@@ -34,6 +34,8 @@
 
 ## 性能调优
 
+### 方式一（针对Atlas A2/A3系列产品）
+
 算子运行过程中，如果出现执行精度下降、内存占用异常等问题，可通过[msProf](https://www.hiascend.com/document/redirect/CannCommunityToolMsprof)性能分析工具分析算子各运行阶段指标数据（如吞吐率、内存占用、耗时等），从而确定问题根源，并针对性地优化。
 
 本章以`AddExample`自定义算子为例，主要介绍算子调优中常用的算子上板性能采集和流水图仿真两种方式。通过采集算子上板运行时各项流水指标分析算子Bound场景，了解仿真流水图便于优化算子内部流水。
@@ -80,3 +82,28 @@
    ```
    采集结果在本项目`$PWD/pipeline_auto/OPPROF_**`目录中。
    其中流水相关文件路径为`OPPROF**/simulator/visualize_data.bin`，可以借助[MindStudio Insight](https://www.hiascend.com/document/redirect/MindStudioInsight)工具查看。
+   
+### 方式二（针对Ascend 950PR）
+
+算子开发过程中，如果出现执行精度下降、内存占用异常等问题，可以通过[CANN Simulator](./cann_sim.md)仿真工具分析算子的指令流水情况，从而确定问题根源，并针对性地优化。
+
+本章以`AddExample`自定义算子为例，主要介绍仿真工具的使用。如何通过仿真工具进行精度和性能调优。
+
+1. 前提条件。
+
+   完成算子开发和编译后，假设采用aclnn接口方式调用，生成的算子可执行文件（test_aclnn_add_example）所在目录为本项目`examples/add_example/examples/build/bin/`。
+
+2. 执行仿真命令，生成仿真数据
+
+   ```
+   cannsim record ./test_aclnn_add_example -s Ascend950 --gen-report
+   ```
+
+   仿真结果在本项目`examples/add_example/examples/build/bin/cannsim_*`目录，流水相关文件为：
+
+   ```
+   trace_core0.json
+   ``` 
+
+3. 在Chrome浏览器中输入“chrome://tracing”地址，并将生成的指令流水图文件（trace_core0.json）拖到空白处打开，具体参数介绍参考CANN Simulator中[“仿真结果解析”](./cann_sim.md#仿真结果解析)章节。
+
