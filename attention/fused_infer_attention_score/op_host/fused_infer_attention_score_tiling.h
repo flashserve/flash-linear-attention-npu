@@ -64,7 +64,7 @@ REGISTER_TILING_DATA_CLASS(FusedInferAttentionPageAttentionParamsOp, FusedInferA
 // AttenMask 参数
 BEGIN_TILING_DATA_DEF(FusedInferAttentionMaskParams)
 TILING_DATA_FIELD_DEF(uint32_t, attenMaskFlag)
-TILING_DATA_FIELD_DEF(uint32_t, attenMaskSize)
+TILING_DATA_FIELD_DEF(uint32_t, attenMaskBatchStride)
 TILING_DATA_FIELD_DEF(uint32_t, attenMaskStride)
 TILING_DATA_FIELD_DEF(int32_t, preToken)
 TILING_DATA_FIELD_DEF(int32_t, nextToken)

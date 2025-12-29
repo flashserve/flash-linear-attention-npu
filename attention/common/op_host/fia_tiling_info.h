@@ -294,7 +294,7 @@ public:
 
     // Mask
     bool attenMaskFlag = false;
-    uint32_t attenMaskSize = 0;
+    uint32_t attenMaskBatchStride = 0;
     uint32_t attenMaskStride = 0;
     int32_t sparseMode = 0;
     int64_t preToken = 0;

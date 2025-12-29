@@ -493,7 +493,7 @@ void FiaTilingNonQuant::FillTilingPageAttenParams()
 void FiaTilingNonQuant::FillTilingMaskParams()
 {
     tilingData_.maskParams.set_attenMaskFlag(fiaInfo_->attenMaskFlag ? 1 : 0);
-    tilingData_.maskParams.set_attenMaskSize(fiaInfo_->attenMaskSize);
+    tilingData_.maskParams.set_attenMaskBatchStride(fiaInfo_->attenMaskBatchStride);
     tilingData_.maskParams.set_attenMaskStride(fiaInfo_->attenMaskStride);
     tilingData_.maskParams.set_sparseMode(fiaInfo_->sparseMode);
     tilingData_.maskParams.set_preToken(fiaInfo_->preToken);

@@ -144,7 +144,7 @@ public:
     bool needInit_ = false;
     int64_t preToken_ = 0;
     int64_t nextToken_ = 0;
-    uint32_t attenMaskSize_ = 0;
+    uint32_t attenMaskBatchStride_ = 0;
     uint32_t attenMaskStride_ = 0;
     bool kvPaddingSizeFlag_ = false;
     bool qPaddingSizeFlag_ = false;

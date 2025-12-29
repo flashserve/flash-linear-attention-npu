@@ -801,17 +801,17 @@ ge::graphStatus FiaInfoParser::GetGSize()
 
 ge::graphStatus FiaInfoParser::GetAttenMaskInfo()
 {
-    // only bss & b1ss & bs need to calc attenMaskSize_ , attenMaskSize_ is uesed to calc batch offset
+    // only bss & b1ss & bs need to calc attenMaskBatchStride_ , attenMaskBatchStride_ is uesed to calc batch offset
     if (attenMaskFlag_) {
         auto *maskTensor = opParamInfo_.attenMask.tensor;
         if (maskTensor->GetStorageShape().GetDimNum() == 2U && s1Size_ == 1U && maskTensor->GetStorageShape().GetDim(0) != 1U) { // for bs situation
-            attenMaskSize_ = maskTensor->GetStorageShape().GetDim(maskTensor->GetStorageShape().GetDimNum() - 1); // batch offset = s2
+            attenMaskBatchStride_ = maskTensor->GetStorageShape().GetDim(maskTensor->GetStorageShape().GetDimNum() - 1); // batch offset = s2
         } else if ((maskTensor->GetStorageShape().GetDimNum() == 3U || maskTensor->GetStorageShape().GetDimNum() == 4U) &&
             maskTensor->GetStorageShape().GetDim(0) == bSize_ && bSize_ != 1) { // for bs & bss situation
-            attenMaskSize_ = maskTensor->GetStorageShape().GetDim(maskTensor->GetStorageShape().GetDimNum() - 1) *
+            attenMaskBatchStride_ = maskTensor->GetStorageShape().GetDim(maskTensor->GetStorageShape().GetDimNum() - 1) *
                 maskTensor->GetStorageShape().GetDim(maskTensor->GetStorageShape().GetDimNum() - 2); // batch offset = s1*s2
         } else {
-            attenMaskSize_ = 0U;
+            attenMaskBatchStride_ = 0U;
         }
         if (*opParamInfo_.sparseMode == 0U || *opParamInfo_.sparseMode == 1U) {
             attenMaskStride_ = maskTensor->GetStorageShape().GetDim(maskTensor->GetStorageShape().GetDimNum() - 1);
@@ -961,7 +961,7 @@ void FiaInfoParser::GenerateFeatureInfo(FiaTilingInfo &fiaInfo)
 
     // atten mask
     fiaInfo.attenMaskFlag = attenMaskFlag_;
-    fiaInfo.attenMaskSize = attenMaskSize_;
+    fiaInfo.attenMaskBatchStride = attenMaskBatchStride_;
     fiaInfo.attenMaskStride = attenMaskStride_;
     fiaInfo.sparseMode = *opParamInfo_.sparseMode;
     // 4: only mla noquant & band mode suppport slidingFlag

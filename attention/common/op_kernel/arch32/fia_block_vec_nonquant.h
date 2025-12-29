@@ -500,7 +500,7 @@ __aicore__ inline void FiaBlockVecNonQuant<FIAT>::ElewiseCompute(
         maskInfo.nextToken = constInfo.nextToken;
         maskInfo.sparseMode = static_cast<fa_base_vector::SparseMode>(constInfo.sparseMode);
         maskInfo.batchIdx = info.bIdx;
-        maskInfo.batchOffset = constInfo.attenMaskSize;
+        maskInfo.batchOffset = constInfo.attenMaskBatchStride;
         maskInfo.attenMaskStride = constInfo.attenMaskStride;
         maskInfo.maskValue = negativeIntScalar;
         maskInfo.s1LeftPaddingSize = info.qPaddingBeginOffset;
