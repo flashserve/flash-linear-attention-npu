@@ -346,6 +346,8 @@ __aicore__ inline void AddExample<T>::Process()
 
     以`AddExample`算子为例，假设开发交付件在`examples`目录，完整代码参见[add_example](../../../examples/add_example)目录。
 
+    > 说明：编译过程依赖第三方开源软件，联网场景会自动下载，离线编译场景需要自行安装，具体参考[离线编译](../context/build_offline.md)。
+
     ```bash
     # 编译指定算子，如--ops=add_example
     bash build.sh --pkg --soc=${soc_version} --vendor_name=${vendor_name} --ops=${op_list}

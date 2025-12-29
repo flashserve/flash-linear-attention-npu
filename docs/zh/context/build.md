@@ -54,3 +54,4 @@ bash build.sh --help
 | --genop         | 可选     | 创建AI Core自定义算子初始目录。                                                       |
 | --experimental  | 可选     | 编译experimental目录下的用户算子。                                                   |
 | --oom           | 可选     | 开启kernel侧oom内存检测功能。                                                   |
+| --cann_3rd_lib_path           | 可选     | 离线编译场景下第三方库存放的目录。                                                   |
