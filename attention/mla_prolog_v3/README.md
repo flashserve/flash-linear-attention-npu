@@ -203,18 +203,22 @@
 
 <table class="tg"><thead>
   <tr>
-    <th class="tg-0lax">调用方式</th>
-    <th class="tg-0lax">样例代码</th>
-    <th class="tg-0lax">说明</th>
+    <th class="tg-0pky">调用方式</th>
+    <th class="tg-0pky">样例代码</th>
+    <th class="tg-0pky">说明</th>
   </tr></thead>
 <tbody>
   <tr>
-    <td class="tg-0lax">
+    <td class="tg-9wq8" rowspan="6">aclnn接口</td>
+    <td class="tg-0pky">
     <a href="./examples/test_aclnn_mla_prolog_v3.cpp">MlaPrologV3接口测试用例代码
     </a>
     </td>
+    <td class="tg-lboi" rowspan="6">
+    通过
+    <a href="./docs/aclnnMlaPrologV3WeightNz.md">aclnnMlaPrologV3WeightNz
+    </a>
+    接口方式调用算子
+    </td>
   </tr>
 </tbody></table>
-
-<!-- ## 参考资源
-[MlaProlog算子设计原理](../mla_prolog/docs/MlaProlog算子设计介绍.md) -->
