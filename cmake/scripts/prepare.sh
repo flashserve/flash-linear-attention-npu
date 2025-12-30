@@ -94,6 +94,10 @@ while [[ $# -gt 0 ]]; do
         ENABLE_STATIC="$2"
         shift 2
         ;;
+    --enable_experimental)
+        ENABLE_EXPERIMENTAL="$2"
+        shift 2
+        ;;
     --enable_ccache)
         ENABLE_CCACHE="$2"
         shift 2
@@ -155,12 +159,13 @@ function build() {
         -DBUILD_OPS_RTY_KERNEL=${BUILD_OPS_RTY_KERNEL} \
         -DENABLE_BUILT_IN=${ENABLE_BUILT_IN} \
         -DENABLE_STATIC=${ENABLE_STATIC} \
+        -DENABLE_EXPERIMENTAL=${ENABLE_EXPERIMENTAL} \
         -DOP_DEBUG_CONFIG=${OP_DEBUG_CONFIG} \
         -DCANN_3RD_LIB_PATH=${CANN_3RD_LIB_PATH} \
         -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
         -DVERSION=${VERSION} \
         -DENABLE_OOM=${ENABLE_OOM}
-
+        
     make ${JOB_NUM} prepare_build
 }
 

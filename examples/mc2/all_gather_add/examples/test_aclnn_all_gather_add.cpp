@@ -22,6 +22,7 @@
 #include <iomanip>
 #include <string>
 #include <vector>
+#include "hccl/hccl.h"
 #include "aclnn/opdev/fp16_t.h"
 #include "../op_host/op_api/aclnn_all_gather_add.h"
 
