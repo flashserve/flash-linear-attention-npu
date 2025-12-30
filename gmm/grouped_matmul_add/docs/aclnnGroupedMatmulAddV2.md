@@ -6,8 +6,9 @@
 
 | 产品                                                         | 是否支持 |
 | :----------------------------------------------------------- | :------: |
-| <term>昇腾910_95 AI处理器</term>                             |    √     |
-
+| <term>Ascend 950PR/Ascend 950DT AI处理器</term>             |    √     |
+| <term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>     |    ×     |
+| <term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term> |    ×     |
 ## 功能说明
 
 - 接口功能：实现分组矩阵乘计算，每组矩阵乘的维度大小可以不同。基本功能为矩阵乘，如$y_i[m_i,n_i]=x_i[m_i,k_i] \times weight_i[k_i,n_i]+y_i[m_i,n_i], i=1...g$，其中g为分组个数，$m_i/k_i/n_i$为对应shape。输入输出数据类型均为aclTensor，K轴分组。
@@ -77,7 +78,7 @@ aclnnStatus aclnnGroupedMatmulAddV2(
     <tr>
       <td>x</td>
       <td>输入</td>
-      <td>公式中的输入x。</td>
+      <td>Device侧的aclTensor类型，公式中的输入x。</td>
       <td>
         <ul>
           <li>x必须转置。</li>
@@ -92,7 +93,7 @@ aclnnStatus aclnnGroupedMatmulAddV2(
     <tr>
       <td>weight</td>
       <td>输入</td>
-      <td>表示权重，公式中的weight。</td>
+      <td>表示权重，Device侧的aclTensor类型，公式中的weight。</td>
       <td>
         <ul>
           <li>weight不支持转置。</li>
@@ -107,7 +108,7 @@ aclnnStatus aclnnGroupedMatmulAddV2(
     <tr>
       <td>groupList</td>
       <td>输入</td>
-      <td>表示输入和输出分组轴方向的matmul大小分布。</td>
+      <td>表示输入和输出分组轴方向的matmul大小分布，Device侧的aclTensor类型。</td>
       <td>-</td>
       <td>INT64</td>
       <td>-</td>
@@ -117,7 +118,7 @@ aclnnStatus aclnnGroupedMatmulAddV2(
     <tr>
       <td>y</td>
       <td>输入</td>
-      <td>表示原地累加的输入矩阵，公式中的y。</td>
+      <td>表示原地累加的输入矩阵，Device侧的aclTensor类型，公式中的y。</td>
       <td>-</td>
       <td>FLOAT32</td>
       <td>ND</td>
@@ -127,7 +128,7 @@ aclnnStatus aclnnGroupedMatmulAddV2(
     <tr>
       <td>yRef</td>
       <td>输出</td>
-      <td>表示原地累加的输入矩阵y的引用（与y完全相同），公式中的yRef</td>
+      <td>表示原地累加的输入矩阵y的引用（与y完全相同），Device侧的aclTensor类型，公式中的yRef</td>
       <td>-</td>
       <td>FLOAT32</td>
       <td>ND</td>

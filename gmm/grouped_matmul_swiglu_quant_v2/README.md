@@ -4,7 +4,7 @@
 
 |产品      | 是否支持 |
 |:----------------------------|:-----------:|
-|<term>昇腾910_95 AI处理器</term>|      √     |
+|<term>Ascend 950PR/Ascend 950DT AI处理器</term>|      √     |
 |<term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>|      √     |
 |<term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>|      √     |
 
@@ -88,7 +88,7 @@
       - **输入**：
         * $X∈\mathbb{Z_8}^{M \times K}$：激活矩阵（左矩阵），M是总token数，K是特征维度。
         * $W∈\mathbb{Z_4}^{E \times K \times N}$：分组权重矩阵（右矩阵），E是专家个数，K是特征维度，N是输出维度。
-        * $bias∈\mathbb{R}^{E \times N}$：计算矩阵乘时的辅助矩阵（生成辅助矩阵的计算过程见下文）。
+        * $weightAsistMatrix∈\mathbb{R}^{E \times N}$：计算矩阵乘时的辅助矩阵（生成辅助矩阵的计算过程见下文）。
         * $w\_scale∈\mathbb{R}^{E \times K\_group\_num \times N}$：分组权重矩阵（右矩阵）的逐通道缩放因子，E是专家个数，K\_group\_num 是在K轴维 度上的分组数，N是输出维度。
         * $x\_scale∈\mathbb{R}^{M}$：激活矩阵（左矩阵）的逐token缩放因子，M是总token数。
         * $grouplist∈\mathbb{N}^{E}$：cumsum或count的分组索引列表。
@@ -98,14 +98,14 @@
       - **计算过程**
         - 1.根据groupList[i]确定当前分组的token，$i \in [0,Len(groupList)]$。
           - 分组逻辑与A8W8相同。
-        - 2.生成辅助矩阵（bias）的计算过程（请注意bias部分计算为离线生成作为输入，并非算子内部完成）：
+        - 2.生成辅助矩阵（weightAsistMatrix）的计算过程（请注意weightAsistMatrix部分计算为离线生成作为输入，并非算子内部完成）：
           - 当为per-channel量化（$w\_scale$为2维）：
 
-            $bias_{i} = 8 × weightScale × Σ_{k=0}^{K-1} weight[:,k,:]$
+            $weightAsistMatrix_{i} = 8 × weightScale × Σ_{k=0}^{K-1} weight[:,k,:]$
 
           - 当为per-group量化（$w\_scale$为3维）：
 
-            $bias_{i} = 8 × Σ_{k=0}^{K-1} (weight[:,k,:] × weightScale[:, ⌊k/num\_per\_group⌋, :])$
+            $weightAsistMatrix_{i} = 8 × Σ_{k=0}^{K-1} (weight[:,k,:] × weightScale[:, ⌊k/num\_per\_group⌋, :])$
 
             注：$num\_per\_group = K // K\_group\_num$
 
@@ -129,7 +129,7 @@
 
           - 3.3.将高低位的矩阵乘结果还原为整体的结果
 
-            $C_{i} = (C\_high_{i} * 16 + C\_low_{i} + bias_{i}) \odot x\_scale_{i}$
+            $C_{i} = (C\_high_{i} * 16 + C\_low_{i} + weightAsistMatrix_{i}) \odot x\_scale_{i}$
 
             $C_{i,act}, gate_{i} = split(C_{i})$
 
@@ -142,11 +142,14 @@
           $Q_{i} = \left\lfloor \frac{S_{i}}{Q\_scale_{i}} \right\rceil$
     </details>
 
-  - <term>昇腾910_95 AI处理器</term>：
+  - <term>Ascend 950PR/Ascend 950DT AI处理器</term>：
     <details>
-    <summary>量化场景MXFP8：</summary>
-    <a id="量化场景MXFP8"></a>
+    <summary>MX量化场景：</summary>
 
+      - **定义**：
+
+        * **⋅** 表示矩阵乘法。
+        * **⊙** 表示逐元素乘法。
       - **计算过程**
         - 1.根据groupList[i]确定当前分组的 token ，$i \in [0,Len(groupList)]$
 
@@ -156,7 +159,7 @@
 
           $C_{i,act}, gate_{i} = split(C_{i})$
 
-          $S_{i}=Swish(C_{i,act})\odot gate_{i}$  &nbsp;&nbsp;其中$Swish(x)=\frac{x}{1+e^{-x}}$
+          $S_{i}=Swish(C_{i,act})\odot gate_{i}$，其中$Swish(x)=\frac{x}{1+e^{-x}}$
 
         - 3.量化输出结果
 
@@ -171,7 +174,9 @@
             | :-----------: | :--: |
             | FLOAT8_E4M3FN |  8   |
             |  FLOAT8_E5M2  |  15  |
-          - $blocksize$：指每次量化的元素个数，仅支持32的倍数，不能为0，且不能超过1024。
+            |  FLOAT4_E1M2  |  1   |
+            |  FLOAT4_E2M1  |  2   |
+          - $blocksize$：指每次量化的元素个数，仅支持32。
     </details>
 
 ## 参数说明
@@ -192,99 +197,92 @@
     <th style="white-space: nowrap">输入/输出</th>
     <th>描述</th>
     <th>数据类型</th>
-    <th><a href="../../docs/zh/context/数据格式.md" target="_blank">数据格式</a></th>
+    <th>数据格式</th>
   </tr>
 </thead>
 <tbody>
   <tr>
     <td>x</td>
     <td rowspan="1">输入</td>
-    <td>表示左矩阵，Device侧的aclTensor，对应公式中的X。</td>
-    <td>FLOAT8_E4M3FN、FLOAT8_E5M2、INT8</td>
+    <td>表示左矩阵，对应公式中的X。</td>
+    <td>FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E1M2、FLOAT4_E2M1、INT8</td>
     <td>ND</td>
   </tr>
   <tr>
     <td>weight</td>
     <td rowspan="1">输入</td>
-    <td>表示权重矩阵，Device侧的aclTensorList，对应公式中的W。</td>
-    <td>FLOAT8_E4M3FN、FLOAT8_E5M2、INT8、INT4、INT32</td>
+    <td>表示权重矩阵，对应公式中的W。</td>
+    <td>FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E1M2、FLOAT4_E2M1、INT8、INT4、INT32</td>
     <td>ND、FRACTAL_NZ</td>
   </tr>
   <tr>
     <td>weightScale</td>
     <td rowspan="1">输入</td>
-    <td>表示右矩阵的量化因子，Device侧的aclTensorList，公式中的wScale。</td>
+    <td>表示右矩阵的量化因子，公式中的wScale。</td>
     <td>FLOAT8_E8M0、UINT64、FLOAT、FLOAT16、BFLOAT16</td>
     <td>ND</td>
   </tr>
   <tr>
     <td>weightAssistMatrix</td>
-    <td rowspan="1">输入</td>
-    <td>表示计算矩阵乘时的辅助矩阵，Device侧的aclTensorList，公式中的bias。</td>
-    <td>FP32</td>
-    <td>-</td>
+    <td rowspan="1">可选输入</td>
+    <td>表示计算矩阵乘时的辅助矩阵，公式中的weightAssistMatrix。</td>
+    <td>FLOAT</td>
+    <td>ND</td>
   </tr>
   <tr>
     <td>bias</td>
     <td rowspan="1">可选输入</td>
-    <td>表示矩阵乘计算的偏移值，Device侧的aclTensor。</td>
+    <td>表示矩阵乘计算的偏移值。</td>
     <td>-</td>
     <td>-</td>
   </tr>
   <tr>
     <td>xScale</td>
     <td rowspan="1">输入</td>
-    <td>表示左矩阵的的量化因子，Device侧的aclTensor，公式中的xScale。</td>
+    <td>表示左矩阵的的量化因子，公式中的xScale。</td>
     <td>FLOAT8_E8M0、FLOAT</td>
     <td>ND</td>
   </tr>
   <tr>
     <td>smoothScale</td>
     <td rowspan="1">可选输入</td>
-    <td>表示左矩阵的的量化因子，Device侧的aclTensor。</td>
+    <td>表示左矩阵的的量化因子。</td>
     <td>-</td>
     <td>-</td>
-  </tr>    
+  </tr>
   <tr>
     <td>groupList</td>
     <td rowspan="1">输入</td>
-    <td>表示每个分组参与计算的Token个数，Device侧的aclTensor，公式中的grouplist。</td>
+    <td>表示每个分组参与计算的Token个数，公式中的grouplist。</td>
     <td>INT64</td>
     <td>ND</td>
-  </tr>    
+  </tr>
   <tr>
     <td>dequantMode</td>
     <td rowspan="1">输入</td>
     <td>表示反量化计算类型，用于确定激活矩阵与权重矩阵的反量化方式。</td>
+    <td>INT64</td>
     <td>-</td>
-    <td>-</td>
-  </tr>    
+  </tr>
   <tr>
     <td>dequantDtype</td>
     <td rowspan="1">输入</td>
     <td>表示中间GroupedMatmul的结果数据类型。</td>
-    <td>-</td>
+    <td>INT64</td>
     <td>-</td>
   </tr>
   <tr>
     <td>quantMode</td>
     <td rowspan="1">输入</td>
     <td>表示量化计算类型，用于确定swiglu结果的量化模式。</td>
-    <td>-</td>
-    <td>-</td>
-  </tr>
-  <tr>
-    <td>quantDtype</td>
-    <td rowspan="1">输入</td>
-    <td>表示输出的数据类型。</td>
-    <td>-</td>
+    <td>INT64</td>
     <td>-</td>
   </tr>
   <tr>
     <td>groupListType</td>
     <td rowspan="1">输入</td>
     <td>表示分组的解释方式，用于确定groupList的语义。</td>
-    <td>-</td>
+    <td>INT64</td>
     <td>-</td>
   </tr>
   <tr>
@@ -297,14 +295,14 @@
   <tr>
     <td>output</td>
     <td rowspan="1">输出</td>
-    <td>表示输出的量化结果，Device侧的aclTensor，公式中的Q。</td>
-    <td>FLOAT8_E4M3FN、FLOAT8_E5M2、INT8</td>
+    <td>表示输出的量化结果，公式中的Q。</td>
+    <td>FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E1M2、FLOAT4_E2M1、INT8</td>
     <td>ND</td>
   </tr>
   <tr>
     <td>outputScale</td>
     <td rowspan="1">输出</td>
-    <td>表示输出的量化因子，Device侧的aclTensor，公式中的QScale。</td>
+    <td>表示输出的量化因子，公式中的QScale。</td>
     <td>FLOAT8_E8M0、FLOAT</td>
     <td>ND</td>
   </tr>
@@ -325,12 +323,121 @@
 </tbody>
 </table>
 
-- <term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>、<term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>：不支持FLOAT8_XX量化数据类型，支持其他数据类型。
-- <term>昇腾910_95 AI处理器</term>：仅支持FLOAT8_XX量化数据类型，不支持其他数据类型。
+- <term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>、<term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>：
+    - x仅支持INT8量化数据类型、不支持其他数据类型。
+    - weight仅支持非转置，支持INT8、INT4、INT32数据类型，ND格式shape形如{(E, K, N)}，NZ格式下，当weight数据类型是INT8时shape形如{(E, N / 32, K / 16, 16, 32)}，INT4时shape形如{(E, N / 64, K / 16, 16， 64)}，INT32时shape形如{(E, N / 64, K / 16, 16， 8)}。
+    - weightScale，A8W8场景支持FLOAT、FLOAT16、BFLOAT16数据类型，shape只支持2维，形如{(E, N)}；A8W4场景支持UINT64数据类型，shape支持2维和3维，其中per-channel的shape形如{(E, N)}，per-group的shape形如{(E, KGroupCount, N)}。
+    - 支持dequantMode参数：0表示激活矩阵per-token，权重矩阵per-channel；1表示激活矩阵per-token，权重矩阵per-group。
+    - 不支持dequantDtype参数。
+    - 不支持quantMode参数。
+    - A8W8/A8W4场景，不支持N轴长度超过10240。
+    - A8W8场景，不支持x的尾轴长度大于等于65536。
+    - A8W4场景，不支持x的尾轴长度大于等于20000。
+    - output仅支持数据类型INT8，shape支持2维，形如(M, N / 2)。
+    - outputScale仅支持数据类型FLOAT，shape支持1维，形如(M,)。
+- <term>Ascend 950PR/Ascend 950DT AI处理器</term>：
+    - 仅支持FLOAT8、FLOAT4量化数据类型，不支持其他数据类型，支持weight转置。
+    - x支持FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E1M2、FLOAT4_E2M1数据类型。
+    - weight支持FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E1M2、FLOAT4_E2M1数据类型，非转置shape形如{(E, K, N)}，weight转置shape形如{(E, N, K)}。
+    - weightScale支持FLOAT8_E8M0数据类型，shape支持4维：weightScale非转置shape形如{(E, ceil(K / 64), N, 2)}，weightScale转置shape形如{(E, N, ceil(K / 64), 2)}。
+    - xScale: FLOAT8_E8M0数据类型：shape支持3维，形如(M, ceil(K / 64), 2)。
+    - 支持dequantMode参数：当前仅支持取值2，2表示MX量化。
+    - 支持dequantDtype参数：当前仅支持取值0，0表示DT_FLOAT。
+    - 支持quantMode参数：当前仅支持取值2，2表示MX量化。
+    - output支持数据类型FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E1M2、FLOAT4_E2M1，shape支持2维，形如(M, N / 2)。
+    - outputScale支持数据类型FLOAT8_E8M0，shape支持3维，形如(M, ceil((N / 2) / 64), 2)。
 
 ## 约束说明
- - N轴长度不能超过10240。
- - K轴长度不能超过65536。
+  - <term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>、<term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>：
+    - A8W8/A8W4量化场景下需满足以下约束条件：
+        - 数据类型需要满足下表：
+        <table style="undefined;table-layout: fixed; width: 1134px"><colgroup>
+        <col style="width: 319px">
+        <col style="width: 144px">
+        <col style="width: 671px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>量化场景</th>
+            <th>x</th>
+            <th>weight</th>
+            <th>weightScale</th>
+            <th>xScale</th>
+            <th>output</th>
+            <th>outputScale</th>
+          </tr></thead>
+        <tbody>
+          <tr>
+            <td>A8W8</td>
+            <td>INT8</td>
+            <td>INT8</td>
+            <td>FLOAT、FLOAT16、BFLOAT16</td>
+            <td>FLOAT</td>
+            <td>INT8</td>
+            <td>FLOAT</td>
+          </tr>
+          <tr>
+            <td>A8W4</td>
+            <td>INT8</td>
+            <td>INT4、INT32</td>
+            <td>UINT64</td>
+            <td>FLOAT</td>
+            <td>INT8</td>
+            <td>FLOAT</td>
+          </tr>
+        </tbody>
+        </table>
+
+      - A8W8场景下，不支持N轴长度超过10240，不支持x的尾轴长度大于等于65536。
+      - A8W4场景下，不支持N轴长度超过10240，不支持x的尾轴长度大于等于20000。
+      
+
+  - <term>Ascend 950PR/Ascend 950DT AI处理器</term>：
+    - MX量化场景下需满足以下约束条件：
+        - 数据类型需要满足下表：
+        <table style="undefined;table-layout: fixed; width: 1134px"><colgroup>
+        <col style="width: 319px">
+        <col style="width: 144px">
+        <col style="width: 671px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>MX量化场景</th>
+            <th>x</th>
+            <th>weight</th>
+            <th>weightScale</th>
+            <th>xScale</th>
+            <th>output</th>
+            <th>outputScale</th>
+          </tr></thead>
+        <tbody>
+          <tr>
+            <td>MXFP8</td>
+            <td>FLOAT8_E4M3FN、FLOAT8_E5M2</td>
+            <td>FLOAT8_E4M3FN、FLOAT8_E5M2</td>
+            <td>FLOAT8_E8M0</td>
+            <td>FLOAT8_E8M0</td>
+            <td>FLOAT8_E4M3FN、FLOAT8_E5M2</td>
+            <td>FLOAT8_E8M0</td>
+          </tr>
+          <tr>
+            <td>MXFP4</td>
+            <td>FLOAT4_E1M2、FLOAT4_E2M1</td>
+            <td>FLOAT4_E1M2、FLOAT4_E2M1</td>
+            <td>FLOAT8_E8M0</td>
+            <td>FLOAT8_E8M0</td>
+            <td>FLOAT4_E1M2、FLOAT4_E2M1、FLOAT8_E4M3FN、FLOAT8_E5M2</td>
+            <td>FLOAT8_E8M0</td>
+          </tr>
+        </tbody>
+        </table>
+
+      - MX量化场景下，需满足N为128对齐。
+      - MXFP4场景不支持K=2。
+      - MXFP4场景需满足K为偶数；当output的数据类型为FLOAT4_E1M2、FLOAT4_E2M1时，需满足N为大于等于4的偶数。
+
+  - 确定性计算：
+      - aclnnGroupedMatmulSwigluQuantV2默认为确定性实现。
 
 ## 调用说明
 

@@ -4,12 +4,12 @@
 
 | 产品                                                         | 是否支持 |
 | :----------------------------------------------------------- | :------: |
+| <term>Ascend 950PR/Ascend 950DT AI处理器</term>          |    √     |
 | <term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>     |    √     |
 | <term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term> |    √     |
-
 ## 功能说明
 
-- 接口功能：融合GroupedMatmul 、dequant、swiglu和quant，详细解释见计算公式。本接口相较于[aclnnGroupedMatmulSwigluQuant](../../grouped_matmul_swiglu_quant/docs/aclnnGroupedMatmulSwigluQuant.md)，参数weight, weightScale, weightAssistMatrix的字段类型变为tensorlist，请根据实际情况选择合适的接口。
+- 接口功能：融合GroupedMatmul 、dequant、swiglu和quant，详细解释见计算公式。本接口相较于[aclnnGroupedMatmulSwigluQuant](../../grouped_matmul_swiglu_quant/docs/aclnnGroupedMatmulSwigluQuant.md)，新增了MXFP8、MXFP4量化场景（仅Ascend 950PR/Ascend 950DT AI处理器支持），参数weight, weightScale, weightAssistMatrix的字段类型变为tensorlist，请根据实际情况选择合适的接口。
 - 计算公式：
   - <term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>、<term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>：
     <details>
@@ -140,6 +140,43 @@
           $Q\_scale_{i} = \frac{max(|S_{i}|)}{127}$
 
           $Q_{i} = \left\lfloor \frac{S_{i}}{Q\_scale_{i}} \right\rceil$
+    </details>
+
+  - <term>Ascend 950PR/Ascend 950DT AI处理器</term>：
+    <details>
+    <summary>MX量化场景：</summary>
+
+      - **定义**：
+
+        * **⋅** 表示矩阵乘法。
+        * **⊙** 表示逐元素乘法。
+      - **计算过程**
+        - 1.根据groupList[i]确定当前分组的 token ，$i \in [0,Len(groupList)]$
+
+        - 2.根据分组确定的入参进行如下计算：
+
+          $C_{i} = (X_{i}\cdot W_{i} )\odot xScale_{i\ BroadCast} \odot wScale_{i\ BroadCast}$
+
+          $C_{i,act}, gate_{i} = split(C_{i})$
+
+          $S_{i}=Swish(C_{i,act})\odot gate_{i}$，其中$Swish(x)=\frac{x}{1+e^{-x}}$
+
+        - 3.量化输出结果
+
+          $shared\_exp = \left\lfloor \log_2(max_i(|S_i|)) \right\rceil - emax$
+
+          $QScale = 2 ^ {shared\_exp}$
+
+          $Q_i = quantize\_to\_element\_format(S_i/Qscale), \space i\space from\space 1\space to\space blocksize$
+          - $emax$: 对应数据类型的最大正则数的指数位。
+
+            |   DataType    | emax |
+            | :-----------: | :--: |
+            | FLOAT8_E4M3FN |  8   |
+            |  FLOAT8_E5M2  |  15  |
+            |  FLOAT4_E1M2  |  1   |
+            |  FLOAT4_E2M1  |  2   |
+          - $blocksize$：指每次量化的元素个数，仅支持32。
     </details>
 
 ## 函数原型
@@ -415,6 +452,18 @@ aclnnStatus aclnnGroupedMatmulSwigluQuantV2(
       - A8W4场景，不支持x的尾轴长度大于等于20000。
       - output仅支持数据类型INT8，shape支持2维，形如(M, N / 2)。
       - outputScale仅支持数据类型FLOAT，shape支持1维，形如(M,)。
+    - <term>Ascend 950PR/Ascend 950DT AI处理器</term>：
+      - 仅支持FLOAT8、FLOAT4量化数据类型，不支持其他数据类型，支持weight转置。
+      - x支持FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E1M2、FLOAT4_E2M1数据类型。
+      - weight支持FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E1M2、FLOAT4_E2M1数据类型，非转置shape形如{(E, K, N)}，weight转置shape形如{(E, N, K)}。
+      - weightScale支持FLOAT8_E8M0数据类型，shape支持4维：weightScale非转置shape形如{(E, ceil(K / 64), N, 2)}，weightScale转置shape形如{(E, N, ceil(K / 64), 2)}。
+      - xScale: FLOAT8_E8M0数据类型：shape支持3维，形如(M, ceil(K / 64), 2)。
+      - 支持dequantMode参数：当前仅支持取值2，2表示MX量化。
+      - 支持dequantDtype参数：当前仅支持取值0，0表示DT_FLOAT。
+      - 支持quantMode参数：当前仅支持取值2，2表示MX量化。
+      - output支持数据类型FLOAT8_E4M3FN、FLOAT8_E5M2、FLOAT4_E1M2、FLOAT4_E2M1，shape支持2维，形如(M, N / 2)。
+      - outputScale支持数据类型FLOAT8_E8M0，shape支持3维，形如(M, ceil((N / 2) / 64), 2)。
+
 - **返回值：**
   
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn返回码.md)。
@@ -464,6 +513,11 @@ aclnnStatus aclnnGroupedMatmulSwigluQuantV2(
       <td>A8W4、A8W8场景，x的尾轴长度不符合约束。</td>
     </tr>
     <tr>
+      <td>MX量化场景（Ascend 950PR/Ascend 950DT AI处理器）<ul>
+      <li>N不为偶数。</li>
+      <li>传入的dequantMode、quantMode不为2，dequantDtype不为0。</li>
+      <li>传入的bias、weightAssistMatrix、smoothScale、tuningConfig不为空指针。</li>
+      </ul></td>
     </tr>
   </tbody>
   </table>
@@ -536,6 +590,50 @@ aclnnStatus aclnnGroupedMatmulSwigluQuantV2(
       - A8W4场景下，不支持N轴长度超过10240，不支持x的尾轴长度大于等于20000。
       
 
+  - <term>Ascend 950PR/Ascend 950DT AI处理器</term>：
+    - MX量化场景下需满足以下约束条件：
+        - 数据类型需要满足下表：
+        <table style="undefined;table-layout: fixed; width: 1134px"><colgroup>
+        <col style="width: 319px">
+        <col style="width: 144px">
+        <col style="width: 671px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>MX量化场景</th>
+            <th>x</th>
+            <th>weight</th>
+            <th>weightScale</th>
+            <th>xScale</th>
+            <th>output</th>
+            <th>outputScale</th>
+          </tr></thead>
+        <tbody>
+          <tr>
+            <td>MXFP8</td>
+            <td>FLOAT8_E4M3FN、FLOAT8_E5M2</td>
+            <td>FLOAT8_E4M3FN、FLOAT8_E5M2</td>
+            <td>FLOAT8_E8M0</td>
+            <td>FLOAT8_E8M0</td>
+            <td>FLOAT8_E4M3FN、FLOAT8_E5M2</td>
+            <td>FLOAT8_E8M0</td>
+          </tr>
+          <tr>
+            <td>MXFP4</td>
+            <td>FLOAT4_E1M2、FLOAT4_E2M1</td>
+            <td>FLOAT4_E1M2、FLOAT4_E2M1</td>
+            <td>FLOAT8_E8M0</td>
+            <td>FLOAT8_E8M0</td>
+            <td>FLOAT4_E1M2、FLOAT4_E2M1、FLOAT8_E4M3FN、FLOAT8_E5M2</td>
+            <td>FLOAT8_E8M0</td>
+          </tr>
+        </tbody>
+        </table>
+
+      - MX量化场景下，需满足N为128对齐。
+      - MXFP4场景不支持K=2。
+      - MXFP4场景需满足K为偶数；当output的数据类型为FLOAT4_E1M2、FLOAT4_E2M1时，需满足N为大于等于4的偶数。
+      - groupList第1维最大支持1024，即最多支持1024个group。
   - 确定性计算：
       - aclnnGroupedMatmulSwigluQuantV2默认为确定性实现。
 
@@ -769,3 +867,259 @@ aclnnStatus aclnnGroupedMatmulSwigluQuantV2(
     }
     ```
 
+  - <term>Ascend 950PR/Ascend 950DT AI处理器</term>：
+    ```cpp
+    #include <iostream>
+    #include <memory>
+    #include <vector>
+
+    #include "acl/acl.h"
+    #include "aclnnop/aclnn_grouped_matmul_swiglu_quant_v2.h"
+
+    #define CHECK_RET(cond, return_expr) \
+        do {                               \
+          if (!(cond)) {                   \
+            return_expr;                   \
+          }                                \
+        } while (0)
+
+    #define CHECK_FREE_RET(cond, return_expr) \
+        do {                                  \
+            if (!(cond)) {                    \
+                Finalize(deviceId, stream);   \
+                return_expr;                  \
+            }                                 \
+        } while (0)
+
+    #define LOG_PRINT(message, ...)     \
+        do {                              \
+          printf(message, ##__VA_ARGS__); \
+        } while (0)
+
+    int64_t GetShapeSize(const std::vector<int64_t>& shape) {
+        int64_t shapeSize = 1;
+        for (auto i : shape) {
+            shapeSize *= i;
+        }
+        return shapeSize;
+    }
+
+    int Init(int32_t deviceId, aclrtStream* stream) {
+        // 固定写法，资源初始化
+        auto ret = aclInit(nullptr);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclInit failed. ERROR: %d\n", ret); return ret);
+        ret = aclrtSetDevice(deviceId);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSetDevice failed. ERROR: %d\n", ret); return ret);
+        ret = aclrtCreateStream(stream);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtCreateStream failed. ERROR: %d\n", ret); return ret);
+        return 0;
+    }
+
+    template <typename T>
+    int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
+                            aclDataType dataType, aclFormat FormatType, aclTensor** tensor) {
+        auto size = GetShapeSize(shape) * sizeof(T);
+        // 调用aclrtMalloc申请Device侧内存
+        auto ret = aclrtMalloc(deviceAddr, size, ACL_MEM_MALLOC_HUGE_FIRST);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMalloc failed. ERROR: %d\n", ret); return ret);
+
+        // 调用aclrtMemcpy将Host侧数据拷贝到Device侧内存上
+        ret = aclrtMemcpy(*deviceAddr, size, hostData.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); return ret);
+
+        // 计算连续tensor的strides
+        std::vector<int64_t> strides(shape.size(), 1);
+        for (int64_t i = shape.size() - 2; i >= 0; i--) {
+            strides[i] = shape[i + 1] * strides[i + 1];
+        }
+
+        // 调用aclCreateTensor接口创建aclTensor
+        *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, FormatType,
+                                  shape.data(), shape.size(), *deviceAddr);
+        return 0;
+    }
+
+    template <typename T>
+    int CreateAclTensorList(const std::vector<std::vector<T>>& hostData, const std::vector<std::vector<int64_t>>& shapes, 
+                            void** deviceAddr, aclDataType dataType, aclTensorList** tensor) {
+        int size = shapes.size();
+        aclTensor* tensors[size];
+        for (int i = 0; i < size; i++) {
+            int ret = CreateAclTensor<T>(hostData[i], shapes[i], deviceAddr + i, dataType, ACL_FORMAT_ND, tensors + i);
+            CHECK_RET(ret == ACL_SUCCESS, return ret);
+        }
+        *tensor = aclCreateTensorList(tensors, size);
+        return ACL_SUCCESS;
+    }
+
+    template <typename T1, typename T2>
+    auto CeilDiv(T1 a, T2 b) -> T1
+    {
+        if (b == 0) {
+            return a;
+        }
+        return (a + b - 1) / b;
+    }
+
+    void Finalize(int32_t deviceId, aclrtStream stream)
+    {
+        aclrtDestroyStream(stream);
+        aclrtResetDevice(deviceId);
+        aclFinalize();
+    }
+
+    int aclnnGroupedMatmulSwigluQuantV2Test(int32_t deviceId, aclrtStream& stream) 
+    {
+        auto ret = Init(deviceId, &stream);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
+
+        // 2. 构造输入与输出，需要根据API的接口自定义构造
+        int64_t E = 8;
+        int64_t M = 2048;
+        int64_t N = 4096;
+        int64_t K = 7168;
+
+        std::vector<int64_t> xShape = {M, K};
+        std::vector<int64_t> weightShape = {E, K, N};
+        std::vector<int64_t> weightScaleShape = {E, CeilDiv(K, 64), N, 2};
+        std::vector<int64_t> xScaleShape = {M, CeilDiv(K, 64), 2};
+        std::vector<int64_t> groupListShape = {E};
+        std::vector<int64_t> outputShape = {M, N / 2};
+        std::vector<int64_t> outputScaleShape = {M, CeilDiv((N / 2), 64), 2};
+
+        void* xDeviceAddr = nullptr;
+        void* weightDeviceAddr = nullptr;
+        void* weightScaleDeviceAddr = nullptr;
+        void* xScaleDeviceAddr = nullptr;
+        void* groupListDeviceAddr = nullptr;
+        void* outputDeviceAddr = nullptr;
+        void* outputScaleDeviceAddr = nullptr;
+
+        aclTensor* x = nullptr;
+        aclTensorList* weight = nullptr;
+        aclTensorList* weightScale = nullptr;
+        aclTensor* xScale = nullptr;
+        aclTensor* groupList = nullptr;
+        aclTensor* output = nullptr;
+        aclTensor* outputScale = nullptr;
+        aclTensorList* weightAssistMatri = nullptr;
+        aclTensorList* smoothScale = nullptr;
+
+        std::vector<int8_t> xHostData(M * K, 1);
+        std::vector<int8_t> weightHostData(E * N * K, 1);
+        std::vector<int8_t> weightScaleHostData(E * CeilDiv(K, 64) * N * 2, 1);
+        std::vector<int8_t> xScaleHostData(M * CeilDiv(K, 64) * 2, 1);
+        std::vector<int64_t> groupListHostData(E, 1);
+        std::vector<int8_t> outputHostData(M * N / 2, 1);
+        std::vector<int8_t> outputScaleHostData(M * CeilDiv((N / 2), 64) * 2, 1);
+        std::vector<int64_t> tuningConfigData = {1};
+        aclIntArray *tuningConfig = aclCreateIntArray(tuningConfigData.data(), 1);
+        
+        int64_t quantMode = 2;
+        int64_t dequantMode = 2;
+        int64_t dequantDtype = 0;
+        int64_t groupListType = 1;
+
+        // 创建x aclTensor
+        std::vector<unsigned char> xHostDataUnsigned(xHostData.begin(), xHostData.end());
+        ret = CreateAclTensor<uint8_t>(xHostDataUnsigned, xShape, &xDeviceAddr, aclDataType::ACL_FLOAT8_E5M2, aclFormat::ACL_FORMAT_ND, &x);
+        std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> xTensorPtr(x, aclDestroyTensor);
+        std::unique_ptr<void, aclError (*)(void*)> xDeviceAddrPtr(xDeviceAddr, aclrtFree);
+        CHECK_RET(ret == ACL_SUCCESS, return ret);
+
+        // 创建weight aclTensorList
+        std::vector<std::vector<int8_t>> weightHostDataList = {weightHostData};
+        std::vector<std::vector<int64_t>> weightShapeList = {weightShape};
+        ret = CreateAclTensorList<int8_t>(weightHostDataList, weightShapeList, &weightDeviceAddr, aclDataType::ACL_FLOAT8_E5M2, &weight);
+        std::unique_ptr<aclTensorList, aclnnStatus (*)(const aclTensorList*)> weightTensorListPtr(weight, aclDestroyTensorList);
+        std::unique_ptr<void, aclError (*)(void*)> weightDeviceAddrPtr(weightDeviceAddr, aclrtFree);
+        CHECK_RET(ret == ACL_SUCCESS, return ret);
+        
+        // 创建weightScale aclTensorList
+        std::vector<std::vector<int8_t>> weightScaleHostDataList = {weightScaleHostData};
+        std::vector<std::vector<int64_t>> weightScaleShapeList = {weightScaleShape};
+        ret = CreateAclTensorList<int8_t>(weightScaleHostDataList, weightScaleShapeList, &weightScaleDeviceAddr, aclDataType::ACL_FLOAT8_E8M0, &weightScale);
+        std::unique_ptr<aclTensorList, aclnnStatus (*)(const aclTensorList*)> weightScaleTensorListPtr(weightScale, aclDestroyTensorList);
+        std::unique_ptr<void, aclError (*)(void*)> weightScaleDeviceAddrPtr(weightScaleDeviceAddr, aclrtFree);
+        CHECK_RET(ret == ACL_SUCCESS, return ret);
+
+        // 创建xScale aclTensor
+        ret = CreateAclTensor<int8_t>(xScaleHostData, xScaleShape, &xScaleDeviceAddr, aclDataType::ACL_FLOAT8_E8M0, aclFormat::ACL_FORMAT_ND, &xScale);
+        std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> xScaleTensorPtr(xScale, aclDestroyTensor);
+        std::unique_ptr<void, aclError (*)(void*)> xScaleDeviceAddrPtr(xScaleDeviceAddr, aclrtFree);
+        CHECK_RET(ret == ACL_SUCCESS, return ret);
+
+        // 创建group_list aclTensor
+        ret = CreateAclTensor<int64_t>(groupListHostData, groupListShape, &groupListDeviceAddr, aclDataType::ACL_INT64, aclFormat::ACL_FORMAT_ND, &groupList);
+        std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> groupListTensorPtr(groupList, aclDestroyTensor);
+        std::unique_ptr<void, aclError (*)(void*)> groupListDeviceAddrPtr(groupListDeviceAddr, aclrtFree);
+        CHECK_RET(ret == ACL_SUCCESS, return ret);
+
+        // 创建y aclTensor
+        ret = CreateAclTensor<int8_t>(outputHostData, outputShape, &outputDeviceAddr, aclDataType::ACL_FLOAT8_E5M2, aclFormat::ACL_FORMAT_ND, &output);
+        std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> outputTensorPtr(output, aclDestroyTensor);
+        std::unique_ptr<void, aclError (*)(void*)> outputDeviceAddrPtr(outputDeviceAddr, aclrtFree);
+        CHECK_RET(ret == ACL_SUCCESS, return ret);
+
+        // 创建yScale aclTensor
+        ret = CreateAclTensor<int8_t>(outputScaleHostData, outputScaleShape, &outputScaleDeviceAddr, aclDataType::ACL_FLOAT8_E8M0, aclFormat::ACL_FORMAT_ND, &outputScale);
+        std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> outputScaleTensorPtr(outputScale, aclDestroyTensor);
+        std::unique_ptr<void, aclError (*)(void*)> outputScaleDeviceAddrPtr(outputScaleDeviceAddr, aclrtFree);
+        CHECK_RET(ret == ACL_SUCCESS, return ret);
+
+        uint64_t workspaceSize = 0;
+        aclOpExecutor* executor;
+        void* workspaceAddr = nullptr;
+
+        // 3. 调用CANN算子库API
+        // 调用aclnnGroupedMatmulSwigluQuantV2第一段接口
+        ret = aclnnGroupedMatmulSwigluQuantV2GetWorkspaceSize(x, weight, weightScale, nullptr, nullptr, xScale, nullptr, groupList, 
+                                                            dequantMode, dequantDtype, quantMode, groupListType, nullptr, output, outputScale, &workspaceSize, &executor);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnGroupedMatmulSwigluQuantV2GetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
+        // 根据第一段接口计算出的workspaceSize申请device内存
+        if (workspaceSize > 0) {
+            ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
+            CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
+        }
+        // 调用aclnnGroupedMatmulSwigluQuantV2第二段接口
+        ret = aclnnGroupedMatmulSwigluQuantV2(workspaceAddr, workspaceSize, executor, stream);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnGroupedMatmulSwigluQuantV2 failed. ERROR: %d\n", ret); return ret);
+
+        // 4. （固定写法）同步等待任务执行结束
+        ret = aclrtSynchronizeStream(stream);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
+
+        // 5. 获取输出的值，将Device侧内存上的结果拷贝至Host侧，需要根据具体API的接口定义修改
+        auto size = GetShapeSize(outputShape);
+        std::vector<int8_t> outputData(size, 0);
+        ret = aclrtMemcpy(outputData.data(), size * sizeof(outputData[0]), outputDeviceAddr,
+                          size * sizeof(outputData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy outputData from device to host failed. ERROR: %d\n", ret); return ret);
+        for (int64_t j = 0; j < size; j++) {
+            LOG_PRINT("result[%ld] is: %d\n", j, outputData[j]);
+        }
+
+        size = GetShapeSize(outputScaleShape);
+        std::vector<int8_t> outputScaleData(size, 0);
+        ret = aclrtMemcpy(outputScaleData.data(), size * sizeof(outputScaleData[0]), outputScaleDeviceAddr,
+                          size * sizeof(outputScaleData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy outputScaleData from device to host failed. ERROR: %d\n", ret); return ret);
+        for (int64_t j = 0; j < size; j++) {
+            LOG_PRINT("result[%ld] is: %d\n", j, outputScaleData[j]);
+        }
+        return ACL_SUCCESS;
+    }
+
+    int main()
+    {
+        // （固定写法）device/stream初始化，参考AscendCL对外接口列表
+        // 根据自己的实际device填写deviceId
+        int32_t deviceId = 0;
+        aclrtStream stream;
+        auto ret = aclnnGroupedMatmulSwigluQuantV2Test(deviceId, stream);
+        CHECK_FREE_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnGroupedMatmulSwigluQuantV2Test failed. ERROR: %d\n", ret); return ret);
+
+        Finalize(deviceId, stream);
+        return 0;
+    }
+    ```

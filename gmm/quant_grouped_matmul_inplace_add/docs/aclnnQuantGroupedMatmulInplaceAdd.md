@@ -1,12 +1,12 @@
 # aclnnQuantGroupedMatmulInplaceAdd
 
-[📄 查看源码](https://gitcode.com/cann/ops-transformer/tree/master/gmm/quant_grouped_matmul_inplace_add)
-
 ## 产品支持情况
 
 |产品      | 是否支持 |
 |:----------------------------|:-----------:|
-|<term>昇腾910_95 AI处理器</term>|      √     |
+|<term>Ascend 950PR/Ascend 950DT AI处理器</term>|      √     |
+|<term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>|      ×     |
+|<term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>|      ×     |
 
 ## 功能说明
 
@@ -88,7 +88,7 @@ aclnnStatus aclnnQuantGroupedMatmulInplaceAdd(
     <tr>
       <td>x1</td>
       <td>输入</td>
-      <td>公式中的输入x1。</td>
+      <td>Device侧的aclTensor，公式中的输入x1。</td>
       <td>-</td>
       <td>FLOAT8_E4M3FN、FLOAT8_E5M2、HIFLOAT8</td>
       <td>ND</td>
@@ -98,7 +98,7 @@ aclnnStatus aclnnQuantGroupedMatmulInplaceAdd(
     <tr>
       <td>x2</td>
       <td>输入</td>
-      <td>公式中的输入x2。</td>
+      <td>Device侧的aclTensor，公式中的输入x2。</td>
       <td>-</td>
       <td>FLOAT8_E4M3FN、FLOAT8_E5M2、HIFLOAT8</td>
       <td>ND</td>
@@ -108,7 +108,7 @@ aclnnStatus aclnnQuantGroupedMatmulInplaceAdd(
     <tr>
       <td>scale1Optional</td>
       <td>可选输入</td>
-      <td>表示量化参数中的由x1量化引入的缩放因子。</td>
+      <td>表示量化参数中的由x1量化引入的缩放因子，Device侧的aclTensor。</td>
       <td>
         <ul>
           <li>综合约束请参见<a href="#约束说明" target="_blank">约束说明</a>。</li>
@@ -116,13 +116,13 @@ aclnnStatus aclnnQuantGroupedMatmulInplaceAdd(
       </td>
       <td>FLOAT32、FLOAT8_E8M0</td>
       <td>ND</td>
-      <td>2</td>
+      <td>2-3</td>
       <td>√</td>
     </tr>
     <tr>
       <td>scale2</td>
       <td>输入</td>
-      <td>表示量化参数中的由x2量化引入的缩放因子。</td>
+      <td>表示量化参数中的由x2量化引入的缩放因子，Device侧的aclTensor。</td>
       <td>
         <ul>
           <li>综合约束请参见<a href="#约束说明" target="_blank">约束说明</a>。</li>
@@ -130,13 +130,13 @@ aclnnStatus aclnnQuantGroupedMatmulInplaceAdd(
       </td>
       <td>FLOAT32、FLOAT8_E8M0</td>
       <td>ND</td>
-      <td>2</td>
+      <td>2-3</td>
       <td>√</td>
     </tr>
     <tr>
       <td>groupList</td>
       <td>输入</td>
-      <td>表示输入和输出分组轴方向的matmul大小分布。</td>
+      <td>表示输入和输出分组轴方向的matmul大小分布，Device侧的aclTensor。</td>
       <td>
         <ul>
           <li>当groupListType为0时，groupList必须为非负单调非递减数列，当groupListType为1时，groupList必须为非负数列。</li>
@@ -151,7 +151,7 @@ aclnnStatus aclnnQuantGroupedMatmulInplaceAdd(
     <tr>
       <td>yRef</td>
       <td>输入输出</td>
-      <td>对应公式中的输入输出y。</td>
+      <td>Device侧的aclTensor，对应公式中的输入输出y。</td>
       <td>-</td>
       <td>FLOAT32</td>
       <td>ND</td>
@@ -168,7 +168,7 @@ aclnnStatus aclnnQuantGroupedMatmulInplaceAdd(
           <li>1: groupList中数值为分组轴上每组大小。</li>
         </ul>
       </td>
-      <td>-</td>
+      <td>INT64</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -183,7 +183,7 @@ aclnnStatus aclnnQuantGroupedMatmulInplaceAdd(
           <li>当前只支持传0。</li>
         </ul>
       </td>
-      <td>-</td>
+      <td>INT64</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -282,7 +282,7 @@ aclnnStatus aclnnQuantGroupedMatmulInplaceAdd(
         |:---------:| :------ |
         |scale1Optional| 3维tensor，shape为((K / 64) + g, M, 2)，scale\_i起始地址偏移为((K\_0 + K\_1 + ...+ K\_{i-1})/ 64 + g\_i) \* M \* 2，即scale_0的起始地址偏移为0，scale_1的起始地址偏移为(K\_0 / 64 + 1) \* M \* 2， scale_2的起始地址偏移为((K\_0 + K\_1) / 64 + 2) \* M \* 2, 依此类推|
         |scale2| 3维tensor，shape为((K / 64) + g, N, 2), 起始地址偏移与scale1Optional同理|
-
+  - groupList第1维最大支持1024，即最多支持1024个group。
 ## 调用示例
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/编译与运行样例.md)。
 
