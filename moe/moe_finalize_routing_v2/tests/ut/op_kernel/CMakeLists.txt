@@ -12,6 +12,7 @@ if (UT_TEST_ALL OR OP_KERNEL_UT)
     # 算子自己的tiling文件路径
     set(moe_finalize_routing_v2_tiling_files
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../op_host/moe_finalize_routing_v2_tiling.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../op_host/moe_finalize_routing_v2_tiling_arch35.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../op_host/moe_finalize_routing_v2_tiling_membase.cpp
         )
     # 使用AddOpTestCase

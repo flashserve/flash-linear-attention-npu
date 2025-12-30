@@ -1,0 +1,287 @@
+{
+    "op_type": "MoeFinalizeRoutingV2",
+    "op_list": [
+      {
+        "bin_filename": "MoeFinalizeRoutingV2_2980d2db1a80c523e7e59a032c95969880af8",
+        "inputs": [
+          {
+            "name": "expanded_x",
+            "index": 0,
+            "dtype": "float32",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "expanded_row_idx",
+            "index": 1,
+            "dtype": "int32",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "x1",
+            "index": 2,
+            "dtype": "float32",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "x2",
+            "index": 3,
+            "dtype": "float32",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "bias",
+            "index": 4,
+            "dtype": "float32",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "scales",
+            "index": 5,
+            "dtype": "float32",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "expert_idx",
+            "index": 6,
+            "dtype": "int32",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "y",
+            "index": 0,
+            "dtype": "float32",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          }
+        ],
+        "attrs": [
+          {
+            "name": "drop_pad_mode",
+            "dtype": "int",
+            "value": 0
+          }
+        ]
+      },
+      {
+        "bin_filename": "MoeFinalizeRoutingV2_29808098b79498645e9c0da095babdeaf862i16",
+        "inputs": [
+          {
+            "name": "expanded_x",
+            "index": 0,
+            "dtype": "float16",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "expanded_row_idx",
+            "index": 1,
+            "dtype": "int32",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "x1",
+            "index": 2,
+            "dtype": "float16",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "x2",
+            "index": 3,
+            "dtype": "float16",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "bias",
+            "index": 4,
+            "dtype": "float16",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "scales",
+            "index": 5,
+            "dtype": "float16",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "expert_idx",
+            "index": 6,
+            "dtype": "int32",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "y",
+            "index": 0,
+            "dtype": "float16",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          }
+        ],
+        "attrs": [
+          {
+            "name": "drop_pad_mode",
+            "dtype": "int",
+            "value": 0
+          }
+        ]
+      },
+      {
+        "bin_filename": "MoeFinalizeRoutingV2_29805c5e58e043224cccf51a06108010ae13i32",
+        "inputs": [
+          {
+            "name": "expanded_x",
+            "index": 0,
+            "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "expanded_row_idx",
+            "index": 1,
+            "dtype": "int32",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "x1",
+            "index": 2,
+            "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "x2",
+            "index": 3,
+            "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "bias",
+            "index": 4,
+            "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "scales",
+            "index": 5,
+            "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "expert_idx",
+            "index": 6,
+            "dtype": "int32",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "y",
+            "index": 0,
+            "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          }
+        ],
+        "attrs": [
+          {
+            "name": "drop_pad_mode",
+            "dtype": "int",
+            "value": 0
+          }
+        ]
+      }
+    ]
+  }

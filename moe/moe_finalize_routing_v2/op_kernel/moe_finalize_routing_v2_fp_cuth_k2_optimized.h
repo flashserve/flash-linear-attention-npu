@@ -36,7 +36,6 @@ public:
 
 private:
     __aicore__ inline void CkechColAlignment();
-    __aicore__ inline void ParseTilingData();
     __aicore__ inline void CopyIn(
         int64_t nLoopIdx, int64_t lineNumInCurrentLoop, int64_t bias, int64_t dataLen, bool isPadH,
         int64_t rightPaddingH);
@@ -149,7 +148,9 @@ __aicore__ inline void MoeFinalizeRoutingV2FpCuthK2Optimized<T>::CkechColAlignme
 }
 
 template <typename T>
-__aicore__ inline void MoeFinalizeRoutingV2FpCuthK2Optimized<T>::ParseTilingData()
+__aicore__ inline void MoeFinalizeRoutingV2FpCuthK2Optimized<T>::Init(
+    GM_ADDR expandedPermutedRows, GM_ADDR expandedSrcToDstRow, GM_ADDR skip1, GM_ADDR skip2, GM_ADDR bias,
+    GM_ADDR scales, GM_ADDR expertForSourceRow, GM_ADDR out, GM_ADDR workspace)
 {
     if (GetBlockIdx() + 1 == tilingData_.usedCoreNum) {
         curCoreHandleNumPerLoop_ = tilingData_.tailCoreHandleNumPerLoop;
@@ -164,14 +165,7 @@ __aicore__ inline void MoeFinalizeRoutingV2FpCuthK2Optimized<T>::ParseTilingData
         curTotalLoopCount_ = tilingData_.normalCoreLoopNum * (tilingData_.hSliceNum + 1);
         curCoreHandleNum_ = tilingData_.normalCoreHandleNum;
     }
-}
 
-template <typename T>
-__aicore__ inline void MoeFinalizeRoutingV2FpCuthK2Optimized<T>::Init(
-    GM_ADDR expandedPermutedRows, GM_ADDR expandedSrcToDstRow, GM_ADDR skip1, GM_ADDR skip2, GM_ADDR bias,
-    GM_ADDR scales, GM_ADDR expertForSourceRow, GM_ADDR out, GM_ADDR workspace)
-{
-    ParseTilingData();
     // 检查要处理的列数是否对齐以及应该如何对齐
     CkechColAlignment();
 

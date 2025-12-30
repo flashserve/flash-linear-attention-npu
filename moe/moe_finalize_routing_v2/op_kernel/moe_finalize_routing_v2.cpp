@@ -197,7 +197,7 @@ extern "C" __global__ __aicore__ void moe_finalize_routing_v2(
     }
 #endif
 
-#if (ORIG_DTYPE_EXPANDED_X == DT_BF16)
+#if !(defined(__NPU_ARCH__) && __NPU_ARCH__ == 3003) && (ORIG_DTYPE_EXPANDED_X == DT_BF16)
     if (TILING_KEY_IS(TILING_KEY_DTYPE_BF16_BIG_K_V2)) {
         MoeFinalizeRoutingV2::MoeFinalizeRoutingV2Bf16CutK<bfloat16_t, bfloat16_t, true> op(tilingData, pipe);
         op.Init(expandedPermutedRows, expandedSrcToDstRow, skip1, skip2, bias, scales, expertForSourceRow, out, userWS);

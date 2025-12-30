@@ -4,6 +4,7 @@
 
 | 产品                                                         | 是否支持 |
 | :----------------------------------------------------------- | :------: |
+| <term> Ascend 950PR/Ascend 950DT</term>                  |    √     |
 | <term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>     |    √     |
 | <term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term> |    √     |
 
@@ -188,6 +189,10 @@ aclnnStatus aclnnMoeFinalizeRoutingV2(
     - <term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>、<term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>：
       - expandedX要求是一个2D/3D的Tensor，支持的数据类型为FLOAT16、BFLOAT16、FLOAT32，支持drop less和drop pad场景。
       - scalesOptional：混合精度模式下，支持 expandedX 为 BFLOAT16 时 scalesOptional 为 FLOAT32；非混合精度模式下，数据类型要求与expandedX一致。
+      
+    - <term>Ascend 950PR/Ascend 950DT</term>：
+      - expandedX要求是一个2D/3D的Tensor，支持的数据类型为FLOAT16、BFLOAT16、FLOAT32，支持drop less和drop pad场景。
+      - scalesOptional数据类型可以与expandedX不一致。
 -   **返回值：**
 
     aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn返回码.md)。
