@@ -46,6 +46,12 @@ public:
             .ExtendCfgInfo("opFile.value", "moe_init_routing_v2_grad");
         this->AICore().AddConfig("ascend910b", membaseCfg);
         this->AICore().AddConfig("ascend910_93", membaseCfg);
+        OpAICoreConfig regbaseCfg;
+        regbaseCfg.DynamicCompileStaticFlag(true)
+            .DynamicRankSupportFlag(true)
+            .DynamicShapeSupportFlag(true)
+            .ExtendCfgInfo("opFile.value", "moe_init_routing_v2_grad_apt");
+        this->AICore().AddConfig("ascend910_95", regbaseCfg);
     }
 };
 

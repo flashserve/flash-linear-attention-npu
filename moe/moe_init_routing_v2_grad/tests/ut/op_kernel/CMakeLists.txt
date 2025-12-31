@@ -12,6 +12,9 @@ if (UT_TEST_ALL OR OP_KERNEL_UT)
 
 # 算子自己的tiling文件路径
 set(moe_init_routing_v2_grad_tiling_files
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../op_host/moe_init_routing_v2_grad_full_load_tiling_arch35.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../op_host/moe_init_routing_v2_grad_split_h_tiling_arch35.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../op_host/moe_init_routing_v2_grad_tiling_arch35.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../op_host/moe_init_routing_v2_grad_tiling_base.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../op_host/moe_init_routing_v2_grad_tiling.cpp
     )
