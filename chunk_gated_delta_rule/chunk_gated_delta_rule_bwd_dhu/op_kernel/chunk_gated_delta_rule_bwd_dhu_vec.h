@@ -9,11 +9,11 @@
  */
 
 /*!
- * \file chunk_gated_delta_rule_bwd_dhu.h
+ * \file chunk_gated_delta_rule_bwd_dhu_vec.h
  * \brief
  */
-#ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_H
-#define CHUNK_GATED_DELTA_RULE_BWD_DHU_H
+#ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_VEC_H
+#define CHUNK_GATED_DELTA_RULE_BWD_DHU_VEC_H
 #endif
 
 #include "kernel_operator.h"
@@ -23,7 +23,7 @@ using namespace AscendC;
 namespace ChunkGDRBwdDhu {
 
 template <typename DT>
-class GDRVec : public GDRVecBase<DT>
+class GDRVec : public GDRBase<DT>
 {
 public:
     __aicore__ inline GDRVec(){};
@@ -37,14 +37,12 @@ template <typename DT>
 __aicore__ inline void GDRVec<DT>::Init(GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g, GM_ADDR cu_seqlens, 
                                 GM_ADDR chunk_indices, const ChunkGatedDeltaRuleBwdDhuTilingData& tilingData)
 {
-    GDRVecBase<DT>::InitTilingData(tilingData);
-    printf("Init>>>>\n");
+    GDRBase<DT>::InitTilingData(tilingData);
 }
 
 template <typename DT>
 __aicore__ inline void GDRVec<DT>::Process( )
 {
-    printf("process>>>>\n");
    
 }
 

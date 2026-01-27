@@ -83,7 +83,6 @@ bool ChunkGatedDeltaRuleBwdDhuTiling::Init(gert::TilingContext* context) {
               return false);
 
   tilingData.set_B(B);
-  printf("tiling B is %llu\n", tilingData.get_B());
   tilingData.set_H(H);
   tilingData.set_T(T);
   tilingData.set_K(K);
@@ -100,7 +99,6 @@ bool ChunkGatedDeltaRuleBwdDhuTiling::VarLenSetting(gert::TilingContext* context
   const auto chunkIndices = context->GetInputTensor(INPUT_CHUNK_INDICES_IDX);
 
   if (cuSeqlens != nullptr && chunkIndices != nullptr) {
-    printf("is varlen\n");
     IS_VARIABLE_LEN = true;
   } else if (!(cuSeqlens == nullptr && chunkIndices == nullptr)) {
     OP_LOGE(context->GetNodeName(), 
@@ -133,7 +131,7 @@ bool ChunkGatedDeltaRuleBwdDhuTiling::CheckInputShape(gert::TilingContext* conte
 bool ChunkGatedDeltaRuleBwdDhuTiling::CalcUb(gert::TilingContext *context) {
   // AIC_AIV_1_2, 每个VEC处理BT/2行
   uint32_t halfBT = CeilDiv(static_cast<uint32_t>(chunkSize), NUM_2);
-  uint32_t halfK = CeilDiv(halfK, NUM_2);
+  uint32_t halfK = CeilDiv(static_cast<uint32_t>(K), NUM_2);
 
   uint32_t gBufByte = halfBT * HALF_DTYPE_SIZE;
   uint32_t gCastBufByte = halfBT * FP32_DTYPE_SIZE;
@@ -165,21 +163,51 @@ void ChunkGatedDeltaRuleBwdDhuTiling::SetWorkspaceSize(gert::TilingContext* cont
   auto platformInfoPtr = context->GetPlatformInfo();
   auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
   uint32_t totalCoreNum = ascendcPlatform.GetCoreNumAic();
-  uint32_t taskNum = B * H; // 每个核处理一个batch的一个头的完整sequence
+  uint32_t taskNum = B * H * tilingData.get_seqNum(); // 每个核处理一个batch的一个头的完整sequence
   uint32_t usedCoreNum = taskNum > totalCoreNum ? totalCoreNum : taskNum;  
   tilingData.set_usedCoreNum(usedCoreNum);
   context->SetBlockDim(usedCoreNum);
 
   uint64_t bdvWs = chunkSize * V * usedCoreNum * HALF_DTYPE_SIZE;
   uint64_t qWs = K * V * usedCoreNum * HALF_DTYPE_SIZE;
-  uint64_t wV2Ws = K * V * usedCoreNum * HALF_DTYPE_SIZE;
+  uint64_t wDv2Ws = K * V * usedCoreNum * HALF_DTYPE_SIZE;
   uint64_t qDoWs = K * V * usedCoreNum * HALF_DTYPE_SIZE;
-  uint64_t usrWsSize = bdvWs + qWs + wV2Ws + qDoWs;
+  uint64_t usrWsSize = bdvWs + qWs + wDv2Ws + qDoWs;
 
   uint64_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
   size_t* workspace = context->GetWorkspaceSizes(1);
   workspace[0] = usrWsSize + sysWorkspaceSize;
+  tilingData.set_bdvWs(bdvWs);
+  tilingData.set_qWs(qWs);
+  tilingData.set_wDv2Ws(wDv2Ws);
+  tilingData.set_qDoWs(qDoWs);
 }
+
+void ChunkGatedDeltaRuleBwdDhuTiling::PrintTilingData(gert::TilingContext *context) {
+  OP_LOGD(context->GetNodeName(), "End Run ChunkGatedDeltaRuleBwdDhu Tiling");
+  OP_LOGD(context->GetNodeName(), "B is %lu.", tilingData.get_B());
+  OP_LOGD(context->GetNodeName(), "H is %lu.", tilingData.get_H());
+  OP_LOGD(context->GetNodeName(), "T is %lu.", tilingData.get_T());
+  OP_LOGD(context->GetNodeName(), "K is %lu.", tilingData.get_K());
+  OP_LOGD(context->GetNodeName(), "V is %lu.", tilingData.get_V());
+  OP_LOGD(context->GetNodeName(), "chunkSize is %lu.", tilingData.get_chunkSize());
+  OP_LOGD(context->GetNodeName(), "chunkNum is %lu.", tilingData.get_chunkNum());
+  OP_LOGD(context->GetNodeName(), "seqNum is %lu.", tilingData.get_seqNum());
+  OP_LOGD(context->GetNodeName(), "gBufSize is %lu.", tilingData.get_gBufSize());
+  OP_LOGD(context->GetNodeName(), "dvBufSize is %lu.", tilingData.get_dvBufSize());
+  OP_LOGD(context->GetNodeName(), "qBufSize is %lu.", tilingData.get_qBufSize());
+  OP_LOGD(context->GetNodeName(), "dhBufSize is %lu.", tilingData.get_dhBufSize());
+  OP_LOGD(context->GetNodeName(), "totalTbufByte is %lu.", tilingData.get_totalTbufByte());
+  OP_LOGD(context->GetNodeName(), "bdvWs is %lu.", tilingData.get_bdvWs());
+  OP_LOGD(context->GetNodeName(), "qWs is %lu.", tilingData.get_qWs());
+  OP_LOGD(context->GetNodeName(), "wDv2Ws is %lu.", tilingData.get_wDv2Ws());
+  OP_LOGD(context->GetNodeName(), "qDoWs is %lu.", tilingData.get_qDoWs());
+  OP_LOGD(context->GetNodeName(), "isVarLen is %lu.", tilingData.get_isVarLen());
+  OP_LOGD(context->GetNodeName(), "isScale is %lu.", tilingData.get_isScale());
+  OP_LOGD(context->GetNodeName(), "usedCoreNum is %u.", tilingData.get_usedCoreNum());
+  OP_LOGD(context->GetNodeName(), "scale is %f.", tilingData.get_scale());
+}
+
 
 ASCENDC_EXTERN_C ge::graphStatus Tiling4ChunkGDRBwdDhu(gert::TilingContext* context) {
   ChunkGatedDeltaRuleBwdDhuTiling tiling;
@@ -202,10 +230,10 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4ChunkGDRBwdDhu(gert::TilingContext* cont
               OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "platformInfoPtr is null!"),
               return ge::GRAPH_FAILED);
   tiling.SetWorkspaceSize(context);
-  printf(">>>>>>>>>>>save\n");
   tiling.tilingData.SaveToBuffer(
     context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
   context->GetRawTilingData()->SetDataSize(tiling.tilingData.GetDataSize());
+  tiling.PrintTilingData(context);
   return ge::GRAPH_SUCCESS;
 }
 

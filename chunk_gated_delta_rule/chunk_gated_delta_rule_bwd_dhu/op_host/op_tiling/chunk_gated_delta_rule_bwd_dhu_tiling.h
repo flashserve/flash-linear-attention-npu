@@ -39,6 +39,10 @@ TILING_DATA_FIELD_DEF(uint64_t, dvBufSize);
 TILING_DATA_FIELD_DEF(uint64_t, qBufSize);
 TILING_DATA_FIELD_DEF(uint64_t, dhBufSize);
 TILING_DATA_FIELD_DEF(uint64_t, totalTbufByte);
+TILING_DATA_FIELD_DEF(uint64_t, bdvWs);
+TILING_DATA_FIELD_DEF(uint64_t, qWs);
+TILING_DATA_FIELD_DEF(uint64_t, wDv2Ws);
+TILING_DATA_FIELD_DEF(uint64_t, qDoWs);
 TILING_DATA_FIELD_DEF(uint64_t, isVarLen);
 TILING_DATA_FIELD_DEF(uint64_t, isScale);
 TILING_DATA_FIELD_DEF(uint32_t, usedCoreNum);
@@ -57,8 +61,8 @@ public:
     bool CalcUb(gert::TilingContext *context);
     void SetWorkspaceSize(gert::TilingContext *context);
     bool VarLenSetting(gert::TilingContext *context);
+    void PrintTilingData(gert::TilingContext *context);
 private:
-
     bool IS_SCALE = false;
     bool IS_VARIABLE_LEN = false; 
     uint64_t B = 0;

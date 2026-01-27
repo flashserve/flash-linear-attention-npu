@@ -18,11 +18,16 @@
 
 using namespace AscendC;
 namespace ChunkGDRBwdDhu {
-
+constexpr uint64_t SYNC_AIC_AIV_FLAG_0 = 0;
+constexpr uint64_t SYNC_AIC_AIV_FLAG_1 = 1;
+constexpr uint64_t SYNC_AIC_AIV_FLAG_2 = 2;
+constexpr uint64_t SYNC_AIC_AIV_FLAG_3 = 3;
+constexpr uint64_t SYNC_AIC_AIV_FLAG_4 = 4;
+constexpr uint64_t SYNC_AIC_AIV_FLAG_5 = 5;
 template <typename DT>
-class GDRVecBase {
+class GDRBase {
 public:
-    __aicore__ inline GDRVecBase(){};
+    __aicore__ inline GDRBase(){};
 
 protected:
     __aicore__ inline void Process();
@@ -80,20 +85,46 @@ protected:
     uint64_t qBufSize = 0;
     uint64_t dhBufSize = 0;
     uint64_t totalTbufByte = 0;
+    uint64_t bdvWs = 0;
+    uint64_t qWs = 0;
+    uint64_t wDv2Ws = 0;
+    uint64_t qDoWs = 0;
     uint64_t isVarLen = 0;
     uint64_t isScale = 0;
     uint32_t usedCoreNum = 0;
     float  scale = 0;
+
+    // global params
+    uint32_t coreIdx = 0;
+
 };
 
 template <typename DT>
-__aicore__ inline void GDRVecBase<DT>::InitTilingData(const ChunkGatedDeltaRuleBwdDhuTilingData& tilingData)
+__aicore__ inline void GDRBase<DT>::InitTilingData(const ChunkGatedDeltaRuleBwdDhuTilingData& tilingData)
 {
     this->B = tilingData.B;
-    printf("B is %llu \n",this->B);
+    this->H = tilingData.H;
+    this->T = tilingData.T;
+    this->K = tilingData.K;
+    this->V = tilingData.V;
+    this->chunkSize = tilingData.chunkSize;
+    this->chunkNum = tilingData.chunkNum;
+    this->seqNum = tilingData.seqNum;
+    this->gBufSize = tilingData.gBufSize;
+    this->dvBufSize = tilingData.dvBufSize;
+    this->qBufSize = tilingData.qBufSize;
+    this->dhBufSize = tilingData.dhBufSize;
+    this->totalTbufByte = tilingData.totalTbufByte;
+    this->bdvWs = tilingData.bdvWs;
+    this->qWs = tilingData.qWs;
+    this->wDv2Ws = tilingData.wDv2Ws;
+    this->qDoWs = tilingData.qDoWs;
+    this->isVarLen = tilingData.isVarLen;
+    this->isScale = tilingData.isScale;
+    this->usedCoreNum = tilingData.usedCoreNum;
+    this->scale = tilingData.scale;
+    this->coreIdx = GetBlockIdx();
 }
-
-
 
 }  // namespace ChunkGDRBwdDhu
 #endif  // CHUNK_GATED_DELTA_RULE_BWD_DHU_BASE_H
