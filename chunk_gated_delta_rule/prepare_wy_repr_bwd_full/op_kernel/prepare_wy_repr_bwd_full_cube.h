@@ -39,8 +39,8 @@ template <
     class BlockMmadBdk_,
     class BlockMmadBdkb_,
     class BlockMmadBdkbg_,
-    class BlockMmadBkkT_,
-    class BlockMmadBdvb_
+    class BlockMmadBdvb_,
+    class BlockMmadBkkT_
 >
 class PrepareWyReprBwdFullTla {
 public:
@@ -73,6 +73,11 @@ public:
     using ElementDkbg= typename BlockMmadBdkbg::ElementC;
     using LayoutDkbg= typename BlockMmadBdkbg::LayoutC;
 
+    using ElementDu= typename BlockMmadBdvb::ElementB;
+    using LayoutDu= typename BlockMmadBdvb::LayoutB;
+    using ElementDvb= typename BlockMmadBdvb::ElementC;
+    using LayoutDvb= typename BlockMmadBdvb::LayoutC;
+
     /// Parameters structure
     struct Params {
         // Data members
@@ -94,6 +99,10 @@ public:
         LayoutDw layoutDw;
         GM_ADDR ptrDkbg;
         LayoutDw layoutDkbg;
+        GM_ADDR ptrDu;
+        LayoutDu layoutDu;
+        GM_ADDR ptrDvb;
+        LayoutDvb layoutDvb;
         uint64_t B = 1;
         uint64_t T = 32768;
         uint64_t H = 32;
@@ -110,7 +119,7 @@ public:
         Params(GM_ADDR ptrptrKbeta_, LayoutKbeta layoutKbeta_,GM_ADDR ptrDA_,LayoutDA layoutDA_,
             GM_ADDR ptrDk_,LayoutKbeta layoutDk_,GM_ADDR ptrDAT_,LayoutDAT layoutDAT_,GM_ADDR ptrK_,LayoutK layoutK_,
             GM_ADDR ptrDkb_,LayoutDkb layoutDkb_,GM_ADDR ptrAT_,LayoutAT layoutAT_,GM_ADDR ptrDw_, LayoutDw layoutDw_,
-            GM_ADDR ptrDkbg_, LayoutDkbg layoutDkbg_,
+            GM_ADDR ptrDkbg_, LayoutDkbg layoutDkbg_,GM_ADDR ptrDu_, LayoutDkbg layoutDu_,GM_ADDR ptrDvb_, LayoutDkbg layoutDvb_,
             uint64_t B_, uint64_t T_,uint64_t H_,uint64_t K_,uint64_t V_,uint64_t BT_, uint64_t stage_)
             : ptrKbeta(ptrptrKbeta_), 
             layoutKbeta(layoutKbeta_),
@@ -130,6 +139,10 @@ public:
             layoutDw(layoutDw_),
             ptrDkbg(ptrDkbg_),
             layoutDkbg(layoutDkbg_),
+            ptrDu(ptrDu_),
+            layoutDu(layoutDu_),
+            ptrDvb(ptrDvb_),
+            layoutDvb(layoutDvb_),
             B(B_), 
             T(T_), 
             H(H_), 
@@ -244,7 +257,6 @@ public:
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
         }
-        AscendC::SyncAll<false>();
         {//处理第三部分 AT@dw -> DKBG
             uint32_t coreLoopsInB = CeilDiv(params.T, params.BT);
             uint32_t coreLoops = params.B * coreLoopsInB;
@@ -281,6 +293,48 @@ public:
                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadBdkbg(tensorBlockAT, tensorBlockDw, tensorBlockDkbg, actualBlockShape);
+                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
+                }
+            }
+            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
+            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
+        }
+        {//处理第四部分 AT@du -> dvb
+            uint32_t coreLoopsInB = CeilDiv(params.T, params.BT);
+            uint32_t coreLoops = params.B * coreLoopsInB;
+            BlockMmadBdvb blockMmadBdvb(resource);
+            for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
+                uint32_t bIdx = loopIdx / coreLoopsInB;
+                uint32_t chunkIdx = loopIdx % coreLoopsInB;
+                GemmCoord blockCoord{0,0,0};
+                GemmCoord actualBlockShape{static_cast<uint32_t>(params.BT),static_cast<uint32_t>(params.V),static_cast<uint32_t>(params.BT)};
+                for (int h = 0; h < params.H; h++) {
+                    // Represent the full gm
+                    AscendC::GlobalTensor<ElementAT> gmAT;
+                    gmAT.SetGlobalBuffer((__gm__ ElementAT *)params.ptrAT + ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.BT);
+                    AscendC::GlobalTensor<ElementK> gmDu;
+                    gmDu.SetGlobalBuffer((__gm__ ElementDu *)params.ptrDu + ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.K);
+                    AscendC::GlobalTensor<ElementDvb> gmDvb;
+                    gmDvb.SetGlobalBuffer((__gm__ ElementDvb *)params.ptrDvb + ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.K);
+
+                    // Represent the full tensors
+                    auto tensorAT = tla::MakeTensor(gmAT, params.layoutAT, Arch::PositionGM{});
+                    auto tensorDu = tla::MakeTensor(gmDu, params.layoutDu, Arch::PositionGM{});
+                    auto tensorDvb = tla::MakeTensor(gmDvb, params.layoutDkbg, Arch::PositionGM{});
+
+                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
+                    // Make tiled views
+                    auto tensorBlockAT = GetTile(tensorAT,
+                                                tla::MakeCoord(0, 0),
+                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                    auto tensorBlockDu = GetTile(tensorDu,
+                                                tla::MakeCoord(0, 0),
+                                                tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                    auto tensorBlockDvb = GetTile(tensorDvb,
+                                                tla::MakeCoord(0, 0),
+                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                    // Compute block-scoped matrix multiply-add
+                    blockMmadBdvb(tensorBlockAT, tensorBlockDu, tensorBlockDvb, actualBlockShape);
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
                 }
             }
@@ -358,6 +412,8 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Process() {
     using LayoutTagK = layout::RowMajor;
     using LayoutTagV = layout::RowMajor;
     using LayoutTagKT = layout::ColumnMajor;
+    using LayoutTagDu = layout::RowMajor;
+    using LayoutTagDvb = layout::RowMajor;
 
 
     //输入
@@ -369,6 +425,7 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Process() {
     LayoutTagK tagK = LayoutTagK::MakeLayout<kType>(BT, K);
     LayoutTagV tagV = LayoutTagV::MakeLayout<kType>(BT, V);
     LayoutTagKT tagKT = LayoutTagKT::MakeLayout<kType>(BT, K);
+    LayoutTagDu tagDu = LayoutTagDu::MakeLayout<kType>(BT, V);
 
     //中间结果
     using LayoutTagKbeta = layout::RowMajor;
@@ -378,7 +435,10 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Process() {
     LayoutTagDkb tagDkb = LayoutTagDkb::MakeLayout<kType>(BT, K);
 
     using LayoutTagDkbg = layout::RowMajor;
-    LayoutTagV tagDkbg = LayoutTagDkbg::MakeLayout<kType>(BT, V);
+    LayoutTagDkbg tagDkbg = LayoutTagDkbg::MakeLayout<kType>(BT, K);
+
+    using LayoutTagDvb = layout::RowMajor;
+    LayoutTagDvb tagDvb = LayoutTagDvb::MakeLayout<kType>(BT, V);
 
     //输出
     using LayoutTagDk = layout::RowMajor;
@@ -405,6 +465,11 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Process() {
     using BlockMmadDkbg = Gemm::Block::BlockMmadTla<
         DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyDkbg>;
 
+    using TileCopyDvb =
+        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagAT, kType, LayoutTagDu, kType, LayoutTagDvb>;
+    using BlockMmadDvb = Gemm::Block::BlockMmadTla<
+        DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyDvb>;
+    
     auto layoutKbeta = MakeLayoutFromTag(tagKbeta);
     auto layoutDA = MakeLayoutFromTag(tagDA);
     auto layoutDK = MakeLayoutFromTag(tagDk);
@@ -414,8 +479,10 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Process() {
     auto layoutAT = MakeLayoutFromTag(tagAT);
     auto layoutDw = MakeLayoutFromTag(tagDW);
     auto layoutDkbg = MakeLayoutFromTag(tagDkbg);
+    auto layoutDu = MakeLayoutFromTag(tagDu);
+    auto layoutDvb = MakeLayoutFromTag(tagDvb);
     // kernel level
-    using MatmulKernel = Gemm::Kernel::PrepareWyReprBwdFullTla<BlockMmadDk, BlockMmadDkb, BlockMmadDkbg, BlockMmadDkb, BlockMmadDkb>;
+    using MatmulKernel = Gemm::Kernel::PrepareWyReprBwdFullTla<BlockMmadDk, BlockMmadDkb, BlockMmadDkbg, BlockMmadDvb, BlockMmadDkb>;
 
     MatmulKernel kernel;
 
@@ -429,6 +496,8 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Process() {
         A, layoutAT, 
         dw, layoutDw, 
         workspace, layoutDkbg, 
+        du, layoutDu, 
+        workspace, layoutDvb, 
         B, T, H, K, V, BT, 4};
     kernel(param);
 }
