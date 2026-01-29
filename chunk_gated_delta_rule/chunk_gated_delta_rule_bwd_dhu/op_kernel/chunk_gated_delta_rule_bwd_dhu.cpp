@@ -13,6 +13,10 @@
  * \brief
  */
 
+#if defined(ORIG_DTYPE_G) && defined(DT_BF16) && ORIG_DTYPE_G == DT_BF16
+    #define G_BF16
+#endif
+
 #include "chunk_gated_delta_rule_bwd_dhu_vec.h"
 #include "chunk_gated_delta_rule_bwd_dhu_cube.h"
 
@@ -24,6 +28,7 @@
 #elif defined(ORIG_DTYPE_Q) && defined(DT_BF16) && ORIG_DTYPE_Q == DT_BF16
     #define INPUT_DTYPE bfloat16_t
 #endif
+
 using namespace AscendC;
 extern "C" __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
     GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g, GM_ADDR gk, GM_ADDR h0, GM_ADDR dht, 
@@ -45,7 +50,7 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
         }
         if ASCEND_IS_AIV {
             ChunkGDRBwdDhu::GDRVec<INPUT_DTYPE> op;
-            op.Init(q, k, w, d_o, dv, g, cu_seqlens, chunk_indices, tilingData);
+            op.Init(q, k, w, d_o, dv, g, cu_seqlens, dv2, dh, workspace, tilingData);
             op.Process();
         }
 

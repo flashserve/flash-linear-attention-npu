@@ -24,6 +24,17 @@ constexpr uint64_t SYNC_AIC_AIV_FLAG_2 = 2;
 constexpr uint64_t SYNC_AIC_AIV_FLAG_3 = 3;
 constexpr uint64_t SYNC_AIC_AIV_FLAG_4 = 4;
 constexpr uint64_t SYNC_AIC_AIV_FLAG_5 = 5;
+constexpr uint64_t HALF_DTYPE_SIZE = 2;
+constexpr uint64_t FLOAT_DTYPE_SIZE = 4;
+constexpr uint64_t FP32_PER_BLOCK = 8;
+constexpr uint64_t FP32_PER_REPEAT = 64;
+constexpr uint32_t BLOCK_SIZE = 32;
+constexpr uint32_t EVENT_V_MTE2 = 1;
+constexpr uint32_t EVENT_MTE2_V = 1;
+constexpr uint32_t EVENT_MTE3_V = 1;
+constexpr uint32_t EVENT_V_MTE3 = 1;
+constexpr uint32_t EVENT_MTE2_MTE3 = 1;
+
 template <typename DT>
 class GDRBase {
 public:
@@ -32,15 +43,16 @@ public:
 protected:
     __aicore__ inline void Process();
     __aicore__ inline void InitTilingData(const ChunkGatedDeltaRuleBwdDhuTilingData& tilingData);
-
-
+    __aicore__ inline void BroadCastAndMul(const LocalTensor<float>& broadCastSrcLocal,  const LocalTensor<float>& broadCastDstLocal, 
+                                           const LocalTensor<float>& mulSrcLocal, const uint32_t dim0, const uint32_t dim1);
     TPipe pipe;
-    TBuf<TPosition::VECCALC> calcTbuf;
+    TBuf<TPosition::VECCALC> vecTbuf;
     
     // inputGm
     GlobalTensor<DT> qGm;
-    GlobalTensor<DT> gGm;
+    GlobalTensor<DTYPE_G> gGm;
     GlobalTensor<DT> dvGm;
+    GlobalTensor<int64_t> cuSeqlensGm;
     // output gm, also used as input
     GlobalTensor<DT> dv2Gm;
     GlobalTensor<DT> dhGm;
@@ -53,14 +65,22 @@ protected:
     // calc gated q
     LocalTensor<DT> qLocal; // [BT/2,K]
     LocalTensor<float> qCastLocal;
-    LocalTensor<DT> gLocal; // [BT/2,]
+    LocalTensor<DTYPE_G> gLocal; // [BT/2,]
+    LocalTensor<DTYPE_G> gLastLocal;
     LocalTensor<float> gCastLocal;
-    LocalTensor<float> gExpCastLocal;
+    LocalTensor<float> gLastCastLocal;
+    LocalTensor<float> gBCLocal;
+    LocalTensor<float> gBrcbLocal;
+
+    LocalTensor<float> gExpLocal;
+    LocalTensor<float> gFatorLocal;
     
     // update dv2
-    LocalTensor<DT> dvLocal; // [BT/2,V]
+    // LocalTensor<DT> dvLocal; // [BT/2,V]
+    // LocalTensor<DT> bdvLocal; // [BT/2,V]
+    LocalTensor<DT> vInLocal; // [BT/2,V]
+
     LocalTensor<float> dvCastLocal;
-    LocalTensor<DT> bdvLocal; // [BT/2,V]
     LocalTensor<float> bdvCastLocal;
 
     // updated dh
@@ -96,6 +116,9 @@ protected:
 
     // global params
     uint32_t coreIdx = 0;
+    uint32_t subBlockIdx = 0;
+    uint32_t halfBT = 0;
+
 
 };
 
@@ -124,6 +147,86 @@ __aicore__ inline void GDRBase<DT>::InitTilingData(const ChunkGatedDeltaRuleBwdD
     this->usedCoreNum = tilingData.usedCoreNum;
     this->scale = tilingData.scale;
     this->coreIdx = GetBlockIdx();
+    this->subBlockIdx = GetSubBlockIdx();
+    this->halfBT = this->chunkSize / 2 ;
+
+}
+
+template <typename DT>
+__aicore__ inline void GDRBase<DT>::BroadCastAndMul(const LocalTensor<float>& broadCastSrcLocal,  const LocalTensor<float>& broadCastDstLocal, 
+                                                    const LocalTensor<float>& mulSrcLocal, const uint32_t dim0, const uint32_t dim1) 
+{
+    const uint32_t dstShape[] = {dim0, dim1};
+    const uint32_t srcShape[] = {dim0, 1};
+    BroadCast<float, 2, 1, false>(broadCastDstLocal, broadCastSrcLocal, srcShape, dstShape);
+    for (int32_t bt = 0; bt < dim0; bt++) {
+        Mul(mulSrcLocal[bt * this->halfBT], mulSrcLocal[bt * dim0], broadCastDstLocal[bt * dim0], dim1);
+        // 加了自動同步
+    }
+}
+
+template <typename CAST_DT, typename SRC_DT>
+__aicore__ inline void CopyIn(const LocalTensor<CAST_DT>& castLocal, const LocalTensor<SRC_DT>& srcLocal, 
+                                                   const GlobalTensor<SRC_DT>& srcGM, const uint32_t len, bool isCast=true) 
+{
+    SetFlag<HardEvent::V_MTE2>(EVENT_V_MTE2);
+    WaitFlag<HardEvent::V_MTE2>(EVENT_V_MTE2);
+    PipeBarrier<PIPE_MTE2>();
+    if (len % BLOCK_SIZE == 0) {
+        DataCopy(srcLocal, srcGM, len);
+    }
+
+    SetFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
+    WaitFlag<HardEvent::MTE2_V>(EVENT_MTE2_V);
+
+    if (isCast) {
+        Cast(castLocal, srcLocal, RoundMode::CAST_NONE, len); // half -> fp32
+    }
+}
+
+template <typename CAST_DT, typename SRC_DT>
+__aicore__ inline void CopyOut(const LocalTensor<CAST_DT>& castLocal, const LocalTensor<SRC_DT>& srcLocal, 
+                                                   const GlobalTensor<CAST_DT>& dstGM, const uint32_t len, bool isCast=true) 
+{
+    if (isCast) {
+        Cast(castLocal, srcLocal, RoundMode::CAST_RINT, len);
+    }
+
+    SetFlag<HardEvent::V_MTE3>(EVENT_V_MTE3);
+    WaitFlag<HardEvent::V_MTE3>(EVENT_V_MTE3);
+
+    if (len % BLOCK_SIZE == 0) {
+        DataCopy(dstGM, castLocal, len);
+    }
+
+    SetFlag<HardEvent::MTE3_V>(EVENT_MTE3_V);
+    WaitFlag<HardEvent::MTE3_V>(EVENT_MTE3_V);
+}
+
+template <typename DT>
+__aicore__ inline void BlockMul(const LocalTensor<DT>& src0Local, const LocalTensor<DT>& src1Local,
+                                const LocalTensor<DT>& dstLocal, const uint32_t dim0, const uint32_t dim1) 
+{
+    // src0Local[dim0, dim1], src1Local[dim0, oneBlockSize]
+    uint32_t offset = 0;
+    uint32_t tailNum = dim1 % FP32_PER_REPEAT;
+
+    uint8_t repeatStride = dim1 * sizeof(DT) / BLOCK_SIZE; // 一行有幾個block
+    uint8_t dstBlkStride = 1;
+    uint8_t src0BlkStride = 1;
+    uint8_t src1BlkStride = 0;
+    uint8_t dstRepStride = repeatStride;
+    uint8_t src0RepStride = repeatStride;
+    uint8_t src1RepStride = 1;
+    BinaryRepeatParams param(dstBlkStride, src0BlkStride, src1BlkStride, 
+                             dstRepStride, src0RepStride, src1RepStride);
+    while (offset < dim1) {
+        Mul(dstLocal[offset], src0Local[offset], src1Local, FP32_PER_REPEAT, dim0, param);
+        offset += FP32_PER_REPEAT;
+    }
+    if (tailNum != 0) {
+        Mul(dstLocal[offset], src0Local[offset], src1Local, tailNum, dim0, param);
+    }
 }
 
 }  // namespace ChunkGDRBwdDhu

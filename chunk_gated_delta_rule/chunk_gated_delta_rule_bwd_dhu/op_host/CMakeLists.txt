@@ -14,7 +14,7 @@ if (BUILD_OPEN_PROJECT)
     )
     add_ops_compile_options(
         OP_NAME ChunkGatedDeltaRuleBwdDhu
-        OPTIONS --cce-auto-sync=off
+        OPTIONS --cce-auto-sync=on
                 -Wno-deprecated-declarations
                 -Werror
     )

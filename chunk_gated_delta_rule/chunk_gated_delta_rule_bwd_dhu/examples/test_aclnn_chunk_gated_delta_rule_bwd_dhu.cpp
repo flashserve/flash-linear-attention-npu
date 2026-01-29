@@ -140,7 +140,7 @@ std::vector<uint8_t> createUpperTriMask(int chunk_size) {
 int main() {
   // 1. （固定写法）device/stream初始化，参考AscendCL对外接口列表
   // 根据自己的实际device填写deviceId
-  int32_t deviceId = 0;
+  int32_t deviceId = 5;
   aclrtStream stream;
   auto ret = Init(deviceId, &stream);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret);
@@ -148,14 +148,15 @@ int main() {
 
   // 2. 构造输入与输出，需要根据API的接口自定义构造
   int64_t B = 1;
-  int64_t T = 2048;
+  int64_t T = 1024;
   int64_t H = 2;
   int64_t V = 128;
   int64_t K = 128;
   int64_t chunk_size = 64;
-  int64_t chunk_num = 32;
+  int64_t chunk_num = 16;
 
-  std::vector<int64_t> cuSeqlensHostData = {0, 256, 1024, 2048}; // [0, 2, 4, ]
+  std::vector<int64_t> cuSeqlensHostData = {0, 128, 256, 512, 1024}; // [0, 2, 4, ]
+  // std::vector<int64_t> cuSeqlensHostData = {0, 128, 256};
   std::vector<int64_t> chunkIndicesHostData = get_chunk_indices(cuSeqlensHostData,chunk_size);
 
   int64_t NT = static_cast<int64_t>(chunkIndicesHostData.size()) / 2;
@@ -206,20 +207,17 @@ int main() {
   int64_t lenO = B * H * T * V;
   int64_t lenG = B * H * T;
   int64_t lenH = B * H * chunk_num * K * V;
+  std::cout<<"lenH is " <<lenH<<std::endl;
   std::vector<uint16_t> qHostData(lenQK, 0x3C00); // 1.0 的 half 表示
   std::vector<uint16_t> kHostData(lenQK, 0x3C00);
   std::vector<uint16_t> wHostData(lenQK, 0x3C00);
   std::vector<uint16_t> doHostData(lenO, 0x3C00);
   std::vector<uint16_t> dvHostData(lenO, 0x3C00);
   std::vector<uint16_t> gHostData(lenG, 0x3C00);
-  std::vector<float> dv2HostData(lenO, 0);
-  std::vector<float> dhHostData(lenH, 0);
-  std::vector<float> dh0HostData(lenH, 0);
+  std::vector<uint16_t> dv2HostData(lenO, 0);
+  std::vector<uint16_t> dhHostData(lenH, 0x3C00);
+  std::vector<uint16_t> dh0HostData(lenH, 0);
 
-  
-  for(int64_t Indices:chunkIndicesHostData){
-    std::cout<< Indices << std::endl;
-  }
   ret = CreateAclTensor(qHostData, qShape, &qDeviceAddr, aclDataType::ACL_FLOAT16, &q);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   ret = CreateAclTensor(kHostData, kShape, &kDeviceAddr, aclDataType::ACL_FLOAT16, &k);
@@ -243,7 +241,7 @@ int main() {
   ret = CreateAclTensor(dh0HostData, dh0Shape, &dh0DeviceAddr, aclDataType::ACL_FLOAT16, &dh0);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // 3. 调用CANN算子库API，需要修改为具体的Api名称
-  uint64_t workspaceSize = 0;
+  uint64_t workspaceSize = 1024*1024*1024;
   aclOpExecutor *executor;
 
   // 调用aclnnChunkGatedDeltaRuleBwdDhu第一段接口
@@ -264,22 +262,27 @@ int main() {
               LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret);
               return ret);
   }
+  // std::cout << "allocate workspace >>>>> end " << std::endl;
 
   // 调用aclnnChunkGatedDeltaRuleBwdDhu第二段接口
   ret = aclnnChunkGatedDeltaRuleBwdDhu(workspaceAddr, workspaceSize, executor, stream);
   CHECK_RET(ret == ACL_SUCCESS,
             LOG_PRINT("aclnnChunkGatedDeltaRuleBwdDhu failed. ERROR: %d\n", ret);
             return ret);
+  // std::cout << "调用aclnnChunkGatedDeltaRuleBwdDhu第二段接口 end " << std::endl;
 
   // 4. （固定写法）同步等待任务执行结束
   ret = aclrtSynchronizeStream(stream);
   CHECK_RET(ret == ACL_SUCCESS,
             LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret);
             return ret);
+  // std::cout << "aclrtSynchronizeStream end " << std::endl;
 
   // 5.获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
-  LOG_PRINT("d_v2 \n");
-  PrintOutResult(dv2Shape, &dv2DeviceAddr);
+  // LOG_PRINT("d_v2 \n");
+  // PrintOutResult(dv2Shape, &dv2DeviceAddr);
+  LOG_PRINT("d_h \n");
+  PrintOutResult(dhShape, &dhDeviceAddr);
   // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
   aclDestroyTensor(q);
   aclDestroyTensor(k);

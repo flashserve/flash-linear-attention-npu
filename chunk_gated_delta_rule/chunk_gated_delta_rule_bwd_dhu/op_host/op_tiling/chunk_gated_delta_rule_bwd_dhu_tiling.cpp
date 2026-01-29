@@ -169,7 +169,7 @@ void ChunkGatedDeltaRuleBwdDhuTiling::SetWorkspaceSize(gert::TilingContext* cont
   context->SetBlockDim(usedCoreNum);
 
   uint64_t bdvWs = chunkSize * V * usedCoreNum * HALF_DTYPE_SIZE;
-  uint64_t qWs = K * V * usedCoreNum * HALF_DTYPE_SIZE;
+  uint64_t qWs = K * chunkSize * usedCoreNum * HALF_DTYPE_SIZE;
   uint64_t wDv2Ws = K * V * usedCoreNum * HALF_DTYPE_SIZE;
   uint64_t qDoWs = K * V * usedCoreNum * HALF_DTYPE_SIZE;
   uint64_t usrWsSize = bdvWs + qWs + wDv2Ws + qDoWs;
