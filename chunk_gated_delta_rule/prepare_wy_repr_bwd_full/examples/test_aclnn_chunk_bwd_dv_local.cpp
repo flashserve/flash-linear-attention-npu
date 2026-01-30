@@ -282,8 +282,8 @@ int main() {
   // 5.获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
   // PrintOutResult(dkShape, &dkDeviceAddr);
   // PrintOutResultFp32(dbetaShape, &dbetaDeviceAddr);
-  // PrintOutResultFp32(dgShape, &dgDeviceAddr);
-  PrintOutResult(dvShape, &dvDeviceAddr);
+  PrintOutResultFp32(dgShape, &dgDeviceAddr);
+  // PrintOutResult(dvShape, &dvDeviceAddr);
   // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
   // aclDestroyTensor(q);
   // aclDestroyTensor(k);
