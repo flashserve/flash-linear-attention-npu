@@ -23,17 +23,22 @@
 
 namespace optiling {
 
-BEGIN_TILING_DATA_DEF(PrepareWyReprBwdFullilingData)
-TILING_DATA_FIELD_DEF(uint64_t, B);
-TILING_DATA_FIELD_DEF(uint64_t, H);
-TILING_DATA_FIELD_DEF(uint64_t, T);
-TILING_DATA_FIELD_DEF(uint64_t, K);
-TILING_DATA_FIELD_DEF(uint64_t, V);
-TILING_DATA_FIELD_DEF(uint64_t, BT);
-TILING_DATA_FIELD_DEF(uint64_t, dkVecRow); //计算dk流程时vector单次处理的行数
-TILING_DATA_FIELD_DEF(uint64_t, dkbVecRow); //dkb计算流程时vector单次处理的行数
+BEGIN_TILING_DATA_DEF(PrepareWyReprBwdFullTilingData)
+TILING_DATA_FIELD_DEF(int64_t, B);
+TILING_DATA_FIELD_DEF(int64_t, H);
+TILING_DATA_FIELD_DEF(int64_t, T);
+TILING_DATA_FIELD_DEF(int64_t, K);
+TILING_DATA_FIELD_DEF(int64_t, V);
+TILING_DATA_FIELD_DEF(int64_t, chunkNum);
+TILING_DATA_FIELD_DEF(int64_t, chunkSize);
+TILING_DATA_FIELD_DEF(int64_t, kBeteVecRow);//kBeta计算流程时vector单次处理的行数
+TILING_DATA_FIELD_DEF(int64_t, dkbVecRow); //dk计算流程时vector单次处理的行数
+TILING_DATA_FIELD_DEF(int64_t, dkbgVecRow);//dkbg计算流程时vector单次处理的行数
+TILING_DATA_FIELD_DEF(int64_t, dvbVecRow); //dvb计算流程时vector单次处理的行数
+TILING_DATA_FIELD_DEF(int64_t, kktVecRow); //kkt计算流程时vector单次处理的行数
+TILING_DATA_FIELD_DEF(int64_t, isVariable);
 END_TILING_DATA_DEF;
-REGISTER_TILING_DATA_CLASS(PrepareWyReprBwdFull, PrepareWyReprBwdFullilingData)
+REGISTER_TILING_DATA_CLASS(PrepareWyReprBwdFull, PrepareWyReprBwdFullTilingData)
 
 }  // namespace optiling
 

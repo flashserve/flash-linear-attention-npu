@@ -24,17 +24,17 @@ __global__ __aicore__ void prepare_wy_repr_bwd_full(GM_ADDR k, GM_ADDR v, GM_ADD
 {
     AscendC::TPipe tPipe;
     AscendC::AscendCUtils::SetOverflow(1);
-    // KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+    GET_TILING_DATA(tilingData, tiling);
     if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
         if ASCEND_IS_AIC{
             PrepareWyReprBwdFullProcess<DTYPE_K,DTYPE_BETA> prepareWyReprBwdFullProcess(k, v, beta, A, dA, dw, du, g, dk, dv, dbeta, dg, workspace);
-            prepareWyReprBwdFullProcess.Init(tiling);
+            prepareWyReprBwdFullProcess.Init(tilingData);
             prepareWyReprBwdFullProcess.Process();
         }
         if ASCEND_IS_AIV{
             PrepareWyReprBwdFullVectorProcess<DTYPE_K,DTYPE_BETA> prepareWyReprBwdFullVectorProcess(k, v, beta, A, dA, dw, du, g, dk, dv, dbeta, dg, workspace);
-            prepareWyReprBwdFullVectorProcess.Init(tiling, &tPipe);
+            prepareWyReprBwdFullVectorProcess.Init(tilingData, &tPipe);
             prepareWyReprBwdFullVectorProcess.Process();
         }
     }
