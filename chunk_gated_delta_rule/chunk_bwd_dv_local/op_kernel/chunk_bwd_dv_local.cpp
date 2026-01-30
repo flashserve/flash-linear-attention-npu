@@ -13,28 +13,26 @@
  * \brief
  */
 
-#include "chunk_bwd_dv_local.h"
-#include "kernel_operator.h"
+#include "chunk_bwd_dv_local_base.h"
+#include "lib/matmul_intf.h"
 
-extern "C" __global__ __aicore__ void chunk_bwd_dv_local(
-    GM_ADDR q, GM_ADDR k, GM_ADDR d_o, GM_ADDR g,  GM_ADDR upper_tri_matrix,  GM_ADDR g_gamma,  GM_ADDR A, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR d_v, GM_ADDR workspace, GM_ADDR tiling)
+extern "C" __global__ __aicore__ void chunk_bwd_dv_local(GM_ADDR q, GM_ADDR k, GM_ADDR d_o, GM_ADDR g,
+                                                         GM_ADDR upper_tri_matrix, GM_ADDR g_gamma, GM_ADDR A,
+                                                         GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR d_v,
+                                                         GM_ADDR workspace, GM_ADDR tiling)
 {
-    // KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);  
-    
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+
     GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
     if (userWS == nullptr) {
         return;
     }
+    AscendC::TPipe pipe;
 
     GET_TILING_DATA(tilingData, tiling);
-    if (TILING_KEY_IS(0)) {
-        GDN::ChunkBwdDvLocal op;
-        op.Init(q, k, d_o, g, upper_tri_matrix, cu_seqlens, chunk_indices, d_v, userWS, &tilingData);
-        op.Process();
-    }
     if (TILING_KEY_IS(1)) {
-        GDN::ChunkBwdDvLocal op;
-        op.Init(q, k, d_o, g, upper_tri_matrix, cu_seqlens, chunk_indices, d_v, userWS, &tilingData);
+        GDN::ChunkBwdDvLocalBase<DTYPE_Q, DTYPE_G> op;
+        op.Init(q, k, d_o, g, upper_tri_matrix, cu_seqlens, chunk_indices, d_v, userWS, &tilingData, &pipe);
         op.Process();
     }
 }

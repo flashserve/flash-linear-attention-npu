@@ -193,9 +193,10 @@ int main()
     std::vector<uint8_t> triMatrixHostData = createUpperTriangularMatrix(chunk_size);
     printBoolMatrix(triMatrixHostData, chunk_size);
 
-    for (int64_t Indices : chunkIndicesHostData) {
-        std::cout << Indices << std::endl;
+    for(int index = 0;index<chunkIndicesHostData.size();index+=2){
+        std::cout << chunkIndicesHostData[index]<< " "<< chunkIndicesHostData[index+1] << std::endl;
     }
+
     ret = CreateAclTensor(qHostData, qShape, &qDeviceAddr, aclDataType::ACL_FLOAT16, &q);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(kHostData, kShape, &kDeviceAddr, aclDataType::ACL_FLOAT16, &k);

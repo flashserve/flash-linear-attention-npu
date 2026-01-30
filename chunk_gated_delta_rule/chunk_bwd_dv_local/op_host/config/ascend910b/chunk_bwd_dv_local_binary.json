@@ -120,7 +120,126 @@
           }
          ]
       },
-            {
+      {
+        "bin_filename": "ChunkBwdDvLocal_fp16_mix",
+        "inputs": [
+          {
+            "name": "q",
+            "index": 0,
+            "dtype": "float16",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "k",
+            "index": 1,
+            "dtype": "float16",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "d_o",
+            "index": 2,
+            "dtype": "float16",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "g",
+            "index": 3,
+            "dtype": "float",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "upper_tri_matrix",
+            "index": 4,
+            "dtype": "bool",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "g_gamma",
+            "index": 5,
+            "dtype": "float32",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "A",
+            "index": 6,
+            "dtype": "float16",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "cu_seqlens",
+            "index": 7,
+            "dtype": "int64",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "chunk_indices",
+            "index": 8,
+            "dtype": "int64",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "d_v",
+            "index": 0,
+            "dtype": "float16",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          }
+        ],
+        "attrs": [
+          {
+            "name": "scale",
+            "dtype": "float32",
+            "value": 1.0
+          },
+          {
+            "name": "chunk_size",
+            "dtype": "int32",
+            "value": 64
+          }
+         ]
+      },
+      {
         "bin_filename": "ChunkBwdDvLocal_bf16",
         "inputs": [
           {
@@ -157,6 +276,125 @@
             "name": "g",
             "index": 3,
             "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "upper_tri_matrix",
+            "index": 4,
+            "dtype": "bool",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "g_gamma",
+            "index": 5,
+            "dtype": "float32",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "A",
+            "index": 6,
+            "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "cu_seqlens",
+            "index": 7,
+            "dtype": "int64",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "chunk_indices",
+            "index": 8,
+            "dtype": "int64",
+            "format": "ND",
+            "paramType": "optional",
+            "shape": [
+              -2
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "d_v",
+            "index": 0,
+            "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          }
+        ],
+        "attrs": [
+          {
+            "name": "scale",
+            "dtype": "float32",
+            "value": 1.0
+          },
+          {
+            "name": "chunk_size",
+            "dtype": "int32",
+            "value": 64
+          }
+         ]
+      },
+      {
+        "bin_filename": "ChunkBwdDvLocal_bf16_mix",
+        "inputs": [
+          {
+            "name": "q",
+            "index": 0,
+            "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "k",
+            "index": 1,
+            "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "d_o",
+            "index": 2,
+            "dtype": "bfloat16",
+            "format": "ND",
+            "paramType": "required",
+            "shape": [
+              -2
+            ]
+          },
+          {
+            "name": "g",
+            "index": 3,
+            "dtype": "float",
             "format": "ND",
             "paramType": "required",
             "shape": [

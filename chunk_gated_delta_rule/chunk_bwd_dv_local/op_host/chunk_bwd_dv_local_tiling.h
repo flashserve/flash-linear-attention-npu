@@ -27,7 +27,7 @@ TILING_DATA_FIELD_DEF(int64_t, h);
 TILING_DATA_FIELD_DEF(int64_t, t);
 TILING_DATA_FIELD_DEF(int64_t, k);
 TILING_DATA_FIELD_DEF(int64_t, v);
-TILING_DATA_FIELD_DEF(int64_t, chunkNum);
+TILING_DATA_FIELD_DEF(int64_t, chunkNumForT);
 TILING_DATA_FIELD_DEF(int64_t, chunkNumPreCore);
 TILING_DATA_FIELD_DEF(int64_t, chunkNumTailCore);
 TILING_DATA_FIELD_DEF(int64_t, preCoreNum);
@@ -35,6 +35,7 @@ TILING_DATA_FIELD_DEF(int64_t, tailCoreNum);
 TILING_DATA_FIELD_DEF(int64_t, totalCoreNum);
 TILING_DATA_FIELD_DEF(int64_t, chunkSize);
 TILING_DATA_FIELD_DEF(float, scale);
+TILING_DATA_FIELD_DEF(bool, isVariable);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkBwdDvLocal, ChunkBwdDvLocalTilingData)
