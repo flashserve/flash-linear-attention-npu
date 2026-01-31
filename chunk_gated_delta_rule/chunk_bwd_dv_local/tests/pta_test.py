@@ -2,6 +2,7 @@ import torch
 import torch_npu
 from typing import Optional
 import math
+# form ct 
 
 def prepare_lens(cu_seqlens: torch.LongTensor) -> torch.LongTensor:
     return cu_seqlens[1:] - cu_seqlens[:-1]
@@ -66,6 +67,7 @@ def chunk_bwd_dv_local_torch(
                 q_normal = q[batch_idx, i_h, global_start:global_start+chunk_len, i_k:k_end].to(torch.float32)  # [chunk_len, BK]
                 b_q = q_normal.transpose(0, 1)  # [BK, chunk_len]
                 b_A[:chunk_len, :chunk_len] += torch.matmul(b_k, b_q) * scale # [BT,BT]
+                print(" golden k * q^T = ",b_A)
             b_g = g_t[batch_idx, i_h, global_start:global_start+chunk_len] # g_t [B, H, T_max] → b_g [chunk_len]
             o_t = i_t * BT + torch.arange(0, BT) # [BT] chunk内的token序号
             m_t = o_t < T # [BT] bool掩码：是否是有效token
@@ -79,10 +81,12 @@ def chunk_bwd_dv_local_torch(
             g_i = b_g.unsqueeze(1)  # [chunk_len, 1]
             g_j = b_g.unsqueeze(0)  # [1, chunk_len]
             g_factor = torch.exp(g_j - g_i)  # [chunk_len, chunk_len]
+            # print(" golden g_factor = ",g_factor)
             b_A_gated = torch.zeros_like(b_A)
             b_A_gated[:chunk_len, :chunk_len] = b_A[:chunk_len, :chunk_len] * g_factor # [BT, BT] 门控缩放后的注意力核矩阵
             # 应用掩码
             b_A_masked = torch.where(m_A, b_A_gated, torch.zeros_like(b_A_gated)) # 只保留掩码为 True 的位置的 b_A_gated 值，其余置 0
+            # print(" golden b_A_masked = ",b_A_masked)
             b_A_masked = b_A_masked.to(torch.float32) # [BT, BT]
             BV = 128  # 与Triton保持一致
             BV = min(BV, V)  # 确保不超过V
@@ -91,6 +95,7 @@ def chunk_bwd_dv_local_torch(
                 v_width = v_end - i_v
                 b_do = do[batch_idx, i_h, global_start:global_start+chunk_len, i_v:v_end].to(torch.float32) # do [B, T_max, H, V] → b_do [chunk_len, BV]
                 b_dv = torch.matmul(b_A_masked[:chunk_len, :chunk_len], b_do) # b_A_masked 这个 [BT, BT] 的矩阵，只有左上角 [chunk_len, chunk_len] 区域有非 0 值，其余所有区域全是 0
+                print(" golden b_dv = ",b_dv)
                 dv[batch_idx, i_h, global_start:global_start+chunk_len, i_v:v_end] += b_dv
     return dv
 
@@ -107,6 +112,60 @@ def create_incremental_tensor(shape, dtype=torch.float16, start=1, step=1):
     ).reshape(shape)
     return tensor
 
+def create_tensor(shape, dtype=torch.float16):
+
+    # return create_incremental_tensor(shape,dtype)
+    # return torch.ones(shape, dtype=dtype)
+    return torch.rand(shape, dtype=dtype)
+
+import torch
+
+def compare_tensors(tensor1, tensor2, tolerance=0.01, verbose=True):
+    # 检查形状是否相同
+    if tensor1.shape != tensor2.shape:
+        if verbose:
+            print(f"错误: tensor形状不匹配!")
+            print(f"  tensor1 shape: {tensor1.shape}")
+            print(f"  tensor2 shape: {tensor2.shape}")
+        return False
+    
+    # 计算绝对差值
+    diff = torch.abs(tensor1 - tensor2)
+    
+    # 找出超过容差的点位
+    mask = diff > tolerance
+    failed_count = torch.sum(mask).item()
+    total_count = tensor1.numel()
+    
+    if failed_count == 0:
+        if verbose:
+            print(f"✓ 精度对比成功!")
+            print(f"  总点数: {total_count}")
+            print(f"  最大差值: {diff.max().item():.6f}")
+            print(f"  平均差值: {diff.mean().item():.6f}")
+        return True
+    else:
+        if verbose:
+            print(f"✗ 精度对比失败!")
+            print(f"  总点数: {total_count}")
+            print(f"  失败点数: {failed_count} ({failed_count/total_count*100:.2f}%)")
+            print(f"  最大差值: {diff.max().item():.6f}")
+            print(f"  平均差值: {diff.mean().item():.6f}")
+            
+            # 打印部分失败点位
+            print(f"\n失败点位示例 (最多显示10个):")
+            failed_indices = torch.nonzero(mask, as_tuple=True)
+            display_count = min(10, failed_count)
+            
+            for i in range(display_count):
+                idx = tuple(dim[i].item() for dim in failed_indices)
+                val1 = tensor1[idx].item()
+                val2 = tensor2[idx].item()
+                val_diff = diff[idx].item()
+                print(f"  位置{idx}: tensor1={val1:.6f}, tensor2={val2:.6f}, 差值={val_diff:.6f}")
+        
+        return False
+
 if __name__ == "__main__":
     torch.manual_seed(0)
     
@@ -114,16 +173,23 @@ if __name__ == "__main__":
     chunk_size=64
     scale = 1.0
 
-    q = torch.randn(B, H, T, K, dtype=torch.float16)
-    k = torch.randn(B, H, T, K, dtype=torch.float16)
-    d_o = torch.randn(B, H, T, V, dtype=torch.float16)
+    # q = torch.randn(B, H, T, K, dtype=torch.float16)
+    # k = torch.randn(B, H, T, K, dtype=torch.float16)
+    # d_o = torch.randn(B, H, T, V, dtype=torch.float16)
     # g = torch.randn(B, H, T, dtype=torch.float16)
-    g = create_incremental_tensor((B, H, T), dtype=torch.float16)
-    print("g=",g)
+    q = create_tensor((B, H, T, K), dtype=torch.float16)
+    k = create_tensor((B, H, T, K), dtype=torch.float16)
+    d_o = create_tensor((B, H, T, V), dtype=torch.float16)
+    g = create_tensor((B, H, T), dtype=torch.float16)
+    print("q =",q)
+    print("k =",k)
+    print("d_o =",d_o)
+    print("g =",g)
     upper_tri_matrix = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool))
     cu_seqlens = q.new_tensor([0, 2], dtype=torch.long)
-
     chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
+
+    dv_golden = chunk_bwd_dv_local_torch(q, k, d_o, g, scale, cu_seqlens, chunk_size)
 
     q_npu = q.npu()
     k_npu = k.npu()
@@ -135,8 +201,11 @@ if __name__ == "__main__":
 
     dv = torch_npu.npu_chunk_bwd_dv_local(q_npu, k_npu, d_o_npu, g_npu,upper_tri_matrix=None, g_gamma=None, A=None,cu_seqlens=cu_seqlens_npu, chunk_indices = chunk_indices_npu, scale=scale, chunk_size =chunk_size)
     # dv = torch_npu.npu_chunk_bwd_dv_local(q_npu, k_npu, d_o_npu, g_npu,upper_tri_matrix=upper_tri_matrix_npu, g_gamma=g, A=q,cu_seqlens=cu_seqlens_npu, chunk_indices = chunk_indices_npu, scale=scale, chunk_size =chunk_size)
+    print(f"==== dv_golden.shape = {dv_golden.shape} ",dv_golden)
     print(f"==== dv.shape = {dv.shape} ",dv)
 
-    dv_golden = chunk_bwd_dv_local_torch(q, k, d_o, g, scale, cu_seqlens, chunk_size)
-    print(f"==== dv_golden.shape = {dv_golden.shape} ",dv_golden)
+    compare_tensors(dv_golden,dv)
+
+
+    
 

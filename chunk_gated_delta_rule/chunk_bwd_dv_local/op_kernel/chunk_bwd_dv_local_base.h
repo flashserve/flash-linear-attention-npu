@@ -102,6 +102,9 @@ public:
     int64_t strideQK;
     int64_t strideDoDv;
     int64_t strideOut;
+
+    AscendC::DataCopyExtParams copyParams{1, 0, 0, 0, 0};
+    AscendC::DataCopyPadExtParams<QKVT> qkvPadParams{false, 0, 0, 0};
 };
 
 template <typename QKVT, typename GT>
@@ -200,40 +203,59 @@ __aicore__ inline void ChunkBwdDvLocalBase<QKVT, GT>::vectorProcess(int64_t chun
     AscendC::printf("[参数打印] curBatchId = %d  \n", curBatchId);
     for (int hIndex = 0; hIndex < h; hIndex++) {
         AscendC::LocalTensor<GT> gLocalTensor = gTQueIn.template AllocTensor<GT>();
-        AscendC::printf("[参数打印] curBatchId * h * t + hIndex * t + curChunkId * chunkSize = %d  \n", curBatchId * h * t + hIndex * t + curChunkId * chunkSize);
+        // AscendC::printf("[参数打印] curBatchId * h * t + hIndex * t + curChunkId * chunkSize = %d  \n",
+        //                 curBatchId * h * t + hIndex * t + curChunkId * chunkSize);
         AscendC::DataCopy(gLocalTensor, gGm[curBatchId * h * t + hIndex * t + curChunkId * chunkSize], chunkSize);
+        // AscendC::printf("[tensor 打印]  gLocalTensor \n");
+        // AscendC::DumpTensor(gLocalTensor, 5, 16);
         MTE2ToVSync();
         AscendC::LocalTensor<float> gFp32LocalTensor = gFp32TBuf.template Get<float>();
         AscendC::LocalTensor<float> gFactorLocalTensor = gFactorTBuf.template Get<float>();
         AscendC::Duplicate<float>(gFactorLocalTensor, float(0.0), chunkSize); // 清零
         // todo 增加fp32不用cast判断
         AscendC::Cast(gFp32LocalTensor, gLocalTensor, AscendC::RoundMode::CAST_NONE, chunkLen);
+        // AscendC::printf("[tensor 打印]  gFp32LocalTensor \n");
+        // AscendC::DumpTensor(gFp32LocalTensor, 5, 16);
         AscendC::LocalTensor<float> kqFp32LocalTensor = kqFp32TBuf.template Get<float>();
         AscendC::LocalTensor<QKVT> kqLocalTensor = kqTQueIn.template AllocTensor<QKVT>();
         AscendC::LocalTensor<QKVT> kqOutLocalTensor = kqTQueOut.template AllocTensor<QKVT>();
         AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(0x1);
         for (int row = 0; row < chunkLen; row++) {
             AscendC::Adds(gFactorLocalTensor, gFp32LocalTensor, -1 * gFp32LocalTensor.GetValue(row), chunkLen);
+            // AscendC::printf("[tensor 打印]  gFactorLocalTensor \n");
+            // AscendC::DumpTensor(gFactorLocalTensor, 5, 16);
             AscendC::Exp(gFactorLocalTensor, gFactorLocalTensor, chunkLen);
             AscendC::Duplicate<float>(gFactorLocalTensor, float(0.0), row);
             AscendC::Muls(gFactorLocalTensor, gFactorLocalTensor, scale, chunkLen);
             // 搬运 k * q^T 一行
-            AscendC::DataCopy(kqLocalTensor,
-                              workspaceGm[curBatchId * h * t * chunkSize + hIndex * t * chunkSize +
-                                          curChunkId * chunkSize * chunkSize + row * chunkSize],
-                              chunkLen);
+            // AscendC::printf("[tensor 打印]  workspaceGm \n");
+            // AscendC::DumpTensor(workspaceGm[curBatchId * h * t * chunkSize + hIndex * t * chunkSize +
+            //                                 curChunkId * chunkSize * chunkSize + row * chunkSize],
+            //                     5, 64);
+            copyParams.blockCount = 1;
+            copyParams.blockLen = chunkLen * sizeof(QKVT);
+            AscendC::DataCopyPad(kqLocalTensor,
+                                 workspaceGm[curBatchId * h * t * chunkSize + hIndex * t * chunkSize +
+                                             curChunkId * chunkSize * chunkSize + row * chunkSize],
+                                 copyParams, qkvPadParams);
+            // AscendC::printf("[tensor 打印]  kqLocalTensor \n");
+            // AscendC::DumpTensor(kqLocalTensor, 5, 16);
             MTE2ToVSync();
             AscendC::Cast(kqFp32LocalTensor, kqLocalTensor, AscendC::RoundMode::CAST_NONE, chunkLen);
             // AscendC::printf("[tensor 打印]  kqFp32LocalTensor \n");
             // AscendC::DumpTensor(kqFp32LocalTensor, 5, 16);
-            AscendC::Mul(gFp32LocalTensor, kqFp32LocalTensor, gFactorLocalTensor, chunkLen);
-            AscendC::Cast(kqOutLocalTensor, gFp32LocalTensor, AscendC::RoundMode::CAST_NONE, chunkSize);
-            // AscendC::printf("[tensor 打印]  kqOutLocalTensor \n");
-            // AscendC::DumpTensor(kqOutLocalTensor, 5, 16);
+            AscendC::Mul(gFactorLocalTensor, kqFp32LocalTensor, gFactorLocalTensor, chunkLen);
+            AscendC::Cast(kqOutLocalTensor, gFactorLocalTensor, AscendC::RoundMode::CAST_NONE, chunkSize);
+            AscendC::printf("[tensor 打印]  kqOutLocalTensor \n");
+            AscendC::DumpTensor(kqOutLocalTensor, 5, chunkSize);
             // 搬出到workspace
-            AscendC::DataCopy(workspace2Gm[curBatchId * h * t * chunkSize + hIndex * t * chunkSize +
-                                           curChunkId * chunkSize * chunkSize + row * chunkSize],
-                              kqOutLocalTensor, chunkSize);
+            int64_t outAddr = curBatchId * h * t * chunkSize + hIndex * t * chunkSize +
+                                           curChunkId * chunkSize * chunkSize + row * chunkSize;
+            AscendC::printf("[参数打印] outAddr = %d  \n", outAddr);
+            AscendC::DataCopy(workspace2Gm[outAddr], kqOutLocalTensor, chunkSize);
+            AscendC::printf("[tensor 打印]  workspace2Gm \n");
+            AscendC::DumpTensor(workspace2Gm[curBatchId * h * t * chunkSize + hIndex * t * chunkSize +
+                                           curChunkId * chunkSize * chunkSize + row * chunkSize], 5, chunkSize);
         }
         gTQueIn.FreeTensor(gLocalTensor);
         kqTQueIn.FreeTensor(kqLocalTensor);
@@ -293,8 +315,8 @@ __aicore__ inline void ChunkBwdDvLocalBase<QKVT, GT>::cubeProcess(int64_t chunkL
             // // Compute block-scoped matrix multiply-add
             // AscendC::printf("[参数打印] hIndex = %d  \n", hIndex);
             blockMmad(tensorBlockA, tensorBlockB, tensorBlockC, actualBlockShape);
-            // AscendC::printf("[tensor 打印]  tensorBlockC \n");
-            // AscendC::DumpTensor(tensorBlockC.data(), 5, 32);
+            AscendC::printf("[tensor 打印]  tensorBlockC \n");
+            AscendC::DumpTensor(tensorBlockC.data(), 5, 128);
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(0x1);
         }
 
@@ -331,16 +353,15 @@ __aicore__ inline void ChunkBwdDvLocalBase<QKVT, GT>::cubeProcess(int64_t chunkL
         Catlass::GemmCoord actualBlockShape{static_cast<uint32_t>(chunkLen), static_cast<uint32_t>(v),
                                             static_cast<uint32_t>(chunkLen)};
         for (int hIndex = 0; hIndex < h; hIndex++) {
+            AscendC::CrossCoreWaitFlag<0x2>(0x2);
             // Represent the full tensors
             auto tensorA = tla::MakeTensor(workspace2Gm[curBatchId * h * t * chunkSize + hIndex * t * chunkSize +
                                                         curChunkId * chunkSize * chunkSize],
                                            layoutA, Catlass::Arch::PositionGM{});
-            auto tensorB = tla::MakeTensor(
-                dOGm[curBatchId * h * t * chunkSize + hIndex * t * chunkSize + curChunkId * chunkSize * chunkSize],
-                layoutB, Catlass::Arch::PositionGM{});
-            auto tensorC = tla::MakeTensor(
-                dVGm[curBatchId * h * t * chunkSize + hIndex * t * chunkSize + curChunkId * chunkSize * chunkSize],
-                layoutC, Catlass::Arch::PositionGM{});
+            auto tensorB = tla::MakeTensor(dOGm[curBatchId * h * t * v + hIndex * t * v + curChunkId * chunkSize * v],
+                                           layoutB, Catlass::Arch::PositionGM{});
+            auto tensorC = tla::MakeTensor(dVGm[curBatchId * h * t * v + hIndex * t * v + curChunkId * chunkSize * v],
+                                           layoutC, Catlass::Arch::PositionGM{});
             // Make tiled views
             auto tensorBlockA =
                 GetTile(tensorA, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
@@ -348,9 +369,13 @@ __aicore__ inline void ChunkBwdDvLocalBase<QKVT, GT>::cubeProcess(int64_t chunkL
                 GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
             auto tensorBlockC =
                 GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-
-            AscendC::CrossCoreWaitFlag<0x2>(0x2);
+            AscendC::printf("[tensor 打印]  workspace2Gm \n");
+            AscendC::DumpTensor(tensorBlockA.data(), 5, 128);
+            AscendC::printf("[tensor 打印] dOGm \n");
+            AscendC::DumpTensor(tensorBlockB.data(), 5, 128);
             blockMmad(tensorBlockA, tensorBlockB, tensorBlockC, actualBlockShape);
+            AscendC::printf("[tensor 打印] d_A @ d_o  tensorBlockC \n");
+            AscendC::DumpTensor(tensorBlockC.data(), 5, 128);
         }
         AscendC::PipeBarrier<PIPE_ALL>();
     }
