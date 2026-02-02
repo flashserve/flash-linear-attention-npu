@@ -16,6 +16,7 @@
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_VEC_H
 #endif
 
+#include <cmath>
 #include "kernel_operator.h"
 #include "chunk_gated_delta_rule_bwd_dhu_base.h"
 
@@ -63,7 +64,6 @@ __aicore__ inline void GDRVec<DT>::InitUB()
     offset += this->halfBT * HALF_DTYPE_SIZE;
     this->gLastLocal = this->vecTbuf.template GetWithOffset<DTYPE_G>(this->halfBT, offset); // bf16時，負責前半段的核要把後半段也搬進來拿last值
     offset += this->halfBT * HALF_DTYPE_SIZE;
-    printf("offset is %u\n", offset);
     this->gLastCastLocal = this->vecTbuf.template GetWithOffset<float>(this->halfBT, offset); // bf16時，負責前半段的核要把後半段也搬進來拿last值
     offset += this->halfBT * FLOAT_DTYPE_SIZE;
     
@@ -156,7 +156,6 @@ __aicore__ inline void GDRVec<DT>::Process( )
         uint64_t b = 0;
         uint64_t dhBlockSize = this->K * this->V;
         uint64_t gOffset = (b * this->H + h) * this->T;
-        printf(">>>gOffset is %lu\n", gOffset);
         uint64_t gatedQOffset = cubeIdx * BT * this->K;
         uint64_t qdoOffset = cubeIdx * this->K * this->V;
         uint64_t wV2Offset = cubeIdx * this->K * this->V;
@@ -167,31 +166,35 @@ __aicore__ inline void GDRVec<DT>::Process( )
         uint64_t dvGmOffset = 0;
         uint64_t tOffset = seqStartOffset;
         float gLast = 0.0;
+        float gLastExp = 0.0;
         uint64_t bdvGmOffset = 0;
         uint64_t curDhOffset = 0;
+        uint64_t nextDhOffset = 0;
         if (this->subBlockIdx == 1) {
             gatedQOffset += this->halfBT * this->K;
+            qdoOffset +=  this->halfK * this->V;
+            wV2Offset +=  this->halfK * this->V;
         }
         for (int32_t chunkIdx = curChunkNum - 1; chunkIdx >= 0; chunkIdx --) {
             if (this->subBlockIdx == 0) {
                 bdvGmOffset = cubeIdx * BT * this->V;
                 tOffset = seqStartOffset + chunkIdx * BT;
-                // printf("g offset is %lu\n",tOffset + this->halfBT);
 
                 CopyIn(this->gLastCastLocal, this->gLastLocal, this->gGm[gOffset + tOffset + this->halfBT], this->halfBT);
                 // PipeBarrier<PIPE_ALL>();
                 gLast = this->gLastCastLocal.GetValue(static_cast<uint64_t>(this->halfBT - 1));
+                Exp(this->gLastCastLocal, this->gLastCastLocal, this->halfBT);
+                gLastExp = this->gLastCastLocal.GetValue(static_cast<uint64_t>(this->halfBT - 1));
             } else {
                 bdvGmOffset = cubeIdx * BT * this->V + this->halfBT * this->V;
                 tOffset = seqStartOffset + chunkIdx * BT + this->halfBT;
             }
-            printf("g offset is %lu\n",tOffset);
             CopyIn(this->gCastLocal, this->gLocal, this->gGm[gOffset + tOffset], this->halfBT);
-
+            Exp(this->gExpLocal, this->gCastLocal, this->halfBT);
             if (this->subBlockIdx == 1) {
                 gLast = this->gCastLocal.GetValue(this->halfBT - 1);
+                gLastExp = this->gExpLocal.GetValue(this->halfBT - 1);
             }
-            Exp(this->gExpLocal, this->gCastLocal, this->halfBT);
             // COPY IN Q [B,H,T,K]
             uint64_t qGmOffset = (b * this->H + h) * this->T * this->K + tOffset * this->K;  
             CopyIn(this->qCastLocal, this->qLocal, this->qGm[qGmOffset], this->qBufSize);
@@ -214,57 +217,51 @@ __aicore__ inline void GDRVec<DT>::Process( )
             } else {
                 CopyIn(this->dvCastLocal, this->vInLocal, this->dvGm[dvGmOffset], this->dvBufSize);
                 // 64k
-                
                 Muls(this->gCastLocal, this->gCastLocal, static_cast<float>(-1.0), this->halfBT);
                 Adds(this->gCastLocal, this->gCastLocal, gLast, this->halfBT);
                 Exp(this->gCastLocal, this->gCastLocal, this->halfBT);
                 uint8_t repeatTimes = Ceil(this->halfBT, 8); // halfBT is 32 or 64
                 Brcb(this->gBrcbLocal, this->gCastLocal, repeatTimes, {1,8});
+                
                 // halfBT * 32
                 CrossCoreWaitFlag(CROSS_CORE_C2V_BDV); // cube计算完一个chunk的bdv,vec开始计算对应的dv2
-                // printf("cubeIdx %u\n", cubeIdx);
-                // printf("bdvGmOffset %lu\n", bdvGmOffset);
                 CopyIn(this->bdvCastLocal, this->vInLocal, this->bdvGm[bdvGmOffset], this->dvBufSize);
-
-                // DumpTensor(this->bdvCastLocal, 195, 256);
-
                 BlockMul(this->bdvCastLocal, this->gBrcbLocal, this->bdvCastLocal, this->halfBT, this->V);
-                
                 Add(this->bdvCastLocal, this->bdvCastLocal, this->dvCastLocal, this->qBufSize);
                 CopyOut(this->vInLocal, this->bdvCastLocal, this->dv2Gm[dvGmOffset], this->qBufSize);
             }
             CrossCoreSetFlag<0x2, PIPE_MTE3>(CROSS_CORE_V2C_DV2); // 计算完一个chunk的dv2,通知cube可以开始计算w @ dv2 
             
-            
+            if (chunkIdx == 0) {
+                // 每個chunk更新bdh給下個chunk用，chunkIdx=0作爲最後一個chunk，所有的chunk都已經更新完了，無需更新bdh。
+                continue;
+            }
             curDhOffset = dhOffset + chunkIdx * dhBlockSize + this->subBlockIdx * this->dhBufSize;
+            nextDhOffset = curDhOffset - dhBlockSize;
             if (chunkIdx == curChunkNum -1) {
                 // 初始化全零 dh_chunkIdx
                 InitOutput<DT>(this->dhGm[curDhOffset], this->dhBufSize, 0); // 兩個vec核各初始化一半
             } else {
                 CopyIn(this->bdhCastLocal, this->bdhLocal, this->dhGm[curDhOffset], this->dhBufSize);
+                Muls(this->bdhCastLocal, this->bdhCastLocal, gLastExp, this->dhBufSize);
             }
             // dh_updated = dh_i-1 * exp(bg_last) + term1*scale - term2
             CrossCoreWaitFlag(CROSS_CORE_C2V_TERM1); 
             {
-                if (this->subBlockIdx == 1) {
-                    qdoOffset +=  this->halfK * this->V;
-                }
                 CopyIn(this->qdoCastLocal, this->qdoLocal, this->qdoGm[qdoOffset], this->dhBufSize);
                 Muls(this->qdoCastLocal, this->qdoCastLocal, this->scale, this->dhBufSize);
-            }
-            // CrossCoreWaitFlag(CROSS_CORE_C2V_TERM2);
-            {
-                if (this->subBlockIdx == 1) {
-                    wV2Offset +=  this->halfK * this->V;
+                if (chunkIdx != curChunkNum -1) {
+                    Add(this->qdoCastLocal, this->bdhCastLocal, this->qdoCastLocal, this->dhBufSize);
                 }
+            }
+            CrossCoreWaitFlag(CROSS_CORE_C2V_TERM2);
+            {
                 CopyIn(this->wv2CastLocal, this->wv2Local, this->wv2Gm[wV2Offset], this->dhBufSize);
                 Muls(this->wv2CastLocal, this->wv2CastLocal, static_cast<float>(-1.0), this->dhBufSize);
-            }  
-
-
-            
-            
-
+                Add(this->qdoCastLocal, this->qdoCastLocal, this->wv2CastLocal, this->dhBufSize);
+            }
+            CopyOut(this->bdhLocal, this->qdoCastLocal, this->dhGm[nextDhOffset], this->dhBufSize);
+            CrossCoreSetFlag<0x2, PIPE_MTE3>(CROSS_CORE_V2C_BDH);
         }
     }
 }

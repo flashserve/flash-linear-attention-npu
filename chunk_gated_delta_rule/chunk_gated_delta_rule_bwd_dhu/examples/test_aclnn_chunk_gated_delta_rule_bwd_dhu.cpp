@@ -148,14 +148,14 @@ int main() {
 
   // 2. 构造输入与输出，需要根据API的接口自定义构造
   int64_t B = 1;
-  int64_t T = 256;
+  int64_t T = 1792;
   int64_t H = 2;
   int64_t V = 128;
   int64_t K = 128;
   int64_t chunk_size = 64;
   int64_t chunk_num = T/chunk_size;
 
-  std::vector<int64_t> cuSeqlensHostData = {0, 128, 256}; // [0, 2, 4, ]
+  std::vector<int64_t> cuSeqlensHostData = {0, 256, 768, 1792}; // [0, 2, 4, ]
   // std::vector<int64_t> cuSeqlensHostData = {0, 128, 256};
   std::vector<int64_t> chunkIndicesHostData = get_chunk_indices(cuSeqlensHostData,chunk_size);
 
