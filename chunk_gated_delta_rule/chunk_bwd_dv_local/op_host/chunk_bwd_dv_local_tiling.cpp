@@ -44,6 +44,9 @@ static constexpr int64_t CHUNK_SIZE_64 = 64;
 static constexpr int64_t CHUNK_SIZE_128 = 128;
 static constexpr int64_t CHUNK_INDICES_DIM_1_SIZE = 2;
 
+static constexpr uint64_t FIX_LEN_TILING_KEY = 0;
+static constexpr uint64_t VARIABLE_LEN_TILING_KEY = 1;
+
 static constexpr const char *const INPUT_Q_NAME = "q";
 static constexpr const char *const INPUT_K_NAME = "k";
 static constexpr const char *const INPUT_DO_NAME = "do";
@@ -150,7 +153,7 @@ public:
         tiling_.set_chunkSize(chunkSize);
 
         const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
-        tiling_.set_totalCoreNum(static_cast<int64_t>(ascendcPlatform.GetCoreNumAiv()));
+        tiling_.set_totalCoreNum(static_cast<int64_t>(ascendcPlatform.GetCoreNumAic()));
         return ge::GRAPH_SUCCESS;
     }
 
@@ -164,19 +167,25 @@ public:
 
     void InterKernelSplit(int64_t chunkNumForT, int64_t totalCoreNum)
     {
+        std::cout<< "chunkNumForT = "<< chunkNumForT<<std::endl;
         int64_t allChunkNum = chunkNumForT * tiling_.get_b(); // b*t , h核内循环
-        // std::cout << "allChunkNum = " << allChunkNum << std::endl;
+         std::cout<< "allChunkNum = "<< allChunkNum <<std::endl;
         int64_t chunkNumTailCore = allChunkNum / totalCoreNum;
+        std::cout<< "totalCoreNum = "<< totalCoreNum <<std::endl;
+        std::cout<< "chunkNumTailCore = "<< chunkNumTailCore <<std::endl;
         int64_t chunkNumPreCore = chunkNumTailCore + 1;
-        int64_t preCoreNum = allChunkNum % totalCoreNum;
-        int64_t tailCoreNum = chunkNumTailCore == 0 ? 0 : totalCoreNum - preCoreNum;
+        std::cout<< "chunkNumPreCore = "<< chunkNumPreCore <<std::endl;
+        int32_t preCoreNum = static_cast<int32_t>(allChunkNum % totalCoreNum);
+        int32_t tailCoreNum = static_cast<int32_t>(chunkNumTailCore == 0 ? 0 : totalCoreNum - preCoreNum);
+         std::cout<< "preCoreNum = "<< preCoreNum <<std::endl;
+          std::cout<< "tailCoreNum = "<< tailCoreNum <<std::endl;
 
         tiling_.set_chunkNumForT(chunkNumForT);
-        tiling_.set_chunkNumPreCore(chunkNumPreCore);
-        tiling_.set_chunkNumTailCore(chunkNumTailCore);
-        tiling_.set_preCoreNum(preCoreNum);
-        tiling_.set_tailCoreNum(tailCoreNum);
-        tiling_.set_totalCoreNum(preCoreNum + tailCoreNum);
+        // tiling_.set_chunkNumPreCore(chunkNumPreCore);
+        // tiling_.set_chunkNumTailCore(chunkNumTailCore);
+        // tiling_.set_preCoreNum(preCoreNum);
+        // tiling_.set_tailCoreNum(tailCoreNum);
+        // tiling_.set_totalCoreNum(preCoreNum + tailCoreNum);
     }
 
     ge::graphStatus FixLenTiling()
@@ -223,9 +232,9 @@ static void ChunkBwdDvLocalTilingDataPrint(gert::TilingContext *context, ChunkBw
     OP_LOGD(nodeName, "=== chunkNumForT: %ld", tiling.get_chunkNumForT());
     OP_LOGD(nodeName, "=== chunkNumPreCore: %ld", tiling.get_chunkNumPreCore());
     OP_LOGD(nodeName, "=== chunkNumTailCore: %ld", tiling.get_chunkNumTailCore());
-    OP_LOGD(nodeName, "=== preCoreNum: %ld", tiling.get_preCoreNum());
-    OP_LOGD(nodeName, "=== tailCoreNum: %ld", tiling.get_tailCoreNum());
-    OP_LOGD(nodeName, "=== totalCoreNum: %ld", tiling.get_totalCoreNum());
+    OP_LOGD(nodeName, "=== preCoreNum: %d", tiling.get_preCoreNum());
+    OP_LOGD(nodeName, "=== tailCoreNum: %d", tiling.get_tailCoreNum());
+    OP_LOGD(nodeName, "=== totalCoreNum: %d", tiling.get_totalCoreNum());
     OP_LOGD(nodeName, "=== chunkSize: %ld", tiling.get_chunkSize());
     OP_LOGD(nodeName, "=== scale: %f", tiling.get_scale());
     OP_LOGD(nodeName, ">>>>>>>>>>>>>>> Print ChunkBwdDvLocal tiling data end <<<<<<<<<<<<<<<<");
@@ -233,6 +242,7 @@ static void ChunkBwdDvLocalTilingDataPrint(gert::TilingContext *context, ChunkBw
 
 ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
 {
+    std::cout<< "tiling=============================\n"<<std::endl;
     OP_LOGD(context->GetNodeName(), "Tiling4ChunkBwdDvLocal start.");
     ChunkBwdDvLocalTilingData tiling;
     ChunkBwdDvLocalTilingProcessor processor(context, tiling);
@@ -243,7 +253,8 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
     auto cuSeqlensTensor = context->GetOptionalInputTensor(INPUT_SEQLENS_IDX);
     if (cuSeqlensTensor == nullptr) {
         OP_CHECK_IF(processor.FixLenTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        tiling.set_isVariable(false);
+        
+        context->SetTilingKey(FIX_LEN_TILING_KEY);
     } else {
         OP_CHECK_IF(tiling.get_b() != V_L_B,
                     OP_LOGE(context->GetNodeName(),
@@ -251,9 +262,9 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
                             tiling.get_b()),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(processor.VariableLenTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        tiling.set_isVariable(true);
+        context->SetTilingKey(VARIABLE_LEN_TILING_KEY);
     }
-    context->SetTilingKey(1);
+    std::cout<< context->GetTilingKey()<<std::endl;
     OP_LOGD(context->GetNodeName(), "tilingKey: %d", context->GetTilingKey());
     ChunkBwdDvLocalTilingDataPrint(context, tiling);
 
@@ -267,8 +278,9 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
     uint32_t userWorkspaceSize = 2 * tiling.get_b() * tiling.get_h() * tiling.get_t() * tiling.get_chunkSize();
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = sysWorkspaceSize + userWorkspaceSize;
-
+    context->SetScheduleMode(1); 
     OP_LOGD(context->GetNodeName(), "Tiling4ChunkBwdDvLocal end.");
+    std::cout<< "Tiling4ChunkBwdDvLocal end."<<std::endl;
     return ge::GRAPH_SUCCESS;
 }
 
