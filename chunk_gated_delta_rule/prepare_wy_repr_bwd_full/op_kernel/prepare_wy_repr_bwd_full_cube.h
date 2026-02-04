@@ -181,8 +181,10 @@ public:
         Arch::Resource<ArchTag> resource;
         uint32_t coreIdx = AscendC::GetBlockIdx();
         {   //处理第一部分cube DA @ Kbeta     V->C
-            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
             //AscendC::printf("CrossCoreSetFlag\n");
             //AscendC::printf("CrossCoreSetFlag\n");
             BlockMmadBdk blockMmadBdk(resource);
@@ -226,7 +228,7 @@ public:
                     // Compute block-scoped matrix multiply-add
                     //AscendC::printf("CrossCoreWaitFlag\n");
                     blockMmadBdk(tensorBlockDA, tensorBlockKbeta, tensorBlockDk, actualBlockShape);
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
+                    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
                     //AscendC::printf("CrossCoreSetFlag\n");
                 }
             }
@@ -271,6 +273,8 @@ public:
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
                 }
             }
+            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
+            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
         }
@@ -403,6 +407,8 @@ public:
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
                 }
             }
+            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
+            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
         }

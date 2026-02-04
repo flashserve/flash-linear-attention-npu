@@ -168,7 +168,7 @@ public:
         tiling_.set_V(static_cast<int64_t>(vStorageShape.GetDim(DIM_3)));
         tiling_.set_kBeteVecRow(32);
         tiling_.set_dkbVecRow(32);
-        tiling_.set_dkbgVecRow(16);
+        tiling_.set_dkbgVecRow(32);
         tiling_.set_dvbVecRow(32);
         tiling_.set_kktVecRow(32);
 
