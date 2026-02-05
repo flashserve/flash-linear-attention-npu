@@ -166,6 +166,7 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
         uint32_t bIdx = loopIdx / coreLoopsInB;
         uint32_t chunkIdx = loopIdx % coreLoopsInB;
         for (int h = 0; h < H; h++) {
+            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
             for(uint32_t rowOffset = 0;rowOffset < chunkSize; rowOffset += rowNum) {
                 // TODO 判断是否为与cude对应的vec核？
                 ++vecTaskIdx;
@@ -175,7 +176,6 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                 auto kOffset = ((bIdx * H + h) * T  + chunkIdx * BT + rowOffset) * K;
                 auto betaOffset = (bIdx * H + h) * T  + chunkIdx * BT + rowOffset;
                 auto gOffset = (bIdx * H + h) * T  + chunkIdx * BT + rowOffset;
-                // AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
                 //AscendC::printf("CrossCoreWaitFlag kOffset:%d, betaOffset:%d\n", kOffset, betaOffset);
                 //copyin
                 {
@@ -258,13 +258,15 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                     kBetaGOutQue.FreeTensor(tensorOut);
                 }
             }
-            // AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
             //AscendC::printf("CrossCoreSetFlag\n");
         }
     }
     // DumpTensor(workSpaceTensor, 0,  8192);
-    // AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    // AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
+    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
+    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
+    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
+    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
     return;
 }
 
@@ -402,6 +404,7 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
         uint32_t bIdx = loopIdx / coreLoopsInB;
         uint32_t chunkIdx = loopIdx % coreLoopsInB;
         for (int h = 0; h < H; h++) {
+            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
             for(uint32_t rowOffset = 0;rowOffset < chunkSize; rowOffset += rowNum) {
                 // rowOffset/rowNum 代表是第几行
                 ++vecTaskIdx;
@@ -409,7 +412,6 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                     continue;
                 }
                 auto Offset = (bIdx * H + h) * T  + chunkIdx * chunkSize + rowOffset;
-                // AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
                 //AscendC::printf("CrossCoreWaitFlag VOffset:%d, betaOffset:%d\n", VOffset, betaOffset);
                 //copyin
                 {
@@ -451,10 +453,14 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                     mduwOutQue.FreeTensor(tensorMduwOut);
                 }
             }
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
         }
     }
-    // AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::printf("CrossCoreWaitFlag\n");
+    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
+    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
+    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
+    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
+    // AscendC::printf("CrossCoreWaitFlag\n");
     return;
 }
 
@@ -487,12 +493,17 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
     auto tensorGBrcbfp32 = gFp32BrcbRowBuf.Get<float32_t>();
     auto tensorGCalfp32 = gFp32CalBuf.Get<float32_t>();
     auto tensorMdAfp32 = mdAFp32Buf.Get<float32_t>();
-    //
+
+    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
+    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
+    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
+    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
     // printf("coreIdx:%d, coreNumAic:%d\n",coreIdx, coreNumAic );
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
         uint32_t bIdx = loopIdx / coreLoopsInB;
         uint32_t chunkIdx = loopIdx % coreLoopsInB;
         for (int h = 0; h < H; h++) {
+            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 continue;
@@ -551,7 +562,7 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                 }    
                 gInQue.FreeTensor(tensorGIn);
             }
-            
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
         }
     }
     return;

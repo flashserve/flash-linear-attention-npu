@@ -164,7 +164,7 @@ public:
     void operator()<AscendC::AIC>(Params const &params) {
         Arch::Resource<ArchTag> resource;
         uint32_t coreIdx = AscendC::GetBlockIdx();
-        {   // 计算第二个矩阵乘 dA_2 = du @ vb.T
+        {   // 计算第二个矩阵乘 dA_2 = du @ vb.T     V->C
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
@@ -216,6 +216,10 @@ public:
         }
         AscendC::SyncAll<false>();
         {   // 计算第一个矩阵乘 dA_1 = dw @ kbg.T     V->C
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
             BlockMmadDA1 blockMmadDA1(resource);
             uint32_t coreLoopsInB = CeilDiv(params.T, params.BT);
             uint32_t coreLoops = params.B * coreLoopsInB;
@@ -257,13 +261,13 @@ public:
                     // AscendC::printf("CrossCoreSetFlag\n");
                 }
             }
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
         }
         AscendC::SyncAll<false>();
-        {   // 计算第三个矩阵乘 dA_5 = dA_4 @ A.T
+        {   // 计算第三个矩阵乘 dA_5 = dA_4 @ A.T     V->C
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
             uint32_t coreLoopsInB = CeilDiv(params.T, params.BT);
             uint32_t coreLoops = params.B * coreLoopsInB;
             BlockMmadDA5 blockMmadDA5(resource);
@@ -304,8 +308,6 @@ public:
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
                 }
             }
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
         }
         AscendC::SyncAll<false>();
         {   // 计算第四个矩阵乘 dA_6 = A.T @ dA_5

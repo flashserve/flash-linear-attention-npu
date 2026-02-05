@@ -30,7 +30,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingWyReprBwdDa(gert::TilingContext* context)
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     auto sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     size_t userWorkspaceSize = B * T * H * BT * 2 + B * T * H * V;
-    printf("[TilingWyReprBwdDa]---hyh---\n");
+    // printf("[TilingWyReprBwdDa]---hyh---\n");
     // auto baseM = tiling.mmTilingData.get_baseM();
     // auto baseN = tiling.mmTilingData.get_baseN();
     // uint32_t userWorkspaceSize = baseM * baseN * FP32_DATATYPE_SIZE * aicNum * AIC_AIV_RATION;
