@@ -374,13 +374,12 @@ public:
                     gmKKT.SetGlobalBuffer((__gm__ ElementKKT *)params.ptrKKT +
                                           ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) *
                                               params.chunkSize);
-
+                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
                     // Represent the full tensors
                     auto tensorK = tla::MakeTensor(gmK, params.layoutK, Arch::PositionGM{});
                     auto tensorKT = tla::MakeTensor(gmKT, params.layoutKT, Arch::PositionGM{});
                     auto tensorKKT = tla::MakeTensor(gmKKT, params.layoutKKT, Arch::PositionGM{});
 
-                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
                     // Make tiled views
                     auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0),
                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
@@ -390,9 +389,6 @@ public:
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadkkT(tensorBlockK, tensorBlockKT, tensorBlockKKT, actualBlockShape);
-                    AscendC::GlobalTensor<ElementKKT> testA;
-                    AscendC::GlobalTensor<ElementKKT> testB;
-                    AscendC::GlobalTensor<ElementKKT> testC;
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
                 }
             }
