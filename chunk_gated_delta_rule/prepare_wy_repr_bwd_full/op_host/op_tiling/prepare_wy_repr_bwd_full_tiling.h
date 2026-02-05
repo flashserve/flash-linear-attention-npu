@@ -31,15 +31,15 @@ TILING_DATA_FIELD_DEF(int64_t, K);
 TILING_DATA_FIELD_DEF(int64_t, V);
 TILING_DATA_FIELD_DEF(int64_t, chunkNum);
 TILING_DATA_FIELD_DEF(int64_t, chunkSize);
-TILING_DATA_FIELD_DEF(int64_t, kBeteVecRow);//kBeta计算流程时vector单次处理的行数
-TILING_DATA_FIELD_DEF(int64_t, dkbVecRow); //dk计算流程时vector单次处理的行数
-TILING_DATA_FIELD_DEF(int64_t, dkbgVecRow);//dkbg计算流程时vector单次处理的行数
-TILING_DATA_FIELD_DEF(int64_t, dvbVecRow); //dvb计算流程时vector单次处理的行数
-TILING_DATA_FIELD_DEF(int64_t, kktVecRow); //kkt计算流程时vector单次处理的行数
+TILING_DATA_FIELD_DEF(int64_t, kBeteVecRow); // kBeta计算流程时vector单次处理的行数
+TILING_DATA_FIELD_DEF(int64_t, dkbVecRow);   // dk计算流程时vector单次处理的行数
+TILING_DATA_FIELD_DEF(int64_t, dkbgVecRow);  // dkbg计算流程时vector单次处理的行数
+TILING_DATA_FIELD_DEF(int64_t, dvbVecRow);   // dvb计算流程时vector单次处理的行数
+TILING_DATA_FIELD_DEF(int64_t, kktVecRow);   // kkt计算流程时vector单次处理的行数
 TILING_DATA_FIELD_DEF(int64_t, isVariable);
 END_TILING_DATA_DEF;
 REGISTER_TILING_DATA_CLASS(PrepareWyReprBwdFull, PrepareWyReprBwdFullTilingData)
 
-}  // namespace optiling
+} // namespace optiling
 
-#endif  // PREPARE_WY_REPR_BWD_FULL_TILING_H
+#endif // PREPARE_WY_REPR_BWD_FULL_TILING_H

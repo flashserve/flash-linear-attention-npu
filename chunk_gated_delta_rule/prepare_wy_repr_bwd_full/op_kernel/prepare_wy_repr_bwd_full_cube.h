@@ -35,13 +35,7 @@ using namespace Catlass;
 namespace Catlass::Gemm::Kernel {
 
 // Template for Matmul kernel. Compute C = A * B
-template <
-    class BlockMmadBdk_,
-    class BlockMmadBdkb_,
-    class BlockMmadBdkbg_,
-    class BlockMmadBdvb_,
-    class BlockMmadBkkT_
->
+template <class BlockMmadBdk_, class BlockMmadBdkb_, class BlockMmadBdkbg_, class BlockMmadBdvb_, class BlockMmadBkkT_>
 class PrepareWyReprBwdFullTla {
 public:
     using BlockMmadBdk = BlockMmadBdk_;
@@ -59,29 +53,29 @@ public:
     using ElementDk = typename BlockMmadBdk::ElementC;
     using LayoutDk = typename BlockMmadBdk::LayoutC;
 
-    using ElementDAT= typename BlockMmadBdkb::ElementA;
+    using ElementDAT = typename BlockMmadBdkb::ElementA;
     using LayoutDAT = typename BlockMmadBdkb::LayoutA;
     using ElementK = typename BlockMmadBdkb::ElementB;
     using LayoutK = typename BlockMmadBdkb::LayoutB;
     using ElementDkb = typename BlockMmadBdkb::ElementC;
     using LayoutDkb = typename BlockMmadBdkb::LayoutC;
 
-    using ElementAT= typename BlockMmadBdkbg::ElementA;
-    using LayoutAT= typename BlockMmadBdkbg::LayoutA;
-    using ElementDw= typename BlockMmadBdkbg::ElementB;
-    using LayoutDw= typename BlockMmadBdkbg::LayoutB;
-    using ElementDkbg= typename BlockMmadBdkbg::ElementC;
-    using LayoutDkbg= typename BlockMmadBdkbg::LayoutC;
+    using ElementAT = typename BlockMmadBdkbg::ElementA;
+    using LayoutAT = typename BlockMmadBdkbg::LayoutA;
+    using ElementDw = typename BlockMmadBdkbg::ElementB;
+    using LayoutDw = typename BlockMmadBdkbg::LayoutB;
+    using ElementDkbg = typename BlockMmadBdkbg::ElementC;
+    using LayoutDkbg = typename BlockMmadBdkbg::LayoutC;
 
-    using ElementDu= typename BlockMmadBdvb::ElementB;
-    using LayoutDu= typename BlockMmadBdvb::LayoutB;
-    using ElementDvb= typename BlockMmadBdvb::ElementC;
-    using LayoutDvb= typename BlockMmadBdvb::LayoutC;
+    using ElementDu = typename BlockMmadBdvb::ElementB;
+    using LayoutDu = typename BlockMmadBdvb::LayoutB;
+    using ElementDvb = typename BlockMmadBdvb::ElementC;
+    using LayoutDvb = typename BlockMmadBdvb::LayoutC;
 
-    using ElementKT= typename BlockMmadBkkT::ElementB;
-    using LayoutKT= typename BlockMmadBkkT::LayoutB;
-    using ElementKKT= typename BlockMmadBkkT::ElementC;
-    using LayoutKKT= typename BlockMmadBkkT::LayoutC;
+    using ElementKT = typename BlockMmadBkkT::ElementB;
+    using LayoutKT = typename BlockMmadBkkT::LayoutB;
+    using ElementKKT = typename BlockMmadBkkT::ElementC;
+    using LayoutKKT = typename BlockMmadBkkT::LayoutC;
 
     /// Parameters structure
     struct Params {
@@ -122,93 +116,83 @@ public:
 
         // Methods
         CATLASS_DEVICE
-        Params() {}
+        Params()
+        {
+        }
 
         CATLASS_DEVICE
-        Params(GM_ADDR ptrptrKbeta_, LayoutKbeta layoutKbeta_,GM_ADDR ptrDA_,LayoutDA layoutDA_,
-            GM_ADDR ptrDk_,LayoutKbeta layoutDk_,GM_ADDR ptrDAT_,LayoutDAT layoutDAT_,GM_ADDR ptrK_,LayoutK layoutK_,
-            GM_ADDR ptrDkb_,LayoutDkb layoutDkb_,GM_ADDR ptrAT_,LayoutAT layoutAT_,GM_ADDR ptrDw_, LayoutDw layoutDw_,
-            GM_ADDR ptrDkbg_, LayoutDkbg layoutDkbg_,GM_ADDR ptrDu_, LayoutDkbg layoutDu_,GM_ADDR ptrDvb_, LayoutDkbg layoutDvb_,
-            GM_ADDR ptrKT_, LayoutKT layoutKT_, GM_ADDR ptrKKT_, LayoutKKT layoutKKT_,
-            uint64_t B_, uint64_t T_,uint64_t H_,uint64_t K_,uint64_t V_,uint64_t BT_, uint64_t stage_)
-            : ptrKbeta(ptrptrKbeta_), 
-            layoutKbeta(layoutKbeta_),
-            ptrDA(ptrDA_),
-            layoutDA(layoutDA_),
-            ptrDk(ptrDk_), 
-            layoutDk(layoutDk_),
-            ptrDAT(ptrDAT_),
-            layoutDAT(layoutDAT_),
-            ptrK(ptrK_),
-            layoutK(layoutK_),
-            ptrDkb(ptrDkb_),
-            layoutDkb(layoutDkb_),
-            ptrAT(ptrAT_),
-            layoutAT(layoutAT_),
-            ptrDw(ptrDw_),
-            layoutDw(layoutDw_),
-            ptrDkbg(ptrDkbg_),
-            layoutDkbg(layoutDkbg_),
-            ptrDu(ptrDu_),
-            layoutDu(layoutDu_),
-            ptrDvb(ptrDvb_),
-            layoutDvb(layoutDvb_),
-            ptrKT(ptrKT_),
-            layoutKT(layoutKT_),
-            ptrKKT(ptrKKT_),
-            layoutKKT(layoutKKT_),
-            B(B_), 
-            T(T_), 
-            H(H_), 
-            K(K_), 
-            V(V_), 
-            chunkSize(BT_), 
-            stage(stage_){}
+        Params(GM_ADDR ptrptrKbeta_, LayoutKbeta layoutKbeta_, GM_ADDR ptrDA_, LayoutDA layoutDA_, GM_ADDR ptrDk_,
+               LayoutKbeta layoutDk_, GM_ADDR ptrDAT_, LayoutDAT layoutDAT_, GM_ADDR ptrK_, LayoutK layoutK_,
+               GM_ADDR ptrDkb_, LayoutDkb layoutDkb_, GM_ADDR ptrAT_, LayoutAT layoutAT_, GM_ADDR ptrDw_,
+               LayoutDw layoutDw_, GM_ADDR ptrDkbg_, LayoutDkbg layoutDkbg_, GM_ADDR ptrDu_, LayoutDkbg layoutDu_,
+               GM_ADDR ptrDvb_, LayoutDkbg layoutDvb_, GM_ADDR ptrKT_, LayoutKT layoutKT_, GM_ADDR ptrKKT_,
+               LayoutKKT layoutKKT_, uint64_t B_, uint64_t T_, uint64_t H_, uint64_t K_, uint64_t V_, uint64_t BT_,
+               uint64_t stage_)
+            : ptrKbeta(ptrptrKbeta_), layoutKbeta(layoutKbeta_), ptrDA(ptrDA_), layoutDA(layoutDA_), ptrDk(ptrDk_),
+              layoutDk(layoutDk_), ptrDAT(ptrDAT_), layoutDAT(layoutDAT_), ptrK(ptrK_), layoutK(layoutK_),
+              ptrDkb(ptrDkb_), layoutDkb(layoutDkb_), ptrAT(ptrAT_), layoutAT(layoutAT_), ptrDw(ptrDw_),
+              layoutDw(layoutDw_), ptrDkbg(ptrDkbg_), layoutDkbg(layoutDkbg_), ptrDu(ptrDu_), layoutDu(layoutDu_),
+              ptrDvb(ptrDvb_), layoutDvb(layoutDvb_), ptrKT(ptrKT_), layoutKT(layoutKT_), ptrKKT(ptrKKT_),
+              layoutKKT(layoutKKT_), B(B_), T(T_), H(H_), K(K_), V(V_), chunkSize(BT_), stage(stage_)
+        {
+        }
     };
 
     // Methods
     CATLASS_DEVICE
-    PrepareWyReprBwdFullTla() {}
+    PrepareWyReprBwdFullTla()
+    {
+    }
 
     template <int32_t CORE_TYPE = g_coreType>
-    CATLASS_DEVICE
-    void operator()(Params const &params);
+    CATLASS_DEVICE void operator()(Params const &params);
 
     /// Executes one Matmul
     template <>
-    CATLASS_DEVICE
-    void operator()<AscendC::AIC>(Params const &params) {
+    CATLASS_DEVICE void operator()<AscendC::AIC>(Params const &params)
+    {
         Arch::Resource<ArchTag> resource;
         uint32_t coreIdx = AscendC::GetBlockIdx();
-        {   //处理第一部分cube DA @ Kbeta     V->C
+        { //处理第一部分cube DA @ Kbeta     V->C
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
-            //AscendC::printf("CrossCoreSetFlag\n");
-            //AscendC::printf("CrossCoreSetFlag\n");
+            // AscendC::printf("CrossCoreSetFlag\n");
+            // AscendC::printf("CrossCoreSetFlag\n");
             BlockMmadBdk blockMmadBdk(resource);
             uint32_t coreLoopsInB = CeilDiv(params.T, params.chunkSize);
             uint32_t coreLoops = params.B * coreLoopsInB;
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
                 uint32_t bIdx = loopIdx / coreLoopsInB;
                 uint32_t chunkIdx = loopIdx % coreLoopsInB;
-                GemmCoord blockCoord{0,0,0};
-                GemmCoord actualBlockShape{static_cast<uint32_t>(params.chunkSize),static_cast<uint32_t>(params.K),static_cast<uint32_t>(params.chunkSize)};
-                // AscendC::printf("actualBlockShape.m(%d)  actualBlockShape.n(%d) actualBlockShape.k(%d)\n",actualBlockShape.m(), actualBlockShape.n(), actualBlockShape.k());
-                // AscendC::printf("params.ptrDA(%p),params.ptrKbeta(%p),params.ptrDk(%p)\n",params.ptrDA, params.ptrKbeta, params.ptrDk);
+                GemmCoord blockCoord{0, 0, 0};
+                GemmCoord actualBlockShape{static_cast<uint32_t>(params.chunkSize), static_cast<uint32_t>(params.K),
+                                           static_cast<uint32_t>(params.chunkSize)};
+                // AscendC::printf("actualBlockShape.m(%d)  actualBlockShape.n(%d)
+                // actualBlockShape.k(%d)\n",actualBlockShape.m(), actualBlockShape.n(), actualBlockShape.k());
+                // AscendC::printf("params.ptrDA(%p),params.ptrKbeta(%p),params.ptrDk(%p)\n",params.ptrDA,
+                // params.ptrKbeta, params.ptrDk);
                 for (int h = 0; h < params.H; h++) {
                     // Represent the full gm
                     // AscendC::printf("bIdx:%d, h:%d, chunkIdx:%d\n", bIdx, h, chunkIdx);
-                    // AscendC::printf("((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.chunkSize:%d\n", ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.chunkSize);
-                    // AscendC::printf("((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K:%d\n", ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
+                    // AscendC::printf("((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) *
+                    // params.chunkSize:%d\n", ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) *
+                    // params.chunkSize); AscendC::printf("((bIdx * params.H + h) * params.T + chunkIdx *
+                    // params.chunkSize) * params.K:%d\n", ((bIdx * params.H + h) * params.T + chunkIdx *
+                    // params.chunkSize) * params.K);
                     AscendC::GlobalTensor<ElementDA> gmDA;
-                    gmDA.SetGlobalBuffer((__gm__ ElementDA *)params.ptrDA +((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.chunkSize);
+                    gmDA.SetGlobalBuffer((__gm__ ElementDA *)params.ptrDA +
+                                         ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) *
+                                             params.chunkSize);
                     AscendC::GlobalTensor<ElementKbeta> gmKbeta;
-                    gmKbeta.SetGlobalBuffer((__gm__ ElementKbeta *)params.ptrKbeta + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
+                    gmKbeta.SetGlobalBuffer((__gm__ ElementKbeta *)params.ptrKbeta +
+                                            ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) *
+                                                params.K);
                     AscendC::GlobalTensor<ElementDk> gmDk;
-                    gmDk.SetGlobalBuffer((__gm__ ElementDk *)params.ptrDk + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
-                    
+                    gmDk.SetGlobalBuffer((__gm__ ElementDk *)params.ptrDk +
+                                         ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
+
                     // Represent the full tensors
                     auto tensorDA = tla::MakeTensor(gmDA, params.layoutDA, Arch::PositionGM{});
                     auto tensorKbeta = tla::MakeTensor(gmKbeta, params.layoutKbeta, Arch::PositionGM{});
@@ -216,41 +200,43 @@ public:
 
                     AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
                     // Make tiled views
-                    auto tensorBlockDA = GetTile(tensorDA,
-                                                tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                    auto tensorBlockKbeta = GetTile(tensorKbeta,
-                                                tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                    auto tensorBlockDk = GetTile(tensorDk,
-                                                tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                    auto tensorBlockDA = GetTile(tensorDA, tla::MakeCoord(0, 0),
+                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                    auto tensorBlockKbeta = GetTile(tensorKbeta, tla::MakeCoord(0, 0),
+                                                    tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                    auto tensorBlockDk = GetTile(tensorDk, tla::MakeCoord(0, 0),
+                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
-                    //AscendC::printf("CrossCoreWaitFlag\n");
+                    // AscendC::printf("CrossCoreWaitFlag\n");
                     blockMmadBdk(tensorBlockDA, tensorBlockKbeta, tensorBlockDk, actualBlockShape);
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
-                    //AscendC::printf("CrossCoreSetFlag\n");
+                    // AscendC::printf("CrossCoreSetFlag\n");
                 }
             }
         }
         AscendC::SyncAll<false>();
-        {//处理第二部分 DAT@K -> DKB
+        { //处理第二部分 DAT@K -> DKB
             uint32_t coreLoopsInB = CeilDiv(params.T, params.chunkSize);
             uint32_t coreLoops = params.B * coreLoopsInB;
             BlockMmadBdkb blockMmadBdkb(resource);
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
                 uint32_t bIdx = loopIdx / coreLoopsInB;
                 uint32_t chunkIdx = loopIdx % coreLoopsInB;
-                GemmCoord blockCoord{0,0,0};
-                GemmCoord actualBlockShape{static_cast<uint32_t>(params.chunkSize),static_cast<uint32_t>(params.K),static_cast<uint32_t>(params.chunkSize)};
+                GemmCoord blockCoord{0, 0, 0};
+                GemmCoord actualBlockShape{static_cast<uint32_t>(params.chunkSize), static_cast<uint32_t>(params.K),
+                                           static_cast<uint32_t>(params.chunkSize)};
                 for (int h = 0; h < params.H; h++) {
                     // Represent the full gm
                     AscendC::GlobalTensor<ElementDAT> gmDAT;
-                    gmDAT.SetGlobalBuffer((__gm__ ElementDAT *)params.ptrDAT + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.chunkSize);
+                    gmDAT.SetGlobalBuffer((__gm__ ElementDAT *)params.ptrDAT +
+                                          ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) *
+                                              params.chunkSize);
                     AscendC::GlobalTensor<ElementK> gmK;
-                    gmK.SetGlobalBuffer((__gm__ ElementK *)params.ptrK + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
+                    gmK.SetGlobalBuffer((__gm__ ElementK *)params.ptrK +
+                                        ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
                     AscendC::GlobalTensor<ElementDkb> gmDkb;
-                    gmDkb.SetGlobalBuffer((__gm__ ElementDkb *)params.ptrDkb + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
+                    gmDkb.SetGlobalBuffer((__gm__ ElementDkb *)params.ptrDkb +
+                                          ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
 
                     // Represent the full tensors
                     auto tensorDAT = tla::MakeTensor(gmDAT, params.layoutDAT, Arch::PositionGM{});
@@ -259,15 +245,12 @@ public:
 
                     AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
                     // Make tiled views
-                    auto tensorBlockDAT = GetTile(tensorDAT,
-                                                tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                    auto tensorBlockK = GetTile(tensorK,
-                                                tla::MakeCoord(0, 0),
+                    auto tensorBlockDAT = GetTile(tensorDAT, tla::MakeCoord(0, 0),
+                                                  tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                    auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0),
                                                 tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                    auto tensorBlockDkb = GetTile(tensorDkb,
-                                                tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                    auto tensorBlockDkb = GetTile(tensorDkb, tla::MakeCoord(0, 0),
+                                                  tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadBdkb(tensorBlockDAT, tensorBlockK, tensorBlockDkb, actualBlockShape);
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
@@ -279,23 +262,28 @@ public:
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
         }
         AscendC::SyncAll<false>();
-        {//处理第三部分 AT@dw -> DKBG
+        { //处理第三部分 AT@dw -> DKBG
             uint32_t coreLoopsInB = CeilDiv(params.T, params.chunkSize);
             uint32_t coreLoops = params.B * coreLoopsInB;
             BlockMmadBdkbg blockMmadBdkbg(resource);
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
                 uint32_t bIdx = loopIdx / coreLoopsInB;
                 uint32_t chunkIdx = loopIdx % coreLoopsInB;
-                GemmCoord blockCoord{0,0,0};
-                GemmCoord actualBlockShape{static_cast<uint32_t>(params.chunkSize),static_cast<uint32_t>(params.K),static_cast<uint32_t>(params.chunkSize)};
+                GemmCoord blockCoord{0, 0, 0};
+                GemmCoord actualBlockShape{static_cast<uint32_t>(params.chunkSize), static_cast<uint32_t>(params.K),
+                                           static_cast<uint32_t>(params.chunkSize)};
                 for (int h = 0; h < params.H; h++) {
                     // Represent the full gm
                     AscendC::GlobalTensor<ElementAT> gmAT;
-                    gmAT.SetGlobalBuffer((__gm__ ElementAT *)params.ptrAT + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.chunkSize);
+                    gmAT.SetGlobalBuffer((__gm__ ElementAT *)params.ptrAT +
+                                         ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) *
+                                             params.chunkSize);
                     AscendC::GlobalTensor<ElementK> gmDw;
-                    gmDw.SetGlobalBuffer((__gm__ ElementDw *)params.ptrDw + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
+                    gmDw.SetGlobalBuffer((__gm__ ElementDw *)params.ptrDw +
+                                         ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
                     AscendC::GlobalTensor<ElementDkbg> gmDkbg;
-                    gmDkbg.SetGlobalBuffer((__gm__ ElementDkbg *)params.ptrDkbg + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
+                    gmDkbg.SetGlobalBuffer((__gm__ ElementDkbg *)params.ptrDkbg +
+                                           ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
 
                     // Represent the full tensors
                     auto tensorAT = tla::MakeTensor(gmAT, params.layoutAT, Arch::PositionGM{});
@@ -304,15 +292,12 @@ public:
 
                     AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
                     // Make tiled views
-                    auto tensorBlockAT = GetTile(tensorAT,
-                                                tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                    auto tensorBlockDw = GetTile(tensorDw,
-                                                tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                    auto tensorBlockDkbg = GetTile(tensorDkbg,
-                                                tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                    auto tensorBlockAT = GetTile(tensorAT, tla::MakeCoord(0, 0),
+                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                    auto tensorBlockDw = GetTile(tensorDw, tla::MakeCoord(0, 0),
+                                                 tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                    auto tensorBlockDkbg = GetTile(tensorDkbg, tla::MakeCoord(0, 0),
+                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadBdkbg(tensorBlockAT, tensorBlockDw, tensorBlockDkbg, actualBlockShape);
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
@@ -322,23 +307,28 @@ public:
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
         }
         AscendC::SyncAll<false>();
-        {//处理第四部分 AT@du -> dvb
+        { //处理第四部分 AT@du -> dvb
             uint32_t coreLoopsInB = CeilDiv(params.T, params.chunkSize);
             uint32_t coreLoops = params.B * coreLoopsInB;
             BlockMmadBdvb blockMmadBdvb(resource);
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
                 uint32_t bIdx = loopIdx / coreLoopsInB;
                 uint32_t chunkIdx = loopIdx % coreLoopsInB;
-                GemmCoord blockCoord{0,0,0};
-                GemmCoord actualBlockShape{static_cast<uint32_t>(params.chunkSize),static_cast<uint32_t>(params.V),static_cast<uint32_t>(params.chunkSize)};
+                GemmCoord blockCoord{0, 0, 0};
+                GemmCoord actualBlockShape{static_cast<uint32_t>(params.chunkSize), static_cast<uint32_t>(params.V),
+                                           static_cast<uint32_t>(params.chunkSize)};
                 for (int h = 0; h < params.H; h++) {
                     // Represent the full gm
                     AscendC::GlobalTensor<ElementAT> gmAT;
-                    gmAT.SetGlobalBuffer((__gm__ ElementAT *)params.ptrAT + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.chunkSize);
+                    gmAT.SetGlobalBuffer((__gm__ ElementAT *)params.ptrAT +
+                                         ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) *
+                                             params.chunkSize);
                     AscendC::GlobalTensor<ElementK> gmDu;
-                    gmDu.SetGlobalBuffer((__gm__ ElementDu *)params.ptrDu + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.V);
+                    gmDu.SetGlobalBuffer((__gm__ ElementDu *)params.ptrDu +
+                                         ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.V);
                     AscendC::GlobalTensor<ElementDvb> gmDvb;
-                    gmDvb.SetGlobalBuffer((__gm__ ElementDvb *)params.ptrDvb + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.V);
+                    gmDvb.SetGlobalBuffer((__gm__ ElementDvb *)params.ptrDvb +
+                                          ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.V);
 
                     // Represent the full tensors
                     auto tensorAT = tla::MakeTensor(gmAT, params.layoutAT, Arch::PositionGM{});
@@ -347,15 +337,12 @@ public:
 
                     AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
                     // Make tiled views
-                    auto tensorBlockAT = GetTile(tensorAT,
-                                                tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                    auto tensorBlockDu = GetTile(tensorDu,
-                                                tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                    auto tensorBlockDvb = GetTile(tensorDvb,
-                                                tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                    auto tensorBlockAT = GetTile(tensorAT, tla::MakeCoord(0, 0),
+                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                    auto tensorBlockDu = GetTile(tensorDu, tla::MakeCoord(0, 0),
+                                                 tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                    auto tensorBlockDvb = GetTile(tensorDvb, tla::MakeCoord(0, 0),
+                                                  tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadBdvb(tensorBlockAT, tensorBlockDu, tensorBlockDvb, actualBlockShape);
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
@@ -365,23 +352,28 @@ public:
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
         }
         AscendC::SyncAll<false>();
-        {//处理第五部分 K@KT -> kkT
+        { //处理第五部分 K@KT -> kkT
             uint32_t coreLoopsInB = CeilDiv(params.T, params.chunkSize);
             uint32_t coreLoops = params.B * coreLoopsInB;
             BlockMmadBkkT blockMmadkkT(resource);
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
                 uint32_t bIdx = loopIdx / coreLoopsInB;
                 uint32_t chunkIdx = loopIdx % coreLoopsInB;
-                GemmCoord blockCoord{0,0,0};
-                GemmCoord actualBlockShape{static_cast<uint32_t>(params.chunkSize),static_cast<uint32_t>(params.chunkSize),static_cast<uint32_t>(params.K)};
+                GemmCoord blockCoord{0, 0, 0};
+                GemmCoord actualBlockShape{static_cast<uint32_t>(params.chunkSize),
+                                           static_cast<uint32_t>(params.chunkSize), static_cast<uint32_t>(params.K)};
                 for (int h = 0; h < params.H; h++) {
                     // Represent the full gm
                     AscendC::GlobalTensor<ElementK> gmK;
-                    gmK.SetGlobalBuffer((__gm__ ElementK *)params.ptrK + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
+                    gmK.SetGlobalBuffer((__gm__ ElementK *)params.ptrK +
+                                        ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
                     AscendC::GlobalTensor<ElementKT> gmKT;
-                    gmKT.SetGlobalBuffer((__gm__ ElementKT *)params.ptrKT + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
+                    gmKT.SetGlobalBuffer((__gm__ ElementKT *)params.ptrKT +
+                                         ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.K);
                     AscendC::GlobalTensor<ElementKKT> gmKKT;
-                    gmKKT.SetGlobalBuffer((__gm__ ElementKKT *)params.ptrKKT + ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) * params.chunkSize);
+                    gmKKT.SetGlobalBuffer((__gm__ ElementKKT *)params.ptrKKT +
+                                          ((bIdx * params.H + h) * params.T + chunkIdx * params.chunkSize) *
+                                              params.chunkSize);
 
                     // Represent the full tensors
                     auto tensorK = tla::MakeTensor(gmK, params.layoutK, Arch::PositionGM{});
@@ -390,15 +382,12 @@ public:
 
                     AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
                     // Make tiled views
-                    auto tensorBlockK = GetTile(tensorK,
-                                                tla::MakeCoord(0, 0),
+                    auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0),
                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                    auto tensorBlockKT = GetTile(tensorKT,
-                                                tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                    auto tensorBlockKKT = GetTile(tensorKKT,
-                                                tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                    auto tensorBlockKT = GetTile(tensorKT, tla::MakeCoord(0, 0),
+                                                 tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                    auto tensorBlockKKT = GetTile(tensorKKT, tla::MakeCoord(0, 0),
+                                                  tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadkkT(tensorBlockK, tensorBlockKT, tensorBlockKKT, actualBlockShape);
                     AscendC::GlobalTensor<ElementKKT> testA;
@@ -414,17 +403,21 @@ public:
         }
     }
 };
-}
+} // namespace Catlass::Gemm::Kernel
 
 template <typename kType, typename betaType>
 class PrepareWyReprBwdFullProcess {
- public:
-     /** @brief constructor */
-    __aicore__ inline PrepareWyReprBwdFullProcess(GM_ADDR k_, GM_ADDR v_, GM_ADDR beta_, GM_ADDR A_, GM_ADDR dA_, GM_ADDR dw_, GM_ADDR du_, GM_ADDR g_, GM_ADDR dk_, GM_ADDR dv_, GM_ADDR dbeta_, GM_ADDR dg_,GM_ADDR workspace_);
+public:
+    /** @brief constructor */
+    __aicore__ inline PrepareWyReprBwdFullProcess(GM_ADDR k_, GM_ADDR v_, GM_ADDR beta_, GM_ADDR A_, GM_ADDR dA_,
+                                                  GM_ADDR dw_, GM_ADDR du_, GM_ADDR g_, GM_ADDR cu_seqlens_,
+                                                  GM_ADDR chunk_indices_, GM_ADDR dk_, GM_ADDR dv_, GM_ADDR dbeta_,
+                                                  GM_ADDR dg_, GM_ADDR workspace_);
 
     __aicore__ inline void Process();
 
-    __aicore__ inline void Init(const PrepareWyReprBwdFullTilingData& tiling);
+    __aicore__ inline void Init(const PrepareWyReprBwdFullTilingData &tiling);
+
 private:
     uint64_t B = 0;
     uint64_t T = 0;
@@ -440,6 +433,8 @@ private:
     GM_ADDR dw;
     GM_ADDR du;
     GM_ADDR g;
+    GM_ADDR cu_seqlens;
+    GM_ADDR chunk_indices;
     GM_ADDR dk;
     GM_ADDR dv;
     GM_ADDR dbeta;
@@ -448,25 +443,16 @@ private:
 };
 
 template <typename kType, typename betaType>
- __aicore__ inline PrepareWyReprBwdFullProcess<kType, betaType>::PrepareWyReprBwdFullProcess(GM_ADDR k_, GM_ADDR v_, GM_ADDR beta_, GM_ADDR A_, GM_ADDR dA_, GM_ADDR dw_, GM_ADDR du_, GM_ADDR g_, GM_ADDR dk_, GM_ADDR dv_, GM_ADDR dbeta_, GM_ADDR dg_,GM_ADDR workspace_)
- :
-    k(k_),
-    v(v_),
-    beta(beta_),
-    A(A_),
-    dA(dA_),
-    dw(dw_),
-    du(du_),
-    g(g_),
-    dk(dk_),
-    dv(dv_),
-    dbeta(dbeta_),
-    dg(dg_),
-    workspace(workspace_)
-    {};
+__aicore__ inline PrepareWyReprBwdFullProcess<kType, betaType>::PrepareWyReprBwdFullProcess(
+    GM_ADDR k_, GM_ADDR v_, GM_ADDR beta_, GM_ADDR A_, GM_ADDR dA_, GM_ADDR dw_, GM_ADDR du_, GM_ADDR g_,
+    GM_ADDR cu_seqlens_, GM_ADDR chunk_indices_, GM_ADDR dk_, GM_ADDR dv_, GM_ADDR dbeta_, GM_ADDR dg_,
+    GM_ADDR workspace_)
+    : k(k_), v(v_), beta(beta_), A(A_), dA(dA_), dw(dw_), du(du_), g(g_), cu_seqlens(cu_seqlens_),
+      chunk_indices(chunk_indices_), dk(dk_), dv(dv_), dbeta(dbeta_), dg(dg_), workspace(workspace_){};
 
 template <typename kType, typename betaType>
-__aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Init(const PrepareWyReprBwdFullTilingData& tiling) {
+__aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Init(const PrepareWyReprBwdFullTilingData &tiling)
+{
     B = tiling.B;
     T = tiling.T;
     H = tiling.H;
@@ -477,8 +463,8 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Init(const 
 }
 
 template <typename kType, typename betaType>
-__aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Process() {
-
+__aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Process()
+{
     //输入
     using LayoutTagA = layout::RowMajor;
     using LayoutTagAT = layout::ColumnMajor;
@@ -532,28 +518,28 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Process() {
     //计算dk第一部分, dA @ Kbeta
     using TileCopyDk =
         Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDA, kType, LayoutTagKbeta, kType, LayoutTagDk>;
-    using BlockMmadDk = Gemm::Block::BlockMmadTla<
-        DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyDk>;
+    using BlockMmadDk =
+        Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyDk>;
 
     using TileCopyDkb =
         Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDAT, kType, LayoutTagK, kType, LayoutTagDkb>;
-    using BlockMmadDkb = Gemm::Block::BlockMmadTla<
-        DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyDkb>;
+    using BlockMmadDkb =
+        Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyDkb>;
 
     using TileCopyDkbg =
         Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagAT, kType, LayoutTagDW, kType, LayoutTagDkbg>;
-    using BlockMmadDkbg = Gemm::Block::BlockMmadTla<
-        DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyDkbg>;
+    using BlockMmadDkbg =
+        Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyDkbg>;
 
     using TileCopyDvb =
         Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagAT, kType, LayoutTagDu, kType, LayoutTagDvb>;
-    using BlockMmadDvb = Gemm::Block::BlockMmadTla<
-        DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyDvb>;
+    using BlockMmadDvb =
+        Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyDvb>;
 
     using TileCopyKKT =
         Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagK, kType, LayoutTagKT, kType, LayoutTagKKT>;
-    using BlockMmadKKT = Gemm::Block::BlockMmadTla<
-        DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyKKT>;
+    using BlockMmadKKT =
+        Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyKKT>;
 
     auto layoutKbeta = MakeLayoutFromTag(tagKbeta);
     auto layoutDA = MakeLayoutFromTag(tagDA);
@@ -569,27 +555,18 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Process() {
     auto layoutKT = MakeLayoutFromTag(tagKT);
     auto layoutKKT = MakeLayoutFromTag(tagKKT);
     // kernel level
-    using MatmulKernel = Gemm::Kernel::PrepareWyReprBwdFullTla<BlockMmadDk, BlockMmadDkb, BlockMmadDkbg, BlockMmadDvb, BlockMmadKKT>;
+    using MatmulKernel =
+        Gemm::Kernel::PrepareWyReprBwdFullTla<BlockMmadDk, BlockMmadDkb, BlockMmadDkbg, BlockMmadDvb, BlockMmadKKT>;
 
     MatmulKernel kernel;
 
-    typename MatmulKernel::Params param{
-        workspace, layoutKbeta,
-        dA, layoutDA,
-        dk, layoutDK,
-        dA, layoutDAT,
-        k, layoutK, 
-        workspace, layoutDkb, 
-        A, layoutAT, 
-        dw, layoutDw, 
-        workspace, layoutDkbg, 
-        du, layoutDu, 
-        workspace, layoutDvb, 
-        k, layoutKT, 
-        workspace, layoutKKT, 
-        B, T, H, K, V, chunkSize, 4};
+    typename MatmulKernel::Params param{workspace, layoutKbeta, dA,        layoutDA,   dk,        layoutDK, dA,
+                                        layoutDAT, k,           layoutK,   workspace,  layoutDkb, A,        layoutAT,
+                                        dw,        layoutDw,    workspace, layoutDkbg, du,        layoutDu, workspace,
+                                        layoutDvb, k,           layoutKT,  workspace,  layoutKKT, B,        T,
+                                        H,         K,           V,         chunkSize,  4};
     kernel(param);
 }
 
 
-#endif  // PREPARE_WY_REPR_BWD_FULL_CUBE_H
+#endif // PREPARE_WY_REPR_BWD_FULL_CUBE_H

@@ -70,7 +70,9 @@ public:
     ge::graphStatus RequiredInputDimNumCheck(const gert::StorageShape *curShape, size_t validDimNum,
                                              const char *inputName)
     {
-        OP_CHECK_IF(curShape == nullptr, OP_LOGE(context_->GetNodeName(), "Input %s is required, but got nullptr.", inputName), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(curShape == nullptr,
+                    OP_LOGE(context_->GetNodeName(), "Input %s is required, but got nullptr.", inputName),
+                    return ge::GRAPH_FAILED);
         const gert::Shape storageShape = curShape->GetStorageShape();
         size_t dimNum = storageShape.GetDimNum();
         OP_CHECK_IF(dimNum != validDimNum,
@@ -90,8 +92,8 @@ public:
         OP_CHECK_IF(RequiredInputDimNumCheck(context_->GetRequiredInputShape(INPUT_V_IDX), DIM_NUM_4, INPUT_V_NAME) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(RequiredInputDimNumCheck(context_->GetRequiredInputShape(INPUT_BETA_IDX), DIM_NUM_3, INPUT_BETA_NAME) !=
-                        ge::GRAPH_SUCCESS,
+        OP_CHECK_IF(RequiredInputDimNumCheck(context_->GetRequiredInputShape(INPUT_BETA_IDX), DIM_NUM_3,
+                                             INPUT_BETA_NAME) != ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
         OP_CHECK_IF(RequiredInputDimNumCheck(context_->GetRequiredInputShape(INPUT_A_IDX), DIM_NUM_4, INPUT_A_NAME) !=
                         ge::GRAPH_SUCCESS,
@@ -202,9 +204,8 @@ public:
     {
         const gert::StorageShape *chunkIndicesShape = context_->GetOptionalInputShape(INPUT_CHUNK_INDICES_IDX);
         OP_CHECK_NULL_WITH_CONTEXT(context_, chunkIndicesShape);
-        OP_CHECK_IF(RequiredInputDimNumCheck(chunkIndicesShape, DIM_2, INPUT_CHUNK_INDICES_NAME) !=
-                        ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
+        OP_CHECK_IF(RequiredInputDimNumCheck(chunkIndicesShape, DIM_2, INPUT_CHUNK_INDICES_NAME) != ge::GRAPH_SUCCESS, ,
+                    return ge::GRAPH_FAILED);
         const gert::Shape chunkIndicesStorageShape = chunkIndicesShape->GetStorageShape();
         int64_t chunkIndicesDim1 = chunkIndicesStorageShape.GetDim(DIM_1);
         OP_CHECK_IF(chunkIndicesDim1 != CHUNK_INDICES_DIM_1_SIZE,
@@ -268,7 +269,7 @@ ge::graphStatus Tiling4PrepareWyReprBwdFull(gert::TilingContext *context)
     uint32_t userWorkspaceSize = 2 * tiling.get_B() * tiling.get_H() * tiling.get_T() * tiling.get_V();
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = userWorkspaceSize + sysWorkspaceSize;
-    context->SetScheduleMode(1);  // set as batchmod for template using SyncAll
+    context->SetScheduleMode(1); // set as batchmod for template using SyncAll
     OP_LOGD(context->GetNodeName(), "Tiling4PrepareWyReprBwdFull end.");
     return ge::GRAPH_SUCCESS;
 }

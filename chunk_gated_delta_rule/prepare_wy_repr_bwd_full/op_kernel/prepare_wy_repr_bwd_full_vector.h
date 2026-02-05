@@ -22,9 +22,12 @@ using namespace AscendC;
 
 template <typename kType, typename betaType>
 class PrepareWyReprBwdFullVectorProcess {
- public:
-     /** @brief constructor */
-    __aicore__ inline PrepareWyReprBwdFullVectorProcess(GM_ADDR k_, GM_ADDR v_, GM_ADDR beta_, GM_ADDR A_, GM_ADDR dA_, GM_ADDR dw_, GM_ADDR du_, GM_ADDR g_, GM_ADDR dk_, GM_ADDR dv_, GM_ADDR dbeta_, GM_ADDR dg_,GM_ADDR workspace_);
+public:
+    /** @brief constructor */
+    __aicore__ inline PrepareWyReprBwdFullVectorProcess(GM_ADDR k_, GM_ADDR v_, GM_ADDR beta_, GM_ADDR A_, GM_ADDR dA_,
+                                                        GM_ADDR dw_, GM_ADDR du_, GM_ADDR g_, GM_ADDR cu_seqlens_,
+                                                        GM_ADDR chunk_indices_, GM_ADDR dk_, GM_ADDR dv_,
+                                                        GM_ADDR dbeta_, GM_ADDR dg_, GM_ADDR workspace_);
 
     __aicore__ inline void Process();
     __aicore__ inline void ProcessKBeta();
@@ -32,7 +35,8 @@ class PrepareWyReprBwdFullVectorProcess {
     __aicore__ inline void ProcessDkbg();
     __aicore__ inline void ProcessDvb();
     __aicore__ inline void ProcessKKT();
-    __aicore__ inline void Init(const PrepareWyReprBwdFullTilingData& tiling, AscendC::TPipe *pipe_);
+    __aicore__ inline void Init(const PrepareWyReprBwdFullTilingData &tiling, AscendC::TPipe *pipe_);
+
 private:
     uint64_t B = 0;
     uint64_t T = 0;
@@ -54,12 +58,15 @@ private:
     GM_ADDR dw;
     GM_ADDR du;
     GM_ADDR g;
+    GM_ADDR cu_seqlens;
+    GM_ADDR chunk_indices;
     GM_ADDR dk;
     GM_ADDR dv;
     GM_ADDR dbeta;
     GM_ADDR dg;
     GM_ADDR workspace;
     AscendC::TPipe *pipe = nullptr;
+
 private:
     GlobalTensor<kType> kTensor;
     GlobalTensor<kType> vTensor;
@@ -112,25 +119,17 @@ private:
 };
 
 template <typename kType, typename betaType>
- __aicore__ inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::PrepareWyReprBwdFullVectorProcess(GM_ADDR k_, GM_ADDR v_, GM_ADDR beta_, GM_ADDR A_, GM_ADDR dA_, GM_ADDR dw_, GM_ADDR du_, GM_ADDR g_, GM_ADDR dk_, GM_ADDR dv_, GM_ADDR dbeta_, GM_ADDR dg_,GM_ADDR workspace_)
- :
-    k(k_),
-    v(v_),
-    beta(beta_),
-    A(A_),
-    dA(dA_),
-    dw(dw_),
-    du(du_),
-    g(g_),
-    dk(dk_),
-    dv(dv_),
-    dbeta(dbeta_),
-    dg(dg_),
-    workspace(workspace_)
-    {};
+__aicore__ inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::PrepareWyReprBwdFullVectorProcess(
+    GM_ADDR k_, GM_ADDR v_, GM_ADDR beta_, GM_ADDR A_, GM_ADDR dA_, GM_ADDR dw_, GM_ADDR du_, GM_ADDR g_,
+    GM_ADDR cu_seqlens_, GM_ADDR chunk_indices_, GM_ADDR dk_, GM_ADDR dv_, GM_ADDR dbeta_, GM_ADDR dg_,
+    GM_ADDR workspace_)
+    : k(k_), v(v_), beta(beta_), A(A_), dA(dA_), dw(dw_), du(du_), g(g_), cu_seqlens(cu_seqlens_),
+      chunk_indices(chunk_indices_), dk(dk_), dv(dv_), dbeta(dbeta_), dg(dg_), workspace(workspace_){};
 
 template <typename kType, typename betaType>
-__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Init(const PrepareWyReprBwdFullTilingData& tiling, AscendC::TPipe *pipe_) {
+__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Init(
+    const PrepareWyReprBwdFullTilingData &tiling, AscendC::TPipe *pipe_)
+{
     pipe = pipe_;
     workSpaceTensor.SetGlobalBuffer((__gm__ kType *)workspace);
     kTensor.SetGlobalBuffer((__gm__ kType *)k);
@@ -159,7 +158,8 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Init(
 }
 
 template <typename kType, typename betaType>
-__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Process() {
+__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Process()
+{
     //计算K * Beta[:None]
     ProcessKBeta();
     pipe->Reset();
@@ -178,7 +178,8 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 }
 
 template <typename kType, typename betaType>
-__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessKKT() {
+__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessKKT()
+{
     uint32_t coreLoopsInB = CeilDiv(T, chunkSize);
     uint32_t coreLoops = B * coreLoopsInB;
     uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
@@ -188,7 +189,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     uint32_t vecTaskIdx = 0;
     uint32_t wholeReduceSumCnt = CeilDiv(chunkSize, FP32_PER_REPEAT_64);
 
-    //init
+    // init
     pipe->InitBuffer(daInQue, 2, rowNum * chunkSize * sizeof(kType));
     pipe->InitBuffer(kktInQue, 2, rowNum * chunkSize * sizeof(kType));
 
@@ -196,7 +197,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     pipe->InitBuffer(daFp32Buf, rowNum * chunkSize * sizeof(float32_t));
     pipe->InitBuffer(betaBuf, chunkSize * sizeof(betaType));
     pipe->InitBuffer(betaFp32Buf, chunkSize * sizeof(float32_t));
-    //daaFp32Buf，dg保存全量当前chunk数据，用于reducesum及累加
+    // daaFp32Buf，dg保存全量当前chunk数据，用于reducesum及累加
     pipe->InitBuffer(daaFp32Buf, chunkSize * chunkSize * sizeof(float32_t));
     pipe->InitBuffer(dgBuf, chunkSize * sizeof(betaType));
     pipe->InitBuffer(reduceSumTmpBuf, chunkSize * ONE_BLOCK_32);
@@ -207,7 +208,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     auto tensorBetaFP32 = betaFp32Buf.Get<float32_t>();
     auto tensorDaaFP32 = daaFp32Buf.Get<float32_t>();
     auto tensorDg = dgBuf.Get<betaType>();
-    
+
     auto tensorReduceSum = reduceSumTmpBuf.Get<float32_t>();
     //复用空间
     auto tensorDgFP32 = kktFp32Buf.Get<float32_t>();
@@ -230,19 +231,19 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                 continue;
             }
             if constexpr (std::is_same<betaType, float32_t>()) {
-                DataCopy(tensorBetaFP32, betaTensor[(bIdx * H + h) * T  + chunkIdx * chunkSize], chunkSize);
+                DataCopy(tensorBetaFP32, betaTensor[(bIdx * H + h) * T + chunkIdx * chunkSize], chunkSize);
             } else {
-                DataCopy(tensorBeta, betaTensor[(bIdx * H + h) * T  + chunkIdx * chunkSize], chunkSize);
+                DataCopy(tensorBeta, betaTensor[(bIdx * H + h) * T + chunkIdx * chunkSize], chunkSize);
                 SetFlag<AscendC::HardEvent::MTE2_V>(0);
                 WaitFlag<AscendC::HardEvent::MTE2_V>(0);
                 Cast(tensorBetaFP32, tensorBeta, RoundMode::CAST_NONE, chunkSize);
             }
             AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
             //分批次处理计算daa
-            for(uint32_t rowOffset = 0;rowOffset < chunkSize; rowOffset += rowNum) {
-                auto dAOffset = ((bIdx * H + h) * T  + chunkIdx * chunkSize + rowOffset) * chunkSize;
-                auto betaOffset = (bIdx * H + h) * T  + chunkIdx * chunkSize + rowOffset;
-                //copyin
+            for (uint32_t rowOffset = 0; rowOffset < chunkSize; rowOffset += rowNum) {
+                auto dAOffset = ((bIdx * H + h) * T + chunkIdx * chunkSize + rowOffset) * chunkSize;
+                auto betaOffset = (bIdx * H + h) * T + chunkIdx * chunkSize + rowOffset;
+                // copyin
                 {
                     auto tensordaIn = daInQue.AllocTensor<kType>();
                     auto tensorKKTin = kktInQue.AllocTensor<kType>();
@@ -253,16 +254,16 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     daInQue.EnQue(tensordaIn);
                     kktInQue.EnQue(tensorKKTin);
                 }
-                //compute
+                // compute
                 {
                     auto tensordaIn = daInQue.DeQue<kType>();
                     auto tensorKKTin = kktInQue.DeQue<kType>();
-                    //cast FP32
+                    // cast FP32
                     Cast(tensorKKTFp32, tensorKKTin, RoundMode::CAST_NONE, chunkSize * rowNum);
                     Cast(tensorDaFp32, tensordaIn, RoundMode::CAST_NONE, chunkSize * rowNum);
                     PipeBarrier<PIPE_V>();
                     // KKT * beta -> KKT
-                    for(int i = 0; i < rowNum; i++) {
+                    for (int i = 0; i < rowNum; i++) {
                         Mul(tensorKKTFp32[i * chunkSize], tensorKKTFp32[i * chunkSize], tensorBetaFP32, chunkSize);
                     }
                     PipeBarrier<PIPE_V>();
@@ -276,18 +277,19 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
             }
             //最后处理daa的sum相减
             {
-                DataCopy(tensorDg, dgTensor[(bIdx * H + h) * T  + chunkIdx * chunkSize], chunkSize);
+                DataCopy(tensorDg, dgTensor[(bIdx * H + h) * T + chunkIdx * chunkSize], chunkSize);
                 SetFlag<AscendC::HardEvent::MTE2_V>(0);
-                //reducesum
-                for(uint32_t row = 0;row < chunkSize; row++) {
-                    WholeReduceSum(tensorReduceSum[row * FP32_PER_BLOCK_8], tensorDaaFP32[row * chunkSize], FP32_PER_REPEAT_64, wholeReduceSumCnt, 1, 1, 8);
+                // reducesum
+                for (uint32_t row = 0; row < chunkSize; row++) {
+                    WholeReduceSum(tensorReduceSum[row * FP32_PER_BLOCK_8], tensorDaaFP32[row * chunkSize],
+                                   FP32_PER_REPEAT_64, wholeReduceSumCnt, 1, 1, 8);
                 }
                 PipeBarrier<PIPE_V>();
                 WholeReduceSum(tensorSum1DaaFP32, tensorReduceSum, wholeReduceSumCnt, chunkSize, 1, 1, 1);
                 uint32_t remain_row = chunkSize;
                 uint32_t CalcCnt = 0;
                 uint32_t Offset = 0;
-                while(remain_row > 1) {
+                while (remain_row > 1) {
                     CalcCnt = (remain_row / 2) * chunkSize;
                     remain_row = CeilDiv(remain_row, 2);
                     Offset = remain_row * chunkSize;
@@ -303,7 +305,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     DataCopy(tensorDgFP32, tensorDg, chunkSize);
                 }
                 PipeBarrier<PIPE_V>();
-                Add(tensorDgFP32Add,tensorDgFP32Add, tensorDgFP32, chunkSize);
+                Add(tensorDgFP32Add, tensorDgFP32Add, tensorDgFP32, chunkSize);
                 PipeBarrier<PIPE_V>();
                 if constexpr (!std::is_same<betaType, float32_t>()) {
                     Cast(tensorDg, tensorDgFP32Add, RoundMode::CAST_RINT, chunkSize);
@@ -312,7 +314,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                 }
                 SetFlag<AscendC::HardEvent::V_MTE3>(0);
                 WaitFlag<AscendC::HardEvent::V_MTE3>(0);
-                DataCopy(dgTensor[(bIdx * H + h) * T  + chunkIdx * chunkSize], tensorDg, chunkSize);
+                DataCopy(dgTensor[(bIdx * H + h) * T + chunkIdx * chunkSize], tensorDg, chunkSize);
             }
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
         }
@@ -322,7 +324,8 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 
 
 template <typename kType, typename betaType>
-__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDvb() {
+__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDvb()
+{
     uint32_t coreLoopsInB = CeilDiv(T, chunkSize);
     uint32_t coreLoops = B * coreLoopsInB;
     uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
@@ -332,7 +335,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     uint32_t vecTaskIdx = 0;
     uint32_t wholeReduceSumCnt = CeilDiv(V, FP32_PER_REPEAT_64);
 
-    //init
+    // init
     pipe->InitBuffer(vInQue, 2, rowNum * V * sizeof(kType));
     pipe->InitBuffer(betaInQue, 2, rowNum * sizeof(betaType));
     pipe->InitBuffer(dbetaInQue, 2, rowNum * sizeof(betaType));
@@ -358,20 +361,20 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 
     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
-    
+
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
         uint32_t bIdx = loopIdx / coreLoopsInB;
         uint32_t chunkIdx = loopIdx % coreLoopsInB;
         for (int h = 0; h < H; h++) {
             AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-            for(uint32_t rowOffset = 0;rowOffset < chunkSize; rowOffset += rowNum) {
+            for (uint32_t rowOffset = 0; rowOffset < chunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                     continue;
                 }
-                auto vOffset = ((bIdx * H + h) * T  + chunkIdx * chunkSize + rowOffset) * V;
-                auto betaOffset = (bIdx * H + h) * T  + chunkIdx * chunkSize + rowOffset;
-                //copyin
+                auto vOffset = ((bIdx * H + h) * T + chunkIdx * chunkSize + rowOffset) * V;
+                auto betaOffset = (bIdx * H + h) * T + chunkIdx * chunkSize + rowOffset;
+                // copyin
                 {
                     auto tensorDvbin = dvbInQue.AllocTensor<kType>();
                     auto tensorVin = vInQue.AllocTensor<kType>();
@@ -379,7 +382,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     auto tensordDbetaIn = dbetaInQue.AllocTensor<betaType>();
 
                     DataCopy(tensorDvbin, workSpaceTensor[vOffset], V * rowNum);
-                    DataCopy(tensorVin, vTensor[vOffset], V * rowNum);     
+                    DataCopy(tensorVin, vTensor[vOffset], V * rowNum);
                     DataCopy(tensorBetain, betaTensor[betaOffset], rowNum);
                     DataCopy(tensordDbetaIn, dbetaTensor[betaOffset], rowNum);
 
@@ -388,7 +391,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     betaInQue.EnQue(tensorBetain);
                     dbetaInQue.EnQue(tensordDbetaIn);
                 }
-                //compute
+                // compute
                 {
                     auto tensorDvbin = dvbInQue.DeQue<kType>();
                     auto tensorVin = vInQue.DeQue<kType>();
@@ -397,7 +400,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 
                     auto tensorDvOut = dvOutQue.AllocTensor<kType>();
                     auto tensorDbetaOut = dBetaOutQue.AllocTensor<betaType>();
-                    //cast FP32
+                    // cast FP32
                     if constexpr (!std::is_same<betaType, float32_t>()) {
                         Cast(tensorBetaFP32, tensorBetain, RoundMode::CAST_NONE, rowNum);
                         Cast(tensorDbetaFP32, tensorDbetain, RoundMode::CAST_NONE, rowNum);
@@ -409,7 +412,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 
                     Cast(tensorVFp32, tensorVin, RoundMode::CAST_NONE, V * rowNum);
                     PipeBarrier<PIPE_V>();
-                    //brcb(beta)  dvb * v -> v
+                    // brcb(beta)  dvb * v -> v
                     Brcb(tensorBetaBrcbFP32, tensorBetaFP32, static_cast<uint8_t>(rowNum / 8), {1, 8});
                     Mul(tensorVFp32, tensorVFp32, tensorDvbFp32, V * rowNum);
                     PipeBarrier<PIPE_V>();
@@ -422,9 +425,10 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                         perchannelResOffset += FP32_PER_REPEAT_64;
                     }
                     PipeBarrier<PIPE_V>();
-                    //reducesum
-                    for(uint32_t row = 0;row < rowNum; row++) {
-                        WholeReduceSum(tensorReduceSum[row * FP32_PER_BLOCK_8], tensorVFp32[row * V], FP32_PER_REPEAT_64, wholeReduceSumCnt, 1, 1, 8);
+                    // reducesum
+                    for (uint32_t row = 0; row < rowNum; row++) {
+                        WholeReduceSum(tensorReduceSum[row * FP32_PER_BLOCK_8], tensorVFp32[row * V],
+                                       FP32_PER_REPEAT_64, wholeReduceSumCnt, 1, 1, 8);
                     }
                     PipeBarrier<PIPE_V>();
                     WholeReduceSum(tensorDbetaAddFP32, tensorReduceSum, wholeReduceSumCnt, rowNum, 1, 1, 1);
@@ -447,7 +451,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     dvOutQue.EnQue(tensorDvOut);
                     dBetaOutQue.EnQue(tensorDbetaOut);
                 }
-                //copyout
+                // copyout
                 {
                     auto tensorDvOut = dvOutQue.DeQue<kType>();
                     auto tensorDbetaOut = dBetaOutQue.DeQue<betaType>();
@@ -464,7 +468,8 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 }
 
 template <typename kType, typename betaType>
-__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkbg() {
+__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkbg()
+{
     uint32_t coreLoopsInB = CeilDiv(T, chunkSize);
     uint32_t coreLoops = B * coreLoopsInB;
     uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
@@ -474,7 +479,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     uint32_t vecTaskIdx = 0;
     uint32_t wholeReduceSumCnt = CeilDiv(K, FP32_PER_REPEAT_64);
 
-    //init
+    // init
     pipe->InitBuffer(kInQue, 2, rowNum * K * sizeof(kType));
     pipe->InitBuffer(betaInQue, 2, rowNum * sizeof(betaType));
     pipe->InitBuffer(gInQue, 2, rowNum * sizeof(betaType));
@@ -511,20 +516,20 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
-    
+
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
         uint32_t bIdx = loopIdx / coreLoopsInB;
         uint32_t chunkIdx = loopIdx % coreLoopsInB;
         for (int h = 0; h < H; h++) {
             AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-            for(uint32_t rowOffset = 0;rowOffset < chunkSize; rowOffset += rowNum) {
+            for (uint32_t rowOffset = 0; rowOffset < chunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                     continue;
                 }
-                auto kOffset = ((bIdx * H + h) * T  + chunkIdx * chunkSize + rowOffset) * K;
-                auto betaOffset = (bIdx * H + h) * T  + chunkIdx * chunkSize + rowOffset;
-                //copyin
+                auto kOffset = ((bIdx * H + h) * T + chunkIdx * chunkSize + rowOffset) * K;
+                auto betaOffset = (bIdx * H + h) * T + chunkIdx * chunkSize + rowOffset;
+                // copyin
                 {
                     auto tensorDkbgin = dkbgInQue.AllocTensor<kType>();
                     auto tensorKin = kInQue.AllocTensor<kType>();
@@ -534,7 +539,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     auto tensordDbetaIn = dbetaInQue.AllocTensor<betaType>();
 
                     DataCopy(tensorDkbgin, workSpaceTensor[kOffset], K * rowNum);
-                    DataCopy(tensorKin, kTensor[kOffset], K * rowNum);     
+                    DataCopy(tensorKin, kTensor[kOffset], K * rowNum);
                     DataCopy(tensorBetain, betaTensor[betaOffset], rowNum);
                     DataCopy(tensorGin, gTensor[betaOffset], rowNum);
                     DataCopy(tensorDkin, dkTensor[kOffset], K * rowNum);
@@ -547,7 +552,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     dkInQue.EnQue(tensorDkin);
                     dbetaInQue.EnQue(tensordDbetaIn);
                 }
-                //compute
+                // compute
                 {
                     auto tensorDkbgin = dkbgInQue.DeQue<kType>();
                     auto tensorKin = kInQue.DeQue<kType>();
@@ -559,7 +564,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     auto tensorDkOut = dkOutQue.AllocTensor<kType>();
                     auto tensorDbetaOut = dBetaOutQue.AllocTensor<betaType>();
                     auto tensorDgOut = dgOutQue.AllocTensor<betaType>();
-                    //cast FP32
+                    // cast FP32
                     if constexpr (!std::is_same<betaType, float32_t>()) {
                         Cast(tensorBetaFP32, tensorBetain, RoundMode::CAST_NONE, rowNum);
                         Cast(tensorGFP32, tensorGin, RoundMode::CAST_NONE, rowNum);
@@ -576,7 +581,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     // exp(g) ->g
                     Exp(tensorGFP32, tensorGFP32, rowNum);
                     PipeBarrier<PIPE_V>();
-                    //brcb(gexp)  brcb(beta)
+                    // brcb(gexp)  brcb(beta)
                     Brcb(tensorGbrcbFP32, tensorGFP32, static_cast<uint8_t>(rowNum / 8), {1, 8});
                     Brcb(tensorBetaBrcbFP32, tensorBetaFP32, static_cast<uint8_t>(rowNum / 8), {1, 8});
                     PipeBarrier<PIPE_V>();
@@ -590,7 +595,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     }
                     PipeBarrier<PIPE_V>();
                     // dkbg(dkbg * gexp) * k ->k
-                    
+
                     Mul(tensorKFp32, tensorKFp32, tensorDkbgFp32, K * rowNum);
                     PipeBarrier<PIPE_V>();
                     perchannelResOffset = 0;
@@ -600,10 +605,12 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                         perchannelResOffset += FP32_PER_REPEAT_64;
                     }
 
-                    //reducesum
-                    for(uint32_t row = 0;row < rowNum; row++) {
-                        WholeReduceSum(tensorKFp32[row * FP32_PER_BLOCK_8], tensorKFp32[row * K], FP32_PER_REPEAT_64, wholeReduceSumCnt, 1, 1, 8);
-                        WholeReduceSum(tensorDkFp32[row * FP32_PER_BLOCK_8], tensorDkFp32[row * K], FP32_PER_REPEAT_64, wholeReduceSumCnt, 1, 1, 8);
+                    // reducesum
+                    for (uint32_t row = 0; row < rowNum; row++) {
+                        WholeReduceSum(tensorKFp32[row * FP32_PER_BLOCK_8], tensorKFp32[row * K], FP32_PER_REPEAT_64,
+                                       wholeReduceSumCnt, 1, 1, 8);
+                        WholeReduceSum(tensorDkFp32[row * FP32_PER_BLOCK_8], tensorDkFp32[row * K], FP32_PER_REPEAT_64,
+                                       wholeReduceSumCnt, 1, 1, 8);
                     }
                     PipeBarrier<PIPE_V>();
                     WholeReduceSum(tensorDbetaAddFP32, tensorKFp32, wholeReduceSumCnt, rowNum, 1, 1, 1);
@@ -616,8 +623,8 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     // 计算当前dk公式为 dkbg(dkbg * gexp) * beta -> dkbg
                     perchannelResOffset = 0;
                     while (perchannelResOffset < K) {
-                        Mul(tensorDkbgFp32[perchannelResOffset], tensorDkbgFp32[perchannelResOffset], tensorBetaBrcbFP32,
-                            FP32_PER_REPEAT_64, rowNum, {1, 1, 0, repeatStride, repeatStride, 1});
+                        Mul(tensorDkbgFp32[perchannelResOffset], tensorDkbgFp32[perchannelResOffset],
+                            tensorBetaBrcbFP32, FP32_PER_REPEAT_64, rowNum, {1, 1, 0, repeatStride, repeatStride, 1});
                         perchannelResOffset += FP32_PER_REPEAT_64;
                     }
                     Cast(tensorDkFp32, tensorDkin, RoundMode::CAST_NONE, K * rowNum);
@@ -644,7 +651,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     dBetaOutQue.EnQue(tensorDbetaOut);
                     dgOutQue.EnQue(tensorDgOut);
                 }
-                //copyout
+                // copyout
                 {
                     auto tensorDkOut = dkOutQue.DeQue<kType>();
                     auto tensorDbetaOut = dBetaOutQue.DeQue<betaType>();
@@ -656,9 +663,8 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     dBetaOutQue.FreeTensor(tensorDbetaOut);
                     dgOutQue.FreeTensor(tensorDgOut);
                 }
-                
             }
-            
+
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
         }
     }
@@ -666,7 +672,8 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 }
 
 template <typename kType, typename betaType>
-__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkb() {
+__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkb()
+{
     uint32_t coreLoopsInB = CeilDiv(T, chunkSize);
     uint32_t coreLoops = B * coreLoopsInB;
     uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
@@ -676,7 +683,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     uint32_t vecTaskIdx = 0;
     uint32_t wholeReduceSumCnt = CeilDiv(K, FP32_PER_REPEAT_64);
 
-    //init
+    // init
     pipe->InitBuffer(kInQue, 2, rowNum * K * sizeof(kType));
     pipe->InitBuffer(betaInQue, 2, rowNum * sizeof(betaType));
     pipe->InitBuffer(dkInQue, 2, rowNum * K * sizeof(kType));
@@ -707,14 +714,14 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
         uint32_t chunkIdx = loopIdx % coreLoopsInB;
         for (int h = 0; h < H; h++) {
             AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-            for(uint32_t rowOffset = 0;rowOffset < chunkSize; rowOffset += rowNum) {
+            for (uint32_t rowOffset = 0; rowOffset < chunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                     continue;
                 }
-                auto kOffset = ((bIdx * H + h) * T  + chunkIdx * chunkSize + rowOffset) * K;
-                auto betaOffset = (bIdx * H + h) * T  + chunkIdx * chunkSize + rowOffset;
-                //copyin
+                auto kOffset = ((bIdx * H + h) * T + chunkIdx * chunkSize + rowOffset) * K;
+                auto betaOffset = (bIdx * H + h) * T + chunkIdx * chunkSize + rowOffset;
+                // copyin
                 {
                     auto tensorDkbin = dkbInQue.AllocTensor<kType>();
                     auto tensorKin = kInQue.AllocTensor<kType>();
@@ -725,13 +732,13 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     DataCopy(tensorKin, kTensor[kOffset], K * rowNum);
                     DataCopy(tensorBetain, betaTensor[betaOffset], rowNum);
                     DataCopy(tensorDkin, dkTensor[kOffset], K * rowNum);
-                    
+
                     dkbInQue.EnQue(tensorDkbin);
                     kInQue.EnQue(tensorKin);
                     betaInQue.EnQue(tensorBetain);
                     dkInQue.EnQue(tensorDkin);
                 }
-                //compute
+                // compute
                 {
                     auto tensorDkbin = dkbInQue.DeQue<kType>();
                     auto tensorKin = kInQue.DeQue<kType>();
@@ -740,7 +747,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 
                     auto tensorDkOut = dkOutQue.AllocTensor<kType>();
                     auto tensorDbetaOut = dBetaOutQue.AllocTensor<betaType>();
-                    //cast FP32
+                    // cast FP32
                     if constexpr (!std::is_same<betaType, float32_t>()) {
                         Cast(tensorBetaFP32, tensorBetain, RoundMode::CAST_NONE, rowNum);
                     } else {
@@ -750,10 +757,10 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     Cast(tensorDkbFp32, tensorDkbin, RoundMode::CAST_NONE, K * rowNum);
                     Cast(tensorDkFp32, tensorDkin, RoundMode::CAST_NONE, K * rowNum);
                     PipeBarrier<PIPE_V>();
-                    //brcb
-                    Brcb(tensorBetaBrcbFP32, tensorBetaFP32, static_cast<uint8_t>(rowNum /8), {1, 8});
+                    // brcb
+                    Brcb(tensorBetaBrcbFP32, tensorBetaFP32, static_cast<uint8_t>(rowNum / 8), {1, 8});
                     PipeBarrier<PIPE_V>();
-                    //mul
+                    // mul
                     Mul(tensorKFp32, tensorKFp32, tensorDkbFp32, K * rowNum);
                     PipeBarrier<PIPE_V>();
                     uint64_t perchannelResOffset = 0;
@@ -764,9 +771,10 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                         perchannelResOffset += FP32_PER_REPEAT_64;
                     }
                     // DumpTensor(tensorKFp32, 1,  K * rowNum);
-                    //reducesum
-                    for(uint32_t row = 0;row < rowNum; row++) {
-                        WholeReduceSum(tensorReduceSum[row * FP32_PER_BLOCK_8], tensorKFp32[row * K], FP32_PER_REPEAT_64, wholeReduceSumCnt, 1, 1, 8);
+                    // reducesum
+                    for (uint32_t row = 0; row < rowNum; row++) {
+                        WholeReduceSum(tensorReduceSum[row * FP32_PER_BLOCK_8], tensorKFp32[row * K],
+                                       FP32_PER_REPEAT_64, wholeReduceSumCnt, 1, 1, 8);
                     }
                     PipeBarrier<PIPE_V>();
                     WholeReduceSum(tensorBetaFP32, tensorReduceSum, wholeReduceSumCnt, rowNum, 1, 1, 1);
@@ -789,7 +797,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     dkOutQue.EnQue(tensorDkOut);
                     dBetaOutQue.EnQue(tensorDbetaOut);
                 }
-                //copyout
+                // copyout
                 {
                     auto tensorDkOut = dkOutQue.DeQue<kType>();
                     auto tensorDbetaOut = dBetaOutQue.DeQue<betaType>();
@@ -798,9 +806,8 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     dkOutQue.FreeTensor(tensorDkOut);
                     dBetaOutQue.FreeTensor(tensorDbetaOut);
                 }
-                
             }
-            
+
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
         }
     }
@@ -808,7 +815,8 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 }
 
 template <typename kType, typename betaType>
-__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessKBeta() {
+__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessKBeta()
+{
     uint32_t coreLoopsInB = CeilDiv(T, chunkSize);
     uint32_t coreLoops = B * coreLoopsInB;
     uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
@@ -817,7 +825,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     uint32_t rowOffset = 0;
     uint32_t vecTaskIdx = 0;
 
-    //init
+    // init
     pipe->InitBuffer(kInQue, 2, rowNum * K * sizeof(kType));
     pipe->InitBuffer(betaInQue, 2, rowNum * sizeof(betaType));
     pipe->InitBuffer(kBetaOutQue, 2, rowNum * K * sizeof(kType));
@@ -833,15 +841,15 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
         uint32_t bIdx = loopIdx / coreLoopsInB;
         uint32_t chunkIdx = loopIdx % coreLoopsInB;
         for (int h = 0; h < H; h++) {
-            for(uint32_t rowOffset = 0;rowOffset < chunkSize; rowOffset += rowNum) {
+            for (uint32_t rowOffset = 0; rowOffset < chunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                     continue;
                 }
-                auto kOffset = ((bIdx * H + h) * T  + chunkIdx * chunkSize + rowOffset) * K;
-                auto betaOffset = (bIdx * H + h) * T  + chunkIdx * chunkSize + rowOffset;
+                auto kOffset = ((bIdx * H + h) * T + chunkIdx * chunkSize + rowOffset) * K;
+                auto betaOffset = (bIdx * H + h) * T + chunkIdx * chunkSize + rowOffset;
                 AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-                //copyin
+                // copyin
                 {
                     auto tensorKin = kInQue.AllocTensor<kType>();
                     DataCopy(tensorKin, kTensor[kOffset], K * rowNum);
@@ -851,12 +859,12 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     kInQue.EnQue(tensorKin);
                     betaInQue.EnQue(tensorBetain);
                 }
-                //compute
+                // compute
                 {
                     auto tensorKin = kInQue.DeQue<kType>();
                     auto tensorBetain = betaInQue.DeQue<betaType>();
                     auto tensorOut = kBetaOutQue.AllocTensor<kType>();
-                    //cast FP32
+                    // cast FP32
                     if constexpr (!std::is_same<betaType, float32_t>()) {
                         Cast(tensorBetaFP32, tensorBetain, RoundMode::CAST_NONE, rowNum);
                     } else {
@@ -864,10 +872,10 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     }
                     Cast(tensorKFp32, tensorKin, RoundMode::CAST_NONE, K * rowNum);
                     PipeBarrier<PIPE_V>();
-                    //brcb
-                    Brcb(tensorBetaBrcbFP32, tensorBetaFP32, static_cast<uint8_t>(rowNum /8), {1, 8});
+                    // brcb
+                    Brcb(tensorBetaBrcbFP32, tensorBetaFP32, static_cast<uint8_t>(rowNum / 8), {1, 8});
                     PipeBarrier<PIPE_V>();
-                    //mul
+                    // mul
                     uint64_t perchannelResOffset = 0;
                     uint8_t repeatStride = K * sizeof(float32_t) / ONE_BLOCK_32;
                     while (perchannelResOffset < K) {
@@ -881,7 +889,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     betaInQue.FreeTensor(tensorBetain);
                     kBetaOutQue.EnQue(tensorOut);
                 }
-                //copyout
+                // copyout
                 {
                     auto tensorOut = kBetaOutQue.DeQue<kType>();
                     DataCopy(workSpaceTensor[kOffset], tensorOut, K * rowNum);
@@ -899,5 +907,4 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 }
 
 
-
-#endif  // PREPARE_WY_REPR_BWD_FULL_VECTOR_H
+#endif // PREPARE_WY_REPR_BWD_FULL_VECTOR_H

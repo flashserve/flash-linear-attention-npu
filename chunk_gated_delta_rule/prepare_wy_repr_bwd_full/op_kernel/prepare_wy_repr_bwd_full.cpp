@@ -19,22 +19,25 @@
 #include "lib/matmul_intf.h"
 // #include "kernel_basic_intf.h"
 using namespace AscendC;
-__global__ __aicore__ void prepare_wy_repr_bwd_full(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADDR dA, GM_ADDR dw, GM_ADDR du, GM_ADDR g, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
-                                                    GM_ADDR dk, GM_ADDR dv, GM_ADDR dbeta, GM_ADDR dg, GM_ADDR workspace, GM_ADDR tiling)
+__global__ __aicore__ void prepare_wy_repr_bwd_full(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADDR dA,
+                                                    GM_ADDR dw, GM_ADDR du, GM_ADDR g, GM_ADDR cu_seqlens,
+                                                    GM_ADDR chunk_indices, GM_ADDR dk, GM_ADDR dv, GM_ADDR dbeta,
+                                                    GM_ADDR dg, GM_ADDR workspace, GM_ADDR tiling)
 {
     AscendC::AscendCUtils::SetOverflow(1);
     GET_TILING_DATA(tilingData, tiling);
-    // AscendC::printf("dA(%p), workspace(%p),dk(%p)\n",dA, workspace, dk);
     if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
-        if ASCEND_IS_AIC{
-            PrepareWyReprBwdFullProcess<DTYPE_K,DTYPE_BETA> prepareWyReprBwdFullProcess(k, v, beta, A, dA, dw, du, g, dk, dv, dbeta, dg, workspace);
+        if ASCEND_IS_AIC {
+            PrepareWyReprBwdFullProcess<DTYPE_K, DTYPE_BETA> prepareWyReprBwdFullProcess(
+                k, v, beta, A, dA, dw, du, g, cu_seqlens, chunk_indices, dk, dv, dbeta, dg, workspace);
             prepareWyReprBwdFullProcess.Init(tilingData);
             prepareWyReprBwdFullProcess.Process();
         }
-        if ASCEND_IS_AIV{
+        if ASCEND_IS_AIV {
             AscendC::TPipe tPipe;
-            PrepareWyReprBwdFullVectorProcess<DTYPE_K,DTYPE_BETA> prepareWyReprBwdFullVectorProcess(k, v, beta, A, dA, dw, du, g, dk, dv, dbeta, dg, workspace);
+            PrepareWyReprBwdFullVectorProcess<DTYPE_K, DTYPE_BETA> prepareWyReprBwdFullVectorProcess(
+                k, v, beta, A, dA, dw, du, g, cu_seqlens, chunk_indices, dk, dv, dbeta, dg, workspace);
             prepareWyReprBwdFullVectorProcess.Init(tilingData, &tPipe);
             prepareWyReprBwdFullVectorProcess.Process();
         }
