@@ -637,11 +637,11 @@ __aicore__ inline void GDRCube<DT>::Process()
     LayoutTagDh tagDh = LayoutTagDh::MakeLayout<ElementHalf>(this->K, this->V);
     LayoutTagBdv tagBdv = LayoutTagBdv::MakeLayout<ElementHalf>(this->chunkSize, this->V);
 
-    LayoutTagGq tagGq = LayoutTagGq::MakeLayout<ElementHalf>(this->chunkSize, this->K);
+    LayoutTagGq tagGq = LayoutTagGq::MakeLayout<ElementHalf>(this->K, this->chunkSize);
     LayoutTagDo tagDo = LayoutTagDo::MakeLayout<ElementHalf>(this->T, this->V);
     LayoutTagBdh tagBdh = LayoutTagBdh::MakeLayout<ElementHalf>(this->K, this->V);
 
-    LayoutTagW tagW = LayoutTagW::MakeLayout<ElementHalf>(this->chunkSize, this->K);
+    LayoutTagW tagW = LayoutTagW::MakeLayout<ElementHalf>(this->K, this->T);
     LayoutTagDv2 tagDv2 = LayoutTagDv2::MakeLayout<ElementHalf>(this->T, this->V);
 
     LayoutTagCuSeqlens tagCuSeqlens = LayoutTagCuSeqlens::MakeLayout<int64_t>(1, this->seqNum + 1);

@@ -272,7 +272,7 @@ __aicore__ inline void GDRVec<DT>::CalcDv2(const float gLast, uint64_t& curGmOff
         CopyIn(this->dvCastLocal, this->vInLocal, this->dvGm[curGmOffsetV], this->dvBufSize, false);
         SetFlag<HardEvent::MTE2_MTE3>(EVENT_MTE2_MTE3);
         WaitFlag<HardEvent::MTE2_MTE3>(EVENT_MTE2_MTE3);
-        CopyOut(this->vInLocal, this->dvCastLocal, this->dv2Gm[curGmOffsetV], this->qBufSize, false);
+        CopyOut(this->vInLocal, this->dvCastLocal, this->dv2Gm[curGmOffsetV], this->dvBufSize, false);
     } else {
         CopyIn(this->dvCastLocal, this->vInLocal, this->dvGm[curGmOffsetV], this->dvBufSize);
         // 64k
@@ -286,8 +286,8 @@ __aicore__ inline void GDRVec<DT>::CalcDv2(const float gLast, uint64_t& curGmOff
         CrossCoreWaitFlag(CROSS_CORE_C2V_BDV); // cube计算完一个chunk的bdv,vec开始计算对应的dv2
         CopyIn(this->bdvCastLocal, this->vInLocal, this->bdvGm[bdvOffset], this->dvBufSize);
         BlockMul(this->bdvCastLocal, this->gBrcbLocal, this->bdvCastLocal, this->halfBT, this->V);
-        Add(this->bdvCastLocal, this->bdvCastLocal, this->dvCastLocal, this->qBufSize);
-        CopyOut(this->vInLocal, this->bdvCastLocal, this->dv2Gm[curGmOffsetV], this->qBufSize);
+        Add(this->bdvCastLocal, this->bdvCastLocal, this->dvCastLocal, this->dvBufSize);
+        CopyOut(this->vInLocal, this->bdvCastLocal, this->dv2Gm[curGmOffsetV], this->dvBufSize);
     }
     CrossCoreSetFlag<0x2, PIPE_MTE3>(CROSS_CORE_V2C_DV2); // 计算完一个chunk的dv2,通知cube可以开始计算w @ dv2 
 }

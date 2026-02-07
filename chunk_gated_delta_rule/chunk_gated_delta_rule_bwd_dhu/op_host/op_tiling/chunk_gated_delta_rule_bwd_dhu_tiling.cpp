@@ -114,7 +114,7 @@ bool ChunkGatedDeltaRuleBwdDhuTiling::VarLenSetting(gert::TilingContext* context
     tilingData.set_seqNum(1);
   } else {
     auto seqNum = cuSeqlens->GetShapeSize() - 1;
-    auto chunkNum = chunkIndices->GetShapeSize() / 2;
+    auto chunkNum = chunkIndices->GetShapeSize() / NUM_2;
     tilingData.set_seqNum(seqNum);
     tilingData.set_chunkNum(chunkNum);
   }
@@ -146,7 +146,6 @@ bool ChunkGatedDeltaRuleBwdDhuTiling::CalcUb(gert::TilingContext *context) {
   uint32_t tBufByte = std::max(NUM_2 * dhCastBufByte,
       gCastBufByte + gBrcbBufByte + dvBufByte + NUM_2 * dvCastBufByte);
   
-  printf("tBufByte is %lu\n", tBufByte);
   auto platformInfoPtr = context->GetPlatformInfo();
   auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
   uint64_t maxUbSize = 0;

@@ -41,8 +41,8 @@ int64_t GetShapeSize(const std::vector<int64_t> &shape) {
 }
 
 void PrintOutResult(std::vector<int64_t> &shape, void **deviceAddr) {
-  auto size = GetShapeSize(shape);
-  std::vector<float> resultData(size, 0);
+  int64_t size = GetShapeSize(shape);
+  std::vector<short> resultData(size, 0);
   auto ret = aclrtMemcpy(
       resultData.data(), resultData.size() * sizeof(resultData[0]), *deviceAddr,
       size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
@@ -147,16 +147,15 @@ int main() {
             return ret);
 
   // 2. 构造输入与输出，需要根据API的接口自定义构造
-  int64_t B = 2;
-  int64_t T = 1024;
+  int64_t B = 1;
+  int64_t T = 32768;
   int64_t H = 32;
-  int64_t V = 256;
   int64_t K = 128;
-  int64_t chunk_size = 128;
+  int64_t V = 128;
+  int64_t chunk_size = 64;
   int64_t chunk_num = T/chunk_size;
 
-  std::vector<int64_t> cuSeqlensHostData = {0, 256, 768, 1792}; // [0, 2, 4, ]
-  // std::vector<int64_t> cuSeqlensHostData = {0, 128, 256};
+  std::vector<int64_t> cuSeqlensHostData = {0, 1024, 2048, 4096, 8192, 10240, 20480, 32768}; // [0, 2, 4, ]
   std::vector<int64_t> chunkIndicesHostData = get_chunk_indices(cuSeqlensHostData,chunk_size);
 
   int64_t NT = static_cast<int64_t>(chunkIndicesHostData.size()) / 2;
@@ -168,8 +167,6 @@ int main() {
   std::vector<int64_t> doShape = {B, H, T, V};
   std::vector<int64_t> dvShape = {B, H, T, V};
   std::vector<int64_t> gShape = {B, H, T};
-  // std::vector<int64_t> cuSeqlensShape = {static_cast<int64_t>(cuSeqlensHostData.size())};
-  // std::vector<int64_t> chunkIndicesShape = {NT, 2};
   uint64_t cuSeqlensSize = cuSeqlensHostData.size();
   uint64_t chunkIndicesSize = NT*2;
 
@@ -245,15 +242,11 @@ int main() {
   aclOpExecutor *executor;
 
   // 调用aclnnChunkGatedDeltaRuleBwdDhu第一段接口
-  std::cout << "aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize >>>>>" << std::endl;
-  
-  // ret = aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(q, k, w, d_o, dv, g, nullptr, nullptr, nullptr, cuSeqlens, chunkIndices, scale, chunk_size, dh, dh0, dv2, &workspaceSize, &executor);
-  ret = aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(q, k, w, d_o, dv, g, nullptr, nullptr, nullptr, nullptr, nullptr, scale, chunk_size, dh, dh0, dv2, &workspaceSize, &executor);
+  ret = aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(q, k, w, d_o, dv, g, nullptr, nullptr, nullptr, cuSeqlens, chunkIndices, scale, chunk_size, dh, dh0, dv2, &workspaceSize, &executor);
   CHECK_RET(
       ret == ACL_SUCCESS,
       LOG_PRINT("aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize failed. ERROR: %d\n", ret);
       return ret);
-  std::cout << "aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize >>>>> end " << std::endl;
 
   // 根据第一段接口计算出的workspaceSize申请device内存
   void *workspaceAddr = nullptr;
@@ -263,25 +256,20 @@ int main() {
               LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret);
               return ret);
   }
-  std::cout << "allocate workspace >>>>> end " << std::endl;
 
   // 调用aclnnChunkGatedDeltaRuleBwdDhu第二段接口
   ret = aclnnChunkGatedDeltaRuleBwdDhu(workspaceAddr, workspaceSize, executor, stream);
   CHECK_RET(ret == ACL_SUCCESS,
             LOG_PRINT("aclnnChunkGatedDeltaRuleBwdDhu failed. ERROR: %d\n", ret);
             return ret);
-  // std::cout << "调用aclnnChunkGatedDeltaRuleBwdDhu第二段接口 end " << std::endl;
 
   // 4. （固定写法）同步等待任务执行结束
   ret = aclrtSynchronizeStream(stream);
   CHECK_RET(ret == ACL_SUCCESS,
             LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret);
             return ret);
-  // std::cout << "aclrtSynchronizeStream end " << std::endl;
 
   // 5.获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
-  // LOG_PRINT("d_v2 \n");
-  // PrintOutResult(dv2Shape, &dv2DeviceAddr);
   LOG_PRINT("d_h \n");
   PrintOutResult(dhShape, &dhDeviceAddr);
   // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
