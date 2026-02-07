@@ -490,7 +490,6 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
     pipe->InitBuffer(gOutQue, 2, rowNum * sizeof(kType));
     // 向外搬出最终的结果
     auto tensorGfp32 = gFp32Buf.Get<float32_t>();
-    auto tensorGBrcbfp32 = gFp32BrcbRowBuf.Get<float32_t>();
     auto tensorGCalfp32 = gFp32CalBuf.Get<float32_t>();
     auto tensorMdAfp32 = mdAFp32Buf.Get<float32_t>();
 
@@ -506,6 +505,7 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
             AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
+                AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
                 continue;
             }
             // auto gOffset = (bIdx * H + h) * T  + chunkIdx * BT + rowOffset;
