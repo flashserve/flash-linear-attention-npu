@@ -279,8 +279,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     PipeBarrier<PIPE_V>();
                     // KKT * beta -> KKT
                     for (int i = 0; i < curRowNum; i++) {
-                        Mul(tensorKKTFp32[i * chunk
-                            Size], tensorKKTFp32[i * chunkSize], tensorBetaFP32, curChunkSize);
+                        Mul(tensorKKTFp32[i * chunkSize], tensorKKTFp32[i * chunkSize], tensorBetaFP32, curChunkSize);
                     }
                     PipeBarrier<PIPE_V>();
                     // da * KKT(KKT * beta) -> da_A
