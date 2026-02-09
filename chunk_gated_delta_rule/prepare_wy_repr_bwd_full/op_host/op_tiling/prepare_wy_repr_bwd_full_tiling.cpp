@@ -56,10 +56,19 @@ static constexpr const char *const INPUT_DU_NAME = "du";
 static constexpr const char *const INPUT_G_NAME = "g";
 static constexpr const char *const INPUT_CHUNK_INDICES_NAME = "chunk_indices";
 
+static constexpr uint64_t SIZE_HALF = 2;
+static constexpr uint64_t SIZE_FP32 = 4;
+constexpr uint64_t ONE_BLOCK_32 = 32;
 
 class PrepareWyReprBwdFullTilingProcessor {
     gert::TilingContext *context_;
     PrepareWyReprBwdFullTilingData &tiling_;
+    int64_t B = 0;
+    int64_t H = 0;
+    int64_t K = 0;
+    int64_t V = 0;
+    int64_t T = 0;
+    int64_t chunkSize = 0;
 
 public:
     explicit PrepareWyReprBwdFullTilingProcessor(gert::TilingContext *context, PrepareWyReprBwdFullTilingData &tiling)
@@ -131,7 +140,179 @@ public:
         }
         return ge::GRAPH_SUCCESS;
     }
+    ge::graphStatus SetKBeteVecRow(uint64_t ubSize, ge::DataType kType, ge::DataType betaType)
+    {
+        uint64_t rowNum = chunkSize / 2;
+        uint64_t sizeofKType = SIZE_FP32;
+        uint64_t sizeofBetaType = SIZE_FP32;
+        if (kType != ge::DataType::DT_FLOAT) {
+            sizeofKType = SIZE_HALF;
+        }
+        if (betaType != ge::DataType::DT_FLOAT) {
+            sizeofBetaType = SIZE_HALF;
+        }
+        while (rowNum >= 8) {
+            uint64_t useUbSize = 0;
+            useUbSize += 2 * rowNum * K * sizeofKType;
+            useUbSize += 2 * rowNum * sizeofBetaType;
+            useUbSize += 2 * rowNum * K * sizeofKType;
+            useUbSize += rowNum * K * sizeof(float);
+            useUbSize += rowNum * sizeof(float);
+            useUbSize += rowNum * ONE_BLOCK_32;
+            
+            if (useUbSize <= ubSize) {
+                break;
+            }
+            rowNum = rowNum / 2;
+            
+        }
+        tiling_.set_kBeteVecRow(rowNum);
+        return ge::GRAPH_SUCCESS;
+    }
+    ge::graphStatus SetDkbVecRow(uint64_t ubSize, ge::DataType kType, ge::DataType betaType)
+    {
+        uint64_t rowNum = chunkSize / 2;
+        uint64_t sizeofKType = SIZE_FP32;
+        uint64_t sizeofBetaType = SIZE_FP32;
+        if (kType != ge::DataType::DT_FLOAT) {
+            sizeofKType = SIZE_HALF;
+        }
+        if (betaType != ge::DataType::DT_FLOAT) {
+            sizeofBetaType = SIZE_HALF;
+        }
+        while (rowNum >= 8) {
+            uint64_t useUbSize = 0;
+            useUbSize += 2 * rowNum * K * sizeofKType;
+            useUbSize += 2 * rowNum * sizeofBetaType;
+            useUbSize += 2 * rowNum * K * sizeofKType;
+            useUbSize += 2 * rowNum * K * sizeofKType;
+            useUbSize += 2 * rowNum * K * sizeofKType;
+            useUbSize += 2 * rowNum * sizeofBetaType;
+            useUbSize += rowNum * K * sizeof(float);
+            useUbSize += rowNum * K * sizeof(float);
+            useUbSize += rowNum * K * sizeof(float);
+            useUbSize += rowNum * sizeof(float);
+            useUbSize += rowNum * ONE_BLOCK_32;
+            useUbSize += rowNum * ONE_BLOCK_32;
+            
+            if (useUbSize <= ubSize) {
+                break;
+            }
+            rowNum = rowNum / 2;
+        }
+        tiling_.set_dkbVecRow(rowNum);
+        return ge::GRAPH_SUCCESS;
+    }
+    ge::graphStatus SetDkbgVecRow(uint64_t ubSize, ge::DataType kType, ge::DataType betaType)
+    {
+        uint64_t rowNum = chunkSize / 2;
+        uint64_t sizeofKType = SIZE_FP32;
+        uint64_t sizeofBetaType = SIZE_FP32;
+        if (kType != ge::DataType::DT_FLOAT) {
+            sizeofKType = SIZE_HALF;
+        }
+        if (betaType != ge::DataType::DT_FLOAT) {
+            sizeofBetaType = SIZE_HALF;
+        }
+        while (rowNum >= 8) {
+            uint64_t useUbSize = 0;
+            useUbSize += 2 * rowNum * K * sizeofKType;
+            useUbSize += 2 * rowNum * sizeofBetaType;
+            useUbSize += 2 * rowNum * sizeofBetaType;
+            useUbSize += 2 * rowNum * K * sizeofKType;
+            useUbSize += 2 * rowNum * K * sizeofKType;
+            useUbSize += 2 * rowNum * sizeofBetaType;
+            useUbSize += 2 * rowNum * K * sizeofKType;
+            useUbSize += 2 * rowNum * sizeofBetaType;
+            useUbSize += 2 * rowNum * sizeofBetaType;
+            useUbSize += rowNum * K * sizeof(float);
+            useUbSize += rowNum * sizeof(float);
+            useUbSize += rowNum * ONE_BLOCK_32;
+            useUbSize += rowNum * sizeof(float);
+            useUbSize += rowNum * ONE_BLOCK_32;
+            useUbSize += rowNum * K * sizeof(float);
+            useUbSize += rowNum * K * sizeof(float);
+            useUbSize += rowNum * sizeof(float);
+            useUbSize += rowNum * sizeof(float);
+            useUbSize += rowNum * sizeof(float);
+            
+            if (useUbSize <= ubSize) {
+                break;
+            }
+            rowNum = rowNum / 2;
+        }
+        tiling_.set_dkbgVecRow(rowNum);
+        return ge::GRAPH_SUCCESS;
+    }
+    ge::graphStatus SetDvbVecRow(uint64_t ubSize, ge::DataType kType, ge::DataType betaType)
+    {
+        uint64_t rowNum = chunkSize / 2;
+        uint64_t sizeofKType = SIZE_FP32;
+        uint64_t sizeofBetaType = SIZE_FP32;
+        if (kType != ge::DataType::DT_FLOAT) {
+            sizeofKType = SIZE_HALF;
+        }
+        if (betaType != ge::DataType::DT_FLOAT) {
+            sizeofBetaType = SIZE_HALF;
+        }
+        while (rowNum >= 8) {
+            uint64_t useUbSize = 0;
+            useUbSize += 2 * rowNum * V * sizeofKType;
+            useUbSize += 2 * rowNum * sizeofBetaType;
+            useUbSize += 2 * rowNum * sizeofBetaType;
+            useUbSize += 2 * rowNum * V * sizeofKType;
+            useUbSize += 2 * rowNum * V * sizeofKType;
+            useUbSize += 2 * rowNum * sizeofBetaType;
 
+            useUbSize += rowNum * V * sizeof(float);
+            useUbSize += rowNum * V * sizeof(float);
+            useUbSize += rowNum * sizeof(float);
+            useUbSize += rowNum * ONE_BLOCK_32;
+            useUbSize += rowNum * sizeof(float);
+            useUbSize += rowNum * sizeof(float);
+            useUbSize += rowNum * ONE_BLOCK_32;
+            
+            if (useUbSize <= ubSize) {
+                break;
+            }
+            rowNum = rowNum / 2;
+        }
+        tiling_.set_dvbVecRow(rowNum);
+        return ge::GRAPH_SUCCESS;
+    }
+    ge::graphStatus SetKKTVecRow(uint64_t ubSize, ge::DataType kType, ge::DataType betaType)
+    {
+        uint64_t rowNum = chunkSize / 2;
+        uint64_t sizeofKType = SIZE_FP32;
+        uint64_t sizeofBetaType = SIZE_FP32;
+        if (kType != ge::DataType::DT_FLOAT) {
+            sizeofKType = SIZE_HALF;
+        }
+        if (betaType != ge::DataType::DT_FLOAT) {
+            sizeofBetaType = SIZE_HALF;
+        }
+        while (rowNum >= 8) {
+            uint64_t useUbSize = 0;
+            useUbSize += 2 * chunkSize * sizeofBetaType;
+            useUbSize += 2 * chunkSize * sizeofBetaType;
+            useUbSize += 2 * rowNum * chunkSize * sizeofKType;
+            useUbSize += 2 * rowNum * chunkSize * sizeofKType;
+            useUbSize += 2 * chunkSize * sizeofBetaType;
+
+            useUbSize += rowNum * chunkSize * sizeof(float);
+            useUbSize += rowNum * chunkSize * sizeof(float);
+            useUbSize += chunkSize * sizeof(float);            useUbSize += rowNum * chunkSize * sizeof(float);
+            useUbSize += chunkSize * chunkSize * sizeof(float);
+            useUbSize += chunkSize * ONE_BLOCK_32;
+            
+            if (useUbSize <= ubSize) {
+                break;
+            }
+            rowNum = rowNum / 2;
+        }
+        tiling_.set_kktVecRow(rowNum);
+        return ge::GRAPH_SUCCESS;
+    }
     ge::graphStatus CommonTiling()
     {
         const gert::Shape kStorageShape = context_->GetRequiredInputShape(INPUT_K_IDX)->GetStorageShape();
@@ -163,26 +344,45 @@ public:
         OP_CHECK_IF(CompareShape(kStorageShape, AStorageShape, INPUT_K_NAME, INPUT_A_NAME, DIM_NUM_3) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        tiling_.set_B(static_cast<int64_t>(vStorageShape.GetDim(DIM_0)));
-        tiling_.set_H(static_cast<int64_t>(vStorageShape.GetDim(DIM_1)));
-        tiling_.set_T(static_cast<int64_t>(vStorageShape.GetDim(DIM_2)));
-        tiling_.set_K(static_cast<int64_t>(kStorageShape.GetDim(DIM_3)));
-        tiling_.set_V(static_cast<int64_t>(vStorageShape.GetDim(DIM_3)));
-        tiling_.set_kBeteVecRow(32);
-        tiling_.set_dkbVecRow(32);
-        tiling_.set_dkbgVecRow(32);
-        tiling_.set_dvbVecRow(32);
-        tiling_.set_kktVecRow(32);
-
+        B = static_cast<int64_t>(vStorageShape.GetDim(DIM_0));
+        H = static_cast<int64_t>(vStorageShape.GetDim(DIM_1));
+        T = static_cast<int64_t>(vStorageShape.GetDim(DIM_2));
+        K = static_cast<int64_t>(kStorageShape.GetDim(DIM_3));
+        V = static_cast<int64_t>(vStorageShape.GetDim(DIM_3));
+        tiling_.set_B(B);
+        tiling_.set_H(H);
+        tiling_.set_T(T);
+        tiling_.set_K(K);
+        tiling_.set_V(V);
         auto attrPtr = context_->GetAttrs();
         OP_CHECK_NULL_WITH_CONTEXT(context_, attrPtr);
-        int64_t chunkSize = static_cast<int64_t>(*(attrPtr->GetAttrPointer<int32_t>(ATTR_CHUNK_SIZE_IDX)));
+        chunkSize = static_cast<int64_t>(*(attrPtr->GetAttrPointer<int32_t>(ATTR_CHUNK_SIZE_IDX)));
         OP_CHECK_IF(chunkSize != CHUNK_SIZE_64 && chunkSize != CHUNK_SIZE_128,
                     OP_LOGE(context_->GetNodeName(),
                             "Check attr chunkSize failed, the chunkSize should be 64 or 128, but get %ld.", chunkSize),
                     return ge::GRAPH_FAILED);
         tiling_.set_chunkSize(chunkSize);
+        const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
+        uint64_t ubSize = 0;
+        ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
 
+        auto kDesc = context_->GetDynamicInputDesc(INPUT_K_IDX, 0);
+        OP_CHECK_NULL_WITH_CONTEXT(context_, kDesc); // check xDesc is not null
+        auto kDType = kDesc->GetDataType();
+        auto betaDesc = context_->GetDynamicInputDesc(INPUT_BETA_IDX, 0);
+        OP_CHECK_NULL_WITH_CONTEXT(context_, betaDesc); // check xDesc is not null
+        auto betaDType = kDesc->GetDataType();
+
+        OP_CHECK_IF(SetKBeteVecRow(ubSize, kDType, betaDType) != ge::GRAPH_SUCCESS,
+                    OP_LOGE(context_->GetNodeName(), "SetKBeteVecRow Failed."), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(SetDkbVecRow(ubSize, kDType, betaDType) != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "SetDkbVecRow Failed."),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(SetDkbgVecRow(ubSize, kDType, betaDType) != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "SetDkbgVecRow Failed."),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(SetDvbVecRow(ubSize, kDType, betaDType) != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "SetDvbVecRow Failed."),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(SetKKTVecRow(ubSize, kDType, betaDType) != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "SetKKTVecRow Failed."),
+                    return ge::GRAPH_FAILED);
         return ge::GRAPH_SUCCESS;
     }
 
