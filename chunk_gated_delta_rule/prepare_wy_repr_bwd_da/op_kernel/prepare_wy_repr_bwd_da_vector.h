@@ -119,9 +119,9 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Init(co
     workSpace2Tensor.SetGlobalBuffer((__gm__ kType *)workspace + B * H * T * BT);
     dA1Tensor.SetGlobalBuffer((__gm__ kType *)dA);
     dA2Tensor.SetGlobalBuffer((__gm__ kType *)workspace);
-    dA4Tensor.SetGlobalBuffer((__gm__ kType *)workspace);
-    dA5Tensor.SetGlobalBuffer((__gm__ kType *)dA);
-    dA6Tensor.SetGlobalBuffer((__gm__ kType *)workspace);
+    dA4Tensor.SetGlobalBuffer((__gm__ kType *)dA);
+    dA5Tensor.SetGlobalBuffer((__gm__ kType *)workspace);
+    dA6Tensor.SetGlobalBuffer((__gm__ kType *)dA);
     return;
 }
 
@@ -137,10 +137,10 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
     // DumpTensor(dA2Tensor, 2, 4096);
     ProcessMDuDw();
     // DumpTensor(dA4Tensor, 4, 4096);
-    // pipe->Reset();
-    // AscendC::SyncAll<false>();
+    pipe->Reset();
+    AscendC::SyncAll<false>();
     // DumpTensor(dA5Tensor, 5, 4096);
-    // ProcessG();
+    ProcessG();
     // DumpTensor(dA6Tensor, 6, 4096);
     return;
 }
@@ -527,65 +527,65 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
         uint32_t chunkIdx = loopIdx % coreLoopsInB;
         for (int h = 0; h < H; h++) {
             AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-            ++vecTaskIdx;
-            if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
-                continue;
-            }
-            // auto gOffset = (bIdx * H + h) * T  + chunkIdx * BT + rowOffset;
-            auto gOffset = (bIdx * H + h) * T  + chunkIdx * BT;
-            // AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-            //copyin
-            {
-                auto tensorGIn = gInQue.AllocTensor<betaType>();
-                DataCopy(tensorGIn, gTensor[gOffset], rowNum);
+            // ++vecTaskIdx;
+            // if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
+            //     // AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
+            //     continue;
+            // }
+            // // auto gOffset = (bIdx * H + h) * T  + chunkIdx * BT + rowOffset;
+            // auto gOffset = (bIdx * H + h) * T  + chunkIdx * BT;
+            // // AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
+            // //copyin
+            // {
+            //     auto tensorGIn = gInQue.AllocTensor<betaType>();
+            //     DataCopy(tensorGIn, gTensor[gOffset], rowNum);
                 
-                // DataCopy(tensormdAIn, mdATensor[gOffset], rowNum);
-                gInQue.EnQue(tensorGIn);
-                // mdAInQue.EnQue(tensormdAIn);
-            }
-            //compute && copyout
-            {
-                auto tensorGIn = gInQue.DeQue<betaType>();
-                if constexpr (!std::is_same<betaType, float32_t>()) {
-                    Cast(tensorGfp32, tensorGIn, RoundMode::CAST_NONE, rowNum);
-                } else {
-                    DataCopy(tensorGfp32, tensorGIn, rowNum);
-                }
-                PipeBarrier<PIPE_V>();
-                // todo 此处添加CUBE的同步等待
-                for (int row = 1; row < rowNum; row++) {
-                    auto tensormdAIn = mdAInQue.AllocTensor<kType>();
-                    auto tensorGOut = gOutQue.AllocTensor<kType>();
-                    // 正三角，按照BT 一行一行算，WORKSAPCE搭配一行一行进，置为0所以是正三角方式
-                    AscendC::Duplicate<float>(tensorGCalfp32, float(0.0), rowNum);
-                    AscendC::Adds(tensorGCalfp32, tensorGfp32, -1 * tensorGfp32.GetValue(row), row);
-                    // AscendC::printf("[tensor 打印]  tensorGCalfp32 \n");
-                    // AscendC::DumpTensor(tensorGCalfp32, 5, 16);
-                    AscendC::Exp(tensorGCalfp32, tensorGCalfp32, row);
-                    // todo：使用外部搬入的workspace 直接参与运算
-                    AscendC::DataCopy(tensormdAIn, workSpaceTensor[gOffset], rowNum);
-                    mdAInQue.EnQue(tensormdAIn);
-                    tensormdAIn = mdAInQue.DeQue<kType>();
-                    // AscendC::printf("[tensor 打印]  tensormdAIn \n");
-                    // AscendC::DumpTensor(tensormdAIn, 5, 16);
-                    SetFlag<AscendC::HardEvent::MTE2_V>(0);
-                    WaitFlag<AscendC::HardEvent::MTE2_V>(0);
-                    AscendC::Cast(tensorMdAfp32, tensormdAIn, AscendC::RoundMode::CAST_NONE, rowNum);
-                    // AscendC::printf("[tensor 打印]  tensorMdAfp32 \n");
-                    // AscendC::DumpTensor(tensorMdAfp32, 5, 16);
-                    AscendC::Muls(tensorMdAfp32, tensorMdAfp32, float(-1.0), row);
-                    AscendC::Mul(tensorGCalfp32, tensorMdAfp32, tensorGCalfp32, row);
-                    AscendC::Cast(tensorGOut, tensorGCalfp32, AscendC::RoundMode::CAST_NONE, row);
-                    mdAInQue.FreeTensor(tensormdAIn);
-                    gOutQue.EnQue(tensorGOut);
-                    tensorGOut = gOutQue.DeQue<kType>();
-                    // 直接搬出到外面了
-                    DataCopy(workSpace2Tensor[gOffset], tensorGOut, rowNum);
-                    gOutQue.FreeTensor(tensorGOut);
-                }    
-                gInQue.FreeTensor(tensorGIn);
-            }
+            //     // DataCopy(tensormdAIn, mdATensor[gOffset], rowNum);
+            //     gInQue.EnQue(tensorGIn);
+            //     // mdAInQue.EnQue(tensormdAIn);
+            // }
+            // //compute && copyout
+            // {
+            //     auto tensorGIn = gInQue.DeQue<betaType>();
+            //     if constexpr (!std::is_same<betaType, float32_t>()) {
+            //         Cast(tensorGfp32, tensorGIn, RoundMode::CAST_NONE, rowNum);
+            //     } else {
+            //         DataCopy(tensorGfp32, tensorGIn, rowNum);
+            //     }
+            //     PipeBarrier<PIPE_V>();
+            //     // todo 此处添加CUBE的同步等待
+            //     for (int row = 1; row < rowNum; row++) {
+            //         auto tensormdAIn = mdAInQue.AllocTensor<kType>();
+            //         auto tensorGOut = gOutQue.AllocTensor<kType>();
+            //         // 正三角，按照BT 一行一行算，WORKSAPCE搭配一行一行进，置为0所以是正三角方式
+            //         AscendC::Duplicate<float>(tensorGCalfp32, float(0.0), rowNum);
+            //         AscendC::Adds(tensorGCalfp32, tensorGfp32, -1 * tensorGfp32.GetValue(row), row);
+            //         // AscendC::printf("[tensor 打印]  tensorGCalfp32 \n");
+            //         // AscendC::DumpTensor(tensorGCalfp32, 5, 16);
+            //         AscendC::Exp(tensorGCalfp32, tensorGCalfp32, row);
+            //         // todo：使用外部搬入的workspace 直接参与运算
+            //         AscendC::DataCopy(tensormdAIn, workSpaceTensor[gOffset], rowNum);
+            //         mdAInQue.EnQue(tensormdAIn);
+            //         tensormdAIn = mdAInQue.DeQue<kType>();
+            //         // AscendC::printf("[tensor 打印]  tensormdAIn \n");
+            //         // AscendC::DumpTensor(tensormdAIn, 5, 16);
+            //         SetFlag<AscendC::HardEvent::MTE2_V>(0);
+            //         WaitFlag<AscendC::HardEvent::MTE2_V>(0);
+            //         AscendC::Cast(tensorMdAfp32, tensormdAIn, AscendC::RoundMode::CAST_NONE, rowNum);
+            //         // AscendC::printf("[tensor 打印]  tensorMdAfp32 \n");
+            //         // AscendC::DumpTensor(tensorMdAfp32, 5, 16);
+            //         AscendC::Muls(tensorMdAfp32, tensorMdAfp32, float(-1.0), row);
+            //         AscendC::Mul(tensorGCalfp32, tensorMdAfp32, tensorGCalfp32, row);
+            //         AscendC::Cast(tensorGOut, tensorGCalfp32, AscendC::RoundMode::CAST_NONE, row);
+            //         mdAInQue.FreeTensor(tensormdAIn);
+            //         gOutQue.EnQue(tensorGOut);
+            //         tensorGOut = gOutQue.DeQue<kType>();
+            //         // 直接搬出到外面了
+            //         DataCopy(workSpace2Tensor[gOffset], tensorGOut, rowNum);
+            //         gOutQue.FreeTensor(tensorGOut);
+            //     }    
+            //     gInQue.FreeTensor(tensorGIn);
+            // }
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
         }
     }

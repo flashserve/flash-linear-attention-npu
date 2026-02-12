@@ -203,7 +203,7 @@ def compute_dA_cpu(
                 b_dA = torch.where(m_A, b_dA_7.to(torch.float32), 0.0) # [BT, BT]
 
                 # 存储结果
-                dA[i_b, i_h, bos + idx * BT : bos + idx * BT + BT, :] = b_dA_5.to(torch.float16)
+                dA[i_b, i_h, bos + idx * BT : bos + idx * BT + BT, :] = b_dA_6.to(torch.float16)
 
     return dA
 
