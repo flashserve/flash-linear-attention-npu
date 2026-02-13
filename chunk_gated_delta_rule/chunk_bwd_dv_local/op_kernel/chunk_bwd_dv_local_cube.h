@@ -86,7 +86,6 @@ ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Init(GM_ADDR q, GM_ADDR k, GM_ADDR d_o,
 template <typename QKVT, typename GT, typename Strategy>
 __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Process()
 {
-    using BlockScheduler = typename Catlass::Gemm::Block::GemmIdentityBlockSwizzle<3, 0>;
     using ArchTag = Catlass::Arch::AtlasA2;
     using DispatchPolicy = Catlass::Gemm::MmadPingpong<ArchTag, true>;
     using L1TileShape = Shape<_128, _128, _128>;

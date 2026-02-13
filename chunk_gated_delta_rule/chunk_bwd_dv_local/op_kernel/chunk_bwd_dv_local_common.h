@@ -103,7 +103,6 @@ struct VariableLengthStrategy {
         int64_t chunkStartToken = curSeqChunkId * chunkSize;
         int64_t chunkEndToken = chunkStartToken + chunkSize;
         chunkEndToken = chunkEndToken > curSeqT ? curSeqT : chunkEndToken;
-        // AscendC::PipeBarrier<PIPE_ALL>();
         return IndexResult(0, bos + chunkStartToken, chunkEndToken - chunkStartToken);
     }
 };
