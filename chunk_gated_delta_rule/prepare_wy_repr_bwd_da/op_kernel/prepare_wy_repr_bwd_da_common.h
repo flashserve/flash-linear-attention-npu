@@ -22,8 +22,9 @@ constexpr uint32_t FP32_PER_BLOCK_8 = 8;
 constexpr uint32_t FP32_PER_REPEAT_64 = 64;
 constexpr uint32_t BIT_NUM_FOR_UINT8 = 8;
 constexpr uint32_t SIZE_FLOAT = 4;
-constexpr uint32_t BLOCK_SIZE = 32;
 constexpr uint32_t CAL_NUM_FLOAT = 64; // API一次能处理256B，能计算64个float元素
+constexpr uint32_t CHUNK_SIZE_64 = 64;
+constexpr uint32_t NUM_2 = 2;
 
 // __aicore__ void inline GetChunkOffset(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, uint64_t B, uint64_t H, uint64_t T,
 //                                       uint64_t chunkSize, uint32_t loopIdx, uint32_t &bos, uint32_t &eos)
@@ -66,5 +67,16 @@ __aicore__ inline void MTE2ToVSync()
     AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventIDMTE2ToV);
     AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventIDMTE2ToV);
 }
+
+struct IndexResult {
+    int64_t curBatchId;
+    int64_t curTokenId;
+    int64_t chunkLen;
+
+    __aicore__ inline IndexResult(int64_t curBatchId_, int64_t curTokenId, int64_t chunkLen)
+        : curBatchId(curBatchId_), curTokenId(curTokenId), chunkLen(chunkLen)
+    {
+    }
+};
 
 #endif  // PREPARE_WY_REPR_BWD_DA_COMMON_H

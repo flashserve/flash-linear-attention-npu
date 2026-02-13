@@ -33,12 +33,6 @@ def create_incremental_tensor(shape, dtype=torch.float16, start=1, step=1):
     ).reshape(shape)
     return tensor
 
-def create_tensor(shape, dtype=torch.float16):
-
-    # return create_incremental_tensor(shape,dtype)
-    # return torch.ones(shape, dtype=dtype)
-    return torch.rand(shape, dtype=dtype)
-
 def bool_matrix_to_uint8(chunk_size):
     # 创建反上三角矩阵（上三角为0，下三角为1）
     bool_matrix = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool))
@@ -203,7 +197,7 @@ def compute_dA_cpu(
                 b_dA = torch.where(m_A, b_dA_7.to(torch.float32), 0.0) # [BT, BT]
 
                 # 存储结果
-                dA[i_b, i_h, bos + idx * BT : bos + idx * BT + BT, :] = b_dA_6.to(torch.float16)
+                dA[i_b, i_h, bos + idx * BT : bos + idx * BT + BT, :] = b_dA.to(torch.float16)
 
     return dA
 
@@ -224,11 +218,11 @@ def test_variable():
     print(f"==== v.shape = {v.shape} ")
     beta = create_tensor((B, H, T), dtype=torch.float)
     print(f"==== beta.shape = {beta.shape} ")
-    A = create_tensor((B, H, T, BT), dtype=torch.float16) * 0.1
+    A = create_tensor((B, H, T, BT), dtype=torch.float16)
     print(f"==== A.shape = {A.shape} ")
-    dw = create_tensor((B, H, T, K), dtype=torch.float16) * 0.1
+    dw = create_tensor((B, H, T, K), dtype=torch.float16)
     print(f"==== dw.shape = {dw.shape} ")
-    du = create_tensor((B, H, T, V), dtype=torch.float16) * 0.1
+    du = create_tensor((B, H, T, V), dtype=torch.float16)
     print(f"==== du.shape = {du.shape} ")
     g = create_tensor((B, H, T), dtype=torch.float)
     print(f"==== g.shape = {g.shape} ")
@@ -271,19 +265,19 @@ def test_fix():
     print(f"==== v.shape = {v.shape} ")
     beta = create_tensor((B, H, T), dtype=torch.float)
     print(f"==== beta.shape = {beta.shape} ")
-    A = create_tensor((B, H, T, BT), dtype=torch.float16) * 0.1
+    A = create_tensor((B, H, T, BT), dtype=torch.float16)
     print(f"==== A.shape = {A.shape} ")
-    dw = create_tensor((B, H, T, K), dtype=torch.float16) * 0.1
+    dw = create_tensor((B, H, T, K), dtype=torch.float16)
     print(f"==== dw.shape = {dw.shape} ")
-    du = create_tensor((B, H, T, V), dtype=torch.float16) * 0.1
+    du = create_tensor((B, H, T, V), dtype=torch.float16)
     print(f"==== du.shape = {du.shape} ")
     g = create_tensor((B, H, T), dtype=torch.float)
     print(f"==== g.shape = {g.shape} ")
 
-    upper_tri_matrix = bool_matrix_to_uint8(chunk_size)
-    print(f"==== upper_tri_matrix.shape = {upper_tri_matrix.shape}")
-    print("==== upper_tri_matrix ====")
-    print(upper_tri_matrix)
+    # upper_tri_matrix = bool_matrix_to_uint8(chunk_size)
+    # print(f"==== upper_tri_matrix.shape = {upper_tri_matrix.shape}")
+    # print("==== upper_tri_matrix ====")
+    # print(upper_tri_matrix)
 
     lower_tri_matrix = bool_matrix_lower_tri_to_uint8(chunk_size)
     print(f"==== lower_tri_matrix.shape = {lower_tri_matrix.shape}")
@@ -297,7 +291,7 @@ def test_fix():
     dw_npu = dw.npu()
     du_npu = du.npu()
     g_npu = g.npu()
-    upper_tri_matrix_npu = upper_tri_matrix.npu()
+    # upper_tri_matrix_npu = upper_tri_matrix.npu()
     lower_tri_matrix_npu = lower_tri_matrix.npu()
 
     dA_npu = torch_npu.npu_prepare_wy_repr_bwd_da(k_npu, v_npu, beta_npu, A_npu, dw_npu, du_npu, g_npu, lower_tri_matrix=lower_tri_matrix_npu, cu_seqlens=None, chunk_indices=None, chunk_size=chunk_size)
@@ -310,10 +304,15 @@ def test_fix():
     chunk_indices = None
     cu_seqlens = None
     NT = T // BT
-    print("hhhhhhhhhhhh NT: ", NT)
+    print("==== NT = ", NT)
     dA_cpu = compute_dA_cpu(A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, H, T, K, BT, NT)
     torch.save(dA_cpu, "/data/yzq/ops-transformer_GDN/chunk_gated_delta_rule/prepare_wy_repr_bwd_da/test/output/dA_cpu.pt")
 
+def create_tensor(shape, dtype=torch.float16):
+
+    # return create_incremental_tensor(shape,dtype)
+    # return torch.ones(shape, dtype=dtype)
+    return torch.rand(shape, dtype=dtype)
 
 if __name__ == "__main__":
     torch.manual_seed(0)

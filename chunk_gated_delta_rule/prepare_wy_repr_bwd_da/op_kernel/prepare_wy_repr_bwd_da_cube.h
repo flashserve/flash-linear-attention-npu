@@ -345,8 +345,6 @@ public:
                     
                     // Compute block-scoped matrix multiply-add
                     blockMmadDA6(tensorBlockAT, tensorBlockDA5, tensorBlockDA6, actualBlockShape);
-                    
-                    // 注意：这里可能需要设置计算完成的标志
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
                 }
             }
