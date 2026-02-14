@@ -25,7 +25,7 @@ __aicore__ void inline GetChunkOffset(GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
                                       uint64_t chunkSize, uint32_t loopIdx, uint32_t &bos, uint32_t &eos)
 {
     if (cu_seqlens == nullptr) {
-        uint32_t coreLoopsInB = AscendC::CeilDiv(T, chunkSize);
+        uint32_t coreLoopsInB = (T + chunkSize - 1) / chunkSize;
         uint32_t chunkIdx = loopIdx % coreLoopsInB;
         uint32_t bIdx = loopIdx / coreLoopsInB;
         bos = chunkIdx * chunkSize;
