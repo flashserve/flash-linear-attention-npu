@@ -35,7 +35,6 @@ __global__ __aicore__ void prepare_wy_repr_bwd_da(GM_ADDR k, GM_ADDR v, GM_ADDR 
         }
         if ASCEND_IS_AIV{
             AscendC::TPipe tPipe;
-            uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
             PrepareWyReprBwdDAVectorProcess<DTYPE_K, DTYPE_BETA> prepareWyReprBwdDAVectorProcess(k, v, beta, A, dw, du, g, mask, dA, workspace);
             prepareWyReprBwdDAVectorProcess.Init(tilingData, &tPipe);
             prepareWyReprBwdDAVectorProcess.Process();

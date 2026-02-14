@@ -362,18 +362,13 @@ public:
     __aicore__ inline void Process();
     __aicore__ inline void Init(const PrepareWyReprBwdDaTilingData &tiling);
 private:
-    uint64_t B = 1;
-    uint64_t T = 2048;
-    uint64_t H = 4;
-    uint64_t K = 128;
-    uint64_t V = 128;
-    uint64_t BT = 64;
-    // uint64_t B = 1;
-    // uint64_t T = 32768;
-    // uint64_t H = 32;
-    // uint64_t K = 128;
-    // uint64_t V = 128;
-    // uint64_t BT = 64;
+    uint64_t B = 0;
+    uint64_t T = 0;
+    uint64_t H = 0;
+    uint64_t K = 0;
+    uint64_t V = 0;
+    uint64_t BT = 0;
+    uint64_t chunkNum = 0;
     GM_ADDR k;
     GM_ADDR v;
     GM_ADDR beta;
@@ -410,12 +405,13 @@ __aicore__ inline PrepareWyReprBwdDAProcess<kType, betaType>::PrepareWyReprBwdDA
 
 template <typename kType, typename betaType>
 __aicore__ void inline PrepareWyReprBwdDAProcess<kType, betaType>::Init(const PrepareWyReprBwdDaTilingData &tiling) {
-    // B = tiling.B;
-    // T = tiling.T;
-    // H = tiling.H;
-    // K = tiling.K;
-    // V = tiling.V;
-    // BT = tiling.BT;
+    B = tiling.B;
+    T = tiling.T;
+    H = tiling.H;
+    K = tiling.K;
+    V = tiling.V;
+    BT = tiling.chunkSize;
+    chunkNum = tiling.chunkNum;
     return;
 }
 
@@ -502,6 +498,7 @@ __aicore__ void inline PrepareWyReprBwdDAProcess<kType, betaType>::Process() {
     GM_ADDR ptrDA4 = dA;
     GM_ADDR ptrDA5 = workspace;
     GM_ADDR ptrDA6 = dA;
+    // AscendC::printf("####cube === B, T, H, K, V, BT: %ld, %ld, %ld, %ld, %ld, %ld\n", B, T, H, K, V, BT);
     typename MatmulKernel::Params param{
         dw, layoutDw,
         ptrKbg, layoutKbg,
