@@ -679,7 +679,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     if constexpr (!std::is_same<betaType, float32_t>()) {
                         Cast(tensorDbetaOut, tensorDbetaAddFP32, RoundMode::CAST_RINT, curRowNum);
                     } else {
-                        DataCopy(tensorDbetaOut, tensorDbetaAddFP32, curRowNum);
+                        DataCopy(tensorDbetaOut, tensorDbetaAddFP32, rowNum);
                     }
 
                     dkbgInQue.FreeTensor(tensorDkbgin);
