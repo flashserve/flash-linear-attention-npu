@@ -3,7 +3,7 @@ import torch
 
 import sys
 
-path = "/root/data_nvme0n1/huangjunzhe/GDN/target/result/cpu_for_test"
+path = "/data/huangjunzhe/GDN/ops-transformer_GDN/chunk_gated_delta_rule/chunk_bwd_dqkwg/tests/result/cpu_for_test"
 # 示例: python script.py arg1 arg2
 if len(sys.argv) > 1:
     path = sys.argv[1]
@@ -28,7 +28,11 @@ else:
 # /root/data_nvme0n1/huangjunzhe/GDN/target/result/gen/dg_npu.bin
 # for name in ["dg_npu", "dk_npu", "dq_npu", "dw_npu"]:
 for name in ["dg", "dk", "dq", "dw"]:
-    binx = np.fromfile(f"{path}/gen/{name}_npu.bin", np.float16)
+    if name == "dg":
+        dtype = np.float32
+    else:
+        dtype = np.float16
+    binx = np.fromfile(f"{path}/gen/{name}_npu.bin", dtype)
     tp = torch.from_numpy(binx)#.reshape(B,H,T,K)
     if name == "dg":
         tp = tp.reshape(B,H,T)

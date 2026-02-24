@@ -42,13 +42,36 @@ def compute_chunk_mapping(Lens, chunk_size=10):
     
     return result
 
+
+from typing import Optional
+import pickle
+import math
+
+def prepare_lens(cu_seqlens: torch.LongTensor) -> torch.LongTensor:
+    return cu_seqlens[1:] - cu_seqlens[:-1]
+
+def cdiv(a: torch.LongTensor
+    , b : int):
+    torch.empty
+    return (a + b - 1) // b
+
+def prepare_chunk_indices(
+    cu_seqlens: torch.LongTensor,
+    chunkSize: int
+) -> torch.LongTensor:
+    indices = torch.cat([torch.arange(n) for n in cdiv(prepare_lens(cu_seqlens), chunkSize).tolist()])
+    # print("cu_seqlens is ", cu_seqlens)
+    # print("indices is ", indices)
+
+    return torch.stack([indices.eq(0).cumsum(0) - 1, indices], 1).to(cu_seqlens)
+
 # # Example usage
 # Lens = torch.tensor([   0, 1023, 1025, 1536, 2048])
 # chunk_size = 16
 # result = compute_chunk_mapping(Lens, chunk_size)
 # print(result)
 
-def get_inputs(pkl_path, transpose = True, dtype=torch.float16, gdtype=torch.float16):
+def get_inputs(pkl_path, transpose = True, dtype=torch.float16, gdtype=torch.float32):
     import pickle
     import json
     with open(f"{pkl_path}/input.pkl", 'rb') as f:
@@ -77,7 +100,10 @@ def get_inputs(pkl_path, transpose = True, dtype=torch.float16, gdtype=torch.flo
     scale = data['scale']
     chunk_size = data['chunk_size']
     # chunk_indices = compute_chunk_mapping(cu_seqlens, chunk_size).astype(np.int64)
-    chunk_indices = torch.load(f"{pkl_path}/chunk_indices.pt").numpy()
+    # chunk_indices = torch.load(f"{pkl_path}/chunk_indices.pt").numpy()
+    chunk_indices = data['chunk_indices'].numpy() if data['chunk_indices'] is not None else None
+    num_chunks = chunk_indices.shape[0] if chunk_indices is not None else q.shape[2] // chunk_size
+    isVarLen = 0 if cu_seqlens is None else 1
     if True:
         print("q", q.dtype, q.shape)
         print("k", k.dtype, k.shape)
@@ -90,10 +116,13 @@ def get_inputs(pkl_path, transpose = True, dtype=torch.float16, gdtype=torch.flo
         print("dh", dh.dtype, dh.shape)
         print(f"scale = {scale}")
         print(f"chunk_size = {chunk_size}")
-        print(f"num_chunks = {chunk_indices.shape[0]}")
+        print(f"num_chunks = {num_chunks}")
         print(f"seqlen_nums = {cu_seqlens.shape[0]}")
-        print("cu_seqlens", cu_seqlens.dtype, cu_seqlens.shape, cu_seqlens)
-        print("chunk_indices", chunk_indices.dtype, chunk_indices.shape)
+        if isVarLen == 1:
+            print("cu_seqlens", cu_seqlens.dtype, cu_seqlens.shape, cu_seqlens)
+            print("chunk_indices", chunk_indices.dtype, chunk_indices.shape)
+        else:
+            print("isVarLen is False!")
         
 
     q.numpy().tofile(f"{pkl_path}/gen/q.bin")
@@ -112,17 +141,18 @@ def get_inputs(pkl_path, transpose = True, dtype=torch.float16, gdtype=torch.flo
     with open(f"{pkl_path}/gen/config.cfg", 'w') as f:
         f.write(f"scale = {scale}\n")
         f.write(f"chunk_size = {chunk_size}\n")
-        # f.write(f"num_chunks = {chunk_indices.shape[0]}\n")
-        f.write(f"num_chunks = {q.shape[2] // chunk_size}\n")
+        f.write(f"num_chunks = {num_chunks}\n")
+        # f.write(f"num_chunks = {q.shape[2] // chunk_size}\n")
         f.write(f"seqlen_nums = {cu_seqlens.shape[0]}\n")
         f.write(f"B = {q.shape[0]}\n")
         f.write(f"H = {q.shape[1]}\n")
         f.write(f"T = {q.shape[2]}\n")
         f.write(f"K = {q.shape[3]}\n")
         f.write(f"V = {v.shape[3]}\n")
+        f.write(f"isVarLen = {isVarLen}\n")
     print(f"path is {pkl_path}")
 
-path = '/root/data_nvme0n1/huangjunzhe/GDN/target/result/cpu_for_test'
+path = '/data/huangjunzhe/GDN/ops-transformer_GDN/chunk_gated_delta_rule/chunk_bwd_dqkwg/tests/result/cpu_for_test'
 # 示例: python script.py arg1 arg2
 if len(sys.argv) > 1:
     path = sys.argv[1]

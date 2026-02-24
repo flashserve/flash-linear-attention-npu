@@ -33,6 +33,14 @@ constexpr int64_t CONST_BT = 64;
 constexpr size_t FP16_SIZE = 2;
 constexpr size_t FP32_SIZE = 4;
 
+int64_t CeilDiv(int64_t a, int64_t b)
+{
+    if (unlikely(b == 0)) {
+        return 0;
+    }
+    return (a + b - 1) / b;
+}
+
 ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* context) {
     const gert::Shape qStorageShape = context->GetRequiredInputShape(0)->GetStorageShape();
     const gert::Shape kStorageShape = context->GetRequiredInputShape(1)->GetStorageShape();
@@ -49,7 +57,24 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     int64_t K = kStorageShape.GetDim(3);//CONST_K;
     int64_t V = vStorageShape.GetDim(3);//CONST_V;
     int64_t BT = CONST_BT;
-    int64_t numChunks = T / BT;  // = 32
+
+    auto cuSeqlensTensor = context->GetOptionalInputTensor(8);
+    int64_t numChunks = CeilDiv(T, BT);  // = 32
+    int isVarLen = 0;
+    if (cuSeqlensTensor != nullptr) {
+        auto cuChunkIndicesTensor = context->GetOptionalInputTensor(9);
+        const gert::StorageShape *chunkIndicesShape = context->GetOptionalInputShape(9);
+        OP_CHECK_NULL_WITH_CONTEXT(context, chunkIndicesShape);
+        const gert::Shape chunkIndicesStorageShape = chunkIndicesShape->GetStorageShape();
+        numChunks = chunkIndicesStorageShape.GetDim(0);
+        if (chunkIndicesStorageShape.GetDim(1) != 2) {
+            std::cout << "the 2nd dim of chunkIndicesStorageShape should be 2, but now is  " << chunkIndicesStorageShape.GetDim(1) << "!" << std::endl;
+            return ge::GRAPH_FAILED;
+        }
+        isVarLen = 1;
+    }
+
+    
     // std::cout << "[tiling] B: " << B << ", H: " << H << ", T: " << T << ", K: " << K << ", V: " << V << ", BT: " << BT << ", numChunks: " << numChunks << std::endl;
     
     
@@ -135,7 +160,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     tilingData.set_wsMm7Offset(wsMm7Offset);
     
     // 检查是否有 cu_seqlens 输入来判断 IS_VARLEN
-    tilingData.set_isVarLen(0);
+    tilingData.set_isVarLen(isVarLen);
     
     // 保存 tiling data
     tilingData.SaveToBuffer(context->GetRawTilingData()->GetData(), 

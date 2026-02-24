@@ -208,16 +208,16 @@ bool WriteLargeFile(const std::string &filePath, int64_t size, std::vector<T>& h
 //     CHECK_RET(ret == ACL_SUCCESS, return ret);
 // }
 
-
+template <typename T = short>
 void PrintResult(std::vector<int64_t>& shape, void** deviceAddr, const string & path)
 {
     auto size = GetShapeSize(shape);
-    std::vector<short> resultData(size, 0);
+    std::vector<T> resultData(size, 0);
     auto ret = aclrtMemcpy(
         resultData.data(), resultData.size() * sizeof(resultData[0]), *deviceAddr, size * sizeof(resultData[0]),
         ACL_MEMCPY_DEVICE_TO_HOST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return);
-    if(size < 2147479552 / sizeof(short)) WriteFile(path, size, resultData);
+    if(size < 2147479552 / sizeof(T)) WriteFile(path, size, resultData);
     else WriteLargeFile(path, size, resultData);
     // for (int64_t i = 0; i < size; i++) {
     //     LOG_PRINT("mean result[%ld] is: %f\n", i, resultData[i]);
@@ -266,7 +266,7 @@ int CreateAclTensor(
 int main()
 {
     
-    const string DATAPATH = "/root/data_nvme0n1/huangjunzhe/GDN/target/result/cpu_for_test/gen/";
+    const string DATAPATH = "/data/huangjunzhe/GDN/ops-transformer_GDN/chunk_gated_delta_rule/chunk_bwd_dqkwg/tests/result/cpu_for_test/gen/";
     auto config = parse_config(DATAPATH + "config.cfg");
     // std::
     // 1. 调用acl进行device/stream初始化
@@ -288,6 +288,7 @@ int main()
     int num_chunks = std::stoi(config["num_chunks"]);
     int seqlen_nums = std::stoi(config["seqlen_nums"]);
     float scale = std::stof(config["scale"]);
+    int isVarLen = std::stoi(config["isVarLen"]);
     std::cout << "[test] B: " << B << "\n"
             << "[test] H: " << H << "\n"
             << "[test] T: " << T << "\n"
@@ -338,9 +339,9 @@ int main()
     aclTensor* g = nullptr;
     void* gDeviceAddr = nullptr;
     std::vector<int64_t> gShape = {B, H, T};
-    std::vector<int16_t> gHostData(B * H * T, HALF_ONE);
+    std::vector<float> gHostData(B * H * T, 1.0);
     ReadFile(DATAPATH + "g.bin",gShape,gHostData);
-    ret = CreateAclTensor(gHostData, gShape, &gDeviceAddr, aclDataType::ACL_FLOAT16, &g);
+    ret = CreateAclTensor(gHostData, gShape, &gDeviceAddr, aclDataType::ACL_FLOAT, &g);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
     aclTensor* h = nullptr;
@@ -380,18 +381,24 @@ int main()
     void* cu_seqlensDeviceAddr = nullptr;
     std::vector<int64_t> cu_seqlensShape = {seqlen_nums};
     std::vector<int64_t> cu_seqlensHostData(seqlen_nums, 0);
-    ReadFile(DATAPATH + "cu_seqlens.bin",cu_seqlensShape,cu_seqlensHostData);
-    ret = CreateAclTensor(cu_seqlensHostData, cu_seqlensShape, &cu_seqlensDeviceAddr, aclDataType::ACL_INT64, &cu_seqlens);
-    PrintVector(cu_seqlensHostData, "cu_seqlens");
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    if (isVarLen == 1) {
+        ReadFile(DATAPATH + "cu_seqlens.bin",cu_seqlensShape,cu_seqlensHostData);
+        ret = CreateAclTensor(cu_seqlensHostData, cu_seqlensShape, &cu_seqlensDeviceAddr, aclDataType::ACL_INT64, &cu_seqlens);
+        PrintVector(cu_seqlensHostData, "cu_seqlens");
+        CHECK_RET(ret == ACL_SUCCESS, return ret);
+    } else {
+        std::cout << "isVarLen == FALSE!\n";
+    }
 
     aclTensor* chunk_indices = nullptr;
     void* chunk_indicesDeviceAddr = nullptr;
     std::vector<int64_t> chunk_indicesShape = {num_chunks, 2};
     std::vector<int64_t> chunk_indicesHostData(num_chunks * 2, 0);
-    // ReadFile(DATAPATH + "chunk_indices.bin",chunk_indicesShape,chunk_indicesHostData);
-    ret = CreateAclTensor(chunk_indicesHostData, chunk_indicesShape, &chunk_indicesDeviceAddr, aclDataType::ACL_INT64, &chunk_indices);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    if (isVarLen == 1) {
+        ReadFile(DATAPATH + "chunk_indices.bin",chunk_indicesShape,chunk_indicesHostData);
+        ret = CreateAclTensor(chunk_indicesHostData, chunk_indicesShape, &chunk_indicesDeviceAddr, aclDataType::ACL_INT64, &chunk_indices);
+        CHECK_RET(ret == ACL_SUCCESS, return ret);
+    }
 
     aclTensor* dq = nullptr;
     void* dqDeviceAddr = nullptr;
@@ -418,7 +425,7 @@ int main()
     void* dgDeviceAddr = nullptr;
     std::vector<int64_t> dgShape = {B, H, T};
     std::vector<int16_t> dgHostData(B * H * T, 0);
-    ret = CreateAclTensor(dgHostData, dgShape, &dgDeviceAddr, aclDataType::ACL_FLOAT16, &dg);
+    ret = CreateAclTensor(dgHostData, dgShape, &dgDeviceAddr, aclDataType::ACL_FLOAT, &dg);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
     // 3. 调用CANN算子库API，需要修改为具体的Api名称
@@ -448,7 +455,7 @@ int main()
     PrintResult(dqShape, &dqDeviceAddr, DATAPATH + "dq_npu.bin");
     PrintResult(dkShape, &dkDeviceAddr, DATAPATH + "dk_npu.bin");
     PrintResult(dwShape, &dwDeviceAddr, DATAPATH + "dw_npu.bin");
-    PrintResult(dgShape, &dgDeviceAddr, DATAPATH + "dg_npu.bin");
+    PrintResult<float>(dgShape, &dgDeviceAddr, DATAPATH + "dg_npu.bin");
 
     // 7. 释放aclTensor，需要根据具体API的接口定义修改
     aclDestroyTensor(q);

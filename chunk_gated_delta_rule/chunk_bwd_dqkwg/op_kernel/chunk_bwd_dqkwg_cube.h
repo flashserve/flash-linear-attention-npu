@@ -86,6 +86,9 @@ public:
         GM_ADDR ptrDo;     // [B, H, T, V]
         GM_ADDR ptrDh;     // [B, num_chunks, H, K, V]
         GM_ADDR ptrDv;     // [B, H, T, V]
+        //varlen
+        GM_ADDR ptrCuSeqLens;
+        GM_ADDR ptrChunkIndices;
         
         // 输出指针
         GM_ADDR ptrDq;     // [B, H, T, K]
@@ -112,6 +115,8 @@ public:
         uint64_t V;// = CONST_V;
         uint64_t BT;// = CONST_BT;
         uint64_t numChunks;// = CONST_NUM_CHUNKS;
+        // uint64_t chunkSize = 64;
+        uint64_t isVarLen;
         
         // 其他参数
         float scale;
@@ -122,19 +127,19 @@ public:
         CATLASS_DEVICE
         Params(
             GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR h,
-            GM_ADDR do_, GM_ADDR dh, GM_ADDR dv,
+            GM_ADDR do_, GM_ADDR dh, GM_ADDR dv, GM_ADDR cu_seqlen, GM_ADDR chunk_indices,
             GM_ADDR dq, GM_ADDR dk, GM_ADDR dw, GM_ADDR dg,
             GM_ADDR workspace,
             uint64_t B, uint64_t H, uint64_t T, uint64_t K, uint64_t V, uint64_t BT, uint64_t numChunks, 
             uint64_t wsDw, uint64_t wsDgLast, uint64_t wsMm5, uint64_t wsDsTemp, uint64_t wsMm6, uint64_t wsMm7,
-            float s
+            float s, uint64_t isVarLen
         ) : ptrQ(q), ptrK(k), ptrV(v), ptrG(g), ptrH(h),
-            ptrDo(do_), ptrDh(dh), ptrDv(dv),
+            ptrDo(do_), ptrDh(dh), ptrDv(dv), ptrCuSeqLens(cu_seqlen), ptrChunkIndices(chunk_indices),
             ptrDq(dq), ptrDk(dk), ptrDw(dw), ptrDg(dg),
             ptrWorkspace(workspace),
             wsDwOffset(wsDw), wsDgLastOffset(wsDgLast),
             wsMm5Offset(wsMm5), wsDsTempOffset(wsDsTemp), wsMm6Offset(wsMm6), wsMm7Offset(wsMm7),
-            scale(s), B(B), H(H), T(T), K(K), V(V), BT(BT), numChunks(numChunks) {}
+            scale(s), B(B), H(H), T(T), K(K), V(V), BT(BT), numChunks(numChunks), isVarLen(isVarLen) {}
     };
     
     CATLASS_DEVICE
@@ -170,20 +175,29 @@ public:
         auto layoutVxK = LayoutColMajor::MakeLayout<ElementA>(params.V, params.K);
                 // AscendC::printf("params.ptrDv %d %d\n",params.ptrDv,params.ptrDv);
                 // AscendC::printf("params.ptrH %d %d\n",params.ptrH,params.ptrH);
-                // AscendC::printf("params.ptrDw %d %d\n",params.ptrDw,params.ptrDw);
+                // AscendC::printf("params.+++ptrDw %d %d\n",params.ptrDw,params.ptrDw);
+        uint32_t bos = 0;
+        uint32_t eos = 0;
+
         // ========== Part 1: b_dw = b_dv @ b_h^T ==========
         {
-
             BlockMmadPart1 blockMmadPart1(resource);
             auto layoutH = LayoutColMajor::MakeLayout<ElementA>(params.K, params.V);
             // printf("[cube]coreLoops %d, H %d\n",coreLoops,params.H);
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
             // for (uint32_t loopIdx = coreIdx; loopIdx < 1; loopIdx += coreNum) {
+                if (params.isVarLen == 1) {
+                    GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                                    params.BT, loopIdx, bos, eos);
+                }
+
+                uint32_t actual_chunk_len = eos-bos;
+                // AscendC::printf("[cube] loopIdx %d, bos %d, eos %d, actual_chunk_len %d\n",loopIdx, bos, eos, actual_chunk_len);
                 uint32_t bIdx = loopIdx / params.numChunks;
                 uint32_t chunkIdx = loopIdx % params.numChunks;
 
                 GemmCoord actualBlockShape{
-                    static_cast<uint32_t>(params.BT),
+                    static_cast<uint32_t>(actual_chunk_len),
                     static_cast<uint32_t>(params.K),
                     static_cast<uint32_t>(params.V)
                 };
@@ -192,15 +206,11 @@ public:
                 // for (uint32_t h = 0; h < 1; h++) {
                     // 设置 GM 地址
                     // dv: [B, H, T, V] -> offset = ((b * H + h) * T + chunk * BT) * V
-                    uint64_t dvOffset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.V;
-                    // printf("uint64_t dvOffset %d = ((bIdx %d * params.H %d + h %d) * params.T %d + chunkIdx %d * params.BT %d) * params.V %d;\n",dvOffset,bIdx, params.H , h, params.T , chunkIdx , params.BT, params.V);
+                    uint64_t dvOffset = ((bIdx * params.H + h) * params.T + (params.isVarLen ? bos : (chunkIdx * BT))) * params.V;
                     // h: [B, H, num_chunks, K, V] -> offset = ((b * numChunks + chunk) * H + h) * K * V
                     uint64_t hOffset = ((bIdx * params.H + h) * params.numChunks + chunkIdx) * params.K * params.V;
-                    // printf("uint64_t hOffset %d = ((bIdx %d * params.numChunks %d + chunkIdx %d) * params.H %d + h %d) * params.K %d * params.V %d;\n",hOffset ,bIdx, params.numChunks ,chunkIdx, params.H , h, params.K,params.V);
                     // dw output (workspace): [B, H, T, K]
-                    uint64_t dwOffset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.K;
-                    // printf("uint64_t dwOffset %d = ((bIdx %d * params.H %d + h %d) * params.T %d + chunkIdx %d * params.BT %d) * params.K %d\n",dwOffset ,bIdx, params.H , h,params.T, chunkIdx, params.BT, params.K);
-                    // printf("dvOffset %d, hOffset %d, dwOffset %d, \n",dvOffset, hOffset, dwOffset);
+                    uint64_t dwOffset = ((bIdx * params.H + h) * params.T + (params.isVarLen ? bos : (chunkIdx * BT))) * params.K;
 
                     GlobalTensor<ElementA> gmDv;
                     gmDv.SetGlobalBuffer((__gm__ ElementA *)params.ptrDv + dvOffset);
@@ -211,15 +221,13 @@ public:
                     GlobalTensor<ElementC> gmDw;
                     // gmDw.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsDwOffset) + dwOffset);
                     gmDw.SetGlobalBuffer((__gm__ ElementC *)params.ptrDw + dwOffset);
-                    // printf("ptrDw %d + dwOffset %d\n",(__gm__ ElementC *)params.ptrDw,dwOffset);
 
                     auto tensorDv = tla::MakeTensor(gmDv, MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
                     auto tensorH = tla::MakeTensor(gmH, MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});  // h^T
                     auto tensorDw = tla::MakeTensor(gmDw, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     
                     AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-                    // AscendC::printf("!!!m %d k %d n %d\n",actualBlockShape.m(),actualBlockShape.k(),actualBlockShape.n());
-                    // AscendC::PipeBarrier<PIPE_MTE2>();
+
                     auto tensorBlockDv = GetTile(tensorDv, tla::MakeCoord(0, 0), 
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
                     auto tensorBlockH = GetTile(tensorH, tla::MakeCoord(0, 0), 
@@ -231,6 +239,7 @@ public:
 
 
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
+
                 }
             }
             // 最终同步(后移)
@@ -238,25 +247,29 @@ public:
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
         }
         AscendC::SyncAll<false>();
+
         // ========== Part 2: mm5 = q @ k^T (纯 Cube) ==========
         {
             BlockMmadPart2 blockMmadPart2(resource);
             
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                                params.BT, loopIdx, bos, eos);
+                uint32_t actual_chunk_len = eos-bos;
                 uint32_t bIdx = loopIdx / params.numChunks;
                 uint32_t chunkIdx = loopIdx % params.numChunks;
                 
                 GemmCoord actualBlockShape{
-                    static_cast<uint32_t>(params.BT),
-                    static_cast<uint32_t>(params.BT),
+                    static_cast<uint32_t>(actual_chunk_len),
+                    static_cast<uint32_t>(actual_chunk_len),
                     static_cast<uint32_t>(params.K)
                 };
                 
                 for (uint32_t h = 0; h < params.H; h++) {
                     // q, k: [B, H, T, K]
-                    uint64_t qkOffset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.K;
+                    uint64_t qkOffset = ((bIdx * params.H + h) * params.T + bos) * params.K;
                     // mm5: workspace [B, H, T, BT]
-                    uint64_t mm5Offset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.BT;
+                    uint64_t mm5Offset = ((bIdx * params.H + h) * params.T + bos) * params.BT;
                     
                     GlobalTensor<ElementA> gmQ;
                     gmQ.SetGlobalBuffer((__gm__ ElementA *)params.ptrQ + qkOffset);
@@ -264,6 +277,7 @@ public:
                     gmK.SetGlobalBuffer((__gm__ ElementA *)params.ptrK + qkOffset);
                     GlobalTensor<ElementC> gmMm5;
                     gmMm5.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsMm5Offset) + mm5Offset);
+// gmMm5.SetGlobalBuffer((__gm__ ElementC *)params.ptrDw + mm5Offset);
                     
                     auto tensorQ = tla::MakeTensor(gmQ, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     auto tensorK = tla::MakeTensor(gmK, MakeLayoutFromTag(layoutKxBT), Arch::PositionGM{});  // k^T
@@ -285,6 +299,7 @@ public:
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
         }
         AscendC::SyncAll<false>();
+
         // ========== Part 3: b_ds = b_do @ b_v^T ==========
         {
             // AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
@@ -292,20 +307,23 @@ public:
             BlockMmadPart3 blockMmadPart3(resource);
             
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                                params.BT, loopIdx, bos, eos);
+                uint32_t actual_chunk_len = eos-bos;
                 uint32_t bIdx = loopIdx / params.numChunks;
                 uint32_t chunkIdx = loopIdx % params.numChunks;
                 
                 GemmCoord actualBlockShape{
-                    static_cast<uint32_t>(params.BT),
-                    static_cast<uint32_t>(params.BT),
+                    static_cast<uint32_t>(actual_chunk_len),
+                    static_cast<uint32_t>(actual_chunk_len),
                     static_cast<uint32_t>(params.V)
                 };
                 
                 for (uint32_t h = 0; h < params.H; h++) {
                     // do, v: [B, H, T, V]
-                    uint64_t dvOffset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.V;
+                    uint64_t dvOffset = ((bIdx * params.H + h) * params.T + bos) * params.V;
                     // ds_temp: workspace [B, H, T, BT]
-                    uint64_t dsOffset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.BT;
+                    uint64_t dsOffset = ((bIdx * params.H + h) * params.T + bos) * params.BT;
                     
                     GlobalTensor<ElementA> gmDo;
                     gmDo.SetGlobalBuffer((__gm__ ElementA *)params.ptrDo + dvOffset);
@@ -336,29 +354,33 @@ public:
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
         }
         AscendC::SyncAll<false>();
+
         // ========== Part 4: b_dq = b_do @ b_h^T ==========
         {
             BlockMmadPart4 blockMmadPart4(resource);
             
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                                params.BT, loopIdx, bos, eos);
+                uint32_t actual_chunk_len = eos-bos;
                 uint32_t bIdx = loopIdx / params.numChunks;
                 uint32_t chunkIdx = loopIdx % params.numChunks;
                 
                 GemmCoord actualBlockShape{
-                    static_cast<uint32_t>(params.BT),
+                    static_cast<uint32_t>(actual_chunk_len),
                     static_cast<uint32_t>(params.K),
                     static_cast<uint32_t>(params.V)
                 };
                 
                 for (uint32_t h = 0; h < params.H; h++) {
                     // do: [B, H, T, V]
-                    uint64_t doOffset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.V;
+                    uint64_t doOffset = ((bIdx * params.H + h) * params.T + bos) * params.V;
                     // h: [B, H, num_chunks, K, V]   [1, 44, 4, 128, 128]
                     uint64_t hOffset = ((bIdx * params.H + h) * params.numChunks + chunkIdx) * params.K * params.V;
                     //bIdx * numChunks * H * K * V + chunkIdx * H * K * V + h * K * V;
 
                     // dq: [B, H, T, K]
-                    uint64_t dqOffset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.K;
+                    uint64_t dqOffset = ((bIdx * params.H + h) * params.T + bos) * params.K;
                     
                     GlobalTensor<ElementA> gmDo;
                     gmDo.SetGlobalBuffer((__gm__ ElementA *)params.ptrDo + doOffset);
@@ -383,34 +405,44 @@ public:
                     blockMmadPart4(tensorBlockDo, tensorBlockH, tensorBlockDq, actualBlockShape);
 
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
+// printf("[cube] loopIdx %d,h %d,DoOffset %d hOffset %d dqOffset %d actual_chunk_len %d\n",loopIdx,h,doOffset, hOffset, dqOffset, actual_chunk_len);
+// if (loopIdx == 0 &&  h == 2) {
+//     DumpTensor(gmDo,__LINE__,3*128);
+//     DumpTensor(gmH,__LINE__,128*128);
+//     DumpTensor(gmDq,__LINE__,3*128);
+// }
                 }
             }
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
         }
         AscendC::SyncAll<false>();
+
         // ========== Part 5: b_dk = b_v @ b_dh ==========
         {
             BlockMmadPart5 blockMmadPart5(resource);
             
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                                params.BT, loopIdx, bos, eos);
+                uint32_t actual_chunk_len = eos-bos;
                 uint32_t bIdx = loopIdx / params.numChunks;
                 uint32_t chunkIdx = loopIdx % params.numChunks;
                 
                 GemmCoord actualBlockShape{
-                    static_cast<uint32_t>(params.BT),
+                    static_cast<uint32_t>(actual_chunk_len),
                     static_cast<uint32_t>(params.K),
                     static_cast<uint32_t>(params.V)
                 };
                 
                 for (uint32_t h = 0; h < params.H; h++) {
                     // v: [B, H, T, V]
-                    uint64_t vOffset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.V;
+                    uint64_t vOffset = ((bIdx * params.H + h) * params.T + bos) * params.V;
                     // dh: [B, H, num_chunks, K, V]  -> 需要转置访问 [V, K]
                     // uint64_t dhOffset = ((bIdx * params.numChunks + chunkIdx) * params.H + h) * params.K * params.V;
                     uint64_t dhOffset = ((bIdx * params.H + h) * params.numChunks + chunkIdx) * params.K * params.V;
                     // dk: [B, H, T, K]
-                    uint64_t dkOffset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.K;
+                    uint64_t dkOffset = ((bIdx * params.H + h) * params.T + bos) * params.K;
                     
                     GlobalTensor<ElementA> gmV;
                     gmV.SetGlobalBuffer((__gm__ ElementA *)params.ptrV + vOffset);
@@ -434,7 +466,12 @@ public:
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     
                     blockMmadPart5(tensorBlockV, tensorBlockDh, tensorBlockDk, actualBlockShape);
-                    
+// if(true){
+//     printf("[cube] loopIdx %d h %d dkOffset %d\n",loopIdx,h,dkOffset);
+//     // DumpTensor(gmV,__LINE__,64);
+//     // DumpTensor(gmDh,__LINE__,64);
+//     DumpTensor(gmDk,__LINE__,64);
+// }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
                 }
             }
@@ -442,26 +479,30 @@ public:
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
         }
         AscendC::SyncAll<false>();
+
         // ========== Part 6: mm6 = b_ds_temp @ b_k ==========
         // 结果累加到 dq
         {
             BlockMmadPart6 blockMmadPart6(resource);
             
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                                params.BT, loopIdx, bos, eos);
+                uint32_t actual_chunk_len = eos-bos;
                 uint32_t bIdx = loopIdx / params.numChunks;
                 uint32_t chunkIdx = loopIdx % params.numChunks;
                 
                 GemmCoord actualBlockShape{
-                    static_cast<uint32_t>(params.BT),
+                    static_cast<uint32_t>(actual_chunk_len),
                     static_cast<uint32_t>(params.K),
-                    static_cast<uint32_t>(params.BT)
+                    static_cast<uint32_t>(actual_chunk_len)
                 };
                 
                 for (uint32_t h = 0; h < params.H; h++) {
                     // ds_temp: workspace [B, H, T, BT]
-                    uint64_t dsOffset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.BT;
+                    uint64_t dsOffset = ((bIdx * params.H + h) * params.T + bos) * params.BT;
                     // k: [B, H, T, K]
-                    uint64_t kOffset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.K;
+                    uint64_t kOffset = ((bIdx * params.H + h) * params.T + bos) * params.K;
                     // dq: [B, H, T, K] - 累加
                     uint64_t dqOffset = kOffset;
                     
@@ -500,20 +541,23 @@ public:
             BlockMmadPart7 blockMmadPart7(resource);
             
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                                params.BT, loopIdx, bos, eos);
+                uint32_t actual_chunk_len = eos-bos;
                 uint32_t bIdx = loopIdx / params.numChunks;
                 uint32_t chunkIdx = loopIdx % params.numChunks;
                 
                 GemmCoord actualBlockShape{
-                    static_cast<uint32_t>(params.BT),
+                    static_cast<uint32_t>(actual_chunk_len),
                     static_cast<uint32_t>(params.K),
-                    static_cast<uint32_t>(params.BT)
+                    static_cast<uint32_t>(actual_chunk_len)
                 };
                 
                 for (uint32_t h = 0; h < params.H; h++) {
                     // ds_temp^T: workspace [B, H, T, BT]
-                    uint64_t dsOffset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.BT;
+                    uint64_t dsOffset = ((bIdx * params.H + h) * params.T + bos) * params.BT;
                     // q: [B, H, T, K]
-                    uint64_t qOffset = ((bIdx * params.H + h) * params.T + chunkIdx * params.BT) * params.K;
+                    uint64_t qOffset = ((bIdx * params.H + h) * params.T + bos) * params.K;
 
                     // dk: [B, H, T, K] - 累加
                     uint64_t dkOffset = qOffset;
@@ -577,6 +621,7 @@ public:
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
         }
+
     }
 };
 
@@ -590,11 +635,11 @@ class ChunkBwdDqkwgCubeProcess {
 public:
     __aicore__ inline ChunkBwdDqkwgCubeProcess(
         GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR h,
-        GM_ADDR do_, GM_ADDR dh, GM_ADDR dv,
+        GM_ADDR do_, GM_ADDR dh, GM_ADDR dv, GM_ADDR cu_seqlen, GM_ADDR chunk_indices,
         GM_ADDR dq, GM_ADDR dk, GM_ADDR dw, GM_ADDR dg,
         GM_ADDR workspace
     ) : ptrQ(q), ptrK(k), ptrV(v), ptrG(g), ptrH(h),
-        ptrDo(do_), ptrDh(dh), ptrDv(dv),
+        ptrDo(do_), ptrDh(dh), ptrDv(dv), ptrCuSeqLen(cu_seqlen), ptrChunkIndices(chunk_indices),
         ptrDq(dq), ptrDk(dk), ptrDw(dw), ptrDg(dg),
         ptrWorkspace(workspace) {}
     
@@ -611,6 +656,8 @@ private:
     GM_ADDR ptrDo;
     GM_ADDR ptrDh;
     GM_ADDR ptrDv;
+    GM_ADDR ptrCuSeqLen;
+    GM_ADDR ptrChunkIndices;
     GM_ADDR ptrDq;
     GM_ADDR ptrDk;
     GM_ADDR ptrDw;
@@ -626,6 +673,7 @@ private:
     uint64_t BT = CONST_BT;
     uint64_t numChunks = CONST_NUM_CHUNKS;
     float scale;
+    uint64_t isVarLen;
     
     // Workspace 偏移
     uint64_t wsDwOffset;
@@ -667,7 +715,8 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Init(const Chu
     wsDsTempOffset = tiling.wsDsTempOffset;
     wsMm6Offset = tiling.wsMm6Offset;
     wsMm7Offset = tiling.wsMm7Offset;
-
+    isVarLen = tiling.isVarLen;
+// printf("[cube] DTYPE_G %d, float %d\n",sizeof(DTYPE_G),sizeof(float));
 }
 
 template <typename DataType, typename GType>
@@ -723,11 +772,11 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Process() {
     MatmulKernel kernel;
     typename MatmulKernel::Params params(
         ptrQ, ptrK, ptrV, ptrG, ptrH,
-        ptrDo, ptrDh, ptrDv,
+        ptrDo, ptrDh, ptrDv, ptrCuSeqLen, ptrChunkIndices,
         ptrDq, ptrDk, ptrDw, ptrDg,
         ptrWorkspace, B, H, T, K, V, BT, numChunks,
         wsDwOffset, wsDgLastOffset, wsMm5Offset, wsDsTempOffset, wsMm6Offset, wsMm7Offset,
-        scale
+        scale, isVarLen
     );
     
     kernel(params);
