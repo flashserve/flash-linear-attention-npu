@@ -21,7 +21,7 @@ namespace op_api {
 using npu_preparation = at_npu::native::OpPreparation;
 
 // Tensor q, Tensor k, Tensor d_o, Tensor g, Tensor? upper_tri_matrix, Tensor? g_gamma, Tensor? A, Tensor? cu_seqlens, Tensor? chunk_indices, float scale, int chunk_size) -> (Tensor)
-at::Tensor npu_chunk_bwd_dqkwg(
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> npu_chunk_bwd_dqkwg(
     const at::Tensor &q,
     const at::Tensor &k,
     const at::Tensor &v,
@@ -32,18 +32,20 @@ at::Tensor npu_chunk_bwd_dqkwg(
     const at::Tensor &dv,
     const c10::optional<at::Tensor> &cu_seqlens,
     const c10::optional<at::Tensor> &chunk_indices,
-    double scale, 
+    c10::optional<double> scale, 
     int64_t chunk_size)
 {
+
     at::Tensor dq = npu_preparation::apply_tensor_without_format(q.sizes(), q.options().dtype());
     at::Tensor dk = npu_preparation::apply_tensor_without_format(k.sizes(), k.options().dtype());
     at::Tensor dw = npu_preparation::apply_tensor_without_format(k.sizes(), k.options().dtype());
     at::Tensor dg = npu_preparation::apply_tensor_without_format(g.sizes(), g.options().dtype());
     const at::Tensor &cu_seqlens_ = c10::value_or_else(cu_seqlens, [] { return at::Tensor(); });
     const at::Tensor &chunk_indices_ = c10::value_or_else(chunk_indices, [] { return at::Tensor(); });
+    float scale_real = static_cast<float>(scale.value_or(1.0));
     EXEC_NPU_CMD(aclnnChunkBwdDqkwg,
-        q, k, v, g, h, dox, dh, dv, cu_seqlens_, chunk_indices_, scale, chunk_size, dq, dk, dw, dg);
-    return dq, dk, dw, dg;
+        q, k, v, g, h, dox, dh, dv, cu_seqlens_, chunk_indices_, scale_real, chunk_size, dq, dk, dw, dg);
+    return std::tie(dq, dk, dw, dg);
 }
 
 }  // namespace op_api

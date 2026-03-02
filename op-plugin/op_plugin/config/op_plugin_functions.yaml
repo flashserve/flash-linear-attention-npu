@@ -6232,7 +6232,7 @@ custom:
   - func: npu_chunk_gated_delta_rule_bwd_dhu(Tensor q, Tensor k, Tensor w, Tensor d_o, Tensor dv, Tensor? g, Tensor? gK, Tensor? h0, Tensor? dht, int[]? cu_seqlens, int[]? chunk_indices, float scale, int chunk_size) -> (Tensor, Tensor, Tensor)
     op_api: all_version
 
-  - func: npu_prepare_wy_repr_bwd_full(Tensor k, Tensor v, Tensor beta, Tensor a, Tensor dA, Tensor dW, Tensor du, Tensor g, Tensor? cu_seqlens, Tensor? chunk_indices, int chunk_size) -> (Tensor, Tensor, Tensor, Tensor)
+  - func: npu_prepare_wy_repr_bwd_full(Tensor k, Tensor v, Tensor beta, Tensor a, Tensor dA, Tensor dW, Tensor du, Tensor g, int[]? cu_seqlens, int[]? chunk_indices, int chunk_size) -> (Tensor, Tensor, Tensor, Tensor)
     op_api: all_version
 
   - func: npu_chunk_bwd_dqkwg(Tensor q, Tensor k, Tensor v, Tensor g, Tensor h, Tensor dox, Tensor dh, Tensor dv, Tensor? cu_seqlens, Tensor? chunk_indices, float? scale, int chunk_size) -> (Tensor, Tensor, Tensor, Tensor)

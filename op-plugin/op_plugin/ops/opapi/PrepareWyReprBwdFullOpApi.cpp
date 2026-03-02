@@ -32,12 +32,12 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> npu_prepare_wy_repr_b
     const at::Tensor &dw,
     const at::Tensor &du,
     const at::Tensor &g,
-    const c10::optional<at::Tensor> &cu_seqlens,
-    const c10::optional<at::Tensor> &chunk_indices,
+    c10::OptionalIntArrayRef cu_seqlens,
+    c10::OptionalIntArrayRef chunk_indices,
     int64_t chunk_sizes)
 {
-    const at::Tensor &cu_seqlens_ = c10::value_or_else(cu_seqlens, [] { return at::Tensor(); });
-    const at::Tensor &chunk_indices_ = c10::value_or_else(chunk_indices, [] { return at::Tensor(); });
+    auto cu_seqlens_ = cu_seqlens.value_or(at::IntArrayRef{});
+    auto chunk_indices_ = chunk_indices.value_or(at::IntArrayRef{});
     
     at::Tensor dk = npu_preparation::apply_tensor_without_format(k.sizes(), k.options().dtype());
     at::Tensor dv = npu_preparation::apply_tensor_without_format(v.sizes(), v.options().dtype());
