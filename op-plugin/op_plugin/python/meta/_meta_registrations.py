@@ -497,7 +497,7 @@ def npu_prepare_wy_repr_bwd_da(k, v, beta, A, dw, du, g, lower_tri_matrix, cu_se
 
 @impl(m, "npu_chunk_gated_delta_rule_bwd_dhu")
 def npu_chunk_gated_delta_rule_bwd_dhu(q, k, w, d_o, dv, g, gK, h0, dht, cu_seqlens, chunk_indices, scale, chunk_size):
-    chunk_num = len(cu_seqlens.size) - 1
+    chunk_num = int(len(chunk_indices) // 2)
     B = q.size(0)
     H = q.size(1)
     T = q.size(2)

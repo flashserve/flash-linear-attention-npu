@@ -42,14 +42,12 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> npu_chunk_gated_delta_rule_bwd_dh
     int T = q_size[2];
     int K = q_size[3];
     int V = dv_size[3];
-
     int chunk_num = T / chunk_size; 
 
-    if (cu_seqlens.has_value()) {
-        auto cu_seqlens_ref = cu_seqlens.value();  // 获取ArrayRef
-        chunk_num = cu_seqlens_ref.size() - 1;
+    if (chunk_indices.has_value()) {
+        auto chunk_indices_ref = chunk_indices.value();  // 获取ArrayRef
+        chunk_num = int(chunk_indices_ref.size() / 2);
     }
-
 
     at::Tensor dv2 = npu_preparation::apply_tensor_without_format(dv.sizes(), dv.options().dtype());
     at::Tensor dh = npu_preparation::apply_tensor_without_format({B,H,chunk_num,K,V}, q.options().dtype());
@@ -58,10 +56,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> npu_chunk_gated_delta_rule_bwd_dh
     const at::Tensor &g_ = c10::value_or_else(g, [] { return at::Tensor(); });
     const at::Tensor &h0_ = c10::value_or_else(h0, [] { return at::Tensor(); });
     const at::Tensor &dht_ = c10::value_or_else(dht, [] { return at::Tensor(); });
-    auto cu_seqlens_real = cu_seqlens.value_or(at::IntArrayRef{});
-    auto chunk_indices_real = chunk_indices.value_or(at::IntArrayRef{});
     EXEC_NPU_CMD(aclnnChunkGatedDeltaRuleBwdDhu,
-        q, k, w, d_o, dv, g_, gK_, h0_, dht_, cu_seqlens_real, chunk_indices_real, scale, chunk_size, dh, dh0, dv2);
+        q, k, w, d_o, dv, g_, gK_, h0_, dht_, cu_seqlens, chunk_indices, scale, chunk_size, dh, dh0, dv2);
     return std::make_tuple(dh, dh0, dv2); 
 }
 

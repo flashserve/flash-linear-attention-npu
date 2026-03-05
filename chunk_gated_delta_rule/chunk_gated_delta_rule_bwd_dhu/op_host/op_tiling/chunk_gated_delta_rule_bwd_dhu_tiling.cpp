@@ -74,7 +74,7 @@ bool ChunkGatedDeltaRuleBwdDhuTiling::Init(gert::TilingContext* context) {
   
   auto attrs = context->GetAttrs();
   OP_CHECK_IF(attrs == nullptr, OP_LOGE(context->GetNodeName(), "attrs is nullptr."), return false);
-  const float *scalePtr = attrs->GetAttrPointer<float>(ATTR_SCALE_IDX);
+  const double *scalePtr = attrs->GetAttrPointer<double>(ATTR_SCALE_IDX);
   IS_SCALE = scalePtr == nullptr ? false : true;
   float scale = IS_SCALE ? *scalePtr : 1.0;
   const uint32_t *chunkSizePtr = attrs->GetAttrPointer<uint32_t>(ATTR_CHUNK_SIZE_IDX);
@@ -95,10 +95,8 @@ bool ChunkGatedDeltaRuleBwdDhuTiling::Init(gert::TilingContext* context) {
 }
 
 bool ChunkGatedDeltaRuleBwdDhuTiling::VarLenSetting(gert::TilingContext* context) {
-  const auto cuSeqlens = context->GetInputTensor(INPUT_CU_SEQLENS_IDX);
-
-  const auto chunkIndices = context->GetInputTensor(INPUT_CHUNK_INDICES_IDX);
-
+  const auto cuSeqlens = context->GetOptionalInputTensor(INPUT_CU_SEQLENS_IDX);
+  const auto chunkIndices = context->GetOptionalInputTensor(INPUT_CHUNK_INDICES_IDX);
   if (cuSeqlens != nullptr && chunkIndices != nullptr) {
     IS_VARIABLE_LEN = true;
   } else if (!(cuSeqlens == nullptr && chunkIndices == nullptr)) {
