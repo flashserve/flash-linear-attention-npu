@@ -1,7 +1,6 @@
 /**
  * Copyright (c) 2025 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -66,6 +65,18 @@ protected:
     void InitCompileInfo();
     void PrintTilingData();
 
+    //Host tiling rule-chain engine: compose shape/UB steps by ordered rules.
+    using HostRuleFn = ge::graphStatus (RecurrentGatedDeltaRuleTiling::*)();
+    struct UbCalcContext {
+        int64_t ubSize = 0;
+        int64_t aNv = 0;
+        int64_t aDv = 0;
+        int64_t aDk = 0;
+        int64_t fixedUbBytes = 0;
+        int64_t workingUbBytes = 0;
+        int64_t coeff = 0;
+    };
+
     ge::graphStatus CheckContext();
     ge::graphStatus AnalyzeDtype();
     ge::graphStatus AnalyzeShapes();
@@ -73,6 +84,28 @@ protected:
     ge::graphStatus GetScale();
     ge::graphStatus GetOptionalInput();
     ge::graphStatus AnalyzeFormat();
+    //Host tiling refactor helpers: split shape validation/fill and UB calculation.
+    ge::graphStatus CheckShapeDimAndRelation(const gert::Shape &queryShape, const gert::Shape &keyShape,
+                                             const gert::Shape &valueShape, const gert::Shape &betaShape,
+                                             const gert::Shape &stateShape, const gert::Shape &cuSeqlensShape,
+                                             const gert::Shape &ssmStateShape);
+    void FillTilingShapeData(const gert::Shape &queryShape, const gert::Shape &valueShape, const gert::Shape &stateShape,
+                             const gert::Shape &cuSeqlensShape);
+    ge::graphStatus CheckShapeValueRangeAndRule();
+    void UpdateDynamicBlockDimByTaskUnits();
+    int64_t CalcFixedUbBytes(int64_t aNv, int64_t aDv, int64_t aDk) const;
+    int64_t CalcWorkingUbBytes(int64_t aNv, int64_t aDv, int64_t aDk) const;
+    int64_t CalcVStepCoeff(int64_t aDk) const;
+    ge::graphStatus FinalizeVStepFromUb(int64_t ubSize, int64_t usedUbBytes, int64_t coeff);
+    ge::graphStatus RuleCheckShapeDimAndRelation();
+    ge::graphStatus RuleFillTilingShapeData();
+    ge::graphStatus RuleCheckShapeValueRangeAndRule();
+    ge::graphStatus RuleUpdateDynamicBlockDimByTaskUnits();
+    ge::graphStatus RuleInitUbCalcContext();
+    ge::graphStatus RuleCalcFixedUbBytes();
+    ge::graphStatus RuleCalcWorkingUbBytes();
+    ge::graphStatus RuleCalcVStepCoeff();
+    ge::graphStatus RuleFinalizeVStepFromUb();
 
     bool CheckDimEqual(const gert::Shape a, const int64_t dimA, gert::Shape b, const int64_t dimB, const std::string &nameA,
                        const std::string &nameB, const std::string &dimDesc);
@@ -82,6 +115,7 @@ protected:
     RecurrentGatedDeltaRuleCompileInfo compileInfo_;
     RecurrentGatedDeltaRuleTilingData tilingData_;
     RecurrentGatedDeltaRuleInfo inputParams_;
+    UbCalcContext ubCalcCtx_;
 };
 
 } // namespace optiling
