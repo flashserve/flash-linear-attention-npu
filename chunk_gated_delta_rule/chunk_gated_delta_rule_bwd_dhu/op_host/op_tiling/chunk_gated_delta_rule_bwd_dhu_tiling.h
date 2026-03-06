@@ -58,10 +58,12 @@ public:
     ChunkGatedDeltaRuleBwdDhuTilingData tilingData;
     bool Init(gert::TilingContext *context);
     bool CheckInputShape(gert::TilingContext *context);
+    bool CheckInputDtype(gert::TilingContext *context);
     bool CalcUb(gert::TilingContext *context);
     void SetWorkspaceSize(gert::TilingContext *context);
     bool VarLenSetting(gert::TilingContext *context);
     void PrintTilingData(gert::TilingContext *context);
+    uint32_t tilingKey = 0;
 private:
     bool IS_SCALE = false;
     bool IS_VARIABLE_LEN = false; 

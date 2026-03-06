@@ -53,6 +53,9 @@ namespace {
   constexpr uint32_t FP32_DTYPE_SIZE = 4;
   constexpr uint32_t INT8_DTYPE_SIZE = 1;
 
+  constexpr uint32_t TILING_KEY = 0;
+  constexpr uint32_t TILING_KEY_G_FP32 = 1;
+
   template <typename T> 
   static T CeilDiv(T a, T b) {
     if (b == 0) {
@@ -82,7 +85,7 @@ bool ChunkGatedDeltaRuleBwdDhuTiling::Init(gert::TilingContext* context) {
   OP_CHECK_IF(!(chunkSize == NUM_64 || chunkSize == NUM_128), 
               OP_LOGE(context->GetNodeName(), "chunk_size should be 64 or 128, but got %d.", chunkSize), 
               return false);
-
+  
   tilingData.set_B(B);
   tilingData.set_H(H);
   tilingData.set_T(T);
@@ -124,6 +127,21 @@ bool ChunkGatedDeltaRuleBwdDhuTiling::CheckInputShape(gert::TilingContext* conte
   OP_CHECK_IF(IS_VARIABLE_LEN && B != 1, 
               OP_LOGE(context->GetNodeName(), 
               "B must be 1 when seqence is variable len, but got %u.", B), return false);
+  return true;  
+}
+
+bool ChunkGatedDeltaRuleBwdDhuTiling::CheckInputDtype(gert::TilingContext* context) {
+  const auto gDtype = context->GetOptionalInputDesc(INPUT_G_IDX)->GetDataType();
+  const auto qDtype = context->GetOptionalInputDesc(INPUT_Q_IDX)->GetDataType();
+  if (gDtype != qDtype && gDtype != ge::DT_FLOAT) {
+    OP_LOGE(context->GetNodeName(), "gDtype must be DT_FLOAT or as same as qDtype");
+    return false;
+  }
+  if (gDtype == ge::DT_FLOAT) {
+    tilingKey = TILING_KEY_G_FP32;
+  } else {
+    tilingKey = TILING_KEY;
+  }
   return true;  
 }
 
@@ -222,9 +240,12 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4ChunkGDRBwdDhu(gert::TilingContext* cont
   OP_CHECK_IF(!tiling.CheckInputShape(context), OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
               "CheckInputShape Failed"), return ge::GRAPH_FAILED);
 
+  OP_CHECK_IF(!tiling.CheckInputDtype(context), OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
+              "CheckInputDtype Failed"), return ge::GRAPH_FAILED);
+  
   OP_CHECK_IF(!tiling.CalcUb(context), OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
             "Set Ub Failed"), return ge::GRAPH_FAILED);
-  context->SetTilingKey(1);
+  context->SetTilingKey(tiling.tilingKey);
   auto platformInfoPtr = context->GetPlatformInfo();
   OP_CHECK_IF(platformInfoPtr == nullptr,
               OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "platformInfoPtr is null!"),
