@@ -54,7 +54,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> npu_chunk_gated_delta_rule_fwd_h(
         NT = (T / chunk_size_ - 1) / chunk_size_;
     }
 
-    at::Tensor h_out = npu_preparation::apply_tensor_without_format({B, HV, NT, K, V}, k.options().dtype());
+    at::Tensor h_out = at::zeros({B, HV, NT, K, V}, k.options().dtype());
     at::Tensor v_new_out = npu_preparation::apply_tensor_without_format(u.sizes(), u.options().dtype());
     at::Tensor final_state_out;
     if(output_final_state_) {
