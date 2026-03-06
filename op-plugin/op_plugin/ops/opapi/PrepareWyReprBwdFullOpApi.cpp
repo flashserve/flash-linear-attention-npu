@@ -36,16 +36,13 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> npu_prepare_wy_repr_b
     c10::OptionalIntArrayRef chunk_indices,
     int64_t chunk_sizes)
 {
-    auto cu_seqlens_ = cu_seqlens.value_or(at::IntArrayRef{});
-    auto chunk_indices_ = chunk_indices.value_or(at::IntArrayRef{});
-    
     at::Tensor dk = npu_preparation::apply_tensor_without_format(k.sizes(), k.options().dtype());
     at::Tensor dv = npu_preparation::apply_tensor_without_format(v.sizes(), v.options().dtype());
     at::Tensor dg = npu_preparation::apply_tensor_without_format(g.sizes(), g.options().dtype());
     at::Tensor dbeta = npu_preparation::apply_tensor_without_format(beta.sizes(), beta.options().dtype());
 
     EXEC_NPU_CMD(aclnnPrepareWyReprBwdFull,
-        k, v, beta, A, dA, dw, du, g, cu_seqlens_, chunk_indices_, chunk_sizes, dk, dv, dbeta, dg);
+        k, v, beta, A, dA, dw, du, g, cu_seqlens, chunk_indices, chunk_sizes, dk, dv, dbeta, dg);
     return std::tie(dk, dv, dbeta, dg);
 }
 
