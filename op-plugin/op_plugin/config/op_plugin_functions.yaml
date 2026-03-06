@@ -6228,7 +6228,7 @@ custom:
   
   - func: npu_chunk_fwd_o(Tensor q, Tensor k, Tensor v, Tensor h, Tensor g, Tensor? cu_seqlens, Tensor? chunk_indices, float scale, int? chunk_size) -> Tensor
     op_api: all_version
- 	     
+
   - func: npu_chunk_bwd_dv_local(Tensor q, Tensor k, Tensor d_o, Tensor g, Tensor upper_tri_matrix, Tensor? g_gamma, Tensor? A, Tensor? cu_seqlens, Tensor? chunk_indices, float scale, int chunk_size) -> Tensor
     op_api: all_version
 
