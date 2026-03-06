@@ -37,25 +37,34 @@ const std::array<const aclTensor *, 4> ChunkBwdDqkwg(
     const aclTensor *dgOut,
     aclOpExecutor *executor)
 {
+// std::cout << "2222222222--2222200\n";
     L0_DFX(ChunkBwdDqkwg, q, k, v, g, h, dox, dh, dv, cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, dqOut, dkOut, dwOut, dgOut);
+// std::cout << "2222222222--2222200111\n";
     
     const aclTensor *actualCuSeqQLen = nullptr;
-    if (!cuSeqlensOptional) {
+    if (cuSeqlensOptional) {
+// printf("dh %p, dv %p, cuSeqlensOptional : %p, chunkIndicesOptional %p\n",dh,dv,cuSeqlensOptional,chunkIndicesOptional);
         actualCuSeqQLen = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
+// std::cout << "2222222222--2222200222-A" << actualCuSeqQLen <<"\n";
         const_cast<aclTensor *>(actualCuSeqQLen)->SetStorageFormat(Format::FORMAT_ND);
+// std::cout << "2222222222--2222200222-B\n";
         const_cast<aclTensor *>(actualCuSeqQLen)->SetViewFormat(Format::FORMAT_ND);
+// std::cout << "2222222222--2222200222-C\n";
         const_cast<aclTensor *>(actualCuSeqQLen)->SetOriginalFormat(Format::FORMAT_ND);
     } else {
         actualCuSeqQLen = nullptr;
     }
+// std::cout << "2222222222--2222200222\n";
 
     const aclTensor *actualChunkIndices = nullptr;
-    if (!chunkIndicesOptional) {
+    if (chunkIndicesOptional) {
+// std::cout << "2222222222--2222200222\n";
         actualChunkIndices = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
         const_cast<aclTensor *>(actualChunkIndices)->SetStorageFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualChunkIndices)->SetViewFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualChunkIndices)->SetOriginalFormat(Format::FORMAT_ND);
     } else {
+// std::cout << "1111111111\n";
         actualChunkIndices = nullptr;
     }
 
@@ -63,10 +72,12 @@ const std::array<const aclTensor *, 4> ChunkBwdDqkwg(
         OP_INPUT(q, k, v, g, h, dox, dh, dv, actualCuSeqQLen, actualChunkIndices),
         OP_OUTPUT(dqOut, dkOut, dwOut, dgOut),
         OP_ATTR(scale, chunkSize));
+
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr, nullptr};
     }
+
     return {dqOut, dkOut, dwOut, dgOut};
 }
 

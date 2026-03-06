@@ -145,41 +145,60 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+// std::cout << "1111\n";
     ChunkBwdDqkwgParams params{q, k, v, g, h, dox, dh, dv, cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, dqOut, dkOut, dwOut, dgOut};
+
     // Standard syntax, Check parameters.
     L2_DFX_PHASE_1(aclnnChunkBwdDqkwg, DFX_IN(q, k, v, g, h, dox, dh, dv, cuSeqlensOptional, chunkIndicesOptional),
                    DFX_OUT(dqOut, dkOut, dwOut, dgOut));
+// std::cout << "11111111111--22222\n";
     // 固定写法，创建OpExecutor
+// std::cout << "11111111111--2222233\n";
     auto uniqueExecutor = CREATE_EXECUTOR();
+// std::cout << "11111111111--2222244\n";
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+// std::cout << "11111111111--222255\n";
     auto executorPtr = uniqueExecutor.get();
     // 固定写法，参数检查
+// std::cout << "11111111111--2222266\n";
     auto ret = CheckParams(params);
+// std::cout << "11111111111--2222277\n";
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+// std::cout << "11111111111--2222288\n";
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
+// std::cout << "11111111111--2222299\n";
     auto result = l0op::ChunkBwdDqkwg(params.q, params.k, params.v, params.g, params.h, params.dox, params.dh, params.dv, params.cuSeqlensOptional, params.chunkIndicesOptional, params.scale, params.chunkSize, params.dqOut, params.dkOut, params.dwOut, params.dgOut, executorPtr);
+// std::cout << "11111111111--2222200\n";
+// printf("result[0] %p, result[1] %p, result[2] : %p, result[3] %p\n",result[0],result[1],result[2],result[3]);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[2] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[3] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+// std::cout << "22222AA\n";
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.
     auto viewCopyResult = l0op::ViewCopy(result[0], params.dqOut, executorPtr);
     CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+// std::cout << "22222BB\n";
 
     viewCopyResult = l0op::ViewCopy(result[1], params.dkOut, executorPtr);
     CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+// std::cout << "22222VV\n";
 
     viewCopyResult = l0op::ViewCopy(result[2], params.dwOut, executorPtr);
     CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+// std::cout << "22222CC\n";
 
     viewCopyResult = l0op::ViewCopy(result[3], params.dgOut, executorPtr);
     CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+// std::cout << "3333\n";
 
     // Standard syntax, get the size of workspace needed during computation.
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
+// std::cout << "5555\n";
+
     return ACLNN_SUCCESS;
 }
 

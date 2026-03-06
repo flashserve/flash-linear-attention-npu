@@ -62,7 +62,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     const int32_t* chunkSizePtr = attr->GetAttrPointer<int32_t>(ATTR_CHUNK_SIZE_ITEM);
     if (chunkSizePtr != nullptr) {
         BT = *chunkSizePtr;
-        std::cout << "[tiling] BT: " << BT << "\n";
+        // std::cout << "[tiling] BT: " << BT << "\n";
         if (BT != 64 && BT != 128) {
             std::cout << "BT should be 64 or 128 ." << std::endl;
             return ge::GRAPH_FAILED;
@@ -93,6 +93,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
         std::cout << "varlen mode only support B = 1, but now B = " << B << "." << std::endl;
         return ge::GRAPH_FAILED;
     }
+        // std::cout << "[tiling] isVarLen: " << isVarLen << "\n";
 
     
     // std::cout << "[tiling] B: " << B << ", H: " << H << ", T: " << T << ", K: " << K << ", V: " << V << ", BT: " << BT << ", numChunks: " << numChunks << std::endl;
@@ -136,31 +137,31 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     // offset += dwSize;
     
     size_t wsDgLastOffset = offset;
-std::cout << "[tiling] offset: " << offset << ", dgLastSize: "<<dgLastSize<<"\n";
+// std::cout << "[tiling] offset: " << offset << ", dgLastSize: "<<dgLastSize<<"\n";
     offset += dgLastSize;
 
     size_t wsMm5Offset = offset;
-std::cout << "[tiling] offset: " << offset << ", mm5Size: "<<mm5Size<<"\n";
+// std::cout << "[tiling] offset: " << offset << ", mm5Size: "<<mm5Size<<"\n";
     offset += mm5Size;
     
     size_t wsDsTempOffset = offset;
-std::cout << "[tiling] offset: " << offset << ", dsTempSize: "<<dsTempSize<<"\n";
+// std::cout << "[tiling] offset: " << offset << ", dsTempSize: "<<dsTempSize<<"\n";
     offset += dsTempSize;
 
     size_t wsMm6Offset = offset;
-std::cout << "[tiling] offset: " << mm6Size << ", mm6Size: "<<mm6Size<<"\n";
+// std::cout << "[tiling] offset: " << mm6Size << ", mm6Size: "<<mm6Size<<"\n";
     offset += mm6Size;
 
     size_t wsMm7Offset = offset;
-std::cout << "[tiling] offset: " << offset << ", mm7Size: "<<mm7Size<<"\n";
+// std::cout << "[tiling] offset: " << offset << ", mm7Size: "<<mm7Size<<"\n";
     offset += mm7Size;
 
     size_t wsMul1Offset = offset;
-std::cout << "[tiling] offset: " << offset << ", mul1Size: "<<mul1Size<<"\n";
+// std::cout << "[tiling] offset: " << offset << ", mul1Size: "<<mul1Size<<"\n";
     offset += mul1Size;
     
     size_t totalUserWorkspace = offset;
-    std::cout << "[tiling] totalUserWorkspace: " << totalUserWorkspace << ", sysWorkspaceSize: " << sysWorkspaceSize << "\n";
+    // std::cout << "[tiling] totalUserWorkspace: " << totalUserWorkspace << ", sysWorkspaceSize: " << sysWorkspaceSize << "\n";
     
     // 设置 workspace 大小
     size_t* workspaces = context->GetWorkspaceSizes(1);
@@ -201,11 +202,14 @@ std::cout << "[tiling] offset: " << offset << ", mul1Size: "<<mul1Size<<"\n";
     return ge::GRAPH_SUCCESS;
 }
 
+struct ChunkBwdDqkwgCompileInfo {};
 ASCENDC_EXTERN_C ge::graphStatus TilingParseChunkBwdDqkwg(gert::TilingParseContext* context) {
+    (void)context;
     return ge::GRAPH_SUCCESS;
 }
 
 IMPL_OP_OPTILING(ChunkBwdDqkwg)
-    .Tiling(TilingChunkBwdDqkwg);
+    .Tiling(TilingChunkBwdDqkwg)
+    .TilingParse<ChunkBwdDqkwgCompileInfo>(TilingParseChunkBwdDqkwg);
 
 }  // namespace optiling

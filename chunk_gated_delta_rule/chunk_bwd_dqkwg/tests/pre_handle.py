@@ -176,7 +176,7 @@ def get_inputs(pkl_path, transpose = True, dtype=torch.float16, gdtype=torch.flo
         g.detach().to(torch.float32).numpy().astype(bfloat16).tofile(f"{pkl_path}/gen/g.bin")
     else:
         g.detach().numpy().tofile(f"{pkl_path}/gen/g.bin")
-    down_tri.numpy().tofile(f"{pkl_path}/gen/down_tri.bin")
+    # down_tri.numpy().tofile(f"{pkl_path}/gen/down_tri.bin")
 
     if cu_seqlens != None:
         cu_seqlens.numpy().tofile(f"{pkl_path}/gen/cu_seqlens.bin")

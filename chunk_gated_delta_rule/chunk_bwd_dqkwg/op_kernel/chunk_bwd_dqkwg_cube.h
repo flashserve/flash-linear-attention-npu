@@ -409,7 +409,7 @@ public:
                     auto tensorDq = tla::MakeTensor(gmDq, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     
                     AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-                    // AscendC::PipeBarrier<PIPE_ALL>();
+
                     auto tensorBlockDo = GetTile(tensorDo, tla::MakeCoord(0, 0), 
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
                     auto tensorBlockH = GetTile(tensorH, tla::MakeCoord(0, 0), 
@@ -473,8 +473,7 @@ public:
                     auto tensorDk = tla::MakeTensor(gmDk, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     
                     AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-                    // AscendC::PipeBarrier<PIPE_ALL>();
-                    
+
                     auto tensorBlockV = GetTile(tensorV, tla::MakeCoord(0, 0), 
                                                  tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
                     auto tensorBlockDh = GetTile(tensorDh, tla::MakeCoord(0, 0), 
@@ -546,15 +545,7 @@ public:
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     
                     blockMmadPart6(tensorBlockDsTemp, tensorBlockK, tensorBlockDq, actualBlockShape);
-// if(h==0 && loopIdx ==0) {
-//     DumpTensor(gmDsTemp,__LINE__,8);
-//     DumpTensor(gmDsTemp[128],__LINE__,8);
-//     DumpTensor(gmDsTemp[128*2],__LINE__,8);
-//     DumpTensor(gmDsTemp[128*3],__LINE__,8);
-//     DumpTensor(gmK,__LINE__,64);
-//     DumpTensor(gmDq,__LINE__,64);
-//     PipeBarrier<PIPE_ALL>();
-// }
+
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
                 }
             }
@@ -612,35 +603,10 @@ public:
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     
                     blockMmadPart7(tensorBlockDsTemp, tensorBlockQ, tensorBlockDk, actualBlockShape);
-// if (loopIdx == 13 && h == 2) {
-//     // GlobalTensor<ElementC> gmQQ;
-//     // gmQQ.SetGlobalBuffer((__gm__ ElementA *)params.ptrQ);
-//     printf("qOffset %d = ((bIdx %d * params.H %d + h %d) * params.T %d + chunkIdx %d * params.BT %d) * params.K %d;\n",
-//             qOffset,bIdx,params.H,h,params.T,chunkIdx,params.BT,params.K);
-//     // DumpTensor(gmQQ[0],__LINE__,64);
-//     // DumpTensor(gmQQ[qOffset],__LINE__,64);
-//     // DumpTensor(gmDsTemp,__LINE__,16);
-//     // DumpTensor(gmDsTemp[64],__LINE__,16);
-//     // DumpTensor(gmDsTemp[64*2],__LINE__,16);
-//     // DumpTensor(gmDsTemp[64*3],__LINE__,16);
-//     // DumpTensor(gmDsTemp[64*4],__LINE__,16);
-// if constexpr (std::is_same<ElementC, half>::value) {
-//     printf("[cube] line %d: ", __LINE__);
-//     for(int i =0;i <64;i++) printf("%f ", static_cast<float>(gmDsTemp.GetValue(i*64)) * 100000);
-//     printf("\n");
-//     for(int i =0;i <64;i++) printf("%f ", static_cast<float>(gmDsTemp.GetValue(1+i*64)) * 100000);
-//     printf("\n");
-// }
+// if(h==0&&loopIdx==0){
+//     DumpTensor(gmDsTemp,__LINE__,64);
 //     DumpTensor(gmQ,__LINE__,64);
-//     // DumpTensor(gmDk,__LINE__,64);
-// if constexpr (std::is_same<ElementC, half>::value) {
-//     printf("[cube] line %d: ", __LINE__);
-//     for(int i =0;i <128;i++) {
-//         printf("%f ", static_cast<float>(gmDk.GetValue(i)) * 100000);
-//     }
-//     printf("\n");
-// }
-//     // DumpTensor(tensorMm7Fp32[63*128],__LINE__,64);
+//     DumpTensor(gmDk,__LINE__,64);
 // }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
                 }

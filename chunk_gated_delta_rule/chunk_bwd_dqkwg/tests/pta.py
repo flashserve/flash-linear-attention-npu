@@ -1,4 +1,11 @@
 import torch
+import torch_npu
+
+
+
+
+from ct import single
+import torch
 import torch.nn.functional as F
 from typing import Tuple
 
@@ -10,21 +17,7 @@ from typing import Optional
 import pickle
 import math
 import sys
-REGIN=False
-save_path = "/root/data_nvme0n1/huangjunzhe/GDN/ops-transformer_GDN/chunk_gated_delta_rule/chunk_bwd_dqkwg/tests/result/case_01"
-case_number = -1
-if len(sys.argv) > 1:
-    regen = sys.argv[1]
-    if regen == "regen":
-        print("[test.py] regenerate all random data!")
-        REGIN=True
-if len(sys.argv) > 2:
-    print(f"[test.py] save_path: {sys.argv[2]}")
-    save_path = sys.argv[2]
-if len(sys.argv) > 3:
-    result = sys.argv[3][5:]  # "case_" 长度为5
-    case_number = int(result)
-    print(f"[test.py] case id: {case_number}")
+
 def prepare_lens(cu_seqlens: torch.LongTensor) -> torch.LongTensor:
     return cu_seqlens[1:] - cu_seqlens[:-1]
 
@@ -33,7 +26,7 @@ def cdiv(a: torch.LongTensor
     torch.empty
     return (a + b - 1) // b
 
-def prepare_chunk_indices(
+def prepare_chunk_indices_torch(
     cu_seqlens: torch.LongTensor,
     chunkSize: int
 ) -> torch.LongTensor:
@@ -42,6 +35,45 @@ def prepare_chunk_indices(
     # print("indices is ", indices)
 
     return torch.stack([indices.eq(0).cumsum(0) - 1, indices], 1).to(cu_seqlens)
+
+def prepare_chunk_indices(
+    cu_seqlens: list[int],
+    chunk_size: int
+) -> list[int]: 
+    """
+    基于 cu_seqlens (list[int]) 生成 chunk 索引。
+    
+    注意：原 PyTorch 版本返回的是 shape [N, 2] 的 Tensor。
+    为了保持纯 Python 兼容性，这里返回 list[tuple[start_seq_idx, chunk_idx_in_seq]]。
+    如果算子需要扁平化的 list[int] (如 [s0, c0, s1, c1, ...])，请在调用前展开。
+    
+    逻辑复刻原代码：
+    1. 计算每个序列的长度: lens[i] = cu_seqlens[i+1] - cu_seqlens[i]
+    2. 计算每个序列需要的 chunk 数: ceil(lens[i] / chunk_size)
+    3. 生成对应的 (sequence_id, chunk_id) 对
+    """
+    indices = []
+    
+    # 遍历每个序列段
+    for i in range(len(cu_seqlens) - 1):
+        start = cu_seqlens[i]
+        end = cu_seqlens[i+1]
+        length = end - start
+        
+        if length <= 0:
+            continue
+            
+        # 计算该序列需要多少个 chunk
+        # 等价于 cdiv(length, chunk_size)
+        num_chunks = (length + chunk_size - 1) // chunk_size
+        
+        for chunk_id in range(num_chunks):
+            # 原逻辑: indices.eq(0).cumsum(0) - 1 对应的是序列索引 i
+            # 原逻辑: indices 对应的是 chunk_id
+            indices.append((i))
+            indices.append((chunk_id))
+            
+    return indices
 
 
 def chunk_bwd_dqkwg_cpu(
@@ -371,162 +403,100 @@ def chunk_bwd_dqkwg_cpu(
 # 使用示例 / 验证
 # -------------------------------------------------------------------------
 if __name__ == "__main__":
+    REGIN=True
+    save_path = "/data/huangjunzhe/GDN/result/result/case_21"
+    case_number = 21
+    if len(sys.argv) > 1:
+        regen = sys.argv[1]
+        if regen == "regen":
+            print("[test.py] regenerate all random data!")
+            REGIN=True
+    if len(sys.argv) > 2:
+        print(f"[test.py] save_path: {sys.argv[2]}")
+        save_path = sys.argv[2]
+    if len(sys.argv) > 3:
+        result = sys.argv[3][5:]  # "case_" 长度为5
+        case_number = int(result)
+        print(f"[test.py] case id: {case_number}")
     # 简单的形状参数
-
-    
-    B, T, H, K, V = 1, 2816, 4, 128, 128
-    B, T, H, K, V = 1, 32768, 32, 128, 128
-    B, T, H, K, V = 1, 1+64+63+65+257, 4, 128, 128      ##T 会根据seqlen重新赋值
-    # B, T, H, K, V = 1, 64+128, 4, 128, 128
-    chunk_size = 64
-    num_chunks = int(T / chunk_size)
-    dtype = torch.float16
+    K, V = 128, 128
     calc_type = torch.float32
-    Gtype = torch.float32
-    if False:
-        q = torch.randn(B, T, H, K, dtype=dtype)
-        k = torch.randn(B, T, H, K, dtype=dtype)
-        v = torch.randn(B, T, H, V, dtype=dtype)
-        do = torch.randn(B, T, H, V, dtype=dtype)
-        w = torch.rand((B, T, H, D), device=device, dtype=device_dtype)
-        
-        # 状态形状：(B, H, NT, K, V)
-        NT = (T + chunk_size - 1) // chunk_size
-        h = torch.randn(B, H, NT, K, V, dtype=dtype)
-        dh = torch.randn(B, H, NT, K, V, dtype=dtype)
-        
-        # Optional
-        g = torch.randn(B, T, H, dtype=dtype)
-        scale = 0.5
-    elif REGIN==False:      ## read gpu
-        import pickle
-        # with open('/root/data_nvme0n1/huangjunzhe/GDN/target/result/gpu_model/input.pkl', 'rb') as f:
-        with open(f'{save_path}/input.pkl', 'rb') as f:
-            print(f'reading {save_path}/input.pkl')
-            data = pickle.load(f)
-        
-        q = data['q'].cpu()
-        k = data['k'].cpu()
-        v = data['v'].cpu()
-        h = data['h'].cpu()
-        g = data['g'].cpu()
-        do = data['do'].cpu()
-        dh = data['dh'].cpu()
-        dv = data['dv'].cpu()
-        w = data['w'].cpu()
-        cu_seqlens = data['cu_seqlens'].cpu() if data['cu_seqlens'] is not None else None
-        B, H, K, V = q.shape[0], q.shape[2], q.shape[3], v.shape[3]
-        dtype = q.dtype
-        Gtype = g.dtype
-        if cu_seqlens is not None and B != 1:
-            print(f"varlen mode only support B = 1, but now B = {B}!")
-            exit(1)
-        T = cu_seqlens[-1] if cu_seqlens is not None else q.shape[1]
-        chunk_size = data['chunk_size']
-        # chunk_indices = data['chunk_indices'].cpu() if data['cu_seqlens'] is not None else None
-        chunk_indices = torch.load(f'{save_path}/chunk_indices.pt').cpu() if data['cu_seqlens'] is not None else None
-        num_chunks = chunk_indices.shape[0] if data['cu_seqlens'] is not None else int(T / chunk_size)
-        
-        scale = data['scale']
-        
-    else:  ##自定义输入
-        isVarLen = False
-        chunk_size = 128
-        cases = [   #B,H,T,chunk_size,dtype,Gtype,scale,cu_seqlens
-            [64,8,1024,64,torch.float16,torch.float16,0.088,None],
-            [32,16,2048,64,torch.bfloat16,torch.bfloat16,0.0625,None],
-            [16,32,4096,64,torch.float16,torch.float16,0.0442,None],
-            [8,32,8192,64,torch.bfloat16,torch.bfloat16,0.03125,None],
-            [128,4,1024,64,torch.float16,torch.float16,0.088,None],
-            [64,4,4096,128,torch.bfloat16,torch.bfloat16,0.0625,None],
-            [32,16,8192,64,torch.float16,torch.float16,0.0442,None],
-            [16,32,16384,64,torch.bfloat16,torch.bfloat16,0.03125,None],
-            [64,8,2048,128,torch.float16,torch.float16,0.0625,None],
-            [32,16,4096,128,torch.bfloat16,torch.bfloat16,0.0442,None],
-            [16,32,8192,128,torch.float16,torch.float16,0.03125,None],
-            [8,32,8192,128,torch.bfloat16,torch.bfloat16,0.0221,None],  #C12
-            [1,4,1024,64,torch.float16,torch.float16,0.088,None],
-            [48,8,2048,64,torch.bfloat16,torch.bfloat16,0.0625,None],
-            [24,16,4096,64,torch.float16,torch.float16,0.0442,None],
-            [12,32,8192,64,torch.bfloat16,torch.bfloat16,0.03125,None],
-            [1,16,32768,64,torch.float16,torch.float32,0.0625,torch.tensor([0,16,20000,30000,32768])],      # V1
-            [1,8,65536,64,torch.bfloat16,torch.bfloat16,0.0625,torch.tensor([0,16,20000,65536])],
-            [1,32,65536,64,torch.float16,torch.float32,0.0442,torch.tensor([0,16,20000,50000,65536])],
-            [1,32,262144,64,torch.bfloat16,torch.bfloat16,0.03125,torch.tensor([0,16,20000,50000,65536,210000,262144])],
-            [1,2,256,64,torch.float16,torch.float16,0.088,None],  #21
+    isVarLen = False
+    chunk_size = 128
+    cases = [   #B,H,T,chunk_size,dtype,Gtype,scale,cu_seqlens
+        [64,8,1024,64,torch.float16,torch.float16,0.088,None],
+        [32,16,2048,64,torch.bfloat16,torch.bfloat16,0.0625,None],
+        [16,32,4096,64,torch.float16,torch.float16,0.0442,None],
+        [8,32,8192,64,torch.bfloat16,torch.bfloat16,0.03125,None],
+        [128,4,1024,64,torch.float16,torch.float16,0.088,None],
+        [64,4,4096,128,torch.bfloat16,torch.bfloat16,0.0625,None],
+        [32,16,8192,64,torch.float16,torch.float16,0.0442,None],
+        [16,32,16384,64,torch.bfloat16,torch.bfloat16,0.03125,None],
+        [64,8,2048,128,torch.float16,torch.float16,0.0625,None],
+        [32,16,4096,128,torch.bfloat16,torch.bfloat16,0.0442,None],
+        [16,32,8192,128,torch.float16,torch.float16,0.03125,None],
+        [8,32,8192,128,torch.bfloat16,torch.bfloat16,0.0221,None],  #C12
+        [1,4,1024,64,torch.float16,torch.float16,0.088,None],
+        [48,8,2048,64,torch.bfloat16,torch.bfloat16,0.0625,None],
+        [24,16,4096,64,torch.float16,torch.float16,0.0442,None],
+        [12,32,8192,64,torch.bfloat16,torch.bfloat16,0.03125,None],
+        [1,16,32768,64,torch.float16,torch.float32,0.0625,torch.tensor([0,16,20000,30000,32768])],      # V1
+        [1,8,65536,64,torch.bfloat16,torch.bfloat16,0.0625,torch.tensor([0,16,20000,65536])],
+        [1,32,65536,64,torch.float16,torch.float32,0.0442,torch.tensor([0,16,20000,50000,65536])],
+        [1,32,262144,64,torch.bfloat16,torch.bfloat16,0.03125,torch.tensor([0,16,20000,50000,65536,210000,262144])],
+        [1,2,128,64,torch.float16,torch.float16,0.088,[0,16,128]],  #21
+    ]
+    
 
-        ]
-        
+    dtype = torch.float16
+    Gtype = torch.float16
+    B, H = 4, 8
+    T = 1024
+    scale = 0.088
+    if isVarLen:
+        cu_seqlens = torch.cumsum(torch.tensor([0, 3, 64, 63, 66, 260]), dim=0)
+    else:
+        cu_seqlens = None
+    if case_number != -1:
+        single_case = cases[case_number-1]  #case_01 => cases[0]
+        dtype = single_case[4]
+        Gtype = single_case[5]
+        B, H = single_case[0], single_case[1]
+        chunk_size = single_case[3]
+        cu_seqlens = single_case[7]
+        cu_seqlens_torch = torch.tensor(cu_seqlens) if cu_seqlens is not None else None
 
-        dtype = torch.float16
-        Gtype = torch.float16
-        B, H = 4, 8
-        T = 1024
-        scale = 0.088
-        if isVarLen:
-            cu_seqlens = torch.cumsum(torch.tensor([0, 3, 64, 63, 66, 260]), dim=0)
+        if single_case[7] is None:
+            isVarLen = False
         else:
-            cu_seqlens = None
-        if case_number != -1:
-            single_case = cases[case_number-1]  #case_01 => cases[0]
-            dtype = single_case[4]
-            Gtype = single_case[5]
-            B, H = single_case[0], single_case[1]
-            chunk_size = single_case[3]
-            cu_seqlens = single_case[7]
-            if single_case[7] is None:
-                isVarLen = False
-            else:
-                isVarLen = True
-            # isVarLen == single_case[7] != None
-            T = single_case[2]
-            scale = single_case[6]
+            isVarLen = True
+        # isVarLen == single_case[7] != None
+        T = single_case[2]
+        scale = single_case[6]
 
-        if isVarLen:
-            B = 1  ##变长只支持B=1
-            # 
-            # cu_seqlens = torch.cumsum(torch.tensor([0, 3, 3]), dim=0)
-            T = cu_seqlens[-1]
-            chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
-            num_chunks = chunk_indices.shape[0]
-            torch.save(chunk_indices, f"{save_path}/chunk_indices.pt")
-            print("[test.py] varlen == True, saved chunk_indices")
-        else:
-            # cu_seqlens = None
-            # 
-            chunk_indices = None
-            num_chunks = T // chunk_size
-        
-        q = torch.randn(B,T,H,K, dtype=dtype, requires_grad=True) * 5e-7 # std≈5e-6#torch.randn([B, T, H, K], dtype=dtype)
-        k = torch.randn(B,T,H,K, dtype=dtype, requires_grad=True) * 5e-7 * 100000  # torch.randn([B, T, H, K], dtype=dtype)
-        v = torch.randn(B,T,H,V, dtype=dtype, requires_grad=True) * 5e-7 * 1000000  # torch.randn([B, T, H, V], dtype=dtype)
+    if isVarLen:
+        B = 1  ##变长只支持B=1
+        T = cu_seqlens_torch[-1]
+        chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
+        num_chunks = len(chunk_indices) // 2
+        print("chunk_indices",chunk_indices)
+    else:
+        chunk_indices = None
+        num_chunks = T // chunk_size
+    
+    q = torch.randn(B,T,H,K, dtype=dtype, requires_grad=True) * 5e-7 # std≈5e-6#torch.randn([B, T, H, K], dtype=dtype)
+    k = torch.randn(B,T,H,K, dtype=dtype, requires_grad=True) * 5e-7 * 100000  # torch.randn([B, T, H, K], dtype=dtype)
+    v = torch.randn(B,T,H,V, dtype=dtype, requires_grad=True) * 5e-7 * 1000000  # torch.randn([B, T, H, V], dtype=dtype)
 
-        g = torch.randn(B,T,H, dtype=dtype, requires_grad=True) * 5e-2  # torch.randn([B, T, H], dtype=Gtype)
-        do = torch.randn(B,T,H,V, dtype=dtype, requires_grad=True) * 5e-7 * 100000  # torch.randn([B, T, H, V], dtype=dtype)
+    g = torch.randn(B,T,H, dtype=dtype, requires_grad=True) * 5e-2  # torch.randn([B, T, H], dtype=Gtype)
+    do = torch.randn(B,T,H,V, dtype=dtype, requires_grad=True) * 5e-7 * 100000  # torch.randn([B, T, H, V], dtype=dtype)
 
-        dv = torch.randn(B,T,H,V, dtype=dtype, requires_grad=True) * 5e-7 * 1000000  # torch.randn([B, T, H, V], dtype=dtype)
-        w = torch.randn(B,T,H,K, dtype=dtype, requires_grad=True) * 5e-7 * 100000  # torch.randn([B, T, H, K], dtype=dtype)
-        # scale = 0.4
-        
-        # cu_seqlens = torch.tensor([0, 64, 128])
-# tensor = torch.randn(B,H,T,V, dtype=dtype, requires_grad=True) * 5e-7  # std≈5e-6
-# do = generate_same_distribution_tensor(B,T,H,V,inputDtype)
-# dv = generate_same_distribution_tensor(B,T,H,V,inputDtype) * 1000000
-# q = generate_same_distribution_tensor(B,T,H,K,inputDtype) 
-# k = generate_same_distribution_tensor(B,T,H,K,inputDtype) * 100000
-# w = generate_same_distribution_tensor(B,T,H,K,inputDtype) * 100000
-# g = torch.randn(B, T, H, dtype=gDtype, requires_grad=True) * 5e-2
+    dv = torch.randn(B,T,H,V, dtype=dtype, requires_grad=True) * 5e-7 * 1000000  # torch.randn([B, T, H, V], dtype=dtype)
+    w = torch.randn(B,T,H,K, dtype=dtype, requires_grad=True) * 5e-7 * 100000  # torch.randn([B, T, H, K], dtype=dtype)
 
-        # print("chunk_indices", chunk_indices.shape,chunk_indices)
-        h = torch.randn(B, num_chunks, H, K, V, dtype=dtype, requires_grad=True) * 5e-7 * 100000  # torch.randn([B, num_chunks, H, K, V], dtype=dtype)
-        dh = torch.randn(B, num_chunks, H, K, V, dtype=dtype, requires_grad=True) * 5e-7 * 100000 # torch.randn([B, num_chunks, H, K, V], dtype=dtype)
-        if isVarLen ==True:
-            torch.save(chunk_indices.cpu(), f"{save_path}/chunk_indices.pt")
-        import pickle
-        with open(f'{save_path}/input.pkl', 'wb') as f:
-            pickle.dump({'q': q.cpu(), 'k': k.cpu(), 'v': v.cpu(), 'w': w.cpu(), 'g': g.cpu(), 'h': h.cpu(), 'dv': dv.cpu(), 'do': do.cpu(), 'dh': dh.cpu(), 'chunk_size': chunk_size, 'scale': scale, 'cu_seqlens': cu_seqlens.cpu() if cu_seqlens != None else None, 'chunk_indices': chunk_indices.cpu() if chunk_indices != None else None}, f)
-        
-        print(f"random data genereated, pkl written to {save_path}/input.pkl")
+    h = torch.randn(B, num_chunks, H, K, V, dtype=dtype, requires_grad=True) * 5e-7 * 100000  # torch.randn([B, num_chunks, H, K, V], dtype=dtype)
+    dh = torch.randn(B, num_chunks, H, K, V, dtype=dtype, requires_grad=True) * 5e-7 * 100000 # torch.randn([B, num_chunks, H, K, V], dtype=dtype)
+
     q = q.to(dtype).to(calc_type)
     k = k.to(dtype).to(calc_type)
     v = v.to(dtype).to(calc_type)
@@ -549,38 +519,53 @@ if __name__ == "__main__":
     if cu_seqlens == None:
         print("cu_seqlens is None")
     else:
-        print(f"cu_seqlens: {cu_seqlens.shape} {cu_seqlens.dtype} {cu_seqlens}")
-        print(f"chunk_indices: {chunk_indices.shape} {chunk_indices.dtype} {chunk_indices}")
+        print(f"cu_seqlens: {cu_seqlens_torch.shape} {cu_seqlens_torch.dtype} {cu_seqlens_torch}")
+        # print(f"chunk_indices: {chunk_indices.shape} {chunk_indices.dtype} {chunk_indices}")
     print(f"scale: {scale}")
     print(f"chunk_size: {chunk_size}")
-    # pause()
-    #cu_seqlens = torch.tensor([0, 1023, 1025, 1536, 2048], dtype=torch.long)
-    # pause()
 
     dq, dk, dw, dg = chunk_bwd_dqkwg_cpu(
-        q, k, v, do, h, dh, w, g, dv, scale, cu_seqlens, chunk_size
+        q, k, v, do, h, dh, w, g, dv, scale, cu_seqlens_torch, chunk_size
     )
     dq = dq.to(dtype)
     dk = dk.to(dtype)
     dw = dw.to(dtype)
     dg = dg.to(Gtype)
+    print("==============start NPU=============")
+    torch_npu.npu.set_device(1)
+    q_npu = torch.transpose(q, 1, 2).to(dtype).npu()
+    k_npu = torch.transpose(k, 1, 2).to(dtype).npu()
+    v_npu = torch.transpose(v, 1, 2).to(dtype).npu()
+    w_npu = torch.transpose(w, 1, 2).to(dtype).npu()
+    g_npu = torch.transpose(g, 1, 2).to(Gtype).npu()
+    h_npu = torch.transpose(h, 1, 2).to(dtype).npu()
+    dv_npu = torch.transpose(dv, 1, 2).to(dtype).npu()
+    do_npu = torch.transpose(do, 1, 2).to(dtype).npu()
+    dh_npu = torch.transpose(dh, 1, 2).to(dtype).npu()
+    # cu_seqlens_npu = cu_seqlens if cu_seqlens is not None else None
+    chunk_indices_npu = chunk_indices if cu_seqlens is not None else None
+    down_tri = q_npu
+    dq_npu, dk_npu, dw_npu, dg_npu = torch_npu.npu_chunk_bwd_dqkwg(
+        q_npu, k_npu, v_npu, g_npu, h_npu, do_npu, dh_npu, dv_npu, cu_seqlens, chunk_indices_npu, scale, chunk_size
+    )
+    dq_npu = torch.transpose(dq_npu, 1, 2).cpu()
+    dk_npu = torch.transpose(dk_npu, 1, 2).cpu()
+    dw_npu = torch.transpose(dw_npu, 1, 2).cpu()
+    dg_npu = torch.transpose(dg_npu, 1, 2).cpu()
 
-    
     # print("Output shapes:", dq.shape, dk.shape, dg.shape, dw.shape)
+    print("dq_npu", dq_npu.shape, dq_npu.dtype)
+    print("dk_npu", dk_npu.shape, dk_npu.dtype)
+    print("dw_npu", dw_npu.shape, dw_npu.dtype)
+    print("dg_npu", dg_npu.shape, dg_npu.dtype)
+
     print("dq", dq.cpu().shape, dq.cpu().dtype)
     print("dk", dk.cpu().shape, dk.cpu().dtype)
     print("dw", dw.cpu().shape, dw.cpu().dtype)
     print("dg", dg.cpu().shape, dg.cpu().dtype)
-    
-    torch.save(dq, f"{save_path}/dq_cpu.pt")
-    torch.save(dk, f"{save_path}/dk_cpu.pt")
-    torch.save(dw, f"{save_path}/dw_cpu.pt")
-    torch.save(dg, f"{save_path}/dg_cpu.pt")
-    print(f"save path is {save_path}")
 
-    if dg is not None:
-        # Triton kernel 返回的 dg 是 (NK, B*T*H) 的 sum 还是什么?
-        # Triton: dg += i_k * all * H (offset) ??? 
-        # Triton code: atomic add to dg not shown, but stores to dg ptr.
-        # Python code returns full sequence dg.
-        pass
+    type_dict = {torch.float16:"float16", torch.float32:"float32",torch.bfloat16:"bf16"}
+    single(dq_npu,dq,calc_count=100000,dtype=type_dict[dtype])
+    single(dk_npu,dk,calc_count=100000,dtype=type_dict[dtype])
+    single(dw_npu,dw,calc_count=100000,dtype=type_dict[dtype])
+    single(dg_npu,dg,calc_count=100000,dtype=type_dict[Gtype])

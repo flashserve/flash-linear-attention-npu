@@ -521,8 +521,8 @@ int main(int argc, char* argv[])
     aclDestroyTensor(dv);
     aclDestroyTensor(do_);
     aclDestroyTensor(dh);
-    aclDestroyTensor(cu_seqlens);
-    aclDestroyTensor(chunk_indices);
+    aclDestroyIntArray(cu_seqlens);
+    aclDestroyIntArray(chunk_indices);
     aclDestroyTensor(dq);
     aclDestroyTensor(dk);
     aclDestroyTensor(dw);

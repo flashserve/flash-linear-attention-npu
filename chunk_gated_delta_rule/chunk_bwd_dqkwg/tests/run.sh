@@ -1,5 +1,6 @@
 # source /root/data_nvme0n1/huangjunzhe/Ascend/ascend-toolkit/set_env.sh
-ascend_path="/data/huangjunzhe/Ascend/cann-9.0.0"
+ascend_path="/data/zs/run/Ascend/cann-9.0.0/"
+# ascend_path="/data/huangjunzhe/Ascend/cann-9.0.0"
 
 ascend_path_orig=${ascend_path}/../
 custom_path="/data/huangjunzhe/GDN/custom"
@@ -8,12 +9,15 @@ source ${ascend_path}/set_env.sh
 
 compi=$1
 compi_y="compile"
+
+test_script_path=/data/huangjunzhe/GDN/ops-transformer_GDN/chunk_gated_delta_rule/chunk_bwd_dqkwg/tests
+
 ##path=/root/data_nvme0n1/huangjunzhe/GDN/ops-transformer_GDN/chunk_gated_delta_rule/chunk_bwd_dqkwg/tests/result/case_01
 data_path=$2
 if [ -n "$data_path" ]; then
-    code_path=${data_path}/../../../../../
-    example_path=${data_path}/../../../examples/
-    custom_path=${data_path}/../../../../../../custom
+    code_path=${test_script_path}/../../../
+    example_path=${test_script_path}/../examples/
+    custom_path=${test_script_path}/../../../../custom
 fi
 echo "[run.sh] code_path: ${code_path}"
 echo "[run.sh] example_path: ${example_path}"

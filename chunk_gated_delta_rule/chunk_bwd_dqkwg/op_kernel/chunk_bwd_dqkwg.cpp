@@ -40,7 +40,6 @@ __global__ __aicore__ void chunk_bwd_dqkwg(
     GM_ADDR dv,             // [B, H, T, V]
     GM_ADDR cu_seqlens,     // [N+1] (optional)
     GM_ADDR chunk_indices,  // [num_chunks, 2] (optional)
-    GM_ADDR mask_a,         // [BT, BT]
     GM_ADDR dq,             // [B, H, T, K] - output
     GM_ADDR dk,             // [B, H, T, K] - output
     GM_ADDR dw,             // [B, H, T, K] - output

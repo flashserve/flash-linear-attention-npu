@@ -145,7 +145,7 @@ public:
             .ExtendCfgInfo("coreType.value", "AiCore")
             .ExtendCfgInfo("aclnnSupport.value", "support_aclnn");
 
-        this->AICore().AddConfig("ascend910b");
+        this->AICore().AddConfig("ascend910b", aicore_config);
         this->AICore().AddConfig("ascend910_93");
         this->AICore().AddConfig("ascend910_95", aicore_config);
     }

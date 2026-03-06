@@ -100,6 +100,8 @@ __aicore__ void inline GetChunkOffset(GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
         AscendC::GlobalTensor<uint64_t> chunkIndicesTensor;
         cuSeqlensTensor.SetGlobalBuffer((__gm__ uint64_t *)cu_seqlens);
         chunkIndicesTensor.SetGlobalBuffer((__gm__ uint64_t *)chunk_indices);
+// DumpTensor(cuSeqlensTensor,__LINE__,64);
+// DumpTensor(chunkIndicesTensor,__LINE__,64);
         uint32_t seqIdx = chunkIndicesTensor.GetValue(2 * loopIdx);
         uint32_t chunkIdx = chunkIndicesTensor.GetValue(2 * loopIdx + 1);
         uint32_t curSeqBegin = cuSeqlensTensor.GetValue(seqIdx);
