@@ -6223,6 +6223,12 @@ custom:
     acl_op: all_version
     exposed: all_version
 
+  - func: npu_chunk_gated_delta_rule_fwd_h(Tensor k, Tensor w, Tensor u, Tensor g, Tensor? initial_state, Tensor? cu_seqlens, Tensor? chunk_indices, bool? output_final_state, int? chunk_size) -> (Tensor, Tensor, Tensor)
+    op_api: all_version
+  
+  - func: npu_chunk_fwd_o(Tensor q, Tensor k, Tensor v, Tensor h, Tensor g, Tensor? cu_seqlens, Tensor? chunk_indices, float scale, int? chunk_size) -> Tensor
+    op_api: all_version
+ 	     
   - func: npu_chunk_bwd_dv_local(Tensor q, Tensor k, Tensor d_o, Tensor g, Tensor upper_tri_matrix, Tensor? g_gamma, Tensor? A, Tensor? cu_seqlens, Tensor? chunk_indices, float scale, int chunk_size) -> Tensor
     op_api: all_version
 

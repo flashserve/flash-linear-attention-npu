@@ -21,6 +21,13 @@ m_aten = Library("aten", "IMPL", "Meta")
 def matmul_backward_meta(grad, self, other, mask):
     return (torch.empty_like(self), torch.empty_like(other))
 
+@impl(m, "npu_chunk_gated_delta_rule_fwd_h")
+def npu_chunk_gated_delta_rule_fwd_h(k, w, u, g, initial_state, cu_seqlens, chunk_indices, output_final_state, chunk_size):
+    return torch.empty(k.shape, dtype=k.dtype, device=k.device), torch.empty(v.shape, dtype=v.dtype, device=v.device), torch.empty(beta.shape, dtype=beta.dtype, device=beta.device), torch.empty(g.shape, dtype=g.dtype, device=g.device)
+
+@impl(m, "npu_chunk_fwd_o")
+def npu_chunk_fwd_o(q, k, v, h, g, cu_seqlens, chunk_indices, scale, chunk_size):
+    return torch.empty(v.shape, dtype=v.dtype, device=v.device)
 
 @impl(m, "npu_incre_flash_attention")
 def npu_incre_flash_attention_forward(query, key, value, *, padding_mask=None, atten_mask=None, pse_shift=None, actual_seq_lengths=None,
