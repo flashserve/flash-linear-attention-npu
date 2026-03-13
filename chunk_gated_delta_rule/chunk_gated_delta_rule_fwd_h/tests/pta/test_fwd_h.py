@@ -1,15 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-# -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-# CANN Open Software License Agreement Version 2.0 (the "License").
-# Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-# See LICENSE in the root of the software repository for the full text of the License.
-# -----------------------------------------------------------------------------------------------------------
-
 import os
 import sys
 import logging
@@ -235,8 +223,8 @@ def gen_input_data(h_input, rand_wu = True):
     else:
         w, u = gen_wu_data()
     k = torch.randn([h_input.shape_batch, h_input.k_num_head, h_input.seqlen, h_input.k_head_dim], dtype=h_input.dtype)
-    # g = torch.randn([h_input.shape_batch, h_input.v_num_head, h_input.seqlen], dtype=torch.float)
-    g = gen_decay_data(h_input, cu_seqlens, chunk_offsets)
+    g = torch.randn([h_input.shape_batch, h_input.v_num_head, h_input.seqlen], dtype=torch.float)
+    # g = gen_decay_data(h_input, cu_seqlens, chunk_offsets)
     if h_input.use_initial_state:
         initial_state = torch.randn([h_input.shape_batch, h_input.v_num_head, h_input.token_batch, h_input.k_head_dim, h_input.v_head_dim], dtype=h_input.dtype)
     else:
@@ -277,7 +265,6 @@ if __name__ == "__main__":
         output_tensor = parse_actual_output(gdn_fwd_h_input)
     else:
         output_tensor = gen_ref_data(gdn_fwd_h_input, input_tensor)
-    # breakpoint()
     torch.npu.synchronize()
     result = torch_npu.npu_chunk_gated_delta_rule_fwd_h(
         input_tensor.k.npu(),
@@ -290,9 +277,7 @@ if __name__ == "__main__":
         False,
         gdn_fwd_h_input.chunk_size
     )
-    # breakpoint()
     torch.npu.synchronize()
-    # breakpoint()
     save_data(input_tensor, output_tensor)
     result[0].cpu().view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "h_npu.bin"))
     result[1].cpu().view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "v_npu.bin"))

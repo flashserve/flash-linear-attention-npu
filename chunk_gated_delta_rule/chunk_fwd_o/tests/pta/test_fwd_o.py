@@ -1,15 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-# -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-# CANN Open Software License Agreement Version 2.0 (the "License").
-# Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-# See LICENSE in the root of the software repository for the full text of the License.
-# -----------------------------------------------------------------------------------------------------------
-
 import os
 import sys
 import logging
@@ -163,6 +151,17 @@ class GDNFwdOOutputTensor:
     def __init__(self, o):
         self.o = o
 
+def gen_seqlen(seqlen, is_varied_len, batch):
+    if is_varied_len == 0:
+        return None
+    cu_seqlens = [0]
+    avg_len = seqlen // batch
+    for i in range(batch - 1):
+        diff = random.randint(avg_len // 2, avg_len * 3 // 2)
+        cu_seqlens.append(cu_seqlens[-1] + diff)
+    cu_seqlens.append(seqlen)
+    return torch.Tensor(cu_seqlens).to(torch.int64)
+
 def get_cu_offsets(o_input, cu_seqlens):
     if cu_seqlens is None:
         return None, None
@@ -175,6 +174,35 @@ def get_cu_offsets(o_input, cu_seqlens):
         for c in range(curr_chunks):
             chunk_offsets.append([tb, c])
     return cu_seqlens.npu(), torch.Tensor(chunk_offsets).to(cu_seqlens.dtype).npu()
+
+def gen_decay_data(o_input, cu_seqlens, chunk_offsets):
+    base = torch.randint(-15, -5, [o_input.v_num_head])
+    bias = torch.empty([o_input.shape_batch, o_input.v_num_head, o_input.seqlen]).uniform_(-2, 0)
+    g = base[:, None] + bias
+
+    for shape_batch_idx in range(o_input.shape_batch):
+        for v_head_idx in range(o_input.v_num_head):
+            for token_batch_idx in range(o_input.token_batch):
+                batch_token_start, batch_token_end = cu_seqlens[token_batch_idx], cu_seqlens[token_batch_idx+1]
+                batch_tokens = batch_token_end - batch_token_start
+                batch_chunks = math.ceil(batch_tokens / o_input.chunk_size)
+                for chunk_id in range(batch_chunks):
+                    chunk_start_token = batch_token_start + o_input.chunk_size * chunk_id
+                    chunk_end_token = min(chunk_start_token + o_input.chunk_size, batch_token_end)
+                    g[shape_batch_idx, v_head_idx, chunk_start_token:chunk_end_token] = g[shape_batch_idx, v_head_idx, chunk_start_token:chunk_end_token].cumsum(0)
+    return g
+
+def gen_input_data(o_input):
+    cu_seqlens = gen_seqlen(o_input.seqlen, o_input.is_varied_len, o_input.token_batch)
+    cu_seqlens, chunk_offsets = get_cu_offsets(o_input, cu_seqlens)
+    num_chunks = chunk_offsets.shape[0] if chunk_offsets is not None else (math.ceil(o_input.seqlen / o_input.chunk_size))
+    q = torch.randn([o_input.shape_batch, o_input.k_num_head, o_input.seqlen, o_input.k_head_dim], dtype=o_input.dtype)
+    k = torch.randn([o_input.shape_batch, o_input.k_num_head, o_input.seqlen, o_input.k_head_dim], dtype=o_input.dtype)
+    v = torch.randn([o_input.shape_batch, o_input.v_num_head, o_input.seqlen, o_input.v_head_dim], dtype=o_input.dtype)
+    h = torch.randn([o_input.shape_batch, o_input.v_num_head, num_chunks, o_input.k_head_dim, o_input.v_head_dim], dtype=o_input.dtype)
+    g = torch.randn([o_input.shape_batch, o_input.v_num_head, o_input.seqlen], dtype=torch.float)
+    # g = gen_decay_data(o_input, cu_seqlens, chunk_offsets)
+    return GDNFwdOInputTensor(q, k, v, h, g, cu_seqlens, chunk_offsets)
 
 def parse_actual_input(o_input):
     actual_data = torch.load(o_input.data_path, map_location='cpu')
@@ -215,9 +243,18 @@ def save_data(input_tensor, output_tensor):
 
 if __name__ == "__main__":
     gdn_fwd_o_input = GDNFwdOInput()
-    input_tensor = parse_actual_input(gdn_fwd_o_input)
+
+    if gdn_fwd_o_input.use_actual_input:
+        input_tensor = parse_actual_input(gdn_fwd_o_input)
+    else:
+        input_tensor = gen_input_data(gdn_fwd_o_input)
+    
+    if gdn_fwd_o_input.use_actual_output:
+        output_tensor = parse_actual_output(gdn_fwd_o_input)
+    else:
+        output_tensor = gen_ref_data(gdn_fwd_o_input, input_tensor)
+
     torch.npu.synchronize()
-    # breakpoint()
     result = torch_npu.npu_chunk_fwd_o(
         input_tensor.q.npu(),
         input_tensor.k.npu(),
@@ -229,11 +266,6 @@ if __name__ == "__main__":
         gdn_fwd_o_input.scale,
         gdn_fwd_o_input.chunk_size
     )
-    # breakpoint()
     torch.npu.synchronize()
-    if gdn_fwd_o_input.use_actual_output:
-        output_tensor = parse_actual_output(gdn_fwd_o_input)
-    else:
-        output_tensor = gen_ref_data(gdn_fwd_o_input, input_tensor)
     save_data(input_tensor, output_tensor)
     result.cpu().view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "o_npu.bin"))
