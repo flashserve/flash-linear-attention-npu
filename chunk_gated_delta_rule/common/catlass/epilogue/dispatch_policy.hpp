@@ -102,23 +102,25 @@ struct EpilogueAtlasA2Gemv {
     using ArchTag = Arch::AtlasA2;
 };
 
-struct EpilogueAtlasA2GDNFwdHVnew {
-    using ArchTag = Arch::AtlasA2;
-};
+// moved to chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_vector.h
+// struct EpilogueAtlasA2GDNFwdHVnew {
+//     using ArchTag = Arch::AtlasA2;
+// };
 
-struct EpilogueAtlasA2GDNFwdHUpdate {
-    using ArchTag = Arch::AtlasA2;
-};
+// moved to chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_vector.h
+// struct EpilogueAtlasA2GDNFwdHUpdate {
+//     using ArchTag = Arch::AtlasA2;
+// };
 
-// For AtlasA2, GDN FwdO QKmask
-struct EpilogueAtlasA2GDNFwdOQkmask {
-    using ArchTag = Arch::AtlasA2;
-};
+// moved to chunk_fwd_o/op_kernel/chunk_fwd_o_vector.h
+// struct EpilogueAtlasA2GDNFwdOQkmask {
+//     using ArchTag = Arch::AtlasA2;
+// };
 
-// For AtlasA2, GDN FwdO Output
-struct EpilogueAtlasA2GDNFwdOOutput {
-    using ArchTag = Arch::AtlasA2;
-};
+// moved to chunk_fwd_o/op_kernel/chunk_fwd_o_vector.h
+// struct EpilogueAtlasA2GDNFwdOOutput {
+//     using ArchTag = Arch::AtlasA2;
+// };
 ///////////////////////////
 }  // namespace Catlass::Epilogue
 

@@ -40,9 +40,11 @@ class BlockEpilogue {
 #include "catlass/epilogue/block/block_epilogue_online_softmax_no_mask.hpp"
 #include "catlass/epilogue/block/block_epilogue_rescale_o_no_split_row.hpp"
 #include "catlass/epilogue/block/block_epilogue_w4a4_per_token_per_channel_dequant.hpp"
-#include "catlass/epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
-#include "catlass/epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
-#include "catlass/epilogue/block/block_epilogue_gdn_fwdo_qkmask.hpp"
-#include "catlass/epilogue/block/block_epilogue_gdn_fwdo_output.hpp"
+// moved to chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_vector.h
+// #include "catlass/epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
+// #include "catlass/epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
+// moved to chunk_fwd_o/op_kernel/chunk_fwd_o_vector.h
+// #include "catlass/epilogue/block/block_epilogue_gdn_fwdo_qkmask.hpp"
+// #include "catlass/epilogue/block/block_epilogue_gdn_fwdo_output.hpp"
 
 #endif  // CATLASS_EPILOGUE_BLOCK_BLOCK_EPILOGUE_HPP
