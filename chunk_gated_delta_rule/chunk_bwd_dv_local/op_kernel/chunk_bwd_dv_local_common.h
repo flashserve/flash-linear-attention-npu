@@ -22,7 +22,6 @@ constexpr int32_t BIT_NUM_FOR_UINT8 = 8;
 constexpr int32_t BUFFER_NUM = 2;
 constexpr int32_t SIZE_FLOAT = 4;
 constexpr int32_t BLOCK_SIZE = 32;
-constexpr int32_t MASK_ALIGN_LINE = 4; // chunk_size = 64 场景下，mask一行8B，4行32B对齐
 constexpr int32_t CAL_NUM_FLOAT = 64;  // API一次能处理256B，能计算64个float元素
 constexpr int32_t MASK_LINE_SIZE = 32;
 constexpr uint64_t SYNC_AIV_AIC_FLAG_1 = 1;

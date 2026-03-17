@@ -154,8 +154,7 @@ template <typename QKVT, typename GT, typename Strategy>
 __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(const IndexResult &indexResult)
 {
     int64_t padNum = strategy.chunkSize - indexResult.chunkLen;
-    int64_t taskSplitLine = indexResult.chunkLen / MASK_ALIGN_LINE / NUM_2;
-    taskSplitLine = MASK_ALIGN_LINE * taskSplitLine;
+    int64_t taskSplitLine = indexResult.chunkLen / NUM_2;
     int64_t taskStartLine = 0;
     int64_t taskEndLine = 0;
     int64_t taskLineNum = 0;
@@ -229,17 +228,6 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         }
         gHalfTQueIn.FreeTensor(gHalfLocalTensor);
         AscendC::PipeBarrier<PIPE_V>();
-
-        // gFp32LocalTensor2 * -1
-        AscendC::Muls(gFp32LocalTensor2, gFp32LocalTensor2, float(-1.0), taskLineNum);
-        AscendC::PipeBarrier<PIPE_V>();
-        // exp neg gLocalTensor
-        AscendC::Exp(gFp32LocalTensor2, gFp32LocalTensor2, taskLineNum);
-
-        // exp gFp32LocalTensor
-        AscendC::Exp(gFp32LocalTensor, gFp32LocalTensor, indexResult.chunkLen);
-        AscendC::PipeBarrier<PIPE_V>();
-
         // copy gFp32LocalTensor  chunkLen / 2行
         for (int64_t index = 0; index < chunkSizeRepeatTime; index++) {
             repeatOffset = index * CAL_NUM_FLOAT;
@@ -247,18 +235,26 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
             AscendC::Copy(gFactorLocalTensor[repeatOffset], gFp32LocalTensor[repeatOffset], curSize, taskLineNum,
                           {1, 1, chunkSizeRepeatStride, 0});
         }
-
-        // 计算 gFactor = gFp32LocalTensor *  exp neg gLocalTensor
+        // 计算 gFactor = gFactorLocalTensor - gFp32LocalTensor2
         Brcb(brcbLocalTensor, gFp32LocalTensor2, CeilDiv(taskLineNum, 8), {1, 8}); // Brcb处理数据个数需要8对齐
         AscendC::PipeBarrier<PIPE_V>();
         for (int64_t index = 0; index < chunkSizeRepeatTime; index++) {
             repeatOffset = index * CAL_NUM_FLOAT;
-            curSize = index == chunkSizeRepeatTime - 1 ? strategy.chunkSize - repeatOffset : CAL_NUM_FLOAT;
-            AscendC::Mul(gFactorLocalTensor[repeatOffset], gFactorLocalTensor[repeatOffset], brcbLocalTensor, curSize,
+            curSize = index == chunkLenRepeatTime - 1 ? indexResult.chunkLen - repeatOffset : CAL_NUM_FLOAT;
+            AscendC::Sub(gFactorLocalTensor[repeatOffset], gFactorLocalTensor[repeatOffset], brcbLocalTensor, curSize,
                          taskLineNum, {1, 1, 0, chunkSizeRepeatStride, chunkSizeRepeatStride, 1});
         }
-        uint32_t array1[] = {static_cast<uint32_t>(taskLineNum), static_cast<uint32_t>(64)};
-        AscendC::ShapeInfo shapeInfo1(2, array1);
+        AscendC::PipeBarrier<PIPE_V>();
+        // 大于0的位置全部清0
+        AscendC::Mins(gFactorLocalTensor, gFactorLocalTensor,  float(0.0), taskLineNum * strategy.chunkSize);
+        AscendC::PipeBarrier<PIPE_V>();
+        // exp(gFactor)
+        for (int64_t index = 0; index < chunkSizeRepeatTime; index++) {
+            repeatOffset = index * CAL_NUM_FLOAT;
+            curSize = index == chunkLenRepeatTime - 1 ? indexResult.chunkLen - repeatOffset : CAL_NUM_FLOAT;
+            AscendC::Exp(gFactorLocalTensor[repeatOffset], gFactorLocalTensor[repeatOffset], curSize,
+                         taskLineNum, {1, 1, chunkSizeRepeatStride, chunkSizeRepeatStride});
+        }
         AscendC::PipeBarrier<PIPE_V>();
 
         // 根据mask矩阵分割处理当前核分到的chunk行(taskLineNum)
@@ -283,8 +279,6 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         }
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::Muls(gFactorLocalTensor, gFactorLocalTensor, scale, taskLineNum * strategy.chunkSize);
-
-        AscendC::PipeBarrier<PIPE_V>();
         AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_3);
 
         // 搬入 (k@q^T)
@@ -294,15 +288,12 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
             AscendC::DataCopyPad(kqLocalTensor, workspaceGm[taskOffset], copyParams, qkvPadParams);
             kqTQueIn.EnQue(kqLocalTensor);
         }
-
         AscendC::LocalTensor<QKVT> kqLocalTensor = kqTQueIn.DeQue<QKVT>();
-
         AscendC::Cast(kqFp32LocalTensor, kqLocalTensor, AscendC::RoundMode::CAST_NONE,
                       taskLineNum * strategy.chunkSize);
         kqTQueIn.FreeTensor(kqLocalTensor);
-
+        AscendC::PipeBarrier<PIPE_V>();
         // 计算 out = gFactor * (k@q^T)
-        // AscendC::PipeBarrier<PIPE_ALL>();
         AscendC::Mul(gFactorLocalTensor, gFactorLocalTensor, kqFp32LocalTensor, taskLineNum * strategy.chunkSize);
         AscendC::PipeBarrier<PIPE_V>();
         // 搬出
