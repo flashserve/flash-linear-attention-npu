@@ -60,6 +60,7 @@ public:
 
         this->Input("cu_seqlens")
             .ParamType(OPTIONAL)
+            .ValueDepend(OPTIONAL)
             .DataType({ge::DT_INT64, ge::DT_INT64})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND})
@@ -67,6 +68,7 @@ public:
 
         this->Input("chunk_offsets")
             .ParamType(OPTIONAL)
+            .ValueDepend(OPTIONAL)
             .DataType({ge::DT_INT64, ge::DT_INT64})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND})
