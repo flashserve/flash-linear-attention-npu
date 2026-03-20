@@ -273,10 +273,8 @@ public:
                 
                 for (uint32_t h = 0; h < params.H; h++) {
                     // q, k: [B, H, T, K]
-                    // uint64_t qkOffset = ((bIdx * params.H + h) * params.T + bos) * params.K;
                     uint64_t qkOffset = (h * params.T + bos) * params.K;
                     // mm5: workspace [B, H, T, BT]
-                    // uint64_t mm5Offset = ((bIdx * params.H + h) * params.T + bos) * params.BT;
                     uint64_t mm5Offset = (h * params.T + bos) * params.BT;
                     
                     GlobalTensor<ElementA> gmQ;
@@ -285,15 +283,11 @@ public:
                     gmK.SetGlobalBuffer((__gm__ ElementA *)params.ptrK + qkOffset);
                     GlobalTensor<ElementC> gmMm5;
                     gmMm5.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsMm5Offset) + mm5Offset);
-// gmMm5.SetGlobalBuffer((__gm__ ElementC *)params.ptrDw + mm5Offset);
-                    
+
                     auto tensorQ = tla::MakeTensor(gmQ, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     auto tensorK = tla::MakeTensor(gmK, MakeLayoutFromTag(layoutKxBT), Arch::PositionGM{});  // k^T
                     auto tensorMm5 = tla::MakeTensor(gmMm5, MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
-                    // AscendC::PipeBarrier<PIPE_MTE2>();
-#if 0
-                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-#endif
+
                     auto tensorBlockQ = GetTile(tensorQ, tla::MakeCoord(0, 0), 
                                                  tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
                     auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0), 
@@ -302,15 +296,10 @@ public:
                                                    tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     
                     blockMmadPart2(tensorBlockQ, tensorBlockK, tensorBlockMm5, actualBlockShape);
-#if 0
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
-#endif
+
                 }
             }
-#if 0
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-#endif
+
         }
         AscendC::SyncAll<false>();
 
