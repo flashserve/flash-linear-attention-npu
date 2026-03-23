@@ -48,7 +48,7 @@ public:
     {
         // assert innerPingpongStage == 2
         constexpr uint32_t BASE = 0;
-        constexpr uint32_t MASK_UB_TENSOR_SIZE = 8 * UB_LINE_SIZE;
+        constexpr uint32_t MASK_UB_TENSOR_SIZE = 32 * UB_LINE_SIZE;
         constexpr uint32_t GBRCLEFTCAST_UB_TENSOR_SIZE = 40 * UB_LINE_SIZE;
         constexpr uint32_t GBRCUP_UB_TENSOR_SIZE = 32 * UB_LINE_SIZE;
         constexpr uint32_t FLOAT_UB_TENSOR_SIZE = 32 * UB_LINE_SIZE;
@@ -75,11 +75,11 @@ public:
         constexpr uint32_t OUT_HALF_UB_TENSOR_OFFSET_PING = OUT_UB_TENSOR_OFFSET_PING + FLOAT_UB_TENSOR_SIZE;
 
         gUbTensorPing = resource.ubBuf.template GetBufferByByte<float>(G_UB_TENSOR_OFFSET_PING);
-        gUbFPTensorPing = resource.ubBuf.template GetBufferByByte<half>(G_HALF_UB_TENSOR_OFFSET_PING);
+        gUbFPTensorPing = resource.ubBuf.template GetBufferByByte<AElementOutput>(G_HALF_UB_TENSOR_OFFSET_PING);
         gUbBFTensorPing = resource.ubBuf.template GetBufferByByte<AElementOutput>(G_HALF_UB_TENSOR_OFFSET_PING);
         aUbTensorPing = resource.ubBuf.template GetBufferByByte<float>(A_UB_TENSOR_OFFSET_PING);
         outUbTensorPing = resource.ubBuf.template GetBufferByByte<float>(OUT_UB_TENSOR_OFFSET_PING);
-        outUbFPTensorPing = resource.ubBuf.template GetBufferByByte<half>(OUT_HALF_UB_TENSOR_OFFSET_PING);
+        outUbFPTensorPing = resource.ubBuf.template GetBufferByByte<AElementOutput>(OUT_HALF_UB_TENSOR_OFFSET_PING);
         outUbBFTensorPing = resource.ubBuf.template GetBufferByByte<AElementOutput>(OUT_HALF_UB_TENSOR_OFFSET_PING);
 
         constexpr uint32_t G_UB_TENSOR_OFFSET_PONG = 32 * UB_LINE_SIZE + OUT_HALF_UB_TENSOR_OFFSET_PING + HALF_UB_TENSOR_SIZE;
@@ -89,11 +89,11 @@ public:
         constexpr uint32_t OUT_HALF_UB_TENSOR_OFFSET_PONG = OUT_UB_TENSOR_OFFSET_PONG + FLOAT_UB_TENSOR_SIZE;
 
         gUbTensorPong = resource.ubBuf.template GetBufferByByte<float>(G_UB_TENSOR_OFFSET_PONG);
-        gUbFPTensorPong = resource.ubBuf.template GetBufferByByte<half>(G_HALF_UB_TENSOR_OFFSET_PONG);
+        gUbFPTensorPong = resource.ubBuf.template GetBufferByByte<AElementOutput>(G_HALF_UB_TENSOR_OFFSET_PONG);
         gUbBFTensorPong = resource.ubBuf.template GetBufferByByte<AElementOutput>(G_HALF_UB_TENSOR_OFFSET_PONG);
         aUbTensorPong = resource.ubBuf.template GetBufferByByte<float>(A_UB_TENSOR_OFFSET_PONG);
         outUbTensorPong = resource.ubBuf.template GetBufferByByte<float>(OUT_UB_TENSOR_OFFSET_PONG);
-        outUbFPTensorPong = resource.ubBuf.template GetBufferByByte<half>(OUT_HALF_UB_TENSOR_OFFSET_PONG);
+        outUbFPTensorPong = resource.ubBuf.template GetBufferByByte<AElementOutput>(OUT_HALF_UB_TENSOR_OFFSET_PONG);
         outUbBFTensorPong = resource.ubBuf.template GetBufferByByte<AElementOutput>(OUT_HALF_UB_TENSOR_OFFSET_PONG);
 
         // PUB: 4+20+16+1+16=57
@@ -121,6 +121,7 @@ public:
         uint32_t kHeadDim,
         uint32_t vHeadDim,
         uint32_t &pingpongFlag // 可能为01或0123
+        , uint32_t batchIdx, uint32_t headIdx, uint32_t chunkIdx
         )
     {
         // uint32_t innerPingpongStage = 2;
@@ -138,6 +139,8 @@ public:
 
 
         // 好像垂直方向不需要是32B的倍数
+
+        uint32_t gbrcStart, gbrcRealStart, gbrcRealEnd, gbrcRealProcess, gbrcEffStart, gbrcEffEnd, mulsRemain, mulsRemainIdx;
         if(mActualThisSubBlock <= 32) // 一次做完
         {   if(subBlockIdx == 0)
             {
@@ -161,11 +164,11 @@ public:
             uint32_t srcLeftShape_[2] = {gbrcRealProcess, 1};
 
             AscendC::ResetMask();
-            AscendC::GlobalTensor<AElementOutput> maskOutputThisSubBlock = maskOutput[offsetA];
-            AscendC::GlobalTensor<AElementInput> attnInputThisSubBlock = attnInput[offsetA];
+            AscendC::GlobalTensor<AElementOutput> maskOutputThisSubBlock = maskOutput[gbrcStart * nActual];
+            AscendC::GlobalTensor<AElementInput> attnInputThisSubBlock = attnInput[gbrcStart * nActual];
             AscendC::GlobalTensor<GElementInput> gInputThisSubBlock = gInput;
 
-            AscendC::DataCopyParams aInputUbParams{(uint16_t)mActualThisSubBlock, (uint16_t)(nActual*sizeof(half)), 0, 0};
+            AscendC::DataCopyParams aInputUbParams{(uint16_t)mActualThisSubBlock, (uint16_t)(nActual*sizeof(float)), 0, 0};
             AscendC::DataCopyPadParams aInputUbPadParams{false, 0, 0, 0};
             AscendC::DataCopyExtParams aOutputUbParams{(uint16_t)mActualThisSubBlock, (uint32_t)(nActual*sizeof(half)), 0, 0, 0};
 
@@ -175,14 +178,17 @@ public:
 
             AscendC::LocalTensor<float> aUbTensor = (pingpongFlag == 0) ? aUbTensorPing : aUbTensorPong;
             AscendC::LocalTensor<float> outUbTensor = (pingpongFlag == 0) ? outUbTensorPing : outUbTensorPong;
-            AscendC::LocalTensor<half> outUbFPTensor = (pingpongFlag == 0) ? outUbFPTensorPing : outUbFPTensorPong;
+            AscendC::LocalTensor<AElementOutput> outUbFPTensor = (pingpongFlag == 0) ? outUbFPTensorPing : outUbFPTensorPong;
             AscendC::LocalTensor<AElementOutput> outUbBFTensor = (pingpongFlag == 0) ? outUbBFTensorPing : outUbBFTensorPong;
             AscendC::LocalTensor<float> gUbTensor = (pingpongFlag == 0) ? gUbTensorPing : gUbTensorPong;
-            AscendC::LocalTensor<half> gUbFPTensor = (pingpongFlag == 0) ? gUbFPTensorPIng : gUbFPTensorPong;
-            AscendC::LocalTensor<AElementOutput> gUbBFTensor = (pingpongFlag == 0) ? gUbBFTensorPIng : gUbBFTensorPong;
+            AscendC::LocalTensor<AElementOutput> gUbFPTensor = (pingpongFlag == 0) ? gUbFPTensorPing : gUbFPTensorPong;
+            AscendC::LocalTensor<AElementOutput> gUbBFTensor = (pingpongFlag == 0) ? gUbBFTensorPing : gUbBFTensorPong;
 
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
+
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
 
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag); 
             AscendC::DataCopyPad(gUbTensor, gInputThisSubBlock, gfloatUbParams, gUbPadParams);
@@ -204,13 +210,14 @@ public:
             // [0, gbrcRealStart) * 1
             // [gbrcRealStart, CeilDiv(gbrcStart + mActualThisSubBlock, 8) * 8) * masktensor
             // [CeilDiv(gbrcStart + mActualThisSubBlock, 8) * 8, AlignedNActual) * 0
+            
             gbrcRealEnd = CeilDiv(gbrcStart + mActualThisSubBlock, 8) * 8;
             AscendC::Mul(gbrcUpUbTensor[gbrcRealStart], gbrcUpUbTensor[gbrcRealStart], maskUbTensor[gbrcEffStart * 64], gbrcRealEnd - gbrcRealStart, mActualThisSubBlock,
             {1, 1, 1, static_cast<uint8_t>(alignedNActual/8), static_cast<uint8_t>(alignedNActual/8), static_cast<uint8_t>(64/8)});
             AscendC::PipeBarrier<PIPE_V>();
             // 总数为 AlignedNActual - gbrcRealEnd
 
-            mulsRemain = AlignedNActual - gbrcRealEnd;
+            mulsRemain = alignedNActual - gbrcRealEnd;
             mulsRemainIdx = gbrcRealEnd;
             while(mulsRemain > 64)
             {
@@ -222,18 +229,12 @@ public:
             AscendC::Muls(gbrcUpUbTensor[mulsRemainIdx], gbrcUpUbTensor[mulsRemainIdx], (float)0.0, mulsRemain, mActualThisSubBlock,
             {1, 1, static_cast<uint8_t>(alignedNActual/8), static_cast<uint8_t>(alignedNActual/8)});
             AscendC::PipeBarrier<PIPE_V>();
-
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
             if(chunkSize==fullChunkSize) AscendC::DataCopy(aUbTensor, attnInputThisSubBlock, mActualThisSubBlock*nActual);
             else AscendC::DataCopyPad(aUbTensor, attnInputThisSubBlock, aInputUbParams, aInputUbPadParams);
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
             AscendC::Mul(outUbTensor, aUbTensor, gbrcUpUbTensor, mActualThisSubBlock * alignedNActual);
-
-            // AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
-            // AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
-            // if(chunkSize==fullChunkSize) AscendC::DataCopy(maskOutputThisSubBlock, outUbTensor, mActualThisSubBlock*nActual);
-            // else AscendC::DataCopyPad(maskOutputThisSubBlock, outUbTensor, aOutputUbParams);
 
             AscendC::PipeBarrier<PIPE_V>();
             if(std::is_same<AElementOutput, half>::value)
@@ -265,10 +266,13 @@ public:
             AscendC::DataCopyPadParams gUbPadParams{false, 0, 0, 0}; 
 
             AscendC::LocalTensor<float> gUbTensor = (pingpongFlag == 0) ? gUbTensorPing : gUbTensorPong;
-            AscendC::LocalTensor<half> gUbFPTensor = (pingpongFlag == 0) ? gUbFPTensorPIng : gUbFPTensorPong;
-            AscendC::LocalTensor<AElementOutput> gUbBFTensor = (pingpongFlag == 0) ? gUbBFTensorPIng : gUbBFTensorPong;
+            AscendC::LocalTensor<AElementOutput> gUbFPTensor = (pingpongFlag == 0) ? gUbFPTensorPing : gUbFPTensorPong;
+            AscendC::LocalTensor<AElementOutput> gUbBFTensor = (pingpongFlag == 0) ? gUbBFTensorPing : gUbBFTensorPong;
 
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
+
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
 
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag); 
             AscendC::DataCopyPad(gUbTensor, gInputThisSubBlock, gfloatUbParams, gUbPadParams);
@@ -321,13 +325,13 @@ public:
                 AscendC::GlobalTensor<AElementOutput> maskOutputThisSubBlock = maskOutput[gbrcStart * nActual];
                 AscendC::GlobalTensor<AElementInput> attnInputThisSubBlock = attnInput[gbrcStart * nActual];
 
-                AscendC::DataCopyParams aInputUbParams{(uint16_t)mActualThisStage, (uint16_t)(nActual*sizeof(half)), 0, 0};
+                AscendC::DataCopyParams aInputUbParams{(uint16_t)mActualThisStage, (uint16_t)(nActual*sizeof(float)), 0, 0};
                 AscendC::DataCopyPadParams aInputUbPadParams{false, 0, 0, 0};
                 AscendC::DataCopyExtParams aOutputUbParams{(uint16_t)mActualThisStage, (uint32_t)(nActual*sizeof(half)), 0, 0, 0};
                 
                 AscendC::LocalTensor<float> aUbTensor = (pingpongFlag == 0) ? aUbTensorPing : aUbTensorPong;
                 AscendC::LocalTensor<float> outUbTensor = (pingpongFlag == 0) ? outUbTensorPing : outUbTensorPong;
-                AscendC::LocalTensor<half> outUbFPTensor = (pingpongFlag == 0) ? outUbFPTensorPing : outUbFPTensorPong;
+                AscendC::LocalTensor<AElementOutput> outUbFPTensor = (pingpongFlag == 0) ? outUbFPTensorPing : outUbFPTensorPong;
                 AscendC::LocalTensor<AElementOutput> outUbBFTensor = (pingpongFlag == 0) ? outUbBFTensorPing : outUbBFTensorPong;
 
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
@@ -341,8 +345,8 @@ public:
                 uint32_t dstLeftShape_[2] = {gbrcRealProcess, alignedNActual};
                 uint32_t srcLeftShape_[2] = {gbrcRealProcess, 1};
 
-                AscendC::Broadcast<float, 2, 0>(gbrcUpUbTensor, gcompUbTensor, dstUpShape_, srcUpShape_, shareTensor);
-                AscendC::Broadcast<float, 2, 1>(gbrcLeftcastUbTensor, gcompUbTensor[gbrcRealStart], dstLeftShape_, srcLeftShape_, shareTensor);
+                AscendC::Broadcast<float, 2, 0>(gbrcUpUbTensor, gcompUbTensor, dstUpShape_, srcUpShape_, shareUbTensor);
+                AscendC::Broadcast<float, 2, 1>(gbrcLeftcastUbTensor, gcompUbTensor[gbrcRealStart], dstLeftShape_, srcLeftShape_, shareUbTensor);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Sub(gbrcUpUbTensor, gbrcLeftcastUbTensor[gbrcEffStart*alignedNActual], gbrcUpUbTensor, mActualThisStage * alignedNActual);
                 AscendC::PipeBarrier<PIPE_V>();
@@ -351,11 +355,11 @@ public:
                 AscendC::Exp(gbrcUpUbTensor, gbrcUpUbTensor, mActualThisStage * alignedNActual);
                 AscendC::PipeBarrier<PIPE_V>();
                 
-                gbrcrealEnd = CeilDiv(gbrcStart + mActualThisStage, 8) * 8;
-                AscendC::Mul(gbrcUpUbTensor[gbrcRealStart], gbrcUpUbtensor[gbrcRealStart], maskUbTensor[gbrcEffStart * 64], gbrcRealEnd - gbrcRealStart, mActualThisStage,
+                gbrcRealEnd = CeilDiv(gbrcStart + mActualThisStage, 8) * 8;
+                AscendC::Mul(gbrcUpUbTensor[gbrcRealStart], gbrcUpUbTensor[gbrcRealStart], maskUbTensor[gbrcEffStart * 64], gbrcRealEnd - gbrcRealStart, mActualThisStage,
                 {1, 1, 1, static_cast<uint8_t>(alignedNActual/8), static_cast<uint8_t>(alignedNActual/8), static_cast<uint8_t>(64/8)});
                 AscendC::PipeBarrier<PIPE_V>();
-                mulsRemain = AlignedNActual - gbrcRealEnd;
+                mulsRemain = alignedNActual - gbrcRealEnd;
                 mulsRemainIdx = gbrcRealEnd;
                 while(mulsRemain > 64)
                 {
@@ -367,15 +371,8 @@ public:
                 AscendC::Muls(gbrcUpUbTensor[mulsRemainIdx], gbrcUpUbTensor[mulsRemainIdx], (float)0.0, mulsRemain, mActualThisStage,
                 {1, 1, static_cast<uint8_t>(alignedNActual/8), static_cast<uint8_t>(alignedNActual/8)});
                 AscendC::PipeBarrier<PIPE_V>();
-
                 AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
                 AscendC::Mul(outUbTensor, aUbTensor, gbrcUpUbTensor, mActualThisStage * alignedNActual);
-
-                // AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
-                // AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
-                // if(chunkSize==fullChunkSize) AscendC::DataCopy(maskOutputThisSubBlock, outUbTensor, mActualThisSubBlock*nActual);
-                // else AscendC::DataCopyPad(maskOutputThisSubBlock, outUbTensor, aOutputUbParams);
-
                 AscendC::PipeBarrier<PIPE_V>();
                 if(std::is_same<AElementOutput, half>::value)
                 {
@@ -408,19 +405,19 @@ private:
     AscendC::LocalTensor<uint8_t> shareUbTensor;
 
     AscendC::LocalTensor<float> gUbTensorPing;
-    AscendC::LocalTensor<half> gUbFPTensorPing;
+    AscendC::LocalTensor<AElementOutput> gUbFPTensorPing;
     AscendC::LocalTensor<AElementOutput> gUbBFTensorPing;
     AscendC::LocalTensor<float> aUbTensorPing;
     AscendC::LocalTensor<float> outUbTensorPing;
-    AscendC::LocalTensor<half> outUbFPTensorPing;
+    AscendC::LocalTensor<AElementOutput> outUbFPTensorPing;
     AscendC::LocalTensor<AElementOutput> outUbBFTensorPing;
 
     AscendC::LocalTensor<float> gUbTensorPong;
-    AscendC::LocalTensor<half> gUbFPTensorPong;
+    AscendC::LocalTensor<AElementOutput> gUbFPTensorPong;
     AscendC::LocalTensor<AElementOutput> gUbBFTensorPong;
     AscendC::LocalTensor<float> aUbTensorPong;
     AscendC::LocalTensor<float> outUbTensorPong;
-    AscendC::LocalTensor<half> outUbFPTensorPong;
+    AscendC::LocalTensor<AElementOutput> outUbFPTensorPong;
     AscendC::LocalTensor<AElementOutput> outUbBFTensorPong;
 
 };
