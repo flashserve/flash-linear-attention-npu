@@ -408,6 +408,8 @@ public:
             }
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
+            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
+            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
         }
         AscendC::SyncAll<false>();
 
@@ -530,6 +532,8 @@ public:
             }
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
+            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
+            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
         }
         AscendC::SyncAll<false>();
         // ========== Part 7: mm7 = b_ds_temp^T @ b_q ==========
@@ -592,6 +596,8 @@ public:
             }
             
             // 最终同步
+            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
+            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
         }
