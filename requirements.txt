@@ -6,3 +6,4 @@ scipy
 attrs
 protobuf
 psutil
+expecttest
