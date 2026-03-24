@@ -36,6 +36,7 @@ TILING_DATA_FIELD_DEF(int64_t, isVariedLen);
 TILING_DATA_FIELD_DEF(int64_t, shapeBatch);
 TILING_DATA_FIELD_DEF(int64_t, tokenBatch);
 TILING_DATA_FIELD_DEF(int64_t, vWorkspaceOffset);
+TILING_DATA_FIELD_DEF(int64_t, vUpdateWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, hWorkspaceOffset);
 END_TILING_DATA_DEF;
 

@@ -42,8 +42,8 @@ public:
     using ElementG = float;
     using ElementH = typename BlockMmadWH::ElementB;
     using ElementV = typename BlockMmadKV::ElementB;
-    using ElementVWork = half;
-    using ElementHWork = half;
+    using ElementVWork = float;
+    using ElementHWork = float;
 
     using L1TileShape = typename BlockMmadWH::L1TileShape;
     
@@ -66,6 +66,7 @@ public:
     uint32_t shapeBatch;
     uint32_t tokenBatch;
     uint32_t vWorkspaceOffset;
+    uint32_t vUpdateWorkspaceOffset;
     uint32_t hWorkspaceOffset;
     
     AscendC::GlobalTensor<ElementK> gmK;
@@ -76,10 +77,9 @@ public:
     AscendC::GlobalTensor<ElementH> gmH;
     AscendC::GlobalTensor<ElementV> gmV;
     AscendC::GlobalTensor<ElementH> gmFinalState;
-    AscendC::GlobalTensor<ElementV> gmVWorkspace;
-    AscendC::GlobalTensor<ElementVWork> gmVWorkspaceHalf;
-    AscendC::GlobalTensor<ElementH> gmHWorkspace;
-    AscendC::GlobalTensor<ElementHWork> gmHWorkspaceHalf;
+    AscendC::GlobalTensor<ElementVWork> gmVWorkspace;
+    AscendC::GlobalTensor<ElementV> gmVUpdateWorkspace;
+    AscendC::GlobalTensor<ElementHWork> gmHWorkspace;
     
     CubeScheduler cubeBlockScheduler;
     VecScheduler vecBlockScheduler;
@@ -107,6 +107,7 @@ public:
         shapeBatch = gdnFwdHTilingData->shapeBatch;
         tokenBatch = gdnFwdHTilingData->tokenBatch;
         vWorkspaceOffset = gdnFwdHTilingData->vWorkspaceOffset;
+        vUpdateWorkspaceOffset = gdnFwdHTilingData->vUpdateWorkspaceOffset;
         hWorkspaceOffset = gdnFwdHTilingData->hWorkspaceOffset;
         
         gmK.SetGlobalBuffer((__gm__ ElementK *)k);
@@ -117,10 +118,9 @@ public:
         gmH.SetGlobalBuffer((__gm__ ElementH *)h);
         gmV.SetGlobalBuffer((__gm__ ElementV *)v_new);
         gmFinalState.SetGlobalBuffer((__gm__ ElementH *)final_state);
-        gmVWorkspace.SetGlobalBuffer((__gm__ ElementV *)(user + vWorkspaceOffset));
-        gmVWorkspaceHalf.SetGlobalBuffer((__gm__ ElementVWork *)(user + vWorkspaceOffset));
-        gmHWorkspace.SetGlobalBuffer((__gm__ ElementH *)(user + hWorkspaceOffset));
-        gmHWorkspaceHalf.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
+        gmVWorkspace.SetGlobalBuffer((__gm__ ElementVWork *)(user + vWorkspaceOffset));
+        gmVUpdateWorkspace.SetGlobalBuffer((__gm__ ElementV *)(user + vUpdateWorkspaceOffset));
+        gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
 
         if ASCEND_IS_AIC {
             cubeBlockScheduler.Init(cu_seqlens, chunk_indices, tiling);
@@ -145,7 +145,7 @@ public:
             auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
             
             auto kLayout = tla::MakeLayout<ElementK, LayoutK>(kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens);
-            auto vworkLayout = tla::MakeLayout<ElementVWork, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
+            auto vworkLayout = tla::MakeLayout<ElementV, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
             auto hworkLayout = tla::MakeLayout<ElementHWork, LayoutH>(coreNum * kHeadDim * PING_PONG_STAGES, vHeadDim);
 
             while (cubeBlockScheduler.isRunning) {
@@ -159,7 +159,7 @@ public:
                     int64_t cube1OffsetVwork = cube1Offsets.vWorkOffset;
                     auto tensorW = tla::MakeTensor(gmW[cube1OffsetW], wLayout, Catlass::Arch::PositionGM{});
                     auto tensorH = tla::MakeTensor(gmH[cube1OffsetH], hLayout, Catlass::Arch::PositionGM{});
-                    auto tensorV = tla::MakeTensor(gmVWorkspaceHalf[cube1OffsetVwork], vLayout, Catlass::Arch::PositionGM{});
+                    auto tensorV = tla::MakeTensor(gmVWorkspace[cube1OffsetVwork], vLayout, Catlass::Arch::PositionGM{});
                     GemmCoord cube1Shape {cube1Offsets.blockTokens, vHeadDim, kHeadDim};
                     auto tensorBlockW = GetTile(tensorW, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.m(), cube1Shape.k()));
                     auto tensorBlockH = GetTile(tensorH, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.k(), cube1Shape.n()));
@@ -179,8 +179,8 @@ public:
                         int64_t cube2OffsetVwork = cube2Offsets.vWorkOffset;
                         int64_t cube2OffsetH = cube2Offsets.hWorkOffset;
                         auto tensorK = tla::MakeTensor(gmK[cube2OffsetK], kLayout, Catlass::Arch::PositionGM{});
-                        auto tensorVwork = tla::MakeTensor(gmVWorkspace[cube2OffsetVwork], vworkLayout, Catlass::Arch::PositionGM{});
-                        auto tensorHwork = tla::MakeTensor(gmHWorkspaceHalf[cube2OffsetH], hworkLayout, Catlass::Arch::PositionGM{});
+                        auto tensorVwork = tla::MakeTensor(gmVUpdateWorkspace[cube2OffsetVwork], vworkLayout, Catlass::Arch::PositionGM{});
+                        auto tensorHwork = tla::MakeTensor(gmHWorkspace[cube2OffsetH], hworkLayout, Catlass::Arch::PositionGM{});
                         GemmCoord cube2Shape{kHeadDim, vHeadDim, cube2Offsets.blockTokens};
                         auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.m(), cube2Shape.k()));
                         auto tensorBlockVwork = GetTile(tensorVwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.k(), cube2Shape.n()));
@@ -216,8 +216,8 @@ public:
                 // gmVWorkspace = g_buf * gmV
                 if (vecBlockScheduler.NeedProcessStage1()) {
                     epilogueGDNFwdHVnew(
-                        gmV[vec1Offsets.uvOffset], gmVWorkspace[vec1Offsets.vWorkOffset], 
-                        gmG[vec1Offsets.gOffset], gmU[vec1Offsets.uvOffset], gmVWorkspaceHalf[vec1Offsets.vWorkOffset], 
+                        gmV[vec1Offsets.uvOffset], gmVUpdateWorkspace[vec1Offsets.vWorkOffset], 
+                        gmG[vec1Offsets.gOffset], gmU[vec1Offsets.uvOffset], gmVWorkspace[vec1Offsets.vWorkOffset], 
                         vec1Offsets.blockTokens, kHeadDim, vHeadDim, vecBlockScheduler.cube1Done
                     );
                 } else {
@@ -235,7 +235,7 @@ public:
                             gmVec2Out[vec2Offsets.hDstOffset],
                             gmG[vec2Offsets.gOffset],
                             gmH[vec2Offsets.hSrcOffset],
-                            gmHWorkspaceHalf[vec2Offsets.hWorkOffset],
+                            gmHWorkspace[vec2Offsets.hWorkOffset],
                             vec2Offsets.blockTokens, kHeadDim, vHeadDim, vecBlockScheduler.cube2Done
                         );
                     } else {

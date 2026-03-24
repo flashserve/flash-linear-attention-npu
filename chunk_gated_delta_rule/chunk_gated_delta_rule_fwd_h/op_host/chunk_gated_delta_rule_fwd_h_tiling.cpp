@@ -100,16 +100,19 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
 
     constexpr size_t WORKSPACE_RSV_BYTE = 16 * 1024 * 1024;
     constexpr size_t GM_ALIGN = 512;
-    int64_t pingpongStages = 2;
+    constexpr int64_t PING_PONG_STAGES = 2;
 
     size_t workspaceOffset = ascendcPlatform.GetLibApiWorkSpaceSize();
     workspaceOffset += WORKSPACE_RSV_BYTE;
     
     tiling.set_vWorkspaceOffset(workspaceOffset);
-    workspaceOffset += (aicCoreNum * chunkSize * vHeadDim * sizeof(float) * pingpongStages + GM_ALIGN) / GM_ALIGN * GM_ALIGN;
+    workspaceOffset += (aicCoreNum * chunkSize * vHeadDim * sizeof(float) * PING_PONG_STAGES + GM_ALIGN) / GM_ALIGN * GM_ALIGN;
+
+    tiling.set_vUpdateWorkspaceOffset(workspaceOffset);
+    workspaceOffset += (aicCoreNum * chunkSize * vHeadDim * sizeof(float) * PING_PONG_STAGES + GM_ALIGN) / GM_ALIGN * GM_ALIGN;
 
     tiling.set_hWorkspaceOffset(workspaceOffset);
-    workspaceOffset += (aicCoreNum * kHeadDim * vHeadDim * sizeof(float) * pingpongStages + GM_ALIGN) / GM_ALIGN * GM_ALIGN;
+    workspaceOffset += (aicCoreNum * kHeadDim * vHeadDim * sizeof(float) * PING_PONG_STAGES + GM_ALIGN) / GM_ALIGN * GM_ALIGN;
 
     workspaceOffset += WORKSPACE_RSV_BYTE;
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);

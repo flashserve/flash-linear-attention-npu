@@ -129,7 +129,7 @@ struct BlockSchedulerGdnFwdH {
         vLoops = vHeadDim / vBlockSize;
         taskNum = vLoops * batch * vNumHead;
         headGroups = vNumHead / kNumHead;
-        hasDummyHead = taskNum % (PING_PONG_STAGES * cubeCoreNum) <= cubeCoreNum;
+        hasDummyHead = (taskNum % (PING_PONG_STAGES * cubeCoreNum) <= cubeCoreNum) && (taskNum % (PING_PONG_STAGES * cubeCoreNum) > 0);
         taskLoops = (taskNum + cubeCoreNum * PING_PONG_STAGES - 1) / (cubeCoreNum * PING_PONG_STAGES);
         headInnerLoop = taskNum > cubeCoreNum ? PING_PONG_STAGES : 1;
         taskIdx = cubeCoreIdx * headInnerLoop;
