@@ -6,6 +6,16 @@ import math
 import random
 # import custom_ops
 import aclnn_extension
+import os
+
+# 当前文件所在目录
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+# output 文件夹路径
+output_dir = os.path.join(current_dir, "output")
+
+# 如果不存在就创建
+os.makedirs(output_dir, exist_ok=True)
 
 torch.npu.config.allow_internal_format = False
 torch.npu.set_compile_mode(jit_compile=False)
@@ -326,8 +336,8 @@ def test_variable():
     # lower_tri_matrix_npu = lower_tri_matrix.npu()
 
     dA_npu = torch.ops.npu.npu_prepare_wy_repr_bwd_da(k_npu, v_npu, beta_npu, A_npu, dw_npu, du_npu, g_npu, chunk_size=chunk_size, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices)
-    torch.save(dA_npu, "/home/chenshi/workspace/flash-linear-attention-npu/torch_custom/aclnn_extension/test/output/test_dA_var_npu.pt")
-    # torch.save(dA_npu, "/home/chenshi/workspace/flash-linear-attention-npu/torch_custom/test/output/dA_var_npu_model_case.pt")
+    save_path1 = os.path.join(output_dir, "test_dA_var_npu.pt")
+    torch.save(dA_npu, save_path1)
     print(f"==== dA_npu.shape = {dA_npu.shape} ")
     # print(f"==== dA_npu = {dA_npu} ")
     print(f"==== dA_npu.dtype = {dA_npu.dtype} ")
@@ -335,8 +345,8 @@ def test_variable():
     NT = len(chunk_indices) // 2
     print("==== NT = ", NT)
     dA_cpu = compute_dA_cpu(A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, H, T, K, BT, NT)
-    torch.save(dA_cpu, "/home/chenshi/workspace/flash-linear-attention-npu/torch_custom/aclnn_extension/test/output/test_dA_var_cpu.pt")
-    # torch.save(dA_cpu, "/home/chenshi/workspace/flash-linear-attention-npu/torch_custom/test/output/dA_var_cpu_model_case.pt")
+    save_path2 = os.path.join(output_dir, "test_dA_var_cpu.pt")
+    torch.save(dA_cpu, save_path2)
 
     # ct.isclose(dA_cpu, dA_npu, diff_thd=0.1)
 
@@ -388,8 +398,8 @@ def test_fix():
     # lower_tri_matrix_npu = lower_tri_matrix.npu()
 
     dA_npu = torch.ops.npu.npu_prepare_wy_repr_bwd_da(k_npu, v_npu, beta_npu, A_npu, dw_npu, du_npu, g_npu, chunk_size=chunk_size, cu_seqlens=None, chunk_indices=None)
-    torch.save(dA_npu, "/home/chenshi/workspace/flash-linear-attention-npu/torch_custom/aclnn_extension/test/output/test_dA_npu.pt")
-    # torch.save(dA_npu, "/home/chenshi/workspace/flash-linear-attention-npu/torch_custom/test/output/dA_npu_model_case.pt")
+    save_path3 = os.path.join(output_dir, "test_dA_npu.pt")
+    torch.save(dA_npu, save_path3)
     # print(f"==== dA_npu.shape = {dA_npu.shape} ")
     # print(f"==== dA_npu = {dA_npu} ")
     # print(f"==== dA_npu.dtype = {dA_npu.dtype} ")
@@ -399,8 +409,8 @@ def test_fix():
     NT = (T + BT - 1) // BT
     print("==== NT = ", NT)
     dA_cpu = compute_dA_cpu(A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, H, T, K, BT, NT)
-    torch.save(dA_cpu, "/home/chenshi/workspace/flash-linear-attention-npu/torch_custom/aclnn_extension/test/output/test_dA_cpu.pt")
-    # torch.save(dA_cpu, "/home/chenshi/workspace/flash-linear-attention-npu/torch_custom/test/output/dA_cpu_model_case.pt")
+    save_path4 = os.path.join(output_dir, "test_dA_cpu.pt")
+    torch.save(dA_cpu, save_path4)
 
     # ct.isclose(dA_cpu, dA_npu, diff_thd=0.1)
 
