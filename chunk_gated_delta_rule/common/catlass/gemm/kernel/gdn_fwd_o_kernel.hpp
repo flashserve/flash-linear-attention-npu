@@ -197,16 +197,11 @@ public:
                     Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube1Done);
 
                 }
-
                 // AscendC::PipeBarrier<PIPE_ALL>();
 
                 if (needRun && coreIdx < coreNum) {
-
-
                     if(!cubeBlockScheduler.isRunning) Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done);
-
                     Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done);
-
                     GDNFwdOOffsets& cube2Offsets = cubeBlockScheduler.GetCube23Offsets();
                     int64_t cube2OffsetQ = cube2Offsets.qkOffset;
                     int64_t cube2OffsetH = cube2Offsets.hOffset;
@@ -222,17 +217,10 @@ public:
                     blockMmadQH(tensorBlockQ, tensorBlockH, tensorBlockHWork, cube2Shape);
                     blockMmadQH.finalWaitFlags();
                     Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube2Done);
-                }
-
-                // AscendC::PipeBarrier<PIPE_ALL>();
 
                 if (needRun && coreIdx < coreNum) {
-
-                
                     GDNFwdOOffsets& cube3Offsets = cubeBlockScheduler.GetCube23Offsets();
-
                     if(isFirstC3) Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done);
-
                     int64_t cube3OffsetAttnMask = cube3Offsets.attnWorkOffset; 
                     int64_t cube3OffsetV = cube3Offsets.ovOffset; 
                     int64_t cube3OffsetVWork = cube3Offsets.hvWorkOffset; 
@@ -251,7 +239,6 @@ public:
                     isFirstC3 = false;
                 }
                 needRun = true;
-
                 // AscendC::PipeBarrier<PIPE_ALL>();
             }
             if (coreIdx < coreNum) {
@@ -314,7 +301,7 @@ public:
                     epilogueGDNFwdOOutput(
                         gmO[vec2OffsetO], 
                         gmG[vec2OffsetG], gmVWorkspace[vec2OffsetVWork], gmHWorkspace[vec2OffsetHWork], 
-                        scale, vec2Offsets.blockTokens, kHeadDim, vHeadDim, pingpongFlag
+                        scale, vec2Offsets.blockTokens, kHeadDim, vHeadDim, pingpongFlag, vec2Offsets.batchIdx, vec2Offsets.headIdx, vec2Offsets.chunkIdx
                     );
                     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done);
                 }

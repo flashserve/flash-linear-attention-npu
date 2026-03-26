@@ -46,7 +46,6 @@ public:
     CATLASS_DEVICE
     BlockEpilogue(Arch::Resource<ArchTag> &resource)
     {
-        // assert innerPingpongStage == 2
         constexpr uint32_t BASE = 0;
         constexpr uint32_t MASK_UB_TENSOR_SIZE = 32 * UB_LINE_SIZE;
         constexpr uint32_t GBRCLEFTCAST_UB_TENSOR_SIZE = 40 * UB_LINE_SIZE;
@@ -95,15 +94,6 @@ public:
         outUbTensorPong = resource.ubBuf.template GetBufferByByte<float>(OUT_UB_TENSOR_OFFSET_PONG);
         outUbFPTensorPong = resource.ubBuf.template GetBufferByByte<AElementOutput>(OUT_HALF_UB_TENSOR_OFFSET_PONG);
         outUbBFTensorPong = resource.ubBuf.template GetBufferByByte<AElementOutput>(OUT_HALF_UB_TENSOR_OFFSET_PONG);
-
-        // PUB: 4+20+16+1+16=57
-        // V1: 1+1+16+16+8=42
-        // V2: 1+1+16+16+16+8=58
-        // ALL = 57+58+58=173
-        // with error
-
-
-
     }
 
     CATLASS_DEVICE
@@ -120,14 +110,13 @@ public:
         uint32_t chunkSize,
         uint32_t kHeadDim,
         uint32_t vHeadDim,
-        uint32_t &pingpongFlag // 可能为01或0123
+        uint32_t &pingpongFlag
         , uint32_t batchIdx, uint32_t headIdx, uint32_t chunkIdx
         )
     {
-        // uint32_t innerPingpongStage = 2;
         uint32_t mActual = chunkSize;
         uint32_t nActual = chunkSize;
-        uint32_t alignedNActual = CeilDiv(nActual, 8) * 8;
+        uint32_t alignedNActual = CeilDiv(nActual, 16) * 16;
         uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
         uint32_t blockIdx = AscendC::GetBlockIdx();
@@ -136,12 +125,12 @@ public:
         uint32_t mOffset = subBlockIdx * mActualPerSubBlock;
         uint32_t nOffset = 0;
         int64_t offsetA = mOffset * nActual + nOffset;
-
-
-        // 好像垂直方向不需要是32B的倍数
+        uint16_t aInputDstStride;
+        if((nActual - 1) % 8 <= 3) aInputDstStride = 1;
+        else aInputDstStride = 0;
 
         uint32_t gbrcStart, gbrcRealStart, gbrcRealEnd, gbrcRealProcess, gbrcEffStart, gbrcEffEnd, mulsRemain, mulsRemainIdx;
-        if(mActualThisSubBlock <= 32) // 一次做完
+        if(mActualThisSubBlock <= 32)
         {   if(subBlockIdx == 0)
             {
                 gbrcStart = 0;
@@ -168,7 +157,8 @@ public:
             AscendC::GlobalTensor<AElementInput> attnInputThisSubBlock = attnInput[gbrcStart * nActual];
             AscendC::GlobalTensor<GElementInput> gInputThisSubBlock = gInput;
 
-            AscendC::DataCopyParams aInputUbParams{(uint16_t)mActualThisSubBlock, (uint16_t)(nActual*sizeof(float)), 0, 0};
+
+            AscendC::DataCopyParams aInputUbParams{(uint16_t)mActualThisSubBlock, (uint16_t)(nActual*sizeof(float)), 0, aInputDstStride};
             AscendC::DataCopyPadParams aInputUbPadParams{false, 0, 0, 0};
             AscendC::DataCopyExtParams aOutputUbParams{(uint16_t)mActualThisSubBlock, (uint32_t)(nActual*sizeof(half)), 0, 0, 0};
 
@@ -206,16 +196,11 @@ public:
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Exp(gbrcUpUbTensor, gbrcUpUbTensor, mActualThisSubBlock * alignedNActual);
             AscendC::PipeBarrier<PIPE_V>();
-            // [gbrcStart, gbrcStart + mActualThisSubBlock)
-            // [0, gbrcRealStart) * 1
-            // [gbrcRealStart, CeilDiv(gbrcStart + mActualThisSubBlock, 8) * 8) * masktensor
-            // [CeilDiv(gbrcStart + mActualThisSubBlock, 8) * 8, AlignedNActual) * 0
             
             gbrcRealEnd = CeilDiv(gbrcStart + mActualThisSubBlock, 8) * 8;
             AscendC::Mul(gbrcUpUbTensor[gbrcRealStart], gbrcUpUbTensor[gbrcRealStart], maskUbTensor[gbrcEffStart * 64], gbrcRealEnd - gbrcRealStart, mActualThisSubBlock,
             {1, 1, 1, static_cast<uint8_t>(alignedNActual/8), static_cast<uint8_t>(alignedNActual/8), static_cast<uint8_t>(64/8)});
             AscendC::PipeBarrier<PIPE_V>();
-            // 总数为 AlignedNActual - gbrcRealEnd
 
             mulsRemain = alignedNActual - gbrcRealEnd;
             mulsRemainIdx = gbrcRealEnd;
@@ -229,14 +214,15 @@ public:
             AscendC::Muls(gbrcUpUbTensor[mulsRemainIdx], gbrcUpUbTensor[mulsRemainIdx], (float)0.0, mulsRemain, mActualThisSubBlock,
             {1, 1, static_cast<uint8_t>(alignedNActual/8), static_cast<uint8_t>(alignedNActual/8)});
             AscendC::PipeBarrier<PIPE_V>();
+
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
             if(chunkSize==fullChunkSize) AscendC::DataCopy(aUbTensor, attnInputThisSubBlock, mActualThisSubBlock*nActual);
             else AscendC::DataCopyPad(aUbTensor, attnInputThisSubBlock, aInputUbParams, aInputUbPadParams);
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
             AscendC::Mul(outUbTensor, aUbTensor, gbrcUpUbTensor, mActualThisSubBlock * alignedNActual);
-
             AscendC::PipeBarrier<PIPE_V>();
+
             if(std::is_same<AElementOutput, half>::value)
             {
                 AscendC::Cast(outUbFPTensor, outUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * alignedNActual);
@@ -253,7 +239,6 @@ public:
                 if(chunkSize==fullChunkSize) AscendC::DataCopy(maskOutputThisSubBlock, outUbBFTensor, mActualThisSubBlock*nActual);
                 else AscendC::DataCopyPad(maskOutputThisSubBlock, outUbBFTensor, aOutputUbParams);
             }
-            
             pingpongFlag = 1 - pingpongFlag;
         }
         else // mActualThisSubBlock  > 32 ; <=64
@@ -285,13 +270,6 @@ public:
             uint32_t mActualThisStage = 0;
             for(uint32_t stage = 0; stage < 2; ++stage)
             {
-                // mActualPerSubBlock: vec0的任务数量
-                // mActualThisSubBlock: 本vec的任务数量
-                // offsetA: 本vec的行偏移
-                // 起点 subBlockIdx * mActualPerSubBlock
-                // 数量 mActualThisSubBlock 可能是 33 ~ 64
-                // stage0起点  subBlockIdx * mActualPerSubBlock  数量 mActualThisStage
-                // stage1起点  subBlockIdx * mActualPerSubBlock + mActualPerStage  数量 mActualThisStage
                 if(stage==0) mActualThisStage = mActualPerStage;
                 else mActualThisStage = mActualThisSubBlock - mActualPerStage;
 
@@ -325,7 +303,7 @@ public:
                 AscendC::GlobalTensor<AElementOutput> maskOutputThisSubBlock = maskOutput[gbrcStart * nActual];
                 AscendC::GlobalTensor<AElementInput> attnInputThisSubBlock = attnInput[gbrcStart * nActual];
 
-                AscendC::DataCopyParams aInputUbParams{(uint16_t)mActualThisStage, (uint16_t)(nActual*sizeof(float)), 0, 0};
+                AscendC::DataCopyParams aInputUbParams{(uint16_t)mActualThisStage, (uint16_t)(nActual*sizeof(float)), 0, aInputDstStride};
                 AscendC::DataCopyPadParams aInputUbPadParams{false, 0, 0, 0};
                 AscendC::DataCopyExtParams aOutputUbParams{(uint16_t)mActualThisStage, (uint32_t)(nActual*sizeof(half)), 0, 0, 0};
                 
@@ -390,7 +368,6 @@ public:
                     if(chunkSize==fullChunkSize) AscendC::DataCopy(maskOutputThisSubBlock, outUbBFTensor, mActualThisStage*nActual);
                     else AscendC::DataCopyPad(maskOutputThisSubBlock, outUbBFTensor, aOutputUbParams);
                 }
-         
                 pingpongFlag = 1 - pingpongFlag;
             }
         }

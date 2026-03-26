@@ -118,6 +118,7 @@ public:
         uint32_t kHeadDim,
         uint32_t vHeadDim,
         uint32_t &pingpongFlag
+        , uint32_t batchIdx, uint32_t headIdx, uint32_t chunkIdx
         )
     {
         uint32_t mActual = chunkSize;
@@ -125,6 +126,7 @@ public:
         uint32_t alignedM = CeilDiv(nActual, 8) * 8;
         uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
+        uint32_t blockIdx = AscendC::GetBlockIdx();
         uint32_t mActualPerSubBlock = CeilDiv(mActual, subBlockNum);
         uint32_t mActualThisSubBlock = (subBlockIdx == 0) ? mActualPerSubBlock : (mActual - mActualPerSubBlock);
         uint32_t mOffset = subBlockIdx * mActualPerSubBlock;
@@ -151,10 +153,10 @@ public:
             uint32_t srcShape_[2] = {gbrcRealProcess, 1};
 
             AscendC::ResetMask();
-            AscendC::GlobalTensor<AElementInput> attnInputThisSubBlock = attnInput[offsetA];
-            AscendC::GlobalTensor<HElementInput> hInputThisSubBlock = hInput[offsetA];
+            AscendC::GlobalTensor<AElementInput> attnInputThisSubBlock = attnInput[gbrcStart * nActual];
+            AscendC::GlobalTensor<HElementInput> hInputThisSubBlock = hInput[gbrcStart * nActual];
             AscendC::GlobalTensor<GElementInput> gInputThisSubBlock = gInput;
-            AscendC::GlobalTensor<HElementOutput> hOutputThisSubBlock = hOutput[offsetA];
+            AscendC::GlobalTensor<HElementOutput> hOutputThisSubBlock = hOutput[gbrcStart * nActual];
 
             AscendC::DataCopyParams gfloatUbParams{1, (uint16_t)(mActual*sizeof(float)), 0, 0};
             AscendC::DataCopyParams ghalfUbParams{1, (uint16_t)(mActual*sizeof(half)), 0, 0};
@@ -200,8 +202,8 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
             AscendC::Mul(gbrcUpUbTensor, hUbTensor, gbrcLeftcastUbTensor[gbrcEffStart*nActual], mActualThisSubBlock * nActual);
             AscendC::PipeBarrier<PIPE_V>();    
-
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            
             AscendC::Add(gbrcUpUbTensor, aUbTensor, gbrcUpUbTensor, mActualThisSubBlock * nActual); 
             AscendC::PipeBarrier<PIPE_V>();    
             AscendC::Muls(outUbTensor, gbrcUpUbTensor, (float)scale, mActualThisSubBlock * nActual);
@@ -246,12 +248,8 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
             AscendC::Copy(gcompUbTensor, gUbTensor, 64, 2, {1, 1, 8, 8});
             AscendC::PipeBarrier<PIPE_V>();
-
-
-
             AscendC::Exp(gcompUbTensor, gcompUbTensor, mActual);
             AscendC::PipeBarrier<PIPE_V>();    
-
             uint32_t mActualPerStage = CeilDiv(mActualThisSubBlock, 2);
             uint32_t mActualThisStage = 0;
             for(uint32_t stage = 0; stage < 2; stage++)
