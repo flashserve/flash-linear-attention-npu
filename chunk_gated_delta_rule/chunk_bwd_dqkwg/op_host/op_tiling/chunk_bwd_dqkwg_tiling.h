@@ -36,7 +36,7 @@ BEGIN_TILING_DATA_DEF(ChunkBwdDqkwgTilingData)
     
     // scale 参数
     TILING_DATA_FIELD_DEF(float, scale);             // 1.0 / sqrt(K)
-    
+    TILING_DATA_FIELD_DEF(uint32_t, mul0RowNum);             // 1.0 / sqrt(K)
     // Workspace 偏移量 (按字节)
     TILING_DATA_FIELD_DEF(uint64_t, wsDwOffset);         // Part 1: b_dw 偏移
     TILING_DATA_FIELD_DEF(uint64_t, wsDgLastOffset);     // Part 1: b_dg_last 偏移

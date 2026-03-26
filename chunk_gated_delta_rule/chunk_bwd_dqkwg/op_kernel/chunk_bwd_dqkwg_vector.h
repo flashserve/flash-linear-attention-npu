@@ -77,6 +77,7 @@ private:
     uint64_t BT;
     uint64_t numChunks;
     float scale;
+    uint32_t mul0RowNum = 0;
     int isVarLen;
     
     // Workspace 偏移
@@ -156,6 +157,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::Init(const C
     wsMul1Offset = tiling.wsMul1Offset;
     uint64_t dgLastSize = tiling.dgLastSize;
     isVarLen = tiling.isVarLen;
+    mul0RowNum = tiling.mul0RowNum;
 
     if (BT == 64) {
         BUFFER_NUM = 2;
@@ -232,9 +234,8 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart1
     // 1. h * dh 的逐元素乘法和求和 -> dg_last
     // 2. dw 的负号处理
     
-    const uint32_t hDhSize = K * V;  // h 和 dh 的大小
+    const uint32_t hDhSize = mul0RowNum * V;  // h 和 dh 的大小
     const uint32_t dwSize = BT * K;
-    uint32_t hDhSize_sub = hDhSize;
     uint32_t BT_sub = BT;
     uint32_t BT_sub_offset = 0;
 
@@ -242,10 +243,16 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart1
     uint32_t vecTaskIdx = 0;
 
     // 初始化 buffers
-    pipe->InitBuffer(inQue1, 1, hDhSize_sub * sizeof(float));
-    pipe->InitBuffer(inQue2, 1, hDhSize_sub * sizeof(float));   // hDhSize >= dwSize
+    pipe->InitBuffer(inQue1, BUFFER_NUM, 2 * hDhSize * sizeof(DataType));
+    // pipe->InitBuffer(inQue2, BUFFER_NUM, hDhSize * sizeof(DataType));   // hDhSize >= dwSize
     pipe->InitBuffer(outQue1, BUFFER_NUM, sizeof(float) * 8);  // dg_last (对齐到 32 字节)
     pipe->InitBuffer(outQue2, BUFFER_NUM, dwSize * sizeof(DataType));
+    pipe->InitBuffer(calcBuf1, 2 * hDhSize * sizeof(float));
+    // pipe->InitBuffer(calcBuf2, hDhSize * sizeof(float));
+    pipe->InitBuffer(calcBuf3, hDhSize * sizeof(float));
+    auto tensorHFp32 = calcBuf1.Get<float>();
+    auto tensorDhFp32 = tensorHFp32[hDhSize];
+    auto tensorSumFp32 = calcBuf3.Get<float>();
 
     // 发送同步信号给 Cube
     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
@@ -277,62 +284,75 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart1
             uint64_t dgLastOffset = (bIdx * H + h) * numChunks + chunkIdx;
 
             // ========== 计算 dg_last = sum(h * dh) ==========
-            float dg_last_sum = 0.0f;
             // 等待 Cube 信号 (dw Cube 计算)
-            
+            for(uint32_t row = 0; row < K; row += mul0RowNum) {
+                // CopyIn: h 和 dh
+                {
+                    auto tensorHIn = inQue1.AllocTensor<DataType>();
+                    auto tensorDhIn = tensorHIn[hDhSize];
+                    DataCopy(tensorDhIn, gmDh[hOffset + row * V], hDhSize);
+                    DataCopy(tensorHIn, gmH[hOffset + row * V], hDhSize);
+                    inQue1.EnQue(tensorHIn);
+                    // inQue2.EnQue(tensorDhIn);
+                }
+                // Compute: h * dh -> reduceSum
+                {
+                    auto tensorHIn = inQue1.DeQue<DataType>();
+                    auto tensorDhIn = tensorHIn[hDhSize];
+                    // Cast to fp32 (bf16 不支持直接 Mul)
+                    Cast(tensorHFp32, tensorHIn, RoundMode::CAST_NONE, hDhSize);
+                    Cast(tensorDhFp32, tensorDhIn, RoundMode::CAST_NONE, hDhSize);
+                    PipeBarrier<PIPE_V>();
+                    
+                    // 逐元素乘法
+                    if(row == 0) {
+                        Mul(tensorSumFp32, tensorHFp32, tensorDhFp32, hDhSize);
+                    } else {
+                        Mul(tensorHFp32, tensorHFp32, tensorDhFp32, hDhSize);
+                        PipeBarrier<PIPE_V>();
+                        Add(tensorSumFp32, tensorSumFp32, tensorHFp32, hDhSize);
+                    }
 
-            // CopyIn: h 和 dh
-            {
-                auto tensorHIn = inQue1.AllocTensor<DataType>();
-                auto tensorDhIn = inQue2.AllocTensor<DataType>();
-                DataCopy(tensorHIn[hDhSize_sub], gmH[hOffset], hDhSize_sub);
-                DataCopy(tensorDhIn[hDhSize_sub], gmDh[hOffset], hDhSize_sub);
-                inQue1.EnQue(tensorHIn);
-                inQue2.EnQue(tensorDhIn);
+                    PipeBarrier<PIPE_V>();
+
+                    // 求和 (使用 ReduceSum)
+
+                    // // 注: 需要将结果累加到一个标量
+                    
+                    // // 简化处理: 分块求和
+                    // LocalTensor<float> tensorSum = tensorDgLastOut;
+                    
+                    // // 使用向量求和
+                    // uint32_t reduceLen = hDhSize;
+                    // WholeReduceSum(tensorCalcDh, tensorCalcH,      // tensorCalcH: [K,V] = [128,128]
+                    //                 64, 256-8, 1, 1, 8);
+                    // WholeReduceSum(tensorCalcDh[128*2-8], tensorCalcH[128*128-8*64],      // tensorCalcH: [K,V] = [128,128]
+                    //                 64, 8, 1, 1, 8);
+                    // // tensorCalcDh: [128,2]
+                    // PipeBarrier<PIPE_V>();
+                    // WholeReduceSum(tensorCalcH, tensorCalcDh,      // tensorCalcH: [K,V] = [128,128]
+                    //                 64, 128 * 128 / 64 / 64, 1, 1, 8);
+                    // // tensorCalcH: [2,2]
+                    // PipeBarrier<PIPE_V>();  
+                    // WholeReduceSum(tensorSum, tensorCalcH,      // tensorCalcH: [K,V] = [128,128]
+                    //                 4, 1, 1, 1, 8);
+
+                    inQue1.FreeTensor(tensorHIn);
+                    // inQue2.FreeTensor(tensorDhIn);
+                    // outQue1.EnQue(tensorDgLastOut);
+                }
             }
-
-            // Compute: h * dh -> reduceSum
             {
-                auto tensorHIn = inQue1.DeQue<DataType>();
-                auto tensorCalcH = tensorHIn.template ReinterpretCast<float>();
-                auto tensorDhIn = inQue2.DeQue<DataType>();
-                auto tensorCalcDh = tensorDhIn.template ReinterpretCast<float>();
+                uint32_t remainNum = hDhSize;
+                while(remainNum > 64) {
+                    remainNum = remainNum / 2;
+                    Add(tensorSumFp32, tensorSumFp32, tensorSumFp32[remainNum], remainNum);
+                    PipeBarrier<PIPE_V>();
+                }
                 auto tensorDgLastOut = outQue1.AllocTensor<float>();
-
-                // Cast to fp32 (bf16 不支持直接 Mul)
-                Cast(tensorCalcH, tensorHIn[hDhSize_sub], RoundMode::CAST_NONE, hDhSize_sub);
-                Cast(tensorCalcDh, tensorDhIn[hDhSize_sub], RoundMode::CAST_NONE, hDhSize_sub);
-                PipeBarrier<PIPE_V>();
-                
-                // 逐元素乘法
-                Mul(tensorCalcH, tensorCalcH, tensorCalcDh, hDhSize_sub);
-                PipeBarrier<PIPE_V>();  
-                // 求和 (使用 ReduceSum)
-                // 注: 需要将结果累加到一个标量
-                
-                // 简化处理: 分块求和
-                LocalTensor<float> tensorSum = tensorDgLastOut;
-                
-                // 使用向量求和
-                uint32_t reduceLen = hDhSize_sub;
-                WholeReduceSum(tensorCalcDh, tensorCalcH,      // tensorCalcH: [K,V] = [128,128]
-                                64, 256-8, 1, 1, 8);
-                WholeReduceSum(tensorCalcDh[128*2-8], tensorCalcH[128*128-8*64],      // tensorCalcH: [K,V] = [128,128]
-                                64, 8, 1, 1, 8);
-                // tensorCalcDh: [128,2]
-                PipeBarrier<PIPE_V>();
-                WholeReduceSum(tensorCalcH, tensorCalcDh,      // tensorCalcH: [K,V] = [128,128]
-                                64, 128 * 128 / 64 / 64, 1, 1, 8);
-                // tensorCalcH: [2,2]
-                PipeBarrier<PIPE_V>();  
-                WholeReduceSum(tensorSum, tensorCalcH,      // tensorCalcH: [K,V] = [128,128]
-                                4, 1, 1, 1, 8);
-
-                inQue1.FreeTensor(tensorHIn);
-                inQue2.FreeTensor(tensorDhIn);
+                WholeReduceSum(tensorDgLastOut, tensorSumFp32, 64, 1, 1, 1, 8);
                 outQue1.EnQue(tensorDgLastOut);
             }
-            
             {
                 auto tensorDgLastOut = outQue1.DeQue<float>();
 
@@ -346,29 +366,31 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart1
                 outQue1.FreeTensor(tensorDgLastOut);
             }
 
+
+
             // ========== 处理 dw: 取负号 ==========
             // Cube 计算的是 dv @ h^T, 需要乘以 -1
             // 从 workspace 读取 dw, 乘以 -1, 写回最终输出
             CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
             // CopyIn: dw from workspace
             {
-                auto tensorDwIn = inQue2.AllocTensor<DataType>();
-                DataCopy(tensorDwIn[dwSize_sub], gmDw[dwOffset + BT_sub_offset * K], dwSize_sub);
+                auto tensorDwIn = inQue1.AllocTensor<DataType>();
+                DataCopy(tensorDwIn, gmDw[dwOffset], dwSize_sub);
                 inQue2.EnQue(tensorDwIn);
             }
 
             // Compute: -dw
             {
                 auto tensorDwIn = inQue2.DeQue<DataType>();
-                auto tensorCalcDw = tensorDwIn.template ReinterpretCast<float>();
+                // auto tensorCalcDw = tensorDwIn.template ReinterpretCast<float>();
                 auto tensorDwOut = outQue2.AllocTensor<DataType>();
                 
                 // Cast to fp32, 乘以 -1, cast back
-                Cast(tensorCalcDw, tensorDwIn[dwSize_sub], RoundMode::CAST_NONE, dwSize_sub);
+                Cast(tensorHFp32, tensorDwIn, RoundMode::CAST_NONE, dwSize_sub);
                 PipeBarrier<PIPE_V>();
-                Muls(tensorCalcDw, tensorCalcDw, -1.0f, dwSize_sub);
+                Muls(tensorHFp32, tensorHFp32, -1.0f, dwSize_sub);
                 PipeBarrier<PIPE_V>();
-                Cast(tensorDwOut, tensorCalcDw, RoundMode::CAST_RINT, dwSize_sub);
+                Cast(tensorDwOut, tensorHFp32, RoundMode::CAST_RINT, dwSize_sub);
                 inQue2.FreeTensor(tensorDwIn);
                 outQue2.EnQue(tensorDwOut);
             }
@@ -376,7 +398,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart1
             // CopyOut: dw to final output
             {
                 auto tensorDwOut = outQue2.DeQue<DataType>();
-                DataCopy(gmDw[dwOffset + BT_sub_offset * K], tensorDwOut, dwSize_sub);
+                DataCopy(gmDw[dwOffset], tensorDwOut, dwSize_sub);
 
                 outQue2.FreeTensor(tensorDwOut);
             }
