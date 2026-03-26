@@ -180,6 +180,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     tilingData.set_BT(BT);
     tilingData.set_numChunks(numChunks);
     tilingData.set_scale(scale);
+    tilingData.set_mul0RowNum(32);
     
     // tilingData.set_wsDwOffset(wsDwOffset);
     tilingData.set_wsDgLastOffset(wsDgLastOffset);
