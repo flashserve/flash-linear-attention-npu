@@ -217,6 +217,7 @@ public:
                     blockMmadQH(tensorBlockQ, tensorBlockH, tensorBlockHWork, cube2Shape);
                     blockMmadQH.finalWaitFlags();
                     Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube2Done);
+                }
 
                 if (needRun && coreIdx < coreNum) {
                     GDNFwdOOffsets& cube3Offsets = cubeBlockScheduler.GetCube23Offsets();
