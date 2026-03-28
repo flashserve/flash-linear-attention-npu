@@ -33,6 +33,9 @@ struct GDNFwdHOffsets {
     uint32_t gOffset;
     uint32_t hWorkOffset;
     uint32_t vWorkOffset;
+    uint32_t initialStateOffset;
+    uint32_t finalStateOffset;
+    bool isInitialState;
     bool isFinalState;
     uint32_t blockTokens;
     bool isDummyHead;
@@ -177,9 +180,12 @@ struct BlockSchedulerGdnFwdH {
         
         vHeadIdx = baseHeadIdx + headInnerIdx;
         kHeadIdx = vHeadIdx / headGroups;
-        offsets[currStage].isFinalState = chunkIdx == (batchChunks - 1); 
+        offsets[currStage].isInitialState = chunkIdx == 0; 
+        offsets[currStage].isFinalState = chunkIdx == (batchChunks - 1);
+        offsets[currStage].initialStateOffset = (batchIdx * vNumHead + vHeadIdx) * kHeadDim * vHeadDim; 
+        offsets[currStage].finalStateOffset = (batchIdx * vNumHead + vHeadIdx) * kHeadDim * vHeadDim;  
         offsets[currStage].hSrcOffset = (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset + chunkIdx) * kHeadDim * vHeadDim;
-        offsets[currStage].hDstOffset = offsets[currStage].isFinalState ? ((batchIdx * vNumHead + vHeadIdx) * kHeadDim * vHeadDim) : (offsets[currStage].hSrcOffset + kHeadDim * vHeadDim);
+        offsets[currStage].hDstOffset = offsets[currStage].hSrcOffset + kHeadDim * vHeadDim;
         offsets[currStage].uvOffset = (shapeBatchIdx * vNumHead * totalTokens + vHeadIdx * totalTokens + tokenOffset + chunkIdx * chunkSize) * vHeadDim;
         offsets[currStage].wkOffset = (shapeBatchIdx * kNumHead * totalTokens + kHeadIdx * totalTokens + tokenOffset + chunkIdx * chunkSize) * kHeadDim;
         offsets[currStage].wOffset = (shapeBatchIdx * vNumHead * totalTokens + vHeadIdx * totalTokens + tokenOffset + chunkIdx * chunkSize) * kHeadDim;

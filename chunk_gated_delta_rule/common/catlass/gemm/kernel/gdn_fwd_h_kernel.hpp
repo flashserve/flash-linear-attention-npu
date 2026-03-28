@@ -22,30 +22,60 @@ using namespace Catlass;
 namespace Catlass::Gemm::Kernel {
 
 template<
-    class CubeScheduler, 
-    class VecScheduler, 
-    class BlockMmadWH,
-    class BlockMmadKV,
-    class EpilogueGDNFwdHVnew,
-    class EpilogueGDNFwdHUpdate
+    typename INPUT_TYPE,
+    typename G_TYPE,
+    typename STATE_TYPE,
+    typename WORKSPACE_TYPE
 >
 class GDNFwdHKernel {
 public:
     
     using ArchTag = Arch::AtlasA2;
+    using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHCube;
+    using VecScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHVec;
+
+    using DispatchPolicyTla = Gemm::MmadPingpongTlaMulti<ArchTag, true>;
+    using L1TileShapeTla = Shape<_128, _128, _128>;
+    using L0TileShapeTla = L1TileShapeTla;
+
+    using WType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
+    using HType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
+    using VworkType = Gemm::GemmType<WORKSPACE_TYPE, layout::RowMajor>;
+    using KType = Gemm::GemmType<INPUT_TYPE, layout::ColumnMajor>;
+    using HworkType = Gemm::GemmType<WORKSPACE_TYPE, layout::RowMajor>;
+    using VType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
+    using GType = Gemm::GemmType<G_TYPE, layout::RowMajor>;
+    using UType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
+    using FinalStateType = Gemm::GemmType<STATE_TYPE, layout::RowMajor>;
+
+    // cube 1
+    using TileCopyWH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
+    using BlockMmadWH = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyWH>;
+
+    // cube 2
+    using TileCopyKV = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::ColumnMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
+    using BlockMmadKV = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKV>;
+
+    // vec 1
+    using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasA2GDNFwdHVnew;
+    using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType>;
+
+    // vec 2
+    using DispatchPolicyGDNFwdHUpdate = Epilogue::EpilogueAtlasA2GDNFwdHUpdate;
+    using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType, FinalStateType>;
 
     using GDNFwdHOffsets = Catlass::Gemm::Block::GDNFwdHOffsets;
 
-    using ElementK = typename BlockMmadKV::ElementA;
-    using ElementW = typename BlockMmadWH::ElementA;
-    using ElementU = typename BlockMmadKV::ElementB;
-    using ElementG = float;
-    using ElementH = typename BlockMmadWH::ElementB;
-    using ElementV = typename BlockMmadKV::ElementB;
-    using ElementVWork = float;
-    using ElementHWork = float;
-
-    using L1TileShape = typename BlockMmadWH::L1TileShape;
+    using ElementK = INPUT_TYPE;
+    using ElementW = INPUT_TYPE;
+    using ElementU = INPUT_TYPE;
+    using ElementG = G_TYPE;
+    using ElementH = INPUT_TYPE;
+    using ElementV = INPUT_TYPE;
+    using ElementVWork = WORKSPACE_TYPE;
+    using ElementHWork = WORKSPACE_TYPE;
+    using ElementInitialState = STATE_TYPE;
+    using ElementFinalState = STATE_TYPE;
     
     using LayoutW = Catlass::layout::RowMajor;
     using LayoutH = Catlass::layout::RowMajor;
@@ -73,14 +103,17 @@ public:
     AscendC::GlobalTensor<ElementW> gmW;
     AscendC::GlobalTensor<ElementU> gmU;
     AscendC::GlobalTensor<ElementG> gmG;
-    AscendC::GlobalTensor<ElementH> gmInitialState;
+    AscendC::GlobalTensor<ElementInitialState> gmInitialState;
     AscendC::GlobalTensor<ElementH> gmH;
     AscendC::GlobalTensor<ElementV> gmV;
-    AscendC::GlobalTensor<ElementH> gmFinalState;
+    AscendC::GlobalTensor<ElementFinalState> gmFinalState;
     AscendC::GlobalTensor<ElementVWork> gmVWorkspace;
     AscendC::GlobalTensor<ElementV> gmVUpdateWorkspace;
     AscendC::GlobalTensor<ElementHWork> gmHWorkspace;
     
+    AscendC::GlobalTensor<int64_t> gmSeqlen;
+    AscendC::GlobalTensor<int64_t> gmNumChunks;
+
     CubeScheduler cubeBlockScheduler;
     VecScheduler vecBlockScheduler;
 
@@ -114,13 +147,16 @@ public:
         gmW.SetGlobalBuffer((__gm__ ElementW *)w);
         gmU.SetGlobalBuffer((__gm__ ElementU *)u);
         gmG.SetGlobalBuffer((__gm__ ElementG *)g);
-        gmInitialState.SetGlobalBuffer((__gm__ ElementH *)inital_state);
+        gmInitialState.SetGlobalBuffer((__gm__ ElementInitialState *)inital_state);
         gmH.SetGlobalBuffer((__gm__ ElementH *)h);
         gmV.SetGlobalBuffer((__gm__ ElementV *)v_new);
-        gmFinalState.SetGlobalBuffer((__gm__ ElementH *)final_state);
+        gmFinalState.SetGlobalBuffer((__gm__ ElementFinalState *)final_state);
         gmVWorkspace.SetGlobalBuffer((__gm__ ElementVWork *)(user + vWorkspaceOffset));
         gmVUpdateWorkspace.SetGlobalBuffer((__gm__ ElementV *)(user + vUpdateWorkspaceOffset));
         gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
+
+        gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
+        gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)chunk_indices);
 
         if ASCEND_IS_AIC {
             cubeBlockScheduler.Init(cu_seqlens, chunk_indices, tiling);
@@ -204,6 +240,51 @@ public:
 
             EpilogueGDNFwdHVnew epilogueGDNFwdHVnew(resource);
 
+            if (useInitialState) {
+                AscendC::LocalTensor<ElementInitialState> stateUbTensorPing = resource.ubBuf.template GetBufferByByte<ElementInitialState>(0);
+                AscendC::LocalTensor<ElementInitialState> stateUbTensorPong = resource.ubBuf.template GetBufferByByte<ElementInitialState>(96 * 1024);
+                AscendC::LocalTensor<ElementH> hUbTensorPing = resource.ubBuf.template GetBufferByByte<ElementH>(64 * 1024);
+                AscendC::LocalTensor<ElementH> hUbTensorPong = resource.ubBuf.template GetBufferByByte<ElementH>(160 * 1024);
+                uint32_t totalChunks = isVariedLen ? vecBlockScheduler.totalChunks : ((seqlen + chunkSize - 1) / chunkSize);
+                uint32_t stateBlockSize = kHeadDim * vHeadDim;
+                uint32_t pingpongFlag = 1;
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
+                for (uint32_t shapeBatchIdx = 0; shapeBatchIdx < shapeBatch; shapeBatchIdx++) {
+                    for (uint32_t vHeadIdx = 0; vHeadIdx < vNumHead; vHeadIdx++) {
+                        for (uint32_t tokenBatchIdx = 0; tokenBatchIdx < tokenBatch; tokenBatchIdx++) {
+                            uint32_t batchIdx = isVariedLen ? tokenBatchIdx : shapeBatchIdx;
+                            uint32_t chunkOffset = isVariedLen ? gmNumChunks.GetValue(tokenBatchIdx) : 0;
+                            uint32_t initialStateOffset = (batchIdx * vNumHead + vHeadIdx) * stateBlockSize;
+                            uint32_t hOffset = (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset) * stateBlockSize;
+                            AscendC::LocalTensor<ElementInitialState> stateUbTensor = pingpongFlag ? stateUbTensorPing : stateUbTensorPong;
+                            AscendC::LocalTensor<ElementH> hUbTensor = pingpongFlag ? hUbTensorPing : hUbTensorPong;
+                            auto event_id = pingpongFlag ? EVENT_ID1 : EVENT_ID0;
+                            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(event_id);
+                            if constexpr(!std::is_same<ElementInitialState, ElementH>::value) {
+                                AscendC::DataCopy(stateUbTensor, gmInitialState[initialStateOffset], stateBlockSize);
+                                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(event_id);
+                                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(event_id);
+                                AscendC::Cast(hUbTensor, stateUbTensor, AscendC::RoundMode::CAST_RINT, stateBlockSize);
+                                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(event_id);
+                                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(event_id);
+                                AscendC::DataCopy(gmH[hOffset], hUbTensor, stateBlockSize);
+                            } else {
+                                AscendC::DataCopy(stateUbTensor, gmInitialState[initialStateOffset], stateBlockSize);
+                                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(event_id);
+                                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(event_id);
+                                AscendC::DataCopy(gmH[hOffset], stateUbTensor, stateBlockSize);
+                            }
+                            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(event_id);
+                            pingpongFlag = 1 - pingpongFlag;
+                        }
+                        
+                    }
+                }
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
+            }
+
             Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done);
             Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done);
             while (vecBlockScheduler.isRunning) {
@@ -229,14 +310,14 @@ public:
                     GDNFwdHOffsets& vec2Offsets = vecBlockScheduler.GetStage2Offsets();
                     if (vecBlockScheduler.NeedProcessStage2()) {
                         // step 4:  h[i+1] += h_work if i < num_chunks - 1 else None
-                        AscendC::GlobalTensor<ElementH> gmVec2Out = vec2Offsets.isFinalState ? gmFinalState : gmH;
                         EpilogueGDNFwdHUpdate epilogueGDNFwdHUpdate(resource);
                         epilogueGDNFwdHUpdate(
-                            gmVec2Out[vec2Offsets.hDstOffset],
+                            gmH[vec2Offsets.hDstOffset], gmFinalState[vec2Offsets.finalStateOffset],
                             gmG[vec2Offsets.gOffset],
                             gmH[vec2Offsets.hSrcOffset],
                             gmHWorkspace[vec2Offsets.hWorkOffset],
-                            vec2Offsets.blockTokens, kHeadDim, vHeadDim, vecBlockScheduler.cube2Done
+                            vec2Offsets.blockTokens, kHeadDim, vHeadDim, vecBlockScheduler.cube2Done,
+                            (vec2Offsets.isFinalState && storeFinalState)
                         );
                     } else {
                         Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done);

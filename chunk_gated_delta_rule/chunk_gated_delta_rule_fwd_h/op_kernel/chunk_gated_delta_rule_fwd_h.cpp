@@ -29,88 +29,59 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd_h(GM_ADDR k, GM
     GM_ADDR user = AscendC::GetUserWorkspace(workspace);
     
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
-    if (gdnFwdHTilingData->dataType == 0) {
-
-        using ArchTag = Catlass::Arch::AtlasA2;
-        using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHCube;
-        using VecScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHVec;
-        
-        using DispatchPolicyTla = Gemm::MmadPingpongTlaMulti<ArchTag, true>;
-        using L1TileShapeTla = Shape<_128, _128, _128>;
-        using L0TileShapeTla = L1TileShapeTla;
-
-        using WType = Gemm::GemmType<half, layout::RowMajor>;
-        using HType = Gemm::GemmType<half, layout::RowMajor>;
-        using VworkType = Gemm::GemmType<float, layout::RowMajor>;
-        using KType = Gemm::GemmType<half, layout::ColumnMajor>;
-        using HworkType = Gemm::GemmType<float, layout::RowMajor>;
-        using VType = Gemm::GemmType<half, layout::RowMajor>;
-        using GType = Gemm::GemmType<float, layout::RowMajor>;
-        using UType = Gemm::GemmType<half, layout::RowMajor>;
-        using HType = Gemm::GemmType<half, layout::RowMajor>;
-
-        // cube 1
-        using TileCopyWH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, half, layout::RowMajor, half, layout::RowMajor, float, layout::RowMajor>;
-        using BlockMmadWH = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, half, half, float, void, TileCopyWH>;
-
-        // cube 2
-        using TileCopyKV = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, half, layout::ColumnMajor, half, layout::RowMajor, float, layout::RowMajor>;
-        using BlockMmadKV = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, half, half, float, void, TileCopyKV>;
-
-        // vec 1
-        using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasA2GDNFwdHVnew;
-        using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType>;
-
-        // vec 2
-        using DispatchPolicyGDNFwdHUpdate = Epilogue::EpilogueAtlasA2GDNFwdHUpdate;
-        using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType>;
-
-        using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<CubeScheduler, VecScheduler, BlockMmadWH, BlockMmadKV, EpilogueGDNFwdHVnew, EpilogueGDNFwdHUpdate>;
-
-        GDNFwdHKernel gdnFwdH;
-        gdnFwdH.Init(k, w, u, g, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-        gdnFwdH.Process();
-
+    using workspaceType = float;
+    // dtype: 0 - fp16, 1 - bf16, 2 - fp32
+    if (gdnFwdHTilingData->dataType == 1) {
+        if (gdnFwdHTilingData->stateDataType == 2) {
+            if (gdnFwdHTilingData->gDataType == 2) {
+                using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<bfloat16_t, float, float, workspaceType>;
+                GDNFwdHKernel gdnFwdH;
+                gdnFwdH.Init(k, w, u, g, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+                gdnFwdH.Process();
+            } else {
+                // using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<bfloat16_t, bfloat16_t, float, workspaceType>;
+                // GDNFwdHKernel gdnFwdH;
+                // gdnFwdH.Init(k, w, u, g, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+                // gdnFwdH.Process();
+            }
+        } else {
+            if (gdnFwdHTilingData->gDataType == 2) {
+                using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<bfloat16_t, float, bfloat16_t, workspaceType>;
+                GDNFwdHKernel gdnFwdH;
+                gdnFwdH.Init(k, w, u, g, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+                gdnFwdH.Process();
+            } else {
+                // using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<bfloat16_t, bfloat16_t, bfloat16_t, workspaceType>;
+                // GDNFwdHKernel gdnFwdH;
+                // gdnFwdH.Init(k, w, u, g, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+                // gdnFwdH.Process();
+            }
+        }
     } else {
-        
-        using ArchTag = Catlass::Arch::AtlasA2;
-        using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHCube;
-        using VecScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHVec;
-        
-        using DispatchPolicyTla = Gemm::MmadPingpongTlaMulti<ArchTag, true>;
-        using L1TileShapeTla = Shape<_128, _128, _128>;
-        using L0TileShapeTla = L1TileShapeTla;
-
-        using WType = Gemm::GemmType<bfloat16_t, layout::RowMajor>;
-        using HType = Gemm::GemmType<bfloat16_t, layout::RowMajor>;
-        using VworkType = Gemm::GemmType<float, layout::RowMajor>;
-        using KType = Gemm::GemmType<bfloat16_t, layout::ColumnMajor>;
-        using HworkType = Gemm::GemmType<float, layout::RowMajor>;
-        using VType = Gemm::GemmType<bfloat16_t, layout::RowMajor>;
-        using GType = Gemm::GemmType<float, layout::RowMajor>;
-        using UType = Gemm::GemmType<bfloat16_t, layout::RowMajor>;
-        using HType = Gemm::GemmType<bfloat16_t, layout::RowMajor>;
-
-        // cube 1
-        using TileCopyWH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, bfloat16_t, layout::RowMajor, bfloat16_t, layout::RowMajor, float, layout::RowMajor>;
-        using BlockMmadWH = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, bfloat16_t, bfloat16_t, float, void, TileCopyWH>;
-
-        // cube 2
-        using TileCopyKV = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, bfloat16_t, layout::ColumnMajor, bfloat16_t, layout::RowMajor, float, layout::RowMajor>;
-        using BlockMmadKV = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, bfloat16_t, bfloat16_t, float, void, TileCopyKV>;
-
-        // vec 1
-        using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasA2GDNFwdHVnew;
-        using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType>;
-
-        // vec 2
-        using DispatchPolicyGDNFwdHUpdate = Epilogue::EpilogueAtlasA2GDNFwdHUpdate;
-        using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType>;
-
-        using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<CubeScheduler, VecScheduler, BlockMmadWH, BlockMmadKV, EpilogueGDNFwdHVnew, EpilogueGDNFwdHUpdate>;
-
-        GDNFwdHKernel gdnFwdH;
-        gdnFwdH.Init(k, w, u, g, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-        gdnFwdH.Process();
+        if (gdnFwdHTilingData->stateDataType == 2) {
+            if (gdnFwdHTilingData->gDataType == 2) {
+                using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<half, float, float, workspaceType>;
+                GDNFwdHKernel gdnFwdH;
+                gdnFwdH.Init(k, w, u, g, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+                gdnFwdH.Process();
+            } else {
+                // using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<half, half, float, workspaceType>;
+                // GDNFwdHKernel gdnFwdH;
+                // gdnFwdH.Init(k, w, u, g, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+                // gdnFwdH.Process();
+            }
+        } else {
+            if (gdnFwdHTilingData->gDataType == 2) {
+                using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<half, float, half, workspaceType>;
+                GDNFwdHKernel gdnFwdH;
+                gdnFwdH.Init(k, w, u, g, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+                gdnFwdH.Process();
+            } else {
+                // using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<half, half, half, workspaceType>;
+                // GDNFwdHKernel gdnFwdH;
+                // gdnFwdH.Init(k, w, u, g, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+                // gdnFwdH.Process();
+            }
+        }
     }
 }

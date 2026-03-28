@@ -85,7 +85,24 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     }
     
     auto initialStateTensor = context->GetOptionalInputTensor(INPUT_INITIAL_STATE_IDX);
-    bool useInitialState = 0;
+    bool useInitialState = initialStateTensor != nullptr;
+    int64_t stateDataType = 2;
+    if (useInitialState) {
+        auto stateDType = initialStateTensor->GetDataType();
+        if (stateDType == ge::DT_BF16) {
+            stateDataType = 1;
+        } else if (stateDType == ge::DT_FLOAT16) {
+            stateDataType = 0;
+        }
+    }
+    
+    auto gDType = context->GetOptionalInputTensor(INPUT_G_IDX)->GetDataType();
+    int64_t gDataType = 2;
+    if (gDType == ge::DT_BF16) {
+        gDataType = 1;
+    } else if (gDType == ge::DT_FLOAT16) {
+        gDataType = 0;
+    }
     
     auto attrPtr = context->GetAttrs();
     bool storeFinalState = *(attrPtr->GetAttrPointer<bool>(ATTR_STORE_FINAL_STATE_IDX));
@@ -128,6 +145,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     tiling.set_useInitialState(useInitialState);
     tiling.set_storeFinalState(storeFinalState);
     tiling.set_dataType(dataType);
+    tiling.set_stateDataType(stateDataType);
+    tiling.set_gDataType(gDataType);
     tiling.set_isVariedLen(isVariedLen);
     tiling.set_shapeBatch(shapeBatch);
     tiling.set_tokenBatch(tokenBatch);
