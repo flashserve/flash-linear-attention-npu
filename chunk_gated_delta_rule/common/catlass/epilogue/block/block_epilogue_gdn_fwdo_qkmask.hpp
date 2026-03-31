@@ -126,7 +126,7 @@ public:
         uint32_t nOffset = 0;
         int64_t offsetA = mOffset * nActual + nOffset;
         uint16_t aInputDstStride;
-        if((nActual - 1) % 8 <= 3) aInputDstStride = 1;
+        if((nActual - 1) % 16 <= 7) aInputDstStride = 1;
         else aInputDstStride = 0;
 
         uint32_t gbrcStart, gbrcRealStart, gbrcRealEnd, gbrcRealProcess, gbrcEffStart, gbrcEffEnd, mulsRemain, mulsRemainIdx;
