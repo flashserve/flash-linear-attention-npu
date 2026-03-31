@@ -288,6 +288,30 @@ private:
         ReduceSum<float, Pattern::Reduce::AR, true>(dstTensor, srcTensor, stateShape, true);
     }
 
+    __aicore__ inline bool CanUseK128AddFoldFastPath(uint32_t rows) const
+    {
+        if (alignK_ != ADD_FOLD_REDUCE_MIN_K) {
+            return false;
+        }
+        if (rows == 0 || rows > MAX_REPEAT_TIME) {
+            return false;
+        }
+        return true;
+    }
+
+    __aicore__ inline void ReduceSumAddFoldK128(LocalTensor<float> &dstTensor, LocalTensor<float> &srcTensor,
+                                                uint32_t rows)
+    {
+        const uint8_t repeatTime = static_cast<uint8_t>(rows);
+        const uint8_t rowRepStride = static_cast<uint8_t>(alignK_ / FP32_NUM_PER_BLOCK);
+
+        // Write the folded result to the upper half to avoid the multi-repeat src0/dst overlap case.
+        Add(srcTensor[REPEAT_LENTH], srcTensor, srcTensor[REPEAT_LENTH], REPEAT_LENTH, repeatTime,
+            {1, 1, 1, rowRepStride, rowRepStride, rowRepStride});
+        AscendC::PipeBarrier<PIPE_V>();
+        WholeReduceSum(dstTensor, srcTensor[REPEAT_LENTH], REPEAT_LENTH, repeatTime, 1, 1, rowRepStride);
+    }
+
     __aicore__ inline void ReduceSumAddFold(LocalTensor<float> &dstTensor, LocalTensor<float> &srcTensor,
                                             uint32_t rows)
     {
@@ -298,6 +322,11 @@ private:
         
         if ((alignK_ & (alignK_ - 1)) != 0) {
             ReduceSumBaseline(dstTensor, srcTensor, rows);
+            return;
+        }
+
+        if (CanUseK128AddFoldFastPath(rows)) {
+            ReduceSumAddFoldK128(dstTensor, srcTensor, rows);
             return;
         }
 
