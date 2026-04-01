@@ -2,6 +2,7 @@
 ascend_path="/data/huangjunzhe/Ascend/cann-9.0.0/"
 # ascend_path="/data/huangjunzhe/Ascend/cann-9.0.0"
 test_script_path=/data/huangjunzhe/GDN/perf/flash-linear-attention-npu/chunk_gated_delta_rule/chunk_bwd_dqkwg/tests
+data_path=/data/huangjunzhe/GDN/result/result_newg
 export TMPDIR=/data/huangjunzhe/tmp
 
 
@@ -13,30 +14,23 @@ source ${ascend_path}/set_env.sh
 compi=$1
 compi_y="compile"
 
+caseid=$2
+caseid="${caseid//$'\r'/}"
 
-
-##path=/root/data_nvme0n1/huangjunzhe/GDN/ops-transformer_GDN/chunk_gated_delta_rule/chunk_bwd_dqkwg/tests/result/case_01
-data_path=$2
-if [ -n "$data_path" ]; then
-    code_path=${test_script_path}/../../../
-    example_path=${test_script_path}/../examples/
-    custom_path=${test_script_path}/../../../../custom
-fi
 echo "[run.sh] code_path: ${code_path}"
-echo "[run.sh] example_path: ${example_path}"
 echo "[run.sh] custom_path: ${custom_path}"
 alias log='export ASCEND_SLOG_PRINT_TO_STDOUT=1; export ASCEND_GLOBAL_LOG_LEVEL=0'
 alias unlog='unset ASCEND_SLOG_PRINT_TO_STDOUT; unset ASCEND_GLOBAL_LOG_LEVEL'
 
 
+
 if [ "$compi" = "$compi_y" ]; then
     unset ASCEND_SLOG_PRINT_TO_STDOUT; unset ASCEND_GLOBAL_LOG_LEVEL
-    # rm /root/data_nvme0n1/huangjunzhe/GDN/target/test_gdn
-    # echo "/root/data_nvme0n1/huangjunzhe/GDN/target/test_gdn deleted!"
-    # export TMPDIR=/root/data_nvme0n1/huangjunzhe/tmp
+
+    export TMPDIR=/data/huangjunzhe/tmp
     cd ${code_path}
     bash build.sh --pkg --ops=chunk_bwd_dqkwg #--soc=ascend910_93
-    #bash build.sh --pkg --ops=prepare_wy_repr_bwd_full
+
     if [ $? -ne 0 ]; then
         exit 1
     fi
@@ -61,11 +55,27 @@ export LD_LIBRARY_PATH=${ascend_path}/opp/vendors/custom_transformer/op_api/lib/
 # chmod +x test_gdn
 # LD_LIBRARY_PATH=${custom_path}/vendors/custom_transformer/op_api/lib/:${LD_LIBRARY_PATH}
 # ./test_gdn $2
-msprof python3 ${test_script_path}/pta.py
+python3 ${test_script_path}/pta.py ${caseid}
 
 # md5sum /home/huangjunzhe/GDN/data/test/out/*_npu.pt
-
+if [ $? -ne 0 ]; then
+    echo "[ERROR] failed to run operator." >&2
+    exit 1
+fi
 # conda activate gdn_py39
 # export TORCH_DEVICE_BACKEND_AUTOLOAD=0
 # python3 /root/data_nvme0n1/huangjunzhe/GDN/target/result/to_pt.py /root/data_nvme0n1/huangjunzhe/GDN/target/result/cpu_model
-md5sum /data/huangjunzhe/GDN/data//test/out/*.pt
+
+
+ct single ${data_path}/${caseid}/out/dw_npu.pt ${data_path}/${caseid}/out/dw_cpu.pt --calc_count 100000 --dtype float16
+ct single ${data_path}/${caseid}/out/dg_npu.pt ${data_path}/${caseid}/out/dg_cpu.pt --calc_count 100000 --dtype float16
+ct single ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt --calc_count 100000 --dtype float16
+ct single ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt --calc_count 100000 --dtype float16
+
+
+ct viz ${data_path}/${caseid}/out/dw_npu.pt ${data_path}/${caseid}/out/dw_cpu.pt --out_dir ${data_path}/${caseid} --name dw
+ct viz ${data_path}/${caseid}/out/dg_npu.pt ${data_path}/${caseid}/out/dg_cpu.pt --out_dir ${data_path}/${caseid} --name dg
+ct viz ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt --out_dir ${data_path}/${caseid} --name dq
+ct viz ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt --out_dir ${data_path}/${caseid} --name dk
+
+md5sum ${data_path}/${caseid}/out/*.pt

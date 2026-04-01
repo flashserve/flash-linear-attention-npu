@@ -244,11 +244,13 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart1
     uint32_t dwSize_sub = BT_sub * K;
     uint32_t vecTaskIdx = 0;
 
+    uint32_t maxSize = (2 * hDhSize) > dwSize ? (2 * hDhSize) : dwSize;
+
     // 初始化 buffers
-    pipe->InitBuffer(inQue1, BUFFER_NUM, 2 * hDhSize * sizeof(DataType));
+    pipe->InitBuffer(inQue1, BUFFER_NUM, maxSize * sizeof(DataType));  // h 和 dh 共用一个输入队列
     pipe->InitBuffer(outQue1, BUFFER_NUM, sizeof(float) * 8);  // dg_last (对齐到 32 字节)
     pipe->InitBuffer(outQue2, BUFFER_NUM, dwSize * sizeof(DataType));
-    pipe->InitBuffer(calcBuf1, 2 * hDhSize * sizeof(float));
+    pipe->InitBuffer(calcBuf1, maxSize * sizeof(float));
     pipe->InitBuffer(calcBuf3, hDhSize * sizeof(float));
     auto tensorHFp32 = calcBuf1.Get<float>();
     auto tensorDhFp32 = tensorHFp32[hDhSize];
@@ -302,7 +304,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart1
                     Cast(tensorHFp32, tensorHIn, RoundMode::CAST_NONE, hDhSize);
                     Cast(tensorDhFp32, tensorDhIn, RoundMode::CAST_NONE, hDhSize);
                     PipeBarrier<PIPE_V>();
-                    
+
                     // 逐元素乘法
                     if(row == 0) {
                         Mul(tensorSumFp32, tensorHFp32, tensorDhFp32, hDhSize);
@@ -1158,7 +1160,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart5
                 uint64_t offset = (real_BT - 1) / 8 * 8; // 每行8个float
                 uint64_t mask[1] = {0};
                 mask[0] = 1ULL << (real_BT - 1 - offset); // 计算掩码，只有最后一个位置有效
-                
+
                 Add(tensorGFp32[offset], tensorGFp32[offset], tensorDgFinal, mask, 1, {1,1,1,8,8,8});
 
                 PipeBarrier<PIPE_V>();
@@ -1169,7 +1171,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart5
                 }
                 PipeBarrier<PIPE_V>();
 
-                
+
                 // 处理最后一个位置的 dg
                 // b_dg_last *= exp(g_last)
                 // is_last_mask: 只有最后一个位置添加 dgLastTerm
