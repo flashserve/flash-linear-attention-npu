@@ -281,7 +281,9 @@ template <typename DT, typename GT>
 __aicore__ inline void GDRVec<DT, GT>::CalcGatedQ(float& gLast, float& gLastExp, const bool isLastChunk) 
 {
     if (this->curCalcBT == 0) {
-        CrossCoreSetFlag<0x2, PIPE_MTE3>(CROSS_CORE_V2C_GQ);
+        if (chunkIdx_ != 0) {
+            CrossCoreSetFlag<0x2, PIPE_MTE3>(CROSS_CORE_V2C_GQ);
+        }
         return;
     }
     if constexpr (std::is_same<GT, float>::value) {
