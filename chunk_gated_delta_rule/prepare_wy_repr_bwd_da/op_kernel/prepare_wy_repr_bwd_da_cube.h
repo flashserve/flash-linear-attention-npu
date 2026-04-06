@@ -440,9 +440,9 @@ __aicore__ void inline PrepareWyReprBwdDAProcess<kType, betaType>::Process() {
 
     // 中间结果
     using LayoutTagDA1 = layout::RowMajor;
-    LayoutTagDA1 tagDA1 = LayoutTagDA1::MakeLayout<kType>(BT, BT);
+    LayoutTagDA1 tagDA1 = LayoutTagDA1::MakeLayout<float32_t>(BT, BT);
     using LayoutTagDA2 = layout::RowMajor;
-    LayoutTagDA2 tagDA2 = LayoutTagDA2::MakeLayout<kType>(BT, BT);
+    LayoutTagDA2 tagDA2 = LayoutTagDA2::MakeLayout<float32_t>(BT, BT);
     using LayoutTagDA4 = layout::RowMajor;
     LayoutTagDA4 tagDA4 = LayoutTagDA4::MakeLayout<kType>(BT, BT);
     using LayoutTagDA5 = layout::RowMajor;
@@ -457,15 +457,15 @@ __aicore__ void inline PrepareWyReprBwdDAProcess<kType, betaType>::Process() {
 
     // 计算第一个矩阵乘 dA_1 = dw @ kbg.T
     using TileCopyDA1 =
-        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDw, kType, LayoutTagKbg, kType, LayoutTagDA1>;
+        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDw, kType, LayoutTagKbg, float32_t, LayoutTagDA1>;
     using BlockMmadDA1 = Gemm::Block::BlockMmadTla<
-        DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyDA1>;
+        DispatchPolicy, L1TileShape, L0TileShape, kType, kType, float32_t, void, TileCopyDA1>;
 
     // 计算第二个矩阵乘 dA_2 = du @ vb.T
     using TileCopyDA2 =
-        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDu, kType, LayoutTagVb, kType, LayoutTagDA2>;
+        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDu, kType, LayoutTagVb, float32_t, LayoutTagDA2>;
     using BlockMmadDA2 = Gemm::Block::BlockMmadTla<
-        DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyDA2>;
+        DispatchPolicy, L1TileShape, L0TileShape, kType, kType, float32_t, void, TileCopyDA2>;
 
     // 计算第三个矩阵乘 dA_5 = dA_4 @ A.T
     using TileCopyDA5 =
@@ -499,12 +499,12 @@ __aicore__ void inline PrepareWyReprBwdDAProcess<kType, betaType>::Process() {
     MatmulKernel kernel;
 
     // ptrVb/ptrKbg 必须指向 Vector 写入的 workspace 区域：vb / kbg=workSpace2Tensor(基址+B*H*T*BT 元素)
-    GM_ADDR ptrVb = reinterpret_cast<GM_ADDR>(reinterpret_cast<__gm__ kType*>(workspace) + (B * H * T * BT));
+    GM_ADDR ptrVb = reinterpret_cast<GM_ADDR>(reinterpret_cast<__gm__ float32_t*>(workspace) + (2 *B * H * T * BT));
     GM_ADDR ptrKbg = ptrVb;
-    GM_ADDR ptrDA1 = dA;
-    GM_ADDR ptrDA2 = workspace;
+    GM_ADDR ptrDA1 = workspace;
+    GM_ADDR ptrDA2 = reinterpret_cast<GM_ADDR>(reinterpret_cast<__gm__ float32_t*>(workspace) + (B * H * T * BT));
     GM_ADDR ptrDA4 = dA;
-    GM_ADDR ptrDA5 = workspace;
+    GM_ADDR ptrDA5 = dA;
     GM_ADDR ptrDA6 = dA;
     typename MatmulKernel::Params param{
         dw, layoutDw,

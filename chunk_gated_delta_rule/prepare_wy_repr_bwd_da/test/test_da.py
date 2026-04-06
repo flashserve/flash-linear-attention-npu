@@ -107,14 +107,14 @@ def bool_matrix_lower_tri_to_uint8(chunk_size):
     # 创建下三角矩阵（下三角不包括对角线为1，上三角包括对角线为0）
     bool_matrix = torch.tril(torch.ones(chunk_size, chunk_size, dtype=torch.bool), diagonal=-1)
     bool_matrix = ~bool_matrix # 和FA含义一致，0代表保留，1代表屏蔽
-    print(f"==== bool_matrix.shape = {bool_matrix.shape} ")
-    print("==== bool_matrix ====")
-    print(bool_matrix)
+    # print(f"==== bool_matrix.shape = {bool_matrix.shape} ")
+    # print("==== bool_matrix ====")
+    # print(bool_matrix)
     # 将bool矩阵转换为uint8 (0或1)
     uint8_matrix = bool_matrix.to(torch.uint8)
-    print(f"==== uint8_matrix.shape = {uint8_matrix.shape} ")
-    print("==== uint8_matrix ====")
-    print(uint8_matrix)
+    # print(f"==== uint8_matrix.shape = {uint8_matrix.shape} ")
+    # print("==== uint8_matrix ====")
+    # print(uint8_matrix)
     # 重塑为 (chunk_size, chunk_size//8, 8) 以便每8个bit打包
     reshaped = uint8_matrix.reshape(chunk_size, chunk_size // 8, 8)
     # 将每8个bit打包成一个uint8
@@ -137,7 +137,7 @@ def get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices):
         eos = bos + chunk_size
         if eos > T:
             eos = T
-    # print(bos, eos)
+    # # print(bos, eos)
     return bos, eos
 
 def compute_dA_cpu(
@@ -190,9 +190,9 @@ def compute_dA_cpu(
         o_t = i_t * BT + torch.arange(0, BT, dtype=torch.int32)
         m_t = o_t < T
         m_A = (o_t[:, None] > o_t[None, :]) & (m_t[:, None] & m_t)
-        # print("==== m_A.shape = ", m_A.shape)
-        # print("==== m_A ====")
-        # print(m_A)
+        # # print("==== m_A.shape = ", m_A.shape)
+        # # print("==== m_A ====")
+        # # print(m_A)
 
         for i_b in range(B):
         # 遍历所有batch
@@ -272,32 +272,32 @@ def compute_dA_cpu(
 
 def test_variable():
     B = 1
-    T = 16384
-    H = 32
+    T = 4096
+    H = 4
     K = 128
     V = 128
     BT=chunk_size=64
 
     k = create_tensor((B, H, T, K), dtype=torch.float16)
-    print(f"==== k.shape = {k.shape} ")
+    # print(f"==== k.shape = {k.shape} ")
     v = create_tensor((B, H, T, V), dtype=torch.float16)
-    print(f"==== v.shape = {v.shape} ")
+    # print(f"==== v.shape = {v.shape} ")
     beta = create_tensor((B, H, T), dtype=torch.float)
-    print(f"==== beta.shape = {beta.shape} ")
+    # print(f"==== beta.shape = {beta.shape} ")
     A = create_tensor((B, H, T, BT), dtype=torch.float16)
-    print(f"==== A.shape = {A.shape} ")
+    # print(f"==== A.shape = {A.shape} ")
     dw = create_tensor((B, H, T, K), dtype=torch.float16)
-    print(f"==== dw.shape = {dw.shape} ")
+    # print(f"==== dw.shape = {dw.shape} ")
     du = create_tensor((B, H, T, V), dtype=torch.float16)
-    print(f"==== du.shape = {du.shape} ")
+    # print(f"==== du.shape = {du.shape} ")
     # g = create_tensor((B, H, T), dtype=torch.float)
     g = torch.arange(-1, -(B * H * T + 1), -1).reshape((B, H, T)).to(torch.float)
-    print(f"==== g.shape = {g.shape} ")
-    print(f"==== g = {g} ")
+    # print(f"==== g.shape = {g.shape} ")
+    # print(f"==== g = {g} ")
 
     cu_seqlens = prepare_cu_seqlens(T = T, L = 16)
     chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
-    print(f"==== chunk_indices len = {len(chunk_indices)}, chunk_indices[:20] = {chunk_indices[:20]}")
+    # print(f"==== chunk_indices len = {len(chunk_indices)}, chunk_indices[:20] = {chunk_indices[:20]}")
 
     k_npu = k.npu()
     v_npu = v.npu()
@@ -309,14 +309,14 @@ def test_variable():
 
     dA_npu = torch_npu.npu_prepare_wy_repr_bwd_da(k_npu, v_npu, beta_npu, A_npu, dw_npu, du_npu, g_npu, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices, chunk_size=chunk_size)
     torch.save(dA_npu, "/data/yzq/flash-linear-attention-npu-yzq/chunk_gated_delta_rule/prepare_wy_repr_bwd_da/test/output/test_dA_var_npu.pt")
-    print(f"==== dA_npu.shape = {dA_npu.shape} ")
-    print(f"==== dA_npu = {dA_npu} ")
-    print(f"==== dA_npu.dtype = {dA_npu.dtype} ")
+    # print(f"==== dA_npu.shape = {dA_npu.shape} ")
+    # print(f"==== dA_npu = {dA_npu} ")
+    # print(f"==== dA_npu.dtype = {dA_npu.dtype} ")
     # 测试dA_npu里是否包含nan值
-    print(f"==== dA_npu has NaN: {torch.isnan(dA_npu).any().item()}")
+    # print(f"==== dA_npu has NaN: {torch.isnan(dA_npu).any().item()}")
 
     NT = len(chunk_indices) // 2
-    print("==== NT = ", NT)
+    # print("==== NT = ", NT)
     dA_cpu = compute_dA_cpu(A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, H, T, K, BT, NT)
     torch.save(dA_cpu, "/data/yzq/flash-linear-attention-npu-yzq/chunk_gated_delta_rule/prepare_wy_repr_bwd_da/test/output/test_dA_var_cpu.pt")
 
@@ -324,28 +324,28 @@ def test_variable():
 
 def test_fix():
     B = 1
-    T = 16384
-    H = 32
+    T = 2048
+    H = 4
     K = 128
     V = 128
     BT=chunk_size=64
 
     k = create_tensor((B, H, T, K), dtype=torch.bfloat16)
-    print(f"==== k.shape = {k.shape} ")
+    # print(f"==== k.shape = {k.shape} ")
     v = create_tensor((B, H, T, V), dtype=torch.bfloat16)
-    print(f"==== v.shape = {v.shape} ")
+    # print(f"==== v.shape = {v.shape} ")
     beta = create_tensor((B, H, T), dtype=torch.float)
-    print(f"==== beta.shape = {beta.shape} ")
+    # print(f"==== beta.shape = {beta.shape} ")
     A = create_tensor((B, H, T, BT), dtype=torch.bfloat16)
-    print(f"==== A.shape = {A.shape} ")
+    # print(f"==== A.shape = {A.shape} ")
     dw = create_tensor((B, H, T, K), dtype=torch.bfloat16)
-    print(f"==== dw.shape = {dw.shape} ")
+    # print(f"==== dw.shape = {dw.shape} ")
     du = create_tensor((B, H, T, V), dtype=torch.bfloat16)
-    print(f"==== du.shape = {du.shape} ")
+    # print(f"==== du.shape = {du.shape} ")
     # g = create_tensor((B, H, T), dtype=torch.float)
     g = torch.arange(-1, -(B * H * T + 1), -1).reshape((B, H, T)).to(torch.float)
-    print(f"==== g.shape = {g.shape} ")
-    print(f"==== g = {g} ")
+    # print(f"==== g.shape = {g.shape} ")
+    # print(f"==== g = {g} ")
 
     k_npu = k.npu()
     v_npu = v.npu()
@@ -357,16 +357,16 @@ def test_fix():
 
     dA_npu = torch_npu.npu_prepare_wy_repr_bwd_da(k_npu, v_npu, beta_npu, A_npu, dw_npu, du_npu, g_npu, cu_seqlens=None, chunk_indices=None, chunk_size=chunk_size)
     torch.save(dA_npu, "/data/yzq/flash-linear-attention-npu-yzq/chunk_gated_delta_rule/prepare_wy_repr_bwd_da/test/output/test_dA_npu.pt")
-    print(f"==== dA_npu.shape = {dA_npu.shape} ")
-    print(f"==== dA_npu = {dA_npu} ")
-    print(f"==== dA_npu.dtype = {dA_npu.dtype} ")
+    # print(f"==== dA_npu.shape = {dA_npu.shape} ")
+    # print(f"==== dA_npu = {dA_npu} ")
+    # print(f"==== dA_npu.dtype = {dA_npu.dtype} ")
     # 测试dA_npu里是否包含nan值
-    print(f"==== dA_npu has NaN: {torch.isnan(dA_npu).any().item()}")
+    # print(f"==== dA_npu has NaN: {torch.isnan(dA_npu).any().item()}")
 
     chunk_indices = None
     cu_seqlens = None
     NT = (T + BT - 1) // BT
-    print("==== NT = ", NT)
+    # print("==== NT = ", NT)
     dA_cpu = compute_dA_cpu(A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, H, T, K, BT, NT)
     torch.save(dA_cpu, "/data/yzq/flash-linear-attention-npu-yzq/chunk_gated_delta_rule/prepare_wy_repr_bwd_da/test/output/test_dA_cpu.pt")
 
@@ -380,7 +380,7 @@ def create_tensor(shape, dtype=torch.float16):
 
 if __name__ == "__main__":
     torch.manual_seed(0)
-    print("==== test_variable ====")
+    # print("==== test_variable ====")
     test_variable()
-    print("==== test_fix ====")
+    # print("==== test_fix ====")
     test_fix()

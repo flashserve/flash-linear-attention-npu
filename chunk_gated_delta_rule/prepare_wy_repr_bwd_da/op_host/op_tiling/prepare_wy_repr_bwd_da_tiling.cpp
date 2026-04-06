@@ -419,7 +419,8 @@ ge::graphStatus Tiling4PrepareWyReprBwdDa(gert::TilingContext *context)
 
     auto sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     OP_LOGD(context->GetNodeName(), "=== sysWorkspaceSize: %ld", sysWorkspaceSize);
-    size_t userWorkspaceSize = 2 * tiling.get_B() * tiling.get_H() * tiling.get_T() * (tiling.get_V() + tiling.get_chunkSize());
+    size_t userWorkspaceSize = 8 * tiling.get_B() * tiling.get_H() * tiling.get_T() * tiling.get_chunkSize();
+    userWorkspaceSize += 2 * tiling.get_B() * tiling.get_H() * tiling.get_T() * tiling.get_V();
     OP_LOGD(context->GetNodeName(), "=== userWorkspaceSize: %ld", userWorkspaceSize);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = static_cast<size_t>(sysWorkspaceSize + userWorkspaceSize);

@@ -62,8 +62,8 @@ private:
     GlobalTensor<betaType> gTensor;
     GlobalTensor<betaType> betaTensor;
     GlobalTensor<kType> dATensor;
-    GlobalTensor<kType> dA1Tensor;
-    GlobalTensor<kType> dA2Tensor;
+    GlobalTensor<float32_t> dA1Tensor;
+    GlobalTensor<float32_t> dA2Tensor;
     GlobalTensor<kType> dA4Tensor;
     GlobalTensor<kType> dA5Tensor;
     GlobalTensor<kType> dA6Tensor;
@@ -124,9 +124,9 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Init(
 
     pipe = pipe_;
     workSpaceTensor.SetGlobalBuffer((__gm__ kType *)workspace);
-    workSpace2Tensor.SetGlobalBuffer((__gm__ kType *)workspace + B * H * T * BT);
-    dA1Tensor.SetGlobalBuffer((__gm__ kType *)dA);
-    dA2Tensor.SetGlobalBuffer((__gm__ kType *)workspace);
+    workSpace2Tensor.SetGlobalBuffer((__gm__ kType *)((__gm__ float32_t *)workspace + 2 * B * H * T * BT));
+    dA1Tensor.SetGlobalBuffer((__gm__ float32_t *)workspace);
+    dA2Tensor.SetGlobalBuffer((__gm__ float32_t *)workspace + B * H * T * BT);
     dA4Tensor.SetGlobalBuffer((__gm__ kType *)dA);
     dA5Tensor.SetGlobalBuffer((__gm__ kType *)workspace);
     dA6Tensor.SetGlobalBuffer((__gm__ kType *)dA);
@@ -395,18 +395,18 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
     uint32_t bos = 0;
     uint32_t eos = 0;
     uint32_t curRowNum = rowNum;
-
-    pipe->InitBuffer(mduInQue, 2, rowNum * BT * sizeof(kType));
-    pipe->InitBuffer(mdwInQue, 2, rowNum * BT * sizeof(kType));
-    pipe->InitBuffer(mduFp32Buf, rowNum * BT * sizeof(float32_t));
-    pipe->InitBuffer(mdwFp32Buf, rowNum * BT * sizeof(float32_t));
+    // AscendC::printf("rowNum:%d\n", rowNum);
+    pipe->InitBuffer(mduInQue, 2, rowNum * BT * sizeof(float32_t));
+    pipe->InitBuffer(mdwInQue, 2, rowNum * BT * sizeof(float32_t));
+    // pipe->InitBuffer(mduFp32Buf, rowNum * BT * sizeof(float32_t));
+    // pipe->InitBuffer(mdwFp32Buf, rowNum * BT * sizeof(float32_t));
     pipe->InitBuffer(mduwCalFp32Buf, rowNum * BT * sizeof(float32_t));
     pipe->InitBuffer(maskTBuf, BT * BT / BIT_NUM_FOR_UINT8);
     pipe->InitBuffer(zeroFp32TBuf, ONE_BLOCK_32);
     pipe->InitBuffer(mduwOutQue, 2, rowNum * BT * sizeof(kType));
 
-    auto tensorMduFp32 = mduFp32Buf.Get<float32_t>();
-    auto tensorMdwFp32 = mdwFp32Buf.Get<float32_t>();
+    // auto tensorMduFp32 = mduFp32Buf.Get<float32_t>();
+    // auto tensorMdwFp32 = mdwFp32Buf.Get<float32_t>();
     auto tensorDuwCalFP32 = mduwCalFp32Buf.Get<float32_t>();
     auto maskLocalTensor = maskTBuf.Get<uint8_t>();
     auto zeroFp32LocalTensor = zeroFp32TBuf.Get<float32_t>();
@@ -445,24 +445,25 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                 auto offset = (h * T + bos + rowOffset) * BT;
                 // copyin
                 {
-                    auto tensorMduin = mduInQue.AllocTensor<kType>();
+                    auto tensorMduin = mduInQue.AllocTensor<float32_t>();
                     DataCopy(tensorMduin, dA2Tensor[offset], curRowNum * BT);
-                    auto tensorMdwin = mdwInQue.AllocTensor<kType>();
+                    auto tensorMdwin = mdwInQue.AllocTensor<float32_t>();
                     DataCopy(tensorMdwin, dA1Tensor[offset], curRowNum * BT);
                     mduInQue.EnQue(tensorMduin);
                     mdwInQue.EnQue(tensorMdwin);
                 }
                 // compute
                 {
-                    auto tensorMduin = mduInQue.DeQue<kType>();
-                    auto tensorMdwin = mdwInQue.DeQue<kType>();
+                    auto tensorMduin = mduInQue.DeQue<float32_t>();
+                    auto tensorMdwin = mdwInQue.DeQue<float32_t>();
                     auto tensorMduwOut = mduwOutQue.AllocTensor<kType>();
                     //cast FP32
-                    Cast(tensorMduFp32, tensorMduin, RoundMode::CAST_NONE, curRowNum * BT);
-                    Cast(tensorMdwFp32, tensorMdwin, RoundMode::CAST_NONE, curRowNum * BT);
-                    PipeBarrier<PIPE_V>();
+                    // Cast(tensorMduFp32, tensorMduin, RoundMode::CAST_NONE, curRowNum * BT);
+                    // Cast(tensorMdwFp32, tensorMdwin, RoundMode::CAST_NONE, curRowNum * BT);
+                    // PipeBarrier<PIPE_V>();
                     // 相加：rowNum行 du + dw，元素个数为 rowNum * BT
-                    AscendC::Add(tensorDuwCalFP32, tensorMduFp32, tensorMdwFp32, curRowNum * BT);
+                    AscendC::Add(tensorDuwCalFP32, tensorMduin, tensorMdwin, curRowNum * BT);
+                    // AscendC::Adds(tensorDuwCalFP32, tensorMdwin, 0.0f, curRowNum * BT);
                     PipeBarrier<PIPE_V>();
                     // 计算 dA4 = dA3 * mask 使用select
                     // dstBlkStride, src0BlkStride, src1BlkStride, dstRepStride, src0RepStride, src1RepStride
