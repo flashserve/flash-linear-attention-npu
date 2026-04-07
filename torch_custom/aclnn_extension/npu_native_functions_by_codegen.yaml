@@ -1,0 +1,25 @@
+autograd: []
+backend: NPU
+cpp_namespace: at_npu::native
+custom:
+- func: npu_fast_gelu_custom(Tensor self) -> Tensor
+  impl_ns: op_api
+- func: npu_fast_gelu_custom_backward(Tensor grad, Tensor self) -> Tensor
+  impl_ns: op_api
+- func: npu_prepare_wy_repr_bwd_full(Tensor k, Tensor v, Tensor beta, Tensor A, Tensor dA, Tensor dw, Tensor du, Tensor g, int chunk_size, *, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> (Tensor dk, Tensor dv, Tensor dbeta, Tensor dg)
+  impl_ns: op_api
+- func: npu_chunk_gated_delta_rule_bwd_dhu(Tensor q, Tensor k, Tensor w, Tensor d_o, Tensor dv, float scale, int chunk_size, *, Tensor? g=None, Tensor? gK=None, Tensor? h0=None, Tensor? dht=None, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> (Tensor, Tensor, Tensor)
+  impl_ns: op_api
+- func: npu_chunk_bwd_dv_local(Tensor q, Tensor k, Tensor d_o, Tensor g, float scale, int chunk_size, *, Tensor? g_gamma=None, Tensor? A=None, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> Tensor
+  impl_ns: op_api
+- func: npu_prepare_wy_repr_bwd_da(Tensor k, Tensor v, Tensor beta, Tensor A, Tensor dw, Tensor du, Tensor g, *, int chunk_size, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> Tensor
+  impl_ns: op_api
+- func: npu_chunk_bwd_dqkwg(Tensor q, Tensor k, Tensor v, Tensor g, Tensor h, Tensor dox, Tensor dh, Tensor dv, int chunk_size, *, int[]? cu_seqlens=None, int[]? chunk_indices=None, float? scale=None) -> (Tensor, Tensor, Tensor, Tensor)
+  impl_ns: op_api
+- func: npu_chunk_fwd_o(Tensor q, Tensor k, Tensor v, Tensor h, Tensor g, float scale, *, Tensor? cu_seqlens=None, Tensor? chunk_indices=None, int? chunk_size=None) -> Tensor
+  impl_ns: op_api
+- func: npu_chunk_gated_delta_rule_fwd_h(Tensor k, Tensor w, Tensor u, Tensor g, *, Tensor? initial_state=None, Tensor? cu_seqlens=None, Tensor? chunk_indices=None, bool? output_final_state=False, int? chunk_size=None) -> (Tensor, Tensor, Tensor)
+  impl_ns: op_api
+quant: []
+supported: []
+symint: []
