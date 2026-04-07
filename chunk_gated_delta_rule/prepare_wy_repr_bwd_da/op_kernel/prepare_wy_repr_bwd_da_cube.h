@@ -71,6 +71,10 @@ public:
     using ElementDA5 = typename BlockMmadDA5::ElementC;
     using LayoutDA5 = typename BlockMmadDA5::LayoutC;
 
+    using ElementDA5T = typename BlockMmadDA6::ElementA;
+    using LayoutDA5T = typename BlockMmadDA6::LayoutA;
+    using ElementA = typename BlockMmadDA6::ElementB;
+    using LayoutA = typename BlockMmadDA6::LayoutB;
     using ElementDA6 = typename BlockMmadDA6::ElementC;
     using LayoutDA6 = typename BlockMmadDA6::LayoutC;
 
@@ -91,10 +95,14 @@ public:
         LayoutDA2 layoutDA2;
         GM_ADDR ptrDA4;
         LayoutDA4 layoutDA4;
+        GM_ADDR ptrA;
+        LayoutA layoutA;
         GM_ADDR ptrAT;
         LayoutAT layoutAT;
         GM_ADDR ptrDA5;
         LayoutDA5 layoutDA5;
+        GM_ADDR ptrDA5T;
+        LayoutDA5T layoutDA5T;
         GM_ADDR ptrDA6;
         LayoutDA6 layoutDA6;
         GM_ADDR ptrCuSeqLens;
@@ -120,8 +128,10 @@ public:
                GM_ADDR ptrVb_, LayoutVb layoutVb_,
                GM_ADDR ptrDA2_, LayoutDA2 layoutDA2_,
                GM_ADDR ptrDA4_, LayoutDA4 layoutDA4_,
+               GM_ADDR ptrA_, LayoutA layoutA_,
                GM_ADDR ptrAT_, LayoutAT layoutAT_,
                GM_ADDR ptrDA5_, LayoutDA5 layoutDA5_,
+               GM_ADDR ptrDA5T_, LayoutDA5T layoutDA5T_,
                GM_ADDR ptrDA6_, LayoutDA6 layoutDA6_,
                GM_ADDR ptrCuSeqLens_, GM_ADDR ptrChunkIndices_, uint64_t chunkNum_,
                uint64_t B_, uint64_t T_, uint64_t H_, uint64_t K_, uint64_t V_, uint64_t BT_, uint64_t stage_)
@@ -139,10 +149,14 @@ public:
               layoutDA2(layoutDA2_),
               ptrDA4(ptrDA4_),
               layoutDA4(layoutDA4_),
+              ptrA(ptrA_),
+              layoutA(layoutA_),
               ptrAT(ptrAT_),
               layoutAT(layoutAT_),
               ptrDA5(ptrDA5_),
               layoutDA5(layoutDA5_),
+              ptrDA5T(ptrDA5T_),
+              layoutDA5T(layoutDA5T_),
               ptrDA6(ptrDA6_),
               layoutDA6(layoutDA6_),
               ptrCuSeqLens(ptrCuSeqLens_),
@@ -315,32 +329,31 @@ public:
                 GemmCoord actualBlockShape{curChunkSize, curChunkSize, curChunkSize};
                 for (int h = 0; h < params.H; h++) {
                     // Represent the full gm
-                    AscendC::GlobalTensor<ElementAT> gmAT;
-                    gmAT.SetGlobalBuffer((__gm__ ElementAT *)params.ptrAT + (h * params.T + bos) * params.BT);
-                    AscendC::GlobalTensor<ElementDA5> gmDA5;
-                    gmDA5.SetGlobalBuffer((__gm__ ElementDA5 *)params.ptrDA5 + (h * params.T + bos) * params.BT);
+                    AscendC::GlobalTensor<ElementDA5T> gmDA5T;
+                    gmDA5T.SetGlobalBuffer((__gm__ ElementDA5T *)params.ptrDA5T + (h * params.T + bos) * params.BT);
+                    AscendC::GlobalTensor<ElementA> gmA;
+                    gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.BT);
                     AscendC::GlobalTensor<ElementDA6> gmDA6;
                     gmDA6.SetGlobalBuffer((__gm__ ElementDA6 *)params.ptrDA6 + (h * params.T + bos) * params.BT);
 
                     // Represent the full tensors
-                    auto tensorAT = tla::MakeTensor(gmAT, params.layoutAT, Arch::PositionGM{});
-                    auto tensorDA5 = tla::MakeTensor(gmDA5, params.layoutDA5, Arch::PositionGM{});
+                    auto tensorDA5T = tla::MakeTensor(gmDA5T, params.layoutDA5T, Arch::PositionGM{});
+                    auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
                     auto tensorDA6 = tla::MakeTensor(gmDA6, params.layoutDA6, Arch::PositionGM{});
 
                     AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
                     // Make tiled views
-                    auto tensorBlockAT = GetTile(tensorAT,
+                    auto tensorBlockDA5T = GetTile(tensorDA5T,
                                                 tla::MakeCoord(0, 0),
                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                    auto tensorBlockDA5 = GetTile(tensorDA5,
+                    auto tensorBlockA = GetTile(tensorA,
                                                 tla::MakeCoord(0, 0),
                                                 tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
                     auto tensorBlockDA6 = GetTile(tensorDA6,
                                                 tla::MakeCoord(0, 0),
                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-                    
                     // Compute block-scoped matrix multiply-add
-                    blockMmadDA6(tensorBlockAT, tensorBlockDA5, tensorBlockDA6, actualBlockShape);
+                    blockMmadDA6(tensorBlockDA5T, tensorBlockA, tensorBlockDA6, actualBlockShape);
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
                 }
             }
@@ -435,6 +448,8 @@ __aicore__ void inline PrepareWyReprBwdDAProcess<kType, betaType>::Process() {
     LayoutTagDu tagDu = LayoutTagDu::MakeLayout<kType>(BT, V);
     using LayoutTagVb = layout::ColumnMajor;
     LayoutTagVb tagVb = LayoutTagVb::MakeLayout<kType>(V, BT);
+    using LayoutTagA = layout::RowMajor;
+    LayoutTagA tagA = LayoutTagA::MakeLayout<kType>(BT, BT);
     using LayoutTagAT = layout::ColumnMajor;
     LayoutTagAT tagAT = LayoutTagAT::MakeLayout<kType>(BT, BT);
 
@@ -447,6 +462,8 @@ __aicore__ void inline PrepareWyReprBwdDAProcess<kType, betaType>::Process() {
     LayoutTagDA4 tagDA4 = LayoutTagDA4::MakeLayout<kType>(BT, BT);
     using LayoutTagDA5 = layout::RowMajor;
     LayoutTagDA5 tagDA5 = LayoutTagDA5::MakeLayout<kType>(BT, BT);
+    using LayoutTagDA5T = layout::ColumnMajor;
+    LayoutTagDA5T tagDA5T = LayoutTagDA5T::MakeLayout<kType>(BT, BT);
     using LayoutTagDA6 = layout::RowMajor;
     LayoutTagDA6 tagDA6 = LayoutTagDA6::MakeLayout<kType>(BT, BT);
 
@@ -475,7 +492,7 @@ __aicore__ void inline PrepareWyReprBwdDAProcess<kType, betaType>::Process() {
 
     // 计算第四个矩阵乘 dA_6 = A.T @ dA_5
     using TileCopyDA6 =
-        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagAT, kType, LayoutTagDA5, kType, LayoutTagDA6>;
+        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDA5T, kType, LayoutTagA, kType, LayoutTagDA6>;
     using BlockMmadDA6 = Gemm::Block::BlockMmadTla<
         DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyDA6>;
 
@@ -487,9 +504,11 @@ __aicore__ void inline PrepareWyReprBwdDAProcess<kType, betaType>::Process() {
     auto layoutVb = MakeLayoutFromTag(tagVb);
     auto layoutDA2 = MakeLayoutFromTag(tagDA2);
 
-    auto layoutDA4 = MakeLayoutFromTag(tagDA4);
+    auto layoutA = MakeLayoutFromTag(tagA);
     auto layoutAT = MakeLayoutFromTag(tagAT);
+    auto layoutDA4 = MakeLayoutFromTag(tagDA4);
     auto layoutDA5 = MakeLayoutFromTag(tagDA5);
+    auto layoutDA5T = MakeLayoutFromTag(tagDA5T);
 
     auto layoutDA6 = MakeLayoutFromTag(tagDA6);
 
@@ -514,8 +533,10 @@ __aicore__ void inline PrepareWyReprBwdDAProcess<kType, betaType>::Process() {
         ptrVb, layoutVb,
         ptrDA2, layoutDA2,
         ptrDA4, layoutDA4,
+        A, layoutA,
         A, layoutAT,
         ptrDA5, layoutDA5,
+        ptrDA5, layoutDA5T,
         ptrDA6, layoutDA6,
         cu_seqlens,
         chunk_indices,
