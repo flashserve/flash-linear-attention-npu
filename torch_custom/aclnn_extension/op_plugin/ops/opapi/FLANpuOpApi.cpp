@@ -39,7 +39,22 @@ using namespace op_infer;
     return std::make_tuple(std::move(dk), std::move(dv), std::move(dbeta), std::move(dg));
 }
 
-::std::tuple<at::Tensor,at::Tensor,at::Tensor> npu_chunk_gated_delta_rule_bwd_dhu(const at::Tensor & q, const at::Tensor & k, const at::Tensor & w, const at::Tensor & d_o, const at::Tensor & dv, double scale, int64_t chunk_size, const c10::optional<at::Tensor> & g, const c10::optional<at::Tensor> & gK, const c10::optional<at::Tensor> & h0, const c10::optional<at::Tensor> & dht, at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices)
+::std::tuple<at::Tensor,at::Tensor,at::Tensor> npu_chunk_gated_delta_rule_bwd_dhu(
+    const at::Tensor & q, 
+    const at::Tensor & k, 
+    const at::Tensor & w, 
+    const at::Tensor & d_o, 
+    const at::Tensor & dv, 
+    double scale, 
+    int64_t chunk_size, 
+    const c10::optional<at::Tensor> & g, 
+    const c10::optional<at::Tensor> & gK, 
+    const c10::optional<at::Tensor> & h0, 
+    const c10::optional<at::Tensor> & dht, 
+    at::OptionalIntArrayRef cu_seqlens, 
+    at::OptionalIntArrayRef chunk_indices, 
+    c10::optional<bool> use_exp2, 
+    c10::optional<bool> transpose_state_layout)
 {
     auto q_size = q.sizes();
     auto dv_size = dv.sizes();
@@ -48,7 +63,7 @@ using namespace op_infer;
     int64_t T = q_size[2];
     int64_t K = q_size[3];
     int64_t V = dv_size[3];
-    int64_t chunk_num = T / chunk_size;
+    int64_t chunk_num = (T + chunk_size -1) / chunk_size; 
 
     if (chunk_indices.has_value()) {
         auto chunk_indices_ref = chunk_indices.value();
