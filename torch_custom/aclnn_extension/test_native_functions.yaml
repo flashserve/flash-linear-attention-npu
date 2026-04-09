@@ -1,0 +1,2 @@
+backend: NPU
+cpp_namespace: at_npu::native
