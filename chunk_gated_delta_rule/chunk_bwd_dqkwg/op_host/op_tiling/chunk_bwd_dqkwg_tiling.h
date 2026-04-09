@@ -44,9 +44,9 @@ BEGIN_TILING_DATA_DEF(ChunkBwdDqkwgTilingData)
     TILING_DATA_FIELD_DEF(uint64_t, dgLastSize);     // Part 1: b_dg_last 偏移
     TILING_DATA_FIELD_DEF(uint64_t, wsMm5Offset);        // Part 2: mm5 (q @ k^T) 偏移
     TILING_DATA_FIELD_DEF(uint64_t, wsDsTempOffset);     // Part 3: b_ds_temp 偏移
-    TILING_DATA_FIELD_DEF(uint64_t, wsMm6Offset);        // Part 6: mm6 偏移
-    TILING_DATA_FIELD_DEF(uint64_t, wsMm7Offset);        // Part 7: mm7 偏移
-    TILING_DATA_FIELD_DEF(uint64_t, wsMul1Offset);        // Part 2: mul1 偏移
+    // TILING_DATA_FIELD_DEF(uint64_t, wsMm6Offset);        // Part 6: mm6 偏移
+    // TILING_DATA_FIELD_DEF(uint64_t, wsMm7Offset);        // Part 7: mm7 偏移
+    // TILING_DATA_FIELD_DEF(uint64_t, wsMul1Offset);        // Part 2: mul1 偏移
     
     // 其他偏移
     TILING_DATA_FIELD_DEF(uint64_t, totalWorkspaceSize); // 总 workspace 大小

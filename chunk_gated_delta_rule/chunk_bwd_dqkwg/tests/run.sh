@@ -1,5 +1,5 @@
 # source /root/data_nvme0n1/huangjunzhe/Ascend/ascend-toolkit/set_env.sh
-ascend_path="/data/huangjunzhe/Ascend/cann-9.0.0/"
+ascend_path="/data/huangjunzhe/Ascend.GDN/cann-9.0.0/"
 # ascend_path="/data/huangjunzhe/Ascend/cann-9.0.0"
 test_script_path=/data/huangjunzhe/GDN/perf/flash-linear-attention-npu/chunk_gated_delta_rule/chunk_bwd_dqkwg/tests
 data_path=/data/huangjunzhe/GDN/result/result_newg
@@ -13,9 +13,11 @@ source ${ascend_path}/set_env.sh
 
 compi=$1
 compi_y="compile"
+compi_auto="auto"
 
 caseid=$2
 caseid="${caseid//$'\r'/}"
+mode=""
 
 echo "[run.sh] code_path: ${code_path}"
 echo "[run.sh] custom_path: ${custom_path}"
@@ -42,6 +44,14 @@ if [ "$compi" = "$compi_y" ]; then
     # clear
 fi
 
+if [ "$compi" = "$compi_auto" ]; then
+    rm -rf ${data_path}/${caseid}/*.png
+    rm -rf ${data_path}/${caseid}/out/*_npu.pt
+    if [ -f ${data_path}/${caseid}/out/dg_cpu.pt ] && [ -f ${data_path}/${caseid}/out/dq_cpu.pt ]; then
+        mode="nocpu"
+    fi
+fi
+
 # export LD_LIBRARY_PATH=${ascend_path_orig}/cann/opp/vendors/custom_transformer/op_api/lib/:${LD_LIBRARY_PATH}
 
 # source ${custom_path}/vendors/custom_transformer/bin/set_env.bash
@@ -55,7 +65,7 @@ export LD_LIBRARY_PATH=${ascend_path}/opp/vendors/custom_transformer/op_api/lib/
 # chmod +x test_gdn
 # LD_LIBRARY_PATH=${custom_path}/vendors/custom_transformer/op_api/lib/:${LD_LIBRARY_PATH}
 # ./test_gdn $2
-python3 ${test_script_path}/pta.py ${caseid}
+python3 ${test_script_path}/pta.py ${caseid} ${mode}
 
 # md5sum /home/huangjunzhe/GDN/data/test/out/*_npu.pt
 if [ $? -ne 0 ]; then
@@ -67,15 +77,15 @@ fi
 # python3 /root/data_nvme0n1/huangjunzhe/GDN/target/result/to_pt.py /root/data_nvme0n1/huangjunzhe/GDN/target/result/cpu_model
 
 
-ct single ${data_path}/${caseid}/out/dw_npu.pt ${data_path}/${caseid}/out/dw_cpu.pt --calc_count 100000 --dtype float16
-ct single ${data_path}/${caseid}/out/dg_npu.pt ${data_path}/${caseid}/out/dg_cpu.pt --calc_count 100000 --dtype float16
-ct single ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt --calc_count 100000 --dtype float16
-ct single ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt --calc_count 100000 --dtype float16
+# ct single ${data_path}/${caseid}/out/dw_npu.pt ${data_path}/${caseid}/out/dw_cpu.pt --calc_count 100000 --dtype float16
+# ct single ${data_path}/${caseid}/out/dg_npu.pt ${data_path}/${caseid}/out/dg_cpu.pt --calc_count 100000 --dtype float16
+# ct single ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt --calc_count 100000 --dtype float16
+# ct single ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt --calc_count 100000 --dtype float16
 
 
-ct viz ${data_path}/${caseid}/out/dw_npu.pt ${data_path}/${caseid}/out/dw_cpu.pt --out_dir ${data_path}/${caseid} --name dw
-ct viz ${data_path}/${caseid}/out/dg_npu.pt ${data_path}/${caseid}/out/dg_cpu.pt --out_dir ${data_path}/${caseid} --name dg
-ct viz ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt --out_dir ${data_path}/${caseid} --name dq
-ct viz ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt --out_dir ${data_path}/${caseid} --name dk
+ct viz ${data_path}/${caseid}/out/dw_npu.pt ${data_path}/${caseid}/out/dw_cpu.pt --out_dir ${data_path}/${caseid} --name dw -wl 1 -sr 0.1
+ct viz ${data_path}/${caseid}/out/dg_npu.pt ${data_path}/${caseid}/out/dg_cpu.pt --out_dir ${data_path}/${caseid} --name dg -wl 1
+ct viz ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt --out_dir ${data_path}/${caseid} --name dq -wl 1 -sr 0.1
+ct viz ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt --out_dir ${data_path}/${caseid} --name dk -wl 1 -sr 0.1
 
 md5sum ${data_path}/${caseid}/out/*.pt

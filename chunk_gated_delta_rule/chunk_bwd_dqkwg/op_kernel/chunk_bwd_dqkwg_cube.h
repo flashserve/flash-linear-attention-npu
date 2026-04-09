@@ -506,7 +506,7 @@ public:
                     GlobalTensor<ElementA> gmK;
                     gmK.SetGlobalBuffer((__gm__ ElementA *)params.ptrK + kOffset);
                     GlobalTensor<ElementC> gmDq;
-                    gmDq.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsMm6Offset) + dqOffset);
+                    gmDq.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsMm5Offset) + dqOffset);
 
                     auto tensorDsTemp = tla::MakeTensor(gmDsTemp, MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
                     auto tensorK = tla::MakeTensor(gmK, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
@@ -570,7 +570,7 @@ public:
                     GlobalTensor<ElementA> gmQ;
                     gmQ.SetGlobalBuffer((__gm__ ElementA *)params.ptrQ + qOffset);
                     GlobalTensor<ElementC> gmDk;
-                    gmDk.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsMm7Offset) + dkOffset);
+                    gmDk.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsMm5Offset) + dkOffset);
                     
                     auto tensorDsTemp = tla::MakeTensor(gmDsTemp, MakeLayoutFromTag(layoutBTxBT_T), Arch::PositionGM{});  // Transposed
                     auto tensorQ = tla::MakeTensor(gmQ, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
@@ -619,6 +619,7 @@ public:
         GM_ADDR dq, GM_ADDR dk, GM_ADDR dw, GM_ADDR dg,
         GM_ADDR workspace
     ) : ptrQ(q), ptrK(k), ptrV(v), ptrG(g), ptrH(h),
+    
         ptrDo(do_), ptrDh(dh), ptrDv(dv), ptrCuSeqLen(cu_seqlen), ptrChunkIndices(chunk_indices),
         ptrDq(dq), ptrDk(dk), ptrDw(dw), ptrDg(dg),
         ptrWorkspace(workspace) {}
@@ -693,8 +694,8 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Init(const Chu
     wsMm5Offset = tiling.wsMm5Offset;
     // wsMm5Offset = wsMm5Offset;
     wsDsTempOffset = tiling.wsDsTempOffset;
-    wsMm6Offset = tiling.wsMm6Offset;
-    wsMm7Offset = tiling.wsMm7Offset;
+    // wsMm6Offset = tiling.wsMm6Offset;
+    // wsMm7Offset = tiling.wsMm7Offset;
     isVarLen = tiling.isVarLen;
 // printf("[cube] DTYPE_G %d, float %d\n",sizeof(DTYPE_G),sizeof(float));
 }

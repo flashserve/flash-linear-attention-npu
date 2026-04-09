@@ -154,9 +154,9 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::Init(const C
     wsDgLastOffset = tiling.wsDgLastOffset;
     wsMm5Offset = tiling.wsMm5Offset;
     wsDsTempOffset = tiling.wsDsTempOffset;
-    wsMm6Offset = tiling.wsMm6Offset;
-    wsMm7Offset = tiling.wsMm7Offset;
-    wsMul1Offset = tiling.wsMul1Offset;
+    // wsMm6Offset = tiling.wsMm6Offset;
+    // wsMm7Offset = tiling.wsMm7Offset;
+    // wsMul1Offset = tiling.wsMul1Offset;
     uint64_t dgLastSize = tiling.dgLastSize;
     isVarLen = tiling.isVarLen;
     mul0RowNum = tiling.mul0RowNum;
@@ -186,10 +186,12 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::Init(const C
 
     gmMm5.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm5Offset));
     gmDsTemp.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsDsTempOffset));
-    gmMm6.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm6Offset));
-
-    gmMm7.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm7Offset));
-    gmMul1.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMul1Offset));
+    // gmMm6.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm6Offset));
+    // gmMm7.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm7Offset));
+    gmMm6.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm5Offset));
+    gmMm7.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm5Offset));
+    // gmMul1.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMul1Offset));
+    gmMul1.SetGlobalBuffer((__gm__ DataType *)ptrDq);
 }
 
 // ============== 主处理函数 ==============

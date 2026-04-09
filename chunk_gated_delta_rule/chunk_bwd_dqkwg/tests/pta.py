@@ -3,46 +3,52 @@ from chunk_bwd_dqkwg_cpu import *
 # 使用示例 / 验证
 # -------------------------------------------------------------------------
 if __name__ == "__main__":
-    RANDOM_DATA = False
+    
     case_number = 22
+    mode = ""
     if len(sys.argv) > 1:
         case_name = sys.argv[1][5:]  # "case_" 长度为5
         case_name = case_name.rstrip('\r\n')  # 去除末尾的 \r 和 \n
         case_number = int(case_name)
         print(f"[test.py] case id: {case_number}")
+    if len(sys.argv) > 2:
+        mode = sys.argv[2]
+
 
     # 简单的形状参数
     K, V = 128, 128
     calc_type = torch.float32
     isVarLen = False
     chunk_size = 128
-    cases = [   #B,H,T,chunk_size,dtype,Gtype,scale,cu_seqlens
-        [64,8,1024,64,torch.float16,torch.float16,0.088,None],
-        [32,16,2048,64,torch.bfloat16,torch.bfloat16,0.0625,None],
-        [16,32,4096,64,torch.float16,torch.float16,0.0442,None],
-        [8,32,8192,64,torch.bfloat16,torch.bfloat16,0.03125,None],
-        [128,4,1024,64,torch.float16,torch.float16,0.088,None],
-        [64,4,4096,64,torch.bfloat16,torch.bfloat16,0.0625,None],
-        [32,16,8192,64,torch.float16,torch.float16,0.0442,None],
-        [16,32,16384,64,torch.bfloat16,torch.bfloat16,0.03125,None],
-        [64,8,2048,128,torch.float16,torch.float16,0.0625,None],
-        [32,16,4096,128,torch.bfloat16,torch.bfloat16,0.0442,None],
-        [16,32,8192,128,torch.float16,torch.float16,0.03125,None],
-        [8,32,8192,128,torch.bfloat16,torch.bfloat16,0.0221,None],  #C12
-        [1,4,1024,64,torch.float16,torch.float16,0.088,None],
-        [48,8,2048,64,torch.bfloat16,torch.bfloat16,0.0625,None],
-        [24,16,4096,64,torch.float16,torch.float16,0.0442,None],
-        [12,32,8192,64,torch.bfloat16,torch.bfloat16,0.03125,None],
-        [1,16,32768,64,torch.float16,torch.float32,0.0625,[0,16,20000,30000,32768]],      # V1
-        [1,8,65536,64,torch.bfloat16,torch.bfloat16,0.0625,[0,16,20000,65536]],
-        [1,32,65536,64,torch.float16,torch.float32,0.0442,[0,16,20000,50000,65536]],
-        [1,32,262144,64,torch.bfloat16,torch.bfloat16,0.03125,[0,16,20000,50000,65536,210000,262144]],
-        [21,32,195,64,torch.float16,torch.float16,0.03125,None], #21
-        [1,32,7909,64,torch.bfloat16,torch.bfloat16,0.03125,[0,1024,2168,3087,4096,7909]], # 22
-        [2,4,512,64,torch.bfloat16,torch.float32,0.088,None],  #23 [0,16,128] [0,16,135,512]
-        [1,32,32768,64,torch.bfloat16,torch.float32,0.088,None],  #24 [0,16,128]
+    import case_extra_info
+    cases = [   #B,H,T,chunk_size,dtype,Gtype,scale,cu_seqlens, K,V
+        [64,8,1024,64,torch.float16,torch.float16,0.088,None,128,128],
+        [32,16,2048,64,torch.bfloat16,torch.bfloat16,0.0625,None,128,128],
+        [16,32,4096,64,torch.float16,torch.float16,0.0442,None,128,128],
+        [8,32,8192,64,torch.bfloat16,torch.bfloat16,0.03125,None,128,128],
+        [128,4,1024,64,torch.float16,torch.float16,0.088,None,128,128],
+        [64,4,4096,64,torch.bfloat16,torch.bfloat16,0.0625,None,128,128],
+        [32,16,8192,64,torch.float16,torch.float16,0.0442,None,128,128],
+        [16,32,16384,64,torch.bfloat16,torch.bfloat16,0.03125,None,128,128],
+        [64,8,2048,128,torch.float16,torch.float16,0.0625,None,128,128],
+        [32,16,4096,128,torch.bfloat16,torch.bfloat16,0.0442,None,128,128],
+        [16,32,8192,128,torch.float16,torch.float16,0.03125,None,128,128],
+        [8,32,8192,128,torch.bfloat16,torch.bfloat16,0.0221,None,128,128],  #C12
+        [1,4,1024,64,torch.float16,torch.float16,0.088,None,128,128],
+        [48,8,2048,64,torch.bfloat16,torch.bfloat16,0.0625,None,128,128],
+        [24,16,4096,64,torch.float16,torch.float16,0.0442,None,128,128],
+        [12,32,8192,64,torch.bfloat16,torch.bfloat16,0.03125,None,128,128],
+        [1,16,32768,64,torch.float16,torch.float32,0.0625,[0,16,20000,30000,32768],128,128],      # V1
+        [1,8,65536,64,torch.bfloat16,torch.bfloat16,0.0625,[0,16,20000,65536],128,128],
+        [1,32,65536,64,torch.float16,torch.float32,0.0442,[0,16,20000,50000,65536],128,128],
+        [1,32,262144,64,torch.bfloat16,torch.bfloat16,0.03125,[0,16,20000,50000,65536,210000,262144],128,128],
+        [21,32,195,64,torch.float16,torch.float16,0.03125,None,128,128], #21
+        [1,32,7909,64,torch.bfloat16,torch.bfloat16,0.03125,[0,1024,2168,3087,4096,7909],128,128], # 22
+        [1,32,65536,64,torch.bfloat16,torch.bfloat16,0.32,case_extra_info.pj_cu_seqlens,128,128],  #23 [0,16,128] [0,16,135,512]
+        [1,32,65536,128,torch.bfloat16,torch.bfloat16,0.32,case_extra_info.pj_cu_seqlens,128,128],  #24 [0,16,128] [0,16,135,512]
+        [2,4,512,128,torch.bfloat16,torch.float32,0.088,None,128,256],  #25 [0,16,128] [0,16,135,512]
     ]
-    device_id = 5
+    device_id = 6
     
 
     dtype = torch.float16
@@ -70,6 +76,10 @@ if __name__ == "__main__":
         # isVarLen == single_case[7] != None
         T = single_case[2]
         scale = single_case[6]
+        K = single_case[8]
+        V = single_case[9]
+        V = 256 ########################################手动修改V，测试二阶段用例
+
 
     if isVarLen:
         B = 1  ##变长只支持B=1
@@ -83,8 +93,13 @@ if __name__ == "__main__":
     
     test_case_name = f"case_{case_name}"
     data_path = "/data/huangjunzhe/GDN/result/result_newg"
-    RUN_CPU = False
+    RANDOM_DATA = True
+    RUN_CPU = True
     SAVE_FILES = True
+    if mode == "nocpu":
+        RUN_CPU = False
+        RANDOM_DATA = False
+    
     if SAVE_FILES:
         os.makedirs(f'{data_path}/{test_case_name}/in/', exist_ok=True)
         os.makedirs(f'{data_path}/{test_case_name}/out/', exist_ok=True)
@@ -230,15 +245,21 @@ if __name__ == "__main__":
         # single(dg_npu,dg,calc_count=100000,dtype=type_dict[Gtype])
         if SAVE_FILES:
             if RANDOM_DATA:
-                torch.save(dq,f"{data_path}/{test_case_name}/out/dq_cpu.pt")
-                torch.save(dk,f"{data_path}/{test_case_name}/out/dk_cpu.pt")
-                torch.save(dw,f"{data_path}/{test_case_name}/out/dw_cpu.pt")
-                torch.save(dg,f"{data_path}/{test_case_name}/out/dg_cpu.pt")
+                torch.save(dq.detach(),f"{data_path}/{test_case_name}/out/dq_cpu.pt")
+                torch.save(dk.detach(),f"{data_path}/{test_case_name}/out/dk_cpu.pt")
+                torch.save(dw.detach(),f"{data_path}/{test_case_name}/out/dw_cpu.pt")
+                torch.save(dg.detach(),f"{data_path}/{test_case_name}/out/dg_cpu.pt")
                 print(f"cpu files saved to {data_path}/{test_case_name}/out/ .")
                 
     if SAVE_FILES:
-        torch.save(dq_npu,f"{data_path}/{test_case_name}/out/dq_npu.pt")
-        torch.save(dk_npu,f"{data_path}/{test_case_name}/out/dk_npu.pt")
-        torch.save(dw_npu,f"{data_path}/{test_case_name}/out/dw_npu.pt")
-        torch.save(dg_npu,f"{data_path}/{test_case_name}/out/dg_npu.pt")
+        torch.save(dq_npu.detach(),f"{data_path}/{test_case_name}/out/dq_npu.pt")
+        torch.save(dk_npu.detach(),f"{data_path}/{test_case_name}/out/dk_npu.pt")
+        torch.save(dw_npu.detach(),f"{data_path}/{test_case_name}/out/dw_npu.pt")
+        torch.save(dg_npu.detach(),f"{data_path}/{test_case_name}/out/dg_npu.pt")
         print(f"npu files saved to {data_path}/{test_case_name}/out/ .")
+        # if mode == "nocpu":
+        #     torch.save(torch.load(f"{data_path}/{test_case_name}/out/dq_cpu.pt").detach(),f"{data_path}/{test_case_name}/out/dq_cpu.pt")
+        #     torch.save(torch.load(f"{data_path}/{test_case_name}/out/dk_cpu.pt").detach(),f"{data_path}/{test_case_name}/out/dk_cpu.pt")
+        #     torch.save(torch.load(f"{data_path}/{test_case_name}/out/dw_cpu.pt").detach(),f"{data_path}/{test_case_name}/out/dw_cpu.pt")
+        #     torch.save(torch.load(f"{data_path}/{test_case_name}/out/dg_cpu.pt").detach(),f"{data_path}/{test_case_name}/out/dg_cpu.pt")
+        #     print(f"detached cpu files saved to {data_path}/{test_case_name}/out/ .")

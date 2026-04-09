@@ -71,8 +71,6 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     }
 
 
-
-
     auto cuSeqlensTensor = context->GetOptionalInputTensor(8);
     int64_t numChunks = CeilDiv(T, BT);  // = 32
     int isVarLen = 0;
@@ -97,7 +95,29 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
 
     
     // std::cout << "[tiling] B: " << B << ", H: " << H << ", T: " << T << ", K: " << K << ", V: " << V << ", BT: " << BT << ", numChunks: " << numChunks << std::endl;
-    
+    {
+        // 检查输入维度是否符合预期
+        if (qStorageShape.GetDim(0) != B || qStorageShape.GetDim(1) != H || qStorageShape.GetDim(2) != T || qStorageShape.GetDim(3) != K ||
+            kStorageShape.GetDim(0) != B || kStorageShape.GetDim(1) != H || kStorageShape.GetDim(2) != T || kStorageShape.GetDim(3) != K ||
+            vStorageShape.GetDim(0) != B || vStorageShape.GetDim(1) != H || vStorageShape.GetDim(2) != T || vStorageShape.GetDim(3) != V ||
+            gStorageShape.GetDim(0) != B || gStorageShape.GetDim(1) != H || gStorageShape.GetDim(2) != T ||
+            hStorageShape.GetDim(0) != B || hStorageShape.GetDim(1) != H || hStorageShape.GetDim(2) != numChunks || hStorageShape.GetDim(3) != K || hStorageShape.GetDim(4) != V ||
+            doxStorageShape.GetDim(0) != B || doxStorageShape.GetDim(1) != H || doxStorageShape.GetDim(2) != T || doxStorageShape.GetDim(3) != V ||
+            dhStorageShape.GetDim(0) != B || dhStorageShape.GetDim(1) != H || dhStorageShape.GetDim(2) != numChunks || dhStorageShape.GetDim(3) != K || dhStorageShape.GetDim(4) != V ||
+            dvStorageShape.GetDim(0) != B || dvStorageShape.GetDim(1) != H || dvStorageShape.GetDim(2) != T || dvStorageShape.GetDim(3) != V) {
+            std::cout << "Input tensor shapes do not match expected dimensions!" << std::endl;
+            return ge::GRAPH_FAILED;
+        }
+        if (K != 128) {
+            std::cout << "K should be 128, but now K = " << K << "." << std::endl;
+            return ge::GRAPH_FAILED;
+        }
+        if (V != 128 && V != 256) {
+            std::cout << "V should be 128 or 256, but now V = " << V << "." << std::endl;
+            return ge::GRAPH_FAILED;
+        }
+
+    }
     
     // 计算 scale = 1.0 / sqrt(K)
     // float scale = 1.0f / std::sqrt(static_cast<float>(K));
@@ -123,11 +143,12 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     // // 对齐到 32 字节
     dgLastSize = ((dgLastSize + 31) / 32) * 32;
     
-    size_t mm5Size = B * H * T * BT * FP16_SIZE;                   // mm5 (q @ k^T)
+    // size_t mm5Size = B * H * T * BT * FP16_SIZE;                   // mm5 (q @ k^T)
+    size_t mm5Size = B * H * T * K * FP16_SIZE;// mm5 (q @ k^T): B * H * T * BT * FP16_SIZE, mm6/mm7 需要复用 mm5 的空间，BT 可能是 64 或 128，这里直接按 128 来计算，保证空间足够
     size_t dsTempSize = B * H * T * BT * FP16_SIZE;                // b_ds_temp
-    size_t mm6Size = B * H * T * K * FP16_SIZE;                   // mm6
-    size_t mm7Size = B * H * T * K * FP16_SIZE;                   // mm1
-    size_t mul1Size = B * H * T * BT * FP16_SIZE;                   // mul1
+    // size_t mm6Size = B * H * T * K * FP16_SIZE;                   // mm6
+    // size_t mm7Size = B * H * T * K * FP16_SIZE;                   // mm7
+    // size_t mul1Size = B * H * T * BT * FP16_SIZE;                   // mul1
 
     
     // Workspace 偏移计算
@@ -148,17 +169,17 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
 // std::cout << "[tiling] offset: " << offset << ", dsTempSize: "<<dsTempSize<<"\n";
     offset += dsTempSize;
 
-    size_t wsMm6Offset = offset;
-// std::cout << "[tiling] offset: " << mm6Size << ", mm6Size: "<<mm6Size<<"\n";
-    offset += mm6Size;
+//     size_t wsMm6Offset = offset;
+// // std::cout << "[tiling] offset: " << mm6Size << ", mm6Size: "<<mm6Size<<"\n";
+//     offset += mm6Size;
 
-    size_t wsMm7Offset = offset;
-// std::cout << "[tiling] offset: " << offset << ", mm7Size: "<<mm7Size<<"\n";
-    offset += mm7Size;
+//     size_t wsMm7Offset = offset;
+// // std::cout << "[tiling] offset: " << offset << ", mm7Size: "<<mm7Size<<"\n";
+//     offset += mm7Size;
 
-    size_t wsMul1Offset = offset;
-// std::cout << "[tiling] offset: " << offset << ", mul1Size: "<<mul1Size<<"\n";
-    offset += mul1Size;
+//     size_t wsMul1Offset = offset;
+// // std::cout << "[tiling] offset: " << offset << ", mul1Size: "<<mul1Size<<"\n";
+//     offset += mul1Size;
     
     size_t totalUserWorkspace = offset;
     // std::cout << "[tiling] totalUserWorkspace: " << totalUserWorkspace << ", sysWorkspaceSize: " << sysWorkspaceSize << "\n";
@@ -180,17 +201,16 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     tilingData.set_BT(BT);
     tilingData.set_numChunks(numChunks);
     tilingData.set_scale(scale);
-    tilingData.set_mul0RowNum(32);
+    tilingData.set_mul0RowNum(V == 256 ? 16 : 32);      // part1 中逐元素乘法的行数，V=256 时每 16 行处理一次，V=128 时每 32 行处理一次
     
-    // tilingData.set_wsDwOffset(wsDwOffset);
     tilingData.set_wsDgLastOffset(wsDgLastOffset);
     tilingData.set_dgLastSize(dgLastSize);
     tilingData.set_wsMm5Offset(wsMm5Offset);
     tilingData.set_wsDsTempOffset(wsDsTempOffset);
     tilingData.set_totalWorkspaceSize(totalUserWorkspace);
-    tilingData.set_wsMm6Offset(wsMm6Offset);
-    tilingData.set_wsMm7Offset(wsMm7Offset);
-    tilingData.set_wsMul1Offset(wsMul1Offset);
+    // tilingData.set_wsMm6Offset(wsMm6Offset);
+    // tilingData.set_wsMm7Offset(wsMm7Offset);
+    // tilingData.set_wsMul1Offset(wsMul1Offset);
     
     // 检查是否有 cu_seqlens 输入来判断 IS_VARLEN
     tilingData.set_isVarLen(isVarLen);
