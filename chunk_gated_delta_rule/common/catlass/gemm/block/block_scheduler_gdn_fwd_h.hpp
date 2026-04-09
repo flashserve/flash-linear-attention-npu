@@ -141,6 +141,7 @@ struct BlockSchedulerGdnFwdH {
         isRunning = taskIdx < taskNum;
 
         if (isVariedLen) {
+            gmNumChunks.SetValue(0, 0);
             for (uint32_t b = 1; b <= tokenBatch; b++) {
                 int64_t batchChunk = (gmSeqlen.GetValue(b) - gmSeqlen.GetValue(b - 1) + chunkSize - 1) / chunkSize;
                 gmNumChunks.SetValue(b, gmNumChunks.GetValue(b - 1) + batchChunk);
