@@ -14,6 +14,7 @@
 
 #include "tiling_base/tiling_util.h"
 #include "platform/platform_ascendc.h"
+#include "platform/soc_spec.h"
 
 namespace Ops {
 namespace Transformer {
