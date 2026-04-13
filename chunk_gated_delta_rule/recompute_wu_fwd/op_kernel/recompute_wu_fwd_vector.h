@@ -16,7 +16,7 @@
 #ifndef RECOMPUTE_WU_FWD_VECTOR_H
 #define RECOMPUTE_WU_FWD_VECTOR_H
 
-
+#include "catlass/arch/cross_core_sync.hpp"
 using namespace AscendC;
 
 template <typename kType, typename betaType>
@@ -56,6 +56,7 @@ private:
     AscendC::TPipe *pipe = nullptr;
 
 private:
+    Arch::CrossCoreFlagWithReverse<> flagAicFinishStore{SYNC_AIC_AIV_FLAG_5, SYNC_AIV_AIC_FLAG_3};
     GlobalTensor<kType> kTensor;
     GlobalTensor<kType> vTensor;
     GlobalTensor<betaType> betaTensor;
@@ -152,12 +153,12 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessVb()
         GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
         for (int h = 0; h < H; h++) {
-            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
+            ++vecTaskIdx;
+            if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
+                Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAicFinishStore);
+                continue;
+            }
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
-                ++vecTaskIdx;
-                if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                    continue;
-                }
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
                 auto vOffset = (h * T + bos + rowOffset) * V;
                 auto betaOffset = h * T + bos + rowOffset;
@@ -213,14 +214,9 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessVb()
                 }
             }
 
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
+            Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAicFinishStore);
         }
     }
-
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
     return;
 }
 
@@ -256,12 +252,12 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessKbgE
         GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
         for (int h = 0; h < H; h++) {
-            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
+            ++vecTaskIdx;
+            if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
+                Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAicFinishStore);
+                continue;
+            }
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
-                ++vecTaskIdx;
-                if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                    continue;
-                }
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
                 auto kOffset = (h * T + bos + rowOffset) * K;
                 auto betaOffset = h * T + bos + rowOffset;
@@ -322,13 +318,9 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessKbgE
                     kBetagExpOutQue.FreeTensor(tensorOut);
                 }
             }
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
+            Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAicFinishStore);
         }
     }
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
     return;
 }
 

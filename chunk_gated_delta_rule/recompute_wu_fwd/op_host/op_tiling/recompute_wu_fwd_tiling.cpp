@@ -128,7 +128,7 @@ public:
     }
     ge::graphStatus SetKbgExpVecRow(uint64_t ubSize, ge::DataType kType, ge::DataType betaType)
     {
-        uint64_t rowNum = chunkSize / 2;
+        uint64_t rowNum = chunkSize;
         uint64_t sizeofKType = SIZE_FP32;
         uint64_t sizeofBetaType = SIZE_FP32;
         if (kType != ge::DataType::DT_FLOAT) {
@@ -141,8 +141,10 @@ public:
             uint64_t useUbSize = 0;
             useUbSize += 2 * rowNum * K * sizeofKType;
             useUbSize += 2 * rowNum * sizeofBetaType;
+            useUbSize += 2 * rowNum * sizeofBetaType;
             useUbSize += 2 * rowNum * K * sizeofKType;
             useUbSize += rowNum * K * sizeof(float);
+            useUbSize += rowNum * sizeof(float);
             useUbSize += rowNum * sizeof(float);
             useUbSize += rowNum * ONE_BLOCK_32;
             
@@ -158,7 +160,7 @@ public:
 
     ge::graphStatus SetVbVecRow(uint64_t ubSize, ge::DataType kType, ge::DataType betaType)
     {
-        uint64_t rowNum = chunkSize / 2;
+        uint64_t rowNum = chunkSize;
         uint64_t sizeofKType = SIZE_FP32;
         uint64_t sizeofBetaType = SIZE_FP32;
         if (kType != ge::DataType::DT_FLOAT) {
@@ -169,10 +171,10 @@ public:
         }
         while (rowNum >= 8) {
             uint64_t useUbSize = 0;
-            useUbSize += 2 * rowNum * K * sizeofKType;
+            useUbSize += 2 * rowNum * V * sizeofKType;
             useUbSize += 2 * rowNum * sizeofBetaType;
-            useUbSize += 2 * rowNum * K * sizeofKType;
-            useUbSize += rowNum * K * sizeof(float);
+            useUbSize += 2 * rowNum * V * sizeofKType;
+            useUbSize += rowNum * V * sizeof(float);
             useUbSize += rowNum * sizeof(float);
             useUbSize += rowNum * ONE_BLOCK_32;
             
