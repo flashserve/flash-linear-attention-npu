@@ -33,6 +33,9 @@ struct GDNFwdHOffsets {
     uint32_t gOffset;
     uint32_t hWorkOffset;
     uint32_t vWorkOffset;
+    uint32_t initialStateOffset;
+    uint32_t finalStateOffset;
+    bool isInitialState;
     bool isFinalState;
     uint32_t blockTokens;
     bool isDummyHead;
@@ -57,6 +60,7 @@ struct BlockSchedulerGdnFwdH {
     uint32_t tokenBatch;
     bool useInitialState;
     bool storeFinalState;
+    uint32_t numChunksWorkspaceOffset;
 
     uint32_t taskIdx;
     uint32_t taskLoops;
@@ -105,7 +109,7 @@ struct BlockSchedulerGdnFwdH {
     BlockSchedulerGdnFwdH() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, uint32_t coreIdx, uint32_t coreNum) {
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user, uint32_t coreIdx, uint32_t coreNum) {
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
 
         batch = gdnFwdHTilingData->batch;
@@ -120,16 +124,17 @@ struct BlockSchedulerGdnFwdH {
         tokenBatch = gdnFwdHTilingData->tokenBatch;
         useInitialState = gdnFwdHTilingData->useInitialState;
         storeFinalState = gdnFwdHTilingData->storeFinalState;
+        numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
-        gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)chunk_indices);
+        gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
 
         cubeCoreIdx = coreIdx;
         cubeCoreNum = coreNum;
         vLoops = vHeadDim / vBlockSize;
         taskNum = vLoops * batch * vNumHead;
         headGroups = vNumHead / kNumHead;
-        hasDummyHead = taskNum % (PING_PONG_STAGES * cubeCoreNum) <= cubeCoreNum;
+        hasDummyHead = (taskNum % (PING_PONG_STAGES * cubeCoreNum) <= cubeCoreNum) && (taskNum % (PING_PONG_STAGES * cubeCoreNum) > 0);
         taskLoops = (taskNum + cubeCoreNum * PING_PONG_STAGES - 1) / (cubeCoreNum * PING_PONG_STAGES);
         headInnerLoop = taskNum > cubeCoreNum ? PING_PONG_STAGES : 1;
         taskIdx = cubeCoreIdx * headInnerLoop;
@@ -177,9 +182,12 @@ struct BlockSchedulerGdnFwdH {
         
         vHeadIdx = baseHeadIdx + headInnerIdx;
         kHeadIdx = vHeadIdx / headGroups;
-        offsets[currStage].isFinalState = chunkIdx == (batchChunks - 1); 
+        offsets[currStage].isInitialState = chunkIdx == 0; 
+        offsets[currStage].isFinalState = chunkIdx == (batchChunks - 1);
+        offsets[currStage].initialStateOffset = (batchIdx * vNumHead + vHeadIdx) * kHeadDim * vHeadDim; 
+        offsets[currStage].finalStateOffset = (batchIdx * vNumHead + vHeadIdx) * kHeadDim * vHeadDim;  
         offsets[currStage].hSrcOffset = (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset + chunkIdx) * kHeadDim * vHeadDim;
-        offsets[currStage].hDstOffset = offsets[currStage].isFinalState ? ((batchIdx * vNumHead + vHeadIdx) * kHeadDim * vHeadDim) : (offsets[currStage].hSrcOffset + kHeadDim * vHeadDim);
+        offsets[currStage].hDstOffset = offsets[currStage].hSrcOffset + kHeadDim * vHeadDim;
         offsets[currStage].uvOffset = (shapeBatchIdx * vNumHead * totalTokens + vHeadIdx * totalTokens + tokenOffset + chunkIdx * chunkSize) * vHeadDim;
         offsets[currStage].wkOffset = (shapeBatchIdx * kNumHead * totalTokens + kHeadIdx * totalTokens + tokenOffset + chunkIdx * chunkSize) * kHeadDim;
         offsets[currStage].wOffset = (shapeBatchIdx * vNumHead * totalTokens + vHeadIdx * totalTokens + tokenOffset + chunkIdx * chunkSize) * kHeadDim;
@@ -228,8 +236,8 @@ struct BlockSchedulerGdnFwdHCube : public BlockSchedulerGdnFwdH {
     BlockSchedulerGdnFwdHCube() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling) {
-        BlockSchedulerGdnFwdH::Init(cu_seqlens, chunk_indices, tiling, AscendC::GetBlockIdx(), AscendC::GetBlockNum());
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user) {
+        BlockSchedulerGdnFwdH::Init(cu_seqlens, chunk_indices, tiling, user, AscendC::GetBlockIdx(), AscendC::GetBlockNum());
     }
 
 };
@@ -239,8 +247,8 @@ struct BlockSchedulerGdnFwdHVec : public BlockSchedulerGdnFwdH {
     BlockSchedulerGdnFwdHVec() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling) {
-        BlockSchedulerGdnFwdH::Init(cu_seqlens, chunk_indices, tiling, AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(), AscendC::GetBlockNum());
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user) {
+        BlockSchedulerGdnFwdH::Init(cu_seqlens, chunk_indices, tiling, user, AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(), AscendC::GetBlockNum());
     }
 
 };

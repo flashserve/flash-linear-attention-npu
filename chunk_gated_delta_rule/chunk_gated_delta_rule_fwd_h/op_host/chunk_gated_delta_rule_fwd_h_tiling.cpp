@@ -1,11 +1,10 @@
 /**
  * Copyright (c) 2025 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
+ * the BSD 3-Clause License (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
  */
 
 /*!
@@ -85,7 +84,24 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     }
     
     auto initialStateTensor = context->GetOptionalInputTensor(INPUT_INITIAL_STATE_IDX);
-    bool useInitialState = 0;
+    bool useInitialState = initialStateTensor != nullptr;
+    int64_t stateDataType = 2;
+    if (useInitialState) {
+        auto stateDType = initialStateTensor->GetDataType();
+        if (stateDType == ge::DT_BF16) {
+            stateDataType = 1;
+        } else if (stateDType == ge::DT_FLOAT16) {
+            stateDataType = 0;
+        }
+    }
+    
+    auto gDType = context->GetOptionalInputTensor(INPUT_G_IDX)->GetDataType();
+    int64_t gDataType = 2;
+    if (gDType == ge::DT_BF16) {
+        gDataType = 1;
+    } else if (gDType == ge::DT_FLOAT16) {
+        gDataType = 0;
+    }
     
     auto attrPtr = context->GetAttrs();
     bool storeFinalState = *(attrPtr->GetAttrPointer<bool>(ATTR_STORE_FINAL_STATE_IDX));
@@ -100,17 +116,22 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
 
     constexpr size_t WORKSPACE_RSV_BYTE = 16 * 1024 * 1024;
     constexpr size_t GM_ALIGN = 512;
-    constexpr size_t BYTE_SIZE_16_BIT = 2;
-    int64_t pingpongStages = 2;
+    constexpr int64_t PING_PONG_STAGES = 2;
 
     size_t workspaceOffset = ascendcPlatform.GetLibApiWorkSpaceSize();
     workspaceOffset += WORKSPACE_RSV_BYTE;
     
     tiling.set_vWorkspaceOffset(workspaceOffset);
-    workspaceOffset += (aicCoreNum * chunkSize * vHeadDim * BYTE_SIZE_16_BIT * pingpongStages + GM_ALIGN) / GM_ALIGN * GM_ALIGN;
+    workspaceOffset += (aicCoreNum * chunkSize * vHeadDim * sizeof(float) * PING_PONG_STAGES + GM_ALIGN) / GM_ALIGN * GM_ALIGN;
+
+    tiling.set_vUpdateWorkspaceOffset(workspaceOffset);
+    workspaceOffset += (aicCoreNum * chunkSize * vHeadDim * sizeof(float) * PING_PONG_STAGES + GM_ALIGN) / GM_ALIGN * GM_ALIGN;
 
     tiling.set_hWorkspaceOffset(workspaceOffset);
-    workspaceOffset += (aicCoreNum * kHeadDim * vHeadDim * BYTE_SIZE_16_BIT * pingpongStages + GM_ALIGN) / GM_ALIGN * GM_ALIGN;
+    workspaceOffset += (aicCoreNum * kHeadDim * vHeadDim * sizeof(float) * PING_PONG_STAGES + GM_ALIGN) / GM_ALIGN * GM_ALIGN;
+
+    tiling.set_numChunksWorkspaceOffset(workspaceOffset);
+    workspaceOffset += ((tokenBatch + 1) * sizeof(int64_t) + GM_ALIGN) / GM_ALIGN * GM_ALIGN;
 
     workspaceOffset += WORKSPACE_RSV_BYTE;
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
@@ -126,6 +147,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     tiling.set_useInitialState(useInitialState);
     tiling.set_storeFinalState(storeFinalState);
     tiling.set_dataType(dataType);
+    tiling.set_stateDataType(stateDataType);
+    tiling.set_gDataType(gDataType);
     tiling.set_isVariedLen(isVariedLen);
     tiling.set_shapeBatch(shapeBatch);
     tiling.set_tokenBatch(tokenBatch);

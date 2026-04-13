@@ -1,11 +1,10 @@
 /**
  * Copyright (c) 2025 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License").
+ * the BSD 3-Clause License (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
  */
 
 /*!
@@ -260,7 +259,7 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         // 根据mask矩阵分割处理当前核分到的chunk行(taskLineNum)
         int64_t curTaskLine = taskStartLine;
         startSplitMaskId = taskStartLine / MASK_LINE_SIZE;
-        endSplitMaskId = CeilDiv(taskEndLine, MASK_LINE_SIZE);
+        endSplitMaskId = CeilDiv(taskEndLine + 1, MASK_LINE_SIZE);
         for (int64_t index = startSplitMaskId; index < endSplitMaskId; index++) {
             repeatOffset = (curTaskLine - taskStartLine) * strategy.chunkSize;
             curSize = index == endSplitMaskId - 1 ? taskEndLine - curTaskLine + 1 :

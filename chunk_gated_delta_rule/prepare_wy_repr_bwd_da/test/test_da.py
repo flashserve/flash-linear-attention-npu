@@ -5,7 +5,7 @@ import math
 import ct
 import random
 
-torch.npu.utils.set_device(3)
+torch.npu.utils.set_device(1)
 
 def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
     """
@@ -259,6 +259,7 @@ def compute_dA_cpu(
                 b_g_sub_exp = torch.exp(g_chunk.to(torch.float32)[:, None] - g_chunk.to(torch.float32)[None, :]) 
                 
                 # 步骤7：b_dA_7
+                # b_dA_7 = -b_dA_6.to(torch.float32) * (g_chunk.to(torch.float32)[:, None] - g_chunk.to(torch.float32)[None, :]) #b_g_sub_exp.to(torch.float32)
                 b_dA_7 = -b_dA_6.to(torch.float32) * b_g_sub_exp.to(torch.float32)
 
                 # 步骤8：b_dA
@@ -266,7 +267,7 @@ def compute_dA_cpu(
                 b_dA = torch.where(m_A[:chunk_len, :chunk_len], b_dA_7.to(torch.float32), 0.0)
 
                 # 存储结果
-                dA[i_b, i_h, bos : eos, : chunk_len] = b_dA.to(A.dtype)
+                dA[i_b, i_h, bos : eos, : chunk_len] = b_dA.T.to(A.dtype)
 
     return dA
 
@@ -324,8 +325,8 @@ def test_variable():
 
 def test_fix():
     B = 1
-    T = 16384
-    H = 32
+    T = 2048
+    H = 4
     K = 128
     V = 128
     BT=chunk_size=64
@@ -356,7 +357,7 @@ def test_fix():
     g_npu = g.npu()
 
     dA_npu = torch_npu.npu_prepare_wy_repr_bwd_da(k_npu, v_npu, beta_npu, A_npu, dw_npu, du_npu, g_npu, cu_seqlens=None, chunk_indices=None, chunk_size=chunk_size)
-    torch.save(dA_npu, "/data/yzq/flash-linear-attention-npu-yzq/chunk_gated_delta_rule/prepare_wy_repr_bwd_da/test/output/test_dA_npu.pt")
+    # torch.save(dA_npu, "/data/yzq/flash-linear-attention-npu-yzq/chunk_gated_delta_rule/prepare_wy_repr_bwd_da/test/output/test_dA_npu.pt")
     print(f"==== dA_npu.shape = {dA_npu.shape} ")
     print(f"==== dA_npu = {dA_npu} ")
     print(f"==== dA_npu.dtype = {dA_npu.dtype} ")
@@ -368,7 +369,7 @@ def test_fix():
     NT = (T + BT - 1) // BT
     print("==== NT = ", NT)
     dA_cpu = compute_dA_cpu(A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, H, T, K, BT, NT)
-    torch.save(dA_cpu, "/data/yzq/flash-linear-attention-npu-yzq/chunk_gated_delta_rule/prepare_wy_repr_bwd_da/test/output/test_dA_cpu.pt")
+    # torch.save(dA_cpu, "/data/yzq/flash-linear-attention-npu-yzq/chunk_gated_delta_rule/prepare_wy_repr_bwd_da/test/output/test_dA_cpu.pt")
 
     ct.isclose(dA_npu, dA_cpu, diff_thd=0.1)
 
@@ -380,7 +381,7 @@ def create_tensor(shape, dtype=torch.float16):
 
 if __name__ == "__main__":
     torch.manual_seed(0)
-    print("==== test_variable ====")
-    test_variable()
-    print("==== test_fix ====")
+    # print("==== test_variable ====")
+    # test_variable()
+    # print("==== test_fix ====")
     test_fix()

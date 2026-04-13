@@ -197,3 +197,11 @@ if __name__ == "__main__":
     h_npu = format_convert("h_npu.bin", to_dtype)
     h_ref = format_convert("h_ref.bin", to_dtype)
     data_compare(h_npu, h_ref, 0.0001, 0.0001)
+
+    try:
+        final_state_npu = format_convert("final_state_npu.bin", torch.float32)
+        final_state_ref = format_convert("final_state_ref.bin", torch.float32)
+        print('------------------ final_state compare --------------------')
+        data_compare(final_state_npu, final_state_ref, 0.0001, 0.0001)
+    except:
+        print('no final state data')

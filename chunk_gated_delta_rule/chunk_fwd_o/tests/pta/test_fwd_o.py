@@ -112,6 +112,17 @@ def forward_o_trans_cpu(
     o_output = o_output.to(torch.bfloat16)
     return o_output
 
+def parse_dtype(str_dtype):
+    if str_dtype == "half" or str_dtype == "fp16" or str_dtype == "float16":
+        return torch.float16
+    elif str_dtype == "bf16" or str_dtype == "bfloat16":
+        return torch.bfloat16
+    if str_dtype == "float" or str_dtype == "float32":
+        return torch.float32
+    else:
+        logging("[ERROR] dtype must be half or bf16")
+        sys.exit()
+
 class GDNFwdOInput:
     def __init__(self):
         self.shape_batch = int(sys.argv[1])
@@ -128,6 +139,8 @@ class GDNFwdOInput:
         self.use_actual_input = int(sys.argv[12])
         self.use_actual_output = int(sys.argv[13])
         self.data_path = str(sys.argv[14])
+        torch.npu.set_device(int(sys.argv[15]))
+        self.g_dtype = parse_dtype(str(sys.argv[16]))
 
         if self.str_dtype == "half" or self.str_dtype == "fp16" or self.str_dtype == "float16":
             self.dtype = torch.float16
@@ -210,7 +223,7 @@ def parse_actual_input(o_input):
     k = actual_data['k'].to(o_input.dtype).transpose(1, 2).contiguous()
     v = actual_data['v'].to(o_input.dtype).transpose(1, 2).contiguous()
     h = actual_data['h'].to(o_input.dtype).transpose(1, 2).contiguous()
-    g = actual_data['g'].transpose(1, 2).contiguous()
+    g = actual_data['g'].to(o_input.g_dtype).transpose(1, 2).contiguous()
     cu_seqlens, chunk_offsets = get_cu_offsets(o_input, actual_data.get('cu_seqlens'))
     return GDNFwdOInputTensor(q, k, v, h, g, cu_seqlens, chunk_offsets)
 
@@ -235,7 +248,7 @@ def save_data(input_tensor, output_tensor):
     input_tensor.k.view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "k.bin"))
     input_tensor.v.view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "v.bin"))
     input_tensor.h.view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "h.bin"))
-    input_tensor.g.numpy().tofile(os.path.join(WORKSPACE, "data", "g.bin"))
+    input_tensor.g.view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "g.bin"))
     if input_tensor.cu_seqlens is not None:
         np.array(input_tensor.cu_seqlens.cpu()).astype(np.int64).tofile(os.path.join(WORKSPACE, "data", "cu_seqlens.bin"))
 
@@ -267,5 +280,9 @@ if __name__ == "__main__":
         gdn_fwd_o_input.chunk_size
     )
     torch.npu.synchronize()
+    if gdn_fwd_o_input.use_actual_output:
+        output_tensor = parse_actual_output(gdn_fwd_o_input)
+    else:
+        output_tensor = gen_ref_data(gdn_fwd_o_input, input_tensor)
     save_data(input_tensor, output_tensor)
     result.cpu().view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "o_npu.bin"))
