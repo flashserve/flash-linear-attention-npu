@@ -228,7 +228,6 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
         for (int h = 0; h < H; h++) {
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                // AscendC::printf("230 Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);\n");
                 Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
                 continue;
             }
@@ -249,7 +248,6 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                 }
                 betaInQue.FreeTensor(tensorBeta);
             }
-            // AscendC::printf("251 Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);\n");
             Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
             //分批次处理计算daa
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
@@ -397,7 +395,6 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
         GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
         for (int h = 0; h < H; h++) {
-            // AscendC::printf("339 Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);\n");
             Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
@@ -551,7 +548,6 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
         GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
         for (int h = 0; h < H; h++) {
-            // AscendC::printf("555 Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore); loopIdx:%d\n", loopIdx);
             Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
@@ -741,7 +737,6 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
         GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
         for (int h = 0; h < H; h++) {
-            // AscendC::printf("745 Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);\n");
             Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
@@ -926,7 +921,6 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     kBetaOutQue.FreeTensor(tensorOut);
                 }
             }
-            // AscendC::printf("930 Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);\n");
             Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
         }
     }

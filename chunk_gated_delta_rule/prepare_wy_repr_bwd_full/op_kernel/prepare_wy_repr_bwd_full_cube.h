@@ -183,7 +183,6 @@ public:
                     auto tensorKbeta = tla::MakeTensor(gmKbeta, params.layoutKbeta, Arch::PositionGM{});
                     auto tensorDk = tla::MakeTensor(gmDk, params.layoutDk, Arch::PositionGM{});
 
-                    // AscendC::printf("185 Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);\n");
                     Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);
                     // Make tiled views
                     auto tensorBlockDA = GetTile(tensorDA, tla::MakeCoord(0, 0),
@@ -229,7 +228,6 @@ public:
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadBdkb(tensorBlockDAT, tensorBlockK, tensorBlockDkb, actualBlockShape);
-                    // AscendC::printf("231 Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);\n");
                     Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
                 }
             }
@@ -266,7 +264,6 @@ public:
                                                    tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadBdkbg(tensorBlockAT, tensorBlockDw, tensorBlockDkbg, actualBlockShape);
-                    // AscendC::printf("268 Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore); loopIdx:%d\n", loopIdx);
                     Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
                 }
             }
@@ -303,7 +300,6 @@ public:
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadBdvb(tensorBlockAT, tensorBlockDu, tensorBlockDvb, actualBlockShape);
-                    // AscendC::printf("305 Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);\n");
                     Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
                 }
             }
@@ -340,7 +336,6 @@ public:
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadkkT(tensorBlockK, tensorBlockKT, tensorBlockKKT, actualBlockShape);
-                    // AscendC::printf("342 Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);\n");
                     Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
                 }
             }
