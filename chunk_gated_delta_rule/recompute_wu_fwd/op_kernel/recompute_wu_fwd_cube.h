@@ -55,7 +55,7 @@ public:
     using LayoutKbgExp = typename BlockMmadW::LayoutB;
     using ElementW = typename BlockMmadW::ElementC;
     using LayoutW = typename BlockMmadW::LayoutC;
-    Arch::CrossCoreFlagWithReverse<> flagAicFinishStore{SYNC_AIC_AIV_FLAG_5, SYNC_AIV_AIC_FLAG_3};
+    Arch::CrossCoreFlagWithReverse<> flagAivFinishStore{SYNC_AIC_AIV_FLAG_5, SYNC_AIV_AIC_FLAG_3};
     /// Parameters structure
     struct Params {
         // Data members
@@ -137,7 +137,7 @@ public:
                     auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
                     auto tensorVb = tla::MakeTensor(gmVb, params.layoutVb, Arch::PositionGM{});
                     auto tensorU = tla::MakeTensor(gmU, params.layoutU, Arch::PositionGM{});
-                    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
+                    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);
                     // Make tiled views
                     auto tensorBlockA = GetTile(tensorA, tla::MakeCoord(0, 0),
                                                  tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
@@ -173,7 +173,7 @@ public:
                     auto tensorKbgExp = tla::MakeTensor(gmKbgExp, params.layoutKbgExp, Arch::PositionGM{});
                     auto tensorW = tla::MakeTensor(gmW, params.layoutW, Arch::PositionGM{});
 
-                    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
+                    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);
                     // Make tiled views
                     auto tensorBlockA = GetTile(tensorA, tla::MakeCoord(0, 0),
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));

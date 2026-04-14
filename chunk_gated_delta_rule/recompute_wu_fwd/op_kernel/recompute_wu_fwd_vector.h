@@ -56,7 +56,7 @@ private:
     AscendC::TPipe *pipe = nullptr;
 
 private:
-    Arch::CrossCoreFlagWithReverse<> flagAicFinishStore{SYNC_AIC_AIV_FLAG_5, SYNC_AIV_AIC_FLAG_3};
+    Arch::CrossCoreFlagWithReverse<> flagAivFinishStore{SYNC_AIC_AIV_FLAG_5, SYNC_AIV_AIC_FLAG_3};
     GlobalTensor<kType> kTensor;
     GlobalTensor<kType> vTensor;
     GlobalTensor<betaType> betaTensor;
@@ -155,7 +155,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessVb()
         for (int h = 0; h < H; h++) {
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAicFinishStore);
+                Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
                 continue;
             }
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
@@ -214,7 +214,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessVb()
                 }
             }
 
-            Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAicFinishStore);
+            Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
         }
     }
     return;
@@ -254,7 +254,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessKbgE
         for (int h = 0; h < H; h++) {
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAicFinishStore);
+                Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
                 continue;
             }
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
@@ -318,7 +318,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessKbgE
                     kBetagExpOutQue.FreeTensor(tensorOut);
                 }
             }
-            Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAicFinishStore);
+            Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
         }
     }
     return;
