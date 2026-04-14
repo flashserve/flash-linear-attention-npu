@@ -1,0 +1,197 @@
+api: pytorch
+api_type: executor_recompute_wu_fwd
+version: v2.1
+name: aclnn.chunk.bwd.dv.local
+aclnn_name: ChunkBwdDvLocal
+# aclnn_api_type: aclnn_recompute_wu_fwd
+generate: generator_recompute_wu_fwd
+dtype_numbers: 1
+extra_numbers: 0
+standard:
+  acc: cv_fused_double_benchmark
+inputs:
+  - name: k
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        values: [ [ 1, 100 ], [ 1, 32 ], [ 1, 100 ], [ 1, 100 ] ]
+  - name: v
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        values: [ [ 1, 100 ], [ 1, 32 ], [ 1, 100 ], [ 1, 100 ] ]
+  - name: beta
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16, fp32]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 3 ]
+      dim_values:
+        values: [ [ 1, 100 ], [ 1, 32 ], [ 1, 100 ] ]
+  - name: A
+    type: tensor
+    required: true
+    dtypes:
+      values: [fbf16, fp162]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        values: [ [ 1, 100 ], [ 1, 32 ], [ 1, 100 ], [ 1, 100 ] ]
+  - name: dA
+    type: tensor
+    required: true
+    dtypes:
+      values: [fbf16, fp162]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        values: [ [ 1, 100 ], [ 1, 32 ], [ 1, 100 ], [ 1, 100 ] ]
+  - name: g_gamma
+    type: tensor
+    required: true
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 2 ]
+      dim_values:
+        values: [ [ 1, 2 ], [ 1, 2 ]]
+  - name: A
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 2 ]
+      dim_values:
+        values: [[ 1, 2 ], [ 1, 2 ] ]
+  - name: cu_seqlens
+    type: tensor
+    required: true
+    dtypes:
+      values: [int64]
+    ranges:
+      valid:
+        values: [ [ 1, 100 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 1 ]
+      dim_values:
+        values: [ [ 1, 100 ]]
+  - name: chunk_indices
+    type: tensor
+    required: true
+    dtypes:
+      values: [int64]
+    ranges:
+      valid:
+        values: [ [ 1, 100 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 2 ]
+      dim_values:
+        values: [ [ 1, 100 ], 2]
+  - name: scale
+    type: attr
+    required: true
+    dtypes:
+      values: [float]
+    ranges:
+      valid:
+        values: [1.0]
+      invalid:
+        values: []
+  - name: chunk_size
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [64,128]
+      invalid:
+        values: []
+  - name: is_mix
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [true,false]
+      invalid:
+        values: []
+  - name: is_fix
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [true,false]
+      invalid:
+        values: []
+  - name: qkv_type
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["bf16", "fp16"]
+      invalid:
+        values: []

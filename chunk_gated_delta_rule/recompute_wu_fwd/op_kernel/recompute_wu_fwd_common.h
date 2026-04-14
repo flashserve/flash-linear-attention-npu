@@ -8,16 +8,14 @@
  */
 
 /*!
- * \file prepare_wy_repr_bwd_full_common.h
+ * \file recompute_wu_fwd_common.h
  * \brief
  */
 
-#ifndef PREPARE_WY_REPR_BWD_FULL_COMMON_H
-#define PREPARE_WY_REPR_BWD_FULL_COMMON_H
-constexpr uint64_t SYNC_FLAG_2 = 2;
-constexpr uint64_t SYNC_FLAG_3 = 3;
-constexpr uint64_t SYNC_FLAG_4 = 4;
-constexpr uint64_t SYNC_FLAG_5 = 5;
+#ifndef RECOMPUTE_WU_FWD_COMMON_H
+#define RECOMPUTE_WU_FWD_COMMON_H
+constexpr uint64_t SYNC_AIV_AIC_FLAG_3 = 3;
+constexpr uint64_t SYNC_AIC_AIV_FLAG_5 = 5;
 constexpr uint64_t ONE_BLOCK_32 = 32;
 constexpr uint32_t FP32_PER_BLOCK_8 = 8;
 constexpr uint32_t FP32_PER_REPEAT_64 = 64;
@@ -48,4 +46,4 @@ __aicore__ void inline GetChunkOffset(GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
 
     return;
 }
-#endif // PREPARE_WY_REPR_BWD_FULL_COMMON_H
+#endif // RECOMPUTE_WU_FWD_COMMON_H
