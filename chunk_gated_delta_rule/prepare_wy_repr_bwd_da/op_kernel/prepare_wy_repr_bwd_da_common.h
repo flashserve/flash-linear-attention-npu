@@ -15,8 +15,10 @@
 
 #ifndef PREPARE_WY_REPR_BWD_DA_COMMON_H
 #define PREPARE_WY_REPR_BWD_DA_COMMON_H
-constexpr uint64_t SYNC_AIV_AIC_FLAG_3 = 3;
-constexpr uint64_t SYNC_AIC_AIV_FLAG_5 = 5;
+constexpr uint64_t SYNC_FLAG_2 = 2;
+constexpr uint64_t SYNC_FLAG_3 = 3;
+constexpr uint64_t SYNC_FLAG_4 = 4;
+constexpr uint64_t SYNC_FLAG_5 = 5;
 constexpr uint64_t ONE_BLOCK_32 = 32;
 constexpr uint32_t FP32_PER_BLOCK_8 = 8;
 constexpr uint32_t FP32_PER_REPEAT_64 = 64;

@@ -13,6 +13,9 @@
  * \brief
  */
 
+#ifndef PREPARE_WY_REPR_BWD_DA_CUBE_H
+#define PREPARE_WY_REPR_BWD_DA_CUBE_H
+
 #include "prepare_wy_repr_bwd_da_common.h"
 #include "catlass/arch/arch.hpp"
 #include "catlass/catlass.hpp"
@@ -25,10 +28,7 @@
 #include "catlass/status.hpp"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
-
-#ifndef PREPARE_WY_REPR_BWD_DA_CUBE_H
-#define PREPARE_WY_REPR_BWD_DA_CUBE_H
-
+#include "catlass/arch/cross_core_sync.hpp"
 
 using namespace Catlass;
 
@@ -77,7 +77,8 @@ public:
     using LayoutA = typename BlockMmadDA6::LayoutB;
     using ElementDA6 = typename BlockMmadDA6::ElementC;
     using LayoutDA6 = typename BlockMmadDA6::LayoutC;
-
+    Arch::CrossCoreFlagWithReverse<> flagAicFinishStore{SYNC_FLAG_2, SYNC_FLAG_3};
+    Arch::CrossCoreFlagWithReverse<> flagAivFinishStore{SYNC_FLAG_4, SYNC_FLAG_5};
     // Parameters structure
     struct Params {
         // Data members
@@ -189,10 +190,6 @@ public:
         uint32_t bos = 0;
         uint32_t eos = 0;
         {   // 计算第一个矩阵乘 dA_1 = dw @ kbg.T     V->C
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
             BlockMmadDA1 blockMmadDA1(resource);
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
                 GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
@@ -213,7 +210,7 @@ public:
                     auto tensorKbg = tla::MakeTensor(gmKbg, params.layoutKbg, Arch::PositionGM{});
                     auto tensorDA1 = tla::MakeTensor(gmDA1, params.layoutDA1, Arch::PositionGM{});
 
-                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
+                    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);
                     // Make tiled views
                     auto tensorBlockDw = GetTile(tensorDw,
                                                 tla::MakeCoord(0, 0),
@@ -226,16 +223,11 @@ public:
                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadDA1(tensorBlockDw, tensorBlockKbg, tensorBlockDA1, actualBlockShape);
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
                 }
             }
         }
         AscendC::SyncAll<false>();
         {   // 计算第二个矩阵乘 dA_2 = du @ vb.T     V->C
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
             BlockMmadDA2 blockMmadDA2(resource);
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
                 GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
@@ -257,7 +249,7 @@ public:
                     auto tensorVb = tla::MakeTensor(gmVb, params.layoutVb, Arch::PositionGM{});
                     auto tensorDA2 = tla::MakeTensor(gmDA2, params.layoutDA2, Arch::PositionGM{});
 
-                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
+                    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);
                     // Make tiled views
                     auto tensorBlockDu = GetTile(tensorDu,
                                                 tla::MakeCoord(0, 0),
@@ -270,16 +262,11 @@ public:
                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadDA2(tensorBlockDu, tensorBlockVb, tensorBlockDA2, actualBlockShape);
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
                 }
             }
         }
         AscendC::SyncAll<false>();
         {   // 计算第三个矩阵乘 dA_5 = dA_4 @ A.T     V->C
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
             BlockMmadDA5 blockMmadDA5(resource);
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
                 GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
@@ -301,7 +288,7 @@ public:
                     auto tensorAT = tla::MakeTensor(gmAT, params.layoutAT, Arch::PositionGM{});
                     auto tensorDA5 = tla::MakeTensor(gmDA5, params.layoutDA5, Arch::PositionGM{});
 
-                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
+                    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);
                     // Make tiled views
                     auto tensorBlockDA4 = GetTile(tensorDA4,
                                                 tla::MakeCoord(0, 0),
@@ -314,7 +301,6 @@ public:
                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadDA5(tensorBlockDA4, tensorBlockAT, tensorBlockDA5, actualBlockShape);
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
                 }
             }
         }
@@ -341,7 +327,6 @@ public:
                     auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
                     auto tensorDA6 = tla::MakeTensor(gmDA6, params.layoutDA6, Arch::PositionGM{});
 
-                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
                     // Make tiled views
                     auto tensorBlockDA5T = GetTile(tensorDA5T,
                                                 tla::MakeCoord(0, 0),
@@ -354,13 +339,9 @@ public:
                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
                     blockMmadDA6(tensorBlockDA5T, tensorBlockA, tensorBlockDA6, actualBlockShape);
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_5);
+                    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
                 }
             }
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_3);
         }
     }
 };
