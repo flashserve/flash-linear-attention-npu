@@ -17,6 +17,7 @@
 
 #include "chunk_bwd_dqkwg_common.h"
 #include "kernel_operator.h"
+#include "catlass/arch/cross_core_sync.hpp"
 
 using namespace AscendC;
 
@@ -50,6 +51,8 @@ private:
                                       uint32_t rows, uint32_t cols, int axis);
     
 private:
+    Arch::CrossCoreFlagWithReverse<> flagAicFinishStore{SYNC_FLAG_2, SYNC_FLAG_3};
+    // Arch::CrossCoreFlagWithReverse<> flagAivFinishStore{SYNC_FLAG_4, SYNC_FLAG_5};
     // 输入输出指针
     GM_ADDR ptrQ;
     GM_ADDR ptrK;
@@ -256,11 +259,6 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart1
     auto tensorDhFp32 = tensorHFp32[hDhSize];
     auto tensorSumFp32 = calcBuf3.Get<float>();
 
-    // 发送同步信号给 Cube
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
     uint32_t bos = 0;
     uint32_t eos = 0;
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
@@ -273,8 +271,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart1
         for (uint32_t h = 0; h < H; h++) {
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-                CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
+                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
                 continue;
             }
             // 计算偏移
@@ -347,7 +344,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart1
             // ========== 处理 dw: 取负号 ==========
             // Cube 计算的是 dv @ h^T, 需要乘以 -1
             // 从 workspace 读取 dw, 乘以 -1, 写回最终输出
-            CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
+            Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
             // CopyIn: dw from workspace
             {
                 auto tensorDwIn = inQue1.AllocTensor<DataType>();
@@ -378,8 +375,6 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart1
                 outQue2.FreeTensor(tensorDwOut);
             }
 
-            // 通知 Cube 继续
-            CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
         }
     }
 
@@ -606,11 +601,6 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart3
     uint32_t bos = 0;
     uint32_t eos = 0;
     uint32_t vecTaskIdx = 0;
-    // 发送同步信号
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
         GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, H, T, BT, loopIdx, bos, eos);
@@ -621,15 +611,9 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart3
         uint32_t chunkIdx = loopIdx % numChunks;
 
         for (uint32_t h = 0; h < H; h++) {
-            // if (GetSubBlockIdx() == 1) {
-            //     CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-            //     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-            //     continue;
-            // }
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-                CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
+                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
                 continue;
             }
 
@@ -643,7 +627,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart3
             uint64_t dgOffset = gOffset;
 
             // 等待 Cube 完成 ds 计算
-            CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
+            Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
 
             // CopyIn: ds (Cube output), g
             {
@@ -764,8 +748,6 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart3
                 outQue1.FreeTensor(tensorDsTempOut);
                 outQue2.FreeTensor(tensorDgOut);
             }
-
-            CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
         }
 
     }
@@ -811,11 +793,6 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart4
     uint32_t vecTaskIdx = 0;
     uint32_t bos = 0;
     uint32_t eos = 0;
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
         GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, H, T,
                         BT, loopIdx, bos, eos);
@@ -827,21 +804,15 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart4
         uint32_t chunkIdx = loopIdx % numChunks;
         
         for (uint32_t h = 0; h < H; h++) {
-            // if (GetSubBlockIdx() == 1) {
-            //     CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-            //     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-            //     continue;
-            // }
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-                CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
+                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
                 continue;
             }
             uint64_t qkOffset = (h * T + bos) * K;
             uint64_t gOffset = (h * T + bos);
             
-            CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
+            Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
             // CopyIn
             {
                 auto tensorDqIn = inQue1.AllocTensor<DataType>();
@@ -957,8 +928,6 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart4
                 outQue1.FreeTensor(tensorDqOut);
                 outQue2.FreeTensor(tensorDgOut);
             }
-            
-            CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
         }
     }
 }
@@ -999,10 +968,6 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart5
     uint32_t bos = 0;
     uint32_t eos = 0;
     uint32_t vecTaskIdx = 0;
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
         GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, H, T, BT, loopIdx, bos, eos);
         uint32_t actual_chunk_len = eos - bos;
@@ -1015,15 +980,13 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart5
         for (uint32_t h = 0; h < H; h++) {
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-                CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
+                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
                 continue;
             }
             uint64_t kOffset = (h * T + bos) * K;
             uint64_t gOffset = (h * T + bos);
             uint64_t dgLastOffset = (bIdx * H + h) * numChunks + chunkIdx;
-            
-            CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
+            Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
 
             // CopyIn
             {
@@ -1209,8 +1172,6 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart5
                 outQue1.FreeTensor(tensorDkOut);
                 outQue2.FreeTensor(tensorDgOut);
             }
-
-            CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
         }
     }
 }
@@ -1233,10 +1194,6 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart6
     uint32_t bos = 0;
     uint32_t eos = 0;
     uint32_t vecTaskIdx = 0;
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
         GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, H, T,
@@ -1247,20 +1204,14 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart6
         uint32_t chunkIdx = loopIdx % numChunks;
         
         for (uint32_t h = 0; h < H; h++) {
-            // if (GetSubBlockIdx() == 1) {
-            //     CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-            //     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-            //     continue;
-            // }
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-                CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
+                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
                 continue;
             }
             uint64_t dqOffset = (h * T + bos) * K;
             
-            CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
+            Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
             
             // Part 6 的 Vector 工作是将 Cube 计算的 mm6 累加到 dq
             // CopyIn
@@ -1306,8 +1257,6 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart6
                 DataCopy(gmDq[dqOffset], tensorDqOut, dqSize);
                 outQue1.FreeTensor(tensorDqOut);
             }
-            
-            CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
         }
     }
 }
@@ -1329,10 +1278,6 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart7
     uint32_t bos = 0;
     uint32_t eos = 0;
     uint32_t vecTaskIdx = 0;
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
         GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, H, T,
@@ -1343,20 +1288,13 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart7
         uint32_t chunkIdx = loopIdx % numChunks;
         
         for (uint32_t h = 0; h < H; h++) {
-            // if (GetSubBlockIdx() == 1) {
-            //     CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-            //     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-            //     continue;
-            // }
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-                CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
+                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
                 continue;
             }
             uint64_t dkOffset = (h * T + bos) * K;
-            
-            CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
+            Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
             
             // Part 7 的 Vector 工作是将 Cube 计算的 mm7 累加到 dk
             // CopyIn
@@ -1401,8 +1339,6 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart7
 
                 outQue1.FreeTensor(tensorDkOut);
             }
-
-            CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
         }
     }
 }

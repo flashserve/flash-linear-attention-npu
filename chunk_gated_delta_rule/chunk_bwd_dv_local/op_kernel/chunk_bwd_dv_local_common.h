@@ -24,11 +24,10 @@ constexpr int32_t SIZE_FLOAT = 4;
 constexpr int32_t BLOCK_SIZE = 32;
 constexpr int32_t CAL_NUM_FLOAT = 64;  // API一次能处理256B，能计算64个float元素
 constexpr int32_t MASK_LINE_SIZE = 32;
-constexpr uint64_t SYNC_AIV_AIC_FLAG_1 = 1;
-constexpr uint64_t SYNC_AIV_AIC_FLAG_2 = 2;
-constexpr uint64_t SYNC_AIC_AIV_FLAG_3 = 3;
-constexpr uint64_t SYNC_AIC_AIV_FLAG_4 = 4;
-
+constexpr uint64_t SYNC_FLAG_2 = 2;
+constexpr uint64_t SYNC_FLAG_3 = 3;
+constexpr uint64_t SYNC_FLAG_4 = 4;
+constexpr uint64_t SYNC_FLAG_5 = 5;
 __aicore__ inline int64_t CeilDiv(int64_t dividend, int64_t divisor)
 {
     if (unlikely(divisor == 0)) {

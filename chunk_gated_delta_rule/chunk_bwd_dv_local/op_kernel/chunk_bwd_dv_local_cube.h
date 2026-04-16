@@ -30,7 +30,7 @@
 #include "tla/tensor.hpp"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
-
+#include "catlass/arch/cross_core_sync.hpp"
 #include "chunk_bwd_dv_local_common.h"
 namespace GDN {
 
@@ -52,6 +52,7 @@ public:
     AscendC::GlobalTensor<QKVT> dOGm;
     AscendC::GlobalTensor<QKVT> dVGm;
     AscendC::GlobalTensor<QKVT> workspaceGm;
+    Catlass::Arch::CrossCoreFlagWithReverse<> flagAicFinishStore{SYNC_FLAG_2, SYNC_FLAG_3};
 
     int64_t H;
     int64_t T;
@@ -125,7 +126,6 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Process()
                     workspaceGm[curBatchId * H * T * strategy.chunkSize + hIndex * T * strategy.chunkSize +
                                 indexResult.curTokenId * strategy.chunkSize],
                     layoutC, Catlass::Arch::PositionGM{});
-                AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_1);
                 auto tensorBlockA =
                     GetTile(tensorA, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
                 auto tensorBlockB =
@@ -134,13 +134,9 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Process()
                     GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
 
                 blockMmad(tensorBlockA, tensorBlockB, tensorBlockC, actualBlockShape);
-                AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_3);
+                Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
             }
         }
-        AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_1);
-        AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_1);
-        AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_1);
-        AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_1);
     }
     AscendC::SyncAll<false>();
     // v @ d_o

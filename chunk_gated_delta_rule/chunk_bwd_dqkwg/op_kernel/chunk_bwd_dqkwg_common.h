@@ -26,37 +26,12 @@ constexpr uint64_t CONST_V = 128;
 constexpr uint64_t CONST_BT = 64;
 constexpr uint64_t CONST_NUM_CHUNKS = 44;//CONST_T / CONST_BT;  // 32
 constexpr int32_t CAL_NUM_FLOAT = 64; // API一次能处理256B，能计算64个float元素
-// Part 1: dw 和 dg_last 计算 (C-V 融合)
-constexpr uint64_t SYNC_PART1_AIC_AIV = 10;  // AIC -> AIV
-constexpr uint64_t SYNC_PART1_AIV_AIC = 11;  // AIV -> AIC
-
-// Part 2: mm5 = q @ k^T (纯 Cube)
-constexpr uint64_t SYNC_PART2_AIC_AIV = 20;  // AIC -> AIV
-constexpr uint64_t SYNC_PART2_AIV_AIC = 21;  // AIV -> AIC
-
-// Part 3: ds 计算 (C-V 融合)
-constexpr uint64_t SYNC_PART3_AIC_AIV = 30;  // AIC -> AIV
-constexpr uint64_t SYNC_PART3_AIV_AIC = 31;  // AIV -> AIC
-
-// Part 4: dq 计算 (C-V 融合)
-constexpr uint64_t SYNC_PART4_AIC_AIV = 40;  // AIC -> AIV
-constexpr uint64_t SYNC_PART4_AIV_AIC = 41;  // AIV -> AIC
-
-// Part 5: dk 计算 (C-V 融合)
-constexpr uint64_t SYNC_PART5_AIC_AIV = 50;  // AIC -> AIV
-constexpr uint64_t SYNC_PART5_AIV_AIC = 51;  // AIV -> AIC
-
-// Part 6: dq += ds @ k (C-V 融合)
-constexpr uint64_t SYNC_PART6_AIC_AIV = 60;  // AIC -> AIV
-constexpr uint64_t SYNC_PART6_AIV_AIC = 61;  // AIV -> AIC
-
-// Part 7: dk += ds^T @ q (C-V 融合)
-constexpr uint64_t SYNC_PART7_AIC_AIV = 70;  // AIC -> AIV
-constexpr uint64_t SYNC_PART7_AIV_AIC = 71;  // AIV -> AIC
 
 // 通用同步 Flag (用于简化)
-constexpr uint64_t SYNC_AIV_AIC_FLAG_0 = 3;
-constexpr uint64_t SYNC_AIC_AIV_FLAG_0 = 5;
+constexpr uint64_t SYNC_FLAG_2 = 2;
+constexpr uint64_t SYNC_FLAG_3 = 3;
+constexpr uint64_t SYNC_FLAG_4 = 4;
+constexpr uint64_t SYNC_FLAG_5 = 5;
 
 constexpr uint32_t UB_SIZE = 192 * 1024;  // 192KB
 constexpr uint32_t ONE_BLOCK_32 = 32;

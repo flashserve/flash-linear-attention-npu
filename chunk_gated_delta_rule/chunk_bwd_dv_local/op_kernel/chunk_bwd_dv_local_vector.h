@@ -15,7 +15,7 @@
 
 #ifndef CHUNK_BWD_DV_LOCAL_VECTOR_H
 #define CHUNK_BWD_DV_LOCAL_VECTOR_H
-
+#include "catlass/arch/cross_core_sync.hpp"
 #include "kernel_operator.h"
 
 namespace GDN {
@@ -39,6 +39,7 @@ public:
 
 
     AscendC::TPipe *pipe_;
+    Catlass::Arch::CrossCoreFlagWithReverse<> flagAicFinishStore{SYNC_FLAG_2, SYNC_FLAG_3};
     AscendC::GlobalTensor<QKVT> dOGm;
     AscendC::GlobalTensor<GT> gGm;
     AscendC::GlobalTensor<uint8_t> triMatrixGm;
@@ -129,11 +130,6 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::Init(
 template <typename QKVT, typename GT, typename Strategy>
 __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::Process()
 {
-    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_1);
-    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_1);
-    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_1);
-    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_1);
-
     AscendC::Duplicate<float>(maskLocalTensor, float(1.0), MASK_LINE_SIZE * MASK_LINE_SIZE);
     AscendC::PipeBarrier<PIPE_V>();
     for (int64_t index = 0; index < MASK_LINE_SIZE; index++) {
@@ -188,8 +184,7 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         }
         taskLineNum = taskEndLine - taskStartLine + 1;
         if (taskLineNum == 0) {
-            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_3);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_1);
+            Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
             continue;
         }
         // 搬入chunkSize g
@@ -279,7 +274,7 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         }
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::Muls(gFactorLocalTensor, gFactorLocalTensor, scale, taskLineNum * strategy.chunkSize);
-        AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_3);
+        Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
 
         // 搬入 (k@q^T)
         {
@@ -308,7 +303,6 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         AscendC::DataCopy(workspaceGm[taskOffset], kqOutLocalTensor, taskLineNum * strategy.chunkSize);
 
         kqTQueOut.FreeTensor(kqOutLocalTensor);
-        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_1);
     }
 }
 

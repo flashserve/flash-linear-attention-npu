@@ -27,6 +27,7 @@
 #include "catlass/status.hpp"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
+#include "catlass/arch/cross_core_sync.hpp"
 
 using namespace Catlass;
 using namespace AscendC;
@@ -74,7 +75,8 @@ public:
     // Layout 定义
     using LayoutRowMajor = layout::RowMajor;
     using LayoutColMajor = layout::ColumnMajor;
-    
+    Arch::CrossCoreFlagWithReverse<> flagAicFinishStore{SYNC_FLAG_2, SYNC_FLAG_3};
+    // Arch::CrossCoreFlagWithReverse<> flagAivFinishStore{SYNC_FLAG_4, SYNC_FLAG_5};    
     /// Parameters structure
     struct Params {
         // 输入指针
@@ -220,7 +222,6 @@ public:
                     auto tensorH = tla::MakeTensor(gmH, MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});  // h^T
                     auto tensorDw = tla::MakeTensor(gmDw, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     
-                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
 
                     auto tensorBlockDv = GetTile(tensorDv, tla::MakeCoord(0, 0), 
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
@@ -232,15 +233,9 @@ public:
                     blockMmadPart1(tensorBlockDv, tensorBlockH, tensorBlockDw, actualBlockShape);
 
 
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
-
+                    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
                 }
             }
-            // 最终同步(后移)
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
         }
         AscendC::SyncAll<false>();
 
@@ -331,7 +326,6 @@ public:
                     auto tensorV = tla::MakeTensor(gmV, MakeLayoutFromTag(layoutVxBT), Arch::PositionGM{});  // v^T
                     auto tensorDs = tla::MakeTensor(gmDs, MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
                     
-                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
                     // AscendC::PipeBarrier<PIPE_MTE2>();
                     auto tensorBlockDo = GetTile(tensorDo, tla::MakeCoord(0, 0), 
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
@@ -342,13 +336,9 @@ public:
                     
                     blockMmadPart3(tensorBlockDo, tensorBlockV, tensorBlockDs, actualBlockShape);
 
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
+                    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
                 }
             }
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
         }
         AscendC::SyncAll<false>();
 
@@ -392,7 +382,6 @@ public:
                     auto tensorH = tla::MakeTensor(gmH, MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});  // h^T: [V, K]
                     auto tensorDq = tla::MakeTensor(gmDq, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     
-                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
 
                     auto tensorBlockDo = GetTile(tensorDo, tla::MakeCoord(0, 0), 
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
@@ -403,13 +392,10 @@ public:
                     
                     blockMmadPart4(tensorBlockDo, tensorBlockH, tensorBlockDq, actualBlockShape);
 
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
+                    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
                 }
             }
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
+
         }
         AscendC::SyncAll<false>();
 
@@ -452,7 +438,6 @@ public:
                     auto tensorDh = tla::MakeTensor(gmDh, MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});  // dh: [V, K]
                     auto tensorDk = tla::MakeTensor(gmDk, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     
-                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
 
                     auto tensorBlockV = GetTile(tensorV, tla::MakeCoord(0, 0), 
                                                  tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
@@ -463,13 +448,9 @@ public:
                     
                     blockMmadPart5(tensorBlockV, tensorBlockDh, tensorBlockDk, actualBlockShape);
 
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
+                    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
                 }
             }
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
         }
         AscendC::SyncAll<false>();
 
@@ -512,8 +493,6 @@ public:
                     auto tensorK = tla::MakeTensor(gmK, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     auto tensorDq = tla::MakeTensor(gmDq, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     
-                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-                    
                     auto tensorBlockDsTemp = GetTile(tensorDsTemp, tla::MakeCoord(0, 0), 
                                                       tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
                     auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0), 
@@ -522,18 +501,10 @@ public:
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     
                     blockMmadPart6(tensorBlockDsTemp, tensorBlockK, tensorBlockDq, actualBlockShape);
-// if(h==0&&loopIdx==7){
-//     DumpTensor(gmDsTemp[63*64],__LINE__,64);
-//     DumpTensor(gmK[63*128],__LINE__,64);
-//     DumpTensor(gmDq[63*128],__LINE__,64);
-// }
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
+                    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
                 }
             }
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
+
         }
         AscendC::SyncAll<false>();
         // ========== Part 7: mm7 = b_ds_temp^T @ b_q ==========
@@ -576,8 +547,6 @@ public:
                     auto tensorQ = tla::MakeTensor(gmQ, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     auto tensorDk = tla::MakeTensor(gmDk, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     
-                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-                    
                     auto tensorBlockDsTemp = GetTile(tensorDsTemp, tla::MakeCoord(0, 0), 
                                                       tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
                     auto tensorBlockQ = GetTile(tensorQ, tla::MakeCoord(0, 0), 
@@ -586,20 +555,9 @@ public:
                                                   tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     
                     blockMmadPart7(tensorBlockDsTemp, tensorBlockQ, tensorBlockDk, actualBlockShape);
-// if(h==0&&loopIdx==0){
-//     DumpTensor(gmDsTemp,__LINE__,64);
-//     DumpTensor(gmQ,__LINE__,64);
-//     DumpTensor(gmDk,__LINE__,64);
-// }
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
+                    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
                 }
             }
-            
-            // 最终同步
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
         }
 
     }
