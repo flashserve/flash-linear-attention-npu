@@ -14,6 +14,7 @@
 
 #ifndef PREPARE_WY_REPR_BWD_DA_VECTOR_H
 #define PREPARE_WY_REPR_BWD_DA_VECTOR_H
+#include "catlass/arch/cross_core_sync.hpp"
 
 using namespace AscendC;
 
@@ -42,6 +43,8 @@ private:
     uint64_t rowNumVBeta = 0;
     uint64_t rowNumMDuDw = 0;
     uint64_t rowNumG = 0;
+    Arch::CrossCoreFlagWithReverse<> flagAicFinishStore{SYNC_FLAG_2, SYNC_FLAG_3};
+    Arch::CrossCoreFlagWithReverse<> flagAivFinishStore{SYNC_FLAG_4, SYNC_FLAG_5};
 
     GM_ADDR k;
     GM_ADDR v;
@@ -188,7 +191,6 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
         GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, BT, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
         for (int h = 0; h < H; h++) {
-            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
@@ -271,13 +273,9 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                     kBetaGOutQue.FreeTensor(tensorOut);
                 }
             }
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
+            Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
         }
     }
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
     return;
 }
 
@@ -313,7 +311,6 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
         GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, BT, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
         for (int h = 0; h < H; h++) {
-            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
@@ -373,13 +370,9 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                     vBetaOutQue.FreeTensor(tensorOut);
                 }
             }
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
+            Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
         }
     }
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
     return;
 }
 
@@ -434,7 +427,6 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
         GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, BT, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
         for (int h = 0; h < H; h++) {
-            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
@@ -482,13 +474,9 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                     mduwOutQue.FreeTensor(tensorMduwOut);
                 }
             }
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
+            Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
         }
     }
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
-    AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
     return;
 }
 
@@ -552,10 +540,6 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
     AscendC::Duplicate<float>(tensorGAllFp32, float(0.0), BT);
     PipeBarrier<PIPE_V>();
 
-    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
-    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
-    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
-    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
         GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, BT, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
@@ -578,7 +562,7 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                 PipeBarrier<PIPE_V>();
                 gAllInQue.FreeTensor(tensorGAllIn);
             }
-            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_5);
+            Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
@@ -671,7 +655,6 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                     dAOutQue.FreeTensor(tensorDAOut);
                 }
             }
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_3);
         }
     }
     return;

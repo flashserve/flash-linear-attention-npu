@@ -15,8 +15,8 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 output_dir = os.path.join(current_dir, "output")
 os.makedirs(output_dir, exist_ok=True)
 
-torch.npu.config.allow_internal_format = False
-torch.npu.set_compile_mode(jit_compile=False)
+# torch.npu.config.allow_internal_format = False
+# torch.npu.set_compile_mode(jit_compile=False)
 
 def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
     """

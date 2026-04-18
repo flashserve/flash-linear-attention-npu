@@ -13,8 +13,8 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 output_dir = os.path.join(current_dir, "output")
 os.makedirs(output_dir, exist_ok=True)
 
-torch.npu.config.allow_internal_format = False
-torch.npu.set_compile_mode(jit_compile=False)
+# torch.npu.config.allow_internal_format = False
+# torch.npu.set_compile_mode(jit_compile=False)
 
 
 def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
@@ -343,7 +343,7 @@ def test_prepare_wy_repr_bwd_da_variable(
         chunk_size=chunk_size, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices
     )
     save_path1 = os.path.join(output_dir, "test_dA_var_npu.pt")
-    torch.save(dA_npu, save_path1)
+    # torch.save(dA_npu, save_path1)
     print(f"==== dA_npu.shape = {dA_npu.shape} ")
     print(f"==== dA_npu.dtype = {dA_npu.dtype} ")
     # print(f"==== dA_npu = {dA_npu} ")
@@ -354,7 +354,7 @@ def test_prepare_wy_repr_bwd_da_variable(
     print("==== NT = ", NT)
     dA_cpu = compute_dA_cpu(A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, H, T, K, BT, NT)
     save_path2 = os.path.join(output_dir, "test_dA_var_cpu.pt")
-    torch.save(dA_cpu, save_path2)
+    # torch.save(dA_cpu, save_path2)
     # 测试dA_cpu里是否包含nan值
     print(f"==== dA_cpu has NaN: {torch.isnan(dA_cpu).any().item()}")
 
@@ -411,7 +411,7 @@ def test_prepare_wy_repr_bwd_da_fix(
         chunk_size=chunk_size, cu_seqlens=None, chunk_indices=None
     )
     save_path3 = os.path.join(output_dir, "test_dA_npu.pt")
-    torch.save(dA_npu, save_path3)
+    # torch.save(dA_npu, save_path3)
     print(f"==== dA_npu.shape = {dA_npu.shape} ")
     print(f"==== dA_npu.dtype = {dA_npu.dtype} ")
     # print(f"==== dA_npu = {dA_npu} ")
@@ -424,7 +424,7 @@ def test_prepare_wy_repr_bwd_da_fix(
     print("==== NT = ", NT)
     dA_cpu = compute_dA_cpu(A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, H, T, K, BT, NT)
     save_path4 = os.path.join(output_dir, "test_dA_cpu.pt")
-    torch.save(dA_cpu, save_path4)
+    # torch.save(dA_cpu, save_path4)
     # 测试dA_cpu里是否包含nan值
     print(f"==== dA_cpu has NaN: {torch.isnan(dA_cpu).any().item()}")
 
