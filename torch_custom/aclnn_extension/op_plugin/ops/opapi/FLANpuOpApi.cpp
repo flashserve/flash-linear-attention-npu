@@ -188,16 +188,38 @@ at::Tensor npu_chunk_fwd_o(
     const at::Tensor & k, 
     const at::Tensor & w, 
     const at::Tensor & u, 
-    const at::Tensor & g, 
+    const c10::optional<at::Tensor> & g, 
+    const c10::optional<at::Tensor> & gk,
     const c10::optional<at::Tensor> & initial_state, 
+    c10::optional<bool> output_final_state, 
+    c10::optional<int64_t> chunk_size,
+    c10::optional<bool> save_new_value,
     at::OptionalIntArrayRef cu_seqlens, 
     at::OptionalIntArrayRef chunk_indices, 
-    c10::optional<bool> output_final_state, 
-    c10::optional<int64_t> chunk_size)
+    c10::optional<bool> use_exp2,
+    c10::optional<bool> transpose_state_layout)
 {
+    TORCH_CHECK(
+        g.has_value() && g->defined(),
+        "npu_chunk_gated_delta_rule_fwd_h: g cannot be None or undefined; pass a real gate tensor until NPU supports g=None.");
+    TORCH_CHECK(
+        !gk.has_value() || !gk->defined(),
+        "npu_chunk_gated_delta_rule_fwd_h: gk is reserved and only None is supported.");
+    TORCH_CHECK(
+        save_new_value.value_or(true),
+        "npu_chunk_gated_delta_rule_fwd_h: save_new_value is reserved and only true is supported.");
+    TORCH_CHECK(
+        !use_exp2.value_or(false),
+        "npu_chunk_gated_delta_rule_fwd_h: use_exp2 is reserved and only false is supported.");
+    TORCH_CHECK(
+        !transpose_state_layout.value_or(false),
+        "npu_chunk_gated_delta_rule_fwd_h: transpose_state_layout is reserved and only false is supported.");
+
     // optional 参数处理
     bool output_final_state_ = output_final_state.value_or(false);
     int64_t chunk_size_ = chunk_size.value_or(64);
+    const at::Tensor &g_ = c10::value_or_else(g, [] { return at::Tensor(); });
+    const at::Tensor &gk_ = c10::value_or_else(gk, [] { return at::Tensor(); });
     const at::Tensor &initial_state_ = c10::value_or_else(initial_state, [] { return at::Tensor(); });
 
     // 计算shape
@@ -208,6 +230,7 @@ at::Tensor npu_chunk_fwd_o(
     int64_t K = k_sizes[3];
     int64_t V = u_sizes[3];
     int64_t HV = u_sizes[1];
+
     int64_t NT = 0;
     if (chunk_indices.has_value()) {
         auto chunk_indices_ref = chunk_indices.value();
@@ -216,7 +239,7 @@ at::Tensor npu_chunk_fwd_o(
         NT = (T + chunk_size_ - 1) / chunk_size_;
     }
 
-    // 创建输出tensor
+    // 创建输出 tensor
     at::Tensor h_out = at::zeros({B, HV, NT, K, V}, k.options());
     at::Tensor v_new_out = at::empty_like(u);
     at::Tensor final_state_out;
@@ -229,10 +252,15 @@ at::Tensor npu_chunk_fwd_o(
     }
 
     // 调用ACLNN算子（两阶段调用：先获取工作空间大小，再执行）
+    bool save_new_value_ = save_new_value.value_or(true);
+    bool use_exp2_ = use_exp2.value_or(false);
+    bool transpose_state_layout_ = transpose_state_layout.value_or(false);
+
     EXEC_NPU_CMD_EXT(
         aclnnChunkGatedDeltaRuleFwdH,
-        k, w, u, g,
-        initial_state_, cu_seqlens, chunk_indices, output_final_state_, chunk_size_,
+        k, w, u, g_,
+        gk_, initial_state_, output_final_state_, chunk_size_, save_new_value_,
+        cu_seqlens, chunk_indices, use_exp2_, transpose_state_layout_,
         h_out, v_new_out, final_state_out
     );
     if (output_final_state_) {

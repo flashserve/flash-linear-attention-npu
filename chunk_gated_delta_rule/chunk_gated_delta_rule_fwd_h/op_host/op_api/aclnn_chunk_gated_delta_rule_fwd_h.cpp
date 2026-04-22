@@ -39,12 +39,16 @@ struct ChunkGatedDeltaRuleFwdHParams {
     const aclTensor *k = nullptr;
     const aclTensor *w = nullptr;
     const aclTensor *u = nullptr;
-    const aclTensor *g = nullptr;
+    const aclTensor *gOptional = nullptr;
+    const aclTensor *gkOptional = nullptr;
     const aclTensor *initalStateOptional = nullptr;
-    const aclIntArray *cuSeqlensOptional = nullptr;
-    const aclIntArray *chunkIndicesOptional = nullptr;
     bool outputFinalState = false;
     int64_t chunkSize = 64;
+    bool saveNewValue = true;
+    const aclIntArray *cuSeqlensOptional = nullptr;
+    const aclIntArray *chunkIndicesOptional = nullptr;
+    bool useExp2 = false;
+    bool transposeStateLayout = false;
     const aclTensor *hOut = nullptr;
     const aclTensor *vNewOut = nullptr;
     const aclTensor *finalStateOut = nullptr;
@@ -55,7 +59,6 @@ static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleFwdHParams params)
     CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
     CHECK_COND(params.w != nullptr, ACLNN_ERR_PARAM_NULLPTR, "w must not be nullptr.");
     CHECK_COND(params.u != nullptr, ACLNN_ERR_PARAM_NULLPTR, "u must not be nullptr.");
-    CHECK_COND(params.g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
 
     CHECK_COND(params.hOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "hOut must not be nullptr.");
     CHECK_COND(params.vNewOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "vNewOut must not be nullptr.");
@@ -92,8 +95,8 @@ static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdHParams &params, a
                "Contiguous w failed.");
     CHECK_COND(DataContiguous(params.u, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "Contiguous u failed.");
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
+    CHECK_COND(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
+               "Contiguous gOptional failed.");
     if (params.initalStateOptional != nullptr) {
         CHECK_COND(DataContiguous(params.initalStateOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                    "Contiguous initalStateOptional failed.");
@@ -102,9 +105,31 @@ static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdHParams &params, a
     return ACLNN_SUCCESS;
 }
 
+static aclnnStatus CheckGOptionalNonNull(const ChunkGatedDeltaRuleFwdHParams &params)
+{
+    CHECK_COND(params.gOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
+               "g is an optional-parameter slot in the API but only a non-null aclTensor is supported; nullptr is not allowed until g=None is implemented.");
+    return ACLNN_SUCCESS;
+}
+
+static aclnnStatus CheckReservedOptions(const ChunkGatedDeltaRuleFwdHParams &params)
+{
+    CHECK_COND(params.gkOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
+               "gk is reserved for ChunkGatedDeltaRuleFwdH and must be nullptr.");
+    CHECK_COND(params.saveNewValue, ACLNN_ERR_PARAM_INVALID,
+               "save_new_value is reserved and only true is supported.");
+    CHECK_COND(!params.useExp2, ACLNN_ERR_PARAM_INVALID,
+               "use_exp2 is reserved and only false is supported.");
+    CHECK_COND(!params.transposeStateLayout, ACLNN_ERR_PARAM_INVALID,
+               "transpose_state_layout is reserved and only false is supported.");
+    return ACLNN_SUCCESS;
+}
+
 static aclnnStatus CheckParams(ChunkGatedDeltaRuleFwdHParams params)
 {
     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckGOptionalNonNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckReservedOptions(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -115,21 +140,41 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     const aclTensor *k,
     const aclTensor *w,
     const aclTensor *u,
-    const aclTensor *g,
+    const aclTensor *gOptional,
+    const aclTensor *gkOptional,
     const aclTensor *initalStateOptional,
-    const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkIndicesOptional,
     bool outputFinalState,
     int64_t chunkSize,
+    bool saveNewValue,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOptional,
+    bool useExp2,
+    bool transposeStateLayout,
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
-    ChunkGatedDeltaRuleFwdHParams params{k, w, u, g, initalStateOptional, cuSeqlensOptional, chunkIndicesOptional, outputFinalState, chunkSize, hOut, vNewOut, finalStateOut};
+    ChunkGatedDeltaRuleFwdHParams params{k,
+                                         w,
+                                         u,
+                                         gOptional,
+                                         gkOptional,
+                                         initalStateOptional,
+                                         outputFinalState,
+                                         chunkSize,
+                                         saveNewValue,
+                                         cuSeqlensOptional,
+                                         chunkIndicesOptional,
+                                         useExp2,
+                                         transposeStateLayout,
+                                         hOut,
+                                         vNewOut,
+                                         finalStateOut};
     // Standard syntax, Check parameters.
-    L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleFwdH, DFX_IN(k, w, u, g, initalStateOptional, cuSeqlensOptional, chunkIndicesOptional),
+    L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleFwdH,
+                   DFX_IN(k, w, u, gOptional, gkOptional, initalStateOptional, cuSeqlensOptional, chunkIndicesOptional),
                    DFX_OUT(hOut, vNewOut, finalStateOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
@@ -138,7 +183,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
-    auto result = l0op::ChunkGatedDeltaRuleFwdH(params.k, params.w, params.u, params.g, params.initalStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize, params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
+    auto result = l0op::ChunkGatedDeltaRuleFwdH(params.k, params.w, params.u, params.gOptional, params.initalStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize, params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.

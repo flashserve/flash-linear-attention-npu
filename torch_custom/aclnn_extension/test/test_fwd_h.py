@@ -277,16 +277,28 @@ if __name__ == "__main__":
     print("before custom op")
     print(input_tensor.chunk_offsets)
     print(input_tensor.cu_seqlens)
+    def _as_int_list(x):
+        if x is None:
+            return None
+        if isinstance(x, torch.Tensor):
+            return x.cpu().tolist()
+        return list(x)
+
+    # 与 npu_custom.yaml / FLA chunk_gated_delta_rule_fwd_h 对齐：k,w,u 位置参数；g 及之后为关键字（g 当前不可为 None）
     result = torch.ops.npu.npu_chunk_gated_delta_rule_fwd_h(
         input_tensor.k.npu(),
         input_tensor.w.npu(),
         input_tensor.u.npu(),
-        input_tensor.g.npu(),
-        initial_state=None,
-        cu_seqlens=input_tensor.cu_seqlens,
-        chunk_indices=input_tensor.chunk_offsets,
-        output_final_state=False,
-        chunk_size=gdn_fwd_h_input.chunk_size
+        g=input_tensor.g.npu(),
+        initial_state=(
+            input_tensor.initial_state.npu()
+            if input_tensor.initial_state is not None
+            else None
+        ),
+        output_final_state=bool(gdn_fwd_h_input.store_final_state),
+        chunk_size=gdn_fwd_h_input.chunk_size,
+        cu_seqlens=_as_int_list(input_tensor.cu_seqlens),
+        chunk_indices=_as_int_list(input_tensor.chunk_offsets),
     )
     print("after custom op")
     torch_npu._C._npu_synchronize()
