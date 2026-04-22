@@ -91,8 +91,8 @@ aclnnStatus aclnnChunkBwdDqkwg(
 | ------------------------ | --------- | -------------------- | ---------------------- | ------------------------------------------------- | --------- | ------------- |
 | `scale`                  | 输入      | 可选属性，接口侧必传 | 缩放系数               | 建议设置为 `1 / sqrt(K)`                          | `float`   | 建议大于 0    |
 | `chunkSize`              | 输入      | 可选属性，接口侧必传 | 分块大小               | 当前仅支持 `64` 或 `128`                          | `int64_t` | `64` / `128` |
-| `use_exp2`               | 输入      | 必选                 | 是否使用 exp2 近似实现 | `true` 使用 exp2，`false` 使用标准 exp            | `bool`    | `true` / `false` |
-| `transpose_state_layout` | 输入      | 必选                 | 是否转置内部状态布局   | 影响 `h/dh` 对应的内部 state layout 与 kernel 访存 | `bool`    | `true` / `false` |
+| `use_exp2`               | 输入      | 可选                 | 是否使用 exp2 近似实现 | `true` 使用 exp2，`false` 使用标准 exp            | `bool`    | `true` / `false` `必须是false` |
+| `transpose_state_layout` | 输入      | 可选                 | 是否转置内部状态布局   | 影响 `h/dh` 对应的内部 state layout 与 kernel 访存 | `bool`    | `true` / `false` `必须是false` |
 
 ### 3.3 输出参数（Outputs）
 

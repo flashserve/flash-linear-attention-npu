@@ -62,11 +62,11 @@ aclnnStatus aclnnPrepareWyReprBwdDa(
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `k` | 输入 | 必选 | Key 输入张量 | 参与反向计算；接口执行前会先转为连续内存 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
 | `v` | 输入 | 必选 | Value 输入张量 | 参与反向计算；接口执行前会先转为连续内存 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, V]` | 支持 |
-| `beta` | 输入 | 必选 | Beta 权重张量 | 参与反向计算；通常为 FP32 | `FLOAT` | `ND` | `[B, H, T]` | 支持 |
+| `beta` | 输入 | 必选 | Beta 权重张量 | 参与反向计算；通常为 FP32 | `FLOAT16`、`BFLOAT16`、 `FLOAT` | `ND` | `[B, H, T]` | 支持 |
 | `a` | 输入 | 必选 | 前向输出 A 矩阵 | 参与反向计算；接口执行前会先转为连续内存 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, BT]` | 支持 |
 | `dw` | 输入 | 必选 | Weight 梯度输入 | 对应 w 分支的梯度输入 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
 | `du` | 输入 | 必选 | U 分支梯度输入 | 对应 u 分支的梯度输入 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, V]` | 支持 |
-| `g` | 输入 | 必选 | Gate 门控张量 | 参与反向计算；通常为 FP32 | `FLOAT` | `ND` | `[B, H, T]` | 支持 |
+| `g` | 输入 | 必选 | Gate 门控张量 | 参与反向计算；通常为 FP32 | `FLOAT16`、`BFLOAT16`、 `FLOAT` | `ND` | `[B, H, T]` | 支持 |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列累计长度 | 变长模式输入，形状为 `[N+1]` | `INT64` | `ND` | 1 维 | - |
 | `chunkIndicesOptional` | 输入 | 可选 | 分块索引信息 | 扁平化的一维数组 `[num_chunks * 2]` | `INT64` | `ND` | 1 维 | - |
 
@@ -187,16 +187,27 @@ print(dA.shape)
 ```text
 prepare_wy_repr_bwd_da/
 ├── examples/
-│   └── test_aclnn_prepare_wy_repr_bwd_da.cpp     # C++ 单元测试示例
+│   └── test_aclnn_prepare_wy_repr_bwd_da.cpp
 ├── op_host/
 │   ├── op_api/
-│   │   ├── aclnn_prepare_wy_repr_bwd_da.cpp      # ACLNN 逻辑封装
-│   │   └── aclnn_prepare_wy_repr_bwd_da.h
+│   │   ├── aclnn_prepare_wy_repr_bwd_da.cpp
+│   │   ├── aclnn_prepare_wy_repr_bwd_da.h
+│   │   ├── prepare_wy_repr_bwd_da.cpp
+│   │   └── prepare_wy_repr_bwd_da.h
 │   ├── op_tiling/
-│   │   ├── prepare_wy_repr_bwd_da_tiling.cpp     # 算子 Tiling 策略
+│   │   ├── prepare_wy_repr_bwd_da_tiling.cpp
 │   │   └── prepare_wy_repr_bwd_da_tiling.h
-│   ├── prepare_wy_repr_bwd_da_def.cpp            # 算子定义注册
-│   └── CMakeLists.txt
-└── op_kernel/
-    └── prepare_wy_repr_bwd_da.cpp                # AICore 算子内核实现
+│   ├── CMakeLists.txt
+│   └── prepare_wy_repr_bwd_da_def.cpp
+├── op_kernel/
+│   ├── prepare_wy_repr_bwd_da_common.h
+│   ├── prepare_wy_repr_bwd_da_cube.h
+│   ├── prepare_wy_repr_bwd_da_vector.h
+│   └── prepare_wy_repr_bwd_da.cpp
+├── test/
+│   ├── test_da_all.py
+│   └── test_da.py
+├── CMakeLists.txt
+├── README.md
+└── run.sh
 ```
