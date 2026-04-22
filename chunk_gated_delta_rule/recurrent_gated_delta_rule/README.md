@@ -1,5 +1,4 @@
 # RecurrentGatedDeltaRule 算子说明
-🔗 [查看源码](https://gitcode.com/Wei_NaChuan/flash-linear-attention-npu/tree/main/chunk_gated_delta_rule/recurrent_gated_delta_rule)
 `RecurrentGatedDeltaRule` 是用于循环门控 Delta 规则（Recurrent Gated Delta Rule，RGDR）的自定义算子，主要应用于线性注意力机制的推理场景。该算子在每个时间步根据当前输入 $q_t, k_t, v_t$ 和上一隐藏状态 $S_{t-1}$，计算当前输出 $o_t$ 并更新隐藏状态 $S_t$。
 
 ---
@@ -80,11 +79,11 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 
 | 参数名 | 输入/输出 | 必选/可选 | 描述 | 使用说明 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|---|---|
-| `query` | 输入 | 必选 | 公式中的 $q$；不支持空 Tensor | 接口执行前会先转为连续内存 | `BFLOAT16` | `ND` | `(T, Nk, Dk)` | 支持 |
-| `key` | 输入 | 必选 | 公式中的 $k$；不支持空 Tensor | 接口执行前会先转为连续内存 | `BFLOAT16` | `ND` | `(T, Nk, Dk)` | 支持 |
-| `value` | 输入 | 必选 | 公式中的 $v$；不支持空 Tensor | 接口执行前会先转为连续内存 | `BFLOAT16` | `ND` | `(T, Nv, Dv)` | 支持 |
-| `beta` | 输入 | 必选 | 公式中的 $\beta$；不支持空 Tensor | 接口执行前会先转为连续内存 | `BFLOAT16` | `ND` | `(T, Nv)` | 支持 |
-| `stateRef` | 输入&输出 | 必选 | 状态矩阵 $S$，算子执行后原地更新；不支持空 Tensor | **不支持非连续 Tensor**，算子执行后直接写入其存储 | `BFLOAT16` | `ND` | `(BlockNum, Nv, Dv, Dk)` | 不支持 |
+| `query` | 输入 | 必选 | 公式中的 $q$；不支持空 Tensor | - | `BFLOAT16` | `ND` | `(T, Nk, Dk)` | 支持 |
+| `key` | 输入 | 必选 | 公式中的 $k$；不支持空 Tensor | - | `BFLOAT16` | `ND` | `(T, Nk, Dk)` | 支持 |
+| `value` | 输入 | 必选 | 公式中的 $v$；不支持空 Tensor | - | `BFLOAT16` | `ND` | `(T, Nv, Dv)` | 支持 |
+| `beta` | 输入 | 必选 | 公式中的 $\beta$；不支持空 Tensor | - | `BFLOAT16` | `ND` | `(T, Nv)` | 支持 |
+| `stateRef` | 输入&输出 | 必选 | 状态矩阵 $S$，算子执行后原地更新；不支持空 Tensor | **不支持非连续 Tensor** | `BFLOAT16` | `ND` | `(BlockNum, Nv, Dv, Dk)` | 不支持 |
 | `actualSeqLengths` | 输入 | 必选 | 各 batch 的有效序列长度；不支持空 Tensor | 各元素之和等于 $T$ | `INT32` | `ND` | `(B,)` | 支持 |
 | `ssmStateIndices` | 输入 | 必选 | 输入序列到状态矩阵的映射索引，`state[ssmStateIndices[i]]` 表示第 $i$ 个 token 对应的状态块；不支持空 Tensor | 取值范围 `[0, BlockNum)` | `INT32` | `ND` | `(T,)` | 支持 |
 | `g` | 输入 | 可选 | 标量衰减系数 $\alpha_t = e^g$ | 传 `nullptr` 时等价于全 0（$\alpha_t = 1$，即无标量衰减） | `FLOAT32` | `ND` | `(T, Nv)` | 支持 |
@@ -95,7 +94,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 
 | 参数名 | 输入/输出 | 必选/可选 | 描述 | 使用说明 | 数据类型 | 取值约束 |
 |---|---|---|---|---|---|---|
-| `scaleValue` | 输入 | 可选（默认 `1.0`） | Query 的缩放因子 | `op_def` 默认值为 `1.0f`；推荐按 `1 / sqrt(Dk)` 设置 | `float` | 推荐 `1 / sqrt(Dk)` |
+| `scaleValue` | 输入 | 可选（默认 `1.0`） | Query 的缩放因子 | 推荐按 `1 / sqrt(Dk)` 设置 | `float` | 推荐 `1 / sqrt(Dk)` |
 
 ### 3.3 输出参数（Outputs）
 
@@ -115,44 +114,19 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 - `actualSeqLengths` 为长度 $B$ 的一维 INT32 张量，各元素之和等于 $T$。
 - `ssmStateIndices` 为长度 $T$ 的一维 INT32 张量，取值范围 `[0, BlockNum)`。
 - 当前仅支持 `BFLOAT16` 精度（query/key/value/beta/stateRef/out）。
+- 每个序列的有效 token 数 $L_i$（即 `actualSeqLengths[i]`）须满足 $L_i \le 8$。
 
 ### 3.5 补充说明
 
-- 输入张量 `query/key/value/beta/g/gk` 等支持非连续 Tensor 输入，接口层会自动进行连续化处理。
-- `stateRef` 为原地输入输出，**不支持非连续 Tensor**，算子执行后直接写入其存储。
-- 输出 `out` 若为非连续视图，将通过内部 `ViewCopy` 回写结果。
+- 输入张量 `query/key/value/beta/g` 支持非连续 Tensor 输入。
+- `stateRef` 为原地输入输出，**不支持非连续 Tensor**。
+- `gk` 当前版本暂不支持，须传 `None`。
 
 ---
 
 ## 4. 调用约束与执行语义
 
-### 4.1 执行流程
-
-该算子采用两阶段执行模型：
-
-1. 调用 `aclnnRecurrentGatedDeltaRuleGetWorkspaceSize`：
-   - 完成参数合法性检查
-   - 构建执行器（executor）
-   - 返回所需 `workspaceSize`
-
-2. 调用 `aclnnRecurrentGatedDeltaRule`：
-   - 在指定 `workspace` 和 `executor` 下执行计算
-   - 内部通过 AICore kernel 完成逐 token 循环更新
-
----
-
-### 4.2 内存行为
-
-- 输入张量 `query/key/value/beta/g/gk`：
-  - 若为非连续 Tensor，将在内部自动转换为连续布局再参与计算
-- `stateRef`：
-  - 原地输入输出，**不支持非连续 Tensor**
-- 输出张量 `out`：
-  - 若为非连续视图，将通过内部 `ViewCopy` 回写结果
-
----
-
-### 4.3 形状约束（强约束）
+### 4.1 形状约束（强约束）
 
 必须满足以下条件：
 
@@ -165,10 +139,10 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 
 ---
 
-### 4.4 数值语义
+### 4.2 数值语义
 
-- `g` 传 `nullptr` 时：$\alpha_t = e^0 = 1$，即无标量衰减
-- `gk` 传 `nullptr` 时：$\alpha_{kt} = \mathbf{1}$，即无逐维衰减
+- `g` 传 `None` 时：$\alpha_t = e^0 = 1$，即无标量衰减
+- `gk` 当前版本暂不支持，须传 `None`
 - `scaleValue` 推荐设置为：
 
 ```text
@@ -177,57 +151,101 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 
 ---
 
-## 5. ACLNN C++ 测试调用示例
+## 5. Torch 测试调用示例
 
-完整调用示例见 [test_aclnn_recurrent_gated_delta_rule.cpp](./examples/test_aclnn_recurrent_gated_delta_rule.cpp)。
+### 5.1 定长场景（每序列处理相同数量 token）
 
-```cpp
-#include "aclnnop/aclnn_recurrent_gated_delta_rule.h"
+```python
+import torch
+import torch_npu
+import math
 
-int main()
-{
-    // 1. 初始化 ACL、device、stream（参考 aclInit / aclrtSetDevice / aclrtCreateStream）
-    int32_t deviceId = 0;
-    aclrtContext context;
-    aclrtStream stream;
-    // ... 省略初始化代码 ...
+def test_recurrent_gated_delta_rule_fixed():
+    B, mtp = 4, 2           # 4 个 batch，每序列 2 个 token
+    T = B * mtp             # 累积 token 数
+    Nk, Nv, Dk, Dv = 4, 8, 128, 128
+    BlockNum = T            # 每个 token 对应一个独立状态块
+    scale = 1.0 / math.sqrt(Dk)
+    device = "npu:0"
 
-    // 2. 构造输入张量（示例参数）
-    int32_t batchSize = 32, mtp = 2, headKNum = 4, headVNum = 8, dimV = 128, dimK = 128;
-    // query/key: (T, Nk, Dk) = (batchSize*mtp, headKNum, dimK)
-    // value/out: (T, Nv, Dv) = (batchSize*mtp, headVNum, dimV)
-    // beta/g:    (T, Nv)     = (batchSize*mtp, headVNum)
-    // stateRef:  (BlockNum, Nv, Dv, Dk) = (batchSize*mtp, headVNum, dimV, dimK)
-    // actualSeqLengths: (B,) = (batchSize,)
-    // ssmStateIndices:  (T,) = (batchSize*mtp,)
-    // ... 省略 tensor 创建代码，参考完整示例 ...
+    query = torch.randn(T, Nk, Dk, dtype=torch.bfloat16).to(device)
+    key   = torch.randn(T, Nk, Dk, dtype=torch.bfloat16).to(device)
+    value = torch.randn(T, Nv, Dv, dtype=torch.bfloat16).to(device)
+    state = torch.randn(BlockNum, Nv, Dv, Dk, dtype=torch.bfloat16).to(device)
+    beta  = torch.rand(T, Nv, dtype=torch.bfloat16).to(device)
+    g     = torch.randn(T, Nv, dtype=torch.float32).to(device)
 
-    // 3. 调用第一段接口获取 workspace 大小
-    uint64_t workspaceSize = 0;
-    float scaleValue = 1.0f;
-    aclOpExecutor *executor = nullptr;
-    auto ret = aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(
-        query, key, value, beta, stateRef,
-        actSeqLen, ssmStaId,
-        gama, gamak, numAccTok,
-        scaleValue, attnOut,
-        &workspaceSize, &executor);
+    # actual_seq_lengths: 各 batch 的有效序列长度（总和须等于 T）
+    actual_seq_lengths = torch.tensor([mtp] * B, dtype=torch.int32).to(device)
+    # ssm_state_indices: 第 i 个 token 使用 state[ssm_state_indices[i]]
+    ssm_state_indices  = torch.arange(T, dtype=torch.int32).to(device)
 
-    // 4. 申请 workspace
-    void *workspaceAddr = nullptr;
-    if (workspaceSize > 0) {
-        aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    }
+    out = torch_npu.npu_recurrent_gated_delta_rule(
+        query, key, value, state,
+        beta=beta,
+        scale=scale,
+        actual_seq_lengths=actual_seq_lengths,
+        ssm_state_indices=ssm_state_indices,
+        num_accepted_tokens=None,   # None = 每序列接受 1 个 token（默认）
+        g=g,
+        gk=None                     # 当前版本暂不支持，须传 None
+    )
 
-    // 5. 调用第二段接口执行算子
-    ret = aclnnRecurrentGatedDeltaRule(workspaceAddr, workspaceSize, executor, stream);
+    assert out.shape == (T, Nv, Dv)
+    print("out shape:", out.shape)   # (8, 8, 128)
+    # state 已被原地更新
 
-    // 6. 同步等待
-    aclrtSynchronizeStream(stream);
+if __name__ == "__main__":
+    test_recurrent_gated_delta_rule_fixed()
+```
 
-    // 7. 释放资源（参考完整示例）
-    return 0;
-}
+### 5.2 变长场景（投机推理，各序列接受不同数量 token）
+
+变长场景下，不同序列接受的 token 数量不同（常见于投机推理中 draft 模型的结果验证）。
+
+```python
+import torch
+import torch_npu
+import math
+
+def test_recurrent_gated_delta_rule_varlen():
+    B, mtp = 4, 2
+    T = B * mtp
+    Nk, Nv, Dk, Dv = 4, 8, 128, 128
+    BlockNum = T
+    scale = 1.0 / math.sqrt(Dk)
+    device = "npu:0"
+
+    query = torch.randn(T, Nk, Dk, dtype=torch.bfloat16).to(device)
+    key   = torch.randn(T, Nk, Dk, dtype=torch.bfloat16).to(device)
+    value = torch.randn(T, Nv, Dv, dtype=torch.bfloat16).to(device)
+    state = torch.randn(BlockNum, Nv, Dv, Dk, dtype=torch.bfloat16).to(device)
+    beta  = torch.rand(T, Nv, dtype=torch.bfloat16).to(device)
+    g     = torch.randn(T, Nv, dtype=torch.float32).to(device)
+
+    actual_seq_lengths = torch.tensor([mtp] * B, dtype=torch.int32).to(device)
+    ssm_state_indices  = torch.arange(T, dtype=torch.int32).to(device)
+
+    # 各序列实际接受的 token 数不同（投机推理验证结果）
+    # 需满足 num_accepted_tokens[i] <= actual_seq_lengths[i] <= 8
+    num_accepted_tokens = torch.tensor([2, 1, 2, 1], dtype=torch.int32).to(device)
+
+    out = torch_npu.npu_recurrent_gated_delta_rule(
+        query, key, value, state,
+        beta=beta,
+        scale=scale,
+        actual_seq_lengths=actual_seq_lengths,
+        ssm_state_indices=ssm_state_indices,
+        num_accepted_tokens=num_accepted_tokens,
+        g=g,
+        gk=None
+    )
+
+    assert out.shape == (T, Nv, Dv)
+    print("out shape:", out.shape)   # (8, 8, 128)
+
+if __name__ == "__main__":
+    test_recurrent_gated_delta_rule_varlen()
 ```
 
 ---

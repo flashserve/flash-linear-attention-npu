@@ -1,5 +1,4 @@
 # ChunkBwdDvLocal 算子说明
-🔗 [查看源码](https://gitcode.com/Wei_NaChuan/flash-linear-attention-npu/tree/main/chunk_gated_delta_rule/chunk_bwd_dv_local)
 `ChunkBwdDvLocal` 是 Gated Delta Rule（门控 Delta 规则）线性注意力机制反向传播过程中的自定义算子。该算子根据查询（Q）、键（K）、门控（g）和输出梯度（dO）计算 Value 的本地梯度 $dV_{\text{local}}$。
 
 ---
@@ -70,12 +69,12 @@ aclnnStatus aclnnChunkBwdDvLocal(
 
 | 参数名 | 输入/输出 | 必选/可选 | 描述 | 使用说明 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|---|---|
-| `q` | 输入 | 必选 | Query 输入张量 | 参与反向计算；接口执行前会先转为连续内存 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
-| `k` | 输入 | 必选 | Key 输入张量 | 参与反向计算；接口执行前会先转为连续内存 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
-| `dO` | 输入 | 必选 | 前向输出的梯度张量 | 参与反向计算；接口执行前会先转为连续内存 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, V]` | 支持 |
-| `g` | 输入 | 必选 | Gate 输入张量（门控衰减系数） | 参与 gating 计算；接口执行前会先转为连续内存 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, H, T]` | 支持 |
-| `gGammaOptional` | 输入 | 接口为必传；当前实现要求传空 | 预留门控参数输入 | 当前 tiling 明确要求 `g_gamma == nullptr`，**必须传空指针** | `FLOAT` | `ND` | 未启用 | - |
-| `aOptional` | 输入 | 接口为必传；当前实现要求传空 | 预留参数输入 | 当前 tiling 明确要求 `A == nullptr`，**必须传空指针** | `FLOAT16`、`BFLOAT16` | `ND` | 未启用 | - |
+| `q` | 输入 | 必选 | Query 输入张量 | 参与反向计算 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
+| `k` | 输入 | 必选 | Key 输入张量 | 参与反向计算 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
+| `dO` | 输入 | 必选 | 前向输出的梯度张量 | 参与反向计算 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, V]` | 支持 |
+| `g` | 输入 | 必选 | Gate 输入张量（门控衰减系数） | 参与 gating 计算 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, H, T]` | 支持 |
+| `gGammaOptional` | 输入 | 可选 | 预留门控参数输入 | 当前版本不支持，须传 `None` | `FLOAT` | `ND` | - | - |
+| `aOptional` | 输入 | 可选 | 预留参数输入 | 当前版本不支持，须传 `None` | `FLOAT16`、`BFLOAT16` | `ND` | - | - |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | 变长模式输入，形如 `[0, T1, T1+T2, ...]`，形状为 `[N+1]` | `INT64` | `ND` | 1 维 | - |
 | `chunkIndicesOptional` | 输入 | 可选 | 分块索引信息 | 变长模式输入，形状为 `[num_chunks, 2]` | `INT64` | `ND` | 2 维 | - |
 
@@ -83,8 +82,8 @@ aclnnStatus aclnnChunkBwdDvLocal(
 
 | 参数名 | 输入/输出 | 必选/可选 | 描述 | 使用说明 | 数据类型 | 取值约束 |
 |---|---|---|---|---|---|---|
-| `scale` | 输入 | 必选 | 缩放系数 | `op_def` 默认值为 `1.0f`；推荐按 `1 / sqrt(K)` 设置 | `double` | 建议按 `1 / sqrt(K)` 设置 |
-| `chunkSize` | 输入 | 必选 | 分块大小 | `op_def` 默认值为 `64`；当前 tiling 仅支持 `64` 或 `128` | `int64_t` | 仅支持 `64` / `128` |
+| `scale` | 输入 | 必选 | 缩放系数 | 推荐按 `1 / sqrt(K)` 设置 | `double` | 建议按 `1 / sqrt(K)` 设置 |
+| `chunkSize` | 输入 | 必选 | 分块大小 | 仅支持 `64` 或 `128` | `int64_t` | 仅支持 `64` / `128` |
 
 ### 3.3 输出参数（Outputs）
 
@@ -99,47 +98,22 @@ aclnnStatus aclnnChunkBwdDvLocal(
 - `q`、`k` 的形状必须为 `[B, H, T, K]`。
 - `dO` 的形状必须为 `[B, H, T, V]`。
 - `g` 的形状必须为 `[B, H, T]`。
-- 当前实现要求 `K = 128`。
-- 当前实现要求 `V = 128`。
-- `chunkSize` 当前仅支持 `64` 或 `128`。
-- 当启用变长模式时，`cuSeqlensOptional` 和 `chunkIndicesOptional` 必须同时提供；当前实现仅支持 `B = 1`。
-- 当前实现要求 `gGammaOptional` 和 `aOptional` 传空指针，否则执行失败。
+- `K` 须为 `128`。
+- `V` 须为 `128`。
+- `chunkSize` 仅支持 `64` 或 `128`。
+- 当启用变长模式时，`cuSeqlensOptional` 和 `chunkIndicesOptional` 必须同时提供；变长模式仅支持 `B = 1`。
+- `gGammaOptional` 和 `aOptional` 须传 `None`（当前版本不支持）。
 
 ### 3.5 补充说明
 
-- 接口层会先对 `q`、`k`、`dO`、`g` 做连续化处理，因此这些输入可以是非连续 Tensor。
-- 若输出张量本身是非连续视图，接口层会在内部通过 `ViewCopy` 将连续计算结果回写到目标输出。
+- `q`、`k`、`dO`、`g` 支持非连续 Tensor 输入。
+- 输出 `dV` 支持非连续视图作为输出目标。
 
 ---
 
 ## 4. 调用约束与执行语义
 
-### 4.1 执行流程
-
-该算子采用两阶段执行模型：
-
-1. 调用 `aclnnChunkBwdDvLocalGetWorkspaceSize`：
-   - 完成参数合法性检查
-   - 将输入 Tensor 转换为连续内存（Contiguous）
-   - 构建执行器（executor）
-   - 返回所需 `workspaceSize`
-
-2. 调用 `aclnnChunkBwdDvLocal`：
-   - 在指定 `workspace` 和 `executor` 下执行计算
-   - 内部通过 Cube（AIC）+ Vector（AIV）协同完成三阶段计算
-
----
-
-### 4.2 内存行为
-
-- 输入张量 `q/k/dO/g`：
-  - 若为非连续 Tensor，将在内部自动转换为连续布局再参与计算
-- 输出张量 `out`：
-  - 若为非连续视图，将通过内部 `ViewCopy` 回写结果
-
----
-
-### 4.3 可选参数约束
+### 4.1 可选参数约束
 
 - `cuSeqlensOptional` 和 `chunkIndicesOptional`：
   - 同时出现时启用变长模式（varlen）
@@ -151,7 +125,7 @@ aclnnStatus aclnnChunkBwdDvLocal(
 
 ---
 
-### 4.4 形状约束（强约束）
+### 4.2 形状约束（强约束）
 
 必须满足以下条件：
 
@@ -167,7 +141,7 @@ aclnnStatus aclnnChunkBwdDvLocal(
 
 ---
 
-### 4.5 变长模式（VarLen）
+### 4.3 变长模式（VarLen）
 
 当提供 `cuSeqlensOptional` 时：
 
@@ -180,7 +154,7 @@ B = 1
 
 ---
 
-### 4.6 数值语义
+### 4.4 数值语义
 
 - `scale`：
   - 必须显式传入
@@ -194,26 +168,26 @@ B = 1
 
 ## 5. Torch 测试调用示例
 
+### 5.1 定长场景（Padding-mode）
+
 ```python
 import torch
 import torch_npu
 import math
 
-def test_chunk_bwd_dv_local():
-    # 参数设置
-    B, H, T, K, V = 1, 8, 32768, 128, 128
+def test_chunk_bwd_dv_local_fixed():
+    B, H, T, K, V = 2, 4, 128, 128, 128
     chunk_size = 64
     scale = 1.0 / math.sqrt(K)
     device = "npu:0"
     dtype = torch.bfloat16
 
-    # 构造输入
-    q = torch.randn(B, H, T, K, device=device, dtype=dtype)
-    k = torch.randn(B, H, T, K, device=device, dtype=dtype)
+    q   = torch.randn(B, H, T, K, device=device, dtype=dtype)
+    k   = torch.randn(B, H, T, K, device=device, dtype=dtype)
     d_o = torch.randn(B, H, T, V, device=device, dtype=dtype)
-    g = torch.randn(B, H, T, device=device, dtype=torch.float32)
+    g   = torch.randn(B, H, T,    device=device, dtype=torch.float32)
 
-    # 调用算子
+    # 定长模式：cu_seqlens=None, chunk_indices=None
     dv = torch_npu.npu_chunk_bwd_dv_local(
         q, k, d_o, g,
         g_gamma=None,
@@ -224,12 +198,66 @@ def test_chunk_bwd_dv_local():
         chunk_size=chunk_size
     )
 
-    print("dv shape:", dv.shape)
     assert dv.shape == (B, H, T, V)
-    print("Execution Successful!")
+    print("dv shape:", dv.shape)  # (2, 4, 128, 128)
 
 if __name__ == "__main__":
-    test_chunk_bwd_dv_local()
+    test_chunk_bwd_dv_local_fixed()
+```
+
+### 5.2 变长场景（VarLen-mode）
+
+变长模式需要额外准备 `cu_seqlens` 和 `chunk_indices`（当前仅支持 `B = 1`）。
+
+```python
+import torch
+import torch_npu
+import math
+
+def prepare_chunk_indices(cu_seqlens, chunk_size):
+    """根据累积序列长度生成分块索引，返回形如 [num_chunks, 2] 的张量。"""
+    seq_lens = cu_seqlens[1:] - cu_seqlens[:-1]
+    result = []
+    for batch_idx, sl in enumerate(seq_lens.tolist()):
+        num_chunks = (sl + chunk_size - 1) // chunk_size
+        for ci in range(num_chunks):
+            result.append([batch_idx, ci])
+    return torch.tensor(result, dtype=torch.long)
+
+def test_chunk_bwd_dv_local_varlen():
+    H, K, V = 4, 128, 128
+    chunk_size = 64
+    scale = 1.0 / math.sqrt(K)
+    device = "npu:0"
+    dtype = torch.bfloat16
+
+    # 变长：B=1，包含两段序列，长度分别为 192 和 64，总长 256
+    cu_seqlens = torch.tensor([0, 192, 256], dtype=torch.long)
+    T = int(cu_seqlens[-1])
+
+    q   = torch.randn(1, H, T, K, device=device, dtype=dtype)
+    k   = torch.randn(1, H, T, K, device=device, dtype=dtype)
+    d_o = torch.randn(1, H, T, V, device=device, dtype=dtype)
+    g   = torch.randn(1, H, T,    device=device, dtype=torch.float32)
+
+    # 每行 [batch_idx, chunk_idx]，展平后传入
+    chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
+
+    dv = torch_npu.npu_chunk_bwd_dv_local(
+        q, k, d_o, g,
+        g_gamma=None,
+        A=None,
+        cu_seqlens=cu_seqlens.tolist(),
+        chunk_indices=chunk_indices.flatten().tolist(),
+        scale=scale,
+        chunk_size=chunk_size
+    )
+
+    assert dv.shape == (1, H, T, V)
+    print("dv shape:", dv.shape)  # (1, 4, 256, 128)
+
+if __name__ == "__main__":
+    test_chunk_bwd_dv_local_varlen()
 ```
 
 ---
