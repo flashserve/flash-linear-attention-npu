@@ -150,9 +150,9 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     // size_t mm5Size = B * H * T * BT * FP16_SIZE;                   // mm5 (q @ k^T)
     size_t mm5Size = B * H * T * K * FP16_SIZE;// mm5 (q @ k^T): B * H * T * BT * FP16_SIZE, mm6/mm7 需要复用 mm5 的空间，BT 可能是 64 或 128，这里直接按 128 来计算，保证空间足够
     size_t dsTempSize = B * H * T * BT * FP16_SIZE;                // b_ds_temp
-    // size_t mm6Size = B * H * T * K * FP16_SIZE;                   // mm6
-    // size_t mm7Size = B * H * T * K * FP16_SIZE;                   // mm7
-    // size_t mul1Size = B * H * T * BT * FP16_SIZE;                   // mul1
+    size_t mm6Size = B * H * T * K * FP16_SIZE;                   // mm6
+    size_t mm7Size = B * H * T * K * FP16_SIZE;                   // mm7
+    size_t mul1Size = B * H * T * BT * FP16_SIZE;                   // mul1
 
     
     // Workspace 偏移计算
@@ -173,17 +173,17 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
 // std::cout << "[tiling] offset: " << offset << ", dsTempSize: "<<dsTempSize<<"\n";
     offset += dsTempSize;
 
-//     size_t wsMm6Offset = offset;
-// // std::cout << "[tiling] offset: " << mm6Size << ", mm6Size: "<<mm6Size<<"\n";
-//     offset += mm6Size;
+    size_t wsMm6Offset = offset;
+// std::cout << "[tiling] offset: " << mm6Size << ", mm6Size: "<<mm6Size<<"\n";
+    offset += mm6Size;
 
-//     size_t wsMm7Offset = offset;
-// // std::cout << "[tiling] offset: " << offset << ", mm7Size: "<<mm7Size<<"\n";
-//     offset += mm7Size;
+    size_t wsMm7Offset = offset;
+// std::cout << "[tiling] offset: " << offset << ", mm7Size: "<<mm7Size<<"\n";
+    offset += mm7Size;
 
-//     size_t wsMul1Offset = offset;
-// // std::cout << "[tiling] offset: " << offset << ", mul1Size: "<<mul1Size<<"\n";
-//     offset += mul1Size;
+    size_t wsMul1Offset = offset;
+// std::cout << "[tiling] offset: " << offset << ", mul1Size: "<<mul1Size<<"\n";
+    offset += mul1Size;
     
     size_t totalUserWorkspace = offset;
     // std::cout << "[tiling] totalUserWorkspace: " << totalUserWorkspace << ", sysWorkspaceSize: " << sysWorkspaceSize << "\n";
@@ -214,9 +214,9 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     tilingData.set_wsMm5Offset(wsMm5Offset);
     tilingData.set_wsDsTempOffset(wsDsTempOffset);
     tilingData.set_totalWorkspaceSize(totalUserWorkspace);
-    // tilingData.set_wsMm6Offset(wsMm6Offset);
-    // tilingData.set_wsMm7Offset(wsMm7Offset);
-    // tilingData.set_wsMul1Offset(wsMul1Offset);
+    tilingData.set_wsMm6Offset(wsMm6Offset);
+    tilingData.set_wsMm7Offset(wsMm7Offset);
+    tilingData.set_wsMul1Offset(wsMul1Offset);
     
     // 检查是否有 cu_seqlens 输入来判断 IS_VARLEN
     tilingData.set_isVarLen(isVarLen);
