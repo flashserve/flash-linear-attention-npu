@@ -18,7 +18,7 @@ torch.npu.set_compile_mode(jit_compile=False)
 
 np.random.seed(1)
 torch.manual_seed(1)
-torch.npu.set_device(0)
+torch.npu.set_device(2)
 
 WORKSPACE = os.path.dirname(os.path.abspath(__file__))
 from typing import Optional

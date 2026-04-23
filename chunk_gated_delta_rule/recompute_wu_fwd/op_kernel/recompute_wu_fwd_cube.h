@@ -12,7 +12,14 @@
  * \brief
  */
 
-#include "recompute_wu_fwd_common.h"
+
+#ifndef RECOMPUTE_WU_FWD_CUBE_H
+#define RECOMPUTE_WU_FWD_CUBE_H
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#define CATLASS_ARCH 3510
+#else
+#define CATLASS_ARCH 2201
+#endif
 #include "catlass/arch/arch.hpp"
 #include "catlass/catlass.hpp"
 #include "catlass/gemm/block/block_mmad.hpp"
@@ -25,12 +32,8 @@
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 #include "catlass/arch/cross_core_sync.hpp"
-#ifndef RECOMPUTE_WU_FWD_CUBE_H
-#define RECOMPUTE_WU_FWD_CUBE_H
-
-
 using namespace Catlass;
-
+using namespace tla;
 namespace Catlass::Gemm::Kernel {
 
 // Template for Matmul kernel. Compute C = A * B
@@ -263,7 +266,11 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType>::Process()
     LayoutTagW tagW = LayoutTagW::MakeLayout<kType>(chunkSize, K);
     LayoutTagU tagU = LayoutTagU::MakeLayout<kType>(chunkSize, V);
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using ArchTag = Arch::Ascend950;
+#else
     using ArchTag = Arch::AtlasA2;
+#endif
     using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;
     using L1TileShape = Shape<_128, _128, _256>;
     using L0TileShape = Shape<_128, _128, _128>;

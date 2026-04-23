@@ -4,6 +4,7 @@ from typing import Optional
 import math
 import random
 import ct
+import aclnn_extension
 
 def prepare_lens(cu_seqlens: torch.LongTensor) -> torch.LongTensor:
     return cu_seqlens[1:] - cu_seqlens[:-1]
@@ -229,7 +230,7 @@ def test_chunk_bwd_dv_local_fix(
     d_o_npu = d_o.npu()
     g_npu = g.npu()
 
-    dv = torch_npu.npu_chunk_bwd_dv_local(
+    dv = torch.ops.npu.npu_chunk_bwd_dv_local(
         q_npu, k_npu, d_o_npu, g_npu,
         g_gamma=None,
         A=None,
@@ -280,7 +281,7 @@ def test_chunk_bwd_dv_local_variable(
     cu_seqlens_list = cu_seqlens.tolist()
     chunk_indices_list = chunk_indices.flatten().tolist()
 
-    dv = torch_npu.npu_chunk_bwd_dv_local(
+    dv = torch.ops.npu.npu_chunk_bwd_dv_local(
         q_npu, k_npu, d_o_npu, g_npu,
         g_gamma=None,
         A=None,

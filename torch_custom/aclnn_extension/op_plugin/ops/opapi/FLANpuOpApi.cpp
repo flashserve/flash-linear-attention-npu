@@ -224,6 +224,8 @@ at::Tensor npu_chunk_fwd_o(
         int N = cu_seqlens.has_value() ? cu_seqlens->size() - 1 : B;
         auto state_options = initial_state.has_value() ? initial_state->options() : h_out.options();
         final_state_out = at::empty({N, HV, K, V}, state_options);
+    } else {
+        final_state_out = at::empty({1}, k.options());
     }
 
     // 调用ACLNN算子（两阶段调用：先获取工作空间大小，再执行）
@@ -233,7 +235,33 @@ at::Tensor npu_chunk_fwd_o(
         initial_state_, cu_seqlens, chunk_indices, output_final_state_, chunk_size_,
         h_out, v_new_out, final_state_out
     );
-    return std::make_tuple(h_out, v_new_out, final_state_out);
+    if (output_final_state_) {
+        return std::make_tuple(h_out, v_new_out, final_state_out);
+    } else {
+        return std::make_tuple(h_out, v_new_out, at::Tensor());
+    }
+}
+
+::std::tuple<at::Tensor, at::Tensor> npu_recompute_w_u_fwd(
+    const at::Tensor &k,
+    const at::Tensor &v,
+    const at::Tensor &beta,
+    const at::Tensor &A,
+    int64_t chunk_size,
+    const c10::optional<at::Tensor> &g,
+    const c10::optional<at::Tensor> &gK,
+    c10::OptionalIntArrayRef cu_seqlens,
+    c10::OptionalIntArrayRef chunk_indices
+)
+{
+    at::Tensor w = at::empty_like(k);
+    at::Tensor u = at::empty_like(v);
+    const at::Tensor &gK_ = c10::value_or_else(gK, [] { return at::Tensor(); });
+    const at::Tensor &g_ = c10::value_or_else(g, [] { return at::Tensor(); });
+
+    EXEC_NPU_CMD_EXT(aclnnRecomputeWUFwd,
+        k, v, beta, A, g_, gK_,cu_seqlens, chunk_indices, chunk_size, w, u);
+    return std::tie(w,u);
 }
 
 }  // namespace op_api

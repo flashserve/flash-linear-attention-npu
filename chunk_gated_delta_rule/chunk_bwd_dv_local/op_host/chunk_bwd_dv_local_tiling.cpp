@@ -145,7 +145,7 @@ public:
 
         auto attrPtr = context_->GetAttrs();
         OP_CHECK_NULL_WITH_CONTEXT(context_, attrPtr);
-        float scale = *(attrPtr->GetAttrPointer<float>(ATTR_SCALE_IDX));
+        float scale = static_cast<float>(*(attrPtr->GetAttrPointer<double>(ATTR_SCALE_IDX)));
         tiling_.set_scale(scale);
         int64_t chunkSize = static_cast<int64_t>(*(attrPtr->GetAttrPointer<int32_t>(ATTR_CHUNK_SIZE_IDX)));
         OP_CHECK_IF(chunkSize != CHUNK_SIZE_64 && chunkSize != CHUNK_SIZE_128,

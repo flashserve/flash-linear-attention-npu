@@ -3,7 +3,7 @@ import torch_npu
 from typing import Optional
 import pickle
 import math
-import ct
+# import ct
 import random
 import aclnn_extension
 torch.npu.utils.set_device(3)
@@ -298,7 +298,7 @@ def test_recompute_wu_fwd(
             chunk_indices=None
         )
     cpu_w = compute_w_golden(k, v, beta, A, g, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
-    ct.viz(w.cpu(), cpu_w.cpu())
+    # ct.viz(w.cpu(), cpu_w.cpu())
     
     # cpu_u = compute_u_golden(k, v, beta, A, g, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
     # ct.isclose(u.cpu(), cpu_u.cpu(), diff_thd=0.1)

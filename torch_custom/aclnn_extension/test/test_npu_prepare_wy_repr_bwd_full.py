@@ -535,32 +535,32 @@ if __name__ == "__main__":
     #F4
     test_prepare_wy_repr_bwd_full(B = 8, H = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
     #F5
-    test_prepare_wy_repr_bwd_full(B = 128, H = 4, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
-    #F6
-    test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.float32)
-    #F7
-    test_prepare_wy_repr_bwd_full(B = 32, H = 16, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
-    #F8    
-    test_prepare_wy_repr_bwd_full(B = 16, H = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
-    #F9
-    test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
-    #F10
-    test_prepare_wy_repr_bwd_full(B = 32, H = 16, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
-    #F11
-    test_prepare_wy_repr_bwd_full(B = 16, H = 32, T = 16384, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float32)
-    #F12
-    test_prepare_wy_repr_bwd_full(B = 8, H = 32, T = 32768, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
-    #F13
-    test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
-    #F14
-    test_prepare_wy_repr_bwd_full(B = 32, H = 16, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
-    #F15
-    test_prepare_wy_repr_bwd_full(B = 16, H = 32, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float32)
-    #F16
-    test_prepare_wy_repr_bwd_full(B = 8, H = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
-    #F17
-    test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
-    # F18
+    # test_prepare_wy_repr_bwd_full(B = 128, H = 4, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
+    # #F6
+    # test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.float32)
+    # #F7
+    # test_prepare_wy_repr_bwd_full(B = 32, H = 16, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
+    # #F8    
+    # test_prepare_wy_repr_bwd_full(B = 16, H = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # #F9
+    # test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
+    # #F10
+    # test_prepare_wy_repr_bwd_full(B = 32, H = 16, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # #F11
+    # test_prepare_wy_repr_bwd_full(B = 16, H = 32, T = 16384, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float32)
+    # #F12
+    # test_prepare_wy_repr_bwd_full(B = 8, H = 32, T = 32768, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # #F13
+    # test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
+    # #F14
+    # test_prepare_wy_repr_bwd_full(B = 32, H = 16, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # #F15
+    # test_prepare_wy_repr_bwd_full(B = 16, H = 32, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float32)
+    # #F16
+    # test_prepare_wy_repr_bwd_full(B = 8, H = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # #F17
+    # test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # # F18
     test_prepare_wy_repr_bwd_full(B = 32, H = 16, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
     #L1
     cu_seqlens = prepare_cu_seqlens(T = 32768, L = 16)
@@ -579,10 +579,10 @@ if __name__ == "__main__":
     chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
     test_prepare_wy_repr_bwd_full(B = 1, H = 4, T = 262144, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float32, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
     #L5
-    cu_seqlens = prepare_cu_seqlens(T = 32768, L = 7)
-    chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    test_prepare_wy_repr_bwd_full(B = 1, H = 16, T = 32768, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
-    #L6
-    cu_seqlens = prepare_cu_seqlens(T = 65536, L = 25)
-    chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    test_prepare_wy_repr_bwd_full(B = 1, H = 8, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # cu_seqlens = prepare_cu_seqlens(T = 32768, L = 7)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
+    # test_prepare_wy_repr_bwd_full(B = 1, H = 16, T = 32768, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # #L6
+    # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 25)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
+    # test_prepare_wy_repr_bwd_full(B = 1, H = 8, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)

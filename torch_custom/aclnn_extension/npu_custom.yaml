@@ -31,7 +31,8 @@ custom:
     op_api: all_version
   - func: npu_chunk_gated_delta_rule_fwd_h(Tensor k, Tensor w, Tensor u, Tensor g, *, Tensor? initial_state=None, int[]? cu_seqlens=None, int[]? chunk_indices=None, bool? output_final_state=False, int? chunk_size=None) -> (Tensor, Tensor, Tensor)
     op_api: all_version
-  
+  - func: npu_recompute_w_u_fwd(Tensor k, Tensor v, Tensor beta, Tensor A, int chunk_size, *, Tensor? g=None, Tensor? gk=None, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> (Tensor, Tensor)
+    op_api: all_version
   
 
 autograd:

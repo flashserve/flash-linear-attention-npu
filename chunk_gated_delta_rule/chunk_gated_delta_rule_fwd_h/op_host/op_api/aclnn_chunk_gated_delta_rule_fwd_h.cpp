@@ -146,7 +146,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     CHECK_RET(viewCopyResult0 != nullptr, ACLNN_ERR_INNER_NULLPTR);
     auto viewCopyResult1 = l0op::ViewCopy(result[1], params.vNewOut, executorPtr);
     CHECK_RET(viewCopyResult1 != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    if (params.finalStateOut != nullptr) {
+    if (outputFinalState && params.finalStateOut != nullptr) {
         auto viewCopyResult2 = l0op::ViewCopy(result[2], params.finalStateOut, executorPtr);
         CHECK_RET(viewCopyResult2 != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
