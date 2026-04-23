@@ -157,22 +157,27 @@ at::Tensor npu_chunk_fwd_o(
     const at::Tensor & k, 
     const at::Tensor & v, 
     const at::Tensor & h, 
-    const at::Tensor & g, 
     double scale, 
+    const c10::optional<at::Tensor> & g,
+    const c10::optional<at::Tensor> & g_gamma,
     at::OptionalIntArrayRef cu_seqlens, 
     at::OptionalIntArrayRef chunk_indices, 
-    c10::optional<int64_t> chunk_size)
+    c10::optional<int64_t> chunk_size,
+    c10::optional<bool> transpose_state_layout)
 {
     // 创建输出tensor
     at::Tensor o = at::empty_like(v);
 
     // chunk_size默认值
     int64_t chunk_size_ = chunk_size.value_or(64);
+    const at::Tensor &g_ = c10::value_or_else(g, [] { return at::Tensor(); });
+    (void)g_gamma;
+    (void)transpose_state_layout;
 
     // 调用ACLNN算子
     EXEC_NPU_CMD_EXT(
         aclnnChunkFwdO,
-        q, k, v, h, g,
+        q, k, v, h, g_,
         cu_seqlens, chunk_indices, scale, chunk_size_,
         o
     );

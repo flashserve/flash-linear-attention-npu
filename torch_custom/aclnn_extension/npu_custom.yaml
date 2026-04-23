@@ -27,7 +27,7 @@ custom:
     op_api: all_version
   - func: npu_chunk_bwd_dqkwg(Tensor q, Tensor k, Tensor v, Tensor g, Tensor h, Tensor dox, Tensor dh, Tensor dv, int chunk_size, *, int[]? cu_seqlens=None, int[]? chunk_indices=None, Tensor? w=None, Tensor? g_gamma=None, float? scale=None, bool? use_exp2=None, bool? transpose_state_layout=None) -> (Tensor, Tensor, Tensor, Tensor)
     op_api: all_version
-  - func: npu_chunk_fwd_o(Tensor q, Tensor k, Tensor v, Tensor h, Tensor g, float scale, *, int[]? cu_seqlens=None, int[]? chunk_indices=None, int? chunk_size=None) -> Tensor
+  - func: npu_chunk_fwd_o(Tensor q, Tensor k, Tensor v, Tensor h, float scale, *, Tensor? g=None, Tensor? g_gamma=None, int[]? cu_seqlens=None, int[]? chunk_indices=None, int? chunk_size=None, bool? transpose_state_layout=False) -> Tensor
     op_api: all_version
   - func: npu_chunk_gated_delta_rule_fwd_h(Tensor k, Tensor w, Tensor u, Tensor g, *, Tensor? initial_state=None, int[]? cu_seqlens=None, int[]? chunk_indices=None, bool? output_final_state=False, int? chunk_size=None) -> (Tensor, Tensor, Tensor)
     op_api: all_version
