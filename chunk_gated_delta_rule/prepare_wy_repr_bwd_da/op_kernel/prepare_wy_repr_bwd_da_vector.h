@@ -548,10 +548,12 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
             {
                 auto gAllOffset =  h * T + bos;
                 auto tensorGAllIn = gAllInQue.AllocTensor<betaType>();
-                DataCopy(tensorGAllIn, gTensor[gAllOffset], BT);
+                DataCopyPad(tensorGAllIn, gTensor[gAllOffset],
+                    {1, curChunkSize * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},
+                    {true, 0, static_cast<uint32_t>(sizeof(betaType)), 0});
                 gAllInQue.EnQue(tensorGAllIn);
             }
-            // cost and copy gAll to gFactorLocalTensor
+            // cast and copy gAll to gFactorLocalTensor
             {
                 auto tensorGAllIn = gAllInQue.DeQue<betaType>();
                 if constexpr (!std::is_same<betaType, float32_t>()) {
@@ -561,6 +563,10 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                 }
                 PipeBarrier<PIPE_V>();
                 gAllInQue.FreeTensor(tensorGAllIn);
+            }
+            if (curChunkSize < BT) {
+                AscendC::Duplicate<float>(tensorGAllFp32[curChunkSize], float(0.0), BT - curChunkSize);
+                PipeBarrier<PIPE_V>();
             }
             Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
@@ -605,6 +611,14 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                     Cast(tensorDA6Fp32, tensorDA6In, RoundMode::CAST_NONE, curRowNum * BT);
                     PipeBarrier<PIPE_V>();
 
+                    if (curChunkSize < BT) {
+                        uint32_t invalidColNum = BT - curChunkSize;
+                        for (uint32_t r = 0; r < curRowNum; r++) {
+                            AscendC::Duplicate<float>(tensorDA6Fp32[r * BT + curChunkSize], float(0.0), invalidColNum);
+                        }
+                        PipeBarrier<PIPE_V>();
+                    }
+
                     Brcb(brcbLocalTensor, tensorGFp32, static_cast<uint8_t>(CeilDiv(curRowNum, 8)), {1, 8});
                     PipeBarrier<PIPE_V>();
 
@@ -618,16 +632,16 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                     }
                     PipeBarrier<PIPE_V>();
 
-                    // 计算 gFactor = exp(g[:, None] - g[None, :])
-                    // for (uint32_t idx = 0; idx < (curRowNum * BT + CAL_NUM_FLOAT - 1) / CAL_NUM_FLOAT; idx++) {
-                    //     uint32_t curSize = (idx + 1) * CAL_NUM_FLOAT <= curRowNum * BT ? 
-                    //                        CAL_NUM_FLOAT : curRowNum * BT - idx * CAL_NUM_FLOAT;
-                    //     AscendC::Exp(gFactorLocalTensor[idx * CAL_NUM_FLOAT], 
-                    //                  gFactorLocalTensor[idx * CAL_NUM_FLOAT], 
-                    //                  curSize, 1, {1, 1, repeatStride, repeatStride});
-                    // }
                     AscendC::Exp(gFactorLocalTensor, gFactorLocalTensor, curRowNum * BT);
                     PipeBarrier<PIPE_V>();
+
+                    if (curChunkSize < BT) {
+                        uint32_t invalidColNum = BT - curChunkSize;
+                        for (uint32_t r = 0; r < curRowNum; r++) {
+                            AscendC::Duplicate<float>(gFactorLocalTensor[r * BT + curChunkSize], float(0.0), invalidColNum);
+                        }
+                        PipeBarrier<PIPE_V>();
+                    }
 
                     // dA7 = -dA6 * gFactor, 复用tensorDA6Fp32
                     Muls(tensorDA6Fp32, tensorDA6Fp32, float(-1.0), curRowNum * BT);
