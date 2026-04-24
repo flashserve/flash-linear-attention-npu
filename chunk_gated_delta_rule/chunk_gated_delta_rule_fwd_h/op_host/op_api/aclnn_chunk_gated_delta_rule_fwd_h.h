@@ -16,16 +16,20 @@ extern "C" {
 #endif
 
 /* funtion: aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize
- * parameters :
+ * parameters (order aligned with chunk_gated_delta_rule_fwd_h Python API):
  * k : required
  * w : required
  * u : required
- * g : required
+ * gOptional : optional, only non-null aclTensor is supported
+ * gkOptional : optional, reserved (must be nullptr)
  * initalStateOptional : optional
- * cuSeqlensOptional : optional
- * chunkIndicesOptional : optional
  * outputFinalState : required
  * chunkSize : required
+ * saveNewValue : reserved (must be true)
+ * cuSeqlensOptional : optional
+ * chunkIndicesOptional : optional
+ * useExp2 : reserved (must be false)
+ * transposeStateLayout : reserved (must be false)
  * hOut : required
  * vNewOut : required
  * finalStateOut : optional
@@ -37,12 +41,16 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     const aclTensor *k,
     const aclTensor *w,
     const aclTensor *u,
-    const aclTensor *g,
+    const aclTensor *gOptional,
+    const aclTensor *gkOptional,
     const aclTensor *initalStateOptional,
-    const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkIndicesOptional,
     bool outputFinalState,
     int64_t chunkSize,
+    bool saveNewValue,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOptional,
+    bool useExp2,
+    bool transposeStateLayout,
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,

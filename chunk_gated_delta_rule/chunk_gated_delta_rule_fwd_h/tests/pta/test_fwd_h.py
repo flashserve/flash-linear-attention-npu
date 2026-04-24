@@ -311,29 +311,29 @@ if __name__ == "__main__":
     else:
         input_tensor = gen_input_data(gdn_fwd_h_input)
 
+    def _as_int_list(x):
+        if x is None:
+            return None
+        if isinstance(x, torch.Tensor):
+            return x.cpu().tolist()
+        return list(x)
+
     torch.npu.synchronize()
+    # 与 npu_custom.yaml / FLA chunk_gated_delta_rule_fwd_h 对齐：k,w,u 位置参数；g 及之后为关键字（g 当前不可为 None）
     result = torch.ops.npu.npu_chunk_gated_delta_rule_fwd_h(
         input_tensor.k.npu(),
         input_tensor.w.npu(),
         input_tensor.u.npu(),
-        input_tensor.g.npu(),
+        g=input_tensor.g.npu(),
         initial_state=(
             input_tensor.initial_state.npu()
             if input_tensor.initial_state is not None
             else None
         ),
-        cu_seqlens=(
-            input_tensor.cu_seqlens.tolist()
-            if input_tensor.cu_seqlens is not None
-            else None
-        ),
-        chunk_indices=(
-            input_tensor.chunk_offsets.tolist()
-            if input_tensor.chunk_offsets is not None
-            else None
-        ),
         output_final_state=gdn_fwd_h_input.store_final_state,
         chunk_size=gdn_fwd_h_input.chunk_size,
+        cu_seqlens=_as_int_list(input_tensor.cu_seqlens),
+        chunk_indices=_as_int_list(input_tensor.chunk_offsets),
     )
     torch.npu.synchronize()
     if gdn_fwd_h_input.use_actual_output:
