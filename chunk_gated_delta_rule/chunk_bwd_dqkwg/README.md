@@ -155,22 +155,20 @@ aclnnStatus aclnnChunkBwdDqkwg(
 当提供 `cuSeqlensOptional` 时：
 
 - `chunkIndicesOptional` 必须同时提供
-- `numChunks` 由 `chunkIndices` 推导
-- 要求 `numChunks` 为偶数
-- 当前实现仅支持：
+- 当前实现仅支持：B = 1
 
 
-**示例：**
+**chunkIndicesOptional 示例：**
 
 ```text
-cuSeqlens = [0, 4, 10]
+cuSeqlensOptional = [0, 4, 10]
 chunkSize = 4
 
 序列划分：
 - 第 0 个序列长度 = 4 → 需要 1 个 chunk
 - 第 1 个序列长度 = 6 → 需要 2 个 chunk
 
-chunkIndices（二维表示）：
+chunkIndicesOptional（二维表示）：
 [
   [0, 0],   # 第 0 个序列，第 0 个 chunk
   [1, 0],   # 第 1 个序列，第 0 个 chunk
@@ -181,21 +179,13 @@ chunkIndices（二维表示）：
 [0, 0, 1, 0, 1, 1]
 ```
 
-```text
-B = 1
-```
-
 ---
 
 ### 4.4 数值语义
 
 - `scale`：
   - 必须显式传入
-  - 推荐设置为：
-
-```text
-1 / sqrt(K)
-```
+  - 推荐设置为：$1 / \sqrt{K}$
 
 
 - 当前算子实现配置为：
