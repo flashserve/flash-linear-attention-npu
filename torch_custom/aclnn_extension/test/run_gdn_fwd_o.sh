@@ -1,4 +1,4 @@
-shapeBatch=1
+batch=1
 seqlen=256
 kNumHead=2
 vNumHead=2
@@ -18,5 +18,5 @@ useActualOutput=0
 dataPath="/path/to/data"
 
 echo 'Case: batch=' $batch ' seqlen=' $seqlen ' kNumHead=' $kNumHead  ' vNumHead=' $vNumHead ' kHeadDim=' $kHeadDim ' vHeadDim=' $vHeadDim ' isVariedLen=' $isVariedLen ' chunkSize=' $chunkSize ' dtype=' $dtype
-python3 test_fwd_o.py $shapeBatch $seqlen $kNumHead $vNumHead $kHeadDim $vHeadDim $isVariedLen $tokenBatch $chunkSize $scale "$dtype" $useActualInput $useActualOutput $dataPath $device $gDtype
+python3 test_fwd_o.py $batch $seqlen $kNumHead $vNumHead $kHeadDim $vHeadDim $isVariedLen $tokenBatch $chunkSize $scale "$dtype" $useActualInput $useActualOutput $dataPath $device $gDtype
 # python data_compare_o.py $dtype
