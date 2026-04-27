@@ -550,23 +550,19 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                 auto tensorGAllIn = gAllInQue.AllocTensor<betaType>();
                 DataCopyPad(tensorGAllIn, gTensor[gAllOffset],
                     {1, curChunkSize * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},
-                    {true, 0, static_cast<uint32_t>(sizeof(betaType)), 0});
+                    {false, 0, 0, 0});
                 gAllInQue.EnQue(tensorGAllIn);
             }
             // cast and copy gAll to gFactorLocalTensor
             {
                 auto tensorGAllIn = gAllInQue.DeQue<betaType>();
                 if constexpr (!std::is_same<betaType, float32_t>()) {
-                    Cast(tensorGAllFp32, tensorGAllIn, RoundMode::CAST_NONE, BT);
+                    Cast(tensorGAllFp32, tensorGAllIn, RoundMode::CAST_NONE, curChunkSize);
                 } else {
                     DataCopy(tensorGAllFp32, tensorGAllIn, BT);
                 }
                 PipeBarrier<PIPE_V>();
                 gAllInQue.FreeTensor(tensorGAllIn);
-            }
-            if (curChunkSize < BT) {
-                AscendC::Duplicate<float>(tensorGAllFp32[curChunkSize], float(0.0), BT - curChunkSize);
-                PipeBarrier<PIPE_V>();
             }
             Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
@@ -611,14 +607,6 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                     Cast(tensorDA6Fp32, tensorDA6In, RoundMode::CAST_NONE, curRowNum * BT);
                     PipeBarrier<PIPE_V>();
 
-                    if (curChunkSize < BT) {
-                        uint32_t invalidColNum = BT - curChunkSize;
-                        for (uint32_t r = 0; r < curRowNum; r++) {
-                            AscendC::Duplicate<float>(tensorDA6Fp32[r * BT + curChunkSize], float(0.0), invalidColNum);
-                        }
-                        PipeBarrier<PIPE_V>();
-                    }
-
                     Brcb(brcbLocalTensor, tensorGFp32, static_cast<uint8_t>(CeilDiv(curRowNum, 8)), {1, 8});
                     PipeBarrier<PIPE_V>();
 
@@ -631,17 +619,11 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                         perchannelResOffset += FP32_PER_REPEAT_64;
                     }
                     PipeBarrier<PIPE_V>();
-
+                    // 大于0的位置全部清0
+                    AscendC::Mins(gFactorLocalTensor, gFactorLocalTensor,  float(0.0), curRowNum * BT);
+                    PipeBarrier<PIPE_V>();
                     AscendC::Exp(gFactorLocalTensor, gFactorLocalTensor, curRowNum * BT);
                     PipeBarrier<PIPE_V>();
-
-                    if (curChunkSize < BT) {
-                        uint32_t invalidColNum = BT - curChunkSize;
-                        for (uint32_t r = 0; r < curRowNum; r++) {
-                            AscendC::Duplicate<float>(gFactorLocalTensor[r * BT + curChunkSize], float(0.0), invalidColNum);
-                        }
-                        PipeBarrier<PIPE_V>();
-                    }
 
                     // dA7 = -dA6 * gFactor, 复用tensorDA6Fp32
                     Muls(tensorDA6Fp32, tensorDA6Fp32, float(-1.0), curRowNum * BT);
