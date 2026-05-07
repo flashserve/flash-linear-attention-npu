@@ -168,7 +168,7 @@ class Process:
         bgn_src: str = \
             ("/**\n"
              " * This program is free software, you can redistribute it and/or modify.\n"
-             " * Copyright (c) {year} Huawei Technologies Co., Ltd.\n"
+             " * Copyright (c) {year} Tianjin University, Ltd.\n"
              " * This file is a part of the CANN Open Software.\n"
 
              " * Please refer to the License for details. "

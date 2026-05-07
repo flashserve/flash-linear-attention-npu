@@ -26,7 +26,7 @@ PYF_PATH = os.path.dirname(os.path.realpath(__file__))
 IMPL_HEAD = '''#!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 """
-Copyright (c) Huawei Technologies Co., Ltd. {}-{}. All rights reserved.
+Copyright (c) Tianjin University, Ltd. {}-{}. All rights reserved.
 """
 
 import re

@@ -615,7 +615,7 @@ def generate_config_inc(package_attr: Dict, build_dir: str,):
     header = [
         '#!/bin/sh\n',
         '#----------------------------------------------------------------------------\n',
-        f'# Copyright Huawei Technologies Co., Ltd. 2023-{year}. All rights reserved.\n',
+        f'# Copyright Tianjin University, Ltd. 2023-{year}. All rights reserved.\n',
         '#----------------------------------------------------------------------------\n',
         '\n',
     ]
