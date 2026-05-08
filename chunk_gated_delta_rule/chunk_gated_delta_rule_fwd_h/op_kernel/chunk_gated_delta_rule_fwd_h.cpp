@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Tianjin University, Ltd.
+ * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * the BSD 3-Clause License (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  */
 
 // #include "chunk_gated_delta_rule_fwd_h.h"
-#include "catlass/gemm/kernel/gdn_fwd_h_kernel.hpp"
+#include "gemm/kernel/gdn_fwd_h_kernel.hpp"
 #include "lib/matmul_intf.h"
 
 using namespace Catlass;

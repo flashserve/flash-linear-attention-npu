@@ -123,6 +123,7 @@ set_directory_properties(PROPERTIES
 )
 
 include(cmake/third_party/opbase.cmake)
+include(cmake/third_party/catlass.cmake)
 include(cmake/config.cmake)
 include(cmake/third_party/json.cmake)
 if (ENABLE_TEST)
@@ -541,6 +542,9 @@ if (BUILD_OPS_RTY_KERNEL)
         endif()
     endforeach ()
 
+    install(DIRECTORY ${OPS_ADV_CATLASS_INC}/
+            DESTINATION ${IMPL_INSTALL_DIR}/ascendc/common
+    )
     install(DIRECTORY ${OPS_ADV_UTILS_KERNEL_INC}/
             DESTINATION ${IMPL_INSTALL_DIR}/ascendc/common
     )

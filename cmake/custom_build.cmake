@@ -941,6 +941,9 @@ foreach (_op_name ${OP_LIST})
     )
 endforeach ()
 
+install(DIRECTORY ${OPS_ADV_CATLASS_INC}/
+        DESTINATION ${IMPL_INSTALL_DIR}/ascendc/common
+)
 install(DIRECTORY ${OPS_ADV_UTILS_KERNEL_INC}/
         DESTINATION ${IMPL_INSTALL_DIR}/ascendc/common
 )

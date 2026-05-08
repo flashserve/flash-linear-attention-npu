@@ -21,8 +21,8 @@ cmake-build-*
 
 # build & output tempalte dirs
 /build/
-build_out/
-output/
+/build_out/
+/output/
 
 # binary files
 *.so
@@ -48,7 +48,8 @@ torch_custom/aclnn_extension/op_plugin/ops/opapi/StructKernelNpuOpApi.cpp
 torch_custom/aclnn_extension/torch_npu/
 
 #gdn cache
-/third_party
+# third_party：CMake FetchContent / ExternalProject 等在线拉取的依赖目录，不纳入仓库（含 catlass）
+/third_party/
 chunk_gated_delta_rule/chunk_bwd_dqkwg/tests/result
 chunk_gated_delta_rule/chunk_bwd_dqkwg/examples/test_gdn
 chunk_gated_delta_rule/chunk_bwd_dqkwg/tests/ct/viz_result

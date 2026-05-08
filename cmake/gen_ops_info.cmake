@@ -230,9 +230,11 @@ function(compile_from_config)
   if(NOT TARGET binary)
     add_custom_target(binary)
   endif()
+  # Copy full op_kernel tree (kernels may ship catlass/... under op_kernel; cp *.* skips directories).
   add_custom_target(${CONFCMP_TARGET}
-    COMMAND cp -r ${CONFCMP_IMPL_DIR}/*.* ${CONFCMP_OUT_DIR}/src
-    COMMAND cp ${CONFCMP_OP_PYTHON_DIR}/${CONFCMP_OP_NAME}.py ${CONFCMP_OUT_DIR}/src
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${CONFCMP_OUT_DIR}/src/${CONFCMP_OP_NAME}/op_kernel
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CONFCMP_IMPL_DIR} ${CONFCMP_OUT_DIR}/src/${CONFCMP_OP_NAME}/op_kernel
+    COMMAND ${CMAKE_COMMAND} -E copy ${CONFCMP_OP_PYTHON_DIR}/${CONFCMP_OP_NAME}.py ${CONFCMP_OUT_DIR}/src/${CONFCMP_OP_NAME}/
   )
   add_dependencies(binary config_compile_${CONFCMP_COMPUTE_UNIT}_${CONFCMP_OP_NAME} ${CONFCMP_TARGET})
 

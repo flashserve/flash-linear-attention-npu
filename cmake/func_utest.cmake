@@ -442,7 +442,7 @@ function(OpsTest_Level1_AddOpKernelStatic)
     )
     set(_Target ${UTest_NamePrefix}_${TMP_BRIEF}_OpTilingDataDef)
     add_library(${_Target} INTERFACE)
-    target_include_directories(${_Target} INTERFACE ${_OpsTest_GenDirInc} ${OPS_ADV_UTILS_KERNEL_INC})
+    target_include_directories(${_Target} INTERFACE ${_OpsTest_GenDirInc} ${OPS_ADV_CATLASS_INC} ${OPS_ADV_UTILS_KERNEL_INC})
 
     # 编译变量处理
     set(_TargetPrefix  ${UTest_NamePrefix}_${TMP_BRIEF}_OpKernel)
@@ -464,6 +464,7 @@ function(OpsTest_Level1_AddOpKernelStatic)
     if (EXISTS "${_Inc}")
         list(APPEND _PrivateIncludeDirectories ${_Inc})
     endif ()
+    list(APPEND _PrivateIncludeDirectories ${OPS_ADV_CATLASS_INC} ${OPS_ADV_UTILS_KERNEL_INC})
     set(_PrivateCompileOptions
             -include ${_OpsTest_GenDirInc}/tiling/${tmp_brief}/tiling_stub.h
     )
