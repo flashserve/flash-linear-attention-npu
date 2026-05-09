@@ -33,7 +33,7 @@ source $INSTALL_PATH/ascend-toolkit/set_env.sh
 
 ```
 # 编译命令，注意--soc=${soc_version}需要指定为当前机器的芯片类型{ascend910b/ascend910_93/ascend950}
-bash build.sh --soc=ascend910_93 --pkg --ops=chunk_bwd_dv_local,chunk_bwd_dqkwg,chunk_gated_delta_rule_bwd_dhu,prepare_wy_repr_bwd_da,prepare_wy_repr_bwd_full,chunk_fwd_o,chunk_gated_delta_rule_fwd_h,recurrent_gated_delta_rule,recompute_wu_fwd
+bash build.sh --soc=ascend910_93 --pkg --ops=causal_conv1d,chunk_bwd_dv_local,chunk_bwd_dqkwg,chunk_gated_delta_rule_bwd_dhu,prepare_wy_repr_bwd_da,prepare_wy_repr_bwd_full,chunk_fwd_o,chunk_gated_delta_rule_fwd_h,recurrent_gated_delta_rule,recompute_wu_fwd
 
 # 安装run包
 ./build_out/cann-*.run
@@ -91,6 +91,7 @@ python examples/flash_gated_delta_rule.py
 ├── cmake                              # 项目工程编译目录
 ├── common                             # 项目公共头文件和公共源码
 ├── chunk_gated_delta_rule             # Chunk Gated Delta Rule训练算子
+│   ├── causal_conv1d                  # conv1d fn/update 算子
 │   ├── chunk_bwd_dqkwg                # 反向传播dq/dk/dw/dg算子
 │   ├── chunk_bwd_dv_local             # 反向传播dv局部计算算子
 │   ├── chunk_fwd_o                    # 前向传播输出o算子

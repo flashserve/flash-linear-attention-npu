@@ -17,6 +17,8 @@ custom:
         size: grad
         dtype: grad
       exec: aclnnFastGeluBackward
+  - func: npu_causal_conv1d(Tensor x, Tensor weight, Tensor? bias, Tensor conv_states, *, int[]? query_start_loc=None, int[]? cache_indices=None, int[]? initial_state_mode=None, int[]? num_accepted_tokens=None, int activation_mode=0, int pad_slot_id=-1, int run_mode=0) -> Tensor
+    op_api: all_version
   - func: npu_prepare_wy_repr_bwd_full(Tensor k, Tensor v, Tensor beta, Tensor A, Tensor dA, Tensor dw, Tensor du, Tensor g, int chunk_size, *, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> (Tensor dk, Tensor dv, Tensor dbeta, Tensor dg)
     op_api: all_version
   - func: npu_chunk_gated_delta_rule_bwd_dhu(Tensor q, Tensor k, Tensor w, Tensor d_o, Tensor dv, float scale, int chunk_size, *, Tensor? g=None, Tensor? gK=None, Tensor? h0=None, Tensor? dht=None, int[]? cu_seqlens=None, int[]? chunk_indices=None, bool? use_exp2=False, bool? transpose_state_layout=False) -> (Tensor, Tensor, Tensor)
@@ -33,7 +35,7 @@ custom:
     op_api: all_version
   - func: npu_recompute_w_u_fwd(Tensor k, Tensor v, Tensor beta, Tensor A, int chunk_size, *, Tensor? g=None, Tensor? gk=None, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> (Tensor, Tensor)
     op_api: all_version
-  
+
 
 autograd:
 

@@ -15,7 +15,7 @@ if [ ! -f "$YAML_FILE" ]; then
 fi
 
 # get the torch version
-PYTORCH_VERSION=$(python -c "import torch; print(torch.__version__.split('+')[0])")
+PYTORCH_VERSION=$(python3 -c "import torch; print(torch.__version__.split('+')[0])")
 
 IFS='.' read -ra version_parts <<< "$PYTORCH_VERSION"
 PYTORCH_VERSION_DIR="v${version_parts[0]}r${version_parts[1]}"
@@ -25,12 +25,12 @@ export PYTORCH_CUSTOM_DERIVATIVES_PATH="${CDIR}/op_plugin/config/${PYTORCH_VERSI
 export ACLNN_EXTENSION_PATH="${CDIR}"
 export ACLNN_EXTENSION_SWITCH="TRUE"
 
-ATRN_DIR="$CDIR/torch_npu/csrc/aten" 
+ATRN_DIR="$CDIR/torch_npu/csrc/aten"
 if [ ! -d "${ATRN_DIR}" ]; then
     mkdir -p "${ATRN_DIR}"
 fi
 
-UTILS_DIR="$CDIR/torch_npu/utils" 
+UTILS_DIR="$CDIR/torch_npu/utils"
 if [ ! -d "${UTILS_DIR}" ]; then
     mkdir -p "${UTILS_DIR}"
 fi

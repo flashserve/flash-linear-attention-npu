@@ -292,4 +292,40 @@ at::Tensor npu_chunk_fwd_o(
     return std::tie(w,u);
 }
 
+at::Tensor npu_causal_conv1d(
+    const at::Tensor &x,
+    const at::Tensor &weight,
+    const c10::optional<at::Tensor> &bias,
+    const at::Tensor &conv_states,
+    at::OptionalIntArrayRef query_start_loc,
+    at::OptionalIntArrayRef cache_indices,
+    at::OptionalIntArrayRef initial_state_mode,
+    at::OptionalIntArrayRef num_accepted_tokens,
+    int64_t activation_mode,
+    int64_t pad_slot_id,
+    int64_t run_mode)
+{
+    at::Tensor y = at::empty_like(x);
+
+    const at::Tensor &bias_ = c10::value_or_else(bias, [] { return at::Tensor(); });
+
+    c10::optional<at::IntArrayRef> query_start_loc_ = query_start_loc.has_value()
+        ? c10::optional<at::IntArrayRef>(query_start_loc.value()) : c10::nullopt;
+    c10::optional<at::IntArrayRef> cache_indices_ = cache_indices.has_value()
+        ? c10::optional<at::IntArrayRef>(cache_indices.value()) : c10::nullopt;
+    c10::optional<at::IntArrayRef> initial_state_mode_ = initial_state_mode.has_value()
+        ? c10::optional<at::IntArrayRef>(initial_state_mode.value()) : c10::nullopt;
+    c10::optional<at::IntArrayRef> num_accepted_tokens_ = num_accepted_tokens.has_value()
+        ? c10::optional<at::IntArrayRef>(num_accepted_tokens.value()) : c10::nullopt;
+
+    EXEC_NPU_CMD_EXT(
+        aclnnCausalConv1d,
+        x, weight, bias_, conv_states,
+        query_start_loc_, cache_indices_, initial_state_mode_, num_accepted_tokens_,
+        activation_mode, pad_slot_id, run_mode,
+        y
+    );
+    return y;
+}
+
 }  // namespace op_api
