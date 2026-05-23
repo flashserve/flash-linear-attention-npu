@@ -22,7 +22,7 @@ constexpr uint64_t ONE_BLOCK_32 = 32;
 constexpr uint32_t FP32_PER_BLOCK_8 = 8;
 constexpr uint32_t FP32_PER_REPEAT_64 = 64;
 
-__aicore__ void inline GetChunkOffset(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, uint64_t B, uint64_t H, uint64_t T,
+__aicore__ void inline GetChunkOffset(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, uint64_t B, uint64_t HV, uint64_t T,
                                       uint64_t chunkSize, uint32_t loopIdx, uint32_t &bos, uint32_t &eos)
 {
     if (cu_seqlens == nullptr) {
@@ -31,8 +31,8 @@ __aicore__ void inline GetChunkOffset(GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
         uint32_t bIdx = loopIdx / coreLoopsInB;
         bos = chunkIdx * chunkSize;
         eos = bos + chunkSize > T ? T : bos + chunkSize;
-        bos += (bIdx * H * T);
-        eos += (bIdx * H * T);
+        bos += (bIdx * HV * T);
+        eos += (bIdx * HV * T);
     } else {
         AscendC::GlobalTensor<uint64_t> cuSeqlensTensor;
         AscendC::GlobalTensor<uint64_t> chunkIndicesTensor;

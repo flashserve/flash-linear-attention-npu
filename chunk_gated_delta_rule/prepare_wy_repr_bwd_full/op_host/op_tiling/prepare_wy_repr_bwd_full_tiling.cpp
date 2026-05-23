@@ -25,7 +25,8 @@ class PrepareWyReprBwdFullTilingProcessor {
     gert::TilingContext *context_;
     PrepareWyReprBwdFullTilingData &tiling_;
     int64_t B = 0;
-    int64_t H = 0;
+    int64_t HK = 0;
+    int64_t HV = 0;
     int64_t K = 0;
     int64_t V = 0;
     int64_t T = 0;
@@ -284,34 +285,81 @@ public:
         const gert::Shape dwStorageShape = context_->GetRequiredInputShape(INPUT_DW_IDX)->GetStorageShape();
         const gert::Shape duStorageShape = context_->GetRequiredInputShape(INPUT_DU_IDX)->GetStorageShape();
         const gert::Shape gStorageShape = context_->GetRequiredInputShape(INPUT_G_IDX)->GetStorageShape();
-        OP_CHECK_IF(CompareShape(vStorageShape, kStorageShape, INPUT_V_NAME, INPUT_K_NAME, DIM_NUM_3) !=
-                        ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
+        /* Benchmark (test_npu_prepare_wy_repr_bwd_full): k [B,HK,T,K], v/dw/… [B,HV,T,…], HV % HK == 0. */
+        const int64_t HV = static_cast<int64_t>(vStorageShape.GetDim(DIM_1));
+        const int64_t HK = static_cast<int64_t>(kStorageShape.GetDim(DIM_1));
+        OP_CHECK_IF(vStorageShape.GetDim(DIM_0) != kStorageShape.GetDim(DIM_0),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed: batch dim 0 must match (got %zu vs %zu).",
+                            INPUT_V_NAME, INPUT_K_NAME, vStorageShape.GetDim(DIM_0), kStorageShape.GetDim(DIM_0)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(vStorageShape.GetDim(DIM_2) != kStorageShape.GetDim(DIM_2),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed: time dim 2 must match (got %zu vs %zu).",
+                            INPUT_V_NAME, INPUT_K_NAME, vStorageShape.GetDim(DIM_2), kStorageShape.GetDim(DIM_2)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(HV <= 0 || HK <= 0,
+                    OP_LOGE(context_->GetNodeName(), "HV and HK must be positive (HV=%ld, HK=%ld).", HV, HK),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(HV % HK != 0,
+                    OP_LOGE(context_->GetNodeName(),
+                            "HV (%ld) must be a positive multiple of HK (%ld) for GQA (remainder %ld).", HV, HK,
+                            HV % HK),
+                    return ge::GRAPH_FAILED);
         OP_CHECK_IF(CompareShape(vStorageShape, duStorageShape, INPUT_V_NAME, INPUT_DU_NAME, DIM_NUM_4) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
         OP_CHECK_IF(CompareShape(betaStorageShape, gStorageShape, INPUT_BETA_NAME, INPUT_G_NAME, DIM_NUM_3) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CompareShape(kStorageShape, gStorageShape, INPUT_K_NAME, INPUT_G_NAME, DIM_NUM_3) !=
-                        ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
+        OP_CHECK_IF(kStorageShape.GetDim(DIM_0) != gStorageShape.GetDim(DIM_0),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed: batch dim 0 must match (got %zu vs %zu).",
+                            INPUT_K_NAME, INPUT_G_NAME, kStorageShape.GetDim(DIM_0), gStorageShape.GetDim(DIM_0)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(kStorageShape.GetDim(DIM_2) != gStorageShape.GetDim(DIM_2),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed: time dim 2 must match (got %zu vs %zu).",
+                            INPUT_K_NAME, INPUT_G_NAME, kStorageShape.GetDim(DIM_2), gStorageShape.GetDim(DIM_2)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(vStorageShape.GetDim(DIM_1) != gStorageShape.GetDim(DIM_1),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed: head dim 1 must match HV (got %zu vs %zu).",
+                            INPUT_V_NAME, INPUT_G_NAME, vStorageShape.GetDim(DIM_1), gStorageShape.GetDim(DIM_1)),
+                    return ge::GRAPH_FAILED);
         OP_CHECK_IF(CompareShape(AStorageShape, dAStorageShape, INPUT_A_NAME, INPUT_DA_NAME, DIM_NUM_4) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CompareShape(dwStorageShape, kStorageShape, INPUT_DW_NAME, INPUT_K_NAME, DIM_NUM_4) !=
+        OP_CHECK_IF(CompareShape(dwStorageShape, vStorageShape, INPUT_DW_NAME, INPUT_V_NAME, DIM_NUM_3) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CompareShape(kStorageShape, AStorageShape, INPUT_K_NAME, INPUT_A_NAME, DIM_NUM_3) !=
-                        ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
+        OP_CHECK_IF(dwStorageShape.GetDim(DIM_3) != kStorageShape.GetDim(DIM_3),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed: last dim K must match (got %zu vs %zu).",
+                            INPUT_DW_NAME, INPUT_K_NAME, dwStorageShape.GetDim(DIM_3), kStorageShape.GetDim(DIM_3)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(kStorageShape.GetDim(DIM_0) != AStorageShape.GetDim(DIM_0),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed: batch dim 0 must match (got %zu vs %zu).",
+                            INPUT_K_NAME, INPUT_A_NAME, kStorageShape.GetDim(DIM_0), AStorageShape.GetDim(DIM_0)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(kStorageShape.GetDim(DIM_2) != AStorageShape.GetDim(DIM_2),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed: time dim 2 must match (got %zu vs %zu).",
+                            INPUT_K_NAME, INPUT_A_NAME, kStorageShape.GetDim(DIM_2), AStorageShape.GetDim(DIM_2)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(vStorageShape.GetDim(DIM_1) != AStorageShape.GetDim(DIM_1),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed: head dim 1 must match HV (got %zu vs %zu).",
+                            INPUT_V_NAME, INPUT_A_NAME, vStorageShape.GetDim(DIM_1), AStorageShape.GetDim(DIM_1)),
+                    return ge::GRAPH_FAILED);
         B = static_cast<int64_t>(vStorageShape.GetDim(DIM_0));
-        H = static_cast<int64_t>(vStorageShape.GetDim(DIM_1));
         T = static_cast<int64_t>(vStorageShape.GetDim(DIM_2));
         K = static_cast<int64_t>(kStorageShape.GetDim(DIM_3));
         V = static_cast<int64_t>(vStorageShape.GetDim(DIM_3));
         tiling_.set_B(B);
-        tiling_.set_H(H);
+        tiling_.set_HV(HV);
+        tiling_.set_HK(HK);
         tiling_.set_T(T);
         tiling_.set_K(K);
         tiling_.set_V(V);
@@ -336,7 +384,7 @@ public:
         auto kDType = kDesc->GetDataType();
         auto betaDesc = context_->GetDynamicInputDesc(INPUT_BETA_IDX, 0);
         OP_CHECK_NULL_WITH_CONTEXT(context_, betaDesc); // check xDesc is not null
-        auto betaDType = kDesc->GetDataType();
+        auto betaDType = betaDesc->GetDataType();
 
         OP_CHECK_IF(SetKBeteVecRow(ubSize, kDType, betaDType) != ge::GRAPH_SUCCESS,
                     OP_LOGE(context_->GetNodeName(), "SetKBeteVecRow Failed."), return ge::GRAPH_FAILED);
@@ -435,7 +483,8 @@ static void PrepareWyReprBwdFullTilingDataPrint(gert::TilingContext *context, Pr
     auto nodeName = context->GetNodeName();
     OP_LOGD(nodeName, ">>>>>>>>>>>>>>> Start to print PrepareWyReprBwdFull tiling data <<<<<<<<<<<<<<<<");
     OP_LOGD(nodeName, "=== B: %ld", tiling.get_B());
-    OP_LOGD(nodeName, "=== H: %ld", tiling.get_H());
+    OP_LOGD(nodeName, "=== HV: %ld", tiling.get_HV());
+    OP_LOGD(nodeName, "=== HK: %ld", tiling.get_HK());
     OP_LOGD(nodeName, "=== T: %ld", tiling.get_T());
     OP_LOGD(nodeName, "=== K: %ld", tiling.get_K());
     OP_LOGD(nodeName, "=== V: %ld", tiling.get_V());
@@ -489,7 +538,7 @@ ge::graphStatus Tiling4PrepareWyReprBwdFull(gert::TilingContext *context)
     context->SetBlockDim(ascendcPlatform.GetCoreNumAic());
 
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
-    uint32_t userWorkspaceSize = 2 * tiling.get_B() * tiling.get_H() * tiling.get_T() * tiling.get_V();
+    uint32_t userWorkspaceSize = 2 * tiling.get_B() * tiling.get_HV() * tiling.get_T() * tiling.get_V();
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = userWorkspaceSize + sysWorkspaceSize;
     context->SetScheduleMode(1); // set as batchmod for template using SyncAll

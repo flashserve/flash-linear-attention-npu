@@ -112,7 +112,7 @@ public:
         uint64_t chunkNum;
         uint64_t B = 1;
         uint64_t T = 32768;
-        uint64_t H = 32;
+        uint64_t HV = 32;
         uint64_t K = 128;
         uint64_t V = 128;
         uint64_t chunkSize = 64;
@@ -150,7 +150,7 @@ public:
               layoutDw(layoutDw_), ptrDkbg(ptrDkbg_), layoutDkbg(layoutDkbg_), ptrDu(ptrDu_), layoutDu(layoutDu_),
               ptrDvb(ptrDvb_), layoutDvb(layoutDvb_), ptrKT(ptrKT_), layoutKT(layoutKT_), ptrKKT(ptrKKT_),
               layoutKKT(layoutKKT_), ptrCuSeqLens(ptrCuSeqLens_), ptrChunkIndices(ptrChunkIndices_),
-              chunkNum(chunkNum_), B(B_), T(T_), H(H_), K(K_), V(V_), chunkSize(BT_), stage(stage_),
+              chunkNum(chunkNum_), B(B_), T(T_), HV(H_), K(K_), V(V_), chunkSize(BT_), stage(stage_),
               kBeteVecRow(kBeteVecRow_), dkbVecRow(dkbVecRow_), dkbgVecRow(dkbgVecRow_), dvbVecRow(dvbVecRow_), kktVecRow(kktVecRow_),
               kBetaCVNum(kBetaCVNum_), dkbCVNum(dkbCVNum_), dkbgCVNum(dkbgCVNum_), dvbCVNum(dvbCVNum_), kktCVNum(kktCVNum_)
         {
@@ -185,12 +185,12 @@ public:
             AscendC::GlobalTensor<ElementKbeta> gmKbeta;
             AscendC::GlobalTensor<ElementDk> gmDk;
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.HV, params.T,
                                params.chunkSize, loopIdx, bos, eos);
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
                 GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
-                for (int h = 0; h < params.H; h++) {
+                for (int h = 0; h < params.HV; h++) {
                     // Represent the full gm
                     gmDA.SetGlobalBuffer((__gm__ ElementDA *)params.ptrDA + (h * params.T + bos) * params.chunkSize);
                     gmKbeta.SetGlobalBuffer((__gm__ ElementKbeta *)params.ptrKbeta + (h * params.T + bos) * params.K);
@@ -230,12 +230,12 @@ public:
             }
             uint8_t beginSubBlockIdx = 1;
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.HV, params.T,
                                params.chunkSize, loopIdx, bos, eos);
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
                 GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
-                for (int h = 0; h < params.H; h++) {
+                for (int h = 0; h < params.HV; h++) {
                     // Represent the full gm
                     gmDAT.SetGlobalBuffer((__gm__ ElementDAT *)params.ptrDAT + (h * params.T + bos) * params.chunkSize);
                     gmK.SetGlobalBuffer((__gm__ ElementK *)params.ptrK + (h * params.T + bos) * params.K);
@@ -285,12 +285,12 @@ public:
             }
             uint8_t beginSubBlockIdx = 1;
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.HV, params.T,
                                params.chunkSize, loopIdx, bos, eos);
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
                 GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
-                for (int h = 0; h < params.H; h++) {
+                for (int h = 0; h < params.HV; h++) {
                     // Represent the full gm
                     gmAT.SetGlobalBuffer((__gm__ ElementAT *)params.ptrAT + (h * params.T + bos) * params.chunkSize);
                     gmDw.SetGlobalBuffer((__gm__ ElementDw *)params.ptrDw + (h * params.T + bos) * params.K);
@@ -339,12 +339,12 @@ public:
             }
             uint8_t beginSubBlockIdx = 1;
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.HV, params.T,
                                params.chunkSize, loopIdx, bos, eos);
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
                 GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.V), curChunkSize};
-                for (int h = 0; h < params.H; h++) {
+                for (int h = 0; h < params.HV; h++) {
                     // Represent the full gm
                     gmAT.SetGlobalBuffer((__gm__ ElementAT *)params.ptrAT + (h * params.T + bos) * params.chunkSize);
                     gmDu.SetGlobalBuffer((__gm__ ElementDu *)params.ptrDu + (h * params.T + bos) * params.V);
@@ -394,12 +394,12 @@ public:
             }
             uint8_t beginSubBlockIdx = 1;
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.HV, params.T,
                                params.chunkSize, loopIdx, bos, eos);
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
                 GemmCoord actualBlockShape{curChunkSize, curChunkSize, static_cast<uint32_t>(params.K)};
-                for (int h = 0; h < params.H; h++) {
+                for (int h = 0; h < params.HV; h++) {
                     // Represent the full gm
                     gmK.SetGlobalBuffer((__gm__ ElementK *)params.ptrK + (h * params.T + bos) * params.K);
                     gmKT.SetGlobalBuffer((__gm__ ElementKT *)params.ptrKT + (h * params.T + bos) * params.K);
@@ -453,7 +453,7 @@ public:
 private:
     uint64_t B = 0;
     uint64_t T = 0;
-    uint64_t H = 0;
+    uint64_t HV = 0;
     uint64_t K = 0;
     uint64_t V = 0;
     uint64_t chunkSize = 0;
@@ -498,7 +498,7 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Init(const 
 {
     B = tiling.B;
     T = tiling.T;
-    H = tiling.H;
+    HV = tiling.HV;
     K = tiling.K;
     V = tiling.V;
     chunkSize = tiling.chunkSize;
@@ -619,7 +619,7 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Process()
         workspace, layoutKbeta, dA, layoutDA, dk,        layoutDK,  dA,         layoutDAT,     k,        layoutK,
         workspace, layoutDkb,   A,  layoutAT, dw,        layoutDw,  workspace,  layoutDkbg,    du,       layoutDu,
         workspace, layoutDvb,   k,  layoutKT, workspace, layoutKKT, cu_seqlens, chunk_indices, chunkNum, B,
-        T,         H,           K,  V,        chunkSize, 4,
+        T,         HV,           K,  V,        chunkSize, 4,
         kBeteVecRow, dkbVecRow, dkbgVecRow, dvbVecRow, kktVecRow, kBetaCVNum, dkbCVNum, dkbgCVNum, dvbCVNum, kktCVNum};
     kernel(param);
 }

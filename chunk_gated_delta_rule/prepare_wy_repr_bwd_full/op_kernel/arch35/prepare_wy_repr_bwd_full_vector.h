@@ -90,7 +90,7 @@ public:
 private:
     uint64_t B = 0;
     uint64_t T = 0;
-    uint64_t H = 0;
+    uint64_t HV = 0;
     uint64_t K = 0;
     uint64_t V = 0;
     uint64_t chunkSize = 0;
@@ -169,7 +169,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Init(
 
     B = tiling.B;
     T = tiling.T;
-    H = tiling.H;
+    HV = tiling.HV;
     K = tiling.K;
     V = tiling.V;
     chunkSize = tiling.chunkSize;
@@ -442,9 +442,9 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     }
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
-        GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, chunkSize, loopIdx, bos, eos);
+        GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < H; h++) {
+        for (int h = 0; h < HV; h++) {
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 continue;
@@ -758,9 +758,9 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     }
     
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
-        GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, chunkSize, loopIdx, bos, eos);
+        GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < H; h++) {
+        for (int h = 0; h < HV; h++) {
             uint32_t taskNum = CeilDiv(curChunkSize, rowNum);
             taskNum = CeilDiv(taskNum, GetSubBlockNum());
             uint32_t dealTaskNum = 0;
@@ -1154,9 +1154,9 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     }
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
-        GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, chunkSize, loopIdx, bos, eos);
+        GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < H; h++) {
+        for (int h = 0; h < HV; h++) {
             uint32_t taskNum = CeilDiv(curChunkSize, rowNum);
             taskNum = CeilDiv(taskNum, GetSubBlockNum());
             uint32_t dealTaskNum = 0;
@@ -1481,9 +1481,9 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     }
     
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
-        GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, chunkSize, loopIdx, bos, eos);
+        GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < H; h++) {
+        for (int h = 0; h < HV; h++) {
             uint32_t taskNum = CeilDiv(curChunkSize, rowNum);
             taskNum = CeilDiv(taskNum, GetSubBlockNum());
             uint32_t dealTaskNum = 0;
@@ -1670,9 +1670,9 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     pipe->InitBuffer(kBetaOutQue, 2, rowNum * K * sizeof(kType));
     
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
-        GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, chunkSize, loopIdx, bos, eos);
+        GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < H; h++) {
+        for (int h = 0; h < HV; h++) {
             AscendC::CrossCoreWaitFlag(SYNC_FLAG_5);
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;

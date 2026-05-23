@@ -20,7 +20,8 @@
 #pragma pack(push, 8)
 struct PrepareWyReprBwdFullTilingDataA5 {
     int64_t B = 0;
-    int64_t H = 0;
+    int64_t HV = 0;
+    int64_t HK = 0;
     int64_t T = 0;
     int64_t K = 0;
     int64_t V = 0;
