@@ -150,9 +150,8 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     // size_t mm5Size = B * H * T * BT * FP16_SIZE;                   // mm5 (q @ k^T)
     size_t mm5Size = B * H * T * K * FP16_SIZE;// mm5 (q @ k^T): B * H * T * BT * FP16_SIZE, mm6/mm7 需要复用 mm5 的空间，BT 可能是 64 或 128，这里直接按 128 来计算，保证空间足够
     size_t dsTempSize = B * H * T * BT * FP16_SIZE;                // b_ds_temp
-    size_t mm6Size = B * H * T * K * FP16_SIZE;                   // mm6
-    size_t mm7Size = B * H * T * K * FP16_SIZE;                   // mm7
-    size_t mul1Size = B * H * T * BT * FP16_SIZE;                   // mul1
+    // Reuse existing storage so old_dqkwg keeps the same workspace size as main.
+    // mm6/mm7 reuse mm5 after Part3 consumes mm5; mul1 uses dq as scratch before Part4 rewrites dq.
 
     
     // Workspace 偏移计算
@@ -173,17 +172,9 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
 // std::cout << "[tiling] offset: " << offset << ", dsTempSize: "<<dsTempSize<<"\n";
     offset += dsTempSize;
 
-    size_t wsMm6Offset = offset;
-// std::cout << "[tiling] offset: " << mm6Size << ", mm6Size: "<<mm6Size<<"\n";
-    offset += mm6Size;
-
-    size_t wsMm7Offset = offset;
-// std::cout << "[tiling] offset: " << offset << ", mm7Size: "<<mm7Size<<"\n";
-    offset += mm7Size;
-
-    size_t wsMul1Offset = offset;
-// std::cout << "[tiling] offset: " << offset << ", mul1Size: "<<mul1Size<<"\n";
-    offset += mul1Size;
+    size_t wsMm6Offset = wsMm5Offset;
+    size_t wsMm7Offset = wsMm5Offset;
+    size_t wsMul1Offset = 0;
     
     size_t totalUserWorkspace = offset;
     // std::cout << "[tiling] totalUserWorkspace: " << totalUserWorkspace << ", sysWorkspaceSize: " << sysWorkspaceSize << "\n";

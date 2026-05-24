@@ -184,9 +184,8 @@
      gmMm5.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm5Offset));
      gmDsTemp.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsDsTempOffset));
      gmMm6.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm6Offset));
- 
      gmMm7.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm7Offset));
-     gmMul1.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMul1Offset));
+     gmMul1.SetGlobalBuffer((__gm__ DataType *)ptrDq);
  }
  
  // ============== 主处理函数 ==============
