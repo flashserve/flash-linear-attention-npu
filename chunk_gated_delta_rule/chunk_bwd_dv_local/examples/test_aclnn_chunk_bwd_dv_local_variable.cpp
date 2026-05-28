@@ -136,7 +136,7 @@ int main()
 {
     // 1. （固定写法）device/stream初始化，参考AscendCL对外接口列表
     // 根据自己的实际device填写deviceId
-    int32_t deviceId = 0;
+    int32_t deviceId = 2;
     aclrtStream stream;
     auto ret = Init(deviceId, &stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
@@ -152,45 +152,34 @@ int main()
     std::vector<int64_t> cuSeqlensHostData = {0, 64, 128};
     std::vector<int64_t> chunkIndicesHostData = get_chunk_indices(cuSeqlensHostData, chunk_size);
     int64_t NT = static_cast<int64_t>(chunkIndicesHostData.size()) / 2;
-    float scale = 1.0;
+    double scale = 1.0;
 
     std::vector<int64_t> qShape = {B, H, T, K};
     std::vector<int64_t> kShape = {B, H, T, K};
     std::vector<int64_t> dOShape = {B, H, T, V};
     std::vector<int64_t> gShape = {B, H, T};
-    std::vector<int64_t> triMatrixShape = {chunk_size, chunk_size};
-    std::vector<int64_t> cuSeqlensShape = {static_cast<int64_t>(cuSeqlensHostData.size())};
-    std::vector<int64_t> chunkIndicesShape = {NT, 2};
     std::vector<int64_t> dVShape = {B, H, T, V};
 
     void *qDeviceAddr = nullptr;
     void *kDeviceAddr = nullptr;
     void *dODeviceAddr = nullptr;
     void *gDeviceAddr = nullptr;
-    void *triMatrixDeviceAddr = nullptr;
-    void *cuSeqlensDeviceAddr = nullptr;
-    void *chunkIndicesDeviceAddr = nullptr;
     void *dVDeviceAddr = nullptr;
 
     aclTensor *q = nullptr;
     aclTensor *k = nullptr;
     aclTensor *dO = nullptr;
     aclTensor *g = nullptr;
-    aclTensor *triMatrix = nullptr;
-    aclTensor *cuSeqlens = nullptr;
-    aclTensor *chunkIndices = nullptr;
     aclTensor *dV = nullptr;
 
     int64_t lenQK = B * H * T * K;
     int64_t lenO = B * H * T * V;
     int64_t lenG = B * H * T;
-    std::vector<uint16_t> qHostData(lenQK, 0x3C00); // 1.0 的 half 表示
+    std::vector<uint16_t> qHostData(lenQK, 0x3C00);
     std::vector<uint16_t> kHostData(lenQK, 0x3C00);
     std::vector<uint16_t> dOHostData(lenO, 0x3C00);
     std::vector<uint16_t> gHostData(lenG, 0x3C00);
     std::vector<float> dVHostData(lenO, 0);
-    std::vector<uint8_t> triMatrixHostData = createUpperTriangularMatrix(chunk_size);
-    printBoolMatrix(triMatrixHostData, chunk_size);
 
     for(int index = 0;index<chunkIndicesHostData.size();index+=2){
         std::cout << chunkIndicesHostData[index]<< " "<< chunkIndicesHostData[index+1] << std::endl;
@@ -204,21 +193,19 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(gHostData, gShape, &gDeviceAddr, aclDataType::ACL_FLOAT16, &g);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(cuSeqlensHostData, cuSeqlensShape, &cuSeqlensDeviceAddr, aclDataType::ACL_INT64, &cuSeqlens);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(chunkIndicesHostData, chunkIndicesShape, &chunkIndicesDeviceAddr, aclDataType::ACL_INT64,
-                          &chunkIndices);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(dVHostData, dVShape, &dVDeviceAddr, aclDataType::ACL_FLOAT16, &dV);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(triMatrixHostData, triMatrixShape, &triMatrixDeviceAddr, aclDataType::ACL_BOOL, &triMatrix);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+
+    aclIntArray *cuSeqlens = aclCreateIntArray(cuSeqlensHostData.data(), cuSeqlensHostData.size());
+    CHECK_RET(cuSeqlens != nullptr, LOG_PRINT("create cuSeqlens failed.\n"); return ret);
+    aclIntArray *chunkIndices = aclCreateIntArray(chunkIndicesHostData.data(), chunkIndicesHostData.size());
+    CHECK_RET(chunkIndices != nullptr, LOG_PRINT("create chunkIndices failed.\n"); return ret);
     // 3. 调用CANN算子库API，需要修改为具体的Api名称
     uint64_t workspaceSize = 0;
     aclOpExecutor *executor;
 
     // 调用aclnnChunkBwdDvLocal第一段接口
-    ret = aclnnChunkBwdDvLocalGetWorkspaceSize(q, k, dO, g, triMatrix, nullptr, nullptr, cuSeqlens, chunkIndices, scale, chunk_size, dV,
+    ret = aclnnChunkBwdDvLocalGetWorkspaceSize(q, k, dO, g, nullptr, nullptr, cuSeqlens, chunkIndices, scale, chunk_size, dV,
                                                &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnChunkBwdDvLocalGetWorkspaceSize failed. ERROR: %d\n", ret);
               return ret);
@@ -246,8 +233,8 @@ int main()
     aclDestroyTensor(k);
     aclDestroyTensor(dO);
     aclDestroyTensor(g);
-    aclDestroyTensor(cuSeqlens);
-    aclDestroyTensor(chunkIndices);
+    aclDestroyIntArray(cuSeqlens);
+    aclDestroyIntArray(chunkIndices);
     aclDestroyTensor(dV);
 
     // 7. 释放device资源
@@ -255,8 +242,6 @@ int main()
     aclrtFree(kDeviceAddr);
     aclrtFree(dODeviceAddr);
     aclrtFree(gDeviceAddr);
-    aclrtFree(cuSeqlensDeviceAddr);
-    aclrtFree(chunkIndicesDeviceAddr);
     aclrtFree(dVDeviceAddr);
 
     if (workspaceSize > 0) {

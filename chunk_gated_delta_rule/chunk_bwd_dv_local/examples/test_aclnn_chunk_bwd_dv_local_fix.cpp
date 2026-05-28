@@ -136,7 +136,7 @@ int main()
 {
     // 1. （固定写法）device/stream初始化，参考AscendCL对外接口列表
     // 根据自己的实际device填写deviceId
-    int32_t deviceId = 0;
+    int32_t deviceId = 2;
     aclrtStream stream;
     auto ret = Init(deviceId, &stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
@@ -148,39 +148,34 @@ int main()
     int64_t V = 128;
     int64_t K = 128;
     int64_t chunk_size = 64;
-    float scale = 1.0;
+    double scale = 1.0;
 
     std::vector<int64_t> qShape = {B, H, T, K};
     std::vector<int64_t> kShape = {B, H, T, K};
     std::vector<int64_t> dOShape = {B, H, T, V};
     std::vector<int64_t> gShape = {B, H, T};
-    std::vector<int64_t> triMatrixShape = {chunk_size, chunk_size};
     std::vector<int64_t> dVShape = {B, H, T, V};
 
     void *qDeviceAddr = nullptr;
     void *kDeviceAddr = nullptr;
     void *dODeviceAddr = nullptr;
     void *gDeviceAddr = nullptr;
-    void *triMatrixDeviceAddr = nullptr;
     void *dVDeviceAddr = nullptr;
 
     aclTensor *q = nullptr;
     aclTensor *k = nullptr;
     aclTensor *dO = nullptr;
     aclTensor *g = nullptr;
-    aclTensor *triMatrix = nullptr;
     aclTensor *dV = nullptr;
 
     int64_t lenQK = B * H * T * K;
     int64_t lenO = B * H * T * V;
     int64_t lenG = B * H * T;
-    std::vector<uint16_t> qHostData(lenQK, 0x3C00); // 1.0 的 half 表示
+    std::vector<uint16_t> qHostData(lenQK, 0x3C00);
     std::vector<uint16_t> kHostData(lenQK, 0x3C00);
     std::vector<uint16_t> dOHostData(lenO, 0x3C00);
     std::vector<uint16_t> gHostData(lenG, 0x3C00);
     std::vector<float> dVHostData(lenO, 0);
-    std::vector<uint8_t> triMatrixHostData = createUpperTriangularMatrix(chunk_size);
-    // printBoolMatrix(triMatrixHostData, chunk_size);
 
     ret = CreateAclTensor(qHostData, qShape, &qDeviceAddr, aclDataType::ACL_FLOAT16, &q);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
@@ -192,14 +187,12 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(dVHostData, dVShape, &dVDeviceAddr, aclDataType::ACL_FLOAT16, &dV);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(triMatrixHostData, triMatrixShape, &triMatrixDeviceAddr, aclDataType::ACL_BOOL, &triMatrix);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 3. 调用CANN算子库API，需要修改为具体的Api名称
     uint64_t workspaceSize = 0;
     aclOpExecutor *executor;
 
     // 调用aclnnChunkBwdDvLocal第一段接口
-    ret = aclnnChunkBwdDvLocalGetWorkspaceSize(q, k, dO, g, nullptr, nullptr, nullptr, nullptr, nullptr, scale, chunk_size, dV,
+    ret = aclnnChunkBwdDvLocalGetWorkspaceSize(q, k, dO, g, nullptr, nullptr, nullptr, nullptr, scale, chunk_size, dV,
                                                &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnChunkBwdDvLocalGetWorkspaceSize failed. ERROR: %d\n", ret);
               return ret);

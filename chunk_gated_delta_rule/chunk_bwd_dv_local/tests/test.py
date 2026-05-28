@@ -3,8 +3,9 @@ import torch_npu
 from typing import Optional
 import math
 import random
-import ct
+from ct import dual,viz
 import fla_npu
+torch_npu.npu.set_device(5)
 
 def prepare_lens(cu_seqlens: torch.LongTensor) -> torch.LongTensor:
     return cu_seqlens[1:] - cu_seqlens[:-1]
@@ -64,6 +65,7 @@ def chunk_bwd_dv_local_fix(
     chunk_size: int = 64
 ) -> torch.Tensor:
     B, H, T, K = k.shape
+    qkv_type = q.dtype
     V = do.shape[3]
     if scale is None:
         scale = 1.0 / math.sqrt(K)
@@ -90,6 +92,76 @@ def chunk_bwd_dv_local_fix(
             BK = min(BK, K)
             for i_k in range(0, K, BK):
                 k_end = min(i_k + BK, K)
+                b_k = k[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len, i_k:k_end]
+                q_normal = q[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len, i_k:k_end]
+                b_q = q_normal.transpose(0, 1)
+                if chunk_len == 1:
+                    matmul_result = torch.sum(b_k * q_normal)
+                    b_A[:chunk_len, :chunk_len] += matmul_result
+                else:
+                    b_A[:chunk_len, :chunk_len] += torch.matmul(b_k, b_q)
+            b_g = g_t[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len].to(torch.float32)
+            o_t = i_t * BT + torch.arange(0, BT)
+            m_t = o_t < T
+            o_t_col = o_t.unsqueeze(1)
+            o_t_row = o_t.unsqueeze(0)
+            pos_mask = o_t_col <= o_t_row
+            m_t_col = m_t.unsqueeze(1)
+            valid_mask = m_t_col & m_t
+            m_A = pos_mask & valid_mask
+            g_i = b_g.unsqueeze(1)
+            g_j = b_g.unsqueeze(0)
+            g_factor = torch.exp(g_j - g_i) * scale
+            b_A_gated = torch.zeros_like(b_A)
+            b_A_gated[:chunk_len, :chunk_len] = b_A[:chunk_len, :chunk_len] * g_factor
+            b_A_masked = torch.where(m_A, b_A_gated, torch.zeros_like(b_A_gated))
+            b_A_masked = b_A_masked.to(qkv_type)
+            BV = 128
+            BV = min(BV, V)
+            for i_v in range(0, V, BV):
+                v_end = min(i_v + BV, V)
+                v_width = v_end - i_v
+                b_do = do[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len, i_v:v_end]
+                b_dv = torch.matmul(b_A_masked[:chunk_len, :chunk_len], b_do)
+                dv[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len, i_v:v_end] += b_dv
+    return dv
+
+def chunk_bwd_dv_local_fix_high_precision(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    do: torch.Tensor,
+    g: torch.Tensor,
+    scale: Optional[float],
+    cu_seqlens: torch.LongTensor,
+    chunk_size: int = 64
+) -> torch.Tensor:
+    B, H, T, K = k.shape
+    V = do.shape[3]
+    if scale is None:
+        scale = 1.0 / math.sqrt(K)
+    if cu_seqlens is not None:
+        batch_idx = 0
+    BT = min(chunk_size, max(16, 2 ** math.ceil(math.log2(T))))
+    chunk_per_T = (T + chunk_size - 1) // chunk_size
+    NT = chunk_per_T * B
+    dv = torch.zeros_like(do).to(torch.float64)
+    g_t = g
+    for chunk_idx in range(NT):
+        i_n = chunk_idx // chunk_per_T
+        batch_idx = i_n
+        i_t = chunk_idx % chunk_per_T
+
+        chunk_start_token = i_t * chunk_size
+        chunk_end_token = min(chunk_start_token + chunk_size, T)
+        chunk_len = chunk_end_token - chunk_start_token
+        if chunk_len <= 0:
+            continue
+        for i_h in range(H):
+            b_A = torch.zeros(BT, BT, device=q.device, dtype=torch.float64)
+            BK = 128
+            BK = min(BK, K)
+            for i_k in range(0, K, BK):
+                k_end = min(i_k + BK, K)
                 b_k = k[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len, i_k:k_end].to(torch.float32)
                 q_normal = q[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len, i_k:k_end].to(torch.float32)
                 b_q = q_normal.transpose(0, 1)
@@ -98,7 +170,7 @@ def chunk_bwd_dv_local_fix(
                     b_A[:chunk_len, :chunk_len] += matmul_result
                 else:
                     b_A[:chunk_len, :chunk_len] += torch.matmul(b_k, b_q)
-            b_g = g_t[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len]
+            b_g = g_t[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len].to(torch.float64)
             o_t = i_t * BT + torch.arange(0, BT)
             m_t = o_t < T
             o_t_col = o_t.unsqueeze(1)
@@ -135,6 +207,7 @@ def chunk_bwd_dv_local_variable(
     chunk_size: int = 64
 ) -> torch.Tensor:
     B, H, T, K = k.shape
+    qkv_type = q.dtype
     V = do.shape[3]
     if scale is None:
         scale = 1.0 / math.sqrt(K)
@@ -164,6 +237,80 @@ def chunk_bwd_dv_local_variable(
             BK = min(BK, K)
             for i_k in range(0, K, BK):
                 k_end = min(i_k + BK, K)
+                b_k = k[batch_idx, i_h, global_start:global_start+chunk_len, i_k:k_end]
+                q_normal = q[batch_idx, i_h, global_start:global_start+chunk_len, i_k:k_end]
+                b_q = q_normal.transpose(0, 1)
+                if chunk_len == 1:
+                    matmul_result = torch.sum(b_k * q_normal)
+                    b_A[:chunk_len, :chunk_len] += matmul_result
+                else:
+                    b_A[:chunk_len, :chunk_len] += torch.matmul(b_k, b_q)
+            b_g = g_t[batch_idx, i_h, global_start:global_start+chunk_len].to(torch.float32)
+            o_t = i_t * BT + torch.arange(0, BT)
+            m_t = o_t < T
+            o_t_col = o_t.unsqueeze(1)
+            o_t_row = o_t.unsqueeze(0)
+            pos_mask = o_t_col <= o_t_row
+            m_t_col = m_t.unsqueeze(1)
+            valid_mask = m_t_col & m_t
+            m_A = pos_mask & valid_mask
+            g_i = b_g.unsqueeze(1)
+            g_j = b_g.unsqueeze(0)
+            g_factor = torch.exp(g_j - g_i)
+            b_A_gated = torch.zeros_like(b_A)
+            b_A_gated[:chunk_len, :chunk_len] = b_A[:chunk_len, :chunk_len] * g_factor * scale
+            b_A_masked = torch.where(m_A, b_A_gated, torch.zeros_like(b_A_gated))
+            b_A_masked = b_A_masked.to(qkv_type)
+            BV = 128
+            BV = min(BV, V)
+            for i_v in range(0, V, BV):
+                v_end = min(i_v + BV, V)
+                v_width = v_end - i_v
+                b_do = do[batch_idx, i_h, global_start:global_start+chunk_len, i_v:v_end]
+                b_dv = torch.matmul(b_A_masked[:chunk_len, :chunk_len], b_do)
+                dv[batch_idx, i_h, global_start:global_start+chunk_len, i_v:v_end] += b_dv
+    return dv
+
+def chunk_bwd_dv_local_variable_high_precision(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    do: torch.Tensor,
+    g: torch.Tensor,
+    scale: Optional[float],
+    cu_seqlens: torch.LongTensor,
+    chunk_size: int = 64
+) -> torch.Tensor:
+    B, H, T, K = k.shape
+    qkv_type = q.dtype
+    V = do.shape[3]
+    if scale is None:
+        scale = 1.0 / math.sqrt(K)
+    if cu_seqlens is not None:
+        batch_idx = 0
+    chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
+    chunk_indices = chunk_indices.view(-1)
+    BT = min(chunk_size, max(16, 2 ** math.ceil(math.log2(T))))
+    NT = len(chunk_indices) // 2
+    dv = torch.zeros_like(do).to(torch.float64)
+    g_t = g
+    for chunk_idx in range(NT):
+        i_n = chunk_indices[chunk_idx * 2].item()
+        i_t = chunk_indices[chunk_idx * 2 + 1].item()
+        bos = cu_seqlens[i_n].item()
+        eos = cu_seqlens[i_n + 1].item()
+        T = eos - bos
+        chunk_start_token = i_t * chunk_size
+        chunk_end_token = min(chunk_start_token + chunk_size, T)
+        chunk_len = chunk_end_token - chunk_start_token
+        if chunk_len <= 0:
+            continue
+        global_start = bos + chunk_start_token
+        for i_h in range(H):
+            b_A = torch.zeros(BT, BT, device=q.device, dtype=torch.float64)
+            BK = 128
+            BK = min(BK, K)
+            for i_k in range(0, K, BK):
+                k_end = min(i_k + BK, K)
                 b_k = k[batch_idx, i_h, global_start:global_start+chunk_len, i_k:k_end].to(torch.float32)
                 q_normal = q[batch_idx, i_h, global_start:global_start+chunk_len, i_k:k_end].to(torch.float32)
                 b_q = q_normal.transpose(0, 1)
@@ -172,7 +319,7 @@ def chunk_bwd_dv_local_variable(
                     b_A[:chunk_len, :chunk_len] += matmul_result
                 else:
                     b_A[:chunk_len, :chunk_len] += torch.matmul(b_k, b_q)
-            b_g = g_t[batch_idx, i_h, global_start:global_start+chunk_len]
+            b_g = g_t[batch_idx, i_h, global_start:global_start+chunk_len].to(torch.float64)
             o_t = i_t * BT + torch.arange(0, BT)
             m_t = o_t < T
             o_t_col = o_t.unsqueeze(1)
@@ -216,19 +363,18 @@ def test_chunk_bwd_dv_local_fix(
         test_chunk_bwd_dv_local_fix.call_count = 1
     else:
         test_chunk_bwd_dv_local_fix.call_count += 1
-
+    # 标杆输入
     q = create_tensor((B, H, T, K), dtype=ktype)
     k = create_tensor((B, H, T, K), dtype=ktype)
     d_o = create_tensor((B, H, T, V), dtype=ktype)
     g = torch.arange(B * H * T, 0, -1).reshape((B, H, T)).to(gtype)
-
-    cu_seqlens = None
-    dv_golden = chunk_bwd_dv_local_fix(q, k, d_o, g, scale, cu_seqlens, chunk_size)
-
+    # 算子输入
     q_npu = q.npu()
     k_npu = k.npu()
     d_o_npu = d_o.npu()
     g_npu = g.npu()
+
+    cu_seqlens = None
 
     dv = torch.ops.npu.npu_chunk_bwd_dv_local(
         q_npu, k_npu, d_o_npu, g_npu,
@@ -239,8 +385,10 @@ def test_chunk_bwd_dv_local_fix(
         scale=scale,
         chunk_size=chunk_size
     )
-
-    ct.single(dv.cpu(), dv_golden)
+    dv_golden = chunk_bwd_dv_local_fix(q, k, d_o, g, scale, cu_seqlens, chunk_size)
+    dv_golden_high_precision = chunk_bwd_dv_local_fix_high_precision(q, k, d_o, g, scale, cu_seqlens, chunk_size)
+    result = dual(dv.cpu(), dv_golden, dv_golden_high_precision)
+    # viz(dv.cpu(), dv_golden, dv_golden_high_precision)
     print(f"test_chunk_bwd_dv_local_fix 被调用了第 {test_chunk_bwd_dv_local_fix.call_count} 次")
 
 
@@ -262,7 +410,7 @@ def test_chunk_bwd_dv_local_variable(
         test_chunk_bwd_dv_local_variable.call_count = 1
     else:
         test_chunk_bwd_dv_local_variable.call_count += 1
-
+    # 标杆输入
     q = create_tensor((B, H, T, K), dtype=ktype)
     k = create_tensor((B, H, T, K), dtype=ktype)
     d_o = create_tensor((B, H, T, V), dtype=ktype)
@@ -270,9 +418,7 @@ def test_chunk_bwd_dv_local_variable(
 
     cu_seqlens = generate_cu_seqlens(cu_seqlens_len, T)
     chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
-
-    dv_golden = chunk_bwd_dv_local_variable(q, k, d_o, g, scale, cu_seqlens, chunk_size)
-
+    # 算子输入
     q_npu = q.npu()
     k_npu = k.npu()
     d_o_npu = d_o.npu()
@@ -291,27 +437,57 @@ def test_chunk_bwd_dv_local_variable(
         chunk_size=chunk_size
     )
 
-    ct.single(dv.cpu(), dv_golden)
+    dv_golden = chunk_bwd_dv_local_variable(q, k, d_o, g, scale, cu_seqlens, chunk_size)
+    dv_golden_high_precision = chunk_bwd_dv_local_variable_high_precision(q, k, d_o, g, scale, cu_seqlens, chunk_size)
+
+    result = dual(dv.cpu(), dv_golden, dv_golden_high_precision)
+    # viz(dv.cpu(), dv_golden, dv_golden_high_precision)
     print(f"test_chunk_bwd_dv_local_variable 被调用了第 {test_chunk_bwd_dv_local_variable.call_count} 次")
 
 
 if __name__ == "__main__":
-    # Fix length tests
-    test_chunk_bwd_dv_local_fix(B=2, H=2, T=65, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.float16, gtype=torch.float16)
-    test_chunk_bwd_dv_local_fix(B=2, H=2, T=65, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16)
-    test_chunk_bwd_dv_local_fix(B=2, H=2, T=65, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.float32)
-    test_chunk_bwd_dv_local_fix(B=2, H=2, T=65, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.float16, gtype=torch.float32)
-    test_chunk_bwd_dv_local_fix(B=4, H=4, T=128, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.float16, gtype=torch.float32)
-    test_chunk_bwd_dv_local_fix(B=8, H=8, T=256, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.float16, gtype=torch.float16)
-    test_chunk_bwd_dv_local_fix(B=16, H=16, T=512, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.float16, gtype=torch.float16)
-    test_chunk_bwd_dv_local_fix(B=32, H=32, T=1024, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.float16, gtype=torch.float16)
-    
-    # Variable length tests
-    test_chunk_bwd_dv_local_variable(B=1, H=32, T=128, K=128, V=128, chunk_size=64, scale=0.011, cu_seqlens_len=2, ktype=torch.float16, gtype=torch.float16)
-    test_chunk_bwd_dv_local_variable(B=1, H=16, T=256, K=128, V=128, chunk_size=64, scale=0.011, cu_seqlens_len=3, ktype=torch.float16, gtype=torch.float32)
-    test_chunk_bwd_dv_local_variable(B=1, H=8, T=512, K=128, V=128, chunk_size=64, scale=0.011, cu_seqlens_len=4, ktype=torch.float16, gtype=torch.float16)
-    test_chunk_bwd_dv_local_variable(B=1, H=2, T=64, K=128, V=128, chunk_size=64, scale=0.011, cu_seqlens_len=2, ktype=torch.float16, gtype=torch.float16)
-    test_chunk_bwd_dv_local_variable(B=1, H=2, T=64, K=128, V=128, chunk_size=64, scale=0.011, cu_seqlens_len=2, ktype=torch.bfloat16, gtype=torch.bfloat16)
-    test_chunk_bwd_dv_local_variable(B=1, H=2, T=64, K=128, V=128, chunk_size=64, scale=0.011, cu_seqlens_len=2, ktype=torch.bfloat16, gtype=torch.float32)
-    test_chunk_bwd_dv_local_variable(B=1, H=2, T=64, K=128, V=128, chunk_size=64, scale=0.011, cu_seqlens_len=2, ktype=torch.float16, gtype=torch.float32)
-    test_chunk_bwd_dv_local_variable(B=1, H=32, T=2048, K=128, V=128, chunk_size=64, scale=0.011, cu_seqlens_len=8, ktype=torch.float16, gtype=torch.float16)
+    ################################## 一阶段泛化用例 #################################################
+    # C1
+    test_chunk_bwd_dv_local_fix(B=64, H=8, T=1024, K=128, V=128, chunk_size=64, scale=0.088, ktype=torch.float16, gtype=torch.float16)
+    # C2
+    test_chunk_bwd_dv_local_fix(B=32, H=16, T=2048, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16)
+    # C3
+    test_chunk_bwd_dv_local_fix(B=16, H=32, T=4096, K=128, V=128, chunk_size=64, scale=0.0442, ktype=torch.float16, gtype=torch.float16)
+    # C4
+    test_chunk_bwd_dv_local_fix(B=8, H=32, T=8192, K=128, V=128, chunk_size=64, scale=0.03125, ktype=torch.bfloat16, gtype=torch.bfloat16)
+    # C5
+    test_chunk_bwd_dv_local_fix(B=128, H=4, T=1024, K=128, V=128, chunk_size=64, scale=0.088, ktype=torch.float16, gtype=torch.float16)
+    # C6
+    test_chunk_bwd_dv_local_fix(B=64, H=8, T=4096, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16)
+    # C7
+    test_chunk_bwd_dv_local_fix(B=32, H=16, T=8192, K=128, V=128, chunk_size=64, scale=0.0442, ktype=torch.float16, gtype=torch.float16)
+    # C8
+    test_chunk_bwd_dv_local_fix(B=16, H=32, T=16384, K=128, V=128, chunk_size=64, scale=0.03125, ktype=torch.bfloat16, gtype=torch.bfloat16)
+    # C9
+    test_chunk_bwd_dv_local_fix(B=64, H=8, T=2048, K=128, V=128, chunk_size=128, scale=0.0625, ktype=torch.float16, gtype=torch.float16)
+    # C10
+    test_chunk_bwd_dv_local_fix(B=32, H=16, T=4096, K=128, V=128, chunk_size=128, scale=0.0442, ktype=torch.bfloat16, gtype=torch.bfloat16)
+    # C11
+    test_chunk_bwd_dv_local_fix(B=16, H=32, T=8192, K=128, V=128, chunk_size=128, scale=0.03125, ktype=torch.float16, gtype=torch.float16)
+    # C12
+    test_chunk_bwd_dv_local_fix(B=8, H=32, T=16384, K=128, V=128, chunk_size=128, scale=0.0221, ktype=torch.bfloat16, gtype=torch.bfloat16)
+    # C13
+    test_chunk_bwd_dv_local_fix(B=1, H=4, T=1024, K=128, V=128, chunk_size=64, scale=0.088, ktype=torch.float16, gtype=torch.float16)
+    # C14
+    test_chunk_bwd_dv_local_fix(B=48, H=8, T=2048, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16)
+    # C15
+    test_chunk_bwd_dv_local_fix(B=24, H=16, T=4096, K=128, V=128, chunk_size=64, scale=0.0442, ktype=torch.float16, gtype=torch.float16)
+    # C16
+    test_chunk_bwd_dv_local_fix(B=12, H=32, T=8192, K=128, V=128, chunk_size=64, scale=0.03125, ktype=torch.bfloat16, gtype=torch.bfloat16)
+    # V1
+    test_chunk_bwd_dv_local_variable(B=1, H=16, T=32768, K=128, V=128, chunk_size=64, scale=0.0625, cu_seqlens_len=512, ktype=torch.float16, gtype=torch.float32)
+    # V2
+    test_chunk_bwd_dv_local_variable(B=1, H=8, T=65536, K=128, V=128, chunk_size=64, scale=0.0625, cu_seqlens_len=1024, ktype=torch.bfloat16, gtype=torch.bfloat16)
+    # V3
+    test_chunk_bwd_dv_local_variable(B=1, H=32, T=65536, K=128, V=128, chunk_size=64, scale=0.0442, cu_seqlens_len=1024, ktype=torch.float16, gtype=torch.float32)
+    # V4
+    test_chunk_bwd_dv_local_variable(B=1, H=32, T=16384, K=128, V=128, chunk_size=64, scale=0.03125, cu_seqlens_len=256, ktype=torch.bfloat16, gtype=torch.bfloat16)
+
+    ################################## Vdim 256 泛化用例 #################################################
+    test_chunk_bwd_dv_local_fix(B=2, H=2, T=512, K=128, V=256, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16)
+    test_chunk_bwd_dv_local_variable(B=1, H=2, T=512, K=128, V=256, chunk_size=64, scale=0.011, cu_seqlens_len=4, ktype=torch.bfloat16, gtype=torch.bfloat16)

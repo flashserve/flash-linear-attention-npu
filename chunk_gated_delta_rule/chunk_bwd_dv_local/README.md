@@ -99,7 +99,7 @@ aclnnStatus aclnnChunkBwdDvLocal(
 - `dO` 的形状必须为 `[B, H, T, V]`。
 - `g` 的形状必须为 `[B, H, T]`。
 - `K` 须为 `128`。
-- `V` 须为 `128`。
+- `V` 须为 `128` 或 `256`。
 - `chunkSize` 仅支持 `64` 或 `128`。
 - 当启用变长模式时，`cuSeqlensOptional` 和 `chunkIndicesOptional` 必须同时提供；变长模式仅支持 `B = 1`。
 - `gGammaOptional` 和 `aOptional` 须传 `None`（当前版本不支持）。
@@ -136,7 +136,7 @@ aclnnStatus aclnnChunkBwdDvLocal(
 额外限制：
 
 - `K = 128`
-- `V = 128`
+- `V = 128` 或 `V = 256`
 - `chunkSize ∈ {64, 128}`
 
 ---

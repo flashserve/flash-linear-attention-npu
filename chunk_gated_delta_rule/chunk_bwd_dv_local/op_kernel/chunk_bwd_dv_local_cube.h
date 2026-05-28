@@ -44,12 +44,13 @@ using _128 = tla::Int<128>;
 #include "tla/tensor.hpp"
 #endif
 
+#include <type_traits>
 #include "chunk_bwd_dv_local_struct.h"
 #include "chunk_bwd_dv_local_common.h"
 using namespace tla;
 namespace GDN {
 
-template <typename QKVT, typename GT, typename Strategy>
+template <typename QKVT, typename GT, typename Strategy, int V>
 class ChunkBwdDvLocalCube {
 private:
     Strategy strategy;
@@ -71,15 +72,14 @@ public:
     int64_t H;
     int64_t T;
     int64_t K;
-    int64_t V;
     int64_t coreLoops;
     int64_t blockNum;
     int64_t coreIdx;
 };
 
-template <typename QKVT, typename GT, typename Strategy>
+template <typename QKVT, typename GT, typename Strategy, int V>
 __aicore__ inline void
-ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Init(GM_ADDR q, GM_ADDR k, GM_ADDR d_o, GM_ADDR cu_seqlens,
+ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Init(GM_ADDR q, GM_ADDR k, GM_ADDR d_o, GM_ADDR cu_seqlens,
                                               GM_ADDR chunk_indices, GM_ADDR d_v, GM_ADDR workspace,
                                               const ChunkBwdDvLocalTilingData *__restrict tilingData)
 {
@@ -92,14 +92,13 @@ ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Init(GM_ADDR q, GM_ADDR k, GM_ADDR d_o,
     H = tilingData->h;
     T = tilingData->t;
     K = tilingData->k;
-    V = tilingData->v;
     coreLoops = tilingData->b * strategy.chunkNumForT;
     blockNum = static_cast<int64_t>(AscendC::GetBlockNum());
     coreIdx = static_cast<int64_t>(AscendC::GetBlockIdx());
 }
 
-template <typename QKVT, typename GT, typename Strategy>
-__aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Process()
+template <typename QKVT, typename GT, typename Strategy, int V>
+__aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
 {
     #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         using ArchTag = Catlass::Arch::Ascend950;
@@ -107,8 +106,8 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Process()
         using ArchTag = Catlass::Arch::AtlasA2;
     #endif    
     using DispatchPolicy = Catlass::Gemm::MmadPingpong<ArchTag, true, false>;
-    using L1TileShape = Shape<_128, _128, _128>;
-    using L0TileShape = Shape<_128, _128, _128>;
+    using L1TileShapeQK = Shape<_128, _128, _128>;
+    using L0TileShapeQK = Shape<_128, _128, _128>;
     using ElementA = QKVT;
     using ElementB = QKVT;
     using ElementC = QKVT;
@@ -120,7 +119,7 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Process()
         using LayoutTagC = Catlass::layout::RowMajor;
         using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, ElementA, LayoutTagA, ElementB, LayoutTagB,
                                                                 ElementC, LayoutTagC>;
-        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, ElementA,
+        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShapeQK, L0TileShapeQK, ElementA,
                                                              ElementB, ElementC, void, TileCopy>;
 
         BlockMmad blockMmad(resource);
@@ -162,6 +161,9 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Process()
         AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_1);
     }
     AscendC::SyncAll<false>();
+    // 根据V值选择不同的TileShape
+    using L1TileShapeV = typename std::conditional<V == 128, Shape<_128, _128, _128>, Shape<_128, _256, _64>>::type;
+    using L0TileShapeV = typename std::conditional<V == 128, Shape<_128, _128, _128>, Shape<_128, _256, _64>>::type;
     // v @ d_o
     {
         using LayoutTagA = Catlass::layout::RowMajor;
@@ -169,7 +171,7 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Process()
         using LayoutTagC = Catlass::layout::RowMajor;
         using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, ElementA, LayoutTagA, ElementB, LayoutTagB,
                                                                 ElementC, LayoutTagC>;
-        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, ElementA,
+        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShapeV, L0TileShapeV, ElementA,
                                                              ElementB, ElementC, void, TileCopy>;
 
         BlockMmad blockMmad(resource);
