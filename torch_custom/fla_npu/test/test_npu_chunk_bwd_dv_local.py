@@ -1,5 +1,6 @@
 import torch
 import torch_npu
+import os
 from typing import Optional
 import math
 import hashlib
@@ -10,6 +11,7 @@ import fla_npu
 
 torch.npu.config.allow_internal_format = False
 torch.npu.set_compile_mode(jit_compile=False)
+torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
 
 def test_variable():
     B, H, T, K, V = 1, 32, 128, 128, 128

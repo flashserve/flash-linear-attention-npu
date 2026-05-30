@@ -9,7 +9,7 @@ chunkSize=64
 dtype="bf16"
 useActualInput=0
 useActualOutput=0
-device=2
+device=${TEST_DEVICE_ID:-0}
 gDType="float"
 stateDType="float"
 

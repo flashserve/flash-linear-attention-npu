@@ -1,12 +1,13 @@
 import torch
 import torch_npu
+import os
 from typing import Optional
 import pickle
 import math
 # import ct
 import random
 import fla_npu
-torch.npu.utils.set_device(3)
+torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
 
 def get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices):
     if cu_seqlens != None:

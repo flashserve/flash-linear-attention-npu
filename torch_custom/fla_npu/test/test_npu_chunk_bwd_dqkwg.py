@@ -474,7 +474,7 @@ if __name__ == "__main__":
         [2,4,512,64,torch.bfloat16,torch.float32,0.088,None],  #21 [0,16,128] [0,16,135,512]
         [1,32,16384,64,torch.bfloat16,torch.float32,0.088,None],  #21 [0,16,128]
     ]
-    device_id = 5
+    device_id = int(os.environ.get("TEST_DEVICE_ID", 0))
     
 
     dtype = torch.float16

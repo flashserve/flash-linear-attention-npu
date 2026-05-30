@@ -59,6 +59,10 @@ PROF_*
 OPPROF_*
 extra-info
 
+# test artifacts
+torch_custom/fla_npu/test/test_output/
+torch_custom/fla_npu/test/data/
+
 # examples
 examples/fast_kernel_launch_example/.cache
 examples/fast_kernel_launch_example/ascend_ops.egg-info

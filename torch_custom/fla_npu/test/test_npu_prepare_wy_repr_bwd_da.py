@@ -7,7 +7,7 @@ import random
 import fla_npu
 import os
 
-torch.npu.utils.set_device(3)
+torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 output_dir = os.path.join(current_dir, "output")

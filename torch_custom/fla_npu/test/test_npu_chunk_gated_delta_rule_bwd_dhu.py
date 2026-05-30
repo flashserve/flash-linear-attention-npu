@@ -9,7 +9,7 @@ os.environ['PARALLEL_COMPILE'] = '0'
 
 torch.npu.config.allow_internal_format = False
 torch.npu.set_compile_mode(jit_compile=False)
-torch_npu.npu.set_device(4)
+torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
 
 
 def prepare_chunk_indices_original(cu_seqlens, chunk_size=64):

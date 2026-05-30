@@ -144,7 +144,7 @@ class GDNFwdOInput:
         self.use_actual_input = int(sys.argv[12])
         self.use_actual_output = int(sys.argv[13])
         self.data_path = str(sys.argv[14])
-        torch.npu.set_device(int(sys.argv[15]))
+        torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", sys.argv[15])))
         self.g_dtype = parse_dtype(str(sys.argv[16]))
 
         if self.str_dtype == "half" or self.str_dtype == "fp16" or self.str_dtype == "float16":

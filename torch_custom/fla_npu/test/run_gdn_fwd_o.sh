@@ -11,7 +11,7 @@ scale=0.08838834764831845
 dtype="bf16"
 gDtype="bf16"
 
-device=2
+device=${TEST_DEVICE_ID:-0}
 useActualInput=0
 useActualOutput=0
 

@@ -1,4 +1,5 @@
 import numpy as np
+import os
 import torch
 
 import torch_npu
@@ -6,6 +7,8 @@ from torch_npu.testing.testcase import TestCase, run_tests
 from torch_npu.testing.common_utils import create_common_tensor
 
 import fla_npu
+
+torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
 
 
 class TestFastGelu(TestCase):

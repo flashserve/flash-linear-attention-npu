@@ -1,10 +1,13 @@
 import unittest
 
+import os
 import torch
 import torch_npu
 import torch.nn.functional as F
 
 import fla_npu
+
+torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
 
 
 # CPU golden reference adapted from:
