@@ -5,7 +5,7 @@ import pickle
 import math
 import ct
 import random
-torch.npu.utils.set_device(2)
+torch.npu.utils.set_device(7)
 
 def get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices):
     if cu_seqlens != None:
@@ -462,21 +462,22 @@ def test_prepare_wy_repr_bwd_full(
         NT = len(chunk_indices) // 2
     else:
         NT = (T + chunk_size - 1) // chunk_size
-    # cpu_dv = compute_dv_golden(A, du, beta, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
-    # ct.isclose(dv.cpu(), cpu_dv.cpu(), diff_thd=0.1)
-    # # torch.save(cpu_dv, "cpu_dv.pt")
-    
-    # cpu_dk = compute_dk_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
-    # ct.isclose(dk, cpu_dk, diff_thd=0.1)
-    # # torch.save(cpu_dk, "cpu_dk.pt")
-    
-    # cpu_dg = compute_dg_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
-    # ct.isclose(dg, cpu_dg, diff_thd=0.1)
-    # # torch.save(cpu_dg, "cpu_dg.pt")
-    
-    # cpu_dbeta = compute_dbeta_golden(A, dw, g, beta, dA,k,v,du, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
-    # ct.isclose(dbeta, cpu_dbeta, diff_thd=0.1)
-    # # torch.save(cpu_dbeta, "cpu_dbeta.pt") 
+    print(f"test_prepare_wy_repr_bwd_full 被调用了第 {test_prepare_wy_repr_bwd_full.call_count} 次的dv:")
+    cpu_dv = compute_dv_golden(A, du, beta, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
+    ct.isclose(dv.cpu(), cpu_dv.cpu(), diff_thd=0.1)
+    # torch.save(cpu_dv, "cpu_dv.pt")
+    print(f"test_prepare_wy_repr_bwd_full 被调用了第 {test_prepare_wy_repr_bwd_full.call_count} 次的dk:")
+    cpu_dk = compute_dk_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
+    ct.isclose(dk.cpu(), cpu_dk.cpu(), diff_thd=0.1)
+    # torch.save(cpu_dk, "cpu_dk.pt")
+    print(f"test_prepare_wy_repr_bwd_full 被调用了第 {test_prepare_wy_repr_bwd_full.call_count} 次的dg:")
+    cpu_dg = compute_dg_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
+    ct.isclose(dg.cpu(), cpu_dg.cpu(), diff_thd=0.1)
+    # torch.save(cpu_dg, "cpu_dg.pt")
+    print(f"test_prepare_wy_repr_bwd_full 被调用了第 {test_prepare_wy_repr_bwd_full.call_count} 次的dbeta:")
+    cpu_dbeta = compute_dbeta_golden(A, dw, g, beta, dA,k,v,du, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
+    ct.isclose(dbeta.cpu(), cpu_dbeta.cpu(), diff_thd=0.1)
+    torch.save(cpu_dbeta, "cpu_dbeta.pt") 
     
     print(f"test_prepare_wy_repr_bwd_full 被调用了第 {test_prepare_wy_repr_bwd_full.call_count} 次")
     return dk, dv, dbeta, dg
@@ -518,27 +519,27 @@ if __name__ == "__main__":
     # test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
     # #F18
     # test_prepare_wy_repr_bwd_full(B = 32, H = 16, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
-    #L1
-    cu_seqlens = prepare_cu_seqlens(T = 65536, L = 64)
-    chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    test_prepare_wy_repr_bwd_full(B = 1, H = 32, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # #L1
+    # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 64)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
+    # test_prepare_wy_repr_bwd_full(B = 1, H = 32, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
     # #L2
     # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 33)
     # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
     # test_prepare_wy_repr_bwd_full(B = 1, H = 16, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
-    # #L3
+    #L3
     # cu_seqlens = prepare_cu_seqlens(T = 131072, L = 333)
     # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
     # test_prepare_wy_repr_bwd_full(B = 1, H = 8, T = 131072, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
     # # L4
-    # cu_seqlens = prepare_cu_seqlens(T = 262144, L = 567)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, H = 4, T = 262144, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float32, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
-    # #L5
-    # cu_seqlens = prepare_cu_seqlens(T = 32768, L = 7)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, H = 16, T = 32768, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
-    # #L6
-    # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 25)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, H = 8, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    cu_seqlens = prepare_cu_seqlens(T = 262144, L = 567)
+    chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
+    test_prepare_wy_repr_bwd_full(B = 1, H = 4, T = 262144, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float32, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    #L5
+    cu_seqlens = prepare_cu_seqlens(T = 32768, L = 7)
+    chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
+    test_prepare_wy_repr_bwd_full(B = 1, H = 16, T = 32768, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    #L6
+    cu_seqlens = prepare_cu_seqlens(T = 65536, L = 25)
+    chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
+    test_prepare_wy_repr_bwd_full(B = 1, H = 8, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)

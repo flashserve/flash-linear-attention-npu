@@ -50,10 +50,8 @@ __global__ __aicore__ void prepare_wy_repr_bwd_full(GM_ADDR k, GM_ADDR v, GM_ADD
             PrepareWyReprBwdFullProcess<DTYPE_K, DTYPE_BETA> prepareWyReprBwdFullProcess(
                 k, v, beta, A, dA, dw, du, g, cu_seqlens, chunk_indices, dk, dv, dbeta, dg, workspace);
 #else
-            PrepareWyReprBwdFullProcess<DTYPE_K, DTYPE_BETA, GemmCubeTileShape<_128, _128, _256>,
-                                        GemmCubeTileShape<_128, _128, _128>>
-                prepareWyReprBwdFullProcess(k, v, beta, A, dA, dw, du, g, cu_seqlens, chunk_indices, dk, dv, dbeta, dg,
-                                            workspace);
+            PrepareWyReprBwdFullProcess<DTYPE_K, DTYPE_BETA> prepareWyReprBwdFullProcess(
+                k, v, beta, A, dA, dw, du, g, cu_seqlens, chunk_indices, dk, dv, dbeta, dg, workspace);
 #endif
             prepareWyReprBwdFullProcess.Init(tilingData);
             prepareWyReprBwdFullProcess.Process();
@@ -72,10 +70,8 @@ __global__ __aicore__ void prepare_wy_repr_bwd_full(GM_ADDR k, GM_ADDR v, GM_ADD
             PrepareWyReprBwdFullProcess<DTYPE_K, DTYPE_BETA> prepareWyReprBwdFullProcess(
                 k, v, beta, A, dA, dw, du, g, cu_seqlens, chunk_indices, dk, dv, dbeta, dg, workspace);
 #else
-            PrepareWyReprBwdFullProcess<DTYPE_K, DTYPE_BETA, GemmCubeTileShape<_128, _256, _256>,
-                                        GemmCubeTileShape<_128, _256, _64>>
-                prepareWyReprBwdFullProcess(k, v, beta, A, dA, dw, du, g, cu_seqlens, chunk_indices, dk, dv, dbeta, dg,
-                                            workspace);
+            PrepareWyReprBwdFullProcess<DTYPE_K, DTYPE_BETA> prepareWyReprBwdFullProcess(
+                k, v, beta, A, dA, dw, du, g, cu_seqlens, chunk_indices, dk, dv, dbeta, dg, workspace);
 #endif
             prepareWyReprBwdFullProcess.Init(tilingData);
             prepareWyReprBwdFullProcess.Process();
