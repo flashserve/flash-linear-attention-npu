@@ -7,7 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#define CATLASS_ARCH 2201
+#define CATLASS_ARCH 3510
 
 #include "catlass/arch/arch.hpp"
 #include "catlass/arch/cross_core_sync.hpp"
@@ -29,6 +29,24 @@
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 
+using _0 = tla::Int<0>;
+using _1 = tla::Int<1>;
+using _2 = tla::Int<2>;
+using _4 = tla::Int<4>;
+using _8 = tla::Int<8>;
+using _16 = tla::Int<16>;
+using _32 = tla::Int<32>;
+using _64 = tla::Int<64>;
+using _128 = tla::Int<128>;
+using _256 = tla::Int<256>;
+using _512 = tla::Int<512>;
+using _1024 = tla::Int<1024>;
+using _2048 = tla::Int<2048>;
+using _4096 = tla::Int<4096>;
+using _8192 = tla::Int<8192>;
+using _16384 = tla::Int<16384>;
+using _32768 = tla::Int<32768>;
+using _65536 = tla::Int<65536>;
 
 
 #include "kernel_operator.h"
@@ -46,7 +64,7 @@ template<
 class GDNFwdHKernel {
 public:
     
-    using ArchTag = Arch::AtlasA2;
+    using ArchTag = Arch::Ascend950;
     using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHCube;
     using VecScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHVec;
 
