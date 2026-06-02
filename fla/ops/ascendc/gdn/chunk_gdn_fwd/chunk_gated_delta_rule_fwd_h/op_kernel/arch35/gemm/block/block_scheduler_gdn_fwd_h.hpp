@@ -15,6 +15,11 @@ using namespace Catlass;
 
 // constexpr uint32_t PING_PONG_STAGES = 1;
 constexpr uint32_t PING_PONG_STAGES = 2;
+constexpr uint32_t BYTE_SIZE_16_BIT = 2;
+constexpr uint32_t BYTES_PER_C0 = 32;
+constexpr uint32_t BYTE_SIZE_PER_REPEAT = 256;
+constexpr uint32_t SIZE_16_NUM_PER_C0 = BYTES_PER_C0 / BYTE_SIZE_16_BIT;
+constexpr uint32_t FLOAT_NUM_PER_REPEAT = BYTE_SIZE_PER_REPEAT / sizeof(float);
 
 template <typename T>
 CATLASS_DEVICE T AlignUp(T a, T b) {

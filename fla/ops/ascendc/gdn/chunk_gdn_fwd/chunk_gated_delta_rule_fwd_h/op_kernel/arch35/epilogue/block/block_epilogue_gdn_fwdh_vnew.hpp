@@ -24,14 +24,16 @@ template <
     class VOutputType_,
     class GInputType_,
     class UInputType_,
-    class WSInputType_
+    class WSInputType_,
+    class VUpdateType_
 >
 class BlockEpilogue <
     EpilogueAtlasGDNFwdHVnew,
     VOutputType_,
     GInputType_,
     UInputType_,
-    WSInputType_
+    WSInputType_,
+    VUpdateType_
 > {
 public:
     // Type aliases
@@ -42,6 +44,8 @@ public:
     using GElementInput = typename GInputType_::Element;
     using UElementInput = typename UInputType_::Element;
     using WSElementInput = typename WSInputType_::Element;
+    using VElementUpdate = typename VUpdateType_::Element;
+    using VLayoutUpdate = typename VUpdateType_::Layout;
 
     CATLASS_DEVICE
     BlockEpilogue(Arch::Resource<ArchTag> &resource)
@@ -95,6 +99,7 @@ public:
     void operator()(
         AscendC::GlobalTensor<VElementOutput> vnewOutput,
         AscendC::GlobalTensor<VElementOutput> vnewdecayOutput,
+        AscendC::LocalTensor<VElementUpdate> l1VUpdate,
         AscendC::GlobalTensor<GElementInput> gInput,
         AscendC::GlobalTensor<UElementInput> uInput,
         AscendC::GlobalTensor<float> wsInput,
@@ -103,7 +108,8 @@ public:
         uint32_t vHeadDim,
         Arch::CrossCoreFlag cube1Done,
         Arch::CrossCoreFlag vec1Done,
-        bool isInitialState 
+        bool isInitialState,
+        bool isPing
     )
     {
         uint32_t mActual = chunkSize;
@@ -202,11 +208,6 @@ public:
 
         Arch::CrossCoreWaitFlag(cube1Done);
 
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
-        AscendC::DataCopy(wsUbTensor, wsInputThisSubBlock, mActualThisSubBlock * nvActual);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
-        
         AscendC::Sub<float>(wsUbTensor, calcUbTensor, wsUbTensor, mActualThisSubBlock * nvActual);
         AscendC::PipeBarrier<PIPE_V>();
         
@@ -217,12 +218,26 @@ public:
         AscendC::Mul(calcUbTensor[gbrcEffStart*nvActual], wsUbTensor, calcUbTensor[gbrcEffStart*nvActual], mActualThisSubBlock * nvActual);
         AscendC::PipeBarrier<PIPE_V>();
         
-        AscendC::Cast(vNewDecayUbTensor, calcUbTensor[gbrcEffStart*nvActual], AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nvActual);
-        AscendC::PipeBarrier<PIPE_V>();
+        uint32_t nvLoops = vHeadDim / FLOAT_NUM_PER_REPEAT;
+        for (uint32_t nLoop = 0; nLoop < nvLoops; nLoop++) {
+            uint32_t castSrcOffset = gbrcEffStart * nvActual + nLoop * FLOAT_NUM_PER_REPEAT;
+            uint32_t castDstOffset = nLoop * mActualThisSubBlock * FLOAT_NUM_PER_REPEAT;
+            AscendC::Cast(vNewDecayUbTensor[castDstOffset], calcUbTensor[castSrcOffset], AscendC::RoundMode::CAST_RINT, FLOAT_NUM_PER_REPEAT, mActualThisSubBlock, {(uint16_t)mActualThisSubBlock, 1, 1, (uint8_t)(nvLoops * 8)});
+        }
         
+        AscendC::PipeBarrier<PIPE_V>();
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
-        AscendC::DataCopy(vnewdecayOutputThisSubBlock, vNewDecayUbTensor, mActualThisSubBlock * nvActual);
+        
+        uint32_t ubToL1Loops = nvActual / SIZE_16_NUM_PER_C0;
+        AscendC::DataCopyParams intriParams;
+        intriParams.blockCount = ubToL1Loops;
+        intriParams.blockLen = mActualThisSubBlock;
+        intriParams.srcGap = 0;
+        intriParams.dstGap = mActual - mActualThisSubBlock;
+        uint32_t l1Addr = mOffset * SIZE_16_NUM_PER_C0;
+        AscendC::DataCopy(l1VUpdate[l1Addr], vNewDecayUbTensor, intriParams);
+
         Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
 
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
@@ -230,17 +245,14 @@ public:
         AscendC::Cast(vNewOutputUbTensor, wsUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nvActual);
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
         AscendC::DataCopy(vnewOutputThisSubBlock, vNewOutputUbTensor, mActualThisSubBlock * nvActual);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
 
-        isPing = !isPing;
     }
 
 private:
     uint32_t pongBaseEvent = 4;
-    bool isPing = true;
 
     AscendC::LocalTensor<float> calcUbTensor;
 
