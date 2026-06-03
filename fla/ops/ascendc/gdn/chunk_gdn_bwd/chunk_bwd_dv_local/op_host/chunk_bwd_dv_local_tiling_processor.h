@@ -49,16 +49,12 @@ static constexpr int64_t V_L_B = 1;
 static constexpr int64_t CHUNK_SIZE_64 = 64;
 static constexpr int64_t CHUNK_SIZE_128 = 128;
 static constexpr int64_t CHUNK_INDICES_DIM_1_SIZE = 2;
-
-static constexpr int64_t K_SIZE_128 = 128;
-static constexpr int64_t V_SIZE_128 = 128;
-static constexpr int64_t V_SIZE_256 = 256;
+static constexpr int64_t DEFAULT_HEAD_BUF_NUM = 4;
 
 static constexpr const char *const INPUT_Q_NAME = "q";
 static constexpr const char *const INPUT_K_NAME = "k";
 static constexpr const char *const INPUT_DO_NAME = "do";
 static constexpr const char *const INPUT_G_NAME = "g";
-static constexpr const char *const INPUT_TRI_MATRIX_NAME = "upper_tri_matrix";
 static constexpr const char *const INPUT_CHUNK_INDICES_NAME = "chunk_indices";
 static constexpr const char *const INPUT_SEQLENS_NAME = "cu_seqlens";
 
@@ -163,16 +159,6 @@ public:
         tiling_.k = static_cast<int64_t>(qStorageShape.GetDim(DIM_3));
         tiling_.v = static_cast<int64_t>(dOStorageShape.GetDim(DIM_3));
 
-        OP_LOGI(ctx_.nodeName, "=== K/V dimension check: K=%ld, V=%ld", tiling_.k, tiling_.v);
-        OP_CHECK_IF(tiling_.k != K_SIZE_128,
-                    OP_LOGE(ctx_.nodeName,
-                            "Check input k shape failed, the k dimension should be 128, but get %ld.", tiling_.k),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(tiling_.v != V_SIZE_128 && tiling_.v != V_SIZE_256,
-                    OP_LOGE(ctx_.nodeName,
-                            "Check input v shape failed, the v dimension should be 128 or 256, but get %ld.", tiling_.v),
-                    return ge::GRAPH_FAILED);
-
         tiling_.scale = static_cast<float>(ctx_.scale);
         int64_t chunkSize = static_cast<int64_t>(ctx_.chunkSize);
         OP_CHECK_IF(chunkSize != CHUNK_SIZE_64 && chunkSize != CHUNK_SIZE_128,
@@ -231,12 +217,13 @@ public:
         OP_CHECK_IF(CommonTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
         if (IsVariableLength()) {
             OP_CHECK_IF(tiling_.b != V_L_B,
-                        OP_LOGE(ctx_.nodeName, "B cannot be 1 when cu_seqlens is nullptr."),
+                        OP_LOGE(ctx_.nodeName, "B must be 1 when cu_seqlens is provided."),
                         return ge::GRAPH_FAILED);
             OP_CHECK_IF(VariableLenTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
         } else {
             OP_CHECK_IF(FixLenTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
         }
+        tiling_.headBufNum = DEFAULT_HEAD_BUF_NUM;
         return ge::GRAPH_SUCCESS;
     }
 };

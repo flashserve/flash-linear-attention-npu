@@ -32,6 +32,8 @@ static void ChunkBwdDvLocalTilingDataPrint(gert::TilingContext *context, const C
     OP_LOGD(nodeName, "=== v: %ld", tiling.v);
     OP_LOGD(nodeName, "=== chunkNumForT: %ld", tiling.chunkNumForT);
     OP_LOGD(nodeName, "=== chunkSize: %ld", tiling.chunkSize);
+    OP_LOGD(nodeName, "=== headBufNum: %ld", tiling.headBufNum);
+    OP_LOGD(nodeName, "=== usedCoreNum: %ld", tiling.usedCoreNum);
     OP_LOGD(nodeName, "=== scale: %f", tiling.scale);
     OP_LOGD(nodeName, ">>>>>>>>>>>>>>> Print ChunkBwdDvLocal tiling data end <<<<<<<<<<<<<<<<");
 }
@@ -71,21 +73,24 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
     int dTQ = (qDtype == ge::DT_BF16) ? CHUNK_BWD_DV_LOCAL_TPL_BF16 : CHUNK_BWD_DV_LOCAL_TPL_FP16;
     int dTG = (gDtype == ge::DT_FLOAT) ? CHUNK_BWD_DV_LOCAL_TPL_FP32 : dTQ;
 
-    int v = static_cast<int>(tiling->v);
-    OP_LOGD(context->GetNodeName(), "V value: %d", v);
-
-    uint64_t tilingKey = GET_TPL_TILING_KEY(strategyKey, dTQ, dTG, v);
+    uint64_t tilingKey = GET_TPL_TILING_KEY(strategyKey, dTQ, dTG);
     context->SetTilingKey(tilingKey);
 
     OP_LOGD(context->GetNodeName(), "tilingKey: %d", context->GetTilingKey());
-    ChunkBwdDvLocalTilingDataPrint(context, *tiling);
 
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     int64_t coreNum = static_cast<int64_t>(ascendcPlatform.GetCoreNumAic());
-    context->SetBlockDim(std::min(tiling->chunkNumForT * tiling->b, coreNum));
+    int64_t usedCoreNum = std::min(tiling->chunkNumForT * tiling->b, coreNum);
+    tiling->usedCoreNum = usedCoreNum;
+    tiling->headBufNum =
+        (processor.IsVariableLength() && tiling->h > DEFAULT_HEAD_BUF_NUM) ? tiling->h : DEFAULT_HEAD_BUF_NUM;
+    ChunkBwdDvLocalTilingDataPrint(context, *tiling);
+    context->SetBlockDim(usedCoreNum);
 
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
-    uint32_t userWorkspaceSize = QKV_DTYPE_SIZE * tiling->b * tiling->h * tiling->t * tiling->chunkSize;
+    size_t userWorkspaceSize =
+        static_cast<size_t>(QKV_DTYPE_SIZE) * tiling->usedCoreNum * tiling->headBufNum *
+        tiling->chunkSize * tiling->chunkSize;
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = sysWorkspaceSize + userWorkspaceSize;
     context->SetScheduleMode(1);
