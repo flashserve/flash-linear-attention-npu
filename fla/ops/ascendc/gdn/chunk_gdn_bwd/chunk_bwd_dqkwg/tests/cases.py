@@ -19,7 +19,7 @@ def generate_increasing_sequence(start, end, count):
 
 
 cases = {   #B,HV,HK,T,chunk_size,dtype,Gtype,scale,cu_seqlens, K,V
-        "case_fast": [2,8,4,512,128,torch.bfloat16,torch.float32,0.088,None,128,256],  #25 [0,16,128] [0,16,135,512]
+        "case_fast": [2,8,4,512,128,torch.bfloat16,torch.float32,0.088,None,128,256],
         "case_01": [64,8,8,1024,64,torch.float16,torch.float16,0.088,None,128,128],
         "case_02": [32,16,16,2048,64,torch.bfloat16,torch.bfloat16,0.0625,None,128,128],
         "case_03": [16,32,32,4096,64,torch.float16,torch.float16,0.0442,None,128,128],
@@ -40,21 +40,23 @@ cases = {   #B,HV,HK,T,chunk_size,dtype,Gtype,scale,cu_seqlens, K,V
         "case_18": [1,8,8,65536,64,torch.bfloat16,torch.bfloat16,0.0625,[0,16,20000,65536],128,128],
         "case_19": [1,32,32,65536,64,torch.float16,torch.float32,0.0442,[0,16,20000,50000,65536],128,128],
         "case_20": [1,32,32,262144,64,torch.bfloat16,torch.bfloat16,0.03125,[0,16,20000,50000,65536,210000,262144],128,128],
-        "case_21": [21,32,32,195,64,torch.float16,torch.float16,0.03125,None,128,128], #21
-        "case_22": [1,32,32,7909,64,torch.bfloat16,torch.bfloat16,0.03125,[0,1024,2168,3087,4096,7909],128,128], # 22
-        "case_23": [1,32,32,65536,64,torch.bfloat16,torch.bfloat16,0.32,case_extra_info.pj_cu_seqlens,128,128],  #23 [0,16,128] [0,16,135,512]
-        "case_24": [1,32,32,65536,128,torch.bfloat16,torch.bfloat16,0.32,case_extra_info.pj_cu_seqlens,128,128],  #24 [0,16,128] [0,16,135,512]
-        "case_25": [1,16,8,1024,64,torch.bfloat16,torch.float32,0.088, [0, 57, 143, 187, 197, 227],128,256],  #25 [0,16,128] [0,16,135,512]
-        "case_step2_01": [1,32,16,16384,64,torch.bfloat16,torch.bfloat16,0.03125, generate_increasing_sequence(0, 16384, 128),128,256],  #26 [0,16,128] [0,16,135,512]
-        "case_step2_02": [1,63,21,16384,64,torch.bfloat16,torch.bfloat16,0.03125, [0, 1066, 2048, 5000, 9000, 10000, 12000, 14000, 16384],128,256],  #26 [0,16,128] [0,16,135,512]
-        "case_step2_03": [1,32,8,65536,128,torch.bfloat16,torch.bfloat16,0.03125, generate_increasing_sequence(0, 65536, 172),128,256],  #26 [0,16,128] [0,16,135,512]
-        "case_step2_04": [1,32,16,65536,64,torch.bfloat16,torch.bfloat16,0.03125, generate_increasing_sequence(0, 65536, 668),128,128],  #26 [0,16,128] [0,16,135,512]
-        "case_step2_05": [1,32,16,65536,64,torch.bfloat16,torch.bfloat16,0.03125, generate_increasing_sequence(0, 65536, 17),128,128],  #26 [0,16,128] [0,16,135,512]
-        "case_step2_06": [1,64,2,262144,64,torch.bfloat16,torch.bfloat16,0.03125, generate_increasing_sequence(0, 262144, 30),128,256],  #26 [0,16,128] [0,16,135,512]
-        "case_step2_07": [1,32,16,4096,64,torch.bfloat16,torch.bfloat16,0.03125, None,128,256],  #26 [0,16,128] [0,16,135,512]
-        "case_step2_08": [16,63,21,2048,64,torch.bfloat16,torch.bfloat16,0.03125, None,128,256],  #26 [0,16,128] [0,16,135,512]
-        "case_step2_09": [711,32,4,196,128,torch.bfloat16,torch.bfloat16,0.03125, None,128,128],  #26 [0,16,128] [0,16,135,512]
-        "case_step2_10": [176,64,2,24,64,torch.bfloat16,torch.bfloat16,0.03125, None,128,256],  #26 [0,16,128] [0,16,135,512]
+        "case_21": [21,32,32,195,64,torch.float16,torch.float16,0.03125,None,128,128],
+        "case_22": [1,32,32,7909,64,torch.bfloat16,torch.bfloat16,0.03125,[0,1024,2168,3087,4096,7909],128,128],
+        "case_23": [1,32,32,65536,64,torch.bfloat16,torch.bfloat16,0.32,case_extra_info.pj_cu_seqlens,128,128],
+        "case_24": [1,32,32,65536,128,torch.bfloat16,torch.bfloat16,0.32,case_extra_info.pj_cu_seqlens,128,128],
+        "case_25": [1,16,8,1024,64,torch.bfloat16,torch.float32,0.088, [0, 57, 143, 187, 197, 227],128,256],
+        "case_step2_01": [1,32,16,16384,64,torch.float16,torch.float32,0.03125, generate_increasing_sequence(0, 16384, 128),128,256],
+        "case_step2_02": [1,63,21,16384,64,torch.bfloat16,torch.float32,0.03125, [0, 1066, 2048, 5000, 9000, 10000, 12000, 14000, 16384],128,256],
+        "case_step2_03": [1,32,8,65536,128,torch.float16,torch.float32,0.03125, generate_increasing_sequence(0, 65536, 172),128,256],
+        "case_step2_04": [1,32,16,65536,64,torch.bfloat16,torch.float32,0.03125, generate_increasing_sequence(0, 65536, 668),128,128],
+        "case_step2_05": [1,32,4,65536,64,torch.float16,torch.float32,0.03125, generate_increasing_sequence(0, 65536, 17),128,128],
+        "case_step2_06": [1,64,2,65519,64,torch.bfloat16,torch.float32,0.03125, generate_increasing_sequence(0, 65519, 30),128,256],
+        "case_step2_07": [1,32,16,4096,64,torch.float16,torch.float32,0.03125, None,128,256],
+        "case_step2_08": [16,63,21,2048,64,torch.bfloat16,torch.float32,0.03125, None,128,256],
+        "case_step2_09": [711,32,4,196,128,torch.float16,torch.float32,0.03125, None,128,128],
+        "case_step2_10": [176,64,2,24,64,torch.bfloat16,torch.float32,0.03125, None,128,256],
+        "case_step2_11": [1,48,16,65536,64,torch.float16,torch.float32,0.03125, generate_increasing_sequence(0, 65536, 667),128,256],
+        "case_step2_12": [1,48,16,65536,128,torch.bfloat16,torch.float32,0.03125, generate_increasing_sequence(0, 65536, 13),128,256],
 }
 def error_exit(msg):
     print(f"[error_exit] {msg}")

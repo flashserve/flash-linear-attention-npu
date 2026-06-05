@@ -10,7 +10,7 @@ from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from chunk_bwd_dqkwg_cpu import chunk_bwd_dqkwg_cpu
 
 def create_gate_g(B: int, H: int, T: int, gtype):
@@ -115,6 +115,7 @@ def chunk_bwd_dqkwg_torch(
     scale: Optional[float],
     cu_seqlens: Optional[torch.LongTensor],
     chunk_size: int = 64,
+    benchmark: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     q_t = q.transpose(1, 2).contiguous()
     k_t = k.transpose(1, 2).contiguous()
@@ -129,7 +130,8 @@ def chunk_bwd_dqkwg_torch(
     cu_seqlens_tensor = torch.tensor(cu_seqlens, dtype=torch.int64) if cu_seqlens is not None else None
 
     dq, dk, dw, dg = chunk_bwd_dqkwg_cpu(
-        q_t, k_t, v_t, do_t, h_t, dh_t, w_t, g_t, dv_t, scale, cu_seqlens_tensor, chunk_size
+        q_t, k_t, v_t, do_t, h_t, dh_t, w_t, g_t, dv_t, scale, cu_seqlens_tensor, chunk_size,
+        benchmark=benchmark
     )
 
     dq = dq.transpose(1, 2).contiguous()
@@ -147,7 +149,7 @@ class FunctionApi(BaseApi):
         super(FunctionApi, self).__init__(task_result)
         self.qkv_type = None
 
-    def __call__(self, input_data: InputDataset, with_output: bool = False):
+    def cpu(self, input_data: InputDataset, with_output: bool = False):
         q = input_data.kwargs["q"]
         k = input_data.kwargs["k"]
         v = input_data.kwargs["v"]
@@ -183,6 +185,36 @@ class FunctionApi(BaseApi):
 
         return dq, dk, dw_out, dg
 
+    def cpu_benchmark(self, input_data: InputDataset, with_output: bool = False):
+        q = input_data.kwargs["q"].to(torch.float64)
+        k = input_data.kwargs["k"].to(torch.float64)
+        v = input_data.kwargs["v"].to(torch.float64)
+        do = input_data.kwargs["do"].to(torch.float64)
+        h = input_data.kwargs["h"].to(torch.float64)
+        dh = input_data.kwargs["dh"].to(torch.float64)
+        w = input_data.kwargs.get("w", None)
+        if w is not None:
+            w = w.to(torch.float64)
+        g = input_data.kwargs["g"].to(torch.float64)
+        dv = input_data.kwargs["dv"].to(torch.float64)
+        cu_seqlens = input_data.kwargs.get("cu_seqlens", None)
+        chunk_size = input_data.kwargs["chunk_size"]
+        scale = input_data.kwargs["scale"]
+
+        dq, dk, dw_out, dg = chunk_bwd_dqkwg_torch(
+            q, k, v, do, h, dh, w, g, dv, scale, cu_seqlens, chunk_size,
+            benchmark=True
+        )
+
+        return dq, dk, dw_out, dg
+
+    def __call__(self, input_data: InputDataset, with_output: bool = False):
+        q = input_data.kwargs["q"]
+        if q.dtype == torch.float64:
+            return self.cpu_benchmark(input_data, with_output)
+        else:
+            return self.cpu(input_data, with_output)
+
     def init_by_input_data(self, input_data: InputDataset):
         B, HK, T_json, K = input_data.kwargs["q"].shape
         HV = input_data.kwargs["v"].shape[1]
@@ -211,7 +243,7 @@ class FunctionApi(BaseApi):
         if not is_mix:
             g_type = qkv_type
 
-        is_fix = False
+        # is_fix = False
         if not is_fix:
             cu_seqlens = cumsum_cu_seqlens(cu_seqlens).tolist()
             T = cu_seqlens[-1]
@@ -232,7 +264,22 @@ class FunctionApi(BaseApi):
             cu_seqlens = None
             chunk_indices = None
             num_chunks = (T_json + chunk_size - 1) // chunk_size
-            g = create_gate_g(B, HV, T_json, g_type)
+            T = T_json
+            dtype = qkv_type
+            Gtype = g_type
+            # g = create_gate_g(B, HV, T_json, g_type)
+            q = torch.randn(B,HK,T,K, dtype=dtype, requires_grad=True)
+            k = torch.randn(B,HK,T,K, dtype=dtype, requires_grad=True)
+            v = torch.randn(B,HV,T,V, dtype=dtype, requires_grad=True)
+
+            g = -torch.sort(torch.rand(B*T*HV) * 10, descending=False)[0].reshape((B,HV,T)).to(Gtype)    #G必须递减且为负数
+            do = torch.randn(B,HV,T,V, dtype=dtype, requires_grad=True)
+            
+            dv = torch.randn(B,HV,T,V, dtype=dtype, requires_grad=True)
+            w = None
+
+            h = torch.randn(B, HV, num_chunks, K, V, dtype=dtype, requires_grad=True)
+            dh = torch.randn(B, HV, num_chunks, K, V, dtype=dtype, requires_grad=True)
 
         q = q.to(qkv_type)
         k = k.to(qkv_type)

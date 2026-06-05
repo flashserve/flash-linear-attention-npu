@@ -1,14 +1,11 @@
-# source /root/data_nvme0n1/huangjunzhe/Ascend/ascend-toolkit/set_env.sh
 ascend_path="/data/huangjunzhe/Ascend.GDN/cann-9.0.0"
-# ascend_path="/data/huangjunzhe/Ascend/cann-9.0.0"
-test_script_path=$(cd "$(dirname "$0")" && pwd)
-# echo "[run.sh] test_script_path: ${test_script_path}"
 data_path=/data/huangjunzhe/GDN/result/result_newg
 export TMPDIR=/data/huangjunzhe/tmp
-
-
-ascend_path_orig=${ascend_path}/../
 custom_path="/home/huangjunzhe/GDN/custom"
+
+#======================================================================================
+ascend_path_orig=${ascend_path}/../
+test_script_path=$(cd "$(dirname "$0")" && pwd)
 code_path=${test_script_path}/../../../../../../../
 source ${ascend_path}/set_env.sh
 
@@ -28,7 +25,6 @@ alias unlog='unset ASCEND_SLOG_PRINT_TO_STDOUT; unset ASCEND_GLOBAL_LOG_LEVEL'
 if [ "$compi" = "$compi_y" ]; then
     unset ASCEND_SLOG_PRINT_TO_STDOUT; unset ASCEND_GLOBAL_LOG_LEVEL
 
-    export TMPDIR=/data/huangjunzhe/tmp
     cd ${code_path}
     bash build.sh --pkg --ops=chunk_bwd_dqkwg #--soc=ascend910_93
 
@@ -74,9 +70,34 @@ fi
 # ct single ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt --calc_count 100000 --dtype float16
 
 
-ct viz ${data_path}/${caseid}/out/dw_npu.pt ${data_path}/${caseid}/out/dw_cpu.pt --out_dir ${data_path}/${caseid} --name dw -wl 1
-ct viz ${data_path}/${caseid}/out/dg_npu.pt ${data_path}/${caseid}/out/dg_cpu.pt --out_dir ${data_path}/${caseid} --name dg -wl 1
-ct viz ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt --out_dir ${data_path}/${caseid} --name dq -wl 1
-ct viz ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt --out_dir ${data_path}/${caseid} --name dk -wl 1
+# ct viz ${data_path}/${caseid}/out/dw_npu.pt ${data_path}/${caseid}/out/dw_cpu.pt --out_dir ${data_path}/${caseid} --name dw -wl 1
+# ct viz ${data_path}/${caseid}/out/dg_npu.pt ${data_path}/${caseid}/out/dg_cpu.pt --out_dir ${data_path}/${caseid} --name dg -wl 1
+# ct viz ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt --out_dir ${data_path}/${caseid} --name dq -wl 1
+# ct viz ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt --out_dir ${data_path}/${caseid} --name dk -wl 1
+
+# ct dual ${data_path}/${caseid}/out/dg_npu.pt ${data_path}/${caseid}/out/dg_cpu.pt ${data_path}/${caseid}/out/dg_cpu_benchmark.pt --out_dir ${data_path}/${caseid}
+# ct dual ${data_path}/${caseid}/out/dw_npu.pt ${data_path}/${caseid}/out/dw_cpu.pt ${data_path}/${caseid}/out/dw_cpu_benchmark.pt --out_dir ${data_path}/${caseid}
+# ct dual ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt ${data_path}/${caseid}/out/dq_cpu_benchmark.pt --out_dir ${data_path}/${caseid}
+# ct dual ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt ${data_path}/${caseid}/out/dk_cpu_benchmark.pt --out_dir ${data_path}/${caseid}
+
+names=(dw dg dq dk)
+
+for name in "${names[@]}"; do
+    (
+        echo "Processing dual $name..."
+        ct dual ${data_path}/${caseid}/out/${name}_npu.pt \
+                ${data_path}/${caseid}/out/${name}_cpu.pt \
+                ${data_path}/${caseid}/out/${name}_cpu_benchmark.pt \
+                --out_dir ${data_path}/${caseid} \
+                > ${data_path}/${caseid}/${name}.txt 2>&1
+    ) &
+done
+
+for name in "${names[@]}"; do
+    echo "Processing viz $name..."
+    ct viz ${data_path}/${caseid}/out/${name}_npu.pt ${data_path}/${caseid}/out/${name}_cpu.pt \
+        --out_dir ${data_path}/${caseid} --name ${name} -wl 1 > /dev/null 2>&1 &
+done
+wait
 
 md5sum ${data_path}/${caseid}/out/*.pt

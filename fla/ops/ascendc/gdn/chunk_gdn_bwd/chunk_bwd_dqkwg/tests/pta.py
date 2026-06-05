@@ -5,6 +5,20 @@ import fla_npu
 # -------------------------------------------------------------------------
 # 使用示例 / 验证
 # -------------------------------------------------------------------------
+def tensor_size_gb(tensor, precision=2):
+    """
+    获取 tensor 的大小（GB）
+    
+    Args:
+        tensor: PyTorch tensor
+        precision: 小数点精度
+    
+    Returns:
+        float: 大小（GB）
+    """
+    size_bytes = tensor.element_size() * tensor.numel()
+    size_gb = size_bytes / (1024 ** 3)
+    return round(size_gb, precision)
 if __name__ == "__main__":
     
     case_name = "case_22"
@@ -19,7 +33,7 @@ if __name__ == "__main__":
     chunk_size = 128
     from cases import get_case_info
     case = get_case_info(case_name)
-    device_id = 7
+    device_id = 6
     
 
     dtype = torch.float16
@@ -64,6 +78,8 @@ if __name__ == "__main__":
     RANDOM_DATA = True
     RUN_CPU = True
     SAVE_FILES = True
+    BENCHMARK = True
+
     if SAVE_FILES:
         os.makedirs(f'{data_path}/{case_name}/in/', exist_ok=True)
         os.makedirs(f'{data_path}/{case_name}/out/', exist_ok=True)
@@ -77,9 +93,6 @@ if __name__ == "__main__":
         # print("g",g)
         do = torch.randn(B,HV,T,V, dtype=dtype, requires_grad=True)  # torch.randn([B, T, H, V], dtype=dtype)
         
-        dv = torch.randn(B,HV,T,V, dtype=dtype, requires_grad=True)  # torch.randn([B, T, H, V], dtype=dtype)
-        w = torch.randn(B,HK,T,K, dtype=dtype, requires_grad=True)   # torch.randn([B, T, H, K], dtype=dtype)
-
         dv = torch.randn(B,HV,T,V, dtype=dtype, requires_grad=True)  # torch.randn([B, T, H, V], dtype=dtype)
         w = torch.randn(B,HK,T,K, dtype=dtype, requires_grad=True)   # torch.randn([B, T, H, K], dtype=dtype)
 
@@ -148,12 +161,13 @@ if __name__ == "__main__":
     q_npu = q.to(dtype).npu()
     k_npu = k.to(dtype).npu()
     v_npu = v.to(dtype).npu()
-    w_npu = w.to(dtype).npu()
+    # w_npu = w.to(dtype).npu()
     g_npu = g.to(Gtype).npu()
     h_npu = h.to(dtype).npu()
     dv_npu = dv.to(dtype).npu()
     do_npu = do.to(dtype).npu()
     dh_npu = dh.to(dtype).npu()
+    print(f"input size(GB): q {tensor_size_gb(q_npu)}, k {tensor_size_gb(k_npu)}, v {tensor_size_gb(v_npu)}, g {tensor_size_gb(g_npu)}, h {tensor_size_gb(h_npu)}, dv {tensor_size_gb(dv_npu)}, do {tensor_size_gb(do_npu)}, dh {tensor_size_gb(dh_npu)}")
     # cu_seqlens_npu = cu_seqlens if cu_seqlens is not None else None
     chunk_indices_npu = chunk_indices if cu_seqlens is not None else None
     down_tri = q_npu
@@ -189,6 +203,15 @@ if __name__ == "__main__":
         dq, dk, dw, dg = chunk_bwd_dqkwg_cpu(
             q, k, v, do, h, dh, w, g, dv, scale, cu_seqlens_torch, chunk_size
         )
+        if BENCHMARK:
+            print("=====start cpu benchmark=========")
+            dq_benchmark, dk_benchmark, dw_benchmark, dg_benchmark = chunk_bwd_dqkwg_cpu(
+                q, k, v, do, h, dh, w, g, dv, scale, cu_seqlens_torch, chunk_size, benchmark = True
+            )
+            dq_benchmark = torch.transpose(dq_benchmark, 1, 2).cpu()
+            dk_benchmark = torch.transpose(dk_benchmark, 1, 2).cpu()
+            dw_benchmark = torch.transpose(dw_benchmark, 1, 2).cpu()
+            dg_benchmark = torch.transpose(dg_benchmark, 1, 2).cpu()
         # dq = dq.to(dtype)
         # dk = dk.to(dtype)
         # dw = dw.to(dtype)
@@ -208,10 +231,7 @@ if __name__ == "__main__":
         print("dg", dg.cpu().shape, dg.cpu().dtype)
 
         type_dict = {torch.float16:"float16", torch.float32:"float32",torch.bfloat16:"bf16"}
-        # single(dq_npu,dq,calc_count=100000,dtype=type_dict[dtype])
-        # single(dk_npu,dk,calc_count=100000,dtype=type_dict[dtype])
-        # single(dw_npu,dw,calc_count=100000,dtype=type_dict[dtype])
-        # single(dg_npu,dg,calc_count=100000,dtype=type_dict[Gtype])
+
         if SAVE_FILES:
             if RANDOM_DATA:
                 torch.save(dq.detach(),f"{data_path}/{case_name}/out/dq_cpu.pt")
@@ -219,6 +239,12 @@ if __name__ == "__main__":
                 torch.save(dw.detach(),f"{data_path}/{case_name}/out/dw_cpu.pt")
                 torch.save(dg.detach(),f"{data_path}/{case_name}/out/dg_cpu.pt")
                 print(f"cpu files saved to {data_path}/{case_name}/out/ .")
+                if BENCHMARK:
+                    torch.save(dq_benchmark.detach(),f"{data_path}/{case_name}/out/dq_cpu_benchmark.pt")
+                    torch.save(dk_benchmark.detach(),f"{data_path}/{case_name}/out/dk_cpu_benchmark.pt")
+                    torch.save(dw_benchmark.detach(),f"{data_path}/{case_name}/out/dw_cpu_benchmark.pt")
+                    torch.save(dg_benchmark.detach(),f"{data_path}/{case_name}/out/dg_cpu_benchmark.pt")
+                    print(f"cpu benchmark files saved to {data_path}/{case_name}/out/ .")
                 
     if SAVE_FILES:
         torch.save(dq_npu.detach(),f"{data_path}/{case_name}/out/dq_npu.pt")
