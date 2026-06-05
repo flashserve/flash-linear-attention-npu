@@ -98,62 +98,7 @@ export PYTORCH_VERSION=2.7.1
 python examples/flash_gated_delta_rule.py
 ```
 
-## CI 环境
-
-本仓提供基于 GitHub self-hosted runner 的 NPU CI 配置，当前规划部署在 `192.168.9.221` 的 `/workspace` 目录下，后续迁移时只需要迁移 runner 与 Docker 镜像/脚本。
-
-为节省 NPU 资源，CI 不会在 PR 新建、重开或提交新 commit 时自动执行。PR 合入门禁会要求当前 head commit 存在 `NPU CI / manual` 成功状态；如果 PR 更新了 commit，旧 commit 上的 CI 成功状态不会继续生效，需要维护者重新手动触发。
-
-### Docker CI 镜像
-
-CI 镜像定义在 `ci/Dockerfile`，默认基于 CANN 8.5.0 910B Ubuntu 22.04 镜像构建，并预装工程基础依赖、Ascend PyTorch `v26.1.0-beta.1` release family 下 `pytorch2.7.1` 配套的 `torch==2.7.1` 与 `torch_npu-2.7.1.post5-cp310-cp310-manylinux_2_28_aarch64.whl`（包含 `torchnpugen`）、`triton-ascend==3.2.0` 和 `pybind11`：
-
-```sh
-docker build -t fla-npu-ci:8.5.0-910b -f ci/Dockerfile .
-```
-
-如果需要额外安装 `tests/requirements.txt` 中的重型测试依赖，可以启用构建参数：
-
-```sh
-docker build --build-arg INSTALL_TEST_REQUIREMENTS=true -t fla-npu-ci:8.5.0-910b -f ci/Dockerfile .
-```
-
-如需调整 PyTorch / torch-npu 版本，可通过 `TORCH_VERSION`、`TORCH_NPU_VERSION`、`TORCH_NPU_RELEASE_TAG`、`TORCH_NPU_WHL`、`TORCH_NPU_WHL_URL` 构建参数覆盖；`TORCH_NPU_RELEASE_TAG` 必须属于 `ASCEND_PYTORCH_RELEASE_VERSION=v26.1.0-beta.1`，并且 wheel 必须与所选 PyTorch 和 Python 版本匹配。
-
-### NPU 自动探测
-
-`ci/detect_npu.sh` 会扫描宿主机 `npu-smi info`，优先选择健康且空闲的 NPU；如果没有完全空闲的健康卡，会退化选择空闲卡，并在日志中打印所选卡的健康状态、空闲状态和推断出的 `--soc`。
-
-```sh
-bash ci/detect_npu.sh --summary
-bash ci/run_ci_container.sh
-```
-
-常用可配置环境变量如下：
-
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `CI_IMAGE` | `fla-npu-ci:8.5.0-910b` | CI Docker 镜像名 |
-| `CI_MODE` | `quick` | `quick` 执行当前 SOC 编译；`full` 调用 `gdn-verify.sh` |
-| `CI_OPS` | 空 | 指定逗号分隔的算子列表；为空时按脚本默认范围执行 |
-| `CI_REBUILD_IMAGE` | `false` | 为 `true` 时运行前重新构建镜像 |
-| `CI_DOCKER_PRIVILEGED` | `true` | 运行 CI 容器时启用 `--privileged`，否则 `torch_npu` 可能无法枚举 NPU |
-| `CI_CONTAINER_DEVICE` | `0` | 容器内传给 `torch.npu.set_device` / example 的逻辑设备号；宿主机物理卡由 `ASCEND_RT_VISIBLE_DEVICES` 限定后通常映射为 `0` |
-| `CI_REQUIRE_HEALTHY_NPU` | `false` | 为 `true` 时所选 NPU 非 `OK` 会直接失败 |
-| `CI_BUILD_TORCH_CUSTOM` | `false` | 为 `true` 时额外编译 `torch_custom/fla_npu` |
-| `CI_RUN_TORCH_TESTS` | `false` | 为 `true` 时额外执行 `torch_custom/fla_npu/test/test.sh` |
-| `CI_RUN_EXAMPLE_ST` | `true` | 官方 CI 固定执行；安装 `.run` 包、编译 `torch_custom/fla_npu` 并执行 `examples/flash_gated_delta_rule.py` |
-| `CI_EXAMPLE_ARGS` | 空 | 可选，传给 `examples/flash_gated_delta_rule.py` 的额外参数；为空时保持用例原始 shape，仅由 CI 覆盖容器内逻辑设备号 `--device` |
-| `CI_EXAMPLE_CASES` | 空 | 可选，分号分隔的多组 Example ST 参数，用于后续泛化场景；设置后优先于 `CI_EXAMPLE_ARGS` |
-| `CI_CACHE_ROOT` | `/workspace/flash-linear-attention-npu-ci/cache` | self-hosted runner 上的持久 CI 缓存根目录 |
-| `CI_THIRD_PARTY_CACHE` | `$CI_CACHE_ROOT/third_party` | 挂载到容器 `/workspace/repo/third_party` 的三方依赖缓存目录 |
-| `CI_CPACK_JOBS` | `$CI_JOBS` | 传给 `CMAKE_BUILD_PARALLEL_LEVEL`/`MAKEFLAGS`，用于加速 cpack 内部 preinstall 构建 |
-| `CI_FORCE_CLEAN_CACHE` | `false` | 为 `true` 时强制清理 `build/`、`build_out/`、`output/` 和三方依赖缓存 |
-| `CI_SEED_THIRD_PARTY` | `true` | 为 `true` 时从 CI 镜像的 `/opt/fla-ci/third_party` 预烘种子填充三方缓存 |
-
-CI 会对 `build.sh`、`CMakeLists.txt`、`cmake/`、`ci/`、`scripts/package/`、`scripts/util/`、`scripts/ci/`、依赖清单等构建输入计算签名。若新增三方引用、修改三方版本、调整 CMake/打包/CI 编译流程，签名变化后会自动删除 `build/`、`build_out/`、`output/` 并清空三方缓存，随后重新走完整编译。
-
-### 触发 NPU CI
+## 触发 NPU CI
 
 NPU CI 支持两种手动触发方式。
 
