@@ -51,6 +51,8 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
         context->GetOptionalInputShape(CHUNK_BWD_DV_LOCAL_INPUT_K_IDX),
         context->GetOptionalInputShape(CHUNK_BWD_DV_LOCAL_INPUT_DO_IDX),
         context->GetOptionalInputShape(CHUNK_BWD_DV_LOCAL_INPUT_G_IDX),
+        context->GetOptionalInputShape(CHUNK_BWD_DV_LOCAL_INPUT_G_GAMMA_IDX),
+        context->GetOptionalInputShape(CHUNK_BWD_DV_LOCAL_INPUT_A_IDX),
         context->GetOptionalInputShape(CHUNK_BWD_DV_LOCAL_INPUT_SEQLENS_IDX),
         context->GetOptionalInputShape(CHUNK_BWD_DV_LOCAL_INPUT_CHUNK_INDICES_IDX),
         *(attrPtr->GetAttrPointer<double>(CHUNK_BWD_DV_LOCAL_ATTR_SCALE_IDX)),

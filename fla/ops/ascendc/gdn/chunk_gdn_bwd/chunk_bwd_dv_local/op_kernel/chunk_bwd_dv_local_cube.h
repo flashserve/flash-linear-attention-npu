@@ -193,6 +193,7 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Process()
     P1_TileMmad p1TileMmad;
 
     constexpr uint32_t P2_STAGE_NUM = 3;
+    constexpr uint32_t P2_VALUE_TILE_N = 128;
     constexpr uint32_t P2_L1_TILE_BYTES = 128 * 128 * sizeof(ElementA);
     constexpr uint32_t P2_L0_TILE_BYTES = 128 * 128 * sizeof(ElementA);
     constexpr uint32_t P2_L0C_TILE_BYTES = 128 * 128 * sizeof(float);
@@ -634,9 +635,100 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Process()
                 AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_3);                                   \
             } while (0)
 
+// V=256 时 P2 按 N 维切成 128 列 tile。AIV 仍然每个 head 只通知一次，
+// AIC 在收到 gated Ws ready 后串行完成该 head 的所有 V tile。
+#define RUN_DV_HEAD_VALUE_TILE(P2_HEAD_INDEX, P2_VALUE_OFFSET, P2_TILE_N)                                          \
+            do {                                                                                                  \
+                int64_t dvHeadIndex = (P2_HEAD_INDEX);                                                           \
+                uint32_t p2ValueOffset = static_cast<uint32_t>(P2_VALUE_OFFSET);                                  \
+                uint32_t p2TileN = static_cast<uint32_t>(P2_TILE_N);                                              \
+                Catlass::GemmCoord dvTileShape{static_cast<uint32_t>(dvGemmShape.m()), p2TileN,                  \
+                                               static_cast<uint32_t>(dvGemmShape.k())};                          \
+                int64_t wsOffset = GetCoreBufferSingleHWorkspaceOffset(coreIdx, dvHeadIndex, 0,                  \
+                                                                       strategy.chunkSize, workspaceHeadSlotNum); \
+                int64_t doOffset =                                                                               \
+                    chunkTask.batchId * headNum * seqLen * valueDim +                                             \
+                    dvHeadIndex * seqLen * valueDim + chunkTask.tokenStart * valueDim + p2ValueOffset;           \
+                int64_t dvOffset =                                                                               \
+                    chunkTask.batchId * headNum * seqLen * valueDim +                                             \
+                    dvHeadIndex * seqLen * valueDim + chunkTask.tokenStart * valueDim + p2ValueOffset;           \
+                auto p2TensorA = tla::MakeTensor(workspaceGm[wsOffset], p2LayoutA, Catlass::Arch::PositionGM{}); \
+                auto p2TensorBlockA = GetTile(p2TensorA, tla::MakeCoord(0, 0),                                   \
+                                              tla::MakeShape(dvTileShape.m(), dvTileShape.k()));                 \
+                auto doTensorB = tla::MakeTensor(dOGm[doOffset], p2LayoutB, Catlass::Arch::PositionGM{});        \
+                auto doTensorBlockB = GetTile(doTensorB, tla::MakeCoord(0, 0),                                   \
+                                              tla::MakeShape(dvTileShape.k(), dvTileShape.n()));                 \
+                auto p2TensorC = tla::MakeTensor(dVGm[dvOffset], p2LayoutC, Catlass::Arch::PositionGM{});        \
+                auto p2TensorBlockC = GetTile(p2TensorC, tla::MakeCoord(0, 0),                                   \
+                                              tla::MakeShape(dvTileShape.m(), dvTileShape.n()));                 \
+                using P2_CopyGmToL1A = typename P2_TileCopy::template CopyGmToL1A<decltype(p2TensorBlockA)>;     \
+                using P2_CopyDoGmToL1B = typename P2_TileCopy::template CopyGmToL1B<decltype(doTensorBlockB)>;   \
+                using P2_CopyL0CToGm = typename P2_TileCopy::template CopyL0CToGm<decltype(p2TensorBlockC)>;     \
+                P2_CopyGmToL1A p2CopyGmToL1A;                                                                    \
+                P2_CopyDoGmToL1B p2CopyDoGmToL1B;                                                                \
+                P2_CopyL0CToGm p2CopyL0CToGm;                                                                    \
+                auto tensorP2L1A = tla::MakeTensor(p2L1ATensorRaw0, p2L1ALayout, Catlass::Arch::PositionL1{});   \
+                auto tensorP2L1B = tla::MakeTensor(p2L1BTensorRaw0, p2L1BLayout, Catlass::Arch::PositionL1{});   \
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(P2_EVENT_A);                                    \
+                p2CopyGmToL1A(tensorP2L1A, p2TensorBlockA);                                                      \
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(P2_EVENT_A);                                     \
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(P2_PREFETCH_EVENT_B0);                          \
+                p2CopyDoGmToL1B(tensorP2L1B, doTensorBlockB);                                                    \
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(P2_PREFETCH_EVENT_B0);                           \
+                auto p2LayoutAInL0 = tla::MakeLayout<ElementA, P2_LayoutTagL0A>(dvTileShape.m(), dvTileShape.k()); \
+                auto p2LayoutBInL0 = tla::MakeLayout<ElementB, P2_LayoutTagL0B>(dvTileShape.k(), dvTileShape.n()); \
+                auto tensorP2L0A = tla::MakeTensor(p2L0ATensorRaw0, p2LayoutAInL0, Catlass::Arch::PositionL0A{}); \
+                auto tensorP2L0B = tla::MakeTensor(p2L0BTensorRaw0, p2LayoutBInL0, Catlass::Arch::PositionL0B{}); \
+                auto tensorP2TileL1A = GetTile(tensorP2L1A, tla::MakeCoord(0, 0),                                \
+                                               tla::MakeShape(dvTileShape.m(), dvTileShape.k()));                \
+                auto tensorP2TileL1B = GetTile(tensorP2L1B, tla::MakeCoord(0, 0),                                \
+                                               tla::MakeShape(dvTileShape.k(), dvTileShape.n()));                \
+                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(P2_EVENT_A0);                                      \
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(P2_EVENT_A);                                    \
+                p2CopyL1ToL0A(tensorP2L0A, tensorP2TileL1A);                                                     \
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(P2_EVENT_A0);                                       \
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(P2_EVENT_A);                                     \
+                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(P2_EVENT_B0);                                      \
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(P2_PREFETCH_EVENT_B0);                          \
+                p2CopyL1ToL0B(tensorP2L0B, tensorP2TileL1B);                                                     \
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(P2_EVENT_B0);                                       \
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(P2_PREFETCH_EVENT_B0);                           \
+                auto p2LayoutInL0C = tla::MakeLayoutL0C(dvTileShape.m(), dvTileShape.n());                       \
+                auto tensorP2L0C = tla::MakeTensor(p2L0CTensorRaw1, p2LayoutInL0C, Catlass::Arch::PositionL0C{}); \
+                auto tensorP2TileL0C = GetTile(tensorP2L0C, tla::MakeCoord(0, 0),                                \
+                                               tla::MakeShape(dvTileShape.m(), dvTileShape.n()));                \
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(P2_EVENT_A0);                                      \
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(P2_EVENT_B0);                                      \
+                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(P2_EVENT_C1);                                       \
+                p2TileMmad(tensorP2TileL0C, tensorP2L0A, tensorP2L0B, true, 0);                                  \
+                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(P2_EVENT_A0);                                       \
+                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(P2_EVENT_B0);                                       \
+                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(P2_EVENT_C1);                                        \
+                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(P2_EVENT_C1);                                       \
+                p2CopyL0CToGm(p2TensorBlockC, tensorP2L0C);                                                      \
+                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(P2_EVENT_C1);                                        \
+            } while (0)
+
+            if (valueDim > P2_VALUE_TILE_N) {
+                for (int64_t hIndex = 0; hIndex < headNum; ++hIndex) {
+                    RUN_KQ_HEAD(hIndex, do {} while (0));
+                    AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_2);
+                    for (uint32_t vOffset = 0; vOffset < static_cast<uint32_t>(valueDim);
+                         vOffset += P2_VALUE_TILE_N) {
+                        uint32_t tileN = static_cast<uint32_t>(valueDim) - vOffset;
+                        if (tileN > P2_VALUE_TILE_N) {
+                            tileN = P2_VALUE_TILE_N;
+                        }
+                        RUN_DV_HEAD_VALUE_TILE(hIndex, vOffset, tileN);
+                    }
+                }
+            } else {
+
             // Prologue：先生成前几个 head 的 Ws，让 AIV 尽早开始 gating，同时顺手预取前两个 dO。
             RUN_KQ_HEAD(0, do {} while (0));
-            RUN_KQ_HEAD(1, PREFETCH_NEXT_DO_IF_ANY());
+            if (headNum > 1) {
+                RUN_KQ_HEAD(1, PREFETCH_NEXT_DO_IF_ANY());
+            }
             if (headNum > 2) {
                 RUN_KQ_HEAD(2, PREFETCH_NEXT_DO_IF_ANY());
             }
@@ -660,6 +752,7 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Process()
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_3);
                 }
             }
+            }
             // Epilogue：离开 chunk 前回收所有事件，确保下一轮复用同一片片上资源时状态干净。
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(P2_PREFETCH_EVENT_B0);
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(P2_PREFETCH_EVENT_B1);
@@ -672,6 +765,7 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy>::Process()
 #undef STORE_DV_HEAD
 #undef ISSUE_DV_MMAD
 #undef PREPARE_DV_HEAD_TO_L0
+#undef RUN_DV_HEAD_VALUE_TILE
 #undef PREFETCH_KQ_MATRIX_TO_L1A
 #undef ENSURE_DO_READY
 #undef PREFETCH_NEXT_DO_IF_ANY

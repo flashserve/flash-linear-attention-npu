@@ -144,8 +144,9 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::Process()
 template <typename QKVT, typename GT, typename Strategy>
 __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(const ChunkTaskIndex &chunkTask)
 {
-    // 每个 head 的 Ws 行切给两个 subblock；rowSplit 按 8 对齐后，Brcb 的源地址满足 32B 对齐要求。
-    int64_t rowSplit = (chunkTask.chunkLen / NUM_2 / 8) * 8;  // 按 8 对齐，满足 Brcb 的 32B 对齐要求
+    // 切分点向上按 8 对齐，既保证 Brcb 源地址 32B 对齐，也保证两个 subblock 均不超过半块 UB 容量。
+    int64_t alignedHalfRows = CeilDiv(chunkTask.chunkLen / NUM_2, 8) * 8;
+    int64_t rowSplit = alignedHalfRows < chunkTask.chunkLen ? alignedHalfRows : chunkTask.chunkLen;
     int64_t rowStart = 0;
     int64_t rowEnd = 0;
     int64_t rowCount = 0;
