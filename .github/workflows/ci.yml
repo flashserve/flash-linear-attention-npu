@@ -23,7 +23,7 @@ on:
 
 jobs:
   prepare:
-    name: prepare
+    name: 准备 NPU CI
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (
@@ -45,11 +45,13 @@ jobs:
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
       ops: ${{ steps.prepare.outputs.ops }}
       example_args: ${{ steps.prepare.outputs.example_args }}
+      comment_id: ${{ steps.prepare.outputs.comment_id }}
     steps:
       - name: Resolve PR and requested CI mode
         id: prepare
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.NPU_CI_BOT_TOKEN || github.token }}
           script: |
             const maintainers = new Set([
               'juyangokok',
@@ -61,28 +63,58 @@ jobs:
             ]);
             const actor = context.actor;
             if (!maintainers.has(actor)) {
-              core.setFailed(`${actor} is not allowed to trigger NPU CI.`);
+              core.setFailed(`${actor} 无权触发 NPU CI。`);
               return;
             }
 
-            const contextName = 'NPU CI / manual';
+            const contextName = 'NPU CI / 手动验证';
             let prNumber;
             let ciMode = 'quick';
             let ops = '';
             let exampleArgs = '';
-            const postComment = async (body) => {
-              if (context.eventName !== 'issue_comment') {
-                return;
+            let commentId = '';
+            const upsertComment = async (pr, body) => {
+              if (!prNumber || !pr) {
+                return '';
               }
+              const marker = `<!-- npu-ci:pr=${prNumber}:sha=${pr.head.sha} -->`;
+              const fullBody = `${marker}\n${body}`;
               try {
-                await github.rest.issues.createComment({
+                const comments = await github.paginate(github.rest.issues.listComments, {
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: prNumber,
-                  body,
+                  per_page: 100,
                 });
+                const existing = comments
+                  .filter((comment) =>
+                    comment.user &&
+                    comment.user.type === 'Bot' &&
+                    typeof comment.body === 'string' &&
+                    comment.body.includes(marker)
+                  )
+                  .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
+
+                if (existing) {
+                  await github.rest.issues.updateComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    comment_id: existing.id,
+                    body: fullBody,
+                  });
+                  return String(existing.id);
+                }
+
+                const { data: comment } = await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: fullBody,
+                });
+                return String(comment.id);
               } catch (error) {
-                core.warning(`Unable to create PR comment: ${error.message}`);
+                core.warning(`Unable to create or update PR comment: ${error.message}`);
+                return '';
               }
             };
 
@@ -107,15 +139,15 @@ jobs:
             }
 
             if (!Number.isInteger(prNumber) || prNumber <= 0) {
-              core.setFailed(`Invalid PR number: ${prNumber}`);
+              core.setFailed(`无效的 PR 编号：${prNumber}`);
               return;
             }
             if (!['quick', 'full'].includes(ciMode)) {
-              core.setFailed(`Unsupported CI mode: ${ciMode}`);
+              core.setFailed(`不支持的 CI 模式：${ciMode}`);
               return;
             }
             if (/[\r\n]/.test(exampleArgs)) {
-              core.setFailed('example_args must be a single line.');
+              core.setFailed('example_args 必须写在一行内。');
               return;
             }
 
@@ -125,7 +157,7 @@ jobs:
               pull_number: prNumber,
             });
             if (pr.draft) {
-              core.setFailed(`PR #${prNumber} is draft; mark it ready for review before running NPU CI.`);
+              core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再运行 NPU CI。`);
               return;
             }
 
@@ -140,8 +172,17 @@ jobs:
               latestManualCi.state === 'success' &&
               (latestManualCi.description || '').includes('+example');
             if (latestPassedWithExample) {
-              core.notice(`NPU CI already passed for ${pr.head.sha}; skipping duplicate run.`);
-              await postComment(`NPU CI already passed for \`${pr.head.sha}\`; no new run was started.`);
+              core.notice(`${pr.head.sha} 已经通过 NPU CI，跳过重复运行。`);
+              commentId = await upsertComment(
+                pr,
+                [
+                  `NPU CI 已经在 \`${pr.head.sha}\` 上通过，本次不会重复运行。`,
+                  '',
+                  `- 请求模式：\`${ciMode}\``,
+                  `- 触发人：@${actor}`,
+                  '- Example ST：已覆盖',
+                ].join('\n')
+              );
               core.setOutput('should_run', 'false');
               core.setOutput('pr_number', String(prNumber));
               core.setOutput('head_repo', pr.head.repo.full_name);
@@ -149,6 +190,7 @@ jobs:
               core.setOutput('ci_mode', ciMode);
               core.setOutput('ops', ops);
               core.setOutput('example_args', exampleArgs);
+              core.setOutput('comment_id', commentId);
               return;
             }
 
@@ -159,10 +201,21 @@ jobs:
               sha: pr.head.sha,
               state: 'pending',
               context: contextName,
-              description: `NPU CI requested by @${actor} (${ciMode}+example)`,
+              description: `NPU CI 已由 @${actor} 触发 (${ciMode}+example)`,
               target_url: targetUrl,
             });
-            await postComment(`NPU CI started for \`${pr.head.sha}\` in \`${ciMode}\` mode${ops ? ` with ops=\`${ops}\`` : ''} with mandatory Example ST.`);
+            commentId = await upsertComment(
+              pr,
+              [
+                `NPU CI 已开始验证 \`${pr.head.sha}\`。`,
+                '',
+                `- 模式：\`${ciMode}\``,
+                `- 触发人：@${actor}`,
+                '- Example ST：必跑',
+                ops ? `- 算子：\`${ops}\`` : '',
+                `- 运行链接：[NPU CI #${context.runNumber}](${targetUrl})`,
+              ].filter(Boolean).join('\n')
+            );
 
             core.setOutput('should_run', 'true');
             core.setOutput('pr_number', String(prNumber));
@@ -171,15 +224,17 @@ jobs:
             core.setOutput('ci_mode', ciMode);
             core.setOutput('ops', ops);
             core.setOutput('example_args', exampleArgs);
+            core.setOutput('comment_id', commentId);
 
   ascend-npu:
-    name: ascend-npu
+    name: Ascend NPU 验证
     needs: prepare
     if: needs.prepare.outputs.should_run == 'true'
     runs-on: [self-hosted, linux, arm64, npu, flash-linear-attention-npu]
     timeout-minutes: 240
     permissions:
       contents: read
+      issues: write
       statuses: write
     env:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
@@ -216,16 +271,52 @@ jobs:
         if: always()
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.NPU_CI_BOT_TOKEN || github.token }}
           script: |
             const state = '${{ job.status }}' === 'success' ? 'success' : 'failure';
-            const mode = '${{ needs.prepare.outputs.ci_mode }}';
+            const mode = ${{ toJson(needs.prepare.outputs.ci_mode) }};
+            const ops = ${{ toJson(needs.prepare.outputs.ops) }};
+            const sha = ${{ toJson(needs.prepare.outputs.head_sha) }};
+            const prNumber = ${{ toJson(needs.prepare.outputs.pr_number) }};
+            const commentId = ${{ toJson(needs.prepare.outputs.comment_id) }};
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: '${{ needs.prepare.outputs.head_sha }}',
+              sha,
               state,
-              context: 'NPU CI / manual',
-              description: state === 'success' ? `NPU CI passed (${mode}+example)` : `NPU CI failed (${mode}+example)`,
+              context: 'NPU CI / 手动验证',
+              description: state === 'success' ? `NPU CI 通过 (${mode}+example)` : `NPU CI 失败 (${mode}+example)`,
               target_url: targetUrl,
             });
+            const result = state === 'success' ? '通过' : '失败';
+            const commentBody = [
+              `<!-- npu-ci:pr=${prNumber}:sha=${sha} -->`,
+              `NPU CI ${result}：\`${sha}\`。`,
+              '',
+              `- 模式：\`${mode}\``,
+              `- 触发人：@${context.actor}`,
+              '- Example ST：必跑',
+              ops ? `- 算子：\`${ops}\`` : '',
+              `- 运行链接：[NPU CI #${context.runNumber}](${targetUrl})`,
+            ].filter(Boolean).join('\n');
+
+            try {
+              if (commentId) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: Number(commentId),
+                  body: commentBody,
+                });
+              } else if (prNumber) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: Number(prNumber),
+                  body: commentBody,
+                });
+              }
+            } catch (error) {
+              core.warning(`Unable to create or update PR comment: ${error.message}`);
+            }

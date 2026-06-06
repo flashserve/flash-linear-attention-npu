@@ -33,7 +33,7 @@
    只能由维护者点击 GitHub Actions 按钮，或在 PR 评论里发送 `/run-npu-ci quick` / `/run-npu-ci full` 触发。PR 更新 commit 后，旧 commit 上的 CI 成功状态不会再满足合入门禁。
 
 9. **分支保护里的状态检查名称要完全一致。**
-   必需状态检查是 `Repository Rules / required-reviewers` 和 `NPU CI / manual`。名字写错、大小写不同、空格不同，GitHub 都会认为没有通过。
+   必需状态检查是 `仓库规则 / 维护者检视门禁` 和 `NPU CI / 手动验证`。名字写错、大小写不同、空格不同，GitHub 都会认为没有通过。
 
 10. **`weinachuan` 强行合入 bypass 不是写在代码里自动生效的。**
     需要 GitHub 管理员用 `scripts/github/apply_branch_protection.sh` 应用到 GitHub 分支保护规则。
@@ -347,8 +347,8 @@ bash scripts/github/apply_branch_protection.sh main
 
 这个脚本会给 `main` 配置：
 
-- 必需状态检查：`Repository Rules / required-reviewers`
-- 必需状态检查：`NPU CI / manual`
+- 必需状态检查：`仓库规则 / 维护者检视门禁`
+- 必需状态检查：`NPU CI / 手动验证`
 - PR 至少 2 个 approval
 - 需要 CODEOWNERS review
 - push 新 commit 后旧 review 失效
@@ -370,8 +370,8 @@ bash scripts/github/apply_branch_protection.sh main
 9. 勾选 `Require approval of the most recent reviewable push`
 10. 勾选 `Require status checks to pass before merging`
 11. 勾选 `Require branches to be up to date before merging`
-12. 添加必需检查 `Repository Rules / required-reviewers`
-13. 添加必需检查 `NPU CI / manual`
+12. 添加必需检查 `仓库规则 / 维护者检视门禁`
+13. 添加必需检查 `NPU CI / 手动验证`
 14. 在 bypass 或 pull request bypass allowance 中添加用户 `weinachuan`
 15. 保存规则
 
@@ -380,6 +380,11 @@ bash scripts/github/apply_branch_protection.sh main
 ## 第 10 步：验证触发方式
 
 本仓 NPU CI 不会被 PR 自动触发。维护者可以用两种方式手动触发。
+
+触发后，GitHub 机器人会在 PR 评论区写入一条 NPU CI 状态评论。刚触发时显示“已开始”，执行完成后同一条评论会更新为“通过”或“失败”。如果 Actions 页面能看到 workflow 已触发，但 PR 下没有机器人评论，先检查下面两项：
+
+1. 打开仓库 `Settings -> Actions -> General`，在 `Workflow permissions` 中选择 `Read and write permissions`，保存。
+2. 如果组织或仓库策略不允许打开默认写权限，请创建一个名为 `NPU_CI_BOT_TOKEN` 的仓库 secret。这个 token 至少需要能读 PR、写 issue comment、写 commit status。workflow 会优先使用 `NPU_CI_BOT_TOKEN`，没有配置时才使用默认 `GITHUB_TOKEN`。
 
 方式一：GitHub Actions 按钮。
 
@@ -414,14 +419,16 @@ bash scripts/github/apply_branch_protection.sh main
 触发后，PR 当前 head commit 会出现状态：
 
 ```text
-NPU CI / manual pending
+NPU CI / 手动验证 pending
 ```
 
 成功后会变成：
 
 ```text
-NPU CI / manual success
+NPU CI / 手动验证 success
 ```
+
+PR 评论区也会出现或更新一条机器人评论，包含触发人、模式、Example ST 要求和 Actions run 链接。
 
 如果当前 head commit 已经成功跑过带 Example ST 的 NPU CI，重复触发会跳过，不再占用 NPU。
 
@@ -429,8 +436,8 @@ NPU CI / manual success
 
 合入 PR 前确认三件事：
 
-1. 当前 head commit 上 `NPU CI / manual` 是 success
-2. 当前 head commit 上 `Repository Rules / required-reviewers` 是 success
+1. 当前 head commit 上 `NPU CI / 手动验证` 是 success
+2. 当前 head commit 上 `仓库规则 / 维护者检视门禁` 是 success
 3. 维护账号列表中至少 2 个账号完成 approval
 
 如果 PR 又 push 了新 commit，需要重新跑 NPU CI。旧 commit 的成功结果不能给新 commit 使用。
@@ -499,7 +506,17 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 - workflow 是否启用
 - Actions 页面是否出现新的 `NPU CI` run
 
+### Actions 已触发，但 PR 下没有机器人评论
+
+检查：
+
+- `Settings -> Actions -> General -> Workflow permissions` 是否是 `Read and write permissions`
+- 如果仓库不能开启默认写权限，是否已经配置仓库 secret `NPU_CI_BOT_TOKEN`
+- `NPU_CI_BOT_TOKEN` 是否至少具备 PR 读取、issue comment 写入、commit status 写入权限
+- workflow 日志里是否还有 `Resource not accessible by integration`
+
 ## 参考链接
 
 - GitHub self-hosted runners 文档：<https://docs.github.com/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners>
 - GitHub branch protection 文档：<https://docs.github.com/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches>
+- GitHub `GITHUB_TOKEN` 权限文档：<https://docs.github.com/actions/security-for-github-actions/security-guides/automatic-token-authentication>
