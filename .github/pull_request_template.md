@@ -15,6 +15,7 @@
 > - 同一 PR 的同一 commit 如果已有 NPU CI 在排队或运行，重复评论只会更新机器人评论，不会再次占用 NPU。
 > - NPU CI 会固定执行 `examples/flash_gated_delta_rule.py`，默认保持该用例原始 shape；通常不要填写 `example_args`，除非维护者明确要求追加已批准的泛化场景参数。
 > - Example ST 必须使用 Ascend PyTorch `v26.1.0-beta.1` release family 的配套 `torch_npu` wheel（已包含 `torchnpugen` 并修复 GDN stream 同步问题）；PyTorch 小版本可按环境选择，但不要拉取 `op-plugin` 重新编译或安装不属于该 release family 的旧版 `torch-npu`。
+> - 修改算子 `def`、`aclnn` 接口入参类型，或修改 `torch` 接口入参类型等导致不满足 ABI 一致性的改动，必须由 `weinachuan` 在当前 head commit 上检视通过。
 > - NPU CI 部署与排障教程见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部署教程.md)。
 
 ## 关联 Issue / 背景
@@ -56,6 +57,10 @@
 - 是否影响公共模块或其他算子:
   - [ ] 否
   - [ ] 是，请说明影响面、兼容策略和回归范围:
+- ABI / 接口兼容性:
+  - [ ] 不涉及算子 `def`、`aclnn` 接口或 `torch` 接口入参 / 返回值 / 必选可选属性变化
+  - [ ] 涉及 ABI 不兼容风险，已说明原因，并需要 `weinachuan` 检视通过
+- ABI 不兼容风险说明:
 
 <details>
 <summary>版本与产品编译矩阵</summary>

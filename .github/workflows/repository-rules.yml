@@ -125,16 +125,74 @@ jobs:
             }
 
             const approvedBy = [...approvals.keys()].sort();
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+
+            const changedLines = (file) => (file.patch || '')
+              .split('\n')
+              .filter((line) => /^[+-]/.test(line) && !line.startsWith('+++') && !line.startsWith('---'))
+              .map((line) => line.slice(1).trim())
+              .filter((line) =>
+                line &&
+                !line.startsWith('//') &&
+                !line.startsWith('/*') &&
+                !line.startsWith('*')
+              );
+            const hasChangedLine = (file, pattern) => changedLines(file).some((line) => pattern.test(line));
+            const isDeletedOrRenamed = (file) => ['removed', 'renamed'].includes(file.status);
+
+            const abiFindings = [];
+            for (const file of files) {
+              const path = file.filename.replace(/\\/g, '/');
+              const noPatch = !file.patch;
+              if (/^fla\/ops\/.*\/op_host\/.*_def\.cpp$/.test(path)) {
+                const pattern = /\b(Input|Output|Attr)\s*\(|\.(ParamType|DataType|DataTypeList|Format|FormatList|ValueDepend|AttrType|Int|Float|Bool|String)\s*\(/;
+                if (isDeletedOrRenamed(file) || noPatch || hasChangedLine(file, pattern)) {
+                  abiFindings.push(`${path}: 算子 def 输入/输出/属性 ABI 可能变化`);
+                }
+              } else if (/^fla\/ops\/.*\/op_host\/op_api\/aclnn_.*\.(h|cpp)$/.test(path)) {
+                const pattern = /\baclnn[A-Za-z0-9_]*(GetWorkspaceSize)?\s*\(|\b(const\s+)?acl(Tensor|TensorList|IntArray|Scalar|ScalarList|BoolArray|FloatArray)\s*\*|\b(int64_t|uint64_t|double|float|bool|aclrtStream|aclOpExecutor)\b/;
+                if (isDeletedOrRenamed(file) || noPatch || hasChangedLine(file, pattern)) {
+                  abiFindings.push(`${path}: aclnn 接口入参/返回 ABI 可能变化`);
+                }
+              } else if (/^torch_custom\/fla_npu\/(npu_custom|test_native_functions|deprecated)\.yaml$/.test(path)) {
+                const pattern = /^\s*(-\s*)?func:\s*|^\s*op_api:\s*|^\s*dispatch:\s*|^\s*variants:\s*/;
+                if (isDeletedOrRenamed(file) || noPatch || hasChangedLine(file, pattern)) {
+                  abiFindings.push(`${path}: torch Python/C++ 接口 schema 可能变化`);
+                }
+              } else if (/^torch_custom\/fla_npu\/op_plugin\/ops\/opapi\/.*\.(h|hpp|cpp)$/.test(path)) {
+                const pattern = /\bnpu_[A-Za-z0-9_]+\s*\(|\bat::Tensor\b|\bc10::optional\b|\bat::OptionalIntArrayRef\b|\b(int64_t|double|float|bool)\b|TORCH_LIBRARY|m\.def\s*\(/;
+                if (isDeletedOrRenamed(file) || noPatch || hasChangedLine(file, pattern)) {
+                  abiFindings.push(`${path}: torch 接口入参/适配 ABI 可能变化`);
+                }
+              }
+            }
+            const needAbiOwnerApproval = abiFindings.length > 0;
+            const abiOwnerApproved = approvals.has('weinachuan');
+
             await core.summary
               .addHeading('仓库检视门禁')
               .addRaw(`要求的维护者审批数：2\n\n`)
               .addRaw(`当前 head SHA：${pr.head.sha}\n\n`)
               .addRaw(`已通过检视：${approvedBy.length ? approvedBy.map((u) => `@${u}`).join(', ') : '暂无'}\n`)
+              .addRaw(`\nABI 风险改动：${needAbiOwnerApproval ? '是' : '否'}\n`)
+              .addRaw(`ABI 责任人 @weinachuan 审批：${abiOwnerApproved ? '已满足' : '未满足'}\n`)
+              .addRaw(abiFindings.length ? `\nABI 风险文件：\n${abiFindings.map((item) => `- ${item}`).join('\n')}\n` : '')
               .write();
 
             if (approvedBy.length < 2) {
               core.setFailed(
                 `需要至少 2 个维护账号在当前 head commit 上检视通过。` +
                 `当前有效审批数：${approvedBy.length}。`
+              );
+            }
+            if (needAbiOwnerApproval && !abiOwnerApproved) {
+              core.setFailed(
+                `本 PR 修改了 def/aclnn/torch 接口等 ABI 风险区域，` +
+                `必须由 @weinachuan 在当前 head commit 上检视通过。`
               );
             }
