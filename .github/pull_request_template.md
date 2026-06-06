@@ -4,7 +4,7 @@
 
 > **NPU CI 不会在 PR 新建、重开或 push 新 commit 时自动执行。**
 >
-> 合入前，当前 head commit 必须具备成功的 `NPU CI / manual` 状态；如果本 PR 后续更新了 commit，旧 commit 的 CI 结果不再有效，需要维护者重新触发。即使已有 2 个维护账号检视通过，只要当前 commit 未完成 NPU CI，仍不可合入（`weinachuan` 可按仓库保护规则 bypass）。
+> 合入前，当前 head commit 必须具备成功的 `NPU CI / 手动验证` 状态；如果本 PR 后续更新了 commit，旧 commit 的 CI 结果不再有效，需要维护者重新触发。即使已有 2 个维护账号检视通过，只要当前 commit 未完成 NPU CI，仍不可合入（`weinachuan` 可按仓库保护规则 bypass）。
 >
 > 触发方式：
 >
@@ -12,7 +12,7 @@
 > - 在 PR 评论区发送 `/run-npu-ci quick` 或 `/run-npu-ci full`。
 > - NPU CI 会固定执行 `examples/flash_gated_delta_rule.py`，默认保持该用例原始 shape；通常不要填写 `example_args`，除非维护者明确要求追加已批准的泛化场景参数。
 > - Example ST 必须使用 Ascend PyTorch `v26.1.0-beta.1` release family 的配套 `torch_npu` wheel（已包含 `torchnpugen` 并修复 GDN stream 同步问题）；PyTorch 小版本可按环境选择，但不要拉取 `op-plugin` 重新编译或安装不属于该 release family 的旧版 `torch-npu`。
-> - NPU CI 部署与排障教程见 [`docs/npu-ci-deployment-guide.md`](docs/npu-ci-deployment-guide.md)。
+> - NPU CI 部署与排障教程见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部署教程.md)。
 
 ## 关联 Issue / 背景
 

@@ -1,4 +1,4 @@
-name: Repository Rules
+name: 仓库规则
 
 on:
   create:
@@ -9,13 +9,13 @@ on:
 
 jobs:
   branch-creation-guard:
-    name: branch-creation-guard
+    name: 分支创建权限检查
     if: github.event_name == 'create' && github.event.ref_type == 'branch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Delete unauthorized repository branch
+      - name: 删除未授权分支
         uses: actions/github-script@v7
         with:
           script: |
@@ -30,7 +30,7 @@ jobs:
             const actor = context.actor;
             const branch = context.payload.ref;
             if (allowed.has(actor)) {
-              core.notice(`${actor} is allowed to create repository branches.`);
+              core.notice(`${actor} 允许在主仓库创建分支。`);
               return;
             }
 
@@ -40,18 +40,18 @@ jobs:
               ref: `heads/${branch}`,
             });
             core.setFailed(
-              `${actor} is not allowed to create repository branch "${branch}". ` +
-              'Please fork the repository and open a pull request from your fork.'
+              `${actor} 无权在主仓库创建分支 "${branch}"。` +
+              '请先 fork 本仓库，再从个人仓库向主仓库提交 Pull Request。'
             );
 
   pull-request-author:
-    name: pull-request-author
+    name: 自动填写 PR 提交人
     if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
     steps:
-      - name: Fill PR author
+      - name: 填写 PR 提交人
         uses: actions/github-script@v7
         with:
           script: |
@@ -60,12 +60,12 @@ jobs:
             const authorLine = `- 责任人 / 提交人: @${pr.user.login}`;
             const marker = /- 责任人 \/ 提交人:[^\n]*/;
             if (!marker.test(body)) {
-              core.notice('PR body does not contain the author marker.');
+              core.notice('PR 描述中没有找到责任人 / 提交人标记。');
               return;
             }
             const nextBody = body.replace(marker, authorLine);
             if (nextBody === body) {
-              core.notice('PR author is already filled.');
+              core.notice('PR 提交人已经填写。');
               return;
             }
             await github.rest.pulls.update({
@@ -76,23 +76,23 @@ jobs:
             });
 
   required-reviewers:
-    name: required-reviewers
+    name: 维护者检视门禁
     if: github.event_name == 'pull_request_target' || github.event_name == 'pull_request_review'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
     steps:
-      - name: Require two approvals from maintainers
+      - name: 检查维护者审批数量
         uses: actions/github-script@v7
         with:
           script: |
             const pr = context.payload.pull_request;
             if (!pr) {
-              core.notice('No pull request payload found.');
+              core.notice('没有找到 Pull Request 事件信息。');
               return;
             }
             if (pr.draft) {
-              core.notice('Draft PR: review gate is skipped until the PR is ready for review.');
+              core.notice('草稿 PR 暂不检查检视门禁，标记为 ready for review 后再检查。');
               return;
             }
 
@@ -126,15 +126,15 @@ jobs:
 
             const approvedBy = [...approvals.keys()].sort();
             await core.summary
-              .addHeading('Repository review gate')
-              .addRaw(`Required approvals: 2\n\n`)
-              .addRaw(`Current head SHA: ${pr.head.sha}\n\n`)
-              .addRaw(`Approved by: ${approvedBy.length ? approvedBy.map((u) => `@${u}`).join(', ') : 'none'}\n`)
+              .addHeading('仓库检视门禁')
+              .addRaw(`要求的维护者审批数：2\n\n`)
+              .addRaw(`当前 head SHA：${pr.head.sha}\n\n`)
+              .addRaw(`已通过检视：${approvedBy.length ? approvedBy.map((u) => `@${u}`).join(', ') : '暂无'}\n`)
               .write();
 
             if (approvedBy.length < 2) {
               core.setFailed(
-                `Need at least 2 approvals from maintainers. ` +
-                `Current valid approvals on this head commit: ${approvedBy.length}.`
+                `需要至少 2 个维护账号在当前 head commit 上检视通过。` +
+                `当前有效审批数：${approvedBy.length}。`
               );
             }
