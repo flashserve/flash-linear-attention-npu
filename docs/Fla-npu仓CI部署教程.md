@@ -14,8 +14,8 @@
 2. **宿主机物理 NPU 和容器内逻辑 NPU 不是同一个编号。**
    脚本会在宿主机上自动选择一张物理卡，例如 `ASCEND_RT_VISIBLE_DEVICES=2`。进入容器后，这张卡通常映射成逻辑设备 `0`。所以 CI 中传给 PyTorch example 的设备号默认是 `CI_CONTAINER_DEVICE=0`。
 
-3. **Example ST 必跑，而且不改用例原始 shape。**
-   CI 固定执行 `examples/flash_gated_delta_rule.py`。默认不传 `--tokens`、`--heads`、`--dim`、`--value-dim` 等 shape 参数，只额外传容器内逻辑设备号 `--device 0`。
+3. **Example ST 必跑，shape 由用例文件统一管理。**
+   CI 默认执行 `ci/example_st_cases.json` 中 `enabled=true` 的用例。当前 `case1_current_default` 保持原始 shape；后续 GVA、`Vdim=256` 等场景通过新增用例显式配置 `B`、`T`、`chunk_size`、`query_head`、`value_head`、`Kdim`、`Vdim` 等 shape 字段，以及 `gate_source`、`gate_function`、`initial_state`、`output_final_state`、`qk_l2norm` 等行为字段。
 
 4. **Ascend PyTorch 必须使用 `v26.1.0-beta.1` release family。**
    该 release 修复了 GDN 自定义适配中 `aclnn_extension` 未传 stream 导致算子间数据同步不生效的问题。镜像中直接安装 GitCode release 页面提供的 `torch_npu` wheel，该 wheel 已包含 `torchnpugen`，不要再拉 `op-plugin` 仓库重新编译。
@@ -294,7 +294,15 @@ CI_MODE=quick CI_RUN_EXAMPLE_ST=true bash ci/run_ci_container.sh
 - 编译整包
 - 安装 `.run` 自定义 OPP 包
 - 编译并安装 `torch_custom/fla_npu`
-- 执行 `examples/flash_gated_delta_rule.py`，保持用例原始 shape，仅覆盖 `--device 0`
+- 执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例，仅覆盖容器内逻辑设备号 `--device 0`
+
+本地排障时可以只跑某个用例：
+
+```sh
+CI_EXAMPLE_CASE_FILTER=case1_current_default CI_MODE=quick CI_RUN_EXAMPLE_ST=true bash ci/run_ci_container.sh
+```
+
+正式 GitHub NPU CI 不暴露用例子集选择，默认跑全部 `enabled=true` 用例，避免只跑部分用例却满足合入门禁。
 
 ## 第 6 步：生成 self-hosted runner token
 
@@ -475,7 +483,6 @@ bash scripts/github/apply_branch_protection.sh main
    - `pr_number`: PR 编号，例如 `23`
    - `ci_mode`: `quick` 或 `full`
    - `ops`: 可选，逗号分隔的算子列表
-   - `example_args`: 可选，默认留空，留空时保持 `examples/flash_gated_delta_rule.py` 原始 shape；通常不要填写，除非维护者明确要求追加已批准的泛化场景参数
 5. 点击绿色 `Run workflow`
 
 方式二：在 PR 评论区发送命令。

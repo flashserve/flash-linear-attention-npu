@@ -13,6 +13,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch_npu
 
 from fla.ops.triton.triton_core.causal_conv1d import causal_conv1d_triton
@@ -25,6 +26,21 @@ from fla.ops.triton.triton_core.utils import autocast_custom_bwd, autocast_custo
 
 _disable_compile = getattr(getattr(torch, "compiler", None), "disable", lambda fn: fn)
 _DEFAULT_VARLEN_CHUNK_SIZES = (16, 32, 64, 128, 608 * 2)
+
+
+def _make_gate(shape: tuple[int, ...], dtype: torch.dtype, device: str, gate_function: str) -> torch.Tensor:
+    if gate_function == "logsigmoid":
+        return F.logsigmoid(torch.randn(*shape, dtype=dtype, device=device))
+    if gate_function == "negative_linear":
+        lo, hi = -5e-2, -5e-5
+        steps = shape[1] if len(shape) >= 2 else shape[-1]
+        g_t = torch.linspace(hi, lo, steps, dtype=torch.float32, device=device).to(dtype)
+        if len(shape) == 3:
+            return g_t.view(1, steps, 1).expand(*shape).contiguous()
+        return g_t.view(1, 1, steps, 1).expand(*shape).contiguous()
+    if gate_function == "zeros":
+        return torch.zeros(*shape, dtype=dtype, device=device)
+    raise ValueError(f"Unsupported gate_function: {gate_function}")
 
 
 def cdiv_torch(a, b):
@@ -635,6 +651,11 @@ class DemoGatedDeltaNet(nn.Module):
         self.hidden_size = hidden_size
         self.num_v_heads = num_value_heads
         self.num_k_heads = num_key_heads
+        if self.num_v_heads % self.num_k_heads != 0:
+            raise ValueError(
+                "num_value_heads must be an integer multiple of num_key_heads "
+                f"for the current grouped-value smoke path, got {self.num_v_heads} and {self.num_k_heads}."
+            )
         self.head_k_dim = key_head_dim
         self.head_v_dim = value_head_dim
         self.key_dim = self.head_k_dim * self.num_k_heads
@@ -780,20 +801,32 @@ def _build_mean_1k_cu_seqlens(
 def _main():
     import argparse
 
-    import torch.nn.functional as F
     import torch_npu
 
     import fla_npu  # noqa: F401
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--case-name", default="", help="Example/ST case name for CI logs")
     parser.add_argument("--device", type=int, default=2)
-    parser.add_argument("--heads", type=int, default=32)
+    parser.add_argument("--batch", type=int, default=1)
+    parser.add_argument("--heads", type=int, default=32, help="legacy alias for --query-heads and --value-heads")
+    parser.add_argument("--query-heads", type=int, default=None)
+    parser.add_argument("--value-heads", type=int, default=None)
     parser.add_argument("--tokens", type=int, default=65536)
-    parser.add_argument("--dim", type=int, default=128)
+    parser.add_argument("--dim", type=int, default=128, help="legacy alias for --key-dim")
+    parser.add_argument("--key-dim", type=int, default=None)
     parser.add_argument("--value-dim", type=int, default=128)
     parser.add_argument("--chunk-size", type=int, default=64)
     parser.add_argument("--dtype", choices=["fp16", "bf16"], default="bf16")
     parser.add_argument("--mean-len", type=int, default=1024)
+    parser.add_argument("--gate-source", choices=["g", "gk", "g+gk"], default="g")
+    parser.add_argument("--gate-function", choices=["logsigmoid", "negative_linear", "zeros"], default="logsigmoid")
+    parser.add_argument("--initial-state", choices=["none", "zeros", "random"], default="none")
+    parser.add_argument("--output-final-state", action="store_true")
+    parser.add_argument("--qk-l2norm", dest="qk_l2norm", action="store_true", default=True)
+    parser.add_argument("--no-qk-l2norm", dest="qk_l2norm", action="store_false")
+    parser.add_argument("--varlen", dest="varlen", action="store_true", default=True)
+    parser.add_argument("--no-varlen", dest="varlen", action="store_false")
     parser.add_argument(
         "--demo-model",
         action="store_true",
@@ -806,27 +839,70 @@ def _main():
     torch.npu.set_compile_mode(jit_compile=False)
 
     dtype = torch.float16 if args.dtype == "fp16" else torch.bfloat16
-    varlen = True
-    batch = 1
+    query_heads = args.query_heads if args.query_heads is not None else args.heads
+    value_heads = args.value_heads if args.value_heads is not None else args.heads
+    key_dim = args.key_dim if args.key_dim is not None else args.dim
+    value_dim = args.value_dim
+    batch = args.batch
     device = f"npu:{args.device}"
+    positive_values = {
+        "batch": batch,
+        "tokens": args.tokens,
+        "query_heads": query_heads,
+        "value_heads": value_heads,
+        "key_dim": key_dim,
+        "value_dim": value_dim,
+        "chunk_size": args.chunk_size,
+        "mean_len": args.mean_len,
+    }
+    for name, value in positive_values.items():
+        if value <= 0:
+            raise ValueError(f"{name} must be positive, got {value}.")
+    if args.varlen and batch != 1:
+        raise ValueError("varlen smoke currently requires batch=1. Use --no-varlen for B > 1 cases.")
+    if value_heads % query_heads != 0:
+        raise ValueError(
+            "value_heads must be an integer multiple of query_heads for the current grouped-value smoke path, "
+            f"got query_heads={query_heads}, value_heads={value_heads}."
+        )
+    if args.gate_source != "g":
+        raise NotImplementedError(
+            f"gate_source={args.gate_source} is reserved in the Example/ST schema, but the current NPU "
+            "fwd_h path only supports g and requires gk=None."
+        )
 
     if args.demo_model:
-        hidden_size = args.heads * args.dim
+        if (
+            args.gate_source != "g"
+            or args.gate_function != "logsigmoid"
+            or args.initial_state != "none"
+            or args.output_final_state
+            or not args.qk_l2norm
+        ):
+            raise ValueError(
+                "demo_model smoke currently uses its built-in gate, state and qk-l2norm path. "
+                "Use demo_model=false for gate/initial_state/output_final_state/qk_l2norm case coverage."
+            )
+        if batch != 1:
+            raise ValueError("demo_model smoke currently requires batch=1.")
+        hidden_size = query_heads * key_dim
         if hidden_size <= 0:
-            raise ValueError("hidden_size = heads * dim 非法")
-        cu_seqlens = _build_mean_1k_cu_seqlens(
-            total_tokens=args.tokens,
-            chunk_size=args.chunk_size,
-            device=device,
-            mean_len=args.mean_len,
-        )
-        x = torch.randn(1, args.tokens, hidden_size, dtype=dtype, device=device, requires_grad=True)
+            raise ValueError("hidden_size = query_heads * key_dim 非法")
+        cu_seqlens = None
+        if args.varlen:
+            cu_seqlens = _build_mean_1k_cu_seqlens(
+                total_tokens=args.tokens,
+                chunk_size=args.chunk_size,
+                device=device,
+                mean_len=args.mean_len,
+            )
+        x = torch.randn(batch, args.tokens, hidden_size, dtype=dtype, device=device, requires_grad=True)
         net = DemoGatedDeltaNet(
             hidden_size,
-            num_value_heads=args.heads,
-            num_key_heads=args.heads,
-            key_head_dim=args.dim,
-            value_head_dim=args.value_dim,
+            num_value_heads=value_heads,
+            num_key_heads=query_heads,
+            key_head_dim=key_dim,
+            value_head_dim=value_dim,
             conv_kernel_dim=args.conv_kernel,
             chunk_size=args.chunk_size,
         ).to(device=device, dtype=dtype)
@@ -846,14 +922,14 @@ def _main():
         )
         return
 
-    q = torch.randn(batch, args.heads, args.tokens, args.dim, dtype=dtype, device=device)
-    k = torch.randn(batch, args.heads, args.tokens, args.dim, dtype=dtype, device=device)
-    v = torch.randn(batch, args.heads, args.tokens, args.value_dim, dtype=dtype, device=device)
-    beta = torch.rand(batch, args.tokens, args.heads, dtype=dtype, device=device).sigmoid()
-    g = F.logsigmoid(torch.randn(batch, args.tokens, args.heads, dtype=dtype, device=device))
+    q = torch.randn(batch, query_heads, args.tokens, key_dim, dtype=dtype, device=device)
+    k = torch.randn(batch, query_heads, args.tokens, key_dim, dtype=dtype, device=device)
+    v = torch.randn(batch, value_heads, args.tokens, value_dim, dtype=dtype, device=device)
+    beta = torch.rand(batch, args.tokens, value_heads, dtype=dtype, device=device).sigmoid()
+    g = _make_gate((batch, args.tokens, value_heads), dtype, device, args.gate_function)
 
     cu_seqlens = None
-    if varlen:
+    if args.varlen:
         cu_seqlens = _build_mean_1k_cu_seqlens(
             total_tokens=args.tokens,
             chunk_size=args.chunk_size,
@@ -871,14 +947,21 @@ def _main():
 
     print(
         "config:",
+        f"case={args.case_name or '<direct>'}",
         f"B={batch}",
-        f"H={args.heads}",
+        f"QH={query_heads}",
+        f"VH={value_heads}",
         f"T={args.tokens}",
-        f"K={args.dim}",
-        f"V={args.value_dim}",
+        f"K={key_dim}",
+        f"V={value_dim}",
         f"chunk_size={args.chunk_size}",
         f"dtype={args.dtype}",
-        f"varlen={varlen}",
+        f"varlen={args.varlen}",
+        f"gate_source={args.gate_source}",
+        f"gate_function={args.gate_function}",
+        f"initial_state={args.initial_state}",
+        f"output_final_state={args.output_final_state}",
+        f"qk_l2norm={args.qk_l2norm}",
         f"device={device}",
     )
 
@@ -889,14 +972,31 @@ def _main():
     g.requires_grad_(True)
 
     torch.npu.synchronize()
+    attn_q = q
+    attn_k = k
+    if query_heads != value_heads:
+        repeat = value_heads // query_heads
+        attn_q = q.repeat_interleave(repeat, dim=1)
+        attn_k = k.repeat_interleave(repeat, dim=1)
+        print("grouped value heads:", f"repeat={repeat}", f"attn_heads={attn_q.shape[1]}")
+    initial_state = None
+    if args.initial_state != "none":
+        state_count = len(cu_seqlens) - 1 if cu_seqlens is not None else batch
+        state_shape = (state_count, value_heads, key_dim, value_dim)
+        if args.initial_state == "zeros":
+            initial_state = torch.zeros(state_shape, dtype=dtype, device=device)
+        else:
+            initial_state = torch.randn(state_shape, dtype=dtype, device=device)
+        print("initial_state:", tuple(initial_state.shape), initial_state.dtype, initial_state.device)
     o, final_state = flash_gated_delta_rule(
-        q,
-        k,
+        attn_q,
+        attn_k,
         v,
         g=g,
         beta=beta,
-        output_final_state=False,
-        use_qk_l2norm_in_kernel=True,
+        initial_state=initial_state,
+        output_final_state=args.output_final_state,
+        use_qk_l2norm_in_kernel=args.qk_l2norm,
         cu_seqlens=cu_seqlens,
         chunk_size=args.chunk_size,
     )

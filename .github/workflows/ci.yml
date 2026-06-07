@@ -16,11 +16,6 @@ on:
         description: "Optional comma-separated operator list"
         required: false
         default: ''
-      example_args:
-        description: "Optional extra args for examples/flash_gated_delta_rule.py; empty keeps original shape"
-        required: false
-        default: ''
-
 jobs:
   prepare:
     name: 准备 NPU CI
@@ -46,7 +41,6 @@ jobs:
       head_sha: ${{ steps.prepare.outputs.head_sha }}
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
       ops: ${{ steps.prepare.outputs.ops }}
-      example_args: ${{ steps.prepare.outputs.example_args }}
       comment_id: ${{ steps.prepare.outputs.comment_id }}
     steps:
       - name: 解析 PR 和 CI 参数
@@ -73,7 +67,6 @@ jobs:
             let prNumber;
             let ciMode = 'quick';
             let ops = '';
-            let exampleArgs = '';
             let commentId = '';
             const upsertComment = async (pr, body) => {
               if (!prNumber || !pr) {
@@ -150,7 +143,6 @@ jobs:
               prNumber = Number(core.getInput('pr_number', { required: true }));
               ciMode = core.getInput('ci_mode') || 'quick';
               ops = core.getInput('ops') || '';
-              exampleArgs = core.getInput('example_args') || '';
             } else {
               prNumber = context.payload.issue.number;
               const body = (context.payload.comment.body || '').trim();
@@ -165,8 +157,6 @@ jobs:
                   ciMode = part;
                 } else if (part.startsWith('ops=')) {
                   ops = part.slice('ops='.length);
-                } else if (part.startsWith('example_args=')) {
-                  exampleArgs = part.slice('example_args='.length);
                 }
               }
             }
@@ -179,11 +169,6 @@ jobs:
               core.setFailed(`不支持的 CI 模式：${ciMode}`);
               return;
             }
-            if (/[\r\n]/.test(exampleArgs)) {
-              core.setFailed('example_args 必须写在一行内。');
-              return;
-            }
-
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -217,6 +202,7 @@ jobs:
                   `- 请求模式：\`${ciMode}\``,
                   `- 触发人：@${actor}`,
                   '- Example ST：已覆盖',
+                  '- Example ST 用例：全部 enabled 用例',
                 ].join('\n')
               );
               core.setOutput('should_run', 'false');
@@ -225,7 +211,6 @@ jobs:
               core.setOutput('head_sha', pr.head.sha);
               core.setOutput('ci_mode', ciMode);
               core.setOutput('ops', ops);
-              core.setOutput('example_args', exampleArgs);
               core.setOutput('comment_id', commentId);
               return;
             }
@@ -240,6 +225,7 @@ jobs:
                   `- 触发人：@${actor}`,
                   '- 当前状态：排队或运行中',
                   '- Example ST：必跑',
+                  '- Example ST 用例：全部 enabled 用例',
                   latestExecutionCi.target_url ? `- 运行链接：[查看已有 NPU CI](${latestExecutionCi.target_url})` : '',
                 ].filter(Boolean).join('\n')
               );
@@ -249,7 +235,6 @@ jobs:
               core.setOutput('head_sha', pr.head.sha);
               core.setOutput('ci_mode', ciMode);
               core.setOutput('ops', ops);
-              core.setOutput('example_args', exampleArgs);
               core.setOutput('comment_id', commentId);
               return;
             }
@@ -272,6 +257,7 @@ jobs:
                 `- 模式：\`${ciMode}\``,
                 `- 触发人：@${actor}`,
                 '- Example ST：必跑',
+                '- Example ST 用例：全部 enabled 用例',
                 ops ? `- 算子：\`${ops}\`` : '',
                 `- 运行链接：[NPU CI #${context.runNumber}](${targetUrl})`,
               ].filter(Boolean).join('\n')
@@ -283,7 +269,6 @@ jobs:
             core.setOutput('head_sha', pr.head.sha);
             core.setOutput('ci_mode', ciMode);
             core.setOutput('ops', ops);
-            core.setOutput('example_args', exampleArgs);
             core.setOutput('comment_id', commentId);
 
   ascend-npu:
@@ -300,7 +285,6 @@ jobs:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
       CI_OPS: ${{ needs.prepare.outputs.ops }}
       CI_RUN_EXAMPLE_ST: 'true'
-      CI_EXAMPLE_ARGS: ${{ needs.prepare.outputs.example_args }}
       CI_IMAGE: fla-npu-ci:8.5.0-910b
     steps:
       - name: 拉取 PR 代码（第 1 次）
@@ -392,8 +376,25 @@ jobs:
 
       - name: 使用可信 CI 脚本
         run: |
+          # CI 执行脚本必须来自默认分支，避免 PR 修改脚本后影响 runner。
+          # 但 Example/ST 用例配置属于被验证内容：新 PR 中新增或修改的 enabled 用例
+          # 必须跟随 PR head commit 一起进入容器，并被 /run-npu-ci quick 实际执行验证。
+          tmp_cases="$(mktemp)"
+          if [ -f repo/ci/example_st_cases.json ]; then
+            cp repo/ci/example_st_cases.json "$tmp_cases"
+            python3 -m json.tool "$tmp_cases" >/dev/null
+          else
+            rm -f "$tmp_cases"
+          fi
+
           rm -rf repo/ci
           cp -a trusted-ci/ci repo/ci
+
+          # 覆盖可信 CI 脚本后，再恢复 PR 自身的 case 文件。
+          # 因此后续 PR 只补充 ci/example_st_cases.json 时，NPU CI 会跑到新增用例。
+          if [ -f "$tmp_cases" ]; then
+            cp "$tmp_cases" repo/ci/example_st_cases.json
+          fi
 
       - name: 运行 NPU CI 容器
         working-directory: repo
@@ -429,6 +430,7 @@ jobs:
               `- 模式：\`${mode}\``,
               `- 触发人：@${context.actor}`,
               '- Example ST：必跑',
+              '- Example ST 用例：全部 enabled 用例',
               ops ? `- 算子：\`${ops}\`` : '',
               `- 运行链接：[NPU CI #${context.runNumber}](${targetUrl})`,
             ].filter(Boolean).join('\n');

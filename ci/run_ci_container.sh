@@ -150,8 +150,8 @@ docker run --rm \
     -e CI_BUILD_TORCH_CUSTOM="${CI_BUILD_TORCH_CUSTOM:-false}" \
     -e CI_RUN_TORCH_TESTS="${CI_RUN_TORCH_TESTS:-false}" \
     -e CI_RUN_EXAMPLE_ST="${CI_RUN_EXAMPLE_ST:-true}" \
-    -e CI_EXAMPLE_ARGS="${CI_EXAMPLE_ARGS:-}" \
-    -e CI_EXAMPLE_CASES="${CI_EXAMPLE_CASES:-}" \
+    -e CI_EXAMPLE_CASES_FILE="${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}" \
+    -e CI_EXAMPLE_CASE_FILTER="${CI_EXAMPLE_CASE_FILTER:-}" \
     -e CI_TEST_OP="${CI_TEST_OP:-}" \
     "$image" \
     bash ci/run_checks.sh

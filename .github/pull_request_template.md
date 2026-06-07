@@ -13,7 +13,7 @@
 > - GitHub `Actions` 页面选择 `NPU CI`，点击 `Run workflow`，填写本 PR 编号。
 > - 在 PR 评论区发送 `/run-npu-ci quick` 或 `/run-npu-ci full`。
 > - 同一 PR 的同一 commit 如果已有 NPU CI 在排队或运行，重复评论只会更新机器人评论，不会再次占用 NPU。
-> - NPU CI 会固定执行 `examples/flash_gated_delta_rule.py`，默认保持该用例原始 shape；通常不要填写 `example_args`，除非维护者明确要求追加已批准的泛化场景参数。
+> - NPU CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例；当前 `case1_current_default` 保持原始 shape。新增 GVA、`Vdim=256` 等场景时，请在用例文件中显式填写 `B`、`T`、`chunk_size`、`query_head`、`value_head`、`Kdim`、`Vdim` 等 shape 字段，以及 `gate_source`、`gate_function`、`initial_state`、`output_final_state`、`qk_l2norm` 等行为字段。
 > - Example ST 必须使用 Ascend PyTorch `v26.1.0-beta.1` release family 的配套 `torch_npu` wheel（已包含 `torchnpugen` 并修复 GDN stream 同步问题）；PyTorch 小版本可按环境选择，但不要拉取 `op-plugin` 重新编译或安装不属于该 release family 的旧版 `torch-npu`。
 > - 修改算子 `def`、`aclnn` 接口入参类型，或修改 `torch` 接口入参类型等导致不满足 ABI 一致性的改动，必须由 `weinachuan` 在当前 head commit 上检视通过。
 > - NPU CI 部署与排障教程见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部署教程.md)。
@@ -159,7 +159,7 @@ bash build_and_test.sh
 python examples/flash_gated_delta_rule.py
 ```
 
-也可以由维护者触发 CI 验证：`/run-npu-ci quick`。CI 固定执行 `examples/flash_gated_delta_rule.py`，默认保持该用例原始 shape，仅覆盖容器内逻辑设备号 `--device`。
+也可以由维护者触发 CI 验证：`/run-npu-ci quick`。CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例，默认覆盖当前 `case1_current_default`，仅覆盖容器内逻辑设备号 `--device`。
 
 通过标准:
 
@@ -217,9 +217,9 @@ python examples/flash_gated_delta_rule.py
 
 | 产品 | `--soc` | 实际执行命令 | 结果 | 日志 / 结论 |
 | --- | --- | --- | --- | --- |
-| A2 | `ascend910b` | `python examples/flash_gated_delta_rule.py` | 通过 / 未通过 / 未执行 |  |
-| A3 | `ascend910_93` | `python examples/flash_gated_delta_rule.py` | 通过 / 未通过 / 未执行 |  |
-| A5 | `ascend950` | `python examples/flash_gated_delta_rule.py` | 通过 / 未通过 / 未执行 |  |
+| A2 | `ascend910b` | `python3 ci/run_example_st_cases.py --device 0 --cases-file ci/example_st_cases.json` | 通过 / 未通过 / 未执行 |  |
+| A3 | `ascend910_93` | `python3 ci/run_example_st_cases.py --device 0 --cases-file ci/example_st_cases.json` | 通过 / 未通过 / 未执行 |  |
+| A5 | `ascend950` | `python3 ci/run_example_st_cases.py --device 0 --cases-file ci/example_st_cases.json` | 通过 / 未通过 / 未执行 |  |
 
 - 端到端场景说明:
 - 与本 PR 修改算子的关联:

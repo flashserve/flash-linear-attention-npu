@@ -171,22 +171,9 @@ if [[ "${CI_RUN_EXAMPLE_ST:-true}" == "true" ]]; then
     install_custom_opp_package
     check_example_python_deps
     build_torch_custom
-    run_example_case() {
-        local example_case="$1"
-        local example_args=()
-        if [[ -n "${example_case//[[:space:]]/}" ]]; then
-            read -r -a example_args <<< "$example_case"
-        fi
-        echo "[CI] Running Example ST: examples/flash_gated_delta_rule.py --device $ci_test_device ${example_args[*]}"
-        python3 examples/flash_gated_delta_rule.py --device "$ci_test_device" "${example_args[@]}"
-    }
-
-    if [[ -n "${CI_EXAMPLE_CASES:-}" ]]; then
-        IFS=';' read -r -a example_case_list <<< "$CI_EXAMPLE_CASES"
-        for example_case in "${example_case_list[@]}"; do
-            run_example_case "$example_case"
-        done
-    else
-        run_example_case "${CI_EXAMPLE_ARGS:-}"
+    example_st_args=(--device "$ci_test_device" --cases-file "${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}")
+    if [[ -n "${CI_EXAMPLE_CASE_FILTER:-}" ]]; then
+        example_st_args+=(--case-filter "$CI_EXAMPLE_CASE_FILTER")
     fi
+    python3 ci/run_example_st_cases.py "${example_st_args[@]}"
 fi
