@@ -376,8 +376,20 @@ jobs:
 
       - name: 使用可信 CI 脚本
         run: |
+          tmp_cases="$(mktemp)"
+          if [ -f repo/ci/example_st_cases.json ]; then
+            cp repo/ci/example_st_cases.json "$tmp_cases"
+            python3 -m json.tool "$tmp_cases" >/dev/null
+          else
+            rm -f "$tmp_cases"
+          fi
+
           rm -rf repo/ci
           cp -a trusted-ci/ci repo/ci
+
+          if [ -f "$tmp_cases" ]; then
+            cp "$tmp_cases" repo/ci/example_st_cases.json
+          fi
 
       - name: 运行 NPU CI 容器
         working-directory: repo
