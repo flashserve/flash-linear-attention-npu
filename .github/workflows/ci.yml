@@ -376,6 +376,9 @@ jobs:
 
       - name: 使用可信 CI 脚本
         run: |
+          # CI 执行脚本必须来自默认分支，避免 PR 修改脚本后影响 runner。
+          # 但 Example/ST 用例配置属于被验证内容：新 PR 中新增或修改的 enabled 用例
+          # 必须跟随 PR head commit 一起进入容器，并被 /run-npu-ci quick 实际执行验证。
           tmp_cases="$(mktemp)"
           if [ -f repo/ci/example_st_cases.json ]; then
             cp repo/ci/example_st_cases.json "$tmp_cases"
@@ -387,6 +390,8 @@ jobs:
           rm -rf repo/ci
           cp -a trusted-ci/ci repo/ci
 
+          # 覆盖可信 CI 脚本后，再恢复 PR 自身的 case 文件。
+          # 因此后续 PR 只补充 ci/example_st_cases.json 时，NPU CI 会跑到新增用例。
           if [ -f "$tmp_cases" ]; then
             cp "$tmp_cases" repo/ci/example_st_cases.json
           fi
