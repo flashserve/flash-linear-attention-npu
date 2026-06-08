@@ -22,9 +22,14 @@
 
 namespace optiling {
 
+static constexpr int64_t V_DIM_128 = 128;
+static constexpr int64_t V_DIM_256 = 256;
+
 BEGIN_TILING_DATA_DEF(RecomputeWUFwdTilingData)
 TILING_DATA_FIELD_DEF(int64_t, B);
-TILING_DATA_FIELD_DEF(int64_t, H);
+TILING_DATA_FIELD_DEF(int64_t, Hk);
+TILING_DATA_FIELD_DEF(int64_t, Hv);
+TILING_DATA_FIELD_DEF(int64_t, hvPerHk);
 TILING_DATA_FIELD_DEF(int64_t, T);
 TILING_DATA_FIELD_DEF(int64_t, K);
 TILING_DATA_FIELD_DEF(int64_t, V);

@@ -282,7 +282,9 @@ at::Tensor npu_chunk_fwd_o(
     c10::OptionalIntArrayRef chunk_indices
 )
 {
-    at::Tensor w = at::empty_like(k);
+    auto w_shape = v.sizes().vec();
+    w_shape[3] = k.size(3);
+    at::Tensor w = at::empty(w_shape, v.options().dtype(k.scalar_type()));
     at::Tensor u = at::empty_like(v);
     const at::Tensor &gK_ = c10::value_or_else(gK, [] { return at::Tensor(); });
     const at::Tensor &g_ = c10::value_or_else(g, [] { return at::Tensor(); });

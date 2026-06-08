@@ -35,7 +35,9 @@ public:
 private:
     uint64_t B = 0;
     uint64_t T = 0;
-    uint64_t H = 0;
+    uint64_t Hv = 1;
+    uint64_t Hk = 1;
+    uint64_t hvPerHk = 1;
     uint64_t K = 0;
     uint64_t V = 0;
     uint64_t chunkSize = 0;
@@ -100,7 +102,9 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::Init(
 
     B = tiling.B;
     T = tiling.T;
-    H = tiling.H;
+    Hv = tiling.Hv;
+    Hk = tiling.Hk;
+    hvPerHk = tiling.hvPerHk;
     K = tiling.K;
     V = tiling.V;
     chunkSize = tiling.chunkSize;
@@ -150,9 +154,9 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessVb()
     auto tensorBetaBrcbFP32 = betaFp32BrcbBuf.Get<float32_t>();
     
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
-        GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, chunkSize, loopIdx, bos, eos);
+        GetChunkOffset(cu_seqlens, chunk_indices, B, Hv, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < H; h++) {
+        for (int h = 0; h < Hv; h++) {
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
@@ -249,24 +253,29 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessKbgE
     auto tensorBetaBrcbFP32 = betaFp32BrcbBuf.Get<float32_t>();
     
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
-        GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, chunkSize, loopIdx, bos, eos);
+        GetChunkOffset(cu_seqlens, chunk_indices, B, Hv, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < H; h++) {
+        for (int h = 0; h < Hv; h++) {
             ++vecTaskIdx;
+            uint64_t hk = h / hvPerHk;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
                 continue;
             }
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
-                auto kOffset = (h * T + bos + rowOffset) * K;
+                uint64_t coreLoopsInB = (T + chunkSize - 1) / chunkSize;
+                uint64_t bIdx = cu_seqlens ? 0 : (loopIdx / coreLoopsInB);
+                uint64_t bosK = cu_seqlens ? bos : (bos - bIdx * (Hv - Hk) * T);
+                auto kSrcOffset = (hk * T + bosK + rowOffset) * K;
+                auto kDstOffset = (h * T + bos + rowOffset) * K;
                 auto betaOffset = h * T + bos + rowOffset;
                 // copyin
                 {
                     auto tensorKin = kInQue.AllocTensor<kType>();
                     auto tensorBetain = betaInQue.AllocTensor<betaType>();
                     auto tensorGin = gInQue.AllocTensor<betaType>();
-                    DataCopy(tensorKin, kTensor[kOffset], K * curRowNum);
+                    DataCopy(tensorKin, kTensor[kSrcOffset], K * curRowNum);
                     DataCopyPad(tensorBetain, betaTensor[betaOffset], {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
                     DataCopyPad(tensorGin, gTensor[betaOffset], {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
                     kInQue.EnQue(tensorKin);
@@ -314,7 +323,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessKbgE
                 // copyout
                 {
                     auto tensorOut = kBetagExpOutQue.DeQue<kType>();
-                    DataCopy(workSpaceTensor[kOffset], tensorOut, K * curRowNum);
+                    DataCopy(workSpaceTensor[kDstOffset], tensorOut, K * curRowNum);
                     kBetagExpOutQue.FreeTensor(tensorOut);
                 }
             }
