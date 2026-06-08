@@ -25,7 +25,7 @@ extern "C" __global__ __aicore__ void chunk_fwd_o(GM_ADDR q, GM_ADDR k, GM_ADDR 
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
 
     GM_ADDR user = AscendC::GetUserWorkspace(workspace);
-    
+
     __gm__ ChunkFwdOTilingData *__restrict gdnFwdOTilingData = reinterpret_cast<__gm__ ChunkFwdOTilingData *__restrict>(tiling);
     using workspaceType = float;
     // dtype: 0 - fp16, 1 - bf16, 2 - fp32

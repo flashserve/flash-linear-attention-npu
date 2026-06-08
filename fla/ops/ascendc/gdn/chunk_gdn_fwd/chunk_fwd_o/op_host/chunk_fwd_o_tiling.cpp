@@ -56,7 +56,7 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
 {
     OP_LOGD(context->GetNodeName(), "Tiling4ChunkFwdO start.");
     ChunkFwdOTilingData tiling;
-    
+
     gert::Shape qStorageShape = context->GetOptionalInputShape(INPUT_Q_IDX)->GetStorageShape();
     gert::Shape vStorageShape = context->GetOptionalInputShape(INPUT_V_IDX)->GetStorageShape();
 
@@ -66,7 +66,7 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     int64_t kHeadDim = qStorageShape.GetDim(DIM_HEAD_DIM);
     int64_t vHeadDim = vStorageShape.GetDim(DIM_HEAD_DIM);
     int64_t isVariedLen, shapeBatch, tokenBatch;
-    
+
     auto cuSeqlensTensor = context->GetOptionalInputTensor(INPUT_SEQLENS_IDX);
     if (cuSeqlensTensor == nullptr) {
         isVariedLen = false;
@@ -77,7 +77,7 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
         shapeBatch = 1;
         tokenBatch = cuSeqlensTensor->GetStorageShape().GetDim(DIM_BATCH) - 1;
     }
-    
+
     auto attrPtr = context->GetAttrs();
     float scale = *(attrPtr->GetAttrPointer<double>(ATTR_SCALE_IDX));
     int64_t chunkSize = *(attrPtr->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_IDX));
@@ -92,7 +92,7 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     } else if (gDType == ge::DT_FLOAT16) {
         gDataType = 0;
     }
-   
+
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint32_t aicCoreNum = ascendcPlatform.GetCoreNumAic();
     context->SetBlockDim(aicCoreNum);
@@ -103,7 +103,7 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
 
     size_t workspaceOffset = ascendcPlatform.GetLibApiWorkSpaceSize();
     workspaceOffset += WORKSPACE_RSV_BYTE;
-    
+
     tiling.set_vWorkspaceOffset(workspaceOffset);
     workspaceOffset += (aicCoreNum * chunkSize * vHeadDim * sizeof(float) * pingpongStages + GM_ALIGN) / GM_ALIGN * GM_ALIGN;
 

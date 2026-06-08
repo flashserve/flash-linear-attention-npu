@@ -17,5 +17,5 @@ add_modules_sources(OPTYPE chunk_gated_delta_rule_fwd_h ACLNNTYPE aclnn_exclude)
 add_ops_compile_options(
     OP_NAME ChunkGatedDeltaRuleFwdH
     OPTIONS --cce-auto-sync=off
-            -Wno-deprecated-declarations	
+            -Wno-deprecated-declarations
 )
