@@ -385,73 +385,67 @@ if __name__ == "__main__":
     # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
     # test_recompute_wu_fwd(B = 1, H = 8, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
 
-    # GVA tests (Hk != Hv)
-    # test_recompute_wu_fwd(B=2, Hk=2, Hv=4, T=128, K=128, V=128, chunk_size=64, ktype=torch.float16, btype=torch.float16)
-    # test_recompute_wu_fwd(B=4, Hk=4, Hv=8, T=256, K=128, V=128, chunk_size=64, ktype=torch.float16, btype=torch.float16)
+    # === GVA / VDIM256 quick cases ===
+    # 默认只打开一个小的 GVA + VDIM256 smoke，用于快速确认主路径。
+    test_recompute_wu_fwd(B=1, Hk=2, Hv=4, T=256, K=128, V=256, chunk_size=64,
+                          ktype=torch.float16, btype=torch.float16)
 
-    # === GVA 泛化测试 ===
+    # GVA V=128 smoke
+    # test_recompute_wu_fwd(B=2, Hk=2, Hv=4, T=128, K=128, V=128, chunk_size=64,
+    #                       ktype=torch.float16, btype=torch.float16)
+    # test_recompute_wu_fwd(B=4, Hk=4, Hv=8, T=256, K=128, V=128, chunk_size=64,
+    #                       ktype=torch.float16, btype=torch.float16)
 
-    # -- 变长序列 --
-    # V1: Vdim=256 暂不支持
-    # cu_seqlens = prepare_cu_seqlens(T = 16384, L = 128)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_recompute_wu_fwd(B=1, Hk=16, Hv=32, T=16384, K=128, V=256, chunk_size=64, ktype=torch.float16, btype=torch.float16, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices)
+    # VDIM256 non-GVA smoke
+    # test_recompute_wu_fwd(B=1, Hk=4, Hv=4, T=256, K=128, V=256, chunk_size=64,
+    #                       ktype=torch.float16, btype=torch.float16)
 
-    # V2: Vdim=256 暂不支持
-    # cu_seqlens = prepare_cu_seqlens(T = 16384, L = 1)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_recompute_wu_fwd(B=1, Hk=21, Hv=63, T=16384, K=128, V=256, chunk_size=64, ktype=torch.float16, btype=torch.float16, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices)
+    # GVA + VDIM256 fixed-length cases
+    # test_recompute_wu_fwd(B=1, Hk=16, Hv=32, T=4096, K=128, V=256, chunk_size=64,
+    #                       ktype=torch.float16, btype=torch.float16)
+    # test_recompute_wu_fwd(B=16, Hk=21, Hv=63, T=2048, K=128, V=256, chunk_size=64,
+    #                       ktype=torch.float16, btype=torch.float16)
+    # test_recompute_wu_fwd(B=176, Hk=2, Hv=64, T=24, K=128, V=256, chunk_size=64,
+    #                       ktype=torch.float16, btype=torch.float16)
 
-    # V3: Vdim=256 暂不支持
-    # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 172)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 128)
-    # test_recompute_wu_fwd(B=1, Hk=8, Hv=32, T=65536, K=128, V=256, chunk_size=128, ktype=torch.float16, btype=torch.float16, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices)
+    # GVA V=128 fixed-length case
+    # test_recompute_wu_fwd(B=711, Hk=4, Hv=32, T=196, K=128, V=128, chunk_size=128,
+    #                       ktype=torch.float16, btype=torch.float16)
 
-    # V4
-    # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 668)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_recompute_wu_fwd(B=1, Hk=16, Hv=32, T=65536, K=128, V=128, chunk_size=64, ktype=torch.float16, btype=torch.float16, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices)
+    # GVA + VDIM256 variable-length cases
+    # cu_seqlens = prepare_cu_seqlens(T=16384, L=128)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size=64)
+    # test_recompute_wu_fwd(B=1, Hk=16, Hv=32, T=16384, K=128, V=256, chunk_size=64,
+    #                       ktype=torch.float16, btype=torch.float16,
+    #                       cu_seqlens=cu_seqlens, chunk_indices=chunk_indices)
 
-    # V5
-    # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 17)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 128)
-    # test_recompute_wu_fwd(B=1, Hk=4, Hv=32, T=65536, K=128, V=128, chunk_size=128, ktype=torch.float16, btype=torch.float16, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices)
+    # cu_seqlens = prepare_cu_seqlens(T=16384, L=1)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size=64)
+    # test_recompute_wu_fwd(B=1, Hk=21, Hv=63, T=16384, K=128, V=256, chunk_size=64,
+    #                       ktype=torch.float16, btype=torch.float16,
+    #                       cu_seqlens=cu_seqlens, chunk_indices=chunk_indices)
 
-    # V6: Vdim=256 暂不支持
-    # cu_seqlens = prepare_cu_seqlens(T = 262144, L = 32)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_recompute_wu_fwd(B=1, Hk=2, Hv=64, T=262144, K=128, V=256, chunk_size=64, ktype=torch.float16, btype=torch.float16, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices)
+    # cu_seqlens = prepare_cu_seqlens(T=65536, L=172)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size=128)
+    # test_recompute_wu_fwd(B=1, Hk=8, Hv=32, T=65536, K=128, V=256, chunk_size=128,
+    #                       ktype=torch.float16, btype=torch.float16,
+    #                       cu_seqlens=cu_seqlens, chunk_indices=chunk_indices)
 
-    # -- 定长序列 --
-    # baseline V=128 check
-    # test_recompute_wu_fwd(B=1, Hk=4, Hv=4, T=256, K=128, V=128, chunk_size=64,
-    #                   ktype=torch.float16, btype=torch.float16)
-    # non-GVA V=256 check with diagnostics
-    k = torch.randn(1, 4, 256, 128, dtype=torch.float16)
-    v = torch.randn(1, 4, 256, 256, dtype=torch.float16)
-    beta = torch.randn(1, 4, 256, dtype=torch.float16)
-    A = torch.randn(1, 4, 256, 64, dtype=torch.float16)
-    g = torch.randn(1, 4, 256, dtype=torch.float16)
-    w, u = torch.ops.npu.npu_recompute_w_u_fwd(k.npu(), v.npu(), beta.npu(), A.npu(), 64, g=g.npu(), gk=None, cu_seqlens=None, chunk_indices=None)
-    cpu_w = compute_w_golden(k, v, beta, A, g, None, None, 1, 4, 256, 128, 64, 4, Hk=4)
-    cpu_u = compute_u_golden(v, beta, A, None, None, 1, 4, 256, 64, 4)
-    ct.isclose(w.cpu(), cpu_w.cpu(), diff_thd=0.1)
-    ct.isclose(u.cpu(), cpu_u.cpu(), diff_thd=0.1)
-    print("W[0,0,0,:4]:", w.cpu()[0,0,0,:4])
-    print("cpu_W[0,0,0,:4]:", cpu_w[0,0,0,:4])
-    print("U[0,0,0,:4]:", u.cpu()[0,0,0,:4])
-    print("cpu_U[0,0,0,:4]:", cpu_u[0,0,0,:4])
-    # F_G1: Vdim=256 暂不支持
-    # test_recompute_wu_fwd(B=1, Hk=16, Hv=32, T=4096, K=128, V=256, chunk_size=64, ktype=torch.float16, btype=torch.float16)
-    # V256 GVA test
-    # test_recompute_wu_fwd(B=1, Hk=2, Hv=4, T=256, K=128, V=256, chunk_size=64,
-    #                   ktype=torch.float16, btype=torch.float16)
+    # cu_seqlens = prepare_cu_seqlens(T=262144, L=32)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size=64)
+    # test_recompute_wu_fwd(B=1, Hk=2, Hv=64, T=262144, K=128, V=256, chunk_size=64,
+    #                       ktype=torch.float16, btype=torch.float16,
+    #                       cu_seqlens=cu_seqlens, chunk_indices=chunk_indices)
 
-    # F_G2: Vdim=256 暂不支持
-    # test_recompute_wu_fwd(B=16, Hk=21, Hv=63, T=2048, K=128, V=256, chunk_size=64, ktype=torch.float16, btype=torch.float16)
+    # GVA V=128 variable-length cases
+    # cu_seqlens = prepare_cu_seqlens(T=65536, L=668)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size=64)
+    # test_recompute_wu_fwd(B=1, Hk=16, Hv=32, T=65536, K=128, V=128, chunk_size=64,
+    #                       ktype=torch.float16, btype=torch.float16,
+    #                       cu_seqlens=cu_seqlens, chunk_indices=chunk_indices)
 
-    # F_G3
-    # test_recompute_wu_fwd(B=711, Hk=4, Hv=32, T=196, K=128, V=128, chunk_size=128, ktype=torch.float16, btype=torch.float16)
-
-    # F_G4: Vdim=256 暂不支持
-    # test_recompute_wu_fwd(B=176, Hk=2, Hv=64, T=24, K=128, V=256, chunk_size=64, ktype=torch.float16, btype=torch.float16)
+    # cu_seqlens = prepare_cu_seqlens(T=65536, L=17)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size=128)
+    # test_recompute_wu_fwd(B=1, Hk=4, Hv=32, T=65536, K=128, V=128, chunk_size=128,
+    #                       ktype=torch.float16, btype=torch.float16,
+    #                       cu_seqlens=cu_seqlens, chunk_indices=chunk_indices)
