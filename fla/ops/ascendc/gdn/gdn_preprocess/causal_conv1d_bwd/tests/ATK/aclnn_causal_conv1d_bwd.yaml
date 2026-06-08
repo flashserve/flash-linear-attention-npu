@@ -1,0 +1,133 @@
+api: pytorch
+api_type: executor_causal_conv1d_bwd
+aclnn_api_type: aclnn_causal_conv1d_bwd
+version: v2.1
+name: aclnn.causal_conv1d_bwd
+aclnn_name: CausalConv1dBwd
+generate: generator_causal_conv1d_bwd
+dtype_numbers: 50
+extra_numbers: 0
+standard:
+  acc: causal_conv1d_bwd_allclose
+  perf: not_key
+inputs:
+  - name: x
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16, fp32]
+    ranges:
+      valid:
+        values: [[-2, 2]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [3]
+      dim_values:
+        values: [[1, 8], [64, 32768], [16, 1536]]
+  - name: y
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16, fp32]
+    ranges:
+      valid:
+        values: [[-2, 2]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [3]
+      dim_values:
+        values: [[1, 8], [64, 32768], [16, 1536]]
+  - name: weight
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16, fp32]
+    ranges:
+      valid:
+        values: [[-2, 2]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [2]
+      dim_values:
+        values: [[2, 4], [16, 1536]]
+  - name: dy
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16, fp32]
+    ranges:
+      valid:
+        values: [[-2, 2]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [3]
+      dim_values:
+        values: [[1, 8], [64, 32768], [16, 1536]]
+  - name: initial_state
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16, fp32]
+    ranges:
+      valid:
+        values: [[-2, 2]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [3]
+      dim_values:
+        values: [[1, 8], [2, 4], [16, 1536]]
+  - name: dht
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16, fp32]
+    ranges:
+      valid:
+        values: [[-2, 2]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [3]
+      dim_values:
+        values: [[1, 8], [2, 4], [16, 1536]]
+  - name: queryStartLoc
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [[0, 64]]
+      invalid:
+        values: []
+  - name: activation
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0, 1, 2]
+      invalid:
+        values: []
+  - name: inputLayout
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: [BSND, BNSD, TND, NTD]
+      invalid:
+        values: []
