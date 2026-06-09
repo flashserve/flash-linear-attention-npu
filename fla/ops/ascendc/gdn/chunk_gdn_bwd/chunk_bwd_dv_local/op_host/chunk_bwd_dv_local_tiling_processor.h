@@ -34,7 +34,8 @@ static constexpr size_t CHUNK_BWD_DV_LOCAL_INPUT_CHUNK_INDICES_IDX = 7;
 static constexpr size_t CHUNK_BWD_DV_LOCAL_ATTR_SCALE_IDX = 0;
 static constexpr size_t CHUNK_BWD_DV_LOCAL_ATTR_CHUNK_SIZE_IDX = 1;
 
-static constexpr size_t Q_K_DO_DIM_NUM = 4;
+static constexpr size_t Q_K_DIM_NUM = 4;
+static constexpr size_t DO_DIM_NUM = 4;
 static constexpr size_t G_DIM_NUM = 3;
 static constexpr size_t SEQLENS_DIM_NUM = 1;
 
@@ -109,13 +110,13 @@ public:
 
     ge::graphStatus PreCheck()
     {
-        OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.qShape, Q_K_DO_DIM_NUM,
+        OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.qShape, Q_K_DIM_NUM,
                                              INPUT_Q_NAME) != ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.kShape, Q_K_DO_DIM_NUM,
+        OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.kShape, Q_K_DIM_NUM,
                                              INPUT_K_NAME) != ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.dOShape, Q_K_DO_DIM_NUM,
+        OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.dOShape, DO_DIM_NUM,
                                              INPUT_DO_NAME) != ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
         OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.gShape, G_DIM_NUM, INPUT_G_NAME) !=
@@ -142,28 +143,54 @@ public:
         return ge::GRAPH_SUCCESS;
     }
 
+    ge::graphStatus CompareDim(const gert::Shape &shape1, const gert::Shape &shape2,
+                                const char *inputName1, const char *inputName2, size_t dimIndex)
+    {
+        size_t shapeDim1 = shape1.GetDim(dimIndex);
+        size_t shapeDim2 = shape2.GetDim(dimIndex);
+        OP_CHECK_IF(shapeDim1 != shapeDim2,
+                    OP_LOGE(ctx_.nodeName,
+                            "Compare input shape of %s and %s failed, the length of dim %zu should be same, "
+                            "but got %zu and %zu.",
+                            inputName1, inputName2, dimIndex, shapeDim1, shapeDim2),
+                    return ge::GRAPH_FAILED);
+        return ge::GRAPH_SUCCESS;
+    }
+
     ge::graphStatus CommonTiling()
     {
         const gert::Shape qStorageShape = ctx_.qShape->GetStorageShape();
         const gert::Shape kStorageShape = ctx_.kShape->GetStorageShape();
         const gert::Shape dOStorageShape = ctx_.dOShape->GetStorageShape();
         const gert::Shape gStorageShape = ctx_.gShape->GetStorageShape();
-        OP_CHECK_IF(CompareShape(qStorageShape, kStorageShape, INPUT_Q_NAME, INPUT_K_NAME, Q_K_DO_DIM_NUM) !=
+        OP_CHECK_IF(CompareShape(qStorageShape, kStorageShape, INPUT_Q_NAME, INPUT_K_NAME, Q_K_DIM_NUM) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CompareShape(qStorageShape, dOStorageShape, INPUT_Q_NAME, INPUT_DO_NAME, G_DIM_NUM) !=
+        OP_CHECK_IF(CompareDim(qStorageShape, dOStorageShape, INPUT_Q_NAME, INPUT_DO_NAME, DIM_0) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CompareShape(qStorageShape, gStorageShape, INPUT_Q_NAME, INPUT_G_NAME, G_DIM_NUM) !=
+        OP_CHECK_IF(CompareDim(qStorageShape, dOStorageShape, INPUT_Q_NAME, INPUT_DO_NAME, DIM_2) !=
+                        ge::GRAPH_SUCCESS,
+                    , return ge::GRAPH_FAILED);
+        OP_CHECK_IF(CompareShape(dOStorageShape, gStorageShape, INPUT_DO_NAME, INPUT_G_NAME, G_DIM_NUM) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
         tiling_.b = static_cast<int64_t>(qStorageShape.GetDim(DIM_0));
-        tiling_.h = static_cast<int64_t>(qStorageShape.GetDim(DIM_1));
+        tiling_.hQk = static_cast<int64_t>(qStorageShape.GetDim(DIM_1));
+        tiling_.hDo = static_cast<int64_t>(dOStorageShape.GetDim(DIM_1));
+        OP_CHECK_IF(tiling_.hDo % tiling_.hQk != 0,
+                    OP_LOGE(ctx_.nodeName,
+                            "Check input shape failed, hDo (%ld) must be divisible by hQk (%ld).",
+                            tiling_.hDo, tiling_.hQk),
+                    return ge::GRAPH_FAILED);
+        tiling_.hRatio = tiling_.hDo / tiling_.hQk;
+        tiling_.headBufNum = 2 + 2 * tiling_.hRatio;
         tiling_.t = static_cast<int64_t>(qStorageShape.GetDim(DIM_2));
         tiling_.k = static_cast<int64_t>(qStorageShape.GetDim(DIM_3));
         tiling_.v = static_cast<int64_t>(dOStorageShape.GetDim(DIM_3));
 
         OP_LOGI(ctx_.nodeName, "=== K/V dimension check: K=%ld, V=%ld", tiling_.k, tiling_.v);
+        OP_LOGI(ctx_.nodeName, "=== GVA check: hQk=%ld, hDo=%ld, hRatio=%ld", tiling_.hQk, tiling_.hDo, tiling_.hRatio);
         OP_CHECK_IF(tiling_.k != K_SIZE_128,
                     OP_LOGE(ctx_.nodeName,
                             "Check input k shape failed, the k dimension should be 128, but get %ld.", tiling_.k),
