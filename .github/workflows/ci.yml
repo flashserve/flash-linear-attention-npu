@@ -49,17 +49,20 @@ jobs:
         with:
           github-token: ${{ github.token }}
           script: |
-            const maintainers = new Set([
-              'juyangokok',
-              'weinachuan',
-              'weiwei-612',
-              'woey',
-              'zhangshuolei-hfut',
-              'chen-linxin',
-            ]);
             const actor = context.actor;
-            if (!maintainers.has(actor)) {
-              core.setFailed(`${actor} 无权触发 NPU CI。`);
+            let actorPermission = 'none';
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: actor,
+              });
+              actorPermission = data.permission || 'none';
+            } catch (error) {
+              core.warning(`Unable to inspect repository permission for ${actor}: ${error.message}`);
+            }
+            if (actorPermission !== 'admin') {
+              core.setFailed(`${actor} 无权触发 NPU CI：需要仓库 Admin 权限，当前权限为 ${actorPermission}。`);
               return;
             }
 

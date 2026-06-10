@@ -4,9 +4,9 @@
 
 > **NPU CI 不会在 PR 新建、重开或 push 新 commit 时自动执行。**
 >
-> PR 新建、重开或 push 新 commit 后，GitHub 会自动把当前 head commit 标记为 `NPU CI / 手动验证 pending`，说明该 commit 暂未执行 NPU CI。机器人评论会提示可请求触发的维护账号和触发命令。
+> PR 新建、重开或 push 新 commit 后，GitHub 会自动把当前 head commit 标记为 `NPU CI / 手动验证 pending`，说明该 commit 暂未执行 NPU CI。机器人评论会提示可请求仓库 Admin 权限账号触发。
 >
-> 合入前，当前 head commit 必须具备成功的 `NPU CI / 手动验证` 状态；如果本 PR 后续更新了 commit，旧 commit 的 CI 结果不再有效，需要维护者重新触发。即使已有 2 个维护账号检视通过，只要当前 commit 未完成 NPU CI，仍不可合入（`weinachuan` 可按仓库保护规则 bypass）。
+> 合入前，当前 head commit 必须具备成功的 `NPU CI / 手动验证` 状态；如果本 PR 后续更新了 commit，旧 commit 的 CI 结果不再有效，需要仓库 Admin 权限账号重新触发。即使已有 2 个仓库 Admin 检视通过，只要当前 commit 未完成 NPU CI，仍不可合入（`weinachuan` 可按仓库保护规则 bypass）。
 >
 > 触发方式：
 >
@@ -159,7 +159,7 @@ bash build_and_test.sh
 python examples/flash_gated_delta_rule.py
 ```
 
-也可以由维护者触发 CI 验证：`/run-npu-ci quick`。CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例，默认覆盖当前 `case1_current_default`，仅覆盖容器内逻辑设备号 `--device`。
+也可以由仓库 Admin 权限账号触发 CI 验证：`/run-npu-ci quick`。CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例，默认覆盖当前 `case1_current_default`，仅覆盖容器内逻辑设备号 `--device`。
 
 通过标准:
 

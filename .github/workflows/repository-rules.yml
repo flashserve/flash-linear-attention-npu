@@ -96,14 +96,26 @@ jobs:
               return;
             }
 
-            const maintainers = new Set([
-              'juyangokok',
-              'weinachuan',
-              'weiwei-612',
-              'woey',
-              'zhangshuolei-hfut',
-              'chen-linxin',
-            ]);
+            const adminPermissionCache = new Map();
+            const hasAdminPermission = async (login) => {
+              const key = login.toLowerCase();
+              if (adminPermissionCache.has(key)) {
+                return adminPermissionCache.get(key);
+              }
+              let isAdmin = false;
+              try {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username: login,
+                });
+                isAdmin = data.permission === 'admin';
+              } catch (error) {
+                core.warning(`Unable to inspect repository permission for ${login}: ${error.message}`);
+              }
+              adminPermissionCache.set(key, isAdmin);
+              return isAdmin;
+            };
             const reviews = await github.paginate(github.rest.pulls.listReviews, {
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -114,17 +126,23 @@ jobs:
             const approvals = new Map();
             for (const review of reviews) {
               const login = review.user && review.user.login;
-              if (!login || !maintainers.has(login) || login === pr.user.login) {
+              if (!login || login.toLowerCase() === pr.user.login.toLowerCase()) {
                 continue;
               }
+              if (!(await hasAdminPermission(login))) {
+                continue;
+              }
+              const normalizedLogin = login.toLowerCase();
               if (review.state === 'APPROVED' && review.commit_id === pr.head.sha) {
-                approvals.set(login, review);
+                approvals.set(normalizedLogin, review);
               } else if (review.state === 'CHANGES_REQUESTED' || review.state === 'DISMISSED') {
-                approvals.delete(login);
+                approvals.delete(normalizedLogin);
               }
             }
 
-            const approvedBy = [...approvals.keys()].sort();
+            const approvedBy = [...approvals.values()]
+              .map((review) => review.user.login)
+              .sort((a, b) => a.localeCompare(b));
             const files = await github.paginate(github.rest.pulls.listFiles, {
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -176,7 +194,7 @@ jobs:
 
             await core.summary
               .addHeading('仓库检视门禁')
-              .addRaw(`要求的维护者审批数：2\n\n`)
+              .addRaw(`要求的仓库 Admin 审批数：2\n\n`)
               .addRaw(`当前 head SHA：${pr.head.sha}\n\n`)
               .addRaw(`已通过检视：${approvedBy.length ? approvedBy.map((u) => `@${u}`).join(', ') : '暂无'}\n`)
               .addRaw(`\nABI 风险改动：${needAbiOwnerApproval ? '是' : '否'}\n`)
@@ -189,7 +207,7 @@ jobs:
             if (missingRequiredReviews || missingAbiOwner) {
               const reasons = [];
               if (missingRequiredReviews) {
-                reasons.push(`维护者审批 ${approvedBy.length}/2`);
+                reasons.push(`仓库 Admin 审批 ${approvedBy.length}/2`);
               }
               if (missingAbiOwner) {
                 reasons.push('等待 @weinachuan ABI 审批');

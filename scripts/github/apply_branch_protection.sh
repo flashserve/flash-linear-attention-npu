@@ -26,11 +26,11 @@ curl -fsSL \
       "NPU CI / 手动验证"
     ]
   },
-  "enforce_admins": false,
+  "enforce_admins": true,
   "required_pull_request_reviews": {
     "dismissal_restrictions": {},
     "dismiss_stale_reviews": true,
-    "require_code_owner_reviews": true,
+    "require_code_owner_reviews": false,
     "require_last_push_approval": true,
     "required_approving_review_count": 2,
     "bypass_pull_request_allowances": {
