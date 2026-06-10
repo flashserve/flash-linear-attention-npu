@@ -176,12 +176,12 @@ at::Tensor chunk_fwd_o_npu(const at::Tensor &q, const at::Tensor &k, const at::T
     ChunkFwdOTilingResult tilingResult =
         CalcTilingParams(q, k, v, h, g, scale, chunk_size, cu_seqlens, chunk_offsets);
 
-    GM_ADDR qPtr = reinterpret_cast<GM_ADDR>(q.data_ptr());
-    GM_ADDR kPtr = reinterpret_cast<GM_ADDR>(k.data_ptr());
-    GM_ADDR vPtr = reinterpret_cast<GM_ADDR>(v.data_ptr());
-    GM_ADDR hPtr = reinterpret_cast<GM_ADDR>(h.data_ptr());
-    GM_ADDR gPtr = reinterpret_cast<GM_ADDR>(g.data_ptr());
-    GM_ADDR oPtr = reinterpret_cast<GM_ADDR>(output.data_ptr());
+    GM_ADDR qPtr = (GM_ADDR)q.data_ptr();
+    GM_ADDR kPtr = (GM_ADDR)k.data_ptr();
+    GM_ADDR vPtr = (GM_ADDR)v.data_ptr();
+    GM_ADDR hPtr = (GM_ADDR)h.data_ptr();
+    GM_ADDR gPtr = (GM_ADDR)g.data_ptr();
+    GM_ADDR oPtr = (GM_ADDR)output.data_ptr();
 
     GM_ADDR cuSeqlensPtr = nullptr;
     GM_ADDR chunkOffsetsPtr = nullptr;
@@ -193,12 +193,12 @@ at::Tensor chunk_fwd_o_npu(const at::Tensor &q, const at::Tensor &k, const at::T
     if (cu_seqlens.has_value()) {
         cuSeqlensVec = std::vector<int64_t>(cu_seqlens.value().begin(), cu_seqlens.value().end());
         cuSeqlensTensor = at::tensor(cuSeqlensVec, at::dtype(at::kLong).device(q.device()));
-        cuSeqlensPtr = reinterpret_cast<GM_ADDR>(cuSeqlensTensor.data_ptr());
+        cuSeqlensPtr = (GM_ADDR)cuSeqlensTensor.data_ptr();
     }
     if (chunk_offsets.has_value()) {
         chunkOffsetsVec = std::vector<int64_t>(chunk_offsets.value().begin(), chunk_offsets.value().end());
         chunkOffsetsTensor = at::tensor(chunkOffsetsVec, at::dtype(at::kLong).device(q.device()));
-        chunkOffsetsPtr = reinterpret_cast<GM_ADDR>(chunkOffsetsTensor.data_ptr());
+        chunkOffsetsPtr = (GM_ADDR)chunkOffsetsTensor.data_ptr();
     }
 
     void *workspacePtr = nullptr;
@@ -206,7 +206,7 @@ at::Tensor chunk_fwd_o_npu(const at::Tensor &q, const at::Tensor &k, const at::T
         auto ret = aclrtMalloc(&workspacePtr, tilingResult.workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
         TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: ", ret);
     }
-    GM_ADDR workspaceGm = reinterpret_cast<GM_ADDR>(workspacePtr);
+    GM_ADDR workspaceGm = (GM_ADDR)workspacePtr;
 
     auto qDtype = q.scalar_type();
     auto gDtype = g.scalar_type();

@@ -19,6 +19,8 @@
 #include <cstdint>
 #include "exe_graph/runtime/storage_shape.h"
 #include <register/op_impl_registry.h>
+#include "tiling_base/data_copy_transpose_tiling.h"
+#include "tiling_base/tiling_templates_registry.h"
 #include "../op_kernel/chunk_fwd_o_struct.h"
 
 using GDN::ChunkFwdOTilingData;

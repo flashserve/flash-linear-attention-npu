@@ -201,7 +201,7 @@ struct BlockSchedulerGdnFwdOCube : public BlockSchedulerGdnFwdO {
 
     CATLASS_DEVICE
     GDNFwdOOffsets& GetCube1Offsets() {
-        return offsets[(currStage - 1) % PING_PONG_STAGES];
+        return offsets[(currStage + PING_PONG_STAGES - 1) % PING_PONG_STAGES];
     }
 
     CATLASS_DEVICE
@@ -221,7 +221,7 @@ struct BlockSchedulerGdnFwdOCube : public BlockSchedulerGdnFwdO {
 
     CATLASS_DEVICE
     GDNFwdOOffsets& GetCube23Offsets() {
-        return offsets[(currStage - 2) % PING_PONG_STAGES];
+        return offsets[(currStage + PING_PONG_STAGES - 2) % PING_PONG_STAGES];
     }
 
     CATLASS_DEVICE
@@ -264,12 +264,12 @@ struct BlockSchedulerGdnFwdOVec : public BlockSchedulerGdnFwdO {
 
     CATLASS_DEVICE
     GDNFwdOOffsets& GetVec1Offsets() {
-        return offsets[(currStage - 1) % PING_PONG_STAGES];
+        return offsets[(currStage + PING_PONG_STAGES - 1) % PING_PONG_STAGES];
     }
     
     CATLASS_DEVICE
     GDNFwdOOffsets& GetVec2Offsets() {
-        return offsets[(currStage - 2) % PING_PONG_STAGES];
+        return offsets[(currStage + PING_PONG_STAGES - 2) % PING_PONG_STAGES];
     }
 
 };
