@@ -155,7 +155,7 @@ struct BlockSchedulerGdnFwdH {
 
         if (isVariedLen) {
             gmNumChunks.SetValue(0, 0);
-            gmSeqlen.SetValue(0, 0);
+            gmNumSeq.SetValue(0, 0);
             uint32_t actualBatch = 0;
             int64_t prevSeq = 0, currSeq;
             for (uint32_t b = 1; b <= tokenBatch; b++) {
