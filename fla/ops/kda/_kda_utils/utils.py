@@ -329,7 +329,11 @@ def deprecate_kwarg(
 
     """
     deprecated_version = version.parse(version)
-    current_version = version.parse(__version__)
+    try:
+        current_version = version.parse(__version__)
+    except NameError:
+        # __version__ not available in isolated KDA package
+        current_version = version.parse("0.0.0")
     is_greater_or_equal_version = current_version >= deprecated_version
 
     if is_greater_or_equal_version:
