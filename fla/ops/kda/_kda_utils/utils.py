@@ -457,6 +457,7 @@ def map_triton_backend_to_torch_device() -> str:
 # However, the torch backend is 'cuda' for both Nvidia and AMD GPUs.
 # Therefore, we need to check the triton backend to determine the actual GPU vendor.
 _IS_NPU = hasattr(torch, 'npu') and torch.npu.is_available()
+IS_NPU = _IS_NPU  # Public alias for import
 
 if _IS_NPU:
     # NPU device detection
