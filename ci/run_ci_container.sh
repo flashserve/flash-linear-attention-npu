@@ -9,6 +9,7 @@ container_name="${CI_CONTAINER_NAME:-fla-npu-ci-$(date +%s)}"
 cache_root="${CI_CACHE_ROOT:-}"
 npu_lock_fd=""
 npu_lock_file=""
+container_id_file=""
 
 if [[ -z "$cache_root" ]]; then
     if [[ -d /workspace ]]; then
@@ -26,6 +27,71 @@ release_npu_lock() {
         npu_lock_fd=""
         npu_lock_file=""
     fi
+}
+
+is_truthy() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+stop_ci_container() {
+    if ! command -v docker >/dev/null 2>&1; then
+        return
+    fi
+    if docker ps -q --filter "name=^/${container_name}$" | grep -q .; then
+        echo "[CI] Stopping CI container: $container_name"
+        docker rm -f "$container_name" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "${container_id_file:-}" ]]; then
+        rm -f "$container_id_file"
+    fi
+}
+
+cleanup_run() {
+    local status=$?
+    stop_ci_container
+    release_npu_lock
+    return "$status"
+}
+
+cleanup_stale_ci_containers() {
+    if ! is_truthy "${CI_CLEANUP_STALE_CONTAINERS:-true}"; then
+        return
+    fi
+    if ! command -v docker >/dev/null 2>&1; then
+        return
+    fi
+
+    local max_age_seconds="${CI_STALE_CONTAINER_SECONDS:-14400}"
+    if [[ "$max_age_seconds" == "0" ]]; then
+        return
+    fi
+    if ! [[ "$max_age_seconds" =~ ^[0-9]+$ ]]; then
+        echo "[CI][WARN] Invalid CI_STALE_CONTAINER_SECONDS=$max_age_seconds; skip stale container cleanup."
+        return
+    fi
+
+    local now
+    now="$(date +%s)"
+    local id
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        local name started_at started_epoch age
+        name="$(docker inspect -f '{{.Name}}' "$id" 2>/dev/null | sed 's#^/##')" || continue
+        started_at="$(docker inspect -f '{{.State.StartedAt}}' "$id" 2>/dev/null)" || continue
+        started_epoch="$(date -d "$started_at" +%s 2>/dev/null || echo 0)"
+        [[ "$started_epoch" =~ ^[0-9]+$ ]] || started_epoch=0
+        if (( started_epoch == 0 )); then
+            continue
+        fi
+        age=$((now - started_epoch))
+        if (( age >= max_age_seconds )); then
+            echo "[CI] Removing stale CI container: $name (${age}s old)"
+            docker rm -f "$id" >/dev/null 2>&1 || true
+        fi
+    done < <(docker ps -q --filter "name=fla-npu-ci-")
 }
 
 acquire_npu_lock() {
@@ -48,8 +114,16 @@ acquire_npu_lock() {
         local candidates=()
         mapfile -t candidates < <(bash ci/detect_npu.sh --candidates)
         if (( ${#candidates[@]} == 0 )); then
-            echo "[CI][ERROR] No NPU device was found on host." >&2
-            exit 1
+            local elapsed=$((SECONDS - started_at))
+            if [[ "$lock_wait_seconds" != "0" && "$elapsed" -ge "$lock_wait_seconds" ]]; then
+                echo "[CI][ERROR] Timed out waiting for an eligible NPU after ${lock_wait_seconds}s." >&2
+                bash ci/detect_npu.sh --summary || true
+                exit 1
+            fi
+            echo "[CI] No eligible NPU is available; retrying in ${lock_retry_seconds}s."
+            bash ci/detect_npu.sh --summary || true
+            sleep "$lock_retry_seconds"
+            continue
         fi
 
         local id
@@ -61,9 +135,6 @@ acquire_npu_lock() {
                 npu_lock_fd="$fd"
                 npu_lock_file="$candidate_lock"
                 eval "$(bash ci/detect_npu.sh --env-for "$id")"
-                trap release_npu_lock EXIT
-                trap 'release_npu_lock; exit 130' INT
-                trap 'release_npu_lock; exit 143' TERM
                 echo "[CI] Acquired NPU lock: $npu_lock_file"
                 return
             fi
@@ -79,6 +150,12 @@ acquire_npu_lock() {
         sleep "$lock_retry_seconds"
     done
 }
+
+trap cleanup_run EXIT
+trap 'stop_ci_container; release_npu_lock; exit 130' INT
+trap 'stop_ci_container; release_npu_lock; exit 143' TERM
+
+cleanup_stale_ci_containers
 
 if ! docker image inspect "$image" >/dev/null 2>&1 || [[ "${CI_REBUILD_IMAGE:-false}" == "true" ]]; then
     echo "[CI] Building Docker image: $image"
@@ -125,8 +202,31 @@ echo "[CI] Running $container_name on NPU ${NPU_SELECTED_DEVICE} (${NPU_SELECTED
 echo "[CI] third_party cache: $third_party_cache"
 echo "[CI] container TMPDIR: ${CI_TMPDIR:-auto}"
 
-docker run --rm \
+container_timeout_seconds="${CI_CONTAINER_TIMEOUT_SECONDS:-10800}"
+if [[ "$container_timeout_seconds" != "0" && ! "$container_timeout_seconds" =~ ^[0-9]+$ ]]; then
+    echo "[CI][ERROR] Invalid CI_CONTAINER_TIMEOUT_SECONDS=$container_timeout_seconds" >&2
+    exit 2
+fi
+if [[ "$container_timeout_seconds" != "0" ]] && ! command -v timeout >/dev/null 2>&1; then
+    echo "[CI][ERROR] timeout command is required when CI_CONTAINER_TIMEOUT_SECONDS is set." >&2
+    exit 1
+fi
+
+container_id_file="${TMPDIR:-/tmp}/${container_name}.cid"
+rm -f "$container_id_file"
+run_prefix=()
+if [[ "$container_timeout_seconds" != "0" ]]; then
+    run_prefix=(timeout --kill-after=30s "${container_timeout_seconds}s")
+    echo "[CI] container timeout: ${container_timeout_seconds}s"
+else
+    echo "[CI] container timeout: disabled"
+fi
+
+"${run_prefix[@]}" docker run --rm \
     --name "$container_name" \
+    --cidfile "$container_id_file" \
+    --label "org.flashserve.fla-npu-ci=true" \
+    --label "org.flashserve.fla-npu-ci.npu=${NPU_SELECTED_DEVICE}" \
     --network host \
     --ipc host \
     "${device_args[@]}" \
@@ -153,6 +253,8 @@ docker run --rm \
     -e CI_RUN_EXAMPLE_ST="${CI_RUN_EXAMPLE_ST:-true}" \
     -e CI_EXAMPLE_CASES_FILE="${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}" \
     -e CI_EXAMPLE_CASE_FILTER="${CI_EXAMPLE_CASE_FILTER:-}" \
+    -e CI_EXAMPLE_CASE_TIMEOUT_SECONDS="${CI_EXAMPLE_CASE_TIMEOUT_SECONDS:-1800}" \
+    -e CI_CONTAINER_TIMEOUT_SECONDS="${CI_CONTAINER_TIMEOUT_SECONDS:-10800}" \
     -e CI_TEST_OP="${CI_TEST_OP:-}" \
     -e CI_TMPDIR="${CI_TMPDIR:-}" \
     -e CI_TMPDIR_CANDIDATES="${CI_TMPDIR_CANDIDATES:-}" \
