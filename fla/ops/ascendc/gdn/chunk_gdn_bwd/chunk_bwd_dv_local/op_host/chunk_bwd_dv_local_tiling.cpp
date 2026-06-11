@@ -26,7 +26,10 @@ static void ChunkBwdDvLocalTilingDataPrint(gert::TilingContext *context, const C
     auto nodeName = context->GetNodeName();
     OP_LOGD(nodeName, ">>>>>>>>>>>>>>> Start to print ChunkBwdDvLocal tiling data <<<<<<<<<<<<<<<<");
     OP_LOGD(nodeName, "=== b: %ld", tiling.b);
-    OP_LOGD(nodeName, "=== h: %ld", tiling.h);
+    OP_LOGD(nodeName, "=== hQk: %ld", tiling.hQk);
+    OP_LOGD(nodeName, "=== hDo: %ld", tiling.hDo);
+    OP_LOGD(nodeName, "=== hRatio: %ld", tiling.hRatio);
+    OP_LOGD(nodeName, "=== headBufNum: %ld", tiling.headBufNum);
     OP_LOGD(nodeName, "=== t: %ld", tiling.t);
     OP_LOGD(nodeName, "=== k: %ld", tiling.k);
     OP_LOGD(nodeName, "=== v: %ld", tiling.v);
@@ -82,10 +85,11 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
 
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     int64_t coreNum = static_cast<int64_t>(ascendcPlatform.GetCoreNumAic());
-    context->SetBlockDim(std::min(tiling->chunkNumForT * tiling->b, coreNum));
+    int64_t usedCoreNum = std::min(tiling->chunkNumForT * tiling->b, coreNum);
+    context->SetBlockDim(usedCoreNum);
 
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
-    uint32_t userWorkspaceSize = QKV_DTYPE_SIZE * tiling->b * tiling->h * tiling->t * tiling->chunkSize;
+    uint32_t userWorkspaceSize = QKV_DTYPE_SIZE * usedCoreNum * tiling->headBufNum * tiling->chunkSize * tiling->chunkSize;
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = sysWorkspaceSize + userWorkspaceSize;
     context->SetScheduleMode(1);

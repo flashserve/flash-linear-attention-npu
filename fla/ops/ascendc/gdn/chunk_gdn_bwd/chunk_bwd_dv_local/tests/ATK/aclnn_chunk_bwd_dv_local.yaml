@@ -55,7 +55,7 @@ inputs:
       dim_numbers:
         values: [ 4 ]
       dim_values:
-        values: [ [ 1, 100 ], [ 1, 32 ], [ 1, 100 ], [ 1, 100 ] ]
+        values: [ [ 1, 100 ], [ 1, 64 ], [ 1, 100 ], [ 1, 100 ] ]
   - name: g
     type: tensor
     required: true
@@ -70,7 +70,7 @@ inputs:
       dim_numbers:
         values: [ 3 ]
       dim_values:
-        values: [ [ 1, 100 ], [ 1, 32 ], [ 1, 100 ]]
+        values: [ [ 1, 100 ], [ 1, 64 ], [ 1, 100 ]]
   - name: upper_tri_matrix
     type: tensor
     required: true
@@ -194,5 +194,15 @@ inputs:
     ranges:
       valid:
         values: ["bf16", "fp16"]
+      invalid:
+        values: []
+  - name: h_ratio
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [1, 2, 4]
       invalid:
         values: []

@@ -144,17 +144,18 @@ int main()
     // 2. 构造输入与输出，需要根据API的接口自定义构造
     int64_t B = 1;
     int64_t T = 128;
-    int64_t H = 2;
+    int64_t H_qk = 4;
+    int64_t H_do = 8;
     int64_t V = 128;
     int64_t K = 128;
     int64_t chunk_size = 64;
     double scale = 1.0;
 
-    std::vector<int64_t> qShape = {B, H, T, K};
-    std::vector<int64_t> kShape = {B, H, T, K};
-    std::vector<int64_t> dOShape = {B, H, T, V};
-    std::vector<int64_t> gShape = {B, H, T};
-    std::vector<int64_t> dVShape = {B, H, T, V};
+    std::vector<int64_t> qShape = {B, H_qk, T, K};
+    std::vector<int64_t> kShape = {B, H_qk, T, K};
+    std::vector<int64_t> dOShape = {B, H_do, T, V};
+    std::vector<int64_t> gShape = {B, H_do, T};
+    std::vector<int64_t> dVShape = {B, H_do, T, V};
 
     void *qDeviceAddr = nullptr;
     void *kDeviceAddr = nullptr;
@@ -168,9 +169,9 @@ int main()
     aclTensor *g = nullptr;
     aclTensor *dV = nullptr;
 
-    int64_t lenQK = B * H * T * K;
-    int64_t lenO = B * H * T * V;
-    int64_t lenG = B * H * T;
+    int64_t lenQK = B * H_qk * T * K;
+    int64_t lenO = B * H_do * T * V;
+    int64_t lenG = B * H_do * T;
     std::vector<uint16_t> qHostData(lenQK, 0x3C00);
     std::vector<uint16_t> kHostData(lenQK, 0x3C00);
     std::vector<uint16_t> dOHostData(lenO, 0x3C00);
