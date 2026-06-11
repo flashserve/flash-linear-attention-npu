@@ -6,10 +6,10 @@ import torch.nn.functional as F
 import triton
 import triton.language as tl
 
-from fla.ops.utils.index import prepare_chunk_indices
-from fla.ops.utils.op import exp
-from fla.ops.utils.softplus import softplus
-from fla.utils import IS_AMD, autocast_custom_bwd, autocast_custom_fwd, autotune_cache_kwargs, check_shared_mem, input_guard
+from fla.ops.kda._kda_utils.index import prepare_chunk_indices
+from fla.ops.kda._kda_utils.op import exp
+from fla.ops.kda._kda_utils.softplus import softplus
+from fla.ops.kda._kda_utils.utils import IS_AMD, autocast_custom_bwd, autocast_custom_fwd, autotune_cache_kwargs, check_shared_mem, input_guard
 
 BS_LIST = [32, 64] if check_shared_mem() else [16, 32]
 BT_LIST_AUTOTUNE = [32, 64, 128]

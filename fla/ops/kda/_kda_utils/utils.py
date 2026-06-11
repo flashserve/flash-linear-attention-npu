@@ -19,7 +19,10 @@ from packaging import version
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from fla import __version__
+    try:
+        from fla import __version__
+    except ImportError:
+        __version__ = "0.0.0"
 
 FLA_CI_ENV = os.getenv("FLA_CI_ENV") == "1"
 FLA_CACHE_RESULTS = os.getenv('FLA_CACHE_RESULTS', '1') == '1'
@@ -449,25 +452,65 @@ def map_triton_backend_to_torch_device() -> str:
 # For AMD GPUs, the triton backend is 'hip', while for Nvidia GPUs, the triton backend is 'cuda'.
 # However, the torch backend is 'cuda' for both Nvidia and AMD GPUs.
 # Therefore, we need to check the triton backend to determine the actual GPU vendor.
-device = get_available_device() if get_available_device() != 'hip' else 'cuda'
-device_torch_lib = getattr(torch, device)
-device_platform = get_available_device()
-device_name = map_triton_backend_to_torch_device()
+_IS_NPU = hasattr(torch, 'npu') and torch.npu.is_available()
+
+if _IS_NPU:
+    # NPU device detection
+    device = 'npu'
+    device_torch_lib = torch.npu
+    device_platform = 'npu'
+    device_name = 'npu'
+elif get_available_device() != 'hip':
+    device = get_available_device()
+    device_torch_lib = getattr(torch, device, torch.cuda)
+    device_platform = get_available_device()
+    device_name = map_triton_backend_to_torch_device()
+else:
+    device = 'cuda'
+    device_torch_lib = torch.cuda
+    device_platform = 'hip'
+    device_name = 'cuda'
 
 IS_AMD = (device_platform == 'hip')
 IS_INTEL = (device_platform == 'xpu')
 IS_NVIDIA = (device_platform == 'cuda')
-IS_INTEL_ALCHEMIST = (IS_INTEL and 'Intel(R) Arc(TM) A' in torch.xpu.get_device_name(0))
-IS_NVIDIA_HOPPER = (IS_NVIDIA and ('NVIDIA H' in torch.cuda.get_device_name(0) or torch.cuda.get_device_capability()[0] >= 9))
-IS_NVIDIA_BLACKWELL = (IS_NVIDIA and torch.cuda.get_device_capability()[0] == 10)
-USE_CUDA_GRAPH = (IS_NVIDIA and os.environ.get('FLA_USE_CUDA_GRAPH', '0') == '1')
 
-# Nvidia Ampere or newer, haven't check AMD and intel yet.
-IS_TF32_SUPPORTED = (IS_NVIDIA and torch.cuda.get_device_capability(0)[0] >= 8)
-IS_GATHER_SUPPORTED = hasattr(triton.language, 'gather')
-IS_TMA_SUPPORTED = (IS_NVIDIA and torch.cuda.get_device_capability(0)[0] >= 9) \
-    and os.environ.get('FLA_USE_TMA', '0') == '1' and \
-    (hasattr(triton.language, '_experimental_make_tensor_descriptor') or hasattr(triton.language, 'make_tensor_descriptor'))
+# NPU-safe defaults for GPU-specific flags
+if _IS_NPU:
+    IS_INTEL_ALCHEMIST = False
+    IS_NVIDIA_HOPPER = False
+    IS_NVIDIA_BLACKWELL = False
+    USE_CUDA_GRAPH = False
+    IS_TF32_SUPPORTED = False
+    IS_GATHER_SUPPORTED = hasattr(triton.language, 'gather')
+    IS_TMA_SUPPORTED = False
+else:
+    try:
+        IS_INTEL_ALCHEMIST = (IS_INTEL and 'Intel(R) Arc(TM) A' in torch.xpu.get_device_name(0))
+    except Exception:
+        IS_INTEL_ALCHEMIST = False
+    try:
+        IS_NVIDIA_HOPPER = (IS_NVIDIA and ('NVIDIA H' in torch.cuda.get_device_name(0) or torch.cuda.get_device_capability()[0] >= 9))
+    except Exception:
+        IS_NVIDIA_HOPPER = False
+    try:
+        IS_NVIDIA_BLACKWELL = (IS_NVIDIA and torch.cuda.get_device_capability()[0] == 10)
+    except Exception:
+        IS_NVIDIA_BLACKWELL = False
+    USE_CUDA_GRAPH = (IS_NVIDIA and os.environ.get('FLA_USE_CUDA_GRAPH', '0') == '1')
+
+    # Nvidia Ampere or newer, haven't check AMD and intel yet.
+    try:
+        IS_TF32_SUPPORTED = (IS_NVIDIA and torch.cuda.get_device_capability(0)[0] >= 8)
+    except Exception:
+        IS_TF32_SUPPORTED = False
+    IS_GATHER_SUPPORTED = hasattr(triton.language, 'gather')
+    try:
+        IS_TMA_SUPPORTED = (IS_NVIDIA and torch.cuda.get_device_capability(0)[0] >= 9) \
+            and os.environ.get('FLA_USE_TMA', '0') == '1' and \
+            (hasattr(triton.language, '_experimental_make_tensor_descriptor') or hasattr(triton.language, 'make_tensor_descriptor'))
+    except Exception:
+        IS_TMA_SUPPORTED = False
 
 if IS_NVIDIA and not IS_TF32_SUPPORTED:
     # Make old card happy, since triton will use tf32 by default.
@@ -510,6 +553,9 @@ class Backend(Enum):
 
 @functools.cache
 def check_shared_mem(arch: str = "none", tensor_idx: int = 0) -> bool:
+    if _IS_NPU:
+        # NPU generally has sufficient shared memory
+        return True
     try:
         device_shared_mem_list = get_all_max_shared_mem()
         max_shared_memory = device_shared_mem_list[tensor_idx]
@@ -519,24 +565,31 @@ def check_shared_mem(arch: str = "none", tensor_idx: int = 0) -> bool:
 
 
 if check_pytorch_version('2.4'):
-    device = 'cuda' if device == 'cpu' else device
+    if _IS_NPU:
+        device = 'npu'
+    elif device == 'cpu':
+        device = 'cuda'
     autocast_custom_fwd = functools.partial(torch.amp.custom_fwd, device_type=device)
     autocast_custom_bwd = functools.partial(torch.amp.custom_bwd, device_type=device)
 
     def custom_device_ctx(index: int):
         return device_torch_lib.device(index)
 else:
-    assert device == 'cuda', 'Only cuda device is supported for PyTorch version < 2.4.0.'
+    if not _IS_NPU:
+        assert device == 'cuda', 'Only cuda device is supported for PyTorch version < 2.4.0.'
     autocast_custom_fwd = device_torch_lib.amp.custom_fwd
     autocast_custom_bwd = device_torch_lib.amp.custom_bwd
 
     def custom_device_ctx(index: int):
+        if _IS_NPU:
+            return torch.npu.device(index)
         return torch.cuda.device(index)
 
 
 def _register_aliases():
     current_module = sys.modules[__name__]
     for key in (
+        'IS_NPU',
         'IS_AMD',
         'IS_INTEL',
         'IS_NVIDIA',

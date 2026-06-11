@@ -5,8 +5,8 @@ import torch
 import triton
 import triton.language as tl
 
-from fla.ops.utils.op import exp2
-from fla.utils import autotune_cache_kwargs
+from fla.ops.kda._kda_utils.op import exp2
+from fla.ops.kda._kda_utils.utils import autotune_cache_kwargs
 
 
 @triton.heuristics({

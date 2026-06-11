@@ -5,8 +5,8 @@ import torch
 import triton
 import triton.language as tl
 
-from fla.ops.utils.index import prepare_chunk_indices
-from fla.utils import autotune_cache_kwargs, check_shared_mem, input_guard
+from fla.ops.kda._kda_utils.index import prepare_chunk_indices
+from fla.ops.kda._kda_utils.utils import autotune_cache_kwargs, check_shared_mem, input_guard
 
 BS_LIST = [32, 64] if check_shared_mem() else [16, 32]
 

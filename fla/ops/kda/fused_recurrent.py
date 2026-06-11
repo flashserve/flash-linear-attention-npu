@@ -5,9 +5,9 @@ import torch
 import triton
 import triton.language as tl
 
-from fla.ops.utils.op import exp
-from fla.ops.utils.softplus import softplus
-from fla.utils import input_guard
+from fla.ops.kda._kda_utils.op import exp
+from fla.ops.kda._kda_utils.softplus import softplus
+from fla.ops.kda._kda_utils.utils import input_guard
 
 
 @triton.heuristics(

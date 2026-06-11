@@ -1,56 +1,66 @@
-from .cumsum import (
-    chunk_global_cumsum,
-    chunk_global_cumsum_scalar,
-    chunk_global_cumsum_vector,
-    chunk_local_cumsum,
-    chunk_local_cumsum_scalar,
-    chunk_local_cumsum_vector,
+# fla/ops/kda/_kda_utils/__init__.py
+# KDA-isolated utility functions — unified export
+# All imports point to local copies within this package, NOT to the global fla.* tree.
+
+from .utils import (
+    input_guard,
+    autocast_custom_fwd,
+    autocast_custom_bwd,
+    check_shared_mem,
+    autotune_cache_kwargs,
+    device,
+    IS_NPU,
+    IS_AMD,
+    IS_NVIDIA,
+    IS_NVIDIA_HOPPER,
+    IS_GATHER_SUPPORTED,
+    IS_TF32_SUPPORTED,
+    IS_TMA_SUPPORTED,
+    USE_CUDA_GRAPH,
+    assert_close,
+    tensor_cache,
 )
-from .index import (
-    get_max_num_splits,
-    prepare_chunk_indices,
-    prepare_chunk_offsets,
-    prepare_cu_seqlens_from_lens,
-    prepare_cu_seqlens_from_mask,
-    prepare_lens,
-    prepare_lens_from_mask,
-    prepare_position_ids,
-    prepare_sequence_ids,
-    prepare_token_indices,
-)
-from .logsumexp import logsumexp_fwd
-from .matmul import addmm, matmul
-from .pack import pack_sequence, unpack_sequence
-from .pooling import mean_pooling
-from .softmax import softmax_bwd, softmax_fwd
+from .index import prepare_chunk_indices, prepare_chunk_offsets
+from .op import exp, exp2, log, log2, gather
+from .constant import RCP_LN2
 from .softplus import softplus
-from .solve_tril import solve_tril
+from .cumsum import chunk_local_cumsum
+from .l2norm import l2norm_fwd, l2norm_bwd
 
 __all__ = [
-    "addmm",
-    "chunk_global_cumsum",
-    "chunk_global_cumsum_scalar",
-    "chunk_global_cumsum_vector",
-    "chunk_local_cumsum",
-    "chunk_local_cumsum_scalar",
-    "chunk_local_cumsum_vector",
-    "get_max_num_splits",
-    "logsumexp_fwd",
-    "matmul",
-    "mean_pooling",
-    "pack_sequence",
+    # utils
+    "input_guard",
+    "autocast_custom_fwd",
+    "autocast_custom_bwd",
+    "check_shared_mem",
+    "autotune_cache_kwargs",
+    "device",
+    "IS_NPU",
+    "IS_AMD",
+    "IS_NVIDIA",
+    "IS_NVIDIA_HOPPER",
+    "IS_GATHER_SUPPORTED",
+    "IS_TF32_SUPPORTED",
+    "IS_TMA_SUPPORTED",
+    "USE_CUDA_GRAPH",
+    "assert_close",
+    "tensor_cache",
+    # index
     "prepare_chunk_indices",
     "prepare_chunk_offsets",
-    "prepare_cu_seqlens_from_lens",
-    "prepare_cu_seqlens_from_mask",
-    "prepare_lens",
-    "prepare_lens_from_mask",
-    "prepare_position_ids",
-    "prepare_sequence_ids",
-    "prepare_token_indices",
-    "softmax_bwd",
-    "softmax_fwd",
+    # op
+    "exp",
+    "exp2",
+    "log",
+    "log2",
+    "gather",
+    # constant
+    "RCP_LN2",
+    # softplus
     "softplus",
-    "solve_tril",
-    "unpack_sequence",
+    # cumsum
+    "chunk_local_cumsum",
+    # l2norm
+    "l2norm_fwd",
+    "l2norm_bwd",
 ]

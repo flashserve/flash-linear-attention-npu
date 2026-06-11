@@ -4,7 +4,7 @@
 import triton
 from triton import language as tl
 
-from fla.utils import IS_NVIDIA
+from fla.ops.kda._kda_utils.utils import IS_NVIDIA
 
 
 def _generate_softplus(num_pack):
