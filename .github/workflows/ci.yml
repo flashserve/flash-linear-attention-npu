@@ -181,6 +181,27 @@ jobs:
               core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再运行 NPU CI。`);
               return;
             }
+            if (!ops && ciMode === 'quick') {
+              const files = await github.paginate(github.rest.pulls.listFiles, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                per_page: 100,
+              });
+              const inferredOps = new Set();
+              const opMarkers = new Set(['op_host', 'op_kernel', 'op_proto', 'op_tiling']);
+              for (const file of files) {
+                const parts = (file.filename || '').split('/');
+                const markerIndex = parts.findIndex((part) => opMarkers.has(part));
+                if (markerIndex > 0) {
+                  inferredOps.add(parts[markerIndex - 1]);
+                }
+              }
+              if (inferredOps.size > 0) {
+                ops = Array.from(inferredOps).sort().join(',');
+                core.notice(`Auto inferred CI ops: ${ops}`);
+              }
+            }
 
             const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
               owner: context.repo.owner,
@@ -293,7 +314,7 @@ jobs:
       - name: 拉取 PR 合并后代码（第 1 次）
         id: checkout_pr_1
         continue-on-error: true
-        timeout-minutes: 10
+        timeout-minutes: 5
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
@@ -311,7 +332,7 @@ jobs:
         id: checkout_pr_2
         if: steps.checkout_pr_1.outcome == 'failure'
         continue-on-error: true
-        timeout-minutes: 10
+        timeout-minutes: 5
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
@@ -327,7 +348,7 @@ jobs:
 
       - name: 拉取 PR 合并后代码（第 3 次）
         if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
-        timeout-minutes: 10
+        timeout-minutes: 5
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
@@ -338,7 +359,7 @@ jobs:
       - name: 拉取可信 CI 脚本（第 1 次）
         id: checkout_trusted_ci_1
         continue-on-error: true
-        timeout-minutes: 10
+        timeout-minutes: 5
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
@@ -355,7 +376,7 @@ jobs:
         id: checkout_trusted_ci_2
         if: steps.checkout_trusted_ci_1.outcome == 'failure'
         continue-on-error: true
-        timeout-minutes: 10
+        timeout-minutes: 5
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
@@ -370,7 +391,7 @@ jobs:
 
       - name: 拉取可信 CI 脚本（第 3 次）
         if: steps.checkout_trusted_ci_1.outcome == 'failure' && steps.checkout_trusted_ci_2.outcome == 'failure'
-        timeout-minutes: 10
+        timeout-minutes: 5
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
