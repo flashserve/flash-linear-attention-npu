@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
+import signal
 import shlex
 import subprocess
 import sys
@@ -103,6 +105,64 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     raise ValueError(f"Expected a boolean value, got {value!r}.")
 
 
+def _as_non_negative_int(value: Any, name: str) -> int:
+    try:
+        timeout = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a non-negative integer.") from exc
+    if timeout < 0:
+        raise ValueError(f"{name} must be a non-negative integer.")
+    return timeout
+
+
+def _default_timeout_seconds() -> int:
+    return _as_non_negative_int(os.environ.get("CI_EXAMPLE_CASE_TIMEOUT_SECONDS", "1800"), "CI_EXAMPLE_CASE_TIMEOUT_SECONDS")
+
+
+def _case_timeout_seconds(case: dict[str, Any], default_timeout: int) -> int:
+    value = case.get("timeout_seconds", case.get("timeout-seconds"))
+    if value is None:
+        return default_timeout
+    return _as_non_negative_int(value, f"timeout_seconds for case {case['name']}")
+
+
+def _terminate_process_group(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(proc.pid, signal.SIGTERM)
+        else:
+            proc.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=30)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        if os.name == "posix":
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except ProcessLookupError:
+        return
+    proc.wait()
+
+
+def _run_command(cmd: list[str], cwd: Path, timeout_seconds: int) -> None:
+    timeout = None if timeout_seconds == 0 else timeout_seconds
+    proc = subprocess.Popen(cmd, cwd=cwd, start_new_session=(os.name == "posix"))
+    try:
+        return_code = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_process_group(proc)
+        raise exc
+    if return_code != 0:
+        raise subprocess.CalledProcessError(return_code, cmd)
+
+
 def _select_cases(cases: list[dict[str, Any]], case_filter: str) -> list[dict[str, Any]]:
     enabled = [case for case in cases if case.get("enabled", True)]
     if not case_filter.strip():
@@ -157,8 +217,11 @@ def main() -> int:
     parser.add_argument("--device", type=int, required=True)
     parser.add_argument("--cases-file", default="ci/example_st_cases.json")
     parser.add_argument("--case-filter", default="", help="Comma-separated case names to run")
+    parser.add_argument("--timeout-seconds", type=int, default=_default_timeout_seconds(), help="Default per-case timeout; 0 disables timeout")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.timeout_seconds < 0:
+        raise SystemExit("--timeout-seconds must be a non-negative integer.")
 
     repo_root = Path(__file__).resolve().parents[1]
     cases_file = (repo_root / args.cases_file).resolve()
@@ -166,17 +229,22 @@ def main() -> int:
     if not cases:
         raise SystemExit(f"No enabled Example/ST cases found in {cases_file}.")
 
-    print(f"[CI] Example/ST cases file: {cases_file}")
+    print(f"[CI] Example/ST cases file: {cases_file}", flush=True)
     for index, case in enumerate(cases, start=1):
         name = case["name"]
         description = str(case.get("description", "")).strip()
         cmd = _build_command(repo_root, args.device, case)
-        print(f"[CI] Example/ST case {index}/{len(cases)}: {name}")
+        timeout_seconds = _case_timeout_seconds(case, args.timeout_seconds)
+        print(f"[CI] Example/ST case {index}/{len(cases)}: {name}", flush=True)
         if description:
-            print(f"[CI] {description}")
-        print(f"[CI] Command: {shlex.join(cmd)}")
+            print(f"[CI] {description}", flush=True)
+        print(f"[CI] Timeout: {'disabled' if timeout_seconds == 0 else str(timeout_seconds) + 's'}", flush=True)
+        print(f"[CI] Command: {shlex.join(cmd)}", flush=True)
         if not args.dry_run:
-            subprocess.run(cmd, cwd=repo_root, check=True)
+            try:
+                _run_command(cmd, repo_root, timeout_seconds)
+            except subprocess.TimeoutExpired:
+                raise SystemExit(f"[CI][ERROR] Example/ST case {name} timed out after {timeout_seconds}s.")
     return 0
 
 
