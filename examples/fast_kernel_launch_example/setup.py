@@ -108,6 +108,9 @@ class CMakeBuildCommand(Command):
         # Get NPU_ARCH from environment variable or set default
         NPU_ARCH = os.environ.get('NPU_ARCH', 'ascend910b')
         logging.info(f"Using NPU_ARCH: {NPU_ARCH}")
+        FAST_KERNEL_OP_NAME = os.environ.get('FAST_KERNEL_OP_NAME', '')
+        if FAST_KERNEL_OP_NAME:
+            logging.info(f"Building only fast kernel op: {FAST_KERNEL_OP_NAME}")
 
         # Build the CMake project
         build_temp = os.path.join(os.getcwd(), 'build')
@@ -117,6 +120,8 @@ class CMakeBuildCommand(Command):
                                 f'-DTORCH_NPU_PATH={TORCH_NPU_PATH}',
                                 f'-DNPU_ARCH={NPU_ARCH}'
                                 ]
+        if FAST_KERNEL_OP_NAME:
+            cmake_config_command.append(f'-DFAST_KERNEL_OP_NAME={FAST_KERNEL_OP_NAME}')
         subprocess.check_call(cmake_config_command, cwd=os.getcwd())
         subprocess.check_call(['cmake', '--build', build_temp, '--config', 'Release', '--parallel', num_jobs], cwd=os.getcwd())
         logging.info("CMake extensions built successfully.")

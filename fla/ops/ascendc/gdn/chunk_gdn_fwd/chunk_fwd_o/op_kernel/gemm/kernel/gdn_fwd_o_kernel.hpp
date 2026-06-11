@@ -74,6 +74,7 @@ using _65536 = tla::Int<65536>;
 #endif
 
 #include "kernel_operator.h"
+#include "../../chunk_fwd_o_struct.h"
 using namespace Catlass;
 using namespace tla;
 
@@ -198,25 +199,23 @@ public:
     __aicore__ inline GDNFwdOKernel() {}
 
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g,
-        GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, GM_ADDR o, GM_ADDR tiling, GM_ADDR user) {
+        GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, GM_ADDR o, const GDN::ChunkFwdOTilingData *tilingData, GM_ADDR user) {
 
-        __gm__ ChunkFwdOTilingData *__restrict gdnFwdOTilingData = reinterpret_cast<__gm__ ChunkFwdOTilingData *__restrict>(tiling);
-
-        shapeBatch = gdnFwdOTilingData->shapeBatch;
-        seqlen = gdnFwdOTilingData->seqlen;
-        kNumHead = gdnFwdOTilingData->kNumHead;
-        vNumHead = gdnFwdOTilingData->vNumHead;
-        kHeadDim = gdnFwdOTilingData->kHeadDim;
-        vHeadDim = gdnFwdOTilingData->vHeadDim;
-        scale = gdnFwdOTilingData->scale;
-        chunkSize = gdnFwdOTilingData->chunkSize;
-        isVariedLen = gdnFwdOTilingData->isVariedLen;
-        tokenBatch = gdnFwdOTilingData->tokenBatch;
-        vWorkspaceOffset = gdnFwdOTilingData->vWorkspaceOffset;
-        hWorkspaceOffset = gdnFwdOTilingData->hWorkspaceOffset;
-        attnWorkspaceOffset = gdnFwdOTilingData->attnWorkspaceOffset;
-        aftermaskWorkspaceOffset = gdnFwdOTilingData->aftermaskWorkspaceOffset;
-        maskWorkspaceOffset = gdnFwdOTilingData->maskWorkspaceOffset;
+        shapeBatch = tilingData->shapeBatch;
+        seqlen = tilingData->seqlen;
+        kNumHead = tilingData->kNumHead;
+        vNumHead = tilingData->vNumHead;
+        kHeadDim = tilingData->kHeadDim;
+        vHeadDim = tilingData->vHeadDim;
+        scale = tilingData->scale;
+        chunkSize = tilingData->chunkSize;
+        isVariedLen = tilingData->isVariedLen;
+        tokenBatch = tilingData->tokenBatch;
+        vWorkspaceOffset = tilingData->vWorkspaceOffset;
+        hWorkspaceOffset = tilingData->hWorkspaceOffset;
+        attnWorkspaceOffset = tilingData->attnWorkspaceOffset;
+        aftermaskWorkspaceOffset = tilingData->aftermaskWorkspaceOffset;
+        maskWorkspaceOffset = tilingData->maskWorkspaceOffset;
 
         gmQ.SetGlobalBuffer((__gm__ ElementQ *)q);
         gmK.SetGlobalBuffer((__gm__ ElementK *)k);
@@ -231,11 +230,11 @@ public:
         gmMask.SetGlobalBuffer((__gm__ ElementMask *)(user + maskWorkspaceOffset));
 
         if ASCEND_IS_AIC {
-            cubeBlockScheduler.Init(cu_seqlens, chunk_offsets, tiling);
+            cubeBlockScheduler.Init(cu_seqlens, chunk_offsets, tilingData);
         }
 
         if ASCEND_IS_AIV {
-            vecBlockScheduler.Init(cu_seqlens, chunk_offsets, tiling);
+            vecBlockScheduler.Init(cu_seqlens, chunk_offsets, tilingData);
         }
     }
 

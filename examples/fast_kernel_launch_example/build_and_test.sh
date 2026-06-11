@@ -15,7 +15,7 @@ OP_NAME="${1:-}"
 
 usage() {
     echo "Usage: $0 [OP_NAME]"
-    echo "  OP_NAME: operator name to test (e.g., add, grouped_matmul, chunk_bwd_dv_local)"
+    echo "  OP_NAME: operator name to test (e.g., add, grouped_matmul, chunk_bwd_dv_local, chunk_fwd_o)"
     echo "  If not specified, all tests will be run."
     exit 1
 }
@@ -39,8 +39,13 @@ pip install -r requirements.txt
 
 # Build the project
 echo "Building the project..."
+if [[ -n "$OP_NAME" ]]; then
+    export FAST_KERNEL_OP_NAME="$OP_NAME"
+else
+    unset FAST_KERNEL_OP_NAME
+fi
 python3 setup.py clean
-python3 -m build --wheel --no-isolation
+python3 setup.py bdist_wheel
 python3 -m pip install dist/*.whl --force-reinstall --no-deps
 
 # Run tests
