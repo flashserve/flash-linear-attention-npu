@@ -4,6 +4,83 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
 
+select_ci_tmpdir() {
+    local min_free_kb="${CI_TMPDIR_MIN_KB:-65536}"
+    local candidates=()
+
+    if [[ -n "${CI_TMPDIR:-}" ]]; then
+        candidates=("$CI_TMPDIR")
+    elif [[ -n "${CI_TMPDIR_CANDIDATES:-}" ]]; then
+        local old_ifs="$IFS"
+        IFS=':'
+        read -r -a candidates <<< "$CI_TMPDIR_CANDIDATES"
+        IFS="$old_ifs"
+    else
+        [[ -n "${TMPDIR:-}" ]] && candidates+=("$TMPDIR")
+        candidates+=("$repo_dir/.ci-tmp")
+
+        local root
+        for root in /workspace /mnt /home /tmp /var/tmp; do
+            [[ -d "$root" ]] && candidates+=("$root/fla-npu-ci-tmp")
+        done
+
+        local mount
+        for mount in /mnt/*; do
+            [[ -d "$mount" ]] && candidates+=("$mount/fla-npu-ci-tmp")
+        done
+    fi
+
+    local best_dir=""
+    local best_free_kb=-1
+    local candidate
+    local -A seen=()
+    local checked=()
+
+    for candidate in "${candidates[@]}"; do
+        [[ -n "$candidate" ]] || continue
+        if [[ -n "${seen[$candidate]:-}" ]]; then
+            continue
+        fi
+        seen["$candidate"]=1
+
+        if ! mkdir -p "$candidate" 2>/dev/null; then
+            checked+=("$candidate=create-failed")
+            continue
+        fi
+        if [[ ! -w "$candidate" ]]; then
+            checked+=("$candidate=not-writable")
+            continue
+        fi
+
+        local free_kb
+        free_kb="$(df -Pk "$candidate" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+        if [[ ! "$free_kb" =~ ^[0-9]+$ ]]; then
+            checked+=("$candidate=df-failed")
+            continue
+        fi
+        checked+=("$candidate=${free_kb}KB")
+        if (( free_kb > best_free_kb )); then
+            best_dir="$candidate"
+            best_free_kb="$free_kb"
+        fi
+    done
+
+    if [[ -z "$best_dir" ]]; then
+        echo "[CI][ERROR] No writable TMPDIR candidate found. Checked: ${checked[*]:-<none>}" >&2
+        return 1
+    fi
+    if (( best_free_kb < min_free_kb )); then
+        echo "[CI][ERROR] No TMPDIR candidate has at least ${min_free_kb} KB free. Checked: ${checked[*]}" >&2
+        return 1
+    fi
+
+    echo "$best_dir"
+}
+
+ci_tmpdir="$(select_ci_tmpdir)"
+export TMPDIR="$ci_tmpdir"
+echo "[CI] TMPDIR=$TMPDIR ($(df -h "$TMPDIR" | awk 'NR == 2 { print $4 " free" }'))"
+
 bash ci/cleanup_ci_logs.sh
 
 if [[ -f /usr/local/Ascend/ascend-toolkit/latest/set_env.sh ]]; then

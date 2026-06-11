@@ -123,6 +123,7 @@ done
 
 echo "[CI] Running $container_name on NPU ${NPU_SELECTED_DEVICE} (${NPU_SELECTED_NAME}, health=${NPU_SELECTED_HEALTH}, free=${NPU_SELECTED_FREE})"
 echo "[CI] third_party cache: $third_party_cache"
+echo "[CI] container TMPDIR: ${CI_TMPDIR:-auto}"
 
 docker run --rm \
     --name "$container_name" \
@@ -153,5 +154,8 @@ docker run --rm \
     -e CI_EXAMPLE_CASES_FILE="${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}" \
     -e CI_EXAMPLE_CASE_FILTER="${CI_EXAMPLE_CASE_FILTER:-}" \
     -e CI_TEST_OP="${CI_TEST_OP:-}" \
+    -e CI_TMPDIR="${CI_TMPDIR:-}" \
+    -e CI_TMPDIR_CANDIDATES="${CI_TMPDIR_CANDIDATES:-}" \
+    -e CI_TMPDIR_MIN_KB="${CI_TMPDIR_MIN_KB:-}" \
     "$image" \
     bash ci/run_checks.sh

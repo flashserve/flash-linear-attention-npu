@@ -59,7 +59,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
 {
     OP_LOGD(context->GetNodeName(), "Tiling4ChunkGatedDeltaRuleFwdH start.");
     ChunkGatedDeltaRuleFwdHTilingData tiling;
-    
+
     gert::Shape kStorageShape = context->GetOptionalInputShape(INPUT_K_IDX)->GetStorageShape();
     gert::Shape uStorageShape = context->GetOptionalInputShape(INPUT_U_IDX)->GetStorageShape();
 
@@ -69,7 +69,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     int64_t kHeadDim = kStorageShape.GetDim(DIM_HEAD_DIM);
     int64_t vHeadDim = uStorageShape.GetDim(DIM_HEAD_DIM);
     int64_t batch, isVariedLen, shapeBatch, tokenBatch;
-    
+
     auto cuSeqlensTensor = context->GetOptionalInputTensor(INPUT_SEQLENS_IDX);
     if (cuSeqlensTensor == nullptr) {
         isVariedLen = false;
@@ -82,7 +82,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
         tokenBatch = cuSeqlensTensor->GetStorageShape().GetDim(DIM_BATCH) - 1;
         batch = tokenBatch;
     }
-    
+
     auto initialStateTensor = context->GetOptionalInputTensor(INPUT_INITIAL_STATE_IDX);
     bool useInitialState = initialStateTensor != nullptr;
     int64_t stateDataType = 2;
@@ -94,7 +94,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
             stateDataType = 0;
         }
     }
-    
+
     auto gDType = context->GetOptionalInputTensor(INPUT_G_IDX)->GetDataType();
     int64_t gDataType = 2;
     if (gDType == ge::DT_BF16) {
@@ -102,7 +102,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     } else if (gDType == ge::DT_FLOAT16) {
         gDataType = 0;
     }
-    
+
     auto attrPtr = context->GetAttrs();
     bool storeFinalState = *(attrPtr->GetAttrPointer<bool>(ATTR_STORE_FINAL_STATE_IDX));
     int64_t chunkSize = *(attrPtr->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_IDX));
@@ -120,7 +120,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
 
     size_t workspaceOffset = ascendcPlatform.GetLibApiWorkSpaceSize();
     workspaceOffset += WORKSPACE_RSV_BYTE;
-    
+
     tiling.set_vWorkspaceOffset(workspaceOffset);
     workspaceOffset += (aicCoreNum * chunkSize * vHeadDim * sizeof(float) * PING_PONG_STAGES + GM_ALIGN) / GM_ALIGN * GM_ALIGN;
 

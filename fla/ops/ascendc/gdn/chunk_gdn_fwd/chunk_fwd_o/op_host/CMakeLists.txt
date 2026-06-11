@@ -12,7 +12,7 @@ if (BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnnExc PRIVATE
         chunk_fwd_o_def.cpp
     )
-endif()	
+endif()
 
 add_modules_sources(OPTYPE chunk_fwd_o ACLNNTYPE aclnn_exclude)
 add_ops_compile_options(

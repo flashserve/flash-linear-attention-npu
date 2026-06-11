@@ -22,11 +22,10 @@ curl -fsSL \
   "required_status_checks": {
     "strict": true,
     "contexts": [
-      "仓库规则 / 维护者检视门禁",
       "NPU CI / 手动验证"
     ]
   },
-  "enforce_admins": false,
+  "enforce_admins": true,
   "required_pull_request_reviews": {
     "dismissal_restrictions": {},
     "dismiss_stale_reviews": true,

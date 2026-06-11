@@ -7,8 +7,9 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#ifndef CATLASS_GEMM_BLOCK_BLOCK_MMAD_PINGPONG_TLA_MULTI_HPP
-#define CATLASS_GEMM_BLOCK_BLOCK_MMAD_PINGPONG_TLA_MULTI_HPP
+#ifndef CATLASS_GEMM_BLOCK_BLOCK_MMAD_PINGPONG_TLA_PRELOADA_L1B_HPP
+#define CATLASS_GEMM_BLOCK_BLOCK_MMAD_PINGPONG_TLA_PRELOADA_L1B_HPP
+
 
 #include "catlass/catlass.hpp"
 #include "catlass/arch/resource.hpp"
@@ -23,18 +24,16 @@
 
 namespace Catlass::Gemm {
 
-template <class ArchTag_, bool ENABLE_UNIT_FLAG_ = false, bool USE_HF32_MODE_ = false, uint32_t L0C_STAGES_ = 1,
-    bool ENABLE_L1_RESIDENT_ = false, uint32_t L1A_STAGES_ = 2, uint32_t L1B_STAGES_ = 2, uint32_t L0A_STAGES_ = 2,
+template <class ArchTag_, bool ENABLE_UNIT_FLAG_ = false, uint32_t L0C_STAGES_ = 1,
+    uint32_t L1A_STAGES_ = 2, uint32_t L1B_STAGES_ = 2, uint32_t L0A_STAGES_ = 2,
     uint32_t L0B_STAGES_ = 2>
-struct MmadPingpongTlaMulti : public MmadBase<ArchTag_, false> {
+struct MmadPingpongTlaPreloadAL1B : public MmadBase<ArchTag_, false> {
     static constexpr uint32_t L1A_STAGES = L1A_STAGES_;
     static constexpr uint32_t L1B_STAGES = L1B_STAGES_;
     static constexpr uint32_t L0A_STAGES = L0A_STAGES_;
     static constexpr uint32_t L0B_STAGES = L0B_STAGES_;
     static constexpr uint32_t L0C_STAGES = L0C_STAGES_;
     static constexpr bool ENABLE_UNIT_FLAG = ENABLE_UNIT_FLAG_;
-    static constexpr bool USE_HF32_MODE = USE_HF32_MODE_;
-    static constexpr bool ENABLE_L1_RESIDENT = ENABLE_L1_RESIDENT_;
 };
 
 }  // namespace Catlass::Gemm
@@ -44,9 +43,7 @@ namespace Catlass::Gemm::Block {
 template <
     class ArchTag_,
     bool ENABLE_UNIT_FLAG_,
-    bool USE_HF32_MODE_,
     uint32_t L0C_STAGES_,
-    bool ENABLE_L1_RESIDENT_,
     uint32_t L1A_STAGES_,
     uint32_t L1B_STAGES_,
     uint32_t L0A_STAGES_,
@@ -61,7 +58,7 @@ template <
     class TileMmad_
 >
 struct BlockMmadTla <
-    MmadPingpongTlaMulti<ArchTag_, ENABLE_UNIT_FLAG_, USE_HF32_MODE_, L0C_STAGES_, ENABLE_L1_RESIDENT_, L1A_STAGES_,
+    MmadPingpongTlaPreloadAL1B<ArchTag_, ENABLE_UNIT_FLAG_, L0C_STAGES_, L1A_STAGES_,
         L1B_STAGES_, L0A_STAGES_, L0B_STAGES_>,
     L1TileShape_,
     L0TileShape_,
@@ -74,7 +71,7 @@ struct BlockMmadTla <
 > {
 public:
     // Type Aliases
-    using DispatchPolicy = MmadPingpongTlaMulti<ArchTag_, ENABLE_UNIT_FLAG_, USE_HF32_MODE_, L0C_STAGES_, ENABLE_L1_RESIDENT_,
+    using DispatchPolicy = MmadPingpongTlaPreloadAL1B<ArchTag_, ENABLE_UNIT_FLAG_, L0C_STAGES_,
         L1A_STAGES_, L1B_STAGES_, L0A_STAGES_, L0B_STAGES_>;
     using ArchTag = typename DispatchPolicy::ArchTag;
     using TileCopy = TileCopy_;
@@ -86,7 +83,6 @@ public:
     using LayoutB = typename TileCopy::LayoutB;
     using ElementC = ElementC_;
     using LayoutC = typename TileCopy::LayoutC;
-    using ElementBias = ElementBias_;
 
     using TileMmad = TileMmad_;
 
@@ -95,8 +91,6 @@ public:
     using CopyL1ToBT = typename TileCopy::CopyL1ToBT;
 
     using ElementAccumulator = typename TileCopy::ElementAccumulator;
-
-    static constexpr bool HAS_BIAS = TileCopy::HAS_BIAS;
 
     using LayoutTagL1A = typename TileCopy::LayoutTagL1A;
     using LayoutTagL1B = typename TileCopy::LayoutTagL1B;
@@ -112,8 +106,6 @@ public:
         "L0TileShape must be tla::tuple and static!");
 
     static constexpr bool ENABLE_UNIT_FLAG = DispatchPolicy::ENABLE_UNIT_FLAG;
-    static constexpr bool USE_HF32_MODE = DispatchPolicy::USE_HF32_MODE;
-    static constexpr bool ENABLE_L1_RESIDENT = DispatchPolicy::ENABLE_L1_RESIDENT;
     static constexpr uint32_t L1A_STAGES = DispatchPolicy::L1A_STAGES;
     static constexpr uint32_t L1B_STAGES = DispatchPolicy::L1B_STAGES;
     static constexpr uint32_t L0A_STAGES = DispatchPolicy::L0A_STAGES;
@@ -134,19 +126,13 @@ public:
     static constexpr uint32_t L0B_TILE_SIZE = L0_TILE_K * L0_TILE_N * sizeof(ElementB);
     static constexpr uint32_t L0C_TILE_SIZE = L1_TILE_M * L1_TILE_N * sizeof(ElementAccumulator);
 
-    // Check HF32_MODE
-    static_assert(
-        !USE_HF32_MODE || (USE_HF32_MODE && std::is_same_v<ElementA, float> && std::is_same_v<ElementB, float>),
-        "HF32 MODE only supports in float!"
-    );
-
     // Check L0C_STAGES
     static_assert(!(ENABLE_UNIT_FLAG && L0C_STAGES != 1), "L0C_STAGES must be 1 when UnitFlag is true!");
 
     // Check LayoutC
     static_assert(tla::detail::isRowMajor<LayoutC>::value ||
-                      ((std::is_same_v<ElementC, half> || std::is_same_v<ElementC, bfloat16_t> ||
-                          std::is_same_v<ElementC, float>) && tla::detail::iszN<ElementC, LayoutC>::value),
+                    ((std::is_same_v<ElementC, half> || std::is_same_v<ElementC, bfloat16_t> ||
+                        std::is_same_v<ElementC, float>) && tla::detail::iszN<ElementC, LayoutC>::value),
         "LayoutC only supports zN in half or bfloat16 or float, RowMajor in all dtype yet!");
 
     // Check L1TileShape
@@ -169,12 +155,6 @@ public:
     static_assert(L1_TILE_N * SizeOfBits<ElementB>::value % _32B == 0, "L1TileShape::N must be 32B aligned.");
     static_assert(L0_TILE_K * SizeOfBits<ElementB>::value % _32B == 0, "L0TileShape::K must be 32B aligned.");
 #endif
-
-    static_assert((!HAS_BIAS && (L1A_STAGES + L1B_STAGES) <= 8) || (HAS_BIAS && (L1A_STAGES + L1B_STAGES) <= 7),
-        "L1 Buffer overflow: Exceeds the supported range of EVENT(0~7)");
-
-    static_assert((!HAS_BIAS && (L0A_STAGES + L0B_STAGES) <= 8) || (HAS_BIAS && (L0A_STAGES + L0B_STAGES) <= 7),
-        "L0 Buffer overflow: Exceeds the supported range of EVENT_ID(0~7)");
 
     static constexpr auto L1A_LAYOUT =
         tla::MakeLayout<ElementA, LayoutTagL1A>(tla::Int<L1_TILE_M>{}, tla::Int<L1_TILE_K>{});
@@ -239,11 +219,6 @@ public:
             } else {
                 l0CTensorList[0] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
             }
-            if constexpr (HAS_BIAS) {
-                uint32_t l1BiasOffset = l1BOffset + L1B_TILE_SIZE * L1B_STAGES;
-                l1BiasTensor = resource.l1Buf.template GetBufferByByte<uint8_t>(l1BiasOffset);
-                l0BiasTensor = resource.btBuf.template GetBufferByByte<ElementAccumulator>(0);
-            }
         }
     }
 
@@ -255,12 +230,6 @@ public:
     void preSetFlags() {
 
         if ASCEND_IS_AIC {
-            // use HF32 when USE_HF32_MODE is true
-            if constexpr (USE_HF32_MODE) {
-                AscendC::SetHF32Mode(true);
-            } else {
-                AscendC::SetHF32Mode(false);
-            }
             if constexpr (ENABLE_UNIT_FLAG && tla::detail::isRowMajor<LayoutC>::value) {
                 AscendC::SetMMLayoutTransform(true);
             }
@@ -281,23 +250,12 @@ public:
                     AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0CEventList[i]);
                 }
             }
-            if constexpr (HAS_BIAS) {
-                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(L1A_STAGES + L1B_STAGES);
-                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0A_STAGES + L0B_STAGES);
-            }
-
-            if constexpr (ENABLE_L1_RESIDENT) {
-                RestoreStatus();
-            }
         }
     }
 
     CATLASS_DEVICE
     void finalWaitFlags() {
         if ASCEND_IS_AIC {
-            if constexpr (USE_HF32_MODE) {
-                AscendC::SetHF32Mode(false);
-            }
             if constexpr (ENABLE_UNIT_FLAG && tla::detail::isRowMajor<LayoutC>::value) {
                 AscendC::SetMMLayoutTransform(false);
             }
@@ -318,32 +276,17 @@ public:
                     AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0CEventList[i]);
                 }
             }
-            if constexpr (HAS_BIAS) {
-                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(L1A_STAGES + L1B_STAGES);
-                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0A_STAGES + L0B_STAGES);
-            }
         }
     }
 
     /// Perform a block-scoped matrix multiply-accumulate
     template <class TensorA, class TensorB, class TensorC, class TensorBias = EmptyClass>
-    CATLASS_DEVICE void operator()(TensorA &tensorA, TensorB &tensorB, TensorC &tensorC, GemmCoord const &actualShape,
-        TensorBias const &tensorBias = {})
+    CATLASS_DEVICE void operator()(TensorA &tensorA, TensorB &tensorB, TensorC &tensorC, GemmCoord const &actualShape)
     {
-        // Check L1TileShape
-        if constexpr (HAS_BIAS) {
-            static constexpr uint32_t BIAS_BUF_SIZE = L0_TILE_N * sizeof(ElementAccumulator);
-            static constexpr uint32_t L1BIAS_SIZE = L1_TILE_N * sizeof(ElementBias);
-            static_assert(BIAS_BUF_SIZE <= ArchTag::BIAS_SIZE,
-                "BIAS_BUF_SIZE exceeding the BT space! Reduce L0_TILE_N");
-            static_assert(L1A_TILE_SIZE * L1A_STAGES + L1B_TILE_SIZE * L1B_STAGES + L1BIAS_SIZE <= ArchTag::L1_SIZE,
-                "L1TileShape exceeding the L1 space!");
-        }
-
         using CopyGmToL1A = typename TileCopy_::template CopyGmToL1A<TensorA>;
-        using CopyGmToL1B = typename TileCopy_::template CopyGmToL1B<TensorB>;
+        // using CopyGmToL1B = typename TileCopy_::template CopyGmToL1B<TensorB>;
         CopyGmToL1A copyGmToL1A;
-        CopyGmToL1B copyGmToL1B;
+        // CopyGmToL1B copyGmToL1B;
 #if (defined (CATLASS_ARCH) && CATLASS_ARCH == 2201)
         using CopyL0CToGm = typename TileCopy_::template CopyL0CToGm<TensorC>;
         CopyL0CToGm copyL0CToDst;
@@ -375,51 +318,15 @@ public:
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[l1AListId]);
         auto tensorL1A = tla::MakeTensor(l1ATensorList[l1AListId], L1A_LAYOUT, Arch::PositionL1{});
         auto tensorTileA = GetTileA(tensorA, 0, 0, mBlockActual, kL1Actual);
-        if constexpr (ENABLE_L1_RESIDENT) {
-            // If the currently loaded GM pointer and block coordinates are the same as the last loaded ones,
-            // skip this loading.
-            if (lastAddrA[l1AListId] != tensorTileA.data().GetPhyAddr()
-                || tla::get<0>(tensorTileA.coord()) != lastCoordA[l1AListId].row()
-                || tla::get<1>(tensorTileA.coord()) != lastCoordA[l1AListId].column()) {
-                copyGmToL1A(tensorL1A, tensorTileA);
-                lastCoordA[l1AListId] = MatrixCoord{tla::get<0>(tensorTileA.coord()), tla::get<1>(tensorTileA.coord())};
-                lastAddrA[l1AListId] = const_cast<__gm__ typename AscendC::GlobalTensor<ElementA>::PrimType *>(
-                    tensorTileA.data().GetPhyAddr()
-                );
-            }
-        } else {
-            copyGmToL1A(tensorL1A, tensorTileA);
-        }
+        copyGmToL1A(tensorL1A, tensorTileA);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1AEventList[l1AListId]);
 
         // load first matrix B tile from GM to L1
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BEventList[l1BListId]);
-        auto tensorL1B = tla::MakeTensor(l1BTensorList[l1BListId], L1B_LAYOUT, Arch::PositionL1{});
-        auto tensorTileB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(kL1Actual, nBlockActual));
-        if constexpr (ENABLE_L1_RESIDENT) {
-            if (lastAddrB[l1BListId] != tensorTileB.data().GetPhyAddr()
-                || tla::get<0>(tensorTileB.coord()) != lastCoordB[l1BListId].row()
-                || tla::get<1>(tensorTileB.coord()) != lastCoordB[l1BListId].column()) {
-                copyGmToL1B(tensorL1B, tensorTileB);
-                lastCoordB[l1BListId] = MatrixCoord{tla::get<0>(tensorTileB.coord()), tla::get<1>(tensorTileB.coord())};
-                lastAddrB[l1BListId] = const_cast<__gm__ typename AscendC::GlobalTensor<ElementB>::PrimType *>(
-                    tensorTileB.data().GetPhyAddr()
-                );
-            }
-        } else {
-            copyGmToL1B(tensorL1B, tensorTileB);
-        }
+        // auto tensorL1B = tla::MakeTensor(l1BTensorList[l1BListId], L1B_LAYOUT, Arch::PositionL1{});
+        // auto tensorTileB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(kL1Actual, nBlockActual));
+        // copyGmToL1B(tensorL1B, tensorTileB);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1BEventList[l1BListId]);
-
-        if constexpr (HAS_BIAS && !std::is_same_v<TensorBias, EmptyClass>) {
-            using CopyGmToL1Bias = typename TileCopy::template CopyGmToL1Bias<TensorBias>;
-            CopyGmToL1Bias copyGmToL1Bias;
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(L1A_STAGES + L1B_STAGES);
-            auto l1Bias = l1BiasTensor.template ReinterpretCast<ElementBias>();
-            auto tensorL1Bias = tla::MakeTensor(l1Bias, L1BIAS_LAYOUT, Arch::PositionL1{});
-            copyGmToL1Bias(tensorL1Bias, tensorBias);
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(L1A_STAGES + L1B_STAGES);
-        }
 
         if constexpr (!ENABLE_UNIT_FLAG) {
             AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0CEventList[l0CListId]);
@@ -451,48 +358,20 @@ public:
 
                 // load next matrix A tile from GM to L1
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[l1AListIdNext]);
-                if constexpr (ENABLE_L1_RESIDENT) {
-                    if (lastAddrA[l1AListIdNext] != tensorTileA.data().GetPhyAddr()
-                        || tla::get<0>(tensorTileA.coord()) != lastCoordA[l1AListIdNext].row()
-                        || tla::get<1>(tensorTileA.coord()) != lastCoordA[l1AListIdNext].column()) {
-                        copyGmToL1A(tensorL1A, tensorTileA);
-                        lastCoordA[l1AListIdNext] =
-                            MatrixCoord{tla::get<0>(tensorTileA.coord()), tla::get<1>(tensorTileA.coord())};
-                        lastAddrA[l1AListIdNext] =
-                            const_cast<__gm__ typename AscendC::GlobalTensor<ElementA>::PrimType *>(
-                                tensorTileA.data().GetPhyAddr()
-                            );
-                    }
-                } else {
-                    copyGmToL1A(tensorL1A, tensorTileA);
-                }
+                copyGmToL1A(tensorL1A, tensorTileA);
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1AEventList[l1AListIdNext]);
 
                 // load next matrix B tile from GM to L1
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BEventList[l1BListIdNext]);
-                if constexpr (ENABLE_L1_RESIDENT) {
-                    if (lastAddrB[l1BListIdNext] != tensorTileB.data().GetPhyAddr()
-                        || tla::get<0>(tensorTileB.coord()) != lastCoordB[l1BListIdNext].row()
-                        || tla::get<1>(tensorTileB.coord()) != lastCoordB[l1BListIdNext].column()) {
-                        copyGmToL1B(tensorL1B, tensorTileB);
-                        lastCoordB[l1BListIdNext] =
-                            MatrixCoord{tla::get<0>(tensorTileB.coord()), tla::get<1>(tensorTileB.coord())};
-                        lastAddrB[l1BListIdNext] =
-                            const_cast<__gm__ typename AscendC::GlobalTensor<ElementB>::PrimType *>(
-                                tensorTileB.data().GetPhyAddr()
-                            );
-                    }
-                } else {
-                    copyGmToL1B(tensorL1B, tensorTileB);
-                }
+                // copyGmToL1B(tensorL1B, tensorTileB);
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1BEventList[l1BListIdNext]);
             }
 
             // Get L1 tensor for current stage
             auto l1ATensor = l1ATensorList[l1AListId];
-            auto l1BTensor = l1BTensorList[l1BListId];
+            // auto l1BTensor = l1BTensorList[l1BListId];
             tensorL1A = tla::MakeTensor(l1ATensor, L1A_LAYOUT, Arch::PositionL1{});
-            tensorL1B = tla::MakeTensor(l1BTensor, L1B_LAYOUT, Arch::PositionL1{});
+            // tensorL1B = tla::MakeTensor(l1BTensor, L1B_LAYOUT, Arch::PositionL1{});
             // Get the loop nums on L0
             uint32_t kL0Loop = CeilDiv<L0_TILE_K>(kL1Actual);
 
@@ -530,9 +409,12 @@ public:
                         auto layoutBInL0 = tla::MakeLayout<ElementB, LayoutTagL0B>(kL0Actual, nL0Actual);
                         auto tensorL0B = tla::MakeTensor(l0BTile, layoutBInL0, Arch::PositionL0B{});
                         // Locate the current tile of matrix B on L1
-                        auto tensorTileL1B = GetTile(tensorL1B,
-                                                     tla::MakeCoord(kL0Idx * L0_TILE_K, nL0Idx * L0_TILE_N),
-                                                     tla::MakeShape(kL0Actual, nL0Actual));
+                        // auto tensorTileL1B = GetTile(tensorL1B,
+                        //                              tla::MakeCoord(kL0Idx * L0_TILE_K, nL0Idx * L0_TILE_N),
+                        //                              tla::MakeShape(kL0Actual, nL0Actual));
+                        auto tensorTileL1B = GetTile(tensorB,
+                                                    tla::MakeCoord(kL0Idx * L0_TILE_K, nL0Idx * L0_TILE_N),
+                                                    tla::MakeShape(kL0Actual, nL0Actual));
 
                         // Wait for mmad finished
                         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEventList[l0BListId]);
@@ -549,32 +431,13 @@ public:
                             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1BEventList[l1BListId]);
                         }
 
-                        if constexpr (HAS_BIAS && !std::is_same_v<TensorBias, EmptyClass>) {
-                            if (initC) {
-                                if (nL0Idx == 0) {
-                                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(L1A_STAGES + L1B_STAGES);
-                                }
-                                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0A_STAGES + L0B_STAGES);
-                                auto l1Bias = l1BiasTensor.template ReinterpretCast<ElementBias>();
-                                auto tensorL1Bias = tla::MakeTensor(l1Bias, L1BIAS_LAYOUT, Arch::PositionL1{});
-                                auto tensorTileL1Bias = GetTile(tensorL1Bias,
-                                                                tla::MakeCoord(nL0Idx * L0_TILE_N),
-                                                                tla::MakeShape(nL0Actual));
-                                // Load bias to l0 biasTable
-                                copyL1ToBT(tensorL0Bias, tensorTileL1Bias);
-                                if (nL0Idx == nL0Loop - 1) {
-                                    AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(L1A_STAGES + L1B_STAGES);
-                                }
-                            }
-                        }
-
                         // Notify to do mmad
                         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0CEventList[l0CListId]);
 
                         // Locate the current tile on L0C
                         auto tensorTileL0C = GetTile(tensorL0C,
-                                                     tla::MakeCoord(mL0Idx * L0_TILE_M, nL0Idx * L0_TILE_N),
-                                                     tla::MakeShape(mL0Actual, nL0Actual));
+                                                    tla::MakeCoord(mL0Idx * L0_TILE_M, nL0Idx * L0_TILE_N),
+                                                    tla::MakeShape(mL0Actual, nL0Actual));
 
                         // Compute the matrix multiplication on L0A and L0B and write the result to the accumulator
                         // Wait for loading L0B
@@ -591,19 +454,8 @@ public:
                             }
                         }
 
-                        if constexpr (HAS_BIAS && !std::is_same_v<TensorBias, EmptyClass>) {
-                            if (initC) {
-                                tileMmad(tensorTileL0C, tensorL0A, tensorL0B, tensorL0Bias,
-                                    mL0Actual, nL0Actual, kL0Actual, initC, unitFlag);
-                                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0A_STAGES + L0B_STAGES);
-                            } else {
-                                tileMmad(tensorTileL0C, tensorL0A, tensorL0B,
-                                    mL0Actual, nL0Actual, kL0Actual, initC, unitFlag);
-                            }
-                        } else {
-                            tileMmad(tensorTileL0C, tensorL0A, tensorL0B,
+                        tileMmad(tensorTileL0C, tensorL0A, tensorL0B,
                                 mL0Actual, nL0Actual, kL0Actual, initC, unitFlag);
-                        }
 
                         // Notify to move the next L0B tile
                         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEventList[l0BListId]);
@@ -677,4 +529,4 @@ protected:
 
 } // namespace Catlass::Gemm::Block
 
-#endif // CATLASS_GEMM_BLOCK_BLOCK_MMAD_PINGPONG_TLA_MULTI_HPP
+#endif // CATLASS_GEMM_BLOCK_BLOCK_MMAD_PINGPONG_TLA_PRELOADA_L1B_HPP
