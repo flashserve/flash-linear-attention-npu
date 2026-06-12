@@ -50,12 +50,19 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     const gert::Shape dhStorageShape = context->GetRequiredInputShape(6)->GetStorageShape();
     const gert::Shape dvStorageShape = context->GetRequiredInputShape(7)->GetStorageShape();
 
-    int64_t B = vStorageShape.GetDim(0);//CONST_B;
-    int64_t H = vStorageShape.GetDim(1);//CONST_H;
-    int64_t T = vStorageShape.GetDim(2);//CONST_T;
-    int64_t K = kStorageShape.GetDim(3);//CONST_K;
-    int64_t V = vStorageShape.GetDim(3);//CONST_V;
+    int64_t B = vStorageShape.GetDim(0);
+    int64_t HV = vStorageShape.GetDim(1);
+    int64_t T = vStorageShape.GetDim(2);
+    int64_t HK = kStorageShape.GetDim(1);
+    int64_t K = kStorageShape.GetDim(3);
+    int64_t V = vStorageShape.GetDim(3);
     int64_t BT = CONST_BT;
+    // HV = n * HK, n is derived from q and v shapes automatically
+    if (HK == 0 || HV % HK != 0) {
+        std::cout << "HV must be a multiple of HK, but HV = " << HV << ", HK = " << HK << "." << std::endl;
+        return ge::GRAPH_FAILED;
+    }
+    int64_t n_ratio = HV / HK;
     auto attr = context->GetAttrs();
     const int ATTR_CHUNK_SIZE_ITEM = 1;
     const int32_t* chunkSizePtr = attr->GetAttrPointer<int32_t>(ATTR_CHUNK_SIZE_ITEM);
@@ -98,15 +105,20 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
         // std::cout << "[tiling] isVarLen: " << isVarLen << "\n";
     {
         // 检查输入维度是否符合预期
-        if (qStorageShape.GetDim(0) != B || qStorageShape.GetDim(1) != H || qStorageShape.GetDim(2) != T || qStorageShape.GetDim(3) != K ||
-            kStorageShape.GetDim(0) != B || kStorageShape.GetDim(1) != H || kStorageShape.GetDim(2) != T || kStorageShape.GetDim(3) != K ||
-            vStorageShape.GetDim(0) != B || vStorageShape.GetDim(1) != H || vStorageShape.GetDim(2) != T || vStorageShape.GetDim(3) != V ||
-            gStorageShape.GetDim(0) != B || gStorageShape.GetDim(1) != H || gStorageShape.GetDim(2) != T ||
-            hStorageShape.GetDim(0) != B || hStorageShape.GetDim(1) != H || hStorageShape.GetDim(2) != numChunks || hStorageShape.GetDim(3) != K || hStorageShape.GetDim(4) != V ||
-            doxStorageShape.GetDim(0) != B || doxStorageShape.GetDim(1) != H || doxStorageShape.GetDim(2) != T || doxStorageShape.GetDim(3) != V ||
-            dhStorageShape.GetDim(0) != B || dhStorageShape.GetDim(1) != H || dhStorageShape.GetDim(2) != numChunks || dhStorageShape.GetDim(3) != K || dhStorageShape.GetDim(4) != V ||
-            dvStorageShape.GetDim(0) != B || dvStorageShape.GetDim(1) != H || dvStorageShape.GetDim(2) != T || dvStorageShape.GetDim(3) != V) {
+        // q, k: [B, HK, T, K]
+        // v, dox, dv: [B, HV, T, V]
+        // g: [B, HV, T]
+        // h, dh: [B, HV, numChunks, K, V]
+        if (qStorageShape.GetDim(0) != B || qStorageShape.GetDim(1) != HK || qStorageShape.GetDim(2) != T || qStorageShape.GetDim(3) != K ||
+            kStorageShape.GetDim(0) != B || kStorageShape.GetDim(1) != HK || kStorageShape.GetDim(2) != T || kStorageShape.GetDim(3) != K ||
+            vStorageShape.GetDim(0) != B || vStorageShape.GetDim(1) != HV || vStorageShape.GetDim(2) != T || vStorageShape.GetDim(3) != V ||
+            gStorageShape.GetDim(0) != B || gStorageShape.GetDim(1) != HV || gStorageShape.GetDim(2) != T ||
+            hStorageShape.GetDim(0) != B || hStorageShape.GetDim(1) != HV || hStorageShape.GetDim(2) != numChunks || hStorageShape.GetDim(3) != K || hStorageShape.GetDim(4) != V ||
+            doxStorageShape.GetDim(0) != B || doxStorageShape.GetDim(1) != HV || doxStorageShape.GetDim(2) != T || doxStorageShape.GetDim(3) != V ||
+            dhStorageShape.GetDim(0) != B || dhStorageShape.GetDim(1) != HV || dhStorageShape.GetDim(2) != numChunks || dhStorageShape.GetDim(3) != K || dhStorageShape.GetDim(4) != V ||
+            dvStorageShape.GetDim(0) != B || dvStorageShape.GetDim(1) != HV || dvStorageShape.GetDim(2) != T || dvStorageShape.GetDim(3) != V) {
             std::cout << "Input tensor shapes do not match expected dimensions!" << std::endl;
+            std::cout << "Expected: q,k [B,HK,T,K], v,dox,dv [B,HV,T,V], g [B,HV,T], h,dh [B,HV,NC,K,V]" << std::endl;
             return ge::GRAPH_FAILED;
         }
         if (K != 128) {
@@ -120,7 +132,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
 
     }
     
-    // std::cout << "[tiling] B: " << B << ", H: " << H << ", T: " << T << ", K: " << K << ", V: " << V << ", BT: " << BT << ", numChunks: " << numChunks << std::endl;
+    // std::cout << "[tiling] B: " << B << ", HV: " << HV << ", HK: " << HK << ", T: " << T << ", K: " << K << ", V: " << V << ", BT: " << BT << ", numChunks: " << numChunks << std::endl;
     
     
     // 计算 scale = 1.0 / sqrt(K)
@@ -143,16 +155,14 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     // 设置 TilingKey
     context->SetTilingKey(1);
     
-    size_t dgLastSize = B * H * numChunks * 1 * FP32_SIZE;         // b_dg_last (fp32)
-    // // 对齐到 32 字节
+    size_t dgLastSize = B * HV * numChunks * 1 * FP32_SIZE;         // b_dg_last (fp32)
     dgLastSize = ((dgLastSize + 31) / 32) * 32;
     
-    // size_t mm5Size = B * H * T * BT * FP16_SIZE;                   // mm5 (q @ k^T)
-    size_t mm5Size = B * H * T * K * FP16_SIZE;// mm5 (q @ k^T): B * H * T * BT * FP16_SIZE, mm6/mm7 需要复用 mm5 的空间，BT 可能是 64 或 128，这里直接按 128 来计算，保证空间足够
-    size_t dsTempSize = B * H * T * BT * FP16_SIZE;                // b_ds_temp
-    // size_t mm6Size = B * H * T * K * FP16_SIZE;                   // mm6
-    // size_t mm7Size = B * H * T * K * FP16_SIZE;                   // mm7
-    // size_t mul1Size = B * H * T * BT * FP16_SIZE;                   // mul1
+    size_t mm5Size = B * HV * T * K * FP16_SIZE;
+    size_t dsTempSize = B * HV * T * BT * FP16_SIZE;
+    // size_t mm6Size = B * HV * T * K * FP16_SIZE;                   // mm6
+    // size_t mm7Size = B * HV * T * K * FP16_SIZE;                   // mm7
+    // size_t mul1Size = B * HV * T * BT * FP16_SIZE;                   // mul1
 
     
     // Workspace 偏移计算
@@ -199,7 +209,8 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     // 填充 TilingData
     ChunkBwdDqkwgTilingData tilingData;
     tilingData.set_B(B);
-    tilingData.set_H(H);
+    tilingData.set_HV(HV);
+    tilingData.set_HK(HK);
     tilingData.set_T(T);
     tilingData.set_K(K);
     tilingData.set_V(V);

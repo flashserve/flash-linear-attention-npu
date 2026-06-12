@@ -129,9 +129,23 @@ at::Tensor npu_prepare_wy_repr_bwd_da(const at::Tensor & k, const at::Tensor & v
 ::std::tuple<at::Tensor,at::Tensor,at::Tensor,at::Tensor> npu_chunk_bwd_dqkwg(const at::Tensor & q, const at::Tensor & k, const at::Tensor & v, const at::Tensor & g, const at::Tensor & h, const at::Tensor & dox, const at::Tensor & dh, const at::Tensor & dv, int64_t chunk_size, at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices, const c10::optional<at::Tensor> & w, const c10::optional<at::Tensor> & g_gamma, c10::optional<double> scale, c10::optional<bool> use_exp2, c10::optional<bool> transpose_state_layout)
 {
     // 创建输出tensor
-    at::Tensor dq = at::empty_like(q);
-    at::Tensor dk = at::empty_like(k);
-    at::Tensor dw = at::empty_like(k);
+    // at::Tensor dq = at::empty_like(q);
+    // at::Tensor dk = at::empty_like(k);
+    // at::Tensor dw = at::empty_like(k);
+    // 
+
+    // 获取输入 q 的维度信息
+    auto q_sizes = q.sizes();
+    auto v_sizes = v.sizes();
+    int64_t batch_size = q_sizes[0];
+    int64_t num_heads = v_sizes[1];
+    int64_t seq_len = q_sizes[2];
+    int64_t head_dim = q_sizes[3];
+    
+    // 使用具体 shape 创建，但保持相同的 dtype/device
+    at::Tensor dq = at::empty({batch_size, num_heads, seq_len, head_dim}, q.options());
+    at::Tensor dk = at::empty({batch_size, num_heads, seq_len, head_dim}, q.options());
+    at::Tensor dw = at::empty({batch_size, num_heads, seq_len, head_dim}, q.options());
     at::Tensor dg = at::empty_like(g);
 
     // scale处理

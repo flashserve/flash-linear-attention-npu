@@ -12,7 +12,10 @@
  * \brief ChunkBwdDqkwg 算子定义
  * 
  * 实现 USE_G=True, USE_DW=True, USE_G_GAMMA=False 的反向传播
- * 输入输出维度: [B, H, T, K/V] (已转置)
+ * 维度拆分: H维度拆分为HV和HK, HV = n * HK
+ * - q, k: [B, HK, T, K]
+ * - v, g, dox, dv, h, dh: [B, HV, T, ...] 或 [B, HV, ...]
+ * - 所有输出: [B, HV, T, ...] 或 [B, HV, ...]
  */
 
 #include "register/op_def_registry.h"
@@ -23,56 +26,56 @@ class ChunkBwdDqkwg : public OpDef {
 public:
     explicit ChunkBwdDqkwg(const char *name) : OpDef(name)
     {
-        // q: [B, H, T, K] - query tensor
+        // q: [B, HK, T, K] - query tensor (HK heads)
         this->Input("q")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
         
-        // k: [B, H, T, K] - key tensor
+        // k: [B, HK, T, K] - key tensor (HK heads)
         this->Input("k")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
         
-        // v: [B, H, T, V] - value tensor
+        // v: [B, HV, T, V] - value tensor (HV heads)
         this->Input("v")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
         
-        // g: [B, H, T] - gate tensor (支持 fp16/bf16/fp32)
+        // g: [B, HV, T] - gate tensor (HV heads, 支持 fp16/bf16/fp32)
         this->Input("g")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
         
-        // h: [B, num_chunks, H, K, V] - hidden state tensor
+        // h: [B, HV, num_chunks, K, V] - hidden state tensor (HV heads)
         this->Input("h")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
         
-        // do: [B, H, T, V] - gradient of output
+        // do: [B, HV, T, V] - gradient of output (HV heads)
         this->Input("dox")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
         
-        // dh: [B, num_chunks, H, K, V] - gradient of hidden state
+        // dh: [B, HV, num_chunks, K, V] - gradient of hidden state (HV heads)
         this->Input("dh")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
         
-        // dv: [B, H, T, V] - gradient of v (for USE_DW=True, delta rule)
+        // dv: [B, HV, T, V] - gradient of v (HV heads, for USE_DW=True, delta rule)
         this->Input("dv")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16})
@@ -109,28 +112,28 @@ public:
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
 
-        // dq: [B, H, T, K] - gradient of q
+        // dq: [B, HV, T, K] - gradient of q (HV heads)
         this->Output("dq")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
         
-        // dk: [B, H, T, K] - gradient of k
+        // dk: [B, HV, T, K] - gradient of k (HV heads)
         this->Output("dk")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
         
-        // dw: [B, H, T, K] - gradient of w (delta rule)
+        // dw: [B, HV, T, K] - gradient of w (HV heads, delta rule)
         this->Output("dw")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
         
-        // dg: [B, H, T] - gradient of g (支持 fp32 输出)
+        // dg: [B, HV, T] - gradient of g (HV heads, 支持 fp32 输出)
         this->Output("dg")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT})
