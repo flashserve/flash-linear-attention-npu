@@ -120,6 +120,7 @@
 | activationMode | 激活函数模式。0：不使用激活函数，1：使用SiLU激活函数。 | INT64 | 0 |
 | padSlotId | 无效缓存槽位的标记ID，用于跳过不需要计算的序列。 | INT64 | -1 |
 | runMode | 运行模式。0：前向计算模式（fn），1：状态更新模式（update）。 | INT64 | 0 |
+| headNum | 头数。仅支持在前向计算模式中传入大于0的数值，指示输出格式转换成BNSD或NTD。 | INT64 | 0 |
 
 ## 约束说明
 - 输入tensor的shape大小需满足一定约束，具体见[aclnnCausalConv1d](./docs/aclnnCausalConv1d.md)。

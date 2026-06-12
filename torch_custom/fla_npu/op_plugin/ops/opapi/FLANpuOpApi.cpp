@@ -294,6 +294,36 @@ at::Tensor npu_chunk_fwd_o(
     return std::tie(w,u);
 }
 
+at::Tensor infer_y_tensor(
+    const at::Tensor& x,
+    int64_t head_num,
+    int64_t run_mode)
+{
+    at::Tensor y;
+    int64_t x_dim = x.dim();
+
+    if (run_mode == 0 && head_num > 0) {
+        if (x_dim == 3) {
+            auto sizes = x.sizes();
+            int64_t b = sizes[0];
+            int64_t s = sizes[1];
+            int64_t d = sizes[2] / head_num;
+            y = at::empty({b, head_num, s, d}, x.options());
+        } else if (x_dim == 2) {
+            auto sizes = x.sizes();
+            int64_t s = sizes[0];
+            int64_t d = sizes[1] / head_num;
+            y = at::empty({head_num, s, d}, x.options());
+        } else {
+            y = at::empty_like(x);
+        }
+    } else {
+        y = at::empty_like(x);
+    }
+
+    return y;
+}
+
 at::Tensor npu_causal_conv1d(
     const at::Tensor &x,
     const at::Tensor &weight,
@@ -305,9 +335,10 @@ at::Tensor npu_causal_conv1d(
     at::OptionalIntArrayRef num_accepted_tokens,
     int64_t activation_mode,
     int64_t pad_slot_id,
-    int64_t run_mode)
+    int64_t run_mode,
+    int64_t head_num = 0)
 {
-    at::Tensor y = at::empty_like(x);
+    at::Tensor y = infer_y_tensor(x, head_num, run_mode);
 
     const at::Tensor &bias_ = c10::value_or_else(bias, [] { return at::Tensor(); });
 
