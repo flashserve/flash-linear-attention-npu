@@ -14,11 +14,11 @@ import triton.language as tl
 from fla.ops.triton.triton_core.kda._kda_utils.index import prepare_chunk_indices
 from fla.ops.triton.triton_core.kda._kda_utils.op import exp
 from fla.ops.triton.triton_core.kda._kda_utils.softplus import softplus
-from fla.ops.triton.triton_core.kda._kda_utils.utils import IS_AMD, autocast_custom_bwd, autocast_custom_fwd, autotune_cache_kwargs, check_shared_mem, input_guard
+from fla.ops.triton.triton_core.kda._kda_utils.utils import autocast_custom_bwd, autocast_custom_fwd, autotune_cache_kwargs, input_guard
 
-BS_LIST = [32, 64] if check_shared_mem() else [16, 32]
+BS_LIST = [32, 64]
 BT_LIST_AUTOTUNE = [32, 64, 128]
-NUM_WARPS_AUTOTUNE = [2, 4, 8, 16] if IS_AMD else [4, 8, 16, 32]
+NUM_WARPS_AUTOTUNE = [4, 8, 16, 32]
 
 def naive_kda_gate(
     g: torch.Tensor,

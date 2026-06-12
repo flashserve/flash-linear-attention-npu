@@ -205,6 +205,29 @@ KDA 代码中 CP 相关路径均为 `if cp_context is not None:` 条件分支，
 - 更新测试文件 `test_kda_chunk.py` 中的 import
 - 更新文档中所有路径引用
 
+### 5.5 NPU 无关分支精简
+
+**背景**：KDA 源代码中保留了大量 GPU 特性分支（`IS_NVIDIA`、`IS_NVIDIA_HOPPER`、`IS_AMD`、`IS_TF32_SUPPORTED`、`USE_CUDA_GRAPH` 等），在 NPU 环境下这些分支全部走 False/默认路径，属于死代码。为提高可读性和可维护性，将 NPU 无关分支精简为硬编码值。
+
+**改动清单**：
+
+| 文件 | 精简内容 | 改动 |
+|------|---------|------|
+| `_kda_utils/softplus.py` | 删除 `softplus_nv`/`softplus2_nv` NV PTX 内联汇编实现及 `IS_NVIDIA` 分支 | 保留 `softplus_triton`/`softplus2_triton` 作为唯一实现（85 行 → 15 行） |
+| `chunk_bwd.py` | `BK_LIST`/`BV_LIST`/`NUM_WARPS` 从条件表达式硬编码 | `BK_LIST=[64]`, `BV_LIST=[64]`, `NUM_WARPS=[2]`；移除 `IS_NVIDIA_HOPPER`, `check_shared_mem` import |
+| `chunk_bwd.py` | `CONST_TILING` 删除 H100/Ampere 三级分支 | 固定 `CONST_TILING=32`（NPU 保守值）；移除 `check_shared_mem` 运行时调用 |
+| `chunk_intra.py` | `SOLVE_TRIL_DOT_PRECISION` 删除 `IS_TF32_SUPPORTED` 分支 | 硬编码 `tl.constexpr('ieee')`；移除 `IS_TF32_SUPPORTED` import |
+| `_kda_common/chunk_delta_h.py` | `NUM_WARPS` 删除 `IS_NVIDIA_HOPPER` 分支；`use_cuda_graph` 删除 `USE_CUDA_GRAPH` 引用 | `NUM_WARPS=[2,4,8,16]`, `use_cuda_graph=False`；移除 `IS_NVIDIA_HOPPER`, `USE_CUDA_GRAPH`, `check_shared_mem` import |
+| `gate.py` | `BS_LIST`/`NUM_WARPS_AUTOTUNE` 删除 `check_shared_mem`/`IS_AMD` 分支 | `BS_LIST=[32,64]`, `NUM_WARPS_AUTOTUNE=[4,8,16,32]`；移除 `IS_AMD`, `check_shared_mem` import |
+| `_kda_utils/l2norm.py` | `NUM_WARPS_AUTOTUNE` 删除 `IS_AMD` 分支 | `NUM_WARPS_AUTOTUNE=[1,2,4,8,16,32]`；移除 `IS_AMD` import |
+| `_kda_utils/utils.py` | 删除 `if _IS_NPU / else` 双分支 GPU 特性检测；`TRITON_F32_DEFAULT` 块；TMA allocator 块 | GPU 特性 flag 硬编码为 NPU 安全默认值（`False`）；删除 `os.environ['TRITON_F32_DEFAULT']` 设置；删除 TMA allocator 注册 |
+| `_kda_utils/__init__.py` | 移除不再被 KDA 消费端 import 的变量导出 | 移除 `IS_AMD`, `IS_NVIDIA`, `IS_NVIDIA_HOPPER`, `IS_TF32_SUPPORTED`, `IS_TMA_SUPPORTED`, `USE_CUDA_GRAPH`, `check_shared_mem` 导出 |
+
+**注意事项**：
+- `utils.py` 中 `IS_AMD`/`IS_NVIDIA`/`IS_NVIDIA_HOPPER`/`USE_CUDA_GRAPH`/`IS_TF32_SUPPORTED`/`IS_TMA_SUPPORTED` 变量定义仍保留（内部互赋值引用），只是不再对外导出
+- `IS_GATHER_SUPPORTED`、`check_shared_mem`、`IS_NPU` 等运行时仍有意义（非 GPU 硬编码）的变量保留定义和导出
+- `CONST_TILING=32` 为 NPU 保守值，如后续 NPU 性能调优验证可调整
+
 ---
 
 ## 六、执行阶段记录
@@ -219,6 +242,7 @@ KDA 代码中 CP 相关路径均为 `if cp_context is not None:` 条件分支，
 | Phase 6 | 测试文件拷贝 + import/device 适配 | ✅ 已完成 |
 | Phase 7 | 语法验证 + IS_NPU 修复 + NPU 验证 34 用例全 PASS | ✅ 已完成 |
 | Phase 8 | 目录迁移至 `fla/ops/triton/triton_core/kda/` + 二次 import 重映射 | ✅ 已完成 |
+| Phase 9 | NPU 无关分支精简：删除 GPU 死代码，硬编码 NPU 默认值 | ✅ 已完成 |
 
 ---
 
@@ -233,6 +257,8 @@ KDA 代码中 CP 相关路径均为 `if cp_context is not None:` 条件分支，
 | 5 | py_compile 语法检查全量通过 | ✅ PASS（26 个 .py 文件） |
 | 6 | 旧 import 残留 grep 检查 | ✅ PASS（0 处功能性残留） |
 | 7 | 目录迁移后 import 一致性检查 | ✅ PASS（`fla.ops.kda.` 零残留，全部指向 `fla.ops.triton.triton_core.kda.`） |
+| 8 | NPU 无关分支精简后语法检查 | ✅ PASS（8 个修改文件 py_compile 全部通过） |
+| 9 | NPU 无关变量消费端残留检查 | ✅ PASS（`IS_AMD`/`IS_NVIDIA_HOPPER`/`IS_TF32_SUPPORTED`/`IS_TMA_SUPPORTED`/`USE_CUDA_GRAPH`/`softplus_nv` 在消费端零引用） |
 
 ---
 
@@ -288,15 +314,17 @@ fla.ops.triton.triton_core.kda
 
 | # | 风险 | 影响 | 缓解措施 | 状态 |
 |---|------|------|---------|------|
-| 1 | `_kda_utils/utils.py` 中 GPU 检测逻辑在 NPU 上报错 | NPU 环境无法初始化 | 添加 `_IS_NPU` 检测分支，NPU 下安全默认值；非 NPU 路径 `torch.cuda.*` 包裹 `try/except` | ✅ 已缓解 |
+| 1 | `_kda_utils/utils.py` 中 GPU 检测逻辑在 NPU 上报错 | NPU 环境无法初始化 | GPU 特性 flag 已硬编码为 NPU 安全默认值，删除 GPU 检测双分支 | ✅ 已根因消除 |
 | 2 | `@dispatch` 装饰器依赖 `fla.ops.backends` | 导入失败 | 移除 `@dispatch` 装饰器和 import | ✅ 已缓解 |
 | 3 | `_kda_gla/chunk.py` 链式依赖 | 依赖爆炸 | 发现 `chunk_h.py` 额外依赖并拷贝到 `_kda_common/` | ✅ 已缓解 |
-| 4 | Triton autotune `num_warps`/`num_stages` NPU 不兼容 | Kernel launch 失败或性能差 | NPU Triton 可能忽略这些参数，或配置 `TRITON_ALL_BLOCKS_PARALLEL=1` | ⚠️ 待观察 |
+| 4 | Triton autotune `num_warps`/`num_stages` NPU 不兼容 | Kernel launch 失败或性能差 | `num_warps` 已硬编码为 NPU 合理值（消除了 GPU 分支选择错误参数的风险） | ✅ 已缓解 |
 | 5 | `tl.gather` NPU Triton 不支持 | chunk_intra 运行时错误 | `_kda_utils/op.py` 中 `gather` 已有 fallback 返回 `None` | ⚠️ 待观察 |
 | 6 | `TRITON_ABOVE_3_4_0` 等版本检测与 NPU Triton 不兼容 | autotune_cache 不可用 | 添加版本兼容性检测 | ⚠️ 待观察 |
 | 7 | `test_kda.py` 硬编码 `torch.device("cuda")` | 测试在 NPU 上失败 | 未合入此文件（按计划暂不合入），如需合入改为动态 device | ⏳ 按需 |
 | 8 | `cu_seqlens_cpu` 参数签名差异 | varlen 测试失败 | 使用隔离的 `_kda_utils/index.py` 保持完整签名 | ✅ 已缓解 |
-| 9 | `USE_CUDA_GRAPH` NPU 不适用 | autotune 配置问题 | NPU 下 `USE_CUDA_GRAPH = False` | ✅ 已缓解 |
+| 9 | `USE_CUDA_GRAPH` NPU 不适用 | autotune 配置问题 | 已硬编码 `use_cuda_graph=False`，删除 `USE_CUDA_GRAPH` 变量引用 | ✅ 已根因消除 |
+| 10 | `IS_NPU` 公开别名缺失 | import 失败 | 添加 `IS_NPU = _IS_NPU` | ✅ 已修复 |
+| 11 | `chunk_bwd.py` 中 `CONST_TILING` NPU 下误取 H100 值 128 | tiling 过大导致 NPU kernel 异常 | 删除 GPU 分支，硬编码 `CONST_TILING=32` | ✅ 已根因消除 |
 | 10 | `IS_NPU` 公开别名缺失 | import 失败 | 添加 `IS_NPU = _IS_NPU` | ✅ 已修复 |
 
 ---

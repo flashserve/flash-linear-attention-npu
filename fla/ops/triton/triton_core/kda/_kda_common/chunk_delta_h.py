@@ -12,9 +12,9 @@ import triton.language as tl
 
 from fla.ops.triton.triton_core.kda._kda_utils.index import prepare_chunk_indices, prepare_chunk_offsets
 from fla.ops.triton.triton_core.kda._kda_utils.op import exp, exp2
-from fla.ops.triton.triton_core.kda._kda_utils.utils import IS_NVIDIA_HOPPER, USE_CUDA_GRAPH, autotune_cache_kwargs, check_shared_mem
+from fla.ops.triton.triton_core.kda._kda_utils.utils import autotune_cache_kwargs
 
-NUM_WARPS = [2, 4] if IS_NVIDIA_HOPPER else [2, 4, 8, 16]
+NUM_WARPS = [2, 4, 8, 16]
 
 @triton.heuristics({
     'USE_G': lambda args: args['g'] is not None,
@@ -32,13 +32,13 @@ NUM_WARPS = [2, 4] if IS_NVIDIA_HOPPER else [2, 4, 8, 16]
 #         for BV in ([32, 64] if check_shared_mem('ada') else [32])
 #     ],
 #     key=['H', 'K', 'V', 'BT', 'USE_EXP2', 'TRANSPOSE_STATE'],
-#     use_cuda_graph=USE_CUDA_GRAPH,
+#     use_cuda_graph=False,
 #     **autotune_cache_kwargs,
 # )
 @triton.autotune(
     configs=[triton.Config({'BV': 32}, num_warps=2, num_stages=2)],
     key=['H', 'K', 'V', 'BT', 'USE_EXP2', 'TRANSPOSE_STATE'],
-    use_cuda_graph=USE_CUDA_GRAPH,
+    use_cuda_graph=False,
     **autotune_cache_kwargs,
 )
 @triton.jit(do_not_specialize=['T'])
@@ -341,13 +341,13 @@ def chunk_gated_delta_rule_fwd_kernel_h_blockdim64(
 #         for BV in ([64, 32] if check_shared_mem('ada') else [32])
 #     ],
 #     key=['H', 'K', 'V', 'BT', 'BV', 'USE_G', 'USE_EXP2', 'TRANSPOSE_STATE'],
-#     use_cuda_graph=USE_CUDA_GRAPH,
+#     use_cuda_graph=False,
 #     **autotune_cache_kwargs,
 # )
 @triton.autotune(
     configs=[triton.Config({'BV': 32}, num_warps=2, num_stages=1)],
     key=['H', 'K', 'V', 'BT', 'BV', 'USE_G', 'USE_EXP2', 'TRANSPOSE_STATE'],
-    use_cuda_graph=USE_CUDA_GRAPH,
+    use_cuda_graph=False,
     **autotune_cache_kwargs,
 )
 @triton.jit(do_not_specialize=['T'])

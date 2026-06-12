@@ -467,55 +467,14 @@ IS_AMD = (device_platform == 'hip')
 IS_INTEL = (device_platform == 'xpu')
 IS_NVIDIA = (device_platform == 'cuda')
 
-# NPU-safe defaults for GPU-specific flags
-if _IS_NPU:
-    IS_INTEL_ALCHEMIST = False
-    IS_NVIDIA_HOPPER = False
-    IS_NVIDIA_BLACKWELL = False
-    USE_CUDA_GRAPH = False
-    IS_TF32_SUPPORTED = False
-    IS_GATHER_SUPPORTED = hasattr(triton.language, 'gather')
-    IS_TMA_SUPPORTED = False
-else:
-    try:
-        IS_INTEL_ALCHEMIST = (IS_INTEL and 'Intel(R) Arc(TM) A' in torch.xpu.get_device_name(0))
-    except Exception:
-        IS_INTEL_ALCHEMIST = False
-    try:
-        IS_NVIDIA_HOPPER = (IS_NVIDIA and ('NVIDIA H' in torch.cuda.get_device_name(0) or torch.cuda.get_device_capability()[0] >= 9))
-    except Exception:
-        IS_NVIDIA_HOPPER = False
-    try:
-        IS_NVIDIA_BLACKWELL = (IS_NVIDIA and torch.cuda.get_device_capability()[0] == 10)
-    except Exception:
-        IS_NVIDIA_BLACKWELL = False
-    USE_CUDA_GRAPH = (IS_NVIDIA and os.environ.get('FLA_USE_CUDA_GRAPH', '0') == '1')
-
-    # Nvidia Ampere or newer, haven't check AMD and intel yet.
-    try:
-        IS_TF32_SUPPORTED = (IS_NVIDIA and torch.cuda.get_device_capability(0)[0] >= 8)
-    except Exception:
-        IS_TF32_SUPPORTED = False
-    IS_GATHER_SUPPORTED = hasattr(triton.language, 'gather')
-    try:
-        IS_TMA_SUPPORTED = (IS_NVIDIA and torch.cuda.get_device_capability(0)[0] >= 9) \
-            and os.environ.get('FLA_USE_TMA', '0') == '1' and \
-            (hasattr(triton.language, '_experimental_make_tensor_descriptor') or hasattr(triton.language, 'make_tensor_descriptor'))
-    except Exception:
-        IS_TMA_SUPPORTED = False
-
-if IS_NVIDIA and not IS_TF32_SUPPORTED:
-    # Make old card happy, since triton will use tf32 by default.
-    # This is a workaround for old nvidia card.
-    os.environ['TRITON_F32_DEFAULT'] = 'ieee'
-
-if IS_TMA_SUPPORTED:
-    logger.info('TMA is supported, using TMA by default.')
-
-    def alloc_fn(size: int, alignment: int, stream: int | None):
-        return torch.empty(size, device=torch.device(device_name, device_torch_lib.current_device()), dtype=torch.int8)
-
-    triton.set_allocator(alloc_fn)
+# NPU-focused: GPU-specific flags are hardcoded to safe defaults for NPU
+IS_INTEL_ALCHEMIST = False
+IS_NVIDIA_HOPPER = False
+IS_NVIDIA_BLACKWELL = False
+USE_CUDA_GRAPH = False
+IS_TF32_SUPPORTED = False
+IS_GATHER_SUPPORTED = hasattr(triton.language, 'gather')
+IS_TMA_SUPPORTED = False
 
 def get_all_max_shared_mem():
     try:

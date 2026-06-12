@@ -24,14 +24,12 @@ from fla.ops.triton.triton_core.kda._kda_utils.index import prepare_chunk_indice
 from fla.ops.triton.triton_core.kda._kda_utils.constant import RCP_LN2
 from fla.ops.triton.triton_core.kda._kda_utils.op import exp2
 from fla.ops.triton.triton_core.kda._kda_utils.utils import (
-    IS_NVIDIA_HOPPER,
     autotune_cache_kwargs,
-    check_shared_mem,
 )
 
-BK_LIST = [64] if check_shared_mem() else [32]
-BV_LIST = [64] if check_shared_mem('ampere') else [32]
-NUM_WARPS = [2, 4] if IS_NVIDIA_HOPPER else [2]
+BK_LIST = [64]
+BV_LIST = [64]
+NUM_WARPS = [2]
 
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -549,13 +547,8 @@ def chunk_kda_bwd_dAv(
     BT = chunk_size
     if chunk_indices is None and cu_seqlens is not None:
         chunk_indices = prepare_chunk_indices(cu_seqlens, BT)
-    # H100 can have larger block size
-    if check_shared_mem('hopper', k.device.index):
-        CONST_TILING = 128
-    elif check_shared_mem:
-        CONST_TILING = 64
-    else:
-        CONST_TILING = 32
+    # NPU: use conservative tiling size
+    CONST_TILING = 32
     BK = min(max(triton.next_power_of_2(K), 16), CONST_TILING)
     BV = min(max(triton.next_power_of_2(V), 16), CONST_TILING)
     NT = triton.cdiv(T, BT) if cu_seqlens is None else len(chunk_indices)

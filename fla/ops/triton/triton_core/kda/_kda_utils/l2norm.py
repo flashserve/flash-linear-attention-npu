@@ -11,10 +11,10 @@ import torch.nn as nn
 import triton
 import triton.language as tl
 
-from fla.ops.triton.triton_core.kda._kda_utils.utils import IS_AMD, autotune_cache_kwargs, input_guard
+from fla.ops.triton.triton_core.kda._kda_utils.utils import autotune_cache_kwargs, input_guard
 
 BT_LIST = [8, 16, 32, 64, 128]
-NUM_WARPS_AUTOTUNE = [1, 2, 4, 8, 16] if IS_AMD else [1, 2, 4, 8, 16, 32]
+NUM_WARPS_AUTOTUNE = [1, 2, 4, 8, 16, 32]
 
 @triton.autotune(
     configs=[triton.Config({}, num_warps=num_warps) for num_warps in NUM_WARPS_AUTOTUNE],
