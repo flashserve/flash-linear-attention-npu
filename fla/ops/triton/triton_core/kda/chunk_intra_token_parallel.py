@@ -1,5 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
-# Token-parallel implementation of KDA intra chunk kernel
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import torch
 import triton
@@ -7,7 +12,6 @@ import triton.language as tl
 
 from fla.ops.triton.triton_core.kda._kda_utils.op import exp2
 from fla.ops.triton.triton_core.kda._kda_utils.utils import autotune_cache_kwargs
-
 
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -98,7 +102,6 @@ def chunk_kda_fwd_kernel_intra_token_parallel(
             
             tl.store(Aqk + i_t * H*BT + (i_hg * BH + o_h) * BT + j % BT, b_Aqk.to(Aqk.dtype.element_ty), mask=m_h)
             tl.store(Akk + i_t * H*BC + (i_hg * BH + o_h) * BC + j - i_ts, b_Akk.to(Akk.dtype.element_ty), mask=m_h)
-
 
 def chunk_kda_fwd_intra_token_parallel(
     q: torch.Tensor,

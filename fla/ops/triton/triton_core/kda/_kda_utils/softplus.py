@@ -1,11 +1,15 @@
-# REVISED FROM
-# https://github.com/shawntan/stickbreaking-attention/blob/main/stickbreaking_attention/sb_varlen/softplus.py
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import triton
 from triton import language as tl
 
 from fla.ops.triton.triton_core.kda._kda_utils.utils import IS_NVIDIA
-
 
 def _generate_softplus(num_pack):
     template = """
@@ -27,7 +31,6 @@ def _generate_softplus(num_pack):
     out_str = " ".join(out_str.split("\n"))
     return out_str
 
-
 def _generate_softplus2(num_pack):
     template = """
         .reg .pred p;
@@ -46,17 +49,14 @@ def _generate_softplus2(num_pack):
     out_str = " ".join(out_str.split("\n"))
     return out_str
 
-
 def _generate_constraints(num_pack):
     return ",".join("=r" for i in range(num_pack)) + "," + ",".join("r" for i in range(num_pack))
-
 
 _NUM_REG = 1
 s_softplus: tl.constexpr = tl.constexpr(_generate_softplus(_NUM_REG))
 s_softplus2: tl.constexpr = tl.constexpr(_generate_softplus2(_NUM_REG))
 s_constraints: tl.constexpr = tl.constexpr(_generate_constraints(_NUM_REG))
 NUM_REG: tl.constexpr = tl.constexpr(_NUM_REG)
-
 
 @triton.jit
 def softplus_nv(x):

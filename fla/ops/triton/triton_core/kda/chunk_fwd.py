@@ -1,3 +1,11 @@
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
+
 import torch
 
 from fla.ops.triton.triton_core.kda._kda_common.chunk_delta_h import chunk_gated_delta_rule_fwd_h
@@ -11,7 +19,6 @@ from fla.ops.triton.triton_core.kda.chunk_intra import chunk_kda_fwd_intra
 from fla.ops.triton.triton_core.kda.gate import kda_gate_chunk_cumsum
 from fla.ops.triton.triton_core.kda._kda_utils.cumsum import chunk_local_cumsum
 from fla.ops.triton.triton_core.kda._kda_utils.constant import RCP_LN2
-
 
 def chunk_kda_fwd(
     q: torch.Tensor,

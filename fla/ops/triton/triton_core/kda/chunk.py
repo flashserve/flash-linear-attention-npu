@@ -1,5 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
-# Related files are modified and supported by the Moonshot AI Team
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import torch
 
@@ -9,7 +14,6 @@ from fla.ops.triton.triton_core.kda.chunk_bwd import chunk_kda_bwd
 from fla.ops.triton.triton_core.kda.chunk_fwd import chunk_kda_fwd
 from fla.ops.triton.triton_core.kda._kda_utils.index import prepare_chunk_indices
 from fla.ops.triton.triton_core.kda._kda_utils.utils import autocast_custom_bwd, autocast_custom_fwd, input_guard
-
 
 class ChunkKDAFunction(torch.autograd.Function):
     @staticmethod
@@ -139,7 +143,6 @@ class ChunkKDAFunction(torch.autograd.Function):
 
         return (dq.to(q), dk.to(k), dv.to(v), dg.to(g_input), db.to(beta), dA, dbias, None, dh0,
                 None, None, None, None, None, None, None, None, None, None, None)
-
 
 @torch.compiler.disable
 def chunk_kda(

@@ -1,5 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
-
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import torch
 import triton
@@ -10,7 +15,6 @@ from fla.ops.triton.triton_core.kda._kda_utils.op import exp
 from fla.ops.triton.triton_core.kda._kda_utils.utils import autotune_cache_kwargs, check_shared_mem
 
 BKV_LIST = [32, 64] if check_shared_mem() else [16, 32]
-
 
 @triton.heuristics({
     'USE_INITIAL_STATE': lambda args: args['h0'] is not None,
@@ -127,7 +131,6 @@ def chunk_fwd_kernel_h(
         p_ht = tl.make_block_ptr(ht + i_nh * K*V, (K, V), (V, 1), (i_k * BK, i_v * BV), (BK, BV), (1, 0))
         tl.store(p_ht, b_h.to(p_ht.dtype.element_ty), boundary_check=(0, 1))
 
-
 @triton.heuristics({
     'STORE_INITIAL_STATE_GRADIENT': lambda args: args['dh0'] is not None,
     'USE_FINAL_STATE_GRADIENT': lambda args: args['dht'] is not None,
@@ -243,7 +246,6 @@ def chunk_bwd_kernel_dh(
         p_dh0 = tl.make_block_ptr(dh0 + i_nh * K*V, (K, V), (V, 1), (i_k * BK, i_v * BV), (BK, BV), (1, 0))
         tl.store(p_dh0, b_dh.to(p_dh0.dtype.element_ty), boundary_check=(0, 1))
 
-
 def chunk_fwd_h(
     k: torch.Tensor,
     v: torch.Tensor,
@@ -298,7 +300,6 @@ def chunk_fwd_h(
         BV=32,
     )
     return h, ht
-
 
 def chunk_bwd_dh(
     q: torch.Tensor,

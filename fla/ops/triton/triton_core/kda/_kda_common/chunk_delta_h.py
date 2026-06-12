@@ -1,4 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import torch
 import triton
@@ -9,7 +15,6 @@ from fla.ops.triton.triton_core.kda._kda_utils.op import exp, exp2
 from fla.ops.triton.triton_core.kda._kda_utils.utils import IS_NVIDIA_HOPPER, USE_CUDA_GRAPH, autotune_cache_kwargs, check_shared_mem
 
 NUM_WARPS = [2, 4] if IS_NVIDIA_HOPPER else [2, 4, 8, 16]
-
 
 @triton.heuristics({
     'USE_G': lambda args: args['g'] is not None,
@@ -320,7 +325,6 @@ def chunk_gated_delta_rule_fwd_kernel_h_blockdim64(
             else:
                 p_ht = tl.make_block_ptr(ht, (K, V), (V, 1), (192, i_v * BV), (64, BV), (1, 0))
             tl.store(p_ht, b_h4.to(p_ht.dtype.element_ty), boundary_check=(0, 1))
-
 
 @triton.heuristics({
     'USE_G': lambda args: args['g'] is not None,
@@ -661,7 +665,6 @@ def chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64(
                 p_dh3 = tl.make_block_ptr(dh0, (K, V), (V, 1), (192, i_v * BV), (64, BV), (1, 0))
             tl.store(p_dh3, b_dh4.to(p_dh3.dtype.element_ty), boundary_check=(0, 1))
 
-
 def chunk_gated_delta_rule_fwd_h(
     k: torch.Tensor,
     w: torch.Tensor,
@@ -720,7 +723,6 @@ def chunk_gated_delta_rule_fwd_h(
         TRANSPOSE_STATE=transpose_state_layout,
     )
     return h, v_new, final_state
-
 
 def chunk_gated_delta_rule_bwd_dhu(
     q: torch.Tensor,

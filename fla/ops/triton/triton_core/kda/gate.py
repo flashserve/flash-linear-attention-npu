@@ -1,5 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
-# This file is modified and supported by the Moonshot AI Team
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import torch
 import torch.nn.functional as F
@@ -14,7 +19,6 @@ from fla.ops.triton.triton_core.kda._kda_utils.utils import IS_AMD, autocast_cus
 BS_LIST = [32, 64] if check_shared_mem() else [16, 32]
 BT_LIST_AUTOTUNE = [32, 64, 128]
 NUM_WARPS_AUTOTUNE = [2, 4, 8, 16] if IS_AMD else [4, 8, 16, 32]
-
 
 def naive_kda_gate(
     g: torch.Tensor,
@@ -46,7 +50,6 @@ def naive_kda_gate(
     g = (-A_log.view(H, 1).float().exp() * F.softplus(g.float())).to(output_dtype)
     return g
 
-
 def naive_kda_lowerbound_gate(
     g: torch.Tensor,
     A_log: torch.Tensor,
@@ -60,7 +63,6 @@ def naive_kda_lowerbound_gate(
         g = g + dt_bias.view(H, -1)
     g = lower_bound * F.sigmoid(A_log.view(H, 1).exp() * g)
     return g.to(output_dtype)
-
 
 @triton.heuristics({
     "HAS_BIAS": lambda args: args["dt_bias"] is not None,
@@ -117,7 +119,6 @@ def kda_gate_fwd_kernel(
         p_yb = tl.make_block_ptr(yb + i_h, (T,), (H,), (i_t * BT,), (BT,), (0,))
         b_yb = tl.sigmoid(tl.load(p_b, boundary_check=(0,)).to(tl.float32))
         tl.store(p_yb, b_yb.to(p_yb.dtype.element_ty), boundary_check=(0,))
-
 
 @triton.heuristics({
     "HAS_BIAS": lambda args: args["dt_bias"] is not None,
@@ -204,7 +205,6 @@ def kda_gate_bwd_kernel(
         b_db = tl.load(p_dyb, boundary_check=(0,)).to(tl.float32) * b_b * (1.0 - b_b)
         tl.store(p_db, b_db.to(p_db.dtype.element_ty), boundary_check=(0,))
 
-
 def kda_gate_fwd(
     g: torch.Tensor,
     A_log: torch.Tensor,
@@ -234,7 +234,6 @@ def kda_gate_fwd(
         lower_bound=lower_bound,
     )
     return yg
-
 
 def kda_gate_bwd(
     g: torch.Tensor,
@@ -276,7 +275,6 @@ def kda_gate_bwd(
 
     return dg, dA, dbias
 
-
 class KDAGateFunction(torch.autograd.Function):
     @staticmethod
     @input_guard
@@ -314,7 +312,6 @@ class KDAGateFunction(torch.autograd.Function):
         )
         return dg, dA, dbias, None, None
 
-
 @torch.compiler.disable
 def fused_kda_gate(
     g: torch.Tensor,
@@ -346,7 +343,6 @@ def fused_kda_gate(
     if dt_bias is None:
         dt_bias = g_bias
     return KDAGateFunction.apply(g, A_log, dt_bias, lower_bound, output_dtype)
-
 
 @triton.heuristics({
     "HAS_BIAS": lambda args: args["dt_bias"] is not None,
@@ -425,7 +421,6 @@ def kda_gate_chunk_cumsum_vector_kernel(
     if HAS_SCALE:
         b_o *= scale
     tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0, 1))
-
 
 @input_guard
 def kda_gate_chunk_cumsum(

@@ -1,4 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import contextlib
 import functools
@@ -30,11 +36,9 @@ FLA_DISABLE_TENSOR_CACHE = os.getenv('FLA_DISABLE_TENSOR_CACHE', '0') == '1'
 TRITON_ABOVE_3_4_0 = version.parse(triton.__version__) >= version.parse("3.4.0")
 TRITON_ABOVE_3_5_1 = version.parse(triton.__version__) >= version.parse("3.5.1")
 
-
 SUPPORTS_AUTOTUNE_CACHE = "cache_results" in inspect.signature(triton.autotune).parameters
 
 autotune_cache_kwargs = {"cache_results": FLA_CACHE_RESULTS} if SUPPORTS_AUTOTUNE_CACHE else {}
-
 
 @lru_cache(maxsize=1)
 def check_environments():
@@ -79,19 +83,15 @@ def check_environments():
 
     return None
 
-
 check_environments()
-
 
 def get_abs_err(x, y):
     return (x.detach()-y.detach()).flatten().abs().max().item()
-
 
 def get_err_ratio(x, y):
     err = (x.detach()-y.detach()).flatten().square().mean().sqrt().item()
     base = (x.detach()).flatten().square().mean().sqrt().item()
     return err / (base + 1e-8)
-
 
 def assert_close(prefix, ref, tri, ratio, warning=False, err_atol=1e-6):
     abs_atol = get_abs_err(ref, tri)
@@ -107,7 +107,6 @@ def assert_close(prefix, ref, tri, ratio, warning=False, err_atol=1e-6):
             warnings.warn(msg)
     else:
         assert error_rate < ratio, msg
-
 
 def tensor_cache(
     fn: Callable[..., torch.Tensor],
@@ -151,7 +150,6 @@ def tensor_cache(
         return result
 
     return wrapper
-
 
 def input_guard(
     fn: Callable[..., torch.Tensor] | None = None,
@@ -232,11 +230,9 @@ def input_guard(
 
     return decorator
 
-
 def contiguous(fn: Callable[..., torch.Tensor]) -> Callable[..., torch.Tensor]:
     """Alias for input_guard() without parameters."""
     return input_guard(fn)
-
 
 def require_version(version, hint):
     """
@@ -253,13 +249,11 @@ def require_version(version, hint):
         return wrapper
     return decorator
 
-
 class Action(Enum):
     NONE = "none"
     NOTIFY = "notify"
     NOTIFY_ALWAYS = "notify_always"
     RAISE = "raise"
-
 
 def deprecate_kwarg(
     old_name: str,
@@ -411,21 +405,17 @@ def deprecate_kwarg(
 
     return wrapper
 
-
 def checkpoint(fn):
     def wrapper(*args, **kwargs):
         return torch.utils.checkpoint.checkpoint(fn, *args, **kwargs)
     return wrapper
 
-
 @functools.cache
 def check_pytorch_version(version_s: str = '2.4') -> bool:
     return version.parse(torch.__version__) >= version.parse(version_s)
 
-
 def _cpu_device_warning():
     warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
-
 
 @functools.cache
 def get_multiprocessor_count(tensor_idx: int = 0) -> int:
@@ -438,7 +428,6 @@ def get_multiprocessor_count(tensor_idx: int = 0) -> int:
         else:
             return 1
 
-
 @functools.cache
 def get_available_device() -> str:
     try:
@@ -447,11 +436,9 @@ def get_available_device() -> str:
         _cpu_device_warning()
         return 'cpu'
 
-
 def map_triton_backend_to_torch_device() -> str:
     backend = get_available_device()        # 'cuda' | 'hip' | 'xpu' | 'cpu' | ...
     return {'cuda': 'cuda', 'hip': 'cuda', 'xpu': 'xpu'}.get(backend, backend)
-
 
 # For AMD GPUs, the triton backend is 'hip', while for Nvidia GPUs, the triton backend is 'cuda'.
 # However, the torch backend is 'cuda' for both Nvidia and AMD GPUs.
@@ -530,7 +517,6 @@ if IS_TMA_SUPPORTED:
 
     triton.set_allocator(alloc_fn)
 
-
 def get_all_max_shared_mem():
     try:
         return [
@@ -540,7 +526,6 @@ def get_all_max_shared_mem():
     except BaseException:
         _cpu_device_warning()
         return [-1]
-
 
 class Backend(Enum):
     ADA = 101376       # RTX 4090
@@ -555,7 +540,6 @@ class Backend(Enum):
         except KeyError:
             return cls.DEFAULT.value
 
-
 @functools.cache
 def check_shared_mem(arch: str = "none", tensor_idx: int = 0) -> bool:
     if _IS_NPU:
@@ -567,7 +551,6 @@ def check_shared_mem(arch: str = "none", tensor_idx: int = 0) -> bool:
         return max_shared_memory >= Backend.get_shared_memory(arch)
     except Exception:
         return False
-
 
 if check_pytorch_version('2.4'):
     if _IS_NPU:
@@ -590,7 +573,6 @@ else:
             return torch.npu.device(index)
         return torch.cuda.device(index)
 
-
 def _register_aliases():
     current_module = sys.modules[__name__]
     for key in (
@@ -608,7 +590,6 @@ def _register_aliases():
     ):
         if hasattr(current_module, key):
             setattr(current_module, key.lower(), getattr(current_module, key))
-
 
 _register_aliases()
 

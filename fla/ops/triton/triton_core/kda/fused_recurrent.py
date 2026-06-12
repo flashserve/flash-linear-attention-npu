@@ -1,5 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
-# This kernel is modified from the Decode kernel of the vllm gdn/kda model.
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import torch
 import triton
@@ -8,7 +13,6 @@ import triton.language as tl
 from fla.ops.triton.triton_core.kda._kda_utils.op import exp
 from fla.ops.triton.triton_core.kda._kda_utils.softplus import softplus
 from fla.ops.triton.triton_core.kda._kda_utils.utils import input_guard
-
 
 @triton.heuristics(
     {
@@ -215,7 +219,6 @@ def fused_recurrent_kda_fwd_kernel(
                 p_ht = ht + (i_n * HV + i_hv) * K * V + o_k[:, None] * V + o_v[None, :]
             tl.store(p_ht, b_h.to(p_ht.dtype.element_ty), mask=mask_h)
 
-
 @torch.compiler.disable
 def fused_recurrent_kda_fwd(
     q: torch.Tensor,
@@ -312,7 +315,6 @@ def fused_recurrent_kda_fwd(
     )
 
     return out, final_state
-
 
 @input_guard
 def fused_recurrent_kda(

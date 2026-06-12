@@ -1,4 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import os
 
@@ -27,7 +33,6 @@ else:
     @triton.jit
     def log2(x): return tl.log2(x.to(tl.float32))
 
-
 if not IS_GATHER_SUPPORTED:
     @triton.jit
     def gather(src, index, axis, _builder=None):
@@ -39,7 +44,6 @@ if not IS_GATHER_SUPPORTED:
         return None
 else:
     gather = tl.gather
-
 
 if hasattr(triton.language, '_experimental_make_tensor_descriptor'):
     # For Triton 3.3.x

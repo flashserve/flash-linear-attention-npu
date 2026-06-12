@@ -1,4 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import torch
 import triton
@@ -12,7 +18,6 @@ from fla.ops.triton.triton_core.kda._kda_utils.utils import autotune_cache_kwarg
 
 BK_LIST = [32, 64] if check_shared_mem() else [16, 32]
 BV_LIST = [64, 128] if check_shared_mem('ampere') else [16, 32]
-
 
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -88,7 +93,6 @@ def chunk_gla_fwd_A_kernel_intra_sub_inter(
     p_A = tl.make_block_ptr(A + (bos*H + i_h)*BT, (T, BT), (H*BT, 1), (i_t * BT + i_i * BC, i_j * BC), (BC, BC), (1, 0))
     tl.store(p_A, b_A.to(A.dtype.element_ty), boundary_check=(0, 1))
 
-
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
 })
@@ -162,7 +166,6 @@ def chunk_gla_fwd_A_kernel_intra_sub_intra(
     tl.debug_barrier()
     b_A = tl.zeros([BC, BC], dtype=tl.float32)
     tl.store(A + o_A[:, None] + o_i, b_A, mask=m_A[:, None] & (o_i[:, None] < o_i))
-
 
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -240,7 +243,6 @@ def chunk_gla_fwd_A_kernel_intra_sub_intra_split(
     b_A = tl.zeros([BC, BC], dtype=tl.float32)
     tl.store(A + o_A[:, None] + o_i, b_A, mask=m_A[:, None] & (o_i[:, None] < o_i))
 
-
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
 })
@@ -288,7 +290,6 @@ def chunk_gla_fwd_A_kernel_intra_sub_intra_merge(
         b_A += tl.load(p_A, boundary_check=(0, 1))
     p_A2 = tl.make_block_ptr(A2 + (bos*H+i_h)*BT, (T, BT), (H*BT, 1), (i_t * BT + i_c * BC, i_c * BC), (BC, BC), (1, 0))
     tl.store(p_A2, b_A.to(A2.dtype.element_ty), boundary_check=(0, 1))
-
 
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -382,7 +383,6 @@ def chunk_gla_fwd_kernel_o(
     b_A = tl.where(m_s, b_A, 0.).to(b_v.dtype)
     b_o += tl.dot(b_A, b_v) * scalar
     tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0, 1))
-
 
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -519,7 +519,6 @@ def chunk_gla_bwd_kernel_intra(
         p_gqj += H*K
     tl.store(p_dk, b_dk.to(p_dk.dtype.element_ty), boundary_check=(0, 1))
 
-
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
 })
@@ -569,7 +568,6 @@ def chunk_gla_bwd_kernel_dA(
     m_s = tl.arange(0, BT)[:, None] >= tl.arange(0, BT)[None, :]
     b_dA = tl.where(m_s, b_dA * scale, 0.)
     tl.store(p_dA, b_dA.to(p_dA.dtype.element_ty), boundary_check=(0, 1))
-
 
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -647,7 +645,6 @@ def chunk_gla_bwd_kernel_dv(
         b_dv += tl.dot(b_k, b_dh.to(b_k.dtype))
 
     tl.store(p_dv, b_dv.to(p_dv.dtype.element_ty), boundary_check=(0, 1))
-
 
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -769,7 +766,6 @@ def chunk_gla_bwd_kernel_inter(
     tl.store(p_dk, b_dk.to(p_dk.dtype.element_ty), boundary_check=(0, 1))
     tl.store(p_dg, b_dg.to(p_dg.dtype.element_ty), boundary_check=(0, 1))
 
-
 def chunk_gla_fwd_intra_gk(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -865,7 +861,6 @@ def chunk_gla_fwd_intra_gk(
         )
     return A
 
-
 def chunk_gla_fwd_o_gk(
     q: torch.Tensor,
     v: torch.Tensor,
@@ -911,7 +906,6 @@ def chunk_gla_fwd_o_gk(
     )
     return o
 
-
 def chunk_gla_bwd_dA(
     v: torch.Tensor,
     do: torch.Tensor,
@@ -944,7 +938,6 @@ def chunk_gla_bwd_dA(
         BV=BV,
     )
     return dA
-
 
 def chunk_gla_bwd_dv(
     k: torch.Tensor,
@@ -981,7 +974,6 @@ def chunk_gla_bwd_dv(
         BT=BT,
     )
     return dv
-
 
 def chunk_gla_bwd_dqk_intra(
     q: torch.Tensor,
@@ -1024,7 +1016,6 @@ def chunk_gla_bwd_dqk_intra(
         NC=NC,
     )
     return dq, dk
-
 
 def chunk_gla_bwd_dqkg(
     q: torch.Tensor,
@@ -1075,7 +1066,6 @@ def chunk_gla_bwd_dqkg(
         BT=BT,
     )
     return dq2, dk2, dg
-
 
 def chunk_gla_fwd(
     q: torch.Tensor,
@@ -1129,7 +1119,6 @@ def chunk_gla_fwd(
         chunk_indices=chunk_indices,
     )
     return g_cumsum, A, h, ht, o
-
 
 def chunk_gla_bwd(
     q: torch.Tensor,
@@ -1225,7 +1214,6 @@ def chunk_gla_bwd(
     )
     return dq, dk, dv, dg, dh0
 
-
 class ChunkGLAFunction(torch.autograd.Function):
 
     @staticmethod
@@ -1292,7 +1280,6 @@ class ChunkGLAFunction(torch.autograd.Function):
             chunk_indices=chunk_indices,
         )
         return dq.to(q), dk.to(k), dv.to(v), dg, None, dh0, None, None, None
-
 
 @torch.compiler.disable
 def chunk_gla(

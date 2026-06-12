@@ -1,4 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import torch
 import triton
@@ -18,7 +24,6 @@ else:
 ################################################################################
 # Fused inter + solve_tril kernel: compute off-diagonal Akk and solve in one pass
 ################################################################################
-
 
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -344,7 +349,6 @@ def chunk_kda_fwd_kernel_inter_solve_fused(
     tl.store(p_Akk32, b_Ai32.to(Akk.dtype.element_ty), boundary_check=(0, 1))
     tl.store(p_Akk33, b_Ai33.to(Akk.dtype.element_ty), boundary_check=(0, 1))
 
-
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
 })
@@ -614,7 +618,6 @@ def chunk_kda_bwd_kernel_intra(
             tl.store(p_dk2, b_dk2.to(p_dk2.dtype.element_ty), boundary_check=(0, 1))
             tl.store(p_dg2, b_dg2.to(p_dg2.dtype.element_ty), boundary_check=(0, 1))
 
-
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
 })
@@ -735,7 +738,6 @@ def chunk_kda_fwd_kernel_intra_sub_chunk(
     b_Ai += m_I
     tl.store(p_Akk, b_Ai.to(Akk.dtype.element_ty), boundary_check=(0, 1))
 
-
 def chunk_kda_fwd_intra(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -834,7 +836,6 @@ def chunk_kda_fwd_intra(
         chunk_indices=chunk_indices,
     )
     return w, u, qg, kg, Aqk, Akk
-
 
 def chunk_kda_bwd_intra(
     q: torch.Tensor,

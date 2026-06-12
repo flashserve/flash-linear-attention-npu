@@ -1,4 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import torch
 import triton
@@ -26,7 +32,6 @@ from fla.ops.triton.triton_core.kda._kda_utils.utils import (
 BK_LIST = [64] if check_shared_mem() else [32]
 BV_LIST = [64] if check_shared_mem('ampere') else [32]
 NUM_WARPS = [2, 4] if IS_NVIDIA_HOPPER else [2]
-
 
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -109,7 +114,6 @@ def chunk_kda_bwd_kernel_dAv(
     p_dA = tl.make_block_ptr(dA, (T, BT), (H*BT, 1), (i_t * BT, 0), (BT, BT), (1, 0))
     b_dA = tl.where(o_t[:, None] >= o_t, b_dA * scale, 0.)
     tl.store(p_dA, b_dA.to(p_dA.dtype.element_ty), boundary_check=(0, 1))
-
 
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -530,7 +534,6 @@ def chunk_kda_bwd_kernel_wy_dqkg_fused_opt_v2(
     casted_b_db = b_db.to(p_db.dtype.element_ty)
     tl.store(p_db, casted_b_db, boundary_check=(0,))
 
-
 def chunk_kda_bwd_dAv(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -581,7 +584,6 @@ def chunk_kda_bwd_dAv(
     )
     return dA, dv
 
-
 def chunk_kda_bwd_wy_dqkg_fused(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -625,7 +627,6 @@ def chunk_kda_bwd_wy_dqkg_fused(
     dA_t = torch.zeros([H, B, T, BT], dtype=torch.float32, device=q.device)
     db_t = torch.zeros([H, B, T], dtype=torch.float32, device=q.device)
 
-
     grid = (NT, B * H)
     chunk_kda_bwd_kernel_wy_dqkg_fused_opt_v2[grid](
         q=q_t,
@@ -663,7 +664,6 @@ def chunk_kda_bwd_wy_dqkg_fused(
     dv = dv2
     return dq, dk, dv, db, dg, dA
 
-
     # grid = (NT, B * H)
     # chunk_kda_bwd_kernel_wy_dqkg_fused[grid](
     #     q=q,
@@ -696,7 +696,6 @@ def chunk_kda_bwd_wy_dqkg_fused(
     # )
     # dv = dv2
     # return dq, dk, dv, db, dg, dA
-
 
 def chunk_kda_bwd(
     q: torch.Tensor,

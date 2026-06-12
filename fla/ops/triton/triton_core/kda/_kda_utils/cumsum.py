@@ -1,5 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
-
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import torch
 import triton
@@ -9,7 +14,6 @@ from fla.ops.triton.triton_core.kda._kda_utils.index import prepare_chunk_indice
 from fla.ops.triton.triton_core.kda._kda_utils.utils import autotune_cache_kwargs, check_shared_mem, input_guard
 
 BS_LIST = [32, 64] if check_shared_mem() else [16, 32]
-
 
 @triton.heuristics({
     'HAS_SCALE': lambda args: args['scale'] is not None,
@@ -63,7 +67,6 @@ def chunk_local_cumsum_scalar_kernel(
     if HAS_SCALE:
         b_o *= scale
     tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0,))
-
 
 @triton.heuristics({
     'HAS_SCALE': lambda args: args['scale'] is not None,
@@ -126,8 +129,6 @@ def chunk_local_cumsum_vector_kernel(
         b_o *= scale
     tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0, 1))
 
-
-
 @triton.heuristics({
     'HAS_SCALE': lambda args: args['scale'] is not None,
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -186,7 +187,6 @@ def chunk_global_cumsum_scalar_kernel(
         if HAS_SCALE:
             b_o *= scale
         tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0,))
-
 
 @triton.heuristics({
     'HAS_SCALE': lambda args: args['scale'] is not None,
@@ -248,7 +248,6 @@ def chunk_global_cumsum_vector_kernel(
         tl.store(p_o, b_c.to(p_o.dtype.element_ty), boundary_check=(0, 1))
         b_z += tl.sum(b_s, 0)
 
-
 def chunk_local_cumsum_scalar(
     g: torch.Tensor,
     chunk_size: int,
@@ -284,7 +283,6 @@ def chunk_local_cumsum_scalar(
         REVERSE=reverse,
     )
     return g
-
 
 def chunk_local_cumsum_vector(
     g: torch.Tensor,
@@ -327,7 +325,6 @@ def chunk_local_cumsum_vector(
     )
     return g
 
-
 @input_guard
 def chunk_global_cumsum_scalar(
     s: torch.Tensor,
@@ -357,7 +354,6 @@ def chunk_global_cumsum_scalar(
         REVERSE=reverse,
     )
     return z
-
 
 @input_guard
 def chunk_global_cumsum_vector(
@@ -391,7 +387,6 @@ def chunk_global_cumsum_vector(
         REVERSE=reverse,
     )
     return z
-
 
 @input_guard
 def chunk_global_cumsum(
@@ -428,7 +423,6 @@ def chunk_global_cumsum(
             f"which should be [B, T, H]/[B, T, H, D] if `head_first=False` "
             f"or [B, H, T]/[B, H, T, D] otherwise",
         )
-
 
 @input_guard
 def chunk_local_cumsum(

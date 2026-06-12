@@ -1,4 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import torch
 import triton
@@ -7,7 +13,6 @@ import triton.language as tl
 from fla.ops.triton.triton_core.kda._kda_utils.index import prepare_chunk_indices
 from fla.ops.triton.triton_core.kda._kda_utils.op import exp2
 from fla.ops.triton.triton_core.kda._kda_utils.utils import autotune_cache_kwargs, check_shared_mem
-
 
 @triton.heuristics({
     'STORE_QG': lambda args: args['qg'] is not None,
@@ -101,7 +106,6 @@ def recompute_w_u_fwd_kda_kernel(
 
         b_w = tl.dot(b_A, b_kb.to(b_k.dtype))
         tl.store(p_w, b_w.to(p_w.dtype.element_ty), boundary_check=(0, 1))
-
 
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
@@ -211,7 +215,6 @@ def prepare_wy_repr_bwd_kda_kernel(
     tl.store(p_dA, b_dA.to(p_dA.dtype.element_ty), boundary_check=(0, 1))
     tl.store(p_db, b_db.to(p_db.dtype.element_ty), boundary_check=(0,))
 
-
 def recompute_w_u_fwd(
     k: torch.Tensor,
     v: torch.Tensor,
@@ -257,7 +260,6 @@ def recompute_w_u_fwd(
         BV=BV,
     )
     return w, u, qg, kg
-
 
 def prepare_wy_repr_bwd(
     k: torch.Tensor,

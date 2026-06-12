@@ -1,4 +1,10 @@
-# Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
+# Copyright © 2026 Huawei Technologies Co., Ltd.
+# Based on flash-linear-attention: https://github.com/fla-org/flash-linear-attention
+#
+# This file contains code copied and/or modified from the flash-linear-attention project.
+# The original source code was licensed under the MIT license and included
+# the following copyright notice:
+# Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
 import torch
 import torch.nn as nn
@@ -9,7 +15,6 @@ from fla.ops.triton.triton_core.kda._kda_utils.utils import IS_AMD, autotune_cac
 
 BT_LIST = [8, 16, 32, 64, 128]
 NUM_WARPS_AUTOTUNE = [1, 2, 4, 8, 16] if IS_AMD else [1, 2, 4, 8, 16, 32]
-
 
 @triton.autotune(
     configs=[triton.Config({}, num_warps=num_warps) for num_warps in NUM_WARPS_AUTOTUNE],
@@ -38,7 +43,6 @@ def l2norm_fwd_kernel1(
     tl.store(y + cols, b_y, mask=mask)
     tl.store(rstd + i_t, b_rstd)
 
-
 @triton.autotune(
     configs=[triton.Config({}, num_warps=num_warps) for num_warps in NUM_WARPS_AUTOTUNE],
     key=["D"],
@@ -66,7 +70,6 @@ def l2norm_bwd_kernel1(
     b_dy = tl.load(dy + cols, mask=mask, other=0.0).to(tl.float32)
     b_dx = b_dy * b_rstd - tl.sum(b_dy * b_y) * b_y * b_rstd
     tl.store(dx + cols, b_dx, mask=mask)
-
 
 @triton.autotune(
     configs=[triton.Config({"BT": BT}, num_warps=num_warps) for num_warps in [1, 2, 4, 8, 16] for BT in BT_LIST],
@@ -97,7 +100,6 @@ def l2norm_fwd_kernel(
     tl.store(p_y, b_y.to(p_y.dtype.element_ty), boundary_check=(0, 1))
     tl.store(p_rstd, b_rstd.to(p_rstd.dtype.element_ty), boundary_check=(0,))
 
-
 @triton.autotune(
     configs=[triton.Config({"BT": BT}, num_warps=num_warps) for num_warps in [1, 2, 4, 8, 16] for BT in BT_LIST],
     key=["D", "NB"],
@@ -127,7 +129,6 @@ def l2norm_bwd_kernel(
     b_dy = tl.load(p_dy, boundary_check=(0, 1)).to(tl.float32)
     b_dx = b_dy * b_rstd[:, None] - tl.sum(b_dy * b_y, 1)[:, None] * b_y * b_rstd[:, None]
     tl.store(p_dx, b_dx.to(p_dx.dtype.element_ty), boundary_check=(0, 1))
-
 
 def l2norm_fwd(
     x: torch.Tensor,
@@ -179,7 +180,6 @@ def l2norm_fwd(
             BD=BD,
         )
     return y.view(x_shape_og), rstd.view(x_shape_og[:-1])
-
 
 def l2norm_bwd(
     y: torch.Tensor,
@@ -233,7 +233,6 @@ def l2norm_bwd(
 
     return dx.view(y_shape_og)
 
-
 class L2NormFunction(torch.autograd.Function):
     @staticmethod
     @input_guard
@@ -256,7 +255,6 @@ class L2NormFunction(torch.autograd.Function):
         dx = l2norm_bwd(y, rstd, dy, ctx.eps)
         return dx, None, None
 
-
 def l2norm(
     x: torch.Tensor,
     eps: float = 1e-6,
@@ -264,9 +262,7 @@ def l2norm(
 ) -> torch.Tensor:
     return L2NormFunction.apply(x, eps, output_dtype)
 
-
 l2_norm = l2norm
-
 
 class L2Norm(nn.Module):
     def __init__(
