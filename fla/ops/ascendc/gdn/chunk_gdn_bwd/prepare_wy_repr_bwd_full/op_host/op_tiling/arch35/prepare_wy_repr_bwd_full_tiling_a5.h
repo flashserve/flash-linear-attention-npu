@@ -52,6 +52,7 @@ public:
     ge::graphStatus SetKBeteVecRowRegbase(uint64_t ubSize, ge::DataType kType, ge::DataType betaType);
     ge::graphStatus SetDkbVecRowRegbase(uint64_t ubSize, ge::DataType kType, ge::DataType betaType);
     ge::graphStatus SetDkbgVecRowRegbase(uint64_t ubSize, ge::DataType kType, ge::DataType betaType);
+    ge::graphStatus SetDkGatherVecRowRegbase(uint64_t ubSize, ge::DataType kType, ge::DataType betaType);
     ge::graphStatus SetDvbVecRowRegbase(uint64_t ubSize, ge::DataType kType, ge::DataType betaType);
     ge::graphStatus SetKKTVecRowRegbase(uint64_t ubSize, ge::DataType kType, ge::DataType betaType);
     int64_t CeilDiv(int64_t a, int64_t b);
