@@ -3,12 +3,12 @@
 
 import torch
 
-from fla.ops.kda._kda_utils.l2norm import l2norm_bwd, l2norm_fwd
-from fla.ops.kda._kda_cp import FLACPContext
-from fla.ops.kda.chunk_bwd import chunk_kda_bwd
-from fla.ops.kda.chunk_fwd import chunk_kda_fwd
-from fla.ops.kda._kda_utils.index import prepare_chunk_indices
-from fla.ops.kda._kda_utils.utils import autocast_custom_bwd, autocast_custom_fwd, input_guard
+from fla.ops.triton.triton_core.kda._kda_utils.l2norm import l2norm_bwd, l2norm_fwd
+from fla.ops.triton.triton_core.kda._kda_cp import FLACPContext
+from fla.ops.triton.triton_core.kda.chunk_bwd import chunk_kda_bwd
+from fla.ops.triton.triton_core.kda.chunk_fwd import chunk_kda_fwd
+from fla.ops.triton.triton_core.kda._kda_utils.index import prepare_chunk_indices
+from fla.ops.triton.triton_core.kda._kda_utils.utils import autocast_custom_bwd, autocast_custom_fwd, input_guard
 
 
 class ChunkKDAFunction(torch.autograd.Function):
@@ -237,7 +237,7 @@ def chunk_kda(
         >>> import torch
         >>> import torch.nn.functional as F
         >>> from einops import rearrange
-        >>> from fla.ops.kda import chunk_kda
+        >>> from fla.ops.triton.triton_core.kda import chunk_kda
         # inputs with equal lengths
         >>> B, T, H, K, V = 4, 2048, 4, 512, 512
         >>> q = torch.randn(B, T, H, K, dtype=torch.bfloat16, device='cuda')

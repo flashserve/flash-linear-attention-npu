@@ -4,20 +4,20 @@ import torch
 import triton
 import triton.language as tl
 
-from fla.ops.kda._kda_common.chunk_delta_h import chunk_gated_delta_rule_bwd_dhu, chunk_gated_delta_rule_fwd_h
-from fla.ops.kda._kda_cp import FLACPContext
-from fla.ops.kda._kda_cp.chunk_delta_h import (
+from fla.ops.triton.triton_core.kda._kda_common.chunk_delta_h import chunk_gated_delta_rule_bwd_dhu, chunk_gated_delta_rule_fwd_h
+from fla.ops.triton.triton_core.kda._kda_cp import FLACPContext
+from fla.ops.triton.triton_core.kda._kda_cp.chunk_delta_h import (
     chunk_gated_delta_rule_bwd_dhu_pre_process,
     expand_h0,
 )
-from fla.ops.kda.chunk_intra import chunk_kda_bwd_intra
-from fla.ops.kda.gate import kda_gate_bwd, kda_gate_chunk_cumsum
-from fla.ops.kda.wy_fast import recompute_w_u_fwd
-from fla.ops.kda._kda_utils.cumsum import chunk_local_cumsum
-from fla.ops.kda._kda_utils.index import prepare_chunk_indices
-from fla.ops.kda._kda_utils.constant import RCP_LN2
-from fla.ops.kda._kda_utils.op import exp2
-from fla.ops.kda._kda_utils.utils import (
+from fla.ops.triton.triton_core.kda.chunk_intra import chunk_kda_bwd_intra
+from fla.ops.triton.triton_core.kda.gate import kda_gate_bwd, kda_gate_chunk_cumsum
+from fla.ops.triton.triton_core.kda.wy_fast import recompute_w_u_fwd
+from fla.ops.triton.triton_core.kda._kda_utils.cumsum import chunk_local_cumsum
+from fla.ops.triton.triton_core.kda._kda_utils.index import prepare_chunk_indices
+from fla.ops.triton.triton_core.kda._kda_utils.constant import RCP_LN2
+from fla.ops.triton.triton_core.kda._kda_utils.op import exp2
+from fla.ops.triton.triton_core.kda._kda_utils.utils import (
     IS_NVIDIA_HOPPER,
     autotune_cache_kwargs,
     check_shared_mem,

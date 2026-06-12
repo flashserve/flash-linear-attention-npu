@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import triton
 import triton.language as tl
 
-from fla.ops.kda._kda_utils.utils import autotune_cache_kwargs, tensor_cache
+from fla.ops.triton.triton_core.kda._kda_utils.utils import autotune_cache_kwargs, tensor_cache
 
 
 @triton.autotune(

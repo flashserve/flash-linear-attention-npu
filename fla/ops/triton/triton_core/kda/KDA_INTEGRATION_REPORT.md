@@ -2,6 +2,7 @@
 
 **目标仓库**: `flash-linear-attention-npu-v2`  
 **合入日期**: 2026-06-11  
+**迁移更新**: 2026-06-12（KDA 目录从 `fla/ops/kda/` 迁移至 `fla/ops/triton/triton_core/kda/`）  
 **验证状态**: ✅ NPU 验证通过，test_kda_chunk 34/34 用例全部 PASS
 
 ---
@@ -16,7 +17,7 @@
 
 | 原则 | 说明 |
 |------|------|
-| **文件隔离** | KDA 依赖的共享模块全部放入 `fla/ops/kda/` 子目录，通过相对引用访问 |
+| **文件隔离** | KDA 依赖的共享模块全部放入 `fla/ops/triton/triton_core/kda/` 子目录，通过相对引用访问 |
 | **零侵入** | 不修改目标仓库任何现有文件（`__init__.py`、`utils.py`、`cumsum.py` 等） |
 | **1:1 直接拷贝** | KDA 特有文件直接从源仓库复制，仅修改 import 路径指向隔离内部副本 |
 | **NPU 兼容** | 设备检测、GPU 特性标志、autocast 等均已适配 NPU |
@@ -33,17 +34,17 @@
 | `__init__.py` 文件 | 4 个 |
 | 测试文件 | 1 个（`test_kda_chunk.py`，34 用例全 PASS） |
 | 总代码行数 | ≈8,043 行 |
-| Import 重映射 | 50 处 |
+| Import 重映射 | 50 处（初始）+ 55 处（迁移至 triton_core 后二次重映射） |
 | 修改目标仓库已有文件 | **0 个** |
 
 ---
 
 ## 二、目录结构
 
-合入后 `fla/ops/kda/` 的完整目录结构：
+合入后 `fla/ops/triton/triton_core/kda/` 的完整目录结构：
 
 ```
-fla/ops/kda/
+fla/ops/triton/triton_core/kda/
 ├── __init__.py                          # 导出 chunk_kda, fused_recurrent_kda
 │
 ├── chunk.py                             # 主入口 ChunkKDAFunction + chunk_kda API
@@ -87,10 +88,10 @@ tests/ops/
 
 ## 三、Import 重映射规则
 
-所有 KDA 文件中的外部依赖 import 均已重映射到隔离目录：
+### 3.1 初始迁移（源仓库 → `fla.ops.kda.*`）
 
-| 源 import 路径 | 目标 import 路径 | 说明 |
-|---------------|-----------------|------|
+| 源 import 路径 | 初始目标 import 路径 | 说明 |
+|---------------|---------------------|------|
 | `fla.utils` | `fla.ops.kda._kda_utils.utils` | 工具函数、设备检测、autocast 等 |
 | `fla.ops.utils` / `fla.ops.utils.index` | `fla.ops.kda._kda_utils.index` | `prepare_chunk_indices`, `prepare_chunk_offsets` |
 | `fla.ops.utils` (chunk_local_cumsum) | `fla.ops.kda._kda_utils.cumsum` | cumsum 相关 |
@@ -105,7 +106,16 @@ tests/ops/
 | `fla.ops.cp` | `fla.ops.kda._kda_cp` | FLACPContext stub |
 | `fla.ops.cp.chunk_delta_h` | `fla.ops.kda._kda_cp.chunk_delta_h` | CP 函数 stub |
 | `fla.ops.backends` | **已移除** | `@dispatch` 装饰器一并移除 |
-| `fla.ops.kda.*` | `fla.ops.kda.*` | KDA 内部引用不变 |
+
+### 3.2 目录迁移（`fla.ops.kda.*` → `fla.ops.triton.triton_core.kda.*`）
+
+KDA 目录从 `fla/ops/kda/` 迁移至 `fla/ops/triton/triton_core/kda/` 后，所有 import 前缀统一替换：
+
+| 旧 import 前缀 | 新 import 前缀 |
+|----------------|----------------|
+| `fla.ops.kda.` | `fla.ops.triton.triton_core.kda.` |
+
+涉及 16 个 `.py` 文件 + 1 个测试文件，共 55 处替换（含 docstring 中的示例代码），0 处残留。
 
 ---
 
@@ -153,7 +163,7 @@ KDA 代码中 CP 相关路径均为 `if cp_context is not None:` 条件分支，
 
 | 文件 | 修改 |
 |------|------|
-| `test_kda_chunk.py` | `from fla.utils import ...` → `from fla.ops.kda._kda_utils.utils import ...` |
+| `test_kda_chunk.py` | `from fla.utils import ...` → `from fla.ops.triton.triton_core.kda._kda_utils.utils import ...` |
 | `test_kda_chunk.py` | `device` 从 `_kda_utils.utils` 导入（已含 NPU 检测） |
 | `test_kda.py`（未合入） | `torch.device("cuda")` → `torch.device("npu" if ... else "cuda")` |
 
@@ -185,6 +195,16 @@ KDA 代码中 CP 相关路径均为 `if cp_context is not None:` 条件分支，
 
 **修复**：添加 `IS_NPU = _IS_NPU` 公开别名赋值（line 460）。
 
+### 5.4 目录迁移至 `triton_core/kda/`
+
+**背景**：为与目标仓库目录结构对齐，KDA 目录从 `fla/ops/kda/` 迁移至 `fla/ops/triton/triton_core/kda/`。
+
+**改动**：
+- 物理移动整个 `kda/` 目录
+- 批量替换所有 `.py` 文件中的 import 前缀：`fla.ops.kda.` → `fla.ops.triton.triton_core.kda.`
+- 更新测试文件 `test_kda_chunk.py` 中的 import
+- 更新文档中所有路径引用
+
 ---
 
 ## 六、执行阶段记录
@@ -198,6 +218,7 @@ KDA 代码中 CP 相关路径均为 `if cp_context is not None:` 条件分支，
 | Phase 5 | NPU 适配 + @dispatch 移除 + __init__.py 导出重写 | ✅ 已完成 |
 | Phase 6 | 测试文件拷贝 + import/device 适配 | ✅ 已完成 |
 | Phase 7 | 语法验证 + IS_NPU 修复 + NPU 验证 34 用例全 PASS | ✅ 已完成 |
+| Phase 8 | 目录迁移至 `fla/ops/triton/triton_core/kda/` + 二次 import 重映射 | ✅ 已完成 |
 
 ---
 
@@ -205,12 +226,13 @@ KDA 代码中 CP 相关路径均为 `if cp_context is not None:` 条件分支，
 
 | # | 验收项 | 结果 |
 |---|--------|------|
-| 1 | `from fla.ops.kda import chunk_kda, fused_recurrent_kda` import 成功 | ✅ PASS |
+| 1 | `from fla.ops.triton.triton_core.kda import chunk_kda, fused_recurrent_kda` import 成功 | ✅ PASS |
 | 2 | 目标仓库零影响：不修改任何已有文件 | ✅ PASS（0 个已有文件被修改） |
 | 3 | `pytest tests/ops/test_kda_chunk.py -v` 全部 PASS | ✅ PASS（34/34） |
 | 4 | `pytest tests/ops/test_kda.py -v` | ⏳ 未合入（按计划暂不合入） |
 | 5 | py_compile 语法检查全量通过 | ✅ PASS（26 个 .py 文件） |
 | 6 | 旧 import 残留 grep 检查 | ✅ PASS（0 处功能性残留） |
+| 7 | 目录迁移后 import 一致性检查 | ✅ PASS（`fla.ops.kda.` 零残留，全部指向 `fla.ops.triton.triton_core.kda.`） |
 
 ---
 
@@ -219,7 +241,7 @@ KDA 代码中 CP 相关路径均为 `if cp_context is not None:` 条件分支，
 ### 8.1 基本调用
 
 ```python
-from fla.ops.kda import chunk_kda, fused_recurrent_kda
+from fla.ops.triton.triton_core.kda import chunk_kda, fused_recurrent_kda
 
 # chunk_kda: 训练/推理前向+反向
 o, final_state = chunk_kda(q, k, v, g, beta, ...)
@@ -249,7 +271,7 @@ o, _ = chunk_kda(
 KDA 模块完全自包含，依赖链如下：
 
 ```
-fla.ops.kda
+fla.ops.triton.triton_core.kda
 ├── chunk_kda / fused_recurrent_kda  (对外 API)
 │
 ├── _kda_utils/    ← 工具函数隔离副本（NPU 适配版 utils.py）
@@ -258,7 +280,7 @@ fla.ops.kda
 └── _kda_cp/       ← CP stub（NPU 不支持，所有函数 raise NotImplementedError）
 ```
 
-**不会** import 目标仓库已有的 `fla/ops/triton/triton_core/` 或 `fla/ops/ascendc/` 中的任何内容。
+**不会** import 目标仓库已有的 `fla/ops/triton/triton_core/` 中的其他文件（`utils.py`、`cumsum.py`、`l2norm.py` 等）或 `fla/ops/ascendc/` 中的任何内容。
 
 ---
 

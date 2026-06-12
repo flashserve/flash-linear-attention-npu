@@ -4,9 +4,9 @@ import torch
 import triton
 import triton.language as tl
 
-from fla.ops.kda._kda_utils.index import prepare_chunk_indices, prepare_chunk_offsets
-from fla.ops.kda._kda_utils.op import exp, exp2
-from fla.ops.kda._kda_utils.utils import IS_NVIDIA_HOPPER, USE_CUDA_GRAPH, autotune_cache_kwargs, check_shared_mem
+from fla.ops.triton.triton_core.kda._kda_utils.index import prepare_chunk_indices, prepare_chunk_offsets
+from fla.ops.triton.triton_core.kda._kda_utils.op import exp, exp2
+from fla.ops.triton.triton_core.kda._kda_utils.utils import IS_NVIDIA_HOPPER, USE_CUDA_GRAPH, autotune_cache_kwargs, check_shared_mem
 
 NUM_WARPS = [2, 4] if IS_NVIDIA_HOPPER else [2, 4, 8, 16]
 

@@ -5,9 +5,9 @@ import torch
 import triton
 import triton.language as tl
 
-from fla.ops.kda._kda_utils.op import exp
-from fla.ops.kda._kda_utils.softplus import softplus
-from fla.ops.kda._kda_utils.utils import input_guard
+from fla.ops.triton.triton_core.kda._kda_utils.op import exp
+from fla.ops.triton.triton_core.kda._kda_utils.softplus import softplus
+from fla.ops.triton.triton_core.kda._kda_utils.utils import input_guard
 
 
 @triton.heuristics(
@@ -373,7 +373,7 @@ def fused_recurrent_kda(
         >>> import torch
         >>> import torch.nn.functional as F
         >>> from einops import rearrange
-        >>> from fla.ops.kda import fused_recurrent_kda
+        >>> from fla.ops.triton.triton_core.kda import fused_recurrent_kda
         # inputs with equal lengths
         >>> B, T, H, HV, K, V = 4, 2048, 4, 8, 512, 512
         >>> q = torch.randn(B, T, H, K, device='cuda')
