@@ -401,8 +401,7 @@ namespace Catlass::Gemm::Kernel {
                         gmH.SetGlobalBuffer((__gm__ ElementA *)params.ptrH + hOffset);
                         // gmH.SetGlobalBuffer((__gm__ ElementA *)params.ptrH);
                         GlobalTensor<ElementC> gmDw;
-                        // gmDw.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsDwOffset) + dwOffset);
-                        gmDw.SetGlobalBuffer((__gm__ ElementC *)params.ptrDw + dwOffset);
+                        gmDw.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsDwOffset) + dwOffset);
     
                         auto tensorDv = tla::MakeTensor(gmDv, MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
                         auto tensorH = tla::MakeTensor(gmH, MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});  // h^T
@@ -414,14 +413,15 @@ namespace Catlass::Gemm::Kernel {
                                                       tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
                         auto tensorBlockH = GetTile(tensorH, tla::MakeCoord(0, 0), 
                                                      tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                        auto tensorBlockDw = GetTile(tensorDw, tla::MakeCoord(0, 0), 
+                        auto tensorBlockDw = GetTile(tensorDw, tla::MakeCoord(0, 0),
                                                       tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-                        
+
                         blockMmadPart1(tensorBlockDv, tensorBlockH, tensorBlockDw, actualBlockShape);
-    
-    
+
+                        AscendC::PipeBarrier<PIPE_FIX>();
+
                         AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_0);
-    
+
                     }
                 }
                 // 最终同步(后移)
@@ -430,7 +430,8 @@ namespace Catlass::Gemm::Kernel {
                 AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
                 AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
             }
-    
+            AscendC::SyncAll<false>();
+
             // ========== Part 2: mm5 = q @ k^T (纯 Cube) ==========
             {
                 BlockMmadPart2 blockMmadPart2(resource);
@@ -478,7 +479,8 @@ namespace Catlass::Gemm::Kernel {
                 }
     
             }
-    
+            AscendC::SyncAll<false>();
+
             // ========== Part 3: b_ds = b_do @ b_v^T ==========
             {
                 // AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
@@ -536,7 +538,8 @@ namespace Catlass::Gemm::Kernel {
                 AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
                 AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
             }
-    
+            AscendC::SyncAll<false>();
+
             // ========== Fused Part 4+6: b_dq = b_do @ b_h^T, then mm6 = b_ds_temp @ b_k ==========
             // 每次迭代先计算 dq, 再计算 mm6, Vector 端在 UB 中完成 dq += mm6 避免 GM 往返
             {
@@ -625,7 +628,8 @@ namespace Catlass::Gemm::Kernel {
                 AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
                 AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
             }
-    
+            AscendC::SyncAll<false>();
+
             // ========== Fused Part 5+7: b_dk = b_v @ b_dh, then mm7 = b_ds_temp^T @ b_q ==========
             {
                 for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
@@ -802,6 +806,7 @@ namespace Catlass::Gemm::Kernel {
         V = tiling.V;
         BT = tiling.BT;
         numChunks = tiling.numChunks;
+        wsDwOffset = tiling.wsDwOffset;
         wsDgLastOffset = tiling.wsDgLastOffset;
         // wsDgLastOffset = ((wsDgLastOffset + 31) / 32) * 32;
         wsMm5Offset = tiling.wsMm5Offset;
@@ -871,6 +876,5 @@ namespace Catlass::Gemm::Kernel {
         
         kernel(params);
     }
-    
+
     #endif  // CHUNK_BWD_DQKWG_CUBE_H
-    

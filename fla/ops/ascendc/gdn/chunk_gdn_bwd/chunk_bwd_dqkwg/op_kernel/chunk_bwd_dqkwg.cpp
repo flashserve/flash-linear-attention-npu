@@ -59,6 +59,10 @@
          // 使用 C-V 融合模式
          KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
          GET_TILING_DATA(tilingData, tiling);
+         GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
+         if (userWorkspace == nullptr) {
+             return;
+         }
          // AIC (Cube) 端执行
  
          if ASCEND_IS_AIC {
@@ -66,7 +70,7 @@
                  q, k, v, g, h,
                  do_, dh, dv, cu_seqlens, chunk_indices,
                  dq, dk, dw, dg,
-                 workspace
+                 userWorkspace
              );
              cubeProcess.Init(tilingData);
              cubeProcess.Process();
@@ -79,7 +83,7 @@
                  q, k, v, g, h,
                  do_, dh, dv, cu_seqlens, chunk_indices, nullptr,        //mask = nullptr
                  dq, dk, dw, dg,
-                 workspace
+                 userWorkspace
              );
              vectorProcess.Init(tilingData, &tPipe);
              vectorProcess.Process();
