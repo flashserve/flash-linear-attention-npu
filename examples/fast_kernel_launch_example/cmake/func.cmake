@@ -10,11 +10,19 @@
 # define functions
 
 # usage: recursive_add_subdirectory()
+# When FAST_KERNEL_OP_NAME is set, only the matching operator subdirectory is built.
+# This lets you compile a single target operator and avoid being blocked by unrelated
+# operators' compilation issues, e.g.:
+#   FAST_KERNEL_OP_NAME=chunk_gated_delta_rule_fwd_h python3 -m build --wheel -n
 macro(recursive_add_subdirectory)
     file(GLOB CURRENT_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/*)
     foreach(SUB_DIR ${CURRENT_DIRS})
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${SUB_DIR}/${NPU_ARCH}/CMakeLists.txt")
-            add_subdirectory(${SUB_DIR}/${NPU_ARCH})
+            if(NOT FAST_KERNEL_OP_NAME OR FAST_KERNEL_OP_NAME STREQUAL "" OR FAST_KERNEL_OP_NAME STREQUAL SUB_DIR)
+                add_subdirectory(${SUB_DIR}/${NPU_ARCH})
+            else()
+                message(STATUS "Skip operator '${SUB_DIR}' (FAST_KERNEL_OP_NAME=${FAST_KERNEL_OP_NAME})")
+            endif()
         endif()
     endforeach()
 endmacro()
