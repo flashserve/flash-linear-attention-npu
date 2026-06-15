@@ -12,7 +12,7 @@ import triton
 import triton.language as tl
 import triton.language.extra.libdevice as tldevice
 
-from fla.ops.triton.triton_core.kda._kda_utils.utils import IS_GATHER_SUPPORTED
+from fla.ops.triton.triton_core.utils import IS_GATHER_SUPPORTED
 
 if os.environ.get('FLA_USE_FAST_OPS', '0') == '1':
     @triton.jit

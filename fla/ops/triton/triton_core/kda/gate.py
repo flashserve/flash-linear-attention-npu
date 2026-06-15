@@ -14,7 +14,7 @@ import triton.language as tl
 from fla.ops.triton.triton_core.index import prepare_chunk_indices
 from fla.ops.triton.triton_core.kda._kda_utils.op import exp
 from fla.ops.triton.triton_core.softplus import softplus
-from fla.ops.triton.triton_core.kda._kda_utils.utils import autocast_custom_bwd, autocast_custom_fwd, autotune_cache_kwargs, input_guard
+from fla.ops.triton.triton_core.utils import autocast_custom_bwd, autocast_custom_fwd, autotune_cache_kwargs, input_guard
 
 BS_LIST = [32, 64]
 BT_LIST_AUTOTUNE = [32, 64, 128]

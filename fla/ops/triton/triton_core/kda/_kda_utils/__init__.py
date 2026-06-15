@@ -8,11 +8,10 @@
 
 # fla/ops/kda/_kda_utils/__init__.py
 # KDA-isolated utility functions — unified export
-# Merged modules (constant, softplus, index) now live in triton_core/ directly.
-# cumsum (merged to triton_core — KDA callers use use_per_head_kernel=True)
-# Remaining modules (utils, op, l2norm) are still local copies.
+# Merged modules (constant, softplus, index, cumsum, utils) now live in triton_core/ directly.
+# Remaining modules (op, l2norm) are still local copies.
 
-from .utils import (
+from fla.ops.triton.triton_core.utils import (
     input_guard,
     autocast_custom_fwd,
     autocast_custom_bwd,
@@ -31,7 +30,7 @@ from fla.ops.triton.triton_core.cumsum import chunk_local_cumsum
 from .l2norm import l2norm_fwd, l2norm_bwd
 
 __all__ = [
-    # utils
+    # utils (merged to triton_core)
     "input_guard",
     "autocast_custom_fwd",
     "autocast_custom_bwd",

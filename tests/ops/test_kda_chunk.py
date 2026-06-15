@@ -50,7 +50,7 @@ import torch.nn.functional as F
 from fla.ops.triton.triton_core.kda import chunk_kda
 from fla.ops.triton.triton_core.kda.gate import naive_kda_gate, naive_kda_lowerbound_gate
 from fla.ops.triton.triton_core.kda.naive import naive_recurrent_kda
-from fla.ops.triton.triton_core.kda._kda_utils.utils import assert_close, device
+from fla.ops.triton.triton_core.utils import assert_close, device
 
 # Actual deployment constants
 D = 128

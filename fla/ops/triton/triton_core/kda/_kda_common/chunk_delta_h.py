@@ -12,7 +12,7 @@ import triton.language as tl
 
 from fla.ops.triton.triton_core.index import prepare_chunk_indices, prepare_chunk_offsets
 from fla.ops.triton.triton_core.kda._kda_utils.op import exp, exp2
-from fla.ops.triton.triton_core.kda._kda_utils.utils import autotune_cache_kwargs
+from fla.ops.triton.triton_core.utils import autotune_cache_kwargs
 
 NUM_WARPS = [2, 4, 8, 16]
 

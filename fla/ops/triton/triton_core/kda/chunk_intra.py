@@ -14,7 +14,7 @@ from fla.ops.triton.triton_core.kda.chunk_intra_token_parallel import chunk_kda_
 from fla.ops.triton.triton_core.kda.wy_fast import recompute_w_u_fwd
 from fla.ops.triton.triton_core.index import prepare_chunk_indices
 from fla.ops.triton.triton_core.kda._kda_utils.op import exp2, gather
-from fla.ops.triton.triton_core.kda._kda_utils.utils import IS_GATHER_SUPPORTED, autotune_cache_kwargs
+from fla.ops.triton.triton_core.utils import IS_GATHER_SUPPORTED, autotune_cache_kwargs
 
 # NPU: use ieee precision (tf32 is NVIDIA-specific)
 SOLVE_TRIL_DOT_PRECISION = tl.constexpr('ieee')

@@ -14,7 +14,7 @@ from fla.ops.triton.triton_core.kda._kda_common.chunk_h import chunk_bwd_dh, chu
 from fla.ops.triton.triton_core.index import prepare_chunk_indices
 from fla.ops.triton.triton_core.cumsum import chunk_local_cumsum
 from fla.ops.triton.triton_core.kda._kda_utils.op import exp, exp2
-from fla.ops.triton.triton_core.kda._kda_utils.utils import autotune_cache_kwargs, check_shared_mem, input_guard
+from fla.ops.triton.triton_core.utils import autotune_cache_kwargs, check_shared_mem, input_guard
 
 BK_LIST = [32, 64] if check_shared_mem() else [16, 32]
 BV_LIST = [64, 128] if check_shared_mem('ampere') else [16, 32]
