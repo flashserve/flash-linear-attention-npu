@@ -17,6 +17,15 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const { data: repo } = await github.rest.repos.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            if (repo.fork) {
+              core.notice(`Fork 仓库 ${repo.full_name}，跳过分支创建限制。`);
+              return;
+            }
+
             const allowed = new Set([
               'juyangokok',
               'weinachuan',
