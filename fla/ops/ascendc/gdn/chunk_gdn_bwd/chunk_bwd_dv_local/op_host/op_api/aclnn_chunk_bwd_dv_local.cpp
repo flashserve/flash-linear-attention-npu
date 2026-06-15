@@ -48,6 +48,15 @@ struct ChunkBwdDvLocalParams {
     const aclTensor *out = nullptr;
 };
 
+static constexpr size_t Q_K_DO_DIM_NUM = 4;
+static constexpr size_t G_DIM_NUM = 3;
+static constexpr size_t ACLNN_DIM_3 = 3;
+static constexpr int64_t K_DIM_SUPPORTED = 128;
+static constexpr int64_t V_DIM_128 = 128;
+static constexpr int64_t V_DIM_256 = 256;
+static constexpr int64_t CHUNK_SIZE_64 = 64;
+static constexpr int64_t CHUNK_SIZE_128 = 128;
+
 static aclnnStatus CheckNotNull(ChunkBwdDvLocalParams params)
 {
     CHECK_COND(params.q != nullptr, ACLNN_ERR_PARAM_NULLPTR, "q must not be nullptr.");
@@ -59,6 +68,40 @@ static aclnnStatus CheckNotNull(ChunkBwdDvLocalParams params)
     return ACLNN_SUCCESS;
 }
 
+static aclnnStatus CheckDimNumAndNonZero(const aclTensor *tensor, size_t expectedDimNum, const char *tensorName)
+{
+    const auto &shape = tensor->GetViewShape();
+    size_t dimNum = shape.GetDimNum();
+    CHECK_COND(dimNum == expectedDimNum, ACLNN_ERR_PARAM_INVALID,
+               "Check %s shape failed, dim num should be %zu, but got %zu.", tensorName, expectedDimNum, dimNum);
+    for (size_t dimIndex = 0; dimIndex < dimNum; ++dimIndex) {
+        CHECK_COND(shape.GetDim(dimIndex) > 0, ACLNN_ERR_PARAM_INVALID,
+                   "Check %s shape failed, dim %zu should be positive, but got %ld.", tensorName, dimIndex,
+                   shape.GetDim(dimIndex));
+    }
+    return ACLNN_SUCCESS;
+}
+
+static aclnnStatus CheckSameDim(const aclTensor *lhs, const aclTensor *rhs, const char *lhsName, const char *rhsName,
+                                size_t dimIndex)
+{
+    int64_t lhsDim = lhs->GetViewShape().GetDim(dimIndex);
+    int64_t rhsDim = rhs->GetViewShape().GetDim(dimIndex);
+    CHECK_COND(lhsDim == rhsDim, ACLNN_ERR_PARAM_INVALID,
+               "Compare %s and %s shape failed, dim %zu should be same, but got %ld and %ld.", lhsName, rhsName,
+               dimIndex, lhsDim, rhsDim);
+    return ACLNN_SUCCESS;
+}
+
+static aclnnStatus CheckSameLeadingDims(const aclTensor *lhs, const aclTensor *rhs, const char *lhsName,
+                                        const char *rhsName, size_t dimNum)
+{
+    for (size_t dimIndex = 0; dimIndex < dimNum; ++dimIndex) {
+        CHECK_RET(CheckSameDim(lhs, rhs, lhsName, rhsName, dimIndex) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    }
+    return ACLNN_SUCCESS;
+}
+
 static aclnnStatus CheckFormat(ChunkBwdDvLocalParams params)
 {
     return ACLNN_SUCCESS;
@@ -66,6 +109,33 @@ static aclnnStatus CheckFormat(ChunkBwdDvLocalParams params)
 
 static aclnnStatus CheckShape(ChunkBwdDvLocalParams params)
 {
+    CHECK_COND(params.gGammaOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
+               "gGammaOptional is not supported by chunk_bwd_dv_local currently.");
+    CHECK_COND(params.aOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
+               "aOptional is not supported by chunk_bwd_dv_local currently.");
+    CHECK_COND(params.chunkSize == CHUNK_SIZE_64 || params.chunkSize == CHUNK_SIZE_128, ACLNN_ERR_PARAM_INVALID,
+               "chunkSize should be 64 or 128, but got %ld.", params.chunkSize);
+
+    CHECK_RET(CheckDimNumAndNonZero(params.q, Q_K_DO_DIM_NUM, "q") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckDimNumAndNonZero(params.k, Q_K_DO_DIM_NUM, "k") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckDimNumAndNonZero(params.dO, Q_K_DO_DIM_NUM, "dO") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckDimNumAndNonZero(params.g, G_DIM_NUM, "g") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckDimNumAndNonZero(params.out, Q_K_DO_DIM_NUM, "out") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+
+    CHECK_RET(CheckSameLeadingDims(params.q, params.k, "q", "k", Q_K_DO_DIM_NUM) == ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckSameLeadingDims(params.q, params.dO, "q", "dO", G_DIM_NUM) == ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckSameLeadingDims(params.q, params.g, "q", "g", G_DIM_NUM) == ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckSameLeadingDims(params.dO, params.out, "dO", "out", Q_K_DO_DIM_NUM) == ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
+
+    int64_t kDim = params.q->GetViewShape().GetDim(ACLNN_DIM_3);
+    int64_t vDim = params.dO->GetViewShape().GetDim(ACLNN_DIM_3);
+    CHECK_COND(kDim == K_DIM_SUPPORTED, ACLNN_ERR_PARAM_INVALID, "K should be 128, but got %ld.", kDim);
+    CHECK_COND(vDim == V_DIM_128 || vDim == V_DIM_256, ACLNN_ERR_PARAM_INVALID,
+               "V should be 128 or 256, but got %ld.", vDim);
     return ACLNN_SUCCESS;
 }
 
@@ -92,6 +162,14 @@ static aclnnStatus ParamsDataContiguous(ChunkBwdDvLocalParams &params, aclOpExec
 
 static aclnnStatus CheckDtype(ChunkBwdDvLocalParams params)
 {
+    auto qDtype = params.q->GetDataType();
+    CHECK_COND(qDtype == DataType::DT_FLOAT16 || qDtype == DataType::DT_BF16, ACLNN_ERR_PARAM_INVALID,
+               "q dtype should be float16 or bfloat16.");
+    CHECK_COND(params.k->GetDataType() == qDtype, ACLNN_ERR_PARAM_INVALID, "k dtype should be same as q.");
+    CHECK_COND(params.dO->GetDataType() == qDtype, ACLNN_ERR_PARAM_INVALID, "dO dtype should be same as q.");
+    CHECK_COND(params.out->GetDataType() == qDtype, ACLNN_ERR_PARAM_INVALID, "out dtype should be same as q.");
+    CHECK_COND(params.g->GetDataType() == qDtype || params.g->GetDataType() == DataType::DT_FLOAT,
+               ACLNN_ERR_PARAM_INVALID, "g dtype should be same as q or float32.");
     return ACLNN_SUCCESS;
 }
 
