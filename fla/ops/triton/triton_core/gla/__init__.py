@@ -6,6 +6,5 @@
 # the following copyright notice:
 # Copyright (c) 2023-2026, Songlin Yang, Yu Zhang, Zhiyuan Li
 
-# _kda_common: KDA-isolated common operators
-from .chunk_delta_h import chunk_gated_delta_rule_fwd_h
-from .chunk_h import chunk_fwd_h, chunk_bwd_dh
+# GLA (Gated Linear Attention) chunk operators
+from .chunk import chunk_gla_fwd_o_gk

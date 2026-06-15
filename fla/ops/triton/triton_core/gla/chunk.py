@@ -10,11 +10,11 @@ import torch
 import triton
 import triton.language as tl
 
-from fla.ops.triton.triton_core.kda._kda_common.chunk_h import chunk_bwd_dh, chunk_fwd_h
+from fla.ops.triton.triton_core.chunk_h import chunk_bwd_dh, chunk_fwd_h
 from fla.ops.triton.triton_core.index import prepare_chunk_indices
 from fla.ops.triton.triton_core.cumsum import chunk_local_cumsum
 from fla.ops.triton.triton_core.utils import exp, exp2
-from fla.ops.triton.triton_core.utils import autotune_cache_kwargs, check_shared_mem, input_guard
+from fla.ops.triton.triton_core.utils import autotune_cache_kwargs, check_shared_mem, input_guard, IS_NPU
 
 BK_LIST = [32, 64] if check_shared_mem() else [16, 32]
 BV_LIST = [64, 128] if check_shared_mem('ampere') else [16, 32]
@@ -291,25 +291,32 @@ def chunk_gla_fwd_A_kernel_intra_sub_intra_merge(
     p_A2 = tl.make_block_ptr(A2 + (bos*H+i_h)*BT, (T, BT), (H*BT, 1), (i_t * BT + i_c * BC, i_c * BC), (BC, BC), (1, 0))
     tl.store(p_A2, b_A.to(A2.dtype.element_ty), boundary_check=(0, 1))
 
+# GPU: full autotune sweep over BK/BV/num_warps/num_stages
+# NPU: single hardcoded config (autotune not well-supported)
+_fwd_o_autotune = (
+    triton.autotune(
+        configs=[
+            triton.Config({'BK': BK, 'BV': BV}, num_warps=num_warps, num_stages=num_stages)
+            for BK in [32, 64]
+            for BV in [64, 128]
+            for num_warps in [2, 4, 8]
+            for num_stages in [2, 3, 4]
+        ],
+        key=['BT', 'TRANSPOSE_STATE'],
+        **autotune_cache_kwargs,
+    )
+    if not IS_NPU
+    else triton.autotune(
+        configs=[triton.Config({'BK': 64, 'BV': 128}, num_warps=4, num_stages=4)],
+        key=['BT', 'TRANSPOSE_STATE'],
+        **autotune_cache_kwargs,
+    )
+)
+
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
 })
-# @triton.autotune(
-#     configs=[
-#         triton.Config({'BK': BK, 'BV': BV}, num_warps=num_warps, num_stages=num_stages)
-#         for BK in [32, 64]
-#         for BV in [64, 128]
-#         for num_warps in [2, 4, 8]
-#         for num_stages in [2, 3, 4]
-#     ],
-#     key=['BT', 'TRANSPOSE_STATE'],
-#     **autotune_cache_kwargs,
-# )
-@triton.autotune(
-    configs=[triton.Config({'BK': 64, 'BV': 128}, num_warps=4, num_stages=4)],
-    key=['BT', 'TRANSPOSE_STATE'],
-    **autotune_cache_kwargs,
-)
+@_fwd_o_autotune
 @triton.jit(do_not_specialize=['T'])
 def chunk_gla_fwd_kernel_o(
     q,

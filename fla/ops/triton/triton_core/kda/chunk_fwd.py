@@ -8,13 +8,13 @@
 
 import torch
 
-from fla.ops.triton.triton_core.kda._kda_common.chunk_delta_h import chunk_gated_delta_rule_fwd_h
+from fla.ops.triton.triton_core.kda.chunk_delta_h import chunk_gated_delta_rule_fwd_h
 from fla.ops.triton.triton_core.kda._kda_cp import FLACPContext
 from fla.ops.triton.triton_core.kda._kda_cp.chunk_delta_h import (
     chunk_gated_delta_rule_fwd_h_pre_process,
     compress_h0,
 )
-from fla.ops.triton.triton_core.kda._kda_gla.chunk import chunk_gla_fwd_o_gk
+from fla.ops.triton.triton_core.gla.chunk import chunk_gla_fwd_o_gk
 from fla.ops.triton.triton_core.kda.chunk_intra import chunk_kda_fwd_intra
 from fla.ops.triton.triton_core.kda.gate import kda_gate_chunk_cumsum
 from fla.ops.triton.triton_core.cumsum import chunk_local_cumsum

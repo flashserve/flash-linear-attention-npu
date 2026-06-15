@@ -11,16 +11,51 @@ import triton
 import triton.language as tl
 
 from fla.ops.triton.triton_core.index import prepare_chunk_offsets
-from fla.ops.triton.triton_core.utils import exp
-from fla.ops.triton.triton_core.utils import autotune_cache_kwargs, check_shared_mem
+from fla.ops.triton.triton_core.utils import exp, autotune_cache_kwargs, check_shared_mem, IS_NPU
 
 BKV_LIST = [32, 64] if check_shared_mem() else [16, 32]
+
+# On NPU, autotune is not used — BK/BV are hardcoded to 32.
+# On GPU, autotune sweeps BK/BV from BKV_LIST with num_warps and num_stages.
+_fwd_autotune = (
+    triton.autotune(
+        configs=[
+            triton.Config({'BK': BK, 'BV': BV}, num_warps=num_warps, num_stages=num_stages)
+            for BK in BKV_LIST
+            for BV in BKV_LIST
+            for num_warps in [1, 2, 4, 8]
+            for num_stages in [2, 3, 4]
+        ],
+        key=['BT', 'USE_G', 'USE_GK', 'USE_GV'],
+        **autotune_cache_kwargs,
+    )
+    if not IS_NPU
+    else (lambda fn: fn)  # no-op decorator on NPU
+)
+
+_bwd_autotune = (
+    triton.autotune(
+        configs=[
+            triton.Config({'BK': BK, 'BV': BV}, num_warps=num_warps, num_stages=num_stages)
+            for BK in BKV_LIST
+            for BV in BKV_LIST
+            for num_warps in [1, 2, 4, 8]
+            for num_stages in [2, 3, 4]
+        ],
+        key=['BT', 'USE_G', 'USE_GK', 'USE_GV'],
+        **autotune_cache_kwargs,
+    )
+    if not IS_NPU
+    else (lambda fn: fn)  # no-op decorator on NPU
+)
+
 
 @triton.heuristics({
     'USE_INITIAL_STATE': lambda args: args['h0'] is not None,
     'STORE_FINAL_STATE': lambda args: args['ht'] is not None,
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
 })
+@_fwd_autotune
 @triton.jit(do_not_specialize=['T'])
 def chunk_fwd_kernel_h(
     k,
@@ -136,6 +171,7 @@ def chunk_fwd_kernel_h(
     'USE_FINAL_STATE_GRADIENT': lambda args: args['dht'] is not None,
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
 })
+@_bwd_autotune
 @triton.jit(do_not_specialize=['T'])
 def chunk_bwd_kernel_dh(
     q,
@@ -274,6 +310,11 @@ def chunk_fwd_h(
     h = k.new_empty(B, NS, H, K, V, dtype=k.dtype if not states_in_fp32 else torch.float)
     ht = k.new_empty(N, H, K, V, dtype=torch.float) if output_final_state else None
     def grid(meta): return (triton.cdiv(K, meta['BK']), triton.cdiv(V, meta['BV']), N * H)
+
+    # On NPU, autotune is disabled and BK/BV are hardcoded.
+    # On GPU, autotune provides BK/BV from the config sweep.
+    npu_kwargs = dict(BK=32, BV=32) if IS_NPU else {}
+
     chunk_fwd_kernel_h[grid](
         k=k,
         v=v,
@@ -296,8 +337,7 @@ def chunk_fwd_h(
         USE_G_GAMMA=g_gamma is not None,
         USE_GK=gk is not None,
         USE_GV=gv is not None,
-        BK=32,
-        BV=32,
+        **npu_kwargs,
     )
     return h, ht
 
@@ -336,6 +376,9 @@ def chunk_bwd_dh(
     dh0 = torch.empty_like(h0, dtype=torch.float) if h0 is not None else None
 
     def grid(meta): return (triton.cdiv(K, meta['BK']), triton.cdiv(V, meta['BV']), N * H)
+
+    npu_kwargs = dict(BK=32, BV=32) if IS_NPU else {}
+
     chunk_bwd_kernel_dh[grid](
         q=q,
         g=g,
@@ -361,7 +404,6 @@ def chunk_bwd_dh(
         USE_G_GAMMA=g_gamma is not None,
         USE_GK=gk is not None,
         USE_GV=gv is not None,
-        BK=32,
-        BV=32,
+        **npu_kwargs,
     )
     return dh, dh0

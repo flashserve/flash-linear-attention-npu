@@ -10,7 +10,7 @@ import torch
 import triton
 import triton.language as tl
 
-from fla.ops.triton.triton_core.kda._kda_common.chunk_delta_h import chunk_gated_delta_rule_bwd_dhu, chunk_gated_delta_rule_fwd_h
+from fla.ops.triton.triton_core.kda.chunk_delta_h import chunk_gated_delta_rule_bwd_dhu, chunk_gated_delta_rule_fwd_h
 from fla.ops.triton.triton_core.kda._kda_cp import FLACPContext
 from fla.ops.triton.triton_core.kda._kda_cp.chunk_delta_h import (
     chunk_gated_delta_rule_bwd_dhu_pre_process,
