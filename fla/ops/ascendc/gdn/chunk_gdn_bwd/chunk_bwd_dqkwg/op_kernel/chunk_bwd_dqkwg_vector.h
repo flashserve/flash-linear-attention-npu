@@ -208,7 +208,9 @@
      // Part 1: dw 和 dg_last 计算
      ProcessPart1();
      pipe->Reset();
-     AscendC::SyncAll<false>();
+     // Part 2 does not exchange cross-core flags. The next flag phase starts
+     // only after the Part 2 SyncAll below, so Part 1's drained tokens cannot
+     // be consumed by Part 3.
      // Part 2: 等待 mm5 (q @ k^T) 完成, 计算 mul1
      ProcessPart2();
      pipe->Reset();
@@ -256,9 +258,10 @@
                  uint32_t outIdx = r * kLimit + kIdx;
                  float val = dw.GetValue(outIdx);
                  float absVal = val >= 0.0f ? val : -val;
-                bool refineSmall = absVal >= refineAbsMin && absVal <= refineAbsMax;
-                bool refineChunkHeadZero = r == 0 && absVal <= refineAbsMax;
-                if (refineSmall || refineChunkHeadZero) {
+                 bool refineSmall = absVal >= refineAbsMin && absVal <= refineAbsMax;
+                 bool refineChunkHeadZero = r == 0 && absVal <= refineAbsMax;
+                 bool refineChunkHeadRepairCols = r == 0 && kIdx < FP16_ELEMENTS_PER_BLOCK;
+                 if (refineSmall || refineChunkHeadZero || refineChunkHeadRepairCols) {
                      float sum = 0.0f;
                      for (uint32_t vIdx = 0; vIdx < vLimit; ++vIdx) {
                          float dvVal = static_cast<float>(gmDv.GetValue(dvOffset + r * vLimit + vIdx));
@@ -472,8 +475,9 @@
                  PipeBarrier<PIPE_V>();
                  Cast(tensorDwOut, tensorHFp32, RoundMode::CAST_RINT, dwSize_sub);
                  PipeBarrier<PIPE_V>();
-                 RepairDwChunkHeadBlock(tensorDwOut, tensorDwIn, tensorHFp32, tensorSumFp32,
-                                        dvOffset, hOffset, BT_sub);
+                 // RefineSmallDw scalar-recomputes the chunk-head repair block.
+                 // The vector repair path uses a different reduction order and
+                 // can move near-threshold fp16 values by a few ulps.
                  inQue1.FreeTensor(tensorDwIn);
                  outQue2.EnQue(tensorDwOut);
              }

@@ -430,7 +430,9 @@ namespace Catlass::Gemm::Kernel {
                 AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
                 AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
             }
-            AscendC::SyncAll<false>();
+            // Part 2 is cube-only and uses no AIV/AIC flags. Keep the four
+            // token drain above; the next flag phase is separated by the
+            // SyncAll after Part 2.
 
             // ========== Part 2: mm5 = q @ k^T (纯 Cube) ==========
             {

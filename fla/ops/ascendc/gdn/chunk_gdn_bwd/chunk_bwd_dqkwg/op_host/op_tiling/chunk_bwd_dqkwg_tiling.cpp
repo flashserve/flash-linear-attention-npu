@@ -18,6 +18,7 @@
  #include "tiling_base/tiling_templates_registry.h"
  #include "tiling_base/tiling_type.h"
  #include <cmath>
+ #include <cstdlib>
  
  namespace optiling {
  
@@ -140,44 +141,61 @@
      auto sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
      const int64_t aicNum = ascendcPlatform.GetCoreNumAic();
      
-     // 设置 TilingKey
-     context->SetTilingKey(1);
-     
-     size_t dwSize = B * H * T * K * FP32_SIZE;                     // b_dw workspace, conservatively reserved
-     dwSize = ((dwSize + 31) / 32) * 32;
-     size_t dgLastSize = B * H * numChunks * 8 * FP32_SIZE;         // b_dg_last, one 32B slot per scalar
-     // // 对齐到 32 字节
-     dgLastSize = ((dgLastSize + 31) / 32) * 32;
-     
+     uint64_t tilingKey = 2;
+     const char *implEnv = std::getenv("DQKWG_IMPL");
+     if (implEnv != nullptr && (implEnv[0] == '1' || implEnv[0] == 'o' || implEnv[0] == 'O')) {
+         tilingKey = 1;
+     }
+     context->SetTilingKey(tilingKey);
+
      // size_t mm5Size = B * H * T * BT * FP16_SIZE;                   // mm5 (q @ k^T)
      size_t mm5Size = B * H * T * K * FP16_SIZE;// mm5 (q @ k^T): B * H * T * BT * FP16_SIZE, mm6/mm7 需要复用 mm5 的空间，BT 可能是 64 或 128，这里直接按 128 来计算，保证空间足够
      size_t dsTempSize = B * H * T * BT * FP16_SIZE;                // b_ds_temp
-     // Reuse existing storage so old_dqkwg keeps the same workspace size as main.
-     // mm6/mm7 reuse mm5 after Part3 consumes mm5; mul1 uses dq as scratch before Part4 rewrites dq.
- 
-     
-     // Workspace 偏移计算
+
      size_t offset = 0;
-     
-     size_t wsDwOffset = offset;
-     offset += dwSize;
-     
-     size_t wsDgLastOffset = offset;
- // std::cout << "[tiling] offset: " << offset << ", dgLastSize: "<<dgLastSize<<"\n";
-     offset += dgLastSize;
- 
-     size_t wsMm5Offset = offset;
- // std::cout << "[tiling] offset: " << offset << ", mm5Size: "<<mm5Size<<"\n";
-     offset += mm5Size;
-     
-     size_t wsDsTempOffset = offset;
- // std::cout << "[tiling] offset: " << offset << ", dsTempSize: "<<dsTempSize<<"\n";
-     offset += dsTempSize;
- 
-     size_t wsMm6Offset = wsMm5Offset;
-     size_t wsMm7Offset = wsMm5Offset;
+     size_t wsDwOffset = 0;
+     size_t wsDgLastOffset = 0;
+     size_t wsMm5Offset = 0;
+     size_t wsDsTempOffset = 0;
+     size_t wsMm6Offset = 0;
+     size_t wsMm7Offset = 0;
      size_t wsMul1Offset = 0;
-     
+     size_t dgLastSize = 0;
+
+     if (tilingKey == 1) {
+         // Legacy path: Part 1 writes dw directly to output, so only dg_last/mm5/ds_temp need workspace.
+         dgLastSize = B * H * numChunks * FP32_SIZE;
+         dgLastSize = ((dgLastSize + 31) / 32) * 32;
+
+         wsDgLastOffset = offset;
+         offset += dgLastSize;
+         wsMm5Offset = offset;
+         offset += mm5Size;
+         wsDsTempOffset = offset;
+         offset += dsTempSize;
+         wsMm6Offset = wsMm5Offset;
+         wsMm7Offset = wsMm5Offset;
+         wsMul1Offset = 0;
+     } else {
+         // Current path: Cube stores dw in dtype workspace, Vector finalizes/sign-fixes it.
+         size_t dwSize = B * H * T * K * FP16_SIZE;
+         dwSize = ((dwSize + 31) / 32) * 32;
+         dgLastSize = B * H * numChunks * 8 * FP32_SIZE;         // one 32B slot per scalar
+         dgLastSize = ((dgLastSize + 31) / 32) * 32;
+
+         wsDwOffset = offset;
+         offset += dwSize;
+         wsDgLastOffset = offset;
+         offset += dgLastSize;
+         wsMm5Offset = offset;
+         offset += mm5Size;
+         wsDsTempOffset = offset;
+         offset += dsTempSize;
+         wsMm6Offset = wsMm5Offset;
+         wsMm7Offset = wsMm5Offset;
+         wsMul1Offset = 0;
+     }
+
      size_t totalUserWorkspace = offset;
      // std::cout << "[tiling] totalUserWorkspace: " << totalUserWorkspace << ", sysWorkspaceSize: " << sysWorkspaceSize << "\n";
      
@@ -233,4 +251,4 @@
      .TilingParse<ChunkBwdDqkwgCompileInfo>(TilingParseChunkBwdDqkwg);
  
  }  // namespace optiling
- 
+

@@ -15,6 +15,8 @@
  #include "chunk_bwd_dqkwg_common.h"
  #include "chunk_bwd_dqkwg_cube.h"
  #include "chunk_bwd_dqkwg_vector.h"
+ #include "chunk_bwd_dqkwg_cube_legacy.h"
+ #include "chunk_bwd_dqkwg_vector_legacy.h"
  #include "lib/matmul_intf.h"
  
  using namespace AscendC;
@@ -53,20 +55,21 @@
      // 设置溢出处理
      AscendCUtils::SetOverflow(1);
      
-     // 根据 TilingKey 选择执行路径
+     GET_TILING_DATA(tilingData, tiling);
+     GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
+     if (userWorkspace == nullptr) {
+         return;
+     }
+
+     // 根据 TilingKey 选择执行路径: 1 = legacy, 2 = current.
      if (TILING_KEY_IS(1)) {
- 
+
          // 使用 C-V 融合模式
          KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
-         GET_TILING_DATA(tilingData, tiling);
-         GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
-         if (userWorkspace == nullptr) {
-             return;
-         }
          // AIC (Cube) 端执行
- 
+
          if ASCEND_IS_AIC {
-             ChunkBwdDqkwgCubeProcess<DTYPE_Q, DTYPE_G> cubeProcess(
+             ChunkBwdDqkwgCubeProcessLegacy<DTYPE_Q, DTYPE_G> cubeProcess(
                  q, k, v, g, h,
                  do_, dh, dv, cu_seqlens, chunk_indices,
                  dq, dk, dw, dg,
@@ -79,7 +82,7 @@
          // AIV (Vector) 端执行
          if ASCEND_IS_AIV {
              TPipe tPipe; // 创建 TPipe 用于 Vector 端流水
-             ChunkBwdDqkwgVectorProcess<DTYPE_Q, DTYPE_G> vectorProcess(
+             ChunkBwdDqkwgVectorProcessLegacy<DTYPE_Q, DTYPE_G> vectorProcess(
                  q, k, v, g, h,
                  do_, dh, dv, cu_seqlens, chunk_indices, nullptr,        //mask = nullptr
                  dq, dk, dw, dg,
@@ -88,7 +91,34 @@
              vectorProcess.Init(tilingData, &tPipe);
              vectorProcess.Process();
          }
- 
+
+     } else if (TILING_KEY_IS(2)) {
+
+         KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
+
+         if ASCEND_IS_AIC {
+             ChunkBwdDqkwgCubeProcess<DTYPE_Q, DTYPE_G> cubeProcess(
+                 q, k, v, g, h,
+                 do_, dh, dv, cu_seqlens, chunk_indices,
+                 dq, dk, dw, dg,
+                 userWorkspace
+             );
+             cubeProcess.Init(tilingData);
+             cubeProcess.Process();
+         }
+
+         if ASCEND_IS_AIV {
+             TPipe tPipe;
+             ChunkBwdDqkwgVectorProcess<DTYPE_Q, DTYPE_G> vectorProcess(
+                 q, k, v, g, h,
+                 do_, dh, dv, cu_seqlens, chunk_indices, nullptr,
+                 dq, dk, dw, dg,
+                 userWorkspace
+             );
+             vectorProcess.Init(tilingData, &tPipe);
+             vectorProcess.Process();
+         }
+
      }
  
      return;
