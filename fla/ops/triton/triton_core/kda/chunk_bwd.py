@@ -22,7 +22,7 @@ from fla.ops.triton.triton_core.kda.wy_fast import recompute_w_u_fwd
 from fla.ops.triton.triton_core.cumsum import chunk_local_cumsum
 from fla.ops.triton.triton_core.index import prepare_chunk_indices
 from fla.ops.triton.triton_core.constant import RCP_LN2
-from fla.ops.triton.triton_core.kda._kda_utils.op import exp2
+from fla.ops.triton.triton_core.utils import exp2
 from fla.ops.triton.triton_core.utils import (
     autotune_cache_kwargs,
 )

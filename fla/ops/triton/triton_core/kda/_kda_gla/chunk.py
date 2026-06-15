@@ -13,7 +13,7 @@ import triton.language as tl
 from fla.ops.triton.triton_core.kda._kda_common.chunk_h import chunk_bwd_dh, chunk_fwd_h
 from fla.ops.triton.triton_core.index import prepare_chunk_indices
 from fla.ops.triton.triton_core.cumsum import chunk_local_cumsum
-from fla.ops.triton.triton_core.kda._kda_utils.op import exp, exp2
+from fla.ops.triton.triton_core.utils import exp, exp2
 from fla.ops.triton.triton_core.utils import autotune_cache_kwargs, check_shared_mem, input_guard
 
 BK_LIST = [32, 64] if check_shared_mem() else [16, 32]

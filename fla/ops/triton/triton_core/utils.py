@@ -608,21 +608,57 @@ def _cpu_device_warning():
 
 
 # ============================================================================
-# Op functions (exp, exp2, log, log2) — direct triton references
-# NOTE: KDA uses @triton.jit-wrapped versions with float32 cast in op.py.
-# Those remain in _kda_utils/op.py and are NOT merged here (Phase 3).
+# Op functions (exp, exp2, log, log2)
+# On NPU: use @triton.jit wrappers with explicit .to(tl.float32) cast for
+# precision correctness. On GPU: use direct references to tl/tldevice functions.
 # ============================================================================
 
-if os.environ.get('FLA_USE_FAST_OPS', '0') == '1':
-    exp = tldevice.fast_expf
-    exp2 = tldevice.exp2
-    log = tldevice.fast_logf
-    log2 = tldevice.fast_log2f
+if _IS_NPU:
+    # NPU: wrap with @triton.jit and force float32 for precision
+    @triton.jit
+    def exp(x):
+        return tl.exp(x.to(tl.float32))
+
+    @triton.jit
+    def exp2(x):
+        return tl.math.exp2(x.to(tl.float32))
+
+    @triton.jit
+    def log(x):
+        return tl.log(x.to(tl.float32))
+
+    @triton.jit
+    def log2(x):
+        return tl.log2(x.to(tl.float32))
 else:
-    exp = tl.exp
-    exp2 = tl.math.exp2
-    log = tl.log
-    log2 = tl.log2
+    # GPU: direct references (optionally fast approximations)
+    if os.environ.get('FLA_USE_FAST_OPS', '0') == '1':
+        exp = tldevice.fast_expf
+        exp2 = tldevice.exp2
+        log = tldevice.fast_logf
+        log2 = tldevice.fast_log2f
+    else:
+        exp = tl.exp
+        exp2 = tl.math.exp2
+        log = tl.log
+        log2 = tl.log2
+
+
+# ============================================================================
+# tl.gather — fallback for platforms that don't support it
+# ============================================================================
+
+if not IS_GATHER_SUPPORTED:
+    @triton.jit
+    def gather(src, index, axis, _builder=None):
+        """
+        Gather operation that works when tl.gather is not supported.
+        This is a fallback implementation that returns None.
+        Just to make triton compiler happy.
+        """
+        return None
+else:
+    gather = tl.gather
 
 
 # ============================================================================

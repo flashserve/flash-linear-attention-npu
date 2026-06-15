@@ -1,22 +1,26 @@
-from typing import Optional
-
 import torch
 import torch.nn as nn
 import triton
 import triton.language as tl
 
-from .utils import input_guard, is_amd
+from .utils import IS_NPU, autotune_cache_kwargs, input_guard, is_amd
 
 BT_LIST = [8, 16, 32, 64, 128]
-NUM_WARPS_AUTOTUNE = [1, 2, 4, 8, 16] if is_amd else [1, 2, 4, 8, 16, 32]
+NUM_WARPS_AUTOTUNE = [1, 2, 4, 8, 16, 32]
 
+
+# ============================================================================
+# kernel1: simple 1D per-row normalization (D > 512 path)
+# Identical for both GPU and NPU.
+# ============================================================================
 
 @triton.autotune(
     configs=[
         triton.Config({}, num_warps=num_warps)
         for num_warps in NUM_WARPS_AUTOTUNE
     ],
-    key=['D']
+    key=["D"],
+    **autotune_cache_kwargs,
 )
 @triton.jit
 def l2norm_fwd_kernel1(
@@ -46,7 +50,8 @@ def l2norm_fwd_kernel1(
         triton.Config({}, num_warps=num_warps)
         for num_warps in NUM_WARPS_AUTOTUNE
     ],
-    key=['D']
+    key=["D"],
+    **autotune_cache_kwargs,
 )
 @triton.jit
 def l2norm_bwd_kernel1(
@@ -72,13 +77,19 @@ def l2norm_bwd_kernel1(
     tl.store(dx + cols, b_dx, mask=mask)
 
 
+# ============================================================================
+# GPU kernel: cooperative loop pattern with bt_size
+# Each program processes multiple blocks via a for loop.
+# ============================================================================
+
 @triton.autotune(
     configs=[
         triton.Config({'BT': BT}, num_warps=num_warps)
         for num_warps in [1, 2, 4, 8, 16]
         for BT in BT_LIST
     ],
-    key=['D', 'NB']
+    key=['D', 'NB'],
+    **autotune_cache_kwargs,
 )
 @triton.jit
 def l2norm_fwd_kernel(
@@ -115,7 +126,8 @@ def l2norm_fwd_kernel(
         for num_warps in [1, 2, 4, 8, 16]
         for BT in BT_LIST
     ],
-    key=['D', 'NB']
+    key=['D', 'NB'],
+    **autotune_cache_kwargs,
 )
 @triton.jit
 def l2norm_bwd_kernel(
@@ -161,10 +173,89 @@ def l2norm_bwd_kernel(
             tl.store(p_dx, b_dx.to(p_dx.dtype.element_ty), boundary_check=(0, 1))
 
 
+# ============================================================================
+# NPU kernel: 1:1 block-program mapping, no cooperative loops.
+# T is not constexpr (do_not_specialize) to reduce recompilation.
+# bt_size parameter removed; each program handles exactly one block.
+# ============================================================================
+
+@triton.autotune(
+    configs=[
+        triton.Config({"BT": BT}, num_warps=num_warps)
+        for num_warps in [1, 2, 4, 8, 16]
+        for BT in BT_LIST
+    ],
+    key=["D", "NB"],
+    **autotune_cache_kwargs,
+)
+@triton.jit(do_not_specialize=["T"])
+def l2norm_fwd_kernel_npu(
+    x,
+    y,
+    rstd,
+    eps,
+    T,
+    D: tl.constexpr,
+    BD: tl.constexpr,
+    NB: tl.constexpr,
+    BT: tl.constexpr,
+):
+    i_t = tl.program_id(0)
+    p_x = tl.make_block_ptr(x, (T, D), (D, 1), (i_t * BT, 0), (BT, BD), (1, 0))
+    p_y = tl.make_block_ptr(y, (T, D), (D, 1), (i_t * BT, 0), (BT, BD), (1, 0))
+    p_rstd = tl.make_block_ptr(rstd, (T,), (1,), (i_t * BT,), (BT,), (0,))
+
+    b_x = tl.load(p_x, boundary_check=(0, 1)).to(tl.float32)
+    b_rstd = 1 / tl.sqrt(tl.sum(b_x * b_x, 1) + eps)
+    b_y = b_x * b_rstd[:, None]
+
+    tl.store(p_y, b_y.to(p_y.dtype.element_ty), boundary_check=(0, 1))
+    tl.store(p_rstd, b_rstd.to(p_rstd.dtype.element_ty), boundary_check=(0,))
+
+
+@triton.autotune(
+    configs=[
+        triton.Config({"BT": BT}, num_warps=num_warps)
+        for num_warps in [1, 2, 4, 8, 16]
+        for BT in BT_LIST
+    ],
+    key=["D", "NB"],
+    **autotune_cache_kwargs,
+)
+@triton.jit(do_not_specialize=["T"])
+def l2norm_bwd_kernel_npu(
+    y,
+    rstd,
+    dy,
+    dx,
+    eps,
+    T,
+    D: tl.constexpr,
+    BD: tl.constexpr,
+    NB: tl.constexpr,
+    BT: tl.constexpr,
+):
+    i_t = tl.program_id(0)
+    p_y = tl.make_block_ptr(y, (T, D), (D, 1), (i_t * BT, 0), (BT, BD), (1, 0))
+    p_rstd = tl.make_block_ptr(rstd, (T,), (1,), (i_t * BT,), (BT,), (0,))
+    p_dy = tl.make_block_ptr(dy, (T, D), (D, 1), (i_t * BT, 0), (BT, BD), (1, 0))
+    p_dx = tl.make_block_ptr(dx, (T, D), (D, 1), (i_t * BT, 0), (BT, BD), (1, 0))
+
+    b_y = tl.load(p_y, boundary_check=(0, 1)).to(tl.float32)
+    b_rstd = tl.load(p_rstd, boundary_check=(0,)).to(tl.float32)
+    b_dy = tl.load(p_dy, boundary_check=(0, 1)).to(tl.float32)
+    b_dx = b_dy * b_rstd[:, None] - tl.sum(b_dy * b_y, 1)[:, None] * b_y * b_rstd[:, None]
+    tl.store(p_dx, b_dx.to(p_dx.dtype.element_ty), boundary_check=(0, 1))
+
+
+# ============================================================================
+# Host functions — dispatch between GPU and NPU kernels
+# ============================================================================
+
 def l2norm_fwd(
     x: torch.Tensor,
     eps: float = 1e-6,
-    output_dtype: Optional[torch.dtype] = None
+    output_dtype: torch.dtype | None = None,
 ):
     x_shape_og = x.shape
     x = x.view(-1, x.shape[-1])
@@ -183,24 +274,44 @@ def l2norm_fwd(
 
     rstd = torch.empty((T,), dtype=torch.float32, device=x.device)
     if D <= 512:
-        NB = triton.cdiv(T, 2048)
-        bt_size = 32
+        # NOTE: NPU uses a larger NB divisor (2048*32) to reduce recompilation.
+        # GPU uses the original 2048 divisor.
+        NB = triton.cdiv(T, 2048 * 32) if IS_NPU else triton.cdiv(T, 2048)
 
-        def grid(meta):
-            new_bt = meta['BT'] * bt_size
-            return (triton.cdiv(T, new_bt), )
+        if IS_NPU:
+            # NPU: 1:1 block-program mapping, no bt_size loop, T not constexpr
+            def grid(meta):
+                return (triton.cdiv(T, meta["BT"]),)
 
-        l2norm_fwd_kernel[grid](
-            x=x,
-            y=y,
-            rstd=rstd,
-            eps=eps,
-            T=T,
-            D=D,
-            BD=BD,
-            NB=NB,
-            bt_size=bt_size,
-        )
+            l2norm_fwd_kernel_npu[grid](
+                x=x,
+                y=y,
+                rstd=rstd,
+                eps=eps,
+                T=T,
+                D=D,
+                BD=BD,
+                NB=NB,
+            )
+        else:
+            # GPU: cooperative loop pattern with bt_size
+            bt_size = 32
+
+            def grid(meta):
+                new_bt = meta['BT'] * bt_size
+                return (triton.cdiv(T, new_bt), )
+
+            l2norm_fwd_kernel[grid](
+                x=x,
+                y=y,
+                rstd=rstd,
+                eps=eps,
+                T=T,
+                D=D,
+                BD=BD,
+                NB=NB,
+                bt_size=bt_size,
+            )
     else:
         l2norm_fwd_kernel1[(T,)](
             x=x,
@@ -217,7 +328,7 @@ def l2norm_bwd(
     y: torch.Tensor,
     rstd: torch.Tensor,
     dy: torch.Tensor,
-    eps: float = 1e-6
+    eps: float = 1e-6,
 ):
     y_shape_og = y.shape
     y = y.view(-1, dy.shape[-1])
@@ -233,20 +344,39 @@ def l2norm_bwd(
         raise RuntimeError("This layer norm doesn't support feature dim >= 64KB.")
 
     if D <= 512:
-        NB = triton.cdiv(T, 2048)
-        bt_size = 40
-        l2norm_bwd_kernel[(bt_size,)](
-            y=y,
-            rstd=rstd,
-            dy=dy,
-            dx=dx,
-            eps=eps,
-            T=T,
-            D=D,
-            BD=BD,
-            NB=NB,
-            bt_size=bt_size,
-        )
+        NB = triton.cdiv(T, 2048 * 32) if IS_NPU else triton.cdiv(T, 2048)
+
+        if IS_NPU:
+            # NPU: dynamic grid, 1:1 block-program mapping
+            def grid(meta):
+                return (triton.cdiv(T, meta["BT"]),)
+
+            l2norm_bwd_kernel_npu[grid](
+                y=y,
+                rstd=rstd,
+                dy=dy,
+                dx=dx,
+                eps=eps,
+                T=T,
+                D=D,
+                BD=BD,
+                NB=NB,
+            )
+        else:
+            # GPU: fixed 40 programs with cooperative work distribution
+            bt_size = 40
+            l2norm_bwd_kernel[(bt_size,)](
+                y=y,
+                rstd=rstd,
+                dy=dy,
+                dx=dx,
+                eps=eps,
+                T=T,
+                D=D,
+                BD=BD,
+                NB=NB,
+                bt_size=bt_size,
+            )
     else:
         l2norm_bwd_kernel1[(T,)](
             y=y,
@@ -262,14 +392,13 @@ def l2norm_bwd(
 
 
 class L2NormFunction(torch.autograd.Function):
-
     @staticmethod
     @input_guard
     def forward(
         ctx,
         x,
         eps=1e-6,
-        output_dtype=None
+        output_dtype=None,
     ):
         y, rstd = l2norm_fwd(x, eps, output_dtype)
         ctx.eps = eps
@@ -288,7 +417,7 @@ class L2NormFunction(torch.autograd.Function):
 def l2norm(
     x: torch.Tensor,
     eps: float = 1e-6,
-    output_dtype: Optional[torch.dtype] = None
+    output_dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     return L2NormFunction.apply(x, eps, output_dtype)
 
@@ -297,11 +426,10 @@ l2_norm = l2norm
 
 
 class L2Norm(nn.Module):
-
     def __init__(
         self,
         eps: float = 1e-6,
-        output_dtype: Optional[torch.dtype] = None
+        output_dtype: torch.dtype | None = None,
     ):
         super().__init__()
         self.eps = eps

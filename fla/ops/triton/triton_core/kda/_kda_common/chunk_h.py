@@ -11,7 +11,7 @@ import triton
 import triton.language as tl
 
 from fla.ops.triton.triton_core.index import prepare_chunk_offsets
-from fla.ops.triton.triton_core.kda._kda_utils.op import exp
+from fla.ops.triton.triton_core.utils import exp
 from fla.ops.triton.triton_core.utils import autotune_cache_kwargs, check_shared_mem
 
 BKV_LIST = [32, 64] if check_shared_mem() else [16, 32]
