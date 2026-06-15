@@ -220,7 +220,7 @@ def compute_dA_cpu(
 
                 b_dA = torch.where(m_A[:chunk_len, :chunk_len], b_dA_7.to(torch.float32), 0.0)
 
-                dA[i_b, i_h, bos : eos, : chunk_len] = b_dA.to(A.dtype)
+                dA[i_b, i_h, bos : eos, : chunk_len] = b_dA.T.to(A.dtype)
 
     return dA
 
@@ -266,7 +266,8 @@ def run_test_case(case_idx, B, H, T, K, V, chunk_size, k_dtype, v_dtype, beta_dt
     A = create_tensor((B, H, T, BT), dtype=A_dtype)
     dw = create_tensor((B, H, T, K), dtype=dw_dtype)
     du = create_tensor((B, H, T, V), dtype=du_dtype)
-    g = create_tensor((B, H, T), dtype=g_dtype)
+    # g = create_tensor((B, H, T), dtype=g_dtype)
+    g = torch.arange(-1, -(B * H * T + 1), -1).reshape((B, H, T)).to(gtype)
 
     # lower_tri_matrix = bool_matrix_lower_tri_to_uint8(chunk_size)
 
@@ -314,7 +315,7 @@ def run_test_case(case_idx, B, H, T, K, V, chunk_size, k_dtype, v_dtype, beta_dt
     torch.save(dA_cpu, os.path.join(output_dir, f"test_dA_{case_idx}_cpu.pt"))
 
     try:
-        ct.isclose(dA_cpu, dA_npu, diff_thd=0.1)
+        ct.isclose(dA_npu.cpu(), dA_cpu, diff_thd=0.1)
         print(f"==== Case {case_idx}: PASSED")
         return True
     except Exception as e:
