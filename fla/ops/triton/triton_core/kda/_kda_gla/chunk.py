@@ -11,8 +11,8 @@ import triton
 import triton.language as tl
 
 from fla.ops.triton.triton_core.kda._kda_common.chunk_h import chunk_bwd_dh, chunk_fwd_h
-from fla.ops.triton.triton_core.kda._kda_utils.index import prepare_chunk_indices
-from fla.ops.triton.triton_core.kda._kda_utils.cumsum import chunk_local_cumsum
+from fla.ops.triton.triton_core.index import prepare_chunk_indices
+from fla.ops.triton.triton_core.cumsum import chunk_local_cumsum
 from fla.ops.triton.triton_core.kda._kda_utils.op import exp, exp2
 from fla.ops.triton.triton_core.kda._kda_utils.utils import autotune_cache_kwargs, check_shared_mem, input_guard
 
@@ -1081,7 +1081,7 @@ def chunk_gla_fwd(
     chunk_indices: torch.LongTensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if g_cumsum is None:
-        g_cumsum = chunk_local_cumsum(g, chunk_size, cu_seqlens=cu_seqlens)
+        g_cumsum = chunk_local_cumsum(g, chunk_size, cu_seqlens=cu_seqlens, use_per_head_kernel=True)
 
     h, ht = chunk_fwd_h(
         k=k,
@@ -1137,7 +1137,7 @@ def chunk_gla_bwd(
     chunk_indices: torch.LongTensor | None = None,
 ):
     if g_cumsum is None:
-        g_cumsum = chunk_local_cumsum(g, chunk_size, cu_seqlens=cu_seqlens)
+        g_cumsum = chunk_local_cumsum(g, chunk_size, cu_seqlens=cu_seqlens, use_per_head_kernel=True)
 
     if h is None:
         h, _ = chunk_fwd_h(

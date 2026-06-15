@@ -10,7 +10,7 @@ import torch
 import triton
 import triton.language as tl
 
-from fla.ops.triton.triton_core.kda._kda_utils.index import prepare_chunk_indices, prepare_chunk_offsets
+from fla.ops.triton.triton_core.index import prepare_chunk_indices, prepare_chunk_offsets
 from fla.ops.triton.triton_core.kda._kda_utils.op import exp, exp2
 from fla.ops.triton.triton_core.kda._kda_utils.utils import autotune_cache_kwargs
 

@@ -1,3 +1,4 @@
+import inspect
 import itertools
 import contextlib
 import os
@@ -10,7 +11,6 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from packaging import version
 
 import torch
-import torch.nn.functional as F
 import triton
 import triton.language as tl
 import triton.language.extra.libdevice as tldevice
@@ -19,6 +19,11 @@ import triton.runtime.driver as driver
 logger = logging.getLogger(__name__)
 
 FLA_CI_ENV = os.getenv("FLA_CI_ENV") == "1"
+FLA_CACHE_RESULTS = os.getenv('FLA_CACHE_RESULTS', '1') == '1'
+
+SUPPORTS_AUTOTUNE_CACHE = "cache_results" in inspect.signature(triton.autotune).parameters
+
+autotune_cache_kwargs = {"cache_results": FLA_CACHE_RESULTS} if SUPPORTS_AUTOTUNE_CACHE else {}
 
 
 def tensor_cache(
@@ -60,42 +65,9 @@ def tensor_cache(
     return wrapper
 
 
-@tensor_cache
-def prepare_lens(cu_seqlens: torch.LongTensor) -> torch.LongTensor:
-    return cu_seqlens[1:] - cu_seqlens[:-1]
-
-
-@tensor_cache
-def prepare_chunk_indices(
-    cu_seqlens: torch.LongTensor,
-    chunk_size: int
-) -> torch.LongTensor:
-    indices = torch.cat([torch.arange(n) for n in triton.cdiv(prepare_lens(cu_seqlens), chunk_size).tolist()])
-    return torch.stack([indices.eq(0).cumsum(0) - 1, indices], 1).to(cu_seqlens)
-
-
-@tensor_cache
-def prepare_chunk_indices_list( 
-    cu_seqlens: list[int],
-    chunk_size: int
- ) -> list[int]: 
-    indices = []
-    
-    for i in range(len(cu_seqlens) - 1):
-        start = cu_seqlens[i]
-        end = cu_seqlens[i+1]
-        length = end - start
-        
-        if length <= 0:
-            continue
-            
-        num_chunks = (length + chunk_size - 1) // chunk_size
-        
-        for chunk_id in range(num_chunks):
-            indices.append((i))
-            indices.append((chunk_id))
-            
-    return indices
+# NOTE: Index-related functions (prepare_lens, prepare_chunk_indices,
+# prepare_chunk_offsets, prepare_position_ids, prepare_sequence_ids, etc.)
+# have been moved to fla/ops/triton/triton_core/index.py
 
 
 def get_abs_err(x, y):
@@ -220,7 +192,7 @@ def input_guard(
                 break
         if tensor is None:
             for value in kwargs.values():
-                if isinstance(value, torch.Tensor):
+                if value is torch.Tensor:
                     tensor = value
                     break
 
@@ -237,14 +209,6 @@ def input_guard(
 
 def _cpu_device_warning():
     warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
-
-
-@tensor_cache
-def prepare_chunk_offsets(
-    cu_seqlens: torch.LongTensor,
-    chunk_size: int
-) -> torch.LongTensor:
-    return torch.cat([cu_seqlens.new_tensor([0]), triton.cdiv(prepare_lens(cu_seqlens), chunk_size)]).cumsum(-1)
 
 
 if os.environ.get('FLA_USE_FAST_OPS', '0') == '1':
@@ -292,14 +256,6 @@ def check_shared_mem(arch: str = "none", tensor_idx: int = 0) -> bool:
         return max_shared_memory >= Backend.get_shared_memory(arch)
     except Exception:
         return False
-
-
-@tensor_cache
-def prepare_chunk_offsets(
-    cu_seqlens: torch.LongTensor,
-    chunk_size: int
-) -> torch.LongTensor:
-    return torch.cat([cu_seqlens.new_tensor([0]), triton.cdiv(prepare_lens(cu_seqlens), chunk_size)]).cumsum(-1)
 
 
 def get_autotune_config(

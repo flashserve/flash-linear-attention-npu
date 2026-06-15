@@ -17,8 +17,8 @@ from fla.ops.triton.triton_core.kda._kda_cp.chunk_delta_h import (
 from fla.ops.triton.triton_core.kda._kda_gla.chunk import chunk_gla_fwd_o_gk
 from fla.ops.triton.triton_core.kda.chunk_intra import chunk_kda_fwd_intra
 from fla.ops.triton.triton_core.kda.gate import kda_gate_chunk_cumsum
-from fla.ops.triton.triton_core.kda._kda_utils.cumsum import chunk_local_cumsum
-from fla.ops.triton.triton_core.kda._kda_utils.constant import RCP_LN2
+from fla.ops.triton.triton_core.cumsum import chunk_local_cumsum
+from fla.ops.triton.triton_core.constant import RCP_LN2
 
 def chunk_kda_fwd(
     q: torch.Tensor,
@@ -63,7 +63,8 @@ def chunk_kda_fwd(
             scale=RCP_LN2,
             chunk_size=chunk_size,
             cu_seqlens=cu_seqlens,
-            chunk_indices=chunk_indices
+            chunk_indices=chunk_indices,
+            use_per_head_kernel=True,
         )
 
     # qg = None if disable_recompute is False

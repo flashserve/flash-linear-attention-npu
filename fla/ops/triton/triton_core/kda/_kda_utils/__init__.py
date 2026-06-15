@@ -8,7 +8,9 @@
 
 # fla/ops/kda/_kda_utils/__init__.py
 # KDA-isolated utility functions — unified export
-# All imports point to local copies within this package, NOT to the global fla.* tree.
+# Merged modules (constant, softplus, index) now live in triton_core/ directly.
+# cumsum (merged to triton_core — KDA callers use use_per_head_kernel=True)
+# Remaining modules (utils, op, l2norm) are still local copies.
 
 from .utils import (
     input_guard,
@@ -21,11 +23,11 @@ from .utils import (
     assert_close,
     tensor_cache,
 )
-from .index import prepare_chunk_indices, prepare_chunk_offsets
+from fla.ops.triton.triton_core.index import prepare_chunk_indices, prepare_chunk_offsets
 from .op import exp, exp2, log, log2, gather
-from .constant import RCP_LN2
-from .softplus import softplus
-from .cumsum import chunk_local_cumsum
+from fla.ops.triton.triton_core.constant import RCP_LN2
+from fla.ops.triton.triton_core.softplus import softplus
+from fla.ops.triton.triton_core.cumsum import chunk_local_cumsum
 from .l2norm import l2norm_fwd, l2norm_bwd
 
 __all__ = [
@@ -39,7 +41,7 @@ __all__ = [
     "IS_GATHER_SUPPORTED",
     "assert_close",
     "tensor_cache",
-    # index
+    # index (merged to triton_core)
     "prepare_chunk_indices",
     "prepare_chunk_offsets",
     # op
@@ -48,11 +50,11 @@ __all__ = [
     "log",
     "log2",
     "gather",
-    # constant
+    # constant (merged to triton_core)
     "RCP_LN2",
-    # softplus
+    # softplus (merged to triton_core)
     "softplus",
-    # cumsum
+    # cumsum (merged to triton_core — KDA callers use use_per_head_kernel=True)
     "chunk_local_cumsum",
     # l2norm
     "l2norm_fwd",

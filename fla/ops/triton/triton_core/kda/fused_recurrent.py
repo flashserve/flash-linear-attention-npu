@@ -11,7 +11,7 @@ import triton
 import triton.language as tl
 
 from fla.ops.triton.triton_core.kda._kda_utils.op import exp
-from fla.ops.triton.triton_core.kda._kda_utils.softplus import softplus
+from fla.ops.triton.triton_core.softplus import softplus
 from fla.ops.triton.triton_core.kda._kda_utils.utils import input_guard
 
 @triton.heuristics(

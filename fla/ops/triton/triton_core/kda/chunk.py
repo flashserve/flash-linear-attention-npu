@@ -12,7 +12,7 @@ from fla.ops.triton.triton_core.kda._kda_utils.l2norm import l2norm_bwd, l2norm_
 from fla.ops.triton.triton_core.kda._kda_cp import FLACPContext
 from fla.ops.triton.triton_core.kda.chunk_bwd import chunk_kda_bwd
 from fla.ops.triton.triton_core.kda.chunk_fwd import chunk_kda_fwd
-from fla.ops.triton.triton_core.kda._kda_utils.index import prepare_chunk_indices
+from fla.ops.triton.triton_core.index import prepare_chunk_indices
 from fla.ops.triton.triton_core.kda._kda_utils.utils import autocast_custom_bwd, autocast_custom_fwd, input_guard
 
 class ChunkKDAFunction(torch.autograd.Function):
