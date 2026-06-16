@@ -29,10 +29,10 @@ public:
                                  GM_ADDR out_gm, GM_ADDR workspace,
                                  const SolveTrilTilingData* tilingData)
     {
-        BT_           = static_cast<uint32_t>(tilingData->n);
-        totalTasks_   = static_cast<uint32_t>(tilingData->totalTasks);
-        H_            = static_cast<uint32_t>(tilingData->H);
-        NT_           = static_cast<uint32_t>(tilingData->NT);
+        BT_           = static_cast<uint32_t>(tilingData->chunkSize);
+        totalTasks_   = static_cast<uint32_t>(tilingData->chunkNumTotal);
+        H_            = static_cast<uint32_t>(tilingData->numHead);
+        NT_           = static_cast<uint32_t>(tilingData->chunkNumInSeq);
         rowStride_    = static_cast<uint32_t>(tilingData->rowStride);
         blockDim_     = static_cast<uint32_t>(tilingData->blockDim);
         taskPerCore_  = static_cast<uint32_t>(tilingData->taskPerCore);
@@ -112,6 +112,7 @@ private:
             DataCopyPad(dst[row * dim], xGlobal[base + row * rowStride_],
                 {1, static_cast<uint16_t>(rowBytes), 0, 0}, {false, 0, 0, 0});
         }
+        PipeBarrier<PIPE_ALL>();
     }
 
     // Store a dim×dim block to yGlobal with row stride rowStride_
@@ -123,6 +124,7 @@ private:
             DataCopyPad(yGlobal[base + row * rowStride_], src[row * dim],
                 {1, static_cast<uint16_t>(rowBytes), 0, 0});
         }
+        PipeBarrier<PIPE_ALL>();
     }
 
     // ========================================================================

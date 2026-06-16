@@ -37,7 +37,9 @@ constexpr uint32_t MBH3_WORK_BYTES = MBH3_WORK_TOTAL * sizeof(float);
 constexpr uint32_t UB_CAPACITY_BYTES = 192 * 1024;
 
 // ============================================================================
-// TilingKey: D_TYPE (FLOAT16 only) × MBH_LEVELS (0,1,2,3)
+// TilingKey: D_TYPE (FLOAT16) x MBH_LEVELS (0,1,2,3)
+// Note: BF16 kernel support requires ascend950 (bisheng for ascend910b
+//       does not support bf16 type cast in backend).
 // ============================================================================
 ASCENDC_TPL_ARGS_DECL(SolveTril,
     ASCENDC_TPL_DATATYPE_DECL(D_TYPE, C_DT_FLOAT16, ASCENDC_TPL_INPUT(0)),
