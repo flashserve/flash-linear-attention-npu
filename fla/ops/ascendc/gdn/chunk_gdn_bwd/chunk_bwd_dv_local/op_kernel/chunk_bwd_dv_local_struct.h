@@ -138,7 +138,10 @@ ASCENDC_TPL_SEL(
 
 struct ChunkBwdDvLocalTilingData {
     int64_t b;
-    int64_t h;
+    int64_t hQk;
+    int64_t hDo;
+    int64_t hRatio;
+    int64_t headBufNum;
     int64_t t;
     int64_t k;
     int64_t v;

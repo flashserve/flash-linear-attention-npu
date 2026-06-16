@@ -16,6 +16,7 @@
 #ifndef PREPARE_WY_REPR_BWD_FULL_VECTOR_H
 #define PREPARE_WY_REPR_BWD_FULL_VECTOR_H
 #include "catlass/arch/cross_core_sync.hpp"
+#include "kernel_utils/vector/regbase.hpp"
 constexpr uint32_t UB_ALIGN_SIZE = 32;
 
 using namespace AscendC;
@@ -62,10 +63,24 @@ public:
     __aicore__ inline void ProcessDvbA5();
     __aicore__ inline void ProcessKKTA5();
     __aicore__ inline void Init(const PrepareWyReprBwdFullTilingDataA5 &tiling, AscendC::TPipe *pipe_);
-    __simd_vf__ inline void ProcessKBetaComputerVF(__ubuf__ kType* kBetaOut,
+    __simd_vf__ inline void ProcessKBetaComputerVFMutiLineOneCol(__ubuf__ kType* kBetaOut,
+                                                   __ubuf__ kType* kIn, __ubuf__ betaType* betaIn,
+                                                   uint16_t mSize, uint16_t nSize, uint16_t lastLoopCnt);
+    __simd_vf__ inline void ProcessKBetaComputerVFOneLineOneCol(__ubuf__ kType* kBetaOut,
                                                    __ubuf__ kType* kIn, __ubuf__ betaType* betaIn,
                                                    uint16_t mSize, uint16_t nSize);
-    __simd_vf__ inline void ProcessDkbComputerVF(__ubuf__ kType* dkOut, __ubuf__ betaType* dBetaOut,
+    __simd_vf__ inline void ProcessKBetaComputerVFTwoCol(__ubuf__ kType* kBetaOut,
+                                                   __ubuf__ kType* kIn, __ubuf__ betaType* betaIn,
+                                                   uint16_t mSize, uint16_t nSize);
+    __simd_vf__ inline void ProcessDkbComputerVFOneLineOneCol(__ubuf__ kType* dkOut, __ubuf__ betaType* dBetaOut,
+                                                 __ubuf__ kType* kIn, __ubuf__ betaType* betaIn,
+                                                 __ubuf__ kType* dkIn, __ubuf__ kType* dkbIn,
+                                                 uint16_t mSize, uint16_t nSize);
+    __simd_vf__ inline void ProcessDkbComputerVFMutiLineOneCol(__ubuf__ kType* dkOut, __ubuf__ betaType* dBetaOut,
+                                                 __ubuf__ kType* kIn, __ubuf__ betaType* betaIn,
+                                                 __ubuf__ kType* dkIn, __ubuf__ kType* dkbIn,
+                                                 uint16_t mSize, uint16_t nSize);
+    __simd_vf__ inline void ProcessDkbComputerVFTwoCol(__ubuf__ kType* dkOut, __ubuf__ betaType* dBetaOut,
                                                  __ubuf__ kType* kIn, __ubuf__ betaType* betaIn,
                                                  __ubuf__ kType* dkIn, __ubuf__ kType* dkbIn,
                                                  uint16_t mSize, uint16_t nSize);
@@ -74,7 +89,15 @@ public:
                                                   __ubuf__ betaType* betaIn, __ubuf__ betaType* gIn,
                                                   __ubuf__ kType* dkIn, __ubuf__ betaType* dBetaIn,
                                                   __ubuf__ kType* dkbgIn, uint16_t mSize, uint16_t nSize);
-    __simd_vf__ inline void ProcessDvbComputerVF(__ubuf__ kType* dvOut, __ubuf__ betaType* dBetaOut,
+    __simd_vf__ inline void ProcessDvbComputerVFOneLineOneCol(__ubuf__ kType* dvOut, __ubuf__ betaType* dBetaOut,
+                                                 __ubuf__ kType* dvbIn, __ubuf__ kType* vIn,
+                                                 __ubuf__ betaType* betaIn, __ubuf__ betaType* dbetaIn,
+                                                 uint16_t mSize, uint16_t nSize);
+    __simd_vf__ inline void ProcessDvbComputerVFMutiLineOneCol(__ubuf__ kType* dvOut, __ubuf__ betaType* dBetaOut,
+                                                 __ubuf__ kType* dvbIn, __ubuf__ kType* vIn,
+                                                 __ubuf__ betaType* betaIn, __ubuf__ betaType* dbetaIn,
+                                                 uint16_t mSize, uint16_t nSize);
+    __simd_vf__ inline void ProcessDvbComputerVFTwoCol(__ubuf__ kType* dvOut, __ubuf__ betaType* dBetaOut,
                                                  __ubuf__ kType* dvbIn, __ubuf__ kType* vIn,
                                                  __ubuf__ betaType* betaIn, __ubuf__ betaType* dbetaIn,
                                                  uint16_t mSize, uint16_t nSize);
@@ -527,167 +550,271 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 }
 
 template <typename kType, typename betaType>
-__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDvbComputerVF(
+__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDvbComputerVFMutiLineOneCol(
     __ubuf__ kType* dvOut, __ubuf__ betaType* dBetaOut, __ubuf__ kType* dvbIn, __ubuf__ kType* vIn,
     __ubuf__ betaType* betaIn, __ubuf__ betaType* dbetaIn, uint16_t mSize, uint16_t nSize)
 {
     uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
-    uint32_t nKUbAligned = Align(nSize, static_cast<uint16_t>(UB_ALIGN_SIZE / sizeof(kType)));
-    uint16_t nLoopCnt = (nSize + eleKNumPerVf - 1) / eleKNumPerVf;
-    RegTensor<betaType> betaInReg;
-    RegTensor<float> betaBrcbFP32Reg, dbetaFP32Reg;
-    RegTensor<kType> vInReg;
-    RegTensor<kType> dbetaInReg;
-    RegTensor<kType> dvbInReg;
-    RegTensor<float> vFP32ZeroReg, vFP32OneReg, dbetaAddFP32Reg, dvbFP32ZeroReg, dvbFP32OneReg, reduceSumReg;
-    RegTensor<kType> dvOutReg;
-    RegTensor<betaType> dbetaOutReg;
+    uint32_t oneEleNum = min(eleKNumPerVf, nSize);
+    uint16_t mLoopCnt = mSize / PRELOAD_NUM - 1;
+    uint16_t lastLoopCnt = mSize % PRELOAD_NUM;
+    RegTensor<betaType> betaInReg, betaInReg1;
+    RegTensor<kType> vInReg, vInReg1;
+    RegTensor<kType> dvbInReg, dvbInReg1;
+    RegTensor<float> betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg1;
+    RegTensor<float> vFP32ZeroReg, vFP32OneReg, vFP32ZeroReg1, vFP32OneReg1;
+    RegTensor<float> dvbFP32ZeroReg, dvbFP32OneReg, dvbFP32ZeroReg1, dvbFP32OneReg1;
+    RegTensor<betaType> dbetaInReg;
+    RegTensor<float> dbetaFP32Reg;
+    RegTensor<float> dBetaFP32Reg;
+    RegTensor<kType> dvOutReg, dvOutReg1;
 
     MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
     MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
 
-    UnalignRegForLoad uLoadBeta;
-    UnalignRegForLoad uLoadDbeta;
     UnalignRegForStore uStore;
 
-    LoadAlign(vInReg, vIn);
-    LoadAlign(dvbInReg, dvbIn);
-    uint32_t nextEleOffset = 0;
-    // 前mSize-1行
-    for (uint16_t mIdx = 0; mIdx < mSize - 1; mIdx++) {
-        // cast from bf16/fp16 to FP32
-        if constexpr (!std::is_same<betaType, float>()) {
-            LoadUnAlignPre(uLoadBeta, betaIn + mIdx);
-            LoadUnAlign(betaInReg, uLoadBeta, betaIn + mIdx);
-            Cast<float, betaType, ctHalf2Fp32Zero>(betaBrcbFP32Reg, betaInReg, maskFull16);
-            LoadUnAlignPre(uLoadDbeta, dbetaIn + mIdx);
-            LoadUnAlign(dbetaInReg, uLoadDbeta, dbetaIn + mIdx);
-            Cast<float, betaType, ctHalf2Fp32Zero>(dbetaFP32Reg, dbetaInReg, maskFull16);
-        } else {
-            LoadUnAlignPre(uLoadBeta, betaIn + mIdx);
-            LoadUnAlign(betaBrcbFP32Reg, uLoadBeta, betaIn + mIdx);
-            LoadUnAlignPre(uLoadDbeta, dbetaIn + mIdx);
-            LoadUnAlign(dbetaFP32Reg, uLoadDbeta, dbetaIn + mIdx);
-        }
-        Duplicate(betaBrcbFP32Reg, betaBrcbFP32Reg, maskFull32);
-        Duplicate(reduceSumReg, static_cast<float>(0), maskFull32);
-        uint32_t mOffset = mIdx * nKUbAligned;
-        for (uint16_t vfBlockIdx = 0; vfBlockIdx < nLoopCnt; vfBlockIdx++) {
-            // uint32_t eleOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            // LoadAlign(vInReg, vIn + eleOffset);
-            // LoadAlign(dvbInReg, dvbIn + eleOffset);
-            Cast<float, kType, ctHalf2Fp32Zero>(vFP32ZeroReg, vInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(vFP32OneReg, vInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32Zero>(dvbFP32ZeroReg, dvbInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dvbFP32OneReg, dvbInReg, maskFull16);
-            uint32_t thisEleNum = min(eleKNumPerVf, nSize - vfBlockIdx * eleKNumPerVf);
-            nextEleOffset += thisEleNum;
-            LoadAlign(vInReg, vIn + nextEleOffset);
-            LoadAlign(dvbInReg, dvbIn + nextEleOffset);
-            Mul(vFP32ZeroReg, vFP32ZeroReg, dvbFP32ZeroReg, maskFull32);
-            Mul(vFP32OneReg, vFP32OneReg, dvbFP32OneReg, maskFull32);
-            Mul(dvbFP32ZeroReg, dvbFP32ZeroReg, betaBrcbFP32Reg, maskFull32);
-            Mul(dvbFP32OneReg, dvbFP32OneReg, betaBrcbFP32Reg, maskFull32);
+    LoadIn<betaType, true>(betaInReg, betaIn);
+    LoadIn<betaType, true>(betaInReg1, betaIn + 1);
+    LoadIn<kType, false>(vInReg, vIn);
+    LoadIn<kType, false>(vInReg1, vIn + oneEleNum);
+    LoadIn<kType, false>(dvbInReg, dvbIn);
+    LoadIn<kType, false>(dvbInReg1, dvbIn + oneEleNum);
 
-            Cast<kType, float, ctFp322HalfOne>(dvOutReg, dvbFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfZero>(dvOutReg, dvbFP32ZeroReg, maskFull32);
-            uint32_t dstUbOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            StoreAlign((__ubuf__ kType*&)dvOut + dstUbOffset, dvOutReg, maskFull16);
+    for (uint16_t mIdx = 0; mIdx < mLoopCnt; mIdx++) {
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg1, betaInReg1, maskFull16, maskFull32);
+        LoadIn<betaType, true>(betaInReg, betaIn + (mIdx + 1) * PRELOAD_NUM);
+        LoadIn<betaType, true>(betaInReg1, betaIn + (mIdx + 1) * PRELOAD_NUM + 1);
+        CastHalf2Float<kType>(vFP32ZeroReg, vFP32OneReg, vInReg, maskFull16);
+        CastHalf2Float<kType>(vFP32ZeroReg1, vFP32OneReg1, vInReg1, maskFull16);
+        LoadIn<kType, false>(vInReg, vIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(vInReg1, vIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+        CastHalf2Float<kType>(dvbFP32ZeroReg, dvbFP32OneReg, dvbInReg, maskFull16);
+        CastHalf2Float<kType>(dvbFP32ZeroReg1, dvbFP32OneReg1, dvbInReg1, maskFull16);
+        LoadIn<kType, false>(dvbInReg, dvbIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(dvbInReg1, dvbIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+
+        MulFloatTwoReg(vFP32ZeroReg, vFP32OneReg, vFP32ZeroReg, vFP32OneReg, dvbFP32ZeroReg, dvbFP32OneReg, maskFull32);
+        MulFloatTwoReg(dvbFP32ZeroReg, dvbFP32OneReg, dvbFP32ZeroReg, dvbFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+
+        MulFloatTwoReg(vFP32ZeroReg1, vFP32OneReg1, vFP32ZeroReg1, vFP32OneReg1, dvbFP32ZeroReg1, dvbFP32OneReg1, maskFull32);
+        MulFloatTwoReg(dvbFP32ZeroReg1, dvbFP32OneReg1, dvbFP32ZeroReg1, dvbFP32OneReg1, betaBrcbFP32ZeroReg1, betaBrcbFP32ZeroReg1, maskFull32);
+
+        CastFloat2Half<kType>(dvOutReg, dvbFP32ZeroReg, dvbFP32OneReg, maskFull32);
+        CastFloat2Half<kType>(dvOutReg1, dvbFP32ZeroReg1, dvbFP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)dvOut + oneEleNum * (mIdx * PRELOAD_NUM), dvOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)dvOut + oneEleNum * (mIdx * PRELOAD_NUM + 1), dvOutReg1, maskFull16);
+
+        // Row 0: dBeta = reduceSum(v * dvb) + dbeta
+        Add(vFP32ZeroReg, vFP32ZeroReg, vFP32OneReg, maskFull32);
+        ReduceSum(dBetaFP32Reg, vFP32ZeroReg, maskFull32);
+        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx * PRELOAD_NUM);
+        HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
+        Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
+
+        // Row 1
+        Add(vFP32ZeroReg1, vFP32ZeroReg1, vFP32OneReg1, maskFull32);
+        ReduceSum(dBetaFP32Reg, vFP32ZeroReg1, maskFull32);
+        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx * PRELOAD_NUM + 1);
+        HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
+        Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM + 1, dBetaFP32Reg, maskFull32, uStore, 1);
+    }
+    uint16_t mIdx = mLoopCnt;
+    {
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg1, betaInReg1, maskFull16, maskFull32);
+        CastHalf2Float<kType>(vFP32ZeroReg, vFP32OneReg, vInReg, maskFull16);
+        CastHalf2Float<kType>(vFP32ZeroReg1, vFP32OneReg1, vInReg1, maskFull16);
+        CastHalf2Float<kType>(dvbFP32ZeroReg, dvbFP32OneReg, dvbInReg, maskFull16);
+        CastHalf2Float<kType>(dvbFP32ZeroReg1, dvbFP32OneReg1, dvbInReg1, maskFull16);
+
+        MulFloatTwoReg(vFP32ZeroReg, vFP32OneReg, vFP32ZeroReg, vFP32OneReg, dvbFP32ZeroReg, dvbFP32OneReg, maskFull32);
+        MulFloatTwoReg(dvbFP32ZeroReg, dvbFP32OneReg, dvbFP32ZeroReg, dvbFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        MulFloatTwoReg(vFP32ZeroReg1, vFP32OneReg1, vFP32ZeroReg1, vFP32OneReg1, dvbFP32ZeroReg1, dvbFP32OneReg1, maskFull32);
+        MulFloatTwoReg(dvbFP32ZeroReg1, dvbFP32OneReg1, dvbFP32ZeroReg1, dvbFP32OneReg1, betaBrcbFP32ZeroReg1, betaBrcbFP32ZeroReg1, maskFull32);
+
+        CastFloat2Half<kType>(dvOutReg, dvbFP32ZeroReg, dvbFP32OneReg, maskFull32);
+        CastFloat2Half<kType>(dvOutReg1, dvbFP32ZeroReg1, dvbFP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)dvOut + oneEleNum * (mIdx * PRELOAD_NUM), dvOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)dvOut + oneEleNum * (mIdx * PRELOAD_NUM + 1), dvOutReg1, maskFull16);
+
+        Add(vFP32ZeroReg, vFP32ZeroReg, vFP32OneReg, maskFull32);
+        ReduceSum(dBetaFP32Reg, vFP32ZeroReg, maskFull32);
+        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx * PRELOAD_NUM);
+        HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
+        Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
+
+        Add(vFP32ZeroReg1, vFP32ZeroReg1, vFP32OneReg1, maskFull32);
+        ReduceSum(dBetaFP32Reg, vFP32ZeroReg1, maskFull32);
+        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx * PRELOAD_NUM + 1);
+        HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
+        Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM + 1, dBetaFP32Reg, maskFull32, uStore, 1);
+
+        mIdx += 1;
+        for (uint16_t i = 0; i < lastLoopCnt; i++) {
+            LoadIn<betaType, true>(betaInReg, betaIn + mIdx * PRELOAD_NUM);
+            LoadIn<kType, false>(vInReg, vIn + oneEleNum * (mIdx * PRELOAD_NUM));
+            LoadIn<kType, false>(dvbInReg, dvbIn + oneEleNum * (mIdx * PRELOAD_NUM));
+            HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+            CastHalf2Float<kType>(vFP32ZeroReg, vFP32OneReg, vInReg, maskFull16);
+            CastHalf2Float<kType>(dvbFP32ZeroReg, dvbFP32OneReg, dvbInReg, maskFull16);
+            MulFloatTwoReg(vFP32ZeroReg, vFP32OneReg, vFP32ZeroReg, vFP32OneReg, dvbFP32ZeroReg, dvbFP32OneReg, maskFull32);
+            MulFloatTwoReg(dvbFP32ZeroReg, dvbFP32OneReg, dvbFP32ZeroReg, dvbFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+            CastFloat2Half<kType>(dvOutReg, dvbFP32ZeroReg, dvbFP32OneReg, maskFull32);
+            StoreAlign((__ubuf__ kType*&)dvOut + oneEleNum * (mIdx * PRELOAD_NUM), dvOutReg, maskFull16);
 
             Add(vFP32ZeroReg, vFP32ZeroReg, vFP32OneReg, maskFull32);
-            Add(reduceSumReg, reduceSumReg, vFP32ZeroReg, maskFull32);
-        }
-        ReduceSum(dbetaAddFP32Reg, reduceSumReg, maskFull32);
-        Add(dbetaAddFP32Reg, dbetaAddFP32Reg, dbetaFP32Reg, maskFull32);
-
-        auto actDbetaOut = dBetaOut + mIdx;
-        if constexpr (!std::is_same<betaType, float32_t>()) {
-            Cast<betaType, float, ctFp322HalfZero>(dbetaOutReg, dbetaAddFP32Reg, maskFull32);
-            StoreUnAlign(actDbetaOut, dbetaOutReg, uStore, 1);
-            StoreUnAlignPost(actDbetaOut, uStore, 0);
-        } else {
-            StoreUnAlign(actDbetaOut, dbetaAddFP32Reg, uStore, 1);
-            StoreUnAlignPost(actDbetaOut, uStore, 0);
+            ReduceSum(dBetaFP32Reg, vFP32ZeroReg, maskFull32);
+            LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx * PRELOAD_NUM);
+            HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
+            Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
+            StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
         }
     }
-    uint16_t mIdx = mSize - 1;
+}
+
+template <typename kType, typename betaType>
+__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDvbComputerVFOneLineOneCol(
+    __ubuf__ kType* dvOut, __ubuf__ betaType* dBetaOut, __ubuf__ kType* dvbIn, __ubuf__ kType* vIn,
+    __ubuf__ betaType* betaIn, __ubuf__ betaType* dbetaIn, uint16_t mSize, uint16_t nSize)
+{
+    RegTensor<betaType> betaInReg;
+    RegTensor<kType> vInReg;
+    RegTensor<kType> dvbInReg;
+    RegTensor<float> betaBrcbFP32ZeroReg;
+    RegTensor<float> vFP32ZeroReg, vFP32OneReg;
+    RegTensor<float> dvbFP32ZeroReg, dvbFP32OneReg;
+    RegTensor<betaType> dbetaInReg;
+    RegTensor<float> dbetaFP32Reg;
+    RegTensor<float> dBetaFP32Reg;
+    RegTensor<kType> dvOutReg;
+
+    MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
+    MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
+
+    UnalignRegForStore uStore;
+
+    LoadIn<betaType, true>(betaInReg, betaIn);
+    LoadIn<kType, false>(vInReg, vIn);
+    LoadIn<kType, false>(dvbInReg, dvbIn);
+    HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+    CastHalf2Float<kType>(vFP32ZeroReg, vFP32OneReg, vInReg, maskFull16);
+    CastHalf2Float<kType>(dvbFP32ZeroReg, dvbFP32OneReg, dvbInReg, maskFull16);
+    MulFloatTwoReg(vFP32ZeroReg, vFP32OneReg, vFP32ZeroReg, vFP32OneReg, dvbFP32ZeroReg, dvbFP32OneReg, maskFull32);
+    MulFloatTwoReg(dvbFP32ZeroReg, dvbFP32OneReg, dvbFP32ZeroReg, dvbFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+    CastFloat2Half<kType>(dvOutReg, dvbFP32ZeroReg, dvbFP32OneReg, maskFull32);
+    StoreAlign((__ubuf__ kType*&)dvOut, dvOutReg, maskFull16);
+
+    Add(vFP32ZeroReg, vFP32ZeroReg, vFP32OneReg, maskFull32);
+    ReduceSum(dBetaFP32Reg, vFP32ZeroReg, maskFull32);
+    LoadIn<betaType, true>(dbetaInReg, dbetaIn);
+    HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
+    Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
+    StoreUnAlignOut<betaType>(dBetaOut, dBetaFP32Reg, maskFull32, uStore, 1);
+}
+
+template <typename kType, typename betaType>
+__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDvbComputerVFTwoCol(
+    __ubuf__ kType* dvOut, __ubuf__ betaType* dBetaOut, __ubuf__ kType* dvbIn, __ubuf__ kType* vIn,
+    __ubuf__ betaType* betaIn, __ubuf__ betaType* dbetaIn, uint16_t mSize, uint16_t nSize)
+{
+    uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
+    uint32_t oneEleNum = min(eleKNumPerVf, nSize);
+    uint16_t mLoopCnt = mSize - 1;
+    RegTensor<betaType> betaInReg;
+    RegTensor<kType> vInReg, vInReg1;
+    RegTensor<kType> dvbInReg, dvbInReg1;
+    RegTensor<float> betaBrcbFP32ZeroReg;
+    RegTensor<float> vFP32ZeroReg, vFP32OneReg, vFP32ZeroReg1, vFP32OneReg1;
+    RegTensor<float> dvbFP32ZeroReg, dvbFP32OneReg, dvbFP32ZeroReg1, dvbFP32OneReg1;
+    RegTensor<betaType> dbetaInReg;
+    RegTensor<float> dbetaFP32Reg;
+    RegTensor<float> dBetaFP32Reg;
+    RegTensor<kType> dvOutReg, dvOutReg1;
+
+    MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
+    MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
+
+    UnalignRegForStore uStore;
+
+    LoadIn<betaType, true>(betaInReg, betaIn);
+    LoadIn<kType, false>(vInReg, vIn);
+    LoadIn<kType, false>(vInReg1, vIn + oneEleNum);
+    LoadIn<kType, false>(dvbInReg, dvbIn);
+    LoadIn<kType, false>(dvbInReg1, dvbIn + oneEleNum);
+
+    for (uint16_t mIdx = 0; mIdx < mLoopCnt; mIdx++) {
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        LoadIn<betaType, true>(betaInReg, betaIn + (mIdx + 1) * PRELOAD_NUM);
+        CastHalf2Float<kType>(vFP32ZeroReg, vFP32OneReg, vInReg, maskFull16);
+        CastHalf2Float<kType>(vFP32ZeroReg1, vFP32OneReg1, vInReg1, maskFull16);
+        LoadIn<kType, false>(vInReg, vIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(vInReg1, vIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+        CastHalf2Float<kType>(dvbFP32ZeroReg, dvbFP32OneReg, dvbInReg, maskFull16);
+        CastHalf2Float<kType>(dvbFP32ZeroReg1, dvbFP32OneReg1, dvbInReg1, maskFull16);
+        LoadIn<kType, false>(dvbInReg, dvbIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(dvbInReg1, dvbIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+
+        MulFloatTwoReg(vFP32ZeroReg, vFP32OneReg, vFP32ZeroReg, vFP32OneReg, dvbFP32ZeroReg, dvbFP32OneReg, maskFull32);
+        MulFloatTwoReg(dvbFP32ZeroReg, dvbFP32OneReg, dvbFP32ZeroReg, dvbFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        MulFloatTwoReg(vFP32ZeroReg1, vFP32OneReg1, vFP32ZeroReg1, vFP32OneReg1, dvbFP32ZeroReg1, dvbFP32OneReg1, maskFull32);
+        MulFloatTwoReg(dvbFP32ZeroReg1, dvbFP32OneReg1, dvbFP32ZeroReg1, dvbFP32OneReg1, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+
+        CastFloat2Half<kType>(dvOutReg, dvbFP32ZeroReg, dvbFP32OneReg, maskFull32);
+        CastFloat2Half<kType>(dvOutReg1, dvbFP32ZeroReg1, dvbFP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)dvOut + oneEleNum * (mIdx * PRELOAD_NUM), dvOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)dvOut + oneEleNum * (mIdx * PRELOAD_NUM + 1), dvOutReg1, maskFull16);
+
+        Add(vFP32ZeroReg, vFP32ZeroReg, vFP32OneReg, maskFull32);
+        ReduceSum(dBetaFP32Reg, vFP32ZeroReg, maskFull32);
+        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx * PRELOAD_NUM);
+        HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
+        Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
+
+        Add(vFP32ZeroReg1, vFP32ZeroReg1, vFP32OneReg1, maskFull32);
+        ReduceSum(dBetaFP32Reg, vFP32ZeroReg1, maskFull32);
+        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx * PRELOAD_NUM + 1);
+        HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
+        Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM + 1, dBetaFP32Reg, maskFull32, uStore, 1);
+    }
+    uint16_t mIdx = mLoopCnt;
     {
-        // cast from bf16/fp16 to FP32
-        if constexpr (!std::is_same<betaType, float>()) {
-            LoadUnAlignPre(uLoadBeta, betaIn + mIdx);
-            LoadUnAlign(betaInReg, uLoadBeta, betaIn + mIdx);
-            Cast<float, betaType, ctHalf2Fp32Zero>(betaBrcbFP32Reg, betaInReg, maskFull16);
-            LoadUnAlignPre(uLoadDbeta, dbetaIn + mIdx);
-            LoadUnAlign(dbetaInReg, uLoadDbeta, dbetaIn + mIdx);
-            Cast<float, betaType, ctHalf2Fp32Zero>(dbetaFP32Reg, dbetaInReg, maskFull16);
-        } else {
-            LoadUnAlignPre(uLoadBeta, betaIn + mIdx);
-            LoadUnAlign(betaBrcbFP32Reg, uLoadBeta, betaIn + mIdx);
-            LoadUnAlignPre(uLoadDbeta, dbetaIn + mIdx);
-            LoadUnAlign(dbetaFP32Reg, uLoadDbeta, dbetaIn + mIdx);
-        }
-        Duplicate(betaBrcbFP32Reg, betaBrcbFP32Reg, maskFull32);
-        Duplicate(reduceSumReg, static_cast<float>(0), maskFull32);
-        uint32_t mOffset = mIdx * nKUbAligned;
-        for (uint16_t vfBlockIdx = 0; vfBlockIdx < nLoopCnt - 1; vfBlockIdx++) {
-            // uint32_t eleOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            // LoadAlign(vInReg, vIn + eleOffset);
-            // LoadAlign(dvbInReg, dvbIn + eleOffset);
-            Cast<float, kType, ctHalf2Fp32Zero>(vFP32ZeroReg, vInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(vFP32OneReg, vInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32Zero>(dvbFP32ZeroReg, dvbInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dvbFP32OneReg, dvbInReg, maskFull16);
-            uint32_t thisEleNum = min(eleKNumPerVf, nSize - vfBlockIdx * eleKNumPerVf);
-            nextEleOffset += thisEleNum;
-            LoadAlign(vInReg, vIn + nextEleOffset);
-            LoadAlign(dvbInReg, dvbIn + nextEleOffset);
-            Mul(vFP32ZeroReg, vFP32ZeroReg, dvbFP32ZeroReg, maskFull32);
-            Mul(vFP32OneReg, vFP32OneReg, dvbFP32OneReg, maskFull32);
-            Mul(dvbFP32ZeroReg, dvbFP32ZeroReg, betaBrcbFP32Reg, maskFull32);
-            Mul(dvbFP32OneReg, dvbFP32OneReg, betaBrcbFP32Reg, maskFull32);
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        CastHalf2Float<kType>(vFP32ZeroReg, vFP32OneReg, vInReg, maskFull16);
+        CastHalf2Float<kType>(vFP32ZeroReg1, vFP32OneReg1, vInReg1, maskFull16);
+        CastHalf2Float<kType>(dvbFP32ZeroReg, dvbFP32OneReg, dvbInReg, maskFull16);
+        CastHalf2Float<kType>(dvbFP32ZeroReg1, dvbFP32OneReg1, dvbInReg1, maskFull16);
 
-            Cast<kType, float, ctFp322HalfOne>(dvOutReg, dvbFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfZero>(dvOutReg, dvbFP32ZeroReg, maskFull32);
-            uint32_t dstUbOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            StoreAlign((__ubuf__ kType*&)dvOut + dstUbOffset, dvOutReg, maskFull16);
+        MulFloatTwoReg(vFP32ZeroReg, vFP32OneReg, vFP32ZeroReg, vFP32OneReg, dvbFP32ZeroReg, dvbFP32OneReg, maskFull32);
+        MulFloatTwoReg(dvbFP32ZeroReg, dvbFP32OneReg, dvbFP32ZeroReg, dvbFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        MulFloatTwoReg(vFP32ZeroReg1, vFP32OneReg1, vFP32ZeroReg1, vFP32OneReg1, dvbFP32ZeroReg1, dvbFP32OneReg1, maskFull32);
+        MulFloatTwoReg(dvbFP32ZeroReg1, dvbFP32OneReg1, dvbFP32ZeroReg1, dvbFP32OneReg1, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
 
-            Add(vFP32ZeroReg, vFP32ZeroReg, vFP32OneReg, maskFull32);
-            Add(reduceSumReg, reduceSumReg, vFP32ZeroReg, maskFull32);
-        }
-        uint16_t vfBlockIdx = nLoopCnt - 1;
-        {
-            // uint32_t eleOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            // LoadAlign(vInReg, vIn + eleOffset);
-            // LoadAlign(dvbInReg, dvbIn + eleOffset);
-            Cast<float, kType, ctHalf2Fp32Zero>(vFP32ZeroReg, vInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(vFP32OneReg, vInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32Zero>(dvbFP32ZeroReg, dvbInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dvbFP32OneReg, dvbInReg, maskFull16);
-            Mul(vFP32ZeroReg, vFP32ZeroReg, dvbFP32ZeroReg, maskFull32);
-            Mul(vFP32OneReg, vFP32OneReg, dvbFP32OneReg, maskFull32);
-            Mul(dvbFP32ZeroReg, dvbFP32ZeroReg, betaBrcbFP32Reg, maskFull32);
-            Mul(dvbFP32OneReg, dvbFP32OneReg, betaBrcbFP32Reg, maskFull32);
+        CastFloat2Half<kType>(dvOutReg, dvbFP32ZeroReg, dvbFP32OneReg, maskFull32);
+        CastFloat2Half<kType>(dvOutReg1, dvbFP32ZeroReg1, dvbFP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)dvOut + oneEleNum * (mIdx * PRELOAD_NUM), dvOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)dvOut + oneEleNum * (mIdx * PRELOAD_NUM + 1), dvOutReg1, maskFull16);
 
-            Cast<kType, float, ctFp322HalfOne>(dvOutReg, dvbFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfZero>(dvOutReg, dvbFP32ZeroReg, maskFull32);
-            uint32_t dstUbOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            StoreAlign((__ubuf__ kType*&)dvOut + dstUbOffset, dvOutReg, maskFull16);
+        Add(vFP32ZeroReg, vFP32ZeroReg, vFP32OneReg, maskFull32);
+        ReduceSum(dBetaFP32Reg, vFP32ZeroReg, maskFull32);
+        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx * PRELOAD_NUM);
+        HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
+        Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
 
-            Add(vFP32ZeroReg, vFP32ZeroReg, vFP32OneReg, maskFull32);
-            Add(reduceSumReg, reduceSumReg, vFP32ZeroReg, maskFull32);
-        }
-        ReduceSum(dbetaAddFP32Reg, reduceSumReg, maskFull32);
-        Add(dbetaAddFP32Reg, dbetaAddFP32Reg, dbetaFP32Reg, maskFull32);
-
-        auto actDbetaOut = dBetaOut + mIdx;
-        if constexpr (!std::is_same<betaType, float32_t>()) {
-            Cast<betaType, float, ctFp322HalfZero>(dbetaOutReg, dbetaAddFP32Reg, maskFull32);
-            StoreUnAlign(actDbetaOut, dbetaOutReg, uStore, 1);
-            StoreUnAlignPost(actDbetaOut, uStore, 0);
-        } else {
-            StoreUnAlign(actDbetaOut, dbetaAddFP32Reg, uStore, 1);
-            StoreUnAlignPost(actDbetaOut, uStore, 0);
-        }
+        Add(vFP32ZeroReg1, vFP32ZeroReg1, vFP32OneReg1, maskFull32);
+        ReduceSum(dBetaFP32Reg, vFP32ZeroReg1, maskFull32);
+        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx * PRELOAD_NUM + 1);
+        HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
+        Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM + 1, dBetaFP32Reg, maskFull32, uStore, 1);
     }
 }
 
@@ -803,10 +930,28 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventUbInMTE2VList[ubListId]);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(eventUbOutMTE3VList[ubListId]);
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(SYNC_AIC_AIV_FLAG_BEGIN + cvListId);
-                    ProcessDvbComputerVF((__ubuf__ kType*)dvOutAddr, (__ubuf__ betaType*)dBetaOutAddr,
-                                         (__ubuf__ kType*)dvbInAddr, (__ubuf__ kType*)vInAddr,
-                                         (__ubuf__ betaType*)betaInAddr, (__ubuf__ betaType*)dbetaInAddr,
-                                         curRowNum, V);
+                    uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
+                    if (V <= eleKNumPerVf) {
+                        if (curRowNum == 1) {
+                            ProcessDvbComputerVFOneLineOneCol(
+                                    (__ubuf__ kType*)dvOutAddr, (__ubuf__ betaType*)dBetaOutAddr,
+                                    (__ubuf__ kType*)dvbInAddr, (__ubuf__ kType*)vInAddr,
+                                    (__ubuf__ betaType*)betaInAddr, (__ubuf__ betaType*)dbetaInAddr,
+                                    curRowNum, V);
+                        } else {
+                            ProcessDvbComputerVFMutiLineOneCol(
+                                    (__ubuf__ kType*)dvOutAddr, (__ubuf__ betaType*)dBetaOutAddr,
+                                    (__ubuf__ kType*)dvbInAddr, (__ubuf__ kType*)vInAddr,
+                                    (__ubuf__ betaType*)betaInAddr, (__ubuf__ betaType*)dbetaInAddr,
+                                    curRowNum, V);
+                        }
+                    } else {
+                        ProcessDvbComputerVFTwoCol(
+                                    (__ubuf__ kType*)dvOutAddr, (__ubuf__ betaType*)dBetaOutAddr,
+                                    (__ubuf__ kType*)dvbInAddr, (__ubuf__ kType*)vInAddr,
+                                    (__ubuf__ betaType*)betaInAddr, (__ubuf__ betaType*)dbetaInAddr,
+                                    curRowNum, V);
+                    }
                     AscendC::CrossCoreSetFlag<0x4, PIPE_V>(SYNC_AIV_AIC_FLAG_BEGIN + cvListId);
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventUbOutVMTE3List[ubListId]);
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventUbInVMTE2List[ubListId]);
@@ -844,8 +989,8 @@ __simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proc
     uint16_t mSize, uint16_t nSize)
 {
     uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
-    uint32_t nKUbAligned = Align(nSize, static_cast<uint16_t>(UB_ALIGN_SIZE / sizeof(kType)));
     uint16_t nLoopCnt = (nSize + eleKNumPerVf - 1) / eleKNumPerVf;
+    uint16_t mLoopCnt = mSize - 1;
     RegTensor<kType> kInReg;
     RegTensor<betaType> betaInReg;
     RegTensor<betaType> gInReg;
@@ -853,231 +998,120 @@ __simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proc
     RegTensor<betaType> dbetaInReg;
     RegTensor<kType> dkbgInReg;
     RegTensor<float> betaBrcbFP32ZeroReg, dkFP32ZeroReg, dkFP32OneReg, dgFP32ZeroReg;
-    RegTensor<float> kFP32ZeroReg, kFP32OneReg, dBetaAddZeroReg, dBetaAddOneReg, dkbgFP32ZeroReg, dkbgFP32OneReg;
-    RegTensor<float> gBrcbFP32ZeroReg, gBrcbFP32OneReg, dbetaFP32ZeroReg, dbetaFP32OneReg;
+    RegTensor<float> kFP32ZeroReg, kFP32OneReg, dBetaAddZeroReg, dkbgFP32ZeroReg, dkbgFP32OneReg;
+    RegTensor<float> gBrcbFP32ZeroReg, dbetaFP32ZeroReg, dbetaFP32OneReg;
     RegTensor<float> kReduceSumReg, dkReduceSumReg;
     RegTensor<kType> dkOutReg;
-    RegTensor<betaType> dBetaOutReg;
-    RegTensor<betaType> dgOutReg;
 
     MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
     MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
 
-    UnalignRegForLoad uLoadBeta;
-    UnalignRegForLoad uLoadG;
-    UnalignRegForLoad uLoadDBeta;
     UnalignRegForStore uStoreDBeta;
     UnalignRegForStore uStoreDg;
 
-    if constexpr (!std::is_same<betaType, float>()) {
-        LoadAlign(dbetaInReg, dBetaIn);
-        Cast<float, betaType, ctHalf2Fp32Zero>(dbetaFP32ZeroReg, dbetaInReg, maskFull16);
-        Cast<float, betaType, ctHalf2Fp32One>(dbetaFP32OneReg, dbetaInReg, maskFull16);
-    } else {
-        LoadAlign<betaType, LoadDist::DIST_DINTLV_B32>(dbetaFP32ZeroReg, dbetaFP32OneReg, dBetaIn);
-    }
-    LoadAlign(kInReg, kIn);
-    LoadAlign(dkbgInReg, dkbgIn);
-    LoadAlign(dkInReg, dkIn);
-    uint32_t nextEleOffset = 0;
+    LoadIn<betaType, true>(betaInReg, betaIn);
+    LoadIn<betaType, true>(gInReg, gIn);
+    LoadIn<betaType, true>(dbetaInReg, dBetaIn);
+    LoadIn<kType>(kInReg, kIn);
+    LoadIn<kType>(dkbgInReg, dkbgIn);
+    LoadIn<kType>(dkInReg, dkIn);
     // 前mSize - 1行
-    for (uint16_t mIdx = 0; mIdx < mSize - 1; mIdx++) {
-        // cast from bf16/fp16 to FP32
-        if constexpr (!std::is_same<betaType, float>()) {
-            LoadUnAlignPre(uLoadBeta, betaIn + mIdx);
-            LoadUnAlign(betaInReg, uLoadBeta, betaIn + mIdx);
-            Cast<float, betaType, ctHalf2Fp32Zero>(betaBrcbFP32ZeroReg, betaInReg, maskFull16);
-            LoadUnAlignPre(uLoadG, gIn + mIdx);
-            LoadUnAlign(gInReg, uLoadG, gIn + mIdx);
-            Cast<float, betaType, ctHalf2Fp32Zero>(gBrcbFP32ZeroReg, gInReg, maskFull16);
-            LoadUnAlignPre(uLoadDBeta, dBetaIn + mIdx);
-            LoadUnAlign(dbetaInReg, uLoadDBeta, dBetaIn + mIdx);
-            Cast<float, betaType, ctHalf2Fp32Zero>(dbetaFP32ZeroReg, dbetaInReg, maskFull16);
-        } else {
-            LoadUnAlignPre(uLoadBeta, betaIn + mIdx);
-            LoadUnAlign(betaBrcbFP32ZeroReg, uLoadBeta, betaIn + mIdx);
-            LoadUnAlignPre(uLoadG, gIn + mIdx);
-            LoadUnAlign(gBrcbFP32ZeroReg, uLoadG, gIn + mIdx);
-            LoadUnAlignPre(uLoadDBeta, dBetaIn + mIdx);
-            LoadUnAlign(dbetaFP32ZeroReg, uLoadDBeta, dBetaIn + mIdx);
-        }
-        MaskReg maskgExpReg;
-        uint32_t expNum = 1;
-        maskgExpReg = UpdateMask<betaType>(expNum);
-        Exp(gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskgExpReg);
-        Duplicate(betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-        Duplicate(gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
+    for (uint16_t mIdx = 0; mIdx < mLoopCnt; mIdx++) {
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(gBrcbFP32ZeroReg, gInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(dbetaFP32ZeroReg, dbetaInReg, maskFull16, maskFull32);
+        LoadIn<betaType, true>(betaInReg, betaIn + (mIdx + 1));
+        LoadIn<betaType, true>(gInReg, gIn + (mIdx + 1));
+        LoadIn<betaType, true>(dbetaInReg, dBetaIn + (mIdx + 1));
+
+        Exp(gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
         Duplicate(kReduceSumReg, static_cast<float>(0), maskFull32);
         Duplicate(dkReduceSumReg, static_cast<float>(0), maskFull32);
-        uint32_t mOffset = mIdx * nKUbAligned;
         for (uint16_t vfBlockIdx = 0; vfBlockIdx < nLoopCnt; vfBlockIdx++) {
-            uint32_t eleOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            Cast<float, kType, ctHalf2Fp32Zero>(kFP32ZeroReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(kFP32OneReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32Zero>(dkbgFP32ZeroReg, dkbgInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dkbgFP32OneReg, dkbgInReg, maskFull16);
+            CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+            CastHalf2Float<kType>(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgInReg, maskFull16);
             uint32_t thisEleNum = min(eleKNumPerVf, nSize - vfBlockIdx * eleKNumPerVf);
-            nextEleOffset += thisEleNum;
-            LoadAlign(kInReg, kIn + nextEleOffset);
-            LoadAlign(dkbgInReg, dkbgIn + nextEleOffset);
-            
-            Mul(dkbgFP32ZeroReg, dkbgFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
-            Mul(dkbgFP32OneReg, dkbgFP32OneReg, gBrcbFP32ZeroReg, maskFull32);
-            Mul(kFP32ZeroReg, kFP32ZeroReg, dkbgFP32ZeroReg, maskFull32);
-            Mul(kFP32OneReg, kFP32OneReg, dkbgFP32OneReg, maskFull32);
-            Mul(dkFP32ZeroReg, kFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-            Mul(dkFP32OneReg, kFP32OneReg, betaBrcbFP32ZeroReg, maskFull32);
+            LoadIn<kType>(kInReg, kIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+            LoadIn<kType>(dkbgInReg, dkbgIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+
+            MulFloatTwoReg(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
+            MulFloatTwoReg(kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg, kFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, maskFull32);
+            MulFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, kFP32ZeroReg, kFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
             Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
             Add(kReduceSumReg, kReduceSumReg, kFP32ZeroReg, maskFull32);
             Add(dkFP32ZeroReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
             Add(dkReduceSumReg, dkReduceSumReg, dkFP32ZeroReg, maskFull32);
-            Mul(dkbgFP32ZeroReg, dkbgFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-            Mul(dkbgFP32OneReg, dkbgFP32OneReg, betaBrcbFP32ZeroReg, maskFull32);
+            MulFloatTwoReg(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
 
-            Cast<float, kType, ctHalf2Fp32Zero>(dkFP32ZeroReg, dkInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dkFP32OneReg, dkInReg, maskFull16);
-            LoadAlign(dkInReg, dkIn + nextEleOffset);
-            Add(dkFP32ZeroReg, dkFP32ZeroReg, dkbgFP32ZeroReg, maskFull32);
-            Add(dkFP32OneReg, dkFP32OneReg, dkbgFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfOne>(dkOutReg, dkFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfZero>(dkOutReg, dkFP32ZeroReg, maskFull32);
-            uint32_t dstUbOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            StoreAlign((__ubuf__ kType*&)dkOut + dstUbOffset, dkOutReg, maskFull16);
+            CastHalf2Float<kType>(dkFP32ZeroReg, dkFP32OneReg, dkInReg, maskFull16);
+            LoadIn<kType>(dkInReg, dkIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+            AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, maskFull32);
+            CastFloat2Half<kType>(dkOutReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+            StoreAlign((__ubuf__ kType*&)dkOut + mIdx * nSize + vfBlockIdx * eleKNumPerVf, dkOutReg, maskFull16);
         }
         ReduceSum(dBetaAddZeroReg, kReduceSumReg, maskFull32);
         ReduceSum(dgFP32ZeroReg, dkReduceSumReg, maskFull32);
         Add(dBetaAddZeroReg, dBetaAddZeroReg, dbetaFP32ZeroReg, maskFull32);
-        auto actDbetaOut = dBetaOut + mIdx;
-        auto actDgOut = dgOut + mIdx;
-        if constexpr (!std::is_same<betaType, float32_t>()) {
-            Cast<betaType, float, ctFp322HalfZero>(dBetaOutReg, dBetaAddZeroReg, maskFull32);
-            StoreUnAlign(actDbetaOut, dBetaOutReg, uStoreDBeta, 1);
-            StoreUnAlignPost(actDbetaOut, uStoreDBeta, 0);
-            Cast<betaType, float, ctFp322HalfZero>(dgOutReg, dgFP32ZeroReg, maskFull32);
-            StoreUnAlign(actDgOut, dgOutReg, uStoreDg, 1);
-            StoreUnAlignPost(actDgOut, uStoreDg, 0);
-        } else {
-            StoreUnAlign(actDbetaOut, dBetaAddZeroReg, uStoreDBeta, 1);
-            StoreUnAlignPost(actDbetaOut, uStoreDBeta, 0);
-            StoreUnAlign(actDgOut, dgFP32ZeroReg, uStoreDg, 1);
-            StoreUnAlignPost(actDgOut, uStoreDg, 0);
-        }
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx, dBetaAddZeroReg, maskFull32, uStoreDBeta, 1);
+        StoreUnAlignOut<betaType>(dgOut + mIdx, dgFP32ZeroReg, maskFull32, uStoreDg, 1);
     }
     // 最后一行
-    uint16_t mIdx =  mSize - 1;
+    uint16_t mIdx = mLoopCnt;
     {
-        // cast from bf16/fp16 to FP32
-        if constexpr (!std::is_same<betaType, float>()) {
-            LoadUnAlignPre(uLoadBeta, betaIn + mIdx);
-            LoadUnAlign(betaInReg, uLoadBeta, betaIn + mIdx);
-            Cast<float, betaType, ctHalf2Fp32Zero>(betaBrcbFP32ZeroReg, betaInReg, maskFull16);
-            LoadUnAlignPre(uLoadG, gIn + mIdx);
-            LoadUnAlign(gInReg, uLoadG, gIn + mIdx);
-            Cast<float, betaType, ctHalf2Fp32Zero>(gBrcbFP32ZeroReg, gInReg, maskFull16);
-            LoadUnAlignPre(uLoadDBeta, dBetaIn + mIdx);
-            LoadUnAlign(dbetaInReg, uLoadDBeta, dBetaIn + mIdx);
-            Cast<float, betaType, ctHalf2Fp32Zero>(dbetaFP32ZeroReg, dbetaInReg, maskFull16);
-        } else {
-            LoadUnAlignPre(uLoadBeta, betaIn + mIdx);
-            LoadUnAlign(betaBrcbFP32ZeroReg, uLoadBeta, betaIn + mIdx);
-            LoadUnAlignPre(uLoadG, gIn + mIdx);
-            LoadUnAlign(gBrcbFP32ZeroReg, uLoadG, gIn + mIdx);
-            LoadUnAlignPre(uLoadDBeta, dBetaIn + mIdx);
-            LoadUnAlign(dbetaFP32ZeroReg, uLoadDBeta, dBetaIn + mIdx);
-        }
-        MaskReg maskgExpReg;
-        uint32_t expNum = 1;
-        maskgExpReg = UpdateMask<betaType>(expNum);
-        Exp(gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskgExpReg);
-        Duplicate(betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-        Duplicate(gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(gBrcbFP32ZeroReg, gInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(dbetaFP32ZeroReg, dbetaInReg, maskFull16, maskFull32);
+
+        Exp(gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
         Duplicate(kReduceSumReg, static_cast<float>(0), maskFull32);
         Duplicate(dkReduceSumReg, static_cast<float>(0), maskFull32);
-        uint32_t mOffset = mIdx * nKUbAligned;
         // 最后一行的前nLoopCnt - 1
         for (uint16_t vfBlockIdx = 0; vfBlockIdx < nLoopCnt - 1; vfBlockIdx++) {
-            uint32_t eleOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            Cast<float, kType, ctHalf2Fp32Zero>(kFP32ZeroReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(kFP32OneReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32Zero>(dkbgFP32ZeroReg, dkbgInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dkbgFP32OneReg, dkbgInReg, maskFull16);
-            uint32_t thisEleNum = min(eleKNumPerVf, nSize - vfBlockIdx * eleKNumPerVf);
-            nextEleOffset += thisEleNum;
-            LoadAlign(kInReg, kIn + nextEleOffset);
-            LoadAlign(dkbgInReg, dkbgIn + nextEleOffset);
-            
-            Mul(dkbgFP32ZeroReg, dkbgFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
-            Mul(dkbgFP32OneReg, dkbgFP32OneReg, gBrcbFP32ZeroReg, maskFull32);
-            Mul(kFP32ZeroReg, kFP32ZeroReg, dkbgFP32ZeroReg, maskFull32);
-            Mul(kFP32OneReg, kFP32OneReg, dkbgFP32OneReg, maskFull32);
-            Mul(dkFP32ZeroReg, kFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-            Mul(dkFP32OneReg, kFP32OneReg, betaBrcbFP32ZeroReg, maskFull32);
+            CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+            CastHalf2Float<kType>(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgInReg, maskFull16);
+            LoadIn<kType>(kInReg, kIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+            LoadIn<kType>(dkbgInReg, dkbgIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+
+            MulFloatTwoReg(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
+            MulFloatTwoReg(kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg, kFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, maskFull32);
+            MulFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, kFP32ZeroReg, kFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
             Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
             Add(kReduceSumReg, kReduceSumReg, kFP32ZeroReg, maskFull32);
             Add(dkFP32ZeroReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
             Add(dkReduceSumReg, dkReduceSumReg, dkFP32ZeroReg, maskFull32);
-            Mul(dkbgFP32ZeroReg, dkbgFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-            Mul(dkbgFP32OneReg, dkbgFP32OneReg, betaBrcbFP32ZeroReg, maskFull32);
+            MulFloatTwoReg(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
 
-            Cast<float, kType, ctHalf2Fp32Zero>(dkFP32ZeroReg, dkInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dkFP32OneReg, dkInReg, maskFull16);
-            LoadAlign(dkInReg, dkIn + nextEleOffset);
-            Add(dkFP32ZeroReg, dkFP32ZeroReg, dkbgFP32ZeroReg, maskFull32);
-            Add(dkFP32OneReg, dkFP32OneReg, dkbgFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfOne>(dkOutReg, dkFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfZero>(dkOutReg, dkFP32ZeroReg, maskFull32);
-            uint32_t dstUbOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            StoreAlign((__ubuf__ kType*&)dkOut + dstUbOffset, dkOutReg, maskFull16);
+            CastHalf2Float<kType>(dkFP32ZeroReg, dkFP32OneReg, dkInReg, maskFull16);
+            LoadIn<kType>(dkInReg, dkIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+            AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, maskFull32);
+            CastFloat2Half<kType>(dkOutReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+            StoreAlign((__ubuf__ kType*&)dkOut + mIdx * nSize + vfBlockIdx * eleKNumPerVf, dkOutReg, maskFull16);
         }
         // 最后一行最后一个loop
         uint16_t vfBlockIdx = nLoopCnt - 1;
         {
-            uint32_t eleOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            Cast<float, kType, ctHalf2Fp32Zero>(kFP32ZeroReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(kFP32OneReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32Zero>(dkbgFP32ZeroReg, dkbgInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dkbgFP32OneReg, dkbgInReg, maskFull16);
-            
-            Mul(dkbgFP32ZeroReg, dkbgFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
-            Mul(dkbgFP32OneReg, dkbgFP32OneReg, gBrcbFP32ZeroReg, maskFull32);
-            Mul(kFP32ZeroReg, kFP32ZeroReg, dkbgFP32ZeroReg, maskFull32);
-            Mul(kFP32OneReg, kFP32OneReg, dkbgFP32OneReg, maskFull32);
-            Mul(dkFP32ZeroReg, kFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-            Mul(dkFP32OneReg, kFP32OneReg, betaBrcbFP32ZeroReg, maskFull32);
+            CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+            CastHalf2Float<kType>(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgInReg, maskFull16);
+
+            MulFloatTwoReg(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
+            MulFloatTwoReg(kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg, kFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, maskFull32);
+            MulFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, kFP32ZeroReg, kFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
             Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
             Add(kReduceSumReg, kReduceSumReg, kFP32ZeroReg, maskFull32);
             Add(dkFP32ZeroReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
             Add(dkReduceSumReg, dkReduceSumReg, dkFP32ZeroReg, maskFull32);
-            Mul(dkbgFP32ZeroReg, dkbgFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-            Mul(dkbgFP32OneReg, dkbgFP32OneReg, betaBrcbFP32ZeroReg, maskFull32);
+            MulFloatTwoReg(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
 
-            Cast<float, kType, ctHalf2Fp32Zero>(dkFP32ZeroReg, dkInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dkFP32OneReg, dkInReg, maskFull16);
-            Add(dkFP32ZeroReg, dkFP32ZeroReg, dkbgFP32ZeroReg, maskFull32);
-            Add(dkFP32OneReg, dkFP32OneReg, dkbgFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfOne>(dkOutReg, dkFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfZero>(dkOutReg, dkFP32ZeroReg, maskFull32);
-            uint32_t dstUbOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            StoreAlign((__ubuf__ kType*&)dkOut + dstUbOffset, dkOutReg, maskFull16);
+            CastHalf2Float<kType>(dkFP32ZeroReg, dkFP32OneReg, dkInReg, maskFull16);
+            AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, maskFull32);
+            CastFloat2Half<kType>(dkOutReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+            StoreAlign((__ubuf__ kType*&)dkOut + mIdx * nSize + vfBlockIdx * eleKNumPerVf, dkOutReg, maskFull16);
         }
         ReduceSum(dBetaAddZeroReg, kReduceSumReg, maskFull32);
         ReduceSum(dgFP32ZeroReg, dkReduceSumReg, maskFull32);
         Add(dBetaAddZeroReg, dBetaAddZeroReg, dbetaFP32ZeroReg, maskFull32);
-        auto actDbetaOut = dBetaOut + mIdx;
-        auto actDgOut = dgOut + mIdx;
-        if constexpr (!std::is_same<betaType, float32_t>()) {
-            Cast<betaType, float, ctFp322HalfZero>(dBetaOutReg, dBetaAddZeroReg, maskFull32);
-            StoreUnAlign(actDbetaOut, dBetaOutReg, uStoreDBeta, 1);
-            StoreUnAlignPost(actDbetaOut, uStoreDBeta, 0);
-            Cast<betaType, float, ctFp322HalfZero>(dgOutReg, dgFP32ZeroReg, maskFull32);
-            StoreUnAlign(actDgOut, dgOutReg, uStoreDg, 1);
-            StoreUnAlignPost(actDgOut, uStoreDg, 0);
-        } else {
-            StoreUnAlign(actDbetaOut, dBetaAddZeroReg, uStoreDBeta, 1);
-            StoreUnAlignPost(actDbetaOut, uStoreDBeta, 0);
-            StoreUnAlign(actDgOut, dgFP32ZeroReg, uStoreDg, 1);
-            StoreUnAlignPost(actDgOut, uStoreDg, 0);
-        }
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx, dBetaAddZeroReg, maskFull32, uStoreDBeta, 1);
+        StoreUnAlignOut<betaType>(dgOut + mIdx, dgFP32ZeroReg, maskFull32, uStoreDg, 1);
     }
 }
 
@@ -1257,161 +1291,276 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 }
 
 template <typename kType, typename betaType>
-__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkbComputerVF(
+__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkbComputerVFMutiLineOneCol(
     __ubuf__ kType* dkOut, __ubuf__ betaType* dBetaOut, __ubuf__ kType* kIn, __ubuf__ betaType* betaIn,
     __ubuf__ kType* dkIn, __ubuf__ kType* dkbIn, uint16_t mSize, uint16_t nSize)
 {
     uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
-    uint32_t nKUbAligned = Align(nSize, static_cast<uint16_t>(UB_ALIGN_SIZE / sizeof(kType)));
-    uint16_t nLoopCnt = (nSize + eleKNumPerVf - 1) / eleKNumPerVf;
-    RegTensor<betaType> betaInReg;
-    RegTensor<float> betaBrcbFP32ZeroReg, betaBrcbFP32OneReg, dBetaFP32Reg;
-    RegTensor<kType> kInReg;
-    RegTensor<kType> dkInReg;
-    RegTensor<kType> dkbInReg;
-    RegTensor<float> kFP32ZeroReg, kFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, reduceSumReg;
-    RegTensor<kType> dkOutReg;
-    RegTensor<betaType> dBetaOutZeroReg, dBetaOutOneReg;
+    uint32_t oneEleNum = min(eleKNumPerVf, nSize);
+    uint16_t mLoopCnt = mSize / PRELOAD_NUM - 1;
+    uint16_t lastLoopCnt = mSize % PRELOAD_NUM;
+    RegTensor<betaType> betaInReg, betaInReg1;
+    RegTensor<kType> kInReg, kInReg1;
+    RegTensor<kType> dkInReg, dkInReg1;
+    RegTensor<kType> dkbInReg, dkbInReg1;
+    RegTensor<float> betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg1;
+    RegTensor<float> kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg1, kFP32OneReg1;
+    RegTensor<float> dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg1, dkFP32OneReg1;
+    RegTensor<float> dkbFP32ZeroReg, dkbFP32OneReg, dkbFP32ZeroReg1, dkbFP32OneReg1;
+    RegTensor<kType> dkOutReg, dkOutReg1;
+    RegTensor<float> dBetaFP32Reg;
+    RegTensor<betaType> dBetaOutZeroReg;
 
     MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
     MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
 
-    UnalignRegForLoad uLoad;
     UnalignRegForStore uStore;
 
-    LoadAlign(kInReg, kIn);
-    LoadAlign(dkbInReg, dkbIn);
-    LoadAlign(dkInReg, dkIn);
-    uint32_t nextEleOffset = 0;
-    // 前mSize-1行
-    for (uint16_t mIdx = 0; mIdx < mSize - 1; mIdx++) {
-        // cast from bf16/fp16 to FP32
-        if constexpr (!std::is_same<betaType, float>()) {
-            LoadUnAlignPre(uLoad, betaIn + mIdx);
-            LoadUnAlign(betaInReg, uLoad, betaIn + mIdx);
-            Cast<float, betaType, ctHalf2Fp32Zero>(betaBrcbFP32ZeroReg, betaInReg, maskFull16);
-        } else {
-            LoadUnAlignPre(uLoad, betaIn + mIdx);
-            LoadUnAlign(betaBrcbFP32ZeroReg, uLoad, betaIn + mIdx);
-        }
-        Duplicate(betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-        Duplicate(reduceSumReg, static_cast<float>(0), maskFull32);
-        uint32_t mOffset = mIdx * nKUbAligned;
-        for (uint16_t vfBlockIdx = 0; vfBlockIdx < nLoopCnt; vfBlockIdx++) {
-            Cast<float, kType, ctHalf2Fp32Zero>(kFP32ZeroReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(kFP32OneReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32Zero>(dkbFP32ZeroReg, dkbInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dkbFP32OneReg, dkbInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32Zero>(dkFP32ZeroReg, dkInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dkFP32OneReg, dkInReg, maskFull16);
-            uint32_t thisEleNum = min(eleKNumPerVf, nSize - vfBlockIdx * eleKNumPerVf);
-            nextEleOffset += thisEleNum;
-            LoadAlign(kInReg, kIn + nextEleOffset);
-            LoadAlign(dkbInReg, dkbIn + nextEleOffset);
-            LoadAlign(dkInReg, dkIn + nextEleOffset);
-            Mul(kFP32ZeroReg, kFP32ZeroReg, dkbFP32ZeroReg, maskFull32);
-            Mul(kFP32OneReg, kFP32OneReg, dkbFP32OneReg, maskFull32);
-            Mul(dkbFP32ZeroReg, dkbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-            Mul(dkbFP32OneReg, dkbFP32OneReg, betaBrcbFP32ZeroReg, maskFull32);
-            Add(dkFP32ZeroReg, dkFP32ZeroReg, dkbFP32ZeroReg, maskFull32);
-            Add(dkFP32OneReg, dkFP32OneReg, dkbFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfOne>(dkOutReg, dkFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfZero>(dkOutReg, dkFP32ZeroReg, maskFull32);
-            uint32_t dstUbOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            StoreAlign((__ubuf__ kType*&)dkOut + dstUbOffset, dkOutReg, maskFull16);
+    LoadIn<betaType, true>(betaInReg, betaIn);
+    LoadIn<betaType, true>(betaInReg1, betaIn + 1);
+    LoadIn<kType, false>(kInReg, kIn);
+    LoadIn<kType, false>(kInReg1, kIn + oneEleNum);
+    LoadIn<kType, false>(dkInReg, dkIn);
+    LoadIn<kType, false>(dkInReg1, dkIn + oneEleNum);
+    LoadIn<kType, false>(dkbInReg, dkbIn);
+    LoadIn<kType, false>(dkbInReg1, dkbIn + oneEleNum);
+
+    for (uint16_t mIdx = 0; mIdx < mLoopCnt; mIdx++) {
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg1, betaInReg1, maskFull16, maskFull32);
+        LoadIn<betaType, true>(betaInReg, betaIn + (mIdx + 1) * PRELOAD_NUM);
+        LoadIn<betaType, true>(betaInReg1, betaIn + (mIdx + 1) * PRELOAD_NUM + 1);
+        CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+        CastHalf2Float<kType>(kFP32ZeroReg1, kFP32OneReg1, kInReg1, maskFull16);
+        LoadIn<kType, false>(kInReg, kIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(kInReg1, kIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+        CastHalf2Float<kType>(dkFP32ZeroReg, dkFP32OneReg, dkInReg, maskFull16);
+        CastHalf2Float<kType>(dkFP32ZeroReg1, dkFP32OneReg1, dkInReg1, maskFull16);
+        LoadIn<kType, false>(dkInReg, dkIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(dkInReg1, dkIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+        CastHalf2Float<kType>(dkbFP32ZeroReg, dkbFP32OneReg, dkbInReg, maskFull16);
+        CastHalf2Float<kType>(dkbFP32ZeroReg1, dkbFP32OneReg1, dkbInReg1, maskFull16);
+        LoadIn<kType, false>(dkbInReg, dkbIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(dkbInReg1, dkbIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+
+        MulFloatTwoReg(kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg, kFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, maskFull32);
+        MulFloatTwoReg(dkbFP32ZeroReg, dkbFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, maskFull32);
+
+        MulFloatTwoReg(kFP32ZeroReg1, kFP32OneReg1, kFP32ZeroReg1, kFP32OneReg1, dkbFP32ZeroReg1, dkbFP32OneReg1, maskFull32);
+        MulFloatTwoReg(dkbFP32ZeroReg1, dkbFP32OneReg1, dkbFP32ZeroReg1, dkbFP32OneReg1, betaBrcbFP32ZeroReg1, betaBrcbFP32ZeroReg1, maskFull32);
+        AddFloatTwoReg(dkFP32ZeroReg1, dkFP32OneReg1, dkFP32ZeroReg1, dkFP32OneReg1, dkbFP32ZeroReg1, dkbFP32OneReg1, maskFull32);
+
+        CastFloat2Half<kType>(dkOutReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+        CastFloat2Half<kType>(dkOutReg1, dkFP32ZeroReg1, dkFP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM), dkOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM + 1), dkOutReg1, maskFull16);
+
+        Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
+        ReduceSum(dBetaFP32Reg, kFP32ZeroReg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
+
+        Add(kFP32ZeroReg1, kFP32ZeroReg1, kFP32OneReg1, maskFull32);
+        ReduceSum(dBetaFP32Reg, kFP32ZeroReg1, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM + 1, dBetaFP32Reg, maskFull32, uStore, 1);
+    }
+    uint16_t mIdx = mLoopCnt;
+    {
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg1, betaInReg1, maskFull16, maskFull32);
+        CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+        CastHalf2Float<kType>(kFP32ZeroReg1, kFP32OneReg1, kInReg1, maskFull16);
+        CastHalf2Float<kType>(dkFP32ZeroReg, dkFP32OneReg, dkInReg, maskFull16);
+        CastHalf2Float<kType>(dkFP32ZeroReg1, dkFP32OneReg1, dkInReg1, maskFull16);
+        CastHalf2Float<kType>(dkbFP32ZeroReg, dkbFP32OneReg, dkbInReg, maskFull16);
+        CastHalf2Float<kType>(dkbFP32ZeroReg1, dkbFP32OneReg1, dkbInReg1, maskFull16);
+
+        MulFloatTwoReg(kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg, kFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, maskFull32);
+        MulFloatTwoReg(dkbFP32ZeroReg, dkbFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, maskFull32);
+
+        MulFloatTwoReg(kFP32ZeroReg1, kFP32OneReg1, kFP32ZeroReg1, kFP32OneReg1, dkbFP32ZeroReg1, dkbFP32OneReg1, maskFull32);
+        MulFloatTwoReg(dkbFP32ZeroReg1, dkbFP32OneReg1, dkbFP32ZeroReg1, dkbFP32OneReg1, betaBrcbFP32ZeroReg1, betaBrcbFP32ZeroReg1, maskFull32);
+        AddFloatTwoReg(dkFP32ZeroReg1, dkFP32OneReg1, dkFP32ZeroReg1, dkFP32OneReg1, dkbFP32ZeroReg1, dkbFP32OneReg1, maskFull32);
+
+        CastFloat2Half<kType>(dkOutReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+        CastFloat2Half<kType>(dkOutReg1, dkFP32ZeroReg1, dkFP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM), dkOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM + 1), dkOutReg1, maskFull16);
+
+        Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
+        ReduceSum(dBetaFP32Reg, kFP32ZeroReg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
+
+        Add(kFP32ZeroReg1, kFP32ZeroReg1, kFP32OneReg1, maskFull32);
+        ReduceSum(dBetaFP32Reg, kFP32ZeroReg1, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM + 1, dBetaFP32Reg, maskFull32, uStore, 1);
+
+        mIdx += 1;
+        for (uint16_t i = 0; i < lastLoopCnt; i++) {
+            LoadIn<betaType, true>(betaInReg, betaIn + mIdx * PRELOAD_NUM);
+            LoadIn<kType, false>(kInReg, kIn + oneEleNum * (mIdx * PRELOAD_NUM));
+            LoadIn<kType, false>(dkInReg, dkIn + oneEleNum * (mIdx * PRELOAD_NUM));
+            LoadIn<kType, false>(dkbInReg, dkbIn + oneEleNum * (mIdx * PRELOAD_NUM));
+            HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+            CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+            CastHalf2Float<kType>(dkFP32ZeroReg, dkFP32OneReg, dkInReg, maskFull16);
+            CastHalf2Float<kType>(dkbFP32ZeroReg, dkbFP32OneReg, dkbInReg, maskFull16);
+            MulFloatTwoReg(kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg, kFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, maskFull32);
+            MulFloatTwoReg(dkbFP32ZeroReg, dkbFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+            AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, maskFull32);
+            CastFloat2Half<kType>(dkOutReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+            StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM), dkOutReg, maskFull16);
 
             Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
-            Add(reduceSumReg, reduceSumReg, kFP32ZeroReg, maskFull32);
-        }
-        ReduceSum(dBetaFP32Reg, reduceSumReg, maskFull32);
-
-        auto actDbetaOut = dBetaOut + mIdx;
-        if constexpr (!std::is_same<betaType, float32_t>()) {
-            Cast<betaType, float, ctFp322HalfZero>(dBetaOutZeroReg, dBetaFP32Reg, maskFull32);
-            StoreUnAlign(actDbetaOut, dBetaOutZeroReg, uStore, 1);
-            StoreUnAlignPost(actDbetaOut, uStore, 0);
-        } else {
-            StoreUnAlign(actDbetaOut, dBetaFP32Reg, uStore, 1);
-            StoreUnAlignPost(actDbetaOut, uStore, 0);
+            ReduceSum(dBetaFP32Reg, kFP32ZeroReg, maskFull32);
+            StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
         }
     }
-    // 最后一行
-    uint16_t mIdx = mSize - 1;
+}
+
+template <typename kType, typename betaType>
+__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkbComputerVFOneLineOneCol(
+    __ubuf__ kType* dkOut, __ubuf__ betaType* dBetaOut, __ubuf__ kType* kIn, __ubuf__ betaType* betaIn,
+    __ubuf__ kType* dkIn, __ubuf__ kType* dkbIn, uint16_t mSize, uint16_t nSize)
+{
+    RegTensor<betaType> betaInReg;
+    RegTensor<kType> kInReg;
+    RegTensor<kType> dkInReg;
+    RegTensor<kType> dkbInReg;
+    RegTensor<float> betaBrcbFP32ZeroReg;
+    RegTensor<float> kFP32ZeroReg, kFP32OneReg;
+    RegTensor<float> dkFP32ZeroReg, dkFP32OneReg;
+    RegTensor<float> dkbFP32ZeroReg, dkbFP32OneReg;
+    RegTensor<kType> dkOutReg;
+    RegTensor<float> dBetaFP32Reg;
+    RegTensor<betaType> dBetaOutZeroReg;
+
+    MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
+    MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
+
+    UnalignRegForStore uStore;
+
+    LoadIn<betaType, true>(betaInReg, betaIn);
+    LoadIn<kType, false>(kInReg, kIn);
+    LoadIn<kType, false>(dkInReg, dkIn);
+    LoadIn<kType, false>(dkbInReg, dkbIn);
+    HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+    CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+    CastHalf2Float<kType>(dkFP32ZeroReg, dkFP32OneReg, dkInReg, maskFull16);
+    CastHalf2Float<kType>(dkbFP32ZeroReg, dkbFP32OneReg, dkbInReg, maskFull16);
+    MulFloatTwoReg(kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg, kFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, maskFull32);
+    MulFloatTwoReg(dkbFP32ZeroReg, dkbFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+    AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, maskFull32);
+    CastFloat2Half<kType>(dkOutReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+    StoreAlign((__ubuf__ kType*&)dkOut, dkOutReg, maskFull16);
+
+    Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
+    ReduceSum(dBetaFP32Reg, kFP32ZeroReg, maskFull32);
+    StoreUnAlignOut<betaType>(dBetaOut, dBetaFP32Reg, maskFull32, uStore, 1);
+}
+
+template <typename kType, typename betaType>
+__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkbComputerVFTwoCol(
+    __ubuf__ kType* dkOut, __ubuf__ betaType* dBetaOut, __ubuf__ kType* kIn, __ubuf__ betaType* betaIn,
+    __ubuf__ kType* dkIn, __ubuf__ kType* dkbIn, uint16_t mSize, uint16_t nSize)
+{
+    uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
+    uint32_t oneEleNum = min(eleKNumPerVf, nSize);
+    uint16_t mLoopCnt = mSize - 1;
+    uint16_t lastLoopCnt = mSize % PRELOAD_NUM;
+    RegTensor<betaType> betaInReg;
+    RegTensor<kType> kInReg, kInReg1;
+    RegTensor<kType> dkInReg, dkInReg1;
+    RegTensor<kType> dkbInReg, dkbInReg1;
+    RegTensor<float> betaBrcbFP32ZeroReg;
+    RegTensor<float> kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg1, kFP32OneReg1;
+    RegTensor<float> dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg1, dkFP32OneReg1;
+    RegTensor<float> dkbFP32ZeroReg, dkbFP32OneReg, dkbFP32ZeroReg1, dkbFP32OneReg1;
+    RegTensor<kType> dkOutReg, dkOutReg1;
+    RegTensor<float> dBetaFP32Reg;
+    RegTensor<betaType> dBetaOutZeroReg;
+
+    MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
+    MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
+
+    UnalignRegForStore uStore;
+
+    LoadIn<betaType, true>(betaInReg, betaIn);
+    LoadIn<kType, false>(kInReg, kIn);
+    LoadIn<kType, false>(kInReg1, kIn + oneEleNum);
+    LoadIn<kType, false>(dkInReg, dkIn);
+    LoadIn<kType, false>(dkInReg1, dkIn + oneEleNum);
+    LoadIn<kType, false>(dkbInReg, dkbIn);
+    LoadIn<kType, false>(dkbInReg1, dkbIn + oneEleNum);
+
+    for (uint16_t mIdx = 0; mIdx < mLoopCnt; mIdx++) {
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        LoadIn<betaType, true>(betaInReg, betaIn + (mIdx + 1) * PRELOAD_NUM);
+        CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+        CastHalf2Float<kType>(kFP32ZeroReg1, kFP32OneReg1, kInReg1, maskFull16);
+        LoadIn<kType, false>(kInReg, kIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(kInReg1, kIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+        CastHalf2Float<kType>(dkFP32ZeroReg, dkFP32OneReg, dkInReg, maskFull16);
+        CastHalf2Float<kType>(dkFP32ZeroReg1, dkFP32OneReg1, dkInReg1, maskFull16);
+        LoadIn<kType, false>(dkInReg, dkIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(dkInReg1, dkIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+        CastHalf2Float<kType>(dkbFP32ZeroReg, dkbFP32OneReg, dkbInReg, maskFull16);
+        CastHalf2Float<kType>(dkbFP32ZeroReg1, dkbFP32OneReg1, dkbInReg1, maskFull16);
+        LoadIn<kType, false>(dkbInReg, dkbIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(dkbInReg1, dkbIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+
+        MulFloatTwoReg(kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg, kFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, maskFull32);
+        MulFloatTwoReg(dkbFP32ZeroReg, dkbFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, maskFull32);
+
+        MulFloatTwoReg(kFP32ZeroReg1, kFP32OneReg1, kFP32ZeroReg1, kFP32OneReg1, dkbFP32ZeroReg1, dkbFP32OneReg1, maskFull32);
+        MulFloatTwoReg(dkbFP32ZeroReg1, dkbFP32OneReg1, dkbFP32ZeroReg1, dkbFP32OneReg1, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        AddFloatTwoReg(dkFP32ZeroReg1, dkFP32OneReg1, dkFP32ZeroReg1, dkFP32OneReg1, dkbFP32ZeroReg1, dkbFP32OneReg1, maskFull32);
+
+        CastFloat2Half<kType>(dkOutReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+        CastFloat2Half<kType>(dkOutReg1, dkFP32ZeroReg1, dkFP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM), dkOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM + 1), dkOutReg1, maskFull16);
+
+        Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
+        ReduceSum(dBetaFP32Reg, kFP32ZeroReg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
+
+        Add(kFP32ZeroReg1, kFP32ZeroReg1, kFP32OneReg1, maskFull32);
+        ReduceSum(dBetaFP32Reg, kFP32ZeroReg1, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM + 1, dBetaFP32Reg, maskFull32, uStore, 1);
+    }
+    uint16_t mIdx = mLoopCnt;
     {
-        // cast from bf16/fp16 to FP32
-        if constexpr (!std::is_same<betaType, float>()) {
-            LoadUnAlignPre(uLoad, betaIn + mIdx);
-            LoadUnAlign(betaInReg, uLoad, betaIn + mIdx);
-            Cast<float, betaType, ctHalf2Fp32Zero>(betaBrcbFP32ZeroReg, betaInReg, maskFull16);
-        } else {
-            LoadUnAlignPre(uLoad, betaIn + mIdx);
-            LoadUnAlign(betaBrcbFP32ZeroReg, uLoad, betaIn + mIdx);
-        }
-        Duplicate(betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-        Duplicate(reduceSumReg, static_cast<float>(0), maskFull32);
-        uint32_t mOffset = mIdx * nKUbAligned;
-        uint32_t nextEleOffset = 0;
-        // 最后一行的前nLoopCnt - 1
-        for (uint16_t vfBlockIdx = 0; vfBlockIdx < nLoopCnt - 1; vfBlockIdx++) {
-            Cast<float, kType, ctHalf2Fp32Zero>(kFP32ZeroReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(kFP32OneReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32Zero>(dkbFP32ZeroReg, dkbInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dkbFP32OneReg, dkbInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32Zero>(dkFP32ZeroReg, dkInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dkFP32OneReg, dkInReg, maskFull16);
-            uint32_t thisEleNum = min(eleKNumPerVf, nSize - vfBlockIdx * eleKNumPerVf);
-            nextEleOffset += thisEleNum;
-            LoadAlign(kInReg, kIn + nextEleOffset);
-            LoadAlign(dkbInReg, dkbIn + nextEleOffset);
-            LoadAlign(dkInReg, dkIn + nextEleOffset);
-            Mul(kFP32ZeroReg, kFP32ZeroReg, dkbFP32ZeroReg, maskFull32);
-            Mul(kFP32OneReg, kFP32OneReg, dkbFP32OneReg, maskFull32);
-            Mul(dkbFP32ZeroReg, dkbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-            Mul(dkbFP32OneReg, dkbFP32OneReg, betaBrcbFP32ZeroReg, maskFull32);
-            Add(dkFP32ZeroReg, dkFP32ZeroReg, dkbFP32ZeroReg, maskFull32);
-            Add(dkFP32OneReg, dkFP32OneReg, dkbFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfOne>(dkOutReg, dkFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfZero>(dkOutReg, dkFP32ZeroReg, maskFull32);
-            uint32_t dstUbOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            StoreAlign((__ubuf__ kType*&)dkOut + dstUbOffset, dkOutReg, maskFull16);
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+        CastHalf2Float<kType>(kFP32ZeroReg1, kFP32OneReg1, kInReg1, maskFull16);
+        CastHalf2Float<kType>(dkFP32ZeroReg, dkFP32OneReg, dkInReg, maskFull16);
+        CastHalf2Float<kType>(dkFP32ZeroReg1, dkFP32OneReg1, dkInReg1, maskFull16);
+        CastHalf2Float<kType>(dkbFP32ZeroReg, dkbFP32OneReg, dkbInReg, maskFull16);
+        CastHalf2Float<kType>(dkbFP32ZeroReg1, dkbFP32OneReg1, dkbInReg1, maskFull16);
 
-            Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
-            Add(reduceSumReg, reduceSumReg, kFP32ZeroReg, maskFull32);
-        }
-        // 最后一行最后一个loop
-        uint16_t vfBlockIdx = nLoopCnt - 1;
-        {
-            Cast<float, kType, ctHalf2Fp32Zero>(kFP32ZeroReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(kFP32OneReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32Zero>(dkbFP32ZeroReg, dkbInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dkbFP32OneReg, dkbInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32Zero>(dkFP32ZeroReg, dkInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(dkFP32OneReg, dkInReg, maskFull16);
-            Mul(kFP32ZeroReg, kFP32ZeroReg, dkbFP32ZeroReg, maskFull32);
-            Mul(kFP32OneReg, kFP32OneReg, dkbFP32OneReg, maskFull32);
-            Mul(dkbFP32ZeroReg, dkbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-            Mul(dkbFP32OneReg, dkbFP32OneReg, betaBrcbFP32ZeroReg, maskFull32);
-            Add(dkFP32ZeroReg, dkFP32ZeroReg, dkbFP32ZeroReg, maskFull32);
-            Add(dkFP32OneReg, dkFP32OneReg, dkbFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfOne>(dkOutReg, dkFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfZero>(dkOutReg, dkFP32ZeroReg, maskFull32);
-            uint32_t dstUbOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            StoreAlign((__ubuf__ kType*&)dkOut + dstUbOffset, dkOutReg, maskFull16);
+        MulFloatTwoReg(kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg, kFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, maskFull32);
+        MulFloatTwoReg(dkbFP32ZeroReg, dkbFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkbFP32ZeroReg, dkbFP32OneReg, maskFull32);
 
-            Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
-            Add(reduceSumReg, reduceSumReg, kFP32ZeroReg, maskFull32);
-        }
-        ReduceSum(dBetaFP32Reg, reduceSumReg, maskFull32);
+        MulFloatTwoReg(kFP32ZeroReg1, kFP32OneReg1, kFP32ZeroReg1, kFP32OneReg1, dkbFP32ZeroReg1, dkbFP32OneReg1, maskFull32);
+        MulFloatTwoReg(dkbFP32ZeroReg1, dkbFP32OneReg1, dkbFP32ZeroReg1, dkbFP32OneReg1, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        AddFloatTwoReg(dkFP32ZeroReg1, dkFP32OneReg1, dkFP32ZeroReg1, dkFP32OneReg1, dkbFP32ZeroReg1, dkbFP32OneReg1, maskFull32);
 
-        auto actDbetaOut = dBetaOut + mIdx;
-        if constexpr (!std::is_same<betaType, float32_t>()) {
-            Cast<betaType, float, ctFp322HalfZero>(dBetaOutZeroReg, dBetaFP32Reg, maskFull32);
-            StoreUnAlign(actDbetaOut, dBetaOutZeroReg, uStore, 1);
-            StoreUnAlignPost(actDbetaOut, uStore, 0);
-        } else {
-            StoreUnAlign(actDbetaOut, dBetaFP32Reg, uStore, 1);
-            StoreUnAlignPost(actDbetaOut, uStore, 0);
-        }
+        CastFloat2Half<kType>(dkOutReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+        CastFloat2Half<kType>(dkOutReg1, dkFP32ZeroReg1, dkFP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM), dkOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM + 1), dkOutReg1, maskFull16);
+
+        Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
+        ReduceSum(dBetaFP32Reg, kFP32ZeroReg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
+
+        Add(kFP32ZeroReg1, kFP32ZeroReg1, kFP32OneReg1, maskFull32);
+        ReduceSum(dBetaFP32Reg, kFP32ZeroReg1, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM + 1, dBetaFP32Reg, maskFull32, uStore, 1);
     }
 }
 
@@ -1521,10 +1670,25 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventUbInMTE2VList[ubListId]);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(eventUbOutMTE3VList[ubListId]);
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(SYNC_AIC_AIV_FLAG_BEGIN + cvListId);
-                    ProcessDkbComputerVF(
-                        (__ubuf__ kType*)dkOutAddr, (__ubuf__ betaType*)dBetaOutAddr, (__ubuf__ kType*)kInAddr, 
-                        (__ubuf__ betaType*)betaInAddr,(__ubuf__ kType*)dkInAddr, (__ubuf__ kType*)dkbInAddr, 
-                        curRowNum, K);
+                    uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
+                    if (K <= eleKNumPerVf) {
+                        if (curRowNum == 1) {
+                            ProcessDkbComputerVFOneLineOneCol(
+                                    (__ubuf__ kType*)dkOutAddr, (__ubuf__ betaType*)dBetaOutAddr, (__ubuf__ kType*)kInAddr,
+                                    (__ubuf__ betaType*)betaInAddr,(__ubuf__ kType*)dkInAddr, (__ubuf__ kType*)dkbInAddr,
+                                    curRowNum, K);
+                        } else {
+                            ProcessDkbComputerVFMutiLineOneCol(
+                                    (__ubuf__ kType*)dkOutAddr, (__ubuf__ betaType*)dBetaOutAddr, (__ubuf__ kType*)kInAddr,
+                                    (__ubuf__ betaType*)betaInAddr,(__ubuf__ kType*)dkInAddr, (__ubuf__ kType*)dkbInAddr,
+                                    curRowNum, K);
+                        }
+                    } else {
+                        ProcessDkbComputerVFTwoCol(
+                                    (__ubuf__ kType*)dkOutAddr, (__ubuf__ betaType*)dBetaOutAddr, (__ubuf__ kType*)kInAddr,
+                                    (__ubuf__ betaType*)betaInAddr,(__ubuf__ kType*)dkInAddr, (__ubuf__ kType*)dkbInAddr,
+                                    curRowNum, K);
+                    }
                     AscendC::CrossCoreSetFlag<0x4, PIPE_V>(SYNC_AIV_AIC_FLAG_BEGIN + cvListId);
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventUbOutVMTE3List[ubListId]);
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventUbInVMTE2List[ubListId]);
@@ -1555,99 +1719,148 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 }
 
 template <typename kType, typename betaType>
-__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessKBetaComputerVF(
+__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessKBetaComputerVFMutiLineOneCol(
+    __ubuf__ kType* kBetaOut, __ubuf__ kType* kIn, __ubuf__ betaType* betaIn,
+    uint16_t mSize, uint16_t nSize, uint16_t lastLoopCnt)
+{
+    uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
+    uint16_t nLoopCnt = (nSize + eleKNumPerVf - 1) / eleKNumPerVf;
+    uint32_t oneEleNum = min(eleKNumPerVf, nSize);
+    uint16_t mLoopCnt = mSize / 2 - 1;
+    RegTensor<kType> kInReg, kInReg1;
+    RegTensor<betaType> betaInReg, betaInReg1;
+    RegTensor<float> kFP32ZeroReg, kFP32OneReg, kBetaFP32ZeroReg, kBetaFP32OneReg;
+    RegTensor<float> kFP32ZeroReg1, kFP32OneReg1, kBetaFP32ZeroReg1, kBetaFP32OneReg1;
+    RegTensor<float> betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg1;
+    RegTensor<kType> kBetaOutReg, kBetaOutReg1;
+
+    MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
+    MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
+
+    LoadIn<betaType, true>(betaInReg, betaIn);
+    LoadIn<betaType, true>(betaInReg1, betaIn + 1);
+    LoadIn<kType, false>(kInReg, kIn);
+    LoadIn<kType, false>(kInReg1, kIn + oneEleNum);
+    // 前mSize - 3行
+    for (uint16_t mIdx = 0; mIdx < mLoopCnt; mIdx++) {
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg1, betaInReg1, maskFull16, maskFull32);
+        LoadIn<betaType, true>(betaInReg, betaIn + (mIdx + 1) * 2);
+        LoadIn<betaType, true>(betaInReg1, betaIn + (mIdx + 1) * 2 + 1);
+        CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+        CastHalf2Float<kType>(kFP32ZeroReg1, kFP32OneReg1, kInReg1, maskFull16);
+        LoadIn<kType, false>(kInReg, kIn + oneEleNum * ((mIdx + 1) * 2));
+        LoadIn<kType, false>(kInReg1, kIn + oneEleNum * ((mIdx + 1) * 2 + 1));
+        MulFloatTwoReg(kBetaFP32ZeroReg, kBetaFP32OneReg, kFP32ZeroReg, kFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        MulFloatTwoReg(kBetaFP32ZeroReg1, kBetaFP32OneReg1, kFP32ZeroReg1, kFP32OneReg1, betaBrcbFP32ZeroReg1, betaBrcbFP32ZeroReg1, maskFull32);
+        CastFloat2Half<kType>(kBetaOutReg, kBetaFP32ZeroReg, kBetaFP32OneReg, maskFull32);
+        CastFloat2Half<kType>(kBetaOutReg1, kBetaFP32ZeroReg1, kBetaFP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)kBetaOut + oneEleNum * (mIdx * 2), kBetaOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)kBetaOut + oneEleNum * (mIdx * 2 + 1), kBetaOutReg1, maskFull16);
+    }
+    uint16_t mIdx = mLoopCnt;
+    // 最后三行
+    {
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg1, betaInReg1, maskFull16, maskFull32);
+
+        CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+        CastHalf2Float<kType>(kFP32ZeroReg1, kFP32OneReg1, kInReg1, maskFull16);
+
+        MulFloatTwoReg(kBetaFP32ZeroReg, kBetaFP32OneReg, kFP32ZeroReg, kFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        MulFloatTwoReg(kBetaFP32ZeroReg1, kBetaFP32OneReg1, kFP32ZeroReg1, kFP32OneReg1, betaBrcbFP32ZeroReg1, betaBrcbFP32ZeroReg1, maskFull32);
+        CastFloat2Half<kType>(kBetaOutReg, kBetaFP32ZeroReg, kBetaFP32OneReg, maskFull32);
+        CastFloat2Half<kType>(kBetaOutReg1, kBetaFP32ZeroReg1, kBetaFP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)kBetaOut + oneEleNum * (mIdx * 2), kBetaOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)kBetaOut + oneEleNum * (mIdx * 2 + 1), kBetaOutReg1, maskFull16);
+
+        mIdx += 1;
+        // 最后一行
+        for (uint16_t i = 0; i < lastLoopCnt; i++) {
+            LoadIn<betaType, true>(betaInReg, betaIn + mIdx * 2);
+            LoadIn<kType, false>(kInReg, kIn + oneEleNum * (mIdx * 2));
+            HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+            CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+            MulFloatTwoReg(kBetaFP32ZeroReg, kBetaFP32OneReg, kFP32ZeroReg, kFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+            CastFloat2Half<kType>(kBetaOutReg, kBetaFP32ZeroReg, kBetaFP32OneReg, maskFull32);
+            StoreAlign((__ubuf__ kType*&)kBetaOut + oneEleNum * (mIdx * 2), kBetaOutReg, maskFull16);
+        }
+    }
+}
+
+template <typename kType, typename betaType>
+__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessKBetaComputerVFOneLineOneCol(
     __ubuf__ kType* kBetaOut, __ubuf__ kType* kIn, __ubuf__ betaType* betaIn,
     uint16_t mSize, uint16_t nSize)
 {
     uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
-    uint32_t nKUbAligned = Align(nSize, static_cast<uint16_t>(UB_ALIGN_SIZE / sizeof(kType)));
-    uint16_t nLoopCnt = (nSize + eleKNumPerVf - 1) / eleKNumPerVf;
+    uint32_t oneEleNum = min(eleKNumPerVf, nSize);
     RegTensor<kType> kInReg;
-    RegTensor<float> kFP32ZeroReg, kFP32OneReg;
     RegTensor<betaType> betaInReg;
-    RegTensor<float> betaBrcbFP32ZeroReg, betaBrcbFP32OneReg;
+    RegTensor<float> kFP32ZeroReg, kFP32OneReg, kBetaFP32ZeroReg, kBetaFP32OneReg;
+    RegTensor<float> betaBrcbFP32ZeroReg;
     RegTensor<kType> kBetaOutReg;
 
     MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
     MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
 
-    UnalignRegForLoad uLoad;
-    UnalignRegForStore uStore;
+    LoadIn<betaType, true>(betaInReg, betaIn);
+    LoadIn<kType, false>(kInReg, kIn);
+    
+    HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+    CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+    MulFloatTwoReg(kBetaFP32ZeroReg, kBetaFP32OneReg, kFP32ZeroReg, kFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+    CastFloat2Half<kType>(kBetaOutReg, kBetaFP32ZeroReg, kBetaFP32OneReg, maskFull32);
+    StoreAlign(kBetaOut, kBetaOutReg, maskFull16);
+}
 
-    if constexpr (!std::is_same<betaType, float>()) {
-        LoadUnAlignPre(uLoad, betaIn);
-        LoadUnAlign(betaInReg, uLoad, betaIn);
-    } else {
-        LoadUnAlignPre(uLoad, betaIn);
-        LoadUnAlign(betaInReg, uLoad, betaIn);
-    }
-    LoadAlign(kInReg, kIn);
-    uint32_t nextEleOffset = 0;
+template <typename kType, typename betaType>
+__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessKBetaComputerVFTwoCol(
+    __ubuf__ kType* kBetaOut, __ubuf__ kType* kIn, __ubuf__ betaType* betaIn,
+    uint16_t mSize, uint16_t nSize)
+{
+    uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
+    uint16_t nLoopCnt = (nSize + eleKNumPerVf - 1) / eleKNumPerVf;
+    uint32_t oneEleNum = min(eleKNumPerVf, nSize);
+    RegTensor<kType> kInReg, kInReg1;
+    RegTensor<betaType> betaInReg, betaInReg1;
+    RegTensor<float> kFP32ZeroReg, kFP32OneReg, kBetaFP32ZeroReg, kBetaFP32OneReg;
+    RegTensor<float> kFP32ZeroReg1, kFP32OneReg1, kBetaFP32ZeroReg1, kBetaFP32OneReg1;
+    RegTensor<float> betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg1;
+    RegTensor<kType> kBetaOutReg, kBetaOutReg1;
+
+    MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
+    MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
+
+    LoadIn<betaType, true>(betaInReg, betaIn);
+    LoadIn<kType, false>(kInReg, kIn);
+    LoadIn<kType, false>(kInReg1, kIn + oneEleNum);
     for (uint16_t mIdx = 0; mIdx < mSize - 1; mIdx++) {
-        // cast from bf16/fp16 to FP32
-        if constexpr (!std::is_same<betaType, float>()) {
-            Cast<float, betaType, ctHalf2Fp32Zero>(betaBrcbFP32ZeroReg, betaInReg, maskFull16);
-            Duplicate(betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-            LoadUnAlignPre(uLoad, betaIn + (mIdx + 1));
-            LoadUnAlign(betaInReg, uLoad, betaIn + (mIdx + 1));
-        } else {
-            Duplicate(betaBrcbFP32ZeroReg, betaInReg, maskFull32);
-            LoadUnAlignPre(uLoad, betaIn + (mIdx + 1));
-            LoadUnAlign(betaInReg, uLoad, betaIn + (mIdx + 1));
-        }
-        uint32_t mOffset = mIdx * nKUbAligned;
-        for (uint16_t vfBlockIdx = 0; vfBlockIdx < nLoopCnt; vfBlockIdx++) {
-            uint32_t eleOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            Cast<float, kType, ctHalf2Fp32Zero>(kFP32ZeroReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(kFP32OneReg, kInReg, maskFull16);
-            uint32_t thisEleNum = min(eleKNumPerVf, nSize - vfBlockIdx * eleKNumPerVf);
-            nextEleOffset += thisEleNum;
-            LoadAlign(kInReg, kIn + nextEleOffset);
-            Mul(kFP32ZeroReg, kFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-            Mul(kFP32OneReg, kFP32OneReg, betaBrcbFP32ZeroReg, maskFull32);
-            Cast<kType, float, ctFp322HalfOne>(kBetaOutReg, kFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfZero>(kBetaOutReg, kFP32ZeroReg, maskFull32);
-            uint32_t dstUbOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            StoreAlign((__ubuf__ kType*&)kBetaOut + dstUbOffset, kBetaOutReg, maskFull16);
-        }
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        LoadIn<betaType, true>(betaInReg, betaIn + (mIdx + 1));
+        CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+        CastHalf2Float<kType>(kFP32ZeroReg1, kFP32OneReg1, kInReg1, maskFull16);
+        LoadIn<kType, false>(kInReg, kIn + oneEleNum * (mIdx + 1) * 2);
+        LoadIn<kType, false>(kInReg1, kIn + oneEleNum * (mIdx + 1) * 2 + 1);
+        MulFloatTwoReg(kBetaFP32ZeroReg, kBetaFP32OneReg, kFP32ZeroReg, kFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        MulFloatTwoReg(kBetaFP32ZeroReg1, kBetaFP32OneReg1, kFP32ZeroReg1, kFP32OneReg1, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        CastFloat2Half<kType>(kBetaOutReg, kBetaFP32ZeroReg, kBetaFP32OneReg, maskFull32);
+        CastFloat2Half<kType>(kBetaOutReg1, kBetaFP32ZeroReg1, kBetaFP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)kBetaOut + oneEleNum * (mIdx * 2), kBetaOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)kBetaOut + oneEleNum * (mIdx * 2 + 1), kBetaOutReg1, maskFull16);
     }
     uint16_t mIdx = mSize - 1;
+    // 最后一行
     {
-        // cast from bf16/fp16 to FP32
-        if constexpr (!std::is_same<betaType, float>()) {
-            Cast<float, betaType, ctHalf2Fp32Zero>(betaBrcbFP32ZeroReg, betaInReg, maskFull16);
-            Duplicate(betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-        } else {
-            Duplicate(betaBrcbFP32ZeroReg, betaInReg, maskFull32);
-        }
-        Duplicate(betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-        uint32_t mOffset = mIdx * nKUbAligned;
-        for (uint16_t vfBlockIdx = 0; vfBlockIdx < nLoopCnt - 1; vfBlockIdx++) {
-            uint32_t eleOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            Cast<float, kType, ctHalf2Fp32Zero>(kFP32ZeroReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(kFP32OneReg, kInReg, maskFull16);
-            uint32_t thisEleNum = min(eleKNumPerVf, nSize - vfBlockIdx * eleKNumPerVf);
-            nextEleOffset += thisEleNum;
-            LoadAlign(kInReg, kIn + nextEleOffset);
-            Mul(kFP32ZeroReg, kFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-            Mul(kFP32OneReg, kFP32OneReg, betaBrcbFP32ZeroReg, maskFull32);
-            Cast<kType, float, ctFp322HalfOne>(kBetaOutReg, kFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfZero>(kBetaOutReg, kFP32ZeroReg, maskFull32);
-            uint32_t dstUbOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            StoreAlign((__ubuf__ kType*&)kBetaOut + dstUbOffset, kBetaOutReg, maskFull16);
-        }
-        uint16_t vfBlockIdx = nLoopCnt - 1;
-        {
-            uint32_t eleOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            Cast<float, kType, ctHalf2Fp32Zero>(kFP32ZeroReg, kInReg, maskFull16);
-            Cast<float, kType, ctHalf2Fp32One>(kFP32OneReg, kInReg, maskFull16);
-            Mul(kFP32ZeroReg, kFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
-            Mul(kFP32OneReg, kFP32OneReg, betaBrcbFP32ZeroReg, maskFull32);
-            Cast<kType, float, ctFp322HalfOne>(kBetaOutReg, kFP32OneReg, maskFull32);
-            Cast<kType, float, ctFp322HalfZero>(kBetaOutReg, kFP32ZeroReg, maskFull32);
-            uint32_t dstUbOffset = mOffset + vfBlockIdx * eleKNumPerVf;
-            StoreAlign((__ubuf__ kType*&)kBetaOut + dstUbOffset, kBetaOutReg, maskFull16);
-        }
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+        CastHalf2Float<kType>(kFP32ZeroReg1, kFP32OneReg1, kInReg1, maskFull16);
+        MulFloatTwoReg(kBetaFP32ZeroReg, kBetaFP32OneReg, kFP32ZeroReg, kFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        MulFloatTwoReg(kBetaFP32ZeroReg1, kBetaFP32OneReg1, kFP32ZeroReg1, kFP32OneReg1, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+        CastFloat2Half<kType>(kBetaOutReg, kBetaFP32ZeroReg, kBetaFP32OneReg, maskFull32);
+        CastFloat2Half<kType>(kBetaOutReg1, kBetaFP32ZeroReg1, kBetaFP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)kBetaOut + oneEleNum * (mIdx * 2), kBetaOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)kBetaOut + oneEleNum * (mIdx * 2 + 1), kBetaOutReg1, maskFull16);
     }
 }
 
@@ -1700,9 +1913,24 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     auto kBetaOutAddr = reinterpret_cast<uint64_t>(tensorOut.GetPhyAddr());
                     auto kInAddr = reinterpret_cast<uint64_t>(tensorKin.GetPhyAddr());
                     auto betaInAddr = reinterpret_cast<uint64_t>(tensorBetain.GetPhyAddr());
-                    ProcessKBetaComputerVF(
-                        (__ubuf__ kType*)kBetaOutAddr, (__ubuf__ kType*)kInAddr, (__ubuf__ betaType*)betaInAddr,
-                        curRowNum, K);
+                    uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
+                    if (K <= eleKNumPerVf) {
+                        uint16_t lastLoopCnt = curRowNum % PRELOAD_NUM;
+                        if (curRowNum == 1) {
+                            ProcessKBetaComputerVFOneLineOneCol(
+                                    (__ubuf__ kType*)kBetaOutAddr, (__ubuf__ kType*)kInAddr, (__ubuf__ betaType*)betaInAddr,
+                                    curRowNum, K);
+                        } else {
+                            ProcessKBetaComputerVFMutiLineOneCol(
+                                    (__ubuf__ kType*)kBetaOutAddr, (__ubuf__ kType*)kInAddr, (__ubuf__ betaType*)betaInAddr,
+                                    curRowNum, K, lastLoopCnt);
+                        }
+                    } else {
+                        ProcessKBetaComputerVFTwoCol(
+                                    (__ubuf__ kType*)kBetaOutAddr, (__ubuf__ kType*)kInAddr, (__ubuf__ betaType*)betaInAddr,
+                                    curRowNum, K);
+                    }
+                    
                     kInQue.FreeTensor(tensorKin);
                     betaInQue.FreeTensor(tensorBetain);
                     kBetaOutQue.EnQue(tensorOut);

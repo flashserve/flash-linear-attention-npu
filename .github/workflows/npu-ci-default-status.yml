@@ -1,0 +1,113 @@
+name: NPU CI 默认状态
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+jobs:
+  mark-not-run:
+    name: 标记 NPU CI 未执行
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: 写入未执行状态并提示触发人
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              core.notice('没有找到 Pull Request 事件信息。');
+              return;
+            }
+
+            const contextName = 'NPU CI / 手动验证';
+            const marker = `<!-- npu-ci:pr=${pr.number}:sha=${pr.head.sha} -->`;
+            const isCommitUpdate = context.payload.action === 'synchronize';
+            const pendingDescription = isCommitUpdate
+              ? '未执行：commit 已变化，请重新触发 /run-npu-ci quick'
+              : '未执行：请仓库 Admin 评论 /run-npu-ci quick';
+            const title = isCommitUpdate
+              ? `PR commit 已变化，NPU CI 已重置为未执行：\`${pr.head.sha}\`。`
+              : `NPU CI 暂未执行：\`${pr.head.sha}\`。`;
+
+            const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: pr.head.sha,
+              per_page: 100,
+            });
+            const manualCiStatuses = statuses
+              .filter((status) => status.context === contextName)
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            const latestExecutionCi = manualCiStatuses
+              .find((status) => (status.description || '').includes('+example'));
+            const latestNotRunCi = manualCiStatuses
+              .find((status) => (status.description || '').includes('未执行'));
+
+            if (latestExecutionCi) {
+              core.notice(`当前 head commit 已经有 NPU CI 执行状态：${latestExecutionCi.state}。`);
+              return;
+            }
+
+            if (!latestNotRunCi) {
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: pr.head.sha,
+                state: 'pending',
+                context: contextName,
+                description: pendingDescription,
+                target_url: pr.html_url,
+              });
+            }
+
+            const body = [
+              marker,
+              title,
+              '',
+              '- 当前状态：未执行',
+              isCommitUpdate ? '- 原因：PR head commit 已变化，旧 commit 的 NPU CI 结果不再生效' : '',
+              '- 合入要求：当前 commit 必须通过 `NPU CI / 手动验证`',
+              '- 触发命令：仓库 Admin 权限账号在本 PR 评论 `/run-npu-ci quick` 或 `/run-npu-ci full`',
+              '- 可请求触发的 CI 账号：仓库 Admin 权限账号',
+              '- Example ST：必跑',
+            ].filter(Boolean).join('\n');
+
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                per_page: 100,
+              });
+              const existing = comments
+                .filter((comment) =>
+                  comment.user &&
+                  comment.user.type === 'Bot' &&
+                  typeof comment.body === 'string' &&
+                  comment.body.includes(marker)
+                )
+                .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
+
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  body,
+                });
+              }
+            } catch (error) {
+              core.warning(`Unable to create or update PR comment: ${error.message}`);
+            }

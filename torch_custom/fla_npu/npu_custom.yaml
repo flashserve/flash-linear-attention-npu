@@ -17,7 +17,7 @@ custom:
         size: grad
         dtype: grad
       exec: aclnnFastGeluBackward
-  - func: npu_causal_conv1d(Tensor x, Tensor weight, Tensor? bias, Tensor conv_states, *, int[]? query_start_loc=None, int[]? cache_indices=None, int[]? initial_state_mode=None, int[]? num_accepted_tokens=None, int activation_mode=0, int pad_slot_id=-1, int run_mode=0) -> Tensor
+  - func: npu_causal_conv1d(Tensor x, Tensor weight, Tensor? bias, Tensor conv_states, *, int[]? query_start_loc=None, int[]? cache_indices=None, int[]? initial_state_mode=None, int[]? num_accepted_tokens=None, int activation_mode=0, int pad_slot_id=-1, int run_mode=0, int head_num=0) -> Tensor
     op_api: all_version
   - func: npu_prepare_wy_repr_bwd_full(Tensor k, Tensor v, Tensor beta, Tensor A, Tensor dA, Tensor dw, Tensor du, Tensor g, int chunk_size, *, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> (Tensor dk, Tensor dv, Tensor dbeta, Tensor dg)
     op_api: all_version

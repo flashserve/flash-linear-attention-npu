@@ -12,58 +12,20 @@
  * \brief
  */
 #include "prepare_wy_repr_bwd_da_tiling.h"
- #include <register/op_impl_registry.h>
+#include "arch35/prepare_wy_repr_bwd_da_tiling_a5.h"
+#include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
 // #include "tiling_base/tiling_type.h"
 
 namespace optiling {
-static constexpr size_t INPUT_K_IDX = 0;
-static constexpr size_t INPUT_V_IDX = 1;
-static constexpr size_t INPUT_BETA_IDX = 2;
-static constexpr size_t INPUT_A_IDX = 3;
-static constexpr size_t INPUT_DW_IDX = 4;
-static constexpr size_t INPUT_DU_IDX = 5;
-static constexpr size_t INPUT_G_IDX = 6;
-static constexpr size_t INPUT_SEQLENS_IDX = 7;
-static constexpr size_t INPUT_CHUNK_INDICES_IDX = 8;
-
-static constexpr size_t ATTR_CHUNK_SIZE_IDX = 0;
-
-static constexpr size_t DIM_NUM_2 = 2;
-static constexpr size_t DIM_NUM_3 = 3;
-static constexpr size_t DIM_NUM_4 = 4;
-
-static constexpr size_t DIM_0 = 0;
-static constexpr size_t DIM_1 = 1;
-static constexpr size_t DIM_2 = 2;
-static constexpr size_t DIM_3 = 3;
-static constexpr int64_t CHUNK_INDICES_DIM_1_SIZE = 2;
-
-static constexpr int64_t CHUNK_SIZE_64 = 64;
-static constexpr int64_t CHUNK_SIZE_128 = 128;
-
-static constexpr int64_t VAR_LEN_B_DIM_1 = 1;
-
-static constexpr const char *const INPUT_K_NAME = "k";
-static constexpr const char *const INPUT_V_NAME = "v";
-static constexpr const char *const INPUT_BETA_NAME = "beta";
-static constexpr const char *const INPUT_A_NAME = "A";
-static constexpr const char *const INPUT_DW_NAME = "dw";
-static constexpr const char *const INPUT_DU_NAME = "du";
-static constexpr const char *const INPUT_G_NAME = "g";
-static constexpr const char *const INPUT_CHUNK_INDICES_NAME = "chunk_indices";
-
-static constexpr uint64_t SIZE_HALF = 2;
-static constexpr uint64_t SIZE_FP32 = 4;
-constexpr uint64_t ONE_BLOCK_32 = 32;
-constexpr uint64_t BIT_NUM_FOR_UINT8 = 8;
 
 class PrepareWyReprBwdDaTilingProcessor {
     gert::TilingContext *context_;
     PrepareWyReprBwdDaTilingData &tiling_;
     int64_t B = 0;
-    int64_t H = 0;
+    int64_t HV = 0;
+    int64_t HK = 0;
     int64_t K = 0;
     int64_t V = 0;
     int64_t T = 0;
@@ -273,31 +235,84 @@ public:
         const gert::Shape dwStorageShape = context_->GetRequiredInputShape(INPUT_DW_IDX)->GetStorageShape();
         const gert::Shape duStorageShape = context_->GetRequiredInputShape(INPUT_DU_IDX)->GetStorageShape();
         const gert::Shape gStorageShape = context_->GetRequiredInputShape(INPUT_G_IDX)->GetStorageShape();
-        OP_CHECK_IF(CompareShape(vStorageShape, kStorageShape, INPUT_V_NAME, INPUT_K_NAME, DIM_NUM_3) !=
-                        ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
         OP_CHECK_IF(CompareShape(vStorageShape, duStorageShape, INPUT_V_NAME, INPUT_DU_NAME, DIM_NUM_4) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
         OP_CHECK_IF(CompareShape(betaStorageShape, gStorageShape, INPUT_BETA_NAME, INPUT_G_NAME, DIM_NUM_3) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CompareShape(kStorageShape, gStorageShape, INPUT_K_NAME, INPUT_G_NAME, DIM_NUM_3) !=
-                        ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CompareShape(dwStorageShape, kStorageShape, INPUT_DW_NAME, INPUT_K_NAME, DIM_NUM_4) !=
-                        ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CompareShape(kStorageShape, AStorageShape, INPUT_K_NAME, INPUT_A_NAME, DIM_NUM_3) !=
-                        ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
+        // GVA: v[B,HV,T,V] and k[B,HK,T,K] may have different head dims, only compare B(dim0) and T(dim2)
+        OP_CHECK_IF(vStorageShape.GetDim(DIM_0) != kStorageShape.GetDim(DIM_0),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed, the length of dim %zu should be same,but got "
+                            "%zu and %zu.",
+                            INPUT_V_NAME, INPUT_K_NAME, DIM_0, vStorageShape.GetDim(DIM_0), kStorageShape.GetDim(DIM_0)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(vStorageShape.GetDim(DIM_2) != kStorageShape.GetDim(DIM_2),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed, the length of dim %zu should be same,but got "
+                            "%zu and %zu.",
+                            INPUT_V_NAME, INPUT_K_NAME, DIM_2, vStorageShape.GetDim(DIM_2), kStorageShape.GetDim(DIM_2)),
+                    return ge::GRAPH_FAILED);
+        // GVA: k[B,HK,T,K] and g[B,HV,T] may have different head dims, only compare B(dim0) and T(dim2)
+        OP_CHECK_IF(kStorageShape.GetDim(DIM_0) != gStorageShape.GetDim(DIM_0),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed, the length of dim %zu should be same,but got "
+                            "%zu and %zu.",
+                            INPUT_K_NAME, INPUT_G_NAME, DIM_0, kStorageShape.GetDim(DIM_0), gStorageShape.GetDim(DIM_0)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(kStorageShape.GetDim(DIM_2) != gStorageShape.GetDim(DIM_2),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed, the length of dim %zu should be same,but got "
+                            "%zu and %zu.",
+                            INPUT_K_NAME, INPUT_G_NAME, DIM_2, kStorageShape.GetDim(DIM_2), gStorageShape.GetDim(DIM_2)),
+                    return ge::GRAPH_FAILED);
+        // GVA: dw[B,HV,T,K] and k[B,HK,T,K] may have different head dims, compare B(dim0), T(dim2), K(dim3)
+        OP_CHECK_IF(dwStorageShape.GetDim(DIM_0) != kStorageShape.GetDim(DIM_0),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed, the length of dim %zu should be same,but got "
+                            "%zu and %zu.",
+                            INPUT_DW_NAME, INPUT_K_NAME, DIM_0, dwStorageShape.GetDim(DIM_0), kStorageShape.GetDim(DIM_0)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(dwStorageShape.GetDim(DIM_2) != kStorageShape.GetDim(DIM_2),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed, the length of dim %zu should be same,but got "
+                            "%zu and %zu.",
+                            INPUT_DW_NAME, INPUT_K_NAME, DIM_2, dwStorageShape.GetDim(DIM_2), kStorageShape.GetDim(DIM_2)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(dwStorageShape.GetDim(DIM_3) != kStorageShape.GetDim(DIM_3),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed, the length of dim %zu should be same,but got "
+                            "%zu and %zu.",
+                            INPUT_DW_NAME, INPUT_K_NAME, DIM_3, dwStorageShape.GetDim(DIM_3), kStorageShape.GetDim(DIM_3)),
+                    return ge::GRAPH_FAILED);
+        // GVA: k[B,HK,T,K] and A[B,HV,T,BT] may have different head dims, only compare B(dim0) and T(dim2)
+        OP_CHECK_IF(kStorageShape.GetDim(DIM_0) != AStorageShape.GetDim(DIM_0),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed, the length of dim %zu should be same,but got "
+                            "%zu and %zu.",
+                            INPUT_K_NAME, INPUT_A_NAME, DIM_0, kStorageShape.GetDim(DIM_0), AStorageShape.GetDim(DIM_0)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(kStorageShape.GetDim(DIM_2) != AStorageShape.GetDim(DIM_2),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare input shape of %s and %s failed, the length of dim %zu should be same,but got "
+                            "%zu and %zu.",
+                            INPUT_K_NAME, INPUT_A_NAME, DIM_2, kStorageShape.GetDim(DIM_2), AStorageShape.GetDim(DIM_2)),
+                    return ge::GRAPH_FAILED);
         B = static_cast<int64_t>(vStorageShape.GetDim(DIM_0));
-        H = static_cast<int64_t>(vStorageShape.GetDim(DIM_1));
+        HV = static_cast<int64_t>(vStorageShape.GetDim(DIM_1));
+        HK = static_cast<int64_t>(kStorageShape.GetDim(DIM_1));
+        // GVA: HV must be a positive multiple of HK
+        OP_CHECK_IF(HV % HK != 0,
+                    OP_LOGE(context_->GetNodeName(),
+                            "HV (%ld) must be a positive multiple of HK (%ld) for GVA (remainder %ld).", HV, HK, HV % HK),
+                    return ge::GRAPH_FAILED);
         T = static_cast<int64_t>(vStorageShape.GetDim(DIM_2));
         K = static_cast<int64_t>(kStorageShape.GetDim(DIM_3));
         V = static_cast<int64_t>(vStorageShape.GetDim(DIM_3));
         tiling_.set_B(B);
-        tiling_.set_H(H);
+        tiling_.set_HV(HV);
+        tiling_.set_HK(HK);
         tiling_.set_T(T);
         tiling_.set_K(K);
         tiling_.set_V(V);
@@ -318,7 +333,7 @@ public:
         auto kDType = kDesc->GetDataType();
         auto betaDesc = context_->GetDynamicInputDesc(INPUT_BETA_IDX, 0);
         OP_CHECK_NULL_WITH_CONTEXT(context_, betaDesc); // check xDesc is not null
-        auto betaDType = kDesc->GetDataType();
+        auto betaDType = betaDesc->GetDataType();
 
         OP_CHECK_IF(SetRowNumKBetaG(ubSize, kDType, betaDType) != ge::GRAPH_SUCCESS,
                     OP_LOGE(context_->GetNodeName(), "SetRowNumKBetaG Failed."), return ge::GRAPH_FAILED);
@@ -369,7 +384,8 @@ static void PrepareWyReprBwdDaTilingDataPrint(gert::TilingContext *context, Prep
     auto nodeName = context->GetNodeName();
     OP_LOGD(nodeName, ">>>>>>>>>>>>>>> Start to print PrepareWyReprBwdDa tiling data <<<<<<<<<<<<<<<<");
     OP_LOGD(nodeName, "=== B: %ld", tiling.get_B());
-    OP_LOGD(nodeName, "=== H: %ld", tiling.get_H());
+    OP_LOGD(nodeName, "=== HV: %ld", tiling.get_HV());
+    OP_LOGD(nodeName, "=== HK: %ld", tiling.get_HK());
     OP_LOGD(nodeName, "=== T: %ld", tiling.get_T());
     OP_LOGD(nodeName, "=== K: %ld", tiling.get_K());
     OP_LOGD(nodeName, "=== V: %ld", tiling.get_V());
@@ -390,6 +406,15 @@ ge::graphStatus Tiling4PrepareWyReprBwdDa(gert::TilingContext *context)
     PrepareWyReprBwdDaTilingProcessor processor(context, tiling);
 
     OP_CHECK_IF(processor.PreCheck() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+
+    const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510) {
+        PrepareWyReprBwdDaTilingA5 prepareWyReprBwdDaTilingA5;
+        OP_CHECK_IF(!prepareWyReprBwdDaTilingA5.SetTiling(context),
+                    OP_LOGE(context->GetNodeName(), "SetTiling failed."), return ge::GRAPH_FAILED);
+        return ge::GRAPH_SUCCESS;
+    }
+
     OP_CHECK_IF(processor.CommonTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
 
     auto cuSeqlensTensor = context->GetOptionalInputTensor(INPUT_SEQLENS_IDX);
@@ -413,13 +438,12 @@ ge::graphStatus Tiling4PrepareWyReprBwdDa(gert::TilingContext *context)
 
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
-    const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     context->SetBlockDim(ascendcPlatform.GetCoreNumAic());
 
     auto sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     OP_LOGD(context->GetNodeName(), "=== sysWorkspaceSize: %ld", sysWorkspaceSize);
     int64_t maxKV = std::max(tiling.get_K(), tiling.get_V());
-    size_t userWorkspaceSize = 2 * tiling.get_B() * tiling.get_H() * tiling.get_T() * (tiling.get_chunkSize() + maxKV);
+    size_t userWorkspaceSize = 2 * tiling.get_B() * tiling.get_HV() * tiling.get_T() * (tiling.get_chunkSize() + maxKV);
     OP_LOGD(context->GetNodeName(), "=== userWorkspaceSize: %ld", userWorkspaceSize);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = static_cast<size_t>(sysWorkspaceSize + userWorkspaceSize);

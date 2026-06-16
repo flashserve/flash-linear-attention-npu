@@ -76,15 +76,35 @@ torch.ops.npu.npu_chunk_bwd_dv_local(...)
 
 ### 接入实践
 
-环境准备：[triton-ascend](https://gitcode.com/Ascend/triton-ascend)包安装，可以使用以下命令安装
+环境准备：除本仓根目录 `requirements.txt` 外，Example ST 还依赖 Ascend PyTorch `v26.1.0-beta.1` release family 对应的 PyTorch / torch-npu / torchnpugen、[triton-ascend](https://gitcode.com/Ascend/triton-ascend) 和 `pybind11`。`v26.1.0-beta.1` 是必须的 Ascend PyTorch release 版本；PyTorch 小版本可以按环境选择，但必须安装同一 release family 下匹配的 `torch_npu` wheel。对应 wheel 已包含 `torchnpugen`，并修复了 GDN 算子自定义适配中 `aclnn_extension` 未传 stream 导致算子间数据同步不生效的问题；不要再拉取 `op-plugin` 仓库重新编译。`triton-ascend` 会提供 `triton` Python 模块；3.2.0 及以前不要和社区版 `triton` 共存，否则可能触发 `torch_npu` 的 `triton` namespace 重复注册。
+
 ```sh
-pip install triton-ascend
+# 以下示例使用 Python 3.10/aarch64 + PyTorch 2.7.1；其他 PyTorch 小版本请切换到同属 v26.1.0-beta.1 的配套 tag 和 wheel。
+pip install -r requirements.txt
+pip install torch==2.7.1
+curl -fL --retry 3 --retry-delay 2 -o /tmp/torch_npu-2.7.1.post5-cp310-cp310-manylinux_2_28_aarch64.whl \
+  https://gitcode.com/Ascend/pytorch/releases/download/v26.1.0-beta.1-pytorch2.7.1/torch_npu-2.7.1.post5-cp310-cp310-manylinux_2_28_aarch64.whl
+pip install /tmp/torch_npu-2.7.1.post5-cp310-cp310-manylinux_2_28_aarch64.whl
+pip uninstall -y triton
+pip install triton-ascend==3.2.0
+pip uninstall -y triton
+pip install pybind11
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export PYTORCH_VERSION=2.7.1
 ```
 
 一键运行GDN模块，组装了所有GDN相关算子，包括前向和反向，包括AscendC和Triton算子
 ```sh
 python examples/flash_gated_delta_rule.py
 ```
+
+NPU CI 的 Example/ST 用例由 [`ci/example_st_cases.json`](ci/example_st_cases.json) 管理。当前默认启用 `case1_current_default`，shape 与上面的直接运行默认值一致；后续 GVA、`Vdim=256` 等泛化场景可以在该文件中新增用例，显式填写 `B`、`T`、`chunk_size`、`query_head`、`value_head`、`Kdim`、`Vdim` 等 shape 字段，以及 `gate_source`、`gate_function`、`initial_state`、`output_final_state`、`qk_l2norm` 等行为字段。
+
+当前端到端 Example/ST 已支持 `gate_source=g`；`gk` / `g+gk` 先作为用例 schema 预留，待 NPU fwd_h 路径支持后再启用。
+
+## 维护文档
+
+NPU CI 维护说明见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部署教程.md)。
 
 ## 🔍目录结构
 关键目录如下：

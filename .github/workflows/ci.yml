@@ -1,0 +1,459 @@
+name: NPU CI
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to run NPU CI for"
+        required: true
+      ci_mode:
+        description: "CI mode: quick or full"
+        required: false
+        default: quick
+      ops:
+        description: "Optional comma-separated operator list"
+        required: false
+        default: ''
+jobs:
+  prepare:
+    name: 准备 NPU CI
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        github.actor != 'github-actions[bot]' &&
+        contains(github.event.comment.body, '/run-npu-ci')
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: read
+      statuses: write
+    outputs:
+      should_run: ${{ steps.prepare.outputs.should_run }}
+      pr_number: ${{ steps.prepare.outputs.pr_number }}
+      head_repo: ${{ steps.prepare.outputs.head_repo }}
+      head_sha: ${{ steps.prepare.outputs.head_sha }}
+      ci_mode: ${{ steps.prepare.outputs.ci_mode }}
+      ops: ${{ steps.prepare.outputs.ops }}
+      comment_id: ${{ steps.prepare.outputs.comment_id }}
+    steps:
+      - name: 解析 PR 和 CI 参数
+        id: prepare
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const actor = context.actor;
+            let actorPermission = 'none';
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: actor,
+              });
+              actorPermission = data.permission || 'none';
+            } catch (error) {
+              core.warning(`Unable to inspect repository permission for ${actor}: ${error.message}`);
+            }
+            if (actorPermission !== 'admin') {
+              core.setFailed(`${actor} 无权触发 NPU CI：需要仓库 Admin 权限，当前权限为 ${actorPermission}。`);
+              return;
+            }
+
+            const contextName = 'NPU CI / 手动验证';
+            let prNumber;
+            let ciMode = 'quick';
+            let ops = '';
+            let commentId = '';
+            const upsertComment = async (pr, body) => {
+              if (!prNumber || !pr) {
+                return '';
+              }
+              const marker = `<!-- npu-ci:pr=${prNumber}:sha=${pr.head.sha} -->`;
+              const fullBody = `${marker}\n${body}`;
+              try {
+                const comments = await github.paginate(github.rest.issues.listComments, {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  per_page: 100,
+                });
+                const existing = comments
+                  .filter((comment) =>
+                    comment.user &&
+                    comment.user.type === 'Bot' &&
+                    typeof comment.body === 'string' &&
+                    comment.body.includes(marker)
+                  )
+                  .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
+
+                if (existing) {
+                  await github.rest.issues.updateComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    comment_id: existing.id,
+                    body: fullBody,
+                  });
+                  return String(existing.id);
+                }
+
+                const { data: comment } = await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: fullBody,
+                });
+                return String(comment.id);
+              } catch (error) {
+                core.warning(`Unable to create or update PR comment: ${error.message}`);
+                return '';
+              }
+            };
+
+            const isActivePendingStatus = async (status) => {
+              if (!status || status.state !== 'pending') {
+                return false;
+              }
+              if (!(status.description || '').includes('+example')) {
+                return false;
+              }
+              const targetUrl = status.target_url || '';
+              const match = targetUrl.match(/\/actions\/runs\/(\d+)/);
+              if (!match) {
+                core.warning('NPU CI pending status has no Actions run URL; treating it as active.');
+                return true;
+              }
+              try {
+                const { data: run } = await github.rest.actions.getWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: Number(match[1]),
+                });
+                return ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(run.status);
+              } catch (error) {
+                core.warning(`Unable to inspect NPU CI workflow run: ${error.message}`);
+                return true;
+              }
+            };
+
+            if (context.eventName === 'workflow_dispatch') {
+              prNumber = Number(core.getInput('pr_number', { required: true }));
+              ciMode = core.getInput('ci_mode') || 'quick';
+              ops = core.getInput('ops') || '';
+            } else {
+              prNumber = context.payload.issue.number;
+              const body = (context.payload.comment.body || '').trim();
+              if (!body.startsWith('/run-npu-ci')) {
+                core.notice('评论包含 /run-npu-ci，但去掉首尾空白后不是以触发命令开头，跳过。');
+                core.setOutput('should_run', 'false');
+                return;
+              }
+              const parts = body.split(/\s+/).slice(1);
+              for (const part of parts) {
+                if (part === 'quick' || part === 'full') {
+                  ciMode = part;
+                } else if (part.startsWith('ops=')) {
+                  ops = part.slice('ops='.length);
+                }
+              }
+            }
+
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.setFailed(`无效的 PR 编号：${prNumber}`);
+              return;
+            }
+            if (!['quick', 'full'].includes(ciMode)) {
+              core.setFailed(`不支持的 CI 模式：${ciMode}`);
+              return;
+            }
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            if (pr.draft) {
+              core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再运行 NPU CI。`);
+              return;
+            }
+
+            const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: pr.head.sha,
+              per_page: 100,
+            });
+            const manualCiStatuses = statuses
+              .filter((status) => status.context === contextName)
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            const latestExecutionCi = manualCiStatuses
+              .find((status) => (status.description || '').includes('+example'));
+            const latestPassedWithExample = latestExecutionCi &&
+              latestExecutionCi.state === 'success';
+            if (latestPassedWithExample) {
+              core.notice(`${pr.head.sha} 已经通过 NPU CI，跳过重复运行。`);
+              commentId = await upsertComment(
+                pr,
+                [
+                  `NPU CI 已经在 \`${pr.head.sha}\` 上通过，本次不会重复运行。`,
+                  '',
+                  `- 请求模式：\`${ciMode}\``,
+                  `- 触发人：@${actor}`,
+                  '- Example ST：已覆盖',
+                  '- Example ST 用例：全部 enabled 用例',
+                ].join('\n')
+              );
+              core.setOutput('should_run', 'false');
+              core.setOutput('pr_number', String(prNumber));
+              core.setOutput('head_repo', pr.head.repo.full_name);
+              core.setOutput('head_sha', pr.head.sha);
+              core.setOutput('ci_mode', ciMode);
+              core.setOutput('ops', ops);
+              core.setOutput('comment_id', commentId);
+              return;
+            }
+            if (await isActivePendingStatus(latestExecutionCi)) {
+              core.notice(`${pr.head.sha} 已经有 NPU CI 在排队或运行，跳过重复启动。`);
+              commentId = await upsertComment(
+                pr,
+                [
+                  `NPU CI 已在验证 \`${pr.head.sha}\`，本次评论不会重复启动新任务。`,
+                  '',
+                  `- 请求模式：\`${ciMode}\``,
+                  `- 触发人：@${actor}`,
+                  '- 当前状态：排队或运行中',
+                  '- Example ST：必跑',
+                  '- Example ST 用例：全部 enabled 用例',
+                  latestExecutionCi.target_url ? `- 运行链接：[查看已有 NPU CI](${latestExecutionCi.target_url})` : '',
+                ].filter(Boolean).join('\n')
+              );
+              core.setOutput('should_run', 'false');
+              core.setOutput('pr_number', String(prNumber));
+              core.setOutput('head_repo', pr.head.repo.full_name);
+              core.setOutput('head_sha', pr.head.sha);
+              core.setOutput('ci_mode', ciMode);
+              core.setOutput('ops', ops);
+              core.setOutput('comment_id', commentId);
+              return;
+            }
+
+            const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: pr.head.sha,
+              state: 'pending',
+              context: contextName,
+              description: `NPU CI 已由 @${actor} 触发 (${ciMode}+example)`,
+              target_url: targetUrl,
+            });
+            commentId = await upsertComment(
+              pr,
+              [
+                `NPU CI 已开始验证 \`${pr.head.sha}\`。`,
+                '',
+                `- 模式：\`${ciMode}\``,
+                `- 触发人：@${actor}`,
+                '- Example ST：必跑',
+                '- Example ST 用例：全部 enabled 用例',
+                ops ? `- 算子：\`${ops}\`` : '',
+                `- 运行链接：[NPU CI #${context.runNumber}](${targetUrl})`,
+              ].filter(Boolean).join('\n')
+            );
+
+            core.setOutput('should_run', 'true');
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('head_repo', pr.head.repo.full_name);
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('ci_mode', ciMode);
+            core.setOutput('ops', ops);
+            core.setOutput('comment_id', commentId);
+
+  ascend-npu:
+    name: Ascend NPU 验证
+    needs: prepare
+    if: needs.prepare.outputs.should_run == 'true'
+    runs-on: [self-hosted, linux, arm64, npu, flash-linear-attention-npu]
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      issues: write
+      statuses: write
+    env:
+      CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
+      CI_OPS: ${{ needs.prepare.outputs.ops }}
+      CI_RUN_EXAMPLE_ST: 'true'
+      CI_IMAGE: fla-npu-ci:8.5.0-910b
+    steps:
+      - name: 拉取 PR 合并后代码（第 1 次）
+        id: checkout_pr_1
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: refs/pull/${{ needs.prepare.outputs.pr_number }}/merge
+          fetch-depth: 1
+          path: repo
+
+      - name: 等待后重试拉取 PR 合并后代码
+        if: steps.checkout_pr_1.outcome == 'failure'
+        run: |
+          rm -rf repo
+          sleep 15
+
+      - name: 拉取 PR 合并后代码（第 2 次）
+        id: checkout_pr_2
+        if: steps.checkout_pr_1.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: refs/pull/${{ needs.prepare.outputs.pr_number }}/merge
+          fetch-depth: 1
+          path: repo
+
+      - name: 再次等待后重试拉取 PR 代码
+        if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
+        run: |
+          rm -rf repo
+          sleep 30
+
+      - name: 拉取 PR 合并后代码（第 3 次）
+        if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
+        timeout-minutes: 10
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: refs/pull/${{ needs.prepare.outputs.pr_number }}/merge
+          fetch-depth: 1
+          path: repo
+
+      - name: 拉取可信 CI 脚本（第 1 次）
+        id: checkout_trusted_ci_1
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          path: trusted-ci
+
+      - name: 等待后重试拉取可信 CI 脚本
+        if: steps.checkout_trusted_ci_1.outcome == 'failure'
+        run: |
+          rm -rf trusted-ci
+          sleep 15
+
+      - name: 拉取可信 CI 脚本（第 2 次）
+        id: checkout_trusted_ci_2
+        if: steps.checkout_trusted_ci_1.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          path: trusted-ci
+
+      - name: 再次等待后重试拉取可信 CI 脚本
+        if: steps.checkout_trusted_ci_1.outcome == 'failure' && steps.checkout_trusted_ci_2.outcome == 'failure'
+        run: |
+          rm -rf trusted-ci
+          sleep 30
+
+      - name: 拉取可信 CI 脚本（第 3 次）
+        if: steps.checkout_trusted_ci_1.outcome == 'failure' && steps.checkout_trusted_ci_2.outcome == 'failure'
+        timeout-minutes: 10
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          path: trusted-ci
+
+      - name: 使用可信 CI 脚本
+        run: |
+          # CI 执行脚本必须来自默认分支，避免 PR 修改脚本后影响 runner。
+          # 但 Example/ST 用例配置属于被验证内容：新 PR 中新增或修改的 enabled 用例
+          # 必须跟随 PR merge ref 一起进入容器，并被 /run-npu-ci quick 实际执行验证。
+          tmp_cases="$(mktemp)"
+          if [ -f repo/ci/example_st_cases.json ]; then
+            cp repo/ci/example_st_cases.json "$tmp_cases"
+            python3 -m json.tool "$tmp_cases" >/dev/null
+          else
+            rm -f "$tmp_cases"
+          fi
+
+          rm -rf repo/ci
+          cp -a trusted-ci/ci repo/ci
+
+          # 覆盖可信 CI 脚本后，再恢复 PR 自身的 case 文件。
+          # 因此后续 PR 只补充 ci/example_st_cases.json 时，NPU CI 会跑到新增用例。
+          if [ -f "$tmp_cases" ]; then
+            cp "$tmp_cases" repo/ci/example_st_cases.json
+          fi
+
+      - name: 运行 NPU CI 容器
+        working-directory: repo
+        run: bash ci/run_ci_container.sh
+
+      - name: 发布 NPU CI 状态
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const state = '${{ job.status }}' === 'success' ? 'success' : 'failure';
+            const mode = ${{ toJson(needs.prepare.outputs.ci_mode) }};
+            const ops = ${{ toJson(needs.prepare.outputs.ops) }};
+            const sha = ${{ toJson(needs.prepare.outputs.head_sha) }};
+            const prNumber = ${{ toJson(needs.prepare.outputs.pr_number) }};
+            const commentId = ${{ toJson(needs.prepare.outputs.comment_id) }};
+            const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha,
+              state,
+              context: 'NPU CI / 手动验证',
+              description: state === 'success' ? `NPU CI 通过 (${mode}+example)` : `NPU CI 失败 (${mode}+example)`,
+              target_url: targetUrl,
+            });
+            const result = state === 'success' ? '通过' : '失败';
+            const commentBody = [
+              `<!-- npu-ci:pr=${prNumber}:sha=${sha} -->`,
+              `NPU CI ${result}：\`${sha}\`。`,
+              '',
+              `- 模式：\`${mode}\``,
+              `- 触发人：@${context.actor}`,
+              '- Example ST：必跑',
+              '- Example ST 用例：全部 enabled 用例',
+              ops ? `- 算子：\`${ops}\`` : '',
+              `- 运行链接：[NPU CI #${context.runNumber}](${targetUrl})`,
+            ].filter(Boolean).join('\n');
+
+            try {
+              if (commentId) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: Number(commentId),
+                  body: commentBody,
+                });
+              } else if (prNumber) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: Number(prNumber),
+                  body: commentBody,
+                });
+              }
+            } catch (error) {
+              core.warning(`Unable to create or update PR comment: ${error.message}`);
+            }

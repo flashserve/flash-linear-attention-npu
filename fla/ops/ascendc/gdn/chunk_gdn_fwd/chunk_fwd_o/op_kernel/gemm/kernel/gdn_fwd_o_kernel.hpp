@@ -74,6 +74,7 @@ using _65536 = tla::Int<65536>;
 #endif
 
 #include "kernel_operator.h"
+#include "../../chunk_fwd_o_struct.h"
 using namespace Catlass;
 using namespace tla;
 
@@ -87,7 +88,7 @@ template<
 >
 class GDNFwdOKernel {
 public:
-    
+
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     using ArchTag = Arch::Ascend950;
 #else
@@ -141,7 +142,7 @@ public:
 
     using ElementAtten = typename BlockMmadQK::ElementC;
     using LayoutAtten = Catlass::layout::RowMajor;
-    
+
     using ElementAttenMasked = typename BlockMmadQH::ElementA;
     using LayoutAttenMasked = Catlass::layout::RowMajor;
 
@@ -152,7 +153,7 @@ public:
     using LayoutOinter = Catlass::layout::RowMajor;
 
 
-    using ElementVNEW = typename BlockMmadAttenVNEW::ElementB; 
+    using ElementVNEW = typename BlockMmadAttenVNEW::ElementB;
     using LayoutVNEW = Catlass::layout::RowMajor;
 
 
@@ -177,7 +178,7 @@ public:
     uint32_t attnWorkspaceOffset;
     uint32_t aftermaskWorkspaceOffset;
     uint32_t maskWorkspaceOffset;
-    
+
     AscendC::GlobalTensor<ElementQ> gmQ;
     AscendC::GlobalTensor<ElementK> gmK;
     AscendC::GlobalTensor<ElementVNEW> gmV;
@@ -197,26 +198,24 @@ public:
 
     __aicore__ inline GDNFwdOKernel() {}
 
-    __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g, 
-        GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, GM_ADDR o, GM_ADDR tiling, GM_ADDR user) {
-        
-        __gm__ ChunkFwdOTilingData *__restrict gdnFwdOTilingData = reinterpret_cast<__gm__ ChunkFwdOTilingData *__restrict>(tiling);
+    __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g,
+        GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, GM_ADDR o, const GDN::ChunkFwdOTilingData *tilingData, GM_ADDR user) {
 
-        shapeBatch = gdnFwdOTilingData->shapeBatch;
-        seqlen = gdnFwdOTilingData->seqlen;
-        kNumHead = gdnFwdOTilingData->kNumHead;
-        vNumHead = gdnFwdOTilingData->vNumHead;
-        kHeadDim = gdnFwdOTilingData->kHeadDim;
-        vHeadDim = gdnFwdOTilingData->vHeadDim;
-        scale = gdnFwdOTilingData->scale;
-        chunkSize = gdnFwdOTilingData->chunkSize;
-        isVariedLen = gdnFwdOTilingData->isVariedLen;
-        tokenBatch = gdnFwdOTilingData->tokenBatch;
-        vWorkspaceOffset = gdnFwdOTilingData->vWorkspaceOffset;
-        hWorkspaceOffset = gdnFwdOTilingData->hWorkspaceOffset;
-        attnWorkspaceOffset = gdnFwdOTilingData->attnWorkspaceOffset;
-        aftermaskWorkspaceOffset = gdnFwdOTilingData->aftermaskWorkspaceOffset;
-        maskWorkspaceOffset = gdnFwdOTilingData->maskWorkspaceOffset;
+        shapeBatch = tilingData->shapeBatch;
+        seqlen = tilingData->seqlen;
+        kNumHead = tilingData->kNumHead;
+        vNumHead = tilingData->vNumHead;
+        kHeadDim = tilingData->kHeadDim;
+        vHeadDim = tilingData->vHeadDim;
+        scale = tilingData->scale;
+        chunkSize = tilingData->chunkSize;
+        isVariedLen = tilingData->isVariedLen;
+        tokenBatch = tilingData->tokenBatch;
+        vWorkspaceOffset = tilingData->vWorkspaceOffset;
+        hWorkspaceOffset = tilingData->hWorkspaceOffset;
+        attnWorkspaceOffset = tilingData->attnWorkspaceOffset;
+        aftermaskWorkspaceOffset = tilingData->aftermaskWorkspaceOffset;
+        maskWorkspaceOffset = tilingData->maskWorkspaceOffset;
 
         gmQ.SetGlobalBuffer((__gm__ ElementQ *)q);
         gmK.SetGlobalBuffer((__gm__ ElementK *)k);
@@ -231,11 +230,11 @@ public:
         gmMask.SetGlobalBuffer((__gm__ ElementMask *)(user + maskWorkspaceOffset));
 
         if ASCEND_IS_AIC {
-            cubeBlockScheduler.Init(cu_seqlens, chunk_offsets, tiling);
+            cubeBlockScheduler.Init(cu_seqlens, chunk_offsets, tilingData);
         }
 
         if ASCEND_IS_AIV {
-            vecBlockScheduler.Init(cu_seqlens, chunk_offsets, tiling);
+            vecBlockScheduler.Init(cu_seqlens, chunk_offsets, tilingData);
         }
     }
 
@@ -255,19 +254,16 @@ public:
             auto vnewLayout = tla::MakeLayout<ElementVNEW, LayoutVNEW>(shapeBatch * vNumHead * seqlen, vHeadDim);
 
             bool needRun = false;
-            bool isFirstC3 = true;
 
             while (cubeBlockScheduler.isRunning) {
                 cubeBlockScheduler.InitTask();
 
                 if (cubeBlockScheduler.isRunning && coreIdx < coreNum) {
 
-                    Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done);
-
                     GDNFwdOOffsets& cube1Offsets = cubeBlockScheduler.GetCube1Offsets();
-                    int64_t cube1OffsetQ = cube1Offsets.qkOffset; 
-                    int64_t cube1OffsetK = cube1Offsets.qkOffset; 
-                    int64_t cube1OffsetAttn = cube1Offsets.attnWorkOffset; 
+                    int64_t cube1OffsetQ = cube1Offsets.qkOffset;
+                    int64_t cube1OffsetK = cube1Offsets.qkOffset;
+                    int64_t cube1OffsetAttn = cube1Offsets.attnWorkOffset;
                     auto attenLayout = tla::MakeLayout<ElementAtten, LayoutAtten>(coreNum * chunkSize * PING_PONG_STAGES, cube1Offsets.blockTokens);
                     auto tensorQ = tla::MakeTensor(gmQ[cube1OffsetQ], qLayout, Catlass::Arch::PositionGM{});
                     auto tensorK = tla::MakeTensor(gmK[cube1OffsetK], kLayout, Catlass::Arch::PositionGM{});
@@ -285,12 +281,11 @@ public:
                 // AscendC::PipeBarrier<PIPE_ALL>();
 
                 if (needRun && coreIdx < coreNum) {
-                    if(!cubeBlockScheduler.isRunning) Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done);
-                    Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done);
+                    Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done);
                     GDNFwdOOffsets& cube2Offsets = cubeBlockScheduler.GetCube23Offsets();
                     int64_t cube2OffsetQ = cube2Offsets.qkOffset;
                     int64_t cube2OffsetH = cube2Offsets.hOffset;
-                    int64_t cube2OffsetHWork = cube2Offsets.hvWorkOffset; 
+                    int64_t cube2OffsetHWork = cube2Offsets.hvWorkOffset;
                     auto tensorQ = tla::MakeTensor(gmQ[cube2OffsetQ], qLayout, Catlass::Arch::PositionGM{});
                     auto tensorH = tla::MakeTensor(gmH[cube2OffsetH], hLayout, Catlass::Arch::PositionGM{});
                     auto tensorHWork = tla::MakeTensor(gmHWorkspace[cube2OffsetHWork], ointerLayout, Catlass::Arch::PositionGM{});
@@ -301,15 +296,16 @@ public:
                     blockMmadQH.preSetFlags();
                     blockMmadQH(tensorBlockQ, tensorBlockH, tensorBlockHWork, cube2Shape);
                     blockMmadQH.finalWaitFlags();
-                    Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube2Done);
                 }
+
+                AscendC::PipeBarrier<PIPE_MTE2>();
+                AscendC::PipeBarrier<PIPE_FIX>();
 
                 if (needRun && coreIdx < coreNum) {
                     GDNFwdOOffsets& cube3Offsets = cubeBlockScheduler.GetCube23Offsets();
-                    if(isFirstC3) Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done);
-                    int64_t cube3OffsetAttnMask = cube3Offsets.attnWorkOffset; 
-                    int64_t cube3OffsetV = cube3Offsets.ovOffset; 
-                    int64_t cube3OffsetVWork = cube3Offsets.hvWorkOffset; 
+                    int64_t cube3OffsetAttnMask = cube3Offsets.attnWorkOffset;
+                    int64_t cube3OffsetV = cube3Offsets.ovOffset;
+                    int64_t cube3OffsetVWork = cube3Offsets.hvWorkOffset;
                     auto attenLayout = tla::MakeLayout<ElementAtten, LayoutAtten>(coreNum * chunkSize * PING_PONG_STAGES, cube3Offsets.blockTokens);
                     auto tensorAttnMask = tla::MakeTensor(gmAftermaskWorkspace[cube3OffsetAttnMask], attenLayout, Catlass::Arch::PositionGM{});
                     auto tensorV = tla::MakeTensor(gmV[cube3OffsetV], vnewLayout, Catlass::Arch::PositionGM{});
@@ -322,14 +318,9 @@ public:
                     blockMmadAttenVNEW(tensorBlockAttnMask, tensorBlockV, tensorBlockVWork, cube3Shape);
                     blockMmadAttenVNEW.finalWaitFlags();
                     Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube3Done);
-                    isFirstC3 = false;
                 }
                 needRun = true;
                 // AscendC::PipeBarrier<PIPE_ALL>();
-            }
-            if (coreIdx < coreNum) {
-                Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done);
-
             }
         }
 
@@ -349,12 +340,6 @@ public:
             bool needRun = false;
             uint32_t pingpongFlag = 0;
 
-            if (coreIdx < coreNum * subBlockNum) {
-                Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec1Done);
-                Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec1Done);
-                Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done);
-            }
-
             while (vecBlockScheduler.isRunning) {
                 vecBlockScheduler.InitTask();
 
@@ -366,7 +351,7 @@ public:
                     int64_t vec1OffsetAttn = vec1Offsets.attnWorkOffset;
                     EpilogueGDNFwdOQkmask epilogueGDNFwdOQkmask(resource);
                     epilogueGDNFwdOQkmask(
-                        gmAftermaskWorkspace[vec1OffsetAttnMask], 
+                        gmAftermaskWorkspace[vec1OffsetAttnMask],
                         gmG[vec1OffsetG], gmAttnWorkspace[vec1OffsetAttn], gmMask,
                         chunkSize, vec1Offsets.blockTokens, kHeadDim, vHeadDim, pingpongFlag, vec1Offsets.batchIdx, vec1Offsets.headIdx, vec1Offsets.chunkIdx
                     );
@@ -376,7 +361,6 @@ public:
                 // AscendC::PipeBarrier<PIPE_ALL>();
 
                 if (needRun && coreIdx < coreNum * subBlockNum) {
-                    Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done);
                     Arch::CrossCoreWaitFlag(vecBlockScheduler.cube3Done);
                     GDNFwdOOffsets& vec2Offsets = vecBlockScheduler.GetVec2Offsets();
                     int64_t vec2OffsetO = vec2Offsets.ovOffset;
@@ -385,20 +369,16 @@ public:
                     int64_t vec2OffsetHWork = vec2Offsets.hvWorkOffset;
                     EpilogueGDNFwdOOutput epilogueGDNFwdOOutput(resource);
                     epilogueGDNFwdOOutput(
-                        gmO[vec2OffsetO], 
-                        gmG[vec2OffsetG], gmVWorkspace[vec2OffsetVWork], gmHWorkspace[vec2OffsetHWork], 
+                        gmO[vec2OffsetO],
+                        gmG[vec2OffsetG], gmVWorkspace[vec2OffsetVWork], gmHWorkspace[vec2OffsetHWork],
                         scale, vec2Offsets.blockTokens, kHeadDim, vHeadDim, pingpongFlag, vec2Offsets.batchIdx, vec2Offsets.headIdx, vec2Offsets.chunkIdx
                     );
-                    Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done);
                 }
-                
-                // AscendC::PipeBarrier<PIPE_ALL>();
-
                 needRun = true;
             }
         }
     }
-    
+
 };
 
 }

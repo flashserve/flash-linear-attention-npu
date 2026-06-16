@@ -59,7 +59,9 @@ class RecomputeWUFwdTilingProcessor {
     gert::TilingContext *context_;
     RecomputeWUFwdTilingData &tiling_;
     int64_t B = 0;
-    int64_t H = 0;
+    int64_t Hk = 0;
+    int64_t Hv = 0;
+    int64_t hvPerHk = 1;
     int64_t K = 0;
     int64_t V = 0;
     int64_t T = 0;
@@ -195,28 +197,79 @@ public:
         const gert::Shape betaStorageShape = context_->GetRequiredInputShape(INPUT_BETA_IDX)->GetStorageShape();
         const gert::Shape AStorageShape = context_->GetRequiredInputShape(INPUT_A_IDX)->GetStorageShape();
         const gert::Shape gStorageShape = context_->GetRequiredInputShape(INPUT_G_IDX)->GetStorageShape();
-        OP_CHECK_IF(CompareShape(vStorageShape, kStorageShape, INPUT_V_NAME, INPUT_K_NAME, DIM_NUM_3) !=
-                        ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
+        B = static_cast<int64_t>(vStorageShape.GetDim(DIM_0));
+        Hk = static_cast<int64_t>(kStorageShape.GetDim(DIM_1));
+        Hv = static_cast<int64_t>(vStorageShape.GetDim(DIM_1));
+        OP_CHECK_IF(Hk <= 0 || Hv <= 0,
+                    OP_LOGE(context_->GetNodeName(),
+                            "Invalid head dim: Hk and Hv must be positive, but got Hk=%ld, Hv=%ld.", Hk, Hv),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(Hv % Hk != 0,
+                    OP_LOGE(context_->GetNodeName(),
+                            "GVA check: Hv must be divisible by Hk, but got Hk=%ld, Hv=%ld.", Hk, Hv),
+                    return ge::GRAPH_FAILED);
+        hvPerHk = Hv / Hk;
+        OP_CHECK_IF(vStorageShape.GetDim(DIM_0) != kStorageShape.GetDim(DIM_0),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare B: v B=%ld vs k B=%ld mismatch.",
+                            vStorageShape.GetDim(DIM_0), kStorageShape.GetDim(DIM_0)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(vStorageShape.GetDim(DIM_2) != kStorageShape.GetDim(DIM_2),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare T: v T=%ld vs k T=%ld mismatch.",
+                            vStorageShape.GetDim(DIM_2), kStorageShape.GetDim(DIM_2)),
+                    return ge::GRAPH_FAILED);
         OP_CHECK_IF(CompareShape(betaStorageShape, gStorageShape, INPUT_BETA_NAME, INPUT_G_NAME, DIM_NUM_3) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CompareShape(kStorageShape, gStorageShape, INPUT_K_NAME, INPUT_G_NAME, DIM_NUM_3) !=
-                        ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CompareShape(kStorageShape, AStorageShape, INPUT_K_NAME, INPUT_A_NAME, DIM_NUM_3) !=
-                        ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
-        B = static_cast<int64_t>(vStorageShape.GetDim(DIM_0));
-        H = static_cast<int64_t>(vStorageShape.GetDim(DIM_1));
+        OP_CHECK_IF(kStorageShape.GetDim(DIM_0) != gStorageShape.GetDim(DIM_0),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare B: k B=%ld vs g B=%ld mismatch.",
+                            kStorageShape.GetDim(DIM_0), gStorageShape.GetDim(DIM_0)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(kStorageShape.GetDim(DIM_2) != gStorageShape.GetDim(DIM_2),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare T: k T=%ld vs g T=%ld mismatch.",
+                            kStorageShape.GetDim(DIM_2), gStorageShape.GetDim(DIM_2)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(kStorageShape.GetDim(DIM_0) != AStorageShape.GetDim(DIM_0),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare B: k B=%ld vs A B=%ld mismatch.",
+                            kStorageShape.GetDim(DIM_0), AStorageShape.GetDim(DIM_0)),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(kStorageShape.GetDim(DIM_2) != AStorageShape.GetDim(DIM_2),
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare T: k T=%ld vs A T=%ld mismatch.",
+                            kStorageShape.GetDim(DIM_2), AStorageShape.GetDim(DIM_2)),
+                    return ge::GRAPH_FAILED);
+        // A/beta/g 的 head 维必须等于 Hv（kernel 按 for h<Hv 索引这三个输入），否则会越界读
+        OP_CHECK_IF(AStorageShape.GetDim(DIM_1) != Hv,
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare head: A H=%ld must equal Hv=%ld.", AStorageShape.GetDim(DIM_1), Hv),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(betaStorageShape.GetDim(DIM_1) != Hv,
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare head: beta H=%ld must equal Hv=%ld.", betaStorageShape.GetDim(DIM_1), Hv),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(gStorageShape.GetDim(DIM_1) != Hv,
+                    OP_LOGE(context_->GetNodeName(),
+                            "Compare head: g H=%ld must equal Hv=%ld.", gStorageShape.GetDim(DIM_1), Hv),
+                    return ge::GRAPH_FAILED);
         T = static_cast<int64_t>(vStorageShape.GetDim(DIM_2));
         K = static_cast<int64_t>(kStorageShape.GetDim(DIM_3));
         V = static_cast<int64_t>(vStorageShape.GetDim(DIM_3));
         tiling_.set_B(B);
-        tiling_.set_H(H);
+        tiling_.set_Hk(Hk);
+        tiling_.set_Hv(Hv);
+        tiling_.set_hvPerHk(hvPerHk);
         tiling_.set_T(T);
         tiling_.set_K(K);
         tiling_.set_V(V);
+        OP_CHECK_IF(V != V_DIM_128 && V != V_DIM_256,
+                    OP_LOGE(context_->GetNodeName(),
+                            "Check value dim V failed: only %ld or %ld is supported, but get %ld.",
+                            V_DIM_128, V_DIM_256, V),
+                    return ge::GRAPH_FAILED);
         auto attrPtr = context_->GetAttrs();
         OP_CHECK_NULL_WITH_CONTEXT(context_, attrPtr);
         chunkSize = static_cast<int64_t>(*(attrPtr->GetAttrPointer<int32_t>(ATTR_CHUNK_SIZE_IDX)));
@@ -326,11 +379,15 @@ static void RecomputeWUFwdTilingDataPrint(gert::TilingContext *context, Recomput
     auto nodeName = context->GetNodeName();
     OP_LOGD(nodeName, ">>>>>>>>>>>>>>> Start to print RecomputeWUFwd tiling data <<<<<<<<<<<<<<<<");
     OP_LOGD(nodeName, "=== B: %ld", tiling.get_B());
-    OP_LOGD(nodeName, "=== H: %ld", tiling.get_H());
+    OP_LOGD(nodeName, "=== Hk: %ld", tiling.get_Hk());
+    OP_LOGD(nodeName, "=== Hv: %ld", tiling.get_Hv());
+    OP_LOGD(nodeName, "=== hvPerHk: %ld", tiling.get_hvPerHk());
     OP_LOGD(nodeName, "=== T: %ld", tiling.get_T());
     OP_LOGD(nodeName, "=== K: %ld", tiling.get_K());
     OP_LOGD(nodeName, "=== V: %ld", tiling.get_V());
     OP_LOGD(nodeName, "=== chunkSize: %ld", tiling.get_chunkSize());
+    OP_LOGD(nodeName, "=== vbVecRow: %ld", tiling.get_vbVecRow());
+    OP_LOGD(nodeName, "=== kbgExpVecRow: %ld", tiling.get_kbgExpVecRow());
     OP_LOGD(nodeName, ">>>>>>>>>>>>>>> Print RecomputeWUFwd tiling data end <<<<<<<<<<<<<<<<");
 }
 
@@ -358,8 +415,12 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
         OP_CHECK_IF(processor.VariableLenTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
         tiling.set_isVariable(1);
     }
-    context->SetTilingKey(1);
-    OP_LOGD(context->GetNodeName(), "tilingKey: %d", context->GetTilingKey());
+    if (tiling.get_V() == V_DIM_256) {
+        context->SetTilingKey(2);
+    } else {
+        context->SetTilingKey(1);
+    }
+    OP_LOGD(context->GetNodeName(), "tilingKey: %d (V=%ld)", context->GetTilingKey(), tiling.get_V());
     RecomputeWUFwdTilingDataPrint(context, tiling);
 
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
@@ -368,7 +429,7 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
     context->SetBlockDim(ascendcPlatform.GetCoreNumAic());
 
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
-    uint32_t userWorkspaceSize = 2 * tiling.get_B() * tiling.get_H() * tiling.get_T() * tiling.get_V();
+    uint32_t userWorkspaceSize = 2 * tiling.get_B() * tiling.get_Hv() * tiling.get_T() * tiling.get_V();
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = userWorkspaceSize + sysWorkspaceSize;
     context->SetScheduleMode(1); // set as batchmod for template using SyncAll

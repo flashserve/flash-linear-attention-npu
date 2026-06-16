@@ -12,8 +12,12 @@
  * \brief
  */
 
-// #include "chunk_gated_delta_rule_fwd_h.h"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
+#else
 #include "gemm/kernel/gdn_fwd_h_kernel.hpp"
+#endif
+
 #include "lib/matmul_intf.h"
 
 using namespace Catlass;
@@ -26,7 +30,7 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd_h(GM_ADDR k, GM
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
 
     GM_ADDR user = AscendC::GetUserWorkspace(workspace);
-    
+
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
     using workspaceType = float;
     // dtype: 0 - fp16, 1 - bf16, 2 - fp32

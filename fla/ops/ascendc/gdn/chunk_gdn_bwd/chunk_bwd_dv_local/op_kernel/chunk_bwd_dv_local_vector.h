@@ -62,7 +62,10 @@ public:
     AscendC::LocalTensor<float> maskLocalTensor;
     AscendC::LocalTensor<float> zeroFp32LocalTensor;
 
-    int64_t H;
+    int64_t H_qk;
+    int64_t H_do;
+    int64_t hRatio;
+    int64_t headBufNum;
     int64_t T;
     int64_t K;
     int64_t V;
@@ -94,7 +97,10 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::Init(
     dVGm.SetGlobalBuffer((__gm__ QKVT *)d_v);
     workspaceGm.SetGlobalBuffer((__gm__ QKVT *)workspace);
 
-    H = tilingData->h;
+    H_qk = tilingData->hQk;
+    H_do = tilingData->hDo;
+    hRatio = tilingData->hRatio;
+    headBufNum = tilingData->headBufNum;
     T = tilingData->t;
     K = tilingData->k;
     V = tilingData->v;
@@ -129,11 +135,6 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::Init(
 template <typename QKVT, typename GT, typename Strategy>
 __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::Process()
 {
-    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_1);
-    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_1);
-    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_1);
-    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_1);
-
     AscendC::Duplicate<float>(maskLocalTensor, float(1.0), MASK_LINE_SIZE * MASK_LINE_SIZE);
     AscendC::PipeBarrier<PIPE_V>();
     for (int64_t index = 0; index < MASK_LINE_SIZE; index++) {
@@ -146,8 +147,6 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::Process()
         strategy.calculate(loopIdx, indexResult);
         ProcessChunk(indexResult);
     }
-
-    AscendC::SyncAll<false>();
 }
 
 template <typename QKVT, typename GT, typename Strategy>
@@ -172,28 +171,35 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
     AscendC::LocalTensor<float> brcbLocalTensor = brcbTBuf.template Get<float>();
     AscendC::LocalTensor<float> kqFp32LocalTensor = kqFp32TBuf.template Get<float>();
 
+    int64_t coreBaseOffset = coreIdx * headBufNum * strategy.chunkSize * strategy.chunkSize;
     AscendC::PipeBarrier<PIPE_V>();
-    for (int64_t hIndex = 0; hIndex < H; hIndex++) {
-        int64_t baseOffset = indexResult.curBatchId * H * T * strategy.chunkSize + hIndex * T * strategy.chunkSize +
-                             indexResult.curTokenId * strategy.chunkSize;
+    for (int64_t doHead = 0; doHead < H_do; doHead++) {
+        int64_t qkHead = doHead / hRatio;
+        int64_t doGroup = doHead % hRatio;
+        int64_t p1Slot = qkHead % 2;
+        int64_t gatedSlot = 2 + (qkHead % 2) * hRatio + doGroup;
+        int64_t baseReadOffset = coreBaseOffset + p1Slot * strategy.chunkSize * strategy.chunkSize;
+        int64_t baseWriteOffset = coreBaseOffset + gatedSlot * strategy.chunkSize * strategy.chunkSize;
         ++vecTaskIdx;
-        if (vecTaskIdx % subBlockNum != subBlockIdx) { // 设置任务起止行（左闭右闭）
+        if (vecTaskIdx % subBlockNum != subBlockIdx) {
             taskStartLine = 0;
             taskEndLine = taskSplitLine - 1;
-            taskOffset = baseOffset;
+            taskOffset = baseWriteOffset;
         } else {
             taskStartLine = taskSplitLine;
             taskEndLine = indexResult.chunkLen - 1;
-            taskOffset = baseOffset + taskSplitLine * strategy.chunkSize;
+            taskOffset = baseWriteOffset + taskSplitLine * strategy.chunkSize;
         }
+        int64_t taskReadOffset = baseReadOffset + (taskStartLine * strategy.chunkSize);
         taskLineNum = taskEndLine - taskStartLine + 1;
         if (taskLineNum == 0) {
-            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_3);
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_1);
+            if (doHead % hRatio == 0) {
+                AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_3);
+            }
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_1);
             continue;
         }
-        // 搬入chunkSize g
-        int64_t baseGOffset = indexResult.curBatchId * H * T + hIndex * T + indexResult.curTokenId;
+        int64_t baseGOffset = indexResult.curBatchId * H_do * T + doHead * T + indexResult.curTokenId;
         {
             AscendC::LocalTensor<GT> gLocalTensor = gTQueIn.AllocTensor<GT>();
             copyParams.blockLen = indexResult.chunkLen * sizeof(GT);
@@ -279,13 +285,15 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         }
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::Muls(gFactorLocalTensor, gFactorLocalTensor, scale, taskLineNum * strategy.chunkSize);
-        AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_3);
+        if (doHead % hRatio == 0) {
+            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_3);
+        }
 
         // 搬入 (k@q^T)
         {
             AscendC::LocalTensor<QKVT> kqLocalTensor = kqTQueIn.AllocTensor<QKVT>();
             copyParams.blockLen = taskLineNum * strategy.chunkSize * sizeof(QKVT);
-            AscendC::DataCopyPad(kqLocalTensor, workspaceGm[taskOffset], copyParams, qkvPadParams);
+            AscendC::DataCopyPad(kqLocalTensor, workspaceGm[taskReadOffset], copyParams, qkvPadParams);
             kqTQueIn.EnQue(kqLocalTensor);
         }
         AscendC::LocalTensor<QKVT> kqLocalTensor = kqTQueIn.DeQue<QKVT>();
@@ -308,7 +316,7 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         AscendC::DataCopy(workspaceGm[taskOffset], kqOutLocalTensor, taskLineNum * strategy.chunkSize);
 
         kqTQueOut.FreeTensor(kqOutLocalTensor);
-        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIV_AIC_FLAG_1);
+        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_1);
     }
 }
 

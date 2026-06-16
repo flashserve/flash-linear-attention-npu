@@ -72,16 +72,64 @@ def compute_dv_golden(
                 
                 # 计算 dv_chunk = A_chunk @ du_chunk * beta_chunk
                 # 步骤1: b_dv_beta = A_chunk @ du_chunk
-                b_dv_beta = torch.matmul(A_chunk.T.to(torch.float32), du_chunk.to(torch.float32))  # [chunk_size, V]
+                b_dv_beta = torch.matmul(A_chunk.T, du_chunk)  # [chunk_size, V]
                 
                 # 步骤2: dv_chunk = b_dv_beta * beta_chunk.unsqueeze(-1)
-                dv_chunk = b_dv_beta.to(torch.float32) * beta_chunk[:, None].to(torch.float32)  # [chunk_size, D]
+                dv_chunk = b_dv_beta * beta_chunk[:, None]  # [chunk_size, D]
                 
                 # 存储结果
                 dv[i_b,i_h, bos:eos, :] = dv_chunk.to(dv.dtype)
     
     return dv
 
+def compute_dv_golden_high_precision(
+    A: torch.Tensor,      # [B, HV, T, chunk_size]
+    du: torch.Tensor,     # [B, HV, T, D] - 上游梯度
+    beta: torch.Tensor,   # [B, HV, T] - beta参数
+    cu_seqlens: torch.Tensor,
+    chunk_indices: torch.Tensor,
+    B: int,
+    HV: int,
+    T: int,
+    D: int,
+    chunk_size: int,  # chunk_size
+    NT: int,  # T / chunk_size
+) -> torch.Tensor:
+    """
+    CPU golden for dv:`A`/`du`/`beta` 均在 HV 维上按 `i_h` 遍历。
+    """
+    # 初始化dv,形状与du相同 [B, HV, T, D];外层按 HV 遍历
+    dv = torch.zeros_like(du).to(torch.float64)
+    for i_b in range(B):
+        for idx in range(NT):
+            bos,eos = get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices)
+            # print(bos, eos, eos-bos)
+            for i_h in range(HV):
+                
+            # 遍历所有head 
+                # 获取当前chunk的A向量
+                # A形状: [B, T, H, chunk_size]
+                # 我们需要获取这个chunk对应的A向量
+                # 注意: A的每个位置存储的是该chunk对应的A向量
+                A_chunk = A[i_b,i_h, bos:eos,:eos - bos]  # [chunk_size, chunk_size]
+                
+                # 获取当前chunk的du
+                du_chunk = du[i_b,i_h, bos:eos, :]  # [chunk_size, V]
+                
+                # 获取当前chunk的beta
+                beta_chunk = beta[i_b,i_h, bos:eos]  # [chunk_size]
+                
+                # 计算 dv_chunk = A_chunk @ du_chunk * beta_chunk
+                # 步骤1: b_dv_beta = A_chunk @ du_chunk
+                b_dv_beta = torch.matmul(A_chunk.T.to(torch.float64), du_chunk.to(torch.float64))  # [chunk_size, V]
+                
+                # 步骤2: dv_chunk = b_dv_beta * beta_chunk.unsqueeze(-1)
+                dv_chunk = b_dv_beta.to(torch.float64) * beta_chunk[:, None].to(torch.float64)  # [chunk_size, D]
+                
+                # 存储结果
+                dv[i_b,i_h, bos:eos, :] = dv_chunk.to(dv.dtype)
+    
+    return dv
 
 def compute_dk_golden(
     A: torch.Tensor,      # [B, HV, T, chunk_size]
@@ -137,6 +185,60 @@ def compute_dk_golden(
                 dk[i_b, hk, bos:eos, :] = (prev + dk_chunk.to(torch.float32)).to(dk.dtype)
     return dk
 
+def compute_dk_golden_high_precision(
+    A: torch.Tensor,      # [B, HV, T, chunk_size]
+    dw: torch.Tensor,     # [B, HV, T, D] 与 FLA prepare_wy_repr_bwd 一致,按 value head 索引
+    g: torch.Tensor,     # [B, HV, T]
+    beta: torch.Tensor,   # [B, HV, T]
+    dA: torch.Tensor,      # [B, HV, T, chunk_size]
+    k: torch.Tensor,     # [B, HK, T, D]
+    cu_seqlens: torch.Tensor,
+    chunk_indices: torch.Tensor,
+    B: int,
+    HK: int,
+    HV: int,
+    T: int,
+    D: int,
+    chunk_size: int,  # chunk_size
+    NT: int,  # T / chunk_size
+) -> torch.Tensor:
+    """
+    CPU golden for dk(变长)。
+    外层按 HV 遍历(与 FLA prepare_wy_repr_bwd_kernel);`k` 取 KV head `hk`,`dw` 取 value head `i_h`;
+    各 HV 对 dk 的贡献累加到对应 `hk`(与 FLA 最后 ``dk.view(..., HV//HK, K).sum`` 等价)。
+    """
+    if HV % HK != 0:
+        raise ValueError(f"compute_dk_golden: HV ({HV}) must be divisible by HK ({HK}).")
+    heads_per_kv = HV // HK
+    dk = torch.zeros_like(k).to(torch.float64)
+    for i_b in range(B):
+        for idx in range(NT):
+            bos, eos = get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices)
+            for i_h in range(HV):
+                hk = _hv_to_hk(i_h, heads_per_kv)
+                A_chunk = A[i_b, i_h, bos:eos, : eos - bos]
+                beta_chunk = beta[i_b, i_h, bos:eos]
+                g_chunk = g[i_b, i_h, bos:eos]
+                g_exp_chunk = torch.exp(g_chunk.to(torch.float64))
+                k_chunk = k[i_b, hk, bos:eos, : ]
+                dA_chunk = dA[i_b, i_h, bos:eos, : eos - bos]
+                b_dk_beta = torch.matmul(dA_chunk.T.to(torch.float64), k_chunk.to(torch.float64))
+                b_k_beta = k_chunk.to(torch.float64) * beta_chunk.to(torch.float64)[:, None]
+                dw_chunk = dw[i_b, i_h, bos:eos, :]
+                b_dk_beta_g = torch.matmul(A_chunk.T.to(torch.float64), dw_chunk.to(torch.float64))
+
+                dk_chunk = torch.matmul(dA_chunk.to(torch.float64), b_k_beta.to(k.dtype).to(torch.float64)).to(k.dtype).to(torch.float64)
+                dk_chunk = dk_chunk.to(k.dtype).to(torch.float64) + (
+                    b_dk_beta.to(k.dtype).to(torch.float64) * beta_chunk[:, None].to(torch.float64)
+                )
+                dk_chunk = dk_chunk.to(k.dtype).to(torch.float64) + b_dk_beta_g.to(k.dtype).to(torch.float64) * (
+                    beta_chunk.to(torch.float64) * g_exp_chunk.to(torch.float64)
+                )[:, None]
+
+                prev = dk[i_b, hk, bos:eos, :].to(torch.float64)
+                dk[i_b, hk, bos:eos, :] = (prev + dk_chunk.to(torch.float64)).to(dk.dtype)
+    return dk
+
 def compute_dg_golden(
     A: torch.Tensor,      # [B, HV, T, chunk_size]
     dw: torch.Tensor,     # [B, HV, T, D]
@@ -169,29 +271,86 @@ def compute_dg_golden(
 
                 beta_chunk = beta[i_b,i_h, bos:eos]
                 g_chunk = g[i_b,i_h, bos:eos]
-                g_exp_chunk = torch.exp(g_chunk.to(torch.float32))
+                g_exp_chunk = torch.exp(g_chunk)
 
-                b_dk_beta_g = torch.matmul(A_chunk.T.to(torch.float32), dw_chunk.to(torch.float32))
+                b_dk_beta_g = torch.matmul(A_chunk.T, dw_chunk)
 
                 k_chunk = k[i_b, hk, bos:eos, : ]
-                b_kbg = k_chunk.to(torch.float32) * (
-                    beta_chunk.to(torch.float32) * g_exp_chunk.to(torch.float32)
+                b_kbg = k_chunk * (
+                    beta_chunk * g_exp_chunk
                 )[:,None]
                 dA_chunk = dA[i_b,i_h, bos:eos,: eos - bos]
                 if k_chunk.size(0) == 1:
-                    dot_val = torch.sum(k_chunk.to(torch.float32) * k_chunk.to(torch.float32), dim=1, keepdim=True)
+                    dot_val = torch.sum(k_chunk * k_chunk, dim=1, keepdim=True)
                     b_A = dot_val
                 else:
-                    k_f32 = k_chunk.to(torch.float32).contiguous()
+                    k_f32 = k_chunk.contiguous()
                     b_A = torch.matmul(k_f32, k_f32.T.contiguous())
-                b_A = b_A.to(torch.float32) * beta_chunk[:,None].to(torch.float32)
-                b_dA_A = dA_chunk.to(torch.float32).T * b_A.to(torch.float32)
+                b_A = b_A * beta_chunk[:,None]
+                b_dA_A = dA_chunk.T * b_A
 
-                dg_chunk = torch.sum(b_dk_beta_g.to(k.dtype).to(torch.float32) * b_kbg.to(torch.float32), dim = 1)
-                dg_chunk = dg_chunk.to(dg.dtype).to(torch.float32) +  (
+                dg_chunk = torch.sum(b_dk_beta_g.to(dg.dtype) * b_kbg.to(dg.dtype), dim = 1)
+                dg_chunk = dg_chunk.to(dg.dtype) +  (
+                    torch.sum(b_dA_A, dim = 1) - torch.sum(b_dA_A, dim = 0)
+                ).to(dg.dtype)
+                dg[i_b,i_h, bos:eos] = dg_chunk.to(g.dtype)
+    return dg
+
+def compute_dg_golden_high_precision(
+    A: torch.Tensor,      # [B, HV, T, chunk_size]
+    dw: torch.Tensor,     # [B, HV, T, D]
+    g: torch.Tensor,     # [B, HV, T]
+    beta: torch.Tensor,   # [B, HV, T]
+    dA: torch.Tensor,      # [B, HV, T, chunk_size]
+    k: torch.Tensor,     # [B, HK, T, D]
+    cu_seqlens: torch.Tensor,
+    chunk_indices: torch.Tensor,
+    B: int,
+    HK: int,
+    HV: int,
+    T: int,
+    D: int,
+    chunk_size: int,  # chunk_size
+    NT: int,  # T / chunk_size
+) -> torch.Tensor:
+    """CPU golden for dg:按 HV 遍历;`dw` 取 `i_h`,`k` 取 `hk`(与 FLA kernel 一致)。"""
+    if HV % HK != 0:
+        raise ValueError(f"compute_dg_golden: HV ({HV}) must be divisible by HK ({HK}).")
+    heads_per_kv = HV // HK
+    dg = torch.zeros_like(g).to(torch.float64)
+    for i_b in range(B):
+        for idx in range(NT):
+            bos,eos = get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices)
+            for i_h in range(HV):
+                hk = _hv_to_hk(i_h, heads_per_kv)
+                A_chunk = A[i_b,i_h, bos:eos,: eos - bos]
+                dw_chunk = dw[i_b, i_h, bos:eos, :]
+
+                beta_chunk = beta[i_b,i_h, bos:eos]
+                g_chunk = g[i_b,i_h, bos:eos]
+                g_exp_chunk = torch.exp(g_chunk.to(torch.float64))
+
+                b_dk_beta_g = torch.matmul(A_chunk.T.to(torch.float64), dw_chunk.to(torch.float64))
+
+                k_chunk = k[i_b, hk, bos:eos, : ]
+                b_kbg = k_chunk.to(torch.float64) * (
+                    beta_chunk.to(torch.float64) * g_exp_chunk.to(torch.float64)
+                )[:,None]
+                dA_chunk = dA[i_b,i_h, bos:eos,: eos - bos]
+                if k_chunk.size(0) == 1:
+                    dot_val = torch.sum(k_chunk.to(torch.float64) * k_chunk.to(torch.float64), dim=1, keepdim=True)
+                    b_A = dot_val
+                else:
+                    k_f32 = k_chunk.to(torch.float64).contiguous()
+                    b_A = torch.matmul(k_f32, k_f32.T.contiguous())
+                b_A = b_A.to(torch.float64) * beta_chunk[:,None].to(torch.float64)
+                b_dA_A = dA_chunk.to(torch.float64).T * b_A.to(torch.float64)
+
+                dg_chunk = torch.sum(b_dk_beta_g.to(k.dtype).to(torch.float64) * b_kbg.to(torch.float64), dim = 1)
+                dg_chunk = dg_chunk.to(dg.dtype).to(torch.float64) +  (
                     torch.sum(b_dA_A, dim = 1) - torch.sum(b_dA_A, dim = 0)
                 )
-                dg[i_b,i_h, bos:eos] = dg_chunk.to(k.dtype)
+                dg[i_b,i_h, bos:eos] = dg_chunk.to(dg.dtype)
     return dg
 
 def compute_dbeta_golden(
@@ -231,30 +390,90 @@ def compute_dbeta_golden(
 
                 beta_chunk = beta[i_b,i_h, bos:eos]
                 g_chunk = g[i_b,i_h, bos:eos]
-                g_exp_chunk = torch.exp(g_chunk.to(torch.float32))
+                g_exp_chunk = torch.exp(g_chunk)
                 k_chunk = k[i_b, hk, bos:eos, : ]
                 #   beta________0
                 # 步骤1: b_dk_beta_g = A_chunk @ dw_chunk
-                b_dk_beta_g = torch.matmul(A_chunk.T.to(torch.float32), dw_chunk.to(torch.float32))  
+                b_dk_beta_g = torch.matmul(A_chunk.T, dw_chunk)  
                 
                 # 步骤2: b_dbeta += tl.sum(b_dk_beta_g * b_k * b_g_exp[:, None], 1)
-                tmp = b_dk_beta_g * k_chunk.to(torch.float32) * g_exp_chunk.to(torch.float32)[:, None] # [chunkSize, D]
+                tmp = b_dk_beta_g * k_chunk * g_exp_chunk[:, None] # [chunkSize, D]
                 #   beta________1 
                 
-                b_dv_beta = torch.matmul(A_chunk.T.to(torch.float32), du_chunk.to(torch.float32))  # [chunkSize, V]
+                b_dv_beta = torch.matmul(A_chunk.T, du_chunk)  # [chunkSize, V]
                 #   beta________2 
                 dA_chunk = dA[i_b,i_h, bos:eos,: eos - bos]  # [chunkSize, chunkSize]
-                b_dk_beta = torch.matmul(dA_chunk.T.to(torch.float32), k_chunk.to(torch.float32))  # [chunkSize, V]
-                tmp = b_dk_beta.to(k.dtype).to(torch.float32) * k_chunk
+                b_dk_beta = torch.matmul(dA_chunk.T, k_chunk)  # [chunkSize, V]
+                tmp = b_dk_beta.to(k.dtype) * k_chunk
                 # test
-                dbeta_chunk = torch.sum(tmp, 1).to(torch.float16)
-                tmp = b_dk_beta_g.to(k.dtype).to(torch.float32) * k_chunk.to(torch.float32) * g_exp_chunk.to(torch.float32)[:, None] # [chunkSize, D]
-                dbeta_chunk = dbeta_chunk.to(k.dtype).to(torch.float32) + torch.sum(tmp, dim = 1)# [chunkSize]
-                dbeta_chunk = dbeta_chunk.to(k.dtype).to(torch.float32) + torch.sum(b_dv_beta.to(k.dtype).to(torch.float32) * v_chunk, 1)
+                dbeta_chunk = torch.sum(tmp, 1)
+                tmp = b_dk_beta_g.to(k.dtype) * k_chunk * g_exp_chunk[:, None] # [chunkSize, D]
+                dbeta_chunk = dbeta_chunk.to(k.dtype) + torch.sum(tmp, dim = 1)# [chunkSize]
+                dbeta_chunk = dbeta_chunk.to(k.dtype) + torch.sum(b_dv_beta.to(k.dtype) * v_chunk, 1)
                 # 存储结果
                 dbeta[i_b,i_h, bos:eos] = dbeta_chunk
     return dbeta
 
+def compute_dbeta_golden_high_precision(
+    A: torch.Tensor,      # [B, HV, T, chunkSize]
+    dw: torch.Tensor,     # [B, HV, T, D]
+    g: torch.Tensor,     # [B, HV, T]
+    beta: torch.Tensor,   # [B, HV, T]
+    dA: torch.Tensor,      # [B, HV, T, chunkSize]
+    k: torch.Tensor,     # [B, HK, T, D]
+    v: torch.Tensor,      # [B, HV, T, D]
+    du: torch.Tensor,     # [B, HV, T, D]
+    cu_seqlens: torch.Tensor,
+    chunk_indices: torch.Tensor,
+    B: int,
+    HK: int,
+    HV: int,
+    T: int,
+    D: int,
+    chunkSize: int,  # chunkSize
+    NT: int,  # T / chunkSize
+) -> torch.Tensor:
+    """CPU golden for dbeta:按 HV 遍历;`dw` 取 `i_h`,`k` 取 `hk`。"""
+    if HV % HK != 0:
+        raise ValueError(f"compute_dbeta_golden: HV ({HV}) must be divisible by HK ({HK}).")
+    heads_per_kv = HV // HK
+    dbeta = torch.zeros_like(beta).to(torch.float64)
+    for i_b in range(B):
+        for idx in range(NT):
+            bos,eos = get_bos_eos(idx, T, chunkSize, cu_seqlens, chunk_indices)
+            for i_h in range(HV):
+                hk = _hv_to_hk(i_h, heads_per_kv)
+                A_chunk = A[i_b,i_h, bos:eos,: eos - bos]
+                v_chunk = v[i_b,i_h, bos:eos,:]
+
+                dw_chunk = dw[i_b, i_h, bos:eos, :]
+                du_chunk = du[i_b,i_h, bos:eos, :]
+
+                beta_chunk = beta[i_b,i_h, bos:eos]
+                g_chunk = g[i_b,i_h, bos:eos]
+                g_exp_chunk = torch.exp(g_chunk.to(torch.float64))
+                k_chunk = k[i_b, hk, bos:eos, : ]
+                #   beta________0
+                # 步骤1: b_dk_beta_g = A_chunk @ dw_chunk
+                b_dk_beta_g = torch.matmul(A_chunk.T.to(torch.float64), dw_chunk.to(torch.float64))  
+                
+                # 步骤2: b_dbeta += tl.sum(b_dk_beta_g * b_k * b_g_exp[:, None], 1)
+                tmp = b_dk_beta_g * k_chunk.to(torch.float64) * g_exp_chunk.to(torch.float64)[:, None] # [chunkSize, D]
+                #   beta________1 
+                
+                b_dv_beta = torch.matmul(A_chunk.T.to(torch.float64), du_chunk.to(torch.float64))  # [chunkSize, V]
+                #   beta________2 
+                dA_chunk = dA[i_b,i_h, bos:eos,: eos - bos]  # [chunkSize, chunkSize]
+                b_dk_beta = torch.matmul(dA_chunk.T.to(torch.float64), k_chunk.to(torch.float64))  # [chunkSize, V]
+                tmp = b_dk_beta.to(k.dtype).to(torch.float64) * k_chunk
+                # test
+                dbeta_chunk = torch.sum(tmp, 1).to(torch.float64)
+                tmp = b_dk_beta_g.to(k.dtype).to(torch.float64) * k_chunk.to(torch.float64) * g_exp_chunk.to(torch.float64)[:, None] # [chunkSize, D]
+                dbeta_chunk = dbeta_chunk.to(k.dtype).to(torch.float64) + torch.sum(tmp, dim = 1)# [chunkSize]
+                dbeta_chunk = dbeta_chunk.to(k.dtype).to(torch.float64) + torch.sum(b_dv_beta.to(k.dtype).to(torch.float64) * v_chunk, 1)
+                # 存储结果
+                dbeta[i_b,i_h, bos:eos] = dbeta_chunk
+    return dbeta
 
 def prepare_lens(cu_seqlens: torch.LongTensor) -> torch.LongTensor:
     return cu_seqlens[1:] - cu_seqlens[:-1]
@@ -482,13 +701,17 @@ def test_prepare_wy_repr_bwd_full(
     try:
         import ct
         cpu_dv = compute_dv_golden(A, du, beta, cu_seqlens, chunk_indices, B, HV, T, K, chunk_size, NT)
-        ct.isclose(dv.cpu(), cpu_dv, diff_thd=0.1)
+        cpu_dv_high_precision = compute_dv_golden_high_precision(A, du, beta, cu_seqlens, chunk_indices, B, HV, T, K, chunk_size, NT)
+        ct.dual(dv.cpu(), cpu_dv_high_precision, cpu_dv)
         cpu_dk = compute_dk_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
-        ct.isclose(dk.cpu(), cpu_dk, diff_thd=0.1)
+        cpu_dk_high_precision = compute_dk_golden_high_precision(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
+        ct.dual(dk.cpu(), cpu_dk_high_precision, cpu_dk)
         cpu_dg = compute_dg_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
-        ct.isclose(dg.cpu(), cpu_dg, diff_thd=0.1)
+        cpu_dg_high_precision = compute_dg_golden_high_precision(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
+        ct.dual(dg.cpu(), cpu_dg_high_precision, cpu_dg)
         cpu_dbeta = compute_dbeta_golden(A, dw, g, beta, dA,k,v,du, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
-        ct.isclose(dbeta.cpu(), cpu_dbeta, diff_thd=0.1)
+        cpu_dbeta_high_precision = compute_dbeta_golden_high_precision(A, dw, g, beta, dA,k,v,du, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
+        ct.dual(dbeta.cpu(), cpu_dbeta_high_precision, cpu_dbeta)
     finally:
         pass
     # torch.save(cpu_dbeta, "cpu_dbeta.pt") 
@@ -560,4 +783,4 @@ if __name__ == "__main__":
     # #L6
     # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 25)
     # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, HK = 8, HV = 8, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # test_prepare_wy_repr_bwd_full(B = 1, HK = 8, HV = 8, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices, seed=42)

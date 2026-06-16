@@ -23,6 +23,7 @@ cmake-build-*
 /build/
 /build_out/
 /output/
+/.ci-cache/
 
 # binary files
 *.so

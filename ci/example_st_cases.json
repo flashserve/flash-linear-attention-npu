@@ -1,0 +1,24 @@
+[
+  {
+    "name": "case1_current_default",
+    "description": "Current flash_gated_delta_rule Example/ST smoke shape.",
+    "script": "examples/flash_gated_delta_rule.py",
+    "enabled": true,
+    "B": 1,
+    "T": 65536,
+    "chunk_size": 64,
+    "query_head": 32,
+    "value_head": 32,
+    "Kdim": 128,
+    "Vdim": 128,
+    "dtype": "bf16",
+    "mean_len": 1024,
+    "gate_source": "g",
+    "gate_function": "logsigmoid",
+    "varlen": true,
+    "initial_state": "none",
+    "output_final_state": false,
+    "qk_l2norm": true,
+    "demo_model": false
+  }
+]

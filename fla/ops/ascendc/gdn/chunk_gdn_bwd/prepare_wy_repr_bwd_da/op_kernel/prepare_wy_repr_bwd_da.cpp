@@ -13,9 +13,16 @@
  */
 
 #include "kernel_operator.h"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "arch35/prepare_wy_repr_bwd_da_common.h"
+#include "arch35/prepare_wy_repr_bwd_da_cube.h"
+#include "arch35/prepare_wy_repr_bwd_da_vector.h"
+#include "arch35/prepare_wy_repr_bwd_da_tiling_data_apt.h"
+#else
 #include "prepare_wy_repr_bwd_da_common.h"
 #include "prepare_wy_repr_bwd_da_cube.h"
 #include "prepare_wy_repr_bwd_da_vector.h"
+#endif
 #include "lib/matmul_intf.h"
 // #include "kernel_basic_intf.h"
 
@@ -25,6 +32,9 @@ __global__ __aicore__ void prepare_wy_repr_bwd_da(GM_ADDR k, GM_ADDR v, GM_ADDR 
                                                   GM_ADDR dA, GM_ADDR workspace, GM_ADDR tiling)
 {
     AscendC::AscendCUtils::SetOverflow(1);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    REGISTER_TILING_DEFAULT(PrepareWyReprBwdDaTilingDataA5);
+#endif
     GET_TILING_DATA(tilingData, tiling);
     if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);

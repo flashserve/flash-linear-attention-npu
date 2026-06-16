@@ -58,6 +58,11 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
     attrInfo.runMode = (runModePtr == nullptr) ? 0 : *runModePtr;
     OP_CHECK_IF(attrInfo.runMode != 0 && attrInfo.runMode != 1, OP_LOGE(context, "runMode only supports 0/1"),
                 return ge::GRAPH_FAILED);
+
+    const int64_t *headNumPtr = attrs->GetAttrPointer<int64_t>(ATTR_HEAD_NUM_INDEX);
+    attrInfo.headNum = (headNumPtr == nullptr) ? 0 : *headNumPtr;
+    OP_CHECK_IF(attrInfo.headNum < 0, OP_LOGE(context, "headNum only supports larger than 0"),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -79,7 +84,9 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     const bool isDecodeMode = (attrInfo.runMode == 1);
     tiling.activationMode = attrInfo.activationMode;
     tiling.padSlotId = attrInfo.padSlotId;
-
+    tiling.headNum = attrInfo.headNum;
+    // decodeMode does not support output format transpose
+    tiling.isOutReshape = (!isDecodeMode && tiling.headNum > 0);
     auto xShapePtr = context->GetInputShape(X_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, xShapePtr);
     auto xShape = EnsureNotScalar(xShapePtr->GetStorageShape());
@@ -89,6 +96,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     int64_t seqLen = 0;
     int64_t batch = 0;
     int64_t inputMode = 0;
+    int64_t headNum = tiling.headNum;
 
     if (xShape.GetDimNum() == 2) {
         if (isDecodeMode) {
@@ -99,6 +107,8 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
             cuSeqlen = batch;
             OP_CHECK_IF(batch <= 0 || dim <= 0, OP_LOGE(context, "invalid x shape for 2D decode mode"),
                         return ge::GRAPH_FAILED);
+            OP_CHECK_IF(headNum > 0, OP_LOGE(context, "2D decode mode does not support output format BNSD or NTD(indicated by headNum > 0), only support headNum = 0"),
+                        return ge::GRAPH_FAILED);
         } else {
             inputMode = 0;
             cuSeqlen = xShape.GetDim(0);
@@ -106,6 +116,12 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
             seqLen = 0;
             OP_CHECK_IF(dim <= 0 || cuSeqlen < 0, OP_LOGE(context, "invalid x shape for 2D varlen mode"),
                         return ge::GRAPH_FAILED);
+            OP_CHECK_IF(headNum < 0 || headNum > dim || (headNum > 0 && dim % headNum != 0),
+                OP_LOGE(context, "invalid headNum: headNum should be in [0, dim] and dim mod headNum = 0, actually headNum=%ld, dim=%ld.", headNum, dim),
+                return ge::GRAPH_FAILED);
+            OP_CHECK_IF(headNum > 0 && (dim / headNum) % DIM_ALIGN_ELEMS != 0,
+                OP_LOGE(context, "the headDim (= dim / headNum) should be multiple of 16, but actually headNum=%ld, dim=%ld.", headNum, dim),
+                return ge::GRAPH_FAILED);
         }
     } else if (xShape.GetDimNum() == 3) {
         inputMode = 1;
@@ -115,6 +131,17 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         cuSeqlen = batch * seqLen;
         OP_CHECK_IF(batch <= 0 || dim <= 0 || seqLen <= 0, OP_LOGE(context, "invalid x shape for 3D batch mode"),
                     return ge::GRAPH_FAILED);
+        if (isDecodeMode) {
+            OP_CHECK_IF(headNum > 0, OP_LOGE(context, "2D decode mode does not support output format BNSD or NTD(indicated by headNum > 0), only support headNum = 0"),
+                        return ge::GRAPH_FAILED);
+        } else {
+            OP_CHECK_IF(headNum < 0 || headNum > dim || (headNum > 0 && dim % headNum != 0),
+                OP_LOGE(context, "invalid headNum: headNum should be in [0, dim] and dim mod headNum = 0, actually headNum=%ld, dim=%ld.", headNum, dim),
+                return ge::GRAPH_FAILED);
+            OP_CHECK_IF(headNum > 0 && (dim / headNum) % DIM_ALIGN_ELEMS != 0,
+                OP_LOGE(context, "the headDim (= dim / headNum) should be multiple of 16, but actually headNum=%ld, dim=%ld.", headNum, dim),
+                return ge::GRAPH_FAILED);
+        }
     } else {
         OP_LOGE(context, "x must be 2D (cu_seqlen, dim) or 3D (batch, seqlen, dim)");
         return ge::GRAPH_FAILED;

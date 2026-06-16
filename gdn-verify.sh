@@ -130,16 +130,21 @@ get_soc_list() {
 
 detect_soc_from_npu() {
     local name
-    name=$(npu-smi info 2>/dev/null | grep -oP 'Ascend\S+' | head -1 | sed 's/PR//i')
+    name=$(npu-smi info 2>/dev/null | awk -F'|' '/^\|[[:space:]]*[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]*\|/ {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2);
+        split($2, fields, /[[:space:]]+/);
+        print fields[2];
+        exit;
+    }')
     if [[ -z "$name" ]]; then
-        echo "[WARN] 无法从 npu-smi 解析 NPU 型号，假设为 ascend950"
-        name="Ascend950"
+        echo "[WARN] 无法从 npu-smi 解析 NPU 型号，假设为 ascend910b"
+        name="910B"
     fi
     case "$name" in
         *910B*|*910b*) echo "ascend910b" ;;
         *910_93*|*910*93*) echo "ascend910_93" ;;
         *950*|*Ascend950*) echo "ascend950" ;;
-        *) echo "[WARN] 未知 NPU 型号: $name，假设为 ascend950"; echo "ascend950" ;;
+        *) echo "[WARN] 未知 NPU 型号: $name，假设为 ascend910b"; echo "ascend910b" ;;
     esac
 }
 
@@ -149,6 +154,13 @@ find_run_file() {
 
 auto_select_device() {
     local dev
+    if [[ -x "$SCRIPT_DIR/ci/detect_npu.sh" ]]; then
+        dev=$("$SCRIPT_DIR/ci/detect_npu.sh" --selected 2>/dev/null || true)
+        if [[ -n "$dev" ]]; then
+            echo "$dev"
+            return
+        fi
+    fi
     dev=$(npu-smi info 2>/dev/null | awk '/^\| [0-9]+ /{id=$2; next} /No running processes/ && id!=""{print id; exit}' ORS='')
     if [[ -z "$dev" ]]; then
         dev=$(npu-smi info 2>/dev/null | awk '/^\| [0-9]+ *\|/{print $2; exit}')

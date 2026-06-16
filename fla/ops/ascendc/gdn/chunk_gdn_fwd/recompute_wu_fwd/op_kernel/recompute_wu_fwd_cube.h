@@ -76,8 +76,10 @@ public:
         GM_ADDR ptrChunkIndices;
         uint64_t chunkNum;
         uint64_t B = 1;
+        uint64_t Hk = 1;
+        uint64_t Hv = 1;
+        uint64_t hvPerHk = 1;
         uint64_t T = 32768;
-        uint64_t H = 32;
         uint64_t K = 128;
         uint64_t V = 128;
         uint64_t chunkSize = 64;
@@ -90,13 +92,13 @@ public:
 
         CATLASS_DEVICE
         Params(GM_ADDR ptrA_, LayoutA layoutA_, GM_ADDR ptrVb_, LayoutVb layoutVb_, GM_ADDR ptrU_,
-               LayoutW layoutW_, GM_ADDR ptrKbgExp_, LayoutKbgExp layoutKbgExp_, GM_ADDR ptrW_, LayoutU layoutU_,
+               LayoutU layoutU_, GM_ADDR ptrKbgExp_, LayoutKbgExp layoutKbgExp_, GM_ADDR ptrW_, LayoutW layoutW_,
                GM_ADDR ptrCuSeqLens_, GM_ADDR ptrChunkIndices_, uint64_t chunkNum_, uint64_t B_,
-               uint64_t T_, uint64_t H_, uint64_t K_, uint64_t V_, uint64_t BT_)
+               uint64_t Hk_, uint64_t Hv_, uint64_t hvPerHk_, uint64_t T_, uint64_t K_, uint64_t V_, uint64_t BT_)
             : ptrA(ptrA_), layoutA(layoutA_), ptrVb(ptrVb_), layoutVb(layoutVb_), ptrU(ptrU_),
-              layoutW(layoutW_), ptrKbgExp(ptrKbgExp_), layoutKbgExp(layoutKbgExp_), ptrW(ptrW_), layoutU(layoutU_),
+              layoutU(layoutU_), ptrKbgExp(ptrKbgExp_), layoutKbgExp(layoutKbgExp_), ptrW(ptrW_), layoutW(layoutW_),
               ptrCuSeqLens(ptrCuSeqLens_), ptrChunkIndices(ptrChunkIndices_),
-              chunkNum(chunkNum_), B(B_), T(T_), H(H_), K(K_), V(V_), chunkSize(BT_)
+              chunkNum(chunkNum_), B(B_), Hk(Hk_), Hv(Hv_), hvPerHk(hvPerHk_), T(T_), K(K_), V(V_), chunkSize(BT_)
         {
         }
     };
@@ -125,31 +127,38 @@ public:
             AscendC::GlobalTensor<ElementVb> gmVb;
             AscendC::GlobalTensor<ElementU> gmU;
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv, params.T,
                                params.chunkSize, loopIdx, bos, eos);
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
-                GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.V), curChunkSize};
-                for (int h = 0; h < params.H; h++) {
+                for (int h = 0; h < params.Hv; h++) {
                     // Represent the full gm
                     gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.chunkSize);
-                    gmVb.SetGlobalBuffer((__gm__ ElementVb *)params.ptrVb + (h * params.T + bos) * params.V);
-                    gmU.SetGlobalBuffer((__gm__ ElementU *)params.ptrU + (h * params.T + bos) * params.V);
 
                     // Represent the full tensors
                     auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
-                    auto tensorVb = tla::MakeTensor(gmVb, params.layoutVb, Arch::PositionGM{});
-                    auto tensorU = tla::MakeTensor(gmU, params.layoutU, Arch::PositionGM{});
                     Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);
-                    // Make tiled views
-                    auto tensorBlockA = GetTile(tensorA, tla::MakeCoord(0, 0),
-                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                    auto tensorBlockVb = GetTile(tensorVb, tla::MakeCoord(0, 0),
-                                                    tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                    auto tensorBlockU = GetTile(tensorU, tla::MakeCoord(0, 0),
-                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-                    // Compute block-scoped matrix multiply-add
-                    BlockMmadU(tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
+                    // N 维步进取自 Catlass tile 的 N 维：
+                    // key=1 tileN=128 -> V=128 单次；key=2 tileN=256 -> V=256 单次
+                    uint32_t tileN = tla::get<1>(BdkL1TileShape{});
+                    for (uint32_t nOffset = 0; nOffset < params.V; nOffset += tileN) {
+                        uint32_t curN = (nOffset + tileN > params.V) ? (params.V - nOffset) : tileN;
+                        GemmCoord actualBlockShape{curChunkSize, curN, curChunkSize};
+                        gmVb.SetGlobalBuffer((__gm__ ElementVb *)params.ptrVb + (h * params.T + bos) * params.V + nOffset);
+                        gmU.SetGlobalBuffer((__gm__ ElementU *)params.ptrU + (h * params.T + bos) * params.V + nOffset);
+
+                        auto tensorVb = tla::MakeTensor(gmVb, params.layoutVb, Arch::PositionGM{});
+                        auto tensorU = tla::MakeTensor(gmU, params.layoutU, Arch::PositionGM{});
+                        // Make tiled views
+                        auto tensorBlockA = GetTile(tensorA, tla::MakeCoord(0, 0),
+                                                     tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                        auto tensorBlockVb = GetTile(tensorVb, tla::MakeCoord(0, 0),
+                                                        tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                        auto tensorBlockU = GetTile(tensorU, tla::MakeCoord(0, 0),
+                                                     tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                        // Compute block-scoped matrix multiply-add
+                        BlockMmadU(tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
+                    }
                 }
             }
         }
@@ -160,15 +169,16 @@ public:
             AscendC::GlobalTensor<ElementKbgExp> gmKbgExp;
             AscendC::GlobalTensor<ElementW> gmW;
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv, params.T,
                                params.chunkSize, loopIdx, bos, eos);
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
                 GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
-                for (int h = 0; h < params.H; h++) {
+                for (int h = 0; h < params.Hv; h++) {
                     // Represent the full gm
                     gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.chunkSize);
-                    gmKbgExp.SetGlobalBuffer((__gm__ ElementKbgExp *)params.ptrKbgExp + (h * params.T + bos) * params.K);
+                    gmKbgExp.SetGlobalBuffer((__gm__ ElementKbgExp *)params.ptrKbgExp +
+                                             (h * params.T + bos) * params.K);
                     gmW.SetGlobalBuffer((__gm__ ElementW *)params.ptrW + (h * params.T + bos) * params.K);
 
                     // Represent the full tensors
@@ -194,7 +204,10 @@ public:
 };
 } // namespace Catlass::Gemm::Kernel
 
-template <typename kType, typename betaType>
+template <class... Dims>
+using GemmCubeTileShape = tla::Shape<Dims...>;
+
+template <typename kType, typename betaType, typename L1TileShape, typename L0TileShape>
 class RecomputeWUFwdProcess {
 public:
     /** @brief constructor */
@@ -209,7 +222,9 @@ public:
 private:
     uint64_t B = 0;
     uint64_t T = 0;
-    uint64_t H = 0;
+    uint64_t Hv = 1;
+    uint64_t Hk = 1;
+    uint64_t hvPerHk = 1;
     uint64_t K = 0;
     uint64_t V = 0;
     uint64_t chunkSize = 0;
@@ -226,20 +241,22 @@ private:
     GM_ADDR workspace;
 };
 
-template <typename kType, typename betaType>
-__aicore__ inline RecomputeWUFwdProcess<kType, betaType>::RecomputeWUFwdProcess(
+template <typename kType, typename betaType, typename L1TileShape, typename L0TileShape>
+__aicore__ inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0TileShape>::RecomputeWUFwdProcess(
     GM_ADDR k_, GM_ADDR v_, GM_ADDR beta_, GM_ADDR A_, GM_ADDR g_,
     GM_ADDR cu_seqlens_, GM_ADDR chunk_indices_, GM_ADDR w_, GM_ADDR u_,
     GM_ADDR workspace_)
     : k(k_), v(v_), beta(beta_), A(A_), g(g_), cu_seqlens(cu_seqlens_),
       chunk_indices(chunk_indices_), w(w_), u(u_), workspace(workspace_){};
 
-template <typename kType, typename betaType>
-__aicore__ void inline RecomputeWUFwdProcess<kType, betaType>::Init(const RecomputeWUFwdTilingData &tiling)
+template <typename kType, typename betaType, typename L1TileShape, typename L0TileShape>
+__aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0TileShape>::Init(const RecomputeWUFwdTilingData &tiling)
 {
     B = tiling.B;
     T = tiling.T;
-    H = tiling.H;
+    Hv = tiling.Hv;
+    Hk = tiling.Hk;
+    hvPerHk = tiling.hvPerHk;
     K = tiling.K;
     V = tiling.V;
     chunkSize = tiling.chunkSize;
@@ -247,8 +264,8 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType>::Init(const Recomp
     return;
 }
 
-template <typename kType, typename betaType>
-__aicore__ void inline RecomputeWUFwdProcess<kType, betaType>::Process()
+template <typename kType, typename betaType, typename L1TileShape, typename L0TileShape>
+__aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0TileShape>::Process()
 {
     //输入
     using LayoutTagA = layout::RowMajor;
@@ -268,12 +285,12 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType>::Process()
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     using ArchTag = Arch::Ascend950;
+    // 950: UnitFlag=true 时 L0C_STAGES 必须为 1（见 block_mmad_pingpong_tla.hpp static_assert）
+    using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;
 #else
     using ArchTag = Arch::AtlasA2;
-#endif
     using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;
-    using L1TileShape = Shape<_128, _128, _256>;
-    using L0TileShape = Shape<_128, _128, _128>;
+#endif
 
     //计算U
     using TileCopyU =
@@ -305,7 +322,7 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType>::Process()
         A, layoutA, vb, layoutVb, u,        layoutU,  
         kbgExp, layoutKbgExp, w,        layoutW,
         cu_seqlens, chunk_indices, chunkNum, B,
-        T,         H,           K,  V,        chunkSize};
+        Hk, Hv, hvPerHk, T, K, V, chunkSize};
     kernel(param);
 }
 

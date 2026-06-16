@@ -1,0 +1,83 @@
+name: 仓库规则
+
+on:
+  create:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+jobs:
+  branch-creation-guard:
+    name: 分支创建权限检查
+    if: github.event_name == 'create' && github.event.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 删除未授权分支
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: repo } = await github.rest.repos.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            if (repo.fork) {
+              core.notice(`Fork 仓库 ${repo.full_name}，跳过分支创建限制。`);
+              return;
+            }
+
+            const allowed = new Set([
+              'juyangokok',
+              'weinachuan',
+              'weiwei-612',
+              'woey',
+              'zhangshuolei-hfut',
+              'chen-linxin',
+            ]);
+            const actor = context.actor;
+            const branch = context.payload.ref;
+            if (allowed.has(actor)) {
+              core.notice(`${actor} 允许在主仓库创建分支。`);
+              return;
+            }
+
+            await github.rest.git.deleteRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${branch}`,
+            });
+            core.setFailed(
+              `${actor} 无权在主仓库创建分支 "${branch}"。` +
+              '请先 fork 本仓库，再从个人仓库向主仓库提交 Pull Request。'
+            );
+
+  pull-request-author:
+    name: 自动填写 PR 提交人
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: 填写 PR 提交人
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const body = pr.body || '';
+            const authorLine = `- 责任人 / 提交人: @${pr.user.login}`;
+            const marker = /- 责任人 \/ 提交人:[^\n]*/;
+            if (!marker.test(body)) {
+              core.notice('PR 描述中没有找到责任人 / 提交人标记。');
+              return;
+            }
+            const nextBody = body.replace(marker, authorLine);
+            if (nextBody === body) {
+              core.notice('PR 提交人已经填写。');
+              return;
+            }
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              body: nextBody,
+            });
