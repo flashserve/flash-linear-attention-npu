@@ -19,7 +19,9 @@ G_GAMMA_INDEX = 11
 CHUNK_SIZE_INDEX = 13
 IS_MIX_INDEX = 14
 IS_FIX_INDEX = 15
-QKV_TYPE_INDEX = 16
+USE_EXP2_INDEX = 16
+TRANSPOSE_STATE_LAYOUT_INDEX = 17
+QKV_TYPE_INDEX = 18
 
 
 @GENERATOR_REGISTRY.register("generator_chunk_bwd_dqkwg")
@@ -52,16 +54,24 @@ class ChunkBwdDqkwgGenerator(CaseGenerator):
         if isinstance(chunk_size, list):
             chunk_size = chunk_size[0]
 
+        # HV = n * HK, pick n from {1, 2} for dimension split testing
+        n_ratio = random.choice((1, 2))
+        HK = H
+        HV = HK * n_ratio
+
         num_chunks = (T + chunk_size - 1) // chunk_size
 
-        case_config.inputs[Q_INDEX].shape = [B, H, T, K]
-        case_config.inputs[K_INDEX].shape = [B, H, T, K]
-        case_config.inputs[V_INDEX].shape = [B, H, T, V]
-        case_config.inputs[G_INDEX].shape = [B, H, T]
-        case_config.inputs[H_INDEX].shape = [B, H, num_chunks, K, V]
-        case_config.inputs[DO_INDEX].shape = [B, H, T, V]
-        case_config.inputs[DH_INDEX].shape = [B, H, num_chunks, K, V]
-        case_config.inputs[DV_INDEX].shape = [B, H, T, V]
-        case_config.inputs[W_INDEX].shape = [B, H, T, K]
+        # q, k: [B, HK, T, K]; v, dox, dv: [B, HV, T, V]
+        # g: [B, HV, T]; h, dh: [B, HV, num_chunks, K, V]
+        # outputs: dq, dk, dw: [B, HV, T, K]; dg: [B, HV, T]
+        case_config.inputs[Q_INDEX].shape = [B, HK, T, K]
+        case_config.inputs[K_INDEX].shape = [B, HK, T, K]
+        case_config.inputs[V_INDEX].shape = [B, HV, T, V]
+        case_config.inputs[G_INDEX].shape = [B, HV, T]
+        case_config.inputs[H_INDEX].shape = [B, HV, num_chunks, K, V]
+        case_config.inputs[DO_INDEX].shape = [B, HV, T, V]
+        case_config.inputs[DH_INDEX].shape = [B, HV, num_chunks, K, V]
+        case_config.inputs[DV_INDEX].shape = [B, HV, T, V]
+        case_config.inputs[W_INDEX].shape = [B, HV, T, K]
 
         return case_config

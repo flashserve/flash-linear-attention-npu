@@ -29,22 +29,22 @@ using namespace AscendC;
 
 
 __global__ __aicore__ void chunk_bwd_dqkwg(
-    GM_ADDR q,              // [B, H, T, K]
-    GM_ADDR k,              // [B, H, T, K]
-    GM_ADDR v,              // [B, H, T, V]
-    GM_ADDR g,              // [B, H, T]
-    GM_ADDR h,              // [B, num_chunks, H, K, V]
-    GM_ADDR do_,            // [B, H, T, V]
-    GM_ADDR dh,             // [B, num_chunks, H, K, V]
-    GM_ADDR dv,             // [B, H, T, V]
+    GM_ADDR q,              // [B, HK, T, K]
+    GM_ADDR k,              // [B, HK, T, K]
+    GM_ADDR v,              // [B, HV, T, V]
+    GM_ADDR g,              // [B, HV, T]
+    GM_ADDR h,              // [B, HV, num_chunks, K, V]
+    GM_ADDR do_,            // [B, HV, T, V]
+    GM_ADDR dh,             // [B, HV, num_chunks, K, V]
+    GM_ADDR dv,             // [B, HV, T, V]
     GM_ADDR cu_seqlens,     // [N+1] (optional)
     GM_ADDR chunk_indices,  // [num_chunks, 2] (optional)
     GM_ADDR w,
     GM_ADDR g_gamma,
-    GM_ADDR dq,             // [B, H, T, K] - output
-    GM_ADDR dk,             // [B, H, T, K] - output
-    GM_ADDR dw,             // [B, H, T, K] - output
-    GM_ADDR dg,             // [B, H, T] - output (fp32)
+    GM_ADDR dq,             // [B, HV, T, K] - output
+    GM_ADDR dk,             // [B, HV, T, K] - output
+    GM_ADDR dw,             // [B, HV, T, K] - output
+    GM_ADDR dg,             // [B, HV, T] - output (fp32)
     GM_ADDR workspace,      // workspace buffer
     GM_ADDR tiling          // . data
 )

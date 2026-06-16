@@ -18,12 +18,13 @@
 #include "kernel_operator.h"
 
 constexpr uint64_t CONST_B = 1;
-constexpr uint64_t CONST_H = 4;
+constexpr uint64_t CONST_HV = 4;
+constexpr uint64_t CONST_HK = 4;
 constexpr uint64_t CONST_T = 2816;
 constexpr uint64_t CONST_K = 128;
 constexpr uint64_t CONST_V = 128;
 constexpr uint64_t CONST_BT = 64;
-constexpr uint64_t CONST_NUM_CHUNKS = 44;//CONST_T / CONST_BT;  // 32
+constexpr uint64_t CONST_NUM_CHUNKS = 44;
 constexpr int32_t CAL_NUM_FLOAT = 64; // API一次能处理256B，能计算64个float元素
 // Part 1: dw 和 dg_last 计算 (C-V 融合)
 constexpr uint64_t SYNC_PART1_AIC_AIV = 10;  // AIC -> AIV
@@ -81,18 +82,17 @@ struct TypeTraits<half> {
     static constexpr bool needsCast = true;
 };
 
-__aicore__ void inline GetChunkOffset(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, uint64_t B, uint64_t H, uint64_t T,
+__aicore__ void inline GetChunkOffset(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, uint64_t B, uint64_t HV, uint64_t T,
                                       uint64_t chunkSize, uint32_t loopIdx, uint32_t &bos, uint32_t &eos)
 {
     if (cu_seqlens == nullptr) {
-        // AscendC::printf("111\n");
         uint32_t coreLoopsInB = CEIL_DIV(T, chunkSize);
         uint32_t chunkIdx = loopIdx % coreLoopsInB;
         uint32_t bIdx = loopIdx / coreLoopsInB;
         bos = chunkIdx * chunkSize;
         eos = bos + chunkSize > T ? T : bos + chunkSize;
-        bos += (bIdx * H * T);
-        eos += (bIdx * H * T);
+        bos += (bIdx * HV * T);
+        eos += (bIdx * HV * T);
     } else {
         AscendC::GlobalTensor<uint64_t> cuSeqlensTensor;
         AscendC::GlobalTensor<uint64_t> chunkIndicesTensor;

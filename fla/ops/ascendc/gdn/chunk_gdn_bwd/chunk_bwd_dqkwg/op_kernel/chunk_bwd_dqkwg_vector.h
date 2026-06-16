@@ -69,7 +69,8 @@ private:
     
     // Tiling 参数
     uint64_t B;
-    uint64_t H;
+    uint64_t HV;
+    uint64_t HK;
     uint64_t T;
     uint64_t K;
     uint64_t V;
@@ -78,6 +79,7 @@ private:
     float scale;
     int isVarLen;
     uint32_t mul0RowNum = 0;
+    uint64_t n_ratio = 1;
     
     // Workspace 偏移
     uint64_t wsDwOffset;
@@ -144,12 +146,14 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::Init(const C
 
     scale = tiling.scale;
     B = tiling.B;
-    H = tiling.H;
+    HV = tiling.HV;
+    HK = tiling.HK;
     T = tiling.T;
     K = tiling.K;
     V = tiling.V;
     BT = tiling.BT;
     numChunks = tiling.numChunks;
+    n_ratio = (HK > 0) ? (HV / HK) : 1;
     wsDgLastOffset = tiling.wsDgLastOffset;
     wsMm5Offset = tiling.wsMm5Offset;
     wsDsTempOffset = tiling.wsDsTempOffset;
@@ -267,24 +271,23 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart1
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
         uint32_t bIdx = loopIdx / numChunks;
         uint32_t chunkIdx = loopIdx % numChunks;
-        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, H, T, BT, loopIdx, bos, eos);
+        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, HV, T, BT, loopIdx, bos, eos);
         BT_sub = eos-bos;
         dwSize_sub = BT_sub * K;
         
-        for (uint32_t h = 0; h < H; h++) {
+        for (uint32_t h = 0; h < HV; h++) {
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
                 CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
                 continue;
             }
-            // 计算偏移
-            // h, dh: [B, H, num_chunks, K, V]
-            uint64_t hOffset = ((bIdx * H + h) * numChunks + chunkIdx) * K * V;
-            // dw (workspace): 按 [B, H, T, K] 布局
+            // h is hv_idx; h_state, dh: [B, HV, num_chunks, K, V]
+            uint64_t hOffset = ((bIdx * HV + h) * numChunks + chunkIdx) * K * V;
+            // dw: [B, HV, T, K]
             uint64_t dwOffset = (h * T + bos) * K;
-            // dg_last: [B, H, num_chunks]
-            uint64_t dgLastOffset = (bIdx * H + h) * numChunks + chunkIdx;
+            // dg_last: [B, HV, num_chunks]
+            uint64_t dgLastOffset = (bIdx * HV + h) * numChunks + chunkIdx;
 
             // ========== 计算 dg_last = sum(h * dh) ==========
             // 等待 Cube 信号 (dw Cube 计算)
@@ -443,16 +446,16 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart2
     PipeBarrier<PIPE_V>();
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
-        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, H, T, BT, loopIdx, bos, eos);
+        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, HV, T, BT, loopIdx, bos, eos);
         bos_orig = bos;
         eos_orig = eos;
         uint32_t vec_core_0_length = (eos_orig - bos_orig) >= (BT / 2) ? (BT / 2) : (eos_orig - bos_orig);
         uint32_t vec_core_1_length = (eos_orig - bos_orig) >= (BT / 2) ? (eos_orig - bos_orig - (BT / 2)) : 0;
-        if (GetSubBlockIdx() == 0) {        // BT: 0..BT_sub_end
+        if (GetSubBlockIdx() == 0) {
             BT_sub_start = 0;
-            BT_sub_end = vec_core_0_length;         // [0, vec_core_0_length)
+            BT_sub_end = vec_core_0_length;
             eos = bos + vec_core_0_length;
-        } else {       // BT: BT_sub_end+1..eos
+        } else {
             BT_sub_start = vec_core_0_length;
             BT_sub_end = eos_orig - bos_orig;
             bos = bos + vec_core_0_length;
@@ -464,15 +467,15 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart2
         uint32_t bIdx = loopIdx / numChunks;
         uint32_t chunkIdx = loopIdx % numChunks;
 
-        for (uint32_t h = 0; h < H; h++) {
-            if (real_BT == 0) {       //sub core get 0 token
+        for (uint32_t h = 0; h < HV; h++) {
+            if (real_BT == 0) {
                 continue;
             }
 
-            // 偏移计算
-            // g: [B, H, T]
+            // h is hv_idx
+            // g: [B, HV, T]
             uint64_t gOffset = (h * T + bos_orig);
-            // ds, mm5, ds_temp: [B, H, T, BT]
+            // ds, mm5, ds_temp: [B, HV, T, BT]
             uint64_t dsOffset = (h * T + bos) * BT;
             // CopyIn: g
             {
@@ -621,19 +624,14 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart3
     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
-        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, H, T, BT, loopIdx, bos, eos);
+        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, HV, T, BT, loopIdx, bos, eos);
         BT_sub_end = eos-bos;
         uint32_t real_BT= eos-bos;
         dsSize_sub = (eos-bos) * BT;
         uint32_t bIdx = loopIdx / numChunks;
         uint32_t chunkIdx = loopIdx % numChunks;
 
-        for (uint32_t h = 0; h < H; h++) {
-            // if (GetSubBlockIdx() == 1) {
-            //     CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-            //     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-            //     continue;
-            // }
+        for (uint32_t h = 0; h < HV; h++) {
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
@@ -641,13 +639,13 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart3
                 continue;
             }
 
-            // 偏移计算
-            // g: [B, H, T]
+            // h is hv_idx
+            // g: [B, HV, T]
             uint64_t gOffset = (h * T + bos);
-            // ds, mm5, ds_temp: [B, H, T, BT]
+            // ds, mm5, ds_temp: [B, HV, T, BT]
             uint64_t dsOffset = (h * T + bos) * BT;
 
-            // dg: [B, H, T]
+            // dg: [B, HV, T]
             uint64_t dgOffset = gOffset;
 
             // 等待 Cube 完成 ds 计算
@@ -825,7 +823,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart4
     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
-        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, H, T,
+        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, HV, T,
                         BT, loopIdx, bos, eos);
         uint32_t actual_chunk_len = eos-bos;
         dqSize_sub = actual_chunk_len * K;
@@ -834,19 +832,20 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart4
         uint32_t bIdx = loopIdx / numChunks;
         uint32_t chunkIdx = loopIdx % numChunks;
         
-        for (uint32_t h = 0; h < H; h++) {
-            // if (GetSubBlockIdx() == 1) {
-            //     CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-            //     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-            //     continue;
-            // }
+        for (uint32_t h = 0; h < HV; h++) {
+            // h is hv_idx; compute hk_idx for q/k access
+            uint32_t hk_idx = h / n_ratio;
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
                 CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
                 continue;
             }
-            uint64_t qkOffset = (h * T + bos) * K;
+            // q: [B, HK, T, K], dq: [B, HV, T, K]
+            uint64_t bos_hk = bos - static_cast<uint64_t>(bIdx) * static_cast<uint64_t>(HV - HK) * T;
+            uint64_t qkOffset = (hk_idx * T + bos_hk) * K;
+            uint64_t dqOffset = (h * T + bos) * K;
+            // g, dg: [B, HV, T]
             uint64_t gOffset = (h * T + bos);
             
             CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
@@ -857,7 +856,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart4
                 auto tensorGIn = inQue3.AllocTensor<GType>();
                 auto tensorDgIn = inQue4.AllocTensor<GType>();
                 
-                DataCopy(tensorDqIn[dqSize_sub], gmDq[qkOffset + dqSize_sub_offset], dqSize_sub);
+                DataCopy(tensorDqIn[dqSize_sub], gmDq[dqOffset + dqSize_sub_offset], dqSize_sub);
 
                 DataCopy(tensorQIn[dqSize_sub], gmQ[qkOffset + dqSize_sub_offset], dqSize_sub);
 
@@ -956,7 +955,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart4
                 auto tensorDqOut = outQue1.DeQue<DataType>();
                 auto tensorDgOut = outQue2.DeQue<GType>();
 
-                DataCopy(gmDq[qkOffset + dqSize_sub_offset], tensorDqOut, dqSize_sub);
+                DataCopy(gmDq[dqOffset + dqSize_sub_offset], tensorDqOut, dqSize_sub);
 
                 // 累加到 dg (读取现有值, 加上新值, 写回)
                 // 简化: 直接累加 (需要在 Part 5 中处理最终值)
@@ -1018,7 +1017,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart5
     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
-        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, H, T, BT, loopIdx, bos, eos);
+        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, HV, T, BT, loopIdx, bos, eos);
         uint32_t actual_chunk_len = eos - bos;
         real_BT = actual_chunk_len;
         dkSize = actual_chunk_len * K;
@@ -1026,16 +1025,23 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart5
         uint32_t bIdx = loopIdx / numChunks;
         uint32_t chunkIdx = loopIdx % numChunks;
         
-        for (uint32_t h = 0; h < H; h++) {
+        for (uint32_t h = 0; h < HV; h++) {
+            // h is hv_idx; compute hk_idx for k access
+            uint32_t hk_idx = h / n_ratio;
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
                 CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
                 continue;
             }
-            uint64_t kOffset = (h * T + bos) * K;
+            // k: [B, HK, T, K], dk: [B, HV, T, K]
+            uint64_t bos_hk = bos - static_cast<uint64_t>(bIdx) * static_cast<uint64_t>(HV - HK) * T;
+            uint64_t kOffset = (hk_idx * T + bos_hk) * K;
+            uint64_t dkOffset = (h * T + bos) * K;
+            // g, dg: [B, HV, T]
             uint64_t gOffset = (h * T + bos);
-            uint64_t dgLastOffset = (bIdx * H + h) * numChunks + chunkIdx;
+            // dg_last: [B, HV, num_chunks]
+            uint64_t dgLastOffset = (bIdx * HV + h) * numChunks + chunkIdx;
             
             CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
 
@@ -1045,10 +1051,8 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart5
                 auto tensorKIn = inQue2.AllocTensor<DataType>();
                 auto tensorGIn = inQue3.AllocTensor<GType>();
                 auto tensorDgIn = inQue4.AllocTensor<GType>();
-                // auto tensorDgLastIn = inQue5.AllocTensor<float>();
-                // auto tensorGLastIn = inQue6.AllocTensor<GType>();
                 
-                DataCopy(tensorDkIn[dkSize], gmDk[kOffset], dkSize);
+                DataCopy(tensorDkIn[dkSize], gmDk[dkOffset], dkSize);
                 DataCopy(tensorKIn[dkSize], gmK[kOffset], dkSize);
 
                 DataCopyParams dataCopyParams;
@@ -1212,7 +1216,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart5
                 auto tensorDkOut = outQue1.DeQue<DataType>();
                 auto tensorDgOut = outQue2.DeQue<GType>();
 
-                DataCopy(gmDk[kOffset], tensorDkOut, dkSize);
+                DataCopy(gmDk[dkOffset], tensorDkOut, dkSize);
 
                 // dg 需要与之前的累加
                 // 累加到 dg (读取现有值, 加上新值, 写回)
@@ -1257,25 +1261,21 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart6
     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
-        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, H, T,
+        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, HV, T,
                         BT, loopIdx, bos, eos);
         uint32_t actual_chunk_len = eos - bos;
         dqSize = actual_chunk_len * K;
         uint32_t bIdx = loopIdx / numChunks;
         uint32_t chunkIdx = loopIdx % numChunks;
         
-        for (uint32_t h = 0; h < H; h++) {
-            // if (GetSubBlockIdx() == 1) {
-            //     CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-            //     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-            //     continue;
-            // }
+        for (uint32_t h = 0; h < HV; h++) {
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
                 CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
                 continue;
             }
+            // dq: [B, HV, T, K]
             uint64_t dqOffset = (h * T + bos) * K;
             
             CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
@@ -1353,25 +1353,21 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart7
     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
-        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, H, T,
+        GetChunkOffset(ptrCuSeqLen, ptrChunkIndices, B, HV, T,
                         BT, loopIdx, bos, eos);
         uint32_t actual_chunk_len = eos - bos;
         dkSize = actual_chunk_len * K;
         uint32_t bIdx = loopIdx / numChunks;
         uint32_t chunkIdx = loopIdx % numChunks;
         
-        for (uint32_t h = 0; h < H; h++) {
-            // if (GetSubBlockIdx() == 1) {
-            //     CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
-            //     CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
-            //     continue;
-            // }
+        for (uint32_t h = 0; h < HV; h++) {
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);
                 CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
                 continue;
             }
+            // dk: [B, HV, T, K]
             uint64_t dkOffset = (h * T + bos) * K;
             
             CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_0);

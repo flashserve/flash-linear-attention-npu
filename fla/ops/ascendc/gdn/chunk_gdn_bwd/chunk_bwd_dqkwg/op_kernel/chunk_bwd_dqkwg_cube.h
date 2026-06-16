@@ -112,23 +112,23 @@ public:
     /// Parameters structure
     struct Params {
         // 输入指针
-        GM_ADDR ptrQ;      // [B, H, T, K]
-        GM_ADDR ptrK;      // [B, H, T, K]
-        GM_ADDR ptrV;      // [B, H, T, V]
-        GM_ADDR ptrG;      // [B, H, T]
-        GM_ADDR ptrH;      // [B, num_chunks, H, K, V]
-        GM_ADDR ptrDo;     // [B, H, T, V]
-        GM_ADDR ptrDh;     // [B, num_chunks, H, K, V]
-        GM_ADDR ptrDv;     // [B, H, T, V]
+        GM_ADDR ptrQ;      // [B, HK, T, K]
+        GM_ADDR ptrK;      // [B, HK, T, K]
+        GM_ADDR ptrV;      // [B, HV, T, V]
+        GM_ADDR ptrG;      // [B, HV, T]
+        GM_ADDR ptrH;      // [B, HV, num_chunks, K, V]
+        GM_ADDR ptrDo;     // [B, HV, T, V]
+        GM_ADDR ptrDh;     // [B, HV, num_chunks, K, V]
+        GM_ADDR ptrDv;     // [B, HV, T, V]
         //varlen
         GM_ADDR ptrCuSeqLens;
         GM_ADDR ptrChunkIndices;
         
         // 输出指针
-        GM_ADDR ptrDq;     // [B, H, T, K]
-        GM_ADDR ptrDk;     // [B, H, T, K]
-        GM_ADDR ptrDw;     // [B, H, T, K]
-        GM_ADDR ptrDg;     // [B, H, T]
+        GM_ADDR ptrDq;     // [B, HV, T, K]
+        GM_ADDR ptrDk;     // [B, HV, T, K]
+        GM_ADDR ptrDw;     // [B, HV, T, K]
+        GM_ADDR ptrDg;     // [B, HV, T]
         
         // Workspace 指针
         GM_ADDR ptrWorkspace;
@@ -142,17 +142,17 @@ public:
         uint64_t wsMm7Offset;
         
         // 形状参数
-        uint64_t B;// = CONST_B;
-        uint64_t H;// = CONST_H;
-        uint64_t T;// = CONST_T;
-        uint64_t K;// = CONST_K;
-        uint64_t V;// = CONST_V;
-        uint64_t BT;// = CONST_BT;
-        uint64_t numChunks;// = CONST_NUM_CHUNKS;
-        // uint64_t chunkSize = 64;
+        uint64_t B;
+        uint64_t HV;            // number of heads for V-dim tensors
+        uint64_t HK;            // number of heads for K-dim tensors, HV = n_ratio * HK
+        uint64_t T;
+        uint64_t K;
+        uint64_t V;
+        uint64_t BT;
+        uint64_t numChunks;
+        uint64_t n_ratio;       // HV / HK
         uint64_t isVarLen;
         
-        // 其他参数
         float scale;
         
         CATLASS_DEVICE
@@ -164,7 +164,7 @@ public:
             GM_ADDR do_, GM_ADDR dh, GM_ADDR dv, GM_ADDR cu_seqlen, GM_ADDR chunk_indices,
             GM_ADDR dq, GM_ADDR dk, GM_ADDR dw, GM_ADDR dg,
             GM_ADDR workspace,
-            uint64_t B, uint64_t H, uint64_t T, uint64_t K, uint64_t V, uint64_t BT, uint64_t numChunks, 
+            uint64_t B, uint64_t HV, uint64_t HK, uint64_t T, uint64_t K, uint64_t V, uint64_t BT, uint64_t numChunks, uint64_t n_ratio,
             uint64_t wsDw, uint64_t wsDgLast, uint64_t wsMm5, uint64_t wsDsTemp, uint64_t wsMm6, uint64_t wsMm7,
             float s, uint64_t isVarLen
         ) : ptrQ(q), ptrK(k), ptrV(v), ptrG(g), ptrH(h),
@@ -173,7 +173,7 @@ public:
             ptrWorkspace(workspace),
             wsDwOffset(wsDw), wsDgLastOffset(wsDgLast),
             wsMm5Offset(wsMm5), wsDsTempOffset(wsDsTemp), wsMm6Offset(wsMm6), wsMm7Offset(wsMm7),
-            scale(s), B(B), H(H), T(T), K(K), V(V), BT(BT), numChunks(numChunks), isVarLen(isVarLen) {}
+            scale(s), B(B), HV(HV), HK(HK), T(T), K(K), V(V), BT(BT), numChunks(numChunks), n_ratio(n_ratio), isVarLen(isVarLen) {}
     };
     
     CATLASS_DEVICE
@@ -212,9 +212,8 @@ public:
         {
             BlockMmadPart1 blockMmadPart1(resource);
             auto layoutH = LayoutColMajor::MakeLayout<ElementA>(params.K, params.V);
-            // printf("[cube]coreLoops %d, H %d\n",coreLoops,params.H);
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.HV, params.T,
                                 params.BT, loopIdx, bos, eos);
                 uint32_t actual_chunk_len = eos-bos;
                 uint32_t bIdx = loopIdx / params.numChunks;
@@ -226,18 +225,17 @@ public:
                     static_cast<uint32_t>(params.V)
                 };
 
-                for (uint32_t h = 0; h < params.H; h++) {
+                for (uint32_t h = 0; h < params.HV; h++) {
+                    // h is hv_idx; compute hk_idx for q/k access
+                    uint32_t hk_idx = h / params.n_ratio;
 
-                    // 设置 GM 地址
-                    // dv: [B, H, T, V] -> offset = ((b * H + h) * T + chunk * BT) * V
-                    // uint64_t dvOffset = ((bIdx * params.H + h) * params.T + bos) * params.V;
+                    // dv: [B, HV, T, V] -> offset = (hv_idx * T + bos) * V
                     uint64_t dvOffset = (h * params.T + bos) * params.V;
 
-                    // h: [B, H, num_chunks, K, V] -> offset = ((b * numChunks + chunk) * H + h) * K * V
-                    uint64_t hOffset = ((bIdx * params.H + h) * params.numChunks + chunkIdx) * params.K * params.V;
+                    // h_state: [B, HV, num_chunks, K, V] -> offset = ((bIdx * HV + hv_idx) * numChunks + chunkIdx) * K * V
+                    uint64_t hOffset = ((bIdx * params.HV + h) * params.numChunks + chunkIdx) * params.K * params.V;
 
-                    // dw output (workspace): [B, H, T, K]
-                    // uint64_t dwOffset = ((bIdx * params.H + h) * params.T + bos) * params.K;
+                    // dw output: [B, HV, T, K] -> offset = (hv_idx * T + bos) * K
                     uint64_t dwOffset = (h * params.T + bos) * params.K;
 
                     GlobalTensor<ElementA> gmDv;
@@ -283,7 +281,7 @@ public:
             BlockMmadPart2 blockMmadPart2(resource);
             
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.HV, params.T,
                                 params.BT, loopIdx, bos, eos);
                 uint32_t actual_chunk_len = eos-bos;
                 uint32_t bIdx = loopIdx / params.numChunks;
@@ -295,10 +293,14 @@ public:
                     static_cast<uint32_t>(params.K)
                 };
                 
-                for (uint32_t h = 0; h < params.H; h++) {
-                    // q, k: [B, H, T, K]
-                    uint64_t qkOffset = (h * params.T + bos) * params.K;
-                    // mm5: workspace [B, H, T, BT]
+                for (uint32_t h = 0; h < params.HV; h++) {
+                    // h is hv_idx; compute hk_idx for q/k access
+                    uint32_t hk_idx = h / params.n_ratio;
+                    
+                    // q, k: [B, HK, T, K] -> offset uses HK for batch stride, not HV
+                    uint64_t bos_hk = bos - static_cast<uint64_t>(bIdx) * static_cast<uint64_t>(params.HV - params.HK) * params.T;
+                    uint64_t qkOffset = (hk_idx * params.T + bos_hk) * params.K;
+                    // mm5: workspace [B, HV, T, BT] -> offset = (hv_idx * T + bos) * BT
                     uint64_t mm5Offset = (h * params.T + bos) * params.BT;
                     
                     GlobalTensor<ElementA> gmQ;
@@ -329,12 +331,10 @@ public:
 
         // ========== Part 3: b_ds = b_do @ b_v^T ==========
         {
-            // AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
-            
             BlockMmadPart3 blockMmadPart3(resource);
             
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.HV, params.T,
                                 params.BT, loopIdx, bos, eos);
                 uint32_t actual_chunk_len = eos-bos;
                 uint32_t bIdx = loopIdx / params.numChunks;
@@ -346,12 +346,11 @@ public:
                     static_cast<uint32_t>(params.V)
                 };
                 
-                for (uint32_t h = 0; h < params.H; h++) {
-                    // do, v: [B, H, T, V]
-                    // uint64_t dvOffset = ((bIdx * params.H + h) * params.T + bos) * params.V;
+                for (uint32_t h = 0; h < params.HV; h++) {
+                    // h is hv_idx
+                    // do, v: [B, HV, T, V]
                     uint64_t dvOffset = (h * params.T + bos) * params.V;
-                    // ds_temp: workspace [B, H, T, BT]
-                    // uint64_t dsOffset = ((bIdx * params.H + h) * params.T + bos) * params.BT;
+                    // ds_temp: workspace [B, HV, T, BT]
                     uint64_t dsOffset = (h * params.T + bos) * params.BT;
                     
                     GlobalTensor<ElementA> gmDo;
@@ -391,7 +390,7 @@ public:
             BlockMmadPart4 blockMmadPart4(resource);
             
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.HV, params.T,
                                 params.BT, loopIdx, bos, eos);
                 uint32_t actual_chunk_len = eos-bos;
                 uint32_t bIdx = loopIdx / params.numChunks;
@@ -403,16 +402,16 @@ public:
                     static_cast<uint32_t>(params.V)
                 };
                 
-                for (uint32_t h = 0; h < params.H; h++) {
-                    // do: [B, H, T, V]
-                    // uint64_t doOffset = ((bIdx * params.H + h) * params.T + bos) * params.V;
+                for (uint32_t h = 0; h < params.HV; h++) {
+                    // h is hv_idx; compute hk_idx for q/k access
+                    uint32_t hk_idx = h / params.n_ratio;
+                    
+                    // do: [B, HV, T, V]
                     uint64_t doOffset = (h * params.T + bos) * params.V;
-                    // h: [B, H, num_chunks, K, V]   [1, 44, 4, 128, 128]
-                    uint64_t hOffset = ((bIdx * params.H + h) * params.numChunks + chunkIdx) * params.K * params.V;
-                    //bIdx * numChunks * H * K * V + chunkIdx * H * K * V + h * K * V;
+                    // h_state: [B, HV, num_chunks, K, V]
+                    uint64_t hOffset = ((bIdx * params.HV + h) * params.numChunks + chunkIdx) * params.K * params.V;
 
-                    // dq: [B, H, T, K]
-                    // uint64_t dqOffset = ((bIdx * params.H + h) * params.T + bos) * params.K;
+                    // dq: [B, HV, T, K]
                     uint64_t dqOffset = (h * params.T + bos) * params.K;
                     
                     GlobalTensor<ElementA> gmDo;
@@ -452,7 +451,7 @@ public:
             BlockMmadPart5 blockMmadPart5(resource);
             
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.HV, params.T,
                                 params.BT, loopIdx, bos, eos);
                 uint32_t actual_chunk_len = eos-bos;
                 uint32_t bIdx = loopIdx / params.numChunks;
@@ -464,15 +463,13 @@ public:
                     static_cast<uint32_t>(params.V)
                 };
                 
-                for (uint32_t h = 0; h < params.H; h++) {
-                    // v: [B, H, T, V]
-                    // uint64_t vOffset = ((bIdx * params.H + h) * params.T + bos) * params.V;
+                for (uint32_t h = 0; h < params.HV; h++) {
+                    // h is hv_idx
+                    // v: [B, HV, T, V]
                     uint64_t vOffset = (h * params.T + bos) * params.V;
-                    // dh: [B, H, num_chunks, K, V]  -> 需要转置访问 [V, K]
-                    // uint64_t dhOffset = ((bIdx * params.numChunks + chunkIdx) * params.H + h) * params.K * params.V;
-                    uint64_t dhOffset = ((bIdx * params.H + h) * params.numChunks + chunkIdx) * params.K * params.V;
-                    // dk: [B, H, T, K]
-                    // uint64_t dkOffset = ((bIdx * params.H + h) * params.T + bos) * params.K;
+                    // dh: [B, HV, num_chunks, K, V]  -> 需要转置访问 [V, K]
+                    uint64_t dhOffset = ((bIdx * params.HV + h) * params.numChunks + chunkIdx) * params.K * params.V;
+                    // dk: [B, HV, T, K]
                     uint64_t dkOffset = (h * params.T + bos) * params.K;
                     
                     GlobalTensor<ElementA> gmV;
@@ -513,7 +510,7 @@ public:
             BlockMmadPart6 blockMmadPart6(resource);
             
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.HV, params.T,
                                 params.BT, loopIdx, bos, eos);
                 uint32_t actual_chunk_len = eos-bos;
                 uint32_t bIdx = loopIdx / params.numChunks;
@@ -525,15 +522,17 @@ public:
                     static_cast<uint32_t>(actual_chunk_len)
                 };
                 
-                for (uint32_t h = 0; h < params.H; h++) {
-                    // ds_temp: workspace [B, H, T, BT]
-                    // uint64_t dsOffset = ((bIdx * params.H + h) * params.T + bos) * params.BT;
+                for (uint32_t h = 0; h < params.HV; h++) {
+                    // h is hv_idx; compute hk_idx for k access
+                    uint32_t hk_idx = h / params.n_ratio;
+                    
+                    // ds_temp: workspace [B, HV, T, BT]
                     uint64_t dsOffset = (h * params.T + bos) * params.BT;
-                    // k: [B, H, T, K]
-                    // uint64_t kOffset = ((bIdx * params.H + h) * params.T + bos) * params.K;
-                    uint64_t kOffset = (h * params.T + bos) * params.K;
-                    // dq: [B, H, T, K] - 累加
-                    uint64_t dqOffset = kOffset;
+                    // k: [B, HK, T, K] -> offset uses HK for batch stride, not HV
+                    uint64_t bos_hk = bos - static_cast<uint64_t>(bIdx) * static_cast<uint64_t>(params.HV - params.HK) * params.T;
+                    uint64_t kOffset = (hk_idx * params.T + bos_hk) * params.K;
+                    // dq: [B, HV, T, K] - 累加
+                    uint64_t dqOffset = (h * params.T + bos) * params.K;
                     
                     GlobalTensor<ElementA> gmDsTemp;
                     gmDsTemp.SetGlobalBuffer((__gm__ ElementA *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsDsTempOffset) + dsOffset);
@@ -576,7 +575,7 @@ public:
             BlockMmadPart7 blockMmadPart7(resource);
             
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNum) {
-                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.H, params.T,
+                GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.HV, params.T,
                                 params.BT, loopIdx, bos, eos);
                 uint32_t actual_chunk_len = eos-bos;
                 uint32_t bIdx = loopIdx / params.numChunks;
@@ -588,16 +587,18 @@ public:
                     static_cast<uint32_t>(actual_chunk_len)
                 };
                 
-                for (uint32_t h = 0; h < params.H; h++) {
-                    // ds_temp^T: workspace [B, H, T, BT]
-                    // uint64_t dsOffset = ((bIdx * params.H + h) * params.T + bos) * params.BT;
+                for (uint32_t h = 0; h < params.HV; h++) {
+                    // h is hv_idx; compute hk_idx for q access
+                    uint32_t hk_idx = h / params.n_ratio;
+                    
+                    // ds_temp^T: workspace [B, HV, T, BT]
                     uint64_t dsOffset = (h * params.T + bos) * params.BT;
-                    // q: [B, H, T, K]
-                    // uint64_t qOffset = ((bIdx * params.H + h) * params.T + bos) * params.K;
-                    uint64_t qOffset = (h * params.T + bos) * params.K;
+                    // q: [B, HK, T, K] -> offset uses HK for batch stride, not HV
+                    uint64_t bos_hk = bos - static_cast<uint64_t>(bIdx) * static_cast<uint64_t>(params.HV - params.HK) * params.T;
+                    uint64_t qOffset = (hk_idx * params.T + bos_hk) * params.K;
 
-                    // dk: [B, H, T, K] - 累加
-                    uint64_t dkOffset = qOffset;
+                    // dk: [B, HV, T, K] - 累加
+                    uint64_t dkOffset = (h * params.T + bos) * params.K;
                     
                     GlobalTensor<ElementA> gmDsTemp;
                     gmDsTemp.SetGlobalBuffer((__gm__ ElementA *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsDsTempOffset) + dsOffset);
@@ -680,12 +681,14 @@ private:
     
     // Tiling 参数
     uint64_t B = CONST_B;
-    uint64_t H = CONST_H;
+    uint64_t HV = CONST_HV;
+    uint64_t HK = CONST_HK;
     uint64_t T = CONST_T;
     uint64_t K = CONST_K;
     uint64_t V = CONST_V;
     uint64_t BT = CONST_BT;
     uint64_t numChunks = CONST_NUM_CHUNKS;
+    uint64_t n_ratio = 1;
     float scale;
     uint64_t isVarLen;
     
@@ -704,24 +707,26 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Init(const Chu
 /*
     // 设置 workspace 偏移
     // wsDwOffset = 0;
-    wsDgLastOffset = 0;//B * H * numChunks * sizeof(float);
+    wsDgLastOffset = 0;//B * HV * numChunks * sizeof(float);
     // wsDgLastOffset = ((wsDgLastOffset + 31) / 32) * 32;
-    wsMm5Offset = wsDgLastOffset + ((B * H * numChunks * sizeof(float) + 31) / 32) * 32;
+    wsMm5Offset = wsDgLastOffset + ((B * HV * numChunks * sizeof(float) + 31) / 32) * 32;
     // wsMm5Offset = wsMm5Offset;
-    wsDsTempOffset = wsMm5Offset + B * H * T * BT * sizeof(DataType);
-    wsMm6Offset = wsDsTempOffset + B * H * T * BT * sizeof(DataType);
-    wsMm7Offset = wsMm6Offset + B * H * T * K * sizeof(DataType);
+    wsDsTempOffset = wsMm5Offset + B * HV * T * BT * sizeof(DataType);
+    wsMm6Offset = wsDsTempOffset + B * HV * T * BT * sizeof(DataType);
+    wsMm7Offset = wsMm6Offset + B * HV * T * K * sizeof(DataType);
 */
     // printf("[cube] wsDgLastOffset %d,wsMm5Offset %d,wsDsTempOffset %d, wsMm6Offset %d wsMm7Offset %d\n",wsDgLastOffset,wsMm5Offset,wsDsTempOffset,wsMm6Offset, wsMm7Offset);
 ////////////////////tiling/////
     scale = tiling.scale;
     B = tiling.B;
-    H = tiling.H;
+    HV = tiling.HV;
+    HK = tiling.HK;
     T = tiling.T;
     K = tiling.K;
     V = tiling.V;
     BT = tiling.BT;
     numChunks = tiling.numChunks;
+    n_ratio = (HK > 0) ? (HV / HK) : 1;
     wsDgLastOffset = tiling.wsDgLastOffset;
     // wsDgLastOffset = ((wsDgLastOffset + 31) / 32) * 32;
     wsMm5Offset = tiling.wsMm5Offset;
@@ -793,7 +798,7 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Process() {
         ptrQ, ptrK, ptrV, ptrG, ptrH,
         ptrDo, ptrDh, ptrDv, ptrCuSeqLen, ptrChunkIndices,
         ptrDq, ptrDk, ptrDw, ptrDg,
-        ptrWorkspace, B, H, T, K, V, BT, numChunks,
+        ptrWorkspace, B, HV, HK, T, K, V, BT, numChunks, n_ratio,
         wsDwOffset, wsDgLastOffset, wsMm5Offset, wsDsTempOffset, wsMm6Offset, wsMm7Offset,
         scale, isVarLen
     );

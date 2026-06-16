@@ -94,8 +94,6 @@ def chunk_bwd_dqkwg_cpu(
         calc_type = torch.float64
     else:
         calc_type = torch.float32
-    datatype = q.dtype
-    gtype = g.dtype
     q.to(calc_type)
     k.to(calc_type)
     v.to(calc_type)
@@ -109,7 +107,8 @@ def chunk_bwd_dqkwg_cpu(
     HV = v.shape[2]
     V = v.shape[-1]
     n_ratio = HV // HK  # HV = n_ratio * HK
-
+    datatype = q.dtype
+    gtype = g.dtype
     if benchmark:
         datatype = torch.float64
         gtype = torch.float64
@@ -285,7 +284,7 @@ def chunk_bwd_dqkwg_cpu(
                     dg_c -= ds2.sum(dim=0)
 
                     # dg_c = dg_c_C.to(torch.float16) + dg_c_D.to(torch.float16) + dg_c_A.to(torch.float16) + dg_c_B.to(torch.float16)
-                    dg_c = dg_c.to(gtype)
+                    dg_c = dg_c.to(datatype).to(gtype)
 
                     # print("dg_c after", dg_c.shape)
                     # pause()
