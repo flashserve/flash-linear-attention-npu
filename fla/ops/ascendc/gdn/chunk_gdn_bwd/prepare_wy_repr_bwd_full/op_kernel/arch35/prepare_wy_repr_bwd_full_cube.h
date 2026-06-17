@@ -193,7 +193,7 @@ public:
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
                 GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
-                for (int h_v = 0; h_v < params.HV; h_v++) {
+                for (uint64_t h_v = 0; h_v < params.HV; h_v++) {
                     // Represent the full gm
                     gmDA.SetGlobalBuffer((__gm__ ElementDA *)params.ptrDA + (h_v * params.T + bos) * params.chunkSize);
                     gmKbeta.SetGlobalBuffer((__gm__ ElementKbeta *)params.ptrKbeta + (h_v * params.T + bos) * params.K);
@@ -242,8 +242,8 @@ public:
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
                 GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
-                for (int h_v = 0; h_v < params.HV; h_v++) {
-                    int h_k = h_v / params.groupSize;
+                for (uint64_t h_v = 0; h_v < params.HV; h_v++) {
+                    uint64_t h_k = h_v / params.groupSize;
                     // Represent the full gm
                     gmDAT.SetGlobalBuffer((__gm__ ElementDAT *)params.ptrDAT + (h_v * params.T + bos) * params.chunkSize);
                     gmK.SetGlobalBuffer((__gm__ ElementK *)params.ptrK + (h_k * params.T + kBos) * params.K);
@@ -302,8 +302,8 @@ public:
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
                 GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
-                for (int h_v = 0; h_v < params.HV; h_v++) {
-                    int h_k = h_v / params.groupSize;
+                for (uint64_t h_v = 0; h_v < params.HV; h_v++) {
+                    uint64_t h_k = h_v / params.groupSize;
                     // Represent the full gm
                     gmAT.SetGlobalBuffer((__gm__ ElementAT *)params.ptrAT + (h_v * params.T + bos) * params.chunkSize);
                     gmDw.SetGlobalBuffer((__gm__ ElementDw *)params.ptrDw + (h_k * params.T + kBos) * params.K);
@@ -357,7 +357,7 @@ public:
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
                 GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.V), curChunkSize};
-                for (int h_v = 0; h_v < params.HV; h_v++) {
+                for (uint64_t h_v = 0; h_v < params.HV; h_v++) {
                     // Represent the full gm
                     gmAT.SetGlobalBuffer((__gm__ ElementAT *)params.ptrAT + (h_v * params.T + bos) * params.chunkSize);
                     gmDu.SetGlobalBuffer((__gm__ ElementDu *)params.ptrDu + (h_v * params.T + bos) * params.V);
@@ -412,7 +412,7 @@ public:
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
                 GemmCoord actualBlockShape{curChunkSize, curChunkSize, static_cast<uint32_t>(params.K)};
-                for (int h_k = 0; h_k < params.HK; h_k++) {
+                for (uint64_t h_k = 0; h_k < params.HK; h_k++) {
                     // Represent the full gm
                     gmK.SetGlobalBuffer((__gm__ ElementK *)params.ptrK + (h_k * params.T + bos) * params.K);
                     gmKT.SetGlobalBuffer((__gm__ ElementKT *)params.ptrKT + (h_k * params.T + bos) * params.K);

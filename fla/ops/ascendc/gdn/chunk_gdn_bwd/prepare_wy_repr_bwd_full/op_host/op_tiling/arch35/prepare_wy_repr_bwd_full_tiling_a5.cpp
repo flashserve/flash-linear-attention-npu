@@ -61,7 +61,7 @@ bool PrepareWyReprBwdFullTilingA5::SetTiling(gert::TilingContext *context)
 
     auto sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     OP_LOGD(context->GetNodeName(), "=== sysWorkspaceSize: %ld", sysWorkspaceSize);
-    size_t userWorkspaceSize = 2 * tiling_.B * tiling_.HV * tiling_.T * (tiling_.V + tiling_.K * (tiling_.HV / tiling_.HK));
+    size_t userWorkspaceSize = 2 * tiling_.B * tiling_.HV * tiling_.T * (tiling_.V + tiling_.K);
     OP_LOGD(context->GetNodeName(), "=== userWorkspaceSize: %ld", userWorkspaceSize);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = static_cast<size_t>(userWorkspaceSize + sysWorkspaceSize);

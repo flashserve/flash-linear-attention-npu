@@ -494,14 +494,14 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
         GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h_k = 0; h_k < HK; h_k++) {
+        for (uint64_t h_k = 0; h_k < HK; h_k++) {
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 continue;
             }
             uint32_t tmpCvListId = cvListId;
-            for (int i = 0; i < groupSize; i++) {
-                int h_v = h_k * groupSize + i;
+            for (uint64_t i = 0; i < groupSize; i++) {
+                uint64_t h_v = h_k * groupSize + i;
                 auto& tensorBeta = tensorBetaInList[ubBetaDgListId];
                 auto& tensorDg = tensorDgInList[ubBetaDgListId];
                 {// copyin beta/dg
@@ -918,7 +918,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
         GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h_v = 0; h_v < HV; h_v++) {
+        for (uint64_t h_v = 0; h_v < HV; h_v++) {
             uint32_t taskNum = CeilDiv(curChunkSize, rowNum);
             taskNum = CeilDiv(taskNum, GetSubBlockNum());
             uint32_t dealTaskNum = 0;
@@ -1367,7 +1367,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
             GetKBosByVBos(bos, T, HV, HK, kBos);
         }
         uint32_t curChunkSize = eos - bos;
-        for (int h_v = 0; h_v < HV; h_v++) {
+        for (uint64_t h_v = 0; h_v < HV; h_v++) {
             uint32_t taskNum = CeilDiv(curChunkSize, rowNum);
             taskNum = CeilDiv(taskNum, GetSubBlockNum());
             uint32_t dealTaskNum = 0;
@@ -1377,8 +1377,8 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                     continue;
                 }
-                int h_k = h_v / groupSize;
-                int needGatherDk = h_v % groupSize;
+                uint64_t h_k = h_v / groupSize;
+                uint64_t needGatherDk = h_v % groupSize;
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
                 auto kOffset = (h_k * T + kBos + rowOffset) * K;
                 auto betaOffset = h_v * T + bos + rowOffset;
@@ -1534,9 +1534,9 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 continue;
             }
-            for (int h_v = 0; h_v < HV; h_v++) {
-                int h_k = h_v / groupSize;
-                int needGatherDk = h_v % groupSize;
+            for (uint64_t h_v = 0; h_v < HV; h_v++) {
+                uint64_t h_k = h_v / groupSize;
+                uint64_t needGatherDk = h_v % groupSize;
                 if (!needGatherDk) {
                     continue;
                 }
@@ -2131,7 +2131,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
             GetKBosByVBos(bos, T, HV, HK, kBos);
         }
         uint32_t curChunkSize = eos - bos;
-        for (int h_v = 0; h_v < HV; h_v++) {
+        for (uint64_t h_v = 0; h_v < HV; h_v++) {
             uint32_t taskNum = CeilDiv(curChunkSize, rowNum);
             taskNum = CeilDiv(taskNum, GetSubBlockNum());
             uint32_t dealTaskNum = 0;
@@ -2140,7 +2140,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                     continue;
                 }
-                int h_k = h_v / groupSize;
+                uint64_t h_k = h_v / groupSize;
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
                 auto kOffset = (h_k * T + kBos + rowOffset) * K;
                 auto betaOffset = h_v * T + bos + rowOffset;
@@ -2391,14 +2391,14 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
             GetKBosByVBos(bos, T, HV, HK, kBos);
         }
         uint32_t curChunkSize = eos - bos;
-        for (int h_v = 0; h_v < HV; h_v++) {
+        for (uint64_t h_v = 0; h_v < HV; h_v++) {
             AscendC::CrossCoreWaitFlag(SYNC_FLAG_5);
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                     continue;
                 }
-                int h_k = h_v / groupSize;
+                uint64_t h_k = h_v / groupSize;
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
                 auto kOffset = (h_k * T + kBos + rowOffset) * K;
                 auto betaOffset = h_v * T + bos + rowOffset;
