@@ -110,7 +110,7 @@ def _next_power_of_2(value: int) -> int:
 def _cumsum_block_t(g: torch.Tensor, chunk_size: int) -> int:
     # Keep this aligned with fla.ops.triton.triton_core.cumsum.chunk_local_cumsum_scalar.
     h = int(g.shape[-1])
-    return _next_power_of_2((1 << 17) // max(1, h * int(chunk_size)))
+    return max(int(chunk_size), _next_power_of_2((1 << 17) // max(1, h * int(chunk_size))))
 
 
 def _ensure_varlen_metadata(
@@ -166,6 +166,54 @@ def _chunk_list(
     if chunk_indices_list is None:
         return None
     return chunk_indices_list.get(str(chunk_size))
+
+# Sequence counter so repeated fwd_h calls in one process land in distinct files.
+_FWD_H_DUMP_COUNTER = 0
+def _maybe_dump_fwd_h_inputs(
+    k: torch.Tensor,
+    w: torch.Tensor,
+    u: torch.Tensor,
+    g: torch.Tensor,
+    initial_state: Optional[torch.Tensor],
+    cu_seqlens_list: Optional[list[int]],
+    chunk_indices_list: Optional[Dict[str, Optional[list[int]]]],
+    chunk_size: int,
+) -> None:
+    """Capture the real model-distributed inputs feeding npu_chunk_gated_delta_rule_fwd_h.
+    Enabled only when GDN_FWD_H_DUMP_DIR is set. The payload layout matches what
+    examples/fast_kernel_launch_example/.../test_chunk_gated_delta_rule_fwd_h.py::test_model_dump reads.
+    """
+    dump_dir = os.environ.get("GDN_FWD_H_DUMP_DIR")
+    if not dump_dir:
+        return
+    global _FWD_H_DUMP_COUNTER
+    out_dir = Path(dump_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    name = os.environ.get("GDN_FWD_H_DUMP_NAME", "model_dump")
+    payload = {
+        "name": f"{name}_{_FWD_H_DUMP_COUNTER}",
+        "chunk_size": int(chunk_size),
+        "dtype": str(k.dtype).replace("torch.", ""),
+        "cu_seqlens": list(cu_seqlens_list) if cu_seqlens_list is not None else None,
+        "chunk_indices": _chunk_list(chunk_indices_list, chunk_size),
+        "k": k.detach().cpu(),
+        "w": w.detach().cpu(),
+        "u": u.detach().cpu(),
+        # g is [B, HV, T] fp32 here; the test casts to fp32 anyway.
+        "g": g.detach().cpu().float(),
+        "initial_state": initial_state.detach().cpu() if initial_state is not None else None,
+    }
+    out_path = out_dir / f"{payload['name']}_cs{int(chunk_size)}.pt"
+    torch.save(payload, out_path)
+    _FWD_H_DUMP_COUNTER += 1
+    print(
+        f"[fwd_h-dump] saved {out_path} "
+        f"dtype={payload['dtype']} k={tuple(payload['k'].shape)} w={tuple(payload['w'].shape)} "
+        f"u={tuple(payload['u'].shape)} g={tuple(payload['g'].shape)} "
+        f"init={None if payload['initial_state'] is None else tuple(payload['initial_state'].shape)} "
+        f"cu={'None' if payload['cu_seqlens'] is None else len(payload['cu_seqlens'])} -> {out_path.name}",
+        flush=True,
+    )
 
 
 def flash_chunk_gated_delta_rule_fwd(
@@ -223,6 +271,17 @@ def flash_chunk_gated_delta_rule_fwd(
         gk=None,
         cu_seqlens=cu_seqlens_list,
         chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
+    )
+
+    _maybe_dump_fwd_h_inputs(
+        k=k,
+        w=w,
+        u=u,
+        g=g,
+        initial_state=initial_state,
+        cu_seqlens_list=cu_seqlens_list,
+        chunk_indices_list=chunk_indices_list,
+        chunk_size=chunk_size,
     )
 
     h, v_new, final_state = torch.ops.npu.npu_chunk_gated_delta_rule_fwd_h(
