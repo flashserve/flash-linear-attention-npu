@@ -1,0 +1,380 @@
+[
+  {
+    "name": "fix_hk_eq_hv_1",
+    "description": "Fix length (HK == HV): HK=query_head=2 HV=value_head=2 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16",
+    "enabled": true,
+    "B": 1, "query_head": 2, "value_head": 2, "T": 128, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "fp16", "gtype": "fp16",
+    "varlen": false
+  },
+  {
+    "name": "fix_hk_eq_hv_2",
+    "description": "Fix length (HK == HV): HK=query_head=4 HV=value_head=4 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16",
+    "enabled": true,
+    "B": 2, "query_head": 4, "value_head": 4, "T": 256, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 128,
+    "dtype": "bf16", "gtype": "bf16",
+    "varlen": false
+  },
+  {
+    "name": "fix_hk_eq_hv_3",
+    "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=256 ktype=dtype=fp16",
+    "enabled": true,
+    "B": 4, "query_head": 8, "value_head": 8, "T": 512, "Kdim": 128, "Vdim": 256,
+    "chunk_size": 64,
+    "dtype": "fp16", "gtype": "fp32",
+    "varlen": false
+  },
+  {
+    "name": "fix_hk_eq_hv_4",
+    "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=256 ktype=dtype=bf16",
+    "enabled": true,
+    "B": 8, "query_head": 16, "value_head": 16, "T": 1024, "Kdim": 128, "Vdim": 256,
+    "chunk_size": 128,
+    "dtype": "bf16", "gtype": "fp32",
+    "varlen": false
+  },
+  {
+    "name": "fix_hk_eq_hv_5",
+    "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16",
+    "enabled": true,
+    "B": 1, "query_head": 32, "value_head": 32, "T": 2048, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "fp16", "gtype": "fp32",
+    "varlen": false
+  },
+  {
+    "name": "var_hk_eq_hv_1",
+    "description": "Variable length (HK == HV): HK=query_head=4 HV=value_head=4 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=2 ktype=dtype=fp16",
+    "enabled": true,
+    "B": 1, "query_head": 4, "value_head": 4, "T": 128, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64, "mean_len": 2,
+    "dtype": "fp16", "gtype": "fp16",
+    "varlen": true
+  },
+  {
+    "name": "var_hk_eq_hv_2",
+    "description": "Variable length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=3 ktype=dtype=bf16",
+    "enabled": true,
+    "B": 1, "query_head": 8, "value_head": 8, "T": 256, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 128, "mean_len": 3,
+    "dtype": "bf16", "gtype": "bf16",
+    "varlen": true
+  },
+  {
+    "name": "var_hk_eq_hv_3",
+    "description": "Variable length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=4 ktype=dtype=fp16",
+    "enabled": true,
+    "B": 1, "query_head": 16, "value_head": 16, "T": 512, "Kdim": 128, "Vdim": 256,
+    "chunk_size": 64, "mean_len": 4,
+    "dtype": "fp16", "gtype": "fp32",
+    "varlen": true
+  },
+  {
+    "name": "var_hk_eq_hv_4",
+    "description": "Variable length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=5 ktype=dtype=bf16",
+    "enabled": true,
+    "B": 1, "query_head": 32, "value_head": 32, "T": 1024, "Kdim": 128, "Vdim": 256,
+    "chunk_size": 128, "mean_len": 5,
+    "dtype": "bf16", "gtype": "fp32",
+    "varlen": true
+  },
+  {
+    "name": "var_hk_eq_hv_5",
+    "description": "Variable length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=16 ktype=dtype=bf16",
+    "enabled": true,
+    "B": 1, "query_head": 32, "value_head": 32, "T": 2048, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64, "mean_len": 16,
+    "dtype": "bf16", "gtype": "fp32",
+    "varlen": true
+  },
+  {
+    "name": "gva_fix_1",
+    "description": "GVA fix length: HK=query_head=16 HV=value_head=32 K=Kdim=128 V=Vdim=256 ktype=dtype=fp16",
+    "enabled": false,
+    "B": 1, "query_head": 16, "value_head": 32, "T": 4096, "Kdim": 128, "Vdim": 256,
+    "chunk_size": 64,
+    "dtype": "fp16", "gtype": "fp32",
+    "varlen": false
+  },
+  {
+    "name": "gva_fix_2",
+    "description": "GVA fix length: HK=query_head=21 HV=value_head=63 K=Kdim=128 V=Vdim=256 ktype=dtype=bf16",
+    "enabled": false,
+    "B": 16, "query_head": 21, "value_head": 63, "T": 2048, "Kdim": 128, "Vdim": 256,
+    "chunk_size": 64,
+    "dtype": "bf16", "gtype": "fp32",
+    "varlen": false
+  },
+  {
+    "name": "gva_fix_3",
+    "description": "GVA fix length: HK=query_head=4 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16",
+    "enabled": false,
+    "B": 711, "query_head": 4, "value_head": 32, "T": 196, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 128,
+    "dtype": "fp16", "gtype": "fp32",
+    "varlen": false
+  },
+  {
+    "name": "gva_fix_4",
+    "description": "GVA fix length: HK=query_head=2 HV=value_head=64 K=Kdim=128 V=Vdim=256 ktype=dtype=bf16",
+    "enabled": false,
+    "B": 176, "query_head": 2, "value_head": 64, "T": 24, "Kdim": 128, "Vdim": 256,
+    "chunk_size": 64,
+    "dtype": "bf16", "gtype": "fp32",
+    "varlen": false
+  },
+  {
+    "name": "gva_var_1",
+    "description": "GVA variable length: HK=query_head=16 HV=value_head=32 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=128 ktype=dtype=fp16",
+    "enabled": false,
+    "B": 1, "query_head": 16, "value_head": 32, "T": 16384, "Kdim": 128, "Vdim": 256,
+    "chunk_size": 64, "mean_len": 128,
+    "dtype": "fp16", "gtype": "fp32",
+    "varlen": true
+  },
+  {
+    "name": "gva_var_2",
+    "description": "GVA variable length: HK=query_head=21 HV=value_head=63 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=2 ktype=dtype=bf16",
+    "enabled": false,
+    "B": 1, "query_head": 21, "value_head": 63, "T": 16384, "Kdim": 128, "Vdim": 256,
+    "chunk_size": 64, "mean_len": 2,
+    "dtype": "bf16", "gtype": "fp32",
+    "varlen": true
+  },
+  {
+    "name": "gva_var_3",
+    "description": "GVA variable length: HK=query_head=8 HV=value_head=32 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=172 ktype=dtype=bf16",
+    "enabled": false,
+    "B": 1, "query_head": 8, "value_head": 32, "T": 65536, "Kdim": 128, "Vdim": 256,
+    "chunk_size": 128, "mean_len": 172,
+    "dtype": "bf16", "gtype": "fp32",
+    "varlen": true
+  },
+  {
+    "name": "gva_var_4",
+    "description": "GVA variable length: HK=query_head=16 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=668 ktype=dtype=fp16",
+    "enabled": false,
+    "B": 1, "query_head": 16, "value_head": 32, "T": 65536, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64, "mean_len": 668,
+    "dtype": "fp16", "gtype": "fp32",
+    "varlen": true
+  },
+  {
+    "name": "gva_var_5",
+    "description": "GVA variable length: HK=query_head=4 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=17 ktype=dtype=bf16",
+    "enabled": false,
+    "B": 1, "query_head": 4, "value_head": 32, "T": 65536, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 128, "mean_len": 17,
+    "dtype": "bf16", "gtype": "fp32",
+    "varlen": true
+  },
+  {
+    "name": "gva_var_6",
+    "description": "GVA variable length: HK=query_head=2 HV=value_head=64 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=32 ktype=dtype=fp16",
+    "enabled": false,
+    "B": 1, "query_head": 2, "value_head": 64, "T": 262144, "Kdim": 128, "Vdim": 256,
+    "chunk_size": 64, "mean_len": 32,
+    "dtype": "fp16", "gtype": "fp32",
+    "varlen": true
+  },
+  {
+    "name": "phase_1_fix_1",
+    "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | 标准用例，所有必选输入",
+    "enabled": false,
+    "B": 64, "query_head": 8, "value_head": 8, "T": 1024, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "fp16", "gtype": "fp16",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_2",
+    "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | BF16精度",
+    "enabled": false,
+    "B": 32, "query_head": 16, "value_head": 16, "T": 2048, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "bf16", "gtype": "bf16",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_3",
+    "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | T=4096，beta/g支持FP32",
+    "enabled": false,
+    "B": 16, "query_head": 32, "value_head": 32, "T": 4096, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "fp16", "gtype": "fp32",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_4",
+    "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | 超长序列T=8192",
+    "enabled": false,
+    "B": 8, "query_head": 32, "value_head": 32, "T": 8192, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "bf16", "gtype": "bf16",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_5",
+    "description": "Fix length (HK == HV): HK=query_head=4 HV=value_head=4 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | 极限batch B=128",
+    "enabled": false,
+    "B": 128, "query_head": 4, "value_head": 4, "T": 1024, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "fp16", "gtype": "fp16",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_6",
+    "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | B=64,T=2048",
+    "enabled": false,
+    "B": 64, "query_head": 8, "value_head": 8, "T": 2048, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "bf16", "gtype": "fp32",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_7",
+    "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | T=4096,B=32",
+    "enabled": false,
+    "B": 32, "query_head": 16, "value_head": 16, "T": 4096, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "fp16", "gtype": "fp16",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_8",
+    "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | T=8192,B=16",
+    "enabled": false,
+    "B": 16, "query_head": 32, "value_head": 32, "T": 8192, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "bf16", "gtype": "bf16",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_9",
+    "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | 大batch+长序列",
+    "enabled": false,
+    "B": 64, "query_head": 8, "value_head": 8, "T": 4096, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "fp16", "gtype": "fp16",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_10",
+    "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | B=32, T=8192",
+    "enabled": false,
+    "B": 32, "query_head": 16, "value_head": 16, "T": 8192, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "bf16", "gtype": "bf16",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_11",
+    "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | 极长序列T=16384",
+    "enabled": false,
+    "B": 16, "query_head": 32, "value_head": 32, "T": 16384, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "fp16", "gtype": "fp32",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_12",
+    "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | T=32768超长序列",
+    "enabled": false,
+    "B": 8, "query_head": 32, "value_head": 32, "T": 32768, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "bf16", "gtype": "bf16",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_13",
+    "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | B=1,T=32K",
+    "enabled": false,
+    "B": 1, "query_head": 32, "value_head": 32, "T": 32768, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "bf16", "gtype": "bf16",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_14",
+    "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | B=1,T=64K",
+    "enabled": false,
+    "B": 1, "query_head": 16, "value_head": 16, "T": 65536, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "fp16", "gtype": "fp16",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_15",
+    "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | B=1,T=128K,H=8",
+    "enabled": false,
+    "B": 1, "query_head": 8, "value_head": 8, "T": 131072, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "bf16", "gtype": "bf16",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_fix_16",
+    "description": "Fix length (HK == HV): HK=query_head=4 HV=value_head=4 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | B=1,T=256K,H=4,极限长度",
+    "enabled": false,
+    "B": 1, "query_head": 4, "value_head": 4, "T": 262144, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64,
+    "dtype": "fp16", "gtype": "fp32",
+    "varlen": false
+  },
+  {
+    "name": "phase_1_var_1",
+    "description": "Variable length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=65 ktype=dtype=fp16 | 变长输入，N=64个样本",
+    "enabled": false,
+    "B": 1, "query_head": 8, "value_head": 8, "T": 1024, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64, "mean_len": 65,
+    "dtype": "fp16", "gtype": "fp16",
+    "varlen": true
+  },
+  {
+    "name": "phase_1_var_2",
+    "description": "Variable length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=33 ktype=dtype=bf16 | 变长输入，N=32个样本",
+    "enabled": false,
+    "B": 1, "query_head": 16, "value_head": 16, "T": 2048, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64, "mean_len": 33,
+    "dtype": "bf16", "gtype": "bf16",
+    "varlen": true
+  },
+  {
+    "name": "phase_1_var_3",
+    "description": "Variable length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=17 ktype=dtype=fp16 | 变长输入，N=16个样本",
+    "enabled": false,
+    "B": 1, "query_head": 32, "value_head": 32, "T": 4096, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64, "mean_len": 17,
+    "dtype": "fp16", "gtype": "fp32",
+    "varlen": true
+  },
+  {
+    "name": "phase_1_var_4",
+    "description": "Variable length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=9 ktype=dtype=bf16 | 变长输入，N=8个样本",
+    "enabled": false,
+    "B": 1, "query_head": 32, "value_head": 32, "T": 8192, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 64, "mean_len": 9,
+    "dtype": "bf16", "gtype": "bf16",
+    "varlen": true
+  },
+  {
+    "name": "phase_1_var_5",
+    "description": "Variable length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=2 ktype=dtype=bf16 | B=1,T=32K,chunk_size=128,变长",
+    "enabled": false,
+    "B": 1, "query_head": 16, "value_head": 16, "T": 32768, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 128, "mean_len": 2,
+    "dtype": "bf16", "gtype": "bf16",
+    "varlen": true
+  },
+  {
+    "name": "phase_1_var_6",
+    "description": "Variable length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=2 ktype=dtype=fp16 | B=1,T=64K,chunk_size=128,变长",
+    "enabled": false,
+    "B": 1, "query_head": 8, "value_head": 8, "T": 65536, "Kdim": 128, "Vdim": 128,
+    "chunk_size": 128, "mean_len": 2,
+    "dtype": "fp16", "gtype": "fp16",
+    "varlen": true
+  }
+]
