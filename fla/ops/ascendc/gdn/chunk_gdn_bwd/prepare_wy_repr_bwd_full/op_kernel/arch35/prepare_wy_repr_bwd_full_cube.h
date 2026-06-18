@@ -491,6 +491,7 @@ private:
     GM_ADDR dbeta;
     GM_ADDR dg;
     GM_ADDR workspace;
+    GM_ADDR workspaceDk;
     uint64_t kBeteVecRow = 0;
     uint64_t dkbVecRow = 0;
     uint64_t dkbgVecRow = 0;
@@ -534,6 +535,8 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Init(
     dkbgCVNum = tiling.dkbgCVNum;
     dvbCVNum = tiling.dvbCVNum;
     kktCVNum = tiling.kktCVNum;
+    // dk 暂时先存放到workspace中，以HV存放
+    GM_ADDR workspaceDk = workspace + (B * HV * T * V * sizeof(kType));
     return;
 }
 
@@ -643,9 +646,6 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::ProcessImpl
         Gemm::Kernel::PrepareWyReprBwdFullTla<BlockMmadDk, BlockMmadDkb, BlockMmadDkbg, BlockMmadDvb, BlockMmadKKT>;
 
     MatmulKernel kernel;
-
-    // dk 暂时先存放到workspace中，以HV存放
-    GM_ADDR workspaceDk = reinterpret_cast<GM_ADDR>(reinterpret_cast<__gm__ kType*>(workspace) + (B * HV * T * V));
 
     typename MatmulKernel::Params param{
         workspace, layoutKbeta, dA, layoutDA, workspaceDk,        layoutDK,  dA,         layoutDAT,     k,        layoutK,
