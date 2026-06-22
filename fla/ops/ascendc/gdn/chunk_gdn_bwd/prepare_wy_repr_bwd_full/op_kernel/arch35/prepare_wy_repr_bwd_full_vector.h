@@ -60,6 +60,16 @@ public:
     __aicore__ inline void ProcessKBetaA5();
     __aicore__ inline void ProcessDkbA5();
     __aicore__ inline void ProcessDkbgA5();
+    __aicore__ inline void ProcessDkGatherA5();
+    __simd_vf__ inline void ProcessDkGatherComputerVFOneLineOneCol(__ubuf__ kType* dkOut,
+                                                  __ubuf__ kType* dkIn1, __ubuf__ kType* dkIn2,
+                                                  uint16_t mSize, uint16_t nSize);
+    __simd_vf__ inline void ProcessDkGatherComputerVFMutiLineOneCol(__ubuf__ kType* dkOut,
+                                                  __ubuf__ kType* dkIn1, __ubuf__ kType* dkIn2,
+                                                  uint16_t mSize, uint16_t nSize);
+    __simd_vf__ inline void ProcessDkGatherComputerVFTwoCol(__ubuf__ kType* dkOut,
+                                                  __ubuf__ kType* dkIn1, __ubuf__ kType* dkIn2,
+                                                  uint16_t mSize, uint16_t nSize);
     __aicore__ inline void ProcessDvbA5();
     __aicore__ inline void ProcessKKTA5();
     __aicore__ inline void Init(const PrepareWyReprBwdFullTilingDataA5 &tiling, AscendC::TPipe *pipe_);
@@ -84,6 +94,11 @@ public:
                                                  __ubuf__ kType* kIn, __ubuf__ betaType* betaIn,
                                                  __ubuf__ kType* dkIn, __ubuf__ kType* dkbIn,
                                                  uint16_t mSize, uint16_t nSize);
+    __simd_vf__ inline void ProcessDkbgComputerGatherDkVF(__ubuf__ kType* dkOut, __ubuf__ betaType* dBetaOut, 
+                                                  __ubuf__ betaType* dgOut, __ubuf__ kType* kIn, 
+                                                  __ubuf__ betaType* betaIn, __ubuf__ betaType* gIn,
+                                                  __ubuf__ kType* dkIn, __ubuf__ kType* dkGatherIn, __ubuf__ betaType* dBetaIn,
+                                                  __ubuf__ kType* dkbgIn, uint16_t mSize, uint16_t nSize);
     __simd_vf__ inline void ProcessDkbgComputerVF(__ubuf__ kType* dkOut, __ubuf__ betaType* dBetaOut, 
                                                   __ubuf__ betaType* dgOut, __ubuf__ kType* kIn, 
                                                   __ubuf__ betaType* betaIn, __ubuf__ betaType* gIn,
@@ -114,6 +129,8 @@ private:
     uint64_t B = 0;
     uint64_t T = 0;
     uint64_t HV = 0;
+    uint64_t HK = 0;
+    uint64_t groupSize = 0;
     uint64_t K = 0;
     uint64_t V = 0;
     uint64_t chunkSize = 0;
@@ -121,6 +138,7 @@ private:
     uint64_t kBeteVecRow = 0;
     uint64_t dkbVecRow = 0;
     uint64_t dkbgVecRow = 0;
+    uint64_t dkGatherVecRow = 0;
     uint64_t dvbVecRow = 0;
     uint64_t kktVecRow = 0;
     uint64_t kBetaCVNum = 0;
@@ -159,6 +177,7 @@ private:
     GlobalTensor<betaType> dgTensor;
     GlobalTensor<kType> dATensor;
     GlobalTensor<kType> workSpaceTensor;
+    GlobalTensor<kType> workSpaceDkTensor;
 
     TQue<AscendC::TPosition::VECIN, 1> kInQue;
     TQue<AscendC::TPosition::VECIN, 1> betaInQue;
@@ -193,6 +212,8 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Init(
     B = tiling.B;
     T = tiling.T;
     HV = tiling.HV;
+    HK = tiling.HK;
+    groupSize = HV / HK;
     K = tiling.K;
     V = tiling.V;
     chunkSize = tiling.chunkSize;
@@ -200,6 +221,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Init(
     kBeteVecRow = tiling.kBeteVecRow;
     dkbVecRow = tiling.dkbVecRow;
     dkbgVecRow = tiling.dkbgVecRow;
+    dkGatherVecRow = tiling.dkGatherVecRow;
     dvbVecRow = tiling.dvbVecRow;
     kktVecRow = tiling.kktVecRow;
     kBetaCVNum = tiling.kBetaCVNum;
@@ -207,6 +229,8 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Init(
     dkbgCVNum = tiling.dkbgCVNum;
     dvbCVNum = tiling.dvbCVNum;
     kktCVNum = tiling.kktCVNum;
+
+    workSpaceDkTensor.SetGlobalBuffer((__gm__ kType *)workspace + B * HV * T * V);
 
     return;
 }
@@ -221,6 +245,9 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     AscendC::SyncAll<false>();
     ProcessDkbgA5();
     AscendC::SyncAll<false>();
+    if (groupSize > 1) {
+        ProcessDkGatherA5();
+    }
     ProcessDvbA5();
     AscendC::SyncAll<false>();
     ProcessKKTA5();
@@ -467,76 +494,86 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
         GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < HV; h++) {
+        for (uint64_t h_k = 0; h_k < HK; h_k++) {
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 continue;
             }
-            auto& tensorBeta = tensorBetaInList[ubBetaDgListId];
-            auto& tensorDg = tensorDgInList[ubBetaDgListId];
-            {// copyin beta/dg
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventUbBetaInVMTE2List[ubBetaDgListId]);
-                DataCopyPad(tensorBeta, betaTensor[h * T + bos], {1, curChunkSize * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventUbBetaInMTE2VList[ubBetaDgListId]);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventUbDgInVMTE2List[ubBetaDgListId]);
-                DataCopyPad(tensorDg, dgTensor[h * T + bos], {1, curChunkSize * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventUbDgInMTE2VList[ubBetaDgListId]);
-            }
-            Duplicate(tensorReducesum0, 0.0f, chunkSize);
-            for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
-                auto& tensordaIn = tensorDaInList[ubListId];
-                auto& tensorKKTin = tensorKKTInList[cvListId];
-                // copyin da
-                {
-                    auto dAOffset = (h * T + bos + rowOffset) * chunkSize;
-                    curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
-                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventUbDaInVMTE2List[ubListId]);
-                    DataCopy(tensordaIn, dATensor[dAOffset], chunkSize * curRowNum);
-                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventUbDaInMTE2VList[ubListId]);
+            uint32_t tmpCvListId = cvListId;
+            for (uint64_t i = 0; i < groupSize; i++) {
+                uint64_t h_v = h_k * groupSize + i;
+                auto& tensorBeta = tensorBetaInList[ubBetaDgListId];
+                auto& tensorDg = tensorDgInList[ubBetaDgListId];
+                {// copyin beta/dg
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventUbBetaInVMTE2List[ubBetaDgListId]);
+                    DataCopyPad(tensorBeta, betaTensor[h_v * T + bos], {1, curChunkSize * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventUbBetaInMTE2VList[ubBetaDgListId]);
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventUbDgInVMTE2List[ubBetaDgListId]);
+                    DataCopyPad(tensorDg, dgTensor[h_v * T + bos], {1, curChunkSize * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventUbDgInMTE2VList[ubBetaDgListId]);
                 }
-                // compute
-                {
-                    auto betaInAddr = reinterpret_cast<uint64_t>(tensorBeta.GetPhyAddr());
-                    auto daInAddr = reinterpret_cast<uint64_t>(tensordaIn.GetPhyAddr());
-                    auto kKTinAddr = reinterpret_cast<uint64_t>(tensorKKTin.GetPhyAddr());
-                    auto reducesum1Addr = reinterpret_cast<uint64_t>(tensorReducesum1[rowOffset].GetPhyAddr());
-                    auto reducesum0Addr = reinterpret_cast<uint64_t>(tensorReducesum0.GetPhyAddr());
+                Duplicate(tensorReducesum0, 0.0f, chunkSize);
+                tmpCvListId = cvListId;
+                for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
+                    auto& tensordaIn = tensorDaInList[ubListId];
+                    auto& tensorKKTin = tensorKKTInList[tmpCvListId];
+                    // copyin da
+                    {
+                        auto dAOffset = (h_v * T + bos + rowOffset) * chunkSize;
+                        curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
+                        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventUbDaInVMTE2List[ubListId]);
+                        DataCopy(tensordaIn, dATensor[dAOffset], chunkSize * curRowNum);
+                        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventUbDaInMTE2VList[ubListId]);
+                    }
+                    // compute
+                    {
+                        auto betaInAddr = reinterpret_cast<uint64_t>(tensorBeta.GetPhyAddr());
+                        auto daInAddr = reinterpret_cast<uint64_t>(tensordaIn.GetPhyAddr());
+                        auto kKTinAddr = reinterpret_cast<uint64_t>(tensorKKTin.GetPhyAddr());
+                        auto reducesum1Addr = reinterpret_cast<uint64_t>(tensorReducesum1[rowOffset].GetPhyAddr());
+                        auto reducesum0Addr = reinterpret_cast<uint64_t>(tensorReducesum0.GetPhyAddr());
 
-                    if (rowOffset == 0) {
-                        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventUbBetaInMTE2VList[ubBetaDgListId]);
+                        if (rowOffset == 0) {
+                            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventUbBetaInMTE2VList[ubBetaDgListId]);
+                        }
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventUbDaInMTE2VList[ubListId]);
+                        if (i == 0) {
+                            AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(SYNC_AIC_AIV_FLAG_BEGIN + tmpCvListId);
+                        }
+                        ProcessKKTComputerVF((__ubuf__ kType*)kKTinAddr, (__ubuf__ betaType*)betaInAddr,
+                            (__ubuf__ kType*)daInAddr, (__ubuf__ float*)reducesum1Addr, (__ubuf__ float*)reducesum0Addr,
+                            curChunkSize, curRowNum, chunkSize);
+                        if (i == groupSize - 1) {
+                            AscendC::CrossCoreSetFlag<0x4, PIPE_V>(SYNC_AIV_AIC_FLAG_BEGIN + tmpCvListId);
+                        }
+                        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventUbDaInVMTE2List[ubListId]);
+                        if (rowOffset + rowNum >= curChunkSize) {
+                            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventUbBetaInVMTE2List[ubBetaDgListId]);
+                        }
                     }
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventUbDaInMTE2VList[ubListId]);
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(SYNC_AIC_AIV_FLAG_BEGIN + cvListId);
-                    ProcessKKTComputerVF((__ubuf__ kType*)kKTinAddr, (__ubuf__ betaType*)betaInAddr,
-                        (__ubuf__ kType*)daInAddr, (__ubuf__ float*)reducesum1Addr, (__ubuf__ float*)reducesum0Addr,
-                        curChunkSize, curRowNum, chunkSize);
-                    AscendC::CrossCoreSetFlag<0x4, PIPE_V>(SYNC_AIV_AIC_FLAG_BEGIN + cvListId);
-                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventUbDaInVMTE2List[ubListId]);
-                    if (rowOffset + rowNum >= curChunkSize) {
-                        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventUbBetaInVMTE2List[ubBetaDgListId]);
-                    }
+                    ubListId = (ubListId + 1 < UB_STAGES) ? (ubListId + 1) : 0;
+                    tmpCvListId = (tmpCvListId + 1 < kktCVNum) ? (tmpCvListId + 1) : 0;
                 }
-                ubListId = (ubListId + 1 < UB_STAGES) ? (ubListId + 1) : 0;
-                cvListId = (cvListId + 1 < kktCVNum) ? (cvListId + 1) : 0;
+                auto& tensorOutDg = tensorDgOutList[ubBetaDgListId];
+                auto dgInAddr = reinterpret_cast<uint64_t>(tensorDg.GetPhyAddr());
+                auto dgOutAddr = reinterpret_cast<uint64_t>(tensorOutDg.GetPhyAddr());
+                auto reducesum1Addr = reinterpret_cast<uint64_t>(tensorReducesum1[rowOffset].GetPhyAddr());
+                auto reducesum0Addr = reinterpret_cast<uint64_t>(tensorReducesum0.GetPhyAddr());
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventUbDgInMTE2VList[ubBetaDgListId]);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(eventUbOutMTE3VList[ubBetaDgListId]);
+                ProcessKKTComputerVFSub((__ubuf__ betaType*)dgOutAddr, (__ubuf__ betaType*)dgInAddr,
+                            (__ubuf__ float*)reducesum1Addr, (__ubuf__ float*)reducesum0Addr,
+                            curChunkSize);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventUbOutVMTE3List[ubBetaDgListId]);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventUbDgInVMTE2List[ubBetaDgListId]);
+                {//copyout
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventUbOutVMTE3List[ubBetaDgListId]);
+                    DataCopyPad(dgTensor[h_v * T + bos], tensorOutDg, {1, curChunkSize * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0});
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(eventUbOutMTE3VList[ubBetaDgListId]);
+                }
+                ubBetaDgListId = (ubBetaDgListId + 1 < UB_STAGES) ? (ubBetaDgListId + 1) : 0;
             }
-            auto& tensorOutDg = tensorDgOutList[ubBetaDgListId];
-            auto dgInAddr = reinterpret_cast<uint64_t>(tensorDg.GetPhyAddr());
-            auto dgOutAddr = reinterpret_cast<uint64_t>(tensorOutDg.GetPhyAddr());
-            auto reducesum1Addr = reinterpret_cast<uint64_t>(tensorReducesum1[rowOffset].GetPhyAddr());
-            auto reducesum0Addr = reinterpret_cast<uint64_t>(tensorReducesum0.GetPhyAddr());
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventUbDgInMTE2VList[ubBetaDgListId]);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(eventUbOutMTE3VList[ubBetaDgListId]);
-            ProcessKKTComputerVFSub((__ubuf__ betaType*)dgOutAddr, (__ubuf__ betaType*)dgInAddr,
-                        (__ubuf__ float*)reducesum1Addr, (__ubuf__ float*)reducesum0Addr,
-                        curChunkSize);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventUbOutVMTE3List[ubBetaDgListId]);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventUbDgInVMTE2List[ubBetaDgListId]);
-            {//copyout
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventUbOutVMTE3List[ubBetaDgListId]);
-                DataCopyPad(dgTensor[h * T + bos], tensorOutDg, {1, curChunkSize * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0});
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(eventUbOutMTE3VList[ubBetaDgListId]);
-            }
-            ubBetaDgListId = (ubBetaDgListId + 1 < UB_STAGES) ? (ubBetaDgListId + 1) : 0;
+            cvListId = tmpCvListId;
         }
     }
     for (uint32_t i = 0; i < UB_STAGES; ++i) {
@@ -734,7 +771,7 @@ __simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proc
     RegTensor<float> dvbFP32ZeroReg, dvbFP32OneReg, dvbFP32ZeroReg1, dvbFP32OneReg1;
     RegTensor<betaType> dbetaInReg;
     RegTensor<float> dbetaFP32Reg;
-    RegTensor<float> dBetaFP32Reg;
+    RegTensor<float> dBetaFP32Reg, dBetaFP32Reg1;
     RegTensor<kType> dvOutReg, dvOutReg1;
 
     MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
@@ -750,7 +787,7 @@ __simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proc
 
     for (uint16_t mIdx = 0; mIdx < mLoopCnt; mIdx++) {
         HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
-        LoadIn<betaType, true>(betaInReg, betaIn + (mIdx + 1) * PRELOAD_NUM);
+        LoadIn<betaType, true>(betaInReg, betaIn + mIdx + 1);
         CastHalf2Float<kType>(vFP32ZeroReg, vFP32OneReg, vInReg, maskFull16);
         CastHalf2Float<kType>(vFP32ZeroReg1, vFP32OneReg1, vInReg1, maskFull16);
         LoadIn<kType, false>(vInReg, vIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
@@ -772,17 +809,14 @@ __simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proc
 
         Add(vFP32ZeroReg, vFP32ZeroReg, vFP32OneReg, maskFull32);
         ReduceSum(dBetaFP32Reg, vFP32ZeroReg, maskFull32);
-        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx * PRELOAD_NUM);
+        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx);
         HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
-        Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
-        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
 
         Add(vFP32ZeroReg1, vFP32ZeroReg1, vFP32OneReg1, maskFull32);
-        ReduceSum(dBetaFP32Reg, vFP32ZeroReg1, maskFull32);
-        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx * PRELOAD_NUM + 1);
-        HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
+        ReduceSum(dBetaFP32Reg1, vFP32ZeroReg1, maskFull32);
+        Add(dBetaFP32Reg, dBetaFP32Reg, dBetaFP32Reg1, maskFull32);
         Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
-        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM + 1, dBetaFP32Reg, maskFull32, uStore, 1);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx, dBetaFP32Reg, maskFull32, uStore, 1);
     }
     uint16_t mIdx = mLoopCnt;
     {
@@ -804,17 +838,14 @@ __simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proc
 
         Add(vFP32ZeroReg, vFP32ZeroReg, vFP32OneReg, maskFull32);
         ReduceSum(dBetaFP32Reg, vFP32ZeroReg, maskFull32);
-        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx * PRELOAD_NUM);
+        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx);
         HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
-        Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
-        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
 
         Add(vFP32ZeroReg1, vFP32ZeroReg1, vFP32OneReg1, maskFull32);
-        ReduceSum(dBetaFP32Reg, vFP32ZeroReg1, maskFull32);
-        LoadIn<betaType, true>(dbetaInReg, dbetaIn + mIdx * PRELOAD_NUM + 1);
-        HalfOrFloat2Float<betaType>(dbetaFP32Reg, dbetaInReg, maskFull16, maskFull32);
+        ReduceSum(dBetaFP32Reg1, vFP32ZeroReg1, maskFull32);
+        Add(dBetaFP32Reg, dBetaFP32Reg, dBetaFP32Reg1, maskFull32);
         Add(dBetaFP32Reg, dBetaFP32Reg, dbetaFP32Reg, maskFull32);
-        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM + 1, dBetaFP32Reg, maskFull32, uStore, 1);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx, dBetaFP32Reg, maskFull32, uStore, 1);
     }
 }
 
@@ -887,7 +918,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
         GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, chunkSize, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < HV; h++) {
+        for (uint64_t h_v = 0; h_v < HV; h_v++) {
             uint32_t taskNum = CeilDiv(curChunkSize, rowNum);
             taskNum = CeilDiv(taskNum, GetSubBlockNum());
             uint32_t dealTaskNum = 0;
@@ -897,8 +928,8 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     continue;
                 }
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
-                auto vOffset = (h * T + bos + rowOffset) * V;
-                auto betaOffset = h * T + bos + rowOffset;
+                auto vOffset = (h_v * T + bos + rowOffset) * V;
+                auto betaOffset = h_v * T + bos + rowOffset;
                 
                 auto& tensorDvbin = tensorDvbinList[cvListId];
                 auto& tensorVin = tensorVinList[ubListId];
@@ -982,6 +1013,148 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 }
 
 template <typename kType, typename betaType>
+__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkbgComputerGatherDkVF(
+    __ubuf__ kType* dkOut, __ubuf__ betaType* dBetaOut, __ubuf__ betaType* dgOut,
+    __ubuf__ kType* kIn, __ubuf__ betaType* betaIn, __ubuf__ betaType* gIn,
+    __ubuf__ kType* dkIn, __ubuf__ kType* dkGatherIn, __ubuf__ betaType* dBetaIn, __ubuf__ kType* dkbgIn,
+    uint16_t mSize, uint16_t nSize)
+{
+    uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
+    uint16_t nLoopCnt = (nSize + eleKNumPerVf - 1) / eleKNumPerVf;
+    uint16_t mLoopCnt = mSize - 1;
+    RegTensor<kType> kInReg;
+    RegTensor<betaType> betaInReg;
+    RegTensor<betaType> gInReg;
+    RegTensor<kType> dkInReg, dkGatherInReg;
+    RegTensor<betaType> dbetaInReg;
+    RegTensor<kType> dkbgInReg;
+    RegTensor<float> betaBrcbFP32ZeroReg, dkFP32ZeroReg, dkFP32OneReg, dkGatherFP32ZeroReg, dkGatherFP32OneReg, dgFP32ZeroReg;
+    RegTensor<float> kFP32ZeroReg, kFP32OneReg, dBetaAddZeroReg, dkbgFP32ZeroReg, dkbgFP32OneReg;
+    RegTensor<float> gBrcbFP32ZeroReg, dbetaFP32ZeroReg, dbetaFP32OneReg;
+    RegTensor<float> kReduceSumReg, dkReduceSumReg;
+    RegTensor<kType> dkOutReg;
+
+    MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
+    MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
+
+    UnalignRegForStore uStoreDBeta;
+    UnalignRegForStore uStoreDg;
+
+    LoadIn<betaType, true>(betaInReg, betaIn);
+    LoadIn<betaType, true>(gInReg, gIn);
+    LoadIn<betaType, true>(dbetaInReg, dBetaIn);
+    LoadIn<kType>(kInReg, kIn);
+    LoadIn<kType>(dkbgInReg, dkbgIn);
+    LoadIn<kType>(dkInReg, dkIn);
+    LoadIn<kType>(dkGatherInReg, dkGatherIn);
+    // 前mSize - 1行
+    for (uint16_t mIdx = 0; mIdx < mLoopCnt; mIdx++) {
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(gBrcbFP32ZeroReg, gInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(dbetaFP32ZeroReg, dbetaInReg, maskFull16, maskFull32);
+        LoadIn<betaType, true>(betaInReg, betaIn + (mIdx + 1));
+        LoadIn<betaType, true>(gInReg, gIn + (mIdx + 1));
+        LoadIn<betaType, true>(dbetaInReg, dBetaIn + (mIdx + 1));
+
+        Exp(gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
+        Duplicate(kReduceSumReg, static_cast<float>(0), maskFull32);
+        Duplicate(dkReduceSumReg, static_cast<float>(0), maskFull32);
+        for (uint16_t vfBlockIdx = 0; vfBlockIdx < nLoopCnt; vfBlockIdx++) {
+            CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+            CastHalf2Float<kType>(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgInReg, maskFull16);
+            LoadIn<kType>(kInReg, kIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+            LoadIn<kType>(dkbgInReg, dkbgIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+
+            MulFloatTwoReg(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
+            MulFloatTwoReg(kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg, kFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, maskFull32);
+            MulFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, kFP32ZeroReg, kFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+            Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
+            Add(kReduceSumReg, kReduceSumReg, kFP32ZeroReg, maskFull32);
+            Add(dkFP32ZeroReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+            Add(dkReduceSumReg, dkReduceSumReg, dkFP32ZeroReg, maskFull32);
+            MulFloatTwoReg(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+
+            CastHalf2Float<kType>(dkFP32ZeroReg, dkFP32OneReg, dkInReg, maskFull16);
+            LoadIn<kType>(dkInReg, dkIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+            CastHalf2Float<kType>(dkGatherFP32ZeroReg, dkGatherFP32OneReg, dkGatherInReg, maskFull16);
+            LoadIn<kType>(dkGatherInReg, dkGatherIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+            AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, maskFull32);
+            AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkGatherFP32ZeroReg, dkGatherFP32OneReg, maskFull32);
+            CastFloat2Half<kType>(dkOutReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+            StoreAlign((__ubuf__ kType*&)dkOut + mIdx * nSize + vfBlockIdx * eleKNumPerVf, dkOutReg, maskFull16);
+        }
+        ReduceSum(dBetaAddZeroReg, kReduceSumReg, maskFull32);
+        ReduceSum(dgFP32ZeroReg, dkReduceSumReg, maskFull32);
+        Add(dBetaAddZeroReg, dBetaAddZeroReg, dbetaFP32ZeroReg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx, dBetaAddZeroReg, maskFull32, uStoreDBeta, 1);
+        StoreUnAlignOut<betaType>(dgOut + mIdx, dgFP32ZeroReg, maskFull32, uStoreDg, 1);
+    }
+    // 最后一行
+    uint16_t mIdx = mLoopCnt;
+    {
+        HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(gBrcbFP32ZeroReg, gInReg, maskFull16, maskFull32);
+        HalfOrFloat2Float<betaType>(dbetaFP32ZeroReg, dbetaInReg, maskFull16, maskFull32);
+
+        Exp(gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
+        Duplicate(kReduceSumReg, static_cast<float>(0), maskFull32);
+        Duplicate(dkReduceSumReg, static_cast<float>(0), maskFull32);
+        // 最后一行的前nLoopCnt - 1
+        for (uint16_t vfBlockIdx = 0; vfBlockIdx < nLoopCnt - 1; vfBlockIdx++) {
+            CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+            CastHalf2Float<kType>(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgInReg, maskFull16);
+            LoadIn<kType>(kInReg, kIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+            LoadIn<kType>(dkbgInReg, dkbgIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+
+            MulFloatTwoReg(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
+            MulFloatTwoReg(kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg, kFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, maskFull32);
+            MulFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, kFP32ZeroReg, kFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+            Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
+            Add(kReduceSumReg, kReduceSumReg, kFP32ZeroReg, maskFull32);
+            Add(dkFP32ZeroReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+            Add(dkReduceSumReg, dkReduceSumReg, dkFP32ZeroReg, maskFull32);
+            MulFloatTwoReg(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+
+            CastHalf2Float<kType>(dkFP32ZeroReg, dkFP32OneReg, dkInReg, maskFull16);
+            LoadIn<kType>(dkInReg, dkIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+            CastHalf2Float<kType>(dkGatherFP32ZeroReg, dkGatherFP32OneReg, dkGatherInReg, maskFull16);
+            LoadIn<kType>(dkGatherInReg, dkGatherIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
+            AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, maskFull32);
+            AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkGatherFP32ZeroReg, dkGatherFP32OneReg, maskFull32);
+            CastFloat2Half<kType>(dkOutReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+            StoreAlign((__ubuf__ kType*&)dkOut + mIdx * nSize + vfBlockIdx * eleKNumPerVf, dkOutReg, maskFull16);
+        }
+        // 最后一行最后一个loop
+        uint16_t vfBlockIdx = nLoopCnt - 1;
+        {
+            CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
+            CastHalf2Float<kType>(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgInReg, maskFull16);
+
+            MulFloatTwoReg(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, gBrcbFP32ZeroReg, gBrcbFP32ZeroReg, maskFull32);
+            MulFloatTwoReg(kFP32ZeroReg, kFP32OneReg, kFP32ZeroReg, kFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, maskFull32);
+            MulFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, kFP32ZeroReg, kFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+            Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
+            Add(kReduceSumReg, kReduceSumReg, kFP32ZeroReg, maskFull32);
+            Add(dkFP32ZeroReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+            Add(dkReduceSumReg, dkReduceSumReg, dkFP32ZeroReg, maskFull32);
+            MulFloatTwoReg(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, betaBrcbFP32ZeroReg, betaBrcbFP32ZeroReg, maskFull32);
+
+            CastHalf2Float<kType>(dkFP32ZeroReg, dkFP32OneReg, dkInReg, maskFull16);
+            CastHalf2Float<kType>(dkGatherFP32ZeroReg, dkGatherFP32OneReg, dkGatherInReg, maskFull16);
+            AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkbgFP32ZeroReg, dkbgFP32OneReg, maskFull32);
+            AddFloatTwoReg(dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg, dkFP32OneReg, dkGatherFP32ZeroReg, dkGatherFP32OneReg, maskFull32);
+            CastFloat2Half<kType>(dkOutReg, dkFP32ZeroReg, dkFP32OneReg, maskFull32);
+            StoreAlign((__ubuf__ kType*&)dkOut + mIdx * nSize + vfBlockIdx * eleKNumPerVf, dkOutReg, maskFull16);
+        }
+        ReduceSum(dBetaAddZeroReg, kReduceSumReg, maskFull32);
+        ReduceSum(dgFP32ZeroReg, dkReduceSumReg, maskFull32);
+        Add(dBetaAddZeroReg, dBetaAddZeroReg, dbetaFP32ZeroReg, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx, dBetaAddZeroReg, maskFull32, uStoreDBeta, 1);
+        StoreUnAlignOut<betaType>(dgOut + mIdx, dgFP32ZeroReg, maskFull32, uStoreDg, 1);
+    }
+}
+
+template <typename kType, typename betaType>
 __simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkbgComputerVF(
     __ubuf__ kType* dkOut, __ubuf__ betaType* dBetaOut, __ubuf__ betaType* dgOut,
     __ubuf__ kType* kIn, __ubuf__ betaType* betaIn, __ubuf__ betaType* gIn,
@@ -1030,7 +1203,6 @@ __simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proc
         for (uint16_t vfBlockIdx = 0; vfBlockIdx < nLoopCnt; vfBlockIdx++) {
             CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
             CastHalf2Float<kType>(dkbgFP32ZeroReg, dkbgFP32OneReg, dkbgInReg, maskFull16);
-            uint32_t thisEleNum = min(eleKNumPerVf, nSize - vfBlockIdx * eleKNumPerVf);
             LoadIn<kType>(kInReg, kIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
             LoadIn<kType>(dkbgInReg, dkbgIn + mIdx * nSize + (vfBlockIdx + 1) * eleKNumPerVf);
 
@@ -1127,6 +1299,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     uint32_t wholeReduceSumCnt = CeilDiv(K, FP32_PER_REPEAT_64);
     uint32_t bos = 0;
     uint32_t eos = 0;
+    uint64_t kBos = 0;
     uint32_t curRowNum = rowNum;
 
     uint32_t ubOffset = 0;
@@ -1136,7 +1309,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     AscendC::LocalTensor<kType> tensorKinList[UB_STAGES];
     AscendC::LocalTensor<betaType> tensorBetaInList[UB_STAGES];
     AscendC::LocalTensor<betaType> tensorGInList[UB_STAGES];
-    AscendC::LocalTensor<kType> tensorDkInList[UB_STAGES];
+    AscendC::LocalTensor<kType> tensorWorkspaceDkInList[UB_STAGES];
     AscendC::LocalTensor<betaType> tensorDbetaInList[UB_STAGES];
     AscendC::LocalTensor<kType> tensorDkOutList[UB_STAGES];
     AscendC::LocalTensor<betaType> tensorDbetaOutList[UB_STAGES];
@@ -1162,7 +1335,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
         ubOffset += rowNum * sizeof(betaType);
         tensorGInList[i] = resource.ubBuf.template GetBufferByByte<betaType>(ubOffset);
         ubOffset += rowNum * sizeof(betaType);
-        tensorDkInList[i] = resource.ubBuf.template GetBufferByByte<kType>(ubOffset);
+        tensorWorkspaceDkInList[i] = resource.ubBuf.template GetBufferByByte<kType>(ubOffset);
         ubOffset += rowNum * K * sizeof(kType);
         tensorDbetaInList[i] = resource.ubBuf.template GetBufferByByte<betaType>(ubOffset);
         ubOffset += rowNum * sizeof(betaType);
@@ -1189,8 +1362,12 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
         GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, chunkSize, loopIdx, bos, eos);
+        kBos = bos;
+        if (cu_seqlens == nullptr && HV != HK) {
+            GetKBosByVBos(bos, T, HV, HK, kBos);
+        }
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < HV; h++) {
+        for (uint64_t h_v = 0; h_v < HV; h_v++) {
             uint32_t taskNum = CeilDiv(curChunkSize, rowNum);
             taskNum = CeilDiv(taskNum, GetSubBlockNum());
             uint32_t dealTaskNum = 0;
@@ -1200,15 +1377,19 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                     continue;
                 }
+                uint64_t h_k = h_v / groupSize;
+                uint64_t needGatherDk = h_v % groupSize;
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
-                auto kOffset = (h * T + bos + rowOffset) * K;
-                auto betaOffset = h * T + bos + rowOffset;
+                auto kOffset = (h_k * T + kBos + rowOffset) * K;
+                auto betaOffset = h_v * T + bos + rowOffset;
+                auto dkInOffset = (h_v * T + bos + rowOffset) * K;
+                auto dkOutOffset = (h_k * T + kBos + rowOffset) * K;
 
                 auto& tensorDkbgIn = tensorDkbgInList[cvListId];
                 auto& tensorKin = tensorKinList[ubListId];
                 auto& tensorBetaIn = tensorBetaInList[ubListId];
                 auto& tensorGIn = tensorGInList[ubListId];
-                auto& tensorDkIn = tensorDkInList[ubListId];
+                auto& tensorWorkspaceDkIn = tensorWorkspaceDkInList[ubListId];
                 auto& tensorDbetaIn = tensorDbetaInList[ubListId];
                 auto& tensorDkOut = tensorDkOutList[ubListId];
                 auto& tensorDbetaOut = tensorDbetaOutList[ubListId];
@@ -1224,7 +1405,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     DataCopyPad(tensorGIn, gTensor[betaOffset],
                                 {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},
                                 {false, 0, 0, 0});
-                    DataCopy(tensorDkIn, dkTensor[kOffset], K * curRowNum);
+                    DataCopy(tensorWorkspaceDkIn, workSpaceDkTensor[dkInOffset], K * curRowNum);
                     DataCopyPad(tensorDbetaIn, dbetaTensor[betaOffset],
                                 {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},
                                 {false, 0, 0, 0});
@@ -1236,7 +1417,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     auto kInAddr = reinterpret_cast<uint64_t>(tensorKin.GetPhyAddr());
                     auto betaInAddr = reinterpret_cast<uint64_t>(tensorBetaIn.GetPhyAddr());
                     auto gInAddr = reinterpret_cast<uint64_t>(tensorGIn.GetPhyAddr());
-                    auto dkInAddr = reinterpret_cast<uint64_t>(tensorDkIn.GetPhyAddr());
+                    auto dkWorkspaceInAddr = reinterpret_cast<uint64_t>(tensorWorkspaceDkIn.GetPhyAddr());
                     auto dBetaInAddr = reinterpret_cast<uint64_t>(tensorDbetaIn.GetPhyAddr());
                     auto dkOutAddr = reinterpret_cast<uint64_t>(tensorDkOut.GetPhyAddr());
                     auto dBetaOutAddr = reinterpret_cast<uint64_t>(tensorDbetaOut.GetPhyAddr());
@@ -1252,7 +1433,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                         (__ubuf__ kType*)kInAddr,
                         (__ubuf__ betaType*)betaInAddr,
                         (__ubuf__ betaType*)gInAddr,
-                        (__ubuf__ kType*)dkInAddr,
+                        (__ubuf__ kType*)dkWorkspaceInAddr,
                         (__ubuf__ betaType*)dBetaInAddr,
                         (__ubuf__ kType*)dkbgInAddr,
                         curRowNum, K);
@@ -1263,7 +1444,11 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                 // copyout
                 {
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventUbOutVMTE3List[ubListId]);
-                    DataCopy(dkTensor[kOffset], tensorDkOut, K * curRowNum);
+                    if (needGatherDk) {
+                        DataCopy(workSpaceDkTensor[dkInOffset], tensorDkOut, K * curRowNum);
+                    } else {
+                        DataCopy(dkTensor[dkOutOffset], tensorDkOut, K * curRowNum);
+                    }
                     DataCopyPad(dbetaTensor[betaOffset], tensorDbetaOut,
                                 {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0});
                     DataCopyPad(dgTensor[betaOffset], tensorDgOut,
@@ -1282,12 +1467,321 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
             }
         }
     }
+    
+    for (uint32_t i = 0; i < UB_STAGES; ++i) {
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventUbInVMTE2List[i]);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(eventUbOutMTE3VList[i]);
+    }
+    return;
+}
+
+template <typename kType, typename betaType>
+__aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkGatherA5()
+{
+    Arch::Resource<Arch::Ascend950> resource;
+    uint32_t coreLoops = chunkNum;
+    uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
+    uint32_t coreNumAic = GetBlockNum();
+    uint32_t rowNum = dkGatherVecRow;
+    uint32_t vecTaskIdx = 0;
+    uint32_t bos = 0;
+    uint32_t eos = 0;
+    uint64_t kBos = 0;
+    uint32_t curRowNum = rowNum;
+
+    uint32_t ubOffset = 0;
+    uint32_t ubListId = 0;
+    uint32_t dkOutUbListId = 0;
+    AscendC::LocalTensor<kType> tensorWsDkInList[UB_STAGES];
+    AscendC::LocalTensor<kType> tensorDkGatherInList[UB_STAGES];
+    AscendC::LocalTensor<kType> tensorDkOutList[UB_STAGES];
+
+    int32_t eventVMTE2 = 0;
+    int32_t eventMTE2V = 0;
+    int32_t eventMTE3V = 0;
+    int32_t eventVMTE3 = 0;
+    int32_t eventUbInVMTE2List[UB_STAGES];
+    int32_t eventUbInMTE2VList[UB_STAGES];
+    int32_t eventUbOutMTE3VList[UB_STAGES];
+    int32_t eventUbOutVMTE3List[UB_STAGES];
+
+    for (uint32_t i = 0; i < UB_STAGES; ++i) {
+        tensorWsDkInList[i] = resource.ubBuf.template GetBufferByByte<kType>(ubOffset);
+        ubOffset += rowNum * K * sizeof(kType);
+        tensorDkGatherInList[i] = resource.ubBuf.template GetBufferByByte<kType>(ubOffset);
+        ubOffset += rowNum * K * sizeof(kType);
+        tensorDkOutList[i] = resource.ubBuf.template GetBufferByByte<kType>(ubOffset);
+        ubOffset += rowNum * K * sizeof(kType);
+
+        eventUbInVMTE2List[i] = eventVMTE2++;
+        eventUbInMTE2VList[i] = eventMTE2V++;
+        eventUbOutMTE3VList[i] = eventMTE3V++;
+        eventUbOutVMTE3List[i] = eventVMTE3++;
+
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventUbInVMTE2List[i]);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(eventUbOutMTE3VList[i]);
+    }
+
+    for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
+        GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, chunkSize, loopIdx, bos, eos);
+        kBos = bos;
+        if (cu_seqlens == nullptr && HV != HK) {
+            GetKBosByVBos(bos, T, HV, HK, kBos);
+        }
+        uint32_t curChunkSize = eos - bos;
+        for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
+            ++vecTaskIdx;
+            if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
+                continue;
+            }
+            for (uint64_t h_v = 0; h_v < HV; h_v++) {
+                uint64_t h_k = h_v / groupSize;
+                uint64_t needGatherDk = h_v % groupSize;
+                if (!needGatherDk) {
+                    continue;
+                }
+
+                curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
+                auto dkInOffset = (h_v * T + bos + rowOffset) * K;
+                auto dkOutOffset = (h_k * T + kBos + rowOffset) * K;
+
+                auto& tensorWsDkIn = tensorWsDkInList[ubListId];
+                auto& tensorDkGatherIn = tensorDkGatherInList[dkOutUbListId];
+                auto& tensorDkOut = tensorDkOutList[dkOutUbListId];
+
+                // copyin
+                {
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventUbInVMTE2List[ubListId]);
+                    DataCopy(tensorWsDkIn, workSpaceDkTensor[dkInOffset], K * curRowNum);
+                    if (needGatherDk == 1) {
+                        DataCopy(tensorDkGatherIn, dkTensor[dkOutOffset], K * curRowNum);
+                    }
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventUbInMTE2VList[ubListId]);
+                }
+                // compute
+                {
+                    auto dkOutAddr = reinterpret_cast<uint64_t>(tensorDkOut.GetPhyAddr());
+                    auto wsDkInAddr = reinterpret_cast<uint64_t>(tensorWsDkIn.GetPhyAddr());
+                    auto dkGatherInAddr = reinterpret_cast<uint64_t>(tensorDkGatherIn.GetPhyAddr());
+                    if (needGatherDk != 1) {
+                        dkGatherInAddr = dkOutAddr;
+                    }
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventUbInMTE2VList[ubListId]);
+                    if (needGatherDk == 1) {
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(eventUbOutMTE3VList[dkOutUbListId]);
+                    }
+                    uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
+                    if (K <= eleKNumPerVf) {
+                        if (curRowNum == 1) {
+                            ProcessDkGatherComputerVFOneLineOneCol(
+                                (__ubuf__ kType*)dkOutAddr,
+                                (__ubuf__ kType*)wsDkInAddr, (__ubuf__ kType*)dkGatherInAddr,
+                                curRowNum, K);
+                        } else {
+                            ProcessDkGatherComputerVFMutiLineOneCol(
+                                (__ubuf__ kType*)dkOutAddr,
+                                (__ubuf__ kType*)wsDkInAddr, (__ubuf__ kType*)dkGatherInAddr,
+                                curRowNum, K);
+                        }
+                    } else {
+                        ProcessDkGatherComputerVFTwoCol(
+                            (__ubuf__ kType*)dkOutAddr,
+                            (__ubuf__ kType*)wsDkInAddr, (__ubuf__ kType*)dkGatherInAddr,
+                            curRowNum, K);
+                    }
+                    if (needGatherDk == groupSize - 1) {
+                        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventUbOutVMTE3List[dkOutUbListId]);
+                    }
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventUbInVMTE2List[ubListId]);
+                }
+                // copyout
+                {
+                    if (needGatherDk == groupSize - 1) {
+                        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventUbOutVMTE3List[dkOutUbListId]);
+                        DataCopy(dkTensor[dkOutOffset], tensorDkOut, K * curRowNum);
+                        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(eventUbOutMTE3VList[dkOutUbListId]);
+                    }
+                }
+                ubListId = (ubListId + 1 < UB_STAGES) ? (ubListId + 1) : 0;
+                if (needGatherDk == groupSize - 1) {
+                    dkOutUbListId = (dkOutUbListId + 1 < UB_STAGES) ? (dkOutUbListId + 1) : 0;
+                }
+            }
+        }
+    }
 
     for (uint32_t i = 0; i < UB_STAGES; ++i) {
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventUbInVMTE2List[i]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(eventUbOutMTE3VList[i]);
     }
     return;
+}
+
+template <typename kType, typename betaType>
+__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkGatherComputerVFOneLineOneCol(
+    __ubuf__ kType* dkOut, __ubuf__ kType* dkIn1, __ubuf__ kType* dkIn2,
+    uint16_t mSize, uint16_t nSize)
+{
+    RegTensor<kType> dk1Reg, dk2Reg;
+    RegTensor<float> dk1FP32ZeroReg, dk1FP32OneReg;
+    RegTensor<float> dk2FP32ZeroReg, dk2FP32OneReg;
+    RegTensor<kType> dkOutReg;
+
+    MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
+    MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
+
+    LoadIn<kType, false>(dk1Reg, dkIn1);
+    LoadIn<kType, false>(dk2Reg, dkIn2);
+    CastHalf2Float<kType>(dk1FP32ZeroReg, dk1FP32OneReg, dk1Reg, maskFull16);
+    CastHalf2Float<kType>(dk2FP32ZeroReg, dk2FP32OneReg, dk2Reg, maskFull16);
+    AddFloatTwoReg(dk1FP32ZeroReg, dk1FP32OneReg, dk1FP32ZeroReg, dk1FP32OneReg, dk2FP32ZeroReg, dk2FP32OneReg, maskFull32);
+    CastFloat2Half<kType>(dkOutReg, dk1FP32ZeroReg, dk1FP32OneReg, maskFull32);
+    StoreAlign((__ubuf__ kType*&)dkOut, dkOutReg, maskFull16);
+}
+
+template <typename kType, typename betaType>
+__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkGatherComputerVFMutiLineOneCol(
+    __ubuf__ kType* dkOut, __ubuf__ kType* dkIn1, __ubuf__ kType* dkIn2,
+    uint16_t mSize, uint16_t nSize)
+{
+    uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
+    uint32_t oneEleNum = min(eleKNumPerVf, nSize);
+    uint16_t mLoopCnt = mSize / PRELOAD_NUM - 1;
+    uint16_t lastLoopCnt = mSize % PRELOAD_NUM;
+    RegTensor<kType> dk1Reg, dk1Reg1;
+    RegTensor<kType> dk2Reg, dk2Reg1;
+    RegTensor<float> dk1FP32ZeroReg, dk1FP32OneReg, dk1FP32ZeroReg1, dk1FP32OneReg1;
+    RegTensor<float> dk2FP32ZeroReg, dk2FP32OneReg, dk2FP32ZeroReg1, dk2FP32OneReg1;
+    RegTensor<kType> dkOutReg, dkOutReg1;
+
+    MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
+    MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
+
+    LoadIn<kType, false>(dk1Reg, dkIn1);
+    LoadIn<kType, false>(dk1Reg1, dkIn1 + oneEleNum);
+    LoadIn<kType, false>(dk2Reg, dkIn2);
+    LoadIn<kType, false>(dk2Reg1, dkIn2 + oneEleNum);
+
+    for (uint16_t mIdx = 0; mIdx < mLoopCnt; mIdx++) {
+        CastHalf2Float<kType>(dk1FP32ZeroReg, dk1FP32OneReg, dk1Reg, maskFull16);
+        CastHalf2Float<kType>(dk1FP32ZeroReg1, dk1FP32OneReg1, dk1Reg1, maskFull16);
+        LoadIn<kType, false>(dk1Reg, dkIn1 + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(dk1Reg1, dkIn1 + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+        CastHalf2Float<kType>(dk2FP32ZeroReg, dk2FP32OneReg, dk2Reg, maskFull16);
+        CastHalf2Float<kType>(dk2FP32ZeroReg1, dk2FP32OneReg1, dk2Reg1, maskFull16);
+        LoadIn<kType, false>(dk2Reg, dkIn2 + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(dk2Reg1, dkIn2 + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+
+        AddFloatTwoReg(dk1FP32ZeroReg, dk1FP32OneReg, dk1FP32ZeroReg, dk1FP32OneReg, dk2FP32ZeroReg, dk2FP32OneReg, maskFull32);
+        AddFloatTwoReg(dk1FP32ZeroReg1, dk1FP32OneReg1, dk1FP32ZeroReg1, dk1FP32OneReg1, dk2FP32ZeroReg1, dk2FP32OneReg1, maskFull32);
+
+        CastFloat2Half<kType>(dkOutReg, dk1FP32ZeroReg, dk1FP32OneReg, maskFull32);
+        CastFloat2Half<kType>(dkOutReg1, dk1FP32ZeroReg1, dk1FP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM), dkOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM + 1), dkOutReg1, maskFull16);
+    }
+    uint16_t mIdx = mLoopCnt;
+    {
+        CastHalf2Float<kType>(dk1FP32ZeroReg, dk1FP32OneReg, dk1Reg, maskFull16);
+        CastHalf2Float<kType>(dk1FP32ZeroReg1, dk1FP32OneReg1, dk1Reg1, maskFull16);
+        CastHalf2Float<kType>(dk2FP32ZeroReg, dk2FP32OneReg, dk2Reg, maskFull16);
+        CastHalf2Float<kType>(dk2FP32ZeroReg1, dk2FP32OneReg1, dk2Reg1, maskFull16);
+
+        AddFloatTwoReg(dk1FP32ZeroReg, dk1FP32OneReg, dk1FP32ZeroReg, dk1FP32OneReg, dk2FP32ZeroReg, dk2FP32OneReg, maskFull32);
+        AddFloatTwoReg(dk1FP32ZeroReg1, dk1FP32OneReg1, dk1FP32ZeroReg1, dk1FP32OneReg1, dk2FP32ZeroReg1, dk2FP32OneReg1, maskFull32);
+
+        CastFloat2Half<kType>(dkOutReg, dk1FP32ZeroReg, dk1FP32OneReg, maskFull32);
+        CastFloat2Half<kType>(dkOutReg1, dk1FP32ZeroReg1, dk1FP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM), dkOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM + 1), dkOutReg1, maskFull16);
+
+        mIdx += 1;
+        for (uint16_t i = 0; i < lastLoopCnt; i++) {
+            LoadIn<kType, false>(dk1Reg, dkIn1 + oneEleNum * (mIdx * PRELOAD_NUM));
+            LoadIn<kType, false>(dk2Reg, dkIn2 + oneEleNum * (mIdx * PRELOAD_NUM));
+            CastHalf2Float<kType>(dk1FP32ZeroReg, dk1FP32OneReg, dk1Reg, maskFull16);
+            CastHalf2Float<kType>(dk2FP32ZeroReg, dk2FP32OneReg, dk2Reg, maskFull16);
+            AddFloatTwoReg(dk1FP32ZeroReg, dk1FP32OneReg, dk1FP32ZeroReg, dk1FP32OneReg, dk2FP32ZeroReg, dk2FP32OneReg, maskFull32);
+            CastFloat2Half<kType>(dkOutReg, dk1FP32ZeroReg, dk1FP32OneReg, maskFull32);
+            StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM), dkOutReg, maskFull16);
+        }
+    }
+}
+
+template <typename kType, typename betaType>
+__simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::ProcessDkGatherComputerVFTwoCol(
+    __ubuf__ kType* dkOut, __ubuf__ kType* dkIn1, __ubuf__ kType* dkIn2,
+    uint16_t mSize, uint16_t nSize)
+{
+    uint32_t eleKNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
+    uint32_t oneEleNum = min(eleKNumPerVf, nSize);
+    uint16_t mLoopCnt = mSize - 1;
+    uint16_t lastLoopCnt = mSize % PRELOAD_NUM;
+    RegTensor<kType> dk1Reg, dk1Reg1;
+    RegTensor<kType> dk2Reg, dk2Reg1;
+    RegTensor<float> dk1FP32ZeroReg, dk1FP32OneReg, dk1FP32ZeroReg1, dk1FP32OneReg1;
+    RegTensor<float> dk2FP32ZeroReg, dk2FP32OneReg, dk2FP32ZeroReg1, dk2FP32OneReg1;
+    RegTensor<kType> dkOutReg, dkOutReg1;
+
+    MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
+    MaskReg maskFull16 = CreateMask<half, MaskPattern::ALL>();
+
+    LoadIn<kType, false>(dk1Reg, dkIn1);
+    LoadIn<kType, false>(dk1Reg1, dkIn1 + oneEleNum);
+    LoadIn<kType, false>(dk2Reg, dkIn2);
+    LoadIn<kType, false>(dk2Reg1, dkIn2 + oneEleNum);
+
+    for (uint16_t mIdx = 0; mIdx < mLoopCnt; mIdx++) {
+        CastHalf2Float<kType>(dk1FP32ZeroReg, dk1FP32OneReg, dk1Reg, maskFull16);
+        CastHalf2Float<kType>(dk1FP32ZeroReg1, dk1FP32OneReg1, dk1Reg1, maskFull16);
+        LoadIn<kType, false>(dk1Reg, dkIn1 + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(dk1Reg1, dkIn1 + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+        CastHalf2Float<kType>(dk2FP32ZeroReg, dk2FP32OneReg, dk2Reg, maskFull16);
+        CastHalf2Float<kType>(dk2FP32ZeroReg1, dk2FP32OneReg1, dk2Reg1, maskFull16);
+        LoadIn<kType, false>(dk2Reg, dkIn2 + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
+        LoadIn<kType, false>(dk2Reg1, dkIn2 + oneEleNum * ((mIdx + 1) * PRELOAD_NUM + 1));
+
+        AddFloatTwoReg(dk1FP32ZeroReg, dk1FP32OneReg, dk1FP32ZeroReg, dk1FP32OneReg, dk2FP32ZeroReg, dk2FP32OneReg, maskFull32);
+        AddFloatTwoReg(dk1FP32ZeroReg1, dk1FP32OneReg1, dk1FP32ZeroReg1, dk1FP32OneReg1, dk2FP32ZeroReg1, dk2FP32OneReg1, maskFull32);
+
+        CastFloat2Half<kType>(dkOutReg, dk1FP32ZeroReg, dk1FP32OneReg, maskFull32);
+        CastFloat2Half<kType>(dkOutReg1, dk1FP32ZeroReg1, dk1FP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM), dkOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM + 1), dkOutReg1, maskFull16);
+    }
+    uint16_t mIdx = mLoopCnt;
+    {
+        CastHalf2Float<kType>(dk1FP32ZeroReg, dk1FP32OneReg, dk1Reg, maskFull16);
+        CastHalf2Float<kType>(dk1FP32ZeroReg1, dk1FP32OneReg1, dk1Reg1, maskFull16);
+        CastHalf2Float<kType>(dk2FP32ZeroReg, dk2FP32OneReg, dk2Reg, maskFull16);
+        CastHalf2Float<kType>(dk2FP32ZeroReg1, dk2FP32OneReg1, dk2Reg1, maskFull16);
+
+        AddFloatTwoReg(dk1FP32ZeroReg, dk1FP32OneReg, dk1FP32ZeroReg, dk1FP32OneReg, dk2FP32ZeroReg, dk2FP32OneReg, maskFull32);
+        AddFloatTwoReg(dk1FP32ZeroReg1, dk1FP32OneReg1, dk1FP32ZeroReg1, dk1FP32OneReg1, dk2FP32ZeroReg1, dk2FP32OneReg1, maskFull32);
+
+        CastFloat2Half<kType>(dkOutReg, dk1FP32ZeroReg, dk1FP32OneReg, maskFull32);
+        CastFloat2Half<kType>(dkOutReg1, dk1FP32ZeroReg1, dk1FP32OneReg1, maskFull32);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM), dkOutReg, maskFull16);
+        StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM + 1), dkOutReg1, maskFull16);
+
+        mIdx += 1;
+        for (uint16_t i = 0; i < lastLoopCnt; i++) {
+            LoadIn<kType, false>(dk1Reg, dkIn1 + oneEleNum * (mIdx * PRELOAD_NUM));
+            LoadIn<kType, false>(dk1Reg1, dkIn1 + oneEleNum * (mIdx * PRELOAD_NUM + 1));
+            LoadIn<kType, false>(dk2Reg, dkIn2 + oneEleNum * (mIdx * PRELOAD_NUM));
+            LoadIn<kType, false>(dk2Reg1, dkIn2 + oneEleNum * (mIdx * PRELOAD_NUM + 1));
+            CastHalf2Float<kType>(dk1FP32ZeroReg, dk1FP32OneReg, dk1Reg, maskFull16);
+            CastHalf2Float<kType>(dk1FP32ZeroReg1, dk1FP32OneReg1, dk1Reg1, maskFull16);
+            CastHalf2Float<kType>(dk2FP32ZeroReg, dk2FP32OneReg, dk2Reg, maskFull16);
+            CastHalf2Float<kType>(dk2FP32ZeroReg1, dk2FP32OneReg1, dk2Reg1, maskFull16);
+            AddFloatTwoReg(dk1FP32ZeroReg, dk1FP32OneReg, dk1FP32ZeroReg, dk1FP32OneReg, dk2FP32ZeroReg, dk2FP32OneReg, maskFull32);
+            AddFloatTwoReg(dk1FP32ZeroReg1, dk1FP32OneReg1, dk1FP32ZeroReg1, dk1FP32OneReg1, dk2FP32ZeroReg1, dk2FP32OneReg1, maskFull32);
+            CastFloat2Half<kType>(dkOutReg, dk1FP32ZeroReg, dk1FP32OneReg, maskFull32);
+            CastFloat2Half<kType>(dkOutReg1, dk1FP32ZeroReg1, dk1FP32OneReg1, maskFull32);
+            StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM), dkOutReg, maskFull16);
+            StoreAlign((__ubuf__ kType*&)dkOut + oneEleNum * (mIdx * PRELOAD_NUM + 1), dkOutReg1, maskFull16);
+        }
+    }
 }
 
 template <typename kType, typename betaType>
@@ -1478,7 +1972,7 @@ __simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proc
     RegTensor<float> dkFP32ZeroReg, dkFP32OneReg, dkFP32ZeroReg1, dkFP32OneReg1;
     RegTensor<float> dkbFP32ZeroReg, dkbFP32OneReg, dkbFP32ZeroReg1, dkbFP32OneReg1;
     RegTensor<kType> dkOutReg, dkOutReg1;
-    RegTensor<float> dBetaFP32Reg;
+    RegTensor<float> dBetaFP32Reg, dBetaFP32Reg1;
     RegTensor<betaType> dBetaOutZeroReg;
 
     MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
@@ -1496,7 +1990,7 @@ __simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proc
 
     for (uint16_t mIdx = 0; mIdx < mLoopCnt; mIdx++) {
         HalfOrFloat2Float<betaType>(betaBrcbFP32ZeroReg, betaInReg, maskFull16, maskFull32);
-        LoadIn<betaType, true>(betaInReg, betaIn + (mIdx + 1) * PRELOAD_NUM);
+        LoadIn<betaType, true>(betaInReg, betaIn + mIdx + 1);
         CastHalf2Float<kType>(kFP32ZeroReg, kFP32OneReg, kInReg, maskFull16);
         CastHalf2Float<kType>(kFP32ZeroReg1, kFP32OneReg1, kInReg1, maskFull16);
         LoadIn<kType, false>(kInReg, kIn + oneEleNum * ((mIdx + 1) * PRELOAD_NUM));
@@ -1525,11 +2019,11 @@ __simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proc
 
         Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
         ReduceSum(dBetaFP32Reg, kFP32ZeroReg, maskFull32);
-        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
 
         Add(kFP32ZeroReg1, kFP32ZeroReg1, kFP32OneReg1, maskFull32);
-        ReduceSum(dBetaFP32Reg, kFP32ZeroReg1, maskFull32);
-        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM + 1, dBetaFP32Reg, maskFull32, uStore, 1);
+        ReduceSum(dBetaFP32Reg1, kFP32ZeroReg1, maskFull32);
+        Add(dBetaFP32Reg, dBetaFP32Reg, dBetaFP32Reg1, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx, dBetaFP32Reg, maskFull32, uStore, 1);
     }
     uint16_t mIdx = mLoopCnt;
     {
@@ -1556,11 +2050,11 @@ __simd_vf__ inline void PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proc
 
         Add(kFP32ZeroReg, kFP32ZeroReg, kFP32OneReg, maskFull32);
         ReduceSum(dBetaFP32Reg, kFP32ZeroReg, maskFull32);
-        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM, dBetaFP32Reg, maskFull32, uStore, 1);
 
         Add(kFP32ZeroReg1, kFP32ZeroReg1, kFP32OneReg1, maskFull32);
-        ReduceSum(dBetaFP32Reg, kFP32ZeroReg1, maskFull32);
-        StoreUnAlignOut<betaType>(dBetaOut + mIdx * PRELOAD_NUM + 1, dBetaFP32Reg, maskFull32, uStore, 1);
+        ReduceSum(dBetaFP32Reg1, kFP32ZeroReg1, maskFull32);
+        Add(dBetaFP32Reg, dBetaFP32Reg, dBetaFP32Reg1, maskFull32);
+        StoreUnAlignOut<betaType>(dBetaOut + mIdx, dBetaFP32Reg, maskFull32, uStore, 1);
     }
 }
 
@@ -1576,6 +2070,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     uint32_t vecTaskIdx = 0;
     uint32_t bos = 0;
     uint32_t eos = 0;
+    uint64_t kBos = 0;
     uint32_t curRowNum = rowNum;
 
     uint32_t ubOffset = 0;
@@ -1631,8 +2126,12 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
         GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, chunkSize, loopIdx, bos, eos);
+        kBos = bos;
+        if (cu_seqlens == nullptr && HV != HK) {
+            GetKBosByVBos(bos, T, HV, HK, kBos);
+        }
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < HV; h++) {
+        for (uint64_t h_v = 0; h_v < HV; h_v++) {
             uint32_t taskNum = CeilDiv(curChunkSize, rowNum);
             taskNum = CeilDiv(taskNum, GetSubBlockNum());
             uint32_t dealTaskNum = 0;
@@ -1641,9 +2140,11 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                     continue;
                 }
+                uint64_t h_k = h_v / groupSize;
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
-                auto kOffset = (h * T + bos + rowOffset) * K;
-                auto betaOffset = h * T + bos + rowOffset;
+                auto kOffset = (h_k * T + kBos + rowOffset) * K;
+                auto betaOffset = h_v * T + bos + rowOffset;
+                auto dkOffset = (h_v * T + bos + rowOffset) * K;
 
                 auto& tensorDkbin = tensorDkbinList[cvListId];
                 auto& tensorKin = tensorKinList[ubListId];
@@ -1656,7 +2157,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventUbInVMTE2List[ubListId]);
                     DataCopy(tensorKin, kTensor[kOffset], K * curRowNum);
                     DataCopyPad(tensorBetain, betaTensor[betaOffset], {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
-                    DataCopy(tensorDkin, dkTensor[kOffset], K * curRowNum);
+                    DataCopy(tensorDkin, workSpaceDkTensor[dkOffset], K * curRowNum);
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventUbInMTE2VList[ubListId]);
                 }
                 // compute
@@ -1696,7 +2197,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                 // copyout
                 {
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventUbOutVMTE3List[ubListId]);
-                    DataCopy(dkTensor[kOffset], tensorDkOut, K * curRowNum);
+                    DataCopy(workSpaceDkTensor[dkOffset], tensorDkOut, K * curRowNum);
                     DataCopyPad(dbetaTensor[betaOffset], tensorDbetaOut, {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0});
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(eventUbOutMTE3VList[ubListId]);
                 }
@@ -1875,6 +2376,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     uint32_t vecTaskIdx = 0;
     uint32_t bos = 0;
     uint32_t eos = 0;
+    uint64_t kBos = 0;
     uint32_t curRowNum = rowNum;
 
     // init
@@ -1884,17 +2386,23 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
         GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, chunkSize, loopIdx, bos, eos);
+        kBos = bos;
+        if (cu_seqlens == nullptr && HV != HK) {
+            GetKBosByVBos(bos, T, HV, HK, kBos);
+        }
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < HV; h++) {
+        for (uint64_t h_v = 0; h_v < HV; h_v++) {
             AscendC::CrossCoreWaitFlag(SYNC_FLAG_5);
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                     continue;
                 }
+                uint64_t h_k = h_v / groupSize;
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
-                auto kOffset = (h * T + bos + rowOffset) * K;
-                auto betaOffset = h * T + bos + rowOffset;
+                auto kOffset = (h_k * T + kBos + rowOffset) * K;
+                auto betaOffset = h_v * T + bos + rowOffset;
+                auto kBetaOffset = (h_v * T + bos + rowOffset) * K;
                 // copyin
                 {
                     auto tensorKin = kInQue.AllocTensor<kType>();
@@ -1938,7 +2446,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                 // copyout
                 {
                     auto tensorOut = kBetaOutQue.DeQue<kType>();
-                    DataCopy(workSpaceTensor[kOffset], tensorOut, K * curRowNum);
+                    DataCopy(workSpaceTensor[kBetaOffset], tensorOut, K * curRowNum);
                     kBetaOutQue.FreeTensor(tensorOut);
                 }
             }

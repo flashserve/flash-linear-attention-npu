@@ -1,11 +1,17 @@
 import torch
 import torch_npu
+import os
 from typing import Optional
 import pickle
 import math
-import ct
+# import ct
 import random
-torch.npu.utils.set_device(2)
+torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
+import fla_npu
+# import custom_ops
+
+torch.npu.config.allow_internal_format = False
+torch.npu.set_compile_mode(jit_compile=False)
 
 def get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices):
     if cu_seqlens != None:
@@ -24,13 +30,13 @@ def get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices):
     return bos,eos
 
 def compute_dv_golden(
-    A: torch.Tensor,      # [B, T, H, chunk_size] - 每个chunk的A值
-    du: torch.Tensor,     # [B, T, H, D] - 上游梯度
-    beta: torch.Tensor,   # [B, H, T] - beta参数
+    A: torch.Tensor,      # [B, T, VH, chunk_size] - 每个chunk的A值
+    du: torch.Tensor,     # [B, T, VH, D] - 上游梯度
+    beta: torch.Tensor,   # [B, VH, T] - beta参数
     cu_seqlens: torch.Tensor,
     chunk_indices: torch.Tensor,
     B: int,
-    H: int,
+    VH: int,
     T: int,
     D: int,
     chunk_size: int,  # chunk_size
@@ -38,58 +44,54 @@ def compute_dv_golden(
 ) -> torch.Tensor:
     """
     CPU golden implementation for dv computation (变长序列)
-    A的形状为 [B, T, H, chunk_size]
+    A的形状为 [B, T, VH, chunk_size]
     算法:
     1. 对于每个chunk (由chunk_indices指定)
     2. 获取对应的seq_idx, chunk_indices
     3. 计算该chunk内的dv: dv_chunk = A_chunk @ du_chunk * beta_chunk
     """
-    # 初始化dv，形状与du相同 [B, T, H, D]
+    # 初始化dv，形状与du相同 [B, T, VH, D]
     dv = torch.zeros_like(du)
     for i_b in range(B):
         for idx in range(NT):
             bos,eos = get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices)
             # print(bos, eos, eos-bos)
         # 遍历所有batch
-            for i_h in range(H):
-                
-            # 遍历所有head 
+            for i_h in range(VH):
+
+            # 遍历所有head
                 # 获取当前chunk的A向量
-                # A形状: [B, T, H, chunk_size]
+                # A形状: [B, T, VH, chunk_size]
                 # 我们需要获取这个chunk对应的A向量
                 # 注意: A的每个位置存储的是该chunk对应的A向量
                 A_chunk = A[i_b,i_h, bos:eos,:eos - bos]  # [chunk_size, chunk_size]
-                
+
                 # 获取当前chunk的du
                 du_chunk = du[i_b,i_h, bos:eos, :]  # [chunk_size, V]
-                
+
                 # 获取当前chunk的beta
                 beta_chunk = beta[i_b,i_h, bos:eos]  # [chunk_size]
-                
+
                 # 计算 dv_chunk = A_chunk @ du_chunk * beta_chunk
                 # 步骤1: b_dv_beta = A_chunk @ du_chunk
-                b_dv_beta = torch.matmul(A_chunk.T.to(torch.float32), du_chunk.to(torch.float32))  # [chunk_size, V]
-                
+                b_dv_beta = torch.matmul(A_chunk.T, du_chunk)  # [chunk_size, V]
+
                 # 步骤2: dv_chunk = b_dv_beta * beta_chunk.unsqueeze(-1)
-                dv_chunk = b_dv_beta.to(torch.float32) * beta_chunk[:, None].to(torch.float32)  # [chunk_size, D]
-                
+                dv_chunk = b_dv_beta * beta_chunk[:, None]  # [chunk_size, D]
+
                 # 存储结果
                 dv[i_b,i_h, bos:eos, :] = dv_chunk.to(dv.dtype)
-    
+
     return dv
 
-
-def compute_dk_golden(
-    A: torch.Tensor,      # [B, T, H, chunk_size] - 每个chunk的A值
-    dw: torch.Tensor,     # [B, T, H, D]
-    g: torch.Tensor,     # [B, H, T]
-    beta: torch.Tensor,   # [B, H, T] - beta参数
-    dA: torch.Tensor,      # [B, T, H, chunk_size]
-    k: torch.Tensor,     # [B, T, H, D]
+def compute_dv_golden_high_precision(
+    A: torch.Tensor,      # [B, T, VH, chunk_size] - 每个chunk的A值
+    du: torch.Tensor,     # [B, T, VH, D] - 上游梯度
+    beta: torch.Tensor,   # [B, VH, T] - beta参数
     cu_seqlens: torch.Tensor,
     chunk_indices: torch.Tensor,
     B: int,
-    H: int,
+    VH: int,
     T: int,
     D: int,
     chunk_size: int,  # chunk_size
@@ -97,34 +99,96 @@ def compute_dk_golden(
 ) -> torch.Tensor:
     """
     CPU golden implementation for dv computation (变长序列)
-    A的形状为 [B, T, H, chunk_size]
+    A的形状为 [B, T, VH, chunk_size]
+    算法:
+    1. 对于每个chunk (由chunk_indices指定)
+    2. 获取对应的seq_idx, chunk_indices
+    3. 计算该chunk内的dv: dv_chunk = A_chunk @ du_chunk * beta_chunk
+    """
+    # 初始化dv，形状与du相同 [B, T, VH, D]
+    dv = torch.zeros_like(du).to(torch.float64)
+    for i_b in range(B):
+        for idx in range(NT):
+            bos,eos = get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices)
+            # print(bos, eos, eos-bos)
+        # 遍历所有batch
+            for i_h in range(VH):
+
+            # 遍历所有head
+                # 获取当前chunk的A向量
+                # A形状: [B, T, VH, chunk_size]
+                # 我们需要获取这个chunk对应的A向量
+                # 注意: A的每个位置存储的是该chunk对应的A向量
+                A_chunk = A[i_b,i_h, bos:eos,:eos - bos]  # [chunk_size, chunk_size]
+
+                # 获取当前chunk的du
+                du_chunk = du[i_b,i_h, bos:eos, :]  # [chunk_size, V]
+
+                # 获取当前chunk的beta
+                beta_chunk = beta[i_b,i_h, bos:eos]  # [chunk_size]
+
+                # 计算 dv_chunk = A_chunk @ du_chunk * beta_chunk
+                # 步骤1: b_dv_beta = A_chunk @ du_chunk
+                b_dv_beta = torch.matmul(A_chunk.T.to(torch.float64), du_chunk.to(torch.float64))  # [chunk_size, V]
+
+                # 步骤2: dv_chunk = b_dv_beta * beta_chunk.unsqueeze(-1)
+                dv_chunk = b_dv_beta.to(torch.float64) * beta_chunk[:, None].to(torch.float64)  # [chunk_size, D]
+
+                # 存储结果
+                dv[i_b,i_h, bos:eos, :] = dv_chunk.to(dv.dtype)
+
+    return dv
+
+def compute_dk_golden(
+    A: torch.Tensor,      # [B, T, VH, chunk_size] - 每个chunk的A值
+    dw: torch.Tensor,     # [B, T, KH, D]
+    g: torch.Tensor,     # [B, VH, T]
+    beta: torch.Tensor,   # [B, VH, T] - beta参数
+    dA: torch.Tensor,      # [B, T, VH, chunk_size]
+    k: torch.Tensor,     # [B, T, KH, D]
+    cu_seqlens: torch.Tensor,
+    chunk_indices: torch.Tensor,
+    B: int,
+    KH: int,
+    VH: int,
+    T: int,
+    D: int,
+    chunk_size: int,  # chunk_size
+    NT: int,  # T / chunk_size
+) -> torch.Tensor:
+    """
+    CPU golden implementation for dk computation (变长序列)
+    A的形状为 [B, T, VH, chunk_size]
+    k/dw使用KH head, 其余使用VH head
     算法:
     1. 对于每个chunk (由chunk_indices指定)
     2. 获取对应的seq_idx, chunk_indices
     3. 计算该chunk内的dv: dv_chunk = A_chunk @ du_chunk * beta_chunk
     """
     dk = torch.zeros_like(k)
+    ratio = VH // KH
     for i_b in range(B):
         for idx in range(NT):
             bos,eos = get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices)
         # 遍历所有batch
-            for i_h in range(H):
-            # 遍历所有head 
+            for i_h in range(VH):
+            # 遍历所有head
+                i_h_k = i_h // ratio
                 # 获取当前chunk的A向量
-                # A形状: [B, T, H, chunk_size]
+                # A形状: [B, T, VH, chunk_size]
                 # 我们需要获取这个chunk对应的A向量
                 # 注意: A的每个位置存储的是该chunk对应的A向量
                 A_chunk = A[i_b,i_h, bos:eos,: eos - bos]  # [chunk_size, chunk_size]
-                
+
                 # 获取当前chunk的dw
-                dw_chunk = dw[i_b,i_h, bos:eos, :]  # [chunk_size, D]
-           
+                dw_chunk = dw[i_b,i_h_k, bos:eos, :]  # [chunk_size, D]
+
                 # 获取当前chunk的beta,g
                 beta_chunk = beta[i_b,i_h, bos:eos]  # [chunk_size]
                 g_chunk = g[i_b,i_h, bos:eos]  # [chunk_size]
                 g_exp_chunk = torch.exp(g_chunk.to(torch.float32))
                 #   k________0
-                k_chunk = k[i_b, i_h, bos:eos, : ]
+                k_chunk = k[i_b, i_h_k, bos:eos, : ]
                 dA_chunk = dA[i_b,i_h, bos:eos,:eos-bos]  # [chunk_size, chunk_size]
                 b_dk_beta = torch.matmul(dA_chunk.T.to(torch.float32), k_chunk.to(torch.float32))  # [chunk_size, D]
                 #   k________1
@@ -133,164 +197,394 @@ def compute_dk_golden(
                 #   k________2
                 # 步骤1: b_dk_beta_g = A_chunk @ dw_chunk
                 b_dk_beta_g = torch.matmul(A_chunk.T.to(torch.float32), dw_chunk.to(torch.float32))  # [chunk_size, D]
-                
-                # 步骤2: dk_chunk = b_dk_beta_g * beta_chunk[:, None] * g_exp_chunk[:, None] 
+
+                # 步骤2: dk_chunk = b_dk_beta_g * beta_chunk[:, None] * g_exp_chunk[:, None]
                 dk_chunk = torch.matmul(dA_chunk.to(torch.float32), b_k_beta.to(k.dtype).to(torch.float32)).to(k.dtype).to(torch.float32)  # [chunk_size, D]
                 dk_chunk = dk_chunk.to(k.dtype).to(torch.float32) + (b_dk_beta.to(k.dtype).to(torch.float32) * beta_chunk[:, None].to(torch.float32))
                 dk_chunk = dk_chunk.to(k.dtype).to(torch.float32) + b_dk_beta_g.to(k.dtype).to(torch.float32) * (beta_chunk.to(torch.float32) * g_exp_chunk.to(torch.float32))[:,None]  # [chunk_size, D]
                 # 存储结果
-                dk[i_b,i_h, bos:eos, :] = dk_chunk
+                dk[i_b,i_h_k, bos:eos, :] += dk_chunk
     return dk
 
-def compute_dg_golden(
-    A: torch.Tensor,      # [B, T, H, chunk_size] - 每个chunk的A值
-    dw: torch.Tensor,     # [B, T, H, D]
-    g: torch.Tensor,     # [B, H, T]
-    beta: torch.Tensor,   # [B, H, T] - beta参数
-    dA: torch.Tensor,      # [B, T, H, chunk_size]
-    k: torch.Tensor,     # [B, T, H, D]
+def compute_dk_golden_high_precision(
+    A: torch.Tensor,      # [B, T, VH, chunk_size] - 每个chunk的A值
+    dw: torch.Tensor,     # [B, T, KH, D]
+    g: torch.Tensor,     # [B, VH, T]
+    beta: torch.Tensor,   # [B, VH, T] - beta参数
+    dA: torch.Tensor,      # [B, T, VH, chunk_size]
+    k: torch.Tensor,     # [B, T, KH, D]
     cu_seqlens: torch.Tensor,
     chunk_indices: torch.Tensor,
     B: int,
-    H: int,
+    KH: int,
+    VH: int,
     T: int,
     D: int,
     chunk_size: int,  # chunk_size
     NT: int,  # T / chunk_size
 ) -> torch.Tensor:
     """
-    CPU golden implementation for dv computation (变长序列)
-    A的形状为 [B, T, H, chunk_size]
+    CPU golden implementation for dk computation (变长序列)
+    A的形状为 [B, T, VH, chunk_size]
+    k/dw使用KH head, 其余使用VH head
+    算法:
+    1. 对于每个chunk (由chunk_indices指定)
+    2. 获取对应的seq_idx, chunk_indices
+    3. 计算该chunk内的dv: dv_chunk = A_chunk @ du_chunk * beta_chunk
+    """
+    dk = torch.zeros_like(k).to(torch.float64)
+    ratio = VH // KH
+    for i_b in range(B):
+        for idx in range(NT):
+            bos,eos = get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices)
+        # 遍历所有batch
+            for i_h in range(VH):
+            # 遍历所有head
+                i_h_k = i_h // ratio
+                # 获取当前chunk的A向量
+                # A形状: [B, T, VH, chunk_size]
+                # 我们需要获取这个chunk对应的A向量
+                # 注意: A的每个位置存储的是该chunk对应的A向量
+                A_chunk = A[i_b,i_h, bos:eos,: eos - bos]  # [chunk_size, chunk_size]
+
+                # 获取当前chunk的dw
+                dw_chunk = dw[i_b,i_h_k, bos:eos, :]  # [chunk_size, D]
+
+                # 获取当前chunk的beta,g
+                beta_chunk = beta[i_b,i_h, bos:eos]  # [chunk_size]
+                g_chunk = g[i_b,i_h, bos:eos]  # [chunk_size]
+                g_exp_chunk = torch.exp(g_chunk.to(torch.float64))
+                #   k________0
+                k_chunk = k[i_b, i_h_k, bos:eos, : ]
+                dA_chunk = dA[i_b,i_h, bos:eos,:eos-bos]  # [chunk_size, chunk_size]
+                b_dk_beta = torch.matmul(dA_chunk.T.to(torch.float64), k_chunk.to(torch.float64))  # [chunk_size, D]
+                #   k________1
+                b_kt_beta = k_chunk.T.to(torch.float64) * beta_chunk.to(torch.float64)[None,: ]
+                b_k_beta = k_chunk.to(torch.float64) * beta_chunk.to(torch.float64)[:, None]
+                #   k________2
+                # 步骤1: b_dk_beta_g = A_chunk @ dw_chunk
+                b_dk_beta_g = torch.matmul(A_chunk.T.to(torch.float64), dw_chunk.to(torch.float64))  # [chunk_size, D]
+
+                # 步骤2: dk_chunk = b_dk_beta_g * beta_chunk[:, None] * g_exp_chunk[:, None]
+                dk_chunk = torch.matmul(dA_chunk.to(torch.float64), b_k_beta.to(k.dtype).to(torch.float64)).to(k.dtype).to(torch.float64)  # [chunk_size, D]
+                dk_chunk = dk_chunk.to(k.dtype).to(torch.float64) + (b_dk_beta.to(k.dtype).to(torch.float64) * beta_chunk[:, None].to(torch.float64))
+                dk_chunk = dk_chunk.to(k.dtype).to(torch.float64) + b_dk_beta_g.to(k.dtype).to(torch.float64) * (beta_chunk.to(torch.float64) * g_exp_chunk.to(torch.float64))[:,None]  # [chunk_size, D]
+                # 存储结果
+                dk[i_b,i_h_k, bos:eos, :] += dk_chunk
+    return dk
+
+def compute_dg_golden(
+    A: torch.Tensor,      # [B, T, VH, chunk_size] - 每个chunk的A值
+    dw: torch.Tensor,     # [B, T, KH, D]
+    g: torch.Tensor,     # [B, VH, T]
+    beta: torch.Tensor,   # [B, VH, T] - beta参数
+    dA: torch.Tensor,      # [B, T, VH, chunk_size]
+    k: torch.Tensor,     # [B, T, KH, D]
+    cu_seqlens: torch.Tensor,
+    chunk_indices: torch.Tensor,
+    B: int,
+    KH: int,
+    VH: int,
+    T: int,
+    D: int,
+    chunk_size: int,  # chunk_size
+    NT: int,  # T / chunk_size
+) -> torch.Tensor:
+    """
+    CPU golden implementation for dg computation (变长序列)
+    A的形状为 [B, T, VH, chunk_size]
+    k/dw使用KH head, 其余使用VH head
     算法:
     1. 对于每个chunk (由chunk_indices指定)
     2. 获取对应的seq_idx, chunk_indices
     3. 计算该chunk内的dv: dv_chunk = A_chunk @ du_chunk * beta_chunk
     """
     dg = torch.zeros_like(g)
+    ratio = VH // KH
     for i_b in range(B):
         for idx in range(NT):
             bos,eos = get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices)
         # 遍历所有batch
-            for i_h in range(H):
+            for i_h in range(VH):
 
-            # 遍历所有head 
+            # 遍历所有head
+                i_h_k = i_h // ratio
                 # 获取当前chunk的A向量
-                # A形状: [B, T, H, chunk_size]
+                # A形状: [B, T, VH, chunk_size]
                 # 我们需要获取这个chunk对应的A向量
                 # 注意: A的每个位置存储的是该chunk对应的A向量
                 A_chunk = A[i_b,i_h, bos:eos,: eos - bos]  # [chunk_size, chunk_size]
-                
+
                 # 获取当前chunk的dw
-                dw_chunk = dw[i_b,i_h, bos:eos, :]  # [chunk_size, D]
-            
+                dw_chunk = dw[i_b,i_h_k, bos:eos, :]  # [chunk_size, D]
+
                 # 获取当前chunk的beta,g
-                # beta形状: [B, H, T]
+                # beta形状: [B, VH, T]
                 beta_chunk = beta[i_b,i_h, bos:eos]  # [chunk_size]
                 g_chunk = g[i_b,i_h, bos:eos]  # [chunk_size]
-                g_exp_chunk = torch.exp(g_chunk.to(torch.float32))
-                
+                g_exp_chunk = torch.exp(g_chunk)
+
                 #   g________0
                 # 步骤1: b_dk_beta_g = A_chunk @ dw_chunk
-                b_dk_beta_g = torch.matmul(A_chunk.T.to(torch.float32), dw_chunk.to(torch.float32))  
- 
+                b_dk_beta_g = torch.matmul(A_chunk.T, dw_chunk)
+
                 # 步骤2: b_dg += tl.sum(b_dk_beta_g * b_k * b_g_exp[:, None] * b_beta[:, None], 1)
-                k_chunk = k[i_b, i_h, bos:eos, : ]
-                b_kbg = k_chunk.to(torch.float32) * (beta_chunk.to(torch.float32) * g_exp_chunk.to(torch.float32))[:,None]
-                #   g________1 
+                k_chunk = k[i_b, i_h_k, bos:eos, : ]
+                b_kbg = k_chunk * (beta_chunk * g_exp_chunk)[:,None]
+                #   g________1
                 dA_chunk = dA[i_b,i_h, bos:eos,: eos - bos]  # [chunk_size, chunk_size]
                 if k_chunk.size(0) == 1:
                     # 形状 [1, K] -> 计算外积等价于平方和
                     # 结果应为 [1, 1]
-                    dot_val = torch.sum(k_chunk.to(torch.float32) * k_chunk.to(torch.float32), dim=1, keepdim=True)  # [1, 1]
+                    dot_val = torch.sum(k_chunk * k_chunk, dim=1, keepdim=True)  # [1, 1]
                     b_A = dot_val
                 else:
                     # 正常走 matmul 路径
-                    k_f32 = k_chunk.to(torch.float32).contiguous()
+                    k_f32 = k_chunk.contiguous()
                     b_A = torch.matmul(k_f32, k_f32.T.contiguous())
-                # b_A = torch.matmul(k_chunk.to(torch.float32).contiguous(), k_chunk.to(torch.float32).T).to(k.dtype).to(torch.float32).contiguous()  # [chunk_size, chunk_size]
-                b_A = b_A.to(torch.float32) * beta_chunk[:,None].to(torch.float32)
-                b_dA_A = dA_chunk.to(torch.float32).T * b_A.to(torch.float32)
+                b_A = b_A * beta_chunk[:,None]
+                b_dA_A = dA_chunk.T * b_A
 
                 # test
-                dg_chunk = torch.sum(b_dk_beta_g.to(k.dtype).to(torch.float32) * b_kbg.to(torch.float32), dim = 1)# [chunk_size]
-                dg_chunk = dg_chunk.to(dg.dtype).to(torch.float32) +  (torch.sum(b_dA_A, dim = 1) - torch.sum(b_dA_A, dim = 0))
+                dg_chunk = torch.sum(b_dk_beta_g.to(dg.dtype) * b_kbg.to(dg.dtype), dim = 1)# [chunk_size]
+                dg_chunk = dg_chunk.to(dg.dtype) +  (torch.sum(b_dA_A, dim = 1) - torch.sum(b_dA_A, dim = 0)).to(dg.dtype)
                 # 存储结果
-                dg[i_b,i_h, bos:eos] = dg_chunk.to(k.dtype)
+                dg[i_b,i_h, bos:eos] = dg_chunk.to(g.dtype)
     return dg
 
-def compute_dbeta_golden(
-    A: torch.Tensor,      # [B, T, H, chunkSize] - 每个chunk的A值
-    dw: torch.Tensor,     # [B, T, H, D]
-    g: torch.Tensor,     # [B, H, T]
-    beta: torch.Tensor,   # [B, H, T] - beta参数
-    dA: torch.Tensor,      # [B, T, H, chunkSize]
-    k: torch.Tensor,     # [B, T, H, D]
-    v: torch.Tensor,      # [B, T, H, D]
-    du: torch.Tensor,     # [B, T, H, D]
+def compute_dg_golden_high_precision(
+    A: torch.Tensor,      # [B, T, VH, chunk_size] - 每个chunk的A值
+    dw: torch.Tensor,     # [B, T, KH, D]
+    g: torch.Tensor,     # [B, VH, T]
+    beta: torch.Tensor,   # [B, VH, T] - beta参数
+    dA: torch.Tensor,      # [B, T, VH, chunk_size]
+    k: torch.Tensor,     # [B, T, KH, D]
     cu_seqlens: torch.Tensor,
     chunk_indices: torch.Tensor,
     B: int,
-    H: int,
+    KH: int,
+    VH: int,
+    T: int,
+    D: int,
+    chunk_size: int,  # chunk_size
+    NT: int,  # T / chunk_size
+) -> torch.Tensor:
+    """
+    CPU golden implementation for dg computation (变长序列)
+    A的形状为 [B, T, VH, chunk_size]
+    k/dw使用KH head, 其余使用VH head
+    算法:
+    1. 对于每个chunk (由chunk_indices指定)
+    2. 获取对应的seq_idx, chunk_indices
+    3. 计算该chunk内的dv: dv_chunk = A_chunk @ du_chunk * beta_chunk
+    """
+    dg = torch.zeros_like(g).to(torch.float64)
+    ratio = VH // KH
+    for i_b in range(B):
+        for idx in range(NT):
+            bos,eos = get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices)
+        # 遍历所有batch
+            for i_h in range(VH):
+
+            # 遍历所有head
+                i_h_k = i_h // ratio
+                # 获取当前chunk的A向量
+                # A形状: [B, T, VH, chunk_size]
+                # 我们需要获取这个chunk对应的A向量
+                # 注意: A的每个位置存储的是该chunk对应的A向量
+                A_chunk = A[i_b,i_h, bos:eos,: eos - bos]  # [chunk_size, chunk_size]
+
+                # 获取当前chunk的dw
+                dw_chunk = dw[i_b,i_h_k, bos:eos, :]  # [chunk_size, D]
+
+                # 获取当前chunk的beta,g
+                # beta形状: [B, VH, T]
+                beta_chunk = beta[i_b,i_h, bos:eos]  # [chunk_size]
+                g_chunk = g[i_b,i_h, bos:eos]  # [chunk_size]
+                g_exp_chunk = torch.exp(g_chunk.to(torch.float64))
+
+                #   g________0
+                # 步骤1: b_dk_beta_g = A_chunk @ dw_chunk
+                b_dk_beta_g = torch.matmul(A_chunk.T.to(torch.float64), dw_chunk.to(torch.float64))
+
+                # 步骤2: b_dg += tl.sum(b_dk_beta_g * b_k * b_g_exp[:, None] * b_beta[:, None], 1)
+                k_chunk = k[i_b, i_h_k, bos:eos, : ]
+                b_kbg = k_chunk.to(torch.float64) * (beta_chunk.to(torch.float64) * g_exp_chunk.to(torch.float64))[:,None]
+                #   g________1
+                dA_chunk = dA[i_b,i_h, bos:eos,: eos - bos]  # [chunk_size, chunk_size]
+                if k_chunk.size(0) == 1:
+                    # 形状 [1, K] -> 计算外积等价于平方和
+                    # 结果应为 [1, 1]
+                    dot_val = torch.sum(k_chunk.to(torch.float64) * k_chunk.to(torch.float64), dim=1, keepdim=True)  # [1, 1]
+                    b_A = dot_val
+                else:
+                    # 正常走 matmul 路径
+                    k_f32 = k_chunk.to(torch.float64).contiguous()
+                    b_A = torch.matmul(k_f32, k_f32.T.contiguous())
+                # b_A = torch.matmul(k_chunk.to(torch.float64).contiguous(), k_chunk.to(torch.float64).T).to(k.dtype).to(torch.float64).contiguous()  # [chunk_size, chunk_size]
+                b_A = b_A.to(torch.float64) * beta_chunk[:,None].to(torch.float64)
+                b_dA_A = dA_chunk.to(torch.float64).T * b_A.to(torch.float64)
+
+                # test
+                dg_chunk = torch.sum(b_dk_beta_g.to(k.dtype).to(torch.float64) * b_kbg.to(torch.float64), dim = 1)# [chunk_size]
+                dg_chunk = dg_chunk.to(dg.dtype).to(torch.float64) +  (torch.sum(b_dA_A, dim = 1) - torch.sum(b_dA_A, dim = 0))
+                # 存储结果
+                dg[i_b,i_h, bos:eos] = dg_chunk.to(dg.dtype)
+    return dg
+
+def compute_dbeta_golden(
+    A: torch.Tensor,      # [B, T, VH, chunkSize] - 每个chunk的A值
+    dw: torch.Tensor,     # [B, T, KH, D]
+    g: torch.Tensor,     # [B, VH, T]
+    beta: torch.Tensor,   # [B, VH, T] - beta参数
+    dA: torch.Tensor,      # [B, T, VH, chunkSize]
+    k: torch.Tensor,     # [B, T, KH, D]
+    v: torch.Tensor,      # [B, T, VH, D]
+    du: torch.Tensor,     # [B, T, VH, D]
+    cu_seqlens: torch.Tensor,
+    chunk_indices: torch.Tensor,
+    B: int,
+    KH: int,
+    VH: int,
     T: int,
     D: int,
     chunkSize: int,  # chunkSize
     NT: int,  # T / chunkSize
 ) -> torch.Tensor:
     """
-    CPU golden implementation for dv computation (变长序列)
-    A的形状为 [B, T, H, chunkSize]
+    CPU golden implementation for dbeta computation (变长序列)
+    A的形状为 [B, T, VH, chunkSize]
+    k/dw使用KH head, 其余使用VH head
     算法:
     1. 对于每个chunk (由chunk_indices指定)
     2. 获取对应的seq_idx, chunk_indices
     3. 计算该chunk内的dv: dv_chunk = A_chunk @ du_chunk * beta_chunk
     """
     dbeta = torch.zeros_like(beta)
+    ratio = VH // KH
     for i_b in range(B):
         for idx in range(NT):
         # 遍历所有batch
             bos,eos = get_bos_eos(idx, T, chunkSize, cu_seqlens, chunk_indices)
-            for i_h in range(H):
-            # 遍历所有head 
+            for i_h in range(VH):
+            # 遍历所有head
+                i_h_k = i_h // ratio
                 # 获取当前chunk的A向量
-                # A形状: [B, T, H, chunkSize]
+                # A形状: [B, T, VH, chunkSize]
                 # 我们需要获取这个chunk对应的A向量
                 # 注意: A的每个位置存储的是该chunk对应的A向量
                 A_chunk = A[i_b,i_h, bos:eos,: eos - bos]  # [chunkSize, chunkSize]
                 v_chunk = v[i_b,i_h, bos:eos,:]  # [chunkSize, V]
-                
+
                 # 获取当前chunk的dw
-                dw_chunk = dw[i_b,i_h, bos:eos, :]  # [chunkSize, D]
+                dw_chunk = dw[i_b,i_h_k, bos:eos, :]  # [chunkSize, D]
                 du_chunk = du[i_b,i_h, bos:eos, :]  # [chunkSize, D]
 
 
                 # 获取当前chunk的beta,g
-                # beta形状: [B, H, T]
+                # beta形状: [B, VH, T]
                 beta_chunk = beta[i_b,i_h, bos:eos]  # [chunkSize]
                 g_chunk = g[i_b,i_h, bos:eos]  # [chunkSize]
-                g_exp_chunk = torch.exp(g_chunk.to(torch.float32))
-                k_chunk = k[i_b, i_h, bos:eos, : ]
+                g_exp_chunk = torch.exp(g_chunk)
+                k_chunk = k[i_b, i_h_k, bos:eos, : ]
                 #   beta________0
                 # 步骤1: b_dk_beta_g = A_chunk @ dw_chunk
-                b_dk_beta_g = torch.matmul(A_chunk.T.to(torch.float32), dw_chunk.to(torch.float32))  
-                
+                b_dk_beta_g = torch.matmul(A_chunk.T, dw_chunk)
+
                 # 步骤2: b_dbeta += tl.sum(b_dk_beta_g * b_k * b_g_exp[:, None], 1)
-                tmp = b_dk_beta_g * k_chunk.to(torch.float32) * g_exp_chunk.to(torch.float32)[:, None] # [chunkSize, D]
-                #   beta________1 
-                
-                b_dv_beta = torch.matmul(A_chunk.T.to(torch.float32), du_chunk.to(torch.float32))  # [chunkSize, V]
-                #   beta________2 
+                tmp = b_dk_beta_g * k_chunk * g_exp_chunk[:, None] # [chunkSize, D]
+                #   beta________1
+
+                b_dv_beta = torch.matmul(A_chunk.T, du_chunk)  # [chunkSize, V]
+                #   beta________2
                 dA_chunk = dA[i_b,i_h, bos:eos,: eos - bos]  # [chunkSize, chunkSize]
-                b_dk_beta = torch.matmul(dA_chunk.T.to(torch.float32), k_chunk.to(torch.float32))  # [chunkSize, V]
-                tmp = b_dk_beta.to(k.dtype).to(torch.float32) * k_chunk
+                b_dk_beta = torch.matmul(dA_chunk.T, k_chunk)  # [chunkSize, V]
+                tmp = b_dk_beta.to(k.dtype) * k_chunk
                 # test
-                dbeta_chunk = torch.sum(tmp, 1).to(torch.float16)
-                tmp = b_dk_beta_g.to(k.dtype).to(torch.float32) * k_chunk.to(torch.float32) * g_exp_chunk.to(torch.float32)[:, None] # [chunkSize, D]
-                dbeta_chunk = dbeta_chunk.to(k.dtype).to(torch.float32) + torch.sum(tmp, dim = 1)# [chunkSize]
-                dbeta_chunk = dbeta_chunk.to(k.dtype).to(torch.float32) + torch.sum(b_dv_beta.to(k.dtype).to(torch.float32) * v_chunk, 1)
+                dbeta_chunk = torch.sum(tmp, 1)
+                tmp = b_dk_beta_g.to(k.dtype) * k_chunk * g_exp_chunk[:, None] # [chunkSize, D]
+                dbeta_chunk = dbeta_chunk.to(k.dtype) + torch.sum(tmp, dim = 1)# [chunkSize]
+                dbeta_chunk = dbeta_chunk.to(k.dtype) + torch.sum(b_dv_beta.to(k.dtype) * v_chunk, 1)
                 # 存储结果
                 dbeta[i_b,i_h, bos:eos] = dbeta_chunk
     return dbeta
 
+def compute_dbeta_golden_high_precision(
+    A: torch.Tensor,      # [B, T, VH, chunkSize] - 每个chunk的A值
+    dw: torch.Tensor,     # [B, T, KH, D]
+    g: torch.Tensor,     # [B, VH, T]
+    beta: torch.Tensor,   # [B, VH, T] - beta参数
+    dA: torch.Tensor,      # [B, T, VH, chunkSize]
+    k: torch.Tensor,     # [B, T, KH, D]
+    v: torch.Tensor,      # [B, T, VH, D]
+    du: torch.Tensor,     # [B, T, VH, D]
+    cu_seqlens: torch.Tensor,
+    chunk_indices: torch.Tensor,
+    B: int,
+    KH: int,
+    VH: int,
+    T: int,
+    D: int,
+    chunkSize: int,  # chunkSize
+    NT: int,  # T / chunkSize
+) -> torch.Tensor:
+    """
+    CPU golden implementation for dbeta computation (变长序列)
+    A的形状为 [B, T, VH, chunkSize]
+    k/dw使用KH head, 其余使用VH head
+    算法:
+    1. 对于每个chunk (由chunk_indices指定)
+    2. 获取对应的seq_idx, chunk_indices
+    3. 计算该chunk内的dv: dv_chunk = A_chunk @ du_chunk * beta_chunk
+    """
+    dbeta = torch.zeros_like(beta).to(torch.float64)
+    ratio = VH // KH
+    for i_b in range(B):
+        for idx in range(NT):
+        # 遍历所有batch
+            bos,eos = get_bos_eos(idx, T, chunkSize, cu_seqlens, chunk_indices)
+            for i_h in range(VH):
+            # 遍历所有head
+                i_h_k = i_h // ratio
+                # 获取当前chunk的A向量
+                # A形状: [B, T, VH, chunkSize]
+                # 我们需要获取这个chunk对应的A向量
+                # 注意: A的每个位置存储的是该chunk对应的A向量
+                A_chunk = A[i_b,i_h, bos:eos,: eos - bos]  # [chunkSize, chunkSize]
+                v_chunk = v[i_b,i_h, bos:eos,:]  # [chunkSize, V]
+
+                # 获取当前chunk的dw
+                dw_chunk = dw[i_b,i_h_k, bos:eos, :]  # [chunkSize, D]
+                du_chunk = du[i_b,i_h, bos:eos, :]  # [chunkSize, D]
+
+
+                # 获取当前chunk的beta,g
+                # beta形状: [B, VH, T]
+                beta_chunk = beta[i_b,i_h, bos:eos]  # [chunkSize]
+                g_chunk = g[i_b,i_h, bos:eos]  # [chunkSize]
+                g_exp_chunk = torch.exp(g_chunk.to(torch.float64))
+                k_chunk = k[i_b, i_h_k, bos:eos, : ]
+                #   beta________0
+                # 步骤1: b_dk_beta_g = A_chunk @ dw_chunk
+                b_dk_beta_g = torch.matmul(A_chunk.T.to(torch.float64), dw_chunk.to(torch.float64))
+
+                # 步骤2: b_dbeta += tl.sum(b_dk_beta_g * b_k * b_g_exp[:, None], 1)
+                tmp = b_dk_beta_g * k_chunk.to(torch.float64) * g_exp_chunk.to(torch.float64)[:, None] # [chunkSize, D]
+                #   beta________1
+
+                b_dv_beta = torch.matmul(A_chunk.T.to(torch.float64), du_chunk.to(torch.float64))  # [chunkSize, V]
+                #   beta________2
+                dA_chunk = dA[i_b,i_h, bos:eos,: eos - bos]  # [chunkSize, chunkSize]
+                b_dk_beta = torch.matmul(dA_chunk.T.to(torch.float64), k_chunk.to(torch.float64))  # [chunkSize, V]
+                tmp = b_dk_beta.to(k.dtype).to(torch.float64) * k_chunk
+                # test
+                dbeta_chunk = torch.sum(tmp, 1).to(torch.float64)
+                tmp = b_dk_beta_g.to(k.dtype).to(torch.float64) * k_chunk.to(torch.float64) * g_exp_chunk.to(torch.float64)[:, None] # [chunkSize, D]
+                dbeta_chunk = dbeta_chunk.to(k.dtype).to(torch.float64) + torch.sum(tmp, dim = 1)# [chunkSize]
+                dbeta_chunk = dbeta_chunk.to(k.dtype).to(torch.float64) + torch.sum(b_dv_beta.to(k.dtype).to(torch.float64) * v_chunk, 1)
+                # 存储结果
+                dbeta[i_b,i_h, bos:eos] = dbeta_chunk
+    return dbeta
 
 def prepare_lens(cu_seqlens: torch.LongTensor) -> torch.LongTensor:
     return cu_seqlens[1:] - cu_seqlens[:-1]
@@ -386,7 +680,8 @@ def prepare_chunk_indices(
 
 def test_prepare_wy_repr_bwd_full(
     B: int,
-    H: int,
+    KH: int,
+    VH: int,
     T: int,
     K: int,
     V: int,
@@ -402,7 +697,8 @@ def test_prepare_wy_repr_bwd_full(
 
     参数:
         B (int): Batch size
-        H (int): Head number
+        KH (int): Key head number
+        VH (int): Value head number
         T (int): Sequence length
         K (int): Key dimension
         V (int): Value dimension
@@ -420,18 +716,18 @@ def test_prepare_wy_repr_bwd_full(
         test_prepare_wy_repr_bwd_full.call_count += 1
 
     # 生成随机张量（float16）
-    k = torch.rand(B, H, T, K, dtype=ktype)
-    v = torch.rand(B, H, T, V, dtype=ktype)
-    beta = torch.rand(B, H, T, dtype=btype)
-    A = torch.rand(B, H, T, chunk_size, dtype=ktype)
-    dA = torch.rand(B, H, T, chunk_size, dtype=ktype)
-    dw = torch.rand(B, H, T, K, dtype=ktype)
-    du = torch.rand(B, H, T, V, dtype=ktype)
-    g = torch.rand(B, H, T, dtype=btype)
+    k = torch.rand(B, KH, T, K, dtype=ktype)
+    v = torch.rand(B, VH, T, V, dtype=ktype)
+    beta = torch.rand(B, VH, T, dtype=btype)
+    A = torch.rand(B, VH, T, chunk_size, dtype=ktype)
+    dA = torch.rand(B, VH, T, chunk_size, dtype=ktype)
+    dw = torch.rand(B, KH, T, K, dtype=ktype)
+    du = torch.rand(B, VH, T, V, dtype=ktype)
+    g = torch.rand(B, VH, T, dtype=btype)
 
     # 将张量移到 NPU 并调用反向算子
     if chunk_indices != None:
-        dk, dv, dbeta, dg = torch_npu.npu_prepare_wy_repr_bwd_full(
+        dk, dv, dbeta, dg = torch.ops.npu.npu_prepare_wy_repr_bwd_full(
             k.npu(),
             v.npu(),
             beta.npu(),
@@ -445,7 +741,7 @@ def test_prepare_wy_repr_bwd_full(
             chunk_size=chunk_size
         )
     else:
-        dk, dv, dbeta, dg = torch_npu.npu_prepare_wy_repr_bwd_full(
+        dk, dv, dbeta, dg = torch.ops.npu.npu_prepare_wy_repr_bwd_full(
             k.npu(),
             v.npu(),
             beta.npu(),
@@ -462,83 +758,119 @@ def test_prepare_wy_repr_bwd_full(
         NT = len(chunk_indices) // 2
     else:
         NT = (T + chunk_size - 1) // chunk_size
-    # cpu_dv = compute_dv_golden(A, du, beta, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
-    # ct.isclose(dv.cpu(), cpu_dv.cpu(), diff_thd=0.1)
-    # # torch.save(cpu_dv, "cpu_dv.pt")
     
-    # cpu_dk = compute_dk_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
-    # ct.isclose(dk, cpu_dk, diff_thd=0.1)
-    # # torch.save(cpu_dk, "cpu_dk.pt")
-    
-    # cpu_dg = compute_dg_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
-    # ct.isclose(dg, cpu_dg, diff_thd=0.1)
-    # # torch.save(cpu_dg, "cpu_dg.pt")
-    
-    # cpu_dbeta = compute_dbeta_golden(A, dw, g, beta, dA,k,v,du, cu_seqlens, chunk_indices, B, H, T, K, chunk_size, NT)
-    # ct.isclose(dbeta, cpu_dbeta, diff_thd=0.1)
-    # # torch.save(cpu_dbeta, "cpu_dbeta.pt") 
+    try:
+        import ct
+        cpu_dv = compute_dv_golden(A, du, beta, cu_seqlens, chunk_indices, B, VH, T, K, chunk_size, NT)
+        cpu_dv_high_precision = compute_dv_golden_high_precision(A, du, beta, cu_seqlens, chunk_indices, B, VH, T, K, chunk_size, NT)
+        ct.dual(dv.cpu(), cpu_dv_high_precision, cpu_dv)
+        cpu_dk = compute_dk_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, KH, VH, T, K, chunk_size, NT)
+        cpu_dk_high_precision = compute_dk_golden_high_precision(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, KH, VH, T, K, chunk_size, NT)
+        ct.dual(dk.cpu(), cpu_dk_high_precision, cpu_dk)
+        cpu_dg = compute_dg_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, KH, VH, T, K, chunk_size, NT)
+        cpu_dg_high_precision = compute_dg_golden_high_precision(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, KH, VH, T, K, chunk_size, NT)
+        ct.dual(dg.cpu(), cpu_dg_high_precision, cpu_dg)
+        cpu_dbeta = compute_dbeta_golden(A, dw, g, beta, dA,k,v,du, cu_seqlens, chunk_indices, B, KH, VH, T, K, chunk_size, NT)
+        cpu_dbeta_high_precision = compute_dbeta_golden_high_precision(A, dw, g, beta, dA,k,v,du, cu_seqlens, chunk_indices, B, KH, VH, T, K, chunk_size, NT)
+        ct.dual(dbeta.cpu(), cpu_dbeta_high_precision, cpu_dbeta)
+    finally:
+        pass
     
     print(f"test_prepare_wy_repr_bwd_full 被调用了第 {test_prepare_wy_repr_bwd_full.call_count} 次")
     return dk, dv, dbeta, dg
 
 if __name__ == "__main__":
     # #F1
-    # test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
+    # test_prepare_wy_repr_bwd_full(B = 64, KH = 8, VH = 8, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
     # #F2
-    # test_prepare_wy_repr_bwd_full(B = 32, H = 16, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # test_prepare_wy_repr_bwd_full(B = 32, KH = 16, VH = 16, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
     # #F3
-    # test_prepare_wy_repr_bwd_full(B = 16, H = 32, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float32)
+    # test_prepare_wy_repr_bwd_full(B = 16, KH = 32, VH = 32, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float32)
     # #F4
-    # test_prepare_wy_repr_bwd_full(B = 8, H = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # test_prepare_wy_repr_bwd_full(B = 8, KH = 32, VH = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
     # #F5
-    # test_prepare_wy_repr_bwd_full(B = 128, H = 4, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
+    # test_prepare_wy_repr_bwd_full(B = 128, KH = 4, VH = 4, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
     # #F6
-    # test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.float32)
+    # test_prepare_wy_repr_bwd_full(B = 64, KH = 8, VH = 8, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.float32)
     # #F7
-    # test_prepare_wy_repr_bwd_full(B = 32, H = 16, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
-    # #F8    
-    # test_prepare_wy_repr_bwd_full(B = 16, H = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # test_prepare_wy_repr_bwd_full(B = 32, KH = 16, VH = 16, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
+    # #F8
+    # test_prepare_wy_repr_bwd_full(B = 16, KH = 32, VH = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
     # #F9
-    # test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
+    # test_prepare_wy_repr_bwd_full(B = 64, KH = 8, VH = 8, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
     # #F10
-    # test_prepare_wy_repr_bwd_full(B = 32, H = 16, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # test_prepare_wy_repr_bwd_full(B = 32, KH = 16, VH = 16, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
     # #F11
-    # test_prepare_wy_repr_bwd_full(B = 16, H = 32, T = 16384, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float32)
+    # test_prepare_wy_repr_bwd_full(B = 16, KH = 32, VH = 32, T = 16384, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float32)
     # #F12
-    # test_prepare_wy_repr_bwd_full(B = 8, H = 32, T = 32768, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # test_prepare_wy_repr_bwd_full(B = 8, KH = 32, VH = 32, T = 32768, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
     # #F13
-    # test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
+    # test_prepare_wy_repr_bwd_full(B = 64, KH = 8, VH = 8, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
     # #F14
-    # test_prepare_wy_repr_bwd_full(B = 32, H = 16, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # test_prepare_wy_repr_bwd_full(B = 32, KH = 16, VH = 16, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
     # #F15
-    # test_prepare_wy_repr_bwd_full(B = 16, H = 32, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float32)
+    # test_prepare_wy_repr_bwd_full(B = 16, KH = 32, VH = 32, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float32)
     # #F16
-    # test_prepare_wy_repr_bwd_full(B = 8, H = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # test_prepare_wy_repr_bwd_full(B = 8, KH = 32, VH = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
     # #F17
-    # test_prepare_wy_repr_bwd_full(B = 64, H = 8, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
+    # test_prepare_wy_repr_bwd_full(B = 64, KH = 8, VH = 8, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
     # #F18
-    # test_prepare_wy_repr_bwd_full(B = 32, H = 16, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
+    # test_prepare_wy_repr_bwd_full(B = 32, KH = 16, VH = 16, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
     #L1
     cu_seqlens = prepare_cu_seqlens(T = 65536, L = 64)
     chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    test_prepare_wy_repr_bwd_full(B = 1, H = 32, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    test_prepare_wy_repr_bwd_full(B = 1, KH = 32, VH = 32, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
     # #L2
     # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 33)
     # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, H = 16, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # test_prepare_wy_repr_bwd_full(B = 1, KH = 16, VH = 16, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
     # #L3
     # cu_seqlens = prepare_cu_seqlens(T = 131072, L = 333)
     # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, H = 8, T = 131072, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # test_prepare_wy_repr_bwd_full(B = 1, KH = 8, VH = 8, T = 131072, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
     # # L4
     # cu_seqlens = prepare_cu_seqlens(T = 262144, L = 567)
     # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, H = 4, T = 262144, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float32, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # test_prepare_wy_repr_bwd_full(B = 1, KH = 4, VH = 4, T = 262144, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float32, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
     # #L5
     # cu_seqlens = prepare_cu_seqlens(T = 32768, L = 7)
     # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, H = 16, T = 32768, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # test_prepare_wy_repr_bwd_full(B = 1, KH = 16, VH = 16, T = 32768, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
     # #L6
     # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 25)
     # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, H = 8, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # test_prepare_wy_repr_bwd_full(B = 1, KH = 8, VH = 8, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    
+    # # 二阶段泛化用例
+    # # L7
+    # cu_seqlens = prepare_cu_seqlens(T = 16384, L = 128)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
+    # test_prepare_wy_repr_bwd_full(B = 1, VH = 32, KH = 16, T = 16384, K = 128, V = 256, chunk_size = 64, ktype=torch.float16, btype=torch.float32, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # # L8
+    # cu_seqlens = prepare_cu_seqlens(T = 16384, L = 2)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
+    # test_prepare_wy_repr_bwd_full(B = 1, VH = 63, KH = 21, T = 16384, K = 128, V = 256, chunk_size = 64, ktype=torch.bfloat16, btype=torch.float32, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # # L9
+    # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 172)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 128)
+    # test_prepare_wy_repr_bwd_full(B = 1, VH = 32, KH = 8, T = 65536, K = 128, V = 256, chunk_size = 128, ktype=torch.bfloat16, btype=torch.float32, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # # L10
+    # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 668)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
+    # test_prepare_wy_repr_bwd_full(B = 1, VH = 32, KH = 16, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float32, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # # L11
+    # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 17)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 128)
+    # test_prepare_wy_repr_bwd_full(B = 1, VH = 32, KH = 4, T = 65536, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.float32, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # # L12
+    # cu_seqlens = prepare_cu_seqlens(T = 262144, L = 32)
+    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
+    # test_prepare_wy_repr_bwd_full(B = 1, VH = 64, KH = 2, T = 262144, K = 128, V = 256, chunk_size = 64, ktype=torch.float16, btype=torch.float32, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
+    # # F19
+    # test_prepare_wy_repr_bwd_full(B = 1, VH = 32, KH = 16, T = 4096, K = 128, V = 256, chunk_size = 64, ktype=torch.float16, btype=torch.float32)
+    # # F20
+    # test_prepare_wy_repr_bwd_full(B = 16, VH = 63, KH = 21, T = 2048, K = 128, V = 256, chunk_size = 64, ktype=torch.bfloat16, btype=torch.float32)
+    # # F21
+    # test_prepare_wy_repr_bwd_full(B = 711, VH = 32, KH = 4, T = 196, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float32)
+    # # F22
+    # test_prepare_wy_repr_bwd_full(B = 176, VH = 64, KH = 2, T = 24, K = 128, V = 256, chunk_size = 64, ktype=torch.bfloat16, btype=torch.float32)

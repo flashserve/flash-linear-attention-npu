@@ -402,7 +402,7 @@ public:
                 gmAT.SetGlobalBuffer((__gm__ ElementAT *)params.ptrAT + valueBase * params.chunkSize);
                 gmK.SetGlobalBuffer((__gm__ ElementK *)params.ptrK + keyBase * params.K);
                 gmKT.SetGlobalBuffer((__gm__ ElementKT *)params.ptrKT + keyBase * params.K);
-                gmDw.SetGlobalBuffer((__gm__ ElementDw *)params.ptrDw + valueBase * params.K);
+                gmDw.SetGlobalBuffer((__gm__ ElementDw *)params.ptrDw + keyBase * params.K);
                 gmDu.SetGlobalBuffer((__gm__ ElementDu *)params.ptrDu + valueBase * params.V);
 
                 auto tensorDA = tla::MakeTensor(gmDA, params.layoutDA, Arch::PositionGM{});

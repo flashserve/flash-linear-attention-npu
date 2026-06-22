@@ -38,8 +38,12 @@ bool PrepareWyReprBwdFullTilingA5::SetTiling(gert::TilingContext *context)
         OP_CHECK_IF(VariableLenTiling() != ge::GRAPH_SUCCESS, , return false);
         tiling_.isVariable = 1;
     }
-    context->SetTilingKey(1);
-    OP_LOGD(context->GetNodeName(), "tilingKey: %d", context->GetTilingKey());
+    if (tiling_.V == V_DIM_256) {
+        context->SetTilingKey(2);
+    } else {
+        context->SetTilingKey(1);
+    }
+    OP_LOGD(context->GetNodeName(), "tilingKey: %d (V=%ld)", context->GetTilingKey(), tiling_.V);
     PrepareWyReprBwdFullTilingDataPrint();
 
     OP_CHECK_IF(context_->GetRawTilingData() == nullptr, OP_LOGE(context_->GetNodeName(), "RawTilingData is nullptr."),
@@ -55,10 +59,13 @@ bool PrepareWyReprBwdFullTilingA5::SetTiling(gert::TilingContext *context)
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     context->SetBlockDim(ascendcPlatform.GetCoreNumAic());
 
-    uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
-    uint32_t userWorkspaceSize = 2 * tiling_.B * tiling_.HV * tiling_.T * tiling_.V;
+    auto sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+    OP_LOGD(context->GetNodeName(), "=== sysWorkspaceSize: %ld", sysWorkspaceSize);
+    size_t userWorkspaceSize = 2 * tiling_.B * tiling_.HV * tiling_.T * (tiling_.V + tiling_.K);
+    OP_LOGD(context->GetNodeName(), "=== userWorkspaceSize: %ld", userWorkspaceSize);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
-    currentWorkspace[0] = userWorkspaceSize + sysWorkspaceSize;
+    currentWorkspace[0] = static_cast<size_t>(userWorkspaceSize + sysWorkspaceSize);
+    OP_LOGD(context->GetNodeName(), "=== currentWorkspace[0]: %ld", currentWorkspace[0]);
     context->SetScheduleMode(1); // set as batchmod for template using SyncAll
     OP_LOGD(context->GetNodeName(), "Tiling4PrepareWyReprBwdFull end.");
     return true;
@@ -118,7 +125,7 @@ ge::graphStatus PrepareWyReprBwdFullTilingA5::CommonTiling()
     OP_CHECK_IF(CompareShape(AStorageShape, dAStorageShape, INPUT_A_NAME, INPUT_DA_NAME, DIM_NUM_4) !=
                     ge::GRAPH_SUCCESS,
                 , return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CompareShape(dwStorageShape, vStorageShape, INPUT_DW_NAME, INPUT_V_NAME, DIM_NUM_3) !=
+    OP_CHECK_IF(CompareShape(dwStorageShape, kStorageShape, INPUT_DW_NAME, INPUT_K_NAME, DIM_NUM_3) !=
                     ge::GRAPH_SUCCESS,
                 , return ge::GRAPH_FAILED);
     OP_CHECK_IF(dwStorageShape.GetDim(DIM_3) != kStorageShape.GetDim(DIM_3),
@@ -151,6 +158,10 @@ ge::graphStatus PrepareWyReprBwdFullTilingA5::CommonTiling()
     tiling_.T = T;
     tiling_.K = K;
     tiling_.V = V;
+    OP_CHECK_IF(V != V_DIM_128 && V != V_DIM_256,
+                    OP_LOGE(context_->GetNodeName(),
+                            "Check value dim V failed: only %ld or %ld is supported, but get %ld.", V_DIM_128, V_DIM_256, V),
+                    return ge::GRAPH_FAILED);
     auto attrPtr = context_->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context_, attrPtr);
     chunkSize = static_cast<int64_t>(*(attrPtr->GetAttrPointer<int32_t>(ATTR_CHUNK_SIZE_IDX)));
@@ -175,6 +186,8 @@ ge::graphStatus PrepareWyReprBwdFullTilingA5::CommonTiling()
     OP_CHECK_IF(SetDkbVecRowRegbase(ubSize, kDType, betaDType) != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "SetDkbVecRow Failed."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(SetDkbgVecRowRegbase(ubSize, kDType, betaDType) != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "SetDkbgVecRow Failed."),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(SetDkGatherVecRowRegbase(ubSize, kDType, betaDType) != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "SetDkGatherVecRow Failed."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(SetDvbVecRowRegbase(ubSize, kDType, betaDType) != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "SetDvbVecRow Failed."),
                 return ge::GRAPH_FAILED);
@@ -383,6 +396,32 @@ ge::graphStatus PrepareWyReprBwdFullTilingA5::SetDkbgVecRowRegbase(uint64_t ubSi
     return ge::GRAPH_SUCCESS;
 }
 
+ge::graphStatus PrepareWyReprBwdFullTilingA5::SetDkGatherVecRowRegbase(uint64_t ubSize, ge::DataType kType, ge::DataType betaType)
+{
+    uint64_t rowNum = chunkSize / 2;
+    uint64_t sizeofKType = SIZE_FP32;
+    uint64_t sizeofBetaType = SIZE_FP32;
+    if (kType != ge::DataType::DT_FLOAT) {
+        sizeofKType = SIZE_HALF;
+    }
+    if (betaType != ge::DataType::DT_FLOAT) {
+        sizeofBetaType = SIZE_HALF;
+    }
+    while (rowNum >= 8) {
+        uint64_t useUbSize = 0;
+        useUbSize += 2 * rowNum * K * sizeofKType;
+        useUbSize += 2 * rowNum * K * sizeofKType;
+        useUbSize += 2 * rowNum * K * sizeofKType;
+
+        if (useUbSize <= ubSize) {
+            break;
+        }
+        rowNum = rowNum / 2;
+    }
+    tiling_.dkGatherVecRow = rowNum;
+    return ge::GRAPH_SUCCESS;
+}
+
 ge::graphStatus PrepareWyReprBwdFullTilingA5::SetDvbVecRowRegbase(uint64_t ubSize, ge::DataType kType, ge::DataType betaType)
 {
     uint64_t rowNum = chunkSize / 2;
@@ -474,6 +513,7 @@ void PrepareWyReprBwdFullTilingA5::PrepareWyReprBwdFullTilingDataPrint()
     OP_LOGD(nodeName, "=== kBeteVecRow: %ld", tiling_.kBeteVecRow);
     OP_LOGD(nodeName, "=== dkbVecRow: %ld", tiling_.dkbVecRow);
     OP_LOGD(nodeName, "=== dkbgVecRow: %ld", tiling_.dkbgVecRow);
+    OP_LOGD(nodeName, "=== dkGatherVecRow: %ld", tiling_.dkGatherVecRow);
     OP_LOGD(nodeName, "=== dvbVecRow: %ld", tiling_.dvbVecRow);
     OP_LOGD(nodeName, "=== kktVecRow: %ld", tiling_.kktVecRow);
     OP_LOGD(nodeName, "=== isVariable: %ld", tiling_.isVariable);
