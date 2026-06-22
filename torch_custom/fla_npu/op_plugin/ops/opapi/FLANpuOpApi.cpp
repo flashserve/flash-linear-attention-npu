@@ -411,4 +411,16 @@ at::Tensor npu_causal_conv1d(
     return y;
 }
 
+at::Tensor npu_solve_tril(const at::Tensor & x, int64_t chunk_size, at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices, c10::string_view layout)
+{
+    auto output_size = x.sizes();
+    auto output_dtype = x.scalar_type();
+    at::Tensor out = npu_preparation::apply_tensor_without_format(output_size,
+                                                                  x.options().dtype(output_dtype));
+    std::string layout_str(layout);
+    const char *layout_cstr = layout_str.c_str();
+    EXEC_NPU_CMD_EXT(aclnnSolveTril, x, cu_seqlens, chunk_indices, chunk_size, layout_cstr, out);
+    return out;
+}
+
 }  // namespace op_api
