@@ -30,6 +30,7 @@ struct PrepareWyReprBwdFullTilingDataA5 {
     int64_t kBeteVecRow = 0; // kBeta计算流程时vector单次处理的行数
     int64_t dkbVecRow = 0;   // dk计算流程时vector单次处理的行数
     int64_t dkbgVecRow = 0;  // dkbg计算流程时vector单次处理的行数
+    int64_t dkGatherVecRow = 0;  // dk合并(HV->HK)计算流程时vector单次处理的行数
     int64_t dvbVecRow = 0;   // dvb计算流程时vector单次处理的行数
     int64_t kktVecRow = 0;   // kkt计算流程时vector单次处理的行数
     int64_t isVariable = 0;

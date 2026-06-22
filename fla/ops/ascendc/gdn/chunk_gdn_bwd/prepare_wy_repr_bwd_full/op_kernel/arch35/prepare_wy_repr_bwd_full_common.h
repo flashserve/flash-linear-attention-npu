@@ -53,4 +53,13 @@ __aicore__ void inline GetChunkOffset(GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
 
     return;
 }
+
+__aicore__ void inline GetKBosByVBos(uint32_t vBos, uint64_t T, uint64_t HV, uint64_t HK, uint64_t &kBos)
+{
+    uint64_t batchIdx = vBos / (HV * T);
+    uint64_t timeBos = vBos - batchIdx * HV * T;
+    kBos = batchIdx * HK * T + timeBos;
+
+    return;
+}
 #endif // PREPARE_WY_REPR_BWD_FULL_COMMON_H

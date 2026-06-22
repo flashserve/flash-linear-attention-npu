@@ -234,7 +234,7 @@ public:
         OP_CHECK_IF(CompareShape(AStorageShape, dAStorageShape, INPUT_A_NAME, INPUT_DA_NAME, DIM_NUM_4) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CompareShape(dwStorageShape, vStorageShape, INPUT_DW_NAME, INPUT_V_NAME, DIM_NUM_3) !=
+        OP_CHECK_IF(CompareShape(dwStorageShape, kStorageShape, INPUT_DW_NAME, INPUT_K_NAME, DIM_NUM_3) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
         OP_CHECK_IF(dwStorageShape.GetDim(DIM_3) != kStorageShape.GetDim(DIM_3),
