@@ -47,6 +47,23 @@ class SolveTrilCube {
     static constexpr int32_t NUM_FRACS = MATRIX_SIZE / FRAC;
     static constexpr int32_t L1_SLOT_ELEMS = TILE_LEN;
 
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+    // Ascend950: I 和 -I 常驻 UB，按需通过 MTE3 加载到 L1
+    static constexpr int32_t SLOT_MNEG  = 0;
+    static constexpr int32_t SLOT_X     = 1;
+    static constexpr int32_t SLOT_Y     = 2;
+    static constexpr int32_t SLOT_INPUT = 3;
+    static constexpr int32_t L1_SLOT_COUNT = 4;
+
+    static constexpr int32_t UB_AUX_I_OFF    = 0;
+    static constexpr int32_t UB_AUX_INEG_OFF = TILE_LEN;
+    static constexpr int32_t UB_AUX_ZERO_OFF = 2 * TILE_LEN;
+    static constexpr int32_t UB_WORK_X_OFF   = 3 * TILE_LEN;
+    static constexpr int32_t UB_WORK_Y_OFF   = 4 * TILE_LEN;
+    static constexpr int32_t UB_WORK_IN_OFF  = 5 * TILE_LEN;
+    static constexpr int32_t UB_TOTAL_ELEMS  = 6 * TILE_LEN;
+    static constexpr int32_t L1_TOTAL_ELEMS = L1_SLOT_COUNT * L1_SLOT_ELEMS;
+#else
     static constexpr int32_t SLOT_INEG = 0;
     static constexpr int32_t SLOT_I = 1;
     static constexpr int32_t SLOT_MNEG = 2;
@@ -55,6 +72,7 @@ class SolveTrilCube {
     static constexpr int32_t SLOT_INPUT = 5;
     static constexpr int32_t L1_SLOT_COUNT = 6;
     static constexpr int32_t L1_TOTAL_ELEMS = L1_SLOT_COUNT * L1_SLOT_ELEMS;
+#endif
 
     static constexpr int32_t EVT_MTE2_MTE1 = 0;
     static constexpr int32_t EVT_MTE1_M = 0;
@@ -75,7 +93,9 @@ private:
     __aicore__ inline void ProcessOneTile(int64_t tileIdx);
     __aicore__ inline int64_t GetTileGMOffset(int64_t tileIdx);
     __aicore__ inline int64_t GetTileValidSize(int64_t tileIdx);
+#if !SOLVE_TRIL_PLATFORM_ASCEND950
     __aicore__ inline void PrepareConstants();
+#endif
     __aicore__ inline void LoadInputTile(int64_t gmOffset, int64_t validSize = MATRIX_SIZE);
     __aicore__ inline void LoadFullInputForMBH(int64_t gmOffset, int64_t validSize = MATRIX_SIZE);
     __aicore__ inline void StoreFinalResult(int64_t gmOffset, int64_t validSize = MATRIX_SIZE);
@@ -90,6 +110,12 @@ private:
     __aicore__ inline void L0CToSlot(int32_t slotDst);
     __aicore__ inline void ExtractBlocksToSlot(int32_t srcSlot, int32_t dstSlot,
                                                 int32_t blockSize, int32_t startBlock);
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+    __aicore__ inline void GenerateAuxMatricesOnUB();
+    __aicore__ inline void LoadAuxToL1(LocalTensor<half> ubSrc, int32_t l1Slot);
+    __aicore__ inline void L0CToUB_X();
+    __aicore__ inline void LoadUBXToL1(int32_t slotDst);
+#endif
     __aicore__ inline void ClearSlot(int32_t slot);
 
 private:
@@ -97,6 +123,27 @@ private:
     GlobalTensor<half> inputGM_;
     GlobalTensor<half> outputGM_;
     GlobalTensor<half> workspaceGM_;
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+    // Ascend950: UB 替代 GM scratch，不需要 scratchGM_
+
+    TBuf<TPosition::A1> l1Buf_;
+    LocalTensor<half> l1_;
+    TBuf<TPosition::A2> l0aBuf_;
+    LocalTensor<half> l0a_;
+    TBuf<TPosition::B2> l0bBuf_;
+    LocalTensor<half> l0b_;
+    TBuf<TPosition::CO1> l0cBuf_;
+    LocalTensor<float> l0c_;
+
+    TBuf<TPosition::VECCALC> ubBuf_;
+    LocalTensor<half> ub_;
+    LocalTensor<half> ubI_;
+    LocalTensor<half> ubINeg_;
+    LocalTensor<half> ubZero_;
+    LocalTensor<half> ubWorkX_;
+    LocalTensor<half> ubWorkY_;
+    LocalTensor<half> ubWorkIn_;
+#else
     GlobalTensor<half> scratchGM_;
 
     TBuf<TPosition::A1> l1Buf_;
@@ -107,6 +154,7 @@ private:
     LocalTensor<half> l0b_;
     TBuf<TPosition::CO1> l0cBuf_;
     LocalTensor<float> l0c_;
+#endif
 
     int64_t totalTiles_;
     int64_t matrixSize_;
@@ -126,7 +174,9 @@ private:
     GlobalTensor<int64_t> cuSeqlensGM_;
     GlobalTensor<int64_t> chunkIndicesGM_;
 
+#if !SOLVE_TRIL_PLATFORM_ASCEND950
     Catlass::Arch::CrossCoreFlagWithReverse<> flagAivFinish_{SYNC_AIC_AIV_FLAG_SOLVE, SYNC_AIV_AIC_FLAG_SOLVE};
+#endif
 };
 
 
@@ -168,6 +218,27 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::Init(
         cuSeqlensGM_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(cu_seqlens));
         chunkIndicesGM_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(chunk_indices));
     }
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+    // Ascend950: UB 替代 GM scratch，不需要 scratchGM_
+
+    pipe_.InitBuffer(l1Buf_, L1_TOTAL_ELEMS * sizeof(half));
+    l1_ = l1Buf_.Get<half>();
+    pipe_.InitBuffer(l0aBuf_, TILE_LEN * sizeof(half));
+    l0a_ = l0aBuf_.Get<half>();
+    pipe_.InitBuffer(l0bBuf_, TILE_LEN * sizeof(half));
+    l0b_ = l0bBuf_.Get<half>();
+    pipe_.InitBuffer(l0cBuf_, TILE_LEN * sizeof(float));
+    l0c_ = l0cBuf_.Get<float>();
+
+    pipe_.InitBuffer(ubBuf_, UB_TOTAL_ELEMS * sizeof(half));
+    ub_ = ubBuf_.Get<half>();
+    ubI_     = ub_[UB_AUX_I_OFF];
+    ubINeg_  = ub_[UB_AUX_INEG_OFF];
+    ubZero_  = ub_[UB_AUX_ZERO_OFF];
+    ubWorkX_ = ub_[UB_WORK_X_OFF];
+    ubWorkY_ = ub_[UB_WORK_Y_OFF];
+    ubWorkIn_ = ub_[UB_WORK_IN_OFF];
+#else
     int64_t scratchOffset = GM_NUM_SHARED_SLOTS * TILE_LEN + aicIdx_ * TILE_LEN;
     scratchGM_ = workspaceGM_[scratchOffset];
 
@@ -179,6 +250,7 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::Init(
     l0b_ = l0bBuf_.Get<half>();
     pipe_.InitBuffer(l0cBuf_, TILE_LEN * sizeof(float));
     l0c_ = l0cBuf_.Get<float>();
+#endif
 }
 
 template <int MATRIX_SIZE>
@@ -192,9 +264,12 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::Process()
         return;
     }
 
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+    GenerateAuxMatricesOnUB();
+#else
     SyncAll<false>();
-
     PrepareConstants();
+#endif
 
     for (int64_t t = startTile; t < endTile; t++) {
         ProcessOneTile(t);
@@ -285,7 +360,12 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ProcessOneTile(int64_t tileId
             LoadFullInputForMBH(gmOffset);
             RecursiveMerge();
         } else {
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+            LoadAuxToL1(ubI_, SLOT_Y);
+            MatmulToL0C(SLOT_X, SLOT_Y, true);
+#else
             MatmulToL0C(SLOT_X, SLOT_I, true);
+#endif
             SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
             WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
         }
@@ -378,6 +458,28 @@ template <int MATRIX_SIZE>
 __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::L0CToSlot(int32_t slotDst)
 {
     int32_t rowStride = MATRIX_SIZE;
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+    auto intriParams = AscendC::FixpipeParamsV220(
+        MATRIX_SIZE, MATRIX_SIZE,
+        MATRIX_SIZE, rowStride, false);
+    intriParams.quantPre = QuantMode_t::F322F16;
+    AscendC::Fixpipe<half, float, AscendC::CFG_ROW_MAJOR>(ubWorkY_, l0c_, intriParams);
+    SetFlag<HardEvent::FIX_MTE3>(EVT_FIX_MTE2);
+    WaitFlag<HardEvent::FIX_MTE3>(EVT_FIX_MTE2);
+
+    Nd2NzParams nd2nzParams;
+    nd2nzParams.ndNum = 1;
+    nd2nzParams.nValue = MATRIX_SIZE;
+    nd2nzParams.dValue = MATRIX_SIZE;
+    nd2nzParams.srcDValue = rowStride;
+    nd2nzParams.srcNdMatrixStride = 0;
+    nd2nzParams.dstNzNStride = 1;
+    nd2nzParams.dstNzC0Stride = MATRIX_SIZE;
+    nd2nzParams.dstNzMatrixStride = 0;
+    DataCopy(l1_[slotDst * L1_SLOT_ELEMS], ubWorkY_, nd2nzParams);
+    SetFlag<HardEvent::MTE3_MTE1>(EVT_MTE2_MTE1);
+    WaitFlag<HardEvent::MTE3_MTE1>(EVT_MTE2_MTE1);
+#else
     NsSolveTril::L0CToGM(
         scratchGM_,
         l0c_,
@@ -401,6 +503,7 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::L0CToSlot(int32_t slotDst)
     DataCopy(l1_[slotDst * L1_SLOT_ELEMS], scratchGM_, nd2nzParams);
     SetFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_MTE1);
     WaitFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_MTE1);
+#endif
 }
 
 template <int MATRIX_SIZE>
@@ -413,6 +516,84 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::MatmulToSlot(
     L0CToSlot(slotDst);
 }
 
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+// ========== Ascend950 新增函数 ==========
+
+template <int MATRIX_SIZE>
+__aicore__ inline void SolveTrilCube<MATRIX_SIZE>::GenerateAuxMatricesOnUB()
+{
+    Duplicate(ubZero_, half(0.0f), TILE_LEN);
+    Duplicate(ubI_, half(0.0f), TILE_LEN);
+    Duplicate(ubINeg_, half(0.0f), TILE_LEN);
+
+    SetFlag<HardEvent::V_MTE3>(0);
+    WaitFlag<HardEvent::V_MTE3>(0);
+    PipeBarrier<PIPE_V>();
+
+    constexpr int32_t NUM_FRACS_AUX = MATRIX_SIZE / 16;
+    for (int32_t fi = 0; fi < NUM_FRACS_AUX; fi++) {
+        int32_t baseOff = fi * 16 * MATRIX_SIZE + fi * 16;
+        for (int32_t r = 0; r < 16; r++) {
+            int32_t diagOff = baseOff + r * MATRIX_SIZE + r;
+            ubI_.SetValue(diagOff, half(1.0f));
+            ubINeg_.SetValue(diagOff, half(-1.0f));
+        }
+    }
+
+    SetFlag<HardEvent::V_MTE3>(1);
+    WaitFlag<HardEvent::V_MTE3>(1);
+}
+
+template <int MATRIX_SIZE>
+__aicore__ inline void SolveTrilCube<MATRIX_SIZE>::LoadAuxToL1(
+    LocalTensor<half> ubSrc, int32_t l1Slot)
+{
+    Nd2NzParams nd2nzParams;
+    nd2nzParams.ndNum = 1;
+    nd2nzParams.nValue = MATRIX_SIZE;
+    nd2nzParams.dValue = MATRIX_SIZE;
+    nd2nzParams.srcDValue = MATRIX_SIZE;
+    nd2nzParams.srcNdMatrixStride = 0;
+    nd2nzParams.dstNzNStride = 1;
+    nd2nzParams.dstNzC0Stride = MATRIX_SIZE;
+    nd2nzParams.dstNzMatrixStride = 0;
+
+    DataCopy(l1_[l1Slot * L1_SLOT_ELEMS], ubSrc, nd2nzParams);
+    SetFlag<HardEvent::MTE3_MTE1>(EVT_MTE2_MTE1);
+    WaitFlag<HardEvent::MTE3_MTE1>(EVT_MTE2_MTE1);
+}
+
+template <int MATRIX_SIZE>
+__aicore__ inline void SolveTrilCube<MATRIX_SIZE>::L0CToUB_X()
+{
+    auto intriParams = AscendC::FixpipeParamsV220(
+        MATRIX_SIZE, MATRIX_SIZE,
+        MATRIX_SIZE, MATRIX_SIZE, false);
+    intriParams.quantPre = QuantMode_t::F322F16;
+    AscendC::Fixpipe<half, float, AscendC::CFG_ROW_MAJOR>(ubWorkX_, l0c_, intriParams);
+    SetFlag<HardEvent::FIX_MTE3>(EVT_FIX_MTE2);
+    WaitFlag<HardEvent::FIX_MTE3>(EVT_FIX_MTE2);
+}
+
+template <int MATRIX_SIZE>
+__aicore__ inline void SolveTrilCube<MATRIX_SIZE>::LoadUBXToL1(int32_t slotDst)
+{
+    Nd2NzParams nd2nzParams;
+    nd2nzParams.ndNum = 1;
+    nd2nzParams.nValue = MATRIX_SIZE;
+    nd2nzParams.dValue = MATRIX_SIZE;
+    nd2nzParams.srcDValue = MATRIX_SIZE;
+    nd2nzParams.srcNdMatrixStride = 0;
+    nd2nzParams.dstNzNStride = 1;
+    nd2nzParams.dstNzC0Stride = MATRIX_SIZE;
+    nd2nzParams.dstNzMatrixStride = 0;
+
+    DataCopy(l1_[slotDst * L1_SLOT_ELEMS], ubWorkX_, nd2nzParams);
+    SetFlag<HardEvent::MTE3_MTE1>(EVT_MTE2_MTE1);
+    WaitFlag<HardEvent::MTE3_MTE1>(EVT_MTE2_MTE1);
+}
+#endif  // SOLVE_TRIL_PLATFORM_ASCEND950
+
 template <int MATRIX_SIZE>
 __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ClearSlot(int32_t slot)
 {
@@ -421,7 +602,11 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ClearSlot(int32_t slot)
     params.blockLen = TILE_LEN * sizeof(half) / 32;
     params.srcStride = 0;
     params.dstStride = 0;
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+    DataCopy(l1_[slot * L1_SLOT_ELEMS], ubZero_, params);
+#else
     DataCopy(l1_[slot * L1_SLOT_ELEMS], workspaceGM_[GM_WS_ZERO * TILE_LEN], params);
+#endif
 }
 
 template <int MATRIX_SIZE>
@@ -447,18 +632,28 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ExtractBlocksToSlot(
                 int32_t row = blk * fracsPerBlock + fi;
                 int32_t col = blk * fracsPerBlock + fj;
                 int32_t off = (col * NUM_FRACS + row) * FRAC_LEN;
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+                DataCopy(ubWorkY_, l1_[srcSlot * L1_SLOT_ELEMS + off], copyParams);
+                SetFlag<HardEvent::MTE3_V>(EVT_MTE3_MTE2);
+                WaitFlag<HardEvent::MTE3_V>(EVT_MTE3_MTE2);
+                DataCopy(l1_[dstSlot * L1_SLOT_ELEMS + off], ubWorkY_, copyParams);
+                SetFlag<HardEvent::V_MTE3>(EVT_MTE2_MTE3);
+                WaitFlag<HardEvent::V_MTE3>(EVT_MTE2_MTE3);
+#else
                 DataCopy(scratchGM_, l1_[srcSlot * L1_SLOT_ELEMS + off], copyParams);
                 SetFlag<HardEvent::MTE3_MTE2>(EVT_MTE3_MTE2);
                 WaitFlag<HardEvent::MTE3_MTE2>(EVT_MTE3_MTE2);
                 DataCopy(l1_[dstSlot * L1_SLOT_ELEMS + off], scratchGM_, copyParams);
                 SetFlag<HardEvent::MTE2_MTE3>(EVT_MTE2_MTE3);
                 WaitFlag<HardEvent::MTE2_MTE3>(EVT_MTE2_MTE3);
+#endif
             }
         }
     }
 }
 
 
+#if !SOLVE_TRIL_PLATFORM_ASCEND950
 template <int MATRIX_SIZE>
 __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::PrepareConstants()
 {
@@ -477,6 +672,7 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::PrepareConstants()
     SetFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_MTE1);
     WaitFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_MTE1);
 }
+#endif
 
 template <int MATRIX_SIZE>
 __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::LoadInputTile(int64_t gmOffset, int64_t validSize)
@@ -522,12 +718,22 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::MCHInvertDiagonal()
     MatmulToSlot(SLOT_INPUT, SLOT_INPUT, SLOT_Y, true);
     PipeBarrier<PIPE_ALL>();
 
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+    LoadAuxToL1(ubI_, SLOT_MNEG);
+    MatmulToL0C(SLOT_MNEG, SLOT_MNEG, true);
+#else
     MatmulToL0C(SLOT_I, SLOT_I, true);
+#endif
     SetFlag<HardEvent::M_MTE1>(EVT_MTE1_M);
     WaitFlag<HardEvent::M_MTE1>(EVT_MTE1_M);
     SetFlag<HardEvent::M_MTE1>(EVT_MTE1_M);
     WaitFlag<HardEvent::M_MTE1>(EVT_MTE1_M);
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+    LoadAuxToL1(ubINeg_, SLOT_MNEG);
+    MatmulToSlot(SLOT_MNEG, SLOT_INPUT, SLOT_X, false);
+#else
     MatmulToSlot(SLOT_INEG, SLOT_INPUT, SLOT_X, false);
+#endif
 
     constexpr int32_t NUM_ITERS = 3;
     for (int32_t iter = 0; iter < NUM_ITERS - 1; iter++) {
@@ -536,7 +742,12 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::MCHInvertDiagonal()
         WaitFlag<HardEvent::M_MTE1>(EVT_MTE1_M);
         SetFlag<HardEvent::M_MTE1>(EVT_MTE1_M);
         WaitFlag<HardEvent::M_MTE1>(EVT_MTE1_M);
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+        LoadAuxToL1(ubI_, SLOT_MNEG);
+        MatmulToSlot(SLOT_X, SLOT_MNEG, SLOT_X, false);
+#else
         MatmulToSlot(SLOT_X, SLOT_I, SLOT_X, false);
+#endif
         MatmulToSlot(SLOT_Y, SLOT_Y, SLOT_Y, true);
     }
     MatmulToL0C(SLOT_X, SLOT_Y, true);
@@ -544,7 +755,12 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::MCHInvertDiagonal()
     WaitFlag<HardEvent::M_MTE1>(EVT_MTE1_M);
     SetFlag<HardEvent::M_MTE1>(EVT_MTE1_M);
     WaitFlag<HardEvent::M_MTE1>(EVT_MTE1_M);
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+    LoadAuxToL1(ubI_, SLOT_MNEG);
+    MatmulToSlot(SLOT_X, SLOT_MNEG, SLOT_X, false);
+#else
     MatmulToSlot(SLOT_X, SLOT_I, SLOT_X, false);
+#endif
 }
 
 
@@ -568,7 +784,12 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::LoadFullInputForMBH(int64_t g
     SetFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_MTE1);
     WaitFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_MTE1);
 
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+    LoadAuxToL1(ubINeg_, SLOT_Y);
+    MatmulToSlot(SLOT_Y, SLOT_INPUT, SLOT_MNEG, true);
+#else
     MatmulToSlot(SLOT_INEG, SLOT_INPUT, SLOT_MNEG, true);
+#endif
 }
 
 template <int MATRIX_SIZE>
@@ -580,7 +801,12 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::RecursiveMerge()
 
         ExtractBlocksToSlot(SLOT_X, SLOT_Y, blockSize, drvStart);
 
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+        LoadAuxToL1(ubI_, SLOT_MNEG);
+        MatmulToL0C(SLOT_MNEG, SLOT_MNEG, true);
+#else
         MatmulToL0C(SLOT_I, SLOT_I, true);
+#endif
         SetFlag<HardEvent::M_MTE1>(EVT_M_MTE1);
         WaitFlag<HardEvent::M_MTE1>(EVT_M_MTE1);
         SetFlag<HardEvent::M_MTE1>(EVT_M_MTE1);
@@ -603,12 +829,22 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::RecursiveMerge()
         ExtractBlocksToSlot(SLOT_X, SLOT_INPUT, blockSize, drvStart);
         SetFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_MTE1);
         WaitFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_MTE1);
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+        LoadAuxToL1(ubI_, SLOT_Y);
+        MatmulToL0C(SLOT_Y, SLOT_INPUT, false);
+#else
         MatmulToL0C(SLOT_I, SLOT_INPUT, false);
+#endif
         SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
         WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
 
         if (blockSize < MATRIX_SIZE / 2) {
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+            L0CToUB_X();
+            LoadUBXToL1(SLOT_X);
+#else
             L0CToSlot(SLOT_X);
+#endif
             SetFlag<HardEvent::MTE2_MTE3>(EVT_MTE2_MTE3);
             WaitFlag<HardEvent::MTE2_MTE3>(EVT_MTE2_MTE3);
         }
@@ -626,7 +862,12 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ProcessPartialTile(int64_t gm
         LoadFullInputForMBH(gmOffset, validSize);
         RecursiveMerge();
     } else {
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+        LoadAuxToL1(ubI_, SLOT_Y);
+        MatmulToL0C(SLOT_X, SLOT_Y, true);
+#else
         MatmulToL0C(SLOT_X, SLOT_I, true);
+#endif
         SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
         WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
     }

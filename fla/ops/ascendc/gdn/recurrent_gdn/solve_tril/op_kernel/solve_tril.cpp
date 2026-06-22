@@ -6,7 +6,9 @@
 #include "kernel_operator.h"
 #include "lib/matmul_intf.h"
 #include "solve_tril_cube.h"
+#if !SOLVE_TRIL_PLATFORM_ASCEND950
 #include "solve_tril_vector.h"
+#endif
 
 using namespace AscendC;
 
@@ -15,7 +17,11 @@ extern "C" __global__ __aicore__ void solve_tril(GM_ADDR x, GM_ADDR cu_seqlens, 
 {
     GET_TILING_DATA(tilingData, tiling);
     if (TILING_KEY_IS(1)) {
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+        KERNEL_TASK_TYPE(1, KERNEL_TYPE_AIC);
+#else
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
+#endif
 
         int64_t ms = tilingData.matrixSize;
         int64_t totalTiles = tilingData.totalTiles;
@@ -41,6 +47,7 @@ extern "C" __global__ __aicore__ void solve_tril(GM_ADDR x, GM_ADDR cu_seqlens, 
             }
         }
 
+#if !SOLVE_TRIL_PLATFORM_ASCEND950
         if ASCEND_IS_AIV {
             if (ms == 16) {
                 NsSolveTril::SolveTrilVector<16> op;
@@ -60,5 +67,6 @@ extern "C" __global__ __aicore__ void solve_tril(GM_ADDR x, GM_ADDR cu_seqlens, 
                 op.Process();
             }
         }
+#endif
     }
 }

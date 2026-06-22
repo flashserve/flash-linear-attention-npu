@@ -10,6 +10,11 @@
 #include "catlass/arch/cross_core_sync.hpp"
 #include "solve_tril_common.h"
 
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+// Ascend950: AIV 核不需要，辅助矩阵在 AIC 的 UB 上生成
+// 此文件内容被条件编译跳过
+#else
+
 namespace NsSolveTril {
 
 using namespace AscendC;
@@ -124,4 +129,5 @@ __aicore__ inline void SolveTrilVector<MATRIX_SIZE>::GenerateAuxMatrices()
 
 }  // namespace NsSolveTril
 
+#endif  // SOLVE_TRIL_PLATFORM_ASCEND950
 #endif  // SOLVE_TRIL_VECTOR_H

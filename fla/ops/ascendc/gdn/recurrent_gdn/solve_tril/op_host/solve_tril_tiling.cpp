@@ -8,6 +8,15 @@
 #include "tiling/platform/platform_ascendc.h"
 #include <string>
 
+// Platform detection for tiling layer (aligns with solve_tril_common.h)
+#if !defined(SOLVE_TRIL_PLATFORM_ASCEND950)
+#if defined(__ASCEND950__) || defined(ASCENDC_PLATFORM_ASCEND950)
+#define SOLVE_TRIL_PLATFORM_ASCEND950 1
+#else
+#define SOLVE_TRIL_PLATFORM_ASCEND950 0
+#endif
+#endif
+
 namespace optiling {
 
 constexpr uint32_t INPUT_X_IDX = 0;
@@ -117,9 +126,13 @@ static ge::graphStatus SolveTrilTilingFunc(gert::TilingContext* context)
     context->SetBlockDim(usedCoreNum);
 
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+    size_t userWorkspaceSize = 0;
+#else
     size_t sharedSize = 3 * chunkSize * chunkSize * sizeof(uint16_t);
     size_t perCoreSize = chunkSize * chunkSize * sizeof(uint16_t);
     size_t userWorkspaceSize = sharedSize + usedCoreNum * perCoreSize;
+#endif
     userWorkspaceSize = ((userWorkspaceSize + 511) / 512) * 512;
     size_t* ws = context->GetWorkspaceSizes(1);
     ws[0] = userWorkspaceSize + sysWorkspaceSize;

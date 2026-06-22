@@ -6,3 +6,5 @@ Dockerfile text eol=lf
 ci/Dockerfile text eol=lf
 .gitattributes text eol=lf
 .github/CODEOWNERS text eol=lf
+fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/old_files/*.sh -text
+fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/run_all_cases.sh -text

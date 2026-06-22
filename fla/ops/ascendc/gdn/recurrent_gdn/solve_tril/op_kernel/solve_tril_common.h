@@ -8,6 +8,18 @@
 
 #include "kernel_operator.h"
 
+// ========== Ascend950 平台检测 ==========
+// 根据芯片架构宏判断是否为 Ascend950 系列
+#if defined(__ASCEND950__) || defined(ASCENDC_PLATFORM_ASCEND950)
+#define SOLVE_TRIL_PLATFORM_ASCEND950 1
+#else
+#define SOLVE_TRIL_PLATFORM_ASCEND950 0
+#endif
+
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+// Ascend950: 纯 AIC 模式，无 AIC↔AIV 同步需求
+// 辅助矩阵在 UB 上生成，无需 GM workspace slot
+#else
 // AIC/AIV 同步标志常量
 constexpr uint64_t SYNC_AIV_AIC_FLAG_SOLVE = 3;
 constexpr uint64_t SYNC_AIC_AIV_FLAG_SOLVE = 5;
@@ -28,5 +40,6 @@ constexpr uint64_t DIAG_MASK_8X16_EVEN[2] = {
     0x0008000400020001ULL,
     0x0080004000200010ULL
 };
+#endif
 
 #endif  // SOLVE_TRIL_COMMON_H
