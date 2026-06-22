@@ -149,6 +149,8 @@ int main() {
   int64_t B = 1;
   int64_t T = 32768;
   int64_t H = 32;
+  int64_t Hk = 4;
+
   int64_t K = 128;
   int64_t V = 128;
   int64_t chunk_size = 64;
@@ -160,8 +162,8 @@ int main() {
   int64_t NT = static_cast<int64_t>(chunkIndicesHostData.size()) / 2;
   float scale = 1.0;
 
-  std::vector<int64_t> qShape = {B, H, T, K};
-  std::vector<int64_t> kShape = {B, H, T, K};
+  std::vector<int64_t> qShape = {B, Hk, T, K};
+  std::vector<int64_t> kShape = {B, Hk, T, K};
   std::vector<int64_t> wShape = {B, H, T, K};
   std::vector<int64_t> doShape = {B, H, T, V};
   std::vector<int64_t> dvShape = {B, H, T, V};

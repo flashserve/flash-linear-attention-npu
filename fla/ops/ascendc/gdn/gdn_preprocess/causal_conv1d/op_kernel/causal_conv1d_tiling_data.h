@@ -68,5 +68,8 @@ struct CausalConv1dTilingData {
     int64_t explicitTokenSeqRangeCount;
     int64_t tokenTileStartSeq[128];
     int64_t tokenTileEndSeq[128];
+
+    int64_t headNum;
+    bool isOutReshape;
 };
 #endif // CAUSAL_CONV1D_TILING_DATA_H_

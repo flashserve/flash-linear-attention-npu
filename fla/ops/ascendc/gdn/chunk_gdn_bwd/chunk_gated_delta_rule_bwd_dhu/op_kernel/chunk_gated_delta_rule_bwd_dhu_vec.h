@@ -35,7 +35,7 @@ private:
     __aicore__ inline void InitUB();
     __aicore__ inline void InitGlobalTensor(GM_ADDR q, GM_ADDR dv, GM_ADDR g, GM_ADDR cu_seqlens, 
                                             GM_ADDR dv2, GM_ADDR dh, GM_ADDR workspace);
-    __aicore__ inline void CaclOffset(const uint32_t taskIdx, uint64_t& tailChunkLen); 
+    __aicore__ inline void CaclOffset(const uint32_t coarseTaskIdx, const uint32_t h, uint64_t& tailChunkLen);
     __aicore__ inline void CalcGatedQ(float& gLast, float& gLastExp, const bool isLastChunk); 
     __aicore__ inline void CalcDv2(const float gLast, uint64_t& curGmOffsetV, const bool isLastChunk); 
     __aicore__ inline void UpdateDh(const float gLastExp, uint64_t& curGmOffsetH, const bool isLastChunk); 
@@ -146,45 +146,51 @@ __aicore__ inline void GDRVec<DT, GT>::InitGlobalTensor(GM_ADDR q, GM_ADDR dv, G
 template <typename DT, typename GT>
 __aicore__ inline void GDRVec<DT, GT>::Process( )
 {
-    uint32_t totalTaskNum = this->B * this->H * this->seqNum;
+    // 与 cube 一致：当前 for(h) for(chunkIdx)。若改为 chunk-major 以复用 cube 侧同一片 k 的搬运，须此处同序迭代，
+    // 并用按 h 保存的 gLast/gLastExp（及等价状态）贯穿各 chunk 轮次，避免打乱 gatedQ/dv2 的跨 chunk 递推。
+    uint32_t totalTaskNum = this->B * this->Hk * this->seqNum;
     cubeIdx_ = this->coreIdx / 2; // 当前vec对应的cube核，两个vec核处理一个cube结果
     for (uint32_t i = cubeIdx_; i < totalTaskNum; i += this->usedCoreNum) {
-        uint64_t tailChunkLen = 0;
-        CaclOffset(i, tailChunkLen);
-        float gLast = 0.0;
-        float gLastExp = 0.0;
-        uint64_t curGmOffsetV = 0;
-        uint64_t curGmOffsetH = 0;
-        bool isLastChunk = false;
-        // last chunk process
-        int32_t loopNum = curChunkNum_ - 1;
-        if (tailChunkLen != 0) {
-            this->curBT = tailChunkLen;
-            TailChunkProcess(tailChunkLen);
-            loopNum = curChunkNum_ - 2;
-        }
-        // 剩下的都是对齐的
-        this->curBT = this->chunkSize;
-        this->curCalcTK = this->qBufSize;
-        this->curCalcTV = this->dvBufSize;
-        this->curCalcBT = this->halfBT; 
-        for (int32_t chunkIdx = loopNum; chunkIdx >= 0; chunkIdx --) {
-            chunkIdx_ = chunkIdx;
-            isLastChunk = chunkIdx_ == curChunkNum_ - 1 ? true : false;
-            bos_ = chunkIdx_ * this->chunkSize;
-            // gatedQ = q * gExp
-            CalcGatedQ(gLast, gLastExp, isLastChunk);
-            // 計算dv2 dv2 = bdv * exp(bg_last - bg) + dv[B,H,T,V]
-            CalcDv2(gLast, curGmOffsetV, isLastChunk);
-            if (chunkIdx_ > 0) {
-                CrossCoreSetFlag<0x2, PIPE_MTE3>(CROSS_CORE_V2C_DV2); // 计算完一个chunk的dv2,通知cube可以开始计算w @ dv2 
+        const uint32_t hq = i % this->Hk;
+        const uint32_t hGroupEnd = (hq + 1U) * static_cast<uint32_t>(this->hvPerHk);
+        for (uint32_t h = hq * static_cast<uint32_t>(this->hvPerHk); h < hGroupEnd; h++) {
+            uint64_t tailChunkLen = 0;
+            CaclOffset(i, h, tailChunkLen);
+            float gLast = 0.0;
+            float gLastExp = 0.0;
+            uint64_t curGmOffsetV = 0;
+            uint64_t curGmOffsetH = 0;
+            bool isLastChunk = false;
+            // last chunk process
+            int32_t loopNum = curChunkNum_ - 1;
+            if (tailChunkLen != 0) {
+                this->curBT = tailChunkLen;
+                TailChunkProcess(tailChunkLen);
+                loopNum = curChunkNum_ - 2;
             }
-            // updated dh
-            if (chunkIdx_ == 0 && !isLastChunk) {
-                // 每個chunk更新bdh給下個chunk用，chunkIdx=0作爲最後一個chunk，所有的chunk都已經更新完了，無需更新bdh。
-                continue;
+            // 剩下的都是对齐的
+            this->curBT = this->chunkSize;
+            this->curCalcTK = this->qBufSize;
+            this->curCalcTV = this->dvBufSize;
+            this->curCalcBT = this->halfBT; 
+            for (int32_t chunkIdx = loopNum; chunkIdx >= 0; chunkIdx--) {
+                chunkIdx_ = chunkIdx;
+                isLastChunk = chunkIdx_ == curChunkNum_ - 1 ? true : false;
+                bos_ = chunkIdx_ * this->chunkSize;
+                // gatedQ = q * gExp
+                CalcGatedQ(gLast, gLastExp, isLastChunk);
+                // 計算dv2 dv2 = bdv * exp(bg_last - bg) + dv[B,H,T,V]
+                CalcDv2(gLast, curGmOffsetV, isLastChunk);
+                if (chunkIdx_ > 0) {
+                    CrossCoreSetFlag<0x2, PIPE_MTE3>(CROSS_CORE_V2C_DV2); // 计算完一个chunk的dv2,通知cube可以开始计算w @ dv2 
+                }
+                // updated dh
+                if (chunkIdx_ == 0 && !isLastChunk) {
+                    // 每個chunk更新bdh給下個chunk用，chunkIdx=0作爲最後一個chunk，所有的chunk都已經更新完了，無需更新bdh。
+                    continue;
+                }
+                UpdateDh(gLastExp, curGmOffsetH, isLastChunk);
             }
-            UpdateDh(gLastExp, curGmOffsetH, isLastChunk); 
         }
     }
 }
@@ -219,37 +225,35 @@ __aicore__ inline void GDRVec<DT, GT>::TailChunkProcess(uint32_t tailChunkLen)
 }
 
 template <typename DT, typename GT>
-__aicore__ inline void GDRVec<DT, GT>::CaclOffset(const uint32_t taskIdx, uint64_t& tailChunkLen) 
+__aicore__ inline void GDRVec<DT, GT>::CaclOffset(const uint32_t coarseTaskIdx, const uint32_t h, uint64_t& tailChunkLen)
 {
     uint32_t BT = this->chunkSize;
     uint64_t b = 0;
-    uint32_t h = taskIdx % this->H; // 当前任务在第几个h
+    const uint32_t hq = coarseTaskIdx % this->Hk;
     uint64_t preChunkNum = 0;
     uint64_t seqStartOffset = 0;
     uint64_t curSeqLen = 0;
     if (this->isVarLen) {
-        uint32_t seqIdx = taskIdx / this->H; // 当前任务在第几个seq
+        uint32_t seqIdx = coarseTaskIdx / this->Hk;
         seqStartOffset = this->cuSeqlensGm.GetValue(seqIdx); // 当前seq在T中的起始索引
-        uint64_t seqEndOffset = this->cuSeqlensGm.GetValue(seqIdx+1); // 当前seq在T中的结束索引
+        uint64_t seqEndOffset = this->cuSeqlensGm.GetValue(seqIdx + 1); // 当前seq在T中的结束索引
         curSeqLen = seqEndOffset - seqStartOffset;
-        // 计算当前seq的起始chunkIdx
         uint64_t tmpStartOffset = 0;
         uint64_t tmpEndOffset = 0;
-        uint64_t tmpChunkNum = 0;
         for (uint32_t seq = 0; seq < seqIdx; seq++) {
-            tmpStartOffset = this->cuSeqlensGm.GetValue(seq); // 当前seq在T中的起始索引
-            tmpEndOffset = this->cuSeqlensGm.GetValue(seq+1); // 当前seq在T中的结束索引
+            tmpStartOffset = this->cuSeqlensGm.GetValue(seq);
+            tmpEndOffset = this->cuSeqlensGm.GetValue(seq + 1);
             auto tmpChunkNum = ((tmpEndOffset - tmpStartOffset) + BT - 1) / BT;
             preChunkNum += tmpChunkNum;
         }
-        curChunkNum_ = (curSeqLen + BT - 1) / BT; // 当前seq的chunk数
+        curChunkNum_ = (curSeqLen + BT - 1) / BT;
     } else {
         curChunkNum_ = this->chunkNum;
-        b = taskIdx / this->H;
+        b = coarseTaskIdx / this->Hk;
         curSeqLen = this->T;
     }
-    tailChunkLen = curSeqLen % BT; 
-    
+    tailChunkLen = curSeqLen % BT;
+
     dhBlockSize_ = this->K * this->V; // 16384
 
     bdvOffset_ = cubeIdx_ * BT * this->V;
@@ -257,11 +261,10 @@ __aicore__ inline void GDRVec<DT, GT>::CaclOffset(const uint32_t taskIdx, uint64
     qdoOffset_ = cubeIdx_ * dhBlockSize_;
     wV2Offset_ = cubeIdx_ * dhBlockSize_;
 
-    // calc offset
-    gmOffsetK_ = (b * this->H + h) * this->T * this->K + seqStartOffset * this->K;
-    gmOffsetV_ = (b * this->H + h) * this->T * this->V + seqStartOffset * this->V;
-    gmOffsetH_ = (b * this->H + h) * this->chunkNum * dhBlockSize_ + preChunkNum * dhBlockSize_;
-    gmOffsetG_ = (b * this->H + h) * this->T + seqStartOffset;
+    gmOffsetK_ = (b * this->Hk + hq) * this->T * this->K + seqStartOffset * this->K;
+    gmOffsetV_ = (b * this->Hv + h) * this->T * this->V + seqStartOffset * this->V;
+    gmOffsetH_ = (b * this->Hv + h) * this->chunkNum * dhBlockSize_ + preChunkNum * dhBlockSize_;
+    gmOffsetG_ = (b * this->Hv + h) * this->T + seqStartOffset;
 
     if (this->subBlockIdx == 1) {
         gatedQOffset_ += this->halfBT * this->K;
@@ -313,7 +316,7 @@ __aicore__ inline void GDRVec<DT, GT>::CalcGatedQ(float& gLast, float& gLastExp,
     if (chunkIdx_ == 0) {
         return; // chunkIdx==0时，不再需要更新dh，只需要拿到g和gLast用于计算dv2即可。
     }
-    // COPY IN Q [B,H,T,K]
+    // COPY IN Q [B,Hk,T,K]
     CopyIn(this->qCastLocal, this->qLocal, this->qGm[gmOffsetK_ + bos_ * this->K], this->curCalcTK);
     // qCastLocal[halfBT, K] * gExp[halfBT, ] K=128,256 halfBT=32,64
     uint8_t repeatTimes = Ceil(this->halfBT, 8); // halfBT is 32 or 64

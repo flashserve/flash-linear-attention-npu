@@ -97,7 +97,9 @@ protected:
     
     // tiling data
     uint64_t B = 0;
-    uint64_t H = 0;
+    uint64_t Hv = 0;
+    uint64_t Hk = 0;
+    uint64_t hvPerHk = 1; // GVA: value 头数 / qk 头数，hq = h / hvPerHk
     uint64_t T = 0;
     uint64_t K = 0;
     uint64_t V = 0;
@@ -133,7 +135,9 @@ template <typename DT, typename GT>
 __aicore__ inline void GDRBase<DT, GT>::InitTilingData(const ChunkGatedDeltaRuleBwdDhuTilingData& tilingData)
 {
     this->B = tilingData.B;
-    this->H = tilingData.H;
+    this->Hv = tilingData.Hv;
+    this->Hk = tilingData.Hk;
+    this->hvPerHk = this->Hk != 0 ? this->Hv / this->Hk : 0;
     this->T = tilingData.T;
     this->K = tilingData.K;
     this->V = tilingData.V;

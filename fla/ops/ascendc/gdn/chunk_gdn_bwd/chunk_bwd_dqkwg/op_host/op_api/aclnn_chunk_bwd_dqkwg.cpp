@@ -161,23 +161,18 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
-    // 固定写法，参数检查
-    // std::cout << "-------------------------aclnnChunkBwdDqkwgGetWorkspaceSize  333" << std::endl;
+
     auto ret = CheckParams(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
-    // std::cout << "-------------------------aclnnChunkBwdDqkwgGetWorkspaceSize  444" << std::endl;
     auto result = l0op::ChunkBwdDqkwg(params.q, params.k, params.v, params.g, params.h, params.dox, params.dh, params.dv, params.cuSeqlensOptional, params.chunkIndicesOptional, params.w, params.gGamma, params.scale, params.chunkSize, params.dqOut, params.dkOut, params.dwOut, params.dgOut, executorPtr);
-    // std::cout << "-------------------------aclnnChunkBwdDqkwgGetWorkspaceSize  555" << std::endl;
-    
+
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[2] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[3] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    // std::cout << "-------------------------aclnnChunkBwdDqkwgGetWorkspaceSize  666" << std::endl;
-    
-    // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.
+
     auto viewCopyResult = l0op::ViewCopy(result[0], params.dqOut, executorPtr);
     CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
@@ -189,13 +184,10 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
 
     viewCopyResult = l0op::ViewCopy(result[3], params.dgOut, executorPtr);
     CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    // std::cout << "-------------------------aclnnChunkBwdDqkwgGetWorkspaceSize  777" << std::endl;
-    
-    // Standard syntax, get the size of workspace needed during computation.
+
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
-    // std::cout << "-------------------------aclnnChunkBwdDqkwgGetWorkspaceSize  888" << std::endl;
-    
+
     return ACLNN_SUCCESS;
 }
 

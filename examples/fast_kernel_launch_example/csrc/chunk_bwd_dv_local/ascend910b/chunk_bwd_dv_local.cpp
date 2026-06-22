@@ -21,9 +21,9 @@
 #include "platform/platform_ascendc.h"
 #include <type_traits>
 
-#include "chunk_gated_delta_rule/chunk_bwd_dv_local/op_host/chunk_bwd_dv_local_tiling_processor.h"
-#include "chunk_gated_delta_rule/chunk_bwd_dv_local/op_kernel/chunk_bwd_dv_local_common.h"
-#include "chunk_gated_delta_rule/chunk_bwd_dv_local/op_kernel/chunk_bwd_dv_local.cpp"
+#include "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dv_local/op_host/chunk_bwd_dv_local_tiling_processor.h"
+#include "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dv_local/op_kernel/chunk_bwd_dv_local_common.h"
+#include "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dv_local/op_kernel/chunk_bwd_dv_local.cpp"
 
 using TilingData = GDN::ChunkBwdDvLocalTilingData;
 
@@ -98,6 +98,7 @@ TilingData calc_tiling_params(const at::Tensor &q, const at::Tensor &k, const at
 }
 
 template <typename QKVT, typename GT, int V>
+template <typename QKVT, typename GT, int V>
 __global__ __aicore__ void chunk_bwd_dv_local_kernel(
     GM_ADDR q, GM_ADDR k, GM_ADDR d_o, GM_ADDR g,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
@@ -161,7 +162,8 @@ at::Tensor chunk_bwd_dv_local_npu(const at::Tensor & q, const at::Tensor & k, co
     uint32_t blockDim = std::min(tiling.chunkNumForT * tiling.b, coreNum);
 
     uint64_t sysWorkspaceSize = 16U * 1024U * 1024U;
-    uint64_t userWorkspaceSize = optiling::QKV_DTYPE_SIZE * tiling.b * tiling.h * tiling.t * tiling.chunkSize;
+    uint64_t userWorkspaceSize =
+        optiling::QKV_DTYPE_SIZE * blockDim * tiling.headBufNum * tiling.chunkSize * tiling.chunkSize;
     uint64_t workspaceSize = sysWorkspaceSize + userWorkspaceSize;
     void *workspace_ptr = nullptr;
     if (workspaceSize > 0) {
@@ -222,7 +224,8 @@ at::Tensor chunk_bwd_dv_local_npu(const at::Tensor & q, const at::Tensor & k, co
     };
 
     at_npu::native::OpCommand::RunOpApi("ChunkBwdDvLocal", acl_call);
-    // aclrtSynchronizeStream(stream);
+    auto sync_ret = aclrtSynchronizeStream(stream);
+    TORCH_CHECK(sync_ret == ACL_SUCCESS, "aclrtSynchronizeStream failed. ERROR: ", sync_ret);
 
     if (workspaceSize > 0 && workspace_ptr != nullptr) {
         aclrtFree(workspace_ptr);

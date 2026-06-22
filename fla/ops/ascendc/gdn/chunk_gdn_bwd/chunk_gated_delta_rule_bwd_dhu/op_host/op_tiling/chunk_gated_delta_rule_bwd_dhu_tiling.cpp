@@ -67,12 +67,43 @@ namespace {
 bool ChunkGatedDeltaRuleBwdDhuTiling::Init(gert::TilingContext* context) {
 
   const gert::Shape qShape = context->GetInputShape(INPUT_Q_IDX)->GetStorageShape();
+  const gert::Shape kShape = context->GetInputShape(INPUT_K_IDX)->GetStorageShape();
+  const gert::Shape wShape = context->GetInputShape(INPUT_W_IDX)->GetStorageShape();
   const gert::Shape doShape = context->GetInputShape(INPUT_DO_IDX)->GetStorageShape();
+  const gert::Shape dvShape = context->GetInputShape(INPUT_DV_IDX)->GetStorageShape();
   B = qShape.GetDim(DIM_0);
-  H = qShape.GetDim(DIM_1);
+  Hk = qShape.GetDim(DIM_1);
   T = qShape.GetDim(DIM_2);
   K = qShape.GetDim(DIM_3);
+  Hv = doShape.GetDim(DIM_1);
   V = doShape.GetDim(DIM_3);
+
+  OP_CHECK_IF(
+      kShape.GetDim(DIM_0) != static_cast<int64_t>(B) || kShape.GetDim(DIM_1) != static_cast<int64_t>(Hk) ||
+          kShape.GetDim(DIM_2) != static_cast<int64_t>(T) || kShape.GetDim(DIM_3) != static_cast<int64_t>(K),
+      OP_LOGE(context->GetNodeName(),
+              "k must match q as [B,Hk,T,K]; q [%lu,%lu,%lu,%lu], k [%ld,%ld,%ld,%ld].", B, Hk, T, K,
+              kShape.GetDim(DIM_0), kShape.GetDim(DIM_1), kShape.GetDim(DIM_2), kShape.GetDim(DIM_3)),
+      return false);
+  OP_CHECK_IF(
+      wShape.GetDim(DIM_0) != static_cast<int64_t>(B) || wShape.GetDim(DIM_1) != static_cast<int64_t>(Hv) ||
+          wShape.GetDim(DIM_2) != static_cast<int64_t>(T) || wShape.GetDim(DIM_3) != static_cast<int64_t>(K),
+      OP_LOGE(context->GetNodeName(),
+              "w must be [B,Hv,T,K] with Hv=dO.dim1; expect [%lu,%lu,%lu,%lu], got [%ld,%ld,%ld,%ld].", B, Hv, T, K,
+              wShape.GetDim(DIM_0), wShape.GetDim(DIM_1), wShape.GetDim(DIM_2), wShape.GetDim(DIM_3)),
+      return false);
+  OP_CHECK_IF(doShape.GetDim(DIM_0) != static_cast<int64_t>(B) || doShape.GetDim(DIM_2) != static_cast<int64_t>(T),
+              OP_LOGE(context->GetNodeName(), "dO batch/time must match q."), return false);
+  OP_CHECK_IF(
+      dvShape.GetDim(DIM_0) != static_cast<int64_t>(B) || dvShape.GetDim(DIM_1) != static_cast<int64_t>(Hv) ||
+          dvShape.GetDim(DIM_2) != static_cast<int64_t>(T) || dvShape.GetDim(DIM_3) != static_cast<int64_t>(V),
+      OP_LOGE(context->GetNodeName(), "dv must be [B,Hv,T,V] aligned with dO."), return false);
+  // GVA（Grouped Value Attention）：Hk 为 q/k 头数，Hv 为 value 头数（与 do/dv/w对齐）；须 Hv 是 Hk 的整数倍（见 FLA num_v_heads % num_heads）。
+  OP_CHECK_IF(Hv == 0 || Hk == 0 || (Hv % Hk) != 0,
+              OP_LOGE(context->GetNodeName(),
+                      "GVA: Hv (value heads) must be an integer multiple of Hk (q/k heads); require Hv mod Hk == 0; got Hk=%lu Hv=%lu.",
+                      Hk, Hv),
+              return false);
   
   auto attrs = context->GetAttrs();
   OP_CHECK_IF(attrs == nullptr, OP_LOGE(context->GetNodeName(), "attrs is nullptr."), return false);
@@ -86,7 +117,8 @@ bool ChunkGatedDeltaRuleBwdDhuTiling::Init(gert::TilingContext* context) {
               return false);
   
   tilingData.set_B(B);
-  tilingData.set_H(H);
+  tilingData.set_Hv(Hv);
+  tilingData.set_Hk(Hk);
   tilingData.set_T(T);
   tilingData.set_K(K);
   tilingData.set_V(V);
@@ -148,18 +180,23 @@ bool ChunkGatedDeltaRuleBwdDhuTiling::CalcUb(gert::TilingContext *context) {
   // AIC_AIV_1_2, 每个VEC处理BT/2行
   uint32_t halfBT = CeilDiv(static_cast<uint32_t>(chunkSize), NUM_2);
   uint32_t halfK = CeilDiv(static_cast<uint32_t>(K), NUM_2);
-  uint32_t gBufByte = halfBT * HALF_DTYPE_SIZE;
-  uint32_t gCastBufByte = halfBT * FP32_DTYPE_SIZE; // 256
-  uint32_t gBrcbBufByte = halfBT * BLOCK_SIZE; // 512
-  uint32_t dvBufByte = halfBT * V * HALF_DTYPE_SIZE; // 32K
-  uint32_t dvCastBufByte = halfBT * V * FP32_DTYPE_SIZE; // 64K
+  uint32_t gBrcbBufByte = halfBT * BLOCK_SIZE;
+  uint32_t dvBufByte = halfBT * V * HALF_DTYPE_SIZE;
+  uint32_t dvCastBufByte = halfBT * V * FP32_DTYPE_SIZE;
   uint32_t dqkBufByte = halfBT * K * HALF_DTYPE_SIZE;
   uint32_t dqkCastBufByte = halfBT * K * FP32_DTYPE_SIZE;
-  uint32_t dhBufByte = halfK * V * HALF_DTYPE_SIZE;
   uint32_t dhCastBufByte = halfK * V * FP32_DTYPE_SIZE;
 
-  uint32_t tBufByte = std::max(NUM_2 * dhCastBufByte,
-      gCastBufByte + gBrcbBufByte + dvBufByte + NUM_2 * dvCastBufByte);
+  // 与 chunk_gated_delta_rule_bwd_dhu_vec.h InitUB 对齐（同一 vecTbuf 内绝对偏移尖峰）：
+  // - dv2 链：gCast 后 dv2Offset = chunkSize*4，再接 gBrcb、vIn(fp16)、dvCast、bdvCast(fp32)
+  // - gatedQ 链：gCast+gExp 共 2*chunkSize*4，offsetQ 起 qLocal(fp16)+qCast(fp32)+gBCLocal
+  // - UpdateDh：分时复用 [0, 2*dhCastBufByte)，与上两链取 max
+  const uint32_t dvPeak =
+      chunkSize * FP32_DTYPE_SIZE + gBrcbBufByte + dvBufByte + NUM_2 * dvCastBufByte;
+  const uint32_t gatedQPeak =
+      NUM_2 * chunkSize * FP32_DTYPE_SIZE + dqkBufByte + dqkCastBufByte + gBrcbBufByte;
+  const uint32_t dhPeak = NUM_2 * dhCastBufByte;
+  uint32_t tBufByte = std::max(dhPeak, std::max(dvPeak, gatedQPeak));
   
   auto platformInfoPtr = context->GetPlatformInfo();
   auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
@@ -180,11 +217,15 @@ void ChunkGatedDeltaRuleBwdDhuTiling::SetWorkspaceSize(gert::TilingContext* cont
   auto platformInfoPtr = context->GetPlatformInfo();
   auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
   uint32_t totalCoreNum = ascendcPlatform.GetCoreNumAic();
-  uint32_t taskNum = B * H * tilingData.get_seqNum(); // 變長：B*H*S，等長：B*H
+  uint32_t taskNum = B * Hk * tilingData.get_seqNum();
   uint32_t usedCoreNum = taskNum > totalCoreNum ? totalCoreNum : taskNum;  
   tilingData.set_usedCoreNum(usedCoreNum);
   context->SetBlockDim(usedCoreNum);
 
+  // GVA 方案 A：粗粒度 task 为 (b,hq,seq)，组内各 value 头 h 串行（见 cube/vec 中 for h 循环）。
+  // Workspace 按物理核 coreIdx / vec 侧 cubeIdx 分片；每片仍对应「单 chunk、单条流水线」的 bdv/gatedQ/dh term，
+  // 完成该 h 的一步后再处理下一 h，同一片复用，故 per-core 步长仍为 chunkSize*V、BT*K、K*V，无需再乘 (Hv/Hk)。
+  // 若将来改为组内多头并行或双缓冲，需同时改 kernel 内偏移与下列 * usedCoreNum 的核算。
   uint64_t bdvWs = chunkSize * V * usedCoreNum;
   uint64_t qWs = K * chunkSize * usedCoreNum;
   uint64_t wDv2Ws = K * V * usedCoreNum;
@@ -203,7 +244,8 @@ void ChunkGatedDeltaRuleBwdDhuTiling::SetWorkspaceSize(gert::TilingContext* cont
 void ChunkGatedDeltaRuleBwdDhuTiling::PrintTilingData(gert::TilingContext *context) {
   OP_LOGD(context->GetNodeName(), "End Run ChunkGatedDeltaRuleBwdDhu Tiling");
   OP_LOGD(context->GetNodeName(), "B is %lu.", tilingData.get_B());
-  OP_LOGD(context->GetNodeName(), "H is %lu.", tilingData.get_H());
+  OP_LOGD(context->GetNodeName(), "Hv is %lu.", tilingData.get_Hv());
+  OP_LOGD(context->GetNodeName(), "Hk is %lu.", tilingData.get_Hk());
   OP_LOGD(context->GetNodeName(), "T is %lu.", tilingData.get_T());
   OP_LOGD(context->GetNodeName(), "K is %lu.", tilingData.get_K());
   OP_LOGD(context->GetNodeName(), "V is %lu.", tilingData.get_V());

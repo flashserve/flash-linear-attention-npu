@@ -69,7 +69,10 @@ public:
     AscendC::GlobalTensor<QKVT> dVGm;
     AscendC::GlobalTensor<QKVT> workspaceGm;
 
-    int64_t H;
+    int64_t H_qk;
+    int64_t H_do;
+    int64_t hRatio;
+    int64_t headBufNum;
     int64_t T;
     int64_t K;
     int64_t coreLoops;
@@ -89,7 +92,10 @@ ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Init(GM_ADDR q, GM_ADDR k, GM_ADDR d
     dVGm.SetGlobalBuffer((__gm__ QKVT *)d_v);
     workspaceGm.SetGlobalBuffer((__gm__ QKVT *)workspace);
 
-    H = tilingData->h;
+    H_qk = tilingData->hQk;
+    H_do = tilingData->hDo;
+    hRatio = tilingData->hRatio;
+    headBufNum = tilingData->headBufNum;
     T = tilingData->t;
     K = tilingData->k;
     coreLoops = tilingData->b * strategy.chunkNumForT;
@@ -112,97 +118,89 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
     using ElementB = QKVT;
     using ElementC = QKVT;
     Catlass::Arch::Resource<ArchTag> resource;
-    // k @ q^T
-    {
-        using LayoutTagA = Catlass::layout::RowMajor;
-        using LayoutTagB = Catlass::layout::ColumnMajor;
-        using LayoutTagC = Catlass::layout::RowMajor;
-        using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, ElementA, LayoutTagA, ElementB, LayoutTagB,
-                                                                ElementC, LayoutTagC>;
-        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShapeQK, L0TileShapeQK, ElementA,
-                                                             ElementB, ElementC, void, TileCopy>;
-
-        BlockMmad blockMmad(resource);
-        auto layoutA = tla::MakeLayout<ElementA, LayoutTagA>(strategy.chunkSize, K);
-        auto layoutB = tla::MakeLayout<ElementB, LayoutTagB>(K, strategy.chunkSize);
-        auto layoutC = tla::MakeLayout<ElementC, LayoutTagC>(strategy.chunkSize, strategy.chunkSize);
-        IndexResult indexResult;
-        for (int64_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += blockNum) {
-            int64_t curBatchId = static_cast<int64_t>(loopIdx) / strategy.chunkNumForT;
-            strategy.calculate(loopIdx, indexResult);
-            Catlass::GemmCoord actualBlockShape{static_cast<uint32_t>(indexResult.chunkLen),
-                                                static_cast<uint32_t>(indexResult.chunkLen), static_cast<uint32_t>(K)};
-            for (int hIndex = 0; hIndex < H; hIndex++) {
-                auto tensorA =
-                    tla::MakeTensor(kGm[curBatchId * H * T * K + hIndex * T * K + indexResult.curTokenId * K], layoutA,
-                                    Catlass::Arch::PositionGM{});
-                auto tensorB =
-                    tla::MakeTensor(qGm[curBatchId * H * T * K + hIndex * T * K + indexResult.curTokenId * K], layoutB,
-                                    Catlass::Arch::PositionGM{});
-                auto tensorC = tla::MakeTensor(
-                    workspaceGm[curBatchId * H * T * strategy.chunkSize + hIndex * T * strategy.chunkSize +
-                                indexResult.curTokenId * strategy.chunkSize],
-                    layoutC, Catlass::Arch::PositionGM{});
-                AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_1);
-                auto tensorBlockA =
-                    GetTile(tensorA, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                auto tensorBlockB =
-                    GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                auto tensorBlockC =
-                    GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-
-                blockMmad(tensorBlockA, tensorBlockB, tensorBlockC, actualBlockShape);
-                AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_3);
-            }
-        }
-        AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_1);
-        AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_1);
-        AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_1);
-        AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_1);
-    }
-    AscendC::SyncAll<false>();
-    // 根据V值选择不同的TileShape
     using L1TileShapeV = typename std::conditional<V == 128, Shape<_128, _128, _128>, Shape<_128, _256, _64>>::type;
     using L0TileShapeV = typename std::conditional<V == 128, Shape<_128, _128, _128>, Shape<_128, _256, _64>>::type;
-    // v @ d_o
-    {
-        using LayoutTagA = Catlass::layout::RowMajor;
-        using LayoutTagB = Catlass::layout::RowMajor;
-        using LayoutTagC = Catlass::layout::RowMajor;
-        using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, ElementA, LayoutTagA, ElementB, LayoutTagB,
-                                                                ElementC, LayoutTagC>;
-        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShapeV, L0TileShapeV, ElementA,
-                                                             ElementB, ElementC, void, TileCopy>;
+    using LayoutTagA = Catlass::layout::RowMajor;
+    using LayoutTagB = Catlass::layout::ColumnMajor;
+    using LayoutTagC = Catlass::layout::RowMajor;
+    using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, ElementA, LayoutTagA, ElementB, LayoutTagB,
+                                                            ElementC, LayoutTagC>;
+    using BlockMmadQK = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShapeQK, L0TileShapeQK, ElementA,
+                                                         ElementB, ElementC, void, TileCopy>;
 
-        BlockMmad blockMmad(resource);
+    using LayoutTagA_V = Catlass::layout::RowMajor;
+    using LayoutTagB_V = Catlass::layout::RowMajor;
+    using LayoutTagC_V = Catlass::layout::RowMajor;
+    using TileCopyV = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, ElementA, LayoutTagA_V, ElementB, LayoutTagB_V,
+                                                             ElementC, LayoutTagC_V>;
+    using BlockMmadV = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShapeV, L0TileShapeV, ElementA,
+                                                           ElementB, ElementC, void, TileCopyV>;
 
-        auto layoutA = tla::MakeLayout<ElementA, LayoutTagA>(strategy.chunkSize, strategy.chunkSize);
-        auto layoutB = tla::MakeLayout<ElementB, LayoutTagB>(strategy.chunkSize, V);
-        auto layoutC = tla::MakeLayout<ElementC, LayoutTagC>(strategy.chunkSize, V);
-        IndexResult indexResult;
-        for (int64_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += blockNum) {
-            int64_t curBatchId = static_cast<int64_t>(loopIdx) / strategy.chunkNumForT;
-            strategy.calculate(loopIdx, indexResult);
-            Catlass::GemmCoord actualBlockShape{static_cast<uint32_t>(indexResult.chunkLen), static_cast<uint32_t>(V),
-                                                static_cast<uint32_t>(indexResult.chunkLen)};
-            for (int hIndex = 0; hIndex < H; hIndex++) {
-                auto tensorA = tla::MakeTensor(
-                    workspaceGm[curBatchId * H * T * strategy.chunkSize + hIndex * T * strategy.chunkSize +
-                                indexResult.curTokenId * strategy.chunkSize],
-                    layoutA, Catlass::Arch::PositionGM{});
+    auto layoutA_QK = tla::MakeLayout<ElementA, Catlass::layout::RowMajor>(strategy.chunkSize, K);
+    auto layoutB_QK = tla::MakeLayout<ElementB, Catlass::layout::ColumnMajor>(K, strategy.chunkSize);
+    auto layoutC_QK = tla::MakeLayout<ElementC, Catlass::layout::RowMajor>(strategy.chunkSize, strategy.chunkSize);
+    auto layoutA_V = tla::MakeLayout<ElementA, LayoutTagA_V>(strategy.chunkSize, strategy.chunkSize);
+    auto layoutB_V = tla::MakeLayout<ElementB, LayoutTagB_V>(strategy.chunkSize, V);
+    auto layoutC_V = tla::MakeLayout<ElementC, LayoutTagC_V>(strategy.chunkSize, V);
+
+    IndexResult indexResult;
+    int64_t coreBaseOffset = coreIdx * headBufNum * strategy.chunkSize * strategy.chunkSize;
+    for (int64_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += blockNum) {
+        int64_t curBatchId = static_cast<int64_t>(loopIdx) / strategy.chunkNumForT;
+        strategy.calculate(loopIdx, indexResult);
+        Catlass::GemmCoord actualBlockShapeQK{static_cast<uint32_t>(indexResult.chunkLen),
+                                              static_cast<uint32_t>(indexResult.chunkLen),
+                                              static_cast<uint32_t>(K)};
+        Catlass::GemmCoord actualBlockShapeV{static_cast<uint32_t>(indexResult.chunkLen),
+                                             static_cast<uint32_t>(V),
+                                             static_cast<uint32_t>(indexResult.chunkLen)};
+        for (int64_t qkHead = 0; qkHead < H_qk; qkHead++) {
+            int64_t p1Slot = qkHead % 2;
+            {
+                BlockMmadQK blockMmadQK(resource);
+                auto tensorA =
+                    tla::MakeTensor(kGm[curBatchId * H_qk * T * K + qkHead * T * K + indexResult.curTokenId * K], layoutA_QK,
+                                    Catlass::Arch::PositionGM{});
                 auto tensorB =
-                    tla::MakeTensor(dOGm[curBatchId * H * T * V + hIndex * T * V + indexResult.curTokenId * V], layoutB,
+                    tla::MakeTensor(qGm[curBatchId * H_qk * T * K + qkHead * T * K + indexResult.curTokenId * K], layoutB_QK,
                                     Catlass::Arch::PositionGM{});
-                auto tensorC =
-                    tla::MakeTensor(dVGm[curBatchId * H * T * V + hIndex * T * V + indexResult.curTokenId * V], layoutC,
-                                    Catlass::Arch::PositionGM{});
+                auto tensorC = tla::MakeTensor(
+                    workspaceGm[coreBaseOffset + p1Slot * strategy.chunkSize * strategy.chunkSize],
+                    layoutC_QK, Catlass::Arch::PositionGM{});
                 auto tensorBlockA =
-                    GetTile(tensorA, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                    GetTile(tensorA, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShapeQK.m(), actualBlockShapeQK.k()));
                 auto tensorBlockB =
-                    GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                    GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShapeQK.k(), actualBlockShapeQK.n()));
                 auto tensorBlockC =
-                    GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-                blockMmad(tensorBlockA, tensorBlockB, tensorBlockC, actualBlockShape);
+                    GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShapeQK.m(), actualBlockShapeQK.n()));
+                blockMmadQK(tensorBlockA, tensorBlockB, tensorBlockC, actualBlockShapeQK);
+            }
+            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_3);
+            for (int64_t doGroup = 0; doGroup < hRatio; doGroup++) {
+                AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_1);
+            }
+            {
+                BlockMmadV blockMmadV(resource);
+                for (int64_t doGroup = 0; doGroup < hRatio; doGroup++) {
+                    int64_t doHead = qkHead * hRatio + doGroup;
+                    int64_t gatedSlot = 2 + (qkHead % 2) * hRatio + doGroup;
+                    auto tensorA_V = tla::MakeTensor(
+                        workspaceGm[coreBaseOffset + gatedSlot * strategy.chunkSize * strategy.chunkSize],
+                        layoutA_V, Catlass::Arch::PositionGM{});
+                    auto tensorB_V =
+                        tla::MakeTensor(dOGm[curBatchId * H_do * T * V + doHead * T * V + indexResult.curTokenId * V],
+                                        layoutB_V, Catlass::Arch::PositionGM{});
+                    auto tensorC_V =
+                        tla::MakeTensor(dVGm[curBatchId * H_do * T * V + doHead * T * V + indexResult.curTokenId * V],
+                                        layoutC_V, Catlass::Arch::PositionGM{});
+                    auto tensorBlockA_V =
+                        GetTile(tensorA_V, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShapeV.m(), actualBlockShapeV.k()));
+                    auto tensorBlockB_V =
+                        GetTile(tensorB_V, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShapeV.k(), actualBlockShapeV.n()));
+                    auto tensorBlockC_V =
+                        GetTile(tensorC_V, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShapeV.m(), actualBlockShapeV.n()));
+                    blockMmadV(tensorBlockA_V, tensorBlockB_V, tensorBlockC_V, actualBlockShapeV);
+                }
             }
         }
     }

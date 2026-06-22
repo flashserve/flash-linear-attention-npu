@@ -11,15 +11,24 @@
 
 计算公式为：
 
-$$dV_{\text{local}} = \text{mask}\!\left(\exp(g_{\text{col}} - g_{\text{row}})\right) \odot (K Q^T) \cdot dO$$
+对每个 `doHead`，先映射到对应的 Q/K head：
+
+```text
+qkHead = doHead / hRatio
+hRatio = H_do / H_qk
+```
+
+再计算：
+
+$$dV_{\text{local}}[doHead] = \left(\text{mask}\!\left(\exp(g[doHead]_{\text{col}} - g[doHead]_{\text{row}})\right) \odot (K[qkHead] Q[qkHead]^T)\right) \cdot dO[doHead]$$
 
 分解为三个阶段：
 
 | 阶段 | 执行单元 | 计算 | 说明 |
 |------|----------|------|------|
-| Phase 1 | Cube (AIC) | $W_s = K \times Q^T$ | 矩阵乘，生成 chunk 内 attention score 矩阵 |
-| Phase 1.5 | Vector (AIV) | $W_{s\_gated} = \text{mask}(\exp(g)) \odot W_s$ | gating：exp、下三角 mask、逐元素乘 |
-| Phase 2 | Cube (AIC) | $dV = W_{s\_gated} \times dO$ | 矩阵乘，生成最终梯度输出 |
+| Phase 1 | Cube (AIC) | $W_s[qkHead] = K[qkHead] \times Q[qkHead]^T$ | 对每个 Q/K head 生成 chunk 内 attention score 矩阵 |
+| Phase 1.5 | Vector (AIV) | $W_{s\_gated}[doHead] = \text{mask}(\exp(g[doHead])) \odot W_s[qkHead]$ | 每个 dO head 使用映射到的 Q/K score 做 gating：exp、上三角含对角线 mask、逐元素乘 |
+| Phase 2 | Cube (AIC) | $dV[doHead] = W_{s\_gated}[doHead] \times dO[doHead]$ | 矩阵乘，生成最终梯度输出 |
 
 ---
 
@@ -69,10 +78,10 @@ aclnnStatus aclnnChunkBwdDvLocal(
 
 | 参数名 | 输入/输出 | 必选/可选 | 描述 | 使用说明 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|---|---|
-| `q` | 输入 | 必选 | Query 输入张量 | 参与反向计算 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
-| `k` | 输入 | 必选 | Key 输入张量 | 参与反向计算 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
-| `dO` | 输入 | 必选 | 前向输出的梯度张量 | 参与反向计算 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, V]` | 支持 |
-| `g` | 输入 | 必选 | Gate 输入张量（门控衰减系数） | 参与 gating 计算 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, H, T]` | 支持 |
+| `q` | 输入 | 必选 | Query 输入张量 | 参与反向计算，使用 Q/K head 数 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H_qk, T, K]` | 支持 |
+| `k` | 输入 | 必选 | Key 输入张量 | 参与反向计算，形状必须与 `q` 一致 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H_qk, T, K]` | 支持 |
+| `dO` | 输入 | 必选 | 前向输出的梯度张量 | 参与反向计算，使用 dO/dV head 数 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H_do, T, V]` | 支持 |
+| `g` | 输入 | 必选 | Gate 输入张量（门控衰减系数） | 参与 gating 计算，H 轴与 `dO` 一致 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, H_do, T]` | 支持 |
 | `gGammaOptional` | 输入 | 可选 | 预留门控参数输入 | 当前版本不支持，须传 `None` | `FLOAT` | `ND` | - | - |
 | `aOptional` | 输入 | 可选 | 预留参数输入 | 当前版本不支持，须传 `None` | `FLOAT16`、`BFLOAT16` | `ND` | - | - |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | 变长模式输入，形如 `[0, T1, T1+T2, ...]`，形状为 `[N+1]`（N 为 batch 内序列段数，等于 B） | `INT64` | `ND` | 1 维 | - |
@@ -89,15 +98,17 @@ aclnnStatus aclnnChunkBwdDvLocal(
 
 | 参数名 | 输入/输出 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|
-| `out`（即 `dV`） | 输出 | Value 的本地梯度输出张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, V]` | 支持 |
+| `out`（即 `dV`） | 输出 | Value 的本地梯度输出张量，H 轴与 `dO` 一致 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H_do, T, V]` | 支持 |
 | `workspaceSize` | 输出 | Device 侧所需 workspace 大小 | `uint64_t` | - | 标量 | - |
 | `executor` | 输出 | 算子执行器，封装了计算流程 | `aclOpExecutor*` | - | - | - |
 
 ### 3.4 形状与约束
 
-- `q`、`k` 的形状必须为 `[B, H, T, K]`。
-- `dO` 的形状必须为 `[B, H, T, V]`。
-- `g` 的形状必须为 `[B, H, T]`。
+- `q`、`k` 的形状必须为 `[B, H_qk, T, K]`，且二者形状完全一致。
+- `dO` 的形状必须为 `[B, H_do, T, V]`。
+- `g` 的形状必须为 `[B, H_do, T]`。
+- `B`、`T` 在 `q/k` 与 `dO/g/out` 之间必须一致。
+- `H_do` 必须能被 `H_qk` 整除，即 `H_do % H_qk == 0`。
 - `K` 须为 `128`。
 - `V` 须为 `128` 或 `256`。
 - `chunkSize` 仅支持 `64` 或 `128`。
@@ -129,9 +140,13 @@ aclnnStatus aclnnChunkBwdDvLocal(
 
 必须满足以下条件：
 
-- `q, k`: `[B, H, T, K]`
-- `dO`: `[B, H, T, V]`
-- `g`: `[B, H, T]`
+- `q, k`: `[B, H_qk, T, K]`
+- `dO`: `[B, H_do, T, V]`
+- `g`: `[B, H_do, T]`
+- `out`: `[B, H_do, T, V]`
+- `q` 和 `k` 的形状完全一致。
+- `q/k` 与 `dO/g/out` 的 `B`、`T` 一致。
+- `H_do % H_qk == 0`，`hRatio = H_do / H_qk`。
 
 额外限制：
 
@@ -176,16 +191,17 @@ import torch_npu
 import math
 
 def test_chunk_bwd_dv_local_fixed():
-    B, H, T, K, V = 2, 4, 128, 128, 128
+    B, H_qk, h_ratio, T, K, V = 2, 4, 2, 128, 128, 128
+    H_do = H_qk * h_ratio
     chunk_size = 64
     scale = 1.0 / math.sqrt(K)
     device = "npu:0"
     dtype = torch.bfloat16
 
-    q   = torch.randn(B, H, T, K, device=device, dtype=dtype)
-    k   = torch.randn(B, H, T, K, device=device, dtype=dtype)
-    d_o = torch.randn(B, H, T, V, device=device, dtype=dtype)
-    g   = torch.randn(B, H, T,    device=device, dtype=torch.float32)
+    q   = torch.randn(B, H_qk, T, K, device=device, dtype=dtype)
+    k   = torch.randn(B, H_qk, T, K, device=device, dtype=dtype)
+    d_o = torch.randn(B, H_do, T, V, device=device, dtype=dtype)
+    g   = torch.randn(B, H_do, T,    device=device, dtype=torch.float32)
 
     # 定长模式：cu_seqlens=None, chunk_indices=None
     dv = torch_npu.npu_chunk_bwd_dv_local(
@@ -198,8 +214,8 @@ def test_chunk_bwd_dv_local_fixed():
         chunk_size=chunk_size
     )
 
-    assert dv.shape == (B, H, T, V)
-    print("dv shape:", dv.shape)  # (2, 4, 128, 128)
+    assert dv.shape == (B, H_do, T, V)
+    print("dv shape:", dv.shape)  # (2, 8, 128, 128)
 
 if __name__ == "__main__":
     test_chunk_bwd_dv_local_fixed()
@@ -225,7 +241,8 @@ def prepare_chunk_indices(cu_seqlens, chunk_size):
     return torch.tensor(result, dtype=torch.long)
 
 def test_chunk_bwd_dv_local_varlen():
-    H, K, V = 4, 128, 128
+    H_qk, h_ratio, K, V = 4, 2, 128, 128
+    H_do = H_qk * h_ratio
     chunk_size = 64
     scale = 1.0 / math.sqrt(K)
     device = "npu:0"
@@ -235,10 +252,10 @@ def test_chunk_bwd_dv_local_varlen():
     cu_seqlens = torch.tensor([0, 192, 256], dtype=torch.long)
     T = int(cu_seqlens[-1])
 
-    q   = torch.randn(1, H, T, K, device=device, dtype=dtype)
-    k   = torch.randn(1, H, T, K, device=device, dtype=dtype)
-    d_o = torch.randn(1, H, T, V, device=device, dtype=dtype)
-    g   = torch.randn(1, H, T,    device=device, dtype=torch.float32)
+    q   = torch.randn(1, H_qk, T, K, device=device, dtype=dtype)
+    k   = torch.randn(1, H_qk, T, K, device=device, dtype=dtype)
+    d_o = torch.randn(1, H_do, T, V, device=device, dtype=dtype)
+    g   = torch.randn(1, H_do, T,    device=device, dtype=torch.float32)
 
     # 每行 [batch_idx, chunk_idx]，展平后传入
     chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
@@ -253,8 +270,8 @@ def test_chunk_bwd_dv_local_varlen():
         chunk_size=chunk_size
     )
 
-    assert dv.shape == (1, H, T, V)
-    print("dv shape:", dv.shape)  # (1, 4, 256, 128)
+    assert dv.shape == (1, H_do, T, V)
+    print("dv shape:", dv.shape)  # (1, 8, 256, 128)
 
 if __name__ == "__main__":
     test_chunk_bwd_dv_local_varlen()

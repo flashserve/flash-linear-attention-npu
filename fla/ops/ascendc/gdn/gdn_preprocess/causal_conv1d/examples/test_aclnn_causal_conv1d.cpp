@@ -142,9 +142,10 @@ int main()
     int64_t activationMode = 0;
     int64_t padSlotId = -1;
     int64_t runMode = 0;
+    int64_t headNum = 0;
 
     ret = aclnnCausalConv1dGetWorkspaceSize(x, weight, bias, convStates, queryStartLoc, nullptr, nullptr, nullptr,
-                                            activationMode, padSlotId, runMode, y, &workspaceSize, &executor);
+                                            activationMode, padSlotId, runMode, headNum, y, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnCausalConv1dGetWorkspaceSize failed. ERROR: %d\n", ret);
               return ret);
 

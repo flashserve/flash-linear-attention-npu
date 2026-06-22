@@ -160,7 +160,8 @@ public:
         GM_ADDR cu_seqlens; 
         uint64_t B = 0;
         uint64_t T = 0;
-        uint64_t H = 0;
+        uint64_t Hv = 0;
+        uint64_t Hk = 0;
         uint64_t K = 0;
         uint64_t V = 0;
         uint64_t BT = 0;
@@ -181,7 +182,7 @@ public:
         Params(GM_ADDR k_, LayoutK layoutK_, GM_ADDR dh_, LayoutDh layoutDh_, GM_ADDR workspace_,  LayoutBdv layoutBdv_, 
                LayoutGq layoutGq_, GM_ADDR dO_, LayoutDo layoutDo_,    
                GM_ADDR w_ , LayoutW layoutW_, GM_ADDR dv2_ , LayoutDv2 layoutDv2_, LayoutBdh layoutBdh_,
-               GM_ADDR cu_seqlens_, uint64_t B_, uint64_t T_, uint64_t H_, uint64_t K_, uint64_t V_,
+               GM_ADDR cu_seqlens_, uint64_t B_, uint64_t T_, uint64_t Hv_, uint64_t Hk_, uint64_t K_, uint64_t V_,
                uint64_t BT_, uint64_t chunkNum_, uint64_t seqNum_, uint64_t usedCoreNum_, bool isVarLen_,
                uint64_t bdvWorkspaceOffset_, uint64_t gQWorkspaceOffset_,uint64_t bdhTerm1WorkspaceOffset_, uint64_t bdhTerm2WorkspaceOffset_): 
             k(k_), 
@@ -201,7 +202,8 @@ public:
             cu_seqlens(cu_seqlens_),
             B(B_), 
             T(T_), 
-            H(H_), 
+            Hv(Hv_), 
+            Hk(Hk_), 
             K(K_), 
             V(V_), 
             BT(BT_),
@@ -257,16 +259,22 @@ public:
 
         l0CTensor = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
         {
-            // 每个核完成一个batch里的一个head的一个seqence里的所有chunk
-            uint32_t totalTaskNum = params.B * params.H * params.seqNum; // 等長seqNum=1
+            // 每个核完成一个 batch 内一个 q/k 头 hq、一条序列上的所有 chunk；组内各 value 头 h 串行处理（GVA 方案 A）
+            // 性能说明：当前循环顺序为 for(h) for(chunkIdx)，同一 (hq,chunkIdx) 上 k 的 GM 片相同，但 bdv=k@dh 会对每个 h 重新 copyGmToL1A(k)；
+            // w 按 value 头分片 (gmOffsetW 依赖 h)，dh2 路径上 w 本就必须每 h 重搬，不存在跨 h 复用。
+            // 若要减少 k 的重复 MTE：需与 vec 协同改为 chunk-major（for chunkIdx for h），且 vec 侧为每个 h 单独维护跨 chunk 的 gLast/gLastExp 等状态。
+            uint32_t totalTaskNum = params.B * params.Hk * params.seqNum;
             uint32_t coreIdx = GetBlockIdx();
+            const uint32_t hvPerHk = params.Hk != 0 ? static_cast<uint32_t>(params.Hv / params.Hk) : 1;
             for (uint32_t i = coreIdx; i < totalTaskNum; i += params.usedCoreNum) {
-                uint64_t b = 0;
-                int32_t curChunkNum = 0;
-                uint64_t curSeqLen = 0;
-                CaclOffset(i, curChunkNum, curSeqLen, params);
-                uint32_t curBT = 0;
-                for (int32_t chunkIdx = curChunkNum - 1; chunkIdx >= 0; chunkIdx --) {
+                const uint32_t hq = i % params.Hk;
+                const uint32_t hGroupEnd = (hq + 1U) * hvPerHk;
+                for (uint32_t h = hq * hvPerHk; h < hGroupEnd; h++) {
+                    int32_t curChunkNum = 0;
+                    uint64_t curSeqLen = 0;
+                    CaclOffset(i, h, curChunkNum, curSeqLen, params);
+                    uint32_t curBT = 0;
+                    for (int32_t chunkIdx = curChunkNum - 1; chunkIdx >= 0; chunkIdx --) {
                     // cacl k @ dh
                     if (chunkIdx == curChunkNum -1) {
                         curBT = curSeqLen - chunkIdx * params.BT;
@@ -274,7 +282,7 @@ public:
                     } else {
                         curBT = params.BT;  // BT = 64/128 is always 16 aligned
                         // init GlobalTensor
-                        gmK.SetGlobalBuffer((__gm__ ElementK *)params.k + gmOffsetK + chunkIdx * params.BT * params.K);
+                        gmK.SetGlobalBuffer((__gm__ ElementK *)params.k + gmOffsetQK + chunkIdx * params.BT * params.K);
                          // 用的是上一次chunk迭代的结果
                         gmDh.SetGlobalBuffer((__gm__ ElementDh *)params.dh + gmOffsetH + chunkIdx * params.K * params.V);
                         gmWsBdv.SetGlobalBuffer((__gm__ ElementDh *)params.workspace + coreIdx * params.BT * params.V);
@@ -352,7 +360,7 @@ public:
                         gmDo.SetGlobalBuffer((__gm__ ElementDo *)params.dO + gmOffsetV + chunkIdx * params.BT * params.V);
                         gmDhTerm1.SetGlobalBuffer((__gm__ ElementDh *)params.workspace + params.bdhTerm1WorkspaceOffset + coreIdx * params.K * params.V);
                         
-                        gmW.SetGlobalBuffer((__gm__ ElementW *)params.w + gmOffsetK + chunkIdx * params.BT * params.K);
+                        gmW.SetGlobalBuffer((__gm__ ElementW *)params.w + gmOffsetW + chunkIdx * params.BT * params.K);
                         gmDv2.SetGlobalBuffer((__gm__ ElementDv2 *)params.dv2 + gmOffsetV + chunkIdx * params.BT * params.V);
                         gmDhTerm2.SetGlobalBuffer((__gm__ ElementDh *)params.workspace + params.bdhTerm2WorkspaceOffset + coreIdx * params.K * params.V);
 
@@ -504,52 +512,50 @@ public:
                         CrossCoreSetFlag<0x2, PIPE_FIX>(CROSS_CORE_C2V_TERM2);
                     }
                 }
+                }
             }
         }
         return;
     }
     
 private:
-    CATLASS_DEVICE void CaclOffset(const uint32_t taskIdx, int32_t& curChunkNum, uint64_t& curSeqLen, Params const& params)
+    CATLASS_DEVICE void CaclOffset(const uint32_t coarseTaskIdx, uint32_t h, int32_t& curChunkNum, uint64_t& curSeqLen, Params const& params)
     {
         uint64_t seqStartOffset = 0;
         uint64_t preChunkNum = 0;
         uint64_t b = 0;
-        uint32_t h = taskIdx % params.H; // 当前任务在第几个h 
+        const uint32_t hq = coarseTaskIdx % params.Hk;
         if (params.isVarLen) {
-            uint32_t seqIdx = taskIdx / params.H; // 当前任务在第几个seq
+            uint32_t seqIdx = coarseTaskIdx / params.Hk;
             // {0, 96, 224, 320} [0, 2, 4， 6]
             seqStartOffset = gmCuSeqlens.GetValue(seqIdx); // 当前seq在T中的起始索引
             uint64_t seqEndOffset = gmCuSeqlens.GetValue(seqIdx+1); // 当前seq在T中的结束索引
             curSeqLen = seqEndOffset - seqStartOffset;
-            uint64_t tailChunkLen = curSeqLen % params.BT; 
-            // 计算当前seq的起始chunkIdx
             uint64_t tmpStartOffset = 0;
             uint64_t tmpEndOffset = 0;
-            uint64_t tmpChunkNum = 0;
             for (uint32_t seq = 0; seq < seqIdx; seq++) {
-                tmpStartOffset = gmCuSeqlens.GetValue(seq); // 当前seq在T中的起始索引
-                tmpEndOffset = gmCuSeqlens.GetValue(seq+1); // 当前seq在T中的结束索引
+                tmpStartOffset = gmCuSeqlens.GetValue(seq);
+                tmpEndOffset = gmCuSeqlens.GetValue(seq + 1);
                 auto tmpChunkNum = ((tmpEndOffset - tmpStartOffset) + params.BT - 1) / params.BT;
                 preChunkNum += tmpChunkNum;
             }
-            curChunkNum = (curSeqLen + params.BT - 1) / params.BT; // 当前seq的chunk数
-            // calc offset
+            curChunkNum = (curSeqLen + params.BT - 1) / params.BT;
         } else {
             curChunkNum = params.chunkNum;
-            b = taskIdx / params.H;
+            b = coarseTaskIdx / params.Hk;
             curSeqLen = params.T;
         }
-        gmOffsetK = (b * params.H + h) * params.T * params.K + seqStartOffset * params.K;
-        gmOffsetH = (b * params.H + h) * params.chunkNum * params.K * params.V + 
-                    preChunkNum * params.K * params.V; // [B,H,chunk_num,K,V]
-        gmOffsetV = (b * params.H + h) * params.T * params.V + seqStartOffset * params.V;
+        gmOffsetQK = (b * params.Hk + hq) * params.T * params.K + seqStartOffset * params.K;
+        gmOffsetW = (b * params.Hv + h) * params.T * params.K + seqStartOffset * params.K;
+        gmOffsetH = (b * params.Hv + h) * params.chunkNum * params.K * params.V + 
+                    preChunkNum * params.K * params.V; // [B,Hv,chunk_num,K,V]
+        gmOffsetV = (b * params.Hv + h) * params.T * params.V + seqStartOffset * params.V;
     }
 
     AscendC::GlobalTensor<ElementInt> gmCuSeqlens;
 
-    AscendC::GlobalTensor<ElementK> gmK; // [B,H,T,K]
-    AscendC::GlobalTensor<ElementDh> gmDh; // [B,H,chunkNum,K,V]
+    AscendC::GlobalTensor<ElementK> gmK; // [B,Hk,T,K]
+    AscendC::GlobalTensor<ElementDh> gmDh; // [B,Hv,chunkNum,K,V]
     AscendC::GlobalTensor<ElementDh> gmWsBdv;
 
     AscendC::GlobalTensor<ElementGq> gmGq;
@@ -590,7 +596,8 @@ private:
     TileMmadDh1 tileMmadDh1;
     TileMmadDh2 tileMmadDh2;
 
-    uint64_t gmOffsetK = 0;
+    uint64_t gmOffsetQK = 0;
+    uint64_t gmOffsetW = 0;
     uint64_t gmOffsetV = 0;
     uint64_t gmOffsetH = 0;
 };
@@ -718,7 +725,7 @@ __aicore__ inline void GDRCube<DT, GT>::Process()
     typename GDRKernel::Params param{k, layoutK, dh, layoutDh, workspace, layoutBdv, // k @ dh -> bdv[workspace ]
                                      layoutGq, dO, layoutDo,                // gatedQ^T[workspace ] @ do -> bdh[workspace]
                                      w, layoutW, dv2, layoutDv2, layoutBdh, // w^T @ dv2 -> bdh[workspace] 
-                                     cu_seqlens, this->B, this->T, this->H, this->K, this->V, 
+                                     cu_seqlens, this->B, this->T, this->Hv, this->Hk, this->K, this->V, 
                                      this->chunkSize, this->chunkNum, this->seqNum, this->usedCoreNum, static_cast<bool>(this->isVarLen),
                                      bdvWorkspaceOffset, gQWorkspaceOffset, bdhTerm1WorkspaceOffset, bdhTerm2WorkspaceOffset};
     kernel(param);

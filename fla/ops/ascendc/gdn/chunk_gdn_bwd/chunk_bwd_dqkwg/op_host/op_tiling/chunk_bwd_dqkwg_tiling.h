@@ -26,7 +26,8 @@ namespace optiling {
 BEGIN_TILING_DATA_DEF(ChunkBwdDqkwgTilingData)
     // 基本形状参数
     TILING_DATA_FIELD_DEF(uint64_t, B);              // batch size
-    TILING_DATA_FIELD_DEF(uint64_t, H);              // number of heads
+    TILING_DATA_FIELD_DEF(uint64_t, HV);             // number of heads for V-dim tensors (v, g, dox, dv, h, dh)
+    TILING_DATA_FIELD_DEF(uint64_t, HK);             // number of heads for K-dim tensors (q, k), HV = n * HK
     TILING_DATA_FIELD_DEF(uint64_t, T);              // sequence length
     TILING_DATA_FIELD_DEF(uint64_t, K);              // key/query dimension
     TILING_DATA_FIELD_DEF(uint64_t, V);              // value dimension

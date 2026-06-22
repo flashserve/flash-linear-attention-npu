@@ -17,6 +17,10 @@ CHUNK_SIZE_INDEX = 10
 IS_MIX_INDEX = 11
 IS_FIX_INDEX = 12
 QKV_TYOE_INDEX = 13
+H_RATIO_INDEX = 14
+
+GVA_H_RATIOS = [1, 2, 4]
+
 @GENERATOR_REGISTRY.register("generator_chunk_bwd_dv_local")
 class ChunkBwdDvLocalGenerator(CaseGenerator):
     def __init__(self, config):
@@ -33,14 +37,20 @@ class ChunkBwdDvLocalGenerator(CaseGenerator):
         if not is_mix:
             case_config.inputs[G_INDEX].dtype = qkv_type
         is_fix = case_config.inputs[IS_FIX_INDEX].range_values
-        B, H, T, _ = case_config.inputs[Q_INDEX].shape
+        B, H_qk, T, _ = case_config.inputs[Q_INDEX].shape
         if not is_fix:
             B = 1
+
+        h_ratio = case_config.inputs[H_RATIO_INDEX].range_values if H_RATIO_INDEX < len(case_config.inputs) else 1
+        if isinstance(h_ratio, str):
+            h_ratio = int(h_ratio)
+        H_do = H_qk * h_ratio
+
         K = 128
         V = 128
-        case_config.inputs[Q_INDEX].shape = [B, H, T, K]
-        case_config.inputs[K_INDEX].shape = [B, H, T, K]
-        case_config.inputs[D_O_INDEX].shape = [B, H, T, V]
+        case_config.inputs[Q_INDEX].shape = [B, H_qk, T, K]
+        case_config.inputs[K_INDEX].shape = [B, H_qk, T, K]
+        case_config.inputs[D_O_INDEX].shape = [B, H_do, T, V]
 
         chunkSize = case_config.inputs[CHUNK_SIZE_INDEX].range_values
         case_config.inputs[MATRIX_INDEX].shape = [chunkSize, chunkSize]

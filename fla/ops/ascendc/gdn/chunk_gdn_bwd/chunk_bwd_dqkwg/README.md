@@ -72,14 +72,14 @@ aclnnStatus aclnnChunkBwdDqkwg(
 
 | 参数名                 | 输入/输出 | 必选/可选                    | 描述                    | 使用说明                                                                 | 数据类型                       | 数据格式 | 维度（Shape）             | 非连续 Tensor |
 | ---------------------- | --------- | ---------------------------- | ----------------------- | ------------------------------------------------------------------------ | ------------------------------ | -------- | ------------------------- | ------------- |
-| `q`                    | 输入      | 必选                         | Query 输入张量          | 参与反向计算；接口执行前会先转为连续内存                                 | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, H, T, K]`            | 支持          |
-| `k`                    | 输入      | 必选                         | Key 输入张量            | 参与反向计算；接口执行前会先转为连续内存                                 | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, H, T, K]`            | 支持          |
-| `v`                    | 输入      | 必选                         | Value 输入张量          | 参与反向计算；接口执行前会先转为连续内存                                 | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, H, T, V]`            | 支持          |
-| `g`                    | 输入      | 必选                         | Gate 输入张量           | 要求沿序列维 `T` 为非正且单调递减（`g[..., t] <= g[..., t-1]`）；接口执行前会先转为连续内存 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND`     | `[B, H, T]`               | 支持          |
-| `h`                    | 输入      | 必选                         | 前向保存的隐藏状态张量  | 用于反向传播；接口执行前会先转为连续内存                                 | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, H, numChunks, K, V]` | 支持          |
-| `dox`                  | 输入      | 必选                         | 前向输出 `o` 的梯度张量 | 即输出梯度；接口执行前会先转为连续内存                                   | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, H, T, V]`            | 支持          |
-| `dh`                   | 输入      | 必选                         | 隐藏状态梯度张量        | 与 `h` 对应；接口执行前会先转为连续内存                                  | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, H, numChunks, K, V]` | 支持          |
-| `dv`                   | 输入      | 必选                         | Value 分支梯度张量      | 参与 delta rule 反向计算（非输出）；接口执行前会先转为连续内存            | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, H, T, V]`            | 支持          |
+| `q`                    | 输入      | 必选                         | Query 输入张量          | 参与反向计算；接口执行前会先转为连续内存                                 | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HK, T, K]`            | 支持          |
+| `k`                    | 输入      | 必选                         | Key 输入张量            | 参与反向计算；接口执行前会先转为连续内存                                 | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HK, T, K]`            | 支持          |
+| `v`                    | 输入      | 必选                         | Value 输入张量          | 参与反向计算；接口执行前会先转为连续内存                                 | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, T, V]`            | 支持          |
+| `g`                    | 输入      | 必选                         | Gate 输入张量           | 要求沿序列维 `T` 为非正且单调递减（`g[..., t] <= g[..., t-1]`）；接口执行前会先转为连续内存 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND`     | `[B, HV, T]`               | 支持          |
+| `h`                    | 输入      | 必选                         | 前向保存的隐藏状态张量  | 用于反向传播；接口执行前会先转为连续内存                                 | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, numChunks, K, V]` | 支持          |
+| `dox`                  | 输入      | 必选                         | 前向输出 `o` 的梯度张量 | 即输出梯度；接口执行前会先转为连续内存                                   | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, T, V]`            | 支持          |
+| `dh`                   | 输入      | 必选                         | 隐藏状态梯度张量        | 与 `h` 对应；接口执行前会先转为连续内存                                  | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, numChunks, K, V]` | 支持          |
+| `dv`                   | 输入      | 必选                         | Value 分支梯度张量      | 参与 delta rule 反向计算（非输出）；接口执行前会先转为连续内存            | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, T, V]`            | 支持          |
 | `cuSeqlensOptional`    | 输入      | 可选                         | 变长序列的累计长度信息  | 变长模式输入，形状为 `[N+1]`                                             | `INT64`                        | `ND`     | 1 维                      | -             |
 | `chunkIndicesOptional` | 输入      | 可选                         | 分块索引信息            | 逻辑上表示为 `[num_chunks, 2]`，实际需按一维数组 `[num_chunks * 2]` 传入（flatten） | `INT64`                        | `ND`     | 1 维                      | -             |
 | `w`                    | 输入      | 接口为必传；当前实现要求传空 | 预留权重输入            | 当前实现未启用，必须传 `nullptr`                                         | `FLOAT16`、`BFLOAT16`          | `ND`     | 未启用                    | -             |
@@ -98,21 +98,22 @@ aclnnStatus aclnnChunkBwdDqkwg(
 
 | 参数名          | 输入/输出 | 描述                         | 数据类型                       | 数据格式 | 维度（Shape）  | 非连续 Tensor |
 | --------------- | --------- | ---------------------------- | ------------------------------ | -------- | -------------- | ------------- |
-| `dqOut`         | 输出      | Query 梯度输出张量           | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, H, T, K]` | 支持          |
-| `dkOut`         | 输出      | Key 梯度输出张量             | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, H, T, K]` | 支持          |
-| `dwOut`         | 输出      | 权重梯度输出张量             | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, H, T, K]` | 支持          |
-| `dgOut`         | 输出      | Gate 梯度输出张量            | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND`     | `[B, H, T]`    | 支持          |
+| `dqOut`         | 输出      | Query 梯度输出张量           | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, T, K]` | 支持          |
+| `dkOut`         | 输出      | Key 梯度输出张量             | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, T, K]` | 支持          |
+| `dwOut`         | 输出      | 权重梯度输出张量             | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, T, K]` | 支持          |
+| `dgOut`         | 输出      | Gate 梯度输出张量            | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND`     | `[B, HV, T]`    | 支持          |
 | `workspaceSize` | 输出      | Device 侧所需 workspace 大小 | `uint64_t`                     | -        | 标量           | -             |
 | `executor`      | 输出      | 算子执行器                   | `aclOpExecutor*`               | -        | -              | -             |      |
 
 ### 3.4 形状与约束
 
-- `q`、`k` 的形状必须为 `[B, H, T, K]`。  
-- `v`、`dox`、`dv` 的形状必须为 `[B, H, T, V]`。  
-- `g` 的形状必须为 `[B, H, T]`。  
-- `h`、`dh` 的形状必须为 `[B, H, numChunks, K, V]`。  
+- `q`、`k` 的形状必须为 `[B, HK, T, K]`。  
+- `v`、`dox`、`dv` 的形状必须为 `[B, HV, T, V]`。  
+- `g` 的形状必须为 `[B, HV, T]`。  
+- `h`、`dh` 的形状必须为 `[B, HV, numChunks, K, V]`。  
 - 当前实现要求 `K = 128`。  
 - 当前实现要求 `V = 128` 或 `256`。  
+- `HV`必须为`HK`的整数倍。
 - `chunkSize` 当前仅支持 `64` 或 `128`。  
 - 当启用变长模式时，`cuSeqlensOptional` 和 `chunkIndicesOptional` 用于描述变长分块；同时当前实现仅支持 `B = 1`。  
 - 当前实现要求 `w` 和 `gGamma` 传空指针，否则 tiling 阶段会直接报错。  
@@ -137,10 +138,10 @@ aclnnStatus aclnnChunkBwdDqkwg(
 
 必须满足以下条件：
 
-- `q, k`: `[B, H, T, K]`
-- `v, dox, dv`: `[B, H, T, V]`
-- `g`: `[B, H, T]`
-- `h, dh`: `[B, H, numChunks, K, V]`
+- `q, k`: `[B, HK, T, K]`
+- `v, dox, dv`: `[B, HV, T, V]`
+- `g`: `[B, HV, T]`
+- `h, dh`: `[B, HV, numChunks, K, V]`
 
 额外限制：
 
@@ -216,26 +217,26 @@ import torch_npu
 device = "npu:0"
 
 # 基本参数
-B, H, T, K, V = 1, 8, 1024, 128, 128
+B, HK, HV, T, K, V = 1, 8, 16, 1024, 128, 128
 chunk_size = 64
 scale = 1.0 / (K ** 0.5)
 
 # 构造输入（注意 shape）
-q = torch.randn(B, H, T, K, device=device, dtype=torch.float16)
-k = torch.randn(B, H, T, K, device=device, dtype=torch.float16)
-v = torch.randn(B, H, T, V, device=device, dtype=torch.float16)
+q = torch.randn(B, HK, T, K, device=device, dtype=torch.float16)
+k = torch.randn(B, HK, T, K, device=device, dtype=torch.float16)
+v = torch.randn(B, HV, T, V, device=device, dtype=torch.float16)
 
 # 构造满足约束的 g：负数且沿 T 单调递减
-base = torch.rand(B, H, T, device=device, dtype=torch.float32) * 0.1 + 0.01
+base = torch.rand(B, HV, T, device=device, dtype=torch.float32) * 0.1 + 0.01
 g = -torch.cumsum(base, dim=-1)
 
-dox = torch.randn(B, H, T, V, device=device, dtype=torch.float16)
-dv = torch.randn(B, H, T, V, device=device, dtype=torch.float16)
+dox = torch.randn(B, HV, T, V, device=device, dtype=torch.float16)
+dv = torch.randn(B, HV, T, V, device=device, dtype=torch.float16)
 
 # num_chunks = T // chunk_size（简单场景）
 num_chunks = T // chunk_size
-h = torch.randn(B, H, num_chunks, K, V, device=device, dtype=torch.float16)
-dh = torch.randn(B, H, num_chunks, K, V, device=device, dtype=torch.float16)
+h = torch.randn(B, HV, num_chunks, K, V, device=device, dtype=torch.float16)
+dh = torch.randn(B, HV, num_chunks, K, V, device=device, dtype=torch.float16)
 
 # 调用算子
 dq, dk, dw, dg = torch.ops.npu.npu_chunk_bwd_dqkwg(
@@ -259,7 +260,7 @@ import torch_npu
 
 device = "npu:0"
 
-B, H, K, V = 1, 8, 128, 128
+B, HK, HV, K, V = 1, 8, 16, 128, 128
 chunk_size = 64
 scale = 1.0 / (K ** 0.5)
 
@@ -277,19 +278,19 @@ for s, e in zip(cu_seqlens[:-1].tolist(), cu_seqlens[1:].tolist()):
 chunk_indices = torch.tensor(chunk_indices_list, device=device, dtype=torch.int64)
 num_chunks = len(chunk_indices_list) // 2
 
-q = torch.randn(B, H, total_len, K, device=device, dtype=torch.float16)
-k = torch.randn(B, H, total_len, K, device=device, dtype=torch.float16)
-v = torch.randn(B, H, total_len, V, device=device, dtype=torch.float16)
+q = torch.randn(B, HK, total_len, K, device=device, dtype=torch.float16)
+k = torch.randn(B, HK, total_len, K, device=device, dtype=torch.float16)
+v = torch.randn(B, HV, total_len, V, device=device, dtype=torch.float16)
 
 # g: 非正且单调递减
-base = torch.rand(B, H, total_len, device=device, dtype=torch.float32) * 0.1 + 0.01
+base = torch.rand(B, HV, total_len, device=device, dtype=torch.float32) * 0.1 + 0.01
 g = -torch.cumsum(base, dim=-1)
 
-dox = torch.randn(B, H, total_len, V, device=device, dtype=torch.float16)
-dv = torch.randn(B, H, total_len, V, device=device, dtype=torch.float16)
+dox = torch.randn(B, HV, total_len, V, device=device, dtype=torch.float16)
+dv = torch.randn(B, HV, total_len, V, device=device, dtype=torch.float16)
 
-h = torch.randn(B, H, num_chunks, K, V, device=device, dtype=torch.float16)
-dh = torch.randn(B, H, num_chunks, K, V, device=device, dtype=torch.float16)
+h = torch.randn(B, HV, num_chunks, K, V, device=device, dtype=torch.float16)
+dh = torch.randn(B, HV, num_chunks, K, V, device=device, dtype=torch.float16)
 
 dq, dk, dw, dg = torch.ops.npu.npu_chunk_bwd_dqkwg(
     q, k, v, g, h, dox, dh, dv,
@@ -308,10 +309,10 @@ print(dq.shape, dk.shape, dw.shape, dg.shape)
 ### 说明
 
 - 输入 shape：
-  - `q/k`: `[B, H, T, K]`
-  - `v/dox/dv`: `[B, H, T, V]`
-  - `g`: `[B, H, T]` `g需要为负数且单调递减`
-  - `h/dh`: `[B, H, num_chunks, K, V]`
+  - `q/k`: `[B, HK, T, K]`
+  - `v/dox/dv`: `[B, HV, T, V]`
+  - `g`: `[B, HV, T]` `g需要为负数且单调递减`
+  - `h/dh`: `[B, HV, num_chunks, K, V]`
 - `chunk_size` 当前仅支持 `64` 或 `128`
 - `scale` 通常为 `1 / sqrt(K)`
 - `w`、`g_gamma` 当前版本需传 `None`

@@ -104,13 +104,33 @@ detect_cann_version() {
     fi
 
     CANN_VERSION_STR=""
-    if [[ -f "$CANNDIR/version.cfg" ]]; then
-        CANN_VERSION_STR=$(grep -oP 'version=\K[0-9.]+' "$CANNDIR/version.cfg" 2>/dev/null | head -1)
+    local version_candidates=(
+        "$CANNDIR/version.cfg"
+        "$CANNDIR/version.info"
+        "$CANNDIR/opp/version.info"
+    )
+    for version_file in "${version_candidates[@]}"; do
+        [[ -f "$version_file" ]] || continue
+        if [[ "$version_file" == *.cfg ]]; then
+            CANN_VERSION_STR=$(grep -oP 'version=\K[0-9.]+' "$version_file" 2>/dev/null | head -1)
+        else
+            CANN_VERSION_STR=$(
+                grep -oP '(?:Version|version)=\K[0-9]+\.[0-9]+(?:\.[0-9]+)?' "$version_file" 2>/dev/null | head -1
+            )
+            if [[ -z "$CANN_VERSION_STR" ]]; then
+                CANN_VERSION_STR=$(sed -n 's/^[Vv]ersion=\([0-9][0-9.]*\).*/\1/p' "$version_file" 2>/dev/null | head -1)
+            fi
+            if [[ -z "$CANN_VERSION_STR" ]]; then
+                CANN_VERSION_STR=$(head -1 "$version_file" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            fi
+        fi
+        [[ -n "$CANN_VERSION_STR" ]] && break
+    done
+    if [[ -n "$CANN_VERSION_STR" ]]; then
+        CANN_MAJOR_MINOR=$(echo "$CANN_VERSION_STR" | cut -d. -f1-2)
+    else
+        CANN_MAJOR_MINOR=""
     fi
-    if [[ -z "$CANN_VERSION_STR" && -f "$CANNDIR/version.info" ]]; then
-        CANN_VERSION_STR=$(head -1 "$CANNDIR/version.info" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-    fi
-    CANN_MAJOR_MINOR="${CANN_VERSION_STR%.*}"
     if [[ -z "$CANN_VERSION_STR" ]]; then
         echo "[WARN] 无法检测 CANN 版本，假设为 9.0"
         CANN_MAJOR_MINOR="9.0"
@@ -150,6 +170,20 @@ detect_soc_from_npu() {
 
 find_run_file() {
     ls "$SCRIPT_DIR/build_out"/fla-npu-*.run 2>/dev/null | head -1
+}
+
+source_vendor_env() {
+    local vendor_env="${CANNDIR}/vendors/fla_npu_transformer/bin/set_env.bash"
+    if [[ -f "$vendor_env" ]]; then
+        # vendor set_env.bash 会 append ${ASCEND_CUSTOM_OPP_PATH}；脚本启用了 set -u，需先给默认值
+        export ASCEND_CUSTOM_OPP_PATH="${ASCEND_CUSTOM_OPP_PATH:-}"
+        export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
+        # shellcheck disable=SC1090
+        source "$vendor_env"
+        echo "[INFO] 已加载自定义算子环境: $vendor_env"
+    else
+        echo "[WARN] 未找到 $vendor_env；若测试报 libopapi 找不到，请先安装 .run 并 source 该文件"
+    fi
 }
 
 auto_select_device() {
@@ -273,7 +307,7 @@ run_install_stage() {
     echo "[INFO] CANN 路径: $CANNDIR_FOR_INSTALL"
 
     echo ""
-    echo "--- 重新编译 ascend950 整包（匹配当前 NPU） ---"
+    echo "--- 重新编译 $SOC_FOR_INSTALL 整包（匹配当前 NPU） ---"
     rm -rf build
     local compile_log="/tmp/gdn_install_compile.log"
     if ! bash build.sh --pkg --soc="$SOC_FOR_INSTALL" --vendor_name=fla_npu > "$compile_log" 2>&1; then
@@ -308,7 +342,9 @@ run_install_stage() {
         tail -20 "$install_log"
         RUN_OK=false
         FAIL_DETAILS+=$'\n'".run 安装失败 → $install_log"
+        return
     fi
+    source_vendor_env
 }
 
 # ================================================================
@@ -328,6 +364,7 @@ prepare_test_env() {
     fi
 
     pip install ml_dtypes -q 2>/dev/null || true
+    source_vendor_env
     echo "[INFO] 依赖检查完成"
 }
 

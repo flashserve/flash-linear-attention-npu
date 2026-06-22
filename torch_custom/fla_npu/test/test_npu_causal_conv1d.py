@@ -233,6 +233,47 @@ class TestCausalConv1d(unittest.TestCase):
             atol=2e-1,
         )
 
+    def test_npu_causal_conv1d_prefill_batch_output_reshape_matches_cpu_golden(self):
+        x = make_tensor((2, 4, 32), start=1.0)
+        weight_op = make_tensor((4, 32), start=101.0)
+        bias = make_tensor((32,), start=201.0)
+        conv_states = make_tensor((2, 3, 32), start=301.0)
+        conv_states_ref = op_conv_states_to_ref(conv_states)
+        head_num = 2;
+
+        y = self.call_op(
+            x=x,
+            weight=weight_op,
+            bias=bias,
+            conv_states=conv_states,
+            activation_mode=1,
+            pad_slot_id=-1,
+            run_mode=0,
+            head_num=head_num,
+        )
+
+        x_ref = op_batch_x_to_ref(x)
+        weight_ref = op_weight_to_ref(weight_op)
+        bias_ref = bias.detach().cpu().float()
+        y_ref, final_states_ref = causal_conv1d_ref(
+            x_ref,
+            weight_ref,
+            bias=bias_ref,
+            initial_states=None,
+            return_final_states=True,
+            final_states_out=conv_states_ref,
+            activation=activation_from_mode(1),
+            head_num = head_num,
+        )
+        b,s,d = x.shape
+        self.assertTensorClose(y, y_ref.permute(0, 2, 1).reshape(b,s,head_num,d//head_num).transpose(1,2).contiguous(), rtol=1e-1, atol=2e-1)
+        self.assertTensorClose(
+            conv_states,
+            final_states_ref.permute(0, 2, 1).contiguous(),
+            rtol=1e-1,
+            atol=2e-1,
+        )
+
     def test_npu_causal_conv1d_varlen_initial_state_matches_cpu_golden(self):
         x = make_tensor((5, 16), start=1.0)
         weight_op = make_tensor((4, 16), start=101.0)
@@ -282,6 +323,59 @@ class TestCausalConv1d(unittest.TestCase):
 
         self.assertTensorClose(y, y_ref, rtol=1e-1, atol=2e-1)
         self.assertTensorClose(conv_states, conv_states_expected, rtol=1e-1, atol=2e-1)
+
+    def test_npu_causal_conv1d_varlen_initial_state_output_reshape_matches_cpu_golden(self):
+        x = make_tensor((5, 32), start=1.0)
+        weight_op = make_tensor((4, 32), start=101.0)
+        conv_states = make_tensor((2, 3, 32), start=301.0)
+
+        query_start_loc = [0, 2, 5]
+        cache_indices = [0, 1]
+        initial_state_mode = [1, 0]
+        conv_states_ref = op_conv_states_to_ref(conv_states)
+        head_num = 2
+
+        y = self.call_op(
+            x=x,
+            weight=weight_op,
+            bias=None,
+            conv_states=conv_states,
+            query_start_loc=query_start_loc,
+            cache_indices=cache_indices,
+            initial_state_mode=initial_state_mode,
+            activation_mode=0,
+            pad_slot_id=-1,
+            run_mode=0,
+            head_num = head_num
+        )
+
+        weight_ref = op_weight_to_ref(weight_op)
+        x_ref = x.detach().cpu().float()
+        outputs = []
+        for seq_idx in range(len(query_start_loc) - 1):
+            start = query_start_loc[seq_idx]
+            end = query_start_loc[seq_idx + 1]
+            x_seq = x_ref[start:end].transpose(0, 1).unsqueeze(0).contiguous()
+            initial_state = None
+            if initial_state_mode[seq_idx]:
+                initial_state = conv_states_ref[cache_indices[seq_idx]].unsqueeze(0)
+            y_seq, _ = causal_conv1d_ref(
+                x_seq,
+                weight_ref,
+                bias=None,
+                initial_states=initial_state,
+                return_final_states=True,
+                final_states_out=conv_states_ref[cache_indices[seq_idx]].unsqueeze(0),
+                activation=activation_from_mode(0),
+            )
+            outputs.append(y_seq.squeeze(0).transpose(0, 1).contiguous())
+
+        y_ref = torch.cat(outputs, dim=0)
+        conv_states_expected = ref_conv_states_to_op(conv_states_ref)
+
+        s,d = x.shape
+        self.assertTensorClose(y, y_ref.reshape(s, head_num, d//head_num).transpose(0,1).contiguous(), rtol=1e-1, atol=2e-1)
+        self.assertTensorClose(conv_states, conv_states_expected, rtol=1e-1, atol=2e-1) 
 
     def test_npu_causal_conv1d_update_matches_cpu_golden(self):
         x = make_tensor((2, 16), start=1.0)

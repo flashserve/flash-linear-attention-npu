@@ -10,6 +10,8 @@
 #ifndef CATLASS_GEMM_SCHEDULER_GDN_FWD_O_HPP
 #define CATLASS_GEMM_SCHEDULER_GDN_FWD_O_HPP
 
+#include "../../chunk_fwd_o_struct.h"
+
 // constexpr uint32_t PING_PONG_STAGES = 1;
 constexpr uint32_t PING_PONG_STAGES = 2;
 constexpr uint32_t BYTE_SIZE_16_BIT = 2;
@@ -104,17 +106,17 @@ struct BlockSchedulerGdnFwdO {
     BlockSchedulerGdnFwdO() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, GM_ADDR tiling, uint32_t coreIdx, uint32_t coreNum) {
-        __gm__ ChunkFwdOTilingData *__restrict gdnFwdOTilingData = reinterpret_cast<__gm__ ChunkFwdOTilingData *__restrict>(tiling);
-        shapeBatch = gdnFwdOTilingData->shapeBatch;
-        seqlen = gdnFwdOTilingData->seqlen;
-        kNumHead = gdnFwdOTilingData->kNumHead;
-        vNumHead = gdnFwdOTilingData->vNumHead;
-        kHeadDim = gdnFwdOTilingData->kHeadDim;
-        vHeadDim = gdnFwdOTilingData->vHeadDim;
-        chunkSize = gdnFwdOTilingData->chunkSize;
-        isVariedLen = gdnFwdOTilingData->isVariedLen;
-        tokenBatch = gdnFwdOTilingData->tokenBatch;
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, const GDN::ChunkFwdOTilingData *tilingData,
+              uint32_t coreIdx, uint32_t coreNum) {
+        shapeBatch = tilingData->shapeBatch;
+        seqlen = tilingData->seqlen;
+        kNumHead = tilingData->kNumHead;
+        vNumHead = tilingData->vNumHead;
+        kHeadDim = tilingData->kHeadDim;
+        vHeadDim = tilingData->vHeadDim;
+        chunkSize = tilingData->chunkSize;
+        isVariedLen = tilingData->isVariedLen;
+        tokenBatch = tilingData->tokenBatch;
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
         gmChunkOffsets.SetGlobalBuffer((__gm__ int64_t *)chunk_offsets);
@@ -187,8 +189,9 @@ struct BlockSchedulerGdnFwdOCube : public BlockSchedulerGdnFwdO {
     BlockSchedulerGdnFwdOCube() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, GM_ADDR tiling) {
-        BlockSchedulerGdnFwdO::Init(cu_seqlens, chunk_offsets, tiling, AscendC::GetBlockIdx(), AscendC::GetBlockNum());
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, const GDN::ChunkFwdOTilingData *tilingData) {
+        BlockSchedulerGdnFwdO::Init(cu_seqlens, chunk_offsets, tilingData, AscendC::GetBlockIdx(),
+                                    AscendC::GetBlockNum());
     }
 
     CATLASS_DEVICE
@@ -198,7 +201,7 @@ struct BlockSchedulerGdnFwdOCube : public BlockSchedulerGdnFwdO {
 
     CATLASS_DEVICE
     GDNFwdOOffsets& GetCube1Offsets() {
-        return offsets[(currStage - 1) % PING_PONG_STAGES];
+        return offsets[(currStage + PING_PONG_STAGES - 1) % PING_PONG_STAGES];
     }
 
     CATLASS_DEVICE
@@ -218,7 +221,7 @@ struct BlockSchedulerGdnFwdOCube : public BlockSchedulerGdnFwdO {
 
     CATLASS_DEVICE
     GDNFwdOOffsets& GetCube23Offsets() {
-        return offsets[(currStage - 2) % PING_PONG_STAGES];
+        return offsets[(currStage + PING_PONG_STAGES - 2) % PING_PONG_STAGES];
     }
 
     CATLASS_DEVICE
@@ -240,8 +243,9 @@ struct BlockSchedulerGdnFwdOVec : public BlockSchedulerGdnFwdO {
     BlockSchedulerGdnFwdOVec() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, GM_ADDR tiling) {
-        BlockSchedulerGdnFwdO::Init(cu_seqlens, chunk_offsets, tiling, AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(), AscendC::GetBlockNum());
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, const GDN::ChunkFwdOTilingData *tilingData) {
+        BlockSchedulerGdnFwdO::Init(cu_seqlens, chunk_offsets, tilingData,
+                                    AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(), AscendC::GetBlockNum());
     }
 
     CATLASS_DEVICE
@@ -260,12 +264,12 @@ struct BlockSchedulerGdnFwdOVec : public BlockSchedulerGdnFwdO {
 
     CATLASS_DEVICE
     GDNFwdOOffsets& GetVec1Offsets() {
-        return offsets[(currStage - 1) % PING_PONG_STAGES];
+        return offsets[(currStage + PING_PONG_STAGES - 1) % PING_PONG_STAGES];
     }
 
     CATLASS_DEVICE
     GDNFwdOOffsets& GetVec2Offsets() {
-        return offsets[(currStage - 2) % PING_PONG_STAGES];
+        return offsets[(currStage + PING_PONG_STAGES - 2) % PING_PONG_STAGES];
     }
 
 };

@@ -26,7 +26,8 @@ namespace optiling {
 
 BEGIN_TILING_DATA_DEF(ChunkGatedDeltaRuleBwdDhuTilingData)
 TILING_DATA_FIELD_DEF(uint64_t, B);
-TILING_DATA_FIELD_DEF(uint64_t, H);
+TILING_DATA_FIELD_DEF(uint64_t, Hv);
+TILING_DATA_FIELD_DEF(uint64_t, Hk);
 TILING_DATA_FIELD_DEF(uint64_t, T);
 TILING_DATA_FIELD_DEF(uint64_t, K);
 TILING_DATA_FIELD_DEF(uint64_t, V);
@@ -67,7 +68,8 @@ private:
     bool IS_SCALE = false;
     bool IS_VARIABLE_LEN = false; 
     uint64_t B = 0;
-    uint64_t H = 0;
+    uint64_t Hv = 0;
+    uint64_t Hk = 0;
     uint64_t T = 0;
     uint64_t K = 0;
     uint64_t V = 0;

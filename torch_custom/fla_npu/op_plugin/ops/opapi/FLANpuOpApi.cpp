@@ -57,26 +57,50 @@ using namespace op_infer;
     c10::optional<bool> use_exp2, 
     c10::optional<bool> transpose_state_layout)
 {
+    // GVA：q/k 为 [B,Hk,T,K]；w、d_o、dv、g 等为 [B,Hv,T,·]，且 Hv % Hk == 0（与 device tiling 一致）
     auto q_size = q.sizes();
+    auto k_size = k.sizes();
+    auto w_size = w.sizes();
+    auto do_size = d_o.sizes();
     auto dv_size = dv.sizes();
     int64_t B = q_size[0];
-    int64_t H = q_size[1];
+    int64_t Hk = q_size[1];
     int64_t T = q_size[2];
     int64_t K = q_size[3];
+    int64_t Hv = dv_size[1];
     int64_t V = dv_size[3];
-    int64_t chunk_num = (T + chunk_size -1) / chunk_size; 
+    int64_t chunk_num = (T + chunk_size -1) / chunk_size;
+
+    TORCH_CHECK(
+        k_size[0] == B && k_size[1] == Hk && k_size[2] == T && k_size[3] == K,
+        "npu_chunk_gated_delta_rule_bwd_dhu: k must match q as [B,Hk,T,K]; q=", q_size, " k=", k_size);
+    TORCH_CHECK(
+        w_size[0] == B && w_size[1] == Hv && w_size[2] == T && w_size[3] == K,
+        "npu_chunk_gated_delta_rule_bwd_dhu: w must be [B,Hv,T,K] with Hv=dv.dim1; w=", w_size, " dv=", dv_size);
+    TORCH_CHECK(
+        do_size[0] == B && do_size[1] == Hv && do_size[2] == T && do_size[3] == V,
+        "npu_chunk_gated_delta_rule_bwd_dhu: d_o must be [B,Hv,T,V]; d_o=", do_size, " dv=", dv_size);
+    TORCH_CHECK(
+        dv_size[0] == B && dv_size[1] == Hv && dv_size[2] == T && dv_size[3] == V,
+        "npu_chunk_gated_delta_rule_bwd_dhu: dv must be [B,Hv,T,V]; dv=", dv_size);
+    TORCH_CHECK(
+        Hk > 0 && Hv > 0 && Hv % Hk == 0,
+        "npu_chunk_gated_delta_rule_bwd_dhu: GVA requires Hv divisible by Hk; Hk=",
+        Hk,
+        " Hv=",
+        Hv);
 
     if (chunk_indices.has_value()) {
         auto chunk_indices_ref = chunk_indices.value();
         chunk_num = chunk_indices_ref.size() / 2;
     }
 
-    // 创建输出tensor（PTA推荐）
+    // 创建输出 tensor：dh/dh0 与 value 头维 Hv 对齐（device 输出 [B,Hv,chunk_num,K,V]）
     at::Tensor dv2 = at::empty_like(dv);
-    at::Tensor dh = at::empty({B, H, chunk_num, K, V}, q.options());
+    at::Tensor dh = at::empty({B, Hv, chunk_num, K, V}, q.options());
     at::Tensor dh0;
     if (h0.has_value()) {
-        dh0 = at::empty({B, H, chunk_num, K, V}, q.options());
+        dh0 = at::empty({B, Hv, chunk_num, K, V}, q.options());
     } else {
         dh0 = at::Tensor();
     }
@@ -86,6 +110,24 @@ using namespace op_infer;
     const at::Tensor &gK_ = c10::value_or_else(gK, [] { return at::Tensor(); });
     const at::Tensor &h0_ = c10::value_or_else(h0, [] { return at::Tensor(); });
     const at::Tensor &dht_ = c10::value_or_else(dht, [] { return at::Tensor(); });
+
+    if (g_.defined()) {
+        TORCH_CHECK(
+            g_.dim() == 3 && g_.size(0) == B && g_.size(1) == Hv && g_.size(2) == T,
+            "npu_chunk_gated_delta_rule_bwd_dhu: g must be [B,Hv,T]; g=", g_.sizes());
+    }
+    if (h0_.defined()) {
+        TORCH_CHECK(
+            h0_.dim() == 5 && h0_.size(0) == B && h0_.size(1) == Hv && h0_.size(2) == chunk_num,
+            "npu_chunk_gated_delta_rule_bwd_dhu: h0 must be [B,Hv,chunk_num,K,V]; h0=", h0_.sizes(),
+            " chunk_num=", chunk_num);
+    }
+    if (dht_.defined()) {
+        TORCH_CHECK(
+            dht_.dim() == 5 && dht_.size(0) == B && dht_.size(1) == Hv && dht_.size(2) == chunk_num,
+            "npu_chunk_gated_delta_rule_bwd_dhu: dht must be [B,Hv,chunk_num,K,V]; dht=", dht_.sizes(),
+            " chunk_num=", chunk_num);
+    }
 
     // 调用ACLNN算子
     EXEC_NPU_CMD_EXT(
@@ -128,10 +170,18 @@ at::Tensor npu_prepare_wy_repr_bwd_da(const at::Tensor & k, const at::Tensor & v
 
 ::std::tuple<at::Tensor,at::Tensor,at::Tensor,at::Tensor> npu_chunk_bwd_dqkwg(const at::Tensor & q, const at::Tensor & k, const at::Tensor & v, const at::Tensor & g, const at::Tensor & h, const at::Tensor & dox, const at::Tensor & dh, const at::Tensor & dv, int64_t chunk_size, at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices, const c10::optional<at::Tensor> & w, const c10::optional<at::Tensor> & g_gamma, c10::optional<double> scale, c10::optional<bool> use_exp2, c10::optional<bool> transpose_state_layout)
 {
-    // 创建输出tensor
-    at::Tensor dq = at::empty_like(q);
-    at::Tensor dk = at::empty_like(k);
-    at::Tensor dw = at::empty_like(k);
+    // 获取输入 q 的维度信息
+    auto q_sizes = q.sizes();
+    auto v_sizes = v.sizes();
+    int64_t batch_size = q_sizes[0];
+    int64_t num_heads = v_sizes[1];
+    int64_t seq_len = q_sizes[2];
+    int64_t head_dim = q_sizes[3];
+    
+    // 使用具体 shape 创建，但保持相同的 dtype/device
+    at::Tensor dq = at::empty({batch_size, num_heads, seq_len, head_dim}, q.options());
+    at::Tensor dk = at::empty({batch_size, num_heads, seq_len, head_dim}, q.options());
+    at::Tensor dw = at::empty({batch_size, num_heads, seq_len, head_dim}, q.options());
     at::Tensor dg = at::empty_like(g);
 
     // scale处理
@@ -294,6 +344,36 @@ at::Tensor npu_chunk_fwd_o(
     return std::tie(w,u);
 }
 
+at::Tensor infer_y_tensor(
+    const at::Tensor& x,
+    int64_t head_num,
+    int64_t run_mode)
+{
+    at::Tensor y;
+    int64_t x_dim = x.dim();
+
+    if (run_mode == 0 && head_num > 0) {
+        if (x_dim == 3) {
+            auto sizes = x.sizes();
+            int64_t b = sizes[0];
+            int64_t s = sizes[1];
+            int64_t d = sizes[2] / head_num;
+            y = at::empty({b, head_num, s, d}, x.options());
+        } else if (x_dim == 2) {
+            auto sizes = x.sizes();
+            int64_t s = sizes[0];
+            int64_t d = sizes[1] / head_num;
+            y = at::empty({head_num, s, d}, x.options());
+        } else {
+            y = at::empty_like(x);
+        }
+    } else {
+        y = at::empty_like(x);
+    }
+
+    return y;
+}
+
 at::Tensor npu_causal_conv1d(
     const at::Tensor &x,
     const at::Tensor &weight,
@@ -305,9 +385,10 @@ at::Tensor npu_causal_conv1d(
     at::OptionalIntArrayRef num_accepted_tokens,
     int64_t activation_mode,
     int64_t pad_slot_id,
-    int64_t run_mode)
+    int64_t run_mode,
+    int64_t head_num = 0)
 {
-    at::Tensor y = at::empty_like(x);
+    at::Tensor y = infer_y_tensor(x, head_num, run_mode);
 
     const at::Tensor &bias_ = c10::value_or_else(bias, [] { return at::Tensor(); });
 

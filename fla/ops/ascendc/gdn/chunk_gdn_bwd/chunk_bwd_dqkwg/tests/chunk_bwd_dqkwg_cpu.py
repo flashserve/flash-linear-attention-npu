@@ -85,33 +85,42 @@ def chunk_bwd_dqkwg_cpu(
     scale: float,
     cu_seqlens: torch.LongTensor,
     chunk_size: int = 64,
+    benchmark = False
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     CPU Equivalent of chunk_bwd_kernel_dqkwg.
     """
-    q.to(torch.float32)
-    k.to(torch.float32)
-    v.to(torch.float32)
-    do.to(torch.float32)
-    h.to(torch.float32)
-    dh.to(torch.float32)
-    # w.to(torch.float32)
-    
-    g.to(torch.float32)
-    dv.to(torch.float32)
-    B, T, H, K = q.shape
-    V = v.shape[-1]
+    if benchmark:
+        calc_type = torch.float64
+    else:
+        calc_type = torch.float32
     datatype = q.dtype
     gtype = g.dtype
-    calctype = torch.float32
-    g_gamma = None
-    # print(f"h {h.dtype}")
+    q.to(calc_type)
+    k.to(calc_type)
+    v.to(calc_type)
+    do.to(calc_type)
+    h.to(calc_type)
+    dh.to(calc_type)
     
-    dq = torch.zeros_like(q)
-    dk = torch.zeros_like(k)
+    g.to(calc_type)
+    dv.to(calc_type)
+    B, T, HK, K = q.shape
+    HV = v.shape[2]
+    V = v.shape[-1]
+    n_ratio = HV // HK  # HV = n_ratio * HK
+
+    if benchmark:
+        datatype = torch.float64
+        gtype = torch.float64
+    g_gamma = None
+    
+    # 输出使用 HV 维度
+    dq = torch.zeros((B, T, HV, K), dtype=datatype)
+    dk = torch.zeros((B, T, HV, K), dtype=datatype)
     dg = torch.zeros_like(g) if g is not None else None
-    dw = torch.zeros_like(q)
-    w = torch.zeros_like(q)
+    dw = torch.zeros((B, T, HV, K), dtype=datatype)
+    w = torch.zeros((B, T, HV, K), dtype=datatype)
 
     
     # 辅助函数：处理单个序列的逻辑
@@ -122,7 +131,9 @@ def chunk_bwd_dqkwg_cpu(
         # print("H(head)", H, "num_chunks", num_chunks, "b_idx", b_idx, "t_start", t_start, "t_end", t_end, "seq_idx_in_batch", seq_idx_in_batch, "chunk_start_idx", chunk_start_idx)
 
         
-        for h_idx in range(H):
+        for h_idx in range(HV):
+            # h_idx is hv_idx; compute hk_idx for q/k access
+            hk_idx = h_idx // n_ratio
             # 获取当前头的 gamma (如果 USE_G_GAMMA)
             gamma_val = None
             if g_gamma is not None:
@@ -142,8 +153,9 @@ def chunk_bwd_dqkwg_cpu(
                 
                 # 切片当前块的数据
                 
-                q_c = q[b_idx, chunk_start_token_idx:chunk_end_token_idx, h_idx, :]  # [BT, K]
-                k_c = k[b_idx, chunk_start_token_idx:chunk_end_token_idx, h_idx, :]  # [BT, K]
+                q_c = q[b_idx, chunk_start_token_idx:chunk_end_token_idx, hk_idx, :]  # [BT, K]
+                k_c = k[b_idx, chunk_start_token_idx:chunk_end_token_idx, hk_idx, :]  # [BT, K]
+
                 v_c = v[b_idx, chunk_start_token_idx:chunk_end_token_idx, h_idx, :]  # [BT, V]
                 do_c = do[b_idx, chunk_start_token_idx:chunk_end_token_idx, h_idx, :] # [BT, V]
 
@@ -158,20 +170,20 @@ def chunk_bwd_dqkwg_cpu(
                 # -----------------------------------------------------------
                 # Triton: b_dq += dot(b_do, b_h) -> do @ h_prev.T
                 # h_prev 是 [K, V], do_c 是 [BT, V] -> [BT, K]
-                dq_from_state = do_c.to(torch.float32) @ h_prev.transpose(-1, -2).to(torch.float32)
+                dq_from_state = do_c.to(calc_type) @ h_prev.transpose(-1, -2).to(calc_type)
 
-                dq_from_state = dq_from_state.to(datatype).to(torch.float32)
+                dq_from_state = dq_from_state.to(datatype).to(calc_type)
 
                 # Triton: b_dk += dot(b_v, b_dh) -> v @ dh_curr.T
                 # dh_curr 是 [K, V], v_c 是 [BT, V] -> [BT, K]
-                dk_from_state = v_c.to(torch.float32) @ dh_curr.transpose(-1, -2).to(torch.float32)
-                dk_from_state = dk_from_state.to(datatype).to(torch.float32)
+                dk_from_state = v_c.to(calc_type) @ dh_curr.transpose(-1, -2).to(calc_type)
+                dk_from_state = dk_from_state.to(datatype).to(calc_type)
                 # Triton: if USE_DW -> b_dw += dot(b_dv, b_h)
                 if w is not None and dv is not None:
                     dv_c = dv[b_idx, chunk_start_token_idx:chunk_end_token_idx, h_idx, :] # [BT, V]
                     # dw_c: [BT, K]
-                    dw_c_val = dv_c.to(torch.float32) @ h_prev.transpose(-1, -2).to(torch.float32)
-                    dw_c_val = dw_c_val.to(datatype).to(torch.float32)
+                    dw_c_val = dv_c.to(calc_type) @ h_prev.transpose(-1, -2).to(calc_type)
+                    dw_c_val = dw_c_val.to(datatype).to(calc_type)
                     # Triton stores -b_dw
                     dw[b_idx, chunk_start_token_idx:chunk_end_token_idx, h_idx, :] = -dw_c_val
 
@@ -196,8 +208,8 @@ def chunk_bwd_dqkwg_cpu(
                     # Accumulate gradients into dg (from state terms)
                     # b_dg += sum(b_dq * b_q)
                     dg_c = (dq_from_state * q_c).sum(dim=-1)
-                    # print("ADD0.A", dg_c.to(datatype).to(torch.float32))
-                    dg_c = dg_c.to(datatype).to(torch.float32)         #ADD0.A
+                    # print("ADD0.A", dg_c.to(datatype).to(calc_type))
+                    dg_c = dg_c.to(datatype).to(calc_type)         #ADD0.A
 
                     # b_dg -= sum(b_k * b_dk)
                     dg_c -= (k_c * dk_from_state).sum(dim=-1)           #ADD0.B
@@ -205,7 +217,7 @@ def chunk_bwd_dqkwg_cpu(
                     # print("dk_from_state",dk_from_state)
                     # print("k_c * dk_from_state",( k_c * dk_from_state)[0])
                     # print("Add0.B", -(k_c * dk_from_state).sum(dim=-1))
-                    dg_c = dg_c.to(datatype).to(torch.float32)
+                    dg_c = dg_c.to(datatype).to(calc_type)
 
                     # b_dg_last += sum(b_dk * b_k)
                     # print(f"dg_last_accum {dg_last_accum} += (dk_from_state * k_c).sum() {(dk_from_state * k_c).sum()}")
@@ -237,8 +249,8 @@ def chunk_bwd_dqkwg_cpu(
                 # -----------------------------------------------------------
                 # 3. Intra-chunk Attention
                 # -----------------------------------------------------------
-                ds = do_c.to(torch.float32) @ v_c.transpose(-1, -2).to(torch.float32) # [BT, BT]
-                ds = ds.to(datatype).to(torch.float32)
+                ds = do_c.to(calc_type) @ v_c.transpose(-1, -2).to(calc_type) # [BT, BT]
+                ds = ds.to(datatype).to(calc_type)
 
                 
                 # Causal Mask
@@ -261,8 +273,8 @@ def chunk_bwd_dqkwg_cpu(
                     
                     # DG Calculation Part 2 (Intra-chunk)
                     # b_ds2 = b_ds * (q @ k.T)
-                    qk_t = q_c.to(torch.float32) @ k_c.transpose(-1, -2).to(torch.float32)
-                    qk_t = qk_t.to(datatype).to(torch.float32)
+                    qk_t = q_c.to(calc_type) @ k_c.transpose(-1, -2).to(calc_type)
+                    qk_t = qk_t.to(datatype).to(calc_type)
 
 
                     ds2 = ds * qk_t
@@ -273,7 +285,7 @@ def chunk_bwd_dqkwg_cpu(
                     dg_c -= ds2.sum(dim=0)
 
                     # dg_c = dg_c_C.to(torch.float16) + dg_c_D.to(torch.float16) + dg_c_A.to(torch.float16) + dg_c_B.to(torch.float16)
-                    dg_c = dg_c.to(datatype).to(gtype)
+                    dg_c = dg_c.to(gtype)
 
                     # print("dg_c after", dg_c.shape)
                     # pause()
@@ -316,14 +328,14 @@ def chunk_bwd_dqkwg_cpu(
                 # -----------------------------------------------------------
                 # dq += ds @ k
 
-                dq_intra = ds.to(torch.float32) @ k_c.to(torch.float32)
+                dq_intra = ds.to(calc_type) @ k_c.to(calc_type)
                 # if h_idx == 0 and i_t == 7:
                 #     print("ds.to(torch.float32)",ds.to(torch.float32))
                 #     print("k_c.to(torch.float32)",k_c.to(torch.float32))
-                dq_intra = dq_intra.to(datatype).to(torch.float32)
+                dq_intra = dq_intra.to(datatype).to(calc_type)
                 # dk += ds.T @ q
-                dk_intra = ds.transpose(-1, -2).to(torch.float32) @ q_c.to(torch.float32)
-                dk_intra = dk_intra.to(datatype).to(torch.float32)
+                dk_intra = ds.transpose(-1, -2).to(calc_type) @ q_c.to(calc_type)
+                dk_intra = dk_intra.to(datatype).to(calc_type)
 
                 
                 if g is None and g_gamma is None:
