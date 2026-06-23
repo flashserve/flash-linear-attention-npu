@@ -48,6 +48,8 @@ struct GDNFwdHOffsets {
     uint32_t gOffset;
     uint32_t hWorkOffset;
     uint32_t vWorkOffset;
+    uint32_t vBlockOffset;
+    uint32_t vBlockDim;
     uint32_t initialStateOffset;
     uint32_t finalStateOffset;
     bool isInitialState;
@@ -61,7 +63,6 @@ struct GDNFwdHOffsets {
 };
 
 struct GDNFwdHStream {
-    uint32_t vIdx;
     uint32_t batchIdx;
     uint32_t chunkIdx{0};
     uint32_t vHeadIdx;
@@ -103,7 +104,6 @@ struct BlockSchedulerGdnFwdH {
     uint32_t taskLoops;
     uint32_t cubeCoreIdx;
     uint32_t cubeCoreNum;
-    uint32_t vLoops;
     uint32_t taskNum;
     uint32_t headGroups;
     uint32_t totalChunks;
@@ -122,10 +122,10 @@ struct BlockSchedulerGdnFwdH {
     AscendC::GlobalTensor<int64_t> gmNumSeq;
     AscendC::GlobalTensor<int64_t> gmNumChunks;
 
-    Arch::CrossCoreFlag cube1Done{0};
-    Arch::CrossCoreFlag vec1Done{1};
-    Arch::CrossCoreFlag cube2Done{2};
-    Arch::CrossCoreFlag vec2Done[PING_PONG_STAGES] = {3, 4};
+    Arch::CrossCoreFlag cube1Done[PING_PONG_STAGES] = {0, 1};
+    Arch::CrossCoreFlag vec1Done[PING_PONG_STAGES] = {2, 3};
+    Arch::CrossCoreFlag cube2Done[PING_PONG_STAGES] = {4, 5};
+    Arch::CrossCoreFlag vec2Done[PING_PONG_STAGES] = {6, 7};
 
     CATLASS_DEVICE
     BlockSchedulerGdnFwdH() {}
@@ -180,8 +180,8 @@ struct BlockSchedulerGdnFwdH {
 
         cubeCoreIdx = coreIdx;
         cubeCoreNum = coreNum;
-        vLoops = vHeadDim / vBlockSize;
-        taskNum = vLoops * batch * vNumHead;
+        vBlockSize = vHeadDim;
+        taskNum = batch * vNumHead;
         headGroups = vNumHead / kNumHead;
         hasDummyHead = (taskNum % (PING_PONG_STAGES * cubeCoreNum) <= cubeCoreNum) && (taskNum % (PING_PONG_STAGES * cubeCoreNum) > 0);
         taskLoops = (taskNum + cubeCoreNum * PING_PONG_STAGES - 1) / (cubeCoreNum * PING_PONG_STAGES);
@@ -207,8 +207,7 @@ struct BlockSchedulerGdnFwdH {
 
     CATLASS_DEVICE
     void InitNewStream(GDNFwdHStream& newStream) {
-        newStream.vIdx = taskIdx / (batch * vNumHead);
-        newStream.batchIdx = (taskIdx - newStream.vIdx * batch * vNumHead) / vNumHead;
+        newStream.batchIdx = taskIdx / vNumHead;
         newStream.vHeadIdx = taskIdx % vNumHead;
         newStream.kHeadIdx = newStream.vHeadIdx / headGroups;
         newStream.shapeBatchIdx = isVariedLen ? 0 : newStream.batchIdx;
@@ -227,16 +226,20 @@ struct BlockSchedulerGdnFwdH {
 
         offset.isInitialState = stream.chunkIdx == 0;
         offset.isFinalState = stream.chunkIdx == (stream.batchChunks - 1);
-        offset.initialStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim;
-        offset.finalStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim;
-        offset.hSrcOffset = (stream.shapeBatchIdx * vNumHead * totalChunks + stream.vHeadIdx * totalChunks + stream.chunkOffset + stream.chunkIdx) * kHeadDim * vHeadDim;
+        uint32_t vBlockOffset = 0;
+        uint32_t vBlockDim = vBlockSize;
+        offset.initialStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim + vBlockOffset;
+        offset.finalStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim + vBlockOffset;
+        offset.hSrcOffset = (stream.shapeBatchIdx * vNumHead * totalChunks + stream.vHeadIdx * totalChunks + stream.chunkOffset + stream.chunkIdx) * kHeadDim * vHeadDim + vBlockOffset;
         offset.hDstOffset = offset.hSrcOffset + kHeadDim * vHeadDim;
-        offset.uvOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * vHeadDim;
+        offset.uvOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * vHeadDim + vBlockOffset;
         offset.wkOffset = (stream.shapeBatchIdx * kNumHead * totalTokens + stream.kHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
         offset.wOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
         offset.gOffset = stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize;
-        offset.hWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * kHeadDim * vHeadDim;
-        offset.vWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * chunkSize * vHeadDim;
+        offset.hWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * kHeadDim * vBlockSize;
+        offset.vWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * chunkSize * vBlockSize;
+        offset.vBlockOffset = vBlockOffset;
+        offset.vBlockDim = vBlockDim;
         offset.blockTokens = offset.isFinalState ? (stream.batchTokens - stream.chunkIdx * chunkSize) : chunkSize;
         offset.batchIdx = stream.batchIdx;
         offset.headIdx = stream.vHeadIdx;
@@ -301,6 +304,11 @@ struct BlockSchedulerGdnFwdH {
     CATLASS_DEVICE
     const GDNFwdHStream& GetStream(uint32_t i) const {
         return runningQ.streams[(runningQ.head + i) % PING_PONG_STAGES];
+    }
+
+    CATLASS_DEVICE
+    uint32_t GetStreamId(uint32_t i) const {
+        return (runningQ.head + i) % PING_PONG_STAGES;
     }
 
     CATLASS_DEVICE
