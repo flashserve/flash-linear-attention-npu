@@ -427,6 +427,15 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ProcessOneTile(int64_t tileId
             MatmulToL0C(SLOT_Y, SLOT_I, true);
             SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
             WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
+#elif SOLVE_TRIL_MBH_PASSTHROUGH == 3
+            // 诊断3：计算 MNEG=-A 后，输出 MNEG×I = MNEG，直接暴露 MNEG 内容。
+            // I(SLOT_I)已验证可用，故输出忠实反映 MNEG。
+            // 期望：输出 == -A（严格下三角为负、对角及上三角为 0）。
+            // 若全 0 → SLOT_INEG(-I) 为 0 或 MNEG 计算失效；若上三角非零 → 转置问题。
+            LoadFullInputForMBH(gmOffset);                 // 计算 SLOT_MNEG = -A
+            MatmulToL0C(SLOT_MNEG, SLOT_I, true);          // MNEG × I = MNEG
+            SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
+            WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
 #else
             LoadFullInputForMBH(gmOffset);
             RecursiveMerge();

@@ -96,6 +96,20 @@ def test_solve_tril_mbh(BT, layout="bhtd", dtype=torch.float16, seed=42):
     else:
         inv_block = out_cpu[0, :, 0].float().numpy()
 
+    # ===== 诊断3专用：当 kernel 编译为 PASSTHROUGH==3 时，输出应为 MNEG=-A。=====
+    # 设环境变量 MBH_DIAG_MNEG=1 时，把输出与 -A / -A^T / 0 比对，定位 MNEG 计算问题。
+    import os
+    if os.environ.get("MBH_DIAG_MNEG") == "1":
+        negA = -block_np
+        negAT = -block_np.T
+        e_negA = np.abs(inv_block - negA).max()
+        e_negAT = np.abs(inv_block - negAT).max()
+        e_zero = np.abs(inv_block).max()
+        tri_low = np.abs(np.tril(inv_block, -1)).max()
+        tri_up = np.abs(np.triu(inv_block, 1)).max()
+        print(f"      [MNEG diag BT={BT}] vs(-A)={e_negA:.4f}  vs(-A^T)={e_negAT:.4f}  "
+              f"maxabs={e_zero:.4f}  lowTriMax={tri_low:.4f}  upTriMax={tri_up:.4f}")
+
     # 校验 1：与 CPU golden 的最大差
     max_diff = np.abs(inv_block - golden_np).max()
     # 校验 2：(I + A) @ out ≈ I
