@@ -508,4 +508,24 @@ at::Tensor npu_causal_conv1d(
     return std::make_tuple(std::move(dx), std::move(dw), std::move(db), std::move(dh0));
 }
 
+at::Tensor npu_solve_tri(
+    const at::Tensor &x,
+    at::OptionalIntArrayRef cu_seqlens,
+    at::OptionalIntArrayRef chunk_indices,
+    c10::string_view layout)
+{
+    at::Tensor x_contig = x.contiguous();
+    at::Tensor x_out = at::empty_like(x_contig);
+
+    std::string layout_str(layout.data(), layout.size());
+    const char *layout_cstr = layout_str.c_str();
+
+    EXEC_NPU_CMD_EXT(
+        aclnnSolveTri,
+        x_contig, cu_seqlens, chunk_indices, layout_cstr,
+        x_out
+    );
+    return x_out;
+}
+
 }  // namespace op_api
