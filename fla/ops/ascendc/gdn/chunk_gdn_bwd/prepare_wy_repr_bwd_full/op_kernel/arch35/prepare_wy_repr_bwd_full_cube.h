@@ -536,7 +536,7 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::Init(
     dvbCVNum = tiling.dvbCVNum;
     kktCVNum = tiling.kktCVNum;
     // dk 暂时先存放到workspace中，以HV存放
-    GM_ADDR workspaceDk = workspace + (B * HV * T * V * sizeof(kType));
+    workspaceDk = workspace + (B * HV * T * V * sizeof(kType));
     return;
 }
 
