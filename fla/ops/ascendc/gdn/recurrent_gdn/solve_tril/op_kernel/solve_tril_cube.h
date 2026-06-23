@@ -716,8 +716,14 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ExtractBlocksToSlot(
     int32_t fracsPerBlock = blockSize / FRAC;
 
     ClearSlot(dstSlot);
+#if SOLVE_TRIL_PLATFORM_ASCEND950
+    // ClearSlot 在 950 上是 UB(ubZero_)->L1 的 MTE3 搬运，需在后续向同一 slot
+    // 写入分形块前完成，用 PipeBarrier<PIPE_ALL> 保证。
+    PipeBarrier<PIPE_ALL>();
+#else
     SetFlag<HardEvent::MTE2_MTE3>(EVT_MTE2_MTE3);
     WaitFlag<HardEvent::MTE2_MTE3>(EVT_MTE2_MTE3);
+#endif
 
     DataCopyParams copyParams;
     copyParams.blockCount = 1;
@@ -732,12 +738,14 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ExtractBlocksToSlot(
                 int32_t col = blk * fracsPerBlock + fj;
                 int32_t off = (col * NUM_FRACS + row) * FRAC_LEN;
 #if SOLVE_TRIL_PLATFORM_ASCEND950
+                // Ascend950: UB<->L1 经 MTE3 直通（无 GM 中转）。
+                // 两次 DataCopy（L1->UB 再 UB->L1）对同一 ubWorkY_ 先写后读，
+                // 必须严格串行；原 MTE3_V/V_MTE3 跨 V 流水的 flag 并不能约束两条
+                // MTE 搬运指令，存在数据竞争。此处用 PipeBarrier<PIPE_ALL> 保证次序。
                 DataCopy(ubWorkY_, l1_[srcSlot * L1_SLOT_ELEMS + off], copyParams);
-                SetFlag<HardEvent::MTE3_V>(EVT_MTE3_MTE2);
-                WaitFlag<HardEvent::MTE3_V>(EVT_MTE3_MTE2);
+                PipeBarrier<PIPE_ALL>();
                 DataCopy(l1_[dstSlot * L1_SLOT_ELEMS + off], ubWorkY_, copyParams);
-                SetFlag<HardEvent::V_MTE3>(EVT_MTE2_MTE3);
-                WaitFlag<HardEvent::V_MTE3>(EVT_MTE2_MTE3);
+                PipeBarrier<PIPE_ALL>();
 #else
                 DataCopy(scratchGM_, l1_[srcSlot * L1_SLOT_ELEMS + off], copyParams);
                 SetFlag<HardEvent::MTE3_MTE2>(EVT_MTE3_MTE2);
@@ -901,8 +909,10 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::RecursiveMerge()
         ExtractBlocksToSlot(SLOT_X, SLOT_Y, blockSize, drvStart);
 
 #if SOLVE_TRIL_PLATFORM_ASCEND950
-        LoadAuxToL1(ubI_, SLOT_MNEG);
-        MatmulToL0C(SLOT_MNEG, SLOT_MNEG, true);
+        // 注意：SLOT_MNEG 此时保存着 -A，MBH 整个递归过程都需要它，
+        // 不能用作 I 的临时落点。此处用空闲的 SLOT_INPUT 暂存 I（step 4 才会被覆盖）。
+        LoadAuxToL1(ubI_, SLOT_INPUT);
+        MatmulToL0C(SLOT_INPUT, SLOT_INPUT, true);
 #else
         MatmulToL0C(SLOT_I, SLOT_I, true);
 #endif
