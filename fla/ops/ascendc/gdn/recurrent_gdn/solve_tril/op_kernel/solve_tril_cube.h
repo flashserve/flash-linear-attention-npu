@@ -394,9 +394,17 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ProcessOneTile(int64_t tileId
 #endif
 
         if constexpr (MATRIX_SIZE > FRAC) {
-#if SOLVE_TRIL_MBH_PASSTHROUGH
-            // 诊断：跳过 MBH，仅 X×I 写回，验证多分形 matmul + 写回是否正确（应得 mch_out）
+#if SOLVE_TRIL_MBH_PASSTHROUGH == 1
+            // 诊断1：跳过 MBH，仅 X×I 写回，验证多分形 matmul + 写回（应得 mch_out）
             MatmulToL0C(SLOT_X, SLOT_I, true);
+            SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
+            WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
+#elif SOLVE_TRIL_MBH_PASSTHROUGH == 2
+            // 诊断2：提取对角驱动块(drv，奇数块)到 SLOT_Y，再 SLOT_Y×I 写回。
+            // 期望：仅奇数号对角块(=mch_out 的奇数对角块)保留，偶数号对角块=0，非对角=0。
+            // 用于隔离 ExtractBlocksToSlot 的块搬运 + 稀疏算子 matmul 是否正确。
+            ExtractBlocksToSlot(SLOT_X, SLOT_Y, FRAC, isLower_ ? 1 : 0);
+            MatmulToL0C(SLOT_Y, SLOT_I, true);
             SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
             WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
 #else
