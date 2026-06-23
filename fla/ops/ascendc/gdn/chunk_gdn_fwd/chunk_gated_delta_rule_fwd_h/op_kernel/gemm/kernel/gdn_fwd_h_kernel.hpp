@@ -406,6 +406,21 @@ public:
                                 vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, vHeadDim, vecBlockScheduler.cube2Done[streamId],
                                 vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, (streamId == 0)
                             );
+                            uint32_t rowsPerSubBlock = CeilDiv(kHeadDim, subBlockNum);
+                            uint32_t rowBegin = subBlockIdx * rowsPerSubBlock;
+                            if (rowBegin < kHeadDim) {
+                                uint32_t pingpongFlag = (streamId == 0) ? 0 : pongBaseEvent;
+                                uint32_t writebackEvent = EVENT_ID2 + pingpongFlag;
+                                if constexpr (std::is_same<ElementFinalState, float>::value) {
+                                    if (storeFinalState && vec2Offsets.isFinalState) {
+                                        writebackEvent = EVENT_ID0 + pingpongFlag;
+                                    }
+                                }
+                                // Drain the last V2 GM write before AIC reads the next h state.
+                                // Re-prime the event because the epilogue treats it as a preset.
+                                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(writebackEvent);
+                                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(writebackEvent);
+                            }
                         } else {
                             Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done[streamId]);
                         }
