@@ -4,8 +4,8 @@
 
 | 产品 | 是否支持 |
 | :----------------------------------------- | :------:|
-| <term>Ascend 950PR/Ascend 950DT</term> | √ |
-| <term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term> | √ |
+| <term>Ascend 950PR/Ascend 950DT</term> | x |
+| <term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term> | x |
 | <term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term> | √ |
 | <term>Atlas 200I/500 A2 推理产品</term> | x |
 | <term>Atlas 推理系列产品</term> | x |
@@ -13,9 +13,9 @@
 
 ## 功能说明
 
-- 接口功能：计算单位下三角矩阵的逆矩阵。输入为单位下三角矩阵 L = I + A（A 为严格下三角矩阵），输入张量 A 的 shape 为 [B, S, H, BT] 或 [T, H, BT]，每个 chunk 为 BT×BT 的单位下三角块，输出为 L^{-1}。
+- 接口功能：计算单位下三角矩阵的逆矩阵。输入为单位下三角矩阵 L = I + A（A 为严格下三角矩阵），输出为 L^{-1}。
 
-- 算法：采用 MXR 算法（MCH + MBH 组合），利用严格下三角矩阵的幂零性质实现高效求逆。对 16×16 叶子块使用 MCH 求逆，然后通过 MBH 分块递归组装。
+- 算法：采用 MXR 算法（MCH + MBH 组合），利用严格下三角矩阵的幂零性质实现高效求逆。
 
 - 计算公式：
 
@@ -43,11 +43,8 @@
 
 ```cpp
 aclnnStatus aclnnSolveTrilGetWorkspaceSize(
-    const aclTensor  *A,
-    const aclTensor  *cu_seqlens,
-    const aclTensor  *chunk_indices_out,
-    int64_t           layout,
-    aclTensor        *out,
+    const aclTensor  *input,
+    aclTensor        *output,
     uint64_t         *workspaceSize,
     aclOpExecutor    **executor)
 ```
@@ -87,53 +84,23 @@ aclnnStatus aclnnSolveTril(
     </tr></thead>
   <tbody>
     <tr>
-      <td>A（aclTensor*）</td>
+      <td>input（aclTensor*）</td>
       <td>输入</td>
-      <td>输入张量，shape为 [B, S, H, BT] 或 [T, H, BT]，每个 chunk 包含一个 BT×BT 的单位下三角块。</td>
-      <td><ul><li>不支持空Tensor。</li><li>最后一个维度 BT 必须属于 {16, 32, 64, 128}。</li><li>输入块必须为单位下三角矩阵（对角线为1，上三角为0），算子不校验。</li></ul></td>
-      <td>FLOAT16</td>
+      <td>单位下三角矩阵，对应公式中L。</td>
+      <td><ul><li>不支持空Tensor（n>=16）。</li><li>最后两个维度必须相等（方阵）。</li><li>矩阵维度n必须是16的倍数。</li><li>输入必须为单位下三角矩阵（对角线为1，上三角为0），算子不校验。</li></ul></td>
+      <td>FLOAT、FLOAT16</td>
       <td>ND</td>
-      <td>3-4</td>
+      <td>2-3</td>
       <td>x</td>
     </tr>
     <tr>
-      <td>cu_seqlens（aclTensor*）</td>
-      <td>输入</td>
-      <td>变长序列的累积长度，用于标识每个 batch 中有效序列的边界。可选参数，传入 nullptr 表示定长模式。</td>
-      <td><ul><li>可选参数，可传入 nullptr。</li><li>非空时必须为 INT64 类型的一维 Tensor。</li><li>变长模式下必须同时提供 chunk_indices_out。</li></ul></td>
-      <td>INT64</td>
-      <td>ND</td>
-      <td>1</td>
-      <td>x</td>
-    </tr>
-    <tr>
-      <td>chunk_indices_out（aclTensor*）</td>
-      <td>输入</td>
-      <td>变长模式下输出 chunk 的索引映射。可选参数，传入 nullptr 表示定长模式。</td>
-      <td><ul><li>可选参数，可传入 nullptr。</li><li>非空时必须为 INT64 类型的一维 Tensor，其第一维大小即总任务数。</li><li>变长模式下必须同时提供 cu_seqlens。</li></ul></td>
-      <td>INT64</td>
-      <td>ND</td>
-      <td>1</td>
-      <td>x</td>
-    </tr>
-    <tr>
-      <td>layout（int64_t）</td>
-      <td>输入</td>
-      <td>输入张量的内存布局标识。可选参数，默认值为 0。</td>
-      <td><ul><li>可选参数。</li><li>当前仅支持默认值 0。</li></ul></td>
-      <td>INT64</td>
-      <td>-</td>
-      <td>-</td>
-      <td>-</td>
-    </tr>
-    <tr>
-      <td>out（aclTensor*）</td>
+      <td>output（aclTensor*）</td>
       <td>输出</td>
-      <td>逆矩阵结果，对应公式中 L^{-1}。shape 与 A 相同。</td>
-      <td><ul><li>不支持空Tensor。</li><li>数据类型与A一致（FLOAT16）。</li><li>shape与A相同。</li></ul></td>
-      <td>FLOAT16</td>
+      <td>逆矩阵结果，对应公式中L^{-1}。</td>
+      <td><ul><li>不支持空Tensor。</li><li>数据类型与input一致。</li><li>shape与input相同。</li></ul></td>
+      <td>FLOAT、FLOAT16</td>
       <td>ND</td>
-      <td>与A相同</td>
+      <td>2-3</td>
       <td>x</td>
     </tr>
     <tr>
@@ -180,21 +147,18 @@ aclnnStatus aclnnSolveTril(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>A、out 存在空指针。</td>
+      <td>input、output存在空指针。</td>
     </tr>
     <tr>
-      <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="4">161002</td>
-      <td>A 的数据类型不在支持的范围之内（仅支持 FLOAT16）。</td>
+      <td rowspan="3">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="3">161002</td>
+      <td>input的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>A 的 shape 不满足约束（维度不在 3-4 范围内，或最后一个维度 BT 不在 {16, 32, 64, 128} 中）。</td>
+      <td>input的shape不满足约束（非方阵、n不是16的倍数、维度不在2-3范围内）。</td>
     </tr>
     <tr>
-      <td>out 的数据类型或 shape 与 A 不一致。</td>
-    </tr>
-    <tr>
-      <td>变长模式下 cu_seqlens 或 chunk_indices_out 参数不合法。</td>
+      <td>output的数据类型或shape与input不一致。</td>
     </tr>
   </tbody></table>
 
@@ -223,14 +187,11 @@ aclnnStatus aclnnSolveTril(
 
 ## 约束说明
 
-- aclnnSolveTril 默认确定性实现。
-- 输入张量 A 的 shape 为 3D [T, H, BT] 或 4D [B, S, H, BT]，其中最后一个维度 BT 必须属于 {16, 32, 64, 128}。
-- 输入块必须为单位下三角矩阵（对角线元素为 1，上三角部分为 0），算子不校验输入合法性。
-- 仅支持 FLOAT16 数据类型。
-- 不支持非连续 Tensor。
-- 当 BT >= 64 时需要额外 Device 侧 workspace 空间。
-- 支持定长模式和变长模式（通过 cu_seqlens 和 chunk_indices_out 参数控制）。
-- <term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>、<term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>、<term>Ascend 950PR/Ascend 950DT</term>：支持 FLOAT16 数据类型。
+- aclnnSolveTril默认确定性实现。
+- 输入矩阵维度n必须是16的倍数（n = 16, 32, 64, 128, 256, ...）。
+- 输入必须为单位下三角矩阵（对角线元素为1，上三角部分为0），算子不校验输入合法性。
+- 不支持非连续Tensor。
+- <term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>：支持FLOAT、FLOAT16数据类型。
 
 ## 调用示例
 

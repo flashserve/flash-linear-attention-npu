@@ -92,20 +92,21 @@ static ge::graphStatus SolveTrilTilingFunc(gert::TilingContext* context)
     int64_t tilesPerCore = (totalTiles + coreNum - 1) / coreNum;
 
     SolveTrilTilingData tiling;
-    tiling.set_totalTiles(totalTiles);
-    tiling.set_matrixSize(chunkSize);
-    tiling.set_numHeads(H);
-    tiling.set_seqLen(T);
+    // std::cout<<"wangwei: tiling.set_batchSize(B)"<<B<<std::endl;
+    // std::cout<<"wangwei: tiling.set_seqLength(T)"<<T<<std::endl;
+    // std::cout<<"wangwei: tiling.set_numHead(H)"<<H<<std::endl;
+    // std::cout<<"wangwei: tiling.set_chunkSize(BT)"<<BT<<std::endl;
+    // std::cout<<"wangwei: tiling.set_chunkNumInSeq(numChunks)"<<numChunks<<std::endl;
+    // std::cout<<"wangwei: tiling.set_chunkNumTotal(totalTiles)"<<totalTiles<<std::endl;
+    // std::cout<<"wangwei: tiling.set_mode(layoutMode)"<<layoutMode<<std::endl;
+
     tiling.set_batchSize(B);
-    tiling.set_isLower(1);
-    tiling.set_hasCuSeqlens(hasCuSeqlens);
-    tiling.set_tilesPerCore(tilesPerCore);
-    tiling.set_chunkSize(chunkSize);
-    tiling.set_numChunks(numChunks);
-    tiling.set_lastChunkValidSize(lastChunkValidSize);
-    tiling.set_isVarlen(isVarlen);
-    tiling.set_totalChunks(totalChunks);
-    tiling.set_layoutMode(layoutMode);
+    tiling.set_seqLength(T);
+    tiling.set_numHead(H);
+    tiling.set_chunkSize(BT);
+    tiling.set_chunkNumInSeq(numChunks);
+    tiling.set_chunkNumTotal(totalTiles);
+    tiling.set_mode(layoutMode);
 
     context->SetTilingKey(1);
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(),
@@ -117,12 +118,8 @@ static ge::graphStatus SolveTrilTilingFunc(gert::TilingContext* context)
     context->SetBlockDim(usedCoreNum);
 
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
-    size_t sharedSize = 3 * chunkSize * chunkSize * sizeof(uint16_t);
-    size_t perCoreSize = chunkSize * chunkSize * sizeof(uint16_t);
-    size_t userWorkspaceSize = sharedSize + usedCoreNum * perCoreSize;
-    userWorkspaceSize = ((userWorkspaceSize + 511) / 512) * 512;
     size_t* ws = context->GetWorkspaceSizes(1);
-    ws[0] = userWorkspaceSize + sysWorkspaceSize;
+    ws[0] = sysWorkspaceSize;
 
     return ge::GRAPH_SUCCESS;
 }

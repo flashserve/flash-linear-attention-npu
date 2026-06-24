@@ -15,20 +15,13 @@
 namespace optiling {
 
 BEGIN_TILING_DATA_DEF(SolveTrilTilingData)
-    TILING_DATA_FIELD_DEF(int64_t, totalTiles);
-    TILING_DATA_FIELD_DEF(int64_t, matrixSize);
-    TILING_DATA_FIELD_DEF(int64_t, numHeads);
-    TILING_DATA_FIELD_DEF(int64_t, seqLen);
     TILING_DATA_FIELD_DEF(int64_t, batchSize);
-    TILING_DATA_FIELD_DEF(int64_t, isLower);
-    TILING_DATA_FIELD_DEF(int64_t, hasCuSeqlens);
-    TILING_DATA_FIELD_DEF(int64_t, tilesPerCore);
+    TILING_DATA_FIELD_DEF(int64_t, seqLength);
+    TILING_DATA_FIELD_DEF(int64_t, numHead);
     TILING_DATA_FIELD_DEF(int64_t, chunkSize);
-    TILING_DATA_FIELD_DEF(int64_t, numChunks);
-    TILING_DATA_FIELD_DEF(int64_t, lastChunkValidSize);
-    TILING_DATA_FIELD_DEF(int64_t, isVarlen);
-    TILING_DATA_FIELD_DEF(int64_t, totalChunks);
-    TILING_DATA_FIELD_DEF(int64_t, layoutMode);
+    TILING_DATA_FIELD_DEF(int64_t, chunkNumInSeq);
+    TILING_DATA_FIELD_DEF(int64_t, chunkNumTotal);
+    TILING_DATA_FIELD_DEF(int64_t, mode);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(SolveTril, SolveTrilTilingData)
@@ -36,3 +29,4 @@ REGISTER_TILING_DATA_CLASS(SolveTril, SolveTrilTilingData)
 }  // namespace optiling
 
 #endif
+

@@ -8,25 +8,14 @@
 
 #include "kernel_operator.h"
 
-// AIC/AIV 同步标志常量
-constexpr uint64_t SYNC_AIV_AIC_FLAG_SOLVE = 3;
-constexpr uint64_t SYNC_AIC_AIV_FLAG_SOLVE = 5;
 
-// GM 共享 workspace slot（ND 行优先）
-constexpr int32_t GM_WS_I    = 0;
-constexpr int32_t GM_WS_INEG = 1;
-constexpr int32_t GM_WS_ZERO = 2;
-constexpr int32_t GM_NUM_SHARED_SLOTS = 3;
-
-// AIV 核生成辅助矩阵的参数
-constexpr int32_t ROWS_PER_AIV_CORE = 8;
-constexpr int32_t DIAG_BLOCK_ELEMS  = ROWS_PER_AIV_CORE * 16;  // 8x16
-
-// 8x16 ND 块中对角 mask（偶数条带）
-// 对角在 col 0..7: elem = i*16 + i
-constexpr uint64_t DIAG_MASK_8X16_EVEN[2] = {
-    0x0008000400020001ULL,
-    0x0080004000200010ULL
+// 8x16 ND 块对角 mask
+// [0] = ODD  (奇数条带, 对角在 col 8..15)
+// [1] = EVEN (偶数条带, 对角在 col 0..7)
+constexpr uint64_t DIAG_MASK_8X16[2][2] = {
+    { 0x0800040002000100ULL, 0x8000400020001000ULL },  // ODD
+    { 0x0008000400020001ULL, 0x0080004000200010ULL }   // EVEN
 };
+
 
 #endif  // SOLVE_TRIL_COMMON_H
