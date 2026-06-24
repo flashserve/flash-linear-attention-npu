@@ -503,11 +503,14 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::MatmulToL0C(int32_t slotA, in
     LoadData2DParams loadParamsA;
     loadParamsA.startIndex = 0;
     loadParamsA.repeatTimes = NUM_FRACS;
-    loadParamsA.srcStride = NUM_FRACS;
+    loadParamsA.srcStride = 1;
     loadParamsA.dstGap = 0;
     loadParamsA.ifTranspose = false;
     for (int32_t i = 0; i < NUM_FRACS; ++i) {
-        int32_t srcOffsetA = slotA * L1_SLOT_ELEMS + i * FRAC_LEN;
+        // A(左乘)算子需"块级转置"预交换：经探测确认 cube 实际计算 blockT(OpA)@B，
+        // 即左算子的非对角分形会被块转置。故按 (i,k)<-src(k,i) 预交换源分形块，
+        // 使 cube 还原出 plain A。NUM_FRACS=1 时 i*NF==i 无影响（故 BT=16/MCH 一直正确）。
+        int32_t srcOffsetA = slotA * L1_SLOT_ELEMS + i * NUM_FRACS * FRAC_LEN;
         int32_t dstOffsetA = i * NUM_FRACS * FRAC_LEN;
         LoadData(l0a_[dstOffsetA], l1_[srcOffsetA], loadParamsA);
     }
