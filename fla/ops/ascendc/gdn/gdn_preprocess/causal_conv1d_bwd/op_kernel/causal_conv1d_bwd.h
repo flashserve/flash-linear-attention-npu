@@ -80,10 +80,10 @@ private:
     __aicore__ inline void CopyInWeight(uint32_t i_d);
     __aicore__ inline void CopyInDy(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t i_w, uint32_t seqLen);
     __aicore__ inline void CopyInDyWindow(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen);
-    __aicore__ inline void CopyInYAndSiluBwd(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t i_w, uint32_t seqLen);
+    __aicore__ inline void CopyInYWindow(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen);
     __aicore__ inline void CopyInInitialStateBlock(uint32_t i_b, uint32_t i_d);
     __aicore__ inline void CopyInDhtBlock(uint32_t i_b, uint32_t i_d);
-    __aicore__ inline void ApplySiluBackward(LocalTensor<float> dyLocal);
+    __aicore__ inline void ApplySiluBackward(LocalTensor<float> dyLocal, LocalTensor<float> yLocal, uint32_t count);
     __aicore__ inline void AccumulateInitialStateDw(uint32_t i_t, uint32_t i_d, uint32_t i_b, uint32_t seqLen);
     __aicore__ inline void AccumulateDhtDx(uint32_t i_t, uint32_t i_d, uint32_t i_b, uint32_t seqLen);
     __aicore__ inline void ComputeWdyAndAcc(uint32_t i_w, uint32_t dyRowOffset);
@@ -94,7 +94,6 @@ private:
     __aicore__ inline void ComputeDbRowsAccum(uint32_t dyRowOffset);
     __aicore__ inline void FinalizeDbRowsAccum();
     __aicore__ inline void ComputeDh0(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t i_b, uint32_t seqLen);
-    __aicore__ inline void ComputeDwDbForD(uint32_t i_d);
     __aicore__ inline void CopyOutDx(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen);
     __aicore__ inline void CopyOutDwDb(uint32_t i_d);
     __aicore__ inline void CopyOutPartialDwDb(uint32_t coreIdx, uint32_t i_d);
@@ -212,6 +211,9 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
     pipe_->InitBuffer(dyBuf_, dyBdCount_ * FP32_DTYPE_SIZE);
     pipe_->InitBuffer(dxBuf_, btBdCount_ * FP32_DTYPE_SIZE);
     uint32_t calcCount = (btBdCount_ > wBdCount_) ? btBdCount_ : wBdCount_;
+    if (dyBdCount_ > calcCount) {
+        calcCount = dyBdCount_;
+    }
     if constexpr (!IsSameType<inputT, float>::value) {
         pipe_->InitBuffer(castBuf_, calcCount * sizeof(inputT));
     }
@@ -231,8 +233,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
         }
     }
     if (activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH) {
-        pipe_->InitBuffer(yBuf_, btBdCount_ * FP32_DTYPE_SIZE);
-        pipe_->InitBuffer(sigmoidBuf_, btBdCount_ * FP32_DTYPE_SIZE);
+        pipe_->InitBuffer(yBuf_, dyBdCount_ * FP32_DTYPE_SIZE);
+        pipe_->InitBuffer(sigmoidBuf_, dyBdCount_ * FP32_DTYPE_SIZE);
     }
     if (useInitialState_ || useFinalState_)
         pipe_->InitBuffer(dh0Buf_, BD_ * FP32_DTYPE_SIZE);
@@ -457,10 +459,10 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDyWindow(
 }
 
 template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInYAndSiluBwd(
-    uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t i_w, uint32_t seqLen)
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInYWindow(
+    uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen)
 {
-    CopyInInputTile(yGm_, yBuf_.Get<float>(), bos, i_t * BT_ + i_w, i_d, BT_, seqLen, true);
+    CopyInInputTile(yGm_, yBuf_.Get<float>(), bos, i_t * BT_, i_d, dyRows_, seqLen, true);
 }
 
 template <typename inputT, typename calT>
@@ -532,32 +534,32 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDhtBlock(
 }
 
 template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ApplySiluBackward(LocalTensor<float> dyLocal)
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ApplySiluBackward(
+    LocalTensor<float> dyLocal, LocalTensor<float> yLocal, uint32_t count)
 {
-    LocalTensor<float> yLocal = yBuf_.Get<float>();
     LocalTensor<float> sigmoidLocal = sigmoidBuf_.Get<float>();
     LocalTensor<float> t = tempBuf_.Get<float>();
 
-    Muls(sigmoidLocal, yLocal, float(-1.0), btBdCount_);
+    Muls(sigmoidLocal, yLocal, float(-1.0), count);
     PipeBarrier<PIPE_V>();
-    Exp(sigmoidLocal, sigmoidLocal, btBdCount_);
+    Exp(sigmoidLocal, sigmoidLocal, count);
     PipeBarrier<PIPE_V>();
-    Adds(sigmoidLocal, sigmoidLocal, float(1.0), btBdCount_);
+    Adds(sigmoidLocal, sigmoidLocal, float(1.0), count);
     PipeBarrier<PIPE_V>();
-    Duplicate(t, float(1.0), btBdCount_);
+    Duplicate(t, float(1.0), count);
     PipeBarrier<PIPE_V>();
-    Div(sigmoidLocal, t, sigmoidLocal, btBdCount_);
+    Div(sigmoidLocal, t, sigmoidLocal, count);
     PipeBarrier<PIPE_V>();
 
-    Sub(t, t, sigmoidLocal, btBdCount_);
+    Sub(t, t, sigmoidLocal, count);
     PipeBarrier<PIPE_V>();
-    Mul(t, t, yLocal, btBdCount_);
+    Mul(t, t, yLocal, count);
     PipeBarrier<PIPE_V>();
-    Adds(t, t, float(1.0), btBdCount_);
+    Adds(t, t, float(1.0), count);
     PipeBarrier<PIPE_V>();
-    Mul(dyLocal, dyLocal, sigmoidLocal, btBdCount_);
+    Mul(dyLocal, dyLocal, sigmoidLocal, count);
     PipeBarrier<PIPE_V>();
-    Mul(dyLocal, dyLocal, t, btBdCount_);
+    Mul(dyLocal, dyLocal, t, count);
     PipeBarrier<PIPE_V>();
 }
 
@@ -638,10 +640,6 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeWdyAndAcc(
     LocalTensor<float> dyLocal = dyBuf_.Get<float>()[dyRowOffset * BD_];
     LocalTensor<float> dxLocal = dxBuf_.Get<float>();
     LocalTensor<float> wdyLocal = wdyBuf_.Get<float>();
-
-    if (activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH) {
-        ApplySiluBackward(dyLocal);
-    }
 
     uint32_t wIdx = W_ - i_w - 1;
     if (hasWeight_) {
@@ -739,9 +737,12 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDbPartial(uin
     if (!hasBias_) return;
     LocalTensor<float> dyLocal = dyBuf_.Get<float>()[dyRowOffset * BD_];
     LocalTensor<float> dbLocal = dbBuf_.Get<float>();
+    LocalTensor<float> t = tempBuf_.Get<float>();
 
-    ReduceRowsInplace(dyLocal, BT_, BD_);
-    Add(dbLocal, dbLocal, dyLocal, BD_);
+    Adds(t, dyLocal, float(0), btBdCount_);
+    PipeBarrier<PIPE_V>();
+    ReduceRowsInplace(t, BT_, BD_);
+    Add(dbLocal, dbLocal, t, BD_);
     PipeBarrier<PIPE_V>();
 }
 
@@ -778,15 +779,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDh0(
     uint32_t startRow = i_t * BT_;
     if (startRow >= W_ - 1 || startRow >= seqLen) return;
 
-    CopyInDy(bos, i_t, i_d, 0, seqLen);
-    if (activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH) {
-        CopyInYAndSiluBwd(bos, i_t, i_d, 0, seqLen);
-    }
-
     LocalTensor<float> dy0Local = dyBuf_.Get<float>();
-    if (activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH) {
-        ApplySiluBackward(dy0Local);
-    }
 
     AccumulateInitialStateDw(i_t, i_d, i_b, seqLen);
     if (!hasDh0_ || startRow != 0) return;
@@ -1039,55 +1032,6 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReducePartialDwDb(ui
 }
 
 template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDwDbForD(uint32_t i_d)
-{
-    if (!hasWeight_ && !hasBias_) return;
-
-    uint32_t ntPerSeq = CeilDiv(T_, BT_);
-    if (hasWeight_) {
-        CopyInWeight(i_d);
-        Duplicate(dwBuf_.Get<float>(), float(0), wBdCount_);
-        PipeBarrier<PIPE_V>();
-    }
-    if (hasBias_) {
-        Duplicate(dbBuf_.Get<float>(), float(0), BD_);
-        PipeBarrier<PIPE_V>();
-    }
-    if (activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH) {
-        Duplicate(dxBuf_.Get<float>(), float(0), btBdCount_);
-        PipeBarrier<PIPE_V>();
-    }
-
-    for (uint32_t chunkIdx = 0; chunkIdx < numChunks_; chunkIdx++) {
-        uint32_t i_b = chunkIdx / ntPerSeq;
-        uint32_t i_t = chunkIdx % ntPerSeq;
-        uint64_t bos = static_cast<uint64_t>(i_b) * T_;
-
-        if (hasWeight_) {
-            event_t vToMte2 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
-            SetFlag<HardEvent::V_MTE2>(vToMte2);
-            WaitFlag<HardEvent::V_MTE2>(vToMte2);
-            CopyInX(bos, i_t, i_d, T_);
-        }
-
-        for (uint32_t i_w = 0; i_w < W_; i_w++) {
-            CopyInDy(bos, i_t, i_d, i_w, T_);
-            if (activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH) {
-                CopyInYAndSiluBwd(bos, i_t, i_d, i_w, T_);
-                event_t e = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
-                SetFlag<HardEvent::MTE2_V>(e);
-                WaitFlag<HardEvent::MTE2_V>(e);
-                ComputeWdyAndAcc(i_w, 0);
-            }
-            ComputeDwPartial(i_w, 0);
-            if (hasBias_ && i_w == 0) ComputeDbPartial(0);
-        }
-    }
-
-    CopyOutDwDb(i_d);
-}
-
-template <typename inputT, typename calT>
 __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::ResolveChunk(
     uint32_t chunkIdx, uint32_t &i_b, uint32_t &i_t, uint64_t &bos, uint32_t &seqLen)
 {
@@ -1176,11 +1120,12 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
             PipeBarrier<PIPE_V>();
 
             if (activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH) {
+                CopyInDyWindow(bos, i_t, i_d, seqLen);
+                CopyInYWindow(bos, i_t, i_d, seqLen);
+                ApplySiluBackward(dyBuf_.Get<float>(), yBuf_.Get<float>(), dyBdCount_);
                 for (uint32_t i_w = 0; i_w < W_; i_w++) {
-                    CopyInDy(bos, i_t, i_d, i_w, seqLen);
-                    CopyInYAndSiluBwd(bos, i_t, i_d, i_w, seqLen);
-                    ComputeWdyAndAcc(i_w, 0);
-                    ComputeDwPartial(i_w, 0);
+                    ComputeWdyAndAcc(i_w, i_w);
+                    ComputeDwPartial(i_w, i_w);
                     if (hasBias_ && i_w == 0) ComputeDbPartial(0);
                 }
             } else {

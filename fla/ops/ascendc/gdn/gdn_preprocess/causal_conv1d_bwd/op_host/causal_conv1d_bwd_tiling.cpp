@@ -301,7 +301,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t btBdAl = CeilAlign(BT * BD, BLOCK_ALIGN_NUM);
     uint32_t dyBdAl = CeilAlign((BT + W - 1) * BD, BLOCK_ALIGN_NUM);
     uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
-    uint32_t calcBdAl = std::max(btBdAl, wBdAl);
+    uint32_t calcBdAl = std::max(std::max(btBdAl, wBdAl), dyBdAl);
     uint32_t wBtBdAl = CeilAlign(W * BT * BD, BLOCK_ALIGN_NUM);
     uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
     uint32_t need = 0;
@@ -314,7 +314,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     if (hasBias)   need += bdAl * FP32_DTYPE_SIZE;
     if (hasBias && activation == ACTIVATION_NONE) need += btBdAl * FP32_DTYPE_SIZE;
     if (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH)
-        need += 2 * btBdAl * FP32_DTYPE_SIZE;
+        need += 2 * dyBdAl * FP32_DTYPE_SIZE;
     if (useInitialState || useFinalState) {
         need += bdAl * FP32_DTYPE_SIZE;
     }

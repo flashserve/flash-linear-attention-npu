@@ -342,6 +342,7 @@ at::Tensor npu_causal_conv1d(
     c10::string_view input_layout)
 {
     const std::string input_layout_str(input_layout);
+    const char *input_layout_cstr = input_layout_str.c_str();
     const int64_t width = weight.size(0);
     const int64_t dim = weight.size(1);
 
@@ -419,7 +420,7 @@ at::Tensor npu_causal_conv1d(
     EXEC_NPU_CMD_EXT(
         aclnnCausalConv1dBwd,
         x, y_, weight, dy, initial_state_, dht_, query_start_loc_,
-        activation, input_layout_str,
+        activation, input_layout_cstr,
         dx, dw, db, dh0
     );
     return std::make_tuple(std::move(dx), std::move(dw), std::move(db), std::move(dh0));
