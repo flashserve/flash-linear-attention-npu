@@ -27,5 +27,5 @@ add_modules_sources(OPTYPE solve_tril ACLNNTYPE aclnn_exclude)
 add_ops_compile_options(OP_NAME SolveTril OPTIONS
     --cce-auto-sync=off
     -DSOLVE_TRIL_MBH_DEBUG_ONLY=1
-    -DSOLVE_TRIL_MBH_PASSTHROUGH=6
+    -DSOLVE_TRIL_MBH_PASSTHROUGH=8
 )
