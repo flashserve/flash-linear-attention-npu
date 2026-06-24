@@ -1056,6 +1056,9 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::RecursiveMerge()
         MatmulToL0C(SLOT_I, SLOT_I, true);
         SetFlag<HardEvent::M_MTE1>(EVT_M_MTE1);
         WaitFlag<HardEvent::M_MTE1>(EVT_M_MTE1);
+        // ★ 关键：累加前必须 PipeBarrier<PIPE_ALL>，否则下一个 Mmad(initC=false) 会在
+        //   step B 的 L0C 写回提交前启动，导致"覆盖"而非"累加"（mode8 已证）。
+        PipeBarrier<PIPE_ALL>();
         // step C: Y = Y × (-A) + I（累加到 step B 的 L0C=I）
         MatmulToSlot(SLOT_Y, SLOT_MNEG, SLOT_Y, false);
 
@@ -1069,6 +1072,8 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::RecursiveMerge()
         WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
         // step F: 提取驱动对角块 -> SLOT_INPUT（准备累加对角逆）
         ExtractBlocksFromGM(xSrc, SLOT_INPUT, blockSize, drvStart);
+        // ★ 关键：step G 累加前同样需 PipeBarrier<PIPE_ALL>，保证 step E 的 L0C 已提交。
+        PipeBarrier<PIPE_ALL>();
         // step G: L0C += I × INPUT
         MatmulToL0C(SLOT_I, SLOT_INPUT, false);
         SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
