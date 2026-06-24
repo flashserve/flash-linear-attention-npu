@@ -12,9 +12,15 @@
  * \brief
  */
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "arch35/chunk_bwd_dv_local_struct.h"
+#include "arch35/chunk_bwd_dv_local_cube.h"
+#include "arch35/chunk_bwd_dv_local_vector.h"
+#else
 #include "chunk_bwd_dv_local_struct.h"
 #include "chunk_bwd_dv_local_cube.h"
 #include "chunk_bwd_dv_local_vector.h"
+#endif
 #ifndef TORCH_MODE
 #include "lib/matmul_intf.h"
 #endif

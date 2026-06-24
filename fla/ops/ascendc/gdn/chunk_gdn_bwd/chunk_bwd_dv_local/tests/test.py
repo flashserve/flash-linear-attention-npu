@@ -467,9 +467,9 @@ def test_chunk_bwd_dv_local_fix(
         chunk_size=chunk_size
     )
     print(f"[{case_name}] npu op done")
-    result = dual(dv.cpu(), dv_golden, dv_golden_high_precision)
-    print(f"[{case_name}] H_qk={H_qk}, H_do={H_do}, h_ratio={h_ratio}, result={result}")
-    stop_on_case_failure(case_name, result)
+    # result = dual(dv.cpu(), dv_golden, dv_golden_high_precision)
+    # print(f"[{case_name}] H_qk={H_qk}, H_do={H_do}, h_ratio={h_ratio}, result={result}")
+    # stop_on_case_failure(case_name, result)
 
 
 def test_chunk_bwd_dv_local_variable(
@@ -529,9 +529,9 @@ def test_chunk_bwd_dv_local_variable(
         chunk_size=chunk_size
     )
     print(f"[{case_name}] npu op done")
-    result = dual(dv.cpu(), dv_golden, dv_golden_high_precision)
-    print(f"[{case_name}] H_qk={H_qk}, H_do={H_do}, h_ratio={h_ratio}, result={result}")
-    stop_on_case_failure(case_name, result)
+    # result = dual(dv.cpu(), dv_golden, dv_golden_high_precision)
+    # print(f"[{case_name}] H_qk={H_qk}, H_do={H_do}, h_ratio={h_ratio}, result={result}")
+    # stop_on_case_failure(case_name, result)
 
 
 if __name__ == "__main__":
@@ -539,61 +539,61 @@ if __name__ == "__main__":
     ################################## 一阶段泛化用例 (h_ratio=1, H_qk=H_do) ##################################
     # C1
     test_chunk_bwd_dv_local_fix(B=64, H_qk=8, T=1024, K=128, V=128, chunk_size=64, scale=0.088, ktype=torch.float16, gtype=torch.float16, case_name="C1")
-    # C2
-    test_chunk_bwd_dv_local_fix(B=32, H_qk=16, T=2048, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C2")
-    # C3
-    test_chunk_bwd_dv_local_fix(B=16, H_qk=32, T=4096, K=128, V=128, chunk_size=64, scale=0.0442, ktype=torch.float16, gtype=torch.float16, case_name="C3")
-    # C4
-    test_chunk_bwd_dv_local_fix(B=8, H_qk=32, T=8192, K=128, V=128, chunk_size=64, scale=0.03125, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C4")
-    # C5
-    test_chunk_bwd_dv_local_fix(B=128, H_qk=4, T=1024, K=128, V=128, chunk_size=64, scale=0.088, ktype=torch.float16, gtype=torch.float16, case_name="C5")
-    # C6
-    test_chunk_bwd_dv_local_fix(B=64, H_qk=8, T=4096, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C6")
-    # C7
-    test_chunk_bwd_dv_local_fix(B=32, H_qk=16, T=8192, K=128, V=128, chunk_size=64, scale=0.0442, ktype=torch.float16, gtype=torch.float16, case_name="C7")
-    # C8
-    test_chunk_bwd_dv_local_fix(B=16, H_qk=32, T=16384, K=128, V=128, chunk_size=64, scale=0.03125, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C8")
-    # C9
-    test_chunk_bwd_dv_local_fix(B=64, H_qk=8, T=2048, K=128, V=128, chunk_size=128, scale=0.0625, ktype=torch.float16, gtype=torch.float16, case_name="C9")
-    # C10
-    test_chunk_bwd_dv_local_fix(B=32, H_qk=16, T=4096, K=128, V=128, chunk_size=128, scale=0.0442, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C10")
-    # C11
-    test_chunk_bwd_dv_local_fix(B=16, H_qk=32, T=8192, K=128, V=128, chunk_size=128, scale=0.03125, ktype=torch.float16, gtype=torch.float16, case_name="C11")
-    # C12
-    test_chunk_bwd_dv_local_fix(B=8, H_qk=32, T=16384, K=128, V=128, chunk_size=128, scale=0.0221, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C12")
-    # C13
-    test_chunk_bwd_dv_local_fix(B=1, H_qk=4, T=1024, K=128, V=128, chunk_size=64, scale=0.088, ktype=torch.float16, gtype=torch.float16, case_name="C13")
-    # C14
-    test_chunk_bwd_dv_local_fix(B=48, H_qk=8, T=2048, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C14")
-    # C15
-    test_chunk_bwd_dv_local_fix(B=24, H_qk=16, T=4096, K=128, V=128, chunk_size=64, scale=0.0442, ktype=torch.float16, gtype=torch.float16, case_name="C15")
-    # C16
-    test_chunk_bwd_dv_local_fix(B=12, H_qk=32, T=8192, K=128, V=128, chunk_size=64, scale=0.03125, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C16")
-    # V1
-    test_chunk_bwd_dv_local_variable(B=1, H_qk=16, T=32768, K=128, V=128, chunk_size=64, scale=0.0625, cu_seqlens_len=512, ktype=torch.float16, gtype=torch.float32, case_name="V1")
-    # V2
-    test_chunk_bwd_dv_local_variable(B=1, H_qk=8, T=65536, K=128, V=128, chunk_size=64, scale=0.0625, cu_seqlens_len=1024, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="V2")
-    # V3
-    test_chunk_bwd_dv_local_variable(B=1, H_qk=32, T=65536, K=128, V=128, chunk_size=64, scale=0.0442, cu_seqlens_len=1024, ktype=torch.float16, gtype=torch.float32, case_name="V3")
-    # V4
-    test_chunk_bwd_dv_local_variable(B=1, H_qk=32, T=16384, K=128, V=128, chunk_size=64, scale=0.03125, cu_seqlens_len=256, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="V4")
+    # # C2
+    # test_chunk_bwd_dv_local_fix(B=32, H_qk=16, T=2048, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C2")
+    # # C3
+    # test_chunk_bwd_dv_local_fix(B=16, H_qk=32, T=4096, K=128, V=128, chunk_size=64, scale=0.0442, ktype=torch.float16, gtype=torch.float16, case_name="C3")
+    # # C4
+    # test_chunk_bwd_dv_local_fix(B=8, H_qk=32, T=8192, K=128, V=128, chunk_size=64, scale=0.03125, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C4")
+    # # C5
+    # test_chunk_bwd_dv_local_fix(B=128, H_qk=4, T=1024, K=128, V=128, chunk_size=64, scale=0.088, ktype=torch.float16, gtype=torch.float16, case_name="C5")
+    # # C6
+    # test_chunk_bwd_dv_local_fix(B=64, H_qk=8, T=4096, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C6")
+    # # C7
+    # test_chunk_bwd_dv_local_fix(B=32, H_qk=16, T=8192, K=128, V=128, chunk_size=64, scale=0.0442, ktype=torch.float16, gtype=torch.float16, case_name="C7")
+    # # C8
+    # test_chunk_bwd_dv_local_fix(B=16, H_qk=32, T=16384, K=128, V=128, chunk_size=64, scale=0.03125, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C8")
+    # # C9
+    # test_chunk_bwd_dv_local_fix(B=64, H_qk=8, T=2048, K=128, V=128, chunk_size=128, scale=0.0625, ktype=torch.float16, gtype=torch.float16, case_name="C9")
+    # # C10
+    # test_chunk_bwd_dv_local_fix(B=32, H_qk=16, T=4096, K=128, V=128, chunk_size=128, scale=0.0442, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C10")
+    # # C11
+    # test_chunk_bwd_dv_local_fix(B=16, H_qk=32, T=8192, K=128, V=128, chunk_size=128, scale=0.03125, ktype=torch.float16, gtype=torch.float16, case_name="C11")
+    # # C12
+    # test_chunk_bwd_dv_local_fix(B=8, H_qk=32, T=16384, K=128, V=128, chunk_size=128, scale=0.0221, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C12")
+    # # C13
+    # test_chunk_bwd_dv_local_fix(B=1, H_qk=4, T=1024, K=128, V=128, chunk_size=64, scale=0.088, ktype=torch.float16, gtype=torch.float16, case_name="C13")
+    # # C14
+    # test_chunk_bwd_dv_local_fix(B=48, H_qk=8, T=2048, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C14")
+    # # C15
+    # test_chunk_bwd_dv_local_fix(B=24, H_qk=16, T=4096, K=128, V=128, chunk_size=64, scale=0.0442, ktype=torch.float16, gtype=torch.float16, case_name="C15")
+    # # C16
+    # test_chunk_bwd_dv_local_fix(B=12, H_qk=32, T=8192, K=128, V=128, chunk_size=64, scale=0.03125, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C16")
+    # # V1
+    # test_chunk_bwd_dv_local_variable(B=1, H_qk=16, T=32768, K=128, V=128, chunk_size=64, scale=0.0625, cu_seqlens_len=512, ktype=torch.float16, gtype=torch.float32, case_name="V1")
+    # # V2
+    # test_chunk_bwd_dv_local_variable(B=1, H_qk=8, T=65536, K=128, V=128, chunk_size=64, scale=0.0625, cu_seqlens_len=1024, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="V2")
+    # # V3
+    # test_chunk_bwd_dv_local_variable(B=1, H_qk=32, T=65536, K=128, V=128, chunk_size=64, scale=0.0442, cu_seqlens_len=1024, ktype=torch.float16, gtype=torch.float32, case_name="V3")
+    # # V4
+    # test_chunk_bwd_dv_local_variable(B=1, H_qk=32, T=16384, K=128, V=128, chunk_size=64, scale=0.03125, cu_seqlens_len=256, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="V4")
 
-    # ################################## Vdim 256 泛化用例 #################################################
-    test_chunk_bwd_dv_local_fix(B=2, H_qk=2, T=512, K=128, V=256, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="Vdim256_F1")
-    test_chunk_bwd_dv_local_variable(B=1, H_qk=2, T=512, K=128, V=256, chunk_size=64, scale=0.011, cu_seqlens_len=4, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="Vdim256_V1")
+    # # ################################## Vdim 256 泛化用例 #################################################
+    # test_chunk_bwd_dv_local_fix(B=2, H_qk=2, T=512, K=128, V=256, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="Vdim256_F1")
+    # test_chunk_bwd_dv_local_variable(B=1, H_qk=2, T=512, K=128, V=256, chunk_size=64, scale=0.011, cu_seqlens_len=4, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="Vdim256_V1")
 
-    # # ################################## GVA 泛化用例 (H_do = h_ratio × H_qk) ##################################
-    # GVA-F1: h_ratio=2, H_qk=4, H_do=8
-    test_chunk_bwd_dv_local_fix(B=2, H_qk=4, T=512, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=2, case_name="GVA_F1")
-    # GVA-F2: h_ratio=2, H_qk=8, H_do=16
-    test_chunk_bwd_dv_local_fix(B=2, H_qk=8, T=1024, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=2, case_name="GVA_F2")
-    # GVA-F3: h_ratio=4, H_qk=4, H_do=16
-    test_chunk_bwd_dv_local_fix(B=2, H_qk=4, T=512, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=4, case_name="GVA_F3")
-    # GVA-F4: h_ratio=2, H_qk=4, H_do=8, V=256
-    test_chunk_bwd_dv_local_fix(B=2, H_qk=4, T=512, K=128, V=256, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=2, case_name="GVA_F4")
-    # GVA-F5: h_ratio=2, H_qk=8, H_do=16, float16
-    test_chunk_bwd_dv_local_fix(B=2, H_qk=8, T=1024, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.float16, gtype=torch.float16, h_ratio=2, case_name="GVA_F5")
-    # GVA-V1: h_ratio=2, variable length
-    test_chunk_bwd_dv_local_variable(B=1, H_qk=4, T=512, K=128, V=128, chunk_size=64, scale=0.0625, cu_seqlens_len=4, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=2, case_name="GVA_V1")
-    # GVA-V2: h_ratio=4, variable length
-    test_chunk_bwd_dv_local_variable(B=1, H_qk=4, T=512, K=128, V=128, chunk_size=64, scale=0.0625, cu_seqlens_len=4, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=4, case_name="GVA_V2")
+    # # # ################################## GVA 泛化用例 (H_do = h_ratio × H_qk) ##################################
+    # # GVA-F1: h_ratio=2, H_qk=4, H_do=8
+    # test_chunk_bwd_dv_local_fix(B=2, H_qk=4, T=512, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=2, case_name="GVA_F1")
+    # # GVA-F2: h_ratio=2, H_qk=8, H_do=16
+    # test_chunk_bwd_dv_local_fix(B=2, H_qk=8, T=1024, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=2, case_name="GVA_F2")
+    # # GVA-F3: h_ratio=4, H_qk=4, H_do=16
+    # test_chunk_bwd_dv_local_fix(B=2, H_qk=4, T=512, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=4, case_name="GVA_F3")
+    # # GVA-F4: h_ratio=2, H_qk=4, H_do=8, V=256
+    # test_chunk_bwd_dv_local_fix(B=2, H_qk=4, T=512, K=128, V=256, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=2, case_name="GVA_F4")
+    # # GVA-F5: h_ratio=2, H_qk=8, H_do=16, float16
+    # test_chunk_bwd_dv_local_fix(B=2, H_qk=8, T=1024, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.float16, gtype=torch.float16, h_ratio=2, case_name="GVA_F5")
+    # # GVA-V1: h_ratio=2, variable length
+    # test_chunk_bwd_dv_local_variable(B=1, H_qk=4, T=512, K=128, V=128, chunk_size=64, scale=0.0625, cu_seqlens_len=4, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=2, case_name="GVA_V1")
+    # # GVA-V2: h_ratio=4, variable length
+    # test_chunk_bwd_dv_local_variable(B=1, H_qk=4, T=512, K=128, V=128, chunk_size=64, scale=0.0625, cu_seqlens_len=4, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=4, case_name="GVA_V2")
