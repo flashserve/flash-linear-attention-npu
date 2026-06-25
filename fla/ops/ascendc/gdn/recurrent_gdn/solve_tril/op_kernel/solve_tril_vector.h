@@ -127,6 +127,9 @@ __aicore__ inline void SolveTrilVector<MATRIX_SIZE>::Init(
 template <int MATRIX_SIZE>
 __aicore__ inline void SolveTrilVector<MATRIX_SIZE>::Process()
 {
+#if SOLVE_TRIL_UBOPT_DIAG == 1
+    return;   // 探针L1：Resource/Init 后立即返回
+#endif
     int32_t subIdx = static_cast<int32_t>(GetSubBlockIdx());
     int32_t blockIdx = static_cast<int32_t>(GetBlockIdx());
 
@@ -135,6 +138,9 @@ __aicore__ inline void SolveTrilVector<MATRIX_SIZE>::Process()
         GenerateAuxMatrices();
     }
     SyncAll<false>();   // 所有 AIV 核各调用一次（与既有结构一致）
+#if SOLVE_TRIL_UBOPT_DIAG == 2 || SOLVE_TRIL_UBOPT_DIAG == 3
+    return;   // 探针L2/L3：aux-gen+SyncAll 后返回（vector 无 PrepareConstants）
+#endif
 
 #if SOLVE_TRIL_MBH_UB_OPT
     // UB 协作：仅 MATRIX_SIZE>FRAC（BT>16 才有 MBH 递归）；仅本组非空闲（与 cube 一致）。

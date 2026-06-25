@@ -348,6 +348,9 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::Init(
 template <int MATRIX_SIZE>
 __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::Process()
 {
+#if SOLVE_TRIL_UBOPT_DIAG == 1
+    return;   // 探针L1：Resource/Init 后立即返回
+#endif
     int64_t startTile = aicIdx_ * tilesPerCore_;
     int64_t endTile = startTile + tilesPerCore_;
 
@@ -365,7 +368,13 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::Process()
 #endif
 #else
     SyncAll<false>();
+#if SOLVE_TRIL_UBOPT_DIAG == 2
+    return;   // 探针L2：SyncAll 后返回
+#endif
     PrepareConstants();
+#if SOLVE_TRIL_UBOPT_DIAG == 3
+    return;   // 探针L3：PrepareConstants 后返回
+#endif
 #endif
 
     for (int64_t t = startTile; t < endTile; t++) {

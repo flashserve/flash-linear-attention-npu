@@ -28,6 +28,18 @@
 #define SOLVE_TRIL_MBH_PASSTHROUGH 0
 #endif
 
+// ========== UB-opt 卡死定位探针（默认 0=关闭）==========
+// UB-opt 路径在 950 上始终卡死在 setup（BT=16 前无输出），多轮修复无效，故加分级早退探针定位：
+//   =1：Process() 一进入即 return（Resource 已构造、Init 已跑）。若仍卡死 -> 卡在 Resource 构造/Init/launch；
+//       若完成（不超时，结果错）-> 卡在 Process 体内（SyncAll 或 compute）。
+//   =2：执行到 SyncAll 之后 return（cube：SyncAll 后；vector：aux-gen+SyncAll 后）。
+//       若 =1 完成而 =2 卡死 -> 卡在 SyncAll/aux-gen；若 =2 完成 -> 卡在 SyncAll 之后（PrepareConstants/compute）。
+//   =3：cube 执行到 PrepareConstants 之后 return。隔离 PrepareConstants vs tile 计算。
+//   =0：完整执行。定位完成后移除本探针。
+#ifndef SOLVE_TRIL_UBOPT_DIAG
+#define SOLVE_TRIL_UBOPT_DIAG 0
+#endif
+
 // ========== arch3510 UB 优化开关（Ascend950 性能优化）==========
 // 利用 arch3510 架构特性把 MBH 递归的 GM 中转换成 UB 中转，由 cube(AIC)+vector(AIV) 协作：
 //   - AIC：Mmad；递归结果 Fixpipe(L0C->UB) 暂存（task1）。
