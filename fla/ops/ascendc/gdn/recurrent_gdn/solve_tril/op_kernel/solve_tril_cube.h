@@ -550,9 +550,13 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ProcessOneTile(int64_t tileId
             SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
             WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
 #else
-#if SOLVE_TRIL_UBOPT_DIAG >= 4
-            // 探针L4+：BT>16 跳过 RecursiveMerge（AIV 此时已早退不协作，cube 若跑 RecursiveMerge
-            // 会等不到 aivReady 而死锁）。定位仅依赖 BT=16 单核路径。
+#if SOLVE_TRIL_UBOPT_DIAG == 7
+            // 探针L7：裸握手——跑 RecursiveMerge（内部数据op已 strip，仅保留跨核 flag），
+            //   不调 LoadFullInputForMBH。卡死 -> 握手拓扑/扇出有误；完成 -> 数据op故障。
+            RecursiveMerge();
+#elif SOLVE_TRIL_UBOPT_DIAG >= 4
+            // 探针L4/5/6：BT>16 跳过 RecursiveMerge（AIV 此时已早退不协作，cube 若跑会死锁）。
+            //   定位仅依赖 BT=16 单核路径。
 #else
             LoadFullInputForMBH(gmOffset);
             RecursiveMerge();
@@ -1170,6 +1174,7 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::RecursiveMerge()
         Catlass::Arch::CrossCoreWaitFlag(ubFlagAivReady1_);
         PipeBarrier<PIPE_ALL>();
 
+#if SOLVE_TRIL_UBOPT_DIAG != 7
         // step B: L0C = I × I = 完整单位阵
         MatmulToL0C(SLOT_I, SLOT_I, true);
         PipeBarrier<PIPE_ALL>();
@@ -1182,11 +1187,14 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::RecursiveMerge()
         // step G: L0C += I × drv(SLOT_X)
         MatmulToL0C(SLOT_I, SLOT_X, false);
         PipeBarrier<PIPE_ALL>();
+#endif
 
         if (!lastLevel) {
+#if SOLVE_TRIL_UBOPT_DIAG != 7
             // 层间结果 L0C -> xUB_（Fixpipe，NZ）；通知两 subcore 可从 xUB_ 提取下一层
             SpillL0CToUB();
             PipeBarrier<PIPE_ALL>();
+#endif
             Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(ubFlagAicReady_);
         }
         // lastLevel：结果留在 L0C，由 ProcessOneTile 的 StoreFinalResult 写出。

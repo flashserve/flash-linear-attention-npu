@@ -138,8 +138,8 @@ __aicore__ inline void SolveTrilVector<MATRIX_SIZE>::Process()
         GenerateAuxMatrices();
     }
     SyncAll<false>();   // 所有 AIV 核各调用一次（与既有结构一致）
-#if SOLVE_TRIL_UBOPT_DIAG >= 2
-    return;   // 探针L2+：aux-gen+SyncAll 后返回（vector 不参与协作，避免与 cube 早退失配死锁）
+#if SOLVE_TRIL_UBOPT_DIAG >= 2 && SOLVE_TRIL_UBOPT_DIAG != 7
+    return;   // 探针L2~L6：aux-gen+SyncAll 后返回（AIV 不协作）。L7 例外：跑裸握手。
 #endif
 
 #if SOLVE_TRIL_MBH_UB_OPT
@@ -175,6 +175,7 @@ __aicore__ inline void SolveTrilVector<MATRIX_SIZE>::CooperateMergeOneTile(int32
     int32_t othStart = isLower_ ? 0 : 1;
 
     // task2：MCH 输出 GM(ND) -> xUB_(UB, NZ)（GM->UB nd2nz）。仅 sub0 做数据搬运；sub1 只陪跑握手。
+#if SOLVE_TRIL_UBOPT_DIAG != 7
     if (subIdx == 0) {
         Nd2NzParams nd2nzParams;
         nd2nzParams.ndNum = 1;
@@ -188,6 +189,7 @@ __aicore__ inline void SolveTrilVector<MATRIX_SIZE>::CooperateMergeOneTile(int32
         DataCopy(xUB_, mchOutGM_, nd2nzParams);
         PipeBarrier<PIPE_ALL>();
     }
+#endif
 
     // 与 cube RecursiveMerge 的层循环一一对应（每层 1 次握手）。两 subcore 都进循环、
     // 调用相同次数的 Wait(aicReady)/Set(aivReady)，以平衡 1:2 MIX 的 FFTS 跨核计数（见 Process 注释）。
@@ -196,6 +198,7 @@ __aicore__ inline void SolveTrilVector<MATRIX_SIZE>::CooperateMergeOneTile(int32
         Catlass::Arch::CrossCoreWaitFlag(ubFlagAicReady_);
         PipeBarrier<PIPE_ALL>();
 
+#if SOLVE_TRIL_UBOPT_DIAG != 7
         if (subIdx == 0) {
             // 清 L1 提取目标槽（zeroUB->L1），再写选中分形（xUB->L1，raw）。全部 UB->L1，在 AIV sub0。
             ClearSlotUB(SLOT_X);
@@ -205,6 +208,7 @@ __aicore__ inline void SolveTrilVector<MATRIX_SIZE>::CooperateMergeOneTile(int32
             ExtractFromUB(SLOT_INPUT, blockSize, othStart);
             PipeBarrier<PIPE_ALL>();
         }
+#endif
 
         // 通知 AIC：本 subcore 已就绪。每 subcore Set 自己的 flag（1:2 MIX FFTS 计数要求）。
         if (subIdx == 0) {

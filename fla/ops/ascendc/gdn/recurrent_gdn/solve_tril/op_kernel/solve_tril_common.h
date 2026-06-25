@@ -43,6 +43,8 @@
 //   =6：仅 BT=16 跑完整(含 StoreFinalResult)；BT>16 在 StoreFinalResult 前返回(且已跳过 RecursiveMerge)。
 //       分离 “BT=16 StoreFinalResult(纯单核)” 与 “BT>16 RecursiveMerge(跨核协作)”。
 //       =6 卡 -> BT=16 StoreFinalResult；=6 不卡 -> 卡死在 RecursiveMerge 跨核协作。
+//   =7：BT>16 跑 RecursiveMerge + AIV 协作，但两核都【只保留跨核 flag，strip 所有数据op】（裸握手）。
+//       =7 卡 -> 握手拓扑/扇出有误（如 AIC 单次 Set 未扇出到两 subcore）；=7 不卡 -> 卡死是某数据op故障。
 //   =0：完整执行。定位完成后移除本探针。
 #ifndef SOLVE_TRIL_UBOPT_DIAG
 #define SOLVE_TRIL_UBOPT_DIAG 0
