@@ -84,13 +84,13 @@ aclnnStatus aclnnChunkFwdO(
 
 | 参数名 | 输入/输出 | 必选/可选 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|---|
-| `q` | 输入 | 必选 | Query 输入张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
-| `k` | 输入 | 必选 | Key 输入张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
-| `v` | 输入 | 必选 | Value 输入张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, V]` | 支持 |
-| `h` | 输入 | 必选 | 前向保存的隐藏状态张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, numChunks, K, V]` | 支持 |
-| `g` | 输入 | 必选 | Gate 输入张量 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, H, T]` | 支持 |
+| `q` | 输入 | 必选 | Query 输入张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HK, T, K]` | 支持 |
+| `k` | 输入 | 必选 | Key 输入张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HK, T, K]` | 支持 |
+| `v` | 输入 | 必选 | Value 输入张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
+| `h` | 输入 | 必选 | 前向保存的隐藏状态张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, numChunks, K, V]` | 支持 |
+| `g` | 输入 | 必选 | Gate 输入张量 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | `INT64` | `ND` | 1 维 | - |
-| `chunkOffsetsOptional` | 输入 | 可选 | 分块索引信息 | `INT64` | `ND` | 2 维 | - |
+| `chunkOffsetsOptional` | 输入 | 可选 | 分块索引信息，按 `[tokenBatchIdx, batchChunkIdx]` 成对扁平化 | `INT64` | `ND` | 1 维，长度需能被 2 整除 | - |
 
 ### 3.2 属性参数（Attributes）
 
@@ -103,20 +103,22 @@ aclnnStatus aclnnChunkFwdO(
 
 | 参数名 | 输入/输出 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|
-| `oOut` | 输出 | 前向注意力输出张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, V]` | 支持 |
+| `oOut` | 输出 | 前向注意力输出张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `workspaceSize` | 输出 | Device 侧所需 workspace 大小 | `uint64_t` | - | 标量 | - |
 | `executor` | 输出 | 算子执行器，封装了计算流程 | `aclOpExecutor*` | - | - | - |
 
 ### 3.4 形状与约束
 
-- `q`、`k` 的形状必须为 `[B, H, T, K]`。
-- `v`、`oOut` 的形状必须为 `[B, H, T, V]`。
-- `g` 的形状必须为 `[B, H, T]`。
-- `h` 的形状必须为 `[B, H, numChunks, K, V]`。
+- `q`、`k` 的形状必须为 `[B, HK, T, K]`，二者完全同形。
+- `v`、`oOut` 的形状必须为 `[B, HV, T, V]`。
+- `q` 和 `v` 的 `B`、`T` 必须一致，head 数允许不同。
+- `g` 的形状必须为 `[B, HV, T]`，head 维与 `v` 对齐。
+- `h` 的形状必须为 `[B, HV, numChunks, K, V]`，head 维与 `v` 对齐，`K` 维与 `q/k` 对齐，`V` 维与 `v` 对齐。
+- GVA 约束：`HV % HK == 0`，映射关系为 `hk = hv / (HV / HK)`。
 - 当前实现要求 `K = 128`。
 - 当前实现要求 `V = 128` 或 `256`。
 - `chunkSize` 当前仅支持 `64` 或 `128`。
-- 当启用变长模式时，`cuSeqlensOptional` 和 `chunkOffsetsOptional` 用于描述变长分块；同时当前实现仅支持 `B = 1`。
+- 当启用变长模式时，`cuSeqlensOptional` 和 `chunkOffsetsOptional` 用于描述变长分块；二者需要同时提供，且当前实现仅支持 `B = 1`。
 
 ---
 
@@ -125,17 +127,18 @@ aclnnStatus aclnnChunkFwdO(
 ### 4.1 可选参数约束
 
 - `cuSeqlensOptional` 和 `chunkOffsetsOptional`：
-  - 同时出现时启用变长模式（varlen）
+  - 二者任意一个出现时进入变长模式，当前实现要求二者同时提供
   - 变长模式仅支持 `B = 1`
 
 ### 4.2 形状约束（强约束）
 
 必须满足以下条件：
 
-- `q, k`: `[B, H, T, K]`
-- `v, oOut`: `[B, H, T, V]`
-- `g`: `[B, H, T]`
-- `h`: `[B, H, numChunks, K, V]`
+- `q, k`: `[B, HK, T, K]`
+- `v, oOut`: `[B, HV, T, V]`
+- `g`: `[B, HV, T]`
+- `h`: `[B, HV, numChunks, K, V]`
+- `HV % HK == 0`
 
 额外限制：
 
@@ -148,8 +151,9 @@ aclnnStatus aclnnChunkFwdO(
 当提供 `cuSeqlensOptional` 时：
 
 - `chunkOffsetsOptional` 必须同时提供
-- `numChunks` 由 `chunkOffsets` 推导
-- 要求 `numChunks` 为偶数
+- `chunkOffsetsOptional` 是扁平化的一维 int64 数组，语义为连续的 `[tokenBatchIdx, batchChunkIdx]` pair
+- `chunkOffsetsOptional` 的长度必须能被 2 整除
+- `numChunks` 由 `chunkOffsetsOptional` 的 pair 数推导
 - 当前实现仅支持 `B = 1`
 
 ### 4.4 数值语义
@@ -185,7 +189,7 @@ import math
 
 def test_chunk_fwd_o_fixed_len():
     # 参数设置
-    B, H, T, K, V = 1, 2, 256, 128, 128
+    B, HK, HV, T, K, V = 1, 2, 4, 256, 128, 128
     chunk_size = 64
     num_chunks = (T + chunk_size - 1) // chunk_size
     scale = 1.0 / math.sqrt(K)
@@ -193,11 +197,11 @@ def test_chunk_fwd_o_fixed_len():
     dtype = torch.bfloat16
 
     # 构造输入
-    q = torch.randn(B, H, T, K, device=device, dtype=dtype)
-    k = torch.randn(B, H, T, K, device=device, dtype=dtype)
-    v = torch.randn(B, H, T, V, device=device, dtype=dtype)
-    h = torch.randn(B, H, num_chunks, K, V, device=device, dtype=dtype)
-    g = torch.randn(B, H, T, device=device, dtype=dtype)
+    q = torch.randn(B, HK, T, K, device=device, dtype=dtype)
+    k = torch.randn(B, HK, T, K, device=device, dtype=dtype)
+    v = torch.randn(B, HV, T, V, device=device, dtype=dtype)
+    h = torch.randn(B, HV, num_chunks, K, V, device=device, dtype=dtype)
+    g = torch.randn(B, HV, T, device=device, dtype=dtype)
 
     # 调用算子（定长：cu_seqlens / chunk_indices 传 None）
     o = torch.ops.npu.npu_chunk_fwd_o(
@@ -229,7 +233,7 @@ import math
 
 def test_chunk_fwd_o_varlen():
     # 参数设置：变长模式仅支持 B = 1
-    B, H, K, V = 1, 2, 128, 128
+    B, HK, HV, K, V = 1, 2, 4, 128, 128
     chunk_size = 64
     scale = 1.0 / math.sqrt(K)
     device = "npu:0"
@@ -252,11 +256,11 @@ def test_chunk_fwd_o_varlen():
     chunk_indices_flat = [x for pair in chunk_indices_pairs for x in pair]
 
     # 构造输入
-    q = torch.randn(B, H, T, K, device=device, dtype=dtype)
-    k = torch.randn(B, H, T, K, device=device, dtype=dtype)
-    v = torch.randn(B, H, T, V, device=device, dtype=dtype)
-    h = torch.randn(B, H, num_chunks, K, V, device=device, dtype=dtype)
-    g = torch.randn(B, H, T, device=device, dtype=dtype)
+    q = torch.randn(B, HK, T, K, device=device, dtype=dtype)
+    k = torch.randn(B, HK, T, K, device=device, dtype=dtype)
+    v = torch.randn(B, HV, T, V, device=device, dtype=dtype)
+    h = torch.randn(B, HV, num_chunks, K, V, device=device, dtype=dtype)
+    g = torch.randn(B, HV, T, device=device, dtype=dtype)
 
     # 调用算子
     o = torch.ops.npu.npu_chunk_fwd_o(
@@ -292,13 +296,17 @@ chunk_fwd_o/
 │   ├── chunk_fwd_o_def.cpp
 │   ├── chunk_fwd_o_tiling.cpp
 │   ├── chunk_fwd_o_tiling.h
+│   ├── chunk_fwd_o_tiling_processor.h
 │   └── op_api/
 │       ├── aclnn_chunk_fwd_o.cpp
 │       ├── aclnn_chunk_fwd_o.h
 │       ├── chunk_fwd_o.cpp
 │       └── chunk_fwd_o.h
 ├── op_kernel/
-│   └── chunk_fwd_o.cpp
+│   ├── chunk_fwd_o.cpp
+│   ├── chunk_fwd_o_struct.h
+│   ├── epilogue/
+│   └── gemm/
 └── tests/
     └── pta/
         ├── data_compare_o.py
