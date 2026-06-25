@@ -41,6 +41,11 @@ using namespace AscendC;
 constexpr int32_t FRAC = 16;
 constexpr int32_t FRAC_LEN = FRAC * FRAC;
 
+#if SOLVE_TRIL_MBH_UB_OPT
+// L0C->UB 且输出 NZ：预定义 CFG_NZ 是 isToUB=false（L0C->L1），此处定义 isToUB=true 用于 L0C->UB。
+constexpr AscendC::FixpipeConfig CFG_NZ_UB = {AscendC::CO2Layout::NZ, true};
+#endif
+
 template <int MATRIX_SIZE>
 class SolveTrilCube {
     static constexpr int32_t TILE_LEN = MATRIX_SIZE * MATRIX_SIZE;
@@ -131,6 +136,11 @@ private:
                                                 int32_t blockSize, int32_t startBlock);
     __aicore__ inline void SpillL0CToXGM();
 #endif
+#if SOLVE_TRIL_MBH_UB_OPT
+    // arch3510 UB 优化（AIC 侧）：递归结果 Fixpipe L0C->UB(NZ)。
+    // mch_out 暂存(GM->UB) 与每层块提取(UB->L1) 由 AIV 负责（见 vector.h）。
+    __aicore__ inline void SpillL0CToUB();
+#endif
     __aicore__ inline void ClearSlot(int32_t slot);
 
 private:
@@ -171,6 +181,12 @@ private:
     // （避免该 arch 上失效的 L1->GM 原始 DataCopy）。
     GlobalTensor<half> xGM_;
 #endif
+#if SOLVE_TRIL_MBH_UB_OPT
+    // arch3510 UB 优化：X 的 UB 常驻副本（NZ）。AIC 经 Fixpipe 写（SpillL0CToUB），
+    // AIV 读（提取）/写（GM->UB 暂存）。须与 AIV 的 xUB_ 同物理偏移（各 TPipe 内首个 VECCALC）。
+    TBuf<TPosition::VECCALC> xUbBuf_;
+    LocalTensor<half> xUB_;
+#endif
 
     TBuf<TPosition::A1> l1Buf_;
     LocalTensor<half> l1_;
@@ -202,6 +218,11 @@ private:
 
 #if !SOLVE_TRIL_PLATFORM_ASCEND950
     Catlass::Arch::CrossCoreFlagWithReverse<> flagAivFinish_{SYNC_AIC_AIV_FLAG_SOLVE, SYNC_AIV_AIC_FLAG_SOLVE};
+#endif
+#if SOLVE_TRIL_MBH_UB_OPT
+    // UB 优化跨核握手（AIC<->AIV，两核以相同 id 构造 -> 同一硬件 flag）
+    Catlass::Arch::CrossCoreFlag ubFlagAicReady_{UBOPT_FLAG_AIC_READY};  // AIC -> AIV
+    Catlass::Arch::CrossCoreFlag ubFlagAivReady_{UBOPT_FLAG_AIV_READY};  // AIV -> AIC
 #endif
 };
 
@@ -285,6 +306,11 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::Init(
     xGM_ = workspaceGM_[xGmOffset];
 #endif
 
+#if SOLVE_TRIL_MBH_UB_OPT
+    // 关键：xUbBuf_ 必须是本 TPipe 内首个 VECCALC 分配 -> 物理偏移 0，与 AIV 的 xUB_ 对齐。
+    pipe_.InitBuffer(xUbBuf_, TILE_LEN * sizeof(half));
+    xUB_ = xUbBuf_.Get<half>();
+#endif
     pipe_.InitBuffer(l1Buf_, L1_TOTAL_ELEMS * sizeof(half));
     l1_ = l1Buf_.Get<half>();
     pipe_.InitBuffer(l0aBuf_, TILE_LEN * sizeof(half));
@@ -407,7 +433,15 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ProcessOneTile(int64_t tileId
         // 其余（-A、I、Zero、块中转）沿用经验证可用的 910b GM 通路。
         // LoadInputTile(gmOffset);   // MCH 输入加载（已屏蔽）
         // MCHInvertDiagonal();       // MCH 求对角块逆（已屏蔽）
+#if SOLVE_TRIL_MBH_UB_OPT
+        // UB 优化：BT>16 时 mch_out 由 AIV 暂存到 UB(GM->UB nd2nz)，AIC 不再 GM->L1；
+        // BT==16 无 MBH 递归，仍需 SLOT_X=mch_out 以做 X×I 写回。
+        if constexpr (MATRIX_SIZE == FRAC) {
+            LoadMchOutToSlotX();
+        }
+#else
         LoadMchOutToSlotX();
+#endif
 #else
         LoadInputTile(gmOffset);
         MCHInvertDiagonal();
@@ -831,6 +865,25 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::SpillL0CToXGM()
 }
 #endif  // SOLVE_TRIL_MBH_DEBUG_ONLY && !SOLVE_TRIL_PLATFORM_ASCEND950
 
+#if SOLVE_TRIL_MBH_UB_OPT
+// arch3510 UB 优化（AIC 侧）：递归结果 L0C(FP32) -> xUB_(FP16, NZ)，Fixpipe(F322F16, CFG_NZ_UB)。
+// Fixpipe 是 cube 指令，但目标 UB（AIV 的）——这是 arch3510 的 L0C->UB 通路（task1）。
+// 用 3 参重载（无 cbufWorkspace）：quantPre=F322F16 是均匀下转(pre-quant)，不需要 deq 标量张量
+// （cbufWorkspace 仅在按通道 deq-tensor 量化时承载标量张量；与既有 L0CToGM 的 3 参 F322F16 一致）。
+template <int MATRIX_SIZE>
+__aicore__ inline void SolveTrilCube<MATRIX_SIZE>::SpillL0CToUB()
+{
+    AscendC::FixpipeParamsArch3510<AscendC::CO2Layout::NZ> intriParams(
+        MATRIX_SIZE,    // nSize
+        MATRIX_SIZE,    // mSize
+        MATRIX_SIZE,    // srcStride (L0C)
+        MATRIX_SIZE);   // dstStride (UB NZ)
+    intriParams.quantPre = QuantMode_t::F322F16;
+    AscendC::Fixpipe<half, float, CFG_NZ_UB>(xUB_, l0c_, intriParams);
+    PipeBarrier<PIPE_ALL>();
+}
+#endif  // SOLVE_TRIL_MBH_UB_OPT
+
 template <int MATRIX_SIZE>
 __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ClearSlot(int32_t slot)
 {
@@ -1041,7 +1094,46 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::LoadFullInputForMBH(int64_t g
 template <int MATRIX_SIZE>
 __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::RecursiveMerge()
 {
-#if SOLVE_TRIL_MBH_DEBUG_ONLY && !SOLVE_TRIL_PLATFORM_ASCEND950
+#if SOLVE_TRIL_MBH_UB_OPT
+    // ===== arch3510 UB 优化（AIC 侧）：cube 做 Mmad + Fixpipe(L0C->UB)，UB<->L1 搬运在 AIV =====
+    // 调用前置：LoadFullInputForMBH 已算出 SLOT_MNEG=-A（SLOT_INPUT 用完即释放）。
+    // X 常驻 xUB_(UB,NZ)：初值由 AIV 把 mch_out GM->UB(nd2nz) 暂存；每层结果由本核 SpillL0CToUB 写回。
+    // 每层 drv/oth 两组块由 AIV 经 raw UB->L1 提取到 SLOT_X / SLOT_INPUT（清零也在 AIV）。
+    // A、F 步同取 drv，故复用 SLOT_X（X 在 UB，L1 SLOT_X 空闲）。与 GM 通路代数等价；每 step 全 PipeBarrier 串行。
+    // 握手（每层各 1 次，双核计数 = 层数，匹配）：
+    //   AIC SetFlag(AicReady)：常量就绪(L0)/本层结果已写回 xUB_(L>=1) -> AIV 可提取；
+    //   AIC WaitFlag(AivReady)：AIV 已把 drv->SLOT_X、oth->SLOT_INPUT 提取到 L1 -> 可 Mmad。
+    PipeBarrier<PIPE_ALL>();
+    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(ubFlagAicReady_);  // 常量就绪，SLOT_X/INPUT 可由 AIV 写
+    for (int32_t blockSize = FRAC; blockSize < MATRIX_SIZE; blockSize *= 2) {
+        bool lastLevel = !(blockSize < MATRIX_SIZE / 2);
+
+        // 等 AIV 完成本层提取：SLOT_X=drv 块、SLOT_INPUT=oth 块
+        Catlass::Arch::CrossCoreWaitFlag(ubFlagAivReady_);
+        PipeBarrier<PIPE_ALL>();
+
+        // step B: L0C = I × I = 完整单位阵
+        MatmulToL0C(SLOT_I, SLOT_I, true);
+        PipeBarrier<PIPE_ALL>();
+        // step C: Y = drv(SLOT_X) × (-A) + I -> SLOT_Y（经 L0C->GM scratch->L1，AIC 内部）
+        MatmulToSlot(SLOT_X, SLOT_MNEG, SLOT_Y, false);
+        PipeBarrier<PIPE_ALL>();
+        // step E: L0C = Y × oth(SLOT_INPUT)
+        MatmulToL0C(SLOT_Y, SLOT_INPUT, true);
+        PipeBarrier<PIPE_ALL>();
+        // step G: L0C += I × drv(SLOT_X)
+        MatmulToL0C(SLOT_I, SLOT_X, false);
+        PipeBarrier<PIPE_ALL>();
+
+        if (!lastLevel) {
+            // 层间结果 L0C -> xUB_（Fixpipe，NZ）；通知 AIV 可从 xUB_ 提取下一层
+            SpillL0CToUB();
+            PipeBarrier<PIPE_ALL>();
+            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(ubFlagAicReady_);
+        }
+        // lastLevel：结果留在 L0C，由 ProcessOneTile 的 StoreFinalResult 写出。
+    }
+#elif SOLVE_TRIL_MBH_DEBUG_ONLY && !SOLVE_TRIL_PLATFORM_ASCEND950
     // ===== MBH 调试：GM-only 数据流（规避失效的 L1->GM 直拷）=====
     // X 的权威副本在 GM：第 0 层为 mch_out，之后为 xGM_（由 SpillL0CToXGM 写回）。
     // 所有块提取改为 ExtractBlocksFromGM（GM->L1，已验证）。
@@ -1151,7 +1243,14 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ProcessPartialTile(int64_t gm
     // MBH 调试模式：屏蔽 MCH，X 直接来自接口入参 mch_out（只取 validSize 部分）
     // LoadInputTile(gmOffset, validSize);   // MCH 输入加载（已屏蔽）
     // MCHInvertDiagonal();                   // MCH 求对角块逆（已屏蔽）
+#if SOLVE_TRIL_MBH_UB_OPT
+    // UB 优化：BT>16 时 mch_out 由 AIV 暂存到 UB；BT==16 仍需 SLOT_X=mch_out。
+    if constexpr (MATRIX_SIZE == FRAC) {
+        LoadMchOutToSlotX(validSize);
+    }
+#else
     LoadMchOutToSlotX(validSize);
+#endif
 #else
     LoadInputTile(gmOffset, validSize);
     MCHInvertDiagonal();
