@@ -39,7 +39,10 @@
 //   =4：ProcessOneTile 中 staging(BT=16 的 LoadMchOutToSlotX) 之后 return；BT>16 跳过 RecursiveMerge，
 //       AIV(DIAG>=2) 不协作。隔离 LoadMchOutToSlotX。
 //   =5：BT=16 做完 matmul 后、StoreFinalResult 前 return；BT>16 同样跳过 RecursiveMerge。隔离 matmul。
-//       =4 完成且 =5 卡 -> matmul；=5 完成 -> 卡在 StoreFinalResult；=4 卡 -> LoadMchOutToSlotX。
+//       =4 完成且 =5 卡 -> matmul；=5 完成 -> 卡在 BT=16 StoreFinalResult 或 BT>16 RecursiveMerge。
+//   =6：仅 BT=16 跑完整(含 StoreFinalResult)；BT>16 在 StoreFinalResult 前返回(且已跳过 RecursiveMerge)。
+//       分离 “BT=16 StoreFinalResult(纯单核)” 与 “BT>16 RecursiveMerge(跨核协作)”。
+//       =6 卡 -> BT=16 StoreFinalResult；=6 不卡 -> 卡死在 RecursiveMerge 跨核协作。
 //   =0：完整执行。定位完成后移除本探针。
 #ifndef SOLVE_TRIL_UBOPT_DIAG
 #define SOLVE_TRIL_UBOPT_DIAG 0

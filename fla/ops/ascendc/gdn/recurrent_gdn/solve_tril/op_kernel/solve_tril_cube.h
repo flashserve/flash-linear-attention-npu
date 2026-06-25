@@ -570,6 +570,14 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ProcessOneTile(int64_t tileId
         }
 #if SOLVE_TRIL_UBOPT_DIAG == 5
         return;   // 探针L5：matmul(BT=16) / RecursiveMerge 后、StoreFinalResult 前返回，隔离 matmul
+#elif SOLVE_TRIL_UBOPT_DIAG == 6
+        // 探针L6：仅 BT=16 跑 StoreFinalResult（纯 AIC 单核，无协作）；BT>16 在此返回，
+        //   既跳过 RecursiveMerge(DIAG>=4) 也跳过 StoreFinalResult -> 把“BT=16 的 StoreFinalResult”
+        //   从“BT>16 的 RecursiveMerge 跨核协作”中干净分离。
+        //   DIAG=6 卡死 -> BT=16 StoreFinalResult 是元凶；DIAG=6 不卡 -> 卡死在 RecursiveMerge(跨核)。
+        if constexpr (MATRIX_SIZE > FRAC) {
+            return;
+        }
 #endif
         StoreFinalResult(gmOffset);
     }
