@@ -929,11 +929,16 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::SpillL0CToXGM()
 template <int MATRIX_SIZE>
 __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::SpillL0CToUB()
 {
+    // L0C(FP32) -> xUB_(FP16, 稠密 zN/NZ)。dstStride 单位=元素，为相邻 N-fractal-column 的跨度。
+    // 稠密 zN：每个 N-column-fractal-strip 跨 mSize*16 = NUM_FRACS*FRAC_LEN 元素，故 dstStride 必须
+    // = NUM_FRACS*FRAC_LEN，才能让分形 (fr,fc) 落在 (fc*NUM_FRACS+fr)*FRAC_LEN —— 与 nd2nz 暂存布局
+    // 及 ExtractFromUB/matmul 的 zN 偏移一致。（之前误用 MATRIX_SIZE，相差 16 倍 -> 仅暂存(nd2nz)的
+    // BT=32 通过、含 Fixpipe spill 的 BT>=64 失败。SDK GetGMLen 推导见 kernel_operator_fixpipe_impl.h。）
     AscendC::FixpipeParamsArch3510<AscendC::CO2Layout::NZ> intriParams(
-        MATRIX_SIZE,    // nSize
-        MATRIX_SIZE,    // mSize
-        MATRIX_SIZE,    // srcStride (L0C)
-        MATRIX_SIZE);   // dstStride (UB NZ)
+        MATRIX_SIZE,             // nSize
+        MATRIX_SIZE,             // mSize
+        MATRIX_SIZE,             // srcStride (L0C，与已验证的 L0CToGM 一致)
+        NUM_FRACS * FRAC_LEN);   // dstStride (UB zN 稠密列跨度 = NUM_FRACS*256 元素)
     intriParams.quantPre = QuantMode_t::F322F16;
     AscendC::Fixpipe<half, float, CFG_NZ_UB>(xUB_, l0c_, intriParams);
     PipeBarrier<PIPE_ALL>();
