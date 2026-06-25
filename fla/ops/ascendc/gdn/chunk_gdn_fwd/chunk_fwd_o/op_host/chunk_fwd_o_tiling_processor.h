@@ -60,6 +60,7 @@ static constexpr size_t CHUNK_FWD_O_WORKSPACE_RSV_BYTE = 16 * 1024 * 1024;
 static constexpr size_t CHUNK_FWD_O_GM_ALIGN = 512;
 static constexpr int64_t CHUNK_FWD_O_PINGPONG_STAGES = 2;
 static constexpr int64_t CHUNK_FWD_O_CHUNK_OFFSETS_PAIR_SIZE = 2;
+static constexpr int64_t CHUNK_FWD_O_MAX_V_HEAD_DIM = 256;
 
 static constexpr const char *const CHUNK_FWD_O_INPUT_Q_NAME = "q";
 static constexpr const char *const CHUNK_FWD_O_INPUT_K_NAME = "k";
@@ -185,6 +186,11 @@ public:
 
         OP_CHECK_IF(vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) % qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) != 0,
                     OP_LOGE(ctx_.nodeName, "Check head num failed, vNumHead should be divisible by kNumHead."),
+                    return ge::GRAPH_FAILED);
+
+        OP_CHECK_IF(vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) > CHUNK_FWD_O_MAX_V_HEAD_DIM,
+                    OP_LOGE(ctx_.nodeName, "Check v shape failed, vHeadDim should be <= %ld, but get %ld.",
+                            CHUNK_FWD_O_MAX_V_HEAD_DIM, vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM)),
                     return ge::GRAPH_FAILED);
 
         return ge::GRAPH_SUCCESS;

@@ -88,6 +88,8 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
 
     context->SetBlockDim(aicCoreNum);
+    OP_CHECK_IF(context->SetScheduleMode(1) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "SetScheduleMode(1) error"), return ge::GRAPH_FAILED);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = processor.GetWorkspaceSize();
 

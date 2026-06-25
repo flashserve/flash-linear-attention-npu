@@ -30,6 +30,10 @@
 
 using namespace op;
 
+static constexpr size_t CHUNK_FWD_O_QKV_DIM_NUM = 4;
+static constexpr size_t CHUNK_FWD_O_DIM_HEAD_DIM = 3;
+static constexpr int64_t CHUNK_FWD_O_MAX_V_HEAD_DIM = 256;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -66,6 +70,12 @@ static aclnnStatus CheckFormat(ChunkFwdOParams params)
 
 static aclnnStatus CheckShape(ChunkFwdOParams params)
 {
+    const auto &vShape = params.v->GetViewShape();
+    CHECK_COND(vShape.GetDimNum() == CHUNK_FWD_O_QKV_DIM_NUM, ACLNN_ERR_PARAM_INVALID,
+               "v should be 4D [B, HV, T, V].");
+    CHECK_COND(vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) <= CHUNK_FWD_O_MAX_V_HEAD_DIM, ACLNN_ERR_PARAM_INVALID,
+               "vHeadDim should be less than or equal to %ld, but got %ld.",
+               CHUNK_FWD_O_MAX_V_HEAD_DIM, vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM));
     return ACLNN_SUCCESS;
 }
 

@@ -170,6 +170,8 @@ public:
 
             AscendC::DataCopyParams aInputUbParams{(uint16_t)mActualThisSubBlock, (uint16_t)(nActual*sizeof(float)), 0, aInputDstStride};
             AscendC::DataCopyPadParams aInputUbPadParams{false, 0, 0, 0};
+            // UB->GM DataCopyPad advances the UB source by AlignUp(blockLen, 32B).
+            // For fp16/bf16 qk-mask rows this matches alignedNActual, so srcStride stays 0.
             AscendC::DataCopyExtParams aOutputUbParams{(uint16_t)mActualThisSubBlock, (uint32_t)(nActual*sizeof(half)), 0, 0, 0};
 
             AscendC::DataCopyParams gfloatUbParams{1, (uint16_t)(mActual*sizeof(float)), 0, 0};
@@ -335,6 +337,8 @@ public:
 
                 AscendC::DataCopyParams aInputUbParams{(uint16_t)mActualThisStage, (uint16_t)(nActual*sizeof(float)), 0, aInputDstStride};
                 AscendC::DataCopyPadParams aInputUbPadParams{false, 0, 0, 0};
+                // UB->GM DataCopyPad advances the UB source by AlignUp(blockLen, 32B).
+                // For fp16/bf16 qk-mask rows this matches alignedNActual, so srcStride stays 0.
                 AscendC::DataCopyExtParams aOutputUbParams{(uint16_t)mActualThisStage, (uint32_t)(nActual*sizeof(half)), 0, 0, 0};
 
                 AscendC::LocalTensor<float> aUbTensor = (pingpongFlag == 0) ? aUbTensorPing : aUbTensorPong;
