@@ -55,15 +55,15 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 
 | 参数名 | 输入/输出 | 必选/可选 | 描述 | 使用说明 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|---|---|
-| `q` | 输入 | 必选 | Query 输入张量 | 参与反向递推 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
-| `k` | 输入 | 必选 | Key 输入张量 | 参与 dv2 计算 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
-| `w` | 输入 | 必选 | Weight（衰减权重）输入张量 | 参与隐藏状态更新 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
-| `dO` | 输入 | 必选 | 前向输出 `o` 的梯度张量 | 即上游输出梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, V]` | 支持 |
-| `dv` | 输入 | 必选 | Value 的上游梯度张量 | 将与来自 `dh` 的贡献叠加后输出为 `dv2` | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, V]` | 支持 |
-| `gOptional` | 输入 | 可选 | Gate 张量 | 对隐藏状态递推施加指数门控 `exp(g)` | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, H, T]` | 支持 |
-| `gkOptional` | 输入 | 可选 | Key-wise Gate 张量 | 对每个 Key 维度施加额外门控 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
-| `h0Optional` | 输入 | 可选 | 初始隐藏状态张量 | 提供时参与递推初始化 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, K, V]` | 支持 |
-| `dhtOptional` | 输入 | 可选 | 末尾隐藏状态的梯度张量 | 反向递推的起始梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, K, V]` | 支持 |
+| `q` | 输入 | 必选 | Query 输入张量 | 参与反向递推 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HK, T, K]` | 支持 |
+| `k` | 输入 | 必选 | Key 输入张量 | 参与 dv2 计算 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HK, T, K]` | 支持 |
+| `w` | 输入 | 必选 | Weight（衰减权重）输入张量 | 参与隐藏状态更新 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, K]` | 支持 |
+| `dO` | 输入 | 必选 | 前向输出 `o` 的梯度张量 | 即上游输出梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
+| `dv` | 输入 | 必选 | Value 的上游梯度张量 | 将与来自 `dh` 的贡献叠加后输出为 `dv2` | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
+| `gOptional` | 输入 | 可选 | Gate 张量 | 对隐藏状态递推施加指数门控 `exp(g)` | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
+| `gkOptional` | 输入 | 可选 | Key-wise Gate 张量 | 对每个 Key 维度施加额外门控 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, K]` | 支持 |
+| `h0Optional` | 输入 | 可选 | 初始隐藏状态张量 | 提供时参与递推初始化 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
+| `dhtOptional` | 输入 | 可选 | 末尾隐藏状态的梯度张量 | 反向递推的起始梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | 变长模式输入，形状为 `[N+1]` | `INT64` | `ND` | 1 维 | - |
 | `chunkIndicesOptional` | 输入 | 可选 | 分块索引信息 | 变长模式输入，扁平化存储 `[seqIdx0, chunkIdx0, ...]`，长度为 `2 * numChunks` | `INT64` | `ND` | 1 维 | - |
 
@@ -78,9 +78,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 
 | 参数名 | 输入/输出 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|
-| `dhOut` | 输出 | 各 chunk 起始时刻的隐藏状态梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, NT, K, V]` | 支持 |
-| `dh0Out` | 输出 | 初始隐藏状态 `h0` 的梯度（仅当 `h0Optional` 非空时有意义）| `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, K, V]` | 支持 |
-| `dv2Out` | 输出 | 融合了隐藏状态贡献后的 Value 梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, V]` | 支持 |
+| `dhOut` | 输出 | 各 chunk 起始时刻的隐藏状态梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, NT, K, V]` | 支持 |
+| `dh0Out` | 输出 | 初始隐藏状态 `h0` 的梯度（仅当 `h0Optional` 非空时有意义）| `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
+| `dv2Out` | 输出 | 融合了隐藏状态贡献后的 Value 梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `workspaceSize` | 输出 | Device 侧所需 workspace 大小 | `uint64_t` | - | 标量 | - |
 | `executor` | 输出 | 算子执行器，封装了计算流程 | `aclOpExecutor*` | - | - | - |
 
@@ -88,13 +88,18 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 
 ### 3.4 形状与约束
 
-- `q`、`k`、`w` 的形状必须为 `[B, H, T, K]`。
-- `dO`、`dv` 的形状必须为 `[B, H, T, V]`。
-- `gOptional` 的形状必须为 `[B, H, T]`（若提供）。
-- `gkOptional` 的形状必须为 `[B, H, T, K]`（若提供）。
-- `h0Optional`、`dhtOptional` 的形状必须为 `[B, H, K, V]`（若提供）。
+- `q`、`k` 的形状必须为 `[B, HK, T, K]`，二者完全同形。
+- `w` 的形状必须为 `[B, HV, T, K]`，head 维与 value 侧对齐。
+- `dO`、`dv` 的形状必须为 `[B, HV, T, V]`。
+- `q` 与 `dO`/`dv` 的 `B`、`T` 必须一致，head 数允许不同（GVA）。
+- `gOptional` 的形状必须为 `[B, HV, T]`（若提供）。
+- `gkOptional` 的形状必须为 `[B, HV, T, K]`（若提供）。
+- `h0Optional`、`dhtOptional` 的形状必须为 `[B, HV, K, V]`（若提供）。
+- `dhOut` 的形状必须为 `[B, HV, NT, K, V]`。
+- **GVA 约束**：`HV % HK == 0`；读 `q`/`k` 时使用 `hq = hv / (HV / HK)`，读/写 `w`/`dO`/`dv`/`g`/`dh`/`dv2` 使用 value head 索引 `hv`。
 - 当前实现要求 `K ≤ 128`。
-- 当前实现要求 `V ≤ 256`。
+- 当前实现要求 `V ≤ 256`（Cube tile 原生按 `V` 上限 256 设计，**无**按 V 维切换的 TilingKey）。
+- **TilingKey**：`g` 与 `q` 同 dtype 时为 Key=1，`g` 为 FP32 时为 Key=2（与 V 维无关）。
 - `chunkSize` 当前仅支持 `64` 或 `128`。
 - 当启用变长模式时，`cuSeqlensOptional` 和 `chunkIndicesOptional` 须同时提供，且仅支持 `B = 1`。
 
@@ -119,16 +124,18 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 
 必须满足以下条件：
 
-- `q, k, w`: `[B, H, T, K]`
-- `dO, dv`: `[B, H, T, V]`
-- `gOptional`: `[B, H, T]`
-- `gkOptional`: `[B, H, T, K]`
-- `h0Optional, dhtOptional`: `[B, H, K, V]`
+- `q, k`: `[B, HK, T, K]`
+- `w`: `[B, HV, T, K]`
+- `dO, dv, dv2Out`: `[B, HV, T, V]`
+- `gOptional`: `[B, HV, T]`
+- `gkOptional`: `[B, HV, T, K]`（若提供）
+- `h0Optional, dhtOptional, dhOut`: head 维为 `HV`
+- `HV % HK == 0`（GVA）
 
 额外限制：
 
 - `K ≤ 128`
-- `V ≤ 256`
+- `V ≤ 256`（支持 `V = 256`）
 - `chunkSize ∈ {64, 128}`
 
 ---
@@ -183,20 +190,20 @@ import torch_npu
 import math
 
 def test_chunk_gated_delta_rule_bwd_dhu_fix():
-    # 参数设置
-    B, H, T, K, V = 2, 8, 256, 128, 128
+    # 参数设置（GVA 示例：HK=2, HV=4, V=256）
+    B, HK, HV, T, K, V = 2, 2, 4, 256, 128, 256
     chunk_size = 64
     scale = 1.0 / math.sqrt(K)
     device = "npu:0"
     dtype = torch.float16
 
     # 构造输入
-    q   = torch.rand(B, H, T, K, dtype=dtype).to(device)
-    k   = torch.rand(B, H, T, K, dtype=dtype).to(device)
-    w   = torch.rand(B, H, T, K, dtype=dtype).to(device)
-    d_o = torch.rand(B, H, T, V, dtype=dtype).to(device)
-    dv  = torch.rand(B, H, T, V, dtype=dtype).to(device)
-    g   = torch.rand(B, H, T,    dtype=dtype).to(device)
+    q   = torch.rand(B, HK, T, K, dtype=dtype).to(device)
+    k   = torch.rand(B, HK, T, K, dtype=dtype).to(device)
+    w   = torch.rand(B, HV, T, K, dtype=dtype).to(device)
+    d_o = torch.rand(B, HV, T, V, dtype=dtype).to(device)
+    dv  = torch.rand(B, HV, T, V, dtype=dtype).to(device)
+    g   = torch.rand(B, HV, T,    dtype=torch.float32).to(device)
 
     # 调用算子（固定长度模式，启用 gate g）
     dh, dh0, dv2 = torch.ops.npu.npu_chunk_gated_delta_rule_bwd_dhu(
@@ -214,10 +221,10 @@ def test_chunk_gated_delta_rule_bwd_dhu_fix():
     )
 
     NT = (T + chunk_size - 1) // chunk_size
-    print("dh   shape:", dh.shape)    # [B, H, NT, K, V]
-    print("dv2  shape:", dv2.shape)   # [B, H, T, V]
-    assert dh.shape  == (B, H, NT, K, V)
-    assert dv2.shape == (B, H, T, V)
+    print("dh   shape:", dh.shape)    # [B, HV, NT, K, V]
+    print("dv2  shape:", dv2.shape)   # [B, HV, T, V]
+    assert dh.shape  == (B, HV, NT, K, V)
+    assert dv2.shape == (B, HV, T, V)
     print("Fix-length Execution Successful!")
 
 if __name__ == "__main__":
@@ -264,7 +271,7 @@ def prepare_chunk_indices(cu_seqlens, chunk_size: int):
 
 def test_chunk_gated_delta_rule_bwd_dhu_varlen():
     # 参数设置（变长模式要求 B = 1）
-    B, H, T, K, V = 1, 8, 512, 128, 128
+    B, HK, HV, T, K, V = 1, 2, 4, 512, 128, 256
     chunk_size = 64
     scale = 1.0 / math.sqrt(K)
     device = "npu:0"
@@ -276,12 +283,12 @@ def test_chunk_gated_delta_rule_bwd_dhu_varlen():
     NT = len(chunk_indices) // 2
 
     # 构造输入
-    q   = torch.rand(B, H, T, K, dtype=dtype).to(device)
-    k   = torch.rand(B, H, T, K, dtype=dtype).to(device)
-    w   = torch.rand(B, H, T, K, dtype=dtype).to(device)
-    d_o = torch.rand(B, H, T, V, dtype=dtype).to(device)
-    dv  = torch.rand(B, H, T, V, dtype=dtype).to(device)
-    g   = torch.rand(B, H, T,    dtype=dtype).to(device)
+    q   = torch.rand(B, HK, T, K, dtype=dtype).to(device)
+    k   = torch.rand(B, HK, T, K, dtype=dtype).to(device)
+    w   = torch.rand(B, HV, T, K, dtype=dtype).to(device)
+    d_o = torch.rand(B, HV, T, V, dtype=dtype).to(device)
+    dv  = torch.rand(B, HV, T, V, dtype=dtype).to(device)
+    g   = torch.rand(B, HV, T,    dtype=torch.float32).to(device)
 
     # 调用算子（变长模式，启用 gate g）
     dh, dh0, dv2 = torch.ops.npu.npu_chunk_gated_delta_rule_bwd_dhu(
@@ -298,10 +305,10 @@ def test_chunk_gated_delta_rule_bwd_dhu_varlen():
         transpose_state_layout=False
     )
 
-    print("dh   shape:", dh.shape)    # [B, H, NT, K, V]
-    print("dv2  shape:", dv2.shape)   # [B, H, T, V]
-    assert dh.shape  == (B, H, NT, K, V)
-    assert dv2.shape == (B, H, T, V)
+    print("dh   shape:", dh.shape)    # [B, HV, NT, K, V]
+    print("dv2  shape:", dv2.shape)   # [B, HV, T, V]
+    assert dh.shape  == (B, HV, NT, K, V)
+    assert dv2.shape == (B, HV, T, V)
     print("Variable-length Execution Successful!")
 
 if __name__ == "__main__":

@@ -7,9 +7,9 @@
 
 在分块序列模型中，计算以下张量：
 
-- **h**：各分块起始处的隐藏状态张量，形状为 `[B, H, numChunks, K, V]`
-- **v_new**：各分块经 WY 分解修正后的 Value 张量，形状与 `u` 相同（`[B, H, T, V]`）
-- **finalState**：最后一个分块结束后的最终隐藏状态，形状为 `[N, H, K, V]`（`N` 为变长子序列数，定长时 `N = B`），仅在 `output_final_state = true` 时返回有效值
+- **h**：各分块起始处的隐藏状态张量，形状为 `[B, HV, numChunks, K, V]`
+- **v_new**：各分块经 WY 分解修正后的 Value 张量，形状与 `u` 相同（`[B, HV, T, V]`）
+- **finalState**：最后一个分块结束后的最终隐藏状态，形状为 `[N, HV, K, V]`（`N` 为变长子序列数，定长时 `N = B`），仅在 `output_final_state = true` 时返回有效值
 
 具体而言，该算子沿分块维度顺序执行递推计算：
 
@@ -109,14 +109,14 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdH(
 
 | 参数名 | 输入/输出 | 必选/可选 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|---|
-| `k` | 输入 | 必选 | Key 输入张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
-| `w` | 输入 | 必选 | WY 分解中的 W 矩阵 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, K]` | 支持 |
-| `u` | 输入 | 必选 | 修正后的 Value 张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, V]` | 支持 |
-| `gOptional` | 输入 | 接口为可选；当前实现要求非空 | Gate 输入张量 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, H, T]` | 支持 |
+| `k` | 输入 | 必选 | Key 输入张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HK, T, K]` | 支持 |
+| `w` | 输入 | 必选 | WY 分解中的 W 矩阵 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, K]` | 支持 |
+| `u` | 输入 | 必选 | 修正后的 Value 张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
+| `gOptional` | 输入 | 接口为可选；当前实现要求非空 | Gate 输入张量 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
 | `gkOptional` | 输入 | 接口为可选；当前实现要求传空 | 预留的逐通道门控张量 | `FLOAT16`、`BFLOAT16` | `ND` | 未启用 | - |
-| `initalStateOptional` | 输入 | 可选 | 初始隐藏状态张量；不传则默认全零 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, H, K, V]` | 支持 |
+| `initalStateOptional` | 输入 | 可选 | 初始隐藏状态张量；不传则默认全零 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, K, V]` | 支持 |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | `INT64` | `ND` | 1 维 | - |
-| `chunkIndicesOptional` | 输入 | 可选 | 分块索引信息（`[token_batch_id, chunk_id]` 二元组） | `INT64` | `ND` | 2 维 | - |
+| `chunkIndicesOptional` | 输入 | 可选 | 分块索引信息（`[token_batch_id, chunk_id]` 二元组扁平化） | `INT64` | `ND` | 1 维，长度需能被 2 整除 | - |
 
 ### 3.2 属性参数（Attributes）
 
@@ -132,24 +132,27 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdH(
 
 | 参数名 | 输入/输出 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|
-| `hOut` | 输出 | 各分块起始隐藏状态张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, numChunks, K, V]` | 支持 |
-| `vNewOut` | 输出 | 经 WY 分解修正的 Value 张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H, T, V]` | 支持 |
-| `finalStateOut` | 输出 | 最终隐藏状态张量；`outputFinalState = false` 时无意义 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[N, H, K, V]` | 支持 |
+| `hOut` | 输出 | 各分块起始隐藏状态张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, numChunks, K, V]` | 支持 |
+| `vNewOut` | 输出 | 经 WY 分解修正的 Value 张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
+| `finalStateOut` | 输出 | 最终隐藏状态张量；`outputFinalState = false` 时无意义 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[N, HV, K, V]` | 支持 |
 | `workspaceSize` | 输出 | Device 侧所需 workspace 大小 | `uint64_t` | - | 标量 | - |
 | `executor` | 输出 | 算子执行器，封装了计算流程 | `aclOpExecutor*` | - | - | - |
 
 ### 3.4 形状与约束
 
-- `k`、`w` 的形状必须为 `[B, H, T, K]`。
-- `u`、`vNewOut` 的形状必须为 `[B, H, T, V]`。
-- `gOptional` 的形状必须为 `[B, H, T]`。
-- `hOut` 的形状必须为 `[B, H, numChunks, K, V]`；定长时 `numChunks = ceil(T / chunkSize)`，变长时 `numChunks` 由 `chunkIndices` 推导。
-- `initalStateOptional`（若提供）的形状必须为 `[B, H, K, V]`。
-- `finalStateOut` 的形状必须为 `[N, H, K, V]`（`N` 为变长子序列数，定长时 `N = B`）。
+- `k` 的形状必须为 `[B, HK, T, K]`，与 `k` 同形的仅 `k` 自身（无其他 Q/K 张量）。
+- `w` 的形状必须为 `[B, HV, T, K]`，head 维与 value 侧对齐。
+- `u`、`vNewOut` 的形状必须为 `[B, HV, T, V]`。
+- `k` 与 `u` 的 `B`、`T` 必须一致，head 数允许不同（GVA）。
+- `gOptional` 的形状必须为 `[B, HV, T]`，head 维与 `u` 对齐。
+- `hOut` 的形状必须为 `[B, HV, numChunks, K, V]`；定长时 `numChunks = ceil(T / chunkSize)`，变长时 `numChunks` 由 `chunkIndices` 推导。
+- `initalStateOptional`（若提供）的形状必须为 `[B, HV, K, V]`。
+- `finalStateOut` 的形状必须为 `[N, HV, K, V]`（`N` 为变长子序列数，定长时 `N = B`）。
+- **GVA 约束**：`HV % HK == 0`；value head 索引 `hv` 映射到 key head `hk = hv / (HV / HK)`，`k`/`w` 的 key 侧偏移使用 `hk`，其余张量使用 `hv`。
 - 当前实现要求 `K = 128`。
-- 当前实现要求 `V = 128` 或 `256`。
+- 当前实现要求 `V = 128` 或 `256`（`V = 256` 时 kernel 使用对应 Catlass tile 路径）。
 - `chunkSize` 当前仅支持 `64` 或 `128`。
-- 当启用变长模式时，`cuSeqlensOptional` 和 `chunkIndicesOptional` 用于描述变长分块；同时当前实现仅支持 `B = 1`。
+- 当启用变长模式时，`cuSeqlensOptional` 和 `chunkIndicesOptional` 须同时提供，且当前实现仅支持 `B = 1`。
 
 ---
 
@@ -163,9 +166,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdH(
   - 接口层为可选；**当前实现要求传空指针，否则执行失败**
 - `initalStateOptional`：
   - 若不提供（传空指针），则默认初始状态为全零矩阵
-  - 形状必须为 `[B, H, K, V]`
+  - 形状必须为 `[B, HV, K, V]`
 - `cuSeqlensOptional` 和 `chunkIndicesOptional`：
-  - 同时出现时启用变长模式（varlen）
+  - 二者须同时提供或同时省略；同时提供时启用变长模式（varlen）
   - 变长模式仅支持 `B = 1`
 - `saveNewValue` / `useExp2` / `transposeStateLayout`：
   - 当前实现下分别只允许 `true` / `false` / `false`
@@ -174,12 +177,14 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdH(
 
 必须满足以下条件：
 
-- `k, w`: `[B, H, T, K]`
-- `u, vNewOut`: `[B, H, T, V]`
-- `gOptional`: `[B, H, T]`
-- `hOut`: `[B, H, numChunks, K, V]`
-- `initalStateOptional`: `[B, H, K, V]`（若提供）
-- `finalStateOut`: `[N, H, K, V]`
+- `k`: `[B, HK, T, K]`
+- `w`: `[B, HV, T, K]`
+- `u, vNewOut`: `[B, HV, T, V]`
+- `gOptional`: `[B, HV, T]`
+- `hOut`: `[B, HV, numChunks, K, V]`
+- `initalStateOptional`: `[B, HV, K, V]`（若提供）
+- `finalStateOut`: `[N, HV, K, V]`
+- `HV % HK == 0`（GVA）
 
 额外限制：
 
@@ -252,19 +257,19 @@ import torch_npu
 import math
 
 def test_chunk_gated_delta_rule_fwd_h_fixed_len():
-    # 参数设置
-    B, H, T, K, V = 1, 2, 256, 128, 128
+    # 参数设置（GVA 示例：HK=2, HV=4）
+    B, HK, HV, T, K, V = 1, 2, 4, 256, 128, 128
     chunk_size = 64
     num_chunks = (T + chunk_size - 1) // chunk_size
     device = "npu:0"
     dtype = torch.bfloat16
 
     # 构造输入
-    k = torch.randn(B, H, T, K, device=device, dtype=dtype)
-    w = torch.randn(B, H, T, K, device=device, dtype=dtype)
-    u = torch.randn(B, H, T, V, device=device, dtype=dtype)
-    g = torch.randn(B, H, T, device=device, dtype=torch.float32)
-    initial_state = torch.zeros(B, H, K, V, device=device, dtype=dtype)
+    k = torch.randn(B, HK, T, K, device=device, dtype=dtype)
+    w = torch.randn(B, HV, T, K, device=device, dtype=dtype)
+    u = torch.randn(B, HV, T, V, device=device, dtype=dtype)
+    g = torch.randn(B, HV, T, device=device, dtype=torch.float32)
+    initial_state = torch.zeros(B, HV, K, V, device=device, dtype=dtype)
 
     # 调用算子（定长：cu_seqlens / chunk_indices 传 None）
     h, v_new, final_state = torch.ops.npu.npu_chunk_gated_delta_rule_fwd_h(
@@ -284,9 +289,9 @@ def test_chunk_gated_delta_rule_fwd_h_fixed_len():
     print("h shape:", h.shape)
     print("v_new shape:", v_new.shape)
     print("final_state shape:", final_state.shape)
-    assert h.shape == (B, H, num_chunks, K, V)
-    assert v_new.shape == (B, H, T, V)
-    assert final_state.shape == (B, H, K, V)
+    assert h.shape == (B, HV, num_chunks, K, V)
+    assert v_new.shape == (B, HV, T, V)
+    assert final_state.shape == (B, HV, K, V)
     print("Execution Successful!")
 
 if __name__ == "__main__":
@@ -303,8 +308,8 @@ import torch_npu
 import math
 
 def test_chunk_gated_delta_rule_fwd_h_varlen():
-    # 参数设置：变长模式仅支持 B = 1
-    B, H, K, V = 1, 2, 128, 128
+    # 参数设置：变长模式仅支持 B = 1（GVA：HK=2, HV=4）
+    B, HK, HV, K, V = 1, 2, 4, 128, 128
     chunk_size = 64
     device = "npu:0"
     dtype = torch.bfloat16
@@ -326,10 +331,10 @@ def test_chunk_gated_delta_rule_fwd_h_varlen():
     chunk_indices_flat = [x for pair in chunk_indices_pairs for x in pair]
 
     # 构造输入
-    k = torch.randn(B, H, T, K, device=device, dtype=dtype)
-    w = torch.randn(B, H, T, K, device=device, dtype=dtype)
-    u = torch.randn(B, H, T, V, device=device, dtype=dtype)
-    g = torch.randn(B, H, T, device=device, dtype=torch.float32)
+    k = torch.randn(B, HK, T, K, device=device, dtype=dtype)
+    w = torch.randn(B, HV, T, K, device=device, dtype=dtype)
+    u = torch.randn(B, HV, T, V, device=device, dtype=dtype)
+    g = torch.randn(B, HV, T, device=device, dtype=torch.float32)
 
     # 调用算子（变长模式：传入 cu_seqlens 与 chunk_indices；本例不带 initial_state）
     h, v_new, final_state = torch.ops.npu.npu_chunk_gated_delta_rule_fwd_h(
@@ -350,9 +355,9 @@ def test_chunk_gated_delta_rule_fwd_h_varlen():
     print("h shape:", h.shape)
     print("v_new shape:", v_new.shape)
     print("final_state shape:", final_state.shape)
-    assert h.shape == (B, H, num_chunks, K, V)
-    assert v_new.shape == (B, H, T, V)
-    assert final_state.shape == (N, H, K, V)
+    assert h.shape == (B, HV, num_chunks, K, V)
+    assert v_new.shape == (B, HV, T, V)
+    assert final_state.shape == (N, HV, K, V)
     print("Execution Successful!")
 
 if __name__ == "__main__":

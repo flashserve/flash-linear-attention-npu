@@ -23,7 +23,7 @@ w = A @ kbg_exp
 
 其中：
 
-- `A` 为 chunk 内局部矩阵，形状为 `[B, H, T, chunkSize]`
+- `A` 为 chunk 内局部矩阵，形状为 `[B, HV, T, chunkSize]`
 - `vb` 的局部形状为 `[curChunkSize, V]`
 - `kbg_exp` 的局部形状为 `[curChunkSize, K]`
 - `u` 的局部输出形状为 `[curChunkSize, V]`
@@ -82,11 +82,11 @@ aclnnStatus aclnnRecomputeWUFwd(
 
 | 参数名                 | 输入/输出 | 必选/可选                    | 描述                         | 使用说明                                                                 | 数据类型                       | 数据格式 | 维度（Shape）          | 非连续 Tensor |
 | ---------------------- | --------- | ---------------------------- | ---------------------------- | ------------------------------------------------------------------------ | ------------------------------ | -------- | ---------------------- | ------------- |
-| `k`                    | 输入      | 必选                         | Key 输入张量                 | 参与 `w` 的重计算；ACLNN 接口执行前会先转为连续内存                       | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, H, T, K]`         | 支持          |
-| `v`                    | 输入      | 必选                         | Value 输入张量               | 参与 `u` 的重计算；ACLNN 接口执行前会先转为连续内存                       | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, H, T, V]`         | 支持          |
-| `beta`                 | 输入      | 必选                         | beta 权重张量                | 用于缩放 `v` 和 `k`；ACLNN 接口执行前会先转为连续内存                     | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND`     | `[B, H, T]`            | 支持          |
-| `a` / `A`              | 输入      | 必选                         | chunk 内局部矩阵             | 每个 chunk 内参与 `A @ vb` 和 `A @ kbg_exp`；ACLNN 接口执行前会先转为连续内存 | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, H, T, chunkSize]` | 支持          |
-| `g`                    | 输入      | ACLNN 当前实现要求必传       | Gate / log-decay 输入张量     | 当前实现中用于计算 `exp(g)`；ACLNN 接口执行前会先转为连续内存             | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND`     | `[B, H, T]`            | 支持          |
+| `k`                    | 输入      | 必选                         | Key 输入张量                 | 参与 `w` 的重计算；ACLNN 接口执行前会先转为连续内存                       | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HK, T, K]`         | 支持          |
+| `v`                    | 输入      | 必选                         | Value 输入张量               | 参与 `u` 的重计算；ACLNN 接口执行前会先转为连续内存                       | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, T, V]`         | 支持          |
+| `beta`                 | 输入      | 必选                         | beta 权重张量                | 用于缩放 `v` 和 `k`；ACLNN 接口执行前会先转为连续内存                     | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND`     | `[B, HV, T]`            | 支持          |
+| `a` / `A`              | 输入      | 必选                         | chunk 内局部矩阵             | 每个 chunk 内参与 `A @ vb` 和 `A @ kbg_exp`；ACLNN 接口执行前会先转为连续内存 | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, T, chunkSize]` | 支持          |
+| `g`                    | 输入      | ACLNN 当前实现要求必传       | Gate / log-decay 输入张量     | 当前实现中用于计算 `exp(g)`；ACLNN 接口执行前会先转为连续内存             | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND`     | `[B, HV, T]`            | 支持          |
 | `gk`                   | 输入      | 接口存在；当前实现要求传空   | 预留输入                     | 当前 ACLNN 封装要求 `gk == nullptr`，否则参数检查失败                    | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND`     | 未启用                 | -             |
 | `cuSeqlensOptional`    | 输入      | 可选                         | 变长序列累计长度信息         | 变长模式输入；表示每条序列的起止位置，形状为 `[N + 1]`                   | `INT64`                        | `ND`     | 1 维                   | -             |
 | `chunkIndicesOptional` | 输入      | 可选                         | 变长模式 chunk 索引信息      | 逻辑上表示为 `[numChunks, 2]`，实际按一维数组 `[numChunks * 2]` 传入       | `INT64`                        | `ND`     | 1 维                   | -             |
@@ -105,8 +105,8 @@ aclnnStatus aclnnRecomputeWUFwd(
 
 | 参数名          | 输入/输出 | 描述                         | 数据类型              | 数据格式 | 维度（Shape）  | 非连续 Tensor |
 | --------------- | --------- | ---------------------------- | --------------------- | -------- | -------------- | ------------- |
-| `wOut` / `w`    | 输出      | 重计算得到的 `w` 张量         | `FLOAT16`、`BFLOAT16` | `ND`     | `[B, H, T, K]` | 支持          |
-| `uOut` / `u`    | 输出      | 重计算得到的 `u` 张量         | `FLOAT16`、`BFLOAT16` | `ND`     | `[B, H, T, V]` | 支持          |
+| `wOut` / `w`    | 输出      | 重计算得到的 `w` 张量         | `FLOAT16`、`BFLOAT16` | `ND`     | `[B, HV, T, K]` | 支持          |
+| `uOut` / `u`    | 输出      | 重计算得到的 `u` 张量         | `FLOAT16`、`BFLOAT16` | `ND`     | `[B, HV, T, V]` | 支持          |
 | `workspaceSize` | 输出      | Device 侧所需 workspace 大小 | `uint64_t`            | -        | 标量           | -             |
 | `executor`      | 输出      | 算子执行器                   | `aclOpExecutor*`      | -        | -              | -             |
 
@@ -116,25 +116,23 @@ aclnnStatus aclnnRecomputeWUFwd(
 
 当前实现显式检查以下维度要求：
 
-- `k` 必须为 4 维：`[B, H, T, K]`
-- `v` 必须为 4 维：`[B, H, T, V]`
-- `beta` 必须为 3 维：`[B, H, T]`
-- `A` 必须为 4 维：`[B, H, T, chunkSize]`
-- `g` 必须为 3 维：`[B, H, T]`
-
-并要求以下输入的前三维一致：
-
-- `v` 与 `k` 的 `[B, H, T]` 一致
-- `beta` 与 `g` 的 `[B, H, T]` 一致
-- `k` 与 `g` 的 `[B, H, T]` 一致
-- `k` 与 `A` 的 `[B, H, T]` 一致
+- `k` 必须为 4 维：`[B, HK, T, K]`
+- `v` 必须为 4 维：`[B, HV, T, V]`
+- `beta` 必须为 3 维：`[B, HV, T]`
+- `A` 必须为 4 维：`[B, HV, T, chunkSize]`
+- `g` 必须为 3 维：`[B, HV, T]`
+- `k` 与 `v` 的 `B`、`T` 必须一致；`K` 维与 `k` 对齐，`V` 维与 `v` 对齐
+- `beta`、`g`、`A` 的 head 维须与 `v` 对齐（`HV`）
+- **GVA 约束**：`HV % HK == 0`；读 `k` 时使用 `hk = hv / (HV / HK)`，写 `w`/`u` 及 `v`/`beta`/`g`/`A` 使用 value head 索引 `hv`
+- `w` 输出形状为 `[B, HV, T, K]`（**非** `empty_like(k)` 的 `[B, HK, T, K]`）
 
 额外限制：
 
 - `chunkSize` 当前仅支持 `64` 或 `128`
 - 变长模式下要求 `B = 1`
 - `gk` 当前实现未启用，必须传 `nullptr`
-- 当前 kernel 设计和测试场景主要面向 `K = 128`，`V = 128` 或 `256`；若使用其他 `K/V`，需结合 kernel tiling 和 workspace 重新验证
+- 当前 kernel 主要面向 `K = 128`，`V ∈ {128, 256}`
+- **TilingKey**：`V = 128` 时 Key=1，`V = 256` 时 Key=2（Cube Catlass tile 分支不同）
 
 ---
 
@@ -285,16 +283,17 @@ w_chunk       : [curChunkSize, K]
 
 `RecomputeWUFwd` 根据 `k`、`v`、`beta`、`A` 和 `g` 重计算并输出 `w`、`u`：
 
-- `w`: `[B, H, T, K]`
-- `u`: `[B, H, T, V]`
+- `w`: `[B, HV, T, K]`
+- `u`: `[B, HV, T, V]`
 
 其中：
 
-- `k`: `[B, H, T, K]`
-- `v`: `[B, H, T, V]`
-- `beta`: `[B, H, T]`
-- `A`: `[B, H, T, chunk_size]`
-- `g`: `[B, H, T]`
+- `k`: `[B, HK, T, K]`
+- `v`: `[B, HV, T, V]`
+- `beta`: `[B, HV, T]`
+- `A`: `[B, HV, T, chunk_size]`
+- `g`: `[B, HV, T]`
+- GVA：`HV % HK == 0`
 
 当前实现中：
 
@@ -315,26 +314,22 @@ import torch_npu
 # 设备
 device = "npu:0"
 
-# 基本参数
-B, H, T, K, V = 1, 8, 1024, 128, 128
+# 基本参数（GVA 示例：HK=2, HV=4；MHA 时令 HK=HV）
+B, HK, HV, T, K, V = 1, 2, 4, 1024, 128, 128
 chunk_size = 64
 
 # 构造输入
-k = torch.randn(B, H, T, K, device=device, dtype=torch.float16)
-v = torch.randn(B, H, T, V, device=device, dtype=torch.float16)
+k = torch.randn(B, HK, T, K, device=device, dtype=torch.float16)
+v = torch.randn(B, HV, T, V, device=device, dtype=torch.float16)
 
-# beta shape: [B, H, T]
-# 当前算子支持 beta 为 float16 / bfloat16 / float32；
-# 测试中建议使用 float32，便于覆盖 beta/g 的 FP32 路径。
-beta = torch.randn(B, H, T, device=device, dtype=torch.float32)
+# beta shape: [B, HV, T]
+beta = torch.randn(B, HV, T, device=device, dtype=torch.float32)
 
-# A shape: [B, H, T, chunk_size]
-# 每个 chunk 内实际参与矩阵乘的局部形状为 [cur_chunk_size, cur_chunk_size]。
-A = torch.randn(B, H, T, chunk_size, device=device, dtype=torch.float16)
+# A shape: [B, HV, T, chunk_size]
+A = torch.randn(B, HV, T, chunk_size, device=device, dtype=torch.float16)
 
-# g shape: [B, H, T]
-# 当前实现中会计算 exp(g)，g 必须传入，不能为 None。
-g = torch.randn(B, H, T, device=device, dtype=torch.float32)
+# g shape: [B, HV, T]
+g = torch.randn(B, HV, T, device=device, dtype=torch.float32)
 
 # 定长场景下 cu_seqlens 和 chunk_indices 均为 None。
 # gk 当前未启用，必须为 None。
@@ -352,7 +347,7 @@ w, u = torch.ops.npu.npu_recompute_wu_fwd(
 
 print(w.shape, u.shape)
 # 期望输出:
-# torch.Size([B, H, T, K]) torch.Size([B, H, T, V])
+# torch.Size([B, HV, T, K]) torch.Size([B, HV, T, V])
 ```
 
 ---
@@ -366,7 +361,7 @@ import torch_npu
 device = "npu:0"
 
 # 变长场景当前仅支持 B = 1
-B, H, K, V = 1, 8, 128, 128
+B, HK, HV, K, V = 1, 2, 4, 128, 128
 chunk_size = 64
 
 # 3 条变长序列
@@ -410,18 +405,17 @@ chunk_indices = torch.tensor(chunk_indices_list, device=device, dtype=torch.int6
 # 变长场景下 T 使用 total_len
 T = total_len
 
-k = torch.randn(B, H, T, K, device=device, dtype=torch.float16)
-v = torch.randn(B, H, T, V, device=device, dtype=torch.float16)
+k = torch.randn(B, HK, T, K, device=device, dtype=torch.float16)
+v = torch.randn(B, HV, T, V, device=device, dtype=torch.float16)
 
-# beta shape: [B, H, T]
-beta = torch.randn(B, H, T, device=device, dtype=torch.float32)
+# beta shape: [B, HV, T]
+beta = torch.randn(B, HV, T, device=device, dtype=torch.float32)
 
-# A shape: [B, H, T, chunk_size]
-A = torch.randn(B, H, T, chunk_size, device=device, dtype=torch.float16)
+# A shape: [B, HV, T, chunk_size]
+A = torch.randn(B, HV, T, chunk_size, device=device, dtype=torch.float16)
 
-# g shape: [B, H, T]
-# 当前实现中会计算 exp(g)，g 必须传入。
-g = torch.randn(B, H, T, device=device, dtype=torch.float32)
+# g shape: [B, HV, T]
+g = torch.randn(B, HV, T, device=device, dtype=torch.float32)
 
 w, u = torch.ops.npu.npu_recompute_wu_fwd(
     k,
@@ -437,7 +431,7 @@ w, u = torch.ops.npu.npu_recompute_wu_fwd(
 
 print(w.shape, u.shape)
 # 期望输出:
-# torch.Size([1, H, total_len, K]) torch.Size([1, H, total_len, V])
+# torch.Size([1, HV, total_len, K]) torch.Size([1, HV, total_len, V])
 ```
 
 ---
@@ -462,8 +456,8 @@ print(w.shape, u.shape)
   - `chunk_size` 仅支持 `64` 或 `128`
 
 - 输出：
-  - `w`: `[B, H, T, K]`
-  - `u`: `[B, H, T, V]`
+  - `w`: `[B, HV, T, K]`
+  - `u`: `[B, HV, T, V]`
 
 ---
 
