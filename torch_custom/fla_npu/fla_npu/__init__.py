@@ -14,3 +14,5 @@ def _load_opextension_so():
     torch.ops.load_library(atb_so_path)
 
 _load_opextension_so()
+
+from . import kda  # noqa: F401,E402
