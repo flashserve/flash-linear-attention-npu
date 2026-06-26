@@ -14,8 +14,10 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_BASE_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_BASE_H
 #include "kernel_operator.h"
+#include "chunk_gated_delta_rule_bwd_dhu_struct.h"
 
 using namespace AscendC;
+using GDN::ChunkGatedDeltaRuleBwdDhuTilingData;
 namespace ChunkGDRBwdDhu {
 constexpr uint64_t SYNC_AIC_AIV_FLAG_0 = 0;
 constexpr uint64_t SYNC_AIC_AIV_FLAG_1 = 1;
