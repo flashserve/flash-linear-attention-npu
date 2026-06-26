@@ -94,8 +94,14 @@ static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdHParams &params, a
                "Contiguous w failed.");
     CHECK_COND(DataContiguous(params.u, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "Contiguous u failed.");
-    CHECK_COND(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous gOptional failed.");
+    if (params.gOptional != nullptr) {
+        CHECK_COND(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
+                   "Contiguous gOptional failed.");
+    }
+    if (params.gkOptional != nullptr) {
+        CHECK_COND(DataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
+                   "Contiguous gkOptional failed.");
+    }
     if (params.initalStateOptional != nullptr) {
         CHECK_COND(DataContiguous(params.initalStateOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                    "Contiguous initalStateOptional failed.");
@@ -104,17 +110,15 @@ static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdHParams &params, a
     return ACLNN_SUCCESS;
 }
 
-static aclnnStatus CheckGOptionalNonNull(const ChunkGatedDeltaRuleFwdHParams &params)
+static aclnnStatus CheckGateOptionalNonNull(const ChunkGatedDeltaRuleFwdHParams &params)
 {
-    CHECK_COND(params.gOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
-               "g is an optional-parameter slot in the API but only a non-null aclTensor is supported; nullptr is not allowed until g=None is implemented.");
+    CHECK_COND(params.gOptional != nullptr || params.gkOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
+               "either gOptional or gkOptional must be non-null.");
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus CheckReservedOptions(const ChunkGatedDeltaRuleFwdHParams &params)
 {
-    CHECK_COND(params.gkOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
-               "gk is reserved for ChunkGatedDeltaRuleFwdH and must be nullptr.");
     CHECK_COND(params.saveNewValue, ACLNN_ERR_PARAM_INVALID,
                "save_new_value is reserved and only true is supported.");
     CHECK_COND(!params.useExp2, ACLNN_ERR_PARAM_INVALID,
@@ -127,7 +131,7 @@ static aclnnStatus CheckReservedOptions(const ChunkGatedDeltaRuleFwdHParams &par
 static aclnnStatus CheckParams(ChunkGatedDeltaRuleFwdHParams params)
 {
     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckGOptionalNonNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckGateOptionalNonNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckReservedOptions(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -182,7 +186,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
-    auto result = l0op::ChunkGatedDeltaRuleFwdH(params.k, params.w, params.u, params.gOptional, params.initalStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize, params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
+    auto result = l0op::ChunkGatedDeltaRuleFwdH(params.k, params.w, params.u, params.gOptional, params.gkOptional, params.initalStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize, params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.

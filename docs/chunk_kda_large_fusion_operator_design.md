@@ -566,3 +566,21 @@ KDA 不能通过“给所有 GDN 算子加 `gk`”实现。正确方案是：
 2. 新增 KDA 专属 intra、output 和 backward 融合 L0。
 3. 用 ACLNN L2 大算子把可复用 GDN L0 与 KDA L0 拼接。
 4. 首期保证 `chunk_size=64/128`、`V=128/256`、bf16/fp16、定长/varlen 的功能和精度。
+## 13. 实现校准与复用边界
+
+当前已落地一套 KDA 正反向 composite operator，用于先打通公开 ABI、NPU 功能执行和精度闭环。该路径已覆盖 `chunk_size=128,V=256` 的 forward 精度，以及中等规模 backward 梯度对齐。
+
+`ChunkGatedDeltaRuleFwdH` 已增强 `gk` 输入下发和 K 维 state decay，已通过 `chunk_size=64,K=128,V=128` 的 NPU 精度验证。实现中需要注意：
+
+- KDA 传入 `fwd_h` 的 `k` 应为已预缩放的 `kg = k * exp2(gk_last - gk)`。
+- 因此 `gk` 分支的 V1 不应再对 `v_new` 做标量 gate decay。
+- V2 只对历史 state 做 `exp2(gk_last)[:, None]` 的 K 维衰减，再加上 `kg^T @ v_new`。
+- 原 GDN `g` 分支仍保持自然指数语义，不能被 KDA 的 `exp2` 改动污染。
+
+验证中发现现有 `ChunkGatedDeltaRuleFwdH` 在 `chunk_size=128,V=256` 下，即使走原 `g` 分支也会在运行阶段挂起。这说明 V256 不是单纯给现有 `fwd_h` 增加 `gk` 就能复用的形状。KDA 大融合首期若要求 `V=256`，状态更新部分需要单独按 V tile 重新实现：
+
+- V 维按 `BV=64/128` 切分，避免将完整 `[K,V]` state 固定驻留单个 UB buffer。
+- cube 的 `w @ h` 与 `kg^T @ v_new` 使用 L1/UB ping-pong，vector 侧只处理当前 V tile 的 state decay 和累加。
+- `final_state` 写回也按 V tile 拼接，不能复用当前 V128 假设的固定 buffer。
+
+因此，后续 Ascend C 大融合实现的推荐路线是：保留当前 composite 作为功能 fallback；对 `V<=128` 可继续评估复用增强后的 `fwd_h(gk)`；对 `V=256` 新增 KDA 专用状态更新 kernel 或在 KDA monolithic kernel 内融合该递推。

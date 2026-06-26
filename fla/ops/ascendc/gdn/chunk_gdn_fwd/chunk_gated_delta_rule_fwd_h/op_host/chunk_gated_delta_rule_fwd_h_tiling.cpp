@@ -22,9 +22,10 @@ static constexpr size_t INPUT_K_IDX = 0;
 static constexpr size_t INPUT_W_IDX = 1;
 static constexpr size_t INPUT_U_IDX = 2;
 static constexpr size_t INPUT_G_IDX = 3;
-static constexpr size_t INPUT_INITIAL_STATE_IDX = 4;
-static constexpr size_t INPUT_SEQLENS_IDX = 5;
-static constexpr size_t INPUT_CHUNK_INDICES_IDX = 6;
+static constexpr size_t INPUT_GK_IDX = 4;
+static constexpr size_t INPUT_INITIAL_STATE_IDX = 5;
+static constexpr size_t INPUT_SEQLENS_IDX = 6;
+static constexpr size_t INPUT_CHUNK_INDICES_IDX = 7;
 
 static constexpr size_t ATTR_STORE_FINAL_STATE_IDX = 0;
 static constexpr size_t ATTR_CHUNK_SIZE_IDX = 1;
@@ -49,6 +50,7 @@ static void ChunkGatedDeltaRuleFwdHTilingDataPrint(gert::TilingContext *context,
     OP_LOGD(nodeName, "=== useInitialState: %ld", tiling.get_useInitialState());
     OP_LOGD(nodeName, "=== storeFinalState: %ld", tiling.get_storeFinalState());
     OP_LOGD(nodeName, "=== dataType: %ld", tiling.get_dataType());
+    OP_LOGD(nodeName, "=== hasGk: %ld", tiling.get_hasGk());
     OP_LOGD(nodeName, "=== isVariedLen: %ld", tiling.get_isVariedLen());
     OP_LOGD(nodeName, "=== shapeBatch: %ld", tiling.get_shapeBatch());
     OP_LOGD(nodeName, "=== tokenBatch: %f", tiling.get_tokenBatch());
@@ -95,7 +97,14 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
         }
     }
 
-    auto gDType = context->GetOptionalInputTensor(INPUT_G_IDX)->GetDataType();
+    auto gTensor = context->GetOptionalInputTensor(INPUT_G_IDX);
+    auto gkTensor = context->GetOptionalInputTensor(INPUT_GK_IDX);
+    bool hasGk = gkTensor != nullptr;
+    OP_CHECK_IF(gTensor == nullptr && gkTensor == nullptr,
+                OP_LOGE(context->GetNodeName(), "Either g or gk must be provided."),
+                return ge::GRAPH_FAILED);
+    auto gateTensor = gTensor != nullptr ? gTensor : gkTensor;
+    auto gDType = gateTensor->GetDataType();
     int64_t gDataType = 2;
     if (gDType == ge::DT_BF16) {
         gDataType = 1;
@@ -152,6 +161,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     tiling.set_dataType(dataType);
     tiling.set_stateDataType(stateDataType);
     tiling.set_gDataType(gDataType);
+    tiling.set_hasGk(hasGk);
     tiling.set_isVariedLen(isVariedLen);
     tiling.set_shapeBatch(shapeBatch);
     tiling.set_tokenBatch(tokenBatch);
