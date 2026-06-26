@@ -464,75 +464,8 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ProcessOneTile(int64_t tileId
 #endif
 
         if constexpr (MATRIX_SIZE > FRAC) {
-#if SOLVE_TRIL_MBH_PASSTHROUGH == 1
-            // 诊断1：跳过 MBH，仅 X×I 写回，验证多分形 matmul + 写回（应得 mch_out）
-            MatmulToL0C(SLOT_X, SLOT_I, true);
-            SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
-            WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
-#elif SOLVE_TRIL_MBH_PASSTHROUGH == 2
-            // 诊断2：提取对角驱动块(drv，奇数块)到 SLOT_Y，再 SLOT_Y×I 写回。
-            // 期望：仅奇数号对角块(=mch_out 的奇数对角块)保留，偶数号对角块=0，非对角=0。
-            // 用于隔离 ExtractBlocksToSlot 的块搬运 + 稀疏算子 matmul 是否正确。
-            ExtractBlocksToSlot(SLOT_X, SLOT_Y, FRAC, isLower_ ? 1 : 0);
-            MatmulToL0C(SLOT_Y, SLOT_I, true);
-            SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
-            WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
-#elif SOLVE_TRIL_MBH_PASSTHROUGH == 3
-            // 诊断3：计算 MNEG=-A 后，输出 MNEG×I = MNEG，直接暴露 MNEG 内容。
-            // I(SLOT_I)已验证可用，故输出忠实反映 MNEG。
-            // 期望：输出 == -A（严格下三角为负、对角及上三角为 0）。
-            // 若全 0 → SLOT_INEG(-I) 为 0 或 MNEG 计算失效；若上三角非零 → 转置问题。
-            LoadFullInputForMBH(gmOffset);                 // 计算 SLOT_MNEG = -A
-            MatmulToL0C(SLOT_MNEG, SLOT_I, true);          // MNEG × I = MNEG
-            SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
-            WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
-#elif SOLVE_TRIL_MBH_PASSTHROUGH == 4
-            // 诊断4：A 在 B 位：输出 I × A（A=完整严格下三角，载于 SLOT_INPUT）。
-            // 期望 == A（严格下三角）。用已知非对称、非块对角的 A 探测 B 算子放置语义。
-            LoadFullInputForMBH(gmOffset);                 // A -> SLOT_INPUT（顺带算 MNEG，忽略）
-            MatmulToL0C(SLOT_I, SLOT_INPUT, true);         // I × A
-            SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
-            WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
-#elif SOLVE_TRIL_MBH_PASSTHROUGH == 5
-            // 诊断5：A 在 A 位：输出 A × I。期望 == A。探测 A 算子放置语义。
-            LoadFullInputForMBH(gmOffset);                 // A -> SLOT_INPUT
-            MatmulToL0C(SLOT_INPUT, SLOT_I, true);         // A × I
-            SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
-            WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
-#elif SOLVE_TRIL_MBH_PASSTHROUGH == 6
-            // 诊断6：测试 initC=false 累加路径（merge step B+C 的核心）。
-            // L0C = I×I (initC=true)，再 L0C += A×I (initC=false)。期望输出 == I + A。
-            // 若 != I+A → L0C 跨两次 matmul 的累加/保持 在本 arch 有问题。
-            LoadFullInputForMBH(gmOffset);                 // A -> SLOT_INPUT
-            MatmulToL0C(SLOT_I, SLOT_I, true);             // L0C = I
-            SetFlag<HardEvent::M_MTE1>(EVT_M_MTE1);
-            WaitFlag<HardEvent::M_MTE1>(EVT_M_MTE1);
-            MatmulToL0C(SLOT_INPUT, SLOT_I, false);        // L0C += A×I = I + A
-            SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
-            WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
-#elif SOLVE_TRIL_MBH_PASSTHROUGH == 8
-            // 诊断8：同 mode6，但两次 matmul 间加 PipeBarrier<PIPE_ALL>。
-            // 若输出 == I+A → 累加问题是同步竞争（缺 barrier）；否则是结构性问题。
-            LoadFullInputForMBH(gmOffset);
-            MatmulToL0C(SLOT_I, SLOT_I, true);             // L0C = I
-            PipeBarrier<PIPE_ALL>();
-            MatmulToL0C(SLOT_INPUT, SLOT_I, false);        // L0C += A×I
-            SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
-            WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
-#elif SOLVE_TRIL_MBH_PASSTHROUGH == 7
-            // 诊断7：测试 MatmulToSlot 读写同槽 + L0CToSlot 回写（merge step C 的形态）。
-            // 先 SLOT_INPUT=A；SLOT_Y<-A 的拷贝经 matmul：MatmulToSlot(SLOT_INPUT,SLOT_I,SLOT_Y)
-            // 即 SLOT_Y = A×I = A（经 L0CToSlot 回写）；再 MatmulToL0C(SLOT_Y,SLOT_I) 输出。
-            // 期望 == A。若 != A → L0CToSlot 回写丢失非对角块。
-            LoadFullInputForMBH(gmOffset);                 // A -> SLOT_INPUT
-            MatmulToSlot(SLOT_INPUT, SLOT_I, SLOT_Y, true);// SLOT_Y = A (经 L0C->scratch->L1)
-            MatmulToL0C(SLOT_Y, SLOT_I, true);             // 输出 SLOT_Y
-            SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
-            WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
-#else
             LoadFullInputForMBH(gmOffset);
             RecursiveMerge();
-#endif
         } else {
 #if SOLVE_TRIL_PLATFORM_ASCEND950
             LoadAuxToL1(ubI_, SLOT_Y);
@@ -543,7 +476,6 @@ __aicore__ inline void SolveTrilCube<MATRIX_SIZE>::ProcessOneTile(int64_t tileId
             SetFlag<HardEvent::M_FIX>(EVT_M_FIX);
             WaitFlag<HardEvent::M_FIX>(EVT_M_FIX);
         }
-        StoreFinalResult(gmOffset);
         StoreFinalResult(gmOffset);
     }
 }

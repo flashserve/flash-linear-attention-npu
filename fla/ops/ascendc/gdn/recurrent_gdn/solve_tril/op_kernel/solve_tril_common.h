@@ -19,15 +19,6 @@
 // (__CCE_AICORE__ == 310) 的检测以启用 UB 优化。
 #define SOLVE_TRIL_PLATFORM_ASCEND950 0
 
-// ========== MBH 诊断开关（默认关闭）==========
-// 打开后，BT>16 的调试路径跳过 RecursiveMerge，仅做 X×I 写回（X=mch_out）。
-// 期望输出 == mch_out（块对角逆，非对角块为 0）。用于隔离"多分形 matmul + 写回"
-// 是否正确：若输出对角块==mch_out 且非对角==0，则 matmul/store 正常，bug 在
-// ExtractBlocksToSlot / L0CToSlot / L0C 累加；否则多分形 matmul 或写回本身有问题。
-#ifndef SOLVE_TRIL_MBH_PASSTHROUGH
-#define SOLVE_TRIL_MBH_PASSTHROUGH 0
-#endif
-
 // ========== arch3510 UB 优化开关（Ascend950 性能优化）==========
 // 利用 arch3510 架构特性把 MBH 递归的 GM 中转换成 UB 中转，由 cube(AIC)+vector(AIV) 协作：
 //   - AIC：Mmad；递归结果 Fixpipe(L0C->UB) 暂存（task1）。
