@@ -51,6 +51,7 @@ constexpr uint32_t KDA_SCALAR_MTE2_V_EVENT_ID = 2;
 constexpr uint32_t KDA_SCALAR_V_S_EVENT_ID = 3;
 constexpr uint32_t KDA_SCALAR_V_MTE3_EVENT_ID = 4;
 constexpr uint32_t KDA_SCALAR_MTE3_V_EVENT_ID = 5;
+constexpr uint32_t KDA_VEC_BUFFER_NUM = 2;
 constexpr uint8_t KDA_SCORE_DONE_FLAG0 = 2;
 constexpr uint8_t KDA_SCORE_DONE_FLAG1 = 3;
 constexpr uint8_t KDA_SCORE_READY_FLAG0 = 4;
@@ -178,12 +179,12 @@ public:
         if (pipe_ != nullptr && initVecBuffers) {
             pipe_->InitBuffer(exp2Buf_, EXP2_UB_ELEMENTS * sizeof(float));
             pipe_->InitBuffer(vecBuf_, 5 * EXP2_UB_ELEMENTS * sizeof(float));
-            pipe_->InitBuffer(qInQue_, 1, EXP2_UB_ELEMENTS * sizeof(T));
-            pipe_->InitBuffer(kInQue_, 1, EXP2_UB_ELEMENTS * sizeof(T));
-            pipe_->InitBuffer(gInQue_, 1, EXP2_UB_ELEMENTS * sizeof(float));
-            pipe_->InitBuffer(qgOutQue_, 1, EXP2_UB_ELEMENTS * sizeof(T));
-            pipe_->InitBuffer(wOutQue_, 1, EXP2_UB_ELEMENTS * sizeof(T));
-            pipe_->InitBuffer(kgOutQue_, 1, EXP2_UB_ELEMENTS * sizeof(T));
+            pipe_->InitBuffer(qInQue_, KDA_VEC_BUFFER_NUM, EXP2_UB_ELEMENTS * sizeof(T));
+            pipe_->InitBuffer(kInQue_, KDA_VEC_BUFFER_NUM, EXP2_UB_ELEMENTS * sizeof(T));
+            pipe_->InitBuffer(gInQue_, KDA_VEC_BUFFER_NUM, EXP2_UB_ELEMENTS * sizeof(float));
+            pipe_->InitBuffer(qgOutQue_, KDA_VEC_BUFFER_NUM, EXP2_UB_ELEMENTS * sizeof(T));
+            pipe_->InitBuffer(wOutQue_, KDA_VEC_BUFFER_NUM, EXP2_UB_ELEMENTS * sizeof(T));
+            pipe_->InitBuffer(kgOutQue_, KDA_VEC_BUFFER_NUM, EXP2_UB_ELEMENTS * sizeof(T));
         }
     }
 
@@ -430,9 +431,93 @@ private:
         return exp2Local;
     }
 
+    __aicore__ inline uint64_t GateProductToken(uint64_t start, uint64_t logicalIdx, uint64_t subBlockIdx,
+                                                uint64_t subBlockNum) const
+    {
+        return start + subBlockIdx + logicalIdx * subBlockNum;
+    }
+
+    __aicore__ inline void LoadGateProductRow(uint64_t b, uint64_t h, uint64_t hv, uint64_t ti)
+    {
+        LocalTensor<T> qLocal = qInQue_.AllocTensor<T>();
+        LocalTensor<T> kLocal = kInQue_.AllocTensor<T>();
+        LocalTensor<float> gLocal = gInQue_.AllocTensor<float>();
+        CopyRowIn(qLocal, q_, QOffset(b, h, ti, 0));
+        CopyRowIn(kLocal, k_, QOffset(b, h, ti, 0));
+        CopyRowIn(gLocal, gk_, KVOffset(b, hv, ti, 0, K_));
+        qInQue_.EnQue(qLocal);
+        kInQue_.EnQue(kLocal);
+        gInQue_.EnQue(gLocal);
+    }
+
+    __aicore__ inline void StoreGateProductRow(uint64_t b, uint64_t hv, uint64_t ti)
+    {
+        LocalTensor<T> qPosLocal = qgOutQue_.DeQue<T>();
+        LocalTensor<T> kPosLocal = wOutQue_.DeQue<T>();
+        LocalTensor<T> kNegLocal = kgOutQue_.DeQue<T>();
+        CopyRowOut(qg_, KVOffset(b, hv, ti, 0, K_), qPosLocal);
+        CopyRowOut(w_, KVOffset(b, hv, ti, 0, K_), kPosLocal);
+        CopyRowOut(kg_, KVOffset(b, hv, ti, 0, K_), kNegLocal);
+        qgOutQue_.FreeTensor(qPosLocal);
+        wOutQue_.FreeTensor(kPosLocal);
+        kgOutQue_.FreeTensor(kNegLocal);
+    }
+
+    __aicore__ inline void ComputeGateProductRow(LocalTensor<float> &qFp32, LocalTensor<float> &kFp32,
+                                                 LocalTensor<float> &gFp32, LocalTensor<float> &expFp32,
+                                                 LocalTensor<float> &outFp32)
+    {
+        LocalTensor<T> qPosLocal = qgOutQue_.AllocTensor<T>();
+        LocalTensor<T> kPosLocal = wOutQue_.AllocTensor<T>();
+        LocalTensor<T> kNegLocal = kgOutQue_.AllocTensor<T>();
+
+        Muls(expFp32, gFp32, LN2, static_cast<uint32_t>(K_));
+        PipeBarrier<PIPE_V>();
+        Exp(expFp32, expFp32, static_cast<uint32_t>(K_));
+        PipeBarrier<PIPE_V>();
+
+        Mul(outFp32, qFp32, expFp32, static_cast<uint32_t>(K_));
+        PipeBarrier<PIPE_V>();
+        if constexpr (IsSameType<T, float>::value) {
+            DataCopy(qPosLocal, outFp32, static_cast<uint32_t>(K_));
+        } else {
+            Cast(qPosLocal, outFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(K_));
+        }
+        PipeBarrier<PIPE_V>();
+
+        Mul(outFp32, kFp32, expFp32, static_cast<uint32_t>(K_));
+        PipeBarrier<PIPE_V>();
+        if constexpr (IsSameType<T, float>::value) {
+            DataCopy(kPosLocal, outFp32, static_cast<uint32_t>(K_));
+        } else {
+            Cast(kPosLocal, outFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(K_));
+        }
+        PipeBarrier<PIPE_V>();
+
+        Muls(expFp32, gFp32, -LN2, static_cast<uint32_t>(K_));
+        PipeBarrier<PIPE_V>();
+        Exp(expFp32, expFp32, static_cast<uint32_t>(K_));
+        PipeBarrier<PIPE_V>();
+        Mul(outFp32, kFp32, expFp32, static_cast<uint32_t>(K_));
+        PipeBarrier<PIPE_V>();
+        if constexpr (IsSameType<T, float>::value) {
+            DataCopy(kNegLocal, outFp32, static_cast<uint32_t>(K_));
+        } else {
+            Cast(kNegLocal, outFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(K_));
+        }
+
+        qgOutQue_.EnQue(qPosLocal);
+        wOutQue_.EnQue(kPosLocal);
+        kgOutQue_.EnQue(kNegLocal);
+    }
+
     __aicore__ inline void PrepareGateProducts(uint64_t b, uint64_t h, uint64_t hv, uint64_t start, uint64_t curT,
                                                uint64_t subBlockIdx, uint64_t subBlockNum)
     {
+        if (subBlockIdx >= curT || subBlockNum == 0) {
+            return;
+        }
+
         LocalTensor<float> vecLocal = vecBuf_.Get<float>();
         LocalTensor<float> qFp32 = vecLocal;
         LocalTensor<float> kFp32 = vecLocal[EXP2_UB_ELEMENTS];
@@ -440,21 +525,21 @@ private:
         LocalTensor<float> expFp32 = vecLocal[3 * EXP2_UB_ELEMENTS];
         LocalTensor<float> outFp32 = vecLocal[4 * EXP2_UB_ELEMENTS];
 
+        uint64_t rowCount = 0;
         for (uint64_t i = subBlockIdx; i < curT; i += subBlockNum) {
-            uint64_t ti = start + i;
-            LocalTensor<T> qLocal = qInQue_.AllocTensor<T>();
-            LocalTensor<T> kLocal = kInQue_.AllocTensor<T>();
-            LocalTensor<float> gLocal = gInQue_.AllocTensor<float>();
-            CopyRowIn(qLocal, q_, QOffset(b, h, ti, 0));
-            CopyRowIn(kLocal, k_, QOffset(b, h, ti, 0));
-            CopyRowIn(gLocal, gk_, KVOffset(b, hv, ti, 0, K_));
-            qInQue_.EnQue(qLocal);
-            kInQue_.EnQue(kLocal);
-            gInQue_.EnQue(gLocal);
+            ++rowCount;
+        }
 
-            qLocal = qInQue_.DeQue<T>();
-            kLocal = kInQue_.DeQue<T>();
-            gLocal = gInQue_.DeQue<float>();
+        LoadGateProductRow(b, h, hv, GateProductToken(start, 0, subBlockIdx, subBlockNum));
+        for (uint64_t logicalIdx = 0; logicalIdx < rowCount; ++logicalIdx) {
+            uint64_t ti = GateProductToken(start, logicalIdx, subBlockIdx, subBlockNum);
+            LocalTensor<T> qLocal = qInQue_.DeQue<T>();
+            LocalTensor<T> kLocal = kInQue_.DeQue<T>();
+            LocalTensor<float> gLocal = gInQue_.DeQue<float>();
+
+            if (logicalIdx + 1 < rowCount) {
+                LoadGateProductRow(b, h, hv, GateProductToken(start, logicalIdx + 1, subBlockIdx, subBlockNum));
+            }
 
             if constexpr (IsSameType<T, float>::value) {
                 DataCopy(qFp32, qLocal, static_cast<uint32_t>(K_));
@@ -469,58 +554,12 @@ private:
             gInQue_.FreeTensor(gLocal);
             PipeBarrier<PIPE_V>();
 
-            LocalTensor<T> qPosLocal = qgOutQue_.AllocTensor<T>();
-            LocalTensor<T> kPosLocal = wOutQue_.AllocTensor<T>();
-            LocalTensor<T> kNegLocal = kgOutQue_.AllocTensor<T>();
-
-            Muls(expFp32, gFp32, LN2, static_cast<uint32_t>(K_));
-            PipeBarrier<PIPE_V>();
-            Exp(expFp32, expFp32, static_cast<uint32_t>(K_));
-            PipeBarrier<PIPE_V>();
-
-            Mul(outFp32, qFp32, expFp32, static_cast<uint32_t>(K_));
-            PipeBarrier<PIPE_V>();
-            if constexpr (IsSameType<T, float>::value) {
-                DataCopy(qPosLocal, outFp32, static_cast<uint32_t>(K_));
-            } else {
-                Cast(qPosLocal, outFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(K_));
+            if (logicalIdx > 0) {
+                StoreGateProductRow(b, hv, GateProductToken(start, logicalIdx - 1, subBlockIdx, subBlockNum));
             }
-            PipeBarrier<PIPE_V>();
-
-            Mul(outFp32, kFp32, expFp32, static_cast<uint32_t>(K_));
-            PipeBarrier<PIPE_V>();
-            if constexpr (IsSameType<T, float>::value) {
-                DataCopy(kPosLocal, outFp32, static_cast<uint32_t>(K_));
-            } else {
-                Cast(kPosLocal, outFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(K_));
-            }
-            PipeBarrier<PIPE_V>();
-
-            Muls(expFp32, gFp32, -LN2, static_cast<uint32_t>(K_));
-            PipeBarrier<PIPE_V>();
-            Exp(expFp32, expFp32, static_cast<uint32_t>(K_));
-            PipeBarrier<PIPE_V>();
-            Mul(outFp32, kFp32, expFp32, static_cast<uint32_t>(K_));
-            PipeBarrier<PIPE_V>();
-            if constexpr (IsSameType<T, float>::value) {
-                DataCopy(kNegLocal, outFp32, static_cast<uint32_t>(K_));
-            } else {
-                Cast(kNegLocal, outFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(K_));
-            }
-            qgOutQue_.EnQue(qPosLocal);
-            wOutQue_.EnQue(kPosLocal);
-            kgOutQue_.EnQue(kNegLocal);
-
-            qPosLocal = qgOutQue_.DeQue<T>();
-            kPosLocal = wOutQue_.DeQue<T>();
-            kNegLocal = kgOutQue_.DeQue<T>();
-            CopyRowOut(qg_, KVOffset(b, hv, ti, 0, K_), qPosLocal);
-            CopyRowOut(w_, KVOffset(b, hv, ti, 0, K_), kPosLocal);
-            CopyRowOut(kg_, KVOffset(b, hv, ti, 0, K_), kNegLocal);
-            qgOutQue_.FreeTensor(qPosLocal);
-            wOutQue_.FreeTensor(kPosLocal);
-            kgOutQue_.FreeTensor(kNegLocal);
+            ComputeGateProductRow(qFp32, kFp32, gFp32, expFp32, outFp32);
         }
+        StoreGateProductRow(b, hv, GateProductToken(start, rowCount - 1, subBlockIdx, subBlockNum));
     }
 
     __aicore__ inline void ComputeRawAqkAkkScalar(uint64_t b, uint64_t hv, uint64_t start, uint64_t curT)
@@ -856,12 +895,12 @@ private:
     TBuf<TPosition::VECCALC> scalarI64Buf_;
     TBuf<TPosition::VECCALC> exp2Buf_;
     TBuf<TPosition::VECCALC> vecBuf_;
-    TQue<TPosition::VECIN, 1> qInQue_;
-    TQue<TPosition::VECIN, 1> kInQue_;
-    TQue<TPosition::VECIN, 1> gInQue_;
-    TQue<TPosition::VECOUT, 1> qgOutQue_;
-    TQue<TPosition::VECOUT, 1> wOutQue_;
-    TQue<TPosition::VECOUT, 1> kgOutQue_;
+    TQue<TPosition::VECIN, KDA_VEC_BUFFER_NUM> qInQue_;
+    TQue<TPosition::VECIN, KDA_VEC_BUFFER_NUM> kInQue_;
+    TQue<TPosition::VECIN, KDA_VEC_BUFFER_NUM> gInQue_;
+    TQue<TPosition::VECOUT, KDA_VEC_BUFFER_NUM> qgOutQue_;
+    TQue<TPosition::VECOUT, KDA_VEC_BUFFER_NUM> wOutQue_;
+    TQue<TPosition::VECOUT, KDA_VEC_BUFFER_NUM> kgOutQue_;
     Catlass::Arch::CrossCoreFlagWithReverse<> scoreReadyFlag_{KDA_SCORE_READY_FLAG0, KDA_SCORE_READY_FLAG1};
     Catlass::Arch::CrossCoreFlagWithReverse<> scoreDoneFlag_{KDA_SCORE_DONE_FLAG0, KDA_SCORE_DONE_FLAG1};
 
