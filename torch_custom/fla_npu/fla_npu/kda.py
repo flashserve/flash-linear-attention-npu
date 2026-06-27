@@ -82,6 +82,51 @@ def _empty_like_optional(base: torch.Tensor) -> torch.Tensor:
     return torch.empty((0,), device=base.device, dtype=base.dtype)
 
 
+def _can_try_native_state(
+    q: torch.Tensor,
+    total_t: int,
+    kdim: int,
+    vdim: int,
+    cu_seqlens: Optional[Sequence[int]],
+    chunk_indices: Optional[Sequence[int]],
+) -> bool:
+    return (
+        bool(getattr(q, "is_npu", False))
+        and cu_seqlens is None
+        and chunk_indices is None
+        and total_t > 0
+        and kdim == 128
+        and vdim == 128
+    )
+
+
+def _run_native_state_fwd_h(
+    kg: torch.Tensor,
+    w: torch.Tensor,
+    u: torch.Tensor,
+    gk: torch.Tensor,
+    initial_state: Optional[torch.Tensor],
+    output_final_state: bool,
+    chunk_size: int,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    native_initial_state = initial_state.unsqueeze(2).contiguous() if initial_state is not None else None
+    return torch.ops.npu.npu_chunk_gated_delta_rule_fwd_h(
+        kg.contiguous(),
+        w.contiguous(),
+        u.contiguous(),
+        g=None,
+        gk=gk.contiguous(),
+        initial_state=native_initial_state,
+        output_final_state=output_final_state,
+        chunk_size=chunk_size,
+        save_new_value=True,
+        cu_seqlens=None,
+        chunk_indices=None,
+        use_exp2=False,
+        transpose_state_layout=False,
+    )
+
+
 def _chunk_kda_forward_impl(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -97,6 +142,7 @@ def _chunk_kda_forward_impl(
     return_intermediate: bool,
     safe_gate: bool,
     transpose_state_layout: bool,
+    force_composite_state: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if safe_gate:
         raise RuntimeError("npu_chunk_kda_fwd: safe_gate=True is not implemented in the composite core.")
@@ -120,6 +166,9 @@ def _chunk_kda_forward_impl(
     if hv % hq != 0:
         raise RuntimeError("npu_chunk_kda_fwd: HV must be divisible by H.")
 
+    use_native_state = (not force_composite_state) and _can_try_native_state(
+        q, total_t, kdim, vdim, cu_seqlens, chunk_indices
+    )
     spans = _chunk_spans(batch, total_t, chunk_size, cu_seqlens, chunk_indices)
     nt = len(spans) if cu_seqlens is not None else (total_t + chunk_size - 1) // chunk_size
     num_seq = batch if cu_seqlens is None else len(_as_int_list(cu_seqlens)) - 1
@@ -179,6 +228,14 @@ def _chunk_kda_forward_impl(
             qg_blk = q_blk * torch.exp2(g_blk)
             kg_blk = k_blk * torch.exp2(last_g[None, :] - g_blk)
 
+            if use_native_state or return_intermediate:
+                w[b, ihv, start:end].copy_(w_blk.to(w.dtype))
+                u[b, ihv, start:end].copy_(u_blk.to(u.dtype))
+                qg[b, ihv, start:end].copy_(qg_blk.to(qg.dtype))
+                kg[b, ihv, start:end].copy_(kg_blk.to(kg.dtype))
+            if use_native_state:
+                continue
+
             h_prev = states[state_idx][ihv]
             v_new_blk = u_blk - w_blk @ h_prev
             h_next = torch.exp2(last_g)[:, None] * h_prev + kg_blk.transpose(0, 1) @ v_new_blk
@@ -192,13 +249,53 @@ def _chunk_kda_forward_impl(
             akk[b, ihv, start:end, local_cols].copy_(inv_akk.to(akk.dtype))
             h_out[b, ihv, chunk_idx].copy_(h_prev.to(h_out.dtype))
             if return_intermediate:
-                w[b, ihv, start:end].copy_(w_blk.to(w.dtype))
-                u[b, ihv, start:end].copy_(u_blk.to(u.dtype))
-                qg[b, ihv, start:end].copy_(qg_blk.to(qg.dtype))
-                kg[b, ihv, start:end].copy_(kg_blk.to(kg.dtype))
                 v_new[b, ihv, start:end].copy_(v_new_blk.to(v_new.dtype))
 
-    if output_final_state:
+    if use_native_state:
+        try:
+            h_out, v_new, _native_final_state = _run_native_state_fwd_h(
+                kg, w, u, gk, initial_state, output_final_state, chunk_size
+            )
+        except Exception:
+            return _chunk_kda_forward_impl(
+                q,
+                k,
+                v,
+                gk,
+                beta,
+                scale,
+                chunk_size,
+                initial_state,
+                output_final_state,
+                cu_seqlens,
+                chunk_indices,
+                return_intermediate,
+                safe_gate,
+                transpose_state_layout,
+                True,
+            )
+        if output_final_state:
+            final_dtype = initial_state.dtype if initial_state is not None else torch.float32
+            final_state = torch.zeros((num_seq, hv, kdim, vdim), device=q.device, dtype=final_dtype)
+        else:
+            final_state = _empty_like_optional(q)
+        for b, state_idx, chunk_idx, start, end in spans:
+            cur_t = end - start
+            local_cols = slice(0, cur_t)
+            for ihv in range(hv):
+                h_prev = h_out[b, ihv, chunk_idx].to(torch.float32)
+                v_new_blk = v_new[b, ihv, start:end].to(torch.float32)
+                qg_blk = qg[b, ihv, start:end].to(torch.float32)
+                aqk_blk = aqk[b, ihv, start:end, local_cols].to(torch.float32)
+                o_inter = qg_blk @ h_prev * float(scale)
+                o_local = aqk_blk @ v_new_blk
+                o[b, ihv, start:end].copy_((o_inter + o_local).to(out_dtype))
+                if output_final_state and chunk_idx == nt - 1:
+                    kg_blk = kg[b, ihv, start:end].to(torch.float32)
+                    last_g = gk[b, ihv, end - 1].to(torch.float32)
+                    last_state = torch.exp2(last_g)[:, None] * h_prev + kg_blk.transpose(0, 1) @ v_new_blk
+                    final_state[state_idx, ihv].copy_(last_state.to(final_state.dtype))
+    elif output_final_state:
         final_state = torch.stack([torch.stack(seq_states, dim=0) for seq_states in states], dim=0)
         final_state = final_state.to(initial_state.dtype if initial_state is not None else torch.float32)
     else:

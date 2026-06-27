@@ -57,6 +57,13 @@ using namespace op_infer;
     c10::optional<bool> use_exp2, 
     c10::optional<bool> transpose_state_layout)
 {
+    TORCH_CHECK(
+        (g.has_value() && g->defined()) || (gK.has_value() && gK->defined()),
+        "npu_chunk_gated_delta_rule_bwd_dhu: either g or gK must be defined.");
+    TORCH_CHECK(
+        !transpose_state_layout.value_or(false),
+        "npu_chunk_gated_delta_rule_bwd_dhu: transpose_state_layout=True is not supported.");
+
     auto q_size = q.sizes();
     auto dv_size = dv.sizes();
     int64_t B = q_size[0];
@@ -75,8 +82,8 @@ using namespace op_infer;
     at::Tensor dv2 = at::empty_like(dv);
     at::Tensor dh = at::empty({B, H, chunk_num, K, V}, q.options());
     at::Tensor dh0;
-    if (h0.has_value()) {
-        dh0 = at::empty({B, H, chunk_num, K, V}, q.options());
+    if (h0.has_value() && h0->defined()) {
+        dh0 = at::empty({B, H, K, V}, q.options());
     } else {
         dh0 = at::Tensor();
     }

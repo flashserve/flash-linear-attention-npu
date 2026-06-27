@@ -99,6 +99,7 @@ echo ""
 
 run_test "prepare_wy_repr_bwd_full"        "python3 test_npu_prepare_wy_repr_bwd_full.py"
 run_test "chunk_gated_delta_rule_bwd_dhu"  "python3 test_npu_chunk_gated_delta_rule_bwd_dhu.py"
+run_test "chunk_gated_delta_rule_bwd_dhu_gk" "python3 test_npu_chunk_gated_delta_rule_bwd_dhu_gk.py"
 run_test "chunk_bwd_dv_local"              "python3 test_npu_chunk_bwd_dv_local.py"
 run_test "causal_conv1d"                   "python3 test_npu_causal_conv1d.py"
 run_test "prepare_wy_repr_bwd_da"          "python3 test_npu_prepare_wy_repr_bwd_da.py"

@@ -130,13 +130,21 @@ bool ChunkGatedDeltaRuleBwdDhuTiling::CheckInputShape(gert::TilingContext* conte
 }
 
 bool ChunkGatedDeltaRuleBwdDhuTiling::CheckInputDtype(gert::TilingContext* context) {
-  const auto gDtype = context->GetOptionalInputDesc(INPUT_G_IDX)->GetDataType();
+  const auto gDesc = context->GetOptionalInputDesc(INPUT_G_IDX);
+  const auto gkDesc = context->GetOptionalInputDesc(INPUT_GK_IDX);
+  OP_CHECK_IF(gDesc == nullptr && gkDesc == nullptr,
+              OP_LOGE(context->GetNodeName(), "either g or gk must be provided."),
+              return false);
+
+  const bool hasGk = gkDesc != nullptr;
+  const auto gateDtype = hasGk ? gkDesc->GetDataType() : gDesc->GetDataType();
   const auto qDtype = context->GetOptionalInputDesc(INPUT_Q_IDX)->GetDataType();
-  if (gDtype != qDtype && gDtype != ge::DT_FLOAT) {
-    OP_LOGE(context->GetNodeName(), "gDtype must be DT_FLOAT or as same as qDtype");
+  if (gateDtype != qDtype && gateDtype != ge::DT_FLOAT) {
+    OP_LOGE(context->GetNodeName(), "gate dtype must be DT_FLOAT or as same as qDtype");
     return false;
   }
-  if (gDtype == ge::DT_FLOAT) {
+  tilingData.set_hasGk(hasGk);
+  if (gateDtype == ge::DT_FLOAT) {
     tilingKey = TILING_KEY_G_FP32;
   } else {
     tilingKey = TILING_KEY;
@@ -221,6 +229,7 @@ void ChunkGatedDeltaRuleBwdDhuTiling::PrintTilingData(gert::TilingContext *conte
   OP_LOGD(context->GetNodeName(), "qDoWs is %lu.", tilingData.get_qDoWs());
   OP_LOGD(context->GetNodeName(), "isVarLen is %lu.", tilingData.get_isVarLen());
   OP_LOGD(context->GetNodeName(), "isScale is %lu.", tilingData.get_isScale());
+  OP_LOGD(context->GetNodeName(), "hasGk is %d.", tilingData.get_hasGk());
   OP_LOGD(context->GetNodeName(), "usedCoreNum is %u.", tilingData.get_usedCoreNum());
   OP_LOGD(context->GetNodeName(), "scale is %f.", tilingData.get_scale());
 }

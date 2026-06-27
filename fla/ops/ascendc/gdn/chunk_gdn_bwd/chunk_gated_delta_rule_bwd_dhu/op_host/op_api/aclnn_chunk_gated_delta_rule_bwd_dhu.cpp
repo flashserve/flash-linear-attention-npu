@@ -60,6 +60,8 @@ static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleBwdDhuParams params)
     CHECK_COND(params.w != nullptr, ACLNN_ERR_PARAM_NULLPTR, "w must not be nullptr.");
     CHECK_COND(params.dO != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dO must not be nullptr.");
     CHECK_COND(params.dv != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dv must not be nullptr.");
+    CHECK_COND(params.gOptional != nullptr || params.gkOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
+               "Either gOptional or gkOptional must not be nullptr.");
 
     CHECK_COND(params.dhOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dhOut must not be nullptr.");
     CHECK_COND(params.dv2Out != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dv2Out must not be nullptr.");

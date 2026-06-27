@@ -43,7 +43,7 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
         }
         if ASCEND_IS_AIV {
             ChunkGDRBwdDhu::GDRVec<DTYPE_Q, DTYPE_Q> op;
-            op.Init(q, k, w, d_o, dv, g, cu_seqlens, dv2, dh, workspace, tilingData);
+            op.Init(q, k, w, d_o, dv, g, gk, cu_seqlens, dv2, dh, workspace, tilingData);
             op.Process();
         }
     }
@@ -55,7 +55,7 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
         }
         if ASCEND_IS_AIV {
             ChunkGDRBwdDhu::GDRVec<DTYPE_Q, float> op;
-            op.Init(q, k, w, d_o, dv, g, cu_seqlens, dv2, dh, workspace, tilingData);
+            op.Init(q, k, w, d_o, dv, g, gk, cu_seqlens, dv2, dh, workspace, tilingData);
             op.Process();
         }
     }
