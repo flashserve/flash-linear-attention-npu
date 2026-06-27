@@ -32,27 +32,29 @@ BEGIN_TILING_DATA_DEF(ChunkBwdDqkwgTilingData)
     TILING_DATA_FIELD_DEF(uint64_t, V);              // value dimension
     TILING_DATA_FIELD_DEF(uint64_t, BT);             // chunk size (tile size in T dimension)
     TILING_DATA_FIELD_DEF(uint64_t, numChunks);      // T / BT
-    
+
     // scale 参数
     TILING_DATA_FIELD_DEF(float, scale);             // 1.0 / sqrt(K)
     TILING_DATA_FIELD_DEF(uint32_t, mul0RowNum);
-    
+    TILING_DATA_FIELD_DEF(uint32_t, aicCoreNum);     // CV 深融合使用的 AIC blockDim (cube/vector 共用)
+
     // Workspace 偏移量 (按字节)
-    TILING_DATA_FIELD_DEF(uint64_t, wsDwOffset);         // Part 1: b_dw 偏移
-    TILING_DATA_FIELD_DEF(uint64_t, wsDgLastOffset);     // Part 1: b_dg_last 偏移
-    TILING_DATA_FIELD_DEF(uint64_t, dgLastSize);     // Part 1: b_dg_last 偏移
-    TILING_DATA_FIELD_DEF(uint64_t, wsMm5Offset);        // Part 2: mm5 (q @ k^T) 偏移
-    TILING_DATA_FIELD_DEF(uint64_t, wsDsTempOffset);     // Part 3: b_ds_temp 偏移
-    // TILING_DATA_FIELD_DEF(uint64_t, wsMm6Offset);        // Part 6: mm6 偏移
-    // TILING_DATA_FIELD_DEF(uint64_t, wsMm7Offset);        // Part 7: mm7 偏移
-    // TILING_DATA_FIELD_DEF(uint64_t, wsMul1Offset);        // Part 2: mul1 偏移
-    
+    TILING_DATA_FIELD_DEF(uint64_t, wsDwOffset);         // PartA: b_dw / 之后 PartC mm6 复用
+    TILING_DATA_FIELD_DEF(uint64_t, wsBtxKSyncSlotsPerHead); // cross-stage group ring depth per core
+    TILING_DATA_FIELD_DEF(uint64_t, wsDgLastOffset);     // PartA: b_dg_last 偏移
+    TILING_DATA_FIELD_DEF(uint64_t, dgLastSize);         // PartA: b_dg_last 大小, 32B 对齐
+    TILING_DATA_FIELD_DEF(uint64_t, wsMm5Offset);        // PartA: mm5 / 之后 PartD mm7 复用
+    TILING_DATA_FIELD_DEF(uint64_t, wsDsTempOffset);     // PartB: b_ds_temp 偏移
+    TILING_DATA_FIELD_DEF(uint64_t, wsMm6Offset);        // PartC: mm6 复用已释放的 wsDw
+    TILING_DATA_FIELD_DEF(uint64_t, wsMm7Offset);        // PartD: mm7 复用已释放的 wsMm5
+    TILING_DATA_FIELD_DEF(uint64_t, wsMul1Offset);       // independent short BT x BT ring for mul1
+
     // 其他偏移
     TILING_DATA_FIELD_DEF(uint64_t, totalWorkspaceSize); // 总 workspace 大小
-    
+
     // IS_VARLEN 相关
     TILING_DATA_FIELD_DEF(uint64_t, isVarLen);           // 是否变长序列
-    
+
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkBwdDqkwg, ChunkBwdDqkwgTilingData)

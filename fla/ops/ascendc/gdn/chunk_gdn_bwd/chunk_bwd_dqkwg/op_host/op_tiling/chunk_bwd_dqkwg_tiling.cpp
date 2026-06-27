@@ -18,6 +18,7 @@
 #include "tiling_base/tiling_templates_registry.h"
 #include "tiling_base/tiling_type.h"
 #include <cmath>
+#include <algorithm>
 
 namespace optiling {
 
@@ -138,53 +139,74 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     // 获取平台信息
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     auto sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
-    const int64_t aicNum = ascendcPlatform.GetCoreNumAic();
-    
+    const int64_t physicalAicNum = ascendcPlatform.GetCoreNumAic();
+
     // 设置 TilingKey
     context->SetTilingKey(1);
     
-    size_t dgLastSize = B * H * numChunks * 1 * FP32_SIZE;         // b_dg_last (fp32)
-    // // 对齐到 32 字节
-    dgLastSize = ((dgLastSize + 31) / 32) * 32;
-    
-    // size_t mm5Size = B * H * T * BT * FP16_SIZE;                   // mm5 (q @ k^T)
-    size_t mm5Size = B * H * T * K * FP16_SIZE;// mm5 (q @ k^T): B * H * T * BT * FP16_SIZE, mm6/mm7 需要复用 mm5 的空间，BT 可能是 64 或 128，这里直接按 128 来计算，保证空间足够
-    size_t dsTempSize = B * H * T * BT * FP16_SIZE;                // b_ds_temp
-    // size_t mm6Size = B * H * T * K * FP16_SIZE;                   // mm6
-    // size_t mm7Size = B * H * T * K * FP16_SIZE;                   // mm7
-    // size_t mul1Size = B * H * T * BT * FP16_SIZE;                   // mul1
+    auto align32 = [](size_t value) -> size_t {
+        return ((value + 31) / 32) * 32;
+    };
 
-    
-    // Workspace 偏移计算
+    const int64_t coreLoops = B * numChunks;
+    int64_t aicNum = physicalAicNum;
+    if (aicNum < 1) {
+        aicNum = 1;
+    }
+    int64_t ringCoreSlots = std::min(aicNum, coreLoops);
+    if (ringCoreSlots < 1) {
+        ringCoreSlots = 1;
+    }
+
+    constexpr int64_t shortRingDepth = 8;  // must match DqkwgShortRingDepth in common.h
+    const size_t mainDgLastSize = align32(static_cast<size_t>(B) * H * numChunks * FP32_SIZE);
+    const size_t mainMm5Size = static_cast<size_t>(B) * H * T * K * FP16_SIZE;
+    const size_t mainDsTempSize = static_cast<size_t>(B) * H * T * BT * FP16_SIZE;
+    const size_t mainWorkspaceSize = mainDgLastSize + mainMm5Size + mainDsTempSize;
+
+    auto workspaceForDepth = [&](int64_t groupRingDepth) -> size_t {
+        int64_t sharedBtxKDepth = std::max(groupRingDepth, shortRingDepth);
+        size_t shortBtxKSize = align32(static_cast<size_t>(ringCoreSlots) * shortRingDepth * H * BT * K * FP16_SIZE);
+        size_t sharedBtxKSize = align32(static_cast<size_t>(ringCoreSlots) * sharedBtxKDepth * H * BT * K * FP16_SIZE);
+        size_t groupBtbSize = align32(static_cast<size_t>(ringCoreSlots) * groupRingDepth * H * BT * BT * FP16_SIZE);
+        size_t shortBtbSize = align32(static_cast<size_t>(ringCoreSlots) * shortRingDepth * H * BT * BT * FP16_SIZE);
+        size_t dgLastSize = align32(static_cast<size_t>(ringCoreSlots) * groupRingDepth * H * FP32_SIZE);
+        return shortBtxKSize + sharedBtxKSize + groupBtbSize + shortBtbSize + dgLastSize;
+    };
+
+    int64_t groupRingDepth = 4;
+    for (int64_t candidate : {16, 8, 4}) {
+        if (workspaceForDepth(candidate) <= mainWorkspaceSize) {
+            groupRingDepth = candidate;
+            break;
+        }
+    }
+
+    const size_t shortBtxKSize = align32(static_cast<size_t>(ringCoreSlots) * shortRingDepth * H * BT * K * FP16_SIZE);
+    const int64_t sharedBtxKDepth = std::max(groupRingDepth, shortRingDepth);
+    const size_t sharedBtxKSize = align32(static_cast<size_t>(ringCoreSlots) * sharedBtxKDepth * H * BT * K * FP16_SIZE);
+    const size_t groupBtbSize = align32(static_cast<size_t>(ringCoreSlots) * groupRingDepth * H * BT * BT * FP16_SIZE);
+    const size_t shortBtbSize = align32(static_cast<size_t>(ringCoreSlots) * shortRingDepth * H * BT * BT * FP16_SIZE);
+    size_t dgLastSize = align32(static_cast<size_t>(ringCoreSlots) * groupRingDepth * H * FP32_SIZE);
+
     size_t offset = 0;
-    
-    // size_t wsDwOffset = offset;
-    // offset += dwSize;
-    
-    size_t wsDgLastOffset = offset;
-// std::cout << "[tiling] offset: " << offset << ", dgLastSize: "<<dgLastSize<<"\n";
-    offset += dgLastSize;
+    size_t wsDwOffset = offset;
+    offset += shortBtxKSize;
 
     size_t wsMm5Offset = offset;
-// std::cout << "[tiling] offset: " << offset << ", mm5Size: "<<mm5Size<<"\n";
-    offset += mm5Size;
-    
+    offset += sharedBtxKSize;
+
     size_t wsDsTempOffset = offset;
-// std::cout << "[tiling] offset: " << offset << ", dsTempSize: "<<dsTempSize<<"\n";
-    offset += dsTempSize;
+    offset += groupBtbSize;
 
-//     size_t wsMm6Offset = offset;
-// // std::cout << "[tiling] offset: " << mm6Size << ", mm6Size: "<<mm6Size<<"\n";
-//     offset += mm6Size;
+    size_t wsMul1Offset = offset;
+    offset += shortBtbSize;
 
-//     size_t wsMm7Offset = offset;
-// // std::cout << "[tiling] offset: " << offset << ", mm7Size: "<<mm7Size<<"\n";
-//     offset += mm7Size;
+    size_t wsDgLastOffset = offset;
+    offset += dgLastSize;
 
-//     size_t wsMul1Offset = offset;
-// // std::cout << "[tiling] offset: " << offset << ", mul1Size: "<<mul1Size<<"\n";
-//     offset += mul1Size;
-    
+    size_t wsMm6Offset = wsDwOffset;
+    size_t wsMm7Offset = wsMm5Offset;
     size_t totalUserWorkspace = offset;
     // std::cout << "[tiling] totalUserWorkspace: " << totalUserWorkspace << ", sysWorkspaceSize: " << sysWorkspaceSize << "\n";
     
@@ -194,7 +216,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     
     // 设置 block 数量
     context->SetBlockDim(aicNum);
-    context->SetScheduleMode(1); // set as batchmod for template using SyncAll
+    context->SetScheduleMode(1); // mixed AIC/AIV schedule
     
     // 填充 TilingData
     ChunkBwdDqkwgTilingData tilingData;
@@ -207,16 +229,18 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     tilingData.set_numChunks(numChunks);
     tilingData.set_scale(scale);
     tilingData.set_mul0RowNum(V == 256 ? 16 : 32);
-    
-    // tilingData.set_wsDwOffset(wsDwOffset);
+    tilingData.set_aicCoreNum(static_cast<uint32_t>(aicNum));
+
+    tilingData.set_wsDwOffset(wsDwOffset);
+    tilingData.set_wsBtxKSyncSlotsPerHead(static_cast<uint64_t>(groupRingDepth));
     tilingData.set_wsDgLastOffset(wsDgLastOffset);
     tilingData.set_dgLastSize(dgLastSize);
     tilingData.set_wsMm5Offset(wsMm5Offset);
     tilingData.set_wsDsTempOffset(wsDsTempOffset);
     tilingData.set_totalWorkspaceSize(totalUserWorkspace);
-    // tilingData.set_wsMm6Offset(wsMm6Offset);
-    // tilingData.set_wsMm7Offset(wsMm7Offset);
-    // tilingData.set_wsMul1Offset(wsMul1Offset);
+    tilingData.set_wsMm6Offset(wsMm6Offset);
+    tilingData.set_wsMm7Offset(wsMm7Offset);
+    tilingData.set_wsMul1Offset(wsMul1Offset);
     
     // 检查是否有 cu_seqlens 输入来判断 IS_VARLEN
     tilingData.set_isVarLen(isVarLen);
