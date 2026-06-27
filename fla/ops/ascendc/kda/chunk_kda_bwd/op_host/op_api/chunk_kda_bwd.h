@@ -44,6 +44,8 @@ const std::array<const aclTensor *, 6> ChunkKdaBwd(
     const aclTensor *dbetaOut,
     const aclTensor *dgkOut,
     const aclTensor *dh0Out,
+    const aclTensor *dVNewGrad,
+    const aclTensor *dW,
     aclOpExecutor *executor);
 } // namespace l0op
 

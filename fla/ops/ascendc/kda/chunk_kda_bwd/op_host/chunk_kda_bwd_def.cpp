@@ -54,6 +54,9 @@ public:
         this->Output("dbeta").ParamType(REQUIRED).DataType(floatTypes).Format(formats).UnknownShapeFormat(formats);
         this->Output("dgk").ParamType(REQUIRED).DataType(floatTypes).Format(formats).UnknownShapeFormat(formats);
         this->Output("dh0").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Output("d_v_new_grad").ParamType(REQUIRED).DataType(floatTypes).Format(formats)
+            .UnknownShapeFormat(formats);
+        this->Output("d_w").ParamType(REQUIRED).DataType(floatTypes).Format(formats).UnknownShapeFormat(formats);
 
         this->Attr("scale").AttrType(REQUIRED).Float(1.0);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);

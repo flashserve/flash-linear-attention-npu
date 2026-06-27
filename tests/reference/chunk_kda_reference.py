@@ -68,14 +68,14 @@ def chunk_kda_forward_reference(
     output_final_state: bool = False,
     cu_seqlens: Optional[torch.Tensor] = None,
 ) -> ChunkKdaForwardResult:
-    """Reference KDA forward for head-first tensors.
+    """Reference KDA forward for token-first tensors.
 
     Args:
-        q: [B, H, T, K].
-        k: [B, H, T, K].
-        v: [B, HV, T, V].
-        gk: [B, HV, T, K], cumulative key-wise gate in log2 space.
-        beta: [B, HV, T].
+        q: [B, T, H, K].
+        k: [B, T, H, K].
+        v: [B, T, HV, V].
+        gk: [B, T, HV, K], cumulative key-wise gate in log2 space.
+        beta: [B, T, HV].
         scale: attention scale.
         chunk_size: 64 or 128 in the intended NPU implementation.
         initial_state: optional [N, HV, K, V] state.
@@ -83,19 +83,19 @@ def chunk_kda_forward_reference(
         cu_seqlens: optional flattened varlen boundaries.
     """
     if q.dim() != 4 or k.dim() != 4 or v.dim() != 4:
-        raise ValueError("q/k/v must be 4-D head-first tensors.")
+        raise ValueError("q/k/v must be 4-D token-first tensors.")
     if gk.dim() != 4 or beta.dim() != 3:
-        raise ValueError("gk must be [B, HV, T, K] and beta must be [B, HV, T].")
+        raise ValueError("gk must be [B, T, HV, K] and beta must be [B, T, HV].")
     if q.shape != k.shape:
         raise ValueError("q and k must have identical shape.")
-    bsz, hq, total_t, kdim = q.shape
-    b_v, hv, t_v, vdim = v.shape
+    bsz, total_t, hq, kdim = q.shape
+    b_v, t_v, hv, vdim = v.shape
     if (b_v, t_v) != (bsz, total_t):
         raise ValueError("v shape prefix must match q/k.")
-    if gk.shape != (bsz, hv, total_t, kdim):
-        raise ValueError("gk shape must be [B, HV, T, K].")
-    if beta.shape != (bsz, hv, total_t):
-        raise ValueError("beta shape must be [B, HV, T].")
+    if gk.shape != (bsz, total_t, hv, kdim):
+        raise ValueError("gk shape must be [B, T, HV, K].")
+    if beta.shape != (bsz, total_t, hv):
+        raise ValueError("beta shape must be [B, T, HV].")
     if hv % hq != 0:
         raise ValueError("HV must be divisible by H.")
 
@@ -106,15 +106,15 @@ def chunk_kda_forward_reference(
 
     out_dtype = v.dtype
     device = q.device
-    o = torch.zeros((bsz, hv, total_t, vdim), device=device, dtype=out_dtype)
-    Aqk = torch.zeros((bsz, hv, total_t, chunk_size), device=device, dtype=q.dtype)
-    Akk = torch.zeros((bsz, hv, total_t, chunk_size), device=device, dtype=q.dtype)
-    w = torch.zeros((bsz, hv, total_t, kdim), device=device, dtype=q.dtype)
-    u = torch.zeros((bsz, hv, total_t, vdim), device=device, dtype=v.dtype)
-    qg = torch.zeros((bsz, hv, total_t, kdim), device=device, dtype=q.dtype)
-    kg = torch.zeros((bsz, hv, total_t, kdim), device=device, dtype=k.dtype)
+    o = torch.zeros((bsz, total_t, hv, vdim), device=device, dtype=out_dtype)
+    Aqk = torch.zeros((bsz, total_t, hv, chunk_size), device=device, dtype=q.dtype)
+    Akk = torch.zeros((bsz, total_t, hv, chunk_size), device=device, dtype=q.dtype)
+    w = torch.zeros((bsz, total_t, hv, kdim), device=device, dtype=q.dtype)
+    u = torch.zeros((bsz, total_t, hv, vdim), device=device, dtype=v.dtype)
+    qg = torch.zeros((bsz, total_t, hv, kdim), device=device, dtype=q.dtype)
+    kg = torch.zeros((bsz, total_t, hv, kdim), device=device, dtype=k.dtype)
     v_new = torch.zeros_like(v)
-    h_out = torch.zeros((bsz, hv, nt, kdim, vdim), device=device, dtype=q.dtype)
+    h_out = torch.zeros((bsz, nt, hv, kdim, vdim), device=device, dtype=q.dtype)
 
     if initial_state is None:
         state = torch.zeros((num_seq, hv, kdim, vdim), device=device, dtype=torch.float32)
@@ -147,11 +147,11 @@ def chunk_kda_forward_reference(
         local_cols = slice(0, cur_t)
         for ihv in range(hv):
             ih = ihv // group
-            q_blk = q[b, ih, start:end].to(torch.float32)
-            k_blk = k[b, ih, start:end].to(torch.float32)
-            v_blk = v[b, ihv, start:end].to(torch.float32)
-            g_blk = gk[b, ihv, start:end].to(torch.float32)
-            beta_blk = beta[b, ihv, start:end].to(torch.float32)
+            q_blk = q[b, start:end, ih].to(torch.float32)
+            k_blk = k[b, start:end, ih].to(torch.float32)
+            v_blk = v[b, start:end, ihv].to(torch.float32)
+            g_blk = gk[b, start:end, ihv].to(torch.float32)
+            beta_blk = beta[b, start:end, ihv].to(torch.float32)
 
             rel = g_blk[:, None, :] - g_blk[None, :, :]
             qk = torch.einsum("ik,jk,ijk->ij", q_blk, k_blk, torch.exp2(rel)) * float(scale)
@@ -170,21 +170,21 @@ def chunk_kda_forward_reference(
             kg_blk = k_blk * torch.exp2(last_g[None, :] - g_blk)
 
             h_prev = state[state_b, ihv]
-            h_out[b, ihv, chunk_idx] = h_prev.to(h_out.dtype)
+            h_out[b, chunk_idx, ihv] = h_prev.to(h_out.dtype)
             v_new_blk = u_blk - w_blk @ h_prev
             state[state_b, ihv] = torch.exp2(last_g)[:, None] * h_prev + kg_blk.T @ v_new_blk
 
-            o_inter = qg_blk @ h_out[b, ihv, chunk_idx].to(torch.float32) * float(scale)
+            o_inter = qg_blk @ h_out[b, chunk_idx, ihv].to(torch.float32) * float(scale)
             o_local = tril_qk @ v_new_blk
-            o[b, ihv, start:end] = (o_inter + o_local).to(out_dtype)
+            o[b, start:end, ihv] = (o_inter + o_local).to(out_dtype)
 
-            Aqk[b, ihv, start:end, local_cols] = tril_qk.to(Aqk.dtype)
-            Akk[b, ihv, start:end, local_cols] = inv_akk.to(Akk.dtype)
-            w[b, ihv, start:end] = w_blk.to(w.dtype)
-            u[b, ihv, start:end] = u_blk.to(u.dtype)
-            qg[b, ihv, start:end] = qg_blk.to(qg.dtype)
-            kg[b, ihv, start:end] = kg_blk.to(kg.dtype)
-            v_new[b, ihv, start:end] = v_new_blk.to(v_new.dtype)
+            Aqk[b, start:end, ihv, local_cols] = tril_qk.to(Aqk.dtype)
+            Akk[b, start:end, ihv, local_cols] = inv_akk.to(Akk.dtype)
+            w[b, start:end, ihv] = w_blk.to(w.dtype)
+            u[b, start:end, ihv] = u_blk.to(u.dtype)
+            qg[b, start:end, ihv] = qg_blk.to(qg.dtype)
+            kg[b, start:end, ihv] = kg_blk.to(kg.dtype)
+            v_new[b, start:end, ihv] = v_new_blk.to(v_new.dtype)
 
     final_state = state.to(initial_state.dtype if initial_state is not None else torch.float32) if output_final_state else None
     return ChunkKdaForwardResult(
@@ -203,11 +203,11 @@ def chunk_kda_forward_reference(
 
 def run_smoke() -> None:
     torch.manual_seed(0)
-    q = torch.randn(1, 2, 32, 16, dtype=torch.float32)
+    q = torch.randn(1, 32, 2, 16, dtype=torch.float32)
     k = torch.randn_like(q)
-    v = torch.randn(1, 2, 32, 32, dtype=torch.float32)
-    gk = torch.randn(1, 2, 32, 16, dtype=torch.float32).cumsum(dim=2) * 0.01
-    beta = torch.sigmoid(torch.randn(1, 2, 32, dtype=torch.float32))
+    v = torch.randn(1, 32, 2, 32, dtype=torch.float32)
+    gk = torch.randn(1, 32, 2, 16, dtype=torch.float32).cumsum(dim=1) * 0.01
+    beta = torch.sigmoid(torch.randn(1, 32, 2, dtype=torch.float32))
     res = chunk_kda_forward_reference(q, k, v, gk, beta, scale=16 ** -0.5, chunk_size=16, output_final_state=True)
     for name, value in vars(res).items():
         if value is not None and not torch.isfinite(value).all():

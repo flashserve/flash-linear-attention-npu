@@ -19,18 +19,25 @@
 - varlen 约束：输入 flatten 到 `B=1`，`cu_seqlens` 表示每个 sequence 边界。
 - key head dim 约束：当前实现对齐三方语义并限制 `K <= 256`。
 
-本仓 torch_custom 暴露 head-first NPU ABI：
+本仓 torch_custom 对外暴露 token-first ABI，aclnn L2 内部转换为 head-first 连续布局。BSND 为默认训练入口；TND 作为 flattened token 入口兼容 causal_conv1d 一类前处理算子的输出，外部输入和输出不暴露内部重排：
 
 ```text
-q/k:    [B, H,  T, K]
-v:      [B, HV, T, V]
-gk:     [B, HV, T, K]
-beta:   [B, HV, T]
+q/k:    [B, T, H,  K]  -> internal [B, H,  T, K]
+v:      [B, T, HV, V]  -> internal [B, HV, T, V]
+gk:     [B, T, HV, K]  -> internal [B, HV, T, K]
+beta:   [B, T, HV]     -> internal [B, HV, T]
 state:  [N, HV, K, V]
-output: [B, HV, T, V]
+output: [B, T, HV, V]  <- internal [B, HV, T, V]
+Aqk/Akk:[B, T, HV, BT] <- internal [B, HV, T, BT]
+h:      [B, NT, HV, K, V] <- internal [B, HV, NT, K, V]
+
+TND:    [T, N, D]      -> view [1, T, N, D] -> internal [1, N, T, D]
+TN:     [T, N]         -> view [1, T, N]    -> internal [1, N, T]
+TND output/intermediate gradients are reshaped back to [T, N, D]/[T, N].
+h in TND mode is returned as [NT, HV, K, V].
 ```
 
-其中 `gk` 是已经完成 KDA log2 gate 累计后的 key-wise gate。`safe_gate=True`、`transpose_state_layout=True` 当前显式报错，避免静默偏离三方语义；`use_gate_in_kernel`、QK L2Norm in-kernel、beta sigmoid in-kernel 可作为后续扩展。
+其中 `gk` 是已经完成 KDA log2 gate 累计后的 key-wise gate。核心 `npu_chunk_kda_fwd/bwd` 仍消费预累计 `gk`；`gk/beta` 对外支持 float32 和 bfloat16，L2 内部统一 cast 到 fp32 后进入 L0。为对齐 fla-org 高层 raw gate 入口，新增独立 `npu_kda_gate_cumsum` L0/L2 扩展：默认路径计算 chunk 内 `cumsum(g / ln2)`，`use_gate_in_kernel=True && safe_gate=True` 路径在 kernel 内计算 `lower_bound * sigmoid(exp(A_log) * (g + dt_bias))` 后再做 chunk 内 log2 累计。非 safe raw gate 的 softplus 路径当前显式报错，避免在没有稳定向量 Log/Ln 路径时退化成低质量 scalar 近似。
 
 ## 3. Forward L0 设计
 
@@ -55,6 +62,10 @@ h_next   = exp2(g_last)[:, None] * h_prev + kg^T @ v_new
 ```
 
 `h` 保存每个 chunk 的 `h_prev`，用于反向重算和推理中间状态返回。
+
+本轮面向 GM 往返做了两处低风险融合：
+- `uRow/wSum` 在当前 token 完成后立即用于计算 `v_new = u - w @ h_prev`，避免后续再次从 GM 读取 `u/w`。
+- `o` 的 `qg @ h_prev` 项和 `h_next` 更新直接读取仍驻留/同步后的 `final_state` 行，而不是回读刚写出的 `h` 中间量。
 
 ### 3.1 exp2 实现
 
@@ -129,6 +140,13 @@ for r in V:
     dh0[:, r] = new_state
 ```
 
+反向热路径中 `d_v_new` 与 `d_w` 原先会在 `AddWUGrad`、`DRawAkk/DYValue`、`UpdateDStatePrev` 中被多次重复计算。本轮将其拆成 chunk 内独立 fp32 workspace 输出：
+```text
+d_v_new_grad[j, r] = sum_i Aqk[i, j] * d_o[i, r] + sum_d kg[j, d] * d_state[d, r]
+d_w[i, d]          = -sum_r d_v_new_grad[i, r] * h_prev[d, r]
+```
+后续 `dh`、`dq/dk`、`dv/dbeta/dgk` 路径只读取该 workspace，减少重复 V 维扫描，并保持中间梯度为 fp32。该 workspace 是 `ChunkKdaBwd` L0 的内部输出，不暴露到 Python/ACLNN 公共 ABI。
+
 ## 5. aclnn 接口
 
 ### 5.1 Forward
@@ -166,14 +184,33 @@ npu_chunk_kda_bwd(
 ) -> (dq, dk, dv, dbeta, dgk, dh0)
 ```
 
-### 5.3 参数约束
+### 5.3 Gate Cumsum
+
+```text
+npu_kda_gate_cumsum(
+    g,
+    chunk_size: int,
+    *,
+    A_log=None,
+    dt_bias=None,
+    cu_seqlens=None,
+    use_gate_in_kernel=False,
+    safe_gate=False,
+    lower_bound=None
+) -> gk
+```
+
+该接口输出 float32 `gk`，shape 与输入 `g` 一致，支持 BSND `[B,T,HV,K]` 和 TND `[T,HV,K]`。默认路径对已成形 gate 增量做 chunk-local log2 累计；safe raw gate 路径要求同时传入 `A_log`，可选 `dt_bias`，并显式设置 `use_gate_in_kernel=True, safe_gate=True`。
+
+### 5.4 参数约束
 
 - `chunk_size` 支持 `32/64/128`。
 - `K <= 256`。
 - `V` 已覆盖 `256`。
 - `HV % H == 0`。
-- `q/k/v/state/o` 支持 float32、float16、bfloat16；`gk/beta` 当前要求 float32。
-- `safe_gate=True`、`transpose_state_layout=True` 当前显式报错。
+- 对外 layout 支持 BSND：`q/k=[B,T,H,K]`、`v=[B,T,HV,V]`、`gk=[B,T,HV,K]`、`beta=[B,T,HV]`，以及 TND：`q/k=[T,H,K]`、`v=[T,HV,V]`、`gk=[T,HV,K]`、`beta=[T,HV]`。
+- `q/k/v/state/o` 支持 float32、float16、bfloat16；`gk/beta` 支持 float32、bfloat16，L2 内部以 fp32 gate 进入 L0。
+- 核心 KDA fwd/bwd 的 `safe_gate=True`、`transpose_state_layout=True` 当前显式报错；raw gate 的 safe 路径通过 `npu_kda_gate_cumsum` 生成 `gk` 后接入核心 fwd/bwd。
 
 ## 6. 文件归档
 
@@ -181,22 +218,25 @@ npu_chunk_kda_bwd(
 
 - `fla/ops/ascendc/kda/chunk_kda_fwd/**`
 - `fla/ops/ascendc/kda/chunk_kda_bwd/**`
+- `fla/ops/ascendc/kda/kda_layout_swap12/**`
+- `fla/ops/ascendc/kda/kda_gate_cumsum/**`
 
 新增 torch_custom ABI：
 
 - `torch_custom/fla_npu/npu_custom.yaml`
 - `torch_custom/fla_npu/op_plugin/ops/opapi/FLANpuOpApi.cpp`
-- `torch_custom/fla_npu/fla_npu/kda.py`
 
 新增验证：
 
 - `torch_custom/fla_npu/test/test_npu_chunk_kda.py`
 - `tests/reference/chunk_kda_reference.py`
 
-## 7. 后续优化方向
+## 7. 已落地优化与后续空间
 
-当前实现已完成 KDA 正反向功能闭环和精度验证。面向吞吐优化时，建议继续：
+当前实现已完成 KDA 正反向功能闭环、BF16 gate 输入、safe raw gate 独立 L0/L2 扩展和精度验证。本轮已落地：
 
-- 将 `w/u`、`o`、`h_next` 的 V 维 tile 驻留 UB，减少 GM 往返。
-- 将 backward 的 `d_v_new`、`dh`、`dq/dk` 分解为 cube 主路径和 vec 辅助路径。
-- 为 BF16 gate 输入、`use_gate_in_kernel`、`safe_gate` 增加独立 L0/L2 扩展，进一步对齐 fla-org 高层接口。
+- forward 在 chunk 内复用 `uRow/wSum/final_state` 计算 `v_new/o/h_next`，减少 `u/w/h` 的 GM 回读。
+- backward 将 `d_v_new_grad`、`d_w` 拆成 fp32 workspace 预计算阶段，后续 `dh`、`dq/dk`、`dv/dbeta/dgk` 路径复用，减少重复 V 维扫描。
+- 新增 `KdaGateCumsum` L0/L2，覆盖默认 gate 增量累计和 `use_gate_in_kernel=True && safe_gate=True` 的 raw gate 入口。
+
+后续吞吐继续优化时，可把 `d_v_new_grad = Aqk^T @ d_o + kg @ d_state`、`dAqk = d_o @ v_new^T`、`qg/d_o` 与 `w/d_v_new_grad` 的矩阵乘进一步搬到 CATLASS cube 主路径，AIV 只负责 mask、gate 梯度、beta 累加和状态递推辅助项。

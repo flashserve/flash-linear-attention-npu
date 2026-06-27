@@ -46,11 +46,13 @@ const std::array<const aclTensor *, 6> ChunkKdaBwd(
     const aclTensor *dbetaOut,
     const aclTensor *dgkOut,
     const aclTensor *dh0Out,
+    const aclTensor *dVNewGrad,
+    const aclTensor *dW,
     aclOpExecutor *executor)
 {
     L0_DFX(ChunkKdaBwd, q, k, v, gk, beta, aqk, akk, w, u, qg, kg, vNew, h, dO, initialStateOptional,
            dhtOptional, cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, totalChunks, dqOut, dkOut, dvOut,
-           dbetaOut, dgkOut, dh0Out);
+           dbetaOut, dgkOut, dh0Out, dVNewGrad, dW);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional != nullptr) {
@@ -72,7 +74,7 @@ const std::array<const aclTensor *, 6> ChunkKdaBwd(
         ChunkKdaBwd,
         OP_INPUT(q, k, v, gk, beta, aqk, akk, w, u, qg, kg, vNew, h, dO, initialStateOptional, dhtOptional,
                  actualCuSeqlens, actualChunkIndices),
-        OP_OUTPUT(dqOut, dkOut, dvOut, dbetaOut, dgkOut, dh0Out),
+        OP_OUTPUT(dqOut, dkOut, dvOut, dbetaOut, dgkOut, dh0Out, dVNewGrad, dW),
         OP_ATTR(scale, chunkSize, totalChunks));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwd failed.");
