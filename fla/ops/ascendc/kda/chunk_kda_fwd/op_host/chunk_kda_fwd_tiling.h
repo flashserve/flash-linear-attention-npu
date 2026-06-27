@@ -31,6 +31,7 @@ TILING_DATA_FIELD_DEF(bool, outputFinalState);
 TILING_DATA_FIELD_DEF(bool, isVarLen);
 TILING_DATA_FIELD_DEF(int64_t, dataType);
 TILING_DATA_FIELD_DEF(int64_t, gateDataType);
+TILING_DATA_FIELD_DEF(int64_t, usedCoreNum);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkKdaFwd, ChunkKdaFwdTilingData)

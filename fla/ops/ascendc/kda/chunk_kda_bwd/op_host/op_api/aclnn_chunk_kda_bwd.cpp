@@ -107,8 +107,6 @@ aclnnStatus KdaBwdParamsDataContiguous(ChunkKdaBwdParams &params, aclOpExecutor 
     CHECK_RET(KdaBwdDataContiguous(params.v, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(KdaBwdDataContiguous(params.gk, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(KdaBwdDataContiguous(params.beta, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(KdaBwdDataContiguous(params.aqk, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(KdaBwdDataContiguous(params.akk, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(KdaBwdDataContiguous(params.dO, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(KdaBwdDataContiguous(params.initialStateOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(KdaBwdDataContiguous(params.dhtOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);

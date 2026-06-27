@@ -94,7 +94,15 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     tiling.set_isVarLen(isVarLen);
     tiling.set_dataType(DTypeCode(qDesc->GetDataType()));
     tiling.set_gateDataType(DTypeCode(gDesc->GetDataType()));
+    tiling.set_usedCoreNum(blockDim == 0 ? 1 : blockDim);
 
+    if (qDesc->GetDataType() == ge::DT_FLOAT) {
+        context->SetTilingKey(0);
+    } else if (qShape.GetDim(DIM_D) < 16) {
+        context->SetTilingKey(2);
+    } else {
+        context->SetTilingKey(1);
+    }
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
     return ge::GRAPH_SUCCESS;

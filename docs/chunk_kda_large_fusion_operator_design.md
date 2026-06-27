@@ -7,17 +7,17 @@
 - forward L2：调用一个 `ChunkKdaFwd` L0 融合 kernel。
 - backward L2：先调用 `ChunkKdaFwd` L0 重算中间量，再调用 `ChunkKdaBwd` L0 融合 kernel 完成反向。
 
-该方案优先保证与 fla-org KDA 公式语义一致，并覆盖 KDA 训练/推理需要的状态递推、GVA、varlen、`chunk_size=128`、`vdim=256` 等场景。
+该方案优先保证与 fla-org KDA 公式语义一致，并覆盖 KDA 训练/推理需要的状态递推、GVA、varlen、`chunk_size=128`、`vdim=256` 等典型场景。
 
 ## 2. 三方实现对标
 
-对标实现参考 fla-org `fla/ops/kda/chunk.py` 与公共 chunk 状态接口：
+对标 fla-org KDA chunk 语义：
 
 - 输入语义：`q/k=[B,T,H,K]`，`v=[B,T,HV,V]`，`g=[B,T,HV,K]`，`beta=[B,T,HV]`。
-- KDA 与 GDN 的核心差异：GDN 使用 head-wise scalar gate，KDA 使用 key-wise gate，状态衰减为 `exp2(gk_last)` 的 K 维对角衰减。
+- KDA 与 GDN 的核心差异：GDN 使用 head-wise scalar gate，KDA 使用 key-wise `gk`，状态衰减为 `exp2(gk_last)` 的 K 维对角衰减。
 - GVA 约束：`HV % H == 0`。
-- varlen 约束：输入需要 flatten 到 `B=1`，`cu_seqlens` 表示每个 sequence 边界。
-- key headdim 约束：对齐 fla-org 当前 KDA 约束，`K <= 256`。
+- varlen 约束：输入 flatten 到 `B=1`，`cu_seqlens` 表示每个 sequence 边界。
+- key head dim 约束：当前实现对齐三方语义并限制 `K <= 256`。
 
 本仓 torch_custom 暴露 head-first NPU ABI：
 
@@ -30,19 +30,15 @@ state:  [N, HV, K, V]
 output: [B, HV, T, V]
 ```
 
-其中 `gk` 是已经完成 KDA log2 gate 累计后的 key-wise gate。`use_gate_in_kernel=True`、`safe_gate=True`、`state_v_first=True`、QK L2Norm in-kernel、beta sigmoid in-kernel 作为后续扩展点保留，不在本次 L0 ABI 中隐式拼接。
+其中 `gk` 是已经完成 KDA log2 gate 累计后的 key-wise gate。`safe_gate=True`、`transpose_state_layout=True` 当前显式报错，避免静默偏离三方语义；`use_gate_in_kernel`、QK L2Norm in-kernel、beta sigmoid in-kernel 可作为后续扩展。
 
 ## 3. Forward L0 设计
 
-### 3.1 L0 算子
-
-`ChunkKdaFwd` 是一个 AscendC 融合 kernel，输入 `q/k/v/gk/beta/initial_state/cu_seqlens/chunk_indices`，输出：
+`ChunkKdaFwd` 输入 `q/k/v/gk/beta/initial_state/cu_seqlens/chunk_indices`，输出：
 
 ```text
 o, final_state, Aqk, Akk, w, u, qg, kg, v_new, h
 ```
-
-### 3.2 计算语义
 
 每个 chunk 内计算：
 
@@ -60,18 +56,52 @@ h_next   = exp2(g_last)[:, None] * h_prev + kg^T @ v_new
 
 `h` 保存每个 chunk 的 `h_prev`，用于反向重算和推理中间状态返回。
 
-实现中所有 `exp2(x)` 均按三方 Triton 的 fp32 exp2 语义对齐：先在 UB 中以 fp32 写入 `x * ln2`，再调用 AscendC 向量 `Exp` 得到 `2^x`。K 维 gate 相关的 `exp2(g)`、`exp2(g_i-g_j)`、`exp2(g_last-g)`、`exp2(g_last)` 均按 K 向量成批计算，不使用 scalar 多项式近似。
+### 3.1 exp2 实现
 
-### 3.3 调度与状态
+所有 `exp2(x)` 均对齐三方 Triton 的 fp32 exp2 语义：先在 UB 中以 fp32 写入 `x * ln2`，再调用 AscendC 向量 `Exp` 得到 `2^x`。K 维 gate 相关的 `exp2(g)`、`exp2(g_i-g_j)`、`exp2(g_last-g)`、`exp2(g_last)` 均按 K 向量成批计算，不再使用 scalar 多项式循环近似。
 
-- task 维度按 `(sequence, value_head)` 切分。
-- fixed-length 下每个 batch 独立递推；varlen 下通过 `cu_seqlens` 找到 sequence 边界。
-- chunk 内存在严格数据依赖的 `Akk inverse`、`w/u`、`v_new`、`h_next` 在单个 L0 kernel 内完成，避免把状态递推拆回 torch 层。
-- 当前版本为功能闭环实现，`exp2` 已使用 UB 向量 Exp 路径；其余矩阵累加仍使用 GM scalar 读写保证语义正确。后续性能版本可将 `Aqk/Akk/w/u` 的局部矩阵计算迁移到 cube/UB tile，并将 `h_prev/v_new/h_next` 的 V 维 tile 常驻 UB。
+### 3.2 CATLASS score 路径
+
+KDA 的 score 可按 gate 因子拆解：
+
+```text
+q_i * k_j * exp2(g_i - g_j) = (q_i * exp2(g_i)) @ (k_j * exp2(-g_j))^T
+k_i * k_j * exp2(g_i - g_j) = (k_i * exp2(g_i)) @ (k_j * exp2(-g_j))^T
+```
+
+因此 forward 对 fp16/bf16 且 `K >= 16` 的 score 原始矩阵使用 CATLASS cube：
+
+```text
+q_pos = q * exp2(g)
+k_pos = k * exp2(g)
+k_neg = k * exp2(-g)
+Aqk_raw = q_pos @ k_neg^T
+Akk_raw = k_pos @ k_neg^T
+```
+
+实现细节：
+
+- AIV 先在 UB 中生成 `q_pos/k_pos/k_neg`，以 32B 对齐 `DataCopy` 写入 `qg/w/kg` 临时 GM。
+- AIC 使用 CATLASS `BlockMmadTla` 执行两次 cube matmul。
+- AIV/AIC 使用 `CrossCoreFlagWithReverse` 做 ready/done 同步。
+- AIV 完成 mask、scale、`beta_i` 乘法和 lower-triangular inverse。
+- `qg/w/kg` 最终会被覆盖为对外语义需要的 `qg/kg/w`。
+
+fp32 和小 K fallback 走 AIV-only。AIV-only 不使用 GM `DataCopy` 作为临时 score 写回，而使用标量 `SetValue`，避免小行宽或 AIV 内部 MTE 写回后立即 scalar 读取造成 hazard。
+
+### 3.3 tiling key
+
+forward 当前有三个 tiling key：
+
+```text
+key 0: float32, AIV_ONLY
+key 1: fp16/bf16 且 K >= 16, MIX_AIC_1_2
+key 2: fp16/bf16 且 K < 16, AIV_ONLY
+```
+
+key 1 是 CATLASS score 主路径；key 0/key 2 是语义 fallback。这样既支持典型模型 `chunk_size=128`、`V=256`，也支持测试和小模型中常见的 `K=8`。
 
 ## 4. Backward L0 设计
-
-### 4.1 L2 编排
 
 `aclnnChunkKdaBwd` 是 backward L2 入口。它在 aclnn executor 内部完成：
 
@@ -81,19 +111,15 @@ ChunkKdaBwd(...) -> dq/dk/dv/dbeta/dgk/dh0
 ViewCopy(...)    -> user outputs
 ```
 
-因此 backward 不依赖 torch autograd 拼接，也不要求 Python 保存全部中间量。
+外部传入的 `Aqk/Akk` 保留为接口兼容参数和 shape 校验来源，但 L2 不再对其做无用 contiguous，也不把其数值传入反向 kernel；反向实际使用内部重算出的临时中间量。
 
-### 4.2 `ChunkKdaBwd` 覆盖范围
-
-`ChunkKdaBwd` 是一个反向融合 L0 kernel，覆盖原先拆分图中的以下逻辑：
+`ChunkKdaBwd` 覆盖：
 
 - `d_o + Aqk + v_new -> dAqk, d_v_new(local)`。
 - `dht + kg + qg + w + d_o + d_v_new -> dh0`，即 KDA 版本的 `bwd_dhu`。
 - `Akk/w/u` 反传到 `k/v/beta/gk`。
 - `Aqk` 反传到 `q/k/gk`。
-- GVA 下同一个 q-head 对应多个 value-head；kernel 以 `(sequence, q_head)` 为 task，内部顺序处理该 q-head 下的 value-head，避免 `dq/dk` 写冲突。
-
-### 4.3 `dh0` 数据依赖处理
+- GVA 下同一个 q-head 对应多个 value-head，kernel 以 `(sequence, q_head)` 为 task，内部顺序处理该 q-head 下的 value-head，避免 `dq/dk` 写冲突。
 
 KDA 的反向状态递推需要先使用当前 chunk 的旧 `d_state` 计算完整 `d_h_prev`，然后再写回给前一个 chunk。实现中按 V 维列处理：
 
@@ -102,8 +128,6 @@ for r in V:
     new_state[d] = f(old_d_state[:, r], qg, kg, w, d_o, d_v_new)
     dh0[:, r] = new_state
 ```
-
-这样避免 `dh0` 既作为工作区又作为输出时出现边读边覆盖。
 
 ## 5. aclnn 接口
 
@@ -144,12 +168,12 @@ npu_chunk_kda_bwd(
 
 ### 5.3 参数约束
 
-- `chunk_size` 支持 `32/64/128`。其中 `32/64` 对齐三方 KDA，`128` 用于 NPU 侧大 chunk 场景。
+- `chunk_size` 支持 `32/64/128`。
 - `K <= 256`。
 - `V` 已覆盖 `256`。
 - `HV % H == 0`。
 - `q/k/v/state/o` 支持 float32、float16、bfloat16；`gk/beta` 当前要求 float32。
-- `safe_gate=True`、`transpose_state_layout=True` 当前显式报错，避免静默偏离三方语义。
+- `safe_gate=True`、`transpose_state_layout=True` 当前显式报错。
 
 ## 6. 文件归档
 
@@ -171,8 +195,8 @@ npu_chunk_kda_bwd(
 
 ## 7. 后续优化方向
 
-当前实现已经完成 KDA 正反向功能闭环和精度验证。面向吞吐优化时，建议继续按以下方向演进：
+当前实现已完成 KDA 正反向功能闭环和精度验证。面向吞吐优化时，建议继续：
 
-- forward 将 `Aqk/Akk/w/u` 的块内矩阵计算迁移到 cube，并将 `h_prev/v_new/h_next` 的 V tile 驻留 UB。
-- backward 将 `d_v_new`、`dh`、`dq/dk` 分解为 cube 主路径和 vec 辅助路径，通过 UB ping-pong 降低 GM 往返。
-- 对 `gk/beta` 增加 L2 cast 或 raw-gate L0，使 BF16 gate 输入、`use_gate_in_kernel`、`safe_gate` 与 fla-org 高层接口进一步对齐。
+- 将 `w/u`、`o`、`h_next` 的 V 维 tile 驻留 UB，减少 GM 往返。
+- 将 backward 的 `d_v_new`、`dh`、`dq/dk` 分解为 cube 主路径和 vec 辅助路径。
+- 为 BF16 gate 输入、`use_gate_in_kernel`、`safe_gate` 增加独立 L0/L2 扩展，进一步对齐 fla-org 高层接口。
