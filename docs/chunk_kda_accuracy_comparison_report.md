@@ -23,7 +23,9 @@
 | forward float32 | `chunk_size=64`、`initial_state`、`final_state`、全部中间量 | 通过 |
 | forward varlen/GVA/V256 | `chunk_size=128`、`HV > H`、`cu_seqlens`、`V=256` | 通过 |
 | forward bf16 | `chunk_size=32`、BF16 q/k/v/state、float32 gk/beta | 通过 |
+| forward fp16 | `chunk_size=64`、FP16 q/k/v/state、float32 gk/beta、全部中间量 | 通过 |
 | backward float32 | `dq/dk/dv/dbeta/dgk/dh0` vs autograd golden | 通过 |
+| backward fp16 | `chunk_size=64`、FP16 q/k/v/state、float32 gk/beta | 通过 |
 | backward GVA/V256 | `chunk_size=128`、`HV > H`、`V=256` | 通过 |
 
 ## 3. 精度阈值
@@ -31,10 +33,11 @@
 | 数据类型 | 阈值 |
 |---|---|
 | float32 | `rtol=3e-3, atol=3e-3` |
+| fp16 | `rtol=2e-2, atol=2e-2` |
 | bf16 | `rtol=2e-2, atol=2e-2` |
 
 ## 4. 测试结论
 
-新增 KDA AscendC L0/L2 正反向算子已完成构建、安装和精度验证。测试覆盖了三方 KDA 关键语义：key-wise `gk` gate、GVA、varlen、`initial_state/output_final_state`、反向 `dht/dh0` 递推、`chunk_size=32/64/128` 入口，以及 `V=256` 典型模型场景。
+新增 KDA AscendC L0/L2 正反向算子已完成构建、安装和精度验证。测试覆盖了三方 KDA 关键语义：key-wise `gk` gate、GVA、varlen、`initial_state/output_final_state`、反向 `dht/dh0` 递推、`chunk_size=32/64/128` 入口，以及 `V=256` 典型模型场景。数据类型覆盖 float32、float16、bfloat16 的 forward，以及 float32、float16 的 backward。
 
 所有已执行精度用例均通过，NPU 输出与 PyTorch reference/autograd golden 在设定阈值内一致。

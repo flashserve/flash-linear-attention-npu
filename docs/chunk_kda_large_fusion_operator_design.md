@@ -146,7 +146,7 @@ npu_chunk_kda_bwd(
 - `K <= 256`。
 - `V` 已覆盖 `256`。
 - `HV % H == 0`。
-- `gk/beta` 当前要求 float32。
+- `q/k/v/state/o` 支持 float32、float16、bfloat16；`gk/beta` 当前要求 float32。
 - `safe_gate=True`、`transpose_state_layout=True` 当前显式报错，避免静默偏离三方语义。
 
 ## 6. 文件归档

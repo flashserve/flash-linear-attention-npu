@@ -201,6 +201,49 @@ def test_chunk_kda_fwd_bf16_chunk32_matches_reference():
     _assert_close("final_state bf16 chunk32", got[1], ref.final_state, rtol=2e-2, atol=2e-2)
 
 
+def test_chunk_kda_fwd_fp16_matches_reference():
+    device = _device()
+    if device.type == "cpu":
+        return
+    q, k, v, gk, beta, initial_state = _make_inputs(
+        device, h=1, hv=1, t=8, kdim=8, vdim=32, dtype=torch.float16
+    )
+    scale = q.shape[-1] ** -0.5
+
+    got = torch.ops.npu.npu_chunk_kda_fwd(
+        q,
+        k,
+        v,
+        gk,
+        beta,
+        scale,
+        64,
+        initial_state=initial_state,
+        output_final_state=True,
+        return_intermediate=True,
+    )
+    ref = chunk_kda_forward_reference(
+        q.detach().cpu(),
+        k.detach().cpu(),
+        v.detach().cpu(),
+        gk.detach().cpu(),
+        beta.detach().cpu(),
+        scale=scale,
+        chunk_size=64,
+        initial_state=initial_state.detach().cpu(),
+        output_final_state=True,
+    )
+    _assert_close("o fp16", got[0], ref.o, rtol=2e-2, atol=2e-2)
+    _assert_close("final_state fp16", got[1], ref.final_state, rtol=2e-2, atol=2e-2)
+    _assert_close("Aqk fp16", got[2], ref.Aqk, rtol=2e-2, atol=2e-2)
+    _assert_close("Akk fp16", got[3], ref.Akk, rtol=2e-2, atol=2e-2)
+    _assert_close("w fp16", got[4], ref.w, rtol=2e-2, atol=2e-2)
+    _assert_close("u fp16", got[5], ref.u, rtol=2e-2, atol=2e-2)
+    _assert_close("qg fp16", got[6], ref.qg, rtol=2e-2, atol=2e-2)
+    _assert_close("kg fp16", got[7], ref.kg, rtol=2e-2, atol=2e-2)
+    _assert_close("v_new fp16", got[8], ref.v_new, rtol=2e-2, atol=2e-2)
+
+
 def test_chunk_kda_bwd_matches_autograd():
     device = _device()
     q, k, v, gk, beta, initial_state = _make_inputs(device, h=1, hv=1, t=8, kdim=8, vdim=8)
@@ -261,6 +304,72 @@ def test_chunk_kda_bwd_matches_autograd():
     expected = (ref_grads[0], ref_grads[1], ref_grads[2], ref_grads[4].float(), ref_grads[3].float(), ref_grads[5])
     for name, actual, ref in zip(("dq", "dk", "dv", "dbeta", "dgk", "dh0"), got, expected):
         _assert_close(name, actual, ref, rtol=3e-3, atol=3e-3)
+
+
+def test_chunk_kda_bwd_fp16_matches_autograd():
+    device = _device()
+    if device.type == "cpu":
+        return
+    q, k, v, gk, beta, initial_state = _make_inputs(
+        device, h=1, hv=1, t=8, kdim=8, vdim=32, dtype=torch.float16
+    )
+    scale = q.shape[-1] ** -0.5
+    fwd = torch.ops.npu.npu_chunk_kda_fwd(
+        q,
+        k,
+        v,
+        gk,
+        beta,
+        scale,
+        64,
+        initial_state=initial_state,
+        output_final_state=True,
+        return_intermediate=False,
+    )
+    d_o = torch.randn_like(fwd[0])
+    dht = torch.randn_like(fwd[1])
+
+    got = torch.ops.npu.npu_chunk_kda_bwd(
+        q,
+        k,
+        v,
+        gk,
+        beta,
+        fwd[2],
+        fwd[3],
+        d_o,
+        scale,
+        64,
+        initial_state=initial_state,
+        dht=dht,
+    )
+
+    q_ref = q.detach().cpu().requires_grad_(True)
+    k_ref = k.detach().cpu().requires_grad_(True)
+    v_ref = v.detach().cpu().requires_grad_(True)
+    gk_ref = gk.detach().cpu().requires_grad_(True)
+    beta_ref = beta.detach().cpu().requires_grad_(True)
+    initial_state_ref = initial_state.detach().cpu().requires_grad_(True)
+    ref_o, ref_final_state = _chunk_kda_forward_autograd(
+        q_ref,
+        k_ref,
+        v_ref,
+        gk_ref,
+        beta_ref,
+        scale,
+        64,
+        initial_state_ref,
+    )
+    ref_grads = torch.autograd.grad(
+        [ref_o, ref_final_state],
+        [q_ref, k_ref, v_ref, gk_ref, beta_ref, initial_state_ref],
+        grad_outputs=[d_o.detach().cpu(), dht.detach().cpu()],
+        allow_unused=False,
+        retain_graph=False,
+    )
+    expected = (ref_grads[0], ref_grads[1], ref_grads[2], ref_grads[4].float(), ref_grads[3].float(), ref_grads[5])
+    for name, actual, ref in zip(("dq", "dk", "dv", "dbeta", "dgk", "dh0"), got, expected):
+        _assert_close(f"{name} fp16", actual, ref, rtol=2e-2, atol=2e-2)
 
 
 def test_chunk_kda_bwd_chunk128_v256_gva_matches_autograd():
@@ -329,5 +438,7 @@ if __name__ == "__main__":
     test_chunk_kda_fwd_matches_reference()
     test_chunk_kda_fwd_chunk128_v256_gva_varlen()
     test_chunk_kda_fwd_bf16_chunk32_matches_reference()
+    test_chunk_kda_fwd_fp16_matches_reference()
     test_chunk_kda_bwd_matches_autograd()
+    test_chunk_kda_bwd_fp16_matches_autograd()
     test_chunk_kda_bwd_chunk128_v256_gva_matches_autograd()
