@@ -37,7 +37,15 @@
 | fp16 | `rtol=2e-2, atol=2e-2` |
 | bf16 | `rtol=2e-2, atol=2e-2` |
 
-## 4. 测试结论
+## 4. exp2 精度曲线
+
+下图使用 float64 `2^x` 作为 reference，对比 `exp(x * ln2)` fp32 路径、三方 Triton `tl.math.exp2(x.to(tl.float32))` 语义，以及旧 `Exp2Scalar` scalar 多项式循环的相对误差。
+
+![chunk_kda_exp2_accuracy](chunk_kda_exp2_accuracy.svg)
+
+注：Triton 曲线按源码语义使用 fp32 `exp2` 模拟，用于对比公式路径；不同 GPU 后端 libdevice 的最后几 ulp 可能存在差异。
+
+## 5. 测试结论
 
 新增 KDA AscendC L0/L2 正反向算子已完成构建、安装和精度验证。测试覆盖了三方 KDA 关键语义：key-wise `gk` gate、GVA、varlen、`initial_state/output_final_state`、反向 `dht/dh0` 递推、`chunk_size=32/64/128` 入口，以及 `V=256` 典型模型场景。数据类型覆盖 float32、float16、bfloat16 的 forward，以及 float32、float16 的 backward。
 
