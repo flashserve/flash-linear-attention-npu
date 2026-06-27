@@ -1,52 +1,40 @@
-# Chunk KDA 算子与三方实现精度对比测试报告
+# Chunk KDA 算子与三方实现精度对比报告
 
 ## 1. 测试对象
 
-待测对象：
-- `npu_chunk_kda_fwd`
-- `npu_chunk_kda_bwd`
-- 增强后的 `npu_chunk_gated_delta_rule_fwd_h(gk=...)`
-- 增强后的 `npu_chunk_gated_delta_rule_bwd_dhu(gk=...)`
+本次验证覆盖以下新增接口：
 
-对标对象：
-- fla-org KDA 公式语义。
-- 仓内 PyTorch reference：`tests/reference/chunk_kda_reference.py`。
+- `torch.ops.npu.npu_chunk_kda_fwd`
+- `torch.ops.npu.npu_chunk_kda_bwd`
+- L0 `ChunkKdaFwd`
+- L0 `ChunkKdaBwd`
 
-说明：当前验证环境未提供可直接运行的 fla-org Triton GPU kernel，因此本报告用与 fla-org KDA 公式对齐的 PyTorch reference 做数值对标。
+对标对象为 fla-org KDA chunk 公式语义，以及仓内按该公式实现的 PyTorch reference：
 
-## 2. 当前实现状态
+- `tests/reference/chunk_kda_reference.py`
+- `torch_custom/fla_npu/test/test_npu_chunk_kda.py` 中的 autograd golden
 
-- `torch.ops.npu.npu_chunk_kda_fwd/bwd` 已作为 KDA 大融合 L2 入口落地。
-- KDA forward 已拆为块内重算、跨 chunk 状态递推、输出合成三段：`K=128,V=128` 场景优先复用增强后的 native `fwd_h(gk)`，若 native L0 不可用或形状不满足约束则自动回退到 composite 状态递推。
-- `chunk_size=128,V=256` 仍走 composite fallback，避免复用现有 `fwd_h` 的 V256 挂起路径；该 fallback 已通过 forward 精度测试。
-- `chunk_gated_delta_rule_bwd_dhu` 已补齐 `gk` 分支，按三方 KDA 语义实现 `dv2 = kg @ dh + dv`，并在 `dh` 递推中按 K 维执行 `exp2(gk_last)` state decay。
+## 2. 覆盖范围
 
-## 3. 已执行测试
-
-| Case | 覆盖范围 | 结果 |
+| Case | 覆盖点 | 结果 |
 |---|---|---|
-| 构建 | `fwd_h + bwd_dhu` custom 包构建 | 通过 |
-| 安装 | custom 包安装、`fla_npu` wheel 构建安装 | 通过 |
-| KDA native hit | `K=128,V=128,chunk_size=64` 命中 native `fwd_h(gk)` | 通过 |
-| KDA forward V256 | `T=128,K=128,V=256,chunk_size=128` forward vs reference | 通过 |
-| KDA backward medium | `T=64,K=64,V=128,chunk_size=64` backward vs autograd golden | 通过 |
-| KDA varlen/GVA | 仓内 KDA 测试脚本覆盖 varlen、GVA、V256 小形状 | 通过 |
-| `bwd_dhu(gk)` precision | `T=128,K=128,V=128,chunk_size=64` vs CPU golden | 通过 |
+| AscendC custom 包构建 | `chunk_kda_fwd`、`chunk_kda_bwd` L0/L2 构建 | 通过 |
+| torch_custom wheel 构建 | `npu_chunk_kda_fwd`、`npu_chunk_kda_bwd` ABI 注册 | 通过 |
+| forward float32 | `chunk_size=64`、`initial_state`、`final_state`、全部中间量 | 通过 |
+| forward varlen/GVA/V256 | `chunk_size=128`、`HV > H`、`cu_seqlens`、`V=256` | 通过 |
+| forward bf16 | `chunk_size=32`、BF16 q/k/v/state、float32 gk/beta | 通过 |
+| backward float32 | `dq/dk/dv/dbeta/dgk/dh0` vs autograd golden | 通过 |
+| backward GVA/V256 | `chunk_size=128`、`HV > H`、`V=256` | 通过 |
 
-## 4. 关键数值结果
+## 3. 精度阈值
 
-| Case | 输出 | max_abs | mean_abs | 结果 |
-|---|---|---:|---:|---|
-| KDA native forward fp16 | `final_state` | `2.22e-6` | `3.51e-7` | 通过 |
-| KDA forward V256 fp16 | `o` | `2.38e-7` | `1.64e-8` | 通过 |
-| KDA forward V256 fp16 | `final_state` | `5.59e-9` | `1.81e-10` | 通过 |
-| KDA backward medium fp16 | `dq/dk/dv/dh0` | `0` | `0` | 通过 |
-| KDA backward medium fp16 | `dbeta/dgk` | `1.83e-3` | `7.54e-5` | 通过 |
+| 数据类型 | 阈值 |
+|---|---|
+| float32 | `rtol=3e-3, atol=3e-3` |
+| bf16 | `rtol=2e-2, atol=2e-2` |
 
-阈值：
-- fp16：`rtol=5e-2, atol=5e-2`
-- bf16：`rtol=8e-2, atol=8e-2`
+## 4. 测试结论
 
-## 5. 结论
+新增 KDA AscendC L0/L2 正反向算子已完成构建、安装和精度验证。测试覆盖了三方 KDA 关键语义：key-wise `gk` gate、GVA、varlen、`initial_state/output_final_state`、反向 `dht/dh0` 递推、`chunk_size=32/64/128` 入口，以及 `V=256` 典型模型场景。
 
-当前 PR 已具备一套可运行的 KDA 正反向大融合 L2 算子，功能和精度与公式级 reference 对齐。`K=128,V=128` forward 状态段已验证可复用 native `fwd_h(gk)`；`bwd_dhu(gk)` 已完成 native kernel 语义并通过精度测试；`chunk_size=128,V=256` forward 通过 composite fallback 保持功能覆盖。
+所有已执行精度用例均通过，NPU 输出与 PyTorch reference/autograd golden 在设定阈值内一致。

@@ -24,6 +24,41 @@ using npu_preparation = at_npu::native::OpPreparation;
 using namespace op_plugin::utils;
 using namespace op_infer;
 
+namespace {
+int64_t CeilDiv(int64_t x, int64_t y)
+{
+    return (x + y - 1) / y;
+}
+
+int64_t GetKdaSeqNum(int64_t batch, at::OptionalIntArrayRef cu_seqlens)
+{
+    if (!cu_seqlens.has_value()) {
+        return batch;
+    }
+    auto cu = cu_seqlens.value();
+    return static_cast<int64_t>(cu.size()) - 1;
+}
+
+int64_t GetKdaTotalChunks(int64_t batch, int64_t seqlen, int64_t chunk_size,
+                          at::OptionalIntArrayRef cu_seqlens,
+                          at::OptionalIntArrayRef chunk_indices)
+{
+    if (chunk_indices.has_value()) {
+        return static_cast<int64_t>(chunk_indices.value().size()) / 2;
+    }
+    if (!cu_seqlens.has_value()) {
+        return CeilDiv(seqlen, chunk_size);
+    }
+    (void)batch;
+    int64_t total = 0;
+    auto cu = cu_seqlens.value();
+    for (size_t i = 0; i + 1 < cu.size(); ++i) {
+        total += CeilDiv(cu[i + 1] - cu[i], chunk_size);
+    }
+    return total;
+}
+} // namespace
+
 
 ::std::tuple<at::Tensor,at::Tensor,at::Tensor,at::Tensor> npu_prepare_wy_repr_bwd_full(const at::Tensor & k, const at::Tensor & v, const at::Tensor & beta, const at::Tensor & A, const at::Tensor & dA, const at::Tensor & dw, const at::Tensor & du, const at::Tensor & g, int64_t chunk_size, at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices)
 {
@@ -294,6 +329,155 @@ at::Tensor npu_chunk_fwd_o(
     EXEC_NPU_CMD_EXT(aclnnRecomputeWUFwd,
         k, v, beta, A, g_, gK_,cu_seqlens, chunk_indices, chunk_size, w, u);
     return std::tie(w,u);
+}
+
+::std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
+             at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+npu_chunk_kda_fwd(
+    const at::Tensor &q,
+    const at::Tensor &k,
+    const at::Tensor &v,
+    const at::Tensor &gk,
+    const at::Tensor &beta,
+    double scale,
+    int64_t chunk_size,
+    const c10::optional<at::Tensor> &initial_state,
+    c10::optional<bool> output_final_state,
+    at::OptionalIntArrayRef cu_seqlens,
+    at::OptionalIntArrayRef chunk_indices,
+    c10::optional<bool> return_intermediate,
+    c10::optional<bool> safe_gate,
+    c10::optional<bool> transpose_state_layout)
+{
+    TORCH_CHECK(!safe_gate.value_or(false), "npu_chunk_kda_fwd: safe_gate=True is not supported.");
+    TORCH_CHECK(!transpose_state_layout.value_or(false),
+                "npu_chunk_kda_fwd: transpose_state_layout=True is not supported.");
+    TORCH_CHECK(chunk_size == 32 || chunk_size == 64 || chunk_size == 128,
+                "npu_chunk_kda_fwd: chunk_size must be 32, 64 or 128.");
+    TORCH_CHECK(q.dim() == 4 && k.dim() == 4 && v.dim() == 4 && gk.dim() == 4 && beta.dim() == 3,
+                "npu_chunk_kda_fwd: expected head-first q/k/v/gk/beta tensors.");
+    TORCH_CHECK(q.sizes() == k.sizes(), "npu_chunk_kda_fwd: q and k must have identical shape.");
+    TORCH_CHECK(gk.scalar_type() == at::kFloat && beta.scalar_type() == at::kFloat,
+                "npu_chunk_kda_fwd: gk and beta must be float32.");
+
+    auto q_sizes = q.sizes();
+    auto v_sizes = v.sizes();
+    int64_t B = q_sizes[0];
+    int64_t H = q_sizes[1];
+    int64_t T = q_sizes[2];
+    int64_t K = q_sizes[3];
+    int64_t HV = v_sizes[1];
+    int64_t V = v_sizes[3];
+    TORCH_CHECK(v_sizes[0] == B && v_sizes[2] == T, "npu_chunk_kda_fwd: v shape prefix must match q.");
+    TORCH_CHECK(gk.sizes()[0] == B && gk.sizes()[1] == HV && gk.sizes()[2] == T && gk.sizes()[3] == K,
+                "npu_chunk_kda_fwd: gk shape mismatch.");
+    TORCH_CHECK(beta.sizes()[0] == B && beta.sizes()[1] == HV && beta.sizes()[2] == T,
+                "npu_chunk_kda_fwd: beta shape mismatch.");
+    TORCH_CHECK(HV % H == 0, "npu_chunk_kda_fwd: HV must be divisible by H.");
+
+    int64_t seq_num = GetKdaSeqNum(B, cu_seqlens);
+    int64_t total_chunks = GetKdaTotalChunks(B, T, chunk_size, cu_seqlens, chunk_indices);
+    bool output_final_state_ = output_final_state.value_or(false);
+    bool return_intermediate_ = return_intermediate.value_or(false);
+    double scale_ = scale;
+    int64_t chunk_size_ = chunk_size;
+    bool recompute_output_final_state = true;
+    int64_t total_chunks_ = total_chunks;
+
+    at::Tensor o = at::empty_like(v);
+    at::Tensor final_state_work = at::empty({seq_num, HV, K, V},
+        (initial_state.has_value() && initial_state->defined()) ? initial_state->options() : q.options());
+    at::Tensor aqk = at::empty({B, HV, T, chunk_size}, q.options());
+    at::Tensor akk = at::empty({B, HV, T, chunk_size}, q.options());
+    at::Tensor w = at::empty({B, HV, T, K}, q.options());
+    at::Tensor u = at::empty_like(v);
+    at::Tensor qg = at::empty({B, HV, T, K}, q.options());
+    at::Tensor kg = at::empty({B, HV, T, K}, q.options());
+    at::Tensor v_new = at::empty_like(v);
+    at::Tensor h = at::empty({B, HV, total_chunks, K, V}, q.options());
+    const at::Tensor &initial_state_ = c10::value_or_else(initial_state, [] { return at::Tensor(); });
+
+    EXEC_NPU_CMD_EXT(
+        aclnnChunkKdaFwd,
+        q, k, v, gk, beta, initial_state_,
+        cu_seqlens, chunk_indices,
+        scale_, chunk_size_, recompute_output_final_state, total_chunks_,
+        o, final_state_work, aqk, akk, w, u, qg, kg, v_new, h
+    );
+
+    at::Tensor final_state = output_final_state_ ? final_state_work : at::empty({0}, q.options());
+    if (return_intermediate_) {
+        return std::make_tuple(o, final_state, aqk, akk, w, u, qg, kg, v_new, h);
+    }
+    at::Tensor empty = at::empty({0}, q.options());
+    return std::make_tuple(o, final_state, aqk, akk, empty, empty, empty, empty, empty, h);
+}
+
+::std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+npu_chunk_kda_bwd(
+    const at::Tensor &q,
+    const at::Tensor &k,
+    const at::Tensor &v,
+    const at::Tensor &gk,
+    const at::Tensor &beta,
+    const at::Tensor &aqk,
+    const at::Tensor &akk,
+    const at::Tensor &d_o,
+    double scale,
+    int64_t chunk_size,
+    const c10::optional<at::Tensor> &initial_state,
+    const c10::optional<at::Tensor> &dht,
+    at::OptionalIntArrayRef cu_seqlens,
+    at::OptionalIntArrayRef chunk_indices,
+    c10::optional<bool> safe_gate,
+    c10::optional<bool> transpose_state_layout)
+{
+    TORCH_CHECK(!safe_gate.value_or(false), "npu_chunk_kda_bwd: safe_gate=True is not supported.");
+    TORCH_CHECK(!transpose_state_layout.value_or(false),
+                "npu_chunk_kda_bwd: transpose_state_layout=True is not supported.");
+    TORCH_CHECK(chunk_size == 32 || chunk_size == 64 || chunk_size == 128,
+                "npu_chunk_kda_bwd: chunk_size must be 32, 64 or 128.");
+    TORCH_CHECK(gk.scalar_type() == at::kFloat && beta.scalar_type() == at::kFloat,
+                "npu_chunk_kda_bwd: gk and beta must be float32.");
+
+    auto q_sizes = q.sizes();
+    auto v_sizes = v.sizes();
+    int64_t B = q_sizes[0];
+    int64_t H = q_sizes[1];
+    int64_t T = q_sizes[2];
+    int64_t K = q_sizes[3];
+    int64_t HV = v_sizes[1];
+    int64_t V = v_sizes[3];
+    TORCH_CHECK(HV % H == 0, "npu_chunk_kda_bwd: HV must be divisible by H.");
+    int64_t seq_num = GetKdaSeqNum(B, cu_seqlens);
+    int64_t total_chunks = GetKdaTotalChunks(B, T, chunk_size, cu_seqlens, chunk_indices);
+    double scale_ = scale;
+    int64_t chunk_size_ = chunk_size;
+    int64_t seq_num_ = seq_num;
+    int64_t total_chunks_ = total_chunks;
+
+    at::Tensor dq = at::empty_like(q);
+    at::Tensor dk = at::empty_like(k);
+    at::Tensor dv = at::empty_like(v);
+    at::Tensor dbeta = at::empty(beta.sizes(), beta.options().dtype(at::kFloat));
+    at::Tensor dgk = at::empty(gk.sizes(), gk.options().dtype(at::kFloat));
+    at::Tensor dh0_work = at::empty({seq_num, HV, K, V},
+        (initial_state.has_value() && initial_state->defined()) ? initial_state->options() :
+        ((dht.has_value() && dht->defined()) ? dht->options() : q.options()));
+    const at::Tensor &initial_state_ = c10::value_or_else(initial_state, [] { return at::Tensor(); });
+    const at::Tensor &dht_ = c10::value_or_else(dht, [] { return at::Tensor(); });
+
+    EXEC_NPU_CMD_EXT(
+        aclnnChunkKdaBwd,
+        q, k, v, gk, beta, aqk, akk, d_o,
+        initial_state_, dht_,
+        cu_seqlens, chunk_indices,
+        scale_, chunk_size_, seq_num_, total_chunks_,
+        dq, dk, dv, dbeta, dgk, dh0_work
+    );
+
+    at::Tensor dh0 = (initial_state.has_value() && initial_state->defined()) ? dh0_work : at::empty({0}, q.options());
+    return std::make_tuple(dq, dk, dv, dbeta, dgk, dh0);
 }
 
 at::Tensor npu_causal_conv1d(

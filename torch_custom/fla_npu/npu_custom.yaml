@@ -35,6 +35,10 @@ custom:
     op_api: all_version
   - func: npu_recompute_w_u_fwd(Tensor k, Tensor v, Tensor beta, Tensor A, int chunk_size, *, Tensor? g=None, Tensor? gk=None, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> (Tensor, Tensor)
     op_api: all_version
+  - func: npu_chunk_kda_fwd(Tensor q, Tensor k, Tensor v, Tensor gk, Tensor beta, float scale, int chunk_size, *, Tensor? initial_state=None, bool? output_final_state=False, int[]? cu_seqlens=None, int[]? chunk_indices=None, bool? return_intermediate=False, bool? safe_gate=False, bool? transpose_state_layout=False) -> (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor)
+    op_api: all_version
+  - func: npu_chunk_kda_bwd(Tensor q, Tensor k, Tensor v, Tensor gk, Tensor beta, Tensor Aqk, Tensor Akk, Tensor d_o, float scale, int chunk_size, *, Tensor? initial_state=None, Tensor? dht=None, int[]? cu_seqlens=None, int[]? chunk_indices=None, bool? safe_gate=False, bool? transpose_state_layout=False) -> (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor)
+    op_api: all_version
 
 
 autograd:
