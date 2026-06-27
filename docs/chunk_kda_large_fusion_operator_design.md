@@ -81,13 +81,13 @@ Akk_raw = k_pos @ k_neg^T
 
 实现细节：
 
-- AIV 先在 UB 中生成 `q_pos/k_pos/k_neg`，以 32B 对齐 `DataCopy` 写入 `qg/w/kg` 临时 GM。
+- AIV 使用 `TQue<VECIN>` 搬入 `q/k/gk` 行，UB 中用 `Cast/Muls/Exp/Mul` 生成 `q_pos/k_pos/k_neg`，再通过 `TQue<VECOUT>` 与 `DataCopy/DataCopyPad` 写入 `qg/w/kg` 临时 GM。
 - AIC 使用 CATLASS `BlockMmadTla` 执行两次 cube matmul。
 - AIV/AIC 使用 `CrossCoreFlagWithReverse` 做 ready/done 同步。
 - AIV 完成 mask、scale、`beta_i` 乘法和 lower-triangular inverse。
 - `qg/w/kg` 最终会被覆盖为对外语义需要的 `qg/kg/w`。
 
-fp32 和小 K fallback 走 AIV-only。AIV-only 不使用 GM `DataCopy` 作为临时 score 写回，而使用标量 `SetValue`，避免小行宽或 AIV 内部 MTE 写回后立即 scalar 读取造成 hazard。
+fp32 和小 K fallback 走 AIV-only。AIV-only 与 CATLASS 前处理共用同一套 SIMD gate-product 管线：32B 对齐连续行走 `DataCopy`，小行宽或非 32B 对齐行走 `DataCopyPad`，不再用逐元素 `GetValue/SetValue` 生成 `qg/w/kg`。
 
 ### 3.3 tiling key
 

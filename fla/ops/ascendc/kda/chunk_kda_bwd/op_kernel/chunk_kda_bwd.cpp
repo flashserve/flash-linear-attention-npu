@@ -15,6 +15,7 @@ namespace {
 constexpr float LN2 = 0.69314718055994530942f;
 constexpr uint64_t MAX_K_DIM = 256;
 constexpr uint32_t EXP2_EVENT_ID = 0;
+constexpr uint32_t KDA_MTE2_V_EVENT_ID = 1;
 
 __aicore__ inline uint32_t FloatToBits(float value)
 {
@@ -150,6 +151,7 @@ public:
         isVarLen_ = tiling.isVarLen;
 
         pipe_->InitBuffer(exp2Buf_, MAX_K_DIM * sizeof(float));
+        pipe_->InitBuffer(vecBuf_, MAX_K_DIM * sizeof(float));
     }
 
     __aicore__ inline void Process()
@@ -228,12 +230,27 @@ private:
         WaitFlag<HardEvent::V_S>(EXP2_EVENT_ID);
     }
 
+    template <typename CopyT>
+    __aicore__ inline void CopyRowIn(LocalTensor<CopyT> &dst, GlobalTensor<CopyT> &src, uint64_t offset)
+    {
+        uint64_t rowBytes = K_ * static_cast<uint64_t>(sizeof(CopyT));
+        if (rowBytes >= 32 && rowBytes % 32 == 0) {
+            DataCopy(dst, src[offset], static_cast<uint32_t>(K_));
+            return;
+        }
+        DataCopyParams params{1, static_cast<uint16_t>(rowBytes), 0, 0};
+        DataCopyPadParams padParams{false, 0, 0, 0};
+        DataCopyPad(dst, src[offset], params, padParams);
+    }
+
     __aicore__ inline LocalTensor<float> Exp2G(uint64_t b, uint64_t hv, uint64_t t)
     {
         LocalTensor<float> exp2Local = exp2Buf_.Get<float>();
-        for (uint64_t d = 0; d < K_; ++d) {
-            exp2Local.SetValue(d, gk_.GetValue(KVOffset(b, hv, t, d, K_)) * LN2);
-        }
+        CopyRowIn(exp2Local, gk_, KVOffset(b, hv, t, 0, K_));
+        SetFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
+        WaitFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
+        Muls(exp2Local, exp2Local, LN2, static_cast<uint32_t>(K_));
+        PipeBarrier<PIPE_V>();
         RunExp2(exp2Local, static_cast<uint32_t>(K_));
         return exp2Local;
     }
@@ -241,10 +258,15 @@ private:
     __aicore__ inline LocalTensor<float> Exp2GDiff(uint64_t b, uint64_t hv, uint64_t lhs, uint64_t rhs)
     {
         LocalTensor<float> exp2Local = exp2Buf_.Get<float>();
-        for (uint64_t d = 0; d < K_; ++d) {
-            float diff = gk_.GetValue(KVOffset(b, hv, lhs, d, K_)) - gk_.GetValue(KVOffset(b, hv, rhs, d, K_));
-            exp2Local.SetValue(d, diff * LN2);
-        }
+        LocalTensor<float> rhsLocal = vecBuf_.Get<float>();
+        CopyRowIn(exp2Local, gk_, KVOffset(b, hv, lhs, 0, K_));
+        CopyRowIn(rhsLocal, gk_, KVOffset(b, hv, rhs, 0, K_));
+        SetFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
+        WaitFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
+        Sub(exp2Local, exp2Local, rhsLocal, static_cast<uint32_t>(K_));
+        PipeBarrier<PIPE_V>();
+        Muls(exp2Local, exp2Local, LN2, static_cast<uint32_t>(K_));
+        PipeBarrier<PIPE_V>();
         RunExp2(exp2Local, static_cast<uint32_t>(K_));
         return exp2Local;
     }
@@ -583,6 +605,7 @@ private:
     GlobalTensor<T> dh0_;
     TPipe *pipe_ = nullptr;
     TBuf<TPosition::VECCALC> exp2Buf_;
+    TBuf<TPosition::VECCALC> vecBuf_;
 
     uint64_t B_ = 0;
     uint64_t N_ = 0;
