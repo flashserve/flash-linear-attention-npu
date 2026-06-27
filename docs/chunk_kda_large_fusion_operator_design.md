@@ -60,12 +60,14 @@ h_next   = exp2(g_last)[:, None] * h_prev + kg^T @ v_new
 
 `h` 保存每个 chunk 的 `h_prev`，用于反向重算和推理中间状态返回。
 
+实现中所有 `exp2(x)` 均按三方 Triton 的 fp32 exp2 语义对齐：先在 UB 中以 fp32 写入 `x * ln2`，再调用 AscendC 向量 `Exp` 得到 `2^x`。K 维 gate 相关的 `exp2(g)`、`exp2(g_i-g_j)`、`exp2(g_last-g)`、`exp2(g_last)` 均按 K 向量成批计算，不使用 scalar 多项式近似。
+
 ### 3.3 调度与状态
 
 - task 维度按 `(sequence, value_head)` 切分。
 - fixed-length 下每个 batch 独立递推；varlen 下通过 `cu_seqlens` 找到 sequence 边界。
 - chunk 内存在严格数据依赖的 `Akk inverse`、`w/u`、`v_new`、`h_next` 在单个 L0 kernel 内完成，避免把状态递推拆回 torch 层。
-- 当前版本为功能闭环实现，使用 GM scalar 读写保证语义正确；后续性能版本可将 `Aqk/Akk/w/u` 的局部矩阵计算迁移到 cube/UB tile，并将 `h_prev/v_new/h_next` 的 V 维 tile 常驻 UB。
+- 当前版本为功能闭环实现，`exp2` 已使用 UB 向量 Exp 路径；其余矩阵累加仍使用 GM scalar 读写保证语义正确。后续性能版本可将 `Aqk/Akk/w/u` 的局部矩阵计算迁移到 cube/UB tile，并将 `h_prev/v_new/h_next` 的 V 维 tile 常驻 UB。
 
 ## 4. Backward L0 设计
 

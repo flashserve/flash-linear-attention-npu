@@ -20,6 +20,7 @@
 |---|---|---|
 | AscendC custom 包构建 | `chunk_kda_fwd`、`chunk_kda_bwd` L0/L2 构建 | 通过 |
 | torch_custom wheel 构建 | `npu_chunk_kda_fwd`、`npu_chunk_kda_bwd` ABI 注册 | 通过 |
+| exp2 UB 向量路径 | `exp2(x)` 使用 fp32 `Exp(x * ln2)` 替代 scalar 多项式近似 | 通过 |
 | forward float32 | `chunk_size=64`、`initial_state`、`final_state`、全部中间量 | 通过 |
 | forward varlen/GVA/V256 | `chunk_size=128`、`HV > H`、`cu_seqlens`、`V=256` | 通过 |
 | forward bf16 | `chunk_size=32`、BF16 q/k/v/state、float32 gk/beta | 通过 |
