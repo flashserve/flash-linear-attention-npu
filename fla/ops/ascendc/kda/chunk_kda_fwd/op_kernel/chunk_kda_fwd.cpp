@@ -51,6 +51,8 @@ constexpr uint32_t KDA_SCALAR_MTE2_V_EVENT_ID = 2;
 constexpr uint32_t KDA_SCALAR_V_S_EVENT_ID = 3;
 constexpr uint32_t KDA_SCALAR_V_MTE3_EVENT_ID = 4;
 constexpr uint32_t KDA_SCALAR_MTE3_V_EVENT_ID = 5;
+constexpr uint32_t KDA_MTE2_MTE3_EVENT_ID = 6;
+constexpr uint32_t KDA_MTE3_MTE2_EVENT_ID = 7;
 constexpr uint32_t KDA_VEC_BUFFER_NUM = 2;
 constexpr uint8_t KDA_SCORE_DONE_FLAG0 = 2;
 constexpr uint8_t KDA_SCORE_DONE_FLAG1 = 3;
@@ -292,11 +294,12 @@ private:
     }
 
     template <typename CopyT>
-    __aicore__ inline void CopyRowIn(LocalTensor<CopyT> &dst, GlobalTensor<CopyT> &src, uint64_t offset)
+    __aicore__ inline void CopyVectorIn(LocalTensor<CopyT> &dst, GlobalTensor<CopyT> &src, uint64_t offset,
+                                        uint64_t count)
     {
-        uint64_t rowBytes = K_ * static_cast<uint64_t>(sizeof(CopyT));
+        uint64_t rowBytes = count * static_cast<uint64_t>(sizeof(CopyT));
         if (rowBytes >= 32 && rowBytes % 32 == 0) {
-            DataCopy(dst, src[offset], static_cast<uint32_t>(K_));
+            DataCopy(dst, src[offset], static_cast<uint32_t>(count));
             return;
         }
         DataCopyParams params{1, static_cast<uint16_t>(rowBytes), 0, 0};
@@ -305,15 +308,61 @@ private:
     }
 
     template <typename CopyT>
-    __aicore__ inline void CopyRowOut(GlobalTensor<CopyT> &dst, uint64_t offset, LocalTensor<CopyT> &src)
+    __aicore__ inline void CopyVectorOut(GlobalTensor<CopyT> &dst, uint64_t offset, LocalTensor<CopyT> &src,
+                                         uint64_t count)
     {
-        uint64_t rowBytes = K_ * static_cast<uint64_t>(sizeof(CopyT));
+        uint64_t rowBytes = count * static_cast<uint64_t>(sizeof(CopyT));
         if (rowBytes >= 32 && rowBytes % 32 == 0) {
-            DataCopy(dst[offset], src, static_cast<uint32_t>(K_));
+            DataCopy(dst[offset], src, static_cast<uint32_t>(count));
             return;
         }
         DataCopyParams params{1, static_cast<uint16_t>(rowBytes), 0, 0};
         DataCopyPad(dst[offset], src, params);
+    }
+
+    template <typename CopyT>
+    __aicore__ inline void CopyRowIn(LocalTensor<CopyT> &dst, GlobalTensor<CopyT> &src, uint64_t offset)
+    {
+        CopyVectorIn(dst, src, offset, K_);
+    }
+
+    template <typename CopyT>
+    __aicore__ inline void CopyRowOut(GlobalTensor<CopyT> &dst, uint64_t offset, LocalTensor<CopyT> &src)
+    {
+        CopyVectorOut(dst, offset, src, K_);
+    }
+
+    __aicore__ inline void CopyTensorRow(GlobalTensor<T> &dst, uint64_t dstOffset, GlobalTensor<T> &src,
+                                         uint64_t srcOffset, uint64_t count)
+    {
+        LocalTensor<T> rowLocal = exp2Buf_.Get<T>();
+        CopyVectorIn(rowLocal, src, srcOffset, count);
+        SetFlag<HardEvent::MTE2_MTE3>(KDA_MTE2_MTE3_EVENT_ID);
+        WaitFlag<HardEvent::MTE2_MTE3>(KDA_MTE2_MTE3_EVENT_ID);
+        CopyVectorOut(dst, dstOffset, rowLocal, count);
+        SetFlag<HardEvent::MTE3_MTE2>(KDA_MTE3_MTE2_EVENT_ID);
+        WaitFlag<HardEvent::MTE3_MTE2>(KDA_MTE3_MTE2_EVENT_ID);
+    }
+
+    __aicore__ inline void ZeroTensorRow(GlobalTensor<T> &dst, uint64_t dstOffset, uint64_t count)
+    {
+        LocalTensor<float> rowFp32 = vecBuf_.Get<float>();
+        Duplicate(rowFp32, 0.0f, static_cast<uint32_t>(count));
+        PipeBarrier<PIPE_V>();
+        if constexpr (IsSameType<T, float>::value) {
+            SetFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+            WaitFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+            CopyVectorOut(dst, dstOffset, rowFp32, count);
+        } else {
+            LocalTensor<T> rowLocal = exp2Buf_.Get<T>();
+            Cast(rowLocal, rowFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(count));
+            PipeBarrier<PIPE_V>();
+            SetFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+            WaitFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+            CopyVectorOut(dst, dstOffset, rowLocal, count);
+        }
+        SetFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
+        WaitFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
     }
 
     template <typename CopyT>
@@ -661,12 +710,11 @@ private:
     __aicore__ inline void InitState(uint64_t seq, uint64_t hv)
     {
         for (uint64_t d = 0; d < K_; ++d) {
-            for (uint64_t r = 0; r < V_; ++r) {
-                float value = 0.0f;
-                if (hasInitial_) {
-                    value = ReadAsFloat(initialState_, StateOffset(seq, hv, d, r));
-                }
-                WriteFromFloat(finalState_, StateOffset(seq, hv, d, r), value);
+            uint64_t stateOffset = StateOffset(seq, hv, d, 0);
+            if (hasInitial_) {
+                CopyTensorRow(finalState_, stateOffset, initialState_, stateOffset, V_);
+            } else {
+                ZeroTensorRow(finalState_, stateOffset, V_);
             }
         }
     }
@@ -674,10 +722,7 @@ private:
     __aicore__ inline void StoreCurrentState(uint64_t b, uint64_t hv, uint64_t seq, uint64_t chunkIdx)
     {
         for (uint64_t d = 0; d < K_; ++d) {
-            for (uint64_t r = 0; r < V_; ++r) {
-                float value = ReadAsFloat(finalState_, StateOffset(seq, hv, d, r));
-                WriteFromFloat(h_, HOffset(b, hv, chunkIdx, d, r), value);
-            }
+            CopyTensorRow(h_, HOffset(b, hv, chunkIdx, d, 0), finalState_, StateOffset(seq, hv, d, 0), V_);
         }
     }
 
