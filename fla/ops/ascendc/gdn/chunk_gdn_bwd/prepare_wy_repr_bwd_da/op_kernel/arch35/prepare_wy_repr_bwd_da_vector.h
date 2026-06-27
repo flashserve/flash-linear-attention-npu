@@ -73,7 +73,8 @@ public:
 private:
     uint64_t B = 0;
     uint64_t T = 0;
-    uint64_t H = 0;
+    uint64_t HV = 0;
+    uint64_t HK = 0;
     uint64_t K = 0;
     uint64_t V = 0;
     uint64_t BT = 0;
@@ -136,7 +137,8 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Init(
     const PrepareWyReprBwdDaTilingDataA5& tiling, AscendC::TPipe *pipe_) {
     B = tiling.B;
     T = tiling.T;
-    H = tiling.H;
+    HV = tiling.HV;
+    HK = tiling.HK;
     K = tiling.K;
     V = tiling.V;
     BT = tiling.chunkSize;
@@ -149,7 +151,7 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Init(
 
     pipe = pipe_;
     workSpaceTensor.SetGlobalBuffer((__gm__ kType *)workspace);
-    workSpace2Tensor.SetGlobalBuffer((__gm__ kType *)workspace + B * H * T * BT);
+    workSpace2Tensor.SetGlobalBuffer((__gm__ kType *)workspace + B * HV * T * BT);
     dA1Tensor.SetGlobalBuffer((__gm__ kType *)dA);
     dA2Tensor.SetGlobalBuffer((__gm__ kType *)workspace);
     dA4Tensor.SetGlobalBuffer((__gm__ kType *)dA);
@@ -198,18 +200,26 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
     pipe->InitBuffer(kBetaGOutQue, 2, rowNum * K * sizeof(kType));
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
-        GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, BT, loopIdx, bos, eos);
+        GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, BT, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < H; h++) {
+        uint64_t keyBos = bos;
+        if (cu_seqlens == nullptr && HV != HK) {
+            uint64_t batchIdx = bos / (HV * T);
+            uint64_t timeBos = bos - batchIdx * HV * T;
+            keyBos = batchIdx * HK * T + timeBos;
+        }
+        uint64_t groupSize = HV / HK;
+        for (int h_v = 0; h_v < HV; h_v++) {
+            uint64_t h_k = h_v / groupSize;
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                     continue;
                 }
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
-                auto kOffset = (h * T + bos + rowOffset) * K;
-                auto betaOffset = h * T + bos + rowOffset;
-                auto gOffset = h * T + bos + rowOffset;
+                auto kOffset = (h_k * T + keyBos + rowOffset) * K;
+                auto betaOffset = h_v * T + bos + rowOffset;
+                auto gOffset = h_v * T + bos + rowOffset;
                 // copyin
                 {
                     auto tensorKIn = kInQue.AllocTensor<kType>();
@@ -265,7 +275,8 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                 //copyout
                 {
                     auto tensorOut = kBetaGOutQue.DeQue<kType>();
-                    DataCopy(workSpace2Tensor[kOffset], tensorOut, K * curRowNum);
+                    auto kbgOffset = (h_v * T + bos + rowOffset) * K;
+                    DataCopy(workSpace2Tensor[kbgOffset], tensorOut, K * curRowNum);
                     kBetaGOutQue.FreeTensor(tensorOut);
                 }
             }
@@ -297,17 +308,17 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
     betaTensor.SetGlobalBuffer((__gm__ betaType *)beta);
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
-        GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, BT, loopIdx, bos, eos);
+        GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, BT, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < H; h++) {
+        for (int h_v = 0; h_v < HV; h_v++) {
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                     continue;
                 }
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
-                auto vOffset = (h * T + bos + rowOffset) * V;
-                auto betaOffset = h * T + bos + rowOffset;
+                auto vOffset = (h_v * T + bos + rowOffset) * V;
+                auto betaOffset = h_v * T + bos + rowOffset;
                 // copyin
                 {
                     auto tensorVin = vInQue.AllocTensor<kType>();
@@ -381,16 +392,16 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
     pipe->InitBuffer(mduwOutQue, 2, rowNum * BT * sizeof(kType));
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
-        GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, BT, loopIdx, bos, eos);
+        GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, BT, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < H; h++) {
+        for (int h_v = 0; h_v < HV; h_v++) {
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 ++vecTaskIdx;
                 if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                     continue;
                 }
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
-                auto offset = (h * T + bos + rowOffset) * BT;
+                auto offset = (h_v * T + bos + rowOffset) * BT;
                 // copyin
                 {
                     auto tensorMduin = mduInQue.AllocTensor<kType>();
@@ -507,9 +518,9 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
     dATensor.SetGlobalBuffer((__gm__ kType *)dA);
 
     for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += coreNumAic) {
-        GetChunkOffset(cu_seqlens, chunk_indices, B, H, T, BT, loopIdx, bos, eos);
+        GetChunkOffset(cu_seqlens, chunk_indices, B, HV, T, BT, loopIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
-        for (int h = 0; h < H; h++) {
+        for (int h_v = 0; h_v < HV; h_v++) {
             uint32_t taskNum = CeilDiv(curChunkSize, rowNum);
             taskNum = CeilDiv(taskNum, GetSubBlockNum());
             uint32_t dealTaskNum = 0;
@@ -517,7 +528,7 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
             // copyin gAll [1, BT] once per head
             auto& tensorGAllIn = tensorGAllInList[ubGAllListId];
             {
-                auto gAllOffset = h * T + bos;
+                auto gAllOffset = h_v * T + bos;
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventUbGAllInVMTE2List[ubGAllListId]);
                 DataCopyPad(tensorGAllIn, gTensor[gAllOffset],
                     {1, curChunkSize * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},
@@ -532,8 +543,8 @@ __aicore__ void inline PrepareWyReprBwdDAVectorProcess<kType, betaType>::Process
                     continue;
                 }
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
-                auto gOffset = h * T + bos + rowOffset;
-                auto offset = (h * T + bos + rowOffset) * BT;
+                auto gOffset = h_v * T + bos + rowOffset;
+                auto offset = (h_v * T + bos + rowOffset) * BT;
 
                 auto& tensorDA6In = tensorDA6InList[cvListId];
                 auto& tensorGIn = tensorGInList[ubListId];
@@ -1313,4 +1324,3 @@ __simd_vf__ inline void PrepareWyReprBwdDAVectorProcess<kType, betaType>::Proces
 }
 
 #endif  // PREPARE_WY_REPR_BWD_DA_VECTOR_H
-
