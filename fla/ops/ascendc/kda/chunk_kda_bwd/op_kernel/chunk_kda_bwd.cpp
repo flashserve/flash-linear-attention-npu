@@ -14,8 +14,14 @@ using namespace AscendC;
 namespace {
 constexpr float LN2 = 0.69314718055994530942f;
 constexpr uint64_t MAX_K_DIM = 256;
+constexpr uint64_t MAX_CHUNK_SIZE = 128;
 constexpr uint32_t EXP2_EVENT_ID = 0;
 constexpr uint32_t KDA_MTE2_V_EVENT_ID = 1;
+constexpr uint32_t KDA_SCALAR_MTE2_V_EVENT_ID = 2;
+constexpr uint32_t KDA_SCALAR_V_S_EVENT_ID = 3;
+constexpr uint32_t KDA_SCALAR_V_MTE3_EVENT_ID = 4;
+constexpr uint32_t KDA_SCALAR_MTE3_V_EVENT_ID = 5;
+constexpr uint32_t KDA_SCALAR_S_V_EVENT_ID = 6;
 
 __aicore__ inline uint32_t FloatToBits(float value)
 {
@@ -62,36 +68,14 @@ __aicore__ inline bfloat16_t BitsToBf16(uint16_t value)
 }
 
 template <typename T>
-__aicore__ inline float ReadAsFloat(GlobalTensor<T> &tensor, uint64_t offset)
-{
-    if constexpr (IsSameType<T, bfloat16_t>::value) {
-        return BitsToFloat(static_cast<uint32_t>(Bf16ToBits(tensor.GetValue(offset))) << 16);
-    }
-    return static_cast<float>(tensor.GetValue(offset));
-}
-
-template <typename T>
-__aicore__ inline void WriteFromFloat(GlobalTensor<T> &tensor, uint64_t offset, float value)
+__aicore__ inline T FloatToType(float value)
 {
     if constexpr (IsSameType<T, bfloat16_t>::value) {
         uint32_t bits = FloatToBits(value);
         uint32_t bias = 0x7FFFu + ((bits >> 16) & 1u);
-        tensor.SetValue(offset, BitsToBf16(static_cast<uint16_t>((bits + bias) >> 16)));
-        return;
+        return BitsToBf16(static_cast<uint16_t>((bits + bias) >> 16));
     }
-    tensor.SetValue(offset, static_cast<T>(value));
-}
-
-template <typename T>
-__aicore__ inline void AddToTensor(GlobalTensor<T> &tensor, uint64_t offset, float delta)
-{
-    float value = ReadAsFloat(tensor, offset) + delta;
-    WriteFromFloat(tensor, offset, value);
-}
-
-__aicore__ inline void AddToFloatTensor(GlobalTensor<float> &tensor, uint64_t offset, float delta)
-{
-    tensor.SetValue(offset, tensor.GetValue(offset) + delta);
+    return static_cast<T>(value);
 }
 
 template <typename T>
@@ -150,8 +134,14 @@ public:
         hasDht_ = tiling.hasDht;
         isVarLen_ = tiling.isVarLen;
 
+        pipe_->InitBuffer(scalarInBuf_, 32);
+        pipe_->InitBuffer(scalarFp32Buf_, 32);
+        pipe_->InitBuffer(scalarOutBuf_, 32);
+        pipe_->InitBuffer(scalarI64Buf_, 32);
         pipe_->InitBuffer(exp2Buf_, MAX_K_DIM * sizeof(float));
         pipe_->InitBuffer(vecBuf_, MAX_K_DIM * sizeof(float));
+        pipe_->InitBuffer(dbetaAccBuf_, MAX_CHUNK_SIZE * sizeof(float));
+        pipe_->InitBuffer(dgkAccBuf_, MAX_CHUNK_SIZE * MAX_K_DIM * sizeof(float));
     }
 
     __aicore__ inline void Process()
@@ -196,15 +186,15 @@ private:
         return ((seq * HV_ + hv) * K_ + d) * V_ + r;
     }
 
-    __aicore__ inline uint64_t ChunkCountBefore(uint64_t seq) const
+    __aicore__ inline uint64_t ChunkCountBefore(uint64_t seq)
     {
         if (!isVarLen_) {
             return 0;
         }
         uint64_t count = 0;
         for (uint64_t s = 0; s < seq; ++s) {
-            uint64_t start = static_cast<uint64_t>(cuSeqlens_.GetValue(s));
-            uint64_t end = static_cast<uint64_t>(cuSeqlens_.GetValue(s + 1));
+            uint64_t start = static_cast<uint64_t>(ReadInt64(cuSeqlens_, s));
+            uint64_t end = static_cast<uint64_t>(ReadInt64(cuSeqlens_, s + 1));
             count += (end - start + BT_ - 1) / BT_;
         }
         return count;
@@ -241,6 +231,144 @@ private:
         DataCopyParams params{1, static_cast<uint16_t>(rowBytes), 0, 0};
         DataCopyPadParams padParams{false, 0, 0, 0};
         DataCopyPad(dst, src[offset], params, padParams);
+    }
+
+    template <typename CopyT>
+    __aicore__ inline float ReadAsFloat(GlobalTensor<CopyT> &tensor, uint64_t offset)
+    {
+        LocalTensor<CopyT> scalarIn = scalarInBuf_.Get<CopyT>();
+        DataCopyParams params{1, static_cast<uint16_t>(sizeof(CopyT)), 0, 0};
+        DataCopyPadParams padParams{false, 0, 0, 0};
+        DataCopyPad(scalarIn, tensor[offset], params, padParams);
+        SetFlag<HardEvent::MTE2_V>(KDA_SCALAR_MTE2_V_EVENT_ID);
+        WaitFlag<HardEvent::MTE2_V>(KDA_SCALAR_MTE2_V_EVENT_ID);
+
+        LocalTensor<float> scalarFp32 = scalarFp32Buf_.Get<float>();
+        if constexpr (IsSameType<CopyT, float>::value) {
+            Adds(scalarFp32, scalarIn, 0.0f, 1);
+        } else {
+            Cast(scalarFp32, scalarIn, RoundMode::CAST_NONE, 1);
+        }
+        PipeBarrier<PIPE_V>();
+        SetFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+        WaitFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+        __ubuf__ float *ptr = (__ubuf__ float *)scalarFp32.GetPhyAddr();
+        return ptr[0];
+    }
+
+    __aicore__ inline int64_t ReadInt64(GlobalTensor<int64_t> &tensor, uint64_t offset)
+    {
+        LocalTensor<int64_t> scalarI64 = scalarI64Buf_.Get<int64_t>();
+        DataCopyParams params{1, static_cast<uint16_t>(sizeof(int64_t)), 0, 0};
+        DataCopyPadParams padParams{false, 0, 0, 0};
+        DataCopyPad(scalarI64, tensor[offset], params, padParams);
+        SetFlag<HardEvent::MTE2_V>(KDA_SCALAR_MTE2_V_EVENT_ID);
+        WaitFlag<HardEvent::MTE2_V>(KDA_SCALAR_MTE2_V_EVENT_ID);
+        SetFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+        WaitFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+        __ubuf__ int64_t *ptr = (__ubuf__ int64_t *)scalarI64.GetPhyAddr();
+        return ptr[0];
+    }
+
+    template <typename CopyT>
+    __aicore__ inline void WriteFromFloat(GlobalTensor<CopyT> &tensor, uint64_t offset, float value)
+    {
+        LocalTensor<float> scalarFp32 = scalarFp32Buf_.Get<float>();
+        Duplicate(scalarFp32, value, 1);
+        PipeBarrier<PIPE_V>();
+        DataCopyParams params{1, static_cast<uint16_t>(sizeof(CopyT)), 0, 0};
+        if constexpr (IsSameType<CopyT, float>::value) {
+            SetFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+            WaitFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+            DataCopyPad(tensor[offset], scalarFp32, params);
+        } else {
+            LocalTensor<CopyT> scalarOut = scalarOutBuf_.Get<CopyT>();
+            Cast(scalarOut, scalarFp32, RoundMode::CAST_RINT, 1);
+            PipeBarrier<PIPE_V>();
+            SetFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+            WaitFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+            DataCopyPad(tensor[offset], scalarOut, params);
+        }
+        SetFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
+        WaitFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
+    }
+
+    template <typename CopyT>
+    __aicore__ inline void AddToTensor(GlobalTensor<CopyT> &tensor, uint64_t offset, float delta)
+    {
+        float value = ReadAsFloat(tensor, offset) + delta;
+        WriteFromFloat(tensor, offset, value);
+    }
+
+    __aicore__ inline float ReadFloat(GlobalTensor<float> &tensor, uint64_t offset)
+    {
+        return ReadAsFloat(tensor, offset);
+    }
+
+    __aicore__ inline __ubuf__ float *UbPtr(LocalTensor<float> &tensor)
+    {
+        return (__ubuf__ float *)tensor.GetPhyAddr();
+    }
+
+    __aicore__ inline void PrepareScalarWrittenBuffer(LocalTensor<float> &tensor, uint64_t count)
+    {
+        SetFlag<HardEvent::S_V>(KDA_SCALAR_S_V_EVENT_ID);
+        WaitFlag<HardEvent::S_V>(KDA_SCALAR_S_V_EVENT_ID);
+        Adds(tensor, tensor, 0.0f, static_cast<uint32_t>(count));
+        PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void CopyFloatVectorOut(GlobalTensor<float> &dst, uint64_t offset, LocalTensor<float> &src,
+                                              uint64_t count)
+    {
+        uint64_t bytes = count * sizeof(float);
+        SetFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+        WaitFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+        if (bytes >= 32 && bytes % 32 == 0) {
+            DataCopy(dst[offset], src, static_cast<uint32_t>(count));
+        } else {
+            DataCopyParams params{1, static_cast<uint16_t>(bytes), 0, 0};
+            DataCopyPad(dst[offset], src, params);
+        }
+        SetFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
+        WaitFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
+    }
+
+    __aicore__ inline void InitGradAcc(uint64_t start, uint64_t curT)
+    {
+        activeChunkStart_ = start;
+        LocalTensor<float> dbetaAcc = dbetaAccBuf_.Get<float>();
+        LocalTensor<float> dgkAcc = dgkAccBuf_.Get<float>();
+        Duplicate(dbetaAcc, 0.0f, static_cast<uint32_t>(curT));
+        Duplicate(dgkAcc, 0.0f, static_cast<uint32_t>(curT * K_));
+        PipeBarrier<PIPE_V>();
+        SetFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+        WaitFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+    }
+
+    __aicore__ inline void AddDbeta(uint64_t token, float delta)
+    {
+        LocalTensor<float> dbetaAcc = dbetaAccBuf_.Get<float>();
+        __ubuf__ float *ptr = UbPtr(dbetaAcc);
+        ptr[token - activeChunkStart_] += delta;
+    }
+
+    __aicore__ inline void AddDgk(uint64_t token, uint64_t d, float delta)
+    {
+        LocalTensor<float> dgkAcc = dgkAccBuf_.Get<float>();
+        __ubuf__ float *ptr = UbPtr(dgkAcc);
+        ptr[(token - activeChunkStart_) * K_ + d] += delta;
+    }
+
+    __aicore__ inline void FlushGradAcc(uint64_t b, uint64_t hv, uint64_t start, uint64_t curT)
+    {
+        LocalTensor<float> dbetaAcc = dbetaAccBuf_.Get<float>();
+        PrepareScalarWrittenBuffer(dbetaAcc, curT);
+        CopyFloatVectorOut(dbeta_, BetaOffset(b, hv, start), dbetaAcc, curT);
+
+        LocalTensor<float> dgkAcc = dgkAccBuf_.Get<float>();
+        PrepareScalarWrittenBuffer(dgkAcc, curT * K_);
+        CopyFloatVectorOut(dgk_, KVOffset(b, hv, start, 0, K_), dgkAcc, curT * K_);
     }
 
     __aicore__ inline LocalTensor<float> Exp2G(uint64_t b, uint64_t hv, uint64_t t)
@@ -282,10 +410,6 @@ private:
         }
         for (uint64_t hv = hvBegin; hv < hvEnd; ++hv) {
             for (uint64_t t = seqStart; t < seqEnd; ++t) {
-                dbeta_.SetValue(BetaOffset(b, hv, t), 0.0f);
-                for (uint64_t d = 0; d < K_; ++d) {
-                    dgk_.SetValue(KVOffset(b, hv, t, d, K_), 0.0f);
-                }
                 for (uint64_t r = 0; r < V_; ++r) {
                     WriteFromFloat(dv_, KVOffset(b, hv, t, r, V_), 0.0f);
                 }
@@ -327,6 +451,7 @@ private:
         for (uint64_t i = 0; i < curT; ++i) {
             uint64_t ti = start + i;
             LocalTensor<float> expG = Exp2G(b, hv, ti);
+            __ubuf__ float *expGPtr = UbPtr(expG);
             for (uint64_t d = 0; d < K_; ++d) {
                 float dQG = 0.0f;
                 for (uint64_t r = 0; r < V_; ++r) {
@@ -335,34 +460,36 @@ private:
                 dQG *= scale_;
 
                 float qv = ReadAsFloat(q_, QOffset(b, qh, ti, d));
-                float expg = expG.GetValue(d);
+                float expg = expGPtr[d];
                 AddToTensor(dq_, QOffset(b, qh, ti, d), dQG * expg);
-                AddToFloatTensor(dgk_, KVOffset(b, hv, ti, d, K_), dQG * qv * expg * LN2);
+                AddDgk(ti, d, dQG * qv * expg * LN2);
             }
 
             LocalTensor<float> expLastMinusG = Exp2GDiff(b, hv, last, ti);
+            __ubuf__ float *expLastMinusGPtr = UbPtr(expLastMinusG);
             for (uint64_t d = 0; d < K_; ++d) {
                 float dKG = 0.0f;
                 for (uint64_t r = 0; r < V_; ++r) {
                     dKG += DState(seq, hv, d, r) * ReadAsFloat(vNew_, KVOffset(b, hv, ti, r, V_));
                 }
                 float kv = ReadAsFloat(k_, QOffset(b, qh, ti, d));
-                float factor = expLastMinusG.GetValue(d);
+                float factor = expLastMinusGPtr[d];
                 float kgGateGrad = dKG * kv * factor * LN2;
                 AddToTensor(dk_, QOffset(b, qh, ti, d), dKG * factor);
-                AddToFloatTensor(dgk_, KVOffset(b, hv, last, d, K_), kgGateGrad);
-                AddToFloatTensor(dgk_, KVOffset(b, hv, ti, d, K_), -kgGateGrad);
+                AddDgk(last, d, kgGateGrad);
+                AddDgk(ti, d, -kgGateGrad);
             }
         }
 
         LocalTensor<float> decayGate = Exp2G(b, hv, last);
+        __ubuf__ float *decayGatePtr = UbPtr(decayGate);
         for (uint64_t d = 0; d < K_; ++d) {
-            float decay = decayGate.GetValue(d);
+            float decay = decayGatePtr[d];
             float dDecay = 0.0f;
             for (uint64_t r = 0; r < V_; ++r) {
                 dDecay += DState(seq, hv, d, r) * HPrev(b, hv, chunkIdx, d, r);
             }
-            AddToFloatTensor(dgk_, KVOffset(b, hv, last, d, K_), dDecay * decay * LN2);
+            AddDgk(last, d, dDecay * decay * LN2);
         }
     }
 
@@ -388,16 +515,17 @@ private:
     {
         float value = 0.0f;
         LocalTensor<float> expG = Exp2G(b, hv, colToken);
+        __ubuf__ float *expGPtr = UbPtr(expG);
         for (uint64_t d = 0; d < K_; ++d) {
             float dw = DWValue(b, seq, hv, chunkIdx, start, end, rowToken, d);
             float kj = ReadAsFloat(k_, QOffset(b, qh, colToken, d));
-            float betaJ = beta_.GetValue(BetaOffset(b, hv, colToken));
-            value += dw * kj * betaJ * expG.GetValue(d);
+            float betaJ = ReadFloat(beta_, BetaOffset(b, hv, colToken));
+            value += dw * kj * betaJ * expGPtr[d];
         }
         for (uint64_t r = 0; r < V_; ++r) {
             float du = DUSum(b, seq, hv, start, end, rowToken, r);
             float vj = ReadAsFloat(v_, KVOffset(b, hv, colToken, r, V_));
-            float betaJ = beta_.GetValue(BetaOffset(b, hv, colToken));
+            float betaJ = ReadFloat(beta_, BetaOffset(b, hv, colToken));
             value += du * vj * betaJ;
         }
         return value;
@@ -429,8 +557,9 @@ private:
         uint64_t curT = end - start;
         for (uint64_t j = 0; j < curT; ++j) {
             uint64_t tj = start + j;
-            float betaJ = beta_.GetValue(BetaOffset(b, hv, tj));
+            float betaJ = ReadFloat(beta_, BetaOffset(b, hv, tj));
             LocalTensor<float> expG = Exp2G(b, hv, tj);
+            __ubuf__ float *expGPtr = UbPtr(expG);
             for (uint64_t d = 0; d < K_; ++d) {
                 float dKbg = 0.0f;
                 for (uint64_t i = 0; i < curT; ++i) {
@@ -439,10 +568,10 @@ private:
                              DWValue(b, seq, hv, chunkIdx, start, end, ti, d);
                 }
                 float kv = ReadAsFloat(k_, QOffset(b, qh, tj, d));
-                float eg = expG.GetValue(d);
+                float eg = expGPtr[d];
                 AddToTensor(dk_, QOffset(b, qh, tj, d), dKbg * betaJ * eg);
-                AddToFloatTensor(dbeta_, BetaOffset(b, hv, tj), dKbg * kv * eg);
-                AddToFloatTensor(dgk_, KVOffset(b, hv, tj, d, K_), dKbg * kv * betaJ * eg * LN2);
+                AddDbeta(tj, dKbg * kv * eg);
+                AddDgk(tj, d, dKbg * kv * betaJ * eg * LN2);
             }
             for (uint64_t r = 0; r < V_; ++r) {
                 float dVb = 0.0f;
@@ -452,31 +581,32 @@ private:
                 }
                 float vv = ReadAsFloat(v_, KVOffset(b, hv, tj, r, V_));
                 AddToTensor(dv_, KVOffset(b, hv, tj, r, V_), dVb * betaJ);
-                AddToFloatTensor(dbeta_, BetaOffset(b, hv, tj), dVb * vv);
+                AddDbeta(tj, dVb * vv);
             }
         }
 
         for (uint64_t i = 0; i < curT; ++i) {
             uint64_t ti = start + i;
-            float betaI = beta_.GetValue(BetaOffset(b, hv, ti));
+            float betaI = ReadFloat(beta_, BetaOffset(b, hv, ti));
             for (uint64_t j = 0; j < i; ++j) {
                 uint64_t tj = start + j;
                 float dRaw = DRawAkk(b, seq, qh, hv, start, end, i, j, curT, chunkIdx);
                 float sumKK = 0.0f;
                 LocalTensor<float> relGate = Exp2GDiff(b, hv, ti, tj);
+                __ubuf__ float *relGatePtr = UbPtr(relGate);
                 for (uint64_t d = 0; d < K_; ++d) {
                     float ki = ReadAsFloat(k_, QOffset(b, qh, ti, d));
                     float kj = ReadAsFloat(k_, QOffset(b, qh, tj, d));
-                    float er = relGate.GetValue(d);
+                    float er = relGatePtr[d];
                     sumKK += ki * kj * er;
                     float common = dRaw * betaI * er;
                     AddToTensor(dk_, QOffset(b, qh, ti, d), common * kj);
                     AddToTensor(dk_, QOffset(b, qh, tj, d), common * ki);
                     float gateGrad = common * ki * kj * LN2;
-                    AddToFloatTensor(dgk_, KVOffset(b, hv, ti, d, K_), gateGrad);
-                    AddToFloatTensor(dgk_, KVOffset(b, hv, tj, d, K_), -gateGrad);
+                    AddDgk(ti, d, gateGrad);
+                    AddDgk(tj, d, -gateGrad);
                 }
-                AddToFloatTensor(dbeta_, BetaOffset(b, hv, ti), dRaw * sumKK);
+                AddDbeta(ti, dRaw * sumKK);
             }
         }
         (void)seq;
@@ -495,15 +625,16 @@ private:
                             ReadAsFloat(vNew_, KVOffset(b, hv, tj, r, V_));
                 }
                 LocalTensor<float> relGate = Exp2GDiff(b, hv, ti, tj);
+                __ubuf__ float *relGatePtr = UbPtr(relGate);
                 for (uint64_t d = 0; d < K_; ++d) {
                     float qi = ReadAsFloat(q_, QOffset(b, qh, ti, d));
                     float kj = ReadAsFloat(k_, QOffset(b, qh, tj, d));
-                    float common = dAqk * scale_ * relGate.GetValue(d);
+                    float common = dAqk * scale_ * relGatePtr[d];
                     AddToTensor(dq_, QOffset(b, qh, ti, d), common * kj);
                     AddToTensor(dk_, QOffset(b, qh, tj, d), common * qi);
                     float gateGrad = common * qi * kj * LN2;
-                    AddToFloatTensor(dgk_, KVOffset(b, hv, ti, d, K_), gateGrad);
-                    AddToFloatTensor(dgk_, KVOffset(b, hv, tj, d, K_), -gateGrad);
+                    AddDgk(ti, d, gateGrad);
+                    AddDgk(tj, d, -gateGrad);
                 }
             }
         }
@@ -516,9 +647,10 @@ private:
         uint64_t last = end - 1;
         float newState[MAX_K_DIM];
         LocalTensor<float> decayGate = Exp2G(b, hv, last);
+        __ubuf__ float *decayGatePtr = UbPtr(decayGate);
         for (uint64_t r = 0; r < V_; ++r) {
             for (uint64_t d = 0; d < K_; ++d) {
-                float decay = decayGate.GetValue(d);
+                float decay = decayGatePtr[d];
                 float value = DState(seq, hv, d, r) * decay;
                 for (uint64_t i = 0; i < curT; ++i) {
                     uint64_t ti = start + i;
@@ -543,9 +675,11 @@ private:
         if (end <= start) {
             return;
         }
+        InitGradAcc(start, end - start);
         AddQGKGDecayGrad(b, seq, qh, hv, chunkIdx, start, end);
         AddWUGrad(b, seq, qh, hv, chunkIdx, start, end);
         AddAqkGrad(b, qh, hv, start, end);
+        FlushGradAcc(b, hv, start, end - start);
         UpdateDStatePrev(b, seq, hv, chunkIdx, start, end);
     }
 
@@ -555,8 +689,8 @@ private:
         uint64_t seqStart = 0;
         uint64_t seqEnd = T_;
         if (isVarLen_) {
-            seqStart = static_cast<uint64_t>(cuSeqlens_.GetValue(seq));
-            seqEnd = static_cast<uint64_t>(cuSeqlens_.GetValue(seq + 1));
+            seqStart = static_cast<uint64_t>(ReadInt64(cuSeqlens_, seq));
+            seqEnd = static_cast<uint64_t>(ReadInt64(cuSeqlens_, seq + 1));
         }
         uint64_t group = HV_ / H_;
         uint64_t hvBegin = qh * group;
@@ -604,8 +738,14 @@ private:
     GlobalTensor<float> dgk_;
     GlobalTensor<T> dh0_;
     TPipe *pipe_ = nullptr;
+    TBuf<TPosition::VECCALC> scalarInBuf_;
+    TBuf<TPosition::VECCALC> scalarFp32Buf_;
+    TBuf<TPosition::VECCALC> scalarOutBuf_;
+    TBuf<TPosition::VECCALC> scalarI64Buf_;
     TBuf<TPosition::VECCALC> exp2Buf_;
     TBuf<TPosition::VECCALC> vecBuf_;
+    TBuf<TPosition::VECCALC> dbetaAccBuf_;
+    TBuf<TPosition::VECCALC> dgkAccBuf_;
 
     uint64_t B_ = 0;
     uint64_t N_ = 0;
@@ -617,6 +757,7 @@ private:
     uint64_t BT_ = 0;
     uint64_t NT_ = 0;
     float scale_ = 1.0f;
+    uint64_t activeChunkStart_ = 0;
     bool hasDht_ = false;
     bool isVarLen_ = false;
 };

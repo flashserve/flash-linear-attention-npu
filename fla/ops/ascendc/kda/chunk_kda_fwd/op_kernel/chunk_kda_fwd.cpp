@@ -47,6 +47,10 @@ constexpr float LN2 = 0.69314718055994530942f;
 constexpr uint32_t EXP2_UB_ELEMENTS = 256;
 constexpr uint32_t EXP2_EVENT_ID = 0;
 constexpr uint32_t KDA_MTE2_V_EVENT_ID = 1;
+constexpr uint32_t KDA_SCALAR_MTE2_V_EVENT_ID = 2;
+constexpr uint32_t KDA_SCALAR_V_S_EVENT_ID = 3;
+constexpr uint32_t KDA_SCALAR_V_MTE3_EVENT_ID = 4;
+constexpr uint32_t KDA_SCALAR_MTE3_V_EVENT_ID = 5;
 constexpr uint8_t KDA_SCORE_DONE_FLAG0 = 2;
 constexpr uint8_t KDA_SCORE_DONE_FLAG1 = 3;
 constexpr uint8_t KDA_SCORE_READY_FLAG0 = 4;
@@ -106,15 +110,6 @@ __aicore__ inline bfloat16_t BitsToBf16(uint16_t value)
 }
 
 template <typename T>
-__aicore__ inline float ReadAsFloat(const GlobalTensor<T> &tensor, uint64_t offset)
-{
-    if constexpr (IsSameType<T, bfloat16_t>::value) {
-        return BitsToFloat(static_cast<uint32_t>(Bf16ToBits(tensor.GetValue(offset))) << 16);
-    }
-    return static_cast<float>(tensor.GetValue(offset));
-}
-
-template <typename T>
 __aicore__ inline T FloatToType(float value)
 {
     if constexpr (IsSameType<T, bfloat16_t>::value) {
@@ -126,18 +121,13 @@ __aicore__ inline T FloatToType(float value)
 }
 
 template <typename T>
-__aicore__ inline void WriteFromFloat(GlobalTensor<T> &tensor, uint64_t offset, float value)
-{
-    tensor.SetValue(offset, FloatToType<T>(value));
-}
-
-template <typename T>
 class ChunkKdaFwdKernel {
 public:
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR initialState,
                                 GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o, GM_ADDR finalState,
                                 GM_ADDR aqk, GM_ADDR akk, GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg,
-                                GM_ADDR vNew, GM_ADDR h, const ChunkKdaFwdTilingData &tiling, TPipe *pipe)
+                                GM_ADDR vNew, GM_ADDR h, const ChunkKdaFwdTilingData &tiling, TPipe *pipe,
+                                bool initVecBuffers = true)
     {
         pipe_ = pipe;
         q_.SetGlobalBuffer((__gm__ T *)q);
@@ -180,6 +170,12 @@ public:
         usedCoreNum_ = tiling.usedCoreNum;
 
         if (pipe_ != nullptr) {
+            pipe_->InitBuffer(scalarInBuf_, 32);
+            pipe_->InitBuffer(scalarFp32Buf_, 32);
+            pipe_->InitBuffer(scalarOutBuf_, 32);
+            pipe_->InitBuffer(scalarI64Buf_, 32);
+        }
+        if (pipe_ != nullptr && initVecBuffers) {
             pipe_->InitBuffer(exp2Buf_, EXP2_UB_ELEMENTS * sizeof(float));
             pipe_->InitBuffer(vecBuf_, 5 * EXP2_UB_ELEMENTS * sizeof(float));
             pipe_->InitBuffer(qInQue_, 1, EXP2_UB_ELEMENTS * sizeof(T));
@@ -221,7 +217,6 @@ public:
                 uint64_t hv = task % HV_;
                 ProcessSeqHeadAiv(seq, hv);
             }
-            AscendC::SyncAll<false>();
         }
     }
 
@@ -237,7 +232,6 @@ public:
                 uint64_t hv = task % HV_;
                 ProcessSeqHeadAic(seq, hv);
             }
-            AscendC::SyncAll<false>();
         }
     }
 
@@ -272,15 +266,15 @@ private:
         return ((seq * HV_ + hv) * K_ + d) * V_ + r;
     }
 
-    __aicore__ inline uint64_t ChunkCountBefore(uint64_t seq) const
+    __aicore__ inline uint64_t ChunkCountBefore(uint64_t seq)
     {
         if (!isVarLen_) {
             return 0;
         }
         uint64_t count = 0;
         for (uint64_t s = 0; s < seq; ++s) {
-            uint64_t start = static_cast<uint64_t>(cuSeqlens_.GetValue(s));
-            uint64_t end = static_cast<uint64_t>(cuSeqlens_.GetValue(s + 1));
+            uint64_t start = static_cast<uint64_t>(ReadInt64(cuSeqlens_, s));
+            uint64_t end = static_cast<uint64_t>(ReadInt64(cuSeqlens_, s + 1));
             count += (end - start + BT_ - 1) / BT_;
         }
         return count;
@@ -319,6 +313,81 @@ private:
         }
         DataCopyParams params{1, static_cast<uint16_t>(rowBytes), 0, 0};
         DataCopyPad(dst[offset], src, params);
+    }
+
+    template <typename CopyT>
+    __aicore__ inline float ReadAsFloat(GlobalTensor<CopyT> &tensor, uint64_t offset)
+    {
+        LocalTensor<CopyT> scalarIn = scalarInBuf_.Get<CopyT>();
+        DataCopyParams params{1, static_cast<uint16_t>(sizeof(CopyT)), 0, 0};
+        DataCopyPadParams padParams{false, 0, 0, 0};
+        DataCopyPad(scalarIn, tensor[offset], params, padParams);
+        SetFlag<HardEvent::MTE2_V>(KDA_SCALAR_MTE2_V_EVENT_ID);
+        WaitFlag<HardEvent::MTE2_V>(KDA_SCALAR_MTE2_V_EVENT_ID);
+
+        LocalTensor<float> scalarFp32 = scalarFp32Buf_.Get<float>();
+        if constexpr (IsSameType<CopyT, float>::value) {
+            Adds(scalarFp32, scalarIn, 0.0f, 1);
+        } else {
+            Cast(scalarFp32, scalarIn, RoundMode::CAST_NONE, 1);
+        }
+        PipeBarrier<PIPE_V>();
+        SetFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+        WaitFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+        __ubuf__ float *ptr = (__ubuf__ float *)scalarFp32.GetPhyAddr();
+        return ptr[0];
+    }
+
+    __aicore__ inline int64_t ReadInt64(GlobalTensor<int64_t> &tensor, uint64_t offset)
+    {
+        LocalTensor<int64_t> scalarI64 = scalarI64Buf_.Get<int64_t>();
+        DataCopyParams params{1, static_cast<uint16_t>(sizeof(int64_t)), 0, 0};
+        DataCopyPadParams padParams{false, 0, 0, 0};
+        DataCopyPad(scalarI64, tensor[offset], params, padParams);
+        SetFlag<HardEvent::MTE2_V>(KDA_SCALAR_MTE2_V_EVENT_ID);
+        WaitFlag<HardEvent::MTE2_V>(KDA_SCALAR_MTE2_V_EVENT_ID);
+        SetFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+        WaitFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+        __ubuf__ int64_t *ptr = (__ubuf__ int64_t *)scalarI64.GetPhyAddr();
+        return ptr[0];
+    }
+
+    template <typename CopyT>
+    __aicore__ inline void WriteFromFloat(GlobalTensor<CopyT> &tensor, uint64_t offset, float value)
+    {
+        LocalTensor<float> scalarFp32 = scalarFp32Buf_.Get<float>();
+        Duplicate(scalarFp32, value, 1);
+        PipeBarrier<PIPE_V>();
+        DataCopyParams params{1, static_cast<uint16_t>(sizeof(CopyT)), 0, 0};
+        if constexpr (IsSameType<CopyT, float>::value) {
+            SetFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+            WaitFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+            DataCopyPad(tensor[offset], scalarFp32, params);
+        } else {
+            LocalTensor<CopyT> scalarOut = scalarOutBuf_.Get<CopyT>();
+            Cast(scalarOut, scalarFp32, RoundMode::CAST_RINT, 1);
+            PipeBarrier<PIPE_V>();
+            SetFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+            WaitFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
+            DataCopyPad(tensor[offset], scalarOut, params);
+        }
+        SetFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
+        WaitFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
+    }
+
+    __aicore__ inline float ReadFloat(GlobalTensor<float> &tensor, uint64_t offset)
+    {
+        return ReadAsFloat(tensor, offset);
+    }
+
+    __aicore__ inline void WriteFloat(GlobalTensor<float> &tensor, uint64_t offset, float value)
+    {
+        WriteFromFloat(tensor, offset, value);
+    }
+
+    __aicore__ inline __ubuf__ float *UbPtr(LocalTensor<float> &tensor)
+    {
+        return (__ubuf__ float *)tensor.GetPhyAddr();
     }
 
     __aicore__ inline LocalTensor<float> Exp2G(uint64_t b, uint64_t hv, uint64_t t)
@@ -530,7 +599,7 @@ private:
                     aqkValue = ReadAsFloat(aqk_, AOffset(b, hv, ti, j)) * scale_;
                     if (j < i) {
                         akkValue = ReadAsFloat(akk_, AOffset(b, hv, ti, j)) *
-                                   beta_.GetValue(BetaOffset(b, hv, ti));
+                                   ReadFloat(beta_, BetaOffset(b, hv, ti));
                     }
                 }
                 WriteFromFloat(aqk_, AOffset(b, hv, ti, j), aqkValue);
@@ -612,9 +681,10 @@ private:
         for (uint64_t i = 0; i < curT; ++i) {
             uint64_t ti = start + i;
             LocalTensor<float> expLastMinusG = Exp2GDiff(b, hv, last, ti);
+            __ubuf__ float *expLastMinusGPtr = UbPtr(expLastMinusG);
             for (uint64_t d = 0; d < K_; ++d) {
                 float kv = ReadAsFloat(k_, QOffset(b, h, ti, d));
-                WriteFromFloat(kg_, KVOffset(b, hv, ti, d, K_), kv * expLastMinusG.GetValue(d));
+                WriteFromFloat(kg_, KVOffset(b, hv, ti, d, K_), kv * expLastMinusGPtr[d]);
             }
 
             float wSum[EXP2_UB_ELEMENTS];
@@ -624,11 +694,12 @@ private:
             for (uint64_t j = 0; j < curT; ++j) {
                 uint64_t tj = start + j;
                 LocalTensor<float> expGj = Exp2G(b, hv, tj);
-                float betaJ = beta_.GetValue(BetaOffset(b, hv, tj));
+                __ubuf__ float *expGjPtr = UbPtr(expGj);
+                float betaJ = ReadFloat(beta_, BetaOffset(b, hv, tj));
                 float a = ReadAsFloat(akk_, AOffset(b, hv, ti, j));
                 for (uint64_t d = 0; d < K_; ++d) {
                     float kj = ReadAsFloat(k_, QOffset(b, h, tj, d));
-                    wSum[d] += a * kj * betaJ * expGj.GetValue(d);
+                    wSum[d] += a * kj * betaJ * expGjPtr[d];
                 }
             }
             for (uint64_t d = 0; d < K_; ++d) {
@@ -640,7 +711,7 @@ private:
                     uint64_t tj = start + j;
                     float a = ReadAsFloat(akk_, AOffset(b, hv, ti, j));
                     float vj = ReadAsFloat(v_, KVOffset(b, hv, tj, r, V_));
-                    float betaJ = beta_.GetValue(BetaOffset(b, hv, tj));
+                    float betaJ = ReadFloat(beta_, BetaOffset(b, hv, tj));
                     sum += a * vj * betaJ;
                 }
                 WriteFromFloat(u_, KVOffset(b, hv, ti, r, V_), sum);
@@ -680,8 +751,9 @@ private:
         }
 
         LocalTensor<float> decayGate = Exp2G(b, hv, last);
+        __ubuf__ float *decayGatePtr = UbPtr(decayGate);
         for (uint64_t d = 0; d < K_; ++d) {
-            float decay = decayGate.GetValue(d);
+            float decay = decayGatePtr[d];
             for (uint64_t r = 0; r < V_; ++r) {
                 float next = decay * ReadAsFloat(h_, HOffset(b, hv, chunkIdx, d, r));
                 for (uint64_t i = 0; i < curT; ++i) {
@@ -708,14 +780,14 @@ private:
     }
 
     __aicore__ inline void ResolveSeq(uint64_t seq, uint64_t &b, uint64_t &seqStart, uint64_t &seqEnd,
-                                      uint64_t &chunkBase) const
+                                      uint64_t &chunkBase)
     {
         b = isVarLen_ ? 0 : seq;
         seqStart = 0;
         seqEnd = T_;
         if (isVarLen_) {
-            seqStart = static_cast<uint64_t>(cuSeqlens_.GetValue(seq));
-            seqEnd = static_cast<uint64_t>(cuSeqlens_.GetValue(seq + 1));
+            seqStart = static_cast<uint64_t>(ReadInt64(cuSeqlens_, seq));
+            seqEnd = static_cast<uint64_t>(ReadInt64(cuSeqlens_, seq + 1));
         }
         chunkBase = isVarLen_ ? ChunkCountBefore(seq) : 0;
     }
@@ -778,6 +850,10 @@ private:
     GlobalTensor<T> vNew_;
     GlobalTensor<T> h_;
     TPipe *pipe_ = nullptr;
+    TBuf<TPosition::VECCALC> scalarInBuf_;
+    TBuf<TPosition::VECCALC> scalarFp32Buf_;
+    TBuf<TPosition::VECCALC> scalarOutBuf_;
+    TBuf<TPosition::VECCALC> scalarI64Buf_;
     TBuf<TPosition::VECCALC> exp2Buf_;
     TBuf<TPosition::VECCALC> vecBuf_;
     TQue<TPosition::VECIN, 1> qInQue_;
@@ -829,7 +905,7 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(GM_ADDR q, GM_ADDR k, GM_ADD
             if ASCEND_IS_AIC {
                 ChunkKdaFwdKernel<bfloat16_t> op;
                 op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w, u,
-                        qg, kg, v_new, h, tilingData, nullptr);
+                        qg, kg, v_new, h, tilingData, &pipe, false);
                 op.ProcessAic();
             }
             if ASCEND_IS_AIV {
@@ -842,7 +918,7 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(GM_ADDR q, GM_ADDR k, GM_ADD
             if ASCEND_IS_AIC {
                 ChunkKdaFwdKernel<half> op;
                 op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w, u,
-                        qg, kg, v_new, h, tilingData, nullptr);
+                        qg, kg, v_new, h, tilingData, &pipe, false);
                 op.ProcessAic();
             }
             if ASCEND_IS_AIV {
