@@ -225,11 +225,17 @@ public:
 
         uint32_t mActualPadded = (mActual + NZ_BLOCK_SIZE - 1) / NZ_BLOCK_SIZE * NZ_BLOCK_SIZE;
         bool waitWsFromMte3 = storeFinalState && isInitialState && std::is_same<FinalStateElement, float>::value;
-        for (uint32_t rowStart = rowBegin; rowStart < rowEnd; rowStart += ROW_TILE) {
+        for (uint32_t rowStart = rowBegin; rowStart < rowEnd;) {
+            uint32_t alignExtra = rowStart & 7;
+            uint32_t maxRowsThisTile = ROW_TILE - alignExtra;
             uint32_t rowsThisTile = rowEnd - rowStart;
-            if (rowsThisTile > ROW_TILE) {
-                rowsThisTile = ROW_TILE;
+            if (rowsThisTile > maxRowsThisTile) {
+                rowsThisTile = maxRowsThisTile;
             }
+            uint32_t gbrcRealStart = rowStart & ~7;
+            uint32_t gbrcRealProcess = alignExtra + rowsThisTile;
+            uint32_t dstShape_[2] = {gbrcRealProcess, nvActual};
+            uint32_t srcShape_[2] = {gbrcRealProcess, 1};
             uint32_t localRowStart = rowStart - rowBegin;
 
             AscendC::GlobalTensor<VElementOutput> vnewOutputThisTile = vnewOutput[rowStart * inputStride];
@@ -250,21 +256,16 @@ public:
             AscendC::Sub<float>(wsUbTensorThisTile, calcUbTensor, wsUbTensorThisTile, rowsThisTile * nvActual);
             AscendC::PipeBarrier<PIPE_V>();
 
-            for (uint32_t row = 0; row < rowsThisTile; ++row) {
-                AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
-                AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
-                float gScale = gUbTensor.GetValue(rowStart + row);
-                AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
-                AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
-                AscendC::Muls(calcUbTensor[row * nvActual], wsUbTensorThisTile[row * nvActual], gScale, nvActual);
-            }
+            AscendC::Broadcast<float, 2, 1>(calcUbTensor, gUbTensor[gbrcRealStart], dstShape_, srcShape_, shareBuffer_);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mul(calcUbTensor[alignExtra * nvActual], wsUbTensorThisTile, calcUbTensor[alignExtra * nvActual], rowsThisTile * nvActual);
             AscendC::PipeBarrier<PIPE_V>();
 
             uint32_t nvLoops = nvActual / FLOAT_NUM_PER_REPEAT;
             for (uint32_t nLoop = 0; nLoop < nvLoops; nLoop++) {
                 uint32_t castSrcOffset = nLoop * FLOAT_NUM_PER_REPEAT;
                 uint32_t castDstOffset = nLoop * rowsThisTile * FLOAT_NUM_PER_REPEAT;
-                AscendC::Cast(vNewDecayUbTensor[castDstOffset], calcUbTensor[castSrcOffset], AscendC::RoundMode::CAST_RINT, FLOAT_NUM_PER_REPEAT, rowsThisTile, {(uint16_t)rowsThisTile, 1, 1, (uint8_t)(nvLoops * 8)});
+                AscendC::Cast(vNewDecayUbTensor[castDstOffset], calcUbTensor[alignExtra * nvActual + castSrcOffset], AscendC::RoundMode::CAST_RINT, FLOAT_NUM_PER_REPEAT, rowsThisTile, {(uint16_t)rowsThisTile, 1, 1, (uint8_t)(nvLoops * 8)});
             }
 
             AscendC::PipeBarrier<PIPE_V>();
@@ -281,6 +282,9 @@ public:
             AscendC::DataCopy(l1VUpdate[l1Addr], vNewDecayUbTensor, intriParams);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
+            if (rowStart + rowsThisTile >= rowEnd) {
+                Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
+            }
 
             AscendC::Cast(vNewOutputUbTensor, wsUbTensorThisTile, AscendC::RoundMode::CAST_RINT, rowsThisTile * nvActual);
             AscendC::PipeBarrier<PIPE_V>();
@@ -288,6 +292,7 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
             CopyUbToGm(vnewOutputThisTile, vNewOutputUbTensor, rowsThisTile, nvActual, inputStride);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
+            rowStart += rowsThisTile;
         }
 
         if (rowBegin < rowEnd) {
@@ -295,7 +300,6 @@ public:
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
         }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
-        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
 
     }
 
