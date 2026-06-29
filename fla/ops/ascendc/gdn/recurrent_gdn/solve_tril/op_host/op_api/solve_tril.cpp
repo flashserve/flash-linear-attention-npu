@@ -18,16 +18,12 @@ const aclTensor* SolveTril(
     const aclTensor *x,
     const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional,
-    const aclTensor *mchOutOptional,
-    const aclTensor *zeroMatOptional,
-    const aclTensor *eyeMatOptional,
     int64_t chunkSize,
     const char *layout,
     const aclTensor *xOut,
     aclOpExecutor *executor)
 {
-    L0_DFX(SolveTril, x, cuSeqlensOptional, chunkIndicesOptional,
-           mchOutOptional, zeroMatOptional, eyeMatOptional, chunkSize, layout, xOut);
+    L0_DFX(SolveTril, x, cuSeqlensOptional, chunkIndicesOptional, chunkSize, layout, xOut);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional) {
@@ -48,8 +44,7 @@ const aclTensor* SolveTril(
     std::string layoutStr(layout ? layout : "bsnd");
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(SolveTril,
-        OP_INPUT(x, actualCuSeqlens, actualChunkIndices,
-                 mchOutOptional, zeroMatOptional, eyeMatOptional),
+        OP_INPUT(x, actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(xOut),
         OP_ATTR(chunkSize, layoutStr));
     if (ret != ACLNN_SUCCESS) {

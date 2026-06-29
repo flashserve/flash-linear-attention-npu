@@ -8,15 +8,6 @@
 #include "tiling/platform/platform_ascendc.h"
 #include <string>
 
-// Platform detection for tiling layer (aligns with solve_tril_common.h)
-#if !defined(SOLVE_TRIL_PLATFORM_ASCEND950)
-#if defined(__ASCEND950__) || defined(ASCENDC_PLATFORM_ASCEND950)
-#define SOLVE_TRIL_PLATFORM_ASCEND950 1
-#else
-#define SOLVE_TRIL_PLATFORM_ASCEND950 0
-#endif
-#endif
-
 namespace optiling {
 
 constexpr uint32_t INPUT_X_IDX = 0;
@@ -101,6 +92,14 @@ static ge::graphStatus SolveTrilTilingFunc(gert::TilingContext* context)
     int64_t tilesPerCore = (totalTiles + coreNum - 1) / coreNum;
 
     SolveTrilTilingData tiling;
+    // ===== tiling 字段语义说明（MCH 上片后）=====
+    // 下列 7 个字段沿用本仓字段名，但语义按 MCH 版实现解释（kernel 端用这些名字读取 MCH 变量）：
+    //   batchSize -> batchSize, seqLen -> seqLength, chunkSize -> chunkSize,
+    //   numHeads  -> numHead,   numChunks -> chunkNumInSeq,
+    //   totalChunks -> chunkNumTotal（= MCH 主循环上界 = 全部 (chunk,head) tile 数 = totalTiles）,
+    //   layoutMode -> mode（0=bhtd, 1=bsnd 定长, 2=tnd 变长；MCH 仅处理 1/2）。
+    // 其余字段（totalTiles / matrixSize / isLower / hasCuSeqlens / tilesPerCore /
+    //   lastChunkValidSize / isVarlen）沿用本仓原有语义与逻辑，供后续 MBH 使用。
     tiling.set_totalTiles(totalTiles);
     tiling.set_matrixSize(chunkSize);
     tiling.set_numHeads(H);
@@ -113,7 +112,10 @@ static ge::graphStatus SolveTrilTilingFunc(gert::TilingContext* context)
     tiling.set_numChunks(numChunks);
     tiling.set_lastChunkValidSize(lastChunkValidSize);
     tiling.set_isVarlen(isVarlen);
-    tiling.set_totalChunks(totalChunks);
+    // chunkNumTotal 语义：MCH 主循环上界 = 全部 tile 数（= totalTiles）。
+    // 注意与本仓旧 totalChunks（变长下 = chunkIndicesLen/2，定长下 = 0）不同；
+    // 旧值未被任何已启用路径使用，此处改写为 MCH 所需的 totalTiles。
+    tiling.set_totalChunks(totalTiles);
     tiling.set_layoutMode(layoutMode);
 
     context->SetTilingKey(1);
@@ -126,19 +128,10 @@ static ge::graphStatus SolveTrilTilingFunc(gert::TilingContext* context)
     context->SetBlockDim(usedCoreNum);
 
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
-#if SOLVE_TRIL_PLATFORM_ASCEND950
-    size_t userWorkspaceSize = 0;
-#else
-    size_t sharedSize = 3 * chunkSize * chunkSize * sizeof(uint16_t);
-    size_t perCoreSize = chunkSize * chunkSize * sizeof(uint16_t);
-    // 每核需要 2 段 per-core 区：scratch（L0CToSlot 中转）+ xGM（MBH 调试时 X 的 GM 常驻副本，
-    // ExtractBlocksToSlot 从该区按块 GM->L1 提取，规避失效的 L1->GM 直拷）。
-    // 非调试构建多预留一段亦无害。
-    size_t userWorkspaceSize = sharedSize + 2 * usedCoreNum * perCoreSize;
-#endif
-    userWorkspaceSize = ((userWorkspaceSize + 511) / 512) * 512;
+    // 新 kernel 全程片上缓存（OnChipBuffer: UB/L1/L0），不使用 user GM workspace。
+    // 仅预留系统 workspace（GetLibApiWorkSpaceSize）。
     size_t* ws = context->GetWorkspaceSizes(1);
-    ws[0] = userWorkspaceSize + sysWorkspaceSize;
+    ws[0] = sysWorkspaceSize;
 
     return ge::GRAPH_SUCCESS;
 }

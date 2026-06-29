@@ -76,9 +76,11 @@ def get_include_dirs():
 
 def get_compile_args():
     compile_args = ["-std=c++17"]
-    # MBH 调试模式：启用 solve_tril 的 MCH 输出 / 全 0 矩阵 / 单位矩阵 调试入参。
-    # 屏蔽 MCH 实现、单独调试 MBH 模块时打开；正式构建时移除该宏。
-    compile_args.append("-DSOLVE_TRIL_MBH_DEBUG_ONLY=1")
+    # MCH 已上片，solve_tril 接口收敛为 (x, cu_seqlens, chunk_indices, x_out)，
+    # 不再需要 MCH 输出 / 全 0 矩阵 / 单位矩阵 调试入参。
+    # 各 binding 的 `#if SOLVE_TRIL_MBH_DEBUG_ONLY` 块在该宏未定义时走 `#else`（6 段接口）分支。
+    # 如需临时回到“屏蔽 MCH、单独对拍 MBH”的调试模式，再打开下面这行：
+    # compile_args.append("-DSOLVE_TRIL_MBH_DEBUG_ONLY=1")
     # for Windows
     if sys.platform == "win32":
         compile_args.append("/MD")
