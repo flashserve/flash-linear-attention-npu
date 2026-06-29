@@ -71,6 +71,3 @@ examples/fast_kernel_launch_example/build/
 examples/fast_kernel_launch_example/dist
 .history/
 
-# solve_tril 调试副本（含空格目录名，仅本地调试用，不纳入仓库）
-/fla/ops/ascendc/gdn/recurrent_gdn/solve_tril copy/
-/fla/ops/ascendc/gdn/recurrent_gdn/solve_tril copy 2/
