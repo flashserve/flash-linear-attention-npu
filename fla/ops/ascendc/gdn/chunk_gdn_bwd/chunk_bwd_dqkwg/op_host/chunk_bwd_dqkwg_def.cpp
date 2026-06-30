@@ -15,7 +15,8 @@
  * 维度拆分 (GVA): H 拆为 HV 和 HK, HV = n_ratio * HK
  * - q, k: [B, HK, T, K]
  * - v, g, dox, dv, h, dh: [B, HV, T, ...] 或 [B, HV, ...]
- * - 所有输出 (dq/dk/dw/dg): [B, HV, T, ...] 或 [B, HV, ...]
+ * - dq, dk: [B, HK, T, K]
+ * - dw, dg: [B, HV, T, ...]
  */
 
 #include "register/op_def_registry.h"
@@ -112,14 +113,14 @@ public:
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
 
-        // dq: [B, HV, T, K] - gradient of q (HV heads)
+        // dq: [B, HK, T, K] - gradient of q (HK heads)
         this->Output("dq")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16})
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
 
-        // dk: [B, HV, T, K] - gradient of k (HV heads)
+        // dk: [B, HK, T, K] - gradient of k (HK heads)
         this->Output("dk")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16})

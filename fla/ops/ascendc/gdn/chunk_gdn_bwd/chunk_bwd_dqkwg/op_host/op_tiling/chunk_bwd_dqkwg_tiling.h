@@ -26,7 +26,7 @@ namespace optiling {
 BEGIN_TILING_DATA_DEF(ChunkBwdDqkwgTilingData)
     // 基本形状参数
     TILING_DATA_FIELD_DEF(uint64_t, B);              // batch size
-    TILING_DATA_FIELD_DEF(uint64_t, HV);             // value 侧 head 数 (v/g/h/do/dh/dv 及全部输出)
+    TILING_DATA_FIELD_DEF(uint64_t, HV);             // value 侧 head 数 (v/g/h/do/dh/dv/dw/dg)
     TILING_DATA_FIELD_DEF(uint64_t, HK);             // key/query 侧 head 数 (q/k), HV = n_ratio * HK
     TILING_DATA_FIELD_DEF(uint64_t, T);              // sequence length
     TILING_DATA_FIELD_DEF(uint64_t, K);              // key/query dimension
@@ -44,9 +44,9 @@ BEGIN_TILING_DATA_DEF(ChunkBwdDqkwgTilingData)
     TILING_DATA_FIELD_DEF(uint64_t, wsBtxKSyncSlotsPerHead); // cross-stage group ring depth per core
     TILING_DATA_FIELD_DEF(uint64_t, wsDgLastOffset);     // PartA: b_dg_last 偏移
     TILING_DATA_FIELD_DEF(uint64_t, dgLastSize);         // PartA: b_dg_last 大小, 32B 对齐
-    TILING_DATA_FIELD_DEF(uint64_t, wsMm5Offset);        // PartA: mm5 / 之后 PartD mm7 复用
+    TILING_DATA_FIELD_DEF(uint64_t, wsMm5Offset);        // PartA: mm5 / GVA C: dq_inner / PartD: mm7
     TILING_DATA_FIELD_DEF(uint64_t, wsDsTempOffset);     // PartB: b_ds_temp 偏移
-    TILING_DATA_FIELD_DEF(uint64_t, wsMm6Offset);        // PartC: mm6 复用已释放的 wsDw
+    TILING_DATA_FIELD_DEF(uint64_t, wsMm6Offset);        // PartC: mm6 / GVA D: dk_inner
     TILING_DATA_FIELD_DEF(uint64_t, wsMm7Offset);        // PartD: mm7 复用已释放的 wsMm5
     TILING_DATA_FIELD_DEF(uint64_t, wsMul1Offset);       // independent short BT x BT ring for mul1
 
