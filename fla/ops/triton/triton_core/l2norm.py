@@ -5,19 +5,23 @@ import torch.nn as nn
 import triton
 import triton.language as tl
 
-from .utils import input_guard, is_amd
-
-BT_LIST = [8, 16, 32, 64, 128]
-NUM_WARPS_AUTOTUNE = [1, 2, 4, 8, 16] if is_amd else [1, 2, 4, 8, 16, 32]
+from .utils import input_guard
 
 
-@triton.autotune(
-    configs=[
-        triton.Config({}, num_warps=num_warps)
-        for num_warps in NUM_WARPS_AUTOTUNE
-    ],
-    key=['D']
-)
+BT_LIST = (8, 16, 32, 64, 128)
+FWD_TARGET_BLOCK_ELEMENTS = 8 * 1024
+BWD_TARGET_BLOCK_ELEMENTS = 8 * 1024
+FWD_MAX_BT = 32
+BWD_MAX_BT = 64
+
+
+def _select_l2norm_bt(bd: int, target_block_elements: int, max_bt: int) -> int:
+    max_bt_by_size = max(1, target_block_elements // max(1, int(bd)))
+    max_bt = min(int(max_bt), max_bt_by_size)
+    candidates = [bt for bt in BT_LIST if bt <= max_bt]
+    return candidates[-1] if candidates else BT_LIST[0]
+
+
 @triton.jit
 def l2norm_fwd_kernel1(
     x,
@@ -41,13 +45,6 @@ def l2norm_fwd_kernel1(
     tl.store(rstd + i_t, b_rstd)
 
 
-@triton.autotune(
-    configs=[
-        triton.Config({}, num_warps=num_warps)
-        for num_warps in NUM_WARPS_AUTOTUNE
-    ],
-    key=['D']
-)
 @triton.jit
 def l2norm_bwd_kernel1(
     y,
@@ -72,24 +69,15 @@ def l2norm_bwd_kernel1(
     tl.store(dx + cols, b_dx, mask=mask)
 
 
-@triton.autotune(
-    configs=[
-        triton.Config({'BT': BT}, num_warps=num_warps)
-        for num_warps in [1, 2, 4, 8, 16]
-        for BT in BT_LIST
-    ],
-    key=['D', 'NB']
-)
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def l2norm_fwd_kernel(
     x,
     y,
     rstd,
     eps,
-    T: tl.constexpr,
+    T,
     D: tl.constexpr,
     BD: tl.constexpr,
-    NB: tl.constexpr,
     BT: tl.constexpr,
     bt_size,
 ):
@@ -109,45 +97,22 @@ def l2norm_fwd_kernel(
             tl.store(p_rstd, b_rstd.to(p_rstd.dtype.element_ty), boundary_check=(0,))
 
 
-@triton.autotune(
-    configs=[
-        triton.Config({'BT': BT}, num_warps=num_warps)
-        for num_warps in [1, 2, 4, 8, 16]
-        for BT in BT_LIST
-    ],
-    key=['D', 'NB']
-)
-@triton.jit
+@triton.jit(do_not_specialize=['T'])
 def l2norm_bwd_kernel(
     y,
     rstd,
     dy,
     dx,
     eps,
-    T: tl.constexpr,
+    T,
     D: tl.constexpr,
     BD: tl.constexpr,
-    NB: tl.constexpr,
     BT: tl.constexpr,
     bt_size,
 ):
-    i_t_start = tl.program_id(0)
-    num_blocks = bt_size
-
-    total_i_t = T // BT
-    base_tasks_per_block = total_i_t // num_blocks
-    remainder_tasks = total_i_t % num_blocks
-
-    if i_t_start < remainder_tasks:
-        tasks_this_block = base_tasks_per_block + 1
-        start_i_t = i_t_start * tasks_this_block
-    else:
-        tasks_this_block = base_tasks_per_block
-        start_i_t = i_t_start * base_tasks_per_block + remainder_tasks
-
-    for task_idx in range(tasks_this_block):
-        i_t = start_i_t + task_idx
-        block_start = i_t * BT
+    i_t = tl.program_id(0)
+    for offset in range(0, bt_size):
+        block_start = (i_t * bt_size + offset) * BT
         if block_start < T:
             p_y = tl.make_block_ptr(y, (T, D), (D, 1), (block_start, 0), (BT, BD), (1, 0))
             p_rstd = tl.make_block_ptr(rstd, (T,), (1,), (block_start,), (BT,), (0,))
@@ -183,7 +148,7 @@ def l2norm_fwd(
 
     rstd = torch.empty((T,), dtype=torch.float32, device=x.device)
     if D <= 512:
-        NB = triton.cdiv(T, 2048)
+        BT = _select_l2norm_bt(BD, FWD_TARGET_BLOCK_ELEMENTS, FWD_MAX_BT)
         bt_size = 32
 
         def grid(meta):
@@ -198,7 +163,7 @@ def l2norm_fwd(
             T=T,
             D=D,
             BD=BD,
-            NB=NB,
+            BT=BT,
             bt_size=bt_size,
         )
     else:
@@ -233,9 +198,14 @@ def l2norm_bwd(
         raise RuntimeError("This layer norm doesn't support feature dim >= 64KB.")
 
     if D <= 512:
-        NB = triton.cdiv(T, 2048)
+        BT = _select_l2norm_bt(BD, BWD_TARGET_BLOCK_ELEMENTS, BWD_MAX_BT)
         bt_size = 40
-        l2norm_bwd_kernel[(bt_size,)](
+
+        def grid(meta):
+            new_bt = meta['BT'] * bt_size
+            return (triton.cdiv(T, new_bt), )
+
+        l2norm_bwd_kernel[grid](
             y=y,
             rstd=rstd,
             dy=dy,
@@ -244,7 +214,7 @@ def l2norm_bwd(
             T=T,
             D=D,
             BD=BD,
-            NB=NB,
+            BT=BT,
             bt_size=bt_size,
         )
     else:
