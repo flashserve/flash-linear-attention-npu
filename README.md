@@ -141,7 +141,6 @@ NPU CI 维护说明见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部
 ├── README.md
 ├── build.sh                           # 项目工程编译脚本
 ├── install_deps.sh                    # 安装依赖包脚本
-├── QUICKSTART.md                      # 快速入门文档
 ├── CONTRIBUTING.md                    # 贡献指南
 ├── SECURITY.md                        # 安全声明
 ├── LICENSE                            # 许可证
