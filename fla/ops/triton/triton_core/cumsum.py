@@ -86,7 +86,10 @@ def chunk_local_cumsum_scalar(
         raise ValueError(
             f"chunk_size must be a power of 2, chunk_size is{chunk_size}"
         )
-    BT = triton.next_power_of_2((1 << 17) // (H * chunk_size))
+    # BLOCK_T must be a multiple of chunk_size (>= chunk_size) so the kernel can reshape a
+    # block into (N_CHUNKS, CHUNK_SIZE, H) with N_CHUNKS >= 1. Large head counts can drive
+    # (1<<17)//(H*chunk_size) below chunk_size, which would make N_CHUNKS == 0 and crash.
+    BT = max(chunk_size, triton.next_power_of_2((1 << 17) // (H * chunk_size)))
     chunk_indices = chunk_indices_out[str(BT)] if chunk_indices_out is not None else None
     NT = triton.cdiv(T, BT) if cu_seqlens is None else len(chunk_indices)
     g_org, g = g, torch.empty_like(g, dtype=output_dtype or g.dtype)
