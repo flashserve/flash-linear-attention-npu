@@ -1,0 +1,19 @@
+name: chunk_local_cumsum
+dsl: ascendc
+category: fla
+description: |
+  Flash Linear Attention 中 gated delta rule 使用的 chunk-local cumsum
+  AscendC 自定义算子实现。该实现从 Triton 版
+  triton_ops/triton_core/cumsum.py 迁移而来，支持固定长度和 varlen、
+  reverse、scale、chunk_size=16/32/64 等路径；当前 AscendC kernel
+  支持 [B, T, H] float32 布局，并对 head_first=true 做显式拒绝。
+
+source:
+  project: flash-linear-attention-npu
+  repo: /home/m00913889/codex04/flash-linear-attention-npu
+  upstream_path: fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/
+
+upstream:
+  - target: triton-ascend
+    status: planned
+    note: "Triton chunk_local_cumsum 已迁移为 AscendC 实现，30 个 Triton golden 用例精度对拍通过。"

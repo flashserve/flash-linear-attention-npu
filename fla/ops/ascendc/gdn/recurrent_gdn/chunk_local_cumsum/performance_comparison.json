@@ -1,0 +1,1420 @@
+{
+  "source": "msprof op",
+  "metric": "Task Duration(us)",
+  "profile_root": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1",
+  "case_count": 30,
+  "valid_case_count": 30,
+  "average_speedup_triton_over_ascendc": 0.5325214825701291,
+  "cases": [
+    {
+      "case": "fixed_prefix_c64",
+      "shape": [
+        1,
+        64,
+        32
+      ],
+      "chunk_size": 64,
+      "reverse": false,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_prefix_c64/OPPROF_20260624084309_HDZVKBAAMLKLIFKP/OpBasicInfo.csv",
+        "task_duration_us": 2.8,
+        "max_task_duration_us": 2.8,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "1"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_prefix_c64/OPPROF_20260624084309_HDZVKBAAMLKLIFKP"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_prefix_c64/OPPROF_20260624084329_IZLBQUOZUKJSFEHF/OpBasicInfo.csv",
+        "task_duration_us": 5.46,
+        "max_task_duration_us": 5.46,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "1"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_prefix_c64/OPPROF_20260624084329_IZLBQUOZUKJSFEHF"
+      },
+      "speedup_triton_over_ascendc": 0.5128205128205128,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_reverse_c64",
+      "shape": [
+        1,
+        128,
+        32
+      ],
+      "chunk_size": 64,
+      "reverse": true,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_c64/OPPROF_20260624084335_SWXAMRRIBKCPNJOE/OpBasicInfo.csv",
+        "task_duration_us": 3.22,
+        "max_task_duration_us": 3.22,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_c64/OPPROF_20260624084335_SWXAMRRIBKCPNJOE"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_c64/OPPROF_20260624084356_SFVVSHEQTSASCMJO/OpBasicInfo.csv",
+        "task_duration_us": 6.2,
+        "max_task_duration_us": 6.2,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_c64/OPPROF_20260624084356_SFVVSHEQTSASCMJO"
+      },
+      "speedup_triton_over_ascendc": 0.5193548387096775,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_scale_batch2",
+      "shape": [
+        2,
+        128,
+        32
+      ],
+      "chunk_size": 64,
+      "reverse": false,
+      "scale": 0.25,
+      "is_varlen": false,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_scale_batch2/OPPROF_20260624084402_WGXBNZZOOSYFRTMS/OpBasicInfo.csv",
+        "task_duration_us": 3.18,
+        "max_task_duration_us": 3.18,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "4"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_scale_batch2/OPPROF_20260624084402_WGXBNZZOOSYFRTMS"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_scale_batch2/OPPROF_20260624084423_FDYZNFJROHMDJIQR/OpBasicInfo.csv",
+        "task_duration_us": 7.54,
+        "max_task_duration_us": 7.54,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "4"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_scale_batch2/OPPROF_20260624084423_FDYZNFJROHMDJIQR"
+      },
+      "speedup_triton_over_ascendc": 0.4217506631299735,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_reverse_scale_c32",
+      "shape": [
+        1,
+        96,
+        64
+      ],
+      "chunk_size": 32,
+      "reverse": true,
+      "scale": -0.5,
+      "is_varlen": false,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_scale_c32/OPPROF_20260624084429_BJAQNAWPUHJHXPQN/OpBasicInfo.csv",
+        "task_duration_us": 3.24,
+        "max_task_duration_us": 3.24,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_scale_c32/OPPROF_20260624084429_BJAQNAWPUHJHXPQN"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_scale_c32/OPPROF_20260624084450_IFVDHLVCFJXBPLAD/OpBasicInfo.csv",
+        "task_duration_us": 5.84,
+        "max_task_duration_us": 5.84,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_scale_c32/OPPROF_20260624084450_IFVDHLVCFJXBPLAD"
+      },
+      "speedup_triton_over_ascendc": 0.5547945205479452,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_tiny_c16",
+      "shape": [
+        1,
+        17,
+        32
+      ],
+      "chunk_size": 16,
+      "reverse": false,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 256,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_tiny_c16/OPPROF_20260624084456_OLVQOIOBKBAVAROW/OpBasicInfo.csv",
+        "task_duration_us": 2.88,
+        "max_task_duration_us": 2.88,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "1"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_tiny_c16/OPPROF_20260624084456_OLVQOIOBKBAVAROW"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_tiny_c16/OPPROF_20260624084517_KGBZBFBXRWNOZCQM/OpBasicInfo.csv",
+        "task_duration_us": 4.6,
+        "max_task_duration_us": 4.6,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_tiny_c16/OPPROF_20260624084517_KGBZBFBXRWNOZCQM"
+      },
+      "speedup_triton_over_ascendc": 0.6260869565217392,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_reverse_tail_c16",
+      "shape": [
+        1,
+        73,
+        64
+      ],
+      "chunk_size": 16,
+      "reverse": true,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 128,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_tail_c16/OPPROF_20260624084524_SKKBKAUFPHNSVPZH/OpBasicInfo.csv",
+        "task_duration_us": 3.82,
+        "max_task_duration_us": 3.82,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "1"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_tail_c16/OPPROF_20260624084524_SKKBKAUFPHNSVPZH"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_tail_c16/OPPROF_20260624084543_OFVPHSGDGEFSFRDL/OpBasicInfo.csv",
+        "task_duration_us": 5.32,
+        "max_task_duration_us": 5.32,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "5"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_tail_c16/OPPROF_20260624084543_OFVPHSGDGEFSFRDL"
+      },
+      "speedup_triton_over_ascendc": 0.7180451127819548,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_scale_neg_c16",
+      "shape": [
+        2,
+        95,
+        32
+      ],
+      "chunk_size": 16,
+      "reverse": false,
+      "scale": -1.25,
+      "is_varlen": false,
+      "block_t": 256,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_scale_neg_c16/OPPROF_20260624084549_STQGPVQIBDMLCRNR/OpBasicInfo.csv",
+        "task_duration_us": 3.16,
+        "max_task_duration_us": 3.16,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_scale_neg_c16/OPPROF_20260624084549_STQGPVQIBDMLCRNR"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_scale_neg_c16/OPPROF_20260624084610_DUBRNPMDRPZEGGUQ/OpBasicInfo.csv",
+        "task_duration_us": 7.08,
+        "max_task_duration_us": 7.08,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "12"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_scale_neg_c16/OPPROF_20260624084610_DUBRNPMDRPZEGGUQ"
+      },
+      "speedup_triton_over_ascendc": 0.4463276836158192,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_batch3_c32",
+      "shape": [
+        3,
+        65,
+        64
+      ],
+      "chunk_size": 32,
+      "reverse": false,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_batch3_c32/OPPROF_20260624084616_ATXPVEKEEDKAAWOQ/OpBasicInfo.csv",
+        "task_duration_us": 3.2,
+        "max_task_duration_us": 3.2,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "6"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_batch3_c32/OPPROF_20260624084616_ATXPVEKEEDKAAWOQ"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_batch3_c32/OPPROF_20260624084637_BIJODXZUHXZNACNQ/OpBasicInfo.csv",
+        "task_duration_us": 6.12,
+        "max_task_duration_us": 6.12,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "9"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_batch3_c32/OPPROF_20260624084637_BIJODXZUHXZNACNQ"
+      },
+      "speedup_triton_over_ascendc": 0.5228758169934641,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_reverse_batch2_c32",
+      "shape": [
+        2,
+        127,
+        64
+      ],
+      "chunk_size": 32,
+      "reverse": true,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_batch2_c32/OPPROF_20260624084643_QINBWPHGRUIQWXLG/OpBasicInfo.csv",
+        "task_duration_us": 3.52,
+        "max_task_duration_us": 3.52,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "4"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_batch2_c32/OPPROF_20260624084643_QINBWPHGRUIQWXLG"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_batch2_c32/OPPROF_20260624084704_GVUBDALWIFMWXLQZ/OpBasicInfo.csv",
+        "task_duration_us": 6.78,
+        "max_task_duration_us": 6.78,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "8"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_batch2_c32/OPPROF_20260624084704_GVUBDALWIFMWXLQZ"
+      },
+      "speedup_triton_over_ascendc": 0.5191740412979351,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_h128_c32",
+      "shape": [
+        1,
+        96,
+        128
+      ],
+      "chunk_size": 32,
+      "reverse": false,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 32,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_h128_c32/OPPROF_20260624084710_CKKUBGBPPRNHNDBR/OpBasicInfo.csv",
+        "task_duration_us": 2.72,
+        "max_task_duration_us": 2.72,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_h128_c32/OPPROF_20260624084710_CKKUBGBPPRNHNDBR"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_h128_c32/OPPROF_20260624084730_OKAVQFDGWRDGIUNA/OpBasicInfo.csv",
+        "task_duration_us": 6.4,
+        "max_task_duration_us": 6.4,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_h128_c32/OPPROF_20260624084730_OKAVQFDGWRDGIUNA"
+      },
+      "speedup_triton_over_ascendc": 0.425,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_reverse_h128_c32",
+      "shape": [
+        1,
+        80,
+        128
+      ],
+      "chunk_size": 32,
+      "reverse": true,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 32,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_h128_c32/OPPROF_20260624084737_ERAUUHCENWDLXOBW/OpBasicInfo.csv",
+        "task_duration_us": 3.22,
+        "max_task_duration_us": 3.22,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_h128_c32/OPPROF_20260624084737_ERAUUHCENWDLXOBW"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_h128_c32/OPPROF_20260624084756_BZWPBVNPZGWPCJUZ/OpBasicInfo.csv",
+        "task_duration_us": 5.9,
+        "max_task_duration_us": 5.9,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_h128_c32/OPPROF_20260624084756_BZWPBVNPZGWPCJUZ"
+      },
+      "speedup_triton_over_ascendc": 0.5457627118644068,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_h96_c16",
+      "shape": [
+        1,
+        129,
+        96
+      ],
+      "chunk_size": 16,
+      "reverse": false,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 128,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_h96_c16/OPPROF_20260624084802_UMPPTRMZJJRJKJNZ/OpBasicInfo.csv",
+        "task_duration_us": 3.68,
+        "max_task_duration_us": 3.68,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_h96_c16/OPPROF_20260624084802_UMPPTRMZJJRJKJNZ"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_h96_c16/OPPROF_20260624084823_LACICCSNEEGMJYOU/OpBasicInfo.csv",
+        "task_duration_us": 5.98,
+        "max_task_duration_us": 5.98,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "9"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_h96_c16/OPPROF_20260624084823_LACICCSNEEGMJYOU"
+      },
+      "speedup_triton_over_ascendc": 0.6153846153846154,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_reverse_h96_c16",
+      "shape": [
+        2,
+        130,
+        96
+      ],
+      "chunk_size": 16,
+      "reverse": true,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 128,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_h96_c16/OPPROF_20260624084829_UZJGRRQVNJCLHZJP/OpBasicInfo.csv",
+        "task_duration_us": 4.18,
+        "max_task_duration_us": 4.18,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "4"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_h96_c16/OPPROF_20260624084829_UZJGRRQVNJCLHZJP"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_h96_c16/OPPROF_20260624084850_WOXZTWLPGKBDLZUE/OpBasicInfo.csv",
+        "task_duration_us": 9.12,
+        "max_task_duration_us": 9.12,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "18"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_h96_c16/OPPROF_20260624084850_WOXZTWLPGKBDLZUE"
+      },
+      "speedup_triton_over_ascendc": 0.4583333333333333,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_h16_c64",
+      "shape": [
+        1,
+        129,
+        16
+      ],
+      "chunk_size": 64,
+      "reverse": false,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 128,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_h16_c64/OPPROF_20260624084856_DHPBSNKXXTGPOHLY/OpBasicInfo.csv",
+        "task_duration_us": 3.08,
+        "max_task_duration_us": 3.08,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_h16_c64/OPPROF_20260624084856_DHPBSNKXXTGPOHLY"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_h16_c64/OPPROF_20260624084917_TRGULCPVDMIYNNBP/OpBasicInfo.csv",
+        "task_duration_us": 5.92,
+        "max_task_duration_us": 5.92,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_h16_c64/OPPROF_20260624084917_TRGULCPVDMIYNNBP"
+      },
+      "speedup_triton_over_ascendc": 0.5202702702702703,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_reverse_h16_c64",
+      "shape": [
+        2,
+        191,
+        16
+      ],
+      "chunk_size": 64,
+      "reverse": true,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 128,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_h16_c64/OPPROF_20260624084923_XFAFGGSIJKEUROAT/OpBasicInfo.csv",
+        "task_duration_us": 4.0,
+        "max_task_duration_us": 4.0,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "4"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_h16_c64/OPPROF_20260624084923_XFAFGGSIJKEUROAT"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_h16_c64/OPPROF_20260624084942_EDIPXJQGDFKLWKQI/OpBasicInfo.csv",
+        "task_duration_us": 6.2,
+        "max_task_duration_us": 6.2,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "6"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_h16_c64/OPPROF_20260624084942_EDIPXJQGDFKLWKQI"
+      },
+      "speedup_triton_over_ascendc": 0.6451612903225806,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_h8_c64",
+      "shape": [
+        3,
+        257,
+        8
+      ],
+      "chunk_size": 64,
+      "reverse": false,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 256,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_h8_c64/OPPROF_20260624084948_MFWENOOAFUUGKGMH/OpBasicInfo.csv",
+        "task_duration_us": 3.68,
+        "max_task_duration_us": 3.68,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "6"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_h8_c64/OPPROF_20260624084948_MFWENOOAFUUGKGMH"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_h8_c64/OPPROF_20260624085008_AZBPEZDDSYVCPHMF/OpBasicInfo.csv",
+        "task_duration_us": 8.82,
+        "max_task_duration_us": 8.82,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "15"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_h8_c64/OPPROF_20260624085008_AZBPEZDDSYVCPHMF"
+      },
+      "speedup_triton_over_ascendc": 0.41723356009070295,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_reverse_h8_c64",
+      "shape": [
+        1,
+        255,
+        8
+      ],
+      "chunk_size": 64,
+      "reverse": true,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 256,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_h8_c64/OPPROF_20260624085014_OEEXUDXZUCRCCLNM/OpBasicInfo.csv",
+        "task_duration_us": 3.86,
+        "max_task_duration_us": 3.86,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "1"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_h8_c64/OPPROF_20260624085014_OEEXUDXZUCRCCLNM"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_h8_c64/OPPROF_20260624085035_CHDSDBWXTHJLGKOD/OpBasicInfo.csv",
+        "task_duration_us": 5.84,
+        "max_task_duration_us": 5.84,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "4"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_h8_c64/OPPROF_20260624085035_CHDSDBWXTHJLGKOD"
+      },
+      "speedup_triton_over_ascendc": 0.660958904109589,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_scale_small_input",
+      "shape": [
+        1,
+        128,
+        32
+      ],
+      "chunk_size": 64,
+      "reverse": false,
+      "scale": 3.0,
+      "is_varlen": false,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_scale_small_input/OPPROF_20260624085041_WMBHLMWYRPYALTGJ/OpBasicInfo.csv",
+        "task_duration_us": 3.4,
+        "max_task_duration_us": 3.4,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_scale_small_input/OPPROF_20260624085041_WMBHLMWYRPYALTGJ"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_scale_small_input/OPPROF_20260624085101_XJGQBCEOXKAEYTBH/OpBasicInfo.csv",
+        "task_duration_us": 7.28,
+        "max_task_duration_us": 7.28,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_scale_small_input/OPPROF_20260624085101_XJGQBCEOXKAEYTBH"
+      },
+      "speedup_triton_over_ascendc": 0.467032967032967,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_reverse_scale_large_input",
+      "shape": [
+        1,
+        128,
+        32
+      ],
+      "chunk_size": 64,
+      "reverse": true,
+      "scale": -0.75,
+      "is_varlen": false,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_scale_large_input/OPPROF_20260624085107_YXWKHNGQAGQKUIWE/OpBasicInfo.csv",
+        "task_duration_us": 3.4,
+        "max_task_duration_us": 3.4,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_scale_large_input/OPPROF_20260624085107_YXWKHNGQAGQKUIWE"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_scale_large_input/OPPROF_20260624085127_JGFENXXLIQCEVNRX/OpBasicInfo.csv",
+        "task_duration_us": 6.94,
+        "max_task_duration_us": 6.94,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_scale_large_input/OPPROF_20260624085127_JGFENXXLIQCEVNRX"
+      },
+      "speedup_triton_over_ascendc": 0.48991354466858783,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_tail_c32_h32",
+      "shape": [
+        2,
+        97,
+        32
+      ],
+      "chunk_size": 32,
+      "reverse": false,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 128,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_tail_c32_h32/OPPROF_20260624085133_PRDXLQWMAXKJLCWO/OpBasicInfo.csv",
+        "task_duration_us": 2.98,
+        "max_task_duration_us": 2.98,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_tail_c32_h32/OPPROF_20260624085133_PRDXLQWMAXKJLCWO"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_tail_c32_h32/OPPROF_20260624085154_NOAHXAAAQNQGRWTF/OpBasicInfo.csv",
+        "task_duration_us": 5.72,
+        "max_task_duration_us": 5.72,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "8"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_tail_c32_h32/OPPROF_20260624085154_NOAHXAAAQNQGRWTF"
+      },
+      "speedup_triton_over_ascendc": 0.520979020979021,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_reverse_tail_c32_h32",
+      "shape": [
+        1,
+        193,
+        32
+      ],
+      "chunk_size": 32,
+      "reverse": true,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 128,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_tail_c32_h32/OPPROF_20260624085200_BMNXHSCHXXBTSQTN/OpBasicInfo.csv",
+        "task_duration_us": 3.58,
+        "max_task_duration_us": 3.58,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_tail_c32_h32/OPPROF_20260624085200_BMNXHSCHXXBTSQTN"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_tail_c32_h32/OPPROF_20260624085221_JMZKVCAMJCSGLDEH/OpBasicInfo.csv",
+        "task_duration_us": 5.66,
+        "max_task_duration_us": 5.66,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "7"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_tail_c32_h32/OPPROF_20260624085221_JMZKVCAMJCSGLDEH"
+      },
+      "speedup_triton_over_ascendc": 0.6325088339222614,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_single_chunk_c64_b2",
+      "shape": [
+        2,
+        31,
+        32
+      ],
+      "chunk_size": 64,
+      "reverse": false,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_single_chunk_c64_b2/OPPROF_20260624085227_GZEUUKGSZQHGSDSY/OpBasicInfo.csv",
+        "task_duration_us": 3.3,
+        "max_task_duration_us": 3.3,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_single_chunk_c64_b2/OPPROF_20260624085227_GZEUUKGSZQHGSDSY"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_single_chunk_c64_b2/OPPROF_20260624085248_ZLGBTDEJQVSRHRKZ/OpBasicInfo.csv",
+        "task_duration_us": 5.06,
+        "max_task_duration_us": 5.06,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "2"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_single_chunk_c64_b2/OPPROF_20260624085248_ZLGBTDEJQVSRHRKZ"
+      },
+      "speedup_triton_over_ascendc": 0.6521739130434783,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_reverse_single_chunk_c64",
+      "shape": [
+        1,
+        63,
+        32
+      ],
+      "chunk_size": 64,
+      "reverse": true,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_single_chunk_c64/OPPROF_20260624085254_ENMACHAUUCLQEQBH/OpBasicInfo.csv",
+        "task_duration_us": 3.6,
+        "max_task_duration_us": 3.6,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "1"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_reverse_single_chunk_c64/OPPROF_20260624085254_ENMACHAUUCLQEQBH"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_single_chunk_c64/OPPROF_20260624085315_HKIYMQDHJGQMBOIY/OpBasicInfo.csv",
+        "task_duration_us": 5.52,
+        "max_task_duration_us": 5.52,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "1"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_reverse_single_chunk_c64/OPPROF_20260624085315_HKIYMQDHJGQMBOIY"
+      },
+      "speedup_triton_over_ascendc": 0.6521739130434784,
+      "faster": "triton"
+    },
+    {
+      "case": "fixed_exact_two_blocks_c64",
+      "shape": [
+        2,
+        128,
+        32
+      ],
+      "chunk_size": 64,
+      "reverse": false,
+      "scale": 1.0,
+      "is_varlen": false,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_exact_two_blocks_c64/OPPROF_20260624085321_YEFPTAHNLDIYRZSY/OpBasicInfo.csv",
+        "task_duration_us": 3.32,
+        "max_task_duration_us": 3.32,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "4"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/fixed_exact_two_blocks_c64/OPPROF_20260624085321_YEFPTAHNLDIYRZSY"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_exact_two_blocks_c64/OPPROF_20260624085342_WEDPLYAVMXSNHPLP/OpBasicInfo.csv",
+        "task_duration_us": 6.02,
+        "max_task_duration_us": 6.02,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "4"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/fixed_exact_two_blocks_c64/OPPROF_20260624085342_WEDPLYAVMXSNHPLP"
+      },
+      "speedup_triton_over_ascendc": 0.5514950166112957,
+      "faster": "triton"
+    },
+    {
+      "case": "varlen_prefix_c64",
+      "shape": [
+        1,
+        128,
+        32
+      ],
+      "chunk_size": 64,
+      "reverse": false,
+      "scale": 1.0,
+      "is_varlen": true,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/varlen_prefix_c64/OPPROF_20260624085348_QUPGVWRYSQJPKZIU/OpBasicInfo.csv",
+        "task_duration_us": 4.16,
+        "max_task_duration_us": 4.16,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/varlen_prefix_c64/OPPROF_20260624085348_QUPGVWRYSQJPKZIU"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/varlen_prefix_c64/OPPROF_20260624085409_FHPFEXFXYRVYKCHT/OpBasicInfo.csv",
+        "task_duration_us": 6.5,
+        "max_task_duration_us": 6.5,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/varlen_prefix_c64/OPPROF_20260624085409_FHPFEXFXYRVYKCHT"
+      },
+      "speedup_triton_over_ascendc": 0.64,
+      "faster": "triton"
+    },
+    {
+      "case": "varlen_reverse_scale",
+      "shape": [
+        1,
+        128,
+        32
+      ],
+      "chunk_size": 64,
+      "reverse": true,
+      "scale": 0.25,
+      "is_varlen": true,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/varlen_reverse_scale/OPPROF_20260624085415_UUKYUQSYUIOQPGPH/OpBasicInfo.csv",
+        "task_duration_us": 4.06,
+        "max_task_duration_us": 4.06,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/varlen_reverse_scale/OPPROF_20260624085415_UUKYUQSYUIOQPGPH"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/varlen_reverse_scale/OPPROF_20260624085436_NGZYCKJNLURAPDZY/OpBasicInfo.csv",
+        "task_duration_us": 7.68,
+        "max_task_duration_us": 7.68,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/varlen_reverse_scale/OPPROF_20260624085436_NGZYCKJNLURAPDZY"
+      },
+      "speedup_triton_over_ascendc": 0.5286458333333333,
+      "faster": "triton"
+    },
+    {
+      "case": "varlen_tail_c32_h64",
+      "shape": [
+        1,
+        113,
+        64
+      ],
+      "chunk_size": 32,
+      "reverse": false,
+      "scale": 1.0,
+      "is_varlen": true,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/varlen_tail_c32_h64/OPPROF_20260624085442_WDNGQCSDJILWIKQZ/OpBasicInfo.csv",
+        "task_duration_us": 3.5,
+        "max_task_duration_us": 3.5,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/varlen_tail_c32_h64/OPPROF_20260624085442_WDNGQCSDJILWIKQZ"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/varlen_tail_c32_h64/OPPROF_20260624085503_LXIGWJBNUGSVZAAO/OpBasicInfo.csv",
+        "task_duration_us": 7.78,
+        "max_task_duration_us": 7.78,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/varlen_tail_c32_h64/OPPROF_20260624085503_LXIGWJBNUGSVZAAO"
+      },
+      "speedup_triton_over_ascendc": 0.4498714652956298,
+      "faster": "triton"
+    },
+    {
+      "case": "varlen_reverse_tail_c32_h64",
+      "shape": [
+        1,
+        113,
+        64
+      ],
+      "chunk_size": 32,
+      "reverse": true,
+      "scale": 1.0,
+      "is_varlen": true,
+      "block_t": 64,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/varlen_reverse_tail_c32_h64/OPPROF_20260624085509_QDQADVNKIOGTZTNZ/OpBasicInfo.csv",
+        "task_duration_us": 4.02,
+        "max_task_duration_us": 4.02,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/varlen_reverse_tail_c32_h64/OPPROF_20260624085509_QDQADVNKIOGTZTNZ"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/varlen_reverse_tail_c32_h64/OPPROF_20260624085530_HVTTFWHPASYNMAZA/OpBasicInfo.csv",
+        "task_duration_us": 7.28,
+        "max_task_duration_us": 7.28,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/varlen_reverse_tail_c32_h64/OPPROF_20260624085530_HVTTFWHPASYNMAZA"
+      },
+      "speedup_triton_over_ascendc": 0.5521978021978021,
+      "faster": "triton"
+    },
+    {
+      "case": "varlen_c16_h96",
+      "shape": [
+        1,
+        201,
+        96
+      ],
+      "chunk_size": 16,
+      "reverse": false,
+      "scale": -0.25,
+      "is_varlen": true,
+      "block_t": 128,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/varlen_c16_h96/OPPROF_20260624085536_JXZMNOWAQCUPRJTW/OpBasicInfo.csv",
+        "task_duration_us": 4.56,
+        "max_task_duration_us": 4.56,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/varlen_c16_h96/OPPROF_20260624085536_JXZMNOWAQCUPRJTW"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/varlen_c16_h96/OPPROF_20260624085557_DAKHEBLJTIVNYXMQ/OpBasicInfo.csv",
+        "task_duration_us": 13.58,
+        "max_task_duration_us": 13.58,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/varlen_c16_h96/OPPROF_20260624085557_DAKHEBLJTIVNYXMQ"
+      },
+      "speedup_triton_over_ascendc": 0.33578792341678937,
+      "faster": "triton"
+    },
+    {
+      "case": "varlen_reverse_c16_h96",
+      "shape": [
+        1,
+        201,
+        96
+      ],
+      "chunk_size": 16,
+      "reverse": true,
+      "scale": 0.5,
+      "is_varlen": true,
+      "block_t": 128,
+      "triton": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/varlen_reverse_c16_h96/OPPROF_20260624085603_XVVWHLXHOYTVASQG/OpBasicInfo.csv",
+        "task_duration_us": 5.08,
+        "max_task_duration_us": 5.08,
+        "kernel_count": 1,
+        "kernels": [
+          "chunk_local_cumsum_scalar_kernel"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/triton/varlen_reverse_c16_h96/OPPROF_20260624085603_XVVWHLXHOYTVASQG"
+      },
+      "ascendc": {
+        "op_basic_info_csv": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/varlen_reverse_c16_h96/OPPROF_20260624085623_TBMVZKSWDEXRLSOE/OpBasicInfo.csv",
+        "task_duration_us": 13.6,
+        "max_task_duration_us": 13.6,
+        "kernel_count": 1,
+        "kernels": [
+          "ChunkLocalCumsum_61db216723180657093e83a4a9ad8c3b_0"
+        ],
+        "block_dims": [
+          "3"
+        ],
+        "op_types": [
+          "vector"
+        ],
+        "profiling_dir": "/home/m00913889/codex04/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/profiling/perf_final_after_opt1/ascendc/varlen_reverse_c16_h96/OPPROF_20260624085623_TBMVZKSWDEXRLSOE"
+      },
+      "speedup_triton_over_ascendc": 0.3735294117647059,
+      "faster": "triton"
+    }
+  ]
+}
