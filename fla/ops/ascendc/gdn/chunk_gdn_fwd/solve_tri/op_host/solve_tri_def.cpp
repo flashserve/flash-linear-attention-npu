@@ -3,6 +3,7 @@
  * BSD 3-Clause License.
  */
  #include "register/op_def_registry.h"
+ #include <string>
 
  namespace ops {
  class SolveTri : public OpDef {
@@ -49,6 +50,11 @@
  
         this->AICore().AddConfig("ascend910b", aicore_config);
         this->AICore().AddConfig("ascend910_93", aicore_config);
+#ifdef ASCEND_SOC_VERSION
+        if (std::string(ASCEND_SOC_VERSION) == "ascend950") {
+            this->AICore().AddConfig("ascend950", aicore_config);
+        }
+#endif
     }
 };
  OP_ADD(SolveTri);
