@@ -1,10 +1,93 @@
+from __future__ import annotations
+
+import ctypes
+import os
 import pathlib
-import torch
+
+
+_PACKAGE_DIR = pathlib.Path(__file__).resolve().parent
+_DEFAULT_VENDOR_DIR = "fla_npu_transformer"
+
+
+def _prepend_env_path(name: str, value: pathlib.Path) -> None:
+    value_str = str(value)
+    parts = [part for part in os.environ.get(name, "").split(os.pathsep) if part]
+    if value_str not in parts:
+        os.environ[name] = os.pathsep.join([value_str, *parts])
+
+
+def _candidate_vendor_names() -> list[str]:
+    names = []
+    env_vendor = os.environ.get("FLA_NPU_VENDOR_NAME", "").strip()
+    if env_vendor:
+        names.append(env_vendor)
+        if not env_vendor.endswith("_transformer"):
+            names.append(f"{env_vendor}_transformer")
+    names.append(_DEFAULT_VENDOR_DIR)
+    return list(dict.fromkeys(names))
+
+
+def _resolve_vendor_dir() -> pathlib.Path:
+    override = os.environ.get("FLA_NPU_OPP_PATH", "").strip()
+    roots = [pathlib.Path(override).expanduser()] if override else [_PACKAGE_DIR / "opp"]
+
+    for root in roots:
+        if (root / "op_api" / "lib" / "libcust_opapi.so").exists():
+            return root.resolve()
+
+        vendors_root = root / "vendors"
+        for name in _candidate_vendor_names():
+            vendor_dir = vendors_root / name
+            if vendor_dir.exists():
+                return vendor_dir.resolve()
+
+        if vendors_root.exists():
+            vendor_dirs = [path for path in vendors_root.iterdir() if path.is_dir()]
+            if len(vendor_dirs) == 1:
+                return vendor_dirs[0].resolve()
+
+    raise FileNotFoundError(
+        "Unable to find embedded FLA NPU custom OPP. Expected "
+        f"{_PACKAGE_DIR / 'opp' / 'vendors' / _DEFAULT_VENDOR_DIR}. "
+        "If you installed it elsewhere, set FLA_NPU_OPP_PATH to either the OPP "
+        "root containing vendors/ or the vendor directory itself."
+    )
+
+
+def _prepare_embedded_opp() -> pathlib.Path:
+    if not (os.environ.get("ASCEND_HOME_PATH") or os.environ.get("ASCEND_OPP_PATH")):
+        raise RuntimeError(
+            "CANN environment is not initialized. Please source the CANN set_env.sh "
+            "before importing fla_npu."
+        )
+
+    vendor_dir = _resolve_vendor_dir()
+    opp_root = vendor_dir.parent.parent if vendor_dir.parent.name == "vendors" else vendor_dir
+    op_api_lib = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
+    if not op_api_lib.exists():
+        raise FileNotFoundError(f"Embedded custom op_api library not found: {op_api_lib}")
+    op_api_alias = op_api_lib.with_name("libopapi.so")
+
+    _prepend_env_path("ASCEND_CUSTOM_OPP_PATH", vendor_dir)
+    _prepend_env_path("ASCEND_CUSTOM_OPP_PATH", opp_root)
+    _prepend_env_path("LD_LIBRARY_PATH", op_api_lib.parent)
+    os.environ["FLA_NPU_OP_API_LIB"] = str(op_api_lib)
+
+    mode = getattr(os, "RTLD_GLOBAL", 0) | getattr(os, "RTLD_NOW", 0)
+    if op_api_alias.exists():
+        ctypes.CDLL(str(op_api_alias), mode=mode)
+    ctypes.CDLL(str(op_api_lib), mode=mode)
+    return vendor_dir
 
 
 # Load the custom operator library
 def _load_opextension_so():
-    so_dir = pathlib.Path(__file__).parents[0]
+    _prepare_embedded_opp()
+
+    import torch
+    import torch_npu  # noqa: F401
+
+    so_dir = _PACKAGE_DIR
     so_files = list(so_dir.glob('custom_aclnn_extension_lib*.so'))
 
     if not so_files:

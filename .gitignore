@@ -32,7 +32,6 @@ cmake-build-*
 # python cache
 *.pyc
 __pycache__
-MANIFEST.in
 
 # torch_custom build artifacts
 torch_custom/fla_npu/fla_npu.egg-info/
