@@ -407,7 +407,7 @@ at::Tensor npu_causal_conv1d(
         aclnnCausalConv1d,
         x, weight, bias_, conv_states,
         query_start_loc_, cache_indices_, initial_state_mode_, num_accepted_tokens_,
-        activation_mode, pad_slot_id, run_mode,
+        activation_mode, pad_slot_id, run_mode, head_num,
         y
     );
     return y;
