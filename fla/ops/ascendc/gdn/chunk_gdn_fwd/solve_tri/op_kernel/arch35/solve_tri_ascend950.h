@@ -15,45 +15,35 @@ using namespace AscendC;
 // ============================================================================
 // SolveTri —— 完整下三角逆 (I+A)^{-1} 的 ascend950 实现（MCH + MBH 合一）
 //
-// 两段算法合并在同一 SolveTril 类（source 风格：OnChipBuffer + SyncAll 协同）：
-//   - MCH（块对角逆）：源仓移植。AIV 生成 NZ 辅助矩阵 + gather 对角块，AIC 牛顿迭代
-//     求每个 16×16 对角块逆，结果(NZ)暂存 ub_Res(UB)。
-//   - MBH（递归合并）：基于【本仓已验证 RecursiveMerge(UB-opt) 算法】移植（非源仓）。
-//     X 常驻 ub_Res(UB,NZ)；逐层 blockSize=16->cur：AIV 从 ub_Res 提取 drv/oth 对角块
-//     到 L1，AIC 做 B/C/E/G 四步矩乘合并，层间结果 Fixpipe 回 ub_Res，末层写 gm_out。
+// 两段算法合并在同一 SolveTri 类：
+//   - MCH（块对角逆）：AIV 生成 NZ 辅助矩阵 + gather 对角块，AIC 牛顿迭代求每个
+//     16×16 对角块逆；cur==16 直接写 gm_out，cur>16 结果(NZ)暂存 ub_Res(UB) 供 MBH。
+//   - MBH（递归合并）：X 常驻 ub_Res(UB,NZ)；逐层 blockSize=16->cur：AIV 从 ub_Res
+//     提取 drv/oth 对角块到 L1，AIC 做 B/C/E/G 四步矩乘合并，层间结果 Fixpipe 回
+//     ub_Res，末层写 gm_out。
 //
-// MCH 移植中的接口/“非泛化参数”适配（不改 MCH 整体算法逻辑）：
-//   [接口] kernel 形参收敛为 x / cu_seqlens / chunk_indices / x_out / workspace /
-//          tiling；输出沿用本仓 x_out 命名；索引为 INT64；支持 FP16 + BF16。
-//   [tiling 字段] 沿用本仓字段名、按 MCH 语义读取：
-//          batchSize / seqLen / numHeads / chunkSize / numChunks(=chunkNumInSeq) /
-//          totalChunks(=chunkNumTotal, 主循环上界) / layoutMode(=mode) / isLower。
-//   [尾块辅助矩阵修复] 源实现把单位/全零矩阵按整 chunk_size 在循环外生成一次；尾块
-//          chunk_size_actual 变化时 NZ 单位阵的分形偏移随之改变，会算错。改为仅在
-//          chunk 尺寸“发生变化”时（即 seqlen 尾块）按 chunk_size_actual 重建 I/Zero
-//          并重拷 l1_I；非尾块尺寸不变则复用，避免额外开销。
-//   [GM 偏移泛化] 源 x_gm_offset 仅在“单 chunk / 单 head”下成立。改为与本仓已验证 MBH
-//          的 GetTileGMOffset 对齐的完整公式（[B,T,H,BT] 布局，行跨度 = num_head*chunk_size）。
-//   [搬运步长泛化] 源对角块 gather 的 srcStride 硬编码为 1（仅 BT=32、H=1 成立）。
-//          改为按物理行跨度推导 srcStride = num_head*chunk_size/16 - 1。
+// 【分核 / 同步】（本版：CrossCoreFlag + round-robin，统一 MCH 与 MBH）
+//   - 参照仓1（recurrent_gdn/solve_tril）已验证的 MCH 写法：跨核用 CrossCoreSetFlag/
+//     WaitFlag 每 tile / 每 MBH 层握手，AIC 与其配对 AIV 处理同一 tile（cur 一致 -> 层数
+//     一致 -> 握手计数天然对齐，无需全局屏障 / 固定调度，无死锁）。
+//   - 多核 round-robin，以 num_core 为间隔分核：
+//       AIV(sub0): loop_idx = core_idx/2; loop_idx += num_core
+//       AIC     : loop_idx = core_idx;   loop_idx += num_core
+//   - flag：mode 0x4；0x2 = AIV->AIC(数据/提取就绪)，0x0 = AIC->AIV(计算/回写完成)。
+//     两 flag 严格交替复用于 MCH 与每个 MBH 层。
+//   - 注：原 SyncAll 固定调度版已整体替换为 CrossCoreFlag（MBH 一并切换）。
 //
-// MBH 移植要点（对齐本仓已验证 UB-opt 路径）：
-//   - 跨核同步用 SyncAll<false>（本仓实测：CrossCoreFlag 在 1:2 MIX 上死锁）。多核“固定调度”：
-//     每 (AIC,其2 AIV subcore) 组处理连续 tile 段 [groupIdx*tilesPerCore, +tilesPerCore)，
-//     所有组都走 tilesPerCore 个 slot、每 slot 固定 (2 + 2*maxLevels) 次 SyncAll（maxLevels=
-//     log2(chunk_size/16)，各核一致）—— 真实层做活、其余层空屏障补齐、越界 slot 全空屏障，
-//     故组间 SyncAll 计数恒等，不死锁。单核(usedCoreNum=1)退化为逐 tile 行为。
-//   - -A 由 AIV 备数：完整 A GM(ND)->ub_FullA(NZ) 后 Muls(-1) -> l1_MNEG（替代源 -I 矩乘，
-//     代数等价；省一次 cube 矩乘与 -I 常量）。
-//   - MBH 各步矩乘用本仓已验证 RecursiveMerge 的 V1 约定（MbhMatmulToL0C，对 A 做块转置预交换），
-//     不复用 MCH 的 V2 MatmulToL0C：MBH 的 -A / Y 含非对角分形，两种约定在非对角分形上不等价。
+// 【布局 / 变长 TND】
+//   - GM 偏移按 [B,H,T,BT](bhtd) / [B,T,H,BT](bsnd) / [total_T,H,BT](tnd 变长) 完整公式；
+//     tnd 由 cu_seqlens / chunk_indices（INT64，GetValue）确定每 tile 偏移与序列长度。
+//   - 行跨度 row_stride = (bhtd) chunk_size : num_head*chunk_size。
 //
-// 已知限制 / 假设（待硬件验证）：
-//   * 多核固定调度假设：MIX 1:2 下 GetBlockIdx() 对 AIC 与其配对 AIV 返回同一组索引；若目标
-//     SDK 语义不同（如 AIV 返回 AIV-global 索引），仅需改 Process() 中 groupIdx 推导一行。
-//   * 尾块在 ChunkAlign 上取整后会按对齐尺寸读取 GM，可能越过有效行（源既有行为）。
-//   * MCH 用 V2、MBH 用 V1：MCH 操作数为块对角（非对角分形恒 0），两约定等价，故 MCH 验证
-//     无法覆盖非对角分形；MBH 改用本仓已验证 V1 约定，BT>16 正确性由 V1 自身保证。
+// 【尾块（partial chunk）正确性】
+//   - actual_size = 该 chunk 的有效行数（尾块 < cur）。cur = ChunkAlign(actual_size)。
+//   - 输入 gather 只读 actual_size 行（逐分形 min(16, actual_size-i*16)）；越界分形不读，
+//     由 aux 置 I，使部分对角块逆为 [[valid^-1,0],[0,I]]。
+//   - MBH 的 -A 只读 actual_size 行（其余清 0），保证 padding 参与 MBH 得 I。
+//   - 输出只写 actual_size 行（FixpipeL0cToGM 的 validRows），避免跨序列覆写 / OOB。
 // ============================================================================
 
 constexpr AscendC::FixpipeConfig CFG_NZ_L1 = {AscendC::CO2Layout::NZ, false};
@@ -65,18 +55,18 @@ public:
     __aicore__ inline void Init(GM_ADDR aGm, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR outGm,
                                 GM_ADDR workspace, const SolveTriTilingData *tilingData)
     {
-        // Tiling（沿用本仓字段名，按 MCH 语义解释）
+        // Tiling
         batch_size = tilingData->batchSize;
-        seq_length = tilingData->seqLen;          // <- seqLength
-        num_head = tilingData->numHeads;          // <- numHead
+        seq_length = tilingData->seqLen;
+        num_head = tilingData->numHeads;
         chunk_size = tilingData->chunkSize;
-        chunk_num_in_seq = tilingData->numChunks; // <- chunkNumInSeq
+        chunk_num_in_seq = tilingData->numChunks;
         chunk_num_total = tilingData->totalTiles; // 主循环上界 = 全部 tile 数
         mode = tilingData->layoutMode;            // 0=bhtd, 1=bsnd, 2=tnd
-        is_lower = tilingData->isLower;           // MBH 驱动块选择（下三角=1）
-        tiles_per_core = tilingData->tilesPerCore;// 每个 (AIC,其AIV) 组处理的 tile 数（多核划分）
+        is_lower = tilingData->isLower;
+        tiles_per_core = tilingData->tilesPerCore;
 
-        // GM
+        // GM（INT64 索引）
         gm_a.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(aGm));
         gm_cu_seqlens.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cu_seqlens));
         gm_chunk_indices.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(chunk_indices));
@@ -84,17 +74,14 @@ public:
 
         OnChipBuffer buf;
 
-        // UB（每块 chunk_size*chunk_size 个 InDtype）：
-        //   ub_I / ub_Zero / ub_A / ub_I_A / ub_Res 为 MCH 所用；
-        //   ub_FullA 为 MBH 阶段暂存“完整 -A”（GM->UB nd2nz 后取负）。
+        // UB（每块 chunk_size*chunk_size 个 InDtype）
         ub_I = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(0);
         ub_Zero = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(chunk_size * chunk_size * sizeof(InDtype));
         ub_A = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(chunk_size * chunk_size * sizeof(InDtype) * 2);
         ub_I_A = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(chunk_size * chunk_size * sizeof(InDtype) * 3);
         ub_Res = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(chunk_size * chunk_size * sizeof(InDtype) * 4);
         ub_FullA = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(chunk_size * chunk_size * sizeof(InDtype) * 5);
-        // L1（NZ 槽，每槽 chunk_size*chunk_size 个 InDtype）：
-        //   MCH 用 l1_I / l1_X / l1_Y；MBH 复用三者并额外用 l1_MNEG(-A) / l1_INPUT(提取的 oth 块)。
+        // L1（NZ 槽）
         l1_I = buf.template GetBuffer<BufferType::ASCEND_CB, InDtype>(0);
         l1_X = buf.template GetBuffer<BufferType::ASCEND_CB, InDtype>(chunk_size * chunk_size * sizeof(InDtype));
         l1_Y = buf.template GetBuffer<BufferType::ASCEND_CB, InDtype>(chunk_size * chunk_size * sizeof(InDtype) * 2);
@@ -114,7 +101,7 @@ public:
         core_idx = AscendC::GetBlockIdx();
         sub_block_idx = AscendC::GetSubBlockIdx();
 
-        // 辅助矩阵缓存标记：0 为无效初值（chunk_size_actual 恒 >=16），首个 tile 必触发生成。
+        // 辅助矩阵缓存标记：0 为无效初值（cur 恒 >=16），首个 tile 必触发生成
         last_chunk_size = 0;
     }
 
@@ -126,24 +113,18 @@ public:
     __aicore__ inline void ub_to_l1(AscendC::LocalTensor<InDtype> l1Tensor,
                                     AscendC::LocalTensor<InDtype> ubTensor, uint32_t chunkSize)
     {
-        AscendC::DataCopy(l1Tensor,                               // dst
-                          ubTensor,                               // src
-                          AscendC::DataCopyParams(1,              // nBurst
-                                                  chunkSize * chunkSize / 16,  // lenBurst
-                                                  0,              // srcGap
-                                                  0));            // dstGap
+        AscendC::DataCopy(l1Tensor, ubTensor,
+                          AscendC::DataCopyParams(1, chunkSize * chunkSize / 16, 0, 0));
     }
 
     __aicore__ inline void FixpipeL0cToL1(AscendC::LocalTensor<InDtype> l1Tensor,
-                                          AscendC::LocalTensor<float> l0CTensor,
-                                          uint32_t chunkSize)
+                                          AscendC::LocalTensor<float> l0CTensor, uint32_t chunkSize)
     {
         AscendC::FixpipeParamsArch3510<AscendC::CO2Layout::NZ> fixPipeParams;
         fixPipeParams.nSize = chunkSize;
         fixPipeParams.mSize = chunkSize;
         fixPipeParams.srcStride = chunkSize;
         fixPipeParams.dstStride = chunkSize * 16;
-
         if constexpr (std::is_same_v<InDtype, half>) {
             fixPipeParams.quantPre = QuantMode_t::F322F16;
         } else {
@@ -153,8 +134,7 @@ public:
     }
 
     __aicore__ inline void FixpipeL0cToUB(AscendC::LocalTensor<InDtype> ubTensor,
-                                          AscendC::LocalTensor<float> l0CTensor,
-                                          uint32_t chunkSize)
+                                          AscendC::LocalTensor<float> l0CTensor, uint32_t chunkSize)
     {
         AscendC::FixpipeParamsArch3510<AscendC::CO2Layout::NZ> fixPipeParams;
         fixPipeParams.nSize = chunkSize;
@@ -163,7 +143,6 @@ public:
         fixPipeParams.dstStride = chunkSize * 16;
         fixPipeParams.dualDstCtl = 0;
         fixPipeParams.subBlockId = 0;
-
         if constexpr (std::is_same_v<InDtype, half>) {
             fixPipeParams.quantPre = QuantMode_t::F322F16;
         } else {
@@ -183,13 +162,15 @@ public:
         return 128;
     }
 
-    // 结果写回：L0C(FP32, NZ) -> gm_out(ND, 行优先)。dstStride = GM 物理行跨度。
-    // 用于 cur==16（纯 MCH，无 MBH）及 cur>16 时 MBH 末层的最终结果写出。
+    // 结果写回：L0C(FP32, NZ) -> gm_out(ND, 行优先)。
+    //   validRows = 有效行数（尾块 < curSize），只写 validRows 行避免跨序列覆写。
+    //   curSize   = 对齐后 chunk 尺寸（= L0C/输出的列数与源行跨度）。
+    //   dstStride = GM 物理行跨度。
     __aicore__ inline void FixpipeL0cToGM(AscendC::GlobalTensor<OutDtype> gmTensor,
                                           AscendC::LocalTensor<float> l0CTensor,
-                                          uint32_t curSize, uint32_t dstStride)
+                                          uint32_t validRows, uint32_t curSize, uint32_t dstStride)
     {
-        auto intriParams = AscendC::FixpipeParamsV220(curSize, curSize, curSize, dstStride, false);
+        auto intriParams = AscendC::FixpipeParamsV220(curSize, validRows, curSize, dstStride, false);
         if constexpr (std::is_same_v<OutDtype, half>) {
             intriParams.quantPre = QuantMode_t::F322F16;
         } else {
@@ -198,6 +179,7 @@ public:
         AscendC::Fixpipe<OutDtype, float, AscendC::CFG_ROW_MAJOR>(gmTensor, l0CTensor, intriParams);
     }
 
+    // MCH V2 MatmulToL0C（块对角操作数专用；非对角分形恒 0，V1/V2 等价）
     __aicore__ inline void MatmulToL0C(AscendC::LocalTensor<InDtype> l1A, AscendC::LocalTensor<InDtype> l1B,
                                        AscendC::LocalTensor<InDtype> l0A, AscendC::LocalTensor<InDtype> l0B,
                                        AscendC::LocalTensor<float> l0C, int64_t chunkSize, bool initC)
@@ -239,11 +221,10 @@ public:
     // 按给定 cur_size 生成 NZ 块对角辅助矩阵（尾块安全）：单位阵 I、全零阵 Zero，并清零 ub_A。
     __aicore__ inline void AuxMatrixGen(int64_t cur_size)
     {
-        uint64_t NUM_FRACS = cur_size / 16; // 对角分形个数
-        uint64_t NUM_ITER = NUM_FRACS * 2;  // 8x16 条带数
+        uint64_t NUM_FRACS = cur_size / 16;
+        uint64_t NUM_ITER = NUM_FRACS * 2;
         int32_t chunkElems = static_cast<int32_t>(cur_size * cur_size);
 
-        // 清零 A / 生成单位阵 I（NZ：对角分形落在 (i*NUM_FRACS+i)*256 = i*(cur_size*16+256)）
         Duplicate(ub_A, (InDtype)0, chunkElems);
         Duplicate(ub_I, (InDtype)0, chunkElems);
         for (uint64_t stripIdx = 0; stripIdx < NUM_ITER; stripIdx++) {
@@ -256,13 +237,12 @@ public:
             uint64_t UB_DIAG_I_OFF = fracsIdx * (cur_size + 16) * 16 + oldEvenIdx * 8 * 16;
             Duplicate(ub_I[UB_DIAG_I_OFF], (InDtype)1.0f, diagMask, 1, 1, 1);
         }
-        // 全零矩阵
         Duplicate(ub_Zero, (InDtype)0, chunkElems);
     }
 
-    // 由 loop_idx 计算该 tile 的 GM 偏移与对齐后的实际 chunk 尺寸。
-    // 与本仓已验证 MBH 的 GetTileGMOffset / GetTileValidSize 公式对齐（[B,T,H,BT] 布局）。
-    __aicore__ inline void ComputeTile(int64_t loop_idx, int64_t &x_gm_offset, int64_t &cur_size)
+    // 由 loop_idx 计算该 tile 的 GM 偏移、对齐后 chunk 尺寸 cur_size 与有效行数 actual_size。
+    __aicore__ inline void ComputeTile(int64_t loop_idx, int64_t &x_gm_offset,
+                                       int64_t &cur_size, int64_t &actual_size)
     {
         int64_t seq_idx = 0;
         int64_t chunk_in_seq_idx = 0;
@@ -271,22 +251,21 @@ public:
         int64_t local_seq_length = seq_length;
         int64_t local_chunk_num_in_seq = chunk_num_in_seq;
 
-        if (mode == 0) { // BHTD: [B, H, T, BT]，遍历顺序 B -> H -> chunk
+        if (mode == 0) { // BHTD: [B, H, T, BT]
             seq_idx = loop_idx / (chunk_num_in_seq * num_head);
             head_idx = (loop_idx / chunk_num_in_seq) % num_head;
             chunk_in_seq_idx = loop_idx % chunk_num_in_seq;
             x_gm_offset = seq_idx * num_head * seq_length * chunk_size +
                           head_idx * seq_length * chunk_size +
                           chunk_in_seq_idx * chunk_size * chunk_size;
-        } else if (mode == 1) { // 定长 bsnd
+        } else if (mode == 1) { // BSND: [B, T, H, BT]
             seq_idx = loop_idx / (chunk_num_in_seq * num_head);
             chunk_in_seq_idx = loop_idx % (chunk_num_in_seq * num_head) / num_head;
             head_idx = loop_idx % (chunk_num_in_seq * num_head) % num_head;
-            // [B,T,H,BT]: base = b*T*H*BT + chunk*BT*H*BT + h*BT
             x_gm_offset = seq_idx * seq_length * num_head * chunk_size +
                           chunk_in_seq_idx * chunk_size * num_head * chunk_size +
                           head_idx * chunk_size;
-        } else if (mode == 2) { // 变长 tnd
+        } else { // TND varlen: [total_T, H, BT]; B = 1
             chunk_idx = loop_idx / num_head;
             head_idx = loop_idx % num_head;
             seq_idx = gm_chunk_indices.GetValue(chunk_idx * 2);
@@ -294,20 +273,19 @@ public:
             local_seq_length = gm_cu_seqlens.GetValue(seq_idx + 1) - gm_cu_seqlens.GetValue(seq_idx);
             local_chunk_num_in_seq = CeilDiv(local_seq_length, chunk_size);
             int64_t bos = gm_cu_seqlens.GetValue(seq_idx);
-            // (bos + chunk*BT) * H * BT + h * BT
             x_gm_offset = (bos + chunk_in_seq_idx * chunk_size) * num_head * chunk_size +
                           head_idx * chunk_size;
         }
 
-        cur_size = (chunk_in_seq_idx == (local_chunk_num_in_seq - 1)) ?
-                       ChunkAlign(local_seq_length - chunk_in_seq_idx * chunk_size) :
-                       chunk_size;
+        bool is_last = (chunk_in_seq_idx == (local_chunk_num_in_seq - 1));
+        actual_size = is_last ? (local_seq_length - chunk_in_seq_idx * chunk_size) : chunk_size;
+        cur_size = is_last ? ChunkAlign(actual_size) : chunk_size;
     }
 
     // ---- AIV：MCH 单 tile 备数（含 MBH 所需的完整 -A 暂存）----
-    __aicore__ inline void AivMchPrep(int64_t cur, int64_t x_gm_offset, int64_t row_stride)
+    __aicore__ inline void AivMchPrep(int64_t cur, int64_t actual_size, int64_t x_gm_offset, int64_t row_stride)
     {
-        // [尾块辅助矩阵] 仅 chunk 尺寸变化时重建 NZ 单位/全零阵并重拷 l1_I（避免每 tile 开销）。
+        // [尾块辅助矩阵] 仅 chunk 尺寸变化时重建 NZ 单位/全零阵并重拷 l1_I
         if (cur != last_chunk_size) {
             AuxMatrixGen(cur);
             AscendC::PipeBarrier<PIPE_ALL>();
@@ -316,13 +294,16 @@ public:
             last_chunk_size = cur;
         }
 
-        // 对角 16x16 块 GM(ND) -> ub_A(NZ 块对角)；srcStride 按物理行跨度泛化。
+        // 对角 16x16 块 GM(ND) -> ub_A(NZ 块对角)；尾块只读 actual_size 行（逐分形裁剪）。
         uint16_t src_blk_stride = static_cast<uint16_t>(row_stride / 16 - 1);
-        for (uint64_t i = 0; i < (uint64_t)(cur / 16); i++) {
+        uint64_t num_valid_fracs = static_cast<uint64_t>(CeilDiv(actual_size, 16));
+        for (uint64_t i = 0; i < num_valid_fracs; i++) {
+            int64_t rows64 = actual_size - static_cast<int64_t>(i) * 16;
+            uint16_t rows = static_cast<uint16_t>(rows64 >= 16 ? 16 : rows64);
             uint64_t srcOffset = i * (16 * (uint64_t)row_stride + 16);
             uint64_t dstOffset = i * ((uint64_t)cur * 16 + 16 * 16);
             AscendC::DataCopy(ub_A[dstOffset], gm_a[x_gm_offset + srcOffset],
-                              AscendC::DataCopyParams(16, 1, src_blk_stride, 0));
+                              AscendC::DataCopyParams(rows, 1, src_blk_stride, 0));
         }
         AscendC::PipeBarrier<PIPE_ALL>();
 
@@ -333,11 +314,13 @@ public:
         ub_to_l1(l1_X, ub_I_A, static_cast<uint32_t>(cur));      // l1_X = I - A
         AscendC::PipeBarrier<PIPE_ALL>();
 
-        // MBH 预备（cur>16）：完整 A GM(ND)->ub_FullA(NZ)，取负 -> l1_MNEG(NZ)。
+        // MBH 预备（cur>16）：完整 A GM(ND)->ub_FullA(NZ)，尾块只读 actual_size 行（其余清 0），取负 -> l1_MNEG。
         if (cur > 16) {
+            Duplicate(ub_FullA, (InDtype)0, (int32_t)(cur * cur));  // 清 padding 行
+            AscendC::PipeBarrier<PIPE_ALL>();
             AscendC::Nd2NzParams p;
             p.ndNum = 1;
-            p.nValue = static_cast<uint32_t>(cur);
+            p.nValue = static_cast<uint32_t>(actual_size);
             p.dValue = static_cast<uint32_t>(cur);
             p.srcDValue = static_cast<uint32_t>(row_stride);
             p.srcNdMatrixStride = 0;
@@ -353,9 +336,9 @@ public:
         }
     }
 
-    // ---- AIC：MCH 牛顿迭代，求 16x16 对角块逆（块对角逆）----
-    // cur>16：结果 Fixpipe 暂存 ub_Res(UB,NZ) 供 MBH 消费；cur==16：纯 MCH，直接写 gm_out。
-    __aicore__ inline void AicMchNewton(int64_t cur, int64_t x_gm_offset, int64_t row_stride)
+    // ---- AIC：MCH 牛顿迭代，求 16x16 对角块逆 ----
+    // cur>16：结果 Fixpipe 暂存 ub_Res(UB,NZ) 供 MBH；cur==16：纯 MCH，直接写 gm_out（只写 actual_size 行）。
+    __aicore__ inline void AicMchNewton(int64_t cur, int64_t actual_size, int64_t x_gm_offset, int64_t row_stride)
     {
         MatmulToL0C(l1_Y, l1_Y, l0a_Y, l0b_Y, l0c_Y, cur, true);
         AscendC::PipeBarrier<PIPE_ALL>();
@@ -381,12 +364,11 @@ public:
             AscendC::PipeBarrier<PIPE_ALL>();
             if (iter == 1) {
                 if (cur > 16) {
-                    // MCH 块对角逆 -> ub_Res(UB,NZ)，供 MBH 从 UB 提取消费。
-                    FixpipeL0cToUB(ub_Res, l0c_X, cur);
+                    FixpipeL0cToUB(ub_Res, l0c_X, cur);   // -> MBH 消费
                 } else {
-                    // cur==16：无 MBH，直接写最终结果到 gm_out(ND)。
                     FixpipeL0cToGM(gm_out[x_gm_offset], l0c_X,
-                                   static_cast<uint32_t>(cur), static_cast<uint32_t>(row_stride));
+                                   static_cast<uint32_t>(actual_size), static_cast<uint32_t>(cur),
+                                   static_cast<uint32_t>(row_stride));
                 }
                 AscendC::PipeBarrier<PIPE_ALL>();
             } else {
@@ -396,15 +378,14 @@ public:
         }
     }
 
-    // ---- AIV：清 L1 槽（zeroUB->L1，整槽置零）。zeroUB 复用 ub_Zero（已按 cur 清零）----
+    // ---- AIV：清 L1 槽（zeroUB->L1，整槽置零）----
     __aicore__ inline void ClearSlotUB(AscendC::LocalTensor<InDtype> l1Slot, int64_t cur)
     {
         AscendC::DataCopy(l1Slot, ub_Zero,
                           AscendC::DataCopyParams(1, (uint16_t)(cur * cur / 16), 0, 0));
     }
 
-    // ---- AIV：从 ub_Res(NZ) 按块 raw UB->L1 提取选中对角块到 l1Slot（非选中分形由 ClearSlotUB 置零）----
-    // ub_Res 与 L1 槽 NZ 布局一致：分形 (fr,fc) 偏移 = (fc*NUM_FRACS+fr)*256。
+    // ---- AIV：从 ub_Res(NZ) 按块 raw UB->L1 提取选中对角块到 l1Slot ----
     __aicore__ inline void ExtractFromUB(AscendC::LocalTensor<InDtype> l1Slot,
                                          int64_t cur, int32_t blockSize, int32_t startBlock)
     {
@@ -426,11 +407,7 @@ public:
         }
     }
 
-    // ---- AIC：MBH 矩乘（本仓已验证 RecursiveMerge 的 V1 约定，运行期 cur 参数化）----
-    // 关键：cube 实际算 blockT(OpA)@B，左算子非对角分形会被块转置；故对 A 按 (i,k)<-src(k,i)
-    // 预交换源分形（srcOffsetA = i*numFracs*FRAC_LEN），使 cube 还原出 plain A@B。
-    // 不能复用 MCH 的 V2 MatmulToL0C：MCH 操作数是块对角（非对角分形恒 0），两种约定等价，
-    // 故 MCH 永远无法验证非对角分形行为；而 MBH 的 -A / Y 含非对角分形，必须用本 V1 约定。
+    // ---- AIC：MBH 矩乘（V1 约定，对 A 做块转置预交换，运行期 cur 参数化）----
     __aicore__ inline void MbhMatmulToL0C(AscendC::LocalTensor<InDtype> l1A,
                                           AscendC::LocalTensor<InDtype> l1B,
                                           int64_t cur, bool initC)
@@ -468,7 +445,6 @@ public:
         AscendC::Mmad(l0c_X, l0a_X, l0b_X, mmadParams);
     }
 
-    // ---- AIC：MBH 一层的 matmul + Fixpipe 落 L1 ----
     __aicore__ inline void MbhMatmulToSlot(AscendC::LocalTensor<InDtype> l1A,
                                            AscendC::LocalTensor<InDtype> l1B,
                                            AscendC::LocalTensor<InDtype> l1Dst,
@@ -480,95 +456,85 @@ public:
         AscendC::PipeBarrier<PIPE_ALL>();
     }
 
+    // ---- AIC：MBH 单层 B/C/E/G 四步矩乘 + 层间/末层写出 ----
+    __aicore__ inline void MbhLevelAic(int64_t cur, int64_t actual_size, int64_t x_gm_offset,
+                                       int64_t row_stride, bool lastLevel)
+    {
+        // step B: L0C = I × I（完整单位阵）
+        MbhMatmulToL0C(l1_I, l1_I, cur, true);
+        AscendC::PipeBarrier<PIPE_ALL>();
+        // step C: Y = drv(l1_X) × (-A) + I -> l1_Y
+        MbhMatmulToSlot(l1_X, l1_MNEG, l1_Y, cur, false);
+        // step E: L0C = Y × oth(l1_INPUT)
+        MbhMatmulToL0C(l1_Y, l1_INPUT, cur, true);
+        AscendC::PipeBarrier<PIPE_ALL>();
+        // step G: L0C += I × drv(l1_X)
+        MbhMatmulToL0C(l1_I, l1_X, cur, false);
+        AscendC::PipeBarrier<PIPE_ALL>();
+        if (!lastLevel) {
+            FixpipeL0cToUB(ub_Res, l0c_X, cur);   // 层间结果 -> ub_Res，下层提取
+        } else {
+            FixpipeL0cToGM(gm_out[x_gm_offset], l0c_X,
+                           static_cast<uint32_t>(actual_size), static_cast<uint32_t>(cur),
+                           static_cast<uint32_t>(row_stride));
+        }
+        AscendC::PipeBarrier<PIPE_ALL>();
+    }
+
+    // ---- Process：CrossCoreFlag + round-robin，MCH 与 MBH 每 tile 逐层握手 ----
     __aicore__ inline void Process()
     {
         int32_t drvStart = is_lower ? 1 : 0;
         int32_t othStart = is_lower ? 0 : 1;
         int64_t row_stride = (mode == 0) ? chunk_size : (num_head * chunk_size);
 
-        // ===== 多核固定调度协同 =====
-        // SyncAll<false> 是全局屏障（要求所有 launched 核调用次数完全一致，否则死锁；
-        // CrossCoreFlag 在本 1:2 MIX 上死锁，故沿用本仓已验证的 SyncAll<false>）。
-        // 为使各 (AIC,其2个AIV subcore) 组的 SyncAll 计数恒等，采用“固定调度”：
-        //   - 每组处理连续 tile 段 [groupIdx*tiles_per_core, +tiles_per_core)；所有组都走
-        //     tiles_per_core 个 slot；每 slot 固定 (2 + 2*maxLevels) 次 SyncAll，与该 tile 的
-        //     实际 cur 无关 —— 真实层做活、其余层用空屏障补齐；越界 slot 全空屏障。
-        //   - maxLevels = log2(chunk_size/16)，由 chunk_size 推导，各核一致。
-        // 这样每核总 SyncAll 次数 = tiles_per_core*(2 + 2*maxLevels)，组间恒等，不死锁。
-        // 单核(usedCoreNum=1)时 tiles_per_core=totalTiles、groupIdx=0，退化为原逐 tile 行为。
-        //
-        // 【关键假设】MIX 1:2 下 GetBlockIdx() 对 AIC 与其配对 AIV 返回同一组索引（core_idx）。
-        //   若目标 SDK 语义不同（如 AIV 返回 AIV-global 索引），仅需改此处 groupIdx 推导一行。
-        int64_t groupIdx = core_idx;
-        int32_t maxLevels = 0;
-        for (int32_t bs = 16; bs < chunk_size; bs *= 2) maxLevels++;
+        if ASCEND_IS_AIV {
+            if (sub_block_idx == 0) {
+                for (int64_t loop_idx = core_idx / 2; loop_idx < chunk_num_total; loop_idx += num_core) {
+                    int64_t x_gm_offset = 0;
+                    int64_t cur = 0;
+                    int64_t actual_size = 0;
+                    ComputeTile(loop_idx, x_gm_offset, cur, actual_size);
 
-        for (int64_t slot = 0; slot < tiles_per_core; slot++) {
-            int64_t loop_idx = groupIdx * tiles_per_core + slot;
-            bool valid = (loop_idx < chunk_num_total);
+                    // ---- MCH 备数 ----
+                    AivMchPrep(cur, actual_size, x_gm_offset, row_stride);
+                    AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(0x2);   // 数据就绪 -> AIC
+                    AscendC::CrossCoreWaitFlag<0x4>(0x0);             // 等 AIC：MCH 完成（ub_Res 就绪 / cur==16 已写 GM）
 
-            int64_t x_gm_offset = 0;
-            int64_t cur = 0;
-            if (valid) {
-                ComputeTile(loop_idx, x_gm_offset, cur);
-            }
-
-            // ===== MCH 阶段 =====
-            if ASCEND_IS_AIV {
-                if (valid && sub_block_idx == 0) {
-                    AivMchPrep(cur, x_gm_offset, row_stride);
-                }
-            }
-            AscendC::SyncAll<false>();   // SP_a: AIV 备数完成 -> AIC 可做 MCH 牛顿
-            if ASCEND_IS_AIC {
-                if (valid) {
-                    AicMchNewton(cur, x_gm_offset, row_stride);
-                    AscendC::PipeBarrier<PIPE_ALL>();
-                }
-            }
-            AscendC::SyncAll<false>();   // SP_b: AIC 牛顿完成(ub_Res 就绪 / cur==16 已写 GM)
-
-            // ===== MBH 阶段：固定 maxLevels 层；真实层(blockSize<cur)做活，其余空屏障补齐 =====
-            for (int32_t lvl = 0; lvl < maxLevels; lvl++) {
-                int32_t blockSize = 16 << lvl;                       // 16,32,64,...
-                bool realLevel = valid && (blockSize < cur);
-                bool lastLevel = realLevel && !(blockSize < cur / 2);
-
-                AscendC::SyncAll<false>();   // SP1: ub_Res 就绪 -> AIV 提取
-                if ASCEND_IS_AIV {
-                    if (realLevel && sub_block_idx == 0) {
+                    // ---- MBH 各层：提取 drv/oth -> 握手 ----
+                    for (int32_t blockSize = 16; blockSize < cur; blockSize *= 2) {
                         ClearSlotUB(l1_X, cur);
                         ClearSlotUB(l1_INPUT, cur);
                         AscendC::PipeBarrier<PIPE_ALL>();
                         ExtractFromUB(l1_X, cur, blockSize, drvStart);     // drv -> l1_X
                         ExtractFromUB(l1_INPUT, cur, blockSize, othStart); // oth -> l1_INPUT
                         AscendC::PipeBarrier<PIPE_ALL>();
+                        AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(0x2);   // 提取就绪 -> AIC
+                        AscendC::CrossCoreWaitFlag<0x4>(0x0);             // 等 AIC：本层矩乘/回写完成
                     }
                 }
-                AscendC::SyncAll<false>();   // SP2: AIV 提取完成 -> AIC 矩乘
-                if ASCEND_IS_AIC {
-                    if (realLevel) {
-                        // step B: L0C = I × I（完整单位阵）
-                        MbhMatmulToL0C(l1_I, l1_I, cur, true);
-                        AscendC::PipeBarrier<PIPE_ALL>();
-                        // step C: Y = drv(l1_X) × (-A) + I -> l1_Y
-                        MbhMatmulToSlot(l1_X, l1_MNEG, l1_Y, cur, false);
-                        // step E: L0C = Y × oth(l1_INPUT)
-                        MbhMatmulToL0C(l1_Y, l1_INPUT, cur, true);
-                        AscendC::PipeBarrier<PIPE_ALL>();
-                        // step G: L0C += I × drv(l1_X)
-                        MbhMatmulToL0C(l1_I, l1_X, cur, false);
-                        AscendC::PipeBarrier<PIPE_ALL>();
-                        if (!lastLevel) {
-                            FixpipeL0cToUB(ub_Res, l0c_X, cur);   // 层间结果 -> ub_Res，下层提取
-                        } else {
-                            FixpipeL0cToGM(gm_out[x_gm_offset], l0c_X,
-                                        static_cast<uint32_t>(cur), static_cast<uint32_t>(row_stride));
-                        }
-                        AscendC::PipeBarrier<PIPE_ALL>();
-                    }
+            }
+        }
+
+        if ASCEND_IS_AIC {
+            for (int64_t loop_idx = core_idx; loop_idx < chunk_num_total; loop_idx += num_core) {
+                int64_t x_gm_offset = 0;
+                int64_t cur = 0;
+                int64_t actual_size = 0;
+                ComputeTile(loop_idx, x_gm_offset, cur, actual_size);
+
+                // ---- MCH 牛顿 ----
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE1>(0x2);   // 等 AIV：数据就绪
+                AicMchNewton(cur, actual_size, x_gm_offset, row_stride);
+                AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(0x0);     // MCH 完成 -> AIV
+
+                // ---- MBH 各层：等提取 -> 四步矩乘 -> 写出 -> 握手 ----
+                for (int32_t blockSize = 16; blockSize < cur; blockSize *= 2) {
+                    bool lastLevel = !(blockSize < cur / 2);
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE1>(0x2);   // 等 AIV：提取就绪
+                    MbhLevelAic(cur, actual_size, x_gm_offset, row_stride, lastLevel);
+                    AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(0x0);     // 本层完成 -> AIV
                 }
-                
             }
         }
     }
