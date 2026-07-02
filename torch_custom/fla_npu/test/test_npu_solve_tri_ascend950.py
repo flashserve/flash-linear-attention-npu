@@ -9,6 +9,7 @@ test_npu_solve_tri_ascend950.py - Test SolveTri custom operator on ascend950 via
 用例覆盖：
   - 仓1 原有全部用例（BSND + TND varlen，BT=32）。
   - chunk_size ∈ {16,32,64,128} × 定长(BSND)/变长(TND) × 有尾块/无尾块。
+  - 上述每条用例分别以 fp16 与 bf16 输入各跑一遍（bf16 判据阈值放宽，见 tol_for）。
 """
 import os
 import torch
@@ -22,6 +23,15 @@ torch.npu.utils.set_device(0)
 # 默认 False：每条用例只打印一行 PASS/FAIL 汇总。
 # 打开方式：置为 True，或运行时设环境变量 SOLVE_TRI_VERBOSE=1。
 PRINT_POINT_DETAIL = os.environ.get("SOLVE_TRI_VERBOSE", "0") == "1"
+
+
+def tol_for(dtype):
+    """verify_err 判据阈值：bf16 尾数位(8)少于 fp16(10)，残差更大，放宽容忍度。"""
+    return 2e-2 if dtype == torch.bfloat16 else 1e-3
+
+
+def dtype_name(dtype):
+    return "bf16" if dtype == torch.bfloat16 else "fp16"
 
 
 def solve_tril_golden(A_tensor, chunk_size, layout="bsnd"):
@@ -52,7 +62,7 @@ def solve_tril_golden(A_tensor, chunk_size, layout="bsnd"):
                     result[s:e, h, :actual_size] = M_inv
                 else:
                     result[b, s:e, h, :actual_size] = M_inv
-    return torch.from_numpy(result).half()
+    return torch.from_numpy(result)   # float32 golden（与 dtype 无关，仅用于诊断 max_diff）
 
 
 def generate_lower_tri_input(B, H, T, chunk_size, dtype=torch.float16, seed=42, layout="bsnd"):
@@ -84,6 +94,8 @@ def generate_lower_tri_input(B, H, T, chunk_size, dtype=torch.float16, seed=42, 
 def test_solve_tri(B, H, T, chunk_size, layout="bsnd", dtype=torch.float16):
     """定长用例（BSND / BHTD）。chunk_size = 输入末维 BT。"""
     torch.manual_seed(42)
+    tol = tol_for(dtype)
+    dt = dtype_name(dtype)
     A = generate_lower_tri_input(B, H, T, chunk_size, dtype, layout=layout)
     golden = solve_tril_golden(A, chunk_size, layout=layout)
 
@@ -125,18 +137,20 @@ def test_solve_tri(B, H, T, chunk_size, layout="bsnd", dtype=torch.float16):
                     chunk_diff = np.abs(inv_block - golden_chunk).max()
                     is_partial = (c == num_chunks - 1 and actual_size < chunk_size)
                     partial_tag = f" [partial {actual_size}x{actual_size}]" if is_partial else ""
-                    cst = "OK" if err < 1e-3 else "FAIL"
+                    cst = "OK" if err < tol else "FAIL"
                     print(f"  [{cst}] b={b} h={h} c={c}{partial_tag}: max_diff={chunk_diff:.6f}, verify_err={err:.6f}")
 
-    passed = max_verify_err < 1e-3
+    passed = max_verify_err < tol
     status = "PASS" if passed else "FAIL"
-    print(f"  [{status}] layout={layout} B={B} H={H} T={T} BT={chunk_size}: "
+    print(f"  [{status}] {dt} layout={layout} B={B} H={H} T={T} BT={chunk_size} (tol={tol:g}): "
           f"max_diff={max_diff:.6f}, verify_err={max_verify_err:.6f}")
     return passed
 
 
 def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16):
     """变长 TND 用例 [total_T, H, BT]。chunk_size = 输入末维 BT。"""
+    tol = tol_for(dtype)
+    dt = dtype_name(dtype)
     total_T = sum(seq_lens)
     cu_seqlens = torch.tensor([0] + list(np.cumsum(seq_lens)), dtype=torch.int32)
     lens = cu_seqlens[1:] - cu_seqlens[:-1]
@@ -189,7 +203,7 @@ def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16):
                 M = eye + block
                 M_inv = np.linalg.inv(M)
                 golden[s:e, h, :actual_size] = M_inv
-    golden = torch.from_numpy(golden).half()
+    golden = torch.from_numpy(golden)   # float32 golden（仅用于诊断 max_diff）
 
     A_npu = A.npu()
     cu_seqlens_list = cu_seqlens.tolist()
@@ -229,48 +243,49 @@ def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16):
                     chunk_diff = np.abs(inv_block - golden_chunk).max()
                     is_partial = (actual_size < chunk_size)
                     partial_tag = f" [partial {actual_size}x{actual_size}]" if is_partial else ""
-                    cst = "OK" if err < 1e-3 else "FAIL"
+                    cst = "OK" if err < tol else "FAIL"
                     print(f"  [{cst}] seq={seq_idx} h={h} c={c}{partial_tag}: "
                           f"max_diff={chunk_diff:.6f}, verify_err={err:.6f}")
 
-    passed = max_verify_err < 1e-3
+    passed = max_verify_err < tol
     status = "PASS" if passed else "FAIL"
-    print(f"  [{status}] varlen seqs={seq_lens}, H={H}, BT={chunk_size}: "
+    print(f"  [{status}] {dt} varlen seqs={seq_lens}, H={H}, BT={chunk_size} (tol={tol:g}): "
           f"max_verify_err={max_verify_err:.6f}")
     return passed
 
 
-if __name__ == "__main__":
-    print("=" * 60)
-    print("SolveTri NPU Test (ascend950, torch.ops.npu)")
-    print("=" * 60)
-
+def run_all_cases(dtype):
+    """按给定输入 dtype 跑完整用例集，返回结果布尔列表。"""
     results = []
+    dt = dtype_name(dtype)
+    print(f"\n{'#' * 60}")
+    print(f"##########  INPUT DTYPE = {dt}  ##########")
+    print(f"{'#' * 60}")
 
     # ================================================================
     # Group 1: 仓1 原有全部用例（BT=32）
     # ================================================================
     print("\n########## [Group 1] repo1 original cases (BT=32) ##########")
     print("\n--- BSND layout [B, T, H, BT] ---")
-    results.append(test_solve_tri(1, 2, 40, 32, layout="bsnd"))
-    results.append(test_solve_tri(2, 2, 64, 32, layout="bsnd"))
-    results.append(test_solve_tri(1, 1, 35, 32, layout="bsnd"))
-    results.append(test_solve_tri(2, 2, 100, 32, layout="bsnd"))
+    results.append(test_solve_tri(1, 2, 40, 32, layout="bsnd", dtype=dtype))
+    results.append(test_solve_tri(2, 2, 64, 32, layout="bsnd", dtype=dtype))
+    results.append(test_solve_tri(1, 1, 35, 32, layout="bsnd", dtype=dtype))
+    results.append(test_solve_tri(2, 2, 100, 32, layout="bsnd", dtype=dtype))
     print("\n--- Network Cases layout [B, T, H, BT] ---")
-    results.append(test_solve_tri(1, 4, 32768, 64, layout="bsnd"))
-    results.append(test_solve_tri(1, 4, 32768, 128, layout="bsnd"))
-    results.append(test_solve_tri(8, 8, 4096, 64, layout="bsnd"))
-    results.append(test_solve_tri(8, 8, 4096, 128, layout="bsnd"))
+    results.append(test_solve_tri(1, 4, 32768, 64, layout="bsnd", dtype=dtype))
+    results.append(test_solve_tri(1, 4, 32768, 128, layout="bsnd", dtype=dtype))
+    results.append(test_solve_tri(8, 8, 4096, 64, layout="bsnd", dtype=dtype))
+    results.append(test_solve_tri(8, 8, 4096, 128, layout="bsnd", dtype=dtype))
 
     print("\n--- TND varlen layout [total_T, H, BT] ---")
-    results.append(test_solve_tri_varlen([64], 1, 32))
-    results.append(test_solve_tri_varlen([32, 32, 32], 2, 32))
-    results.append(test_solve_tri_varlen([45], 1, 32))
-    results.append(test_solve_tri_varlen([100, 50, 35], 2, 32))
-    results.append(test_solve_tri_varlen([4, 18], 1, 32))
-    results.append(test_solve_tri_varlen([35], 1, 32))
-    results.append(test_solve_tri_varlen([3], 1, 32))
-    results.append(test_solve_tri_varlen([18], 2, 32))
+    results.append(test_solve_tri_varlen([64], 1, 32, dtype=dtype))
+    results.append(test_solve_tri_varlen([32, 32, 32], 2, 32, dtype=dtype))
+    results.append(test_solve_tri_varlen([45], 1, 32, dtype=dtype))
+    results.append(test_solve_tri_varlen([100, 50, 35], 2, 32, dtype=dtype))
+    results.append(test_solve_tri_varlen([4, 18], 1, 32, dtype=dtype))
+    results.append(test_solve_tri_varlen([35], 1, 32, dtype=dtype))
+    results.append(test_solve_tri_varlen([3], 1, 32, dtype=dtype))
+    results.append(test_solve_tri_varlen([18], 2, 32, dtype=dtype))
 
     # ================================================================
     # Group 2: chunk_size ∈ {16,32,64,128} × 定长/变长 × 有尾块/无尾块
@@ -286,15 +301,28 @@ if __name__ == "__main__":
 
         # ---- 定长 BSND ----
         print(f"[BSND fixed, no-tail]  T={2 * cs}")
-        results.append(test_solve_tri(2, 2, 2 * cs, cs, layout="bsnd"))
+        results.append(test_solve_tri(2, 2, 2 * cs, cs, layout="bsnd", dtype=dtype))
         print(f"[BSND fixed, with-tail] T={2 * cs + tb} (tail={tb})")
-        results.append(test_solve_tri(2, 2, 2 * cs + tb, cs, layout="bsnd"))
+        results.append(test_solve_tri(2, 2, 2 * cs + tb, cs, layout="bsnd", dtype=dtype))
 
         # ---- 变长 TND ----
         print(f"[TND varlen, no-tail]  seqs=[{2 * cs},{cs}]")
-        results.append(test_solve_tri_varlen([2 * cs, cs], 2, cs))
+        results.append(test_solve_tri_varlen([2 * cs, cs], 2, cs, dtype=dtype))
         print(f"[TND varlen, with-tail] seqs=[{2 * cs + tb},{cs + ts}] (tails={tb},{ts})")
-        results.append(test_solve_tri_varlen([2 * cs + tb, cs + ts], 2, cs))
+        results.append(test_solve_tri_varlen([2 * cs + tb, cs + ts], 2, cs, dtype=dtype))
+
+    return results
+
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("SolveTri NPU Test (ascend950, torch.ops.npu) — fp16 + bf16")
+    print("=" * 60)
+
+    results = []
+    # 每条用例分别以 fp16 与 bf16 输入各跑一遍
+    for dtype in (torch.float16, torch.bfloat16):
+        results += run_all_cases(dtype)
 
     print(f"\n{'=' * 60}")
     print(f"Results: {sum(results)}/{len(results)} passed")
