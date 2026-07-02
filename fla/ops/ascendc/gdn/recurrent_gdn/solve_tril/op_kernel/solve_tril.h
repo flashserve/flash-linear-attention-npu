@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2026 Tianjin University, Ltd.
+ * Licensed under the BSD 3-Clause License.
+ */
+
 #ifndef SOLVE_TRIL_H
 #define SOLVE_TRIL_H
 
@@ -7,6 +12,24 @@
 
 using namespace AscendC;
 
+// ============================================================================
+// SolveTril —— 下三角逆 (I+A)^{-1} 的 ascend950 MCH 实现
+//
+// MCH（块对角逆）：每个 chunk 独立求逆，AIV/AIC 协同流水。
+//   - AIV(sub_block_idx=0): AuxMatrixGen → l1_I；逐 tile 提取对角块 GM->UB->l1_Y、
+//     计算 I-A → l1_X；CrossCoreSetFlag(0x2) 通知 AIC 数据就绪。
+//   - AIC: 逐 tile 牛顿迭代求逆 → gm_out；CrossCoreSetFlag(0x0) 通知 AIV 计算完成。
+//   - 跨核采用 CrossCoreSetFlag/WaitFlag 每 tile 握手机制，无死锁。
+//   - 多核调度：round-robin (loop_idx = core_idx; loop_idx < total; loop_idx += num_core)。
+//
+// 移植适配要点（对比源仓参考）：
+//   [索引] INT64（与本仓 def / op_api / tiling 一致）
+//   [同步] CrossCoreSetFlag/WaitFlag 替代 SyncAll（源仓 SyncAll<false> 在 1:2 MIX 上死锁）
+//   [GM 偏移] bsnd / tnd 完整公式，泛化 batch > 1 / seq / head 任意组合
+//   [srcStride] 对角块 gather 的 srcStride 按 row_stride 推导（源仓硬编码 1 仅 H=1 成立）
+//   [尾块] 辅助矩阵按 chunk_size_actual 生成并缓存（仅尺寸变化时重建），避免每 tile 开销
+//   [写出] MCH 结果 Fixpipe 写 gm_out（源仓仅 DumpTensor ub_Res 用于联调）
+// ============================================================================
 
 constexpr AscendC::FixpipeConfig CFG_NZ_L1 = {AscendC::CO2Layout::NZ, false};
 constexpr AscendC::FixpipeConfig CFG_NZ_UB = {AscendC::CO2Layout::NZ, true};
@@ -17,46 +40,31 @@ public:
     __aicore__ inline void Init(GM_ADDR aGm, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR outGm,
                                 GM_ADDR workspace, const SolveTrilTilingData *tilingData)
     {
-        // Tiling
-        batch_size = tilingData->batchSize;
-        seq_length = tilingData->seqLength;
-        num_head = tilingData->numHead;
-        chunk_size = tilingData->chunkSize;
-        chunk_num_in_seq = tilingData->chunkNumInSeq;
-        chunk_num_total = tilingData->chunkNumTotal;
-        mode = tilingData->mode;
-
-        AscendC::printf("wangwei[vector]: batch_size %d\n", batch_size);
-        AscendC::printf("wangwei[vector]: seq_length %d\n", seq_length);
-        AscendC::printf("wangwei[vector]: num_head %d\n", num_head);
-        AscendC::printf("wangwei[vector]: chunk_size %d\n", chunk_size);
-        AscendC::printf("wangwei[vector]: chunk_num_in_seq %d\n", chunk_num_in_seq);
-        AscendC::printf("wangwei[vector]: chunk_num_total %d\n", chunk_num_total);
-        AscendC::printf("wangwei[vector]: mode %d\n", mode);
-        // GM
+        // Tiling（沿用本仓字段名）
+        batch_size       = tilingData->batchSize;
+        seq_length       = tilingData->seqLen;
+        num_head         = tilingData->numHeads;
+        chunk_size       = tilingData->chunkSize;
+        chunk_num_in_seq = tilingData->numChunks;
+        chunk_num_total  = tilingData->totalChunks;
+        mode             = tilingData->layoutMode;
+        
+        // GM（INT64 索引，与本仓 infra 一致）
         gm_a.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(aGm));
-        gm_cu_seqlens.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(cu_seqlens));
-        gm_chunk_indices.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(chunk_indices));
+        gm_cu_seqlens.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cu_seqlens));
+        gm_chunk_indices.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(chunk_indices));
         gm_out.SetGlobalBuffer(reinterpret_cast<__gm__ OutDtype *>(outGm));
 
-        // pipe->InitBuffer(ubBuf_, chunk_size * chunk_size * sizeof(InDtype));
-        // pipe->InitBuffer(ubBuf_2, chunk_size * chunk_size * sizeof(InDtype));
-        // pipe->InitBuffer(l1Buf_, chunk_size * chunk_size * sizeof(InDtype));
-        
-        // ub_ = ubBuf_.Get<InDtype>();
-        // ub_2 = ubBuf_2.Get<InDtype>();
-        // l1_ = l1Buf_.Get<InDtype>();
-
-
         OnChipBuffer buf;
-        
-        // UB
-        ub_I = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(0);
+
+        // UB（5 槽，每槽 chunk_size*chunk_size）
+        ub_I    = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(0);
         ub_Zero = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(chunk_size * chunk_size * sizeof(InDtype));
-        ub_A = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(chunk_size * chunk_size * sizeof(InDtype) * 2);
-        ub_I_A = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(chunk_size * chunk_size * sizeof(InDtype) * 3);
-        ub_Res = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(chunk_size * chunk_size * sizeof(InDtype) * 4);
-        // L1
+        ub_A    = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(chunk_size * chunk_size * sizeof(InDtype) * 2);
+        ub_I_A  = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(chunk_size * chunk_size * sizeof(InDtype) * 3);
+        ub_Res  = buf.template GetBuffer<BufferType::ASCEND_UB, InDtype>(chunk_size * chunk_size * sizeof(InDtype) * 4);
+
+        // L1（3 槽）
         l1_I = buf.template GetBuffer<BufferType::ASCEND_CB, InDtype>(0);
         l1_X = buf.template GetBuffer<BufferType::ASCEND_CB, InDtype>(chunk_size * chunk_size * sizeof(InDtype));
         l1_Y = buf.template GetBuffer<BufferType::ASCEND_CB, InDtype>(chunk_size * chunk_size * sizeof(InDtype) * 2);
@@ -69,11 +77,14 @@ public:
         l0c_X = buf.template GetBuffer<BufferType::ASCEND_L0C, float>(0);
         l0c_Y = buf.template GetBuffer<BufferType::ASCEND_L0C, float>(chunk_size * chunk_size * sizeof(float));
 
-
         // Core
-        num_core = AscendC::GetBlockNum();
-        core_idx = AscendC::GetBlockIdx();
+        num_core      = AscendC::GetBlockNum();
+        core_idx      = AscendC::GetBlockIdx();
         sub_block_idx = AscendC::GetSubBlockIdx();
+
+        // 辅助矩阵缓存：0 为初始值（chunk_size_actual 恒 >=16），首个 tile 必触发生成
+        last_chunk_size = 0;
+        last_chunk_actual_size = 0;
     }
 
     __aicore__ inline int64_t CeilDiv(int64_t a, int64_t b)
@@ -84,36 +95,29 @@ public:
     __aicore__ inline void ub_to_l1(AscendC::LocalTensor<InDtype> l1Tensor,
                                     AscendC::LocalTensor<InDtype> ubTensor, uint32_t chunkSize)
     {
-        AscendC::DataCopy(l1Tensor,                               // dst
-                          ubTensor,                               // src
-                          AscendC::DataCopyParams(1,              // nBurst
-                                                  chunkSize * chunkSize / 16,  // lenBurst
-                                                  0,              // srcGap
-                                                  0));            // dstGap
+        AscendC::DataCopy(l1Tensor, ubTensor,
+                          AscendC::DataCopyParams(1, chunkSize * chunkSize / 16, 0, 0));
     }
 
     __aicore__ inline void FixpipeL0cToL1(AscendC::LocalTensor<InDtype> l1Tensor,
-                                          AscendC::LocalTensor<float> l0CTensor,
-                                          uint32_t chunkSize)
+                                          AscendC::LocalTensor<float> l0CTensor, uint32_t chunkSize)
     {
         AscendC::FixpipeParamsArch3510<AscendC::CO2Layout::NZ> fixPipeParams;
         fixPipeParams.nSize = chunkSize;
         fixPipeParams.mSize = chunkSize;
         fixPipeParams.srcStride = chunkSize;
         fixPipeParams.dstStride = chunkSize * 16;
-        
-        // fixPipeParams.unitFlag = 0;
+
         if constexpr (std::is_same_v<InDtype, half>) {
             fixPipeParams.quantPre = QuantMode_t::F322F16;
         } else {
             fixPipeParams.quantPre = QuantMode_t::F322BF16;
         }
-        AscendC::Fixpipe<InDtype, float, CFG_NZ_L1>(l1Tensor, l0CTensor, fixPipeParams); 
+        AscendC::Fixpipe<InDtype, float, CFG_NZ_L1>(l1Tensor, l0CTensor, fixPipeParams);
     }
 
     __aicore__ inline void FixpipeL0cToUB(AscendC::LocalTensor<InDtype> ubTensor,
-                                          AscendC::LocalTensor<float> l0CTensor,
-                                          uint32_t chunkSize)
+                                          AscendC::LocalTensor<float> l0CTensor, uint32_t chunkSize)
     {
         AscendC::FixpipeParamsArch3510<AscendC::CO2Layout::NZ> fixPipeParams;
         fixPipeParams.nSize = chunkSize;
@@ -122,49 +126,46 @@ public:
         fixPipeParams.dstStride = chunkSize * 16;
         fixPipeParams.dualDstCtl = 0;
         fixPipeParams.subBlockId = 0;
-        
-        // fixPipeParams.unitFlag = 0;
+
         if constexpr (std::is_same_v<InDtype, half>) {
             fixPipeParams.quantPre = QuantMode_t::F322F16;
         } else {
             fixPipeParams.quantPre = QuantMode_t::F322BF16;
         }
-        AscendC::Fixpipe<InDtype, float, CFG_NZ_UB>(ubTensor, l0CTensor, fixPipeParams); 
+        AscendC::Fixpipe<InDtype, float, CFG_NZ_UB>(ubTensor, l0CTensor, fixPipeParams);
     }
 
     __aicore__ inline int64_t ChunkAlign(int64_t cur_chunk)
     {
-        if (cur_chunk <= 16)
-            return 16;
-        if (cur_chunk <= 32)
-            return 32;
-        if (cur_chunk <= 64)
-            return 64;
+        if (cur_chunk <= 16)  return 16;
+        if (cur_chunk <= 32)  return 32;
+        if (cur_chunk <= 64)  return 64;
         return 128;
     }
 
+    // MCH V2 MatmulToL0C（块对角操作数专用；非对角分形恒 0，V1/V2 等价）
     __aicore__ inline void MatmulToL0C(AscendC::LocalTensor<InDtype> l1A, AscendC::LocalTensor<InDtype> l1B,
                                        AscendC::LocalTensor<InDtype> l0A, AscendC::LocalTensor<InDtype> l0B,
                                        AscendC::LocalTensor<float> l0C, int64_t chunkSize, bool initC)
     {
         int64_t numFracs = chunkSize / 16;
-        
+
         AscendC::LoadData2DParamsV2 loadDataParamsA;
         loadDataParamsA.mStartPosition = 0;
         loadDataParamsA.kStartPosition = 0;
-        loadDataParamsA.mStep = numFracs; // 3
-        loadDataParamsA.kStep = numFracs; // 3
-        loadDataParamsA.srcStride = numFracs; // 3
-        loadDataParamsA.dstStride = numFracs; // 3
+        loadDataParamsA.mStep = numFracs;
+        loadDataParamsA.kStep = numFracs;
+        loadDataParamsA.srcStride = numFracs;
+        loadDataParamsA.dstStride = numFracs;
         loadDataParamsA.ifTranspose = false;
         AscendC::LoadData(l0A, l1A, loadDataParamsA);
 
         AscendC::LoadData2DParamsV2 loadDataParamsB;
-        loadDataParamsB.mStartPosition = 0; 
-        loadDataParamsB.kStartPosition = 0; 
-        loadDataParamsB.mStep = numFracs; 
-        loadDataParamsB.kStep = numFracs; 
-        loadDataParamsB.srcStride = numFracs; 
+        loadDataParamsB.mStartPosition = 0;
+        loadDataParamsB.kStartPosition = 0;
+        loadDataParamsB.mStep = numFracs;
+        loadDataParamsB.kStep = numFracs;
+        loadDataParamsB.srcStride = numFracs;
         loadDataParamsB.dstStride = numFracs;
         loadDataParamsB.ifTranspose = true;
         AscendC::LoadData(l0B, l1B, loadDataParamsB);
@@ -181,242 +182,242 @@ public:
         AscendC::Mmad(l0C, l0A, l0B, mmadParams);
     }
 
-    __aicore__ inline void AuxMatrixGen()
+    // 结果写回：L0C(FP32, NZ) -> gm_out(ND, 行优先)
+    __aicore__ inline void FixpipeL0cToGM(AscendC::GlobalTensor<OutDtype> gmTensor,
+                                          AscendC::LocalTensor<float> l0CTensor,
+                                          uint32_t curSize, uint32_t dstStride)
     {
-        uint64_t NUM_FRACS = chunk_size / 16; // 对角矩阵个数
-        uint64_t NUM_ITER = NUM_FRACS * 2;    // 切成8*16的块有多少
-        int32_t chunkElems = chunk_size * chunk_size;
-        // 清零A矩阵需要的内存
+        auto intriParams = AscendC::FixpipeParamsV220(curSize, curSize, curSize, dstStride, false);
+        if constexpr (std::is_same_v<OutDtype, half>) {
+            intriParams.quantPre = QuantMode_t::F322F16;
+        } else {
+            intriParams.quantPre = QuantMode_t::F322BF16;
+        }
+        AscendC::Fixpipe<OutDtype, float, AscendC::CFG_ROW_MAJOR>(gmTensor, l0CTensor, intriParams);
+    }
+
+    // 按给定 cur_size 生成 NZ 块对角辅助矩阵（尾块安全）
+    __aicore__ inline void AuxMatrixGen(int64_t cur_size)
+    {
+        uint64_t NUM_FRACS = cur_size / 16;
+        uint64_t NUM_ITER  = NUM_FRACS * 2;
+        int32_t chunkElems = static_cast<int32_t>(cur_size * cur_size);
+
+        // 清零 A / 生成单位阵 I
         Duplicate(ub_A, (InDtype)0, chunkElems);
-        
-        // 单位矩阵生成
         Duplicate(ub_I, (InDtype)0, chunkElems);
         for (uint64_t stripIdx = 0; stripIdx < NUM_ITER; stripIdx++) {
-            uint64_t fracsIdx = stripIdx / 2;
+            uint64_t fracsIdx   = stripIdx / 2;
             uint64_t oldEvenIdx = stripIdx % 2;
             uint64_t diagMask[2] = {
                 DIAG_MASK_8X16[oldEvenIdx ? 0 : 1][0],
                 DIAG_MASK_8X16[oldEvenIdx ? 0 : 1][1]
             };
-            uint64_t UB_DIAG_I_OFF = fracsIdx * (chunk_size + 16) * 16 + oldEvenIdx * 8 * 16;
+            uint64_t UB_DIAG_I_OFF = fracsIdx * (cur_size + 16) * 16 + oldEvenIdx * 8 * 16;
             Duplicate(ub_I[UB_DIAG_I_OFF], (InDtype)1.0f, diagMask, 1, 1, 1);
         }
-        // 全零矩阵生成
-        Duplicate(ub_Zero, (InDtype)0, chunkElems);    
+        // 全零矩阵
+        Duplicate(ub_Zero, (InDtype)0, chunkElems);
     }
 
-    __aicore__ inline void ProcessVec()
+    // 由 loop_idx 计算该 tile 的 GM 偏移与对齐后的实际 chunk 尺寸
+    __aicore__ inline void ComputeTile(int64_t loop_idx, int64_t &x_gm_offset,
+                                       int64_t &cur_size, int64_t &row_stride)
     {
-        for (uint64_t loop_idx = core_idx; loop_idx < chunk_num_total; loop_idx += num_core) {
-            int64_t x_gm_offset = 0;
-            int64_t seq_idx = 0;
-            int64_t chunk_in_seq_idx = 0;
-            int64_t head_idx = 0;
-            int64_t chunk_idx = 0;
+        int64_t seq_idx            = 0;
+        int64_t chunk_in_seq_idx   = 0;
+        int64_t head_idx           = 0;
+        int64_t chunk_idx          = 0;
+        int64_t local_seq_length   = seq_length;
+        int64_t local_chunk_num_in_seq = chunk_num_in_seq;
 
-            // 2.计算索引
-            if (mode == 1) { // 定长
-                seq_idx = loop_idx / (chunk_num_in_seq * num_head);
-                chunk_in_seq_idx = loop_idx % (chunk_num_in_seq * num_head) / num_head;
-                head_idx = loop_idx % (chunk_num_in_seq * num_head) % num_head;
-                x_gm_offset = seq_idx * num_head * seq_length * chunk_size +
-                              chunk_in_seq_idx * num_head * chunk_size +
-                              head_idx * chunk_size;
-            } else if (mode == 2) { // 变长
-                chunk_idx = loop_idx / num_head;
-                seq_idx = gm_chunk_indices.GetValue(chunk_idx * 2);
-                seq_length = gm_cu_seqlens.GetValue(seq_idx + 1) - gm_cu_seqlens.GetValue(seq_idx);
-                chunk_num_in_seq = CeilDiv(seq_length, chunk_size);
-                chunk_in_seq_idx = gm_chunk_indices.GetValue(chunk_idx * 2 + 1);
-                x_gm_offset = gm_cu_seqlens.GetValue(seq_idx) +
-                              chunk_in_seq_idx * num_head * chunk_size +
-                              head_idx * chunk_size;
-            }
+        row_stride = num_head * chunk_size;
 
-            chunk_size_actual = (chunk_in_seq_idx == (chunk_num_in_seq - 1)) ?
-                                    ChunkAlign(seq_length - chunk_in_seq_idx * chunk_size) :
-                                    chunk_size;
+        if (mode == 0) {
+            // BHTD: [B, H, T, BT]
+            seq_idx          = loop_idx / (chunk_num_in_seq * num_head);
+            chunk_in_seq_idx = loop_idx % (chunk_num_in_seq * num_head) / num_head;
+            head_idx         = loop_idx % (chunk_num_in_seq * num_head) % num_head;
+            x_gm_offset = seq_idx * num_head * seq_length * chunk_size +
+                          chunk_in_seq_idx * num_head * chunk_size +
+                          head_idx * chunk_size;
+        } else if (mode == 1) {
+            // BSND: [B, T, H, BT]
+            seq_idx          = loop_idx / (chunk_num_in_seq * num_head);
+            chunk_in_seq_idx = loop_idx % (chunk_num_in_seq * num_head) / num_head;
+            head_idx         = loop_idx % (chunk_num_in_seq * num_head) % num_head;
+            x_gm_offset = seq_idx * seq_length * num_head * chunk_size +
+                          chunk_in_seq_idx * chunk_size * num_head * chunk_size +
+                          head_idx * chunk_size;
+        } else {
+            // TND varlen: [total_T, H, BT]; B = 1
+            chunk_idx = loop_idx / num_head;
+            head_idx  = loop_idx % num_head;
+            seq_idx          = gm_chunk_indices.GetValue(chunk_idx * 2);
+            chunk_in_seq_idx = gm_chunk_indices.GetValue(chunk_idx * 2 + 1);
+            local_seq_length = gm_cu_seqlens.GetValue(seq_idx + 1) - gm_cu_seqlens.GetValue(seq_idx);
+            local_chunk_num_in_seq = CeilDiv(local_seq_length, chunk_size);
+            int64_t bos = gm_cu_seqlens.GetValue(seq_idx);
+            x_gm_offset = (bos + chunk_in_seq_idx * chunk_size) * num_head * chunk_size +
+                          head_idx * chunk_size;
+        }
+        last_chunk_actual_size = local_seq_length - (local_chunk_num_in_seq - 1) * chunk_size;
+        last_chunk_size = ChunkAlign(last_chunk_actual_size);
 
-            // 3.MCH
-            // gm_a -> ub_a
-            AscendC::printf("wangwei[vector]: x_gm_offset %d\n", x_gm_offset);
-            AscendC::printf("wangwei[vector]: chunk_size_actual %d\n", chunk_size_actual);
 
-            // AscendC::DataCopy(ub_A, gm_a[x_gm_offset],
-            //                   AscendC::Nd2NzParams(chunk_size_actual / 16,                  // ndNum
-            //                                        16,                                      // nValue
-            //                                        chunk_size_actual,                                      // dValue
-            //                                        (chunk_size_actual * num_head + 1) * 16, // srcNdMatrixStride
-            //                                        chunk_size_actual * num_head,            // srcDValue
-            //                                        16,                                       // dstNzC0Stride
-            //                                        1,                                       // dstNzNStride
-            //                                        (chunk_size_actual + 16) * 16));          // dstNzMatrixStride
-            
-            for(uint64_t i = 0; i < chunk_size_actual / 16; i++){
-                uint64_t srcOffset = i * (chunk_size_actual * 16 + 16);
-                uint64_t dstOffset = i * (chunk_size_actual * 16 + 16 * 16);
-                AscendC::DataCopy(ub_A[dstOffset], gm_a[x_gm_offset + srcOffset], AscendC::DataCopyParams(16, 1, 1, 0));     
-            }
-            
-            AscendC::PipeBarrier<PIPE_ALL>();
-
-            AscendC::DataCopy(l1_Y,                               // dst
-                          ub_A,                               // src
-                          AscendC::DataCopyParams(1,              // nBurst
-                                                  chunk_size_actual * chunk_size_actual / 16,  // lenBurst
-                                                  0,              // srcGap
-                                                  0));            // dstGap
-            // AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(0x1);
-            // AscendC::DumpTensor(gm_a[x_gm_offset], 1, chunk_size_actual*chunk_size_actual); 
-            // AscendC::DumpTensor(ub_A, 2, chunk_size_actual*chunk_size_actual); 
-            
-            AscendC::PipeBarrier<PIPE_ALL>();
-
-            AscendC::Sub(ub_I_A, ub_I, ub_A, (int32_t)(chunk_size_actual * chunk_size_actual));
-
-            
-
-            AscendC::PipeBarrier<PIPE_ALL>();
-            // SetFlag<HardEvent::V_MTE3>(0);
-            // WaitFlag<HardEvent::V_MTE3>(0);
-            // AscendC::DumpTensor(ub_I_A, 0, chunk_size_actual*chunk_size_actual);
-            // AscendC::printf("wangwei: DataCopy(l1_X, ub_A)");
-
-            AscendC::DataCopy(l1_X, ub_I_A,                                     // src
-                          AscendC::DataCopyParams(1,                // nBurst
-                                                  chunk_size_actual * chunk_size_actual / 16,  // lenBurst
-                                                  0,                // srcGap
-                                                  0));              // dstGap
-            
-            // AscendC::DumpTensor(ub_A, 1, chunk_size_actual*chunk_size_actual); 
-            AscendC::PipeBarrier<PIPE_ALL>();
-
-        }  
-        
+        cur_size = (chunk_in_seq_idx == (local_chunk_num_in_seq - 1))
+                       ? ChunkAlign(local_seq_length - chunk_in_seq_idx * chunk_size)
+                       : chunk_size;
     }
 
-    __aicore__ inline void ProcessCube()
+    // ---- AIV：MCH 单 tile 备数 ----
+    __aicore__ inline void AivMchPrep(int64_t loop_idx, int64_t cur, int64_t x_gm_offset, int64_t row_stride)
     {
-        for (uint64_t loop_idx = core_idx; loop_idx < chunk_num_total; loop_idx += num_core) {
-            int64_t x_gm_offset = 0;
-            int64_t seq_idx = 0;
-            int64_t chunk_in_seq_idx = 0;
-            int64_t head_idx = 0;
-            int64_t chunk_idx = 0;
-
-            // 2.计算索引
-            if (mode == 1) { // 定长
-                seq_idx = loop_idx / (chunk_num_in_seq * num_head);
-                chunk_in_seq_idx = loop_idx % (chunk_num_in_seq * num_head) / num_head;
-                head_idx = loop_idx % (chunk_num_in_seq * num_head) % num_head;
-                x_gm_offset = seq_idx * num_head * seq_length * chunk_size +
-                              chunk_in_seq_idx * num_head * chunk_size +
-                              head_idx * chunk_size;
-            } else if (mode == 2) { // 变长
-                chunk_idx = loop_idx / num_head;
-                seq_idx = gm_chunk_indices.GetValue(chunk_idx * 2);
-                seq_length = gm_cu_seqlens.GetValue(seq_idx + 1) - gm_cu_seqlens.GetValue(seq_idx);
-                chunk_num_in_seq = CeilDiv(seq_length, chunk_size);
-                chunk_in_seq_idx = gm_chunk_indices.GetValue(chunk_idx * 2 + 1);
-                x_gm_offset = gm_cu_seqlens.GetValue(seq_idx) +
-                              chunk_in_seq_idx * num_head * chunk_size +
-                              head_idx * chunk_size;
-            }
-            chunk_size_actual = (chunk_in_seq_idx == (chunk_num_in_seq - 1)) ?
-                                    ChunkAlign(seq_length - chunk_in_seq_idx * chunk_size) :
-                                    chunk_size;
-            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE1>(0x2);
-            
-            // AscendC::printf("wangwei: l1_X: \n");
-            // AscendC::DumpTensor(l1_X, 1, chunk_size_actual * chunk_size_actual);
-
-            MatmulToL0C(l1_Y, l1_Y, l0a_Y, l0b_Y, l0c_Y, chunk_size_actual, true);
+        // [尾块辅助矩阵] 仅 chunk 尺寸变化时重建 NZ 单位/全零阵并重拷 l1_I
+        if ((loop_idx == core_idx / 2) || (cur != last_chunk_size)) {
+            AuxMatrixGen(cur);
             AscendC::PipeBarrier<PIPE_ALL>();
-            FixpipeL0cToL1(l1_Y, l0c_Y, chunk_size_actual);
+            ub_to_l1(l1_I, ub_I, static_cast<uint32_t>(cur));
             AscendC::PipeBarrier<PIPE_ALL>();
+            last_chunk_size = cur;
+        }
 
-            MatmulToL0C(l1_I, l1_X, l0a_X, l0b_X, l0c_X, chunk_size_actual, true);
-            AscendC::PipeBarrier<PIPE_ALL>();
-            FixpipeL0cToL1(l1_X, l0c_X, chunk_size_actual);
-            AscendC::PipeBarrier<PIPE_ALL>();
-
-            MatmulToL0C(l1_X, l1_Y, l0a_X, l0b_X, l0c_X, chunk_size_actual, false);
-            AscendC::PipeBarrier<PIPE_ALL>();
-            FixpipeL0cToL1(l1_X, l0c_X, chunk_size_actual);
-            AscendC::PipeBarrier<PIPE_ALL>();
-
-            for (uint64_t iter = 0; iter < 2; iter++) {
-                MatmulToL0C(l1_Y, l1_Y, l0a_Y, l0b_Y, l0c_Y, chunk_size_actual, true);
-                AscendC::PipeBarrier<PIPE_ALL>();
-                FixpipeL0cToL1(l1_Y, l0c_Y, chunk_size_actual);
-                AscendC::PipeBarrier<PIPE_ALL>();
-                MatmulToL0C(l1_X, l1_Y, l0a_X, l0b_X, l0c_X, chunk_size_actual, false);
-                AscendC::PipeBarrier<PIPE_ALL>();
-                if(iter == 1){
-                    FixpipeL0cToUB(ub_Res, l0c_X, chunk_size_actual);
-                    AscendC::PipeBarrier<PIPE_ALL>();
-                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(0x0);
-                } else {
-                    FixpipeL0cToL1(l1_X, l0c_X, chunk_size_actual);
-                    AscendC::PipeBarrier<PIPE_ALL>();
-                }
-                // FixpipeL0cToL1(l1_X, l0c_X, chunk_size_actual);
-                
-            }
-            
-
-            
-            // AscendC::SyncAll<false>();
-            // AscendC::DumpTensor(l1_X, 9, chunk_size_actual * chunk_size_actual);
-        }  
+        // 对角 16x16 块 GM(ND) -> ub_A(NZ 块对角)
+        uint64_t src_blk_stride = static_cast<uint64_t>(row_stride / 16 - 1);
         
+        bool last_chunk_unalign = (cur != chunk_size) && (last_chunk_actual_size != last_chunk_size);
+        // uint64_t cur_chunk = last_chunk_actual_size == cur ? cur : last_chunk_size;
+        uint64_t repeat = CeilDiv(cur, 16);
+
+
+        if(last_chunk_unalign){
+            for (uint64_t i = 0; i < repeat; i++) {
+                uint64_t srcOffset = i * (16 * static_cast<uint64_t>(row_stride) + 16);
+                uint64_t dstOffset = i * (static_cast<uint64_t>(cur) * 16 + 16 * 16);
+                AscendC::DataCopy(ub_A[dstOffset], gm_a[x_gm_offset + srcOffset],
+                              AscendC::DataCopyParams(i == (repeat - 1) ? last_chunk_actual_size % 16 : 16, 
+                                1, 
+                                src_blk_stride, 
+                                0));
+            }
+        } else {
+            for (uint64_t i = 0; i < repeat; i++) {
+                uint64_t srcOffset = i * (16 * static_cast<uint64_t>(row_stride) + 16);
+                uint64_t dstOffset = i * (static_cast<uint64_t>(cur) * 16 + 16 * 16);
+                AscendC::DataCopy(ub_A[dstOffset], gm_a[x_gm_offset + srcOffset],
+                              AscendC::DataCopyParams(16, 
+                                1, 
+                                src_blk_stride, 
+                                0));
+            }
+        }
+        
+        for (uint64_t i = 0; i < repeat; i++) {
+            uint64_t srcOffset = i * (16 * static_cast<uint64_t>(row_stride) + 16);
+            uint64_t dstOffset = i * (static_cast<uint64_t>(cur) * 16 + 16 * 16);
+            AscendC::DataCopy(ub_A[dstOffset], gm_a[x_gm_offset + srcOffset],
+                              AscendC::DataCopyParams(i == (repeat-1) ? last_chunk_actual_size % 16 : 16, 
+                                1, 
+                                src_blk_stride, 
+                                0));
+        }
+        AscendC::PipeBarrier<PIPE_ALL>();
+
+        ub_to_l1(l1_Y, ub_A, static_cast<uint32_t>(cur));        // l1_Y = A（块对角）
+        AscendC::PipeBarrier<PIPE_ALL>();
+        AscendC::Sub(ub_I_A, ub_I, ub_A, (int32_t)(cur * cur));  // I - A
+        AscendC::PipeBarrier<PIPE_ALL>();
+        ub_to_l1(l1_X, ub_I_A, static_cast<uint32_t>(cur));      // l1_X = I - A
+        AscendC::PipeBarrier<PIPE_ALL>();
     }
 
-    __aicore__ inline void Process(){
-        
+    // ---- AIC：MCH 牛顿迭代，求 16x16 对角块逆，Fixpipe 写 gm_out ----
+    __aicore__ inline void AicMchNewton(int64_t cur, int64_t x_gm_offset, int64_t row_stride)
+    {
+        MatmulToL0C(l1_Y, l1_Y, l0a_Y, l0b_Y, l0c_Y, cur, true);
+        AscendC::PipeBarrier<PIPE_ALL>();
+        FixpipeL0cToL1(l1_Y, l0c_Y, cur);
+        AscendC::PipeBarrier<PIPE_ALL>();
+
+        MatmulToL0C(l1_I, l1_X, l0a_X, l0b_X, l0c_X, cur, true);
+        AscendC::PipeBarrier<PIPE_ALL>();
+        FixpipeL0cToL1(l1_X, l0c_X, cur);
+        AscendC::PipeBarrier<PIPE_ALL>();
+
+        MatmulToL0C(l1_X, l1_Y, l0a_X, l0b_X, l0c_X, cur, false);
+        AscendC::PipeBarrier<PIPE_ALL>();
+        FixpipeL0cToL1(l1_X, l0c_X, cur);
+        AscendC::PipeBarrier<PIPE_ALL>();
+
+        for (uint64_t iter = 0; iter < 2; iter++) {
+            MatmulToL0C(l1_Y, l1_Y, l0a_Y, l0b_Y, l0c_Y, cur, true);
+            AscendC::PipeBarrier<PIPE_ALL>();
+            FixpipeL0cToL1(l1_Y, l0c_Y, cur);
+            AscendC::PipeBarrier<PIPE_ALL>();
+            MatmulToL0C(l1_X, l1_Y, l0a_X, l0b_X, l0c_X, cur, false);
+            AscendC::PipeBarrier<PIPE_ALL>();
+            if (iter == 1) {
+                // MCH 块对角逆 -> gm_out(ND)
+                // FixpipeL0cToGM(gm_out[x_gm_offset], l0c_X,
+                //                static_cast<uint32_t>(cur), static_cast<uint32_t>(row_stride));
+                FixpipeL0cToUB(ub_Res, l0c_X, cur);
+            } else {
+                FixpipeL0cToL1(l1_X, l0c_X, cur);
+            }
+            AscendC::PipeBarrier<PIPE_ALL>();
+        }
+    }
+
+    // ---- Process：AIV/AIC 每 tile 握手流水 ----
+    __aicore__ inline void Process()
+    {
         if ASCEND_IS_AIV {
-            if (sub_block_idx == 0){
-                // AscendC::DumpTensor(gm_a, 9, chunk_size * chunk_size);
-                // AscendC::printf("wangwei: ASCEND_IS_AIV");
-                AuxMatrixGen();
-                AscendC::PipeBarrier<PIPE_ALL>();
-                
+            
+            if (sub_block_idx == 0) {
 
-                AscendC::DataCopy(l1_I, ub_I,                           // src
-                              AscendC::DataCopyParams(1,                // nBurst
-                                                      chunk_size * chunk_size / 16,  // lenBurst
-                                                      0,                // srcGap
-                                                      0));              // dstGap
-                // AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(0x0);
-                            
-                ProcessVec();
+                for (int64_t loop_idx = core_idx / 2; loop_idx < chunk_num_total; loop_idx += num_core) {
+                    int64_t x_gm_offset = 0;
+                    int64_t cur         = 0;
+                    int64_t row_stride  = 0;
+                    ComputeTile(loop_idx, x_gm_offset, cur, row_stride);
+
+
+                    AivMchPrep(loop_idx, cur, x_gm_offset, row_stride);
+
+
+                    // 通知同组 AIC：数据就绪
+                    AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(0x2);
+                    // // 等待同组 AIC：计算完成（unlock L1 供下个 tile 使用）
+                    AscendC::CrossCoreWaitFlag<0x4>(0x0);
+
+                }
             }
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(0x2);
-            AscendC::CrossCoreWaitFlag<0x2>(0x0);
-            // AscendC::CrossCoreWaitFlag(0x0);
-            // AscendC::PipeBarrier<PIPE_ALL>();
-            // AscendC::SyncAll<false>();
-            // AscendC::Muls(ub_Res, ub_Res, 1, (int32_t)(chunk_size * chunk_size));
-            AscendC::DumpTensor(ub_Res, 3, chunk_size * chunk_size);
-            
-            
         }
+
         if ASCEND_IS_AIC {
-            // AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(0x0);
-            // AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE3>(0x1);
-            
-            // AscendC::DumpTensor(l1_X, 0, chunk_size * chunk_size); 
-            // AscendC::DumpTensor(l1_Y, 1, chunk_size * chunk_size); 
-            // AscendC::DumpTensor(l1_I, 2, chunk_size * chunk_size); 
-            ProcessCube();
+            for (int64_t loop_idx = core_idx; loop_idx < chunk_num_total; loop_idx += num_core) {
+                int64_t x_gm_offset = 0;
+                int64_t cur         = 0;
+                int64_t row_stride  = 0;
+                ComputeTile(loop_idx, x_gm_offset, cur, row_stride);
+
+                // 等待同组 AIV：数据就绪
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE1>(0x2);
+                
+                
+                AicMchNewton(cur, x_gm_offset, row_stride);
+                // // 通知同组 AIV：计算完成
+                AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(0x0);
+            }
         }
     }
+
 private:
-    // Gm
-    AscendC::GlobalTensor<InDtype> gm_a;
-    AscendC::GlobalTensor<int32_t> gm_cu_seqlens;
-    AscendC::GlobalTensor<int32_t> gm_chunk_indices;
-    AscendC::GlobalTensor<InDtype> gm_out;
+    // GM
+    AscendC::GlobalTensor<InDtype>  gm_a;
+    AscendC::GlobalTensor<int64_t>  gm_cu_seqlens;
+    AscendC::GlobalTensor<int64_t>  gm_chunk_indices;
+    AscendC::GlobalTensor<OutDtype> gm_out;
 
     // UB
     AscendC::LocalTensor<InDtype> ub_A;
@@ -435,15 +436,14 @@ private:
     AscendC::LocalTensor<InDtype> l0a_Y;
     AscendC::LocalTensor<InDtype> l0b_X;
     AscendC::LocalTensor<InDtype> l0b_Y;
-    AscendC::LocalTensor<float> l0c_X;
-    AscendC::LocalTensor<float> l0c_Y;
+    AscendC::LocalTensor<float>   l0c_X;
+    AscendC::LocalTensor<float>   l0c_Y;
 
     // Tiling
     int64_t batch_size;
     int64_t seq_length;
     int64_t num_head;
     int64_t chunk_size;
-    int64_t chunk_size_actual;
     int64_t chunk_num_in_seq;
     int64_t chunk_num_total;
     int64_t mode;
@@ -452,7 +452,10 @@ private:
     int64_t num_core;
     int64_t core_idx;
     int64_t sub_block_idx;
-};
 
+    // 辅助矩阵当前缓存尺寸（仅尺寸变化时重建）
+    int64_t last_chunk_size;
+    int64_t last_chunk_actual_size;
+};
 
 #endif  // SOLVE_TRIL_H

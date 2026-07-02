@@ -92,21 +92,32 @@ static ge::graphStatus SolveTrilTilingFunc(gert::TilingContext* context)
     int64_t tilesPerCore = (totalTiles + coreNum - 1) / coreNum;
 
     SolveTrilTilingData tiling;
-    // std::cout<<"wangwei: tiling.set_batchSize(B)"<<B<<std::endl;
-    // std::cout<<"wangwei: tiling.set_seqLength(T)"<<T<<std::endl;
-    // std::cout<<"wangwei: tiling.set_numHead(H)"<<H<<std::endl;
-    // std::cout<<"wangwei: tiling.set_chunkSize(BT)"<<BT<<std::endl;
-    // std::cout<<"wangwei: tiling.set_chunkNumInSeq(numChunks)"<<numChunks<<std::endl;
-    // std::cout<<"wangwei: tiling.set_chunkNumTotal(totalTiles)"<<totalTiles<<std::endl;
-    // std::cout<<"wangwei: tiling.set_mode(layoutMode)"<<layoutMode<<std::endl;
-
+    // ===== tiling 字段语义说明（MCH 上片后）=====
+    // 下列 7 个字段沿用本仓字段名，但语义按 MCH 版实现解释（kernel 端用这些名字读取 MCH 变量）：
+    //   batchSize -> batchSize, seqLen -> seqLength, chunkSize -> chunkSize,
+    //   numHeads  -> numHead,   numChunks -> chunkNumInSeq,
+    //   totalChunks -> chunkNumTotal（= MCH 主循环上界 = 全部 (chunk,head) tile 数 = totalTiles）,
+    //   layoutMode -> mode（0=bhtd, 1=bsnd 定长, 2=tnd 变长；MCH 仅处理 1/2）。
+    // 其余字段（totalTiles / matrixSize / isLower / hasCuSeqlens / tilesPerCore /
+    //   lastChunkValidSize / isVarlen）沿用本仓原有语义与逻辑，供后续 MBH 使用。
+    
+    tiling.set_totalTiles(totalTiles);
+    tiling.set_matrixSize(chunkSize);
+    tiling.set_numHeads(H);
+    tiling.set_seqLen(T);
     tiling.set_batchSize(B);
-    tiling.set_seqLength(T);
-    tiling.set_numHead(H);
-    tiling.set_chunkSize(BT);
-    tiling.set_chunkNumInSeq(numChunks);
-    tiling.set_chunkNumTotal(totalTiles);
-    tiling.set_mode(layoutMode);
+    tiling.set_isLower(1);
+    tiling.set_hasCuSeqlens(hasCuSeqlens);
+    tiling.set_tilesPerCore(tilesPerCore);
+    tiling.set_chunkSize(chunkSize);
+    tiling.set_numChunks(numChunks);
+    tiling.set_lastChunkValidSize(lastChunkValidSize);
+    tiling.set_isVarlen(isVarlen);
+    // chunkNumTotal 语义：MCH 主循环上界 = 全部 tile 数（= totalTiles）。
+    // 注意与本仓旧 totalChunks（变长下 = chunkIndicesLen/2，定长下 = 0）不同；
+    // 旧值未被任何已启用路径使用，此处改写为 MCH 所需的 totalTiles。
+    tiling.set_totalChunks(totalTiles);
+    tiling.set_layoutMode(layoutMode);
 
     context->SetTilingKey(1);
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(),
@@ -118,6 +129,8 @@ static ge::graphStatus SolveTrilTilingFunc(gert::TilingContext* context)
     context->SetBlockDim(usedCoreNum);
 
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+    // 新 kernel 全程片上缓存（OnChipBuffer: UB/L1/L0），不使用 user GM workspace。
+    // 仅预留系统 workspace（GetLibApiWorkSpaceSize）。
     size_t* ws = context->GetWorkspaceSizes(1);
     ws[0] = sysWorkspaceSize;
 

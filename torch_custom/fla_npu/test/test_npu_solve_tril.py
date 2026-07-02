@@ -1,6 +1,6 @@
 """
 test_npu_solve_tril.py - Test SolveTril custom operator via torch.ops.npu
-Supports BHTD [B,H,T,BT], BSND [B,T,H,BT], and TND [total_T,H,BT] layouts.
+Supports BSND [B,T,H,BT] and TND [total_T,H,BT] (varlen) layouts.
 """
 import torch
 import torch_npu
@@ -10,11 +10,12 @@ import fla_npu
 torch.npu.utils.set_device(0)
 
 
-def solve_tril_golden(A_tensor, chunk_size, layout="bhtd"):
+def solve_tril_golden(A_tensor, chunk_size, layout="bsnd"):
     """CPU golden: compute (I + A)^{-1} for each chunk, support non-aligned T."""
     A = A_tensor.float().numpy()
-    if layout == "bhtd":
-        B, H, T, BT = A.shape
+    if layout == "tnd":
+        T, H, BT = A.shape
+        B = 1
     else:
         B, T, H, BT = A.shape
     num_chunks = (T + chunk_size - 1) // chunk_size
@@ -26,25 +27,25 @@ def solve_tril_golden(A_tensor, chunk_size, layout="bhtd"):
                 s = c * chunk_size
                 e = min(s + chunk_size, T)
                 actual_size = e - s
-                if layout == "bhtd":
-                    block = A[b, h, s:e, :actual_size]
+                if layout == "tnd":
+                    block = A[s:e, h, :actual_size]
                 else:
                     block = A[b, s:e, h, :actual_size]
                 eye = np.eye(actual_size, dtype=np.float32)
                 M = eye + block
                 M_inv = np.linalg.inv(M)
-                if layout == "bhtd":
-                    result[b, h, s:e, :actual_size] = M_inv
+                if layout == "tnd":
+                    result[s:e, h, :actual_size] = M_inv
                 else:
                     result[b, s:e, h, :actual_size] = M_inv
     return torch.from_numpy(result).half()
 
 
-def generate_lower_tri_input(B, H, T, chunk_size, dtype=torch.float16, seed=42, layout="bhtd"):
+def generate_lower_tri_input(B, H, T, chunk_size, dtype=torch.float16, seed=42, layout="bsnd"):
     """Generate random strictly lower triangular input."""
     torch.manual_seed(seed)
-    if layout == "bhtd":
-        A = torch.zeros(B, H, T, chunk_size, dtype=dtype)
+    if layout == "tnd":
+        A = torch.zeros(T, H, chunk_size, dtype=dtype)
     else:
         A = torch.zeros(B, T, H, chunk_size, dtype=dtype)
     num_chunks = (T + chunk_size - 1) // chunk_size
@@ -59,15 +60,15 @@ def generate_lower_tri_input(B, H, T, chunk_size, dtype=torch.float16, seed=42, 
                 for i in range(actual_size):
                     for j in range(i, actual_size):
                         one_chunk[i, j] = 0.0
-                if layout == "bhtd":
-                    A[b, h, s:e, :actual_size] = one_chunk
+                if layout == "tnd":
+                    A[s:e, h, :actual_size] = one_chunk
                 else:
                     A[b, s:e, h, :actual_size] = one_chunk
     return A
 
 
-def test_solve_tril(B, H, T, chunk_size, layout="bhtd", dtype=torch.float16):
-    """Run one test case."""
+def test_solve_tril(B, H, T, chunk_size, layout="bsnd", dtype=torch.float16):
+    """Run one fixed-length test case."""
     torch.manual_seed(42)
     A = generate_lower_tri_input(B, H, T, chunk_size, dtype, layout=layout)
     golden = solve_tril_golden(A, chunk_size, layout=layout)
@@ -91,9 +92,9 @@ def test_solve_tril(B, H, T, chunk_size, layout="bhtd", dtype=torch.float16):
                 s = c * chunk_size
                 e = min(s + chunk_size, T)
                 actual_size = e - s
-                if layout == "bhtd":
-                    block = A_np[b, h, s:e, :actual_size]
-                    inv_block = R_np[b, h, s:e, :actual_size]
+                if layout == "tnd":
+                    block = A_np[s:e, h, :actual_size]
+                    inv_block = R_np[s:e, h, :actual_size]
                 else:
                     block = A_np[b, s:e, h, :actual_size]
                     inv_block = R_np[b, s:e, h, :actual_size]
@@ -102,7 +103,7 @@ def test_solve_tril(B, H, T, chunk_size, layout="bhtd", dtype=torch.float16):
                 err = np.abs(product - eye).max()
                 max_verify_err = max(max_verify_err, err)
 
-                golden_chunk = golden[b, h, s:e, :actual_size].float().numpy() if layout == "bhtd" else golden[b, s:e, h, :actual_size].float().numpy()
+                golden_chunk = golden[h, s:e, :actual_size].float().numpy() if layout == "tnd" else golden[b, h, s:e, :actual_size].float().numpy()
                 chunk_diff = np.abs(inv_block - golden_chunk).max()
                 is_partial = (c == num_chunks - 1 and actual_size < chunk_size)
                 partial_tag = f" [partial {actual_size}x{actual_size}]" if is_partial else ""
@@ -226,18 +227,9 @@ if __name__ == "__main__":
 
     results = []
 
-    # BHTD layout tests
-    print("\n--- BHTD layout [B, H, T, BT] ---")
-    results.append(test_solve_tril(1, 1, 16, 16, layout="bhtd"))
-    results.append(test_solve_tril(2, 2, 32, 32, layout="bhtd"))
-    results.append(test_solve_tril(1, 1, 64, 32, layout="bhtd"))
-    results.append(test_solve_tril(1, 1, 100, 32, layout="bhtd"))
-    results.append(test_solve_tril(1, 1, 50, 32, layout="bhtd"))
-    results.append(test_solve_tril(2, 2, 100, 32, layout="bhtd"))
-
     # BSND layout tests
     print("\n--- BSND layout [B, T, H, BT] ---")
-    results.append(test_solve_tril(1, 2, 64, 32, layout="bsnd"))
+    results.append(test_solve_tril(1, 2, 40, 32, layout="bsnd"))
     results.append(test_solve_tril(2, 2, 64, 32, layout="bsnd"))
     results.append(test_solve_tril(1, 1, 35, 32, layout="bsnd"))
     results.append(test_solve_tril(2, 2, 100, 32, layout="bsnd"))
@@ -246,7 +238,9 @@ if __name__ == "__main__":
     print("\n--- TND varlen layout [total_T, H, BT] ---")
     results.append(test_solve_tril_varlen([64], 1, 32))
     results.append(test_solve_tril_varlen([32, 32, 32], 2, 32))
+    results.append(test_solve_tril_varlen([45], 1, 32))
     results.append(test_solve_tril_varlen([100, 50, 35], 2, 32))
+    results.append(test_solve_tril_varlen([4, 18], 1, 32))
     results.append(test_solve_tril_varlen([35], 1, 32))
     results.append(test_solve_tril_varlen([3], 1, 32))
     results.append(test_solve_tril_varlen([18], 2, 32))
