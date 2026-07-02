@@ -821,7 +821,11 @@ namespace Catlass::Gemm::Kernel {
         using LayoutColMajor = layout::ColumnMajor;
 
         // 架构和策略定义
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        using ArchTag = Arch::Ascend950;
+#else
         using ArchTag = Arch::AtlasA2;
+#endif
         using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;
         using L1TileShape = tla::Shape<_128, _128, _256>;
         using L0TileShape = tla::Shape<_128, _128, _128>;
