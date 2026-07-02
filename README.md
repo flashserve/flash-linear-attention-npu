@@ -33,7 +33,7 @@ source $INSTALL_PATH/ascend-toolkit/set_env.sh
 
 ```
 # 编译命令，注意 --soc=${soc_version} 需指定为当前机器芯片类型 {ascend910b/ascend910_93/ascend950}
-bash build.sh --soc=ascend910_93 --pkg --vendor_name=fla_npu
+bash build.sh --soc=ascend910b --pkg --vendor_name=fla_npu
 
 # 安装 run 包（custom 包名：fla-npu-<vendor>_linux-<arch>.run）
 ./build_out/fla-npu-*.run
@@ -48,6 +48,73 @@ bash build.sh --soc=ascend910_93 --pkg --vendor_name=fla_npu
 ```sh
 cd torch_custom/fla_npu
 bash build.sh  # 一键编译安装脚本，先调用torchnpugen自动接入算子，再运行setup编whl包，最后安装whl包
+```
+
+### 源码一键编译并生成 wheel
+
+在已完成 CANN、PyTorch、torch-npu、triton-ascend 环境准备后，可以在仓库根目录执行源码态一键安装。默认目标芯片为 `ascend910b`，A3/A5 机器需要显式指定 `FLA_NPU_SOC`：
+
+```sh
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+pip install -U setuptools wheel packaging psutil
+FLA_NPU_SOC=ascend910b FLA_NPU_VENDOR_NAME=fla_npu pip install --no-build-isolation .
+```
+
+该命令会自动完成：
+
+```text
+bash build.sh --soc=${FLA_NPU_SOC} --pkg --vendor_name=${FLA_NPU_VENDOR_NAME}
+./build_out/fla-npu-*.run --quiet --install-path=<wheel-staging>/fla_npu/opp
+cd torch_custom/fla_npu && bash gen.sh npu_custom.yaml
+cd torch_custom/fla_npu && python setup.py build_ext --inplace
+将 <wheel-staging>/fla_npu/opp/vendors/<vendor>_transformer 打进 wheel
+```
+
+安装后的 wheel 内同时包含 torch 适配 `.so` 和 AscendC OPP 运行产物。用户侧只需要安装 wheel，并在 Python 中 `import fla_npu`；`fla_npu` 会自动设置内嵌 OPP 路径、预加载 `libcust_opapi.so` 并注册 `torch.ops.npu.*`，不需要手动执行 run 包或 source vendor 目录。
+
+可用环境变量：
+
+| 环境变量 | 作用 | 默认 |
+|---|---|---|
+| `FLA_NPU_SOC` | 目标芯片 | `ascend910b` |
+| `FLA_NPU_VENDOR_NAME` | custom vendor 名 | `fla_npu` |
+| `FLA_NPU_OPS` | 单算子过滤，空表示全量 | 空 |
+| `FLA_NPU_SKIP_RUN_BUILD` | 跳过 run 包编译 | `FALSE` |
+| `FLA_NPU_SKIP_RUN_INSTALL` | 跳过将 run 包安装产物内嵌到 wheel | `FALSE` |
+| `FLA_NPU_SKIP_TORCH_GEN` | 跳过 torchnpugen 代码生成 | `FALSE` |
+| `FLA_NPU_OPP_PATH` | 运行时指定外部 OPP root 或 vendor 目录 | wheel 内嵌 OPP |
+| `FLA_NPU_DISABLE_LOCAL_VERSION` | wheel 版本号不追加 SOC/torch/ABI 本地版本 | `FALSE` |
+
+安装后可验证：
+
+```sh
+python -c "import fla_npu; import torch; print(hasattr(torch.ops.npu, 'npu_chunk_fwd_o'))"
+```
+
+### 单 wheel 离线交付
+
+如果需要给客户离线交付，只需要提供构建出来的 wheel：
+
+```sh
+python -m pip wheel --no-build-isolation --no-deps . -w dist
+python -m pip install --force-reinstall --no-deps dist/flash_linear_attention_npu-*.whl
+```
+
+`--force-reinstall` 会整体替换 Python 包目录，因此 wheel 内的 `.so` 和内嵌 OPP 产物会同步覆盖。
+
+高级调试场景下，可以把 wheel 内嵌 OPP 复制到外部目录：
+
+```sh
+python -m fla_npu.install_opp --install-path /path/to/custom_opp --force
+export FLA_NPU_OPP_PATH=/path/to/custom_opp
+```
+
+普通客户不需要执行这一步。
+
+本地环境检查可先执行：
+
+```sh
+python scripts/check_npu_env.py
 ```
 
 ### 测试单算子

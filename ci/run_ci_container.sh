@@ -129,6 +129,11 @@ echo "[CI] third_party cache: $third_party_cache"
 echo "[CI] GDR accuracy golden cache: $gdr_accuracy_cache"
 echo "[CI] container TMPDIR: ${CI_TMPDIR:-auto}"
 
+container_command=(bash ci/run_checks.sh)
+if [[ -n "${CI_CONTAINER_COMMAND:-}" ]]; then
+    container_command=(bash -lc "$CI_CONTAINER_COMMAND")
+fi
+
 docker run --rm \
     --name "$container_name" \
     --network host \
@@ -163,5 +168,10 @@ docker run --rm \
     -e CI_TMPDIR="${CI_TMPDIR:-}" \
     -e CI_TMPDIR_CANDIDATES="${CI_TMPDIR_CANDIDATES:-}" \
     -e CI_TMPDIR_MIN_KB="${CI_TMPDIR_MIN_KB:-}" \
+    -e FLA_NPU_SOC="${FLA_NPU_SOC:-${CI_SOC:-${NPU_SOC}}}" \
+    -e FLA_NPU_VENDOR_NAME="${FLA_NPU_VENDOR_NAME:-${CI_VENDOR_NAME:-fla_npu}}" \
+    -e FLA_NPU_LOCAL_VERSION="${FLA_NPU_LOCAL_VERSION:-}" \
+    -e FLA_NPU_TORCH_VERSION="${FLA_NPU_TORCH_VERSION:-}" \
+    -e FLA_NPU_CXX11_ABI="${FLA_NPU_CXX11_ABI:-}" \
     "$image" \
-    bash ci/run_checks.sh
+    "${container_command[@]}"
