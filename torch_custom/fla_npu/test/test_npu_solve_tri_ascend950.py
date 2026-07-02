@@ -10,12 +10,18 @@ test_npu_solve_tri_ascend950.py - Test SolveTri custom operator on ascend950 via
   - 仓1 原有全部用例（BSND + TND varlen，BT=32）。
   - chunk_size ∈ {16,32,64,128} × 定长(BSND)/变长(TND) × 有尾块/无尾块。
 """
+import os
 import torch
 import torch_npu
 import numpy as np
 import fla_npu
 
 torch.npu.utils.set_device(0)
+
+# 是否打印每个 (b,h,c)/(seq,h,c) 点位的 OK/FAIL 明细及用例头。
+# 默认 False：每条用例只打印一行 PASS/FAIL 汇总。
+# 打开方式：置为 True，或运行时设环境变量 SOLVE_TRI_VERBOSE=1。
+PRINT_POINT_DETAIL = os.environ.get("SOLVE_TRI_VERBOSE", "0") == "1"
 
 
 def solve_tril_golden(A_tensor, chunk_size, layout="bsnd"):
@@ -94,7 +100,8 @@ def test_solve_tri(B, H, T, chunk_size, layout="bsnd", dtype=torch.float16):
     A_np = A.float().numpy()
     R_np = out_cpu.float().numpy()
     max_verify_err = 0.0
-    print(f"\n--- Test (layout={layout}, B={B}, H={H}, T={T}, BT={chunk_size}, numChunks={num_chunks}) ---")
+    if PRINT_POINT_DETAIL:
+        print(f"\n--- Test (layout={layout}, B={B}, H={H}, T={T}, BT={chunk_size}, numChunks={num_chunks}) ---")
     for b in range(B):
         for h in range(H):
             for c in range(num_chunks):
@@ -114,11 +121,12 @@ def test_solve_tri(B, H, T, chunk_size, layout="bsnd", dtype=torch.float16):
                 err = np.abs(product - eye).max()
                 max_verify_err = max(max_verify_err, err)
 
-                chunk_diff = np.abs(inv_block - golden_chunk).max()
-                is_partial = (c == num_chunks - 1 and actual_size < chunk_size)
-                partial_tag = f" [partial {actual_size}x{actual_size}]" if is_partial else ""
-                cst = "OK" if err < 1e-3 else "FAIL"
-                print(f"  [{cst}] b={b} h={h} c={c}{partial_tag}: max_diff={chunk_diff:.6f}, verify_err={err:.6f}")
+                if PRINT_POINT_DETAIL:
+                    chunk_diff = np.abs(inv_block - golden_chunk).max()
+                    is_partial = (c == num_chunks - 1 and actual_size < chunk_size)
+                    partial_tag = f" [partial {actual_size}x{actual_size}]" if is_partial else ""
+                    cst = "OK" if err < 1e-3 else "FAIL"
+                    print(f"  [{cst}] b={b} h={h} c={c}{partial_tag}: max_diff={chunk_diff:.6f}, verify_err={err:.6f}")
 
     passed = max_verify_err < 1e-3
     status = "PASS" if passed else "FAIL"
@@ -195,8 +203,9 @@ def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16):
 
     max_verify_err = 0.0
     total_chunks = chunk_indices.shape[0]
-    print(f"\n--- Varlen test (seqs={seq_lens}, H={H}, BT={chunk_size}, "
-          f"total_T={total_T}, total_chunks={total_chunks}) ---")
+    if PRINT_POINT_DETAIL:
+        print(f"\n--- Varlen test (seqs={seq_lens}, H={H}, BT={chunk_size}, "
+              f"total_T={total_T}, total_chunks={total_chunks}) ---")
 
     for seq_idx in range(num_seqs):
         bos = cu_seqlens[seq_idx].item()
@@ -215,13 +224,14 @@ def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16):
                 err = np.abs(product - eye).max()
                 max_verify_err = max(max_verify_err, err)
 
-                golden_chunk = golden[s:e, h, :actual_size].float().numpy()
-                chunk_diff = np.abs(inv_block - golden_chunk).max()
-                is_partial = (actual_size < chunk_size)
-                partial_tag = f" [partial {actual_size}x{actual_size}]" if is_partial else ""
-                cst = "OK" if err < 1e-3 else "FAIL"
-                print(f"  [{cst}] seq={seq_idx} h={h} c={c}{partial_tag}: "
-                      f"max_diff={chunk_diff:.6f}, verify_err={err:.6f}")
+                if PRINT_POINT_DETAIL:
+                    golden_chunk = golden[s:e, h, :actual_size].float().numpy()
+                    chunk_diff = np.abs(inv_block - golden_chunk).max()
+                    is_partial = (actual_size < chunk_size)
+                    partial_tag = f" [partial {actual_size}x{actual_size}]" if is_partial else ""
+                    cst = "OK" if err < 1e-3 else "FAIL"
+                    print(f"  [{cst}] seq={seq_idx} h={h} c={c}{partial_tag}: "
+                          f"max_diff={chunk_diff:.6f}, verify_err={err:.6f}")
 
     passed = max_verify_err < 1e-3
     status = "PASS" if passed else "FAIL"
