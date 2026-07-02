@@ -529,4 +529,63 @@ at::Tensor npu_solve_tri(
     return x_out;
 }
 
+at::Tensor npu_chunk_local_cumsum(
+    const at::Tensor &g,
+    int64_t chunk_size,
+    const c10::optional<at::Tensor> &cu_seqlens,
+    const c10::optional<at::Tensor> &chunk_indices_out,
+    bool reverse,
+    double scale,
+    bool head_first,
+    c10::string_view output_dtype)
+{
+    TORCH_CHECK(g.dim() >= 3, "npu_chunk_local_cumsum: g must be [B, H, T, *], got ", g.sizes());
+    TORCH_CHECK(g.scalar_type() == at::kFloat, "npu_chunk_local_cumsum: only float32 g is supported.");
+    TORCH_CHECK(chunk_size > 0 && (chunk_size & (chunk_size - 1)) == 0,
+                "npu_chunk_local_cumsum: chunk_size must be a positive power of two, got ", chunk_size);
+    TORCH_CHECK(head_first, "npu_chunk_local_cumsum: only head_first=true / [B, H, T, *] layout is supported.");
+
+    std::string output_dtype_str(output_dtype.data(), output_dtype.size());
+    if (output_dtype_str.empty()) {
+        output_dtype_str = "float32";
+    }
+    TORCH_CHECK(output_dtype_str == "float32" || output_dtype_str == "torch.float" ||
+                    output_dtype_str == "torch.float32",
+                "npu_chunk_local_cumsum: output_dtype only supports float32, got ", output_dtype_str);
+
+    at::Tensor g_contig = g.contiguous();
+    at::Tensor out = at::empty_like(g_contig);
+    at::Tensor empty_index = at::empty({0}, g_contig.options().dtype(at::kLong));
+
+    at::Tensor cu_seqlens_tensor = empty_index;
+    if (cu_seqlens.has_value() && cu_seqlens->defined()) {
+        cu_seqlens_tensor = cu_seqlens->contiguous();
+        TORCH_CHECK(cu_seqlens_tensor.scalar_type() == at::kLong,
+                    "npu_chunk_local_cumsum: cu_seqlens must be int64.");
+    }
+
+    at::Tensor chunk_indices_tensor = empty_index;
+    if (chunk_indices_out.has_value() && chunk_indices_out->defined()) {
+        chunk_indices_tensor = chunk_indices_out->contiguous();
+        TORCH_CHECK(chunk_indices_tensor.scalar_type() == at::kLong,
+                    "npu_chunk_local_cumsum: chunk_indices_out must be int64.");
+    }
+
+    if (cu_seqlens_tensor.numel() > 0) {
+        TORCH_CHECK(g_contig.size(0) == 1,
+                    "npu_chunk_local_cumsum: B must be 1 when cu_seqlens is provided, got ", g_contig.size(0));
+        TORCH_CHECK(chunk_indices_tensor.numel() > 0,
+                    "npu_chunk_local_cumsum: chunk_indices_out is required when cu_seqlens is provided.");
+    }
+
+    char *output_dtype_cstr = const_cast<char *>(output_dtype_str.c_str());
+    EXEC_NPU_CMD_EXT(
+        aclnnChunkLocalCumsum,
+        g_contig, cu_seqlens_tensor, chunk_indices_tensor,
+        chunk_size, reverse, scale, head_first, output_dtype_cstr,
+        out
+    );
+    return out;
+}
+
 }  // namespace op_api
