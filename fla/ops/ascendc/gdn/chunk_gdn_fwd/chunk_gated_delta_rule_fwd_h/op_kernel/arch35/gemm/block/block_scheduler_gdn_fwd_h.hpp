@@ -46,8 +46,10 @@ struct GDNFwdHOffsets {
     uint32_t wkOffset;
     uint32_t wOffset;
     uint32_t gOffset;
+    uint32_t gkOffset;
     uint32_t hWorkOffset;
     uint32_t vWorkOffset;
+    uint32_t kDecayWorkOffset;
     uint32_t initialStateOffset;
     uint32_t finalStateOffset;
     bool isInitialState;
@@ -235,8 +237,10 @@ struct BlockSchedulerGdnFwdH {
         offset.wkOffset = (stream.shapeBatchIdx * kNumHead * totalTokens + stream.kHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
         offset.wOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
         offset.gOffset = stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize;
+        offset.gkOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
         offset.hWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * kHeadDim * vHeadDim;
         offset.vWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * chunkSize * vHeadDim;
+        offset.kDecayWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * chunkSize * kHeadDim;
         offset.blockTokens = offset.isFinalState ? (stream.batchTokens - stream.chunkIdx * chunkSize) : chunkSize;
         offset.batchIdx = stream.batchIdx;
         offset.headIdx = stream.vHeadIdx;

@@ -96,6 +96,10 @@ static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdHParams &params, a
                "Contiguous u failed.");
     CHECK_COND(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "Contiguous gOptional failed.");
+    if (params.gkOptional != nullptr) {
+        CHECK_COND(DataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
+                   "Contiguous gkOptional failed.");
+    }
     if (params.initalStateOptional != nullptr) {
         CHECK_COND(DataContiguous(params.initalStateOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                    "Contiguous initalStateOptional failed.");
@@ -113,8 +117,6 @@ static aclnnStatus CheckGOptionalNonNull(const ChunkGatedDeltaRuleFwdHParams &pa
 
 static aclnnStatus CheckReservedOptions(const ChunkGatedDeltaRuleFwdHParams &params)
 {
-    CHECK_COND(params.gkOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
-               "gk is reserved for ChunkGatedDeltaRuleFwdH and must be nullptr.");
     CHECK_COND(params.saveNewValue, ACLNN_ERR_PARAM_INVALID,
                "save_new_value is reserved and only true is supported.");
     CHECK_COND(!params.useExp2, ACLNN_ERR_PARAM_INVALID,
@@ -124,11 +126,32 @@ static aclnnStatus CheckReservedOptions(const ChunkGatedDeltaRuleFwdHParams &par
     return ACLNN_SUCCESS;
 }
 
+static aclnnStatus CheckGkParams(const ChunkGatedDeltaRuleFwdHParams &params)
+{
+    if (params.gkOptional != nullptr) {
+        auto gkShape = params.gkOptional->GetViewShape();
+        CHECK_COND(gkShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID,
+                   "gk must have rank 4 when provided, got rank %ld.", gkShape.GetDimNum());
+        CHECK_COND(gkShape.GetDim(3) == params.k->GetViewShape().GetDim(3), ACLNN_ERR_PARAM_INVALID,
+                   "gk.shape[3] (K) must match k.shape[3] (K).");
+        CHECK_COND(gkShape.GetDim(2) == params.k->GetViewShape().GetDim(2), ACLNN_ERR_PARAM_INVALID,
+                   "gk.shape[2] (T) must match k.shape[2] (T).");
+        CHECK_COND(gkShape.GetDim(1) == params.u->GetViewShape().GetDim(1), ACLNN_ERR_PARAM_INVALID,
+                   "gk.shape[1] (HV) must match u.shape[1] (HV).");
+        CHECK_COND(gkShape.GetDim(0) == params.k->GetViewShape().GetDim(0), ACLNN_ERR_PARAM_INVALID,
+                   "gk.shape[0] (B) must match k.shape[0] (B).");
+        CHECK_COND(params.gkOptional->GetDataType() == params.gOptional->GetDataType(), ACLNN_ERR_PARAM_INVALID,
+                   "gk.dtype must match g.dtype in the current implementation.");
+    }
+    return ACLNN_SUCCESS;
+}
+
 static aclnnStatus CheckParams(ChunkGatedDeltaRuleFwdHParams params)
 {
     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckGOptionalNonNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckReservedOptions(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckGkParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -182,7 +205,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
-    auto result = l0op::ChunkGatedDeltaRuleFwdH(params.k, params.w, params.u, params.gOptional, params.initalStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize, params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
+    auto result = l0op::ChunkGatedDeltaRuleFwdH(params.k, params.w, params.u, params.gOptional, params.gkOptional, params.initalStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize, params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.

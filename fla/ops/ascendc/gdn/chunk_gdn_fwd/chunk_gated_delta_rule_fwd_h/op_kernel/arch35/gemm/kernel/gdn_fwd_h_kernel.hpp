@@ -60,7 +60,8 @@ template<
     typename INPUT_TYPE,
     typename G_TYPE,
     typename STATE_TYPE,
-    typename WORKSPACE_TYPE
+    typename WORKSPACE_TYPE,
+    bool kGated
 >
 class GDNFwdHKernel {
 public:
@@ -96,11 +97,11 @@ public:
 
     // vec 1
     using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnew;
-    using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, VUpdateType, FinalStateType>;
+    using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, VUpdateType, FinalStateType, std::bool_constant<kGated>>;
 
     // vec 2
     using DispatchPolicyGDNFwdHUpdate = Epilogue::EpilogueAtlasGDNFwdHUpdate;
-    using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType, FinalStateType>;
+    using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType, FinalStateType, std::bool_constant<kGated>>;
 
     using GDNFwdHOffsets = Catlass::Gemm::Block::GDNFwdHOffsets;
 
@@ -137,6 +138,7 @@ public:
     uint32_t tokenBatch;
     uint32_t vWorkspaceOffset;
     uint32_t vUpdateWorkspaceOffset;
+    uint32_t kDecayWorkspaceOffset;
     uint32_t hWorkspaceOffset;
     uint32_t numSeqWorkspaceOffset;
     uint32_t numChunksWorkspaceOffset;
@@ -145,6 +147,7 @@ public:
     AscendC::GlobalTensor<ElementW> gmW;
     AscendC::GlobalTensor<ElementU> gmU;
     AscendC::GlobalTensor<ElementG> gmG;
+    AscendC::GlobalTensor<ElementG> gmGk;
     AscendC::GlobalTensor<ElementInitialState> gmInitialState;
     AscendC::GlobalTensor<ElementH> gmH;
     AscendC::GlobalTensor<ElementV> gmV;
@@ -152,6 +155,7 @@ public:
     AscendC::GlobalTensor<ElementVWork> gmVWorkspace;
     AscendC::GlobalTensor<ElementV> gmVUpdateWorkspace;
     AscendC::GlobalTensor<ElementHWork> gmHWorkspace;
+    AscendC::GlobalTensor<ElementK> gmKDecayWorkspace;
 
     AscendC::GlobalTensor<int64_t> gmSeqlen;
     AscendC::GlobalTensor<int64_t> gmNumSeq;
@@ -173,7 +177,7 @@ public:
 
     __aicore__ inline GDNFwdHKernel() {}
 
-    __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
+    __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
         GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user) {
 
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
@@ -192,6 +196,7 @@ public:
         tokenBatch = gdnFwdHTilingData->tokenBatch;
         vWorkspaceOffset = gdnFwdHTilingData->vWorkspaceOffset;
         vUpdateWorkspaceOffset = gdnFwdHTilingData->vUpdateWorkspaceOffset;
+        kDecayWorkspaceOffset = gdnFwdHTilingData->kDecayWorkspaceOffset;
         hWorkspaceOffset = gdnFwdHTilingData->hWorkspaceOffset;
         numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
         numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
@@ -200,6 +205,7 @@ public:
         gmW.SetGlobalBuffer((__gm__ ElementW *)w);
         gmU.SetGlobalBuffer((__gm__ ElementU *)u);
         gmG.SetGlobalBuffer((__gm__ ElementG *)g);
+        gmGk.SetGlobalBuffer((__gm__ ElementG *)gk);
         gmInitialState.SetGlobalBuffer((__gm__ ElementInitialState *)inital_state);
         gmH.SetGlobalBuffer((__gm__ ElementH *)h);
         gmV.SetGlobalBuffer((__gm__ ElementV *)v_new);
@@ -207,6 +213,7 @@ public:
         gmVWorkspace.SetGlobalBuffer((__gm__ ElementVWork *)(user + vWorkspaceOffset));
         gmVUpdateWorkspace.SetGlobalBuffer((__gm__ ElementV *)(user + vUpdateWorkspaceOffset));
         gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
+        gmKDecayWorkspace.SetGlobalBuffer((__gm__ ElementK *)(user + kDecayWorkspaceOffset));
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
         gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
@@ -286,11 +293,13 @@ public:
                         Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done);
 
                         if (cubeBlockScheduler.NeedProcessStage2(stream)) {
-                            // step 3: h[i+1] = k.T @ v_work
-                            int64_t cube2OffsetK = cube2Offsets.wkOffset;
+                            // step 3: h[i+1] = k.T @ v_work (or k_decay.T @ v_work when kGated)
+                            int64_t cube2OffsetKwork = kGated ? cube2Offsets.kDecayWorkOffset : cube2Offsets.wkOffset;
                             int64_t cube2OffsetVwork = cube2Offsets.vWorkOffset;
                             int64_t cube2OffsetH = cube2Offsets.hWorkOffset;
-                            auto tensorK = tla::MakeTensor(gmK[cube2OffsetK], kLayout, Catlass::Arch::PositionGM{});
+                            auto tensorK = kGated
+                                ? tla::MakeTensor(gmKDecayWorkspace[cube2OffsetKwork], kLayout, Catlass::Arch::PositionGM{})
+                                : tla::MakeTensor(gmK[cube2OffsetKwork], kLayout, Catlass::Arch::PositionGM{});
                             auto vUpdateLayout = tla::MakeLayout<ElementVUpdate, LayoutVUpdate>(cube2Offsets.blockTokens, vHeadDim);
                             AscendC::LocalTensor<ElementHWork> ubHUpdate = (i == 0) ? ubHUpdatePing : ubHUpdatePong;
                             auto tensorHwork = tla::MakeTensor(ubHUpdate, hworkLayout, Catlass::Arch::PositionUB{});
@@ -417,6 +426,7 @@ public:
                         epilogueGDNFwdHVnew(
                             gmV[vec1Offsets.uvOffset], gmVUpdateWorkspace[vec1Offsets.vWorkOffset], l1VUpdate,
                             gmG[vec1Offsets.gOffset], gmU[vec1Offsets.uvOffset], gmVWorkspace[vec1Offsets.vWorkOffset],
+                            gmGk[vec1Offsets.gkOffset], gmK[vec1Offsets.wkOffset], gmKDecayWorkspace[vec1Offsets.kDecayWorkOffset],
                             vec1Offsets.blockTokens, kHeadDim, vHeadDim,
                             vecBlockScheduler.cube1Done, vecBlockScheduler.vec1Done,
                             vec1Offsets.isInitialState, vec1Offsets.isFinalState, storeFinalState, (i == 0)
@@ -438,6 +448,7 @@ public:
                                 gmG[vec2Offsets.gOffset],
                                 gmH[vec2Offsets.hSrcOffset],
                                 gmHWorkspace[vec2Offsets.hWorkOffset],
+                                gmGk[vec2Offsets.gkOffset],
                                 vec2Offsets.blockTokens, kHeadDim, vHeadDim, vecBlockScheduler.cube2Done,
                                 vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, (i == 0)
                             );

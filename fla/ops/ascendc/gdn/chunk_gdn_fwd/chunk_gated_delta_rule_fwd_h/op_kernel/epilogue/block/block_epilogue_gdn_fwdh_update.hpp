@@ -23,7 +23,8 @@ template <
     class GInputType_,
     class HInputType_,
     class HUpdateInputType_,
-    class FinalStateType_
+    class FinalStateType_,
+    class KGatedTag
 >
 class BlockEpilogue <
     EpilogueAtlasGDNFwdHUpdate,
@@ -31,8 +32,10 @@ class BlockEpilogue <
     GInputType_,
     HInputType_,
     HUpdateInputType_,
-    FinalStateType_
+    FinalStateType_,
+    KGatedTag
 > {
+    static constexpr bool kGated = KGatedTag::value;
 public:
     // Type aliases
     using DispatchPolicy = EpilogueAtlasGDNFwdHUpdate;
@@ -76,6 +79,13 @@ public:
         hUbTensor_pong = resource.ubBuf.template GetBufferByByte<HElementOutput>(PONG_BUF_3_OFFSET);
         glastUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(PONG_G_INPUT_BUF_OFFSET);
 
+        if constexpr (kGated) {
+            gkLastUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(PING_G_SUB_BUF_OFFSET);
+            gkLastUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(PONG_G_SUB_BUF_OFFSET);
+            gkInputUbTensor_ping = resource.ubBuf.template GetBufferByByte<GElementInput>(PING_G_INPUT_BUF_OFFSET);
+            gkInputUbTensor_pong = resource.ubBuf.template GetBufferByByte<GElementInput>(PONG_G_INPUT_BUF_OFFSET);
+            shareBufferGk_ = resource.ubBuf.template GetBufferByByte<uint8_t>(SHARE_BUF_OFFSET);
+        }
     }
 
     CATLASS_DEVICE
@@ -88,6 +98,7 @@ public:
         AscendC::GlobalTensor<GElementInput> gInput,
         AscendC::GlobalTensor<HElementInput> hInput,
         AscendC::GlobalTensor<float> hUpdateInput,
+        AscendC::GlobalTensor<GElementInput> gkInput,
         uint32_t chunkSize,
         uint32_t kHeadDim,
         uint32_t vHeadDim,
@@ -153,13 +164,50 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
         float muls = glastUbTensor.GetValue(0);
+        if constexpr (kGated) {
+            AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(EVENT_ID2 + pingpongFlag);
+        }
         AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
         AscendC::Muls(calcUbTensor, calcUbTensor, muls, mActualThisSubBlock * nActual);
         AscendC::PipeBarrier<PIPE_V>();
+        //AscendC::printf("ljm kgated invalid test");
+        if constexpr (kGated) {
+            //AscendC::printf("ljm kgated valid uupdate");
+            AscendC::GlobalTensor<GElementInput> gkLastInput = gkInput[(chunkSize - 1) * kHeadDim + mOffset];
+            AscendC::LocalTensor<float> gkLastUbTensor = isPing ? gkLastUbTensor_ping : gkLastUbTensor_pong;
+            AscendC::LocalTensor<GElementInput> gkInputUbTensor = isPing ? gkInputUbTensor_ping : gkInputUbTensor_pong;
+
+            AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(EVENT_ID2 + pingpongFlag);
+            if constexpr(std::is_same<GElementInput, float>::value) {
+                AscendC::DataCopy(gkLastUbTensor, gkLastInput, mActualThisSubBlock); // 空间是否够用？
+            } else {
+                AscendC::DataCopy(gkInputUbTensor, gkLastInput, mActualThisSubBlock);
+            }
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            if constexpr(!std::is_same<GElementInput, float>::value) {
+                AscendC::Cast(gkLastUbTensor, gkInputUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock);
+            }
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Exp(gkLastUbTensor, gkLastUbTensor, mActualThisSubBlock);
+            AscendC::PipeBarrier<PIPE_V>();
+
+            uint32_t gkBrcReptime = (mActualThisSubBlock + 8 - 1) / 8;
+            uint32_t dstShapeGk[2] = {gkBrcReptime * 8, nActual};
+            uint32_t srcShapeGk[2] = {gkBrcReptime * 8, 1};
+            AscendC::Broadcast<float, 2, 1>(hUpdateUbTensor, gkLastUbTensor, dstShapeGk, srcShapeGk, shareBufferGk_);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mul(calcUbTensor, calcUbTensor, hUpdateUbTensor, mActualThisSubBlock * nActual);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
+        }
 
         Arch::CrossCoreWaitFlag(cube2Done);
 
+        if constexpr (kGated) {
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
+        }
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
         AscendC::DataCopy(hUpdateUbTensor, hUpdateInputThisSubBlock, mActualThisSubBlock * nActual);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
@@ -211,7 +259,11 @@ private:
     AscendC::LocalTensor<HElementOutput> hUbTensor_pong;
     AscendC::LocalTensor<float> glastUbTensor_pong;
 
+    AscendC::LocalTensor<float> gkLastUbTensor_ping;
+    AscendC::LocalTensor<float> gkLastUbTensor_pong;
+    AscendC::LocalTensor<GElementInput> gkInputUbTensor_ping;
+    AscendC::LocalTensor<GElementInput> gkInputUbTensor_pong;
+    AscendC::LocalTensor<uint8_t> shareBufferGk_;
 };
 }
-
 #endif
