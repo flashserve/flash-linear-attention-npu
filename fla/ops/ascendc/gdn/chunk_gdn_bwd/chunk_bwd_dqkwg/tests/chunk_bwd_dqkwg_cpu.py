@@ -112,13 +112,15 @@ def chunk_bwd_dqkwg_cpu(
     B, T, HK, K = q.shape
     HV = v.shape[2]
     V = v.shape[-1]
+    if HK <= 0 or HV <= 0 or HV % HK != 0:
+        raise ValueError(f"GVA requires HV divisible by HK, got HV={HV}, HK={HK}")
     n_ratio = HV // HK  # HV = n_ratio * HK
 
     g_gamma = None
     
-    # 输出使用 HV 维度
-    dq = torch.zeros((B, T, HV, K), dtype=datatype)
-    dk = torch.zeros((B, T, HV, K), dtype=datatype)
+    # Keep per-value-head contributions first, then reduce them into key heads.
+    dq_hv = torch.zeros((B, T, HV, K), dtype=datatype)
+    dk_hv = torch.zeros((B, T, HV, K), dtype=datatype)
     dg = torch.zeros_like(g) if g is not None else None
     dw = torch.zeros((B, T, HV, K), dtype=datatype)
     w = torch.zeros((B, T, HV, K), dtype=datatype)
@@ -358,8 +360,8 @@ def chunk_bwd_dqkwg_cpu(
                     # print(h_idx,i_t,"dk_total",dk_total)
 
 
-                dq[b_idx, chunk_start_token_idx:chunk_end_token_idx, h_idx, :] = dq_total
-                dk[b_idx, chunk_start_token_idx:chunk_end_token_idx, h_idx, :] = dk_total
+                dq_hv[b_idx, chunk_start_token_idx:chunk_end_token_idx, h_idx, :] = dq_total.to(datatype)
+                dk_hv[b_idx, chunk_start_token_idx:chunk_end_token_idx, h_idx, :] = dk_total.to(datatype)
 
                 # if RANDOM_DATA == False:
                 #     pass
@@ -410,5 +412,8 @@ def chunk_bwd_dqkwg_cpu(
                 # 但如果发生，通常 cu_seqlens[i] 是第 i 个样本的长度。
                 # 简化起见，我们假设 input 是 packed flat tensor 如果 cu_seqlens 存在。
                 pass 
+
+    dq = dq_hv.view(B, T, HK, n_ratio, K).sum(dim=3).to(datatype)
+    dk = dk_hv.view(B, T, HK, n_ratio, K).sum(dim=3).to(datatype)
 
     return dq, dk, dw, dg

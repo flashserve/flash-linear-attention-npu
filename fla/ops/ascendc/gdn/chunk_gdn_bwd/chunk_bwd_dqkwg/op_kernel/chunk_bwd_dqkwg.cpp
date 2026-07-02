@@ -33,8 +33,8 @@
      GM_ADDR chunk_indices,  // [num_chunks, 2] (optional)
      GM_ADDR w,
      GM_ADDR g_gamma,
-     GM_ADDR dq,             // [B, HV, T, K] - output
-     GM_ADDR dk,             // [B, HV, T, K] - output
+     GM_ADDR dq,             // [B, HK, T, K] - output
+     GM_ADDR dk,             // [B, HK, T, K] - output
      GM_ADDR dw,             // [B, HV, T, K] - output
      GM_ADDR dg,             // [B, HV, T] - output (fp32)
      GM_ADDR workspace,      // workspace buffer
