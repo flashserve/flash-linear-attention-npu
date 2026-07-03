@@ -54,6 +54,7 @@ struct ChunkGatedDeltaRuleFwdHTilingContext {
     int64_t gDataType;     // g dtype
     bool useInitialState;
     int64_t stateDataType; // initial/final state dtype
+    bool useGk;
     // attrs
     bool storeFinalState;
     int64_t chunkSize;
@@ -101,6 +102,11 @@ public:
         tiling.vUpdateWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
         workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * vHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_PING_PONG_STAGES));
 
+        tiling.kDecayWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
+        if (ctx_.useGk) {
+            workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * kHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_PING_PONG_STAGES));
+        }
+
         tiling.hWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
         workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * kHeadDim * vHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_PING_PONG_STAGES));
 
@@ -128,6 +134,7 @@ public:
         tiling.isVariedLen = isVariedLen;
         tiling.shapeBatch = shapeBatch;
         tiling.tokenBatch = tokenBatch;
+        tiling.useGk = ctx_.useGk;
     }
 
 private:
