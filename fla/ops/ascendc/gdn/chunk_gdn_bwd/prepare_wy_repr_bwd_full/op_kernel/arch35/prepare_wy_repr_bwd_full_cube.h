@@ -295,18 +295,13 @@ public:
             for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
                 GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.HV, params.T,
                                params.chunkSize, loopIdx, bos, eos);
-                kBos = bos;
-                if (params.ptrCuSeqLens == nullptr && params.HV != params.HK) {
-                    GetKBosByVBos(bos, params.T, params.HV, params.HK, kBos);
-                }
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
                 GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
                 for (uint64_t h_v = 0; h_v < params.HV; h_v++) {
-                    uint64_t h_k = h_v / params.groupSize;
                     // Represent the full gm
                     gmAT.SetGlobalBuffer((__gm__ ElementAT *)params.ptrAT + (h_v * params.T + bos) * params.chunkSize);
-                    gmDw.SetGlobalBuffer((__gm__ ElementDw *)params.ptrDw + (h_k * params.T + kBos) * params.K);
+                    gmDw.SetGlobalBuffer((__gm__ ElementDw *)params.ptrDw + (h_v * params.T + bos) * params.K);
 
                     // Represent the full tensors
                     auto tensorAT = tla::MakeTensor(gmAT, params.layoutAT, Arch::PositionGM{});
