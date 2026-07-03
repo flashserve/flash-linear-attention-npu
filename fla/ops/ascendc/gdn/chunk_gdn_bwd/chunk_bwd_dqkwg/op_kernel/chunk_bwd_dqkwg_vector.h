@@ -41,6 +41,7 @@ private:
     __aicore__ inline void ProcessPart5();  // dk 处理, dg 最终计算
     __aicore__ inline void ProcessPart6();  // dq 累加
     __aicore__ inline void ProcessPart7();  // dk 累加
+    __aicore__ inline void ProcessPart8();  // dq/dk reduce: [B, HV, T, K] -> [B, HK, T, K] when HK != HV
     
     // 辅助函数
     __aicore__ inline void ComputeExpScalar(float input, float &output);
@@ -89,7 +90,9 @@ private:
     uint64_t wsMm6Offset;
     uint64_t wsMm7Offset;
     uint64_t wsMul1Offset;
+    uint64_t wsDqkvReduceOffset;
     int BUFFER_NUM = 1;
+    int needReduce = 0;
     
     // Pipeline
     TPipe *pipe = nullptr;
@@ -101,6 +104,7 @@ private:
     GlobalTensor<DataType> gmWorkspace;
     GlobalTensor<float> gmDgLast;
     GlobalTensor<DataType> gmMm5, gmDsTemp, gmMul1, gmMm6, gmMm7;
+    GlobalTensor<DataType> gmDqIntermediate, gmDkIntermediate;
     
     // Queues (用于流水)
     TQue<TPosition::VECIN, 2> inQue1;
@@ -160,6 +164,8 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::Init(const G
     // wsMm6Offset = tiling.wsMm6Offset;
     // wsMm7Offset = tiling.wsMm7Offset;
     // wsMul1Offset = tiling.wsMul1Offset;
+    wsDqkvReduceOffset = tiling.wsDqkvReduceOffset;
+    needReduce = tiling.needReduce;
     uint64_t dgLastSize = tiling.dgLastSize;
     isVarLen = tiling.isVarLen;
     mul0RowNum = tiling.mul0RowNum;
@@ -194,7 +200,19 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::Init(const G
     gmMm6.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm5Offset));
     gmMm7.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm5Offset));
     // gmMul1.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMul1Offset));
-    gmMul1.SetGlobalBuffer((__gm__ DataType *)ptrDq);
+    // When needReduce, ptrDq has [B, HK, T, K] which is too small for mul1 [B, HV, T, BT]
+    // Use dq intermediate workspace instead (it has [B, HV, T, K] space, and BT <= K)
+    if (needReduce) {
+        gmMul1.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsDqkvReduceOffset));
+    } else {
+        gmMul1.SetGlobalBuffer((__gm__ DataType *)ptrDq);
+    }
+
+    // When HK != HV, dq/dk intermediate results go to workspace before reduction
+    if (needReduce) {
+        gmDqIntermediate.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsDqkvReduceOffset));
+        gmDkIntermediate.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsDqkvReduceOffset + B * HV * T * K * sizeof(DataType)));
+    }
 }
 
 // ============== 主处理函数 ==============
@@ -226,6 +244,13 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::Process() {
     AscendC::SyncAll<false>();
     // Part 7: dk 累加
     ProcessPart7();
+    pipe->Reset();
+    
+    // Part 8: dq/dk reduce when HK != HV
+    if (needReduce) {
+        AscendC::SyncAll<false>();
+        ProcessPart8();
+    }
 }
 
 // ============== Part 1: dw 和 dg_last 计算 ==============
@@ -856,7 +881,9 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart4
                 auto tensorGIn = inQue3.AllocTensor<GType>();
                 auto tensorDgIn = inQue4.AllocTensor<GType>();
                 
-                DataCopy(tensorDqIn[dqSize_sub], gmDq[dqOffset + dqSize_sub_offset], dqSize_sub);
+                DataCopy(tensorDqIn[dqSize_sub], (needReduce ? gmDqIntermediate[dqOffset + dqSize_sub_offset] : gmDq[dqOffset + dqSize_sub_offset]), dqSize_sub);
+                // DataCopy(tensorDqIn[0], gmQ[0], 32);
+// DataCopy(tensorDqIn[dqSize_sub], gmDq[0], dqSize_sub);
 
                 DataCopy(tensorQIn[dqSize_sub], gmQ[qkOffset + dqSize_sub_offset], dqSize_sub);
 
@@ -955,7 +982,12 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart4
                 auto tensorDqOut = outQue1.DeQue<DataType>();
                 auto tensorDgOut = outQue2.DeQue<GType>();
 
-                DataCopy(gmDq[dqOffset + dqSize_sub_offset], tensorDqOut, dqSize_sub);
+                if (needReduce) {
+                    DataCopy(gmDqIntermediate[dqOffset + dqSize_sub_offset], tensorDqOut, dqSize_sub);
+                    // DataCopy(gmDqIntermediate[0], tensorDqOut, dqSize_sub);
+                } else {
+                    DataCopy(gmDq[dqOffset + dqSize_sub_offset], tensorDqOut, dqSize_sub);
+                }
 
                 // 累加到 dg (读取现有值, 加上新值, 写回)
                 // 简化: 直接累加 (需要在 Part 5 中处理最终值)
@@ -1052,7 +1084,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart5
                 auto tensorGIn = inQue3.AllocTensor<GType>();
                 auto tensorDgIn = inQue4.AllocTensor<GType>();
                 
-                DataCopy(tensorDkIn[dkSize], gmDk[dkOffset], dkSize);
+                DataCopy(tensorDkIn[dkSize], (needReduce ? gmDkIntermediate[dkOffset] : gmDk[dkOffset]), dkSize);
                 DataCopy(tensorKIn[dkSize], gmK[kOffset], dkSize);
 
                 DataCopyParams dataCopyParams;
@@ -1216,7 +1248,11 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart5
                 auto tensorDkOut = outQue1.DeQue<DataType>();
                 auto tensorDgOut = outQue2.DeQue<GType>();
 
-                DataCopy(gmDk[dkOffset], tensorDkOut, dkSize);
+                if (needReduce) {
+                    DataCopy(gmDkIntermediate[dkOffset], tensorDkOut, dkSize);
+                } else {
+                    DataCopy(gmDk[dkOffset], tensorDkOut, dkSize);
+                }
 
                 // dg 需要与之前的累加
                 // 累加到 dg (读取现有值, 加上新值, 写回)
@@ -1286,7 +1322,11 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart6
                 auto tensorDqIn = inQue1.AllocTensor<DataType>();
                 auto tensorMM6In = inQue2.AllocTensor<DataType>();
                 
-                DataCopy(tensorDqIn[dqSize], gmDq[dqOffset], dqSize);
+                if (needReduce) {
+                    DataCopy(tensorDqIn[dqSize], gmDqIntermediate[dqOffset], dqSize);
+                } else {
+                    DataCopy(tensorDqIn[dqSize], gmDq[dqOffset], dqSize);
+                }
                 DataCopy(tensorMM6In[dqSize], gmMm6[dqOffset], dqSize);
 
                 inQue1.EnQue(tensorDqIn);
@@ -1321,7 +1361,11 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart6
             //CopyOut
             {
                 auto tensorDqOut = outQue1.DeQue<DataType>();
-                DataCopy(gmDq[dqOffset], tensorDqOut, dqSize);
+                if (needReduce) {
+                    DataCopy(gmDqIntermediate[dqOffset], tensorDqOut, dqSize);
+                } else {
+                    DataCopy(gmDq[dqOffset], tensorDqOut, dqSize);
+                }
                 outQue1.FreeTensor(tensorDqOut);
             }
             
@@ -1378,7 +1422,11 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart7
                 auto tensorDkIn = inQue1.AllocTensor<DataType>();
                 auto tensorMm7In = inQue2.AllocTensor<DataType>();
                 
-                DataCopy(tensorDkIn[dkSize], gmDk[dkOffset], dkSize);
+                if (needReduce) {
+                    DataCopy(tensorDkIn[dkSize], gmDkIntermediate[dkOffset], dkSize);
+                } else {
+                    DataCopy(tensorDkIn[dkSize], gmDk[dkOffset], dkSize);
+                }
                 DataCopy(tensorMm7In[dkSize], gmMm7[dkOffset], dkSize);
 
                 inQue1.EnQue(tensorDkIn);
@@ -1411,12 +1459,156 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart7
             //CopyOut
             {
                 auto tensorDkOut = outQue1.DeQue<DataType>();
-                DataCopy(gmDk[dkOffset], tensorDkOut, dkSize);
+                if (needReduce) {
+                    DataCopy(gmDkIntermediate[dkOffset], tensorDkOut, dkSize);
+                } else {
+                    DataCopy(gmDk[dkOffset], tensorDkOut, dkSize);
+                }
 
                 outQue1.FreeTensor(tensorDkOut);
             }
 
             CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
+        }
+    }
+}
+
+// ============== Part 8: dq/dk reduce when HK != HV ==============
+// Equivalent to: dq = dq.view(B, T, HK, HV // HK, K).sum(3)
+//                dk = dk.view(B, T, HK, HV // HK, K).sum(3)
+// Input: gmDqIntermediate/gmDkIntermediate [B, HV, T, K]
+// Output: gmDq/gmDk [B, HK, T, K]
+template <typename DataType, typename GType>
+__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessPart8() {
+    uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
+    uint32_t coreNum = GetBlockNum();
+    // Each core processes a subset of (B * HK * T) rows
+    uint32_t totalRows = B * HK * T;
+    
+    // Each row has K elements; we process n_ratio rows at a time (summing them)
+    // Layout of intermediate: [B, HV, T, K] where HV = n_ratio * HK
+    // We need to sum n_ratio consecutive HV heads for each HK head
+    // For a given (b, hk, t), the intermediate rows are at:
+    //   h = hk * n_ratio, hk * n_ratio + 1, ..., hk * n_ratio + n_ratio - 1
+    // offset in intermediate = (h * T + t) * K
+    
+    const uint32_t rowSize = K;  // elements per row
+    const uint32_t rowSizeBytes = rowSize * sizeof(DataType);
+    
+    // UB buffers: need n_ratio input rows + 1 output row (all in fp32 for accumulation)
+    // n_ratio * K * sizeof(float) for inputs + K * sizeof(float) for output
+    uint32_t inputBufSize = n_ratio * rowSize;
+    uint32_t fp32BufSize = inputBufSize * sizeof(float);
+    uint32_t outBufSize = rowSize * sizeof(DataType);
+    
+    pipe->InitBuffer(inQue1, 1, n_ratio * rowSizeBytes);
+    pipe->InitBuffer(outQue1, 1, outBufSize);
+    pipe->InitBuffer(calcBuf1, fp32BufSize);
+    pipe->InitBuffer(calcBuf2, rowSize * sizeof(float));
+    
+    auto tensorAccFp32 = calcBuf1.Get<float>();       // accumulator [n_ratio * K]
+    auto tensorOutFp32 = calcBuf2.Get<float>();       // output row [K]
+    
+    // Process each (b, hk, t) combination
+    for (uint32_t rowIdx = coreIdx; rowIdx < totalRows; rowIdx += coreNum) {
+        uint32_t b = rowIdx / (HK * T);
+        uint32_t remainder = rowIdx % (HK * T);
+        uint32_t hk = remainder / T;
+        uint32_t t = remainder % T;
+        
+        // CopyIn: read n_ratio rows from intermediate dq
+        {
+            auto tensorIn = inQue1.AllocTensor<DataType>();
+            for (uint32_t r = 0; r < n_ratio; r++) {
+                uint32_t h = hk * n_ratio + r;
+                uint64_t offset = ((uint64_t)b * HV + h) * T * K + (uint64_t)t * K;
+                DataCopy(tensorIn[r * rowSize], gmDqIntermediate[offset], rowSize);
+            }
+            inQue1.EnQue(tensorIn);
+        }
+        
+        // Compute: sum n_ratio rows for dq
+        {
+            auto tensorIn = inQue1.DeQue<DataType>();
+            Cast(tensorAccFp32, tensorIn, RoundMode::CAST_NONE, n_ratio * rowSize);
+            PipeBarrier<PIPE_V>();
+            
+            // Sum n_ratio rows: first copy row 0 to output, then add rows 1..n_ratio-1
+            DataCopy(tensorOutFp32, tensorAccFp32, rowSize);
+            PipeBarrier<PIPE_V>();
+            for (uint32_t r = 1; r < n_ratio; r++) {
+                Add(tensorOutFp32, tensorOutFp32, tensorAccFp32[r * rowSize], rowSize);
+                PipeBarrier<PIPE_V>();
+            }
+            
+            auto tensorOut = outQue1.AllocTensor<DataType>();
+            Cast(tensorOut, tensorOutFp32, RoundMode::CAST_RINT, rowSize);
+            inQue1.FreeTensor(tensorIn);
+            outQue1.EnQue(tensorOut);
+        }
+        
+        // CopyOut: write to final dq output [B, HK, T, K]
+        {
+            auto tensorOut = outQue1.DeQue<DataType>();
+            uint64_t dqOutOffset = ((uint64_t)b * HK + hk) * T * K + (uint64_t)t * K;
+            DataCopy(gmDq[dqOutOffset], tensorOut, rowSize);
+            outQue1.FreeTensor(tensorOut);
+        }
+    }
+    
+    pipe->Reset();
+    
+    // Now do the same for dk
+    pipe->InitBuffer(inQue1, 1, n_ratio * rowSizeBytes);
+    pipe->InitBuffer(outQue1, 1, outBufSize);
+    pipe->InitBuffer(calcBuf1, fp32BufSize);
+    pipe->InitBuffer(calcBuf2, rowSize * sizeof(float));
+    
+    auto tensorAccFp32Dk = calcBuf1.Get<float>();
+    auto tensorOutFp32Dk = calcBuf2.Get<float>();
+    
+    for (uint32_t rowIdx = coreIdx; rowIdx < totalRows; rowIdx += coreNum) {
+        uint32_t b = rowIdx / (HK * T);
+        uint32_t remainder = rowIdx % (HK * T);
+        uint32_t hk = remainder / T;
+        uint32_t t = remainder % T;
+        
+        // CopyIn: read n_ratio rows from intermediate dk
+        {
+            auto tensorIn = inQue1.AllocTensor<DataType>();
+            for (uint32_t r = 0; r < n_ratio; r++) {
+                uint32_t h = hk * n_ratio + r;
+                uint64_t offset = ((uint64_t)b * HV + h) * T * K + (uint64_t)t * K;
+                DataCopy(tensorIn[r * rowSize], gmDkIntermediate[offset], rowSize);
+            }
+            inQue1.EnQue(tensorIn);
+        }
+        
+        // Compute: sum n_ratio rows for dk
+        {
+            auto tensorIn = inQue1.DeQue<DataType>();
+            Cast(tensorAccFp32Dk, tensorIn, RoundMode::CAST_NONE, n_ratio * rowSize);
+            PipeBarrier<PIPE_V>();
+            
+            DataCopy(tensorOutFp32Dk, tensorAccFp32Dk, rowSize);
+            PipeBarrier<PIPE_V>();
+            for (uint32_t r = 1; r < n_ratio; r++) {
+                Add(tensorOutFp32Dk, tensorOutFp32Dk, tensorAccFp32Dk[r * rowSize], rowSize);
+                PipeBarrier<PIPE_V>();
+            }
+            
+            auto tensorOut = outQue1.AllocTensor<DataType>();
+            Cast(tensorOut, tensorOutFp32Dk, RoundMode::CAST_RINT, rowSize);
+            inQue1.FreeTensor(tensorIn);
+            outQue1.EnQue(tensorOut);
+        }
+        
+        // CopyOut: write to final dk output [B, HK, T, K]
+        {
+            auto tensorOut = outQue1.DeQue<DataType>();
+            uint64_t dkOutOffset = ((uint64_t)b * HK + hk) * T * K + (uint64_t)t * K;
+            DataCopy(gmDk[dkOutOffset], tensorOut, rowSize);
+            outQue1.FreeTensor(tensorOut);
         }
     }
 }

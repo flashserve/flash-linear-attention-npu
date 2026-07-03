@@ -176,14 +176,15 @@ at::Tensor npu_prepare_wy_repr_bwd_da(const at::Tensor & k, const at::Tensor & v
     auto q_sizes = q.sizes();
     auto v_sizes = v.sizes();
     int64_t batch_size = q_sizes[0];
-    int64_t num_heads = v_sizes[1];
+    int64_t k_num_heads = q_sizes[1];
+    int64_t v_num_heads = v_sizes[1];
     int64_t seq_len = q_sizes[2];
     int64_t head_dim = q_sizes[3];
     
     // 使用具体 shape 创建，但保持相同的 dtype/device
-    at::Tensor dq = at::empty({batch_size, num_heads, seq_len, head_dim}, q.options());
-    at::Tensor dk = at::empty({batch_size, num_heads, seq_len, head_dim}, q.options());
-    at::Tensor dw = at::empty({batch_size, num_heads, seq_len, head_dim}, q.options());
+    at::Tensor dq = at::empty({batch_size, k_num_heads, seq_len, head_dim}, q.options());
+    at::Tensor dk = at::empty({batch_size, k_num_heads, seq_len, head_dim}, q.options());
+    at::Tensor dw = at::empty({batch_size, v_num_heads, seq_len, head_dim}, q.options());
     at::Tensor dg = at::empty_like(g);
 
     // scale处理

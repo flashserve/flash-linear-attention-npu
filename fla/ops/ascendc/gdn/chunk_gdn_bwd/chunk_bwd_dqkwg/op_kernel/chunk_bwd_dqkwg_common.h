@@ -41,6 +41,8 @@ constexpr uint64_t SYNC_PART6_AIC_AIV = 60;
 constexpr uint64_t SYNC_PART6_AIV_AIC = 61;
 constexpr uint64_t SYNC_PART7_AIC_AIV = 70;
 constexpr uint64_t SYNC_PART7_AIV_AIC = 71;
+constexpr uint64_t SYNC_PART8_AIC_AIV = 80;
+constexpr uint64_t SYNC_PART8_AIV_AIC = 81;
 constexpr uint64_t SYNC_AIV_AIC_FLAG_0 = 3;
 constexpr uint64_t SYNC_AIC_AIV_FLAG_0 = 5;
 

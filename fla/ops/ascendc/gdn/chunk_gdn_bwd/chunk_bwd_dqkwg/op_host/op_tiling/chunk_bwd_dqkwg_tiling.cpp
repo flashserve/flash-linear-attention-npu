@@ -36,6 +36,8 @@ static void ChunkBwdDqkwgTilingDataPrint(gert::TilingContext *context, const Chu
     OP_LOGD(nodeName, "=== scale: %f", tiling.scale);
     OP_LOGD(nodeName, "=== mul0RowNum: %ld", tiling.mul0RowNum);
     OP_LOGD(nodeName, "=== isVarLen: %ld", tiling.isVarLen);
+    OP_LOGD(nodeName, "=== needReduce: %ld", tiling.needReduce);
+    OP_LOGD(nodeName, "=== wsDqkvReduceOffset: %ld", tiling.wsDqkvReduceOffset);
     OP_LOGD(nodeName, ">>>>>>>>>>>>>>> Print ChunkBwdDqkwg tiling data end <<<<<<<<<<<<<<<<");
 }
 
