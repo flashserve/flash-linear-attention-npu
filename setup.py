@@ -68,12 +68,12 @@ def _env_flag(name):
     return os.getenv(name, "FALSE").upper() in {"1", "TRUE", "YES", "ON"}
 
 
-def _run(cmd, cwd):
+def _run(cmd, cwd, env=None):
     printable = " ".join(str(part) for part in cmd)
     print(f"[fla-npu build] START {printable}", flush=True)
     start = time.monotonic()
     try:
-        subprocess.run(cmd, cwd=str(cwd), check=True)
+        subprocess.run(cmd, cwd=str(cwd), check=True, env=env)
     except subprocess.CalledProcessError:
         elapsed = time.monotonic() - start
         print(f"[fla-npu build] FAILED after {elapsed:.1f}s: {printable}", flush=True)
@@ -270,7 +270,16 @@ def _install_run_package(run_file, install_path):
         pass
 
     cmd = [str(run_file), "--quiet", f"--install-path={Path(install_path).resolve()}"]
-    _run(cmd, REPO_ROOT)
+    tmp_dir = Path(install_path).resolve().parent / ".run-installer-tmp"
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["TMPDIR"] = str(tmp_dir)
+    try:
+        _run(cmd, REPO_ROOT, env=env)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _build_run_package():

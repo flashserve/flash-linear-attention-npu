@@ -94,12 +94,36 @@ def _prepare_embedded_opp() -> pathlib.Path:
     return vendor_dir
 
 
+def _preload_library(path: pathlib.Path) -> None:
+    if not path.exists():
+        return
+    mode = getattr(os, "RTLD_GLOBAL", 0) | getattr(os, "RTLD_NOW", 0)
+    ctypes.CDLL(str(path), mode=mode)
+
+
+def _preload_torch_npu_dependencies(torch_module, torch_npu_module) -> None:
+    torch_lib = pathlib.Path(torch_module.__file__).resolve().parent / "lib"
+    torch_npu_lib = pathlib.Path(torch_npu_module.__file__).resolve().parent / "lib"
+    _prepend_env_path("LD_LIBRARY_PATH", torch_lib)
+    _prepend_env_path("LD_LIBRARY_PATH", torch_npu_lib)
+
+    for lib_path in (
+        torch_lib / "libc10.so",
+        torch_lib / "libtorch.so",
+        torch_lib / "libtorch_cpu.so",
+        torch_npu_lib / "libtorch_npu.so",
+    ):
+        _preload_library(lib_path)
+
+
 # Load the custom operator library
 def _load_opextension_so():
     _prepare_embedded_opp()
 
     import torch
-    import torch_npu  # noqa: F401
+    import torch_npu
+
+    _preload_torch_npu_dependencies(torch, torch_npu)
 
     so_dir = _PACKAGE_DIR
     so_files = list(so_dir.glob('custom_aclnn_extension_lib*.so'))
