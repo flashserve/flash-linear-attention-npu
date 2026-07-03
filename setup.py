@@ -36,7 +36,7 @@ DEFAULT_VENDOR_NAME = "fla_npu"
 MIN_PYTHON = (3, 9)
 MIN_TORCH = "2.7.0"
 MIN_TORCH_NPU = "2.7.1.post5"
-MIN_TORCH_NPU_MAINLINE_FIX = "2.10.0"
+MIN_TORCH_NPU_MAINLINE_FIX = "2.10.0.post1"
 MIN_TRITON_ASCEND = "3.2.0"
 TORCH_NPU_GDN_FIX_RELEASE_URL = (
     "https://gitcode.com/Ascend/pytorch/releases?"
@@ -125,7 +125,7 @@ def _check_torch_npu_gdn_fix(failures, actual):
     failures.append(
         "torch_npu must come from an Ascend PyTorch release that contains the "
         "GDN aclnn_extension stream fix. Expected torch_npu>=2.7.1.post5 "
-        "for the 2.7.1 release family, or a fixed mainline release such as "
+        "for the 2.7.1 release family, or a fixed PyTorch 2.10 release such as "
         f"{MIN_TORCH_NPU_MAINLINE_FIX}+ from {TORCH_NPU_GDN_FIX_RELEASE_URL}; got {actual}."
     )
 

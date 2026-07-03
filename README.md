@@ -167,7 +167,7 @@ torch.ops.npu.npu_chunk_bwd_dv_local(...)
 
 ### 接入实践
 
-环境准备：除本仓根目录 `requirements.txt` 外，Example ST 还依赖包含 GDN `aclnn_extension` stream 修复的 Ascend PyTorch release 对应的 PyTorch / torch-npu / torchnpugen、[triton-ascend](https://gitcode.com/Ascend/triton-ascend) 和 `pybind11`。构建脚本会拒绝未包含该修复的 `torch_npu`，当前要求 `torch_npu>=2.7.1.post5` 的 2.7.1 release family，或指定 GitCode release 中修复 GDN 问题的 mainline 版本：[Ascend/pytorch releases](https://gitcode.com/Ascend/pytorch/releases?presetConfig={%22tags%22:229,%22release%22:122})。对应 wheel 已包含 `torchnpugen`；不要再拉取 `op-plugin` 仓库重新编译。`triton-ascend` 会提供 `triton` Python 模块；3.2.0 及以前不要和社区版 `triton` 共存，否则可能触发 `torch_npu` 的 `triton` namespace 重复注册。
+环境准备：除本仓根目录 `requirements.txt` 外，Example ST 还依赖包含 GDN `aclnn_extension` stream 修复的 Ascend PyTorch release 对应的 PyTorch / torch-npu / torchnpugen、[triton-ascend](https://gitcode.com/Ascend/triton-ascend) 和 `pybind11`。构建脚本会拒绝未包含该修复的 `torch_npu`，当前要求 `torch_npu>=2.7.1.post5` 的 2.7.1 release family，或 `torch_npu>=2.10.0.post1` 的 PyTorch 2.10+ release family。注意 `release v26.0.0-pytorch2.10.0` 附带的裸 `torch_npu-2.10.0` 不包含该 GDN 修复；请使用包含修复的 `v26.1.0-beta.1-pytorch2.10.0` (`torch_npu-2.10.0.post1`) 或 `v26.0.1-pytorch2.10.0` (`torch_npu-2.10.0.post2`) 及后续版本：[Ascend/pytorch releases](https://gitcode.com/Ascend/pytorch/releases?presetConfig={%22tags%22:229,%22release%22:122})。对应 wheel 已包含 `torchnpugen`；不要再拉取 `op-plugin` 仓库重新编译。`triton-ascend` 会提供 `triton` Python 模块；3.2.0 及以前不要和社区版 `triton` 共存，否则可能触发 `torch_npu` 的 `triton` namespace 重复注册。
 
 ```sh
 # 以下示例使用 Python 3.10/aarch64 + PyTorch 2.7.1；其他 PyTorch 小版本请切换到同属 v26.1.0-beta.1 的配套 tag 和 wheel。
