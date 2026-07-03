@@ -80,6 +80,46 @@ static aclnnStatus CheckFormat(ChunkBwdDqkwgParams params)
 
 static aclnnStatus CheckShape(ChunkBwdDqkwgParams params)
 {
+    const auto qShape = params.q->GetViewShape();
+    const auto kShape = params.k->GetViewShape();
+    const auto vShape = params.v->GetViewShape();
+    const auto gShape = params.g->GetViewShape();
+    const auto dqShape = params.dqOut->GetViewShape();
+    const auto dkShape = params.dkOut->GetViewShape();
+    const auto dwShape = params.dwOut->GetViewShape();
+    const auto dgShape = params.dgOut->GetViewShape();
+
+    CHECK_COND(qShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "q must be [B, HK, T, K].");
+    CHECK_COND(kShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "k must be [B, HK, T, K].");
+    CHECK_COND(vShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "v must be [B, HV, T, V].");
+    CHECK_COND(gShape.GetDimNum() == 3, ACLNN_ERR_PARAM_INVALID, "g must be [B, HV, T].");
+    CHECK_COND(dqShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "dqOut must be [B, HK, T, K].");
+    CHECK_COND(dkShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "dkOut must be [B, HK, T, K].");
+    CHECK_COND(dwShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "dwOut must be [B, HV, T, K].");
+    CHECK_COND(dgShape.GetDimNum() == 3, ACLNN_ERR_PARAM_INVALID, "dgOut must be [B, HV, T].");
+
+    const int64_t B = qShape.GetDim(0);
+    const int64_t HK = qShape.GetDim(1);
+    const int64_t T = qShape.GetDim(2);
+    const int64_t K = qShape.GetDim(3);
+    const int64_t HV = vShape.GetDim(1);
+
+    CHECK_COND(HK > 0 && HV > 0 && HV % HK == 0, ACLNN_ERR_PARAM_INVALID,
+               "GVA requires HV divisible by HK.");
+    CHECK_COND(kShape.GetDim(0) == B && kShape.GetDim(1) == HK && kShape.GetDim(2) == T && kShape.GetDim(3) == K,
+               ACLNN_ERR_PARAM_INVALID, "k must match q shape [B, HK, T, K].");
+    CHECK_COND(vShape.GetDim(0) == B && vShape.GetDim(2) == T, ACLNN_ERR_PARAM_INVALID,
+               "v must match q batch and sequence dimensions.");
+    CHECK_COND(gShape.GetDim(0) == B && gShape.GetDim(1) == HV && gShape.GetDim(2) == T, ACLNN_ERR_PARAM_INVALID,
+               "g must be [B, HV, T].");
+    CHECK_COND(dqShape.GetDim(0) == B && dqShape.GetDim(1) == HK && dqShape.GetDim(2) == T && dqShape.GetDim(3) == K,
+               ACLNN_ERR_PARAM_INVALID, "dqOut must be [B, HK, T, K].");
+    CHECK_COND(dkShape.GetDim(0) == B && dkShape.GetDim(1) == HK && dkShape.GetDim(2) == T && dkShape.GetDim(3) == K,
+               ACLNN_ERR_PARAM_INVALID, "dkOut must be [B, HK, T, K].");
+    CHECK_COND(dwShape.GetDim(0) == B && dwShape.GetDim(1) == HV && dwShape.GetDim(2) == T && dwShape.GetDim(3) == K,
+               ACLNN_ERR_PARAM_INVALID, "dwOut must be [B, HV, T, K].");
+    CHECK_COND(dgShape.GetDim(0) == B && dgShape.GetDim(1) == HV && dgShape.GetDim(2) == T,
+               ACLNN_ERR_PARAM_INVALID, "dgOut must be [B, HV, T].");
     return ACLNN_SUCCESS;
 }
 
