@@ -28,13 +28,15 @@ Akk       = inv(I + tril(k_i * k_j * exp2(g_i - g_j) * beta_i, -1))
 w         = Akk @ (k * beta * exp2(g))
 u         = Akk @ (v * beta)
 v_new     = u - w @ h_prev
-h_next    = exp2(g_last) * h_prev + kg @ v_new
+h_next    = exp2(g_last) * h_prev + kg_state @ v_new
 o         = qg @ h_prev * scale + Aqk @ v_new
 ```
 
 其中：
 
 - `gk` 是 log2 空间下 key gate 的累积值。
+- `qg` 是 `q * exp2(gk)` 的中间张量。
+- `kg` 不是 `gk` 的笔误，而是 key-gated k 中间张量。kernel 中保存的 `kg = k * exp2(-gk)`；状态更新时结合当前 chunk 的 `g_last` 后，数学上等价于 `kg_state = k * exp2(g_last - gk)`。
 - AscendC vector pipe 中使用 `exp(x * ln2)` 实现 `exp2(x)`。
 - `final_state` 遵循三方对标实现和 GDN 语义，固定为 `float32`，即使 `q/k/v/o` 是 `fp16` 或 `bf16`。
 
@@ -73,7 +75,7 @@ BNSD 和 NTD 是性能布局，适用于上游 causal conv 已经完成数据排
 
 支持的 dtype 语义：
 
-- `q/k/v/o/Aqk/Akk/w/u/qg/kg/v_new/h`：根据张量角色跟随 `q` 或 `v` 的 dtype，算子注册覆盖 `fp16`、`bf16` 和 `fp32`。
+- `q/k/v/o/Aqk/Akk/w/u/qg/kg/v_new/h`：根据张量角色跟随 `q` 或 `v` 的 dtype，算子注册覆盖 `fp16`、`bf16` 和 `fp32`；其中 `kg` 表示 key-gated k 中间张量，不是 `gk` 输入。
 - `gk/beta`：PyTorch 层接受 `fp32` 或 `bf16`，进入 `ChunkKdaFwd` 前统一 cast 到 `fp32`。
 - `initial_state/final_state`：固定为 `fp32`。
 
@@ -100,7 +102,7 @@ split 路径包含三个 `ChunkKdaFwd` 阶段以及一次 GDN 状态传播：
 
 ```text
 stage 1: 准备 qg/kg/w/u/Aqk/Akk 输入并求解 chunk 内部项
-GDN fwd_h: 使用 kg、w、u、gk 更新 h/v_new/final_state
+GDN fwd_h: 使用 kg（key-gated k）、w、u、gk 更新 h/v_new/final_state
 stage 2: 计算 output cube 主路径和最终 o 行
 stage 3: 启用 post-WU cube 时后处理 w/kg/u
 ```
@@ -117,7 +119,7 @@ BNSD/NTD split forward 中，raw `o/Aqk/Akk/w/u/qg/kg/v_new/h` 存放在 executo
 
 - Gate 乘积准备：
   - AIV 加载 `q/k/gk` 行。
-  - AIV 计算 `qg = q * exp2(g)`、`w seed = k * exp2(g)`、`kg = k * exp2(-g)`。
+  - AIV 计算 `qg = q * exp2(gk)`、`w seed = k * exp2(gk)`、`kg = k * exp2(-gk)`。
   - 行输入和输出使用 double-buffer 队列。
 - `Aqk/Akk` raw score：
   - 目标 `K>=16` 路径使用 Catlass cube GEMM。
