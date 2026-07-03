@@ -50,6 +50,8 @@ cd torch_custom/fla_npu
 bash build.sh  # 一键编译安装脚本，先调用torchnpugen自动接入算子，再运行setup编whl包，最后安装whl包
 ```
 
+如果仍采用“先编译并安装 run 包，再单独编译 torch_custom”的老流程，请在运行 Python 前 source custom OPP 的 `set_env.bash`，或设置 `FLA_NPU_OPP_PATH` 指向 OPP root / vendor 目录。`import fla_npu` 会优先使用 wheel 内嵌 OPP，找不到时会继续从 `FLA_NPU_OPP_PATH`、`ASCEND_CUSTOM_OPP_PATH` 和 `ASCEND_OPP_PATH` 查找已安装 OPP。
+
 ### 源码一键编译并生成 wheel
 
 在已完成 CANN、PyTorch、torch-npu、triton-ascend 环境准备后，可以在仓库根目录执行源码态一键安装。默认目标芯片为 `ascend910b`，A3/A5 机器需要显式指定 `FLA_NPU_SOC`：
@@ -70,7 +72,7 @@ cd torch_custom/fla_npu && python setup.py build_ext --inplace
 将 <wheel-staging>/fla_npu/opp/vendors/<vendor>_transformer 打进 wheel
 ```
 
-安装后的 wheel 内同时包含 torch 适配 `.so` 和 AscendC OPP 运行产物。用户侧只需要安装 wheel，并在 Python 中 `import fla_npu`；`fla_npu` 会自动设置内嵌 OPP 路径、预加载 `libcust_opapi.so` 并注册 `torch.ops.npu.*`，不需要手动执行 run 包或 source vendor 目录。
+安装后的 wheel 内同时包含 torch 适配 `.so` 和 AscendC OPP 运行产物。用户侧只需要安装 wheel，并在 Python 中 `import fla_npu`；`fla_npu` 会自动设置内嵌 OPP 路径、预加载 `libcust_opapi.so` 并注册 `torch.ops.npu.*`，不需要手动执行 run 包或 source vendor 目录。wheel 构建时会检查 `op_api`、`op_host` 和 `binary_info_config.json` 等关键 OPP 产物，避免打出缺少运行文件的 wheel。
 
 可用环境变量：
 
@@ -89,7 +91,29 @@ cd torch_custom/fla_npu && python setup.py build_ext --inplace
 
 ```sh
 python -c "import fla_npu; import torch; print(hasattr(torch.ops.npu, 'npu_chunk_fwd_o'))"
+python scripts/check_packaged_wheel_api.py
 ```
+
+推荐调用路径：
+
+```python
+from fla_npu.ops.triton import chunk_local_cumsum, causal_conv1d_triton
+from fla_npu.ops.ascendc import chunk_fwd_o, causal_conv1d
+```
+
+兼容调用路径：
+
+```python
+import torch
+import torch_npu
+import fla_npu
+
+torch.ops.npu.npu_chunk_fwd_o(...)
+torch_npu.ops.chunk_fwd_o(...)
+torch_npu.ops.npu_chunk_fwd_o(...)
+```
+
+`fla_npu.ops.ascendc` 会为已有明确一对一关系的算子提供自动绑定入口，例如 `fast_gelu_custom -> fast_gelu_custom_backward`，以及 `causal_conv1d -> causal_conv1d_bwd` 的 prefill / `activation_mode=0` 场景；其他复杂 GDN 组合算子仍显式暴露 forward/backward 原语，便于上层 `torch.autograd.Function` 按完整计算图组合。
 
 ### 单 wheel 离线交付
 
@@ -143,7 +167,7 @@ torch.ops.npu.npu_chunk_bwd_dv_local(...)
 
 ### 接入实践
 
-环境准备：除本仓根目录 `requirements.txt` 外，Example ST 还依赖 Ascend PyTorch `v26.1.0-beta.1` release family 对应的 PyTorch / torch-npu / torchnpugen、[triton-ascend](https://gitcode.com/Ascend/triton-ascend) 和 `pybind11`。`v26.1.0-beta.1` 是必须的 Ascend PyTorch release 版本；PyTorch 小版本可以按环境选择，但必须安装同一 release family 下匹配的 `torch_npu` wheel。对应 wheel 已包含 `torchnpugen`，并修复了 GDN 算子自定义适配中 `aclnn_extension` 未传 stream 导致算子间数据同步不生效的问题；不要再拉取 `op-plugin` 仓库重新编译。`triton-ascend` 会提供 `triton` Python 模块；3.2.0 及以前不要和社区版 `triton` 共存，否则可能触发 `torch_npu` 的 `triton` namespace 重复注册。
+环境准备：除本仓根目录 `requirements.txt` 外，Example ST 还依赖包含 GDN `aclnn_extension` stream 修复的 Ascend PyTorch release 对应的 PyTorch / torch-npu / torchnpugen、[triton-ascend](https://gitcode.com/Ascend/triton-ascend) 和 `pybind11`。构建脚本会拒绝未包含该修复的 `torch_npu`，当前要求 `torch_npu>=2.7.1.post5` 的 2.7.1 release family，或指定 GitCode release 中修复 GDN 问题的 mainline 版本：[Ascend/pytorch releases](https://gitcode.com/Ascend/pytorch/releases?presetConfig={%22tags%22:229,%22release%22:122})。对应 wheel 已包含 `torchnpugen`；不要再拉取 `op-plugin` 仓库重新编译。`triton-ascend` 会提供 `triton` Python 模块；3.2.0 及以前不要和社区版 `triton` 共存，否则可能触发 `torch_npu` 的 `triton` namespace 重复注册。
 
 ```sh
 # 以下示例使用 Python 3.10/aarch64 + PyTorch 2.7.1；其他 PyTorch 小版本请切换到同属 v26.1.0-beta.1 的配套 tag 和 wheel。

@@ -11,11 +11,18 @@ import shutil
 import sys
 from importlib import metadata
 
+from packaging.version import InvalidVersion, Version
+
 
 MIN_PYTHON = (3, 9)
 MIN_TORCH = "2.7.0"
-MIN_TORCH_NPU = "2.7.1"
+MIN_TORCH_NPU = "2.7.1.post5"
+MIN_TORCH_NPU_MAINLINE_FIX = "2.10.0"
 MIN_TRITON_ASCEND = "3.2.0"
+TORCH_NPU_GDN_FIX_RELEASE_URL = (
+    "https://gitcode.com/Ascend/pytorch/releases?"
+    "presetConfig={%22tags%22:229,%22release%22:122}"
+)
 
 TORCHNPUGEN_MODULES = (
     "torchnpugen.gen_op_plugin_functions",
@@ -73,12 +80,19 @@ def _check_min_version(failures: list[str], name: str, actual: str, minimum: str
     if not actual:
         _fail(failures, f"{name} version is unknown")
         return
-    actual_key = _version_key(actual)
-    minimum_key = _version_key(minimum)
-    if actual_key is None:
+    actual_version = _version_obj(actual)
+    minimum_version = _version_obj(minimum)
+    if actual_version is None:
         _fail(failures, f"{name} has unsupported version string: {actual}")
-    elif actual_key < minimum_key:
+    elif minimum_version is not None and actual_version < minimum_version:
         _fail(failures, f"{name}>={minimum} is required, got {actual}")
+
+
+def _version_obj(value: str) -> Version | None:
+    try:
+        return Version(value.split("+", 1)[0])
+    except InvalidVersion:
+        return None
 
 
 def _version_key(value: str) -> tuple[int, int, int] | None:
@@ -89,6 +103,26 @@ def _version_key(value: str) -> tuple[int, int, int] | None:
     while len(nums) < 3:
         nums.append(0)
     return tuple(nums)
+
+
+def _check_torch_npu_gdn_fix(failures: list[str], actual: str) -> None:
+    actual_version = _version_obj(actual)
+    if actual_version is None:
+        _fail(failures, f"torch_npu has unsupported version string: {actual}")
+        return
+
+    fixed_27 = Version(MIN_TORCH_NPU) <= actual_version < Version("2.8.0")
+    fixed_mainline = actual_version >= Version(MIN_TORCH_NPU_MAINLINE_FIX)
+    if fixed_27 or fixed_mainline:
+        return
+
+    _fail(
+        failures,
+        "torch_npu must come from an Ascend PyTorch release that contains the "
+        "GDN aclnn_extension stream fix. Expected torch_npu>=2.7.1.post5 "
+        "for the 2.7.1 release family, or a fixed mainline release such as "
+        f"{MIN_TORCH_NPU_MAINLINE_FIX}+ from {TORCH_NPU_GDN_FIX_RELEASE_URL}; got {actual}.",
+    )
 
 
 def _detect_cann_version() -> str:
@@ -188,7 +222,7 @@ def main() -> int:
     if torch_npu is not None:
         torch_npu_version = getattr(torch_npu, "__version__", "<unknown>")
         _ok(f"torch_npu version: {torch_npu_version}")
-        _check_min_version(failures, "torch_npu", torch_npu_version, MIN_TORCH_NPU)
+        _check_torch_npu_gdn_fix(failures, torch_npu_version)
 
     if not args.skip_torchnpugen:
         for module_name in TORCHNPUGEN_MODULES:

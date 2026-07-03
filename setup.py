@@ -10,13 +10,17 @@ import re
 import time
 from pathlib import Path
 
+from packaging.version import InvalidVersion, Version
 from setuptools import Distribution, find_packages, setup
 from setuptools.command.build_py import build_py as _build_py
 
 try:
     from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
 except Exception:
-    from setuptools.command.bdist_wheel import bdist_wheel as _bdist_wheel
+    try:
+        from setuptools.command.bdist_wheel import bdist_wheel as _bdist_wheel
+    except Exception:
+        _bdist_wheel = None
 
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -31,8 +35,13 @@ DEFAULT_SOC = "ascend910b"
 DEFAULT_VENDOR_NAME = "fla_npu"
 MIN_PYTHON = (3, 9)
 MIN_TORCH = "2.7.0"
-MIN_TORCH_NPU = "2.7.1"
+MIN_TORCH_NPU = "2.7.1.post5"
+MIN_TORCH_NPU_MAINLINE_FIX = "2.10.0"
 MIN_TRITON_ASCEND = "3.2.0"
+TORCH_NPU_GDN_FIX_RELEASE_URL = (
+    "https://gitcode.com/Ascend/pytorch/releases?"
+    "presetConfig={%22tags%22:229,%22release%22:122}"
+)
 
 TORCHNPUGEN_MODULES = (
     "torchnpugen.gen_op_plugin_functions",
@@ -77,12 +86,19 @@ def _check_min_version(failures, name, actual, minimum):
     if not actual:
         failures.append(f"{name} version is unknown")
         return
-    actual_key = _version_key(actual)
-    minimum_key = _version_key(minimum)
-    if actual_key is None:
+    actual_version = _version_obj(actual)
+    minimum_version = _version_obj(minimum)
+    if actual_version is None:
         failures.append(f"{name} has an unsupported version string: {actual}")
-    elif actual_key < minimum_key:
+    elif minimum_version is not None and actual_version < minimum_version:
         failures.append(f"{name}>={minimum} is required, got {actual}")
+
+
+def _version_obj(value):
+    try:
+        return Version(value.split("+", 1)[0])
+    except InvalidVersion:
+        return None
 
 
 def _version_key(value):
@@ -93,6 +109,25 @@ def _version_key(value):
     while len(nums) < 3:
         nums.append(0)
     return tuple(nums)
+
+
+def _check_torch_npu_gdn_fix(failures, actual):
+    actual_version = _version_obj(actual)
+    if actual_version is None:
+        failures.append(f"torch_npu has an unsupported version string: {actual}")
+        return
+
+    fixed_27 = Version(MIN_TORCH_NPU) <= actual_version < Version("2.8.0")
+    fixed_mainline = actual_version >= Version(MIN_TORCH_NPU_MAINLINE_FIX)
+    if fixed_27 or fixed_mainline:
+        return
+
+    failures.append(
+        "torch_npu must come from an Ascend PyTorch release that contains the "
+        "GDN aclnn_extension stream fix. Expected torch_npu>=2.7.1.post5 "
+        "for the 2.7.1 release family, or a fixed mainline release such as "
+        f"{MIN_TORCH_NPU_MAINLINE_FIX}+ from {TORCH_NPU_GDN_FIX_RELEASE_URL}; got {actual}."
+    )
 
 
 def _distribution_version(name):
@@ -176,7 +211,7 @@ def _check_build_environment():
     if torch is not None:
         _check_min_version(failures, "torch", getattr(torch, "__version__", ""), MIN_TORCH)
     if torch_npu is not None:
-        _check_min_version(failures, "torch_npu", getattr(torch_npu, "__version__", ""), MIN_TORCH_NPU)
+        _check_torch_npu_gdn_fix(failures, getattr(torch_npu, "__version__", ""))
 
     triton_ascend_version = _distribution_version("triton-ascend")
     try:
@@ -244,6 +279,9 @@ def _build_run_package():
     ops_filter = os.getenv("FLA_NPU_OPS", "").strip()
 
     if not _env_flag("FLA_NPU_SKIP_RUN_BUILD"):
+        build_out = REPO_ROOT / "build_out"
+        if build_out.exists():
+            shutil.rmtree(build_out)
         cmd = [
             "bash",
             "build.sh",
@@ -305,6 +343,36 @@ def _write_vendors_config(vendor_dir):
     config_file.write_text(f"load_priority={vendor_dir.name}\n", encoding="utf-8")
 
 
+def _has_glob(root, pattern):
+    return any(Path(root).glob(pattern))
+
+
+def _validate_staged_opp(vendor_dir):
+    vendor_dir = Path(vendor_dir)
+    required = {
+        "custom op_api library": "op_api/lib/libcust_opapi.so",
+        "op_host shared library": "op_impl/ai_core/tbe/op_host/lib/linux/*/libophost*.so",
+        "binary info config": "op_impl/ai_core/tbe/config/*/binary_info_config.json",
+    }
+    missing = [
+        description
+        for description, pattern in required.items()
+        if not _has_glob(vendor_dir, pattern)
+    ]
+    if missing:
+        raise RuntimeError(
+            f"Embedded OPP under {vendor_dir} is incomplete; missing "
+            + ", ".join(missing)
+        )
+
+    aicpu_config = vendor_dir / "op_impl" / "cpu" / "config"
+    aicpu_impl = vendor_dir / "op_impl" / "cpu" / "aicpu_kernel" / "impl"
+    if aicpu_config.exists() and not _has_glob(aicpu_config, "*aicpu*.json"):
+        raise RuntimeError(f"Embedded OPP AICPU config is incomplete under {aicpu_config}")
+    if aicpu_impl.exists() and not _has_glob(aicpu_impl, "*.so"):
+        raise RuntimeError(f"Embedded OPP AICPU impl is incomplete under {aicpu_impl}")
+
+
 def _stage_run_package(run_file, opp_root):
     if _env_flag("FLA_NPU_SKIP_RUN_INSTALL"):
         print("[fla-npu build] Skipping embedded OPP staging because FLA_NPU_SKIP_RUN_INSTALL is set")
@@ -327,6 +395,7 @@ def _stage_run_package(run_file, opp_root):
     if op_api_alias.exists() or op_api_alias.is_symlink():
         op_api_alias.unlink()
     shutil.copy2(op_api_lib, op_api_alias)
+    _validate_staged_opp(vendor_dir)
     print(f"[fla-npu build] Embedded OPP staged at {vendor_dir}")
 
 
@@ -376,10 +445,15 @@ class BinaryDistribution(Distribution):
         return True
 
 
-class FlaNpuBdistWheel(_bdist_wheel):
-    def finalize_options(self):
-        super().finalize_options()
-        self.root_is_pure = False
+CMDCLASS = {"build_py": FlaNpuBuildPy}
+
+if _bdist_wheel is not None:
+    class FlaNpuBdistWheel(_bdist_wheel):
+        def finalize_options(self):
+            super().finalize_options()
+            self.root_is_pure = False
+
+    CMDCLASS["bdist_wheel"] = FlaNpuBdistWheel
 
 
 setup(
@@ -388,12 +462,18 @@ setup(
     description="High-performance linear attention operators for Ascend NPU",
     long_description=(REPO_ROOT / "README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
-    packages=find_packages(include=["fla", "fla.*"]) + ["fla_npu"],
+    packages=(
+        find_packages(include=["fla", "fla.*"])
+        + find_packages(
+            where=str(TORCH_EXTENSION_DIR),
+            include=["fla_npu", "fla_npu.*"],
+        )
+    ),
     package_dir={"fla_npu": str(FLA_NPU_PACKAGE_DIR.relative_to(REPO_ROOT))},
     package_data={"fla_npu": ["custom_aclnn_extension_lib*.so", "opp/**/*"]},
     include_package_data=True,
     distclass=BinaryDistribution,
-    cmdclass={"build_py": FlaNpuBuildPy, "bdist_wheel": FlaNpuBdistWheel},
+    cmdclass=CMDCLASS,
     python_requires=">=3.9",
     install_requires=_read_requirements(),
 )
