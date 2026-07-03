@@ -17,14 +17,7 @@ def _prepend_env_path(name: str, value: pathlib.Path) -> None:
 
 
 def _candidate_vendor_names() -> list[str]:
-    names = []
-    env_vendor = os.environ.get("FLA_NPU_VENDOR_NAME", "").strip()
-    if env_vendor:
-        names.append(env_vendor)
-        if not env_vendor.endswith("_transformer"):
-            names.append(f"{env_vendor}_transformer")
-    names.append(_DEFAULT_VENDOR_DIR)
-    return list(dict.fromkeys(names))
+    return [_DEFAULT_VENDOR_DIR]
 
 
 def _candidate_opp_roots() -> list[pathlib.Path]:

@@ -37,7 +37,7 @@ def get_soc() -> str:
 
 
 def get_vendor_name() -> str:
-    return os.getenv("FLA_NPU_VENDOR_NAME", DEFAULT_VENDOR_NAME)
+    return DEFAULT_VENDOR_NAME
 
 
 def _compact_tag(value: str) -> str:

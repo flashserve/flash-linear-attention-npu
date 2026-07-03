@@ -174,8 +174,8 @@ install_custom_opp_package() {
     chmod +x "${run_files[0]}"
     "${run_files[0]}" --quiet
 
-    local vendor_name="${CI_VENDOR_NAME:-fla_npu}"
-    local vendor_dir="${vendor_name}_transformer"
+    local vendor_name="fla_npu"
+    local vendor_dir="fla_npu_transformer"
     local op_api_lib=""
     for candidate in \
         "${ASCEND_OPP_PATH:-}/vendors/${vendor_dir}/op_api/lib" \

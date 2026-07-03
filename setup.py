@@ -252,7 +252,7 @@ def _check_build_environment():
                 print(f"[fla-npu build][OK] {module}: {spec.origin or 'namespace package'}")
 
     print(f"[fla-npu build][OK] FLA_NPU_SOC={os.getenv('FLA_NPU_SOC', DEFAULT_SOC)}")
-    print(f"[fla-npu build][OK] FLA_NPU_VENDOR_NAME={os.getenv('FLA_NPU_VENDOR_NAME', DEFAULT_VENDOR_NAME)}")
+    print(f"[fla-npu build][OK] FLA NPU vendor={DEFAULT_VENDOR_NAME}")
 
     if failures:
         raise RuntimeError(
@@ -297,7 +297,6 @@ def _install_run_package(run_file, install_path):
 
 def _build_run_package():
     soc = os.getenv("FLA_NPU_SOC", DEFAULT_SOC)
-    vendor_name = os.getenv("FLA_NPU_VENDOR_NAME", DEFAULT_VENDOR_NAME)
     ops_filter = os.getenv("FLA_NPU_OPS", "").strip()
 
     if not _env_flag("FLA_NPU_SKIP_RUN_BUILD"):
@@ -309,7 +308,7 @@ def _build_run_package():
             "build.sh",
             f"--soc={soc}",
             "--pkg",
-            f"--vendor_name={vendor_name}",
+            f"--vendor_name={DEFAULT_VENDOR_NAME}",
         ]
         if ops_filter:
             cmd.append(f"--ops={ops_filter}")
@@ -319,7 +318,7 @@ def _build_run_package():
 
 
 def _vendor_dir_name(vendor_name=None):
-    vendor_name = vendor_name or os.getenv("FLA_NPU_VENDOR_NAME", DEFAULT_VENDOR_NAME)
+    vendor_name = vendor_name or DEFAULT_VENDOR_NAME
     return vendor_name if vendor_name.endswith("_transformer") else f"{vendor_name}_transformer"
 
 

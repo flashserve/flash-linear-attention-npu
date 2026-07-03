@@ -103,8 +103,7 @@ def get_dependency_paths():
 
 
 def get_vendor_dir_name():
-    vendor_name = os.getenv("FLA_NPU_VENDOR_NAME", "fla_npu")
-    return vendor_name if vendor_name.endswith("_transformer") else f"{vendor_name}_transformer"
+    return "fla_npu_transformer"
 
 
 def get_link_args():
