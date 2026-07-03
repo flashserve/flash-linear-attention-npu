@@ -22,6 +22,7 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleFwdH(
     const aclTensor *w,
     const aclTensor *u,
     const aclTensor *g,
+    const aclTensor *gkOptional,
     const aclTensor *initalStateOptional,
     const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional,
@@ -32,7 +33,7 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleFwdH(
     const aclTensor *finalStateOut,
     aclOpExecutor *executor)
 {
-    L0_DFX(ChunkGatedDeltaRuleFwdH, k, w, u, g, initalStateOptional, cuSeqlensOptional, chunkIndicesOptional, outputFinalState, chunkSize, hOut, vNewOut, finalStateOut);
+    L0_DFX(ChunkGatedDeltaRuleFwdH, k, w, u, g, gkOptional, initalStateOptional, cuSeqlensOptional, chunkIndicesOptional, outputFinalState, chunkSize, hOut, vNewOut, finalStateOut);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional) {
@@ -55,7 +56,7 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleFwdH(
     }
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkGatedDeltaRuleFwdH,
-        OP_INPUT(k, w, u, g, initalStateOptional, actualCuSeqlens, actualChunkIndices),
+        OP_INPUT(k, w, u, g, gkOptional, initalStateOptional, actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(hOut, vNewOut, finalStateOut),
         OP_ATTR(outputFinalState, chunkSize));
     if (ret != ACLNN_SUCCESS) {

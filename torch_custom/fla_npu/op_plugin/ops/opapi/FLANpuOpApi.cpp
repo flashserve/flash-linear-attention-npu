@@ -254,9 +254,7 @@ at::Tensor npu_chunk_fwd_o(
     TORCH_CHECK(
         g.has_value() && g->defined(),
         "npu_chunk_gated_delta_rule_fwd_h: g cannot be None or undefined; pass a real gate tensor until NPU supports g=None.");
-    TORCH_CHECK(
-        !gk.has_value() || !gk->defined(),
-        "npu_chunk_gated_delta_rule_fwd_h: gk is reserved and only None is supported.");
+
     TORCH_CHECK(
         save_new_value.value_or(true),
         "npu_chunk_gated_delta_rule_fwd_h: save_new_value is reserved and only true is supported.");

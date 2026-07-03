@@ -52,7 +52,8 @@ template<
     typename G_TYPE,
     typename STATE_TYPE,
     typename WORKSPACE_TYPE,
-    typename TileShapes = GDNFwdHTileShapes128
+    typename TileShapes = GDNFwdHTileShapes128,
+    bool kGated = false
 >
 class GDNFwdHKernel {
 public:
@@ -85,11 +86,11 @@ public:
 
     // vec 1
     using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnew;
-    using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, FinalStateType>;
+    using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, FinalStateType, std::bool_constant<kGated>>;
 
     // vec 2
     using DispatchPolicyGDNFwdHUpdate = Epilogue::EpilogueAtlasGDNFwdHUpdate;
-    using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType, FinalStateType>;
+    using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType, FinalStateType, std::bool_constant<kGated>>;
 
     using GDNFwdHOffsets = Catlass::Gemm::Block::GDNFwdHOffsets;
 
@@ -127,6 +128,7 @@ public:
     uint32_t hWorkspaceOffset;
     uint32_t numSeqWorkspaceOffset;
     uint32_t numChunksWorkspaceOffset;
+    uint32_t kDecayWorkspaceOffset;
 
     AscendC::GlobalTensor<ElementK> gmK;
     AscendC::GlobalTensor<ElementW> gmW;
@@ -140,6 +142,9 @@ public:
     AscendC::GlobalTensor<ElementV> gmVUpdateWorkspace;
     AscendC::GlobalTensor<ElementHWork> gmHWorkspace;
 
+    AscendC::GlobalTensor<ElementG> gmGk;
+    AscendC::GlobalTensor<ElementK> gmKDecayWorkspace;
+
     AscendC::GlobalTensor<int64_t> gmSeqlen;
     AscendC::GlobalTensor<int64_t> gmNumSeq;
     AscendC::GlobalTensor<int64_t> gmNumChunks;
@@ -152,7 +157,7 @@ public:
 
     __aicore__ inline GDNFwdHKernel() {}
 
-    __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
+    __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
         GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user) {
 
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
@@ -174,6 +179,7 @@ public:
         hWorkspaceOffset = gdnFwdHTilingData->hWorkspaceOffset;
         numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
         numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
+        kDecayWorkspaceOffset = gdnFwdHTilingData->kDecayWorkspaceOffset;
 
         gmK.SetGlobalBuffer((__gm__ ElementK *)k);
         gmW.SetGlobalBuffer((__gm__ ElementW *)w);
@@ -186,6 +192,8 @@ public:
         gmVWorkspace.SetGlobalBuffer((__gm__ ElementVWork *)(user + vWorkspaceOffset));
         gmVUpdateWorkspace.SetGlobalBuffer((__gm__ ElementV *)(user + vUpdateWorkspaceOffset));
         gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
+        gmGk.SetGlobalBuffer((__gm__ ElementG *)gk);
+        gmKDecayWorkspace.SetGlobalBuffer((__gm__ ElementK *)(user + kDecayWorkspaceOffset));
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
         gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
@@ -262,10 +270,12 @@ public:
 
                         if (cubeBlockScheduler.NeedProcessStage2(stream)) {
                             // step 3: h[i+1] = k.T @ v_work
-                            int64_t cube2OffsetK = cube2Offsets.wkOffset;
+                            int64_t cube2OffsetKwork = kGated ? cube2Offsets.kDecayWorkOffset : cube2Offsets.wkOffset;
                             int64_t cube2OffsetVwork = cube2Offsets.vWorkOffset;
                             int64_t cube2OffsetH = cube2Offsets.hWorkOffset;
-                            auto tensorK = tla::MakeTensor(gmK[cube2OffsetK], kLayout, Catlass::Arch::PositionGM{});
+                            auto tensorK = kGated
+                                ? tla::MakeTensor(gmKDecayWorkspace[cube2OffsetKwork], kLayout, Catlass::Arch::PositionGM{})
+                                : tla::MakeTensor(gmK[cube2OffsetKwork], kLayout, Catlass::Arch::PositionGM{});
                             auto tensorVwork = tla::MakeTensor(gmVUpdateWorkspace[cube2OffsetVwork], vworkLayout, Catlass::Arch::PositionGM{});
                             auto tensorHwork = tla::MakeTensor(gmHWorkspace[cube2OffsetH], hworkLayout, Catlass::Arch::PositionGM{});
                             GemmCoord cube2Shape{kHeadDim, cube2Offsets.vBlockDim, cube2Offsets.blockTokens};
@@ -416,6 +426,7 @@ public:
                         epilogueGDNFwdHVnew(
                             gmV[vec1Offsets.uvOffset], gmVUpdateWorkspace[vec1Offsets.vWorkOffset],
                             gmG[vec1Offsets.gOffset], gmU[vec1Offsets.uvOffset], gmVWorkspace[vec1Offsets.vWorkOffset],
+                            gmGk[vec1Offsets.gkOffset], gmK[vec1Offsets.wkOffset], gmKDecayWorkspace[vec1Offsets.kDecayWorkOffset],
                             vec1Offsets.blockTokens, kHeadDim, vec1Offsets.vBlockDim, vHeadDim,
                             vecBlockScheduler.cube1Done[streamId], vecBlockScheduler.vec1Done[streamId],
                             vec1Offsets.isInitialState, vec1Offsets.isFinalState, storeFinalState, (streamId == 0)
@@ -438,6 +449,7 @@ public:
                                 gmG[vec2Offsets.gOffset],
                                 gmH[vec2Offsets.hSrcOffset],
                                 gmHWorkspace[vec2Offsets.hWorkOffset],
+                                gmGk[vec2Offsets.gkOffset],
                                 vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, vHeadDim, vecBlockScheduler.cube2Done[streamId],
                                 vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, (streamId == 0)
                             );
