@@ -27,11 +27,24 @@ def _candidate_vendor_names() -> list[str]:
     return list(dict.fromkeys(names))
 
 
-def _resolve_vendor_dir() -> pathlib.Path:
+def _candidate_opp_roots() -> list[pathlib.Path]:
+    roots: list[pathlib.Path] = []
     override = os.environ.get("FLA_NPU_OPP_PATH", "").strip()
-    roots = [pathlib.Path(override).expanduser()] if override else [_PACKAGE_DIR / "opp"]
+    if override:
+        roots.append(pathlib.Path(override).expanduser())
 
-    for root in roots:
+    roots.append(_PACKAGE_DIR / "opp")
+
+    for env_name in ("ASCEND_CUSTOM_OPP_PATH", "ASCEND_OPP_PATH"):
+        for part in os.environ.get(env_name, "").split(os.pathsep):
+            if part:
+                roots.append(pathlib.Path(part).expanduser())
+
+    return list(dict.fromkeys(roots))
+
+
+def _resolve_vendor_dir() -> pathlib.Path:
+    for root in _candidate_opp_roots():
         if (root / "op_api" / "lib" / "libcust_opapi.so").exists():
             return root.resolve()
 
@@ -47,10 +60,11 @@ def _resolve_vendor_dir() -> pathlib.Path:
                 return vendor_dirs[0].resolve()
 
     raise FileNotFoundError(
-        "Unable to find embedded FLA NPU custom OPP. Expected "
+        "Unable to find FLA NPU custom OPP. Expected "
         f"{_PACKAGE_DIR / 'opp' / 'vendors' / _DEFAULT_VENDOR_DIR}. "
-        "If you installed it elsewhere, set FLA_NPU_OPP_PATH to either the OPP "
-        "root containing vendors/ or the vendor directory itself."
+        "If you installed it separately, source the custom OPP set_env.bash, "
+        "or set FLA_NPU_OPP_PATH to either the OPP root containing vendors/ "
+        "or the vendor directory itself."
     )
 
 
@@ -95,5 +109,8 @@ def _load_opextension_so():
 
     atb_so_path = str(so_files[0])
     torch.ops.load_library(atb_so_path)
+    from .ops.ascendc import install_torch_npu_ops_compat
+
+    install_torch_npu_ops_compat()
 
 _load_opextension_so()
