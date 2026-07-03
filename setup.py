@@ -356,17 +356,30 @@ def _has_glob(root, pattern):
     return any(Path(root).glob(pattern))
 
 
+def _has_any_glob(root, patterns):
+    return any(_has_glob(root, pattern) for pattern in patterns)
+
+
 def _validate_staged_opp(vendor_dir):
     vendor_dir = Path(vendor_dir)
-    required = {
-        "custom op_api library": "op_api/lib/libcust_opapi.so",
-        "op_host shared library": "op_impl/ai_core/tbe/op_host/lib/linux/*/libophost*.so",
-        "binary info config": "op_impl/ai_core/tbe/config/*/binary_info_config.json",
+    required_groups = {
+        "custom op_api library": ("op_api/lib/libcust_opapi.so",),
+        "host/proto shared library": (
+            "op_impl/ai_core/tbe/op_host/lib/linux/*/libophost*.so",
+            "op_impl/ai_core/tbe/op_tiling/lib/linux/*/*.so",
+            "op_proto/lib/linux/*/*.so",
+            "op_proto/es/lib/linux/*/*.so",
+        ),
+        "AI Core kernel object": ("op_impl/ai_core/tbe/kernel/*/*/*.o",),
+        "binary info config": (
+            "op_impl/ai_core/tbe/config/*/binary_info_config.json",
+            "op_impl/ai_core/tbe/kernel/config/*/binary_info_config.json",
+        ),
     }
     missing = [
         description
-        for description, pattern in required.items()
-        if not _has_glob(vendor_dir, pattern)
+        for description, patterns in required_groups.items()
+        if not _has_any_glob(vendor_dir, patterns)
     ]
     if missing:
         raise RuntimeError(
