@@ -140,6 +140,7 @@ public:
         uint64_t wsDsTempOffset;
         uint64_t wsMm6Offset;
         uint64_t wsMm7Offset;
+        uint64_t wsDqkvReduceOffset;
         
         // 形状参数
         uint64_t B;
@@ -152,6 +153,7 @@ public:
         uint64_t numChunks;
         uint64_t n_ratio;       // HV / HK
         uint64_t isVarLen;
+        uint64_t needReduce;    // 1 if HK != HV
         
         float scale;
         
@@ -165,15 +167,15 @@ public:
             GM_ADDR dq, GM_ADDR dk, GM_ADDR dw, GM_ADDR dg,
             GM_ADDR workspace,
             uint64_t B, uint64_t HV, uint64_t HK, uint64_t T, uint64_t K, uint64_t V, uint64_t BT, uint64_t numChunks, uint64_t n_ratio,
-            uint64_t wsDw, uint64_t wsDgLast, uint64_t wsMm5, uint64_t wsDsTemp, uint64_t wsMm6, uint64_t wsMm7,
-            float s, uint64_t isVarLen
+            uint64_t wsDw, uint64_t wsDgLast, uint64_t wsMm5, uint64_t wsDsTemp, uint64_t wsMm6, uint64_t wsMm7, uint64_t wsDqkvReduce,
+            float s, uint64_t isVarLen, uint64_t needReduce
         ) : ptrQ(q), ptrK(k), ptrV(v), ptrG(g), ptrH(h),
             ptrDo(do_), ptrDh(dh), ptrDv(dv), ptrCuSeqLens(cu_seqlen), ptrChunkIndices(chunk_indices),
             ptrDq(dq), ptrDk(dk), ptrDw(dw), ptrDg(dg),
             ptrWorkspace(workspace),
             wsDwOffset(wsDw), wsDgLastOffset(wsDgLast),
-            wsMm5Offset(wsMm5), wsDsTempOffset(wsDsTemp), wsMm6Offset(wsMm6), wsMm7Offset(wsMm7),
-            scale(s), B(B), HV(HV), HK(HK), T(T), K(K), V(V), BT(BT), numChunks(numChunks), n_ratio(n_ratio), isVarLen(isVarLen) {}
+            wsMm5Offset(wsMm5), wsDsTempOffset(wsDsTemp), wsMm6Offset(wsMm6), wsMm7Offset(wsMm7), wsDqkvReduceOffset(wsDqkvReduce),
+            scale(s), B(B), HV(HV), HK(HK), T(T), K(K), V(V), BT(BT), numChunks(numChunks), n_ratio(n_ratio), isVarLen(isVarLen), needReduce(needReduce) {}
     };
     
     CATLASS_DEVICE
@@ -419,7 +421,11 @@ public:
                     GlobalTensor<ElementA> gmH;
                     gmH.SetGlobalBuffer((__gm__ ElementA *)params.ptrH + hOffset);
                     GlobalTensor<ElementC> gmDq;
-                    gmDq.SetGlobalBuffer((__gm__ ElementC *)params.ptrDq + dqOffset);
+                    if (params.needReduce) {
+                        gmDq.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsDqkvReduceOffset) + dqOffset);
+                    } else {
+                        gmDq.SetGlobalBuffer((__gm__ ElementC *)params.ptrDq + dqOffset);
+                    }
                     
                     auto tensorDo = tla::MakeTensor(gmDo, MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
                     auto tensorH = tla::MakeTensor(gmH, MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});  // h^T: [V, K]
@@ -477,7 +483,11 @@ public:
                     GlobalTensor<ElementA> gmDh;
                     gmDh.SetGlobalBuffer((__gm__ ElementA *)params.ptrDh + dhOffset);
                     GlobalTensor<ElementC> gmDk;
-                    gmDk.SetGlobalBuffer((__gm__ ElementC *)params.ptrDk + dkOffset);
+                    if (params.needReduce) {
+                        gmDk.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsDqkvReduceOffset + params.B * params.HV * params.T * params.K * sizeof(ElementC)) + dkOffset);
+                    } else {
+                        gmDk.SetGlobalBuffer((__gm__ ElementC *)params.ptrDk + dkOffset);
+                    }
                     
                     auto tensorV = tla::MakeTensor(gmV, MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
                     auto tensorDh = tla::MakeTensor(gmDh, MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});  // dh: [V, K]
@@ -636,6 +646,9 @@ public:
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
             AscendC::CrossCoreWaitFlag(SYNC_AIV_AIC_FLAG_0);
         }
+        if (params.needReduce) {
+            AscendC::SyncAll<false>();
+        }
 
     }
 };
@@ -699,6 +712,8 @@ private:
     uint64_t wsDsTempOffset;
     uint64_t wsMm6Offset;
     uint64_t wsMm7Offset;
+    uint64_t wsDqkvReduceOffset;
+    uint64_t needReduce;
 };
 
 template <typename DataType, typename GType>
@@ -734,6 +749,8 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Init(const GDN
     wsDsTempOffset = tiling.wsDsTempOffset;
     // wsMm6Offset = tiling.wsMm6Offset;
     // wsMm7Offset = tiling.wsMm7Offset;
+    wsDqkvReduceOffset = tiling.wsDqkvReduceOffset;
+    needReduce = tiling.needReduce;
     isVarLen = tiling.isVarLen;
 // printf("[cube] DTYPE_G %d, float %d\n",sizeof(DTYPE_G),sizeof(float));
 }
@@ -799,8 +816,8 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Process() {
         ptrDo, ptrDh, ptrDv, ptrCuSeqLen, ptrChunkIndices,
         ptrDq, ptrDk, ptrDw, ptrDg,
         ptrWorkspace, B, HV, HK, T, K, V, BT, numChunks, n_ratio,
-        wsDwOffset, wsDgLastOffset, wsMm5Offset, wsDsTempOffset, wsMm6Offset, wsMm7Offset,
-        scale, isVarLen
+        wsDwOffset, wsDgLastOffset, wsMm5Offset, wsDsTempOffset, wsMm6Offset, wsMm7Offset, wsDqkvReduceOffset,
+        scale, isVarLen, needReduce
     );
     
     kernel(params);

@@ -75,19 +75,20 @@ fi
 # ct viz ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt --out_dir ${data_path}/${caseid} --name dq -wl 1
 # ct viz ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt --out_dir ${data_path}/${caseid} --name dk -wl 1
 
-# ct dual ${data_path}/${caseid}/out/dg_npu.pt ${data_path}/${caseid}/out/dg_cpu.pt ${data_path}/${caseid}/out/dg_cpu_benchmark.pt --out_dir ${data_path}/${caseid}
-# ct dual ${data_path}/${caseid}/out/dw_npu.pt ${data_path}/${caseid}/out/dw_cpu.pt ${data_path}/${caseid}/out/dw_cpu_benchmark.pt --out_dir ${data_path}/${caseid}
-# ct dual ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt ${data_path}/${caseid}/out/dq_cpu_benchmark.pt --out_dir ${data_path}/${caseid}
-# ct dual ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt ${data_path}/${caseid}/out/dk_cpu_benchmark.pt --out_dir ${data_path}/${caseid}
+# ct dual ${data_path}/${caseid}/out/dg_npu.pt ${data_path}/${caseid}/out/dg_cpu.pt ${data_path}/${caseid}/out/dg_cpu_fp64.pt --out_dir ${data_path}/${caseid}
+# ct dual ${data_path}/${caseid}/out/dw_npu.pt ${data_path}/${caseid}/out/dw_cpu.pt ${data_path}/${caseid}/out/dw_cpu_fp64.pt --out_dir ${data_path}/${caseid}
+# ct dual ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt ${data_path}/${caseid}/out/dq_cpu_fp64.pt --out_dir ${data_path}/${caseid}
+# ct dual ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt ${data_path}/${caseid}/out/dk_cpu_fp64.pt --out_dir ${data_path}/${caseid}
 
 names=(dw dg dq dk)
+# names=(dq)
 
 for name in "${names[@]}"; do
     (
         echo "Processing dual $name..."
         ct dual ${data_path}/${caseid}/out/${name}_npu.pt \
+                ${data_path}/${caseid}/out/${name}_cpu_fp64.pt \
                 ${data_path}/${caseid}/out/${name}_cpu.pt \
-                ${data_path}/${caseid}/out/${name}_cpu_benchmark.pt \
                 --out_dir ${data_path}/${caseid} \
                 > ${data_path}/${caseid}/${name}.txt 2>&1
     ) &
@@ -100,4 +101,4 @@ for name in "${names[@]}"; do
 done
 wait
 
-md5sum ${data_path}/${caseid}/out/*.pt
+# md5sum ${data_path}/${caseid}/out/*.pt
