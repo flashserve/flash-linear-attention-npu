@@ -62,6 +62,14 @@ pip install -U setuptools wheel packaging psutil
 FLA_NPU_SOC=ascend910b pip install --no-build-isolation .
 ```
 
+如果已经做过一次完整编译，之后只修改少量算子源码，可以复用上一次 CMake build 目录做完整 wheel 的真增量构建：
+
+```sh
+FLA_NPU_SOC=ascend910b FLA_NPU_INCREMENTAL_BUILD=1 pip install --no-build-isolation .
+```
+
+该模式会保留 `build/`，由 CMake/Make 只重编发生变化的源文件，同时重新生成包含全量 OPP 的 wheel，未修改算子仍会被保留。不要和 `FLA_NPU_OPS` 同时使用；`FLA_NPU_OPS` 只用于调试 partial OPP 包。
+
 该命令会自动完成：
 
 ```text
@@ -79,7 +87,8 @@ cd torch_custom/fla_npu && python setup.py build_ext --inplace
 | 环境变量 | 作用 | 默认 |
 |---|---|---|
 | `FLA_NPU_SOC` | 目标芯片 | `ascend910b` |
-| `FLA_NPU_OPS` | 单算子过滤，空表示全量 | 空 |
+| `FLA_NPU_INCREMENTAL_BUILD` | 复用 `build/` 做完整 wheel 的真增量构建 | `FALSE` |
+| `FLA_NPU_OPS` | 单算子过滤，生成 partial OPP 调试包；不要用于 release wheel | 空 |
 | `FLA_NPU_SKIP_RUN_BUILD` | 跳过 run 包编译 | `FALSE` |
 | `FLA_NPU_SKIP_RUN_INSTALL` | 跳过将 run 包安装产物内嵌到 wheel | `FALSE` |
 | `FLA_NPU_SKIP_TORCH_GEN` | 跳过 torchnpugen 代码生成 | `FALSE` |

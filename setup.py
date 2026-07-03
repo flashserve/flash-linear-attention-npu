@@ -298,6 +298,13 @@ def _install_run_package(run_file, install_path):
 def _build_run_package():
     soc = os.getenv("FLA_NPU_SOC", DEFAULT_SOC)
     ops_filter = os.getenv("FLA_NPU_OPS", "").strip()
+    incremental = _env_flag("FLA_NPU_INCREMENTAL_BUILD")
+    if incremental and ops_filter:
+        raise RuntimeError(
+            "FLA_NPU_INCREMENTAL_BUILD reuses the full CMake build graph so unchanged "
+            "operators stay packaged. Do not set FLA_NPU_OPS at the same time; "
+            "FLA_NPU_OPS intentionally builds a partial custom OPP package."
+        )
 
     if not _env_flag("FLA_NPU_SKIP_RUN_BUILD"):
         build_out = REPO_ROOT / "build_out"
@@ -310,6 +317,8 @@ def _build_run_package():
             "--pkg",
             f"--vendor_name={DEFAULT_VENDOR_NAME}",
         ]
+        if incremental:
+            cmd.append("--incremental")
         if ops_filter:
             cmd.append(f"--ops={ops_filter}")
         _run(cmd, REPO_ROOT)

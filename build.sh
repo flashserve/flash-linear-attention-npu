@@ -38,6 +38,7 @@ ENABLE_BUILT_IN=FALSE
 ENABLE_BUILT_JIT=FALSE
 ENABLE_AICPU=TRUE
 ENABLE_BUILT_CUSTOM=FALSE
+ENABLE_INCREMENTAL=FALSE
 ENABLE_STATIC=FALSE
 ENABLE_EXPERIMENTAL=FALSE
 KERNEL_TEMPLATE_INPUT=""
@@ -321,6 +322,7 @@ function help_info() {
     echo "    --opkernel build binary kernel"
     echo "    --jit build run package without kernel bin"
     echo "    --pkg build run package with kernel bin"
+    echo "    --incremental reuse build directory for a full incremental rebuild"
     echo "    --experimental build experimental version"
     echo "    --opapi_test build and run opapi unit tests"
     echo "    --ophost_test build and run ophost unit tests"
@@ -1059,6 +1061,10 @@ while [[ $# -gt 0 ]]; do
         shift
         BUILD="jit"
         ;;
+    --incremental)
+        ENABLE_INCREMENTAL=TRUE
+        shift
+        ;;
     --noaicpu)
         ENABLE_AICPU=FALSE
         shift
@@ -1623,7 +1629,13 @@ CUSTOM_OPTION="${CUSTOM_OPTION} -DCUSTOM_ASCEND_CANN_PACKAGE_PATH=${ASCEND_CANN_
 
 set_env
 
-clean
+if [[ "$ENABLE_INCREMENTAL" == "TRUE" ]]; then
+    log "Info: incremental build enabled; reusing ${BUILD_DIR}."
+    mkdir -p ${BUILD_DIR} ${OUTPUT_DIR}
+    clean_build_out
+else
+    clean
+fi
 
 if [ -n "${CCACHE_PROGRAM}" ]; then
     if [ "${CCACHE_PROGRAM}" == "false" ] || [ "${CCACHE_PROGRAM}" == "off" ]; then
