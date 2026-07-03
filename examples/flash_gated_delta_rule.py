@@ -11,6 +11,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+try:
+    import fla_npu  # noqa: F401
+except ImportError as exc:
+    warnings.warn(f"fla_npu is not installed; custom NPU ops may be unavailable: {exc}", RuntimeWarning)
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

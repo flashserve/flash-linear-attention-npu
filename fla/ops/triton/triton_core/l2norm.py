@@ -5,19 +5,9 @@ import torch.nn as nn
 import triton
 import triton.language as tl
 
-from .utils import input_guard, is_amd
-
-BT_LIST = [8, 16, 32, 64, 128]
-NUM_WARPS_AUTOTUNE = [1, 2, 4, 8, 16] if is_amd else [1, 2, 4, 8, 16, 32]
+from .utils import input_guard
 
 
-@triton.autotune(
-    configs=[
-        triton.Config({}, num_warps=num_warps)
-        for num_warps in NUM_WARPS_AUTOTUNE
-    ],
-    key=['D']
-)
 @triton.jit
 def l2norm_fwd_kernel1(
     x,
@@ -41,13 +31,6 @@ def l2norm_fwd_kernel1(
     tl.store(rstd + i_t, b_rstd)
 
 
-@triton.autotune(
-    configs=[
-        triton.Config({}, num_warps=num_warps)
-        for num_warps in NUM_WARPS_AUTOTUNE
-    ],
-    key=['D']
-)
 @triton.jit
 def l2norm_bwd_kernel1(
     y,
@@ -72,14 +55,6 @@ def l2norm_bwd_kernel1(
     tl.store(dx + cols, b_dx, mask=mask)
 
 
-@triton.autotune(
-    configs=[
-        triton.Config({'BT': BT}, num_warps=num_warps)
-        for num_warps in [1, 2, 4, 8, 16]
-        for BT in BT_LIST
-    ],
-    key=['D', 'NB']
-)
 @triton.jit
 def l2norm_fwd_kernel(
     x,
@@ -109,14 +84,6 @@ def l2norm_fwd_kernel(
             tl.store(p_rstd, b_rstd.to(p_rstd.dtype.element_ty), boundary_check=(0,))
 
 
-@triton.autotune(
-    configs=[
-        triton.Config({'BT': BT}, num_warps=num_warps)
-        for num_warps in [1, 2, 4, 8, 16]
-        for BT in BT_LIST
-    ],
-    key=['D', 'NB']
-)
 @triton.jit
 def l2norm_bwd_kernel(
     y,
@@ -199,7 +166,9 @@ def l2norm_fwd(
             D=D,
             BD=BD,
             NB=NB,
+            BT=16,
             bt_size=bt_size,
+            num_warps=4,
         )
     else:
         l2norm_fwd_kernel1[(T,)](
@@ -209,6 +178,7 @@ def l2norm_fwd(
             eps=eps,
             D=D,
             BD=BD,
+            num_warps=4,
         )
     return y.view(x_shape_og), rstd.view(x_shape_og[:-1])
 
@@ -245,7 +215,9 @@ def l2norm_bwd(
             D=D,
             BD=BD,
             NB=NB,
+            BT=16,
             bt_size=bt_size,
+            num_warps=4,
         )
     else:
         l2norm_bwd_kernel1[(T,)](
@@ -256,6 +228,7 @@ def l2norm_bwd(
             eps=eps,
             D=D,
             BD=BD,
+            num_warps=4,
         )
 
     return dx.view(y_shape_og)
