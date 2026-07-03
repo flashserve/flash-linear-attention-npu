@@ -243,11 +243,13 @@ def main() -> int:
 
     triton = _import_module(failures, "triton")
     triton_ascend_version = _distribution_version("triton-ascend")
-    if triton is not None and triton_ascend_version:
+    if triton_ascend_version:
         _ok(f"triton-ascend version: {triton_ascend_version}")
         _check_min_version(failures, "triton-ascend", triton_ascend_version, MIN_TRITON_ASCEND)
     elif triton is not None:
         _fail(failures, "triton is importable, but triton-ascend distribution was not found")
+    else:
+        _fail(failures, "triton-ascend distribution was not found")
 
     if failures:
         print("\nEnvironment check failed:")
