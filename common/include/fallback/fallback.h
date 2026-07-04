@@ -17,7 +17,9 @@
 
 #include <dlfcn.h>
 
+#include <cstdlib>
 #include <functional>
+#include <string>
 #include <tuple>
 #include <type_traits>
 #include <vector>
@@ -94,6 +96,16 @@ inline void* GetOpApiFuncAddrInLib(void* handler, const char* libName, const cha
 }
 
 inline void* GetOpApiLibHandler(const char* libName) {
+  if (std::string(libName) == GetCustOpApiLibName()) {
+    const char* embeddedOpApiLib = std::getenv("FLA_NPU_OP_API_LIB");
+    if (embeddedOpApiLib != nullptr && embeddedOpApiLib[0] != '\0') {
+      auto handler = dlopen(embeddedOpApiLib, RTLD_LAZY | RTLD_GLOBAL);
+      if (handler != nullptr) {
+        return handler;
+      }
+      OP_LOGW("aclnnfallback", "dlopen %s failed, error:%s.", embeddedOpApiLib, dlerror());
+    }
+  }
   auto handler = dlopen(libName, RTLD_LAZY);
   if (handler == nullptr) {
     OP_LOGW("aclnnfallback", "dlopen %s failed, error:%s.", libName, dlerror());
