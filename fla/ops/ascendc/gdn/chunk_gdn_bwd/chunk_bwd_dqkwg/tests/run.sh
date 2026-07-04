@@ -1,6 +1,6 @@
 ascend_path="/data/huangjunzhe/Ascend.GDN/cann-9.0.0"
 data_path=/data/huangjunzhe/GDN/result/result_newg
-export TMPDIR=/data/huangjunzhe/tmp
+export TMPDIR=/workspace/hjz/tmp/
 custom_path="/home/huangjunzhe/GDN/custom"
 
 #======================================================================================
@@ -86,8 +86,8 @@ for name in "${names[@]}"; do
     (
         echo "Processing dual $name..."
         ct dual ${data_path}/${caseid}/out/${name}_npu.pt \
+                ${data_path}/${caseid}/out/${name}_cpu_fp64.pt \
                 ${data_path}/${caseid}/out/${name}_cpu.pt \
-                ${data_path}/${caseid}/out/${name}_cpu_benchmark.pt \
                 --out_dir ${data_path}/${caseid} \
                 > ${data_path}/${caseid}/${name}.txt 2>&1
     ) &
