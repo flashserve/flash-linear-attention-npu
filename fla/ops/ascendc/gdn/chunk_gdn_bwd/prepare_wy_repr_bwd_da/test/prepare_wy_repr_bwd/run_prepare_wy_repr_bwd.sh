@@ -9,6 +9,7 @@ GEN_REPORT_PY="${SCRIPT_DIR}/gen_perf_report.py"
 
 MODE=""
 DEVICE=0
+VIZ=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --precision)
@@ -27,9 +28,13 @@ while [[ $# -gt 0 ]]; do
             DEVICE="$2"
             shift 2
             ;;
+        --viz)
+            VIZ="--viz"
+            shift
+            ;;
         *)
             echo "[ERROR] Unknown argument: $1"
-            echo "Usage: $0 --precision|--performance [--json <path>] [--device <id>]"
+            echo "Usage: $0 --precision|--performance [--json <path>] [--device <id>] [--viz]"
             exit 1
             ;;
     esac
@@ -37,7 +42,7 @@ done
 
 if [ -z "$MODE" ]; then
     echo "[ERROR] Must specify --precision or --performance"
-    echo "Usage: $0 --precision|--performance [--json <path>] [--device <id>]"
+    echo "Usage: $0 --precision|--performance [--json <path>] [--device <id>] [--viz]"
     exit 1
 fi
 
@@ -59,7 +64,7 @@ if [ "$MODE" = "precision" ]; then
     echo " Cases:  $CASES_JSON"
     echo "=========================================="
 
-    python3 "$PY_SCRIPT" --json "$CASES_JSON" --device "$DEVICE"
+    python3 "$PY_SCRIPT" --json "$CASES_JSON" --device "$DEVICE" $VIZ
 else
     PY_SCRIPT="$SCRIPT_DIR/test_prepare_wy_repr_bwd_performance.py"
     if [ ! -f "$PY_SCRIPT" ]; then

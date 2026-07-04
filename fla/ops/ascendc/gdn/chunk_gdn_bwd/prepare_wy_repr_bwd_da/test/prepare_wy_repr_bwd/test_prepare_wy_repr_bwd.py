@@ -203,7 +203,7 @@ def compute_dk_golden(
                 dk_chunk = dk_chunk.to(k.dtype).to(torch.float32) + (b_dk_beta.to(k.dtype).to(torch.float32) * beta_chunk[:, None].to(torch.float32))
                 dk_chunk = dk_chunk.to(k.dtype).to(torch.float32) + b_dk_beta_g.to(k.dtype).to(torch.float32) * (beta_chunk.to(torch.float32) * g_exp_chunk.to(torch.float32))[:,None]  # [chunk_size, D]
                 # 存储结果
-                dk[i_b,i_h_k, bos:eos, :] += dk_chunk
+                dk[i_b,i_h_k, bos:eos, :] += dk_chunk.to(k.dtype)
     return dk
 
 def compute_dk_golden_high_precision(
@@ -232,6 +232,7 @@ def compute_dk_golden_high_precision(
     2. 获取对应的seq_idx, chunk_indices
     3. 计算该chunk内的dv: dv_chunk = A_chunk @ du_chunk * beta_chunk
     """
+    dA = dA.to(torch.float64)
     dk = torch.zeros_like(k).to(torch.float64)
     ratio = VH // KH
     for i_b in range(B):
@@ -378,6 +379,7 @@ def compute_dg_golden_high_precision(
     2. 获取对应的seq_idx, chunk_indices
     3. 计算该chunk内的dv: dv_chunk = A_chunk @ du_chunk * beta_chunk
     """
+    dA = dA.to(torch.float64)
     dg = torch.zeros_like(g).to(torch.float64)
     ratio = VH // KH
     for i_b in range(B):
@@ -537,6 +539,7 @@ def compute_dbeta_golden_high_precision(
     2. 获取对应的seq_idx, chunk_indices
     3. 计算该chunk内的dv: dv_chunk = A_chunk @ du_chunk * beta_chunk
     """
+    dA = dA.to(torch.float64)
     dbeta = torch.zeros_like(beta).to(torch.float64)
     ratio = VH // KH
     for i_b in range(B):
@@ -691,6 +694,8 @@ def test_prepare_wy_repr_bwd_full(
     cu_seqlens = None,
     chunk_indices = None,
     seed: int = 0,
+    name: str = "",
+    viz: bool = False,
 ):
     """
     生成随机输入张量，保存到文件，并调用 NPU 的 WY 表示反向算子。
@@ -800,32 +805,36 @@ def test_prepare_wy_repr_bwd_full(
         print(f"==== cpu_dv has NaN: {torch.isnan(cpu_dv).any().item()}")
         print(f"==== cpu_dv_high_precision has NaN: {torch.isnan(cpu_dv_high_precision).any().item()}")
         print(f"{'='*20} [dv] ct.dual 开始 {'='*20}")
-        ct.dual(dv.cpu(), cpu_dv_high_precision, cpu_dv)
-        # ct.viz(dv.cpu(), cpu_dv_high_precision, cpu_dv, sample_ratio=0.1, out_dir="dv")
+        ct.dual(dv.cpu(), cpu_dv_high_precision, cpu_dv, dtype=ktype)
+        if viz:
+            ct.viz(dv.cpu(), cpu_dv_high_precision, cpu_dv, sample_ratio=0.1, out_dir="dv", name=name)
         print(f"{'='*20} [dv] ct.dual 结束 {'='*20}")
         cpu_dk = compute_dk_golden(A, dw, g, beta, dA.cpu(), k, cu_seqlens, chunk_indices, B, KH, VH, T, K, chunk_size, NT)
         cpu_dk_high_precision = compute_dk_golden_high_precision(A, dw, g, beta, dA.cpu(), k, cu_seqlens, chunk_indices, B, KH, VH, T, K, chunk_size, NT)
         print(f"==== cpu_dk has NaN: {torch.isnan(cpu_dk).any().item()}")
         print(f"==== cpu_dk_high_precision has NaN: {torch.isnan(cpu_dk_high_precision).any().item()}")
         print(f"{'='*20} [dk] ct.dual 开始 {'='*20}")
-        ct.dual(dk.cpu(), cpu_dk_high_precision, cpu_dk)
-        # ct.viz(dk.cpu(), cpu_dk_high_precision, cpu_dk, sample_ratio=0.1, out_dir="dk")
+        ct.dual(dk.cpu(), cpu_dk_high_precision, cpu_dk, dtype=ktype)
+        if viz:
+            ct.viz(dk.cpu(), cpu_dk_high_precision, cpu_dk, sample_ratio=0.1, out_dir="dk", name=name)
         print(f"{'='*20} [dk] ct.dual 结束 {'='*20}")
         cpu_dg = compute_dg_golden(A, dw, g, beta, dA.cpu(), k, cu_seqlens, chunk_indices, B, KH, VH, T, K, chunk_size, NT)
         cpu_dg_high_precision = compute_dg_golden_high_precision(A, dw, g, beta, dA.cpu(), k, cu_seqlens, chunk_indices, B, KH, VH, T, K, chunk_size, NT)
         print(f"==== cpu_dg has NaN: {torch.isnan(cpu_dg).any().item()}")
         print(f"==== cpu_dg_high_precision has NaN: {torch.isnan(cpu_dg_high_precision).any().item()}")
         print(f"{'='*20} [dg] ct.dual 开始 {'='*20}")
-        ct.dual(dg.cpu(), cpu_dg_high_precision, cpu_dg)
-        # ct.viz(dg.cpu(), cpu_dg_high_precision, cpu_dg, sample_ratio=0.1, out_dir="dg")
+        ct.dual(dg.cpu(), cpu_dg_high_precision, cpu_dg, dtype=ktype)
+        if viz:
+            ct.viz(dg.cpu(), cpu_dg_high_precision, cpu_dg, sample_ratio=0.1, out_dir="dg", name=name)
         print(f"{'='*20} [dg] ct.dual 结束 {'='*20}")
         cpu_dbeta = compute_dbeta_golden(A, dw, g, beta, dA.cpu(), k,v,du, cu_seqlens, chunk_indices, B, KH, VH, T, K, chunk_size, NT)
         cpu_dbeta_high_precision = compute_dbeta_golden_high_precision(A, dw, g, beta, dA.cpu(), k,v,du, cu_seqlens, chunk_indices, B, KH, VH, T, K, chunk_size, NT)
         print(f"==== cpu_dbeta has NaN: {torch.isnan(cpu_dbeta).any().item()}")
         print(f"==== cpu_dbeta_high_precision has NaN: {torch.isnan(cpu_dbeta_high_precision).any().item()}")
         print(f"{'='*20} [dbeta] ct.dual 开始 {'='*20}")
-        ct.dual(dbeta.cpu(), cpu_dbeta_high_precision, cpu_dbeta)
-        # ct.viz(dbeta.cpu(), cpu_dbeta_high_precision, cpu_dbeta, sample_ratio=0.1, out_dir="dbeta")
+        ct.dual(dbeta.cpu(), cpu_dbeta_high_precision, cpu_dbeta, dtype=ktype)
+        if viz:
+            ct.viz(dbeta.cpu(), cpu_dbeta_high_precision, cpu_dbeta, sample_ratio=0.1, out_dir="dbeta", name=name)
         print(f"{'='*20} [dbeta] ct.dual 结束 {'='*20}")
     finally:
         pass
@@ -844,7 +853,7 @@ DTYPE_MAP = {
 }
 
 
-def run_cases_from_json(json_path: str):
+def run_cases_from_json(json_path: str, viz: bool = False):
     import json
     with open(json_path, "r") as f:
         cases = json.load(f)
@@ -874,11 +883,13 @@ def run_cases_from_json(json_path: str):
                 B=B, KH=KH, VH=VH, T=T, K=K, V=V,
                 chunk_size=chunk_size, ktype=ktype, btype=btype,
                 cu_seqlens=cu_seqlens, chunk_indices=chunk_indices,
+                name=name, viz=viz,
             )
         else:
             test_prepare_wy_repr_bwd_full(
                 B=B, KH=KH, VH=VH, T=T, K=K, V=V,
                 chunk_size=chunk_size, ktype=ktype, btype=btype,
+                name=name, viz=viz,
             )
 
 
@@ -889,13 +900,15 @@ if __name__ == "__main__":
                         help="Path to JSON case file; if omitted, runs built-in cases")
     parser.add_argument("--device", type=int, default=0,
                         help="NPU device id (default: 0)")
+    parser.add_argument("--viz", action="store_true", default=False,
+                        help="Enable ct.viz visualization (default: off)")
     args = parser.parse_args()
 
     torch.npu.utils.set_device(args.device)
     torch.manual_seed(0)
 
     if args.json:
-        run_cases_from_json(args.json)
+        run_cases_from_json(args.json, viz=args.viz)
     else:
         # 内置用例如下（保留原有用例与注释）
         # #F1
@@ -985,7 +998,7 @@ if __name__ == "__main__":
         # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
         # test_prepare_wy_repr_bwd_full(B = 1, VH = 64, KH = 2, T = 262144, K = 128, V = 256, chunk_size = 64, ktype=torch.float16, btype=torch.float32, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
         # # F19
-        test_prepare_wy_repr_bwd_full(B = 1, VH = 32, KH = 16, T = 4096, K = 128, V = 256, chunk_size = 64, ktype=torch.float16, btype=torch.float32)
+        test_prepare_wy_repr_bwd_full(B = 1, VH = 32, KH = 16, T = 4096, K = 128, V = 256, chunk_size = 64, ktype=torch.float16, btype=torch.float32, name="F19", viz=args.viz)
         # # F20
         # test_prepare_wy_repr_bwd_full(B = 16, VH = 63, KH = 21, T = 2048, K = 128, V = 256, chunk_size = 64, ktype=torch.bfloat16, btype=torch.float32)
         # # F21
