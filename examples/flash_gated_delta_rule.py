@@ -1,6 +1,8 @@
 import os
 import sys
 import warnings
+import hashlib
+import json
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -11,21 +13,25 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+try:
+    import fla_npu  # noqa: F401
+except ImportError as exc:
+    warnings.warn(f"fla_npu is not installed; custom NPU ops may be unavailable: {exc}", RuntimeWarning)
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_npu
 
-from fla.ops.triton.triton_core.causal_conv1d import causal_conv1d_triton
 from fla.ops.triton.triton_core.chunk_scaled_dot_kkt import chunk_scaled_dot_kkt_fwd
 from fla.ops.triton.triton_core.cumsum import chunk_local_cumsum
 from fla.ops.triton.triton_core.l2norm import l2norm_bwd, l2norm_fwd
-from fla.ops.triton.triton_core.solve_tril_fast import solve_tril_npu as solve_tril
 from fla.ops.triton.triton_core.utils import autocast_custom_bwd, autocast_custom_fwd, input_guard
 
 
 _disable_compile = getattr(getattr(torch, "compiler", None), "disable", lambda fn: fn)
 _DEFAULT_VARLEN_CHUNK_SIZES = (16, 32, 64, 128, 608 * 2)
+_ACCURACY_REFERENCE_VERSION = 1
 
 
 def _make_gate(shape: tuple[int, ...], dtype: torch.dtype, device: str, gate_function: str) -> torch.Tensor:
@@ -78,6 +84,279 @@ def _as_int_list(value: Optional[list[int] | torch.Tensor]) -> Optional[list[int
     if isinstance(value, torch.Tensor):
         return [int(x) for x in value.detach().cpu().flatten().tolist()]
     return [int(x) for x in value]
+
+
+def _activation_mode(activation: Optional[str]) -> int:
+    if activation is None or activation == "":
+        return 0
+    if activation in ("silu", "swish"):
+        return 1
+    raise ValueError(f"Unsupported causal_conv1d activation: {activation}")
+
+
+def _silu_backward(grad: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    sigmoid = torch.sigmoid(x)
+    return grad * sigmoid * (1.0 + x * (1.0 - sigmoid))
+
+
+def _flatten_varlen_x(
+    x: torch.Tensor,
+    cu_seqlens: Optional[torch.Tensor],
+) -> tuple[torch.Tensor, Optional[list[int]], bool]:
+    if cu_seqlens is None:
+        return x, None, False
+
+    cu_list = _as_int_list(cu_seqlens)
+    if x.ndim == 3:
+        if x.shape[0] != 1:
+            raise ValueError("causal_conv1d varlen path expects x.shape[0] == 1 for [1, T, D] input.")
+        return x.reshape(x.shape[1], x.shape[2]).contiguous(), cu_list, True
+    if x.ndim == 2:
+        return x.contiguous(), cu_list, True
+    raise ValueError(f"causal_conv1d varlen path expects rank-2 or rank-3 input, got shape={tuple(x.shape)}.")
+
+
+def _flat_to_head_layout(x: torch.Tensor, head_num: int, *, is_varlen: bool) -> torch.Tensor:
+    if head_num <= 0:
+        return x
+    if x.shape[-1] % head_num != 0:
+        raise ValueError(f"last dimension must be divisible by head_num, got shape={tuple(x.shape)}, head_num={head_num}.")
+    head_dim = x.shape[-1] // head_num
+    if is_varlen:
+        flat_x = x.reshape(-1, x.shape[-1]) if x.ndim == 3 else x
+        return flat_x.reshape(flat_x.shape[0], head_num, head_dim).transpose(0, 1).contiguous()
+    return x.reshape(x.shape[0], x.shape[1], head_num, head_dim).transpose(1, 2).contiguous()
+
+
+def _head_to_flat_layout(x: torch.Tensor, *, is_varlen: bool, batch_size: int) -> torch.Tensor:
+    if is_varlen:
+        x_head = x.squeeze(0) if x.ndim == 4 and x.shape[0] == 1 else x
+        return x_head.transpose(0, 1).reshape(-1, x_head.shape[0] * x_head.shape[-1]).contiguous()
+    return x.transpose(1, 2).reshape(batch_size, x.shape[2], x.shape[1] * x.shape[-1]).contiguous()
+
+
+def _prepare_conv_states(
+    x: torch.Tensor,
+    initial_state: Optional[torch.Tensor],
+    *,
+    num_sequences: int,
+    width: int,
+    dim: int,
+) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+    state_len = width - 1
+    if initial_state is None:
+        conv_states = torch.zeros(num_sequences, state_len, dim, dtype=x.dtype, device=x.device)
+        return conv_states, None
+
+    if initial_state.ndim != 3 or initial_state.shape[0] != num_sequences:
+        raise ValueError(
+            "initial_state must be rank-3 and match the sequence count, "
+            f"got shape={tuple(initial_state.shape)} and num_sequences={num_sequences}."
+        )
+
+    if initial_state.shape[1] == dim and initial_state.shape[2] >= width:
+        state_for_bwd = initial_state.transpose(1, 2).contiguous()
+    elif initial_state.shape[2] == dim and initial_state.shape[1] >= width:
+        state_for_bwd = initial_state.contiguous()
+    else:
+        raise ValueError(
+            "initial_state must use [N, D, W] or [N, W, D] layout with W >= kernel width; "
+            f"got shape={tuple(initial_state.shape)}, dim={dim}, width={width}."
+        )
+
+    conv_states = state_for_bwd[:, -state_len:, :].contiguous()
+    return conv_states, state_for_bwd
+
+
+def _causal_conv1d_final_state(
+    x: torch.Tensor,
+    *,
+    width: int,
+    initial_state: Optional[torch.Tensor],
+    cu_seqlens: Optional[torch.Tensor],
+) -> torch.Tensor:
+    dim = x.shape[-1]
+    cu_list = _as_int_list(cu_seqlens)
+    if cu_list is None:
+        sequences = [x[i] for i in range(x.shape[0])]
+    else:
+        flat_x = x.reshape(-1, dim) if x.ndim == 3 else x
+        sequences = [flat_x[cu_list[i] : cu_list[i + 1]] for i in range(len(cu_list) - 1)]
+
+    states = []
+    for idx, seq in enumerate(sequences):
+        prev = None
+        if initial_state is not None:
+            prev = initial_state[idx]
+            if prev.shape[0] != dim:
+                prev = prev.transpose(0, 1).contiguous()
+        hist = seq.transpose(0, 1).contiguous()
+        if prev is not None:
+            hist = torch.cat([prev[:, -width:], hist], dim=-1)
+        if hist.shape[-1] < width:
+            hist = F.pad(hist, (width - hist.shape[-1], 0))
+        states.append(hist[:, -width:])
+    return torch.stack(states, dim=0)
+
+
+def solve_tri_ascendc(
+    A: torch.Tensor,
+    *,
+    cu_seqlens: Optional[list[int] | torch.Tensor] = None,
+    chunk_indices: Optional[list[int] | torch.Tensor] = None,
+    output_dtype: torch.dtype = torch.float,
+) -> torch.Tensor:
+    if not hasattr(torch.ops.npu, "npu_solve_tri"):
+        raise RuntimeError("torch.ops.npu.npu_solve_tri is unavailable. Please rebuild and install the latest fla_npu.")
+
+    A_in = A.to(output_dtype).contiguous()
+    cu_list = _as_int_list(cu_seqlens)
+    chunk_list = _as_int_list(chunk_indices)
+
+    if cu_list is None:
+        return torch.ops.npu.npu_solve_tri(A_in, layout="bsnd")
+
+    if A_in.ndim != 4 or A_in.shape[0] != 1:
+        raise ValueError(f"solve_tri varlen path expects A with shape [1, T, H, BT], got {tuple(A_in.shape)}.")
+    if chunk_list is None:
+        raise ValueError("solve_tri varlen path requires chunk_indices.")
+
+    out = torch.ops.npu.npu_solve_tri(
+        A_in.squeeze(0),
+        cu_seqlens=cu_list,
+        chunk_indices=chunk_list,
+        layout="tnd",
+    )
+    return out.unsqueeze(0)
+
+
+class AscendCCausalConv1dFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx,
+        x: torch.Tensor,
+        weight: torch.Tensor,
+        H: int,
+        bias: Optional[torch.Tensor] = None,
+        residual: Optional[torch.Tensor] = None,
+        initial_state: Optional[torch.Tensor] = None,
+        activation: Optional[str] = None,
+        cu_seqlens: Optional[torch.Tensor] = None,
+        output_final_state: bool = False,
+    ):
+        if not hasattr(torch.ops.npu, "npu_causal_conv1d"):
+            raise RuntimeError("torch.ops.npu.npu_causal_conv1d is unavailable. Please rebuild and install fla_npu.")
+
+        activation_mode = _activation_mode(activation)
+        op_weight = weight.transpose(-1, -2).contiguous()
+        width, dim = op_weight.shape
+        op_x, query_start_loc, is_varlen = _flatten_varlen_x(x, cu_seqlens)
+        num_sequences = len(query_start_loc) - 1 if query_start_loc is not None else int(x.shape[0])
+        conv_states, initial_state_bwd = _prepare_conv_states(
+            x,
+            initial_state,
+            num_sequences=num_sequences,
+            width=width,
+            dim=dim,
+        )
+        initial_state_mode = [1] * num_sequences if initial_state is not None else None
+
+        preactivation = torch.ops.npu.npu_causal_conv1d(
+            op_x,
+            op_weight,
+            bias,
+            conv_states,
+            query_start_loc=query_start_loc,
+            initial_state_mode=initial_state_mode,
+            activation_mode=0,
+            pad_slot_id=-1,
+            run_mode=0,
+            head_num=H,
+        )
+        if is_varlen:
+            preactivation = preactivation.unsqueeze(0)
+        if residual is not None:
+            preactivation = preactivation + _flat_to_head_layout(residual, H, is_varlen=is_varlen)
+
+        y = F.silu(preactivation) if activation_mode != 0 else preactivation
+        final_state = None
+        if output_final_state:
+            final_state = _causal_conv1d_final_state(
+                x,
+                width=width,
+                initial_state=initial_state,
+                cu_seqlens=cu_seqlens,
+            )
+
+        ctx.save_for_backward(x, op_weight, bias, residual, initial_state_bwd, preactivation)
+        ctx.activation_mode = activation_mode
+        ctx.query_start_loc = query_start_loc
+        ctx.is_varlen = is_varlen
+        ctx.head_num = H
+        ctx.batch_size = x.shape[0] if x.ndim == 3 else 1
+        ctx.had_bias = bias is not None
+        ctx.had_residual = residual is not None
+        ctx.had_initial_state = initial_state is not None
+        return y, final_state
+
+    @staticmethod
+    def backward(ctx, dy: torch.Tensor, dht: Optional[torch.Tensor] = None):
+        if not hasattr(torch.ops.npu, "npu_causal_conv1d_bwd"):
+            raise RuntimeError("torch.ops.npu.npu_causal_conv1d_bwd is unavailable. Please rebuild and install fla_npu.")
+
+        x, op_weight, bias, residual, initial_state_bwd, preactivation = ctx.saved_tensors
+        op_x = x.reshape(-1, x.shape[-1]).contiguous() if ctx.is_varlen and x.ndim == 3 else x.contiguous()
+        op_dy = dy.squeeze(0).contiguous() if ctx.is_varlen and dy.ndim == 4 else dy.contiguous()
+        op_y = preactivation.squeeze(0).contiguous() if ctx.is_varlen and preactivation.ndim == 4 else preactivation.contiguous()
+        dht_bwd = None
+        if dht is not None:
+            dht_bwd = dht.transpose(1, 2).contiguous() if dht.ndim == 3 and dht.shape[1] == x.shape[-1] else dht
+
+        dx, dw, db, dh0 = torch.ops.npu.npu_causal_conv1d_bwd(
+            x=op_x,
+            y=op_y if ctx.activation_mode != 0 else None,
+            weight=op_weight,
+            dy=op_dy,
+            initial_state=initial_state_bwd if ctx.had_initial_state else None,
+            dht=dht_bwd,
+            query_start_loc=ctx.query_start_loc,
+            activation=ctx.activation_mode,
+            input_layout="NTD" if ctx.is_varlen else "BNSD",
+        )
+
+        dx = dx.reshape_as(x)
+        dw = dw.transpose(0, 1).contiguous()
+        db = db if ctx.had_bias else None
+        dr = None
+        if ctx.had_residual:
+            dr_head = _silu_backward(dy, preactivation) if ctx.activation_mode != 0 else dy
+            dr = _head_to_flat_layout(dr_head, is_varlen=ctx.is_varlen, batch_size=ctx.batch_size)
+        dh0 = dh0.transpose(1, 2).contiguous() if ctx.had_initial_state else None
+        return dx, dw, None, db, dr, dh0, None, None, None
+
+
+def causal_conv1d_ascendc(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    H: int,
+    bias: Optional[torch.Tensor] = None,
+    residual: Optional[torch.Tensor] = None,
+    initial_state: Optional[torch.Tensor] = None,
+    activation: Optional[str] = None,
+    cu_seqlens: Optional[torch.Tensor] = None,
+    output_final_state: bool = False,
+) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+    return AscendCCausalConv1dFunction.apply(
+        x,
+        weight,
+        H,
+        bias,
+        residual,
+        initial_state,
+        activation,
+        cu_seqlens,
+        output_final_state,
+    )
 
 
 def _as_chunk_dict(
@@ -168,6 +447,35 @@ def _chunk_list(
     return chunk_indices_list.get(str(chunk_size))
 
 
+def recompute_w_u(
+    k: torch.Tensor,
+    v: torch.Tensor,
+    beta: torch.Tensor,
+    A: torch.Tensor,
+    g: torch.Tensor,
+    *,
+    chunk_size: int,
+    cu_seqlens: Optional[list[int]],
+    chunk_indices: Optional[list[int]],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if not hasattr(torch.ops.npu, "npu_recompute_w_u_fwd"):
+        raise RuntimeError("torch.ops.npu.npu_recompute_w_u_fwd is unavailable. Please rebuild and install fla_npu.")
+
+    w, u = torch.ops.npu.npu_recompute_w_u_fwd(
+        k,
+        v,
+        beta,
+        A,
+        chunk_size,
+        g=g,
+        gk=None,
+        cu_seqlens=cu_seqlens,
+        chunk_indices=chunk_indices,
+    )
+    torch.npu.synchronize()
+    return w, u
+
+
 def flash_chunk_gated_delta_rule_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -202,10 +510,10 @@ def flash_chunk_gated_delta_rule_fwd(
         output_dtype=torch.float32,
     )
 
-    A = solve_tril(
-        A=A,
-        cu_seqlens=cu_seqlens,
-        chunk_indices_out=chunk_indices,
+    A = solve_tri_ascendc(
+        A,
+        cu_seqlens=cu_seqlens_list,
+        chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
         output_dtype=k.dtype,
     )
 
@@ -213,14 +521,13 @@ def flash_chunk_gated_delta_rule_fwd(
     beta = beta.transpose(1, 2).contiguous().float()
     A = A.transpose(1, 2).contiguous()
 
-    w, u = torch.ops.npu.npu_recompute_w_u_fwd(
+    w, u = recompute_w_u(
         k,
         v,
         beta,
         A,
-        chunk_size,
-        g=g,
-        gk=None,
+        g,
+        chunk_size=chunk_size,
         cu_seqlens=cu_seqlens_list,
         chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
     )
@@ -282,14 +589,13 @@ def flash_chunk_gated_delta_rule_bwd(
     g = g.transpose(1, 2).contiguous()
     beta = beta.transpose(1, 2).contiguous().float()
 
-    w, u = torch.ops.npu.npu_recompute_w_u_fwd(
+    w, u = recompute_w_u(
         k,
         v,
         beta,
         A,
-        chunk_size,
-        g=g,
-        gk=None,
+        g,
+        chunk_size=chunk_size,
         cu_seqlens=cu_seqlens_list,
         chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
     )
@@ -656,6 +962,11 @@ class DemoGatedDeltaNet(nn.Module):
                 "num_value_heads must be an integer multiple of num_key_heads "
                 f"for the current grouped-value smoke path, got {self.num_v_heads} and {self.num_k_heads}."
             )
+        if key_head_dim != value_head_dim:
+            raise ValueError(
+                "DemoGatedDeltaNet uses causal_conv1d head-first output, which requires "
+                f"key_head_dim == value_head_dim, got {key_head_dim} and {value_head_dim}."
+            )
         self.head_k_dim = key_head_dim
         self.head_v_dim = value_head_dim
         self.key_dim = self.head_k_dim * self.num_k_heads
@@ -699,7 +1010,7 @@ class DemoGatedDeltaNet(nn.Module):
         if cu_seqlens is not None and cu_seqlens.device != mixed_qkv.device:
             cu_seqlens = cu_seqlens.to(mixed_qkv.device)
 
-        mixed_qkv, _ = causal_conv1d_triton(
+        mixed_qkv, _ = causal_conv1d_ascendc(
             mixed_qkv,
             weight=weight,
             H=2 * self.num_k_heads + self.num_v_heads,
@@ -711,10 +1022,9 @@ class DemoGatedDeltaNet(nn.Module):
             output_final_state=False,
         )
 
-        query, key, value = mixed_qkv.split([self.key_dim, self.key_dim, self.value_dim], dim=-1)
-        query = query.reshape(batch_size, seq_len, self.num_k_heads, self.head_k_dim).transpose(1, 2).contiguous()
-        key = key.reshape(batch_size, seq_len, self.num_k_heads, self.head_k_dim).transpose(1, 2).contiguous()
-        value = value.reshape(batch_size, seq_len, self.num_v_heads, self.head_v_dim).transpose(1, 2).contiguous()
+        query = mixed_qkv[:, : self.num_k_heads].contiguous()
+        key = mixed_qkv[:, self.num_k_heads : 2 * self.num_k_heads].contiguous()
+        value = mixed_qkv[:, 2 * self.num_k_heads :].contiguous()
 
         beta = b.sigmoid()
         g = -self.A_log.float().exp() * torch.nn.functional.softplus(a.float() + self.dt_bias)
@@ -798,6 +1108,438 @@ def _build_mean_1k_cu_seqlens(
     return torch.tensor(offsets, dtype=torch.int64, device=device)
 
 
+def _parse_cu_seqlens_arg(value: Optional[str], total_tokens: int, device: str) -> Optional[torch.LongTensor]:
+    if value is None or not str(value).strip():
+        return None
+    parts = [part.strip() for part in str(value).split(",") if part.strip()]
+    if len(parts) < 2:
+        raise ValueError("--cu-seqlens must contain at least two comma-separated integers.")
+    offsets = [int(part) for part in parts]
+    if offsets[0] != 0:
+        raise ValueError(f"--cu-seqlens must start with 0, got {offsets[0]}.")
+    if offsets[-1] != total_tokens:
+        raise ValueError(f"--cu-seqlens must end with total tokens {total_tokens}, got {offsets[-1]}.")
+    for left, right in zip(offsets, offsets[1:]):
+        if right <= left:
+            raise ValueError(f"--cu-seqlens must be strictly increasing, got {offsets}.")
+    return torch.tensor(offsets, dtype=torch.int64, device=device)
+
+
+def _build_direct_cu_seqlens(
+    *,
+    explicit_cu_seqlens: Optional[str],
+    varlen: bool,
+    total_tokens: int,
+    chunk_size: int,
+    device: str,
+    mean_len: int,
+) -> Optional[torch.LongTensor]:
+    cu_seqlens = _parse_cu_seqlens_arg(explicit_cu_seqlens, total_tokens, device)
+    if cu_seqlens is not None:
+        return cu_seqlens
+    if not varlen:
+        return None
+    return _build_mean_1k_cu_seqlens(
+        total_tokens=total_tokens,
+        chunk_size=chunk_size,
+        device=device,
+        mean_len=mean_len,
+    )
+
+
+def _sanitize_case_name(value: str) -> str:
+    value = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in value.strip())
+    return value or "flash_gated_delta_rule"
+
+
+def _accuracy_tensor_names(value: str) -> list[str]:
+    if not value.strip():
+        return ["o"]
+    names = [name.strip() for name in value.split(",") if name.strip()]
+    allowed = {"o", "dq", "dk", "dv", "dbeta", "dg"}
+    unknown = [name for name in names if name not in allowed]
+    if unknown:
+        raise ValueError(f"Unsupported accuracy tensor(s): {', '.join(unknown)}.")
+    return names
+
+
+def _make_accuracy_config(args, *, query_heads: int, value_heads: int, key_dim: int, value_dim: int, scale: float) -> dict:
+    has_explicit_cu_seqlens = bool(str(args.cu_seqlens or "").strip())
+    config = {
+        "version": 1,
+        "reference_version": _ACCURACY_REFERENCE_VERSION,
+        "B": int(args.batch),
+        "T": int(args.tokens),
+        "query_heads": int(query_heads),
+        "value_heads": int(value_heads),
+        "key_dim": int(key_dim),
+        "value_dim": int(value_dim),
+        "chunk_size": int(args.chunk_size),
+        "dtype": str(args.dtype),
+        "seed": int(args.seed),
+        "gate_function": str(args.gate_function),
+        "initial_state": str(args.initial_state),
+        "output_final_state": bool(args.output_final_state),
+        "qk_l2norm": bool(args.qk_l2norm),
+        "pre_normalize_qk": not bool(args.qk_l2norm),
+        "varlen": bool(args.varlen),
+        "cu_seqlens": str(args.cu_seqlens or ""),
+        "scale": float(scale),
+        "tensors": _accuracy_tensor_names(args.accuracy_tensors),
+    }
+    if bool(args.varlen) and not has_explicit_cu_seqlens:
+        config["mean_len"] = int(args.mean_len)
+    return config
+
+
+def _accuracy_golden_path(cache_dir: Path, case_name: str, config: dict) -> Path:
+    encoded = json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()[:16]
+    return cache_dir / f"{_sanitize_case_name(case_name)}_{digest}.pt"
+
+
+def _make_cpu_direct_inputs(
+    *,
+    batch: int,
+    query_heads: int,
+    value_heads: int,
+    tokens: int,
+    key_dim: int,
+    value_dim: int,
+    dtype: torch.dtype,
+    gate_function: str,
+    seed: int,
+    pre_normalize_qk: bool,
+) -> dict[str, torch.Tensor]:
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(seed)
+    q = torch.rand(batch, query_heads, tokens, key_dim, dtype=torch.float32, generator=generator)
+    k = torch.rand(batch, query_heads, tokens, key_dim, dtype=torch.float32, generator=generator)
+    if pre_normalize_qk:
+        q = F.normalize(q, p=2, dim=-1)
+        k = F.normalize(k, p=2, dim=-1)
+    q = q.to(dtype)
+    k = k.to(dtype)
+    v = torch.rand(batch, value_heads, tokens, value_dim, dtype=torch.float32, generator=generator).to(dtype)
+    beta = torch.rand(batch, tokens, value_heads, dtype=torch.float32, generator=generator).to(dtype).sigmoid()
+    if gate_function == "logsigmoid":
+        g = F.logsigmoid(torch.randn(batch, tokens, value_heads, dtype=torch.float32, generator=generator))
+    elif gate_function == "negative_linear":
+        lo, hi = -5e-2, -5e-5
+        g_t = torch.linspace(hi, lo, tokens, dtype=torch.float32)
+        g = g_t.view(1, tokens, 1).expand(batch, tokens, value_heads).contiguous()
+    elif gate_function == "zeros":
+        g = torch.zeros(batch, tokens, value_heads, dtype=torch.float32)
+    else:
+        raise ValueError(f"Unsupported gate_function: {gate_function}")
+    do = torch.randn(batch, tokens, value_heads, value_dim, dtype=torch.float32, generator=generator).to(dtype)
+    return {"q": q, "k": k, "v": v, "beta": beta, "g": g, "do": do}
+
+
+def _naive_recurrent_gated_delta_rule_cpu(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    beta: torch.Tensor,
+    g: torch.Tensor,
+    *,
+    scale: float,
+) -> torch.Tensor:
+    q, k, v, beta, g = [x.transpose(1, 2).contiguous().float() for x in (q, k, v, beta, g)]
+    B, H, T, K = q.shape
+    V = v.shape[-1]
+    state = q.new_zeros(B, H, K, V)
+    o = q.new_empty(B, H, T, V)
+    q = q * scale
+    for idx in range(T):
+        q_i = q[:, :, idx]
+        k_i = k[:, :, idx]
+        v_i = v[:, :, idx]
+        beta_i = beta[:, :, idx]
+        g_i = g[:, :, idx].exp()
+        state = state * g_i[..., None, None]
+        delta_v = v_i - (state * k_i[..., None]).sum(-2)
+        delta_v = delta_v * beta_i[..., None]
+        state = state + k_i.unsqueeze(-1) * delta_v.unsqueeze(-2)
+        o[:, :, idx] = torch.einsum("bhd,bhdm->bhm", q_i, state)
+    return o.transpose(1, 2).contiguous()
+
+
+def _run_cpu_accuracy_reference(
+    inputs: dict[str, torch.Tensor],
+    *,
+    query_heads: int,
+    value_heads: int,
+    scale: float,
+    qk_l2norm: bool,
+    cu_seqlens: Optional[list[int]],
+    tensors: list[str],
+) -> dict[str, torch.Tensor]:
+    q = inputs["q"].detach().float().requires_grad_("dq" in tensors)
+    k = inputs["k"].detach().float().requires_grad_("dk" in tensors)
+    v = inputs["v"].detach().float().requires_grad_("dv" in tensors)
+    beta = inputs["beta"].detach().float().requires_grad_("dbeta" in tensors)
+    g = inputs["g"].detach().float().requires_grad_("dg" in tensors)
+    do = inputs["do"].detach().float()
+
+    repeat = value_heads // query_heads
+
+    def run_slice(start: int, end: int) -> torch.Tensor:
+        q_i = q[:, :, start:end, :].transpose(1, 2)
+        k_i = k[:, :, start:end, :].transpose(1, 2)
+        if repeat != 1:
+            q_i = q_i.repeat_interleave(repeat, dim=2)
+            k_i = k_i.repeat_interleave(repeat, dim=2)
+        if qk_l2norm:
+            q_i = F.normalize(q_i, p=2, dim=-1)
+            k_i = F.normalize(k_i, p=2, dim=-1)
+        v_i = v[:, :, start:end, :].transpose(1, 2)
+        return _naive_recurrent_gated_delta_rule_cpu(
+            q=q_i,
+            k=k_i,
+            v=v_i,
+            beta=beta[:, start:end, :],
+            g=g[:, start:end, :],
+            scale=scale,
+        )
+
+    if cu_seqlens is None:
+        o = run_slice(0, q.shape[2])
+    else:
+        outputs = [run_slice(cu_seqlens[idx], cu_seqlens[idx + 1]) for idx in range(len(cu_seqlens) - 1)]
+        o = torch.cat(outputs, dim=1)
+
+    result = {"o": o.detach().cpu()}
+    grad_names = {"dq", "dk", "dv", "dbeta", "dg"}
+    if grad_names.intersection(tensors):
+        (o * do).sum().backward()
+        grads = {
+            "dq": q.grad,
+            "dk": k.grad,
+            "dv": v.grad,
+            "dbeta": beta.grad,
+            "dg": g.grad,
+        }
+        for name in grad_names.intersection(tensors):
+            result[name] = grads[name].detach().cpu()
+    return result
+
+
+def _load_or_create_accuracy_golden(
+    *,
+    path: Path,
+    config: dict,
+    inputs: dict[str, torch.Tensor],
+    query_heads: int,
+    value_heads: int,
+    scale: float,
+    qk_l2norm: bool,
+    cu_seqlens: Optional[list[int]],
+    force_regenerate: bool,
+) -> dict[str, torch.Tensor]:
+    if path.exists() and not force_regenerate:
+        loaded = torch.load(path, map_location="cpu")
+        if loaded.get("config") == config:
+            print(f"accuracy golden: reused {path}")
+            return loaded["tensors"]
+        print(f"accuracy golden: config mismatch, regenerating {path}")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tensors = _run_cpu_accuracy_reference(
+        inputs,
+        query_heads=query_heads,
+        value_heads=value_heads,
+        scale=scale,
+        qk_l2norm=qk_l2norm,
+        cu_seqlens=cu_seqlens,
+        tensors=config["tensors"],
+    )
+    torch.save({"config": config, "tensors": tensors}, path)
+    print(f"accuracy golden: generated {path}")
+    return tensors
+
+
+def _run_npu_accuracy_candidate(
+    inputs: dict[str, torch.Tensor],
+    *,
+    device: str,
+    query_heads: int,
+    value_heads: int,
+    scale: float,
+    qk_l2norm: bool,
+    cu_seqlens: Optional[torch.LongTensor],
+    chunk_size: int,
+    tensors: list[str],
+) -> dict[str, torch.Tensor]:
+    q = inputs["q"].to(device).contiguous().requires_grad_("dq" in tensors)
+    k = inputs["k"].to(device).contiguous().requires_grad_("dk" in tensors)
+    v = inputs["v"].to(device).contiguous().requires_grad_("dv" in tensors)
+    beta = inputs["beta"].to(device).contiguous().requires_grad_("dbeta" in tensors)
+    g = inputs["g"].to(device).contiguous().requires_grad_("dg" in tensors)
+    do = inputs["do"].to(device).contiguous()
+
+    attn_q = q
+    attn_k = k
+    if query_heads != value_heads:
+        repeat = value_heads // query_heads
+        attn_q = q.repeat_interleave(repeat, dim=1)
+        attn_k = k.repeat_interleave(repeat, dim=1)
+
+    o, _ = flash_gated_delta_rule(
+        attn_q,
+        attn_k,
+        v,
+        g=g,
+        beta=beta,
+        scale=scale,
+        initial_state=None,
+        output_final_state=False,
+        use_qk_l2norm_in_kernel=qk_l2norm,
+        cu_seqlens=cu_seqlens,
+        chunk_size=chunk_size,
+    )
+    torch.npu.synchronize()
+    result = {"o": o.detach().cpu()}
+
+    grad_names = {"dq", "dk", "dv", "dbeta", "dg"}
+    if grad_names.intersection(tensors):
+        (o.float() * do.float()).sum().backward()
+        torch.npu.synchronize()
+        grads = {
+            "dq": q.grad,
+            "dk": k.grad,
+            "dv": v.grad,
+            "dbeta": beta.grad,
+            "dg": g.grad,
+        }
+        for name in grad_names.intersection(tensors):
+            result[name] = grads[name].detach().cpu()
+    return result
+
+
+def _cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:
+    actual = actual.reshape(-1).double()
+    expected = expected.reshape(-1).double()
+    actual_norm = torch.linalg.vector_norm(actual)
+    expected_norm = torch.linalg.vector_norm(expected)
+    denom = actual_norm * expected_norm
+    if denom.item() == 0:
+        return 1.0 if actual_norm.item() == 0 and expected_norm.item() == 0 else 0.0
+    cosine = torch.dot(actual, expected) / denom
+    return float(torch.clamp(cosine, min=-1.0, max=1.0).item())
+
+
+def _accuracy_metric(
+    name: str,
+    actual: torch.Tensor,
+    expected: torch.Tensor,
+    tol: float,
+    cos_min: float,
+) -> tuple[bool, str]:
+    actual = actual.float()
+    expected = expected.float()
+    diff = (actual - expected).abs()
+    finite = bool(torch.isfinite(actual).all().item() and torch.isfinite(expected).all().item())
+    allclose = bool(torch.allclose(actual, expected, rtol=tol, atol=tol))
+    cosine = _cosine_similarity(actual, expected) if finite else float("nan")
+    cosine_ok = bool(cosine >= cos_min)
+    max_abs = float(diff.max().item())
+    mean_abs = float(diff.mean().item())
+    rmse = float(torch.sqrt((diff * diff).mean()).item())
+    bad = diff > (tol + tol * expected.abs())
+    bad_frac = float(bad.float().mean().item())
+    return finite and allclose and cosine_ok, (
+        f"{name}: finite={finite} allclose={allclose} tol={tol:g} "
+        f"cosine={cosine:.9g} cos_min={cos_min:g} cosine_ok={cosine_ok} "
+        f"max_abs={max_abs:.6g} mean_abs={mean_abs:.6g} rmse={rmse:.6g} bad_frac={bad_frac:.6g}"
+    )
+
+
+def _run_accuracy_check(
+    args,
+    *,
+    dtype: torch.dtype,
+    query_heads: int,
+    value_heads: int,
+    key_dim: int,
+    value_dim: int,
+    scale: float,
+    device: str,
+    cu_seqlens: Optional[torch.LongTensor],
+) -> None:
+    if args.demo_model:
+        raise ValueError("--accuracy-check is only supported by the direct flash_gated_delta_rule path.")
+    if args.initial_state != "none":
+        raise ValueError("--accuracy-check currently requires --initial-state none.")
+    if args.output_final_state:
+        raise ValueError("--accuracy-check currently compares o/grads and requires output_final_state=false.")
+
+    tensors = _accuracy_tensor_names(args.accuracy_tensors)
+    config = _make_accuracy_config(
+        args,
+        query_heads=query_heads,
+        value_heads=value_heads,
+        key_dim=key_dim,
+        value_dim=value_dim,
+        scale=scale,
+    )
+    inputs = _make_cpu_direct_inputs(
+        batch=args.batch,
+        query_heads=query_heads,
+        value_heads=value_heads,
+        tokens=args.tokens,
+        key_dim=key_dim,
+        value_dim=value_dim,
+        dtype=dtype,
+        gate_function=args.gate_function,
+        seed=args.seed,
+        pre_normalize_qk=not args.qk_l2norm,
+    )
+    cu_list = _as_int_list(cu_seqlens)
+    cache_dir = Path(args.accuracy_cache_dir)
+    golden_path = _accuracy_golden_path(cache_dir, args.case_name or "flash_gated_delta_rule", config)
+    golden = _load_or_create_accuracy_golden(
+        path=golden_path,
+        config=config,
+        inputs=inputs,
+        query_heads=query_heads,
+        value_heads=value_heads,
+        scale=scale,
+        qk_l2norm=args.qk_l2norm,
+        cu_seqlens=cu_list,
+        force_regenerate=args.accuracy_force_regenerate,
+    )
+    candidate = _run_npu_accuracy_candidate(
+        inputs,
+        device=device,
+        query_heads=query_heads,
+        value_heads=value_heads,
+        scale=scale,
+        qk_l2norm=args.qk_l2norm,
+        cu_seqlens=cu_seqlens,
+        chunk_size=args.chunk_size,
+        tensors=tensors,
+    )
+
+    ok = True
+    print("accuracy check:")
+    for name in tensors:
+        tol = args.accuracy_output_tol if name == "o" else args.accuracy_grad_tol
+        cos_min = args.accuracy_output_cos_min if name == "o" else args.accuracy_grad_cos_min
+        if name == "dbeta":
+            tol = args.accuracy_beta_grad_tol
+            cos_min = args.accuracy_beta_grad_cos_min
+        elif name == "dg":
+            tol = args.accuracy_gate_grad_tol
+            cos_min = args.accuracy_gate_grad_cos_min
+        item_ok, message = _accuracy_metric(name, candidate[name], golden[name], tol, cos_min)
+        print(message)
+        ok = ok and item_ok
+    if not ok:
+        raise AssertionError("accuracy check failed")
+    print("accuracy check passed")
+
+
 def _main():
     import argparse
 
@@ -817,8 +1559,11 @@ def _main():
     parser.add_argument("--key-dim", type=int, default=None)
     parser.add_argument("--value-dim", type=int, default=128)
     parser.add_argument("--chunk-size", type=int, default=64)
+    parser.add_argument("--scale", type=float, default=None)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dtype", choices=["fp16", "bf16"], default="bf16")
     parser.add_argument("--mean-len", type=int, default=1024)
+    parser.add_argument("--cu-seqlens", default="", help="Comma-separated varlen offsets, for example 0,64,128")
     parser.add_argument("--gate-source", choices=["g", "gk", "g+gk"], default="g")
     parser.add_argument("--gate-function", choices=["logsigmoid", "negative_linear", "zeros"], default="logsigmoid")
     parser.add_argument("--initial-state", choices=["none", "zeros", "random"], default="none")
@@ -833,10 +1578,27 @@ def _main():
         help="运行 DemoGatedDeltaNet（从 cu_seqlens 迁移到 tensor 设备及 causal_conv 起始的完整链路）代替裸张量 attn 冒烟",
     )
     parser.add_argument("--conv-kernel", type=int, default=4, help="depthwise causal conv kernel size")
+    parser.add_argument("--accuracy-check", action="store_true")
+    parser.add_argument(
+        "--accuracy-cache-dir",
+        default=os.environ.get("GDR_ACCURACY_CACHE_DIR", "third_party/gdr_accuracy_golden"),
+    )
+    parser.add_argument("--accuracy-force-regenerate", action="store_true")
+    parser.add_argument("--accuracy-tensors", default="o,dq,dk,dv,dbeta,dg")
+    parser.add_argument("--accuracy-output-tol", type=float, default=5e-3)
+    parser.add_argument("--accuracy-grad-tol", type=float, default=8e-3)
+    parser.add_argument("--accuracy-beta-grad-tol", type=float, default=2e-2)
+    parser.add_argument("--accuracy-gate-grad-tol", type=float, default=2e-2)
+    parser.add_argument("--accuracy-output-cos-min", type=float, default=0.999)
+    parser.add_argument("--accuracy-grad-cos-min", type=float, default=0.999)
+    parser.add_argument("--accuracy-beta-grad-cos-min", type=float, default=0.99)
+    parser.add_argument("--accuracy-gate-grad-cos-min", type=float, default=0.99)
     args = parser.parse_args()
 
     torch.npu.set_device(args.device)
     torch.npu.set_compile_mode(jit_compile=False)
+    torch.manual_seed(args.seed)
+    torch.npu.manual_seed_all(args.seed)
 
     dtype = torch.float16 if args.dtype == "fp16" else torch.bfloat16
     query_heads = args.query_heads if args.query_heads is not None else args.heads
@@ -845,6 +1607,7 @@ def _main():
     value_dim = args.value_dim
     batch = args.batch
     device = f"npu:{args.device}"
+    scale = args.scale if args.scale is not None else key_dim ** -0.5
     positive_values = {
         "batch": batch,
         "tokens": args.tokens,
@@ -888,14 +1651,14 @@ def _main():
         hidden_size = query_heads * key_dim
         if hidden_size <= 0:
             raise ValueError("hidden_size = query_heads * key_dim 非法")
-        cu_seqlens = None
-        if args.varlen:
-            cu_seqlens = _build_mean_1k_cu_seqlens(
-                total_tokens=args.tokens,
-                chunk_size=args.chunk_size,
-                device=device,
-                mean_len=args.mean_len,
-            )
+        cu_seqlens = _build_direct_cu_seqlens(
+            explicit_cu_seqlens=args.cu_seqlens,
+            varlen=args.varlen,
+            total_tokens=args.tokens,
+            chunk_size=args.chunk_size,
+            device=device,
+            mean_len=args.mean_len,
+        )
         x = torch.randn(batch, args.tokens, hidden_size, dtype=dtype, device=device, requires_grad=True)
         net = DemoGatedDeltaNet(
             hidden_size,
@@ -922,20 +1685,15 @@ def _main():
         )
         return
 
-    q = torch.randn(batch, query_heads, args.tokens, key_dim, dtype=dtype, device=device)
-    k = torch.randn(batch, query_heads, args.tokens, key_dim, dtype=dtype, device=device)
-    v = torch.randn(batch, value_heads, args.tokens, value_dim, dtype=dtype, device=device)
-    beta = torch.rand(batch, args.tokens, value_heads, dtype=dtype, device=device).sigmoid()
-    g = _make_gate((batch, args.tokens, value_heads), dtype, device, args.gate_function)
-
-    cu_seqlens = None
-    if args.varlen:
-        cu_seqlens = _build_mean_1k_cu_seqlens(
-            total_tokens=args.tokens,
-            chunk_size=args.chunk_size,
-            device=device,
-            mean_len=args.mean_len,
-        )
+    cu_seqlens = _build_direct_cu_seqlens(
+        explicit_cu_seqlens=args.cu_seqlens,
+        varlen=args.varlen,
+        total_tokens=args.tokens,
+        chunk_size=args.chunk_size,
+        device=device,
+        mean_len=args.mean_len,
+    )
+    if cu_seqlens is not None:
         lens = cu_seqlens[1:] - cu_seqlens[:-1]
         print(
             "varlen:",
@@ -955,6 +1713,8 @@ def _main():
         f"K={key_dim}",
         f"V={value_dim}",
         f"chunk_size={args.chunk_size}",
+        f"scale={scale}",
+        f"seed={args.seed}",
         f"dtype={args.dtype}",
         f"varlen={args.varlen}",
         f"gate_source={args.gate_source}",
@@ -964,6 +1724,26 @@ def _main():
         f"qk_l2norm={args.qk_l2norm}",
         f"device={device}",
     )
+
+    if args.accuracy_check:
+        _run_accuracy_check(
+            args,
+            dtype=dtype,
+            query_heads=query_heads,
+            value_heads=value_heads,
+            key_dim=key_dim,
+            value_dim=value_dim,
+            scale=scale,
+            device=device,
+            cu_seqlens=cu_seqlens,
+        )
+        return
+
+    q = torch.randn(batch, query_heads, args.tokens, key_dim, dtype=dtype, device=device)
+    k = torch.randn(batch, query_heads, args.tokens, key_dim, dtype=dtype, device=device)
+    v = torch.randn(batch, value_heads, args.tokens, value_dim, dtype=dtype, device=device)
+    beta = torch.rand(batch, args.tokens, value_heads, dtype=dtype, device=device).sigmoid()
+    g = _make_gate((batch, args.tokens, value_heads), dtype, device, args.gate_function)
 
     q.requires_grad_(True)
     k.requires_grad_(True)
@@ -994,6 +1774,7 @@ def _main():
         v,
         g=g,
         beta=beta,
+        scale=scale,
         initial_state=initial_state,
         output_final_state=args.output_final_state,
         use_qk_l2norm_in_kernel=args.qk_l2norm,

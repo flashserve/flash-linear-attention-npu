@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 
 FIELD_ARGS = (
@@ -27,6 +29,8 @@ FIELD_ARGS = (
 BOOLEAN_FLAGS = (
     (("output_final_state", "output-final-state", "final_state", "final-state"), "--output-final-state"),
 )
+
+ACCURACY_TENSORS = {"o", "dq", "dk", "dv", "dbeta", "dg"}
 
 
 def _read_cases(path: Path) -> list[dict[str, Any]]:
@@ -152,11 +156,143 @@ def _build_command(repo_root: Path, device: int, case: dict[str, Any]) -> list[s
     return cmd
 
 
+def _parse_metric_value(value: str) -> Any:
+    if value == "True":
+        return True
+    if value == "False":
+        return False
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
+def _parse_accuracy_metric(line: str) -> Optional[dict[str, Any]]:
+    stripped = line.strip()
+    if ": " not in stripped:
+        return None
+    name, values = stripped.split(": ", 1)
+    if name not in ACCURACY_TENSORS:
+        return None
+    metric: dict[str, Any] = {"tensor": name, "raw": stripped}
+    for item in values.split():
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        metric[key] = _parse_metric_value(value)
+    return metric
+
+
+def _golden_action(line: str) -> str:
+    if "reused" in line:
+        return "reused"
+    if "config mismatch" in line:
+        return "regenerated"
+    if "generated" in line:
+        return "generated"
+    return "unknown"
+
+
+def _case_expects_accuracy(case: dict[str, Any]) -> bool:
+    return "--accuracy-check" in _normalize_extra_args(case.get("extra_args"))
+
+
+def _blank_case_report(case: dict[str, Any], status: str) -> dict[str, Any]:
+    expects_accuracy = _case_expects_accuracy(case)
+    return {
+        "name": str(case["name"]),
+        "description": str(case.get("description", "")).strip(),
+        "status": status,
+        "return_code": None,
+        "duration_sec": 0.0,
+        "accuracy_check": expects_accuracy,
+        "accuracy_status": "not_run" if status == "not_run" and expects_accuracy else "not_requested",
+        "golden": "not_run",
+        "metrics": [],
+    }
+
+
+def _run_case(cmd: list[str], repo_root: Path, case: dict[str, Any]) -> dict[str, Any]:
+    started = time.monotonic()
+    report = _blank_case_report(case, "running")
+    report["command"] = shlex.join(cmd)
+    process = subprocess.Popen(
+        cmd,
+        cwd=repo_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    metrics: list[dict[str, Any]] = []
+    accuracy_check = "--accuracy-check" in cmd
+    accuracy_passed = False
+    golden = "not_requested"
+    for line in process.stdout:
+        print(line, end="", flush=True)
+        stripped = line.strip()
+        if stripped.startswith("accuracy golden:"):
+            golden = _golden_action(stripped)
+        elif stripped == "accuracy check:":
+            accuracy_check = True
+        elif stripped == "accuracy check passed":
+            accuracy_passed = True
+        metric = _parse_accuracy_metric(stripped)
+        if metric is not None:
+            accuracy_check = True
+            metrics.append(metric)
+    return_code = process.wait()
+    report.update(
+        {
+            "status": "passed" if return_code == 0 else "failed",
+            "return_code": return_code,
+            "duration_sec": round(time.monotonic() - started, 3),
+            "accuracy_check": accuracy_check,
+            "accuracy_status": "passed"
+            if accuracy_passed and return_code == 0
+            else ("failed" if accuracy_check else "not_requested"),
+            "golden": golden,
+            "metrics": metrics,
+        }
+    )
+    return report
+
+
+def _summarize_report(cases: list[dict[str, Any]]) -> dict[str, int]:
+    accuracy_cases = [case for case in cases if case.get("accuracy_check") or case.get("accuracy_status") == "not_run"]
+    return {
+        "total": len(cases),
+        "passed": sum(1 for case in cases if case.get("status") == "passed"),
+        "failed": sum(1 for case in cases if case.get("status") == "failed"),
+        "not_run": sum(1 for case in cases if case.get("status") == "not_run"),
+        "accuracy_total": len(accuracy_cases),
+        "accuracy_passed": sum(1 for case in accuracy_cases if case.get("accuracy_status") == "passed"),
+        "accuracy_failed": sum(1 for case in accuracy_cases if case.get("accuracy_status") == "failed"),
+        "accuracy_not_run": sum(1 for case in accuracy_cases if case.get("accuracy_status") == "not_run"),
+    }
+
+
+def _write_accuracy_report(path: Optional[Path], cases: list[dict[str, Any]]) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    report = {
+        "schema": "gdr-accuracy-report-v1",
+        "summary": _summarize_report(cases),
+        "cases": cases,
+    }
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp_path.replace(path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run configured Example/ST cases.")
     parser.add_argument("--device", type=int, required=True)
     parser.add_argument("--cases-file", default="ci/example_st_cases.json")
     parser.add_argument("--case-filter", default="", help="Comma-separated case names to run")
+    parser.add_argument("--accuracy-report-file", default=os.environ.get("CI_ACCURACY_REPORT_FILE", ""))
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -166,7 +302,13 @@ def main() -> int:
     if not cases:
         raise SystemExit(f"No enabled Example/ST cases found in {cases_file}.")
 
+    report_path = Path(args.accuracy_report_file) if args.accuracy_report_file else None
+    if report_path is not None and not report_path.is_absolute():
+        report_path = repo_root / report_path
+
     print(f"[CI] Example/ST cases file: {cases_file}")
+    case_reports: list[dict[str, Any]] = []
+    failed_return_code = 0
     for index, case in enumerate(cases, start=1):
         name = case["name"]
         description = str(case.get("description", "")).strip()
@@ -175,9 +317,20 @@ def main() -> int:
         if description:
             print(f"[CI] {description}")
         print(f"[CI] Command: {shlex.join(cmd)}")
-        if not args.dry_run:
-            subprocess.run(cmd, cwd=repo_root, check=True)
-    return 0
+        if args.dry_run:
+            continue
+        case_report = _run_case(cmd, repo_root, case)
+        case_reports.append(case_report)
+        _write_accuracy_report(report_path, case_reports)
+        if case_report["return_code"] != 0:
+            failed_return_code = int(case_report["return_code"])
+            for remaining in cases[index:]:
+                case_reports.append(_blank_case_report(remaining, "not_run"))
+            _write_accuracy_report(report_path, case_reports)
+            break
+    if not args.dry_run:
+        _write_accuracy_report(report_path, case_reports)
+    return failed_return_code
 
 
 if __name__ == "__main__":

@@ -37,6 +37,7 @@ jobs:
     outputs:
       should_run: ${{ steps.prepare.outputs.should_run }}
       pr_number: ${{ steps.prepare.outputs.pr_number }}
+      base_ref: ${{ steps.prepare.outputs.base_ref }}
       head_repo: ${{ steps.prepare.outputs.head_repo }}
       head_sha: ${{ steps.prepare.outputs.head_sha }}
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
@@ -218,6 +219,7 @@ jobs:
               );
               core.setOutput('should_run', 'false');
               core.setOutput('pr_number', String(prNumber));
+              core.setOutput('base_ref', pr.base.ref);
               core.setOutput('head_repo', pr.head.repo.full_name);
               core.setOutput('head_sha', pr.head.sha);
               core.setOutput('ci_mode', ciMode);
@@ -242,6 +244,7 @@ jobs:
               );
               core.setOutput('should_run', 'false');
               core.setOutput('pr_number', String(prNumber));
+              core.setOutput('base_ref', pr.base.ref);
               core.setOutput('head_repo', pr.head.repo.full_name);
               core.setOutput('head_sha', pr.head.sha);
               core.setOutput('ci_mode', ciMode);
@@ -276,6 +279,7 @@ jobs:
 
             core.setOutput('should_run', 'true');
             core.setOutput('pr_number', String(prNumber));
+            core.setOutput('base_ref', pr.base.ref);
             core.setOutput('head_repo', pr.head.repo.full_name);
             core.setOutput('head_sha', pr.head.sha);
             core.setOutput('ci_mode', ciMode);
@@ -299,24 +303,24 @@ jobs:
       CI_RUN_EXAMPLE_ST: 'true'
       CI_IMAGE: fla-npu-ci:8.5.0-910b
     steps:
-      - name: 拉取 PR 合并后代码（第 1 次）
+      - name: 拉取当前目标分支代码（第 1 次）
         id: checkout_pr_1
         continue-on-error: true
         timeout-minutes: 10
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: refs/pull/${{ needs.prepare.outputs.pr_number }}/merge
+          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 1
           path: repo
 
-      - name: 等待后重试拉取 PR 合并后代码
+      - name: 等待后重试拉取目标分支代码
         if: steps.checkout_pr_1.outcome == 'failure'
         run: |
           rm -rf repo
           sleep 15
 
-      - name: 拉取 PR 合并后代码（第 2 次）
+      - name: 拉取当前目标分支代码（第 2 次）
         id: checkout_pr_2
         if: steps.checkout_pr_1.outcome == 'failure'
         continue-on-error: true
@@ -324,25 +328,53 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: refs/pull/${{ needs.prepare.outputs.pr_number }}/merge
+          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 1
           path: repo
 
-      - name: 再次等待后重试拉取 PR 代码
+      - name: 再次等待后重试拉取目标分支代码
         if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
         run: |
           rm -rf repo
           sleep 30
 
-      - name: 拉取 PR 合并后代码（第 3 次）
+      - name: 拉取当前目标分支代码（第 3 次）
         if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
         timeout-minutes: 10
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: refs/pull/${{ needs.prepare.outputs.pr_number }}/merge
+          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 1
           path: repo
+
+      - name: 现场合并 PR 代码
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          retry_fetch_pr_head() {
+            local delay="$1"
+            if [ "$delay" != "0" ]; then
+              sleep "$delay"
+            fi
+            git fetch --no-tags --prune --no-recurse-submodules --depth=1 origin \
+              "+refs/pull/${NPU_CI_PR_NUMBER}/head:refs/remotes/pull/${NPU_CI_PR_NUMBER}/head"
+          }
+
+          retry_fetch_pr_head 0 || retry_fetch_pr_head 15 || retry_fetch_pr_head 30
+          fetched_head="$(git rev-parse "refs/remotes/pull/${NPU_CI_PR_NUMBER}/head")"
+          if [ "$fetched_head" != "$NPU_CI_TARGET_SHA" ]; then
+            echo "[CI][ERROR] PR head changed before merge; target=${NPU_CI_TARGET_SHA}, fetched=${fetched_head}."
+            exit 1
+          fi
+
+          git merge --no-ff --no-edit "refs/remotes/pull/${NPU_CI_PR_NUMBER}/head"
+        env:
+          NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+          NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
 
       - name: 拉取可信 CI 脚本（第 1 次）
         id: checkout_trusted_ci_1
@@ -390,7 +422,7 @@ jobs:
         run: |
           # CI 执行脚本必须来自默认分支，避免 PR 修改脚本后影响 runner。
           # 但 Example/ST 用例配置属于被验证内容：新 PR 中新增或修改的 enabled 用例
-          # 必须跟随 PR merge ref 一起进入容器，并被 /run-npu-ci quick 实际执行验证。
+          # 必须跟随当前目标分支和 PR head 的现场合并结果一起进入容器，并被 /run-npu-ci quick 实际执行验证。
           tmp_cases="$(mktemp)"
           if [ -f repo/ci/example_st_cases.json ]; then
             cp repo/ci/example_st_cases.json "$tmp_cases"
