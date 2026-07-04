@@ -354,6 +354,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          pr_head_ref="refs/remotes/pull/${NPU_CI_PR_NUMBER}/head"
 
           retry_fetch_pr_head() {
             local delay="$1"
@@ -361,31 +362,48 @@ jobs:
               sleep "$delay"
             fi
             git fetch --no-tags --prune --no-recurse-submodules --depth=50 origin \
-              "+refs/pull/${NPU_CI_PR_NUMBER}/head:refs/remotes/pull/${NPU_CI_PR_NUMBER}/head"
+              "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
           }
 
-          deepen_merge_history() {
-            echo "[CI] Shallow checkout does not contain merge base; deepening base and PR head history."
-            git fetch --no-tags --prune --no-recurse-submodules --deepen=200 origin \
+          fetch_more_history() {
+            local deepen_by="$1"
+            echo "[CI] Merge base not found in shallow history; deepening by ${deepen_by} commits."
+            git fetch --no-tags --prune --no-recurse-submodules --deepen="${deepen_by}" origin \
               "+refs/heads/${NPU_CI_BASE_REF}:refs/remotes/origin/${NPU_CI_BASE_REF}" \
-              "+refs/pull/${NPU_CI_PR_NUMBER}/head:refs/remotes/pull/${NPU_CI_PR_NUMBER}/head"
+              "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
+          }
+
+          ensure_merge_base() {
+            if git merge-base HEAD "${pr_head_ref}" >/dev/null; then
+              return 0
+            fi
+            for deepen_by in 50 100 200 400 800 1600 3200; do
+              fetch_more_history "${deepen_by}"
+              if git merge-base HEAD "${pr_head_ref}" >/dev/null; then
+                return 0
+              fi
+            done
+            if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+              echo "[CI] Merge base still not found; unshallowing repository as final probe."
+              git fetch --no-tags --prune --no-recurse-submodules --unshallow origin \
+                "+refs/heads/${NPU_CI_BASE_REF}:refs/remotes/origin/${NPU_CI_BASE_REF}" \
+                "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
+            fi
+            git merge-base HEAD "${pr_head_ref}" >/dev/null
           }
 
           retry_fetch_pr_head 0 || retry_fetch_pr_head 15 || retry_fetch_pr_head 30
-          fetched_head="$(git rev-parse "refs/remotes/pull/${NPU_CI_PR_NUMBER}/head")"
+          fetched_head="$(git rev-parse "${pr_head_ref}")"
           if [ "$fetched_head" != "$NPU_CI_TARGET_SHA" ]; then
             echo "[CI][ERROR] PR head changed before merge; target=${NPU_CI_TARGET_SHA}, fetched=${fetched_head}."
             exit 1
           fi
-          if ! git merge-base HEAD "refs/remotes/pull/${NPU_CI_PR_NUMBER}/head" >/dev/null; then
-            deepen_merge_history
-          fi
-          if ! git merge-base HEAD "refs/remotes/pull/${NPU_CI_PR_NUMBER}/head" >/dev/null; then
-            echo "[CI][ERROR] Unable to find merge base between current base ${NPU_CI_BASE_REF} and PR head after deepening history."
+          if ! ensure_merge_base; then
+            echo "[CI][ERROR] Unable to find merge base between current base ${NPU_CI_BASE_REF} and PR head after probing history."
             exit 1
           fi
 
-          git merge --no-ff --no-edit "refs/remotes/pull/${NPU_CI_PR_NUMBER}/head"
+          git merge --no-ff --no-edit "${pr_head_ref}"
         env:
           NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
