@@ -48,13 +48,35 @@ void* GetEmbeddedOpApiFuncAddr(const char* apiName)
 }
 }  // namespace
 
-void* GetOpApiFuncAddr(const char* apiName)
+void* GetFlaNpuOpApiFuncAddr(const char* apiName)
 {
     if (auto funcAddr = GetEmbeddedOpApiFuncAddr(apiName)) {
         return funcAddr;
     }
-    return op_plugin::utils::GetOpApiFuncAddr(apiName);
+    return ::GetOpApiFuncAddr(apiName);
 }
+
+void GetFlaNpuApiFunc(
+    const char* apiName,
+    const char* workspaceApiName,
+    void*& opApiFuncAddr,
+    void*& getWorkspaceSizeFuncAddr)
+{
+    if (opApiFuncAddr != nullptr && getWorkspaceSizeFuncAddr != nullptr) {
+        return;
+    }
+    void* embeddedOpApiFuncAddr = GetEmbeddedOpApiFuncAddr(apiName);
+    void* embeddedWorkspaceSizeFuncAddr = GetEmbeddedOpApiFuncAddr(workspaceApiName);
+    if (embeddedOpApiFuncAddr != nullptr && embeddedWorkspaceSizeFuncAddr != nullptr) {
+        opApiFuncAddr = embeddedOpApiFuncAddr;
+        getWorkspaceSizeFuncAddr = embeddedWorkspaceSizeFuncAddr;
+        return;
+    }
+    ::GetApiFunc(apiName, workspaceApiName, opApiFuncAddr, getWorkspaceSizeFuncAddr);
+}
+
+#define GetOpApiFuncAddr GetFlaNpuOpApiFuncAddr
+#define GetApiFunc GetFlaNpuApiFunc
 
 ::std::tuple<at::Tensor,at::Tensor,at::Tensor,at::Tensor> npu_prepare_wy_repr_bwd_full(const at::Tensor & k, const at::Tensor & v, const at::Tensor & beta, const at::Tensor & A, const at::Tensor & dA, const at::Tensor & dw, const at::Tensor & du, const at::Tensor & g, int64_t chunk_size, at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices)
 {
