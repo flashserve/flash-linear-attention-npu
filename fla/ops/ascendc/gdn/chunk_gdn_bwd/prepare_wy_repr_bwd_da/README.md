@@ -130,23 +130,24 @@ aclnnStatus aclnnPrepareWyReprBwdDa(
 ```python
 import torch
 import torch_npu
+import fla_npu
 
 device = "npu:0"
 
 # 基本参数
-B, H, T, K, V = 1, 4, 2048, 128, 128
+B, HV, HK, T, K, V = 1, 4, 2, 2048, 128, 128
 chunk_size = 64
 BT = chunk_size
 
 # 构造输入
-k = torch.randn(B, H, T, K, device=device, dtype=torch.float16)
-v = torch.randn(B, H, T, V, device=device, dtype=torch.float16)
-beta = torch.randn(B, H, T, device=device, dtype=torch.float32)
-a = torch.randn(B, H, T, BT, device=device, dtype=torch.float16)
-dw = torch.randn(B, H, T, K, device=device, dtype=torch.float16)
-du = torch.randn(B, H, T, V, device=device, dtype=torch.float16)
+k = torch.randn(B, HK, T, K, device=device, dtype=torch.float16)
+v = torch.randn(B, HV, T, V, device=device, dtype=torch.float16)
+beta = torch.randn(B, HV, T, device=device, dtype=torch.float32)
+a = torch.randn(B, HV, T, BT, device=device, dtype=torch.float16)
+dw = torch.randn(B, HV, T, K, device=device, dtype=torch.float16)
+du = torch.randn(B, HV, T, V, device=device, dtype=torch.float16)
 # 构造满足约束的 g：负数且沿 T 单调递减
-base = torch.rand(B, H, T, device=device, dtype=torch.float32) * 0.1 + 0.01
+base = torch.rand(B, HV, T, device=device, dtype=torch.float32) * 0.1 + 0.01
 g = -torch.cumsum(base, dim=-1)
 
 # 调用算子
@@ -164,31 +165,33 @@ print(dA.shape) # Expected: [1, 4, 2048, 64]
 ```python
 import torch
 import torch_npu
+import fla_npu
 
-device = "npu:0"
+device = "npu:1"
 
 # B 必须为 1
-B, H, K, V = 1, 4, 128, 128
+B, HV, HK, T, K, V = 1, 4, 2, 2048, 128, 128
 chunk_size = 64
 BT = chunk_size
 
 # 变长序列: [64, 128] -> 总长 192
-cu_seqlens = torch.tensor([0, 64, 192], device=device, dtype=torch.int64)
-total_len = cu_seqlens[-1].item()
+# 注意: cu_seqlens 和 chunk_indices 必须是 Python list[int]，不能是 Tensor
+cu_seqlens = [0, 64, 192]
+total_len = cu_seqlens[-1]
 
 # 构造 chunk_indices (flattened: [seq_id, chunk_id, ...])
 # seq 0 (len 64): 1 chunk -> [0, 0]
 # seq 1 (len 128): 2 chunks -> [1, 0, 1, 1]
-chunk_indices = torch.tensor([0, 0, 1, 0, 1, 1], device=device, dtype=torch.int64)
+chunk_indices = [0, 0, 1, 0, 1, 1]
 
-k = torch.randn(B, H, total_len, K, device=device, dtype=torch.float16)
-v = torch.randn(B, H, total_len, V, device=device, dtype=torch.float16)
-beta = torch.randn(B, H, total_len, device=device, dtype=torch.float32)
-a = torch.randn(B, H, total_len, BT, device=device, dtype=torch.float16)
-dw = torch.randn(B, H, total_len, K, device=device, dtype=torch.float16)
-du = torch.randn(B, H, total_len, V, device=device, dtype=torch.float16)
+k = torch.randn(B, HK, total_len, K, device=device, dtype=torch.float16)
+v = torch.randn(B, HV, total_len, V, device=device, dtype=torch.float16)
+beta = torch.randn(B, HV, total_len, device=device, dtype=torch.float32)
+a = torch.randn(B, HV, total_len, BT, device=device, dtype=torch.float16)
+dw = torch.randn(B, HV, total_len, K, device=device, dtype=torch.float16)
+du = torch.randn(B, HV, total_len, V, device=device, dtype=torch.float16)
 # 构造满足约束的 g：负数且沿 T 单调递减
-base = torch.rand(B, H, T, device=device, dtype=torch.float32) * 0.1 + 0.01
+base = torch.rand(B, HV, total_len, device=device, dtype=torch.float32) * 0.1 + 0.01
 g = -torch.cumsum(base, dim=-1)
 
 dA = torch.ops.npu.npu_prepare_wy_repr_bwd_da(
@@ -301,7 +304,7 @@ bash run_da.sh --precision --json /path/to/custom_cases.json
 | `--precision` | 运行精度测试（`test_da.py`） |
 | `--performance` | 运行性能测试（`test_da_performance.py`），自动使用 `msprof` 采集性能数据 |
 | `--json <path>` | 指定测试用例 JSON 文件路径，默认为 `test_da_cases.json` |
-| `--device <id>` | 指定 NPU device id，默认为 4 |
+| `--device <id>` | 指定 NPU device id，默认为 0 |
 
 **性能测试输出**：性能测试运行结束后，会在 `test/` 目录下生成 `perf_report.csv` 性能报告，包含每个用例的 shape 信息、数据类型、定长/变长标识和算子耗时。
 
