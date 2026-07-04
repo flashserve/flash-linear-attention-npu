@@ -50,11 +50,7 @@
  
         this->AICore().AddConfig("ascend910b", aicore_config);
         this->AICore().AddConfig("ascend910_93", aicore_config);
-#ifdef ASCEND_SOC_VERSION
-        if (std::string(ASCEND_SOC_VERSION) == "ascend950") {
-            this->AICore().AddConfig("ascend950", aicore_config);
-        }
-#endif
+        this->AICore().AddConfig("ascend950", aicore_config);
     }
 };
  OP_ADD(SolveTri);

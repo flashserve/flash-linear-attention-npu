@@ -327,6 +327,7 @@ public:
         SetFlag<AscendC::HardEvent::MTE3_V>(0);   // ub_to_l1(MTE3) -> 下面 Duplicate ub_FullA(V) [顺序]
         WaitFlag<AscendC::HardEvent::MTE3_V>(0);
         // AscendC::PipeBarrier<PIPE_ALL>();
+        AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(0x2);   // 数据就绪 -> AIC
 
         // MBH 预备（cur>16）：完整 A GM(ND)->ub_FullA(NZ)，尾块只读 actual_size 行（其余清 0），取负 -> l1_MNEG。
         if (cur > 16) {
@@ -538,7 +539,6 @@ public:
 
                     // ---- MCH 备数 ----
                     AivMchPrep(cur, actual_size, x_gm_offset, row_stride);
-                    AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(0x2);   // 数据就绪 -> AIC
                     AscendC::CrossCoreWaitFlag<0x4>(0x0);             // 等 AIC：MCH 完成（ub_Res 就绪 / cur==16 已写 GM）
 
                     // ---- MBH 各层：提取 drv/oth -> 握手 ----
