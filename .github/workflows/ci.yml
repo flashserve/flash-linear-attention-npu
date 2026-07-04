@@ -67,6 +67,7 @@ jobs:
             }
 
             const contextName = 'NPU CI / 手动验证';
+            const accuracyContextName = 'NPU CI / 精度检查';
             let prNumber;
             let ciMode = 'quick';
             let ops = '';
@@ -193,18 +194,25 @@ jobs:
               .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             const latestExecutionCi = manualCiStatuses
               .find((status) => (status.description || '').includes('+example'));
+            const accuracyStatuses = statuses
+              .filter((status) => status.context === accuracyContextName)
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            const latestAccuracyCi = accuracyStatuses[0];
             const latestPassedWithExample = latestExecutionCi &&
-              latestExecutionCi.state === 'success';
+              latestExecutionCi.state === 'success' &&
+              latestAccuracyCi &&
+              latestAccuracyCi.state === 'success';
             if (latestPassedWithExample) {
-              core.notice(`${pr.head.sha} 已经通过 NPU CI，跳过重复运行。`);
+              core.notice(`${pr.head.sha} 已经通过 NPU CI 和精度检查，跳过重复运行。`);
               commentId = await upsertComment(
                 pr,
                 [
-                  `NPU CI 已经在 \`${pr.head.sha}\` 上通过，本次不会重复运行。`,
+                  `NPU CI 和精度检查已经在 \`${pr.head.sha}\` 上通过，本次不会重复运行。`,
                   '',
                   `- 请求模式：\`${ciMode}\``,
                   `- 触发人：@${actor}`,
                   '- Example ST：已覆盖',
+                  '- 精度检查：已覆盖',
                   '- Example ST 用例：全部 enabled 用例',
                 ].join('\n')
               );
