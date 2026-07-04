@@ -17,6 +17,7 @@ from packaging.version import InvalidVersion, Version
 MIN_PYTHON = (3, 9)
 MIN_TORCH = "2.7.0"
 MIN_TRITON_ASCEND = "3.2.0"
+MIN_TRITON_ASCEND_CANN9 = "3.2.1"
 TORCH_NPU_GDN_FIX_MINIMUMS = {
     "2.7.1": "2.7.1.post5",
     "2.8.0": "2.8.0.post5",
@@ -112,6 +113,33 @@ def _version_key(value: str) -> tuple[int, int, int] | None:
     return tuple(nums)
 
 
+def _detect_cann_public_version() -> str:
+    for env_name in ("ASCEND_HOME_PATH", "ASCEND_OPP_PATH"):
+        value = os.getenv(env_name)
+        if not value:
+            continue
+        match = re.search(r"(?:^|[/\\_-])cann[-_ ]?(\d+\.\d+\.\d+(?:[-._A-Za-z0-9]*)?)", value, re.I)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _check_triton_ascend_cann_compat(failures: list[str], actual: str, cann_public_version: str) -> None:
+    soc = os.getenv("FLA_NPU_SOC", "")
+    cann_key = _version_key(cann_public_version)
+    requires_cann9_runtime = (cann_key is not None and cann_key >= (9, 0, 0)) or soc == "ascend950"
+    if not requires_cann9_runtime:
+        return
+    actual_version = _version_obj(actual)
+    if actual_version is None or actual_version < Version(MIN_TRITON_ASCEND_CANN9):
+        detail = f"CANN {cann_public_version}" if cann_public_version else f"FLA_NPU_SOC={soc}"
+        _fail(
+            failures,
+            f"triton-ascend>={MIN_TRITON_ASCEND_CANN9} is required for {detail}; got {actual}. "
+            "triton-ascend 3.2.0 targets CANN 8.5.x and can crash on the CANN 9.x Triton runtime.",
+        )
+
+
 def _check_torch_npu_gdn_fix(failures: list[str], actual: str) -> None:
     actual_version = _version_obj(actual)
     if actual_version is None:
@@ -203,10 +231,13 @@ def main() -> int:
 
     ascend_home = os.getenv("ASCEND_HOME_PATH")
     ascend_opp = os.getenv("ASCEND_OPP_PATH")
+    cann_public_version = _detect_cann_public_version()
     if ascend_home or ascend_opp:
         _ok(f"ASCEND_HOME_PATH={ascend_home or '<unset>'}")
         _ok(f"ASCEND_OPP_PATH={ascend_opp or '<unset>'}")
         _ok(f"CANN version: {_detect_cann_version()}")
+        if cann_public_version:
+            _ok(f"CANN public version: {cann_public_version}")
     else:
         _fail(failures, "ASCEND_HOME_PATH or ASCEND_OPP_PATH must be set")
 
@@ -246,6 +277,7 @@ def main() -> int:
     if triton_ascend_version:
         _ok(f"triton-ascend version: {triton_ascend_version}")
         _check_min_version(failures, "triton-ascend", triton_ascend_version, MIN_TRITON_ASCEND)
+        _check_triton_ascend_cann_compat(failures, triton_ascend_version, cann_public_version)
     elif triton is not None:
         _fail(failures, "triton is importable, but triton-ascend distribution was not found")
     else:
