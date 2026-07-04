@@ -552,6 +552,12 @@ setup(
     package_dir={"fla_npu": str(FLA_NPU_PACKAGE_DIR.relative_to(REPO_ROOT))},
     package_data={"fla_npu": ["custom_aclnn_extension_lib*.so", "opp/**/*"]},
     include_package_data=True,
+    license_files=[
+        "LICENSE",
+        "NOTICE",
+        "LICENSES/BSD-3-Clause.txt",
+        "LICENSES/CANN-Open-Software-License-Agreement-Version-2.0.txt",
+    ],
     distclass=BinaryDistribution,
     cmdclass=CMDCLASS,
     python_requires=">=3.9",

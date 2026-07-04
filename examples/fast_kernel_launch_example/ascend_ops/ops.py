@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # ----------------------------------------------------------------------------
-# Copyright (c) 2026 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
-from typing import List, Optional, Tuple 
+from typing import List, Optional, Tuple
 import torch
 from torch import Tensor
 
@@ -32,7 +34,7 @@ def groupedmatmul(
 ) -> Tensor:
     """
     分组矩阵乘法
-    
+
     Args:
         x: 输入张量列表（必填）
         weight: 权重张量列表（必填）
@@ -48,7 +50,7 @@ def groupedmatmul(
         group_list_type: 分组列表类型，默认为 0
         act_type: 激活类型，默认为 0
         tuning_config: 调优配置，默认为 None
-    
+
     Returns:
         Tensor: 计算结果
     """

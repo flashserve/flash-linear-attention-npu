@@ -1,6 +1,8 @@
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -73,7 +75,7 @@ foreach(compute_unit ${ASCEND_COMPUTE_UNIT})
     set(RESOURCE_PATH ${CMAKE_BINARY_DIR}/autogen/${compute_unit}/aclnnop_resource)
     file(GLOB RESOURCE_CPP ${RESOURCE_PATH}/*.cpp)
     set_source_files_properties(${RESOURCE_CPP} PROPERTIES GENERATED TRUE)
-    add_library(resource_${compute_unit}_static STATIC 
+    add_library(resource_${compute_unit}_static STATIC
                 $<$<TARGET_EXISTS:${OPHOST_NAME}_infer_obj>:$<TARGET_OBJECTS:${OPHOST_NAME}_infer_obj>>
                 $<$<TARGET_EXISTS:${OPHOST_NAME}_tiling_obj>:$<TARGET_OBJECTS:${OPHOST_NAME}_tiling_obj>>
                 $<$<TARGET_EXISTS:${COMMON_NAME}_obj>:$<TARGET_OBJECTS:${COMMON_NAME}_obj>>

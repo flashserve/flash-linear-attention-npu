@@ -181,7 +181,7 @@ def main() -> int:
     parser.add_argument(
         "--skip-torchnpugen",
         action="store_true",
-        help="Skip torchnpugen checks. Intended only for FLA_NPU_SKIP_TORCH_GEN=TRUE.",
+        help="Skip torchnpugen checks. Intended only for internal maintenance builds.",
     )
     args = parser.parse_args()
 

@@ -1,6 +1,8 @@
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -60,7 +62,7 @@ if(UT_TEST_ALL OR OP_HOST_UT)
     target_compile_definitions(${OP_TILING_MODULE_NAME}_cases_obj PRIVATE
             LOG_CPP
       )
-    target_link_libraries(${OP_TILING_MODULE_NAME}_cases_obj 
+    target_link_libraries(${OP_TILING_MODULE_NAME}_cases_obj
       PRIVATE $<BUILD_INTERFACE:intf_llt_pub_asan_cxx17>
       $<$<BOOL:${dlog_FOUND}>:$<BUILD_INTERFACE:dlog_headers>>
       gtest)
@@ -75,7 +77,7 @@ if(UT_TEST_ALL OR OP_HOST_UT)
   function(add_infershape_ut_modules OP_INFERSHAPE_MODULE_NAME)
     # add opinfershape ut common object: transformer_op_infershape_ut_common_obj
     add_library(${OP_INFERSHAPE_MODULE_NAME}_common_obj OBJECT)
-    file(GLOB OP_INFERSHAPE_UT_COMMON_SRC 
+    file(GLOB OP_INFERSHAPE_UT_COMMON_SRC
       ${UT_COMMON_INC}/infer_shape_context_faker.cpp
       ${UT_COMMON_INC}/infer_shape_case_executor.cpp
       ${UT_COMMON_INC}/infer_datatype_context_faker.cpp
@@ -102,7 +104,7 @@ if(UT_TEST_ALL OR OP_HOST_UT)
                                                      ${ASCEND_DIR}/include/ascendc/basic_api
       )
     target_link_libraries(
-      ${OP_INFERSHAPE_MODULE_NAME}_cases_obj 
+      ${OP_INFERSHAPE_MODULE_NAME}_cases_obj
         PRIVATE $<BUILD_INTERFACE:intf_llt_pub_asan_cxx17>
         $<$<BOOL:${dlog_FOUND}>:$<BUILD_INTERFACE:dlog_headers>>
         gtest
@@ -135,12 +137,12 @@ if(UT_TEST_ALL OR OP_API_UT)
       PRIVATE ${JSON_INCLUDE_DIR} ${HI_PYTHON_INC_TEMP} ${UT_PATH}/op_api/stub ${OP_API_UT_COMMON_INC}
               ${ASCEND_DIR}/include ${ASCEND_DIR}/include/aclnn ${ASCEND_DIR}/include/aclnnop
               ${OPAPI_INCLUDE}
-              ${ASCEND_DIR}/pkg_inc 
-              ${ASCEND_DIR}/include/ascendc/basic_api 
+              ${ASCEND_DIR}/pkg_inc
+              ${ASCEND_DIR}/include/ascendc/basic_api
               ${ASCEND_CANN_PACKAGE_PATH}/runtime/pkg_inc
               ${PROJECT_SOURCE_DIR}/tests/ut/framework_normal/common
       )
-    target_link_libraries(${OP_API_MODULE_NAME}_cases_obj 
+    target_link_libraries(${OP_API_MODULE_NAME}_cases_obj
       PRIVATE $<BUILD_INTERFACE:intf_llt_pub_asan_cxx17>
       $<$<BOOL:${dlog_FOUND}>:$<BUILD_INTERFACE:dlog_headers>>
       gtest)
@@ -351,7 +353,7 @@ if(UT_TEST_ALL OR OP_KERNEL_UT)
     else()
       file(GLOB KernelFile "${PROJECT_SOURCE_DIR}/*/${opName}/op_kernel/${opName}.cpp")
     endif()
-    
+
     # find case file
     get_filename_component(ARCH_NAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
     # arch35
@@ -361,7 +363,7 @@ if(UT_TEST_ALL OR OP_KERNEL_UT)
         file(GLOB OPKERNEL_CASES_SRC ${CMAKE_CURRENT_SOURCE_DIR}/test_${opName}*.cpp)
       else()
         return()
-      endif()    
+      endif()
     # op_kernel/arch20/arch22/arch32/arch38
     else()
       list(FIND ARCH_DIRECTORY "arch35" INDEX)
@@ -394,9 +396,9 @@ if(UT_TEST_ALL OR OP_KERNEL_UT)
       add_library(${opName}_${socVersion}_tiling_tmp SHARED ${tilingSrc} $<TARGET_OBJECTS:${COMMON_NAME}_obj>)
       target_include_directories(
         ${opName}_${socVersion}_tiling_tmp
-        PRIVATE ${OPBASE_INC_DIRS} ${ASCEND_DIR}/include/base 
+        PRIVATE ${OPBASE_INC_DIRS} ${ASCEND_DIR}/include/base
                 ${PROJECT_SOURCE_DIR}/common/include
-                ${ASCEND_DIR}/include/experiment 
+                ${ASCEND_DIR}/include/experiment
                 ${ASCEND_DIR}/include/experiment/metadef/common/util
                 ${ASCEND_DIR}/include
         )
@@ -450,7 +452,7 @@ if(UT_TEST_ALL OR OP_KERNEL_UT)
         )
       target_include_directories(
         ${opName}_${socVersion}_cases_obj
-        PRIVATE ${ASCEND_DIR}/include/base/context_builder 
+        PRIVATE ${ASCEND_DIR}/include/base/context_builder
                 ${PROJECT_SOURCE_DIR}/tests/ut/framework_normal/op_kernel
                 ${PROJECT_SOURCE_DIR}/tests/ut/framework_normal/common
                 ${PROJECT_SOURCE_DIR}/common/include/kernel
@@ -505,14 +507,14 @@ if(UT_TEST_ALL OR OP_KERNEL_AICPU_UT)
 
     ## add object: ${opName}_cases_obj
     file(GLOB OPKERNEL_CASES_SRC ${UT_DIR}/tests/ut/op_kernel_aicpu/test_${opName}*.cpp)
-    
+
     message(STATUS "aicpu kernel info: ${opName}, ${KernelFile}, ${OPKERNEL_CASES_SRC}")
 
     add_library(${opName}_cases_obj OBJECT
             ${KernelFile}
             ${OPKERNEL_CASES_SRC}
             )
-    target_compile_options(${opName}_cases_obj PRIVATE 
+    target_compile_options(${opName}_cases_obj PRIVATE
             -g
             )
 

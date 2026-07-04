@@ -1,10 +1,11 @@
 /**
- * Copyright (c) 2025-2026 Tianjin University, Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- */
+ * Copyright (c) 2025-2026 Tianjin University, Ltd.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ */
 
 /*!
  * \file recurrent_gated_delta_rule.h.cpp
@@ -78,7 +79,7 @@ public:
             .Format({ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND});
         this->Attr("scale_value").AttrType(OPTIONAL).Float(1.0);
-        
+
         OpAICoreConfig aicConfig;
         aicConfig.DynamicCompileStaticFlag(true)
             .DynamicFormatFlag(true)

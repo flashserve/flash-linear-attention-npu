@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -647,7 +649,7 @@ class AdpBuilder(opdesc_parser.OpDesc):
                     self._build_mc2_ctx(), self.input_type + self.output_type, self.output_init_value,\
                     self.output_shape_depend_on_compute, self.op_compile_option, abs_rel_kernel_src_path, repr(extend_opt)))
             else:
-                fd.write(COMPILE_OP_API.format(self.op_type, 
+                fd.write(COMPILE_OP_API.format(self.op_type,
                 self.op_type, self.impl_mode_op_info, ', '.join(self.input_name), \
                     ', '.join(self.output_name), self.param_type_dynamic, self._build_mc2_ctx(),\
                     self.input_type + self.output_type, self.output_init_value, self.output_shape_depend_on_compute,\

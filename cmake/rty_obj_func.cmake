@@ -1,6 +1,8 @@
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -281,7 +283,7 @@ macro(add_modules_sources)
   endif()
 
   file(GLOB_RECURSE SUB_OPTILING_SRC ${SOURCE_DIR}/op_tiling/*.cpp)
-  file(GLOB OPTILING_SRCS 
+  file(GLOB OPTILING_SRCS
       ${SOURCE_DIR}/*_tiling*.cpp
       ${SOURCE_DIR}/*fallback*.cpp
       ${SOURCE_DIR}/op_tiling/arch35/*.cpp
@@ -385,7 +387,7 @@ macro(add_modules_sources_with_soc)
   endif()
 
   file(GLOB_RECURSE SUB_OPTILING_SRC ${SOURCE_DIR}/*_tiling*.cpp)
-  file(GLOB OPTILING_SRCS 
+  file(GLOB OPTILING_SRCS
       ${SOURCE_DIR}/*_tiling*.cpp
       ${SOURCE_DIR}/*fallback*.cpp
       ${SOURCE_DIR}/../op_graph/fallback_*.cpp
@@ -442,7 +444,7 @@ macro(add_mc2_modules_sources)
 
   cmake_parse_arguments(MODULE "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
   set(SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
-  
+
    # 获取父目录和祖父目录路径
   get_filename_component(CMAKE_PARENT_DIR ${CMAKE_CURRENT_SOURCE_DIR} DIRECTORY)
   get_filename_component(CMAKE_GRANDPARENT_DIR ${CMAKE_PARENT_DIR} DIRECTORY)
@@ -478,7 +480,7 @@ macro(add_mc2_modules_sources)
     target_sources(${OPHOST_NAME}_infer_obj PRIVATE ${OPINFER_SRCS})
   endif()
 
-  file(GLOB_RECURSE OPTILING_SRCS 
+  file(GLOB_RECURSE OPTILING_SRCS
       ${SOURCE_DIR}/op_tiling/*.cpp
       ${SOURCE_DIR}/../op_graph/fallback_*.cpp
       ${SOURCE_DIR}/../graph_plugin/fallback_*.cpp
@@ -555,7 +557,7 @@ macro(add_graph_plugin_sources)
     endif()
   endif()
 
-  file(GLOB GRAPH_PLUGIN_SRCS 
+  file(GLOB GRAPH_PLUGIN_SRCS
       ${SOURCE_DIR}/*_graph_plugin*.cpp
   )
   if(GRAPH_PLUGIN_SRCS)

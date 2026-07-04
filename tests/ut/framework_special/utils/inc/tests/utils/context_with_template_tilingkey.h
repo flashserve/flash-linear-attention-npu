@@ -1,11 +1,13 @@
 /**
- * Copyright (c) 2025 Tianjin University, Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
- */
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Adapted for flash-linear-attention-npu by Tianjin University.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
+ */
 
 /*!
  * \file context_with_template_tilingkey.h
@@ -41,7 +43,7 @@ public:
     typedef bool (*KernelRunTemplateCbf)(std::function<void(Args...)> func,
                                         uint64_t tilingKey, int64_t blockDim, std::vector<TensorIntf *> &inputs,
                                         std::vector<TensorIntf *> &outputs, uint8_t *workspace, uint8_t *tilingData);
-    
+
     /**
      * 属性设置
      * 设置算子 Kernel 处理回调函数(带模板参数)
@@ -99,7 +101,7 @@ protected:
         std::streambuf *stdOut = std::cout.rdbuf(fmkFileHdl.rdbuf());
     #endif
         /* 调用回调函数, 触发具体算子 Kernel 执行 */
-        ICPU_SET_TILING_KEY(tilingKey_);    
+        ICPU_SET_TILING_KEY(tilingKey_);
         bool ret = kernelRunTemplateCbf_(templateKernelFunc_, tilingKey_, tilingBlockDim_, inputs_, outputs_, workspacePtr_,
                                 tilingData_.data());
 

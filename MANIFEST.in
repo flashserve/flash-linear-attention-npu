@@ -1,11 +1,13 @@
 include README.md
 include LICENSE
+include NOTICE
 include requirements.txt
 include build.sh
 include CMakeLists.txt
 include version.cmake
 include version.info
 include classify_rule.yaml
+recursive-include LICENSES *
 recursive-include cmake *
 recursive-include common *
 recursive-include scripts *

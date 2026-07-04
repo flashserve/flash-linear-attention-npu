@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -248,7 +250,7 @@ class GenOpResourceIni:
             # transformer aic*.json 适配
             ops_info = self._build_dir / "custom/op_impl/ai_core/tbe/config" / self._soc_version
             ops_info = list(ops_info.glob(f"aic-{self._soc_version}-ops-info*.json"))
-            self._ops_info = ops_info[0] if len(ops_info) != 0 else None        
+            self._ops_info = ops_info[0] if len(ops_info) != 0 else None
         self._op_resource_path = self._build_dir / "autogen" / self._soc_version / "aclnnop_resource"
         self._op_res: Dict[str, OpResource] = defaultdict(OpResource)
         self._l0op_list = []
@@ -504,7 +506,7 @@ const OP_BINARY_RES& {op_type}KernelResource() {{
             self._op_res[ops].runtime_kb_files.append(kb_json)
             self._op_res[ops].runtime_kb_files.sort(key=lambda p: p.name)
         return self._op_res
-    
+
 
     def _analyze_ops_l0op(self):
         opapi_symbol = self._build_dir / "opapi_transformer.txt"
@@ -516,7 +518,7 @@ const OP_BINARY_RES& {op_type}KernelResource() {{
             ):
             self._l0op_list.append(op_type.split("_kernelName_")[0])
         self._l0op_list.sort()
-    
+
 
     def _save_op_resource(self, op_type, res_content):
         res_cpp_file = self._op_resource_path / f"{op_type}_op_resource.cpp"
@@ -647,7 +649,7 @@ const OP_BINARY_RES& {op_type}KernelResource() {{
             "tuning_helper_declaration": tuning_helper_declaration,
             "tuning_reg_func": tuning_reg_func,
         }
-    
+
     def _gen_binary_resource_code(self, op_type: str) -> str:
         """二进制"""
         # kernel

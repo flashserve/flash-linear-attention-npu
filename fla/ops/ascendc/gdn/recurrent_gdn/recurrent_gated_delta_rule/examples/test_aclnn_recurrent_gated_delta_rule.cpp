@@ -1,10 +1,11 @@
 /**
- * Copyright (c) 2025 Tianjin University, Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- */
+ * Copyright (c) 2025 Tianjin University, Ltd.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ */
 
 /*!
  * \file test_aclnn_nsa_compress.cpp
@@ -128,7 +129,7 @@ int main()
     int32_t headVNum = 8;
     int32_t dimV = 128;
     int32_t dimK = 128;
- 
+
 
     std::vector<int64_t> stateShape = {batchSize * mtp, headVNum, dimV, dimK};
     std::vector<int64_t> qkShape = {batchSize * mtp, headKNum, dimK};
@@ -147,7 +148,7 @@ int main()
     std::vector<int32_t> numAccTokHostData(batchSize, 1);
     for (int i = 0; i < stateRefHostData.size(); i++) {
         stateRefHostData[i] = 1;
-    } 
+    }
     for (int i = 0; i < queryHostData.size(); i++) {
         queryHostData[i] = 1;
     }

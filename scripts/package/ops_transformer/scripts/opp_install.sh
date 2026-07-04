@@ -1,7 +1,9 @@
 #!/bin/bash
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -338,7 +340,7 @@ install_es_whl_package() {
  	  exit 1
  	fi
 }
- 	 
+
 install_es_whl() {
  	local es_whl_path="${OPS_SOURCE_DIR}/es_packages/whl/es_transformer-1.0.0-py3-none-any.whl"
  	local python_es_whl_name="es_transformer"

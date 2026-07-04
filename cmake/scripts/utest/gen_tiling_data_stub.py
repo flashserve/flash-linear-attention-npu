@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -207,7 +209,7 @@ class Process:
         if isTemplateTilingKey:
             lines = convert_template_tilingkey(ori_file)
             lines = lines.splitlines()
-        else: 
+        else:
             ori_file, existed_flag = check_if_new_tiling_file_path_existed(ori_file)
             if existed_flag:
                 lines = convert_to_old_tiling_struct_style(ori_file)
@@ -275,7 +277,7 @@ class Process:
              "Init{struct_name}(tiling_arg, &tiling_data)\n"
              "\n").format(struct_name=struct_name)
         return rst_source
-    
+
     @classmethod
     def _get_tiling_whole(cls, ori_file: Path, isTemplateTilingKey: bool = False) -> str:
         with open(ori_file, 'r') as f:

@@ -1,6 +1,8 @@
 /**
- * Copyright (c) 2025 Tianjin University, Ltd.
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Adapted for flash-linear-attention-npu by Tianjin University.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -12,14 +14,14 @@
  * \brief
  */
 
-#include "../../../op_kernel/add_example.cpp"  
+#include "../../../op_kernel/add_example.cpp"
 #include "add_example_tiling.h"
 #include <array>
 #include <vector>
 #include <iostream>
 #include <string>
 #include <cstdint>
-#include <cstdlib>  
+#include <cstdlib>
 #include "gtest/gtest.h"
 #include "tikicpulib.h"
 #include "data_utils.h"
@@ -83,7 +85,7 @@ TEST_F(AddExampleTest, test_case_0)
         z,
         workspace,
         (uint8_t *)(tilingDatafromBin));
-    
+
     fileName = "./add_example_data/float32_output_add_example.bin";
     WriteFile(fileName, z, zByteSize);
 

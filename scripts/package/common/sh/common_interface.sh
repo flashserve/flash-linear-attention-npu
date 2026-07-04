@@ -2,6 +2,7 @@
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2025 Tianjin University, Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -45,7 +46,7 @@ py_version_check(){
                     return 0
                 fi
             done
-            
+
             echo "[Common] [$cur_date] [WARNING]: $python_version is not in Python3.7.x, Python3.8.x, Python3.9.x, Python3.10.x, Python3.11.x."
             return 1
         else

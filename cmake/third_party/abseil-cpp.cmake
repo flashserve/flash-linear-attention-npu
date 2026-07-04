@@ -2,6 +2,7 @@
 # This program is free software, you can redistribute it and/or modify it.
 # Copyright (c) 2025 Tianjin University, Ltd.
 # This file is a part of the CANN Open Software.
+# Licensed under CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
@@ -41,7 +42,7 @@ else()
       message(STATUS "[ThirdPartyLib][abseil-cpp] found in ${REQ_URL}.")
   elseif(EXISTS "${CANN_3RD_LIB_PATH}/${ABSEIL_VERSION_PKG}")
       message(STATUS "Found abseil-cpp archive in ${CANN_3RD_LIB_PATH}, moving to pkg")
- 	    file(RENAME "${CANN_3RD_LIB_PATH}/${ABSEIL_VERSION_PKG}" "${CANN_3RD_LIB_PATH}/pkg/${ABSEIL_VERSION_PKG}")
+        file(RENAME "${CANN_3RD_LIB_PATH}/${ABSEIL_VERSION_PKG}" "${CANN_3RD_LIB_PATH}/pkg/${ABSEIL_VERSION_PKG}")
       set(REQ_URL "file://${CANN_3RD_LIB_PATH}/pkg/${ABSEIL_VERSION_PKG}")
   else()
     set(REQ_URL "https://gitcode.com/cann-src-third-party/abseil-cpp/releases/download/20230802.1/abseil-cpp-20230802.1.tar.gz")
@@ -56,7 +57,7 @@ else()
                       CONFIGURE_COMMAND ""
                       BUILD_COMMAND ""
                       INSTALL_COMMAND ""
-                      EXCLUDE_FROM_ALL TRUE 
+                      EXCLUDE_FROM_ALL TRUE
   )
 
   ExternalProject_Get_Property(abseil_build_transformer SOURCE_DIR)

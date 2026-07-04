@@ -1,11 +1,13 @@
 /**
- * Copyright (c) 2025 Tianjin University, Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
- */
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Adapted for flash-linear-attention-npu by Tianjin University.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
+ */
 
 #ifndef OPS_TRANSFORMER_DEV_TESTS_UT_COMMON_TILING_CONTEXT_FAKER_H
 #define OPS_TRANSFORMER_DEV_TESTS_UT_COMMON_TILING_CONTEXT_FAKER_H
@@ -19,10 +21,10 @@ class TilingContextPara {
 public:
     class TensorDescription {
     public:
-        TensorDescription(const gert::StorageShape& shape, 
-                          ge::DataType dtype, 
-                          ge::Format format, 
-                          bool isConst = false, 
+        TensorDescription(const gert::StorageShape& shape,
+                          ge::DataType dtype,
+                          ge::Format format,
+                          bool isConst = false,
                           void* constValue = nullptr) :
             shape_(shape), dtype_(dtype), format_(format), isConst_(isConst), constValue_(constValue) {}
     public:
@@ -50,7 +52,7 @@ public:
                       uint64_t coreNum = 64,
                       uint64_t ubSize = 262144,
                       uint64_t tilingDataSize = 4096,
-                      const std::string socInfoString = "") : 
+                      const std::string socInfoString = "") :
                       opName_(opName),
                       inputTensorDesc_(inputTensorDesc),
                       outputTensorDesc_(outputTensorDesc),
@@ -70,7 +72,7 @@ public:
                       uint64_t coreNum = 64,
                       uint64_t ubSize = 262144,
                       uint64_t tilingDataSize = 4096,
-                      const std::string socInfoString = "") : 
+                      const std::string socInfoString = "") :
                       opName_(opName),
                       inputTensorDesc_(inputTensorDesc),
                       outputTensorDesc_(outputTensorDesc),
@@ -92,7 +94,7 @@ public:
                       uint64_t coreNum = 64,
                       uint64_t ubSize = 262144,
                       uint64_t tilingDataSize = 4096,
-                      const std::string socInfoString = "") : 
+                      const std::string socInfoString = "") :
                       opName_(opName),
                       inputTensorDesc_(inputTensorDesc),
                       outputTensorDesc_(outputTensorDesc),
@@ -116,7 +118,7 @@ public:
                       uint64_t coreNum = 64,
                       uint64_t ubSize = 262144,
                       uint64_t tilingDataSize = 4096,
-                      const std::string socInfoString = "") : 
+                      const std::string socInfoString = "") :
                       opName_(opName),
                       inputTensorDesc_(inputTensorDesc),
                       outputTensorDesc_(outputTensorDesc),
@@ -128,15 +130,15 @@ public:
                       coreNum_(coreNum),
                       ubSize_(ubSize),
                       tilingDataSize_(tilingDataSize) {}
-    
+
     TilingContextPara(const std::string& opName,
                       const std::vector<TensorDescription>& inputTensorDesc,
                       const std::vector<TensorDescription>& outputTensorDesc,
                       const std::vector<OpAttr>& attrs,
                       void* compileInfo,
-                      const std::string& socVersion,                   
+                      const std::string& socVersion,
                       const std::string socInfoString,
-                      uint64_t tilingDataSize) : 
+                      uint64_t tilingDataSize) :
                       opName_(opName),
                       inputTensorDesc_(inputTensorDesc),
                       outputTensorDesc_(outputTensorDesc),
@@ -145,16 +147,16 @@ public:
                       socVersion_(socVersion),
                       socInfoString_(socInfoString),
                       tilingDataSize_(tilingDataSize) {}
-    
+
     TilingContextPara(const std::string& opName,
                       const std::vector<TensorDescription>& inputTensorDesc,
                       const std::vector<TensorDescription>& outputTensorDesc,
                       const std::vector<OpAttr>& attrs,
                       void* compileInfo,
-                      const std::string& socVersion,                   
+                      const std::string& socVersion,
                       const std::string socInfoString,
                       uint64_t tilingDataSize,
-                      int32_t deterministicInfo) : 
+                      int32_t deterministicInfo) :
                       opName_(opName),
                       inputTensorDesc_(inputTensorDesc),
                       outputTensorDesc_(outputTensorDesc),

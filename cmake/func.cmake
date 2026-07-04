@@ -1,6 +1,8 @@
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -112,7 +114,7 @@ function(op_add_subdirectory OP_LIST OP_DIR_LIST)
             if (NOT EXISTS "${OP_DIR}/tests/CMakeLists.txt")
                 continue()
             endif()
-            
+
             file(READ "${OP_DIR}/tests/CMakeLists.txt" CML_CONTENT)
             if (CML_CONTENT MATCHES "OpsTest_Level2_AddOp")
                 set(UTEST_FRAMEWORK_OLD TRUE CACHE BOOL "UTEST_FRAMEWORK_OLD" FORCE)
@@ -950,7 +952,7 @@ endfunction()
 macro(replace_cur_major_minor_ver)
     string(REPLACE CUR_MAJOR_MINOR_VER "${CANN_VERSION_${CANN_VERSION_CURRENT_PACKAGE}_VERSION_MAJOR_MINOR}" depend "${depend}")
 endmacro()
- 	 
+
 # 设置包和版本号
 function(set_package name)
     cmake_parse_arguments(VERSION "" "VERSION" "" ${ARGN})
@@ -970,7 +972,7 @@ function(set_package name)
     set(CANN_VERSION_${name}_BUILD_DEPS PARENT_SCOPE)
     set(CANN_VERSION_${name}_RUN_DEPS PARENT_SCOPE)
 endfunction()
- 	 
+
 # 设置构建依赖
 function(set_build_dependencies pkg_name depend)
     if(NOT CANN_VERSION_CURRENT_PACKAGE)
@@ -986,7 +988,7 @@ function(set_build_dependencies pkg_name depend)
     list(APPEND CANN_VERSION_${CANN_VERSION_CURRENT_PACKAGE}_BUILD_DEPS "${pkg_name}" "${depend}")
     set(CANN_VERSION_${CANN_VERSION_CURRENT_PACKAGE}_BUILD_DEPS "${CANN_VERSION_${CANN_VERSION_CURRENT_PACKAGE}_BUILD_DEPS}" PARENT_SCOPE)
 endfunction()
- 	 
+
 # 设置运行依赖
 function(set_run_dependencies pkg_name depend)
     if(NOT CANN_VERSION_CURRENT_PACKAGE)
@@ -1002,7 +1004,7 @@ function(set_run_dependencies pkg_name depend)
     list(APPEND CANN_VERSION_${CANN_VERSION_CURRENT_PACKAGE}_RUN_DEPS "${pkg_name}" "${depend}")
     set(CANN_VERSION_${CANN_VERSION_CURRENT_PACKAGE}_RUN_DEPS "${CANN_VERSION_${CANN_VERSION_CURRENT_PACKAGE}_RUN_DEPS}" PARENT_SCOPE)
 endfunction()
- 	 
+
 # 检查构建依赖
 function(check_pkg_build_deps pkg_name)
     execute_process(
@@ -1013,7 +1015,7 @@ function(check_pkg_build_deps pkg_name)
         message(FATAL_ERROR "Check ${pkg_name} build dependencies failed!")
     endif()
 endfunction()
- 	 
+
 # 添加生成version.info的目标
 # 目标名格式为：version_${包名}_info
 function(add_version_info_targets)

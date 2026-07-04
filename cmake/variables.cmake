@@ -1,6 +1,8 @@
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -168,7 +170,7 @@ set(OP_TILING_INCLUDE
   ${OPS_TRANSFORMER_DIR}/common/include
   ${OPS_TRANSFORMER_DIR}/common/include/
   ${OPS_TRANSFORMER_DIR}/common/stub/op_tiling
-  
+
    ${OPS_TRANSFORMER_DIR}/mc2/common
    ${OPS_TRANSFORMER_DIR}/mc2/common/utils
    ${OPS_TRANSFORMER_DIR}/mc2/common/op_host/op_tiling

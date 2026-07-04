@@ -1,6 +1,8 @@
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -127,9 +129,9 @@ if(UT_TEST_ALL OR OP_HOST_UT)
       POST_BUILD
       COMMAND
         ${CMAKE_COMMAND} -E env LD_LIBRARY_PATH=$ENV{LD_LIBRARY_PATH}
-        valgrind 
+        valgrind
           --undef-value-errors=no
-          --leak-check=full 
+          --leak-check=full
           --log-file=valgrind_${OP_HOST_UT_EXE}.log
           ./${OP_HOST_UT_EXE}
       COMMENT "Run ops op_host utest by valgrind, output saved to valgrind_${OP_HOST_UT_EXE}.log"

@@ -1,11 +1,13 @@
 /**
- * Copyright (c) 2025 Tianjin University, Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
- */
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Adapted for flash-linear-attention-npu by Tianjin University.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
+ */
 
 #ifndef OPS_TRANSFORMER_DEV_TESTS_UT_COMMON_INFER_SHAPE_CONTEXT_FAKER_H
 #define OPS_TRANSFORMER_DEV_TESTS_UT_COMMON_INFER_SHAPE_CONTEXT_FAKER_H
@@ -41,7 +43,7 @@ public:
     InfershapeContextPara(const std::string& opName,
                           const std::vector<TensorDescription>& inputTensorDesc,
                           const std::vector<TensorDescription>& outputTensorDesc,
-                          const std::vector<OpAttr>& attrs) : 
+                          const std::vector<OpAttr>& attrs) :
                           opName_(opName),
                           inputTensorDesc_(inputTensorDesc),
                           outputTensorDesc_(outputTensorDesc),
@@ -49,7 +51,7 @@ public:
 
     InfershapeContextPara(const std::string& opName,
                           const std::vector<TensorDescription>& inputTensorDesc,
-                          const std::vector<TensorDescription>& outputTensorDesc) : 
+                          const std::vector<TensorDescription>& outputTensorDesc) :
                           opName_(opName),
                           inputTensorDesc_(inputTensorDesc),
                           outputTensorDesc_(outputTensorDesc) {}
@@ -59,7 +61,7 @@ public:
                           const std::vector<TensorDescription>& outputTensorDesc,
                           const std::vector<OpAttr>& attrs,
                           const std::vector<uint32_t>& inputInstanceNum,
-                          const std::vector<uint32_t>& outputInstanceNum) : 
+                          const std::vector<uint32_t>& outputInstanceNum) :
                           opName_(opName),
                           inputTensorDesc_(inputTensorDesc),
                           outputTensorDesc_(outputTensorDesc),
@@ -71,7 +73,7 @@ public:
                           const std::vector<TensorDescription>& inputTensorDesc,
                           const std::vector<TensorDescription>& outputTensorDesc,
                           const std::vector<uint32_t>& inputInstanceNum,
-                          const std::vector<uint32_t>& outputInstanceNum) : 
+                          const std::vector<uint32_t>& outputInstanceNum) :
                           opName_(opName),
                           inputTensorDesc_(inputTensorDesc),
                           outputTensorDesc_(outputTensorDesc),
