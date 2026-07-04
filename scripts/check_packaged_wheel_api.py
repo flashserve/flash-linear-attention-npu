@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 
 ASCENDC_NAMES = (
@@ -28,6 +29,10 @@ TRITON_NAMES = (
     "l2norm",
     "solve_tril",
 )
+REQUIRED_ASCENDC_CONFIGS = (
+    "recompute_wu_fwd.json",
+    "recompute_w_u_fwd.json",
+)
 
 
 def _require_attr(obj, name: str, owner: str) -> None:
@@ -35,12 +40,32 @@ def _require_attr(obj, name: str, owner: str) -> None:
         raise AssertionError(f"{owner}.{name} is missing")
 
 
+def _require_packaged_opp_configs(fla_npu_module) -> None:
+    package_root = Path(fla_npu_module.__file__).resolve().parent
+    config_dirs = list(
+        (package_root / "opp" / "vendors").glob(
+            "*/op_impl/ai_core/tbe/kernel/config/*"
+        )
+    )
+    if not config_dirs:
+        raise AssertionError("packaged OPP kernel config directory is missing")
+
+    missing = []
+    for config_name in REQUIRED_ASCENDC_CONFIGS:
+        if not any((config_dir / config_name).exists() for config_dir in config_dirs):
+            missing.append(config_name)
+    if missing:
+        raise AssertionError(
+            "packaged OPP kernel configs are missing: " + ", ".join(missing)
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-triton", action="store_true", help="Only validate Ascend C APIs.")
     args = parser.parse_args()
 
-    import fla_npu  # noqa: F401
+    import fla_npu
     import torch_npu
     from fla_npu.ops import ascendc
 
@@ -49,6 +74,8 @@ def main() -> int:
         _require_attr(ascendc, f"npu_{name}", "fla_npu.ops.ascendc")
         _require_attr(torch_npu.ops, name, "torch_npu.ops")
         _require_attr(torch_npu.ops, f"npu_{name}", "torch_npu.ops")
+
+    _require_packaged_opp_configs(fla_npu)
 
     if ascendc.BACKWARD_OPS.get("causal_conv1d") != "causal_conv1d_bwd":
         raise AssertionError("causal_conv1d backward binding metadata is missing")

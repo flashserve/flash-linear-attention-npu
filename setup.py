@@ -57,6 +57,9 @@ TORCHNPUGEN_MODULES = (
     "torchnpugen.gen_backend_stubs",
     "torchnpugen.struct.gen_struct_opapi",
 )
+RUNTIME_CONFIG_ALIASES = {
+    "recompute_wu_fwd": "recompute_w_u_fwd",
+}
 
 
 def _read_requirements():
@@ -373,6 +376,36 @@ def _write_vendors_config(vendor_dir):
     config_file.write_text(f"load_priority={vendor_dir.name}\n", encoding="utf-8")
 
 
+def _ensure_runtime_config_aliases(vendor_dir):
+    config_root = (
+        Path(vendor_dir)
+        / "op_impl"
+        / "ai_core"
+        / "tbe"
+        / "kernel"
+        / "config"
+    )
+    if not config_root.exists():
+        return
+
+    copied = []
+    for soc_dir in config_root.iterdir():
+        if not soc_dir.is_dir():
+            continue
+        for source_name, alias_name in RUNTIME_CONFIG_ALIASES.items():
+            source = soc_dir / f"{source_name}.json"
+            alias = soc_dir / f"{alias_name}.json"
+            if source.exists() and not alias.exists():
+                shutil.copy2(source, alias)
+                copied.append(alias.relative_to(Path(vendor_dir)))
+
+    if copied:
+        print(
+            "[fla-npu build] Added runtime OPP config aliases: "
+            + ", ".join(str(path) for path in copied)
+        )
+
+
 def _has_glob(root, pattern):
     return any(Path(root).glob(pattern))
 
@@ -430,6 +463,7 @@ def _stage_run_package(run_file, opp_root):
     vendor_dir = _find_staged_vendor_dir(opp_root)
     _write_vendors_config(vendor_dir)
     _rewrite_set_env(vendor_dir)
+    _ensure_runtime_config_aliases(vendor_dir)
 
     op_api_lib = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
     if not op_api_lib.exists():
