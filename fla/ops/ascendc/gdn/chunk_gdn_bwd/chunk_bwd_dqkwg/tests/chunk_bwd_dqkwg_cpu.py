@@ -85,12 +85,12 @@ def chunk_bwd_dqkwg_cpu(
     scale: float,
     cu_seqlens: torch.LongTensor,
     chunk_size: int = 64,
-    benchmark = False
+    run_fp64 = False
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     CPU Equivalent of chunk_bwd_kernel_dqkwg.
     """
-    if benchmark:
+    if run_fp64:
         calc_type = torch.float64
         datatype = torch.float64
         gtype = torch.float64
@@ -410,5 +410,7 @@ def chunk_bwd_dqkwg_cpu(
                 # 但如果发生，通常 cu_seqlens[i] 是第 i 个样本的长度。
                 # 简化起见，我们假设 input 是 packed flat tensor 如果 cu_seqlens 存在。
                 pass 
-
+    if HK != HV:
+        dq = dq.view(B, T, HK, HV // HK, K).sum(3)
+        dk = dk.view(B, T, HK, HV // HK, K).sum(3)
     return dq, dk, dw, dg

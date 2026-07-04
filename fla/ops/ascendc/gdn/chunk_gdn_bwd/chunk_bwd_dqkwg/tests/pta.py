@@ -33,7 +33,7 @@ if __name__ == "__main__":
     chunk_size = 128
     from cases import get_case_info
     case = get_case_info(case_name)
-    device_id = 6
+    device_id = 5
     
 
     dtype = torch.float16
@@ -68,6 +68,7 @@ if __name__ == "__main__":
         B = 1  ##变长只支持B=1
         T = cu_seqlens_torch[-1]
         chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
+        chunk_indices_torch = torch.tensor(chunk_indices)
         num_chunks = len(chunk_indices) // 2
         # print("chunk_indices",chunk_indices)
     else:
@@ -78,7 +79,7 @@ if __name__ == "__main__":
     RANDOM_DATA = True
     RUN_CPU = True
     SAVE_FILES = True
-    BENCHMARK = True
+    FP64 = True
 
     if SAVE_FILES:
         os.makedirs(f'{data_path}/{case_name}/in/', exist_ok=True)
@@ -108,6 +109,9 @@ if __name__ == "__main__":
             torch.save(w, f"{data_path}/{case_name}/in/w_cpu.pt")
             torch.save(h, f"{data_path}/{case_name}/in/h_cpu.pt")
             torch.save(dh, f"{data_path}/{case_name}/in/dh_cpu.pt")
+            if cu_seqlens is not None:
+                torch.save(cu_seqlens_torch, f"{data_path}/{case_name}/in/cu_seqlen_cpu.pt")
+                torch.save(chunk_indices_torch, f"{data_path}/{case_name}/in/chunk_indices_cpu.pt")
     else:
         # q=torch.load("/home/huangjunzhe/GDN/data/model/after_cpu/q_cpu.pt", weights_only=False)
         # k=torch.load("/home/huangjunzhe/GDN/data/model/after_cpu/k_cpu.pt", weights_only=False)
@@ -127,6 +131,11 @@ if __name__ == "__main__":
         dv=torch.load(f"{data_path}/{case_name}/in/dv_cpu.pt", weights_only=False)
         do=torch.load(f"{data_path}/{case_name}/in/do_cpu.pt", weights_only=False)
         dh=torch.load(f"{data_path}/{case_name}/in/dh_cpu.pt", weights_only=False)
+        if cu_seqlens is not None:
+            cu_seqlens_torch=torch.load(f"{data_path}/{case_name}/in/cu_seqlen_cpu.pt", weights_only=False)
+            chunk_indices_torch=torch.load(f"{data_path}/{case_name}/in/chunk_indices_cpu.pt", weights_only=False)
+            cu_seqlens = cu_seqlens_torch.tolist()
+            chunk_indices = chunk_indices_torch.tolist()
 
     q = q.to(dtype).to(calc_type)
     k = k.to(dtype).to(calc_type)
@@ -171,6 +180,7 @@ if __name__ == "__main__":
     # cu_seqlens_npu = cu_seqlens if cu_seqlens is not None else None
     chunk_indices_npu = chunk_indices if cu_seqlens is not None else None
     down_tri = q_npu
+    print("start torch.ops.npu.npu_chunk_bwd_dqkwg")
     dq_npu, dk_npu, dw_npu, dg_npu = torch.ops.npu.npu_chunk_bwd_dqkwg(
         q_npu, k_npu, v_npu, g_npu, h_npu, do_npu, dh_npu, dv_npu, chunk_size, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices_npu, w=None, g_gamma=None, scale=scale, transpose_state_layout=None
        #q_npu, k_npu, v_npu, g_npu, h_npu, do_npu, dh_npu, dv_npu, chunk_size, cu_seqlens=cu_seqlens, w=None, g_gamma=None, chunk_indices=chunk_indices_npu, scale=scale, transpose_state_layout=None
@@ -203,15 +213,15 @@ if __name__ == "__main__":
         dq, dk, dw, dg = chunk_bwd_dqkwg_cpu(
             q, k, v, do, h, dh, w, g, dv, scale, cu_seqlens_torch, chunk_size
         )
-        if BENCHMARK:
-            print("=====start cpu benchmark=========")
-            dq_benchmark, dk_benchmark, dw_benchmark, dg_benchmark = chunk_bwd_dqkwg_cpu(
-                q, k, v, do, h, dh, w, g, dv, scale, cu_seqlens_torch, chunk_size, benchmark = True
+        if FP64:
+            print("=====start cpu run_fp64=========")
+            dq_fp64, dk_fp64, dw_fp64, dg_fp64 = chunk_bwd_dqkwg_cpu(
+                q, k, v, do, h, dh, w, g, dv, scale, cu_seqlens_torch, chunk_size, run_fp64 = True
             )
-            dq_benchmark = torch.transpose(dq_benchmark, 1, 2).cpu()
-            dk_benchmark = torch.transpose(dk_benchmark, 1, 2).cpu()
-            dw_benchmark = torch.transpose(dw_benchmark, 1, 2).cpu()
-            dg_benchmark = torch.transpose(dg_benchmark, 1, 2).cpu()
+            dq_fp64 = torch.transpose(dq_fp64, 1, 2).cpu()
+            dk_fp64 = torch.transpose(dk_fp64, 1, 2).cpu()
+            dw_fp64 = torch.transpose(dw_fp64, 1, 2).cpu()
+            dg_fp64 = torch.transpose(dg_fp64, 1, 2).cpu()
         # dq = dq.to(dtype)
         # dk = dk.to(dtype)
         # dw = dw.to(dtype)
@@ -239,12 +249,12 @@ if __name__ == "__main__":
                 torch.save(dw.detach(),f"{data_path}/{case_name}/out/dw_cpu.pt")
                 torch.save(dg.detach(),f"{data_path}/{case_name}/out/dg_cpu.pt")
                 print(f"cpu files saved to {data_path}/{case_name}/out/ .")
-                if BENCHMARK:
-                    torch.save(dq_benchmark.detach(),f"{data_path}/{case_name}/out/dq_cpu_benchmark.pt")
-                    torch.save(dk_benchmark.detach(),f"{data_path}/{case_name}/out/dk_cpu_benchmark.pt")
-                    torch.save(dw_benchmark.detach(),f"{data_path}/{case_name}/out/dw_cpu_benchmark.pt")
-                    torch.save(dg_benchmark.detach(),f"{data_path}/{case_name}/out/dg_cpu_benchmark.pt")
-                    print(f"cpu benchmark files saved to {data_path}/{case_name}/out/ .")
+                if FP64:
+                    torch.save(dq_fp64.detach(),f"{data_path}/{case_name}/out/dq_cpu_fp64.pt")
+                    torch.save(dk_fp64.detach(),f"{data_path}/{case_name}/out/dk_cpu_fp64.pt")
+                    torch.save(dw_fp64.detach(),f"{data_path}/{case_name}/out/dw_cpu_fp64.pt")
+                    torch.save(dg_fp64.detach(),f"{data_path}/{case_name}/out/dg_cpu_fp64.pt")
+                    print(f"cpu run_fp64 files saved to {data_path}/{case_name}/out/ .")
                 
     if SAVE_FILES:
         torch.save(dq_npu.detach(),f"{data_path}/{case_name}/out/dq_npu.pt")
