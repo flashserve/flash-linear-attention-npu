@@ -313,15 +313,6 @@ jobs:
           ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 1
           path: repo
-        env:
-          http_proxy: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          https_proxy: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          all_proxy: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          no_proxy: ${{ secrets.NPU_CI_NO_PROXY }}
-          HTTP_PROXY: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          HTTPS_PROXY: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          ALL_PROXY: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          NO_PROXY: ${{ secrets.NPU_CI_NO_PROXY }}
 
       - name: 等待后重试拉取目标分支代码
         if: steps.checkout_pr_1.outcome == 'failure'
@@ -340,15 +331,6 @@ jobs:
           ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 1
           path: repo
-        env:
-          http_proxy: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          https_proxy: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          all_proxy: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          no_proxy: ${{ secrets.NPU_CI_NO_PROXY }}
-          HTTP_PROXY: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          HTTPS_PROXY: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          ALL_PROXY: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          NO_PROXY: ${{ secrets.NPU_CI_NO_PROXY }}
 
       - name: 再次等待后重试拉取目标分支代码
         if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
@@ -365,15 +347,6 @@ jobs:
           ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 1
           path: repo
-        env:
-          http_proxy: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          https_proxy: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          all_proxy: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          no_proxy: ${{ secrets.NPU_CI_NO_PROXY }}
-          HTTP_PROXY: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          HTTPS_PROXY: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          ALL_PROXY: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          NO_PROXY: ${{ secrets.NPU_CI_NO_PROXY }}
 
       - name: 现场合并 PR 代码
         working-directory: repo
@@ -402,14 +375,6 @@ jobs:
         env:
           NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
-          http_proxy: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          https_proxy: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          all_proxy: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          no_proxy: ${{ secrets.NPU_CI_NO_PROXY }}
-          HTTP_PROXY: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          HTTPS_PROXY: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          ALL_PROXY: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          NO_PROXY: ${{ secrets.NPU_CI_NO_PROXY }}
 
       - name: 拉取可信 CI 脚本（第 1 次）
         id: checkout_trusted_ci_1
@@ -420,15 +385,6 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
           path: trusted-ci
-        env:
-          http_proxy: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          https_proxy: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          all_proxy: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          no_proxy: ${{ secrets.NPU_CI_NO_PROXY }}
-          HTTP_PROXY: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          HTTPS_PROXY: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          ALL_PROXY: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          NO_PROXY: ${{ secrets.NPU_CI_NO_PROXY }}
 
       - name: 等待后重试拉取可信 CI 脚本
         if: steps.checkout_trusted_ci_1.outcome == 'failure'
@@ -446,15 +402,6 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
           path: trusted-ci
-        env:
-          http_proxy: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          https_proxy: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          all_proxy: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          no_proxy: ${{ secrets.NPU_CI_NO_PROXY }}
-          HTTP_PROXY: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          HTTPS_PROXY: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          ALL_PROXY: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          NO_PROXY: ${{ secrets.NPU_CI_NO_PROXY }}
 
       - name: 再次等待后重试拉取可信 CI 脚本
         if: steps.checkout_trusted_ci_1.outcome == 'failure' && steps.checkout_trusted_ci_2.outcome == 'failure'
@@ -470,15 +417,6 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
           path: trusted-ci
-        env:
-          http_proxy: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          https_proxy: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          all_proxy: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          no_proxy: ${{ secrets.NPU_CI_NO_PROXY }}
-          HTTP_PROXY: ${{ secrets.NPU_CI_HTTP_PROXY || secrets.NPU_CI_PROXY }}
-          HTTPS_PROXY: ${{ secrets.NPU_CI_HTTPS_PROXY || secrets.NPU_CI_PROXY }}
-          ALL_PROXY: ${{ secrets.NPU_CI_ALL_PROXY || secrets.NPU_CI_PROXY }}
-          NO_PROXY: ${{ secrets.NPU_CI_NO_PROXY }}
 
       - name: 使用可信 CI 脚本
         run: |
