@@ -1,13 +1,16 @@
 import importlib
 from importlib import metadata as importlib_metadata
 import importlib.util
+import hashlib
 import os
 import shutil
 import stat
 import subprocess
 import sys
+import sysconfig
 import re
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from packaging.version import InvalidVersion, Version
@@ -77,6 +80,89 @@ def _read_requirements():
 
 def _env_flag(name):
     return os.getenv(name, "FALSE").upper() in {"1", "TRUE", "YES", "ON"}
+
+
+def _env_value(name):
+    return os.getenv(name, "").strip()
+
+
+def _build_jobs_arg():
+    jobs = _env_value("FLA_NPU_BUILD_JOBS")
+    if not jobs:
+        return []
+    if not re.fullmatch(r"[1-9]\d*", jobs):
+        raise RuntimeError(f"FLA_NPU_BUILD_JOBS must be a positive integer, got {jobs!r}")
+    return [f"-j{jobs}"]
+
+
+def _reuse_torch_extension_path():
+    value = _env_value("FLA_NPU_REUSE_TORCH_CUSTOM_SO")
+    return Path(value).expanduser().resolve() if value else None
+
+
+def _torch_extension_suffix():
+    return sysconfig.get_config_var("EXT_SUFFIX") or ".so"
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_fast_npu_smi_shim():
+    shim_dir = REPO_ROOT / "build" / ".fla_npu_build_tools"
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    shim = shim_dir / "npu-smi"
+    # Only shadow `npu-smi info`. Other subcommands are forwarded to the real
+    # binary where possible so build helpers that expect npu-smi still behave normally.
+    shim.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                'if [ "${1:-}" = "info" ]; then',
+                "  exit 1",
+                "fi",
+                "for candidate in /usr/local/Ascend/driver/tools/npu-smi /usr/local/bin/npu-smi /usr/bin/npu-smi /usr/sbin/npu-smi /bin/npu-smi; do",
+                '  if [ -x "${candidate}" ] && [ "${candidate}" != "$0" ]; then',
+                '    exec "${candidate}" "$@"',
+                "  fi",
+                "done",
+                "exit 1",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    shim.chmod(shim.stat().st_mode | stat.S_IXUSR)
+    return shim_dir
+
+
+def _torch_build_env():
+    env = os.environ.copy()
+    env.setdefault("TORCH_DEVICE_BACKEND_AUTOLOAD", "0")
+    if os.name != "nt":
+        # Build-only workaround: triton-ascend probes `npu-smi info` during import.
+        # Some compile hosts can hang there until its 100s timeout even though PCI
+        # probing has already identified the target SoC. Keep the probe fast here
+        # without changing runtime imports from the installed wheel.
+        shim_dir = _write_fast_npu_smi_shim()
+        env["PATH"] = f"{shim_dir}:{env.get('PATH', '')}"
+    return env
+
+
+@contextmanager
+def _temporary_environ(env):
+    previous = os.environ.copy()
+    os.environ.clear()
+    os.environ.update(env)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(previous)
 
 
 def _run(cmd, cwd, env=None):
@@ -224,49 +310,58 @@ def _check_build_environment():
     else:
         print(f"[fla-npu build][OK] Python: {sys.version.split()[0]}")
 
-    torch = None
-    torch_npu = None
-    for module in ("torch", "torch_npu"):
-        try:
-            loaded = importlib.import_module(module)
-            print(f"[fla-npu build][OK] {module}: {getattr(loaded, '__version__', '<unknown>')}")
-            if module == "torch":
-                torch = loaded
-            else:
-                torch_npu = loaded
-        except Exception as exc:
-            failures.append(f"{module}: {exc}")
-
-    if torch is not None:
-        _check_min_version(failures, "torch", getattr(torch, "__version__", ""), MIN_TORCH)
-    if torch_npu is not None:
-        _check_torch_npu_gdn_fix(failures, getattr(torch_npu, "__version__", ""))
-
-    triton_ascend_version = _distribution_version("triton-ascend")
-    try:
-        triton = importlib.import_module("triton")
-        print(f"[fla-npu build][OK] triton: {getattr(triton, '__file__', '<unknown>')}")
-    except Exception as exc:
-        failures.append(f"triton: {exc}")
-
-    if triton_ascend_version:
-        print(f"[fla-npu build][OK] triton-ascend: {triton_ascend_version}")
-        _check_min_version(failures, "triton-ascend", triton_ascend_version, MIN_TRITON_ASCEND)
-        _check_triton_ascend_a5_compat(failures, triton_ascend_version)
-    else:
-        failures.append("triton-ascend distribution was not found")
-
-    if not _env_flag("FLA_NPU_SKIP_TORCH_GEN"):
-        for module in TORCHNPUGEN_MODULES:
+    reuse_torch_extension = _reuse_torch_extension_path()
+    build_env = _torch_build_env()
+    with _temporary_environ(build_env):
+        torch = None
+        torch_npu = None
+        for module in ("torch", "torch_npu"):
             try:
-                spec = importlib.util.find_spec(module)
+                loaded = importlib.import_module(module)
+                print(f"[fla-npu build][OK] {module}: {getattr(loaded, '__version__', '<unknown>')}")
+                if module == "torch":
+                    torch = loaded
+                else:
+                    torch_npu = loaded
             except Exception as exc:
                 failures.append(f"{module}: {exc}")
-                continue
-            if spec is None:
-                failures.append(f"{module}: not found")
-            else:
-                print(f"[fla-npu build][OK] {module}: {spec.origin or 'namespace package'}")
+
+        if torch is not None:
+            _check_min_version(failures, "torch", getattr(torch, "__version__", ""), MIN_TORCH)
+        if torch_npu is not None:
+            _check_torch_npu_gdn_fix(failures, getattr(torch_npu, "__version__", ""))
+
+        triton_ascend_version = _distribution_version("triton-ascend")
+        try:
+            triton = importlib.import_module("triton")
+            print(f"[fla-npu build][OK] triton: {getattr(triton, '__file__', '<unknown>')}")
+        except Exception as exc:
+            failures.append(f"triton: {exc}")
+
+        if triton_ascend_version:
+            print(f"[fla-npu build][OK] triton-ascend: {triton_ascend_version}")
+            _check_min_version(failures, "triton-ascend", triton_ascend_version, MIN_TRITON_ASCEND)
+            _check_triton_ascend_a5_compat(failures, triton_ascend_version)
+        else:
+            failures.append("triton-ascend distribution was not found")
+
+        if not _env_flag("FLA_NPU_SKIP_TORCH_GEN") and not reuse_torch_extension:
+            for module in TORCHNPUGEN_MODULES:
+                try:
+                    spec = importlib.util.find_spec(module)
+                except Exception as exc:
+                    failures.append(f"{module}: {exc}")
+                    continue
+                if spec is None:
+                    failures.append(f"{module}: not found")
+                else:
+                    print(f"[fla-npu build][OK] {module}: {spec.origin or 'namespace package'}")
+
+    build_jobs = _build_jobs_arg()
+    if build_jobs:
+        print(f"[fla-npu build][OK] FLA_NPU_BUILD_JOBS={build_jobs[0][2:]}")
+    if reuse_torch_extension:
+        print(f"[fla-npu build][OK] FLA_NPU_REUSE_TORCH_CUSTOM_SO={reuse_torch_extension}")
 
     print(f"[fla-npu build][OK] FLA_NPU_SOC={os.getenv('FLA_NPU_SOC', DEFAULT_SOC)}")
     print(f"[fla-npu build][OK] FLA NPU vendor={DEFAULT_VENDOR_NAME}")
@@ -334,6 +429,7 @@ def _build_run_package():
             "--pkg",
             f"--vendor_name={DEFAULT_VENDOR_NAME}",
         ]
+        cmd.extend(_build_jobs_arg())
         if incremental:
             cmd.append("--incremental")
         if ops_filter:
@@ -491,8 +587,13 @@ def _stage_run_package(run_file, opp_root):
 
 
 def _build_torch_extension_inplace():
+    reuse_so = _reuse_torch_extension_path()
+    if reuse_so:
+        _reuse_torch_extension_inplace(reuse_so)
+        return
+
     if not _env_flag("FLA_NPU_SKIP_TORCH_GEN"):
-        _run(["bash", "gen.sh", "npu_custom.yaml"], TORCH_EXTENSION_DIR)
+        _run(["bash", "gen.sh", "npu_custom.yaml"], TORCH_EXTENSION_DIR, env=_torch_build_env())
 
     build_dir = TORCH_EXTENSION_DIR / "build"
     if build_dir.exists():
@@ -500,7 +601,11 @@ def _build_torch_extension_inplace():
     for so_file in FLA_NPU_PACKAGE_DIR.glob("custom_aclnn_extension_lib*.so"):
         so_file.unlink()
 
-    _run([sys.executable, "setup.py", "build_ext", "--force", "--inplace"], TORCH_EXTENSION_DIR)
+    _run(
+        [sys.executable, "setup.py", "build_ext", "--force", "--inplace"],
+        TORCH_EXTENSION_DIR,
+        env=_torch_build_env(),
+    )
 
     so_files = sorted(FLA_NPU_PACKAGE_DIR.glob("custom_aclnn_extension_lib*.so"))
     if not so_files:
@@ -508,6 +613,58 @@ def _build_torch_extension_inplace():
             "custom_aclnn_extension_lib*.so was not produced under "
             f"{FLA_NPU_PACKAGE_DIR}"
         )
+
+
+def _validate_torch_extension_so(so_file):
+    so_file = Path(so_file).resolve()
+    expected_suffix = _torch_extension_suffix()
+    if not so_file.is_file():
+        raise RuntimeError(f"FLA_NPU_REUSE_TORCH_CUSTOM_SO does not point to a file: {so_file}")
+    if not so_file.name.startswith("custom_aclnn_extension_lib"):
+        raise RuntimeError(
+            "FLA_NPU_REUSE_TORCH_CUSTOM_SO must point to custom_aclnn_extension_lib*.so, "
+            f"got {so_file.name}"
+        )
+    if not so_file.name.endswith(expected_suffix):
+        raise RuntimeError(
+            "FLA_NPU_REUSE_TORCH_CUSTOM_SO Python ABI or architecture does not match this build. "
+            f"Expected suffix {expected_suffix!r}, got {so_file.name!r}."
+        )
+    if so_file.stat().st_size <= 0:
+        raise RuntimeError(f"FLA_NPU_REUSE_TORCH_CUSTOM_SO is empty: {so_file}")
+    return so_file
+
+
+def _clear_torch_extension_so(exclude=None):
+    exclude = Path(exclude).resolve() if exclude else None
+    for so_file in FLA_NPU_PACKAGE_DIR.glob("custom_aclnn_extension_lib*.so"):
+        resolved = so_file.resolve()
+        if exclude and resolved == exclude:
+            continue
+        so_file.unlink()
+
+
+def _reuse_torch_extension_inplace(source_so):
+    source_so = _validate_torch_extension_so(source_so)
+    target_so = FLA_NPU_PACKAGE_DIR / source_so.name
+    FLA_NPU_PACKAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+    if source_so.resolve() == target_so.resolve():
+        _clear_torch_extension_so(exclude=source_so)
+    else:
+        _clear_torch_extension_so()
+        shutil.copy2(source_so, target_so)
+
+    so_files = sorted(FLA_NPU_PACKAGE_DIR.glob("custom_aclnn_extension_lib*.so"))
+    if len(so_files) != 1:
+        raise RuntimeError(
+            "Expected exactly one reused custom_aclnn_extension_lib*.so under "
+            f"{FLA_NPU_PACKAGE_DIR}, got {len(so_files)}"
+        )
+    print(
+        "[fla-npu build] Reused torch_custom extension "
+        f"{source_so} -> {so_files[0]} (sha256={_sha256_file(so_files[0])})"
+    )
 
 
 _EXTERNAL_BUILD_DONE = False
