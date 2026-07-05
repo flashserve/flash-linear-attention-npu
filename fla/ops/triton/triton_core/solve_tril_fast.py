@@ -149,6 +149,8 @@ def solve_tril_16x16_kernel_paral_v3(
         base_t += taskid * (LARGE_BLOCK_T // NTASKS)
 
         b_A = tl.zeros((N_BLOCKS, 16, 16), dtype=tl.float32)  # (N_BLOCKS, 16, 16)
+        block_offsets = tl.arange(0, N_BLOCKS)[:, None, None]
+        row_offsets = tl.arange(0, 16)[None, :, None]
         for blkid in range(0, N_BLOCKS):
             row_start_o = base_t + blkid * 16
             col_start_o = row_start_o % BT
@@ -169,17 +171,10 @@ def solve_tril_16x16_kernel_paral_v3(
             b_A_subrec16 = tl.load(ptr_A_subrec16, mask=load_mask, other=0.0).to(
                 tl.float32
             )
-            b_A = tl.insert_slice(
-                ful=b_A,
-                sub=b_A_subrec16[None, :, :],  # (1, 16, 16)
-                offsets=[blkid, 0, 0],
-                sizes=[1, 16, 16],
-                strides=[1, 1, 1],
-            )
+            b_A = tl.where(block_offsets == blkid, b_A_subrec16[None, :, :], b_A)
 
-        # load multi 16x16
-        local_ori_A = tl.trans(b_A, (1, 0, 2))
-        local_ori_A = tl.reshape(local_ori_A, (16, 16 * N_BLOCKS))  # (16, N_BLOCKS*16)
+        # Keep the original blocks for row-wise recurrence updates below.
+        local_ori_A = b_A
 
         # change mask into matrix elementwise action
         tmp = tl.arange(0, 16).to(tl.float32)
@@ -190,23 +185,14 @@ def solve_tril_16x16_kernel_paral_v3(
 
         for i in range(1, 16):
 
-            nblks_vec16 = -tl.extract_slice(
-                local_ori_A, (i, 0), (1, 16 * N_BLOCKS), (16 * N_BLOCKS, 1)
-            )
-            b_a = tl.reshape(nblks_vec16, (N_BLOCKS, 16))
+            b_a = -tl.sum(tl.where(row_offsets == i, local_ori_A, 0.0), 1)
 
             dot_tmp = tl.trans(b_a[:, :, None] * b_A, (1, 0, 2))
             dot_product = tl.sum(dot_tmp, 0)
             b_a = b_a + dot_product  # (N_BLOCKS, 16)
 
             b_a_new_expanded = b_a[:, None, :]  # (N_BLOCKS, 1, 16)
-            b_A = tl.insert_slice(
-                ful=b_A,
-                sub=b_a_new_expanded,
-                offsets=[0, i, 0],
-                sizes=[N_BLOCKS, 1, 16],
-                strides=[1, 1, 1],
-            )
+            b_A = tl.where(row_offsets == i, b_a_new_expanded, b_A)
 
         on_diagonal = rows == cols
         b_A = tl.where(on_diagonal, b_A + 1.0, b_A)
@@ -639,7 +625,9 @@ def solve_tril_npu(
         B, T, H, 16, device=A.device, dtype=torch.float if BT != 16 else output_dtype
     )
 
-    LARGE_BLOCK_T = 608 * 2
+    # Keep the fallback kernel within the smaller UB budget of CANN 9/A5.
+    # The AscendC path remains preferred when npu_solve_tri is available.
+    LARGE_BLOCK_T = BT
     # assert A.shape[1]%LARGE_BLOCK_T == 0 # or last N_BLOCKS have not enough block which leads to tl.arange failed
     # LARGE_BLOCK_T = BT
     chunk_indices = (chunk_indices_out[str(LARGE_BLOCK_T)] if cu_seqlens is not None else None)

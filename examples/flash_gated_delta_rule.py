@@ -26,12 +26,15 @@ import torch_npu
 from fla.ops.triton.triton_core.chunk_scaled_dot_kkt import chunk_scaled_dot_kkt_fwd
 from fla.ops.triton.triton_core.cumsum import chunk_local_cumsum
 from fla.ops.triton.triton_core.l2norm import l2norm_bwd, l2norm_fwd
+from fla.ops.triton.triton_core.solve_tril_fast import solve_tril_npu as solve_tril
 from fla.ops.triton.triton_core.utils import autocast_custom_bwd, autocast_custom_fwd, input_guard
 
 
 _disable_compile = getattr(getattr(torch, "compiler", None), "disable", lambda fn: fn)
 _DEFAULT_VARLEN_CHUNK_SIZES = (16, 32, 64, 128, 608 * 2)
 _ACCURACY_REFERENCE_VERSION = 1
+_SOLVE_TRI_ASCENDC_AVAILABLE: Optional[bool] = None
+_SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON = ""
 
 
 def _make_gate(shape: tuple[int, ...], dtype: torch.dtype, device: str, gate_function: str) -> torch.Tensor:
@@ -228,6 +231,76 @@ def solve_tri_ascendc(
         layout="tnd",
     )
     return out.unsqueeze(0)
+
+
+def _probe_solve_tri_ascendc(device: torch.device, dtype: torch.dtype) -> bool:
+    global _SOLVE_TRI_ASCENDC_AVAILABLE, _SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON
+
+    if _SOLVE_TRI_ASCENDC_AVAILABLE is not None:
+        return _SOLVE_TRI_ASCENDC_AVAILABLE
+
+    if not hasattr(torch.ops.npu, "npu_solve_tri"):
+        _SOLVE_TRI_ASCENDC_AVAILABLE = False
+        _SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON = "torch.ops.npu.npu_solve_tri is not registered"
+        return False
+
+    probe_dtype = dtype if dtype in (torch.float16, torch.bfloat16) else torch.float16
+    try:
+        probe = torch.zeros((1, 64, 1, 64), dtype=probe_dtype, device=device)
+        torch.ops.npu.npu_solve_tri(probe, layout="bsnd")
+        torch.npu.synchronize()
+    except Exception as exc:
+        _SOLVE_TRI_ASCENDC_AVAILABLE = False
+        _SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON = str(exc).splitlines()[0]
+        try:
+            torch.npu.synchronize()
+        except Exception:
+            pass
+        return False
+
+    _SOLVE_TRI_ASCENDC_AVAILABLE = True
+    _SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON = ""
+    return True
+
+
+def solve_tri_auto(
+    A: torch.Tensor,
+    *,
+    cu_seqlens: Optional[torch.Tensor],
+    chunk_indices_out: Optional[Dict[str, Optional[torch.Tensor]]],
+    cu_seqlens_list: Optional[list[int] | torch.Tensor],
+    chunk_indices_list: Optional[list[int] | torch.Tensor],
+    output_dtype: torch.dtype,
+) -> torch.Tensor:
+    global _SOLVE_TRI_ASCENDC_AVAILABLE, _SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON
+
+    if _probe_solve_tri_ascendc(A.device, output_dtype):
+        try:
+            return solve_tri_ascendc(
+                A,
+                cu_seqlens=cu_seqlens_list,
+                chunk_indices=chunk_indices_list,
+                output_dtype=output_dtype,
+            )
+        except Exception as exc:
+            _SOLVE_TRI_ASCENDC_AVAILABLE = False
+            _SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON = str(exc).splitlines()[0]
+            try:
+                torch.npu.synchronize()
+            except Exception:
+                pass
+
+    warnings.warn(
+        "AscendC npu_solve_tri is unavailable; falling back to Triton solve_tril_npu. "
+        f"Reason: {_SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON}",
+        RuntimeWarning,
+    )
+    return solve_tril(
+        A=A,
+        cu_seqlens=cu_seqlens,
+        chunk_indices_out=chunk_indices_out,
+        output_dtype=output_dtype,
+    )
 
 
 class AscendCCausalConv1dFunction(torch.autograd.Function):
@@ -510,10 +583,12 @@ def flash_chunk_gated_delta_rule_fwd(
         output_dtype=torch.float32,
     )
 
-    A = solve_tri_ascendc(
+    A = solve_tri_auto(
         A,
-        cu_seqlens=cu_seqlens_list,
-        chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
+        cu_seqlens=cu_seqlens,
+        chunk_indices_out=chunk_indices,
+        cu_seqlens_list=cu_seqlens_list,
+        chunk_indices_list=_chunk_list(chunk_indices_list, chunk_size),
         output_dtype=k.dtype,
     )
 
