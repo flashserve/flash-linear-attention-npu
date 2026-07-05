@@ -124,18 +124,15 @@ def _detect_cann_public_version() -> str:
     return ""
 
 
-def _check_triton_ascend_a5_compat(failures: list[str], actual: str, cann_public_version: str) -> None:
+def _check_triton_ascend_a5_compat(failures: list[str], actual: str) -> None:
     soc = os.getenv("FLA_NPU_SOC", "ascend910b")
     if soc != "ascend950":
         return
     actual_version = _version_obj(actual)
     if actual_version is None or actual_version < Version(MIN_TRITON_ASCEND_A5):
-        detail = f"FLA_NPU_SOC={soc}"
-        if cann_public_version:
-            detail += f" with CANN {cann_public_version}"
         _fail(
             failures,
-            f"triton-ascend>={MIN_TRITON_ASCEND_A5} is required for {detail}; got {actual}. "
+            f"triton-ascend>={MIN_TRITON_ASCEND_A5} is required for FLA_NPU_SOC={soc}; got {actual}. "
             "triton-ascend 3.2.0 can crash on the A5 Triton runtime.",
         )
 
@@ -277,7 +274,7 @@ def main() -> int:
     if triton_ascend_version:
         _ok(f"triton-ascend version: {triton_ascend_version}")
         _check_min_version(failures, "triton-ascend", triton_ascend_version, MIN_TRITON_ASCEND)
-        _check_triton_ascend_a5_compat(failures, triton_ascend_version, cann_public_version)
+        _check_triton_ascend_a5_compat(failures, triton_ascend_version)
     elif triton is not None:
         _fail(failures, "triton is importable, but triton-ascend distribution was not found")
     else:

@@ -625,7 +625,7 @@ def solve_tril_npu(
         B, T, H, 16, device=A.device, dtype=torch.float if BT != 16 else output_dtype
     )
 
-    # Keep the fallback kernel within the smaller UB budget of CANN 9/A5.
+    # Keep the fallback kernel within the smaller UB budget on A5.
     # The AscendC path remains preferred when npu_solve_tri is available.
     LARGE_BLOCK_T = BT
     # assert A.shape[1]%LARGE_BLOCK_T == 0 # or last N_BLOCKS have not enough block which leads to tl.arange failed
