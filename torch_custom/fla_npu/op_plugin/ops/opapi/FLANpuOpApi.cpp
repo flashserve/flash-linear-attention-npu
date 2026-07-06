@@ -59,6 +59,25 @@ int64_t GetKdaTotalChunks(int64_t batch, int64_t seqlen, int64_t chunk_size,
     }
     return total;
 }
+
+std::vector<int64_t> BuildKdaChunkIndices(at::IntArrayRef cu_seqlens, int64_t chunk_size)
+{
+    std::vector<int64_t> indices;
+    int64_t total_chunks = 0;
+    for (size_t i = 0; i + 1 < cu_seqlens.size(); ++i) {
+        total_chunks += CeilDiv(cu_seqlens[i + 1] - cu_seqlens[i], chunk_size);
+    }
+    indices.reserve(static_cast<size_t>(total_chunks * 2));
+    for (size_t seq = 0; seq + 1 < cu_seqlens.size(); ++seq) {
+        int64_t seq_len = cu_seqlens[seq + 1] - cu_seqlens[seq];
+        int64_t chunks = CeilDiv(seq_len, chunk_size);
+        for (int64_t chunk = 0; chunk < chunks; ++chunk) {
+            indices.push_back(static_cast<int64_t>(seq));
+            indices.push_back(chunk);
+        }
+    }
+    return indices;
+}
 } // namespace
 
 
@@ -467,8 +486,19 @@ npu_chunk_kda_fwd(
                     "npu_chunk_kda_fwd: initial_state must be float32 when provided.");
     }
 
+    std::vector<int64_t> generated_chunk_indices;
+    c10::optional<at::IntArrayRef> chunk_indices_for_call;
+    if (chunk_indices.has_value()) {
+        chunk_indices_for_call = chunk_indices.value();
+    } else if (cu_seqlens.has_value()) {
+        generated_chunk_indices = BuildKdaChunkIndices(cu_seqlens.value(), chunk_size);
+        chunk_indices_for_call = at::IntArrayRef(generated_chunk_indices);
+    } else {
+        chunk_indices_for_call = c10::nullopt;
+    }
+
     int64_t seq_num = GetKdaSeqNum(B, cu_seqlens);
-    int64_t total_chunks = GetKdaTotalChunks(B, T, chunk_size, cu_seqlens, chunk_indices);
+    int64_t total_chunks = GetKdaTotalChunks(B, T, chunk_size, cu_seqlens, chunk_indices_for_call);
     bool output_final_state_ = output_final_state.value_or(false);
     bool return_intermediate_ = return_intermediate.value_or(false);
     double scale_ = scale;
@@ -503,7 +533,7 @@ npu_chunk_kda_fwd(
     EXEC_NPU_CMD_EXT(
         aclnnChunkKdaFwd,
         q, k, v, gk, beta, initial_state_,
-        cu_seqlens, chunk_indices,
+        cu_seqlens, chunk_indices_for_call,
         scale_, chunk_size_, recompute_output_final_state, total_chunks_,
         o, final_state_work, aqk, akk, w, u, qg, kg, v_new, h
     );
