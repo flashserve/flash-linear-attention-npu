@@ -1,6 +1,8 @@
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -100,7 +102,7 @@ target_link_options(intf_pub_cxx14 INTERFACE
   -Wl,-z,noexecstack
   $<$<CONFIG:Release>:-s>
   $<$<CONFIG:Release>:-Wl,--build-id=none>
-  $<$<BOOL:${ENABLE_GCOV}>:-fprofile-arcs -ftest-coverage> 
+  $<$<BOOL:${ENABLE_GCOV}>:-fprofile-arcs -ftest-coverage>
 )
 target_link_directories(intf_pub_cxx14 INTERFACE)
 target_link_libraries(intf_pub_cxx14 INTERFACE
@@ -115,7 +117,7 @@ target_compile_options(intf_pub_cxx17 INTERFACE
     $<IF:$<VERSION_GREATER:${CMAKE_C_COMPILER_VERSION},4.8.5>,-fstack-protector-strong,-fstack-protector-all>
     $<$<CONFIG:Debug>:-g>
     $<$<COMPILE_LANGUAGE:CXX>:-std=c++17>
-    $<$<BOOL:${ENABLE_GCOV}>:-fprofile-arcs -ftest-coverage>  
+    $<$<BOOL:${ENABLE_GCOV}>:-fprofile-arcs -ftest-coverage>
   )
 target_compile_definitions(intf_pub_cxx17 INTERFACE
     _GLIBCXX_USE_CXX11_ABI=0
@@ -129,7 +131,7 @@ target_link_options(intf_pub_cxx17 INTERFACE
     -Wl,-z,noexecstack
     $<$<CONFIG:Release>:-s>
     $<$<CONFIG:Release>:-Wl,--build-id=none>
-    $<$<BOOL:${ENABLE_GCOV}>:-fprofile-arcs -ftest-coverage>   
+    $<$<BOOL:${ENABLE_GCOV}>:-fprofile-arcs -ftest-coverage>
   )
 target_link_directories(intf_pub_cxx17 INTERFACE)
 target_link_libraries(intf_pub_cxx17 INTERFACE
@@ -143,7 +145,7 @@ target_compile_options(intf_pub_aicpu INTERFACE
   $<IF:$<VERSION_GREATER:${CMAKE_C_COMPILER_VERSION},4.8.5>,-fstack-protector-strong,-fstack-protector-all>
   $<$<CONFIG:Debug>:-g>
   $<$<COMPILE_LANGUAGE:CXX>:-std=c++17>
-  $<$<BOOL:${ENABLE_GCOV}>:-fprofile-arcs -ftest-coverage> 
+  $<$<BOOL:${ENABLE_GCOV}>:-fprofile-arcs -ftest-coverage>
 )
 target_compile_definitions(intf_pub_aicpu INTERFACE
   $<$<NOT:$<STREQUAL:${PRODUCT_SIDE},device>>:_GLIBCXX_USE_CXX11_ABI=0>

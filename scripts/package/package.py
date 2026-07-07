@@ -3,6 +3,7 @@
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2025 Tianjin University, Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -759,11 +760,11 @@ def args_parse():
                         help="This parameter define package func name, has higher priority than func name in xml")
     parser.add_argument('--source_root', metavar='source_root', required=False, dest='source_root', nargs='?', const='',
                         help='source root dir.')
-    parser.add_argument('--makeself_dir', metavar='makeself_dir', required=False, dest='makeself_dir', 
+    parser.add_argument('--makeself_dir', metavar='makeself_dir', required=False, dest='makeself_dir',
                         nargs='?', const='', help='makeself dir.')
-    parser.add_argument('--delivery_dir', metavar='delivery_dir', required=False, dest='delivery_dir', 
+    parser.add_argument('--delivery_dir', metavar='delivery_dir', required=False, dest='delivery_dir',
                         nargs='?', const='', help='delivery dir.')
-    parser.add_argument('--independent_pkg', action='store_true', help='Independent pkg.')                    
+    parser.add_argument('--independent_pkg', action='store_true', help='Independent pkg.')
     parser.add_argument('--pkg-output-dir', default='', help='Package dirpath.')
     parser.add_argument('--version_dir', nargs='?', const='', default='', help='Set version dir.')
     parser.add_argument('--tag', metavar='tag', nargs='?', const='', default='')

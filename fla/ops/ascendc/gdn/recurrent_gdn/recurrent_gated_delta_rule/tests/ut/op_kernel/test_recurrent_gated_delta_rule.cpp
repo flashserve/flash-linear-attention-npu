@@ -1,6 +1,7 @@
-﻿/**
+/**
 * Copyright (c) 2025 Tianjin University, Ltd.
 * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+* CANN Open Software License Agreement Version 2.0 (the "License").
 * Please refer to the License for details. You may not use this file except in compliance with the License.
 * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -55,7 +56,7 @@ template <typename T>
 T* GmAllocWrapper(size_t size) {
     T *ptr = reinterpret_cast<T *>(AscendC::GmAlloc(size));
     assert(ptr != nullptr && "GM allocation failed");
-    return ptr; 
+    return ptr;
 }
 
 void InitTilingData(RecurrentGatedDeltaRuleTilingData* tilingData, uint32_t b, uint32_t t, uint32_t nk, uint32_t nv,
@@ -225,8 +226,8 @@ protected:
 
 
 INSTANTIATE_TEST_SUITE_P(
-    GeneralTests, 
-    RecurrentGatedDeltaRuleTest, 
+    GeneralTests,
+    RecurrentGatedDeltaRuleTest,
     testing::Values(
         RGDRTestParams{1, 0, 1, 32, 32, 1, 1}, // general_test_01: has g, no gk, with AcceptedTokens
         RGDRTestParams{0, 0, 1, 32, 32, 1, 1}, // general_test_02: no g, no gk, with AcceptedTokens
@@ -237,7 +238,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST_P(RecurrentGatedDeltaRuleTest, RunTest) {
     auto params = GetParam();
-    std::cout << "tets config: hasGama=" << params.hasGama 
+    std::cout << "tets config: hasGama=" << params.hasGama
               << ", hasGamaK=" << params.hasGamaK
               << ", hasAcceptedTokens=" << params.hasAcceptedTokens << std::endl;
 

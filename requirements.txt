@@ -7,3 +7,4 @@ attrs
 protobuf
 psutil
 expecttest
+packaging

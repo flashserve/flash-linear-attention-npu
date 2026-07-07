@@ -1,3 +1,21 @@
+flash-linear-attention-npu License Notice
+
+This repository contains files under multiple licenses.
+
+1. Unless a file header or a more specific notice says otherwise, original
+   flash-linear-attention-npu project code is licensed under the BSD 3-Clause
+   License below.
+
+2. Files adapted from CANN ops-transformer, and files whose headers identify
+   the CANN Open Software License Agreement Version 2.0, are licensed under
+   the CANN Open Software License Agreement Version 2.0. See
+   LICENSES/CANN-Open-Software-License-Agreement-Version-2.0.txt.
+
+3. If a file-level notice conflicts with this repository-level overview, the
+   file-level notice controls for that file.
+
+See NOTICE for attribution and redistribution notes.
+
 BSD 3-Clause License
 
 Copyright (c) 2026 Tianjin University

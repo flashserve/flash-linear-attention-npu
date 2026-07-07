@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -43,10 +45,10 @@ def parse_txt_content(content):
         r'start_time \[([^\]]+)\] end_time \[([^\]]+)\]'
     )
     match = re.search(pattern, content)
-    
+
     if not match:
         return None
-    
+
     return {
         'soc': match.group(1),
         'op_name': match.group(2),
@@ -80,24 +82,24 @@ def count_sh_files(base_dir, capital_name, op_name):
     """Count total number of {capital_name}-{op_name}-{index}.sh files"""
     # Build matching pattern
     pattern = os.path.join(base_dir, f"{capital_name}-{op_name}-*.sh")
-    
+
     # Use glob to find matching files
     matching_files = glob.glob(pattern)
-    
+
     return len(matching_files)
 
 
 def find_txt_files(filter_names: list = None):
     """Find all txt files in specified directory structure"""
     txt_files = []
-    
+
     # Get build/binary directory under current directory
     base_dir = workdir
-    
+
     if not os.path.exists(base_dir):
         logger.error(f"Directory {base_dir} does not exist")
         return []
-    
+
     # Iterate through all soc directories
     for soc_dir in os.listdir(base_dir):
         gen_dir = os.path.join(base_dir, soc_dir, 'gen')
@@ -108,7 +110,7 @@ def find_txt_files(filter_names: list = None):
                 op_name = match_txt.group(1)
                 if op_name not in filter_names or filter_names is None:
                     txt_files.append(os.path.join(gen_dir, file))
-    
+
     return txt_files
 
 
@@ -128,7 +130,7 @@ def process_txt_file(txt_files, merge_names):
             # Read file content
             with open(txt_file, 'r', encoding='utf-8') as f:
                 content = f.read().strip()
-            
+
             # Parse content
             parsed_data = parse_txt_content(content)
             if not parsed_data:
@@ -141,14 +143,14 @@ def process_txt_file(txt_files, merge_names):
             if not capital_name:
                 logger.warning(f"Cannot extract capital_name from bin_file {bin_file}")
                 continue
-            
+
             # Get base directory for .sh files (same as txt file directory)
             base_dir = os.path.dirname(txt_file)
-            
+
             # Count total number of {capital_name}-{op_name}-{index}.sh files
             ops_kernel_num = count_sh_files(base_dir, capital_name, parsed_data['op_name'])
-            new_kernel_name = f"{remove_apt_suffix(parsed_data['op_name'])},{ops_kernel_num}-{parsed_data['index']}"   
-            
+            new_kernel_name = f"{remove_apt_suffix(parsed_data['op_name'])},{ops_kernel_num}-{parsed_data['index']}"
+
             # Build data row
             if parsed_data['op_name'] in merge_names:
                 key = (parsed_data['soc'], parsed_data['op_name'])
@@ -162,7 +164,7 @@ def process_txt_file(txt_files, merge_names):
                     'size': parsed_data['size'],
                     'soc': parsed_data['soc'],
                 }
-                data_list.append(data_row)     
+                data_list.append(data_row)
         except Exception as e:
             logger.error(f"Error processing file {txt_file}: {e}")
             continue
@@ -171,15 +173,15 @@ def process_txt_file(txt_files, merge_names):
 
 def main():
     filter_names = ["moe_gather_v2", "moe_inplace_index_add", "moe_inplace_index_add_with_sorted", "moe_masked_scatter"]
-    merge_names = ["moe_token_permute_with_routing_map", "moe_token_permute_with_routing_map_grad", 
+    merge_names = ["moe_token_permute_with_routing_map", "moe_token_permute_with_routing_map_grad",
                    "moe_token_unpermute_with_routing_map"]
     # Get all txt files in current directory
     txt_files = find_txt_files(filter_names)
-    
+
     if not txt_files:
         logger.info("No txt files found")
         return
-    
+
     data_list, merge_dict = process_txt_file(txt_files, merge_names)
 
     # Append merged rows
@@ -191,23 +193,23 @@ def main():
             'soc': soc
         }
         data_list.append(merged_row)
-    
+
     # Sort by op_name
     data_list.sort(key=lambda x: x['op_name'])
-    
+
     # Write to CSV file
     if data_list:
         soc_version = data_list[0]['soc']
         csv_filename = os.path.join(build_dir, f'ops_cost_{soc_version}.csv')
         fieldnames = ['op_name', 'duration', 'size', 'soc']
-        
+
         with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(data_list)
-        
+
         logger.info(f"Successfully processed {len(data_list)} files, results saved to {csv_filename}")
-        
+
         # Print statistics
         logger.info(f"Statistics:")
         logger.info(f"Total records: {len(data_list)}")

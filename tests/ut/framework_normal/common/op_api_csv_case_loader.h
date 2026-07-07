@@ -1,6 +1,8 @@
 /**
- * Copyright (c) Tianjin University, Ltd. 2026. All rights reserved.
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Adapted for flash-linear-attention-npu by Tianjin University.
  * This file is a part of the CANN Open Software.
+ * Licensed under CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -67,7 +69,7 @@ const std::unordered_map<std::string, aclFormat> ACL_FORMAT {
     {"FRACTAL_NZ_C0_4", ACL_FORMAT_FRACTAL_NZ_C0_4},
     {"FRACTAL_NZ_C0_8", ACL_FORMAT_FRACTAL_NZ_C0_8}
 };
-    
+
 const std::unordered_map<std::string, op::SocVersion> SOC_VERSION {
     {"Ascend910", op::SocVersion::ASCEND910},
     {"Ascend910B", op::SocVersion::ASCEND910B},

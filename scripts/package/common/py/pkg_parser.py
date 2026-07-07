@@ -3,6 +3,7 @@
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2025 Tianjin University, Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -31,7 +32,7 @@ from .filelist import FileItem, FileList, fill_is_common_path
 from .utils.pkg_utils import (
     ContainAsteriskError, FAIL, BLOCK_CONFIG_PATH,
     BlockConfigError, EnvNotSupported, IllegalVersionDir,
-    InstallScriptFormatError, InstallScriptNotInPackageInfo, VersionInfoNotExist, 
+    InstallScriptFormatError, InstallScriptNotInPackageInfo, VersionInfoNotExist,
     MultiPkgSoftlinkError, PackageError,
     ParseOsArchError, config_feature_to_set,
     flatten, star_pipe, merge_dict, yield_if
@@ -1160,7 +1161,7 @@ def read_version_info(delivery_dir: str, package_attr: PackageAttr) -> Tuple[str
     m = re.match(r'[.a-zA-Z0-9]+$', version) or re.match(r'[-a-zA-Z.0-9]+$', version)
     if not m:
         raise VersionFormatNotMatch()
-    
+
     return version, version_dir
 
 

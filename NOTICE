@@ -1,0 +1,26 @@
+flash-linear-attention-npu Notice
+
+This repository contains original project code and code adapted from the CANN
+ops-transformer project:
+
+  https://gitcode.com/cann/ops-transformer
+
+The adapted CANN portions retain upstream copyright notices where identifiable
+and are provided under the CANN Open Software License Agreement Version 2.0.
+File-level "Adapted for flash-linear-attention-npu by Tianjin University"
+lines identify downstream adaptation only and do not replace upstream copyright
+or license notices.
+The full text is included at:
+
+  LICENSES/CANN-Open-Software-License-Agreement-Version-2.0.txt
+
+Files that carry a CANN Open Software License Agreement Version 2.0 header, or
+are otherwise adapted from CANN ops-transformer, must be used, modified, and
+redistributed in compliance with that license. In particular, the CANN license
+contains purpose and redistribution restrictions tied to Huawei AI Processors
+and/or CANN Software, and requires recipients to receive a copy of the license
+and retained notices.
+
+Original flash-linear-attention-npu files that do not carry a more specific
+license notice are licensed under the BSD 3-Clause License; see LICENSE and
+LICENSES/BSD-3-Clause.txt.

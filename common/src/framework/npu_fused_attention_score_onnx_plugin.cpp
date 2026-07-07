@@ -1,11 +1,13 @@
 /**
- * Copyright (c) 2025 Tianjin University, Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
- */
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Adapted for flash-linear-attention-npu by Tianjin University.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
+ */
 
 #include "onnx_common.h"
 #include "op_transformer_proto_extend.h"
@@ -52,7 +54,7 @@ static Status ParseParamsNpuFusedAttentionScore(const Message *op_src, ge::Opera
       bmm_score_transpose_a = (attr.i() == 1);
     } else if (attr.name() == "bmm_score_transpose_b" && attr.type() == ge::onnx::AttributeProto::INT) {
       bmm_score_transpose_b = (attr.i() == 1);
-    } 
+    }
   }
 
   if (required_attr_num != REQUIRED_ATTR) {
@@ -117,7 +119,7 @@ static Status ParseOpToGraphNpuFusedAttentionScore(const ge::Operator& op, ge::G
   auto data1 = ge::op::Data((ori_name + "_data1").c_str()).set_attr_index(1);
   auto data2 = ge::op::Data((ori_name + "_data2").c_str()).set_attr_index(2);
   auto data3 = ge::op::Data((ori_name + "_data3").c_str()).set_attr_index(3);
-  
+
   float scale = 0;
   float keep_prob = 0;
   bool query_transpose = false;
@@ -149,7 +151,7 @@ static Status ParseOpToGraphNpuFusedAttentionScore(const ge::Operator& op, ge::G
   auto const_scale = ge::op::Const((ori_name + "_Const_scale").c_str()).set_attr_value(tensor_scale);
   auto cast_const_scale = ge::op::Cast((ori_name + "_Cast_const_scale").c_str()).set_input_x(const_scale)
                                                                       .set_attr_dst_type(ACL_FLOAT16);
-  
+
   auto AttentionScore = ge::op::AttentionScore((ori_name + "_AttentionScore").c_str())
                             .set_input_query(data0).set_input_key(data1).set_input_value(data2)
                             .set_input_padding_mask(data3).set_input_scale(cast_const_scale)
@@ -169,7 +171,7 @@ static Status ParseOpToGraphNpuFusedAttentionScore(const ge::Operator& op, ge::G
 // register npu_fused_attention_score op info to GE
 REGISTER_CUSTOM_OP("PartitionedCall")
   .FrameworkType(ONNX)
-  .OriginOpType({ge::AscendString("npu::1::NPUFusedAttentionScore"), 
+  .OriginOpType({ge::AscendString("npu::1::NPUFusedAttentionScore"),
                  ge::AscendString("ai.onnx::11::NPUFusedAttentionScore"),
                  ge::AscendString("ai.onnx::12::NPUFusedAttentionScore"),
                  ge::AscendString("ai.onnx::13::NPUFusedAttentionScore"),

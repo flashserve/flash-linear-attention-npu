@@ -2,6 +2,7 @@
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2025 Tianjin University, Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -1501,7 +1502,7 @@ do_install() {
     local feature_param="$5"
     local docker_root="$6"
     local is_simple="$7"
-    local install_path_real ret 
+    local install_path_real ret
 
     check_param_not_empty "package" "need set package parameter in install!"
     ret="$?" && [ ${ret} -ne 0 ] && return ${ret}

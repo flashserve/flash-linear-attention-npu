@@ -1,6 +1,8 @@
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -51,7 +53,7 @@ macro(add_modules_sources)
   if((AclnnExtraVersionLen GREATER 1) AND (OpTypeLen GREATER 1))
     message(FATAL_ERROR "There should be only 1 optype if there are more than 1 aclnn extra versions!")
   endif()
-  
+
   # opapi 默认全部编译
   file(GLOB OPAPI_SRCS ${OP_API_SRC_DIR}/*.cpp)
   if (OPAPI_SRCS)
@@ -99,7 +101,7 @@ macro(add_modules_sources)
   endif()
 
   file(GLOB_RECURSE SUB_OPTILING_SRC ${SOURCE_DIR}/op_tiling/*.cpp)
-  file(GLOB OPTILING_SRCS 
+  file(GLOB OPTILING_SRCS
       ${SOURCE_DIR}/*fallback*.cpp
       ${SOURCE_DIR}/*_tiling*.cpp
       ${SOURCE_DIR}/op_tiling/arch35/*.cpp
@@ -475,7 +477,7 @@ function(add_tiling_modules)
       PRIVATE ${OP_TILING_INCLUDE}
       $<BUILD_INTERFACE:${ASCEND_CANN_PACKAGE_PATH}/include>
       $<BUILD_INTERFACE:${OPS_TRANSFORMER_DIR}/common/include>
-      
+
       $<$<BOOL:${BUILD_OPEN_PROJECT}>:$<BUILD_INTERFACE:${ASCEND_CANN_PACKAGE_PATH}/include/experiment>>
       $<$<BOOL:${BUILD_OPEN_PROJECT}>:$<BUILD_INTERFACE:${ASCEND_CANN_PACKAGE_PATH}/include/version>>
       $<$<BOOL:${BUILD_OPEN_PROJECT}>:$<BUILD_INTERFACE:${ASCEND_CANN_PACKAGE_PATH}/${SYSTEM_PREFIX}/include/op_common/op_host>>
@@ -531,7 +533,7 @@ endfunction()
 function(add_graph_plugin_modules)
   if(NOT TARGET ${GRAPH_PLUGIN_NAME}_obj)
     add_library(${GRAPH_PLUGIN_NAME}_obj OBJECT)
-    target_include_directories(${GRAPH_PLUGIN_NAME}_obj PRIVATE 
+    target_include_directories(${GRAPH_PLUGIN_NAME}_obj PRIVATE
       ${OP_PROTO_INCLUDE}
     )
     target_compile_definitions(${GRAPH_PLUGIN_NAME}_obj PRIVATE OPS_UTILS_LOG_SUB_MOD_NAME="GRAPH_PLUGIN" LOG_CPP)
@@ -605,7 +607,7 @@ macro(add_graph_plugin_sources)
     endif()
   endif()
 
-  file(GLOB GRAPH_PLUGIN_SRCS 
+  file(GLOB GRAPH_PLUGIN_SRCS
       ${SOURCE_DIR}/*_graph_plugin*.cpp
   )
   if(GRAPH_PLUGIN_SRCS)
@@ -672,7 +674,7 @@ function(protobuf_generate_external comp c_var h_var)
 
     if (_add_target)
       add_custom_target(
-        ${comp} DEPENDS ${${c_var}} ${${h_var}}) 
+        ${comp} DEPENDS ${${c_var}} ${${h_var}})
     endif()
 
     set_source_files_properties(${${c_var}} ${${h_var}} PROPERTIES GENERATED TRUE)
@@ -685,7 +687,7 @@ function(add_onnx_plugin_modules)
   if (NOT TARGET ${ONNX_PLUGIN_NAME}_obj)
     set(ge_onnx_proto_srcs
       ${ASCEND_DIR}/include/proto/ge_onnx.proto)
-    
+
     protobuf_generate_external(onnx ge_onnx_proto_cc ge_onnx_proto_h ${ge_onnx_proto_srcs})
 
     add_library(${ONNX_PLUGIN_NAME}_obj OBJECT ${ge_onnx_proto_h})

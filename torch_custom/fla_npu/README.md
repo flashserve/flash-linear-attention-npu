@@ -55,7 +55,7 @@ fla_npu/
 └── ...
 ```
 
-使用方式：`pip install fla_npu*.whl` 安装后，即可在 Python 中调用本样例接入的自定义算子（如 `torch.ops.npu.npu_fast_gelu_custom`）。
+使用方式：`pip install fla_npu*.whl` 安装后，先 source 已安装 custom OPP 的 `set_env.bash`，或设置 `FLA_NPU_OPP_PATH` 指向 OPP root / vendor 目录，即可在 Python 中调用本样例接入的自定义算子（如 `torch.ops.npu.npu_fast_gelu_custom`、`torch_npu.ops.fast_gelu_custom` 或 `from fla_npu.ops.ascendc import fast_gelu_custom`）。
 
 
 ## 一键运行样例
@@ -76,7 +76,7 @@ cd ..
 cd test && python test_npu_fast_gelu_custom.py
 ```
 
-测试通过即表示样例已跑通，可直接调用 `torch_npu.npu_fast_gelu_custom` 算子。
+测试通过即表示样例已跑通，可直接调用 `torch.ops.npu.npu_fast_gelu_custom`、`torch_npu.ops.fast_gelu_custom` 或 `fla_npu.ops.ascendc.fast_gelu_custom` 算子。
 
 ---
 
@@ -133,7 +133,7 @@ cd dist
 pip install fla_npu*.whl
 ```
 
-安装完成后即可在代码中调用接入的自定义算子（如 `torch_npu.npu_fast_gelu_custom`）。例如用样例自带的测试用例验证：
+安装完成后即可在代码中调用接入的自定义算子（如 `torch.ops.npu.npu_fast_gelu_custom`、`torch_npu.ops.fast_gelu_custom` 或 `fla_npu.ops.ascendc.fast_gelu_custom`）。例如用样例自带的测试用例验证：
 
 ```bash
 cd test

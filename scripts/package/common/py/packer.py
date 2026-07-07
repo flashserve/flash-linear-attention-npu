@@ -3,6 +3,7 @@
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2025 Tianjin University, Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -79,7 +80,7 @@ class MakeselfPkgParams(NamedTuple):
     makeself_header: Optional[str] = None
     help_info: Optional[str] = None
     source_target: Optional[str] = None
-    
+
     install_script: Optional[str] = None
     independent_pkg: Optional[bool] = False
     cleanup: Optional[str] = None
@@ -161,7 +162,7 @@ def compose_makeself_command(params: MakeselfPkgParams) -> str:
         get_cleanup_commands(),
         [params.package_name, params.comments]
        )
-    
+
     command = ' '.join(commands)
     return command
 
@@ -190,7 +191,7 @@ def create_makeself_pkg_params_factory(source_target: str,
             makeself_header=makeself_header,
             help_info=help_info,
             source_target=source_target,
-            
+
             install_script=install_script,
             independent_pkg=independent_pkg,
             cleanup=cleanup,
@@ -216,7 +217,7 @@ def create_run_package_command(params: MakeselfPkgParams
 
 def exec_pack_cmd(delivery_dir: str,
                  pack_cmd: str,
-                 package_name: str) -> str: 
+                 package_name: str) -> str:
     """执行打包命令"""
     if delivery_dir:
         cmd = f'cd {delivery_dir} && {pack_cmd}'

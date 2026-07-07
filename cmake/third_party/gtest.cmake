@@ -1,6 +1,7 @@
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2025 Tianjin University, Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -103,37 +104,37 @@ else()
             )
 endif()
 
-set(GTEST_INCLUDE ${GTEST_INSTALL_PATH}/include)	 
+set(GTEST_INCLUDE ${GTEST_INSTALL_PATH}/include)
 
 
-add_library(gtest STATIC IMPORTED) 
-add_dependencies(gtest third_party_gtest) 
+add_library(gtest STATIC IMPORTED)
+add_dependencies(gtest third_party_gtest)
 
 
-add_library(gmock STATIC IMPORTED) 
-add_dependencies(gmock third_party_gtest) 
+add_library(gmock STATIC IMPORTED)
+add_dependencies(gmock third_party_gtest)
 
 
-add_library(gtest_main STATIC IMPORTED) 
-add_dependencies(gtest_main third_party_gtest) 
+add_library(gtest_main STATIC IMPORTED)
+add_dependencies(gtest_main third_party_gtest)
 
-if (NOT EXISTS ${GTEST_INSTALL_PATH}/include)	 
-file(MAKE_DIRECTORY "${GTEST_INSTALL_PATH}/include")	 
-endif ()	 
-
-
-set_target_properties(gtest PROPERTIES	 
-        IMPORTED_LOCATION ${GTEST_INSTALL_PATH}/lib/libgtest.a	 
-        INTERFACE_INCLUDE_DIRECTORIES ${GTEST_INSTALL_PATH}/include)	 
+if (NOT EXISTS ${GTEST_INSTALL_PATH}/include)
+file(MAKE_DIRECTORY "${GTEST_INSTALL_PATH}/include")
+endif ()
 
 
+set_target_properties(gtest PROPERTIES
+        IMPORTED_LOCATION ${GTEST_INSTALL_PATH}/lib/libgtest.a
+        INTERFACE_INCLUDE_DIRECTORIES ${GTEST_INSTALL_PATH}/include)
 
 
-set_target_properties(gmock PROPERTIES	 
-        IMPORTED_LOCATION ${GTEST_INSTALL_PATH}/lib/libgmock.a	 
-        INTERFACE_INCLUDE_DIRECTORIES ${GTEST_INSTALL_PATH}/include) 
 
 
-set_target_properties(gtest_main PROPERTIES	 
-        IMPORTED_LOCATION ${GTEST_INSTALL_PATH}/lib/libgtest_main.a	 
+set_target_properties(gmock PROPERTIES
+        IMPORTED_LOCATION ${GTEST_INSTALL_PATH}/lib/libgmock.a
+        INTERFACE_INCLUDE_DIRECTORIES ${GTEST_INSTALL_PATH}/include)
+
+
+set_target_properties(gtest_main PROPERTIES
+        IMPORTED_LOCATION ${GTEST_INSTALL_PATH}/lib/libgtest_main.a
         INTERFACE_INCLUDE_DIRECTORIES ${GTEST_INSTALL_PATH}/include)

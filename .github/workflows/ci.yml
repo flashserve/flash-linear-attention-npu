@@ -37,6 +37,7 @@ jobs:
     outputs:
       should_run: ${{ steps.prepare.outputs.should_run }}
       pr_number: ${{ steps.prepare.outputs.pr_number }}
+      base_ref: ${{ steps.prepare.outputs.base_ref }}
       head_repo: ${{ steps.prepare.outputs.head_repo }}
       head_sha: ${{ steps.prepare.outputs.head_sha }}
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
@@ -67,6 +68,7 @@ jobs:
             }
 
             const contextName = 'NPU CI / 手动验证';
+            const accuracyContextName = 'NPU CI / 精度检查';
             let prNumber;
             let ciMode = 'quick';
             let ops = '';
@@ -193,23 +195,31 @@ jobs:
               .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             const latestExecutionCi = manualCiStatuses
               .find((status) => (status.description || '').includes('+example'));
+            const accuracyStatuses = statuses
+              .filter((status) => status.context === accuracyContextName)
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            const latestAccuracyCi = accuracyStatuses[0];
             const latestPassedWithExample = latestExecutionCi &&
-              latestExecutionCi.state === 'success';
+              latestExecutionCi.state === 'success' &&
+              latestAccuracyCi &&
+              latestAccuracyCi.state === 'success';
             if (latestPassedWithExample) {
-              core.notice(`${pr.head.sha} 已经通过 NPU CI，跳过重复运行。`);
+              core.notice(`${pr.head.sha} 已经通过 NPU CI 和精度检查，跳过重复运行。`);
               commentId = await upsertComment(
                 pr,
                 [
-                  `NPU CI 已经在 \`${pr.head.sha}\` 上通过，本次不会重复运行。`,
+                  `NPU CI 和精度检查已经在 \`${pr.head.sha}\` 上通过，本次不会重复运行。`,
                   '',
                   `- 请求模式：\`${ciMode}\``,
                   `- 触发人：@${actor}`,
                   '- Example ST：已覆盖',
+                  '- 精度检查：已覆盖',
                   '- Example ST 用例：全部 enabled 用例',
                 ].join('\n')
               );
               core.setOutput('should_run', 'false');
               core.setOutput('pr_number', String(prNumber));
+              core.setOutput('base_ref', pr.base.ref);
               core.setOutput('head_repo', pr.head.repo.full_name);
               core.setOutput('head_sha', pr.head.sha);
               core.setOutput('ci_mode', ciMode);
@@ -234,6 +244,7 @@ jobs:
               );
               core.setOutput('should_run', 'false');
               core.setOutput('pr_number', String(prNumber));
+              core.setOutput('base_ref', pr.base.ref);
               core.setOutput('head_repo', pr.head.repo.full_name);
               core.setOutput('head_sha', pr.head.sha);
               core.setOutput('ci_mode', ciMode);
@@ -268,6 +279,7 @@ jobs:
 
             core.setOutput('should_run', 'true');
             core.setOutput('pr_number', String(prNumber));
+            core.setOutput('base_ref', pr.base.ref);
             core.setOutput('head_repo', pr.head.repo.full_name);
             core.setOutput('head_sha', pr.head.sha);
             core.setOutput('ci_mode', ciMode);
@@ -291,24 +303,24 @@ jobs:
       CI_RUN_EXAMPLE_ST: 'true'
       CI_IMAGE: fla-npu-ci:8.5.0-910b
     steps:
-      - name: 拉取 PR 合并后代码（第 1 次）
+      - name: 拉取当前目标分支代码（第 1 次）
         id: checkout_pr_1
         continue-on-error: true
         timeout-minutes: 10
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: refs/pull/${{ needs.prepare.outputs.pr_number }}/merge
-          fetch-depth: 1
+          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
+          fetch-depth: 50
           path: repo
 
-      - name: 等待后重试拉取 PR 合并后代码
+      - name: 等待后重试拉取目标分支代码
         if: steps.checkout_pr_1.outcome == 'failure'
         run: |
           rm -rf repo
           sleep 15
 
-      - name: 拉取 PR 合并后代码（第 2 次）
+      - name: 拉取当前目标分支代码（第 2 次）
         id: checkout_pr_2
         if: steps.checkout_pr_1.outcome == 'failure'
         continue-on-error: true
@@ -316,25 +328,86 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: refs/pull/${{ needs.prepare.outputs.pr_number }}/merge
-          fetch-depth: 1
+          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
+          fetch-depth: 50
           path: repo
 
-      - name: 再次等待后重试拉取 PR 代码
+      - name: 再次等待后重试拉取目标分支代码
         if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
         run: |
           rm -rf repo
           sleep 30
 
-      - name: 拉取 PR 合并后代码（第 3 次）
+      - name: 拉取当前目标分支代码（第 3 次）
         if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
         timeout-minutes: 10
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: refs/pull/${{ needs.prepare.outputs.pr_number }}/merge
-          fetch-depth: 1
+          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
+          fetch-depth: 50
           path: repo
+
+      - name: 现场合并 PR 代码
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          pr_head_ref="refs/remotes/pull/${NPU_CI_PR_NUMBER}/head"
+
+          retry_fetch_pr_head() {
+            local delay="$1"
+            if [ "$delay" != "0" ]; then
+              sleep "$delay"
+            fi
+            git fetch --no-tags --prune --no-recurse-submodules --depth=50 origin \
+              "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
+          }
+
+          fetch_more_history() {
+            local deepen_by="$1"
+            echo "[CI] Merge base not found in shallow history; deepening by ${deepen_by} commits."
+            git fetch --no-tags --prune --no-recurse-submodules --deepen="${deepen_by}" origin \
+              "+refs/heads/${NPU_CI_BASE_REF}:refs/remotes/origin/${NPU_CI_BASE_REF}" \
+              "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
+          }
+
+          ensure_merge_base() {
+            if git merge-base HEAD "${pr_head_ref}" >/dev/null; then
+              return 0
+            fi
+            for deepen_by in 50 100 200 400 800 1600 3200; do
+              fetch_more_history "${deepen_by}"
+              if git merge-base HEAD "${pr_head_ref}" >/dev/null; then
+                return 0
+              fi
+            done
+            if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+              echo "[CI] Merge base still not found; unshallowing repository as final probe."
+              git fetch --no-tags --prune --no-recurse-submodules --unshallow origin \
+                "+refs/heads/${NPU_CI_BASE_REF}:refs/remotes/origin/${NPU_CI_BASE_REF}" \
+                "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
+            fi
+            git merge-base HEAD "${pr_head_ref}" >/dev/null
+          }
+
+          retry_fetch_pr_head 0 || retry_fetch_pr_head 15 || retry_fetch_pr_head 30
+          fetched_head="$(git rev-parse "${pr_head_ref}")"
+          if [ "$fetched_head" != "$NPU_CI_TARGET_SHA" ]; then
+            echo "[CI][ERROR] PR head changed before merge; target=${NPU_CI_TARGET_SHA}, fetched=${fetched_head}."
+            exit 1
+          fi
+          if ! ensure_merge_base; then
+            echo "[CI][ERROR] Unable to find merge base between current base ${NPU_CI_BASE_REF} and PR head after probing history."
+            exit 1
+          fi
+
+          git merge --no-ff --no-edit "${pr_head_ref}"
+        env:
+          NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+          NPU_CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
+          NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
 
       - name: 拉取可信 CI 脚本（第 1 次）
         id: checkout_trusted_ci_1
@@ -382,7 +455,7 @@ jobs:
         run: |
           # CI 执行脚本必须来自默认分支，避免 PR 修改脚本后影响 runner。
           # 但 Example/ST 用例配置属于被验证内容：新 PR 中新增或修改的 enabled 用例
-          # 必须跟随 PR merge ref 一起进入容器，并被 /run-npu-ci quick 实际执行验证。
+          # 必须跟随当前目标分支和 PR head 的现场合并结果一起进入容器，并被 /run-npu-ci quick 实际执行验证。
           tmp_cases="$(mktemp)"
           if [ -f repo/ci/example_st_cases.json ]; then
             cp repo/ci/example_st_cases.json "$tmp_cases"

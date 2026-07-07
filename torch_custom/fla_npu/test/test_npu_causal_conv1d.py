@@ -263,7 +263,6 @@ class TestCausalConv1d(unittest.TestCase):
             return_final_states=True,
             final_states_out=conv_states_ref,
             activation=activation_from_mode(1),
-            head_num = head_num,
         )
         b,s,d = x.shape
         self.assertTensorClose(y, y_ref.permute(0, 2, 1).reshape(b,s,head_num,d//head_num).transpose(1,2).contiguous(), rtol=1e-1, atol=2e-1)

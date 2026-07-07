@@ -1,11 +1,13 @@
 /**
- * Copyright (c) 2025 Tianjin University, Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
- */
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Adapted for flash-linear-attention-npu by Tianjin University.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
+ */
 
 /*!
  * \file attention_ffn_schedule.h
@@ -14,7 +16,7 @@
 #ifndef INCLUDE_KERNEL_ATTENTION_FFN_SCHEDULE_H
 #define INCLUDE_KERNEL_ATTENTION_FFN_SCHEDULE_H
 #include <cstdint>
- 
+
 namespace aicpu {
 #pragma pack(push, 1)
 constexpr int32_t kValidFlag = 1;
@@ -30,17 +32,17 @@ struct FfnDataDesc {
   volatile int32_t layer_id;
   volatile int32_t expert_ids[0];
 };
- 
+
 struct AttentionDataDesc {
   int32_t flag[0];
 };
- 
+
 struct ScheduleContext {
   struct CommonArea {
     uint32_t session_num;  // Number of attention nodes
     uint32_t micro_batch_num;
     uint32_t micro_batch_size;
-    uint32_t selected_expert_num; 
+    uint32_t selected_expert_num;
     uint32_t expert_num; // Number of experts per layer, including routing experts and shared experts.
     uint32_t attn_to_ffn_token_size;  // Each token in the Ffn window data area has a space size aligned to 512 bytes.
     uint32_t ffn_to_attn_token_size;  // Each token in the Attention window data area has a space size aligned to 512 bytes.

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -343,7 +345,7 @@ class BinParamBuilder(opdesc_parser.OpDesc):
                 param_file = os.path.realpath(param_file)
                 self._write_build_json(param_file, param)
                 index_value += 1
-                self._write_build_cmd(param_file, bin_file, index_value, auto_gen_path, bisheng_flags, True, 
+                self._write_build_cmd(param_file, bin_file, index_value, auto_gen_path, bisheng_flags, True,
                                       kernel_template_input)
 
     def _write_build_json(self: any, param_file: str, param):
@@ -460,7 +462,7 @@ check_stop() {
 
 on_failure() {
     touch "$STOP_FILE"
-    
+
     # PIDPID
     (
         flock 9
@@ -506,7 +508,7 @@ check_stop
             build_cmd_var += f'export ASCEND_CUSTOM_OPP_PATH={auto_gen_path}:$ASCEND_CUSTOM_OPP_PATH \n'
         build_cmd_var += bin_cmd_str.format(fun=self.op_intf, soc=hard_soc, param=param_file,
                                            impl='high_performance,optional')
-        
+
         print(f"bisheng_flags is: {bisheng_flags}")
 
         if bisheng_flags:
@@ -514,7 +516,7 @@ check_stop
             build_cmd_var += f" --op_debug_config={bisheng_flags}"
 
         enable_tiling_keys = False
-        
+
         if kernel_template_input:
             kernel_template_input = kernel_template_input.replace(',', ';')
             build_cmd_var += f' --kernel-template-input="{kernel_template_input}"'
@@ -534,7 +536,7 @@ check_stop
             build_cmd_var += f' {op_super_config_str}'
 
         build_cmd_var += ")\n\n"
-    
+
         check_result = self._generate_check_result(enable_tiling_keys, bin_file, ci_mode_flag)
         build_cmd_var += check_result
         build_cmd_var += f'end_time=$(date +%s.%N)\n'
@@ -637,7 +639,7 @@ def gen_bin_param_file(cfgfile: str, out_dir: str, soc: str, kernel_template_inp
 
     debug_config = defaultdict(set)
     super_config = defaultdict(set)
-    
+
     op_descs = opdesc_parser.get_op_desc(cfgfile, [], [], BinParamBuilder, ops)
     tiling_key_info, op_debug_config = parse_op_debug_confg(opc_config_file, soc)
     for _op_type, _op_option in op_debug_config.items():

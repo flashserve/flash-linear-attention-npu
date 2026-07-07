@@ -141,7 +141,7 @@ def compute_dv_golden_high_precision(
 
 def compute_dk_golden(
     A: torch.Tensor,      # [B, T, VH, chunk_size] - 每个chunk的A值
-    dw: torch.Tensor,     # [B, T, KH, D]
+    dw: torch.Tensor,     # [B, T, VH, D]
     g: torch.Tensor,     # [B, VH, T]
     beta: torch.Tensor,   # [B, VH, T] - beta参数
     dA: torch.Tensor,      # [B, T, VH, chunk_size]
@@ -159,7 +159,7 @@ def compute_dk_golden(
     """
     CPU golden implementation for dk computation (变长序列)
     A的形状为 [B, T, VH, chunk_size]
-    k/dw使用KH head, 其余使用VH head
+    k使用KH head, 其余使用VH head
     算法:
     1. 对于每个chunk (由chunk_indices指定)
     2. 获取对应的seq_idx, chunk_indices
@@ -181,7 +181,7 @@ def compute_dk_golden(
                 A_chunk = A[i_b,i_h, bos:eos,: eos - bos]  # [chunk_size, chunk_size]
 
                 # 获取当前chunk的dw
-                dw_chunk = dw[i_b,i_h_k, bos:eos, :]  # [chunk_size, D]
+                dw_chunk = dw[i_b,i_h, bos:eos, :]  # [chunk_size, D]
 
                 # 获取当前chunk的beta,g
                 beta_chunk = beta[i_b,i_h, bos:eos]  # [chunk_size]
@@ -208,7 +208,7 @@ def compute_dk_golden(
 
 def compute_dk_golden_high_precision(
     A: torch.Tensor,      # [B, T, VH, chunk_size] - 每个chunk的A值
-    dw: torch.Tensor,     # [B, T, KH, D]
+    dw: torch.Tensor,     # [B, T, VH, D]
     g: torch.Tensor,     # [B, VH, T]
     beta: torch.Tensor,   # [B, VH, T] - beta参数
     dA: torch.Tensor,      # [B, T, VH, chunk_size]
@@ -226,7 +226,7 @@ def compute_dk_golden_high_precision(
     """
     CPU golden implementation for dk computation (变长序列)
     A的形状为 [B, T, VH, chunk_size]
-    k/dw使用KH head, 其余使用VH head
+    k使用KH head, 其余使用VH head
     算法:
     1. 对于每个chunk (由chunk_indices指定)
     2. 获取对应的seq_idx, chunk_indices
@@ -248,7 +248,7 @@ def compute_dk_golden_high_precision(
                 A_chunk = A[i_b,i_h, bos:eos,: eos - bos]  # [chunk_size, chunk_size]
 
                 # 获取当前chunk的dw
-                dw_chunk = dw[i_b,i_h_k, bos:eos, :]  # [chunk_size, D]
+                dw_chunk = dw[i_b,i_h, bos:eos, :]  # [chunk_size, D]
 
                 # 获取当前chunk的beta,g
                 beta_chunk = beta[i_b,i_h, bos:eos]  # [chunk_size]
@@ -275,7 +275,7 @@ def compute_dk_golden_high_precision(
 
 def compute_dg_golden(
     A: torch.Tensor,      # [B, T, VH, chunk_size] - 每个chunk的A值
-    dw: torch.Tensor,     # [B, T, KH, D]
+    dw: torch.Tensor,     # [B, T, VH, D]
     g: torch.Tensor,     # [B, VH, T]
     beta: torch.Tensor,   # [B, VH, T] - beta参数
     dA: torch.Tensor,      # [B, T, VH, chunk_size]
@@ -293,7 +293,7 @@ def compute_dg_golden(
     """
     CPU golden implementation for dg computation (变长序列)
     A的形状为 [B, T, VH, chunk_size]
-    k/dw使用KH head, 其余使用VH head
+    k使用KH head, 其余使用VH head
     算法:
     1. 对于每个chunk (由chunk_indices指定)
     2. 获取对应的seq_idx, chunk_indices
@@ -316,7 +316,7 @@ def compute_dg_golden(
                 A_chunk = A[i_b,i_h, bos:eos,: eos - bos]  # [chunk_size, chunk_size]
 
                 # 获取当前chunk的dw
-                dw_chunk = dw[i_b,i_h_k, bos:eos, :]  # [chunk_size, D]
+                dw_chunk = dw[i_b,i_h, bos:eos, :]  # [chunk_size, D]
 
                 # 获取当前chunk的beta,g
                 # beta形状: [B, VH, T]
@@ -354,7 +354,7 @@ def compute_dg_golden(
 
 def compute_dg_golden_high_precision(
     A: torch.Tensor,      # [B, T, VH, chunk_size] - 每个chunk的A值
-    dw: torch.Tensor,     # [B, T, KH, D]
+    dw: torch.Tensor,     # [B, T, VH, D]
     g: torch.Tensor,     # [B, VH, T]
     beta: torch.Tensor,   # [B, VH, T] - beta参数
     dA: torch.Tensor,      # [B, T, VH, chunk_size]
@@ -372,7 +372,7 @@ def compute_dg_golden_high_precision(
     """
     CPU golden implementation for dg computation (变长序列)
     A的形状为 [B, T, VH, chunk_size]
-    k/dw使用KH head, 其余使用VH head
+    k使用KH head, 其余使用VH head
     算法:
     1. 对于每个chunk (由chunk_indices指定)
     2. 获取对应的seq_idx, chunk_indices
@@ -395,7 +395,7 @@ def compute_dg_golden_high_precision(
                 A_chunk = A[i_b,i_h, bos:eos,: eos - bos]  # [chunk_size, chunk_size]
 
                 # 获取当前chunk的dw
-                dw_chunk = dw[i_b,i_h_k, bos:eos, :]  # [chunk_size, D]
+                dw_chunk = dw[i_b,i_h, bos:eos, :]  # [chunk_size, D]
 
                 # 获取当前chunk的beta,g
                 # beta形状: [B, VH, T]
@@ -434,7 +434,7 @@ def compute_dg_golden_high_precision(
 
 def compute_dbeta_golden(
     A: torch.Tensor,      # [B, T, VH, chunkSize] - 每个chunk的A值
-    dw: torch.Tensor,     # [B, T, KH, D]
+    dw: torch.Tensor,     # [B, T, VH, D]
     g: torch.Tensor,     # [B, VH, T]
     beta: torch.Tensor,   # [B, VH, T] - beta参数
     dA: torch.Tensor,      # [B, T, VH, chunkSize]
@@ -454,7 +454,7 @@ def compute_dbeta_golden(
     """
     CPU golden implementation for dbeta computation (变长序列)
     A的形状为 [B, T, VH, chunkSize]
-    k/dw使用KH head, 其余使用VH head
+    k使用KH head, 其余使用VH head
     算法:
     1. 对于每个chunk (由chunk_indices指定)
     2. 获取对应的seq_idx, chunk_indices
@@ -477,7 +477,7 @@ def compute_dbeta_golden(
                 v_chunk = v[i_b,i_h, bos:eos,:]  # [chunkSize, V]
 
                 # 获取当前chunk的dw
-                dw_chunk = dw[i_b,i_h_k, bos:eos, :]  # [chunkSize, D]
+                dw_chunk = dw[i_b,i_h, bos:eos, :]  # [chunkSize, D]
                 du_chunk = du[i_b,i_h, bos:eos, :]  # [chunkSize, D]
 
 
@@ -511,7 +511,7 @@ def compute_dbeta_golden(
 
 def compute_dbeta_golden_high_precision(
     A: torch.Tensor,      # [B, T, VH, chunkSize] - 每个chunk的A值
-    dw: torch.Tensor,     # [B, T, KH, D]
+    dw: torch.Tensor,     # [B, T, VH, D]
     g: torch.Tensor,     # [B, VH, T]
     beta: torch.Tensor,   # [B, VH, T] - beta参数
     dA: torch.Tensor,      # [B, T, VH, chunkSize]
@@ -531,7 +531,7 @@ def compute_dbeta_golden_high_precision(
     """
     CPU golden implementation for dbeta computation (变长序列)
     A的形状为 [B, T, VH, chunkSize]
-    k/dw使用KH head, 其余使用VH head
+    k使用KH head, 其余使用VH head
     算法:
     1. 对于每个chunk (由chunk_indices指定)
     2. 获取对应的seq_idx, chunk_indices
@@ -554,7 +554,7 @@ def compute_dbeta_golden_high_precision(
                 v_chunk = v[i_b,i_h, bos:eos,:]  # [chunkSize, V]
 
                 # 获取当前chunk的dw
-                dw_chunk = dw[i_b,i_h_k, bos:eos, :]  # [chunkSize, D]
+                dw_chunk = dw[i_b,i_h, bos:eos, :]  # [chunkSize, D]
                 du_chunk = du[i_b,i_h, bos:eos, :]  # [chunkSize, D]
 
 
@@ -721,7 +721,7 @@ def test_prepare_wy_repr_bwd_full(
     beta = torch.rand(B, VH, T, dtype=btype)
     A = torch.rand(B, VH, T, chunk_size, dtype=ktype)
     dA = torch.rand(B, VH, T, chunk_size, dtype=ktype)
-    dw = torch.rand(B, KH, T, K, dtype=ktype)
+    dw = torch.rand(B, VH, T, K, dtype=ktype)
     du = torch.rand(B, VH, T, V, dtype=ktype)
     g = torch.rand(B, VH, T, dtype=btype)
 

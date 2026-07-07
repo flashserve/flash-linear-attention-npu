@@ -1,6 +1,8 @@
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -37,7 +39,7 @@ class OpGenerator:
         logging.info(f"成功为 {self.op_type}/{self.op_name} 创建算子工程！")
         logging.info(f"工程路径: {self.dest_dir}")
         logging.info(f"Create the initial directory for {self.op_name} under {self.op_type} success")
-        
+
 
     def _validate_inputs(self):
         """校验输入参数的有效性和安全性"""
@@ -49,7 +51,7 @@ class OpGenerator:
 
         if not re.match(r"^[a-zA-Z0-9_]+$", self.op_name):
             raise ValueError(f"算子名称 '{self.op_name}' 包含无效字符。只允许字母、数字和下划线。")
-        
+
         if os.path.exists(self.dest_dir):
             raise FileExistsError(f"目标目录 '{self.dest_dir}' 已存在。")
 
@@ -58,7 +60,7 @@ class OpGenerator:
         logging.info(f"使用模板在 '{self.dest_dir}' 创建算子工程...")
         if not os.path.exists(self.template_dir):
             raise FileNotFoundError(f"找不到模板目录 '{self.template_dir}'。请确保 'template/add' 目录存在。")
-        
+
         try:
             shutil.copytree(self.template_dir, self.dest_dir)
             if not os.path.isfile(os.path.join(os.path.dirname(self.dest_dir), "CMakeLists.txt")):
@@ -120,7 +122,7 @@ class OpGenerator:
             for file in files:
                 if file.endswith(('.pyc', '.pyo')):
                     continue
-                
+
                 file_path = os.path.join(root, file)
                 self._replace_content_in_file(file_path, replacements)
 
@@ -148,11 +150,11 @@ def main():
     """主函数，用于独立执行"""
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s', stream=sys.stdout)
     parser = argparse.ArgumentParser(description="生成项目骨架")
-    
+
     parser.add_argument('--op_type', '-t', required=True, help='算子分类，例如 math')
     parser.add_argument('--op_name', '-n', required=True, help='新算子的名称，例如 asinh')
     parser.add_argument('--output_path', '-p', default='.', help='生成工程的根路径')
-    
+
     args = parser.parse_args()
 
     try:

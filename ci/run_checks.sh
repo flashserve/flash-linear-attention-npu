@@ -143,6 +143,20 @@ build_torch_custom() {
     torch_custom_built=true
 }
 
+build_and_check_wheel_api() {
+    rm -rf dist
+    python3 -m pip wheel --no-build-isolation --no-deps . -w dist
+    shopt -s nullglob
+    local wheels=(dist/flash_linear_attention_npu-*.whl)
+    shopt -u nullglob
+    if (( ${#wheels[@]} != 1 )); then
+        echo "[CI][ERROR] Expected exactly one flash_linear_attention_npu wheel, found ${#wheels[@]}." >&2
+        exit 1
+    fi
+    python3 -m pip install --force-reinstall --no-deps "${wheels[0]}"
+    python3 scripts/check_packaged_wheel_api.py
+}
+
 install_custom_opp_package() {
     shopt -s nullglob
     local run_files=(build_out/fla-npu-*.run build/fla-npu-*.run)
@@ -160,8 +174,8 @@ install_custom_opp_package() {
     chmod +x "${run_files[0]}"
     "${run_files[0]}" --quiet
 
-    local vendor_name="${CI_VENDOR_NAME:-fla_npu}"
-    local vendor_dir="${vendor_name}_transformer"
+    local vendor_name="fla_npu"
+    local vendor_dir="fla_npu_transformer"
     local op_api_lib=""
     for candidate in \
         "${ASCEND_OPP_PATH:-}/vendors/${vendor_dir}/op_api/lib" \
@@ -242,6 +256,10 @@ if [[ "${CI_RUN_TORCH_TESTS:-false}" == "true" ]]; then
         test_args+=(--op "$CI_TEST_OP")
     fi
     (cd torch_custom/fla_npu/test && bash test.sh "${test_args[@]}")
+fi
+
+if [[ "${CI_RUN_WHEEL_API_CHECK:-false}" == "true" ]]; then
+    build_and_check_wheel_api
 fi
 
 if [[ "${CI_RUN_EXAMPLE_ST:-true}" == "true" ]]; then

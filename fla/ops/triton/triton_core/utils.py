@@ -152,6 +152,8 @@ def get_available_device() -> str:
     try:
         return triton.runtime.driver.active.get_current_target().backend
     except BaseException:
+        if hasattr(torch, "npu"):
+            return 'npu'
         _cpu_device_warning()
         return 'cpu'
 

@@ -308,48 +308,46 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInInputTile(
     if (useGradLayout &&
         (inputLayout_ == INPUT_LAYOUT_BNSD || inputLayout_ == INPUT_LAYOUT_NTD)) {
         if constexpr (IsSameType<inputT, float>::value) {
-            for (uint32_t row = 0; row < validRows; row++) {
-                uint32_t channel = i_d * BD_;
-                uint32_t remain = BD_;
-                uint32_t localOffset = row * BD_;
-                while (remain > 0) {
-                    uint32_t segLen = GetInputSegmentLen(channel, remain);
-                    DataCopyExtParams copyParams{
-                        1,
-                        static_cast<uint32_t>(segLen * sizeof(inputT)),
-                        0,
-                        0,
-                        0};
-                    uint64_t base = GetInputOffset(bos, startRow + row, channel);
-                    DataCopyPad(dst[localOffset], srcGm[base], copyParams, padParams);
-                    channel += segLen;
-                    localOffset += segLen;
-                    remain -= segLen;
-                }
+            uint32_t channel = i_d * BD_;
+            uint32_t remain = BD_;
+            uint32_t localOffset = 0;
+            while (remain > 0) {
+                uint32_t segLen = GetInputSegmentLen(channel, remain);
+                uint32_t dstGapBytes = (BD_ - segLen) * sizeof(float);
+                DataCopyExtParams copyParams{
+                    static_cast<uint16_t>(validRows),
+                    static_cast<uint32_t>(segLen * sizeof(inputT)),
+                    static_cast<uint32_t>((inputHeadDim_ - segLen) * sizeof(inputT)),
+                    static_cast<uint32_t>(dstGapBytes / 32U),
+                    0};
+                uint64_t base = GetInputOffset(bos, startRow, channel);
+                DataCopyPad(dst[localOffset], srcGm[base], copyParams, padParams);
+                channel += segLen;
+                localOffset += segLen;
+                remain -= segLen;
             }
             event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
             SetFlag<HardEvent::MTE2_V>(ev);
             WaitFlag<HardEvent::MTE2_V>(ev);
         } else {
             LocalTensor<inputT> srcTemp = tempBuf_.Get<inputT>();
-            for (uint32_t row = 0; row < validRows; row++) {
-                uint32_t channel = i_d * BD_;
-                uint32_t remain = BD_;
-                uint32_t localOffset = row * BD_;
-                while (remain > 0) {
-                    uint32_t segLen = GetInputSegmentLen(channel, remain);
-                    DataCopyExtParams copyParams{
-                        1,
-                        static_cast<uint32_t>(segLen * sizeof(inputT)),
-                        0,
-                        0,
-                        0};
-                    uint64_t base = GetInputOffset(bos, startRow + row, channel);
-                    DataCopyPad(srcTemp[localOffset], srcGm[base], copyParams, padParams);
-                    channel += segLen;
-                    localOffset += segLen;
-                    remain -= segLen;
-                }
+            uint32_t channel = i_d * BD_;
+            uint32_t remain = BD_;
+            uint32_t localOffset = 0;
+            while (remain > 0) {
+                uint32_t segLen = GetInputSegmentLen(channel, remain);
+                uint32_t dstGapBytes = (BD_ - segLen) * sizeof(inputT);
+                DataCopyExtParams copyParams{
+                    static_cast<uint16_t>(validRows),
+                    static_cast<uint32_t>(segLen * sizeof(inputT)),
+                    static_cast<uint32_t>((inputHeadDim_ - segLen) * sizeof(inputT)),
+                    static_cast<uint32_t>(dstGapBytes / 32U),
+                    0};
+                uint64_t base = GetInputOffset(bos, startRow, channel);
+                DataCopyPad(srcTemp[localOffset], srcGm[base], copyParams, padParams);
+                channel += segLen;
+                localOffset += segLen;
+                remain -= segLen;
             }
             event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
             SetFlag<HardEvent::MTE2_V>(ev);

@@ -1,6 +1,7 @@
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -113,7 +114,7 @@ static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdHParams &params, a
 static aclnnStatus CheckGateOptionalNonNull(const ChunkGatedDeltaRuleFwdHParams &params)
 {
     CHECK_COND(params.gOptional != nullptr || params.gkOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
-               "either gOptional or gkOptional must be non-null.");
+               "Either gOptional or gkOptional must be non-null.");
     return ACLNN_SUCCESS;
 }
 
@@ -128,11 +129,34 @@ static aclnnStatus CheckReservedOptions(const ChunkGatedDeltaRuleFwdHParams &par
     return ACLNN_SUCCESS;
 }
 
+static aclnnStatus CheckGkParams(const ChunkGatedDeltaRuleFwdHParams &params)
+{
+    if (params.gkOptional != nullptr) {
+        auto gkShape = params.gkOptional->GetViewShape();
+        CHECK_COND(gkShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID,
+                   "gk must have rank 4 when provided, got rank %ld.", gkShape.GetDimNum());
+        CHECK_COND(gkShape.GetDim(3) == params.k->GetViewShape().GetDim(3), ACLNN_ERR_PARAM_INVALID,
+                   "gk.shape[3] (K) must match k.shape[3] (K).");
+        CHECK_COND(gkShape.GetDim(2) == params.k->GetViewShape().GetDim(2), ACLNN_ERR_PARAM_INVALID,
+                   "gk.shape[2] (T) must match k.shape[2] (T).");
+        CHECK_COND(gkShape.GetDim(1) == params.u->GetViewShape().GetDim(1), ACLNN_ERR_PARAM_INVALID,
+                   "gk.shape[1] (HV) must match u.shape[1] (HV).");
+        CHECK_COND(gkShape.GetDim(0) == params.k->GetViewShape().GetDim(0), ACLNN_ERR_PARAM_INVALID,
+                   "gk.shape[0] (B) must match k.shape[0] (B).");
+        if (params.gOptional != nullptr) {
+            CHECK_COND(params.gkOptional->GetDataType() == params.gOptional->GetDataType(), ACLNN_ERR_PARAM_INVALID,
+                       "gk.dtype must match g.dtype when both gates are provided.");
+        }
+    }
+    return ACLNN_SUCCESS;
+}
+
 static aclnnStatus CheckParams(ChunkGatedDeltaRuleFwdHParams params)
 {
     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckGateOptionalNonNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckReservedOptions(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckGkParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -188,6 +212,16 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
                "ParamsDataContiguous failed.");
     auto result = l0op::ChunkGatedDeltaRuleFwdH(params.k, params.w, params.u, params.gOptional, params.gkOptional, params.initalStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize, params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+
+    // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.
+    auto viewCopyResult0 = l0op::ViewCopy(result[0], params.hOut, executorPtr);
+    CHECK_RET(viewCopyResult0 != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    auto viewCopyResult1 = l0op::ViewCopy(result[1], params.vNewOut, executorPtr);
+    CHECK_RET(viewCopyResult1 != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (outputFinalState && params.finalStateOut != nullptr) {
+        auto viewCopyResult2 = l0op::ViewCopy(result[2], params.finalStateOut, executorPtr);
+        CHECK_RET(viewCopyResult2 != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
 
     // Standard syntax, get the size of workspace needed during computation.
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();

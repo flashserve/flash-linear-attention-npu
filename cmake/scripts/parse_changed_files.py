@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # -----------------------------------------------------------------------------------------------------------
-# Copyright (c) 2025 Tianjin University, Ltd.
+# Adapted for flash-linear-attention-npu by Tianjin University.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -295,7 +297,7 @@ class Parser:
             if not cls._parse_classify_item(name=name + '/' + k, desc=sub_desc):
                 return False
         return True
-    
+
     @classmethod
     def get_related_ut_mc2(cls):
         def ops_test_list_append(ops, ops_test_option_lst):
@@ -313,7 +315,7 @@ class Parser:
             logging.info("Don't trigger any mc2 UT.")
             return ""
         return cls.get_ops_test_ut_str(ops_test_option_lst)
-    
+
     @classmethod
     def get_related_ut_exclude_mc2(cls):
         def ops_test_list_append(ops, ops_test_option_lst):
@@ -331,7 +333,7 @@ class Parser:
             logging.info("Don't trigger any UT exclude mc2.")
             return ""
         return cls.get_ops_test_ut_str(ops_test_option_lst)
-    
+
     @classmethod
     def get_ops_test_ut_str(cls, ops_test_option_lst: List[str]) -> str:
         ops_test_ut_str: str = ""

@@ -1,6 +1,8 @@
 /**
-* Copyright (c) 2025 Tianjin University, Ltd.
+* Copyright (c) 2025 Huawei Technologies Co., Ltd.
+* Adapted for flash-linear-attention-npu by Tianjin University.
 * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+* CANN Open Software License Agreement Version 2.0 (the "License").
 * Please refer to the License for details. You may not use this file except in compliance with the License.
 * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -124,7 +126,7 @@ std::tuple<at::Tensor, int64_t> update_context(const at::Tensor &x, c10::string_
         return std::make_tuple(output, bufferSize);
     }
 
-    
+
     Mc2ContextStru mc2ContextHost[2];
     int32_t ret = GetMc2Context(mc2ContextHost, ep_world_size, bufferSize, new_group_ep_str.c_str());
     TORCH_CHECK(ret == 0, "GetMc2Context failed, ret", ret);

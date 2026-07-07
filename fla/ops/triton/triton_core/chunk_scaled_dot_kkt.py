@@ -99,15 +99,6 @@ def chunk_scaled_dot_kkt_fwd_kernel(
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None
 })
-@triton.autotune(
-    configs=[
-        triton.Config({'BK': BK}, num_warps=num_warps, num_stages=num_stages)
-        for BK in [32, 64]
-        for num_warps in [1, 2, 4, 8]
-        for num_stages in [2, 3, 4]
-    ],
-    key=["BC"]
-)
 @triton.jit(do_not_specialize=['T'])
 def chunk_scaled_dot_kkt_fwd_kernel_intra_sub_inter(
     k,
@@ -175,15 +166,6 @@ def chunk_scaled_dot_kkt_fwd_kernel_intra_sub_inter(
 @triton.heuristics({
     'IS_VARLEN': lambda args: args['cu_seqlens'] is not None
 })
-@triton.autotune(
-    configs=[
-        triton.Config({}, num_warps=1),
-        triton.Config({}, num_warps=2),
-        triton.Config({}, num_warps=4),
-        triton.Config({}, num_warps=8),
-    ],
-    key=["BK", "BT"]
-)
 @triton.jit(do_not_specialize=['T'])
 def chunk_scaled_dot_kkt_fwd_kernel_intra_sub_intra(
     k,
@@ -323,7 +305,10 @@ def chunk_scaled_dot_kkt_fwd(
         K=K,
         BT=BT,
         BC=BC,
+        BK=BK,
         NC=NC,
+        num_warps=4,
+        num_stages=3,
     )
 
     grid = (NT, NC, B)
@@ -340,5 +325,6 @@ def chunk_scaled_dot_kkt_fwd(
         BT=BT,
         BC=BC,
         BK=BK,
+        num_warps=4,
     )
     return A
