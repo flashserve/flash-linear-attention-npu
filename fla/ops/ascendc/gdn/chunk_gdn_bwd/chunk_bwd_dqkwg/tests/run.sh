@@ -1,6 +1,6 @@
 ascend_path="/data/huangjunzhe/Ascend.GDN/cann-9.0.0"
 data_path=/data/huangjunzhe/GDN/result/result_newg
-export TMPDIR=/workspace/hjz/tmp/
+export TMPDIR=/data/huangjunzhe/tmp
 custom_path="/home/huangjunzhe/GDN/custom"
 
 #======================================================================================
@@ -75,10 +75,10 @@ fi
 # ct viz ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt --out_dir ${data_path}/${caseid} --name dq -wl 1
 # ct viz ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt --out_dir ${data_path}/${caseid} --name dk -wl 1
 
-# ct dual ${data_path}/${caseid}/out/dg_npu.pt ${data_path}/${caseid}/out/dg_cpu.pt ${data_path}/${caseid}/out/dg_cpu_benchmark.pt --out_dir ${data_path}/${caseid}
-# ct dual ${data_path}/${caseid}/out/dw_npu.pt ${data_path}/${caseid}/out/dw_cpu.pt ${data_path}/${caseid}/out/dw_cpu_benchmark.pt --out_dir ${data_path}/${caseid}
-# ct dual ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt ${data_path}/${caseid}/out/dq_cpu_benchmark.pt --out_dir ${data_path}/${caseid}
-# ct dual ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt ${data_path}/${caseid}/out/dk_cpu_benchmark.pt --out_dir ${data_path}/${caseid}
+# ct dual ${data_path}/${caseid}/out/dg_npu.pt ${data_path}/${caseid}/out/dg_cpu.pt ${data_path}/${caseid}/out/dg_cpu_fp64.pt --out_dir ${data_path}/${caseid}
+# ct dual ${data_path}/${caseid}/out/dw_npu.pt ${data_path}/${caseid}/out/dw_cpu.pt ${data_path}/${caseid}/out/dw_cpu_fp64.pt --out_dir ${data_path}/${caseid}
+# ct dual ${data_path}/${caseid}/out/dq_npu.pt ${data_path}/${caseid}/out/dq_cpu.pt ${data_path}/${caseid}/out/dq_cpu_fp64.pt --out_dir ${data_path}/${caseid}
+# ct dual ${data_path}/${caseid}/out/dk_npu.pt ${data_path}/${caseid}/out/dk_cpu.pt ${data_path}/${caseid}/out/dk_cpu_fp64.pt --out_dir ${data_path}/${caseid}
 
 names=(dw dg dq dk)
 
@@ -96,7 +96,7 @@ done
 for name in "${names[@]}"; do
     echo "Processing viz $name..."
     ct viz ${data_path}/${caseid}/out/${name}_npu.pt ${data_path}/${caseid}/out/${name}_cpu.pt \
-        --out_dir ${data_path}/${caseid} --name ${name} -wl 1 > /dev/null 2>&1 &
+        --out_dir ${data_path}/${caseid} --name ${name} -wl 1 -sc 10000 > /dev/null 2>&1 &
 done
 wait
 

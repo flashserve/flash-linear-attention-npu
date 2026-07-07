@@ -204,6 +204,10 @@ public:
         size_t mm5Size = B * HV * T * K * FP16_SIZE;
         size_t dsTempSize = B * HV * T * BT * FP16_SIZE;
 
+        // When HK != HV, need workspace for intermediate dq/dk results [B, HV, T, K]
+        // before reduction to [B, HK, T, K]
+        size_t dqkvReduceSize = (HK != HV) ? (2 * B * HV * T * K * FP16_SIZE) : 0;
+
         size_t offset = 0;
 
         tiling_.wsDwOffset = 0;
@@ -216,8 +220,12 @@ public:
         tiling_.wsDsTempOffset = static_cast<int64_t>(offset);
         offset += dsTempSize;
 
+        tiling_.wsDqkvReduceOffset = static_cast<int64_t>(offset);
+        offset += dqkvReduceSize;
+
         tiling_.dgLastSize = static_cast<int64_t>(dgLastSize);
         tiling_.totalWorkspaceSize = static_cast<int64_t>(offset);
+        tiling_.needReduce = (HK != HV) ? 1 : 0;
 
         return ge::GRAPH_SUCCESS;
     }
@@ -254,6 +262,9 @@ public:
         size_t mm5Size = tiling_.B * tiling_.HV * tiling_.T * tiling_.K * FP16_SIZE;
         size_t dsTempSize = tiling_.B * tiling_.HV * tiling_.T * tiling_.BT * FP16_SIZE;
 
+        // When HK != HV, need workspace for intermediate dq/dk results [B, HV, T, K]
+        size_t dqkvReduceSize = (tiling_.HK != tiling_.HV) ? (2 * tiling_.B * tiling_.HV * tiling_.T * tiling_.K * FP16_SIZE) : 0;
+
         size_t offset = 0;
 
         tiling_.wsDwOffset = 0;
@@ -266,8 +277,12 @@ public:
         tiling_.wsDsTempOffset = static_cast<int64_t>(offset);
         offset += dsTempSize;
 
+        tiling_.wsDqkvReduceOffset = static_cast<int64_t>(offset);
+        offset += dqkvReduceSize;
+
         tiling_.dgLastSize = static_cast<int64_t>(dgLastSize);
         tiling_.totalWorkspaceSize = static_cast<int64_t>(offset);
+        tiling_.needReduce = (tiling_.HK != tiling_.HV) ? 1 : 0;
 
         return ge::GRAPH_SUCCESS;
     }
