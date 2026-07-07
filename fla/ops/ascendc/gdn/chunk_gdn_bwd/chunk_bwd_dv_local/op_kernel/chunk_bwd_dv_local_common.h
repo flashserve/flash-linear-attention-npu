@@ -27,6 +27,8 @@ constexpr uint64_t SYNC_AIV_AIC_FLAG_1 = 1;
 constexpr uint64_t SYNC_AIV_AIC_FLAG_2 = 2;
 constexpr uint64_t SYNC_AIC_AIV_FLAG_3 = 3;
 constexpr uint64_t SYNC_AIC_AIV_FLAG_4 = 4;
+constexpr uint64_t SYNC_AIV_AIC_GATED_READY_FLAG = SYNC_AIV_AIC_FLAG_1;
+constexpr uint64_t SYNC_AIC_AIV_GATED_FREE_FLAG = SYNC_AIC_AIV_FLAG_4;
 
 __aicore__ inline int64_t CeilDiv(int64_t dividend, int64_t divisor)
 {
