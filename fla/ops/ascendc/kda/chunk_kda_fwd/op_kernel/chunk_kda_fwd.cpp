@@ -753,9 +753,6 @@ private:
         if (subBlockNum == 0 || subBlockIdx >= subBlockNum || K_ == 0) {
             return false;
         }
-        if (curT != KDA_SOLVE_BT) {
-            return false;
-        }
         uint64_t rowBegin = (curT * subBlockIdx) / subBlockNum;
         uint64_t rowEnd = (curT * (subBlockIdx + 1)) / subBlockNum;
         if (rowBegin >= rowEnd) {
