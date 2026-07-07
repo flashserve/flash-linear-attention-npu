@@ -152,8 +152,10 @@ struct ChunkBwdDqkwgTilingData {
     int64_t dgLastSize;
     int64_t wsMm5Offset;
     int64_t wsDsTempOffset;
+    int64_t wsDqkvReduceOffset;
     int64_t totalWorkspaceSize;
     int64_t isVarLen;
+    int64_t needReduce;  // 1 if HK != HV, 0 otherwise
 };
 
 } // namespace GDN

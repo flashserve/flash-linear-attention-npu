@@ -46,7 +46,6 @@ cases = {   #B,HV,HK,T,chunk_size,dtype,Gtype,scale,cu_seqlens, K,V
         "case_23": [1,32,32,65536,64,torch.bfloat16,torch.bfloat16,0.32,case_extra_info.pj_cu_seqlens,128,128],
         "case_24": [1,32,32,65536,128,torch.bfloat16,torch.bfloat16,0.32,case_extra_info.pj_cu_seqlens,128,128],
         "case_25": [1,16,8,1024,64,torch.bfloat16,torch.float32,0.088, [0, 57, 143, 187, 197, 227],128,256],
-        "case_step2_test": [1,32,16,16384,64,torch.bfloat16,torch.float32,0.03125, generate_increasing_sequence(0, 16384, 128),128,256],
         "case_step2_01": [1,32,16,16384,64,torch.bfloat16,torch.float32,0.03125, generate_increasing_sequence(0, 16384, 128),128,256],
         "case_step2_02": [1,63,21,16384,64,torch.bfloat16,torch.float32,0.03125, [0, 16384],128,256],
         "case_step2_03": [1,32,8,65536,128,torch.float16,torch.float32,0.03125, generate_increasing_sequence(0, 65536, 172),128,256],
