@@ -28,6 +28,7 @@ using namespace op;
 
 namespace l0op {
 const aclTensor *Muls(const aclTensor *self, float alpha, aclOpExecutor *executor);
+const aclTensor *ZerosLike(const aclTensor *self, aclOpExecutor *executor);
 }
 
 #ifdef __cplusplus
@@ -421,8 +422,13 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         CHECK_RET(wForHFp32 != nullptr, ACLNN_ERR_INNER_NULLPTR);
         const aclTensor *wForH = l0op::Cast(wForHFp32, params.wOut->GetDataType(), executorPtr);
         CHECK_RET(wForH != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        const aclTensor *initialStateForH = params.initialStateOptional;
+        if (initialStateForH == nullptr) {
+            initialStateForH = l0op::ZerosLike(params.finalStateOut, executorPtr);
+            CHECK_RET(initialStateForH != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        }
         auto hResult = l0op::ChunkGatedDeltaRuleFwdH(kgComputeBnsd, wForH, uComputeBnsd, nullptr, gkBnsd,
-                                                     params.initialStateOptional, params.cuSeqlensOptional,
+                                                     initialStateForH, params.cuSeqlensOptional,
                                                      params.chunkIndicesOptional, params.outputFinalState,
                                                      params.chunkSize, hComputeBnst, vNewComputeBnsd, params.finalStateOut,
                                                      executorPtr);
