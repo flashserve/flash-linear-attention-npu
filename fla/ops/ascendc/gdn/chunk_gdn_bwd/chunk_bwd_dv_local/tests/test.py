@@ -593,6 +593,8 @@ if __name__ == "__main__":
     test_chunk_bwd_dv_local_fix(B=2, H_qk=4, T=512, K=128, V=256, chunk_size=64, scale=0.0625, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=2, case_name="GVA_F4")
     # GVA-F5: h_ratio=2, H_qk=8, H_do=16, float16
     test_chunk_bwd_dv_local_fix(B=2, H_qk=8, T=1024, K=128, V=128, chunk_size=64, scale=0.0625, ktype=torch.float16, gtype=torch.float16, h_ratio=2, case_name="GVA_F5")
+    # GVA-FIX4: h_ratio=32, H_qk=2, H_do=64, short T, V=256, fp16/fp32 gate
+    test_chunk_bwd_dv_local_fix(B=176, H_qk=2, T=24, K=128, V=256, chunk_size=64, scale=0.0625, ktype=torch.float16, gtype=torch.float32, h_ratio=32, case_name="GVA-FIX4")
     # GVA-V1: h_ratio=2, variable length
     test_chunk_bwd_dv_local_variable(B=1, H_qk=4, T=512, K=128, V=128, chunk_size=64, scale=0.0625, cu_seqlens_len=4, ktype=torch.bfloat16, gtype=torch.bfloat16, h_ratio=2, case_name="GVA_V1")
     # GVA-V2: h_ratio=4, variable length
