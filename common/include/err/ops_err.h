@@ -17,9 +17,11 @@
 
 #include "log/log.h"
 
+constexpr int32_t OP_FLA_MODULE_ID = 63;
+
 #define OPS_INNER_ERR_STUB(ERR_CODE_STR, OPS_DESC, FMT, ...)                                                           \
     do {                                                                                                               \
-        OpLogSub(OP, DLOG_ERROR, OPS_DESC, FMT, ##__VA_ARGS__);                                                    \
+        OpLogSub(OP_FLA_MODULE_ID, DLOG_ERROR, OPS_DESC, FMT, ##__VA_ARGS__);                                          \
         REPORT_INNER_ERR_MSG(ERR_CODE_STR, FMT, ##__VA_ARGS__);                                                        \
     } while (0)
 
