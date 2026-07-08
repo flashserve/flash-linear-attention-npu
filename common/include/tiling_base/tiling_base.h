@@ -156,10 +156,11 @@ protected:
     // 8、Dump Tiling数据
     virtual void DumpTilingInfo()
     {
-        int32_t enable = CheckLogLevel(static_cast<int32_t>(OP), DLOG_DEBUG);
-        if (enable != 1) {
-            return;
-        }
+        OP_LOGD(context_, "%ld", DefaultTilingInfoDump());
+    }
+
+    int64_t DefaultTilingInfoDump()
+    {
         auto buf = (uint32_t*)context_->GetRawTilingData()->GetData();
         auto bufLen = context_->GetRawTilingData()->GetDataSize();
         std::ostringstream oss;
@@ -173,6 +174,7 @@ protected:
             }
         }
         OP_LOGD(context_, "%s", oss.str().c_str());
+        return 0;
     }
 
     static uint32_t CalcTschBlockDim(uint32_t sliceNum, uint32_t aicCoreNum, uint32_t aivCoreNum)
