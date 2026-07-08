@@ -1025,14 +1025,14 @@ private:
 
     __aicore__ inline bool UseAkkCubeSolve(uint64_t curT) const
     {
-        return curT > 0 && curT <= KDA_SOLVE_BT && K_ >= 16 && V_ >= 16 && V_ <= 128 && K_ % 16 == 0 && V_ % 16 == 0 &&
+        return curT > 1 && curT <= KDA_SOLVE_BT && K_ >= 16 && V_ >= 16 && V_ <= 128 && K_ % 16 == 0 && V_ % 16 == 0 &&
                K_ * V_ >= KDA_SOLVE_SCRATCH_SLOTS * KDA_SOLVE_MATRIX_ELEMENTS &&
                K_ * V_ >= curT * (K_ + V_);
     }
 
     __aicore__ inline bool UsePostWuCube(uint64_t curT) const
     {
-        return curT > 0 && curT <= KDA_SOLVE_BT && K_ >= 16 && V_ >= 16 && V_ <= 128 && K_ % 16 == 0 && V_ % 16 == 0 &&
+        return curT > 1 && curT <= KDA_SOLVE_BT && K_ >= 16 && V_ >= 16 && V_ <= 128 && K_ % 16 == 0 && V_ % 16 == 0 &&
                K_ * V_ >= curT * (K_ + V_);
     }
 
@@ -2167,7 +2167,7 @@ private:
             ComputeRawAqkAkkScalar(b, h, hv, start, curT);
         } else {
             uint64_t subBlockIdx = isAivOnly_ ? 0 : static_cast<uint64_t>(GetSubBlockIdx());
-            if (K_ < 16) {
+            if (K_ < 16 || curT == 1) {
                 if (!isAivOnly_ && subBlockIdx != 0) {
                     return;
                 }
@@ -2310,7 +2310,7 @@ private:
     __aicore__ inline void ProcessChunkAic(uint64_t b, uint64_t hv, uint64_t start, uint64_t end)
     {
         uint64_t curT = end - start;
-        if (curT == 0 || K_ < 16) {
+        if (curT == 0 || K_ < 16 || curT == 1) {
             return;
         }
         Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(scoreReadyFlag_);
@@ -2491,7 +2491,7 @@ private:
         if (curT == 0) {
             return;
         }
-        if (K_ < 16) {
+        if (K_ < 16 || curT == 1) {
             if (subBlockIdx != 0) {
                 return;
             }
@@ -2547,7 +2547,7 @@ private:
                                               uint64_t end)
     {
         uint64_t curT = end - start;
-        if (curT == 0 || K_ < 16) {
+        if (curT == 0 || K_ < 16 || curT == 1) {
             return;
         }
         Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(scoreReadyFlag_);
@@ -2600,6 +2600,12 @@ private:
         if (curT == 0) {
             return;
         }
+        if (curT == 1) {
+            if (subBlockIdx == 0) {
+                ComputeOutputScalarRows(b, hv, chunkIdx, start, curT, 0, 1);
+            }
+            return;
+        }
         Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(scoreDoneFlag_);
         FinalizeOutputRows(b, hv, start, curT, subBlockIdx, subBlockNum);
     }
@@ -2608,7 +2614,7 @@ private:
                                              uint64_t end)
     {
         uint64_t curT = end - start;
-        if (curT == 0) {
+        if (curT == 0 || curT == 1) {
             return;
         }
         ComputeOutputCube(b, hv, chunkIdx, start, curT);
