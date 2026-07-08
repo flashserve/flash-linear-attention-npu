@@ -22,6 +22,20 @@
 
 using namespace Catlass;
 
+namespace {
+template <typename InputType, typename GateType, typename StateType, typename OutputType, typename WorkspaceType>
+__aicore__ inline void RunGdnFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state,
+                                  GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
+                                  GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user)
+{
+    using GDNFwdHKernel =
+        Catlass::Gemm::Kernel::GDNFwdHKernel<InputType, GateType, StateType, WorkspaceType, OutputType>;
+    GDNFwdHKernel gdnFwdH;
+    gdnFwdH.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+    gdnFwdH.Process();
+}
+} // namespace
+
 extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd_h(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g,
                                                          GM_ADDR gk, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
                                                          GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state,
@@ -34,56 +48,43 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd_h(GM_ADDR k, GM
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
     using workspaceType = float;
     // dtype: 0 - fp16, 1 - bf16, 2 - fp32
-    if (gdnFwdHTilingData->dataType == 1) {
+    if (gdnFwdHTilingData->dataType == 2) {
+        RunGdnFwdH<float, float, float, float, workspaceType>(
+            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+    } else if (gdnFwdHTilingData->dataType == 1) {
         if (gdnFwdHTilingData->stateDataType == 2) {
             if (gdnFwdHTilingData->gDataType == 2) {
-                using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<bfloat16_t, float, float, workspaceType>;
-                GDNFwdHKernel gdnFwdH;
-                gdnFwdH.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                gdnFwdH.Process();
+                RunGdnFwdH<bfloat16_t, float, float, bfloat16_t, workspaceType>(
+                    k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
             } else {
-                using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<bfloat16_t, bfloat16_t, float, workspaceType>;
-                GDNFwdHKernel gdnFwdH;
-                gdnFwdH.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                gdnFwdH.Process();
+                RunGdnFwdH<bfloat16_t, bfloat16_t, float, bfloat16_t, workspaceType>(
+                    k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
             }
         } else {
             if (gdnFwdHTilingData->gDataType == 2) {
-                using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<bfloat16_t, float, bfloat16_t, workspaceType>;
-                GDNFwdHKernel gdnFwdH;
-                gdnFwdH.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                gdnFwdH.Process();
+                RunGdnFwdH<bfloat16_t, float, bfloat16_t, bfloat16_t, workspaceType>(
+                    k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
             } else {
-                using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<bfloat16_t, bfloat16_t, bfloat16_t, workspaceType>;
-                GDNFwdHKernel gdnFwdH;
-                gdnFwdH.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                gdnFwdH.Process();
+                RunGdnFwdH<bfloat16_t, bfloat16_t, bfloat16_t, bfloat16_t, workspaceType>(
+                    k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
             }
         }
     } else {
         if (gdnFwdHTilingData->stateDataType == 2) {
             if (gdnFwdHTilingData->gDataType == 2) {
-                using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<half, float, float, workspaceType>;
-                GDNFwdHKernel gdnFwdH;
-                gdnFwdH.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                gdnFwdH.Process();
+                RunGdnFwdH<half, float, float, half, workspaceType>(
+                    k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
             } else {
-                using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<half, half, float, workspaceType>;
-                GDNFwdHKernel gdnFwdH;
-                gdnFwdH.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                gdnFwdH.Process();
+                RunGdnFwdH<half, half, float, half, workspaceType>(
+                    k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
             }
         } else {
             if (gdnFwdHTilingData->gDataType == 2) {
-                using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<half, float, half, workspaceType>;
-                GDNFwdHKernel gdnFwdH;
-                gdnFwdH.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                gdnFwdH.Process();
+                RunGdnFwdH<half, float, half, half, workspaceType>(
+                    k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
             } else {
-                using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<half, half, half, workspaceType>;
-                GDNFwdHKernel gdnFwdH;
-                gdnFwdH.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                gdnFwdH.Process();
+                RunGdnFwdH<half, half, half, half, workspaceType>(
+                    k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
             }
         }
     }

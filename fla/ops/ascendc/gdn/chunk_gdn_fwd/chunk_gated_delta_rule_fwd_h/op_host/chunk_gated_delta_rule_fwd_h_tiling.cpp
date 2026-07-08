@@ -50,6 +50,7 @@ static void ChunkGatedDeltaRuleFwdHTilingDataPrint(gert::TilingContext *context,
     OP_LOGD(nodeName, "=== useInitialState: %ld", tiling.get_useInitialState());
     OP_LOGD(nodeName, "=== storeFinalState: %ld", tiling.get_storeFinalState());
     OP_LOGD(nodeName, "=== dataType: %ld", tiling.get_dataType());
+    OP_LOGD(nodeName, "=== outputDataType: %ld", tiling.get_outputDataType());
     OP_LOGD(nodeName, "=== hasGk: %ld", tiling.get_hasGk());
     OP_LOGD(nodeName, "=== isVariedLen: %ld", tiling.get_isVariedLen());
     OP_LOGD(nodeName, "=== shapeBatch: %ld", tiling.get_shapeBatch());
@@ -117,7 +118,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     int64_t chunkSize = *(attrPtr->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_IDX));
 
     auto dtype = context->GetInputTensor(0)->GetDataType();
-    uint64_t dataType =  dtype == ge::DT_BF16 ? 1 : 0;
+    uint64_t dataType = dtype == ge::DT_FLOAT ? 2 : (dtype == ge::DT_BF16 ? 1 : 0);
+    auto outputDType = context->GetOutputDesc(0)->GetDataType();
+    uint64_t outputDataType = outputDType == ge::DT_FLOAT ? 2 : (outputDType == ge::DT_BF16 ? 1 : 0);
 
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint32_t aicCoreNum = ascendcPlatform.GetCoreNumAic();
@@ -159,6 +162,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     tiling.set_useInitialState(useInitialState);
     tiling.set_storeFinalState(storeFinalState);
     tiling.set_dataType(dataType);
+    tiling.set_outputDataType(outputDataType);
     tiling.set_stateDataType(stateDataType);
     tiling.set_gDataType(gDataType);
     tiling.set_hasGk(hasGk);

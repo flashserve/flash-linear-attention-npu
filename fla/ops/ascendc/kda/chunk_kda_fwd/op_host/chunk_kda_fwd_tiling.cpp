@@ -50,7 +50,8 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     auto vShape = context->GetOptionalInputShape(INPUT_V_IDX)->GetStorageShape();
     auto qDesc = context->GetInputDesc(INPUT_Q_IDX);
     auto gDesc = context->GetInputDesc(INPUT_GK_IDX);
-    if (qDesc == nullptr || gDesc == nullptr) {
+    auto oDesc = context->GetOutputDesc(0);
+    if (qDesc == nullptr || gDesc == nullptr || oDesc == nullptr) {
         return ge::GRAPH_FAILED;
     }
 
@@ -111,7 +112,11 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     tiling.set_usedCoreNum(blockDim == 0 ? 1 : blockDim);
     tiling.set_stage(stage);
 
-    if (qDesc->GetDataType() == ge::DT_FLOAT) {
+    if (stage == 2 && qDesc->GetDataType() != ge::DT_FLOAT && oDesc->GetDataType() == ge::DT_FLOAT &&
+        qShape.GetDim(DIM_D) >= 16) {
+        context->SetTilingKey(3);
+    } else if (qDesc->GetDataType() == ge::DT_FLOAT &&
+               !((stage == 1 || stage == 2 || stage == 3) && qShape.GetDim(DIM_D) >= 16)) {
         context->SetTilingKey(0);
     } else if (qShape.GetDim(DIM_D) < 16) {
         context->SetTilingKey(2);

@@ -14,43 +14,68 @@ class ChunkKdaFwd : public OpDef {
 public:
     explicit ChunkKdaFwd(const char *name) : OpDef(name)
     {
-        const std::initializer_list<ge::DataType> dataTypes = {
-            ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16
+        const std::initializer_list<ge::DataType> inputDataTypes = {
+            ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16
         };
         const std::initializer_list<ge::DataType> stateTypes = {
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT
+        };
+        const std::initializer_list<ge::DataType> gateTypes = {
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT
+        };
+        const std::initializer_list<ge::DataType> outputDataTypes = {
+            ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT
+        };
+        const std::initializer_list<ge::DataType> publicDataTypes = {
+            ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16
         };
         const std::initializer_list<ge::Format> formats = {
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND
         };
 
-        this->Input("q").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Input("k").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Input("v").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Input("q").ParamType(REQUIRED).DataType(inputDataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Input("k").ParamType(REQUIRED).DataType(inputDataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Input("v").ParamType(REQUIRED).DataType(inputDataTypes).Format(formats).UnknownShapeFormat(formats);
         this->Input("gk").ParamType(REQUIRED)
-            .DataType({ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT})
+            .DataType(gateTypes)
             .Format(formats).UnknownShapeFormat(formats);
         this->Input("beta").ParamType(REQUIRED)
-            .DataType({ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT})
+            .DataType(gateTypes)
             .Format(formats).UnknownShapeFormat(formats);
         this->Input("initial_state").ParamType(OPTIONAL).DataType(stateTypes).Format(formats).UnknownShapeFormat(formats);
         this->Input("cu_seqlens").ParamType(OPTIONAL).ValueDepend(OPTIONAL)
-            .DataType({ge::DT_INT64, ge::DT_INT64, ge::DT_INT64})
+            .DataType({ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64})
             .Format(formats).UnknownShapeFormat(formats);
         this->Input("chunk_indices").ParamType(OPTIONAL).ValueDepend(OPTIONAL)
-            .DataType({ge::DT_INT64, ge::DT_INT64, ge::DT_INT64})
+            .DataType({ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64})
+            .Format(formats).UnknownShapeFormat(formats);
+        this->Input("aqk_in").ParamType(OPTIONAL).DataType(publicDataTypes)
+            .Format(formats).UnknownShapeFormat(formats);
+        this->Input("akk_in").ParamType(OPTIONAL).DataType(publicDataTypes)
+            .Format(formats).UnknownShapeFormat(formats);
+        this->Input("w_in").ParamType(OPTIONAL).DataType(publicDataTypes)
+            .Format(formats).UnknownShapeFormat(formats);
+        this->Input("u_in").ParamType(OPTIONAL).DataType(outputDataTypes)
+            .Format(formats).UnknownShapeFormat(formats);
+        this->Input("qg_in").ParamType(OPTIONAL).DataType(publicDataTypes)
+            .Format(formats).UnknownShapeFormat(formats);
+        this->Input("kg_in").ParamType(OPTIONAL).DataType(publicDataTypes)
+            .Format(formats).UnknownShapeFormat(formats);
+        this->Input("v_new_in").ParamType(OPTIONAL).DataType(publicDataTypes)
+            .Format(formats).UnknownShapeFormat(formats);
+        this->Input("h_in").ParamType(OPTIONAL).DataType(publicDataTypes)
             .Format(formats).UnknownShapeFormat(formats);
 
-        this->Output("o").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Output("o").ParamType(REQUIRED).DataType(outputDataTypes).Format(formats).UnknownShapeFormat(formats);
         this->Output("final_state").ParamType(REQUIRED).DataType(stateTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Output("Aqk").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Output("Akk").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Output("w").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Output("u").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Output("qg").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Output("kg").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Output("v_new").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Output("h").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Output("Aqk").ParamType(REQUIRED).DataType(publicDataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Output("Akk").ParamType(REQUIRED).DataType(publicDataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Output("w").ParamType(REQUIRED).DataType(publicDataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Output("u").ParamType(REQUIRED).DataType(outputDataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Output("qg").ParamType(REQUIRED).DataType(publicDataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Output("kg").ParamType(REQUIRED).DataType(publicDataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Output("v_new").ParamType(REQUIRED).DataType(publicDataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Output("h").ParamType(REQUIRED).DataType(publicDataTypes).Format(formats).UnknownShapeFormat(formats);
 
         this->Attr("scale").AttrType(REQUIRED).Float(1.0);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);

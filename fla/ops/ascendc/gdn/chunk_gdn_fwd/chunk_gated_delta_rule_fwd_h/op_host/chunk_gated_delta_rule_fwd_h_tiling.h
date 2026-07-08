@@ -31,6 +31,7 @@ TILING_DATA_FIELD_DEF(int64_t, chunkSize);
 TILING_DATA_FIELD_DEF(bool, useInitialState);
 TILING_DATA_FIELD_DEF(bool, storeFinalState);
 TILING_DATA_FIELD_DEF(int64_t, dataType);
+TILING_DATA_FIELD_DEF(int64_t, outputDataType);
 TILING_DATA_FIELD_DEF(int64_t, gDataType);
 TILING_DATA_FIELD_DEF(int64_t, stateDataType);
 TILING_DATA_FIELD_DEF(bool, hasGk);

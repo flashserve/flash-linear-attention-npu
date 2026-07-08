@@ -32,6 +32,14 @@ const std::array<const aclTensor *, 10> ChunkKdaFwd(
     bool outputFinalState,
     int64_t totalChunks,
     int64_t stage,
+    const aclTensor *aqkInOptional,
+    const aclTensor *akkInOptional,
+    const aclTensor *wInOptional,
+    const aclTensor *uInOptional,
+    const aclTensor *qgInOptional,
+    const aclTensor *kgInOptional,
+    const aclTensor *vNewInOptional,
+    const aclTensor *hInOptional,
     const aclTensor *oOut,
     const aclTensor *finalStateOut,
     const aclTensor *aqkOut,
@@ -45,8 +53,9 @@ const std::array<const aclTensor *, 10> ChunkKdaFwd(
     aclOpExecutor *executor)
 {
     L0_DFX(ChunkKdaFwd, q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional,
-           scale, chunkSize, outputFinalState, totalChunks, stage, oOut, finalStateOut, aqkOut, akkOut, wOut, uOut,
-           qgOut, kgOut, vNewOut, hOut);
+           scale, chunkSize, outputFinalState, totalChunks, stage, aqkInOptional, akkInOptional, wInOptional,
+           uInOptional, qgInOptional, kgInOptional, vNewInOptional, hInOptional, oOut, finalStateOut, aqkOut,
+           akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional != nullptr) {
@@ -66,7 +75,8 @@ const std::array<const aclTensor *, 10> ChunkKdaFwd(
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         ChunkKdaFwd,
-        OP_INPUT(q, k, v, gk, beta, initialStateOptional, actualCuSeqlens, actualChunkIndices),
+        OP_INPUT(q, k, v, gk, beta, initialStateOptional, actualCuSeqlens, actualChunkIndices, aqkInOptional,
+                 akkInOptional, wInOptional, uInOptional, qgInOptional, kgInOptional, vNewInOptional, hInOptional),
         OP_OUTPUT(oOut, finalStateOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut),
         OP_ATTR(scale, chunkSize, outputFinalState, totalChunks, stage));
     if (ret != ACLNN_SUCCESS) {

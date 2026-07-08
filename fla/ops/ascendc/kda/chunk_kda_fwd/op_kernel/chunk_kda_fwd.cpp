@@ -21,6 +21,7 @@
 #include "catlass/arch/cross_core_sync.hpp"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
+#include <type_traits>
 using _128 = tla::Int<128>;
 #else
 #define CATLASS_ARCH 2201
@@ -63,6 +64,9 @@ constexpr uint32_t KDA_SOLVE_SCRATCH_Y1 = 3;
 constexpr uint32_t KDA_SOLVE_SCRATCH_SLOTS = 4;
 constexpr uint32_t KDA_SOLVE_MCH_ITERS = 2;
 constexpr uint32_t KDA_VEC_ARENA_ELEMENTS = 32768;
+constexpr uint32_t KDA_LOCAL_MATRIX_BASE = EXP2_UB_ELEMENTS * 8;
+constexpr uint32_t KDA_LOCAL_AQK_OFFSET = KDA_LOCAL_MATRIX_BASE;
+constexpr uint32_t KDA_LOCAL_AKK_OFFSET = KDA_LOCAL_AQK_OFFSET + KDA_SOLVE_MATRIX_ELEMENTS;
 constexpr uint8_t KDA_SCORE_DONE_FLAG0 = 2;
 constexpr uint8_t KDA_SCORE_DONE_FLAG1 = 3;
 constexpr uint8_t KDA_SCORE_READY_FLAG0 = 4;
@@ -76,6 +80,12 @@ using KdaArchTag = Catlass::Arch::AtlasA2;
 using KdaDispatchPolicy = Catlass::Gemm::MmadPingpong<KdaArchTag, true, false>;
 using KdaL1TileShape = tla::Shape<_128, _128, _128>;
 using KdaL0TileShape = KdaL1TileShape;
+using KdaFloatL1TileShape = tla::Shape<tla::Int<64>, tla::Int<64>, tla::Int<64>>;
+using KdaFloatL0TileShape = KdaFloatL1TileShape;
+using KdaPostL1TileShape = tla::Shape<_128, _128, _256>;
+using KdaPostL0TileShape = tla::Shape<_128, _128, _128>;
+using KdaFloatPostL1TileShape = tla::Shape<tla::Int<64>, tla::Int<64>, tla::Int<128>>;
+using KdaFloatPostL0TileShape = KdaFloatL0TileShape;
 
 __aicore__ inline uint32_t FloatToBits(float value)
 {
@@ -132,16 +142,19 @@ __aicore__ inline T FloatToType(float value)
     return static_cast<T>(value);
 }
 
-template <typename T>
+template <typename T, typename OUT_T = T>
 class ChunkKdaFwdKernel {
 public:
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR initialState,
-                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o, GM_ADDR finalState,
+                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR aqkInput, GM_ADDR akkInput,
+                                GM_ADDR wInput, GM_ADDR uInput, GM_ADDR qgInput, GM_ADDR kgInput,
+                                GM_ADDR vNewInput, GM_ADDR hInput, GM_ADDR o, GM_ADDR finalState,
                                 GM_ADDR aqk, GM_ADDR akk, GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg,
                                 GM_ADDR vNew, GM_ADDR h, const ChunkKdaFwdTilingData &tiling, TPipe *pipe,
                                 bool initVecBuffers = true)
     {
         pipe_ = pipe;
+        stage_ = tiling.stage;
         q_.SetGlobalBuffer((__gm__ T *)q);
         k_.SetGlobalBuffer((__gm__ T *)k);
         v_.SetGlobalBuffer((__gm__ T *)v);
@@ -157,16 +170,28 @@ public:
             chunkIndices_.SetGlobalBuffer((__gm__ int64_t *)chunkIndices);
         }
         hasChunkIndices_ = chunkIndices != nullptr;
-        o_.SetGlobalBuffer((__gm__ T *)o);
+        o_.SetGlobalBuffer((__gm__ OUT_T *)o);
         finalState_.SetGlobalBuffer((__gm__ float *)finalState);
-        aqk_.SetGlobalBuffer((__gm__ T *)aqk);
-        akk_.SetGlobalBuffer((__gm__ T *)akk);
-        w_.SetGlobalBuffer((__gm__ T *)w);
-        u_.SetGlobalBuffer((__gm__ T *)u);
-        qg_.SetGlobalBuffer((__gm__ T *)qg);
-        kg_.SetGlobalBuffer((__gm__ T *)kg);
-        vNew_.SetGlobalBuffer((__gm__ T *)vNew);
-        h_.SetGlobalBuffer((__gm__ T *)h);
+        GM_ADDR aqkBuffer = (stage_ == 2 && aqkInput != nullptr) ? aqkInput : aqk;
+        GM_ADDR akkBuffer = (stage_ == 2 && akkInput != nullptr) ? akkInput : akk;
+        GM_ADDR wBuffer = (stage_ == 2 && wInput != nullptr) ? wInput : w;
+        GM_ADDR uBuffer = (stage_ == 4 && uInput != nullptr) ? uInput : u;
+        GM_ADDR qgBuffer = (stage_ == 2 && qgInput != nullptr) ? qgInput : qg;
+        GM_ADDR kgBuffer = (stage_ == 2 && kgInput != nullptr) ? kgInput : kg;
+        GM_ADDR vNewBuffer = (stage_ == 2 && vNewInput != nullptr) ? vNewInput : vNew;
+        GM_ADDR hBuffer = (stage_ == 2 && hInput != nullptr) ? hInput : h;
+        if (stage_ == 4) {
+            wBuffer = wInput != nullptr ? wInput : w;
+            kgBuffer = kgInput != nullptr ? kgInput : kg;
+        }
+        aqk_.SetGlobalBuffer((__gm__ T *)aqkBuffer);
+        akk_.SetGlobalBuffer((__gm__ T *)akkBuffer);
+        w_.SetGlobalBuffer((__gm__ T *)wBuffer);
+        u_.SetGlobalBuffer((__gm__ OUT_T *)uBuffer);
+        qg_.SetGlobalBuffer((__gm__ T *)qgBuffer);
+        kg_.SetGlobalBuffer((__gm__ T *)kgBuffer);
+        vNew_.SetGlobalBuffer((__gm__ T *)vNewBuffer);
+        h_.SetGlobalBuffer((__gm__ T *)hBuffer);
 
         B_ = tiling.batch;
         N_ = tiling.seqNum;
@@ -181,7 +206,6 @@ public:
         hasInitial_ = tiling.hasInitialState;
         isVarLen_ = tiling.isVarLen;
         usedCoreNum_ = tiling.usedCoreNum;
-        stage_ = tiling.stage;
 
         if (pipe_ != nullptr) {
             pipe_->InitBuffer(scalarInBuf_, 32);
@@ -218,6 +242,11 @@ public:
             ProcessPostAiv();
             return;
         }
+        if (stage_ == 4) {
+            isAivOnly_ = true;
+            ProcessStateAiv();
+            return;
+        }
         isAivOnly_ = true;
         uint64_t taskNum = static_cast<uint64_t>(N_ * HV_);
         uint64_t blockNum = static_cast<uint64_t>(GetBlockNum());
@@ -240,6 +269,10 @@ public:
         }
         if (stage_ == 3) {
             ProcessPostAiv();
+            return;
+        }
+        if (stage_ == 4) {
+            ProcessStateAiv();
             return;
         }
         if constexpr (IsSameType<T, float>::value) {
@@ -275,6 +308,9 @@ public:
             ProcessPostAic();
             return;
         }
+        if (stage_ == 4) {
+            return;
+        }
         if constexpr (IsSameType<T, float>::value) {
             return;
         } else {
@@ -286,6 +322,16 @@ public:
                 ProcessSeqHeadAic(seq, hv);
             }
         }
+    }
+
+    __aicore__ inline void ProcessOutOnlyAiv()
+    {
+        ProcessOutAiv();
+    }
+
+    __aicore__ inline void ProcessOutOnlyAic()
+    {
+        ProcessOutAic();
     }
 
 private:
@@ -937,7 +983,13 @@ private:
         using LayoutTagC = Catlass::layout::RowMajor;
         using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KdaArchTag, ElementA, LayoutTagA, ElementB,
                                                                 LayoutTagB, ElementC, LayoutTagC>;
-        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, KdaL1TileShape, KdaL0TileShape,
+        using LocalL1TileShape = typename std::conditional<std::is_same<ElementA, float>::value &&
+                                                               std::is_same<ElementB, float>::value,
+                                                           KdaFloatL1TileShape, KdaL1TileShape>::type;
+        using LocalL0TileShape = typename std::conditional<std::is_same<ElementA, float>::value &&
+                                                               std::is_same<ElementB, float>::value,
+                                                           KdaFloatL0TileShape, KdaL0TileShape>::type;
+        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, LocalL1TileShape, LocalL0TileShape,
                                                               ElementA, ElementB, ElementC, void, TileCopy>;
 
         Catlass::Arch::Resource<KdaArchTag> resource;
@@ -1336,15 +1388,20 @@ private:
     {
         using ElementA = T;
         using ElementB = T;
-        using ElementC = T;
+        using ElementC = OUT_T;
         using LayoutTagA = Catlass::layout::RowMajor;
         using LayoutTagB = Catlass::layout::RowMajor;
         using LayoutTagC = Catlass::layout::RowMajor;
         using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KdaArchTag, ElementA, LayoutTagA, ElementB,
                                                                 LayoutTagB, ElementC, LayoutTagC>;
-        using PostL1TileShape = tla::Shape<_128, _128, _256>;
-        using PostL0TileShape = tla::Shape<_128, _128, _128>;
-        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape, PostL0TileShape,
+        using LocalPostL1TileShape = typename std::conditional<std::is_same<ElementA, float>::value &&
+                                                                   std::is_same<ElementB, float>::value,
+                                                               KdaFloatPostL1TileShape, KdaPostL1TileShape>::type;
+        using LocalPostL0TileShape = typename std::conditional<std::is_same<ElementA, float>::value &&
+                                                                   std::is_same<ElementB, float>::value,
+                                                               KdaFloatPostL0TileShape, KdaPostL0TileShape>::type;
+        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, LocalPostL1TileShape,
+                                                              LocalPostL0TileShape,
                                                               ElementA, ElementB, ElementC, void, TileCopy>;
 
         Catlass::Arch::Resource<KdaArchTag> resource;
@@ -1703,6 +1760,167 @@ private:
         }
     }
 
+    __aicore__ inline void ComputePostKgWUScalar(uint64_t b, uint64_t h, uint64_t hv, uint64_t start,
+                                                 uint64_t curT)
+    {
+        uint64_t last = start + curT - 1;
+        for (uint64_t i = 0; i < curT; ++i) {
+            uint64_t ti = start + i;
+            LocalTensor<float> expLastMinusG = Exp2GDiff(b, hv, last, ti);
+            __ubuf__ float *expLastMinusGPtr = UbPtr(expLastMinusG);
+            float kgRow[EXP2_UB_ELEMENTS];
+            for (uint64_t d = 0; d < K_; ++d) {
+                float kv = ReadAsFloat(k_, QOffset(b, h, ti, d));
+                kgRow[d] = kv * expLastMinusGPtr[d];
+            }
+            CopyStackFloatRowOut(kg_, KVOffset(b, hv, ti, 0, K_), kgRow, K_, 2);
+
+            float wSum[EXP2_UB_ELEMENTS];
+            for (uint64_t d = 0; d < K_; ++d) {
+                wSum[d] = 0.0f;
+            }
+            for (uint64_t j = 0; j < curT; ++j) {
+                uint64_t tj = start + j;
+                LocalTensor<float> expGj = Exp2G(b, hv, tj);
+                __ubuf__ float *expGjPtr = UbPtr(expGj);
+                float betaJ = ReadFloat(beta_, BetaOffset(b, hv, tj));
+                float a = ReadAsFloat(akk_, AOffset(b, hv, ti, j));
+                for (uint64_t d = 0; d < K_; ++d) {
+                    float kj = ReadAsFloat(k_, QOffset(b, h, tj, d));
+                    wSum[d] += a * kj * betaJ * expGjPtr[d];
+                }
+            }
+            CopyStackFloatRowOut(w_, KVOffset(b, hv, ti, 0, K_), wSum, K_, 3);
+
+            float uRow[EXP2_UB_ELEMENTS];
+            for (uint64_t r = 0; r < V_; ++r) {
+                uRow[r] = 0.0f;
+            }
+            for (uint64_t j = 0; j < curT; ++j) {
+                uint64_t tj = start + j;
+                float vRow[EXP2_UB_ELEMENTS];
+                LoadStackFloatRow(v_, KVOffset(b, hv, tj, 0, V_), vRow, V_, 0);
+                float a = ReadAsFloat(akk_, AOffset(b, hv, ti, j));
+                float betaJ = ReadFloat(beta_, BetaOffset(b, hv, tj));
+                for (uint64_t r = 0; r < V_; ++r) {
+                    uRow[r] += a * vRow[r] * betaJ;
+                }
+            }
+            CopyStackFloatRowOut(u_, KVOffset(b, hv, ti, 0, V_), uRow, V_, 4);
+        }
+    }
+
+    __aicore__ inline void ComputeAqkAkkPostLocal(uint64_t b, uint64_t h, uint64_t hv, uint64_t start,
+                                                  uint64_t curT)
+    {
+        LocalTensor<float> arena = vecBuf_.Get<float>();
+        LocalTensor<float> aqkMat = arena[KDA_LOCAL_AQK_OFFSET];
+        LocalTensor<float> akkInvMat = arena[KDA_LOCAL_AKK_OFFSET];
+        __ubuf__ float *aqkPtr = UbPtr(aqkMat);
+        __ubuf__ float *akkPtr = UbPtr(akkInvMat);
+
+        for (uint64_t idx = 0; idx < KDA_SOLVE_MATRIX_ELEMENTS; ++idx) {
+            aqkPtr[idx] = 0.0f;
+            akkPtr[idx] = 0.0f;
+        }
+
+        for (uint64_t i = 0; i < curT; ++i) {
+            uint64_t ti = start + i;
+            float lRow[EXP2_UB_ELEMENTS];
+            for (uint64_t j = 0; j < BT_; ++j) {
+                lRow[j] = 0.0f;
+            }
+            for (uint64_t j = 0; j < curT; ++j) {
+                uint64_t tj = start + j;
+                float aqkRaw = 0.0f;
+                float akkRaw = 0.0f;
+                LocalTensor<float> gateLocal = Exp2GDiff(b, hv, ti, tj);
+                __ubuf__ float *gatePtr = UbPtr(gateLocal);
+                for (uint64_t d = 0; d < K_; ++d) {
+                    float qi = ReadAsFloat(q_, QOffset(b, h, ti, d));
+                    float ki = ReadAsFloat(k_, QOffset(b, h, ti, d));
+                    float kj = ReadAsFloat(k_, QOffset(b, h, tj, d));
+                    aqkRaw += qi * kj * gatePtr[d];
+                    akkRaw += ki * kj * gatePtr[d];
+                }
+                if (j <= i) {
+                    aqkPtr[i * BT_ + j] = aqkRaw;
+                    if (j < i) {
+                        lRow[j] = akkRaw * ReadFloat(beta_, BetaOffset(b, hv, ti));
+                    }
+                }
+            }
+
+            for (uint64_t j = 0; j < i; ++j) {
+                float sum = 0.0f;
+                for (uint64_t m = j; m < i; ++m) {
+                    sum += lRow[m] * akkPtr[m * BT_ + j];
+                }
+                akkPtr[i * BT_ + j] = -sum;
+            }
+            akkPtr[i * BT_ + i] = 1.0f;
+        }
+
+        float row[EXP2_UB_ELEMENTS];
+        for (uint64_t i = 0; i < curT; ++i) {
+            uint64_t ti = start + i;
+            for (uint64_t j = 0; j < BT_; ++j) {
+                row[j] = aqkPtr[i * BT_ + j];
+            }
+            CopyStackFloatRowOut(aqk_, AOffset(b, hv, ti, 0), row, BT_, 0);
+            for (uint64_t j = 0; j < BT_; ++j) {
+                row[j] = akkPtr[i * BT_ + j];
+            }
+            CopyStackFloatRowOut(akk_, AOffset(b, hv, ti, 0), row, BT_, 1);
+        }
+
+        uint64_t last = start + curT - 1;
+        for (uint64_t i = 0; i < curT; ++i) {
+            uint64_t ti = start + i;
+            LocalTensor<float> expLastMinusG = Exp2GDiff(b, hv, last, ti);
+            __ubuf__ float *expLastMinusGPtr = UbPtr(expLastMinusG);
+            float kgRow[EXP2_UB_ELEMENTS];
+            for (uint64_t d = 0; d < K_; ++d) {
+                float kv = ReadAsFloat(k_, QOffset(b, h, ti, d));
+                kgRow[d] = kv * expLastMinusGPtr[d];
+            }
+            CopyStackFloatRowOut(kg_, KVOffset(b, hv, ti, 0, K_), kgRow, K_, 2);
+
+            float wSum[EXP2_UB_ELEMENTS];
+            for (uint64_t d = 0; d < K_; ++d) {
+                wSum[d] = 0.0f;
+            }
+            for (uint64_t j = 0; j < curT; ++j) {
+                uint64_t tj = start + j;
+                LocalTensor<float> expGj = Exp2G(b, hv, tj);
+                __ubuf__ float *expGjPtr = UbPtr(expGj);
+                float betaJ = ReadFloat(beta_, BetaOffset(b, hv, tj));
+                float a = akkPtr[i * BT_ + j];
+                for (uint64_t d = 0; d < K_; ++d) {
+                    float kj = ReadAsFloat(k_, QOffset(b, h, tj, d));
+                    wSum[d] += a * kj * betaJ * expGjPtr[d];
+                }
+            }
+            CopyStackFloatRowOut(w_, KVOffset(b, hv, ti, 0, K_), wSum, K_, 3);
+
+            float uRow[EXP2_UB_ELEMENTS];
+            for (uint64_t r = 0; r < V_; ++r) {
+                uRow[r] = 0.0f;
+            }
+            for (uint64_t j = 0; j < curT; ++j) {
+                uint64_t tj = start + j;
+                float vRow[EXP2_UB_ELEMENTS];
+                LoadStackFloatRow(v_, KVOffset(b, hv, tj, 0, V_), vRow, V_, 0);
+                float a = akkPtr[i * BT_ + j];
+                float betaJ = ReadFloat(beta_, BetaOffset(b, hv, tj));
+                for (uint64_t r = 0; r < V_; ++r) {
+                    uRow[r] += a * vRow[r] * betaJ;
+                }
+            }
+            CopyStackFloatRowOut(u_, KVOffset(b, hv, ti, 0, V_), uRow, V_, 4);
+        }
+    }
+
     __aicore__ inline void ScaleRowsByBeta(GlobalTensor<T> &src, GlobalTensor<T> &dst, uint64_t b, uint64_t hv,
                                            uint64_t start, uint64_t rowBegin, uint64_t rowCount, uint64_t dim,
                                            LocalTensor<float> &betaBrcb, LocalTensor<float> &matrixLocal)
@@ -1789,9 +2007,14 @@ private:
         using LayoutTagC = Catlass::layout::RowMajor;
         using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KdaArchTag, ElementA, LayoutTagA, ElementB,
                                                                 LayoutTagB, ElementC, LayoutTagC>;
-        using PostL1TileShape = tla::Shape<_128, _128, _256>;
-        using PostL0TileShape = tla::Shape<_128, _128, _128>;
-        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape, PostL0TileShape,
+        using LocalPostL1TileShape = typename std::conditional<std::is_same<ElementA, float>::value &&
+                                                                   std::is_same<ElementB, float>::value,
+                                                               KdaFloatPostL1TileShape, KdaPostL1TileShape>::type;
+        using LocalPostL0TileShape = typename std::conditional<std::is_same<ElementA, float>::value &&
+                                                                   std::is_same<ElementB, float>::value,
+                                                               KdaFloatPostL0TileShape, KdaPostL0TileShape>::type;
+        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, LocalPostL1TileShape,
+                                                              LocalPostL0TileShape,
                                                               ElementA, ElementB, ElementC, void, TileCopy>;
 
         Catlass::Arch::Resource<KdaArchTag> resource;
@@ -2102,13 +2325,19 @@ private:
     {
         using ElementA = T;
         using ElementB = T;
-        using ElementC = T;
+        using ElementC = OUT_T;
         using LayoutTagA = Catlass::layout::RowMajor;
         using LayoutTagB = Catlass::layout::RowMajor;
         using LayoutTagC = Catlass::layout::RowMajor;
         using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KdaArchTag, ElementA, LayoutTagA, ElementB,
                                                                 LayoutTagB, ElementC, LayoutTagC>;
-        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, KdaL1TileShape, KdaL0TileShape,
+        using LocalL1TileShape = typename std::conditional<std::is_same<ElementA, float>::value &&
+                                                               std::is_same<ElementB, float>::value,
+                                                           KdaFloatL1TileShape, KdaL1TileShape>::type;
+        using LocalL0TileShape = typename std::conditional<std::is_same<ElementA, float>::value &&
+                                                               std::is_same<ElementB, float>::value,
+                                                           KdaFloatL0TileShape, KdaL0TileShape>::type;
+        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, LocalL1TileShape, LocalL0TileShape,
                                                               ElementA, ElementB, ElementC, void, TileCopy>;
 
         Catlass::Arch::Resource<KdaArchTag> resource;
@@ -2161,6 +2390,40 @@ private:
             Add(outLocal, stateLocal, localLocal, static_cast<uint32_t>(V_));
             PipeBarrier<PIPE_V>();
             StoreFloatRow(o_, KVOffset(b, hv, ti, 0, V_), outLocal, V_);
+        }
+    }
+
+    __aicore__ inline void ComputeOutputScalarRows(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
+                                                   uint64_t curT, uint64_t subBlockIdx, uint64_t subBlockNum)
+    {
+        for (uint64_t i = subBlockIdx; i < curT; i += subBlockNum) {
+            uint64_t ti = start + i;
+            float oRow[EXP2_UB_ELEMENTS];
+            for (uint64_t r = 0; r < V_; ++r) {
+                oRow[r] = 0.0f;
+            }
+
+            float qgRow[EXP2_UB_ELEMENTS];
+            LoadStackFloatRow(qg_, KVOffset(b, hv, ti, 0, K_), qgRow, K_, 0);
+            for (uint64_t d = 0; d < K_; ++d) {
+                float hRow[EXP2_UB_ELEMENTS];
+                LoadStackFloatRow(h_, HOffset(b, hv, chunkIdx, d, 0), hRow, V_, 1);
+                float qgValue = qgRow[d];
+                for (uint64_t r = 0; r < V_; ++r) {
+                    oRow[r] += qgValue * hRow[r];
+                }
+            }
+
+            for (uint64_t j = 0; j < curT; ++j) {
+                uint64_t tj = start + j;
+                float vNewRow[EXP2_UB_ELEMENTS];
+                LoadStackFloatRow(vNew_, KVOffset(b, hv, tj, 0, V_), vNewRow, V_, 2);
+                float a = ReadAsFloat(aqk_, AOffset(b, hv, ti, j));
+                for (uint64_t r = 0; r < V_; ++r) {
+                    oRow[r] += a * vNewRow[r];
+                }
+            }
+            CopyStackFloatRowOut(o_, KVOffset(b, hv, ti, 0, V_), oRow, V_, 3);
         }
     }
 
@@ -2228,14 +2491,6 @@ private:
         if (curT == 0) {
             return;
         }
-        if constexpr (IsSameType<T, float>::value) {
-            PrepareGateProducts(b, h, hv, start, curT, 0, 1);
-            ComputeRawAqkAkkScalar(b, h, hv, start, curT);
-            FinalizeAqkAkk(b, hv, start, curT);
-            ComputePostKgWUVec(b, h, hv, chunkIdx, start, curT);
-            return;
-        }
-
         if (K_ < 16) {
             if (subBlockIdx != 0) {
                 return;
@@ -2338,14 +2593,11 @@ private:
         Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(scoreDoneFlag_);
     }
 
-    __aicore__ inline void ProcessChunkOutAiv(uint64_t b, uint64_t hv, uint64_t start, uint64_t end,
-                                              uint64_t subBlockIdx, uint64_t subBlockNum)
+    __aicore__ inline void ProcessChunkOutAiv(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
+                                              uint64_t end, uint64_t subBlockIdx, uint64_t subBlockNum)
     {
         uint64_t curT = end - start;
         if (curT == 0) {
-            return;
-        }
-        if constexpr (IsSameType<T, float>::value) {
             return;
         }
         Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(scoreDoneFlag_);
@@ -2361,6 +2613,90 @@ private:
         }
         ComputeOutputCube(b, hv, chunkIdx, start, curT);
         Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(scoreDoneFlag_);
+    }
+
+    __aicore__ inline void ProcessChunkStateAiv(uint64_t b, uint64_t seq, uint64_t hv, uint64_t chunkIdx,
+                                                uint64_t start, uint64_t end)
+    {
+        uint64_t curT = end - start;
+        if (curT == 0) {
+            return;
+        }
+        StoreCurrentState(b, hv, seq, chunkIdx);
+
+        for (uint64_t i = 0; i < curT; ++i) {
+            uint64_t ti = start + i;
+            float vNewRow[EXP2_UB_ELEMENTS];
+            LoadStackFloatRow(u_, KVOffset(b, hv, ti, 0, V_), vNewRow, V_, 0);
+            for (uint64_t d = 0; d < K_; ++d) {
+                float hRow[EXP2_UB_ELEMENTS];
+                LoadStackFloatRow(finalState_, StateOffset(seq, hv, d, 0), hRow, V_, 1);
+                float wi = ReadAsFloat(w_, KVOffset(b, hv, ti, d, K_));
+                for (uint64_t r = 0; r < V_; ++r) {
+                    vNewRow[r] -= wi * hRow[r];
+                }
+            }
+            CopyStackFloatRowOut(vNew_, KVOffset(b, hv, ti, 0, V_), vNewRow, V_, 2);
+        }
+
+        uint64_t last = end - 1;
+        LocalTensor<float> decayGate = Exp2G(b, hv, last);
+        __ubuf__ float *decayGatePtr = UbPtr(decayGate);
+        float decayValues[EXP2_UB_ELEMENTS];
+        for (uint64_t d = 0; d < K_; ++d) {
+            decayValues[d] = decayGatePtr[d];
+        }
+
+        for (uint64_t d = 0; d < K_; ++d) {
+            float stateRow[EXP2_UB_ELEMENTS];
+            LoadStackFloatRow(finalState_, StateOffset(seq, hv, d, 0), stateRow, V_, 0);
+            float decay = decayValues[d];
+            for (uint64_t r = 0; r < V_; ++r) {
+                stateRow[r] *= decay;
+            }
+            for (uint64_t i = 0; i < curT; ++i) {
+                uint64_t ti = start + i;
+                float kgRow[EXP2_UB_ELEMENTS];
+                float vNewRow[EXP2_UB_ELEMENTS];
+                LoadStackFloatRow(kg_, KVOffset(b, hv, ti, 0, K_), kgRow, K_, 1);
+                LoadStackFloatRow(vNew_, KVOffset(b, hv, ti, 0, V_), vNewRow, V_, 2);
+                float kgValue = kgRow[d];
+                for (uint64_t r = 0; r < V_; ++r) {
+                    stateRow[r] += kgValue * vNewRow[r];
+                }
+            }
+            CopyStackFloatRowOut(finalState_, StateOffset(seq, hv, d, 0), stateRow, V_, 4);
+        }
+    }
+
+    __aicore__ inline void ProcessStateSeqHeadAiv(uint64_t seq, uint64_t hv)
+    {
+        uint64_t b = 0;
+        uint64_t seqStart = 0;
+        uint64_t seqEnd = 0;
+        uint64_t chunkBase = 0;
+        ResolveSeq(seq, b, seqStart, seqEnd, chunkBase);
+        InitState(seq, hv);
+        uint64_t localChunk = 0;
+        for (uint64_t start = seqStart; start < seqEnd; start += BT_) {
+            uint64_t end = start + BT_;
+            if (end > seqEnd) {
+                end = seqEnd;
+            }
+            ProcessChunkStateAiv(b, seq, hv, chunkBase + localChunk, start, end);
+            ++localChunk;
+        }
+    }
+
+    __aicore__ inline void ProcessStateAiv()
+    {
+        uint64_t taskNum = static_cast<uint64_t>(N_ * HV_);
+        uint64_t blockNum = static_cast<uint64_t>(GetBlockNum());
+        for (uint64_t task = GetBlockIdx(); task < taskNum; task += blockNum) {
+            uint64_t seq = task / HV_;
+            uint64_t hv = task % HV_;
+            ProcessStateSeqHeadAiv(seq, hv);
+        }
     }
 
     __aicore__ inline void ProcessPreAiv()
@@ -2468,9 +2804,6 @@ private:
 
     __aicore__ inline void ProcessOutAiv()
     {
-        if constexpr (IsSameType<T, float>::value) {
-            return;
-        }
         uint64_t subBlockNum = static_cast<uint64_t>(GetSubBlockNum());
         if (subBlockNum == 0) {
             return;
@@ -2490,17 +2823,13 @@ private:
             if (ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end)) {
                 (void)seq;
                 (void)h;
-                (void)chunkIdx;
-                ProcessChunkOutAiv(b, hv, start, end, subBlockIdx, subBlockNum);
+                ProcessChunkOutAiv(b, hv, chunkIdx, start, end, subBlockIdx, subBlockNum);
             }
         }
     }
 
     __aicore__ inline void ProcessOutAic()
     {
-        if constexpr (IsSameType<T, float>::value) {
-            return;
-        }
         uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
         uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
         for (uint64_t task = GetBlockIdx(); task < taskNum; task += coreNum) {
@@ -2579,12 +2908,12 @@ private:
     GlobalTensor<float> initialState_;
     GlobalTensor<int64_t> cuSeqlens_;
     GlobalTensor<int64_t> chunkIndices_;
-    GlobalTensor<T> o_;
+    GlobalTensor<OUT_T> o_;
     GlobalTensor<float> finalState_;
     GlobalTensor<T> aqk_;
     GlobalTensor<T> akk_;
     GlobalTensor<T> w_;
-    GlobalTensor<T> u_;
+    GlobalTensor<OUT_T> u_;
     GlobalTensor<T> qg_;
     GlobalTensor<T> kg_;
     GlobalTensor<T> vNew_;
@@ -2626,10 +2955,12 @@ private:
 
 extern "C" __global__ __aicore__ void chunk_kda_fwd(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta,
                                                       GM_ADDR initial_state, GM_ADDR cu_seqlens,
-                                                      GM_ADDR chunk_indices, GM_ADDR o, GM_ADDR final_state,
-                                                      GM_ADDR aqk, GM_ADDR akk, GM_ADDR w, GM_ADDR u, GM_ADDR qg,
-                                                      GM_ADDR kg, GM_ADDR v_new, GM_ADDR h, GM_ADDR workspace,
-                                                      GM_ADDR tiling)
+                                                      GM_ADDR chunk_indices, GM_ADDR aqk_in, GM_ADDR akk_in,
+                                                      GM_ADDR w_in, GM_ADDR u_in, GM_ADDR qg_in, GM_ADDR kg_in,
+                                                      GM_ADDR v_new_in, GM_ADDR h_in, GM_ADDR o,
+                                                      GM_ADDR final_state, GM_ADDR aqk, GM_ADDR akk, GM_ADDR w,
+                                                      GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR v_new, GM_ADDR h,
+                                                      GM_ADDR workspace, GM_ADDR tiling)
 {
     GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
     (void)userWS;
@@ -2638,49 +2969,110 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(GM_ADDR q, GM_ADDR k, GM_ADD
     if (TILING_KEY_IS(0)) {
         KERNEL_TASK_TYPE(0, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaFwdKernel<float> op;
-        op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w, u, qg, kg,
-                v_new, h, tilingData, &pipe);
+        op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                tilingData, &pipe);
         op.ProcessAivOnly();
     } else if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
-        if (tilingData.dataType == 1) {
+        if (tilingData.dataType == 2) {
+            if ASCEND_IS_AIC {
+                ChunkKdaFwdKernel<float> op;
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                        qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                        tilingData, &pipe, false);
+                op.ProcessAic();
+            }
+            if ASCEND_IS_AIV {
+                ChunkKdaFwdKernel<float> op;
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                        qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                        tilingData, &pipe);
+                op.ProcessAiv();
+            }
+        } else if (tilingData.dataType == 1) {
             if ASCEND_IS_AIC {
                 ChunkKdaFwdKernel<bfloat16_t> op;
-                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w, u,
-                        qg, kg, v_new, h, tilingData, &pipe, false);
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                        qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                        tilingData, &pipe, false);
                 op.ProcessAic();
             }
             if ASCEND_IS_AIV {
                 ChunkKdaFwdKernel<bfloat16_t> op;
-                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w, u,
-                        qg, kg, v_new, h, tilingData, &pipe);
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                        qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                        tilingData, &pipe);
                 op.ProcessAiv();
             }
         } else {
             if ASCEND_IS_AIC {
                 ChunkKdaFwdKernel<half> op;
-                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w, u,
-                        qg, kg, v_new, h, tilingData, &pipe, false);
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                        qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                        tilingData, &pipe, false);
                 op.ProcessAic();
             }
             if ASCEND_IS_AIV {
                 ChunkKdaFwdKernel<half> op;
-                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w, u,
-                        qg, kg, v_new, h, tilingData, &pipe);
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                        qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                        tilingData, &pipe);
                 op.ProcessAiv();
+            }
+        }
+    } else if (TILING_KEY_IS(3)) {
+        KERNEL_TASK_TYPE(3, KERNEL_TYPE_MIX_AIC_1_2);
+        if (tilingData.dataType == 1) {
+            if ASCEND_IS_AIC {
+                ChunkKdaFwdKernel<bfloat16_t, float> op;
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                        qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                        tilingData, &pipe, false);
+                op.ProcessOutOnlyAic();
+            }
+            if ASCEND_IS_AIV {
+                ChunkKdaFwdKernel<bfloat16_t, float> op;
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                        qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                        tilingData, &pipe);
+                op.ProcessOutOnlyAiv();
+            }
+        } else {
+            if ASCEND_IS_AIC {
+                ChunkKdaFwdKernel<half, float> op;
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                        qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                        tilingData, &pipe, false);
+                op.ProcessOutOnlyAic();
+            }
+            if ASCEND_IS_AIV {
+                ChunkKdaFwdKernel<half, float> op;
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                        qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                        tilingData, &pipe);
+                op.ProcessOutOnlyAiv();
             }
         }
     } else if (TILING_KEY_IS(2)) {
         KERNEL_TASK_TYPE(2, KERNEL_TYPE_AIV_ONLY);
-        if (tilingData.dataType == 1) {
+        if (tilingData.dataType == 2) {
+            ChunkKdaFwdKernel<float> op;
+            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                    qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                    tilingData, &pipe);
+            op.ProcessAivOnly();
+        } else if (tilingData.dataType == 1) {
             ChunkKdaFwdKernel<bfloat16_t> op;
-            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w, u, qg,
-                    kg, v_new, h, tilingData, &pipe);
+            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                    qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                    tilingData, &pipe);
             op.ProcessAivOnly();
         } else {
             ChunkKdaFwdKernel<half> op;
-            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w, u, qg,
-                    kg, v_new, h, tilingData, &pipe);
+            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, aqk_in, akk_in, w_in, u_in,
+                    qg_in, kg_in, v_new_in, h_in, o, final_state, aqk, akk, w, u, qg, kg, v_new, h,
+                    tilingData, &pipe);
             op.ProcessAivOnly();
         }
     }

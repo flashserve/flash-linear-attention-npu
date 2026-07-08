@@ -28,6 +28,7 @@
 #include "tla/tensor.hpp"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
+#include <type_traits>
 
 
 
@@ -41,7 +42,8 @@ template<
     typename INPUT_TYPE,
     typename G_TYPE,
     typename STATE_TYPE,
-    typename WORKSPACE_TYPE
+    typename WORKSPACE_TYPE,
+    typename OUTPUT_TYPE = INPUT_TYPE
 >
 class GDNFwdHKernel {
 public:
@@ -51,26 +53,28 @@ public:
     using VecScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHVec;
 
     using DispatchPolicyTla = Gemm::MmadPingpongTlaMulti<ArchTag, true, false>;
-    using L1TileShapeTla = Shape<_128, _128, _128>;
+    using L1TileShapeTla = typename std::conditional<
+        std::is_same<INPUT_TYPE, float>::value && std::is_same<OUTPUT_TYPE, float>::value,
+        Shape<_64, _64, _64>, Shape<_128, _128, _128>>::type;
     using L0TileShapeTla = L1TileShapeTla;
 
     using WType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
-    using HType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
+    using HType = Gemm::GemmType<OUTPUT_TYPE, layout::RowMajor>;
     using VworkType = Gemm::GemmType<WORKSPACE_TYPE, layout::RowMajor>;
     using KType = Gemm::GemmType<INPUT_TYPE, layout::ColumnMajor>;
     using HworkType = Gemm::GemmType<WORKSPACE_TYPE, layout::RowMajor>;
-    using VType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
+    using VType = Gemm::GemmType<OUTPUT_TYPE, layout::RowMajor>;
     using GType = Gemm::GemmType<G_TYPE, layout::RowMajor>;
     using UType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
     using FinalStateType = Gemm::GemmType<STATE_TYPE, layout::RowMajor>;
 
     // cube 1
-    using TileCopyWH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
-    using BlockMmadWH = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyWH>;
+    using TileCopyWH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, OUTPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
+    using BlockMmadWH = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, OUTPUT_TYPE, WORKSPACE_TYPE, void, TileCopyWH>;
 
     // cube 2
-    using TileCopyKV = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::ColumnMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
-    using BlockMmadKV = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKV>;
+    using TileCopyKV = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::ColumnMajor, OUTPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
+    using BlockMmadKV = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, OUTPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKV>;
 
     // vec 1
     using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnew;
@@ -86,8 +90,8 @@ public:
     using ElementW = INPUT_TYPE;
     using ElementU = INPUT_TYPE;
     using ElementG = G_TYPE;
-    using ElementH = INPUT_TYPE;
-    using ElementV = INPUT_TYPE;
+    using ElementH = OUTPUT_TYPE;
+    using ElementV = OUTPUT_TYPE;
     using ElementVWork = WORKSPACE_TYPE;
     using ElementHWork = WORKSPACE_TYPE;
     using ElementInitialState = STATE_TYPE;
