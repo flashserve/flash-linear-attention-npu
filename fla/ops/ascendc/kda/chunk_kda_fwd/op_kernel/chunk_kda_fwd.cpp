@@ -45,6 +45,7 @@ using namespace AscendC;
 
 namespace {
 constexpr float LN2 = 0.69314718055994530942f;
+constexpr float KDA_EXP_MAX = 80.0f;
 constexpr uint32_t EXP2_UB_ELEMENTS = 256;
 constexpr uint32_t EXP2_EVENT_ID = 0;
 constexpr uint32_t KDA_MTE2_V_EVENT_ID = 1;
@@ -64,6 +65,14 @@ constexpr uint32_t KDA_SOLVE_SCRATCH_Y1 = 3;
 constexpr uint32_t KDA_SOLVE_SCRATCH_SLOTS = 4;
 constexpr uint32_t KDA_SOLVE_MCH_ITERS = 2;
 constexpr uint32_t KDA_VEC_ARENA_ELEMENTS = 32768;
+constexpr uint32_t KDA_MASK_BITS_PER_BYTE = 8;
+constexpr uint32_t KDA_SELECT_ZERO_FLOATS = 8;
+constexpr uint32_t KDA_SOLVE_MASK_OFFSET =
+    3 * KDA_SOLVE_MATRIX_ELEMENTS + KDA_SOLVE_BT + 512;
+constexpr uint32_t KDA_SOLVE_ONEHOT_OFFSET = KDA_SOLVE_MASK_OFFSET + KDA_SOLVE_BT;
+constexpr uint32_t KDA_SELECT_ZERO_OFFSET = KDA_SOLVE_ONEHOT_OFFSET + KDA_SOLVE_BT;
+constexpr uint32_t KDA_SELECT_MASK_BYTE_OFFSET =
+    (KDA_SELECT_ZERO_OFFSET + KDA_SELECT_ZERO_FLOATS) * sizeof(float);
 constexpr uint32_t KDA_LOCAL_MATRIX_BASE = EXP2_UB_ELEMENTS * 8;
 constexpr uint32_t KDA_LOCAL_AQK_OFFSET = KDA_LOCAL_MATRIX_BASE;
 constexpr uint32_t KDA_LOCAL_AKK_OFFSET = KDA_LOCAL_AQK_OFFSET + KDA_SOLVE_MATRIX_ELEMENTS;
@@ -390,12 +399,19 @@ private:
         return count;
     }
 
+    __aicore__ inline void ExpClamped(LocalTensor<float> &tensor, uint32_t count)
+    {
+        Mins(tensor, tensor, KDA_EXP_MAX, count);
+        PipeBarrier<PIPE_V>();
+        Exp(tensor, tensor, count);
+        PipeBarrier<PIPE_V>();
+    }
+
     __aicore__ inline void RunExp2(LocalTensor<float> &tensor, uint32_t count)
     {
         SetFlag<HardEvent::S_V>(EXP2_EVENT_ID);
         WaitFlag<HardEvent::S_V>(EXP2_EVENT_ID);
-        Exp(tensor, tensor, count);
-        PipeBarrier<PIPE_V>();
+        ExpClamped(tensor, count);
         SetFlag<HardEvent::V_S>(EXP2_EVENT_ID);
         WaitFlag<HardEvent::V_S>(EXP2_EVENT_ID);
     }
@@ -752,8 +768,7 @@ private:
 
         Muls(expFp32, gFp32, LN2, static_cast<uint32_t>(K_));
         PipeBarrier<PIPE_V>();
-        Exp(expFp32, expFp32, static_cast<uint32_t>(K_));
-        PipeBarrier<PIPE_V>();
+        ExpClamped(expFp32, static_cast<uint32_t>(K_));
 
         Mul(outFp32, qFp32, expFp32, static_cast<uint32_t>(K_));
         PipeBarrier<PIPE_V>();
@@ -775,8 +790,7 @@ private:
 
         Muls(expFp32, gFp32, -LN2, static_cast<uint32_t>(K_));
         PipeBarrier<PIPE_V>();
-        Exp(expFp32, expFp32, static_cast<uint32_t>(K_));
-        PipeBarrier<PIPE_V>();
+        ExpClamped(expFp32, static_cast<uint32_t>(K_));
         Mul(outFp32, kFp32, expFp32, static_cast<uint32_t>(K_));
         PipeBarrier<PIPE_V>();
         if constexpr (IsSameType<T, float>::value) {
@@ -849,8 +863,7 @@ private:
 
             Muls(expFp32, gFp32, LN2, static_cast<uint32_t>(elems));
             PipeBarrier<PIPE_V>();
-            Exp(expFp32, expFp32, static_cast<uint32_t>(elems));
-            PipeBarrier<PIPE_V>();
+            ExpClamped(expFp32, static_cast<uint32_t>(elems));
 
             Mul(outFp32, qFp32, expFp32, static_cast<uint32_t>(elems));
             PipeBarrier<PIPE_V>();
@@ -864,8 +877,7 @@ private:
 
             Muls(expFp32, gFp32, -LN2, static_cast<uint32_t>(elems));
             PipeBarrier<PIPE_V>();
-            Exp(expFp32, expFp32, static_cast<uint32_t>(elems));
-            PipeBarrier<PIPE_V>();
+            ExpClamped(expFp32, static_cast<uint32_t>(elems));
             Mul(outFp32, kFp32, expFp32, static_cast<uint32_t>(elems));
             PipeBarrier<PIPE_V>();
             Cast(kgTyped, outFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(elems));
@@ -1066,6 +1078,44 @@ private:
         PipeBarrier<PIPE_V>();
     }
 
+    __aicore__ inline void PrepareSelectZero(LocalTensor<float> zeroLocal)
+    {
+        Duplicate(zeroLocal, 0.0f, KDA_SELECT_ZERO_FLOATS);
+        PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void BuildZeroAfterPrefixBitMask(LocalTensor<uint8_t> dst, uint64_t prefix,
+                                                       uint64_t count)
+    {
+        if (prefix > count) {
+            prefix = count;
+        }
+        uint64_t blocks = (count + KDA_MASK_BITS_PER_BYTE - 1) / KDA_MASK_BITS_PER_BYTE;
+        for (uint64_t block = 0; block < blocks; ++block) {
+            uint8_t maskValue = 0;
+            for (uint64_t bit = 0; bit < KDA_MASK_BITS_PER_BYTE; ++bit) {
+                uint64_t col = block * KDA_MASK_BITS_PER_BYTE + bit;
+                if (col >= prefix || col >= count) {
+                    maskValue |= static_cast<uint8_t>(1U << bit);
+                }
+            }
+            dst.SetValue(block, maskValue);
+        }
+    }
+
+    __aicore__ inline void ApplyPrefixSelectZero(LocalTensor<float> rowLocal, uint64_t prefix,
+                                                 LocalTensor<float> zeroLocal)
+    {
+        LocalTensor<uint8_t> selectMask = vecBuf_.Get<uint8_t>()[KDA_SELECT_MASK_BYTE_OFFSET];
+        BuildZeroAfterPrefixBitMask(selectMask, prefix, KDA_SOLVE_BT);
+        SetFlag<HardEvent::S_V>(EXP2_EVENT_ID);
+        WaitFlag<HardEvent::S_V>(EXP2_EVENT_ID);
+        BinaryRepeatParams repeatParams = {1, 0, 1, 8, 0, 8};
+        Select(rowLocal, selectMask, zeroLocal, rowLocal, SELMODE::VSEL_TENSOR_TENSOR_MODE,
+               KDA_SOLVE_BT, 1, repeatParams);
+        PipeBarrier<PIPE_V>();
+    }
+
     __aicore__ inline void PrepareAqkAkkSolveInput64(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start)
     {
         LocalTensor<float> arena = vecBuf_.Get<float>();
@@ -1074,8 +1124,9 @@ private:
         LocalTensor<float> xMat = arena[2 * KDA_SOLVE_MATRIX_ELEMENTS];
         LocalTensor<float> betaLocal = arena[3 * KDA_SOLVE_MATRIX_ELEMENTS];
         LocalTensor<float> betaBrcb = arena[3 * KDA_SOLVE_MATRIX_ELEMENTS + KDA_SOLVE_BT];
-        LocalTensor<float> maskLocal = arena[3 * KDA_SOLVE_MATRIX_ELEMENTS + KDA_SOLVE_BT + 512];
-        LocalTensor<float> oneHotLocal = arena[3 * KDA_SOLVE_MATRIX_ELEMENTS + KDA_SOLVE_BT + 512 + KDA_SOLVE_BT];
+        LocalTensor<float> maskLocal = arena[KDA_SOLVE_MASK_OFFSET];
+        LocalTensor<float> oneHotLocal = arena[KDA_SOLVE_ONEHOT_OFFSET];
+        LocalTensor<float> zeroLocal = arena[KDA_SELECT_ZERO_OFFSET];
 
         constexpr uint64_t typedOffsetFloats = 20480;
         constexpr uint64_t typedOffset = typedOffsetFloats * sizeof(float) / sizeof(T);
@@ -1105,14 +1156,10 @@ private:
             Mul(akkMat[col], akkMat[col], betaBrcb, 8, KDA_SOLVE_BT, {1, 1, 1, 8, 8, 1});
             PipeBarrier<PIPE_V>();
         }
+        PrepareSelectZero(zeroLocal);
         for (uint64_t row = 0; row < KDA_SOLVE_BT; ++row) {
-            BuildPrefixMask(maskLocal, row + 1, KDA_SOLVE_BT);
-            Mul(aqkMat[row * KDA_SOLVE_BT], aqkMat[row * KDA_SOLVE_BT], maskLocal, KDA_SOLVE_BT);
-            PipeBarrier<PIPE_V>();
-
-            BuildPrefixMask(maskLocal, row, KDA_SOLVE_BT);
-            Mul(akkMat[row * KDA_SOLVE_BT], akkMat[row * KDA_SOLVE_BT], maskLocal, KDA_SOLVE_BT);
-            PipeBarrier<PIPE_V>();
+            ApplyPrefixSelectZero(aqkMat[row * KDA_SOLVE_BT], row + 1, zeroLocal);
+            ApplyPrefixSelectZero(akkMat[row * KDA_SOLVE_BT], row, zeroLocal);
         }
 
         Muls(xMat, akkMat, -1.0f, KDA_SOLVE_MATRIX_ELEMENTS);
@@ -1166,8 +1213,9 @@ private:
         LocalTensor<float> xMat = arena[2 * KDA_SOLVE_MATRIX_ELEMENTS];
         LocalTensor<float> betaLocal = arena[3 * KDA_SOLVE_MATRIX_ELEMENTS];
         LocalTensor<float> betaBrcb = arena[3 * KDA_SOLVE_MATRIX_ELEMENTS + KDA_SOLVE_BT];
-        LocalTensor<float> maskLocal = arena[3 * KDA_SOLVE_MATRIX_ELEMENTS + KDA_SOLVE_BT + 512];
-        LocalTensor<float> oneHotLocal = arena[3 * KDA_SOLVE_MATRIX_ELEMENTS + KDA_SOLVE_BT + 512 + KDA_SOLVE_BT];
+        LocalTensor<float> maskLocal = arena[KDA_SOLVE_MASK_OFFSET];
+        LocalTensor<float> oneHotLocal = arena[KDA_SOLVE_ONEHOT_OFFSET];
+        LocalTensor<float> zeroLocal = arena[KDA_SELECT_ZERO_OFFSET];
 
         constexpr uint64_t typedOffsetFloats = 20480;
         constexpr uint64_t typedOffset = typedOffsetFloats * sizeof(float) / sizeof(T);
@@ -1208,14 +1256,10 @@ private:
             Mul(akkMat[col], akkMat[col], betaBrcb, 8, KDA_SOLVE_BT, {1, 1, 1, 8, 8, 1});
             PipeBarrier<PIPE_V>();
         }
+        PrepareSelectZero(zeroLocal);
         for (uint64_t row = 0; row < KDA_SOLVE_BT; ++row) {
-            BuildPrefixMask(maskLocal, row + 1, KDA_SOLVE_BT);
-            Mul(aqkMat[row * KDA_SOLVE_BT], aqkMat[row * KDA_SOLVE_BT], maskLocal, KDA_SOLVE_BT);
-            PipeBarrier<PIPE_V>();
-
-            BuildPrefixMask(maskLocal, row, KDA_SOLVE_BT);
-            Mul(akkMat[row * KDA_SOLVE_BT], akkMat[row * KDA_SOLVE_BT], maskLocal, KDA_SOLVE_BT);
-            PipeBarrier<PIPE_V>();
+            ApplyPrefixSelectZero(aqkMat[row * KDA_SOLVE_BT], row + 1, zeroLocal);
+            ApplyPrefixSelectZero(akkMat[row * KDA_SOLVE_BT], row, zeroLocal);
         }
 
         Muls(xMat, akkMat, -1.0f, KDA_SOLVE_MATRIX_ELEMENTS);
@@ -1290,6 +1334,7 @@ private:
         LocalTensor<float> betaBrcb = arena[3 * elemCount + KDA_SOLVE_BT];
         LocalTensor<float> maskLocal = arena[3 * elemCount + KDA_SOLVE_BT + 512];
         LocalTensor<float> oneHotLocal = arena[3 * elemCount + KDA_SOLVE_BT + 512 + KDA_SOLVE_BT];
+        LocalTensor<float> zeroLocal = arena[3 * elemCount + KDA_SOLVE_BT + 512 + 2 * KDA_SOLVE_BT];
 
         constexpr uint64_t typedOffsetFloats = 20480;
         constexpr uint64_t typedOffset = typedOffsetFloats * sizeof(float) / sizeof(T);
@@ -1320,15 +1365,11 @@ private:
             Mul(akkMat[col], akkMat[col], betaBrcb, 8, static_cast<uint8_t>(rowCount), {1, 1, 1, 8, 8, 1});
             PipeBarrier<PIPE_V>();
         }
+        PrepareSelectZero(zeroLocal);
         for (uint64_t localRow = 0; localRow < rowCount; ++localRow) {
             uint64_t row = rowBegin + localRow;
-            BuildPrefixMask(maskLocal, row + 1, KDA_SOLVE_BT);
-            Mul(aqkMat[localRow * KDA_SOLVE_BT], aqkMat[localRow * KDA_SOLVE_BT], maskLocal, KDA_SOLVE_BT);
-            PipeBarrier<PIPE_V>();
-
-            BuildPrefixMask(maskLocal, row, KDA_SOLVE_BT);
-            Mul(akkMat[localRow * KDA_SOLVE_BT], akkMat[localRow * KDA_SOLVE_BT], maskLocal, KDA_SOLVE_BT);
-            PipeBarrier<PIPE_V>();
+            ApplyPrefixSelectZero(aqkMat[localRow * KDA_SOLVE_BT], row + 1, zeroLocal);
+            ApplyPrefixSelectZero(akkMat[localRow * KDA_SOLVE_BT], row, zeroLocal);
         }
 
         Muls(xMat, akkMat, -1.0f, static_cast<uint32_t>(elemCount));
