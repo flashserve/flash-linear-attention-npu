@@ -90,6 +90,11 @@ constexpr uint8_t KDA_SCORE_DONE_FLAG0 = 2;
 constexpr uint8_t KDA_SCORE_DONE_FLAG1 = 3;
 constexpr uint8_t KDA_SCORE_READY_FLAG0 = 4;
 constexpr uint8_t KDA_SCORE_READY_FLAG1 = 5;
+// Keep two chunks in flight; four slots isolate flag reuse without batching four chunks.
+constexpr uint32_t KDA_STAGE1_PIPE_SLOTS = 4;
+constexpr uint32_t KDA_STAGE1_PIPE_LOOKAHEAD = 2;
+constexpr uint8_t KDA_STAGE1_RAW_READY_FLAG = 6;
+constexpr uint8_t KDA_STAGE1_RAW_DONE_FLAG = 7;
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 using KdaArchTag = Catlass::Arch::Ascend950;
@@ -2888,33 +2893,48 @@ private:
         return start < end;
     }
 
-    __aicore__ inline void ProcessChunkPreAiv(uint64_t b, uint64_t h, uint64_t hv, uint64_t chunkIdx,
-                                              uint64_t start, uint64_t end, uint64_t subBlockIdx,
-                                              uint64_t subBlockNum)
+    __aicore__ inline bool UseStage1RawPipeline(uint64_t curT) const
+    {
+        if constexpr (IsSameType<T, float>::value) {
+            return false;
+        }
+        return curT != 0 && K_ >= 16 && curT > 1;
+    }
+
+    __aicore__ inline void Stage1SetRawReady(uint64_t slot)
+    {
+        (void)slot;
+        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(KDA_STAGE1_RAW_READY_FLAG);
+    }
+
+    __aicore__ inline void Stage1WaitRawReady(uint64_t slot)
+    {
+        (void)slot;
+        AscendC::CrossCoreWaitFlag<0x2, PIPE_FIX>(KDA_STAGE1_RAW_READY_FLAG);
+    }
+
+    __aicore__ inline void Stage1SetRawDone(uint64_t slot)
+    {
+        (void)slot;
+        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(KDA_STAGE1_RAW_DONE_FLAG);
+    }
+
+    __aicore__ inline void Stage1WaitRawDone(uint64_t slot)
+    {
+        (void)slot;
+        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(KDA_STAGE1_RAW_DONE_FLAG);
+    }
+
+    __aicore__ inline void ProcessChunkPreAivAfterRaw(uint64_t b, uint64_t h, uint64_t hv, uint64_t chunkIdx,
+                                                      uint64_t start, uint64_t end, uint64_t subBlockIdx,
+                                                      uint64_t subBlockNum)
     {
         uint64_t curT = end - start;
-        if (curT == 0) {
-            return;
-        }
-        if (K_ < 16 || curT == 1) {
-            if (subBlockIdx != 0) {
-                return;
-            }
-            PrepareGateProducts(b, h, hv, start, curT, 0, 1);
-            ComputeRawAqkAkkScalar(b, h, hv, start, curT);
-            FinalizeAqkAkk(b, hv, start, curT);
-            ComputePostKgWUVec(b, h, hv, chunkIdx, start, curT);
-            return;
-        }
-
         bool usePostWuCube = UsePostWuCube(curT);
         bool useAkkCubeSolve = UseAkkCubeSolve(curT);
         uint64_t solveRowBegin = 0;
         uint64_t solveRowEnd = 0;
         GetSolveRowRange(curT, subBlockIdx, subBlockNum, solveRowBegin, solveRowEnd);
-        PrepareGateProducts(b, h, hv, start, curT, subBlockIdx, subBlockNum);
-        Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(scoreReadyFlag_);
-        Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(scoreDoneFlag_);
         if (useAkkCubeSolve) {
             if (curT == KDA_SOLVE_BT) {
                 PrepareAqkAkkMxrInputRows(b, hv, chunkIdx, start, solveRowBegin, solveRowEnd);
@@ -2949,22 +2969,38 @@ private:
                 }
             }
         }
-        if (!usePostWuCube) {
-            return;
-        }
-        PrepareWuCubeInputs(b, hv, start, curT, subBlockIdx, subBlockNum);
+        (void)usePostWuCube;
     }
 
-    __aicore__ inline void ProcessChunkPreAic(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
-                                              uint64_t end)
+    __aicore__ inline void ProcessChunkPreAiv(uint64_t b, uint64_t h, uint64_t hv, uint64_t chunkIdx,
+                                              uint64_t start, uint64_t end, uint64_t subBlockIdx,
+                                              uint64_t subBlockNum)
     {
         uint64_t curT = end - start;
-        if (curT == 0 || K_ < 16 || curT == 1) {
+        if (curT == 0) {
             return;
         }
-        Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(scoreReadyFlag_);
-        ComputeRawAqkAkkCube(b, hv, start, curT);
-        Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(scoreDoneFlag_);
+        if (!UseStage1RawPipeline(curT)) {
+            if (subBlockIdx != 0) {
+                return;
+            }
+            PrepareGateProducts(b, h, hv, start, curT, 0, 1);
+            ComputeRawAqkAkkScalar(b, h, hv, start, curT);
+            FinalizeAqkAkk(b, hv, start, curT);
+            ComputePostKgWUVec(b, h, hv, chunkIdx, start, curT);
+            return;
+        }
+
+        PrepareGateProducts(b, h, hv, start, curT, subBlockIdx, subBlockNum);
+        Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(scoreReadyFlag_);
+        Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(scoreDoneFlag_);
+        ProcessChunkPreAivAfterRaw(b, h, hv, chunkIdx, start, end, subBlockIdx, subBlockNum);
+    }
+
+    __aicore__ inline void ProcessChunkPreAicAfterRaw(uint64_t b, uint64_t hv, uint64_t chunkIdx,
+                                                      uint64_t start, uint64_t end)
+    {
+        uint64_t curT = end - start;
         bool usePostWuCube = UsePostWuCube(curT);
         bool useAkkCubeSolve = UseAkkCubeSolve(curT);
         if (useAkkCubeSolve) {
@@ -2981,13 +3017,29 @@ private:
         (void)chunkIdx;
     }
 
+    __aicore__ inline void ProcessChunkPreAic(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
+                                              uint64_t end)
+    {
+        uint64_t curT = end - start;
+        if (!UseStage1RawPipeline(curT)) {
+            return;
+        }
+        Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(scoreReadyFlag_);
+        ComputeRawAqkAkkCube(b, hv, start, curT);
+        Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(scoreDoneFlag_);
+        ProcessChunkPreAicAfterRaw(b, hv, chunkIdx, start, end);
+    }
+
     __aicore__ inline void ProcessChunkPostAiv(uint64_t b, uint64_t h, uint64_t hv, uint64_t chunkIdx,
-                                               uint64_t start, uint64_t end, uint64_t subBlockIdx)
+                                               uint64_t start, uint64_t end, uint64_t subBlockIdx,
+                                               uint64_t subBlockNum)
     {
         uint64_t curT = end - start;
         if (curT == 0 || !UsePostWuCube(curT)) {
             return;
         }
+        PrepareWuCubeInputs(b, hv, start, curT, subBlockIdx, subBlockNum);
+        Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(scoreReadyFlag_);
         Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(scoreDoneFlag_);
         if (subBlockIdx == 0) {
             CopyScratchWAndFinalizeKg(b, h, hv, chunkIdx, start, curT);
@@ -3001,6 +3053,7 @@ private:
         if (curT == 0 || !UsePostWuCube(curT)) {
             return;
         }
+        Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(scoreReadyFlag_);
         ComputePostWuCube(b, hv, chunkIdx, start, curT);
         Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(scoreDoneFlag_);
     }
@@ -3131,18 +3184,76 @@ private:
         uint64_t coreIdx = isAivOnly_ ? static_cast<uint64_t>(GetBlockIdx()) :
                                         static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
         uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
-        for (uint64_t task = coreIdx; task < taskNum; task += coreNum) {
-            uint64_t seq = 0;
-            uint64_t b = 0;
-            uint64_t h = 0;
-            uint64_t hv = 0;
-            uint64_t chunkIdx = 0;
-            uint64_t start = 0;
-            uint64_t end = 0;
-            if (ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end)) {
-                (void)seq;
-                ProcessChunkPreAiv(b, h, hv, chunkIdx, start, end, subBlockIdx, subBlockNum);
+        if (isAivOnly_) {
+            for (uint64_t task = coreIdx; task < taskNum; task += coreNum) {
+                uint64_t seq = 0;
+                uint64_t b = 0;
+                uint64_t h = 0;
+                uint64_t hv = 0;
+                uint64_t chunkIdx = 0;
+                uint64_t start = 0;
+                uint64_t end = 0;
+                if (ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end)) {
+                    (void)seq;
+                    ProcessChunkPreAiv(b, h, hv, chunkIdx, start, end, subBlockIdx, subBlockNum);
+                }
             }
+            return;
+        }
+
+        uint64_t task = coreIdx;
+        uint64_t head = 0;
+        uint64_t tail = 0;
+        uint64_t pending = 0;
+        uint64_t bList[KDA_STAGE1_PIPE_SLOTS];
+        uint64_t hList[KDA_STAGE1_PIPE_SLOTS];
+        uint64_t hvList[KDA_STAGE1_PIPE_SLOTS];
+        uint64_t chunkList[KDA_STAGE1_PIPE_SLOTS];
+        uint64_t startList[KDA_STAGE1_PIPE_SLOTS];
+        uint64_t endList[KDA_STAGE1_PIPE_SLOTS];
+        while (task < taskNum || pending > 0) {
+            while (task < taskNum && pending < KDA_STAGE1_PIPE_LOOKAHEAD) {
+                uint64_t seq = 0;
+                uint64_t b = 0;
+                uint64_t h = 0;
+                uint64_t hv = 0;
+                uint64_t chunkIdx = 0;
+                uint64_t start = 0;
+                uint64_t end = 0;
+                bool valid = ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end);
+                task += coreNum;
+                if (!valid) {
+                    continue;
+                }
+                (void)seq;
+                uint64_t curT = end - start;
+                if (!UseStage1RawPipeline(curT)) {
+                    ProcessChunkPreAiv(b, h, hv, chunkIdx, start, end, subBlockIdx, subBlockNum);
+                    continue;
+                }
+
+                PrepareGateProducts(b, h, hv, start, curT, subBlockIdx, subBlockNum);
+                PipeBarrier<PIPE_ALL>();
+                Stage1SetRawReady(tail);
+                bList[tail] = b;
+                hList[tail] = h;
+                hvList[tail] = hv;
+                chunkList[tail] = chunkIdx;
+                startList[tail] = start;
+                endList[tail] = end;
+                tail = (tail + 1) % KDA_STAGE1_PIPE_SLOTS;
+                ++pending;
+            }
+
+            if (pending == 0) {
+                continue;
+            }
+
+            Stage1WaitRawDone(head);
+            ProcessChunkPreAivAfterRaw(bList[head], hList[head], hvList[head], chunkList[head],
+                                       startList[head], endList[head], subBlockIdx, subBlockNum);
+            head = (head + 1) % KDA_STAGE1_PIPE_SLOTS;
+            --pending;
         }
     }
 
@@ -3153,19 +3264,55 @@ private:
         }
         uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
         uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
-        for (uint64_t task = GetBlockIdx(); task < taskNum; task += coreNum) {
-            uint64_t seq = 0;
-            uint64_t b = 0;
-            uint64_t h = 0;
-            uint64_t hv = 0;
-            uint64_t chunkIdx = 0;
-            uint64_t start = 0;
-            uint64_t end = 0;
-            if (ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end)) {
+        uint64_t task = GetBlockIdx();
+        uint64_t head = 0;
+        uint64_t tail = 0;
+        uint64_t pending = 0;
+        uint64_t bList[KDA_STAGE1_PIPE_SLOTS];
+        uint64_t hvList[KDA_STAGE1_PIPE_SLOTS];
+        uint64_t chunkList[KDA_STAGE1_PIPE_SLOTS];
+        uint64_t startList[KDA_STAGE1_PIPE_SLOTS];
+        uint64_t endList[KDA_STAGE1_PIPE_SLOTS];
+        while (task < taskNum || pending > 0) {
+            while (task < taskNum && pending < KDA_STAGE1_PIPE_LOOKAHEAD) {
+                uint64_t seq = 0;
+                uint64_t b = 0;
+                uint64_t h = 0;
+                uint64_t hv = 0;
+                uint64_t chunkIdx = 0;
+                uint64_t start = 0;
+                uint64_t end = 0;
+                bool valid = ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end);
+                task += coreNum;
+                if (!valid) {
+                    continue;
+                }
                 (void)seq;
                 (void)h;
-                ProcessChunkPreAic(b, hv, chunkIdx, start, end);
+                uint64_t curT = end - start;
+                if (!UseStage1RawPipeline(curT)) {
+                    continue;
+                }
+
+                Stage1WaitRawReady(tail);
+                ComputeRawAqkAkkCube(b, hv, start, curT);
+                Stage1SetRawDone(tail);
+                bList[tail] = b;
+                hvList[tail] = hv;
+                chunkList[tail] = chunkIdx;
+                startList[tail] = start;
+                endList[tail] = end;
+                tail = (tail + 1) % KDA_STAGE1_PIPE_SLOTS;
+                ++pending;
             }
+
+            if (pending == 0) {
+                continue;
+            }
+
+            ProcessChunkPreAicAfterRaw(bList[head], hvList[head], chunkList[head], startList[head], endList[head]);
+            head = (head + 1) % KDA_STAGE1_PIPE_SLOTS;
+            --pending;
         }
     }
 
@@ -3192,7 +3339,7 @@ private:
             uint64_t end = 0;
             if (ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end)) {
                 (void)seq;
-                ProcessChunkPostAiv(b, h, hv, chunkIdx, start, end, subBlockIdx);
+                ProcessChunkPostAiv(b, h, hv, chunkIdx, start, end, subBlockIdx, subBlockNum);
             }
         }
     }
