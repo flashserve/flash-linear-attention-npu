@@ -275,3 +275,22 @@ if [[ "${CI_RUN_EXAMPLE_ST:-true}" == "true" ]]; then
     fi
     python3 ci/run_example_st_cases.py "${example_st_args[@]}"
 fi
+
+# -----------------------------------------------------------------------------
+# Build custom OPP package for ascend950 SoC (compile-only verification)
+# NOTE: This step only verifies that the code compiles for ascend950.
+#       It runs AFTER all ascend910b validation so that the 910b build
+#       artifacts used by the steps above are not overwritten.
+# -----------------------------------------------------------------------------
+echo "[CI] Building custom OPP package for ascend950 (compile-only)..."
+ascend950_ops_arg=()
+if [[ -n "$ci_ops" ]]; then
+    ascend950_ops_arg=(--ops="$ci_ops")
+fi
+if ! bash build.sh --pkg --soc=ascend950 --vendor_name=fla_npu "${ascend950_ops_arg[@]}" -j"$ci_jobs"; then
+    echo "[CI][ERROR] ascend950 package build failed." >&2
+    echo "[CI][ERROR] Failure point: bash build.sh --pkg --soc=ascend950${ci_ops:+ --ops=$ci_ops} --vendor_name=fla_npu -j$ci_jobs" >&2
+    echo "[CI][ERROR] Please review the build log above for compilation errors." >&2
+    exit 1
+fi
+echo "[CI] ascend950 package build completed successfully."
