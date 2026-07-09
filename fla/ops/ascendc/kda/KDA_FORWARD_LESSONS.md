@@ -1,15 +1,16 @@
-# KDA Forward 开发踩坑与接手手册
+# AscendC 融合算子 AI Agent 开发踩坑与注意手册
 
-本文档面向后续继续维护 KDA forward 的工程师或 AI agent。它不是普通变更说明，而是把 KDA 正向开发过程中已经踩过的方向性、结构性、同步、精度、性能和验证问题沉淀成可复用经验。接手前请先读完，再改 kernel。
+本文档面向后续开发 AscendC 融合算子的工程师或 AI agent。KDA forward 是本文的主要实践样本，但结论不局限于 KDA：凡是同时涉及 L2/L0 拼接、AIC cube、AIV vector、workspace、layout、cross-core flag、数值稳定性和性能 profiling 的融合算子，开发前都应该先读一遍。
+
+这不是普通变更说明，而是把一次复杂算子开发中反复出现的方向性、结构性、同步、精度、性能和验证问题沉淀成可复用经验。文档中的 KDA 例子用于解释问题，不代表这些规则只适用于 KDA。
 
 ## 1. 总原则
 
-KDA forward 不是一个单 kernel 里随手写循环就能做好的算子。它同时涉及：
+复杂融合算子不是一个 kernel 里随手写循环就能做好的功能拼接。开始写代码前，先拆清楚三类问题：
 
-- 三方对标实现提供的数学语义和返回契约。
-- 本仓已有 NPU 实现提供的可复用模块和 AscendC 编程范式。
-- Catlass cube 主路径、AIV SIMD 向量准备、GDN chunk 间状态传播之间的协作。
-- layout、dtype、workspace、cross-core flag、UB 生命周期和 PR 交付文档的一致性。
+- 数学语义：三方对标实现或论文/公式定义了“应该算什么”和“输出契约是什么”。
+- NPU 转写：本仓已有模块定义了“在 AscendC 上应该怎么组织 cube/vector/搬运/同步”。
+- 工程边界：dtype、layout、workspace、异常拦截、文档、测试和 PR 交付必须一致。
 
 推荐开发顺序：
 
@@ -17,7 +18,9 @@ KDA forward 不是一个单 kernel 里随手写循环就能做好的算子。它
 需求目标
   -> 三方对标语义
   -> 本仓 NPU 可复用模块
-  -> L2/L0 分层设计
+  -> 数据依赖图和并行边界
+  -> L2/L0 分层设计和 workspace 规划
+  -> cube/vector 分工与流水协议
   -> 单算子小 shape 精度
   -> 组合路径目标 shape 精度
   -> 特殊值/极端值域/尾块/变长
@@ -63,7 +66,101 @@ KDA forward 不是一个单 kernel 里随手写循环就能做好的算子。它
 - 精度问题要用 CT dual/CT viz 或逐阶段输出定位，不能只看最终 pass/fail。
 - 性能结论以 `msopprof` 为准，Python wall time 只能作为粗略体感。
 
-## 3. 当前可声明的能力边界
+## 3. 融合算子设计哲学
+
+### 3.1 先画数据依赖图，再谈融合
+
+融合不是把所有代码塞进一个 kernel。正确的第一步是把计算拆成：
+
+```text
+无数据依赖的大并行部分:
+    按 batch/head/chunk/tile 最大并行度切分。
+    优先交给 AIC cube 或 AIV 大块 vector。
+
+有串行依赖的状态传播:
+    单独抽成阶段或专门 kernel。
+    通过更细粒度的任务划分、负载均衡和 workspace 驻留优化。
+
+只负责格式或边界的辅助部分:
+    L2 里拼 L0、ViewCopy、Cast、LayoutSwap。
+    不要污染核心计算 kernel 的热路径。
+```
+
+KDA 的实践例子：
+
+```text
+chunk 内 Aqk/Akk/qg/kg/w/u:
+    无跨 chunk 依赖，应该按 chunk/head 并行，矩阵主路径走 Catlass cube。
+
+h_next/final_state:
+    有跨 chunk 依赖，复用 GDN fwd_h 的状态传播思路，避免拖慢 chunk 内大并行计算。
+
+layout/cast/output copy:
+    在 aclnn L2 层串 L0 辅助算子，边界清晰。
+```
+
+### 3.2 cube/vector 分工要从硬件算力出发
+
+设计时先问三个问题：
+
+```text
+这是矩阵乘、矩阵求逆、矩阵三角 solve 吗？
+    是 -> 优先 cube/Catlass/blocked solve。
+
+这是逐元素激活、scale、mask、clamp、exp、cast、pad 吗？
+    是 -> AIV vector，大块 DataCopyPad + repeat。
+
+这是少量标量元数据、shape、offset、cu_seqlens 吗？
+    是 -> 可以标量读取，但不能进入热路径内层循环。
+```
+
+硬件上 cube 算力远高于 vector。目标矩阵计算即使“不完整”“带脏数据”“需要 mask”，也应该优先想办法 pad/clean 后继续用 cube，而不是退回 vector 或 scalar。
+
+### 3.3 搬运效率决定 vector 上限
+
+搬运设计的基本原则：
+
+- 输入 layout 尽量让热路径读写连续。
+- 一次搬运尽量覆盖整行、整 tile 或至少多个 cache line。
+- `DataCopyPad` 用来处理尾部和对齐，不要因此把 full chunk 路径拆成逐元素搬运。
+- vector 指令使用 repeat time 处理大块数据，避免在 `for d` 内发大量小 VEC 指令。
+- double buffer 必须真的让 MTE 和 VEC/CUBE 重叠；只定义 ping-pong 变量但每步都 wait，流水仍然是串行。
+
+### 3.4 有脏数据不等于必须小颗粒度切分
+
+尾块、mask、varlen 场景里，常见错误是为了避开脏数据，把 full tile 切成很多小循环。正确思路通常是：
+
+```text
+读入完整 tile
+  -> 对无效区 pad 成中性值
+  -> cube/vector 照常大块计算
+  -> 写回时 DataCopyPad 或按有效区搬出
+```
+
+只有在公开语义要求中间量无效区精确清零时，才需要额外 clean；即便如此，也应尽量用 vector 大块清理。
+
+### 3.5 编译期模板化和运行时 tiling 分工
+
+模板参数用于消除热路径分支：
+
+```cpp
+template <typename T, bool SAFE_GATE, int V_DIM>
+class Kernel;
+```
+
+运行时 tiling 数据用于规模、offset、workspace 和调度：
+
+```cpp
+tiling.batch
+tiling.seqLen
+tiling.layout
+tiling.dataType
+tiling.safeGate
+```
+
+推荐方式参考 GDN：host tiling 写入 dtype/属性字段，kernel 入口按字段选择模板实例；模板内部使用 `if constexpr` 裁剪路径。不要为了每个 dtype/属性组合滥用 tiling key，除非算子框架或模板 registry 明确要求这样做。
+
+## 4. KDA 实例的能力边界
 
 可以声明：
 
@@ -83,9 +180,9 @@ KDA forward 不是一个单 kernel 里随手写循环就能做好的算子。它
 - 所有中间量无效区都有公开语义。
 - sanitizer 已覆盖 race/mem/init/sync，除非实际跑过并确认命中 sanitizer kernel。
 
-## 4. 设计阶段常见错误
+## 5. 设计阶段常见错误
 
-### 4.1 把接口拼接误当融合算子
+### 5.1 把接口拼接误当融合算子
 
 错误方向：
 
@@ -114,7 +211,7 @@ PyTorch API
 
 L2 可以拼 L0，但核心矩阵准备、求逆、post-WU、output 都必须在 AscendC L0 算子中完成。
 
-### 4.2 不拆 chunk 内并行和 chunk 间依赖
+### 5.2 不拆 chunk 内并行和 chunk 间依赖
 
 KDA 有两类完全不同的依赖：
 
@@ -139,7 +236,7 @@ chunk 间:
 - 复用 GDN `ChunkGatedDeltaRuleFwdH` 串起状态传播。
 - `ChunkKdaFwd stage 2` 在 `h/v_new` 可用后计算 `o`。
 
-### 4.3 把 `kg` 和 `gk` 混淆
+### 5.3 把 `kg` 和 `gk` 混淆
 
 命名语义：
 
@@ -163,7 +260,7 @@ kg_state = k * exp2(g_last - gk)
 
 文档、接口和测试里第一次出现缩写时必须写清楚语义，否则后续 review 很容易把 `kg` 当成拼写错误。
 
-### 4.4 对 `useSplitForward` 的误解
+### 5.4 对 `useSplitForward` 的误解
 
 `useSplitForward=true` 不是为了“多写几个 stage 显得复杂”，而是为了主流 `bf16, K=128, V=128, chunk_size=64` 场景：
 
@@ -175,9 +272,9 @@ K * V >= 8192
 
 该路径可以复用 cube 主路径和 GDN 状态传播。小 shape 或 `fp32` 场景收益不足，可走 `stage=0` monolithic path。
 
-## 5. AscendC 编码红线
+## 6. AscendC 编码红线
 
-### 5.1 目标矩阵计算必须走 cube
+### 6.1 目标矩阵计算必须走 cube
 
 错误模式：
 
@@ -205,7 +302,7 @@ for (uint64_t i = 0; i < curT; ++i) {
 - AIC 使用 Catlass GEMM 计算 `Aqk/Akk/post-WU/output`。
 - 非目标 fallback 可以保 correctness，但不能作为目标路径。
 
-### 5.2 AIV 永远不要在热路径做大批 scalar
+### 6.2 AIV 永远不要在热路径做大批 scalar
 
 错误模式：
 
@@ -231,7 +328,7 @@ WaitFlag<HardEvent::V_MTE3>(event);
 DataCopyPad(gmOut[offset], outUb, outParams);
 ```
 
-### 5.3 不要用 scalar fallback 修精度
+### 6.3 不要用 scalar fallback 修精度
 
 精度偏差的正确定位顺序是：
 
@@ -246,7 +343,7 @@ DataCopyPad(gmOut[offset], outUb, outParams);
 
 错误方向是把 cube 矩阵计算搬回 vector/scalar，因为这样通常只是绕开了脏数据、mask 或同步问题，同时毁掉性能。
 
-### 5.4 `inf * 0` 不是 0
+### 6.4 `inf * 0` 不是 0
 
 mask 不能简单依赖乘 0：
 
@@ -260,9 +357,9 @@ masked = expVal * mask;  // expVal=inf, mask=0 时可能得到 nan
 - 或在 mask 前先把非法/非有限值过滤到 0。
 - 对照 GPU/Triton 的 `exp2` 或 safe gate 语义，不要自己发明不同的数值范围。
 
-## 6. 同步和 UB 生命周期踩坑
+## 7. 同步和 UB 生命周期踩坑
 
-### 6.1 `MTE3->MTE2` 不能保护 VEC 复用
+### 7.1 `MTE3->MTE2` 不能保护 VEC 复用
 
 真实问题：
 
@@ -329,7 +426,7 @@ assert_close(gk.cpu(), ref, rtol=2e-3, atol=2e-3)
 - `safe_gate=True` 覆盖大负累积值域。
 - 对比对象必须是 `gk` 本身。
 
-### 6.2 VEC 临时复用后要闭合生命周期
+### 7.2 VEC 临时复用后要闭合生命周期
 
 曾出现过类似模式：
 
@@ -350,7 +447,7 @@ Add(tmpUb, calcUb, tmpUb, ...);
 - `PipeBarrier<PIPE_V>()` 只约束 V pipe 内顺序，不替代 MTE/V 之间的硬事件。
 - 双缓冲时，每个 slot 的 free/ready 生命周期必须闭环。
 
-### 6.3 Cross-core flag 必须计数平衡
+### 7.3 Cross-core flag 必须计数平衡
 
 错误模式：
 
@@ -371,9 +468,9 @@ AIC: 对所有 tile 都 wait ready
 - flag id 需要集中管理，不要散落魔法数字。
 - 不允许 producer 连续 set 同一个 flag 而 consumer 还没 wait，必要时用 reverse/free flag。
 
-## 7. Gate、指数和数值范围
+## 8. Gate、指数和数值范围
 
-### 7.1 `gk` 合法值域
+### 8.1 `gk` 合法值域
 
 safe gate 下：
 
@@ -403,7 +500,7 @@ step_max = max(gk[t+1] - gk[t]) >> 0
 - UB 写回被覆盖。
 - chunk 边界错。
 
-### 7.2 先查 `gk`，再查 `Aqk/Akk`
+### 8.2 先查 `gk`，再查 `Aqk/Akk`
 
 下游爆炸链路：
 
@@ -424,9 +521,9 @@ for each chunk:
 compare(gk, cpu_gate_reference)
 ```
 
-## 8. Layout 和接口边界
+## 9. Layout 和接口边界
 
-### 8.1 BNSD/NTD 是性能 layout
+### 9.1 BNSD/NTD 是性能 layout
 
 如果上游 causal conv 已经转成 BNSD/NTD，KDA 内部不应再做 `KdaLayoutSwap12`。
 
@@ -442,7 +539,7 @@ BSND/TND: 兼容输入，L2 转 BNSD 内部 layout
 BNSD/NTD: 性能输入，L2 reshape/view 后直通 kernel
 ```
 
-### 8.2 `return_intermediate=True` 要明确有效区语义
+### 9.2 `return_intermediate=True` 要明确有效区语义
 
 中间量不是只有 shape 对就完事。需要明确：
 
@@ -453,7 +550,7 @@ BNSD/NTD: 性能输入，L2 reshape/view 后直通 kernel
 
 如果中间量无效区出现极值，不要直接判定主输出错误。先确认公开语义是否要求比较该区域。
 
-### 8.3 用户输出不能随便当 split path 中间量
+### 9.3 用户输出不能随便当 split path 中间量
 
 错误模式：
 
@@ -473,9 +570,9 @@ ChunkGatedDeltaRuleFwdH(... userOutKg, userOutW, ...);
 - split path 内部全部用 executor-owned BNSD temporaries。
 - 最后一步 `ViewCopy` 或 layout swap 回用户输出。
 
-## 9. 精度定位流程
+## 10. 精度定位流程
 
-### 9.1 不要只看最终输出
+### 10.1 不要只看最终输出
 
 KDA 的逐阶段定位顺序：
 
@@ -489,7 +586,7 @@ KDA 的逐阶段定位顺序：
 
 每一步都应该能单独 dump 或以 `return_intermediate=True` 验证。
 
-### 9.2 结构性错误和数值误差要分开
+### 10.2 结构性错误和数值误差要分开
 
 结构性错误特征：
 
@@ -507,7 +604,7 @@ KDA 的逐阶段定位顺序：
 
 结构性错误必须修 kernel。数值误差可用 dual benchmark、MCH/MXR 迭代次数、fp32 workspace 等方式评估取舍。
 
-### 9.3 CT 工具使用
+### 10.3 CT 工具使用
 
 大 tensor 直接画图很慢，可以 sampling：
 
@@ -532,7 +629,7 @@ test:      NPU 输出
 
 不要把 `diff_thd` 调大来制造通过。阈值和双标杆语义必须和用例规格一致。
 
-### 9.4 固定输入多跑
+### 10.4 固定输入多跑
 
 怀疑同步、UB 生命周期或 race 时，固定随机种子多跑：
 
@@ -548,9 +645,9 @@ compare bitwise
 - UB slot 被提前复用。
 - GM workspace 写区重叠。
 
-## 10. 性能定位流程
+## 11. 性能定位流程
 
-### 10.1 性能结论以 msopprof 为准
+### 11.1 性能结论以 msopprof 为准
 
 Python wall time 包含：
 
@@ -568,7 +665,7 @@ AIC/AIV wait
 MTE2/MTE3/VEC/CUBE 占比
 ```
 
-### 10.2 先看 bound，再改代码
+### 11.2 先看 bound，再改代码
 
 常见 bound 和对应方向：
 
@@ -589,7 +686,7 @@ AIV wait:
     AIV 等 AIC 或 MTE，检查 cube 输出、MTE3 写回和双缓冲。
 ```
 
-### 10.3 不要在 for 循环里塞大量小指令
+### 11.3 不要在 for 循环里塞大量小指令
 
 坏模式：
 
@@ -616,7 +713,7 @@ DataCopyPad(outGm, outUb, rowBytes);
 - 使用 repeat time 让 vector 指令处理大块数据。
 - double buffer 要让搬运和计算能互相掩盖，而不是只声明了 ping-pong 变量。
 
-## 11. Partial Chunk 和 Varlen
+## 12. Partial Chunk 和 Varlen
 
 partial chunk 是当前最容易出错的区域。
 
@@ -642,7 +739,7 @@ partial chunk 的选择：
 
 不要为了尾块正确，把 full chunk 路径也改成逐元素 scalar。
 
-## 12. MCH/MXR/MXH 求逆经验
+## 13. MCH/MXR/MXH 求逆经验
 
 `Akk` 是：
 
@@ -669,7 +766,7 @@ compare(o_local_npu, o_local_ref)
 compare(Akk_npu, Akk_ref)
 ```
 
-## 13. 测试矩阵设计
+## 14. 测试矩阵设计
 
 小 shape 不能证明目标 shape 正确，长 shape 也不能替代针对性观测点。
 
@@ -716,7 +813,7 @@ gate:
 调度: 是否触发多 task/core 复用
 ```
 
-## 14. 文档和 PR 交付
+## 15. 文档和 PR 交付
 
 每次修改下面内容时，必须同步更新设计文档、测试说明和公开接口说明：
 
@@ -740,7 +837,7 @@ gate:
 - 失败场景和公开可理解的原因。
 - 已知限制。
 
-## 15. 修改前后检查清单
+## 16. 修改前后检查清单
 
 修改前：
 
@@ -775,9 +872,9 @@ gate:
 - 新增问题必须有能稳定触发的回归用例。
 - PR 描述只写公开测试项和结果，不暴露内部环境。
 
-## 16. 已修复问题速查
+## 17. 已修复问题速查
 
-### 16.1 Gate cumsum 尾行被写 0
+### 17.1 Gate cumsum 尾行被写 0
 
 根因：
 
@@ -809,7 +906,7 @@ WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent);
 - `chunk_size=64`
 - gate-only 对 CPU reference。
 
-### 16.2 `final_state` dtype 不一致
+### 17.2 `final_state` dtype 不一致
 
 根因：
 
@@ -826,7 +923,7 @@ WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent);
 - `initial_state/final_state` 固定 `fp32`。
 - op_def、L2 分配、kernel GlobalTensor 类型一致。
 
-### 16.3 BNSD/NTD 被重复 layout swap
+### 17.3 BNSD/NTD 被重复 layout swap
 
 根因：
 
@@ -842,7 +939,7 @@ WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent);
 - BSND/TND 才转 layout。
 - BNSD/NTD reshape/view 后直通。
 
-### 16.4 partial chunk flag 不平衡
+### 17.4 partial chunk flag 不平衡
 
 根因：
 
@@ -859,7 +956,7 @@ WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent);
 - full tile pad/clean。
 - 空任务也参与 flag 协议，或 tiling 让 paired side 不等待。
 
-## 17. 后续重点
+## 18. 后续重点
 
 1. 为 high `K/V` non-aligned varlen 实现 dedicated partial-chunk 路径。
 2. 为 `V=256` 建独立模板，重新规划 UB/L1 和 Catlass tile。

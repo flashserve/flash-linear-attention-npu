@@ -88,18 +88,18 @@ ge::graphStatus Tiling4KdaGateCumsum(gert::TilingContext *context)
     tiling.set_hasCuSeqlens(hasCuSeqlens);
     tiling.set_hasALog(context->GetOptionalInputDesc(INPUT_A_LOG_IDX) != nullptr ? 1 : 0);
     tiling.set_hasDtBias(context->GetOptionalInputDesc(INPUT_DT_BIAS_IDX) != nullptr ? 1 : 0);
+    int64_t dataType = 0;
+    if (gDesc->GetDataType() == ge::DT_FLOAT) {
+        dataType = 2;
+    } else if (gDesc->GetDataType() == ge::DT_BF16) {
+        dataType = 1;
+    }
+    tiling.set_dataType(dataType);
     tiling.set_useGateInKernel(useGate ? 1 : 0);
     tiling.set_safeGate(safeGate ? 1 : 0);
     tiling.set_lowerBound(lowerBound);
     tiling.set_usedCoreNum(blockDim == 0 ? 1 : blockDim);
 
-    if (gDesc->GetDataType() == ge::DT_FLOAT) {
-        context->SetTilingKey(0);
-    } else if (gDesc->GetDataType() == ge::DT_BF16) {
-        context->SetTilingKey(1);
-    } else {
-        context->SetTilingKey(2);
-    }
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
     return ge::GRAPH_SUCCESS;

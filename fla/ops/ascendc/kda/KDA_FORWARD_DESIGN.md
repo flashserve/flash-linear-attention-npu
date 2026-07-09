@@ -61,6 +61,7 @@ gk      = cumsum(gate * rcp_ln2, within_current_chunk)
 - `gk` 是 chunk 内累积，不跨 chunk 继续累加。`g_i - g_j` 的使用范围在 chunk 内，因此合法 `gk` 在同一 chunk 内应整体单调不增，且 causal 下 `g_i - g_j <= 0`。
 - `safe_gate` 下每步 gate 位于 `[lower_bound, 0]`。默认 `lower_bound=-5` 时，一个 `chunk_size=64` 的 chunk 内 `gk` 可能到 `-300~-460`，这是合法值域。
 - 如果某个 chunk 尾行被错误写成 0，会出现 `g_i - g_j` 正跳几百，随后 `exp2(g_i - g_j)` 溢出或产生极大中间值。这类问题的根因通常在 `KdaGateCumsum` 或同步/写回生命周期，不应先通过收紧输入 range、把 cube 改成 scalar 或调阈值规避。
+- `safe_gate` 不应作为 AIV 热路径 runtime 分支，也不应依赖 tiling key 组合编码。`KdaGateCumsum` 参考 GDN 入口方式：host tiling 写入 `dataType/safeGate` 字段，kernel 入口选择 `<T, SAFE_GATE>` 模板实例，具体计算路径由编译期常量裁剪。
 
 定位 gate cumsum 问题时，应先使用 gate-only 对比，而不是直接看 `o/final_state`：
 

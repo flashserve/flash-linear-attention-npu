@@ -24,6 +24,7 @@ TILING_DATA_FIELD_DEF(int64_t, seqNum);
 TILING_DATA_FIELD_DEF(int64_t, hasCuSeqlens);
 TILING_DATA_FIELD_DEF(int64_t, hasALog);
 TILING_DATA_FIELD_DEF(int64_t, hasDtBias);
+TILING_DATA_FIELD_DEF(int64_t, dataType);
 TILING_DATA_FIELD_DEF(int64_t, useGateInKernel);
 TILING_DATA_FIELD_DEF(int64_t, safeGate);
 TILING_DATA_FIELD_DEF(float, lowerBound);

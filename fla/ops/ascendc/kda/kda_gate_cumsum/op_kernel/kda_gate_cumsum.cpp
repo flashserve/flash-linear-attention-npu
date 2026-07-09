@@ -19,7 +19,7 @@ constexpr uint32_t GATE_SCALAR_V_S_EVENT_ID = 4;
 constexpr uint32_t GATE_MTE3_V_EVENT_ID = 5;
 constexpr uint32_t GATE_ROW_ELEMENTS = 256;
 
-template <typename T>
+template <typename T, bool SAFE_GATE>
 class KdaGateCumsumKernel {
 public:
     __aicore__ inline void Init(GM_ADDR g, GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR cuSeqlens, GM_ADDR gk,
@@ -42,8 +42,6 @@ public:
         hasCuSeqlens_ = tiling.hasCuSeqlens != 0;
         hasALog_ = tiling.hasALog != 0;
         hasDtBias_ = tiling.hasDtBias != 0;
-        useGateInKernel_ = tiling.useGateInKernel != 0;
-        safeGate_ = tiling.safeGate != 0;
         lowerBound_ = tiling.lowerBound;
         usedCoreNum_ = static_cast<uint64_t>(tiling.usedCoreNum);
         maxChunks_ = (t_ + chunkSize_ - 1) / chunkSize_;
@@ -179,39 +177,38 @@ private:
         return ptr[0];
     }
 
-    __aicore__ inline void ApplySafeGate(uint64_t hv, LocalTensor<float> &row)
+    __aicore__ inline void ApplyGate(uint64_t hv, LocalTensor<float> &row)
     {
-        if (!useGateInKernel_) {
-            return;
-        }
-        if (hasDtBias_) {
+        if constexpr (SAFE_GATE) {
+            if (hasDtBias_) {
+                LocalTensor<float> tmp = tmpBuf_.Get<float>();
+                CopyFloatVectorIn(tmp, dtBias_, hv * k_, k_);
+                SetFlag<HardEvent::MTE2_V>(GATE_MTE2_V_EVENT_ID);
+                WaitFlag<HardEvent::MTE2_V>(GATE_MTE2_V_EVENT_ID);
+                Add(row, row, tmp, static_cast<uint32_t>(k_));
+                PipeBarrier<PIPE_V>();
+            }
+
+            float expA = hasALog_ ? ExpScalar(ReadFloat(aLog_, hv)) : 1.0f;
+            Muls(row, row, expA, static_cast<uint32_t>(k_));
+            PipeBarrier<PIPE_V>();
+
             LocalTensor<float> tmp = tmpBuf_.Get<float>();
-            CopyFloatVectorIn(tmp, dtBias_, hv * k_, k_);
-            SetFlag<HardEvent::MTE2_V>(GATE_MTE2_V_EVENT_ID);
-            WaitFlag<HardEvent::MTE2_V>(GATE_MTE2_V_EVENT_ID);
-            Add(row, row, tmp, static_cast<uint32_t>(k_));
+            Muls(tmp, row, -1.0f, static_cast<uint32_t>(k_));
+            PipeBarrier<PIPE_V>();
+            Exp(tmp, tmp, static_cast<uint32_t>(k_));
+            PipeBarrier<PIPE_V>();
+            Adds(tmp, tmp, 1.0f, static_cast<uint32_t>(k_));
+            PipeBarrier<PIPE_V>();
+
+            LocalTensor<float> one = oneBuf_.Get<float>();
+            Duplicate(one, 1.0f, static_cast<uint32_t>(k_));
+            PipeBarrier<PIPE_V>();
+            Div(row, one, tmp, static_cast<uint32_t>(k_));
+            PipeBarrier<PIPE_V>();
+            Muls(row, row, lowerBound_, static_cast<uint32_t>(k_));
             PipeBarrier<PIPE_V>();
         }
-
-        float expA = hasALog_ ? ExpScalar(ReadFloat(aLog_, hv)) : 1.0f;
-        Muls(row, row, expA, static_cast<uint32_t>(k_));
-        PipeBarrier<PIPE_V>();
-
-        LocalTensor<float> tmp = tmpBuf_.Get<float>();
-        Muls(tmp, row, -1.0f, static_cast<uint32_t>(k_));
-        PipeBarrier<PIPE_V>();
-        Exp(tmp, tmp, static_cast<uint32_t>(k_));
-        PipeBarrier<PIPE_V>();
-        Adds(tmp, tmp, 1.0f, static_cast<uint32_t>(k_));
-        PipeBarrier<PIPE_V>();
-
-        LocalTensor<float> one = oneBuf_.Get<float>();
-        Duplicate(one, 1.0f, static_cast<uint32_t>(k_));
-        PipeBarrier<PIPE_V>();
-        Div(row, one, tmp, static_cast<uint32_t>(k_));
-        PipeBarrier<PIPE_V>();
-        Muls(row, row, lowerBound_, static_cast<uint32_t>(k_));
-        PipeBarrier<PIPE_V>();
     }
 
     __aicore__ inline void ProcessTask(uint64_t task)
@@ -237,7 +234,7 @@ private:
         PipeBarrier<PIPE_V>();
         for (uint64_t t = start; t < end; ++t) {
             LoadGateRow(Offset(b, t, hv, 0), row);
-            ApplySafeGate(hv, row);
+            ApplyGate(hv, row);
             Muls(row, row, RCP_LN2, static_cast<uint32_t>(k_));
             PipeBarrier<PIPE_V>();
             Add(acc, acc, row, static_cast<uint32_t>(k_));
@@ -250,7 +247,6 @@ private:
             SetFlag<HardEvent::MTE3_V>(GATE_MTE3_V_EVENT_ID);
             WaitFlag<HardEvent::MTE3_V>(GATE_MTE3_V_EVENT_ID);
         }
-        (void)safeGate_;
     }
 
     GlobalTensor<T> g_;
@@ -278,11 +274,30 @@ private:
     bool hasCuSeqlens_ = false;
     bool hasALog_ = false;
     bool hasDtBias_ = false;
-    bool useGateInKernel_ = false;
-    bool safeGate_ = false;
     float lowerBound_ = -5.0f;
     uint64_t usedCoreNum_ = 1;
 };
+
+template <typename T, bool SAFE_GATE>
+__aicore__ inline void RunKdaGateCumsum(GM_ADDR g, GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR cuSeqlens, GM_ADDR gk,
+                                        const KdaGateCumsumTilingData &tilingData, TPipe *pipe)
+{
+    KdaGateCumsumKernel<T, SAFE_GATE> op;
+    op.Init(g, aLog, dtBias, cuSeqlens, gk, tilingData, pipe);
+    op.Process();
+}
+
+template <typename T>
+__aicore__ inline void DispatchKdaGateCumsumBySafeGate(GM_ADDR g, GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR cuSeqlens,
+                                                       GM_ADDR gk, const KdaGateCumsumTilingData &tilingData,
+                                                       TPipe *pipe)
+{
+    if (tilingData.safeGate != 0) {
+        RunKdaGateCumsum<T, true>(g, aLog, dtBias, cuSeqlens, gk, tilingData, pipe);
+    } else {
+        RunKdaGateCumsum<T, false>(g, aLog, dtBias, cuSeqlens, gk, tilingData, pipe);
+    }
+}
 } // namespace
 
 extern "C" __global__ __aicore__ void kda_gate_cumsum(GM_ADDR g, GM_ADDR aLog, GM_ADDR dtBias,
@@ -290,22 +305,14 @@ extern "C" __global__ __aicore__ void kda_gate_cumsum(GM_ADDR g, GM_ADDR aLog, G
                                                        GM_ADDR tiling)
 {
     (void)workspace;
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     GET_TILING_DATA(tilingData, tiling);
     TPipe pipe;
-    if (TILING_KEY_IS(0)) {
-        KERNEL_TASK_TYPE(0, KERNEL_TYPE_AIV_ONLY);
-        KdaGateCumsumKernel<float> op;
-        op.Init(g, aLog, dtBias, cuSeqlens, gk, tilingData, &pipe);
-        op.Process();
-    } else if (TILING_KEY_IS(1)) {
-        KERNEL_TASK_TYPE(1, KERNEL_TYPE_AIV_ONLY);
-        KdaGateCumsumKernel<bfloat16_t> op;
-        op.Init(g, aLog, dtBias, cuSeqlens, gk, tilingData, &pipe);
-        op.Process();
+    if (tilingData.dataType == 2) {
+        DispatchKdaGateCumsumBySafeGate<float>(g, aLog, dtBias, cuSeqlens, gk, tilingData, &pipe);
+    } else if (tilingData.dataType == 1) {
+        DispatchKdaGateCumsumBySafeGate<bfloat16_t>(g, aLog, dtBias, cuSeqlens, gk, tilingData, &pipe);
     } else {
-        KERNEL_TASK_TYPE(2, KERNEL_TYPE_AIV_ONLY);
-        KdaGateCumsumKernel<half> op;
-        op.Init(g, aLog, dtBias, cuSeqlens, gk, tilingData, &pipe);
-        op.Process();
+        DispatchKdaGateCumsumBySafeGate<half>(g, aLog, dtBias, cuSeqlens, gk, tilingData, &pipe);
     }
 }
