@@ -432,9 +432,12 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         }
         const aclTensor *qgReturnBnsd = prepResult[6];
         CHECK_RET(qgReturnBnsd != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        const bool needPublicStableCopy = !isInternalLayout;
         const aclTensor *aqkScaledBnst = l0op::Muls(prepResult[2], static_cast<float>(params.scale), executorPtr);
         CHECK_RET(aqkScaledBnst != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        const bool needPublicStableCopy = !isInternalLayout;
+        const aclTensor *aqkStableScaledBnst =
+            KdaFwdStableCopyIfNeeded(aqkScaledBnst, needPublicStableCopy, executorPtr);
+        CHECK_RET(aqkStableScaledBnst != nullptr, ACLNN_ERR_INNER_NULLPTR);
         const aclTensor *qgStableBnsd = KdaFwdStableCopyIfNeeded(qgReturnBnsd, needPublicStableCopy, executorPtr);
         CHECK_RET(qgStableBnsd != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
@@ -468,11 +471,12 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         CHECK_RET(akkReturnBnst != nullptr && wReturnBnsd != nullptr && uReturnBnsd != nullptr &&
                       kgReturnBnsd != nullptr,
                   ACLNN_ERR_INNER_NULLPTR);
-        const aclTensor *akkStableBnst = akkReturnBnst;
+        const aclTensor *akkStableBnst = KdaFwdStableCopyIfNeeded(akkReturnBnst, needPublicStableCopy, executorPtr);
         const aclTensor *wStableBnsd = KdaFwdStableCopyIfNeeded(wReturnBnsd, needPublicStableCopy, executorPtr);
         const aclTensor *uStableBnsd = KdaFwdStableCopyIfNeeded(uReturnBnsd, needPublicStableCopy, executorPtr);
         const aclTensor *kgStableBnsd = KdaFwdStableCopyIfNeeded(kgReturnBnsd, needPublicStableCopy, executorPtr);
-        CHECK_RET(wStableBnsd != nullptr && uStableBnsd != nullptr && kgStableBnsd != nullptr,
+        CHECK_RET(akkStableBnst != nullptr && wStableBnsd != nullptr && uStableBnsd != nullptr &&
+                      kgStableBnsd != nullptr,
                   ACLNN_ERR_INNER_NULLPTR);
 
         const aclTensor *hForH = executorPtr->AllocTensor(
@@ -539,7 +543,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         for (auto tensor : outResult) {
             CHECK_RET(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR);
         }
-        result = {oStage2Bnsd, params.finalStateOut, aqkScaledBnst, akkStableBnst, wStableBnsd,
+        result = {oStage2Bnsd, params.finalStateOut, aqkStableScaledBnst, akkStableBnst, wStableBnsd,
                   uStableBnsd, qgStableBnsd, kgStableBnsd, vNewReturnBnsd, hReturnBnst};
     } else {
         result = l0op::ChunkKdaFwd(qBnsd, kBnsd, vBnsd, gkBnsd, betaBns, params.initialStateOptional,

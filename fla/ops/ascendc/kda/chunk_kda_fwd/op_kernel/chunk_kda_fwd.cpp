@@ -1142,6 +1142,14 @@ private:
         PipeBarrier<PIPE_V>();
     }
 
+    __aicore__ inline void ApplyPrefixMulMask(LocalTensor<float> rowLocal, uint64_t prefix,
+                                              LocalTensor<float> maskLocal)
+    {
+        BuildPrefixMask(maskLocal, prefix, KDA_SOLVE_BT);
+        Mul(rowLocal, rowLocal, maskLocal, KDA_SOLVE_BT);
+        PipeBarrier<PIPE_V>();
+    }
+
     __aicore__ inline void PrepareAqkAkkSolveInput64(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start)
     {
         LocalTensor<float> arena = vecBuf_.Get<float>();
@@ -1184,7 +1192,7 @@ private:
         }
         PrepareSelectZero(zeroLocal);
         for (uint64_t row = 0; row < KDA_SOLVE_BT; ++row) {
-            ApplyPrefixSelectZero(aqkMat[row * KDA_SOLVE_BT], row + 1, zeroLocal);
+            ApplyPrefixMulMask(aqkMat[row * KDA_SOLVE_BT], row + 1, maskLocal);
             ApplyPrefixSelectZero(akkMat[row * KDA_SOLVE_BT], row, zeroLocal);
         }
 
@@ -1284,7 +1292,7 @@ private:
         }
         PrepareSelectZero(zeroLocal);
         for (uint64_t row = 0; row < KDA_SOLVE_BT; ++row) {
-            ApplyPrefixSelectZero(aqkMat[row * KDA_SOLVE_BT], row + 1, zeroLocal);
+            ApplyPrefixMulMask(aqkMat[row * KDA_SOLVE_BT], row + 1, maskLocal);
             ApplyPrefixSelectZero(akkMat[row * KDA_SOLVE_BT], row, zeroLocal);
         }
 
@@ -1394,7 +1402,7 @@ private:
         PrepareSelectZero(zeroLocal);
         for (uint64_t localRow = 0; localRow < rowCount; ++localRow) {
             uint64_t row = rowBegin + localRow;
-            ApplyPrefixSelectZero(aqkMat[localRow * KDA_SOLVE_BT], row + 1, zeroLocal);
+            ApplyPrefixMulMask(aqkMat[localRow * KDA_SOLVE_BT], row + 1, maskLocal);
             ApplyPrefixSelectZero(akkMat[localRow * KDA_SOLVE_BT], row, zeroLocal);
         }
 
@@ -1501,7 +1509,7 @@ private:
         PrepareSelectZero(zeroLocal);
         for (uint64_t localRow = 0; localRow < rowCount; ++localRow) {
             uint64_t row = rowBegin + localRow;
-            ApplyPrefixSelectZero(aqkMat[localRow * KDA_SOLVE_BT], row + 1, zeroLocal);
+            ApplyPrefixMulMask(aqkMat[localRow * KDA_SOLVE_BT], row + 1, maskLocal);
             ApplyPrefixSelectZero(akkMat[localRow * KDA_SOLVE_BT], row, zeroLocal);
         }
 

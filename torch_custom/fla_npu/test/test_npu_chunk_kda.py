@@ -36,7 +36,9 @@ def _make_inputs(device, b=1, h=2, hv=2, t=64, kdim=32, vdim=64, dtype=torch.flo
 
 
 def _assert_close(name, actual, expected, rtol=2e-3, atol=2e-3):
-    torch.testing.assert_close(actual.cpu(), expected.cpu(), rtol=rtol, atol=atol, msg=name)
+    expected_cpu = expected.cpu()
+    dynamic_atol = min(atol, 2e-3, expected_cpu.abs().float().mean().item())
+    torch.testing.assert_close(actual.cpu(), expected_cpu, rtol=rtol, atol=dynamic_atol, msg=name)
 
 
 def _kda_gate_cumsum_reference(g, chunk_size, A_log=None, dt_bias=None, use_gate_in_kernel=False,
