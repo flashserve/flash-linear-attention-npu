@@ -78,6 +78,28 @@ inline ge::graphStatus ValidateAlignedDim(gert::TilingContext *context, int64_t 
     return ge::GRAPH_SUCCESS;
 }
 
+inline ge::graphStatus CheckQslInfo(gert::TilingContext *context, bool &qslAbsent, int64_t &qslSize)
+{
+    auto qslShapePtr = context->GetOptionalInputShape(QUERY_START_LOC_INDEX);
+    const gert::CompileTimeTensorDesc *qslDesc = context->GetOptionalInputDesc(QUERY_START_LOC_INDEX);
+    if (qslShapePtr != nullptr) {
+        const auto qslStorageShape = qslShapePtr->GetStorageShape();
+        const int64_t qslDimNum = qslStorageShape.GetDimNum();
+        qslAbsent = (qslDimNum == 0) || (qslDimNum == 1 && qslStorageShape.GetDim(0) <= 0);
+        if (!qslAbsent) {
+            auto qslShape = EnsureNotScalar(qslStorageShape);
+            OP_CHECK_IF(qslShape.GetDimNum() != 1, OP_LOGE(context, "queryStartLoc must be 1D"),
+                        return ge::GRAPH_FAILED);
+            qslSize = qslShape.GetDim(0);
+            OP_CHECK_IF(qslSize < 1, OP_LOGE(context, "queryStartLoc.size must be >= 1"), return ge::GRAPH_FAILED);
+            OP_CHECK_NULL_WITH_CONTEXT(context, qslDesc);
+            OP_CHECK_IF(qslDesc->GetDataType() != ge::DT_INT64, OP_LOGE(context, "queryStartLoc dtype must be int64"),
+                        return ge::GRAPH_FAILED);
+        }
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const CausalConv1dAttrInfo &attrInfo,
                                          CausalConv1dTilingData &tiling, bool &hasBias)
 {
@@ -97,6 +119,11 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     int64_t batch = 0;
     int64_t inputMode = 0;
     int64_t headNum = tiling.headNum;
+
+    bool qslAbsent = true;
+    int64_t qslSize = 0;
+    OP_CHECK_IF(CheckQslInfo(context, qslAbsent, qslSize) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "Check queryStartLoc info error"), return ge::GRAPH_FAILED);
 
     if (xShape.GetDimNum() == 2) {
         if (isDecodeMode) {
@@ -124,8 +151,12 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                 return ge::GRAPH_FAILED);
         }
     } else if (xShape.GetDimNum() == 3) {
-        inputMode = 1;
         batch = xShape.GetDim(0);
+        if (batch == 1 && !qslAbsent) {
+            inputMode = 0;
+        } else {
+            inputMode = 1;
+        }
         seqLen = xShape.GetDim(1);
         dim = xShape.GetDim(2);
         cuSeqlen = batch * seqLen;
@@ -173,26 +204,6 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     OP_CHECK_IF(sDim != dim, OP_LOGE(context, "convStates.shape[2] must equal dim"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(stateLen < (width - 1), OP_LOGE(context, "convStates.shape[1] must be >= width-1"),
                 return ge::GRAPH_FAILED);
-
-    auto qslShapePtr = context->GetOptionalInputShape(QUERY_START_LOC_INDEX);
-    const gert::CompileTimeTensorDesc *qslDesc = context->GetOptionalInputDesc(QUERY_START_LOC_INDEX);
-    bool qslAbsent = true;
-    int64_t qslSize = 0;
-    if (qslShapePtr != nullptr) {
-        const auto qslStorageShape = qslShapePtr->GetStorageShape();
-        const int64_t qslDimNum = qslStorageShape.GetDimNum();
-        qslAbsent = (qslDimNum == 0) || (qslDimNum == 1 && qslStorageShape.GetDim(0) <= 0);
-        if (!qslAbsent) {
-            auto qslShape = EnsureNotScalar(qslStorageShape);
-            OP_CHECK_IF(qslShape.GetDimNum() != 1, OP_LOGE(context, "queryStartLoc must be 1D"),
-                        return ge::GRAPH_FAILED);
-            qslSize = qslShape.GetDim(0);
-            OP_CHECK_IF(qslSize < 1, OP_LOGE(context, "queryStartLoc.size must be >= 1"), return ge::GRAPH_FAILED);
-            OP_CHECK_NULL_WITH_CONTEXT(context, qslDesc);
-            OP_CHECK_IF(qslDesc->GetDataType() != ge::DT_INT64, OP_LOGE(context, "queryStartLoc dtype must be int64"),
-                        return ge::GRAPH_FAILED);
-        }
-    }
 
     if (qslAbsent) {
         OP_CHECK_IF(inputMode == 0, OP_LOGE(context, "queryStartLoc is required in 2D varlen mode (inputMode=0)"),
