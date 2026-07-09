@@ -236,6 +236,9 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     const size_t groupBtbSize = align32(static_cast<size_t>(ringCoreSlots) * groupRingDepth * HV *BT * BT * FP16_SIZE);
     const size_t shortBtbSize = align32(static_cast<size_t>(ringCoreSlots) * adaptiveShortDepth * HV *BT * BT * FP16_SIZE);
     size_t dgLastSize = align32(static_cast<size_t>(ringCoreSlots) * groupRingDepth * HV *FP32_SIZE);
+    const bool gvaMode = HV != HK;
+    const size_t gvaBtxKSize = gvaMode ? align32(static_cast<size_t>(ringCoreSlots) * groupRingDepth * HV * BT * K * FP32_SIZE) : 0;
+    const size_t gvaShortBtxKSize = gvaMode ? align32(static_cast<size_t>(ringCoreSlots) * adaptiveShortDepth * HV * BT * K * FP32_SIZE) : 0;
 
     size_t offset = 0;
     size_t wsDwOffset = offset;
@@ -252,6 +255,12 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
 
     size_t wsDgLastOffset = offset;
     offset += dgLastSize;
+
+    size_t wsGvaBtxKOffset = offset;
+    offset += gvaBtxKSize;
+
+    size_t wsGvaShortBtxKOffset = offset;
+    offset += gvaShortBtxKSize;
 
     size_t wsMm6Offset = wsDwOffset;
     size_t wsMm7Offset = wsMm5Offset;
@@ -289,6 +298,8 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     tilingData.set_wsMm6Offset(wsMm6Offset);
     tilingData.set_wsMm7Offset(wsMm7Offset);
     tilingData.set_wsMul1Offset(wsMul1Offset);
+    tilingData.set_wsGvaBtxKOffset(wsGvaBtxKOffset);
+    tilingData.set_wsGvaShortBtxKOffset(wsGvaShortBtxKOffset);
 
     // 检查是否有 cu_seqlens 输入来判断 IS_VARLEN
     tilingData.set_isVarLen(isVarLen);
