@@ -90,6 +90,14 @@ const aclTensor *KdaFwdCastIfNeeded(const aclTensor *tensor, DataType dataType, 
     return l0op::Cast(tensor, dataType, executor);
 }
 
+const aclTensor *KdaFwdStableCopyIfNeeded(const aclTensor *tensor, bool needCopy, aclOpExecutor *executor)
+{
+    if (tensor == nullptr || !needCopy) {
+        return tensor;
+    }
+    return l0op::Muls(tensor, 1.0f, executor);
+}
+
 int64_t KdaFwdDim(const aclTensor *tensor, size_t idx)
 {
     return tensor->GetViewShape().GetDim(idx);
@@ -426,7 +434,9 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         CHECK_RET(qgReturnBnsd != nullptr, ACLNN_ERR_INNER_NULLPTR);
         const aclTensor *aqkScaledBnst = l0op::Muls(prepResult[2], static_cast<float>(params.scale), executorPtr);
         CHECK_RET(aqkScaledBnst != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        const aclTensor *qgStableBnsd = qgReturnBnsd;
+        const bool needPublicStableCopy = !isInternalLayout;
+        const aclTensor *qgStableBnsd = KdaFwdStableCopyIfNeeded(qgReturnBnsd, needPublicStableCopy, executorPtr);
+        CHECK_RET(qgStableBnsd != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
         const aclTensor *qStage2Bnsd = KdaFwdCastIfNeeded(qComputeBnsd, stage2DataType, executorPtr);
         const aclTensor *kStage2Bnsd = KdaFwdCastIfNeeded(kComputeBnsd, stage2DataType, executorPtr);
@@ -459,9 +469,11 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
                       kgReturnBnsd != nullptr,
                   ACLNN_ERR_INNER_NULLPTR);
         const aclTensor *akkStableBnst = akkReturnBnst;
-        const aclTensor *wStableBnsd = wReturnBnsd;
-        const aclTensor *uStableBnsd = uReturnBnsd;
-        const aclTensor *kgStableBnsd = kgReturnBnsd;
+        const aclTensor *wStableBnsd = KdaFwdStableCopyIfNeeded(wReturnBnsd, needPublicStableCopy, executorPtr);
+        const aclTensor *uStableBnsd = KdaFwdStableCopyIfNeeded(uReturnBnsd, needPublicStableCopy, executorPtr);
+        const aclTensor *kgStableBnsd = KdaFwdStableCopyIfNeeded(kgReturnBnsd, needPublicStableCopy, executorPtr);
+        CHECK_RET(wStableBnsd != nullptr && uStableBnsd != nullptr && kgStableBnsd != nullptr,
+                  ACLNN_ERR_INNER_NULLPTR);
 
         const aclTensor *hForH = executorPtr->AllocTensor(
             KdaFwdMakeShape({batch, hvNum, params.totalChunks, kDim, vDim}),

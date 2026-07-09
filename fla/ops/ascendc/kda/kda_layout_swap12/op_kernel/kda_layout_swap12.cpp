@@ -13,6 +13,7 @@ namespace {
 constexpr uint32_t SWAP12_MTE2_MTE3_EVENT_ID = 0;
 constexpr uint32_t SWAP12_MTE3_MTE2_EVENT_ID = 1;
 constexpr uint32_t SWAP12_UB_ELEMENTS = 8192;
+constexpr uint32_t SWAP12_MAX_GROUP_ROWS = 64;
 
 template <typename T>
 class KdaLayoutSwap12Kernel {
@@ -32,6 +33,37 @@ public:
 
     __aicore__ inline void Process()
     {
+        if (CanUseGroupedCopy()) {
+            ProcessGroupedRows();
+            return;
+        }
+        ProcessSingleRows();
+    }
+
+private:
+    __aicore__ inline bool CanUseGroupedCopy() const
+    {
+        uint64_t rowBytes = tailDim_ * static_cast<uint64_t>(sizeof(T));
+        uint64_t blockLen = rowBytes / 32;
+        uint64_t srcStride = secondDim_ > 0 ? (secondDim_ - 1) * blockLen : 0;
+        return rowBytes >= 32 && rowBytes % 32 == 0 && blockLen > 0 && blockLen <= 65535 &&
+               srcStride <= 65535 && tailDim_ <= SWAP12_UB_ELEMENTS;
+    }
+
+    __aicore__ inline uint64_t GroupRows() const
+    {
+        uint64_t rows = SWAP12_UB_ELEMENTS / tailDim_;
+        if (rows == 0) {
+            rows = 1;
+        }
+        if (rows > SWAP12_MAX_GROUP_ROWS) {
+            rows = SWAP12_MAX_GROUP_ROWS;
+        }
+        return rows;
+    }
+
+    __aicore__ inline void ProcessSingleRows()
+    {
         uint64_t rowCount = batch_ * firstDim_ * secondDim_;
         uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx());
         for (uint64_t row = coreIdx; row < rowCount; row += usedCoreNum_) {
@@ -39,7 +71,48 @@ public:
         }
     }
 
-private:
+    __aicore__ inline void ProcessGroupedRows()
+    {
+        uint64_t rowsPerTile = GroupRows();
+        uint64_t tileCount = (firstDim_ + rowsPerTile - 1) / rowsPerTile;
+        uint64_t taskCount = batch_ * secondDim_ * tileCount;
+        uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx());
+        for (uint64_t task = coreIdx; task < taskCount; task += usedCoreNum_) {
+            uint64_t tileIdx = task % tileCount;
+            uint64_t rem = task / tileCount;
+            uint64_t j = rem % secondDim_;
+            uint64_t b = rem / secondDim_;
+            uint64_t firstStart = tileIdx * rowsPerTile;
+            uint64_t rows = firstDim_ - firstStart;
+            if (rows > rowsPerTile) {
+                rows = rowsPerTile;
+            }
+            CopySwappedRows(b, firstStart, j, rows);
+        }
+    }
+
+    __aicore__ inline void CopySwappedRows(uint64_t b, uint64_t firstStart, uint64_t j, uint64_t rows)
+    {
+        LocalTensor<T> local = copyBuf_.Get<T>();
+        uint64_t rowBytes = tailDim_ * static_cast<uint64_t>(sizeof(T));
+        uint64_t blockLen = rowBytes / 32;
+        uint64_t srcBase = ((b * firstDim_ + firstStart) * secondDim_ + j) * tailDim_;
+        uint64_t dstBase = ((b * secondDim_ + j) * firstDim_ + firstStart) * tailDim_;
+
+        DataCopyParams copyInParams;
+        copyInParams.blockCount = static_cast<uint16_t>(rows);
+        copyInParams.blockLen = static_cast<uint16_t>(blockLen);
+        copyInParams.srcStride = static_cast<uint16_t>((secondDim_ - 1) * blockLen);
+        copyInParams.dstStride = 0;
+        DataCopy(local, x_[srcBase], copyInParams);
+        SetFlag<HardEvent::MTE2_MTE3>(SWAP12_MTE2_MTE3_EVENT_ID);
+        WaitFlag<HardEvent::MTE2_MTE3>(SWAP12_MTE2_MTE3_EVENT_ID);
+
+        DataCopy(y_[dstBase], local, static_cast<uint32_t>(rows * tailDim_));
+        SetFlag<HardEvent::MTE3_MTE2>(SWAP12_MTE3_MTE2_EVENT_ID);
+        WaitFlag<HardEvent::MTE3_MTE2>(SWAP12_MTE3_MTE2_EVENT_ID);
+    }
+
     __aicore__ inline void CopyTile(uint64_t srcOffset, uint64_t dstOffset, uint64_t elems)
     {
         LocalTensor<T> local = copyBuf_.Get<T>();

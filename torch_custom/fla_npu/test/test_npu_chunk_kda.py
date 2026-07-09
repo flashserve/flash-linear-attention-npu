@@ -275,6 +275,53 @@ def test_chunk_kda_fwd_fp16_matches_reference():
     _assert_close("initial_state fp16", got[11], initial_state)
 
 
+def test_chunk_kda_fwd_bsnd_split_intermediate_matches_reference():
+    device = _device()
+    if device.type == "cpu":
+        return
+    q, k, v, gk, beta, initial_state = _make_inputs(
+        device, h=1, hv=2, t=128, kdim=128, vdim=128, dtype=torch.bfloat16
+    )
+    scale = q.shape[-1] ** -0.5
+
+    got = torch.ops.npu.npu_chunk_kda_fwd(
+        q,
+        k,
+        v,
+        gk,
+        beta,
+        scale,
+        64,
+        initial_state=initial_state,
+        output_final_state=True,
+        return_intermediate=True,
+    )
+    ref = chunk_kda_forward_reference(
+        q.detach().cpu(),
+        k.detach().cpu(),
+        v.detach().cpu(),
+        gk.detach().cpu(),
+        beta.detach().cpu(),
+        scale=scale,
+        chunk_size=64,
+        initial_state=initial_state.detach().cpu(),
+        output_final_state=True,
+    )
+
+    _assert_close("o bsnd split intermediate", got[0], ref.o, rtol=2e-2, atol=2e-2)
+    _assert_close("final_state bsnd split intermediate", got[1], ref.final_state, rtol=2e-2, atol=2e-2)
+    _assert_close("g bsnd split intermediate", got[2], gk, rtol=2e-2, atol=2e-2)
+    _assert_close("Aqk bsnd split intermediate", got[3], ref.Aqk, rtol=2e-2, atol=2e-2)
+    _assert_close("Akk bsnd split intermediate", got[4], ref.Akk, rtol=2e-2, atol=2e-2)
+    _assert_close("w bsnd split intermediate", got[5], ref.w, rtol=2e-2, atol=2e-2)
+    _assert_close("u bsnd split intermediate", got[6], ref.u, rtol=2e-2, atol=2e-2)
+    _assert_close("qg bsnd split intermediate", got[7], ref.qg, rtol=2e-2, atol=2e-2)
+    _assert_close("kg bsnd split intermediate", got[8], ref.kg, rtol=2e-2, atol=2e-2)
+    _assert_close("v_new bsnd split intermediate", got[9], ref.v_new, rtol=2e-2, atol=2e-2)
+    _assert_close("h bsnd split intermediate", got[10], ref.h, rtol=2e-2, atol=2e-2)
+    _assert_close("initial_state bsnd split intermediate", got[11], initial_state)
+
+
 def test_chunk_kda_fwd_tnd_matches_reference():
     device = _device()
     q, k, v, gk, beta, initial_state = _make_inputs(device, b=1, h=1, hv=2, t=8, kdim=8, vdim=16)
@@ -521,6 +568,7 @@ if __name__ == "__main__":
     test_chunk_kda_fwd_bf16_chunk32_matches_reference()
     test_chunk_kda_fwd_bf16_gate_matches_reference()
     test_chunk_kda_fwd_fp16_matches_reference()
+    test_chunk_kda_fwd_bsnd_split_intermediate_matches_reference()
     test_chunk_kda_fwd_tnd_matches_reference()
     test_kda_gate_cumsum_default_and_fwd_integration()
     test_kda_gate_cumsum_bnsd_direct_matches_reference()
