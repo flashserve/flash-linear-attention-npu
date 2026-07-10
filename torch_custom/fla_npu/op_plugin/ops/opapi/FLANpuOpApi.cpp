@@ -423,13 +423,14 @@ at::Tensor npu_causal_conv1d(
     c10::string_view input_layout)
 {
     const std::string input_layout_str(input_layout);
-    const char *input_layout_cstr = input_layout_str.c_str();
+    const char *input_layout_cstr = nullptr;
     const int64_t width = weight.size(0);
     const int64_t dim = weight.size(1);
 
     std::vector<int64_t> dx_shape;
     int64_t batch = 0;
     if (input_layout_str == "BNSD") {
+        input_layout_cstr = "BNSD";
         TORCH_CHECK(x.dim() == 3, "BNSD x must be logical [B, T, D]");
         TORCH_CHECK(dy.dim() == 4, "BNSD dy must be [B, N, T, Dh]");
         batch = x.size(0);
@@ -440,6 +441,7 @@ at::Tensor npu_causal_conv1d(
             "BNSD dy must be [B, N, T, Dh] with D=N*Dh for x [B, T, D]");
         dx_shape = x.sizes().vec();
     } else if (input_layout_str == "NTD") {
+        input_layout_cstr = "NTD";
         TORCH_CHECK(x.dim() == 2, "NTD x must be logical [total_tokens, D]");
         TORCH_CHECK(dy.dim() == 3, "NTD dy must be [N, total_tokens, Dh]");
         TORCH_CHECK(query_start_loc.has_value(), "query_start_loc is required for NTD input");
@@ -450,6 +452,7 @@ at::Tensor npu_causal_conv1d(
         batch = static_cast<int64_t>(query_start_loc.value().size()) - 1;
         dx_shape = x.sizes().vec();
     } else if (input_layout_str == "TND") {
+        input_layout_cstr = "TND";
         TORCH_CHECK(x.dim() == 2, "TND input must be [total_tokens, D]");
         TORCH_CHECK(dy.sizes() == x.sizes(), "TND dy shape must match x");
         TORCH_CHECK(query_start_loc.has_value(), "query_start_loc is required for TND input");
@@ -459,6 +462,7 @@ at::Tensor npu_causal_conv1d(
         TORCH_CHECK(
             input_layout_str == "BSND" || input_layout_str == "BSH",
             "input_layout must be one of BSND, BSH, TND, BNSD, or NTD");
+        input_layout_cstr = "BSND";
         TORCH_CHECK(x.dim() == 3, "BSND/BSH input must be [B, T, D]");
         TORCH_CHECK(dy.sizes() == x.sizes(), "BSND/BSH dy shape must match x");
         batch = x.size(0);
