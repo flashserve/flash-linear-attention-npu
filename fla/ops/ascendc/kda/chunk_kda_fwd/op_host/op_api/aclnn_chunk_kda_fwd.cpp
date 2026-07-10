@@ -441,7 +441,13 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         const aclTensor *wForH = wComputeBnsd;
         const aclTensor *initialStateForH = params.initialStateOptional;
         if (initialStateForH == nullptr) {
-            initialStateForH = l0op::ZerosLike(params.finalStateOut, executorPtr);
+            const auto finalStateShape = params.finalStateOut->GetViewShape();
+            const aclTensor *initialStateScratch = executorPtr->AllocTensor(
+                KdaFwdMakeShape({finalStateShape.GetDim(0), finalStateShape.GetDim(1),
+                                 finalStateShape.GetDim(2), finalStateShape.GetDim(3)}),
+                DataType::DT_FLOAT, Format::FORMAT_ND);
+            CHECK_RET(initialStateScratch != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            initialStateForH = l0op::ZerosLike(initialStateScratch, executorPtr);
             CHECK_RET(initialStateForH != nullptr, ACLNN_ERR_INNER_NULLPTR);
         }
         auto hResult = l0op::ChunkGatedDeltaRuleFwdH(kgComputeBnsd, wForH, uComputeBnsd, nullptr, gkBnsd,

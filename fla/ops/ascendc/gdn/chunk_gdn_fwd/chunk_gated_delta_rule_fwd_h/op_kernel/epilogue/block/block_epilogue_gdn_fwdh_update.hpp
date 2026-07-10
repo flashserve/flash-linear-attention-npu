@@ -153,6 +153,7 @@ public:
         bool isInitialState,
         bool isFinalState,
         bool storeFinalState,
+        bool useG,
         bool isPing
     )
     {
@@ -183,28 +184,33 @@ public:
         AscendC::LocalTensor<FinalStateElement> finalOutputUbTensor = isPing ? finalOutputUbTensor_ping : finalOutputUbTensor_pong;
         AscendC::LocalTensor<float> glastUbTensor = isPing ? glastUbTensor_ping : glastUbTensor_pong;
 
-        GElementInput gLastVal = gInputThisSubBlock.GetValue(chunkSize-1);
-        float gLastFloat = 0.0f;
-        if constexpr(std::is_same<GElementInput, float>::value) {
-            gLastFloat = gLastVal;
-        } else if constexpr(std::is_same<GElementInput, half>::value) {
-            gLastFloat = (float)gLastVal;
-        } else if constexpr(std::is_same<GElementInput, bfloat16_t>::value) {
-            gLastFloat = AscendC::ToFloat(gLastVal);
-        }
-        glastUbTensor.SetValue(0, gLastFloat);
+        float muls = 1.0f;
+        if (useG) {
+            GElementInput gLastVal = gInputThisSubBlock.GetValue(chunkSize-1);
+            float gLastFloat = 0.0f;
+            if constexpr(std::is_same<GElementInput, float>::value) {
+                gLastFloat = gLastVal;
+            } else if constexpr(std::is_same<GElementInput, half>::value) {
+                gLastFloat = (float)gLastVal;
+            } else if constexpr(std::is_same<GElementInput, bfloat16_t>::value) {
+                gLastFloat = AscendC::ToFloat(gLastVal);
+            }
+            glastUbTensor.SetValue(0, gLastFloat);
 
-        AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
-        AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
-        AscendC::Exp(glastUbTensor, glastUbTensor, 1);
-        AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
-        AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
-        float muls = glastUbTensor.GetValue(0);
+            AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+            AscendC::Exp(glastUbTensor, glastUbTensor, 1);
+            AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
+            muls = glastUbTensor.GetValue(0);
+        }
         if constexpr (kGated) {
             AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(EVENT_ID2 + pingpongFlag);
         }
-        AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
-        AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+        if (useG) {
+            AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+        }
 
         if (nActual <= 128 && nActual == outputStride) {
             uint32_t mActualThisSubBlock = rowEnd - rowBegin;

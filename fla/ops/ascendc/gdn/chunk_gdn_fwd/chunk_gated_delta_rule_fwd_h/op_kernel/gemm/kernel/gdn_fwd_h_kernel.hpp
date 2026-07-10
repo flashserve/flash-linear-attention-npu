@@ -120,6 +120,7 @@ public:
     uint32_t chunkSize;
     bool useInitialState;
     bool storeFinalState;
+    bool useG;
     uint32_t isVariedLen;
     uint32_t shapeBatch;
     uint32_t tokenBatch;
@@ -171,6 +172,7 @@ public:
         chunkSize = gdnFwdHTilingData->chunkSize;
         useInitialState = gdnFwdHTilingData->useInitialState;
         storeFinalState = gdnFwdHTilingData->storeFinalState;
+        useG = gdnFwdHTilingData->useG;
         isVariedLen = gdnFwdHTilingData->isVariedLen;
         shapeBatch = gdnFwdHTilingData->shapeBatch;
         tokenBatch = gdnFwdHTilingData->tokenBatch;
@@ -429,7 +431,7 @@ public:
                             gmGk[vec1Offsets.gkOffset], gmK[vec1Offsets.wkOffset], gmKDecayWorkspace[vec1Offsets.kDecayWorkOffset],
                             vec1Offsets.blockTokens, kHeadDim, vec1Offsets.vBlockDim, vHeadDim,
                             vecBlockScheduler.cube1Done[streamId], vecBlockScheduler.vec1Done[streamId],
-                            vec1Offsets.isInitialState, vec1Offsets.isFinalState, storeFinalState, (streamId == 0)
+                            vec1Offsets.isInitialState, vec1Offsets.isFinalState, storeFinalState, useG, (streamId == 0)
                         );
                     }
                 } else {
@@ -451,7 +453,7 @@ public:
                                 gmHWorkspace[vec2Offsets.hWorkOffset],
                                 gmGk[vec2Offsets.gkOffset],
                                 vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, vHeadDim, vecBlockScheduler.cube2Done[streamId],
-                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, (streamId == 0)
+                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, useG, (streamId == 0)
                             );
                         } else {
                             Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done[streamId]);

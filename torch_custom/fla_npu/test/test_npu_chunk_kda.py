@@ -275,6 +275,47 @@ def test_chunk_kda_fwd_fp16_matches_reference():
     _assert_close("initial_state fp16", got[11], initial_state)
 
 
+def test_chunk_kda_fwd_fp16_split_return_intermediate_smoke():
+    device = _device()
+    if device.type == "cpu":
+        return
+    q, k, v, gk, beta, _ = _make_inputs(
+        device, h=1, hv=2, t=128, kdim=128, vdim=64, dtype=torch.float16
+    )
+    scale = q.shape[-1] ** -0.5
+
+    got = torch.ops.npu.npu_chunk_kda_fwd(
+        q,
+        k,
+        v,
+        gk,
+        beta,
+        scale,
+        64,
+        output_final_state=True,
+        return_intermediate=True,
+    )
+
+    expected_shapes = [
+        v.shape,
+        (q.shape[0], v.shape[2], q.shape[3], v.shape[3]),
+        gk.shape,
+        (q.shape[0], q.shape[1], v.shape[2], 64),
+        (q.shape[0], q.shape[1], v.shape[2], 64),
+        (q.shape[0], q.shape[1], v.shape[2], q.shape[3]),
+        v.shape,
+        (q.shape[0], q.shape[1], v.shape[2], q.shape[3]),
+        (q.shape[0], q.shape[1], v.shape[2], q.shape[3]),
+        v.shape,
+        (q.shape[0], 2, v.shape[2], q.shape[3], v.shape[3]),
+    ]
+    for idx, shape in enumerate(expected_shapes):
+        assert tuple(got[idx].shape) == tuple(shape)
+        assert torch.isfinite(got[idx].detach().cpu().float()).all().item()
+    assert got[1].dtype == torch.float32
+    assert got[11].numel() == 0
+
+
 def test_chunk_kda_fwd_tnd_matches_reference():
     device = _device()
     q, k, v, gk, beta, initial_state = _make_inputs(device, b=1, h=1, hv=2, t=8, kdim=8, vdim=16)

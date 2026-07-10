@@ -52,6 +52,7 @@ struct ChunkGatedDeltaRuleFwdHTilingContext {
     // dtypes (use GDN_FWD_H_DTYPE_*)
     int64_t dataType;      // input (k/w/u) dtype: fp16 or bf16
     int64_t gDataType;     // g dtype
+    bool useG;             // scalar gate g is provided
     bool useInitialState;
     int64_t stateDataType; // initial/final state dtype
     bool useGk;
@@ -131,6 +132,7 @@ public:
         tiling.dataType = ctx_.dataType;
         tiling.gDataType = ctx_.gDataType;
         tiling.stateDataType = ctx_.stateDataType;
+        tiling.useG = ctx_.useG;
         tiling.isVariedLen = isVariedLen;
         tiling.shapeBatch = shapeBatch;
         tiling.tokenBatch = tokenBatch;

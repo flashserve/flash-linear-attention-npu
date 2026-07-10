@@ -66,6 +66,7 @@ static void ChunkGatedDeltaRuleFwdHTilingDataPrint(gert::TilingContext *context,
     OP_LOGD(nodeName, "=== chunkSize: %ld", tiling.get_chunkSize());
     OP_LOGD(nodeName, "=== useInitialState: %ld", tiling.get_useInitialState());
     OP_LOGD(nodeName, "=== storeFinalState: %ld", tiling.get_storeFinalState());
+    OP_LOGD(nodeName, "=== useG: %d", tiling.get_useG());
     OP_LOGD(nodeName, "=== useGk: %d", tiling.get_useGk());
     OP_LOGD(nodeName, "=== dataType: %ld", tiling.get_dataType());
     OP_LOGD(nodeName, "=== isVariedLen: %ld", tiling.get_isVariedLen());
@@ -87,6 +88,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     bool useInitialState = initialStateTensor != nullptr;
     auto gTensor = context->GetOptionalInputTensor(INPUT_G_IDX);
     auto gkTensor = context->GetOptionalInputTensor(INPUT_GK_IDX);
+    bool useG = gTensor != nullptr;
     bool useGk = gkTensor != nullptr;
     OP_CHECK_IF(gTensor == nullptr && gkTensor == nullptr,
                 OP_LOGE(context->GetNodeName(), "Either g or gk must be provided."),
@@ -111,6 +113,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
         cuSeqlensTensor != nullptr ? cuSeqlensTensor->GetStorageShape().GetDim(DIM_BATCH) : 0;
     tilingCtx.dataType = GdnFwdHDtypeToEnum(context->GetInputTensor(0)->GetDataType());
     tilingCtx.gDataType = GdnFwdHDtypeToEnum(gateTensor->GetDataType());
+    tilingCtx.useG = useG;
     tilingCtx.useInitialState = useInitialState;
     tilingCtx.stateDataType =
         useInitialState ? GdnFwdHDtypeToEnum(initialStateTensor->GetDataType()) : GDN_FWD_H_DTYPE_FP32;
@@ -156,6 +159,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     tiling.set_dataType(plainTiling.dataType);
     tiling.set_stateDataType(plainTiling.stateDataType);
     tiling.set_gDataType(plainTiling.gDataType);
+    tiling.set_useG(plainTiling.useG);
     tiling.set_isVariedLen(plainTiling.isVariedLen);
     tiling.set_shapeBatch(plainTiling.shapeBatch);
     tiling.set_tokenBatch(plainTiling.tokenBatch);

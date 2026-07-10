@@ -156,9 +156,18 @@ public:
         AscendC::LocalTensor<GElementInput> gInputUbTensor,
         AscendC::GlobalTensor<GElementInput> gInputThisSubBlock,
         uint32_t mActual,
-        uint32_t pingpongFlag)
+        uint32_t pingpongFlag,
+        bool useG)
     {
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+        if (!useG) {
+            AscendC::Duplicate<float>(gUbTensor, 1.0f, mActual);
+            AscendC::PipeBarrier<PIPE_V>();
+            if constexpr (kGated) {
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
+            }
+            return;
+        }
         if constexpr(std::is_same<GElementInput, float>::value) {
             AscendC::DataCopyParams gUbParams{1, (uint16_t)(mActual * sizeof(float)), 0, 0};
             AscendC::DataCopyPadParams gUbPadParams{false, 0, 0, 0};
@@ -213,6 +222,7 @@ public:
         bool isInitialState,
         bool isFinalState,
         bool storeFinalState,
+        bool useG,
         bool isPing
     )
     {
@@ -268,7 +278,7 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
             AscendC::Cast(calcUbTensor, uUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nvActual);
 
-            PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock, mActual, pingpongFlag);
+            PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock, mActual, pingpongFlag, useG);
             Arch::CrossCoreWaitFlag(cube1Done);
 
             if (storeFinalState && isInitialState && std::is_same<FinalStateElement, float>::value) {
@@ -396,7 +406,7 @@ public:
             return;
         }
 
-        PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock, mActual, pingpongFlag);
+        PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock, mActual, pingpongFlag, useG);
         Arch::CrossCoreWaitFlag(cube1Done);
 
         bool waitWsFromMte3 = storeFinalState && isInitialState && std::is_same<FinalStateElement, float>::value;

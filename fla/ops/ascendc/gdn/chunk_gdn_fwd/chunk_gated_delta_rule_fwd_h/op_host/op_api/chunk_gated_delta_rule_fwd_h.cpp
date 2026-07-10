@@ -17,6 +17,7 @@ using namespace op;
 
 namespace l0op {
 OP_TYPE_REGISTER(ChunkGatedDeltaRuleFwdH);
+const aclTensor *ZerosLike(const aclTensor *self, aclOpExecutor *executor);
 
 const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleFwdH(
     const aclTensor *k,
@@ -35,6 +36,24 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleFwdH(
     aclOpExecutor *executor)
 {
     L0_DFX(ChunkGatedDeltaRuleFwdH, k, w, u, g, gkOptional, initalStateOptional, cuSeqlensOptional, chunkIndicesOptional, outputFinalState, chunkSize, hOut, vNewOut, finalStateOut);
+
+    const aclTensor *gForKernel = g;
+    if (gForKernel == nullptr && gkOptional != nullptr) {
+        op::Shape gShape;
+        gShape.AppendDim(k->GetViewShape().GetDim(0));
+        gShape.AppendDim(u->GetViewShape().GetDim(1));
+        gShape.AppendDim(k->GetViewShape().GetDim(2));
+        const aclTensor *gScratch = executor->AllocTensor(gShape, gkOptional->GetDataType(), Format::FORMAT_ND);
+        if (gScratch == nullptr) {
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Alloc zero scalar gate scratch failed.");
+            return {nullptr, nullptr, nullptr};
+        }
+        gForKernel = l0op::ZerosLike(gScratch, executor);
+        if (gForKernel == nullptr) {
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Create zero scalar gate tensor failed.");
+            return {nullptr, nullptr, nullptr};
+        }
+    }
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional) {
@@ -57,7 +76,7 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleFwdH(
     }
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkGatedDeltaRuleFwdH,
-        OP_INPUT(k, w, u, g, gkOptional, initalStateOptional, actualCuSeqlens, actualChunkIndices),
+        OP_INPUT(k, w, u, gForKernel, gkOptional, initalStateOptional, actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(hOut, vNewOut, finalStateOut),
         OP_ATTR(outputFinalState, chunkSize));
     if (ret != ACLNN_SUCCESS) {
