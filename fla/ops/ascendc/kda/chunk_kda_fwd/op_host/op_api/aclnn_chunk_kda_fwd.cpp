@@ -444,7 +444,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             initialStateForH = l0op::ZerosLike(params.finalStateOut, executorPtr);
             CHECK_RET(initialStateForH != nullptr, ACLNN_ERR_INNER_NULLPTR);
         }
-        auto hResult = l0op::ChunkGatedDeltaRuleFwdH(kgComputeBnsd, wForH, uComputeBnsd, nullptr, gkBnsd,
+        // KDA carries decay in gk; GDN fwd_h still reads scalar g, so pass a neutral log-gate.
+        const aclTensor *neutralGForH = l0op::ZerosLike(betaBns, executorPtr);
+        CHECK_RET(neutralGForH != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        auto hResult = l0op::ChunkGatedDeltaRuleFwdH(kgComputeBnsd, wForH, uComputeBnsd, neutralGForH, gkBnsd,
                                                      initialStateForH, params.cuSeqlensOptional,
                                                      params.chunkIndicesOptional, params.outputFinalState,
                                                      params.chunkSize, hComputeBnst, vNewComputeBnsd, params.finalStateOut,
