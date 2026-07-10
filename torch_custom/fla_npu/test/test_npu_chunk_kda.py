@@ -272,16 +272,25 @@ def test_chunk_kda_fwd_fp16_matches_reference():
     _assert_close("qg fp16", got[7], ref.qg, rtol=2e-2, atol=2e-2)
     _assert_close("kg fp16", got[8], ref.kg, rtol=2e-2, atol=2e-2)
     _assert_close("v_new fp16", got[9], ref.v_new, rtol=2e-2, atol=2e-2)
+    _assert_close("h fp16", got[10], ref.h, rtol=2e-2, atol=2e-2)
     _assert_close("initial_state fp16", got[11], initial_state)
 
 
-def test_chunk_kda_fwd_fp16_split_return_intermediate_smoke():
+def test_chunk_kda_fwd_fp16_large_return_intermediate_matches_reference():
     device = _device()
     if device.type == "cpu":
         return
-    q, k, v, gk, beta, _ = _make_inputs(
-        device, h=1, hv=2, t=128, kdim=128, vdim=64, dtype=torch.float16
-    )
+    torch.manual_seed(2026)
+    q_cpu = (torch.randn(1, 128, 1, 128, dtype=torch.float16) * 0.08).contiguous()
+    k_cpu = (torch.randn(1, 128, 1, 128, dtype=torch.float16) * 0.08).contiguous()
+    v_cpu = (torch.randn(1, 128, 2, 64, dtype=torch.float16) * 0.08).contiguous()
+    gk_cpu = (torch.randn(1, 128, 2, 128, dtype=torch.float32).cumsum(dim=1) * 0.001).contiguous()
+    beta_cpu = torch.sigmoid(torch.randn(1, 128, 2, dtype=torch.float32)).contiguous()
+    q = q_cpu.to(device)
+    k = k_cpu.to(device)
+    v = v_cpu.to(device)
+    gk = gk_cpu.to(device)
+    beta = beta_cpu.to(device)
     scale = q.shape[-1] ** -0.5
 
     got = torch.ops.npu.npu_chunk_kda_fwd(
@@ -294,6 +303,16 @@ def test_chunk_kda_fwd_fp16_split_return_intermediate_smoke():
         64,
         output_final_state=True,
         return_intermediate=True,
+    )
+    ref = chunk_kda_forward_reference(
+        q_cpu,
+        k_cpu,
+        v_cpu,
+        gk_cpu,
+        beta_cpu,
+        scale=scale,
+        chunk_size=64,
+        output_final_state=True,
     )
 
     expected_shapes = [
@@ -314,6 +333,17 @@ def test_chunk_kda_fwd_fp16_split_return_intermediate_smoke():
         assert torch.isfinite(got[idx].detach().cpu().float()).all().item()
     assert got[1].dtype == torch.float32
     assert got[11].numel() == 0
+    _assert_close("o large fp16", got[0], ref.o, rtol=2e-2, atol=2e-2)
+    _assert_close("final_state large fp16", got[1], ref.final_state, rtol=2e-2, atol=2e-2)
+    _assert_close("g large fp16", got[2], gk_cpu)
+    _assert_close("Aqk large fp16", got[3], ref.Aqk, rtol=2e-2, atol=2e-2)
+    _assert_close("Akk large fp16", got[4], ref.Akk, rtol=2e-2, atol=2e-2)
+    _assert_close("w large fp16", got[5], ref.w, rtol=2e-2, atol=2e-2)
+    _assert_close("u large fp16", got[6], ref.u, rtol=2e-2, atol=2e-2)
+    _assert_close("qg large fp16", got[7], ref.qg, rtol=2e-2, atol=2e-2)
+    _assert_close("kg large fp16", got[8], ref.kg, rtol=2e-2, atol=2e-2)
+    _assert_close("v_new large fp16", got[9], ref.v_new, rtol=2e-2, atol=2e-2)
+    _assert_close("h large fp16", got[10], ref.h, rtol=2e-2, atol=2e-2)
 
 
 def test_chunk_kda_fwd_tnd_matches_reference():

@@ -545,6 +545,7 @@ npu_chunk_kda_fwd(
         q, k, v, gk, beta, initial_state_,
         cu_seqlens, chunk_indices_for_call,
         scale_, chunk_size_, recompute_output_final_state, total_chunks_,
+        return_intermediate_,
         o, final_state_work, aqk, akk, w, u, qg, kg, v_new, h
     );
 

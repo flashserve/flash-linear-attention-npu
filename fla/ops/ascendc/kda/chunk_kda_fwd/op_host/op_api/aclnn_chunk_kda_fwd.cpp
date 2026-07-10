@@ -51,6 +51,7 @@ struct ChunkKdaFwdParams {
     int64_t chunkSize = 64;
     bool outputFinalState = false;
     int64_t totalChunks = 1;
+    bool returnIntermediate = false;
     const aclTensor *oOut = nullptr;
     const aclTensor *finalStateOut = nullptr;
     const aclTensor *aqkOut = nullptr;
@@ -210,6 +211,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     int64_t chunkSize,
     bool outputFinalState,
     int64_t totalChunks,
+    bool returnIntermediate,
     const aclTensor *oOut,
     const aclTensor *finalStateOut,
     const aclTensor *aqkOut,
@@ -224,7 +226,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     aclOpExecutor **executor)
 {
     ChunkKdaFwdParams params{q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional,
-                             scale, chunkSize, outputFinalState, totalChunks, oOut, finalStateOut, aqkOut,
+                             scale, chunkSize, outputFinalState, totalChunks, returnIntermediate, oOut, finalStateOut, aqkOut,
                              akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut};
     L2_DFX_PHASE_1(aclnnChunkKdaFwd,
                    DFX_IN(q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional),
@@ -369,7 +371,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     }
 
     std::array<const aclTensor *, 10> result;
-    bool useSplitForward = params.q->GetDataType() != DataType::DT_FLOAT && params.chunkSize == 64 &&
+    bool useSplitForward = !params.returnIntermediate && params.q->GetDataType() != DataType::DT_FLOAT && params.chunkSize == 64 &&
                            kDim * vDim >= 8192;
     const aclTensor *oComputeBnsd = oBnsd;
     const aclTensor *aqkComputeBnst = aqkBnst;
