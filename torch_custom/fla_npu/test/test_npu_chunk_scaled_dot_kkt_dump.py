@@ -6,8 +6,8 @@ The dump format follows the GDN local dump convention:
   NPU layout     : [B, H, T, *]
 
 This test compares the AscendC output against:
-  1. the dumped GPU/framework output, and
-  2. an independent CPU fp32 implementation.
+  1. the dumped GPU/framework output with the same dtype, and
+  2. an independent CPU fp64 implementation with fp64 accumulation.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import ct
 
 
 DEFAULT_DUMP_ROOT = Path("/home/m00913889/codex04/gva_fix_1")
@@ -163,12 +164,12 @@ def select_current_op_heads(
     return g[:, :h, :].contiguous(), beta[:, :h, :].contiguous(), f"prefix:{h}"
 
 
-def cpu_reference(k: torch.Tensor, g: torch.Tensor, beta: torch.Tensor, chunk_size: int) -> torch.Tensor:
-    k_f = k.float().cpu()
-    g_f = g.float().cpu()
-    beta_f = beta.float().cpu()
+def cpu_fp64_reference(k: torch.Tensor, g: torch.Tensor, beta: torch.Tensor, chunk_size: int) -> torch.Tensor:
+    k_f = k.to(torch.float64).cpu()
+    g_f = g.to(torch.float64).cpu()
+    beta_f = beta.to(torch.float64).cpu()
     bsz, heads, seq_len, _ = k_f.shape
-    out = torch.zeros((bsz, heads, seq_len, chunk_size), dtype=torch.float32)
+    out = torch.zeros((bsz, heads, seq_len, chunk_size), dtype=torch.float64)
 
     mask_cache: dict[int, torch.Tensor] = {}
     for start in range(0, seq_len, chunk_size):
@@ -185,6 +186,14 @@ def cpu_reference(k: torch.Tensor, g: torch.Tensor, beta: torch.Tensor, chunk_si
         out[:, :, start:end, :valid] = torch.where(mask, scaled, torch.zeros_like(scaled))
 
     return out
+
+
+def summarize_dual_result(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "success": bool(result.get("success")),
+        "checks": result.get("checks", {}),
+        "ratios": result.get("ratios", {}),
+    }
 
 
 def compare_chunk(actual: torch.Tensor, expected: torch.Tensor, atol: float, rtol: float) -> dict[str, Any]:
@@ -290,8 +299,8 @@ def verify_case(path: Path, device: torch.device, atol: float, rtol: float) -> d
 
     chunk_size = int(meta["chunk_size"])
     k = inputs["k"].contiguous()
-    g, beta, head_map = select_current_op_heads(k, inputs["g"].float(), inputs["beta"].float(), outputs["A"].float())
-    gpu_ref = outputs["A"].float().contiguous()
+    gpu_out_from_dump = outputs["A"].contiguous()
+    g, beta, head_map = select_current_op_heads(k, inputs["g"].float(), inputs["beta"].float(), gpu_out_from_dump)
 
     npu_out = torch.ops.npu.npu_chunk_scaled_dot_kkt(
         k.to(device),
@@ -300,11 +309,14 @@ def verify_case(path: Path, device: torch.device, atol: float, rtol: float) -> d
         chunk_size=chunk_size,
     ).cpu()
 
-    gpu_result = compare_npu_gpu_stream(npu_out, gpu_ref, chunk_size, atol, rtol)
-    cpu_result = compare_npu_cpu_stream(npu_out, k, g, beta, chunk_size, atol, rtol)
+    cpu_fp64_golden = cpu_fp64_reference(k, g, beta, chunk_size)
+    print("       running ct.dual(npu_out, cpu_fp64_golden, gpu_out_from_dump, level=\"L1\")", flush=True)
+    dual_result = ct.dual(npu_out, cpu_fp64_golden, gpu_out_from_dump, level="L1")
+    gpu_result = compare_npu_gpu_stream(npu_out, gpu_out_from_dump, chunk_size, atol, rtol)
+    cpu_result = compare_npu_gpu_stream(npu_out, cpu_fp64_golden, chunk_size, atol, rtol)
     max_zero = check_zero_regions(npu_out, chunk_size)
-    shape_ok = tuple(npu_out.shape) == tuple(gpu_ref.shape)
-    dtype_ok = npu_out.dtype == torch.float32
+    shape_ok = tuple(npu_out.shape) == tuple(gpu_out_from_dump.shape) == tuple(cpu_fp64_golden.shape)
+    dtype_ok = npu_out.dtype == gpu_out_from_dump.dtype
 
     return {
         "case": str(path),
@@ -315,12 +327,15 @@ def verify_case(path: Path, device: torch.device, atol: float, rtol: float) -> d
         "chunk_size": chunk_size,
         "head_map": head_map,
         "dtype": str(npu_out.dtype),
+        "gpu_dump_dtype": str(gpu_out_from_dump.dtype),
+        "cpu_golden_dtype": str(cpu_fp64_golden.dtype),
         "shape_ok": shape_ok,
         "dtype_ok": dtype_ok,
         "max_zero": max_zero,
         "gpu": gpu_result,
         "cpu": cpu_result,
-        "ok": shape_ok and dtype_ok and max_zero <= ZERO_TOL and gpu_result["ok"] and cpu_result["ok"],
+        "dual": summarize_dual_result(dual_result),
+        "ok": shape_ok and dtype_ok and max_zero <= ZERO_TOL and bool(dual_result.get("success")),
     }
 
 
@@ -329,7 +344,8 @@ def print_result(index: int, total: int, result: dict[str, Any]) -> None:
     print(
         f"[{status}] {index:03d}/{total:03d} {result['case']} "
         f"k={result['input_shape']} g={result['g_shape']} beta={result['beta_shape']} "
-        f"out={result['shape']} dtype={result['dtype']} BT={result['chunk_size']} head_map={result['head_map']}"
+        f"out={result['shape']} dtype={result['dtype']} gpu_dtype={result['gpu_dump_dtype']} "
+        f"cpu_dtype={result['cpu_golden_dtype']} BT={result['chunk_size']} head_map={result['head_map']}"
     )
     if "unsupported" in result:
         print(f"       reason={result['unsupported']}")
@@ -342,6 +358,10 @@ def print_result(index: int, total: int, result: dict[str, Any]) -> None:
         f"       npu_vs_cpu max_err={result['cpu']['max_err']:.9f} "
         f"mean_err={result['cpu']['mean_err']:.9f} allclose={result['cpu']['ok']} "
         f"shape_ok={result['shape_ok']} dtype_ok={result['dtype_ok']} max_zero={result['max_zero']:.3e}"
+    )
+    print(
+        f"       ct.dual L1 success={result['dual']['success']} "
+        f"checks={result['dual']['checks']} ratios={result['dual']['ratios']}"
     )
 
 
