@@ -456,6 +456,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *vNewComputeBnsd = vNewBnsd;
     const aclTensor *hComputeBnst = hBnst;
     const aclTensor *oOutComputeBnsd = oComputeBnsd;
+    bool splitIntermediatesCopied = false;
     if (useSplitForward && isInternalLayout) {
         oComputeBnsd = executorPtr->AllocTensor(KdaFwdMakeShape({batch, hvNum, seqlen, vDim}),
                                                 params.oOut->GetDataType(), Format::FORMAT_ND);
@@ -485,10 +486,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
                                                    DataType::DT_FLOAT, Format::FORMAT_ND);
         CHECK_RET(oOutComputeBnsd != nullptr, ACLNN_ERR_INNER_NULLPTR);
         auto prepResult = l0op::ChunkKdaFwd(qBnsd, kBnsd, vBnsd, gkBnsd, betaBns, params.initialStateOptional,
-                                            params.cuSeqlensOptional, params.chunkIndicesOptional, params.scale,
-                                            params.chunkSize, params.outputFinalState, params.totalChunks, 1,
-                                            oComputeBnsd, params.finalStateOut, aqkComputeBnst, akkComputeBnst,
-                                            wComputeBnsd, uComputeBnsd, qgComputeBnsd, kgComputeBnsd,
+                                            params.cuSeqlensOptional, params.chunkIndicesOptional, nullptr, nullptr,
+                                            nullptr, nullptr, params.scale, params.chunkSize, params.outputFinalState,
+                                            params.totalChunks, 1, oComputeBnsd, params.finalStateOut, aqkComputeBnst,
+                                            akkComputeBnst, wComputeBnsd, uComputeBnsd, qgComputeBnsd, kgComputeBnsd,
                                             vNewComputeBnsd, hComputeBnst, executorPtr);
         for (auto tensor : prepResult) {
             CHECK_RET(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR);
@@ -508,11 +509,12 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             CHECK_RET(wScratchBntd != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
             auto postResult = l0op::ChunkKdaFwd(qBnsd, kBnsd, vBnsd, gkBnsd, betaBns, params.initialStateOptional,
-                                                params.cuSeqlensOptional, params.chunkIndicesOptional, params.scale,
-                                                params.chunkSize, params.outputFinalState, params.totalChunks, 3,
-                                                oComputeBnsd, params.finalStateOut, aqkComputeBnst, akkComputeBnst,
-                                                wComputeBnsd, uComputeBnsd, qgComputeBnsd, kgComputeBnsd,
-                                                vNewComputeBnsd, wScratchBntd, executorPtr);
+                                                params.cuSeqlensOptional, params.chunkIndicesOptional, nullptr,
+                                                nullptr, nullptr, nullptr, params.scale, params.chunkSize,
+                                                params.outputFinalState, params.totalChunks, 3, oComputeBnsd,
+                                                params.finalStateOut, aqkComputeBnst, akkComputeBnst, wComputeBnsd,
+                                                uComputeBnsd, qgComputeBnsd, kgComputeBnsd, vNewComputeBnsd,
+                                                wScratchBntd, executorPtr);
             for (auto tensor : postResult) {
                 CHECK_RET(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR);
             }
@@ -545,16 +547,139 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
                     result = {oComputeBnsd, params.finalStateOut, aqkScaledBnst, akkComputeBnst, wComputeBnsd,
                               uComputeBnsd, qgComputeBnsd, kgComputeBnsd, vNewComputeBnsd, hComputeBnst};
                 } else {
+                    if (isInternalLayout) {
+                        CHECK_RET(KdaFwdViewCopyMaybeCast(aqkScaledBnst, aqkBnst, executorPtr) == ACLNN_SUCCESS,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(KdaFwdViewCopyMaybeCast(akkComputeBnst, akkBnst, executorPtr) == ACLNN_SUCCESS,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(KdaFwdViewCopyMaybeCast(wComputeBnsd, wBnsd, executorPtr) == ACLNN_SUCCESS,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(KdaFwdViewCopyMaybeCast(uComputeBnsd, uBnsd, executorPtr) == ACLNN_SUCCESS,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(KdaFwdViewCopyMaybeCast(qgComputeBnsd, qgBnsd, executorPtr) == ACLNN_SUCCESS,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(KdaFwdViewCopyMaybeCast(kgComputeBnsd, kgBnsd, executorPtr) == ACLNN_SUCCESS,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(KdaFwdViewCopyMaybeCast(vNewComputeBnsd, vNewBnsd, executorPtr) == ACLNN_SUCCESS,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(KdaFwdViewCopyMaybeCast(hComputeBnst, hBnst, executorPtr) == ACLNN_SUCCESS,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                    } else if (isTnd) {
+                        auto aqkBsnt = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, params.chunkSize}),
+                                                                params.aqkOut->GetDataType(), Format::FORMAT_ND);
+                        auto akkBsnt = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, params.chunkSize}),
+                                                                params.akkOut->GetDataType(), Format::FORMAT_ND);
+                        auto wBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, kDim}),
+                                                              params.wOut->GetDataType(), Format::FORMAT_ND);
+                        auto uBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, vDim}),
+                                                              params.uOut->GetDataType(), Format::FORMAT_ND);
+                        auto qgBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, kDim}),
+                                                               params.qgOut->GetDataType(), Format::FORMAT_ND);
+                        auto kgBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, kDim}),
+                                                               params.kgOut->GetDataType(), Format::FORMAT_ND);
+                        auto vNewBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, vDim}),
+                                                                 params.vNewOut->GetDataType(), Format::FORMAT_ND);
+                        auto hBsnt = executorPtr->AllocTensor(
+                            KdaFwdMakeShape({1, params.totalChunks, hvNum, kDim, vDim}),
+                            params.hOut->GetDataType(), Format::FORMAT_ND);
+                        CHECK_RET(aqkBsnt != nullptr && akkBsnt != nullptr && wBsnd != nullptr &&
+                                      uBsnd != nullptr && qgBsnd != nullptr && kgBsnd != nullptr &&
+                                      vNewBsnd != nullptr && hBsnt != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(aqkScaledBnst, aqkBsnt, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(akkComputeBnst, akkBsnt, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(wComputeBnsd, wBsnd, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(uComputeBnsd, uBsnd, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(qgComputeBnsd, qgBsnd, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(kgComputeBnsd, kgBsnd, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(vNewComputeBnsd, vNewBsnd, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(hComputeBnst, hBsnt, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::ViewCopy(l0op::Reshape(aqkBsnt, KdaFwdMakeShape({seqlen, hvNum,
+                                                                                        params.chunkSize}),
+                                                executorPtr),
+                                                 params.aqkOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::ViewCopy(l0op::Reshape(akkBsnt, KdaFwdMakeShape({seqlen, hvNum,
+                                                                                        params.chunkSize}),
+                                                executorPtr),
+                                                 params.akkOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::ViewCopy(l0op::Reshape(wBsnd, KdaFwdMakeShape({seqlen, hvNum, kDim}),
+                                                               executorPtr),
+                                                 params.wOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::ViewCopy(l0op::Reshape(uBsnd, KdaFwdMakeShape({seqlen, hvNum, vDim}),
+                                                               executorPtr),
+                                                 params.uOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::ViewCopy(l0op::Reshape(qgBsnd, KdaFwdMakeShape({seqlen, hvNum, kDim}),
+                                                                executorPtr),
+                                                 params.qgOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::ViewCopy(l0op::Reshape(kgBsnd, KdaFwdMakeShape({seqlen, hvNum, kDim}),
+                                                                executorPtr),
+                                                 params.kgOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::ViewCopy(l0op::Reshape(vNewBsnd, KdaFwdMakeShape({seqlen, hvNum, vDim}),
+                                                                 executorPtr),
+                                                 params.vNewOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::ViewCopy(l0op::Reshape(hBsnt, KdaFwdMakeShape({params.totalChunks, hvNum,
+                                                                                       kDim, vDim}),
+                                                executorPtr),
+                                                 params.hOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+                    } else {
+                        CHECK_RET(l0op::KdaLayoutSwap12(aqkScaledBnst, params.aqkOut, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(akkComputeBnst, params.akkOut, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(wComputeBnsd, params.wOut, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(uComputeBnsd, params.uOut, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(qgComputeBnsd, params.qgOut, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(kgComputeBnsd, params.kgOut, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(vNewComputeBnsd, params.vNewOut, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                        CHECK_RET(l0op::KdaLayoutSwap12(hComputeBnst, params.hOut, executorPtr)[0] != nullptr,
+                                  ACLNN_ERR_INNER_NULLPTR);
+                    }
+                    splitIntermediatesCopied = true;
+
                     auto oLocalBnsd = executorPtr->AllocTensor(KdaFwdMakeShape({batch, hvNum, seqlen, vDim}),
                                                                DataType::DT_FLOAT, Format::FORMAT_ND);
-                    CHECK_RET(oLocalBnsd != nullptr, ACLNN_ERR_INNER_NULLPTR);
-                    auto outResult = l0op::ChunkKdaFwd(qBnsd, kBnsd, vBnsd, gkBnsd, betaBns, params.initialStateOptional,
+                    auto stage2FinalStateDummy = executorPtr->AllocTensor(KdaFwdMakeShape({1}), DataType::DT_FLOAT,
+                                                                          Format::FORMAT_ND);
+                    auto stage2AqkDummy = executorPtr->AllocTensor(KdaFwdMakeShape({1}),
+                                                                   params.aqkOut->GetDataType(), Format::FORMAT_ND);
+                    auto stage2AkkDummy = executorPtr->AllocTensor(KdaFwdMakeShape({1}),
+                                                                   params.akkOut->GetDataType(), Format::FORMAT_ND);
+                    auto stage2WDummy = executorPtr->AllocTensor(KdaFwdMakeShape({1}), params.wOut->GetDataType(),
+                                                                 Format::FORMAT_ND);
+                    auto stage2QGDummy = executorPtr->AllocTensor(KdaFwdMakeShape({1}), params.qgOut->GetDataType(),
+                                                                  Format::FORMAT_ND);
+                    auto stage2KGDummy = executorPtr->AllocTensor(KdaFwdMakeShape({1}), params.kgOut->GetDataType(),
+                                                                  Format::FORMAT_ND);
+                    auto stage2VNewDummy = executorPtr->AllocTensor(KdaFwdMakeShape({1}),
+                                                                    params.vNewOut->GetDataType(), Format::FORMAT_ND);
+                    auto stage2HDummy = executorPtr->AllocTensor(KdaFwdMakeShape({1}), params.hOut->GetDataType(),
+                                                                 Format::FORMAT_ND);
+                    CHECK_RET(oLocalBnsd != nullptr && stage2FinalStateDummy != nullptr &&
+                                  stage2AqkDummy != nullptr && stage2AkkDummy != nullptr &&
+                                  stage2WDummy != nullptr && stage2QGDummy != nullptr &&
+                                  stage2KGDummy != nullptr && stage2VNewDummy != nullptr && stage2HDummy != nullptr,
+                              ACLNN_ERR_INNER_NULLPTR);
+                    auto outResult = l0op::ChunkKdaFwd(qBnsd, kBnsd, vBnsd, gkBnsd, betaBns,
+                                                       params.initialStateOptional,
                                                        params.cuSeqlensOptional, params.chunkIndicesOptional,
-                                                       params.scale, params.chunkSize, params.outputFinalState,
-                                                       params.totalChunks, 2, oOutComputeBnsd, params.finalStateOut,
-                                                       aqkScaledBnst, akkComputeBnst, wComputeBnsd, oLocalBnsd,
-                                                       qgScaledBnsd, kgComputeBnsd, vNewComputeBnsd, hComputeBnst,
-                                                       executorPtr);
+                                                       qgScaledBnsd, aqkScaledBnst, vNewComputeBnsd, hComputeBnst,
+                                                       params.scale, params.chunkSize, false, params.totalChunks, 2,
+                                                       oOutComputeBnsd, stage2FinalStateDummy, stage2AqkDummy,
+                                                       stage2AkkDummy, stage2WDummy, oLocalBnsd, stage2QGDummy,
+                                                       stage2KGDummy, stage2VNewDummy, stage2HDummy, executorPtr);
                     for (auto tensor : outResult) {
                         CHECK_RET(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR);
                     }
@@ -565,10 +690,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         }
     } else {
         result = l0op::ChunkKdaFwd(qBnsd, kBnsd, vBnsd, gkBnsd, betaBns, params.initialStateOptional,
-                                   params.cuSeqlensOptional, params.chunkIndicesOptional, params.scale,
-                                   params.chunkSize, params.outputFinalState, params.totalChunks, 0, oBnsd,
-                                   params.finalStateOut, aqkBnst, akkBnst, wBnsd, uBnsd, qgBnsd, kgBnsd,
-                                   vNewBnsd, hBnst, executorPtr);
+                                   params.cuSeqlensOptional, params.chunkIndicesOptional, nullptr, nullptr, nullptr,
+                                   nullptr, params.scale, params.chunkSize, params.outputFinalState,
+                                   params.totalChunks, 0, oBnsd, params.finalStateOut, aqkBnst, akkBnst, wBnsd,
+                                   uBnsd, qgBnsd, kgBnsd, vNewBnsd, hBnst, executorPtr);
     }
     for (auto tensor : result) {
         CHECK_RET(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR);
@@ -577,91 +702,113 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         if (useSplitForward) {
             CHECK_RET(KdaFwdViewCopyMaybeCast(result[0], oBnsd, executorPtr) == ACLNN_SUCCESS,
                       ACLNN_ERR_INNER_NULLPTR);
-            CHECK_RET(KdaFwdViewCopyMaybeCast(result[2], aqkBnst, executorPtr) == ACLNN_SUCCESS,
-                      ACLNN_ERR_INNER_NULLPTR);
-            CHECK_RET(KdaFwdViewCopyMaybeCast(result[3], akkBnst, executorPtr) == ACLNN_SUCCESS,
-                      ACLNN_ERR_INNER_NULLPTR);
-            CHECK_RET(KdaFwdViewCopyMaybeCast(result[4], wBnsd, executorPtr) == ACLNN_SUCCESS,
-                      ACLNN_ERR_INNER_NULLPTR);
-            CHECK_RET(KdaFwdViewCopyMaybeCast(result[5], uBnsd, executorPtr) == ACLNN_SUCCESS,
-                      ACLNN_ERR_INNER_NULLPTR);
-            CHECK_RET(KdaFwdViewCopyMaybeCast(result[6], qgBnsd, executorPtr) == ACLNN_SUCCESS,
-                      ACLNN_ERR_INNER_NULLPTR);
-            CHECK_RET(KdaFwdViewCopyMaybeCast(result[7], kgBnsd, executorPtr) == ACLNN_SUCCESS,
-                      ACLNN_ERR_INNER_NULLPTR);
-            CHECK_RET(KdaFwdViewCopyMaybeCast(result[8], vNewBnsd, executorPtr) == ACLNN_SUCCESS,
-                      ACLNN_ERR_INNER_NULLPTR);
-            CHECK_RET(KdaFwdViewCopyMaybeCast(result[9], hBnst, executorPtr) == ACLNN_SUCCESS,
-                      ACLNN_ERR_INNER_NULLPTR);
+            if (!splitIntermediatesCopied) {
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[2], aqkBnst, executorPtr) == ACLNN_SUCCESS,
+                          ACLNN_ERR_INNER_NULLPTR);
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[3], akkBnst, executorPtr) == ACLNN_SUCCESS,
+                          ACLNN_ERR_INNER_NULLPTR);
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[4], wBnsd, executorPtr) == ACLNN_SUCCESS,
+                          ACLNN_ERR_INNER_NULLPTR);
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[5], uBnsd, executorPtr) == ACLNN_SUCCESS,
+                          ACLNN_ERR_INNER_NULLPTR);
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[6], qgBnsd, executorPtr) == ACLNN_SUCCESS,
+                          ACLNN_ERR_INNER_NULLPTR);
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[7], kgBnsd, executorPtr) == ACLNN_SUCCESS,
+                          ACLNN_ERR_INNER_NULLPTR);
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[8], vNewBnsd, executorPtr) == ACLNN_SUCCESS,
+                          ACLNN_ERR_INNER_NULLPTR);
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[9], hBnst, executorPtr) == ACLNN_SUCCESS,
+                          ACLNN_ERR_INNER_NULLPTR);
+            }
         }
     } else if (isTnd) {
         auto oBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, vDim}),
                                               params.oOut->GetDataType(), Format::FORMAT_ND);
-        auto aqkBsnt = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, params.chunkSize}),
-                                                params.aqkOut->GetDataType(), Format::FORMAT_ND);
-        auto akkBsnt = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, params.chunkSize}),
-                                                params.akkOut->GetDataType(), Format::FORMAT_ND);
-        auto wBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, kDim}),
-                                              params.wOut->GetDataType(), Format::FORMAT_ND);
-        auto uBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, vDim}),
-                                              params.uOut->GetDataType(), Format::FORMAT_ND);
-        auto qgBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, kDim}),
-                                               params.qgOut->GetDataType(), Format::FORMAT_ND);
-        auto kgBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, kDim}),
-                                               params.kgOut->GetDataType(), Format::FORMAT_ND);
-        auto vNewBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, vDim}),
-                                                 params.vNewOut->GetDataType(), Format::FORMAT_ND);
-        auto hBsnt = executorPtr->AllocTensor(KdaFwdMakeShape({1, params.totalChunks, hvNum, kDim, vDim}),
-                                              params.hOut->GetDataType(), Format::FORMAT_ND);
-        CHECK_RET(oBsnd != nullptr && aqkBsnt != nullptr && akkBsnt != nullptr && wBsnd != nullptr &&
-                      uBsnd != nullptr && qgBsnd != nullptr && kgBsnd != nullptr && vNewBsnd != nullptr &&
-                      hBsnt != nullptr,
-                  ACLNN_ERR_INNER_NULLPTR);
+        CHECK_RET(oBsnd != nullptr, ACLNN_ERR_INNER_NULLPTR);
         const aclTensor *oForLayout = KdaFwdMaybeCast(result[0], params.oOut->GetDataType(), executorPtr);
         CHECK_RET(oForLayout != nullptr, ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(l0op::KdaLayoutSwap12(oForLayout, oBsnd, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[2], aqkBsnt, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[3], akkBsnt, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[4], wBsnd, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[5], uBsnd, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[6], qgBsnd, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[7], kgBsnd, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[8], vNewBsnd, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[9], hBsnt, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(l0op::ViewCopy(l0op::Reshape(oBsnd, KdaFwdMakeShape({seqlen, hvNum, vDim}), executorPtr),
                                  params.oOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::ViewCopy(l0op::Reshape(aqkBsnt, KdaFwdMakeShape({seqlen, hvNum, params.chunkSize}),
-                                                executorPtr),
-                                 params.aqkOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::ViewCopy(l0op::Reshape(akkBsnt, KdaFwdMakeShape({seqlen, hvNum, params.chunkSize}),
-                                                executorPtr),
-                                 params.akkOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::ViewCopy(l0op::Reshape(wBsnd, KdaFwdMakeShape({seqlen, hvNum, kDim}), executorPtr),
-                                 params.wOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::ViewCopy(l0op::Reshape(uBsnd, KdaFwdMakeShape({seqlen, hvNum, vDim}), executorPtr),
-                                 params.uOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::ViewCopy(l0op::Reshape(qgBsnd, KdaFwdMakeShape({seqlen, hvNum, kDim}), executorPtr),
-                                 params.qgOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::ViewCopy(l0op::Reshape(kgBsnd, KdaFwdMakeShape({seqlen, hvNum, kDim}), executorPtr),
-                                 params.kgOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::ViewCopy(l0op::Reshape(vNewBsnd, KdaFwdMakeShape({seqlen, hvNum, vDim}), executorPtr),
-                                 params.vNewOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::ViewCopy(l0op::Reshape(hBsnt, KdaFwdMakeShape({params.totalChunks, hvNum, kDim, vDim}),
-                                                executorPtr),
-                                 params.hOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!splitIntermediatesCopied) {
+            auto aqkBsnt = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, params.chunkSize}),
+                                                    params.aqkOut->GetDataType(), Format::FORMAT_ND);
+            auto akkBsnt = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, params.chunkSize}),
+                                                    params.akkOut->GetDataType(), Format::FORMAT_ND);
+            auto wBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, kDim}),
+                                                  params.wOut->GetDataType(), Format::FORMAT_ND);
+            auto uBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, vDim}),
+                                                  params.uOut->GetDataType(), Format::FORMAT_ND);
+            auto qgBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, kDim}),
+                                                   params.qgOut->GetDataType(), Format::FORMAT_ND);
+            auto kgBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, kDim}),
+                                                   params.kgOut->GetDataType(), Format::FORMAT_ND);
+            auto vNewBsnd = executorPtr->AllocTensor(KdaFwdMakeShape({1, seqlen, hvNum, vDim}),
+                                                     params.vNewOut->GetDataType(), Format::FORMAT_ND);
+            auto hBsnt = executorPtr->AllocTensor(KdaFwdMakeShape({1, params.totalChunks, hvNum, kDim, vDim}),
+                                                  params.hOut->GetDataType(), Format::FORMAT_ND);
+            CHECK_RET(aqkBsnt != nullptr && akkBsnt != nullptr && wBsnd != nullptr && uBsnd != nullptr &&
+                          qgBsnd != nullptr && kgBsnd != nullptr && vNewBsnd != nullptr && hBsnt != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[2], aqkBsnt, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[3], akkBsnt, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[4], wBsnd, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[5], uBsnd, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[6], qgBsnd, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[7], kgBsnd, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[8], vNewBsnd, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[9], hBsnt, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::ViewCopy(l0op::Reshape(aqkBsnt, KdaFwdMakeShape({seqlen, hvNum, params.chunkSize}),
+                                                    executorPtr),
+                                     params.aqkOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::ViewCopy(l0op::Reshape(akkBsnt, KdaFwdMakeShape({seqlen, hvNum, params.chunkSize}),
+                                                    executorPtr),
+                                     params.akkOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::ViewCopy(l0op::Reshape(wBsnd, KdaFwdMakeShape({seqlen, hvNum, kDim}), executorPtr),
+                                     params.wOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::ViewCopy(l0op::Reshape(uBsnd, KdaFwdMakeShape({seqlen, hvNum, vDim}), executorPtr),
+                                     params.uOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::ViewCopy(l0op::Reshape(qgBsnd, KdaFwdMakeShape({seqlen, hvNum, kDim}), executorPtr),
+                                     params.qgOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::ViewCopy(l0op::Reshape(kgBsnd, KdaFwdMakeShape({seqlen, hvNum, kDim}), executorPtr),
+                                     params.kgOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::ViewCopy(l0op::Reshape(vNewBsnd, KdaFwdMakeShape({seqlen, hvNum, vDim}), executorPtr),
+                                     params.vNewOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::ViewCopy(l0op::Reshape(hBsnt, KdaFwdMakeShape({params.totalChunks, hvNum, kDim, vDim}),
+                                                    executorPtr),
+                                     params.hOut, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        }
     } else {
         const aclTensor *oForLayout = KdaFwdMaybeCast(result[0], params.oOut->GetDataType(), executorPtr);
         CHECK_RET(oForLayout != nullptr, ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(l0op::KdaLayoutSwap12(oForLayout, params.oOut, executorPtr)[0] != nullptr,
                   ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[2], params.aqkOut, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[3], params.akkOut, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[4], params.wOut, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[5], params.uOut, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[6], params.qgOut, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[7], params.kgOut, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[8], params.vNewOut, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(result[9], params.hOut, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!splitIntermediatesCopied) {
+            CHECK_RET(l0op::KdaLayoutSwap12(result[2], params.aqkOut, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[3], params.akkOut, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[4], params.wOut, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[5], params.uOut, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[6], params.qgOut, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[7], params.kgOut, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[8], params.vNewOut, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(l0op::KdaLayoutSwap12(result[9], params.hOut, executorPtr)[0] != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+        }
     }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

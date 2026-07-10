@@ -41,6 +41,7 @@ using _128 = tla::Int<128>;
 #endif
 
 using namespace AscendC;
+using _64 = tla::Int<64>;
 
 namespace {
 constexpr float LN2 = 0.69314718055994530942f;
@@ -79,7 +80,7 @@ using KdaArchTag = Catlass::Arch::Ascend950;
 using KdaArchTag = Catlass::Arch::AtlasA2;
 #endif
 using KdaDispatchPolicy = Catlass::Gemm::MmadPingpong<KdaArchTag, true, false>;
-using KdaL1TileShape = tla::Shape<_128, _128, _128>;
+using KdaL1TileShape = tla::Shape<_64, _128, _128>;
 using KdaL0TileShape = KdaL1TileShape;
 
 __aicore__ inline uint32_t FloatToBits(float value)
@@ -141,10 +142,10 @@ template <typename T, typename OUT_T = T>
 class ChunkKdaFwdKernel {
 public:
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR initialState,
-                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o, GM_ADDR finalState,
-                                GM_ADDR aqk, GM_ADDR akk, GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg,
-                                GM_ADDR vNew, GM_ADDR h, const ChunkKdaFwdTilingData &tiling, TPipe *pipe,
-                                bool initVecBuffers = true)
+                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR stageQG, GM_ADDR stageAqk,
+                                GM_ADDR stageVNew, GM_ADDR stageH, GM_ADDR o, GM_ADDR finalState, GM_ADDR aqk,
+                                GM_ADDR akk, GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR vNew, GM_ADDR h,
+                                const ChunkKdaFwdTilingData &tiling, TPipe *pipe, bool initVecBuffers = true)
     {
         pipe_ = pipe;
         q_.SetGlobalBuffer((__gm__ T *)q);
@@ -160,6 +161,18 @@ public:
         }
         if (chunkIndices != nullptr) {
             chunkIndices_.SetGlobalBuffer((__gm__ int64_t *)chunkIndices);
+        }
+        if (stageQG != nullptr) {
+            stageQG_.SetGlobalBuffer((__gm__ T *)stageQG);
+        }
+        if (stageAqk != nullptr) {
+            stageAqk_.SetGlobalBuffer((__gm__ T *)stageAqk);
+        }
+        if (stageVNew != nullptr) {
+            stageVNew_.SetGlobalBuffer((__gm__ T *)stageVNew);
+        }
+        if (stageH != nullptr) {
+            stageH_.SetGlobalBuffer((__gm__ T *)stageH);
         }
         hasChunkIndices_ = chunkIndices != nullptr;
         o_.SetGlobalBuffer((__gm__ OUT_T *)o);
@@ -2230,9 +2243,9 @@ private:
         auto layoutO = tla::MakeLayout<ElementC, LayoutTagC>(BT_, V_);
         Catlass::GemmCoord shapeQH{static_cast<uint32_t>(curT), static_cast<uint32_t>(V_),
                                    static_cast<uint32_t>(K_)};
-        auto tensorQ = tla::MakeTensor(qg_[KVOffset(b, hv, start, 0, K_)], layoutQ,
+        auto tensorQ = tla::MakeTensor(stageQG_[KVOffset(b, hv, start, 0, K_)], layoutQ,
                                        Catlass::Arch::PositionGM{});
-        auto tensorH = tla::MakeTensor(h_[HOffset(b, hv, chunkIdx, 0, 0)], layoutH,
+        auto tensorH = tla::MakeTensor(stageH_[HOffset(b, hv, chunkIdx, 0, 0)], layoutH,
                                        Catlass::Arch::PositionGM{});
         auto tensorO = tla::MakeTensor(o_[KVOffset(b, hv, start, 0, V_)], layoutO,
                                        Catlass::Arch::PositionGM{});
@@ -2246,9 +2259,9 @@ private:
         auto layoutV = tla::MakeLayout<ElementB, LayoutTagB>(BT_, V_);
         Catlass::GemmCoord shapeAV{static_cast<uint32_t>(curT), static_cast<uint32_t>(V_),
                                    static_cast<uint32_t>(curT)};
-        auto tensorAqk = tla::MakeTensor(aqk_[AOffset(b, hv, start, 0)], layoutAqk,
+        auto tensorAqk = tla::MakeTensor(stageAqk_[AOffset(b, hv, start, 0)], layoutAqk,
                                          Catlass::Arch::PositionGM{});
-        auto tensorVNew = tla::MakeTensor(vNew_[KVOffset(b, hv, start, 0, V_)], layoutV,
+        auto tensorVNew = tla::MakeTensor(stageVNew_[KVOffset(b, hv, start, 0, V_)], layoutV,
                                           Catlass::Arch::PositionGM{});
         auto tensorLocal = tla::MakeTensor(u_[KVOffset(b, hv, start, 0, V_)], layoutO,
                                            Catlass::Arch::PositionGM{});
@@ -2271,6 +2284,46 @@ private:
             LoadAsFloatRow(u_, KVOffset(b, hv, ti, 0, V_), localLocal, V_);
             Add(outLocal, stateLocal, localLocal, static_cast<uint32_t>(V_));
             PipeBarrier<PIPE_V>();
+            StoreFloatRow(o_, KVOffset(b, hv, ti, 0, V_), outLocal, V_);
+        }
+    }
+
+    __aicore__ inline void ComputeOutputTailVec(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
+                                                uint64_t curT, uint64_t subBlockIdx, uint64_t subBlockNum)
+    {
+        LocalTensor<float> outLocal = VecScratch(0);
+        LocalTensor<float> workLocal = VecScratch(1);
+        LocalTensor<float> qgLocal = VecScratch(2);
+        LocalTensor<float> aqkLocal = VecScratch(3);
+        __ubuf__ float *qgPtr = UbPtr(qgLocal);
+        __ubuf__ float *aqkPtr = UbPtr(aqkLocal);
+        uint32_t vCount = static_cast<uint32_t>(V_);
+
+        for (uint64_t i = subBlockIdx; i < curT; i += subBlockNum) {
+            uint64_t ti = start + i;
+            Duplicate(outLocal, 0.0f, vCount);
+            PipeBarrier<PIPE_V>();
+
+            LoadAsFloatRow(stageQG_, KVOffset(b, hv, ti, 0, K_), qgLocal, K_);
+            for (uint64_t d = 0; d < K_; ++d) {
+                float qgValue = qgPtr[d];
+                LoadAsFloatRow(stageH_, HOffset(b, hv, chunkIdx, d, 0), workLocal, V_);
+                Muls(workLocal, workLocal, qgValue, vCount);
+                PipeBarrier<PIPE_V>();
+                Add(outLocal, outLocal, workLocal, vCount);
+                PipeBarrier<PIPE_V>();
+            }
+
+            LoadAsFloatRow(stageAqk_, AOffset(b, hv, ti, 0), aqkLocal, BT_);
+            for (uint64_t j = 0; j < curT; ++j) {
+                float aqkValue = aqkPtr[j];
+                LoadAsFloatRow(stageVNew_, KVOffset(b, hv, start + j, 0, V_), workLocal, V_);
+                Muls(workLocal, workLocal, aqkValue, vCount);
+                PipeBarrier<PIPE_V>();
+                Add(outLocal, outLocal, workLocal, vCount);
+                PipeBarrier<PIPE_V>();
+            }
+
             StoreFloatRow(o_, KVOffset(b, hv, ti, 0, V_), outLocal, V_);
         }
     }
@@ -2459,14 +2512,18 @@ private:
         Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(scoreDoneFlag_);
     }
 
-    __aicore__ inline void ProcessChunkOutAiv(uint64_t b, uint64_t hv, uint64_t start, uint64_t end,
-                                              uint64_t subBlockIdx, uint64_t subBlockNum)
+    __aicore__ inline void ProcessChunkOutAiv(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
+                                              uint64_t end, uint64_t subBlockIdx, uint64_t subBlockNum)
     {
         uint64_t curT = end - start;
         if (curT == 0) {
             return;
         }
         if constexpr (IsSameType<T, float>::value) {
+            return;
+        }
+        if (curT != BT_) {
+            ComputeOutputTailVec(b, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum);
             return;
         }
         Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(scoreDoneFlag_);
@@ -2478,6 +2535,9 @@ private:
     {
         uint64_t curT = end - start;
         if (curT == 0) {
+            return;
+        }
+        if (curT != BT_) {
             return;
         }
         ComputeOutputCube(b, hv, chunkIdx, start, curT);
@@ -2612,7 +2672,7 @@ private:
                 (void)seq;
                 (void)h;
                 (void)chunkIdx;
-                ProcessChunkOutAiv(b, hv, start, end, subBlockIdx, subBlockNum);
+                ProcessChunkOutAiv(b, hv, chunkIdx, start, end, subBlockIdx, subBlockNum);
             }
         }
     }
@@ -2710,6 +2770,10 @@ private:
     GlobalTensor<T> kg_;
     GlobalTensor<T> vNew_;
     GlobalTensor<T> h_;
+    GlobalTensor<T> stageQG_;
+    GlobalTensor<T> stageAqk_;
+    GlobalTensor<T> stageVNew_;
+    GlobalTensor<T> stageH_;
     TPipe *pipe_ = nullptr;
     TBuf<TPosition::VECCALC> scalarInBuf_;
     TBuf<TPosition::VECCALC> scalarFp32Buf_;
@@ -2747,10 +2811,11 @@ private:
 
 extern "C" __global__ __aicore__ void chunk_kda_fwd(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta,
                                                       GM_ADDR initial_state, GM_ADDR cu_seqlens,
-                                                      GM_ADDR chunk_indices, GM_ADDR o, GM_ADDR final_state,
-                                                      GM_ADDR aqk, GM_ADDR akk, GM_ADDR w, GM_ADDR u, GM_ADDR qg,
-                                                      GM_ADDR kg, GM_ADDR v_new, GM_ADDR h, GM_ADDR workspace,
-                                                      GM_ADDR tiling)
+                                                      GM_ADDR chunk_indices, GM_ADDR stage_qg, GM_ADDR stage_aqk,
+                                                      GM_ADDR stage_v_new, GM_ADDR stage_h, GM_ADDR o,
+                                                      GM_ADDR final_state, GM_ADDR aqk, GM_ADDR akk, GM_ADDR w,
+                                                      GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR v_new, GM_ADDR h,
+                                                      GM_ADDR workspace, GM_ADDR tiling)
 {
     GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
     (void)userWS;
@@ -2759,8 +2824,8 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(GM_ADDR q, GM_ADDR k, GM_ADD
     if (TILING_KEY_IS(0)) {
         KERNEL_TASK_TYPE(0, KERNEL_TYPE_AIV_ONLY);
         ChunkKdaFwdKernel<float> op;
-        op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w, u, qg, kg,
-                v_new, h, tilingData, &pipe);
+        op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, stage_qg, stage_aqk, stage_v_new,
+                stage_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, tilingData, &pipe);
         op.ProcessAivOnly();
     } else if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
@@ -2768,26 +2833,30 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(GM_ADDR q, GM_ADDR k, GM_ADD
             if ASCEND_IS_AIC {
                 if (tilingData.stage == 2) {
                     ChunkKdaFwdKernel<bfloat16_t, float> op;
-                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w,
-                            u, qg, kg, v_new, h, tilingData, &pipe, false);
+                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, stage_qg, stage_aqk,
+                            stage_v_new, stage_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, tilingData,
+                            &pipe, false);
                     op.ProcessAic();
                 } else {
                     ChunkKdaFwdKernel<bfloat16_t> op;
-                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w,
-                            u, qg, kg, v_new, h, tilingData, &pipe, false);
+                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, stage_qg, stage_aqk,
+                            stage_v_new, stage_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, tilingData,
+                            &pipe, false);
                     op.ProcessAic();
                 }
             }
             if ASCEND_IS_AIV {
                 if (tilingData.stage == 2) {
                     ChunkKdaFwdKernel<bfloat16_t, float> op;
-                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w,
-                            u, qg, kg, v_new, h, tilingData, &pipe);
+                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, stage_qg, stage_aqk,
+                            stage_v_new, stage_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, tilingData,
+                            &pipe);
                     op.ProcessAiv();
                 } else {
                     ChunkKdaFwdKernel<bfloat16_t> op;
-                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w,
-                            u, qg, kg, v_new, h, tilingData, &pipe);
+                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, stage_qg, stage_aqk,
+                            stage_v_new, stage_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, tilingData,
+                            &pipe);
                     op.ProcessAiv();
                 }
             }
@@ -2795,26 +2864,30 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(GM_ADDR q, GM_ADDR k, GM_ADD
             if ASCEND_IS_AIC {
                 if (tilingData.stage == 2) {
                     ChunkKdaFwdKernel<half, float> op;
-                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w,
-                            u, qg, kg, v_new, h, tilingData, &pipe, false);
+                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, stage_qg, stage_aqk,
+                            stage_v_new, stage_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, tilingData,
+                            &pipe, false);
                     op.ProcessAic();
                 } else {
                     ChunkKdaFwdKernel<half> op;
-                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w,
-                            u, qg, kg, v_new, h, tilingData, &pipe, false);
+                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, stage_qg, stage_aqk,
+                            stage_v_new, stage_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, tilingData,
+                            &pipe, false);
                     op.ProcessAic();
                 }
             }
             if ASCEND_IS_AIV {
                 if (tilingData.stage == 2) {
                     ChunkKdaFwdKernel<half, float> op;
-                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w,
-                            u, qg, kg, v_new, h, tilingData, &pipe);
+                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, stage_qg, stage_aqk,
+                            stage_v_new, stage_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, tilingData,
+                            &pipe);
                     op.ProcessAiv();
                 } else {
                     ChunkKdaFwdKernel<half> op;
-                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w,
-                            u, qg, kg, v_new, h, tilingData, &pipe);
+                    op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, stage_qg, stage_aqk,
+                            stage_v_new, stage_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, tilingData,
+                            &pipe);
                     op.ProcessAiv();
                 }
             }
@@ -2823,13 +2896,13 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(GM_ADDR q, GM_ADDR k, GM_ADD
         KERNEL_TASK_TYPE(2, KERNEL_TYPE_AIV_ONLY);
         if (tilingData.dataType == 1) {
             ChunkKdaFwdKernel<bfloat16_t> op;
-            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w, u, qg,
-                    kg, v_new, h, tilingData, &pipe);
+            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, stage_qg, stage_aqk, stage_v_new,
+                    stage_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, tilingData, &pipe);
             op.ProcessAivOnly();
         } else {
             ChunkKdaFwdKernel<half> op;
-            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state, aqk, akk, w, u, qg,
-                    kg, v_new, h, tilingData, &pipe);
+            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, stage_qg, stage_aqk, stage_v_new,
+                    stage_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, tilingData, &pipe);
             op.ProcessAivOnly();
         }
     }

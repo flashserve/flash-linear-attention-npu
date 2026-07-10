@@ -151,6 +151,11 @@ public:
         uint32_t pingpongFlag)
     {
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+        if (mActual == 1) {
+            AscendC::Duplicate<float>(gUbTensor, 1.0f, 1);
+            AscendC::PipeBarrier<PIPE_V>();
+            return;
+        }
         if constexpr(std::is_same<GElementInput, float>::value) {
             AscendC::DataCopyParams gUbParams{1, (uint16_t)(mActual * sizeof(float)), 0, 0};
             AscendC::DataCopyPadParams gUbPadParams{false, 0, 0, 0};
