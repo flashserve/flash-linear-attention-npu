@@ -41,8 +41,12 @@ namespace {
     constexpr uint32_t ATTR_ACTIVATION_INDEX = 0;
     constexpr uint32_t ATTR_INPUT_LAYOUT_INDEX = 1;
     constexpr uint32_t RESERVED_UB = 16 * 1024;
+    constexpr uint32_t B16_DTYPE_SIZE = 2U;
     constexpr uint32_t FP32_DTYPE_SIZE = 4U;
     constexpr uint32_t BLOCK_ALIGN_NUM = 8U;
+    constexpr uint32_t DIRECT_FAST_BT_MAX = 224U;
+    constexpr uint32_t DIRECT_FAST_BT_MIN = 64U;
+    constexpr uint32_t DIRECT_FAST_BT_STEP = 32U;
     constexpr uint32_t ACTIVATION_NONE = 0;
     constexpr uint32_t ACTIVATION_SILU = 1;
     constexpr uint32_t ACTIVATION_SWISH = 2;
@@ -67,6 +71,10 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     auto xShape = context->GetInputShape(X_INPUT_INDEX)->GetStorageShape();
     auto dyShape = context->GetInputShape(DY_INPUT_INDEX)->GetStorageShape();
     auto wShape = context->GetInputShape(WEIGHT_INPUT_INDEX)->GetStorageShape();
+    auto xDesc = context->GetInputDesc(X_INPUT_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
+    auto xDtype = xDesc->GetDataType();
+    bool isB16Input = (xDtype == ge::DT_BF16 || xDtype == ge::DT_FLOAT16);
     uint32_t B = 0;
     uint32_t T = 0;
     uint32_t D = 0;
@@ -260,10 +268,12 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint64_t ubSize = 0;
     uint64_t sysWorkspaceSize = 0;
     uint32_t coreNum = 0;
+    bool isAscend950 = false;
     {
         fe::PlatFormInfos *platformInfoPtr = context->GetPlatformInfo();
         OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
+        isAscend950 = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510);
         coreNum = ascendcPlatform.GetCoreNumAiv();
         OP_CHECK_IF(coreNum == 0, OP_LOGE(context, "coreNum is 0"), return ge::GRAPH_FAILED);
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
@@ -280,8 +290,28 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t BD = (D % 64 == 0) ? 64 : 16;
     uint32_t numBlksD = D / BD;
 
+    bool useArch35DirectFast = isAscend950 && isB16Input &&
+                               activation == ACTIVATION_SILU &&
+                               !useInitialState && !useFinalState &&
+                               W == 4 && BD == 64;
+    auto CalcArch35DirectNeed = [BD, W](uint32_t bt) -> uint32_t {
+        uint32_t btBdAl = CeilAlign(bt * BD, BLOCK_ALIGN_NUM);
+        uint32_t dyBdAl = CeilAlign((bt + W - 1) * BD, BLOCK_ALIGN_NUM);
+        uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
+        uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
+        uint32_t need = 0;
+        need += (3 * btBdAl + 4 * dyBdAl + wBdAl) * B16_DTYPE_SIZE;
+        need += (btBdAl + dyBdAl + wBdAl + bdAl) * FP32_DTYPE_SIZE;
+        return need;
+    };
+
     uint32_t BT = 64;
-    if (T < BT) {
+    if (useArch35DirectFast) {
+        BT = std::min(T, DIRECT_FAST_BT_MAX);
+        while (BT > DIRECT_FAST_BT_MIN && CalcArch35DirectNeed(BT) > ubSize) {
+            BT = (BT > DIRECT_FAST_BT_MIN + DIRECT_FAST_BT_STEP) ? (BT - DIRECT_FAST_BT_STEP) : DIRECT_FAST_BT_MIN;
+        }
+    } else if (T < BT) {
         BT = T;
     }
     OP_CHECK_IF(BT == 0 || totalTokens == 0,
@@ -305,18 +335,22 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t wBtBdAl = CeilAlign(W * BT * BD, BLOCK_ALIGN_NUM);
     uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
     uint32_t need = 0;
-    need += (3 * btBdAl + 2 * calcBdAl) * FP32_DTYPE_SIZE;
-    need += (dyBdAl - btBdAl) * FP32_DTYPE_SIZE;
-    const bool hasWeight = true;
-    const bool hasBias = true;
-    if (hasWeight) need += 2 * wBdAl * FP32_DTYPE_SIZE;
-    if (hasWeight && activation == ACTIVATION_NONE) need += wBtBdAl * FP32_DTYPE_SIZE;
-    if (hasBias)   need += bdAl * FP32_DTYPE_SIZE;
-    if (hasBias && activation == ACTIVATION_NONE) need += btBdAl * FP32_DTYPE_SIZE;
-    if (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH)
-        need += 2 * dyBdAl * FP32_DTYPE_SIZE;
-    if (useInitialState || useFinalState) {
-        need += bdAl * FP32_DTYPE_SIZE;
+    if (useArch35DirectFast) {
+        need = CalcArch35DirectNeed(BT);
+    } else {
+        need += (3 * btBdAl + 2 * calcBdAl) * FP32_DTYPE_SIZE;
+        need += (dyBdAl - btBdAl) * FP32_DTYPE_SIZE;
+        const bool hasWeight = true;
+        const bool hasBias = true;
+        if (hasWeight) need += 2 * wBdAl * FP32_DTYPE_SIZE;
+        if (hasWeight && activation == ACTIVATION_NONE) need += wBtBdAl * FP32_DTYPE_SIZE;
+        if (hasBias)   need += bdAl * FP32_DTYPE_SIZE;
+        if (hasBias && activation == ACTIVATION_NONE) need += btBdAl * FP32_DTYPE_SIZE;
+        if (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH)
+            need += 2 * dyBdAl * FP32_DTYPE_SIZE;
+        if (useInitialState || useFinalState) {
+            need += bdAl * FP32_DTYPE_SIZE;
+        }
     }
 
     OP_CHECK_IF(need > ubSize,
