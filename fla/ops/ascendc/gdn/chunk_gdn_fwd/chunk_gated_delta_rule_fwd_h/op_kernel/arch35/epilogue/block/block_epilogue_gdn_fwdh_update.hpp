@@ -207,8 +207,8 @@ public:
 
             AscendC::GlobalTensor<HElementOutput> hOutputThisTile = hOutput[rowStart * outputStride];
             AscendC::GlobalTensor<HElementInput> hInputThisTile = hInput[rowStart * outputStride];
+            AscendC::GlobalTensor<float> hUpdateInputThisTile = hUpdateInput[rowStart * nActual];
             AscendC::GlobalTensor<FinalStateElement> finalStateThisTile = finalState[rowStart * outputStride];
-            AscendC::LocalTensor<float> hUpdateUbTensorThisTile = hUpdateUbTensor[(rowStart - rowBegin) * nActual];
 
             if (waitHFromV) {
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
@@ -233,20 +233,26 @@ public:
 
             if (waitUpdateFromMte3) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+            } else {
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
             }
-            AscendC::Add<float>(hUpdateUbTensorThisTile, calcUbTensor, hUpdateUbTensorThisTile, rowsThisTile * nActual);
+            CopyGmToUb(hUpdateUbTensor, hUpdateInputThisTile, rowsThisTile, nActual, nActual);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
+            AscendC::Add<float>(hUpdateUbTensor, calcUbTensor, hUpdateUbTensor, rowsThisTile * nActual);
             AscendC::PipeBarrier<PIPE_V>();
 
             if constexpr(std::is_same<FinalStateElement, float>::value) {
                 if (storeFinalState && isFinalState) {
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
-                    CopyUbToGm(finalStateThisTile, hUpdateUbTensorThisTile, rowsThisTile, nActual, outputStride);
+                    CopyUbToGm(finalStateThisTile, hUpdateUbTensor, rowsThisTile, nActual, outputStride);
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
                     waitUpdateFromMte3 = true;
                 } else {
-                    AscendC::Cast(hUbTensor, hUpdateUbTensorThisTile, AscendC::RoundMode::CAST_RINT, rowsThisTile * nActual);
+                    AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT, rowsThisTile * nActual);
                     AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
                     CopyUbToGm(hOutputThisTile, hUbTensor, rowsThisTile, nActual, outputStride);
@@ -255,14 +261,16 @@ public:
                 }
             } else {
                 if (storeFinalState && isFinalState) {
-                    AscendC::Cast(finalOutputUbTensor, hUpdateUbTensorThisTile, AscendC::RoundMode::CAST_RINT, rowsThisTile * nActual);
+                    AscendC::Cast(finalOutputUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT, rowsThisTile * nActual);
                     AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
                     CopyUbToGm(finalStateThisTile, finalOutputUbTensor, rowsThisTile, nActual, outputStride);
                 } else {
-                    AscendC::Cast(hUbTensor, hUpdateUbTensorThisTile, AscendC::RoundMode::CAST_RINT, rowsThisTile * nActual);
+                    AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT, rowsThisTile * nActual);
                     AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
                     CopyUbToGm(hOutputThisTile, hUbTensor, rowsThisTile, nActual, outputStride);
@@ -270,6 +278,14 @@ public:
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
                 waitUpdateFromMte3 = false;
             }
+        }
+
+        if (storeFinalState && isFinalState && std::is_same<FinalStateElement, float>::value) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+        } else {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
         }
 
     }
