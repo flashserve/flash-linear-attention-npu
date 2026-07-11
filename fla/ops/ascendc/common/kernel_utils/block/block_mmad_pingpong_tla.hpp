@@ -933,10 +933,14 @@ public:
                 auto tensorTileL0C = GetTile(tensorL0C,
                                             tla::MakeCoord(rowIdx, 0),
                                             tla::MakeShape(curRowNum, nL1Actual));
+                uint8_t copyUnitFlag = 0;
+                if constexpr (ENABLE_UNIT_FLAG) {
+                    copyUnitFlag = (i == tileNum - 1) ? 0b11 : 0b10;
+                }
                 if (sendVecNum == 2) {
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(l0C2UBAIVAICFlag + ubListId);
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(l0C2UBAIVAICFlag + FLAG_ID_MAX + ubListId);
-                    copyL0CToDst(tensorCList[ubListId], tensorTileL0C, ubRowNum, beginSubBlockIdx, sendVecNum);
+                    copyL0CToDst(tensorCList[ubListId], tensorTileL0C, ubRowNum, beginSubBlockIdx, sendVecNum, copyUnitFlag);
                     AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(l0C2UBAICAIVFlag + ubListId);
                     AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(l0C2UBAICAIVFlag + FLAG_ID_MAX + ubListId);
                     rowIdx += curRowNum;
@@ -949,7 +953,7 @@ public:
                     } else if (beginSubBlockIdx == 1) {
                         AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(l0C2UBAIVAICFlag + FLAG_ID_MAX + ubListId);
                     }
-                    copyL0CToDst(tensorCList[ubListId], tensorTileL0C, ubRowNum, beginSubBlockIdx, sendVecNum);
+                    copyL0CToDst(tensorCList[ubListId], tensorTileL0C, ubRowNum, beginSubBlockIdx, sendVecNum, copyUnitFlag);
                     if (beginSubBlockIdx == 0) {
                         AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(l0C2UBAICAIVFlag + ubListId);
                     } else if (beginSubBlockIdx == 1) {
@@ -973,10 +977,14 @@ public:
                 auto tensorTileL0C = GetTile(tensorL0C,
                                             tla::MakeCoord(rowIdx, 0),
                                             tla::MakeShape(curRowNum, nL1Actual));
+                uint8_t copyUnitFlag = 0;
+                if constexpr (ENABLE_UNIT_FLAG) {
+                    copyUnitFlag = (i == tileNum - 1) ? 0b11 : 0b10;
+                }
                 if (sendVecNum == 2) {
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(l0C2UBAIVAICFlag + ubListId);
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(l0C2UBAIVAICFlag + FLAG_ID_MAX + ubListId);
-                    copyL0CToDst(tensorCList[ubListId], tensorTileL0C, ubRowNum, beginSubBlockIdx, sendVecNum);
+                    copyL0CToDst(tensorCList[ubListId], tensorTileL0C, ubRowNum, beginSubBlockIdx, sendVecNum, copyUnitFlag);
                     AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(l0C2UBAICAIVFlag + ubListId);
                     AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(l0C2UBAICAIVFlag + FLAG_ID_MAX + ubListId);
                     rowIdx += curRowNum;
@@ -989,7 +997,7 @@ public:
                     } else if (beginSubBlockIdx == 1) {
                         AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(l0C2UBAIVAICFlag + FLAG_ID_MAX + ubListId);
                     }
-                    copyL0CToDst(tensorCList[ubListId], tensorTileL0C, ubRowNum, beginSubBlockIdx, sendVecNum);
+                    copyL0CToDst(tensorCList[ubListId], tensorTileL0C, ubRowNum, beginSubBlockIdx, sendVecNum, copyUnitFlag);
                     if (beginSubBlockIdx == 0) {
                         AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(l0C2UBAICAIVFlag + ubListId);
                     } else if (beginSubBlockIdx == 1) {
