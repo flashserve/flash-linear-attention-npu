@@ -97,13 +97,13 @@ public:
     using VUpdateType = Gemm::GemmType<INPUT_TYPE, layout::zN>;
 
     // cube 1
-    using TileCopyWH = Catlass::Gemm::Tile::PackedTileCopyTlaToUB<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor, void, Catlass::Gemm::Tile::CopyL0CToUBMode::SPLIT_M>;
+    using TileCopyWH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
     using BlockMmadWH = Gemm::Block::BlockMmadTla<DispatchPolicyTlaMulti, L1TileShapeVTla, L0TileShapeVTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyWH>;
 
     // cube 2
-    using TileCopyKV = Catlass::Gemm::Tile::PackedTileCopyTlaToUB<ArchTag, INPUT_TYPE, layout::ColumnMajor, INPUT_TYPE, layout::zN, WORKSPACE_TYPE, layout::RowMajor, void, Catlass::Gemm::Tile::CopyL0CToUBMode::SPLIT_M>;
+    using TileCopyKV = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::ColumnMajor, INPUT_TYPE, layout::zN, WORKSPACE_TYPE, layout::RowMajor>;
     using TileMmadKV = Gemm::Tile::TileMmadTla<ArchTag, INPUT_TYPE, typename TileCopyKV::LayoutTagL1A>;
-    using BlockMmadKV = Gemm::Block::BlockMmadTla<DispatchPolicyTlaPreloadAL1B, L1TileShapeVTla, L0TileShapeVTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKV, TileMmadKV>;
+    using BlockMmadKV = Gemm::Block::BlockMmadTla<DispatchPolicyTlaMulti, L1TileShapeVTla, L0TileShapeVTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKV>;
 
     // vec 1
     using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnew;
@@ -276,16 +276,17 @@ public:
                         auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(cube1Offsets.blockTokens, cube1Offsets.vBlockDim);
                         int64_t cube1OffsetW = cube1Offsets.wOffset;
                         int64_t cube1OffsetH = cube1Offsets.hSrcOffset;
+                        int64_t cube1OffsetVwork = cube1Offsets.vWorkOffset;
                         auto tensorW = tla::MakeTensor(gmW[cube1OffsetW], wLayout, Catlass::Arch::PositionGM{});
                         auto tensorH = tla::MakeTensor(gmH[cube1OffsetH], hLayout, Catlass::Arch::PositionGM{});
-                        AscendC::LocalTensor<ElementVWork> ubVWork = (i == 0) ? ubVWorkPing : ubVWorkPong;
-                        auto tensorV = tla::MakeTensor(ubVWork, vLayout, Catlass::Arch::PositionUB{});
+                        auto tensorV = tla::MakeTensor(gmVWorkspace[cube1OffsetVwork], vLayout, Catlass::Arch::PositionGM{});
                         GemmCoord cube1Shape {cube1Offsets.blockTokens, cube1Offsets.vBlockDim, kHeadDim};
                         auto tensorBlockW = GetTile(tensorW, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.m(), cube1Shape.k()));
                         auto tensorBlockH = GetTile(tensorH, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.k(), cube1Shape.n()));
+                        auto tensorBlockV = GetTile(tensorV, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.m(), cube1Shape.n()));
 
                         blockMmadWH.preSetFlags();
-                        blockMmadWH(tensorBlockW, tensorBlockH, tensorV, cube1Shape);
+                        blockMmadWH(tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape);
                         blockMmadWH.finalWaitFlags();
                         Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube1Done[streamId]);
                     }
@@ -303,17 +304,18 @@ public:
                         if (cubeBlockScheduler.NeedProcessStage2(stream)) {
                             // step 3: h[i+1] = k.T @ v_work
                             int64_t cube2OffsetK = cube2Offsets.wkOffset;
+                            int64_t cube2OffsetVwork = cube2Offsets.vWorkOffset;
                             auto tensorK = tla::MakeTensor(gmK[cube2OffsetK], kLayout, Catlass::Arch::PositionGM{});
                             auto vUpdateLayout = tla::MakeLayout<ElementVUpdate, LayoutVUpdate>(cube2Offsets.blockTokens, cube2Offsets.vBlockDim);
-                            AscendC::LocalTensor<ElementHWork> ubHUpdate = (i == 0) ? ubHUpdatePing : ubHUpdatePong;
-                            auto tensorHwork = tla::MakeTensor(ubHUpdate, hworkLayout, Catlass::Arch::PositionUB{});
-                            AscendC::LocalTensor<ElementV> l1VUpdate = (i == 0) ? l1VUpdatePing : l1VUpdatePong;
-                            auto tensorVwork = tla::MakeTensor(l1VUpdate, vUpdateLayout, Catlass::Arch::PositionL1{});
+                            auto tensorVwork = tla::MakeTensor(gmVUpdateWorkspace[cube2OffsetVwork], vUpdateLayout, Catlass::Arch::PositionGM{});
+                            auto tensorHwork = tla::MakeTensor(gmHWorkspace[cube2Offsets.hWorkOffset], hworkLayout, Catlass::Arch::PositionGM{});
                             GemmCoord cube2Shape{kHeadDim, cube2Offsets.vBlockDim, cube2Offsets.blockTokens};
                             auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.m(), cube2Shape.k()));
+                            auto tensorBlockVwork = GetTile(tensorVwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.k(), cube2Shape.n()));
+                            auto tensorBlockHwork = GetTile(tensorHwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
 
                             blockMmadKV.preSetFlags();
-                            blockMmadKV(tensorBlockK, tensorVwork, tensorHwork, cube2Shape);
+                            blockMmadKV(tensorBlockK, tensorBlockVwork, tensorBlockHwork, cube2Shape);
                             blockMmadKV.finalWaitFlags();
                         }
                         Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube2Done[streamId]);

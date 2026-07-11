@@ -71,42 +71,41 @@
                  // fp16
                  if (ms == 16) {
                      NsSolveTri::SolveTriVector<16, half> op;
-                     op.Init(workspace, totalTiles, ms);
+                     op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                      op.Process();
                  } else if (ms == 32) {
                      NsSolveTri::SolveTriVector<32, half> op;
-                     op.Init(workspace, totalTiles, ms);
+                     op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                      op.Process();
                  } else if (ms == 64) {
                      NsSolveTri::SolveTriVector<64, half> op;
-                     op.Init(workspace, totalTiles, ms);
+                     op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                      op.Process();
                  } else if (ms == 128) {
                      NsSolveTri::SolveTriVector<128, half> op;
-                     op.Init(workspace, totalTiles, ms);
+                     op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                      op.Process();
                  }
              } else {
                  // bf16
                  if (ms == 16) {
                      NsSolveTri::SolveTriVector<16, bfloat16_t> op;
-                     op.Init(workspace, totalTiles, ms);
+                     op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                      op.Process();
                  } else if (ms == 32) {
                      NsSolveTri::SolveTriVector<32, bfloat16_t> op;
-                     op.Init(workspace, totalTiles, ms);
+                     op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                      op.Process();
                  } else if (ms == 64) {
                      NsSolveTri::SolveTriVector<64, bfloat16_t> op;
-                     op.Init(workspace, totalTiles, ms);
+                     op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                      op.Process();
                  } else if (ms == 128) {
                      NsSolveTri::SolveTriVector<128, bfloat16_t> op;
-                     op.Init(workspace, totalTiles, ms);
+                     op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                      op.Process();
                  }
              }
          }
      }
  }
- 

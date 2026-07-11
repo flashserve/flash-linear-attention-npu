@@ -7,7 +7,6 @@
  */
  #ifndef SOLVE_TRI_CUBE_H
  #define SOLVE_TRI_CUBE_H
- 
  #include "kernel_operator.h"
  #include "lib/matmul_intf.h"
  #include "catlass/arch/cross_core_sync.hpp"
@@ -90,6 +89,7 @@ class SolveTriCube {
  
 private:
    __aicore__ inline void ProcessOneTile(int64_t tileIdx);
+   __aicore__ inline void ProcessOriginalTile(int64_t gmOffset, int64_t validSize);
    __aicore__ inline int64_t GetTileGMOffset(int64_t tileIdx);
    __aicore__ inline int64_t GetTileValidSize(int64_t tileIdx);
    __aicore__ inline void PrepareConstants();
@@ -204,7 +204,11 @@ __aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::Init(
     // AIC 的核索引
     aicIdx_ = GetBlockIdx();
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+     inputGM_.SetGlobalBuffer(reinterpret_cast<__gm__ T*>(x_out));
+#else
      inputGM_.SetGlobalBuffer(reinterpret_cast<__gm__ T*>(x));
+#endif
      outputGM_.SetGlobalBuffer(reinterpret_cast<__gm__ T*>(x_out));
      workspaceGM_.SetGlobalBuffer(reinterpret_cast<__gm__ T*>(workspace));
 
@@ -370,13 +374,19 @@ __aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::ProcessOneTile(int64_t tile
     int64_t gmOffset = GetTileGMOffset(tileIdx);
     int64_t validSize = GetTileValidSize(tileIdx);
 
+    ProcessOriginalTile(gmOffset, validSize);
+}
+
+template <int MATRIX_SIZE, typename T>
+__aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::ProcessOriginalTile(int64_t gmOffset, int64_t validSize)
+{
     if (validSize < matrixSize_) {
         // 非对齐尾块：特殊路径
         ProcessPartialTile(gmOffset, validSize);
     } else {
         // 正常 chunk：原有逻辑
         LoadInputTile(gmOffset);
-        
+
         MCHInvertDiagonal(gmOffset);
 
         if constexpr (MATRIX_SIZE > FRAC) {
@@ -391,7 +401,7 @@ __aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::ProcessOneTile(int64_t tile
         StoreFinalResult(gmOffset);
     }
 }
- 
+
  // Load slotA->L0A(A2), slotB->L0B(B2), Mmad, result in L0C(CO1)
  // L1(NZ): 分形内行主序(小Z)，分形间列主序(大N) -> (0,0),(1,0),(0,1),(1,1)
  // L0A(ZZ): 分形内行主序(小Z)，分形间行主序(大Z) -> (0,0),(0,1),(1,0),(1,1)
@@ -1038,4 +1048,3 @@ __aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::ProcessPartialTile(int64_t 
 }  // namespace NsSolveTri
 
 #endif  // SOLVE_TRI_CUBE_H
- 
