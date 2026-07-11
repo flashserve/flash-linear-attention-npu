@@ -12,6 +12,8 @@
 #include "../../../kda_layout_swap12/op_host/op_api/kda_layout_swap12.h"
 #include "../../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_host/op_api/chunk_gated_delta_rule_fwd_h.h"
 
+#include <cstring>
+
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
 #include "aclnn_kernels/cast.h"
@@ -39,6 +41,7 @@ extern "C" {
 
 namespace {
 constexpr int64_t MAX_KDA_K_DIM = 256;
+constexpr int64_t MAX_KDA_HEAD_NUM = 128;
 
 int KdaFwdDebugStopAfter()
 {
@@ -58,6 +61,7 @@ struct ChunkKdaFwdParams {
     const aclTensor *initialStateOptional = nullptr;
     const aclIntArray *cuSeqlensOptional = nullptr;
     const aclIntArray *chunkIndicesOptional = nullptr;
+    const char *layout = "BSND";
     double scale = 1.0;
     int64_t chunkSize = 64;
     bool outputFinalState = false;
@@ -178,50 +182,108 @@ enum class KdaFwdLayout {
     NTD,
 };
 
-KdaFwdLayout InferKdaFwdLayout(const ChunkKdaFwdParams &params)
+bool KdaFwdSameShape(const aclTensor *lhs, const aclTensor *rhs)
 {
-    size_t rank = KdaFwdRank(params.q);
-    if (rank == 3) {
-        bool isTnd = KdaFwdDim(params.v, 0) == KdaFwdDim(params.q, 0) &&
-                     KdaFwdDim(params.gk, 0) == KdaFwdDim(params.q, 0) &&
-                     KdaFwdDim(params.beta, 0) == KdaFwdDim(params.q, 0) &&
-                     KdaFwdDim(params.gk, 1) == KdaFwdDim(params.v, 1) &&
-                     KdaFwdDim(params.beta, 1) == KdaFwdDim(params.v, 1) &&
-                     KdaFwdDim(params.gk, 2) == KdaFwdDim(params.q, 2);
-        bool isNtd = KdaFwdDim(params.v, 1) == KdaFwdDim(params.q, 1) &&
-                     KdaFwdDim(params.gk, 0) == KdaFwdDim(params.v, 0) &&
-                     KdaFwdDim(params.beta, 0) == KdaFwdDim(params.v, 0) &&
-                     KdaFwdDim(params.gk, 1) == KdaFwdDim(params.q, 1) &&
-                     KdaFwdDim(params.beta, 1) == KdaFwdDim(params.q, 1) &&
-                     KdaFwdDim(params.gk, 2) == KdaFwdDim(params.q, 2);
-        if (isTnd && isNtd) {
-            return KdaFwdDim(params.q, 0) <= KdaFwdDim(params.q, 1) ? KdaFwdLayout::NTD : KdaFwdLayout::TND;
+    if (KdaFwdRank(lhs) != KdaFwdRank(rhs)) {
+        return false;
+    }
+    for (size_t idx = 0; idx < KdaFwdRank(lhs); ++idx) {
+        if (KdaFwdDim(lhs, idx) != KdaFwdDim(rhs, idx)) {
+            return false;
         }
-        return isNtd ? KdaFwdLayout::NTD : KdaFwdLayout::TND;
     }
+    return true;
+}
 
-    bool isBsnd = KdaFwdDim(params.v, 0) == KdaFwdDim(params.q, 0) &&
-                  KdaFwdDim(params.v, 1) == KdaFwdDim(params.q, 1) &&
-                  KdaFwdDim(params.gk, 0) == KdaFwdDim(params.q, 0) &&
-                  KdaFwdDim(params.gk, 1) == KdaFwdDim(params.q, 1) &&
-                  KdaFwdDim(params.beta, 0) == KdaFwdDim(params.q, 0) &&
-                  KdaFwdDim(params.beta, 1) == KdaFwdDim(params.q, 1) &&
-                  KdaFwdDim(params.gk, 2) == KdaFwdDim(params.v, 2) &&
-                  KdaFwdDim(params.beta, 2) == KdaFwdDim(params.v, 2) &&
-                  KdaFwdDim(params.gk, 3) == KdaFwdDim(params.q, 3);
-    bool isBnsd = KdaFwdDim(params.v, 0) == KdaFwdDim(params.q, 0) &&
-                  KdaFwdDim(params.v, 2) == KdaFwdDim(params.q, 2) &&
-                  KdaFwdDim(params.gk, 0) == KdaFwdDim(params.q, 0) &&
-                  KdaFwdDim(params.gk, 1) == KdaFwdDim(params.v, 1) &&
-                  KdaFwdDim(params.beta, 0) == KdaFwdDim(params.q, 0) &&
-                  KdaFwdDim(params.beta, 1) == KdaFwdDim(params.v, 1) &&
-                  KdaFwdDim(params.gk, 2) == KdaFwdDim(params.q, 2) &&
-                  KdaFwdDim(params.beta, 2) == KdaFwdDim(params.q, 2) &&
-                  KdaFwdDim(params.gk, 3) == KdaFwdDim(params.q, 3);
-    if (isBsnd && isBnsd) {
-        return KdaFwdDim(params.q, 1) <= KdaFwdDim(params.q, 2) ? KdaFwdLayout::BNSD : KdaFwdLayout::BSND;
+aclnnStatus KdaFwdParseLayout(const char *layout, KdaFwdLayout &parsed)
+{
+    CHECK_COND(layout != nullptr, ACLNN_ERR_PARAM_INVALID,
+               "layout must not be nullptr and must be one of BSND, BNSD, TND, NTD.");
+    if (std::strcmp(layout, "BSND") == 0) {
+        parsed = KdaFwdLayout::BSND;
+        return ACLNN_SUCCESS;
     }
-    return isBnsd ? KdaFwdLayout::BNSD : KdaFwdLayout::BSND;
+    if (std::strcmp(layout, "BNSD") == 0) {
+        parsed = KdaFwdLayout::BNSD;
+        return ACLNN_SUCCESS;
+    }
+    if (std::strcmp(layout, "TND") == 0) {
+        parsed = KdaFwdLayout::TND;
+        return ACLNN_SUCCESS;
+    }
+    if (std::strcmp(layout, "NTD") == 0) {
+        parsed = KdaFwdLayout::NTD;
+        return ACLNN_SUCCESS;
+    }
+    CHECK_COND(false, ACLNN_ERR_PARAM_INVALID,
+               "layout must be one of BSND, BNSD, TND, NTD and must be uppercase.");
+    return ACLNN_ERR_PARAM_INVALID;
+}
+
+aclnnStatus KdaFwdCheckLayoutShape(const ChunkKdaFwdParams &params, KdaFwdLayout layout)
+{
+    CHECK_COND(KdaFwdSameShape(params.q, params.k), ACLNN_ERR_PARAM_INVALID,
+               "q and k must have identical shape.");
+    if (layout == KdaFwdLayout::TND) {
+        CHECK_COND(KdaFwdRank(params.q) == 3 && KdaFwdRank(params.v) == 3 &&
+                       KdaFwdRank(params.gk) == 3 && KdaFwdRank(params.beta) == 2,
+                   ACLNN_ERR_PARAM_INVALID,
+                   "layout TND expects q/k [T,H,K], v [T,HV,V], gk [T,HV,K], beta [T,HV].");
+        CHECK_COND(KdaFwdDim(params.v, 0) == KdaFwdDim(params.q, 0) &&
+                       KdaFwdDim(params.gk, 0) == KdaFwdDim(params.q, 0) &&
+                       KdaFwdDim(params.beta, 0) == KdaFwdDim(params.q, 0) &&
+                       KdaFwdDim(params.gk, 1) == KdaFwdDim(params.v, 1) &&
+                       KdaFwdDim(params.beta, 1) == KdaFwdDim(params.v, 1) &&
+                       KdaFwdDim(params.gk, 2) == KdaFwdDim(params.q, 2),
+                   ACLNN_ERR_PARAM_INVALID,
+                   "layout TND shape mismatch.");
+    } else if (layout == KdaFwdLayout::NTD) {
+        CHECK_COND(KdaFwdRank(params.q) == 3 && KdaFwdRank(params.v) == 3 &&
+                       KdaFwdRank(params.gk) == 3 && KdaFwdRank(params.beta) == 2,
+                   ACLNN_ERR_PARAM_INVALID,
+                   "layout NTD expects q/k [H,T,K], v [HV,T,V], gk [HV,T,K], beta [HV,T].");
+        CHECK_COND(KdaFwdDim(params.v, 1) == KdaFwdDim(params.q, 1) &&
+                       KdaFwdDim(params.gk, 0) == KdaFwdDim(params.v, 0) &&
+                       KdaFwdDim(params.beta, 0) == KdaFwdDim(params.v, 0) &&
+                       KdaFwdDim(params.gk, 1) == KdaFwdDim(params.q, 1) &&
+                       KdaFwdDim(params.beta, 1) == KdaFwdDim(params.q, 1) &&
+                       KdaFwdDim(params.gk, 2) == KdaFwdDim(params.q, 2),
+                   ACLNN_ERR_PARAM_INVALID,
+                   "layout NTD shape mismatch.");
+    } else if (layout == KdaFwdLayout::BSND) {
+        CHECK_COND(KdaFwdRank(params.q) == 4 && KdaFwdRank(params.v) == 4 &&
+                       KdaFwdRank(params.gk) == 4 && KdaFwdRank(params.beta) == 3,
+                   ACLNN_ERR_PARAM_INVALID,
+                   "layout BSND expects q/k [B,T,H,K], v [B,T,HV,V], gk [B,T,HV,K], beta [B,T,HV].");
+        CHECK_COND(KdaFwdDim(params.v, 0) == KdaFwdDim(params.q, 0) &&
+                       KdaFwdDim(params.v, 1) == KdaFwdDim(params.q, 1) &&
+                       KdaFwdDim(params.gk, 0) == KdaFwdDim(params.q, 0) &&
+                       KdaFwdDim(params.gk, 1) == KdaFwdDim(params.q, 1) &&
+                       KdaFwdDim(params.beta, 0) == KdaFwdDim(params.q, 0) &&
+                       KdaFwdDim(params.beta, 1) == KdaFwdDim(params.q, 1) &&
+                       KdaFwdDim(params.gk, 2) == KdaFwdDim(params.v, 2) &&
+                       KdaFwdDim(params.beta, 2) == KdaFwdDim(params.v, 2) &&
+                       KdaFwdDim(params.gk, 3) == KdaFwdDim(params.q, 3),
+                   ACLNN_ERR_PARAM_INVALID,
+                   "layout BSND shape mismatch.");
+    } else {
+        CHECK_COND(KdaFwdRank(params.q) == 4 && KdaFwdRank(params.v) == 4 &&
+                       KdaFwdRank(params.gk) == 4 && KdaFwdRank(params.beta) == 3,
+                   ACLNN_ERR_PARAM_INVALID,
+                   "layout BNSD expects q/k [B,H,T,K], v [B,HV,T,V], gk [B,HV,T,K], beta [B,HV,T].");
+        CHECK_COND(KdaFwdDim(params.v, 0) == KdaFwdDim(params.q, 0) &&
+                       KdaFwdDim(params.v, 2) == KdaFwdDim(params.q, 2) &&
+                       KdaFwdDim(params.gk, 0) == KdaFwdDim(params.q, 0) &&
+                       KdaFwdDim(params.gk, 1) == KdaFwdDim(params.v, 1) &&
+                       KdaFwdDim(params.beta, 0) == KdaFwdDim(params.q, 0) &&
+                       KdaFwdDim(params.beta, 1) == KdaFwdDim(params.v, 1) &&
+                       KdaFwdDim(params.gk, 2) == KdaFwdDim(params.q, 2) &&
+                       KdaFwdDim(params.beta, 2) == KdaFwdDim(params.q, 2) &&
+                       KdaFwdDim(params.gk, 3) == KdaFwdDim(params.q, 3),
+                   ACLNN_ERR_PARAM_INVALID,
+                   "layout BNSD shape mismatch.");
+    }
+    return ACLNN_SUCCESS;
 }
 
 aclnnStatus KdaFwdCheckParams(const ChunkKdaFwdParams &params)
@@ -269,6 +331,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *initialStateOptional,
     const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional,
+    const char *layout,
     double scale,
     int64_t chunkSize,
     bool outputFinalState,
@@ -286,7 +349,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
-    ChunkKdaFwdParams params{q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional,
+    ChunkKdaFwdParams params{q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional, layout,
                              scale, chunkSize, outputFinalState, totalChunks, oOut, finalStateOut, aqkOut,
                              akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut};
     L2_DFX_PHASE_1(aclnnChunkKdaFwd,
@@ -298,23 +361,27 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     CHECK_RET(KdaFwdCheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(KdaFwdParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
-    KdaFwdLayout layout = InferKdaFwdLayout(params);
-    bool isTnd = layout == KdaFwdLayout::TND || layout == KdaFwdLayout::NTD;
-    bool isInternalLayout = layout == KdaFwdLayout::BNSD || layout == KdaFwdLayout::NTD;
+    KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
+    CHECK_RET(KdaFwdParseLayout(params.layout, parsedLayout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(KdaFwdCheckLayoutShape(params, parsedLayout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    bool isTnd = parsedLayout == KdaFwdLayout::TND || parsedLayout == KdaFwdLayout::NTD;
+    bool isInternalLayout = parsedLayout == KdaFwdLayout::BNSD || parsedLayout == KdaFwdLayout::NTD;
     int64_t batch = isTnd ? 1 : KdaFwdDim(params.q, 0);
-    int64_t seqlen = layout == KdaFwdLayout::TND ? KdaFwdDim(params.q, 0) :
-                     (layout == KdaFwdLayout::NTD ? KdaFwdDim(params.q, 1) :
-                     (layout == KdaFwdLayout::BNSD ? KdaFwdDim(params.q, 2) : KdaFwdDim(params.q, 1)));
-    int64_t hNum = layout == KdaFwdLayout::TND ? KdaFwdDim(params.q, 1) :
-                   (layout == KdaFwdLayout::NTD ? KdaFwdDim(params.q, 0) :
-                   (layout == KdaFwdLayout::BNSD ? KdaFwdDim(params.q, 1) : KdaFwdDim(params.q, 2)));
+    int64_t seqlen = parsedLayout == KdaFwdLayout::TND ? KdaFwdDim(params.q, 0) :
+                     (parsedLayout == KdaFwdLayout::NTD ? KdaFwdDim(params.q, 1) :
+                     (parsedLayout == KdaFwdLayout::BNSD ? KdaFwdDim(params.q, 2) : KdaFwdDim(params.q, 1)));
+    int64_t hNum = parsedLayout == KdaFwdLayout::TND ? KdaFwdDim(params.q, 1) :
+                   (parsedLayout == KdaFwdLayout::NTD ? KdaFwdDim(params.q, 0) :
+                   (parsedLayout == KdaFwdLayout::BNSD ? KdaFwdDim(params.q, 1) : KdaFwdDim(params.q, 2)));
     int64_t kDim = isTnd ? KdaFwdDim(params.q, 2) : KdaFwdDim(params.q, 3);
-    int64_t hvNum = layout == KdaFwdLayout::TND ? KdaFwdDim(params.v, 1) :
-                    (layout == KdaFwdLayout::NTD ? KdaFwdDim(params.v, 0) :
-                    (layout == KdaFwdLayout::BNSD ? KdaFwdDim(params.v, 1) : KdaFwdDim(params.v, 2)));
+    int64_t hvNum = parsedLayout == KdaFwdLayout::TND ? KdaFwdDim(params.v, 1) :
+                    (parsedLayout == KdaFwdLayout::NTD ? KdaFwdDim(params.v, 0) :
+                    (parsedLayout == KdaFwdLayout::BNSD ? KdaFwdDim(params.v, 1) : KdaFwdDim(params.v, 2)));
     int64_t vDim = isTnd ? KdaFwdDim(params.v, 2) : KdaFwdDim(params.v, 3);
     int64_t seqNum = KdaFwdSeqNum(batch, params.cuSeqlensOptional);
-    CHECK_COND(layout != KdaFwdLayout::TND || hNum == 1, ACLNN_ERR_PARAM_INVALID,
+    CHECK_COND(hNum <= MAX_KDA_HEAD_NUM && hvNum <= MAX_KDA_HEAD_NUM, ACLNN_ERR_PARAM_INVALID,
+               "H and HV must be less than or equal to 128.");
+    CHECK_COND(parsedLayout != KdaFwdLayout::TND || hNum == 1, ACLNN_ERR_PARAM_INVALID,
                "TND layout with H > 1 is not supported by npu_chunk_kda_fwd; use NTD [H,T,D] layout "
                "for multi-head rank3 input.");
     CHECK_RET(KdaFwdCheckCuSeqlens(params.cuSeqlensOptional, seqlen) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -333,7 +400,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *vBsnd = params.v;
     const aclTensor *gkBsnd = params.gk;
     const aclTensor *betaBsn = params.beta;
-    if (layout == KdaFwdLayout::TND) {
+    if (parsedLayout == KdaFwdLayout::TND) {
         qBsnd = l0op::Reshape(params.q, KdaFwdMakeShape({1, seqlen, hNum, kDim}), executorPtr);
         kBsnd = l0op::Reshape(params.k, KdaFwdMakeShape({1, seqlen, hNum, kDim}), executorPtr);
         vBsnd = l0op::Reshape(params.v, KdaFwdMakeShape({1, seqlen, hvNum, vDim}), executorPtr);
@@ -341,7 +408,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         betaBsn = l0op::Reshape(params.beta, KdaFwdMakeShape({1, seqlen, hvNum}), executorPtr);
         CHECK_RET(qBsnd != nullptr && kBsnd != nullptr && vBsnd != nullptr && gkBsnd != nullptr && betaBsn != nullptr,
                   ACLNN_ERR_INNER_NULLPTR);
-    } else if (layout == KdaFwdLayout::NTD) {
+    } else if (parsedLayout == KdaFwdLayout::NTD) {
         qBsnd = l0op::Reshape(params.q, KdaFwdMakeShape({1, hNum, seqlen, kDim}), executorPtr);
         kBsnd = l0op::Reshape(params.k, KdaFwdMakeShape({1, hNum, seqlen, kDim}), executorPtr);
         vBsnd = l0op::Reshape(params.v, KdaFwdMakeShape({1, hvNum, seqlen, vDim}), executorPtr);
@@ -376,7 +443,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *vNewBnsd = nullptr;
     const aclTensor *hBnst = nullptr;
     if (isInternalLayout) {
-        if (layout == KdaFwdLayout::NTD) {
+        if (parsedLayout == KdaFwdLayout::NTD) {
             oBnsd = l0op::Reshape(params.oOut, KdaFwdMakeShape({1, hvNum, seqlen, vDim}), executorPtr);
             aqkBnst = l0op::Reshape(params.aqkOut, KdaFwdMakeShape({1, hvNum, seqlen, params.chunkSize}),
                                     executorPtr);

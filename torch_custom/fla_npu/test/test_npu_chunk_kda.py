@@ -91,6 +91,7 @@ def test_chunk_kda_fwd_matches_reference():
         beta,
         scale,
         64,
+        layout="BSND",
         initial_state=initial_state,
         output_final_state=True,
         return_intermediate=True,
@@ -134,6 +135,7 @@ def test_chunk_kda_fwd_chunk128_v128_gva_varlen():
         beta,
         scale,
         128,
+        layout="BSND",
         output_final_state=True,
         cu_seqlens=cu_seqlens,
         return_intermediate=False,
@@ -171,6 +173,7 @@ def test_chunk_kda_fwd_varlen_initial_state_shape_rejected():
             beta,
             scale,
             64,
+            layout="BSND",
             initial_state=bad_initial_state,
             output_final_state=True,
             cu_seqlens=cu_seqlens,
@@ -198,6 +201,7 @@ def test_chunk_kda_fwd_bf16_chunk32_matches_reference():
         beta,
         scale,
         32,
+        layout="BSND",
         initial_state=initial_state,
         output_final_state=True,
         return_intermediate=False,
@@ -238,6 +242,7 @@ def test_chunk_kda_fwd_bf16_gate_matches_reference():
         beta_bf16,
         scale,
         64,
+        layout="BSND",
         initial_state=initial_state,
         output_final_state=True,
         return_intermediate=False,
@@ -276,6 +281,7 @@ def test_chunk_kda_fwd_fp16_matches_reference():
         beta,
         scale,
         64,
+        layout="BSND",
         initial_state=initial_state,
         output_final_state=True,
         return_intermediate=True,
@@ -317,6 +323,7 @@ def test_chunk_kda_fwd_tnd_matches_reference():
         beta.squeeze(0),
         scale,
         64,
+        layout="TND",
         initial_state=initial_state,
         output_final_state=True,
         return_intermediate=True,
@@ -366,12 +373,62 @@ def test_chunk_kda_fwd_tnd_multi_head_rejected():
             beta,
             kdim ** -0.5,
             64,
+            layout="TND",
             output_final_state=True,
         )
     except RuntimeError as exc:
         assert "TND layout with H > 1 is not supported" in str(exc)
     else:
         raise AssertionError("multi-head TND rank3 input must be rejected before kernel launch")
+
+
+def test_chunk_kda_fwd_lowercase_layout_rejected():
+    device = _device()
+    if device.type == "cpu":
+        return
+    q, k, v, gk, beta, _ = _make_inputs(device, h=1, hv=1, t=8, kdim=8, vdim=8)
+    try:
+        torch.ops.npu.npu_chunk_kda_fwd(
+            q,
+            k,
+            v,
+            gk,
+            beta,
+            q.shape[-1] ** -0.5,
+            64,
+            layout="bsnd",
+        )
+    except RuntimeError as exc:
+        assert "layout must be one of BSND, BNSD, TND, NTD" in str(exc)
+    else:
+        raise AssertionError("lowercase layout must be rejected")
+
+
+def test_chunk_kda_fwd_head_num_gt128_rejected():
+    device = _device()
+    if device.type == "cpu":
+        return
+    h, hv, t, kdim, vdim = 129, 129, 4, 8, 8
+    q = torch.randn(h, t, kdim, device=device, dtype=torch.float16)
+    k = torch.randn(h, t, kdim, device=device, dtype=torch.float16)
+    v = torch.randn(hv, t, vdim, device=device, dtype=torch.float16)
+    gk = torch.randn(hv, t, kdim, device=device, dtype=torch.float32)
+    beta = torch.rand(hv, t, device=device, dtype=torch.float32)
+    try:
+        torch.ops.npu.npu_chunk_kda_fwd(
+            q,
+            k,
+            v,
+            gk,
+            beta,
+            kdim ** -0.5,
+            64,
+            layout="NTD",
+        )
+    except RuntimeError as exc:
+        assert "H and HV must be <= 128" in str(exc)
+    else:
+        raise AssertionError("head counts greater than 128 must be rejected")
 
 
 def test_chunk_kda_fwd_bnsd_direct_matches_reference():
@@ -395,6 +452,7 @@ def test_chunk_kda_fwd_bnsd_direct_matches_reference():
         beta_bns,
         scale,
         64,
+        layout="BNSD",
         initial_state=initial_state,
         output_final_state=True,
         return_intermediate=True,
@@ -446,6 +504,7 @@ def test_chunk_kda_fwd_ntd_direct_matches_reference():
         beta_nt,
         scale,
         64,
+        layout="NTD",
         initial_state=initial_state,
         output_final_state=True,
         return_intermediate=True,
@@ -497,6 +556,7 @@ def test_kda_gate_cumsum_default_and_fwd_integration():
         beta,
         scale,
         32,
+        layout="BSND",
         initial_state=initial_state,
         output_final_state=True,
         return_intermediate=False,
@@ -610,6 +670,8 @@ if __name__ == "__main__":
     test_chunk_kda_fwd_fp16_matches_reference()
     test_chunk_kda_fwd_tnd_matches_reference()
     test_chunk_kda_fwd_tnd_multi_head_rejected()
+    test_chunk_kda_fwd_lowercase_layout_rejected()
+    test_chunk_kda_fwd_head_num_gt128_rejected()
     test_kda_gate_cumsum_default_and_fwd_integration()
     test_kda_gate_cumsum_bnsd_direct_matches_reference()
     test_kda_gate_cumsum_ntd_direct_matches_reference()

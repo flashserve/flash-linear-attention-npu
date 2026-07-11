@@ -39,7 +39,7 @@ custom:
     op_api: all_version
   - func: npu_solve_tri(Tensor x, *, int[]? cu_seqlens=None, int[]? chunk_indices=None, str layout="bsnd") -> Tensor
     op_api: all_version
-  - func: npu_chunk_kda_fwd(Tensor q, Tensor k, Tensor v, Tensor gk, Tensor beta, float scale, int chunk_size, *, Tensor? initial_state=None, bool? output_final_state=False, int[]? cu_seqlens=None, int[]? chunk_indices=None, bool? return_intermediate=False, bool? safe_gate=False, bool? transpose_state_layout=False) -> (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor)
+  - func: npu_chunk_kda_fwd(Tensor q, Tensor k, Tensor v, Tensor gk, Tensor beta, float scale, int chunk_size, *, str layout="BSND", Tensor? initial_state=None, bool? output_final_state=False, int[]? cu_seqlens=None, int[]? chunk_indices=None, bool? return_intermediate=False, bool? safe_gate=False, bool? transpose_state_layout=False) -> (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor)
     op_api: all_version
   - func: npu_kda_gate_cumsum(Tensor g, int chunk_size, *, Tensor? A_log=None, Tensor? dt_bias=None, int[]? cu_seqlens=None, bool? use_gate_in_kernel=False, bool? safe_gate=False, float? lower_bound=None) -> Tensor
     op_api: all_version

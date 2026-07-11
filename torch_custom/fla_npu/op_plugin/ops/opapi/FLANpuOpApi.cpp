@@ -452,6 +452,7 @@ npu_chunk_kda_fwd(
     const at::Tensor &beta,
     double scale,
     int64_t chunk_size,
+    c10::string_view layout,
     const c10::optional<at::Tensor> &initial_state,
     c10::optional<bool> output_final_state,
     at::OptionalIntArrayRef cu_seqlens,
@@ -460,16 +461,23 @@ npu_chunk_kda_fwd(
     c10::optional<bool> safe_gate,
     c10::optional<bool> transpose_state_layout)
 {
+    std::string layout_str(layout.data(), layout.size());
+    TORCH_CHECK(layout_str == "BSND" || layout_str == "BNSD" || layout_str == "TND" || layout_str == "NTD",
+                "npu_chunk_kda_fwd: layout must be one of BSND, BNSD, TND, NTD and must be uppercase.");
     TORCH_CHECK(!safe_gate.value_or(false), "npu_chunk_kda_fwd: safe_gate=True is not supported.");
     TORCH_CHECK(!transpose_state_layout.value_or(false),
                 "npu_chunk_kda_fwd: transpose_state_layout=True is not supported.");
     TORCH_CHECK(chunk_size == 32 || chunk_size == 64 || chunk_size == 128,
                 "npu_chunk_kda_fwd: chunk_size must be 32, 64 or 128.");
-    bool is_rank3 = q.dim() == 3;
-    TORCH_CHECK((!is_rank3 && q.dim() == 4 && k.dim() == 4 && v.dim() == 4 && gk.dim() == 4 && beta.dim() == 3) ||
-                    (is_rank3 && k.dim() == 3 && v.dim() == 3 && gk.dim() == 3 && beta.dim() == 2),
-                "npu_chunk_kda_fwd: expected q/k/v/gk in BSND/BNSD rank4 with beta rank3, "
-                "or TND/NTD rank3 with beta rank2.");
+    bool is_tnd = layout_str == "TND";
+    bool is_ntd = layout_str == "NTD";
+    bool is_bsnd = layout_str == "BSND";
+    bool is_bnsd = layout_str == "BNSD";
+    bool is_rank3 = is_tnd || is_ntd;
+    TORCH_CHECK((is_rank3 && q.dim() == 3 && k.dim() == 3 && v.dim() == 3 && gk.dim() == 3 && beta.dim() == 2) ||
+                    (!is_rank3 && q.dim() == 4 && k.dim() == 4 && v.dim() == 4 && gk.dim() == 4 && beta.dim() == 3),
+                "npu_chunk_kda_fwd: layout/rank mismatch. TND/NTD require q/k/v/gk rank3 with beta rank2; "
+                "BSND/BNSD require q/k/v/gk rank4 with beta rank3.");
     TORCH_CHECK(q.sizes() == k.sizes(), "npu_chunk_kda_fwd: q and k must have identical shape.");
     auto is_gate_dtype = [](at::ScalarType dtype) {
         return dtype == at::kFloat || dtype == at::kBFloat16;
@@ -479,36 +487,6 @@ npu_chunk_kda_fwd(
 
     auto q_sizes = q.sizes();
     auto v_sizes = v.sizes();
-    bool is_bsnd = false;
-    bool is_bnsd = false;
-    bool is_tnd = false;
-    bool is_ntd = false;
-    if (is_rank3) {
-        is_tnd = v_sizes[0] == q_sizes[0] && gk.sizes()[0] == q_sizes[0] && beta.sizes()[0] == q_sizes[0] &&
-                 gk.sizes()[1] == v_sizes[1] && beta.sizes()[1] == v_sizes[1] && gk.sizes()[2] == q_sizes[2];
-        is_ntd = v_sizes[1] == q_sizes[1] && gk.sizes()[0] == v_sizes[0] && beta.sizes()[0] == v_sizes[0] &&
-                 gk.sizes()[1] == q_sizes[1] && beta.sizes()[1] == q_sizes[1] && gk.sizes()[2] == q_sizes[2];
-        if (is_tnd && is_ntd) {
-            is_ntd = q_sizes[0] <= q_sizes[1];
-            is_tnd = !is_ntd;
-        }
-    } else {
-        is_bsnd = v_sizes[0] == q_sizes[0] && v_sizes[1] == q_sizes[1] &&
-                  gk.sizes()[0] == q_sizes[0] && gk.sizes()[1] == q_sizes[1] &&
-                  beta.sizes()[0] == q_sizes[0] && beta.sizes()[1] == q_sizes[1] &&
-                  gk.sizes()[2] == v_sizes[2] && beta.sizes()[2] == v_sizes[2] && gk.sizes()[3] == q_sizes[3];
-        is_bnsd = v_sizes[0] == q_sizes[0] && v_sizes[2] == q_sizes[2] &&
-                  gk.sizes()[0] == q_sizes[0] && gk.sizes()[1] == v_sizes[1] &&
-                  beta.sizes()[0] == q_sizes[0] && beta.sizes()[1] == v_sizes[1] &&
-                  gk.sizes()[2] == q_sizes[2] && beta.sizes()[2] == q_sizes[2] && gk.sizes()[3] == q_sizes[3];
-        if (is_bsnd && is_bnsd) {
-            is_bnsd = q_sizes[1] <= q_sizes[2];
-            is_bsnd = !is_bnsd;
-        }
-    }
-    TORCH_CHECK(is_bsnd || is_bnsd || is_tnd || is_ntd,
-                "npu_chunk_kda_fwd: expected BSND [B,T,H,K], BNSD [B,H,T,K], "
-                "TND [T,H,K], or NTD [H,T,K] layout.");
 
     bool is_internal_layout = is_bnsd || is_ntd;
     int64_t B = is_rank3 ? 1 : q_sizes[0];
@@ -517,6 +495,7 @@ npu_chunk_kda_fwd(
     int64_t K = is_rank3 ? q_sizes[2] : q_sizes[3];
     int64_t HV = is_tnd ? v_sizes[1] : (is_ntd ? v_sizes[0] : (is_bnsd ? v_sizes[1] : v_sizes[2]));
     int64_t V = is_rank3 ? v_sizes[2] : v_sizes[3];
+    TORCH_CHECK(H <= 128 && HV <= 128, "npu_chunk_kda_fwd: H and HV must be <= 128.");
     TORCH_CHECK(!is_tnd || H == 1,
                 "npu_chunk_kda_fwd: TND layout with H > 1 is not supported; use NTD [H,T,D] layout "
                 "for multi-head rank3 input.");
@@ -604,12 +583,13 @@ npu_chunk_kda_fwd(
         at::empty({total_chunks, HV, K, V}, q.options())) : (is_internal_layout ?
         at::empty({B, HV, total_chunks, K, V}, q.options()) : at::empty({B, total_chunks, HV, K, V}, q.options()));
     const at::Tensor &initial_state_ = c10::value_or_else(initial_state, [] { return at::Tensor(); });
+    const char *layout_cstr = layout_str.c_str();
 
     EXEC_NPU_CMD_EXT(
         aclnnChunkKdaFwd,
         q, k, v, gk, beta, initial_state_,
         cu_seqlens, chunk_indices_for_call,
-        scale_, chunk_size_, recompute_output_final_state, total_chunks_,
+        layout_cstr, scale_, chunk_size_, recompute_output_final_state, total_chunks_,
         o, final_state_work, aqk, akk, w, u, qg, kg, v_new, h
     );
 

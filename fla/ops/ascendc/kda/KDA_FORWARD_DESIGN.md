@@ -92,6 +92,7 @@ torch.ops.npu.npu_chunk_kda_fwd(
     scale,
     chunk_size,
     *,
+    layout="BSND",
     initial_state=None,
     output_final_state=False,
     cu_seqlens=None,
@@ -101,6 +102,8 @@ torch.ops.npu.npu_chunk_kda_fwd(
     transpose_state_layout=False,
 )
 ```
+
+`layout` 是显式字符串参数，只接受全大写 `BSND`、`BNSD`、`TND`、`NTD`。默认值为 `BSND`，非 BSND 输入必须显式传入对应 layout；不再根据 shape 自动推导 layout。
 
 支持的内存排布（layout）语义：
 
@@ -113,7 +116,7 @@ torch.ops.npu.npu_chunk_kda_fwd(
 
 BNSD 和 NTD 是性能布局，适用于上游 causal conv 已经完成数据排布转换的流水线。BSND 和 TND 是兼容布局，进入 kernel 前通过 `KdaLayoutSwap12` 转成内部布局。
 
-当前 TND 兼容布局仅支持 `H=1` 的 rank3 输入。多 K head 的 rank3 输入必须使用 NTD 性能布局 `[H, T, D]`；host 侧会直接拦截 `TND && H>1`，避免进入 `fwd_h` kernel 后触发非法访存。
+当前 TND 兼容布局仅支持 `H=1` 的 rank3 输入。多 K head 的 rank3 输入必须使用 NTD 性能布局 `[H, T, D]`；host 侧会直接拦截 `layout=TND && H>1`，避免进入 `fwd_h` kernel 后触发非法访存。当前 `H/HV` 均要求不超过 128。
 
 支持的数据类型（dtype）语义：
 
@@ -141,7 +144,7 @@ o, final_state, g, Aqk, Akk, w, u, qg, kg, v_new, h, initial_state = \
 `aclnn_chunk_kda_fwd.cpp` 中的 L2 实现流程：
 
 1. 将所有输入处理为 contiguous。
-2. 根据 rank 和 shape 一致性推导 BSND/BNSD/TND/NTD。歧义场景优先选择 head 维更短的 layout。
+2. 校验显式 `layout` 参数和输入 rank/shape 是否一致，不做 layout 自动推导。
 3. 对 BNSD/NTD，NTD reshape 为 `[1, HV, T, D]` view 后直接进入 kernel，不触发布局转换。
 4. 对 BSND/TND，TND reshape 为 `[1, T, H, D]` 后通过 `KdaLayoutSwap12` 转成 BNSD。
 5. 如有需要，将 `gk/beta` cast 到 `fp32`。
@@ -202,7 +205,7 @@ ChunkKdaFwd stage 2:
 
 ```mermaid
 flowchart LR
-    In["输入: q/k/v/gk/beta<br/>initial_state/cu_seqlens/chunk_indices"] --> Prep["L2: contiguous + layout 推导"]
+    In["输入: q/k/v/gk/beta<br/>initial_state/cu_seqlens/chunk_indices/layout"] --> Prep["L2: contiguous + layout 校验"]
     Prep -->|BSND/TND| SwapIn["L0: KdaLayoutSwap12<br/>转 BNSD 内部布局"]
     Prep -->|BNSD/NTD| ViewIn["L2: Reshape/View<br/>直通 BNSD 内部布局"]
     SwapIn --> CastGate["L0: Cast<br/>gk/beta -> fp32"]
