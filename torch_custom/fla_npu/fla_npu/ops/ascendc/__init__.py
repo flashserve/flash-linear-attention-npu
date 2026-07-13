@@ -1,7 +1,7 @@
 """Ascend C backed FLA NPU operators.
 
-This module provides stable Python import paths and compatibility helpers for
-the legacy PyTorch dispatcher custom operators.
+This module provides stable Python import paths backed by direct pybind
+Ascend C calls plus compatibility helpers for the legacy PyTorch dispatcher.
 """
 
 from __future__ import annotations
@@ -70,6 +70,16 @@ def _get_torch_op(name: str):
     return _unwrap_legacy_torch_op(getattr(namespace, name))
 
 
+@functools.lru_cache(maxsize=None)
+def _get_direct_op(name: str):
+    import fla_npu
+
+    extension = fla_npu.load_ascendc_extension()
+    if not hasattr(extension, name):
+        raise AttributeError(f"fla_npu.custom_aclnn_extension_lib has no direct Ascend C op {name}.")
+    return getattr(extension, name)
+
+
 def _warn_legacy_torch_op(name: str) -> None:
     warnings.warn(
         _LEGACY_TORCH_OPS_WARNING.format(
@@ -128,13 +138,13 @@ class _LegacyTorchOpWarningWrapper:
 
 
 def _make_raw_wrapper(name: str) -> Callable:
-    @functools.wraps(_get_torch_op)
+    @functools.wraps(_get_direct_op)
     def wrapper(*args, **kwargs):
-        return _get_torch_op(name)(*args, **kwargs)
+        return _get_direct_op(name)(*args, **kwargs)
 
     wrapper.__name__ = name
     wrapper.__qualname__ = name
-    wrapper.__doc__ = f"Call torch.ops.npu.{name}."
+    wrapper.__doc__ = f"Call the direct Ascend C binding for {name}."
     return wrapper
 
 
@@ -163,12 +173,12 @@ class _FastGeluCustomFunction:
             @staticmethod
             def forward(ctx, self):
                 ctx.save_for_backward(self)
-                return _get_torch_op("npu_fast_gelu_custom")(self)
+                return _get_direct_op("npu_fast_gelu_custom")(self)
 
             @staticmethod
             def backward(ctx, grad):
                 (self,) = ctx.saved_tensors
-                return _get_torch_op("npu_fast_gelu_custom_backward")(grad, self)
+                return _get_direct_op("npu_fast_gelu_custom_backward")(grad, self)
 
         return Function.apply(input_tensor)
 
@@ -178,7 +188,7 @@ def fast_gelu_custom(input_tensor):
 
     if _has_tensor_requiring_grad(input_tensor):
         return _FastGeluCustomFunction.apply(input_tensor)
-    return _get_torch_op("npu_fast_gelu_custom")(input_tensor)
+    return _get_direct_op("npu_fast_gelu_custom")(input_tensor)
 
 
 def causal_conv1d(
@@ -211,7 +221,7 @@ def causal_conv1d(
         and _has_tensor_requiring_grad(x, weight, bias)
     )
     if not can_bind_backward:
-        return _get_torch_op("npu_causal_conv1d")(
+        return _get_direct_op("npu_causal_conv1d")(
             x=x,
             weight=weight,
             bias=bias,
@@ -231,7 +241,7 @@ def causal_conv1d(
     class Function(torch.autograd.Function):
         @staticmethod
         def forward(ctx, x_, weight_, bias_, conv_states_):
-            y = _get_torch_op("npu_causal_conv1d")(
+            y = _get_direct_op("npu_causal_conv1d")(
                 x=x_,
                 weight=weight_,
                 bias=bias_,
@@ -249,6 +259,7 @@ def causal_conv1d(
             ctx.has_bias = bias_ is not None
             if bias_ is not None:
                 tensors.append(bias_)
+            ctx.activation_mode = activation_mode
             ctx.save_for_backward(*tensors)
             return y
 
@@ -258,7 +269,7 @@ def causal_conv1d(
             x_ = saved.pop(0)
             weight_ = saved.pop(0)
             bias_ = saved.pop(0) if ctx.has_bias else None
-            dx, dw, db, _ = _get_torch_op("npu_causal_conv1d_bwd")(
+            dx, dw, db, _ = _get_direct_op("npu_causal_conv1d_bwd")(
                 x=x_,
                 y=None if ctx.activation_mode == 0 else None,
                 weight=weight_,

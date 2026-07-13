@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import ctypes
+import importlib
 import os
 import pathlib
 
 
 _PACKAGE_DIR = pathlib.Path(__file__).resolve().parent
 _DEFAULT_VENDOR_DIR = "fla_npu_transformer"
+_ASCENDC_EXTENSION_MODULE = None
+_ASCENDC_EXTENSION_LIBRARY: pathlib.Path | None = None
 _LEGACY_TORCH_OPS_LOADED = False
 _LEGACY_TORCH_OPS_LIBRARY: pathlib.Path | None = None
 
@@ -67,7 +70,7 @@ def _prepare_embedded_opp() -> pathlib.Path:
     if not (os.environ.get("ASCEND_HOME_PATH") or os.environ.get("ASCEND_OPP_PATH")):
         raise RuntimeError(
             "CANN environment is not initialized. Please source the CANN set_env.sh "
-            "before calling fla_npu.load_legacy_torch_ops()."
+            "before calling fla_npu Ascend C operators."
         )
 
     vendor_dir = _resolve_vendor_dir()
@@ -87,6 +90,13 @@ def _prepare_embedded_opp() -> pathlib.Path:
         ctypes.CDLL(str(op_api_alias), mode=mode)
     ctypes.CDLL(str(op_api_lib), mode=mode)
     return vendor_dir
+
+
+def _find_ascendc_extension_library() -> pathlib.Path:
+    so_files = list(_PACKAGE_DIR.glob("custom_aclnn_extension_lib*.so"))
+    if not so_files:
+        raise FileNotFoundError(f"not find custom_aclnn_extension_lib*.so in {_PACKAGE_DIR}")
+    return so_files[0].resolve()
 
 
 def _preload_library(path: pathlib.Path) -> None:
@@ -111,6 +121,24 @@ def _preload_torch_npu_dependencies(torch_module, torch_npu_module) -> None:
         _preload_library(lib_path)
 
 
+def load_ascendc_extension():
+    """Load the direct Ascend C Python extension without torch.ops dispatcher."""
+
+    global _ASCENDC_EXTENSION_MODULE, _ASCENDC_EXTENSION_LIBRARY
+    if _ASCENDC_EXTENSION_MODULE is not None:
+        return _ASCENDC_EXTENSION_MODULE
+
+    _prepare_embedded_opp()
+
+    import torch
+    import torch_npu
+
+    _preload_torch_npu_dependencies(torch, torch_npu)
+    _ASCENDC_EXTENSION_LIBRARY = _find_ascendc_extension_library()
+    _ASCENDC_EXTENSION_MODULE = importlib.import_module("fla_npu.custom_aclnn_extension_lib")
+    return _ASCENDC_EXTENSION_MODULE
+
+
 def load_legacy_torch_ops() -> pathlib.Path:
     """Load the legacy PyTorch dispatcher custom ops.
 
@@ -124,20 +152,10 @@ def load_legacy_torch_ops() -> pathlib.Path:
     if _LEGACY_TORCH_OPS_LOADED and _LEGACY_TORCH_OPS_LIBRARY is not None:
         return _LEGACY_TORCH_OPS_LIBRARY
 
-    _prepare_embedded_opp()
-
     import torch
-    import torch_npu
 
-    _preload_torch_npu_dependencies(torch, torch_npu)
-
-    so_dir = _PACKAGE_DIR
-    so_files = list(so_dir.glob('custom_aclnn_extension_lib*.so'))
-
-    if not so_files:
-        raise FileNotFoundError(f"not find custom_aclnn_extension_lib*.so in {so_dir}")
-
-    legacy_library = so_files[0].resolve()
+    load_ascendc_extension()
+    legacy_library = _ASCENDC_EXTENSION_LIBRARY or _find_ascendc_extension_library()
     torch.ops.load_library(str(legacy_library))
     from .ops.ascendc import install_legacy_torch_ops_warning, install_torch_npu_ops_compat
 
@@ -152,4 +170,4 @@ def is_legacy_torch_ops_loaded() -> bool:
     return _LEGACY_TORCH_OPS_LOADED
 
 
-__all__ = ["is_legacy_torch_ops_loaded", "load_legacy_torch_ops"]
+__all__ = ["is_legacy_torch_ops_loaded", "load_ascendc_extension", "load_legacy_torch_ops"]
