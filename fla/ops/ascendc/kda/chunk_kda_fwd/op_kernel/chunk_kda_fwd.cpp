@@ -242,14 +242,7 @@ public:
             ProcessPostAiv();
             return;
         }
-        isAivOnly_ = true;
-        uint64_t taskNum = static_cast<uint64_t>(N_ * HV_);
-        uint64_t blockNum = static_cast<uint64_t>(GetBlockNum());
-        for (uint64_t task = GetBlockIdx(); task < taskNum; task += blockNum) {
-            uint64_t seq = task / HV_;
-            uint64_t hv = task % HV_;
-            ProcessSeqHeadAiv(seq, hv);
-        }
+        return;
     }
 
     __aicore__ inline void ProcessAiv()
@@ -266,23 +259,7 @@ public:
             ProcessPostAiv();
             return;
         }
-        if constexpr (IsSameType<T, float>::value) {
-            ProcessAivOnly();
-        } else {
-            isAivOnly_ = false;
-            uint64_t subBlockNum = static_cast<uint64_t>(GetSubBlockNum());
-            if (subBlockNum == 0) {
-                return;
-            }
-            uint64_t taskNum = static_cast<uint64_t>(N_ * HV_);
-            uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
-            uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
-            for (uint64_t task = coreIdx; task < taskNum; task += coreNum) {
-                uint64_t seq = task / HV_;
-                uint64_t hv = task % HV_;
-                ProcessSeqHeadAiv(seq, hv);
-            }
-        }
+        return;
     }
 
     __aicore__ inline void ProcessAic()
@@ -299,17 +276,7 @@ public:
             ProcessPostAic();
             return;
         }
-        if constexpr (IsSameType<T, float>::value) {
-            return;
-        } else {
-            uint64_t taskNum = static_cast<uint64_t>(N_ * HV_);
-            uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
-            for (uint64_t task = GetBlockIdx(); task < taskNum; task += coreNum) {
-                uint64_t seq = task / HV_;
-                uint64_t hv = task % HV_;
-                ProcessSeqHeadAic(seq, hv);
-            }
-        }
+        return;
     }
 
 private:
@@ -1037,44 +1004,6 @@ private:
             ComputeGateProductRow(qFp32, kFp32, gFp32, refFp32, expFp32, outFp32, useRef, zeroKg);
         }
         StoreGateProductRow(b, hv, GateProductToken(start, rowCount - 1, subBlockIdx, subBlockNum));
-        SetFlag<HardEvent::MTE3_MTE2>(KDA_MTE3_MTE2_EVENT_ID);
-        WaitFlag<HardEvent::MTE3_MTE2>(KDA_MTE3_MTE2_EVENT_ID);
-    }
-
-    __aicore__ inline void ComputeRawAqkAkkScalar(uint64_t b, uint64_t h, uint64_t hv, uint64_t start, uint64_t curT)
-    {
-        for (uint64_t i = 0; i < curT; ++i) {
-            uint64_t ti = start + i;
-            float aqkRow[EXP2_UB_ELEMENTS];
-            float akkRow[EXP2_UB_ELEMENTS];
-            for (uint64_t j = 0; j < BT_; ++j) {
-                aqkRow[j] = 0.0f;
-                akkRow[j] = 0.0f;
-            }
-            for (uint64_t j = 0; j < curT; ++j) {
-                if (j > i) {
-                    continue;
-                }
-                uint64_t tj = start + j;
-                float aqkRaw = 0.0f;
-                float akkRaw = 0.0f;
-                LocalTensor<float> gateLocal = Exp2GDiff(b, hv, ti, tj);
-                __ubuf__ float *gatePtr = UbPtr(gateLocal);
-                for (uint64_t d = 0; d < K_; ++d) {
-                    float qi = ReadAsFloat(q_, QOffset(b, h, ti, d));
-                    float ki = ReadAsFloat(k_, QOffset(b, h, ti, d));
-                    float kj = ReadAsFloat(k_, QOffset(b, h, tj, d));
-                    aqkRaw += qi * kj * gatePtr[d];
-                    akkRaw += ki * kj * gatePtr[d];
-                }
-                aqkRow[j] = aqkRaw;
-                if (j < i) {
-                    akkRow[j] = akkRaw;
-                }
-            }
-            CopyStackFloatRowOut(aqk_, AOffset(b, hv, ti, 0), aqkRow, BT_, 0);
-            CopyStackFloatRowOut(akk_, AOffset(b, hv, ti, 0), akkRow, BT_, 1);
-        }
         SetFlag<HardEvent::MTE3_MTE2>(KDA_MTE3_MTE2_EVENT_ID);
         WaitFlag<HardEvent::MTE3_MTE2>(KDA_MTE3_MTE2_EVENT_ID);
     }
@@ -2094,16 +2023,11 @@ private:
         }
 
         if constexpr (IsSameType<T, float>::value) {
-            PrepareGateProducts(b, h, hv, start, curT, 0, 1);
-            ComputeRawAqkAkkScalar(b, h, hv, start, curT);
+            return;
         } else {
             uint64_t subBlockIdx = isAivOnly_ ? 0 : static_cast<uint64_t>(GetSubBlockIdx());
             if (K_ < 16) {
-                if (!isAivOnly_ && subBlockIdx != 0) {
-                    return;
-                }
-                PrepareGateProducts(b, h, hv, start, curT, 0, 1);
-                ComputeRawAqkAkkScalar(b, h, hv, start, curT);
+                return;
             } else {
                 if (subBlockIdx == 0) {
                     PrepareGateProducts(b, h, hv, start, curT, 0, 1);
@@ -2423,21 +2347,10 @@ private:
             return;
         }
         if constexpr (IsSameType<T, float>::value) {
-            PrepareGateProducts(b, h, hv, start, curT, 0, 1);
-            ComputeRawAqkAkkScalar(b, h, hv, start, curT);
-            FinalizeAqkAkk(b, hv, start, curT);
-            ComputePostKgWUVec(b, h, hv, chunkIdx, start, curT);
             return;
         }
 
         if (K_ < 16) {
-            if (subBlockIdx != 0) {
-                return;
-            }
-            PrepareGateProducts(b, h, hv, start, curT, 0, 1);
-            ComputeRawAqkAkkScalar(b, h, hv, start, curT);
-            FinalizeAqkAkk(b, hv, start, curT);
-            ComputePostKgWUVec(b, h, hv, chunkIdx, start, curT);
             return;
         }
         bool usePostWuCube = UsePostWuCube(curT);

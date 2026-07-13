@@ -2,6 +2,7 @@
 
 import os
 import pathlib
+import subprocess
 import sys
 
 import torch
@@ -138,7 +139,7 @@ def _make_model_shape_kda_dump(case=None, dump_path=None):
     return dump_path
 
 
-def _make_inputs(device, b=1, h=2, hv=2, t=64, kdim=32, vdim=64, dtype=torch.float32):
+def _make_inputs(device, b=1, h=2, hv=2, t=64, kdim=128, vdim=128, dtype=torch.bfloat16):
     torch.manual_seed(1234 + b + h + hv + t + kdim + vdim)
     q = (torch.randn(b, t, h, kdim, dtype=dtype) * 0.08).to(device).requires_grad_(True)
     k = (torch.randn(b, t, h, kdim, dtype=dtype) * 0.08).to(device).requires_grad_(True)
@@ -359,7 +360,7 @@ def test_chunk_kda_fwd_from_dump_with_stats(dump_path: str, device_id=None):
 
 def test_chunk_kda_fwd_matches_reference():
     device = _device()
-    q, k, v, gk, beta, initial_state = _make_inputs(device, h=1, hv=1, t=8, kdim=8, vdim=8)
+    q, k, v, gk, beta, initial_state = _make_inputs(device, h=1, hv=1, t=16)
     scale = q.shape[-1] ** -0.5
 
     got = torch.ops.npu.npu_chunk_kda_fwd(
@@ -387,16 +388,16 @@ def test_chunk_kda_fwd_matches_reference():
         output_final_state=True,
     )
 
-    _assert_close("o", got[0], ref.o)
-    _assert_close("final_state", got[1], ref.final_state)
+    _assert_close("o", got[0], ref.o, rtol=2e-2, atol=2e-2)
+    _assert_close("final_state", got[1], ref.final_state, rtol=2e-2, atol=2e-2)
     _assert_close("g", got[2], gk)
-    _assert_close("Aqk", got[3], ref.Aqk)
-    _assert_close("Akk", got[4], ref.Akk)
-    _assert_close("w", got[5], ref.w)
-    _assert_close("u", got[6], ref.u)
-    _assert_close("qg", got[7], ref.qg)
-    _assert_close("kg", got[8], ref.kg)
-    _assert_close("v_new", got[9], ref.v_new)
+    _assert_close("Aqk", got[3], ref.Aqk, rtol=2e-2, atol=2e-2)
+    _assert_close("Akk", got[4], ref.Akk, rtol=2e-2, atol=2e-2)
+    _assert_close("w", got[5], ref.w, rtol=2e-2, atol=2e-2)
+    _assert_close("u", got[6], ref.u, rtol=2e-2, atol=2e-2)
+    _assert_close("qg", got[7], ref.qg, rtol=2e-2, atol=2e-2)
+    _assert_close("kg", got[8], ref.kg, rtol=2e-2, atol=2e-2)
+    _assert_close("v_new", got[9], ref.v_new, rtol=2e-2, atol=2e-2)
     _assert_close("initial_state", got[11], initial_state)
 
 
@@ -470,47 +471,38 @@ def test_chunk_kda_fwd_upper_triangle_dirty_zero():
     torch.testing.assert_close(akk_ref[diag, diag], torch.ones(t), rtol=0, atol=0)
 
 
-def test_chunk_kda_fwd_chunk128_v128_gva_varlen():
+def test_chunk_kda_fwd_chunk128_rejected_as_unsupported():
     device = _device()
-    q, k, v, gk, beta, _ = _make_inputs(device, h=1, hv=2, t=16, kdim=8, vdim=128)
+    if device.type == "cpu":
+        return
+    q, k, v, gk, beta, _ = _make_inputs(device, h=1, hv=2, t=16)
     scale = q.shape[-1] ** -0.5
     cu_seqlens = [0, 6, 16]
-
-    got = torch.ops.npu.npu_chunk_kda_fwd(
-        q,
-        k,
-        v,
-        gk,
-        beta,
-        scale,
-        128,
-        layout="BSND",
-        output_final_state=True,
-        cu_seqlens=cu_seqlens,
-        return_intermediate=False,
-    )
-    ref = chunk_kda_forward_reference(
-        q.detach().cpu(),
-        k.detach().cpu(),
-        v.detach().cpu(),
-        gk.detach().cpu(),
-        beta.detach().cpu(),
-        scale=scale,
-        chunk_size=128,
-        output_final_state=True,
-        cu_seqlens=torch.tensor(cu_seqlens, dtype=torch.int64),
-    )
-    _assert_close("o chunk128 v128 gva varlen", got[0], ref.o, rtol=3e-3, atol=3e-3)
-    _assert_close("final_state chunk128 v128 gva varlen", got[1], ref.final_state, rtol=3e-3, atol=3e-3)
-    _assert_close("g chunk128 v128 gva varlen", got[2], gk)
-    assert got[11].numel() == 0
+    try:
+        torch.ops.npu.npu_chunk_kda_fwd(
+            q,
+            k,
+            v,
+            gk,
+            beta,
+            scale,
+            128,
+            layout="BSND",
+            output_final_state=True,
+            cu_seqlens=cu_seqlens,
+            return_intermediate=False,
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("chunk_size != 64 must be rejected as an unsupported KDA forward path")
 
 
 def test_chunk_kda_fwd_varlen_initial_state_shape_rejected():
     device = _device()
     if device.type == "cpu":
         return
-    q, k, v, gk, beta, bad_initial_state = _make_inputs(device, h=1, hv=2, t=16, kdim=8, vdim=32)
+    q, k, v, gk, beta, bad_initial_state = _make_inputs(device, h=1, hv=2, t=16)
     scale = q.shape[-1] ** -0.5
     cu_seqlens = [0, 6, 16]
     try:
@@ -533,43 +525,30 @@ def test_chunk_kda_fwd_varlen_initial_state_shape_rejected():
         raise AssertionError("varlen initial_state with mismatched seq_num should be rejected")
 
 
-def test_chunk_kda_fwd_bf16_chunk32_matches_reference():
+def test_chunk_kda_fwd_bf16_chunk32_rejected_as_unsupported():
     device = _device()
     if device.type == "cpu":
         return
-    q, k, v, gk, beta, initial_state = _make_inputs(
-        device, h=1, hv=1, t=8, kdim=8, vdim=32, dtype=torch.bfloat16
-    )
+    q, k, v, gk, beta, initial_state = _make_inputs(device, h=1, hv=1, t=8, dtype=torch.bfloat16)
     scale = q.shape[-1] ** -0.5
-
-    got = torch.ops.npu.npu_chunk_kda_fwd(
-        q,
-        k,
-        v,
-        gk,
-        beta,
-        scale,
-        32,
-        layout="BSND",
-        initial_state=initial_state,
-        output_final_state=True,
-        return_intermediate=False,
-    )
-    ref = chunk_kda_forward_reference(
-        q.detach().cpu(),
-        k.detach().cpu(),
-        v.detach().cpu(),
-        gk.detach().cpu(),
-        beta.detach().cpu(),
-        scale=scale,
-        chunk_size=32,
-        initial_state=initial_state.detach().cpu(),
-        output_final_state=True,
-    )
-    _assert_close("o bf16 chunk32", got[0], ref.o, rtol=2e-2, atol=2e-2)
-    _assert_close("final_state bf16 chunk32", got[1], ref.final_state, rtol=2e-2, atol=2e-2)
-    _assert_close("g bf16 chunk32", got[2], gk)
-    _assert_close("initial_state bf16 chunk32", got[11], initial_state)
+    try:
+        torch.ops.npu.npu_chunk_kda_fwd(
+            q,
+            k,
+            v,
+            gk,
+            beta,
+            scale,
+            32,
+            layout="BSND",
+            initial_state=initial_state,
+            output_final_state=True,
+            return_intermediate=False,
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("chunk_size != 64 must be rejected as an unsupported KDA forward path")
 
 
 def test_chunk_kda_fwd_bf16_gate_matches_reference():
@@ -577,7 +556,7 @@ def test_chunk_kda_fwd_bf16_gate_matches_reference():
     if device.type == "cpu":
         return
     q, k, v, gk, beta, initial_state = _make_inputs(
-        device, h=1, hv=1, t=8, kdim=8, vdim=32, dtype=torch.float16
+        device, h=1, hv=1, t=8, dtype=torch.float16
     )
     gk_bf16 = gk.detach().to(torch.bfloat16).requires_grad_(True)
     beta_bf16 = beta.detach().to(torch.bfloat16).requires_grad_(True)
@@ -618,7 +597,7 @@ def test_chunk_kda_fwd_fp16_matches_reference():
     if device.type == "cpu":
         return
     q, k, v, gk, beta, initial_state = _make_inputs(
-        device, h=1, hv=1, t=8, kdim=8, vdim=32, dtype=torch.float16
+        device, h=1, hv=1, t=8, dtype=torch.float16
     )
     scale = q.shape[-1] ** -0.5
 
@@ -661,7 +640,7 @@ def test_chunk_kda_fwd_fp16_matches_reference():
 
 def test_chunk_kda_fwd_tnd_matches_reference():
     device = _device()
-    q, k, v, gk, beta, initial_state = _make_inputs(device, b=1, h=1, hv=2, t=8, kdim=8, vdim=16)
+    q, k, v, gk, beta, initial_state = _make_inputs(device, b=1, h=1, hv=2, t=8)
     scale = q.shape[-1] ** -0.5
 
     got = torch.ops.npu.npu_chunk_kda_fwd(
@@ -689,17 +668,17 @@ def test_chunk_kda_fwd_tnd_matches_reference():
         output_final_state=True,
     )
 
-    _assert_close("o tnd", got[0], ref.o.squeeze(0))
-    _assert_close("final_state tnd", got[1], ref.final_state)
-    _assert_close("g tnd", got[2], gk.squeeze(0))
-    _assert_close("Aqk tnd", got[3], ref.Aqk.squeeze(0))
-    _assert_close("Akk tnd", got[4], ref.Akk.squeeze(0))
-    _assert_close("w tnd", got[5], ref.w.squeeze(0))
-    _assert_close("u tnd", got[6], ref.u.squeeze(0))
-    _assert_close("qg tnd", got[7], ref.qg.squeeze(0))
-    _assert_close("kg tnd", got[8], ref.kg.squeeze(0))
-    _assert_close("v_new tnd", got[9], ref.v_new.squeeze(0))
-    _assert_close("h tnd", got[10], ref.h.squeeze(0))
+    _assert_close("o tnd", got[0], ref.o.squeeze(0), rtol=2e-2, atol=2e-2)
+    _assert_close("final_state tnd", got[1], ref.final_state, rtol=2e-2, atol=2e-2)
+    _assert_close("g tnd", got[2], gk.squeeze(0), rtol=2e-2, atol=2e-2)
+    _assert_close("Aqk tnd", got[3], ref.Aqk.squeeze(0), rtol=2e-2, atol=2e-2)
+    _assert_close("Akk tnd", got[4], ref.Akk.squeeze(0), rtol=2e-2, atol=2e-2)
+    _assert_close("w tnd", got[5], ref.w.squeeze(0), rtol=2e-2, atol=2e-2)
+    _assert_close("u tnd", got[6], ref.u.squeeze(0), rtol=2e-2, atol=2e-2)
+    _assert_close("qg tnd", got[7], ref.qg.squeeze(0), rtol=2e-2, atol=2e-2)
+    _assert_close("kg tnd", got[8], ref.kg.squeeze(0), rtol=2e-2, atol=2e-2)
+    _assert_close("v_new tnd", got[9], ref.v_new.squeeze(0), rtol=2e-2, atol=2e-2)
+    _assert_close("h tnd", got[10], ref.h.squeeze(0), rtol=2e-2, atol=2e-2)
     _assert_close("initial_state tnd", got[11], initial_state)
 
 
@@ -707,7 +686,7 @@ def test_chunk_kda_fwd_tnd_multi_head_rejected():
     device = _device()
     if device.type == "cpu":
         return
-    t, h, hv, kdim, vdim = 128, 2, 2, 8, 16
+    t, h, hv, kdim, vdim = 128, 2, 2, 128, 128
     q = torch.randn(t, h, kdim, device=device, dtype=torch.float16)
     k = torch.randn(t, h, kdim, device=device, dtype=torch.float16)
     v = torch.randn(t, hv, vdim, device=device, dtype=torch.float16)
@@ -735,7 +714,7 @@ def test_chunk_kda_fwd_lowercase_layout_rejected():
     device = _device()
     if device.type == "cpu":
         return
-    q, k, v, gk, beta, _ = _make_inputs(device, h=1, hv=1, t=8, kdim=8, vdim=8)
+    q, k, v, gk, beta, _ = _make_inputs(device, h=1, hv=1, t=8)
     try:
         torch.ops.npu.npu_chunk_kda_fwd(
             q,
@@ -757,7 +736,7 @@ def test_chunk_kda_fwd_head_num_gt128_rejected():
     device = _device()
     if device.type == "cpu":
         return
-    h, hv, t, kdim, vdim = 129, 129, 4, 8, 8
+    h, hv, t, kdim, vdim = 129, 129, 4, 128, 128
     q = torch.randn(h, t, kdim, device=device, dtype=torch.float16)
     k = torch.randn(h, t, kdim, device=device, dtype=torch.float16)
     v = torch.randn(hv, t, vdim, device=device, dtype=torch.float16)
@@ -775,7 +754,7 @@ def test_chunk_kda_fwd_head_num_gt128_rejected():
             layout="NTD",
         )
     except RuntimeError as exc:
-        assert "H and HV must be <= 128" in str(exc)
+        assert "H and HV must be <= 128" in str(exc) or "H and HV must be less than or equal to 128" in str(exc)
     else:
         raise AssertionError("head counts greater than 128 must be rejected")
 
@@ -784,8 +763,7 @@ def test_chunk_kda_fwd_bnsd_direct_matches_reference():
     device = _device()
     if device.type == "cpu":
         return
-    q, k, v, gk, beta, initial_state = _make_inputs(device, b=1, h=1, hv=2, t=16, kdim=16, vdim=32,
-                                                    dtype=torch.float16)
+    q, k, v, gk, beta, initial_state = _make_inputs(device, b=1, h=1, hv=2, t=16, dtype=torch.float16)
     scale = q.shape[-1] ** -0.5
     q_bnsd = q.permute(0, 2, 1, 3).contiguous()
     k_bnsd = k.permute(0, 2, 1, 3).contiguous()
@@ -836,8 +814,7 @@ def test_chunk_kda_fwd_ntd_direct_matches_reference():
     device = _device()
     if device.type == "cpu":
         return
-    q, k, v, gk, beta, initial_state = _make_inputs(device, b=1, h=1, hv=2, t=16, kdim=16, vdim=32,
-                                                    dtype=torch.float16)
+    q, k, v, gk, beta, initial_state = _make_inputs(device, b=1, h=1, hv=2, t=16, dtype=torch.float16)
     scale = q.shape[-1] ** -0.5
     q_ntd = q.squeeze(0).permute(1, 0, 2).contiguous()
     k_ntd = k.squeeze(0).permute(1, 0, 2).contiguous()
@@ -888,12 +865,10 @@ def test_kda_gate_cumsum_default_and_fwd_integration():
     device = _device()
     if device.type == "cpu":
         return
-    q, k, v, _, beta, initial_state = _make_inputs(
-        device, h=1, hv=2, t=40, kdim=8, vdim=16, dtype=torch.float16
-    )
-    g_step = (torch.randn(1, 40, 2, 8, dtype=torch.bfloat16) * 0.001).to(device)
-    gk = torch.ops.npu.npu_kda_gate_cumsum(g_step, 32)
-    ref_gk = _kda_gate_cumsum_reference(g_step.detach().cpu(), 32)
+    q, k, v, _, beta, initial_state = _make_inputs(device, h=1, hv=2, t=40, dtype=torch.float16)
+    g_step = (torch.randn(1, 40, 2, 128, dtype=torch.bfloat16) * 0.001).to(device)
+    gk = torch.ops.npu.npu_kda_gate_cumsum(g_step, 64)
+    ref_gk = _kda_gate_cumsum_reference(g_step.detach().cpu(), 64)
     _assert_close("gate cumsum default", gk, ref_gk, rtol=2e-3, atol=2e-3)
 
     scale = q.shape[-1] ** -0.5
@@ -904,7 +879,7 @@ def test_kda_gate_cumsum_default_and_fwd_integration():
         gk,
         beta,
         scale,
-        32,
+        64,
         layout="BSND",
         initial_state=initial_state,
         output_final_state=True,
@@ -917,7 +892,7 @@ def test_kda_gate_cumsum_default_and_fwd_integration():
         ref_gk,
         beta.detach().cpu(),
         scale=scale,
-        chunk_size=32,
+        chunk_size=64,
         initial_state=initial_state.detach().cpu(),
         output_final_state=True,
     )
@@ -925,6 +900,50 @@ def test_kda_gate_cumsum_default_and_fwd_integration():
     _assert_close("gate cumsum fwd state", got[1], ref.final_state, rtol=2e-2, atol=2e-2)
     _assert_close("gate cumsum fwd g", got[2], gk, rtol=2e-2, atol=2e-2)
     _assert_close("gate cumsum fwd initial_state", got[11], initial_state)
+
+
+def test_chunk_kda_fwd_small_k_rejected_as_unsupported():
+    device = _device()
+    if device.type == "cpu":
+        return
+    q, k, v, gk, beta, _ = _make_inputs(device, h=1, hv=1, t=8, kdim=8, vdim=128, dtype=torch.float16)
+    try:
+        torch.ops.npu.npu_chunk_kda_fwd(
+            q,
+            k,
+            v,
+            gk,
+            beta,
+            q.shape[-1] ** -0.5,
+            64,
+            layout="BSND",
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("K < 16 must be rejected as an unsupported KDA forward path")
+
+
+def test_chunk_kda_fwd_float_q_rejected_as_unsupported():
+    device = _device()
+    if device.type == "cpu":
+        return
+    q, k, v, gk, beta, _ = _make_inputs(device, h=1, hv=1, t=8, dtype=torch.float32)
+    try:
+        torch.ops.npu.npu_chunk_kda_fwd(
+            q,
+            k,
+            v,
+            gk,
+            beta,
+            q.shape[-1] ** -0.5,
+            64,
+            layout="BSND",
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("float q/k/v must be rejected as an unsupported KDA forward path")
 
 
 def test_kda_gate_cumsum_bnsd_direct_matches_reference():
@@ -1010,20 +1029,37 @@ def test_kda_gate_cumsum_safe_gate_multitask_last_row_matches_reference():
     _assert_close("gate cumsum safe multitask", got, ref, rtol=2e-3, atol=2e-3)
 
 
+def _run_single_test_in_subprocess(name):
+    subprocess.run([sys.executable, __file__, "--single-test", name], check=True)
+
+
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--single-test":
+        globals()[sys.argv[2]]()
+        raise SystemExit(0)
+
     test_chunk_kda_fwd_matches_reference()
-    test_chunk_kda_fwd_chunk128_v128_gva_varlen()
-    test_chunk_kda_fwd_varlen_initial_state_shape_rejected()
-    test_chunk_kda_fwd_bf16_chunk32_matches_reference()
     test_chunk_kda_fwd_bf16_gate_matches_reference()
     test_chunk_kda_fwd_fp16_matches_reference()
     test_chunk_kda_fwd_tnd_matches_reference()
-    test_chunk_kda_fwd_tnd_multi_head_rejected()
-    test_chunk_kda_fwd_lowercase_layout_rejected()
-    test_chunk_kda_fwd_head_num_gt128_rejected()
+    test_chunk_kda_fwd_bnsd_direct_matches_reference()
+    test_chunk_kda_fwd_ntd_direct_matches_reference()
     test_kda_gate_cumsum_default_and_fwd_integration()
     test_kda_gate_cumsum_bnsd_direct_matches_reference()
     test_kda_gate_cumsum_ntd_direct_matches_reference()
     test_kda_gate_cumsum_safe_gate_matches_reference()
     test_kda_gate_cumsum_safe_gate_multitask_last_row_matches_reference()
+    test_chunk_kda_fwd_upper_triangle_dirty_zero()
     test_chunk_kda_fwd_model_shape_with_stats()
+
+    for negative_test in (
+        "test_chunk_kda_fwd_chunk128_rejected_as_unsupported",
+        "test_chunk_kda_fwd_varlen_initial_state_shape_rejected",
+        "test_chunk_kda_fwd_bf16_chunk32_rejected_as_unsupported",
+        "test_chunk_kda_fwd_tnd_multi_head_rejected",
+        "test_chunk_kda_fwd_lowercase_layout_rejected",
+        "test_chunk_kda_fwd_head_num_gt128_rejected",
+        "test_chunk_kda_fwd_small_k_rejected_as_unsupported",
+        "test_chunk_kda_fwd_float_q_rejected_as_unsupported",
+    ):
+        _run_single_test_in_subprocess(negative_test)

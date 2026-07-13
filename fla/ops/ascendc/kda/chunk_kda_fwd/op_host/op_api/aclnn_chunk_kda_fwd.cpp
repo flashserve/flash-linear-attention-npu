@@ -310,6 +310,19 @@ aclnnStatus KdaFwdCheckParams(const ChunkKdaFwdParams &params)
     return ACLNN_SUCCESS;
 }
 
+bool KdaFwdSplitCubePathSupported(const ChunkKdaFwdParams &params, int64_t kDim, int64_t vDim)
+{
+    auto qDtype = params.q->GetDataType();
+    auto kDtype = params.k->GetDataType();
+    auto vDtype = params.v->GetDataType();
+    bool dataDtypeSupported = (qDtype == DataType::DT_FLOAT16 || qDtype == DataType::DT_BF16) &&
+                              kDtype == qDtype && vDtype == qDtype;
+    return dataDtypeSupported &&
+           params.chunkSize == 64 && kDim >= 16 && vDim >= 16 &&
+           kDim % 16 == 0 && vDim % 16 == 0 && vDim <= 128 &&
+           kDim * vDim >= 8192;
+}
+
 aclnnStatus KdaFwdParamsDataContiguous(ChunkKdaFwdParams &params, aclOpExecutor *executor)
 {
     CHECK_RET(KdaFwdDataContiguous(params.q, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -394,6 +407,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     CHECK_RET(KdaFwdCheckStateShape(params.finalStateOut, "finalStateOut", seqNum, hvNum, kDim, vDim) ==
                   ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
+    CHECK_COND(KdaFwdSplitCubePathSupported(params, kDim, vDim), ACLNN_ERR_PARAM_INVALID,
+               "npu_chunk_kda_fwd only supports the AscendC split cube/vector path: q/k/v dtype must be the same "
+               "fp16/bf16 type, chunkSize must be 64, K/V must be multiples of 16, V must be <= 128, "
+               "and K*V must be >= 8192.");
 
     const aclTensor *qBsnd = params.q;
     const aclTensor *kBsnd = params.k;
@@ -513,8 +530,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     }
 
     std::array<const aclTensor *, 10> result;
-    bool useSplitForward = params.q->GetDataType() != DataType::DT_FLOAT && params.chunkSize == 64 &&
-                           kDim * vDim >= 8192;
+    bool useSplitForward = true;
     int debugStopAfter = KdaFwdDebugStopAfter();
     const aclTensor *oComputeBnsd = oBnsd;
     const aclTensor *aqkComputeBnst = aqkBnst;
@@ -758,12 +774,6 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
                 }
             }
         }
-    } else {
-        result = l0op::ChunkKdaFwd(qBnsd, kBnsd, vBnsd, gkBnsd, betaBns, params.initialStateOptional,
-                                   params.cuSeqlensOptional, params.chunkIndicesOptional, nullptr, nullptr, nullptr,
-                                   nullptr, params.scale, params.chunkSize, params.outputFinalState,
-                                   params.totalChunks, 0, oBnsd, params.finalStateOut, aqkBnst, akkBnst, wBnsd,
-                                   uBnsd, qgBnsd, kgBnsd, vNewBnsd, hBnst, executorPtr);
     }
     for (auto tensor : result) {
         CHECK_RET(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR);
