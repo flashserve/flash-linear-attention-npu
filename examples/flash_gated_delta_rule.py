@@ -469,6 +469,115 @@ def _cumsum_block_t(g: torch.Tensor, chunk_size: int) -> int:
     return _next_power_of_2((1 << 17) // max(1, h * int(chunk_size)))
 
 
+def _chunk_tensor_for_block_t(
+    chunk_indices: Optional[Dict[str, Optional[torch.LongTensor]] | torch.LongTensor],
+    block_t: int,
+) -> Optional[torch.LongTensor]:
+    if chunk_indices is None:
+        return None
+    if isinstance(chunk_indices, dict):
+        return chunk_indices.get(str(block_t))
+    return chunk_indices
+
+
+def _has_npu_op(name: str) -> bool:
+    return hasattr(torch.ops.npu, name)
+
+
+def _chunk_local_cumsum_ascendc(
+    g: torch.Tensor,
+    chunk_size: int,
+    reverse: bool = False,
+    scale: Optional[float] = None,
+    cu_seqlens: Optional[torch.LongTensor] = None,
+    chunk_indices_out: Optional[Dict[str, Optional[torch.LongTensor]] | torch.LongTensor] = None,
+) -> torch.Tensor:
+    if g.ndim != 3:
+        raise ValueError(f"npu_chunk_local_cumsum wrapper expects [B, T, H], got {tuple(g.shape)}.")
+
+    block_t = _cumsum_block_t(g, chunk_size)
+    chunk_indices_tensor = _chunk_tensor_for_block_t(chunk_indices_out, block_t)
+    if cu_seqlens is not None and chunk_indices_tensor is None:
+        chunk_indices_tensor = prepare_chunk_indices(cu_seqlens, block_t)
+
+    out = torch.ops.npu.npu_chunk_local_cumsum(
+        g.transpose(1, 2).contiguous().float(),
+        chunk_size,
+        cu_seqlens=cu_seqlens,
+        chunk_indices_out=chunk_indices_tensor,
+        reverse=reverse,
+        scale=1.0 if scale is None else float(scale),
+        head_first=True,
+        output_dtype="float32",
+    )
+    return out.transpose(1, 2).contiguous()
+
+
+def _chunk_scaled_dot_kkt_ascendc(
+    k: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    *,
+    chunk_size: int,
+) -> torch.Tensor:
+    # AscendC op uses head-first [B, H, T, K] / [B, H, T]; example keeps [B, T, H] / [B, T, H, BT].
+    g_hf = g.transpose(1, 2).contiguous().float()
+    beta_hf = beta.transpose(1, 2).contiguous().float()
+    a_hf = torch.ops.npu.npu_chunk_scaled_dot_kkt(k, g_hf, beta_hf, chunk_size=chunk_size)
+    return a_hf.transpose(1, 2).contiguous()
+
+
+def chunk_local_cumsum_auto(
+    g: torch.Tensor,
+    chunk_size: int,
+    reverse: bool = False,
+    scale: Optional[float] = None,
+    cu_seqlens: Optional[torch.LongTensor] = None,
+    chunk_indices_out: Optional[Dict[str, Optional[torch.LongTensor]] | torch.LongTensor] = None,
+) -> torch.Tensor:
+    if _has_npu_op("npu_chunk_local_cumsum"):
+        return _chunk_local_cumsum_ascendc(
+            g,
+            chunk_size=chunk_size,
+            reverse=reverse,
+            scale=scale,
+            cu_seqlens=cu_seqlens,
+            chunk_indices_out=chunk_indices_out,
+        )
+    return chunk_local_cumsum(
+        g,
+        chunk_size=chunk_size,
+        reverse=reverse,
+        scale=scale,
+        cu_seqlens=cu_seqlens,
+        chunk_indices_out=chunk_indices_out,
+        head_first=False,
+    )
+
+
+def chunk_scaled_dot_kkt_auto(
+    k: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    *,
+    cu_seqlens: Optional[torch.LongTensor] = None,
+    chunk_indices: Optional[torch.LongTensor] = None,
+    chunk_size: int = 64,
+    output_dtype: torch.dtype = torch.float32,
+) -> torch.Tensor:
+    if cu_seqlens is None and _has_npu_op("npu_chunk_scaled_dot_kkt"):
+        return _chunk_scaled_dot_kkt_ascendc(k, g, beta, chunk_size=chunk_size)
+    return chunk_scaled_dot_kkt_fwd(
+        k=k,
+        g=g,
+        beta=beta,
+        cu_seqlens=cu_seqlens,
+        chunk_indices=chunk_indices,
+        chunk_size=chunk_size,
+        output_dtype=output_dtype,
+    )
+
+
 def _ensure_varlen_metadata(
     g: torch.Tensor,
     cu_seqlens: Optional[torch.LongTensor],
@@ -565,16 +674,15 @@ def flash_chunk_gated_delta_rule_fwd(
     chunk_indices_list: Optional[Dict[str, Optional[list[int]]]] = None,
     chunk_size: int = 64,
 ):
-    g = chunk_local_cumsum(
+    g = chunk_local_cumsum_auto(
         g,
         chunk_size=chunk_size,
         cu_seqlens=cu_seqlens,
         chunk_indices_out=chunk_indices,
-        head_first=False,
     )
 
     # A is the WY lower-triangular representation before inversion.
-    A = chunk_scaled_dot_kkt_fwd(
+    A = chunk_scaled_dot_kkt_auto(
         k=k,
         g=g,
         beta=beta,
@@ -781,13 +889,12 @@ def flash_chunk_gated_delta_rule_bwd(
     if dg.dtype != torch.float32:
         raise ValueError(f"dg current type is {dg.dtype}, should be float32")
 
-    dg = chunk_local_cumsum(
+    dg = chunk_local_cumsum_auto(
         dg,
         chunk_size=chunk_size,
         reverse=True,
         cu_seqlens=cu_seqlens,
         chunk_indices_out=chunk_indices,
-        head_first=False,
     )
 
     return dq, dk, dv, db, dg, dh0
