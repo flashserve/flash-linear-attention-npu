@@ -108,6 +108,7 @@ run_test "gdn_fwd_o"                       "bash run_gdn_fwd_o.sh"
 run_test "gdn_fwd_h"                       "bash run_gdn_fwd_h.sh"
 run_test "recompute_wu_fwd"                "python3 test_npu_recompute_w_u_fwd.py"
 run_test "chunk_local_cumsum"              "python3 test_npu_chunk_local_cumsum.py"
+run_test "chunk_scaled_dot_kkt"            "python3 test_npu_chunk_scaled_dot_kkt.py"
 
 echo ""
 echo "=========================================="

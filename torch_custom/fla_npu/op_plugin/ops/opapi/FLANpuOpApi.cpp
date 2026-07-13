@@ -344,6 +344,49 @@ at::Tensor npu_chunk_fwd_o(
     return std::tie(w,u);
 }
 
+at::Tensor npu_chunk_scaled_dot_kkt(
+    const at::Tensor &k,
+    const at::Tensor &g,
+    const at::Tensor &beta,
+    int64_t chunk_size)
+{
+    TORCH_CHECK(k.dim() == 4, "npu_chunk_scaled_dot_kkt: k must be [B,H,T,K], got ", k.sizes());
+    TORCH_CHECK(g.dim() == 3, "npu_chunk_scaled_dot_kkt: g must be [B,H,T], got ", g.sizes());
+    TORCH_CHECK(beta.dim() == 3, "npu_chunk_scaled_dot_kkt: beta must be [B,H,T], got ", beta.sizes());
+    TORCH_CHECK(
+        k.scalar_type() == c10::ScalarType::Half || k.scalar_type() == c10::ScalarType::BFloat16,
+        "npu_chunk_scaled_dot_kkt: k dtype must be float16 or bfloat16, got ", k.scalar_type());
+    TORCH_CHECK(g.scalar_type() == c10::ScalarType::Float,
+        "npu_chunk_scaled_dot_kkt: g dtype must be float32, got ", g.scalar_type());
+    TORCH_CHECK(beta.scalar_type() == c10::ScalarType::Float,
+        "npu_chunk_scaled_dot_kkt: beta dtype must be float32, got ", beta.scalar_type());
+    TORCH_CHECK(
+        chunk_size == 16 || chunk_size == 32 || chunk_size == 64 || chunk_size == 128,
+        "npu_chunk_scaled_dot_kkt: chunk_size must be one of 16, 32, 64, 128, got ", chunk_size);
+
+    const int64_t B = k.size(0);
+    const int64_t H = k.size(1);
+    const int64_t T = k.size(2);
+    TORCH_CHECK(
+        g.size(0) == B && g.size(1) == H && g.size(2) == T,
+        "npu_chunk_scaled_dot_kkt: g must match k prefix [B,H,T]; k=", k.sizes(), " g=", g.sizes());
+    TORCH_CHECK(
+        beta.size(0) == B && beta.size(1) == H && beta.size(2) == T,
+        "npu_chunk_scaled_dot_kkt: beta must match k prefix [B,H,T]; k=", k.sizes(), " beta=", beta.sizes());
+
+    at::Tensor k_contig = k.contiguous();
+    at::Tensor g_contig = g.contiguous();
+    at::Tensor beta_contig = beta.contiguous();
+    at::Tensor A = at::empty({B, H, T, chunk_size}, k.options().dtype(c10::ScalarType::Float));
+
+    EXEC_NPU_CMD_EXT(
+        aclnnChunkScaledDotKkt,
+        k_contig, g_contig, beta_contig, chunk_size,
+        A
+    );
+    return A;
+}
+
 at::Tensor infer_y_tensor(
     const at::Tensor& x,
     int64_t head_num,
