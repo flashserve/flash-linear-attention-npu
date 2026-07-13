@@ -10,12 +10,13 @@ import re
 import shutil
 import sys
 from importlib import metadata
+from typing import Optional, Tuple
 
 from packaging.version import InvalidVersion, Version
 
 
 MIN_PYTHON = (3, 9)
-MIN_TORCH = "2.7.0"
+MIN_TORCH = "2.6.0"
 MIN_TRITON_ASCEND = "3.2.0"
 MIN_TRITON_ASCEND_A5 = "3.2.1"
 TORCH_NPU_GDN_FIX_MINIMUMS = {
@@ -96,14 +97,14 @@ def _check_min_version(failures: list[str], name: str, actual: str, minimum: str
         _fail(failures, f"{name}>={minimum} is required, got {actual}")
 
 
-def _version_obj(value: str) -> Version | None:
+def _version_obj(value: str) -> Optional[Version]:
     try:
         return Version(value.split("+", 1)[0])
     except InvalidVersion:
         return None
 
 
-def _version_key(value: str) -> tuple[int, int, int] | None:
+def _version_key(value: str) -> Optional[Tuple[int, int, int]]:
     parts = re.findall(r"\d+", value.split("+", 1)[0])
     if not parts:
         return None
@@ -124,6 +125,9 @@ def _check_torch_npu_gdn_fix(failures: list[str], actual: str) -> None:
         return
 
     if actual_version >= Version(MIN_TORCH_NPU_FUTURE_FIX_FAMILY):
+        return
+
+    if minimum is None:
         return
 
     requirements = ", ".join(
@@ -190,7 +194,12 @@ def main() -> int:
     parser.add_argument(
         "--build-only",
         action="store_true",
-        help="Allow torch.npu.is_available() to be false, while still checking build dependencies.",
+        help="Only check dependencies required to build the Python-only wheel.",
+    )
+    parser.add_argument(
+        "--legacy-extension",
+        action="store_true",
+        help="Also check torch, torch_npu, torchnpugen and triton-ascend for legacy extension builds.",
     )
     parser.add_argument(
         "--skip-torchnpugen",
@@ -224,8 +233,14 @@ def main() -> int:
     else:
         _fail(failures, "ASCEND_HOME_PATH or ASCEND_OPP_PATH must be set")
 
-    torch = _import_module(failures, "torch")
-    torch_npu = _import_module(failures, "torch_npu")
+    check_runtime = not args.build_only or args.legacy_extension
+    if not check_runtime:
+        _ok("skipping torch/torch_npu/triton checks for Python-only wheel build")
+        torch = None
+        torch_npu = None
+    else:
+        torch = _import_module(failures, "torch")
+        torch_npu = _import_module(failures, "torch_npu")
 
     if torch is not None:
         torch_version = getattr(torch, "__version__", "<unknown>")
@@ -251,20 +266,23 @@ def main() -> int:
         _ok(f"torch_npu version: {torch_npu_version}")
         _check_torch_npu_gdn_fix(failures, torch_npu_version)
 
-    if not args.skip_torchnpugen:
+    if args.legacy_extension and not args.skip_torchnpugen:
         for module_name in TORCHNPUGEN_MODULES:
             _find_module(failures, module_name)
+    elif args.skip_torchnpugen:
+        _warn("skipping torchnpugen checks")
 
-    triton = _import_module(failures, "triton")
-    triton_ascend_version = _distribution_version("triton-ascend")
-    if triton_ascend_version:
-        _ok(f"triton-ascend version: {triton_ascend_version}")
-        _check_min_version(failures, "triton-ascend", triton_ascend_version, MIN_TRITON_ASCEND)
-        _check_triton_ascend_a5_compat(failures, triton_ascend_version)
-    elif triton is not None:
-        _fail(failures, "triton is importable, but triton-ascend distribution was not found")
-    else:
-        _fail(failures, "triton-ascend distribution was not found")
+    if check_runtime:
+        triton = _import_module(failures, "triton")
+        triton_ascend_version = _distribution_version("triton-ascend")
+        if triton_ascend_version:
+            _ok(f"triton-ascend version: {triton_ascend_version}")
+            _check_min_version(failures, "triton-ascend", triton_ascend_version, MIN_TRITON_ASCEND)
+            _check_triton_ascend_a5_compat(failures, triton_ascend_version)
+        elif triton is not None:
+            _fail(failures, "triton is importable, but triton-ascend distribution was not found")
+        else:
+            _fail(failures, "triton-ascend distribution was not found")
 
     if failures:
         print("\nEnvironment check failed:")

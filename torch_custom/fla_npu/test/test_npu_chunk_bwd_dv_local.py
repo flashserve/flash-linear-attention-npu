@@ -1,5 +1,14 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 import torch
-import torch_npu
 import os
 from typing import Optional
 import math
@@ -7,7 +16,8 @@ import hashlib
 from golden import chunk_bwd_dv_local_fix, chunk_bwd_dv_local_variable, prepare_chunk_indices
 from utils import generate_cu_seqlens, compare_tensors_by_ratio, create_incremental_tensor, create_tensor, bool_matrix_to_uint8, get_tensor_md5, compare_tensors_md5
 import ct
-import fla_npu
+from fla_npu.ops import ascendc as ascendc_ops
+
 
 torch.npu.config.allow_internal_format = False
 torch.npu.set_compile_mode(jit_compile=False)
@@ -43,7 +53,7 @@ def test_variable():
     cu_seqlens_list = cu_seqlens.tolist()
     chunk_indices_list = chunk_indices.flatten().tolist()
 
-    dv = torch.ops.npu.npu_chunk_bwd_dv_local(q_npu, k_npu, d_o_npu, g_npu, scale=scale, chunk_size=chunk_size, g_gamma=None, A=None, cu_seqlens=cu_seqlens_list, chunk_indices=chunk_indices_list)
+    dv = ascendc_ops.npu_chunk_bwd_dv_local(q_npu, k_npu, d_o_npu, g_npu, scale=scale, chunk_size=chunk_size, g_gamma=None, A=None, cu_seqlens=cu_seqlens_list, chunk_indices=chunk_indices_list)
     ct.single(dv.cpu(), dv_golden)
 
 
@@ -71,7 +81,7 @@ def test_fix():
     k_npu = k.npu()
     d_o_npu = d_o.npu()
     g_npu = g.npu()
-    dv = torch.ops.npu.npu_chunk_bwd_dv_local(q_npu, k_npu, d_o_npu, g_npu, scale=scale, chunk_size=chunk_size, g_gamma=None, A=None, cu_seqlens=None, chunk_indices=None)
+    dv = ascendc_ops.npu_chunk_bwd_dv_local(q_npu, k_npu, d_o_npu, g_npu, scale=scale, chunk_size=chunk_size, g_gamma=None, A=None, cu_seqlens=None, chunk_indices=None)
     ct.single(dv.cpu(), dv_golden)
 
 

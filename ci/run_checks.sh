@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -154,10 +164,14 @@ build_and_check_wheel_api() {
         exit 1
     fi
     python3 -m pip install --force-reinstall --no-deps "${wheels[0]}"
-    python3 scripts/check_packaged_wheel_api.py
+    wheel_api_args=()
+    if [[ "${CI_CHECK_TRITON_API:-false}" == "true" ]]; then
+        wheel_api_args+=(--check-triton)
+    fi
+    python3 scripts/check_packaged_wheel_api.py "${wheel_api_args[@]}"
 }
 
-install_custom_opp_package() {
+find_single_run_package() {
     shopt -s nullglob
     local run_files=(build_out/fla-npu-*.run build/fla-npu-*.run)
     shopt -u nullglob
@@ -167,12 +181,18 @@ install_custom_opp_package() {
         exit 1
     fi
     if (( ${#run_files[@]} > 1 )); then
-        echo "[CI][WARN] Multiple .run packages found; installing ${run_files[0]}."
+        echo "[CI][WARN] Multiple .run packages found; using ${run_files[0]}." >&2
     fi
+    printf '%s\n' "${run_files[0]}"
+}
 
-    echo "[CI] Installing custom OPP package: ${run_files[0]}"
-    chmod +x "${run_files[0]}"
-    "${run_files[0]}" --quiet
+install_custom_opp_package() {
+    local run_file
+    run_file="$(find_single_run_package)"
+
+    echo "[CI] Installing custom OPP package: ${run_file}"
+    chmod +x "${run_file}"
+    "${run_file}" --quiet
 
     local vendor_name="fla_npu"
     local vendor_dir="fla_npu_transformer"
@@ -191,6 +211,60 @@ install_custom_opp_package() {
     fi
     export LD_LIBRARY_PATH="${op_api_lib}:${LD_LIBRARY_PATH:-}"
     echo "[CI] Custom OPP op_api lib: ${op_api_lib}"
+}
+
+check_scoped_wheel_opp_install() {
+    local scoped_op="${CI_SCOPED_WHEEL_INSTALL_OP:-chunk_fwd_o}"
+    local run_file
+    local install_log
+
+    echo "[CI] Checking scoped run package replacement of installed wheel OPP: ${scoped_op}"
+    build_and_check_wheel_api
+
+    rm -rf build build_out
+    bash build.sh --pkg --soc="$ci_soc" --vendor_name=fla_npu --ops="$scoped_op" -j"$ci_jobs"
+    run_file="$(find_single_run_package)"
+    chmod +x "$run_file"
+
+    install_log="$(mktemp)"
+    "$run_file" --full --quiet 2>&1 | tee "$install_log"
+
+    if ! grep -q "Operator support status after installing this run package" "$install_log"; then
+        echo "[CI][ERROR] Scoped run package install did not print the operator support status table." >&2
+        exit 1
+    fi
+    if ! grep -q "$scoped_op" "$install_log"; then
+        echo "[CI][ERROR] Scoped run package install output did not mention ${scoped_op}." >&2
+        exit 1
+    fi
+    if ! grep -q "WARNING" "$install_log"; then
+        echo "[CI][ERROR] Scoped run package install did not warn about operators outside the scoped build." >&2
+        exit 1
+    fi
+    if grep -q "aclnn ABI header changes detected before installing this run package" "$install_log"; then
+        echo "[CI][ERROR] Scoped run package install printed the removed duplicate ABI warning block." >&2
+        exit 1
+    fi
+    if grep -q "Continue to overwrite the installed wheel OPP" "$install_log"; then
+        echo "[CI][ERROR] Scoped run package install printed the removed duplicate confirmation prompt." >&2
+        exit 1
+    fi
+
+    python3 - <<'PY'
+import pathlib
+import fla_npu
+
+package_dir = pathlib.Path(fla_npu.__file__).resolve().parent
+vendor_dir = package_dir / "opp" / "vendors" / "fla_npu_transformer"
+required = [
+    vendor_dir / "op_api" / "lib" / "libcust_opapi.so",
+    vendor_dir / "op_api" / "lib" / "libopapi.so",
+]
+missing = [path.name for path in required if not path.exists()]
+if missing:
+    raise SystemExit("Missing scoped wheel OPP files: " + ", ".join(missing))
+print("[CI] Scoped wheel OPP install check passed.")
+PY
 }
 
 check_example_python_deps() {
@@ -274,4 +348,8 @@ if [[ "${CI_RUN_EXAMPLE_ST:-true}" == "true" ]]; then
         example_st_args+=(--case-filter "$CI_EXAMPLE_CASE_FILTER")
     fi
     python3 ci/run_example_st_cases.py "${example_st_args[@]}"
+fi
+
+if [[ "${CI_RUN_SCOPED_WHEEL_INSTALL_CHECK:-false}" == "true" ]]; then
+    check_scoped_wheel_opp_install
 fi

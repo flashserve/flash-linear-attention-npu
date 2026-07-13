@@ -1,4 +1,14 @@
 # -*- coding: utf-8 -*-
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 """
 test_npu_solve_tri_tnd_generalized.py - NPU SolveTri TND format generalized test.
 
@@ -12,11 +22,11 @@ Precision compare uses CPU dual-benchmark:
 import random
 import numpy as np
 import torch
-import torch_npu
-import fla_npu
+from fla_npu.ops import ascendc as ascendc_ops
 
 
-torch.npu.utils.set_device(0)
+
+torch.npu.set_device(0)
 
 
 # ============================================================================
@@ -496,7 +506,7 @@ def run_single_case(seq_lens: list, H: int, chunk_size: int, dtype: torch.dtype 
     cu_seqlens_list = cu_seqlens.tolist()
     chunk_indices_flat = chunk_indices.flatten().tolist()
 
-    out_npu = torch.ops.npu.npu_solve_tri(
+    out_npu = ascendc_ops.npu_solve_tri(
         x_npu,
         cu_seqlens=cu_seqlens_list,
         chunk_indices=chunk_indices_flat,

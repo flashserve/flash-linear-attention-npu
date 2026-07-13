@@ -1,11 +1,21 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 import torch
-import torch_npu
 # from ct import single
 import torch
 import torch.nn.functional as F
 from typing import Tuple
 # import custom_ops
-import fla_npu
+from fla_npu.ops import ascendc as ascendc_ops
+
 import os
 
 # 当前文件所在目录
@@ -558,7 +568,7 @@ if __name__ == "__main__":
 
 
     print("==============start NPU=============")
-    torch_npu.npu.set_device(device_id)
+    torch.npu.set_device(device_id)
     print("dtype")
     q_npu = torch.transpose(q, 1, 2).to(dtype).npu()
     print("q_npu", q_npu.shape, q_npu.dtype)
@@ -584,7 +594,7 @@ if __name__ == "__main__":
     down_tri = q_npu
 
     print("qqqqqqqq")
-    dq_npu, dk_npu, dw_npu, dg_npu = torch.ops.npu.npu_chunk_bwd_dqkwg(
+    dq_npu, dk_npu, dw_npu, dg_npu = ascendc_ops.npu_chunk_bwd_dqkwg(
         q_npu, k_npu, v_npu, g_npu, h_npu, do_npu, dh_npu, dv_npu, chunk_size, cu_seqlens=cu_seqlens, w=None, g_gamma=None, chunk_indices=chunk_indices_npu, scale=scale, use_exp2=None, transpose_state_layout=None
     )
     print("custom_ops.npu_chunk_bwd_dqkwg done")

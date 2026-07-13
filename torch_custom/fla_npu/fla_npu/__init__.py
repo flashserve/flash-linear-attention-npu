@@ -3,10 +3,14 @@ from __future__ import annotations
 import ctypes
 import os
 import pathlib
+from typing import Optional
 
 
 _PACKAGE_DIR = pathlib.Path(__file__).resolve().parent
 _DEFAULT_VENDOR_DIR = "fla_npu_transformer"
+_ASCENDC_OPAPI_LIBRARIES: Optional[list[ctypes.CDLL]] = None
+_LEGACY_TORCH_OPS_LOADED = False
+_LEGACY_TORCH_OPS_LIBRARY: Optional[pathlib.Path] = None
 
 
 def _prepend_env_path(name: str, value: pathlib.Path) -> None:
@@ -65,7 +69,7 @@ def _prepare_embedded_opp() -> pathlib.Path:
     if not (os.environ.get("ASCEND_HOME_PATH") or os.environ.get("ASCEND_OPP_PATH")):
         raise RuntimeError(
             "CANN environment is not initialized. Please source the CANN set_env.sh "
-            "before importing fla_npu."
+            "before calling fla_npu Ascend C operators."
         )
 
     vendor_dir = _resolve_vendor_dir()
@@ -73,18 +77,60 @@ def _prepare_embedded_opp() -> pathlib.Path:
     op_api_lib = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
     if not op_api_lib.exists():
         raise FileNotFoundError(f"Embedded custom op_api library not found: {op_api_lib}")
-    op_api_alias = op_api_lib.with_name("libopapi.so")
 
     _prepend_env_path("ASCEND_CUSTOM_OPP_PATH", vendor_dir)
     _prepend_env_path("ASCEND_CUSTOM_OPP_PATH", opp_root)
     _prepend_env_path("LD_LIBRARY_PATH", op_api_lib.parent)
     os.environ["FLA_NPU_OP_API_LIB"] = str(op_api_lib)
 
-    mode = getattr(os, "RTLD_GLOBAL", 0) | getattr(os, "RTLD_NOW", 0)
-    if op_api_alias.exists():
-        ctypes.CDLL(str(op_api_alias), mode=mode)
-    ctypes.CDLL(str(op_api_lib), mode=mode)
     return vendor_dir
+
+
+def _load_shared_library(path_or_name) -> Optional[ctypes.CDLL]:
+    try:
+        return _load_shared_library_required(path_or_name)
+    except OSError:
+        return None
+
+
+def _load_shared_library_required(path_or_name) -> ctypes.CDLL:
+    mode = (
+        getattr(os, "RTLD_GLOBAL", 0)
+        | getattr(os, "RTLD_NOW", 0)
+        | getattr(os, "RTLD_NODELETE", 0)
+    )
+    return ctypes.CDLL(str(path_or_name), mode=mode)
+
+
+def load_ascendc_opapi_libraries() -> list[ctypes.CDLL]:
+    """Load embedded custom op_api and CANN aclnn libraries for ctypes calls."""
+
+    global _ASCENDC_OPAPI_LIBRARIES
+    if _ASCENDC_OPAPI_LIBRARIES is not None:
+        return _ASCENDC_OPAPI_LIBRARIES
+
+    vendor_dir = _prepare_embedded_opp()
+    op_api_dir = vendor_dir / "op_api" / "lib"
+    custom_opapi = op_api_dir / "libcust_opapi.so"
+
+    try:
+        custom_library = _load_shared_library_required(custom_opapi)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Unable to load embedded FLA NPU custom op_api library: {custom_opapi}. "
+            f"Dynamic loader error: {exc}"
+        ) from exc
+    libraries = [custom_library]
+
+    _ASCENDC_OPAPI_LIBRARIES = libraries
+    return libraries
+
+
+def _find_ascendc_extension_library() -> pathlib.Path:
+    so_files = list(_PACKAGE_DIR.glob("custom_aclnn_extension_lib*.so"))
+    if not so_files:
+        raise FileNotFoundError(f"not find custom_aclnn_extension_lib*.so in {_PACKAGE_DIR}")
+    return so_files[0].resolve()
 
 
 def _preload_library(path: pathlib.Path) -> None:
@@ -109,25 +155,48 @@ def _preload_torch_npu_dependencies(torch_module, torch_npu_module) -> None:
         _preload_library(lib_path)
 
 
-# Load the custom operator library
-def _load_opextension_so():
-    _prepare_embedded_opp()
+def load_ascendc_extension():
+    """Backward-compatible alias for loading the decoupled Ascend C runtime."""
+
+    return load_ascendc_opapi_libraries()
+
+
+def load_legacy_torch_ops() -> pathlib.Path:
+    """Load the legacy PyTorch dispatcher custom ops.
+
+    ``import fla_npu`` is intentionally lightweight and does not import torch,
+    torch_npu, or register ``torch.ops.npu`` kernels.  Call this function only
+    when old call sites such as ``torch.ops.npu.npu_chunk_fwd_o(...)`` must keep
+    working during the migration to the decoupled ``fla_npu.ops.ascendc`` API.
+    """
+
+    global _LEGACY_TORCH_OPS_LOADED, _LEGACY_TORCH_OPS_LIBRARY
+    if _LEGACY_TORCH_OPS_LOADED and _LEGACY_TORCH_OPS_LIBRARY is not None:
+        return _LEGACY_TORCH_OPS_LIBRARY
 
     import torch
     import torch_npu
 
+    _prepare_embedded_opp()
     _preload_torch_npu_dependencies(torch, torch_npu)
-
-    so_dir = _PACKAGE_DIR
-    so_files = list(so_dir.glob('custom_aclnn_extension_lib*.so'))
-
-    if not so_files:
-        raise FileNotFoundError(f"not find custom_aclnn_extension_lib*.so in {so_dir}")
-
-    atb_so_path = str(so_files[0])
-    torch.ops.load_library(atb_so_path)
-    from .ops.ascendc import install_torch_npu_ops_compat
+    legacy_library = _find_ascendc_extension_library()
+    torch.ops.load_library(str(legacy_library))
+    from .ops.ascendc import install_legacy_torch_ops_warning, install_torch_npu_ops_compat
 
     install_torch_npu_ops_compat()
+    install_legacy_torch_ops_warning()
+    _LEGACY_TORCH_OPS_LOADED = True
+    _LEGACY_TORCH_OPS_LIBRARY = legacy_library
+    return legacy_library
 
-_load_opextension_so()
+
+def is_legacy_torch_ops_loaded() -> bool:
+    return _LEGACY_TORCH_OPS_LOADED
+
+
+__all__ = [
+    "is_legacy_torch_ops_loaded",
+    "load_ascendc_extension",
+    "load_ascendc_opapi_libraries",
+    "load_legacy_torch_ops",
+]

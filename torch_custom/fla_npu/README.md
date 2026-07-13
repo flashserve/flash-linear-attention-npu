@@ -1,202 +1,184 @@
-# fla_npu 样例说明
+# fla_npu Python 适配说明
 
-本样例是 **「自定义算子接入 - 结构化代码生成」** 的示例工程，演示如何通过 YAML 描述 + 代码生成工具，将自定义 aclnn 算子接入 PyTorch NPU 生态，并生成可参与 torch_npu 编译的适配代码。
+`torch_custom/fla_npu` 是 FLA NPU 的 Python runtime 与可选 legacy PyTorch dispatcher 适配工程。当前默认交付目标是：
 
-## 适用场景
+```python
+from fla_npu.ops import ascendc as ascendc_ops
 
-本样例适用于以下情况：
-
-- **需要接入自定义 aclnn 算子**：CANN 已提供 aclnn 接口（如 `aclnnFastGelu`），希望以 PyTorch 自定义算子的形式在 `torch_npu` 中暴露给用户。
-- **算子满足「结构化适配」条件**：  
-  aclnn 算子与目标 ATen IR 的语义一致，适配层**除申请 output tensor（shape/dtype 由输入推导）外，无其他复杂逻辑**。  
-  满足时即可用 YAML 做结构化描述，由工具自动生成 C++ 适配代码，无需手写适配层。
-
-
-不适用或需手写适配的情况：算子语义与 ATen 不一致、需要复杂 shape/type 推导、或需在适配层写额外逻辑时，应使用非结构化方式（如 opapi）。
-
-## 环境与依赖
-
-- **运行/编译依赖**：PyTorch、torch_npu、CANN。  
-  安装与版本要求见 [torch_npu 安装说明](https://gitcode.com/ascend/pytorch#%E5%AE%89%E8%A3%85)。
-
-
-## 目录与文件结构
-
-### 运行前
-```
-fla_npu/
-├── fla_npu/
-│   └── __init__.py                   # 构建用init文件
-├── deprecated.yaml                   # 废弃api配置
-├── gen.sh                            # 一键生成脚本：调用 torchnpugen 生成算子适配代码
-├── setup.py                          # 项目构建脚本，用于编译生成 whl 包
-├── npu_custom.yaml                   # 自定义算子 YAML（含前向/反向 ATen IR 与 aclnn 映射）
-├── npu_custom_derivatives.yaml       # 前向/反向绑定配置
-├── test_native_functions.yaml        # NPU backend 声明（生成 stub 等时会使用）
-├── test/
-│   └── test_npu_fast_gelu_custom.py  # 自定义算子测试脚本
-└── README.md
+out = ascendc_ops.npu_chunk_fwd_o(...)
 ```
 
+也可以按公开短名导入：
 
-
-### 运行后
-
-先执行 `gen.sh` 生成适配代码，再执行 `setup.py` 构建后，在 `./dist/`下得到 **`fla_npu*.whl`**：
-
-```
-fla_npu/
-├── ...         # 运行前已有文件保持不变
-├── build/      # gen.sh生成的中间产物
-├── op_plugin/  # gen.sh生成的中间产物
-├── torch_npu/  # gen.sh生成的中间产物
-├── dist/
-│   └── fla_npu*.whl # 最终生成的whl包
-└── ...
+```python
+from fla_npu.ops.ascendc import chunk_fwd_o
 ```
 
-使用方式：`pip install fla_npu*.whl` 安装后，先 source 已安装 custom OPP 的 `set_env.bash`，或设置 `FLA_NPU_OPP_PATH` 指向 OPP root / vendor 目录，即可在 Python 中调用本样例接入的自定义算子（如 `torch.ops.npu.npu_fast_gelu_custom`、`torch_npu.ops.fast_gelu_custom` 或 `from fla_npu.ops.ascendc import fast_gelu_custom`）。
+默认路径通过 Python `ctypes` 直调已安装 OPP 里的 `libcust_opapi.so`，不依赖 PyTorch dispatcher 注册，也不会默认编译或加载 `torch_npu` 自定义扩展。旧的 `torch.ops.npu.*` / `torch_npu.ops.*` 兼容路径仍可做，但只作为迁移期可选能力，不推荐新增代码使用，也不会默认使能。
 
+## 默认交付件
 
-## 一键运行样例
+### Python runtime wheel
 
-若仅想快速跑通本样例（不修改算子），在 `fla_npu` 目录下**按顺序**执行：
+默认执行：
 
 ```bash
-# 1. 先执行 gen.sh，生成适配代码
+python3 setup.py bdist_wheel
+```
+
+会生成纯 Python wheel，核心内容包括：
+
+- `fla_npu/__init__.py`：定位并加载内嵌或外部 OPP。
+- `fla_npu/ops/ascendc/__init__.py`：稳定 Python 调用入口、短名导出和正反向自动绑定。
+- `fla_npu/ops/ascendc/_aclnn_ctypes.py`：具体算子的 Python wrapper，只描述输入输出、标量转换和算子级 ABI 特例。
+- `fla_npu/ops/ascendc/_runtime.py`：公共 ctypes runtime，封装 aclTensor/aclIntArray 描述符、workspace、stream 和异步 launch 生命周期。
+- `fla_npu/opp/vendors/fla_npu_transformer/...`：一键 wheel 打包时内嵌的 OPP 产物。
+
+### Ascend C OPP 产物
+
+一键 wheel 或 run 包安装后，OPP vendor 目录为：
+
+```text
+fla_npu/opp/vendors/fla_npu_transformer
+```
+
+关键产物包括：
+
+- `op_api/lib/libcust_opapi.so`：自定义 aclnn op_api 动态库。
+- `op_api/lib/libopapi.so`：wheel 内优先解析用的同名兼容副本。
+- `op_api/include/aclnnop/aclnn_*.h`：Python ctypes ABI 对齐依据。
+- `op_impl/ai_core/tbe/op_host/...`、`op_tiling/...`、`op_proto/...`：host、tiling、proto 动态库。
+- `op_impl/ai_core/tbe/kernel/...`：AI Core kernel `.o` 和 config。
+
+## 推荐调用方式
+
+新增或修改测试、example、上层业务时，默认使用：
+
+```python
+from fla_npu.ops import ascendc as ascendc_ops
+
+result = ascendc_ops.npu_recompute_w_u_fwd(...)
+```
+
+或者：
+
+```python
+from fla_npu.ops.ascendc import recompute_w_u_fwd
+
+result = recompute_w_u_fwd(...)
+```
+
+测试中不要默认调用：
+
+```python
+fla_npu.load_legacy_torch_ops()
+torch.ops.npu.npu_xxx(...)
+```
+
+这样可以避免把测试结果绑定到 PyTorch/torch_npu dispatcher ABI。
+
+## 新算子如何接入默认 runtime
+
+新增 Ascend C 算子后，Python 默认路径需要同步做以下适配：
+
+1. 在 `_aclnn_ctypes.py` 增加 `npu_xxx(...)` wrapper。
+2. wrapper 内按 `aclnn_xxx.h` 的函数签名顺序构造参数，常用转换如下：
+   - Tensor 输入/输出：`ctx.tensor(tensor, "name")`
+   - `Optional[list[int]]` / `Sequence[int]`：`ctx.int_array(values)`
+   - aclnn 签名中要求 Tensor 形式的索引：`ctx.int_tensor(values, device)`
+   - 标量：显式使用 `ctypes.c_int64`、`ctypes.c_double`、`ctypes.c_bool` 等。
+3. 在 wrapper 内申请输出 tensor，并把输出传给 `_call_aclnn(...)`。
+4. 如果 aclnn 参数里有 `char *`、字符串、或 ctypes 不能安全自动转换的参数，在 `_GET_WORKSPACE_ARGTYPES` 中补充 `GetWorkspaceSize` 的 `argtypes`。
+5. 在 `fla_npu/ops/ascendc/__init__.py` 的 `_ASCENDC_OPS` 中加入 `npu_xxx`，这样会自动导出 `npu_xxx` 和去掉 `npu_` 前缀后的短名。
+6. 如果存在明确的正反向关系，在 `BACKWARD_OPS` 中补充映射；需要 autograd 自动绑定时，在 `__init__.py` 中增加对应 `torch.autograd.Function` 包装。
+7. 新增或更新测试，默认调用 `fla_npu.ops.ascendc` 路径。
+
+新增算子通常不需要修改 `_runtime.py`，也不需要感知 `_AclTensor`、`_AclIntArray`、workspace 申请或 stream launch 细节。只有公共 ctypes 调发框架本身需要演进时，才修改 `_runtime.py`。
+
+示例骨架：
+
+```python
+def npu_my_op(x, weight, *, scale=1.0, indices=None):
+    out = _empty_like(x)
+    return _call_aclnn(
+        "aclnnMyOp",
+        lambda ctx: [
+            ctx.tensor(x, "x"),
+            ctx.tensor(weight, "weight"),
+            ctx.int_array(indices),
+            ctypes.c_double(float(scale)),
+            ctx.tensor(out, "out"),
+        ],
+        out,
+    )
+```
+
+## 构建和验证默认 runtime
+
+只构建 Python runtime wheel：
+
+```bash
+python3 setup.py bdist_wheel
+python3 -m pip install --force-reinstall --no-deps dist/fla_npu-*.whl
+```
+
+如果使用仓库根目录的一键 wheel，OPP 会内嵌到 `site-packages/fla_npu/opp`：
+
+```bash
+FLA_NPU_SOC=ascend910b python3 -m pip wheel --no-build-isolation --no-deps . -w dist
+python3 -m pip install --force-reinstall --no-deps dist/flash_linear_attention_npu-*.whl
+python3 scripts/check_packaged_wheel_api.py
+```
+
+单算子 run 包覆盖已安装 wheel 内嵌 OPP 时：
+
+```bash
+bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu --ops=chunk_fwd_o
+./build_out/fla-npu-*.run --full
+```
+
+安装器会列出 scoped run 包覆盖后的算子状态。`WARNING` 表示安装后不可用，`NOTICE` 表示需要人工关注，`OK` 表示 ABI 一致并继续可用。
+
+## legacy torch_npu / torch.ops.npu 路径
+
+如果确实需要兼容 `torch_npu.ops.xxx`，可以显式安装 Python wrapper：
+
+```python
+import torch_npu
+from fla_npu.ops import ascendc
+
+ascendc.install_torch_npu_ops_compat()
+torch_npu.ops.npu_xxx(...)
+```
+
+如果确实需要兼容更旧的 `torch.ops.npu.xxx` 调用：
+
+```python
+import fla_npu
+
+fla_npu.load_legacy_torch_ops()
+torch.ops.npu.npu_xxx(...)
+```
+
+则需要显式生成并构建 legacy extension：
+
+```bash
 bash gen.sh npu_custom.yaml
-
-# 2. 再执行 setup.py 构建 whl 包并安装
-python setup.py bdist_wheel
-cd dist
-pip install fla_npu*.whl --force-reinstall --no-deps
-
-# 3. 运行测试验证
-cd ..
-cd test && python test_npu_fast_gelu_custom.py
+FLA_NPU_BUILD_LEGACY_EXTENSION=1 python3 setup.py bdist_wheel
 ```
 
-测试通过即表示样例已跑通，可直接调用 `torch.ops.npu.npu_fast_gelu_custom`、`torch_npu.ops.fast_gelu_custom` 或 `fla_npu.ops.ascendc.fast_gelu_custom` 算子。
+legacy 路径会生成或使用：
 
----
+- `op_plugin/`
+- `torch_npu/csrc/`
+- `custom_aclnn_extension_lib*.so`
+- `npu_custom.yaml`、`test_native_functions.yaml`、`deprecated.yaml`
 
-**改成接入自己的算子时**：只需把 YAML 里的内容换成自己算子的定义（见下方「使用步骤」），然后同样先跑 `gen.sh`（传入你的 YAML 文件名），再跑 `setup.py` 即可。
+这些兼容路径不会默认使能。`torch.ops.npu` legacy extension 会重新绑定 PyTorch、Python、C++ ABI 和 torch_npu dispatcher 行为，因此只用于历史接口兼容或专项验证。新增算子默认不要以 legacy extension 作为唯一调用方式。
 
-## 使用步骤
+## 测试要求
 
-### 1. 编写自定义算子 YAML（结构化描述）
-
-在 `npu_fast_gelu.yaml` 的 `custom` 段中，按「ATen IR ↔ aclnn」一一对应的方式填写。  
-是否可结构化的判断标准：**opapi 对应的 aclnn 与 ATen IR 语义一致，适配层除申请 output tensor 外无其他逻辑**。
-
-示例（前向 + 反向）：
-
-```yaml
-custom:
-  - func: npu_fast_gelu_custom(Tensor self) -> Tensor
-    op_api: all_version
-    gen_opapi:
-      out:
-        size: self
-        dtype: self
-      exec: aclnnFastGelu
-  - func: npu_fast_gelu_custom_backward(Tensor grad, Tensor self) -> Tensor
-    op_api: all_version
-    gen_opapi:
-      out:
-        size: grad
-        dtype: grad
-      exec: aclnnFastGeluBackward
-```
-
-- `func`：PyTorch 侧暴露的算子签名（ATen IR 形式）。
-- `gen_opapi.out`：输出 tensor 的 shape/dtype 由哪个输入推导（如 `self` / `grad`）。
-- `exec`：实际调用的 aclnn 接口名。
-
-### 2. 执行代码生成
-
-在 `fla_npu` 目录下执行：
-
-```bash
-bash gen.sh npu_custom.yaml
-```
-
-脚本会根据当前环境的 PyTorch 版本生成各类适配代码，用户无需关注。
-
-### 4. 构建 whl 包并运行测试
-
-在步骤 3 完成（gen.sh 已执行）后，再执行 `setup.py` 构建，在 `./dist/`下得到 **`fla_npu*.whl`**：
-
-```bash
-python setup.py bdist_wheel
-cd dist
-pip install fla_npu*.whl
-```
-
-安装完成后即可在代码中调用接入的自定义算子（如 `torch.ops.npu.npu_fast_gelu_custom`、`torch_npu.ops.fast_gelu_custom` 或 `fla_npu.ops.ascendc.fast_gelu_custom`）。例如用样例自带的测试用例验证：
-
-```bash
-cd test
-python test_npu_fast_gelu_custom.py
-```
-
-测试通过即说明算子已正确接入、结果与参考实现一致。
-
-注意运行测试脚本时不能在`fla_npu` 目录下执行，会受init文件所在同名路径影响。
-
-## 自用时的替换与扩展
-
-改成接入自己的算子时，**核心是把 YAML 里的内容换成自己算子的定义**：
-
-- **算子 YAML**（如 `npu_custom.yaml` 或自建 `my_op.yaml`）：在 `custom` 段中写上自己的 `func`、`gen_opapi.out`、`exec`（aclnn 接口名）等，格式参考本样例。
-- **gen.sh 参数**：若使用新文件名（如 `my_op.yaml`），则执行 `bash gen.sh my_op.yaml` 或 `bash gen.sh my_op.yaml`。
-- **测试脚本**：在 `test/` 下修改或新增测试，调用你暴露的算子名做数值验证。
-
-流程不变：先执行 `gen.sh`（传入你的 YAML），再执行 `setup.py` 构建得到 `fla_npu*.whl`，`pip install` 后即可调用。
-
-## gen.sh 结构与代码生成指令说明
-
-本节说明当前目录下 `gen.sh` 的脚本结构及其中调用的代码生成指令，便于有更个性化需求的用户自行调整（如修改输出路径、增删步骤、更换 YAML 等）。
-
-### 脚本参数与环境
-
-- **入参**：`gen.sh` 接收两个参数（第二个可选）。
-  - `$1`：算子 YAML 文件（必填），如 `npu_custom.yaml`。
-- **工作目录**：脚本会 `cd` 到自身所在目录（`fla_npu/`），后续路径均相对该目录。
-- **版本与目录名**：从当前环境的 `torch.__version__` 解析出 `PYTORCH_VERSION`（如 `2.7.0`），并得到目录后缀 `PYTORCH_VERSION_DIR`（如 `v2r7`），用于 `op_plugin/config/v2r7/` 等路径。
-- **环境变量**：脚本会设置并 `export`：
-  - `PYTORCH_VERSION`：PyTorch 版本号。
-  - `PYTORCH_CUSTOM_DERIVATIVES_PATH`：生成的 derivatives 文件路径，供后续 autograd 等使用。
-  - `ACLNN_EXTENSION_PATH`：当前样例根目录。
-  - `ACLNN_EXTENSION_SWITCH="TRUE"`：标识走 aclnn extension 逻辑（部分 torchnpugen 模块会据此分支）。
-- **创建的目录**：若不存在则会创建 `build`、`op_plugin`、`torch_npu`。
-
-### 代码生成指令（执行顺序）
-
-脚本按顺序调用以下 **torchnpugen** 模块，对应不同的代码生成步骤。可根据需要增删或改参数。
-
-| 顺序 | 模块 | 作用 | 主要参数 |
-|------|------|------|----------|
-| 1 | `torchnpugen.gen_op_plugin_functions` | 根据算子 YAML 生成并清洗 `op_plugin_functions.yaml`（ATen IR 与版本信息等） | `--version`、`--output_dir`（如 `op_plugin/config/v2r7/`）、`--source_yaml`（传入的算子 YAML） |
-| 2 | `torchnpugen.gen_derivatives` | 仅当传入 `$2` 时执行；根据 derivatives YAML 生成前反向绑定文件 `derivatives.yaml` | `--version`、`--output_dir`、`--source_yaml`（传入的 derivatives YAML） |
-| 3 | `torchnpugen.gen_op_backend` | 根据 `op_plugin_functions.yaml` 生成 op_plugin 对外接口与路由（如 OpInterface、OpApiInterface 等） | `--version`、`--output_dir`（`op_plugin/`）、`--source_yaml`（上一步生成的 `op_plugin_functions.yaml`）、`--deprecate_yaml` |
-| 4 | `torchnpugen.struct.gen_struct_opapi` | 根据算子 YAML 与 `op_plugin_functions.yaml` 生成 aclnn 结构化适配实现（如 `StructKernelNpuOpApi.cpp`） | `--output_dir`（`op_plugin/ops/opapi/`）、`--native_yaml`（`op_plugin_functions.yaml`）、`--struct_yaml`（传入的算子 YAML） |
-| 5 | `torchnpugen.gen_backend_stubs` | 根据 `test_native_functions.yaml` 等生成 torch_npu 侧 backend stub 代码到 `csrc/aten` | `--output_dir`、`--source_yaml`（当前为 `./test_native_functions.yaml`）、`--impl_path`、`--op_plugin_impl_path`、`--op_plugin_yaml_path` |
-| 6 | `torchnpugen.autograd.gen_autograd` | 根据 `test_native_functions.yaml` 生成 autograd 相关代码到 `csrc/aten` 与 `autograd` | `--out_dir`、`--autograd_dir`、`--npu_native_function_dir`（当前为 `./test_native_functions.yaml`） |
-
-- **步骤 1～4** 使用算子 YAML 和生成的 `op_plugin_functions.yaml`，产出在 `op_plugin/` 下，是 aclnn 扩展适配的核心。
-- **步骤 5～6** 使用 `test_native_functions.yaml`，产出在 `csrc/aten`、`autograd`，用于与 torch_npu 侧的注册与求导衔接。
-
-### 自定义时可调整的内容
-
-- **更换输入 YAML**：修改脚本入参或内部 `$YAML_FILE` / `$DERIVATIVES_YAML_FILE`，或增加新的 YAML 变量并传给对应模块的 `--source_yaml`、`--struct_yaml` 等。
-- **输出路径**：修改 `OUTPUT_DIR`、`OPAPI_OUTPUT_DIR`、`--output_dir`、`--out_dir`、`--autograd_dir` 等，使生成结果落到你希望的目录（需与 `setup.py` 的编译路径一致）。
-- **PyTorch 版本**：脚本已按当前环境自动解析版本；若需写死某版本，可改 `PYTORCH_VERSION` / `PYTORCH_VERSION_DIR` 的赋值。
-
-按上述说明即可在保留主流程的前提下，按需裁剪或扩展 `gen.sh` 中的指令与参数。
-
-## 小结
-
-- **适用**：自定义 aclnn 算子、语义与 ATen 对齐、适配层仅做 output 申请的结构化场景。  
-- **执行流程**：先执行 `gen.sh npu_custom.yaml` 生成适配代码，再执行 `setup.py` 构建得到 `fla_npu*.whl`，`pip install` 后即可调用接入的算子。  
-- **自用**：把 YAML 里的内容换成自己算子的定义，gen.sh 传入对应 YAML 文件名，同样先 gen.sh 再 setup.py 即可。
+- 新测试默认使用 `from fla_npu.ops import ascendc as ascendc_ops`。
+- 不要在默认测试里调用 `fla_npu.load_legacy_torch_ops()`。
+- 不要把 `torch.ops.npu.*` 作为默认正确性路径。
+- 如果 legacy 路径确实需要覆盖，应单独写清楚测试目的，并显式打开 `FLA_NPU_BUILD_LEGACY_EXTENSION=1`。

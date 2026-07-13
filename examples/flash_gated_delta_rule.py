@@ -256,7 +256,9 @@ def _probe_solve_tri_ascendc(device: torch.device, dtype: torch.dtype) -> bool:
 
     probe_dtype = dtype if dtype in (torch.float16, torch.bfloat16) else torch.float16
     try:
-        probe = torch.zeros((1, 64, 1, 64), dtype=probe_dtype, device=device)
+        # solve_tri does not support D=64 on this path; probe a supported D=128
+        # shape so capability detection does not incorrectly force Triton fallback.
+        probe = torch.zeros((1, 64, 1, 128), dtype=probe_dtype, device=device)
         ascendc_solve_tri(probe, layout="bsnd")
         torch.npu.synchronize()
     except Exception as exc:

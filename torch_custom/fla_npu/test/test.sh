@@ -1,4 +1,14 @@
 #!/bin/bash
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 # GDN 全量测试入口
 # 用法:
 #   bash test.sh --device 0              # 在 device 0 上运行全量测试
@@ -43,6 +53,7 @@ if [[ -z "$TEST_DEVICE_ID" ]]; then
 fi
 
 export TEST_DEVICE_ID
+export TORCH_DEVICE_BACKEND_AUTOLOAD=1
 export TEST_LOG_DIR="$SCRIPT_DIR/test_output"
 mkdir -p "$TEST_LOG_DIR"
 

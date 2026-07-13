@@ -1,5 +1,15 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 """
-test_npu_solve_tri_ascend950.py - Test SolveTri custom operator on ascend950 via torch.ops.npu
+test_npu_solve_tri_ascend950.py - Test SolveTri custom operator on ascend950 via fla_npu.ops.ascendc
 
 支持 BSND [B,T,H,BT] 与 TND [total_T,H,BT]（变长）两种布局。
 
@@ -10,11 +20,11 @@ test_npu_solve_tri_ascend950.py - Test SolveTri custom operator on ascend950 via
 """
 import os
 import torch
-import torch_npu
 import numpy as np
-import fla_npu
+from fla_npu.ops import ascendc as ascendc_ops
 
-torch.npu.utils.set_device(0)
+
+torch.npu.set_device(0)
 
 # 是否打印每个 (b,h,c)/(seq,h,c) 点位的 OK/FAIL 明细及用例头。
 # 默认 False：每条用例只打印一行 PASS/FAIL 汇总。
@@ -98,7 +108,7 @@ def test_solve_tri(B, H, T, chunk_size, layout="bsnd", dtype=torch.float16):
 
     A_npu = A.npu()
     # 仓2 接口：chunk_size 由 x 末维隐式确定，定长无需 cu_seqlens / chunk_indices
-    out_npu = torch.ops.npu.npu_solve_tri(A_npu, cu_seqlens=None, chunk_indices=None, layout=layout)
+    out_npu = ascendc_ops.npu_solve_tri(A_npu, cu_seqlens=None, chunk_indices=None, layout=layout)
     out_cpu = out_npu.cpu()
 
     num_chunks = (T + chunk_size - 1) // chunk_size
@@ -206,7 +216,7 @@ def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16):
     cu_seqlens_list = cu_seqlens.tolist()
     chunk_indices_flat = chunk_indices.flatten().tolist()
 
-    out_npu = torch.ops.npu.npu_solve_tri(A_npu,
+    out_npu = ascendc_ops.npu_solve_tri(A_npu,
                                           cu_seqlens=cu_seqlens_list,
                                           chunk_indices=chunk_indices_flat,
                                           layout="tnd")
@@ -312,7 +322,7 @@ def run_all_cases(dtype):
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("SolveTri NPU Test (ascend950, torch.ops.npu) — fp16 + bf16")
+    print("SolveTri NPU Test (ascend950, fla_npu.ops.ascendc) — fp16 + bf16")
     print("=" * 60)
 
     results = []
