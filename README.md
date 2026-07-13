@@ -47,6 +47,14 @@ source /usr/local/Ascend/ascend-toolkit/set_env.sh
 FLA_NPU_SOC=ascend910b python -m pip wheel --no-build-isolation --no-deps . -w dist
 ```
 
+如果需要在同一套 Python、PyTorch、torch-npu、C++ ABI 和 CPU 架构下连续构建多个 SoC wheel，可以使用批量脚本：
+
+```sh
+python scripts/build_multi_soc_wheels.py --soc ascend910b,ascend910_93,ascend950 --jobs 16 -w dist
+```
+
+批量脚本会让第一颗 SoC 完整编译 `torch_custom` 适配扩展，后续 SoC 只复用同一个 `custom_aclnn_extension_lib*.so`；AscendC OPP run 包仍会按每颗 SoC 独立重编并内嵌到各自 wheel 中，脚本也会检查 wheel 内只有目标 SoC 的 kernel config、且包含内嵌 `libcust_opapi.so`。如果 A2/A3 需要基于 CANN 8.5.2，而 A5 需要基于 CANN 9.0.0 及以上，请在对应 CANN 环境中分开执行批量命令，不要把 CANN 要求不同的 SoC 放到同一次构建里。
+
 如果已经做过一次完整编译，之后只修改少量算子源码，可以复用上一次 CMake build 目录做完整 wheel 的真增量构建：
 
 ```sh
@@ -60,10 +68,12 @@ FLA_NPU_SOC=ascend910b FLA_NPU_INCREMENTAL_BUILD=1 python -m pip wheel --no-buil
 | 环境变量 | 可选范围 | 作用 / 建议 | 默认 |
 |---|---|---|---|
 | `FLA_NPU_SOC` | `ascend910b` / `ascend910_93` / `ascend950` | 目标芯片；按实际运行机器选择 | `ascend910b` |
+| `FLA_NPU_BUILD_JOBS` | 正整数，如 `16` | 传递给底层 `build.sh -jN`，控制 AscendC OPP 编译并发 | 空，使用 `build.sh` 默认值 |
 | `FLA_NPU_INCREMENTAL_BUILD` | `TRUE` / `FALSE` | 复用 `build/` 做完整 wheel 的真增量构建；本地反复调试可设 `TRUE`，release wheel 或干净验证建议保持 `FALSE` | `FALSE` |
 | `FLA_NPU_OPS` | 逗号分隔的算子名，如 `chunk_fwd_o,recompute_wu_fwd` | 仅构建指定算子；用于单算子定位，不要用于 release wheel | 空 |
 | `FLA_NPU_SKIP_RUN_BUILD` | `TRUE` / `FALSE` | 跳过 run 包编译；仅在已准备好匹配的 `build_out/fla-npu-*.run` 且只重打 wheel 时可设 `TRUE`，常规构建建议保持 `FALSE` | `FALSE` |
 | `FLA_NPU_SKIP_RUN_INSTALL` | `TRUE` / `FALSE` | 跳过将 run 包安装产物内嵌到 wheel；会得到不含内嵌 OPP 的 wheel，除非使用外部 OPP 调试，否则建议保持 `FALSE` | `FALSE` |
+| `FLA_NPU_REUSE_TORCH_CUSTOM_SO` | `custom_aclnn_extension_lib*.so` 路径 | 复用已有 `torch_custom` 扩展，仅适合同一 Python ABI、PyTorch、torch-npu、C++ ABI、CPU 架构和源码版本；常规多 SoC 构建优先使用 `scripts/build_multi_soc_wheels.py` 自动管理 | 空 |
 | `FLA_NPU_DISABLE_LOCAL_VERSION` | `TRUE` / `FALSE` | wheel 版本号不追加 SOC/torch/ABI 本地版本；内部统一发版需要固定版本号时可设 `TRUE`，日常构建建议保持 `FALSE` 以区分产物兼容范围 | `FALSE` |
 
 布尔变量设为 `TRUE` 时也接受 `1`、`YES`、`ON`；未设置或其他值按 `FALSE` 处理。
