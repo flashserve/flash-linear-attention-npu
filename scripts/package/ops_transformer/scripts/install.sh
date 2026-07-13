@@ -482,6 +482,12 @@ collect_vendor_op_names() {
 
     if [ -d "${kernel_root}" ]; then
       while IFS= read -r src_op_dir; do
+        local rel_dir="${src_op_dir#${kernel_root}/}"
+        case "${rel_dir}" in
+          config/*)
+            continue
+            ;;
+        esac
         to_snake_name "$(basename "${src_op_dir}")"
       done < <(find "${kernel_root}" -mindepth 2 -maxdepth 2 -type d | sort)
     fi
@@ -684,6 +690,11 @@ merge_vendor_to_wheel_opp() {
   if [ -d "${src_kernel_root}" ]; then
     while IFS= read -r src_op_dir; do
       local rel_dir="${src_op_dir#${src_kernel_root}/}"
+      case "${rel_dir}" in
+        config/*)
+          continue
+          ;;
+      esac
       local dst_op_dir="${dst_kernel_root}/${rel_dir}"
       if [ -d "${dst_op_dir}" ]; then
         rm -rf "${dst_op_dir}"
