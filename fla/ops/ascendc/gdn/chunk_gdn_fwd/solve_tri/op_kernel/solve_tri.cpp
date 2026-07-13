@@ -35,12 +35,12 @@ extern "C" __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, G
     if (TILING_KEY_IS(1)) {
         // MIX_AIC_1_2 模式：1 个 AIC + 2 个 AIV
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
-        
+
         int64_t ms = tilingData.matrixSize;
         int64_t totalTiles = tilingData.totalTiles;
         int64_t tilesPerCore = tilingData.tilesPerCore;
         int64_t dtypeMode = tilingData.dtypeMode;  // 0=fp16, 1=bf16
-        
+
         // // AIC 核：执行 CUBE 矩阵乘法
         if ASCEND_IS_AIC {
             if (dtypeMode == 0) {
@@ -83,7 +83,7 @@ extern "C" __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, G
                 }
             }
         }
-        
+
         // AIV 核：执行 Vector 操作（生成辅助矩阵）
         if ASCEND_IS_AIV {
             if (dtypeMode == 0) {

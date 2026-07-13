@@ -20,8 +20,8 @@ extern "C" {
  * k : required
  * w : required
  * u : required
- * gOptional : optional, only non-null aclTensor is supported
- * gkOptional : optional, key-wise gate tensor (may be nullptr)
+ * gOptional : optional scalar gate tensor; either gOptional or gkOptional must be non-null
+ * gkOptional : optional key-wise gate tensor; either gOptional or gkOptional must be non-null
  * initalStateOptional : optional
  * outputFinalState : required
  * chunkSize : required

@@ -26,6 +26,60 @@ using npu_preparation = at_npu::native::OpPreparation;
 using namespace op_plugin::utils;
 using namespace op_infer;
 
+namespace {
+int64_t CeilDiv(int64_t x, int64_t y)
+{
+    return (x + y - 1) / y;
+}
+
+int64_t GetKdaSeqNum(int64_t batch, at::OptionalIntArrayRef cu_seqlens)
+{
+    if (!cu_seqlens.has_value()) {
+        return batch;
+    }
+    auto cu = cu_seqlens.value();
+    return static_cast<int64_t>(cu.size()) - 1;
+}
+
+int64_t GetKdaTotalChunks(int64_t batch, int64_t seqlen, int64_t chunk_size,
+                          at::OptionalIntArrayRef cu_seqlens,
+                          at::OptionalIntArrayRef chunk_indices)
+{
+    if (chunk_indices.has_value()) {
+        return static_cast<int64_t>(chunk_indices.value().size()) / 2;
+    }
+    if (!cu_seqlens.has_value()) {
+        return CeilDiv(seqlen, chunk_size);
+    }
+    (void)batch;
+    int64_t total = 0;
+    auto cu = cu_seqlens.value();
+    for (size_t i = 0; i + 1 < cu.size(); ++i) {
+        total += CeilDiv(cu[i + 1] - cu[i], chunk_size);
+    }
+    return total;
+}
+
+std::vector<int64_t> BuildKdaChunkIndices(at::IntArrayRef cu_seqlens, int64_t chunk_size)
+{
+    std::vector<int64_t> indices;
+    int64_t total_chunks = 0;
+    for (size_t i = 0; i + 1 < cu_seqlens.size(); ++i) {
+        total_chunks += CeilDiv(cu_seqlens[i + 1] - cu_seqlens[i], chunk_size);
+    }
+    indices.reserve(static_cast<size_t>(total_chunks * 2));
+    for (size_t seq = 0; seq + 1 < cu_seqlens.size(); ++seq) {
+        int64_t seq_len = cu_seqlens[seq + 1] - cu_seqlens[seq];
+        int64_t chunks = CeilDiv(seq_len, chunk_size);
+        for (int64_t chunk = 0; chunk < chunks; ++chunk) {
+            indices.push_back(static_cast<int64_t>(seq));
+            indices.push_back(chunk);
+        }
+    }
+    return indices;
+}
+} // namespace
+
 
 ::std::tuple<at::Tensor,at::Tensor,at::Tensor,at::Tensor> npu_prepare_wy_repr_bwd_full(const at::Tensor & k, const at::Tensor & v, const at::Tensor & beta, const at::Tensor & A, const at::Tensor & dA, const at::Tensor & dw, const at::Tensor & du, const at::Tensor & g, int64_t chunk_size, at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices)
 {
@@ -252,9 +306,8 @@ at::Tensor npu_chunk_fwd_o(
     c10::optional<bool> transpose_state_layout)
 {
     TORCH_CHECK(
-        g.has_value() && g->defined(),
-        "npu_chunk_gated_delta_rule_fwd_h: g cannot be None or undefined; pass a real gate tensor until NPU supports g=None.");
-
+        (g.has_value() && g->defined()) || (gk.has_value() && gk->defined()),
+        "npu_chunk_gated_delta_rule_fwd_h: either g or gk must be defined.");
     TORCH_CHECK(
         save_new_value.value_or(true),
         "npu_chunk_gated_delta_rule_fwd_h: save_new_value is reserved and only true is supported.");
@@ -342,6 +395,216 @@ at::Tensor npu_chunk_fwd_o(
     EXEC_NPU_CMD_EXT(aclnnRecomputeWUFwd,
         k, v, beta, A, g_, gK_,cu_seqlens, chunk_indices, chunk_size, w, u);
     return std::tie(w,u);
+}
+::std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
+             at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+npu_chunk_kda_fwd(
+    const at::Tensor &q,
+    const at::Tensor &k,
+    const at::Tensor &v,
+    const at::Tensor &gk,
+    const at::Tensor &beta,
+    double scale,
+    int64_t chunk_size,
+    const c10::optional<at::Tensor> &initial_state,
+    c10::optional<bool> output_final_state,
+    at::OptionalIntArrayRef cu_seqlens,
+    at::OptionalIntArrayRef chunk_indices,
+    c10::optional<bool> return_intermediate,
+    c10::optional<bool> safe_gate,
+    c10::optional<bool> transpose_state_layout)
+{
+    TORCH_CHECK(!safe_gate.value_or(false), "npu_chunk_kda_fwd: safe_gate=True is not supported.");
+    TORCH_CHECK(!transpose_state_layout.value_or(false),
+                "npu_chunk_kda_fwd: transpose_state_layout=True is not supported.");
+    TORCH_CHECK(chunk_size == 32 || chunk_size == 64 || chunk_size == 128,
+                "npu_chunk_kda_fwd: chunk_size must be 32, 64 or 128.");
+    bool is_rank3 = q.dim() == 3;
+    TORCH_CHECK((!is_rank3 && q.dim() == 4 && k.dim() == 4 && v.dim() == 4 && gk.dim() == 4 && beta.dim() == 3) ||
+                    (is_rank3 && k.dim() == 3 && v.dim() == 3 && gk.dim() == 3 && beta.dim() == 2),
+                "npu_chunk_kda_fwd: expected q/k/v/gk in BSND/BNSD rank4 with beta rank3, "
+                "or TND/NTD rank3 with beta rank2.");
+    TORCH_CHECK(q.sizes() == k.sizes(), "npu_chunk_kda_fwd: q and k must have identical shape.");
+    auto is_gate_dtype = [](at::ScalarType dtype) {
+        return dtype == at::kFloat || dtype == at::kBFloat16;
+    };
+    TORCH_CHECK(is_gate_dtype(gk.scalar_type()) && is_gate_dtype(beta.scalar_type()),
+                "npu_chunk_kda_fwd: gk and beta must be float32 or bfloat16.");
+
+    auto q_sizes = q.sizes();
+    auto v_sizes = v.sizes();
+    bool is_bsnd = false;
+    bool is_bnsd = false;
+    bool is_tnd = false;
+    bool is_ntd = false;
+    if (is_rank3) {
+        is_tnd = v_sizes[0] == q_sizes[0] && gk.sizes()[0] == q_sizes[0] && beta.sizes()[0] == q_sizes[0] &&
+                 gk.sizes()[1] == v_sizes[1] && beta.sizes()[1] == v_sizes[1] && gk.sizes()[2] == q_sizes[2];
+        is_ntd = v_sizes[1] == q_sizes[1] && gk.sizes()[0] == v_sizes[0] && beta.sizes()[0] == v_sizes[0] &&
+                 gk.sizes()[1] == q_sizes[1] && beta.sizes()[1] == q_sizes[1] && gk.sizes()[2] == q_sizes[2];
+        if (is_tnd && is_ntd) {
+            is_ntd = q_sizes[0] <= q_sizes[1];
+            is_tnd = !is_ntd;
+        }
+    } else {
+        is_bsnd = v_sizes[0] == q_sizes[0] && v_sizes[1] == q_sizes[1] &&
+                  gk.sizes()[0] == q_sizes[0] && gk.sizes()[1] == q_sizes[1] &&
+                  beta.sizes()[0] == q_sizes[0] && beta.sizes()[1] == q_sizes[1] &&
+                  gk.sizes()[2] == v_sizes[2] && beta.sizes()[2] == v_sizes[2] && gk.sizes()[3] == q_sizes[3];
+        is_bnsd = v_sizes[0] == q_sizes[0] && v_sizes[2] == q_sizes[2] &&
+                  gk.sizes()[0] == q_sizes[0] && gk.sizes()[1] == v_sizes[1] &&
+                  beta.sizes()[0] == q_sizes[0] && beta.sizes()[1] == v_sizes[1] &&
+                  gk.sizes()[2] == q_sizes[2] && beta.sizes()[2] == q_sizes[2] && gk.sizes()[3] == q_sizes[3];
+        if (is_bsnd && is_bnsd) {
+            is_bnsd = q_sizes[1] <= q_sizes[2];
+            is_bsnd = !is_bnsd;
+        }
+    }
+    TORCH_CHECK(is_bsnd || is_bnsd || is_tnd || is_ntd,
+                "npu_chunk_kda_fwd: expected BSND [B,T,H,K], BNSD [B,H,T,K], "
+                "TND [T,H,K], or NTD [H,T,K] layout.");
+
+    bool is_internal_layout = is_bnsd || is_ntd;
+    int64_t B = is_rank3 ? 1 : q_sizes[0];
+    int64_t T = is_tnd ? q_sizes[0] : (is_ntd ? q_sizes[1] : (is_bnsd ? q_sizes[2] : q_sizes[1]));
+    int64_t H = is_tnd ? q_sizes[1] : (is_ntd ? q_sizes[0] : (is_bnsd ? q_sizes[1] : q_sizes[2]));
+    int64_t K = is_rank3 ? q_sizes[2] : q_sizes[3];
+    int64_t HV = is_tnd ? v_sizes[1] : (is_ntd ? v_sizes[0] : (is_bnsd ? v_sizes[1] : v_sizes[2]));
+    int64_t V = is_rank3 ? v_sizes[2] : v_sizes[3];
+    TORCH_CHECK((is_tnd && v_sizes[0] == T) || (is_ntd && v_sizes[1] == T) ||
+                    (is_bsnd && v_sizes[0] == B && v_sizes[1] == T) ||
+                    (is_bnsd && v_sizes[0] == B && v_sizes[2] == T),
+                "npu_chunk_kda_fwd: v shape prefix must match q layout.");
+    TORCH_CHECK((is_tnd && gk.sizes()[0] == T && gk.sizes()[1] == HV && gk.sizes()[2] == K) ||
+                    (is_ntd && gk.sizes()[0] == HV && gk.sizes()[1] == T && gk.sizes()[2] == K) ||
+                    (is_bsnd && gk.sizes()[0] == B && gk.sizes()[1] == T && gk.sizes()[2] == HV &&
+                        gk.sizes()[3] == K) ||
+                    (is_bnsd && gk.sizes()[0] == B && gk.sizes()[1] == HV && gk.sizes()[2] == T &&
+                        gk.sizes()[3] == K),
+                "npu_chunk_kda_fwd: gk shape mismatch.");
+    TORCH_CHECK((is_tnd && beta.sizes()[0] == T && beta.sizes()[1] == HV) ||
+                    (is_ntd && beta.sizes()[0] == HV && beta.sizes()[1] == T) ||
+                    (is_bsnd && beta.sizes()[0] == B && beta.sizes()[1] == T && beta.sizes()[2] == HV) ||
+                    (is_bnsd && beta.sizes()[0] == B && beta.sizes()[1] == HV && beta.sizes()[2] == T),
+                "npu_chunk_kda_fwd: beta shape mismatch.");
+    TORCH_CHECK(HV % H == 0, "npu_chunk_kda_fwd: HV must be divisible by H.");
+    if (initial_state.has_value() && initial_state->defined()) {
+        TORCH_CHECK(initial_state->scalar_type() == at::kFloat,
+                    "npu_chunk_kda_fwd: initial_state must be float32 when provided.");
+    }
+
+    std::vector<int64_t> generated_chunk_indices;
+    c10::optional<at::IntArrayRef> chunk_indices_for_call;
+    if (chunk_indices.has_value()) {
+        chunk_indices_for_call = chunk_indices.value();
+    } else if (cu_seqlens.has_value()) {
+        generated_chunk_indices = BuildKdaChunkIndices(cu_seqlens.value(), chunk_size);
+        chunk_indices_for_call = at::IntArrayRef(generated_chunk_indices);
+    } else {
+        chunk_indices_for_call = c10::nullopt;
+    }
+
+    int64_t seq_num = GetKdaSeqNum(B, cu_seqlens);
+    int64_t total_chunks = GetKdaTotalChunks(B, T, chunk_size, cu_seqlens, chunk_indices_for_call);
+    bool output_final_state_ = output_final_state.value_or(false);
+    bool return_intermediate_ = return_intermediate.value_or(false);
+    double scale_ = scale;
+    int64_t chunk_size_ = chunk_size;
+    bool recompute_output_final_state = true;
+    int64_t total_chunks_ = total_chunks;
+
+    at::Tensor o = at::empty_like(v);
+    at::Tensor final_state_work = at::empty({seq_num, HV, K, V}, q.options().dtype(at::kFloat));
+    at::Tensor aqk = is_rank3 ? (is_internal_layout ? at::empty({HV, T, chunk_size}, q.options()) :
+        at::empty({T, HV, chunk_size}, q.options())) : (is_internal_layout ?
+        at::empty({B, HV, T, chunk_size}, q.options()) : at::empty({B, T, HV, chunk_size}, q.options()));
+    at::Tensor akk = is_rank3 ? (is_internal_layout ? at::empty({HV, T, chunk_size}, q.options()) :
+        at::empty({T, HV, chunk_size}, q.options())) : (is_internal_layout ?
+        at::empty({B, HV, T, chunk_size}, q.options()) : at::empty({B, T, HV, chunk_size}, q.options()));
+    at::Tensor w = is_rank3 ? (is_internal_layout ? at::empty({HV, T, K}, q.options()) :
+        at::empty({T, HV, K}, q.options())) : (is_internal_layout ?
+        at::empty({B, HV, T, K}, q.options()) : at::empty({B, T, HV, K}, q.options()));
+    at::Tensor u = at::empty_like(v);
+    at::Tensor qg = is_rank3 ? (is_internal_layout ? at::empty({HV, T, K}, q.options()) :
+        at::empty({T, HV, K}, q.options())) : (is_internal_layout ?
+        at::empty({B, HV, T, K}, q.options()) : at::empty({B, T, HV, K}, q.options()));
+    at::Tensor kg = is_rank3 ? (is_internal_layout ? at::empty({HV, T, K}, q.options()) :
+        at::empty({T, HV, K}, q.options())) : (is_internal_layout ?
+        at::empty({B, HV, T, K}, q.options()) : at::empty({B, T, HV, K}, q.options()));
+    at::Tensor v_new = at::empty_like(v);
+    at::Tensor h = is_rank3 ? (is_internal_layout ? at::empty({HV, total_chunks, K, V}, q.options()) :
+        at::empty({total_chunks, HV, K, V}, q.options())) : (is_internal_layout ?
+        at::empty({B, HV, total_chunks, K, V}, q.options()) : at::empty({B, total_chunks, HV, K, V}, q.options()));
+    const at::Tensor &initial_state_ = c10::value_or_else(initial_state, [] { return at::Tensor(); });
+
+    EXEC_NPU_CMD_EXT(
+        aclnnChunkKdaFwd,
+        q, k, v, gk, beta, initial_state_,
+        cu_seqlens, chunk_indices_for_call,
+        scale_, chunk_size_, recompute_output_final_state, total_chunks_,
+        o, final_state_work, aqk, akk, w, u, qg, kg, v_new, h
+    );
+
+    at::Tensor final_state = output_final_state_ ? final_state_work : at::empty({0}, q.options().dtype(at::kFloat));
+    if (return_intermediate_) {
+        return std::make_tuple(o, final_state, aqk, akk, w, u, qg, kg, v_new, h);
+    }
+    at::Tensor empty = at::empty({0}, q.options());
+    return std::make_tuple(o, final_state, aqk, akk, empty, empty, empty, empty, empty, h);
+}
+
+at::Tensor npu_kda_gate_cumsum(
+    const at::Tensor &g,
+    int64_t chunk_size,
+    const c10::optional<at::Tensor> &A_log,
+    const c10::optional<at::Tensor> &dt_bias,
+    at::OptionalIntArrayRef cu_seqlens,
+    c10::optional<bool> use_gate_in_kernel,
+    c10::optional<bool> safe_gate,
+    c10::optional<double> lower_bound)
+{
+    TORCH_CHECK(g.dim() == 3 || g.dim() == 4,
+                "npu_kda_gate_cumsum: g must be BSND/BNSD rank4 or TND/NTD rank3.");
+    TORCH_CHECK(chunk_size == 32 || chunk_size == 64 || chunk_size == 128,
+                "npu_kda_gate_cumsum: chunk_size must be 32, 64 or 128.");
+    auto gate_dtype = g.scalar_type();
+    TORCH_CHECK(gate_dtype == at::kFloat || gate_dtype == at::kBFloat16 || gate_dtype == at::kHalf,
+                "npu_kda_gate_cumsum: g must be float32, bfloat16 or float16.");
+    bool is_bnsd = g.dim() == 4 && g.sizes()[1] <= g.sizes()[2];
+    bool is_ntd = g.dim() == 3 && g.sizes()[0] <= g.sizes()[1];
+    int64_t K = g.dim() == 4 ? g.sizes()[3] : g.sizes()[2];
+    int64_t HV = is_bnsd ? g.sizes()[1] : (is_ntd ? g.sizes()[0] : (g.dim() == 4 ? g.sizes()[2] : g.sizes()[1]));
+    TORCH_CHECK(K <= 256, "npu_kda_gate_cumsum: K must be <= 256.");
+
+    bool use_gate = use_gate_in_kernel.value_or(false);
+    bool safe = safe_gate.value_or(false);
+    double lower = lower_bound.value_or(-5.0);
+    if (use_gate) {
+        TORCH_CHECK(A_log.has_value() && A_log->defined(),
+                    "npu_kda_gate_cumsum: A_log is required when use_gate_in_kernel=True.");
+        TORCH_CHECK(A_log->scalar_type() == at::kFloat && A_log->dim() == 1 && A_log->sizes()[0] == HV,
+                    "npu_kda_gate_cumsum: A_log must be float32 with shape [HV].");
+        TORCH_CHECK(safe, "npu_kda_gate_cumsum: raw gate path currently requires safe_gate=True.");
+        TORCH_CHECK(lower >= -5.0 && lower < 0.0, "npu_kda_gate_cumsum: lower_bound must be in [-5, 0).");
+        if (dt_bias.has_value() && dt_bias->defined()) {
+            bool valid_bias = dt_bias->scalar_type() == at::kFloat &&
+                ((dt_bias->dim() == 1 && dt_bias->sizes()[0] == HV * K) ||
+                 (dt_bias->dim() == 2 && dt_bias->sizes()[0] == HV && dt_bias->sizes()[1] == K));
+            TORCH_CHECK(valid_bias, "npu_kda_gate_cumsum: dt_bias must be float32 with shape [HV*K] or [HV, K].");
+        }
+    } else {
+        TORCH_CHECK(!safe, "npu_kda_gate_cumsum: safe_gate only applies when use_gate_in_kernel=True.");
+    }
+
+    at::Tensor gk = at::empty(g.sizes(), g.options().dtype(at::kFloat));
+    const at::Tensor &A_log_ = c10::value_or_else(A_log, [] { return at::Tensor(); });
+    const at::Tensor &dt_bias_ = c10::value_or_else(dt_bias, [] { return at::Tensor(); });
+    EXEC_NPU_CMD_EXT(
+        aclnnKdaGateCumsum,
+        g, A_log_, dt_bias_, cu_seqlens,
+        chunk_size, use_gate, safe, lower, gk
+    );
+    return gk;
 }
 
 at::Tensor npu_chunk_scaled_dot_kkt(
