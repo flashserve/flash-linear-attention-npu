@@ -2259,6 +2259,8 @@ private:
             PipeBarrier<PIPE_V>();
 
             LoadAsFloatRow(stageQG_, KVOffset(b, hv, ti, 0, K_), qgLocal, K_);
+            SetFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+            WaitFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
             for (uint64_t d = 0; d < K_; ++d) {
                 float qgValue = qgPtr[d];
                 LoadAsFloatRow(stageH_, HOffset(b, hv, chunkIdx, d, 0), workLocal, V_);
@@ -2269,6 +2271,8 @@ private:
             }
 
             LoadAsFloatRow(stageAqk_, AOffset(b, hv, ti, 0), aqkLocal, BT_);
+            SetFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+            WaitFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
             for (uint64_t j = 0; j < curT; ++j) {
                 float aqkValue = aqkPtr[j];
                 LoadAsFloatRow(stageVNew_, KVOffset(b, hv, start + j, 0, V_), workLocal, V_);
