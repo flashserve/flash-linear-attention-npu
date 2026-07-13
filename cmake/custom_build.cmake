@@ -1037,11 +1037,9 @@ if (NOT ENABLE_BUILT_IN AND BUILD_OPEN_PROJECT)
     )
 
     # modify VENDOR_NAME in install.sh and upgrade.sh
-    if (EXISTS ${ASCEND_PROJECT_DIR}/fwk_modules/scripts)
-        set(ASCEND_PROJECT_DIR_SCRIPTS_PATH ${ASCEND_PROJECT_DIR}/fwk_modules/scripts)
-    else()
-        set(ASCEND_PROJECT_DIR_SCRIPTS_PATH ${CMAKE_SOURCE_DIR}/cmake/scripts/custom)
-    endif()
+    # Use the repository-owned custom package scripts so scoped wheel-OPP
+    # replacement behavior is deterministic across CANN releases.
+    set(ASCEND_PROJECT_DIR_SCRIPTS_PATH ${CMAKE_SOURCE_DIR}/cmake/scripts/custom)
     add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/scripts/install.sh ${CMAKE_CURRENT_BINARY_DIR}/scripts/upgrade.sh
             COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/scripts
             COMMAND cp -r ${ASCEND_PROJECT_DIR_SCRIPTS_PATH}/* ${CMAKE_CURRENT_BINARY_DIR}/scripts/
