@@ -430,31 +430,21 @@ to_snake_name() {
   echo "$1" | sed -E 's/([A-Z]+)([A-Z][a-z])/\1_\2/g; s/([a-z0-9])([A-Z])/\1_\2/g' | tr '[:upper:]' '[:lower:]'
 }
 
-color_status_tag() {
-  local color="$1"
-  local tag="$2"
-  local red
-  local yellow
-  local green
-  local reset
+support_status_tag() {
+  local status="$1"
 
-  red=$(printf '\033[31m')
-  yellow=$(printf '\033[33m')
-  green=$(printf '\033[32m')
-  reset=$(printf '\033[0m')
-
-  case "${color}" in
-    red)
-      printf '%b[%s]%b' "${red}" "${tag}" "${reset}"
+  case "${status}" in
+    warning)
+      printf 'WARNING'
       ;;
-    yellow)
-      printf '%b[%s]%b' "${yellow}" "${tag}" "${reset}"
+    notice)
+      printf 'NOTICE'
       ;;
-    green)
-      printf '%b[%s]%b' "${green}" "${tag}" "${reset}"
+    ok)
+      printf 'OK'
       ;;
     *)
-      printf '[%s]' "${tag}"
+      printf 'INFO'
       ;;
   esac
 }
@@ -536,14 +526,15 @@ format_change_summary() {
   echo "${summary}"
 }
 
-log_colored_op_status() {
+log_op_status() {
   local level="$1"
-  local color="$2"
-  local tag="$3"
-  local op_name="$4"
-  local reason="$5"
+  local status="$2"
+  local op_name="$3"
+  local reason="$4"
+  local tag
 
-  logandprint "[${level}]:   $(color_status_tag "${color}" "${tag}") ${op_name} - ${reason}"
+  tag=$(support_status_tag "${status}")
+  logandprint "[${level}]:   $(printf '%-7s %-36s - %s' "${tag}" "${op_name}" "${reason}")"
 }
 
 log_op_scope_file() {
@@ -575,13 +566,13 @@ log_included_op_status() {
   summary=$(format_change_summary "${changes_file}")
 
   if grep -qE '^(MODIFIED|DELETED) ' "${changes_file}"; then
-    log_colored_op_status "WARNING" "red" "RED" "${op_name}" "unsupported after install because aclnn ABI changed: ${summary}"
+    log_op_status "WARNING" "warning" "${op_name}" "unsupported after install because aclnn ABI changed: ${summary}"
   elif grep -q '^ADDED ' "${changes_file}"; then
-    log_colored_op_status "WARNING" "yellow" "YELLOW" "${op_name}" "included in run package, but aclnn ABI is new in the installed wheel: ${summary}"
+    log_op_status "WARNING" "notice" "${op_name}" "included in run package, but aclnn ABI is new in the installed wheel: ${summary}"
   elif ! op_has_source_aclnn_header "${src_vendor}" "${op_name}"; then
-    log_colored_op_status "WARNING" "yellow" "YELLOW" "${op_name}" "included in run package, but no aclnn ABI header was found to compare"
+    log_op_status "WARNING" "notice" "${op_name}" "included in run package, but no aclnn ABI header was found to compare"
   else
-    log_colored_op_status "INFO" "green" "GREEN" "${op_name}" "included in run package and aclnn ABI is unchanged"
+    log_op_status "INFO" "ok" "${op_name}" "included in run package and aclnn ABI is unchanged"
   fi
 
   rm -f "${changes_file}"
@@ -606,9 +597,9 @@ confirm_partial_shared_lib_impact() {
   log_op_scope_file "This run package contains operators:" "${src_ops_file}" "INFO"
 
   logandprint "[INFO]: Operator support status after installing this run package:"
-  logandprint "[INFO]:   $(color_status_tag "red" "RED") unsupported after install"
-  logandprint "[INFO]:   $(color_status_tag "yellow" "YELLOW") requires manual attention"
-  logandprint "[INFO]:   $(color_status_tag "green" "GREEN") supported after install"
+  logandprint "[INFO]:   $(printf '%-7s %s' "$(support_status_tag "warning")" "unsupported after install")"
+  logandprint "[INFO]:   $(printf '%-7s %s' "$(support_status_tag "notice")" "requires manual attention")"
+  logandprint "[INFO]:   $(printf '%-7s %s' "$(support_status_tag "ok")" "supported after install")"
 
   while IFS= read -r op_name; do
     log_included_op_status "${src_vendor}" "${dst_vendor}" "${op_name}"
@@ -622,7 +613,7 @@ confirm_partial_shared_lib_impact() {
   logandprint "[WARNING]: Installing this run package replaces shared opapi/tiling/proto libraries in the wheel with the scoped build from this package."
   logandprint "[WARNING]: The following installed operators are not included in this run package and will not be usable after replacement:"
   while IFS= read -r op_name; do
-    log_colored_op_status "WARNING" "red" "RED" "${op_name}" "not included in this run package; shared opapi/tiling/proto libraries will be replaced"
+    log_op_status "WARNING" "warning" "${op_name}" "not included in this run package; shared opapi/tiling/proto libraries will be replaced"
   done <"${unavailable_ops_file}"
   rm -f "${src_ops_file}" "${dst_ops_file}" "${unavailable_ops_file}"
 
@@ -749,70 +740,6 @@ update_wheel_vendors_config() {
   echo "load_priority=${merged}" >"${config_file}"
 }
 
-confirm_aclnn_abi_changes() {
-  local src_vendor="$1"
-  local dst_vendor="$2"
-  local src_abi_dir="${src_vendor}/op_api/include/aclnnop"
-  local dst_abi_dir="${dst_vendor}/op_api/include/aclnnop"
-  local report_file
-
-  if [ ! -d "${src_abi_dir}" ]; then
-    logandprint "[INFO]: No aclnn ABI headers found in run package, skip ABI comparison."
-    return
-  fi
-
-  report_file=$(mktemp)
-
-  while IFS= read -r src_file; do
-    local rel_file="${src_file#${src_abi_dir}/}"
-    local dst_file="${dst_abi_dir}/${rel_file}"
-    if [ ! -f "${dst_file}" ]; then
-      echo "ADDED    ${rel_file}" >>"${report_file}"
-    elif ! cmp -s "${src_file}" "${dst_file}"; then
-      echo "MODIFIED ${rel_file}" >>"${report_file}"
-    fi
-  done < <(find "${src_abi_dir}" -type f | sort)
-
-  while IFS= read -r op_name; do
-    for rel_file in "aclnn_${op_name}.h" "level2/aclnn_${op_name}.h"; do
-      if [ -f "${dst_abi_dir}/${rel_file}" ] && [ ! -f "${src_abi_dir}/${rel_file}" ]; then
-        echo "DELETED  ${rel_file}" >>"${report_file}"
-      fi
-    done
-  done < <(collect_vendor_op_names "${src_vendor}")
-
-  if [ ! -s "${report_file}" ]; then
-    logandprint "[INFO]: No aclnn ABI header changes detected."
-    rm -f "${report_file}"
-    return
-  fi
-
-  logandprint "[WARNING]: aclnn ABI header changes detected before installing this run package:"
-  while IFS= read -r line; do
-    logandprint "[WARNING]:   ${line}"
-  done <"${report_file}"
-  rm -f "${report_file}"
-
-  if [ "${IS_QUIET}" = "y" ]; then
-    logandprint "[WARNING]: --quiet is set, treating aclnn ABI changes as confirmed."
-    return
-  fi
-
-  logandprint "[INFO]: Continue to overwrite the installed wheel OPP? [y/n]"
-  while true; do
-    read yn
-    if [ "${yn}" = "y" ]; then
-      return
-    elif [ "${yn}" = "n" ]; then
-      logandprint "[INFO]: Exit without installing run package."
-      exitlog
-      exit 0
-    else
-      echo "[WARNING]: Input error, please input y or n to choose!"
-    fi
-  done
-}
-
 install_wheel_opp_package() {
   if [ "${IS_INSTALL}" = "n" ]; then
     return
@@ -847,7 +774,6 @@ install_wheel_opp_package() {
   logandprint "[INFO]: Target vendor ${dst_vendor}"
 
   confirm_partial_shared_lib_impact "${src_vendor}" "${dst_vendor}"
-  confirm_aclnn_abi_changes "${src_vendor}" "${dst_vendor}"
   merge_vendor_to_wheel_opp "${src_vendor}" "${dst_vendor}"
   update_wheel_vendors_config "${wheel_opp_root}/vendors" "fla_npu_transformer"
 

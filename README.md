@@ -99,7 +99,7 @@ python -m pip install --force-reinstall --no-deps dist/flash_linear_attention_np
 
 #### 方式 B 产物安装
 
-先确认方式 A 的完整 wheel 已经安装到当前 Python 环境，然后安装 run 包。安装器会在覆盖前列出当前 run 包携带的算子，并用红/黄/绿标出安装后的算子状态：红色表示安装后不可用，包括不在当前 run 包范围内但会受局部 `libcust_opapi.so`、tiling so、proto so 整体替换影响的算子，以及当前 run 包内但 aclnn ABI 修改或删除的算子；黄色表示新增或无法完整确认的 ABI；绿色表示当前 run 包内且 aclnn ABI 一致的算子。安装器还会列出 `op_api/include/aclnnop` 中新增、删除、修改的 aclnn ABI 头文件；删除只按当前 run 包携带的算子范围判断，非 `--quiet` 模式需要确认后才继续。
+先确认方式 A 的完整 wheel 已经安装到当前 Python 环境，然后安装 run 包。安装器会在覆盖前列出当前 run 包携带的算子，并标出安装后的算子状态：`WARNING` 表示安装后不可用，包括不在当前 run 包范围内但会受局部 `libcust_opapi.so`、tiling so、proto so 整体替换影响的算子，以及当前 run 包内但 aclnn ABI 修改或删除的算子；`NOTICE` 表示新增或无法完整确认的 ABI，需要确认当前 Python wheel 是否已有对应 wrapper；`OK` 表示当前 run 包内且 aclnn ABI 一致的算子。`op_api/include/aclnnop` 中新增、删除、修改的 aclnn ABI 头文件会合并显示到对应算子的状态原因里；删除只按当前 run 包携带的算子范围判断，非 `--quiet` 模式只在状态表后确认一次。
 
 ```sh
 # 覆盖当前 Python 环境中 flash-linear-attention-npu wheel 内嵌的 OPP
