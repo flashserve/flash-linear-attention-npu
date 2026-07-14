@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="930" viewBox="0 0 1500 930" role="img" aria-labelledby="title desc">
+  <title id="title">依赖兼容性的已有门禁、当前缺口与完整闭环</title>
+  <desc id="desc">对比当前已经实施的运行门禁、尚未自动保证的依赖兼容性，以及 compatibility manifest 和 preflight 组成的推荐闭环。</desc>
+  <defs>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#4C9B60"/></marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#D9970B"/></marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#5B7DB1"/></marker>
+    <marker id="arrow-result" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#3973B7"/></marker>
+    <style>
+      text { font-family: Arial, "Microsoft YaHei", sans-serif; fill: #172033; letter-spacing: 0; }
+      .panel { rx: 8; stroke-width: 1.5; }
+      .box { rx: 8; stroke-width: 2; }
+      .header { font-size: 19px; font-weight: 700; }
+      .node-title { font-size: 15px; font-weight: 700; }
+      .node-text { font-size: 14px; }
+      .edge { fill: none; stroke-width: 2; }
+      .result-edge { fill: none; stroke-width: 2.3; }
+    </style>
+  </defs>
+  <rect width="1500" height="930" fill="#FFFFFF"/>
+  <text x="750" y="55" text-anchor="middle" font-size="25" font-weight="700">依赖兼容性：已有门禁、当前缺口与完整闭环</text>
+  <text x="750" y="92" text-anchor="middle" font-size="15" fill="#52606D">解耦不等于放弃检查：用运行时能力和可追溯清单替代 Torch C++ ABI 锁定</text>
+
+  <rect class="panel" x="30" y="120" width="440" height="610" fill="#F7FCF8" stroke="#A8D4B2"/>
+  <rect class="panel" x="530" y="120" width="440" height="610" fill="#FFFBF2" stroke="#E6C36A"/>
+  <rect class="panel" x="1030" y="120" width="440" height="610" fill="#F5F9FF" stroke="#AFC4E8"/>
+
+  <!-- Vertical arrows only use the whitespace between nodes. -->
+  <path class="edge" d="M250 300 V325" stroke="#4C9B60" marker-end="url(#arrow-green)"/>
+  <path class="edge" d="M250 400 V425" stroke="#4C9B60" marker-end="url(#arrow-green)"/>
+  <path class="edge" d="M250 500 V525" stroke="#4C9B60" marker-end="url(#arrow-green)"/>
+  <path class="edge" d="M250 600 V625" stroke="#4C9B60" marker-end="url(#arrow-green)"/>
+  <path class="edge" d="M750 300 V325" stroke="#D9970B" marker-end="url(#arrow-amber)"/>
+  <path class="edge" d="M750 400 V425" stroke="#D9970B" marker-end="url(#arrow-amber)"/>
+  <path class="edge" d="M750 500 V525" stroke="#D9970B" marker-end="url(#arrow-amber)"/>
+  <path class="edge" d="M750 600 V625" stroke="#D9970B" marker-end="url(#arrow-amber)"/>
+  <path class="edge" d="M1250 300 V325" stroke="#5B7DB1" marker-end="url(#arrow-blue)"/>
+  <path class="edge" d="M1250 400 V425" stroke="#5B7DB1" marker-end="url(#arrow-blue)"/>
+  <path class="edge" d="M1250 500 V525" stroke="#5B7DB1" marker-end="url(#arrow-blue)"/>
+  <path class="edge" d="M1250 600 V625" stroke="#5B7DB1" marker-end="url(#arrow-blue)"/>
+  <path class="result-edge" d="M250 700 V790" stroke="#3973B7" marker-end="url(#arrow-result)"/>
+  <path class="result-edge" d="M750 700 V790" stroke="#3973B7" marker-end="url(#arrow-result)"/>
+  <path class="result-edge" d="M1250 700 V790" stroke="#3973B7" marker-end="url(#arrow-result)"/>
+
+  <rect class="box" x="50" y="140" width="400" height="60" fill="#E9F7EE" stroke="#4C9B60"/>
+  <text class="header" x="250" y="177" text-anchor="middle" fill="#244B2F">当前已有硬门禁</text>
+  <rect class="box" x="60" y="225" width="380" height="75" fill="#FFFFFF" stroke="#4C9B60"/>
+  <text x="250" text-anchor="middle"><tspan class="node-title" x="250" y="254">Python 安装范围</tspan><tspan class="node-text" x="250" y="280">python_requires &gt;= 3.9</tspan></text>
+  <rect class="box" x="60" y="325" width="380" height="75" fill="#FFFFFF" stroke="#4C9B60"/>
+  <text x="250" text-anchor="middle"><tspan class="node-title" x="250" y="354">CANN 环境</tspan><tspan class="node-text" x="250" y="380">构建和调用前必须完成初始化</tspan></text>
+  <rect class="box" x="60" y="425" width="380" height="75" fill="#FFFFFF" stroke="#4C9B60"/>
+  <text x="250" text-anchor="middle"><tspan class="node-title" x="250" y="454">内嵌 OPP 完整性</tspan><tspan class="node-text" x="250" y="480">op_api / op_host / tiling / kernel 同树交付</tspan></text>
+  <rect class="box" x="60" y="525" width="380" height="75" fill="#FFFFFF" stroke="#4C9B60"/>
+  <text x="250" text-anchor="middle"><tspan class="node-title" x="250" y="554">动态加载</tspan><tspan class="node-text" x="250" y="580">绝对路径 + RTLD_NOW 暴露缺库和缺符号</tspan></text>
+  <rect class="box" x="60" y="625" width="380" height="75" fill="#FFFFFF" stroke="#4C9B60"/>
+  <text x="250" text-anchor="middle"><tspan class="node-title" x="250" y="654">调用检查</tspan><tspan class="node-text" x="250" y="680">NPU tensor / dtype / descriptor / ACL 返回值</tspan></text>
+
+  <rect class="box" x="550" y="140" width="400" height="60" fill="#FFF4D8" stroke="#D9970B"/>
+  <text class="header" x="750" y="177" text-anchor="middle" fill="#6A4A00">当前尚未形成硬门禁</text>
+  <rect class="box" x="560" y="225" width="380" height="75" fill="#FFFFFF" stroke="#D9970B"/>
+  <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="254">SOC / host build tag</tspan><tspan class="node-text" x="750" y="280">py3-none-any 不会让 pip 自动判错</tspan></text>
+  <rect class="box" x="560" y="325" width="380" height="75" fill="#FFFFFF" stroke="#D9970B"/>
+  <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="354">CANN 运行版本范围</tspan><tspan class="node-text" x="750" y="380">当前能读取版本，但未在 import 时强制范围</tspan></text>
+  <rect class="box" x="560" y="425" width="380" height="75" fill="#FFFFFF" stroke="#D9970B"/>
+  <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="454">torch / torch_npu 配套关系</tspan><tspan class="node-text" x="750" y="480">不在 install_requires 中，也未显式比对发布族</tspan></text>
+  <rect class="box" x="560" y="525" width="380" height="75" fill="#FFFFFF" stroke="#D9970B"/>
+  <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="554">环境检查脚本</tspan><tspan class="node-text" x="750" y="580">可检查最低版本，但安装后不会自动运行</tspan></text>
+  <rect class="box" x="560" y="625" width="380" height="75" fill="#FFFFFF" stroke="#D9970B"/>
+  <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="654">同名符号后的 ABI 变化</tspan><tspan class="node-text" x="750" y="680">签名变化和 libstdc++ 基线仍需测试发现</tspan></text>
+
+  <rect class="box" x="1050" y="140" width="400" height="60" fill="#E8F1FF" stroke="#5B7DB1"/>
+  <text class="header" x="1250" y="177" text-anchor="middle" fill="#24466F">推荐的完整闭环</text>
+  <rect class="box" x="1060" y="225" width="380" height="75" fill="#FFFFFF" stroke="#5B7DB1"/>
+  <text x="1250" text-anchor="middle"><tspan class="node-title" x="1250" y="254">compatibility.json</tspan><tspan class="node-text" x="1250" y="280">记录版本、commit、SOC、架构和 CANN 范围</tspan></text>
+  <rect class="box" x="1060" y="325" width="380" height="75" fill="#FFFFFF" stroke="#5B7DB1"/>
+  <text x="1250" text-anchor="middle"><tspan class="node-title" x="1250" y="354">一次性 preflight</tspan><tspan class="node-text" x="1250" y="380">首次 kernel 前检查 host / SOC / CANN</tspan></text>
+  <rect class="box" x="1060" y="425" width="380" height="75" fill="#FFFFFF" stroke="#5B7DB1"/>
+  <text x="1250" text-anchor="middle"><tspan class="node-title" x="1250" y="454">符号和 ABI 指纹</tspan><tspan class="node-text" x="1250" y="480">检查公共 ACL、aclnn 符号与 header 清单</tspan></text>
+  <rect class="box" x="1060" y="525" width="380" height="75" fill="#FFFFFF" stroke="#5B7DB1"/>
+  <text x="1250" text-anchor="middle"><tspan class="node-title" x="1250" y="554">框架能力探测</tspan><tspan class="node-text" x="1250" y="580">检查 NPU tensor / storage / stream，不锁 torch patch</tspan></text>
+  <rect class="box" x="1060" y="625" width="380" height="75" fill="#FFFFFF" stroke="#5B7DB1"/>
+  <text x="1250" text-anchor="middle"><tspan class="node-title" x="1250" y="654">交付闭环</tspan><tspan class="node-text" x="1250" y="680">run 覆盖同步清单；CI 由清单校验支持矩阵</tspan></text>
+
+  <rect class="box" x="180" y="790" width="1140" height="100" fill="#EEF6FF" stroke="#3973B7" stroke-width="2.5"/>
+  <text x="750" text-anchor="middle">
+    <tspan x="750" y="826" font-size="17" font-weight="700" fill="#1F466F">目标：不锁死 torch minor / patch，但在首次 kernel enqueue 前拒绝错误环境</tspan>
+    <tspan x="750" y="858" font-size="15" fill="#1F466F">SOC、host、CANN、ACL 符号和框架能力可解释地失败；发布矩阵只声明真实验证组合</tspan>
+  </text>
+</svg>

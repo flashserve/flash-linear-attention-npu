@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="930" viewBox="0 0 1500 930" role="img" aria-labelledby="title desc">
+  <title id="title">新架构的依赖确定阶段</title>
+  <desc id="desc">从 OPP 构建、wheel 组装、pip 安装、动态加载到首次算子调用，展示构建时固定依赖、运行时依赖和发布验证边界。</desc>
+  <defs>
+    <marker id="arrow-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#52606D"/></marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#5B7DB1"/></marker>
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#8266B5"/></marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#2F7D43"/></marker>
+    <style>
+      text { font-family: Arial, "Microsoft YaHei", sans-serif; fill: #172033; letter-spacing: 0; }
+      .box { rx: 8; stroke-width: 2; }
+      .stage-title { font-size: 18px; font-weight: 700; }
+      .section { font-size: 14px; font-weight: 700; }
+      .body { font-size: 14px; }
+      .summary-title { font-size: 17px; font-weight: 700; }
+      .summary { font-size: 15px; }
+      .edge { fill: none; stroke-width: 2.4; }
+      .edge-thin { fill: none; stroke-width: 2; }
+      .edge-label { font-size: 13px; }
+    </style>
+  </defs>
+  <rect width="1500" height="930" fill="#FFFFFF"/>
+  <text x="750" y="55" text-anchor="middle" font-size="25" font-weight="700">新架构的依赖在什么时候确定</text>
+  <text x="750" y="92" text-anchor="middle" font-size="15" fill="#52606D">框架版本留在目标环境；CANN、SOC、host 二进制留在构建产物</text>
+
+  <!-- Arrows are rendered behind nodes and stay entirely in the whitespace between boxes. -->
+  <path class="edge" d="M280 325 H325" stroke="#52606D" marker-end="url(#arrow-gray)"/>
+  <path class="edge" d="M575 325 H620" stroke="#52606D" marker-end="url(#arrow-gray)"/>
+  <path class="edge" d="M870 325 H915" stroke="#52606D" marker-end="url(#arrow-gray)"/>
+  <path class="edge" d="M1165 325 H1210" stroke="#52606D" marker-end="url(#arrow-gray)"/>
+  <path class="edge-thin" d="M155 500 V575" stroke="#5B7DB1" marker-end="url(#arrow-blue)"/>
+  <path class="edge-thin" d="M450 500 V575" stroke="#5B7DB1" marker-end="url(#arrow-blue)"/>
+  <path class="edge-thin" d="M745 500 V575" stroke="#8266B5" marker-end="url(#arrow-purple)"/>
+  <path class="edge-thin" d="M1040 500 V575" stroke="#8266B5" marker-end="url(#arrow-purple)"/>
+  <path class="edge-thin" d="M1335 500 V575" stroke="#8266B5" marker-end="url(#arrow-purple)"/>
+  <path class="edge" d="M302.5 695 V730 H522 V765" stroke="#2F7D43" marker-end="url(#arrow-green)"/>
+  <path class="edge" d="M1040 695 V730 H978 V765" stroke="#2F7D43" marker-end="url(#arrow-green)"/>
+
+  <rect class="box" x="30" y="150" width="250" height="350" fill="#EEF4FF" stroke="#5B7DB1"/>
+  <text x="155" text-anchor="middle">
+    <tspan class="stage-title" x="155" y="184">1  OPP 构建</tspan>
+    <tspan class="section" x="155" y="230">此时固定</tspan>
+    <tspan class="body" x="155" y="257">CANN 头文件与工具链</tspan>
+    <tspan class="body" x="155" y="282">FLA_NPU_SOC</tspan>
+    <tspan class="body" x="155" y="307">host 架构</tspan>
+    <tspan class="body" x="155" y="332">gcc / libstdc++ 基线</tspan>
+    <tspan class="section" x="155" y="385">此时不读取</tspan>
+    <tspan class="body" x="155" y="412">torch / torch_npu ABI</tspan>
+  </text>
+
+  <rect class="box" x="325" y="150" width="250" height="350" fill="#EEF4FF" stroke="#5B7DB1"/>
+  <text x="450" text-anchor="middle">
+    <tspan class="stage-title" x="450" y="184">2  wheel 组装</tspan>
+    <tspan class="section" x="450" y="230">写入产物</tspan>
+    <tspan class="body" x="450" y="257">公开版本与源码标识</tspan>
+    <tspan class="body" x="450" y="282">SOC.host build tag</tspan>
+    <tspan class="body" x="450" y="307">Python wrapper</tspan>
+    <tspan class="body" x="450" y="332">完整 OPP vendor 树</tspan>
+    <tspan class="section" x="450" y="385">不锁定</tspan>
+    <tspan class="body" x="450" y="412">Python minor / torch / Triton</tspan>
+  </text>
+
+  <rect class="box" x="620" y="150" width="250" height="350" fill="#EFF9F1" stroke="#4C9B60"/>
+  <text x="745" text-anchor="middle">
+    <tspan class="stage-title" x="745" y="184">3  pip 安装</tspan>
+    <tspan class="section" x="745" y="230">安装门禁</tspan>
+    <tspan class="body" x="745" y="257">python_requires &gt;= 3.9</tspan>
+    <tspan class="body" x="745" y="282">普通 Python 依赖</tspan>
+    <tspan class="section" x="745" y="335">pip 不检查</tspan>
+    <tspan class="body" x="745" y="362">build tag 中的 SOC / 架构</tspan>
+    <tspan class="body" x="745" y="387">CANN runtime</tspan>
+    <tspan class="body" x="745" y="412">torch 与 torch_npu 配套关系</tspan>
+  </text>
+
+  <rect class="box" x="915" y="150" width="250" height="350" fill="#FFF7E8" stroke="#D9970B"/>
+  <text x="1040" text-anchor="middle">
+    <tspan class="stage-title" x="1040" y="184">4  import / dlopen</tspan>
+    <tspan class="section" x="1040" y="230">运行时选择</tspan>
+    <tspan class="body" x="1040" y="257">已 source 的 CANN</tspan>
+    <tspan class="body" x="1040" y="282">内嵌或显式外部 OPP</tspan>
+    <tspan class="body" x="1040" y="307">libcust_opapi.so</tspan>
+    <tspan class="section" x="1040" y="360">RTLD_NOW 检查</tspan>
+    <tspan class="body" x="1040" y="387">ELF 架构、依赖库</tspan>
+    <tspan class="body" x="1040" y="412">必需动态符号</tspan>
+  </text>
+
+  <rect class="box" x="1210" y="150" width="250" height="350" fill="#F4F0FF" stroke="#8266B5"/>
+  <text x="1335" text-anchor="middle">
+    <tspan class="stage-title" x="1335" y="184">5  首次算子调用</tspan>
+    <tspan class="section" x="1335" y="230">从当前环境取得</tspan>
+    <tspan class="body" x="1335" y="257">torch Python tensor API</tspan>
+    <tspan class="body" x="1335" y="282">NPU device / dtype / storage</tspan>
+    <tspan class="body" x="1335" y="307">shape / stride / data pointer</tspan>
+    <tspan class="body" x="1335" y="332">current NPU stream</tspan>
+    <tspan class="body" x="1335" y="357">可选真实 ACL format</tspan>
+    <tspan class="section" x="1335" y="412">按能力调用</tspan>
+    <tspan class="body" x="1335" y="439">不比对构建机 torch</tspan>
+  </text>
+
+  <rect class="box" x="30" y="575" width="545" height="120" fill="#EEF4FF" stroke="#5B7DB1"/>
+  <text x="302.5" text-anchor="middle">
+    <tspan class="summary-title" x="302.5" y="608" fill="#24466F">构建产物已经固定</tspan>
+    <tspan class="summary" x="302.5" y="638">CANN 编译接口 × SOC kernel × host ELF × 工具链基线</tspan>
+    <tspan class="summary" x="302.5" y="666">这些依赖不能因 py3-none-any 命名而被忽略</tspan>
+  </text>
+  <rect class="box" x="620" y="575" width="840" height="120" fill="#F4F0FF" stroke="#8266B5"/>
+  <text x="1040" text-anchor="middle">
+    <tspan class="summary-title" x="1040" y="608" fill="#49366B">目标环境运行时确定</tspan>
+    <tspan class="summary" x="1040" y="638">Python × torch × torch_npu 后端 × Triton × CANN runtime</tspan>
+    <tspan class="summary" x="1040" y="666">fla_npu 不冻结框架 ABI，但要求当前环境提供所需能力</tspan>
+  </text>
+
+  <g><rect x="397" y="716" width="105" height="20" fill="#fff"/><text class="edge-label" x="449.5" y="731" text-anchor="middle" fill="#244B2F">构建侧证据</text></g>
+  <g><rect x="1000" y="716" width="105" height="20" fill="#fff"/><text class="edge-label" x="1052.5" y="731" text-anchor="middle" fill="#244B2F">运行侧证据</text></g>
+  <rect class="box" x="180" y="765" width="1140" height="120" fill="#E9F7EE" stroke="#4C9B60" stroke-width="2.5"/>
+  <text x="750" text-anchor="middle">
+    <tspan x="750" y="800" font-size="18" font-weight="700" fill="#244B2F">CI / 发布矩阵给出真实兼容范围</tspan>
+    <tspan x="750" y="833" font-size="16" fill="#244B2F">验证 import、动态符号、stream、单算子精度和端到端 Example/ST</tspan>
+    <tspan x="750" y="863" font-size="16" fill="#244B2F">结论是“这些组合经过验证”，不是“pip 已自动保证所有组合”</tspan>
+  </text>
+</svg>

@@ -5,7 +5,7 @@
 ## 使用方式
 
 - 修改算子实现前，先读 [`operator-development.md`](operator-development.md)。
-- 修改 `fla_npu` Python runtime、wheel 打包、OPP 安装、legacy `torch.ops.npu` 兼容路径、stream 或 autograd 绑定前，先读 [`torch-npu-decoupled-architecture.md`](torch-npu-decoupled-architecture.md)。
+- 修改 `fla_npu` Python runtime、wheel 打包、OPP 安装、依赖版本门禁、legacy `torch.ops.npu` 兼容路径、stream 或 autograd 绑定前，先读 [`torch-npu-decoupled-architecture.md`](torch-npu-decoupled-architecture.md)。
 - 设计验证方案或整理测试结果前，先读 [`validation.md`](validation.md)。
 - 遇到精度、ABI、生成代码、跨 SOC 或提交范围问题时，先读 [`lessons.md`](lessons.md)。
 

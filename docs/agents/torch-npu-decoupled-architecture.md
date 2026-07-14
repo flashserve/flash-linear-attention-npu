@@ -8,6 +8,10 @@
 Markdown 中直接渲染的 SVG 见 [`../assets/fla-npu-decoupled-runtime.svg`](../assets/fla-npu-decoupled-runtime.svg)。
 版本依赖对比图源见 [`../assets/fla-npu-version-dependency.drawio`](../assets/fla-npu-version-dependency.drawio)，
 SVG 见 [`../assets/fla-npu-version-dependency.svg`](../assets/fla-npu-version-dependency.svg)。
+依赖确定阶段图源见 [`../assets/fla-npu-dependency-lifecycle.drawio`](../assets/fla-npu-dependency-lifecycle.drawio)，
+SVG 见 [`../assets/fla-npu-dependency-lifecycle.svg`](../assets/fla-npu-dependency-lifecycle.svg)。
+兼容性门禁图源见 [`../assets/fla-npu-compatibility-guardrails.drawio`](../assets/fla-npu-compatibility-guardrails.drawio)，
+SVG 见 [`../assets/fla-npu-compatibility-guardrails.svg`](../assets/fla-npu-compatibility-guardrails.svg)。
 
 ![fla_npu 解耦运行时架构](../assets/fla-npu-decoupled-runtime.svg)
 
@@ -15,7 +19,7 @@ SVG 见 [`../assets/fla-npu-version-dependency.svg`](../assets/fla-npu-version-d
 
 - 默认 Python 入口是 `from fla_npu.ops.ascendc import 算子名`。
 - 默认 Ascend C 调用链通过 Python `ctypes` 直调 `aclnn*` 符号，不经过 `torch.ops.npu` dispatcher。
-- 默认 wheel 是 `py3-none-any`，不编译 PyTorch C++ extension，不绑定 `cp39/cp310/cp311/cp312`、`cxx11abi` 或某个 torch minor 版本。
+- 默认 wheel 使用 `py3-none-any` 作为 Python compatibility tag，不编译 PyTorch C++ extension，因此不绑定 `cp39/cp310/cp311/cp312`、torch 的 `cxx11abi` 或某个 torch minor 版本；内嵌 OPP 仍按 SOC 和 host 架构分别构建。
 - wheel 内嵌 OPP vendor 树，安装后只要加载 CANN 环境并进入 Python 环境即可调用默认 `fla_npu.ops.ascendc`。
 - Triton 算子入口保持 `from fla_npu.ops.triton import 算子名`，打包时映射根目录 `fla/ops/triton/triton_core`，源码只保留一份。
 - legacy `torch.ops.npu.*` 只作为显式兼容路径保留，不在普通 import 或默认调用时启用。
@@ -86,7 +90,7 @@ SVG 见 [`../assets/fla-npu-version-dependency.svg`](../assets/fla-npu-version-d
 4. `_runtime.py` 直接调用 `aclnn*GetWorkspaceSize` 和 `aclnn*`。
 5. 高层 autograd 用 `torch.autograd.Function` 绑定 forward/backward，不注册 torch_npu dispatcher。
 
-这样 wheel 不再需要 PyTorch C++ extension，所以可以保持 `py3-none-any`。只要目标环境里的 torch Python API 能提供 NPU tensor 和 current stream，且 CANN/ACL 能加载对应 SOC 的 OPP 产物，同一个 wheel 就可以跨多个 torch、torch_npu、Python minor 和 gcc 组合验证。
+这样 wheel 不再需要 PyTorch C++ extension，所以 Python compatibility tag 可以保持 `py3-none-any`。这不表示 wheel 内的 OPP 二进制可以跨 SOC 或 host 架构；它表示同一个 SOC/host wheel 可以在 torch Python API、CANN/ACL 和系统动态库均兼容时，跨多个 torch、torch_npu、Python minor 和 gcc 组合验证。
 
 ## 还会保留哪些依赖
 
@@ -98,6 +102,93 @@ SVG 见 [`../assets/fla-npu-version-dependency.svg`](../assets/fla-npu-version-d
 - **torch Python tensor API**：默认 wrapper 使用 torch tensor 的 `data_ptr()`、storage、shape、stride、dtype、device 和 `torch.npu.current_stream()`。
 - **可选 torch_npu format 读取**：如果宿主进程已经加载 `torch_npu`，runtime 可以复用 `torch_npu.get_npu_format()` 读取真实 ACL format；这不是默认 import 依赖。
 - **legacy 兼容路径**：只有显式 `fla_npu.load_legacy_torch_ops()` 时才重新引入 torch_npu、PyTorch C++ extension 和 dispatcher 依赖。
+
+## 依赖在什么阶段确定
+
+新架构不是“没有依赖”，而是把不同依赖放回应该负责它们的阶段：
+
+> Python、torch、torch_npu 和 Triton 由目标 Python 环境在运行时提供；CANN 编译接口、SOC、host 架构和 OPP host 二进制仍由构建环境决定。
+
+![新架构依赖确定阶段](../assets/fla-npu-dependency-lifecycle.svg)
+
+各阶段的职责如下：
+
+| 阶段 | 此时确定或读取的依赖 | 已有检查 | 不在此阶段确定的内容 |
+| --- | --- | --- | --- |
+| OPP 构建 | CANN 头文件和编译工具链、`FLA_NPU_SOC`、host 架构、gcc/libstdc++ 基线 | 要求已 source CANN；`build.sh --soc=...` 生成对应 op_api、op_host、tiling 和 kernel | 默认路径不读取 torch、torch_npu、torchnpugen 或 PyTorch C++ ABI |
+| wheel 组装 | 包版本、分支或 commit 标识、SOC/host build tag、内嵌 OPP vendor 树 | 检查 `libcust_opapi.so` 和 OPP 关键目录完整；默认清理 legacy extension | 不锁定目标环境的 torch、torch_npu、Python minor 或 Triton 版本 |
+| pip 安装 | 当前 Python 是否满足 `python_requires >= 3.9`，以及普通 Python 依赖 | pip 会拒绝低于最低 Python 版本的环境 | `py3-none-any` 不会让 pip 自动检查 build tag 中的 SOC 和 host 架构，也不会检查 CANN |
+| import / 动态加载 | CANN 环境是否初始化、实际采用的 OPP root、`libcust_opapi.so` 及其 ELF 依赖 | 默认优先 wheel 内嵌 OPP；使用绝对路径和 `RTLD_NOW` 加载，缺库、错误架构和缺失动态符号会立即失败 | 尚未执行具体算子，不代表每个 aclnn 签名和 kernel 都已经验证 |
+| 首次 Ascend C 调用 | 当前 torch Python API、NPU tensor、dtype、storage、shape/stride、当前 NPU stream、可选真实 ACL format | 检查 NPU device 和支持的 dtype；读取 `torch.npu.current_stream()`；检查 ACL descriptor、workspace 和 launch 返回值 | 不要求 wheel 知道构建时 torch/torch_npu 版本 |
+| Triton 调用 | 目标环境实际安装的 Triton Ascend 和 JIT/runtime 能力 | 环境检查脚本可检查最低版本及 A5 特殊最低版本；导入或 JIT 失败会在调用时暴露 | Triton 版本不编入 Ascend C OPP，也不应影响 `fla_npu.ops.ascendc` |
+| CI / 发布验证 | 声明支持的 Python、torch、torch_npu、CANN、SOC 和 host 组合 | 在测试矩阵中验证 import、符号加载、stream、精度和端到端 example | CI 结论是兼容范围证据，不等于 pip 已自动实施这些门禁 |
+
+默认一键 wheel 构建时，[`setup.py`](../../setup.py) 会对 Python 和 CANN 构建环境做检查，但在未启用 `FLA_NPU_BUILD_LEGACY_EXTENSION=1` 时会明确跳过 torch、torch_npu、torchnpugen 和 Triton 的构建时检查。这不是遗漏，而是避免把目标运行环境的框架版本重新冻结进 wheel。
+
+运行环境仍然必须提供一套本身可用的 Ascend PyTorch 后端。`fla_npu` 可以避免额外绑定某个 torch/torch_npu ABI，但不能把一套原本不匹配的 torch 和 torch_npu 组合修复成可用组合。
+
+### “版本正确”如何保证
+
+新架构里的“版本正确”应理解为**目标环境满足当前调用链需要的接口、符号、SOC 和行为约定**，而不是要求版本字符串与构建机完全相等。保证分为以下几层：
+
+1. **安装门禁**：pip 根据 `python_requires` 检查 Python 大版本范围。
+2. **产物身份**：wheel build tag 标识 SOC 和 host 架构；稳定分支、主线 commit 和公开版本用于追溯源码。
+3. **OPP 自洽性**：默认从同一内嵌 vendor 树取得 op_api、op_host、tiling、proto、config 和 kernel，避免从多个安装位置拼接版本。
+4. **动态加载门禁**：`ctypes.CDLL(..., RTLD_NOW)` 在第一次加载时验证 ELF 可加载性、host 架构、依赖库和必需动态符号。
+5. **调用能力检查**：wrapper 检查 NPU tensor、dtype 和 descriptor，runtime 从当前 torch 环境取得 stream，并检查 ACL API 返回值。
+6. **测试矩阵证明**：跨 Python、torch、torch_npu、CANN、SOC 和 host 组合运行单算子、Example/ST 和精度测试，给出发布版本实际支持范围。
+
+![兼容性保证、当前缺口与建议闭环](../assets/fla-npu-compatibility-guardrails.svg)
+
+### 当前已经硬检查的内容
+
+- Python 低于 `3.9` 时构建或安装会失败。
+- 未 source CANN 环境时，OPP 构建和首次 Ascend C 调用会失败。
+- wheel 内嵌 OPP 缺少 `libcust_opapi.so` 或关键目录时，打包验证会失败。
+- `libcust_opapi.so` host 架构错误、依赖动态库缺失或必需符号无法解析时，`RTLD_NOW` 加载会失败。
+- 输入不是 NPU tensor、dtype 不受支持、descriptor 创建失败或 ACL launch 返回错误时，调用会失败。
+- 默认 OPP 搜索顺序使用 wheel 内嵌 vendor；只有显式设置 `FLA_NPU_OPP_PATH` 时，外部 OPP 才会覆盖默认选择。
+
+### 当前不能称为硬保证的内容
+
+以下内容目前主要依赖用户选择、环境检查脚本和发布测试矩阵，不能写成 pip 已自动保证：
+
+1. SOC 和 host 架构位于 wheel build tag 中，但最终兼容 tag 是 `py3-none-any`；pip 不会根据 build tag 自动拒绝装错 SOC 或架构的文件。
+2. 构建过程能读取并打印 CANN 版本，但当前没有在 import 时强制执行经过发布验证的 CANN 运行版本范围。
+3. `requirements.txt` 不锁定 torch、torch_npu 和 Triton；这有利于跨版本复用，但 pip 不会检查 torch 与 torch_npu 是否属于彼此配套的发布组合。
+4. `scripts/check_npu_env.py` 能检查最低版本、GDN 修复版本、NPU 可用性和 A5 Triton 最低版本，但它目前不是 `pip install` 后自动运行的门禁。
+5. 动态加载可以发现缺失符号，却无法仅凭符号名识别“函数名不变但 aclnn 参数 ABI 已不兼容”的变化；这仍需要 header diff、ABI 测试和真实调用覆盖。
+6. 移除 PyTorch C++ extension 消除了 torch 的 C++ ABI 绑定，但 `libcust_opapi.so` 等 host ELF 仍有 CANN 工具链和系统 libstdc++ 基线，需要发布环境验证。
+
+### 推荐的完整兼容性闭环
+
+如果要让错误环境在第一次 kernel enqueue 之前被明确拒绝，推荐在 wheel 内增加机器可读的 `compatibility.json`，并由 runtime 执行一次性 preflight：
+
+```json
+{
+  "schema_version": 1,
+  "package_version": "<public version>",
+  "source_commit": "<commit>",
+  "soc": "<ascend910b | ascend910_93 | ascend950>",
+  "host_arch": "<aarch64 | x86_64>",
+  "cann_build_version": "<build version>",
+  "cann_runtime_range": "<release-verified range>",
+  "required_acl_symbols": ["aclCreateTensor", "<aclnn symbols>"]
+}
+```
+
+preflight 应完成以下工作：
+
+- 比较 `platform.machine()` 与 `host_arch`。
+- 从 ACL 或 NPU device 属性读取实际 SOC，并与 wheel 的 `soc` 对比。
+- 读取实际 CANN runtime 版本并检查发布验证范围；A5 额外要求满足对应最低 CANN 版本。
+- 在发起算子前解析公共 ACL 和当前 wrapper 所需的 aclnn 符号。
+- 对 torch 使用能力探测而不是精确锁版本，例如检查 NPU tensor、storage API、`torch.npu.current_stream()` 和 stream pointer。
+- 对 torch_npu 检查其与 torch 的发布族或功能探针，明确区分“fla_npu wheel 可复用”与“宿主 Ascend PyTorch 组合本身可用”。
+- 外部 run 包覆盖内嵌 OPP 后同步更新兼容性清单，防止 metadata 与实际 op_api/kernel 版本脱节。
+- CI 根据同一份清单生成或校验版本矩阵，发布时只声明真实跑通的组合。
+
+这个闭环不需要把 torch/torch_npu 写成严格 `install_requires` pin。它保留跨版本复用能力，同时把 SOC、CANN、host ELF 和必要运行能力变成可解释、可提前失败的检查。
 
 ## 解耦带来的好处
 
@@ -307,11 +398,11 @@ fla_npu.load_legacy_torch_ops()
 
 ### 是否完全不依赖 torch_npu？
 
-默认 `fla_npu.ops.ascendc` 不 import `torch_npu`，不要求 torch_npu 参与算子注册，也不链接 `libtorch_npu.so`。只有显式调用 `fla_npu.load_legacy_torch_ops()` 或宿主进程自己已经 import `torch_npu` 时，才会接触 torch_npu。
+默认 `fla_npu.ops.ascendc` 自身不 import `torch_npu`，不要求 torch_npu 参与算子注册，也不链接 `libtorch_npu.so`。目标环境仍需由可用的 Ascend PyTorch 后端提供 NPU tensor 和 `torch.npu` stream；该后端可以由宿主程序预先初始化。只有显式调用 `fla_npu.load_legacy_torch_ops()` 时，fla_npu 才会主动 import torch_npu 并进入旧 dispatcher 路径。
 
 ### 一个 wheel 如何兼容多个 torch、python 和 cxx 版本？
 
-默认 wheel 是 pure Python 包，tag 是 `py3-none-any`，没有 `cp311`、`linux_aarch64` 或 `cxx11abi` 这类 PyTorch extension ABI 绑定。算子二进制在 OPP vendor 树里，由 CANN/ACL runtime 加载；Python 层通过 `ctypes` 查找 `libcust_opapi.so` 中的 `aclnn*` 符号。
+默认 wheel 的 Python 调用层是纯 Python，tag 是 `py3-none-any`，没有 `cp311`、PyTorch extension 平台 tag 或 torch `cxx11abi` 绑定。wheel 仍内嵌面向特定 SOC 和 host 架构的 OPP 二进制，并通过 build tag 区分；这些二进制由 CANN/ACL runtime 加载，Python 层通过 `ctypes` 查找 `libcust_opapi.so` 中的 `aclnn*` 符号。
 
 仍需满足：
 
