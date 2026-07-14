@@ -174,6 +174,15 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     OP_CHECK_IF(stateLen < (width - 1), OP_LOGE(context, "convStates.shape[1] must be >= width-1"),
                 return ge::GRAPH_FAILED);
 
+    auto inputStride = context->GetInputStride(CONV_STATES_INDEX);
+    if (inputStride != nullptr && inputStride->GetDimNum() == 3) {
+        tiling.convStateStride0 = inputStride->GetStride(0);
+        tiling.convStateStride1 = inputStride->GetStride(1);
+    } else {
+        tiling.convStateStride0 = stateLen * sDim;
+        tiling.convStateStride1 = sDim;
+    }
+
     auto qslShapePtr = context->GetOptionalInputShape(QUERY_START_LOC_INDEX);
     const gert::CompileTimeTensorDesc *qslDesc = context->GetOptionalInputDesc(QUERY_START_LOC_INDEX);
     bool qslAbsent = true;

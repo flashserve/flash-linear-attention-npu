@@ -124,7 +124,7 @@
 
 ## 约束说明
 - 输入tensor的shape大小需满足一定约束，具体见[aclnnCausalConv1d](./docs/aclnnCausalConv1d.md)。
-
+- cann版本大于等于9.1.0后convStates支持非连续 Tensor，其余版本不支持
 
 ## 调用说明
 

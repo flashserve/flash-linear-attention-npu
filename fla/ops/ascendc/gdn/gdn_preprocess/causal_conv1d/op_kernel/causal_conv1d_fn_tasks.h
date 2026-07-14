@@ -105,33 +105,50 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::InitRingSeqSplit(int32_t cacheIdx, b
     LocalTensor<T> ring = inBuf.Get<T>();
     bool hasGmHistoryCopy = false;
     bool hasVectorInit = false;
-    const int64_t stateBaseOffset = static_cast<int64_t>(cacheIdx) * stateLen * dim + channelStart;
     int64_t xHistoryOffset = static_cast<int64_t>(historyStartTok) * dim + channelStart;
 
     for (int32_t i = 0; i < ringStart; ++i) {
         Duplicate(ring[i * MAX_BLOCK_DIM], static_cast<T>(0), baseDim);
         hasVectorInit = true;
     }
-
-    for (int32_t i = 0, srcTok = historyStartTok; i < historyCount; ++i, ++srcTok, xHistoryOffset += dim) {
-        LocalTensor<T> histSlot = ring[(ringStart + i) * MAX_BLOCK_DIM];
-        if (srcTok >= seqStart) {
-            DataCopy(histSlot, xGm[xHistoryOffset], baseDim);
-            hasGmHistoryCopy = true;
-        } else if (hasInit) {
-            const int32_t statePos = srcTok - seqStart + historyCount;
-            const int64_t stateOffset = stateBaseOffset + static_cast<int64_t>(statePos) * dim;
-            if (tilingData_->hasInitStateWorkspace != 0) {
+    if (tilingData_->hasInitStateWorkspace != 0) {
+        const int64_t stateBaseOffset = static_cast<int64_t>(cacheIdx) * stateLen * dim + channelStart;
+        for (int32_t i = 0, srcTok = historyStartTok; i < historyCount; ++i, ++srcTok, xHistoryOffset += dim) {
+            LocalTensor<T> histSlot = ring[(ringStart + i) * MAX_BLOCK_DIM];
+            if (srcTok >= seqStart) {
+                DataCopy(histSlot, xGm[xHistoryOffset], baseDim);
+                hasGmHistoryCopy = true;
+            } else if (hasInit) {
+                const int32_t statePos = srcTok - seqStart + historyCount;
+                const int64_t stateOffset = stateBaseOffset + static_cast<int64_t>(statePos) * dim;
                 DataCopy(histSlot, initStateWorkspaceGm_[stateOffset], baseDim);
+                hasGmHistoryCopy = true;
             } else {
-                DataCopy(histSlot, convStatesGm[stateOffset], baseDim);
+                Duplicate(histSlot, static_cast<T>(0), baseDim);
+                hasVectorInit = true;
             }
-            hasGmHistoryCopy = true;
-        } else {
-            Duplicate(histSlot, static_cast<T>(0), baseDim);
-            hasVectorInit = true;
+        }
+    } else {
+        const int64_t convStateStride0 = tilingData_->convStateStride0;
+        const int64_t convStateStride1 = tilingData_->convStateStride1;
+        const int64_t stateBaseOffset = static_cast<int64_t>(cacheIdx) * convStateStride0 + channelStart;
+        for (int32_t i = 0, srcTok = historyStartTok; i < historyCount; ++i, ++srcTok, xHistoryOffset += dim) {
+            LocalTensor<T> histSlot = ring[(ringStart + i) * MAX_BLOCK_DIM];
+            if (srcTok >= seqStart) {
+                DataCopy(histSlot, xGm[xHistoryOffset], baseDim);
+                hasGmHistoryCopy = true;
+            } else if (hasInit) {
+                const int32_t statePos = srcTok - seqStart + historyCount;
+                const int64_t stateOffset = stateBaseOffset + static_cast<int64_t>(statePos) * convStateStride1;
+                DataCopy(histSlot, convStatesGm[stateOffset], baseDim);
+                hasGmHistoryCopy = true;
+            } else {
+                Duplicate(histSlot, static_cast<T>(0), baseDim);
+                hasVectorInit = true;
+            }
         }
     }
+
 
     if (hasGmHistoryCopy) {
         SetFlag<HardEvent::MTE2_V>(stateMte2ToVEvent_);
@@ -191,15 +208,20 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::PrefetchInitStatesToWorkspace(int32_
     const int32_t dim = tilingData_->dim;
     const int32_t stateLen = tilingData_->stateLen;
     const int32_t numCacheLines = tilingData_->numCacheLines;
+    const int64_t convStateStride0 = tilingData_->convStateStride0;
+    const int64_t convStateStride1 = tilingData_->convStateStride1;
     LocalTensor<T> tmpBuf = inBuf.Get<T>()[0 * MAX_BLOCK_DIM];
 
     const int64_t totalRows = static_cast<int64_t>(numCacheLines) * stateLen;
     for (int64_t row = 0; row < totalRows; ++row) {
-        const int64_t rowOffset = row * dim + channelStart;
+        int64_t cacheIdx = row / stateLen;
+        int64_t statePos = row % stateLen;
+        const int64_t rowOffset = cacheIdx * convStateStride0 + statePos * convStateStride1 + channelStart;
+        const int64_t workspaceOffset = row * dim + channelStart;
         DataCopy(tmpBuf, convStatesGm[rowOffset], baseDimSize);
         SetFlag<HardEvent::MTE2_MTE3>(initSnapshotMte2ToMte3Event_);
         WaitFlag<HardEvent::MTE2_MTE3>(initSnapshotMte2ToMte3Event_);
-        DataCopy(initStateWorkspaceGm_[rowOffset], tmpBuf, baseDimSize);
+        DataCopy(initStateWorkspaceGm_[workspaceOffset], tmpBuf, baseDimSize);
         SetFlag<HardEvent::MTE3_MTE2>(initSnapshotMte3ToMte2Event_);
         WaitFlag<HardEvent::MTE3_MTE2>(initSnapshotMte3ToMte2Event_);
     }

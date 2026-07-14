@@ -61,6 +61,7 @@ aclnnStatus aclnnCausalConv1dGetWorkspaceSize(
 - runMode=0（前向计算模式）时，卷积核宽度为编译时已知常量，支持FnRolling快速路径优化。
 - runMode=1（状态更新模式）时，卷积核宽度为运行时参数。
 - 当存在 initialStateMode 输入时，算子需要额外的 workspace 用于初始状态同步。
+- cann版本大于等于9.1.0后convStates支持非连续 Tensor，其余版本不支持
 
 ## 调用示例
 
