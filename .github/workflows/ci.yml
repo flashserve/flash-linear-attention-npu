@@ -311,7 +311,9 @@ jobs:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
       CI_OPS: ${{ needs.prepare.outputs.ops }}
       CI_RUN_EXAMPLE_ST: 'true'
+      CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK: 'true'
       CI_RUN_SCOPED_WHEEL_INSTALL_CHECK: 'true'
+      CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report.json
       CI_IMAGE: fla-npu-ci:8.5.0-910b
     steps:
       - name: 拉取当前目标分支代码（第 1 次）
@@ -592,7 +594,8 @@ jobs:
             }
             const state = staleRun ? 'failure' : jobState;
             const staleDescription = `PR head 已变化，本次结果失效`;
-            const accuracyReportPath = 'repo/output/gdr_accuracy_report.json';
+            const accuracyReportPath = `repo/${process.env.CI_ACCURACY_REPORT_FILE || 'output/gdr_accuracy_report.json'}`;
+            const expectedRunId = String(context.runId);
             const formatValue = (value) => {
               if (typeof value === 'number') {
                 return Number.isFinite(value) ? value.toExponential(3) : String(value);
@@ -622,6 +625,13 @@ jobs:
               if (!accuracyReport || !accuracyReport.summary) {
                 return { state: 'failure', description: '精度报告未生成' };
               }
+              const metadata = accuracyReport.metadata || {};
+              if (!metadata.head_sha || !metadata.run_id) {
+                return { state: 'failure', description: '精度报告缺少本次触发标签' };
+              }
+              if (metadata.head_sha !== sha || String(metadata.run_id) !== expectedRunId) {
+                return { state: 'failure', description: '精度报告不属于本次触发' };
+              }
               const summary = accuracyReport.summary;
               const total = Number(summary.accuracy_total || 0);
               const passed = Number(summary.accuracy_passed || 0);
@@ -648,10 +658,12 @@ jobs:
                 return lines;
               }
               const summary = report.summary;
+              const metadata = report.metadata || {};
               lines.push(
                 `精度用例：通过 ${summary.accuracy_passed || 0}/${summary.accuracy_total || 0}，` +
                   `失败 ${summary.accuracy_failed || 0}，未执行 ${summary.accuracy_not_run || 0}。`
               );
+              lines.push(`报告标签：commit \`${metadata.head_sha || '-'}\`，run \`${metadata.run_id || '-'}\`。`);
               lines.push('');
               lines.push('| 用例 | Tensor | 结果 | tol | cosine | cos_min | max_abs | mean_abs | rmse | bad_frac | golden |');
               lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');

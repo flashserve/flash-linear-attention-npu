@@ -38,10 +38,19 @@
 
 ## 调用约定
 
-新代码优先使用稳定 Python 入口：
+安装后的 wheel 公开 Python import 面只使用 `fla_npu`。不要让新代码依赖顶层
+`fla` 包；`fla/` 目录主要作为源码树内实现来源存在。
+
+Ascend C 新代码优先使用稳定 Python 入口：
 
 ```python
 from fla_npu.ops.ascendc import chunk_bwd_dv_local
+```
+
+Triton 算子同样使用 `fla_npu` 下的稳定入口：
+
+```python
+from fla_npu.ops.triton import chunk_local_cumsum
 ```
 
 `torch.ops.npu.*` 是兼容旧调用的过渡路径，仅在兼容性测试或旧 API 验证中使用。需要旧路径时先确认 `fla_npu.load_legacy_torch_ops()` 的加载逻辑。
@@ -102,9 +111,14 @@ FLA_NPU_SOC=ascend910b FLA_NPU_OPS=chunk_fwd_o python -m pip wheel --no-build-is
 ```sh
 bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu
 cd torch_custom/fla_npu
-bash gen.sh npu_custom.yaml
-python3 setup.py bdist_wheel
+bash build.sh
 ```
+
+一体化 wheel 和 `torch_custom/fla_npu` 单独编出的 wheel 使用相同 pip 项目名
+`flash-linear-attention-npu`，Python import 名均为 `fla_npu`。单独编出的
+standalone wheel 只提供 Python 适配和 OPP 骨架；配套 run 包使用 `--full` 或
+`--install` 安装时，会把 run 包里的 `packages/vendors/fla_npu_transformer`
+合并覆盖到当前 Python 环境的 `site-packages/fla_npu/opp/vendors/fla_npu_transformer`。
 
 ## 安装和验证
 

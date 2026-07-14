@@ -119,8 +119,24 @@ def npu_my_op(x, weight, *, scale=1.0, indices=None):
 
 ```bash
 python3 setup.py bdist_wheel
-python3 -m pip install --force-reinstall --no-deps dist/fla_npu-*.whl
+python3 -m pip install --force-reinstall --no-deps dist/flash_linear_attention_npu-*.whl
 ```
+
+这个 standalone wheel 会先安装 Python runtime 和空的 OPP vendor 骨架：
+
+```text
+site-packages/fla_npu/opp/vendors/config.ini
+site-packages/fla_npu/opp/vendors/fla_npu_transformer/
+```
+
+随后安装算子 run 包即可把真实 OPP 产物合并到同一个位置：
+
+```bash
+bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu
+./build_out/fla-npu-*.run --full
+```
+
+安装完成后，`site-packages/fla_npu/opp/vendors/fla_npu_transformer` 下会包含 `libcust_opapi.so`、`libopapi.so`、aclnn 头文件、host/tiling/proto 动态库和 kernel 产物，`from fla_npu.ops.ascendc import 算子名` 的运行时布局与一键 wheel 保持一致。standalone wheel 的分发包名与一键 wheel 保持一致，均为 `flash-linear-attention-npu`；Python 导入名仍为 `fla_npu`。
 
 如果使用仓库根目录的一键 wheel，OPP 会内嵌到 `site-packages/fla_npu/opp`：
 
@@ -130,7 +146,7 @@ python3 -m pip install --force-reinstall --no-deps dist/flash_linear_attention_n
 python3 scripts/check_packaged_wheel_api.py
 ```
 
-单算子 run 包覆盖已安装 wheel 内嵌 OPP 时：
+单算子 run 包覆盖已安装 wheel 内嵌 OPP 或 standalone wheel 已安装 OPP 时：
 
 ```bash
 bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu --ops=chunk_fwd_o

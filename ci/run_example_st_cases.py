@@ -273,12 +273,24 @@ def _summarize_report(cases: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
-def _write_accuracy_report(path: Optional[Path], cases: list[dict[str, Any]]) -> None:
+def _report_metadata(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "head_sha": os.environ.get("CI_ACCURACY_HEAD_SHA") or os.environ.get("NPU_CI_TARGET_SHA", ""),
+        "run_id": os.environ.get("GITHUB_RUN_ID", ""),
+        "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
+        "cases_file": args.cases_file,
+        "case_filter": args.case_filter,
+        "device": args.device,
+    }
+
+
+def _write_accuracy_report(path: Optional[Path], cases: list[dict[str, Any]], metadata: dict[str, Any]) -> None:
     if path is None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     report = {
         "schema": "gdr-accuracy-report-v1",
+        "metadata": metadata,
         "summary": _summarize_report(cases),
         "cases": cases,
     }
@@ -305,6 +317,7 @@ def main() -> int:
     report_path = Path(args.accuracy_report_file) if args.accuracy_report_file else None
     if report_path is not None and not report_path.is_absolute():
         report_path = repo_root / report_path
+    metadata = _report_metadata(args)
 
     print(f"[CI] Example/ST cases file: {cases_file}")
     case_reports: list[dict[str, Any]] = []
@@ -321,15 +334,15 @@ def main() -> int:
             continue
         case_report = _run_case(cmd, repo_root, case)
         case_reports.append(case_report)
-        _write_accuracy_report(report_path, case_reports)
+        _write_accuracy_report(report_path, case_reports, metadata)
         if case_report["return_code"] != 0:
             failed_return_code = int(case_report["return_code"])
             for remaining in cases[index:]:
                 case_reports.append(_blank_case_report(remaining, "not_run"))
-            _write_accuracy_report(report_path, case_reports)
+            _write_accuracy_report(report_path, case_reports, metadata)
             break
     if not args.dry_run:
-        _write_accuracy_report(report_path, case_reports)
+        _write_accuracy_report(report_path, case_reports, metadata)
     return failed_return_code
 
 

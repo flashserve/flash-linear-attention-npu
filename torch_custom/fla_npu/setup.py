@@ -1,22 +1,82 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 import os
 import subprocess
 import sys
 import sysconfig
+from pathlib import Path
 
 from setuptools import find_packages, setup
+
+
+SETUP_DIR = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_NAME = "flash-linear-attention-npu"
+DEFAULT_VERSION = "1.0.0"
+TRITON_CORE_PACKAGE = "fla_npu.ops.triton.triton_core"
+TRITON_CORE_SOURCE = REPO_ROOT / "fla" / "ops" / "triton" / "triton_core"
+OPP_PACKAGE_DATA = [
+    "opp/**/*",
+    "opp/vendors/config.ini",
+    "opp/vendors/fla_npu_transformer/README.txt",
+]
 
 
 def _env_flag(name):
     return os.getenv(name, "FALSE").upper() in {"1", "TRUE", "YES", "ON"}
 
 
+def _package_version():
+    scripts_dir = REPO_ROOT / "scripts"
+    if not scripts_dir.exists():
+        return DEFAULT_VERSION
+
+    sys.path.insert(0, str(scripts_dir))
+    try:
+        from fla_npu_artifacts import get_package_version
+
+        return get_package_version(REPO_ROOT)
+    except Exception:
+        return DEFAULT_VERSION
+    finally:
+        try:
+            sys.path.remove(str(scripts_dir))
+        except ValueError:
+            pass
+
+
+def _packages():
+    packages = find_packages()
+    if TRITON_CORE_SOURCE.exists() and TRITON_CORE_PACKAGE not in packages:
+        packages.append(TRITON_CORE_PACKAGE)
+    return packages
+
+
+def _package_dir():
+    if not TRITON_CORE_SOURCE.exists():
+        return {}
+    # Keep a single Triton source tree in fla/ and map it into the standalone wheel.
+    triton_core_dir = os.path.relpath(TRITON_CORE_SOURCE, SETUP_DIR).replace(os.sep, "/")
+    return {TRITON_CORE_PACKAGE: triton_core_dir}
+
+
 def _setup_pure_python():
     setup(
-        name="fla_npu",
-        version="1.0.0",
+        name=PACKAGE_NAME,
+        version=_package_version(),
         description="FLA NPU Python runtime",
-        packages=find_packages(),
-        package_data={"fla_npu": ["opp/**/*"]},
+        packages=_packages(),
+        package_dir=_package_dir(),
+        package_data={"fla_npu": OPP_PACKAGE_DATA},
+        include_package_data=True,
         zip_safe=False,
     )
 
@@ -111,8 +171,8 @@ def _setup_legacy_extension():
         return link_args
 
     setup(
-        name="fla_npu",
-        version="1.0.0",
+        name=PACKAGE_NAME,
+        version=_package_version(),
         description="FLA NPU legacy PyTorch extension",
         ext_modules=[
             CppExtension(
@@ -125,7 +185,10 @@ def _setup_legacy_extension():
         ],
         cmdclass={"build_ext": BuildExtension},
         zip_safe=False,
-        packages=find_packages(),
+        packages=_packages(),
+        package_dir=_package_dir(),
+        package_data={"fla_npu": OPP_PACKAGE_DATA},
+        include_package_data=True,
     )
 
 

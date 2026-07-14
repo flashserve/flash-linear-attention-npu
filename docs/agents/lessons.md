@@ -18,6 +18,17 @@
 
 新代码优先使用 `fla_npu.ops.ascendc` 下的稳定 Python 入口。`torch.ops.npu.*` 是兼容旧调用的过渡路径，适合兼容性验证，不宜作为新示例的首选写法。
 
+## wheel 公开 import 面只用 fla_npu
+
+一体化 wheel 和 `torch_custom/fla_npu` standalone wheel 的 pip 项目名都应是
+`flash-linear-attention-npu`，安装后的公开 import 名只应是 `fla_npu`。不要在
+wheel 运行路径里依赖顶层 `fla` 包。
+
+Triton 算子也应通过 `from fla_npu.ops.triton import 算子名` 暴露；如果代码里
+出现 `from fla.ops...`，需要确认它只是源码树内部引用，不会进入安装后 wheel
+的运行依赖。standalone wheel 只包含 Python 适配和 OPP 骨架，run 包覆盖后的
+`site-packages/fla_npu/opp/vendors/fla_npu_transformer` 才是实际 Ascend C 产物入口。
+
 ## varlen、layout 和可选状态最容易漏
 
 线性注意力类算子经常同时支持 dense/varlen、多种 layout、不同 head 关系、可选 initial/final state 和特殊 gate 语义。新增 case 时优先覆盖这些分支的组合，而不是只测默认 shape。

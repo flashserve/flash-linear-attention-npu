@@ -40,19 +40,25 @@ def _candidate_opp_roots() -> list[pathlib.Path]:
     return list(dict.fromkeys(roots))
 
 
+def _has_custom_opapi(vendor_dir: pathlib.Path) -> bool:
+    return (vendor_dir / "op_api" / "lib" / "libcust_opapi.so").exists()
+
+
 def _resolve_vendor_dir() -> pathlib.Path:
     for root in _candidate_opp_roots():
-        if (root / "op_api" / "lib" / "libcust_opapi.so").exists():
+        if _has_custom_opapi(root):
             return root.resolve()
 
         vendors_root = root / "vendors"
         for name in _candidate_vendor_names():
             vendor_dir = vendors_root / name
-            if vendor_dir.exists():
+            if _has_custom_opapi(vendor_dir):
                 return vendor_dir.resolve()
 
         if vendors_root.exists():
-            vendor_dirs = [path for path in vendors_root.iterdir() if path.is_dir()]
+            vendor_dirs = [
+                path for path in vendors_root.iterdir() if path.is_dir() and _has_custom_opapi(path)
+            ]
             if len(vendor_dirs) == 1:
                 return vendor_dirs[0].resolve()
 

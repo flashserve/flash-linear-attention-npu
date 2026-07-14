@@ -7,6 +7,7 @@
 - 静态检查：`git diff --check`、schema/文档一致性检查、生成物检查。
 - 环境检查：`python scripts/check_npu_env.py --build-only`。
 - 构建验证：按目标 SOC 生成 wheel 或 OPP run 包。
+- 打包验证：检查一体化 wheel、standalone wheel 和 run 包覆盖后的包名、import 面与 OPP 布局。
 - 单算子验证：运行对应 `torch_custom/fla_npu/test/test_npu_<op>.py` 或 `test.sh --op <name>`。
 - 端到端验证：运行 `examples/flash_gated_delta_rule.py` 或 `ci/run_example_st_cases.py`。
 - 精度验证：对比参考实现，覆盖关键 shape、dtype、layout、dense/varlen 和边界 case。
@@ -33,6 +34,16 @@
 - A5：`ascend950`
 
 修改公共接口、公共 kernel 组件或跨平台逻辑时，应考虑多 SOC 编译和必要运行验证。若当前环境无法覆盖某个 SOC，应在结果中明确说明未覆盖原因。
+
+## 打包和安装验证
+
+一体化 wheel 和 `torch_custom/fla_npu` standalone wheel 都应使用 pip 项目名
+`flash-linear-attention-npu`，安装后公开 import 名为 `fla_npu`。验证时至少确认：
+
+- `python -m pip install --force-reinstall --no-deps dist/flash_linear_attention_npu-*.whl` 可安装。
+- `python scripts/check_packaged_wheel_api.py` 通过。
+- 安装后的 wheel 不依赖顶层 `fla` 包；Ascend C 入口是 `fla_npu.ops.ascendc`，Triton 入口是 `fla_npu.ops.triton`。
+- standalone wheel + run 包 `--full` 或 `--install` 后，`site-packages/fla_npu/opp/vendors/fla_npu_transformer` 下能看到当前 run 包覆盖后的 op_api、tiling、kernel 和配置产物。
 
 ## 精度问题处理
 

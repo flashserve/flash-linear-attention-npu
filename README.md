@@ -108,7 +108,7 @@ python -m pip install --force-reinstall --no-deps dist/flash_linear_attention_np
 ./build_out/fla-npu-*.run --full
 
 # 如果 Python wrapper 也有修改，再安装单独编译出的 wheel
-python -m pip install --force-reinstall --no-deps torch_custom/fla_npu/dist/fla_npu-*.whl
+python -m pip install --force-reinstall --no-deps torch_custom/fla_npu/dist/flash_linear_attention_npu-*.whl
 ```
 
 安装 run 包后需要重启 Python 进程，已经 `dlopen` 的 `libcust_opapi.so` 不会在同一进程内热替换。

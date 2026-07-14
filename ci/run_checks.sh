@@ -143,12 +143,111 @@ export PYTORCH_VERSION
 
 bash ci/prepare_ci_cache.sh
 
+cleanup_installed_fla_npu_python_packages() {
+    echo "[CI] Cleaning stale installed flash-linear-attention-npu Python artifacts"
+    python3 - <<'PY'
+from __future__ import annotations
+
+import shutil
+import site
+import sysconfig
+from pathlib import Path
+
+
+def site_roots() -> list[Path]:
+    roots: list[Path] = []
+    for key in ("purelib", "platlib"):
+        path = sysconfig.get_paths().get(key)
+        if path:
+            roots.append(Path(path))
+    try:
+        roots.extend(Path(path) for path in site.getsitepackages())
+    except Exception:
+        pass
+    try:
+        roots.append(Path(site.getusersitepackages()))
+    except Exception:
+        pass
+    result: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        try:
+            resolved = root.resolve()
+        except OSError:
+            continue
+        if resolved not in seen:
+            result.append(resolved)
+            seen.add(resolved)
+    return result
+
+
+def remove_path(root: Path, path: Path) -> None:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return
+    if resolved == root or root not in resolved.parents:
+        return
+    if path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
+    print(f"[CI] Removed stale Python artifact: {path}")
+
+
+def scrub_pth(root: Path) -> None:
+    markers = (
+        "flash-linear-attention-npu",
+        "flash_linear_attention_npu",
+        "torch_custom/fla_npu",
+        "torch_custom\\fla_npu",
+    )
+    for pth in root.glob("*.pth"):
+        try:
+            lines = pth.read_text(encoding="utf-8", errors="ignore").splitlines(keepends=True)
+        except OSError:
+            continue
+        kept = [line for line in lines if not any(marker in line for marker in markers)]
+        if kept == lines:
+            continue
+        if kept:
+            pth.write_text("".join(kept), encoding="utf-8")
+            print(f"[CI] Scrubbed stale fla_npu entry from: {pth}")
+        else:
+            remove_path(root, pth)
+
+
+patterns = (
+    "fla",
+    "fla_npu",
+    "fla_npu.egg-info",
+    "fla_npu.egg-link",
+    "fla_npu-*.dist-info",
+    "flash_linear_attention_npu.egg-info",
+    "flash_linear_attention_npu.egg-link",
+    "flash_linear_attention_npu-*.dist-info",
+    "__editable__*fla_npu*.*",
+    "__editable__*flash_linear_attention_npu*.*",
+    "__editable__*flash_linear_attention_npu*",
+)
+
+for root in site_roots():
+    if not root.exists() or not root.is_dir():
+        continue
+    for pattern in patterns:
+        for path in root.glob(pattern):
+            remove_path(root, path)
+    scrub_pth(root)
+PY
+}
+
 torch_custom_built=false
 
 build_torch_custom() {
     if [[ "$torch_custom_built" == "true" ]]; then
         return
     fi
+    cleanup_installed_fla_npu_python_packages
     (cd torch_custom/fla_npu && bash build.sh)
     torch_custom_built=true
 }
@@ -163,12 +262,88 @@ build_and_check_wheel_api() {
         echo "[CI][ERROR] Expected exactly one flash_linear_attention_npu wheel, found ${#wheels[@]}." >&2
         exit 1
     fi
-    python3 -m pip install --force-reinstall --no-deps "${wheels[0]}"
+    cleanup_installed_fla_npu_python_packages
+    python3 -m pip install --force-reinstall --no-deps --no-cache-dir "${wheels[0]}"
     wheel_api_args=()
     if [[ "${CI_CHECK_TRITON_API:-false}" == "true" ]]; then
         wheel_api_args+=(--check-triton)
     fi
     python3 scripts/check_packaged_wheel_api.py "${wheel_api_args[@]}"
+}
+
+check_standalone_torch_custom_wheel_layout() {
+    local check_dir="$TMPDIR/fla-npu-standalone-wheel-check"
+    local dist_dir="$check_dir/dist"
+    local target_dir="$check_dir/site"
+    local external_opp_root="$check_dir/external_opp"
+    local run_file
+
+    echo "[CI] Checking standalone torch_custom wheel plus run package OPP layout"
+    rm -rf "$check_dir"
+    mkdir -p "$dist_dir" "$target_dir"
+
+    (cd torch_custom/fla_npu && python3 setup.py bdist_wheel --dist-dir "$dist_dir")
+
+    shopt -s nullglob
+    local wheels=("$dist_dir"/flash_linear_attention_npu-*.whl)
+    shopt -u nullglob
+    if (( ${#wheels[@]} != 1 )); then
+        echo "[CI][ERROR] Expected exactly one flash-linear-attention-npu standalone wheel, found ${#wheels[@]}." >&2
+        exit 1
+    fi
+
+    python3 -m pip install --force-reinstall --no-deps --target "$target_dir" "${wheels[0]}"
+    PYTHONPATH="$target_dir" python3 - <<'PY'
+from pathlib import Path
+
+import fla_npu
+
+package_dir = Path(fla_npu.__file__).resolve().parent
+required = [
+    package_dir / "opp" / "vendors" / "config.ini",
+    package_dir / "opp" / "vendors" / "fla_npu_transformer" / "README.txt",
+]
+missing = [str(path.relative_to(package_dir)) for path in required if not path.exists()]
+if missing:
+    raise SystemExit("Standalone fla_npu wheel is missing OPP skeleton files: " + ", ".join(missing))
+print("[CI] Standalone torch_custom wheel OPP skeleton check passed.")
+PY
+
+    mkdir -p "$external_opp_root/vendors/fla_npu_transformer/op_api/lib"
+    touch "$external_opp_root/vendors/fla_npu_transformer/op_api/lib/libcust_opapi.so"
+    PYTHONPATH="$target_dir" ASCEND_OPP_PATH="$external_opp_root" ASCEND_CUSTOM_OPP_PATH= FLA_NPU_OPP_PATH= python3 - <<'PY'
+import os
+from pathlib import Path
+
+import fla_npu
+
+expected = (Path(os.environ["ASCEND_OPP_PATH"]) / "vendors" / "fla_npu_transformer").resolve()
+actual = fla_npu._resolve_vendor_dir()
+if actual != expected:
+    raise SystemExit(f"Standalone OPP skeleton shadows external OPP: actual={actual}, expected={expected}")
+print("[CI] Standalone torch_custom wheel does not shadow external OPP check passed.")
+PY
+
+    run_file="$(find_single_run_package)"
+    chmod +x "$run_file"
+    PYTHONPATH="$target_dir${PYTHONPATH:+:$PYTHONPATH}" "$run_file" --full --quiet
+
+    PYTHONPATH="$target_dir" python3 - <<'PY'
+from pathlib import Path
+
+import fla_npu
+
+package_dir = Path(fla_npu.__file__).resolve().parent
+vendor_dir = package_dir / "opp" / "vendors" / "fla_npu_transformer"
+required = [
+    vendor_dir / "op_api" / "lib" / "libcust_opapi.so",
+    vendor_dir / "op_api" / "lib" / "libopapi.so",
+]
+missing = [str(path.relative_to(package_dir)) for path in required if not path.exists()]
+if missing:
+    raise SystemExit("Standalone fla_npu wheel run-package install is missing OPP files: " + ", ".join(missing))
+print("[CI] Standalone torch_custom wheel plus run package OPP layout check passed.")
+PY
 }
 
 find_single_run_package() {
@@ -336,6 +511,10 @@ if [[ "${CI_RUN_WHEEL_API_CHECK:-false}" == "true" ]]; then
     build_and_check_wheel_api
 fi
 
+if [[ "${CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK:-false}" == "true" ]]; then
+    check_standalone_torch_custom_wheel_layout
+fi
+
 if [[ "${CI_RUN_EXAMPLE_ST:-true}" == "true" ]]; then
     install_custom_opp_package
     check_example_python_deps
@@ -343,11 +522,18 @@ if [[ "${CI_RUN_EXAMPLE_ST:-true}" == "true" ]]; then
     example_st_args=(--device "$ci_test_device" --cases-file "${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}")
     accuracy_report_file="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}"
     mkdir -p "$(dirname "$accuracy_report_file")"
+    rm -f "$accuracy_report_file" "$accuracy_report_file.tmp"
+    export CI_ACCURACY_HEAD_SHA="${CI_ACCURACY_HEAD_SHA:-${NPU_CI_TARGET_SHA:-}}"
     example_st_args+=(--accuracy-report-file "$accuracy_report_file")
     if [[ -n "${CI_EXAMPLE_CASE_FILTER:-}" ]]; then
         example_st_args+=(--case-filter "$CI_EXAMPLE_CASE_FILTER")
     fi
     python3 ci/run_example_st_cases.py "${example_st_args[@]}"
+    if [[ -f "$accuracy_report_file" ]]; then
+        echo "[CI] Accuracy report generated: $accuracy_report_file"
+    else
+        echo "[CI][WARN] Accuracy report was not generated: $accuracy_report_file" >&2
+    fi
 fi
 
 if [[ "${CI_RUN_SCOPED_WHEEL_INSTALL_CHECK:-false}" == "true" ]]; then

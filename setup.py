@@ -570,8 +570,7 @@ setup(
     long_description=(REPO_ROOT / "README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
     packages=(
-        find_packages(include=["fla", "fla.*"])
-        + find_packages(
+        find_packages(
             where=str(TORCH_EXTENSION_DIR),
             include=["fla_npu", "fla_npu.*"],
         )
