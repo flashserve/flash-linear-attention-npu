@@ -141,13 +141,51 @@ aclnnStatus KdaFwdCheckCuSeqlens(const aclIntArray *cuSeqlensOptional, int64_t s
     return ACLNN_SUCCESS;
 }
 
-aclnnStatus KdaFwdCheckChunkIndices(const aclIntArray *chunkIndicesOptional)
+int64_t KdaFwdExpectedChunks(const aclIntArray *cuSeqlensOptional, int64_t seqlen, int64_t chunkSize)
 {
+    if (cuSeqlensOptional == nullptr) {
+        return (seqlen + chunkSize - 1) / chunkSize;
+    }
+    int64_t total = 0;
+    const aclIntArray &cu = *cuSeqlensOptional;
+    for (size_t idx = 0; idx + 1 < cu.Size(); ++idx) {
+        int64_t length = cu[idx + 1] - cu[idx];
+        total += (length + chunkSize - 1) / chunkSize;
+    }
+    return total;
+}
+
+aclnnStatus KdaFwdCheckChunkIndices(const aclIntArray *chunkIndicesOptional,
+                                    const aclIntArray *cuSeqlensOptional,
+                                    int64_t totalChunks,
+                                    int64_t expectedChunks,
+                                    int64_t chunkSize)
+{
+    CHECK_COND(totalChunks == expectedChunks, ACLNN_ERR_PARAM_INVALID,
+               "totalChunks must equal the number of chunks derived from sequence lengths and chunkSize.");
     if (chunkIndicesOptional == nullptr) {
         return ACLNN_SUCCESS;
     }
+    CHECK_COND(cuSeqlensOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
+               "chunkIndicesOptional is only valid when cuSeqlensOptional is provided.");
     CHECK_COND(chunkIndicesOptional->Size() % 2 == 0, ACLNN_ERR_PARAM_INVALID,
                "chunkIndicesOptional must contain (seq_id, chunk_id) pairs.");
+    CHECK_COND(static_cast<int64_t>(chunkIndicesOptional->Size() / 2) == expectedChunks,
+               ACLNN_ERR_PARAM_INVALID,
+               "chunkIndicesOptional must contain exactly totalChunks (seq_id, chunk_id) pairs.");
+    const aclIntArray &indices = *chunkIndicesOptional;
+    const aclIntArray &cu = *cuSeqlensOptional;
+    int64_t seqNum = static_cast<int64_t>(cu.Size()) - 1;
+    for (size_t idx = 0; idx < indices.Size(); idx += 2) {
+        int64_t seq = indices[idx];
+        int64_t localChunk = indices[idx + 1];
+        CHECK_COND(seq >= 0 && seq < seqNum, ACLNN_ERR_PARAM_INVALID,
+                   "chunkIndicesOptional seq_id must be in [0, seq_num).");
+        int64_t seqLength = cu[seq + 1] - cu[seq];
+        int64_t seqChunks = (seqLength + chunkSize - 1) / chunkSize;
+        CHECK_COND(localChunk >= 0 && localChunk < seqChunks, ACLNN_ERR_PARAM_INVALID,
+                   "chunkIndicesOptional chunk_id is outside the selected sequence.");
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -317,10 +355,12 @@ bool KdaFwdSplitCubePathSupported(const ChunkKdaFwdParams &params, int64_t kDim,
     auto vDtype = params.v->GetDataType();
     bool dataDtypeSupported = (qDtype == DataType::DT_FLOAT16 || qDtype == DataType::DT_BF16) &&
                               kDtype == qDtype && vDtype == qDtype;
+    int64_t solveScratch = 4 * 64 * 64;
+    int64_t postScratch = params.chunkSize * (kDim + vDim);
     return dataDtypeSupported &&
            params.chunkSize == 64 && kDim >= 16 && vDim >= 16 &&
            kDim % 16 == 0 && vDim % 16 == 0 && vDim <= 128 &&
-           kDim * vDim >= 8192;
+           kDim * vDim >= solveScratch && kDim * vDim >= postScratch;
 }
 
 aclnnStatus KdaFwdParamsDataContiguous(ChunkKdaFwdParams &params, aclOpExecutor *executor)
@@ -394,11 +434,16 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     int64_t seqNum = KdaFwdSeqNum(batch, params.cuSeqlensOptional);
     CHECK_COND(hNum <= MAX_KDA_HEAD_NUM && hvNum <= MAX_KDA_HEAD_NUM, ACLNN_ERR_PARAM_INVALID,
                "H and HV must be less than or equal to 128.");
+    CHECK_COND(hNum > 0 && hvNum >= hNum && hvNum % hNum == 0, ACLNN_ERR_PARAM_INVALID,
+               "H and HV must be positive, HV must be greater than or equal to H, and HV must be divisible by H.");
     CHECK_COND(parsedLayout != KdaFwdLayout::TND || hNum == 1, ACLNN_ERR_PARAM_INVALID,
                "TND layout with H > 1 is not supported by npu_chunk_kda_fwd; use NTD [H,T,D] layout "
                "for multi-head rank3 input.");
     CHECK_RET(KdaFwdCheckCuSeqlens(params.cuSeqlensOptional, seqlen) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(KdaFwdCheckChunkIndices(params.chunkIndicesOptional) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    int64_t expectedChunks = KdaFwdExpectedChunks(params.cuSeqlensOptional, seqlen, params.chunkSize);
+    CHECK_RET(KdaFwdCheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional, params.totalChunks,
+                                      expectedChunks, params.chunkSize) == ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(params.cuSeqlensOptional == nullptr || isTnd || batch == 1, ACLNN_ERR_PARAM_INVALID,
                "rank4 varlen input with cuSeqlensOptional currently requires B=1.");
     CHECK_RET(KdaFwdCheckStateShape(params.initialStateOptional, "initialStateOptional", seqNum, hvNum, kDim, vDim) ==
@@ -410,7 +455,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     CHECK_COND(KdaFwdSplitCubePathSupported(params, kDim, vDim), ACLNN_ERR_PARAM_INVALID,
                "npu_chunk_kda_fwd only supports the AscendC split cube/vector path: q/k/v dtype must be the same "
                "fp16/bf16 type, chunkSize must be 64, K/V must be multiples of 16, V must be <= 128, "
-               "and K*V must be >= 8192.");
+               "and K*V must provide enough per-chunk storage for the 16x16 block solve and post-WU cube path.");
 
     const aclTensor *qBsnd = params.q;
     const aclTensor *kBsnd = params.k;

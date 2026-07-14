@@ -319,7 +319,7 @@ if __name__ == "__main__":
         return list(x)
 
     torch.npu.synchronize()
-    # 与 npu_custom.yaml / FLA chunk_gated_delta_rule_fwd_h 对齐：k,w,u 位置参数；g 及之后为关键字（g 当前不可为 None）
+    # 与 npu_custom.yaml / FLA chunk_gated_delta_rule_fwd_h 对齐：k,w,u 为位置参数，g/gk 至少提供一个。
     result = torch.ops.npu.npu_chunk_gated_delta_rule_fwd_h(
         input_tensor.k.npu(),
         input_tensor.w.npu(),

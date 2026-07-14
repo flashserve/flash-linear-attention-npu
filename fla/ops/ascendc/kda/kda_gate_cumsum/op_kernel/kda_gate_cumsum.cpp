@@ -56,7 +56,7 @@ public:
 
     __aicore__ inline void Process()
     {
-        uint64_t taskCount = seqNum_ * hv_ * maxChunks_;
+        uint64_t taskCount = hasCuSeqlens_ ? seqNum_ * hv_ : batch_ * hv_ * maxChunks_;
         uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx());
         for (uint64_t task = coreIdx; task < taskCount; task += usedCoreNum_) {
             ProcessTask(task);
@@ -213,21 +213,33 @@ private:
 
     __aicore__ inline void ProcessTask(uint64_t task)
     {
-        uint64_t chunkSlot = task % maxChunks_;
-        uint64_t hv = (task / maxChunks_) % hv_;
-        uint64_t seq = task / (maxChunks_ * hv_);
-        uint64_t b = hasCuSeqlens_ ? 0 : seq;
-        uint64_t seqStart = hasCuSeqlens_ ? static_cast<uint64_t>(ReadInt64(cuSeqlens_, seq)) : 0;
-        uint64_t seqEnd = hasCuSeqlens_ ? static_cast<uint64_t>(ReadInt64(cuSeqlens_, seq + 1)) : t_;
-        uint64_t start = seqStart + chunkSlot * chunkSize_;
-        if (start >= seqEnd) {
+        if (!hasCuSeqlens_) {
+            uint64_t chunk = task % maxChunks_;
+            uint64_t hv = (task / maxChunks_) % hv_;
+            uint64_t b = task / (maxChunks_ * hv_);
+            uint64_t start = chunk * chunkSize_;
+            uint64_t end = start + chunkSize_;
+            if (end > t_) {
+                end = t_;
+            }
+            ProcessChunk(b, hv, start, end);
             return;
         }
-        uint64_t end = start + chunkSize_;
-        if (end > seqEnd) {
-            end = seqEnd;
+        uint64_t hv = task % hv_;
+        uint64_t seq = task / hv_;
+        uint64_t seqStart = static_cast<uint64_t>(ReadInt64(cuSeqlens_, seq));
+        uint64_t seqEnd = static_cast<uint64_t>(ReadInt64(cuSeqlens_, seq + 1));
+        for (uint64_t start = seqStart; start < seqEnd; start += chunkSize_) {
+            uint64_t end = start + chunkSize_;
+            if (end > seqEnd) {
+                end = seqEnd;
+            }
+            ProcessChunk(0, hv, start, end);
         }
+    }
 
+    __aicore__ inline void ProcessChunk(uint64_t b, uint64_t hv, uint64_t start, uint64_t end)
+    {
         LocalTensor<float> acc = accBuf_.Get<float>();
         LocalTensor<float> row = rowBuf_.Get<float>();
         Duplicate(acc, 0.0f, static_cast<uint32_t>(k_));

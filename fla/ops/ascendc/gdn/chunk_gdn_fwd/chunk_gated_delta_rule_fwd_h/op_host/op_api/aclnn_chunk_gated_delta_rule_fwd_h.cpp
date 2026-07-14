@@ -14,6 +14,8 @@
 
 #include "aclnn_kernels/transdata.h"
 #include "aclnn_kernels/contiguous.h"
+#include "aclnn_kernels/reshape.h"
+#include "aclnn_kernels/slice.h"
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
 #include "aclnn_kernels/common/op_error_check.h"
@@ -30,6 +32,10 @@
 
 
 using namespace op;
+
+namespace l0op {
+const aclTensor *ZerosLike(const aclTensor *self, aclOpExecutor *executor);
+}
 
 #ifdef __cplusplus
 extern "C" {
@@ -72,11 +78,77 @@ static aclnnStatus CheckFormat(ChunkGatedDeltaRuleFwdHParams params)
 
 static aclnnStatus CheckShape(ChunkGatedDeltaRuleFwdHParams params)
 {
+    auto kShape = params.k->GetViewShape();
+    auto wShape = params.w->GetViewShape();
+    auto uShape = params.u->GetViewShape();
+    CHECK_COND(kShape.GetDimNum() == 4 && wShape.GetDimNum() == 4 && uShape.GetDimNum() == 4,
+               ACLNN_ERR_PARAM_INVALID, "k, w and u must be rank-4 BNSD tensors.");
+    CHECK_COND(kShape.GetDim(0) == wShape.GetDim(0) && kShape.GetDim(0) == uShape.GetDim(0) &&
+                   wShape.GetDim(1) == uShape.GetDim(1) && kShape.GetDim(2) == wShape.GetDim(2) &&
+                   kShape.GetDim(2) == uShape.GetDim(2) && kShape.GetDim(3) == wShape.GetDim(3),
+               ACLNN_ERR_PARAM_INVALID,
+               "k, w and u must match in B/T, w and u must match in HV, and k and w must match in K.");
+    CHECK_COND(uShape.GetDim(1) >= kShape.GetDim(1) && uShape.GetDim(1) % kShape.GetDim(1) == 0,
+               ACLNN_ERR_PARAM_INVALID, "u HV must be greater than or equal to k H and divisible by H.");
+    if (params.gOptional != nullptr) {
+        auto gShape = params.gOptional->GetViewShape();
+        CHECK_COND(gShape.GetDimNum() == 3 && gShape.GetDim(0) == uShape.GetDim(0) &&
+                       gShape.GetDim(1) == uShape.GetDim(1) && gShape.GetDim(2) == uShape.GetDim(2),
+                   ACLNN_ERR_PARAM_INVALID, "g must have shape [B, HV, T].");
+    }
     return ACLNN_SUCCESS;
+}
+
+static const aclTensor *MakeNeutralGate(const ChunkGatedDeltaRuleFwdHParams &params, aclOpExecutor *executor)
+{
+    auto gkShape = params.gkOptional->GetViewShape();
+    int64_t offsetsData[] = {0, 0, 0, 0};
+    int64_t sizesData[] = {gkShape.GetDim(0), gkShape.GetDim(1), gkShape.GetDim(2), 1};
+    auto offsets = executor->AllocIntArray(offsetsData, 4);
+    auto sizes = executor->AllocIntArray(sizesData, 4);
+    if (offsets == nullptr || sizes == nullptr) {
+        return nullptr;
+    }
+    auto gateLane = l0op::Slice(params.gkOptional, offsets, sizes, executor);
+    if (gateLane == nullptr) {
+        return nullptr;
+    }
+    gateLane = l0op::Contiguous(gateLane, executor);
+    if (gateLane == nullptr) {
+        return nullptr;
+    }
+    op::Shape gateShape;
+    gateShape.AppendDim(gkShape.GetDim(0));
+    gateShape.AppendDim(gkShape.GetDim(1));
+    gateShape.AppendDim(gkShape.GetDim(2));
+    gateLane = l0op::Reshape(gateLane, gateShape, executor);
+    return gateLane == nullptr ? nullptr : l0op::ZerosLike(gateLane, executor);
 }
 
 static aclnnStatus CheckDtype(ChunkGatedDeltaRuleFwdHParams params)
 {
+    auto inputDtype = params.k->GetDataType();
+    CHECK_COND(inputDtype == DataType::DT_FLOAT16 || inputDtype == DataType::DT_BF16,
+               ACLNN_ERR_PARAM_INVALID, "k dtype must be float16 or bfloat16.");
+    CHECK_COND(params.w->GetDataType() == inputDtype && params.u->GetDataType() == inputDtype,
+               ACLNN_ERR_PARAM_INVALID, "k, w and u must have the same dtype.");
+    CHECK_COND(params.hOut->GetDataType() == inputDtype && params.vNewOut->GetDataType() == inputDtype,
+               ACLNN_ERR_PARAM_INVALID, "hOut and vNewOut dtype must match k, w and u.");
+    auto gateDtype = params.gOptional != nullptr ? params.gOptional->GetDataType() : params.gkOptional->GetDataType();
+    CHECK_COND(gateDtype == DataType::DT_FLOAT || gateDtype == inputDtype,
+               ACLNN_ERR_PARAM_INVALID, "g/gk dtype must be float32 or match k dtype.");
+    if (params.gOptional != nullptr && params.gkOptional != nullptr) {
+        CHECK_COND(params.gOptional->GetDataType() == params.gkOptional->GetDataType(),
+                   ACLNN_ERR_PARAM_INVALID, "g and gk must have the same dtype when both are provided.");
+    }
+    if (params.outputFinalState) {
+        CHECK_COND(params.finalStateOut != nullptr, ACLNN_ERR_PARAM_NULLPTR,
+                   "finalStateOut must be provided when outputFinalState is true.");
+        auto stateDtype = params.initalStateOptional != nullptr ? params.initalStateOptional->GetDataType()
+                                                                : DataType::DT_FLOAT;
+        CHECK_COND(params.finalStateOut->GetDataType() == stateDtype, ACLNN_ERR_PARAM_INVALID,
+                   "finalStateOut dtype must match initial state, or be float32 when initial state is absent.");
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -210,6 +282,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
+    if (params.gOptional == nullptr) {
+        params.gOptional = MakeNeutralGate(params, executorPtr);
+        CHECK_RET(params.gOptional != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
     auto result = l0op::ChunkGatedDeltaRuleFwdH(params.k, params.w, params.u, params.gOptional, params.gkOptional, params.initalStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize, params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
 

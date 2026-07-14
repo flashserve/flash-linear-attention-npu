@@ -386,7 +386,7 @@ def test_chunk_kda_fwd_from_dump_with_stats(dump_path: str, device_id=None):
 
 def test_chunk_kda_fwd_matches_reference():
     device = _device()
-    q, k, v, gk, beta, initial_state = _make_inputs(device, h=1, hv=1, t=16)
+    q, k, v, gk, beta, initial_state = _make_inputs(device, h=1, hv=1, t=64)
     scale = q.shape[-1] ** -0.5
 
     got = fla_ascendc.chunk_kda_fwd(
@@ -582,7 +582,7 @@ def test_chunk_kda_fwd_bf16_gate_matches_reference():
     if device.type == "cpu":
         return
     q, k, v, gk, beta, initial_state = _make_inputs(
-        device, h=1, hv=1, t=8, dtype=torch.float16
+        device, h=1, hv=1, t=64, dtype=torch.float16
     )
     gk_bf16 = gk.detach().to(torch.bfloat16).requires_grad_(True)
     beta_bf16 = beta.detach().to(torch.bfloat16).requires_grad_(True)
@@ -979,7 +979,7 @@ def test_kda_gate_cumsum_bnsd_direct_matches_reference():
     torch.manual_seed(6789)
     g_bsnd = (torch.randn(1, 40, 2, 8, dtype=torch.bfloat16) * 0.001).to(device)
     g_bnsd = g_bsnd.permute(0, 2, 1, 3).contiguous()
-    got = fla_ascendc.kda_gate_cumsum(g_bnsd, 32)
+    got = fla_ascendc.kda_gate_cumsum(g_bnsd, 32, layout="BNSD")
     ref = _kda_gate_cumsum_reference(g_bsnd.detach().cpu(), 32).permute(0, 2, 1, 3)
     _assert_close("gate cumsum bnsd", got, ref, rtol=2e-3, atol=2e-3)
 
@@ -991,7 +991,7 @@ def test_kda_gate_cumsum_ntd_direct_matches_reference():
     torch.manual_seed(7890)
     g_bsnd = (torch.randn(1, 40, 2, 8, dtype=torch.bfloat16) * 0.001).to(device)
     g_ntd = g_bsnd.squeeze(0).permute(1, 0, 2).contiguous()
-    got = fla_ascendc.kda_gate_cumsum(g_ntd, 32)
+    got = fla_ascendc.kda_gate_cumsum(g_ntd, 32, layout="NTD")
     ref = _kda_gate_cumsum_reference(g_bsnd.squeeze(0).detach().cpu(), 32).permute(1, 0, 2)
     _assert_close("gate cumsum ntd", got, ref, rtol=2e-3, atol=2e-3)
 
@@ -1055,6 +1055,80 @@ def test_kda_gate_cumsum_safe_gate_multitask_last_row_matches_reference():
     _assert_close("gate cumsum safe multitask", got, ref, rtol=2e-3, atol=2e-3)
 
 
+def test_kda_gate_cumsum_layout_is_not_inferred_from_shape():
+    device = _device()
+    if device.type == "cpu":
+        return
+    torch.manual_seed(20260714)
+    g_bsnd = (torch.randn(1, 4, 8, 8, dtype=torch.bfloat16) * 0.001).to(device)
+    g_bnsd = g_bsnd.permute(0, 2, 1, 3).contiguous()
+    got_bnsd = fla_ascendc.kda_gate_cumsum(g_bnsd, 32, layout="BNSD")
+    ref_bnsd = _kda_gate_cumsum_reference(g_bsnd.detach().cpu(), 32).permute(0, 2, 1, 3)
+    _assert_close("gate cumsum BNSD T<=HV", got_bnsd, ref_bnsd, rtol=2e-3, atol=2e-3)
+
+    g_ntd = g_bsnd.squeeze(0).permute(1, 0, 2).contiguous()
+    got_ntd = fla_ascendc.kda_gate_cumsum(g_ntd, 32, layout="NTD")
+    ref_ntd = _kda_gate_cumsum_reference(g_bsnd.squeeze(0).detach().cpu(), 32).permute(1, 0, 2)
+    _assert_close("gate cumsum NTD T<=HV", got_ntd, ref_ntd, rtol=2e-3, atol=2e-3)
+
+
+def test_chunk_kda_fwd_invalid_head_mapping_rejected():
+    device = _device()
+    if device.type == "cpu":
+        return
+    for h, hv in ((2, 1), (2, 3)):
+        q, k, v, gk, beta, _ = _make_inputs(device, h=h, hv=hv, t=64, dtype=torch.float16)
+        try:
+            fla_ascendc.chunk_kda_fwd(q, k, v, gk, beta, q.shape[-1] ** -0.5, 64, layout="BSND")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f"invalid H/HV mapping H={h}, HV={hv} must be rejected")
+
+
+def test_chunk_kda_fwd_invalid_chunk_indices_rejected():
+    device = _device()
+    if device.type == "cpu":
+        return
+    q, k, v, gk, beta, _ = _make_inputs(device, h=1, hv=2, t=128, dtype=torch.float16)
+    invalid_indices = ((0, 0, 1), (0, 0), (0, 0, 0, 2), (2, 0, 0, 1))
+    for indices in invalid_indices:
+        try:
+            fla_ascendc.chunk_kda_fwd(
+                q, k, v, gk, beta, q.shape[-1] ** -0.5, 64, layout="BSND",
+                cu_seqlens=(0, 64, 128), chunk_indices=indices,
+            )
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f"invalid chunk_indices={indices} must be rejected")
+
+
+def test_chunk_gdn_fwd_h_gk_only_matches_neutral_g():
+    device = _device()
+    if device.type == "cpu":
+        return
+    torch.manual_seed(20260715)
+    b, h, hv, t, kdim, vdim = 1, 1, 2, 64, 128, 128
+    k = (torch.randn(b, h, t, kdim, dtype=torch.float16) * 0.02).to(device)
+    w = (torch.randn(b, hv, t, kdim, dtype=torch.float16) * 0.02).to(device)
+    u = (torch.randn(b, hv, t, vdim, dtype=torch.float16) * 0.02).to(device)
+    gk = (torch.randn(b, hv, t, kdim, dtype=torch.float32) * 0.001).cumsum(dim=2).to(device)
+    neutral_g = torch.zeros(b, hv, t, dtype=torch.float32, device=device)
+
+    gk_only = fla_ascendc.chunk_gated_delta_rule_fwd_h(
+        k, w, u, gk=gk, output_final_state=True, chunk_size=64,
+    )
+    explicit_neutral = fla_ascendc.chunk_gated_delta_rule_fwd_h(
+        k, w, u, g=neutral_g, gk=gk, output_final_state=True, chunk_size=64,
+    )
+    for name, outputs in (("gk-only", gk_only), ("explicit-neutral", explicit_neutral)):
+        assert outputs[2].dtype == torch.float32, f"{name} final_state must be float32 without initial_state"
+        assert torch.isfinite(outputs[2]).all().item(), f"{name} final_state must be finite"
+    for name, actual, expected in zip(("h", "v_new", "final_state"), gk_only, explicit_neutral):
+        _assert_close(f"gk-only {name}", actual, expected, rtol=0, atol=0)
+
+
 def _run_single_test_in_subprocess(name):
     subprocess.run([sys.executable, __file__, "--single-test", name], check=True)
 
@@ -1075,6 +1149,10 @@ if __name__ == "__main__":
     test_kda_gate_cumsum_ntd_direct_matches_reference()
     test_kda_gate_cumsum_safe_gate_matches_reference()
     test_kda_gate_cumsum_safe_gate_multitask_last_row_matches_reference()
+    test_kda_gate_cumsum_layout_is_not_inferred_from_shape()
+    test_chunk_kda_fwd_invalid_head_mapping_rejected()
+    test_chunk_kda_fwd_invalid_chunk_indices_rejected()
+    test_chunk_gdn_fwd_h_gk_only_matches_neutral_g()
     test_chunk_kda_fwd_upper_triangle_dirty_zero()
     test_chunk_kda_fwd_model_shape_with_stats()
 

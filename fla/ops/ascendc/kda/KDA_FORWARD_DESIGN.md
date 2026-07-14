@@ -66,13 +66,14 @@ gk      = cumsum(gate * rcp_ln2, within_current_chunk)
 定位 gate cumsum 问题时，应先使用 gate-only 对比，而不是直接看 `o/final_state`：
 
 ```python
-gk_npu = torch.ops.npu.npu_kda_gate_cumsum(
+gk_npu = fla_npu.ops.ascendc.kda_gate_cumsum(
     g_raw, chunk_size,
     A_log=a_log,
     dt_bias=dt_bias,
     use_gate_in_kernel=True,
     safe_gate=True,
     lower_bound=-5.0,
+    layout="BSND",
 )
 gk_ref = reference_safe_gate_chunk_cumsum(g_raw, a_log, dt_bias, chunk_size)
 torch.testing.assert_close(gk_npu.cpu(), gk_ref.cpu(), rtol=2e-3, atol=2e-3)
@@ -148,10 +149,10 @@ o, final_state, g, Aqk, Akk, w, u, qg, kg, v_new, h, initial_state = \
 3. 对 BNSD/NTD，NTD reshape 为 `[1, HV, T, D]` view 后直接进入 kernel，不触发布局转换。
 4. 对 BSND/TND，TND reshape 为 `[1, T, H, D]` 后通过 `KdaLayoutSwap12` 转成 BNSD。
 5. 如有需要，将 `gk/beta` cast 到 `fp32`。
-6. 根据 `useSplitForward` 选择 dispatch：
-   - `useSplitForward=true` 表示走 split forward 路径，当前触发条件为 `q` dtype 不是 `fp32`、`chunk_size == 64` 且 `K * V >= 8192`。该路径把一次 KDA 正向拆成多个 L0 调用，以便复用 cube/向量主路径、GDN 状态传播和独立后处理。
-     典型主流模型场景 `bf16, K=128, V=128, chunk_size=64` 满足该条件，因为 `bf16 != fp32` 且 `128 * 128 = 16384 >= 8192`。
-   - `useSplitForward=false` 表示走 monolithic `ChunkKdaFwd(stage=0)` 路径，用于小 shape 或 `fp32` 场景。
+6. 校验并进入 split forward 路径。公开接口不再使用 monolithic `stage=0` scalar 路径兜底：
+   - `q/k/v` 必须同为 `fp16` 或 `bf16`，`chunk_size=64`。
+   - `K * V` 必须同时容纳四个 `64x64` 求逆工作块和 `64 * (K + V)` 的 post-WU cube 输入。
+   - 典型主流模型场景 `bf16, K=128, V=128, chunk_size=64` 满足该约束；其他 shape 不满足 cube 模板时由 host 明确拦截。
 7. 对 BNSD/NTD，split 路径的临时输出 copy 回相同 layout 的用户输出。对 BSND/TND，将 BNSD 中间结果转回公开输出 layout。
 
 split 路径包含三个 `ChunkKdaFwd` 阶段以及一次 GDN 状态传播：
@@ -167,7 +168,7 @@ stage 3: 启用 post-WU cube 时后处理 w/kg/u
 
 - KDA 正向天然分成“chunk 内矩阵项”和“chunk 间状态传播”两类依赖。`Aqk/Akk/w/u/qg/kg` 可以按 chunk 并行准备；`h/v_new/final_state` 依赖前一 chunk 状态，需要复用 GDN 的 `ChunkGatedDeltaRuleFwdH` 串起状态传播；最终 `o` 又依赖已经产出的 `h` 和 `v_new`。
 - 如果把全部逻辑塞进一个大 kernel，需要在 `ChunkKdaFwd` 内重新实现 GDN 状态传播和输出后处理，既会重复已有可靠实现，也会把 cube 主路径、向量后处理、跨 chunk 依赖揉在一起，后续维护和定位都更困难。
-- 对主流 `bf16, K=128, V=128, chunk_size=64` 场景，矩阵计算量足够大，拆分带来的 L0 调用和临时张量开销可以被 cube/向量主路径收益覆盖；而小 shape 或 `fp32` 场景收益不足，所以保留 `stage=0` 单 L0 路径作为简单通用路径。
+- 对主流 `bf16, K=128, V=128, chunk_size=64` 场景，矩阵计算量足够大，拆分带来的 L0 调用和临时张量开销可以被 cube/向量主路径收益覆盖。不满足模板约束的 shape 明确报错，不能回落到 scalar/逐元素计算。
 
 ### 4.1 Stage 间数据依赖
 

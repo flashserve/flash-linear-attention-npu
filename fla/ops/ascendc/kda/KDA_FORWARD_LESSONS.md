@@ -267,10 +267,10 @@ kg_state = k * exp2(g_last - gk)
 ```text
 q dtype != fp32
 chunk_size == 64
-K * V >= 8192
+K * V >= max(4 * 64 * 64, 64 * (K + V))
 ```
 
-该路径可以复用 cube 主路径和 GDN 状态传播。小 shape 或 `fp32` 场景收益不足，可走 `stage=0` monolithic path。
+该路径可以复用 cube 主路径和 GDN 状态传播。不满足模板的 shape 应在 host 层明确拦截，不能走 `stage=0` scalar 路径兜底。
 
 ## 6. AscendC 编码红线
 

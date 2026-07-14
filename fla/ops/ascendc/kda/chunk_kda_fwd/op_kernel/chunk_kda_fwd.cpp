@@ -212,9 +212,6 @@ public:
         stage_ = tiling.stage;
 
         if (pipe_ != nullptr) {
-            pipe_->InitBuffer(scalarInBuf_, 32);
-            pipe_->InitBuffer(scalarFp32Buf_, 32);
-            pipe_->InitBuffer(scalarOutBuf_, 32);
             pipe_->InitBuffer(scalarI64Buf_, 32);
         }
         if (pipe_ != nullptr && initVecBuffers) {
@@ -320,24 +317,7 @@ private:
         return HOffset(b, hv, chunkIdx, 0, 0) + slot * KDA_SOLVE_MATRIX_ELEMENTS;
     }
 
-    __aicore__ inline uint64_t StateOffset(uint64_t seq, uint64_t hv, uint64_t d, uint64_t r) const
-    {
-        return ((seq * HV_ + hv) * K_ + d) * V_ + r;
-    }
 
-    __aicore__ inline uint64_t ChunkCountBefore(uint64_t seq)
-    {
-        if (!isVarLen_) {
-            return 0;
-        }
-        uint64_t count = 0;
-        for (uint64_t s = 0; s < seq; ++s) {
-            uint64_t start = static_cast<uint64_t>(ReadMetaInt64(cuSeqlens_, s));
-            uint64_t end = static_cast<uint64_t>(ReadMetaInt64(cuSeqlens_, s + 1));
-            count += (end - start + BT_ - 1) / BT_;
-        }
-        return count;
-    }
 
     __aicore__ inline uint64_t ScoreRefBlockSize() const
     {
@@ -435,46 +415,8 @@ private:
         CopyVectorOut(dst, offset, src, K_);
     }
 
-    template <typename DstT, typename SrcT>
-    __aicore__ inline void CopyTensorRow(GlobalTensor<DstT> &dst, uint64_t dstOffset, GlobalTensor<SrcT> &src,
-                                         uint64_t srcOffset, uint64_t count)
-    {
-        LocalTensor<float> rowFp32 = vecBuf_.Get<float>();
-        LoadAsFloatRow(src, srcOffset, rowFp32, count);
-        StoreFloatRow(dst, dstOffset, rowFp32, count);
-    }
 
-    template <typename CopyT>
-    __aicore__ inline void ZeroTensorRow(GlobalTensor<CopyT> &dst, uint64_t dstOffset, uint64_t count)
-    {
-        LocalTensor<float> rowFp32 = vecBuf_.Get<float>();
-        Duplicate(rowFp32, 0.0f, static_cast<uint32_t>(count));
-        PipeBarrier<PIPE_V>();
-        StoreFloatRow(dst, dstOffset, rowFp32, count);
-    }
 
-    template <typename CopyT>
-    __aicore__ inline float ReadAsFloat(GlobalTensor<CopyT> &tensor, uint64_t offset)
-    {
-        LocalTensor<CopyT> scalarIn = scalarInBuf_.Get<CopyT>();
-        DataCopyParams params{1, static_cast<uint16_t>(sizeof(CopyT)), 0, 0};
-        DataCopyPadParams padParams{false, 0, 0, 0};
-        DataCopyPad(scalarIn, tensor[offset], params, padParams);
-        SetFlag<HardEvent::MTE2_V>(KDA_SCALAR_MTE2_V_EVENT_ID);
-        WaitFlag<HardEvent::MTE2_V>(KDA_SCALAR_MTE2_V_EVENT_ID);
-
-        LocalTensor<float> scalarFp32 = scalarFp32Buf_.Get<float>();
-        if constexpr (IsSameType<CopyT, float>::value) {
-            Adds(scalarFp32, scalarIn, 0.0f, 1);
-        } else {
-            Cast(scalarFp32, scalarIn, RoundMode::CAST_NONE, 1);
-        }
-        PipeBarrier<PIPE_V>();
-        SetFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
-        WaitFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
-        __ubuf__ float *ptr = (__ubuf__ float *)scalarFp32.GetPhyAddr();
-        return ptr[0];
-    }
 
     __aicore__ inline int64_t ReadInt64(GlobalTensor<int64_t> &tensor, uint64_t offset)
     {
@@ -492,46 +434,11 @@ private:
 
     __aicore__ inline int64_t ReadMetaInt64(GlobalTensor<int64_t> &tensor, uint64_t offset)
     {
-        return tensor.GetValue(offset);
+        return ReadInt64(tensor, offset);
     }
 
-    template <typename CopyT>
-    __aicore__ inline void WriteFromFloat(GlobalTensor<CopyT> &tensor, uint64_t offset, float value)
-    {
-        LocalTensor<float> scalarFp32 = scalarFp32Buf_.Get<float>();
-        Duplicate(scalarFp32, value, 1);
-        PipeBarrier<PIPE_V>();
-        DataCopyParams params{1, static_cast<uint16_t>(sizeof(CopyT)), 0, 0};
-        if constexpr (IsSameType<CopyT, float>::value) {
-            SetFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
-            WaitFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
-            DataCopyPad(tensor[offset], scalarFp32, params);
-        } else {
-            LocalTensor<CopyT> scalarOut = scalarOutBuf_.Get<CopyT>();
-            Cast(scalarOut, scalarFp32, RoundMode::CAST_RINT, 1);
-            PipeBarrier<PIPE_V>();
-            SetFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
-            WaitFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
-            DataCopyPad(tensor[offset], scalarOut, params);
-        }
-        SetFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
-        WaitFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
-    }
 
-    __aicore__ inline float ReadFloat(GlobalTensor<float> &tensor, uint64_t offset)
-    {
-        return ReadAsFloat(tensor, offset);
-    }
 
-    __aicore__ inline void WriteFloat(GlobalTensor<float> &tensor, uint64_t offset, float value)
-    {
-        WriteFromFloat(tensor, offset, value);
-    }
-
-    __aicore__ inline __ubuf__ float *UbPtr(LocalTensor<float> &tensor)
-    {
-        return (__ubuf__ float *)tensor.GetPhyAddr();
-    }
 
     __aicore__ inline LocalTensor<float> VecScratch(uint64_t slot)
     {
@@ -585,92 +492,9 @@ private:
         WaitFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
     }
 
-    __aicore__ inline void LoadExp2GTo(LocalTensor<float> &dst, uint64_t b, uint64_t hv, uint64_t t)
-    {
-        CopyRowIn(dst, gk_, KVOffset(b, hv, t, 0, K_));
-        SetFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
-        WaitFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
-        Muls(dst, dst, LN2, static_cast<uint32_t>(K_));
-        PipeBarrier<PIPE_V>();
-        RunExp2(dst, static_cast<uint32_t>(K_));
-    }
 
-    template <typename CopyT>
-    __aicore__ inline void CopyStackFloatRowOut(GlobalTensor<CopyT> &dst, uint64_t dstOffset, float *values,
-                                                uint64_t count, uint64_t slot = 0)
-    {
-        LocalTensor<float> rowFp32 = vecBuf_.Get<float>()[slot * EXP2_UB_ELEMENTS];
-        __ubuf__ float *rowPtr = UbPtr(rowFp32);
-        for (uint64_t idx = 0; idx < count; ++idx) {
-            rowPtr[idx] = values[idx];
-        }
-        SetFlag<HardEvent::S_V>(EXP2_EVENT_ID);
-        WaitFlag<HardEvent::S_V>(EXP2_EVENT_ID);
-        Adds(rowFp32, rowFp32, 0.0f, static_cast<uint32_t>(count));
-        PipeBarrier<PIPE_V>();
-        if constexpr (IsSameType<CopyT, float>::value) {
-            SetFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
-            WaitFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
-            CopyVectorOut(dst, dstOffset, rowFp32, count);
-        } else {
-            LocalTensor<CopyT> rowLocal = exp2Buf_.Get<CopyT>();
-            Cast(rowLocal, rowFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(count));
-            PipeBarrier<PIPE_V>();
-            SetFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
-            WaitFlag<HardEvent::V_MTE3>(KDA_SCALAR_V_MTE3_EVENT_ID);
-            CopyVectorOut(dst, dstOffset, rowLocal, count);
-        }
-        SetFlag<HardEvent::MTE3_MTE2>(KDA_MTE3_MTE2_EVENT_ID);
-        WaitFlag<HardEvent::MTE3_MTE2>(KDA_MTE3_MTE2_EVENT_ID);
-        SetFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
-        WaitFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
-        SetFlag<HardEvent::MTE3_S>(KDA_SCALAR_MTE3_V_EVENT_ID);
-        WaitFlag<HardEvent::MTE3_S>(KDA_SCALAR_MTE3_V_EVENT_ID);
-    }
 
-    template <typename CopyT>
-    __aicore__ inline void LoadStackFloatRow(GlobalTensor<CopyT> &src, uint64_t srcOffset, float *values,
-                                             uint64_t count, uint64_t slot = 0)
-    {
-        LocalTensor<float> rowFp32 = vecBuf_.Get<float>()[slot * EXP2_UB_ELEMENTS];
-        if constexpr (IsSameType<CopyT, float>::value) {
-            CopyVectorIn(rowFp32, src, srcOffset, count);
-            SetFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
-            WaitFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
-            Adds(rowFp32, rowFp32, 0.0f, static_cast<uint32_t>(count));
-            PipeBarrier<PIPE_V>();
-            SetFlag<HardEvent::V_MTE2>(KDA_MTE3_MTE2_EVENT_ID);
-            WaitFlag<HardEvent::V_MTE2>(KDA_MTE3_MTE2_EVENT_ID);
-        } else {
-            LocalTensor<CopyT> rowLocal = exp2Buf_.Get<CopyT>();
-            CopyVectorIn(rowLocal, src, srcOffset, count);
-            SetFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
-            WaitFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
-            Cast(rowFp32, rowLocal, RoundMode::CAST_NONE, static_cast<uint32_t>(count));
-            PipeBarrier<PIPE_V>();
-            SetFlag<HardEvent::V_MTE2>(KDA_MTE3_MTE2_EVENT_ID);
-            WaitFlag<HardEvent::V_MTE2>(KDA_MTE3_MTE2_EVENT_ID);
-        }
-        PipeBarrier<PIPE_V>();
-        SetFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
-        WaitFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
-        __ubuf__ float *rowPtr = UbPtr(rowFp32);
-        for (uint64_t idx = 0; idx < count; ++idx) {
-            values[idx] = rowPtr[idx];
-        }
-    }
 
-    __aicore__ inline LocalTensor<float> Exp2G(uint64_t b, uint64_t hv, uint64_t t)
-    {
-        LocalTensor<float> exp2Local = exp2Buf_.Get<float>();
-        CopyRowIn(exp2Local, gk_, KVOffset(b, hv, t, 0, K_));
-        SetFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
-        WaitFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
-        Muls(exp2Local, exp2Local, LN2, static_cast<uint32_t>(K_));
-        PipeBarrier<PIPE_V>();
-        RunExp2(exp2Local, static_cast<uint32_t>(K_));
-        return exp2Local;
-    }
 
     __aicore__ inline LocalTensor<float> Exp2NegG(uint64_t b, uint64_t hv, uint64_t t)
     {
@@ -684,21 +508,6 @@ private:
         return exp2Local;
     }
 
-    __aicore__ inline LocalTensor<float> Exp2GDiff(uint64_t b, uint64_t hv, uint64_t lhs, uint64_t rhs)
-    {
-        LocalTensor<float> exp2Local = exp2Buf_.Get<float>();
-        LocalTensor<float> rhsLocal = vecBuf_.Get<float>();
-        CopyRowIn(exp2Local, gk_, KVOffset(b, hv, lhs, 0, K_));
-        CopyRowIn(rhsLocal, gk_, KVOffset(b, hv, rhs, 0, K_));
-        SetFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
-        WaitFlag<HardEvent::MTE2_V>(KDA_MTE2_V_EVENT_ID);
-        Sub(exp2Local, exp2Local, rhsLocal, static_cast<uint32_t>(K_));
-        PipeBarrier<PIPE_V>();
-        Muls(exp2Local, exp2Local, LN2, static_cast<uint32_t>(K_));
-        PipeBarrier<PIPE_V>();
-        RunExp2(exp2Local, static_cast<uint32_t>(K_));
-        return exp2Local;
-    }
 
     __aicore__ inline uint64_t GateProductToken(uint64_t start, uint64_t logicalIdx, uint64_t subBlockIdx,
                                                 uint64_t subBlockNum) const
@@ -1108,27 +917,15 @@ private:
     __aicore__ inline void BuildCausalSelectMasks(LocalTensor<uint8_t> aqkMask, LocalTensor<uint8_t> akkMask,
                                                   uint64_t rowBegin, uint64_t rowCount)
     {
-        constexpr uint32_t blocksPerRow = KDA_SOLVE_BT / KDA_BITS_PER_MASK_BYTE;
+        __ubuf__ uint64_t *aqkMaskPtr = reinterpret_cast<__ubuf__ uint64_t *>(aqkMask.GetPhyAddr());
+        __ubuf__ uint64_t *akkMaskPtr = reinterpret_cast<__ubuf__ uint64_t *>(akkMask.GetPhyAddr());
         for (uint32_t localRow = 0; localRow < rowCount; ++localRow) {
             uint32_t row = static_cast<uint32_t>(rowBegin + localRow);
-            for (uint32_t block = 0; block < blocksPerRow; ++block) {
-                uint32_t colBase = block * KDA_BITS_PER_MASK_BYTE;
-                uint8_t aqkMaskValue = 0;
-                uint8_t akkMaskValue = 0;
-                for (uint32_t bit = 0; bit < KDA_BITS_PER_MASK_BYTE; ++bit) {
-                    uint32_t col = colBase + bit;
-                    if (col > row) {
-                        aqkMaskValue |= static_cast<uint8_t>(1U << bit);
-                    }
-                    if (col >= row) {
-                        akkMaskValue |= static_cast<uint8_t>(1U << bit);
-                    }
-                }
-                uint32_t offset = localRow * blocksPerRow + block;
-                aqkMask.SetValue(offset, aqkMaskValue);
-                akkMask.SetValue(offset, akkMaskValue);
-            }
+            aqkMaskPtr[localRow] = row + 1 >= KDA_SOLVE_BT ? 0ULL : (~0ULL << (row + 1));
+            akkMaskPtr[localRow] = row == 0 ? ~0ULL : (~0ULL << row);
         }
+        SetFlag<HardEvent::S_V>(EXP2_EVENT_ID);
+        WaitFlag<HardEvent::S_V>(EXP2_EVENT_ID);
     }
 
     __aicore__ inline void SelectCausalRows(LocalTensor<float> aqkMat, LocalTensor<float> akkMat,
@@ -1800,98 +1597,7 @@ private:
         }
     }
 
-    __aicore__ inline void FinalizeAqkAkk(uint64_t b, uint64_t hv, uint64_t start, uint64_t curT)
-    {
-        for (uint64_t i = 0; i < curT; ++i) {
-            uint64_t ti = start + i;
-            float aqkRow[EXP2_UB_ELEMENTS];
-            float akkRow[EXP2_UB_ELEMENTS];
-            for (uint64_t j = 0; j < BT_; ++j) {
-                float aqkValue = 0.0f;
-                float akkValue = 0.0f;
-                if (j < curT && j <= i) {
-                    aqkValue = ReadAsFloat(aqk_, AOffset(b, hv, ti, j)) * (stage_ == 1 ? 1.0f : scale_);
-                    if (j < i) {
-                        akkValue = ReadAsFloat(akk_, AOffset(b, hv, ti, j)) *
-                                   ReadFloat(beta_, BetaOffset(b, hv, ti));
-                    }
-                }
-                aqkRow[j] = aqkValue;
-                akkRow[j] = akkValue;
-            }
 
-            for (uint64_t j = 0; j < i; ++j) {
-                float sum = 0.0f;
-                for (uint64_t m = j; m < i; ++m) {
-                    float lim = akkRow[m];
-                    float ymj = ReadAsFloat(akk_, AOffset(b, hv, start + m, j));
-                    sum += lim * ymj;
-                }
-                akkRow[j] = -sum;
-            }
-            akkRow[i] = 1.0f;
-            CopyStackFloatRowOut(aqk_, AOffset(b, hv, ti, 0), aqkRow, BT_, 0);
-            CopyStackFloatRowOut(akk_, AOffset(b, hv, ti, 0), akkRow, BT_, 1);
-        }
-    }
-
-    __aicore__ inline void ComputePostKgWUVec(uint64_t b, uint64_t h, uint64_t hv, uint64_t chunkIdx,
-                                              uint64_t start, uint64_t curT)
-    {
-        uint64_t last = start + curT - 1;
-        uint64_t wScratchBase = HOffset(b, hv, chunkIdx, 0, 0);
-        LocalTensor<float> rowLocal = VecScratch(0);
-        LocalTensor<float> accLocal = VecScratch(1);
-        LocalTensor<float> tmpLocal = VecScratch(2);
-        LocalTensor<float> gateLast = VecScratch(4);
-        LoadExp2GTo(gateLast, b, hv, last);
-
-        for (uint64_t i = 0; i < curT; ++i) {
-            uint64_t ti = start + i;
-            LoadAsFloatRow(kg_, KVOffset(b, hv, ti, 0, K_), rowLocal, K_);
-            Mul(tmpLocal, rowLocal, gateLast, static_cast<uint32_t>(K_));
-            PipeBarrier<PIPE_V>();
-            StoreFloatRow(kg_, KVOffset(b, hv, ti, 0, K_), tmpLocal, K_);
-        }
-
-        LocalTensor<float> gateLocal = VecScratch(5);
-
-        for (uint64_t i = 0; i < curT; ++i) {
-            uint64_t ti = start + i;
-
-            Duplicate(accLocal, 0.0f, static_cast<uint32_t>(K_));
-            PipeBarrier<PIPE_V>();
-            for (uint64_t j = 0; j < curT; ++j) {
-                uint64_t tj = start + j;
-                float coeff = ReadAsFloat(akk_, AOffset(b, hv, ti, j)) * ReadFloat(beta_, BetaOffset(b, hv, tj));
-                LoadAsFloatRow(k_, QOffset(b, h, tj, 0), rowLocal, K_);
-                LoadExp2GTo(gateLocal, b, hv, tj);
-                Mul(rowLocal, rowLocal, gateLocal, static_cast<uint32_t>(K_));
-                PipeBarrier<PIPE_V>();
-                Muls(tmpLocal, rowLocal, coeff, static_cast<uint32_t>(K_));
-                PipeBarrier<PIPE_V>();
-                Add(accLocal, accLocal, tmpLocal, static_cast<uint32_t>(K_));
-                PipeBarrier<PIPE_V>();
-            }
-            StoreFloatRow(h_, wScratchBase + i * K_, accLocal, K_);
-
-            Duplicate(accLocal, 0.0f, static_cast<uint32_t>(V_));
-            PipeBarrier<PIPE_V>();
-            for (uint64_t j = 0; j < curT; ++j) {
-                uint64_t tj = start + j;
-                float coeff = ReadAsFloat(akk_, AOffset(b, hv, ti, j)) * ReadFloat(beta_, BetaOffset(b, hv, tj));
-                LoadAsFloatRow(v_, KVOffset(b, hv, tj, 0, V_), rowLocal, V_);
-                Muls(tmpLocal, rowLocal, coeff, static_cast<uint32_t>(V_));
-                PipeBarrier<PIPE_V>();
-                Add(accLocal, accLocal, tmpLocal, static_cast<uint32_t>(V_));
-                PipeBarrier<PIPE_V>();
-            }
-            StoreFloatRow(u_, KVOffset(b, hv, ti, 0, V_), accLocal, V_);
-        }
-        for (uint64_t i = 0; i < curT; ++i) {
-            CopyTensorRow(w_, KVOffset(b, hv, start + i, 0, K_), h_, wScratchBase + i * K_, K_);
-        }
-    }
 
     __aicore__ inline void ScaleRowsByBeta(GlobalTensor<T> &src, GlobalTensor<T> &dst, uint64_t b, uint64_t hv,
                                            uint64_t start, uint64_t rowBegin, uint64_t rowCount, uint64_t dim,
@@ -2079,185 +1785,9 @@ private:
         WaitFlag<HardEvent::MTE3_V>(KDA_SCALAR_MTE3_V_EVENT_ID);
     }
 
-    __aicore__ inline void InitState(uint64_t seq, uint64_t hv)
-    {
-        for (uint64_t d = 0; d < K_; ++d) {
-            uint64_t stateOffset = StateOffset(seq, hv, d, 0);
-            if (hasInitial_) {
-                CopyTensorRow(finalState_, stateOffset, initialState_, stateOffset, V_);
-            } else {
-                ZeroTensorRow(finalState_, stateOffset, V_);
-            }
-        }
-    }
 
-    __aicore__ inline void StoreCurrentState(uint64_t b, uint64_t hv, uint64_t seq, uint64_t chunkIdx)
-    {
-        for (uint64_t d = 0; d < K_; ++d) {
-            CopyTensorRow(h_, HOffset(b, hv, chunkIdx, d, 0), finalState_, StateOffset(seq, hv, d, 0), V_);
-        }
-    }
 
-    __aicore__ inline void ProcessChunkAiv(uint64_t b, uint64_t seq, uint64_t h, uint64_t hv, uint64_t chunkIdx,
-                                           uint64_t start, uint64_t end)
-    {
-        uint64_t curT = end - start;
-        if (curT == 0) {
-            return;
-        }
 
-        if constexpr (IsSameType<T, float>::value) {
-            return;
-        } else {
-            uint64_t subBlockIdx = isAivOnly_ ? 0 : static_cast<uint64_t>(GetSubBlockIdx());
-            if (K_ < 16) {
-                return;
-            } else {
-                if (subBlockIdx == 0) {
-                    PrepareGateProducts(b, h, hv, start, curT, 0, 1);
-                    PipeBarrier<PIPE_ALL>();
-                }
-                Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(scoreReadyFlag_);
-                Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(scoreReadyFlag_);
-                Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(scoreDoneFlag_);
-                Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(scoreDoneFlag_);
-                if (subBlockIdx != 0) {
-                    return;
-                }
-            }
-        }
-        FinalizeAqkAkk(b, hv, start, curT);
-
-        uint64_t last = end - 1;
-        for (uint64_t i = 0; i < curT; ++i) {
-            uint64_t ti = start + i;
-            LocalTensor<float> expLastMinusG = Exp2GDiff(b, hv, last, ti);
-            __ubuf__ float *expLastMinusGPtr = UbPtr(expLastMinusG);
-            float kgRow[EXP2_UB_ELEMENTS];
-            for (uint64_t d = 0; d < K_; ++d) {
-                float kv = ReadAsFloat(k_, QOffset(b, h, ti, d));
-                kgRow[d] = kv * expLastMinusGPtr[d];
-            }
-            CopyStackFloatRowOut(kg_, KVOffset(b, hv, ti, 0, K_), kgRow, K_, 2);
-
-            float wSum[EXP2_UB_ELEMENTS];
-            for (uint64_t d = 0; d < K_; ++d) {
-                wSum[d] = 0.0f;
-            }
-            for (uint64_t j = 0; j < curT; ++j) {
-                uint64_t tj = start + j;
-                LocalTensor<float> expGj = Exp2G(b, hv, tj);
-                __ubuf__ float *expGjPtr = UbPtr(expGj);
-                float betaJ = ReadFloat(beta_, BetaOffset(b, hv, tj));
-                float a = ReadAsFloat(akk_, AOffset(b, hv, ti, j));
-                for (uint64_t d = 0; d < K_; ++d) {
-                    float kj = ReadAsFloat(k_, QOffset(b, h, tj, d));
-                    wSum[d] += a * kj * betaJ * expGjPtr[d];
-                }
-            }
-            CopyStackFloatRowOut(w_, KVOffset(b, hv, ti, 0, K_), wSum, K_, 3);
-
-            float uRow[EXP2_UB_ELEMENTS];
-            for (uint64_t r = 0; r < V_; ++r) {
-                uRow[r] = 0.0f;
-            }
-            for (uint64_t j = 0; j < curT; ++j) {
-                uint64_t tj = start + j;
-                float vRow[EXP2_UB_ELEMENTS];
-                LoadStackFloatRow(v_, KVOffset(b, hv, tj, 0, V_), vRow, V_, 0);
-                float a = ReadAsFloat(akk_, AOffset(b, hv, ti, j));
-                float betaJ = ReadFloat(beta_, BetaOffset(b, hv, tj));
-                for (uint64_t r = 0; r < V_; ++r) {
-                    uRow[r] += a * vRow[r] * betaJ;
-                }
-            }
-            CopyStackFloatRowOut(u_, KVOffset(b, hv, ti, 0, V_), uRow, V_, 4);
-
-            float vNewRow[EXP2_UB_ELEMENTS];
-            for (uint64_t r = 0; r < V_; ++r) {
-                vNewRow[r] = uRow[r];
-            }
-            for (uint64_t d = 0; d < K_; ++d) {
-                float hRow[EXP2_UB_ELEMENTS];
-                LoadStackFloatRow(finalState_, StateOffset(seq, hv, d, 0), hRow, V_, 1);
-                float wi = wSum[d];
-                for (uint64_t r = 0; r < V_; ++r) {
-                    vNewRow[r] -= wi * hRow[r];
-                }
-            }
-            CopyStackFloatRowOut(vNew_, KVOffset(b, hv, ti, 0, V_), vNewRow, V_, 2);
-        }
-
-        StoreCurrentState(b, hv, seq, chunkIdx);
-
-        for (uint64_t i = 0; i < curT; ++i) {
-            uint64_t ti = start + i;
-            float oRow[EXP2_UB_ELEMENTS];
-            for (uint64_t r = 0; r < V_; ++r) {
-                oRow[r] = 0.0f;
-            }
-            float qgRow[EXP2_UB_ELEMENTS];
-            LoadStackFloatRow(qg_, KVOffset(b, hv, ti, 0, K_), qgRow, K_, 0);
-            for (uint64_t d = 0; d < K_; ++d) {
-                float hRow[EXP2_UB_ELEMENTS];
-                LoadStackFloatRow(finalState_, StateOffset(seq, hv, d, 0), hRow, V_, 1);
-                float qgValue = qgRow[d] * scale_;
-                for (uint64_t r = 0; r < V_; ++r) {
-                    oRow[r] += qgValue * hRow[r];
-                }
-            }
-            for (uint64_t j = 0; j < curT; ++j) {
-                uint64_t tj = start + j;
-                float vNewRow[EXP2_UB_ELEMENTS];
-                LoadStackFloatRow(vNew_, KVOffset(b, hv, tj, 0, V_), vNewRow, V_, 2);
-                float a = ReadAsFloat(aqk_, AOffset(b, hv, ti, j));
-                for (uint64_t r = 0; r < V_; ++r) {
-                    oRow[r] += a * vNewRow[r];
-                }
-            }
-            CopyStackFloatRowOut(o_, KVOffset(b, hv, ti, 0, V_), oRow, V_, 3);
-        }
-
-        LocalTensor<float> decayGate = Exp2G(b, hv, last);
-        __ubuf__ float *decayGatePtr = UbPtr(decayGate);
-        float decayValues[EXP2_UB_ELEMENTS];
-        for (uint64_t d = 0; d < K_; ++d) {
-            decayValues[d] = decayGatePtr[d];
-        }
-        for (uint64_t d = 0; d < K_; ++d) {
-            float decay = decayValues[d];
-            float stateRow[EXP2_UB_ELEMENTS];
-            LoadStackFloatRow(finalState_, StateOffset(seq, hv, d, 0), stateRow, V_, 0);
-            for (uint64_t r = 0; r < V_; ++r) {
-                stateRow[r] *= decay;
-            }
-            for (uint64_t i = 0; i < curT; ++i) {
-                uint64_t ti = start + i;
-                float kgRow[EXP2_UB_ELEMENTS];
-                float vNewRow[EXP2_UB_ELEMENTS];
-                LoadStackFloatRow(kg_, KVOffset(b, hv, ti, 0, K_), kgRow, K_, 1);
-                LoadStackFloatRow(vNew_, KVOffset(b, hv, ti, 0, V_), vNewRow, V_, 2);
-                float kgValue = kgRow[d];
-                for (uint64_t r = 0; r < V_; ++r) {
-                    stateRow[r] += kgValue * vNewRow[r];
-                }
-            }
-            CopyStackFloatRowOut(finalState_, StateOffset(seq, hv, d, 0), stateRow, V_, 4);
-        }
-    }
-
-    __aicore__ inline void ProcessChunkAic(uint64_t b, uint64_t hv, uint64_t start, uint64_t end)
-    {
-        uint64_t curT = end - start;
-        if (curT == 0 || K_ < 16) {
-            return;
-        }
-        Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(scoreReadyFlag_);
-        Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(scoreReadyFlag_);
-        ComputeRawAqkAkkCube(b, hv, start, curT);
-        Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(scoreDoneFlag_);
-        Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(scoreDoneFlag_);
-    }
 
     __aicore__ inline void ComputeOutputCube(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
                                              uint64_t curT)
@@ -2326,49 +1856,6 @@ private:
         }
     }
 
-    __aicore__ inline void ComputeOutputTailVec(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
-                                                uint64_t curT, uint64_t subBlockIdx, uint64_t subBlockNum)
-    {
-        LocalTensor<float> outLocal = VecScratch(0);
-        LocalTensor<float> workLocal = VecScratch(1);
-        LocalTensor<float> qgLocal = VecScratch(2);
-        LocalTensor<float> aqkLocal = VecScratch(3);
-        __ubuf__ float *qgPtr = UbPtr(qgLocal);
-        __ubuf__ float *aqkPtr = UbPtr(aqkLocal);
-        uint32_t vCount = static_cast<uint32_t>(V_);
-
-        for (uint64_t i = subBlockIdx; i < curT; i += subBlockNum) {
-            uint64_t ti = start + i;
-            Duplicate(outLocal, 0.0f, vCount);
-            PipeBarrier<PIPE_V>();
-
-            LoadAsFloatRow(stageQG_, KVOffset(b, hv, ti, 0, K_), qgLocal, K_);
-            SetFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
-            WaitFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
-            for (uint64_t d = 0; d < K_; ++d) {
-                float qgValue = qgPtr[d];
-                LoadAsFloatRow(stageH_, HOffset(b, hv, chunkIdx, d, 0), workLocal, V_);
-                Muls(workLocal, workLocal, qgValue, vCount);
-                PipeBarrier<PIPE_V>();
-                Add(outLocal, outLocal, workLocal, vCount);
-                PipeBarrier<PIPE_V>();
-            }
-
-            LoadAsFloatRow(stageAqk_, AOffset(b, hv, ti, 0), aqkLocal, BT_);
-            SetFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
-            WaitFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
-            for (uint64_t j = 0; j < curT; ++j) {
-                float aqkValue = aqkPtr[j];
-                LoadAsFloatRow(stageVNew_, KVOffset(b, hv, start + j, 0, V_), workLocal, V_);
-                Muls(workLocal, workLocal, aqkValue, vCount);
-                PipeBarrier<PIPE_V>();
-                Add(outLocal, outLocal, workLocal, vCount);
-                PipeBarrier<PIPE_V>();
-            }
-
-            StoreFloatRow(o_, KVOffset(b, hv, ti, 0, V_), outLocal, V_);
-        }
-    }
 
     __aicore__ inline bool ResolveFlatChunk(uint64_t task, uint64_t &seq, uint64_t &b, uint64_t &h, uint64_t &hv,
                                             uint64_t &chunkIdx, uint64_t &start, uint64_t &end)
@@ -2462,13 +1949,6 @@ private:
             } else if (subBlockIdx == 0) {
                 PrepareAqkAkkSolveInputTail(b, hv, chunkIdx, start, curT);
             }
-        } else {
-            if (subBlockIdx == 0) {
-                FinalizeAqkAkk(b, hv, start, curT);
-                if (!usePostWuCube) {
-                    ComputePostKgWUVec(b, h, hv, chunkIdx, start, curT);
-                }
-            }
         }
         if (useAkkCubeSolve) {
             Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(scoreReadyFlag_);
@@ -2487,9 +1967,7 @@ private:
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(scoreDoneFlag_);
             }
         }
-        if (!usePostWuCube) {
-            return;
-        }
+        // Host validation guarantees every accepted shape has enough workspace for this cube path.
         PrepareWuCubeInputs(b, hv, start, curT, subBlockIdx, subBlockNum);
     }
 
@@ -2517,9 +1995,7 @@ private:
                 ComputeAkkInverseMchTail(b, hv, chunkIdx, start, curT);
             }
         }
-        if (!useAkkCubeSolve && !usePostWuCube) {
-            return;
-        }
+        (void)usePostWuCube;
         (void)chunkIdx;
     }
 
@@ -2557,10 +2033,6 @@ private:
         if constexpr (IsSameType<T, float>::value) {
             return;
         }
-        if (curT != BT_) {
-            ComputeOutputTailVec(b, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum);
-            return;
-        }
         Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(scoreDoneFlag_);
         FinalizeOutputRows(b, hv, start, curT, subBlockIdx, subBlockNum);
     }
@@ -2570,9 +2042,6 @@ private:
     {
         uint64_t curT = end - start;
         if (curT == 0) {
-            return;
-        }
-        if (curT != BT_) {
             return;
         }
         ComputeOutputCube(b, hv, chunkIdx, start, curT);
@@ -2735,56 +2204,8 @@ private:
         }
     }
 
-    __aicore__ inline void ResolveSeq(uint64_t seq, uint64_t &b, uint64_t &seqStart, uint64_t &seqEnd,
-                                      uint64_t &chunkBase)
-    {
-        b = isVarLen_ ? 0 : seq;
-        seqStart = 0;
-        seqEnd = T_;
-        if (isVarLen_) {
-            seqStart = static_cast<uint64_t>(ReadMetaInt64(cuSeqlens_, seq));
-            seqEnd = static_cast<uint64_t>(ReadMetaInt64(cuSeqlens_, seq + 1));
-        }
-        chunkBase = isVarLen_ ? ChunkCountBefore(seq) : 0;
-    }
 
-    __aicore__ inline void ProcessSeqHeadAiv(uint64_t seq, uint64_t hv)
-    {
-        uint64_t b = 0;
-        uint64_t seqStart = 0;
-        uint64_t seqEnd = 0;
-        uint64_t chunkBase = 0;
-        ResolveSeq(seq, b, seqStart, seqEnd, chunkBase);
-        uint64_t h = hv / (HV_ / H_);
-        InitState(seq, hv);
-        uint64_t localChunk = 0;
-        for (uint64_t start = seqStart; start < seqEnd; start += BT_) {
-            uint64_t end = start + BT_;
-            if (end > seqEnd) {
-                end = seqEnd;
-            }
-            ProcessChunkAiv(b, seq, h, hv, chunkBase + localChunk, start, end);
-            ++localChunk;
-        }
-    }
 
-    __aicore__ inline void ProcessSeqHeadAic(uint64_t seq, uint64_t hv)
-    {
-        uint64_t b = 0;
-        uint64_t seqStart = 0;
-        uint64_t seqEnd = 0;
-        uint64_t chunkBase = 0;
-        ResolveSeq(seq, b, seqStart, seqEnd, chunkBase);
-        uint64_t localChunk = 0;
-        for (uint64_t start = seqStart; start < seqEnd; start += BT_) {
-            uint64_t end = start + BT_;
-            if (end > seqEnd) {
-                end = seqEnd;
-            }
-            ProcessChunkAic(b, hv, start, end);
-            ++localChunk;
-        }
-    }
 
 private:
     GlobalTensor<T> q_;
@@ -2810,9 +2231,6 @@ private:
     GlobalTensor<T> stageVNew_;
     GlobalTensor<T> stageH_;
     TPipe *pipe_ = nullptr;
-    TBuf<TPosition::VECCALC> scalarInBuf_;
-    TBuf<TPosition::VECCALC> scalarFp32Buf_;
-    TBuf<TPosition::VECCALC> scalarOutBuf_;
     TBuf<TPosition::VECCALC> scalarI64Buf_;
     TBuf<TPosition::VECCALC> exp2Buf_;
     TBuf<TPosition::VECCALC> vecBuf_;

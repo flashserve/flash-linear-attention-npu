@@ -47,8 +47,8 @@ $$
  * k : required
  * w : required
  * u : required
- * gOptional : optional, only non-null aclTensor is supported
- * gkOptional : optional, reserved (must be nullptr)
+ * gOptional : optional scalar gate; either gOptional or gkOptional must be provided
+ * gkOptional : optional per-channel cumulative gate; either gOptional or gkOptional must be provided
  * initalStateOptional : optional
  * outputFinalState : required
  * chunkSize : required
@@ -112,8 +112,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdH(
 | `k` | 输入 | 必选 | Key 输入张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HK, T, K]` | 支持 |
 | `w` | 输入 | 必选 | WY 分解中的 W 矩阵 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, K]` | 支持 |
 | `u` | 输入 | 必选 | 修正后的 Value 张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
-| `gOptional` | 输入 | 接口为可选；当前实现要求非空 | Gate 输入张量 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
-| `gkOptional` | 输入 | 接口为可选；当前实现要求传空 | 预留的逐通道门控张量 | `FLOAT16`、`BFLOAT16` | `ND` | 未启用 | - |
+| `gOptional` | 输入 | 可选；与 `gkOptional` 至少提供一个 | 标量 Gate 输入张量 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
+| `gkOptional` | 输入 | 可选；与 `gOptional` 至少提供一个 | 逐通道累计门控张量 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T, K]` | 支持 |
 | `initalStateOptional` | 输入 | 可选 | 初始隐藏状态张量；不传则默认全零 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, K, V]` | 支持 |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | `INT64` | `ND` | 1 维 | - |
 | `chunkIndicesOptional` | 输入 | 可选 | 分块索引信息（`[token_batch_id, chunk_id]` 二元组扁平化） | `INT64` | `ND` | 1 维，长度需能被 2 整除 | - |
@@ -160,10 +160,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdH(
 
 ### 4.1 可选参数约束
 
-- `gOptional`：
-  - 接口层为可选，但当前实现要求传入有效张量（不可为空）
-- `gkOptional`：
-  - 接口层为可选；**当前实现要求传空指针，否则执行失败**
+- `gOptional` / `gkOptional`：
+  - 二者至少提供一个；仅提供 `gkOptional` 时，L2 接口自动生成零标量 gate 作为中性因子
+  - 同时提供时二者 dtype 必须一致
+  - `gkOptional` 形状为 `[B, HV, T, K]`，其中 `B/T/K` 与 `k` 对齐，`HV` 与 `u` 对齐
 - `initalStateOptional`：
   - 若不提供（传空指针），则默认初始状态为全零矩阵
   - 形状必须为 `[B, HV, K, V]`
@@ -181,6 +181,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdH(
 - `w`: `[B, HV, T, K]`
 - `u, vNewOut`: `[B, HV, T, V]`
 - `gOptional`: `[B, HV, T]`
+- `gkOptional`: `[B, HV, T, K]`（若提供）
 - `hOut`: `[B, HV, numChunks, K, V]`
 - `initalStateOptional`: `[B, HV, K, V]`（若提供）
 - `finalStateOut`: `[N, HV, K, V]`
@@ -231,13 +232,13 @@ USE_G_GAMMA = False
 
 ## 5. Torch 测试调用示例
 
-PyTorch 端通过 `torch.ops.npu.npu_chunk_gated_delta_rule_fwd_h` 调用，签名（见 `FLANpuOpApi.cpp`）：
+PyTorch 端通过稳定入口 `fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd_h` 调用：
 
 ```python
-h, v_new, final_state = torch.ops.npu.npu_chunk_gated_delta_rule_fwd_h(
+h, v_new, final_state = fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd_h(
     k, w, u,
-    g=...,                       # 当前不可为 None
-    gk=None,                     # 预留，必须为 None
+    g=...,                       # 与 gk 至少提供一个
+    gk=None,                     # 可选逐通道累计门控
     initial_state=None,          # 可选；不传则默认全零初始状态
     output_final_state=False,    # 是否输出最终状态
     chunk_size=64,               # 64 或 128

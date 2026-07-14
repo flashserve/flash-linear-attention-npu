@@ -7,6 +7,7 @@
 
 #include "kda_gate_cumsum_tiling.h"
 #include <algorithm>
+#include <cstring>
 #include <register/op_impl_registry.h>
 #include "tiling/platform/platform_ascendc.h"
 
@@ -20,6 +21,7 @@ constexpr size_t ATTR_CHUNK_SIZE_IDX = 0;
 constexpr size_t ATTR_USE_GATE_IDX = 1;
 constexpr size_t ATTR_SAFE_GATE_IDX = 2;
 constexpr size_t ATTR_LOWER_BOUND_IDX = 3;
+constexpr size_t ATTR_LAYOUT_IDX = 4;
 constexpr int64_t MAX_K_DIM = 256;
 
 enum class KdaGateLayout : int64_t {
@@ -40,11 +42,25 @@ ge::graphStatus Tiling4KdaGateCumsum(gert::TilingContext *context)
     }
 
     int64_t rank = static_cast<int64_t>(gShape.GetDimNum());
+    const char *layoutAttr = context->GetAttrs()->GetAttrPointer<char>(ATTR_LAYOUT_IDX);
+    if (layoutAttr == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
     KdaGateLayout layout;
-    if (rank == 4) {
-        layout = gShape.GetDim(1) <= gShape.GetDim(2) ? KdaGateLayout::BNSD : KdaGateLayout::BSND;
+    if (std::strcmp(layoutAttr, "BSND") == 0) {
+        layout = KdaGateLayout::BSND;
+    } else if (std::strcmp(layoutAttr, "BNSD") == 0) {
+        layout = KdaGateLayout::BNSD;
+    } else if (std::strcmp(layoutAttr, "TND") == 0) {
+        layout = KdaGateLayout::TND;
+    } else if (std::strcmp(layoutAttr, "NTD") == 0) {
+        layout = KdaGateLayout::NTD;
     } else {
-        layout = gShape.GetDim(0) <= gShape.GetDim(1) ? KdaGateLayout::NTD : KdaGateLayout::TND;
+        return ge::GRAPH_FAILED;
+    }
+    if ((rank == 4 && (layout == KdaGateLayout::TND || layout == KdaGateLayout::NTD)) ||
+        (rank == 3 && (layout == KdaGateLayout::BSND || layout == KdaGateLayout::BNSD))) {
+        return ge::GRAPH_FAILED;
     }
     int64_t batch = (rank == 4) ? gShape.GetDim(0) : 1;
     int64_t t = (layout == KdaGateLayout::BNSD) ? gShape.GetDim(2) :
@@ -67,7 +83,9 @@ ge::graphStatus Tiling4KdaGateCumsum(gert::TilingContext *context)
     int64_t hasCuSeqlens = (cuShape != nullptr) ? 1 : 0;
     int64_t seqNum = hasCuSeqlens ? (cuShape->GetStorageShape().GetDim(0) - 1) : batch;
     int64_t maxChunks = (t + chunkSize - 1) / chunkSize;
-    int64_t taskCount = seqNum * hv * maxChunks;
+    // Dense input keeps chunk-level parallelism. Varlen owns one (sequence, head) pair and
+    // iterates only that sequence's real chunks, avoiding a rectangular grid of empty tasks.
+    int64_t taskCount = hasCuSeqlens ? seqNum * hv : batch * hv * maxChunks;
 
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint32_t coreNum = ascendcPlatform.GetCoreNumAiv();

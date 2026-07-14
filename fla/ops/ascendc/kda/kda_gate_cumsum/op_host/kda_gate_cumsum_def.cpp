@@ -37,6 +37,7 @@ public:
         this->Attr("use_gate_in_kernel").AttrType(REQUIRED).Bool(false);
         this->Attr("safe_gate").AttrType(REQUIRED).Bool(false);
         this->Attr("lower_bound").AttrType(REQUIRED).Float(-5.0);
+        this->Attr("layout").AttrType(OPTIONAL).String("BSND");
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)

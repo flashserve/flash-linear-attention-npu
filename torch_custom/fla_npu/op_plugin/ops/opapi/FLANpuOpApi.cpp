@@ -72,7 +72,10 @@ void CheckKdaCuSeqlens(at::OptionalIntArrayRef cu_seqlens, int64_t total_tokens,
     }
 }
 
-void CheckKdaChunkIndices(at::OptionalIntArrayRef chunk_indices, const char *op_name)
+void CheckKdaChunkIndices(at::OptionalIntArrayRef chunk_indices,
+                          at::OptionalIntArrayRef cu_seqlens,
+                          int64_t chunk_size,
+                          const char *op_name)
 {
     if (!chunk_indices.has_value()) {
         return;
@@ -83,6 +86,23 @@ void CheckKdaChunkIndices(at::OptionalIntArrayRef chunk_indices, const char *op_
                 ": chunk_indices must contain (seq_id, chunk_id) pairs, but got ",
                 indices.size(),
                 " elements.");
+    TORCH_CHECK(cu_seqlens.has_value(), op_name, ": chunk_indices requires cu_seqlens.");
+    auto cu = cu_seqlens.value();
+    int64_t expected_chunks = 0;
+    for (size_t seq = 0; seq + 1 < cu.size(); ++seq) {
+        expected_chunks += CeilDiv(cu[seq + 1] - cu[seq], chunk_size);
+    }
+    TORCH_CHECK(static_cast<int64_t>(indices.size() / 2) == expected_chunks,
+                op_name, ": chunk_indices must contain exactly one pair per chunk.");
+    for (size_t idx = 0; idx < indices.size(); idx += 2) {
+        int64_t seq = indices[idx];
+        int64_t chunk = indices[idx + 1];
+        TORCH_CHECK(seq >= 0 && seq + 1 < static_cast<int64_t>(cu.size()),
+                    op_name, ": chunk_indices seq_id is out of range.");
+        int64_t chunks = CeilDiv(cu[seq + 1] - cu[seq], chunk_size);
+        TORCH_CHECK(chunk >= 0 && chunk < chunks,
+                    op_name, ": chunk_indices chunk_id is out of range.");
+    }
 }
 
 int64_t GetKdaTotalChunks(int64_t batch, int64_t seqlen, int64_t chunk_size,
@@ -393,7 +413,7 @@ at::Tensor npu_chunk_fwd_o(
     at::Tensor final_state_out;
     if (output_final_state_) {
         int N = cu_seqlens.has_value() ? cu_seqlens->size() - 1 : B;
-        auto state_options = initial_state.has_value() ? initial_state->options() : h_out.options();
+        auto state_options = initial_state.has_value() ? initial_state->options() : k.options().dtype(at::kFloat);
         final_state_out = at::empty({N, HV, K, V}, state_options);
     } else {
         final_state_out = at::empty({1}, k.options());
@@ -495,12 +515,15 @@ npu_chunk_kda_fwd(
     int64_t K = is_rank3 ? q_sizes[2] : q_sizes[3];
     int64_t HV = is_tnd ? v_sizes[1] : (is_ntd ? v_sizes[0] : (is_bnsd ? v_sizes[1] : v_sizes[2]));
     int64_t V = is_rank3 ? v_sizes[2] : v_sizes[3];
-    TORCH_CHECK(H <= 128 && HV <= 128, "npu_chunk_kda_fwd: H and HV must be <= 128.");
+    TORCH_CHECK(H > 0 && HV >= H,
+                "npu_chunk_kda_fwd: H and HV must be positive and H must be <= HV.");
+    TORCH_CHECK(H <= 128 && HV <= 128,
+                "npu_chunk_kda_fwd: H and HV must be <= 128.");
     TORCH_CHECK(!is_tnd || H == 1,
                 "npu_chunk_kda_fwd: TND layout with H > 1 is not supported; use NTD [H,T,D] layout "
                 "for multi-head rank3 input.");
     CheckKdaCuSeqlens(cu_seqlens, T, "npu_chunk_kda_fwd");
-    CheckKdaChunkIndices(chunk_indices, "npu_chunk_kda_fwd");
+    CheckKdaChunkIndices(chunk_indices, cu_seqlens, chunk_size, "npu_chunk_kda_fwd");
     TORCH_CHECK(!cu_seqlens.has_value() || is_rank3 || B == 1,
                 "npu_chunk_kda_fwd: rank4 varlen input with cu_seqlens currently requires B=1.");
     TORCH_CHECK((is_tnd && v_sizes[0] == T) || (is_ntd && v_sizes[1] == T) ||
@@ -520,6 +543,13 @@ npu_chunk_kda_fwd(
                     (is_bnsd && beta.sizes()[0] == B && beta.sizes()[1] == HV && beta.sizes()[2] == T),
                 "npu_chunk_kda_fwd: beta shape mismatch.");
     TORCH_CHECK(HV % H == 0, "npu_chunk_kda_fwd: HV must be divisible by H.");
+    TORCH_CHECK(q.scalar_type() == at::kHalf || q.scalar_type() == at::kBFloat16,
+                "npu_chunk_kda_fwd: q/k/v must use float16 or bfloat16.");
+    TORCH_CHECK(k.scalar_type() == q.scalar_type() && v.scalar_type() == q.scalar_type(),
+                "npu_chunk_kda_fwd: q/k/v dtype must match.");
+    TORCH_CHECK(chunk_size == 64 && K >= 16 && V >= 16 && K % 16 == 0 && V % 16 == 0 && V <= 128 &&
+                    K * V >= 4 * 64 * 64 && K * V >= chunk_size * (K + V),
+                "npu_chunk_kda_fwd: shape is outside the supported split cube/vector template.");
     int64_t seq_num = GetKdaSeqNum(B, cu_seqlens);
     if (initial_state.has_value() && initial_state->defined()) {
         TORCH_CHECK(initial_state->scalar_type() == at::kFloat,
@@ -613,7 +643,8 @@ at::Tensor npu_kda_gate_cumsum(
     at::OptionalIntArrayRef cu_seqlens,
     c10::optional<bool> use_gate_in_kernel,
     c10::optional<bool> safe_gate,
-    c10::optional<double> lower_bound)
+    c10::optional<double> lower_bound,
+    c10::string_view layout)
 {
     TORCH_CHECK(g.dim() == 3 || g.dim() == 4,
                 "npu_kda_gate_cumsum: g must be BSND/BNSD rank4 or TND/NTD rank3.");
@@ -622,8 +653,14 @@ at::Tensor npu_kda_gate_cumsum(
     auto gate_dtype = g.scalar_type();
     TORCH_CHECK(gate_dtype == at::kFloat || gate_dtype == at::kBFloat16 || gate_dtype == at::kHalf,
                 "npu_kda_gate_cumsum: g must be float32, bfloat16 or float16.");
-    bool is_bnsd = g.dim() == 4 && g.sizes()[1] <= g.sizes()[2];
-    bool is_ntd = g.dim() == 3 && g.sizes()[0] <= g.sizes()[1];
+    const std::string layout_str(layout.data(), layout.size());
+    TORCH_CHECK(layout_str == "BSND" || layout_str == "BNSD" || layout_str == "TND" || layout_str == "NTD",
+                "npu_kda_gate_cumsum: layout must be uppercase and one of BSND, BNSD, TND or NTD.");
+    TORCH_CHECK((g.dim() == 4 && (layout_str == "BSND" || layout_str == "BNSD")) ||
+                    (g.dim() == 3 && (layout_str == "TND" || layout_str == "NTD")),
+                "npu_kda_gate_cumsum: layout rank does not match g rank.");
+    bool is_bnsd = layout_str == "BNSD";
+    bool is_ntd = layout_str == "NTD";
     int64_t T = is_bnsd ? g.sizes()[2] : (is_ntd ? g.sizes()[1] : (g.dim() == 4 ? g.sizes()[1] : g.sizes()[0]));
     int64_t K = g.dim() == 4 ? g.sizes()[3] : g.sizes()[2];
     int64_t HV = is_bnsd ? g.sizes()[1] : (is_ntd ? g.sizes()[0] : (g.dim() == 4 ? g.sizes()[2] : g.sizes()[1]));
@@ -658,7 +695,7 @@ at::Tensor npu_kda_gate_cumsum(
     EXEC_NPU_CMD_EXT(
         aclnnKdaGateCumsum,
         g, A_log_, dt_bias_, cu_seqlens,
-        chunk_size, use_gate, safe, lower, gk
+        chunk_size, use_gate, safe, lower, layout_str.c_str(), gk
     );
     return gk;
 }

@@ -25,11 +25,12 @@ const std::array<const aclTensor *, 1> KdaGateCumsum(
     bool useGateInKernel,
     bool safeGate,
     double lowerBound,
+    const char *layout,
     const aclTensor *gkOut,
     aclOpExecutor *executor)
 {
     L0_DFX(KdaGateCumsum, g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize, useGateInKernel,
-           safeGate, lowerBound, gkOut);
+           safeGate, lowerBound, layout, gkOut);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional != nullptr) {
@@ -43,7 +44,7 @@ const std::array<const aclTensor *, 1> KdaGateCumsum(
         KdaGateCumsum,
         OP_INPUT(g, aLogOptional, dtBiasOptional, actualCuSeqlens),
         OP_OUTPUT(gkOut),
-        OP_ATTR(chunkSize, useGateInKernel, safeGate, static_cast<float>(lowerBound)));
+        OP_ATTR(chunkSize, useGateInKernel, safeGate, static_cast<float>(lowerBound), layout));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE KdaGateCumsum failed.");
         return {nullptr};
