@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -161,6 +171,9 @@ docker run --rm \
     -e CI_RUN_TORCH_TESTS="${CI_RUN_TORCH_TESTS:-false}" \
     -e CI_RUN_EXAMPLE_ST="${CI_RUN_EXAMPLE_ST:-true}" \
     -e CI_RUN_WHEEL_API_CHECK="${CI_RUN_WHEEL_API_CHECK:-false}" \
+    -e CI_CHECK_TRITON_API="${CI_CHECK_TRITON_API:-false}" \
+    -e CI_RUN_SCOPED_WHEEL_INSTALL_CHECK="${CI_RUN_SCOPED_WHEEL_INSTALL_CHECK:-false}" \
+    -e CI_SCOPED_WHEEL_INSTALL_OP="${CI_SCOPED_WHEEL_INSTALL_OP:-chunk_fwd_o}" \
     -e CI_EXAMPLE_CASES_FILE="${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}" \
     -e CI_EXAMPLE_CASE_FILTER="${CI_EXAMPLE_CASE_FILTER:-}" \
     -e CI_ACCURACY_REPORT_FILE="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}" \

@@ -1,3 +1,13 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 name: NPU CI
 
 on:
@@ -301,6 +311,7 @@ jobs:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
       CI_OPS: ${{ needs.prepare.outputs.ops }}
       CI_RUN_EXAMPLE_ST: 'true'
+      CI_RUN_SCOPED_WHEEL_INSTALL_CHECK: 'true'
       CI_IMAGE: fla-npu-ci:8.5.0-910b
     steps:
       - name: 拉取当前目标分支代码（第 1 次）

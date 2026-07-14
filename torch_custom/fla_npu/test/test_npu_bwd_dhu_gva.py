@@ -1,3 +1,13 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 """bwd_dhu GVA 双标杆测试：随机输入直接测，无需 example dump。"""
 from __future__ import annotations
 
@@ -9,9 +19,9 @@ from dataclasses import dataclass
 from typing import Optional
 
 import ct
-import fla_npu
+from fla_npu.ops import ascendc as ascendc_ops
+
 import torch
-import torch_npu
 
 torch.npu.config.allow_internal_format = False
 torch.npu.set_compile_mode(jit_compile=False)
@@ -123,7 +133,7 @@ def run_case(case: BwdDhuCase, device: int, out_root: str, seed: int = 0) -> tup
         chunk_size=case.chunk_size, golden_mode="npu",
     )
 
-    dh_npu, _, dv2_npu = torch.ops.npu.npu_chunk_gated_delta_rule_bwd_dhu(
+    dh_npu, _, dv2_npu = ascendc_ops.npu_chunk_gated_delta_rule_bwd_dhu(
         q.npu(), k.npu(), w.npu(), do.npu(), dv.npu(),
         scale=scale,
         chunk_size=case.chunk_size,

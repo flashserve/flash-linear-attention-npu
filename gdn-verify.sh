@@ -64,7 +64,19 @@ done
 # ================================================================
 # 常量定义
 # ================================================================
-ALL_OPS="causal_conv1d,chunk_bwd_dv_local,chunk_bwd_dqkwg,chunk_gated_delta_rule_bwd_dhu,prepare_wy_repr_bwd_da,prepare_wy_repr_bwd_full,chunk_fwd_o,chunk_gated_delta_rule_fwd_h,recurrent_gated_delta_rule,recompute_wu_fwd"
+ALL_OPS="causal_conv1d,chunk_bwd_dv_local,chunk_bwd_dqkwg,chunk_gated_delta_rule_bwd_dhu,prepare_wy_repr_bwd_da,prepare_wy_repr_bwd_full,chunk_fwd_o,chunk_gated_delta_rule_fwd_h,recurrent_gated_delta_rule,recompute_wu_fwd,chunk_local_cumsum"
+TEST_OPS=(
+    "prepare_wy_repr_bwd_full"
+    "chunk_gated_delta_rule_bwd_dhu"
+    "chunk_bwd_dv_local"
+    "causal_conv1d"
+    "prepare_wy_repr_bwd_da"
+    "chunk_bwd_dqkwg"
+    "gdn_fwd_o"
+    "gdn_fwd_h"
+    "recompute_wu_fwd"
+    "chunk_local_cumsum"
+)
 TEST_DIR="$SCRIPT_DIR/torch_custom/fla_npu/test"
 TEST_SCRIPT="$TEST_DIR/test.sh"
 EXAMPLE_SCRIPT="$SCRIPT_DIR/examples/flash_gated_delta_rule.py"
@@ -426,7 +438,7 @@ run_example_stage() {
 
     local log_file="/tmp/gdn_example.log"
     local start_ts=$(date +%s)
-    if timeout 600 python3 "$EXAMPLE_SCRIPT" > "$log_file" 2>&1; then
+    if timeout 600 python3 "$EXAMPLE_SCRIPT" --device "$DEVICE_ID" > "$log_file" 2>&1; then
         local end_ts=$(date +%s)
         local elapsed=$((end_ts - start_ts))
         echo "[OK] ${elapsed}s"
@@ -498,17 +510,12 @@ print_report() {
     if $SKIP_TEST; then
         echo "(已跳过)"
     else
-        local op_names=(
-            "prepare_wy_repr_bwd_full"
-            "chunk_gated_delta_rule_bwd_dhu"
-            "chunk_bwd_dv_local"
-            "causal_conv1d"
-            "prepare_wy_repr_bwd_da"
-            "chunk_bwd_dqkwg"
-            "gdn_fwd_o"
-            "gdn_fwd_h"
-            "recompute_wu_fwd"
-        )
+        local op_names=()
+        if [[ "$MODE" == "single" && -n "$SINGLE_OP" ]]; then
+            op_names=("$SINGLE_OP")
+        else
+            op_names=("${TEST_OPS[@]}")
+        fi
         local test_pass=0 test_fail=0 test_timeout=0
         for op in "${op_names[@]}"; do
             local result="${TEST_RESULTS[$op]:--}"

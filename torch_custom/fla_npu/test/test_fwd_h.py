@@ -1,3 +1,13 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 import os
 import sys
 import logging
@@ -5,12 +15,12 @@ import numpy as np
 import random
 import ml_dtypes
 import torch
-import torch_npu
 from ml_dtypes import bfloat16
 from dataclasses import dataclass
 import math
 # import custom_ops
-import fla_npu
+from fla_npu.ops import ascendc as ascendc_ops
+
 
 torch.npu.config.allow_internal_format = False
 torch.npu.set_compile_mode(jit_compile=False)
@@ -285,7 +295,7 @@ if __name__ == "__main__":
         return list(x)
 
     # 与 npu_custom.yaml / FLA chunk_gated_delta_rule_fwd_h 对齐：k,w,u 位置参数；g 及之后为关键字（g 当前不可为 None）
-    result = torch.ops.npu.npu_chunk_gated_delta_rule_fwd_h(
+    result = ascendc_ops.npu_chunk_gated_delta_rule_fwd_h(
         input_tensor.k.npu(),
         input_tensor.w.npu(),
         input_tensor.u.npu(),
@@ -301,7 +311,7 @@ if __name__ == "__main__":
         chunk_indices=_as_int_list(input_tensor.chunk_offsets),
     )
     print("after custom op")
-    torch_npu._C._npu_synchronize()
+    torch.npu.synchronize()
     print("after synchronize")
     save_data(input_tensor, output_tensor)
     result[0].cpu().view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "h_npu.bin"))

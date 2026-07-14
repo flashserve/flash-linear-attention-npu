@@ -34,7 +34,7 @@ from fla_npu_artifacts import get_package_version, get_wheel_build_tag  # noqa: 
 DEFAULT_SOC = "ascend910b"
 DEFAULT_VENDOR_NAME = "fla_npu"
 MIN_PYTHON = (3, 9)
-MIN_TORCH = "2.7.0"
+MIN_TORCH = "2.6.0"
 MIN_TRITON_ASCEND = "3.2.0"
 MIN_TRITON_ASCEND_A5 = "3.2.1"
 TORCH_NPU_GDN_FIX_MINIMUMS = {
@@ -135,6 +135,9 @@ def _check_torch_npu_gdn_fix(failures, actual):
     if actual_version >= Version(MIN_TORCH_NPU_FUTURE_FIX_FAMILY):
         return
 
+    if minimum is None:
+        return
+
     requirements = ", ".join(
         f"{family}>={minimum}" for family, minimum in TORCH_NPU_GDN_FIX_MINIMUMS.items()
     )
@@ -200,6 +203,7 @@ def _detect_cann_version():
 
 def _check_build_environment():
     failures = []
+    build_legacy_extension = _env_flag("FLA_NPU_BUILD_LEGACY_EXTENSION")
 
     if shutil.which("bash") is None:
         failures.append("bash is required")
@@ -224,39 +228,42 @@ def _check_build_environment():
     else:
         print(f"[fla-npu build][OK] Python: {sys.version.split()[0]}")
 
-    torch = None
-    torch_npu = None
-    for module in ("torch", "torch_npu"):
+    if build_legacy_extension:
+        torch = None
+        torch_npu = None
+        for module in ("torch", "torch_npu"):
+            try:
+                loaded = importlib.import_module(module)
+                print(f"[fla-npu build][OK] {module}: {getattr(loaded, '__version__', '<unknown>')}")
+                if module == "torch":
+                    torch = loaded
+                else:
+                    torch_npu = loaded
+            except Exception as exc:
+                failures.append(f"{module}: {exc}")
+
+        if torch is not None:
+            _check_min_version(failures, "torch", getattr(torch, "__version__", ""), MIN_TORCH)
+        if torch_npu is not None:
+            _check_torch_npu_gdn_fix(failures, getattr(torch_npu, "__version__", ""))
+
+        triton_ascend_version = _distribution_version("triton-ascend")
         try:
-            loaded = importlib.import_module(module)
-            print(f"[fla-npu build][OK] {module}: {getattr(loaded, '__version__', '<unknown>')}")
-            if module == "torch":
-                torch = loaded
-            else:
-                torch_npu = loaded
+            triton = importlib.import_module("triton")
+            print(f"[fla-npu build][OK] triton: {getattr(triton, '__file__', '<unknown>')}")
         except Exception as exc:
-            failures.append(f"{module}: {exc}")
+            failures.append(f"triton: {exc}")
 
-    if torch is not None:
-        _check_min_version(failures, "torch", getattr(torch, "__version__", ""), MIN_TORCH)
-    if torch_npu is not None:
-        _check_torch_npu_gdn_fix(failures, getattr(torch_npu, "__version__", ""))
-
-    triton_ascend_version = _distribution_version("triton-ascend")
-    try:
-        triton = importlib.import_module("triton")
-        print(f"[fla-npu build][OK] triton: {getattr(triton, '__file__', '<unknown>')}")
-    except Exception as exc:
-        failures.append(f"triton: {exc}")
-
-    if triton_ascend_version:
-        print(f"[fla-npu build][OK] triton-ascend: {triton_ascend_version}")
-        _check_min_version(failures, "triton-ascend", triton_ascend_version, MIN_TRITON_ASCEND)
-        _check_triton_ascend_a5_compat(failures, triton_ascend_version)
+        if triton_ascend_version:
+            print(f"[fla-npu build][OK] triton-ascend: {triton_ascend_version}")
+            _check_min_version(failures, "triton-ascend", triton_ascend_version, MIN_TRITON_ASCEND)
+            _check_triton_ascend_a5_compat(failures, triton_ascend_version)
+        else:
+            failures.append("triton-ascend distribution was not found")
     else:
-        failures.append("triton-ascend distribution was not found")
+        print("[fla-npu build][OK] Skipping torch/torch_npu build-time checks for Python-only wheel")
 
-    if not _env_flag("FLA_NPU_SKIP_TORCH_GEN"):
+    if build_legacy_extension and not _env_flag("FLA_NPU_SKIP_TORCH_GEN"):
         for module in TORCHNPUGEN_MODULES:
             try:
                 spec = importlib.util.find_spec(module)
@@ -275,7 +282,8 @@ def _check_build_environment():
         raise RuntimeError(
             "Build environment check failed:\n  - "
             + "\n  - ".join(failures)
-            + "\nInstall matching CANN, torch, torch_npu, torchnpugen and triton-ascend first, "
+            + "\nInstall matching CANN and, when FLA_NPU_BUILD_LEGACY_EXTENSION=1, "
+              "torch, torch_npu, torchnpugen and triton-ascend first, "
               "then run `pip install --no-build-isolation .`."
         )
 
@@ -491,14 +499,19 @@ def _stage_run_package(run_file, opp_root):
 
 
 def _build_torch_extension_inplace():
+    for so_file in FLA_NPU_PACKAGE_DIR.glob("custom_aclnn_extension_lib*.so"):
+        so_file.unlink()
+
+    if not _env_flag("FLA_NPU_BUILD_LEGACY_EXTENSION"):
+        print("[fla-npu build] Skipping legacy PyTorch C++ extension build for Python-only wheel")
+        return
+
     if not _env_flag("FLA_NPU_SKIP_TORCH_GEN"):
         _run(["bash", "gen.sh", "npu_custom.yaml"], TORCH_EXTENSION_DIR)
 
     build_dir = TORCH_EXTENSION_DIR / "build"
     if build_dir.exists():
         shutil.rmtree(build_dir)
-    for so_file in FLA_NPU_PACKAGE_DIR.glob("custom_aclnn_extension_lib*.so"):
-        so_file.unlink()
 
     _run([sys.executable, "setup.py", "build_ext", "--force", "--inplace"], TORCH_EXTENSION_DIR)
 
@@ -564,7 +577,7 @@ setup(
         )
     ),
     package_dir={"fla_npu": str(FLA_NPU_PACKAGE_DIR.relative_to(REPO_ROOT))},
-    package_data={"fla_npu": ["custom_aclnn_extension_lib*.so", "opp/**/*"]},
+    package_data={"fla_npu": ["opp/**/*"]},
     include_package_data=True,
     license_files=[
         "LICENSE",

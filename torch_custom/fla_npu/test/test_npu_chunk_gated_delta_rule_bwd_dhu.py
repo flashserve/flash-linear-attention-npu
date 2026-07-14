@@ -1,8 +1,18 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 import torch
-import torch_npu
 import os
 # import custom_ops
-import fla_npu
+from fla_npu.ops import ascendc as ascendc_ops
+
 
 os.environ['TBE_PARALLEL_COMPILE_ENABLE'] = '0'
 os.environ['PARALLEL_COMPILE'] = '0'
@@ -61,7 +71,7 @@ def run_case(
         print("chunk_indices len =", len(chunk_indices))
 
     print("before custom op")
-    dh, dh0, dv2 = torch.ops.npu.npu_chunk_gated_delta_rule_bwd_dhu(
+    dh, dh0, dv2 = ascendc_ops.npu_chunk_gated_delta_rule_bwd_dhu(
         q.npu(),
         k.npu(),
         w.npu(),

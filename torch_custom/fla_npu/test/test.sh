@@ -1,4 +1,14 @@
 #!/bin/bash
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 # GDN 全量测试入口
 # 用法:
 #   bash test.sh --device 0              # 在 device 0 上运行全量测试
@@ -23,7 +33,8 @@ usage() {
     echo "算子列表:"
     echo "  prepare_wy_repr_bwd_full, chunk_gated_delta_rule_bwd_dhu,"
     echo "  chunk_bwd_dv_local, causal_conv1d, prepare_wy_repr_bwd_da,"
-    echo "  chunk_bwd_dqkwg, gdn_fwd_o, gdn_fwd_h, recompute_wu_fwd"
+    echo "  chunk_bwd_dqkwg, gdn_fwd_o, gdn_fwd_h, recompute_wu_fwd,"
+    echo "  chunk_local_cumsum"
     exit 1
 }
 
@@ -42,6 +53,7 @@ if [[ -z "$TEST_DEVICE_ID" ]]; then
 fi
 
 export TEST_DEVICE_ID
+export TORCH_DEVICE_BACKEND_AUTOLOAD=1
 export TEST_LOG_DIR="$SCRIPT_DIR/test_output"
 mkdir -p "$TEST_LOG_DIR"
 
@@ -106,6 +118,8 @@ run_test "chunk_bwd_dqkwg"                 "python3 test_npu_chunk_bwd_dqkwg.py"
 run_test "gdn_fwd_o"                       "bash run_gdn_fwd_o.sh"
 run_test "gdn_fwd_h"                       "bash run_gdn_fwd_h.sh"
 run_test "recompute_wu_fwd"                "python3 test_npu_recompute_w_u_fwd.py"
+run_test "chunk_local_cumsum"              "python3 test_npu_chunk_local_cumsum.py"
+run_test "chunk_scaled_dot_kkt"            "python3 test_npu_chunk_scaled_dot_kkt.py"
 
 echo ""
 echo "=========================================="

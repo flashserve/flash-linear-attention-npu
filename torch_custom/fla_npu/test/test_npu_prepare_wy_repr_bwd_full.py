@@ -1,5 +1,14 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 import torch
-import torch_npu
 import os
 from typing import Optional
 import pickle
@@ -7,8 +16,9 @@ import math
 # import ct
 import random
 torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
-import fla_npu
+from fla_npu.ops import ascendc as ascendc_ops
 # import custom_ops
+
 
 torch.npu.config.allow_internal_format = False
 torch.npu.set_compile_mode(jit_compile=False)
@@ -671,7 +681,7 @@ def test_prepare_wy_repr_bwd_full(
 
     if chunk_indices != None:
         print(f"cu_seqlens: {cu_seqlens}")
-        dk, dv, dbeta, dg = torch.ops.npu.npu_prepare_wy_repr_bwd_full(
+        dk, dv, dbeta, dg = ascendc_ops.npu_prepare_wy_repr_bwd_full(
             k.npu(),
             v.npu(),
             beta.npu(),
@@ -685,7 +695,7 @@ def test_prepare_wy_repr_bwd_full(
             chunk_indices=chunk_indices
         )
     else:
-        dk, dv, dbeta, dg = torch.ops.npu.npu_prepare_wy_repr_bwd_full(
+        dk, dv, dbeta, dg = ascendc_ops.npu_prepare_wy_repr_bwd_full(
             k.npu(),
             v.npu(),
             beta.npu(),

@@ -1,10 +1,20 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
 import torch
-import torch_npu
 from typing import Optional
 import math
 # import ct
 import random
-import fla_npu
+from fla_npu.ops import ascendc as ascendc_ops
+
 import os
 
 torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
@@ -338,7 +348,7 @@ def test_prepare_wy_repr_bwd_da_variable(
     du_npu = du.npu()
     g_npu = g.npu()
 
-    dA_npu = torch.ops.npu.npu_prepare_wy_repr_bwd_da(
+    dA_npu = ascendc_ops.npu_prepare_wy_repr_bwd_da(
         k_npu, v_npu, beta_npu, A_npu, dw_npu, du_npu, g_npu,
         chunk_size=chunk_size, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices
     )
@@ -400,7 +410,7 @@ def test_prepare_wy_repr_bwd_da_fix(
     du_npu = du.npu()
     g_npu = g.npu()
 
-    dA_npu = torch.ops.npu.npu_prepare_wy_repr_bwd_da(
+    dA_npu = ascendc_ops.npu_prepare_wy_repr_bwd_da(
         k_npu, v_npu, beta_npu, A_npu, dw_npu, du_npu, g_npu,
         chunk_size=chunk_size, cu_seqlens=None, chunk_indices=None
     )

@@ -256,7 +256,9 @@ def _probe_solve_tri_ascendc(device: torch.device, dtype: torch.dtype) -> bool:
 
     probe_dtype = dtype if dtype in (torch.float16, torch.bfloat16) else torch.float16
     try:
-        probe = torch.zeros((1, 64, 1, 64), dtype=probe_dtype, device=device)
+        # solve_tri does not support D=64 on this path; probe a supported D=128
+        # shape so capability detection does not incorrectly force Triton fallback.
+        probe = torch.zeros((1, 64, 1, 128), dtype=probe_dtype, device=device)
         ascendc_solve_tri(probe, layout="bsnd")
         torch.npu.synchronize()
     except Exception as exc:
@@ -458,15 +460,9 @@ def _as_chunk_list_dict(
     return {str(chunk_size): _as_int_list(value)}
 
 
-def _next_power_of_2(value: int) -> int:
-    value = max(1, int(value))
-    return 1 << (value - 1).bit_length()
-
-
 def _cumsum_block_t(g: torch.Tensor, chunk_size: int) -> int:
     # Keep this aligned with fla_npu.ops.triton.chunk_local_cumsum_scalar.
-    h = int(g.shape[-1])
-    return _next_power_of_2((1 << 17) // max(1, h * int(chunk_size)))
+    return int(chunk_size)
 
 
 def _ensure_varlen_metadata(
