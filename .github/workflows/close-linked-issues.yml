@@ -1,0 +1,109 @@
+name: 合入 PR 自动关闭关联 Issue
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  issues: write
+  pull-requests: read
+
+jobs:
+  close-linked-issues:
+    name: 关闭关联 Issue
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: 关闭当前仓库的关联 Issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const pr = context.payload.pull_request;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const repositoryName = `${owner}/${repo}`.toLowerCase();
+            const issueNumbers = new Set();
+            const query = `
+              query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    closingIssuesReferences(first: 100, after: $cursor) {
+                      nodes {
+                        number
+                        state
+                        repository {
+                          nameWithOwner
+                        }
+                      }
+                      pageInfo {
+                        hasNextPage
+                        endCursor
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            let cursor = null;
+            do {
+              const data = await github.graphql(query, {
+                owner,
+                repo,
+                number: pr.number,
+                cursor,
+              });
+              const references = data.repository.pullRequest.closingIssuesReferences;
+              for (const issue of references.nodes) {
+                if (issue.repository.nameWithOwner.toLowerCase() === repositoryName) {
+                  issueNumbers.add(issue.number);
+                }
+              }
+              cursor = references.pageInfo.hasNextPage ? references.pageInfo.endCursor : null;
+            } while (cursor);
+
+            const closingKeyword = /\b(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s*:?\s+(?:(?<repository>[\w.-]+\/[\w.-]+))?#(?<number>\d+)/gi;
+            for (const match of (pr.body || '').matchAll(closingKeyword)) {
+              const targetRepository = match.groups.repository?.toLowerCase();
+              if (!targetRepository || targetRepository === repositoryName) {
+                issueNumbers.add(Number(match.groups.number));
+              }
+            }
+
+            if (issueNumbers.size === 0) {
+              core.notice(`PR #${pr.number} 没有当前仓库的关联 Issue。`);
+              return;
+            }
+
+            for (const issueNumber of issueNumbers) {
+              try {
+                const { data: issue } = await github.rest.issues.get({
+                  owner,
+                  repo,
+                  issue_number: issueNumber,
+                });
+                if (issue.pull_request) {
+                  core.warning(`#${issueNumber} 是 Pull Request，不关闭。`);
+                  continue;
+                }
+                if (issue.state === 'closed') {
+                  core.notice(`Issue #${issueNumber} 已关闭，跳过。`);
+                  continue;
+                }
+                await github.rest.issues.update({
+                  owner,
+                  repo,
+                  issue_number: issueNumber,
+                  state: 'closed',
+                  state_reason: 'completed',
+                });
+                core.notice(`已关闭 Issue #${issueNumber}。`);
+              } catch (error) {
+                if (error.status === 404) {
+                  core.warning(`Issue #${issueNumber} 不存在，跳过。`);
+                  continue;
+                }
+                throw error;
+              }
+            }
