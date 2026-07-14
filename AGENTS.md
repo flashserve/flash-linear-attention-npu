@@ -11,6 +11,7 @@
 - `README.md`：构建、安装、调用、测试入口和目录结构。
 - `CONTRIBUTING.md`：贡献流程和新增算子交付要求。
 - `docs/repository-rules.md`：分支、ABI、NPU CI 和合入规则。
+- `docs/torch-npu-decoupled-architecture.md`：默认 `fla_npu.ops.ascendc` 解耦运行时、wheel 产物、stream、数据依赖、autograd 和 ACL 私有格式透传设计。
 - `docs/agents/README.md`：面向 AI agent 的开发原理、方法论、验证和经验总结索引。
 - `.github/pull_request_template.md`：PR 必填信息和验证矩阵。
 - 当前修改算子的 `README.md`、`docs/aclnn*.md`、测试脚本和相邻算子实现。
@@ -53,7 +54,11 @@ Triton 算子同样使用 `fla_npu` 下的稳定入口：
 from fla_npu.ops.triton import chunk_local_cumsum
 ```
 
-`torch.ops.npu.*` 是兼容旧调用的过渡路径，仅在兼容性测试或旧 API 验证中使用。需要旧路径时先确认 `fla_npu.load_legacy_torch_ops()` 的加载逻辑。
+默认 Ascend C 调用路径必须保持与 `torch_npu` dispatcher、PyTorch C++ extension ABI、CPython ABI 和 C++ ABI 解耦。`fla_npu.ops.ascendc` 通过 Python ctypes 直调 `aclnn*`，不得在普通 import 或默认算子调用时 import `torch_npu`、注册 `torch.ops.npu`，或依赖 `custom_aclnn_extension_lib*.so`。
+
+`torch.ops.npu.*` 是兼容旧调用的过渡路径，仅在兼容性测试或旧 API 验证中使用。需要旧路径时先确认 `fla_npu.load_legacy_torch_ops()` 的加载逻辑，并在 PR 中说明为什么不能使用 `fla_npu.ops.ascendc.<op>`。
+
+修改 `torch_custom/fla_npu/fla_npu/ops/ascendc/_runtime.py`、`_aclnn_ctypes.py`、`torch_custom/fla_npu/setup.py` 或根目录 `setup.py` 时，必须同步检查 `docs/torch-npu-decoupled-architecture.md`。涉及 stream 感知、异步 launch 保活、正反向绑定、ACL 私有 format 透传、OPP wheel 安装位置或 legacy `torch_npu` 兼容路径的行为变化时，文档必须一起更新。
 
 ## 算子开发交付 checklist
 

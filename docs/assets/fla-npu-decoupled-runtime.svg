@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="1080" viewBox="0 0 1320 1080" role="img" aria-labelledby="title desc">
+  <title id="title">fla_npu 默认 Ascend C 运行时架构</title>
+  <desc id="desc">主调用链自上而下，wheel 交付件从左侧接入，自动求导、格式透传和旧兼容路径从右侧接入。所有连线均带方向箭头且不穿过节点。</desc>
+  <defs>
+    <style>
+      .canvas { fill: #ffffff; }
+      .title { font: 700 25px Arial, "Microsoft YaHei", sans-serif; fill: #172033; }
+      .lane-title { font: 700 18px Arial, "Microsoft YaHei", sans-serif; }
+      .node-title { font: 700 17px Arial, "Microsoft YaHei", sans-serif; fill: #172033; }
+      .node-text { font: 15px Arial, "Microsoft YaHei", sans-serif; fill: #334155; }
+      .edge-label { font: 13px Arial, "Microsoft YaHei", sans-serif; }
+      .box { stroke-width: 2; rx: 8; ry: 8; }
+      .edge { fill: none; stroke-width: 2.6; stroke-linejoin: round; stroke-linecap: round; }
+      .edge-side { fill: none; stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
+    </style>
+    <marker id="arrow-green" markerWidth="12" markerHeight="10" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#2F7D43"/>
+    </marker>
+    <marker id="arrow-blue" markerWidth="12" markerHeight="10" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#5B7DB1"/>
+    </marker>
+    <marker id="arrow-amber" markerWidth="12" markerHeight="10" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#B87500"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="12" markerHeight="10" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#6D5BA8"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="12" markerHeight="10" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#D85C5C"/>
+    </marker>
+  </defs>
+
+  <rect class="canvas" width="1320" height="1080"/>
+  <text class="title" x="660" y="48" text-anchor="middle">fla_npu 默认 Ascend C 运行时：调用链、交付件与兼容边界</text>
+
+  <rect class="box" x="30" y="80" width="300" height="48" fill="#EAF2FF" stroke="#5B7DB1"/>
+  <text class="lane-title" x="180" y="111" text-anchor="middle" fill="#223A5E">wheel 交付层</text>
+  <rect class="box" x="380" y="80" width="520" height="48" fill="#E9F7EE" stroke="#4C9B60"/>
+  <text class="lane-title" x="640" y="111" text-anchor="middle" fill="#244B2F">默认调用链（自上而下）</text>
+  <rect class="box" x="950" y="80" width="330" height="48" fill="#F3EEFF" stroke="#8266B5"/>
+  <text class="lane-title" x="1115" y="111" text-anchor="middle" fill="#49366B">语义与兼容层</text>
+
+  <!-- Edges are drawn before nodes so every endpoint remains visually clean. -->
+  <path class="edge-side" d="M180 255 V310" stroke="#5B7DB1" marker-end="url(#arrow-blue)"/>
+  <path class="edge-side" d="M310 380 H350 V768 H410" stroke="#5B7DB1" marker-end="url(#arrow-blue)"/>
+
+  <path class="edge" d="M640 240 V285" stroke="#2F7D43" marker-end="url(#arrow-green)"/>
+  <path class="edge" d="M640 365 V415" stroke="#2F7D43" marker-end="url(#arrow-green)"/>
+  <path class="edge" d="M640 505 V555" stroke="#B87500" marker-end="url(#arrow-amber)"/>
+  <path class="edge" d="M640 675 V725" stroke="#B87500" marker-end="url(#arrow-amber)"/>
+  <path class="edge" d="M640 810 V855" stroke="#6D5BA8" marker-end="url(#arrow-purple)"/>
+  <path class="edge" d="M640 935 V975" stroke="#6D5BA8" marker-end="url(#arrow-purple)"/>
+
+  <path class="edge-side" d="M970 325 H870" stroke="#8266B5" marker-end="url(#arrow-purple)"/>
+  <path class="edge-side" d="M970 615 H870" stroke="#8266B5" marker-end="url(#arrow-purple)"/>
+  <path class="edge-side" d="M970 768 H870" stroke="#D85C5C" stroke-dasharray="7 5" marker-end="url(#arrow-red)"/>
+
+  <!-- Delivery nodes -->
+  <rect class="box" x="50" y="155" width="260" height="100" fill="#F4F8FF" stroke="#5B7DB1"/>
+  <text text-anchor="middle" x="180">
+    <tspan class="node-title" x="180" y="184">py3-none-any wheel</tspan>
+    <tspan class="node-text" x="180" y="210">Python wrapper + 内嵌 OPP</tspan>
+    <tspan class="node-text" x="180" y="234">不携带 cp / cxx11abi tag</tspan>
+  </text>
+  <rect class="box" x="50" y="310" width="260" height="140" fill="#F4F8FF" stroke="#5B7DB1"/>
+  <text text-anchor="middle" x="180">
+    <tspan class="node-title" x="180" y="339">site-packages/fla_npu/opp</tspan>
+    <tspan class="node-text" x="180" y="367">vendors/fla_npu_transformer</tspan>
+    <tspan class="node-text" x="180" y="393">op_api / op_host / tiling / proto</tspan>
+    <tspan class="node-text" x="180" y="419">SOC kernel</tspan>
+  </text>
+
+  <!-- Main call-chain nodes -->
+  <rect class="box" x="410" y="155" width="460" height="85" fill="#F2FAF4" stroke="#4C9B60"/>
+  <text text-anchor="middle" x="640">
+    <tspan class="node-title" x="640" y="185">用户代码或外部 executor</tspan>
+    <tspan class="node-text" x="640" y="215">先设置当前 NPU stream</tspan>
+  </text>
+  <rect class="box" x="410" y="285" width="460" height="80" fill="#F2FAF4" stroke="#4C9B60"/>
+  <text text-anchor="middle" x="640">
+    <tspan class="node-title" x="640" y="316">fla_npu.ops.ascendc.&lt;op&gt;</tspan>
+    <tspan class="node-text" x="640" y="344">稳定公开接口</tspan>
+  </text>
+  <rect class="box" x="410" y="415" width="460" height="90" fill="#FFF8E7" stroke="#D9970B"/>
+  <text text-anchor="middle" x="640">
+    <tspan class="node-title" x="640" y="447">_aclnn_ctypes.py</tspan>
+    <tspan class="node-text" x="640" y="478">单算子 ABI wrapper；校验参数并分配输出 tensor</tspan>
+  </text>
+  <rect class="box" x="410" y="555" width="460" height="120" fill="#FFF8E7" stroke="#D9970B"/>
+  <text text-anchor="middle" x="640">
+    <tspan class="node-title" x="640" y="582">_runtime.py</tspan>
+    <tspan class="node-text" x="640" y="608">构造 ACL tensor descriptor</tspan>
+    <tspan class="node-text" x="640" y="633">获取 current_stream_ptr()</tspan>
+    <tspan class="node-text" x="640" y="658">管理 workspace 与异步对象保活</tspan>
+  </text>
+  <rect class="box" x="410" y="725" width="460" height="85" fill="#FFF8E7" stroke="#D9970B"/>
+  <text text-anchor="middle" x="640">
+    <tspan class="node-title" x="640" y="756">libcust_opapi.so</tspan>
+    <tspan class="node-text" x="640" y="786">aclnn*GetWorkspaceSize / aclnn*</tspan>
+  </text>
+  <rect class="box" x="410" y="855" width="460" height="80" fill="#F3EEFF" stroke="#8266B5"/>
+  <text text-anchor="middle" x="640">
+    <tspan class="node-title" x="640" y="886">CANN ACLNN executor</tspan>
+    <tspan class="node-text" x="640" y="914">使用传入的 ACL tensor descriptor 与 stream</tspan>
+  </text>
+  <rect class="box" x="410" y="975" width="460" height="90" fill="#EDE9FE" stroke="#6D5BA8"/>
+  <text text-anchor="middle" x="640">
+    <tspan class="node-title" x="640" y="1004">NPU stream 与 kernel</tspan>
+    <tspan class="node-text" x="640" y="1031">同 stream 依靠 FIFO；跨 stream 由调用方用 event 建立依赖</tspan>
+  </text>
+
+  <!-- Semantic and compatibility nodes -->
+  <rect class="box" x="970" y="275" width="290" height="100" fill="#F7F3FF" stroke="#8266B5"/>
+  <text text-anchor="middle" x="1115">
+    <tspan class="node-title" x="1115" y="304">自动求导绑定</tspan>
+    <tspan class="node-text" x="1115" y="331">高层 torch.autograd.Function</tspan>
+    <tspan class="node-text" x="1115" y="356">直调匹配的 backward 算子</tspan>
+  </text>
+  <rect class="box" x="970" y="550" width="290" height="130" fill="#F7F3FF" stroke="#8266B5"/>
+  <text text-anchor="middle" x="1115">
+    <tspan class="node-title" x="1115" y="579">ACL tensor metadata 透传</tspan>
+    <tspan class="node-text" x="1115" y="606">shape / stride / storage offset</tspan>
+    <tspan class="node-text" x="1115" y="631">dtype / format / data ptr</tspan>
+    <tspan class="node-text" x="1115" y="656">NZ 等私有格式不做隐式转换</tspan>
+  </text>
+  <rect class="box" x="970" y="710" width="290" height="115" fill="#FFF4F4" stroke="#D85C5C"/>
+  <text text-anchor="middle" x="1115">
+    <tspan class="node-title" x="1115" y="738">可选旧兼容路径</tspan>
+    <tspan class="node-text" x="1115" y="764">fla_npu.load_legacy_torch_ops()</tspan>
+    <tspan class="node-text" x="1115" y="789">torch.ops.npu.*</tspan>
+    <tspan class="node-text" x="1115" y="814">显式启用后才依赖 dispatcher ABI</tspan>
+  </text>
+
+  <!-- Edge labels sit in gaps, never on top of nodes. -->
+  <g><rect x="157" y="273" width="46" height="20" fill="#fff"/><text class="edge-label" x="180" y="288" text-anchor="middle" fill="#223A5E">安装</text></g>
+  <g><rect x="361" y="744" width="44" height="20" fill="#fff"/><text class="edge-label" x="383" y="759" text-anchor="middle" fill="#223A5E">加载</text></g>
+  <g><rect x="621" y="253" width="38" height="20" fill="#fff"/><text class="edge-label" x="640" y="268" text-anchor="middle" fill="#244B2F">调用</text></g>
+  <g><rect x="600" y="382" width="80" height="20" fill="#fff"/><text class="edge-label" x="640" y="397" text-anchor="middle" fill="#244B2F">解析并封装</text></g>
+  <g><rect x="588" y="522" width="104" height="20" fill="#fff"/><text class="edge-label" x="640" y="537" text-anchor="middle" fill="#754B00">构造运行时参数</text></g>
+  <g><rect x="603" y="692" width="74" height="20" fill="#fff"/><text class="edge-label" x="640" y="707" text-anchor="middle" fill="#754B00">ctypes 调用</text></g>
+  <g><rect x="575" y="827" width="130" height="20" fill="#fff"/><text class="edge-label" x="640" y="842" text-anchor="middle" fill="#49366B">创建 executor 并发射</text></g>
+  <g><rect x="583" y="947" width="114" height="20" fill="#fff"/><text class="edge-label" x="640" y="962" text-anchor="middle" fill="#49366B">入队到当前 stream</text></g>
+  <g><rect x="883" y="301" width="76" height="20" fill="#fff"/><text class="edge-label" x="921" y="316" text-anchor="middle" fill="#49366B">正向 / 反向</text></g>
+  <g><rect x="891" y="591" width="68" height="20" fill="#fff"/><text class="edge-label" x="925" y="606" text-anchor="middle" fill="#49366B">描述符字段</text></g>
+  <g><rect x="892" y="744" width="67" height="20" fill="#fff"/><text class="edge-label" x="925" y="759" text-anchor="middle" fill="#9B3434">显式启用</text></g>
+</svg>

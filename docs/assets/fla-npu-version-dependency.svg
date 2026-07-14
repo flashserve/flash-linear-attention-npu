@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="910" viewBox="0 0 1320 910" role="img" aria-labelledby="title desc">
+  <title id="title">fla_npu 新旧路径的版本依赖对比</title>
+  <desc id="desc">左侧展示旧 C++ 扩展如何同时绑定 CPython、PyTorch、torch_npu 和 C++ ABI；右侧展示默认 Python ctypes 路径只保留 CANN、SOC 和 host 架构依赖。箭头方向均从依赖来源指向结果。</desc>
+  <defs>
+    <style>
+      .canvas { fill: #ffffff; }
+      .title { font: 700 25px Arial, "Microsoft YaHei", sans-serif; fill: #172033; }
+      .panel-title { font: 700 18px Arial, "Microsoft YaHei", sans-serif; }
+      .node-title { font: 700 16px Arial, "Microsoft YaHei", sans-serif; fill: #172033; }
+      .node-text { font: 14.5px Arial, "Microsoft YaHei", sans-serif; fill: #334155; }
+      .result-title { font: 700 17px Arial, "Microsoft YaHei", sans-serif; }
+      .result-text { font: 15px Arial, "Microsoft YaHei", sans-serif; }
+      .edge-label { font: 13px Arial, "Microsoft YaHei", sans-serif; }
+      .box { stroke-width: 2; rx: 8; ry: 8; }
+      .edge { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+    <marker id="arrow-red" markerWidth="12" markerHeight="10" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#C94040"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="12" markerHeight="10" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#2F7D43"/>
+    </marker>
+    <marker id="arrow-amber" markerWidth="12" markerHeight="10" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#B87500"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="12" markerHeight="10" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#6D5BA8"/>
+    </marker>
+  </defs>
+
+  <rect class="canvas" width="1320" height="910"/>
+  <text class="title" x="660" y="48" text-anchor="middle">版本依赖从哪里来：旧扩展路径与当前默认路径对比</text>
+
+  <rect x="30" y="145" width="610" height="730" rx="8" fill="#FFF9F9" stroke="#E7B0B0" stroke-width="1.5"/>
+  <rect x="680" y="145" width="610" height="730" rx="8" fill="#F8FCF8" stroke="#A8D4B2" stroke-width="1.5"/>
+  <rect class="box" x="50" y="90" width="570" height="48" fill="#FDECEC" stroke="#D85C5C"/>
+  <text class="panel-title" x="335" y="121" text-anchor="middle" fill="#7A2929">旧扩展路径：多层编译 ABI 绑定</text>
+  <rect class="box" x="700" y="90" width="570" height="48" fill="#E9F7EE" stroke="#4C9B60"/>
+  <text class="panel-title" x="985" y="121" text-anchor="middle" fill="#244B2F">当前默认路径：Python ctypes + 内嵌 OPP</text>
+
+  <!-- All arrows are behind nodes and terminate at explicit node boundaries. -->
+  <path class="edge" d="M290 222.5 L370 336.5" stroke="#C94040" marker-end="url(#arrow-red)"/>
+  <path class="edge" d="M290 347.5 L370 384.8" stroke="#C94040" marker-end="url(#arrow-red)"/>
+  <path class="edge" d="M290 472.5 L370 435.2" stroke="#C94040" marker-end="url(#arrow-red)"/>
+  <path class="edge" d="M290 597.5 L370 483.5" stroke="#C94040" marker-end="url(#arrow-red)"/>
+  <path class="edge" d="M485 515 V710" stroke="#C94040" marker-end="url(#arrow-red)"/>
+
+  <path class="edge" d="M835 280 L899 340" stroke="#2F7D43" marker-end="url(#arrow-green)"/>
+  <path class="edge" d="M1135 280 L1071 340" stroke="#2F7D43" marker-end="url(#arrow-green)"/>
+  <path class="edge" d="M985 440 V495" stroke="#B87500" marker-end="url(#arrow-amber)"/>
+  <path class="edge" d="M985 595 V640" stroke="#6D5BA8" marker-end="url(#arrow-purple)"/>
+  <path class="edge" d="M985 735 V775" stroke="#2F7D43" marker-end="url(#arrow-green)"/>
+
+  <!-- Old dependency sources -->
+  <rect class="box" x="60" y="180" width="230" height="85" fill="#FFF1F1" stroke="#D85C5C"/>
+  <text text-anchor="middle" x="175">
+    <tspan class="node-title" x="175" y="207">CPython ABI</tspan>
+    <tspan class="node-text" x="175" y="232">Python C extension</tspan>
+    <tspan class="node-text" x="175" y="254">cp39 / cp310 / cp311 ...</tspan>
+  </text>
+  <rect class="box" x="60" y="305" width="230" height="85" fill="#FFF1F1" stroke="#D85C5C"/>
+  <text text-anchor="middle" x="175">
+    <tspan class="node-title" x="175" y="335">PyTorch C++ ABI</tspan>
+    <tspan class="node-text" x="175" y="364">ATen / c10 / dispatcher</tspan>
+  </text>
+  <rect class="box" x="60" y="430" width="230" height="85" fill="#FFF1F1" stroke="#D85C5C"/>
+  <text text-anchor="middle" x="175">
+    <tspan class="node-title" x="175" y="457">torch_npu ABI</tspan>
+    <tspan class="node-text" x="175" y="482">op-plugin 生成代码</tspan>
+    <tspan class="node-text" x="175" y="504">torch.ops.npu 注册表</tspan>
+  </text>
+  <rect class="box" x="60" y="555" width="230" height="85" fill="#FFF1F1" stroke="#D85C5C"/>
+  <text text-anchor="middle" x="175">
+    <tspan class="node-title" x="175" y="585">gcc / libstdc++ ABI</tspan>
+    <tspan class="node-text" x="175" y="614">_GLIBCXX_USE_CXX11_ABI</tspan>
+  </text>
+
+  <rect class="box" x="370" y="305" width="230" height="210" fill="#FFE6E6" stroke="#C94040" stroke-width="2.5"/>
+  <text text-anchor="middle" x="485">
+    <tspan class="node-title" x="485" y="342">custom_aclnn_</tspan>
+    <tspan class="node-title" x="485" y="365">extension_lib*.so</tspan>
+    <tspan class="node-text" x="485" y="398">wheel 内 host ELF 扩展</tspan>
+    <tspan class="node-text" x="485" y="444">编译、链接或注册时</tspan>
+    <tspan class="node-text" x="485" y="470">绑定左侧四层 ABI</tspan>
+  </text>
+  <rect class="box" x="60" y="710" width="540" height="115" fill="#FFF1F1" stroke="#D85C5C" stroke-width="2.5"/>
+  <text text-anchor="middle" x="330">
+    <tspan class="result-title" x="330" y="741" fill="#7A2929">结果：包矩阵膨胀</tspan>
+    <tspan class="result-text" x="330" y="773" fill="#7A2929">torch × torch_npu × Python × C++ ABI × host 架构</tspan>
+    <tspan class="result-text" x="330" y="801" fill="#7A2929">任一 ABI 变化都可能要求重新编译 wheel</tspan>
+  </text>
+
+  <!-- Current default path -->
+  <rect class="box" x="710" y="180" width="250" height="100" fill="#F2FAF4" stroke="#4C9B60"/>
+  <text text-anchor="middle" x="835">
+    <tspan class="node-title" x="835" y="211">纯 Python 包</tspan>
+    <tspan class="node-text" x="835" y="240">py3-none-any wheel</tspan>
+    <tspan class="node-text" x="835" y="265">无 CPython 扩展 ABI</tspan>
+  </text>
+  <rect class="box" x="1010" y="180" width="250" height="100" fill="#F2FAF4" stroke="#4C9B60"/>
+  <text text-anchor="middle" x="1135">
+    <tspan class="node-title" x="1135" y="211">torch Python tensor API</tspan>
+    <tspan class="node-text" x="1135" y="240">data_ptr / shape / stride / dtype</tspan>
+    <tspan class="node-text" x="1135" y="265">current NPU stream</tspan>
+  </text>
+  <rect class="box" x="790" y="340" width="390" height="100" fill="#FFF8E7" stroke="#D9970B"/>
+  <text text-anchor="middle" x="985">
+    <tspan class="node-title" x="985" y="370">Python ctypes ABI wrapper</tspan>
+    <tspan class="node-text" x="985" y="398">构造 ACL tensor descriptor</tspan>
+    <tspan class="node-text" x="985" y="423">直调 aclnn*GetWorkspaceSize / aclnn*</tspan>
+  </text>
+  <rect class="box" x="790" y="495" width="390" height="100" fill="#FFF8E7" stroke="#D9970B"/>
+  <text text-anchor="middle" x="985">
+    <tspan class="node-title" x="985" y="525">内嵌 OPP vendor 树</tspan>
+    <tspan class="node-text" x="985" y="553">libcust_opapi.so + op_host / tiling / kernel</tspan>
+    <tspan class="node-text" x="985" y="578">随 wheel 安装到 fla_npu/opp</tspan>
+  </text>
+  <rect class="box" x="790" y="640" width="390" height="95" fill="#F3EEFF" stroke="#8266B5"/>
+  <text text-anchor="middle" x="985">
+    <tspan class="node-title" x="985" y="669">保留的真实运行依赖</tspan>
+    <tspan class="node-text" x="985" y="696">CANN / ACL runtime ABI</tspan>
+    <tspan class="node-text" x="985" y="720">SOC 与 host 架构的二进制兼容性</tspan>
+  </text>
+  <rect class="box" x="710" y="775" width="550" height="90" fill="#EAF7ED" stroke="#4C9B60" stroke-width="2.5"/>
+  <text text-anchor="middle" x="985">
+    <tspan class="result-title" x="985" y="801" fill="#244B2F">结果：默认 wheel 避开四类上层 ABI 绑定</tspan>
+    <tspan class="result-text" x="985" y="827" fill="#244B2F">不绑定 torch_npu dispatcher、PyTorch C++、CPython 与 C++ ABI</tspan>
+    <tspan class="result-text" x="985" y="851" fill="#244B2F">构建矩阵收敛为 SOC × host 架构</tspan>
+  </text>
+
+  <!-- Labels are placed only in whitespace between nodes. -->
+  <g><rect x="425" y="606" width="120" height="21" fill="#fff"/><text class="edge-label" x="485" y="621" text-anchor="middle" fill="#7A2929">形成版本组合</text></g>
+  <g><rect x="817" y="302" width="76" height="20" fill="#fff"/><text class="edge-label" x="855" y="317" text-anchor="middle" fill="#244B2F">Python 调用</text></g>
+  <g><rect x="1078" y="302" width="92" height="20" fill="#fff"/><text class="edge-label" x="1124" y="317" text-anchor="middle" fill="#244B2F">tensor 元数据</text></g>
+  <g><rect x="903" y="457" width="164" height="21" fill="#fff"/><text class="edge-label" x="985" y="472" text-anchor="middle" fill="#754B00">动态加载 libcust_opapi.so</text></g>
+  <g><rect x="933" y="602" width="104" height="21" fill="#fff"/><text class="edge-label" x="985" y="617" text-anchor="middle" fill="#49366B">调用 ACLNN ABI</text></g>
+  <g><rect x="919" y="744" width="132" height="21" fill="#fff"/><text class="edge-label" x="985" y="759" text-anchor="middle" fill="#244B2F">只保留必要兼容矩阵</text></g>
+</svg>
