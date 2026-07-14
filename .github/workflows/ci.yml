@@ -428,7 +428,7 @@ jobs:
         timeout-minutes: 10
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 1
           path: trusted-ci
 
@@ -445,7 +445,7 @@ jobs:
         timeout-minutes: 10
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 1
           path: trusted-ci
 
@@ -460,13 +460,14 @@ jobs:
         timeout-minutes: 10
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 1
           path: trusted-ci
 
       - name: 使用可信 CI 脚本
         run: |
-          # CI 执行脚本必须来自默认分支，避免 PR 修改脚本后影响 runner。
+          # CI 执行脚本必须来自 PR 目标分支，避免 PR 修改脚本后影响 runner，
+          # 同时保证维护分支使用与自身代码匹配的 CI 规则。
           # 但 Example/ST 用例配置属于被验证内容：新 PR 中新增或修改的 enabled 用例
           # 必须跟随当前目标分支和 PR head 的现场合并结果一起进入容器，并被 /run-npu-ci quick 实际执行验证。
           tmp_cases="$(mktemp)"
