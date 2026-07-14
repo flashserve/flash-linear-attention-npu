@@ -189,3 +189,22 @@ docker run --rm \
     -e FLA_NPU_CXX11_ABI="${FLA_NPU_CXX11_ABI:-}" \
     "$image" \
     "${container_command[@]}"
+
+# ---------------------------------------------------------------------------
+# Automated trigger: after 8.5.0 (ascend910b) CI succeeds, automatically
+# start the 9.0.0 (ascend950) compile-only verification.
+#
+# The NPU lock acquired above is intentionally kept held while the 9.0.0 CI
+# runs. This shares a single lock resource across the whole 8.5.0 + 9.0.0
+# flow: the 9.0.0 script does NOT acquire or release any lock of its own,
+# and the EXIT trap installed by acquire_npu_lock releases the lock exactly
+# once when this top-level script exits.
+#
+# Set CI_TRIGGER_950=false to skip the 9.0.0 CI.
+# ---------------------------------------------------------------------------
+if [[ "${CI_TRIGGER_950:-true}" == "true" ]]; then
+    echo "[CI] 8.5.0 CI succeeded; triggering 9.0.0 (ascend950) compile-only CI..."
+    bash ci/9.0.0/run_ci_container.sh
+else
+    echo "[CI] CI_TRIGGER_950=false; skipping 9.0.0 (ascend950) CI."
+fi
