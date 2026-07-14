@@ -24,8 +24,8 @@ extern "C" {
 
 struct ChunkLocalCumsumParams {
     const aclTensor *g = nullptr;
-    const aclTensor *cuSeqlensOptional = nullptr;
-    const aclTensor *chunkIndicesOutOptional = nullptr;
+    const aclIntArray *cuSeqlensOptional = nullptr;
+    const aclIntArray *chunkIndicesOutOptional = nullptr;
     int64_t chunkSize = 0;
     bool reverse = false;
     double scale = 1.0;
@@ -57,29 +57,17 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
     return ACLNN_SUCCESS;
 }
 
-static aclnnStatus OptionalDataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
-{
-    if (tensor == nullptr) {
-        return ACLNN_SUCCESS;
-    }
-    return DataContiguous(tensor, executor);
-}
-
 static aclnnStatus ParamsDataContiguous(ChunkLocalCumsumParams &params, aclOpExecutor *executorPtr)
 {
     CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "Contiguous g failed.");
-    CHECK_COND(OptionalDataContiguous(params.cuSeqlensOptional, executorPtr) == ACLNN_SUCCESS,
-               ACLNN_ERR_PARAM_INVALID, "Contiguous cuSeqlensOptional failed.");
-    CHECK_COND(OptionalDataContiguous(params.chunkIndicesOutOptional, executorPtr) == ACLNN_SUCCESS,
-               ACLNN_ERR_PARAM_INVALID, "Contiguous chunkIndicesOutOptional failed.");
     return ACLNN_SUCCESS;
 }
 
 aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
     const aclTensor *g,
-    const aclTensor *cuSeqlensOptional,
-    const aclTensor *chunkIndicesOutOptional,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOutOptional,
     int64_t chunkSize,
     bool reverse,
     double scale,
