@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1040" viewBox="0 0 1500 1040" role="img" aria-labelledby="title desc">
+  <title id="title">新架构需要稳定的底层接口与跨版本兼容策略</title>
+  <desc id="desc">从 Python tensor 和 stream 能力到 ACL C ABI、每算子 aclnn、OPP、tiling、SOC kernel 和 Triton，列出对应跨版本兼容策略。</desc>
+  <defs>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#4C9B60"/></marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#5B7DB1"/></marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#D9970B"/></marker>
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#8266B5"/></marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#D85C5C"/></marker>
+    <marker id="arrow-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#3F8C8C"/></marker>
+    <marker id="arrow-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#9A74C8"/></marker>
+    <style>
+      text { font-family: Arial, "Microsoft YaHei", sans-serif; fill: #172033; letter-spacing: 0; }
+      .box { rx: 8; stroke-width: 2; }
+      .header { font-size: 19px; font-weight: 700; }
+      .node-title { font-size: 15px; font-weight: 700; }
+      .node-text { font-size: 13px; }
+      .edge { fill: none; stroke-width: 2.2; }
+    </style>
+  </defs>
+  <rect width="1500" height="1040" fill="#FFFFFF"/>
+  <text x="750" y="55" text-anchor="middle" font-size="25" font-weight="700">新架构真正需要稳定的底层接口与跨版本兼容策略</text>
+  <text x="750" y="92" text-anchor="middle" font-size="15" fill="#52606D">Python 能力契约、C ABI、OPP 元数据和 host/kernel 二进制 ABI 需要采用不同策略</text>
+
+  <rect class="box" x="40" y="120" width="900" height="55" fill="#EEF4FF" stroke="#5B7DB1"/>
+  <text class="header" x="490" y="155" text-anchor="middle" fill="#24466F">稳定接口 / ABI 契约</text>
+  <rect class="box" x="1030" y="120" width="430" height="55" fill="#F4F0FF" stroke="#8266B5"/>
+  <text class="header" x="1245" y="155" text-anchor="middle" fill="#49366B">跨版本不一致时的策略</text>
+
+  <!-- Every row uses a single horizontal arrow in the gap between columns. -->
+  <path class="edge" d="M940 235 H1030" stroke="#4C9B60" marker-end="url(#arrow-green)"/>
+  <path class="edge" d="M940 345 H1030" stroke="#5B7DB1" marker-end="url(#arrow-blue)"/>
+  <path class="edge" d="M940 455 H1030" stroke="#D9970B" marker-end="url(#arrow-amber)"/>
+  <path class="edge" d="M940 565 H1030" stroke="#8266B5" marker-end="url(#arrow-purple)"/>
+  <path class="edge" d="M940 675 H1030" stroke="#D85C5C" marker-end="url(#arrow-red)"/>
+  <path class="edge" d="M940 785 H1030" stroke="#3F8C8C" marker-end="url(#arrow-teal)"/>
+  <path class="edge" d="M940 895 H1030" stroke="#9A74C8" marker-end="url(#arrow-violet)"/>
+
+  <rect class="box" x="40" y="195" width="900" height="80" fill="#EFF9F1" stroke="#4C9B60"/>
+  <text x="65"><tspan class="node-title" x="65" y="220">1  Python tensor / stream 能力契约（不是二进制 ABI）</tspan><tspan class="node-text" x="65" y="246">device、dtype、shape、stride、storage、data_ptr、storage_offset</tspan><tspan class="node-text" x="65" y="267">torch.npu.current_stream().npu_stream</tspan></text>
+  <rect class="box" x="1030" y="195" width="430" height="80" fill="#EFF9F1" stroke="#4C9B60"/>
+  <text x="1245" text-anchor="middle"><tspan class="node-title" x="1245" y="219">能力探测 + Python adapter</tspan><tspan class="node-text" x="1245" y="243">保留 storage fallback；集中适配 stream provider</tspan><tspan class="node-text" x="1245" y="265">不按 torch patch 锁版本</tspan></text>
+
+  <rect class="box" x="40" y="305" width="900" height="80" fill="#EEF4FF" stroke="#5B7DB1"/>
+  <text x="65"><tspan class="node-title" x="65" y="330">2  ACL descriptor / runtime C ABI</tspan><tspan class="node-text" x="65" y="356">aclCreateTensor / aclDestroyTensor / aclCreateIntArray / aclDestroyIntArray</tspan><tspan class="node-text" x="65" y="377">aclTensor、aclIntArray、aclOpExecutor、aclrtStream 保持 opaque 语义</tspan></text>
+  <rect class="box" x="1030" y="305" width="430" height="80" fill="#EEF4FF" stroke="#5B7DB1"/>
+  <text x="1245" text-anchor="middle"><tspan class="node-title" x="1245" y="329">符号 preflight + runtime adapter</tspan><tspan class="node-text" x="1245" y="353">签名变化时选择版本化 adapter</tspan><tspan class="node-text" x="1245" y="375">禁止跨 runtime 解释 opaque 对象</tspan></text>
+
+  <rect class="box" x="40" y="415" width="900" height="80" fill="#FFF7E8" stroke="#D9970B"/>
+  <text x="65"><tspan class="node-title" x="65" y="440">3  每算子 aclnn C ABI</tspan><tspan class="node-text" x="65" y="466">aclnnXxxGetWorkspaceSize 的参数顺序、C 类型、optional 语义和输出数量</tspan><tspan class="node-text" x="65" y="487">aclnnXxx(workspace, size, executor, stream) 两段式 launch</tspan></text>
+  <rect class="box" x="1030" y="415" width="430" height="80" fill="#FFF7E8" stroke="#D9970B"/>
+  <text x="1245" text-anchor="middle"><tspan class="node-title" x="1245" y="439">旧符号签名冻结</tspan><tspan class="node-text" x="1245" y="463">不兼容修改发布新符号 / V2</tspan><tspan class="node-text" x="1245" y="485">wrapper 按符号或 manifest 选择；header hash 进 CI</tspan></text>
+
+  <rect class="box" x="40" y="525" width="900" height="80" fill="#F4F0FF" stroke="#8266B5"/>
+  <text x="65"><tspan class="node-title" x="65" y="550">4  OPP 注册与加载契约</tspan><tspan class="node-text" x="65" y="576">vendor / 算子名、libcust_opapi.so、op_proto、op_host 和 config</tspan><tspan class="node-text" x="65" y="597">动态库依赖与 OPP 搜索优先级</tspan></text>
+  <rect class="box" x="1030" y="525" width="430" height="80" fill="#F4F0FF" stroke="#8266B5"/>
+  <text x="1245" text-anchor="middle"><tspan class="node-title" x="1245" y="549">同一 vendor 树原子交付</tspan><tspan class="node-text" x="1245" y="573">run 覆盖同步更新 manifest</tspan><tspan class="node-text" x="1245" y="595">禁止混用不同版本的共享 opapi / tiling / proto</tspan></text>
+
+  <rect class="box" x="40" y="635" width="900" height="80" fill="#FFF1F1" stroke="#D85C5C"/>
+  <text x="65"><tspan class="node-title" x="65" y="660">5  op_host / tiling 到 kernel 的二进制 ABI</tspan><tspan class="node-text" x="65" y="686">TilingData 字节布局与对齐、tiling key、workspace offset</tspan><tspan class="node-text" x="65" y="707">kernel entry、binary_info_config 和输入输出语义</tspan></text>
+  <rect class="box" x="1030" y="635" width="430" height="80" fill="#FFF1F1" stroke="#D85C5C"/>
+  <text x="1245" text-anchor="middle"><tspan class="node-title" x="1245" y="659">host + kernel 成套重编发布</tspan><tspan class="node-text" x="1245" y="683">布局变化增加 version / magic 或新 tiling key</tspan><tspan class="node-text" x="1245" y="705">不允许新 host 配旧 kernel</tspan></text>
+
+  <rect class="box" x="40" y="745" width="900" height="80" fill="#EEF8F8" stroke="#3F8C8C"/>
+  <text x="65"><tspan class="node-title" x="65" y="770">6  SOC kernel / CANN runtime 二进制契约</tspan><tspan class="node-text" x="65" y="796">目标 ISA、SOC binary、CANN runtime API 与系统动态库基线</tspan><tspan class="node-text" x="65" y="817">A2 / A3 / A5、aarch64 / x86_64 不互相假定兼容</tspan></text>
+  <rect class="box" x="1030" y="745" width="430" height="80" fill="#EEF8F8" stroke="#3F8C8C"/>
+  <text x="1245" text-anchor="middle"><tspan class="node-title" x="1245" y="769">按 SOC / host 分包 + fail-fast</tspan><tspan class="node-text" x="1245" y="793">校验已验证的 CANN 范围和必需符号</tspan><tspan class="node-text" x="1245" y="815">不支持的组合直接拒绝，不做静默 fallback</tspan></text>
+
+  <rect class="box" x="40" y="855" width="900" height="80" fill="#F7F3FF" stroke="#9A74C8"/>
+  <text x="65"><tspan class="node-title" x="65" y="880">7  Triton Python / JIT 能力契约（独立于 Ascend C OPP）</tspan><tspan class="node-text" x="65" y="906">triton / triton.language API、NPU backend driver、目标设备能力</tspan><tspan class="node-text" x="65" y="927">kernel 在目标环境 JIT，不复用 libcust_opapi.so ABI</tspan></text>
+  <rect class="box" x="1030" y="855" width="430" height="80" fill="#F7F3FF" stroke="#9A74C8"/>
+  <text x="1245" text-anchor="middle"><tspan class="node-title" x="1245" y="879">版本下限 + capability probe</tspan><tspan class="node-text" x="1245" y="903">在目标设备 JIT / smoke test</tspan><tspan class="node-text" x="1245" y="925">Triton 失败不改变 Ascend C ABI 判定</tspan></text>
+
+  <rect class="box" x="180" y="965" width="1140" height="50" fill="#E9F7EE" stroke="#4C9B60"/>
+  <text x="750" y="997" text-anchor="middle" font-size="15" font-weight="700" fill="#244B2F">原则：API 能力变化用 adapter；同名 C ABI 不兼容必须版本化；host/kernel 二进制布局变化必须成套重编。</text>
+</svg>

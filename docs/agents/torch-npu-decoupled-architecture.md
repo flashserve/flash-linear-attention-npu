@@ -12,6 +12,8 @@ SVG 见 [`../assets/fla-npu-version-dependency.svg`](../assets/fla-npu-version-d
 SVG 见 [`../assets/fla-npu-dependency-lifecycle.svg`](../assets/fla-npu-dependency-lifecycle.svg)。
 兼容性门禁图源见 [`../assets/fla-npu-compatibility-guardrails.drawio`](../assets/fla-npu-compatibility-guardrails.drawio)，
 SVG 见 [`../assets/fla-npu-compatibility-guardrails.svg`](../assets/fla-npu-compatibility-guardrails.svg)。
+底层 ABI 契约图源见 [`../assets/fla-npu-abi-contracts.drawio`](../assets/fla-npu-abi-contracts.drawio)，
+SVG 见 [`../assets/fla-npu-abi-contracts.svg`](../assets/fla-npu-abi-contracts.svg)。
 
 ![fla_npu 解耦运行时架构](../assets/fla-npu-decoupled-runtime.svg)
 
@@ -139,6 +141,38 @@ SVG 见 [`../assets/fla-npu-compatibility-guardrails.svg`](../assets/fla-npu-com
 6. **测试矩阵证明**：跨 Python、torch、torch_npu、CANN、SOC 和 host 组合运行单算子、Example/ST 和精度测试，给出发布版本实际支持范围。
 
 ![兼容性保证、当前缺口与建议闭环](../assets/fla-npu-compatibility-guardrails.svg)
+
+### 实际需要稳定的底层接口和 ABI 契约
+
+“不链接 PyTorch C++”只移除了其中一类 ABI。默认 Ascend C 调用链仍跨越 Python tensor、ACL descriptor、自定义 aclnn、OPP 注册、tiling 和 kernel 多层边界。不同边界不能统一用“版本号相等”处理：Python 层适合能力探测，C ABI 需要冻结签名，host/kernel 共享结构则必须字节级一致并成套发布。
+
+![底层接口和跨版本兼容策略](../assets/fla-npu-abi-contracts.svg)
+
+| 边界 | 实际需要保持稳定的接口或数据 | 不一致时可能出现的结果 | 兼容策略 |
+| --- | --- | --- | --- |
+| Python tensor / stream 能力契约 | `device`、`dtype`、`shape`、`stride()`、`storage_offset()`、`element_size()`、storage data pointer，以及 `torch.npu.current_stream().npu_stream` | 属性不存在、storage API 变化、取错 stream，可能在构造 descriptor 前失败，或把 kernel 入队到错误 stream | 按能力探测并集中放在 `_runtime.py` 适配；保留 `untyped_storage()` 到 `storage()` fallback；需要接入其他 executor 时新增统一 stream provider，不锁死 torch patch 版本 |
+| ACL descriptor / runtime C ABI | `aclCreateTensor`、`aclDestroyTensor`、`aclCreateIntArray`、`aclDestroyIntArray` 的函数签名；`aclTensor`、`aclIntArray`、`aclOpExecutor`、`aclrtStream` 的 opaque 生命周期 | 参数宽度或含义变化会导致 descriptor 错误、非法内存访问或错误 stream；跨 runtime 复用 opaque 对象没有兼容保证 | import/preflight 时解析必需符号；签名变化时使用按 CANN ABI 选择的 runtime adapter；descriptor、executor 和 stream 只交给创建它们的同一 runtime 调用链 |
+| 每算子 aclnn C ABI | `aclnnXxxGetWorkspaceSize` 的参数顺序、C 类型、optional/null 语义、属性默认值、输出数量，以及 `aclnnXxx(workspace, size, executor, stream)` 两段式 launch | ctypes 参数错位可能不在加载时失败，而是在调用时产生参数错误、输出错误甚至进程异常 | 已发布同名符号的签名必须冻结；不兼容修改发布新符号或 `V2`；wrapper 根据符号或 compatibility manifest 选择 adapter；CI 对 `aclnn_*.h` 生成 ABI hash 并与 wrapper 声明双向校验 |
+| OPP 注册与加载契约 | vendor 名、算子注册名、`libcust_opapi.so`、op_proto、op_host、tiling/config、动态依赖和 OPP 搜索优先级 | op_api 能加载但找不到 op_host/kernel，或共享库来自新版本而 config/kernel 来自旧版本 | op_api、op_host、tiling、proto、config 和 kernel 必须来自同一 vendor 树；run 包覆盖需要原子替换共享产物并同步更新 manifest；不能把多个版本拼成一棵 OPP |
+| op_host / tiling 到 kernel 的二进制 ABI | `TilingData` 字节布局、字段顺序/宽度/对齐、tiling key、workspace 分区、kernel entry、输入输出和私有 format 语义 | host 按新布局写 tiling buffer、旧 kernel 按旧偏移读取时，可能产生错误结果、越界或 device error | host 和 kernel 成套重编、测试和发布；结构变化增加显式 version/magic 或新 tiling key；禁止只替换 tiling so 而保留不匹配的 kernel binary |
+| SOC kernel / CANN runtime 契约 | 目标 ISA/SOC、kernel binary 格式、依赖的 CANN runtime API、host ELF 与系统动态库基线 | 装错 A2/A3/A5 或 host 架构会加载失败；CANN runtime 能找到符号但行为不兼容时可能在 launch 后失败 | 按 SOC 和 host 架构分 wheel；manifest 记录构建版本与经过验证的 CANN 范围；首次调用前 fail-fast，不为不兼容 SOC 或 runtime 做静默 fallback |
+| Triton Python / JIT 能力契约 | `triton` / `triton.language` API、Ascend backend driver、目标设备能力和 JIT 行为 | import、JIT 或 launch 失败，但不应改变 Ascend C OPP 的 ABI 判定 | 独立检查 Triton 最低版本和设备能力，在目标环境做 JIT smoke test；Triton adapter 与 Ascend C ctypes runtime 分层维护 |
+
+其中最需要严格对待的是每算子 aclnn ABI 和 tiling ABI：
+
+- `_aclnn_ctypes.py` 中参数的顺序和 ctypes C 类型必须逐项对应公开 `aclnn_*.h`，不能仅凭 Python 参数名相同推断兼容。
+- `<aclnnOp>GetWorkspaceSize` 返回的 `aclOpExecutor` 只能传给同一套 op_api/runtime 的 `<aclnnOp>`，不能跨版本缓存或复用。
+- `TilingData` 是 op_host 写入、kernel 按固定偏移读取的二进制协议。增删字段、修改 `bool`/整数宽度、对齐或字段顺序都属于 ABI 变化。
+- 当前 runtime 会缓存已加载的 CDLL 和符号，并使用 `RTLD_NODELETE`。run 包覆盖 OPP 后必须重启 Python 进程，不能期待当前进程卸载并切换到新 so。
+
+跨版本变化应按下面的顺序决策：
+
+1. **只有 Python API 形态变化**：增加 capability probe 和 adapter，保持公开 `fla_npu.ops.ascendc` 签名不变。
+2. **新增 C 符号且旧符号仍兼容**：优先探测新符号，缺失时使用旧 adapter。
+3. **同名 aclnn 符号的 C ABI 不兼容**：不得原地修改后继续宣称兼容；发布新符号/版本化 ABI，并让 manifest 明确选择。
+4. **OPP 元数据或 tiling/kernel 协议变化**：整套 OPP 重编和原子替换，不做共享库、config、kernel 的跨版本混装。
+5. **SOC、CANN runtime 或 host ELF 不兼容**：构建独立 wheel 或收紧兼容范围，并在 preflight 阶段拒绝。
+6. **算子语义变化**：即使 C 签名未变，也需要新的语义版本、文档和精度测试，不能只依赖符号加载成功作为兼容结论。
 
 ### 当前已经硬检查的内容
 
