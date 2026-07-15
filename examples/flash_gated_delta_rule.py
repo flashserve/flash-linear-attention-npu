@@ -39,8 +39,7 @@ from fla_npu.ops.ascendc import (
 from fla_npu.ops.triton import (
     autocast_custom_bwd,
     autocast_custom_fwd,
-    chunk_local_cumsum,
-    chunk_scaled_dot_kkt_fwd,
+    chunk_local_cumsum as triton_chunk_local_cumsum,
     input_guard,
     l2norm_bwd,
     l2norm_fwd,
@@ -546,6 +545,96 @@ def recompute_w_u(
     return w, u
 
 
+def _float32_output_dtype_name(output_dtype: Optional[torch.dtype | str]) -> str:
+    if output_dtype is None:
+        return "float32"
+    if isinstance(output_dtype, str):
+        normalized = output_dtype.removeprefix("torch.")
+        if normalized in ("float", "float32"):
+            return "float32"
+        raise ValueError(f"AscendC chunk_local_cumsum only supports float32 output, got {output_dtype}.")
+    if output_dtype in (torch.float, torch.float32):
+        return "float32"
+    raise ValueError(f"AscendC chunk_local_cumsum only supports float32 output, got {output_dtype}.")
+
+
+def chunk_local_cumsum_ascendc(
+    g: torch.Tensor,
+    chunk_size: int,
+    reverse: bool = False,
+    scale: Optional[float] = None,
+    cu_seqlens: Optional[torch.Tensor] = None,
+    chunk_indices_out: Optional[Dict[str, Optional[torch.LongTensor]] | torch.Tensor] = None,
+    head_first: bool = True,
+    output_dtype: Optional[torch.dtype] = torch.float,
+    **kwargs,
+) -> torch.Tensor:
+    if g.dim() != 3:
+        raise ValueError(f"AscendC chunk_local_cumsum expects rank-3 input, got shape={tuple(g.shape)}.")
+    if not head_first:
+        raise ValueError("AscendC chunk_local_cumsum expects B,H,T input; transpose before calling.")
+
+    chunk_indices = (
+        _chunk_tensor(chunk_indices_out, chunk_size)
+        if isinstance(chunk_indices_out, dict)
+        else chunk_indices_out
+    )
+    op_kwargs = {
+        "reverse": reverse,
+        "scale": 1.0 if scale is None else float(scale),
+        "head_first": True,
+        "output_dtype": _float32_output_dtype_name(output_dtype),
+    }
+    cu_list = _as_int_list(cu_seqlens)
+    chunk_list = _as_int_list(chunk_indices)
+    if cu_list is not None or chunk_list is not None:
+        op_kwargs["cu_seqlens"] = cu_list
+        op_kwargs["chunk_indices_out"] = chunk_list
+    torch.npu.synchronize()
+    out = torch.ops.npu.npu_chunk_local_cumsum(g.contiguous().float(), chunk_size, **op_kwargs)
+    torch.npu.synchronize()
+    return out
+
+
+def chunk_scaled_dot_kkt_fwd_ascendc(
+    k: torch.Tensor,
+    g: Optional[torch.Tensor] = None,
+    gk: Optional[torch.Tensor] = None,
+    beta: Optional[torch.Tensor] = None,
+    cu_seqlens: Optional[torch.Tensor] = None,
+    chunk_indices: Optional[torch.Tensor] = None,
+    chunk_size: int = 64,
+    output_dtype: torch.dtype = torch.float32,
+) -> torch.Tensor:
+    if gk is not None:
+        raise NotImplementedError("AscendC chunk_scaled_dot_kkt currently supports the gk=None path only.")
+    if g is None or beta is None:
+        raise ValueError("AscendC chunk_scaled_dot_kkt requires g and beta.")
+    if output_dtype not in (torch.float, torch.float32):
+        raise ValueError(f"AscendC chunk_scaled_dot_kkt only supports float32 output, got {output_dtype}.")
+    if g.dim() != 3 or beta.dim() != 3:
+        raise ValueError(
+            "AscendC chunk_scaled_dot_kkt expects g and beta with shape [B,H,T], "
+            f"got g={tuple(g.shape)} beta={tuple(beta.shape)}."
+        )
+
+    op_kwargs = {"chunk_size": chunk_size}
+    cu_list = _as_int_list(cu_seqlens)
+    chunk_list = _as_int_list(chunk_indices)
+    if cu_list is not None or chunk_list is not None:
+        op_kwargs["cu_seqlens"] = cu_list
+        op_kwargs["chunk_indices"] = chunk_list
+    torch.npu.synchronize()
+    A = torch.ops.npu.npu_chunk_scaled_dot_kkt(
+        k,
+        g.contiguous().float(),
+        beta.contiguous().float(),
+        **op_kwargs,
+    )
+    torch.npu.synchronize()
+    return A
+
+
 def flash_chunk_gated_delta_rule_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -561,16 +650,19 @@ def flash_chunk_gated_delta_rule_fwd(
     chunk_indices_list: Optional[Dict[str, Optional[list[int]]]] = None,
     chunk_size: int = 64,
 ):
-    g = chunk_local_cumsum(
+    g = g.transpose(1, 2).contiguous()
+    beta = beta.transpose(1, 2).contiguous().float()
+
+    g = chunk_local_cumsum_ascendc(
         g,
         chunk_size=chunk_size,
         cu_seqlens=cu_seqlens,
         chunk_indices_out=chunk_indices,
-        head_first=False,
+        head_first=True,
     )
 
     # A is the WY lower-triangular representation before inversion.
-    A = chunk_scaled_dot_kkt_fwd(
+    A = chunk_scaled_dot_kkt_fwd_ascendc(
         k=k,
         g=g,
         beta=beta,
@@ -580,6 +672,7 @@ def flash_chunk_gated_delta_rule_fwd(
         output_dtype=torch.float32,
     )
 
+    A = A.transpose(1, 2).contiguous()
     A = solve_tri_auto(
         A,
         cu_seqlens=cu_seqlens,
@@ -589,8 +682,6 @@ def flash_chunk_gated_delta_rule_fwd(
         output_dtype=k.dtype,
     )
 
-    g = g.transpose(1, 2).contiguous()
-    beta = beta.transpose(1, 2).contiguous().float()
     A = A.transpose(1, 2).contiguous()
 
     w, u = recompute_w_u(
@@ -777,7 +868,7 @@ def flash_chunk_gated_delta_rule_bwd(
     if dg.dtype != torch.float32:
         raise ValueError(f"dg current type is {dg.dtype}, should be float32")
 
-    dg = chunk_local_cumsum(
+    dg = triton_chunk_local_cumsum(
         dg,
         chunk_size=chunk_size,
         reverse=True,
