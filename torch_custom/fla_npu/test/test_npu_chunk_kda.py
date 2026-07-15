@@ -4,6 +4,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import time
 
 import torch
 
@@ -34,6 +35,8 @@ MODEL_SHAPE_CASE = {
 }
 MODEL_SHAPE_DUMP = pathlib.Path(os.environ.get("KDA_MODEL_SHAPE_DUMP", "/tmp/kda_model_shape_case.pt"))
 RUN_MODEL_SHAPE_TEST_ENV = "RUN_KDA_MODEL_SHAPE_TEST"
+STAT_SAMPLE_COUNT = int(os.environ.get("KDA_STAT_SAMPLE_COUNT", "262144"))
+REFERENCE_NUM_THREADS = int(os.environ.get("KDA_REFERENCE_NUM_THREADS", "16"))
 
 
 def _device(device_id=None):
@@ -45,19 +48,21 @@ def _device(device_id=None):
 
 
 def _stat(tensor, name):
-    if hasattr(tensor, "is_npu") and tensor.is_npu:
-        torch.npu.synchronize()
-    flat = tensor.detach().flatten().float().cpu()
-    has_nan = torch.isnan(flat).any().item()
+    flat = tensor.detach().flatten()
+    nan_mask = torch.isnan(flat)
+    has_nan = nan_mask.any().item()
     has_inf = torch.isinf(flat).any().item()
-    nan_ratio = torch.isnan(flat).float().mean().item()
-    finite = flat[torch.isfinite(flat)]
+    nan_ratio = nan_mask.float().mean().item()
+
+    total_numel = flat.numel()
+    if total_numel > STAT_SAMPLE_COUNT:
+        stride = (total_numel + STAT_SAMPLE_COUNT - 1) // STAT_SAMPLE_COUNT
+        sample = flat[::stride][:STAT_SAMPLE_COUNT].float().cpu()
+    else:
+        sample = flat.float().cpu()
+    finite = sample[torch.isfinite(sample)]
     if finite.numel() == 0:
         finite = torch.zeros(1, dtype=torch.float32)
-    quant_src = finite
-    if quant_src.numel() > 5_000_000:
-        sample_idx = torch.randint(0, quant_src.numel(), (5_000_000,))
-        quant_src = quant_src[sample_idx]
     return {
         "name": name,
         "shape": tuple(tensor.shape),
@@ -65,13 +70,15 @@ def _stat(tensor, name):
         "device": str(tensor.device),
         "min": finite.min().item(),
         "max": finite.max().item(),
-        "mean": quant_src.mean().item(),
-        "std": quant_src.std().item(),
+        "mean": finite.mean().item(),
+        "std": finite.std().item(),
         "has_nan": has_nan,
         "has_inf": has_inf,
         "nan_ratio": nan_ratio,
-        "percentile_1": torch.quantile(quant_src, 0.01).item(),
-        "percentile_99": torch.quantile(quant_src, 0.99).item(),
+        "percentile_1": torch.quantile(finite, 0.01).item(),
+        "percentile_99": torch.quantile(finite, 0.99).item(),
+        "sample_numel": sample.numel(),
+        "total_numel": total_numel,
     }
 
 
@@ -83,7 +90,8 @@ def _print_stat(stat_dict, prefix=""):
         f"min={s['min']:10.4f} max={s['max']:10.4f} | "
         f"mean={s['mean']:8.4f} std={s['std']:8.4f} | "
         f"p1={s['percentile_1']:8.4f} p99={s['percentile_99']:8.4f} | "
-        f"nan={s['has_nan']} inf={s['has_inf']} nan_ratio={s['nan_ratio']:.4f}"
+        f"nan={s['has_nan']} inf={s['has_inf']} nan_ratio={s['nan_ratio']:.4f} | "
+        f"sample={s['sample_numel']}/{s['total_numel']}"
     )
 
 
@@ -306,7 +314,9 @@ def test_chunk_kda_fwd_model_shape_with_stats(dump_path=None, device_id=None):
     gk_ntd = gk.squeeze(0).permute(1, 0, 2).contiguous()
     beta_nt = beta.squeeze(0).permute(1, 0).contiguous()
 
-    print("\n--- Chunk KDA Forward ---")
+    print("\n--- Chunk KDA Forward ---", flush=True)
+    torch.npu.synchronize()
+    kda_start = time.perf_counter()
     got = fla_ascendc.chunk_kda_fwd(
         q_ntd,
         k_ntd,
@@ -321,7 +331,14 @@ def test_chunk_kda_fwd_model_shape_with_stats(dump_path=None, device_id=None):
         output_final_state=True,
         return_intermediate=True,
     )
+    torch.npu.synchronize()
+    print(
+        f"[Timing] Chunk KDA Forward synchronized wall: "
+        f"{(time.perf_counter() - kda_start) * 1000.0:.3f} ms",
+        flush=True,
+    )
     o_npu, final_state_npu = got[0], got[1]
+    print("--- Chunk KDA Output Statistics ---", flush=True)
     for name, tensor in [
         ("o_npu", o_npu),
         ("final_state_npu", final_state_npu),
@@ -345,18 +362,29 @@ def test_chunk_kda_fwd_model_shape_with_stats(dump_path=None, device_id=None):
     assert torch.isfinite(o_npu).all().item(), "model shape o contains NaN or Inf"
     assert torch.isfinite(final_state_npu).all().item(), "model shape final_state contains NaN or Inf"
 
-    print("\n--- CPU Reference ---")
-    ref = chunk_kda_forward_reference(
-        q.detach().cpu(),
-        k.detach().cpu(),
-        v.detach().cpu(),
-        ref_gk.cpu(),
-        beta.detach().cpu(),
-        scale=scale,
-        chunk_size=chunk_size,
-        initial_state=initial_state.detach().cpu(),
-        output_final_state=True,
-        cu_seqlens=torch.tensor(cu_seqlens, dtype=torch.int64),
+    previous_num_threads = torch.get_num_threads()
+    reference_num_threads = max(1, min(REFERENCE_NUM_THREADS, previous_num_threads))
+    torch.set_num_threads(reference_num_threads)
+    print(f"\n--- CPU Reference (threads={reference_num_threads}) ---", flush=True)
+    reference_start = time.perf_counter()
+    try:
+        ref = chunk_kda_forward_reference(
+            q.detach().cpu(),
+            k.detach().cpu(),
+            v.detach().cpu(),
+            ref_gk.cpu(),
+            beta.detach().cpu(),
+            scale=scale,
+            chunk_size=chunk_size,
+            initial_state=initial_state.detach().cpu(),
+            output_final_state=True,
+            cu_seqlens=torch.tensor(cu_seqlens, dtype=torch.int64),
+        )
+    finally:
+        torch.set_num_threads(previous_num_threads)
+    print(
+        f"[Timing] CPU Reference wall: {time.perf_counter() - reference_start:.3f} s",
+        flush=True,
     )
     ref_o_ntd = ref.o.squeeze(0).permute(1, 0, 2).contiguous()
     _print_stat(_stat(ref_o_ntd, "o_ref"), "  ")
