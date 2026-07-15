@@ -44,10 +44,10 @@ custom:
   - func: npu_solve_tri(Tensor x, *, int[]? cu_seqlens=None, int[]? chunk_indices=None, str layout="bsnd") -> Tensor
     op_api: all_version
 
-autograd: []
+autograd:
 
 
-symint: []
+symint:
 
 
-quant: []
+quant:
