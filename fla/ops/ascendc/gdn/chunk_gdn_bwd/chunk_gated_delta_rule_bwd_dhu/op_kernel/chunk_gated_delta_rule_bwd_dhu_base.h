@@ -74,7 +74,6 @@ protected:
     LocalTensor<DT> qLocal; // [BT/2,K]
     LocalTensor<float> qCastLocal;
     LocalTensor<GT> gLocal; // [BT/2,]
-    LocalTensor<GT> gLastLocal;
     LocalTensor<float> gCastLocal;
     LocalTensor<float> gLastCastLocal;
     LocalTensor<float> gBCLocal;

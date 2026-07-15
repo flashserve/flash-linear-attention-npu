@@ -589,6 +589,9 @@ if __name__ == "__main__":
 
     # GVA smoke: Hk=2, Hv=4
     test_fix(B=1, Hk=2, Hv=4, T=256, K=128, V=128, chunk_size=64, scale=0.088, ktype=torch.bfloat16, gtype=torch.bfloat16)
+    # Gate state stays in the vector pipeline for both chunk sizes and g dtypes.
+    test_fix(B=2, Hk=2, Hv=4, T=256, K=128, V=128, chunk_size=64, scale=0.088, ktype=torch.bfloat16, gtype=torch.float32)
+    test_fix(B=1, Hk=2, Hv=4, T=320, K=128, V=128, chunk_size=128, scale=0.088, ktype=torch.bfloat16, gtype=torch.bfloat16)
     # MHA smoke: Hk=Hv
     test_fix(B=1, Hk=4, Hv=4, T=128, K=128, V=128, chunk_size=64, scale=0.088, ktype=torch.bfloat16, gtype=torch.bfloat16)
     # GVA varlen smoke
