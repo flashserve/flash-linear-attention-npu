@@ -12,6 +12,13 @@ torch.npu.set_compile_mode(jit_compile=False)
 torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
 
 
+DTYPE_LABELS = {
+    torch.float32: "fp32",
+    torch.float16: "fp16",
+    torch.bfloat16: "bf16",
+}
+
+
 def _next_power_of_two(value: int) -> int:
     value = max(value, 1)
     return 1 << (value - 1).bit_length()
@@ -58,7 +65,15 @@ def reference_impl(
                     else:
                         value = torch.cumsum(segment, dim=0)
                     out[batch, head, start:end] = value * scale
-    return out
+    return out.to(g.dtype)
+
+
+def _tolerances(dtype: torch.dtype) -> Tuple[float, float]:
+    if dtype is torch.float32:
+        return 1e-4, 1e-4
+    if dtype is torch.float16:
+        return 1e-3, 2e-3
+    return 2e-2, 5e-2
 
 
 def run_case(
@@ -68,11 +83,12 @@ def run_case(
     reverse: bool = False,
     scale: float = 1.0,
     cu_seqlens_values: Optional[List[int]] = None,
+    dtype: torch.dtype = torch.float32,
 ) -> None:
     torch.manual_seed(sum(ord(ch) for ch in name))
     if len(shape) != 3:
         raise ValueError(f"{name}: chunk_local_cumsum only supports rank-3 [B, H, T], got shape={shape}")
-    g_cpu = torch.randn(shape, dtype=torch.float32)
+    g_cpu = torch.randn(shape, dtype=torch.float32).to(dtype)
     g_npu = g_cpu.npu()
 
     cu_seqlens_arg = None
@@ -93,25 +109,53 @@ def run_case(
         reverse=reverse,
         scale=scale,
         head_first=True,
-        output_dtype="float32",
+        output_dtype="same",
     ).cpu()
     expected = reference_impl(g_cpu, chunk_size, reverse, scale, cu_seqlens_cpu)
 
-    torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-4)
-    print(f"[PASS] {name}: shape={shape}, chunk_size={chunk_size}, reverse={reverse}, scale={scale}")
+    if actual.dtype != dtype:
+        raise AssertionError(f"{name}: expected output dtype {dtype}, got {actual.dtype}")
+    rtol, atol = _tolerances(dtype)
+    torch.testing.assert_close(actual, expected, rtol=rtol, atol=atol)
+    print(
+        f"[PASS] {name}: dtype={DTYPE_LABELS[dtype]}, shape={shape}, "
+        f"chunk_size={chunk_size}, reverse={reverse}, scale={scale}"
+    )
 
 
 if __name__ == "__main__":
-    run_case("fixed_bht_forward", (9, 2, 128), chunk_size=64)
-    run_case("fixed_bht_reverse_scale", (9, 2, 128), chunk_size=64, reverse=True, scale=0.25)
-    run_case("fixed_bht_odd_t_forward", (2, 3, 129), chunk_size=64)
-    run_case("varlen_bht_forward", (1, 2, 128), chunk_size=64, cu_seqlens_values=[0, 128])
-    run_case("varlen_bht_long_forward", (1, 8, 3580), chunk_size=64, cu_seqlens_values=[0, 3580])
-    run_case(
-        "varlen_bht_reverse_scale",
-        (1, 8, 3580),
-        chunk_size=64,
-        reverse=True,
-        scale=-0.5,
-        cu_seqlens_values=[0, 1024, 2048, 3580],
-    )
+    for dtype in (torch.float32, torch.float16, torch.bfloat16):
+        suffix = DTYPE_LABELS[dtype]
+        run_case(f"fixed_bht_forward_{suffix}", (9, 2, 128), chunk_size=64, dtype=dtype)
+        run_case(
+            f"fixed_bht_reverse_scale_{suffix}",
+            (9, 2, 128),
+            chunk_size=64,
+            reverse=True,
+            scale=0.25,
+            dtype=dtype,
+        )
+        run_case(f"fixed_bht_odd_t_forward_{suffix}", (2, 3, 129), chunk_size=64, dtype=dtype)
+        run_case(
+            f"varlen_bht_forward_{suffix}",
+            (1, 2, 128),
+            chunk_size=64,
+            cu_seqlens_values=[0, 128],
+            dtype=dtype,
+        )
+        run_case(
+            f"varlen_bht_long_forward_{suffix}",
+            (1, 8, 3580),
+            chunk_size=64,
+            cu_seqlens_values=[0, 3580],
+            dtype=dtype,
+        )
+        run_case(
+            f"varlen_bht_reverse_scale_{suffix}",
+            (1, 8, 3580),
+            chunk_size=64,
+            reverse=True,
+            scale=-0.5,
+            cu_seqlens_values=[0, 1024, 2048, 3580],
+            dtype=dtype,
+        )

@@ -15,6 +15,7 @@
 
 #include "kernel_operator.h"
 #include "chunk_local_cumsum_tiling_data.h"
+#include <type_traits>
 
 using namespace AscendC;
 
@@ -27,6 +28,9 @@ constexpr int64_t FAST_CHUNK_SCAN_BUFFER_NUM = 2;
 constexpr int64_t FP32_REPEAT_ELEMS = 64;
 constexpr int64_t VECTOR_MAX_REPEAT_TIMES = 255;
 constexpr int64_t VECTOR_MAX_CALC_ELEMS = FP32_REPEAT_ELEMS * VECTOR_MAX_REPEAT_TIMES;
+constexpr int64_t INPUT_DTYPE_FP32 = 0;
+constexpr int64_t INPUT_DTYPE_FP16 = 1;
+constexpr int64_t INPUT_DTYPE_BF16 = 2;
 constexpr int32_t BUFFER_NUM = 1;
 
 __aicore__ inline int64_t MinInt64(int64_t a, int64_t b)
@@ -49,6 +53,7 @@ __aicore__ inline int64_t AlignDownInt64(int64_t value, int64_t align)
     return (value / align) * align;
 }
 
+template <typename GType>
 class ChunkLocalCumsumKernel {
 public:
     __aicore__ inline ChunkLocalCumsumKernel() = default;
@@ -57,8 +62,8 @@ public:
                                 const ChunkLocalCumsumTilingData *tiling)
     {
         tiling_ = tiling;
-        gGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(g), tiling_->totalElements);
-        outGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(out), tiling_->totalElements);
+        gGm_.SetGlobalBuffer(reinterpret_cast<__gm__ GType *>(g), tiling_->totalElements);
+        outGm_.SetGlobalBuffer(reinterpret_cast<__gm__ GType *>(out), tiling_->totalElements);
         if (tiling_->isVarlen != 0) {
             cuSeqlensGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cuSeqlens));
             chunkIndicesGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(chunkIndices), tiling_->numBlocks * 2);
@@ -69,7 +74,8 @@ public:
         fastHTileSize_ = AlignDownInt64(MinInt64(MinInt64(H_TILE_SIZE, tiling_->h), maxFastHLen),
                                         FLOAT_ALIGN_ELEMS);
         // The log-step scan needs two chunk buffers; shrink only the fast H tile, not the whole fast path.
-        chunkFastPath_ = ((tiling_->h & (FLOAT_ALIGN_ELEMS - 1)) == 0) &&
+        chunkFastPath_ = std::is_same<GType, float>::value &&
+                         ((tiling_->h & (FLOAT_ALIGN_ELEMS - 1)) == 0) &&
                          (fastHTileSize_ >= FLOAT_ALIGN_ELEMS);
         if (chunkFastPath_) {
             int64_t chunkBufferBytes = AlignUpInt64(tiling_->chunkSize * fastHTileSize_ *
@@ -81,6 +87,12 @@ public:
             pipe_.InitBuffer(rowQueue_, BUFFER_NUM, rowBufferBytes);
             pipe_.InitBuffer(outQueue_, BUFFER_NUM, rowBufferBytes);
             pipe_.InitBuffer(accBuf_, rowBufferBytes);
+            if constexpr (!std::is_same<GType, float>::value) {
+                int64_t inputRowBufferBytes =
+                    AlignUpInt64(H_TILE_SIZE * static_cast<int64_t>(sizeof(GType)), UB_ALIGN_BYTES);
+                pipe_.InitBuffer(inputRowQueue_, BUFFER_NUM, inputRowBufferBytes);
+                pipe_.InitBuffer(outCastQueue_, BUFFER_NUM, inputRowBufferBytes);
+            }
         }
     }
 
@@ -111,13 +123,26 @@ private:
     __aicore__ inline LocalTensor<float> LoadRowToUb(int64_t gmOffset, int64_t elementCount)
     {
         LocalTensor<float> rowLocal = rowQueue_.AllocTensor<float>();
-        if ((elementCount & 7) == 0) {
-            DataCopy(rowLocal, gGm_[gmOffset], static_cast<uint32_t>(elementCount));
+        if constexpr (std::is_same<GType, float>::value) {
+            if ((elementCount & 7) == 0) {
+                DataCopy(rowLocal, gGm_[gmOffset], static_cast<uint32_t>(elementCount));
+            } else {
+                DataCopyExtParams copyParams{1, static_cast<uint32_t>(elementCount * static_cast<int64_t>(sizeof(float))),
+                                             0, 0, 0};
+                DataCopyPadExtParams<float> padParams{false, 0, 0, 0.0f};
+                DataCopyPad(rowLocal, gGm_[gmOffset], copyParams, padParams);
+            }
         } else {
-            DataCopyExtParams copyParams{1, static_cast<uint32_t>(elementCount * static_cast<int64_t>(sizeof(float))),
+            LocalTensor<GType> inputLocal = inputRowQueue_.AllocTensor<GType>();
+            DataCopyExtParams copyParams{1, static_cast<uint32_t>(elementCount * static_cast<int64_t>(sizeof(GType))),
                                          0, 0, 0};
-            DataCopyPadExtParams<float> padParams{false, 0, 0, 0.0f};
-            DataCopyPad(rowLocal, gGm_[gmOffset], copyParams, padParams);
+            DataCopyPadExtParams<GType> padParams{false, 0, 0, 0};
+            DataCopyPad(inputLocal, gGm_[gmOffset], copyParams, padParams);
+            inputRowQueue_.EnQue(inputLocal);
+            inputLocal = inputRowQueue_.DeQue<GType>();
+            Cast(rowLocal, inputLocal, RoundMode::CAST_NONE, static_cast<uint32_t>(elementCount));
+            PipeBarrier<PIPE_V>();
+            inputRowQueue_.FreeTensor(inputLocal);
         }
         rowQueue_.EnQue(rowLocal);
         return rowQueue_.DeQue<float>();
@@ -125,12 +150,24 @@ private:
 
     __aicore__ inline void CopyUbToGm(int64_t gmOffset, LocalTensor<float> srcLocal, int64_t elementCount)
     {
-        if ((elementCount & 7) == 0) {
-            DataCopy(outGm_[gmOffset], srcLocal, static_cast<uint32_t>(elementCount));
+        if constexpr (std::is_same<GType, float>::value) {
+            if ((elementCount & 7) == 0) {
+                DataCopy(outGm_[gmOffset], srcLocal, static_cast<uint32_t>(elementCount));
+            } else {
+                DataCopyExtParams copyParams{1, static_cast<uint32_t>(elementCount * static_cast<int64_t>(sizeof(float))),
+                                             0, 0, 0};
+                DataCopyPad(outGm_[gmOffset], srcLocal, copyParams);
+            }
         } else {
-            DataCopyExtParams copyParams{1, static_cast<uint32_t>(elementCount * static_cast<int64_t>(sizeof(float))),
+            LocalTensor<GType> outLocal = outCastQueue_.AllocTensor<GType>();
+            Cast(outLocal, srcLocal, RoundMode::CAST_RINT, static_cast<uint32_t>(elementCount));
+            PipeBarrier<PIPE_V>();
+            outCastQueue_.EnQue(outLocal);
+            outLocal = outCastQueue_.DeQue<GType>();
+            DataCopyExtParams copyParams{1, static_cast<uint32_t>(elementCount * static_cast<int64_t>(sizeof(GType))),
                                          0, 0, 0};
-            DataCopyPad(outGm_[gmOffset], srcLocal, copyParams);
+            DataCopyPad(outGm_[gmOffset], outLocal, copyParams);
+            outCastQueue_.FreeTensor(outLocal);
         }
     }
 
@@ -327,8 +364,12 @@ private:
             int64_t chunkStart = chunkIdx * tiling_->chunkSize;
             int64_t chunkEnd = MinInt64(chunkStart + tiling_->chunkSize, tiling_->t);
             int64_t baseOffset = bIdx * tiling_->t * tiling_->h;
-            if (chunkFastPath_) {
-                ProcessSequenceChunkFast(baseOffset, chunkStart, chunkEnd, hStart, hLen);
+            if constexpr (std::is_same<GType, float>::value) {
+                if (chunkFastPath_) {
+                    ProcessSequenceChunkFast(baseOffset, chunkStart, chunkEnd, hStart, hLen);
+                } else {
+                    ProcessSequenceChunk(baseOffset, chunkStart, chunkEnd, hStart, hLen);
+                }
             } else {
                 ProcessSequenceChunk(baseOffset, chunkStart, chunkEnd, hStart, hLen);
             }
@@ -359,8 +400,12 @@ private:
             int64_t baseOffset = outerIdx * tiling_->t * tiling_->h + bos * tiling_->h;
             for (int64_t chunkStart = tStart; chunkStart < tEnd; chunkStart += tiling_->chunkSize) {
                 int64_t chunkEnd = MinInt64(chunkStart + tiling_->chunkSize, tEnd);
-                if (chunkFastPath_) {
-                    ProcessSequenceChunkFast(baseOffset, chunkStart, chunkEnd, hStart, hLen);
+                if constexpr (std::is_same<GType, float>::value) {
+                    if (chunkFastPath_) {
+                        ProcessSequenceChunkFast(baseOffset, chunkStart, chunkEnd, hStart, hLen);
+                    } else {
+                        ProcessSequenceChunk(baseOffset, chunkStart, chunkEnd, hStart, hLen);
+                    }
                 } else {
                     ProcessSequenceChunk(baseOffset, chunkStart, chunkEnd, hStart, hLen);
                 }
@@ -372,11 +417,13 @@ private:
     TPipe pipe_;
     TQue<QuePosition::VECIN, BUFFER_NUM> chunkQueue_;
     TQue<QuePosition::VECIN, BUFFER_NUM> rowQueue_;
+    TQue<QuePosition::VECIN, BUFFER_NUM> inputRowQueue_;
     TQue<QuePosition::VECOUT, BUFFER_NUM> outQueue_;
+    TQue<QuePosition::VECOUT, BUFFER_NUM> outCastQueue_;
     TBuf<> scanBuf_;
     TBuf<> accBuf_;
-    GlobalTensor<float> gGm_;
-    GlobalTensor<float> outGm_;
+    GlobalTensor<GType> gGm_;
+    GlobalTensor<GType> outGm_;
     GlobalTensor<int64_t> cuSeqlensGm_;
     GlobalTensor<int64_t> chunkIndicesGm_;
     const ChunkLocalCumsumTilingData *tiling_ = nullptr;
@@ -391,7 +438,17 @@ extern "C" __global__ __aicore__ void chunk_local_cumsum(GM_ADDR g, GM_ADDR cuSe
     REGISTER_TILING_DEFAULT(ChunkLocalCumsumTilingData);
     GET_TILING_DATA_WITH_STRUCT(ChunkLocalCumsumTilingData, tilingData, tiling);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
-    ChunkLocalCumsumKernel op;
-    op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
-    op.Process();
+    if (tilingData.inputDtype == INPUT_DTYPE_FP16) {
+        ChunkLocalCumsumKernel<half> op;
+        op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
+        op.Process();
+    } else if (tilingData.inputDtype == INPUT_DTYPE_BF16) {
+        ChunkLocalCumsumKernel<bfloat16_t> op;
+        op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
+        op.Process();
+    } else {
+        ChunkLocalCumsumKernel<float> op;
+        op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
+        op.Process();
+    }
 }

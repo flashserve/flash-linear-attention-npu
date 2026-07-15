@@ -585,18 +585,25 @@ at::Tensor npu_chunk_local_cumsum(
     c10::string_view output_dtype)
 {
     TORCH_CHECK(g.dim() == 3, "npu_chunk_local_cumsum: g must be rank-3 [B, H, T], got ", g.sizes());
-    TORCH_CHECK(g.scalar_type() == at::kFloat, "npu_chunk_local_cumsum: only float32 g is supported.");
+    TORCH_CHECK(g.scalar_type() == at::kFloat || g.scalar_type() == at::kHalf ||
+                    g.scalar_type() == at::kBFloat16,
+                "npu_chunk_local_cumsum: g dtype must be float32, float16, or bfloat16, got ",
+                g.scalar_type());
     TORCH_CHECK(chunk_size > 0 && (chunk_size & (chunk_size - 1)) == 0,
                 "npu_chunk_local_cumsum: chunk_size must be a positive power of two, got ", chunk_size);
     TORCH_CHECK(head_first, "npu_chunk_local_cumsum: only head_first=true / [B, H, T] layout is supported.");
 
     std::string output_dtype_str(output_dtype.data(), output_dtype.size());
     if (output_dtype_str.empty()) {
-        output_dtype_str = "float32";
+        output_dtype_str = "same";
     }
-    TORCH_CHECK(output_dtype_str == "float32" || output_dtype_str == "torch.float" ||
-                    output_dtype_str == "torch.float32",
-                "npu_chunk_local_cumsum: output_dtype only supports float32, got ", output_dtype_str);
+    const bool output_dtype_same = output_dtype_str == "same" || output_dtype_str == "same_as_input" ||
+                                   output_dtype_str == "input";
+    const bool output_dtype_float32 = output_dtype_str == "float32" || output_dtype_str == "torch.float" ||
+                                      output_dtype_str == "torch.float32";
+    TORCH_CHECK(output_dtype_same || (output_dtype_float32 && g.scalar_type() == at::kFloat),
+                "npu_chunk_local_cumsum: output dtype must preserve g dtype; got ", output_dtype_str,
+                " for g dtype ", g.scalar_type());
 
     at::Tensor g_contig = g.contiguous();
     at::Tensor out = at::empty_like(g_contig);

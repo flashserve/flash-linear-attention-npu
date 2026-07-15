@@ -51,6 +51,15 @@ python3 -m torchnpugen.gen_op_plugin_functions \
   --output_dir="$OUTPUT_DIR/" \
   --source_yaml="$CDIR/$YAML_FILE"
 
+python3 - <<PY
+from pathlib import Path
+
+path = Path("$OUTPUT_DIR") / "op_plugin_functions.yaml"
+lines = path.read_text().splitlines()
+lines = ["supported: []" if line.strip() == "[]" else line for line in lines]
+path.write_text("\\n".join(lines) + "\\n")
+PY
+
 # check if the second parameter is passed
 if [ -n "$DERIVATIVES_YAML_FILE" ]; then
     python3 -m torchnpugen.gen_derivatives \
