@@ -269,9 +269,16 @@ if [[ "${CI_RUN_EXAMPLE_ST:-true}" == "true" ]]; then
     example_st_args=(--device "$ci_test_device" --cases-file "${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}")
     accuracy_report_file="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}"
     mkdir -p "$(dirname "$accuracy_report_file")"
+    rm -f "$accuracy_report_file" "$accuracy_report_file.tmp"
+    export CI_ACCURACY_HEAD_SHA="${CI_ACCURACY_HEAD_SHA:-${NPU_CI_TARGET_SHA:-}}"
     example_st_args+=(--accuracy-report-file "$accuracy_report_file")
     if [[ -n "${CI_EXAMPLE_CASE_FILTER:-}" ]]; then
         example_st_args+=(--case-filter "$CI_EXAMPLE_CASE_FILTER")
     fi
     python3 ci/run_example_st_cases.py "${example_st_args[@]}"
+    if [[ -f "$accuracy_report_file" ]]; then
+        echo "[CI] Accuracy report generated: $accuracy_report_file"
+    else
+        echo "[CI][WARN] Accuracy report was not generated: $accuracy_report_file" >&2
+    fi
 fi
