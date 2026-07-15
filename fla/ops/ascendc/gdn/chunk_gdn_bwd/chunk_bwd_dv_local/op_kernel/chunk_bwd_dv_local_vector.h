@@ -28,6 +28,8 @@ private:
     Strategy strategy;
     Catlass::Arch::CrossCoreFlagWithReverse<> aivToAicGatedReadyFlag{
         SYNC_AIV_AIC_GATED_READY_FLAG, SYNC_AIC_AIV_GATED_FREE_FLAG};
+    Catlass::Arch::CrossCoreFlagWithReverse<> aicToAivQkReadyFlag{
+        SYNC_AIC_AIV_QK_READY_FLAG, SYNC_AIV_AIC_QK_FREE_FLAG};
 
 public:
     __aicore__ inline ChunkBwdDvLocalVector(const Strategy &s) : strategy(s)
@@ -202,7 +204,7 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         taskLineNum = taskEndLine - taskStartLine + 1;
         if (taskLineNum == 0) {
             if (doHead % hRatio == 0) {
-                AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_3);
+                Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(aicToAivQkReadyFlag);
             }
             Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(aivToAicGatedReadyFlag);
             continue;
@@ -294,7 +296,7 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::Muls(gFactorLocalTensor, gFactorLocalTensor, scale, taskLineNum * strategy.chunkSize);
         if (doHead % hRatio == 0) {
-            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_3);
+            Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(aicToAivQkReadyFlag);
         }
 
         // 搬入 (k@q^T)

@@ -57,6 +57,8 @@ private:
     Strategy strategy;
     Catlass::Arch::CrossCoreFlagWithReverse<> aivToAicGatedReadyFlag{
         SYNC_AIV_AIC_GATED_READY_FLAG, SYNC_AIC_AIV_GATED_FREE_FLAG};
+    Catlass::Arch::CrossCoreFlagWithReverse<> aicToAivQkReadyFlag{
+        SYNC_AIC_AIV_QK_READY_FLAG, SYNC_AIV_AIC_QK_FREE_FLAG};
 
 public:
     __aicore__ inline ChunkBwdDvLocalCube(const Strategy &s) : strategy(s)
@@ -212,7 +214,7 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
                 auto tensorBlockC =
                     GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShapeQK.m(), actualBlockShapeQK.n()));
                 blockMmadQK(tensorBlockA, tensorBlockB, tensorBlockC, actualBlockShapeQK);
-                AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SYNC_AIC_AIV_FLAG_3);
+                Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(aicToAivQkReadyFlag);
             }
         }
     }
