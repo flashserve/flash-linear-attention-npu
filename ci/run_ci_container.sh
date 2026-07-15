@@ -164,6 +164,10 @@ docker run --rm \
     -e CI_EXAMPLE_CASES_FILE="${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}" \
     -e CI_EXAMPLE_CASE_FILTER="${CI_EXAMPLE_CASE_FILTER:-}" \
     -e CI_ACCURACY_REPORT_FILE="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}" \
+    -e CI_ACCURACY_HEAD_SHA="${CI_ACCURACY_HEAD_SHA:-${NPU_CI_TARGET_SHA:-}}" \
+    -e NPU_CI_TARGET_SHA="${NPU_CI_TARGET_SHA:-}" \
+    -e GITHUB_RUN_ID="${GITHUB_RUN_ID:-}" \
+    -e GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-}" \
     -e GDR_ACCURACY_CACHE_DIR="$gdr_accuracy_cache_container" \
     -e CI_TEST_OP="${CI_TEST_OP:-}" \
     -e CI_TMPDIR="${CI_TMPDIR:-}" \
