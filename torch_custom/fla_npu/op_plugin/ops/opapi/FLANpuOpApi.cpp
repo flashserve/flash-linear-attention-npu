@@ -584,11 +584,11 @@ at::Tensor npu_chunk_local_cumsum(
     bool head_first,
     c10::string_view output_dtype)
 {
-    TORCH_CHECK(g.dim() >= 3, "npu_chunk_local_cumsum: g must be [B, H, T, *], got ", g.sizes());
+    TORCH_CHECK(g.dim() == 3, "npu_chunk_local_cumsum: g must be rank-3 [B, H, T], got ", g.sizes());
     TORCH_CHECK(g.scalar_type() == at::kFloat, "npu_chunk_local_cumsum: only float32 g is supported.");
     TORCH_CHECK(chunk_size > 0 && (chunk_size & (chunk_size - 1)) == 0,
                 "npu_chunk_local_cumsum: chunk_size must be a positive power of two, got ", chunk_size);
-    TORCH_CHECK(head_first, "npu_chunk_local_cumsum: only head_first=true / [B, H, T, *] layout is supported.");
+    TORCH_CHECK(head_first, "npu_chunk_local_cumsum: only head_first=true / [B, H, T] layout is supported.");
 
     std::string output_dtype_str(output_dtype.data(), output_dtype.size());
     if (output_dtype_str.empty()) {

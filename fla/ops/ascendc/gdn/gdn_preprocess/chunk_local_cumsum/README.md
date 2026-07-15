@@ -6,18 +6,18 @@
 
 ## 1. 算子功能
 
-输入 `g` 的 shape 为 `[B, H, T, *]`。算子按 `chunk_size` 在时间维 `T` 上划分 chunk，并在每个 chunk 内执行局部累加，输出 shape 与输入一致。尾部 `*` 可为空或包含一个及以上维度，kernel 会将其展平为每个 token 的连续计算宽度。
+输入 `g` 的 shape 为 `[B, H, T]`。算子按 `chunk_size` 在时间维 `T` 上划分 chunk，并在每个 chunk 内执行局部累加，输出 shape 与输入一致。
 
 正向模式 `reverse=false`:
 
 ```text
-out[b, h, t, ...] = scale * sum(g[b, h, k, ...]), k = chunk_start ... t
+out[b, h, t] = scale * sum(g[b, h, k]), k = chunk_start ... t
 ```
 
 反向模式 `reverse=true`:
 
 ```text
-out[b, h, t, ...] = scale * sum(g[b, h, k, ...]), k = t ... chunk_end - 1
+out[b, h, t] = scale * sum(g[b, h, k]), k = t ... chunk_end - 1
 ```
 
 其中 `chunk_start = floor(t / chunk_size) * chunk_size`，`chunk_end = min(chunk_start + chunk_size, T)`。
@@ -32,8 +32,8 @@ out[b, h, t, ...] = scale * sum(g[b, h, k, ...]), k = t ... chunk_end - 1
 // 获取执行所需的 workspace 大小
 aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
     const aclTensor *g,
-    const aclTensor *cuSeqlensOptional,
-    const aclTensor *chunkIndicesOutOptional,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOutOptional,
     int64_t chunkSize,
     bool reverse,
     double scale,
@@ -59,7 +59,7 @@ aclnnStatus aclnnChunkLocalCumsum(
 
 | 参数 | 数据类型 | 是否必须 | 描述 |
 |------|----------|----------|------|
-| g | FLOAT32 | 是 | 输入张量，shape 为 `[B, H, T, *]` |
+| g | FLOAT32 | 是 | 输入张量，shape 为 `[B, H, T]` |
 | cu_seqlens | INT64 | 否 | 变长序列累积长度。固定长度模式传空 tensor |
 | chunk_indices_out | INT64 | 否 | 变长模式下 block 到 `(seq_id, block_id)` 的映射，按二元组连续存储 |
 | chunk_size | int64 | 是 | chunk 长度，必须为 2 的幂 |
@@ -73,9 +73,9 @@ aclnnStatus aclnnChunkLocalCumsum(
 ## 4. 输入约束
 
 1. **数据类型**：输入 `g` 和输出 `out` 仅支持 FLOAT32。
-2. **输入维度**：`g` 必须为 rank >= 3 的 tensor，shape 为 `[B, H, T, *]`。
+2. **输入维度**：`g` 必须为 rank 3 的 tensor，shape 为 `[B, H, T]`。
 3. **chunk_size**：必须为 2 的幂，且 host tiling 计算得到的 `block_t` 不小于 `chunk_size`。
-4. **数据布局**：当前 AscendC kernel 仅支持 `[B, H, T, *]`，`head_first=false` 会被显式拒绝。
+4. **数据布局**：当前 AscendC kernel 仅支持 `[B, H, T]`，`head_first=false` 会被显式拒绝。
 5. **变长模式**：当 `cu_seqlens` 非空时，`B` 必须为 1，且 `chunk_indices_out` 必须非空、元素数为偶数。
 
 ---
@@ -92,7 +92,7 @@ aclnnStatus aclnnChunkLocalCumsum(
 
 该算子使用 AIV kernel 实现。
 
-固定长度模式下，kernel 以 `(batch * head, chunk, tail tile)` 为任务粒度分核，每个任务在一个 batch/head 的一个时间 chunk 内对一段尾部连续维度执行正向或反向累加。
+固定长度模式下，kernel 以 `(batch * head, chunk)` 为任务粒度分核，每个任务在一个 batch/head 的一个时间 chunk 内执行正向或反向累加。
 
 变长模式下，kernel 从 `chunk_indices_out` 读取 `(seq_id, block_id)`，结合 `cu_seqlens` 计算当前序列边界，再在序列局部坐标内执行 chunk-local cumsum。
 

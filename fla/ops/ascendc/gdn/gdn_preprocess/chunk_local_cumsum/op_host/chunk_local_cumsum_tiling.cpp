@@ -86,8 +86,8 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, context->GetAttrs());
 
     const auto &gShape = context->GetInputShape(G_INDEX)->GetStorageShape();
-    OP_CHECK_IF(gShape.GetDimNum() < 3,
-                OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "g must be rank >= 3 for [B, H, T, *], but rank is %zu.",
+    OP_CHECK_IF(gShape.GetDimNum() != 3,
+                OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "g must be rank 3 for [B, H, T], but rank is %zu.",
                                             gShape.GetDimNum()),
                 return ge::GRAPH_FAILED);
 
@@ -111,7 +111,7 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     OP_CHECK_IF(!*headFirstPtr,
                 OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
                                             "head_first=false is not supported; ChunkLocalCumsum currently supports "
-                                            "only [B, H, T, *] layout."),
+                                            "only [B, H, T] layout."),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(std::strcmp(outputDtype, "float32") != 0 && std::strcmp(outputDtype, "torch.float") != 0 &&
@@ -130,13 +130,10 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     int64_t head = gShape.GetDim(1);
     int64_t t = gShape.GetDim(2);
     int64_t tail = 1;
-    for (size_t dimIdx = 3; dimIdx < gShape.GetDimNum(); ++dimIdx) {
-        tail *= gShape.GetDim(dimIdx);
-    }
     OP_CHECK_IF(batch <= 0 || head <= 0 || t <= 0 || tail <= 0,
                 OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
-                                            "g shape must be positive [B, H, T, *], got B=%ld, H=%ld, T=%ld, tail=%ld.",
-                                            batch, head, t, tail),
+                                            "g shape must be positive [B, H, T], got B=%ld, H=%ld, T=%ld.",
+                                            batch, head, t),
                 return ge::GRAPH_FAILED);
     int64_t outer = batch * head;
 

@@ -33,6 +33,10 @@ const aclTensor *ChunkLocalCumsum(
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional != nullptr) {
         actualCuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
+        if (actualCuSeqlens == nullptr) {
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert cu_seqlens int array to tensor failed.");
+            return nullptr;
+        }
         const_cast<aclTensor *>(actualCuSeqlens)->SetStorageFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualCuSeqlens)->SetViewFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualCuSeqlens)->SetOriginalFormat(Format::FORMAT_ND);
@@ -41,6 +45,10 @@ const aclTensor *ChunkLocalCumsum(
     const aclTensor *actualChunkIndicesOut = nullptr;
     if (chunkIndicesOutOptional != nullptr) {
         actualChunkIndicesOut = executor->ConvertToTensor(chunkIndicesOutOptional, DataType::DT_INT64);
+        if (actualChunkIndicesOut == nullptr) {
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert chunk_indices_out int array to tensor failed.");
+            return nullptr;
+        }
         const_cast<aclTensor *>(actualChunkIndicesOut)->SetStorageFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualChunkIndicesOut)->SetViewFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualChunkIndicesOut)->SetOriginalFormat(Format::FORMAT_ND);

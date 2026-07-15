@@ -2,8 +2,6 @@
 
 import math
 import os
-from functools import reduce
-from operator import mul
 from typing import List, Optional, Tuple
 
 import torch
@@ -21,12 +19,10 @@ def _next_power_of_two(value: int) -> int:
     return 1 << (value - 1).bit_length()
 
 
-def _tail_size(shape: Tuple[int, ...]) -> int:
-    return reduce(mul, shape[3:], 1)
-
-
 def _block_t(shape: Tuple[int, ...], chunk_size: int) -> int:
-    return _next_power_of_two((1 << 17) // (_tail_size(shape) * chunk_size))
+    if len(shape) != 3:
+        raise ValueError(f"chunk_local_cumsum only supports rank-3 [B, H, T], got shape={shape}")
+    return _next_power_of_two((1 << 17) // chunk_size)
 
 
 def prepare_chunk_indices(cu_seqlens: torch.Tensor, block_t: int) -> torch.Tensor:
@@ -59,12 +55,12 @@ def reference_impl(
                 for chunk_start in range(0, seq_len, chunk_size):
                     start = seq_start + chunk_start
                     end = min(start + chunk_size, seq_end)
-                    segment = g[batch, head, start:end, ...].to(torch.float32)
+                    segment = g[batch, head, start:end].to(torch.float32)
                     if reverse:
                         value = torch.flip(torch.cumsum(torch.flip(segment, dims=[0]), dim=0), dims=[0])
                     else:
                         value = torch.cumsum(segment, dim=0)
-                    out[batch, head, start:end, ...] = value * scale
+                    out[batch, head, start:end] = value * scale
     return out
 
 
@@ -77,6 +73,8 @@ def run_case(
     cu_seqlens_values: Optional[List[int]] = None,
 ) -> None:
     torch.manual_seed(sum(ord(ch) for ch in name))
+    if len(shape) != 3:
+        raise ValueError(f"{name}: chunk_local_cumsum only supports rank-3 [B, H, T], got shape={shape}")
     g_cpu = torch.randn(shape, dtype=torch.float32)
 
     cu_seqlens_cpu = None
@@ -106,13 +104,13 @@ def run_case(
 
 
 def main() -> int:
-    run_case("fixed_forward_tail1", (9, 2, 128), chunk_size=64)
-    run_case("fixed_reverse_scale_tail1", (9, 2, 128), chunk_size=64, reverse=True, scale=0.25)
-    run_case("fixed_forward_4d", (2, 3, 129, 8), chunk_size=64)
-    run_case("varlen_forward_4d", (1, 8, 3580, 8), chunk_size=64, cu_seqlens_values=[0, 3580])
+    run_case("fixed_forward", (9, 2, 128), chunk_size=64)
+    run_case("fixed_reverse_scale", (9, 2, 128), chunk_size=64, reverse=True, scale=0.25)
+    run_case("fixed_odd_t_forward", (2, 3, 129), chunk_size=64)
+    run_case("varlen_forward", (1, 8, 3580), chunk_size=64, cu_seqlens_values=[0, 3580])
     run_case(
-        "varlen_reverse_scale_4d",
-        (1, 8, 3580, 8),
+        "varlen_reverse_scale",
+        (1, 8, 3580),
         chunk_size=64,
         reverse=True,
         scale=-0.5,
