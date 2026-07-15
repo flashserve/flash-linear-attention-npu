@@ -18,7 +18,8 @@
  #include "lib/matmul_intf.h"
 
  using namespace AscendC;
-
+///////////////////////
+///add
 
  __global__ __aicore__ void chunk_bwd_dqkwg(
      GM_ADDR q,              // [B, HK, T, K]
