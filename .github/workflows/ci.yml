@@ -314,6 +314,9 @@ jobs:
       CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK: 'true'
       CI_RUN_SCOPED_WHEEL_INSTALL_CHECK: 'true'
       CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report.json
+      CI_ACCURACY_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+      CI_ACCURACY_RUN_ID: ${{ github.run_id }}
+      CI_ACCURACY_RUN_ATTEMPT: ${{ github.run_attempt }}
       CI_IMAGE: fla-npu-ci:8.5.0-910b
     steps:
       - name: 拉取当前目标分支代码（第 1 次）
