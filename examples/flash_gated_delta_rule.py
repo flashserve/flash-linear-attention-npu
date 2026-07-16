@@ -56,6 +56,7 @@ _ACCURACY_REFERENCE_VERSION = 1
 _SOLVE_TRI_ASCENDC_AVAILABLE: Optional[bool] = None
 _SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON = ""
 _CUMSUM_KKT_ASCENDC_UNAVAILABLE_REASON = ""
+_BWD_CUMSUM_ASCENDC_UNAVAILABLE_REASON = ""
 
 
 def _make_gate(shape: tuple[int, ...], dtype: torch.dtype, device: str, gate_function: str) -> torch.Tensor:
@@ -745,6 +746,53 @@ def chunk_local_cumsum_kkt_auto(
     )
 
 
+def chunk_local_cumsum_bwd_auto(
+    dg: torch.Tensor,
+    *,
+    cu_seqlens: Optional[torch.Tensor],
+    chunk_indices: Optional[Dict[str, Optional[torch.LongTensor]]],
+    chunk_size: int,
+) -> torch.Tensor:
+    global _BWD_CUMSUM_ASCENDC_UNAVAILABLE_REASON
+
+    fallback_reason = ""
+    try:
+        dg_ascendc = chunk_local_cumsum_ascendc(
+            dg,
+            chunk_size=chunk_size,
+            reverse=True,
+            cu_seqlens=cu_seqlens,
+            chunk_indices_out=chunk_indices,
+            head_first=True,
+            output_dtype=torch.float32,
+        )
+        return dg_ascendc.transpose(1, 2).contiguous()
+    except Exception as exc:
+        _BWD_CUMSUM_ASCENDC_UNAVAILABLE_REASON = str(exc).splitlines()[0]
+        fallback_reason = _BWD_CUMSUM_ASCENDC_UNAVAILABLE_REASON
+        try:
+            torch.npu.synchronize()
+        except Exception:
+            pass
+
+    warnings.warn(
+        "AscendC backward chunk_local_cumsum is unavailable; "
+        "falling back to Triton. "
+        f"Reason: {fallback_reason}",
+        RuntimeWarning,
+    )
+
+    dg_triton = dg.transpose(1, 2).contiguous()
+    return triton_chunk_local_cumsum(
+        dg_triton,
+        chunk_size=chunk_size,
+        reverse=True,
+        cu_seqlens=cu_seqlens,
+        chunk_indices_out=chunk_indices,
+        head_first=False,
+    )
+
+
 def flash_chunk_gated_delta_rule_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -956,22 +1004,17 @@ def flash_chunk_gated_delta_rule_bwd(
         chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
     )
 
-    db = db.transpose(1, 2).contiguous()
-    dg2 = dg2.transpose(1, 2).contiguous()
-    dg = dg.transpose(1, 2).contiguous()
-
     dk.add_(dk2)
     dg.add_(dg2)
     if dg.dtype != torch.float32:
         raise ValueError(f"dg current type is {dg.dtype}, should be float32")
 
-    dg = triton_chunk_local_cumsum(
+    db = db.transpose(1, 2).contiguous()
+    dg = chunk_local_cumsum_bwd_auto(
         dg,
-        chunk_size=chunk_size,
-        reverse=True,
         cu_seqlens=cu_seqlens,
-        chunk_indices_out=chunk_indices,
-        head_first=False,
+        chunk_indices=chunk_indices,
+        chunk_size=chunk_size,
     )
 
     return dq, dk, dv, db, dg, dh0
