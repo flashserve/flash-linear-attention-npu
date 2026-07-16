@@ -168,9 +168,12 @@ public:
     //   3. DK   = dA @ Kbeta
     //   4. Dvb  = A^T @ du
     //   5. KKT  = K @ K^T
-    // AIV -> AIC has one event: Kbeta = K * beta[:, None] is ready.
-    Arch::CrossCoreFlagWithReverse<5> flagAicFinishStore{SYNC_FLAG_2, SYNC_FLAG_3};
+    // AIV -> AIC has one event: Kbeta = K * beta[:, None] is ready.  The
+    // per-slot free flags prevent AIC from reusing a workspace slot before
+    // both AIV sub-blocks have copied its final KKT payload into UB.
+    Arch::CrossCoreFlag flagAicFinishStore{SYNC_FLAG_2};
     Arch::CrossCoreFlagWithReverse<> flagAivFinishStore{SYNC_FLAG_4, SYNC_FLAG_5};
+    Arch::CrossCoreFlag flagWorkspaceFree[2] = {6, 7};
     /// Parameters structure
     struct Params {
         // Data members
@@ -381,6 +384,7 @@ public:
                 //   slotKbetaDvb  : first Kbeta, later reused as Dvb = A^T @ du
                 //   slotKKT       : KKT  = K @ K^T
                 uint64_t workspaceBufferIdx = taskIdx % params.workspaceBufferCount;
+                Arch::CrossCoreWaitFlag(flagWorkspaceFree[workspaceBufferIdx]);
                 uint64_t slotBaseBytes =
                     (coreIdx * params.workspaceBufferCount + workspaceBufferIdx) * params.workspaceSlotSize;
                 uint64_t slotDK = slotBaseBytes / sizeof(ElementK);
@@ -547,7 +551,7 @@ public:
                     AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
                     // Ready event #1: AIV can start Dkb-related dbeta and
                     // keep Dkb*beta in UB while AIC computes Dkbg.
-                    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
+                    Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(flagAicFinishStore);
                     auto layoutL0C = tla::MakeLayoutL0C(mActual, shapeK.n());
                     auto tensorL0C = tla::MakeTensor(l0CBuf, layoutL0C, Arch::PositionL0C{});
                     auto tensorTileL0C = GetTile(tensorL0C, tla::MakeCoord(0, 0), tla::MakeShape(mActual, shapeK.n()));
@@ -562,7 +566,7 @@ public:
                     AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
                     // Ready event #2: AIV can now consume Dkbg and finish the
                     // Dkbg-related dk/dbeta/dg partials.
-                    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
+                    Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(flagAicFinishStore);
                 }
 
                 // Wait for AIV to produce Kbeta = K * beta[:, None] into
@@ -646,7 +650,7 @@ public:
                 }
 
                 // Ready event #3: DK is available; AIV can finish dk writeback.
-                Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
+                Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(flagAicFinishStore);
 
                 auto tensorBlockKForKKT = GetTile(tensorK, tla::MakeCoord(0, 0),
                                                  tla::MakeShape(shapeKKT.m(), shapeKKT.k()));
@@ -746,7 +750,7 @@ public:
                     copyL0CToGm_Dvb(tensorBlockDvb, tensorL0C_Dvb, 0b11);
                     AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
                     // Ready event #4: Dvb is available.
-                    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
+                    Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(flagAicFinishStore);
                     auto layoutL0C = tla::MakeLayoutL0C(mActual, shapeKKT.n());
                     auto tensorL0C = tla::MakeTensor(l0CBuf, layoutL0C, Arch::PositionL0C{});
                     auto tensorTileL0C = GetTile(tensorL0C, tla::MakeCoord(0, 0), tla::MakeShape(mActual, shapeKKT.n()));
@@ -764,9 +768,11 @@ public:
                 }
 
                 // Ready event #5: KKT is available; AIV can finish dg.
-                Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
+                Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(flagAicFinishStore);
             }
         }
+        Arch::CrossCoreWaitFlag(flagWorkspaceFree[0]);
+        Arch::CrossCoreWaitFlag(flagWorkspaceFree[1]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1A);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
