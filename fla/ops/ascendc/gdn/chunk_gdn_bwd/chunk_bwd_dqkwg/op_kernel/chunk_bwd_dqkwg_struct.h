@@ -18,7 +18,7 @@
 #ifndef TORCH_MODE
 #include "ascendc/host_api/tiling/template_argument.h"
 #endif
-
+///////
 namespace GDN {
 
 #define CHUNK_BWD_DQKWG_STRATEGY_FIX_LEN 0
