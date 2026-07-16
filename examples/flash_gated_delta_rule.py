@@ -31,6 +31,8 @@ from fla_npu.ops.ascendc import (
     chunk_fwd_o as ascendc_chunk_fwd_o,
     chunk_gated_delta_rule_bwd_dhu as ascendc_chunk_gated_delta_rule_bwd_dhu,
     chunk_gated_delta_rule_fwd_h as ascendc_chunk_gated_delta_rule_fwd_h,
+    chunk_local_cumsum as ascendc_chunk_local_cumsum,
+    chunk_scaled_dot_kkt as ascendc_chunk_scaled_dot_kkt,
     prepare_wy_repr_bwd_da as ascendc_prepare_wy_repr_bwd_da,
     prepare_wy_repr_bwd_full as ascendc_prepare_wy_repr_bwd_full,
     recompute_w_u_fwd as ascendc_recompute_w_u_fwd,
@@ -593,7 +595,7 @@ def chunk_local_cumsum_ascendc(
         op_kwargs["cu_seqlens"] = cu_list
         op_kwargs["chunk_indices_out"] = chunk_list
     torch.npu.synchronize()
-    out = torch.ops.npu.npu_chunk_local_cumsum(g.contiguous().float(), chunk_size, **op_kwargs)
+    out = ascendc_chunk_local_cumsum(g.contiguous().float(), chunk_size, **op_kwargs)
     torch.npu.synchronize()
     return out
 
@@ -627,7 +629,7 @@ def chunk_scaled_dot_kkt_fwd_ascendc(
         op_kwargs["cu_seqlens"] = cu_list
         op_kwargs["chunk_indices"] = chunk_list
     torch.npu.synchronize()
-    A = torch.ops.npu.npu_chunk_scaled_dot_kkt(
+    A = ascendc_chunk_scaled_dot_kkt(
         k,
         g.contiguous().float(),
         beta.contiguous().float(),
