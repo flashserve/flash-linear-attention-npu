@@ -30,22 +30,24 @@
 
 ```cpp
 aclnnStatus aclnnCausalConv1dGetWorkspaceSize(
-    const aclTensor *x,
-    const aclTensor *weight,
-    const aclTensor *bias,
-    aclTensor       *convStates,
-    const aclTensor *queryStartLoc,
-    const aclTensor *cacheIndices,
-    const aclTensor *initialStateMode,
-    const aclTensor *numAcceptedTokens,
-    int64_t         activationMode,
-    int64_t         padSlotId,
-    int64_t         runMode,
-    int64_t         headNum,
-    aclTensor       *y,
-    uint64_t        *workspaceSize,
-    aclOpExecutor   **executor)
+    const aclTensor   *x,
+    const aclTensor   *weight,
+    const aclTensor   *biasOptional,
+    const aclTensor   *convStates,
+    const aclIntArray *queryStartLocOptional,
+    const aclIntArray *cacheIndicesOptional,
+    const aclIntArray *initialStateModeOptional,
+    const aclIntArray *numAcceptedTokensOptional,
+    int64_t           activationMode,
+    int64_t           padSlotId,
+    int64_t           runMode,
+    int64_t           headNum,
+    const aclTensor   *out,
+    uint64_t          *workspaceSize,
+    aclOpExecutor     **executor)
 ```
+
+其中 `queryStartLocOptional`、`cacheIndicesOptional`、`initialStateModeOptional`、`numAcceptedTokensOptional` 在头文件中均为 `const aclIntArray *` 类型。C/C++ 开发者可通过 `aclCreateIntArray` 创建，也可在不使用对应可选输入时传入空指针。
 
 ## aclnnCausalConv1d
 
@@ -60,7 +62,9 @@ aclnnStatus aclnnCausalConv1dGetWorkspaceSize(
 - 特征维度 $D$ 需为16的倍数。
 - runMode=0（前向计算模式）时，卷积核宽度为编译时已知常量，支持FnRolling快速路径优化。
 - runMode=1（状态更新模式）时，卷积核宽度为运行时参数。
-- 当存在 initialStateMode 输入时，算子需要额外的 workspace 用于初始状态同步。
+- `initialStateMode` 为可选输入，仅在 runMode=0（前向计算模式）下支持。未传入或传入空指针时，所有序列均按无初始状态处理。
+- 当存在 `initialStateMode` 输入时，其长度必须等于 batch，元素取值范围为0或1：0表示对应序列不使用 `convStates` 中的初始状态；1表示对应序列使用 `cacheIndices`（未传入时按序列号映射）指向的 `convStates` 缓存行作为初始状态参与计算。
+- 当存在 `initialStateMode` 输入时，算子需要额外的 workspace 用于初始状态同步。
 
 ## 调用示例
 
@@ -149,15 +153,14 @@ int main()
     void *weightDeviceAddr = nullptr;
     void *biasDeviceAddr = nullptr;
     void *convStatesDeviceAddr = nullptr;
-    void *queryStartLocDeviceAddr = nullptr;
     void *yDeviceAddr = nullptr;
 
     aclTensor *x = nullptr;
     aclTensor *weight = nullptr;
     aclTensor *bias = nullptr;
     aclTensor *convStates = nullptr;
-    aclTensor *queryStartLoc = nullptr;
     aclTensor *y = nullptr;
+    aclIntArray *queryStartLoc = nullptr;
 
     int32_t batchSize = 2;
     int32_t seqLen = 4;
@@ -169,7 +172,6 @@ int main()
     std::vector<int64_t> weightShape = {width, dim};
     std::vector<int64_t> biasShape = {dim};
     std::vector<int64_t> convStatesShape = {batchSize, stateLen, dim};
-    std::vector<int64_t> queryStartLocShape = {batchSize + 1};
     std::vector<int64_t> yShape = {batchSize * seqLen, dim};
 
     std::vector<int16_t> xHostData(GetShapeSize(xShape), 1);
@@ -187,8 +189,8 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(convStatesHostData, convStatesShape, &convStatesDeviceAddr, aclDataType::ACL_BF16, &convStates);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(queryStartLocHostData, queryStartLocShape, &queryStartLocDeviceAddr, aclDataType::ACL_INT64, &queryStartLoc);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    queryStartLoc = aclCreateIntArray(queryStartLocHostData.data(), queryStartLocHostData.size());
+    CHECK_RET(queryStartLoc != nullptr, LOG_PRINT("aclCreateIntArray failed.\n"); return -1);
     ret = CreateAclTensor(yHostData, yShape, &yDeviceAddr, aclDataType::ACL_BF16, &y);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
@@ -222,14 +224,13 @@ int main()
     aclDestroyTensor(weight);
     aclDestroyTensor(bias);
     aclDestroyTensor(convStates);
-    aclDestroyTensor(queryStartLoc);
     aclDestroyTensor(y);
+    aclDestroyIntArray(queryStartLoc);
 
     aclrtFree(xDeviceAddr);
     aclrtFree(weightDeviceAddr);
     aclrtFree(biasDeviceAddr);
     aclrtFree(convStatesDeviceAddr);
-    aclrtFree(queryStartLocDeviceAddr);
     aclrtFree(yDeviceAddr);
     if (workspaceSize > 0) {
         aclrtFree(workspaceAddr);

@@ -92,7 +92,7 @@
   <tr>
     <td>initialStateMode</td>
     <td>输入</td>
-    <td>标记序列是否有初始状态。可选输入。</td>
+    <td>标记各序列是否使用初始状态。可选输入，仅在runMode=0（前向计算模式）下支持；长度需等于batch。元素取值范围为0或1：0表示对应序列不使用convStates中的初始状态，1表示对应序列使用cacheIndices（未传入时按序列号映射）指向的convStates缓存行作为初始状态参与计算。</td>
     <td>INT64</td>
     <td>ND</td>
   </tr>
