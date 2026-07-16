@@ -106,9 +106,9 @@ bash ci/cleanup_ci_logs.sh
 set +u
 
 # 1. CANN toolkit environment
-if [[ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ]]; then
-    source /usr/local/Ascend/ascend-toolkit/set_env.sh
-    echo "[CI-950] Sourced CANN toolkit env: /usr/local/Ascend/ascend-toolkit/set_env.sh"
+if [[ -f /usr/local/Ascend/cann-9.1.0-beta.1/bin/setenv.bash ]]; then
+    source /usr/local/Ascend/cann-9.1.0-beta.1/bin/setenv.bash
+    echo "[CI-950] Sourced CANN toolkit env: /usr/local/Ascend/cann-9.1.0-beta.1/bin/setenv.bash"
 fi
 
 # 2. AscendNPU-IR (Bisheng compiler) environment
@@ -163,6 +163,10 @@ ascend950_ops_arg=()
 if [[ -n "$ci_ops" ]]; then
     ascend950_ops_arg=(--ops="$ci_ops")
 fi
+
+echo "[CI-950] Delete old build artifacts..."
+rm -rf build_out
+rm -rf build
 
 build_cmd=(bash build.sh --pkg --soc=ascend950 --vendor_name=fla_npu "${ascend950_ops_arg[@]}" -j"$ci_jobs")
 echo "[CI-950] Build command: ${build_cmd[*]}"
