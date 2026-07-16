@@ -742,11 +742,6 @@ def npu_chunk_kda_fwd(
             if local_chunk < 0 or local_chunk >= seq_chunks:
                 raise RuntimeError("npu_chunk_kda_fwd: chunk_indices chunk_id is out of range.")
     total_chunks = _kda_total_chunks(batch, seqlen, chunk_size, cu_seqlens_for_call, chunk_indices_for_call)
-    if cu_seqlens_for_call is not None and total_chunks > 4096:
-        raise RuntimeError(
-            "npu_chunk_kda_fwd: varlen input supports at most 4096 chunks in one call; "
-            "split a longer request at sequence boundaries."
-        )
     if cu_seqlens_for_call is not None and seq_num > 1024:
         raise RuntimeError(
             "npu_chunk_kda_fwd: varlen input supports at most 1024 sequences in one call; "

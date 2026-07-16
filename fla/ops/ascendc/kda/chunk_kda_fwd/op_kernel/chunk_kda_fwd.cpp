@@ -52,6 +52,8 @@ constexpr float KDA_FP16_MAX = 65504.0f;
 constexpr uint32_t EXP2_UB_ELEMENTS = 256;
 constexpr uint32_t EXP2_EVENT_ID = 0;
 constexpr uint32_t KDA_MTE2_V_EVENT_ID = 1;
+constexpr uint32_t KDA_SCALAR_MTE2_V_EVENT_ID = 2;
+constexpr uint32_t KDA_SCALAR_V_S_EVENT_ID = 3;
 constexpr uint32_t KDA_SCALAR_V_MTE3_EVENT_ID = 4;
 constexpr uint32_t KDA_SCALAR_MTE3_V_EVENT_ID = 5;
 constexpr uint32_t KDA_MTE2_MTE3_EVENT_ID = 6;
@@ -208,10 +210,10 @@ public:
         isVarLen_ = tiling.isVarLen;
         usedCoreNum_ = tiling.usedCoreNum;
         stage_ = tiling.stage;
-        chunkMap_ = tiling.chunkMap;
-        seqStart_ = tiling.seqStart;
-        seqEnd_ = tiling.seqEnd;
 
+        if (pipe_ != nullptr) {
+            pipe_->InitBuffer(scalarI64Buf_, 32);
+        }
         if (pipe_ != nullptr && initVecBuffers) {
             pipe_->InitBuffer(exp2Buf_, EXP2_UB_ELEMENTS * sizeof(float));
             pipe_->InitBuffer(vecBuf_, KDA_VEC_ARENA_ELEMENTS * sizeof(float));
@@ -411,6 +413,23 @@ private:
     __aicore__ inline void CopyRowOut(GlobalTensor<CopyT> &dst, uint64_t offset, LocalTensor<CopyT> &src)
     {
         CopyVectorOut(dst, offset, src, K_);
+    }
+
+    __aicore__ inline void ReadChunkMetadata(uint64_t flatChunk, uint64_t &seq, uint64_t &start,
+                                             uint64_t &end)
+    {
+        LocalTensor<int64_t> metadata = scalarI64Buf_.Get<int64_t>();
+        DataCopyParams params{1, static_cast<uint16_t>(4 * sizeof(int64_t)), 0, 0};
+        DataCopyPadParams padParams{false, 0, 0, 0};
+        DataCopyPad(metadata, chunkIndices_[flatChunk * 4], params, padParams);
+        SetFlag<HardEvent::MTE2_V>(KDA_SCALAR_MTE2_V_EVENT_ID);
+        WaitFlag<HardEvent::MTE2_V>(KDA_SCALAR_MTE2_V_EVENT_ID);
+        SetFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+        WaitFlag<HardEvent::V_S>(KDA_SCALAR_V_S_EVENT_ID);
+        __ubuf__ int64_t *ptr = reinterpret_cast<__ubuf__ int64_t *>(metadata.GetPhyAddr());
+        seq = static_cast<uint64_t>(ptr[0]);
+        start = static_cast<uint64_t>(ptr[1]);
+        end = static_cast<uint64_t>(ptr[2]);
     }
 
 
@@ -1852,14 +1871,7 @@ private:
             }
         } else {
             if (hasChunkIndices_) {
-                uint32_t chunkMap = chunkMap_[flatChunk];
-                seq = chunkMap >> 16;
-                uint64_t localChunk = chunkMap & 0xFFFFu;
-                start = static_cast<uint64_t>(seqStart_[seq]) + localChunk * BT_;
-                end = start + BT_;
-                if (end > seqEnd_[seq]) {
-                    end = seqEnd_[seq];
-                }
+                ReadChunkMetadata(flatChunk, seq, start, end);
                 b = 0;
                 chunkIdx = flatChunk;
                 h = hv / (HV_ / H_);
@@ -2216,9 +2228,7 @@ private:
     bool isAivOnly_ = false;
     uint64_t usedCoreNum_ = 1;
     int64_t stage_ = 0;
-    const uint32_t *chunkMap_ = nullptr;
-    const uint32_t *seqStart_ = nullptr;
-    const uint32_t *seqEnd_ = nullptr;
+    TBuf<TPosition::VECCALC> scalarI64Buf_;
 };
 } // namespace
 

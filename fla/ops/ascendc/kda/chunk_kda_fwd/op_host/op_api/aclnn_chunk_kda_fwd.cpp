@@ -42,7 +42,6 @@ extern "C" {
 namespace {
 constexpr int64_t MAX_KDA_K_DIM = 256;
 constexpr int64_t MAX_KDA_HEAD_NUM = 128;
-constexpr int64_t MAX_KDA_VARLEN_CHUNKS = 4096;
 constexpr int64_t MAX_KDA_VARLEN_SEQUENCES = 1024;
 
 int KdaFwdDebugStopAfter()
@@ -443,10 +442,6 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
                "for multi-head rank3 input.");
     CHECK_RET(KdaFwdCheckCuSeqlens(params.cuSeqlensOptional, seqlen) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     int64_t expectedChunks = KdaFwdExpectedChunks(params.cuSeqlensOptional, seqlen, params.chunkSize);
-    CHECK_COND(params.cuSeqlensOptional == nullptr || expectedChunks <= MAX_KDA_VARLEN_CHUNKS,
-               ACLNN_ERR_PARAM_INVALID,
-               "varlen input supports at most 4096 chunks in one call; split a longer request at sequence "
-               "boundaries.");
     CHECK_COND(params.cuSeqlensOptional == nullptr || seqNum <= MAX_KDA_VARLEN_SEQUENCES,
                ACLNN_ERR_PARAM_INVALID,
                "varlen input supports at most 1024 sequences in one call; split a larger request at sequence "

@@ -1167,11 +1167,11 @@ def test_chunk_kda_fwd_invalid_chunk_indices_rejected():
             raise AssertionError(f"invalid chunk_indices={indices} must be rejected")
 
 
-def test_chunk_kda_fwd_varlen_sequence_capacity_rejected():
+def test_chunk_kda_fwd_varlen_sequence_count_capacity_rejected():
     device = _device()
     if device.type == "cpu":
         return
-    q, k, v, gk, beta, _ = _make_inputs(device, h=1, hv=2, t=1, dtype=torch.float16)
+    q, k, v, gk, beta, _ = _make_inputs(device, h=1, hv=1, t=1, dtype=torch.float16)
     cu_seqlens = (0,) * 1025 + (1,)
     try:
         fla_ascendc.chunk_kda_fwd(
@@ -1183,21 +1183,22 @@ def test_chunk_kda_fwd_varlen_sequence_capacity_rejected():
     else:
         raise AssertionError("varlen input with more than 1024 sequences must be rejected")
 
-    t = 4096 * 64 + 1
-    q = torch.empty((1, 1, 1, 128), dtype=torch.float16, device=device).expand(1, t, 1, 128)
-    k = torch.empty((1, 1, 1, 128), dtype=torch.float16, device=device).expand(1, t, 1, 128)
-    v = torch.empty((1, 1, 2, 128), dtype=torch.float16, device=device).expand(1, t, 2, 128)
-    gk = torch.empty((1, 1, 2, 128), dtype=torch.float32, device=device).expand(1, t, 2, 128)
-    beta = torch.empty((1, 1, 2), dtype=torch.float32, device=device).expand(1, t, 2)
+
+def test_chunk_kda_fwd_varlen_large_chunk_indices_not_prechecked():
+    device = _device()
+    if device.type == "cpu":
+        return
+    q, k, v, gk, beta, _ = _make_inputs(device, h=1, hv=1, t=1, dtype=torch.float16)
+    repeated_indices = tuple(value for _ in range(4097) for value in (0, 0))
     try:
         fla_ascendc.chunk_kda_fwd(
             q, k, v, gk, beta, q.shape[-1] ** -0.5, 64, layout="BSND",
-            cu_seqlens=(0, t),
+            cu_seqlens=(0, 1), chunk_indices=repeated_indices,
         )
     except RuntimeError as error:
-        assert "at most 4096 chunks" in str(error)
+        assert "exactly one pair per chunk" in str(error)
     else:
-        raise AssertionError("varlen input with more than 4096 chunks must be rejected")
+        raise AssertionError("duplicate chunk_indices should be rejected by semantic validation, not by capacity")
 
 
 def test_chunk_gdn_fwd_h_gk_only_matches_neutral_g():
@@ -1248,7 +1249,8 @@ if __name__ == "__main__":
     test_kda_gate_cumsum_layout_is_not_inferred_from_shape()
     test_chunk_kda_fwd_invalid_head_mapping_rejected()
     test_chunk_kda_fwd_invalid_chunk_indices_rejected()
-    test_chunk_kda_fwd_varlen_sequence_capacity_rejected()
+    test_chunk_kda_fwd_varlen_sequence_count_capacity_rejected()
+    test_chunk_kda_fwd_varlen_large_chunk_indices_not_prechecked()
     test_chunk_gdn_fwd_h_gk_only_matches_neutral_g()
     test_chunk_kda_fwd_upper_triangle_dirty_zero()
     test_chunk_kda_fwd_model_shape_with_stats()
