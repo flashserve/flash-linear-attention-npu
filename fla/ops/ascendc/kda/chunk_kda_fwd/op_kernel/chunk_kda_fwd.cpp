@@ -1221,7 +1221,7 @@ private:
         using LayoutTagC = Catlass::layout::RowMajor;
         using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KdaArchTag, ElementA, LayoutTagA, ElementB,
                                                                 LayoutTagB, ElementC, LayoutTagC>;
-        using PostL1TileShape = tla::Shape<_128, _128, _256>;
+        using PostL1TileShape = tla::Shape<_128, _128, tla::_256>;
         using PostL0TileShape = tla::Shape<_128, _128, _128>;
         using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape, PostL0TileShape,
                                                               ElementA, ElementB, ElementC, void, TileCopy>;
@@ -1657,7 +1657,7 @@ private:
         using LayoutTagC = Catlass::layout::RowMajor;
         using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KdaArchTag, ElementA, LayoutTagA, ElementB,
                                                                 LayoutTagB, ElementC, LayoutTagC>;
-        using PostL1TileShape = tla::Shape<_128, _128, _256>;
+        using PostL1TileShape = tla::Shape<_128, _128, tla::_256>;
         using PostL0TileShape = tla::Shape<_128, _128, _128>;
         using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape, PostL0TileShape,
                                                               ElementA, ElementB, ElementC, void, TileCopy>;
