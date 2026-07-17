@@ -2772,6 +2772,7 @@ def render_accuracy_test(op, spec):
         import pytest
 
         from tests.operators._shared.cases import load_cases, select_cases
+        from tests.operators._shared.npu_generalization import run_generalization_cases
 
 
         OP = "{op}"
@@ -2792,6 +2793,20 @@ def render_accuracy_test(op, spec):
             selected = select_cases(OP)
             ids = [case["id"] for case in selected]
             assert len(ids) == len(set(ids))
+
+
+        @pytest.mark.npu
+        def test_json_generalization_cases():
+            if os.environ.get("FLA_NPU_RUN_OPERATOR_TESTS") != "1":
+                pytest.skip("set FLA_NPU_RUN_OPERATOR_TESTS=1 on an NPU test host")
+            cases = select_cases(
+                OP,
+                tags=("generalization",),
+                route="ascendc",
+                include_negative=False,
+            )
+            assert cases, f"{{OP}} has no executable generalization cases"
+            run_generalization_cases(OP, cases)
 
 
         @pytest.mark.npu
@@ -2952,6 +2967,7 @@ def render_manifest(op, spec):
             "known_limits": spec["limits"],
             "required_outputs": [output[0] for output in spec["outputs"]],
             "accuracy_case_ids": accuracy_case_ids,
+            "generalization_case_ids": [item["id"] for item in cases if "generalization" in item["tags"]],
             "negative_case_ids": negative_case_ids,
             "route_case_ids": route_case_ids,
             "performance_case_ids": performance_case_ids,
@@ -3007,6 +3023,7 @@ def enrich_existing_manifest(op, spec, manifest):
         "known_limits": spec["limits"],
         "required_outputs": [output[0] for output in spec["outputs"]],
         "accuracy_case_ids": [item["id"] for item in cases if "accuracy" in item["tags"]],
+        "generalization_case_ids": [item["id"] for item in cases if "generalization" in item["tags"]],
         "negative_case_ids": [item["id"] for item in cases if "negative" in item["tags"]],
         "route_case_ids": [item["id"] for item in cases if "route" in item["tags"]],
         "performance_case_ids": [item["id"] for item in cases if "performance" in item["tags"]],

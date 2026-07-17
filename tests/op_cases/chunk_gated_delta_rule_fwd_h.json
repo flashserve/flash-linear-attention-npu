@@ -67,6 +67,10 @@
       "chunk_gated_delta_rule_fwd_h_dtype_layout_generalization",
       "chunk_gated_delta_rule_fwd_h_tail_or_varlen"
     ],
+    "generalization_case_ids": [
+      "chunk_gated_delta_rule_fwd_h_dtype_layout_generalization",
+      "chunk_gated_delta_rule_fwd_h_tail_or_varlen"
+    ],
     "negative_case_ids": [
       "chunk_gated_delta_rule_fwd_h_negative_contract",
       "chunk_gated_delta_rule_fwd_h_reserved_option",

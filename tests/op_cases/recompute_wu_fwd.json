@@ -65,6 +65,10 @@
       "recompute_wu_fwd_dtype_layout_generalization",
       "recompute_wu_fwd_tail_or_varlen"
     ],
+    "generalization_case_ids": [
+      "recompute_wu_fwd_dtype_layout_generalization",
+      "recompute_wu_fwd_tail_or_varlen"
+    ],
     "negative_case_ids": [
       "recompute_wu_fwd_negative_contract",
       "recompute_wu_fwd_reserved_gk",

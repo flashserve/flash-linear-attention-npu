@@ -70,6 +70,10 @@
       "causal_conv1d_bwd_dtype_layout_generalization",
       "causal_conv1d_bwd_tail_or_varlen"
     ],
+    "generalization_case_ids": [
+      "causal_conv1d_bwd_dtype_layout_generalization",
+      "causal_conv1d_bwd_tail_or_varlen"
+    ],
     "negative_case_ids": [
       "causal_conv1d_bwd_negative_contract",
       "causal_conv1d_bwd_invalid_width",

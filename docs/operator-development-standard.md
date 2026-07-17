@@ -262,6 +262,16 @@ tests/
 
 涉及手工 UB/L1/GM buffer 复用、跨 pipe 或跨核同步的 kernel 修改，还应按问题类型补充 sanitizer 检查，并确认实际运行的是 sanitizer 编译的 kernel。
 
+三平台构建不能只检查 `OpDef::AddConfig` 或文档声明。应在对应 CANN 环境执行统一构建入口；命令返回成功且生成本次构建的新 run 包后，才可记录该平台编译通过：
+
+```bash
+python3 ci/run_operator_build_matrix.py --soc ascend910b
+python3 ci/run_operator_build_matrix.py --soc ascend910_93
+python3 ci/run_operator_build_matrix.py --soc ascend950
+```
+
+也可在能够同时编译三个目标的环境执行 `python3 ci/run_operator_build_matrix.py --soc all`。`--dry-run` 只用于检查命令和算子集合，不能作为编译通过依据。
+
 ### 7.3 各调用通路测试要求
 
 | 通路 | 测试要求 | 固定归档文件 |
@@ -332,6 +342,20 @@ tests/
 - 测试报告至少记录算子版本、平台、用例总数、通过数、失败用例 ID、精度结论和性能结论；不得提交原始大体积输出、日志或本地环境信息。
 
 实现类型对应的 `fla_npu.ops.ascendc` 或 `fla_npu.ops.triton` 必须覆盖完整主测试矩阵；其他必选通路完成对应调用链验证。
+
+### 7.6 三平台泛化验收
+
+每个正向泛化 case 的 `soc` 必须同时列出 `ascend910b`、`ascend910_93` 和 `ascend950`，并通过 canonical accuracy 入口真实构造 JSON 中的 shape 后调用算子。只解析 JSON、检查 tag 或把 case ID 传给不读取该字段的旧脚本，不算完成泛化测试。
+
+安装当前平台构建产物后，分别执行：
+
+```bash
+python3 ci/run_operator_generalization.py --soc ascend910b --device 0
+python3 ci/run_operator_generalization.py --soc ascend910_93 --device 0
+python3 ci/run_operator_generalization.py --soc ascend950 --device 0
+```
+
+该入口逐算子筛选 `generalization`、`ascendc`、`ACLNN_SUCCESS` case，检查 launch 成功、公开输出 shape 和 NaN/Inf。精度结论仍由各算子的主精度/reference 测试给出；泛化执行通过不能替代精度比较。任一平台编译失败、case 未执行或输出不满足契约时，不得在 README、PR 或测试报告中写该平台已经验证通过。
 
 ## 8. 文档和示例
 

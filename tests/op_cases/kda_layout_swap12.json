@@ -66,6 +66,10 @@
       "kda_layout_swap12_dtype_layout_generalization",
       "kda_layout_swap12_tail_or_varlen"
     ],
+    "generalization_case_ids": [
+      "kda_layout_swap12_dtype_layout_generalization",
+      "kda_layout_swap12_tail_or_varlen"
+    ],
     "negative_case_ids": [
       "kda_layout_swap12_negative_contract",
       "kda_layout_swap12_empty_dimension",

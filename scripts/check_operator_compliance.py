@@ -133,6 +133,7 @@ def validate_manifest(op: str, errors: list[str]) -> None:
         "known_limits",
         "required_outputs",
         "accuracy_case_ids",
+        "generalization_case_ids",
         "negative_case_ids",
         "route_case_ids",
         "performance_case_ids",
@@ -154,6 +155,8 @@ def validate_manifest(op: str, errors: list[str]) -> None:
         return
     ids: set[str] = set()
     all_tags: set[str] = set()
+    generalization_ids: list[str] = []
+    generalization_shapes: set[str] = set()
     model = manifest.get("model")
     allowed_shape_symbols = MODEL_SHAPE_SYMBOLS.get(model, set())
     for index, case in enumerate(cases):
@@ -174,8 +177,18 @@ def validate_manifest(op: str, errors: list[str]) -> None:
             errors.append(f"{prefix}: unknown {model} Shape symbols {sorted(unknown_shape_symbols)}")
         if not isinstance(case.get("seed"), int):
             errors.append(f"{prefix}: seed must be an integer")
+        if not REQUIRED_SOCS.issubset(set(case.get("soc", ()))):
+            errors.append(f"{prefix}: every case must run on A2/A3/A5")
         if "accuracy" in tags and "ascendc" not in case.get("run_on", ()):
             errors.append(f"{prefix}: accuracy cases must run on ascendc")
+        if "generalization" in tags:
+            if isinstance(case_id, str):
+                generalization_ids.append(case_id)
+            generalization_shapes.add(json.dumps(case.get("shape", {}), sort_keys=True))
+            if "ascendc" not in case.get("run_on", ()):
+                errors.append(f"{prefix}: generalization cases must run on ascendc")
+            if case.get("expect", {}).get("return_code") != "ACLNN_SUCCESS":
+                errors.append(f"{prefix}: generalization cases must be positive execution cases")
         if "accuracy" in tags:
             expect = case.get("expect", {})
             if expect.get("finite_outputs") is not True:
@@ -204,6 +217,10 @@ def validate_manifest(op: str, errors: list[str]) -> None:
     for route in capability.get("optional_routes", ()):
         if route not in covered_routes:
             errors.append(f"{path.relative_to(ROOT)}: optional route {route!r} is not covered by any case")
+    if len(generalization_ids) < 2 or len(generalization_shapes) < 2:
+        errors.append(f"{path.relative_to(ROOT)}: require at least two distinct generalization Shapes")
+    if set(coverage.get("generalization_case_ids", ())) != set(generalization_ids):
+        errors.append(f"{path.relative_to(ROOT)}: generalization_case_ids must match tagged cases")
 
 
 def validate_test_tree(op: str, op_root: Path, errors: list[str]) -> None:
@@ -222,6 +239,17 @@ def validate_test_tree(op: str, op_root: Path, errors: list[str]) -> None:
     for path in expected:
         if not path.is_file():
             errors.append(f"missing file: {path.relative_to(ROOT)}")
+    accuracy_path = root / "accuracy" / f"test_{op}.py"
+    if accuracy_path.is_file():
+        accuracy_text = accuracy_path.read_text(encoding="utf-8")
+        for required in ('tags=("generalization",)', "run_generalization_cases(OP, cases)"):
+            if required not in accuracy_text:
+                errors.append(f"{accuracy_path.relative_to(ROOT)}: missing executable JSON generalization hook")
+    shared_runner = TEST_ROOT / "_shared" / "npu_generalization.py"
+    if shared_runner.is_file():
+        shared_text = shared_runner.read_text(encoding="utf-8")
+        if f'"{op}": _run_' not in shared_text:
+            errors.append(f"{shared_runner.relative_to(ROOT)}: missing runner mapping for {op}")
     manifest_path = CASE_ROOT / f"{op}.json"
     if manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -316,6 +344,19 @@ def validate_python_signature(op: str, root: Path, functions, aliases, errors: l
 
 
 def validate_source_rules(operators: dict[str, Path], errors: list[str]) -> None:
+    ci_contracts = {
+        ROOT / "ci" / "run_operator_build_matrix.py": (*REQUIRED_SOCS, "build.sh", "--ops="),
+        ROOT / "ci" / "run_operator_generalization.py": (
+            *REQUIRED_SOCS,
+            "FLA_NPU_RUN_OPERATOR_TESTS",
+            "json_generalization_cases",
+        ),
+    }
+    for path, required_tokens in ci_contracts.items():
+        text = read_text(path, errors)
+        for token in required_tokens:
+            if token not in text:
+                errors.append(f"{path.relative_to(ROOT)}: missing CI contract token {token!r}")
     for cmake in ASCENDC_ROOT.rglob("CMakeLists.txt"):
         text = cmake.read_text(encoding="utf-8")
         if "--cce-auto-sync=on" in text:
@@ -329,6 +370,37 @@ def validate_source_rules(operators: dict[str, Path], errors: list[str]) -> None
         missing = [soc for soc in REQUIRED_SOCS if f'AddConfig("{soc}"' not in text]
         if missing:
             errors.append(f"{definition.relative_to(ROOT)}: missing SOC configs {missing}")
+        class_match = re.search(r"class\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*public\s+OpDef", text)
+        if class_match is None:
+            errors.append(f"{definition.relative_to(ROOT)}: cannot determine OpDef class")
+            continue
+        op_type = class_match.group(1)
+        host_cmake = root / "op_host" / "CMakeLists.txt"
+        cmake_text = read_text(host_cmake, errors)
+        if not cmake_text:
+            continue
+        if "add_op_to_compiled_list()" not in cmake_text:
+            errors.append(f"{host_cmake.relative_to(ROOT)}: operator is absent from compiled list")
+        if re.search(rf"add_modules_sources\s*\(\s*OPTYPE\s+{re.escape(op)}\b", cmake_text, re.S) is None:
+            errors.append(f"{host_cmake.relative_to(ROOT)}: missing add_modules_sources for {op}")
+        compile_names = re.findall(
+            r"add_ops_compile_options\s*\(\s*OP_NAME\s+([A-Za-z_][A-Za-z0-9_]*)", cmake_text, re.S
+        )
+        if not compile_names or op_type not in compile_names:
+            errors.append(f"{host_cmake.relative_to(ROOT)}: missing compile options for {op_type}")
+        wrong_names = sorted(set(compile_names) - {op_type})
+        if wrong_names:
+            errors.append(
+                f"{host_cmake.relative_to(ROOT)}: compile options target other operators {wrong_names}"
+            )
+        if "--cce-auto-sync=off" not in cmake_text:
+            errors.append(f"{host_cmake.relative_to(ROOT)}: missing --cce-auto-sync=off")
+        kernel_sources = list((root / "op_kernel").glob("*.cpp"))
+        if not kernel_sources or not any(
+            re.search(r"__global__\s+__aicore__\s+void\s+", source.read_text(encoding="utf-8"))
+            for source in kernel_sources
+        ):
+            errors.append(f"{root.relative_to(ROOT)}: missing Ascend C kernel entry")
 
 
 def main() -> int:

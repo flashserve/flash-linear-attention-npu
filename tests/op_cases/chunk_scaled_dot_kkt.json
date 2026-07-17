@@ -66,6 +66,10 @@
       "chunk_scaled_dot_kkt_dtype_layout_generalization",
       "chunk_scaled_dot_kkt_tail_or_varlen"
     ],
+    "generalization_case_ids": [
+      "chunk_scaled_dot_kkt_dtype_layout_generalization",
+      "chunk_scaled_dot_kkt_tail_or_varlen"
+    ],
     "negative_case_ids": [
       "chunk_scaled_dot_kkt_negative_contract",
       "chunk_scaled_dot_kkt_varlen_requires_b1",

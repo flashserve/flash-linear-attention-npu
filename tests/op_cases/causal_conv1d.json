@@ -72,6 +72,10 @@
       "causal_conv1d_dtype_layout_generalization",
       "causal_conv1d_tail_or_varlen"
     ],
+    "generalization_case_ids": [
+      "causal_conv1d_dtype_layout_generalization",
+      "causal_conv1d_tail_or_varlen"
+    ],
     "negative_case_ids": [
       "causal_conv1d_negative_contract",
       "causal_conv1d_rank2_forward_requires_qsl",
