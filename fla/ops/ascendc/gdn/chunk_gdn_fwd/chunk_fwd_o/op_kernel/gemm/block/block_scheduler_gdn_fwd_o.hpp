@@ -95,11 +95,10 @@ struct BlockSchedulerGdnFwdO {
     AscendC::GlobalTensor<int64_t> gmSeqlen;
     AscendC::GlobalTensor<int64_t> gmChunkOffsets;
 
-    Arch::CrossCoreFlag cube1Done{3};
-    Arch::CrossCoreFlag vec1Done{4};
-    Arch::CrossCoreFlag cube2Done{5};
-    Arch::CrossCoreFlag cube3Done{6};
-    Arch::CrossCoreFlag vec2Done{7};
+    Arch::CrossCoreFlag cube1Done[PING_PONG_STAGES] = {0, 1};
+    Arch::CrossCoreFlag vec1Done[PING_PONG_STAGES] = {2, 3};
+    Arch::CrossCoreFlag cube3Done[PING_PONG_STAGES] = {4, 5};
+    Arch::CrossCoreFlag vec2Done[PING_PONG_STAGES] = {6, 7};
 
     CATLASS_DEVICE
     BlockSchedulerGdnFwdO() {}

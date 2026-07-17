@@ -78,8 +78,9 @@ private:
     GlobalTensor<betaType> dgTensor;
     GlobalTensor<kType> dATensor;
     GlobalTensor<kType> workSpaceTensor;
-    Arch::CrossCoreFlagWithReverse<5> flagAicFinishStore{SYNC_FLAG_2, SYNC_FLAG_3};
+    Arch::CrossCoreFlag flagAicFinishStore{SYNC_FLAG_2};
     Arch::CrossCoreFlagWithReverse<> flagAivFinishStore{SYNC_FLAG_4, SYNC_FLAG_5};
+    Arch::CrossCoreFlag flagWorkspaceFree[2] = {6, 7};
 
     TQue<AscendC::TPosition::VECIN, 1> oneInQue;
     TQue<AscendC::TPosition::VECOUT, 1> oneOutQue;
@@ -197,6 +198,9 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
     auto tensorGExpFP32 = persistent[persistentStride];
     auto tensorDbetaAccFP32 = persistent[2 * persistentStride];
     auto tensorDgAccFP32 = persistent[3 * persistentStride];
+
+    Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(flagWorkspaceFree[0]);
+    Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(flagWorkspaceFree[1]);
 
     // Outer loop distributes chunks across AIC/AIV core groups; inner loop
     // iterates heads for the same chunk.  For each (chunk, head), AIV performs
@@ -323,7 +327,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
             // DK = dA @ Kbeta.  Then wait for AIC's first ready event:
             // Dkb = dA^T @ K.
             Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
-            Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
+            Arch::CrossCoreWaitFlag(flagAicFinishStore);
 
             bool waitedDkbgReady = false;
             bool waitedDKReady = false;
@@ -396,7 +400,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
 
                 if (!waitedDkbgReady) {
                     // Second AIC ready event: Dkbg = A^T @ dw is available.
-                    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
+                    Arch::CrossCoreWaitFlag(flagAicFinishStore);
                     waitedDkbgReady = true;
                 }
                 tensorIn = oneInQue.AllocTensor<kType>();
@@ -448,7 +452,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                 PipeBarrier<PIPE_V>();
                 if (!waitedDKReady) {
                     // Third AIC ready event: DK = dA @ Kbeta is available.
-                    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
+                    Arch::CrossCoreWaitFlag(flagAicFinishStore);
                     waitedDKReady = true;
                 }
 
@@ -485,14 +489,14 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                 oneOutQue.FreeTensor(tensorDkOut);
             }
             if (!waitedDkbgReady) {
-                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
+                Arch::CrossCoreWaitFlag(flagAicFinishStore);
             }
             if (!waitedDKReady) {
-                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
+                Arch::CrossCoreWaitFlag(flagAicFinishStore);
             }
 
             // Fourth AIC ready event: Dvb = A^T @ du is available.
-            Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
+            Arch::CrossCoreWaitFlag(flagAicFinishStore);
 
             // Stage V2: consume Dvb and V to compute:
             //   dbeta += reduce(Dvb * V)
@@ -553,7 +557,7 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
             }
 
             // Fifth AIC ready event: KKT = K @ K^T is available.
-            Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
+            Arch::CrossCoreWaitFlag(flagAicFinishStore);
 
             {
                 uint64_t kktOffset = 0;
@@ -620,6 +624,11 @@ __aicore__ void inline PrepareWyReprBwdFullVectorProcess<kType, betaType>::Proce
                         PipeBarrier<PIPE_V>();
                     }
                 }
+
+                // All GM reads from this workspace slot are complete.  The
+                // remaining reductions use UB only, so AIC can safely reuse
+                // the slot after both AIV sub-blocks reach this point.
+                Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(flagWorkspaceFree[workspaceBufferIdx]);
 
                 // row_reduce(DAA): only reduce rows owned by this AIV sub-block.
                 // Each sub-block writes disjoint dg rows later, so reducing all

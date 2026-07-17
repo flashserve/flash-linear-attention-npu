@@ -13,9 +13,8 @@
  */
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_VEC_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_VEC_H
-#endif
 
-#include <cmath>
+#include <type_traits>
 #include "kernel_operator.h"
 #include "chunk_gated_delta_rule_bwd_dhu_base.h"
 
@@ -36,9 +35,9 @@ private:
     __aicore__ inline void InitGlobalTensor(GM_ADDR q, GM_ADDR dv, GM_ADDR g, GM_ADDR cu_seqlens, 
                                             GM_ADDR dv2, GM_ADDR dh, GM_ADDR workspace);
     __aicore__ inline void CaclOffset(const uint32_t coarseTaskIdx, const uint32_t h, uint64_t& tailChunkLen);
-    __aicore__ inline void CalcGatedQ(float& gLast, float& gLastExp, const bool isLastChunk); 
-    __aicore__ inline void CalcDv2(const float gLast, uint64_t& curGmOffsetV, const bool isLastChunk); 
-    __aicore__ inline void UpdateDh(const float gLastExp, uint64_t& curGmOffsetH, const bool isLastChunk); 
+    __aicore__ inline void CalcGatedQ(float& gLast, float& gLastExp, const bool isLastChunk);
+    __aicore__ inline void CalcDv2(const float gLast, uint64_t& curGmOffsetV, const bool isLastChunk);
+    __aicore__ inline void UpdateDh(const float gLastExp, uint64_t& curGmOffsetH, const bool isLastChunk);
 
 
 protected:
@@ -221,7 +220,7 @@ __aicore__ inline void GDRVec<DT, GT>::TailChunkProcess(uint32_t tailChunkLen)
         CrossCoreSetFlag<0x2, PIPE_MTE3>(CROSS_CORE_V2C_DV2); // 计算完一个chunk的dv2,通知cube可以开始计算w @ dv2 
     }
     // updated dh
-    UpdateDh(gLastExp, curGmOffsetH, true); 
+    UpdateDh(gLastExp, curGmOffsetH, true);
 }
 
 template <typename DT, typename GT>
@@ -280,7 +279,7 @@ __aicore__ inline void GDRVec<DT, GT>::CaclOffset(const uint32_t coarseTaskIdx, 
 }
 
 template <typename DT, typename GT>
-__aicore__ inline void GDRVec<DT, GT>::CalcGatedQ(float& gLast, float& gLastExp, const bool isLastChunk) 
+__aicore__ inline void GDRVec<DT, GT>::CalcGatedQ(float& gLast, float& gLastExp, const bool isLastChunk)
 {
     if (this->curCalcBT == 0) {
         if (chunkIdx_ != 0) {
@@ -288,6 +287,7 @@ __aicore__ inline void GDRVec<DT, GT>::CalcGatedQ(float& gLast, float& gLastExp,
         }
         return;
     }
+    // GetValue emits the required vector/scalar dependency without expanding the gate state to a full vector.
     if constexpr (std::is_same<GT, float>::value) {
         if (this->subBlockIdx == 0) {
             CopyIn(this->gCastLocal, this->gCastLocal, this->gGm[gmOffsetG_ + bos_], this->curBT, false);
@@ -328,7 +328,7 @@ __aicore__ inline void GDRVec<DT, GT>::CalcGatedQ(float& gLast, float& gLastExp,
 }
 
 template <typename DT, typename GT>
-__aicore__ inline void GDRVec<DT, GT>::CalcDv2(const float gLast, uint64_t& curGmOffsetV, const bool isLastChunk) 
+__aicore__ inline void GDRVec<DT, GT>::CalcDv2(const float gLast, uint64_t& curGmOffsetV, const bool isLastChunk)
 {
     curGmOffsetV = gmOffsetV_ + bos_ * this->V;
     if (isLastChunk) {
@@ -354,7 +354,8 @@ __aicore__ inline void GDRVec<DT, GT>::CalcDv2(const float gLast, uint64_t& curG
 }
 
 template <typename DT, typename GT>
-__aicore__ inline void GDRVec<DT, GT>::UpdateDh(const float gLastExp, uint64_t& curGmOffsetH, const bool isLastChunk) 
+__aicore__ inline void GDRVec<DT, GT>::UpdateDh(const float gLastExp, uint64_t& curGmOffsetH,
+                                                const bool isLastChunk)
 {
     curGmOffsetH = gmOffsetH_ + chunkIdx_ * dhBlockSize_;
     if (isLastChunk) {
@@ -389,3 +390,5 @@ __aicore__ inline void GDRVec<DT, GT>::UpdateDh(const float gLastExp, uint64_t& 
 }
 
 } // namespace ChunkGDRBwdDhu
+
+#endif // CHUNK_GATED_DELTA_RULE_BWD_DHU_VEC_H

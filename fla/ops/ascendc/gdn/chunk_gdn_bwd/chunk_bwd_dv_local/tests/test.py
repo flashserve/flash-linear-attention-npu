@@ -545,6 +545,8 @@ if __name__ == "__main__":
     test_chunk_bwd_dv_local_fix(B=16, H_qk=32, T=4096, K=128, V=128, chunk_size=64, scale=0.0442, ktype=torch.float16, gtype=torch.float16, case_name="C3")
     # C4
     test_chunk_bwd_dv_local_fix(B=8, H_qk=32, T=8192, K=128, V=128, chunk_size=64, scale=0.03125, ktype=torch.bfloat16, gtype=torch.bfloat16, case_name="C4")
+    # A5 bidirectional reverse-sync regression: both handshakes exceed one hardware counter window.
+    test_chunk_bwd_dv_local_fix(B=2, H_qk=32, T=8192, K=128, V=128, chunk_size=64, scale=0.03125, ktype=torch.bfloat16, gtype=torch.float32, case_name="A5_SYNC_B2")
     # C5
     test_chunk_bwd_dv_local_fix(B=128, H_qk=4, T=1024, K=128, V=128, chunk_size=64, scale=0.088, ktype=torch.float16, gtype=torch.float16, case_name="C5")
     # C6

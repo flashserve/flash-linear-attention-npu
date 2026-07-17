@@ -18,6 +18,7 @@
 #include <type_traits>
 #include "chunk_bwd_dv_local_struct.h"
 #include "chunk_bwd_dv_local_common.h"
+#include "catlass/arch/cross_core_sync.hpp"
 #include "kernel_operator.h"
 #include "kernel_utils/vector/regbase.hpp"
 
@@ -30,6 +31,10 @@ template <typename QKVT, typename GT, typename Strategy>
 class ChunkBwdDvLocalVector {
 private:
     Strategy strategy;
+    Catlass::Arch::CrossCoreFlagWithReverse<> aivToAicGatedReadyFlag{
+        SYNC_AIV_AIC_GATED_READY_FLAG, SYNC_AIC_AIV_GATED_FREE_FLAG};
+    Catlass::Arch::CrossCoreFlagWithReverse<> aicToAivQkReadyFlag{
+        SYNC_AIC_AIV_QK_READY_FLAG, SYNC_AIV_AIC_QK_FREE_FLAG};
 
 public:
     __aicore__ inline ChunkBwdDvLocalVector(const Strategy &s) : strategy(s)
@@ -160,9 +165,9 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         taskLineNum = taskEndLine - taskStartLine + 1;
         if (taskLineNum == 0) {
             if (doHead % hRatio == 0) {
-                AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_3);
+                Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(aicToAivQkReadyFlag);
             }
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_1);
+            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(aivToAicGatedReadyFlag);
             continue;
         }
 
@@ -183,7 +188,7 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         }
 
         if (doHead % hRatio == 0) {
-            AscendC::CrossCoreWaitFlag(SYNC_AIC_AIV_FLAG_3);
+            Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(aicToAivQkReadyFlag);
         }
 
         {
@@ -229,7 +234,7 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
             AscendC::DataCopy(workspaceGm[taskOffset], kqOutLocalTensor, taskLineNum * strategy.chunkSize);
             kqTQueOut.FreeTensor(kqOutLocalTensor);
         }
-        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_1);
+        Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(aivToAicGatedReadyFlag);
     }
 }
 
