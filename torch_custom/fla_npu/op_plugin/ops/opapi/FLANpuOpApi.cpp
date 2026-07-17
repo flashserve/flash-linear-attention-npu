@@ -26,6 +26,37 @@ using npu_preparation = at_npu::native::OpPreparation;
 using namespace op_plugin::utils;
 using namespace op_infer;
 
+namespace {
+bool ResolveChunkLocalCumsumOutputDtype(
+    const std::string &output_dtype_str,
+    c10::ScalarType input_dtype,
+    c10::ScalarType &resolved_dtype)
+{
+    if (output_dtype_str.empty() || output_dtype_str == "float" || output_dtype_str == "float32" ||
+        output_dtype_str == "fp32" || output_dtype_str == "torch.float" ||
+        output_dtype_str == "torch.float32") {
+        resolved_dtype = c10::ScalarType::Float;
+        return true;
+    }
+    if (output_dtype_str == "same" || output_dtype_str == "same_as_input" || output_dtype_str == "input" ||
+        output_dtype_str == "none" || output_dtype_str == "None" || output_dtype_str == "null") {
+        resolved_dtype = input_dtype;
+        return true;
+    }
+    if (output_dtype_str == "float16" || output_dtype_str == "fp16" || output_dtype_str == "half" ||
+        output_dtype_str == "torch.float16" || output_dtype_str == "torch.half") {
+        resolved_dtype = c10::ScalarType::Half;
+        return true;
+    }
+    if (output_dtype_str == "bfloat16" || output_dtype_str == "bf16" ||
+        output_dtype_str == "torch.bfloat16") {
+        resolved_dtype = c10::ScalarType::BFloat16;
+        return true;
+    }
+    return false;
+}
+} // namespace
+
 
 ::std::tuple<at::Tensor,at::Tensor,at::Tensor,at::Tensor> npu_prepare_wy_repr_bwd_full(const at::Tensor & k, const at::Tensor & v, const at::Tensor & beta, const at::Tensor & A, const at::Tensor & dA, const at::Tensor & dw, const at::Tensor & du, const at::Tensor & g, int64_t chunk_size, at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices)
 {
@@ -595,56 +626,50 @@ at::Tensor npu_solve_tri(
 at::Tensor npu_chunk_local_cumsum(
     const at::Tensor &g,
     int64_t chunk_size,
-    const c10::optional<at::Tensor> &cu_seqlens,
-    const c10::optional<at::Tensor> &chunk_indices_out,
+    at::OptionalIntArrayRef cu_seqlens,
+    at::OptionalIntArrayRef chunk_indices_out,
     bool reverse,
     double scale,
     bool head_first,
     c10::string_view output_dtype)
 {
-    TORCH_CHECK(g.dim() >= 3, "npu_chunk_local_cumsum: g must be [B, H, T, *], got ", g.sizes());
-    TORCH_CHECK(g.scalar_type() == at::kFloat, "npu_chunk_local_cumsum: only float32 g is supported.");
+    TORCH_CHECK(g.dim() == 3, "npu_chunk_local_cumsum: g must be rank-3 [B, H, T], got ", g.sizes());
+    TORCH_CHECK(g.scalar_type() == at::kFloat || g.scalar_type() == at::kHalf ||
+                    g.scalar_type() == at::kBFloat16,
+                "npu_chunk_local_cumsum: g dtype must be float32, float16, or bfloat16, got ",
+                g.scalar_type());
     TORCH_CHECK(chunk_size > 0 && (chunk_size & (chunk_size - 1)) == 0,
                 "npu_chunk_local_cumsum: chunk_size must be a positive power of two, got ", chunk_size);
-    TORCH_CHECK(head_first, "npu_chunk_local_cumsum: only head_first=true / [B, H, T, *] layout is supported.");
+    TORCH_CHECK(head_first, "npu_chunk_local_cumsum: only head_first=true / [B, H, T] layout is supported.");
 
     std::string output_dtype_str(output_dtype.data(), output_dtype.size());
-    if (output_dtype_str.empty()) {
-        output_dtype_str = "float32";
-    }
-    TORCH_CHECK(output_dtype_str == "float32" || output_dtype_str == "torch.float" ||
-                    output_dtype_str == "torch.float32",
-                "npu_chunk_local_cumsum: output_dtype only supports float32, got ", output_dtype_str);
+    c10::ScalarType out_scalar_type = c10::ScalarType::Float;
+    TORCH_CHECK(ResolveChunkLocalCumsumOutputDtype(output_dtype_str, g.scalar_type(), out_scalar_type),
+                "npu_chunk_local_cumsum: output_dtype must be float32/float16/bfloat16 or same/input/none, got ",
+                output_dtype_str);
 
     at::Tensor g_contig = g.contiguous();
-    at::Tensor out = at::empty_like(g_contig);
-    at::Tensor empty_index = at::empty({0}, g_contig.options().dtype(at::kLong));
+    at::Tensor out = at::empty(g_contig.sizes(), g_contig.options().dtype(out_scalar_type));
 
-    at::Tensor cu_seqlens_tensor = empty_index;
-    if (cu_seqlens.has_value() && cu_seqlens->defined()) {
-        cu_seqlens_tensor = cu_seqlens->contiguous();
-        TORCH_CHECK(cu_seqlens_tensor.scalar_type() == at::kLong,
-                    "npu_chunk_local_cumsum: cu_seqlens must be int64.");
-    }
-
-    at::Tensor chunk_indices_tensor = empty_index;
-    if (chunk_indices_out.has_value() && chunk_indices_out->defined()) {
-        chunk_indices_tensor = chunk_indices_out->contiguous();
-        TORCH_CHECK(chunk_indices_tensor.scalar_type() == at::kLong,
-                    "npu_chunk_local_cumsum: chunk_indices_out must be int64.");
-    }
-
-    if (cu_seqlens_tensor.numel() > 0) {
+    const bool has_cu_seqlens = cu_seqlens.has_value() && cu_seqlens->size() > 0;
+    const bool has_chunk_indices = chunk_indices_out.has_value() && chunk_indices_out->size() > 0;
+    TORCH_CHECK(has_cu_seqlens == has_chunk_indices,
+                "npu_chunk_local_cumsum: cu_seqlens and chunk_indices_out must be both provided or both omitted.");
+    if (has_cu_seqlens) {
+        TORCH_CHECK(cu_seqlens->size() >= 2,
+                    "npu_chunk_local_cumsum: cu_seqlens must have at least 2 elements, got ",
+                    cu_seqlens->size());
+        TORCH_CHECK((chunk_indices_out->size() % 2) == 0,
+                    "npu_chunk_local_cumsum: chunk_indices_out element count must be even, got ",
+                    chunk_indices_out->size());
         TORCH_CHECK(g_contig.size(0) == 1,
                     "npu_chunk_local_cumsum: B must be 1 when cu_seqlens is provided, got ", g_contig.size(0));
-        TORCH_CHECK(chunk_indices_tensor.numel() > 0,
-                    "npu_chunk_local_cumsum: chunk_indices_out is required when cu_seqlens is provided.");
     }
 
     char *output_dtype_cstr = const_cast<char *>(output_dtype_str.c_str());
     EXEC_NPU_CMD_EXT(
         aclnnChunkLocalCumsum,
-        g_contig, cu_seqlens_tensor, chunk_indices_tensor,
+        g_contig, cu_seqlens, chunk_indices_out,
         chunk_size, reverse, scale, head_first, output_dtype_cstr,
         out
     );

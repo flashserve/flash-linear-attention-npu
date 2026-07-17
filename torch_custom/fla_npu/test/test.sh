@@ -18,6 +18,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export PYTHONPATH="$(cd "$SCRIPT_DIR/.." && pwd):${PYTHONPATH:-}"
 TEST_DEVICE_ID=""
 SINGLE_OP=""
 DRY_RUN=false

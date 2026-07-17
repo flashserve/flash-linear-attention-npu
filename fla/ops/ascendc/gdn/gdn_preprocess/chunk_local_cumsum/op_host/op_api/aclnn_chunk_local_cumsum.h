@@ -17,8 +17,8 @@ extern "C" {
 __attribute__((visibility("default")))
 aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
     const aclTensor *g,
-    const aclTensor *cuSeqlensOptional,
-    const aclTensor *chunkIndicesOutOptional,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOutOptional,
     int64_t chunkSize,
     bool reverse,
     double scale,
@@ -42,8 +42,8 @@ aclnnStatus aclnnChunkLocalCumsum(
 namespace l0op {
 const aclTensor *ChunkLocalCumsum(
     const aclTensor *g,
-    const aclTensor *cuSeqlensOptional,
-    const aclTensor *chunkIndicesOutOptional,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOutOptional,
     int64_t chunkSize,
     bool reverse,
     double scale,
