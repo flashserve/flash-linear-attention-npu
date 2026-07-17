@@ -20,6 +20,8 @@
 #include "log/log.h"
 #include "tiling/platform/platform_ascendc.h"
 
+#include <cmath>
+
 namespace optiling {
 
 REGISTER_OPS_TILING_TEMPLATE(RecurrentGatedDeltaRule, RecurrentGatedDeltaRuleTiling, 0);
@@ -34,6 +36,7 @@ const size_t SSM_STATE_INDICES_INDEX = 6;
 const size_t G_INDEX = 7;
 const size_t GK_INDEX = 8;
 const size_t ACC_TO_INDEX = 9;
+const size_t OUT_INDEX = 0;
 
 void RecurrentGatedDeltaRuleTiling::InitCompileInfo()
 {
@@ -135,13 +138,18 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::PostTiling()
 {
     context_->SetBlockDim(tilingData_.vectorCoreNum);
     auto tilingDataSize = sizeof(RecurrentGatedDeltaRuleTilingData);
-    errno_t ret = memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(),
+    auto rawTilingData = context_->GetRawTilingData();
+    OP_CHECK_IF(rawTilingData == nullptr || rawTilingData->GetData() == nullptr ||
+                    rawTilingData->GetCapacity() < tilingDataSize,
+                OP_LOGE(context_->GetNodeName(), "raw tiling buffer is null or too small."),
+                return ge::GRAPH_FAILED);
+    errno_t ret = memcpy_s(rawTilingData->GetData(), rawTilingData->GetCapacity(),
                            reinterpret_cast<void *>(&tilingData_), tilingDataSize);
     if (ret != EOK) {
         OP_LOGE(context_->GetNodeName(), "memcpy_s failed, ret=%d", ret);
         return ge::GRAPH_FAILED;
     }
-    context_->GetRawTilingData()->SetDataSize(tilingDataSize);
+    rawTilingData->SetDataSize(tilingDataSize);
 
     size_t *workspaces = context_->GetWorkspaceSizes(1);
     OP_CHECK_IF(workspaces == nullptr, OPS_REPORT_CUBE_INNER_ERR(context_->GetNodeName(), "workspaces is null"),
@@ -174,6 +182,10 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::CheckContext()
     OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputShape(SSM_STATE_INDICES_INDEX));
     OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(SSM_STATE_INDICES_INDEX));
 
+    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetOutputShape(OUT_INDEX));
+    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetOutputDesc(OUT_INDEX));
+    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetAttrs());
+
     return ge::GRAPH_SUCCESS;
 }
 
@@ -197,6 +209,9 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeDtype()
     auto ssmStateIndicesDtype = context_->GetInputDesc(SSM_STATE_INDICES_INDEX)->GetDataType();
     OP_CHECK_IF(cuSeqlensDtype != ge::DT_INT32 || ssmStateIndicesDtype != ge::DT_INT32,
                 OP_LOGE(context_->GetNodeName(), "cuSeqlens dtype and ssmStateIndices dtype should be int32"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(context_->GetOutputDesc(OUT_INDEX)->GetDataType() != ge::DT_BF16,
+                OP_LOGE(context_->GetNodeName(), "out dtype should be bfloat16"),
                 return ge::GRAPH_FAILED);
 
     if (context_->GetOptionalInputDesc(G_INDEX) != nullptr) {
@@ -224,7 +239,46 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeDtype()
 ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeShapes()
 {
     RecurrentGatedDeltaRuleTilingProcessor processor(BuildProcessorContext());
-    return processor.ProcessShapes(tilingData_);
+    OP_CHECK_IF(processor.ProcessShapes(tilingData_) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context_->GetNodeName(), "required shape validation failed."),
+                return ge::GRAPH_FAILED);
+
+    const auto &outShape = context_->GetOutputShape(OUT_INDEX)->GetStorageShape();
+    const auto &valueShape = context_->GetInputShape(VALUE_INDEX)->GetStorageShape();
+    OP_CHECK_IF(outShape.GetDimNum() != RGDR_QKV_DIM_NUM || outShape.GetDim(0) != valueShape.GetDim(0) ||
+                    outShape.GetDim(1) != valueShape.GetDim(1) || outShape.GetDim(2) != valueShape.GetDim(2),
+                OP_LOGE(context_->GetNodeName(), "out must match value [T,H_v,V]."),
+                return ge::GRAPH_FAILED);
+
+    const int64_t t = valueShape.GetDim(0);
+    const int64_t hv = valueShape.GetDim(1);
+    const int64_t k = context_->GetInputShape(QUERY_INDEX)->GetStorageShape().GetDim(2);
+    const int64_t logicalBatch = context_->GetInputShape(CUSEQLENS_INDEX)->GetStorageShape().GetDim(0) - 1;
+    if (context_->GetOptionalInputDesc(G_INDEX) != nullptr) {
+        auto gShapePtr = context_->GetOptionalInputShape(G_INDEX);
+        OP_CHECK_IF(gShapePtr == nullptr || gShapePtr->GetStorageShape().GetDimNum() != 2 ||
+                        gShapePtr->GetStorageShape().GetDim(0) != t ||
+                        gShapePtr->GetStorageShape().GetDim(1) != hv,
+                    OP_LOGE(context_->GetNodeName(), "g must be [T,H_v]."),
+                    return ge::GRAPH_FAILED);
+    }
+    if (context_->GetOptionalInputDesc(GK_INDEX) != nullptr) {
+        auto gkShapePtr = context_->GetOptionalInputShape(GK_INDEX);
+        OP_CHECK_IF(gkShapePtr == nullptr || gkShapePtr->GetStorageShape().GetDimNum() != 3 ||
+                        gkShapePtr->GetStorageShape().GetDim(0) != t ||
+                        gkShapePtr->GetStorageShape().GetDim(1) != hv ||
+                        gkShapePtr->GetStorageShape().GetDim(2) != k,
+                    OP_LOGE(context_->GetNodeName(), "gk must be [T,H_v,K]."),
+                    return ge::GRAPH_FAILED);
+    }
+    if (context_->GetOptionalInputDesc(ACC_TO_INDEX) != nullptr) {
+        auto acceptedShapePtr = context_->GetOptionalInputShape(ACC_TO_INDEX);
+        OP_CHECK_IF(acceptedShapePtr == nullptr || acceptedShapePtr->GetStorageShape().GetDimNum() != 1 ||
+                        acceptedShapePtr->GetStorageShape().GetDim(0) != logicalBatch,
+                    OP_LOGE(context_->GetNodeName(), "num_accepted_tokens must be [B]."),
+                    return ge::GRAPH_FAILED);
+    }
+    return ge::GRAPH_SUCCESS;
 }
 
 bool RecurrentGatedDeltaRuleTiling::CheckFormat(ge::Format format, const std::string &Desc)
@@ -269,7 +323,12 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeFormat()
 ge::graphStatus RecurrentGatedDeltaRuleTiling::GetScale()
 {
     auto attrs = context_->GetAttrs();
-    float scaleValue = *attrs->GetAttrPointer<float>(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    auto scalePtr = attrs->GetAttrPointer<float>(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context_, scalePtr);
+    float scaleValue = *scalePtr;
+    OP_CHECK_IF(!std::isfinite(scaleValue), OP_LOGE(context_->GetNodeName(), "scale must be finite."),
+                return ge::GRAPH_FAILED);
     tilingData_.scale = scaleValue;
 
     return ge::GRAPH_SUCCESS;

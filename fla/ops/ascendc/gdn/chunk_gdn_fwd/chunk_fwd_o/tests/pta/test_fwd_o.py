@@ -10,7 +10,7 @@ from ml_dtypes import bfloat16
 from dataclasses import dataclass
 import math
 # import custom_ops
-import fla_npu
+from fla_npu.ops import ascendc as ascendc_ops
 
 torch.npu.config.allow_internal_format = False
 torch.npu.set_compile_mode(jit_compile=False)
@@ -311,7 +311,7 @@ if __name__ == "__main__":
     torch.npu.synchronize()
     print("step 6: before custom op")
 
-    result = torch.ops.npu.npu_chunk_fwd_o(
+    result = ascendc_ops.chunk_fwd_o(
         q,
         k,
         v,

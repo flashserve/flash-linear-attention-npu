@@ -1,0 +1,593 @@
+{
+  "schema_version": 1,
+  "op": "recompute_wu_fwd",
+  "implementation": "ascendc",
+  "model": "gdn",
+  "symbol_table_version": "gdn-shape-v1",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": [
+      "bfloat16",
+      "float16",
+      "float32"
+    ],
+    "layouts": [
+      "BNSD"
+    ],
+    "features": [
+      "fixed/varlen",
+      "GVA",
+      "标量 gate g"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ],
+    "optional_routes": [
+      "torch_ops_npu"
+    ]
+  },
+  "data_generation": {
+    "floating_inputs": {
+      "distribution": "uniform",
+      "min": -1.0,
+      "max": 1.0
+    },
+    "positive_inputs": {
+      "distribution": "uniform",
+      "min": 0.0,
+      "max": 1.0
+    },
+    "structured_inputs": "由 reference 名称对应的 runner 构造 gate、三角矩阵、状态和索引"
+  },
+  "coverage_requirements": {
+    "public_modes": [
+      "fixed/varlen",
+      "GVA",
+      "标量 gate g"
+    ],
+    "known_limits": [
+      "当前实现仅支持 `K=128`、`V=128/256`、`chunk_size=64/128`。",
+      "必须满足 `H_v % H_k == 0`，A 最后一维等于 chunk_size。",
+      "g 必须提供；gk 当前未实现且必须为 None；varlen 物理 B=1。"
+    ],
+    "required_outputs": [
+      "w",
+      "u"
+    ],
+    "accuracy_case_ids": [
+      "recompute_wu_fwd_main_accuracy",
+      "recompute_wu_fwd_dtype_layout_generalization",
+      "recompute_wu_fwd_tail_or_varlen"
+    ],
+    "negative_case_ids": [
+      "recompute_wu_fwd_negative_contract",
+      "recompute_wu_fwd_reserved_gk",
+      "recompute_wu_fwd_missing_gate",
+      "recompute_wu_fwd_invalid_feature_dim",
+      "recompute_wu_fwd_invalid_a_width",
+      "recompute_wu_fwd_varlen_requires_b1"
+    ],
+    "route_case_ids": [
+      "recompute_wu_fwd_main_accuracy",
+      "recompute_wu_fwd_performance"
+    ],
+    "performance_case_ids": [
+      "recompute_wu_fwd_performance"
+    ]
+  },
+  "tolerance": {
+    "float16": {
+      "rtol": 0.003,
+      "atol": 0.003
+    },
+    "bfloat16": {
+      "rtol": 0.006,
+      "atol": 0.006
+    }
+  },
+  "cases": [
+    {
+      "id": "recompute_wu_fwd_main_accuracy",
+      "tags": [
+        "accuracy",
+        "example",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 64
+      },
+      "dtype": {
+        "kvA": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gk": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch",
+        "torch_ops_npu"
+      ],
+      "reference": "torch_recompute_wu_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "w",
+          "u"
+        ]
+      },
+      "seed": 2026
+    },
+    {
+      "id": "recompute_wu_fwd_dtype_layout_generalization",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 4,
+        "H_v": 8,
+        "T": 256,
+        "K": 128,
+        "V": 256,
+        "C": 128
+      },
+      "dtype": {
+        "kvA": "bfloat16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gk": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_recompute_wu_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "w",
+          "u"
+        ]
+      },
+      "seed": 2027
+    },
+    {
+      "id": "recompute_wu_fwd_tail_or_varlen",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "tail"
+      ],
+      "shape": {
+        "B": 1,
+        "N": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 193,
+        "K": 128,
+        "V": 128,
+        "C": 64
+      },
+      "dtype": {
+        "kvA": "bfloat16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gk": null,
+        "cu_seqlens": [
+          0,
+          65,
+          193
+        ],
+        "chunk_indices": [
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          1,
+          1
+        ]
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_recompute_wu_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "w",
+          "u"
+        ]
+      },
+      "seed": 2028
+    },
+    {
+      "id": "recompute_wu_fwd_performance",
+      "tags": [
+        "performance",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 64
+      },
+      "dtype": {
+        "kvA": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gk": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "direct_launch"
+      ],
+      "reference": "current_mainline_ascendc_profile",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "metric": "msopprof",
+        "requirement": "no_regression"
+      },
+      "seed": 2029
+    },
+    {
+      "id": "recompute_wu_fwd_negative_contract",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 3,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 64
+      },
+      "dtype": {
+        "kvA": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gk": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "HV divisible by HK"
+      },
+      "seed": 2030
+    },
+    {
+      "id": "recompute_wu_fwd_reserved_gk",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 64
+      },
+      "dtype": {
+        "kvA": "float16",
+        "beta_g": "float32",
+        "gk": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gk": "present",
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "gk is reserved"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2031
+    },
+    {
+      "id": "recompute_wu_fwd_missing_gate",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 64
+      },
+      "dtype": {
+        "kvA": "float16",
+        "beta": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g": null,
+        "gk": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "g must not be nullptr"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2032
+    },
+    {
+      "id": "recompute_wu_fwd_invalid_feature_dim",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 64,
+        "V": 128,
+        "C": 64
+      },
+      "dtype": {
+        "kvA": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gk": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "K must be 128"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2033
+    },
+    {
+      "id": "recompute_wu_fwd_invalid_a_width",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 32
+      },
+      "dtype": {
+        "kvA": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gk": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "A must be"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2034
+    },
+    {
+      "id": "recompute_wu_fwd_varlen_requires_b1",
+      "tags": [
+        "negative",
+        "boundary",
+        "varlen"
+      ],
+      "shape": {
+        "B": 2,
+        "N": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 193,
+        "K": 128,
+        "V": 128,
+        "C": 64
+      },
+      "dtype": {
+        "kvA": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gk": null,
+        "cu_seqlens": [
+          0,
+          65,
+          193
+        ],
+        "chunk_indices": [
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          1,
+          1
+        ]
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "B must be 1"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2035
+    }
+  ]
+}

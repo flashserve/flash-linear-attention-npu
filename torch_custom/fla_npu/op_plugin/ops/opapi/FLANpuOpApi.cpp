@@ -693,6 +693,9 @@ at::Tensor npu_kda_gate_cumsum(
     int64_t T = is_bnsd ? g.sizes()[2] : (is_ntd ? g.sizes()[1] : (g.dim() == 4 ? g.sizes()[1] : g.sizes()[0]));
     int64_t K = g.dim() == 4 ? g.sizes()[3] : g.sizes()[2];
     int64_t HV = is_bnsd ? g.sizes()[1] : (is_ntd ? g.sizes()[0] : (g.dim() == 4 ? g.sizes()[2] : g.sizes()[1]));
+    for (const auto dim : g.sizes()) {
+        TORCH_CHECK(dim > 0, "npu_kda_gate_cumsum: all g dimensions must be positive.");
+    }
     TORCH_CHECK(K <= 256, "npu_kda_gate_cumsum: K must be <= 256.");
     CheckKdaCuSeqlens(cu_seqlens, T, "npu_kda_gate_cumsum");
     TORCH_CHECK(!cu_seqlens.has_value() || g.dim() == 3 || g.sizes()[0] == 1,
@@ -716,6 +719,10 @@ at::Tensor npu_kda_gate_cumsum(
         }
     } else {
         TORCH_CHECK(!safe, "npu_kda_gate_cumsum: safe_gate only applies when use_gate_in_kernel=True.");
+        TORCH_CHECK(!A_log.has_value() || !A_log->defined(),
+                    "npu_kda_gate_cumsum: A_log must be omitted when use_gate_in_kernel=False.");
+        TORCH_CHECK(!dt_bias.has_value() || !dt_bias->defined(),
+                    "npu_kda_gate_cumsum: dt_bias must be omitted when use_gate_in_kernel=False.");
     }
 
     at::Tensor gk = at::empty(g.sizes(), g.options().dtype(at::kFloat));

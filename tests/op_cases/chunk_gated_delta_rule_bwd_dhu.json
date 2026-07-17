@@ -1,0 +1,552 @@
+{
+  "op": "chunk_gated_delta_rule_bwd_dhu",
+  "schema_version": 1,
+  "model": "gdn",
+  "symbol_table_version": "gdn-shape-v1",
+  "implementation": "ascendc",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": [
+      "float16",
+      "bfloat16",
+      "float32_gate"
+    ],
+    "layouts": [
+      "BNSD"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ],
+    "optional_routes": [
+      "torch_ops_npu"
+    ],
+    "features": [
+      "fixed/varlen",
+      "标量 g",
+      "FP16/BF16 主张量",
+      "FP16/BF16/FP32 gate"
+    ]
+  },
+  "tolerance": {
+    "float16": {
+      "rtol": 0.003,
+      "atol": 0.003
+    },
+    "bfloat16": {
+      "rtol": 0.02,
+      "atol": 0.02
+    }
+  },
+  "cases": [
+    {
+      "id": "dense_fp16_g_c64",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "route",
+        "example"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 256,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 4
+      },
+      "dtype": {
+        "data": "float16",
+        "g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 64,
+        "use_exp2": false,
+        "transpose_state_layout": false
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gK": null,
+        "h0": null,
+        "dht": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch",
+        "torch_ops_npu"
+      ],
+      "reference": "torch_custom/fla_npu/test/test_bwd_dhu.py::chunk_gated_delta_rule_bwd_dhu_cpu",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "dh",
+          "dh0",
+          "dv2"
+        ]
+      },
+      "seed": 2026
+    },
+    {
+      "id": "dense_bf16_scalar_gate_c128_v256",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "performance"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 4,
+        "H_v": 8,
+        "T": 257,
+        "K": 128,
+        "V": 256,
+        "C": 128,
+        "N_c": 3
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 128,
+        "use_exp2": false,
+        "transpose_state_layout": false
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gK": null,
+        "h0": null,
+        "dht": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "direct_launch"
+      ],
+      "reference": "torch_custom/fla_npu/test/test_bwd_dhu.py::chunk_gated_delta_rule_bwd_dhu_cpu",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "metric": "msopprof",
+        "requirement": "no_regression",
+        "baseline": "current_mainline_ascendc_profile",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "dh",
+          "dh0",
+          "dv2"
+        ]
+      },
+      "seed": 2027
+    },
+    {
+      "id": "varlen_tail_fp16",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "N": 3,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 321,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 6
+      },
+      "dtype": {
+        "data": "float16",
+        "g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 64,
+        "use_exp2": false,
+        "transpose_state_layout": false
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gK": null,
+        "h0": null,
+        "dht": null,
+        "cu_seqlens": [
+          0,
+          65,
+          193,
+          321
+        ],
+        "chunk_indices": [
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          1,
+          1,
+          2,
+          0,
+          2,
+          1
+        ]
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch"
+      ],
+      "reference": "torch_custom/fla_npu/test/test_bwd_dhu.py::chunk_gated_delta_rule_bwd_dhu_cpu",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "dh",
+          "dh0",
+          "dv2"
+        ]
+      },
+      "seed": 2028
+    },
+    {
+      "id": "negative_chunk_size",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 32,
+        "N_c": 4
+      },
+      "dtype": {
+        "data": "float16",
+        "g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 32
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gK": null,
+        "h0": null,
+        "dht": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "parameter_validation",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "chunk"
+      },
+      "seed": 2029
+    },
+    {
+      "id": "negative_reserved_gk",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "g": "float32",
+        "gK": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gK": "present",
+        "h0": null,
+        "dht": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "parameter_validation",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "gK is reserved"
+      },
+      "seed": 2030
+    },
+    {
+      "id": "negative_reserved_state_inputs",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "g": "float32",
+        "state": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gK": null,
+        "h0": "present",
+        "dht": "present",
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "parameter_validation",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "reserved"
+      },
+      "seed": 2031
+    },
+    {
+      "id": "negative_reserved_boolean_attrs",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 64,
+        "use_exp2": true,
+        "transpose_state_layout": true
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gK": null,
+        "h0": null,
+        "dht": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "parameter_validation",
+      "expect": {
+        "return_code": "RuntimeError",
+        "message_contains": "must be False"
+      },
+      "seed": 2032
+    },
+    {
+      "id": "negative_partial_varlen_metadata",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "N": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gK": null,
+        "h0": null,
+        "dht": null,
+        "cu_seqlens": [
+          0,
+          64,
+          128
+        ],
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "parameter_validation",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "both be provided"
+      },
+      "seed": 2033
+    }
+  ],
+  "data_generation": {
+    "floating_inputs": {
+      "distribution": "uniform",
+      "min": -1.0,
+      "max": 1.0
+    },
+    "positive_inputs": {
+      "distribution": "uniform",
+      "min": 0.0,
+      "max": 1.0
+    },
+    "structured_inputs": "由 case.optional_inputs 和 reference runner 构造 gate、状态及 varlen 索引"
+  },
+  "coverage_requirements": {
+    "public_modes": [
+      "fixed/varlen",
+      "标量 g",
+      "FP16/BF16 主张量",
+      "FP16/BF16/FP32 gate"
+    ],
+    "known_limits": [
+      "`K <= 128`、`V <= 256`；交付矩阵覆盖 K=128、V=128/256。",
+      "`chunk_size` 仅支持 64/128；`H_v % H_k == 0`。",
+      "`g` 必须提供；`gK`、`h0`、`dht` 和 `dh0` 当前为预留，必须为空。",
+      "varlen 当前仅支持物理 `B=1`，两个索引必须同时提供。",
+      "`use_exp2` 与 `transpose_state_layout` 当前必须为 false。"
+    ],
+    "required_outputs": [
+      "dh",
+      "dh0",
+      "dv2"
+    ],
+    "accuracy_case_ids": [
+      "dense_fp16_g_c64",
+      "dense_bf16_scalar_gate_c128_v256",
+      "varlen_tail_fp16"
+    ],
+    "negative_case_ids": [
+      "negative_chunk_size",
+      "negative_reserved_gk",
+      "negative_reserved_state_inputs",
+      "negative_reserved_boolean_attrs",
+      "negative_partial_varlen_metadata"
+    ],
+    "route_case_ids": [
+      "dense_fp16_g_c64",
+      "varlen_tail_fp16"
+    ],
+    "performance_case_ids": [
+      "dense_bf16_scalar_gate_c128_v256"
+    ]
+  }
+}

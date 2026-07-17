@@ -18,7 +18,7 @@ endif()
 if (BUILD_OPS_RTY_KERNEL) # 回黄kernel
     add_ops_compile_options(
         OP_NAME RecurrentGatedDeltaRule
-        OPTIONS --cce-auto-sync=on
+        OPTIONS --cce-auto-sync=off
                 -Wno-deprecated-declarations
                 -Werror
     )
@@ -32,4 +32,3 @@ if (BUILD_OPS_RTY_KERNEL) # 回黄kernel
 else()
     add_modules_sources(OPTYPE recurrent_gated_delta_rule ACLNNTYPE aclnn_exclude)
 endif()
-

@@ -3,6 +3,7 @@
  * CANN Open Software License Agreement Version 2.0.
  */
 #include "aclnn_chunk_local_cumsum.h"
+#include <cstring>
 #include <new>
 
 #include "acl/acl.h"
@@ -46,7 +47,18 @@ static aclnnStatus CheckNotNull(ChunkLocalCumsumParams params)
 static aclnnStatus CheckParams(ChunkLocalCumsumParams params)
 {
     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(params.chunkSize > 0, ACLNN_ERR_PARAM_INVALID, "chunkSize must be positive.");
+    CHECK_COND(params.chunkSize > 0 && (params.chunkSize & (params.chunkSize - 1)) == 0,
+               ACLNN_ERR_PARAM_INVALID, "chunkSize must be a positive power of two.");
+    CHECK_COND(params.headFirst, ACLNN_ERR_PARAM_INVALID,
+               "headFirst=false is not supported; g must use [B, H, T, ...] layout.");
+    CHECK_COND(std::strcmp(params.outputDtypeOptional, "float32") == 0 ||
+                   std::strcmp(params.outputDtypeOptional, "torch.float") == 0 ||
+                   std::strcmp(params.outputDtypeOptional, "torch.float32") == 0,
+               ACLNN_ERR_PARAM_INVALID, "outputDtypeOptional must select float32.");
+    const bool hasCuSeqlens = params.cuSeqlensOptional != nullptr;
+    const bool hasChunkIndices = params.chunkIndicesOutOptional != nullptr;
+    CHECK_COND(hasCuSeqlens == hasChunkIndices, ACLNN_ERR_PARAM_INVALID,
+               "cuSeqlensOptional and chunkIndicesOutOptional must be provided together.");
     return ACLNN_SUCCESS;
 }
 
@@ -86,6 +98,9 @@ aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
                           outputDtypeOptional),
                    DFX_OUT(out));
 
+    CHECK_COND(workspaceSize != nullptr, ACLNN_ERR_PARAM_NULLPTR, "workspaceSize must not be nullptr.");
+    CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "executor must not be nullptr.");
+
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
@@ -112,6 +127,7 @@ aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
 aclnnStatus aclnnChunkLocalCumsum(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkLocalCumsum);
+    CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "executor must not be nullptr.");
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
                "ChunkLocalCumsum launch failed.");
     return ACLNN_SUCCESS;

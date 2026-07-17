@@ -1,136 +1,110 @@
-# ChunkLocalCumsum 算子说明
+# ChunkLocalCumsum
 
-`ChunkLocalCumsum` 是用于 Gated Delta Rule 中门控张量 `g` 的 chunk 内局部累加算子。该算子从 Triton `chunk_local_cumsum` 迁移为 AscendC 自定义算子，支持固定长度序列和基于 `cu_seqlens`、`chunk_indices_out` 的变长序列。
+## 1. 功能概述
 
----
+在每个时间 chunk 内对 gate 或任意尾部特征做局部前缀/后缀累加。该 Ascend C 实现替换 Triton 预处理路径，并支持 fixed/varlen 与 scale。
 
-## 1. 算子功能
+## 2. 数学定义
 
-输入 `g` 的 shape 为 `[B, H, T]`。算子按 `chunk_size` 在时间维 `T` 上划分 chunk，并在每个 chunk 内执行局部累加，输出 shape 与输入一致。
-
-正向模式 `reverse=false`:
+输入 `g` 的 shape 为 `[B,H_v,T]`。算子按 `chunk_size` 在时间维 `T` 上划分 chunk，并在每个 chunk 内执行局部累加，输出 shape 与输入一致：
 
 ```text
-out[b, h, t] = scale * sum(g[b, h, k]), k = chunk_start ... t
+out[b,h,t] = scale * sum(k=chunk_start..t) g[b,h,k]       reverse=false
+out[b,h,t] = scale * sum(k=t..chunk_end-1) g[b,h,k]       reverse=true
 ```
 
-反向模式 `reverse=true`:
+变长序列的 `chunk_start`/`chunk_end` 在每条逻辑序列内计算，不跨 `cu_seqlens` 边界。
 
-```text
-out[b, h, t] = scale * sum(g[b, h, k]), k = t ... chunk_end - 1
-```
+## 3. 输入、输出和属性
 
-其中 `chunk_start = floor(t / chunk_size) * chunk_size`，`chunk_end = min(chunk_start + chunk_size, T)`。
+### 3.1 输入
 
----
+| 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| `g` | 必选 | `[B,H_v,T] 或 [B,H_v,T,...]` | FP32 | head-first | 待累加 gate/特征 |
+| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | varlen 累计长度，Device tensor |
+| `chunk_indices_out` | 可选 | `[N_b,2] 或 [2*N_b]` | INT64 | ND | varlen 内部处理块映射，Device tensor |
 
-## 2. 接口定义
+### 3.2 输出
 
-### 2.1 ACLNN 接口
+| 名称 | Shape | Dtype | 说明 |
+| --- | --- | --- | --- |
+| `out` | `与 g 相同` | FP32 | chunk-local 累加结果 |
 
-```cpp
-// 获取执行所需的 workspace 大小
-aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
-    const aclTensor *g,
-    const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkIndicesOutOptional,
-    int64_t chunkSize,
-    bool reverse,
-    double scale,
-    bool headFirst,
-    char *outputDtypeOptional,
-    const aclTensor *out,
-    uint64_t *workspaceSize,
-    aclOpExecutor **executor);
+### 3.3 属性
 
-// 执行算子计算
-aclnnStatus aclnnChunkLocalCumsum(
-    void *workspace,
-    uint64_t workspaceSize,
-    aclOpExecutor *executor,
-    aclrtStream stream);
-```
+| 名称 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `chunk_size` | int | `无` | 2 的幂 |
+| `reverse` | bool | `false` | 前缀/后缀 |
+| `scale` | double | `1.0` | 输出缩放 |
+| `head_first` | bool | `true` | 当前必须 true |
+| `output_dtype` | str | `float32` | 仅支持 `float32`、`torch.float`、`torch.float32` |
 
-详细接口说明见 [docs/aclnnChunkLocalCumsum.md](docs/aclnnChunkLocalCumsum.md)。
+## 4. 支持范围
 
----
+| 项目 | 支持范围 |
+| --- | --- |
+| SOC | A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`) |
+| Dtype | 输入输出仅 FP32；索引 INT64 |
+| Format/Layout | head-first `[B,H_v,T]` |
+| 模式 | 定长/变长、forward/reverse |
 
-## 3. 输入参数
+变长模式中，`cu_seqlens[0]` 必须为 0、末项等于 `T` 且序列非递减。`chunk_indices_out` 按 sequence-major 保存内部处理块 `(seq_id, local_block_id)`；处理块长度 `B_T` 由 tiling 根据 `chunk_size` 计算，不等同于数学 chunk 长度。定长与变长、尾块与整块遵循同一数学定义。
 
-| 参数 | 数据类型 | 是否必须 | 描述 |
-|------|----------|----------|------|
-| g | FLOAT32 / FLOAT16 / BF16 | 是 | 输入张量，shape 为 `[B, H, T]` |
-| cu_seqlens | INT64 | 否 | 变长序列累积长度。固定长度模式传空 tensor |
-| chunk_indices_out | INT64 | 否 | 变长模式下 block 到 `(seq_id, block_id)` 的映射，按二元组连续存储 |
-| chunk_size | int64 | 是 | chunk 长度，必须为 2 的幂 |
-| reverse | bool | 否 | 是否执行反向 chunk 内累加，默认 `false` |
-| scale | double | 否 | 输出缩放系数，默认 `1.0` |
-| head_first | bool | 否 | 当前实现仅支持 `true` |
-| output_dtype | string | 否 | 默认 `float32`；支持 `float32`/`torch.float32`、`float16`/`half`、`bfloat16`/`bf16`，以及 `same`/`input`/`none` 跟随输入 dtype |
+## 5. 调用入口
 
----
+实现类型：`ascendc`
 
-## 4. 输入约束
+| 入口 | API |
+| --- | --- |
+| Python 主入口 | `fla_npu.ops.ascendc.chunk_local_cumsum` |
+| aclnn | `aclnnChunkLocalCumsumGetWorkspaceSize` / `aclnnChunkLocalCumsum` |
+| Ascend C `<<<>>>` | `chunk_local_cumsum<<<blockDim, l2ctrl, stream>>>(...)` |
+| legacy（可选） | `torch.ops.npu.npu_chunk_local_cumsum` |
 
-1. **数据类型**：输入 `g` 和输出 `out` 均支持 FLOAT32、FLOAT16、BF16；输入输出 dtype 可不一致，kernel 内部按 fp32 累加后 cast 到输出 dtype。
-2. **输入维度**：`g` 必须为 rank 3 的 tensor，shape 为 `[B, H, T]`。
-3. **chunk_size**：必须为 2 的幂，且 host tiling 计算得到的 `block_t` 不小于 `chunk_size`。
-4. **数据布局**：当前 AscendC kernel 仅支持 `[B, H, T]`，`head_first=false` 会被显式拒绝。
-5. **变长模式**：当 `cu_seqlens` 非空时，`B` 必须为 1，且 `chunk_indices_out` 必须非空、元素数为偶数。
+完整签名和示例见 [API 文档](docs/api.md)，kernel、tiling、同步与内存设计见[设计文档](docs/design.md)。
 
----
+## 6. 精度与性能
 
-## 5. 输出参数
+- 主精度入口：`tests/operators/chunk_local_cumsum/accuracy/test_chunk_local_cumsum.py`，主调用使用 `fla_npu.ops.ascendc`。
+- 用例规格：`tests/op_cases/chunk_local_cumsum.json`；覆盖定长/变长、forward/reverse、整块/尾块。
+- 参考实现：`torch_chunk_local_cumsum_reference`；容差按 JSON 中各 dtype 的 `rtol/atol` 执行，不允许为规避失败而收窄输入范围。
+- 性能：使用 msopprof 在相同 shape/dtype/layout、warmup 和迭代配置下对比 `fla_npu.ops.triton.chunk_local_cumsum`；Ascend C 必须更快，仓内主 example 已切换到 Ascend C。
 
-| 输出 | 数据类型 | 描述 |
-|------|----------|------|
-| out | FLOAT32 | 输出张量，shape 与 `g` 一致 |
+## 7. 已知限制
 
----
+- g 必须为 rank-3，shape 为 `[B,H_v,T]`，所有维度为正；head_first 当前必须 true。
+- chunk_size 必须为 2 的幂，且 tiling 计算的 `block_t` 不小于 chunk_size；交付矩阵覆盖 16/32/64/128。
+- output_dtype 仅支持 FP32 别名。
+- varlen 物理 B=1，两个 Device 索引必须同时提供；cu_seqlens 首项为 0、末项为 T 且非递减。
+- chunk_indices_out 必须按 sequence-major 完整列出内部处理块；处理块长度 `B_T` 由 tiling 根据 chunk_size 计算，不能直接按 chunk_size 构造。
 
-## 6. 算子实现
-
-该算子使用 AIV kernel 实现。
-
-固定长度模式下，kernel 以 `(batch * head, chunk)` 为任务粒度分核，每个任务在一个 batch/head 的一个时间 chunk 内执行正向或反向累加。
-
-变长模式下，kernel 从 `chunk_indices_out` 读取 `(seq_id, block_id)`，结合 `cu_seqlens` 计算当前序列边界，再在序列局部坐标内执行 chunk-local cumsum。
-
----
-
-## 7. 目录结构
-
-```text
-chunk_local_cumsum/
-├── docs/
-│   └── aclnnChunkLocalCumsum.md
-├── op_host/
-│   ├── op_api/
-│   │   ├── aclnn_chunk_local_cumsum.cpp
-│   │   ├── aclnn_chunk_local_cumsum.h
-│   │   └── chunk_local_cumsum.cpp
-│   ├── chunk_local_cumsum_def.cpp
-│   ├── chunk_local_cumsum_infershape.cpp
-│   ├── chunk_local_cumsum_tiling.cpp
-│   └── CMakeLists.txt
-├── op_kernel/
-│   ├── chunk_local_cumsum.cpp
-│   └── chunk_local_cumsum_tiling_data.h
-├── test/
-│   └── test.py
-├── CMakeLists.txt
-└── README.md
-```
-
----
-
-## 8. 测试方法
+## 8. 构建与验证
 
 ```bash
-cd /home/m00913889/codex08/flash-linear-attention-npu
-bash build.sh --pkg --soc=ascend910b --ops=chunk_local_cumsum -j16
-python3 fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/test/test.py
-bash torch_custom/fla_npu/test/test.sh --device 0 --op chunk_local_cumsum
+FLA_NPU_SOC=ascend910b FLA_NPU_OPS=chunk_local_cumsum python -m pip wheel --no-build-isolation --no-deps . -w dist
+pytest -q tests/operators/chunk_local_cumsum/accuracy/test_chunk_local_cumsum.py
+python scripts/check_operator_compliance.py
 ```
 
-测试脚本会通过 `torch.ops.npu.npu_chunk_local_cumsum` 调用算子，并覆盖固定长度、反向累加、缩放系数以及变长 `cu_seqlens + chunk_indices_out` 场景。
+A3/A5 分别将 `FLA_NPU_SOC` 替换为 `ascend910_93`/`ascend950`。aclnn 与直调通路源文件位于
+`tests/operators/chunk_local_cumsum/routes/`，均使用同一份 JSON 规格。
+
+<a id="shape-symbols"></a>
+
+## 9. 附录：Shape 变量说明
+
+- 模型/算法族：Gated Delta Network (GDN)
+- 模型级符号表：[GDN 模型符号表](../../README.md#model-shape-symbols)
+- 符号表版本：`gdn-shape-v1`
+
+| 变量 | 语义 |
+| --- | --- |
+| `B` | Batch size；varlen 打包场景通常为 1 |
+| `N` | varlen 逻辑序列数 |
+| `T` | dense 序列长度或 varlen 打包后的 token 总数 |
+| `H_v` | Value/Output/State head 数 |
+| `chunk_size` | 每个 chunk 的 token 数 |
+| `N_b` | varlen 内部处理块总数；由各序列 ceil(seq_len/B_T) 求和 |
+| `B_T` | 单个变长处理块覆盖的 token 数，由 tiling 根据 UB 和 chunk_size 计算 |

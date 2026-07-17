@@ -1,123 +1,102 @@
-# SolveTri 算子说明
+# SolveTri
 
-`SolveTri` 是用于计算下三角矩阵求逆的自定义算子，主要应用于 Gated Delta Rule 线性注意力机制中的 chunk-wise 矩阵求逆操作。
+## 1. 功能概述
 
----
+对每个 chunk 的严格下三角矩阵 A 计算 `(I+A)^-1`，用于 WY 表示求解。输入最后一维保存当前 token 行的 chunk 列，输出保持相同布局。
 
-## 1. 算子功能
+## 2. 数学定义
 
-计算 $(I + A)^{-1}$，其中 $A$ 是严格下三角矩阵（对角线为0）。
+对每个 batch/head/chunk，取有效阶数 M 的严格下三角矩阵 A：
 
-$$Y = (I + A)^{-1}$$
-
-该算子支持两种数据布局：
-- **BSND**: `[Batch, T, Head, chunkSize]`
-- **TND**: `[num_tokens, Head, chunkSize]`（变长序列模式）
-
----
-
-## 2. 接口定义
-
-### 2.1 ACLNN 接口
-
-```cpp
-// 获取执行所需的 workspace 大小
-aclnnStatus aclnnSolveTriGetWorkspaceSize(
-    const aclTensor *x,
-    const aclIntArray *cuSeqlens,
-    const aclIntArray *chunkIndices,
-    const char *layout,
-    const aclTensor *xOut,
-    uint64_t *workspaceSize,
-    aclOpExecutor **executor);
-
-// 执行算子计算
-aclnnStatus aclnnSolveTri(
-    void *workspace,
-    uint64_t workspaceSize,
-    aclOpExecutor *executor,
-    aclrtStream stream);
+```text
+Y = inverse(I_M + tril(A, diagonal=-1))
 ```
 
-### 2.2 PyTorch 接口
+实现采用分块前代/三角逆；尾块只对有效 M 求逆，padding 列按接口约定写零。
 
-```python
-torch.ops.npu.npu_solve_tri(
-    x: Tensor,
-    cu_seqlens: Optional[List[int]] = None,
-    chunk_indices: Optional[List[int]] = None,
-    layout: str = "bsnd"
-) -> Tensor
+## 3. 输入、输出和属性
+
+### 3.1 输入
+
+| 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| `x` | 必选 | `[B,H_v,T,C]、[B,T,H_v,C] 或 [T,H_v,C]` | FP16/BF16 | BHTD/BSND/TND | 严格下三角 A 的行存储 |
+| `cu_seqlens` | TND 必选 | `[N+1]` | INT64 | ND | varlen 累计长度 |
+| `chunk_indices` | TND 必选 | `[2*N_c]` | INT64 | ND | 展平 chunk 索引 |
+
+### 3.2 输出
+
+| 名称 | Shape | Dtype | 说明 |
+| --- | --- | --- | --- |
+| `x_out` | `与 x 相同` | 与 x 相同 | (I+A) 的 chunk-wise 逆 |
+
+### 3.3 属性
+
+| 名称 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `layout` | str | `bsnd` | 仅 bhtd/bsnd/tnd，小写 |
+
+## 4. 支持范围
+
+| 项目 | 支持范围 |
+| --- | --- |
+| SOC | A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`) |
+| Dtype | FP16/BF16 |
+| Format/Layout | BHTD `[B,H_v,T,C]`、BSND `[B,T,H_v,C]`、TND `[T,H_v,C]`；layout 字符串必须小写 |
+| 模式 | dense BHTD/BSND 与 varlen TND，支持尾块 |
+
+varlen 模式中，`cu_seqlens[0]` 必须为 0、末项等于 `T` 且序列非递减。`chunk_indices` 必须按 sequence-major 列出全部 `(seq_id, local_chunk_id)`；其条目数和当前调用的 `N_c` 一致。fixed 与 varlen、尾块与整块遵循同一数学定义。
+
+## 5. 调用入口
+
+实现类型：`ascendc`
+
+| 入口 | API |
+| --- | --- |
+| Python 主入口 | `fla_npu.ops.ascendc.solve_tri` |
+| aclnn | `aclnnSolveTriGetWorkspaceSize` / `aclnnSolveTri` |
+| Ascend C `<<<>>>` | `solve_tri<<<blockDim, l2ctrl, stream>>>(...)` |
+| legacy（可选） | `torch.ops.npu.npu_solve_tri` |
+
+完整签名和示例见 [API 文档](docs/api.md)，kernel、tiling、同步与内存设计见[设计文档](docs/design.md)。
+
+## 6. 精度与性能
+
+- 主精度入口：`tests/operators/solve_tri/accuracy/test_solve_tri.py`，主调用使用 `fla_npu.ops.ascendc`。
+- 用例规格：`tests/op_cases/solve_tri.json`；覆盖 dense BHTD/BSND 与 varlen TND，支持尾块。
+- 参考实现：`torch_linalg_triangular_reference`；容差按 JSON 中各 dtype 的 `rtol/atol` 执行，不允许为规避失败而收窄输入范围。
+- 性能：使用 msopprof 在相同 shape/dtype/layout、warmup 和迭代配置下对比 `fla_npu.ops.triton.solve_tril_npu`；Ascend C 必须更快，仓内主 example 已切换到 Ascend C。
+
+## 7. 已知限制
+
+- 矩阵阶/最后一维 C 支持 16/32/64/128。
+- layout 仅支持小写 `bhtd`、`bsnd`、`tnd`；TND 必须提供两个 varlen 索引，dense layout 不接受 varlen 索引。
+- 输入必须表示严格下三角 A；对角线由算子加单位阵。
+
+## 8. 构建与验证
+
+```bash
+FLA_NPU_SOC=ascend910b FLA_NPU_OPS=solve_tri python -m pip wheel --no-build-isolation --no-deps . -w dist
+pytest -q tests/operators/solve_tri/accuracy/test_solve_tri.py
+python scripts/check_operator_compliance.py
 ```
 
----
+A3/A5 分别将 `FLA_NPU_SOC` 替换为 `ascend910_93`/`ascend950`。aclnn 与直调通路源文件位于
+`tests/operators/solve_tri/routes/`，均使用同一份 JSON 规格。
 
-## 3. 输入参数
+<a id="shape-symbols"></a>
 
-| 参数 | 数据类型 | 是否必须 | 描述 |
-|------|----------|----------|------|
-| x | FLOAT16/BFLOAT16 | 是 | 输入下三角矩阵 |
-| cu_seqlens | INT64 | TND 模式必须 | 累积序列长度 |
-| chunk_indices | INT64 | TND 模式必须 | chunk 索引数组 |
-| layout | string | 否 | 数据布局，默认 "bsnd" |
+## 9. 附录：Shape 变量说明
 
----
+- 模型/算法族：Gated Delta Network (GDN)
+- 模型级符号表：[GDN 模型符号表](../../README.md#model-shape-symbols)
+- 符号表版本：`gdn-shape-v1`
 
-## 4. 输入约束
-
-1. **数据类型**：仅支持 FLOAT16 和 BFLOAT16
-2. **chunkSize**：最后一维仅支持 64 或 128
-3. **输入维度**：
-   - BHTD/BSND: 4D tensor
-   - TND: 3D tensor
-4. **变长模式**：TND layout 必须提供 cu_seqlens 和 chunk_indices
-
----
-
-## 5. 输出参数
-
-| 输出 | 数据类型 | 描述 |
-|------|----------|------|
-| xOut | FLOAT16/BFLOAT16 | 输出矩阵，shape 与输入一致 |
-
----
-
-## 6. 算子实现
-
-### 6.1 算法原理
-
-使用 **MCH (Matrix Chain Halving) + MBH (Matrix Block Halving)** 算法高效计算下三角矩阵的逆：
-
-1. 将矩阵分块为 $2 \times 2$ 块矩阵
-2. 利用下三角矩阵的结构特性递归求解
-3. 通过 AIC 核执行 CUBE 矩阵乘法，AIV 核生成辅助矩阵
-
-## 7. 目录结构
-
-```
-solve_tri/
-├── docs/
-│   └── aclnnSolveTri.md
-├── op_host/
-│   ├── op_api/
-│   │   ├── aclnn_solve_tri.cpp
-│   │   ├── aclnn_solve_tri.h
-│   │   └── solve_tri.cpp
-│   ├── solve_tri_def.cpp
-│   ├── solve_tri_tiling.cpp
-│   ├── solve_tri_tiling.h
-│   └── CMakeLists.txt
-├── op_kernel/
-│   ├── arch35/
-│   │   ├── mem.h
-│   │   ├── solve_tri_ascend950.h
-│   │   └── solve_tri_ascend950_common.h
-│   ├── solve_tri.cpp
-│   ├── solve_tri_common.h
-│   ├── solve_tri_cube.h
-│   └── solve_tri_vector.h
-├── test/
-│   └── test.py
-├── CMakeLists.txt
-└── README.md
-```
+| 变量 | 语义 |
+| --- | --- |
+| `B` | Batch size；varlen 打包场景通常为 1 |
+| `N` | varlen 逻辑序列数 |
+| `T` | dense 序列长度或 varlen 打包后的 token 总数 |
+| `H_v` | Value/Output/State head 数 |
+| `C` | chunk_size |
+| `N_c` | 当前调用中的 chunk 总数 |

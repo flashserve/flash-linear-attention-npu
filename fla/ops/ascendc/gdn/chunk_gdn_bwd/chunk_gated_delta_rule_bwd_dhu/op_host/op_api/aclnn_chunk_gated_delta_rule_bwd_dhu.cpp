@@ -131,6 +131,21 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleBwdDhuParams params)
 static aclnnStatus CheckParams(ChunkGatedDeltaRuleBwdDhuParams params)
 {
     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_COND(params.gOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
+               "gOptional must be provided; the gk-only path is not implemented.");
+    CHECK_COND(params.gkOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
+               "gkOptional is reserved and must be nullptr.");
+    CHECK_COND(params.h0Optional == nullptr, ACLNN_ERR_PARAM_INVALID,
+               "h0Optional is reserved and must be nullptr.");
+    CHECK_COND(params.dhtOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
+               "dhtOptional is reserved and must be nullptr.");
+    CHECK_COND(params.dh0Out == nullptr, ACLNN_ERR_PARAM_INVALID,
+               "dh0Out is reserved and must be nullptr.");
+    CHECK_COND(params.chunkSize == 64 || params.chunkSize == 128, ACLNN_ERR_PARAM_INVALID,
+               "chunkSize must be 64 or 128.");
+    CHECK_COND((params.cuSeqlensOptional == nullptr) == (params.chunkIndicesOptional == nullptr),
+               ACLNN_ERR_PARAM_INVALID,
+               "cuSeqlensOptional and chunkIndicesOptional must both be provided or both be nullptr.");
     CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -157,6 +172,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    CHECK_COND(workspaceSize != nullptr, ACLNN_ERR_PARAM_NULLPTR, "workspaceSize must not be nullptr.");
+    CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "executor must not be nullptr.");
     ChunkGatedDeltaRuleBwdDhuParams params{
         q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional,
         cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, dhOut, dh0Out, dv2Out

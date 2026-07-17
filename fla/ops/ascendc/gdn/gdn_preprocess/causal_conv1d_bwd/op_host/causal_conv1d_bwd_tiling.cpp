@@ -34,6 +34,10 @@ namespace {
     constexpr uint32_t INITIAL_STATE_INPUT_INDEX = 4;
     constexpr uint32_t DHT_INPUT_INDEX = 5;
     constexpr uint32_t QUERY_START_LOC_INPUT_INDEX = 6;
+    constexpr uint32_t DX_OUTPUT_INDEX = 0;
+    constexpr uint32_t DW_OUTPUT_INDEX = 1;
+    constexpr uint32_t DB_OUTPUT_INDEX = 2;
+    constexpr uint32_t DH0_OUTPUT_INDEX = 3;
     constexpr uint32_t DIM_INDEX0 = 0;
     constexpr uint32_t DIM_INDEX1 = 1;
     constexpr uint32_t DIM_INDEX2 = 2;
@@ -74,8 +78,18 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     auto dyShape = context->GetInputShape(DY_INPUT_INDEX)->GetStorageShape();
     auto wShape = context->GetInputShape(WEIGHT_INPUT_INDEX)->GetStorageShape();
     auto xDesc = context->GetInputDesc(X_INPUT_INDEX);
+    auto weightDesc = context->GetInputDesc(WEIGHT_INPUT_INDEX);
+    auto dyDesc = context->GetInputDesc(DY_INPUT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
+    OP_CHECK_NULL_WITH_CONTEXT(context, weightDesc);
+    OP_CHECK_NULL_WITH_CONTEXT(context, dyDesc);
     auto xDtype = xDesc->GetDataType();
+    OP_CHECK_IF(xDtype != ge::DT_FLOAT && xDtype != ge::DT_FLOAT16 && xDtype != ge::DT_BF16,
+                OP_LOGE(context, "x dtype must be float32, float16 or bfloat16"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(weightDesc->GetDataType() != xDtype || dyDesc->GetDataType() != xDtype,
+                OP_LOGE(context, "weight and dy dtype must equal x dtype"),
+                return ge::GRAPH_FAILED);
     bool isB16Input = (xDtype == ge::DT_BF16 || xDtype == ge::DT_FLOAT16);
     uint32_t B = 0;
     uint32_t T = 0;
@@ -91,6 +105,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     if (attrs != nullptr && attrs->GetAttrNum() > ATTR_ACTIVATION_INDEX) {
         activation = *(attrs->GetAttrPointer<uint32_t>(ATTR_ACTIVATION_INDEX));
     }
+    OP_CHECK_IF(activation != ACTIVATION_NONE && activation != ACTIVATION_SILU && activation != ACTIVATION_SWISH,
+                OP_LOGE(context, "activation only supports 0 (none), 1 (SiLU) or 2 (Swish)"),
+                return ge::GRAPH_FAILED);
     const char *inputLayoutStr = "BSND";
     if (attrs != nullptr && attrs->GetAttrNum() > ATTR_INPUT_LAYOUT_INDEX) {
         const char *attrLayout = attrs->GetAttrPointer<char>(ATTR_INPUT_LAYOUT_INDEX);
@@ -195,13 +212,21 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                         OP_LOGE(context, "y and dy must have the same shape"),
                         return ge::GRAPH_FAILED);
         }
+        auto yDesc = context->GetOptionalInputDesc(Y_INPUT_INDEX);
+        OP_CHECK_NULL_WITH_CONTEXT(context, yDesc);
+        OP_CHECK_IF(yDesc->GetDataType() != xDtype,
+                    OP_LOGE(context, "y dtype must equal x dtype"),
+                    return ge::GRAPH_FAILED);
     } else {
         OP_CHECK_IF(activation != ACTIVATION_NONE,
                     OP_LOGE(context, "y is required when activation is enabled"),
                     return ge::GRAPH_FAILED);
     }
+    OP_CHECK_IF(wShape.GetDimNum() != 2,
+                OP_LOGE(context, "weight must be 2D [W, D_total]"),
+                return ge::GRAPH_FAILED);
     uint32_t W = wShape.GetDim(DIM_INDEX0);
-    OP_CHECK_IF(wShape.GetDimNum() != 2 || static_cast<uint32_t>(wShape.GetDim(DIM_INDEX1)) != D,
+    OP_CHECK_IF(W < 2 || W > 4 || static_cast<uint32_t>(wShape.GetDim(DIM_INDEX1)) != D,
                 OP_LOGE(context, "weight must be [W, D_total], got dim1 %ld expect %u",
                         wShape.GetDimNum() > DIM_INDEX1 ? wShape.GetDim(DIM_INDEX1) : 0, D),
                 return ge::GRAPH_FAILED);
@@ -252,6 +277,11 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                 OP_LOGE(context, "initial_state must be [B, W, D]=[%u, %u, %u]", B, W, D),
                 return ge::GRAPH_FAILED);
             useInitialState = true;
+            auto initialStateDesc = context->GetOptionalInputDesc(INITIAL_STATE_INPUT_INDEX);
+            OP_CHECK_NULL_WITH_CONTEXT(context, initialStateDesc);
+            OP_CHECK_IF(initialStateDesc->GetDataType() != xDtype,
+                        OP_LOGE(context, "initial_state dtype must equal x dtype"),
+                        return ge::GRAPH_FAILED);
         }
         auto dhtShape = context->GetInputShape(DHT_INPUT_INDEX);
         if (dhtShape != nullptr && dhtShape->GetStorageShape().GetDimNum() > 0) {
@@ -264,7 +294,55 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                 OP_LOGE(context, "dht must be [B, W, D]=[%u, %u, %u]", B, W, D),
                 return ge::GRAPH_FAILED);
             useFinalState = true;
+            auto dhtDesc = context->GetOptionalInputDesc(DHT_INPUT_INDEX);
+            OP_CHECK_NULL_WITH_CONTEXT(context, dhtDesc);
+            OP_CHECK_IF(dhtDesc->GetDataType() != xDtype,
+                        OP_LOGE(context, "dht dtype must equal x dtype"),
+                        return ge::GRAPH_FAILED);
         }
+    }
+
+    auto ShapesEqual = [](const gert::Shape &lhs, const gert::Shape &rhs) -> bool {
+        if (lhs.GetDimNum() != rhs.GetDimNum()) {
+            return false;
+        }
+        for (size_t i = 0; i < lhs.GetDimNum(); ++i) {
+            if (lhs.GetDim(i) != rhs.GetDim(i)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    auto dxShapePtr = context->GetOutputShape(DX_OUTPUT_INDEX);
+    auto dwShapePtr = context->GetOutputShape(DW_OUTPUT_INDEX);
+    auto dbShapePtr = context->GetOutputShape(DB_OUTPUT_INDEX);
+    auto dh0ShapePtr = context->GetOutputShape(DH0_OUTPUT_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, dxShapePtr);
+    OP_CHECK_NULL_WITH_CONTEXT(context, dwShapePtr);
+    OP_CHECK_NULL_WITH_CONTEXT(context, dbShapePtr);
+    OP_CHECK_NULL_WITH_CONTEXT(context, dh0ShapePtr);
+    const auto &dxShape = dxShapePtr->GetStorageShape();
+    const auto &dwShape = dwShapePtr->GetStorageShape();
+    const auto &dbShape = dbShapePtr->GetStorageShape();
+    const auto &dh0Shape = dh0ShapePtr->GetStorageShape();
+    OP_CHECK_IF(!ShapesEqual(dxShape, xShape), OP_LOGE(context, "dx shape must equal x shape"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(dwShape.GetDimNum() != 2 || static_cast<uint32_t>(dwShape.GetDim(0)) != W ||
+                    static_cast<uint32_t>(dwShape.GetDim(1)) != D,
+                OP_LOGE(context, "dw must be [W, D]=[%u, %u]", W, D), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(dbShape.GetDimNum() != 1 || static_cast<uint32_t>(dbShape.GetDim(0)) != D,
+                OP_LOGE(context, "db must be [D]=[%u]", D), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(dh0Shape.GetDimNum() != 3 || static_cast<uint32_t>(dh0Shape.GetDim(0)) != B ||
+                    static_cast<uint32_t>(dh0Shape.GetDim(1)) != W ||
+                    static_cast<uint32_t>(dh0Shape.GetDim(2)) != D,
+                OP_LOGE(context, "dh0 must be [B, W, D]=[%u, %u, %u]", B, W, D),
+                return ge::GRAPH_FAILED);
+    for (uint32_t outputIndex = DX_OUTPUT_INDEX; outputIndex <= DH0_OUTPUT_INDEX; ++outputIndex) {
+        auto outputDesc = context->GetOutputDesc(outputIndex);
+        OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
+        OP_CHECK_IF(outputDesc->GetDataType() != xDtype,
+                    OP_LOGE(context, "all output dtypes must equal x dtype"),
+                    return ge::GRAPH_FAILED);
     }
 
     uint64_t ubSize = 0;
