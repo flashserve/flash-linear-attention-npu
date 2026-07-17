@@ -1,0 +1,499 @@
+{
+  "schema_version": 1,
+  "op": "recurrent_gated_delta_rule",
+  "implementation": "ascendc",
+  "model": "gdn",
+  "symbol_table_version": "gdn-shape-v1",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": [
+      "bfloat16",
+      "float32",
+      "int32"
+    ],
+    "layouts": [
+      "TND"
+    ],
+    "features": [
+      "变长 recurrent",
+      "g/gk 独立或组合",
+      "可选 accepted-token 状态选择",
+      "原地 state"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ],
+    "optional_routes": []
+  },
+  "data_generation": {
+    "floating_inputs": {
+      "distribution": "uniform",
+      "min": -1.0,
+      "max": 1.0
+    },
+    "positive_inputs": {
+      "distribution": "uniform",
+      "min": 0.0,
+      "max": 1.0
+    },
+    "structured_inputs": "由 reference 名称对应的 runner 构造 gate、三角矩阵、状态和索引"
+  },
+  "coverage_requirements": {
+    "public_modes": [
+      "变长 recurrent",
+      "g/gk 独立或组合",
+      "可选 accepted-token 状态选择",
+      "原地 state"
+    ],
+    "known_limits": [
+      "每条序列本次有效 token 数不超过 8。",
+      "g/gk 均为空表示单位衰减；二者存在时 dtype 必须为 FP32，shape 分别为 `[T,H_v]`、`[T,H_v,K]`。",
+      "state 槽索引必须位于 `[0,D_s)`；actual_seq_lengths 有效项之和等于 T。",
+      "`H_k/H_v <= 256`、`K/V <= 512` 且 `H_v % H_k == 0`。",
+      "state_ref 为原地更新参数，不能 require_grad；非连续 state 依赖 CANN >= 9.1。"
+    ],
+    "required_outputs": [
+      "out",
+      "state_ref"
+    ],
+    "accuracy_case_ids": [
+      "recurrent_gated_delta_rule_main_accuracy",
+      "recurrent_gated_delta_rule_dtype_layout_generalization",
+      "recurrent_gated_delta_rule_tail_or_varlen",
+      "recurrent_gated_delta_rule_g_and_gk"
+    ],
+    "negative_case_ids": [
+      "recurrent_gated_delta_rule_negative_contract",
+      "recurrent_gated_delta_rule_invalid_gate_shape",
+      "recurrent_gated_delta_rule_invalid_accepted_shape"
+    ],
+    "route_case_ids": [
+      "recurrent_gated_delta_rule_main_accuracy",
+      "recurrent_gated_delta_rule_performance"
+    ],
+    "performance_case_ids": [
+      "recurrent_gated_delta_rule_performance"
+    ]
+  },
+  "tolerance": {
+    "float16": {
+      "rtol": 0.003,
+      "atol": 0.003
+    },
+    "bfloat16": {
+      "rtol": 0.006,
+      "atol": 0.006
+    }
+  },
+  "cases": [
+    {
+      "id": "recurrent_gated_delta_rule_main_accuracy",
+      "tags": [
+        "accuracy",
+        "example",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 4,
+        "H_k": 2,
+        "H_v": 4,
+        "K": 128,
+        "V": 128,
+        "D_s": 4,
+        "Q_a": 2
+      },
+      "dtype": {
+        "qkv_beta_out": "bfloat16",
+        "state_g": "float32",
+        "indices": "int32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "scale_value": 0.0883883476
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gk": null,
+        "num_accepted_tokens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch"
+      ],
+      "reference": "torch_recurrent_gated_delta_rule_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "out",
+          "state_ref"
+        ]
+      },
+      "seed": 2026
+    },
+    {
+      "id": "recurrent_gated_delta_rule_dtype_layout_generalization",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary"
+      ],
+      "shape": {
+        "B": 4,
+        "T": 8,
+        "H_k": 4,
+        "H_v": 8,
+        "K": 128,
+        "V": 128,
+        "D_s": 8,
+        "Q_a": 2
+      },
+      "dtype": {
+        "qkv_beta_out": "bfloat16",
+        "state_g": "float32",
+        "indices": "int32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "scale_value": 0.0883883476
+      },
+      "optional_inputs": {
+        "g": null,
+        "gk": "present",
+        "num_accepted_tokens": [
+          2,
+          1,
+          2,
+          1
+        ]
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_recurrent_gated_delta_rule_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "out",
+          "state_ref"
+        ]
+      },
+      "seed": 2027
+    },
+    {
+      "id": "recurrent_gated_delta_rule_tail_or_varlen",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "tail"
+      ],
+      "shape": {
+        "B": 3,
+        "T": 7,
+        "H_k": 2,
+        "H_v": 4,
+        "K": 128,
+        "V": 128,
+        "D_s": 7,
+        "Q_a": 3
+      },
+      "dtype": {
+        "qkv_beta_out": "bfloat16",
+        "state_g": "float32",
+        "indices": "int32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "scale_value": 0.0883883476
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gk": null,
+        "num_accepted_tokens": [
+          3,
+          1,
+          2
+        ]
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_recurrent_gated_delta_rule_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "out",
+          "state_ref"
+        ]
+      },
+      "seed": 2028
+    },
+    {
+      "id": "recurrent_gated_delta_rule_performance",
+      "tags": [
+        "performance",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 4,
+        "H_k": 2,
+        "H_v": 4,
+        "K": 128,
+        "V": 128,
+        "D_s": 4,
+        "Q_a": 2
+      },
+      "dtype": {
+        "qkv_beta_out": "bfloat16",
+        "state_g": "float32",
+        "indices": "int32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "scale_value": 0.0883883476
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gk": null,
+        "num_accepted_tokens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "direct_launch"
+      ],
+      "reference": "current_mainline_ascendc_profile",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "metric": "msopprof",
+        "requirement": "no_regression"
+      },
+      "seed": 2029
+    },
+    {
+      "id": "recurrent_gated_delta_rule_negative_contract",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 4,
+        "H_k": 3,
+        "H_v": 4,
+        "K": 128,
+        "V": 128,
+        "D_s": 4,
+        "Q_a": 2
+      },
+      "dtype": {
+        "qkv_beta_out": "bfloat16",
+        "state_g": "float32",
+        "indices": "int32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "scale_value": 0.0883883476
+      },
+      "optional_inputs": {
+        "g": null,
+        "gk": null,
+        "num_accepted_tokens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "HV divisible by HK"
+      },
+      "seed": 2030
+    },
+    {
+      "id": "recurrent_gated_delta_rule_g_and_gk",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 6,
+        "H_k": 2,
+        "H_v": 4,
+        "K": 128,
+        "V": 128,
+        "D_s": 6,
+        "Q_a": 3
+      },
+      "dtype": {
+        "qkv_beta_out": "bfloat16",
+        "state_g_gk": "float32",
+        "indices": "int32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "scale_value": 0.0883883476
+      },
+      "optional_inputs": {
+        "g": "present",
+        "gk": "present",
+        "num_accepted_tokens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_recurrent_gated_delta_rule_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "out",
+          "state_ref"
+        ]
+      },
+      "seed": 2031
+    },
+    {
+      "id": "recurrent_gated_delta_rule_invalid_gate_shape",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 4,
+        "H_k": 2,
+        "H_v": 4,
+        "K": 128,
+        "V": 128,
+        "D_s": 4,
+        "Q_a": 2
+      },
+      "dtype": {
+        "qkv_beta_out": "bfloat16",
+        "state_gk": "float32",
+        "indices": "int32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "scale_value": 0.0883883476
+      },
+      "optional_inputs": {
+        "g": null,
+        "gk": {
+          "status": "present",
+          "shape": "[T,2,K]"
+        },
+        "num_accepted_tokens": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "gk must be [T, HV, K]"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2032
+    },
+    {
+      "id": "recurrent_gated_delta_rule_invalid_accepted_shape",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 3,
+        "T": 6,
+        "H_k": 2,
+        "H_v": 4,
+        "K": 128,
+        "V": 128,
+        "D_s": 6,
+        "Q_a": 2
+      },
+      "dtype": {
+        "qkv_beta_out": "bfloat16",
+        "state": "float32",
+        "indices": "int32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "scale_value": 0.0883883476
+      },
+      "optional_inputs": {
+        "g": null,
+        "gk": null,
+        "num_accepted_tokens": [
+          2,
+          1
+        ]
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "B entries"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2033
+    }
+  ]
+}

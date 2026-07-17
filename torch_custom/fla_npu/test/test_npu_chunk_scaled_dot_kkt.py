@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Precision test for torch.ops.npu.npu_chunk_scaled_dot_kkt.
+"""Precision test for fla_npu.ops.ascendc.chunk_scaled_dot_kkt.
 
 The custom op covers the gk=None fixed-length path and uses head-first layout:
   k    : [B, Hk, T, K]
@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from typing import Iterable
 
 import torch
+
+from fla_npu.ops import ascendc as ascendc_ops
 
 
 MAX_ABS_TOL = 5e-3
@@ -152,16 +154,16 @@ def make_inputs(case: Case, seed: int) -> tuple[torch.Tensor, torch.Tensor, torc
 def _require_npu_op():
     try:
         import torch_npu  # noqa: F401
-        import fla_npu  # noqa: F401
+        from fla_npu.ops import ascendc as _ascendc_ops  # noqa: F401
     except Exception as exc:  # pragma: no cover - environment dependent
         raise RuntimeError("NPU test requires torch_npu and fla_npu to be importable") from exc
 
     if not hasattr(torch, "npu") or not torch.npu.is_available():
         raise RuntimeError("NPU device is not available")
-    if not hasattr(torch.ops.npu, "npu_chunk_scaled_dot_kkt"):
+    if not hasattr(ascendc_ops, "chunk_scaled_dot_kkt"):
         raise RuntimeError(
-            "torch.ops.npu.npu_chunk_scaled_dot_kkt is not registered. "
-            "Regenerate and rebuild torch_custom/fla_npu after updating npu_custom.yaml."
+            "fla_npu.ops.ascendc.chunk_scaled_dot_kkt is not exported. "
+            "Rebuild and reinstall the integrated fla_npu wheel."
         )
 
     torch.npu.utils.set_device(0)
@@ -210,7 +212,7 @@ def run_case(case: Case, seed: int, cpu_only: bool) -> bool:
         )
         return passed
 
-    out = torch.ops.npu.npu_chunk_scaled_dot_kkt(
+    out = ascendc_ops.chunk_scaled_dot_kkt(
         k.npu(),
         g.npu(),
         beta.npu(),
@@ -233,7 +235,7 @@ def run_case(case: Case, seed: int, cpu_only: bool) -> bool:
 
     cu_seqlens, chunk_indices = make_varlen_metadata(case.T, case.BT)
     varlen_golden = chunk_scaled_dot_kkt_reference(k, g, beta, case.BT, cu_seqlens, chunk_indices)
-    varlen_out = torch.ops.npu.npu_chunk_scaled_dot_kkt(
+    varlen_out = ascendc_ops.chunk_scaled_dot_kkt(
         k.npu(),
         g.npu(),
         beta.npu(),

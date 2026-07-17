@@ -1,0 +1,472 @@
+{
+  "schema_version": 1,
+  "op": "causal_conv1d",
+  "implementation": "ascendc",
+  "model": "gdn",
+  "symbol_table_version": "gdn-shape-v1",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": [
+      "bfloat16",
+      "float16",
+      "int64"
+    ],
+    "layouts": [
+      "BNSD",
+      "BSH",
+      "TH"
+    ],
+    "features": [
+      "dense/varlen forward",
+      "decode/update",
+      "投机接受 token"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ],
+    "optional_routes": [
+      "torch_ops_npu"
+    ]
+  },
+  "data_generation": {
+    "floating_inputs": {
+      "distribution": "uniform",
+      "min": -1.0,
+      "max": 1.0
+    },
+    "positive_inputs": {
+      "distribution": "uniform",
+      "min": 0.0,
+      "max": 1.0
+    },
+    "structured_inputs": "由 reference 名称对应的 runner 构造 gate、三角矩阵、状态和索引"
+  },
+  "coverage_requirements": {
+    "public_modes": [
+      "dense/varlen forward",
+      "decode/update",
+      "投机接受 token"
+    ],
+    "known_limits": [
+      "卷积宽度 W 仅支持 2/3/4，特征维 D 必须为 16 的倍数。",
+      "activation_mode 仅支持 0/1，run_mode 仅支持 0/1。",
+      "head_num>0 仅用于 forward，且必须整除 D；拆分后的 D/head_num 仍须为 16 的倍数。",
+      "conv_states 的 L_s 至少为 W-1；rank-3 投机 update 还要求 L_s >= (W-1)+(T-1)。",
+      "num_accepted_tokens 仅在 run_mode=1 且 W=4 时实现，值域为每条逻辑序列的 [0,token_count]。",
+      "conv_states 为可变输入；非连续状态仅在 CANN >= 9.1 支持。",
+      "rank-2 forward 必须提供 query_start_loc；query_start_loc、cache_indices、initial_state_mode 和接受数的长度必须与逻辑序列数一致。",
+      "initial_state_mode 仅用于 run_mode=0 且元素只能为 0/1；cache_indices 只能选择有效状态槽或 pad_slot_id。"
+    ],
+    "required_outputs": [
+      "y",
+      "conv_states"
+    ],
+    "accuracy_case_ids": [
+      "causal_conv1d_main_accuracy",
+      "causal_conv1d_dtype_layout_generalization",
+      "causal_conv1d_tail_or_varlen"
+    ],
+    "negative_case_ids": [
+      "causal_conv1d_negative_contract",
+      "causal_conv1d_rank2_forward_requires_qsl",
+      "causal_conv1d_accepted_tokens_requires_width4"
+    ],
+    "route_case_ids": [
+      "causal_conv1d_main_accuracy",
+      "causal_conv1d_performance"
+    ],
+    "performance_case_ids": [
+      "causal_conv1d_performance"
+    ]
+  },
+  "tolerance": {
+    "float16": {
+      "rtol": 0.003,
+      "atol": 0.003
+    },
+    "bfloat16": {
+      "rtol": 0.006,
+      "atol": 0.006
+    }
+  },
+  "cases": [
+    {
+      "id": "causal_conv1d_main_accuracy",
+      "tags": [
+        "accuracy",
+        "example",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 64,
+        "D": 128,
+        "W": 3,
+        "D_s": 2,
+        "L_s": 3
+      },
+      "dtype": {
+        "x_weight_state": "bfloat16",
+        "metadata": "int64"
+      },
+      "layout": "BSH",
+      "attrs": {
+        "activation_mode": 0,
+        "pad_slot_id": -1,
+        "run_mode": 0,
+        "head_num": 0
+      },
+      "optional_inputs": {
+        "bias": "present",
+        "query_start_loc": null,
+        "cache_indices": null,
+        "initial_state_mode": null,
+        "num_accepted_tokens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch",
+        "torch_ops_npu"
+      ],
+      "reference": "torch_depthwise_causal_conv1d_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "y",
+          "conv_states"
+        ]
+      },
+      "seed": 2026
+    },
+    {
+      "id": "causal_conv1d_dtype_layout_generalization",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 129,
+        "D": 256,
+        "W": 4,
+        "D_s": 1,
+        "L_s": 4
+      },
+      "dtype": {
+        "x_weight_state": "float16",
+        "metadata": "int64"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "activation_mode": 1,
+        "pad_slot_id": -1,
+        "run_mode": 0,
+        "head_num": 4
+      },
+      "optional_inputs": {
+        "bias": "present",
+        "query_start_loc": null,
+        "cache_indices": null,
+        "initial_state_mode": null,
+        "num_accepted_tokens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_depthwise_causal_conv1d_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "y",
+          "conv_states"
+        ]
+      },
+      "seed": 2027
+    },
+    {
+      "id": "causal_conv1d_tail_or_varlen",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "tail"
+      ],
+      "shape": {
+        "B": 3,
+        "T": 7,
+        "D": 128,
+        "W": 4,
+        "D_s": 3,
+        "L_s": 3,
+        "Q_a": 3
+      },
+      "dtype": {
+        "x_weight_state": "float16",
+        "metadata": "int64"
+      },
+      "layout": "TH",
+      "attrs": {
+        "activation_mode": 0,
+        "pad_slot_id": -1,
+        "run_mode": 1,
+        "head_num": 0
+      },
+      "optional_inputs": {
+        "bias": null,
+        "query_start_loc": [
+          0,
+          3,
+          5,
+          7
+        ],
+        "cache_indices": [
+          0,
+          1,
+          2
+        ],
+        "initial_state_mode": null,
+        "num_accepted_tokens": [
+          3,
+          1,
+          2
+        ]
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_depthwise_causal_conv1d_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "y",
+          "conv_states"
+        ]
+      },
+      "seed": 2028
+    },
+    {
+      "id": "causal_conv1d_performance",
+      "tags": [
+        "performance",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 64,
+        "D": 128,
+        "W": 3,
+        "D_s": 2,
+        "L_s": 3
+      },
+      "dtype": {
+        "x_weight_state": "bfloat16",
+        "metadata": "int64"
+      },
+      "layout": "BSH",
+      "attrs": {
+        "activation_mode": 0,
+        "pad_slot_id": -1,
+        "run_mode": 0,
+        "head_num": 0
+      },
+      "optional_inputs": {
+        "bias": "present",
+        "query_start_loc": null,
+        "cache_indices": null,
+        "initial_state_mode": null,
+        "num_accepted_tokens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "direct_launch"
+      ],
+      "reference": "current_mainline_ascendc_profile",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "metric": "msopprof",
+        "requirement": "no_regression"
+      },
+      "seed": 2029
+    },
+    {
+      "id": "causal_conv1d_negative_contract",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 64,
+        "D": 130,
+        "W": 3,
+        "D_s": 1,
+        "L_s": 3
+      },
+      "dtype": {
+        "x_weight_state": "bfloat16",
+        "metadata": "int64"
+      },
+      "layout": "BSH",
+      "attrs": {
+        "activation_mode": 0,
+        "pad_slot_id": -1,
+        "run_mode": 0,
+        "head_num": 0
+      },
+      "optional_inputs": {
+        "bias": "present",
+        "query_start_loc": null,
+        "cache_indices": null,
+        "initial_state_mode": null,
+        "num_accepted_tokens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "multiple of 16"
+      },
+      "seed": 2030
+    },
+    {
+      "id": "causal_conv1d_rank2_forward_requires_qsl",
+      "tags": [
+        "negative",
+        "boundary",
+        "varlen"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 64,
+        "D": 128,
+        "W": 3,
+        "D_s": 2,
+        "L_s": 2
+      },
+      "dtype": {
+        "x_weight_state": "float16",
+        "metadata": "int64"
+      },
+      "layout": "TH",
+      "attrs": {
+        "activation_mode": 0,
+        "pad_slot_id": -1,
+        "run_mode": 0,
+        "head_num": 0
+      },
+      "optional_inputs": {
+        "bias": null,
+        "query_start_loc": null,
+        "cache_indices": null,
+        "initial_state_mode": null,
+        "num_accepted_tokens": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "query_start_loc"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2031
+    },
+    {
+      "id": "causal_conv1d_accepted_tokens_requires_width4",
+      "tags": [
+        "negative",
+        "boundary",
+        "decode"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 2,
+        "D": 128,
+        "W": 3,
+        "D_s": 2,
+        "L_s": 3
+      },
+      "dtype": {
+        "x_weight_state": "float16",
+        "metadata": "int64"
+      },
+      "layout": "BSH",
+      "attrs": {
+        "activation_mode": 0,
+        "pad_slot_id": -1,
+        "run_mode": 1,
+        "head_num": 0
+      },
+      "optional_inputs": {
+        "bias": null,
+        "query_start_loc": null,
+        "cache_indices": null,
+        "initial_state_mode": null,
+        "num_accepted_tokens": [
+          1,
+          2
+        ]
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "width=4"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2032
+    }
+  ]
+}

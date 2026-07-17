@@ -38,11 +38,14 @@ _ASCENDC_OPS = (
     "npu_chunk_fwd_o",
     "npu_chunk_gated_delta_rule_fwd_h",
     "npu_recompute_w_u_fwd",
+    "npu_recompute_wu_fwd",
     "npu_chunk_local_cumsum",
     "npu_chunk_scaled_dot_kkt",
     "npu_solve_tri",
     "npu_chunk_kda_fwd",
     "npu_kda_gate_cumsum",
+    "npu_kda_layout_swap12",
+    "npu_recurrent_gated_delta_rule",
 )
 
 BACKWARD_OPS = {
@@ -57,6 +60,8 @@ BACKWARD_OPS = {
 MUTATED_ARGUMENTS = {
     "causal_conv1d": ("conv_states",),
     "npu_causal_conv1d": ("conv_states",),
+    "recurrent_gated_delta_rule": ("state_ref",),
+    "npu_recurrent_gated_delta_rule": ("state_ref",),
 }
 
 _LEGACY_TORCH_OPS_WARNING = (

@@ -31,6 +31,8 @@ from fla_npu.ops.ascendc import (
     chunk_fwd_o as ascendc_chunk_fwd_o,
     chunk_gated_delta_rule_bwd_dhu as ascendc_chunk_gated_delta_rule_bwd_dhu,
     chunk_gated_delta_rule_fwd_h as ascendc_chunk_gated_delta_rule_fwd_h,
+    chunk_local_cumsum as ascendc_chunk_local_cumsum,
+    chunk_scaled_dot_kkt as ascendc_chunk_scaled_dot_kkt,
     prepare_wy_repr_bwd_da as ascendc_prepare_wy_repr_bwd_da,
     prepare_wy_repr_bwd_full as ascendc_prepare_wy_repr_bwd_full,
     recompute_w_u_fwd as ascendc_recompute_w_u_fwd,
@@ -39,22 +41,15 @@ from fla_npu.ops.ascendc import (
 from fla_npu.ops.triton import (
     autocast_custom_bwd,
     autocast_custom_fwd,
-    chunk_local_cumsum,
-    chunk_scaled_dot_kkt_fwd,
     input_guard,
     l2norm_bwd,
     l2norm_fwd,
-    solve_tril_npu as solve_tril,
 )
 
 
 _disable_compile = getattr(getattr(torch, "compiler", None), "disable", lambda fn: fn)
 _DEFAULT_VARLEN_CHUNK_SIZES = (16, 32, 64, 128, 608 * 2)
 _ACCURACY_REFERENCE_VERSION = 1
-_SOLVE_TRI_ASCENDC_AVAILABLE: Optional[bool] = None
-_SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON = ""
-
-
 def _make_gate(shape: tuple[int, ...], dtype: torch.dtype, device: str, gate_function: str) -> torch.Tensor:
     if gate_function == "logsigmoid":
         return F.logsigmoid(torch.randn(*shape, dtype=dtype, device=device))
@@ -248,33 +243,6 @@ def solve_tri_ascendc(
     return out.unsqueeze(0)
 
 
-def _probe_solve_tri_ascendc(device: torch.device, dtype: torch.dtype) -> bool:
-    global _SOLVE_TRI_ASCENDC_AVAILABLE, _SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON
-
-    if _SOLVE_TRI_ASCENDC_AVAILABLE is not None:
-        return _SOLVE_TRI_ASCENDC_AVAILABLE
-
-    probe_dtype = dtype if dtype in (torch.float16, torch.bfloat16) else torch.float16
-    try:
-        # solve_tri does not support D=64 on this path; probe a supported D=128
-        # shape so capability detection does not incorrectly force Triton fallback.
-        probe = torch.zeros((1, 64, 1, 128), dtype=probe_dtype, device=device)
-        ascendc_solve_tri(probe, layout="bsnd")
-        torch.npu.synchronize()
-    except Exception as exc:
-        _SOLVE_TRI_ASCENDC_AVAILABLE = False
-        _SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON = str(exc).splitlines()[0]
-        try:
-            torch.npu.synchronize()
-        except Exception:
-            pass
-        return False
-
-    _SOLVE_TRI_ASCENDC_AVAILABLE = True
-    _SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON = ""
-    return True
-
-
 def solve_tri_auto(
     A: torch.Tensor,
     *,
@@ -284,33 +252,11 @@ def solve_tri_auto(
     chunk_indices_list: Optional[list[int] | torch.Tensor],
     output_dtype: torch.dtype,
 ) -> torch.Tensor:
-    global _SOLVE_TRI_ASCENDC_AVAILABLE, _SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON
-
-    if _probe_solve_tri_ascendc(A.device, output_dtype):
-        try:
-            return solve_tri_ascendc(
-                A,
-                cu_seqlens=cu_seqlens_list,
-                chunk_indices=chunk_indices_list,
-                output_dtype=output_dtype,
-            )
-        except Exception as exc:
-            _SOLVE_TRI_ASCENDC_AVAILABLE = False
-            _SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON = str(exc).splitlines()[0]
-            try:
-                torch.npu.synchronize()
-            except Exception:
-                pass
-
-    warnings.warn(
-        "AscendC npu_solve_tri is unavailable; falling back to Triton solve_tril_npu. "
-        f"Reason: {_SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON}",
-        RuntimeWarning,
-    )
-    return solve_tril(
-        A=A,
-        cu_seqlens=cu_seqlens,
-        chunk_indices_out=chunk_indices_out,
+    del cu_seqlens, chunk_indices_out
+    return solve_tri_ascendc(
+        A,
+        cu_seqlens=cu_seqlens_list,
+        chunk_indices=chunk_indices_list,
         output_dtype=output_dtype,
     )
 
@@ -461,8 +407,19 @@ def _as_chunk_list_dict(
 
 
 def _cumsum_block_t(g: torch.Tensor, chunk_size: int) -> int:
-    # Keep this aligned with fla_npu.ops.triton.chunk_local_cumsum_scalar.
-    return int(chunk_size)
+    # Keep this identical to ChunkLocalCumsum host tiling for [B,H,T,*].
+    tail = 1
+    for dim in g.shape[3:]:
+        tail *= int(dim)
+    block_t_base = (1 << 17) // (tail * int(chunk_size))
+    block_t = 1
+    while block_t < max(block_t_base, 1):
+        block_t <<= 1
+    if block_t < chunk_size:
+        raise ValueError(
+            f"chunk_local_cumsum cannot tile tail={tail} with chunk_size={chunk_size}: B_T={block_t}."
+        )
+    return block_t
 
 
 def _ensure_varlen_metadata(
@@ -561,24 +518,23 @@ def flash_chunk_gated_delta_rule_fwd(
     chunk_indices_list: Optional[Dict[str, Optional[list[int]]]] = None,
     chunk_size: int = 64,
 ):
-    g = chunk_local_cumsum(
-        g,
+    g = ascendc_chunk_local_cumsum(
+        g.transpose(1, 2).contiguous(),
         chunk_size=chunk_size,
         cu_seqlens=cu_seqlens,
-        chunk_indices_out=chunk_indices,
-        head_first=False,
-    )
+        chunk_indices_out=_chunk_tensor(chunk_indices, _cumsum_block_t(g, chunk_size)),
+        head_first=True,
+    ).transpose(1, 2).contiguous()
 
     # A is the WY lower-triangular representation before inversion.
-    A = chunk_scaled_dot_kkt_fwd(
+    A = ascendc_chunk_scaled_dot_kkt(
         k=k,
-        g=g,
-        beta=beta,
-        cu_seqlens=cu_seqlens,
-        chunk_indices=_chunk_tensor(chunk_indices, chunk_size),
+        g=g.transpose(1, 2).contiguous(),
+        beta=beta.transpose(1, 2).contiguous(),
+        cu_seqlens=cu_seqlens_list,
+        chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
         chunk_size=chunk_size,
-        output_dtype=torch.float32,
-    )
+    ).transpose(1, 2).contiguous()
 
     A = solve_tri_auto(
         A,
@@ -777,14 +733,14 @@ def flash_chunk_gated_delta_rule_bwd(
     if dg.dtype != torch.float32:
         raise ValueError(f"dg current type is {dg.dtype}, should be float32")
 
-    dg = chunk_local_cumsum(
-        dg,
+    dg = ascendc_chunk_local_cumsum(
+        dg.transpose(1, 2).contiguous(),
         chunk_size=chunk_size,
         reverse=True,
         cu_seqlens=cu_seqlens,
-        chunk_indices_out=chunk_indices,
-        head_first=False,
-    )
+        chunk_indices_out=_chunk_tensor(chunk_indices, _cumsum_block_t(dg, chunk_size)),
+        head_first=True,
+    ).transpose(1, 2).contiguous()
 
     return dq, dk, dv, db, dg, dh0
 

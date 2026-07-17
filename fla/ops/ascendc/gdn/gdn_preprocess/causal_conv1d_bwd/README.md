@@ -1,124 +1,115 @@
 # CausalConv1dBwd
 
-## 产品支持情况
+## 1. 功能概述
 
-| 产品                                           | 是否支持 |
-| :------------------------------------------- | :--: |
-| <term>Ascend 950PR/Ascend 950DT</term>       |   √  |
-| <term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term> |   √  |
-| <term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term> |   √  |
-| <term>Atlas 200I/500 A2 推理产品</term>          |   ×  |
-| <term>Atlas 推理系列产品</term>                    |   ×  |
-| <term>Atlas 训练系列产品</term>                    |   ×  |
+CausalConv1d 的训练反向算子。它支持 dense/varlen 和五种公开 layout，根据 x/weight/dy 及可选预激活 y、initial_state、dht 计算 dx/dw/db/dh0。
 
-## 功能说明
+## 2. 数学定义
 
-- 算子功能：完成因果一维卷积（Causal Conv1d）的反向传播计算，输出输入梯度 `dx`、权重梯度 `dw`、偏置梯度 `db` 和初始状态梯度 `dh0`。
-- 支持固定长度和变长序列：
-  - 固定长度：`BSND`/`BSH`、`BNSD`。
-  - 变长序列：`TND`、`NTD`，通过 `queryStartLoc` 描述每条序列的起止位置。
-- 支持输出梯度 layout 转换：`inputLayout` 只影响前向输出 `y` 及其梯度 `dy` 的物理排布，`x`、`dx` 始终保持逻辑 layout。
+若启用 SiLU/Swish，先得到预激活梯度：
 
-## 计算公式
+```text
+dz = dy                                      activation=0
+dz = dy * (sigmoid(y)+y*sigmoid(y)*(1-sigmoid(y))) activation=1/2
+dx[t-j,d] += dz[t,d] * weight[j,d]
+dw[j,d]   += dz[t,d] * x_or_state[t-j,d]
+db[d]     += sum_t dz[t,d]
+```
 
-令卷积核宽度为 $W$，特征维度为 $D$，前向预激活输出为 $y$，上游梯度为 $dy$。当 `activation=0` 时：
+序列起点以前的 dx 贡献累积到 `dh0`，末状态梯度 `dht` 通过状态滚动关系反传。
 
-$$
-g_t = dy_t
-$$
+## 3. 输入、输出和属性
 
-当 `activation=1` 或 `activation=2` 时，按 SiLU/Swish 反向计算有效梯度：
+### 3.1 输入
 
-$$
-\sigma(y_t)=\frac{1}{1+e^{-y_t}}
-$$
+| 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| `x` | 必选 | `[B,T,D] 或 [T,D]` | FP32/FP16/BF16 | 逻辑 BSH/TH | 前向输入 |
+| `y` | 条件可选 | `由 input_layout 决定` | 与 x 一致 | BSH/BSND/BNSD/TND/NTD | 预激活；activation=1/2 必选 |
+| `weight` | 必选 | `[W,D]` | 与 x 一致 | ND | 卷积权重 |
+| `dy` | 必选 | `与 y 同形` | 与 x 一致 | 由 input_layout 决定 | 上游梯度 |
+| `initial_state` | 可选 | `[B,W,D]` | 与 x 一致 | ND | 前向初始状态 |
+| `dht` | 可选 | `[B,W,D]` | 与 x 一致 | ND | 末状态梯度 |
+| `query_start_loc` | TND/NTD 必选 | `[B+1]` | INT64 | ND | varlen 序列边界 |
 
-$$
-g_t = dy_t \cdot \sigma(y_t) \cdot (1 + y_t \cdot (1 - \sigma(y_t)))
-$$
+### 3.2 输出
 
-反向传播计算：
+| 名称 | Shape | Dtype | 说明 |
+| --- | --- | --- | --- |
+| `dx` | `与逻辑 x 同形` | 与 x 一致 | 输入梯度 |
+| `dw` | `[W,D]` | 与 weight 一致 | 权重梯度 |
+| `db` | `[D]` | 与 weight 一致 | 偏置梯度 |
+| `dh0` | `[B,W,D]` | 与 x 一致 | 初始状态梯度 |
 
-$$
-dx_t = \sum_{i=0}^{W-1} g_{t+i} \cdot weight_{W-1-i}
-$$
+### 3.3 属性
 
-$$
-dw_{W-1-i} = \sum_{b,t} g_{b,t+i} \cdot x_{b,t}
-$$
+| 名称 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `activation` | int | `0` | 0=无激活，1=SiLU，2=Swish(同 SiLU) |
+| `input_layout` | str | `BSND` | BSH/BSND/BNSD/TND/NTD |
 
-$$
-db = \sum_{b,t} g_{b,t}
-$$
+## 4. 支持范围
 
-当 `initial_state` 存在时，序列开头依赖的历史状态会参与 `dw` 和 `dh0` 计算；当 `dht` 存在时，最终卷积状态梯度会反传到序列尾部的 `dx`。
+| 项目 | 支持范围 |
+| --- | --- |
+| SOC | A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`) |
+| Dtype | FP32/FP16/BF16，同次调用所有浮点输入一致 |
+| Format/Layout | x/dx 始终逻辑 BSH/TH；y/dy 按 BSH、BSND、BNSD、TND 或 NTD |
+| 模式 | dense/varlen、无激活/SiLU、可选初末状态 |
 
-## 算子输入输出
 
-### 输入
 
-| 参数名 | 数据类型 | Shape | 是否必选 | 描述 |
-| :-- | :-- | :-- | :--: | :-- |
-| x | FLOAT/FLOAT16/BF16 | 固定长度 `[B, T, D]`；变长 `[totalTokens, D]` | 必选 | 前向输入，始终使用逻辑 layout。 |
-| y | FLOAT/FLOAT16/BF16 | 由 `inputLayout` 决定 | 可选 | 前向预激活输出。`activation=1/2` 时必须提供。 |
-| weight | FLOAT/FLOAT16/BF16 | `[W, D]` | 必选 | 卷积核权重。 |
-| dy | FLOAT/FLOAT16/BF16 | 与 `y` 相同 | 必选 | 前向输出梯度。 |
-| initial_state | FLOAT/FLOAT16/BF16 | `[B, W, D]` | 可选 | 初始卷积状态，与正向算子状态 layout 一致。 |
-| dht | FLOAT/FLOAT16/BF16 | `[B, W, D]` | 可选 | 最终卷积状态梯度。 |
-| queryStartLoc | INT64 | `[B+1]` | 可选 | 变长序列起止位置。`TND`/`NTD` 下必须提供。 |
+## 5. 调用入口
 
-### 输出
+实现类型：`ascendc`
 
-| 参数名 | 数据类型 | Shape | 是否必选 | 描述 |
-| :-- | :-- | :-- | :--: | :-- |
-| dx | FLOAT/FLOAT16/BF16 | 固定长度 `[B, T, D]`；变长 `[totalTokens, D]` | 必选 | 输入梯度，始终按逻辑 layout 输出。 |
-| dw | FLOAT/FLOAT16/BF16 | `[W, D]` | 可选 | 权重梯度，数据类型与 `weight` 相同。 |
-| db | FLOAT/FLOAT16/BF16 | `[D]` | 可选 | 偏置梯度，数据类型与输入相同。 |
-| dh0 | FLOAT/FLOAT16/BF16 | `[B, W, D]` | 可选 | 初始状态梯度。 |
+| 入口 | API |
+| --- | --- |
+| Python 主入口 | `fla_npu.ops.ascendc.causal_conv1d_bwd` |
+| aclnn | `aclnnCausalConv1dBwdGetWorkspaceSize` / `aclnnCausalConv1dBwd` |
+| Ascend C `<<<>>>` | `causal_conv1d_bwd<<<blockDim, l2ctrl, stream>>>(...)` |
+| legacy（可选） | `torch.ops.npu.npu_causal_conv1d_bwd` |
 
-### 属性
+完整签名和示例见 [API 文档](docs/api.md)，kernel、tiling、同步与内存设计见[设计文档](docs/design.md)。
 
-| 属性名 | 类型 | 默认值 | 取值 | 描述 |
-| :-- | :-- | :--: | :-- | :-- |
-| activation | int64 | 0 | 0, 1, 2 | 0：无激活；1：SiLU；2：Swish，当前与 SiLU 等价。 |
-| inputLayout | string | BSND | BSND, BSH, TND, BNSD, NTD | 输入 `y/dy` 的物理 layout。 |
+## 6. 精度与性能
 
-## Layout 与 Shape
+- 主精度入口：`tests/operators/causal_conv1d_bwd/accuracy/test_causal_conv1d_bwd.py`，主调用使用 `fla_npu.ops.ascendc`。
+- 用例规格：`tests/op_cases/causal_conv1d_bwd.json`；覆盖 dense/varlen、无激活/SiLU、可选初末状态。
+- 参考实现：`torch_autograd_causal_conv1d_reference`；容差按 JSON 中各 dtype 的 `rtol/atol` 执行，不允许为规避失败而收窄输入范围。
+- 性能：使用 msopprof 覆盖 JSON performance case，并与当前主线基线比较设备侧 kernel duration，禁止性能回退。
 
-| inputLayout | `x` shape | `y/dy` shape | `dx` 输出 shape | `queryStartLoc` |
-| :-- | :-- | :-- | :-- | :-- |
-| `BSND` / `BSH` | `[B, T, D]` | `[B, T, D]` | `[B, T, D]` | 可不传 |
-| `BNSD` | `[B, T, D]` | `[B, N, T, Dh]`，`D=N*Dh` | `[B, T, D]` | 可不传 |
-| `TND` | `[totalTokens, D]` | `[totalTokens, D]` | `[totalTokens, D]` | 必须传 |
-| `NTD` | `[totalTokens, D]` | `[N, totalTokens, Dh]`，`D=N*Dh` | `[totalTokens, D]` | 必须传 |
+## 7. 已知限制
 
-变长序列下，`queryStartLoc` 必须满足：
+- weight 必须 `[W,D]` 且 W 仅支持 2/3/4；D 或拆分后的 V 必须为 16 的倍数。
+- activation=1/2 时 y 必须提供且与 dy 同 layout/shape。
+- TND/NTD 必须提供合法 query_start_loc；累计长度非递减、首项为 0、末项为总 T，且总 token 数必须大于 0。
+- initial_state/dht/dh0 的逻辑 shape 为 `[B,W,D]`。
 
-$$
-queryStartLoc[0]=0
-$$
+## 8. 构建与验证
 
-$$
-queryStartLoc[B]=totalTokens
-$$
+```bash
+FLA_NPU_SOC=ascend910b FLA_NPU_OPS=causal_conv1d_bwd python -m pip wheel --no-build-isolation --no-deps . -w dist
+pytest -q tests/operators/causal_conv1d_bwd/accuracy/test_causal_conv1d_bwd.py
+python scripts/check_operator_compliance.py
+```
 
-且 `queryStartLoc[i+1] >= queryStartLoc[i]`。
+A3/A5 分别将 `FLA_NPU_SOC` 替换为 `ascend910_93`/`ascend950`。aclnn 与直调通路源文件位于
+`tests/operators/causal_conv1d_bwd/routes/`，均使用同一份 JSON 规格。
 
-## 约束说明
+<a id="shape-symbols"></a>
 
-- `x`、`y`、`weight`、`dy`、`initial_state`、`dht` 的数据类型必须一致。
-- `dx`、`dh0` 的数据类型必须与 `x` 一致。
-- `dw`、`db` 在 kernel 内部使用 `FLOAT` 累加，写回时转换为输入数据类型。
-- `weight` 必须为二维 tensor，shape 为 `[W, D]`。
-- `y` 和 `dy` 必须采用相同的物理 layout 和 shape；`x` 始终采用逻辑 layout。
-- `initial_state`、`dht`、`dh0` 的逻辑 shape 为 `[B, W, D]`，与正向算子的状态 layout 一致。
-- `BSND`/`TND` layout 下逻辑特征维 `D` 必须为 16 的倍数；`BNSD`/`NTD` layout 下最后一维 `Dh` 必须为 16 的倍数，逻辑特征维为 `D=N*Dh`。
-- 不支持空序列，固定长度场景下 `T > 0`，变长场景下 `totalTokens > 0`。
-- `activation=1` 或 `activation=2` 时必须提供 `y`。
-- `TND`/`NTD` layout 下必须提供 `queryStartLoc`。
+## 9. 附录：Shape 变量说明
 
-## 调用说明
+- 模型/算法族：Gated Delta Network (GDN)
+- 模型级符号表：[GDN 模型符号表](../../README.md#model-shape-symbols)
+- 符号表版本：`gdn-shape-v1`
 
-| 调用方式 | 样例代码 | API 文档 |
-| :-- | :-- | :-- |
-| aclnn 接口 | [test_aclnn_causal_conv1d_bwd.cpp](./examples/test_aclnn_causal_conv1d_bwd.cpp) | [aclnnCausalConv1dBwd](./docs/aclnnCausalConv1dBwd.md) |
+| 变量 | 语义 |
+| --- | --- |
+| `B` | Batch size；varlen 打包场景通常为 1 |
+| `T` | dense 序列长度或 varlen 打包后的 token 总数 |
+| `H_v` | Value/Output/State head 数 |
+| `V` | Value/Output 单 head 特征维 |
+| `D` | 不区分 Q/K 与 V 时使用的通道维 |
+| `W` | 一维卷积核宽度 |

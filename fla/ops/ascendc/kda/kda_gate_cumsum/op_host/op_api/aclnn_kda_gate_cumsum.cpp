@@ -138,14 +138,19 @@ aclnnStatus KdaGateCheckParams(
 {
     CHECK_COND(g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
     CHECK_COND(gkOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "gkOut must not be nullptr.");
+    CHECK_COND(g->GetDataType() == DataType::DT_FLOAT || g->GetDataType() == DataType::DT_FLOAT16 ||
+                   g->GetDataType() == DataType::DT_BF16,
+               ACLNN_ERR_PARAM_INVALID, "g must be float32, float16 or bfloat16.");
     CHECK_COND(chunkSize == 32 || chunkSize == 64 || chunkSize == 128, ACLNN_ERR_PARAM_INVALID,
                "chunkSize must be 32, 64 or 128.");
     size_t rank = KdaGateRank(g);
     CHECK_COND(rank == 3 || rank == 4, ACLNN_ERR_PARAM_INVALID,
                "g must be BSND/BNSD rank4 or TND/NTD rank3.");
     size_t kDimIdx = rank == 4 ? 3 : 2;
-    CHECK_COND(KdaGateDim(g, kDimIdx) <= MAX_KDA_K_DIM, ACLNN_ERR_PARAM_INVALID,
-               "K must be less than or equal to 256.");
+    for (size_t idx = 0; idx < rank; ++idx) {
+        CHECK_COND(KdaGateDim(g, idx) > 0, ACLNN_ERR_PARAM_INVALID, "all g dimensions must be positive.");
+    }
+    CHECK_COND(KdaGateDim(g, kDimIdx) <= MAX_KDA_K_DIM, ACLNN_ERR_PARAM_INVALID, "K must be <= 256.");
     CHECK_COND(gkOut->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
                "gkOut must be float32.");
     CHECK_COND(KdaGateSameShape(gkOut, g), ACLNN_ERR_PARAM_INVALID, "gkOut shape must match g shape.");
@@ -172,16 +177,22 @@ aclnnStatus KdaGateCheckParams(
         int64_t k = KdaGateDim(g, kDimIdx);
         CHECK_COND(KdaGateRank(aLogOptional) == 1 && KdaGateDim(aLogOptional, 0) == hv,
                    ACLNN_ERR_PARAM_INVALID, "aLogOptional shape must be [HV].");
+        CHECK_COND(aLogOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
+                   "aLogOptional must be float32.");
         if (dtBiasOptional != nullptr) {
             size_t biasRank = KdaGateRank(dtBiasOptional);
             bool validBias = (biasRank == 1 && KdaGateDim(dtBiasOptional, 0) == hv * k) ||
                              (biasRank == 2 && KdaGateDim(dtBiasOptional, 0) == hv &&
                               KdaGateDim(dtBiasOptional, 1) == k);
             CHECK_COND(validBias, ACLNN_ERR_PARAM_INVALID, "dtBiasOptional shape must be [HV*K] or [HV, K].");
+            CHECK_COND(dtBiasOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
+                       "dtBiasOptional must be float32.");
         }
     } else {
         CHECK_COND(!safeGate, ACLNN_ERR_PARAM_INVALID,
                    "safeGate only takes effect when useGateInKernel is true.");
+        CHECK_COND(aLogOptional == nullptr && dtBiasOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
+                   "aLogOptional and dtBiasOptional must be nullptr when useGateInKernel is false.");
     }
     return ACLNN_SUCCESS;
 }
@@ -202,6 +213,8 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
     aclOpExecutor **executor)
 {
     L2_DFX_PHASE_1(aclnnKdaGateCumsum, DFX_IN(g, aLogOptional, dtBiasOptional, cuSeqlensOptional), DFX_OUT(gkOut));
+    CHECK_COND(workspaceSize != nullptr, ACLNN_ERR_PARAM_NULLPTR, "workspaceSize must not be nullptr.");
+    CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "executor must not be nullptr.");
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
@@ -224,6 +237,7 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
 aclnnStatus aclnnKdaGateCumsum(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnKdaGateCumsum);
+    CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "executor must not be nullptr.");
     return CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
 }
 

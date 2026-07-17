@@ -1424,6 +1424,38 @@ def test_chunk_gdn_fwd_h_gk_only_matches_neutral_g():
     _assert_close("gk final_state formula", gk_only[2], state, rtol=2e-2, atol=2e-3)
 
 
+def test_kda_layout_swap12_matches_reference():
+    device = _device()
+    if device.type == "cpu":
+        return
+    cases = (
+        ((193, 8, 128), torch.bfloat16, True),
+        ((2, 129, 4, 17), torch.float16, False),
+        ((1, 3, 4, 17, 7), torch.float32, False),
+    )
+    for index, (shape, dtype, with_dependency) in enumerate(cases):
+        torch.manual_seed(9200 + index)
+        x = torch.randn(shape, dtype=torch.float32).to(dtype=dtype, device=device)
+        dependency = torch.ones(1, dtype=dtype, device=device) if with_dependency else None
+        actual = fla_ascendc.kda_layout_swap12(x, dependency=dependency)
+        permutation = (1, 0, 2) if len(shape) == 3 else (0, 2, 1, *range(3, len(shape)))
+        expected = x.permute(permutation).contiguous()
+        _assert_close(f"layout swap rank{len(shape)} {dtype}", actual, expected, rtol=0, atol=0)
+
+
+def test_kda_layout_swap12_rejects_invalid_shape():
+    device = _device()
+    if device.type == "cpu":
+        return
+    for shape in ((8, 16), (1, 0, 4, 8)):
+        x = torch.empty(shape, dtype=torch.float16, device=device)
+        try:
+            fla_ascendc.kda_layout_swap12(x)
+        except RuntimeError:
+            continue
+        raise AssertionError(f"kda_layout_swap12 must reject shape {shape}")
+
+
 def _run_single_test_in_subprocess(name):
     subprocess.run([sys.executable, __file__, "--single-test", name], check=True)
 
@@ -1431,6 +1463,33 @@ def _run_single_test_in_subprocess(name):
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--single-test":
         globals()[sys.argv[2]]()
+        raise SystemExit(0)
+
+    selected_operator = os.environ.get("FLA_NPU_OPERATOR")
+    if selected_operator == "kda_gate_cumsum":
+        test_kda_gate_cumsum_default_and_fwd_integration()
+        test_kda_gate_cumsum_bnsd_direct_matches_reference()
+        test_kda_gate_cumsum_ntd_direct_matches_reference()
+        test_kda_gate_cumsum_safe_gate_matches_reference()
+        test_kda_gate_cumsum_safe_gate_multitask_last_row_matches_reference()
+        test_kda_gate_cumsum_layout_is_not_inferred_from_shape()
+        raise SystemExit(0)
+    if selected_operator == "kda_layout_swap12":
+        test_kda_layout_swap12_matches_reference()
+        test_kda_layout_swap12_rejects_invalid_shape()
+        raise SystemExit(0)
+    if selected_operator == "chunk_kda_fwd":
+        test_chunk_kda_fwd_matches_reference()
+        test_chunk_kda_fwd_bf16_gate_matches_reference()
+        test_chunk_kda_fwd_fp16_matches_reference()
+        test_chunk_kda_fwd_tnd_matches_reference()
+        test_chunk_kda_fwd_bnsd_direct_matches_reference()
+        test_chunk_kda_fwd_ntd_direct_matches_reference()
+        test_chunk_kda_fwd_vdim256_matches_reference()
+        test_chunk_kda_fwd_chunk128_matches_reference()
+        test_chunk_kda_fwd_without_intermediate_matches_export_and_reference()
+        test_chunk_kda_fwd_invalid_head_mapping_rejected()
+        test_chunk_kda_fwd_invalid_chunk_indices_rejected()
         raise SystemExit(0)
 
     test_chunk_kda_fwd_matches_reference()

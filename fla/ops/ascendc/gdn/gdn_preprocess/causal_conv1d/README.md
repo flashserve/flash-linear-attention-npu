@@ -1,133 +1,119 @@
 # CausalConv1d
 
-## 产品支持情况
+## 1. 功能概述
 
-|产品      | 是否支持 |
-|:----------------------------|:-----------:|
-|<term>Ascend 950PR/Ascend 950DT</term>|      √     |
-|<term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>|      √     |
-|<term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>|      √     |
-|<term>Atlas 200I/500 A2 推理产品</term>|      ×     |
-|<term>Atlas 推理系列产品</term>|      ×     |
-|<term>Atlas 训练系列产品</term>|      ×     |
+GDN 输入预处理的因果一维卷积。run_mode=0 执行 dense/varlen 前向并维护卷积状态，run_mode=1 执行 decode/投机更新；可选 SiLU 激活和 head layout 转换。
+
+## 2. 数学定义
+
+对通道 d 和时间 t：
+
+```text
+z[t,d] = bias[d] + sum(j=0..W-1, weight[j,d] * x[t-j,d])
+y[t,d] = z[t,d]                    activation_mode=0
+y[t,d] = z[t,d] * sigmoid(z[t,d]) activation_mode=1
+```
+
+`t-j` 越过序列起点时读取该序列的 `conv_states`；update 模式只提交有效/已接受 token 并原地滚动状态。
+
+## 3. 输入、输出和属性
+
+### 3.1 输入
+
+| 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| `x` | 必选 | `[B,T,D] 或 [T,D]` | FP16/BF16 | BSH/TH | 输入序列 |
+| `weight` | 必选 | `[W,D]` | FP16/BF16 | ND | depthwise 卷积权重 |
+| `bias` | 可选 | `[D]` | FP16/BF16 | ND | 偏置 |
+| `conv_states` | 必选/可变 | `[D_s,L_s,D]` | FP16/BF16 | ND | 历史输入状态，原地更新 |
+| `query_start_loc` | 可选 | `[B+1]` | INT64 | ND | varlen 序列边界 |
+| `cache_indices` | 可选 | `[B]` | INT64 | ND | 序列到状态槽的映射 |
+| `initial_state_mode` | 可选 | `[B]` | INT64 | ND | 是否使用已有初始状态 |
+| `num_accepted_tokens` | 可选 | `[B]` | INT64 | ND | 投机解码接受数 |
+
+### 3.2 输出
+
+| 名称 | Shape | Dtype | 说明 |
+| --- | --- | --- | --- |
+| `y` | `与 x 对应；head_num>0 时为 BNSD/NTD` | 与 x 一致 | 卷积输出 |
+| `conv_states` | `[D_s,L_s,D]` | 与输入一致 | 原地更新后的状态 |
+
+### 3.3 属性
+
+| 名称 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `activation_mode` | int | `0` | 0=无激活，1=SiLU |
+| `pad_slot_id` | int | `-1` | 跳过的缓存槽 |
+| `run_mode` | int | `0` | 0=forward，1=update |
+| `head_num` | int | `0` | forward 输出拆分 head；0 保持 BSH/TH |
+
+## 4. 支持范围
+
+| 项目 | 支持范围 |
+| --- | --- |
+| SOC | A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`) |
+| Dtype | x/weight/bias/state/y 为 FP16/BF16；元数据 INT64 |
+| Format/Layout | 输入 BSH/TH；head_num>0 时输出 BNSD/NTD |
+| 模式 | dense/varlen forward、decode/update、投机接受 token |
 
 
-## 功能说明
 
-- 算子功能：完成因果一维卷积（Causal Conv1d）计算，支持前向计算（runMode=0）和状态更新（runMode=1）两种运行模式。
+## 5. 调用入口
 
-- 计算公式：
+实现类型：`ascendc`
 
-  Causal Conv1d 是一种因果一维卷积算子，常用于序列建模中。在每个时间步 $t$，根据当前输入 $x_t$、卷积权重 $w$ 和历史状态，计算卷积输出 $y_t$。
+| 入口 | API |
+| --- | --- |
+| Python 主入口 | `fla_npu.ops.ascendc.causal_conv1d` |
+| aclnn | `aclnnCausalConv1dGetWorkspaceSize` / `aclnnCausalConv1d` |
+| Ascend C `<<<>>>` | `causal_conv1d<<<blockDim, l2ctrl, stream>>>(...)` |
+| legacy（可选） | `torch.ops.npu.npu_causal_conv1d` |
 
-  $$
-  y_t = \text{Activation}\left(\sum_{j=0}^{W-1} w_j \cdot x_{t-j} + b\right)
-  $$
+完整签名和示例见 [API 文档](docs/api.md)，kernel、tiling、同步与内存设计见[设计文档](docs/design.md)。
 
-  其中，$W$ 为卷积核宽度（支持2、3、4），$w_j$ 为卷积权重，$b$ 为偏置（可选），$\text{Activation}$ 为激活函数（可选，SiLU）。当 `activationMode=0` 时不使用激活函数，`activationMode=1` 时使用 SiLU 激活函数。
+## 6. 精度与性能
 
-  算子同时维护卷积状态 `convStates`，用于在增量推理（runMode=1）时缓存历史输入，实现高效的状态更新。
+- 主精度入口：`tests/operators/causal_conv1d/accuracy/test_causal_conv1d.py`，主调用使用 `fla_npu.ops.ascendc`。
+- 用例规格：`tests/op_cases/causal_conv1d.json`；覆盖 dense/varlen forward、decode/update、投机接受 token。
+- 参考实现：`torch_depthwise_causal_conv1d_reference`；容差按 JSON 中各 dtype 的 `rtol/atol` 执行，不允许为规避失败而收窄输入范围。
+- 性能：使用 msopprof 覆盖 JSON performance case，并与当前主线基线比较设备侧 kernel duration，禁止性能回退。
 
+## 7. 已知限制
 
-## 参数说明
+- 卷积宽度 W 仅支持 2/3/4，特征维 D 必须为 16 的倍数。
+- activation_mode 仅支持 0/1，run_mode 仅支持 0/1。
+- head_num>0 仅用于 forward，且必须整除 D；拆分后的 D/head_num 仍须为 16 的倍数。
+- conv_states 的 L_s 至少为 W-1；rank-3 投机 update 还要求 L_s >= (W-1)+(T-1)。
+- num_accepted_tokens 仅在 run_mode=1 且 W=4 时实现，值域为每条逻辑序列的 [0,token_count]。
+- conv_states 为可变输入；非连续状态仅在 CANN >= 9.1 支持。
+- rank-2 forward 必须提供 query_start_loc；query_start_loc、cache_indices、initial_state_mode 和接受数的长度必须与逻辑序列数一致。
+- initial_state_mode 仅用于 run_mode=0 且元素只能为 0/1；cache_indices 只能选择有效状态槽或 pad_slot_id。
 
-<table style="undefined;table-layout: fixed; width: 900px"><colgroup>
-<col style="width: 180px">
-<col style="width: 120px">
-<col style="width: 200px">
-<col style="width: 300px">
-<col style="width: 100px">
-</colgroup>
-<thead>
-  <tr>
-    <th>参数名</th>
-    <th>输入/输出</th>
-    <th>描述</th>
-    <th>数据类型</th>
-    <th>数据格式</th>
-  </tr></thead>
-<tbody>
-  <tr>
-    <td>x</td>
-    <td>输入</td>
-    <td>输入序列，公式中的x。</td>
-    <td>FLOAT16、BFLOAT16</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>weight</td>
-    <td>输入</td>
-    <td>卷积权重，公式中的w。</td>
-    <td>FLOAT16、BFLOAT16</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>bias</td>
-    <td>输入</td>
-    <td>偏置，公式中的b。可选输入，若不提供则默认为0。</td>
-    <td>FLOAT16、BFLOAT16</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>convStates</td>
-    <td>输入&输出</td>
-    <td>卷积状态，缓存历史输入用于因果卷积计算。</td>
-    <td>FLOAT16、BFLOAT16</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>queryStartLoc</td>
-    <td>输入</td>
-    <td>变长序列的起始位置索引，用于变长输入模式。可选输入。</td>
-    <td>INT64</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>cacheIndices</td>
-    <td>输入</td>
-    <td>序列到状态缓存的映射索引。可选输入。</td>
-    <td>INT64</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>initialStateMode</td>
-    <td>输入</td>
-    <td>标记序列是否有初始状态。可选输入。</td>
-    <td>INT64</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>numAcceptedTokens</td>
-    <td>输入</td>
-    <td>每个序列接受的token数量，用于投机解码。可选输入。</td>
-    <td>INT64</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>y</td>
-    <td>输出</td>
-    <td>卷积输出，公式中的y。</td>
-    <td>FLOAT16、BFLOAT16</td>
-    <td>ND</td>
-  </tr>
-</tbody>
-</table>
+## 8. 构建与验证
 
-### 属性说明
+```bash
+FLA_NPU_SOC=ascend910b FLA_NPU_OPS=causal_conv1d python -m pip wheel --no-build-isolation --no-deps . -w dist
+pytest -q tests/operators/causal_conv1d/accuracy/test_causal_conv1d.py
+python scripts/check_operator_compliance.py
+```
 
-| 属性名 | 描述 | 数据类型 | 默认值 |
-|:---:|:---:|:---:|:---:|
-| activationMode | 激活函数模式。0：不使用激活函数，1：使用SiLU激活函数。 | INT64 | 0 |
-| padSlotId | 无效缓存槽位的标记ID，用于跳过不需要计算的序列。 | INT64 | -1 |
-| runMode | 运行模式。0：前向计算模式（fn），1：状态更新模式（update）。 | INT64 | 0 |
-| headNum | 头数。仅支持在前向计算模式中传入大于0的数值，指示输出格式转换成BNSD或NTD。 | INT64 | 0 |
+A3/A5 分别将 `FLA_NPU_SOC` 替换为 `ascend910_93`/`ascend950`。aclnn 与直调通路源文件位于
+`tests/operators/causal_conv1d/routes/`，均使用同一份 JSON 规格。
 
-## 约束说明
-- 输入tensor的shape大小需满足一定约束，具体见[aclnnCausalConv1d](./docs/aclnnCausalConv1d.md)。
-- cann版本大于等于9.1.0后convStates支持非连续 Tensor，其余版本不支持
+<a id="shape-symbols"></a>
 
-## 调用说明
+## 9. 附录：Shape 变量说明
 
-| 调用方式  | 样例代码                                                     | 说明                                                         |
-| --------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| aclnn接口 | [test_aclnn_causal_conv1d.cpp](./examples/test_aclnn_causal_conv1d.cpp) | 通过[aclnnCausalConv1d](./docs/aclnnCausalConv1d.md)调用aclnnCausalConv1d算子 |
+- 模型/算法族：Gated Delta Network (GDN)
+- 模型级符号表：[GDN 模型符号表](../../README.md#model-shape-symbols)
+- 符号表版本：`gdn-shape-v1`
+
+| 变量 | 语义 |
+| --- | --- |
+| `B` | Batch size；varlen 打包场景通常为 1 |
+| `T` | dense 序列长度或 varlen 打包后的 token 总数 |
+| `D` | 不区分 Q/K 与 V 时使用的通道维 |
+| `W` | 一维卷积核宽度 |
+| `L_s` | convolution state 保存的历史长度 |
+| `D_s` | 状态槽位数 |
+| `Q_a` | 单次调用实际接受的 token 数 |

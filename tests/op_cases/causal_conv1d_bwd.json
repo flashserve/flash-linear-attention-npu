@@ -1,0 +1,480 @@
+{
+  "schema_version": 1,
+  "op": "causal_conv1d_bwd",
+  "implementation": "ascendc",
+  "model": "gdn",
+  "symbol_table_version": "gdn-shape-v1",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": [
+      "bfloat16",
+      "float16",
+      "int64"
+    ],
+    "layouts": [
+      "BNSD",
+      "BSH",
+      "NTD"
+    ],
+    "features": [
+      "dense/varlen",
+      "无激活/SiLU",
+      "可选初末状态"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ],
+    "optional_routes": [
+      "torch_ops_npu"
+    ]
+  },
+  "data_generation": {
+    "floating_inputs": {
+      "distribution": "uniform",
+      "min": -1.0,
+      "max": 1.0
+    },
+    "positive_inputs": {
+      "distribution": "uniform",
+      "min": 0.0,
+      "max": 1.0
+    },
+    "structured_inputs": "由 reference 名称对应的 runner 构造 gate、三角矩阵、状态和索引"
+  },
+  "coverage_requirements": {
+    "public_modes": [
+      "dense/varlen",
+      "无激活/SiLU",
+      "可选初末状态"
+    ],
+    "known_limits": [
+      "weight 必须 `[W,D]` 且 W 仅支持 2/3/4；D 或拆分后的 V 必须为 16 的倍数。",
+      "activation=1/2 时 y 必须提供且与 dy 同 layout/shape。",
+      "TND/NTD 必须提供合法 query_start_loc；累计长度非递减、首项为 0、末项为总 T，且总 token 数必须大于 0。",
+      "initial_state/dht/dh0 的逻辑 shape 为 `[B,W,D]`。"
+    ],
+    "required_outputs": [
+      "dx",
+      "dw",
+      "db",
+      "dh0"
+    ],
+    "accuracy_case_ids": [
+      "causal_conv1d_bwd_main_accuracy",
+      "causal_conv1d_bwd_dtype_layout_generalization",
+      "causal_conv1d_bwd_tail_or_varlen"
+    ],
+    "negative_case_ids": [
+      "causal_conv1d_bwd_negative_contract",
+      "causal_conv1d_bwd_invalid_width",
+      "causal_conv1d_bwd_varlen_requires_offsets",
+      "causal_conv1d_bwd_invalid_state_shape"
+    ],
+    "route_case_ids": [
+      "causal_conv1d_bwd_main_accuracy",
+      "causal_conv1d_bwd_performance"
+    ],
+    "performance_case_ids": [
+      "causal_conv1d_bwd_performance"
+    ]
+  },
+  "tolerance": {
+    "float16": {
+      "rtol": 0.003,
+      "atol": 0.003
+    },
+    "bfloat16": {
+      "rtol": 0.006,
+      "atol": 0.006
+    }
+  },
+  "cases": [
+    {
+      "id": "causal_conv1d_bwd_main_accuracy",
+      "tags": [
+        "accuracy",
+        "example",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 64,
+        "D": 128,
+        "W": 3
+      },
+      "dtype": {
+        "floating": "float16",
+        "metadata": "int64"
+      },
+      "layout": "BSH",
+      "attrs": {
+        "activation": 0,
+        "input_layout": "BSH"
+      },
+      "optional_inputs": {
+        "y": null,
+        "initial_state": null,
+        "dht": null,
+        "query_start_loc": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch",
+        "torch_ops_npu"
+      ],
+      "reference": "torch_autograd_causal_conv1d_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "dx",
+          "dw",
+          "db",
+          "dh0"
+        ]
+      },
+      "seed": 2026
+    },
+    {
+      "id": "causal_conv1d_bwd_dtype_layout_generalization",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 129,
+        "H_v": 4,
+        "V": 64,
+        "D": 256,
+        "W": 4
+      },
+      "dtype": {
+        "floating": "bfloat16",
+        "metadata": "int64"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "activation": 1,
+        "input_layout": "BNSD"
+      },
+      "optional_inputs": {
+        "y": "present",
+        "initial_state": "present",
+        "dht": "present",
+        "query_start_loc": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_autograd_causal_conv1d_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "dx",
+          "dw",
+          "db",
+          "dh0"
+        ]
+      },
+      "seed": 2027
+    },
+    {
+      "id": "causal_conv1d_bwd_tail_or_varlen",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "tail"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 193,
+        "H_v": 4,
+        "V": 32,
+        "D": 128,
+        "W": 2
+      },
+      "dtype": {
+        "floating": "bfloat16",
+        "metadata": "int64"
+      },
+      "layout": "NTD",
+      "attrs": {
+        "activation": 2,
+        "input_layout": "NTD"
+      },
+      "optional_inputs": {
+        "y": "present",
+        "initial_state": "present",
+        "dht": null,
+        "query_start_loc": [
+          0,
+          65,
+          193
+        ]
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_autograd_causal_conv1d_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "dx",
+          "dw",
+          "db",
+          "dh0"
+        ]
+      },
+      "seed": 2028
+    },
+    {
+      "id": "causal_conv1d_bwd_performance",
+      "tags": [
+        "performance",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 64,
+        "D": 128,
+        "W": 3
+      },
+      "dtype": {
+        "floating": "float16",
+        "metadata": "int64"
+      },
+      "layout": "BSH",
+      "attrs": {
+        "activation": 0,
+        "input_layout": "BSH"
+      },
+      "optional_inputs": {
+        "y": null,
+        "initial_state": null,
+        "dht": null,
+        "query_start_loc": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "direct_launch"
+      ],
+      "reference": "current_mainline_ascendc_profile",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "metric": "msopprof",
+        "requirement": "no_regression"
+      },
+      "seed": 2029
+    },
+    {
+      "id": "causal_conv1d_bwd_negative_contract",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 64,
+        "D": 128,
+        "W": 3
+      },
+      "dtype": {
+        "floating": "float16",
+        "metadata": "int64"
+      },
+      "layout": "BSH",
+      "attrs": {
+        "activation": 1,
+        "input_layout": "BSND"
+      },
+      "optional_inputs": {
+        "y": null,
+        "initial_state": null,
+        "dht": null,
+        "query_start_loc": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "y"
+      },
+      "seed": 2030
+    },
+    {
+      "id": "causal_conv1d_bwd_invalid_width",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 64,
+        "D": 128,
+        "W": 5
+      },
+      "dtype": {
+        "floating": "float16",
+        "metadata": "int64"
+      },
+      "layout": "BSH",
+      "attrs": {
+        "activation": 0,
+        "input_layout": "BSH"
+      },
+      "optional_inputs": {
+        "y": null,
+        "initial_state": null,
+        "dht": null,
+        "query_start_loc": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "W"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2031
+    },
+    {
+      "id": "causal_conv1d_bwd_varlen_requires_offsets",
+      "tags": [
+        "negative",
+        "boundary",
+        "varlen"
+      ],
+      "shape": {
+        "N": 2,
+        "T": 193,
+        "H_v": 4,
+        "V": 32,
+        "D": 128,
+        "W": 3
+      },
+      "dtype": {
+        "floating": "bfloat16",
+        "metadata": "int64"
+      },
+      "layout": "NTD",
+      "attrs": {
+        "activation": 0,
+        "input_layout": "NTD"
+      },
+      "optional_inputs": {
+        "y": null,
+        "initial_state": null,
+        "dht": null,
+        "query_start_loc": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "query_start_loc"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2032
+    },
+    {
+      "id": "causal_conv1d_bwd_invalid_state_shape",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 64,
+        "D": 128,
+        "W": 3
+      },
+      "dtype": {
+        "floating": "float16",
+        "metadata": "int64"
+      },
+      "layout": "BSH",
+      "attrs": {
+        "activation": 0,
+        "input_layout": "BSH"
+      },
+      "optional_inputs": {
+        "y": null,
+        "initial_state": {
+          "status": "present",
+          "shape": "[B,W-1,D]"
+        },
+        "dht": null,
+        "query_start_loc": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "initial_state"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2033
+    }
+  ]
+}

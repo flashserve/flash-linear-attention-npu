@@ -30,6 +30,7 @@ namespace optiling {
 
 static constexpr int64_t RECOMPUTE_WU_FWD_V_DIM_128 = 128;
 static constexpr int64_t RECOMPUTE_WU_FWD_V_DIM_256 = 256;
+static constexpr int64_t RECOMPUTE_WU_FWD_K_DIM_128 = 128;
 
 static constexpr size_t RECOMPUTE_WU_FWD_INPUT_K_IDX = 0;
 static constexpr size_t RECOMPUTE_WU_FWD_INPUT_V_IDX = 1;
@@ -123,6 +124,11 @@ public:
                             "Check input %s shape failed, the dim num should be %zu, but get %zu.", inputName,
                             validDimNum, dimNum),
                     return ge::GRAPH_FAILED);
+        for (size_t dimIndex = 0; dimIndex < dimNum; ++dimIndex) {
+            OP_CHECK_IF(storageShape.GetDim(dimIndex) <= 0,
+                        OP_LOGE(ctx_.nodeName, "Input %s dimensions must be positive.", inputName),
+                        return ge::GRAPH_FAILED);
+        }
         return ge::GRAPH_SUCCESS;
     }
 
@@ -290,6 +296,9 @@ public:
         tiling_.T = T;
         tiling_.K = K;
         tiling_.V = V;
+        OP_CHECK_IF(K != RECOMPUTE_WU_FWD_K_DIM_128,
+                    OP_LOGE(ctx_.nodeName, "Check key dim K failed: only 128 is supported, but get %ld.", K),
+                    return ge::GRAPH_FAILED);
         OP_CHECK_IF(V != RECOMPUTE_WU_FWD_V_DIM_128 && V != RECOMPUTE_WU_FWD_V_DIM_256,
                     OP_LOGE(ctx_.nodeName,
                             "Check value dim V failed: only %ld or %ld is supported, but get %ld.",
@@ -350,16 +359,16 @@ public:
                     OP_LOGE(ctx_.nodeName, "Input %s data is required, but got nullptr.", RECOMPUTE_WU_FWD_INPUT_SEQLENS_NAME),
                     return ge::GRAPH_FAILED);
         const int64_t *cuSeqlens = ctx_.cuSeqlensData;
-        if (cuSeqlens[0] != 0) {
-            OP_LOGE(ctx_.nodeName, "Check seqlens data failed, the seqlens[0] should be 0, but get %ld.", cuSeqlens[0]);
+        if (cuSeqlens[0] != 0 || cuSeqlens[seqlensDim0 - 1] != T) {
+            OP_LOGE(ctx_.nodeName, "cu_seqlens must start at 0 and end at T=%ld.", T);
             return ge::GRAPH_FAILED;
         }
         std::vector<int64_t> expectChunkIndices;
         for (int64_t i = 1; i < seqlensDim0; i++) {
             int64_t curSeqLen = cuSeqlens[i] - cuSeqlens[i - 1];
-            OP_CHECK_IF(curSeqLen <= 0,
+            OP_CHECK_IF(curSeqLen < 0,
                         OP_LOGE(ctx_.nodeName,
-                                "Check seqlens data failed, the seqlens[%ld]:[%ld] should be larger than seqlens[%ld]:[%ld]",
+                                "Check seqlens data failed, the seqlens[%ld]:[%ld] should not be smaller than seqlens[%ld]:[%ld]",
                                 i, cuSeqlens[i], i - 1, cuSeqlens[i - 1]),
                         return ge::GRAPH_FAILED);
             for (int64_t j = 0; j < curSeqLen; j += chunkSize) {

@@ -20,6 +20,7 @@ constexpr uint32_t kInputGIndex = 1;
 constexpr uint32_t kInputBetaIndex = 2;
 constexpr uint32_t kInputCuSeqlensIndex = 3;
 constexpr uint32_t kInputChunkIndicesIndex = 4;
+constexpr uint32_t kOutputAIndex = 0;
 
 uint64_t CeilDiv(uint64_t a, uint64_t b)
 {
@@ -145,6 +146,7 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
         context->GetInputShape(kInputGIndex) == nullptr || context->GetInputShape(kInputBetaIndex) == nullptr ||
         context->GetInputDesc(kInputKIndex) == nullptr || context->GetInputDesc(kInputGIndex) == nullptr ||
         context->GetInputDesc(kInputBetaIndex) == nullptr ||
+        context->GetOutputShape(kOutputAIndex) == nullptr || context->GetOutputDesc(kOutputAIndex) == nullptr ||
         context->GetRawTilingData() == nullptr) {
         return ge::GRAPH_FAILED;
     }
@@ -173,7 +175,8 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     const ge::DataType kDtype = context->GetInputDesc(kInputKIndex)->GetDataType();
     if ((kDtype != ge::DT_FLOAT16 && kDtype != ge::DT_BF16) ||
         context->GetInputDesc(kInputGIndex)->GetDataType() != ge::DT_FLOAT ||
-        context->GetInputDesc(kInputBetaIndex)->GetDataType() != ge::DT_FLOAT) {
+        context->GetInputDesc(kInputBetaIndex)->GetDataType() != ge::DT_FLOAT ||
+        context->GetOutputDesc(kOutputAIndex)->GetDataType() != ge::DT_FLOAT) {
         return ge::GRAPH_FAILED;
     }
 
@@ -182,6 +185,11 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
         chunkSizeI64 = *context->GetAttrs()->GetAttrPointer<int64_t>(0);
     }
     if (chunkSizeI64 <= 0 || !IsChunkSizeSupported(static_cast<uint64_t>(chunkSizeI64))) {
+        return ge::GRAPH_FAILED;
+    }
+    const gert::Shape &aShape = context->GetOutputShape(kOutputAIndex)->GetStorageShape();
+    if (aShape.GetDimNum() != 4 || aShape.GetDim(0) != bI64 || aShape.GetDim(1) != hkI64 ||
+        aShape.GetDim(2) != tI64 || aShape.GetDim(3) != chunkSizeI64) {
         return ge::GRAPH_FAILED;
     }
 
@@ -208,6 +216,9 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     if (hasCuSeqlens) {
+        if (b != 1) {
+            return ge::GRAPH_FAILED;
+        }
         if (cuSeqlensDesc->GetDataType() != ge::DT_INT64 || chunkIndicesDesc->GetDataType() != ge::DT_INT64) {
             return ge::GRAPH_FAILED;
         }
@@ -215,6 +226,38 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
         const gert::Shape &chunkIndicesShape = chunkIndicesShapePtr->GetStorageShape();
         if (cuSeqlensShape.GetDimNum() != 1 || cuSeqlensShape.GetDim(0) < 2 ||
             !GetChunkPairCount(chunkIndicesShape, &nt) || nt == 0) {
+            return ge::GRAPH_FAILED;
+        }
+        const gert::Tensor *cuSeqlensTensor = context->GetOptionalInputTensor(kInputCuSeqlensIndex);
+        const gert::Tensor *chunkIndicesTensor = context->GetOptionalInputTensor(kInputChunkIndicesIndex);
+        const int64_t *cuSeqlensData = cuSeqlensTensor == nullptr ? nullptr : cuSeqlensTensor->GetData<int64_t>();
+        const int64_t *chunkIndicesData =
+            chunkIndicesTensor == nullptr ? nullptr : chunkIndicesTensor->GetData<int64_t>();
+        if (cuSeqlensData == nullptr || chunkIndicesData == nullptr) {
+            return ge::GRAPH_FAILED;
+        }
+        const int64_t sequenceCount = cuSeqlensShape.GetDim(0) - 1;
+        if (cuSeqlensData[0] != 0 || cuSeqlensData[sequenceCount] != tI64) {
+            return ge::GRAPH_FAILED;
+        }
+        uint64_t expectedPairCount = 0;
+        for (int64_t seqId = 0; seqId < sequenceCount; ++seqId) {
+            const int64_t seqStart = cuSeqlensData[seqId];
+            const int64_t seqEnd = cuSeqlensData[seqId + 1];
+            if (seqStart < 0 || seqEnd < seqStart || seqEnd > tI64) {
+                return ge::GRAPH_FAILED;
+            }
+            const uint64_t localChunkCount =
+                CeilDiv(static_cast<uint64_t>(seqEnd - seqStart), static_cast<uint64_t>(chunkSizeI64));
+            for (uint64_t localChunk = 0; localChunk < localChunkCount; ++localChunk) {
+                if (expectedPairCount >= nt || chunkIndicesData[expectedPairCount * 2] != seqId ||
+                    chunkIndicesData[expectedPairCount * 2 + 1] != static_cast<int64_t>(localChunk)) {
+                    return ge::GRAPH_FAILED;
+                }
+                ++expectedPairCount;
+            }
+        }
+        if (expectedPairCount != nt) {
             return ge::GRAPH_FAILED;
         }
         isVarlen = 1;

@@ -138,10 +138,9 @@ public:
     }
 
 private:
-    // Mirrors the original "(x + GM_ALIGN) / GM_ALIGN * GM_ALIGN" alignment.
     static size_t AlignUp(size_t x)
     {
-        return (x + GDN_FWD_H_GM_ALIGN) / GDN_FWD_H_GM_ALIGN * GDN_FWD_H_GM_ALIGN;
+        return (x + GDN_FWD_H_GM_ALIGN - 1) / GDN_FWD_H_GM_ALIGN * GDN_FWD_H_GM_ALIGN;
     }
 
     const ChunkGatedDeltaRuleFwdHTilingContext &ctx_;

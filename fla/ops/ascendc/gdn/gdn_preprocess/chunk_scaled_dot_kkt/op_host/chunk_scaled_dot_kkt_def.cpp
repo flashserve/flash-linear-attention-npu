@@ -45,6 +45,8 @@ public:
             .NeedCheckSupportFlag(false)
             .ExtendCfgInfo("opFile.value", "chunk_scaled_dot_kkt");
         this->AICore().AddConfig("ascend910b", aicoreConfig);
+        this->AICore().AddConfig("ascend910_93", aicoreConfig);
+        this->AICore().AddConfig("ascend950", aicoreConfig);
     }
 };
 

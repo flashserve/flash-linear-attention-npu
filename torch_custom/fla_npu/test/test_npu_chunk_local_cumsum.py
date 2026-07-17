@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 
 import torch
 import torch_npu
-import fla_npu
+from fla_npu.ops import ascendc as ascendc_ops
 
 
 torch.npu.config.allow_internal_format = False
@@ -87,7 +87,7 @@ def run_case(
         cu_seqlens_npu = cu_seqlens_cpu.npu()
         chunk_indices_npu = chunk_indices_cpu.npu()
 
-    actual = torch.ops.npu.npu_chunk_local_cumsum(
+    actual = ascendc_ops.chunk_local_cumsum(
         g_npu,
         chunk_size,
         cu_seqlens=cu_seqlens_npu,

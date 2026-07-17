@@ -1,0 +1,409 @@
+{
+  "op": "prepare_wy_repr_bwd_full",
+  "schema_version": 1,
+  "model": "gdn",
+  "symbol_table_version": "gdn-shape-v1",
+  "implementation": "ascendc",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": [
+      "float16",
+      "bfloat16",
+      "float32_gate"
+    ],
+    "layouts": [
+      "BNSD"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ],
+    "optional_routes": [
+      "torch_ops_npu"
+    ],
+    "features": [
+      "fixed",
+      "varlen",
+      "支持 GVA"
+    ]
+  },
+  "tolerance": {
+    "float16": {
+      "rtol": 0.003,
+      "atol": 0.003
+    },
+    "bfloat16": {
+      "rtol": 0.02,
+      "atol": 0.02
+    }
+  },
+  "cases": [
+    {
+      "id": "dense_fp16_gva_c64",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "route",
+        "example"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 64
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch",
+        "torch_ops_npu"
+      ],
+      "reference": "torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_full.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "dk",
+          "dv",
+          "dbeta",
+          "dg"
+        ]
+      },
+      "seed": 2026
+    },
+    {
+      "id": "dense_bf16_c128_v256_tail",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "performance"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 4,
+        "H_v": 8,
+        "T": 385,
+        "K": 128,
+        "V": 256,
+        "C": 128
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "direct_launch"
+      ],
+      "reference": "torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_full.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "metric": "msopprof",
+        "requirement": "no_regression",
+        "baseline": "current_mainline_ascendc_profile",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "dk",
+          "dv",
+          "dbeta",
+          "dg"
+        ]
+      },
+      "seed": 2027
+    },
+    {
+      "id": "varlen_fp16_tail",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "N": 3,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 321,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 6
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          65,
+          193,
+          321
+        ],
+        "chunk_indices": [
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          1,
+          1,
+          2,
+          0,
+          2,
+          1
+        ]
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch"
+      ],
+      "reference": "torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_full.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "dk",
+          "dv",
+          "dbeta",
+          "dg"
+        ]
+      },
+      "seed": 2028
+    },
+    {
+      "id": "negative_value_dim",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 64,
+        "C": 64
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "parameter_validation",
+      "expect": {
+        "return_code": "ACLNN_ERR_INNER",
+        "message_contains": "V"
+      },
+      "seed": 2029
+    },
+    {
+      "id": "negative_varlen_pair",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "N": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 64
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          64,
+          128
+        ],
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "parameter_validation",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "both be provided"
+      },
+      "seed": 2030
+    },
+    {
+      "id": "negative_chunk_size",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 32
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 32
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "parameter_validation",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "chunkSize"
+      },
+      "seed": 2031
+    }
+  ],
+  "data_generation": {
+    "floating_inputs": {
+      "distribution": "uniform",
+      "min": -1.0,
+      "max": 1.0
+    },
+    "positive_inputs": {
+      "distribution": "uniform",
+      "min": 0.0,
+      "max": 1.0
+    },
+    "structured_inputs": "由 case.optional_inputs 和 reference runner 构造 gate、状态及 varlen 索引"
+  },
+  "coverage_requirements": {
+    "public_modes": [
+      "fixed",
+      "varlen",
+      "支持 GVA"
+    ],
+    "known_limits": [
+      "`K` 仅支持 128，`V` 仅支持 128/256。",
+      "`chunk_size` 仅支持 64/128，并须等于 A/dA 最后一维。",
+      "必须满足 `H_v % H_k == 0`；varlen 当前仅支持物理 `B=1`。",
+      "`cu_seqlens` 与 `chunk_indices` 必须同时提供或同时省略。"
+    ],
+    "required_outputs": [
+      "dk",
+      "dv",
+      "dbeta",
+      "dg"
+    ],
+    "accuracy_case_ids": [
+      "dense_fp16_gva_c64",
+      "dense_bf16_c128_v256_tail",
+      "varlen_fp16_tail"
+    ],
+    "negative_case_ids": [
+      "negative_value_dim",
+      "negative_varlen_pair",
+      "negative_chunk_size"
+    ],
+    "route_case_ids": [
+      "dense_fp16_gva_c64",
+      "varlen_fp16_tail"
+    ],
+    "performance_case_ids": [
+      "dense_bf16_c128_v256_tail"
+    ]
+  }
+}

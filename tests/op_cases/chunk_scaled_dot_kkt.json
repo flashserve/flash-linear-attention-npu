@@ -1,0 +1,451 @@
+{
+  "schema_version": 1,
+  "op": "chunk_scaled_dot_kkt",
+  "implementation": "ascendc",
+  "model": "gdn",
+  "symbol_table_version": "gdn-shape-v1",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": [
+      "bfloat16",
+      "float16",
+      "float32"
+    ],
+    "layouts": [
+      "BNSD"
+    ],
+    "features": [
+      "fixed/varlen",
+      "GVA 输入",
+      "整块/尾块"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ],
+    "optional_routes": [
+      "torch_ops_npu"
+    ]
+  },
+  "data_generation": {
+    "floating_inputs": {
+      "distribution": "uniform",
+      "min": -1.0,
+      "max": 1.0
+    },
+    "positive_inputs": {
+      "distribution": "uniform",
+      "min": 0.0,
+      "max": 1.0
+    },
+    "structured_inputs": "由 reference 名称对应的 runner 构造 gate、三角矩阵、状态和索引"
+  },
+  "coverage_requirements": {
+    "public_modes": [
+      "fixed/varlen",
+      "GVA 输入",
+      "整块/尾块"
+    ],
+    "known_limits": [
+      "chunk_size 仅支持 16/32/64/128。",
+      "必须满足 H_v % H_k == 0；A 的 head 维为 H_k。",
+      "cu_seqlens/chunk_indices 必须同时提供或同时省略；varlen 物理 B 必须为 1。",
+      "varlen 累计长度必须覆盖 [0,T]，chunk_indices 必须按 sequence-major 完整列出每个 C 大小的 chunk。",
+      "指数差固定 clip 到 [-50,50]；H_v>H_k 时当前实现读取 g/beta 的前 H_k 个 head。"
+    ],
+    "required_outputs": [
+      "A"
+    ],
+    "accuracy_case_ids": [
+      "chunk_scaled_dot_kkt_main_accuracy",
+      "chunk_scaled_dot_kkt_dtype_layout_generalization",
+      "chunk_scaled_dot_kkt_tail_or_varlen"
+    ],
+    "negative_case_ids": [
+      "chunk_scaled_dot_kkt_negative_contract",
+      "chunk_scaled_dot_kkt_varlen_requires_b1",
+      "chunk_scaled_dot_kkt_varlen_pair_required"
+    ],
+    "route_case_ids": [
+      "chunk_scaled_dot_kkt_main_accuracy",
+      "chunk_scaled_dot_kkt_performance"
+    ],
+    "performance_case_ids": [
+      "chunk_scaled_dot_kkt_performance"
+    ]
+  },
+  "tolerance": {
+    "float16": {
+      "rtol": 0.003,
+      "atol": 0.003
+    },
+    "bfloat16": {
+      "rtol": 0.006,
+      "atol": 0.006
+    }
+  },
+  "cases": [
+    {
+      "id": "chunk_scaled_dot_kkt_main_accuracy",
+      "tags": [
+        "accuracy",
+        "example",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "C": 64
+      },
+      "dtype": {
+        "k": "float16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch",
+        "torch_ops_npu"
+      ],
+      "reference": "torch_chunk_scaled_dot_kkt_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "A"
+        ]
+      },
+      "seed": 2026
+    },
+    {
+      "id": "chunk_scaled_dot_kkt_dtype_layout_generalization",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 4,
+        "H_v": 4,
+        "T": 257,
+        "K": 128,
+        "C": 128
+      },
+      "dtype": {
+        "k": "bfloat16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_chunk_scaled_dot_kkt_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "A"
+        ]
+      },
+      "seed": 2027
+    },
+    {
+      "id": "chunk_scaled_dot_kkt_tail_or_varlen",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "tail"
+      ],
+      "shape": {
+        "B": 1,
+        "N": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 193,
+        "K": 128,
+        "C": 32,
+        "N_c": 7
+      },
+      "dtype": {
+        "k": "bfloat16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 32
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          65,
+          193
+        ],
+        "chunk_indices": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          2,
+          1,
+          0,
+          1,
+          1,
+          1,
+          2,
+          1,
+          3
+        ]
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_chunk_scaled_dot_kkt_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "A"
+        ]
+      },
+      "seed": 2028
+    },
+    {
+      "id": "chunk_scaled_dot_kkt_performance",
+      "tags": [
+        "performance",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "C": 64
+      },
+      "dtype": {
+        "k": "float16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "direct_launch"
+      ],
+      "reference": "fla_npu.ops.triton.chunk_scaled_dot_kkt_fwd",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "metric": "msopprof",
+        "requirement": "faster_than_triton"
+      },
+      "seed": 2029
+    },
+    {
+      "id": "chunk_scaled_dot_kkt_negative_contract",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 3,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "C": 64
+      },
+      "dtype": {
+        "k": "float16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "divisible by H_k"
+      },
+      "seed": 2030
+    },
+    {
+      "id": "chunk_scaled_dot_kkt_varlen_requires_b1",
+      "tags": [
+        "negative",
+        "boundary",
+        "varlen"
+      ],
+      "shape": {
+        "B": 2,
+        "N": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 193,
+        "K": 128,
+        "C": 32,
+        "N_c": 7
+      },
+      "dtype": {
+        "k": "float16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 32
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          65,
+          193
+        ],
+        "chunk_indices": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          2,
+          1,
+          0,
+          1,
+          1,
+          1,
+          2,
+          1,
+          3
+        ]
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "physical B=1"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2031
+    },
+    {
+      "id": "chunk_scaled_dot_kkt_varlen_pair_required",
+      "tags": [
+        "negative",
+        "boundary",
+        "varlen"
+      ],
+      "shape": {
+        "B": 1,
+        "N": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 193,
+        "K": 128,
+        "C": 32
+      },
+      "dtype": {
+        "k": "float16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 32
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          65,
+          193
+        ],
+        "chunk_indices": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "provided together"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2032
+    }
+  ]
+}

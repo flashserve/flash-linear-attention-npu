@@ -1,130 +1,110 @@
-# ChunkScaledDotKkt 算子说明
+# ChunkScaledDotKkt
 
-`ChunkScaledDotKkt` 用于 Gated Delta Rule 线性注意力中的 chunk-wise WY 表示构建。当前实现覆盖 `gk is None` 的定长和变长序列场景，输入和输出均采用 head-first 排布。
+## 1. 功能概述
 
-## 1. 产品支持情况
+构造 GDN WY 表示的 chunk-wise 严格下三角 KKT 矩阵。它融合 K@K^T、gate 差指数和 beta 行缩放，输出与 key head 对齐的 A。
 
-| 产品 | 是否支持 |
-| :-- | :--: |
-| Atlas A2 训练系列产品/Atlas A2 推理系列产品 | √ |
+## 2. 数学定义
 
-## 2. 算子功能
-
-对每个 batch、key head 和 chunk，计算带 gate 衰减和 beta 缩放的严格下三角 `K @ K^T`。GVA 场景下，`g`/`beta` 按 value head 维 `Hv` 输入，但本 KKT 算子输出 `A` 与 `k` 的 key head 维 `Hk` 对齐：
+令 `r=t mod C`、`s=t-r+c`：
 
 ```text
-h in [0, Hk)
-g/beta head = h
+A[b,h_k,t,c] = beta[b,h_k,t] * exp(clip(g[t]-g[s],-50,50))
+        * dot(k[b,h_k,t,:], k[b,h_k,s,:])  if c < r
+        0                                    otherwise
 ```
 
-$$
-A_{b,h,t,c} =
-\begin{cases}
-\beta_{b,h,t} \cdot \exp(\mathrm{clip}(g_{b,h,t} - g_{b,h,s}, -50, 50)) \cdot
-\sum_d k_{b,h,t,d} k_{b,h,s,d}, & c < r \\
-0, & c \ge r
-\end{cases}
-$$
+输出严格下三角，不含对角线；H_v>H_k 时当前 KKT 阶段读取 g/beta 的前 H_k 个 head。
 
-其中 `BT=chunk_size`，`r=t mod BT`，`s=t-r+c`，`h` 为 key head。输出只保留每个 chunk 内的严格下三角列，最后一维长度固定为 `BT`。当 `Hv > Hk` 时，当前实现按 Triton/dump 路径读取 `g`/`beta` 的前 `Hk` 个 head 参与 KKT 计算，其余 value head 由后续 value-side 算子使用。
+## 3. 输入、输出和属性
 
-## 3. 接口定义
+### 3.1 输入
 
-### 3.1 ACLNN 接口
+| 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| `k` | 必选 | `[B,H_k,T,K]` | FP16/BF16 | BNSD | Key |
+| `g` | 必选 | `[B,H_v,T]` | FP32 | BNS | 累积 gate |
+| `beta` | 必选 | `[B,H_v,T]` | FP32 | BNS | 行缩放 |
+| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | varlen 累计长度 |
+| `chunk_indices` | 可选 | `[2*N_c]` | INT64 | ND | 展平 chunk 索引 |
 
-```cpp
-aclnnStatus aclnnChunkScaledDotKktGetWorkspaceSize(
-    const aclTensor *k,
-    const aclTensor *g,
-    const aclTensor *beta,
-    const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkIndicesOptional,
-    int64_t chunkSize,
-    aclTensor *A,
-    uint64_t *workspaceSize,
-    aclOpExecutor **executor);
+### 3.2 输出
 
-aclnnStatus aclnnChunkScaledDotKkt(
-    void *workspace,
-    uint64_t workspaceSize,
-    aclOpExecutor *executor,
-    aclrtStream stream);
-```
+| 名称 | Shape | Dtype | 说明 |
+| --- | --- | --- | --- |
+| `A` | `[B,H_k,T,C]` | FP32 | 严格下三角 scaled KKT |
 
-### 3.2 PyTorch 接口
+### 3.3 属性
 
-```python
-torch.ops.npu.npu_chunk_scaled_dot_kkt(
-    k: Tensor,
-    g: Tensor,
-    beta: Tensor,
-    cu_seqlens: list[int] | None = None,
-    chunk_indices: list[int] | None = None,
-    chunk_size: int = 64,
-) -> Tensor
-```
+| 名称 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `chunk_size` | int | `64` | 16/32/64/128 |
 
-## 4. 输入参数
+## 4. 支持范围
 
-| 参数 | 数据类型 | Shape | 是否必须 | 描述 |
-| -- | -- | -- | -- | -- |
-| k | FLOAT16/BF16 | `[B,Hk,T,K]` | 是 | key 张量，head-first 排布 |
-| g | FLOAT | `[B,Hv,T]` | 是 | chunk 内 cumulative gate，head-first 排布 |
-| beta | FLOAT | `[B,Hv,T]` | 是 | 每个 token/value head 的缩放系数，head-first 排布 |
-| cu_seqlens | INT64 | `[N+1]` | 否 | 变长序列累计长度；定长时不传 |
-| chunk_indices | INT64 | `[2*num_chunks]` 或 `[num_chunks,2]` | 否 | 变长 chunk 元数据，按 `[seq_id, chunk_id]` 成对存放 |
-| chunk_size | INT | - | 否 | chunk 大小，默认 64 |
+| 项目 | 支持范围 |
+| --- | --- |
+| SOC | A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`) |
+| Dtype | K 为 FP16/BF16；g/beta/A 为 FP32 |
+| Format/Layout | head-first BNSD/BNS |
+| 模式 | fixed/varlen、GVA 输入、整块/尾块 |
 
-## 5. 输出参数
+varlen 模式中，`cu_seqlens[0]` 必须为 0、末项等于 `T` 且序列非递减。`chunk_indices` 必须按 sequence-major 列出全部 `(seq_id, local_chunk_id)`；其条目数和当前调用的 `N_c` 一致。fixed 与 varlen、尾块与整块遵循同一数学定义。
 
-| 输出 | 数据类型 | Shape | 描述 |
-| -- | -- | -- | -- |
-| A | FLOAT | `[B,Hk,T,chunk_size]` | WY 表示中的严格下三角块 |
+## 5. 调用入口
 
-## 6. 输入约束
+实现类型：`ascendc`
 
-1. `k` 必须为 4D，shape 为 `[B,Hk,T,K]`。
-2. `g` 和 `beta` 必须为 3D，shape 为 `[B,Hv,T]`，并且 `B/T` 与 `k` 一致。
-3. GVA 要求 `Hv % Hk == 0`；`Hk == Hv` 时退化为普通 MHA。KKT 输出 head 维为 `Hk`。
-4. `chunk_size` 仅支持 `16`、`32`、`64`、`128`。
-5. `cu_seqlens` 和 `chunk_indices` 必须同时传入或同时省略；省略时走定长 dense 序列。
-6. `chunk_indices` 表示 `[seq_id, chunk_id]`，`chunk_id` 从 0 开始。
-7. 当前版本不支持 `gk` 分支。
-8. 输入建议传入 contiguous Tensor；PyTorch wrapper 会在调用 ACLNN 前执行 contiguous。
+| 入口 | API |
+| --- | --- |
+| Python 主入口 | `fla_npu.ops.ascendc.chunk_scaled_dot_kkt` |
+| aclnn | `aclnnChunkScaledDotKktGetWorkspaceSize` / `aclnnChunkScaledDotKkt` |
+| Ascend C `<<<>>>` | `chunk_scaled_dot_kkt<<<blockDim, l2ctrl, stream>>>(...)` |
+| legacy（可选） | `torch.ops.npu.npu_chunk_scaled_dot_kkt` |
 
-## 7. 目录结构
+完整签名和示例见 [API 文档](docs/api.md)，kernel、tiling、同步与内存设计见[设计文档](docs/design.md)。
 
-```text
-chunk_scaled_dot_kkt/
-├── docs/
-│   └── aclnnChunkScaledDotKkt.md
-├── op_host/
-│   ├── chunk_scaled_dot_kkt_def.cpp
-│   ├── chunk_scaled_dot_kkt_infershape.cpp
-│   ├── chunk_scaled_dot_kkt_tiling.cpp
-│   ├── chunk_scaled_dot_kkt_tiling.h
-│   └── CMakeLists.txt
-├── op_kernel/
-│   ├── chunk_scaled_dot_kkt.cpp
-│   ├── chunk_scaled_dot_kkt.h
-│   └── chunk_scaled_dot_kkt_tiling_key.h
-├── test/
-│   └── test.py
-├── CMakeLists.txt
-└── README.md
-```
+## 6. 精度与性能
 
-## 8. 验证说明
+- 主精度入口：`tests/operators/chunk_scaled_dot_kkt/accuracy/test_chunk_scaled_dot_kkt.py`，主调用使用 `fla_npu.ops.ascendc`。
+- 用例规格：`tests/op_cases/chunk_scaled_dot_kkt.json`；覆盖 fixed/varlen、GVA 输入、整块/尾块。
+- 参考实现：`torch_chunk_scaled_dot_kkt_reference`；容差按 JSON 中各 dtype 的 `rtol/atol` 执行，不允许为规避失败而收窄输入范围。
+- 性能：使用 msopprof 在相同 shape/dtype/layout、warmup 和迭代配置下对比 `fla_npu.ops.triton.chunk_scaled_dot_kkt_fwd`；Ascend C 必须更快，仓内主 example 已切换到 Ascend C。
 
-算子目录测试入口：
+## 7. 已知限制
+
+- chunk_size 仅支持 16/32/64/128。
+- 必须满足 H_v % H_k == 0；A 的 head 维为 H_k。
+- cu_seqlens/chunk_indices 必须同时提供或同时省略；varlen 物理 B 必须为 1。
+- varlen 累计长度必须覆盖 [0,T]，chunk_indices 必须按 sequence-major 完整列出每个 C 大小的 chunk。
+- 指数差固定 clip 到 [-50,50]；H_v>H_k 时当前实现读取 g/beta 的前 H_k 个 head。
+
+## 8. 构建与验证
 
 ```bash
-python3 fla/ops/ascendc/gdn/gdn_preprocess/chunk_scaled_dot_kkt/test/test.py
+FLA_NPU_SOC=ascend910b FLA_NPU_OPS=chunk_scaled_dot_kkt python -m pip wheel --no-build-isolation --no-deps . -w dist
+pytest -q tests/operators/chunk_scaled_dot_kkt/accuracy/test_chunk_scaled_dot_kkt.py
+python scripts/check_operator_compliance.py
 ```
 
-torch 插件侧测试入口：
+A3/A5 分别将 `FLA_NPU_SOC` 替换为 `ascend910_93`/`ascend950`。aclnn 与直调通路源文件位于
+`tests/operators/chunk_scaled_dot_kkt/routes/`，均使用同一份 JSON 规格。
 
-```bash
-cd torch_custom/fla_npu/test
-python3 test_npu_chunk_scaled_dot_kkt.py
-```
+<a id="shape-symbols"></a>
+
+## 9. 附录：Shape 变量说明
+
+- 模型/算法族：Gated Delta Network (GDN)
+- 模型级符号表：[GDN 模型符号表](../../README.md#model-shape-symbols)
+- 符号表版本：`gdn-shape-v1`
+
+| 变量 | 语义 |
+| --- | --- |
+| `B` | Batch size；varlen 打包场景通常为 1 |
+| `N` | varlen 逻辑序列数 |
+| `T` | dense 序列长度或 varlen 打包后的 token 总数 |
+| `H_k` | Query/Key head 数 |
+| `H_v` | Value/Output/State head 数 |
+| `K` | Query/Key 单 head 特征维 |
+| `C` | chunk_size |
+| `N_c` | 当前调用中的 chunk 总数 |

@@ -13,7 +13,7 @@ if (BUILD_OPEN_PROJECT)
     )
     add_ops_compile_options(
         OP_NAME ChunkGatedDeltaRuleBwdDhu
-        OPTIONS --cce-auto-sync=on
+        OPTIONS --cce-auto-sync=off
                 -Wno-deprecated-declarations
     )
     if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
@@ -26,4 +26,3 @@ if (BUILD_OPEN_PROJECT)
 endif()
 
 add_modules_sources(OPTYPE chunk_gated_delta_rule_bwd_dhu ACLNNTYPE aclnn_exclude)
-

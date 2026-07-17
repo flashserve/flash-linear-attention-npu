@@ -98,6 +98,13 @@ static aclnnStatus CheckDtype(ChunkBwdDvLocalParams params)
 static aclnnStatus CheckParams(ChunkBwdDvLocalParams params)
 {
     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_COND(params.gGammaOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
+               "gGammaOptional is reserved and must be nullptr.");
+    CHECK_COND(params.aOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
+               "aOptional is reserved and must be nullptr.");
+    CHECK_COND((params.cuSeqlensOptional == nullptr) == (params.chunkIndicesOptional == nullptr),
+               ACLNN_ERR_PARAM_INVALID,
+               "cuSeqlensOptional and chunkIndicesOptional must both be provided or both be nullptr.");
     CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -119,6 +126,8 @@ aclnnStatus aclnnChunkBwdDvLocalGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    CHECK_COND(workspaceSize != nullptr, ACLNN_ERR_PARAM_NULLPTR, "workspaceSize must not be nullptr.");
+    CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "executor must not be nullptr.");
     ChunkBwdDvLocalParams params{q, k, dO, g, gGammaOptional, aOptional, cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, out};
     // Standard syntax, Check parameters.
     L2_DFX_PHASE_1(aclnnChunkBwdDvLocal, DFX_IN(q, k, dO, g, gGammaOptional, aOptional, cuSeqlensOptional, chunkIndicesOptional),

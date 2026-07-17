@@ -1,0 +1,402 @@
+{
+  "schema_version": 1,
+  "op": "kda_layout_swap12",
+  "implementation": "ascendc",
+  "model": "kda",
+  "symbol_table_version": "kda-shape-v1",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": [
+      "bfloat16",
+      "float16",
+      "float32"
+    ],
+    "layouts": [
+      "ND-rank3",
+      "ND-rank4",
+      "ND-rank5"
+    ],
+    "features": [
+      "rank3",
+      "rank>=4",
+      "对齐行 grouped copy 和非对齐/超长行 tiled copy"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ],
+    "optional_routes": []
+  },
+  "data_generation": {
+    "floating_inputs": {
+      "distribution": "uniform",
+      "min": -1.0,
+      "max": 1.0
+    },
+    "positive_inputs": {
+      "distribution": "uniform",
+      "min": 0.0,
+      "max": 1.0
+    },
+    "structured_inputs": "由 reference 名称对应的 runner 构造 gate、三角矩阵、状态和索引"
+  },
+  "coverage_requirements": {
+    "public_modes": [
+      "rank3",
+      "rank>=4",
+      "对齐行 grouped copy 和非对齐/超长行 tiled copy"
+    ],
+    "known_limits": [
+      "x rank 必须至少为 3；y rank、dtype 及交换后的每一维必须与 x 精确对应。",
+      "输入在 L2 中先 contiguous；当前 API 总是创建连续 y。",
+      "dependency 只表达执行顺序，不提供数据、dtype 或 shape 语义，不得依赖其值改变输出。",
+      "aclnn/Python 通过 executor 输入依赖排序；`<<<>>>` 直调不读取 dependency，调用者必须在同一 stream 上先发射其生产者。",
+      "所有维度必须为正；host 在进入 tiling 前拒绝空维度，kernel 的 usedCoreNum 至少为 1。"
+    ],
+    "required_outputs": [
+      "y"
+    ],
+    "accuracy_case_ids": [
+      "kda_layout_swap12_main_accuracy",
+      "kda_layout_swap12_dtype_layout_generalization",
+      "kda_layout_swap12_tail_or_varlen"
+    ],
+    "negative_case_ids": [
+      "kda_layout_swap12_negative_contract",
+      "kda_layout_swap12_empty_dimension",
+      "kda_layout_swap12_invalid_dtype",
+      "kda_layout_swap12_invalid_output_shape"
+    ],
+    "route_case_ids": [
+      "kda_layout_swap12_main_accuracy",
+      "kda_layout_swap12_performance",
+      "kda_layout_swap12_invalid_output_shape"
+    ],
+    "performance_case_ids": [
+      "kda_layout_swap12_performance"
+    ]
+  },
+  "tolerance": {
+    "float16": {
+      "rtol": 0.0,
+      "atol": 0.0
+    },
+    "bfloat16": {
+      "rtol": 0.0,
+      "atol": 0.0
+    },
+    "float32": {
+      "rtol": 0.0,
+      "atol": 0.0
+    }
+  },
+  "cases": [
+    {
+      "id": "kda_layout_swap12_main_accuracy",
+      "tags": [
+        "accuracy",
+        "example",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 129,
+        "H_v": 4,
+        "K": 128
+      },
+      "dtype": {
+        "x_y": "float16"
+      },
+      "layout": "ND-rank4",
+      "attrs": {},
+      "optional_inputs": {
+        "dependency": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch"
+      ],
+      "reference": "torch_permute_contiguous_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "y"
+        ]
+      },
+      "seed": 2026
+    },
+    {
+      "id": "kda_layout_swap12_dtype_layout_generalization",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary"
+      ],
+      "shape": {
+        "T": 193,
+        "H_v": 8,
+        "K": 128
+      },
+      "dtype": {
+        "x_y": "bfloat16"
+      },
+      "layout": "ND-rank3",
+      "attrs": {},
+      "optional_inputs": {
+        "dependency": "present"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_permute_contiguous_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "y"
+        ]
+      },
+      "seed": 2027
+    },
+    {
+      "id": "kda_layout_swap12_tail_or_varlen",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "tail"
+      ],
+      "shape": {
+        "B": 1,
+        "N_c": 3,
+        "H_v": 4,
+        "K": 17,
+        "V": 7
+      },
+      "dtype": {
+        "x_y": "float32"
+      },
+      "layout": "ND-rank5",
+      "attrs": {},
+      "optional_inputs": {
+        "dependency": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_permute_contiguous_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "y"
+        ]
+      },
+      "seed": 2028
+    },
+    {
+      "id": "kda_layout_swap12_performance",
+      "tags": [
+        "performance",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 129,
+        "H_v": 4,
+        "K": 128
+      },
+      "dtype": {
+        "x_y": "float16"
+      },
+      "layout": "ND-rank4",
+      "attrs": {},
+      "optional_inputs": {
+        "dependency": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "direct_launch"
+      ],
+      "reference": "current_mainline_ascendc_profile",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "metric": "msopprof",
+        "requirement": "no_regression"
+      },
+      "seed": 2029
+    },
+    {
+      "id": "kda_layout_swap12_negative_contract",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "T": 128,
+        "K": 128
+      },
+      "dtype": {
+        "x_y": "float16"
+      },
+      "layout": "ND-rank2",
+      "attrs": {},
+      "optional_inputs": {
+        "dependency": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "rank must be at least 3"
+      },
+      "seed": 2030
+    },
+    {
+      "id": "kda_layout_swap12_empty_dimension",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 0,
+        "H_v": 4,
+        "K": 128
+      },
+      "dtype": {
+        "x_y": "float16"
+      },
+      "layout": "ND-rank4",
+      "attrs": {},
+      "optional_inputs": {
+        "dependency": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "positive"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2031
+    },
+    {
+      "id": "kda_layout_swap12_invalid_dtype",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 128,
+        "H_v": 4,
+        "K": 128
+      },
+      "dtype": {
+        "x_y": "int32"
+      },
+      "layout": "ND-rank4",
+      "attrs": {},
+      "optional_inputs": {
+        "dependency": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "float32, float16 or bfloat16"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2032
+    },
+    {
+      "id": "kda_layout_swap12_invalid_output_shape",
+      "tags": [
+        "negative",
+        "boundary",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 128,
+        "H_v": 4,
+        "K": 128
+      },
+      "dtype": {
+        "x_y": "float16"
+      },
+      "layout": "ND-rank4",
+      "attrs": {},
+      "optional_inputs": {
+        "dependency": null
+      },
+      "output_override": {
+        "y": "[B,T,H_v,K]"
+      },
+      "run_on": [
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "y shape"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2033
+    }
+  ]
+}
