@@ -55,8 +55,10 @@ _DEFAULT_VARLEN_CHUNK_SIZES = (16, 32, 64, 128, 608 * 2)
 _ACCURACY_REFERENCE_VERSION = 1
 _SOLVE_TRI_ASCENDC_AVAILABLE: Optional[bool] = None
 _SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON = ""
-_CUMSUM_KKT_ASCENDC_AVAILABLE: Optional[bool] = None
-_CUMSUM_KKT_ASCENDC_UNAVAILABLE_REASON = ""
+_CUMSUM_ASCENDC_AVAILABLE: Optional[bool] = None
+_CUMSUM_ASCENDC_UNAVAILABLE_REASON = ""
+_KKT_ASCENDC_AVAILABLE: Optional[bool] = None
+_KKT_ASCENDC_UNAVAILABLE_REASON = ""
 _BWD_CUMSUM_ASCENDC_AVAILABLE: Optional[bool] = None
 _BWD_CUMSUM_ASCENDC_UNAVAILABLE_REASON = ""
 
@@ -646,7 +648,22 @@ def chunk_scaled_dot_kkt_fwd_ascendc(
     return A
 
 
-def _should_use_ascendc_cumsum_kkt(
+def _should_use_ascendc_cumsum(
+    g: torch.Tensor,
+    *,
+    chunk_size: int,
+    output_dtype: torch.dtype,
+) -> bool:
+    if not _is_power_of_two(int(chunk_size)):
+        return False
+    if g.dim() != 3:
+        return False
+    if output_dtype not in (torch.float, torch.float32):
+        return False
+    return True
+
+
+def _should_use_ascendc_kkt(
     k: torch.Tensor,
     g: torch.Tensor,
     beta: torch.Tensor,
@@ -665,17 +682,42 @@ def _should_use_ascendc_cumsum_kkt(
     if g.shape != beta.shape:
         return False
     B, Hk, T, _ = k.shape
-    if g.shape[0] != B or g.shape[1] != T:
+    if g.shape[0] != B or g.shape[2] != T:
         return False
-    Hv = g.shape[2]
+    Hv = g.shape[1]
     return Hk > 0 and Hv > 0 and Hv % Hk == 0
 
 
-def _probe_cumsum_kkt_ascendc(device: torch.device, dtype: torch.dtype) -> bool:
-    global _CUMSUM_KKT_ASCENDC_AVAILABLE, _CUMSUM_KKT_ASCENDC_UNAVAILABLE_REASON
+def _probe_cumsum_ascendc(device: torch.device) -> bool:
+    global _CUMSUM_ASCENDC_AVAILABLE, _CUMSUM_ASCENDC_UNAVAILABLE_REASON
 
-    if _CUMSUM_KKT_ASCENDC_AVAILABLE is not None:
-        return _CUMSUM_KKT_ASCENDC_AVAILABLE
+    if _CUMSUM_ASCENDC_AVAILABLE is not None:
+        return _CUMSUM_ASCENDC_AVAILABLE
+
+    try:
+        probe_chunk_size = 16
+        probe_g = torch.zeros((1, 1, probe_chunk_size), dtype=torch.float32, device=device)
+        chunk_local_cumsum_ascendc(probe_g, chunk_size=probe_chunk_size, head_first=True)
+        torch.npu.synchronize()
+    except Exception as exc:
+        _CUMSUM_ASCENDC_AVAILABLE = False
+        _CUMSUM_ASCENDC_UNAVAILABLE_REASON = str(exc).splitlines()[0]
+        try:
+            torch.npu.synchronize()
+        except Exception:
+            pass
+        return False
+
+    _CUMSUM_ASCENDC_AVAILABLE = True
+    _CUMSUM_ASCENDC_UNAVAILABLE_REASON = ""
+    return True
+
+
+def _probe_kkt_ascendc(device: torch.device, dtype: torch.dtype) -> bool:
+    global _KKT_ASCENDC_AVAILABLE, _KKT_ASCENDC_UNAVAILABLE_REASON
+
+    if _KKT_ASCENDC_AVAILABLE is not None:
+        return _KKT_ASCENDC_AVAILABLE
 
     probe_dtype = dtype if dtype in (torch.float16, torch.bfloat16) else torch.float16
     try:
@@ -683,7 +725,6 @@ def _probe_cumsum_kkt_ascendc(device: torch.device, dtype: torch.dtype) -> bool:
         probe_k = torch.zeros((1, 1, probe_chunk_size, 128), dtype=probe_dtype, device=device)
         probe_g = torch.zeros((1, 1, probe_chunk_size), dtype=torch.float32, device=device)
         probe_beta = torch.ones((1, 1, probe_chunk_size), dtype=torch.float32, device=device)
-        probe_g = chunk_local_cumsum_ascendc(probe_g, chunk_size=probe_chunk_size, head_first=True)
         chunk_scaled_dot_kkt_fwd_ascendc(
             k=probe_k,
             g=probe_g,
@@ -693,20 +734,75 @@ def _probe_cumsum_kkt_ascendc(device: torch.device, dtype: torch.dtype) -> bool:
         )
         torch.npu.synchronize()
     except Exception as exc:
-        _CUMSUM_KKT_ASCENDC_AVAILABLE = False
-        _CUMSUM_KKT_ASCENDC_UNAVAILABLE_REASON = str(exc).splitlines()[0]
+        _KKT_ASCENDC_AVAILABLE = False
+        _KKT_ASCENDC_UNAVAILABLE_REASON = str(exc).splitlines()[0]
         try:
             torch.npu.synchronize()
         except Exception:
             pass
         return False
 
-    _CUMSUM_KKT_ASCENDC_AVAILABLE = True
-    _CUMSUM_KKT_ASCENDC_UNAVAILABLE_REASON = ""
+    _KKT_ASCENDC_AVAILABLE = True
+    _KKT_ASCENDC_UNAVAILABLE_REASON = ""
     return True
 
 
-def chunk_local_cumsum_kkt_auto(
+def chunk_local_cumsum_auto(
+    g: torch.Tensor,
+    *,
+    cu_seqlens: Optional[torch.Tensor],
+    chunk_indices: Optional[Dict[str, Optional[torch.LongTensor]]],
+    chunk_size: int,
+    output_dtype: torch.dtype,
+) -> torch.Tensor:
+    global _CUMSUM_ASCENDC_AVAILABLE, _CUMSUM_ASCENDC_UNAVAILABLE_REASON
+
+    fallback_reason = ""
+    should_try_ascendc = _should_use_ascendc_cumsum(
+        g,
+        chunk_size=chunk_size,
+        output_dtype=output_dtype,
+    )
+    if should_try_ascendc and _probe_cumsum_ascendc(g.device):
+        try:
+            g_ascendc = g.transpose(1, 2).contiguous()
+            return chunk_local_cumsum_ascendc(
+                g_ascendc,
+                chunk_size=chunk_size,
+                cu_seqlens=cu_seqlens,
+                chunk_indices_out=chunk_indices,
+                head_first=True,
+                output_dtype=output_dtype,
+            )
+        except Exception as exc:
+            _CUMSUM_ASCENDC_AVAILABLE = False
+            _CUMSUM_ASCENDC_UNAVAILABLE_REASON = str(exc).splitlines()[0]
+            fallback_reason = _CUMSUM_ASCENDC_UNAVAILABLE_REASON
+            try:
+                torch.npu.synchronize()
+            except Exception:
+                pass
+    elif should_try_ascendc:
+        fallback_reason = _CUMSUM_ASCENDC_UNAVAILABLE_REASON
+
+    if fallback_reason:
+        warnings.warn(
+            "AscendC chunk_local_cumsum is unavailable; "
+            "falling back to Triton. "
+            f"Reason: {fallback_reason}",
+            RuntimeWarning,
+        )
+
+    return triton_chunk_local_cumsum(
+        g,
+        chunk_size=chunk_size,
+        cu_seqlens=cu_seqlens,
+        chunk_indices_out=chunk_indices,
+        head_first=False,
+    ).transpose(1, 2).contiguous()
+
+
+def chunk_scaled_dot_kkt_fwd_auto(
     k: torch.Tensor,
     g: torch.Tensor,
     beta: torch.Tensor,
@@ -715,79 +811,57 @@ def chunk_local_cumsum_kkt_auto(
     chunk_indices: Optional[Dict[str, Optional[torch.LongTensor]]],
     chunk_size: int,
     output_dtype: torch.dtype,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    global _CUMSUM_KKT_ASCENDC_AVAILABLE, _CUMSUM_KKT_ASCENDC_UNAVAILABLE_REASON
+) -> torch.Tensor:
+    global _KKT_ASCENDC_AVAILABLE, _KKT_ASCENDC_UNAVAILABLE_REASON
 
     fallback_reason = ""
-    should_try_ascendc = _should_use_ascendc_cumsum_kkt(
+    should_try_ascendc = _should_use_ascendc_kkt(
         k,
         g,
         beta,
         chunk_size=chunk_size,
         output_dtype=output_dtype,
     )
-    if should_try_ascendc and _probe_cumsum_kkt_ascendc(k.device, k.dtype):
+    if should_try_ascendc and _probe_kkt_ascendc(k.device, k.dtype):
         try:
-            g_ascendc = g.transpose(1, 2).contiguous()
-            beta_ascendc = beta.transpose(1, 2).contiguous().float()
-            g_ascendc = chunk_local_cumsum_ascendc(
-                g_ascendc,
-                chunk_size=chunk_size,
-                cu_seqlens=cu_seqlens,
-                chunk_indices_out=chunk_indices,
-                head_first=True,
-            )
             A_ascendc = chunk_scaled_dot_kkt_fwd_ascendc(
                 k=k,
-                g=g_ascendc,
-                beta=beta_ascendc,
+                g=g,
+                beta=beta,
                 cu_seqlens=cu_seqlens,
                 chunk_indices=_chunk_tensor(chunk_indices, chunk_size),
                 chunk_size=chunk_size,
                 output_dtype=output_dtype,
             )
-            return g_ascendc, beta_ascendc, A_ascendc.transpose(1, 2).contiguous()
+            return A_ascendc.transpose(1, 2).contiguous()
         except Exception as exc:
-            _CUMSUM_KKT_ASCENDC_AVAILABLE = False
-            _CUMSUM_KKT_ASCENDC_UNAVAILABLE_REASON = str(exc).splitlines()[0]
-            fallback_reason = _CUMSUM_KKT_ASCENDC_UNAVAILABLE_REASON
+            _KKT_ASCENDC_AVAILABLE = False
+            _KKT_ASCENDC_UNAVAILABLE_REASON = str(exc).splitlines()[0]
+            fallback_reason = _KKT_ASCENDC_UNAVAILABLE_REASON
             try:
                 torch.npu.synchronize()
             except Exception:
                 pass
     elif should_try_ascendc:
-        fallback_reason = _CUMSUM_KKT_ASCENDC_UNAVAILABLE_REASON
+        fallback_reason = _KKT_ASCENDC_UNAVAILABLE_REASON
 
     if fallback_reason:
         warnings.warn(
-            "AscendC chunk_local_cumsum/chunk_scaled_dot_kkt is unavailable; "
+            "AscendC chunk_scaled_dot_kkt is unavailable; "
             "falling back to Triton. "
             f"Reason: {fallback_reason}",
             RuntimeWarning,
         )
 
-    g_triton = triton_chunk_local_cumsum(
-        g,
-        chunk_size=chunk_size,
-        cu_seqlens=cu_seqlens,
-        chunk_indices_out=chunk_indices,
-        head_first=False,
-    )
-
     # A is the WY lower-triangular representation before inversion.
-    A_triton = triton_chunk_scaled_dot_kkt_fwd(
+    return triton_chunk_scaled_dot_kkt_fwd(
         k=k,
-        g=g_triton,
-        beta=beta,
+        g=g.transpose(1, 2).contiguous(),
+        beta=beta.transpose(1, 2).contiguous(),
         cu_seqlens=cu_seqlens,
         chunk_indices=_chunk_tensor(chunk_indices, chunk_size),
         chunk_size=chunk_size,
         output_dtype=output_dtype,
-    )
-    return (
-        g_triton.transpose(1, 2).contiguous(),
-        beta.transpose(1, 2).contiguous().float(),
-        A_triton,
     )
 
 
@@ -894,7 +968,15 @@ def flash_chunk_gated_delta_rule_fwd(
     chunk_indices_list: Optional[Dict[str, Optional[list[int]]]] = None,
     chunk_size: int = 64,
 ):
-    g, beta, A = chunk_local_cumsum_kkt_auto(
+    g = chunk_local_cumsum_auto(
+        g=g,
+        cu_seqlens=cu_seqlens,
+        chunk_indices=chunk_indices,
+        chunk_size=chunk_size,
+        output_dtype=torch.float32,
+    )
+    beta = beta.transpose(1, 2).contiguous().float()
+    A = chunk_scaled_dot_kkt_fwd_auto(
         k=k,
         g=g,
         beta=beta,
