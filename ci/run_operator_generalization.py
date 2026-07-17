@@ -17,12 +17,19 @@ CASE_ROOT = ROOT / "tests" / "op_cases"
 REQUIRED_SOCS = ("ascend910b", "ascend910_93", "ascend950")
 
 
-def discover_operators() -> list[str]:
-    operators = []
+def discover_cases() -> dict[str, list[str]]:
+    operators = {}
     for path in sorted(CASE_ROOT.glob("*.json")):
         manifest = json.loads(path.read_text(encoding="utf-8"))
         if manifest.get("implementation") == "ascendc":
-            operators.append(manifest["op"])
+            case_ids = [
+                case["id"]
+                for case in manifest.get("cases", [])
+                if "generalization" in case.get("tags", [])
+                and case.get("expect", {}).get("return_code") == "ACLNN_SUCCESS"
+                and "ascendc" in case.get("run_on", [])
+            ]
+            operators[manifest["op"]] = case_ids
     return operators
 
 
@@ -38,8 +45,8 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    registered = discover_operators()
-    requested = parse_csv(args.ops) if args.ops else registered
+    registered = discover_cases()
+    requested = parse_csv(args.ops) if args.ops else list(registered)
     unknown = sorted(set(requested) - set(registered))
     if unknown:
         parser.error(f"operators are not registered in tests/op_cases: {unknown}")
@@ -51,33 +58,44 @@ def main() -> int:
         TEST_DEVICE_ID=str(args.device),
     )
     failures = []
+    case_count = 0
     for op in requested:
         test_path = ROOT / "tests" / "operators" / op / "accuracy" / f"test_{op}.py"
         if not test_path.is_file():
-            failures.append((op, "missing canonical accuracy entry"))
+            failures.append((op, "<all>", "missing canonical accuracy entry"))
             continue
-        command = [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-q",
-            str(test_path.relative_to(ROOT)),
-            "-k",
-            "json_generalization_cases",
-        ]
-        print(f"[GENERALIZATION] soc={args.soc} op={op}")
-        print("[GENERALIZATION] " + " ".join(shlex.quote(item) for item in command))
-        if args.dry_run:
+        if not registered[op]:
+            failures.append((op, "<all>", "no executable generalization cases"))
             continue
-        completed = subprocess.run(command, cwd=ROOT, env=env, check=False)
-        if completed.returncode != 0:
-            failures.append((op, f"pytest returned {completed.returncode}"))
+        for case_id in registered[op]:
+            case_count += 1
+            command = [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                str(test_path.relative_to(ROOT)),
+                "-k",
+                "json_generalization_cases",
+            ]
+            case_env = env.copy()
+            case_env["FLA_NPU_CASE_ID"] = case_id
+            print(f"[GENERALIZATION] soc={args.soc} op={op} case={case_id}")
+            print("[GENERALIZATION] " + " ".join(shlex.quote(item) for item in command))
+            if args.dry_run:
+                continue
+            completed = subprocess.run(command, cwd=ROOT, env=case_env, check=False)
+            if completed.returncode != 0:
+                failures.append((op, case_id, f"pytest returned {completed.returncode}"))
     if failures:
-        for op, reason in failures:
-            print(f"[GENERALIZATION][ERROR] {op}: {reason}", file=sys.stderr)
+        for op, case_id, reason in failures:
+            print(f"[GENERALIZATION][ERROR] {op}/{case_id}: {reason}", file=sys.stderr)
         return 1
     action = "planned" if args.dry_run else "passed"
-    print(f"[GENERALIZATION] {action} {len(requested)} operators on {args.soc}")
+    print(
+        f"[GENERALIZATION] {action} {case_count} cases for "
+        f"{len(requested)} operators on {args.soc}"
+    )
     return 0
 
 

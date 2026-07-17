@@ -20,8 +20,8 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
 | --- | --- | --- | --- | --- | --- |
 | `g` | 必选 | `[B,H_v,T] 或 [B,H_v,T,...]` | FP32 | head-first | 待累加 gate/特征 |
-| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | varlen 累计长度，Device tensor |
-| `chunk_indices_out` | 可选 | `[N_b,2] 或 [2*N_b]` | INT64 | ND | varlen 内部处理块映射，Device tensor |
+| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | varlen 累计长度；aclnn 使用 host `aclIntArray`，Python 使用整数序列 |
+| `chunk_indices_out` | 可选 | `[N_b,2] 或 [2*N_b]` | INT64 | ND | varlen 块映射；aclnn 使用展平的 host `aclIntArray` |
 
 ### 2.2 输出
 
@@ -46,8 +46,8 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 ```cpp
 aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
 const aclTensor *g,
-const aclTensor *cuSeqlensOptional,
-const aclTensor *chunkIndicesOutOptional,
+const aclIntArray *cuSeqlensOptional,
+const aclIntArray *chunkIndicesOutOptional,
 int64_t chunkSize,
 bool reverse,
 double scale,
@@ -72,6 +72,7 @@ aclrtStream stream = nullptr;
 ACL_CHECK(aclrtCreateStream(&stream));
 
 // 按 2.1/2.2 的 shape、dtype 和 layout 创建输入/输出 aclTensor。
+// varlen 时在 host 创建 cuSeqlens/chunkIndicesOut 两个 aclIntArray；后者按 [seq_id, block_id, ...] 展平。
 uint64_t workspaceSize = 0;
 aclOpExecutor *executor = nullptr;
 aclnnStatus status = aclnnChunkLocalCumsumGetWorkspaceSize(
@@ -113,7 +114,18 @@ from fla_npu.ops.ascendc import chunk_local_cumsum
 
 B, H_v, T, C = 1, 4, 129, 64
 g = torch.randn(B, H_v, T, device="npu", dtype=torch.float32)
-out = chunk_local_cumsum(g, C, reverse=False, scale=1.0, head_first=True)
+cu_seqlens = [0, 65, 129]
+# 本 shape 下 B_T=2048，每条逻辑序列各有一个处理块。
+chunk_indices_out = [[0, 0], [1, 0]]
+out = chunk_local_cumsum(
+    g,
+    C,
+    cu_seqlens=cu_seqlens,
+    chunk_indices_out=chunk_indices_out,
+    reverse=False,
+    scale=1.0,
+    head_first=True,
+)
 torch.npu.synchronize()
 assert out.shape == g.shape and out.dtype == torch.float32
 ```
@@ -155,9 +167,10 @@ assert out.shape == g.shape and out.dtype == torch.float32
 ## 8. 已知限制
 
 - g rank 至少 3，所有维度为正；head_first 当前必须 true。
-- chunk_size 必须为 2 的幂，且结合 P 后能满足 UB tile；交付矩阵覆盖 16/32/64/128。
+- chunk_size 必须为 2 的幂，且满足 `B_T >= C`；交付矩阵至少覆盖 `P=1,C=64` 的 varlen 尾块和
+  `P=16,C=64` 的 dense 尾块。
 - output_dtype 仅支持 FP32 别名。
-- varlen 物理 B=1，两个 Device 索引必须同时提供；cu_seqlens 首项为 0、末项为 T 且非递减。
+- varlen 物理 B=1，两个 host 整数数组必须同时提供；cu_seqlens 首项为 0、末项为 T 且非递减。
 - chunk_indices_out 必须按 sequence-major 完整列出内部处理块；处理块长度 B_T 由 UB、C 和 P 共同决定，不能直接按 C 构造。
 
 ## 9. 异常与返回码

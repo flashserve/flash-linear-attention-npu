@@ -52,9 +52,9 @@
     ],
     "known_limits": [
       "g rank 至少 3，所有维度为正；head_first 当前必须 true。",
-      "chunk_size 必须为 2 的幂，且结合 P 后能满足 UB tile；交付矩阵覆盖 16/32/64/128。",
+      "chunk_size 必须为 2 的幂且满足 B_T >= C；交付矩阵至少覆盖 P=1,C=64 的 varlen 尾块和 P=16,C=64 的 dense 尾块。",
       "output_dtype 仅支持 FP32 别名。",
-      "varlen 物理 B=1，两个 Device 索引必须同时提供；cu_seqlens 首项为 0、末项为 T 且非递减。",
+      "varlen 物理 B=1，两个 host 整数数组必须同时提供；cu_seqlens 首项为 0、末项为 T 且非递减。",
       "chunk_indices_out 必须按 sequence-major 完整列出内部处理块；处理块长度 B_T 由 UB、C 和 P 共同决定，不能直接按 C 构造。"
     ],
     "required_outputs": [
@@ -159,7 +159,7 @@
         "H_v": 8,
         "T": 257,
         "P": 16,
-        "C": 128
+        "C": 64
       },
       "dtype": {
         "g_out": "float32",
@@ -167,7 +167,7 @@
       },
       "layout": "BNS",
       "attrs": {
-        "chunk_size": 128,
+        "chunk_size": 64,
         "reverse": true,
         "scale": 0.5,
         "head_first": true,

@@ -19,6 +19,7 @@ signature here.
 from __future__ import annotations
 
 import ctypes
+import operator
 
 from ._runtime import (
     call_aclnn as _runtime_call_aclnn,
@@ -156,6 +157,28 @@ def _call_aclnn(name: str, build_args, outputs):
         outputs,
         get_workspace_argtypes=_GET_WORKSPACE_ARGTYPES.get(name),
     )
+
+
+def _flatten_int_values(values, name):
+    if values is None:
+        return None
+    if hasattr(values, "detach"):
+        values = values.detach().cpu().tolist()
+
+    flattened = []
+
+    def append(value):
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                append(item)
+            return
+        try:
+            flattened.append(operator.index(value))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"{name} must contain integers.") from exc
+
+    append(values)
+    return tuple(flattened)
 
 
 def npu_fast_gelu_custom(self):
@@ -795,10 +818,10 @@ def npu_causal_conv1d(
             ctx.tensor(weight, "weight"),
             ctx.tensor(bias, "bias"),
             ctx.tensor(conv_states, "conv_states"),
-            ctx.int_tensor(query_start_loc, x.device),
-            ctx.int_tensor(cache_indices, x.device),
-            ctx.int_tensor(initial_state_mode, x.device),
-            ctx.int_tensor(num_accepted_tokens, x.device),
+            ctx.int_array(query_values),
+            ctx.int_array(cache_values),
+            ctx.int_array(initial_values),
+            ctx.int_array(accepted_values),
             ctypes.c_int64(int(activation_mode)),
             ctypes.c_int64(int(pad_slot_id)),
             ctypes.c_int64(int(run_mode)),
@@ -1328,26 +1351,23 @@ def npu_chunk_local_cumsum(
         raise RuntimeError("npu_chunk_local_cumsum: head_first=False is not supported by the Ascend C kernel.")
     if (cu_seqlens is None) != (chunk_indices_out is None):
         raise RuntimeError("npu_chunk_local_cumsum: cu_seqlens and chunk_indices_out must be provided together.")
-    if cu_seqlens is not None:
+    cu_values = _flatten_int_values(cu_seqlens, "npu_chunk_local_cumsum: cu_seqlens")
+    index_values = _flatten_int_values(chunk_indices_out, "npu_chunk_local_cumsum: chunk_indices_out")
+    if cu_values is not None:
         if int(g.shape[0]) != 1:
             raise RuntimeError("npu_chunk_local_cumsum: varlen mode requires physical B=1.")
-        if cu_seqlens.dtype != torch.int64 or cu_seqlens.dim() != 1 or cu_seqlens.numel() < 2:
-            raise RuntimeError("npu_chunk_local_cumsum: cu_seqlens must be a rank-1 INT64 tensor with at least two values.")
-        valid_indices_shape = (
-            chunk_indices_out.dim() == 1 and chunk_indices_out.numel() > 0 and chunk_indices_out.numel() % 2 == 0
-        ) or (
-            chunk_indices_out.dim() == 2 and chunk_indices_out.shape[0] > 0 and chunk_indices_out.shape[1] == 2
-        )
-        if chunk_indices_out.dtype != torch.int64 or not valid_indices_shape:
-            raise RuntimeError("npu_chunk_local_cumsum: chunk_indices_out must be INT64 [2*N_b] or [N_b,2].")
+        if len(cu_values) < 2:
+            raise RuntimeError("npu_chunk_local_cumsum: cu_seqlens must contain at least two integer values.")
+        if not index_values or len(index_values) % 2 != 0:
+            raise RuntimeError("npu_chunk_local_cumsum: chunk_indices_out must contain flattened integer pairs.")
     output_dtype_buffer = ctypes.create_string_buffer(output_dtype.encode("utf-8"))
     out = _empty_like(g, dtype=torch.float32)
     return _call_aclnn(
         "aclnnChunkLocalCumsum",
         lambda ctx: [
             ctx.tensor(g, "g"),
-            ctx.tensor(cu_seqlens, "cu_seqlens"),
-            ctx.tensor(chunk_indices_out, "chunk_indices_out"),
+            ctx.int_array(cu_values),
+            ctx.int_array(index_values),
             ctypes.c_int64(int(chunk_size)),
             ctypes.c_bool(_optional_bool(reverse, False)),
             ctypes.c_double(float(scale)),

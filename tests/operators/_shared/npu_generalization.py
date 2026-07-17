@@ -275,11 +275,9 @@ def _run_chunk_local_cumsum(torch, ops, case, device):
     g = _tensor(torch, input_shape, torch.float32, device)
     cu = _meta(case, "cu_seqlens")
     indices = _meta(case, "chunk_indices_out")
-    cu_tensor = None if cu is None else torch.tensor(cu, dtype=torch.int64, device=device)
-    index_tensor = None if indices is None else torch.tensor(indices, dtype=torch.int64, device=device)
     attrs = case["attrs"]
     out = ops.chunk_local_cumsum(
-        g, int(attrs["chunk_size"]), cu_seqlens=cu_tensor, chunk_indices_out=index_tensor,
+        g, int(attrs["chunk_size"]), cu_seqlens=cu, chunk_indices_out=indices,
         reverse=attrs["reverse"], scale=float(attrs["scale"]), head_first=attrs["head_first"],
         output_dtype=attrs["output_dtype"],
     )
@@ -486,11 +484,19 @@ def run_generalization_cases(op_name: str, cases: list[Case]) -> None:
     device_id = int(os.environ.get("TEST_DEVICE_ID", 0))
     device = torch.device(f"npu:{device_id}")
     torch.npu.set_device(device)
+    requested_case_id = os.environ.get("FLA_NPU_CASE_ID")
+    if requested_case_id:
+        cases = [case for case in cases if case["id"] == requested_case_id]
+        if len(cases) != 1:
+            raise AssertionError(f"{op_name}: unknown or duplicate case id {requested_case_id}")
     for case in cases:
         if case.get("expect", {}).get("return_code") != "ACLNN_SUCCESS":
             raise ValueError(f"{case['id']}: generalization runner accepts positive cases only")
         torch.manual_seed(int(case["seed"]))
-        outputs, expected_shapes = RUNNERS[op_name](torch, ascendc_ops, case, device)
+        try:
+            outputs, expected_shapes = RUNNERS[op_name](torch, ascendc_ops, case, device)
+        except Exception as exc:
+            raise AssertionError(f"{op_name}/{case['id']}: {exc}") from exc
         torch.npu.synchronize()
         tensors = _flatten_outputs(outputs)
         if len(tensors) < len(expected_shapes):
