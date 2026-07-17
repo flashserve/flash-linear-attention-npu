@@ -333,6 +333,11 @@
       "dense_bf16_v256_tail",
       "varlen_fp16_tail"
     ],
+    "generalization_case_ids": [
+      "dense_fp16_gva_c64",
+      "dense_bf16_v256_tail",
+      "varlen_fp16_tail"
+    ],
     "negative_case_ids": [
       "negative_varlen_pair",
       "negative_chunk_size"

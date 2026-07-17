@@ -24,11 +24,26 @@ python -m pytest tests/operators/<op_name>/accuracy/test_<op_name>.py
 ```bash
 FLA_NPU_SOC=ascend950 \
 FLA_NPU_CASE_TAGS=accuracy,generalization \
+FLA_NPU_RUN_OPERATOR_TESTS=1 \
 python -m pytest tests/operators/<op_name>/accuracy/test_<op_name>.py
 ```
 
 ```bash
 python scripts/check_operator_compliance.py
 ```
+
+全部主线 Ascend C 算子的三平台构建和 JSON 泛化执行使用统一入口：
+
+```bash
+python3 ci/run_operator_build_matrix.py --soc ascend910b
+python3 ci/run_operator_build_matrix.py --soc ascend910_93
+python3 ci/run_operator_build_matrix.py --soc ascend950
+
+python3 ci/run_operator_generalization.py --soc ascend910b --device 0
+python3 ci/run_operator_generalization.py --soc ascend910_93 --device 0
+python3 ci/run_operator_generalization.py --soc ascend950 --device 0
+```
+
+构建入口必须生成本次命令的新 run 包；泛化入口必须实际运行 `test_json_generalization_cases`。两个入口的 `--dry-run` 结果均不能记为设备侧通过。
 
 测试报告只记录平台、用例 ID、结果、精度指标和性能结论，不记录本地路径或环境信息。

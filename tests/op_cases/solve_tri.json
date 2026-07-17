@@ -66,6 +66,11 @@
       "solve_tri_tail_or_varlen",
       "solve_tri_c16_boundary"
     ],
+    "generalization_case_ids": [
+      "solve_tri_dtype_layout_generalization",
+      "solve_tri_tail_or_varlen",
+      "solve_tri_c16_boundary"
+    ],
     "negative_case_ids": [
       "solve_tri_negative_contract",
       "solve_tri_invalid_chunk_size",

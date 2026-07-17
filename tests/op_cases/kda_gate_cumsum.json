@@ -68,6 +68,10 @@
       "kda_gate_cumsum_dtype_layout_generalization",
       "kda_gate_cumsum_tail_or_varlen"
     ],
+    "generalization_case_ids": [
+      "kda_gate_cumsum_dtype_layout_generalization",
+      "kda_gate_cumsum_tail_or_varlen"
+    ],
     "negative_case_ids": [
       "kda_gate_cumsum_negative_contract",
       "kda_gate_cumsum_raw_gate_requires_a_log",

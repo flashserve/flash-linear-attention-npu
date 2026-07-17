@@ -67,6 +67,10 @@
       "chunk_fwd_o_dtype_layout_generalization",
       "chunk_fwd_o_tail_or_varlen"
     ],
+    "generalization_case_ids": [
+      "chunk_fwd_o_dtype_layout_generalization",
+      "chunk_fwd_o_tail_or_varlen"
+    ],
     "negative_case_ids": [
       "chunk_fwd_o_negative_contract",
       "chunk_fwd_o_missing_gate",

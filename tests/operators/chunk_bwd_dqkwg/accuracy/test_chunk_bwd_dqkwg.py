@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from tests.operators._shared.cases import load_cases, select_cases
+from tests.operators._shared.npu_generalization import run_generalization_cases
 
 
 OP = "chunk_bwd_dqkwg"
@@ -30,6 +31,20 @@ def test_selected_case_ids_are_unique():
     selected = select_cases(OP)
     ids = [case["id"] for case in selected]
     assert len(ids) == len(set(ids))
+
+
+@pytest.mark.npu
+def test_json_generalization_cases():
+    if os.environ.get("FLA_NPU_RUN_OPERATOR_TESTS") != "1":
+        pytest.skip("set FLA_NPU_RUN_OPERATOR_TESTS=1 on an NPU test host")
+    cases = select_cases(
+        OP,
+        tags=("generalization",),
+        route="ascendc",
+        include_negative=False,
+    )
+    assert cases, f"{OP} has no executable generalization cases"
+    run_generalization_cases(OP, cases)
 
 
 @pytest.mark.npu

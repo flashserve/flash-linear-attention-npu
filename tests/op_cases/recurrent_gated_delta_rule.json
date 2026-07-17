@@ -68,6 +68,11 @@
       "recurrent_gated_delta_rule_tail_or_varlen",
       "recurrent_gated_delta_rule_g_and_gk"
     ],
+    "generalization_case_ids": [
+      "recurrent_gated_delta_rule_dtype_layout_generalization",
+      "recurrent_gated_delta_rule_tail_or_varlen",
+      "recurrent_gated_delta_rule_g_and_gk"
+    ],
     "negative_case_ids": [
       "recurrent_gated_delta_rule_negative_contract",
       "recurrent_gated_delta_rule_invalid_gate_shape",

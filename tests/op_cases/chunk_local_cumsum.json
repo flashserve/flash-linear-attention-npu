@@ -65,6 +65,10 @@
       "chunk_local_cumsum_dtype_layout_generalization",
       "chunk_local_cumsum_tail_or_varlen"
     ],
+    "generalization_case_ids": [
+      "chunk_local_cumsum_dtype_layout_generalization",
+      "chunk_local_cumsum_tail_or_varlen"
+    ],
     "negative_case_ids": [
       "chunk_local_cumsum_negative_contract",
       "chunk_local_cumsum_varlen_pair_required",

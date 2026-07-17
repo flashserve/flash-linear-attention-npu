@@ -480,6 +480,7 @@ echo "[CI] mode=$ci_mode soc=$ci_soc ops=${ci_ops:-<all>} jobs=$ci_jobs cpack_jo
 
 python3 torch_custom/fla_npu/test/test_runtime_device_guard.py
 python3 torch_custom/fla_npu/test/test_ascendc_mutation_contract.py
+python3 scripts/check_operator_compliance.py
 
 case "$ci_mode" in
     quick)
@@ -522,6 +523,13 @@ if [[ "${CI_RUN_EXAMPLE_ST:-true}" == "true" ]]; then
     install_custom_opp_package
     check_example_python_deps
     build_torch_custom
+    if [[ "${CI_RUN_OPERATOR_GENERALIZATION:-false}" == "true" ]]; then
+        generalization_args=(--soc "$ci_soc" --device "$ci_test_device")
+        if [[ -n "$ci_ops" ]]; then
+            generalization_args+=(--ops "$ci_ops")
+        fi
+        python3 ci/run_operator_generalization.py "${generalization_args[@]}"
+    fi
     example_st_args=(--device "$ci_test_device" --cases-file "${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}")
     accuracy_report_file="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}"
     mkdir -p "$(dirname "$accuracy_report_file")"

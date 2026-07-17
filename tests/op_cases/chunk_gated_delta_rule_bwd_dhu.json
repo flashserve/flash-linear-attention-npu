@@ -534,6 +534,11 @@
       "dense_bf16_scalar_gate_c128_v256",
       "varlen_tail_fp16"
     ],
+    "generalization_case_ids": [
+      "dense_fp16_g_c64",
+      "dense_bf16_scalar_gate_c128_v256",
+      "varlen_tail_fp16"
+    ],
     "negative_case_ids": [
       "negative_chunk_size",
       "negative_reserved_gk",

@@ -479,6 +479,11 @@
       "dense_bf16_c128_v256_gva",
       "varlen_tail_fp16"
     ],
+    "generalization_case_ids": [
+      "dense_fp16_c64_v128",
+      "dense_bf16_c128_v256_gva",
+      "varlen_tail_fp16"
+    ],
     "negative_case_ids": [
       "negative_head_ratio",
       "negative_reserved_inputs",
