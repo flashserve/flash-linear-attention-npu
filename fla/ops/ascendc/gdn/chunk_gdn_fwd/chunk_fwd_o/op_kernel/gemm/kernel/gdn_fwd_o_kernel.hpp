@@ -268,7 +268,6 @@ public:
 
                 if (cubeBlockScheduler.isRunning && coreIdx < coreNum) {
                     uint32_t streamId = cubeBlockScheduler.GetCurStageId();
-                    Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[streamId]);
 
                     GDNFwdOOffsets& cube1Offsets = cubeBlockScheduler.GetCube1Offsets();
                     int64_t cube1OffsetQ = cube1Offsets.qkOffset;
@@ -293,6 +292,8 @@ public:
                 if (needRun && coreIdx < coreNum) {
                     uint32_t streamId = cubeBlockScheduler.GetPrevStageId();
                     Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done[streamId]);
+                    // vec2Done protects the H/V workspace consumed by Cube2/3; Cube1 uses a separate slot.
+                    Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[streamId]);
                     GDNFwdOOffsets& cube2Offsets = cubeBlockScheduler.GetCube23Offsets();
                     int64_t cube2OffsetQ = cube2Offsets.qkOffset;
                     int64_t cube2OffsetH = cube2Offsets.hOffset;

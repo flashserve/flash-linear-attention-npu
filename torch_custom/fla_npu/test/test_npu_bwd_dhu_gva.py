@@ -64,13 +64,26 @@ class BwdDhuCase:
         return torch.float32
 
 
-# 与 fwd_h 12 项矩阵对齐，Vdim=256；按规模从小到大排列（去掉与 smoke_fixed 重复的 fixed_t4096）
+# 覆盖泛化表中的 fixed/varlen、V=128/256、chunk=64/128 和 MHA/GVA 组合。
 CASES = [
     BwdDhuCase("smoke_varlen_t256_v256", 1, 16, 32, 256, chunk_size=64, cu_seqlens_len=5),
+    BwdDhuCase("smoke_fixed_mha_t257_v128", 1, 4, 4, 257, v_dim=128, chunk_size=128,
+               varlen=False),
+    BwdDhuCase("general_fixed_b2_h32_t8192_v128", 2, 32, 32, 8192, v_dim=128, chunk_size=64,
+               varlen=False),
     BwdDhuCase("fixed_b176_t24_v256", 176, 2, 64, 24, chunk_size=64, varlen=False),
-    BwdDhuCase("fixed_b711_t196_v256", 711, 4, 32, 196, chunk_size=128, varlen=False),
+    BwdDhuCase("general_fixed_b711_t196_v128", 711, 4, 32, 196, v_dim=128, chunk_size=128,
+               varlen=False),
     BwdDhuCase("fixed_b16_t2048_v256", 16, 21, 63, 2048, chunk_size=64, varlen=False),
     BwdDhuCase("smoke_fixed_t4096_v256", 1, 16, 32, 4096, chunk_size=64, varlen=False),
+    BwdDhuCase("general_varlen_t7178_v128_cu17", 1, 4, 32, 7178, v_dim=128, chunk_size=128,
+               cu_seqlens_len=17),
+    BwdDhuCase("general_varlen_t8999_v256_cu13", 1, 16, 48, 8999, chunk_size=128,
+               cu_seqlens_len=13),
+    BwdDhuCase("general_varlen_t16387_v256_cu667", 1, 16, 48, 16387, chunk_size=64,
+               cu_seqlens_len=667),
+    BwdDhuCase("general_varlen_t36621_v128_cu668", 1, 16, 32, 36621, v_dim=128, chunk_size=64,
+               cu_seqlens_len=668),
     BwdDhuCase("varlen_t16384_v256_cu2", 1, 21, 63, 16384, chunk_size=64, cu_seqlens_len=2),
     BwdDhuCase("varlen_t16384_v256_cu128", 1, 16, 32, 16384, chunk_size=64, cu_seqlens_len=128),
     BwdDhuCase("varlen_t65536_v256_cu17", 1, 4, 32, 65536, chunk_size=128, cu_seqlens_len=17),
@@ -105,7 +118,9 @@ def _build_inputs(case: BwdDhuCase, seed: int = 0):
     cu_seqlens = None
     chunk_indices = None
     if case.varlen:
-        cu_seqlens = generate_cu_seqlens(case.cu_seqlens_len, case.tokens)
+        sequence_count = case.cu_seqlens_len - 1
+        segment_max = max(128, math.ceil(case.tokens / sequence_count))
+        cu_seqlens = generate_cu_seqlens(case.cu_seqlens_len, case.tokens, seg_min=1, seg_max=segment_max)
         chunk_indices = prepare_chunk_indices(cu_seqlens, case.chunk_size)
     scale = scale_for_compute_dtype(effective_scale(1.0 / math.sqrt(case.k_dim), case.k_dim), ktype)
     return q, k, w, do, dv, g, cu_seqlens, chunk_indices, scale
@@ -179,7 +194,7 @@ def main():
             raise SystemExit(f"unknown BWD_HU_CASE={only}")
 
     print(f"[MODE] random input + dual(fp64 gt / npu-aligned bench), no example dump", flush=True)
-    print(f"device={device} out_root={out_root} cases={len(cases)} Vdim=256", flush=True)
+    print(f"device={device} out_root={out_root} cases={len(cases)}", flush=True)
 
     results = []
     for case in cases:
