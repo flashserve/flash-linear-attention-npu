@@ -75,12 +75,10 @@ protected:
     LocalTensor<float> qCastLocal;
     LocalTensor<GT> gLocal; // [BT/2,]
     LocalTensor<float> gCastLocal;
-    LocalTensor<float> gLastCastLocal;
     LocalTensor<float> gBCLocal;
     LocalTensor<float> gBrcbLocal;
 
     LocalTensor<float> gExpLocal;
-    LocalTensor<float> gFatorLocal;
     
     // update dv2
     LocalTensor<DT> vInLocal; // [BT/2,V]
