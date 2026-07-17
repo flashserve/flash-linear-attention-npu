@@ -530,6 +530,13 @@ if [[ "${CI_RUN_EXAMPLE_ST:-true}" == "true" ]]; then
         fi
         python3 ci/run_operator_generalization.py "${generalization_args[@]}"
     fi
+    if [[ "${CI_RUN_OPERATOR_ACCURACY:-false}" == "true" ]]; then
+        operator_accuracy_args=(--soc "$ci_soc" --device "$ci_test_device")
+        if [[ -n "$ci_ops" ]]; then
+            operator_accuracy_args+=(--ops "$ci_ops")
+        fi
+        python3 ci/run_operator_accuracy.py "${operator_accuracy_args[@]}"
+    fi
     example_st_args=(--device "$ci_test_device" --cases-file "${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}")
     accuracy_report_file="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}"
     mkdir -p "$(dirname "$accuracy_report_file")"

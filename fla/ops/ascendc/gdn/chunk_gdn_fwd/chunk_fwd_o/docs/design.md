@@ -115,7 +115,10 @@ dense/fixed 尾块与 varlen 尾段均按每条逻辑序列的有效长度计算
 
 ## 9. 精度设计
 
-FP16/BF16 路径在矩阵乘或长归约中使用实现允许的高精度中间量；输出边界再转换到公开 dtype。逐项 reference、尾块、边界和组合模式按 JSON 阈值验证。 参考实现与阈值由 `tests/op_cases/chunk_fwd_o.json` 固定。
+FP16/BF16 路径在矩阵乘或长归约中使用实现允许的高精度中间量；输出边界再转换到公开 dtype。reference 按 kernel 顺序模拟
+QK、gate/mask、中间 dtype 转换、AV、QH、Exp 和输出缩放。逐项 reference、尾块、边界和组合模式按 JSON 阈值验证。
+当前 `2e-2` 阈值继承 `examples/fast_kernel_launch_example/tests/chunk_fwd_o/test_chunk_fwd_o.py` 的 direct-launch 基线，
+参考实现与阈值由 `tests/op_cases/chunk_fwd_o.json` 固定。
 
 ## 10. 性能设计
 

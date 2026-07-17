@@ -9,7 +9,7 @@ from pathlib import Path
 import torch
 
 from fla_npu.ops.ascendc import chunk_gated_delta_rule_bwd_dhu
-from test_bwd_dhu import chunk_gated_delta_rule_bwd_dhu_cpu
+from test_bwd_dhu import chunk_gated_delta_rule_bwd_dhu_cpu, create_bwd_dhu_random_inputs
 
 
 def _manifest():
@@ -42,13 +42,11 @@ def _inputs(case):
     gate_dtype = _dtype(case["dtype"].get("g", dtype_name))
     B, H_k, H_v = shape["B"], shape["H_k"], shape["H_v"]
     T, K, V = shape["T"], shape["K"], shape["V"]
-    generator = torch.Generator().manual_seed(20260717)
-    q = torch.randn(B, H_k, T, K, dtype=data_dtype, generator=generator)
-    k = torch.randn(B, H_k, T, K, dtype=data_dtype, generator=generator)
-    w = torch.randn(B, H_v, T, K, dtype=data_dtype, generator=generator) * 0.05
-    d_o = torch.randn(B, H_v, T, V, dtype=data_dtype, generator=generator) * 0.05
-    dv = torch.randn(B, H_v, T, V, dtype=data_dtype, generator=generator) * 0.05
-    g = torch.randn(B, H_v, T, dtype=gate_dtype, generator=generator) * 0.02
+    torch.manual_seed(int(case["seed"]))
+    q, k, w, d_o, dv, g = create_bwd_dhu_random_inputs(
+        B, H_k, H_v, T, K, V, data_dtype, gate_dtype
+    )
+    generator = torch.Generator().manual_seed(int(case["seed"]) + 1)
     gK = torch.randn(B, H_v, T, K, dtype=data_dtype, generator=generator) if _present(optional, "gK") else None
     h0 = torch.randn(B, H_v, K, V, dtype=data_dtype, generator=generator) if _present(optional, "h0") else None
     dht = torch.randn(B, H_v, K, V, dtype=data_dtype, generator=generator) if _present(optional, "dht") else None
@@ -91,8 +89,19 @@ def _run_accuracy(case, tolerance):
     )
     assert dh0_npu is None and dh0_ref is None
     tol = tolerance[q.dtype.__str__().split(".")[-1]]
-    torch.testing.assert_close(dh_npu.cpu().float(), dh_ref.float(), **tol)
-    torch.testing.assert_close(dv2_npu.cpu().float(), dv2_ref.float(), **tol)
+    for name, actual, expected in (
+        ("dh", dh_npu.cpu().float(), dh_ref.float()),
+        ("dv2", dv2_npu.cpu().float(), dv2_ref.float()),
+    ):
+        diff = (actual - expected).abs()
+        print(
+            f"{case['id']}/{name}: max_abs={diff.max().item():.6e} "
+            f"mean_abs={diff.mean().item():.6e} "
+            f"actual_range=[{actual.min().item():.6e},{actual.max().item():.6e}] "
+            f"expected_range=[{expected.min().item():.6e},{expected.max().item():.6e}]",
+            flush=True,
+        )
+        torch.testing.assert_close(actual, expected, **tol)
 
 
 def _run_negative(case):

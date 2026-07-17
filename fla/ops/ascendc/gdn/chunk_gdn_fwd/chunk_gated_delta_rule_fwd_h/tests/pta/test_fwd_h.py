@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import logging
@@ -244,9 +245,9 @@ def get_cu_offsets(h_input, cu_seqlens):
     return cu_seqlens, torch.zeros([num_chunks, 2]).to(cu_seqlens.dtype)
 
 def gen_decay_data(h_input, cu_seqlens, chunk_offsets):
-    base = torch.randint(-15, -5, [h_input.v_num_head])
-    bias = torch.empty([h_input.shape_batch, h_input.v_num_head, h_input.seqlen]).uniform_(-2, 0)
-    g = base[:, None] + bias
+    g = torch.nn.functional.logsigmoid(
+        torch.randn([h_input.shape_batch, h_input.v_num_head, h_input.seqlen], dtype=torch.float32)
+    )
 
     for shape_batch_idx in range(h_input.shape_batch):
         for v_head_idx in range(h_input.v_num_head):
@@ -264,16 +265,34 @@ def gen_decay_data(h_input, cu_seqlens, chunk_offsets):
 def gen_input_data(h_input, rand_wu = True):
     cu_seqlens = gen_seqlen(h_input.seqlen, h_input.is_varied_len, h_input.token_batch)
     cu_seqlens, chunk_offsets = get_cu_offsets(h_input, cu_seqlens)
+    k = torch.nn.functional.normalize(
+        torch.randn(
+            [h_input.shape_batch, h_input.k_num_head, h_input.seqlen, h_input.k_head_dim],
+            dtype=torch.float32,
+        ),
+        p=2,
+        dim=-1,
+    ).to(h_input.dtype)
+    g = gen_decay_data(h_input, cu_seqlens, chunk_offsets).to(h_input.g_dtype)
     if rand_wu:
-        w = torch.randn([h_input.shape_batch, h_input.v_num_head, h_input.seqlen, h_input.k_head_dim], dtype=h_input.dtype)
-        u = torch.randn([h_input.shape_batch, h_input.v_num_head, h_input.seqlen, h_input.v_head_dim], dtype=h_input.dtype)
+        beta = torch.rand(
+            [h_input.shape_batch, h_input.v_num_head, h_input.seqlen], dtype=torch.float32
+        ).sigmoid()
+        value = torch.randn(
+            [h_input.shape_batch, h_input.v_num_head, h_input.seqlen, h_input.v_head_dim],
+            dtype=torch.float32,
+        )
+        head_ratio = h_input.v_num_head // h_input.k_num_head
+        expanded_k = k.float().repeat_interleave(head_ratio, dim=1)
+        w = (expanded_k * beta[..., None] * g.float().exp()[..., None]).to(h_input.dtype)
+        u = (value * beta[..., None]).to(h_input.dtype)
     else:
         w, u = gen_wu_data()
-    k = torch.randn([h_input.shape_batch, h_input.k_num_head, h_input.seqlen, h_input.k_head_dim], dtype=h_input.dtype)
-    # g = torch.randn([h_input.shape_batch, h_input.v_num_head, h_input.seqlen], dtype=torch.float)
-    g = gen_decay_data(h_input, cu_seqlens, chunk_offsets)
     if h_input.use_initial_state:
-        initial_state = torch.randn([h_input.shape_batch, h_input.v_num_head, h_input.token_batch, h_input.k_head_dim, h_input.v_head_dim], dtype=torch.float32)
+        initial_state = torch.randn(
+            [h_input.shape_batch, h_input.v_num_head, h_input.token_batch, h_input.k_head_dim, h_input.v_head_dim],
+            dtype=torch.float32,
+        ) * 0.1
     else:
         initial_state = None
     return GDNFwdHInputTensor(k, w, u, g, cu_seqlens, chunk_offsets, initial_state)
@@ -302,8 +321,48 @@ def save_data(input_tensor, output_tensor):
     if output_tensor.final_state is not None:
         output_tensor.final_state.view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "final_state_ref.bin"))
 
-if __name__ == "__main__":
+def assert_accuracy(actual, expected, diff_threshold, max_fail_ratio, max_relative_error, name):
+    actual = actual.detach().cpu().float().flatten()
+    expected = expected.detach().cpu().float().flatten()
+    if not torch.isfinite(actual).all() or not torch.isfinite(expected).all():
+        raise AssertionError(f"{name} contains NaN or Inf")
+    abs_diff = (actual - expected).abs()
+    denominator = torch.maximum(actual.abs(), expected.abs()) + 1e-9
+    element_error = torch.where(abs_diff < diff_threshold, abs_diff, abs_diff / denominator)
+    fail_ratio = float((element_error > diff_threshold).float().mean().item())
+    max_error = float(element_error.max().item())
+    print(
+        f"{name}: max_abs={abs_diff.max().item():.6e} mean_abs={abs_diff.mean().item():.6e} "
+        f"fail_ratio={fail_ratio:.6f} max_relative_error={max_error:.6e}"
+    )
+    if fail_ratio > max_fail_ratio:
+        raise AssertionError(
+            f"{name} mismatch: fail ratio {fail_ratio:.6f} > {max_fail_ratio:.6f}"
+        )
+    if max_error >= max_relative_error:
+        raise AssertionError(
+            f"{name} mismatch: max relative error {max_error:.6e} >= {max_relative_error:.6e}"
+        )
 
+if __name__ == "__main__":
+    if len(sys.argv) == 1 and os.environ.get("FLA_NPU_CASE_MANIFEST"):
+        with open(os.environ["FLA_NPU_CASE_MANIFEST"], encoding="utf-8") as manifest_file:
+            manifest = json.load(manifest_file)
+        case = next(
+            item for item in manifest["cases"]
+            if item["id"] == "chunk_gated_delta_rule_fwd_h_main_accuracy"
+        )
+        shape, attrs = case["shape"], case["attrs"]
+        sys.argv.extend([
+            str(shape["B"]), str(shape["T"]), str(shape["H_k"]), str(shape["H_v"]),
+            str(shape["K"]), str(shape["V"]), "0", str(shape["C"]), "0",
+            str(int(attrs["output_final_state"])), case["dtype"]["kwu"], "0", "0", "unused",
+            os.environ.get("TEST_DEVICE_ID", "0"), case["dtype"]["g"], case["dtype"]["state"],
+        ])
+        os.environ["FLA_NPU_SEED"] = str(case["seed"])
+    seed = int(os.environ.get("FLA_NPU_SEED", "2026"))
+    random.seed(seed)
+    torch.manual_seed(seed)
     gdn_fwd_h_input = GDNFwdHInput()
 
     if gdn_fwd_h_input.use_actual_input:
@@ -340,6 +399,34 @@ if __name__ == "__main__":
         output_tensor = parse_actual_output(gdn_fwd_h_input)
     else:
         output_tensor = gen_ref_data(gdn_fwd_h_input, input_tensor)
+    tolerance_key = "bfloat16" if gdn_fwd_h_input.dtype == torch.bfloat16 else "float16"
+    tolerance = manifest["tolerance"][tolerance_key]["atol"] if "manifest" in locals() else (6e-3 if tolerance_key == "bfloat16" else 3e-3)
+    accuracy_policy = manifest.get("accuracy_policy", {}) if "manifest" in locals() else {}
+    max_fail_ratio = float(accuracy_policy.get("max_fail_ratio", 0.05))
+    max_relative_error = float(accuracy_policy.get("max_relative_error", 0.1))
+    for name, actual, expected in (
+        ("h", result[0], output_tensor.h),
+        ("v_new", result[1], output_tensor.v_new),
+    ):
+        assert_accuracy(
+            actual,
+            expected,
+            tolerance,
+            max_fail_ratio,
+            max_relative_error,
+            name,
+        )
+    if output_tensor.final_state is not None:
+        if result[2] is None:
+            raise AssertionError("final_state output is missing")
+        assert_accuracy(
+            result[2],
+            output_tensor.final_state,
+            tolerance,
+            max_fail_ratio,
+            max_relative_error,
+            "final_state",
+        )
     save_data(input_tensor, output_tensor)
     result[0].cpu().view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "h_npu.bin"))
     result[1].cpu().view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "v_npu.bin"))

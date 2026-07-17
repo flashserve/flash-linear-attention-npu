@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import logging
@@ -45,6 +46,7 @@ def forward_o_trans_cpu(
     chunk_size,
     cu_seqlens,chunk_indices
 ):
+    dtype_ = q.dtype
     q = q.to(torch.float32).npu()
     k = k.to(torch.float32).npu()
     v = v.to(torch.float32).npu()
@@ -96,8 +98,10 @@ def forward_o_trans_cpu(
                     L_mask = (g_sel.unsqueeze(-1) - g_sel.unsqueeze(-2)).exp() 
                     attn = attn*L_mask    
                     del L_mask
-                    attn = torch.tril(attn, 0) 
-                    o_inter = (q_sel * g_sel.to(torch.float16).exp()[:, None]) @ hidden_state_sel
+                    # The kernel stores the gated attention tile in the input dtype
+                    # before the A@V matmul, and applies exp(g) after Q@H.
+                    attn = torch.tril(attn, 0).to(dtype_).to(torch.float32)
+                    o_inter = (q_sel @ hidden_state_sel) * g_sel.exp()[:, None]
                     o = (o_inter + attn @ v_sel) * scale
                     o_output[n, h, bos + i * BT: bos + i * BT + actual_len,:] = o[:actual_len, :]
                 else:
@@ -110,12 +114,11 @@ def forward_o_trans_cpu(
                     L_mask = (g_sel.unsqueeze(-1) - g_sel.unsqueeze(-2)).exp() 
                     attn = attn*L_mask           
                     del L_mask
-                    attn = torch.tril(attn, 0) 
-                    o_inter = (q_sel * g_sel.exp()[:, None]) @ hidden_state_sel
+                    attn = torch.tril(attn, 0).to(dtype_).to(torch.float32)
+                    o_inter = (q_sel @ hidden_state_sel) * g_sel.exp()[:, None]
                     o = (o_inter + attn @ v_sel) * scale
                     o_output[0, h, bos + i * BT: bos + i * BT + actual_len,:] = o[:actual_len, :]
-    o_output = o_output.to(torch.bfloat16)
-    return o_output
+    return o_output.to(dtype_)
 
 def parse_dtype(str_dtype):
     if str_dtype == "half" or str_dtype == "fp16" or str_dtype == "float16":
@@ -214,12 +217,13 @@ def gen_input_data(o_input):
     cu_seqlens = gen_seqlen(o_input.seqlen, o_input.is_varied_len, o_input.token_batch)
     cu_seqlens, chunk_offsets = get_cu_offsets(o_input, cu_seqlens)
     num_chunks = chunk_offsets.shape[0] if chunk_offsets is not None else (math.ceil(o_input.seqlen / o_input.chunk_size))
-    q = torch.randn([o_input.shape_batch, o_input.k_num_head, o_input.seqlen, o_input.k_head_dim], dtype=o_input.dtype)
-    k = torch.randn([o_input.shape_batch, o_input.k_num_head, o_input.seqlen, o_input.k_head_dim], dtype=o_input.dtype)
-    v = torch.randn([o_input.shape_batch, o_input.v_num_head, o_input.seqlen, o_input.v_head_dim], dtype=o_input.dtype)
-    h = torch.randn([o_input.shape_batch, o_input.v_num_head, num_chunks, o_input.k_head_dim, o_input.v_head_dim], dtype=o_input.dtype)
-    g = torch.randn([o_input.shape_batch, o_input.v_num_head, o_input.seqlen], dtype=torch.float)
-    # g = gen_decay_data(o_input, cu_seqlens, chunk_offsets)
+    # Match the model-scale regime used by the repository's direct-launch precision test.
+    q = torch.randn([o_input.shape_batch, o_input.k_num_head, o_input.seqlen, o_input.k_head_dim], dtype=o_input.dtype) * 0.1
+    k = torch.randn([o_input.shape_batch, o_input.k_num_head, o_input.seqlen, o_input.k_head_dim], dtype=o_input.dtype) * 0.1
+    v = torch.randn([o_input.shape_batch, o_input.v_num_head, o_input.seqlen, o_input.v_head_dim], dtype=o_input.dtype) * 0.1
+    h = torch.randn([o_input.shape_batch, o_input.v_num_head, num_chunks, o_input.k_head_dim, o_input.v_head_dim], dtype=o_input.dtype) * 0.1
+    g_base = torch.linspace(-0.25, 0.25, o_input.seqlen, dtype=torch.float32).reshape(1, 1, -1)
+    g = g_base.repeat(o_input.shape_batch, o_input.v_num_head, 1).to(o_input.g_dtype)
     return GDNFwdOInputTensor(q, k, v, h, g, cu_seqlens, chunk_offsets)
 
 def parse_actual_input(o_input):
@@ -260,6 +264,21 @@ def save_data(input_tensor, output_tensor):
     output_tensor.o.cpu().to(input_tensor.q.dtype).view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "o_ref.bin"))
 
 if __name__ == "__main__":
+    if len(sys.argv) == 1 and os.environ.get("FLA_NPU_CASE_MANIFEST"):
+        with open(os.environ["FLA_NPU_CASE_MANIFEST"], encoding="utf-8") as manifest_file:
+            manifest = json.load(manifest_file)
+        case = next(item for item in manifest["cases"] if item["id"] == "chunk_fwd_o_main_accuracy")
+        shape, attrs = case["shape"], case["attrs"]
+        sys.argv.extend([
+            str(shape["B"]), str(shape["T"]), str(shape["H_k"]), str(shape["H_v"]),
+            str(shape["K"]), str(shape["V"]), "0", "1", str(shape["C"]),
+            str(attrs["scale"]), case["dtype"]["qkvh"], "0", "0", "unused",
+            os.environ.get("TEST_DEVICE_ID", "0"), case["dtype"]["g"],
+        ])
+        os.environ["FLA_NPU_SEED"] = str(case["seed"])
+    seed = int(os.environ.get("FLA_NPU_SEED", "2026"))
+    random.seed(seed)
+    torch.manual_seed(seed)
     gdn_fwd_o_input = GDNFwdOInput()
 
     if gdn_fwd_o_input.use_actual_input:
@@ -329,9 +348,19 @@ if __name__ == "__main__":
     torch.npu.synchronize()
     print("step 8: after synchronize")
 
-    save_data(input_tensor, output_tensor)
-    result.cpu().view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "o_npu.bin"))
-    print("step 9: save done")
+    tolerance_key = "bfloat16" if gdn_fwd_o_input.dtype == torch.bfloat16 else "float16"
+    tolerance = manifest["tolerance"][tolerance_key]["atol"] if "manifest" in locals() else (6e-3 if tolerance_key == "bfloat16" else 3e-3)
+    actual_cpu = result.cpu().float()
+    expected_cpu = output_tensor.o.cpu().float()
+    diff = (actual_cpu - expected_cpu).abs()
+    print(f"o: max_abs={diff.max().item():.6e} mean_abs={diff.mean().item():.6e}")
+    torch.testing.assert_close(
+        actual_cpu,
+        expected_cpu,
+        rtol=tolerance,
+        atol=tolerance,
+    )
 
     save_data(input_tensor, output_tensor)
     result.cpu().view(torch.int16).numpy().tofile(os.path.join(WORKSPACE, "data", "o_npu.bin"))
+    print("step 9: save done")

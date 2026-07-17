@@ -4,6 +4,7 @@ Accuracy test for npu_recurrent_gated_delta_rule.
 Compares NPU output against CPU golden reference.
 Tests multiple parameter combinations.
 """
+import os
 import sys
 import torch
 import torch_npu
@@ -100,10 +101,7 @@ def run_npu(inp, device):
     print("start run npu_recurrent_gated_delta_rule")
 
     result = ascendc_ops.recurrent_gated_delta_rule(
-        q_npu, k_npu, v_npu, s_npu,
-        beta=b_npu,
-        actual_seq_lengths=asl_npu,
-        ssm_state_indices=ssi_npu,
+        q_npu, k_npu, v_npu, b_npu, s_npu, asl_npu, ssi_npu,
         num_accepted_tokens=nat_npu,
         g=g_npu,
         gk=gk_npu,
@@ -156,7 +154,7 @@ def run_test_case(desc, bs, mtp, nk, nv, dk, dv, device,
 
 
 def main():
-    device = torch.device("npu:2")
+    device = torch.device(f"npu:{int(os.environ.get('TEST_DEVICE_ID', '0'))}")
     torch_npu.npu.set_device(device)
     results = []
     print(f"Using device: {device}")

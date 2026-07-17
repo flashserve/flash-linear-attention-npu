@@ -34,16 +34,21 @@
   },
   "data_generation": {
     "floating_inputs": {
-      "distribution": "uniform",
-      "min": -1.0,
-      "max": 1.0
+      "distribution": "model_derived",
+      "inputs": [
+        "k",
+        "w",
+        "u",
+        "initial_state"
+      ]
     },
-    "positive_inputs": {
-      "distribution": "uniform",
-      "min": 0.0,
-      "max": 1.0
-    },
-    "structured_inputs": "由 reference 名称对应的 runner 构造 gate、三角矩阵、状态和索引"
+    "structured_inputs": "k 做 L2 normalize；g 由 logsigmoid 增量在每个 chunk 内 cumsum；W/U 按 A=I 的 GDN WY 公式由 k/value/beta/g 推导；varlen 索引按 sequence-major 构造。"
+  },
+  "accuracy_policy": {
+    "method": "element_error_ratio",
+    "max_fail_ratio": 0.05,
+    "max_relative_error": 0.1,
+    "description": "绝对误差小于 dtype atol 时按绝对误差计，其余元素按相对误差计；判据与仓内 direct-launch 精度测试一致。"
   },
   "coverage_requirements": {
     "public_modes": [

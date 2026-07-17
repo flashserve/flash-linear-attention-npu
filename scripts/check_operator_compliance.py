@@ -349,7 +349,29 @@ def validate_source_rules(operators: dict[str, Path], errors: list[str]) -> None
         ROOT / "ci" / "run_operator_generalization.py": (
             *REQUIRED_SOCS,
             "FLA_NPU_RUN_OPERATOR_TESTS",
+            "FLA_NPU_CASE_IDS",
             "json_generalization_cases",
+            "start_new_session=True",
+        ),
+        ROOT / "ci" / "run_operator_accuracy.py": (
+            *REQUIRED_SOCS,
+            "FLA_NPU_RUN_OPERATOR_TESTS",
+            "main_ascendc_accuracy_backend",
+            "start_new_session=True",
+        ),
+        ROOT / "ci" / "run_checks.sh": (
+            "run_operator_generalization.py",
+            "run_operator_accuracy.py",
+            "CI_RUN_OPERATOR_GENERALIZATION",
+            "CI_RUN_OPERATOR_ACCURACY",
+        ),
+        ROOT / "ci" / "run_ci_container.sh": (
+            "CI_RUN_OPERATOR_GENERALIZATION",
+            "CI_RUN_OPERATOR_ACCURACY",
+        ),
+        ROOT / ".github" / "workflows" / "ci.yml": (
+            "CI_RUN_OPERATOR_GENERALIZATION: 'true'",
+            "CI_RUN_OPERATOR_ACCURACY: 'true'",
         ),
     }
     for path, required_tokens in ci_contracts.items():
