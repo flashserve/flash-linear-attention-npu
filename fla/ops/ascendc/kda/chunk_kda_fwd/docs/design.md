@@ -50,7 +50,8 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 2. InferShape、op_api 与 tiling host 共同按 README 校验必选参数、shape、dtype、layout、属性和可选输入组合，并构造或核对输出。
 3. tiling processor 计算任务数、边界块、workspace 偏移和模板实例。
 4. `op_kernel/` 按本算子的计算流程完成搬运、计算、同步和写回。
-5. aclnn 两段式接口负责 contiguous、workspace/executor 和 stream 异步发射。
+5. aclnn 两段式接口负责 contiguous、workspace/executor 和 stream 异步发射；内部布局的中间结果通过
+   `ViewCopy` 按原逻辑 shape 回写，只有 BSND/TND 等外部布局转换才调用 `KdaLayoutSwap12`。
 6. `fla_npu.ops.ascendc` 仅通过 ctypes 调用 aclnn，不依赖 torch_npu dispatcher。
 
 ## 6. Tiling 设计

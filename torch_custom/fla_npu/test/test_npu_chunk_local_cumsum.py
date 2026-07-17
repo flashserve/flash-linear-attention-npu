@@ -77,21 +77,21 @@ def run_case(
     g_cpu = torch.randn(shape, dtype=torch.float32)
     g_npu = g_cpu.npu()
 
-    cu_seqlens_npu = None
-    chunk_indices_npu = None
+    cu_seqlens_host = None
+    chunk_indices_host = None
     cu_seqlens_cpu = None
     if cu_seqlens_values is not None:
         cu_seqlens_cpu = torch.tensor(cu_seqlens_values, dtype=torch.long)
         block_t = _block_t(shape, chunk_size)
         chunk_indices_cpu = prepare_chunk_indices(cu_seqlens_cpu, block_t)
-        cu_seqlens_npu = cu_seqlens_cpu.npu()
-        chunk_indices_npu = chunk_indices_cpu.npu()
+        cu_seqlens_host = cu_seqlens_cpu.tolist()
+        chunk_indices_host = chunk_indices_cpu.reshape(-1).tolist()
 
     actual = ascendc_ops.chunk_local_cumsum(
         g_npu,
         chunk_size,
-        cu_seqlens=cu_seqlens_npu,
-        chunk_indices_out=chunk_indices_npu,
+        cu_seqlens=cu_seqlens_host,
+        chunk_indices_out=chunk_indices_host,
         reverse=reverse,
         scale=scale,
         head_first=True,

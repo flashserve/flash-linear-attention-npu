@@ -119,18 +119,6 @@ int64_t KdaFwdNumel(const aclTensor *tensor)
     return numel;
 }
 
-aclnnStatus KdaFwdCopyMaybeCastAfter(const aclTensor *src, const aclTensor *dependency,
-                                     const aclTensor *dst, aclOpExecutor *executor)
-{
-    const aclTensor *castSrc = KdaFwdMaybeCast(src, dst->GetDataType(), executor);
-    CHECK_RET(castSrc != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    const aclTensor *linearSrc = l0op::Reshape(castSrc, KdaFwdMakeShape({1, 1, 1, KdaFwdNumel(castSrc)}), executor);
-    CHECK_RET(linearSrc != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(l0op::KdaLayoutSwap12(linearSrc, dependency, dst, executor)[0] != nullptr,
-              ACLNN_ERR_INNER_NULLPTR);
-    return ACLNN_SUCCESS;
-}
-
 size_t KdaFwdRank(const aclTensor *tensor)
 {
     return tensor->GetViewShape().GetDimNum();
@@ -627,9 +615,17 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *gkBnsdRaw = isInternalLayout ? gkBsnd :
         executorPtr->AllocTensor(KdaFwdMakeShape({batch, hvNum, seqlen, kDim}),
                                  params.gk->GetDataType(), Format::FORMAT_ND);
-    const aclTensor *betaBnsRaw = isInternalLayout ? betaBsn :
-        executorPtr->AllocTensor(KdaFwdMakeShape({batch, hvNum, seqlen}),
-                                 params.beta->GetDataType(), Format::FORMAT_ND);
+    const aclTensor *betaBsnd4 = nullptr;
+    const aclTensor *betaBnsd4 = nullptr;
+    const aclTensor *betaBnsRaw = betaBsn;
+    if (!isInternalLayout) {
+        // KdaLayoutSwap12 的公开 rank-3 语义是交换维 0/1。beta 带 batch 的
+        // [B,T,Hv] 需要交换维 1/2，因此临时补一个尾维，统一走 rank-4 模板。
+        betaBsnd4 = l0op::Reshape(betaBsn, KdaFwdMakeShape({batch, seqlen, hvNum, 1}), executorPtr);
+        betaBnsd4 = executorPtr->AllocTensor(KdaFwdMakeShape({batch, hvNum, seqlen, 1}),
+                                             params.beta->GetDataType(), Format::FORMAT_ND);
+        betaBnsRaw = l0op::Reshape(betaBnsd4, KdaFwdMakeShape({batch, hvNum, seqlen}), executorPtr);
+    }
     bool returnIntermediates = KdaFwdNumel(params.aqkOut) != 0;
     const aclTensor *oBnsd = nullptr;
     const aclTensor *aqkBnst = nullptr;
@@ -693,9 +689,11 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const bool externalComputeBuffersReady = isInternalLayout ||
         (wBnsd != nullptr && uBnsd != nullptr && qgBnsd != nullptr && kgBnsd != nullptr &&
          vNewBnsd != nullptr && hBnst != nullptr);
+    const bool externalBetaBuffersReady = isInternalLayout ||
+        (betaBsnd4 != nullptr && betaBnsd4 != nullptr && betaBnsRaw != nullptr);
     CHECK_RET(qBnsd != nullptr && kBnsd != nullptr && vBnsd != nullptr && gkBnsdRaw != nullptr &&
-                  betaBnsRaw != nullptr && oBnsd != nullptr && internalIntermediateOutputsReady &&
-                  externalComputeBuffersReady,
+                  betaBnsRaw != nullptr && externalBetaBuffersReady && oBnsd != nullptr &&
+                  internalIntermediateOutputsReady && externalComputeBuffersReady,
               ACLNN_ERR_INNER_NULLPTR);
 
     if (!isInternalLayout) {
@@ -703,7 +701,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         CHECK_RET(l0op::KdaLayoutSwap12(kBsnd, kBnsd, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(l0op::KdaLayoutSwap12(vBsnd, vBnsd, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(l0op::KdaLayoutSwap12(gkBsnd, gkBnsdRaw, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(betaBsn, betaBnsRaw, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        CHECK_RET(l0op::KdaLayoutSwap12(betaBsnd4, betaBnsd4, executorPtr)[0] != nullptr,
+                  ACLNN_ERR_INNER_NULLPTR);
     }
 
     const aclTensor *gkBnsd = gkBnsdRaw;
@@ -884,21 +883,21 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
                           ACLNN_ERR_INNER_NULLPTR);
             }
             if (returnIntermediates) {
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[2], oBnsd, aqkBnst, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[2], aqkBnst, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[3], aqkBnst, akkBnst, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[3], akkBnst, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[4], akkBnst, wBnsd, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[4], wBnsd, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[5], wBnsd, uBnsd, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[5], uBnsd, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[6], uBnsd, qgBnsd, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[6], qgBnsd, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[7], qgBnsd, kgBnsd, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[7], kgBnsd, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[8], kgBnsd, vNewBnsd, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[8], vNewBnsd, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[9], vNewBnsd, hBnst, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[9], hBnst, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
             }
         }

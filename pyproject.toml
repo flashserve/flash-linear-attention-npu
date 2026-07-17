@@ -1,3 +1,9 @@
 [build-system]
 requires = ["setuptools>=70.1", "wheel", "packaging", "psutil"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+markers = [
+    "npu: requires an Ascend NPU runtime and device",
+]

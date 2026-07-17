@@ -7,6 +7,7 @@
 #include <string>
 
 #include "opdev/make_op_executor.h"
+#include "opdev/common_types.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
 
@@ -17,8 +18,8 @@ OP_TYPE_REGISTER(ChunkLocalCumsum);
 
 const aclTensor *ChunkLocalCumsum(
     const aclTensor *g,
-    const aclTensor *cuSeqlensOptional,
-    const aclTensor *chunkIndicesOutOptional,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOutOptional,
     int64_t chunkSize,
     bool reverse,
     double scale,
@@ -30,12 +31,36 @@ const aclTensor *ChunkLocalCumsum(
     L0_DFX(ChunkLocalCumsum, g, cuSeqlensOptional, chunkIndicesOutOptional, chunkSize, reverse, scale, headFirst,
            outputDtypeOptional, out);
 
+    const aclTensor *actualCuSeqlens = nullptr;
+    if (cuSeqlensOptional != nullptr) {
+        actualCuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
+        if (actualCuSeqlens == nullptr) {
+            return nullptr;
+        }
+        auto *mutableCuSeqlens = const_cast<aclTensor *>(actualCuSeqlens);
+        mutableCuSeqlens->SetStorageFormat(Format::FORMAT_ND);
+        mutableCuSeqlens->SetViewFormat(Format::FORMAT_ND);
+        mutableCuSeqlens->SetOriginalFormat(Format::FORMAT_ND);
+    }
+
+    const aclTensor *actualChunkIndices = nullptr;
+    if (chunkIndicesOutOptional != nullptr) {
+        actualChunkIndices = executor->ConvertToTensor(chunkIndicesOutOptional, DataType::DT_INT64);
+        if (actualChunkIndices == nullptr) {
+            return nullptr;
+        }
+        auto *mutableChunkIndices = const_cast<aclTensor *>(actualChunkIndices);
+        mutableChunkIndices->SetStorageFormat(Format::FORMAT_ND);
+        mutableChunkIndices->SetViewFormat(Format::FORMAT_ND);
+        mutableChunkIndices->SetOriginalFormat(Format::FORMAT_ND);
+    }
+
     std::string outputDtypeStr(outputDtypeOptional ? outputDtypeOptional : "float32");
     float scaleFloat = static_cast<float>(scale);
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         ChunkLocalCumsum,
-        OP_INPUT(g, cuSeqlensOptional, chunkIndicesOutOptional),
+        OP_INPUT(g, actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(out),
         OP_ATTR(chunkSize, reverse, scaleFloat, headFirst, outputDtypeStr));
     if (ret != ACLNN_SUCCESS) {
