@@ -78,6 +78,7 @@ public:
             .ExtendCfgInfo("opFile.value", "chunk_local_cumsum");
         this->AICore().AddConfig("ascend910b", aicoreConfig);
         this->AICore().AddConfig("ascend910_93", aicoreConfig);
+        this->AICore().AddConfig("ascend950", aicoreConfig);
     }
 };
 OP_ADD(ChunkLocalCumsum);
