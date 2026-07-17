@@ -712,16 +712,18 @@ def test_prepare_wy_repr_bwd_full(
         import ct
         cpu_dv = compute_dv_golden(A, du, beta, cu_seqlens, chunk_indices, B, HV, T, K, chunk_size, NT)
         cpu_dv_high_precision = compute_dv_golden_high_precision(A, du, beta, cu_seqlens, chunk_indices, B, HV, T, K, chunk_size, NT)
-        ct.dual(dv.cpu(), cpu_dv_high_precision, cpu_dv)
+        results = [ct.dual(dv.cpu(), cpu_dv_high_precision, cpu_dv)]
         cpu_dk = compute_dk_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
         cpu_dk_high_precision = compute_dk_golden_high_precision(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
-        ct.dual(dk.cpu(), cpu_dk_high_precision, cpu_dk)
+        results.append(ct.dual(dk.cpu(), cpu_dk_high_precision, cpu_dk))
         cpu_dg = compute_dg_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
         cpu_dg_high_precision = compute_dg_golden_high_precision(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
-        ct.dual(dg.cpu(), cpu_dg_high_precision, cpu_dg)
+        results.append(ct.dual(dg.cpu(), cpu_dg_high_precision, cpu_dg))
         cpu_dbeta = compute_dbeta_golden(A, dw, g, beta, dA,k,v,du, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
         cpu_dbeta_high_precision = compute_dbeta_golden_high_precision(A, dw, g, beta, dA,k,v,du, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
-        ct.dual(dbeta.cpu(), cpu_dbeta_high_precision, cpu_dbeta)
+        results.append(ct.dual(dbeta.cpu(), cpu_dbeta_high_precision, cpu_dbeta))
+        if not all(bool(result.get("success")) for result in results):
+            raise AssertionError("prepare_wy_repr_bwd_full dual precision comparison failed")
     finally:
         pass
     # torch.save(cpu_dbeta, "cpu_dbeta.pt") 
@@ -730,6 +732,13 @@ def test_prepare_wy_repr_bwd_full(
     return dk, dv, dbeta, dg
 
 if __name__ == "__main__":
+    if os.environ.get("FLA_NPU_OPERATOR") == "prepare_wy_repr_bwd_full":
+        test_prepare_wy_repr_bwd_full(
+            B=1, HK=2, HV=4, T=128, K=128, V=128, chunk_size=64,
+            ktype=torch.float16, btype=torch.float32, seed=2026,
+        )
+        raise SystemExit(0)
+
     # HV 为 HK 的倍数(如 HV=16, HK=4)仅跑 CPU golden;NPU 需 HK==HV
     # test_prepare_wy_repr_bwd_full(B = 1, HK = 2, HV = 8, T = 256, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
     test_prepare_wy_repr_bwd_full(B = 1, HK = 8, HV = 8, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)

@@ -355,7 +355,23 @@ python3 ci/run_operator_generalization.py --soc ascend910_93 --device 0
 python3 ci/run_operator_generalization.py --soc ascend950 --device 0
 ```
 
-该入口逐算子筛选 `generalization`、`ascendc`、`ACLNN_SUCCESS` case，检查 launch 成功、公开输出 shape 和 NaN/Inf。精度结论仍由各算子的主精度/reference 测试给出；泛化执行通过不能替代精度比较。任一平台编译失败、case 未执行或输出不满足契约时，不得在 README、PR 或测试报告中写该平台已经验证通过。
+该入口逐算子筛选 `generalization`、`ascendc`、`ACLNN_SUCCESS` case，并通过 `FLA_NPU_CASE_IDS` 每次只运行一个
+JSON case，检查 launch 成功、公开输出 shape 和 NaN/Inf。每个 case 必须设置超时并在超时时终止整个子进程组。
+精度结论仍由各算子的主精度/reference 测试给出；泛化执行通过不能替代精度比较。任一平台编译失败、case 未执行或
+输出不满足契约时，不得在 README、PR 或测试报告中写该平台已经验证通过。
+
+主精度/reference backend 使用独立统一入口，逐算子隔离执行并汇总失败或超时：
+
+```bash
+python3 ci/run_operator_accuracy.py --soc ascend910b --device 0
+python3 ci/run_operator_accuracy.py --soc ascend910_93 --device 0
+python3 ci/run_operator_accuracy.py --soc ascend950 --device 0
+```
+
+每个 backend 必须显式检查比较结果并以非零返回码报告精度失败；只保存输出、打印误差或调用比较工具但忽略其 `success` 结果，不算通过。入口超时必须终止整个子进程组，不能遗留占用 CPU/NPU 的 runner。
+
+仓库 NPU CI 必须默认设置 `CI_RUN_OPERATOR_GENERALIZATION=true` 和 `CI_RUN_OPERATOR_ACCURACY=true`。容器入口必须透传
+这两个变量，`ci/run_checks.sh` 必须在安装当前 custom OPP 和 Python 适配后运行对应统一入口；不得只保留可手工执行的脚本。
 
 ## 8. 文档和示例
 

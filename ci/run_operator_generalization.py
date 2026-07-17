@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import shlex
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -42,6 +43,7 @@ def main() -> int:
     parser.add_argument("--soc", required=True, choices=REQUIRED_SOCS)
     parser.add_argument("--ops", help="comma-separated operators (default: all registered Ascend C operators)")
     parser.add_argument("--device", type=int, default=0)
+    parser.add_argument("--timeout", type=int, default=300, help="per-case timeout in seconds")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -79,22 +81,42 @@ def main() -> int:
                 "json_generalization_cases",
             ]
             case_env = env.copy()
-            case_env["FLA_NPU_CASE_ID"] = case_id
-            print(f"[GENERALIZATION] soc={args.soc} op={op} case={case_id}")
-            print("[GENERALIZATION] " + " ".join(shlex.quote(item) for item in command))
+            case_env["FLA_NPU_CASE_IDS"] = case_id
+            print(f"[GENERALIZATION] soc={args.soc} op={op} case={case_id}", flush=True)
+            print(
+                "[GENERALIZATION] " + " ".join(shlex.quote(item) for item in command),
+                flush=True,
+            )
             if args.dry_run:
                 continue
-            completed = subprocess.run(command, cwd=ROOT, env=case_env, check=False)
-            if completed.returncode != 0:
-                failures.append((op, case_id, f"pytest returned {completed.returncode}"))
+            process = subprocess.Popen(
+                command,
+                cwd=ROOT,
+                env=case_env,
+                start_new_session=True,
+            )
+            try:
+                return_code = process.wait(timeout=args.timeout)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                failures.append((op, case_id, f"timed out after {args.timeout}s"))
+                continue
+            if return_code != 0:
+                failures.append((op, case_id, f"pytest returned {return_code}"))
     if failures:
         for op, case_id, reason in failures:
-            print(f"[GENERALIZATION][ERROR] {op}/{case_id}: {reason}", file=sys.stderr)
+            print(f"[GENERALIZATION][ERROR] {op}/{case_id}: {reason}", file=sys.stderr, flush=True)
         return 1
     action = "planned" if args.dry_run else "passed"
     print(
         f"[GENERALIZATION] {action} {case_count} cases for "
-        f"{len(requested)} operators on {args.soc}"
+        f"{len(requested)} operators on {args.soc}",
+        flush=True,
     )
     return 0
 

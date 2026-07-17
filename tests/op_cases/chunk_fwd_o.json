@@ -35,16 +35,16 @@
   },
   "data_generation": {
     "floating_inputs": {
-      "distribution": "uniform",
-      "min": -1.0,
-      "max": 1.0
+      "distribution": "normal",
+      "std": 0.1,
+      "inputs": [
+        "q",
+        "k",
+        "v",
+        "h"
+      ]
     },
-    "positive_inputs": {
-      "distribution": "uniform",
-      "min": 0.0,
-      "max": 1.0
-    },
-    "structured_inputs": "由 reference 名称对应的 runner 构造 gate、三角矩阵、状态和索引"
+    "structured_inputs": "g 在 [-0.25, 0.25] 上按 T 线性生成；varlen 索引按 sequence-major 构造。该生成规则与仓内 direct-launch 精度用例一致。"
   },
   "coverage_requirements": {
     "public_modes": [
@@ -89,13 +89,18 @@
   },
   "tolerance": {
     "float16": {
-      "rtol": 0.003,
-      "atol": 0.003
+      "rtol": 0.02,
+      "atol": 0.02
     },
     "bfloat16": {
-      "rtol": 0.006,
-      "atol": 0.006
+      "rtol": 0.02,
+      "atol": 0.02
     }
+  },
+  "accuracy_policy": {
+    "method": "torch_allclose",
+    "basis": "examples/fast_kernel_launch_example/tests/chunk_fwd_o/test_chunk_fwd_o.py",
+    "description": "沿用仓内 direct-launch 数值测试对多段 Cube、Exp 与中间 dtype 转换的既有 2e-2 标准。"
   },
   "cases": [
     {

@@ -42,8 +42,17 @@ python3 ci/run_operator_build_matrix.py --soc ascend950
 python3 ci/run_operator_generalization.py --soc ascend910b --device 0
 python3 ci/run_operator_generalization.py --soc ascend910_93 --device 0
 python3 ci/run_operator_generalization.py --soc ascend950 --device 0
+
+python3 ci/run_operator_accuracy.py --soc ascend910b --device 0
+python3 ci/run_operator_accuracy.py --soc ascend910_93 --device 0
+python3 ci/run_operator_accuracy.py --soc ascend950 --device 0
 ```
 
-构建入口必须生成本次命令的新 run 包；泛化入口必须实际运行 `test_json_generalization_cases`。两个入口的 `--dry-run` 结果均不能记为设备侧通过。
+构建入口必须生成本次命令的新 run 包；泛化入口必须通过 `FLA_NPU_CASE_IDS` 逐 case 实际运行
+`test_json_generalization_cases`；精度入口必须运行每个算子的 `test_main_ascendc_accuracy_backend`。设备 runner
+超时后必须清理整个子进程组。三个入口的 `--dry-run` 结果均不能记为设备侧通过。
+
+GitHub NPU CI 默认启用 `CI_RUN_OPERATOR_GENERALIZATION=true` 和 `CI_RUN_OPERATOR_ACCURACY=true`；指定 `CI_OPS` 时只跑
+目标算子，未指定时覆盖全部已注册 Ascend C 算子。
 
 测试报告只记录平台、用例 ID、结果、精度指标和性能结论，不记录本地路径或环境信息。

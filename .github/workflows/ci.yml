@@ -311,6 +311,8 @@ jobs:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
       CI_OPS: ${{ needs.prepare.outputs.ops }}
       CI_RUN_EXAMPLE_ST: 'true'
+      CI_RUN_OPERATOR_GENERALIZATION: 'true'
+      CI_RUN_OPERATOR_ACCURACY: 'true'
       CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK: 'true'
       CI_RUN_SCOPED_WHEEL_INSTALL_CHECK: 'true'
       CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report.json

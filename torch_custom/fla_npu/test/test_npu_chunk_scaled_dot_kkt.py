@@ -197,6 +197,9 @@ def run_case(case: Case, seed: int, cpu_only: bool) -> bool:
     if cpu_only:
         max_zero = _check_zero_regions(golden, case)
         passed = golden.shape == (case.B, case.Hk, case.T, case.BT) and max_zero <= ZERO_TOL
+        if case.B != 1:
+            print(f"  CPU golden shape={tuple(golden.shape)} max_zero={max_zero:.3e} passed={passed}")
+            return passed
         cu_seqlens, chunk_indices = make_varlen_metadata(case.T, case.BT)
         varlen_golden = chunk_scaled_dot_kkt_reference(k, g, beta, case.BT, cu_seqlens, chunk_indices)
         varlen_max_zero = _check_zero_regions(varlen_golden, case, cu_seqlens, chunk_indices)
@@ -232,6 +235,11 @@ def run_case(case: Case, seed: int, cpu_only: bool) -> bool:
         f"max_abs={max_abs:.6e} mean_abs={mean_abs:.6e} max_zero={max_zero:.3e} "
         f"passed={passed}"
     )
+
+    # Varlen uses a flattened physical batch and therefore requires B=1.
+    # B>1 cases still cover the fixed-length batch dimension above.
+    if case.B != 1:
+        return passed
 
     cu_seqlens, chunk_indices = make_varlen_metadata(case.T, case.BT)
     varlen_golden = chunk_scaled_dot_kkt_reference(k, g, beta, case.BT, cu_seqlens, chunk_indices)

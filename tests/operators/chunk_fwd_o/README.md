@@ -38,3 +38,6 @@ FLA_NPU_RUN_OPERATOR_TESTS=1 pytest -q tests/operators/chunk_fwd_o/st/test_examp
 A2/A3/A5 通过 `FLA_NPU_SOC` 选择。精度逐项比较全部公开输出并检查 NaN/Inf；性能只使用 msopprof
 设备侧结果，按 JSON 的 `expect.requirement` 对比 Triton 或当前主线基线。报告记录平台、case 总数、通过数和
 失败 case ID，不记录本地环境路径。
+
+`chunk_fwd_o` 的 FP16/BF16 容差沿用仓内 direct-launch 数值测试的 `2e-2` 标准；reference 必须模拟 kernel 的
+QK、gate/mask、中间 dtype 转换、AV、QH、Exp 和输出缩放顺序，不得通过继续放宽阈值或缩小输入分布掩盖偏差。

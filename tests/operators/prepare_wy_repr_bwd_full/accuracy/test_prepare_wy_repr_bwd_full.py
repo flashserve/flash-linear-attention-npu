@@ -55,5 +55,6 @@ def test_main_ascendc_accuracy_backend():
     env = os.environ.copy()
     env["FLA_NPU_OPERATOR"] = OP
     env["FLA_NPU_CASE_MANIFEST"] = str(ROOT / "tests" / "op_cases" / f"{OP}.json")
-    env["FLA_NPU_CASE_IDS"] = ",".join(case["id"] for case in select_cases(OP, route="ascendc"))
+    accuracy_cases = select_cases(OP, tags=("accuracy",), route="ascendc", include_negative=False)
+    env["FLA_NPU_CASE_IDS"] = ",".join(case["id"] for case in accuracy_cases)
     subprocess.run([sys.executable, str(RUNNER)], cwd=RUNNER.parent, env=env, check=True)
