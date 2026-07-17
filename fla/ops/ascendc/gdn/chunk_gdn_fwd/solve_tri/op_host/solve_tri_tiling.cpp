@@ -3,6 +3,7 @@
  * BSD 3-Clause License.
  */
 #include "solve_tri_tiling.h"
+#include "log/log.h"
 #include "register/op_impl_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 
