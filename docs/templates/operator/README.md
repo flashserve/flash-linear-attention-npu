@@ -60,7 +60,7 @@
 
 | 入口 | 支持情况 | 说明 |
 | --- | --- | --- |
-| `fla_npu.ops.<ascendc|triton>` | 必须，二选一 | 与实现类型一致的 Python 主入口 |
+| `fla_npu.ops.ascendc` / `fla_npu.ops.triton` | 必须，二选一 | 与实现类型一致的 Python 主入口 |
 | aclnn | Ascend C 算子必须 | Triton 算子删除本行 |
 | Ascend C `<<<>>>` | Ascend C 算子必须 | Triton 算子删除本行 |
 | `torch.ops.npu` | 可选 | 未实现时删除本行 |
