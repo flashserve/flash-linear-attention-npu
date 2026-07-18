@@ -20,7 +20,7 @@
 | `R_h` | H_v/H_k 的 head 分组比 | GVA head 映射 |
 | `K` | Query/Key 单 head 特征维 | `q`、`k`、`gk` 的最后一维 |
 | `V` | Value 单 head 特征维 | `v`、`o` 的最后一维 |
-| `C` | chunk_size | chunk 计算粒度和三角块宽度 |
+| `chunk_size` | 每个 chunk 的 token 数，也是三角块宽度 | chunk 维或局部矩阵最后一维 |
 | `N_c` | 当前调用中的 chunk 总数 | 中间状态 `h` 的 chunk 维 |
 | `S_n` | 第 n 条变长序列的有效长度 | `cu_seqlens[n+1]-cu_seqlens[n]` |
 
@@ -32,8 +32,8 @@ KDA 的 head 关系统一写为 `H_v % H_k == 0`，`h_k=floor(h_v/R_h)`。不得
 | --- | --- | --- |
 | `S_0` | 可选初始状态 | `[N,H_v,K,V]` 或 dense `[B,H_v,K,V]` |
 | `S_f` | 最终状态 | 与 `S_0` 相同 |
-| `A_{qk}` | chunk 内 QK 严格因果权重 | token 维后附加 `C` |
-| `A_{kk}` | chunk 内 KK/WY 权重 | token 维后附加 `C` |
+| `A_{qk}` | chunk 内 QK 严格因果权重 | token 维后附加 `chunk_size` |
+| `A_{kk}` | chunk 内 KK/WY 权重 | token 维后附加 `chunk_size` |
 | `W_k` | WY key-side 中间量 | 与 `q` 的特征维一致并按 `H_v` 展开 |
 | `U_v` | WY value-side 中间量 | 与 `v` 同 Shape |
 | `G_k` | 逐 token、逐 key 维的累计 gate | 与 `gk` 同 Shape |
@@ -43,7 +43,7 @@ KDA 的 head 关系统一写为 `H_v % H_k == 0`，`h_k=floor(h_v/R_h)`。不得
 | `D_3` | 通用 ND 输入的第 3 维（rank>=4） | `kda_layout_swap12` |
 | `D_4` | 通用 ND 输入的第 4 维（rank>=5） | `kda_layout_swap12` |
 
-中间量名称用于公式，不作为 JSON Shape 字段。除 `kda_layout_swap12` 使用 `D_i` 表达通用 ND 维度外，JSON 使用 `B/H_k/H_v/T/K/V/C/N/N_c`。
+中间量名称用于公式，不作为 JSON Shape 字段。除 `kda_layout_swap12` 使用 `D_i` 表达通用 ND 维度外，JSON 使用 `B/H_k/H_v/T/K/V/chunk_size/N/N_c`。
 
 ## 3. 布局映射
 
@@ -63,12 +63,12 @@ KDA 的 head 关系统一写为 `H_v % H_k == 0`，`h_k=floor(h_v/R_h)`。不得
 | `cu_seqlens` | `[N+1]` | INT64 | 从 0 开始、以 `T` 结束的累计长度 |
 | `chunk_indices` | `[N_c,2]` 或 `[2*N_c]` | INT64 | sequence-major 的 `(seq_id, local_chunk_id)` 列表 |
 
-KDA 当前要求 `chunk_indices` 为 canonical sequence-major 顺序。调用方省略该输入时，Python wrapper 可根据 `cu_seqlens` 和 `C` 生成等价列表。
+KDA 当前要求 `chunk_indices` 为 canonical sequence-major 顺序。调用方省略该输入时，Python wrapper 可根据 `cu_seqlens` 和 `chunk_size` 生成等价列表。
 
 ## 5. 文档使用约定
 
 1. 每个 KDA 算子 README 的附录引用 `kda-shape-v1`，只列实际使用符号。
 2. 设计和 API 文档通过算子 README 锚点引用符号，不重复本表。
 3. `stage`、`usedCoreNum`、`seqStart` 等 tiling 实现字段不得进入公开 Shape 定义。
-4. `K`、`V`、`C`、head 数和序列数的固定上限统一写入算子“已知限制”。
+4. `K`、`V`、`chunk_size`、head 数和序列数的固定上限统一写入算子“已知限制”。
 5. 修改布局语义或符号后，必须同步三个 KDA 算子及 `tests/reference/chunk_kda_reference.py`。

@@ -112,14 +112,14 @@ chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None, chunk_indices_out=None, re
 import torch
 from fla_npu.ops.ascendc import chunk_local_cumsum
 
-B, H_v, T, C = 1, 4, 129, 64
+B, H_v, T, chunk_size = 1, 4, 129, 64
 g = torch.randn(B, H_v, T, device="npu", dtype=torch.float32)
 cu_seqlens = [0, 65, 129]
 # 本 shape 下 B_T=2048，每条逻辑序列各有一个处理块。
 chunk_indices_out = [[0, 0], [1, 0]]
 out = chunk_local_cumsum(
     g,
-    C,
+    chunk_size,
     cu_seqlens=cu_seqlens,
     chunk_indices_out=chunk_indices_out,
     reverse=False,
@@ -149,9 +149,9 @@ import fla_npu
 
 fla_npu.load_legacy_torch_ops()
 
-B, H_v, T, C = 1, 4, 129, 64
+B, H_v, T, chunk_size = 1, 4, 129, 64
 g = torch.randn(B, H_v, T, device="npu", dtype=torch.float32)
-out = torch.ops.npu.npu_chunk_local_cumsum(g, C, reverse=False, scale=1.0, head_first=True)
+out = torch.ops.npu.npu_chunk_local_cumsum(g, chunk_size, reverse=False, scale=1.0, head_first=True)
 torch.npu.synchronize()
 assert out.shape == g.shape and out.dtype == torch.float32
 ```
@@ -167,11 +167,11 @@ assert out.shape == g.shape and out.dtype == torch.float32
 ## 8. 已知限制
 
 - g rank 至少 3，所有维度为正；head_first 当前必须 true。
-- chunk_size 必须为 2 的幂，且满足 `B_T >= C`；交付矩阵至少覆盖 `P=1,C=64` 的变长序列尾块和
-  `P=16,C=64` 的 dense 尾块。
+- chunk_size 必须为 2 的幂，且满足 `B_T >= chunk_size`；交付矩阵至少覆盖 `P=1,chunk_size=64` 的变长序列尾块和
+  `P=16,chunk_size=64` 的 dense 尾块。
 - output_dtype 仅支持 FP32 别名。
 - 变长序列物理 B=1，两个 host 整数数组必须同时提供；cu_seqlens 首项为 0、末项为 T 且非递减。
-- chunk_indices_out 必须按 sequence-major 完整列出内部处理块；处理块长度 B_T 由 UB、C 和 P 共同决定，不能直接按 C 构造。
+- chunk_indices_out 必须按 sequence-major 完整列出内部处理块；处理块长度 B_T 由 UB、chunk_size 和 P 共同决定，不能直接按 chunk_size 构造。
 
 ## 9. 异常与返回码
 

@@ -25,7 +25,7 @@ Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shap
 
 ## 4. 数学与接口语义
 
-令 `r=t mod C`、`s=t-r+c`：
+令 `r=t mod chunk_size`、`s=t-r+c`：
 
 ```text
 A[b,h_k,t,c] = beta[b,h_k,t] * exp(clip(g[t]-g[s],-50,50))
@@ -74,7 +74,7 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 
 ### 6.3 模板化方案与 tiling key
 
-采用模板化 `D_T_K`(FP16/BF16) 与 `CHUNK_KEY`(16/32/64/128)，共 8 个显式实例。不同 C 的 Cube/UB tile 必须编译期确定；B/H/T 不进入 key。
+采用模板化 `D_T_K`(FP16/BF16) 与 `CHUNK_KEY`(16/32/64/128)，共 8 个显式实例。不同 chunk_size 的 Cube/UB tile 必须编译期确定；B/H/T 不进入 key。
 
 ## 7. Kernel 设计
 
@@ -130,7 +130,7 @@ A2/A3/A5 使用相同 case ID，平台只决定编译与运行目标。
 - chunk_size 仅支持 16/32/64/128。
 - 必须满足 H_v % H_k == 0；A 的 head 维为 H_k。
 - cu_seqlens/chunk_indices 必须同时提供或同时省略；变长序列物理 B 必须为 1。
-- 变长序列累计长度必须覆盖 [0,T]，chunk_indices 必须按 sequence-major 完整列出每个 C 大小的 chunk。
+- 变长序列累计长度必须覆盖 [0,T]，chunk_indices 必须按 sequence-major 完整列出每个长度为 chunk_size 的 chunk。
 - 指数差固定 clip 到 [-50,50]；H_v>H_k 时当前实现读取 g/beta 的前 H_k 个 head。
 
 后续扩展任何限制时，必须同时修改 host 拦截、API 错误码、README、JSON 与三平台回归；模板实例增长前先评估二进制体积和编译耗时。

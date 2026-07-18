@@ -51,7 +51,7 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 
 ### 6.1 任务划分
 
-定长以 `B*ceil(T/C)` 为 chunk 列表，变长序列直接消费规范化 `chunk_indices`；AIC 以 Q/K head 生成共享 score，AIV/AIC 以 value head 消费。
+定长以 `B*ceil(T/chunk_size)` 为 chunk 列表，变长序列直接消费规范化 `chunk_indices`；AIC 以 Q/K head 生成共享 score，AIV/AIC 以 value head 消费。
 
 ### 6.2 Tiling Data
 
@@ -81,7 +81,7 @@ Phase 1 AIC 计算 `K@Q^T`；Phase 1.5 AIV 扩展到 value head并应用 exp/mas
 
 ### 7.2 内存规划
 
-user workspace 是 AIC/AIV 交接的 `C*C` score 环形槽；L1/L0A/L0B/L0C 放置两个矩阵乘 tile，UB 放置 gate、mask 和类型转换临时量。
+user workspace 是 AIC/AIV 交接的 `chunk_size*chunk_size` score 环形槽；L1/L0A/L0B/L0C 放置两个矩阵乘 tile，UB 放置 gate、mask 和类型转换临时量。
 
 | 层级/资源 | 生命周期与所有权 |
 | --- | --- |

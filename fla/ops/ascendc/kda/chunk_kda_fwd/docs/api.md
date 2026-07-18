@@ -37,7 +37,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | `o` | `与 v 相同` | 与 v 相同 | KDA 输出 |
 | `final_state` | `[N,H_v,K,V] 或空` | FP32 | output_final_state=false 时 Python 返回空 tensor |
 | `g` | `与 gk 相同` | FP32 | Python 返回槽：gk 转 FP32 |
-| `Aqk/Akk` | `按 layout 为 [...,T,C]` | 与 q 相同 | chunk 内因果矩阵；内部计算可使用 FP32 |
+| `Aqk/Akk` | `按 layout 为 [...,T,chunk_size]` | 与 q 相同 | chunk 内因果矩阵；内部计算可使用 FP32 |
 | `w/qg/kg` | `按 layout 为 [...,T,K]` | 与 q 相同 | K 维中间量 |
 | `u/v_new` | `与 v 相同` | 与 v 相同 | V 维中间量 |
 | `h` | `按 layout 为 [B,H_v,N_c,K,V] 或 [B,N_c,H_v,K,V]` | 与 q 相同 | 每个 chunk 的起始状态 |
@@ -141,13 +141,13 @@ chunk_kda_fwd(q, k, v, gk, beta, scale, chunk_size, *, layout='BSND', initial_st
 import torch
 from fla_npu.ops.ascendc import chunk_kda_fwd
 
-B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 128, 64
+B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 128, 64
 q = torch.randn(B, H_k, T, K, device="npu", dtype=torch.bfloat16)
 k = torch.randn_like(q)
 v = torch.randn(B, H_v, T, V, device="npu", dtype=torch.bfloat16)
 gk = -torch.rand(B, H_v, T, K, device="npu", dtype=torch.float32).cumsum(2)
 beta = torch.sigmoid(torch.randn(B, H_v, T, device="npu", dtype=torch.float32))
-outputs = chunk_kda_fwd(q, k, v, gk, beta, K ** -0.5, C,
+outputs = chunk_kda_fwd(q, k, v, gk, beta, K ** -0.5, chunk_size,
                 layout="BNSD", output_final_state=True)
 o, final_state = outputs[:2]
 torch.npu.synchronize()
@@ -190,13 +190,13 @@ import fla_npu
 
 fla_npu.load_legacy_torch_ops()
 
-B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 128, 64
+B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 128, 64
 q = torch.randn(B, H_k, T, K, device="npu", dtype=torch.bfloat16)
 k = torch.randn_like(q)
 v = torch.randn(B, H_v, T, V, device="npu", dtype=torch.bfloat16)
 gk = -torch.rand(B, H_v, T, K, device="npu", dtype=torch.float32).cumsum(2)
 beta = torch.sigmoid(torch.randn(B, H_v, T, device="npu", dtype=torch.float32))
-outputs = torch.ops.npu.npu_chunk_kda_fwd(q, k, v, gk, beta, K ** -0.5, C,
+outputs = torch.ops.npu.npu_chunk_kda_fwd(q, k, v, gk, beta, K ** -0.5, chunk_size,
                 layout="BNSD", output_final_state=True)
 o, final_state = outputs[:2]
 torch.npu.synchronize()

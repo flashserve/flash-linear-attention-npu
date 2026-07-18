@@ -51,14 +51,14 @@ def _chunk_count(case: Case) -> int:
     if "N_c" in case["shape"]:
         return _shape(case, "N_c")
     time = _shape(case, "T")
-    chunk = int(case["attrs"].get("chunk_size", case["shape"].get("C", 64)))
+    chunk = int(case["attrs"].get("chunk_size", case["shape"].get("chunk_size", 64)))
     return (time + chunk - 1) // chunk
 
 
 def _run_chunk_bwd_dqkwg(torch, ops, case, device):
     s, d = case["shape"], case["dtype"]
     B, Hk, Hv, T, K, V = (int(s[k]) for k in ("B", "H_k", "H_v", "T", "K", "V"))
-    C, Nc = int(case["attrs"]["chunk_size"]), _chunk_count(case)
+    chunk_size, Nc = int(case["attrs"]["chunk_size"]), _chunk_count(case)
     data = _dtype(torch, d["qkv"])
     gate = _dtype(torch, d["g"])
     state = _dtype(torch, d["state"])
@@ -71,7 +71,7 @@ def _run_chunk_bwd_dqkwg(torch, ops, case, device):
     dh = _tensor(torch, (B, Hv, Nc, K, V), state, device, scale=0.02)
     dv = _tensor(torch, (B, Hv, T, V), data, device)
     out = ops.chunk_bwd_dqkwg(
-        q, k, v, g, h, dox, dh, dv, C,
+        q, k, v, g, h, dox, dh, dv, chunk_size,
         cu_seqlens=_meta(case, "cu_seqlens"),
         chunk_indices=_meta(case, "chunk_indices"),
         scale=float(case["attrs"]["scale"]),
@@ -99,7 +99,7 @@ def _run_chunk_bwd_dv_local(torch, ops, case, device):
 def _run_chunk_gated_delta_rule_bwd_dhu(torch, ops, case, device):
     s, d = case["shape"], case["dtype"]
     B, Hk, Hv, T, K, V = (int(s[k]) for k in ("B", "H_k", "H_v", "T", "K", "V"))
-    C, Nc = int(case["attrs"]["chunk_size"]), _chunk_count(case)
+    chunk_size, Nc = int(case["attrs"]["chunk_size"]), _chunk_count(case)
     data = _dtype(torch, d["data"])
     q = _tensor(torch, (B, Hk, T, K), data, device)
     k = _tensor(torch, (B, Hk, T, K), data, device)
@@ -108,7 +108,7 @@ def _run_chunk_gated_delta_rule_bwd_dhu(torch, ops, case, device):
     dv = _tensor(torch, (B, Hv, T, V), data, device)
     g = -_tensor(torch, (B, Hv, T), _dtype(torch, d["g"]), device, positive=True, scale=0.02)
     out = ops.chunk_gated_delta_rule_bwd_dhu(
-        q, k, w, d_o, dv, float(case["attrs"]["scale"]), C, g=g,
+        q, k, w, d_o, dv, float(case["attrs"]["scale"]), chunk_size, g=g,
         cu_seqlens=_meta(case, "cu_seqlens"), chunk_indices=_meta(case, "chunk_indices"),
         use_exp2=case["attrs"].get("use_exp2", False),
         transpose_state_layout=case["attrs"].get("transpose_state_layout", False),
@@ -119,36 +119,36 @@ def _run_chunk_gated_delta_rule_bwd_dhu(torch, ops, case, device):
 def _prepare_wy_inputs(torch, case, device):
     s, d = case["shape"], case["dtype"]
     B, Hk, Hv, T, K, V = (int(s[k]) for k in ("B", "H_k", "H_v", "T", "K", "V"))
-    C = int(case["attrs"]["chunk_size"])
+    chunk_size = int(case["attrs"]["chunk_size"])
     data = _dtype(torch, d["data"])
     scalar = _dtype(torch, d["beta_g"])
     k = _tensor(torch, (B, Hk, T, K), data, device)
     v = _tensor(torch, (B, Hv, T, V), data, device)
     beta = _tensor(torch, (B, Hv, T), scalar, device, positive=True)
-    A = _tensor(torch, (B, Hv, T, C), data, device, scale=0.02)
+    A = _tensor(torch, (B, Hv, T, chunk_size), data, device, scale=0.02)
     dw = _tensor(torch, (B, Hv, T, K), data, device)
     du = _tensor(torch, (B, Hv, T, V), data, device)
     g = -_tensor(torch, (B, Hv, T), scalar, device, positive=True, scale=0.02)
-    return (k, v, beta, A, dw, du, g), (B, Hk, Hv, T, K, V, C, data)
+    return (k, v, beta, A, dw, du, g), (B, Hk, Hv, T, K, V, chunk_size, data)
 
 
 def _run_prepare_wy_repr_bwd_da(torch, ops, case, device):
     inputs, dims = _prepare_wy_inputs(torch, case, device)
-    B, _, Hv, T, _, _, C, _ = dims
+    B, _, Hv, T, _, _, chunk_size, _ = dims
     out = ops.prepare_wy_repr_bwd_da(
-        *inputs, chunk_size=C, cu_seqlens=_meta(case, "cu_seqlens"),
+        *inputs, chunk_size=chunk_size, cu_seqlens=_meta(case, "cu_seqlens"),
         chunk_indices=_meta(case, "chunk_indices"),
     )
-    return out, ((B, Hv, T, C),)
+    return out, ((B, Hv, T, chunk_size),)
 
 
 def _run_prepare_wy_repr_bwd_full(torch, ops, case, device):
     inputs, dims = _prepare_wy_inputs(torch, case, device)
     k, v, beta, A, dw, du, g = inputs
-    B, Hk, Hv, T, K, V, C, data = dims
-    dA = _tensor(torch, (B, Hv, T, C), data, device)
+    B, Hk, Hv, T, K, V, chunk_size, data = dims
+    dA = _tensor(torch, (B, Hv, T, chunk_size), data, device)
     out = ops.prepare_wy_repr_bwd_full(
-        k, v, beta, A, dA, dw, du, g, C,
+        k, v, beta, A, dA, dw, du, g, chunk_size,
         cu_seqlens=_meta(case, "cu_seqlens"), chunk_indices=_meta(case, "chunk_indices"),
     )
     return out, ((B, Hk, T, K), (B, Hv, T, V), (B, Hv, T), (B, Hv, T))
@@ -203,16 +203,16 @@ def _run_chunk_gated_delta_rule_fwd_h(torch, ops, case, device):
 def _run_recompute_wu_fwd(torch, ops, case, device):
     s, d = case["shape"], case["dtype"]
     B, Hk, Hv, T, K, V = (int(s[k]) for k in ("B", "H_k", "H_v", "T", "K", "V"))
-    C = int(case["attrs"]["chunk_size"])
+    chunk_size = int(case["attrs"]["chunk_size"])
     data = _dtype(torch, d["kvA"])
     scalar = _dtype(torch, d["beta_g"])
     k = _tensor(torch, (B, Hk, T, K), data, device)
     v = _tensor(torch, (B, Hv, T, V), data, device)
     beta = _tensor(torch, (B, Hv, T), scalar, device, positive=True)
-    A = _tensor(torch, (B, Hv, T, C), data, device, scale=0.02)
+    A = _tensor(torch, (B, Hv, T, chunk_size), data, device, scale=0.02)
     g = -_tensor(torch, (B, Hv, T), scalar, device, positive=True, scale=0.02)
     out = ops.recompute_wu_fwd(
-        k, v, beta, A, C, g=g, cu_seqlens=_meta(case, "cu_seqlens"),
+        k, v, beta, A, chunk_size, g=g, cu_seqlens=_meta(case, "cu_seqlens"),
         chunk_indices=_meta(case, "chunk_indices"),
     )
     return out, ((B, Hv, T, K), (B, Hv, T, V))
@@ -286,36 +286,36 @@ def _run_chunk_local_cumsum(torch, ops, case, device):
 
 def _run_chunk_scaled_dot_kkt(torch, ops, case, device):
     B, Hk, Hv, T, K = (_shape(case, key) for key in ("B", "H_k", "H_v", "T", "K"))
-    C = int(case["attrs"]["chunk_size"])
+    chunk_size = int(case["attrs"]["chunk_size"])
     k = _tensor(torch, (B, Hk, T, K), _dtype(torch, case["dtype"]["k"]), device)
     g = -_tensor(torch, (B, Hv, T), torch.float32, device, positive=True, scale=0.02)
     beta = _tensor(torch, (B, Hv, T), torch.float32, device, positive=True)
     out = ops.chunk_scaled_dot_kkt(
         k, g, beta, cu_seqlens=_meta(case, "cu_seqlens"),
-        chunk_indices=_meta(case, "chunk_indices"), chunk_size=C,
+        chunk_indices=_meta(case, "chunk_indices"), chunk_size=chunk_size,
     )
-    return out, ((B, Hk, T, C),)
+    return out, ((B, Hk, T, chunk_size),)
 
 
 def _run_solve_tri(torch, ops, case, device):
-    B, T, Hv, C = (_shape(case, key, 1) for key in ("B", "T", "H_v", "C"))
+    B, T, Hv, chunk_size = (_shape(case, key, 1) for key in ("B", "T", "H_v", "chunk_size"))
     layout = case["attrs"]["layout"]
     if layout == "bhtd":
-        shape = (B, Hv, T, C)
+        shape = (B, Hv, T, chunk_size)
         row_axis = 2
     elif layout == "bsnd":
-        shape = (B, T, Hv, C)
+        shape = (B, T, Hv, chunk_size)
         row_axis = 1
     else:
-        shape = (T, Hv, C)
+        shape = (T, Hv, chunk_size)
         row_axis = 0
     x = _tensor(torch, shape, _dtype(torch, case["dtype"]["x"]), device, scale=0.02)
-    rows = torch.arange(T, device=device).remainder(C)
-    cols = torch.arange(C, device=device)
+    rows = torch.arange(T, device=device).remainder(chunk_size)
+    cols = torch.arange(chunk_size, device=device)
     mask = cols.unsqueeze(0) < rows.unsqueeze(1)
     mask_shape = [1] * len(shape)
     mask_shape[row_axis] = T
-    mask_shape[-1] = C
+    mask_shape[-1] = chunk_size
     x = (x * mask.reshape(mask_shape)).contiguous()
     out = ops.solve_tri(
         x, cu_seqlens=_meta(case, "cu_seqlens"), chunk_indices=_meta(case, "chunk_indices"), layout=layout,

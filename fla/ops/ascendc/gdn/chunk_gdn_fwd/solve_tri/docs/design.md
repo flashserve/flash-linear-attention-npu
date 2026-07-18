@@ -20,7 +20,7 @@
 
 ## 3. 能力边界
 
-实现类型：`ascendc`。Dtype：FP16/BF16。Layout：BHTD `[B,H_v,T,C]`、BSND `[B,T,H_v,C]`、TND `[T,H_v,C]`；layout 字符串必须小写。模式：dense BHTD/BSND 与变长序列 TND，支持尾块。
+实现类型：`ascendc`。Dtype：FP16/BF16。Layout：BHTD `[B,H_v,T,chunk_size]`、BSND `[B,T,H_v,chunk_size]`、TND `[T,H_v,chunk_size]`；layout 字符串必须小写。模式：dense BHTD/BSND 与变长序列 TND，支持尾块。
 Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
 
 ## 4. 数学与接口语义
@@ -49,7 +49,7 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 
 ### 6.1 任务划分
 
-按 `(batch/head/chunk)` 分配，C=128 时继续按内部 tile 求解，尾块使用局部 M。
+按 `(batch/head/chunk)` 分配，chunk_size=128 时继续按内部 tile 求解，尾块使用局部 M。
 
 ### 6.2 Tiling Data
 
@@ -73,7 +73,7 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 
 ### 6.3 模板化方案与 tiling key
 
-固定使用 key 1 作为既有 kernel launch ABI，key 不承载 shape 或模式分派。C、dtype、layout、尾块和变长序列全部由 tiling data 处理，因此不会随 B/H/T 产生组合爆炸；保留 key 1 是因为 kernel 入口现有 TILING_KEY_IS(1) 编译契约。
+固定使用 key 1 作为既有 kernel launch ABI，key 不承载 shape 或模式分派。chunk_size、dtype、layout、尾块和变长序列全部由 tiling data 处理，因此不会随 B/H/T 产生组合爆炸；保留 key 1 是因为 kernel 入口现有 TILING_KEY_IS(1) 编译契约。
 
 ## 7. Kernel 设计
 
@@ -126,7 +126,7 @@ A2/A3/A5 使用相同 case ID，平台只决定编译与运行目标。
 
 ## 12. 已知限制与演进计划
 
-- 矩阵阶/最后一维 C 支持 16/32/64/128。
+- 矩阵阶/最后一维 chunk_size 支持 16/32/64/128。
 - layout 仅支持小写 `bhtd`、`bsnd`、`tnd`；TND 必须提供两个变长序列索引，定长布局 不接受变长序列索引。
 - 输入必须表示严格下三角 A；对角线由算子加单位阵。
 

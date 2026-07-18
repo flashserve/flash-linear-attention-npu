@@ -78,10 +78,10 @@ test_chunk_kda_fwd_ntd_direct_matches_reference
 
 | 用例 | 优化前 | 优化后 | 降幅 | 优化后主要耗时 |
 | --- | ---: | ---: | ---: | --- |
-| BNSD `B=1,H_K=1,H_V=2,T=16384,K=V=128,C=64` | 4.751 ms | 3.531 ms | 25.7% | stage 1 1.512 ms，fwd_h 1.385 ms |
-| NTD `B=1,H_K=H_V=32,T=65536,K=V=128,C=64` | 206.142 ms | 127.648 ms | 38.1% | stage 1 93.123 ms，stage 2 21.991 ms |
-| BSND C9 `B=64,H_K=H_V=8,T=2048,K=V=128,C=128` | 114.572 ms | 68.035 ms | 40.6% | stage 1 42.374 ms，layout 10.011 ms |
-| NTD C33 `B=1,H_K=16,H_V=48,T=8999,K=128,V=256,C=128` | 48.621 ms | 27.210 ms | 44.0% | stage 1 19.064 ms，stage 2 5.114 ms |
+| BNSD `B=1,H_K=1,H_V=2,T=16384,K=V=128,chunk_size=64` | 4.751 ms | 3.531 ms | 25.7% | stage 1 1.512 ms，fwd_h 1.385 ms |
+| NTD `B=1,H_K=H_V=32,T=65536,K=V=128,chunk_size=64` | 206.142 ms | 127.648 ms | 38.1% | stage 1 93.123 ms，stage 2 21.991 ms |
+| BSND C9 `B=64,H_K=H_V=8,T=2048,K=V=128,chunk_size=128` | 114.572 ms | 68.035 ms | 40.6% | stage 1 42.374 ms，layout 10.011 ms |
+| NTD C33 `B=1,H_K=16,H_V=48,T=8999,K=128,V=256,chunk_size=128` | 48.621 ms | 27.210 ms | 44.0% | stage 1 19.064 ms，stage 2 5.114 ms |
 
 优化项与证据：
 

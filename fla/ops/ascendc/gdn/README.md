@@ -20,9 +20,9 @@
 | `R_h` | Value head 与 Q/K head 的分组比 H_v/H_k | GVA head 映射 |
 | `K` | Query/Key 单 head 特征维 | `q`、`k` 的最后一维 |
 | `V` | Value/Output 单 head 特征维 | `v`、`o` 的最后一维 |
-| `C` | chunk_size | chunk 内 token 数、三角块宽度 |
+| `chunk_size` | 每个 chunk 的 token 数，也是三角块宽度 | chunk 维或局部矩阵最后一维 |
 | `N_c` | 当前调用中的 chunk 总数 | `chunk_indices` 的 pair 数、状态 chunk 维 |
-| `N_{c,b}` | dense 场景每个 batch 的 chunk 数，`ceil(T/C)` | dense 状态 chunk 维 |
+| `N_{c,b}` | dense 场景每个 batch 的 chunk 数，`ceil(T/chunk_size)` | dense 状态 chunk 维 |
 | `S_n` | 第 n 条变长序列的有效长度 | `cu_seqlens[n+1]-cu_seqlens[n]` |
 
 `H_v` 必须能按组映射到 `H_k` 时，统一写作 `H_v % H_k == 0`，映射关系为 `h_k=floor(h_v/R_h)`。不得使用 `H`、`Hq`、`Hk`、`Hv`、`query_head` 或 `value_head` 替代模型级符号。
@@ -36,7 +36,7 @@
 | `L_s` | convolution state 保存的历史长度 | decode/update 状态维 |
 | `M` | 三角矩阵有效阶数 | `solve_tri` |
 | `P` | token 后连续尾部元素乘积 | `chunk_local_cumsum` |
-| `B_T` | 单个变长序列处理块覆盖的 token 数，由 tiling 根据 UB、C、P 计算 | `chunk_local_cumsum` 变长序列分块 |
+| `B_T` | 单个变长序列处理块覆盖的 token 数，由 tiling 根据 UB、chunk_size、P 计算 | `chunk_local_cumsum` 变长序列分块 |
 | `N_b` | 变长序列内部处理块总数；由各序列 ceil(seq_len/B_T) 求和 | `chunk_local_cumsum` 的 `chunk_indices_out` pair 数 |
 | `D_s` | 状态槽位数 | recurrent decode state 第一维 |
 | `Q_a` | 单次调用实际接受的 token 数 | speculative decode |
@@ -69,6 +69,6 @@
 
 1. 每个算子 README 末尾保留“Shape 变量说明”附录，引用 `gdn-shape-v1` 并只列本算子实际使用的符号。
 2. `docs/design.md` 和 `docs/api.md` 不复制本表，只链接算子 README 的附录。
-3. 固定维度，例如 `K`、`V` 或 `C` 的离散支持值，只能写在算子“已知限制”中。
+3. 固定维度，例如 `K`、`V` 或 `chunk_size` 的离散支持值，只能写在算子“已知限制”中。
 4. JSON 的 `shape` 字段必须使用本表名称；卷积等辅助算子可使用本文定义的 `D/W/L_s`。
 5. 修改符号名称或语义时，必须提高符号表版本并同步所有受影响文档和 JSON。

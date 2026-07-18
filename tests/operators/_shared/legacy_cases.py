@@ -79,7 +79,7 @@ def dqkwg_case_info(original_id: str) -> Dict:
         "HV": raw["H_v"],
         "HK": raw["H_k"],
         "T": raw["T"],
-        "chunk_size": raw["C"],
+        "chunk_size": raw["chunk_size"],
         "dtype": raw["dtype"],
         "Gtype": raw["g_dtype"],
         "scale": raw["scale"],

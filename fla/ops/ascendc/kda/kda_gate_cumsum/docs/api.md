@@ -113,11 +113,11 @@ kda_gate_cumsum(g, chunk_size, *, A_log=None, dt_bias=None, cu_seqlens=None, use
 import torch
 from fla_npu.ops.ascendc import kda_gate_cumsum
 
-B, T, H_v, K, C = 1, 128, 4, 128, 64
+B, T, H_v, K, chunk_size = 1, 128, 4, 128, 64
 raw = torch.randn(B, T, H_v, K, device="npu", dtype=torch.bfloat16)
 A_log = torch.randn(H_v, device="npu", dtype=torch.float32)
 dt_bias = torch.randn(H_v, K, device="npu", dtype=torch.float32)
-gk = kda_gate_cumsum(raw, C, A_log=A_log, dt_bias=dt_bias,
+gk = kda_gate_cumsum(raw, chunk_size, A_log=A_log, dt_bias=dt_bias,
              use_gate_in_kernel=True, safe_gate=True,
              lower_bound=-5.0, layout="BSND")
 torch.npu.synchronize()
@@ -143,11 +143,11 @@ import fla_npu
 
 fla_npu.load_legacy_torch_ops()
 
-B, T, H_v, K, C = 1, 128, 4, 128, 64
+B, T, H_v, K, chunk_size = 1, 128, 4, 128, 64
 raw = torch.randn(B, T, H_v, K, device="npu", dtype=torch.bfloat16)
 A_log = torch.randn(H_v, device="npu", dtype=torch.float32)
 dt_bias = torch.randn(H_v, K, device="npu", dtype=torch.float32)
-gk = torch.ops.npu.npu_kda_gate_cumsum(raw, C, A_log=A_log, dt_bias=dt_bias,
+gk = torch.ops.npu.npu_kda_gate_cumsum(raw, chunk_size, A_log=A_log, dt_bias=dt_bias,
              use_gate_in_kernel=True, safe_gate=True,
              lower_bound=-5.0, layout="BSND")
 torch.npu.synchronize()

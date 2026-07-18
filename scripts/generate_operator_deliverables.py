@@ -30,7 +30,7 @@ FAMILY_INFO = {
             ("R_h", "Value head 与 Q/K head 的分组比 H_v/H_k"),
             ("K", "Query/Key 单 head 特征维"),
             ("V", "Value/Output 单 head 特征维"),
-            ("C", "chunk_size"),
+            ("chunk_size", "每个 chunk 的 token 数，也是三角块宽度"),
             ("N_c", "当前调用中的 chunk 总数"),
             ("S_n", "第 n 条变长序列的有效长度"),
             ("D", "不区分 Q/K 与 V 时使用的通道维"),
@@ -38,7 +38,7 @@ FAMILY_INFO = {
             ("L_s", "convolution state 保存的历史长度"),
             ("M", "三角矩阵有效阶数"),
             ("P", "token 后连续尾部元素乘积"),
-            ("B_T", "单个变长序列处理块覆盖的 token 数，由 tiling 根据 UB、C、P 计算"),
+            ("B_T", "单个变长序列处理块覆盖的 token 数，由 tiling 根据 UB、chunk_size、P 计算"),
             ("N_b", "变长序列内部处理块总数；由各序列 ceil(seq_len/B_T) 求和"),
             ("D_s", "状态槽位数"),
             ("Q_a", "单次调用实际接受的 token 数"),
@@ -56,7 +56,7 @@ FAMILY_INFO = {
             ("R_h", "H_v/H_k 的 head 分组比"),
             ("K", "Query/Key 单 head 特征维"),
             ("V", "Value 单 head 特征维"),
-            ("C", "chunk_size"),
+            ("chunk_size", "每个 chunk 的 token 数，也是三角块宽度"),
             ("N_c", "当前调用中的 chunk 总数"),
             ("S_n", "第 n 条变长序列的有效长度"),
             ("D_0", "通用 ND 输入的第 0 维"),
@@ -143,8 +143,8 @@ OPS = {
             import torch
             from fla_npu.ops.ascendc import chunk_bwd_dqkwg
 
-            B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 128, 64
-            N_c = (T + C - 1) // C
+            B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 128, 64
+            N_c = (T + chunk_size - 1) // chunk_size
             q = torch.randn(B, H_k, T, K, device="npu", dtype=torch.float16)
             k = torch.randn_like(q)
             v = torch.randn(B, H_v, T, V, device="npu", dtype=torch.float16)
@@ -153,7 +153,7 @@ OPS = {
             dox, dv = torch.randn_like(v), torch.randn_like(v)
             dh = torch.randn_like(h)
             dq, dk, dw, dg = chunk_bwd_dqkwg(
-                q, k, v, g, h, dox, dh, dv, C,
+                q, k, v, g, h, dox, dh, dv, chunk_size,
                 scale=K ** -0.5, w=None, g_gamma=None)
             torch.npu.synchronize()
             assert dq.shape == q.shape and dk.shape == k.shape
@@ -208,22 +208,22 @@ OPS = {
             "必须满足 `H_v % H_k == 0`；变长序列当前仅支持物理 `B=1`。",
             "`g_gamma` 和 `A` 尚未实现，必须传 `None`。",
         ],
-        "task": "定长以 `B*ceil(T/C)` 为 chunk 列表，变长序列直接消费规范化 `chunk_indices`；AIC 以 Q/K head 生成共享 score，AIV/AIC 以 value head 消费。",
+        "task": "定长以 `B*ceil(T/chunk_size)` 为 chunk 列表，变长序列直接消费规范化 `chunk_indices`；AIC 以 Q/K head 生成共享 score，AIV/AIC 以 value head 消费。",
         "tiling_key": "使用模板化 tiling：`strategy`(定长/变长序列)、`D_T_Q`、`D_T_G` 和 `V` 是有限编译期维度。key 只由模板实例生成，不承载 B/H/T 等普通 runtime shape；组合上限由 2 种策略、受支持 dtype 和 2 个 V 实例共同限定。",
         "flow": "Phase 1 AIC 计算 `K@Q^T`；Phase 1.5 AIV 扩展到 value head并应用 exp/mask；Phase 2 AIC 计算 gated score 与 dO 的矩阵乘并写 dV。",
-        "memory": "user workspace 是 AIC/AIV 交接的 `C*C` score 环形槽；L1/L0A/L0B/L0C 放置两个矩阵乘 tile，UB 放置 gate、mask 和类型转换临时量。",
+        "memory": "user workspace 是 AIC/AIV 交接的 `chunk_size*chunk_size` score 环形槽；L1/L0A/L0B/L0C 放置两个矩阵乘 tile，UB 放置 gate、mask 和类型转换临时量。",
         "sync": "score 槽采用 AIC-ready/AIV-done/second-AIC-ready 的阶段协议，生产者复用前等待消费者释放；核内事件覆盖 MTE2、Vector、MTE3 与 Cube/Fixpipe，构建固定 `--cce-auto-sync=off`。",
         "python_sig": "chunk_bwd_dv_local(q, k, d_o, g, scale, chunk_size, *, g_gamma=None, A=None, cu_seqlens=None, chunk_indices=None)",
         "python_example": dedent("""
             import torch
             from fla_npu.ops.ascendc import chunk_bwd_dv_local
 
-            B, H_k, H_v, T, K, V, C = 1, 2, 4, 129, 128, 128, 64
+            B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 129, 128, 128, 64
             q = torch.randn(B, H_k, T, K, device="npu", dtype=torch.bfloat16)
             k = torch.randn_like(q)
             d_o = torch.randn(B, H_v, T, V, device="npu", dtype=torch.bfloat16)
             g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
-            d_v = chunk_bwd_dv_local(q, k, d_o, g, K ** -0.5, C)
+            d_v = chunk_bwd_dv_local(q, k, d_o, g, K ** -0.5, chunk_size)
             torch.npu.synchronize()
             assert d_v.shape == d_o.shape
         """),
@@ -296,14 +296,14 @@ OPS = {
             import torch
             from fla_npu.ops.ascendc import chunk_gated_delta_rule_bwd_dhu
 
-            B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 128, 64
+            B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 128, 64
             q = torch.randn(B, H_k, T, K, device="npu", dtype=torch.float16)
             k = torch.randn_like(q)
             w = torch.randn(B, H_v, T, K, device="npu", dtype=torch.float16)
             d_o = torch.randn(B, H_v, T, V, device="npu", dtype=torch.float16)
             dv = torch.randn_like(d_o)
             g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
-            dh, dh0, dv2 = chunk_gated_delta_rule_bwd_dhu(q, k, w, d_o, dv, K ** -0.5, C, g=g)
+            dh, dh0, dv2 = chunk_gated_delta_rule_bwd_dhu(q, k, w, d_o, dv, K ** -0.5, chunk_size, g=g)
             torch.npu.synchronize()
             assert dv2.shape == dv.shape
         """),
@@ -337,16 +337,16 @@ OPS = {
             ("k", "必选", "[B,H_k,T,K]", "FP16/BF16", "BNSD", "Key"),
             ("v", "必选", "[B,H_v,T,V]", "FP16/BF16", "BNSD", "Value"),
             ("beta", "必选", "[B,H_v,T]", "FP16/BF16/FP32", "BNS", "WY 权重"),
-            ("A", "必选", "[B,H_v,T,C]", "FP16/BF16", "BNSD", "前向 chunk 局部矩阵"),
+            ("A", "必选", "[B,H_v,T,chunk_size]", "FP16/BF16", "BNSD", "前向 chunk 局部矩阵"),
             ("dw", "必选", "[B,H_v,T,K]", "FP16/BF16", "BNSD", "W 梯度"),
             ("du", "必选", "[B,H_v,T,V]", "FP16/BF16", "BNSD", "U 梯度"),
             ("g", "必选", "[B,H_v,T]", "FP16/BF16/FP32", "BNS", "chunk-local gate"),
             ("cu_seqlens", "可选", "[N+1]", "INT64", "ND", "变长序列累计长度"),
             ("chunk_indices", "可选", "[2*N_c]", "INT64", "ND", "展平 chunk 索引"),
         ),
-        "outputs": rows(("dA", "[B,H_v,T,C]", "与 A 一致", "chunk 局部矩阵梯度")),
+        "outputs": rows(("dA", "[B,H_v,T,chunk_size]", "与 A 一致", "chunk 局部矩阵梯度")),
         "attrs": rows(("chunk_size", "int", "无", "必须等于 A/dA 最后一维")),
-        "layouts": "BNSD；A/dA 最后一维为 C",
+        "layouts": "BNSD；A/dA 最后一维为 chunk_size",
         "dtype": "K/V/A/dW/dU 为 FP16/BF16；beta/g 可为 FP32",
         "modes": "定长与变长序列，支持 GVA",
         "limits": [
@@ -358,22 +358,22 @@ OPS = {
         "task": "按 `(batch/value_head/chunk)` 划分；GVA 通过 `h_k=floor(h_v/(H_v/H_k))` 选择 K，尾块把无效行列屏蔽。",
         "tiling_key": "当前仅使用 key=1 进入唯一模板化 kernel，不编码 runtime shape 或 dtype。该单值 key 是现有二进制入口约定，组合数为 1；后续 ABI 整理时应消除。",
         "flow": "AIC 分别计算 dU/V 与 dW/K 两条矩阵乘，AIV 应用 beta、gate、因果三角 mask 及 A 相关修正，最后写 dA。",
-        "memory": "workspace 暂存两个 `C*C` 矩阵乘结果并按阶段复用；L1/L0 承载 K/V tile，UB 承载 beta/gate、mask 和 dA 合并片段。",
+        "memory": "workspace 暂存两个 `chunk_size*chunk_size` 矩阵乘结果并按阶段复用；L1/L0 承载 K/V tile，UB 承载 beta/gate、mask 和 dA 合并片段。",
         "sync": "AIC 产出矩阵片段后通知 AIV 合并，AIV 写回或释放槽位后才允许下一轮覆盖；核内事件覆盖 MTE/Cube/Vector，构建固定 `--cce-auto-sync=off`。",
         "python_sig": "prepare_wy_repr_bwd_da(k, v, beta, A, dw, du, g, *, chunk_size, cu_seqlens=None, chunk_indices=None)",
         "python_example": dedent("""
             import torch
             from fla_npu.ops.ascendc import prepare_wy_repr_bwd_da
 
-            B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 128, 64
+            B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 128, 64
             k = torch.randn(B, H_k, T, K, device="npu", dtype=torch.float16)
             v = torch.randn(B, H_v, T, V, device="npu", dtype=torch.float16)
             beta = torch.rand(B, H_v, T, device="npu", dtype=torch.float32)
-            A = torch.randn(B, H_v, T, C, device="npu", dtype=torch.float16)
+            A = torch.randn(B, H_v, T, chunk_size, device="npu", dtype=torch.float16)
             dw = torch.randn(B, H_v, T, K, device="npu", dtype=torch.float16)
             du = torch.randn_like(v)
             g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
-            dA = prepare_wy_repr_bwd_da(k, v, beta, A, dw, du, g, chunk_size=C)
+            dA = prepare_wy_repr_bwd_da(k, v, beta, A, dw, du, g, chunk_size=chunk_size)
             torch.npu.synchronize()
             assert dA.shape == A.shape
         """),
@@ -407,8 +407,8 @@ OPS = {
             ("k", "必选", "[B,H_k,T,K]", "FP16/BF16", "BNSD", "Key"),
             ("v", "必选", "[B,H_v,T,V]", "FP16/BF16", "BNSD", "Value"),
             ("beta", "必选", "[B,H_v,T]", "FP16/BF16/FP32", "BNS", "WY 权重"),
-            ("A", "必选", "[B,H_v,T,C]", "FP16/BF16", "BNSD", "前向局部矩阵"),
-            ("dA", "必选", "[B,H_v,T,C]", "FP16/BF16", "BNSD", "A 梯度"),
+            ("A", "必选", "[B,H_v,T,chunk_size]", "FP16/BF16", "BNSD", "前向局部矩阵"),
+            ("dA", "必选", "[B,H_v,T,chunk_size]", "FP16/BF16", "BNSD", "A 梯度"),
             ("dw", "必选", "[B,H_v,T,K]", "FP16/BF16", "BNSD", "W 梯度"),
             ("du", "必选", "[B,H_v,T,V]", "FP16/BF16", "BNSD", "U 梯度"),
             ("g", "必选", "[B,H_v,T]", "FP16/BF16/FP32", "BNS", "chunk-local gate"),
@@ -422,7 +422,7 @@ OPS = {
             ("dg", "[B,H_v,T]", "与 g 一致", "gate 梯度"),
         ),
         "attrs": rows(("chunk_size", "int", "无", "必须等于 A/dA 最后一维")),
-        "layouts": "BNSD；A/dA 最后一维为 C",
+        "layouts": "BNSD；A/dA 最后一维为 chunk_size",
         "dtype": "主张量 FP16/BF16；beta/g 可为 FP32",
         "modes": "定长与变长序列，支持 GVA",
         "limits": [
@@ -441,16 +441,16 @@ OPS = {
             import torch
             from fla_npu.ops.ascendc import prepare_wy_repr_bwd_full
 
-            B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 256, 64
+            B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 256, 64
             k = torch.randn(B, H_k, T, K, device="npu", dtype=torch.bfloat16)
             v = torch.randn(B, H_v, T, V, device="npu", dtype=torch.bfloat16)
             beta = torch.rand(B, H_v, T, device="npu", dtype=torch.float32)
-            A = torch.randn(B, H_v, T, C, device="npu", dtype=torch.bfloat16)
+            A = torch.randn(B, H_v, T, chunk_size, device="npu", dtype=torch.bfloat16)
             dA = torch.randn_like(A)
             dw = torch.randn(B, H_v, T, K, device="npu", dtype=torch.bfloat16)
             du = torch.randn_like(v)
             g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
-            dk, dv, dbeta, dg = prepare_wy_repr_bwd_full(k, v, beta, A, dA, dw, du, g, C)
+            dk, dv, dbeta, dg = prepare_wy_repr_bwd_full(k, v, beta, A, dA, dw, du, g, chunk_size)
             torch.npu.synchronize()
             assert dk.shape == k.shape and dv.shape == v.shape
         """),
@@ -507,7 +507,7 @@ OPS.update({
             "`g` 是 kernel 必选输入；`g_gamma` 必须为 None，`transpose_state_layout` 必须为 false。",
         ],
         "task": "按 `(batch,value_head,chunk)` 分配，Q/K score 在同 key head 的 value-head group 间复用；h 通过全局 chunk 序号定位。",
-        "tiling_key": "不使用 tiling key 分派 shape。主 dtype、gate dtype、定长/变长序列、K/V/C 均写入 tiling data，kernel 通过统一 Catlass 调度器处理，避免把 B/H/T 组合固化为 key。",
+        "tiling_key": "不使用 tiling key 分派 shape。主 dtype、gate dtype、定长/变长序列、K/V/chunk_size 均写入 tiling data，kernel 通过统一 Catlass 调度器处理，避免把 B/H/T 组合固化为 key。",
         "flow": "AIC 先计算 QK score 和 QH 状态项，AIV 应用 gate、因果/tail mask，AIC 再完成 score@V，最终与状态项相加写 O。",
         "memory": "workspace 保存 QK score 与 gated score 的阶段结果；L1/L0 承载 QK、QV 和 QH tile，UB 承载 gate、mask 与两个输出分支的逐元素合并。",
         "sync": "AIC/AIV 通过按 core/head 划分的 workspace 槽交接 score，ready/free flag 成对使用；核内 MTE/Cube/Vector 事件闭环，`--cce-auto-sync=off`。",
@@ -522,14 +522,14 @@ OPS.update({
             import torch
             from fla_npu.ops.ascendc import chunk_fwd_o
 
-            B, H_k, H_v, T, K, V, C = 1, 2, 4, 129, 128, 128, 64
-            N_c = (T + C - 1) // C
+            B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 129, 128, 128, 64
+            N_c = (T + chunk_size - 1) // chunk_size
             q = torch.randn(B, H_k, T, K, device="npu", dtype=torch.float16)
             k = torch.randn_like(q)
             v = torch.randn(B, H_v, T, V, device="npu", dtype=torch.float16)
             h = torch.randn(B, H_v, N_c, K, V, device="npu", dtype=torch.float16)
             g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
-            o = chunk_fwd_o(q, k, v, h, K ** -0.5, g=g, chunk_size=C)
+            o = chunk_fwd_o(q, k, v, h, K ** -0.5, g=g, chunk_size=chunk_size)
             torch.npu.synchronize()
             assert o.shape == v.shape
         """),
@@ -537,21 +537,21 @@ OPS.update({
         "runner": "tests/operators/chunk_fwd_o/accuracy/backend.py",
         "reference": "torch_chunk_fwd_o_reference",
         "case": {
-            "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64, "N_c": 2},
+            "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64, "N_c": 2},
             "dtype": {"qkvh": "float16", "g": "float32"}, "layout": "BNSD",
             "attrs": {"scale": 0.0883883476, "chunk_size": 64}, "optional_inputs": {"g": "present", "cu_seqlens": None, "chunk_indices": None},
-            "variant_shape": {"B": 2, "H_k": 4, "H_v": 4, "T": 256, "K": 128, "V": 256, "C": 128, "N_c": 2},
+            "variant_shape": {"B": 2, "H_k": 4, "H_v": 4, "T": 256, "K": 128, "V": 256, "chunk_size": 128, "N_c": 2},
             "variant_dtype": {"qkvh": "bfloat16", "g": "bfloat16"},
             "variant_attrs": {"scale": 0.0883883476, "chunk_size": 128},
-            "tail_shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "C": 64, "N_c": 4},
+            "tail_shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "chunk_size": 64, "N_c": 4},
             "tail_attrs": {"scale": 0.0883883476, "chunk_size": 64},
             "tail_optional_inputs": {"g": "present", "cu_seqlens": [0, 65, 193], "chunk_indices": [0, 0, 0, 1, 1, 0, 1, 1]},
-            "negative_shape": {"B": 1, "H_k": 3, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64, "N_c": 2},
+            "negative_shape": {"B": 1, "H_k": 3, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64, "N_c": 2},
             "negative_message": "HV divisible by HK",
             "extra_cases": [
                 {
                     "id": "chunk_fwd_o_missing_gate", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64, "N_c": 2},
+                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64, "N_c": 2},
                     "dtype": {"qkvh": "float16"}, "layout": "BNSD",
                     "attrs": {"scale": 0.0883883476, "chunk_size": 64},
                     "optional_inputs": {"g": None, "cu_seqlens": None, "chunk_indices": None},
@@ -560,7 +560,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_fwd_o_varlen_pair_required", "tags": ["negative", "boundary", "varlen"],
-                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64, "N_c": 2},
+                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64, "N_c": 2},
                     "dtype": {"qkvh": "float16", "g": "float32"}, "layout": "BNSD",
                     "attrs": {"scale": 0.0883883476, "chunk_size": 64},
                     "optional_inputs": {"g": "present", "cu_seqlens": [0, 128], "chunk_indices": None},
@@ -569,7 +569,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_fwd_o_invalid_feature_dim", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 64, "V": 128, "C": 64, "N_c": 2},
+                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 64, "V": 128, "chunk_size": 64, "N_c": 2},
                     "dtype": {"qkvh": "float16", "g": "float32"}, "layout": "BNSD",
                     "attrs": {"scale": 0.125, "chunk_size": 64},
                     "optional_inputs": {"g": "present", "cu_seqlens": None, "chunk_indices": None},
@@ -578,7 +578,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_fwd_o_invalid_h_chunk_count", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64, "N_c": 3},
+                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64, "N_c": 3},
                     "dtype": {"qkvh": "float16", "g": "float32"}, "layout": "BNSD",
                     "attrs": {"scale": 0.0883883476, "chunk_size": 64},
                     "optional_inputs": {"g": "present", "cu_seqlens": None, "chunk_indices": None},
@@ -587,7 +587,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_fwd_o_invalid_chunk_order", "tags": ["negative", "boundary", "varlen"],
-                    "shape": {"B": 1, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "C": 64, "N_c": 4},
+                    "shape": {"B": 1, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "chunk_size": 64, "N_c": 4},
                     "dtype": {"qkvh": "float16", "g": "float32"}, "layout": "BNSD",
                     "attrs": {"scale": 0.0883883476, "chunk_size": 64},
                     "optional_inputs": {"g": "present", "cu_seqlens": [0, 65, 193], "chunk_indices": [1, 0, 0, 0, 0, 1, 1, 1]},
@@ -659,13 +659,13 @@ OPS.update({
             import torch
             from fla_npu.ops.ascendc import chunk_gated_delta_rule_fwd_h
 
-            B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 128, 64
+            B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 128, 64
             k = torch.randn(B, H_k, T, K, device="npu", dtype=torch.bfloat16)
             w = torch.randn(B, H_v, T, K, device="npu", dtype=torch.bfloat16)
             u = torch.randn(B, H_v, T, V, device="npu", dtype=torch.bfloat16)
             g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
             h, v_new, final_state = chunk_gated_delta_rule_fwd_h(
-                k, w, u, g, chunk_size=C, output_final_state=True)
+                k, w, u, g, chunk_size=chunk_size, output_final_state=True)
             torch.npu.synchronize()
             assert v_new.shape == u.shape and final_state.shape == (B, H_v, K, V)
         """),
@@ -673,15 +673,15 @@ OPS.update({
         "runner": "tests/operators/chunk_gated_delta_rule_fwd_h/accuracy/backend.py",
         "reference": "torch_chunk_gated_delta_rule_fwd_h_reference",
         "case": {
-            "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64, "N_c": 2},
+            "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64, "N_c": 2},
             "dtype": {"kwu": "float16", "g": "float32", "state": "float32"}, "layout": "BNSD",
             "attrs": {"chunk_size": 64, "output_final_state": True, "save_new_value": True, "use_exp2": False, "transpose_state_layout": False},
             "optional_inputs": {"g": "present", "gk": None, "initial_state": None, "cu_seqlens": None, "chunk_indices": None},
-            "variant_shape": {"B": 1, "H_k": 4, "H_v": 8, "T": 256, "K": 128, "V": 256, "C": 128, "N_c": 2},
+            "variant_shape": {"B": 1, "H_k": 4, "H_v": 8, "T": 256, "K": 128, "V": 256, "chunk_size": 128, "N_c": 2},
             "variant_dtype": {"kwu": "bfloat16", "gk": "float32", "state": "float32"},
             "variant_attrs": {"chunk_size": 128, "output_final_state": True, "save_new_value": True, "use_exp2": False, "transpose_state_layout": False},
             "variant_optional_inputs": {"g": None, "gk": "present", "initial_state": "present", "cu_seqlens": None, "chunk_indices": None},
-            "tail_shape": {"B": 1, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "C": 64, "N_c": 4},
+            "tail_shape": {"B": 1, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "chunk_size": 64, "N_c": 4},
             "tail_dtype": {"kwu": "bfloat16", "g": "float32", "state": "float32"},
             "tail_attrs": {"chunk_size": 64, "output_final_state": True, "save_new_value": True, "use_exp2": False, "transpose_state_layout": False},
             "tail_optional_inputs": {"g": "present", "gk": None, "initial_state": "present", "cu_seqlens": [0, 65, 193], "chunk_indices": [0, 0, 0, 1, 1, 0, 1, 1]},
@@ -690,7 +690,7 @@ OPS.update({
             "extra_cases": [
                 {
                     "id": "chunk_gated_delta_rule_fwd_h_reserved_option", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64, "N_c": 2},
+                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64, "N_c": 2},
                     "dtype": {"kwu": "float16", "g": "float32", "state": "float32"}, "layout": "BNSD",
                     "attrs": {"chunk_size": 64, "output_final_state": False, "save_new_value": False, "use_exp2": False, "transpose_state_layout": False},
                     "optional_inputs": {"g": "present", "gk": None, "initial_state": None, "cu_seqlens": None, "chunk_indices": None},
@@ -699,7 +699,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_gated_delta_rule_fwd_h_varlen_pair_required", "tags": ["negative", "boundary", "varlen"],
-                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64, "N_c": 2},
+                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64, "N_c": 2},
                     "dtype": {"kwu": "float16", "g": "float32", "state": "float32"}, "layout": "BNSD",
                     "attrs": {"chunk_size": 64, "output_final_state": False, "save_new_value": True, "use_exp2": False, "transpose_state_layout": False},
                     "optional_inputs": {"g": "present", "gk": None, "initial_state": None, "cu_seqlens": [0, 128], "chunk_indices": None},
@@ -708,7 +708,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_gated_delta_rule_fwd_h_invalid_feature_dim", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 64, "V": 128, "C": 64, "N_c": 2},
+                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 64, "V": 128, "chunk_size": 64, "N_c": 2},
                     "dtype": {"kwu": "float16", "g": "float32", "state": "float32"}, "layout": "BNSD",
                     "attrs": {"chunk_size": 64, "output_final_state": False, "save_new_value": True, "use_exp2": False, "transpose_state_layout": False},
                     "optional_inputs": {"g": "present", "gk": None, "initial_state": None, "cu_seqlens": None, "chunk_indices": None},
@@ -717,7 +717,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_gated_delta_rule_fwd_h_invalid_state_shape", "tags": ["negative", "boundary"],
-                    "shape": {"B": 2, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64, "N_c": 2},
+                    "shape": {"B": 2, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64, "N_c": 2},
                     "dtype": {"kwu": "float16", "g": "float32", "state": "float32"}, "layout": "BNSD",
                     "attrs": {"chunk_size": 64, "output_final_state": True, "save_new_value": True, "use_exp2": False, "transpose_state_layout": False},
                     "optional_inputs": {"g": "present", "gk": None, "initial_state": {"status": "present", "shape": "[1,H_v,K,V]"}, "cu_seqlens": None, "chunk_indices": None},
@@ -726,7 +726,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_gated_delta_rule_fwd_h_invalid_chunk_order", "tags": ["negative", "boundary", "varlen"],
-                    "shape": {"B": 1, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "C": 64, "N_c": 4},
+                    "shape": {"B": 1, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "chunk_size": 64, "N_c": 4},
                     "dtype": {"kwu": "bfloat16", "g": "float32", "state": "float32"}, "layout": "BNSD",
                     "attrs": {"chunk_size": 64, "output_final_state": True, "save_new_value": True, "use_exp2": False, "transpose_state_layout": False},
                     "optional_inputs": {"g": "present", "gk": None, "initial_state": "present", "cu_seqlens": [0, 65, 193], "chunk_indices": [1, 0, 0, 0, 0, 1, 1, 1]},
@@ -755,7 +755,7 @@ OPS.update({
         """),
         "inputs": rows(
             ("k", "必选", "[B,H_k,T,K]", "FP16/BF16", "BNSD", "Key"), ("v", "必选", "[B,H_v,T,V]", "FP16/BF16", "BNSD", "Value"),
-            ("beta", "必选", "[B,H_v,T]", "FP16/BF16/FP32", "BNS", "WY 权重"), ("A", "必选", "[B,H_v,T,C]", "FP16/BF16", "BNSD", "局部矩阵"),
+            ("beta", "必选", "[B,H_v,T]", "FP16/BF16/FP32", "BNS", "WY 权重"), ("A", "必选", "[B,H_v,T,chunk_size]", "FP16/BF16", "BNSD", "局部矩阵"),
             ("g", "必选", "[B,H_v,T]", "FP16/BF16/FP32", "BNS", "标量 gate"),
             ("gk", "预留", "-", "-", "-", "当前 kernel 不消费，必须为 None"),
             ("cu_seqlens", "可选", "[N+1]", "INT64", "ND", "变长序列累计长度"), ("chunk_indices", "可选", "[2*N_c]", "INT64", "ND", "展平 chunk 索引"),
@@ -786,13 +786,13 @@ OPS.update({
             import torch
             from fla_npu.ops.ascendc import recompute_wu_fwd
 
-            B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 256, 64
+            B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 256, 64
             k = torch.randn(B, H_k, T, K, device="npu", dtype=torch.bfloat16)
             v = torch.randn(B, H_v, T, V, device="npu", dtype=torch.bfloat16)
             beta = torch.rand(B, H_v, T, device="npu", dtype=torch.float32)
-            A = torch.randn(B, H_v, T, C, device="npu", dtype=torch.bfloat16)
+            A = torch.randn(B, H_v, T, chunk_size, device="npu", dtype=torch.bfloat16)
             g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
-            w, u = recompute_wu_fwd(k, v, beta, A, C, g=g)
+            w, u = recompute_wu_fwd(k, v, beta, A, chunk_size, g=g)
             torch.npu.synchronize()
             assert w.shape == (B, H_v, T, K) and u.shape == v.shape
         """),
@@ -801,22 +801,22 @@ OPS.update({
         "legacy_op": "npu_recompute_w_u_fwd",
         "reference": "torch_recompute_wu_reference",
         "case": {
-            "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64},
+            "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64},
             "dtype": {"kvA": "float16", "beta_g": "float32"}, "layout": "BNSD", "attrs": {"chunk_size": 64},
             "optional_inputs": {"g": "present", "gk": None, "cu_seqlens": None, "chunk_indices": None},
-            "variant_shape": {"B": 2, "H_k": 4, "H_v": 8, "T": 256, "K": 128, "V": 256, "C": 128},
+            "variant_shape": {"B": 2, "H_k": 4, "H_v": 8, "T": 256, "K": 128, "V": 256, "chunk_size": 128},
             "variant_dtype": {"kvA": "bfloat16", "beta_g": "float32"},
             "variant_attrs": {"chunk_size": 128},
             "variant_optional_inputs": {"g": "present", "gk": None, "cu_seqlens": None, "chunk_indices": None},
-            "tail_shape": {"B": 1, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "C": 64},
+            "tail_shape": {"B": 1, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "chunk_size": 64},
             "tail_dtype": {"kvA": "bfloat16", "beta_g": "float32"},
             "tail_attrs": {"chunk_size": 64},
             "tail_optional_inputs": {"g": "present", "gk": None, "cu_seqlens": [0, 65, 193], "chunk_indices": [0, 0, 0, 1, 1, 0, 1, 1]},
-            "negative_shape": {"B": 1, "H_k": 3, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64}, "negative_message": "HV divisible by HK",
+            "negative_shape": {"B": 1, "H_k": 3, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64}, "negative_message": "HV divisible by HK",
             "extra_cases": [
                 {
                     "id": "recompute_wu_fwd_reserved_gk", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64},
+                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64},
                     "dtype": {"kvA": "float16", "beta_g": "float32", "gk": "float32"}, "layout": "BNSD",
                     "attrs": {"chunk_size": 64},
                     "optional_inputs": {"g": "present", "gk": "present", "cu_seqlens": None, "chunk_indices": None},
@@ -825,7 +825,7 @@ OPS.update({
                 },
                 {
                     "id": "recompute_wu_fwd_missing_gate", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64},
+                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64},
                     "dtype": {"kvA": "float16", "beta": "float32"}, "layout": "BNSD",
                     "attrs": {"chunk_size": 64},
                     "optional_inputs": {"g": None, "gk": None, "cu_seqlens": None, "chunk_indices": None},
@@ -834,7 +834,7 @@ OPS.update({
                 },
                 {
                     "id": "recompute_wu_fwd_invalid_feature_dim", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 64, "V": 128, "C": 64},
+                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 64, "V": 128, "chunk_size": 64},
                     "dtype": {"kvA": "float16", "beta_g": "float32"}, "layout": "BNSD",
                     "attrs": {"chunk_size": 64},
                     "optional_inputs": {"g": "present", "gk": None, "cu_seqlens": None, "chunk_indices": None},
@@ -843,7 +843,7 @@ OPS.update({
                 },
                 {
                     "id": "recompute_wu_fwd_invalid_a_width", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 32},
+                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 32},
                     "dtype": {"kvA": "float16", "beta_g": "float32"}, "layout": "BNSD",
                     "attrs": {"chunk_size": 64},
                     "optional_inputs": {"g": "present", "gk": None, "cu_seqlens": None, "chunk_indices": None},
@@ -852,7 +852,7 @@ OPS.update({
                 },
                 {
                     "id": "recompute_wu_fwd_varlen_requires_b1", "tags": ["negative", "boundary", "varlen"],
-                    "shape": {"B": 2, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "C": 64},
+                    "shape": {"B": 2, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "chunk_size": 64},
                     "dtype": {"kvA": "float16", "beta_g": "float32"}, "layout": "BNSD",
                     "attrs": {"chunk_size": 64},
                     "optional_inputs": {"g": "present", "gk": None, "cu_seqlens": [0, 65, 193], "chunk_indices": [0, 0, 0, 1, 1, 0, 1, 1]},
@@ -878,21 +878,21 @@ OPS.update({
 
             实现采用分块前代/三角逆；尾块只对有效 M 求逆，padding 列按接口约定写零。
         """),
-        "inputs": rows(("x", "必选", "[B,H_v,T,C]、[B,T,H_v,C] 或 [T,H_v,C]", "FP16/BF16", "BHTD/BSND/TND", "严格下三角 A 的行存储"),
+        "inputs": rows(("x", "必选", "[B,H_v,T,chunk_size]、[B,T,H_v,chunk_size] 或 [T,H_v,chunk_size]", "FP16/BF16", "BHTD/BSND/TND", "严格下三角 A 的行存储"),
                        ("cu_seqlens", "TND 必选", "[N+1]", "INT64", "ND", "变长序列累计长度"),
                        ("chunk_indices", "TND 必选", "[2*N_c]", "INT64", "ND", "展平 chunk 索引")),
         "outputs": rows(("x_out", "与 x 相同", "与 x 相同", "(I+A) 的 chunk-wise 逆")),
         "attrs": rows(("layout", "str", "bsnd", "仅 bhtd/bsnd/tnd，小写")),
-        "layouts": "BHTD `[B,H_v,T,C]`、BSND `[B,T,H_v,C]`、TND `[T,H_v,C]`；layout 字符串必须小写",
+        "layouts": "BHTD `[B,H_v,T,chunk_size]`、BSND `[B,T,H_v,chunk_size]`、TND `[T,H_v,chunk_size]`；layout 字符串必须小写",
         "dtype": "FP16/BF16",
         "modes": "dense BHTD/BSND 与变长序列 TND，支持尾块",
         "limits": [
-            "矩阵阶/最后一维 C 支持 16/32/64/128。",
+            "矩阵阶/最后一维 chunk_size 支持 16/32/64/128。",
             "layout 仅支持小写 `bhtd`、`bsnd`、`tnd`；TND 必须提供两个变长序列索引，定长布局 不接受变长序列索引。",
             "输入必须表示严格下三角 A；对角线由算子加单位阵。",
         ],
-        "task": "按 `(batch/head/chunk)` 分配，C=128 时继续按内部 tile 求解，尾块使用局部 M。",
-        "tiling_key": "固定使用 key 1 作为既有 kernel launch ABI，key 不承载 shape 或模式分派。C、dtype、layout、尾块和变长序列全部由 tiling data 处理，因此不会随 B/H/T 产生组合爆炸；保留 key 1 是因为 kernel 入口现有 TILING_KEY_IS(1) 编译契约。",
+        "task": "按 `(batch/head/chunk)` 分配，chunk_size=128 时继续按内部 tile 求解，尾块使用局部 M。",
+        "tiling_key": "固定使用 key 1 作为既有 kernel launch ABI，key 不承载 shape 或模式分派。chunk_size、dtype、layout、尾块和变长序列全部由 tiling data 处理，因此不会随 B/H/T 产生组合爆炸；保留 key 1 是因为 kernel 入口现有 TILING_KEY_IS(1) 编译契约。",
         "flow": "加载 A tile，清理上三角并注入单位对角，按对角块前代求逆，逐块更新剩余下三角并写回。",
         "memory": "UB/L1 保存当前三角 tile 和单位阵，L0/Cube 处理块乘更新；GM 输出与输入不别名。",
         "sync": "每个矩阵由单 core/协作组按对角块顺序推进，核内 MTE/Vector/Cube 事件保护 tile 复用；`--cce-auto-sync=off`。",
@@ -900,17 +900,17 @@ OPS.update({
             ("x/xOut/layout、workspaceSize 或 executor 为空", "ACLNN_ERR_PARAM_INVALID；workspaceSize/executor 为空为 ACLNN_ERR_PARAM_NULLPTR"),
             ("layout 不是小写 bhtd/bsnd/tnd，或 layout 与 rank 不匹配", "ACLNN_ERR_PARAM_INVALID / Python RuntimeError"),
             ("TND 缺少任一变长序列索引，或定长布局 携带变长序列索引", "ACLNN_ERR_PARAM_INVALID / Python RuntimeError"),
-            ("C 非 16/32/64/128、xOut shape/dtype 不匹配", "ACLNN_ERR_PARAM_INVALID / Python RuntimeError"),
+            ("chunk_size 非 16/32/64/128、xOut shape/dtype 不匹配", "ACLNN_ERR_PARAM_INVALID / Python RuntimeError"),
         ),
         "python_sig": "solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout='bsnd')",
         "python_example": dedent("""
             import torch
             from fla_npu.ops.ascendc import solve_tri
 
-            B, T, H, C = 1, 128, 4, 64
-            x = torch.randn(B, T, H, C, device="npu", dtype=torch.float16)
-            row = torch.arange(C, device="npu").view(1, 1, 1, C)
-            pos = torch.arange(T, device="npu").view(1, T, 1, 1) % C
+            B, T, H, chunk_size = 1, 128, 4, 64
+            x = torch.randn(B, T, H, chunk_size, device="npu", dtype=torch.float16)
+            row = torch.arange(chunk_size, device="npu").view(1, 1, 1, chunk_size)
+            pos = torch.arange(T, device="npu").view(1, T, 1, 1) % chunk_size
             x = torch.where(row < pos, x * 0.01, torch.zeros_like(x))
             y = solve_tri(x, layout="bsnd")
             torch.npu.synchronize()
@@ -920,24 +920,24 @@ OPS.update({
         "runner": "tests/operators/solve_tri/accuracy/backend.py",
         "reference": "torch_linalg_triangular_reference",
         "case": {
-            "shape": {"B": 1, "T": 128, "H_v": 4, "C": 64, "N_c": 2}, "dtype": {"x": "float16"}, "layout": "bsnd",
+            "shape": {"B": 1, "T": 128, "H_v": 4, "chunk_size": 64, "N_c": 2}, "dtype": {"x": "float16"}, "layout": "bsnd",
             "attrs": {"layout": "bsnd"}, "optional_inputs": {"cu_seqlens": None, "chunk_indices": None},
-            "variant_shape": {"B": 2, "T": 256, "H_v": 8, "C": 128, "N_c": 2}, "variant_dtype": {"x": "bfloat16"},
+            "variant_shape": {"B": 2, "T": 256, "H_v": 8, "chunk_size": 128, "N_c": 2}, "variant_dtype": {"x": "bfloat16"},
             "variant_layout": "bhtd", "variant_attrs": {"layout": "bhtd"},
-            "tail_shape": {"N": 2, "T": 193, "H_v": 4, "C": 64, "N_c": 4}, "tail_layout": "tnd", "tail_attrs": {"layout": "tnd"},
+            "tail_shape": {"N": 2, "T": 193, "H_v": 4, "chunk_size": 64, "N_c": 4}, "tail_layout": "tnd", "tail_attrs": {"layout": "tnd"},
             "tail_optional_inputs": {"cu_seqlens": [0, 65, 193], "chunk_indices": [0, 0, 0, 1, 1, 0, 1, 1]},
             "negative_layout": "tnd", "negative_attrs": {"layout": "tnd"}, "negative_optional_inputs": {"cu_seqlens": None, "chunk_indices": None},
             "negative_message": "cu_seqlens",
             "extra_cases": [
                 {
                     "id": "solve_tri_c16_boundary", "tags": ["accuracy", "generalization", "boundary"],
-                    "shape": {"B": 1, "T": 33, "H_v": 2, "C": 16, "N_c": 3},
+                    "shape": {"B": 1, "T": 33, "H_v": 2, "chunk_size": 16, "N_c": 3},
                     "dtype": {"x": "float16"}, "layout": "bsnd", "attrs": {"layout": "bsnd"},
                     "optional_inputs": {"cu_seqlens": None, "chunk_indices": None},
                 },
                 {
                     "id": "solve_tri_invalid_chunk_size", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "T": 48, "H_v": 2, "C": 48, "N_c": 1},
+                    "shape": {"B": 1, "T": 48, "H_v": 2, "chunk_size": 48, "N_c": 1},
                     "dtype": {"x": "float16"}, "layout": "bsnd", "attrs": {"layout": "bsnd"},
                     "optional_inputs": {"cu_seqlens": None, "chunk_indices": None},
                     "run_on": ["ascendc", "aclnn"], "reference": "error_contract",
@@ -945,7 +945,7 @@ OPS.update({
                 },
                 {
                     "id": "solve_tri_invalid_layout_case", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "T": 64, "H_v": 2, "C": 32, "N_c": 2},
+                    "shape": {"B": 1, "T": 64, "H_v": 2, "chunk_size": 32, "N_c": 2},
                     "dtype": {"x": "float16"}, "layout": "BSND", "attrs": {"layout": "BSND"},
                     "optional_inputs": {"cu_seqlens": None, "chunk_indices": None},
                     "run_on": ["ascendc", "aclnn"], "reference": "error_contract",
@@ -1318,15 +1318,15 @@ OPS.update({
             "chunk_size 必须为 2 的幂，且结合 P 后能满足 UB tile；交付矩阵覆盖 16/32/64/128。",
             "output_dtype 仅支持 FP32 别名。",
             "变长序列物理 B=1，两个 Device 索引必须同时提供；cu_seqlens 首项为 0、末项为 T 且非递减。",
-            "chunk_indices_out 必须按 sequence-major 完整列出内部处理块；处理块长度 B_T 由 UB、C 和 P 共同决定，不能直接按 C 构造。",
+            "chunk_indices_out 必须按 sequence-major 完整列出内部处理块；处理块长度 B_T 由 UB、chunk_size 和 P 共同决定，不能直接按 chunk_size 构造。",
         ],
-        "task": "定长按 `(B*H_v,chunk,tail_tile)` 分配；变长序列按 `(seq_id,local_block_id,head,tail_tile)` 分配，每个处理块内再按 C 完成 scan。",
+        "task": "定长按 `(B*H_v,chunk,tail_tile)` 分配；变长序列按 `(seq_id,local_block_id,head,tail_tile)` 分配，每个处理块内再按 chunk_size 完成 scan。",
         "tiling_key": "未使用多分支 tiling key；reverse、scale、tail P、定长/变长序列都由 tiling data 和 runtime 常量处理。",
         "flow": "MTE2 分段加载一个 chunk/tail tile，Vector 执行顺序或逆序 scan 与 scale，MTE3 写回；长 P 分 tile。",
         "memory": "UB 保存当前 scan tile和必要的 carry；不同 task 不共享输出区，无 user workspace 数据依赖。",
         "sync": "MTE2-V-MTE3 事件按双缓冲槽闭环，同一 scan 由单 core 顺序处理；`--cce-auto-sync=off`。",
         "local_symbols": [("N_b", "变长序列内部处理块总数；由各序列 ceil(seq_len/B_T) 求和"),
-                          ("B_T", "单个变长序列处理块覆盖的 token 数，由 tiling 根据 UB、C、P 计算")],
+                          ("B_T", "单个变长序列处理块覆盖的 token 数，由 tiling 根据 UB、chunk_size、P 计算")],
         "errors": rows(
             ("g/out、workspaceSize 或 executor 为空", "ACLNN_ERR_PARAM_NULLPTR / ACLNN_ERR_PARAM_INVALID"),
             ("g 非 FP32、rank<3、存在非正维或 head_first=false", "ACLNN_ERR_PARAM_INVALID / Python RuntimeError"),
@@ -1338,9 +1338,9 @@ OPS.update({
             import torch
             from fla_npu.ops.ascendc import chunk_local_cumsum
 
-            B, H_v, T, C = 1, 4, 129, 64
+            B, H_v, T, chunk_size = 1, 4, 129, 64
             g = torch.randn(B, H_v, T, device="npu", dtype=torch.float32)
-            out = chunk_local_cumsum(g, C, reverse=False, scale=1.0, head_first=True)
+            out = chunk_local_cumsum(g, chunk_size, reverse=False, scale=1.0, head_first=True)
             torch.npu.synchronize()
             assert out.shape == g.shape and out.dtype == torch.float32
         """),
@@ -1348,18 +1348,18 @@ OPS.update({
         "runner": "tests/operators/chunk_local_cumsum/accuracy/backend.py",
         "reference": "torch_chunk_local_cumsum_reference",
         "case": {
-            "shape": {"B": 2, "H_v": 4, "T": 128, "P": 1, "C": 64}, "dtype": {"g_out": "float32", "metadata": "int64"}, "layout": "BNS",
+            "shape": {"B": 2, "H_v": 4, "T": 128, "P": 1, "chunk_size": 64}, "dtype": {"g_out": "float32", "metadata": "int64"}, "layout": "BNS",
             "attrs": {"chunk_size": 64, "reverse": False, "scale": 1.0, "head_first": True, "output_dtype": "float32"},
             "optional_inputs": {"cu_seqlens": None, "chunk_indices_out": None},
-            "variant_shape": {"B": 1, "H_v": 8, "T": 257, "P": 16, "C": 128}, "variant_attrs": {"chunk_size": 128, "reverse": True, "scale": 0.5, "head_first": True, "output_dtype": "torch.float32"},
-            "tail_shape": {"B": 1, "N": 2, "H_v": 4, "T": 193, "P": 1, "C": 64, "N_b": 2},
+            "variant_shape": {"B": 1, "H_v": 8, "T": 257, "P": 16, "chunk_size": 128}, "variant_attrs": {"chunk_size": 128, "reverse": True, "scale": 0.5, "head_first": True, "output_dtype": "torch.float32"},
+            "tail_shape": {"B": 1, "N": 2, "H_v": 4, "T": 193, "P": 1, "chunk_size": 64, "N_b": 2},
             "tail_attrs": {"chunk_size": 64, "reverse": True, "scale": 0.5, "head_first": True, "output_dtype": "torch.float32"},
             "tail_optional_inputs": {"cu_seqlens": [0, 65, 193], "chunk_indices_out": [[0, 0], [1, 0]]},
             "negative_attrs": {"chunk_size": 64, "reverse": False, "scale": 1.0, "head_first": False, "output_dtype": "float32"}, "negative_message": "head_first",
             "extra_cases": [
                 {
                     "id": "chunk_local_cumsum_varlen_pair_required", "tags": ["negative", "boundary", "varlen"],
-                    "shape": {"B": 1, "N": 2, "H_v": 4, "T": 193, "P": 1, "C": 64},
+                    "shape": {"B": 1, "N": 2, "H_v": 4, "T": 193, "P": 1, "chunk_size": 64},
                     "dtype": {"g_out": "float32", "metadata": "int64"}, "layout": "BNS",
                     "attrs": {"chunk_size": 64, "reverse": False, "scale": 1.0, "head_first": True, "output_dtype": "float32"},
                     "optional_inputs": {"cu_seqlens": [0, 65, 193], "chunk_indices_out": None},
@@ -1368,7 +1368,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_local_cumsum_invalid_dtype", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "H_v": 4, "T": 128, "P": 1, "C": 64},
+                    "shape": {"B": 1, "H_v": 4, "T": 128, "P": 1, "chunk_size": 64},
                     "dtype": {"g_out": "float16", "metadata": "int64"}, "layout": "BNS",
                     "attrs": {"chunk_size": 64, "reverse": False, "scale": 1.0, "head_first": True, "output_dtype": "float32"},
                     "optional_inputs": {"cu_seqlens": None, "chunk_indices_out": None},
@@ -1377,7 +1377,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_local_cumsum_non_power_of_two", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "H_v": 4, "T": 128, "P": 1, "C": 48},
+                    "shape": {"B": 1, "H_v": 4, "T": 128, "P": 1, "chunk_size": 48},
                     "dtype": {"g_out": "float32", "metadata": "int64"}, "layout": "BNS",
                     "attrs": {"chunk_size": 48, "reverse": False, "scale": 1.0, "head_first": True, "output_dtype": "float32"},
                     "optional_inputs": {"cu_seqlens": None, "chunk_indices_out": None},
@@ -1386,7 +1386,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_local_cumsum_varlen_requires_b1", "tags": ["negative", "boundary", "varlen"],
-                    "shape": {"B": 2, "N": 2, "H_v": 4, "T": 193, "P": 1, "C": 64, "N_b": 2},
+                    "shape": {"B": 2, "N": 2, "H_v": 4, "T": 193, "P": 1, "chunk_size": 64, "N_b": 2},
                     "dtype": {"g_out": "float32", "metadata": "int64"}, "layout": "BNS",
                     "attrs": {"chunk_size": 64, "reverse": False, "scale": 1.0, "head_first": True, "output_dtype": "float32"},
                     "optional_inputs": {"cu_seqlens": [0, 65, 193], "chunk_indices_out": [[0, 0], [1, 0]]},
@@ -1395,7 +1395,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_local_cumsum_invalid_block_order", "tags": ["negative", "boundary", "varlen"],
-                    "shape": {"B": 1, "N": 2, "H_v": 4, "T": 193, "P": 1, "C": 64, "N_b": 2},
+                    "shape": {"B": 1, "N": 2, "H_v": 4, "T": 193, "P": 1, "chunk_size": 64, "N_b": 2},
                     "dtype": {"g_out": "float32", "metadata": "int64"}, "layout": "BNS",
                     "attrs": {"chunk_size": 64, "reverse": False, "scale": 1.0, "head_first": True, "output_dtype": "float32"},
                     "optional_inputs": {"cu_seqlens": [0, 65, 193], "chunk_indices_out": [[1, 0], [0, 0]]},
@@ -1413,7 +1413,7 @@ OPS.update({
         "triton_baseline": "fla_npu.ops.triton.chunk_scaled_dot_kkt_fwd",
         "purpose": "构造 GDN WY 表示的 chunk-wise 严格下三角 KKT 矩阵。它融合 K@K^T、gate 差指数和 beta 行缩放，输出与 key head 对齐的 A。",
         "math": dedent(r"""
-            令 `r=t mod C`、`s=t-r+c`：
+            令 `r=t mod chunk_size`、`s=t-r+c`：
 
             ```text
             A[b,h_k,t,c] = beta[b,h_k,t] * exp(clip(g[t]-g[s],-50,50))
@@ -1426,7 +1426,7 @@ OPS.update({
         "inputs": rows(("k", "必选", "[B,H_k,T,K]", "FP16/BF16", "BNSD", "Key"),
                        ("g", "必选", "[B,H_v,T]", "FP32", "BNS", "累积 gate"), ("beta", "必选", "[B,H_v,T]", "FP32", "BNS", "行缩放"),
                        ("cu_seqlens", "可选", "[N+1]", "INT64", "ND", "变长序列累计长度"), ("chunk_indices", "可选", "[2*N_c]", "INT64", "ND", "展平 chunk 索引")),
-        "outputs": rows(("A", "[B,H_k,T,C]", "FP32", "严格下三角 scaled KKT")),
+        "outputs": rows(("A", "[B,H_k,T,chunk_size]", "FP32", "严格下三角 scaled KKT")),
         "attrs": rows(("chunk_size", "int", "64", "16/32/64/128")),
         "layouts": "head-first BNSD/BNS",
         "dtype": "K 为 FP16/BF16；g/beta/A 为 FP32",
@@ -1435,11 +1435,11 @@ OPS.update({
             "chunk_size 仅支持 16/32/64/128。",
             "必须满足 H_v % H_k == 0；A 的 head 维为 H_k。",
             "cu_seqlens/chunk_indices 必须同时提供或同时省略；变长序列物理 B 必须为 1。",
-            "变长序列累计长度必须覆盖 [0,T]，chunk_indices 必须按 sequence-major 完整列出每个 C 大小的 chunk。",
+            "变长序列累计长度必须覆盖 [0,T]，chunk_indices 必须按 sequence-major 完整列出每个长度为 chunk_size 的 chunk。",
             "指数差固定 clip 到 [-50,50]；H_v>H_k 时当前实现读取 g/beta 的前 H_k 个 head。",
         ],
         "task": "按 `(batch,key_head,chunk)` 分配，Cube 计算 KKT，Vector 应用严格下三角、gate 和 beta。",
-        "tiling_key": "采用模板化 `D_T_K`(FP16/BF16) 与 `CHUNK_KEY`(16/32/64/128)，共 8 个显式实例。不同 C 的 Cube/UB tile 必须编译期确定；B/H/T 不进入 key。",
+        "tiling_key": "采用模板化 `D_T_K`(FP16/BF16) 与 `CHUNK_KEY`(16/32/64/128)，共 8 个显式实例。不同 chunk_size 的 Cube/UB tile 必须编译期确定；B/H/T 不进入 key。",
         "flow": "AIC 计算 CxC KKT，AIV 转 FP32、应用 gate/beta 和严格下三角 mask，尾块写有效行并清零其余列。",
         "memory": "workspace 保存 Cube KKT tile，L1/L0 放 K tile，UB 放 FP32 score、gate 差、beta 与 mask。",
         "sync": "AIC 写 KKT 后通知 AIV，AIV 处理完释放槽位；ready/free 协议保护复用，`--cce-auto-sync=off`。",
@@ -1454,28 +1454,28 @@ OPS.update({
             import torch
             from fla_npu.ops.ascendc import chunk_scaled_dot_kkt
 
-            B, H_k, H_v, T, K, C = 1, 2, 4, 129, 128, 64
+            B, H_k, H_v, T, K, chunk_size = 1, 2, 4, 129, 128, 64
             k = torch.randn(B, H_k, T, K, device="npu", dtype=torch.float16)
             g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
             beta = torch.rand(B, H_v, T, device="npu", dtype=torch.float32)
-            A = chunk_scaled_dot_kkt(k, g, beta, chunk_size=C)
+            A = chunk_scaled_dot_kkt(k, g, beta, chunk_size=chunk_size)
             torch.npu.synchronize()
-            assert A.shape == (B, H_k, T, C) and A.dtype == torch.float32
+            assert A.shape == (B, H_k, T, chunk_size) and A.dtype == torch.float32
         """),
         "aclnn_call": "k, g, beta, nullptr, nullptr, chunkSize, A, &workspaceSize, &executor",
         "runner": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
         "reference": "torch_chunk_scaled_dot_kkt_reference",
         "case": {
-            "shape": {"B": 2, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "C": 64}, "dtype": {"k": "float16", "g_beta_A": "float32"}, "layout": "BNSD",
+            "shape": {"B": 2, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "chunk_size": 64}, "dtype": {"k": "float16", "g_beta_A": "float32"}, "layout": "BNSD",
             "attrs": {"chunk_size": 64}, "optional_inputs": {"cu_seqlens": None, "chunk_indices": None},
-            "variant_shape": {"B": 1, "H_k": 4, "H_v": 4, "T": 257, "K": 128, "C": 128}, "variant_dtype": {"k": "bfloat16", "g_beta_A": "float32"}, "variant_attrs": {"chunk_size": 128},
-            "tail_shape": {"B": 1, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "C": 32, "N_c": 7}, "tail_attrs": {"chunk_size": 32},
+            "variant_shape": {"B": 1, "H_k": 4, "H_v": 4, "T": 257, "K": 128, "chunk_size": 128}, "variant_dtype": {"k": "bfloat16", "g_beta_A": "float32"}, "variant_attrs": {"chunk_size": 128},
+            "tail_shape": {"B": 1, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "chunk_size": 32, "N_c": 7}, "tail_attrs": {"chunk_size": 32},
             "tail_optional_inputs": {"cu_seqlens": [0, 65, 193], "chunk_indices": [0, 0, 0, 1, 0, 2, 1, 0, 1, 1, 1, 2, 1, 3]},
-            "negative_shape": {"B": 1, "H_k": 3, "H_v": 4, "T": 128, "K": 128, "C": 64}, "negative_message": "divisible by H_k",
+            "negative_shape": {"B": 1, "H_k": 3, "H_v": 4, "T": 128, "K": 128, "chunk_size": 64}, "negative_message": "divisible by H_k",
             "extra_cases": [
                 {
                     "id": "chunk_scaled_dot_kkt_varlen_requires_b1", "tags": ["negative", "boundary", "varlen"],
-                    "shape": {"B": 2, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "C": 32, "N_c": 7},
+                    "shape": {"B": 2, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "chunk_size": 32, "N_c": 7},
                     "dtype": {"k": "float16", "g_beta_A": "float32"}, "layout": "BNSD",
                     "attrs": {"chunk_size": 32},
                     "optional_inputs": {"cu_seqlens": [0, 65, 193], "chunk_indices": [0, 0, 0, 1, 0, 2, 1, 0, 1, 1, 1, 2, 1, 3]},
@@ -1484,7 +1484,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_scaled_dot_kkt_varlen_pair_required", "tags": ["negative", "boundary", "varlen"],
-                    "shape": {"B": 1, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "C": 32},
+                    "shape": {"B": 1, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "chunk_size": 32},
                     "dtype": {"k": "float16", "g_beta_A": "float32"}, "layout": "BNSD",
                     "attrs": {"chunk_size": 32}, "optional_inputs": {"cu_seqlens": [0, 65, 193], "chunk_indices": None},
                     "run_on": ["ascendc", "aclnn"], "reference": "error_contract",
@@ -1529,7 +1529,7 @@ OPS.update({
             ("o", "与 v 相同", "与 v 相同", "KDA 输出"),
             ("final_state", "[N,H_v,K,V] 或空", "FP32", "output_final_state=false 时 Python 返回空 tensor"),
             ("g", "与 gk 相同", "FP32", "Python 返回槽：gk 转 FP32"),
-            ("Aqk/Akk", "按 layout 为 [...,T,C]", "与 q 相同", "chunk 内因果矩阵；内部计算可使用 FP32"),
+            ("Aqk/Akk", "按 layout 为 [...,T,chunk_size]", "与 q 相同", "chunk 内因果矩阵；内部计算可使用 FP32"),
             ("w/qg/kg", "按 layout 为 [...,T,K]", "与 q 相同", "K 维中间量"),
             ("u/v_new", "与 v 相同", "与 v 相同", "V 维中间量"),
             ("h", "按 layout 为 [B,H_v,N_c,K,V] 或 [B,N_c,H_v,K,V]", "与 q 相同", "每个 chunk 的起始状态"),
@@ -1585,22 +1585,22 @@ OPS.update({
             重新证明同步顺序，不能机械复制。
         """).strip(),
         "task": "stage1/3/2 按 (sequence,value_head,chunk) 分配无跨 chunk 的矩阵任务；状态传播复用 ChunkGatedDeltaRuleFwdH 并保持同一序列的 chunk 顺序。变长序列 tiling 保存每序列起止与累计 chunk offset，不按每个 chunk 膨胀。",
-        "tiling_key": "公开接口只设置 key=1，用于选择 AIC:AIV=1:2 的 mixed task kernel 类型；它不编码 B/H/T/C/layout，也不产生 shape 组合。设备源码中的 key=0/key=2 是历史保留分支，host 已明确不可达。保留 key=1 的原因是当前 Ascend C mixed task 发射需要通过 tiling key 绑定任务类型，不能仅由普通 tiling data 替代。",
+        "tiling_key": "公开接口只设置 key=1，用于选择 AIC:AIV=1:2 的 mixed task kernel 类型；它不编码 B/H/T/chunk_size/layout，也不产生 shape 组合。设备源码中的 key=0/key=2 是历史保留分支，host 已明确不可达。保留 key=1 的原因是当前 Ascend C mixed task 发射需要通过 tiling key 绑定任务类型，不能仅由普通 tiling data 替代。",
         "flow": "L2 先做 contiguous、layout 规范化与 gate cast；stage1 生成 Aqk/Akk/qg/kg/w seed，stage3 完成 Akk@W/U，GDN fwd_h 更新 h/v_new/final_state，stage2 计算 qg@h 与 Aqk@v_new 并合并 o。",
-        "memory": "stage1 user workspace 包含每 core 两槽、三 plane 的 score scratch，以及每 core 5 个 C*C FP32 solve slot；stage2 使用两个 FP32 output plane。中间 tensor 由 executor 显式持有，不能把后一 stage 读取的数据只作为原地输出参数。",
+        "memory": "stage1 user workspace 包含每 core 两槽、三 plane 的 score scratch，以及每 core 5 个 chunk_size*chunk_size FP32 solve slot；stage2 使用两个 FP32 output plane。中间 tensor 由 executor 显式持有，不能把后一 stage 读取的数据只作为原地输出参数。",
         "sync": "stage1 的 AIV producer 与 AIC consumer 使用深度 2 的 ready/free 双向 cross-core flag；空 payload 也完成握手，队列排空后才复用 flag。MTE2/V/MTE3、Cube/Fixpipe 生命周期由事件闭环，`--cce-auto-sync=off`。",
         "python_sig": "chunk_kda_fwd(q, k, v, gk, beta, scale, chunk_size, *, layout='BSND', initial_state=None, output_final_state=False, cu_seqlens=None, chunk_indices=None, return_intermediate=False, safe_gate=False, transpose_state_layout=False)",
         "python_example": dedent("""
             import torch
             from fla_npu.ops.ascendc import chunk_kda_fwd
 
-            B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 128, 64
+            B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 128, 64
             q = torch.randn(B, H_k, T, K, device="npu", dtype=torch.bfloat16)
             k = torch.randn_like(q)
             v = torch.randn(B, H_v, T, V, device="npu", dtype=torch.bfloat16)
             gk = -torch.rand(B, H_v, T, K, device="npu", dtype=torch.float32).cumsum(2)
             beta = torch.sigmoid(torch.randn(B, H_v, T, device="npu", dtype=torch.float32))
-            outputs = chunk_kda_fwd(q, k, v, gk, beta, K ** -0.5, C,
+            outputs = chunk_kda_fwd(q, k, v, gk, beta, K ** -0.5, chunk_size,
                                     layout="BNSD", output_final_state=True)
             o, final_state = outputs[:2]
             torch.npu.synchronize()
@@ -1686,23 +1686,23 @@ OPS.update({
             ("执行器创建、内部布局转换或 kernel 执行失败", "ACLNN_ERR_INNER/内部错误码"),
         ),
         "case": {
-            "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64, "N_c": 2},
+            "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64, "N_c": 2},
             "dtype": {"q_k_v": "float16", "gk_beta_state": "float32"}, "layout": "BNSD",
             "attrs": {"layout": "BNSD", "scale": 0.0883883476, "chunk_size": 64, "output_final_state": True, "return_intermediate": True, "safe_gate": False, "transpose_state_layout": False},
             "optional_inputs": {"initial_state": "present", "cu_seqlens": None, "chunk_indices": None},
-            "variant_shape": {"B": 1, "H_k": 4, "H_v": 8, "T": 256, "K": 128, "V": 256, "C": 128, "N_c": 2},
+            "variant_shape": {"B": 1, "H_k": 4, "H_v": 8, "T": 256, "K": 128, "V": 256, "chunk_size": 128, "N_c": 2},
             "variant_dtype": {"q_k_v": "bfloat16", "gk_beta_state": "float32"}, "variant_layout": "BSND",
             "variant_attrs": {"layout": "BSND", "scale": 0.0883883476, "chunk_size": 128, "output_final_state": True, "return_intermediate": False, "safe_gate": False, "transpose_state_layout": False},
-            "tail_shape": {"N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "C": 64, "N_c": 4}, "tail_layout": "NTD",
+            "tail_shape": {"N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "chunk_size": 64, "N_c": 4}, "tail_layout": "NTD",
             "tail_attrs": {"layout": "NTD", "scale": 0.0883883476, "chunk_size": 64, "output_final_state": True, "return_intermediate": True, "safe_gate": False, "transpose_state_layout": False},
             "tail_optional_inputs": {"initial_state": "present", "cu_seqlens": [0, 65, 193], "chunk_indices": [0, 0, 0, 1, 1, 0, 1, 1]},
-            "negative_shape": {"H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64}, "negative_layout": "TND",
+            "negative_shape": {"H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64}, "negative_layout": "TND",
             "negative_attrs": {"layout": "TND", "scale": 0.0883883476, "chunk_size": 64, "output_final_state": False, "return_intermediate": False, "safe_gate": False, "transpose_state_layout": False},
             "negative_message": "TND layout with H > 1",
             "extra_cases": [
                 {
                     "id": "chunk_kda_fwd_varlen_requires_b1", "tags": ["negative", "boundary", "varlen"],
-                    "shape": {"B": 2, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "C": 64, "N_c": 4},
+                    "shape": {"B": 2, "N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "chunk_size": 64, "N_c": 4},
                     "dtype": {"q_k_v": "float16", "gk_beta_state": "float32"}, "layout": "BNSD",
                     "attrs": {"layout": "BNSD", "scale": 0.0883883476, "chunk_size": 64, "output_final_state": True, "return_intermediate": True, "safe_gate": False, "transpose_state_layout": False},
                     "optional_inputs": {"initial_state": "present", "cu_seqlens": [0, 65, 193], "chunk_indices": [0, 0, 0, 1, 1, 0, 1, 1]},
@@ -1711,7 +1711,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_kda_fwd_intermediates_all_or_none", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64, "N_c": 2},
+                    "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "chunk_size": 64, "N_c": 2},
                     "dtype": {"q_k_v": "float16", "gk_beta_state": "float32"}, "layout": "BNSD",
                     "attrs": {"layout": "BNSD", "scale": 0.0883883476, "chunk_size": 64, "output_final_state": True, "return_intermediate": "partial", "safe_gate": False, "transpose_state_layout": False},
                     "optional_inputs": {"initial_state": None, "cu_seqlens": None, "chunk_indices": None},
@@ -1720,7 +1720,7 @@ OPS.update({
                 },
                 {
                     "id": "chunk_kda_fwd_chunk_order", "tags": ["negative", "boundary", "varlen"],
-                    "shape": {"N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "C": 64, "N_c": 4},
+                    "shape": {"N": 2, "H_k": 2, "H_v": 4, "T": 193, "K": 128, "V": 128, "chunk_size": 64, "N_c": 4},
                     "dtype": {"q_k_v": "bfloat16", "gk_beta_state": "float32"}, "layout": "NTD",
                     "attrs": {"layout": "NTD", "scale": 0.0883883476, "chunk_size": 64, "output_final_state": True, "return_intermediate": True, "safe_gate": False, "transpose_state_layout": False},
                     "optional_inputs": {"initial_state": "present", "cu_seqlens": [0, 65, 193], "chunk_indices": [1, 0, 0, 0, 0, 1, 1, 1]},
@@ -1782,11 +1782,11 @@ OPS.update({
             import torch
             from fla_npu.ops.ascendc import kda_gate_cumsum
 
-            B, T, H_v, K, C = 1, 128, 4, 128, 64
+            B, T, H_v, K, chunk_size = 1, 128, 4, 128, 64
             raw = torch.randn(B, T, H_v, K, device="npu", dtype=torch.bfloat16)
             A_log = torch.randn(H_v, device="npu", dtype=torch.float32)
             dt_bias = torch.randn(H_v, K, device="npu", dtype=torch.float32)
-            gk = kda_gate_cumsum(raw, C, A_log=A_log, dt_bias=dt_bias,
+            gk = kda_gate_cumsum(raw, chunk_size, A_log=A_log, dt_bias=dt_bias,
                                  use_gate_in_kernel=True, safe_gate=True,
                                  lower_bound=-5.0, layout="BSND")
             torch.npu.synchronize()
@@ -1802,13 +1802,13 @@ OPS.update({
         "runner": "tests/operators/_shared/chunk_kda_backend.py",
         "reference": "_kda_gate_cumsum_reference",
         "case": {
-            "shape": {"B": 1, "T": 128, "H_v": 4, "K": 128, "C": 64}, "dtype": {"g": "float32", "gk": "float32"}, "layout": "BSND",
+            "shape": {"B": 1, "T": 128, "H_v": 4, "K": 128, "chunk_size": 64}, "dtype": {"g": "float32", "gk": "float32"}, "layout": "BSND",
             "attrs": {"chunk_size": 64, "use_gate_in_kernel": False, "safe_gate": False, "lower_bound": -5.0, "layout": "BSND"},
             "optional_inputs": {"A_log": None, "dt_bias": None, "cu_seqlens": None},
-            "variant_shape": {"H_v": 4, "T": 1536, "K": 128, "C": 64}, "variant_dtype": {"g": "bfloat16", "A_log_dt_bias_gk": "float32"}, "variant_layout": "NTD",
+            "variant_shape": {"H_v": 4, "T": 1536, "K": 128, "chunk_size": 64}, "variant_dtype": {"g": "bfloat16", "A_log_dt_bias_gk": "float32"}, "variant_layout": "NTD",
             "variant_attrs": {"chunk_size": 64, "use_gate_in_kernel": True, "safe_gate": True, "lower_bound": -5.0, "layout": "NTD"},
             "variant_optional_inputs": {"A_log": "[H_v]", "dt_bias": "[H_v,K]", "cu_seqlens": None},
-            "tail_shape": {"B": 1, "N": 2, "T": 193, "H_v": 4, "K": 128, "C": 32}, "tail_layout": "BSND",
+            "tail_shape": {"B": 1, "N": 2, "T": 193, "H_v": 4, "K": 128, "chunk_size": 32}, "tail_layout": "BSND",
             "tail_attrs": {"chunk_size": 32, "use_gate_in_kernel": False, "safe_gate": False, "lower_bound": -5.0, "layout": "BSND"},
             "tail_optional_inputs": {"A_log": None, "dt_bias": None, "cu_seqlens": [0, 65, 193]},
             "negative_attrs": {"chunk_size": 64, "use_gate_in_kernel": False, "safe_gate": True, "lower_bound": -5.0, "layout": "BSND"},
@@ -1816,7 +1816,7 @@ OPS.update({
             "extra_cases": [
                 {
                     "id": "kda_gate_cumsum_raw_gate_requires_a_log", "tags": ["negative", "boundary"],
-                    "shape": {"B": 1, "T": 128, "H_v": 4, "K": 128, "C": 64},
+                    "shape": {"B": 1, "T": 128, "H_v": 4, "K": 128, "chunk_size": 64},
                     "dtype": {"g": "bfloat16", "gk": "float32"}, "layout": "BSND",
                     "attrs": {"chunk_size": 64, "use_gate_in_kernel": True, "safe_gate": True, "lower_bound": -5.0, "layout": "BSND"},
                     "optional_inputs": {"A_log": None, "dt_bias": None, "cu_seqlens": None},
@@ -1825,7 +1825,7 @@ OPS.update({
                 },
                 {
                     "id": "kda_gate_cumsum_step_rejects_raw_inputs", "tags": ["negative", "boundary", "route"],
-                    "shape": {"B": 1, "T": 128, "H_v": 4, "K": 128, "C": 64},
+                    "shape": {"B": 1, "T": 128, "H_v": 4, "K": 128, "chunk_size": 64},
                     "dtype": {"g": "float32", "A_log_dt_bias_gk": "float32"}, "layout": "BSND",
                     "attrs": {"chunk_size": 64, "use_gate_in_kernel": False, "safe_gate": False, "lower_bound": -5.0, "layout": "BSND"},
                     "optional_inputs": {"A_log": "[H_v]", "dt_bias": "[H_v,K]", "cu_seqlens": None},
@@ -1834,7 +1834,7 @@ OPS.update({
                 },
                 {
                     "id": "kda_gate_cumsum_varlen_requires_b1", "tags": ["negative", "boundary", "varlen"],
-                    "shape": {"B": 2, "N": 2, "T": 193, "H_v": 4, "K": 128, "C": 32},
+                    "shape": {"B": 2, "N": 2, "T": 193, "H_v": 4, "K": 128, "chunk_size": 32},
                     "dtype": {"g": "float32", "gk": "float32"}, "layout": "BNSD",
                     "attrs": {"chunk_size": 32, "use_gate_in_kernel": False, "safe_gate": False, "lower_bound": -5.0, "layout": "BNSD"},
                     "optional_inputs": {"A_log": None, "dt_bias": None, "cu_seqlens": [0, 65, 193]},
@@ -2010,7 +2010,7 @@ def varlen_note(spec):
     elif has_input(spec, "chunk_indices_out"):
         chunk_note = (
             "`chunk_indices_out` 按 sequence-major 保存内部处理块 `(seq_id, local_block_id)`；"
-            "处理块长度 `B_T` 由 tiling 根据 `chunk_size` 和尾部维 `P` 计算，不等同于数学 chunk 长度 `C`。"
+            "处理块长度 `B_T` 由 tiling 根据 `chunk_size` 和尾部维 `P` 计算，不等同于算子属性 `chunk_size`。"
         )
     return (
         "变长序列模式中，`cu_seqlens[0]` 必须为 0、末项等于 `T` 且序列非递减。"
