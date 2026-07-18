@@ -23,7 +23,7 @@ on:
         required: false
         default: quick
       ops:
-        description: "Optional comma-separated operator list"
+        description: "Optional comma-separated operator list, for example: causal_conv1d,chunk_bwd_dv_local"
         required: false
         default: ''
 jobs:
@@ -82,6 +82,7 @@ jobs:
             let prNumber;
             let ciMode = 'quick';
             let ops = '';
+            let opsSpecified = false;
             let commentId = '';
             const upsertComment = async (pr, body) => {
               if (!prNumber || !pr) {
@@ -158,6 +159,7 @@ jobs:
               prNumber = Number(core.getInput('pr_number', { required: true }));
               ciMode = core.getInput('ci_mode') || 'quick';
               ops = core.getInput('ops') || '';
+              opsSpecified = ops.trim() !== '';
             } else {
               prNumber = context.payload.issue.number;
               const body = (context.payload.comment.body || '').trim();
@@ -171,7 +173,15 @@ jobs:
                 if (part === 'quick' || part === 'full') {
                   ciMode = part;
                 } else if (part.startsWith('ops=')) {
+                  if (opsSpecified) {
+                    core.setFailed('只能指定一个 ops= 参数。');
+                    return;
+                  }
                   ops = part.slice('ops='.length);
+                  opsSpecified = true;
+                } else {
+                  core.setFailed(`无法识别的 NPU CI 参数：${part}。ops 列表必须使用英文逗号且逗号后不能有空格。`);
+                  return;
                 }
               }
             }
@@ -184,6 +194,20 @@ jobs:
               core.setFailed(`不支持的 CI 模式：${ciMode}`);
               return;
             }
+            if (opsSpecified) {
+              const requestedOps = ops.split(',').map((item) => item.trim());
+              if (requestedOps.some((item) => !item || !/^[a-z][a-z0-9_]*$/.test(item))) {
+                core.setFailed('ops 必须是以英文逗号分隔的算子名，且不能包含空项、空格或其他字符。');
+                return;
+              }
+              ops = [...new Set(requestedOps)].join(',');
+            } else {
+              ops = '';
+            }
+            const runOperatorMatrix = ciMode === 'full' || ops !== '';
+            const operatorMatrixScope = runOperatorMatrix
+              ? (ops ? `仅指定算子：\`${ops}\`` : '全部已注册算子')
+              : '跳过（quick 模式未指定 `ops=`）';
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -282,7 +306,7 @@ jobs:
                 `- 触发人：@${actor}`,
                 '- Example ST：必跑',
                 '- Example ST 用例：全部 enabled 用例',
-                ops ? `- 算子：\`${ops}\`` : '',
+                `- 算子泛化/主精度矩阵：${operatorMatrixScope}`,
                 `- 运行链接：[NPU CI #${context.runNumber}](${targetUrl})`,
               ].filter(Boolean).join('\n')
             );
@@ -309,10 +333,10 @@ jobs:
       statuses: write
     env:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }} # 选择 quick 构建或 full 全量验证流程
-      CI_OPS: ${{ needs.prepare.outputs.ops }} # 限定待验证算子；为空时覆盖全部已注册算子
+      CI_OPS: ${{ needs.prepare.outputs.ops }} # 限定待验证算子；quick 为空时跳过算子矩阵，full 为空时覆盖全部算子
       CI_RUN_EXAMPLE_ST: 'true' # 安装 OPP 和 torch_custom 后运行 Example/ST
-      CI_RUN_OPERATOR_GENERALIZATION: 'true' # 运行目标算子的 JSON 泛化用例
-      CI_RUN_OPERATOR_ACCURACY: 'true' # 运行目标算子的主精度测试
+      CI_RUN_OPERATOR_GENERALIZATION: ${{ (needs.prepare.outputs.ci_mode == 'full' || needs.prepare.outputs.ops != '') && 'true' || 'false' }} # full 跑全量；quick 仅在指定 ops 时运行
+      CI_RUN_OPERATOR_ACCURACY: ${{ (needs.prepare.outputs.ci_mode == 'full' || needs.prepare.outputs.ops != '') && 'true' || 'false' }} # full 跑全量；quick 仅在指定 ops 时运行
       CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK: 'true' # 检查独立 torch_custom wheel 的目录布局
       CI_RUN_SCOPED_WHEEL_INSTALL_CHECK: 'true' # 检查按算子裁剪 wheel 的 OPP 安装结果
       CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report.json # 指定 Example/ST 精度汇总报告路径
@@ -581,6 +605,10 @@ jobs:
             const jobState = '${{ job.status }}' === 'success' ? 'success' : 'failure';
             const mode = ${{ toJson(needs.prepare.outputs.ci_mode) }};
             const ops = ${{ toJson(needs.prepare.outputs.ops) }};
+            const runOperatorMatrix = mode === 'full' || ops !== '';
+            const operatorMatrixScope = runOperatorMatrix
+              ? (ops ? `仅指定算子：\`${ops}\`` : '全部已注册算子')
+              : '跳过（quick 模式未指定 `ops=`）';
             const sha = ${{ toJson(needs.prepare.outputs.head_sha) }};
             const prNumber = ${{ toJson(needs.prepare.outputs.pr_number) }};
             const commentId = ${{ toJson(needs.prepare.outputs.comment_id) }};
@@ -724,8 +752,8 @@ jobs:
               staleRun ? `- 失效原因：PR head 已变化，触发时 \`${sha}\`，当前 \`${currentHeadSha}\`` : '',
               '- Example ST：必跑',
               '- Example ST 用例：全部 enabled 用例',
+              `- 算子泛化/主精度矩阵：${operatorMatrixScope}`,
               `- 精度检查：${accuracyStatus.description}`,
-              ops ? `- 算子：\`${ops}\`` : '',
               `- 运行链接：[NPU CI #${context.runNumber}](${targetUrl})`,
               ...formatAccuracyComment(accuracyReport),
             ].filter(Boolean).join('\n');

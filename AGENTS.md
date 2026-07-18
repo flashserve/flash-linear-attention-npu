@@ -210,7 +210,7 @@ git diff --check
 
 - PR 描述使用 `.github/pull_request_template.md`，不要自创栏目替代模板。
 - PR 应关联 Issue，或在模板中说明无需 Issue 的原因。
-- NPU CI 不会在每次 push 后自动跑；需要仓库 Admin 在 Actions 手动触发，或在 PR 评论 `/run-npu-ci quick` / `/run-npu-ci full`。
+- NPU CI 不会在每次 push 后自动跑；需要仓库 Admin 在 Actions 手动触发，或在 PR 评论 `/run-npu-ci quick` / `/run-npu-ci full`。quick 需要验证指定算子矩阵时使用 `/run-npu-ci quick ops=<op_a>,<op_b>`，算子名之间使用英文逗号且不加空格；quick 未指定 `ops=` 时不得默认运行全算子泛化和主精度矩阵。
 - 当前 head commit 需要通过 `NPU CI / 手动验证` 和 `NPU CI / 精度检查`，并满足 2 个 approval。
 - push 新 commit 后旧 commit 的 CI 结果失效，需要重新触发。
 

@@ -124,6 +124,10 @@ ci_ops="${CI_OPS:-}"
 ci_jobs="${CI_JOBS:-$(nproc)}"
 ci_cpack_jobs="${CI_CPACK_JOBS:-$ci_jobs}"
 ci_test_device="${CI_CONTAINER_DEVICE:-0}"
+operator_matrix_scope_enabled=false
+if [[ "$ci_mode" == "full" || -n "$ci_ops" ]]; then
+    operator_matrix_scope_enabled=true
+fi
 
 if [[ "$ci_soc" == "unknown" ]]; then
     ci_soc="ascend910b"
@@ -523,19 +527,23 @@ if [[ "${CI_RUN_EXAMPLE_ST:-true}" == "true" ]]; then
     install_custom_opp_package
     check_example_python_deps
     build_torch_custom
-    if [[ "${CI_RUN_OPERATOR_GENERALIZATION:-false}" == "true" ]]; then
+    if [[ "${CI_RUN_OPERATOR_GENERALIZATION:-false}" == "true" && "$operator_matrix_scope_enabled" == "true" ]]; then
         generalization_args=(--soc "$ci_soc" --device "$ci_test_device")
         if [[ -n "$ci_ops" ]]; then
             generalization_args+=(--ops "$ci_ops")
         fi
         python3 ci/run_operator_generalization.py "${generalization_args[@]}"
+    else
+        echo "[CI] Operator generalization matrix skipped (mode=$ci_mode, ops=${ci_ops:-<none>}, enabled=${CI_RUN_OPERATOR_GENERALIZATION:-false})."
     fi
-    if [[ "${CI_RUN_OPERATOR_ACCURACY:-false}" == "true" ]]; then
+    if [[ "${CI_RUN_OPERATOR_ACCURACY:-false}" == "true" && "$operator_matrix_scope_enabled" == "true" ]]; then
         operator_accuracy_args=(--soc "$ci_soc" --device "$ci_test_device")
         if [[ -n "$ci_ops" ]]; then
             operator_accuracy_args+=(--ops "$ci_ops")
         fi
         python3 ci/run_operator_accuracy.py "${operator_accuracy_args[@]}"
+    else
+        echo "[CI] Operator accuracy matrix skipped (mode=$ci_mode, ops=${ci_ops:-<none>}, enabled=${CI_RUN_OPERATOR_ACCURACY:-false})."
     fi
     example_st_args=(--device "$ci_test_device" --cases-file "${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}")
     accuracy_report_file="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}"

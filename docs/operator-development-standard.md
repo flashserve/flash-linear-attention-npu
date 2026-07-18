@@ -370,8 +370,10 @@ python3 ci/run_operator_accuracy.py --soc ascend950 --device 0
 
 每个 backend 必须显式检查比较结果并以非零返回码报告精度失败；只保存输出、打印误差或调用比较工具但忽略其 `success` 结果，不算通过。入口超时必须终止整个子进程组，不能遗留占用 CPU/NPU 的 runner。
 
-仓库 NPU CI 必须默认设置 `CI_RUN_OPERATOR_GENERALIZATION=true` 和 `CI_RUN_OPERATOR_ACCURACY=true`。容器入口必须透传
-这两个变量，`ci/run_checks.sh` 必须在安装当前 custom OPP 和 Python 适配后运行对应统一入口；不得只保留可手工执行的脚本。
+仓库 NPU CI 按模式控制 `CI_RUN_OPERATOR_GENERALIZATION` 和 `CI_RUN_OPERATOR_ACCURACY`：`full` 未指定 `CI_OPS` 时运行全部
+已注册算子的泛化和主精度矩阵；`quick` 只有显式指定 `CI_OPS` 时才运行所列算子的矩阵，未指定时跳过，避免把轻量验证退化为
+全算子串行精度任务。容器入口必须透传这两个变量，`ci/run_checks.sh` 必须在安装当前 custom OPP 和 Python 适配后按开关运行
+对应统一入口；不得只保留可手工执行的脚本。Example/ST 仍按 CI 配置独立执行，不能因跳过 quick 的全算子矩阵而一并跳过。
 
 ## 8. 文档和示例
 

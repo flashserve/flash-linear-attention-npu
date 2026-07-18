@@ -376,14 +376,18 @@ def validate_source_rules(operators: dict[str, Path], errors: list[str]) -> None
             "run_operator_accuracy.py",
             "CI_RUN_OPERATOR_GENERALIZATION",
             "CI_RUN_OPERATOR_ACCURACY",
+            "operator_matrix_scope_enabled",
         ),
         ROOT / "ci" / "run_ci_container.sh": (
             "CI_RUN_OPERATOR_GENERALIZATION",
             "CI_RUN_OPERATOR_ACCURACY",
         ),
         ROOT / ".github" / "workflows" / "ci.yml": (
-            "CI_RUN_OPERATOR_GENERALIZATION: 'true'",
-            "CI_RUN_OPERATOR_ACCURACY: 'true'",
+            "CI_RUN_OPERATOR_GENERALIZATION:",
+            "CI_RUN_OPERATOR_ACCURACY:",
+            "needs.prepare.outputs.ci_mode == 'full'",
+            "needs.prepare.outputs.ops != ''",
+            "quick 模式未指定 `ops=`",
         ),
     }
     for path, required_tokens in ci_contracts.items():
