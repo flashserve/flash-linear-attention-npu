@@ -20,51 +20,9 @@ ROOT = Path(__file__).resolve().parents[1]
 FAMILY_INFO = {
     "gdn": {
         "name": "Gated Delta Network (GDN)",
-        "version": "gdn-shape-v1",
-        "symbols": [
-            ("B", "Batch size；变长序列打包场景通常为 1"),
-            ("N", "变长序列的逻辑序列数"),
-            ("T", "定长序列长度或变长序列打包后的 token 总数"),
-            ("H_k", "Query/Key head 数"),
-            ("H_v", "Value/Output/State head 数"),
-            ("R_h", "Value head 与 Q/K head 的分组比 H_v/H_k"),
-            ("K", "Query/Key 单 head 特征维"),
-            ("V", "Value/Output 单 head 特征维"),
-            ("chunk_size", "每个 chunk 的 token 数，也是三角块宽度"),
-            ("N_c", "当前调用中的 chunk 总数"),
-            ("S_n", "第 n 条变长序列的有效长度"),
-            ("D", "不区分 Q/K 与 V 时使用的通道维"),
-            ("W", "一维卷积核宽度"),
-            ("L_s", "convolution state 保存的历史长度"),
-            ("M", "三角矩阵有效阶数"),
-            ("P", "token 后连续尾部元素乘积"),
-            ("B_T", "单个变长序列处理块覆盖的 token 数，由 tiling 根据 UB、chunk_size、P 计算"),
-            ("N_b", "变长序列内部处理块总数；由各序列 ceil(seq_len/B_T) 求和"),
-            ("D_s", "状态槽位数"),
-            ("Q_a", "单次调用实际接受的 token 数"),
-        ],
     },
     "kda": {
         "name": "Kimi Delta Attention (KDA)",
-        "version": "kda-shape-v1",
-        "symbols": [
-            ("B", "Batch size"),
-            ("N", "变长序列的逻辑序列数"),
-            ("T", "定长序列长度或变长序列打包 token 总数"),
-            ("H_k", "Query/Key head 数"),
-            ("H_v", "Value/Output head 数"),
-            ("R_h", "H_v/H_k 的 head 分组比"),
-            ("K", "Query/Key 单 head 特征维"),
-            ("V", "Value 单 head 特征维"),
-            ("chunk_size", "每个 chunk 的 token 数，也是三角块宽度"),
-            ("N_c", "当前调用中的 chunk 总数"),
-            ("S_n", "第 n 条变长序列的有效长度"),
-            ("D_0", "通用 ND 输入的第 0 维"),
-            ("D_1", "通用 ND 输入的第 1 维"),
-            ("D_2", "通用 ND 输入的第 2 维"),
-            ("D_3", "通用 ND 输入的第 3 维（rank>=4）"),
-            ("D_4", "通用 ND 输入的第 4 维（rank>=5）"),
-        ],
     },
 }
 
@@ -1325,8 +1283,6 @@ OPS.update({
         "flow": "MTE2 分段加载一个 chunk/tail tile，Vector 执行顺序或逆序 scan 与 scale，MTE3 写回；长 P 分 tile。",
         "memory": "UB 保存当前 scan tile和必要的 carry；不同 task 不共享输出区，无 user workspace 数据依赖。",
         "sync": "MTE2-V-MTE3 事件按双缓冲槽闭环，同一 scan 由单 core 顺序处理；`--cce-auto-sync=off`。",
-        "local_symbols": [("N_b", "变长序列内部处理块总数；由各序列 ceil(seq_len/B_T) 求和"),
-                          ("B_T", "单个变长序列处理块覆盖的 token 数，由 tiling 根据 UB、chunk_size、P 计算")],
         "errors": rows(
             ("g/out、workspaceSize 或 executor 为空", "ACLNN_ERR_PARAM_NULLPTR / ACLNN_ERR_PARAM_INVALID"),
             ("g 非 FP32、rank<3、存在非正维或 head_first=false", "ACLNN_ERR_PARAM_INVALID / Python RuntimeError"),
@@ -1868,10 +1824,6 @@ OPS.update({
         "layouts": "ND；rank3 交换维 0/1，rank>=4 交换维 1/2",
         "dtype": "FP16/BF16/FP32，输入输出一致",
         "modes": "rank3 与 rank>=4；对齐行 grouped copy 和非对齐/超长行 tiled copy",
-        "local_symbols": [
-            ("D_3", "通用 ND 输入的第 3 维（rank>=4）"),
-            ("D_4", "通用 ND 输入的第 4 维（rank>=5）"),
-        ],
         "limits": [
             "x rank 必须至少为 3；y rank、dtype 及交换后的每一维必须与 x 精确对应。",
             "输入在 L2 中先 contiguous；当前 API 总是创建连续 y。",
@@ -1983,19 +1935,10 @@ def has_input(spec, name):
     return any(item[0] == name for item in spec["inputs"])
 
 
-def operator_symbols(spec):
-    family_symbols = FAMILY_INFO[spec["family"]]["symbols"]
-    shape_text = " ".join([item[2] for item in spec["inputs"]] + [item[1] for item in spec["outputs"]])
-    case_shape_keys = set()
-    for key, value in spec.get("case", {}).items():
-        if key.endswith("shape") and isinstance(value, dict):
-            case_shape_keys.update(value)
-    used = []
-    for symbol, meaning in family_symbols:
-        if symbol in case_shape_keys or re.search(rf"(?<![A-Za-z0-9_]){re.escape(symbol)}(?![A-Za-z0-9_])", shape_text):
-            used.append((f"`{symbol}`", meaning))
-    used.extend((f"`{symbol}`", meaning) for symbol, meaning in spec.get("local_symbols", []))
-    return used
+def model_symbol_link(spec, *, from_docs):
+    if spec["family"] == "gdn":
+        return "../../../README.md#model-shape-symbols" if from_docs else "../../README.md#model-shape-symbols"
+    return "../../README.md#model-shape-symbols" if from_docs else "../README.md#model-shape-symbols"
 
 
 def varlen_note(spec):
@@ -2133,9 +2076,7 @@ def kernel_signature(spec):
 
 def render_readme(op, spec):
     limits = "\n".join(f"- {item}" for item in spec["limits"])
-    model_link = "../../README.md#model-shape-symbols" if spec["family"] == "gdn" else "../README.md#model-shape-symbols"
-    family = FAMILY_INFO[spec["family"]]
-    symbols = operator_symbols(spec)
+    model_link = model_symbol_link(spec, from_docs=False)
     support_note = varlen_note(spec)
     reference = spec.get("reference", "仓内 PyTorch/CPU reference")
     coverage = spec.get("coverage", spec["modes"])
@@ -2165,6 +2106,8 @@ def render_readme(op, spec):
         {spec['math'].strip()}
 
         ## 3. 输入、输出和属性
+
+        本文使用的 Shape 符号统一引用[{spec['family'].upper()} 模型符号表]({model_link})，不在算子 README 中重复定义。
 
         ### 3.1 输入
 
@@ -2227,22 +2170,13 @@ def render_readme(op, spec):
 
         A3/A5 分别将 `FLA_NPU_SOC` 替换为 `ascend910_93`/`ascend950`。aclnn 与直调通路源文件位于
         `tests/operators/{op}/routes/`，均使用同一份 JSON 规格。
-
-        <a id="shape-symbols"></a>
-
-        ## 9. 附录：Shape 变量说明
-
-        - 模型/算法族：{family['name']}
-        - 模型级符号表：[{spec['family'].upper()} 模型符号表]({model_link})
-        - 符号表版本：`{family['version']}`
-
-        {table(('变量', '语义'), symbols)}
     """).strip() + "\n"
 
 
 def render_design(op, spec):
     limits = "\n".join(f"- {item}" for item in spec["limits"])
     family = FAMILY_INFO[spec["family"]]
+    model_link = model_symbol_link(spec, from_docs=True)
     if has_input(spec, "cu_seqlens"):
         boundary = (
             "定长尾块与变长序列尾段均按每条逻辑序列的有效长度计算，任何补齐元素在参与指数、"
@@ -2307,7 +2241,7 @@ def render_design(op, spec):
         ## 3. 能力边界
 
         实现类型：`ascendc`。Dtype：{spec['dtype']}。Layout：{spec['layouts']}。模式：{spec['modes']}。
-        Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+        Shape 符号统一引用[{spec['family'].upper()} 模型符号表]({model_link})。
 
         ## 4. 数学与接口语义
 
@@ -2423,6 +2357,7 @@ def render_api(op, spec):
     legacy_name = legacy_op_name(op, spec)
     legacy_status = "支持（显式加载）" if legacy_name else "未实现"
     direct_status = spec.get("direct_status", "支持")
+    model_link = model_symbol_link(spec, from_docs=True)
     if legacy_name:
         legacy_code = legacy_example_code(op, spec)
         legacy_example = f"```python\n{legacy_code}\n```"
@@ -2458,7 +2393,7 @@ def render_api(op, spec):
 
         ## 2. 公共参数与约束
 
-        Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
+        Shape 符号统一引用[{spec['family'].upper()} 模型符号表]({model_link})。
 
         ### 2.1 输入
 

@@ -18,6 +18,8 @@ y[t,d] = z[t,d] * sigmoid(z[t,d]) activation_mode=1
 
 ## 3. 输入、输出和属性
 
+本文使用的 Shape 符号统一引用[GDN 模型符号表](../../README.md#model-shape-symbols)，不在算子 README 中重复定义。
+
 ### 3.1 输入
 
 | 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
@@ -99,21 +101,3 @@ python scripts/check_operator_compliance.py
 
 A3/A5 分别将 `FLA_NPU_SOC` 替换为 `ascend910_93`/`ascend950`。aclnn 与直调通路源文件位于
 `tests/operators/causal_conv1d/routes/`，均使用同一份 JSON 规格。
-
-<a id="shape-symbols"></a>
-
-## 9. 附录：Shape 变量说明
-
-- 模型/算法族：Gated Delta Network (GDN)
-- 模型级符号表：[GDN 模型符号表](../../README.md#model-shape-symbols)
-- 符号表版本：`gdn-shape-v1`
-
-| 变量 | 语义 |
-| --- | --- |
-| `B` | Batch size；变长序列打包场景通常为 1 |
-| `T` | 定长序列长度或变长序列打包后的 token 总数 |
-| `D` | 不区分 Q/K 与 V 时使用的通道维 |
-| `W` | 一维卷积核宽度 |
-| `L_s` | convolution state 保存的历史长度 |
-| `D_s` | 状态槽位数 |
-| `Q_a` | 单次调用实际接受的 token 数 |

@@ -31,7 +31,7 @@ KNOWN_RETURN_CODES = {
     "RuntimeError",
 }
 REQUIRED_DOC_SECTIONS = {
-    "README.md": ("功能概述", "数学定义", "支持范围", "已知限制", "shape-symbols"),
+    "README.md": ("功能概述", "数学定义", "支持范围", "已知限制", "模型符号表"),
     "docs/design.md": ("目标与非目标", "能力边界", "Tiling 设计", "流水与同步", "测试设计"),
     "docs/api.md": ("API 总览", "fla_npu.ops.ascendc", "aclnn", "<<<>>>", "异常与返回码"),
 }
@@ -57,13 +57,6 @@ def read_text(path: Path, errors: list[str]) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def symbol_rows(text: str) -> dict[str, str]:
-    return {
-        symbol: description.strip()
-        for symbol, description in re.findall(r"(?m)^\| `([^`]+)` \| ([^|]+) \|", text)
-    }
-
-
 def validate_documents(op: str, root: Path, errors: list[str]) -> None:
     for relative, sections in REQUIRED_DOC_SECTIONS.items():
         path = root / relative
@@ -80,29 +73,22 @@ def validate_documents(op: str, root: Path, errors: list[str]) -> None:
     if readme.is_file():
         text = readme.read_text(encoding="utf-8")
         model = "kda" if "/kda/" in root.as_posix() else "gdn"
-        if f"{model}-shape-v1" not in text:
-            errors.append(f"{readme.relative_to(ROOT)}: missing {model}-shape-v1 symbol-table version")
-        if "附录：Shape 变量说明" not in text:
-            errors.append(f"{readme.relative_to(ROOT)}: README must own the operator Shape appendix")
-        family_path = ASCENDC_ROOT / model / "README.md"
-        family_symbols = symbol_rows(read_text(family_path, errors))
-        appendix = text.split("附录：Shape 变量说明", 1)[-1]
-        for symbol, description in symbol_rows(appendix).items():
-            if symbol not in family_symbols:
-                errors.append(f"{readme.relative_to(ROOT)}: symbol {symbol!r} is absent from the {model} model table")
-            elif family_symbols[symbol] != description:
-                errors.append(
-                    f"{readme.relative_to(ROOT)}: symbol {symbol!r} description differs from the {model} model table"
-                )
+        if "附录：Shape 变量说明" in text:
+            errors.append(f"{readme.relative_to(ROOT)}: must not duplicate the model Shape symbol table")
+        readme_model_link = "../../README.md#model-shape-symbols" if model == "gdn" else "../README.md#model-shape-symbols"
+        if readme_model_link not in text:
+            errors.append(f"{readme.relative_to(ROOT)}: must link directly to the {model} model Shape table")
     for relative in ("docs/design.md", "docs/api.md"):
         path = root / relative
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8")
-        if "../README.md#shape-symbols" not in text:
-            errors.append(f"{path.relative_to(ROOT)}: must link to the README Shape appendix")
+        model = "kda" if "/kda/" in root.as_posix() else "gdn"
+        model_link = "../../../README.md#model-shape-symbols" if model == "gdn" else "../../README.md#model-shape-symbols"
+        if model_link not in text:
+            errors.append(f"{path.relative_to(ROOT)}: must link directly to the {model} model Shape table")
         if "附录：Shape 变量说明" in text:
-            errors.append(f"{path.relative_to(ROOT)}: Shape appendix must only appear in README")
+            errors.append(f"{path.relative_to(ROOT)}: must not duplicate the model Shape symbol table")
     for relative, heading in (("README.md", "### 3.3 属性"), ("docs/api.md", "### 2.3 属性")):
         path = root / relative
         if not path.is_file():

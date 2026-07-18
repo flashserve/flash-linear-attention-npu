@@ -21,7 +21,7 @@ Gated Delta Rule 的跨 chunk 状态推进算子。它根据 K/W/U、标量 gate
 ## 3. 能力边界
 
 实现类型：`ascendc`。Dtype：K/W/U 为 FP16/BF16；gate/state 可为 FP32。Layout：BNSD；initial/final state 为 `[N,H_v,K,V]`。模式：定长/变长序列、g/gk、可选 initial/final state。
-Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+Shape 符号统一引用[GDN 模型符号表](../../../README.md#model-shape-symbols)。
 
 ## 4. 数学与接口语义
 

@@ -21,7 +21,7 @@
 ## 3. 能力边界
 
 实现类型：`ascendc`。Dtype：输入输出仅 FP32；索引 INT64。Layout：head-first `[B,H_v,T,...]`。模式：定长/变长序列、forward/reverse、任意连续尾部 P。
-Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+Shape 符号统一引用[GDN 模型符号表](../../../README.md#model-shape-symbols)。
 
 ## 4. 数学与接口语义
 

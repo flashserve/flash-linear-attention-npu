@@ -21,7 +21,7 @@
 ## 3. 能力边界
 
 实现类型：`ascendc`。Dtype：K 为 FP16/BF16；g/beta/A 为 FP32。Layout：head-first BNSD/BNS。模式：定长/变长序列、GVA 输入、整块/尾块。
-Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+Shape 符号统一引用[GDN 模型符号表](../../../README.md#model-shape-symbols)。
 
 ## 4. 数学与接口语义
 

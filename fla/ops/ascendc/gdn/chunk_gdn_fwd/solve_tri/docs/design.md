@@ -21,7 +21,7 @@
 ## 3. 能力边界
 
 实现类型：`ascendc`。Dtype：FP16/BF16。Layout：BHTD `[B,H_v,T,chunk_size]`、BSND `[B,T,H_v,chunk_size]`、TND `[T,H_v,chunk_size]`；layout 字符串必须小写。模式：dense BHTD/BSND 与变长序列 TND，支持尾块。
-Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+Shape 符号统一引用[GDN 模型符号表](../../../README.md#model-shape-symbols)。
 
 ## 4. 数学与接口语义
 

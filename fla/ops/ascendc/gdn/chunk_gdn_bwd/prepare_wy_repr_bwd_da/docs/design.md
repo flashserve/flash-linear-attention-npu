@@ -21,7 +21,7 @@ WY 表示反向的 dA 子算子。它根据 K/V、beta、前向 A、dW/dU 与 ga
 ## 3. 能力边界
 
 实现类型：`ascendc`。Dtype：K/V/A/dW/dU 为 FP16/BF16；beta/g 可为 FP32。Layout：BNSD；A/dA 最后一维为 chunk_size。模式：定长与变长序列，支持 GVA。
-Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+Shape 符号统一引用[GDN 模型符号表](../../../README.md#model-shape-symbols)。
 
 ## 4. 数学与接口语义
 

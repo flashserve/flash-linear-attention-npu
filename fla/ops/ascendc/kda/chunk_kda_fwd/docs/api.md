@@ -15,7 +15,7 @@
 
 ## 2. 公共参数与约束
 
-Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
+Shape 符号统一引用[KDA 模型符号表](../../README.md#model-shape-symbols)。
 
 ### 2.1 输入
 

@@ -90,7 +90,7 @@ ctypes 算子如果会通过 data pointer 修改输入 tensor，必须在公共 
 - [ ] 算子源码目录中没有残留 test/、tests/、ATK/，example/torch_custom 中没有主线算子的第二份用例目录；历史 JSON/Python case 表已合并到唯一 manifest，旧 case 文件已删除。
 - [ ] 实现类型对应的 `fla_npu` 入口覆盖主精度、泛化、边界、功能分支和回归矩阵；Ascend C 算子另有 aclnn、`<<<>>>` 通路测试，可选 legacy 入口实现时另有通路测试。
 - [ ] 当前算子的 `README.md`、`docs/design.md`、统一 `docs/api.md`、示例和 CI case 已同步；未新增独立 `aclnn<OpName>.md`。
-- [ ] 新增算子文档基于 `docs/templates/operator/`，Shape 固定取值写入“已知限制”，只有 README 维护 Shape 变量附录，设计和 API 文档链接该附录。
+- [ ] 新增算子文档基于 `docs/templates/operator/`，Shape 固定取值写入“已知限制”；README、设计和 API 文档直接链接模型根 README 的权威符号表，不复制公共符号定义。
 - [ ] 算子符号与所属模型根 README 的模型符号表一致，符号变更已同步受影响的 README、公式、API Shape、JSON case 和测试。
 - [ ] 参数校验、shape/dtype/layout/range、平台差异、预留参数语义、返回码和报错文本保持一致。
 - [ ] 如用 Ascend C 替换 Triton，目标场景性能优于 Triton，仓内 example 默认路径已切换到 `fla_npu.ops.ascendc`。
@@ -224,6 +224,6 @@ git diff --check
 - 改动是否只覆盖本次任务需要的文件。
 - 实现类型、调用通路、Python 导出、文档、报错、返回码、schema、JSON 用例和测试是否与代码一致。
 - 是否遗漏 A2/A3/A5、layout、dtype、变长序列/dense、边界和泛化 case。
-- 算子三份文档、Shape 变量附录和所属模型符号表是否同步。
+- 算子三份文档是否直接引用所属模型的权威符号表，且没有复制公共符号定义。
 - 是否有未跟踪生成物或敏感信息混入。
 - 是否清楚说明已执行和未执行的验证。

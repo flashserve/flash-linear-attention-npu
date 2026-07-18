@@ -21,7 +21,7 @@ Gated Delta Rule 分块反向链路的主梯度算子。它消费前向激活、
 ## 3. 能力边界
 
 实现类型：`ascendc`。Dtype：主张量 FP16/BF16；gate 可为 FP32；输出跟随对应输入。Layout：BNSD；状态张量为 `[B,H_v,N_c,K,V]`。模式：定长与变长序列；变长序列的两个索引必须同时提供。
-Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+Shape 符号统一引用[GDN 模型符号表](../../../README.md#model-shape-symbols)。
 
 ## 4. 数学与接口语义
 

@@ -24,6 +24,8 @@ o        = (qg @ h_prev + Aqk @ v_new) * scale
 
 ## 3. 输入、输出和属性
 
+本文使用的 Shape 符号统一引用[KDA 模型符号表](../README.md#model-shape-symbols)，不在算子 README 中重复定义。
+
 ### 3.1 输入
 
 | 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
@@ -116,23 +118,3 @@ python scripts/check_operator_compliance.py
 
 A3/A5 分别将 `FLA_NPU_SOC` 替换为 `ascend910_93`/`ascend950`。aclnn 与直调通路源文件位于
 `tests/operators/chunk_kda_fwd/routes/`，均使用同一份 JSON 规格。
-
-<a id="shape-symbols"></a>
-
-## 9. 附录：Shape 变量说明
-
-- 模型/算法族：Kimi Delta Attention (KDA)
-- 模型级符号表：[KDA 模型符号表](../README.md#model-shape-symbols)
-- 符号表版本：`kda-shape-v1`
-
-| 变量 | 语义 |
-| --- | --- |
-| `B` | Batch size |
-| `N` | 变长序列的逻辑序列数 |
-| `T` | 定长序列长度或变长序列打包 token 总数 |
-| `H_k` | Query/Key head 数 |
-| `H_v` | Value/Output head 数 |
-| `K` | Query/Key 单 head 特征维 |
-| `V` | Value 单 head 特征维 |
-| `chunk_size` | 每个 chunk 的 token 数，也是三角块宽度 |
-| `N_c` | 当前调用中的 chunk 总数 |

@@ -16,6 +16,8 @@ rank(x) >= 4: y[b,j,i,...] = x[b,i,j,...]
 
 ## 3. 输入、输出和属性
 
+本文使用的 Shape 符号统一引用[KDA 模型符号表](../README.md#model-shape-symbols)，不在算子 README 中重复定义。
+
 ### 3.1 输入
 
 | 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
@@ -84,25 +86,3 @@ python scripts/check_operator_compliance.py
 
 A3/A5 分别将 `FLA_NPU_SOC` 替换为 `ascend910_93`/`ascend950`。aclnn 与直调通路源文件位于
 `tests/operators/kda_layout_swap12/routes/`，均使用同一份 JSON 规格。
-
-<a id="shape-symbols"></a>
-
-## 9. 附录：Shape 变量说明
-
-- 模型/算法族：Kimi Delta Attention (KDA)
-- 模型级符号表：[KDA 模型符号表](../README.md#model-shape-symbols)
-- 符号表版本：`kda-shape-v1`
-
-| 变量 | 语义 |
-| --- | --- |
-| `B` | Batch size |
-| `T` | 定长序列长度或变长序列打包 token 总数 |
-| `H_v` | Value/Output head 数 |
-| `K` | Query/Key 单 head 特征维 |
-| `V` | Value 单 head 特征维 |
-| `N_c` | 当前调用中的 chunk 总数 |
-| `D_0` | 通用 ND 输入的第 0 维 |
-| `D_1` | 通用 ND 输入的第 1 维 |
-| `D_2` | 通用 ND 输入的第 2 维 |
-| `D_3` | 通用 ND 输入的第 3 维（rank>=4） |
-| `D_4` | 通用 ND 输入的第 4 维（rank>=5） |

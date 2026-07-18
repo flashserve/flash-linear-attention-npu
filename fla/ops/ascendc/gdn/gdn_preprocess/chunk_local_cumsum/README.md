@@ -17,6 +17,8 @@ out[b,h,t,p] = scale * sum(k=t..chunk_end-1) g[b,h,k,p]       reverse=true
 
 ## 3. 输入、输出和属性
 
+本文使用的 Shape 符号统一引用[GDN 模型符号表](../../README.md#model-shape-symbols)，不在算子 README 中重复定义。
+
 ### 3.1 输入
 
 | 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
@@ -93,22 +95,3 @@ python scripts/check_operator_compliance.py
 
 A3/A5 分别将 `FLA_NPU_SOC` 替换为 `ascend910_93`/`ascend950`。aclnn 与直调通路源文件位于
 `tests/operators/chunk_local_cumsum/routes/`，均使用同一份 JSON 规格。
-
-<a id="shape-symbols"></a>
-
-## 9. 附录：Shape 变量说明
-
-- 模型/算法族：Gated Delta Network (GDN)
-- 模型级符号表：[GDN 模型符号表](../../README.md#model-shape-symbols)
-- 符号表版本：`gdn-shape-v1`
-
-| 变量 | 语义 |
-| --- | --- |
-| `B` | Batch size；变长序列打包场景通常为 1 |
-| `N` | 变长序列的逻辑序列数 |
-| `T` | 定长序列长度或变长序列打包后的 token 总数 |
-| `H_v` | Value/Output/State head 数 |
-| `chunk_size` | 每个 chunk 的 token 数，也是三角块宽度 |
-| `P` | token 后连续尾部元素乘积 |
-| `N_b` | 变长序列内部处理块总数；由各序列 ceil(seq_len/B_T) 求和 |
-| `B_T` | 单个变长序列处理块覆盖的 token 数，由 tiling 根据 UB、chunk_size、P 计算 |

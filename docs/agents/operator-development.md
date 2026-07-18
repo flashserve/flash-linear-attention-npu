@@ -167,7 +167,7 @@ L2 负责校验、executor/workspace、layout/view 和 launch 编排，不负责
 - Ascend C 算子的 `op_host`、`op_api`、kernel、Python 导出和必选通路要同步；Triton 算子的 wrapper、kernel、grid/config、launch 和 Python 导出要同步。
 - 用例设计统一维护在 `tests/op_cases/<op_name>.json`，执行代码归档到 `tests/operators/<op_name>/`，不在测试脚本中散落关键 shape、dtype 和属性组合。
 - 算子源码目录不得保留 test/、tests/、ATK/，example/torch_custom 不得保留主线算子的第二份用例目录；迁移历史资产时先合并 case、校验可逆性，再删除旧目录和重复 case 文件。
-- 算子 `README.md`、`docs/design.md` 和统一 `docs/api.md` 要一起维护；不再新增独立 aclnn API 文档。只有 README 保留 Shape 变量附录，设计与 API 文档链接该附录。
+- 算子 `README.md`、`docs/design.md` 和统一 `docs/api.md` 要一起维护；不再新增独立 aclnn API 文档。三者直接链接模型根 README 的权威符号表，不复制公共符号定义。
 - 同一模型或算法族的算子符号应与模型根 README 的权威符号表一致，符号变更同时同步公式、API Shape、JSON case 和测试。
 - 修改公共模块时，要列出受影响算子并扩大验证范围。
 - 新增 bugfix 应有能稳定触发的回归用例。
