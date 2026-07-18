@@ -455,7 +455,7 @@ docs/templates/operator/
 调用示例统一写入 `docs/api.md`，至少包含：
 
 - 实现类型对应的 Python 入口：Ascend C 算子提供 `fla_npu.ops.ascendc` 示例，Triton 算子提供 `fla_npu.ops.triton` 示例。
-- aclnn：仅 Ascend C 算子需要，展示初始化 ACL、创建 stream、构造 tensor、调用 `GetWorkspaceSize`、分配 workspace、执行算子、同步并释放资源。
+- aclnn：仅 Ascend C 算子需要，必须在 API 文档内完整展开初始化 ACL、创建设备与 stream、构造 tensor、调用 `GetWorkspaceSize`、分配 workspace、执行算子、同步、输出回拷和资源释放代码；不得只链接仓内 example，也不得用文字步骤或伪代码替代。
 - Ascend C `<<<>>>`：仅 Ascend C 算子需要，说明被发射函数的参数顺序，准备 tiling data、block dim、workspace 和 stream，使用 `op<<<blockDim, l2ctrl, stream>>>(...)` 发射，并同步、检查返回码和结果。
 - `torch.ops.npu`：可选；仅当算子实现该入口时，给出显式加载和调用示例。
 

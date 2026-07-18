@@ -85,11 +85,211 @@ aclnnStatus aclnn<OpName>(
 ### 3.2 调用示例
 
 ```cpp
-// 填写完整的最小可执行示例：初始化 ACL、创建 stream、构造 tensor、
-// 调用 GetWorkspaceSize、分配 workspace、执行算子、同步并释放资源。
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <vector>
+
+#include "acl/acl.h"
+#include "aclnnop/aclnn_chunk_bwd_dv_local.h"
+
+#define CHECK_ACL(expr)                                                                                \
+    do {                                                                                               \
+        const auto status = (expr);                                                                    \
+        if (status != ACL_SUCCESS) {                                                                    \
+            std::fprintf(stderr, "%s failed, error code: %d\\n", #expr, static_cast<int>(status));      \
+            return static_cast<int>(status);                                                           \
+        }                                                                                              \
+    } while (0)
+
+namespace {
+
+size_t GetElementCount(const std::vector<int64_t> &shape)
+{
+    size_t count = 1;
+    for (const int64_t dim : shape) {
+        count *= static_cast<size_t>(dim);
+    }
+    return count;
+}
+
+class AclRuntime {
+public:
+    int Init(int32_t deviceId)
+    {
+        deviceId_ = deviceId;
+        CHECK_ACL(aclInit(nullptr));
+        aclInitialized_ = true;
+        CHECK_ACL(aclrtSetDevice(deviceId_));
+        deviceSet_ = true;
+        CHECK_ACL(aclrtCreateStream(&stream_));
+        return ACL_SUCCESS;
+    }
+
+    ~AclRuntime()
+    {
+        if (stream_ != nullptr) {
+            (void)aclrtDestroyStream(stream_);
+        }
+        if (deviceSet_) {
+            (void)aclrtResetDevice(deviceId_);
+        }
+        if (aclInitialized_) {
+            (void)aclFinalize();
+        }
+    }
+
+    aclrtStream GetStream() const
+    {
+        return stream_;
+    }
+
+private:
+    int32_t deviceId_ = 0;
+    aclrtStream stream_ = nullptr;
+    bool aclInitialized_ = false;
+    bool deviceSet_ = false;
+};
+
+struct DeviceBuffer {
+    void *data = nullptr;
+    size_t size = 0;
+
+    ~DeviceBuffer()
+    {
+        if (data != nullptr) {
+            (void)aclrtFree(data);
+        }
+    }
+
+    int Allocate(size_t byteSize)
+    {
+        size = byteSize;
+        if (size == 0) {
+            return ACL_SUCCESS;
+        }
+        return aclrtMalloc(&data, size, ACL_MEM_MALLOC_HUGE_FIRST);
+    }
+};
+
+struct TensorHandle {
+    aclTensor *value = nullptr;
+
+    ~TensorHandle()
+    {
+        if (value != nullptr) {
+            aclDestroyTensor(value);
+        }
+    }
+};
+
+int CreateFp16Tensor(const std::vector<int64_t> &shape, uint16_t fillValue,
+                     DeviceBuffer &buffer, TensorHandle &tensor)
+{
+    const size_t elementCount = GetElementCount(shape);
+    const size_t byteSize = elementCount * sizeof(uint16_t);
+    CHECK_ACL(buffer.Allocate(byteSize));
+
+    const std::vector<uint16_t> hostData(elementCount, fillValue);
+    CHECK_ACL(aclrtMemcpy(buffer.data, buffer.size, hostData.data(), byteSize,
+                         ACL_MEMCPY_HOST_TO_DEVICE));
+
+    std::vector<int64_t> strides(shape.size(), 1);
+    for (int64_t i = static_cast<int64_t>(shape.size()) - 2; i >= 0; --i) {
+        strides[static_cast<size_t>(i)] =
+            shape[static_cast<size_t>(i + 1)] * strides[static_cast<size_t>(i + 1)];
+    }
+
+    tensor.value = aclCreateTensor(shape.data(), shape.size(), ACL_FLOAT16, strides.data(), 0,
+                                   ACL_FORMAT_ND, shape.data(), shape.size(), buffer.data);
+    if (tensor.value == nullptr) {
+        std::fprintf(stderr, "aclCreateTensor failed\\n");
+        return 1;
+    }
+    return ACL_SUCCESS;
+}
+
+}  // namespace
+
+int main()
+{
+    // 1. 初始化 ACL、device 和 stream。deviceId 按实际环境设置。
+    AclRuntime runtime;
+    CHECK_ACL(runtime.Init(/*deviceId=*/0));
+
+    // 2. 构造定长场景输入和输出；示例数据类型为 FP16。
+    constexpr int64_t B = 1;
+    constexpr int64_t H_k = 2;
+    constexpr int64_t H_v = 4;
+    constexpr int64_t T = 128;
+    constexpr int64_t K = 128;
+    constexpr int64_t V = 128;
+    constexpr int64_t chunkSize = 64;
+    const double scale = 1.0 / std::sqrt(static_cast<double>(K));
+
+    const std::vector<int64_t> qShape = {B, H_k, T, K};
+    const std::vector<int64_t> kShape = {B, H_k, T, K};
+    const std::vector<int64_t> dOShape = {B, H_v, T, V};
+    const std::vector<int64_t> gShape = {B, H_v, T};
+    const std::vector<int64_t> outShape = {B, H_v, T, V};
+
+    DeviceBuffer qBuffer;
+    DeviceBuffer kBuffer;
+    DeviceBuffer dOBuffer;
+    DeviceBuffer gBuffer;
+    DeviceBuffer outBuffer;
+    DeviceBuffer workspaceBuffer;
+    TensorHandle q;
+    TensorHandle k;
+    TensorHandle dO;
+    TensorHandle g;
+    TensorHandle out;
+
+    // 0x3C00 是 FP16 的 1.0，0x0000 是 FP16 的 0.0。
+    CHECK_ACL(CreateFp16Tensor(qShape, 0x3C00, qBuffer, q));
+    CHECK_ACL(CreateFp16Tensor(kShape, 0x3C00, kBuffer, k));
+    CHECK_ACL(CreateFp16Tensor(dOShape, 0x3C00, dOBuffer, dO));
+    CHECK_ACL(CreateFp16Tensor(gShape, 0x0000, gBuffer, g));
+    CHECK_ACL(CreateFp16Tensor(outShape, 0x0000, outBuffer, out));
+
+    // 3. 第一段接口查询 workspace；定长场景的四个可选输入均传空。
+    uint64_t workspaceSize = 0;
+    aclOpExecutor *executor = nullptr;
+    CHECK_ACL(aclnnChunkBwdDvLocalGetWorkspaceSize(
+        q.value,
+        k.value,
+        dO.value,
+        g.value,
+        /*gGammaOptional=*/nullptr,
+        /*aOptional=*/nullptr,
+        /*cuSeqlensOptional=*/nullptr,
+        /*chunkIndicesOptional=*/nullptr,
+        scale,
+        chunkSize,
+        out.value,
+        &workspaceSize,
+        &executor));
+
+    // 4. 按第一段接口返回值分配 workspace，并调用第二段执行接口。
+    CHECK_ACL(workspaceBuffer.Allocate(static_cast<size_t>(workspaceSize)));
+    CHECK_ACL(aclnnChunkBwdDvLocal(workspaceBuffer.data, workspaceSize, executor,
+                                   runtime.GetStream()));
+
+    // 5. 同步 stream 后回拷输出。实际算子文档可在此补充结果校验。
+    CHECK_ACL(aclrtSynchronizeStream(runtime.GetStream()));
+    std::vector<uint16_t> hostOutput(GetElementCount(outShape));
+    CHECK_ACL(aclrtMemcpy(hostOutput.data(), hostOutput.size() * sizeof(uint16_t),
+                         outBuffer.data, outBuffer.size, ACL_MEMCPY_DEVICE_TO_HOST));
+    std::printf("chunk_bwd_dv_local finished, first FP16 raw value: 0x%04x\\n",
+                static_cast<unsigned int>(hostOutput.front()));
+
+    // Tensor、device buffer、workspace、stream、device 和 ACL 由局部对象析构释放。
+    return ACL_SUCCESS;
+}
 ```
 
-> **调用示例说明：以 `chunk_bwd_dv_local` 定长场景为例：** 使用 `q/k=[B,H_k,T,K]`、`dO/out=[B,H_v,T,V]`、`g=[B,H_v,T]`，从“已知限制”选择合法的 `K`、`V`，并从属性表“取值范围”选择合法的 `chunkSize`；`gGammaOptional`、`aOptional`、`cuSeqlensOptional` 和 `chunkIndicesOptional` 传空。先调用 `aclnnChunkBwdDvLocalGetWorkspaceSize`，按返回大小分配 workspace，再调用 `aclnnChunkBwdDvLocal` 并同步 stream。
+> **模板填写要求：** 每个算子的 API 文档都必须保留一份与实际接口签名一致的完整 aclnn 最小示例，覆盖 ACL 初始化、stream 创建、tensor 构造、`GetWorkspaceSize`、workspace 分配、执行、同步、输出回拷和资源释放。不得只引用仓内其他文件，也不得用伪代码或文字步骤替代。以上代码以 `chunk_bwd_dv_local` 定长场景为例；填写其他算子时，应替换头文件、shape、dtype、属性、可选输入和两段式接口名称，并从参数表“取值范围”和“已知限制”选择合法取值。
 
 ## 4. `fla_npu.ops.ascendc` API（仅 Ascend C 算子）
 
