@@ -34,7 +34,7 @@
 
 给出数学公式、维度关系、输入输出语义、边界行为和异常条件。
 
-本文不重复定义 Shape 符号。公式和语义说明使用的变量统一引用[算子 README 的 Shape 变量说明附录](../README.md#shape-symbols)，并与所属模型的权威符号表保持一致。
+本文不重复定义 Shape 符号。公式和语义说明使用的变量统一引用[所属模型的权威符号表](<model-symbol-table-link>)。
 
 > **Hint：** 除 `dV_local = Ws_gated @ dO` 外，还应写清 `qkHead = doHead / hRatio`、门控指数的行列方向、上三角是否含对角线，以及 partial chunk 的有效区域。
 

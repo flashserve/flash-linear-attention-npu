@@ -17,7 +17,7 @@
 
 ## 2. 公共参数与约束
 
-本文不重复定义 Shape 符号。参数 Shape 和接口语义统一引用[算子 README 的 Shape 变量说明附录](../README.md#shape-symbols)，并与所属模型的权威符号表保持一致。
+本文不重复定义 Shape 符号。参数 Shape 和接口语义统一引用[所属模型的权威符号表](<model-symbol-table-link>)。
 
 ### 2.1 输入
 

@@ -21,7 +21,7 @@ Kimi Delta Attention 正向主算子。它消费已经按 chunk 累加的 key ga
 ## 3. 能力边界
 
 实现类型：`ascendc`。Dtype：q/k/v 为同一 FP16 或 BF16；gk/beta 为 FP32 或 BF16，当前实现在 L2 转 FP32；状态为 FP32。Layout：BSND/BNSD/TND/NTD；BNSD/NTD 为内部性能布局，BSND/TND 通过 KdaLayoutSwap12 转换。模式：定长/变长序列、四种显式 layout、可选初始/最终状态、可选中间量。
-Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+Shape 符号统一引用[KDA 模型符号表](../../README.md#model-shape-symbols)。
 
 ## 4. 数学与接口语义
 

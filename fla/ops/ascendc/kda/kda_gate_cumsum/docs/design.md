@@ -21,7 +21,7 @@
 ## 3. 能力边界
 
 实现类型：`ascendc`。Dtype：g 为 FP16/BF16/FP32；A_log/dt_bias/gk 为 FP32；cu_seqlens 为 INT64。Layout：rank4 使用 BSND/BNSD，rank3 使用 TND/NTD；layout 必须显式且不根据 shape 推导。模式：定长/变长序列、step-gate/safe raw-gate、四种 layout、整块/尾块。
-Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+Shape 符号统一引用[KDA 模型符号表](../../README.md#model-shape-symbols)。
 
 ## 4. 数学与接口语义
 

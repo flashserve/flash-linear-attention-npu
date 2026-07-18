@@ -21,7 +21,7 @@ Gated Delta Rule 的 chunk 输出阶段。算子把当前 chunk 的 Q/K/V、chun
 ## 3. 能力边界
 
 实现类型：`ascendc`。Dtype：Q/K/V/H 为 FP16/BF16；g 可为 FP32。Layout：BNSD；状态使用 `[B,H_v,N_c,K,V]`。模式：定长/变长序列、GVA、整块/尾块；g 为必选标量 gate。
-Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+Shape 符号统一引用[GDN 模型符号表](../../../README.md#model-shape-symbols)。
 
 ## 4. 数学与接口语义
 

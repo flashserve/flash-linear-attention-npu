@@ -16,6 +16,8 @@
 
 ## 3. 输入、输出和属性
 
+本文使用的 Shape 符号统一引用[所属模型的权威符号表](<model-symbol-table-link>)，不在算子 README 中重复定义。
+
 ### 3.1 输入
 
 | 名称 | 必选/可选 | Shape | Dtype | Format/Layout | 取值范围 | 说明 |
@@ -101,31 +103,3 @@
 ```
 
 > **Hint：** 命令应覆盖 wheel/OPP 构建、`docs/api.md` 中各通路示例、`tests/op_cases/<op_name>.json` 主精度矩阵和性能测试；只写通用 `pytest` 而不说明测试文件或筛选方式不够。
-
-<a id="shape-symbols"></a>
-
-## 9. 附录：Shape 变量说明
-
-### 9.1 模型符号基线
-
-- 模型/算法族：`<model_name>`
-- 模型级符号表：[`<model_name>` 模型符号表](<model-symbol-table-link>)
-- 符号表版本：`<version>`
-
-本附录使用的模型级符号名称和语义必须与模型根目录 README 中的权威符号表一致。算子未使用的模型符号可以省略；算子特有符号可以追加，但不得复用已有符号表达不同语义。
-
-> **Hint：** GDN 模型下的所有算子应统一 `B`、`H_k`、`H_v`、`T`、`K`、`V`、`chunk_size` 等符号的含义；KDA 模型可以维护自己的符号集合，但所有 KDA 算子必须引用同一份 KDA 模型符号表。模型同时支持 Dense 与序列打包（Sequence Packing）时，两者的存储方式、`B/T` 语义和序列边界应由模型符号表统一定义；本算子只声明实际支持的“存储组织 + Layout”组合。若模型符号发生变化，应在同一个 PR 中同步模型根 README 和受影响算子 README。
-
-### 9.2 本算子使用的符号
-
-| 变量 | 语义 | 示例关联维度 |
-| --- | --- | --- |
-| `B` | Batch size | 所有主输入和输出的第 0 维 |
-| `H_k` | Q/K head 数 | `q`、`k` 的 head 维 |
-| `H_v` | dO/dV head 数 | `dO`、`g`、`dV` 的 head 维 |
-| `T` | 序列长度或当前张量承载的 token 数 | 序列维 |
-| `K` | Q/K 单 head 特征维度 | `q`、`k` 的最后一维 |
-| `V` | Value 单 head 特征维度 | `dO`、`dV` 的最后一维 |
-| `chunk_size` | 每个 chunk 的 token 数，也是三角块宽度 | 分块计算粒度 |
-
-> **Hint：** `chunk_bwd_dv_local` 的 shape 可统一写成 `q/k=[B,H_k,T,K]`、`dO/dV=[B,H_v,T,V]`、`g=[B,H_v,T]`，并在正文说明 `H_v` 与 `H_k` 的关系。

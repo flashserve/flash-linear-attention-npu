@@ -21,7 +21,7 @@
 ## 3. 能力边界
 
 实现类型：`ascendc`。Dtype：Q/K/V/beta/out 为 BF16；state 为 BF16/FP32；gate FP32；索引 INT32。Layout：TND + 独立状态槽布局 `[D_s,H_v,V,K]`。模式：变长 recurrent、g/gk 独立或组合、可选 accepted-token 状态选择、原地 state。
-Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+Shape 符号统一引用[GDN 模型符号表](../../../README.md#model-shape-symbols)。
 
 ## 4. 数学与接口语义
 

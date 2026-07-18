@@ -21,7 +21,7 @@ WY 表示完整反向算子。它消费 `dA/dW/dU`，在 chunk 内反传到 K、
 ## 3. 能力边界
 
 实现类型：`ascendc`。Dtype：主张量 FP16/BF16；beta/g 可为 FP32。Layout：BNSD；A/dA 最后一维为 chunk_size。模式：定长与变长序列，支持 GVA。
-Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+Shape 符号统一引用[GDN 模型符号表](../../../README.md#model-shape-symbols)。
 
 ## 4. 数学与接口语义
 

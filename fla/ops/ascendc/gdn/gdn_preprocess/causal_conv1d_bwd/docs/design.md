@@ -21,7 +21,7 @@ CausalConv1d 的训练反向算子。它支持定长/变长序列和五种公开
 ## 3. 能力边界
 
 实现类型：`ascendc`。Dtype：FP32/FP16/BF16，同次调用所有浮点输入一致。Layout：x/dx 始终逻辑 BSH/TH；y/dy 按 BSH、BSND、BNSD、TND 或 NTD。模式：定长/变长序列、无激活/SiLU、可选初末状态。
-Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+Shape 符号统一引用[GDN 模型符号表](../../../README.md#model-shape-symbols)。
 
 ## 4. 数学与接口语义
 

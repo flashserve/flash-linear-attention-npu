@@ -471,7 +471,7 @@ docs/templates/operator/
 - 性能目标、Triton 对比基线、关键 shape、主要瓶颈和优化方案。
 - 测试矩阵与 `tests/op_cases/<op_name>.json` 的对应关系。
 - 已知限制、异常拦截和后续演进计划。
-- 公式和语义说明中指向算子 README Shape 变量附录的链接；`docs/design.md` 不重复维护符号表。
+- 公式和语义说明直接链接所属模型根 README 的权威符号表；`docs/design.md` 不重复维护符号表。
 
 ### 8.4 统一 API 文档
 
@@ -481,7 +481,7 @@ docs/templates/operator/
 
 - API 总览：按实现类型列出 `fla_npu.ops.ascendc` 或 `fla_npu.ops.triton`；Ascend C 算子同时列出 aclnn、`<<<>>>`，实现时再列出可选的 `torch.ops.npu`。
 - 每个 API 的完整签名、参数顺序、输入输出、属性、required/optional、shape、dtype、format、取值范围、默认值和约束。
-- API 参数表中的 Shape 只使用符号变量，固定维度写入“已知限制”；枚举或离散属性的全部合法值写入属性表的“取值范围”。Shape 和接口语义处链接算子 README 的 Shape 变量附录，`docs/api.md` 不重复维护符号表。
+- API 参数表中的 Shape 只使用符号变量，固定维度写入“已知限制”；枚举或离散属性的全部合法值写入属性表的“取值范围”。Shape 和接口语义直接链接所属模型根 README 的权威符号表，`docs/api.md` 不重复维护符号表。
 - aclnn 的 `GetWorkspaceSize`、执行接口、workspace、executor、stream、异步执行、返回值和错误码，仅 Ascend C 算子需要。
 - 与实现类型对应的 `fla_npu` 公开函数导入方式、参数和返回值；Ascend C 路径还需说明默认解耦调用约定。
 - Ascend C `<<<>>>` 直调所需的 tiling data、block dim、workspace、stream 和参数顺序说明，仅 Ascend C 算子需要。
@@ -504,12 +504,12 @@ docs/templates/operator/
 同一模型或算法族下的所有算子必须使用同一套模型符号定义：
 
 - 模型根目录 README 的“模型符号表”是该模型的权威来源，例如 GDN 使用 `fla/ops/ascendc/gdn/README.md`，KDA 使用 `fla/ops/ascendc/kda/README.md`。
-- 每个算子只在自身 `README.md` 末尾保留 Shape 变量附录，注明模型/算法族、模型级符号表链接和符号表版本，并列出本算子实际使用的符号。
-- `docs/design.md` 在数学公式和接口语义章节链接算子 README 附录；`docs/api.md` 在参数 Shape 和接口语义章节链接算子 README 附录。两者不得复制变量语义表。
+- 算子 `README.md`、`docs/design.md` 和 `docs/api.md` 直接链接模型根目录 README 的权威符号表，不再维护“本算子使用的符号”副本。
+- 仅在出现模型符号表未覆盖、且确实只属于单个算子的局部符号时，在该符号首次出现处就近定义；不得为此复制模型公共符号表。若多个同模型算子都会使用，应将其提升到模型符号表。
 - 同一模型内相同符号必须保持相同含义、大小写和下标形式。例如 GDN 各算子中的 `H_k` 不能在一个算子表示 Q/K head 数，在另一个算子表示单 head 特征维度。
 - 不同语义必须使用不同符号，禁止通过局部文字重新解释已有模型符号。
 - 模型同时支持 Dense 与序列打包（Sequence Packing）时，模型符号表必须定义两种存储组织中 `B`、`T`、逻辑序列数和序列边界的语义。Layout 只表示维度排列，不能直接与存储组织画等号；算子 README 应明确列出实际支持的“存储组织 + Layout”组合。
-- 修改模型符号名称或语义时，必须在同一个 PR 中同步模型根 README、所有受影响算子 README、公式、API Shape、JSON case 字段和测试代码。
+- 修改模型符号名称或语义时，必须在同一个 PR 中同步模型根 README、所有受影响公式、API Shape、JSON case 字段和测试代码。
 - `tests/op_cases/<op_name>.json` 中的 Shape 字段名必须与所属模型符号表一致，不能为同一维度另起别名。
 
 > **Hint：** GDN 和 KDA 分别维护自己的模型符号表。GDN 内所有相关算子共享一套 GDN 符号定义，KDA 内所有相关算子共享一套 KDA 符号定义；不要求 GDN 与 KDA 使用完全相同的符号集合，但同名符号不应表达相互冲突的基础语义。

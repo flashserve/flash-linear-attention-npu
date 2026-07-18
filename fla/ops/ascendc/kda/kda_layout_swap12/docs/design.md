@@ -21,7 +21,7 @@ KDA 内部的连续布局转置算子。rank3 交换维 0/1，rank>=4 交换维 
 ## 3. 能力边界
 
 实现类型：`ascendc`。Dtype：FP16/BF16/FP32，输入输出一致。Layout：ND；rank3 交换维 0/1，rank>=4 交换维 1/2。模式：rank3 与 rank>=4；对齐行 grouped copy 和非对齐/超长行 tiled copy。
-Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
+Shape 符号统一引用[KDA 模型符号表](../../README.md#model-shape-symbols)。
 
 ## 4. 数学与接口语义
 

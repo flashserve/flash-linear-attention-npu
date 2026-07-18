@@ -67,8 +67,8 @@ KDA 当前要求 `chunk_indices` 为 canonical sequence-major 顺序。调用方
 
 ## 5. 文档使用约定
 
-1. 每个 KDA 算子 README 的附录引用 `kda-shape-v1`，只列实际使用符号。
-2. 设计和 API 文档通过算子 README 锚点引用符号，不重复本表。
+1. 本 README 是 KDA Shape 符号的唯一维护位置，符号表版本为 `kda-shape-v1`。
+2. 每个算子的 `README.md`、`docs/design.md` 和 `docs/api.md` 直接链接本表，不复制本表或维护“本算子使用的符号”副本。
 3. `stage`、`usedCoreNum`、`seqStart` 等 tiling 实现字段不得进入公开 Shape 定义。
-4. `K`、`V`、`chunk_size`、head 数和序列数的固定上限统一写入算子“已知限制”。
-5. 修改布局语义或符号后，必须同步三个 KDA 算子及 `tests/reference/chunk_kda_reference.py`。
+4. 固定 Shape 约束写入算子“已知限制”；枚举或离散属性的全部合法值写入属性表“取值范围”。
+5. 修改布局语义或符号后，必须同步所有受影响公式、API Shape、JSON case、测试代码及参考实现。
