@@ -10,12 +10,29 @@
 | `<op>/routes/test_aclnn_<op>.cpp` | 验证两段式 aclnn、workspace、executor、stream 和返回码 |
 | `<op>/routes/test_direct_<op>.cpp` | 验证 tiling data、block dim、workspace 和 `<<<>>>` 发射 |
 | `<op>/routes/test_legacy_<op>.py` | 仅在实现 legacy schema 时验证显式加载路径 |
+| `<op>/routes/test_fast_kernel_<op>.py` | fast-kernel direct-launch Python 扩展回归；参数从唯一 JSON 读取 |
 | `<op>/ut/op_host/` | InferShape、tiling 和参数拦截单元测试 |
 | `<op>/ut/op_kernel/` | 可独立验证的 kernel 模板与 tiling data 测试 |
 | `<op>/performance/` | 使用 JSON 中 `performance` 标签执行 profiling |
 | `<op>/st/` | 真实上层组合和 Example 回归 |
 
+
+## 历史资产迁移规则
+
+- 算子源码目录不得保留 test/、tests/、ATK/；example/torch_custom 适配工程不得保留主线算子的独立用例目录，执行代码统一进入本目录对应算子的职责子目录。
+- 历史 JSON、Python case 表和脚本 main 中的显式矩阵必须并入 tests/op_cases/<op_name>.json，并用 legacy 字段保留原格式、原 ID、执行资产和启用状态。
+- ATK 的 all_*.json 不再提交；使用 tests/operators/_shared/legacy_cases.py 的 materialize 子命令临时生成，并在执行后删除。
+- 原资产存在错误 schema 时不得静默修正或冒充覆盖；原样归档、标记 disabled 和原因，修正后再进入执行矩阵。
+- 迁移完成后必须检查旧目录为空、manifest ID 唯一、原 JSON 可逐字段物化、执行资产存在以及 git diff 中没有生成物。
+
 ## 运行方式
+
+统一精度入口会自动发现 `tests/op_cases/*.json`，不维护第二份算子列表：
+
+```bash
+bash tests/operators/run.sh --device 0
+bash tests/operators/run.sh --device 0 --op chunk_bwd_dqkwg --soc ascend910b
+```
 
 ```bash
 python -m pytest tests/operators/<op_name>/accuracy/test_<op_name>.py

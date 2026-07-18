@@ -10,10 +10,12 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-set -e
-cd "$(dirname "$0")"
+set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OP_NAME="${1:-}"
+cd "$SCRIPT_DIR"
 
 usage() {
     echo "Usage: $0 [OP_NAME]"
@@ -22,16 +24,23 @@ usage() {
     exit 1
 }
 
-if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+if [[ "$OP_NAME" == "-h" || "$OP_NAME" == "--help" ]]; then
     usage
 fi
 
-if [[ -n "$OP_NAME" && ! -d "tests/$OP_NAME" ]]; then
-    echo "Error: test directory 'tests/$OP_NAME' not found."
+canonical_test() {
+    echo "$REPO_ROOT/tests/operators/$1/routes/test_fast_kernel_$1.py"
+}
+
+if [[ -n "$OP_NAME" && ! -d "tests/$OP_NAME" && ! -f "$(canonical_test "$OP_NAME")" ]]; then
+    echo "Error: no fast-kernel test is registered for '$OP_NAME'."
     echo "Available operators:"
     for dir in tests/*/; do
         echo "  $(basename "$dir")"
     done
+    while IFS= read -r test_file; do
+        basename "$(dirname "$(dirname "$test_file")")"
+    done < <(find "$REPO_ROOT/tests/operators" -path "*/routes/test_fast_kernel_*.py" -print | sort)
     exit 1
 fi
 
@@ -53,11 +62,19 @@ python3 -m pip install dist/*.whl --force-reinstall --no-deps
 # Run tests
 echo "Running tests..."
 if [[ -n "$OP_NAME" ]]; then
-    pytest "tests/$OP_NAME" -v
+    canonical="$(canonical_test "$OP_NAME")"
+    if [[ -f "$canonical" ]]; then
+        PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}" pytest "$canonical" -v
+    else
+        pytest "tests/$OP_NAME" -v
+    fi
 else
     for dir in tests/*/; do
         test_dir=$(basename "$dir")
         pytest "tests/$test_dir" -v
     done
+    while IFS= read -r test_file; do
+        PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}" pytest "$test_file" -v
+    done < <(find "$REPO_ROOT/tests/operators" -path "*/routes/test_fast_kernel_*.py" -print | sort)
 fi
 echo "execute samples success"

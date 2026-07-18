@@ -50,11 +50,11 @@ torch_custom/fla_npu/torch_npu/
 #gdn cache
 # third_party：CMake FetchContent / ExternalProject 等在线拉取的依赖目录，不纳入仓库（含 catlass）
 /third_party/
-fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/result
+tests/operators/chunk_bwd_dqkwg/accuracy/legacy/outputs
 fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/examples/test_gdn
-fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/ct/viz_result
-fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/OPPROF_*
-fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/extra-info
+tests/operators/chunk_bwd_dqkwg/accuracy/legacy/ct/viz_result
+tests/operators/chunk_bwd_dqkwg/accuracy/legacy/OPPROF_*
+tests/operators/chunk_bwd_dqkwg/accuracy/legacy/extra-info
 PROF_*
 OPPROF_*
 extra-info
@@ -62,6 +62,10 @@ extra-info
 # test artifacts
 torch_custom/fla_npu/test/test_output/
 torch_custom/fla_npu/test/data/
+tests/operators/*/accuracy/outputs/
+tests/operators/*/performance/generated/
+tests/operators/chunk_bwd_dqkwg/accuracy/simulator/outputs/
+tests/operators/chunk_gated_delta_rule_bwd_dhu/accuracy/bwd_dhu_out/
 
 # examples
 examples/fast_kernel_launch_example/.cache

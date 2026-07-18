@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 from tests.operators.causal_conv1d.common.case_matrix import case_ids
 
 
-RUNNER = ROOT / "torch_custom/fla_npu/test/test_npu_causal_conv1d.py"
+RUNNER = ROOT / "tests/operators/causal_conv1d/accuracy/backend.py"
 
 
 @pytest.mark.npu

@@ -15,7 +15,7 @@ from tests.operators._shared.npu_generalization import run_generalization_cases
 
 OP = "chunk_gated_delta_rule_fwd_h"
 ROOT = Path(__file__).resolve().parents[4]
-RUNNER = ROOT / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/tests/pta/test_fwd_h.py"
+RUNNER = ROOT / "tests/operators/chunk_gated_delta_rule_fwd_h/accuracy/backend.py"
 
 
 def test_case_manifest_covers_required_matrix():

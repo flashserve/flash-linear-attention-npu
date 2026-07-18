@@ -83,7 +83,7 @@
         "direct_launch",
         "torch_ops_npu"
       ],
-      "reference": "torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_full.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_full/accuracy/backend.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true,
@@ -134,7 +134,7 @@
         "ascendc",
         "direct_launch"
       ],
-      "reference": "torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_full.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_full/accuracy/backend.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "metric": "msopprof",
@@ -209,7 +209,7 @@
         "aclnn",
         "direct_launch"
       ],
-      "reference": "torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_full.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_full/accuracy/backend.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true,
@@ -355,6 +355,1146 @@
         "message_contains": "chunkSize"
       },
       "seed": 2031
+    },
+    {
+      "id": "legacy_atk_legacy_mislabeled_0000",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 6,
+        "T": 57,
+        "K": 128,
+        "H_v": 6,
+        "V": 128,
+        "C": 64,
+        "N_c": 1
+      },
+      "dtype": {
+        "q": "float16",
+        "k": "float16",
+        "d_o": "float16",
+        "g": "float32",
+        "upper_tri_matrix": "uint8",
+        "g_gamma": "float32",
+        "A": "float16",
+        "cu_seqlens": "int64",
+        "chunk_indices": "int64"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 1.0,
+        "chunk_size": 64,
+        "is_mix": true,
+        "is_fix": false,
+        "qkv_type": "fp16"
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "aclnn"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_full/accuracy/atk/executor_prepare_wy_repr_bwd_full.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2026,
+      "legacy": {
+        "format": "atk-v2.1",
+        "suite": "atk_legacy_mislabeled",
+        "original_id": 0,
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_full/accuracy/atk/executor_prepare_wy_repr_bwd_full.py",
+        "raw": {
+          "id": 0,
+          "default_seed": null,
+          "name": "aclnn.chunk.bwd.dv.local",
+          "aclnn_name": "ChunkBwdDvLocal",
+          "triton_name": null,
+          "kernel_name": null,
+          "version": "v2.1",
+          "expected_error_msg": null,
+          "api": "pytorch",
+          "api_type": "executor_prepare_wy_repr_bwd_full",
+          "aclnn_api_type": "aclnn_function",
+          "triton_api_type": "triton_function",
+          "fusion_api_type": "fusion_function",
+          "fusion_mode": null,
+          "dist_api_type": "dist_function",
+          "kernel_api_type": "kernel_function",
+          "backward": false,
+          "standard": {
+            "acc": "single_bm",
+            "perf": "not_key",
+            "mem": 1.1
+          },
+          "outputs": null,
+          "inputs": [
+            {
+              "name": "q",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp16",
+              "shape": [
+                1,
+                6,
+                57,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "k",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp16",
+              "shape": [
+                1,
+                6,
+                57,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "d_o",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp16",
+              "shape": [
+                1,
+                6,
+                57,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "g",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp32",
+              "shape": [
+                14,
+                14,
+                64
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "upper_tri_matrix",
+              "type": "tensor",
+              "required": true,
+              "dtype": "uint8",
+              "shape": [
+                64,
+                64
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "g_gamma",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp32",
+              "shape": [
+                1,
+                1
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "A",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp16",
+              "shape": [
+                1,
+                2
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "cu_seqlens",
+              "type": "tensor",
+              "required": true,
+              "dtype": "int64",
+              "shape": [
+                27
+              ],
+              "range_values": [
+                1,
+                100
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "chunk_indices",
+              "type": "tensor",
+              "required": true,
+              "dtype": "int64",
+              "shape": [
+                2,
+                2
+              ],
+              "range_values": [
+                1,
+                100
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "scale",
+              "type": "attr",
+              "required": true,
+              "dtype": "float",
+              "shape": null,
+              "range_values": 1.0,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "chunk_size",
+              "type": "attr",
+              "required": true,
+              "dtype": "int",
+              "shape": null,
+              "range_values": 64,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "is_mix",
+              "type": "attr",
+              "required": true,
+              "dtype": "bool",
+              "shape": null,
+              "range_values": true,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "is_fix",
+              "type": "attr",
+              "required": true,
+              "dtype": "bool",
+              "shape": null,
+              "range_values": false,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "qkv_type",
+              "type": "attr",
+              "required": true,
+              "dtype": "string",
+              "shape": null,
+              "range_values": "fp16",
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            }
+          ],
+          "acl_json": "",
+          "method_inputs": null,
+          "tensor_input": null,
+          "compute_times": null,
+          "save_name": null,
+          "uuid": null,
+          "downloaded": false,
+          "is_boundary": false,
+          "xrun_cs_name": null,
+          "xrun_data": null
+        },
+        "migration_note": "Original ATK metadata names a different operator; disabled until repaired."
+      }
+    },
+    {
+      "id": "legacy_atk_legacy_mislabeled_0001",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 18,
+        "H_k": 32,
+        "T": 51,
+        "K": 128,
+        "H_v": 32,
+        "V": 128,
+        "C": 128,
+        "N_c": 1
+      },
+      "dtype": {
+        "q": "bfloat16",
+        "k": "bfloat16",
+        "d_o": "bfloat16",
+        "g": "bfloat16",
+        "upper_tri_matrix": "uint8",
+        "g_gamma": "float32",
+        "A": "bfloat16",
+        "cu_seqlens": "int64",
+        "chunk_indices": "int64"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 1.0,
+        "chunk_size": 128,
+        "is_mix": false,
+        "is_fix": true,
+        "qkv_type": "bf16"
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "aclnn"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_full/accuracy/atk/executor_prepare_wy_repr_bwd_full.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2027,
+      "legacy": {
+        "format": "atk-v2.1",
+        "suite": "atk_legacy_mislabeled",
+        "original_id": 1,
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_full/accuracy/atk/executor_prepare_wy_repr_bwd_full.py",
+        "raw": {
+          "id": 1,
+          "default_seed": null,
+          "name": "aclnn.chunk.bwd.dv.local",
+          "aclnn_name": "ChunkBwdDvLocal",
+          "triton_name": null,
+          "kernel_name": null,
+          "version": "v2.1",
+          "expected_error_msg": null,
+          "api": "pytorch",
+          "api_type": "executor_prepare_wy_repr_bwd_full",
+          "aclnn_api_type": "aclnn_function",
+          "triton_api_type": "triton_function",
+          "fusion_api_type": "fusion_function",
+          "fusion_mode": null,
+          "dist_api_type": "dist_function",
+          "kernel_api_type": "kernel_function",
+          "backward": false,
+          "standard": {
+            "acc": "single_bm",
+            "perf": "not_key",
+            "mem": 1.1
+          },
+          "outputs": null,
+          "inputs": [
+            {
+              "name": "q",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                18,
+                32,
+                51,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "k",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                18,
+                32,
+                51,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "d_o",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                18,
+                32,
+                51,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "g",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                94,
+                15,
+                35
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "upper_tri_matrix",
+              "type": "tensor",
+              "required": true,
+              "dtype": "uint8",
+              "shape": [
+                128,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "g_gamma",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp32",
+              "shape": [
+                2,
+                2
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "A",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                1,
+                2
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "cu_seqlens",
+              "type": "tensor",
+              "required": true,
+              "dtype": "int64",
+              "shape": [
+                57
+              ],
+              "range_values": [
+                1,
+                100
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "chunk_indices",
+              "type": "tensor",
+              "required": true,
+              "dtype": "int64",
+              "shape": [
+                23,
+                53
+              ],
+              "range_values": [
+                1,
+                100
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "scale",
+              "type": "attr",
+              "required": true,
+              "dtype": "float",
+              "shape": null,
+              "range_values": 1.0,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "chunk_size",
+              "type": "attr",
+              "required": true,
+              "dtype": "int",
+              "shape": null,
+              "range_values": 128,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "is_mix",
+              "type": "attr",
+              "required": true,
+              "dtype": "bool",
+              "shape": null,
+              "range_values": false,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "is_fix",
+              "type": "attr",
+              "required": true,
+              "dtype": "bool",
+              "shape": null,
+              "range_values": true,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "qkv_type",
+              "type": "attr",
+              "required": true,
+              "dtype": "string",
+              "shape": null,
+              "range_values": "bf16",
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            }
+          ],
+          "acl_json": "",
+          "method_inputs": null,
+          "tensor_input": null,
+          "compute_times": null,
+          "save_name": null,
+          "uuid": null,
+          "downloaded": false,
+          "is_boundary": false,
+          "xrun_cs_name": null,
+          "xrun_data": null
+        },
+        "migration_note": "Original ATK metadata names a different operator; disabled until repaired."
+      }
+    },
+    {
+      "id": "legacy_direct_varlen_t65536_l64",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 65536,
+        "K": 128,
+        "V": 128,
+        "C": 64
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "count",
+          "count": 64
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_full/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 10000,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "varlen_t65536_l64",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_full/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 1,
+          "H_k": 32,
+          "H_v": 32,
+          "T": 65536,
+          "K": 128,
+          "V": 128,
+          "C": 64,
+          "cu_seqlens_count": 64
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0000",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_full/routes/test_fast_kernel_prepare_wy_repr_bwd_full.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2026,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0000",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_full/routes/test_fast_kernel_prepare_wy_repr_bwd_full.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "k_dtype",
+            "beta_dtype"
+          ],
+          "values": [
+            1,
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            "float16",
+            "float16"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0001",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 129,
+        "K": 128,
+        "V": 128,
+        "C": 128,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_full/routes/test_fast_kernel_prepare_wy_repr_bwd_full.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2027,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0001",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_full/routes/test_fast_kernel_prepare_wy_repr_bwd_full.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "k_dtype",
+            "beta_dtype"
+          ],
+          "values": [
+            1,
+            2,
+            2,
+            129,
+            128,
+            128,
+            128,
+            "float16",
+            "float32"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0002",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_full/routes/test_fast_kernel_prepare_wy_repr_bwd_full.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2028,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0002",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_full/routes/test_fast_kernel_prepare_wy_repr_bwd_full.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "k_dtype",
+            "beta_dtype"
+          ],
+          "values": [
+            1,
+            2,
+            4,
+            65,
+            128,
+            128,
+            64,
+            "float16",
+            "float16"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0003",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 1,
+        "H_v": 4,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_full/routes/test_fast_kernel_prepare_wy_repr_bwd_full.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2029,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0003",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_full/routes/test_fast_kernel_prepare_wy_repr_bwd_full.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "k_dtype",
+            "beta_dtype"
+          ],
+          "values": [
+            1,
+            1,
+            4,
+            65,
+            128,
+            128,
+            64,
+            "float16",
+            "float16"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0004",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_full/routes/test_fast_kernel_prepare_wy_repr_bwd_full.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2030,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0004",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_full/routes/test_fast_kernel_prepare_wy_repr_bwd_full.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "k_dtype",
+            "beta_dtype"
+          ],
+          "values": [
+            1,
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            "bfloat16",
+            "float32"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_variable_0000",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 256,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": "generated",
+        "chunk_indices": "generated"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_full/routes/test_fast_kernel_prepare_wy_repr_bwd_full.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2026,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "variable_0000",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_full/routes/test_fast_kernel_prepare_wy_repr_bwd_full.py",
+        "raw": {
+          "group": "variable",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "k_dtype",
+            "beta_dtype"
+          ],
+          "values": [
+            1,
+            2,
+            2,
+            65,
+            128,
+            256,
+            64,
+            "float16",
+            "float16"
+          ]
+        }
+      }
     }
   ],
   "data_generation": {
@@ -409,6 +1549,17 @@
     ],
     "performance_case_ids": [
       "dense_bf16_c128_v256_tail"
+    ],
+    "legacy_regression_case_ids": [
+      "legacy_atk_legacy_mislabeled_0000",
+      "legacy_atk_legacy_mislabeled_0001",
+      "legacy_direct_varlen_t65536_l64",
+      "legacy_fast_kernel_fixed_0000",
+      "legacy_fast_kernel_fixed_0001",
+      "legacy_fast_kernel_fixed_0002",
+      "legacy_fast_kernel_fixed_0003",
+      "legacy_fast_kernel_fixed_0004",
+      "legacy_fast_kernel_variable_0000"
     ]
   }
 }

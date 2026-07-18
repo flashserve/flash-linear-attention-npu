@@ -93,6 +93,12 @@
     ],
     "performance_case_ids": [
       "chunk_kda_fwd_performance"
+    ],
+    "legacy_regression_case_ids": [
+      "legacy_chunk128_backend_0000",
+      "legacy_chunk128_backend_0001",
+      "legacy_chunk128_backend_0002",
+      "legacy_model_shape_0000"
     ]
   },
   "tolerance": {
@@ -587,6 +593,267 @@
         "ascend950"
       ],
       "seed": 2033
+    },
+    {
+      "id": "legacy_chunk128_backend_0000",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 1,
+        "H_v": 2,
+        "T": 256,
+        "K": 128,
+        "V": 128,
+        "C": 128,
+        "N_c": 2
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "gk_beta_state": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/_shared/chunk_kda_backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2026,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "chunk128_backend",
+        "original_id": "case_00",
+        "enabled": true,
+        "asset": "tests/operators/_shared/chunk_kda_backend.py",
+        "raw": {
+          "values": [
+            "bfloat16",
+            256,
+            128
+          ],
+          "param_names": [
+            "dtype",
+            "T",
+            "V"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_chunk128_backend_0001",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 1,
+        "H_v": 2,
+        "T": 196,
+        "K": 128,
+        "V": 128,
+        "C": 128,
+        "N_c": 2
+      },
+      "dtype": {
+        "q_k_v": "float16",
+        "gk_beta_state": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/_shared/chunk_kda_backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2027,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "chunk128_backend",
+        "original_id": "case_01",
+        "enabled": true,
+        "asset": "tests/operators/_shared/chunk_kda_backend.py",
+        "raw": {
+          "values": [
+            "float16",
+            196,
+            128
+          ],
+          "param_names": [
+            "dtype",
+            "T",
+            "V"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_chunk128_backend_0002",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 1,
+        "H_v": 2,
+        "T": 257,
+        "K": 128,
+        "V": 256,
+        "C": 128,
+        "N_c": 3
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "gk_beta_state": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/_shared/chunk_kda_backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2028,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "chunk128_backend",
+        "original_id": "case_02",
+        "enabled": true,
+        "asset": "tests/operators/_shared/chunk_kda_backend.py",
+        "raw": {
+          "values": [
+            "bfloat16",
+            257,
+            256
+          ],
+          "param_names": [
+            "dtype",
+            "T",
+            "V"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_model_shape_0000",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 131072,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2048
+      },
+      "dtype": {
+        "q_k_v": "float16",
+        "gk_beta_state": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          31739,
+          55973,
+          78732,
+          97530,
+          115345,
+          130191,
+          131071,
+          131072
+        ],
+        "chunk_indices": "derived"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/_shared/chunk_kda_backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 20260711,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "model_shape",
+        "original_id": "model_shape_131072",
+        "enabled": true,
+        "asset": "tests/operators/_shared/chunk_kda_backend.py",
+        "raw": {
+          "config": {
+            "t": 131072,
+            "h": 2,
+            "hv": 2,
+            "kdim": 128,
+            "vdim": 128,
+            "chunk_size": 64,
+            "cu_seqlens": [
+              0,
+              31739,
+              55973,
+              78732,
+              97530,
+              115345,
+              130191,
+              131071,
+              131072
+            ],
+            "safe_gate": true,
+            "lower_bound": -5.0,
+            "seed": 20260711
+          }
+        }
+      }
     }
   ]
 }

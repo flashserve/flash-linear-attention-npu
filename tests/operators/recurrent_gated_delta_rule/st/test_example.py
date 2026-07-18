@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 from tests.operators.recurrent_gated_delta_rule.common.case_matrix import case_ids
 
 
-RUNNER = ROOT / "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/tests/pta/test_accuracy.py"
+RUNNER = ROOT / "tests/operators/recurrent_gated_delta_rule/accuracy/backend.py"
 
 
 @pytest.mark.npu

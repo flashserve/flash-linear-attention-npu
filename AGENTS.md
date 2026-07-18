@@ -84,6 +84,7 @@ ctypes 算子如果会通过 data pointer 修改输入 tensor，必须在公共 
 - [ ] Triton 算子的 Python wrapper、Triton kernel、grid/config、launch 和 `fla_npu.ops.triton` 导出已同步。
 - [ ] 如实现可选 `torch.ops.npu`，相关 YAML、生成入口和 `fla_npu.load_legacy_torch_ops()` 显式加载路径已同步。
 - [ ] 用例设计已归一到 `tests/op_cases/<op_name>.json`，执行代码已归档到 `tests/operators/<op_name>/`；脚本中没有散落未登记的关键用例。
+- [ ] 算子源码目录中没有残留 test/、tests/、ATK/，example/torch_custom 中没有主线算子的第二份用例目录；历史 JSON/Python case 表已合并到唯一 manifest，旧 case 文件已删除。
 - [ ] 实现类型对应的 `fla_npu` 入口覆盖主精度、泛化、边界、功能分支和回归矩阵；Ascend C 算子另有 aclnn、`<<<>>>` 通路测试，可选 legacy 入口实现时另有通路测试。
 - [ ] 当前算子的 `README.md`、`docs/design.md`、统一 `docs/api.md`、示例和 CI case 已同步；未新增独立 `aclnn<OpName>.md`。
 - [ ] 新增算子文档基于 `docs/templates/operator/`，Shape 固定取值写入“已知限制”，只有 README 维护 Shape 变量附录，设计和 API 文档链接该附录。
@@ -153,12 +154,11 @@ python scripts/check_packaged_wheel_api.py
 以下是历史 GDN 回归入口：
 
 ```sh
-cd torch_custom/fla_npu/test
-bash test.sh --device 0
-bash test.sh --device 0 --op causal_conv1d
+bash tests/operators/run.sh --device 0
+bash tests/operators/run.sh --device 0 --op causal_conv1d
 ```
 
-`test.sh` 只覆盖已接入脚本的历史 GDN 算子，不能作为新增用例的设计来源。新增算子及历史算子新增的测试用例必须写入 `tests/op_cases/<op_name>.json`，并按 `tests/operators/<op_name>/README.md` 中的命令执行。
+该入口读取全部 `tests/op_cases/*.json`，不维护第二份算子清单。新增算子及历史算子新增的测试用例必须写入 `tests/op_cases/<op_name>.json`，并按 `tests/operators/<op_name>/README.md` 中的命令执行。
 
 端到端 Example/ST：
 

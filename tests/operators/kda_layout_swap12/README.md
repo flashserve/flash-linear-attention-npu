@@ -20,11 +20,21 @@
 
 - legacy 通路：未实现，不生成 `torch.ops.npu` 测试。
 
-现有数值/reference 后端：`torch_custom/fla_npu/test/test_npu_chunk_kda.py`。该后端由 canonical 入口传入
+现有数值/reference 后端：`tests/operators/_shared/chunk_kda_backend.py`。该后端由 canonical 入口传入
 `FLA_NPU_CASE_MANIFEST`、`FLA_NPU_CASE_IDS` 和 `FLA_NPU_OPERATOR`；关键 shape、dtype、属性组合不在
 canonical 脚本中重复定义。
 
-## 3. 执行命令
+## 3. 历史资产迁移
+
+torch_custom 适配工程中原有的布局测试矩阵已迁入本目录，非标准目录已删除。case 数据只保留在唯一 manifest；共享执行器从 JSON 按 case ID 加载，不再维护第二份 shape 表。
+
+| 迁移集合 | 数量 | 唯一规格 |
+| --- | ---: | --- |
+| layout_backend | 3 | tests/op_cases/kda_layout_swap12.json |
+
+使用 python3 -m tests.operators._shared.legacy_cases list --op kda_layout_swap12 可列出迁移 case。
+
+## 4. 执行命令
 
 ```bash
 pytest -q tests/operators/kda_layout_swap12/accuracy/test_kda_layout_swap12.py

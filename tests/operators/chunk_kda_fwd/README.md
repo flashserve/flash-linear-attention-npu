@@ -20,11 +20,22 @@
 
 - legacy 通路：`torch.ops.npu.npu_chunk_kda_fwd`，由主 route case 验证显式加载。
 
-现有数值/reference 后端：`torch_custom/fla_npu/test/test_npu_chunk_kda.py`。该后端由 canonical 入口传入
+现有数值/reference 后端：`tests/operators/_shared/chunk_kda_backend.py`。该后端由 canonical 入口传入
 `FLA_NPU_CASE_MANIFEST`、`FLA_NPU_CASE_IDS` 和 `FLA_NPU_OPERATOR`；关键 shape、dtype、属性组合不在
 canonical 脚本中重复定义。
 
-## 3. 执行命令
+## 3. 历史资产迁移
+
+torch_custom 适配工程中原有的主线测试矩阵和诊断脚本已迁入本目录，非标准目录已删除。case 数据只保留在唯一 manifest；共享执行器从 JSON 按 case ID 加载，不再维护第二份 shape 表。
+
+| 迁移集合 | 数量 | 唯一规格 |
+| --- | ---: | --- |
+| chunk128_backend | 3 | tests/op_cases/chunk_kda_fwd.json |
+| model_shape | 1 | tests/op_cases/chunk_kda_fwd.json |
+
+使用 python3 -m tests.operators._shared.legacy_cases list --op chunk_kda_fwd 可列出迁移 case。
+
+## 4. 执行命令
 
 ```bash
 pytest -q tests/operators/chunk_kda_fwd/accuracy/test_chunk_kda_fwd.py

@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 from tests.operators.solve_tri.common.case_matrix import case_ids
 
 
-RUNNER = ROOT / "torch_custom/fla_npu/test/test_npu_solve_tri_ascend950.py"
+RUNNER = ROOT / "tests/operators/solve_tri/accuracy/backend.py"
 
 
 @pytest.mark.npu

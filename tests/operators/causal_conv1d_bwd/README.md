@@ -20,11 +20,21 @@
 
 - legacy 通路：`torch.ops.npu.npu_causal_conv1d_bwd`，由主 route case 验证显式加载。
 
-现有数值/reference 后端：`torch_custom/fla_npu/test/test_npu_causal_conv1d_bwd.py`。该后端由 canonical 入口传入
+现有数值/reference 后端：`tests/operators/causal_conv1d_bwd/accuracy/backend.py`。该后端由 canonical 入口传入
 `FLA_NPU_CASE_MANIFEST`、`FLA_NPU_CASE_IDS` 和 `FLA_NPU_OPERATOR`；关键 shape、dtype、属性组合不在
 canonical 脚本中重复定义。
 
-## 3. 执行命令
+## 3. 历史资产迁移
+
+算子源码目录以及 example/torch_custom 适配工程中原有的主线测试资产已迁入本目录，非标准目录已删除。case 数据只保留在唯一 manifest；脚本、reference、ATK executor、direct-launch harness、性能工具和 C++ UT 按职责归档，不再维护第二份 shape 表。
+
+| 迁移集合 | 数量 | 唯一规格 |
+| --- | ---: | --- |
+| atk_regression | 150 | tests/op_cases/causal_conv1d_bwd.json |
+
+使用 python3 -m tests.operators._shared.legacy_cases list --op causal_conv1d_bwd 可列出迁移 case。ATK 需要旧格式 JSON 时，用同一工具的 materialize 子命令生成临时文件。
+
+## 4. 执行命令
 
 ```bash
 pytest -q tests/operators/causal_conv1d_bwd/accuracy/test_causal_conv1d_bwd.py

@@ -83,6 +83,13 @@
     ],
     "performance_case_ids": [
       "chunk_local_cumsum_performance"
+    ],
+    "legacy_regression_case_ids": [
+      "legacy_direct_fixed_forward_tail1",
+      "legacy_direct_fixed_reverse_scale_tail1",
+      "legacy_direct_fixed_forward_4d",
+      "legacy_direct_varlen_forward_4d",
+      "legacy_direct_varlen_reverse_scale_4d"
     ]
   },
   "tolerance": {
@@ -612,6 +619,326 @@
         "ascend950"
       ],
       "seed": 2035
+    },
+    {
+      "id": "legacy_direct_fixed_forward_tail1",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 9,
+        "H_v": 2,
+        "T": 128,
+        "D": 1,
+        "C": 64
+      },
+      "dtype": {
+        "g": "float32",
+        "output": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "reverse": false,
+        "scale": 1.0,
+        "head_first": true,
+        "output_dtype": "float32"
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices_out": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_local_cumsum/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 7000,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "fixed_forward_tail1",
+        "enabled": true,
+        "asset": "tests/operators/chunk_local_cumsum/accuracy/legacy_direct.py",
+        "raw": {
+          "shape": [
+            9,
+            2,
+            128
+          ],
+          "chunk_size": 64
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_fixed_reverse_scale_tail1",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 9,
+        "H_v": 2,
+        "T": 128,
+        "D": 1,
+        "C": 64
+      },
+      "dtype": {
+        "g": "float32",
+        "output": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "reverse": true,
+        "scale": 0.25,
+        "head_first": true,
+        "output_dtype": "float32"
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices_out": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_local_cumsum/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 7001,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "fixed_reverse_scale_tail1",
+        "enabled": true,
+        "asset": "tests/operators/chunk_local_cumsum/accuracy/legacy_direct.py",
+        "raw": {
+          "shape": [
+            9,
+            2,
+            128
+          ],
+          "chunk_size": 64,
+          "reverse": true,
+          "scale": 0.25
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_fixed_forward_4d",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_v": 3,
+        "T": 129,
+        "D": 8,
+        "C": 64
+      },
+      "dtype": {
+        "g": "float32",
+        "output": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "reverse": false,
+        "scale": 1.0,
+        "head_first": true,
+        "output_dtype": "float32"
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices_out": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_local_cumsum/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 7002,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "fixed_forward_4d",
+        "enabled": true,
+        "asset": "tests/operators/chunk_local_cumsum/accuracy/legacy_direct.py",
+        "raw": {
+          "shape": [
+            2,
+            3,
+            129,
+            8
+          ],
+          "chunk_size": 64
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_varlen_forward_4d",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_v": 8,
+        "T": 3580,
+        "D": 8,
+        "C": 64
+      },
+      "dtype": {
+        "g": "float32",
+        "output": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "reverse": false,
+        "scale": 1.0,
+        "head_first": true,
+        "output_dtype": "float32"
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          3580
+        ],
+        "chunk_indices_out": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_local_cumsum/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 7003,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "varlen_forward_4d",
+        "enabled": true,
+        "asset": "tests/operators/chunk_local_cumsum/accuracy/legacy_direct.py",
+        "raw": {
+          "shape": [
+            1,
+            8,
+            3580,
+            8
+          ],
+          "chunk_size": 64,
+          "cu_seqlens_values": [
+            0,
+            3580
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_varlen_reverse_scale_4d",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_v": 8,
+        "T": 3580,
+        "D": 8,
+        "C": 64
+      },
+      "dtype": {
+        "g": "float32",
+        "output": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "reverse": true,
+        "scale": -0.5,
+        "head_first": true,
+        "output_dtype": "float32"
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          1024,
+          2048,
+          3580
+        ],
+        "chunk_indices_out": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_local_cumsum/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 7004,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "varlen_reverse_scale_4d",
+        "enabled": true,
+        "asset": "tests/operators/chunk_local_cumsum/accuracy/legacy_direct.py",
+        "raw": {
+          "shape": [
+            1,
+            8,
+            3580,
+            8
+          ],
+          "chunk_size": 64,
+          "reverse": true,
+          "scale": -0.5,
+          "cu_seqlens_values": [
+            0,
+            1024,
+            2048,
+            3580
+          ]
+        }
+      }
     }
   ]
 }

@@ -15,7 +15,7 @@ from tests.operators._shared.npu_generalization import run_generalization_cases
 
 OP = "chunk_scaled_dot_kkt"
 ROOT = Path(__file__).resolve().parents[4]
-RUNNER = ROOT / "torch_custom/fla_npu/test/test_npu_chunk_scaled_dot_kkt.py"
+RUNNER = ROOT / "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py"
 
 
 def test_case_manifest_covers_required_matrix():

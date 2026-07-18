@@ -81,6 +81,21 @@
     ],
     "performance_case_ids": [
       "chunk_scaled_dot_kkt_performance"
+    ],
+    "legacy_regression_case_ids": [
+      "legacy_python_backend_cases_0000",
+      "legacy_python_backend_cases_0001",
+      "legacy_python_backend_cases_0002",
+      "legacy_python_backend_cases_0003",
+      "legacy_python_backend_cases_0004",
+      "legacy_python_backend_cases_0005",
+      "legacy_python_backend_cases_0006",
+      "legacy_python_backend_cases_0007",
+      "legacy_python_backend_cases_0008",
+      "legacy_python_backend_cases_0009",
+      "legacy_python_backend_cases_0010",
+      "legacy_python_backend_cases_0011",
+      "legacy_python_backend_cases_0012"
     ]
   },
   "tolerance": {
@@ -450,6 +465,864 @@
         "ascend950"
       ],
       "seed": 2032
+    },
+    {
+      "id": "legacy_python_backend_cases_0000",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 1,
+        "H_v": 1,
+        "T": 1,
+        "K": 8,
+        "C": 16,
+        "N_c": 1
+      },
+      "dtype": {
+        "k": "float16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 16
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2026,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "python_backend_cases",
+        "original_id": "case_00",
+        "enabled": true,
+        "asset": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+        "raw": {
+          "values": [
+            1,
+            1,
+            1,
+            1,
+            8,
+            16,
+            "float16"
+          ],
+          "param_names": [
+            "B",
+            "Hk",
+            "Hv",
+            "T",
+            "K",
+            "BT",
+            "dtype"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_python_backend_cases_0001",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 17,
+        "K": 8,
+        "C": 16,
+        "N_c": 2
+      },
+      "dtype": {
+        "k": "float16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 16
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2027,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "python_backend_cases",
+        "original_id": "case_01",
+        "enabled": true,
+        "asset": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+        "raw": {
+          "values": [
+            1,
+            2,
+            2,
+            17,
+            8,
+            16,
+            "float16"
+          ],
+          "param_names": [
+            "B",
+            "Hk",
+            "Hv",
+            "T",
+            "K",
+            "BT",
+            "dtype"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_python_backend_cases_0002",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 3,
+        "H_v": 3,
+        "T": 64,
+        "K": 16,
+        "C": 16,
+        "N_c": 4
+      },
+      "dtype": {
+        "k": "float16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 16
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2028,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "python_backend_cases",
+        "original_id": "case_02",
+        "enabled": true,
+        "asset": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+        "raw": {
+          "values": [
+            2,
+            3,
+            3,
+            64,
+            16,
+            16,
+            "float16"
+          ],
+          "param_names": [
+            "B",
+            "Hk",
+            "Hv",
+            "T",
+            "K",
+            "BT",
+            "dtype"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_python_backend_cases_0003",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 96,
+        "K": 32,
+        "C": 32,
+        "N_c": 3
+      },
+      "dtype": {
+        "k": "float16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 32
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2029,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "python_backend_cases",
+        "original_id": "case_03",
+        "enabled": true,
+        "asset": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+        "raw": {
+          "values": [
+            1,
+            2,
+            2,
+            96,
+            32,
+            32,
+            "float16"
+          ],
+          "param_names": [
+            "B",
+            "Hk",
+            "Hv",
+            "T",
+            "K",
+            "BT",
+            "dtype"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_python_backend_cases_0004",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 4,
+        "H_v": 4,
+        "T": 128,
+        "K": 64,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "k": "float16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2030,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "python_backend_cases",
+        "original_id": "case_04",
+        "enabled": true,
+        "asset": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+        "raw": {
+          "values": [
+            2,
+            4,
+            4,
+            128,
+            64,
+            64,
+            "float16"
+          ],
+          "param_names": [
+            "B",
+            "Hk",
+            "Hv",
+            "T",
+            "K",
+            "BT",
+            "dtype"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_python_backend_cases_0005",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 160,
+        "K": 32,
+        "C": 128,
+        "N_c": 2
+      },
+      "dtype": {
+        "k": "float16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2031,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "python_backend_cases",
+        "original_id": "case_05",
+        "enabled": true,
+        "asset": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+        "raw": {
+          "values": [
+            1,
+            2,
+            2,
+            160,
+            32,
+            128,
+            "float16"
+          ],
+          "param_names": [
+            "B",
+            "Hk",
+            "Hv",
+            "T",
+            "K",
+            "BT",
+            "dtype"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_python_backend_cases_0006",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 33,
+        "K": 16,
+        "C": 16,
+        "N_c": 3
+      },
+      "dtype": {
+        "k": "float16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 16
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2032,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "python_backend_cases",
+        "original_id": "case_06",
+        "enabled": true,
+        "asset": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+        "raw": {
+          "values": [
+            1,
+            2,
+            4,
+            33,
+            16,
+            16,
+            "float16"
+          ],
+          "param_names": [
+            "B",
+            "Hk",
+            "Hv",
+            "T",
+            "K",
+            "BT",
+            "dtype"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_python_backend_cases_0007",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 3,
+        "H_v": 6,
+        "T": 64,
+        "K": 16,
+        "C": 16,
+        "N_c": 4
+      },
+      "dtype": {
+        "k": "float16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 16
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2033,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "python_backend_cases",
+        "original_id": "case_07",
+        "enabled": true,
+        "asset": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+        "raw": {
+          "values": [
+            2,
+            3,
+            6,
+            64,
+            16,
+            16,
+            "float16"
+          ],
+          "param_names": [
+            "B",
+            "Hk",
+            "Hv",
+            "T",
+            "K",
+            "BT",
+            "dtype"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_python_backend_cases_0008",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 17,
+        "K": 8,
+        "C": 16,
+        "N_c": 2
+      },
+      "dtype": {
+        "k": "bfloat16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 16
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2034,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "python_backend_cases",
+        "original_id": "case_08",
+        "enabled": true,
+        "asset": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+        "raw": {
+          "values": [
+            1,
+            2,
+            2,
+            17,
+            8,
+            16,
+            "bfloat16"
+          ],
+          "param_names": [
+            "B",
+            "Hk",
+            "Hv",
+            "T",
+            "K",
+            "BT",
+            "dtype"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_python_backend_cases_0009",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 3,
+        "H_v": 3,
+        "T": 64,
+        "K": 16,
+        "C": 16,
+        "N_c": 4
+      },
+      "dtype": {
+        "k": "bfloat16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 16
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2035,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "python_backend_cases",
+        "original_id": "case_09",
+        "enabled": true,
+        "asset": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+        "raw": {
+          "values": [
+            2,
+            3,
+            3,
+            64,
+            16,
+            16,
+            "bfloat16"
+          ],
+          "param_names": [
+            "B",
+            "Hk",
+            "Hv",
+            "T",
+            "K",
+            "BT",
+            "dtype"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_python_backend_cases_0010",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 96,
+        "K": 32,
+        "C": 32,
+        "N_c": 3
+      },
+      "dtype": {
+        "k": "bfloat16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 32
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2036,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "python_backend_cases",
+        "original_id": "case_10",
+        "enabled": true,
+        "asset": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+        "raw": {
+          "values": [
+            1,
+            2,
+            2,
+            96,
+            32,
+            32,
+            "bfloat16"
+          ],
+          "param_names": [
+            "B",
+            "Hk",
+            "Hv",
+            "T",
+            "K",
+            "BT",
+            "dtype"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_python_backend_cases_0011",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 4,
+        "H_v": 4,
+        "T": 128,
+        "K": 64,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "k": "bfloat16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2037,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "python_backend_cases",
+        "original_id": "case_11",
+        "enabled": true,
+        "asset": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+        "raw": {
+          "values": [
+            2,
+            4,
+            4,
+            128,
+            64,
+            64,
+            "bfloat16"
+          ],
+          "param_names": [
+            "B",
+            "Hk",
+            "Hv",
+            "T",
+            "K",
+            "BT",
+            "dtype"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_python_backend_cases_0012",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 96,
+        "K": 32,
+        "C": 32,
+        "N_c": 3
+      },
+      "dtype": {
+        "k": "bfloat16",
+        "g_beta_A": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 32
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2038,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "python_backend_cases",
+        "original_id": "case_12",
+        "enabled": true,
+        "asset": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
+        "raw": {
+          "values": [
+            1,
+            2,
+            4,
+            96,
+            32,
+            32,
+            "bfloat16"
+          ],
+          "param_names": [
+            "B",
+            "Hk",
+            "Hv",
+            "T",
+            "K",
+            "BT",
+            "dtype"
+          ]
+        }
+      }
     }
   ]
 }

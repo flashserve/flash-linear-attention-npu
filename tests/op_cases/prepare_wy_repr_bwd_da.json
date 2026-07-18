@@ -83,7 +83,7 @@
         "direct_launch",
         "torch_ops_npu"
       ],
-      "reference": "torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/backend.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true,
@@ -131,7 +131,7 @@
         "ascendc",
         "direct_launch"
       ],
-      "reference": "torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/backend.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "metric": "msopprof",
@@ -198,7 +198,7 @@
         "aclnn",
         "direct_launch"
       ],
-      "reference": "torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/backend.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true,
@@ -298,6 +298,3172 @@
         "message_contains": "chunkSize"
       },
       "seed": 2030
+    },
+    {
+      "id": "legacy_source_fix_hk_eq_hv_1",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3000,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "fix_hk_eq_hv_1",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "fix_hk_eq_hv_1",
+          "description": "Fix length (HK == HV): HK=query_head=2 HV=value_head=2 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16",
+          "enabled": true,
+          "B": 1,
+          "query_head": 2,
+          "value_head": 2,
+          "T": 128,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "fp16",
+          "gtype": "fp16",
+          "varlen": false
+        }
+      }
+    },
+    {
+      "id": "legacy_source_fix_hk_eq_hv_2",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 4,
+        "H_v": 4,
+        "T": 256,
+        "K": 128,
+        "V": 128,
+        "C": 128,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3001,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "fix_hk_eq_hv_2",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "fix_hk_eq_hv_2",
+          "description": "Fix length (HK == HV): HK=query_head=4 HV=value_head=4 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16",
+          "enabled": true,
+          "B": 2,
+          "query_head": 4,
+          "value_head": 4,
+          "T": 256,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 128,
+          "dtype": "bf16",
+          "gtype": "bf16",
+          "varlen": false
+        }
+      }
+    },
+    {
+      "id": "legacy_source_fix_hk_eq_hv_3",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 4,
+        "H_k": 8,
+        "H_v": 8,
+        "T": 512,
+        "K": 128,
+        "V": 256,
+        "C": 64,
+        "N_c": 8
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3002,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "fix_hk_eq_hv_3",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "fix_hk_eq_hv_3",
+          "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=256 ktype=dtype=fp16",
+          "enabled": true,
+          "B": 4,
+          "query_head": 8,
+          "value_head": 8,
+          "T": 512,
+          "Kdim": 128,
+          "Vdim": 256,
+          "chunk_size": 64,
+          "dtype": "fp16",
+          "gtype": "fp32",
+          "varlen": false
+        }
+      }
+    },
+    {
+      "id": "legacy_source_fix_hk_eq_hv_4",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 8,
+        "H_k": 16,
+        "H_v": 16,
+        "T": 1024,
+        "K": 128,
+        "V": 256,
+        "C": 128,
+        "N_c": 8
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3003,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "fix_hk_eq_hv_4",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "fix_hk_eq_hv_4",
+          "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=256 ktype=dtype=bf16",
+          "enabled": true,
+          "B": 8,
+          "query_head": 16,
+          "value_head": 16,
+          "T": 1024,
+          "Kdim": 128,
+          "Vdim": 256,
+          "chunk_size": 128,
+          "dtype": "bf16",
+          "gtype": "fp32",
+          "varlen": false
+        }
+      }
+    },
+    {
+      "id": "legacy_source_fix_hk_eq_hv_5",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 2048,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 32
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3004,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "fix_hk_eq_hv_5",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "fix_hk_eq_hv_5",
+          "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16",
+          "enabled": true,
+          "B": 1,
+          "query_head": 32,
+          "value_head": 32,
+          "T": 2048,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "fp16",
+          "gtype": "fp32",
+          "varlen": false
+        }
+      }
+    },
+    {
+      "id": "legacy_source_var_hk_eq_hv_1",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 4,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 2
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3005,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "var_hk_eq_hv_1",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "var_hk_eq_hv_1",
+          "description": "Variable length (HK == HV): HK=query_head=4 HV=value_head=4 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=2 ktype=dtype=fp16",
+          "enabled": true,
+          "B": 1,
+          "query_head": 4,
+          "value_head": 4,
+          "T": 128,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "mean_len": 2,
+          "dtype": "fp16",
+          "gtype": "fp16",
+          "varlen": true
+        }
+      }
+    },
+    {
+      "id": "legacy_source_var_hk_eq_hv_2",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 8,
+        "H_v": 8,
+        "T": 256,
+        "K": 128,
+        "V": 128,
+        "C": 128,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 3
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3006,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "var_hk_eq_hv_2",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "var_hk_eq_hv_2",
+          "description": "Variable length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=3 ktype=dtype=bf16",
+          "enabled": true,
+          "B": 1,
+          "query_head": 8,
+          "value_head": 8,
+          "T": 256,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 128,
+          "mean_len": 3,
+          "dtype": "bf16",
+          "gtype": "bf16",
+          "varlen": true
+        }
+      }
+    },
+    {
+      "id": "legacy_source_var_hk_eq_hv_3",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 16,
+        "H_v": 16,
+        "T": 512,
+        "K": 128,
+        "V": 256,
+        "C": 64,
+        "N_c": 8
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 4
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3007,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "var_hk_eq_hv_3",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "var_hk_eq_hv_3",
+          "description": "Variable length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=4 ktype=dtype=fp16",
+          "enabled": true,
+          "B": 1,
+          "query_head": 16,
+          "value_head": 16,
+          "T": 512,
+          "Kdim": 128,
+          "Vdim": 256,
+          "chunk_size": 64,
+          "mean_len": 4,
+          "dtype": "fp16",
+          "gtype": "fp32",
+          "varlen": true
+        }
+      }
+    },
+    {
+      "id": "legacy_source_var_hk_eq_hv_4",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 1024,
+        "K": 128,
+        "V": 256,
+        "C": 128,
+        "N_c": 8
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 5
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3008,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "var_hk_eq_hv_4",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "var_hk_eq_hv_4",
+          "description": "Variable length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=5 ktype=dtype=bf16",
+          "enabled": true,
+          "B": 1,
+          "query_head": 32,
+          "value_head": 32,
+          "T": 1024,
+          "Kdim": 128,
+          "Vdim": 256,
+          "chunk_size": 128,
+          "mean_len": 5,
+          "dtype": "bf16",
+          "gtype": "fp32",
+          "varlen": true
+        }
+      }
+    },
+    {
+      "id": "legacy_source_var_hk_eq_hv_5",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 2048,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 32
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 16
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3009,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "var_hk_eq_hv_5",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "var_hk_eq_hv_5",
+          "description": "Variable length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=16 ktype=dtype=bf16",
+          "enabled": true,
+          "B": 1,
+          "query_head": 32,
+          "value_head": 32,
+          "T": 2048,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "mean_len": 16,
+          "dtype": "bf16",
+          "gtype": "fp32",
+          "varlen": true
+        }
+      }
+    },
+    {
+      "id": "legacy_source_gva_fix_1",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 16,
+        "H_v": 32,
+        "T": 4096,
+        "K": 128,
+        "V": 256,
+        "C": 64,
+        "N_c": 64
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3010,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "gva_fix_1",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "gva_fix_1",
+          "description": "GVA fix length: HK=query_head=16 HV=value_head=32 K=Kdim=128 V=Vdim=256 ktype=dtype=fp16",
+          "enabled": false,
+          "B": 1,
+          "query_head": 16,
+          "value_head": 32,
+          "T": 4096,
+          "Kdim": 128,
+          "Vdim": 256,
+          "chunk_size": 64,
+          "dtype": "fp16",
+          "gtype": "fp32",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待 GVA 大规模矩阵确认资源预算、执行稳定性和精度后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_gva_fix_2",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 16,
+        "H_k": 21,
+        "H_v": 63,
+        "T": 2048,
+        "K": 128,
+        "V": 256,
+        "C": 64,
+        "N_c": 32
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3011,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "gva_fix_2",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "gva_fix_2",
+          "description": "GVA fix length: HK=query_head=21 HV=value_head=63 K=Kdim=128 V=Vdim=256 ktype=dtype=bf16",
+          "enabled": false,
+          "B": 16,
+          "query_head": 21,
+          "value_head": 63,
+          "T": 2048,
+          "Kdim": 128,
+          "Vdim": 256,
+          "chunk_size": 64,
+          "dtype": "bf16",
+          "gtype": "fp32",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待 GVA 大规模矩阵确认资源预算、执行稳定性和精度后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_gva_fix_3",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 711,
+        "H_k": 4,
+        "H_v": 32,
+        "T": 196,
+        "K": 128,
+        "V": 128,
+        "C": 128,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3012,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "gva_fix_3",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "gva_fix_3",
+          "description": "GVA fix length: HK=query_head=4 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16",
+          "enabled": false,
+          "B": 711,
+          "query_head": 4,
+          "value_head": 32,
+          "T": 196,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 128,
+          "dtype": "fp16",
+          "gtype": "fp32",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待 GVA 大规模矩阵确认资源预算、执行稳定性和精度后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_gva_fix_4",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 176,
+        "H_k": 2,
+        "H_v": 64,
+        "T": 24,
+        "K": 128,
+        "V": 256,
+        "C": 64,
+        "N_c": 1
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3013,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "gva_fix_4",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "gva_fix_4",
+          "description": "GVA fix length: HK=query_head=2 HV=value_head=64 K=Kdim=128 V=Vdim=256 ktype=dtype=bf16",
+          "enabled": false,
+          "B": 176,
+          "query_head": 2,
+          "value_head": 64,
+          "T": 24,
+          "Kdim": 128,
+          "Vdim": 256,
+          "chunk_size": 64,
+          "dtype": "bf16",
+          "gtype": "fp32",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待 GVA 大规模矩阵确认资源预算、执行稳定性和精度后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_gva_var_1",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 16,
+        "H_v": 32,
+        "T": 16384,
+        "K": 128,
+        "V": 256,
+        "C": 64,
+        "N_c": 256
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 128
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3014,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "gva_var_1",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "gva_var_1",
+          "description": "GVA variable length: HK=query_head=16 HV=value_head=32 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=128 ktype=dtype=fp16",
+          "enabled": false,
+          "B": 1,
+          "query_head": 16,
+          "value_head": 32,
+          "T": 16384,
+          "Kdim": 128,
+          "Vdim": 256,
+          "chunk_size": 64,
+          "mean_len": 128,
+          "dtype": "fp16",
+          "gtype": "fp32",
+          "varlen": true
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待 GVA 大规模矩阵确认资源预算、执行稳定性和精度后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_gva_var_2",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 21,
+        "H_v": 63,
+        "T": 16384,
+        "K": 128,
+        "V": 256,
+        "C": 64,
+        "N_c": 256
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 2
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3015,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "gva_var_2",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "gva_var_2",
+          "description": "GVA variable length: HK=query_head=21 HV=value_head=63 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=2 ktype=dtype=bf16",
+          "enabled": false,
+          "B": 1,
+          "query_head": 21,
+          "value_head": 63,
+          "T": 16384,
+          "Kdim": 128,
+          "Vdim": 256,
+          "chunk_size": 64,
+          "mean_len": 2,
+          "dtype": "bf16",
+          "gtype": "fp32",
+          "varlen": true
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待 GVA 大规模矩阵确认资源预算、执行稳定性和精度后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_gva_var_3",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 8,
+        "H_v": 32,
+        "T": 65536,
+        "K": 128,
+        "V": 256,
+        "C": 128,
+        "N_c": 512
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 172
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3016,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "gva_var_3",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "gva_var_3",
+          "description": "GVA variable length: HK=query_head=8 HV=value_head=32 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=172 ktype=dtype=bf16",
+          "enabled": false,
+          "B": 1,
+          "query_head": 8,
+          "value_head": 32,
+          "T": 65536,
+          "Kdim": 128,
+          "Vdim": 256,
+          "chunk_size": 128,
+          "mean_len": 172,
+          "dtype": "bf16",
+          "gtype": "fp32",
+          "varlen": true
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待 GVA 大规模矩阵确认资源预算、执行稳定性和精度后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_gva_var_4",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 16,
+        "H_v": 32,
+        "T": 65536,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 1024
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 668
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3017,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "gva_var_4",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "gva_var_4",
+          "description": "GVA variable length: HK=query_head=16 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=668 ktype=dtype=fp16",
+          "enabled": false,
+          "B": 1,
+          "query_head": 16,
+          "value_head": 32,
+          "T": 65536,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "mean_len": 668,
+          "dtype": "fp16",
+          "gtype": "fp32",
+          "varlen": true
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待 GVA 大规模矩阵确认资源预算、执行稳定性和精度后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_gva_var_5",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 4,
+        "H_v": 32,
+        "T": 65536,
+        "K": 128,
+        "V": 128,
+        "C": 128,
+        "N_c": 512
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 17
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3018,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "gva_var_5",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "gva_var_5",
+          "description": "GVA variable length: HK=query_head=4 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=17 ktype=dtype=bf16",
+          "enabled": false,
+          "B": 1,
+          "query_head": 4,
+          "value_head": 32,
+          "T": 65536,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 128,
+          "mean_len": 17,
+          "dtype": "bf16",
+          "gtype": "fp32",
+          "varlen": true
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待 GVA 大规模矩阵确认资源预算、执行稳定性和精度后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_gva_var_6",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 64,
+        "T": 262144,
+        "K": 128,
+        "V": 256,
+        "C": 64,
+        "N_c": 4096
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 32
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3019,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "gva_var_6",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "gva_var_6",
+          "description": "GVA variable length: HK=query_head=2 HV=value_head=64 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=32 ktype=dtype=fp16",
+          "enabled": false,
+          "B": 1,
+          "query_head": 2,
+          "value_head": 64,
+          "T": 262144,
+          "Kdim": 128,
+          "Vdim": 256,
+          "chunk_size": 64,
+          "mean_len": 32,
+          "dtype": "fp16",
+          "gtype": "fp32",
+          "varlen": true
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待 GVA 大规模矩阵确认资源预算、执行稳定性和精度后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_1",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 64,
+        "H_k": 8,
+        "H_v": 8,
+        "T": 1024,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 16
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3020,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_1",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_1",
+          "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | 标准用例，所有必选输入",
+          "enabled": false,
+          "B": 64,
+          "query_head": 8,
+          "value_head": 8,
+          "T": 1024,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "fp16",
+          "gtype": "fp16",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_2",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 32,
+        "H_k": 16,
+        "H_v": 16,
+        "T": 2048,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 32
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3021,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_2",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_2",
+          "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | BF16精度",
+          "enabled": false,
+          "B": 32,
+          "query_head": 16,
+          "value_head": 16,
+          "T": 2048,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "bf16",
+          "gtype": "bf16",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_3",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 16,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 4096,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 64
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3022,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_3",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_3",
+          "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | T=4096，beta/g支持FP32",
+          "enabled": false,
+          "B": 16,
+          "query_head": 32,
+          "value_head": 32,
+          "T": 4096,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "fp16",
+          "gtype": "fp32",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_4",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 8,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 8192,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 128
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3023,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_4",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_4",
+          "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | 超长序列T=8192",
+          "enabled": false,
+          "B": 8,
+          "query_head": 32,
+          "value_head": 32,
+          "T": 8192,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "bf16",
+          "gtype": "bf16",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_5",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 128,
+        "H_k": 4,
+        "H_v": 4,
+        "T": 1024,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 16
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3024,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_5",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_5",
+          "description": "Fix length (HK == HV): HK=query_head=4 HV=value_head=4 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | 极限batch B=128",
+          "enabled": false,
+          "B": 128,
+          "query_head": 4,
+          "value_head": 4,
+          "T": 1024,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "fp16",
+          "gtype": "fp16",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_6",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 64,
+        "H_k": 8,
+        "H_v": 8,
+        "T": 2048,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 32
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3025,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_6",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_6",
+          "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | B=64,T=2048",
+          "enabled": false,
+          "B": 64,
+          "query_head": 8,
+          "value_head": 8,
+          "T": 2048,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "bf16",
+          "gtype": "fp32",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_7",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 32,
+        "H_k": 16,
+        "H_v": 16,
+        "T": 4096,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 64
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3026,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_7",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_7",
+          "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | T=4096,B=32",
+          "enabled": false,
+          "B": 32,
+          "query_head": 16,
+          "value_head": 16,
+          "T": 4096,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "fp16",
+          "gtype": "fp16",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_8",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 16,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 8192,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 128
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3027,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_8",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_8",
+          "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | T=8192,B=16",
+          "enabled": false,
+          "B": 16,
+          "query_head": 32,
+          "value_head": 32,
+          "T": 8192,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "bf16",
+          "gtype": "bf16",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_9",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 64,
+        "H_k": 8,
+        "H_v": 8,
+        "T": 4096,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 64
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3028,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_9",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_9",
+          "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | 大batch+长序列",
+          "enabled": false,
+          "B": 64,
+          "query_head": 8,
+          "value_head": 8,
+          "T": 4096,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "fp16",
+          "gtype": "fp16",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_10",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 32,
+        "H_k": 16,
+        "H_v": 16,
+        "T": 8192,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 128
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3029,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_10",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_10",
+          "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | B=32, T=8192",
+          "enabled": false,
+          "B": 32,
+          "query_head": 16,
+          "value_head": 16,
+          "T": 8192,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "bf16",
+          "gtype": "bf16",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_11",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 16,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 16384,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 256
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3030,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_11",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_11",
+          "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | 极长序列T=16384",
+          "enabled": false,
+          "B": 16,
+          "query_head": 32,
+          "value_head": 32,
+          "T": 16384,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "fp16",
+          "gtype": "fp32",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_12",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 8,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 32768,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 512
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3031,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_12",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_12",
+          "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | T=32768超长序列",
+          "enabled": false,
+          "B": 8,
+          "query_head": 32,
+          "value_head": 32,
+          "T": 32768,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "bf16",
+          "gtype": "bf16",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_13",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 32768,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 512
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3032,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_13",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_13",
+          "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | B=1,T=32K",
+          "enabled": false,
+          "B": 1,
+          "query_head": 32,
+          "value_head": 32,
+          "T": 32768,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "bf16",
+          "gtype": "bf16",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_14",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 16,
+        "H_v": 16,
+        "T": 65536,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 1024
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3033,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_14",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_14",
+          "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | B=1,T=64K",
+          "enabled": false,
+          "B": 1,
+          "query_head": 16,
+          "value_head": 16,
+          "T": 65536,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "fp16",
+          "gtype": "fp16",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_15",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 8,
+        "H_v": 8,
+        "T": 131072,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2048
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3034,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_15",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_15",
+          "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | B=1,T=128K,H=8",
+          "enabled": false,
+          "B": 1,
+          "query_head": 8,
+          "value_head": 8,
+          "T": 131072,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "bf16",
+          "gtype": "bf16",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_fix_16",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 4,
+        "H_v": 4,
+        "T": 262144,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 4096
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3035,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_fix_16",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_fix_16",
+          "description": "Fix length (HK == HV): HK=query_head=4 HV=value_head=4 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | B=1,T=256K,H=4,极限长度",
+          "enabled": false,
+          "B": 1,
+          "query_head": 4,
+          "value_head": 4,
+          "T": 262144,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "dtype": "fp16",
+          "gtype": "fp32",
+          "varlen": false
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_var_1",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 8,
+        "H_v": 8,
+        "T": 1024,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 16
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 65
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3036,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_var_1",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_var_1",
+          "description": "Variable length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=65 ktype=dtype=fp16 | 变长输入，N=64个样本",
+          "enabled": false,
+          "B": 1,
+          "query_head": 8,
+          "value_head": 8,
+          "T": 1024,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "mean_len": 65,
+          "dtype": "fp16",
+          "gtype": "fp16",
+          "varlen": true
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_var_2",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 16,
+        "H_v": 16,
+        "T": 2048,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 32
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 33
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3037,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_var_2",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_var_2",
+          "description": "Variable length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=33 ktype=dtype=bf16 | 变长输入，N=32个样本",
+          "enabled": false,
+          "B": 1,
+          "query_head": 16,
+          "value_head": 16,
+          "T": 2048,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "mean_len": 33,
+          "dtype": "bf16",
+          "gtype": "bf16",
+          "varlen": true
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_var_3",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 4096,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 64
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 17
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3038,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_var_3",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_var_3",
+          "description": "Variable length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=17 ktype=dtype=fp16 | 变长输入，N=16个样本",
+          "enabled": false,
+          "B": 1,
+          "query_head": 32,
+          "value_head": 32,
+          "T": 4096,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "mean_len": 17,
+          "dtype": "fp16",
+          "gtype": "fp32",
+          "varlen": true
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_var_4",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 8192,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 128
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 9
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3039,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_var_4",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_var_4",
+          "description": "Variable length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=9 ktype=dtype=bf16 | 变长输入，N=8个样本",
+          "enabled": false,
+          "B": 1,
+          "query_head": 32,
+          "value_head": 32,
+          "T": 8192,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 64,
+          "mean_len": 9,
+          "dtype": "bf16",
+          "gtype": "bf16",
+          "varlen": true
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_var_5",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 16,
+        "H_v": 16,
+        "T": 32768,
+        "K": 128,
+        "V": 128,
+        "C": 128,
+        "N_c": 256
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "beta_g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 2
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3040,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_var_5",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_var_5",
+          "description": "Variable length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=2 ktype=dtype=bf16 | B=1,T=32K,chunk_size=128,变长",
+          "enabled": false,
+          "B": 1,
+          "query_head": 16,
+          "value_head": 16,
+          "T": 32768,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 128,
+          "mean_len": 2,
+          "dtype": "bf16",
+          "gtype": "bf16",
+          "varlen": true
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_source_phase_1_var_6",
+      "tags": [
+        "legacy",
+        "regression",
+        "disabled"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 8,
+        "H_v": 8,
+        "T": 65536,
+        "K": 128,
+        "V": 128,
+        "C": 128,
+        "N_c": 512
+      },
+      "dtype": {
+        "data": "float16",
+        "beta_g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "cu_seqlens": {
+          "generator": "mean_length",
+          "mean_len": 2
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 3041,
+      "legacy": {
+        "format": "operator-json-v0",
+        "suite": "source_matrix",
+        "original_id": "phase_1_var_6",
+        "enabled": false,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "raw": {
+          "name": "phase_1_var_6",
+          "description": "Variable length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=2 ktype=dtype=fp16 | B=1,T=64K,chunk_size=128,变长",
+          "enabled": false,
+          "B": 1,
+          "query_head": 8,
+          "value_head": 8,
+          "T": 65536,
+          "Kdim": 128,
+          "Vdim": 128,
+          "chunk_size": 128,
+          "mean_len": 2,
+          "dtype": "fp16",
+          "gtype": "fp16",
+          "varlen": true
+        },
+        "migration_note": "原 source_matrix 中 enabled=false；迁移时原样保留，待主线基础精度矩阵完成设备验证后逐项启用。"
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0000",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/routes/test_fast_kernel_prepare_wy_repr_bwd_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2026,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0000",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/routes/test_fast_kernel_prepare_wy_repr_bwd_da.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "k_dtype",
+            "beta_dtype"
+          ],
+          "values": [
+            1,
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            "float16",
+            "float16"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0001",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/routes/test_fast_kernel_prepare_wy_repr_bwd_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2027,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0001",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/routes/test_fast_kernel_prepare_wy_repr_bwd_da.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "k_dtype",
+            "beta_dtype"
+          ],
+          "values": [
+            1,
+            2,
+            4,
+            65,
+            128,
+            128,
+            64,
+            "float16",
+            "float32"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0002",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 129,
+        "K": 128,
+        "V": 256,
+        "C": 128,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/routes/test_fast_kernel_prepare_wy_repr_bwd_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2028,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0002",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/routes/test_fast_kernel_prepare_wy_repr_bwd_da.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "k_dtype",
+            "beta_dtype"
+          ],
+          "values": [
+            1,
+            2,
+            2,
+            129,
+            128,
+            256,
+            128,
+            "bfloat16",
+            "float32"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_variable_0000",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": "generated",
+        "chunk_indices": "generated"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/routes/test_fast_kernel_prepare_wy_repr_bwd_da.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2026,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "variable_0000",
+        "enabled": true,
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/routes/test_fast_kernel_prepare_wy_repr_bwd_da.py",
+        "raw": {
+          "group": "variable",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "k_dtype",
+            "beta_dtype"
+          ],
+          "values": [
+            1,
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            "float16",
+            "float16"
+          ]
+        }
+      }
     }
   ],
   "data_generation": {
@@ -348,6 +3514,54 @@
     ],
     "performance_case_ids": [
       "dense_bf16_v256_tail"
+    ],
+    "legacy_regression_case_ids": [
+      "legacy_source_fix_hk_eq_hv_1",
+      "legacy_source_fix_hk_eq_hv_2",
+      "legacy_source_fix_hk_eq_hv_3",
+      "legacy_source_fix_hk_eq_hv_4",
+      "legacy_source_fix_hk_eq_hv_5",
+      "legacy_source_var_hk_eq_hv_1",
+      "legacy_source_var_hk_eq_hv_2",
+      "legacy_source_var_hk_eq_hv_3",
+      "legacy_source_var_hk_eq_hv_4",
+      "legacy_source_var_hk_eq_hv_5",
+      "legacy_source_gva_fix_1",
+      "legacy_source_gva_fix_2",
+      "legacy_source_gva_fix_3",
+      "legacy_source_gva_fix_4",
+      "legacy_source_gva_var_1",
+      "legacy_source_gva_var_2",
+      "legacy_source_gva_var_3",
+      "legacy_source_gva_var_4",
+      "legacy_source_gva_var_5",
+      "legacy_source_gva_var_6",
+      "legacy_source_phase_1_fix_1",
+      "legacy_source_phase_1_fix_2",
+      "legacy_source_phase_1_fix_3",
+      "legacy_source_phase_1_fix_4",
+      "legacy_source_phase_1_fix_5",
+      "legacy_source_phase_1_fix_6",
+      "legacy_source_phase_1_fix_7",
+      "legacy_source_phase_1_fix_8",
+      "legacy_source_phase_1_fix_9",
+      "legacy_source_phase_1_fix_10",
+      "legacy_source_phase_1_fix_11",
+      "legacy_source_phase_1_fix_12",
+      "legacy_source_phase_1_fix_13",
+      "legacy_source_phase_1_fix_14",
+      "legacy_source_phase_1_fix_15",
+      "legacy_source_phase_1_fix_16",
+      "legacy_source_phase_1_var_1",
+      "legacy_source_phase_1_var_2",
+      "legacy_source_phase_1_var_3",
+      "legacy_source_phase_1_var_4",
+      "legacy_source_phase_1_var_5",
+      "legacy_source_phase_1_var_6",
+      "legacy_fast_kernel_fixed_0000",
+      "legacy_fast_kernel_fixed_0001",
+      "legacy_fast_kernel_fixed_0002",
+      "legacy_fast_kernel_variable_0000"
     ]
   }
 }

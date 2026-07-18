@@ -15,7 +15,7 @@ from tests.operators._shared.npu_generalization import run_generalization_cases
 
 OP = "recurrent_gated_delta_rule"
 ROOT = Path(__file__).resolve().parents[4]
-RUNNER = ROOT / "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/tests/pta/test_accuracy.py"
+RUNNER = ROOT / "tests/operators/recurrent_gated_delta_rule/accuracy/backend.py"
 
 
 def test_case_manifest_covers_required_matrix():
