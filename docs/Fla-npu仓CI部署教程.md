@@ -494,6 +494,16 @@ bash scripts/github/apply_branch_protection.sh main
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
 ```
 
+`ops=` 必须填写 `tests/op_cases/*.json` 中登记的算子名；多个名称用英文逗号连接，PR 评论中逗号后不要加空格。
+执行范围如下：
+
+- `/run-npu-ci quick`：执行 quick 基础检查和 Example/ST，跳过全算子泛化与主精度矩阵。
+- `/run-npu-ci quick ops=op_a,op_b`：在 quick 基础检查和 Example/ST 之外，仅执行 `op_a`、`op_b` 的泛化与主精度矩阵。
+- `/run-npu-ci full`：执行全部已注册算子的泛化与主精度矩阵。
+
+workflow 启动和结束时的机器人评论会显示“算子泛化/主精度矩阵”实际范围；若命令包含未知参数、重复 `ops=`、空算子名或
+非法字符，prepare job 会直接失败，不占用 NPU runner。
+
 只有仓库 Admin 权限账号可以触发。workflow 会在触发时调用 GitHub API 检查评论人或手动触发人的仓库权限；权限不是 `admin` 时会直接失败。
 
 PR 新建或 push 新 commit 后，当前 head commit 会先出现默认状态：

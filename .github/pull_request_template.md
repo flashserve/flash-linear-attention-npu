@@ -159,7 +159,7 @@ bash build_and_test.sh
 python examples/flash_gated_delta_rule.py
 ```
 
-也可以由仓库 Admin 权限账号触发 CI 验证：`/run-npu-ci quick`。CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例，默认覆盖当前 `case1_current_default`，仅覆盖容器内逻辑设备号 `--device`。
+也可以由仓库 Admin 权限账号触发 CI 验证：`/run-npu-ci quick`。CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例，默认覆盖当前 `case1_current_default`，仅覆盖容器内逻辑设备号 `--device`。需要同时验证本 PR 修改算子的泛化和主精度矩阵时，使用 `/run-npu-ci quick ops=<op_a>,<op_b>`；多个算子名使用英文逗号连接且逗号后不加空格。
 
 通过标准:
 
