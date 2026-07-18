@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 from tests.operators.chunk_scaled_dot_kkt.common.case_matrix import case_ids
 
 
-RUNNER = ROOT / "torch_custom/fla_npu/test/test_npu_chunk_scaled_dot_kkt.py"
+RUNNER = ROOT / "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py"
 
 
 def main():

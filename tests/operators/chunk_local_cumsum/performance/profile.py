@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 from tests.operators.chunk_local_cumsum.common.case_matrix import case_ids
 
 
-RUNNER = ROOT / "torch_custom/fla_npu/test/test_npu_chunk_local_cumsum.py"
+RUNNER = ROOT / "tests/operators/chunk_local_cumsum/accuracy/backend.py"
 
 
 def main():

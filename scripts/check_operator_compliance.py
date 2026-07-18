@@ -21,7 +21,7 @@ MODEL_SHAPE_SYMBOLS = {
         "B", "N", "T", "H_k", "H_v", "R_h", "K", "V", "C", "N_c", "N_{c,b}", "S_n",
         "D", "W", "L_s", "M", "P", "B_T", "N_b", "D_s", "Q_a",
     },
-    "kda": {"B", "N", "T", "H_k", "H_v", "R_h", "K", "V", "C", "N_c", "S_n", "D_0", "D_1", "D_2"},
+    "kda": {"B", "N", "T", "H_k", "H_v", "R_h", "K", "V", "C", "N_c", "S_n", "D_0", "D_1", "D_2", "D_3", "D_4"},
 }
 KNOWN_RETURN_CODES = {
     "ACLNN_SUCCESS",
@@ -221,6 +221,22 @@ def validate_manifest(op: str, errors: list[str]) -> None:
         return_code = case.get("expect", {}).get("return_code")
         if return_code not in KNOWN_RETURN_CODES:
             errors.append(f"{prefix}: unknown expect.return_code {return_code!r}")
+    legacy_cases = [case for case in cases if "legacy" in case]
+    legacy_ids = [case["id"] for case in legacy_cases]
+    declared_legacy_ids = coverage.get("legacy_regression_case_ids", [])
+    if set(declared_legacy_ids) != set(legacy_ids):
+        errors.append(f"{path.relative_to(ROOT)}: legacy_regression_case_ids must match migrated cases")
+    for case in legacy_cases:
+        legacy = case["legacy"]
+        asset = legacy.get("asset")
+        if not isinstance(asset, str) or not (ROOT / asset).is_file():
+            errors.append(f"{path.relative_to(ROOT)}: migrated case {case['id']!r} has no archived execution asset")
+        if legacy.get("format") == "atk-v2.1" and "/accuracy/atk/" not in f"/{asset}":
+            errors.append(f"{path.relative_to(ROOT)}: ATK case {case['id']!r} is outside accuracy/atk")
+        if legacy.get("enabled") is False and not legacy.get("migration_note"):
+            errors.append(f"{path.relative_to(ROOT)}: disabled migrated case {case['id']!r} needs migration_note")
+        if "raw" not in legacy:
+            errors.append(f"{path.relative_to(ROOT)}: migrated case {case['id']!r} must preserve its raw source")
     required_tags = {"accuracy", "generalization", "boundary", "negative", "route", "performance", "example"}
     missing_tags = required_tags - all_tags
     if missing_tags:
@@ -356,6 +372,18 @@ def validate_python_signature(op: str, root: Path, functions, aliases, errors: l
 
 
 def validate_source_rules(operators: dict[str, Path], errors: list[str]) -> None:
+    for op, root in operators.items():
+        for directory in root.rglob("*"):
+            if directory.is_dir() and directory.name in {"test", "tests", "ATK"}:
+                errors.append(
+                    f"{directory.relative_to(ROOT)}: operator-local test directory is forbidden; "
+                    f"migrate it to tests/operators/{op}"
+                )
+        example_test_dir = ROOT / "examples" / "fast_kernel_launch_example" / "tests" / op
+        if example_test_dir.exists():
+            errors.append(
+                f"{example_test_dir.relative_to(ROOT)}: mainline operator harness must live in tests/operators/{op}/routes"
+            )
     ci_contracts = {
         ROOT / "ci" / "run_operator_build_matrix.py": (*REQUIRED_SOCS, "build.sh", "--ops="),
         ROOT / "ci" / "run_operator_generalization.py": (

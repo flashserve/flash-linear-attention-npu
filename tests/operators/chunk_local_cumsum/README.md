@@ -20,11 +20,21 @@
 
 - legacy 通路：`torch.ops.npu.npu_chunk_local_cumsum`，由主 route case 验证显式加载。
 
-现有数值/reference 后端：`torch_custom/fla_npu/test/test_npu_chunk_local_cumsum.py`。该后端由 canonical 入口传入
+现有数值/reference 后端：`tests/operators/chunk_local_cumsum/accuracy/backend.py`。该后端由 canonical 入口传入
 `FLA_NPU_CASE_MANIFEST`、`FLA_NPU_CASE_IDS` 和 `FLA_NPU_OPERATOR`；关键 shape、dtype、属性组合不在
 canonical 脚本中重复定义。
 
-## 3. 执行命令
+## 3. 历史资产迁移
+
+算子源码目录中原有的 test/、tests/、ATK/ 已迁入本目录并删除原目录。case 数据只保留在唯一 manifest；脚本、reference、ATK executor、性能工具和 C++ UT 按职责归档，不再维护第二份 shape 表。
+
+| 迁移集合 | 数量 | 唯一规格 |
+| --- | ---: | --- |
+| direct_regression | 5 | tests/op_cases/chunk_local_cumsum.json |
+
+使用 python3 -m tests.operators._shared.legacy_cases list --op chunk_local_cumsum 可列出迁移 case。ATK 需要旧格式 JSON 时，用同一工具的 materialize 子命令生成临时文件。
+
+## 4. 执行命令
 
 ```bash
 pytest -q tests/operators/chunk_local_cumsum/accuracy/test_chunk_local_cumsum.py

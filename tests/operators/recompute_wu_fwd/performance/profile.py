@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 from tests.operators.recompute_wu_fwd.common.case_matrix import case_ids
 
 
-RUNNER = ROOT / "torch_custom/fla_npu/test/test_npu_recompute_w_u_fwd.py"
+RUNNER = ROOT / "tests/operators/recompute_wu_fwd/accuracy/backend.py"
 
 
 def main():

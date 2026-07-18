@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 from tests.operators.chunk_fwd_o.common.case_matrix import case_ids
 
 
-RUNNER = ROOT / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/tests/pta/test_fwd_o.py"
+RUNNER = ROOT / "tests/operators/chunk_fwd_o/accuracy/backend.py"
 
 
 @pytest.mark.npu

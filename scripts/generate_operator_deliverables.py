@@ -59,9 +59,11 @@ FAMILY_INFO = {
             ("C", "chunk_size"),
             ("N_c", "当前调用中的 chunk 总数"),
             ("S_n", "第 n 条 varlen 序列的有效长度"),
-            ("D_0", "rank3 的第一交换维；rank>=4 时为 batch 维"),
-            ("D_1", "待交换的第一维"),
-            ("D_2", "待交换的第二维"),
+            ("D_0", "通用 ND 输入的第 0 维"),
+            ("D_1", "通用 ND 输入的第 1 维"),
+            ("D_2", "通用 ND 输入的第 2 维"),
+            ("D_3", "通用 ND 输入的第 3 维（rank>=4）"),
+            ("D_4", "通用 ND 输入的第 4 维（rank>=5）"),
         ],
     },
 }
@@ -157,7 +159,7 @@ OPS = {
             assert dq.shape == q.shape and dk.shape == k.shape
         """),
         "aclnn_call": "q, k, v, g, h, dox, dh, dv, nullptr, nullptr, nullptr, nullptr, scale, chunkSize, false, false, dq, dk, dw, dg, &workspaceSize, &executor",
-        "runner": "torch_custom/fla_npu/test/test_npu_chunk_bwd_dqkwg.py",
+        "runner": "tests/operators/chunk_bwd_dqkwg/accuracy/backend.py",
         "errors": rows(
             ("workspaceSize 或 executor 为空", "ACLNN_ERR_PARAM_NULLPTR"),
             ("必选 tensor 为空，或 rank/shape/GVA 不符合约束", "ACLNN_ERR_PARAM_INVALID"),
@@ -226,7 +228,7 @@ OPS = {
             assert d_v.shape == d_o.shape
         """),
         "aclnn_call": "q, k, dO, g, nullptr, nullptr, nullptr, nullptr, scale, chunkSize, out, &workspaceSize, &executor",
-        "runner": "torch_custom/fla_npu/test/test_npu_chunk_bwd_dv_local.py",
+        "runner": "tests/operators/chunk_bwd_dv_local/accuracy/backend.py",
         "errors": rows(
             ("workspaceSize 或 executor 为空", "ACLNN_ERR_PARAM_NULLPTR"),
             ("必选 tensor 为空", "ACLNN_ERR_PARAM_INVALID"),
@@ -306,7 +308,7 @@ OPS = {
             assert dv2.shape == dv.shape
         """),
         "aclnn_call": "q, k, w, dO, dv, g, nullptr, nullptr, nullptr, cuSeqlens, chunkIndices, scale, chunkSize, dh, nullptr, dv2, &workspaceSize, &executor",
-        "runner": "torch_custom/fla_npu/test/test_npu_chunk_gated_delta_rule_bwd_dhu.py",
+        "runner": "tests/operators/chunk_gated_delta_rule_bwd_dhu/accuracy/backend.py",
         "errors": rows(
             ("workspaceSize 或 executor 为空", "ACLNN_ERR_PARAM_NULLPTR"),
             ("必选 tensor 为空，或 g 未提供", "ACLNN_ERR_PARAM_INVALID"),
@@ -376,7 +378,7 @@ OPS = {
             assert dA.shape == A.shape
         """),
         "aclnn_call": "k, v, beta, A, dw, du, g, nullptr, nullptr, chunkSize, dA, &workspaceSize, &executor",
-        "runner": "torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_da.py",
+        "runner": "tests/operators/prepare_wy_repr_bwd_da/accuracy/backend.py",
         "errors": rows(
             ("workspaceSize 或 executor 为空", "ACLNN_ERR_PARAM_NULLPTR"),
             ("必选 tensor 为空，chunk_size 非 64/128，或 varlen 元数据只提供一个", "ACLNN_ERR_PARAM_INVALID"),
@@ -453,7 +455,7 @@ OPS = {
             assert dk.shape == k.shape and dv.shape == v.shape
         """),
         "aclnn_call": "k, v, beta, A, dA, dw, du, g, nullptr, nullptr, chunkSize, dk, dv, dbeta, dg, &workspaceSize, &executor",
-        "runner": "torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_full.py",
+        "runner": "tests/operators/prepare_wy_repr_bwd_full/accuracy/backend.py",
         "errors": rows(
             ("workspaceSize 或 executor 为空", "ACLNN_ERR_PARAM_NULLPTR"),
             ("必选 tensor 为空，chunk_size 非 64/128，或 varlen 元数据只提供一个", "ACLNN_ERR_PARAM_INVALID"),
@@ -532,7 +534,7 @@ OPS.update({
             assert o.shape == v.shape
         """),
         "aclnn_call": "q, k, v, h, g, nullptr, nullptr, scale, chunkSize, o, &workspaceSize, &executor",
-        "runner": "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/tests/pta/test_fwd_o.py",
+        "runner": "tests/operators/chunk_fwd_o/accuracy/backend.py",
         "reference": "torch_chunk_fwd_o_reference",
         "case": {
             "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64, "N_c": 2},
@@ -668,7 +670,7 @@ OPS.update({
             assert v_new.shape == u.shape and final_state.shape == (B, H_v, K, V)
         """),
         "aclnn_call": "k, w, u, g, nullptr, nullptr, true, chunkSize, true, nullptr, nullptr, false, false, h, vNew, finalState, &workspaceSize, &executor",
-        "runner": "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/tests/pta/test_fwd_h.py",
+        "runner": "tests/operators/chunk_gated_delta_rule_fwd_h/accuracy/backend.py",
         "reference": "torch_chunk_gated_delta_rule_fwd_h_reference",
         "case": {
             "shape": {"B": 1, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "V": 128, "C": 64, "N_c": 2},
@@ -795,7 +797,7 @@ OPS.update({
             assert w.shape == (B, H_v, T, K) and u.shape == v.shape
         """),
         "aclnn_call": "k, v, beta, A, g, nullptr, nullptr, nullptr, chunkSize, w, u, &workspaceSize, &executor",
-        "runner": "torch_custom/fla_npu/test/test_npu_recompute_w_u_fwd.py",
+        "runner": "tests/operators/recompute_wu_fwd/accuracy/backend.py",
         "legacy_op": "npu_recompute_w_u_fwd",
         "reference": "torch_recompute_wu_reference",
         "case": {
@@ -915,7 +917,7 @@ OPS.update({
             assert y.shape == x.shape
         """),
         "aclnn_call": "x, nullptr, nullptr, \"bsnd\", out, &workspaceSize, &executor",
-        "runner": "torch_custom/fla_npu/test/test_npu_solve_tri_ascend950.py",
+        "runner": "tests/operators/solve_tri/accuracy/backend.py",
         "reference": "torch_linalg_triangular_reference",
         "case": {
             "shape": {"B": 1, "T": 128, "H_v": 4, "C": 64, "N_c": 2}, "dtype": {"x": "float16"}, "layout": "bsnd",
@@ -1023,7 +1025,7 @@ OPS.update({
             assert out.shape == v.shape
         """),
         "aclnn_call": "query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, nullptr, numAcceptedTokens, scaleValue, out, &workspaceSize, &executor",
-        "runner": "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/tests/pta/test_accuracy.py",
+        "runner": "tests/operators/recurrent_gated_delta_rule/accuracy/backend.py",
         "reference": "torch_recurrent_gated_delta_rule_reference",
         "case": {
             "shape": {"B": 2, "T": 4, "H_k": 2, "H_v": 4, "K": 128, "V": 128, "D_s": 4, "Q_a": 2},
@@ -1139,7 +1141,7 @@ OPS.update({
             assert y.shape == x.shape
         """),
         "aclnn_call": "x, weight, bias, convStates, nullptr, nullptr, nullptr, nullptr, activationMode, padSlotId, runMode, headNum, y, &workspaceSize, &executor",
-        "runner": "torch_custom/fla_npu/test/test_npu_causal_conv1d.py",
+        "runner": "tests/operators/causal_conv1d/accuracy/backend.py",
         "reference": "torch_depthwise_causal_conv1d_reference",
         "direct_template": {"decl": "uint32_t runModeKey, uint32_t widthKey, uint32_t fnPlanKey", "args": "runModeKey, widthKey, fnPlanKey"},
         "case": {
@@ -1241,7 +1243,7 @@ OPS.update({
             assert dx.shape == x.shape and dw.shape == weight.shape
         """),
         "aclnn_call": "x, y, weight, dy, initialState, dht, nullptr, activation, \"BNSD\", dx, dw, db, dh0, &workspaceSize, &executor",
-        "runner": "torch_custom/fla_npu/test/test_npu_causal_conv1d_bwd.py",
+        "runner": "tests/operators/causal_conv1d_bwd/accuracy/backend.py",
         "reference": "torch_autograd_causal_conv1d_reference",
         "case": {
             "shape": {"B": 2, "T": 64, "D": 128, "W": 3}, "dtype": {"floating": "float16", "metadata": "int64"}, "layout": "BSH",
@@ -1343,7 +1345,7 @@ OPS.update({
             assert out.shape == g.shape and out.dtype == torch.float32
         """),
         "aclnn_call": "g, nullptr, nullptr, chunkSize, false, scale, true, const_cast<char *>(\"float32\"), out, &workspaceSize, &executor",
-        "runner": "torch_custom/fla_npu/test/test_npu_chunk_local_cumsum.py",
+        "runner": "tests/operators/chunk_local_cumsum/accuracy/backend.py",
         "reference": "torch_chunk_local_cumsum_reference",
         "case": {
             "shape": {"B": 2, "H_v": 4, "T": 128, "P": 1, "C": 64}, "dtype": {"g_out": "float32", "metadata": "int64"}, "layout": "BNS",
@@ -1461,7 +1463,7 @@ OPS.update({
             assert A.shape == (B, H_k, T, C) and A.dtype == torch.float32
         """),
         "aclnn_call": "k, g, beta, nullptr, nullptr, chunkSize, A, &workspaceSize, &executor",
-        "runner": "torch_custom/fla_npu/test/test_npu_chunk_scaled_dot_kkt.py",
+        "runner": "tests/operators/chunk_scaled_dot_kkt/accuracy/backend.py",
         "reference": "torch_chunk_scaled_dot_kkt_reference",
         "case": {
             "shape": {"B": 2, "H_k": 2, "H_v": 4, "T": 128, "K": 128, "C": 64}, "dtype": {"k": "float16", "g_beta_A": "float32"}, "layout": "BNSD",
@@ -1640,7 +1642,7 @@ OPS.update({
                     h, v_new, final_state, workspace, tiling);
             }
         """),
-        "runner": "torch_custom/fla_npu/test/test_npu_chunk_kda.py",
+        "runner": "tests/operators/_shared/chunk_kda_backend.py",
         "reference": "tests/reference/chunk_kda_reference.py",
         "errors": rows(
             ("workspaceSize 或 executor 为空", "ACLNN_ERR_PARAM_NULLPTR"),
@@ -1764,7 +1766,7 @@ OPS.update({
             ("step-gate 模式仍传入 A_log/dt_bias", "ACLNN_ERR_PARAM_INVALID"),
             ("Python 输入不是 NPU tensor 或 runtime/op_api 未加载", "RuntimeError"),
         ),
-        "runner": "torch_custom/fla_npu/test/test_npu_chunk_kda.py",
+        "runner": "tests/operators/_shared/chunk_kda_backend.py",
         "reference": "_kda_gate_cumsum_reference",
         "case": {
             "shape": {"B": 1, "T": 128, "H_v": 4, "K": 128, "C": 64}, "dtype": {"g": "float32", "gk": "float32"}, "layout": "BSND",
@@ -1834,9 +1836,8 @@ OPS.update({
         "dtype": "FP16/BF16/FP32，输入输出一致",
         "modes": "rank3 与 rank>=4；对齐行 grouped copy 和非对齐/超长行 tiled copy",
         "local_symbols": [
-            ("D_0", "rank3 的第一交换维；rank>=4 时为 batch 维"),
-            ("D_1", "待交换的第一维"),
-            ("D_2", "待交换的第二维"),
+            ("D_3", "通用 ND 输入的第 3 维（rank>=4）"),
+            ("D_4", "通用 ND 输入的第 4 维（rank>=5）"),
         ],
         "limits": [
             "x rank 必须至少为 3；y rank、dtype 及交换后的每一维必须与 x 精确对应。",
@@ -1863,7 +1864,7 @@ OPS.update({
             torch.testing.assert_close(y.cpu(), x.permute(0, 2, 1, 3).contiguous().cpu())
         """),
         "aclnn_call": "x, dependency, y, &workspaceSize, &executor",
-        "runner": "torch_custom/fla_npu/test/test_npu_chunk_kda.py",
+        "runner": "tests/operators/_shared/chunk_kda_backend.py",
         "reference": "torch_permute_contiguous_reference",
         "errors": rows(
             ("workspaceSize 或 executor 为空", "ACLNN_ERR_PARAM_NULLPTR"),
@@ -3028,6 +3029,7 @@ def enrich_existing_manifest(op, spec, manifest):
         "negative_case_ids": [item["id"] for item in cases if "negative" in item["tags"]],
         "route_case_ids": [item["id"] for item in cases if "route" in item["tags"]],
         "performance_case_ids": [item["id"] for item in cases if "performance" in item["tags"]],
+        "legacy_regression_case_ids": [item["id"] for item in cases if "legacy" in item],
     }
     return json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
 
@@ -3074,6 +3076,34 @@ def write(path, content):
     path.write_text(content, encoding="utf-8")
 
 
+def preserve_test_migration_tail(path, content):
+    """Keep the per-operator migration ledger and commands across regeneration."""
+    if not path.is_file():
+        return content
+    existing = path.read_text(encoding="utf-8")
+    migration_marker = "\n## 3. 历史资产迁移\n"
+    generated_command_marker = "\n## 3. 执行命令\n"
+    if migration_marker not in existing:
+        return content
+    if generated_command_marker not in content:
+        raise ValueError(f"cannot preserve migration section in {path}")
+    return content.split(generated_command_marker, 1)[0] + existing[existing.index(migration_marker):]
+
+
+def merge_migrated_cases(path, rendered):
+    """Append archived case objects when a generated manifest is refreshed."""
+    generated = json.loads(rendered)
+    if not path.is_file():
+        return rendered
+    existing = json.loads(path.read_text(encoding="utf-8"))
+    migrated = [case for case in existing.get("cases", []) if "legacy" in case]
+    if not migrated:
+        return rendered
+    generated["cases"] = [case for case in generated["cases"] if "legacy" not in case] + migrated
+    generated["coverage_requirements"]["legacy_regression_case_ids"] = [case["id"] for case in migrated]
+    return json.dumps(generated, ensure_ascii=False, indent=2) + "\n"
+
+
 def generate(op, spec):
     root = ROOT / spec["root"]
     write(root / "README.md", render_readme(op, spec))
@@ -3083,7 +3113,9 @@ def generate(op, spec):
         legacy.unlink()
 
     test_root = ROOT / "tests" / "operators" / op
-    write(test_root / "README.md", render_test_readme(op, spec))
+    test_readme = test_root / "README.md"
+    rendered_test_readme = preserve_test_migration_tail(test_readme, render_test_readme(op, spec))
+    write(test_readme, rendered_test_readme)
     write(test_root / "common" / "__init__.py", "")
     write(test_root / "common" / "case_matrix.py", render_case_matrix(op))
     write(test_root / "accuracy" / f"test_{op}.py", render_accuracy_test(op, spec))
@@ -3100,7 +3132,8 @@ def generate(op, spec):
     write(test_root / "st" / "test_example.py", render_st_test(op, spec))
     manifest = ROOT / "tests" / "op_cases" / f"{op}.json"
     if "case" in spec:
-        write(manifest, render_manifest(op, spec))
+        rendered_manifest = merge_migrated_cases(manifest, render_manifest(op, spec))
+        write(manifest, rendered_manifest)
     else:
         existing = json.loads(manifest.read_text(encoding="utf-8"))
         write(manifest, enrich_existing_manifest(op, spec, existing))

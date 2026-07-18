@@ -85,6 +85,16 @@
     ],
     "performance_case_ids": [
       "chunk_fwd_o_performance"
+    ],
+    "legacy_regression_case_ids": [
+      "legacy_fast_kernel_fixed_0000",
+      "legacy_fast_kernel_fixed_0001",
+      "legacy_fast_kernel_fixed_0002",
+      "legacy_fast_kernel_fixed_0003",
+      "legacy_fast_kernel_variable_0000",
+      "legacy_fast_kernel_variable_0001",
+      "legacy_fast_kernel_variable_0002",
+      "legacy_fast_kernel_variable_0003"
     ]
   },
   "tolerance": {
@@ -99,7 +109,7 @@
   },
   "accuracy_policy": {
     "method": "torch_allclose",
-    "basis": "examples/fast_kernel_launch_example/tests/chunk_fwd_o/test_chunk_fwd_o.py",
+    "basis": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
     "description": "沿用仓内 direct-launch 数值测试对多段 Cube、Exp 与中间 dtype 转换的既有 2e-2 标准。"
   },
   "cases": [
@@ -607,6 +617,646 @@
         "ascend950"
       ],
       "seed": 2035
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0000",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.08838834764831845
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2026,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0000",
+        "enabled": true,
+        "asset": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "input_dtype",
+            "g_dtype"
+          ],
+          "values": [
+            2,
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.08838834764831845,
+            "float16",
+            "float16"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0001",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.08838834764831845
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2027,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0001",
+        "enabled": true,
+        "asset": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "input_dtype",
+            "g_dtype"
+          ],
+          "values": [
+            2,
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.08838834764831845,
+            "bfloat16",
+            "bfloat16"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0002",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.08838834764831845
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2028,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0002",
+        "enabled": true,
+        "asset": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "input_dtype",
+            "g_dtype"
+          ],
+          "values": [
+            2,
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.08838834764831845,
+            "float16",
+            "float32"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0003",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.08838834764831845
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2029,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0003",
+        "enabled": true,
+        "asset": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "input_dtype",
+            "g_dtype"
+          ],
+          "values": [
+            2,
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.08838834764831845,
+            "bfloat16",
+            "float32"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_variable_0000",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.08838834764831845
+      },
+      "optional_inputs": {
+        "cu_seqlens": "generated",
+        "chunk_indices": "generated"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2026,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "variable_0000",
+        "enabled": true,
+        "asset": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+        "raw": {
+          "group": "variable",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "token_batch",
+            "input_dtype",
+            "g_dtype"
+          ],
+          "values": [
+            1,
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.08838834764831845,
+            3,
+            "float16",
+            "float16"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_variable_0001",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.08838834764831845
+      },
+      "optional_inputs": {
+        "cu_seqlens": "generated",
+        "chunk_indices": "generated"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2027,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "variable_0001",
+        "enabled": true,
+        "asset": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+        "raw": {
+          "group": "variable",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "token_batch",
+            "input_dtype",
+            "g_dtype"
+          ],
+          "values": [
+            1,
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.08838834764831845,
+            3,
+            "bfloat16",
+            "bfloat16"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_variable_0002",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.08838834764831845
+      },
+      "optional_inputs": {
+        "cu_seqlens": "generated",
+        "chunk_indices": "generated"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2028,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "variable_0002",
+        "enabled": true,
+        "asset": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+        "raw": {
+          "group": "variable",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "token_batch",
+            "input_dtype",
+            "g_dtype"
+          ],
+          "values": [
+            1,
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.08838834764831845,
+            3,
+            "float16",
+            "float32"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_variable_0003",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "C": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.08838834764831845
+      },
+      "optional_inputs": {
+        "cu_seqlens": "generated",
+        "chunk_indices": "generated"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2029,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "variable_0003",
+        "enabled": true,
+        "asset": "tests/operators/chunk_fwd_o/routes/test_fast_kernel_chunk_fwd_o.py",
+        "raw": {
+          "group": "variable",
+          "param_names": [
+            "B",
+            "HK",
+            "HV",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "token_batch",
+            "input_dtype",
+            "g_dtype"
+          ],
+          "values": [
+            1,
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.08838834764831845,
+            3,
+            "bfloat16",
+            "float32"
+          ]
+        }
+      }
     }
   ]
 }

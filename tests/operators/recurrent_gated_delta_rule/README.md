@@ -20,11 +20,22 @@
 
 - legacy 通路：未实现，不生成 `torch.ops.npu` 测试。
 
-现有数值/reference 后端：`fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/tests/pta/test_accuracy.py`。该后端由 canonical 入口传入
+现有数值/reference 后端：`tests/operators/recurrent_gated_delta_rule/accuracy/backend.py`。该后端由 canonical 入口传入
 `FLA_NPU_CASE_MANIFEST`、`FLA_NPU_CASE_IDS` 和 `FLA_NPU_OPERATOR`；关键 shape、dtype、属性组合不在
 canonical 脚本中重复定义。
 
-## 3. 执行命令
+## 3. 历史资产迁移
+
+算子源码目录以及 example/torch_custom 适配工程中原有的主线测试资产已迁入本目录，非标准目录已删除。case 数据只保留在唯一 manifest；脚本、reference、ATK executor、direct-launch harness、性能工具和 C++ UT 按职责归档，不再维护第二份 shape 表。
+
+| 迁移集合 | 数量 | 唯一规格 |
+| --- | ---: | --- |
+| direct_accuracy | 1 | tests/op_cases/recurrent_gated_delta_rule.json |
+| fast_kernel_launch | 1（复用 direct_accuracy） | tests/op_cases/recurrent_gated_delta_rule.json |
+
+使用 python3 -m tests.operators._shared.legacy_cases list --op recurrent_gated_delta_rule 可列出迁移 case。ATK 需要旧格式 JSON 时，用同一工具的 materialize 子命令生成临时文件。
+
+## 4. 执行命令
 
 ```bash
 pytest -q tests/operators/recurrent_gated_delta_rule/accuracy/test_recurrent_gated_delta_rule.py
@@ -33,6 +44,7 @@ FLA_NPU_CASE_TAGS=generalization FLA_NPU_RUN_OPERATOR_TESTS=1 pytest -q tests/op
 pytest -q tests/operators/recurrent_gated_delta_rule/ut
 python tests/operators/recurrent_gated_delta_rule/performance/profile.py --dry-run
 FLA_NPU_RUN_OPERATOR_TESTS=1 pytest -q tests/operators/recurrent_gated_delta_rule/st/test_example.py
+(cd examples/fast_kernel_launch_example && bash build_and_test.sh recurrent_gated_delta_rule)
 ```
 
 A2/A3/A5 通过 `FLA_NPU_SOC` 选择。精度逐项比较全部公开输出并检查 NaN/Inf；性能只使用 msopprof

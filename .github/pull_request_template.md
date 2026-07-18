@@ -126,12 +126,10 @@ bash build.sh --pkg --soc=ascend950 --ops=<op_name> --vendor_name=fla_npu
 `torch_custom` 适配验证:
 
 ```sh
-cd torch_custom/fla_npu
-bash build.sh
-cd test
-python3 test_npu_<op_name>.py
-# 或执行全部 GDN 单算子测试
-bash test.sh
+(cd torch_custom/fla_npu && bash build.sh)
+bash tests/operators/run.sh --device 0 --op <op_name>
+# 或执行全部已注册 Ascend C 算子
+bash tests/operators/run.sh --device 0
 ```
 
 `examples/fast_kernel_launch_example` 验证:

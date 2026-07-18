@@ -84,6 +84,9 @@
     ],
     "performance_case_ids": [
       "recurrent_gated_delta_rule_performance"
+    ],
+    "legacy_regression_case_ids": [
+      "legacy_direct_basic_bs2_mtp2"
     ]
   },
   "tolerance": {
@@ -499,6 +502,71 @@
         "ascend950"
       ],
       "seed": 2033
+    },
+    {
+      "id": "legacy_direct_basic_bs2_mtp2",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 5,
+        "H_k": 4,
+        "H_v": 8,
+        "K": 128,
+        "V": 128,
+        "P": 2
+      },
+      "dtype": {
+        "qkv_beta": "bfloat16",
+        "state_g": "float32",
+        "metadata": "int32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "scale_value": 0.08838834764831845
+      },
+      "optional_inputs": {
+        "num_accepted_tokens": null,
+        "g": "present",
+        "gk": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/recurrent_gated_delta_rule/accuracy/backend.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 42,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_accuracy",
+        "original_id": "basic_bs2_mtp2",
+        "enabled": true,
+        "asset": "tests/operators/recurrent_gated_delta_rule/accuracy/backend.py",
+        "raw": {
+          "bs": 2,
+          "mtp": 2,
+          "nk": 4,
+          "nv": 8,
+          "dk": 128,
+          "dv": 128,
+          "use_g": true,
+          "use_gk": false,
+          "use_accepted_tokens": false,
+          "seed": 42,
+          "rtol": 0.01,
+          "atol": 0.004
+        }
+      }
     }
   ]
 }

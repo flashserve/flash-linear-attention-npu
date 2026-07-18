@@ -37,11 +37,13 @@ KDA 的 head 关系统一写为 `H_v % H_k == 0`，`h_k=floor(h_v/R_h)`。不得
 | `W_k` | WY key-side 中间量 | 与 `q` 的特征维一致并按 `H_v` 展开 |
 | `U_v` | WY value-side 中间量 | 与 `v` 同 Shape |
 | `G_k` | 逐 token、逐 key 维的累计 gate | 与 `gk` 同 Shape |
-| `D_0` | rank3 的第一交换维；rank>=4 时为 batch 维 | `kda_layout_swap12` 通用 ND 输入 |
-| `D_1` | 待交换的第一维 | `kda_layout_swap12` 通用 ND 输入 |
-| `D_2` | 待交换的第二维 | `kda_layout_swap12` 通用 ND 输入 |
+| `D_0` | 通用 ND 输入的第 0 维 | `kda_layout_swap12` |
+| `D_1` | 通用 ND 输入的第 1 维 | `kda_layout_swap12` |
+| `D_2` | 通用 ND 输入的第 2 维 | `kda_layout_swap12` |
+| `D_3` | 通用 ND 输入的第 3 维（rank>=4） | `kda_layout_swap12` |
+| `D_4` | 通用 ND 输入的第 4 维（rank>=5） | `kda_layout_swap12` |
 
-中间量名称用于公式，不作为 JSON Shape 字段。JSON 仍使用 `B/H_k/H_v/T/K/V/C/N/N_c`。
+中间量名称用于公式，不作为 JSON Shape 字段。除 `kda_layout_swap12` 使用 `D_i` 表达通用 ND 维度外，JSON 使用 `B/H_k/H_v/T/K/V/C/N/N_c`。
 
 ## 3. 布局映射
 

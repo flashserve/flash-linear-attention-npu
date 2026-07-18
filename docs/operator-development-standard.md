@@ -236,12 +236,13 @@ tests/
 | `tests/operators/<op_name>/common/` | 数据生成、reference/golden、结果比较、JSON 解析等各测试共用代码。 |
 | `tests/operators/<op_name>/accuracy/` | 以实现类型对应的 `fla_npu.ops.ascendc` 或 `fla_npu.ops.triton` 为入口，执行主精度、泛化、边界和回归测试。 |
 | `tests/operators/<op_name>/routes/` | 归档实现类型要求的调用通路测试；Ascend C 算子覆盖 aclnn、`<<<>>>`，实现 legacy 时再覆盖 `torch.ops.npu`。 |
+| `tests/operators/<op_name>/routes/test_fast_kernel_<op_name>.py` | `examples/fast_kernel_launch_example` 构建出的 direct-launch Python 扩展回归；参数矩阵仍从唯一 JSON 读取。 |
 | `tests/operators/<op_name>/ut/op_host/` | InferShape、参数校验、tiling、workspace、block dim 和平台分支单元测试。 |
 | `tests/operators/<op_name>/ut/op_kernel/` | kernel 模板分支、tiling data 解析和可独立验证的 kernel 单元测试。 |
 | `tests/operators/<op_name>/performance/` | 性能用例、profiling/benchmark 入口和结果汇总；Ascend C 替换 Triton 时保存同场景对比。 |
 | `tests/operators/<op_name>/st/` | 算子组合、模型模块和仓内 example 的端到端回归测试。 |
 
-测试脚本只负责读取 JSON、构造输入、调用被测通路和判断结果，不得在脚本中新增未登记的关键用例。历史算子的 `test/`、`tests/`、`ATK/` 等目录可逐步迁移；新增算子必须直接使用上述目录，修改历史算子时新增的用例必须先写入统一 JSON。
+测试脚本只负责读取 JSON、构造输入、调用被测通路和判断结果，不得在脚本中新增未登记的关键用例。算子源码目录及 `torch_custom`、example 等适配工程中不得保留主线算子的独立 `test/`、`tests/`、`ATK/` 用例目录或第二份参数矩阵；历史资产必须先逐条并入唯一 JSON、完成可逆性和执行资产校验，再删除旧文件夹。example 工程可保留构建器，但主线算子的执行 harness 归档到 `tests/operators/<op_name>/routes/`。
 
 ### 7.2 必测内容
 
@@ -506,6 +507,7 @@ PR 提交前至少完成以下检查：
 - [ ] 若 Ascend C 替换 Triton，目标场景性能优于 Triton，example 默认路径已切到 Ascend C。
 - [ ] 泛化用例覆盖 shape、dtype、layout、SOC、边界、负向和真实上层调用。
 - [ ] 用例设计已归一到 `tests/op_cases/<op_name>.json`，测试执行代码已归档到 `tests/operators/<op_name>/`。
+- [ ] 算子源码、`torch_custom` 和 example 适配工程中没有残留主线算子的第二份用例目录或参数矩阵；历史 JSON 可从 manifest 逐字段物化。
 - [ ] 实现类型对应的 `fla_npu.ops.ascendc` 或 `fla_npu.ops.triton` 覆盖主测试矩阵，其他必选通路完成链路验证。
 - [ ] 算子 `README.md`、`docs/design.md` 和统一 `docs/api.md` 已新增或同步更新，未拆分 aclnn 专用文档。
 - [ ] 新增算子文档已使用 `docs/templates/operator/` 模板，且不存在未替换占位符。

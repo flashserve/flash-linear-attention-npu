@@ -20,7 +20,7 @@
 
 - legacy 通路：`torch.ops.npu.npu_kda_gate_cumsum`，由主 route case 验证显式加载。
 
-现有数值/reference 后端：`torch_custom/fla_npu/test/test_npu_chunk_kda.py`。该后端由 canonical 入口传入
+现有数值/reference 后端：`tests/operators/_shared/chunk_kda_backend.py`。该后端由 canonical 入口传入
 `FLA_NPU_CASE_MANIFEST`、`FLA_NPU_CASE_IDS` 和 `FLA_NPU_OPERATOR`；关键 shape、dtype、属性组合不在
 canonical 脚本中重复定义。
 

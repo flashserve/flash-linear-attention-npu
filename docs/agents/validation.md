@@ -23,6 +23,7 @@
 测试矩阵应覆盖语义路径、调度路径和值域路径，而不是只堆几个默认 shape：
 
 - 所有关键 shape、dtype、layout、属性、平台和用途标签先登记到 `tests/op_cases/<op_name>.json`；测试脚本不另建一套用例列表。
+- 合规检查必须确认算子源码树没有 test/、tests/、ATK/，example/torch_custom 没有主线算子的独立用例目录，tests/operators 下没有第二份持久化 case JSON；ATK 输入只能从 manifest 临时物化。
 - 平台至少覆盖 A2、A3、A5，并分别包含基础功能和实现类型对应主入口的精度验证。
 - fixed length 和 varlen 都要覆盖；varlen 场景要覆盖 `cu_seqlens` 与 `chunk_indices` 成对出现、尾 chunk、短序列和多 chunk。
 - head 关系要覆盖一一对应和 GVA/grouped 场景，例如输出 head 数是 Q/K head 数的 1、2、4 倍，确认 head 映射和 workspace slot 没有串头；JSON 字段名使用所属模型根 README 规定的符号。

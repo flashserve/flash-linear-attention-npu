@@ -15,7 +15,7 @@ from tests.operators._shared.npu_generalization import run_generalization_cases
 
 OP = "chunk_fwd_o"
 ROOT = Path(__file__).resolve().parents[4]
-RUNNER = ROOT / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/tests/pta/test_fwd_o.py"
+RUNNER = ROOT / "tests/operators/chunk_fwd_o/accuracy/backend.py"
 
 
 def test_case_manifest_covers_required_matrix():

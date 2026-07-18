@@ -512,7 +512,7 @@ if [[ "${CI_RUN_TORCH_TESTS:-false}" == "true" ]]; then
     if [[ -n "${CI_TEST_OP:-}" ]]; then
         test_args+=(--op "$CI_TEST_OP")
     fi
-    (cd torch_custom/fla_npu/test && bash test.sh "${test_args[@]}")
+    bash tests/operators/run.sh "${test_args[@]}" --soc "$ci_soc"
 fi
 
 if [[ "${CI_RUN_WHEEL_API_CHECK:-false}" == "true" ]]; then

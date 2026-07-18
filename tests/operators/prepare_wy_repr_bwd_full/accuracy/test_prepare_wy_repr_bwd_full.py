@@ -15,7 +15,7 @@ from tests.operators._shared.npu_generalization import run_generalization_cases
 
 OP = "prepare_wy_repr_bwd_full"
 ROOT = Path(__file__).resolve().parents[4]
-RUNNER = ROOT / "torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_full.py"
+RUNNER = ROOT / "tests/operators/prepare_wy_repr_bwd_full/accuracy/backend.py"
 
 
 def test_case_manifest_covers_required_matrix():
