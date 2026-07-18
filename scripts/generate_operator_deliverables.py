@@ -1544,8 +1544,17 @@ OPS.update({
             ("safe_gate", "bool", "false", "预留，当前必须 false"),
             ("transpose_state_layout", "bool", "false", "预留，当前必须 false"),
         ),
+        "attr_ranges": {
+            "layout": '{"BSND", "BNSD", "TND", "NTD"}',
+            "scale": "-",
+            "chunk_size": "{64, 128}",
+            "output_final_state": "{false, true}",
+            "return_intermediate": "{false, true}",
+            "safe_gate": "{false}",
+            "transpose_state_layout": "{false}",
+        },
         "layouts": "BSND/BNSD/TND/NTD；BNSD/NTD 为内部性能布局，BSND/TND 通过 KdaLayoutSwap12 转换",
-        "dtype": "q/k/v 为同一 FP16 或 BF16；gk/beta 为 FP32 或 BF16并在 L2 转 FP32；状态为 FP32",
+        "dtype": "q/k/v 为同一 FP16 或 BF16；gk/beta 为 FP32 或 BF16，当前实现在 L2 转 FP32；状态为 FP32",
         "modes": "dense/varlen、四种显式 layout、可选初始/最终状态、可选中间量",
         "limits": [
             "chunk_size 仅支持 64/128；K/V 均须在 [16,256] 且为 16 的倍数；交付矩阵覆盖 K=128、V=128/256。",
@@ -1554,6 +1563,27 @@ OPS.update({
             "显式 chunk_indices 必须完整、合法并严格采用 sequence-major 规范顺序。",
             "safe_gate 与 transpose_state_layout 当前必须为 false；raw gate 应先调用 kda_gate_cumsum。",
         ],
+        "architecture_note": dedent("""
+            > **架构债务：** 当前 `stage=1/3/2` 与 L2 Cast 是待整改历史实现，不是新增算子的参考架构。
+            > 整改目标和参考实现见 [设计文档](docs/design.md#51-算子边界与-l2l0-分工)。
+        """).strip(),
+        "l2_role": (
+            "aclnn 两段式接口负责 contiguous、workspace/executor 和 stream 异步发射；当前内部布局中间结果通过 "
+            "`ViewCopy` 回写，BSND/TND 外部布局转换调用 `KdaLayoutSwap12`，这些现状均需随架构整改重新收口。"
+        ),
+        "direct_status": "历史诊断通路，待整改",
+        "direct_readme": "`chunk_kda_fwd<<<...>>>`（历史诊断通路，待整改）",
+        "architecture": dedent("""
+            当前实现通过 `stage=1/3/2` 复用同一 L0，并由 L2 拼接 gate cast、阶段间 cast/scale 和状态 kernel；
+            `<<<>>>` 调用者需要理解内部 stage，属于开发规范明确列出的反面样例。整改应优先收敛为一个完整入口下
+            的两个语义 phase，在 L0 内闭合必要的全核同步和 `TPipe::Reset()`，并把输入、阶段间和输出 cast
+            融入 kernel；若两个 phase 没有共同归并语义或片上复用价值，再拆成两个语义独立的 L0。
+
+            正面结构参考 [ops-nn PR #4803 的 GroupNormSwishGrad A5 实现](https://gitcode.com/cann/ops-nn/pull/4803/diffs)：
+            公共 kernel 不暴露 stage，第一 phase 生成输出和 workspace，`pipe.Reset()` 后在第二 phase 消费 workspace
+            前执行 `SyncAll()`，再重建 buffer 并在 kernel 内 reduce/cast。KDA 重构必须结合自身参与核和状态依赖
+            重新证明同步顺序，不能机械复制。
+        """).strip(),
         "task": "stage1/3/2 按 (sequence,value_head,chunk) 分配无跨 chunk 的矩阵任务；状态传播复用 ChunkGatedDeltaRuleFwdH 并保持同一序列的 chunk 顺序。varlen tiling 保存每序列起止与累计 chunk offset，不按每个 chunk 膨胀。",
         "tiling_key": "公开接口只设置 key=1，用于选择 AIC:AIV=1:2 的 mixed task kernel 类型；它不编码 B/H/T/C/layout，也不产生 shape 组合。设备源码中的 key=0/key=2 是历史保留分支，host 已明确不可达。保留 key=1 的原因是当前 Ascend C mixed task 发射需要通过 tiling key 绑定任务类型，不能仅由普通 tiling data 替代。",
         "flow": "L2 先做 contiguous、layout 规范化与 gate cast；stage1 生成 Aqk/Akk/qg/kg/w seed，stage3 完成 Akk@W/U，GDN fwd_h 更新 h/v_new/final_state，stage2 计算 qg@h 与 Aqk@v_new 并合并 o。",
@@ -1578,6 +1608,9 @@ OPS.update({
         """),
         "aclnn_call": "q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices, layout, scale, chunkSize, outputFinalState, totalChunks, o, finalState, aqk, akk, w, u, qg, kg, vNew, h, &workspaceSize, &executor",
         "direct_api": dedent("""
+            > **架构债务：** 下述 stage launch 仅记录当前历史实现和诊断通路，不满足“`<<<>>>` 对外提供完整算子语义、
+            > 不暴露内部 stage、L2 不拼接 Cast”的开发规范。新增算子不得照搬，KDA 后续必须按设计文档整改。
+
             `chunk_kda_fwd` 是复合算子，完整直调通路必须使用 host 为同一 case 生成的四组 launch 配置，
             并按同一 stream 串行执行以下流水；单独发射一次 `chunk_kda_fwd` 不构成公开算子语义：
 
@@ -1931,9 +1964,18 @@ def output_table(spec):
 
 
 def attr_table(spec):
+    attr_ranges = spec.get("attr_ranges")
+    if attr_ranges is None:
+        return table(
+            ("名称", "类型", "默认值", "说明"),
+            [(f"`{a}`", b, f"`{c}`", d) for a, b, c, d in spec["attrs"]],
+        )
     return table(
-        ("名称", "类型", "默认值", "说明"),
-        [(f"`{a}`", b, f"`{c}`", d) for a, b, c, d in spec["attrs"]],
+        ("名称", "类型", "默认值", "取值范围", "说明"),
+        [
+            (f"`{a}`", b, f"`{c}`", f"`{attr_ranges[a]}`" if attr_ranges[a] != "-" else "-", d)
+            for a, b, c, d in spec["attrs"]
+        ],
     )
 
 
@@ -2097,6 +2139,7 @@ def render_readme(op, spec):
     support_note = varlen_note(spec)
     reference = spec.get("reference", "仓内 PyTorch/CPU reference")
     coverage = spec.get("coverage", spec["modes"])
+    architecture_note = spec.get("architecture_note", "")
     if spec.get("replaces_triton"):
         default_performance = (
             f"使用 msopprof 在相同 shape/dtype/layout、warmup 和迭代配置下对比 "
@@ -2109,6 +2152,7 @@ def render_readme(op, spec):
     performance = spec.get("performance_target", default_performance)
     legacy_name = legacy_op_name(op, spec)
     legacy_api = f"`torch.ops.npu.{legacy_name}`" if legacy_name else "未实现"
+    direct_readme = spec.get("direct_readme", f"`{op}<<<blockDim, l2ctrl, stream>>>(...)`")
     return dedent(f"""
         # {spec['title']}
 
@@ -2145,6 +2189,8 @@ def render_readme(op, spec):
 
         {support_note}
 
+        {architecture_note}
+
         ## 5. 调用入口
 
         实现类型：`ascendc`
@@ -2153,8 +2199,10 @@ def render_readme(op, spec):
         | --- | --- |
         | Python 主入口 | `fla_npu.ops.ascendc.{op}` |
         | aclnn | `{aclnn_names(spec)[0]}` / `{aclnn_names(spec)[1]}` |
-        | Ascend C `<<<>>>` | `{op}<<<blockDim, l2ctrl, stream>>>(...)` |
+        | Ascend C `<<<>>>` | {direct_readme} |
         | legacy（可选） | {legacy_api} |
+
+        表中正式入口必须表达一次完整算子语义，不要求调用者理解或传入内部 stage 编号，类型转换也不由 L2 Cast 组成调用前置步骤；现有实现不满足时必须明确标为架构债务和待整改通路。
 
         完整签名和示例见 [API 文档](docs/api.md)，kernel、tiling、同步与内存设计见[设计文档](docs/design.md)。
 
@@ -2222,6 +2270,19 @@ def render_design(op, spec):
             "并对比当前主线 Ascend C 基线检查性能回退。"
         )
     performance = spec.get("performance_design", default_performance)
+    architecture = spec.get(
+        "architecture",
+        (
+            "公共接口只表达完整算子语义，不暴露内部 stage 编号。强生产消费关系可在一个 L0 kernel 内拆成"
+            "语义 phase，并在阶段边界闭合异步生命周期、`TPipe::Reset()` 和必要的 `SyncAll`；只有 GM 数据依赖且"
+            "没有共同归并语义或片上复用价值的计算拆成独立 L0。L2 只负责编排、校验和 workspace/executor，"
+            "输入、阶段间及输出 cast 均在 kernel 内完成。"
+        ),
+    )
+    l2_role = spec.get(
+        "l2_role",
+        "aclnn 两段式接口负责 contiguous、workspace/executor 和 stream 异步发射。",
+    )
     return dedent(f"""
         # {spec['title']} 设计方案
 
@@ -2261,8 +2322,12 @@ def render_design(op, spec):
         2. InferShape、op_api 与 tiling host 共同按 README 校验必选参数、shape、dtype、layout、属性和可选输入组合，并构造或核对输出。
         3. tiling processor 计算任务数、边界块、workspace 偏移和模板实例。
         4. `op_kernel/` 按本算子的计算流程完成搬运、计算、同步和写回。
-        5. aclnn 两段式接口负责 contiguous、workspace/executor 和 stream 异步发射。
+        5. {l2_role}
         6. `fla_npu.ops.ascendc` 仅通过 ctypes 调用 aclnn，不依赖 torch_npu dispatcher。
+
+        ### 5.1 算子边界与 L2/L0 分工
+
+        {architecture}
 
         ## 6. Tiling 设计
 
@@ -2357,6 +2422,7 @@ def render_api(op, spec):
     limits = "\n".join(f"- {item}" for item in spec["limits"])
     legacy_name = legacy_op_name(op, spec)
     legacy_status = "支持（显式加载）" if legacy_name else "未实现"
+    direct_status = spec.get("direct_status", "支持")
     if legacy_name:
         legacy_code = legacy_example_code(op, spec)
         legacy_example = f"```python\n{legacy_code}\n```"
@@ -2383,10 +2449,12 @@ def render_api(op, spec):
         | --- | --- | --- |
         | Python 主入口 | `fla_npu.ops.ascendc.{op}` | 支持 |
         | aclnn | `{get_name}` / `{run_name}` | 支持 |
-        | Ascend C `<<<>>>` | `{kernel_name}<<<blockDim, nullptr, stream>>>` | 支持 |
+        | Ascend C `<<<>>>` | `{kernel_name}<<<blockDim, nullptr, stream>>>` | {direct_status} |
         | legacy | `{legacy_name or '-'}` | {legacy_status} |
 
-        各已实现入口使用 README 中定义的同一公式、shape、dtype、边界和可选参数语义。
+        表中标记为“支持”的正式入口使用 README 中定义的同一公式、shape、dtype、边界和可选参数语义；待整改诊断通路不据此宣称已经满足完整公开语义。
+
+        公共 API 应只表达完整算子语义，不要求调用者传入或理解内部 stage 编号；类型转换应由 kernel 完成，不由 L2 Cast 组成调用前置步骤。现有实现不满足时，必须像本页一样明确标为架构债务和待整改通路。
 
         ## 2. 公共参数与约束
 
