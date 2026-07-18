@@ -448,11 +448,22 @@ output = torch.ops.npu.<op_name>(...)
 
 ## 10. 异常与返回码
 
-| 条件 | aclnn 返回码/异常 | 说明 |
-| --- | --- | --- |
-| `<invalid condition>` | `<return code>` | `<message and handling>` |
+> **强制一致性要求：** 本节公开的每一项约束都必须在代码中存在可定位的参数校验或拦截分支；代码中的每一个公开参数拦截也必须反向写入本节。文档、代码、错误日志、返回码和负向测试必须表达同一个触发条件，不允许只在文档中声明限制却让非法输入进入 kernel，也不允许代码已经拒绝某个场景而文档仍声明支持。
 
-> **填写示例：** `chunk_bwd_dv_local` 应为“已知限制”中的每项约束列出对应返回码和错误信息，并补充 `H_v % H_k != 0`、varlen 两个索引只传一个等组合错误。
+| 公开约束/触发条件 | 代码拦截位置 | 返回码/异常 | 错误信息关键字 | 负向用例 ID |
+| --- | --- | --- | --- | --- |
+| `<required input is null>` | `<file:function/validation branch>` | `<return code>` | `<message keyword>` | `<case id>` |
+| `<invalid dtype/shape/format/range/layout/attribute/SOC/parameter combination>` | `<file:function/validation branch>` | `<return code>` | `<message keyword>` | `<case id>` |
+
+填写时必须完成以下双向核对：
+
+- 从文档到代码：逐项检查 required/optional、dtype、shape、format、range、layout、属性枚举、平台差异、预留参数和跨参数组合约束，确认调用 kernel 前存在对应拦截。
+- 从代码到文档：逐项检查 `op_host`、InferShape、Tiling、aclnn 参数校验和 Python wrapper 中的拒绝分支，确认本节已公开相同限制。
+- 返回码与日志：空指针、非法参数和内部错误不得混用返回码；错误信息应包含实际触发值、期望条件以及必要的平台或模式信息，能够证明命中了目标拦截。
+- 负向测试：每类公开约束和每类代码拦截至少有一个负向用例，`expected_return_code` 和错误信息断言必须与实际分支一致；用例 ID 统一指向 `tests/op_cases/<op_name>.json`。
+- 同步修改：新增、删除或收紧任一约束时，必须在同一个改动中同步代码拦截、错误日志、返回码、本节表格和负向测试。
+
+> **填写示例：** `chunk_bwd_dv_local` 应为“已知限制”中的每项约束分别填写实际校验函数或分支、返回码、日志关键字和 JSON 负向用例 ID，并补充 `H_v % H_k != 0`、varlen 两个索引只传一个等组合错误。若某项文档约束找不到代码拦截，必须先补代码；若某个代码拦截找不到文档条目，必须先补文档，不能只在“说明”中笼统写“参数非法”。
 
 ## 11. 文档自检
 
@@ -462,4 +473,4 @@ output = torch.ops.npu.<op_name>(...)
 - [ ] 已按实现类型保留 `fla_npu.ops.ascendc` 或 `fla_npu.ops.triton`，未同时把两者声明为主入口。
 - [ ] Ascend C 算子的 aclnn、`fla_npu.ops.ascendc`、`<<<>>>` 示例完整可执行；Triton 算子的 `fla_npu.ops.triton` 示例完整可执行。
 - [ ] 实现 `torch.ops.npu` 时已提供显式加载示例；未实现时已删除对应章节。
-- [ ] 错误码与代码拦截、日志文本和负向测试一致。
+- [ ] 已完成“文档约束到代码拦截”和“代码拦截到文档约束”的双向核对；每一项均能对应返回码、日志关键字和 JSON 负向用例 ID。
