@@ -335,7 +335,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -346,7 +346,7 @@
         "suite": "source_matrix",
         "original_id": "fix_hk_eq_hv_1",
         "enabled": true,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "fix_hk_eq_hv_1",
           "description": "Fix length (HK == HV): HK=query_head=2 HV=value_head=2 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16",
@@ -400,7 +400,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -411,7 +411,7 @@
         "suite": "source_matrix",
         "original_id": "fix_hk_eq_hv_2",
         "enabled": true,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "fix_hk_eq_hv_2",
           "description": "Fix length (HK == HV): HK=query_head=4 HV=value_head=4 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16",
@@ -465,7 +465,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -476,7 +476,7 @@
         "suite": "source_matrix",
         "original_id": "fix_hk_eq_hv_3",
         "enabled": true,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "fix_hk_eq_hv_3",
           "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=256 ktype=dtype=fp16",
@@ -530,7 +530,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -541,7 +541,7 @@
         "suite": "source_matrix",
         "original_id": "fix_hk_eq_hv_4",
         "enabled": true,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "fix_hk_eq_hv_4",
           "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=256 ktype=dtype=bf16",
@@ -595,7 +595,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -606,7 +606,7 @@
         "suite": "source_matrix",
         "original_id": "fix_hk_eq_hv_5",
         "enabled": true,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "fix_hk_eq_hv_5",
           "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16",
@@ -663,7 +663,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -674,7 +674,7 @@
         "suite": "source_matrix",
         "original_id": "var_hk_eq_hv_1",
         "enabled": true,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "var_hk_eq_hv_1",
           "description": "Variable length (HK == HV): HK=query_head=4 HV=value_head=4 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=2 ktype=dtype=fp16",
@@ -732,7 +732,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -743,7 +743,7 @@
         "suite": "source_matrix",
         "original_id": "var_hk_eq_hv_2",
         "enabled": true,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "var_hk_eq_hv_2",
           "description": "Variable length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=3 ktype=dtype=bf16",
@@ -801,7 +801,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -812,7 +812,7 @@
         "suite": "source_matrix",
         "original_id": "var_hk_eq_hv_3",
         "enabled": true,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "var_hk_eq_hv_3",
           "description": "Variable length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=4 ktype=dtype=fp16",
@@ -870,7 +870,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -881,7 +881,7 @@
         "suite": "source_matrix",
         "original_id": "var_hk_eq_hv_4",
         "enabled": true,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "var_hk_eq_hv_4",
           "description": "Variable length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=5 ktype=dtype=bf16",
@@ -939,7 +939,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -950,7 +950,7 @@
         "suite": "source_matrix",
         "original_id": "var_hk_eq_hv_5",
         "enabled": true,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "var_hk_eq_hv_5",
           "description": "Variable length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=16 ktype=dtype=bf16",
@@ -1006,7 +1006,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1017,7 +1017,7 @@
         "suite": "source_matrix",
         "original_id": "gva_fix_1",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "gva_fix_1",
           "description": "GVA fix length: HK=query_head=16 HV=value_head=32 K=Kdim=128 V=Vdim=256 ktype=dtype=fp16",
@@ -1073,7 +1073,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1084,7 +1084,7 @@
         "suite": "source_matrix",
         "original_id": "gva_fix_2",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "gva_fix_2",
           "description": "GVA fix length: HK=query_head=21 HV=value_head=63 K=Kdim=128 V=Vdim=256 ktype=dtype=bf16",
@@ -1140,7 +1140,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1151,7 +1151,7 @@
         "suite": "source_matrix",
         "original_id": "gva_fix_3",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "gva_fix_3",
           "description": "GVA fix length: HK=query_head=4 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16",
@@ -1207,7 +1207,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1218,7 +1218,7 @@
         "suite": "source_matrix",
         "original_id": "gva_fix_4",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "gva_fix_4",
           "description": "GVA fix length: HK=query_head=2 HV=value_head=64 K=Kdim=128 V=Vdim=256 ktype=dtype=bf16",
@@ -1277,7 +1277,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1288,7 +1288,7 @@
         "suite": "source_matrix",
         "original_id": "gva_var_1",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "gva_var_1",
           "description": "GVA variable length: HK=query_head=16 HV=value_head=32 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=128 ktype=dtype=fp16",
@@ -1348,7 +1348,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1359,7 +1359,7 @@
         "suite": "source_matrix",
         "original_id": "gva_var_2",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "gva_var_2",
           "description": "GVA variable length: HK=query_head=21 HV=value_head=63 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=2 ktype=dtype=bf16",
@@ -1419,7 +1419,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1430,7 +1430,7 @@
         "suite": "source_matrix",
         "original_id": "gva_var_3",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "gva_var_3",
           "description": "GVA variable length: HK=query_head=8 HV=value_head=32 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=172 ktype=dtype=bf16",
@@ -1490,7 +1490,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1501,7 +1501,7 @@
         "suite": "source_matrix",
         "original_id": "gva_var_4",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "gva_var_4",
           "description": "GVA variable length: HK=query_head=16 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=668 ktype=dtype=fp16",
@@ -1561,7 +1561,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1572,7 +1572,7 @@
         "suite": "source_matrix",
         "original_id": "gva_var_5",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "gva_var_5",
           "description": "GVA variable length: HK=query_head=4 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=17 ktype=dtype=bf16",
@@ -1632,7 +1632,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1643,7 +1643,7 @@
         "suite": "source_matrix",
         "original_id": "gva_var_6",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "gva_var_6",
           "description": "GVA variable length: HK=query_head=2 HV=value_head=64 K=Kdim=128 V=Vdim=256 cu_seqlens_len=mean_len=32 ktype=dtype=fp16",
@@ -1700,7 +1700,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1711,7 +1711,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_1",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_1",
           "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | 标准用例，所有必选输入",
@@ -1767,7 +1767,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1778,7 +1778,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_2",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_2",
           "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | BF16精度",
@@ -1834,7 +1834,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1845,7 +1845,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_3",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_3",
           "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | T=4096，beta/g支持FP32",
@@ -1901,7 +1901,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1912,7 +1912,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_4",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_4",
           "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | 超长序列T=8192",
@@ -1968,7 +1968,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -1979,7 +1979,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_5",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_5",
           "description": "Fix length (HK == HV): HK=query_head=4 HV=value_head=4 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | 极限batch B=128",
@@ -2035,7 +2035,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2046,7 +2046,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_6",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_6",
           "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | B=64,T=2048",
@@ -2102,7 +2102,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2113,7 +2113,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_7",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_7",
           "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | T=4096,B=32",
@@ -2169,7 +2169,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2180,7 +2180,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_8",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_8",
           "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | T=8192,B=16",
@@ -2236,7 +2236,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2247,7 +2247,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_9",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_9",
           "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | 大batch+长序列",
@@ -2303,7 +2303,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2314,7 +2314,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_10",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_10",
           "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | B=32, T=8192",
@@ -2370,7 +2370,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2381,7 +2381,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_11",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_11",
           "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | 极长序列T=16384",
@@ -2437,7 +2437,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2448,7 +2448,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_12",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_12",
           "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | T=32768超长序列",
@@ -2504,7 +2504,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2515,7 +2515,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_13",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_13",
           "description": "Fix length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | B=1,T=32K",
@@ -2571,7 +2571,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2582,7 +2582,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_14",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_14",
           "description": "Fix length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | B=1,T=64K",
@@ -2638,7 +2638,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2649,7 +2649,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_15",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_15",
           "description": "Fix length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 ktype=dtype=bf16 | B=1,T=128K,H=8",
@@ -2705,7 +2705,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2716,7 +2716,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_fix_16",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_fix_16",
           "description": "Fix length (HK == HV): HK=query_head=4 HV=value_head=4 K=Kdim=128 V=Vdim=128 ktype=dtype=fp16 | B=1,T=256K,H=4,极限长度",
@@ -2775,7 +2775,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2786,7 +2786,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_var_1",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_var_1",
           "description": "Variable length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=65 ktype=dtype=fp16 | 变长输入，N=64个样本",
@@ -2846,7 +2846,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2857,7 +2857,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_var_2",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_var_2",
           "description": "Variable length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=33 ktype=dtype=bf16 | 变长输入，N=32个样本",
@@ -2917,7 +2917,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2928,7 +2928,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_var_3",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_var_3",
           "description": "Variable length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=17 ktype=dtype=fp16 | 变长输入，N=16个样本",
@@ -2988,7 +2988,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -2999,7 +2999,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_var_4",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_var_4",
           "description": "Variable length (HK == HV): HK=query_head=32 HV=value_head=32 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=9 ktype=dtype=bf16 | 变长输入，N=8个样本",
@@ -3059,7 +3059,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -3070,7 +3070,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_var_5",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_var_5",
           "description": "Variable length (HK == HV): HK=query_head=16 HV=value_head=16 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=2 ktype=dtype=bf16 | B=1,T=32K,chunk_size=128,变长",
@@ -3130,7 +3130,7 @@
       "run_on": [
         "torch_ops_npu"
       ],
-      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+      "reference": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "finite_outputs": true
@@ -3141,7 +3141,7 @@
         "suite": "source_matrix",
         "original_id": "phase_1_var_6",
         "enabled": false,
-        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py",
+        "asset": "tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py",
         "raw": {
           "name": "phase_1_var_6",
           "description": "Variable length (HK == HV): HK=query_head=8 HV=value_head=8 K=Kdim=128 V=Vdim=128 cu_seqlens_len=mean_len=2 ktype=dtype=fp16 | B=1,T=64K,chunk_size=128,变长",

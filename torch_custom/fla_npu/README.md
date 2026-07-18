@@ -45,7 +45,7 @@ fla_npu/opp/vendors/fla_npu_transformer
 关键产物包括：
 
 - `op_api/lib/libcust_opapi.so`：自定义 aclnn op_api 动态库。
-- `op_api/lib/libopapi.so`：wheel 内优先解析用的同名兼容副本。
+- `op_api/lib/libopapi.so`：依赖同目录 `libcust_opapi.so` 的 torch_npu 兼容桥接库；不得复制 custom 实现冒充该库。
 - `op_api/include/aclnnop/aclnn_*.h`：Python ctypes ABI 对齐依据。
 - `op_impl/ai_core/tbe/op_host/...`、`op_tiling/...`、`op_proto/...`：host、tiling、proto 动态库。
 - `op_impl/ai_core/tbe/kernel/...`：AI Core kernel `.o` 和 config。

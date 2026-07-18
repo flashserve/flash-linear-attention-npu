@@ -163,7 +163,9 @@ site-packages/
 2. wheel 内嵌的 `fla_npu/opp`。
 3. `ASCEND_CUSTOM_OPP_PATH` 或 `ASCEND_OPP_PATH` 中唯一匹配的 vendor。
 
-选中后，包会把 vendor root 前置到 `ASCEND_CUSTOM_OPP_PATH`，把 `op_api/lib` 前置到 `LD_LIBRARY_PATH`，并用 `FLA_NPU_OP_API_LIB` 记录实际加载的 `libcust_opapi.so`。
+选中后，包会把 vendor root 前置到 `ASCEND_CUSTOM_OPP_PATH`，把 `op_api/lib` 前置到 `LD_LIBRARY_PATH`，并用 `FLA_NPU_OP_API_LIB` 记录实际加载的 op_api 动态库。
+
+`libopapi.so` 不是 `libcust_opapi.so` 的文件副本，而是 `SONAME=libopapi.so`、依赖同目录 `libcust_opapi.so` 的薄桥接库。运行时先按绝对路径加载一次 custom 实现，再加载不含算子实现的桥接库：默认 ctypes 通路从 custom 实现解析 aclnn 符号，可选 legacy dispatcher 则通过桥接库满足 torch_npu 对 `libopapi.so` 的动态查找约定，从而避免把同一套 op_api 全局状态初始化两遍。
 
 ### 2.7 解耦后仍然保留的运行时依赖
 

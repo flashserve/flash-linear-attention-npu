@@ -16,9 +16,13 @@ from pathlib import Path
 from typing import Optional
 
 import pytest
+from tests.operators._shared.route_requirements import require_fast_kernel_route
+
+require_fast_kernel_route()
+
+import ascend_ops
 import torch
 import torch_npu
-import ascend_ops
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 

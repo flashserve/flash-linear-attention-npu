@@ -16,6 +16,7 @@
 #define CHUNK_BWD_DQKWG_TILING_PROCESSOR_H
 
 #include "../../op_kernel/chunk_bwd_dqkwg_struct.h"
+#include <algorithm>
 #include "exe_graph/runtime/storage_shape.h"
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
@@ -87,6 +88,7 @@ struct ChunkBwdDqkwgTilingContext {
     const gert::StorageShape *chunkIndicesShape;
     float scale;
     int32_t chunkSize;
+    uint32_t aicCoreNum;
 };
 
 class ChunkBwdDqkwgTilingProcessor {
@@ -198,27 +200,6 @@ public:
         tiling_.scale = ctx_.scale;
         tiling_.mul0RowNum = (V == V_SIZE_256) ? 16 : 32;
 
-        size_t dgLastSize = B * HV * numChunks * 1 * FP32_SIZE;
-        dgLastSize = ((dgLastSize + 31) / 32) * 32;
-
-        size_t mm5Size = B * HV * T * K * FP16_SIZE;
-        size_t dsTempSize = B * HV * T * BT * FP16_SIZE;
-
-        size_t offset = 0;
-
-        tiling_.wsDwOffset = 0;
-        tiling_.wsDgLastOffset = static_cast<int64_t>(offset);
-        offset += dgLastSize;
-
-        tiling_.wsMm5Offset = static_cast<int64_t>(offset);
-        offset += mm5Size;
-
-        tiling_.wsDsTempOffset = static_cast<int64_t>(offset);
-        offset += dsTempSize;
-
-        tiling_.dgLastSize = static_cast<int64_t>(dgLastSize);
-        tiling_.totalWorkspaceSize = static_cast<int64_t>(offset);
-
         return ge::GRAPH_SUCCESS;
     }
 
@@ -248,27 +229,88 @@ public:
 
         tiling_.numChunks = chunkIndicesDim0 / CHUNK_INDICES_DIM_1_SIZE;
 
-        size_t dgLastSize = tiling_.B * tiling_.HV * tiling_.numChunks * 1 * FP32_SIZE;
-        dgLastSize = ((dgLastSize + 31) / 32) * 32;
+        return ge::GRAPH_SUCCESS;
+    }
 
-        size_t mm5Size = tiling_.B * tiling_.HV * tiling_.T * tiling_.K * FP16_SIZE;
-        size_t dsTempSize = tiling_.B * tiling_.HV * tiling_.T * tiling_.BT * FP16_SIZE;
+    static size_t Align32(size_t value)
+    {
+        return (value + 31) / 32 * 32;
+    }
+
+    ge::graphStatus WorkspaceTiling()
+    {
+        const uint64_t aicCoreNum = std::max<uint32_t>(ctx_.aicCoreNum, 1);
+        const uint64_t coreLoops = tiling_.B * tiling_.numChunks;
+        const uint64_t ringCoreSlots = std::max<uint64_t>(std::min(aicCoreNum, coreLoops), 1);
+
+        const size_t mainDgLastSize =
+            Align32(static_cast<size_t>(tiling_.B * tiling_.HV * tiling_.numChunks) * FP32_SIZE);
+        const size_t mainMm5Size =
+            static_cast<size_t>(tiling_.B * tiling_.HV * tiling_.T * tiling_.K) * FP16_SIZE;
+        const size_t mainDsTempSize =
+            static_cast<size_t>(tiling_.B * tiling_.HV * tiling_.T * tiling_.BT) * FP16_SIZE;
+        const size_t mainWorkspaceSize = mainDgLastSize + mainMm5Size + mainDsTempSize;
+
+        auto workspaceForDepth = [&](uint64_t depth) -> size_t {
+            const uint64_t shortDepth = std::max<uint64_t>(depth / 2, 2);
+            const size_t shortBtxK = Align32(
+                static_cast<size_t>(ringCoreSlots * shortDepth * tiling_.HV * tiling_.BT * tiling_.K) * FP16_SIZE);
+            const size_t sharedBtxK = Align32(
+                static_cast<size_t>(ringCoreSlots * depth * tiling_.HV * tiling_.BT * tiling_.K) * FP16_SIZE);
+            const size_t groupBtb = Align32(
+                static_cast<size_t>(ringCoreSlots * depth * tiling_.HV * tiling_.BT * tiling_.BT) * FP16_SIZE);
+            const size_t shortBtb = Align32(
+                static_cast<size_t>(ringCoreSlots * shortDepth * tiling_.HV * tiling_.BT * tiling_.BT) * FP16_SIZE);
+            const size_t dgLast =
+                Align32(static_cast<size_t>(ringCoreSlots * depth * tiling_.HV) * FP32_SIZE);
+            return shortBtxK + sharedBtxK + groupBtb + shortBtb + dgLast;
+        };
+
+        constexpr size_t l2RingBudget = static_cast<size_t>(512) * 1024 * 1024;
+        const size_t ringBudget = std::min(mainWorkspaceSize, l2RingBudget);
+        uint64_t groupRingDepth = 4;
+        for (uint64_t candidate : {16U, 8U, 4U}) {
+            if (workspaceForDepth(candidate) <= ringBudget) {
+                groupRingDepth = candidate;
+                break;
+            }
+        }
+        constexpr uint64_t minDepthForOverlap = 8;
+        if (groupRingDepth < minDepthForOverlap &&
+            workspaceForDepth(minDepthForOverlap) <= mainWorkspaceSize) {
+            groupRingDepth = minDepthForOverlap;
+        }
+
+        const uint64_t shortDepth = std::max<uint64_t>(groupRingDepth / 2, 2);
+        const size_t shortBtxKSize = Align32(
+            static_cast<size_t>(ringCoreSlots * shortDepth * tiling_.HV * tiling_.BT * tiling_.K) * FP16_SIZE);
+        const size_t sharedBtxKSize = Align32(
+            static_cast<size_t>(ringCoreSlots * groupRingDepth * tiling_.HV * tiling_.BT * tiling_.K) * FP16_SIZE);
+        const size_t groupBtbSize = Align32(
+            static_cast<size_t>(ringCoreSlots * groupRingDepth * tiling_.HV * tiling_.BT * tiling_.BT) * FP16_SIZE);
+        const size_t shortBtbSize = Align32(
+            static_cast<size_t>(ringCoreSlots * shortDepth * tiling_.HV * tiling_.BT * tiling_.BT) * FP16_SIZE);
+        const size_t dgLastSize =
+            Align32(static_cast<size_t>(ringCoreSlots * groupRingDepth * tiling_.HV) * FP32_SIZE);
 
         size_t offset = 0;
-
-        tiling_.wsDwOffset = 0;
-        tiling_.wsDgLastOffset = static_cast<int64_t>(offset);
+        tiling_.wsDwOffset = offset;
+        offset += shortBtxKSize;
+        tiling_.wsMm5Offset = offset;
+        offset += sharedBtxKSize;
+        tiling_.wsDsTempOffset = offset;
+        offset += groupBtbSize;
+        tiling_.wsMul1Offset = offset;
+        offset += shortBtbSize;
+        tiling_.wsDgLastOffset = offset;
         offset += dgLastSize;
 
-        tiling_.wsMm5Offset = static_cast<int64_t>(offset);
-        offset += mm5Size;
-
-        tiling_.wsDsTempOffset = static_cast<int64_t>(offset);
-        offset += dsTempSize;
-
-        tiling_.dgLastSize = static_cast<int64_t>(dgLastSize);
-        tiling_.totalWorkspaceSize = static_cast<int64_t>(offset);
-
+        tiling_.aicCoreNum = aicCoreNum;
+        tiling_.wsBtxKSyncSlotsPerHead = groupRingDepth;
+        tiling_.dgLastSize = dgLastSize;
+        tiling_.wsMm6Offset = tiling_.wsDwOffset;
+        tiling_.wsMm7Offset = tiling_.wsMm5Offset;
+        tiling_.totalWorkspaceSize = offset;
         return ge::GRAPH_SUCCESS;
     }
 
@@ -291,6 +333,7 @@ public:
             OP_CHECK_IF(FixLenTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
             tiling_.isVarLen = 0;
         }
+        OP_CHECK_IF(WorkspaceTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
         return ge::GRAPH_SUCCESS;
     }
 };

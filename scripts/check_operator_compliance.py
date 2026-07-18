@@ -254,6 +254,14 @@ def validate_test_tree(op: str, op_root: Path, errors: list[str]) -> None:
         if not path.is_file():
             errors.append(f"missing file: {path.relative_to(ROOT)}")
     accuracy_path = root / "accuracy" / f"test_{op}.py"
+    extra_accuracy_tests = sorted(
+        path for path in (root / "accuracy").glob("test_*.py") if path != accuracy_path
+    )
+    for path in extra_accuracy_tests:
+        errors.append(
+            f"{path.relative_to(ROOT)}: only the canonical test_{op}.py may use the pytest test_ prefix; "
+            "rename historical executors to a non-test filename"
+        )
     if accuracy_path.is_file():
         accuracy_text = accuracy_path.read_text(encoding="utf-8")
         for required in ('tags=("generalization",)', "run_generalization_cases(OP, cases)"):
@@ -273,6 +281,16 @@ def validate_test_tree(op: str, op_root: Path, errors: list[str]) -> None:
             errors.append(f"missing file: {legacy_path.relative_to(ROOT)}")
         if not has_legacy and legacy_path.exists():
             errors.append(f"unexpected legacy route: {legacy_path.relative_to(ROOT)}")
+        if legacy_path.is_file():
+            legacy_text = legacy_path.read_text(encoding="utf-8")
+            if "require_legacy_route()" not in legacy_text:
+                errors.append(f"{legacy_path.relative_to(ROOT)}: missing explicit legacy route gate")
+    fast_kernel_path = root / "routes" / f"test_fast_kernel_{op}.py"
+    if (
+        fast_kernel_path.is_file()
+        and "require_fast_kernel_route()" not in fast_kernel_path.read_text(encoding="utf-8")
+    ):
+        errors.append(f"{fast_kernel_path.relative_to(ROOT)}: missing explicit fast-kernel route gate")
     direct_path = root / "routes" / f"test_direct_{op}.cpp"
     if direct_path.is_file():
         direct_text = direct_path.read_text(encoding="utf-8")
@@ -395,6 +413,9 @@ def validate_source_rules(operators: dict[str, Path], errors: list[str]) -> None
         ROOT / "ci" / "run_ci_container.sh": (
             "CI_RUN_OPERATOR_GENERALIZATION",
             "CI_RUN_OPERATOR_ACCURACY",
+        ),
+        ROOT / "examples" / "fast_kernel_launch_example" / "build_and_test.sh": (
+            "FLA_NPU_RUN_FAST_KERNEL_TESTS=1",
         ),
         ROOT / ".github" / "workflows" / "ci.yml": (
             "CI_RUN_OPERATOR_GENERALIZATION:",

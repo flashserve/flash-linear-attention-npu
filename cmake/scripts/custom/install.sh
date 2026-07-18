@@ -88,13 +88,6 @@ print(package_dir / "opp")
 PY
 }
 
-copy_wheel_file() {
-    local src_file="$1"
-    local dst_file="$2"
-    mkdir -p "$(dirname "${dst_file}")"
-    cp -a "${src_file}" "${dst_file}"
-}
-
 to_snake_name() {
     echo "$1" | sed -E 's/([A-Z]+)([A-Z][a-z])/\1_\2/g; s/([a-z0-9])([A-Z])/\1_\2/g' | tr '[:upper:]' '[:lower:]'
 }
@@ -332,6 +325,12 @@ merge_vendor_to_wheel_opp() {
     local rel_dir
     local dst_op_dir
 
+    if [ -f "${src_vendor}/op_api/lib/libcust_opapi.so" ] &&
+       [ ! -f "${src_vendor}/op_api/lib/libopapi.so" ]; then
+        echo "[ERROR]: Source vendor is missing the libopapi.so compatibility shim." >&2
+        return 1
+    fi
+
     mkdir -p "${dst_vendor}"
 
     if [ -d "${src_kernel_root}" ]; then
@@ -357,9 +356,6 @@ merge_vendor_to_wheel_opp() {
         cp -a "${src_vendor}/." "${dst_vendor}/"
     fi
 
-    if [ -f "${dst_vendor}/op_api/lib/libcust_opapi.so" ]; then
-        copy_wheel_file "${dst_vendor}/op_api/lib/libcust_opapi.so" "${dst_vendor}/op_api/lib/libopapi.so"
-    fi
 }
 
 update_wheel_vendors_config() {

@@ -79,26 +79,15 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(), "gk is reserved and must be absent."),
                 return ge::GRAPH_FAILED);
 
-    auto wShapePtr = context->GetOutputShape(OUTPUT_W_IDX);
-    auto uShapePtr = context->GetOutputShape(OUTPUT_U_IDX);
     auto kShapePtr = context->GetRequiredInputShape(RECOMPUTE_WU_FWD_INPUT_K_IDX);
     auto vShapePtr = context->GetRequiredInputShape(RECOMPUTE_WU_FWD_INPUT_V_IDX);
-    OP_CHECK_IF(wShapePtr == nullptr || uShapePtr == nullptr || kShapePtr == nullptr || vShapePtr == nullptr,
-                OP_LOGE(context->GetNodeName(), "required input/output shapes must be present."),
+    OP_CHECK_IF(kShapePtr == nullptr || vShapePtr == nullptr,
+                OP_LOGE(context->GetNodeName(), "required input shapes must be present."),
                 return ge::GRAPH_FAILED);
     const gert::Shape kShape = kShapePtr->GetStorageShape();
     const gert::Shape vShape = vShapePtr->GetStorageShape();
-    const gert::Shape wShape = wShapePtr->GetStorageShape();
-    const gert::Shape uShape = uShapePtr->GetStorageShape();
-    OP_CHECK_IF(kShape.GetDimNum() != 4 || vShape.GetDimNum() != 4 || wShape.GetDimNum() != 4 ||
-                    uShape.GetDimNum() != 4,
-                OP_LOGE(context->GetNodeName(), "k/v/w/u must be rank-4 tensors."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(wShape.GetDim(0) != kShape.GetDim(0) || wShape.GetDim(1) != vShape.GetDim(1) ||
-                    wShape.GetDim(2) != kShape.GetDim(2) || wShape.GetDim(3) != kShape.GetDim(3) ||
-                    uShape.GetDim(0) != vShape.GetDim(0) || uShape.GetDim(1) != vShape.GetDim(1) ||
-                    uShape.GetDim(2) != vShape.GetDim(2) || uShape.GetDim(3) != vShape.GetDim(3),
-                OP_LOGE(context->GetNodeName(), "w must be [B,H_v,T,K] and u must match v."),
+    OP_CHECK_IF(kShape.GetDimNum() != 4 || vShape.GetDimNum() != 4,
+                OP_LOGE(context->GetNodeName(), "k/v must be rank-4 tensors."),
                 return ge::GRAPH_FAILED);
 
     auto chunkSizePtr = attrPtr->GetAttrPointer<int32_t>(0);

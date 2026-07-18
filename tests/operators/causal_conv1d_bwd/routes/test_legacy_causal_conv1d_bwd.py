@@ -4,6 +4,10 @@ import os
 
 import pytest
 
+from tests.operators._shared.route_requirements import require_legacy_route
+
+require_legacy_route()
+
 from tests.operators.causal_conv1d_bwd.common.case_matrix import case_ids
 
 
@@ -20,7 +24,7 @@ def test_legacy_route_case():
     B, T, D, W = 2, 64, 128, 3
     x = torch.randn(B, T, D, device="npu", dtype=torch.float16)
     weight = torch.randn(W, D, device="npu", dtype=torch.float16)
-    y = torch.randn(B, T, 4, D // 4, device="npu", dtype=torch.float16)
+    y = torch.randn(B, 4, T, D // 4, device="npu", dtype=torch.float16)
     dy = torch.randn_like(y)
     dx, dw, db, dh0 = torch.ops.npu.npu_causal_conv1d_bwd(x, y, weight, dy, activation=1, input_layout="BNSD")
     torch.npu.synchronize()

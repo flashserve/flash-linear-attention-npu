@@ -99,8 +99,22 @@ if (BUILD_OPEN_PROJECT)
     set_target_properties(cust_opapi PROPERTIES OUTPUT_NAME
             cust_opapi
     )
+    add_library(opapi_compat SHARED
+            ${CMAKE_CURRENT_BINARY_DIR}/cust_opapi_stub.cpp
+    )
+    target_compile_options(opapi_compat PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++1z>
+    )
+    target_link_libraries(opapi_compat PRIVATE
+            -Wl,--no-as-needed
+            cust_opapi
+            -Wl,--as-needed
+    )
+    set_target_properties(opapi_compat PROPERTIES
+            OUTPUT_NAME opapi
+    )
     if (NOT ENABLE_BUILT_IN)
-        install(TARGETS cust_opapi
+        install(TARGETS cust_opapi opapi_compat
                 LIBRARY DESTINATION packages/vendors/${VENDOR_NAME}_transformer/op_api/lib
         )
     endif()

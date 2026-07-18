@@ -14,6 +14,23 @@ if [ ! -f "$YAML_FILE" ]; then
     exit 1
 fi
 
+# torchnpugen appends to some outputs, so remove only ignored generated assets
+# before each run. Keep the hand-written FLANpuOpApi.cpp/FLANpuPybind.cpp files.
+for generated_dir in "$CDIR/torch_npu" "$CDIR/op_plugin/config"; do
+  generated_dir="$(realpath -m "$generated_dir")"
+  case "$generated_dir" in
+    "$CDIR"/*) rm -rf -- "$generated_dir" ;;
+    *) echo "Error: refusing to remove unexpected generated path $generated_dir"; exit 1 ;;
+  esac
+done
+rm -f \
+  "$CDIR/op_plugin/AclOpsInterface.h" \
+  "$CDIR/op_plugin/OpApiInterface.h" \
+  "$CDIR/op_plugin/OpInterface.cpp" \
+  "$CDIR/op_plugin/OpInterface.h" \
+  "$CDIR/op_plugin/SparseOpsInterface.h" \
+  "$CDIR/op_plugin/ops/opapi/StructKernelNpuOpApi.cpp"
+
 # get the torch version
 PYTORCH_VERSION=$(python3 -c "import torch; print(torch.__version__.split('+')[0])")
 

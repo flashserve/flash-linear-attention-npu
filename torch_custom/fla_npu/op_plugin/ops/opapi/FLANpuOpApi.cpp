@@ -143,34 +143,6 @@ std::vector<int64_t> BuildKdaChunkIndices(at::IntArrayRef cu_seqlens, int64_t ch
     return indices;
 }
 
-bool ResolveChunkLocalCumsumOutputDtype(
-    const std::string &output_dtype_str,
-    c10::ScalarType input_dtype,
-    c10::ScalarType &resolved_dtype)
-{
-    if (output_dtype_str.empty() || output_dtype_str == "float" || output_dtype_str == "float32" ||
-        output_dtype_str == "fp32" || output_dtype_str == "torch.float" ||
-        output_dtype_str == "torch.float32") {
-        resolved_dtype = c10::ScalarType::Float;
-        return true;
-    }
-    if (output_dtype_str == "same" || output_dtype_str == "same_as_input" || output_dtype_str == "input" ||
-        output_dtype_str == "none" || output_dtype_str == "None" || output_dtype_str == "null") {
-        resolved_dtype = input_dtype;
-        return true;
-    }
-    if (output_dtype_str == "float16" || output_dtype_str == "fp16" || output_dtype_str == "half" ||
-        output_dtype_str == "torch.float16" || output_dtype_str == "torch.half") {
-        resolved_dtype = c10::ScalarType::Half;
-        return true;
-    }
-    if (output_dtype_str == "bfloat16" || output_dtype_str == "bf16" ||
-        output_dtype_str == "torch.bfloat16") {
-        resolved_dtype = c10::ScalarType::BFloat16;
-        return true;
-    }
-    return false;
-}
 } // namespace
 
 
@@ -364,14 +336,17 @@ at::Tensor npu_chunk_fwd_o(
     c10::optional<int64_t> chunk_size,
     c10::optional<bool> transpose_state_layout)
 {
-    // 创建输出tensor
+    TORCH_CHECK(g.has_value() && g->defined(), "npu_chunk_fwd_o: g is required.");
+    TORCH_CHECK(!g_gamma.has_value() || !g_gamma->defined(),
+                "npu_chunk_fwd_o: g_gamma is reserved and must be None.");
+    TORCH_CHECK(!transpose_state_layout.value_or(false),
+                "npu_chunk_fwd_o: transpose_state_layout is reserved and must be false.");
+
     at::Tensor o = at::empty_like(v);
 
     // chunk_size默认值
     int64_t chunk_size_ = chunk_size.value_or(64);
     const at::Tensor &g_ = c10::value_or_else(g, [] { return at::Tensor(); });
-    (void)g_gamma;
-    (void)transpose_state_layout;
 
     // 调用ACLNN算子
     EXEC_NPU_CMD_EXT(
@@ -728,10 +703,11 @@ at::Tensor npu_kda_gate_cumsum(
     at::Tensor gk = at::empty(g.sizes(), g.options().dtype(at::kFloat));
     const at::Tensor &A_log_ = c10::value_or_else(A_log, [] { return at::Tensor(); });
     const at::Tensor &dt_bias_ = c10::value_or_else(dt_bias, [] { return at::Tensor(); });
+    const char *layout_cstr = layout_str.c_str();
     EXEC_NPU_CMD_EXT(
         aclnnKdaGateCumsum,
         g, A_log_, dt_bias_, cu_seqlens,
-        chunk_size, use_gate, safe, lower, layout_str.c_str(), gk
+        chunk_size, use_gate, safe, lower, layout_cstr, gk
     );
     return gk;
 }
@@ -994,38 +970,30 @@ at::Tensor npu_chunk_local_cumsum(
     bool head_first,
     c10::string_view output_dtype)
 {
-    TORCH_CHECK(g.dim() == 3, "npu_chunk_local_cumsum: g must be rank-3 [B, H, T], got ", g.sizes());
-    TORCH_CHECK(g.scalar_type() == at::kFloat || g.scalar_type() == at::kHalf ||
-                    g.scalar_type() == at::kBFloat16,
-                "npu_chunk_local_cumsum: g dtype must be float32, float16, or bfloat16, got ",
-                g.scalar_type());
+    TORCH_CHECK(g.dim() >= 3, "npu_chunk_local_cumsum: g must be [B, H, T, *], got ", g.sizes());
+    TORCH_CHECK(g.scalar_type() == at::kFloat, "npu_chunk_local_cumsum: only float32 g is supported.");
     TORCH_CHECK(chunk_size > 0 && (chunk_size & (chunk_size - 1)) == 0,
                 "npu_chunk_local_cumsum: chunk_size must be a positive power of two, got ", chunk_size);
     TORCH_CHECK(head_first, "npu_chunk_local_cumsum: only head_first=true / [B, H, T] layout is supported.");
 
     std::string output_dtype_str(output_dtype.data(), output_dtype.size());
-    c10::ScalarType out_scalar_type = c10::ScalarType::Float;
-    TORCH_CHECK(ResolveChunkLocalCumsumOutputDtype(output_dtype_str, g.scalar_type(), out_scalar_type),
-                "npu_chunk_local_cumsum: output_dtype must be float32/float16/bfloat16 or same/input/none, got ",
-                output_dtype_str);
+    if (output_dtype_str.empty()) {
+        output_dtype_str = "float32";
+    }
+    TORCH_CHECK(output_dtype_str == "float32" || output_dtype_str == "torch.float" ||
+                    output_dtype_str == "torch.float32",
+                "npu_chunk_local_cumsum: output_dtype only supports float32, got ", output_dtype_str);
 
     at::Tensor g_contig = g.contiguous();
-    at::Tensor out = at::empty(g_contig.sizes(), g_contig.options().dtype(out_scalar_type));
-
-    const bool has_cu_seqlens = cu_seqlens.has_value() && cu_seqlens->size() > 0;
-    const bool has_chunk_indices = chunk_indices_out.has_value() && chunk_indices_out->size() > 0;
-    TORCH_CHECK(has_cu_seqlens == has_chunk_indices,
-                "npu_chunk_local_cumsum: cu_seqlens and chunk_indices_out must be both provided or both omitted.");
-    if (has_cu_seqlens) {
-        TORCH_CHECK(cu_seqlens->size() >= 2,
-                    "npu_chunk_local_cumsum: cu_seqlens must have at least 2 elements, got ",
-                    cu_seqlens->size());
-        TORCH_CHECK((chunk_indices_out->size() % 2) == 0,
-                    "npu_chunk_local_cumsum: chunk_indices_out element count must be even, got ",
-                    chunk_indices_out->size());
+    at::Tensor out = at::empty_like(g_contig);
+    if (cu_seqlens.has_value()) {
         TORCH_CHECK(g_contig.size(0) == 1,
                     "npu_chunk_local_cumsum: B must be 1 when cu_seqlens is provided, got ", g_contig.size(0));
+        TORCH_CHECK(chunk_indices_out.has_value() && !chunk_indices_out->empty(),
+                    "npu_chunk_local_cumsum: chunk_indices_out is required when cu_seqlens is provided.");
     }
+    TORCH_CHECK(cu_seqlens.has_value() == chunk_indices_out.has_value(),
+                "npu_chunk_local_cumsum: cu_seqlens and chunk_indices_out must be provided together.");
 
     char *output_dtype_cstr = const_cast<char *>(output_dtype_str.c_str());
     EXEC_NPU_CMD_EXT(

@@ -440,6 +440,7 @@ def _validate_staged_opp(vendor_dir):
     vendor_dir = Path(vendor_dir)
     required_groups = {
         "custom op_api library": ("op_api/lib/libcust_opapi.so",),
+        "torch_npu op_api compatibility shim": ("op_api/lib/libopapi.so",),
         "host/proto shared library": (
             "op_impl/ai_core/tbe/op_host/lib/linux/*/libophost*.so",
             "op_impl/ai_core/tbe/op_tiling/lib/linux/*/*.so",
@@ -487,13 +488,6 @@ def _stage_run_package(run_file, opp_root):
     _rewrite_set_env(vendor_dir)
     _ensure_runtime_config_aliases(vendor_dir)
 
-    op_api_lib = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
-    if not op_api_lib.exists():
-        raise RuntimeError(f"Embedded OPP is missing {op_api_lib}")
-    op_api_alias = op_api_lib.with_name("libopapi.so")
-    if op_api_alias.exists() or op_api_alias.is_symlink():
-        op_api_alias.unlink()
-    shutil.copy2(op_api_lib, op_api_alias)
     _validate_staged_opp(vendor_dir)
     print(f"[fla-npu build] Embedded OPP staged at {vendor_dir}")
 

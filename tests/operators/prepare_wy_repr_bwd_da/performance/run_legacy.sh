@@ -27,7 +27,7 @@ python3 -m tests.operators._shared.legacy_cases materialize \
 
 if [[ "${MODE}" == "precision" ]]; then
     TEST_DEVICE_ID="${DEVICE}" \
-        python3 tests/operators/prepare_wy_repr_bwd_da/accuracy/test_da.py --json "${CASES_JSON}"
+        python3 tests/operators/prepare_wy_repr_bwd_da/accuracy/legacy_da.py --json "${CASES_JSON}"
 else
     rm -rf "${PROF_DIR}"
     msprof --output="${PROF_DIR}" \
