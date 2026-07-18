@@ -33,13 +33,13 @@ varlen 的 chunk_start/chunk_end 在每条逻辑序列内计算，不跨 `cu_seq
 
 ### 3.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `chunk_size` | int | `无` | 2 的幂 |
-| `reverse` | bool | `false` | 前缀/后缀 |
-| `scale` | double | `1.0` | 输出缩放 |
-| `head_first` | bool | `true` | 当前必须 true |
-| `output_dtype` | str | `float32` | 仅 float32/torch.float/torch.float32 |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `chunk_size` | int | `无` | 正整数且为 2 的幂 | 还须满足 `B_T >= chunk_size` |
+| `reverse` | bool | `false` | `{false, true}` | false=前缀，true=后缀 |
+| `scale` | double | `1.0` | - | 输出缩放 |
+| `head_first` | bool | `true` | `{true}` | 当前必须 true |
+| `output_dtype` | str | `float32` | `{"float32", "torch.float", "torch.float32"}` | 三个别名均表示 FP32 输出 |
 
 ## 4. 支持范围
 

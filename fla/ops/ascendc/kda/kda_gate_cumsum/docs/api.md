@@ -32,13 +32,13 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 
 ### 2.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `chunk_size` | int | `无` | 32/64/128 |
-| `use_gate_in_kernel` | bool | `false` | 是否把 g 当作 raw gate |
-| `safe_gate` | bool | `false` | raw gate 当前仅支持 true |
-| `lower_bound` | double | `-5.0` | safe gate 下限，范围 [-5,0) |
-| `layout` | str | `BSND` | 大写 BSND/BNSD/TND/NTD |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `chunk_size` | int | `无` | `{32, 64, 128}` | chunk 长度 |
+| `use_gate_in_kernel` | bool | `false` | `{false, true}` | 是否把 g 当作 raw gate |
+| `safe_gate` | bool | `false` | `{false, true}` | raw gate 模式下必须为 true，非 raw gate 模式下必须为 false |
+| `lower_bound` | double | `-5.0` | `[-5, 0)` | safe gate 下限 |
+| `layout` | str | `BSND` | `{"BSND", "BNSD", "TND", "NTD"}` | 仅接受大写取值 |
 
 ## 3. aclnn API
 

@@ -38,13 +38,13 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 
 ### 2.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `output_final_state` | bool | `false` | 是否返回末状态 |
-| `chunk_size` | int | `64` | chunk 长度 |
-| `save_new_value` | bool | `true` | 当前必须 true |
-| `use_exp2` | bool | `false` | 当前必须 false |
-| `transpose_state_layout` | bool | `false` | 当前必须 false |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `output_final_state` | bool | `false` | `{false, true}` | 是否返回末状态 |
+| `chunk_size` | int | `64` | `{64, 128}` | chunk 长度 |
+| `save_new_value` | bool | `true` | `{true}` | 当前必须 true |
+| `use_exp2` | bool | `false` | `{false}` | 当前必须 false |
+| `transpose_state_layout` | bool | `false` | `{false}` | 当前必须 false |
 
 ## 3. aclnn API
 

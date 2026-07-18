@@ -39,7 +39,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `<attr>` | `<required>` | `<type>` | `<default>` | `<range>` | `<description>` |
 
-> **填写示例：** `chunk_bwd_dv_local` 的 `scale` 和 `chunk_size` 均为必选属性。参数表说明类型与语义，`chunk_size` 的固定支持值统一写入“已知限制”；不要把“推荐值”和“硬约束”混写。
+> **填写示例：** `chunk_bwd_dv_local` 的 `scale` 和 `chunk_size` 均为必选属性。`chunk_size` 应在“取值范围”中完整列出 `{64, 128}`；`scale` 的推荐值写入“说明”。枚举或离散属性的合法值不得只写入“已知限制”，也不要把“推荐值”和“硬约束”混写。
 
 ## 3. aclnn API（仅 Ascend C 算子）
 
@@ -89,7 +89,7 @@ aclnnStatus aclnn<OpName>(
 // 调用 GetWorkspaceSize、分配 workspace、执行算子、同步并释放资源。
 ```
 
-> **调用示例说明：以 `chunk_bwd_dv_local` 定长场景为例：** 使用 `q/k=[B,H_k,T,K]`、`dO/out=[B,H_v,T,V]`、`g=[B,H_v,T]`，从“已知限制”选择合法的 `K`、`V` 和 `chunkSize`；`gGammaOptional`、`aOptional`、`cuSeqlensOptional` 和 `chunkIndicesOptional` 传空。先调用 `aclnnChunkBwdDvLocalGetWorkspaceSize`，按返回大小分配 workspace，再调用 `aclnnChunkBwdDvLocal` 并同步 stream。
+> **调用示例说明：以 `chunk_bwd_dv_local` 定长场景为例：** 使用 `q/k=[B,H_k,T,K]`、`dO/out=[B,H_v,T,V]`、`g=[B,H_v,T]`，从“已知限制”选择合法的 `K`、`V`，并从属性表“取值范围”选择合法的 `chunkSize`；`gGammaOptional`、`aOptional`、`cuSeqlensOptional` 和 `chunkIndicesOptional` 传空。先调用 `aclnnChunkBwdDvLocalGetWorkspaceSize`，按返回大小分配 workspace，再调用 `aclnnChunkBwdDvLocal` 并同步 stream。
 
 ## 4. `fla_npu.ops.ascendc` API（仅 Ascend C 算子）
 
@@ -189,7 +189,7 @@ Triton 算子删除本章节。
 // 同步 stream，检查返回码并验证结果。
 ```
 
-> **调用示例说明：** `chunk_bwd_dv_local` 直调时应展示一个受支持的模板实例，依次传入 `q/k/d_o/g`、四个可选输入、`d_v`、workspace 和 tiling。模板参数的固定支持值写入“已知限制”；`blockDim` 和 tiling data 必须来自对应 host tiling 结果，不能写成无依据常量。
+> **调用示例说明：** `chunk_bwd_dv_local` 直调时应展示一个受支持的模板实例，依次传入 `q/k/d_o/g`、四个可选输入、`d_v`、workspace 和 tiling。模板参数涉及的固定维度和属性枚举应分别与“已知限制”和属性表“取值范围”保持一致；`blockDim` 和 tiling data 必须来自对应 host tiling 结果，不能写成无依据常量。
 
 ## 7. `torch.ops.npu` API（可选）
 
@@ -241,10 +241,10 @@ output = torch.ops.npu.<op_name>(...)
 
 ## 9. 已知限制
 
-- `<fixed dimension or attribute limitation>`
+- `<fixed dimension or cross-parameter limitation>`
 - `<unsupported optional input or mode>`
 
-> **填写示例：** `chunk_bwd_dv_local` 在这里集中说明 `K` 仅支持 128、`V` 仅支持 128/256、`chunk_size` 仅支持 64/128、varlen 仅支持 `B=1`，以及 `g_gamma/A` 当前必须为空。输入输出表中的 Shape 仍只写符号变量。
+> **填写示例：** `chunk_bwd_dv_local` 在这里集中说明 `K` 仅支持 128、`V` 仅支持 128/256、varlen 仅支持 `B=1`，以及 `g_gamma/A` 当前必须为空。`chunk_size` 的合法值 `{64, 128}` 已写入属性表“取值范围”；只有平台差异或跨参数组合约束需要在本节补充。输入输出表中的 Shape 仍只写符号变量。
 
 ## 10. 异常与返回码
 
@@ -258,6 +258,7 @@ output = torch.ops.npu.<op_name>(...)
 
 - [ ] API 签名与 `aclnn_*.h`、schema 和 Python 导出一致，`<<<>>>` 参数顺序与实现一致。
 - [ ] 所有必选、可选、默认值、shape、dtype、format 和平台约束均有说明。
+- [ ] 枚举或离散属性的全部合法值已在“取值范围”列完整列出，未只写入“已知限制”。
 - [ ] 已按实现类型保留 `fla_npu.ops.ascendc` 或 `fla_npu.ops.triton`，未同时把两者声明为主入口。
 - [ ] Ascend C 算子的 aclnn、`fla_npu.ops.ascendc`、`<<<>>>` 示例完整可执行；Triton 算子的 `fla_npu.ops.triton` 示例完整可执行。
 - [ ] 实现 `torch.ops.npu` 时已提供显式加载示例；未实现时已删除对应章节。

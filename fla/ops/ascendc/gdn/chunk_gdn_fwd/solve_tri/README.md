@@ -32,9 +32,9 @@ Y = inverse(I_M + tril(A, diagonal=-1))
 
 ### 3.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `layout` | str | `bsnd` | 仅 bhtd/bsnd/tnd，小写 |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `layout` | str | `bsnd` | `{"bhtd", "bsnd", "tnd"}` | 仅支持小写取值 |
 
 ## 4. 支持范围
 

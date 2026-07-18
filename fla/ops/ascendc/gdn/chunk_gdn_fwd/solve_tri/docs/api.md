@@ -31,9 +31,9 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 
 ### 2.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `layout` | str | `bsnd` | 仅 bhtd/bsnd/tnd，小写 |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `layout` | str | `bsnd` | `{"bhtd", "bsnd", "tnd"}` | 仅支持小写取值 |
 
 ## 3. aclnn API
 

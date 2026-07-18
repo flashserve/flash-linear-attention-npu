@@ -43,15 +43,15 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 
 ### 2.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `layout` | str | `BSND` | 只接受大写 BSND/BNSD/TND/NTD |
-| `scale` | double | `无` | 通常为 1/sqrt(K) |
-| `chunk_size` | int | `无` | 64 或 128 |
-| `output_final_state` | bool | `false` | 是否返回有效 final_state |
-| `return_intermediate` | bool | `false` | 是否物化八个中间张量 |
-| `safe_gate` | bool | `false` | 预留，当前必须 false |
-| `transpose_state_layout` | bool | `false` | 预留，当前必须 false |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `layout` | str | `BSND` | `{"BSND", "BNSD", "TND", "NTD"}` | 仅接受大写取值 |
+| `scale` | double | `无` | - | 通常为 1/sqrt(K) |
+| `chunk_size` | int | `无` | `{64, 128}` | chunk 长度 |
+| `output_final_state` | bool | `false` | `{false, true}` | 是否返回有效 final_state |
+| `return_intermediate` | bool | `false` | `{false, true}` | 是否物化八个中间张量 |
+| `safe_gate` | bool | `false` | `{false}` | 预留，当前必须 false |
+| `transpose_state_layout` | bool | `false` | `{false}` | 预留，当前必须 false |
 
 ## 3. aclnn API
 
