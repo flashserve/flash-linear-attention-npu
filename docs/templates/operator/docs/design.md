@@ -44,21 +44,6 @@ Ascend C 算子说明 op_host、InferShape、tiling、kernel、aclnn 和 `fla_np
 
 > **Hint：** `chunk_bwd_dv_local` 可说明 op_host 校验 shape 并生成 tiling，kernel 使用 AIC/AIV 混合任务：AIC 计算 `K @ Q^T`，AIV 完成 gating/mask，AIC 再计算 `Ws_gated @ dO`，workspace 用于阶段间数据交换。
 
-### 5.1 算子边界与 L2/L0 分工
-
-逐项说明：
-
-- 一个完整 L0 入口内各语义 phase 的强生产消费关系，或拆成多个独立 L0 的必要性。
-- 公共 aclnn、`fla_npu`、`<<<>>>`、legacy 接口是否完全隐藏内部 phase；不得出现要求调用者传入的 `stage`/`stage_id`。
-- L2 负责的参数校验、layout/view、workspace/executor 和 launch 编排。
-- 输入、阶段间和输出 cast 融入哪个生产者或消费者 kernel；L2 不得拼接独立 Cast L0。
-- 中间 tensor/workspace owner、dtype、layout、stream 顺序和生命周期；不得用 stage 编号替代所有权协议。
-- 同一 L0 内有多个紧耦合 phase 时，`SyncAll` 的参与核、schedule mode、A2/A3/A5 支持，以及 `TPipe::Reset()` 前排空和后续重建的 queue/buffer；Reset 与 SyncAll 的先后要按真实依赖说明。
-
-> **反面样例：KDA 当前实现。** `ChunkKdaFwd(stage=1/3/2)` 把关系不强的分支放进同一 L0，直调调用者需要理解 stage，L2 还拼接 gate/阶段间 cast。新增算子不得照搬；整改应优先收敛为一个完整入口下的两个语义 phase，在 L0 内完成同步和 `TPipe::Reset()` 隔离，并把 cast 融进 kernel；若无共同归并语义或片上复用价值，再拆成独立 L0。
-
-> **参考样例：** [ops-nn PR #4803 的 GroupNormSwishGrad A5 实现](https://gitcode.com/cann/ops-nn/pull/4803/diffs)对外保持一个完整 kernel 入口，内部第一 phase 生成输出和 workspace，调用 `pipe.Reset()` 释放本地资源，在第二 phase 消费 workspace 前执行 `SyncAll()`，随后重建 buffer 并在 kernel 内完成 reduce/cast。填写时需结合本算子的参与核和数据依赖说明，不能只写“参考该实现”。
-
 ## 6. Tiling 设计（仅 Ascend C 算子）
 
 Triton 算子删除本章节，并在整体架构或 Kernel 设计中说明其 grid/config 选择策略。
