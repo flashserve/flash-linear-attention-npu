@@ -18,10 +18,10 @@ REQUIRED_SOCS = {"ascend910b", "ascend910_93", "ascend950"}
 REQUIRED_ROUTES = {"ascendc", "aclnn", "direct_launch"}
 MODEL_SHAPE_SYMBOLS = {
     "gdn": {
-        "B", "N", "T", "H_k", "H_v", "R_h", "K", "V", "C", "N_c", "N_{c,b}", "S_n",
+        "B", "N", "T", "H_k", "H_v", "R_h", "K", "V", "chunk_size", "N_c", "N_{c,b}", "S_n",
         "D", "W", "L_s", "M", "P", "B_T", "N_b", "D_s", "Q_a",
     },
-    "kda": {"B", "N", "T", "H_k", "H_v", "R_h", "K", "V", "C", "N_c", "S_n", "D_0", "D_1", "D_2", "D_3", "D_4"},
+    "kda": {"B", "N", "T", "H_k", "H_v", "R_h", "K", "V", "chunk_size", "N_c", "S_n", "D_0", "D_1", "D_2", "D_3", "D_4"},
 }
 KNOWN_RETURN_CODES = {
     "ACLNN_SUCCESS",

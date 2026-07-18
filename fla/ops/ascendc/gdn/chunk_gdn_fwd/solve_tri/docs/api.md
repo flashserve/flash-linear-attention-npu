@@ -19,7 +19,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 
 | 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
 | --- | --- | --- | --- | --- | --- |
-| `x` | 必选 | `[B,H_v,T,C]、[B,T,H_v,C] 或 [T,H_v,C]` | FP16/BF16 | BHTD/BSND/TND | 严格下三角 A 的行存储 |
+| `x` | 必选 | `[B,H_v,T,chunk_size]、[B,T,H_v,chunk_size] 或 [T,H_v,chunk_size]` | FP16/BF16 | BHTD/BSND/TND | 严格下三角 A 的行存储 |
 | `cu_seqlens` | TND 必选 | `[N+1]` | INT64 | ND | 变长序列累计长度 |
 | `chunk_indices` | TND 必选 | `[2*N_c]` | INT64 | ND | 展平 chunk 索引 |
 
@@ -96,10 +96,10 @@ solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout='bsnd')
 import torch
 from fla_npu.ops.ascendc import solve_tri
 
-B, T, H, C = 1, 128, 4, 64
-x = torch.randn(B, T, H, C, device="npu", dtype=torch.float16)
-row = torch.arange(C, device="npu").view(1, 1, 1, C)
-pos = torch.arange(T, device="npu").view(1, T, 1, 1) % C
+B, T, H, chunk_size = 1, 128, 4, 64
+x = torch.randn(B, T, H, chunk_size, device="npu", dtype=torch.float16)
+row = torch.arange(chunk_size, device="npu").view(1, 1, 1, chunk_size)
+pos = torch.arange(T, device="npu").view(1, T, 1, 1) % chunk_size
 x = torch.where(row < pos, x * 0.01, torch.zeros_like(x))
 y = solve_tri(x, layout="bsnd")
 torch.npu.synchronize()
@@ -125,10 +125,10 @@ import fla_npu
 
 fla_npu.load_legacy_torch_ops()
 
-B, T, H, C = 1, 128, 4, 64
-x = torch.randn(B, T, H, C, device="npu", dtype=torch.float16)
-row = torch.arange(C, device="npu").view(1, 1, 1, C)
-pos = torch.arange(T, device="npu").view(1, T, 1, 1) % C
+B, T, H, chunk_size = 1, 128, 4, 64
+x = torch.randn(B, T, H, chunk_size, device="npu", dtype=torch.float16)
+row = torch.arange(chunk_size, device="npu").view(1, 1, 1, chunk_size)
+pos = torch.arange(T, device="npu").view(1, T, 1, 1) % chunk_size
 x = torch.where(row < pos, x * 0.01, torch.zeros_like(x))
 y = torch.ops.npu.npu_solve_tri(x, layout="bsnd")
 torch.npu.synchronize()
@@ -145,7 +145,7 @@ assert y.shape == x.shape
 
 ## 8. 已知限制
 
-- 矩阵阶/最后一维 C 支持 16/32/64/128。
+- 矩阵阶/最后一维 chunk_size 支持 16/32/64/128。
 - layout 仅支持小写 `bhtd`、`bsnd`、`tnd`；TND 必须提供两个变长序列索引，定长布局 不接受变长序列索引。
 - 输入必须表示严格下三角 A；对角线由算子加单位阵。
 
@@ -156,7 +156,7 @@ assert y.shape == x.shape
 | x/xOut/layout、workspaceSize 或 executor 为空 | ACLNN_ERR_PARAM_INVALID；workspaceSize/executor 为空为 ACLNN_ERR_PARAM_NULLPTR |
 | layout 不是小写 bhtd/bsnd/tnd，或 layout 与 rank 不匹配 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
 | TND 缺少任一变长序列索引，或定长布局 携带变长序列索引 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
-| C 非 16/32/64/128、xOut shape/dtype 不匹配 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
+| chunk_size 非 16/32/64/128、xOut shape/dtype 不匹配 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
 
 负向 case 的 `expect.return_code` 与消息片段集中定义在 `tests/op_cases/solve_tri.json`，修改拦截时必须同步更新。
 

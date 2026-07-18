@@ -50,9 +50,9 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 
 ### 6.1 任务划分
 
-定长按 `(B*H_v,chunk,tail_tile)` 分配；变长序列按 `(seq_id,local_block_id,head,tail_tile)` 分配，每个处理块内再按 C 完成 scan。
+定长按 `(B*H_v,chunk,tail_tile)` 分配；变长序列按 `(seq_id,local_block_id,head,tail_tile)` 分配，每个处理块内再按 chunk_size 完成 scan。
 令 `P` 为时间维后的连续尾部维乘积，host 使用
-`B_T = next_pow2(max(floor(2^17 / (P * C)), 1))` 选择 processing block，并要求 `B_T >= C`。
+`B_T = next_pow2(max(floor(2^17 / (P * chunk_size)), 1))` 选择 processing block，并要求 `B_T >= chunk_size`。
 变长序列的 `chunk_indices_out` 必须为每条序列列出 `ceil(sequence_length / B_T)` 个 block。
 
 ### 6.2 Tiling Data
@@ -117,11 +117,11 @@ A2/A3/A5 使用相同 case ID，平台只决定编译与运行目标。
 ## 12. 已知限制与演进计划
 
 - g rank 至少 3，所有维度为正；head_first 当前必须 true。
-- chunk_size 必须为 2 的幂，且满足 `B_T >= C`；交付矩阵至少覆盖 `P=1,C=64` 的变长序列尾块和
-  `P=16,C=64` 的 dense 尾块。
+- chunk_size 必须为 2 的幂，且满足 `B_T >= chunk_size`；交付矩阵至少覆盖 `P=1,chunk_size=64` 的变长序列尾块和
+  `P=16,chunk_size=64` 的 dense 尾块。
 - output_dtype 仅支持 FP32 别名。
 - 变长序列物理 B=1，两个 host 整数数组必须同时提供；cu_seqlens 首项为 0、末项为 T 且非递减。
 - chunk_indices_out 必须按 sequence-major 完整列出内部处理块；每条序列的索引对数为
-  `ceil(sequence_length / B_T)`，处理块长度 B_T 由 UB、C 和 P 共同决定，不能直接按 C 构造。
+  `ceil(sequence_length / B_T)`，处理块长度 B_T 由 UB、chunk_size 和 P 共同决定，不能直接按 chunk_size 构造。
 
 后续扩展任何限制时，必须同时修改 host 拦截、API 错误码、README、JSON 与三平台回归；模板实例增长前先评估二进制体积和编译耗时。

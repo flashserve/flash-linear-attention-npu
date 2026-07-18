@@ -50,7 +50,7 @@ out[b,h,t] = scale * sum(k=t..chunk_end-1) g[b,h,k]       reverse=true
 | Format/Layout | head-first `[B,H_v,T,...]` |
 | 模式 | 定长/变长序列、forward/reverse、任意连续尾部维 |
 
-变长序列模式中，`cu_seqlens[0]` 必须为 0、末项等于 `T` 且序列非递减。`chunk_indices_out` 按 sequence-major 保存内部处理块 `(seq_id, local_block_id)`；处理块长度 `B_T` 由 tiling 根据 `chunk_size` 和尾部维乘积 `P` 计算，不等同于数学 chunk 长度。定长与变长序列、尾块与整块遵循同一数学定义。
+变长序列模式中，`cu_seqlens[0]` 必须为 0、末项等于 `T` 且序列非递减。`chunk_indices_out` 按 sequence-major 保存内部处理块 `(seq_id, local_block_id)`；处理块长度 `B_T` 由 tiling 根据 `chunk_size` 和尾部维乘积 `P` 计算，不等同于算子属性 `chunk_size`。定长与变长序列、尾块与整块遵循同一数学定义。
 
 ## 5. 调用入口
 

@@ -22,7 +22,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | `k` | 必选 | `[B,H_k,T,K]` | FP16/BF16 | BNSD | Key |
 | `v` | 必选 | `[B,H_v,T,V]` | FP16/BF16 | BNSD | Value |
 | `beta` | 必选 | `[B,H_v,T]` | FP16/BF16/FP32 | BNS | WY 权重 |
-| `A` | 必选 | `[B,H_v,T,C]` | FP16/BF16 | BNSD | 局部矩阵 |
+| `A` | 必选 | `[B,H_v,T,chunk_size]` | FP16/BF16 | BNSD | 局部矩阵 |
 | `g` | 必选 | `[B,H_v,T]` | FP16/BF16/FP32 | BNS | 标量 gate |
 | `gk` | 预留 | `-` | - | - | 当前 kernel 不消费，必须为 None |
 | `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | 变长序列累计长度 |
@@ -115,13 +115,13 @@ recompute_wu_fwd(k, v, beta, A, chunk_size, *, g=None, gk=None, cu_seqlens=None,
 import torch
 from fla_npu.ops.ascendc import recompute_wu_fwd
 
-B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 256, 64
+B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 256, 64
 k = torch.randn(B, H_k, T, K, device="npu", dtype=torch.bfloat16)
 v = torch.randn(B, H_v, T, V, device="npu", dtype=torch.bfloat16)
 beta = torch.rand(B, H_v, T, device="npu", dtype=torch.float32)
-A = torch.randn(B, H_v, T, C, device="npu", dtype=torch.bfloat16)
+A = torch.randn(B, H_v, T, chunk_size, device="npu", dtype=torch.bfloat16)
 g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
-w, u = recompute_wu_fwd(k, v, beta, A, C, g=g)
+w, u = recompute_wu_fwd(k, v, beta, A, chunk_size, g=g)
 torch.npu.synchronize()
 assert w.shape == (B, H_v, T, K) and u.shape == v.shape
 ```
@@ -145,13 +145,13 @@ import fla_npu
 
 fla_npu.load_legacy_torch_ops()
 
-B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 256, 64
+B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 256, 64
 k = torch.randn(B, H_k, T, K, device="npu", dtype=torch.bfloat16)
 v = torch.randn(B, H_v, T, V, device="npu", dtype=torch.bfloat16)
 beta = torch.rand(B, H_v, T, device="npu", dtype=torch.float32)
-A = torch.randn(B, H_v, T, C, device="npu", dtype=torch.bfloat16)
+A = torch.randn(B, H_v, T, chunk_size, device="npu", dtype=torch.bfloat16)
 g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
-w, u = torch.ops.npu.npu_recompute_w_u_fwd(k, v, beta, A, C, g=g)
+w, u = torch.ops.npu.npu_recompute_w_u_fwd(k, v, beta, A, chunk_size, g=g)
 torch.npu.synchronize()
 assert w.shape == (B, H_v, T, K) and u.shape == v.shape
 ```

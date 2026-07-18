@@ -355,7 +355,7 @@ if __name__ == "__main__":
         shape, attrs = case["shape"], case["attrs"]
         sys.argv.extend([
             str(shape["B"]), str(shape["T"]), str(shape["H_k"]), str(shape["H_v"]),
-            str(shape["K"]), str(shape["V"]), "0", str(shape["C"]), "0",
+            str(shape["K"]), str(shape["V"]), "0", str(shape["chunk_size"]), "0",
             str(int(attrs["output_final_state"])), case["dtype"]["kwu"], "0", "0", "unused",
             os.environ.get("TEST_DEVICE_ID", "0"), case["dtype"]["g"], case["dtype"]["state"],
         ])

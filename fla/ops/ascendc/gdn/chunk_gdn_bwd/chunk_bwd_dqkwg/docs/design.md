@@ -75,7 +75,7 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 | `wsBtxKSyncSlotsPerHead` | `uint64_t` | cross-stage group ring depth per core |
 | `wsDgLastOffset` | `uint64_t` | PartA: b_dg_last 偏移 |
 | `dgLastSize` | `uint64_t` | PartA: b_dg_last 大小, 32B 对齐 |
-| `wsMm5Offset` | `uint64_t` | PartA: mm5 / GVA C: dq_inner / PartD: mm7 |
+| `wsMm5Offset` | `uint64_t` | PartA: mm5 / GVA Part C: dq_inner / PartD: mm7 |
 | `wsDsTempOffset` | `uint64_t` | PartB: b_ds_temp 偏移 |
 | `wsMm6Offset` | `uint64_t` | PartC: mm6 / GVA D: dk_inner |
 | `wsMm7Offset` | `uint64_t` | PartD: mm7 复用已释放的 wsMm5 |

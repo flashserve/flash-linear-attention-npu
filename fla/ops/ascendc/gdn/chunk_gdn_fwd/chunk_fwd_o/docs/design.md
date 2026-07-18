@@ -76,7 +76,7 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 
 ### 6.3 模板化方案与 tiling key
 
-不使用 tiling key 分派 shape。主 dtype、gate dtype、定长/变长序列、K/V/C 均写入 tiling data，kernel 通过统一 Catlass 调度器处理，避免把 B/H/T 组合固化为 key。
+不使用 tiling key 分派 shape。主 dtype、gate dtype、定长/变长序列、K/V/chunk_size 均写入 tiling data，kernel 通过统一 Catlass 调度器处理，避免把 B/H/T 组合固化为 key。
 
 ## 7. Kernel 设计
 

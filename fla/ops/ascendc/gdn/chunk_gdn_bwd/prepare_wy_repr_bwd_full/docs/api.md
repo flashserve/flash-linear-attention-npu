@@ -22,8 +22,8 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | `k` | 必选 | `[B,H_k,T,K]` | FP16/BF16 | BNSD | Key |
 | `v` | 必选 | `[B,H_v,T,V]` | FP16/BF16 | BNSD | Value |
 | `beta` | 必选 | `[B,H_v,T]` | FP16/BF16/FP32 | BNS | WY 权重 |
-| `A` | 必选 | `[B,H_v,T,C]` | FP16/BF16 | BNSD | 前向局部矩阵 |
-| `dA` | 必选 | `[B,H_v,T,C]` | FP16/BF16 | BNSD | A 梯度 |
+| `A` | 必选 | `[B,H_v,T,chunk_size]` | FP16/BF16 | BNSD | 前向局部矩阵 |
+| `dA` | 必选 | `[B,H_v,T,chunk_size]` | FP16/BF16 | BNSD | A 梯度 |
 | `dw` | 必选 | `[B,H_v,T,K]` | FP16/BF16 | BNSD | W 梯度 |
 | `du` | 必选 | `[B,H_v,T,V]` | FP16/BF16 | BNSD | U 梯度 |
 | `g` | 必选 | `[B,H_v,T]` | FP16/BF16/FP32 | BNS | chunk-local gate |
@@ -123,16 +123,16 @@ prepare_wy_repr_bwd_full(k, v, beta, A, dA, dw, du, g, chunk_size, *, cu_seqlens
 import torch
 from fla_npu.ops.ascendc import prepare_wy_repr_bwd_full
 
-B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 256, 64
+B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 256, 64
 k = torch.randn(B, H_k, T, K, device="npu", dtype=torch.bfloat16)
 v = torch.randn(B, H_v, T, V, device="npu", dtype=torch.bfloat16)
 beta = torch.rand(B, H_v, T, device="npu", dtype=torch.float32)
-A = torch.randn(B, H_v, T, C, device="npu", dtype=torch.bfloat16)
+A = torch.randn(B, H_v, T, chunk_size, device="npu", dtype=torch.bfloat16)
 dA = torch.randn_like(A)
 dw = torch.randn(B, H_v, T, K, device="npu", dtype=torch.bfloat16)
 du = torch.randn_like(v)
 g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
-dk, dv, dbeta, dg = prepare_wy_repr_bwd_full(k, v, beta, A, dA, dw, du, g, C)
+dk, dv, dbeta, dg = prepare_wy_repr_bwd_full(k, v, beta, A, dA, dw, du, g, chunk_size)
 torch.npu.synchronize()
 assert dk.shape == k.shape and dv.shape == v.shape
 ```
@@ -156,16 +156,16 @@ import fla_npu
 
 fla_npu.load_legacy_torch_ops()
 
-B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 256, 64
+B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 256, 64
 k = torch.randn(B, H_k, T, K, device="npu", dtype=torch.bfloat16)
 v = torch.randn(B, H_v, T, V, device="npu", dtype=torch.bfloat16)
 beta = torch.rand(B, H_v, T, device="npu", dtype=torch.float32)
-A = torch.randn(B, H_v, T, C, device="npu", dtype=torch.bfloat16)
+A = torch.randn(B, H_v, T, chunk_size, device="npu", dtype=torch.bfloat16)
 dA = torch.randn_like(A)
 dw = torch.randn(B, H_v, T, K, device="npu", dtype=torch.bfloat16)
 du = torch.randn_like(v)
 g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
-dk, dv, dbeta, dg = torch.ops.npu.npu_prepare_wy_repr_bwd_full(k, v, beta, A, dA, dw, du, g, C)
+dk, dv, dbeta, dg = torch.ops.npu.npu_prepare_wy_repr_bwd_full(k, v, beta, A, dA, dw, du, g, chunk_size)
 torch.npu.synchronize()
 assert dk.shape == k.shape and dv.shape == v.shape
 ```

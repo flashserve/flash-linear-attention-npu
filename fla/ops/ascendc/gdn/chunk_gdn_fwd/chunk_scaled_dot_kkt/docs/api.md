@@ -29,7 +29,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 
 | 名称 | Shape | Dtype | 说明 |
 | --- | --- | --- | --- |
-| `A` | `[B,H_k,T,C]` | FP32 | 严格下三角 scaled KKT |
+| `A` | `[B,H_k,T,chunk_size]` | FP32 | 严格下三角 scaled KKT |
 
 ### 2.3 属性
 
@@ -98,13 +98,13 @@ chunk_scaled_dot_kkt(k, g, beta, *, cu_seqlens=None, chunk_indices=None, chunk_s
 import torch
 from fla_npu.ops.ascendc import chunk_scaled_dot_kkt
 
-B, H_k, H_v, T, K, C = 1, 2, 4, 129, 128, 64
+B, H_k, H_v, T, K, chunk_size = 1, 2, 4, 129, 128, 64
 k = torch.randn(B, H_k, T, K, device="npu", dtype=torch.float16)
 g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
 beta = torch.rand(B, H_v, T, device="npu", dtype=torch.float32)
-A = chunk_scaled_dot_kkt(k, g, beta, chunk_size=C)
+A = chunk_scaled_dot_kkt(k, g, beta, chunk_size=chunk_size)
 torch.npu.synchronize()
-assert A.shape == (B, H_k, T, C) and A.dtype == torch.float32
+assert A.shape == (B, H_k, T, chunk_size) and A.dtype == torch.float32
 ```
 
 ## 5. Ascend C `<<<>>>` 直调
@@ -126,13 +126,13 @@ import fla_npu
 
 fla_npu.load_legacy_torch_ops()
 
-B, H_k, H_v, T, K, C = 1, 2, 4, 129, 128, 64
+B, H_k, H_v, T, K, chunk_size = 1, 2, 4, 129, 128, 64
 k = torch.randn(B, H_k, T, K, device="npu", dtype=torch.float16)
 g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
 beta = torch.rand(B, H_v, T, device="npu", dtype=torch.float32)
-A = torch.ops.npu.npu_chunk_scaled_dot_kkt(k, g, beta, chunk_size=C)
+A = torch.ops.npu.npu_chunk_scaled_dot_kkt(k, g, beta, chunk_size=chunk_size)
 torch.npu.synchronize()
-assert A.shape == (B, H_k, T, C) and A.dtype == torch.float32
+assert A.shape == (B, H_k, T, chunk_size) and A.dtype == torch.float32
 ```
 
 ## 7. 平台支持
@@ -148,7 +148,7 @@ assert A.shape == (B, H_k, T, C) and A.dtype == torch.float32
 - chunk_size 仅支持 16/32/64/128。
 - 必须满足 H_v % H_k == 0；A 的 head 维为 H_k。
 - cu_seqlens/chunk_indices 必须同时提供或同时省略；变长序列物理 B 必须为 1。
-- 变长序列累计长度必须覆盖 [0,T]，chunk_indices 必须按 sequence-major 完整列出每个 C 大小的 chunk。
+- 变长序列累计长度必须覆盖 [0,T]，chunk_indices 必须按 sequence-major 完整列出每个长度为 chunk_size 的 chunk。
 - 指数差固定 clip 到 [-50,50]；H_v>H_k 时当前实现读取 g/beta 的前 H_k 个 head。
 
 ## 9. 异常与返回码

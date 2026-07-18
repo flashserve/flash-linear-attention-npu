@@ -127,14 +127,14 @@ chunk_gated_delta_rule_bwd_dhu(q, k, w, d_o, dv, scale, chunk_size, *, g=None, g
 import torch
 from fla_npu.ops.ascendc import chunk_gated_delta_rule_bwd_dhu
 
-B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 128, 64
+B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 128, 64
 q = torch.randn(B, H_k, T, K, device="npu", dtype=torch.float16)
 k = torch.randn_like(q)
 w = torch.randn(B, H_v, T, K, device="npu", dtype=torch.float16)
 d_o = torch.randn(B, H_v, T, V, device="npu", dtype=torch.float16)
 dv = torch.randn_like(d_o)
 g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
-dh, dh0, dv2 = chunk_gated_delta_rule_bwd_dhu(q, k, w, d_o, dv, K ** -0.5, C, g=g)
+dh, dh0, dv2 = chunk_gated_delta_rule_bwd_dhu(q, k, w, d_o, dv, K ** -0.5, chunk_size, g=g)
 torch.npu.synchronize()
 assert dv2.shape == dv.shape
 ```
@@ -158,14 +158,14 @@ import fla_npu
 
 fla_npu.load_legacy_torch_ops()
 
-B, H_k, H_v, T, K, V, C = 1, 2, 4, 128, 128, 128, 64
+B, H_k, H_v, T, K, V, chunk_size = 1, 2, 4, 128, 128, 128, 64
 q = torch.randn(B, H_k, T, K, device="npu", dtype=torch.float16)
 k = torch.randn_like(q)
 w = torch.randn(B, H_v, T, K, device="npu", dtype=torch.float16)
 d_o = torch.randn(B, H_v, T, V, device="npu", dtype=torch.float16)
 dv = torch.randn_like(d_o)
 g = -torch.rand(B, H_v, T, device="npu", dtype=torch.float32).cumsum(-1)
-dh, dh0, dv2 = torch.ops.npu.npu_chunk_gated_delta_rule_bwd_dhu(q, k, w, d_o, dv, K ** -0.5, C, g=g)
+dh, dh0, dv2 = torch.ops.npu.npu_chunk_gated_delta_rule_bwd_dhu(q, k, w, d_o, dv, K ** -0.5, chunk_size, g=g)
 torch.npu.synchronize()
 assert dv2.shape == dv.shape
 ```

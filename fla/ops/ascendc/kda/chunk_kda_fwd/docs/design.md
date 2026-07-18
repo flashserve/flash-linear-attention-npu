@@ -98,7 +98,7 @@ stage1/3/2 按 (sequence,value_head,chunk) 分配无跨 chunk 的矩阵任务；
 
 ### 6.3 模板化方案与 tiling key
 
-公开接口只设置 key=1，用于选择 AIC:AIV=1:2 的 mixed task kernel 类型；它不编码 B/H/T/C/layout，也不产生 shape 组合。设备源码中的 key=0/key=2 是历史保留分支，host 已明确不可达。保留 key=1 的原因是当前 Ascend C mixed task 发射需要通过 tiling key 绑定任务类型，不能仅由普通 tiling data 替代。
+公开接口只设置 key=1，用于选择 AIC:AIV=1:2 的 mixed task kernel 类型；它不编码 B/H/T/chunk_size/layout，也不产生 shape 组合。设备源码中的 key=0/key=2 是历史保留分支，host 已明确不可达。保留 key=1 的原因是当前 Ascend C mixed task 发射需要通过 tiling key 绑定任务类型，不能仅由普通 tiling data 替代。
 
 ## 7. Kernel 设计
 
@@ -108,7 +108,7 @@ L2 先做 contiguous、layout 规范化与 gate cast；stage1 生成 Aqk/Akk/qg/
 
 ### 7.2 内存规划
 
-stage1 user workspace 包含每 core 两槽、三 plane 的 score scratch，以及每 core 5 个 C*C FP32 solve slot；stage2 使用两个 FP32 output plane。中间 tensor 由 executor 显式持有，不能把后一 stage 读取的数据只作为原地输出参数。
+stage1 user workspace 包含每 core 两槽、三 plane 的 score scratch，以及每 core 5 个 chunk_size*chunk_size FP32 solve slot；stage2 使用两个 FP32 output plane。中间 tensor 由 executor 显式持有，不能把后一 stage 读取的数据只作为原地输出参数。
 
 | 层级/资源 | 生命周期与所有权 |
 | --- | --- |
