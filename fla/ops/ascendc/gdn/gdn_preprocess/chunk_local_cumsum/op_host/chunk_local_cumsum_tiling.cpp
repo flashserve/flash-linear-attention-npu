@@ -81,7 +81,6 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
 {
     OP_CHECK_NULL_WITH_CONTEXT(context, context->GetInputShape(G_INDEX));
     OP_CHECK_NULL_WITH_CONTEXT(context, context->GetInputDesc(G_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context, context->GetOutputShape(OUT_INDEX));
     OP_CHECK_NULL_WITH_CONTEXT(context, context->GetOutputDesc(OUT_INDEX));
     OP_CHECK_NULL_WITH_CONTEXT(context, context->GetAttrs());
 
@@ -96,16 +95,6 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     OP_CHECK_IF(inDtype != ge::DT_FLOAT || outDtype != ge::DT_FLOAT,
                 OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "ChunkLocalCumsum currently supports float32 only."),
                 return ge::GRAPH_FAILED);
-    const auto &outShape = context->GetOutputShape(OUT_INDEX)->GetStorageShape();
-    OP_CHECK_IF(outShape.GetDimNum() != gShape.GetDimNum(),
-                OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "out shape must equal g shape."),
-                return ge::GRAPH_FAILED);
-    for (size_t dimIdx = 0; dimIdx < gShape.GetDimNum(); ++dimIdx) {
-        OP_CHECK_IF(outShape.GetDim(dimIdx) != gShape.GetDim(dimIdx),
-                    OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "out shape must equal g shape."),
-                    return ge::GRAPH_FAILED);
-    }
-
     auto chunkSizePtr = context->GetAttrs()->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_INDEX);
     auto reversePtr = context->GetAttrs()->GetAttrPointer<bool>(ATTR_REVERSE_INDEX);
     auto scalePtr = context->GetAttrs()->GetAttrPointer<float>(ATTR_SCALE_INDEX);

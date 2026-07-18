@@ -335,14 +335,17 @@ at::Tensor npu_chunk_fwd_o(
     c10::optional<int64_t> chunk_size,
     c10::optional<bool> transpose_state_layout)
 {
-    // 创建输出tensor
+    TORCH_CHECK(g.has_value() && g->defined(), "npu_chunk_fwd_o: g is required.");
+    TORCH_CHECK(!g_gamma.has_value() || !g_gamma->defined(),
+                "npu_chunk_fwd_o: g_gamma is reserved and must be None.");
+    TORCH_CHECK(!transpose_state_layout.value_or(false),
+                "npu_chunk_fwd_o: transpose_state_layout is reserved and must be false.");
+
     at::Tensor o = at::empty_like(v);
 
     // chunk_size默认值
     int64_t chunk_size_ = chunk_size.value_or(64);
     const at::Tensor &g_ = c10::value_or_else(g, [] { return at::Tensor(); });
-    (void)g_gamma;
-    (void)transpose_state_layout;
 
     // 调用ACLNN算子
     EXEC_NPU_CMD_EXT(
@@ -699,10 +702,11 @@ at::Tensor npu_kda_gate_cumsum(
     at::Tensor gk = at::empty(g.sizes(), g.options().dtype(at::kFloat));
     const at::Tensor &A_log_ = c10::value_or_else(A_log, [] { return at::Tensor(); });
     const at::Tensor &dt_bias_ = c10::value_or_else(dt_bias, [] { return at::Tensor(); });
+    const char *layout_cstr = layout_str.c_str();
     EXEC_NPU_CMD_EXT(
         aclnnKdaGateCumsum,
         g, A_log_, dt_bias_, cu_seqlens,
-        chunk_size, use_gate, safe, lower, layout_str.c_str(), gk
+        chunk_size, use_gate, safe, lower, layout_cstr, gk
     );
     return gk;
 }
@@ -958,8 +962,8 @@ at::Tensor npu_solve_tri(
 at::Tensor npu_chunk_local_cumsum(
     const at::Tensor &g,
     int64_t chunk_size,
-    const c10::optional<at::Tensor> &cu_seqlens,
-    const c10::optional<at::Tensor> &chunk_indices_out,
+    at::OptionalIntArrayRef cu_seqlens,
+    at::OptionalIntArrayRef chunk_indices_out,
     bool reverse,
     double scale,
     bool head_first,
@@ -981,33 +985,19 @@ at::Tensor npu_chunk_local_cumsum(
 
     at::Tensor g_contig = g.contiguous();
     at::Tensor out = at::empty_like(g_contig);
-    at::Tensor empty_index = at::empty({0}, g_contig.options().dtype(at::kLong));
-
-    at::Tensor cu_seqlens_tensor = empty_index;
-    if (cu_seqlens.has_value() && cu_seqlens->defined()) {
-        cu_seqlens_tensor = cu_seqlens->contiguous();
-        TORCH_CHECK(cu_seqlens_tensor.scalar_type() == at::kLong,
-                    "npu_chunk_local_cumsum: cu_seqlens must be int64.");
-    }
-
-    at::Tensor chunk_indices_tensor = empty_index;
-    if (chunk_indices_out.has_value() && chunk_indices_out->defined()) {
-        chunk_indices_tensor = chunk_indices_out->contiguous();
-        TORCH_CHECK(chunk_indices_tensor.scalar_type() == at::kLong,
-                    "npu_chunk_local_cumsum: chunk_indices_out must be int64.");
-    }
-
-    if (cu_seqlens_tensor.numel() > 0) {
+    if (cu_seqlens.has_value()) {
         TORCH_CHECK(g_contig.size(0) == 1,
                     "npu_chunk_local_cumsum: B must be 1 when cu_seqlens is provided, got ", g_contig.size(0));
-        TORCH_CHECK(chunk_indices_tensor.numel() > 0,
+        TORCH_CHECK(chunk_indices_out.has_value() && !chunk_indices_out->empty(),
                     "npu_chunk_local_cumsum: chunk_indices_out is required when cu_seqlens is provided.");
     }
+    TORCH_CHECK(cu_seqlens.has_value() == chunk_indices_out.has_value(),
+                "npu_chunk_local_cumsum: cu_seqlens and chunk_indices_out must be provided together.");
 
     char *output_dtype_cstr = const_cast<char *>(output_dtype_str.c_str());
     EXEC_NPU_CMD_EXT(
         aclnnChunkLocalCumsum,
-        g_contig, cu_seqlens_tensor, chunk_indices_tensor,
+        g_contig, cu_seqlens, chunk_indices_out,
         chunk_size, reverse, scale, head_first, output_dtype_cstr,
         out
     );

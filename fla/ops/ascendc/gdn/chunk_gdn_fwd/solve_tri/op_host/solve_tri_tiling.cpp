@@ -33,24 +33,19 @@ static ge::graphStatus SolveTriTilingFunc(gert::TilingContext *context)
     }
 
     auto inputShape = context->GetInputShape(INPUT_X_IDX);
-    auto outputShape = context->GetOutputShape(OUTPUT_X_OUT_IDX);
     auto inputDesc = context->GetInputDesc(INPUT_X_IDX);
     auto outputDesc = context->GetOutputDesc(OUTPUT_X_OUT_IDX);
-    if (inputShape == nullptr || outputShape == nullptr || inputDesc == nullptr || outputDesc == nullptr) {
+    if (inputShape == nullptr || inputDesc == nullptr || outputDesc == nullptr) {
         return ge::GRAPH_FAILED;
     }
     auto shape = inputShape->GetStorageShape();
-    auto outShape = outputShape->GetStorageShape();
     int64_t ndim = shape.GetDimNum();
     if (ndim != 3 && ndim != 4) {
         return ge::GRAPH_FAILED;
     }
-    if (outShape.GetDimNum() != ndim) {
-        return ge::GRAPH_FAILED;
-    }
     for (int64_t dim = 0; dim < ndim; ++dim) {
-        if (shape.GetDim(dim) <= 0 || outShape.GetDim(dim) != shape.GetDim(dim)) {
-            OP_LOGE(context->GetNodeName(), "x dimensions must be positive and x_out shape must match x.");
+        if (shape.GetDim(dim) <= 0) {
+            OP_LOGE(context->GetNodeName(), "x dimensions must be positive.");
             return ge::GRAPH_FAILED;
         }
     }

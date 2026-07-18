@@ -16,11 +16,16 @@ Accuracy test for npu_recurrent_gated_delta_rule.
 Compares NPU output against CPU golden reference from PTA.
 """
 
+import os
 import sys
 from pathlib import Path
 
-import ascend_ops
 import pytest
+from tests.operators._shared.route_requirements import require_fast_kernel_route
+
+require_fast_kernel_route()
+
+import ascend_ops
 import torch
 import torch_npu
 from tests.operators._shared.legacy_cases import legacy_param_values
@@ -115,7 +120,7 @@ def run_golden(inp):
 
 def run_npu(inp):
     """Run NPU operator and return CPU tensors."""
-    device = torch.device("npu:7")
+    device = torch.device(f"npu:{int(os.environ.get('TEST_DEVICE_ID', 0))}")
     torch_npu.npu.set_device(device)
     q_npu = inp["query"].npu()
     k_npu = inp["key"].npu()

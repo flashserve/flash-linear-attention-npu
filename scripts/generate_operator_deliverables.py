@@ -2751,6 +2751,9 @@ def render_legacy_route(op, spec):
         import pytest
 
         from tests.operators.{op}.common.case_matrix import case_ids
+        from tests.operators._shared.route_requirements import require_legacy_route
+
+        require_legacy_route()
 
 
         @pytest.mark.npu

@@ -4,6 +4,10 @@ import os
 
 import pytest
 
+from tests.operators._shared.route_requirements import require_legacy_route
+
+require_legacy_route()
+
 from tests.operators.causal_conv1d.common.case_matrix import case_ids
 
 

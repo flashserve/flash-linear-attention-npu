@@ -136,23 +136,28 @@ ASCENDC_TPL_SEL(
 #endif
 
 struct ChunkBwdDqkwgTilingData {
-    int64_t B;
-    int64_t HV;
-    int64_t HK;
-    int64_t T;
-    int64_t K;
-    int64_t V;
-    int64_t BT;
-    int64_t numChunks;
+    uint64_t B;
+    uint64_t HV;
+    uint64_t HK;
+    uint64_t T;
+    uint64_t K;
+    uint64_t V;
+    uint64_t BT;
+    uint64_t numChunks;
     float scale;
-    int64_t mul0RowNum;
-    int64_t wsDwOffset;
-    int64_t wsDgLastOffset;
-    int64_t dgLastSize;
-    int64_t wsMm5Offset;
-    int64_t wsDsTempOffset;
-    int64_t totalWorkspaceSize;
-    int64_t isVarLen;
+    uint32_t mul0RowNum;
+    uint32_t aicCoreNum;
+    uint64_t wsDwOffset;
+    uint64_t wsBtxKSyncSlotsPerHead;
+    uint64_t wsDgLastOffset;
+    uint64_t dgLastSize;
+    uint64_t wsMm5Offset;
+    uint64_t wsDsTempOffset;
+    uint64_t wsMm6Offset;
+    uint64_t wsMm7Offset;
+    uint64_t wsMul1Offset;
+    uint64_t totalWorkspaceSize;
+    uint64_t isVarLen;
 };
 
 } // namespace GDN

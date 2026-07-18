@@ -4,6 +4,10 @@ import os
 
 import pytest
 
+from tests.operators._shared.route_requirements import require_legacy_route
+
+require_legacy_route()
+
 from tests.operators.kda_gate_cumsum.common.case_matrix import case_ids
 
 

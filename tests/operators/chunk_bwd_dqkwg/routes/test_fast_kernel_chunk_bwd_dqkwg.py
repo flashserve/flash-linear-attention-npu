@@ -12,8 +12,12 @@
 
 import torch
 from tests.operators._shared.legacy_cases import legacy_param_values
-import ascend_ops
 import pytest
+from tests.operators._shared.route_requirements import require_fast_kernel_route
+
+require_fast_kernel_route()
+
+import ascend_ops
 import math
 import random
 from typing import Optional, Tuple
@@ -437,6 +441,12 @@ def chunk_bwd_dqkwg_ref(
         scale, cu_seqlens, chunk_size, benchmark = benchmark
     )
 
+    B, HK, T, K = q.shape
+    HV = v.shape[1]
+    if HV != HK:
+        dq_ref = dq_ref.reshape(B, T, HK, n_ratio, K).sum(dim=3)
+        dk_ref = dk_ref.reshape(B, T, HK, n_ratio, K).sum(dim=3)
+
     dq_out = dq_ref.permute(0, 2, 1, 3).contiguous()#.to(torch.float32)
     dk_out = dk_ref.permute(0, 2, 1, 3).contiguous()#.to(torch.float32)
     dw_out = dw_ref.permute(0, 2, 1, 3).contiguous()#.to(torch.float32)
@@ -623,8 +633,8 @@ def test_chunk_bwd_dqkwg_output_shapes():
         w=None, g_gamma=None, cu_seqlens=None, chunk_indices=None
     )
 
-    assert dq.shape == (B, HV, T, K), f"dq shape mismatch: expected {(B, HV, T, K)}, got {dq.shape}"
-    assert dk.shape == (B, HV, T, K), f"dk shape mismatch: expected {(B, HV, T, K)}, got {dk.shape}"
+    assert dq.shape == (B, HK, T, K), f"dq shape mismatch: expected {(B, HK, T, K)}, got {dq.shape}"
+    assert dk.shape == (B, HK, T, K), f"dk shape mismatch: expected {(B, HK, T, K)}, got {dk.shape}"
     assert dw.shape == (B, HV, T, K), f"dw shape mismatch: expected {(B, HV, T, K)}, got {dw.shape}"
     assert dg.shape == (B, HV, T), f"dg shape mismatch: expected {(B, HV, T)}, got {dg.shape}"
 
@@ -657,8 +667,8 @@ def test_chunk_bwd_dqkwg_gva_output_shapes():
         w=None, g_gamma=None, cu_seqlens=None, chunk_indices=None
     )
 
-    assert dq.shape == (B, HV, T, K), f"dq shape mismatch: expected {(B, HV, T, K)}, got {dq.shape}"
-    assert dk.shape == (B, HV, T, K), f"dk shape mismatch: expected {(B, HV, T, K)}, got {dk.shape}"
+    assert dq.shape == (B, HK, T, K), f"dq shape mismatch: expected {(B, HK, T, K)}, got {dq.shape}"
+    assert dk.shape == (B, HK, T, K), f"dk shape mismatch: expected {(B, HK, T, K)}, got {dk.shape}"
     assert dw.shape == (B, HV, T, K), f"dw shape mismatch: expected {(B, HV, T, K)}, got {dw.shape}"
     assert dg.shape == (B, HV, T), f"dg shape mismatch: expected {(B, HV, T)}, got {dg.shape}"
 

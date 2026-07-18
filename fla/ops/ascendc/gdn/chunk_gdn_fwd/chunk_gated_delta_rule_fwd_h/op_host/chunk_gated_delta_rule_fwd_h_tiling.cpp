@@ -89,38 +89,28 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     auto kShapePtr = context->GetInputShape(INPUT_K_IDX);
     auto wShapePtr = context->GetInputShape(INPUT_W_IDX);
     auto uShapePtr = context->GetInputShape(INPUT_U_IDX);
-    auto hShapePtr = context->GetOutputShape(OUTPUT_H_IDX);
-    auto vNewShapePtr = context->GetOutputShape(OUTPUT_V_NEW_IDX);
     auto kDesc = context->GetInputDesc(INPUT_K_IDX);
     auto wDesc = context->GetInputDesc(INPUT_W_IDX);
     auto uDesc = context->GetInputDesc(INPUT_U_IDX);
     auto hDesc = context->GetOutputDesc(OUTPUT_H_IDX);
     auto vNewDesc = context->GetOutputDesc(OUTPUT_V_NEW_IDX);
-    OP_CHECK_IF(kShapePtr == nullptr || wShapePtr == nullptr || uShapePtr == nullptr || hShapePtr == nullptr ||
-                    vNewShapePtr == nullptr || kDesc == nullptr || wDesc == nullptr || uDesc == nullptr ||
-                    hDesc == nullptr || vNewDesc == nullptr,
+    OP_CHECK_IF(kShapePtr == nullptr || wShapePtr == nullptr || uShapePtr == nullptr ||
+                    kDesc == nullptr || wDesc == nullptr || uDesc == nullptr || hDesc == nullptr ||
+                    vNewDesc == nullptr,
                 OP_LOGE(context->GetNodeName(), "required input/output shape and dtype descriptors must be present."),
                 return ge::GRAPH_FAILED);
 
     const gert::Shape kStorageShape = kShapePtr->GetStorageShape();
     const gert::Shape wStorageShape = wShapePtr->GetStorageShape();
     const gert::Shape uStorageShape = uShapePtr->GetStorageShape();
-    const gert::Shape hStorageShape = hShapePtr->GetStorageShape();
-    const gert::Shape vNewStorageShape = vNewShapePtr->GetStorageShape();
     OP_CHECK_IF(kStorageShape.GetDimNum() != 4 || wStorageShape.GetDimNum() != 4 ||
-                    uStorageShape.GetDimNum() != 4 || hStorageShape.GetDimNum() != 5 ||
-                    vNewStorageShape.GetDimNum() != 4,
-                OP_LOGE(context->GetNodeName(), "k/w/u/v_new must be rank 4 and h must be rank 5."),
+                    uStorageShape.GetDimNum() != 4,
+                OP_LOGE(context->GetNodeName(), "k/w/u must be rank 4."),
                 return ge::GRAPH_FAILED);
     for (size_t dim = 0; dim < 4; ++dim) {
         OP_CHECK_IF(kStorageShape.GetDim(dim) <= 0 || wStorageShape.GetDim(dim) <= 0 ||
-                        uStorageShape.GetDim(dim) <= 0 || vNewStorageShape.GetDim(dim) <= 0,
-                    OP_LOGE(context->GetNodeName(), "k/w/u/v_new dimensions must be positive."),
-                    return ge::GRAPH_FAILED);
-    }
-    for (size_t dim = 0; dim < 5; ++dim) {
-        OP_CHECK_IF(hStorageShape.GetDim(dim) <= 0,
-                    OP_LOGE(context->GetNodeName(), "h dimensions must be positive."),
+                        uStorageShape.GetDim(dim) <= 0,
+                    OP_LOGE(context->GetNodeName(), "k/w/u dimensions must be positive."),
                     return ge::GRAPH_FAILED);
     }
 
@@ -252,17 +242,6 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
                     return ge::GRAPH_FAILED);
     }
 
-    OP_CHECK_IF(hStorageShape.GetDim(0) != batch || hStorageShape.GetDim(1) != vNumHead ||
-                    hStorageShape.GetDim(2) != expectedChunks || hStorageShape.GetDim(3) != kHeadDim ||
-                    hStorageShape.GetDim(4) != vHeadDim,
-                OP_LOGE(context->GetNodeName(), "h must be [B,H_v,N_c,K,V] with derived N_c."),
-                return ge::GRAPH_FAILED);
-    for (size_t dim = 0; dim < 4; ++dim) {
-        OP_CHECK_IF(vNewStorageShape.GetDim(dim) != uStorageShape.GetDim(dim),
-                    OP_LOGE(context->GetNodeName(), "v_new shape must match u."),
-                    return ge::GRAPH_FAILED);
-    }
-
     auto initialStateTensor = context->GetOptionalInputTensor(INPUT_INITIAL_STATE_IDX);
     auto initialStateShapePtr = context->GetOptionalInputShape(INPUT_INITIAL_STATE_IDX);
     auto initialStateDesc = context->GetOptionalInputDesc(INPUT_INITIAL_STATE_IDX);
@@ -282,17 +261,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
                     return ge::GRAPH_FAILED);
     }
     if (storeFinalState) {
-        auto finalStateShapePtr = context->GetOutputShape(OUTPUT_FINAL_STATE_IDX);
         auto finalStateDesc = context->GetOutputDesc(OUTPUT_FINAL_STATE_IDX);
-        OP_CHECK_IF(finalStateShapePtr == nullptr || finalStateDesc == nullptr,
+        OP_CHECK_IF(finalStateDesc == nullptr,
                     OP_LOGE(context->GetNodeName(), "final_state output is required when requested."),
                     return ge::GRAPH_FAILED);
-        const gert::Shape finalShape = finalStateShapePtr->GetStorageShape();
         const ge::DataType expectedStateDtype = useInitialState ? initialStateDesc->GetDataType() : ge::DT_FLOAT;
-        OP_CHECK_IF(finalShape.GetDimNum() != 4 || finalShape.GetDim(0) != logicalSequenceCount ||
-                        finalShape.GetDim(1) != vNumHead || finalShape.GetDim(2) != kHeadDim ||
-                        finalShape.GetDim(3) != vHeadDim || finalStateDesc->GetDataType() != expectedStateDtype,
-                    OP_LOGE(context->GetNodeName(), "final_state shape/dtype must match the state contract."),
+        OP_CHECK_IF(finalStateDesc->GetDataType() != expectedStateDtype,
+                    OP_LOGE(context->GetNodeName(), "final_state dtype must match the state contract."),
                     return ge::GRAPH_FAILED);
     }
 

@@ -49,6 +49,40 @@ python -m pytest tests/operators/<op_name>/accuracy/test_<op_name>.py
 python scripts/check_operator_compliance.py
 ```
 
+默认聚合回归可直接执行：
+
+```bash
+FLA_NPU_RUN_OPERATOR_TESTS=1 python -m pytest tests/operators
+```
+
+该命令运行主精度、泛化、UT 和 ST；legacy 与 fast-kernel 属于可选扩展通路，默认只收集并明确跳过，
+不得因当前 Python 环境未构建对应扩展而记为算子失败。两个可选通路必须在各自的独立构建环境中验证。
+
+验证 `torch.ops.npu` legacy 通路时，先构建含 legacy extension 的 wheel，再显式打开通路开关：
+
+```bash
+FLA_NPU_SOC=ascend910b FLA_NPU_BUILD_LEGACY_EXTENSION=1 \
+python -m pip wheel --no-build-isolation --no-deps . -w dist
+python -m pip install --force-reinstall --no-deps dist/flash_linear_attention_npu-*.whl
+
+FLA_NPU_RUN_OPERATOR_TESTS=1 FLA_NPU_RUN_LEGACY_TESTS=1 \
+python -m pytest tests/operators/<op_name>/routes/test_legacy_<op_name>.py
+```
+
+验证 fast-kernel 通路时，使用专用脚本构建 `ascend_ops` 并执行对应 JSON 回归；脚本会设置
+`FLA_NPU_RUN_FAST_KERNEL_TESTS=1`：
+
+```bash
+bash examples/fast_kernel_launch_example/build_and_test.sh <op_name>
+```
+
+手工运行已构建的 fast-kernel 测试时同样必须显式设置该开关：
+
+```bash
+FLA_NPU_RUN_FAST_KERNEL_TESTS=1 \
+python -m pytest tests/operators/<op_name>/routes/test_fast_kernel_<op_name>.py
+```
+
 全部主线 Ascend C 算子的三平台构建和 JSON 泛化执行使用统一入口：
 
 ```bash

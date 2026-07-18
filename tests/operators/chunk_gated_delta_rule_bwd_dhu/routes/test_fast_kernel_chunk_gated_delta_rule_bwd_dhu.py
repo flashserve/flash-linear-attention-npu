@@ -14,8 +14,12 @@ import math
 import random
 from typing import List, Optional, Tuple
 
-import ascend_ops
 import pytest
+from tests.operators._shared.route_requirements import require_fast_kernel_route
+
+require_fast_kernel_route()
+
+import ascend_ops
 import torch
 import torch_npu
 from tests.operators._shared.legacy_cases import legacy_param_values

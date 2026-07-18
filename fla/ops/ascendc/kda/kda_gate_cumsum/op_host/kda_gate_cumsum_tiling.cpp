@@ -35,8 +35,8 @@ enum class KdaGateLayout : int64_t {
 ge::graphStatus Tiling4KdaGateCumsum(gert::TilingContext *context)
 {
     if (context == nullptr || context->GetRequiredInputShape(INPUT_G_IDX) == nullptr ||
-        context->GetInputDesc(INPUT_G_IDX) == nullptr || context->GetOutputShape(0) == nullptr ||
-        context->GetOutputDesc(0) == nullptr || context->GetAttrs() == nullptr ||
+        context->GetInputDesc(INPUT_G_IDX) == nullptr || context->GetOutputDesc(0) == nullptr ||
+        context->GetAttrs() == nullptr ||
         context->GetRawTilingData() == nullptr) {
         return ge::GRAPH_FAILED;
     }
@@ -50,12 +50,11 @@ ge::graphStatus Tiling4KdaGateCumsum(gert::TilingContext *context)
     if (gDtype != ge::DT_FLOAT && gDtype != ge::DT_FLOAT16 && gDtype != ge::DT_BF16) {
         return ge::GRAPH_FAILED;
     }
-    const auto &gkShape = context->GetOutputShape(0)->GetStorageShape();
-    if (context->GetOutputDesc(0)->GetDataType() != ge::DT_FLOAT || gkShape.GetDimNum() != gShape.GetDimNum()) {
+    if (context->GetOutputDesc(0)->GetDataType() != ge::DT_FLOAT) {
         return ge::GRAPH_FAILED;
     }
     for (size_t idx = 0; idx < gShape.GetDimNum(); ++idx) {
-        if (gShape.GetDim(idx) <= 0 || gkShape.GetDim(idx) != gShape.GetDim(idx)) {
+        if (gShape.GetDim(idx) <= 0) {
             return ge::GRAPH_FAILED;
         }
     }

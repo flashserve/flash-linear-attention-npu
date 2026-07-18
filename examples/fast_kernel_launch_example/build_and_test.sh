@@ -61,6 +61,7 @@ python3 -m pip install dist/*.whl --force-reinstall --no-deps
 
 # Run tests
 echo "Running tests..."
+export FLA_NPU_RUN_FAST_KERNEL_TESTS=1
 if [[ -n "$OP_NAME" ]]; then
     canonical="$(canonical_test "$OP_NAME")"
     if [[ -f "$canonical" ]]; then

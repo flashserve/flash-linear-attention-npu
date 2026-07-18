@@ -11,11 +11,15 @@
 # -----------------------------------------------------------------------------------------------------------
 
 import pytest
+from tests.operators._shared.route_requirements import require_fast_kernel_route
+
+require_fast_kernel_route()
+
+import ascend_ops
 import torch
 import torch_npu
 from tests.operators._shared.legacy_cases import legacy_param_values
 
-import ascend_ops
 
 
 def cdiv(a: int, b: int) -> int:
@@ -51,7 +55,7 @@ def make_inputs(B, HK, HV, T, K, V, chunk_size, k_dtype, beta_dtype, variable=Fa
     beta = torch.rand(actual_B, HV, T, dtype=beta_dtype) * 0.1
     A = torch.rand(actual_B, HV, T, chunk_size, dtype=k_dtype) * 0.1
     dA = torch.rand(actual_B, HV, T, chunk_size, dtype=k_dtype) * 0.1
-    dw = torch.rand(actual_B, HK, T, K, dtype=k_dtype) * 0.1
+    dw = torch.rand(actual_B, HV, T, K, dtype=k_dtype) * 0.1
     du = torch.rand(actual_B, HV, T, V, dtype=k_dtype) * 0.1
     g = torch.rand(actual_B, HV, T, dtype=beta_dtype) * 0.1
     if not variable:
@@ -94,7 +98,7 @@ def prepare_wy_repr_bwd_full_ref(k, v, beta, A, dA, dw, du, g, chunk_size, cu_se
                 v_chunk = v_f[b, hv, bos:eos, :]
                 beta_chunk = beta_f[b, hv, bos:eos]
                 g_exp_chunk = torch.exp(g_f[b, hv, bos:eos])
-                dw_chunk = dw_f[b, hk, bos:eos, :]
+                dw_chunk = dw_f[b, hv, bos:eos, :]
                 du_chunk = du_f[b, hv, bos:eos, :]
 
                 dv_chunk = (A_chunk.T @ du_chunk) * beta_chunk[:, None]

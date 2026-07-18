@@ -12,8 +12,9 @@
  * \brief Recurrent gated delta rule operator with fast kernel launch (<<<>>>).
  */
 
-#include <vector>
+#include <limits>
 #include <tuple>
+#include <vector>
 #include <ATen/Operators.h>
 #include <torch/all.h>
 #include <torch/library.h>
@@ -157,6 +158,17 @@ static RecurrentGatedDeltaRuleTilingData CalcTilingParams(const at::Tensor &quer
     optiling::RecurrentGatedDeltaRuleTilingProcessor processor(ctx);
     TORCH_CHECK(processor.Process(tiling, blockDim, workspaceSize) == ge::GRAPH_SUCCESS,
                 "recurrent_gated_delta_rule tiling failed.");
+
+    auto stateStrides = state.strides();
+    TORCH_CHECK(stateStrides.size() == 4, "state must have four strides.");
+    for (size_t index = 0; index < 3; ++index) {
+        TORCH_CHECK(stateStrides[index] >= 0 &&
+                        static_cast<uint64_t>(stateStrides[index]) <= std::numeric_limits<uint32_t>::max(),
+                    "state stride ", index, " is out of uint32 range: ", stateStrides[index]);
+    }
+    tiling.stateStride0 = static_cast<uint32_t>(stateStrides[0]);
+    tiling.stateStride1 = static_cast<uint32_t>(stateStrides[1]);
+    tiling.stateStride2 = static_cast<uint32_t>(stateStrides[2]);
     return tiling;
 }
 

@@ -8,16 +8,18 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-import torch
-import os
-from typing import Optional
-import pickle
+import json
 import math
-# import ct
+import os
 import random
-torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
+from pathlib import Path
+from typing import Optional
+
+import torch
+
 from fla_npu.ops import ascendc as ascendc_ops
-# import custom_ops
+
+torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
 
 
 torch.npu.config.allow_internal_format = False
@@ -639,15 +641,11 @@ def test_prepare_wy_repr_bwd_full(
         save_path (str): 保存 pickle 文件的路径,默认为 'data.pkl'
 
     返回:
-        tuple: (dk, dv, dbeta, dg)。当 HK < HV(GQA)时 tiling 不可用,返回量为 CPU golden,不调用 NPU。
+        tuple: (dk, dv, dbeta, dg)。
 
     约定:
         要求 ``HV % HK == 0``。对每个 value head ``iv``,对应 KV head ``hk = iv // (HV // HK)``。
         dk 对每个 ``hk`` 累加来自所有映射到它的 ``iv`` 的梯度。
-
-    注意:
-        ``npu_prepare_wy_repr_bwd_full`` 当前仍要求输入 ``k/v`` head 维一致,故仅在 ``HK == HV`` 时
-        与 NPU 结果做 ``ct.isclose``;否则只计算并打印跳过 NPU 的说明。
     """
     if HK <= 0 or HV <= 0:
         raise ValueError(f"HK and HV must be positive (got HK={HK}, HV={HV}).")
@@ -731,75 +729,62 @@ def test_prepare_wy_repr_bwd_full(
     print(f"test_prepare_wy_repr_bwd_full 被调用了第 {test_prepare_wy_repr_bwd_full.call_count} 次")
     return dk, dv, dbeta, dg
 
-if __name__ == "__main__":
-    if os.environ.get("FLA_NPU_OPERATOR") == "prepare_wy_repr_bwd_full":
-        test_prepare_wy_repr_bwd_full(
-            B=1, HK=2, HV=4, T=128, K=128, V=128, chunk_size=64,
-            ktype=torch.float16, btype=torch.float32, seed=2026,
-        )
-        raise SystemExit(0)
+def _dtype_from_name(name: str):
+    mapping = {
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "float32": torch.float32,
+    }
+    try:
+        return mapping[name]
+    except KeyError as exc:
+        raise ValueError(f"unsupported manifest dtype: {name}") from exc
 
-    # HV 为 HK 的倍数(如 HV=16, HK=4)仅跑 CPU golden;NPU 需 HK==HV
-    # test_prepare_wy_repr_bwd_full(B = 1, HK = 2, HV = 8, T = 256, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
-    test_prepare_wy_repr_bwd_full(B = 1, HK = 8, HV = 8, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
-    test_prepare_wy_repr_bwd_full(B = 1, HK = 8, HV = 8, T = 1024, K = 128, V = 256, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
-    # #F1
-    test_prepare_wy_repr_bwd_full(B = 64, HK = 8, HV = 8, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
-    # #F2
-    # test_prepare_wy_repr_bwd_full(B = 32, HK = 16, HV = 16, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
-    # #F3
-    # test_prepare_wy_repr_bwd_full(B = 16, HK = 32, HV = 32, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float32)
-    # #F4
-    # test_prepare_wy_repr_bwd_full(B = 8, HK = 32, HV = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
-    #F5
-    # test_prepare_wy_repr_bwd_full(B = 128, HK = 4, HV = 4, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
-    # #F6
-    # test_prepare_wy_repr_bwd_full(B = 64, HK = 8, HV = 8, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.float32)
-    # #F7
-    # test_prepare_wy_repr_bwd_full(B = 32, HK = 16, HV = 16, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
-    # #F8    
-    # test_prepare_wy_repr_bwd_full(B = 16, HK = 32, HV = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
-    # #F9
-    # test_prepare_wy_repr_bwd_full(B = 64, HK = 8, HV = 8, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
-    # #F10
-    # test_prepare_wy_repr_bwd_full(B = 32, HK = 16, HV = 16, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
-    # #F11
-    # test_prepare_wy_repr_bwd_full(B = 16, HK = 32, HV = 32, T = 16384, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float32)
-    # #F12
-    # test_prepare_wy_repr_bwd_full(B = 8, HK = 32, HV = 32, T = 32768, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
-    # #F13
-    # test_prepare_wy_repr_bwd_full(B = 64, HK = 8, HV = 8, T = 1024, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16)
-    # #F14
-    # test_prepare_wy_repr_bwd_full(B = 32, HK = 16, HV = 16, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
-    # #F15
-    # test_prepare_wy_repr_bwd_full(B = 16, HK = 32, HV = 32, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float32)
-    # #F16
-    # test_prepare_wy_repr_bwd_full(B = 8, HK = 32, HV = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
-    # #F17
-    # test_prepare_wy_repr_bwd_full(B = 64, HK = 8, HV = 8, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16)
-    # # F18
-    # test_prepare_wy_repr_bwd_full(B = 32, HK = 16, HV = 16, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
-    # #L1
-    # cu_seqlens = prepare_cu_seqlens(T = 32768, L = 16)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, HK = 32, HV = 32, T = 32768, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
-    # #L2
-    cu_seqlens = prepare_cu_seqlens(T = 65536, L = 33)
-    chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    test_prepare_wy_repr_bwd_full(B = 1, HK = 16, HV = 16, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
-    # #L3
-    # cu_seqlens = prepare_cu_seqlens(T = 131072, L = 333)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, HK = 8, HV = 8, T = 131072, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
-    # # L4
-    # cu_seqlens = prepare_cu_seqlens(T = 262144, L = 567)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, HK = 4, HV = 4, T = 262144, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float32, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
-    #L5
-    # cu_seqlens = prepare_cu_seqlens(T = 32768, L = 7)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, HK = 16, HV = 16, T = 32768, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.bfloat16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
-    # #L6
-    # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 25)
-    # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
-    # test_prepare_wy_repr_bwd_full(B = 1, HK = 8, HV = 8, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices, seed=42)
+
+def _load_selected_accuracy_cases():
+    default_manifest = Path(__file__).resolve().parents[3] / "op_cases" / "prepare_wy_repr_bwd_full.json"
+    manifest_path = Path(os.environ.get("FLA_NPU_CASE_MANIFEST", default_manifest))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    requested = [item for item in os.environ.get("FLA_NPU_CASE_IDS", "").split(",") if item]
+    if not requested:
+        requested = list(manifest["coverage_requirements"]["accuracy_case_ids"])
+
+    cases_by_id = {case["id"]: case for case in manifest["cases"]}
+    missing = [case_id for case_id in requested if case_id not in cases_by_id]
+    if missing:
+        raise ValueError(f"unknown prepare_wy_repr_bwd_full case ids: {missing}")
+
+    selected = [cases_by_id[case_id] for case_id in requested]
+    for case in selected:
+        if "accuracy" not in case["tags"] or "ascendc" not in case["run_on"]:
+            raise ValueError(f"{case['id']} is not an Ascend C accuracy case")
+        if case["expect"]["return_code"] != "ACLNN_SUCCESS":
+            raise ValueError(f"{case['id']} is not a positive accuracy case")
+    return selected
+
+
+def _run_manifest_case(case):
+    shape = case["shape"]
+    optional = case.get("optional_inputs", {})
+    print(f"[ACCURACY] prepare_wy_repr_bwd_full/{case['id']}", flush=True)
+    test_prepare_wy_repr_bwd_full(
+        B=int(shape["B"]),
+        HK=int(shape["H_k"]),
+        HV=int(shape["H_v"]),
+        T=int(shape["T"]),
+        K=int(shape["K"]),
+        V=int(shape["V"]),
+        chunk_size=int(case["attrs"]["chunk_size"]),
+        ktype=_dtype_from_name(case["dtype"]["data"]),
+        btype=_dtype_from_name(case["dtype"]["beta_g"]),
+        cu_seqlens=optional.get("cu_seqlens"),
+        chunk_indices=optional.get("chunk_indices"),
+        seed=int(case["seed"]),
+    )
+    torch.npu.synchronize()
+    print(f"[ACCURACY][PASS] prepare_wy_repr_bwd_full/{case['id']}", flush=True)
+
+
+if __name__ == "__main__":
+    for selected_case in _load_selected_accuracy_cases():
+        _run_manifest_case(selected_case)

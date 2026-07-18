@@ -40,6 +40,7 @@ function(pack_custom)
   npu_op_package_add(${PACK_CUSTOM_NAME}
     LIBRARY
       cust_opapi
+      opapi_compat
   )
   if (TARGET cust_proto)
     npu_op_package_add(${PACK_CUSTOM_NAME}

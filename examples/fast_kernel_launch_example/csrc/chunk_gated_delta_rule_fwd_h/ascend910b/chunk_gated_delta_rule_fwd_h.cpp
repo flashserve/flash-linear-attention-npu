@@ -127,7 +127,8 @@ static ::ChunkGatedDeltaRuleFwdHTilingData calc_tiling_params(
 
 template <typename INPUT_TYPE, typename G_TYPE, typename STATE_TYPE>
 __global__ __aicore__ void chunk_gated_delta_rule_fwd_h_kernel(
-    GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
+    GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state, GM_ADDR cu_seqlens,
+    GM_ADDR chunk_indices,
     GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, GM_ADDR workspace, GM_ADDR tiling)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
@@ -139,7 +140,7 @@ __global__ __aicore__ void chunk_gated_delta_rule_fwd_h_kernel(
 
     using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<INPUT_TYPE, G_TYPE, STATE_TYPE, float>;
     GDNFwdHKernel gdnFwdH;
-    gdnFwdH.Init(k, w, u, g, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+    gdnFwdH.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
     gdnFwdH.Process();
 }
 
@@ -167,6 +168,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_npu(
     auto w_ptr = (GM_ADDR)w.data_ptr();
     auto u_ptr = (GM_ADDR)u.data_ptr();
     auto g_ptr = (GM_ADDR)g.data_ptr();
+    GM_ADDR gk_ptr = nullptr;
     auto h_ptr = (GM_ADDR)h_out.data_ptr();
     auto v_new_ptr = (GM_ADDR)v_new_out.data_ptr();
     auto final_state_ptr = (GM_ADDR)final_state_out.data_ptr();
@@ -228,21 +230,21 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_npu(
             if (stateIsFp32) {
                 if (gIsFp32) {
                     chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, float, float><<<blockDim, nullptr, stream>>>(
-                        k_ptr, w_ptr, u_ptr, g_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
+                        k_ptr, w_ptr, u_ptr, g_ptr, gk_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
                         h_ptr, v_new_ptr, final_state_ptr, workspace_gm, tiling_gm);
                 } else {
                     chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, INPUT_TYPE, float><<<blockDim, nullptr, stream>>>(
-                        k_ptr, w_ptr, u_ptr, g_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
+                        k_ptr, w_ptr, u_ptr, g_ptr, gk_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
                         h_ptr, v_new_ptr, final_state_ptr, workspace_gm, tiling_gm);
                 }
             } else {
                 if (gIsFp32) {
                     chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, float, INPUT_TYPE><<<blockDim, nullptr, stream>>>(
-                        k_ptr, w_ptr, u_ptr, g_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
+                        k_ptr, w_ptr, u_ptr, g_ptr, gk_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
                         h_ptr, v_new_ptr, final_state_ptr, workspace_gm, tiling_gm);
                 } else {
                     chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, INPUT_TYPE, INPUT_TYPE><<<blockDim, nullptr, stream>>>(
-                        k_ptr, w_ptr, u_ptr, g_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
+                        k_ptr, w_ptr, u_ptr, g_ptr, gk_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
                         h_ptr, v_new_ptr, final_state_ptr, workspace_gm, tiling_gm);
                 }
             }
@@ -251,21 +253,21 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_npu(
             if (stateIsFp32) {
                 if (gIsFp32) {
                     chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, float, float><<<blockDim, nullptr, stream>>>(
-                        k_ptr, w_ptr, u_ptr, g_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
+                        k_ptr, w_ptr, u_ptr, g_ptr, gk_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
                         h_ptr, v_new_ptr, final_state_ptr, workspace_gm, tiling_gm);
                 } else {
                     chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, INPUT_TYPE, float><<<blockDim, nullptr, stream>>>(
-                        k_ptr, w_ptr, u_ptr, g_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
+                        k_ptr, w_ptr, u_ptr, g_ptr, gk_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
                         h_ptr, v_new_ptr, final_state_ptr, workspace_gm, tiling_gm);
                 }
             } else {
                 if (gIsFp32) {
                     chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, float, INPUT_TYPE><<<blockDim, nullptr, stream>>>(
-                        k_ptr, w_ptr, u_ptr, g_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
+                        k_ptr, w_ptr, u_ptr, g_ptr, gk_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
                         h_ptr, v_new_ptr, final_state_ptr, workspace_gm, tiling_gm);
                 } else {
                     chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, INPUT_TYPE, INPUT_TYPE><<<blockDim, nullptr, stream>>>(
-                        k_ptr, w_ptr, u_ptr, g_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
+                        k_ptr, w_ptr, u_ptr, g_ptr, gk_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
                         h_ptr, v_new_ptr, final_state_ptr, workspace_gm, tiling_gm);
                 }
             }
