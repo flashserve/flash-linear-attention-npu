@@ -34,7 +34,7 @@ def prepare_chunk_indices(
 def prepare_lens(cu_seqlens: torch.LongTensor) -> torch.LongTensor:
     return cu_seqlens[1:] - cu_seqlens[:-1]
 
-def prepare_chunk_offsets(
+def prepare_chunk_prefix(
     cu_seqlens: torch.LongTensor,
     chunk_size: int
 ) -> torch.LongTensor:
@@ -59,9 +59,9 @@ def forward_o_trans_cpu(
     BT = chunk_size
     chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size) if cu_seqlens is not None else None
     if cu_seqlens is None:
-        N, NT, chunk_offsets = B, (T + BT - 1) // BT, None
+        N, NT, chunk_prefix = B, (T + BT - 1) // BT, None
     else:
-        N, NT, chunk_offsets = len(cu_seqlens) - 1, len(chunk_indices), prepare_chunk_offsets(cu_seqlens, BT)
+        N, NT, chunk_prefix = len(cu_seqlens) - 1, len(chunk_indices), prepare_chunk_prefix(cu_seqlens, BT)
 
     o_output = torch.zeros((B, HV, T, V), device=k.device, dtype=torch.float32)
     head_ratio = HV // HK
@@ -77,7 +77,7 @@ def forward_o_trans_cpu(
             eos = cu_seqlens[n + 1]
             T_inner = eos - bos
             NT_inner = (T_inner + BT - 1) // BT
-            boh = chunk_offsets[n]
+            boh = chunk_prefix[n]
         
         for h in range(HV):
             # B H T D -> 
@@ -159,14 +159,14 @@ class GDNFwdOInput:
             sys.exit()
 
 class GDNFwdOInputTensor:
-    def __init__(self, q, k, v, h, g, cu_seqlens, chunk_offsets):
+    def __init__(self, q, k, v, h, g, cu_seqlens, chunk_indices):
         self.q = q
         self.k = k
         self.v = v
         self.h = h
         self.g = g
         self.cu_seqlens = cu_seqlens
-        self.chunk_offsets = chunk_offsets
+        self.chunk_indices = chunk_indices
 
 class GDNFwdOOutputTensor:
     def __init__(self, o):
@@ -183,20 +183,20 @@ def gen_seqlen(seqlen, is_varied_len, batch):
     cu_seqlens.append(seqlen)
     return torch.Tensor(cu_seqlens).to(torch.int64)
 
-def get_cu_offsets(o_input, cu_seqlens):
+def get_sequence_metadata(o_input, cu_seqlens):
     if cu_seqlens is None:
         return None, None
     cu_seqlens = cu_seqlens.to(torch.int64)
     num_chunks = 0
-    chunk_offsets = []
+    chunk_indices = []
     for tb in range(o_input.token_batch):
         curr_chunks = math.ceil((cu_seqlens[tb + 1] - cu_seqlens[tb]) / o_input.chunk_size)
         num_chunks += curr_chunks
         for c in range(curr_chunks):
-            chunk_offsets.append([tb, c])
-    return cu_seqlens.npu(), torch.Tensor(chunk_offsets).to(cu_seqlens.dtype).npu()
+            chunk_indices.append([tb, c])
+    return cu_seqlens.npu(), torch.Tensor(chunk_indices).to(cu_seqlens.dtype).npu()
 
-def gen_decay_data(o_input, cu_seqlens, chunk_offsets):
+def gen_decay_data(o_input, cu_seqlens, chunk_indices):
     base = torch.randint(-15, -5, [o_input.v_num_head])
     bias = torch.empty([o_input.shape_batch, o_input.v_num_head, o_input.seqlen]).uniform_(-2, 0)
     g = base[:, None] + bias
@@ -215,8 +215,8 @@ def gen_decay_data(o_input, cu_seqlens, chunk_offsets):
 
 def gen_input_data(o_input):
     cu_seqlens = gen_seqlen(o_input.seqlen, o_input.is_varied_len, o_input.token_batch)
-    cu_seqlens, chunk_offsets = get_cu_offsets(o_input, cu_seqlens)
-    num_chunks = chunk_offsets.shape[0] if chunk_offsets is not None else (math.ceil(o_input.seqlen / o_input.chunk_size))
+    cu_seqlens, chunk_indices = get_sequence_metadata(o_input, cu_seqlens)
+    num_chunks = chunk_indices.shape[0] if chunk_indices is not None else (math.ceil(o_input.seqlen / o_input.chunk_size))
     # Match the model-scale regime used by the repository's direct-launch precision test.
     q = torch.randn([o_input.shape_batch, o_input.k_num_head, o_input.seqlen, o_input.k_head_dim], dtype=o_input.dtype) * 0.1
     k = torch.randn([o_input.shape_batch, o_input.k_num_head, o_input.seqlen, o_input.k_head_dim], dtype=o_input.dtype) * 0.1
@@ -224,7 +224,7 @@ def gen_input_data(o_input):
     h = torch.randn([o_input.shape_batch, o_input.v_num_head, num_chunks, o_input.k_head_dim, o_input.v_head_dim], dtype=o_input.dtype) * 0.1
     g_base = torch.linspace(-0.25, 0.25, o_input.seqlen, dtype=torch.float32).reshape(1, 1, -1)
     g = g_base.repeat(o_input.shape_batch, o_input.v_num_head, 1).to(o_input.g_dtype)
-    return GDNFwdOInputTensor(q, k, v, h, g, cu_seqlens, chunk_offsets)
+    return GDNFwdOInputTensor(q, k, v, h, g, cu_seqlens, chunk_indices)
 
 def parse_actual_input(o_input):
     actual_data = torch.load(o_input.data_path, map_location='cpu')
@@ -233,8 +233,8 @@ def parse_actual_input(o_input):
     v = actual_data['v'].to(o_input.dtype).transpose(1, 2).contiguous()
     h = actual_data['h'].to(o_input.dtype).transpose(1, 2).contiguous()
     g = actual_data['g'].to(o_input.g_dtype).transpose(1, 2).contiguous()
-    cu_seqlens, chunk_offsets = get_cu_offsets(o_input, actual_data.get('cu_seqlens'))
-    return GDNFwdOInputTensor(q, k, v, h, g, cu_seqlens, chunk_offsets)
+    cu_seqlens, chunk_indices = get_sequence_metadata(o_input, actual_data.get('cu_seqlens'))
+    return GDNFwdOInputTensor(q, k, v, h, g, cu_seqlens, chunk_indices)
 
 def gen_ref_data(o_input, input_tensor):
     o = forward_o_trans_cpu(
@@ -300,7 +300,7 @@ if __name__ == "__main__":
     #     input_tensor.g.npu(),
     #     gdn_fwd_o_input.scale,
     #     input_tensor.cu_seqlens,
-    #     input_tensor.chunk_offsets,
+    #     input_tensor.chunk_indices,
     #     gdn_fwd_o_input.chunk_size
     # )
     # torch.npu.synchronize()
@@ -323,7 +323,7 @@ if __name__ == "__main__":
     print("step 5: g ok", g.shape, g.dtype, g.device)
 
     print("cu_seqlens =", input_tensor.cu_seqlens)
-    print("chunk_offsets =", input_tensor.chunk_offsets)
+    print("chunk_indices =", input_tensor.chunk_indices)
     print("scale =", gdn_fwd_o_input.scale)
     print("chunk_size =", gdn_fwd_o_input.chunk_size)
 
@@ -339,7 +339,7 @@ if __name__ == "__main__":
         g=g,
         g_gamma=None,
         cu_seqlens=input_tensor.cu_seqlens.tolist() if input_tensor.cu_seqlens is not None else None,
-        chunk_indices=input_tensor.chunk_offsets.flatten().tolist() if input_tensor.chunk_offsets is not None else None,
+        chunk_indices=input_tensor.chunk_indices.flatten().tolist() if input_tensor.chunk_indices is not None else None,
         chunk_size=gdn_fwd_o_input.chunk_size,
         transpose_state_layout=False, 
     )

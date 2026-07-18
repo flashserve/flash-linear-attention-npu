@@ -22,13 +22,13 @@ def cdiv(a: int, b: int) -> int:
     return (a + b - 1) // b
 
 
-def prepare_chunk_offsets(cu_seqlens: torch.LongTensor, chunk_size: int) -> torch.LongTensor:
-    offsets = []
+def prepare_chunk_indices(cu_seqlens: torch.LongTensor, chunk_size: int) -> torch.LongTensor:
+    indices = []
     for batch_idx in range(cu_seqlens.numel() - 1):
         seq_len = int(cu_seqlens[batch_idx + 1] - cu_seqlens[batch_idx])
         for chunk_idx in range(cdiv(seq_len, chunk_size)):
-            offsets.append([batch_idx, chunk_idx])
-    return torch.tensor(offsets, dtype=torch.long)
+            indices.append([batch_idx, chunk_idx])
+    return torch.tensor(indices, dtype=torch.long)
 
 
 def generate_cu_seqlens(total_length: int, token_batch: int) -> torch.LongTensor:
@@ -59,8 +59,8 @@ def make_inputs(
     torch.manual_seed(0)
     actual_shape_batch = 1 if variable else shape_batch
     cu_seqlens = generate_cu_seqlens(seq_len, token_batch) if variable else None
-    chunk_offsets = prepare_chunk_offsets(cu_seqlens, chunk_size) if variable else None
-    num_chunks = chunk_offsets.shape[0] if variable else cdiv(seq_len, chunk_size)
+    chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size) if variable else None
+    num_chunks = chunk_indices.shape[0] if variable else cdiv(seq_len, chunk_size)
 
     q = torch.randn((actual_shape_batch, k_heads, seq_len, k_dim), dtype=input_dtype) * 0.1
     k = torch.randn((actual_shape_batch, k_heads, seq_len, k_dim), dtype=input_dtype) * 0.1
@@ -68,10 +68,10 @@ def make_inputs(
     h = torch.randn((actual_shape_batch, v_heads, num_chunks, k_dim, v_dim), dtype=input_dtype) * 0.1
     g_base = torch.linspace(-0.25, 0.25, seq_len, dtype=torch.float32).reshape(1, 1, seq_len)
     g = g_base.repeat(actual_shape_batch, v_heads, 1).to(g_dtype)
-    return q, k, v, h, g, cu_seqlens, chunk_offsets
+    return q, k, v, h, g, cu_seqlens, chunk_indices
 
 
-def chunk_fwd_o_ref(q, k, v, h, g, scale, chunk_size, cu_seqlens=None, chunk_offsets=None):
+def chunk_fwd_o_ref(q, k, v, h, g, scale, chunk_size, cu_seqlens=None, chunk_indices=None):
     out_dtype = v.dtype
     q = q.to(torch.float32)
     k = k.to(torch.float32)
@@ -100,8 +100,8 @@ def chunk_fwd_o_ref(q, k, v, h, g, scale, chunk_size, cu_seqlens=None, chunk_off
                         q_block, k_block, v_block, h_block, g_block, scale
                     )
     else:
-        flat_offsets = chunk_offsets.reshape(-1, 2)
-        for global_chunk_idx, (token_batch_idx, batch_chunk_idx) in enumerate(flat_offsets.tolist()):
+        flat_indices = chunk_indices.reshape(-1, 2)
+        for global_chunk_idx, (token_batch_idx, batch_chunk_idx) in enumerate(flat_indices.tolist()):
             bos = int(cu_seqlens[token_batch_idx])
             eos = int(cu_seqlens[token_batch_idx + 1])
             start = bos + batch_chunk_idx * chunk_size
@@ -157,13 +157,13 @@ VARIABLE_TEST_CONFIGS = [
 @pytest.mark.skipif(not torch.npu.is_available(), reason="NPU device not found")
 @pytest.mark.parametrize("B,HK,HV,T,K,V,chunk_size,scale,input_dtype,g_dtype", FIX_TEST_CONFIGS)
 def test_chunk_fwd_o_fix(B, HK, HV, T, K, V, chunk_size, scale, input_dtype, g_dtype):
-    q, k, v, h, g, cu_seqlens, chunk_offsets = make_inputs(
+    q, k, v, h, g, cu_seqlens, chunk_indices = make_inputs(
         B, HK, HV, T, K, V, chunk_size, input_dtype, g_dtype, variable=False
     )
-    expected = chunk_fwd_o_ref(q, k, v, h, g, scale, chunk_size, cu_seqlens, chunk_offsets)
+    expected = chunk_fwd_o_ref(q, k, v, h, g, scale, chunk_size, cu_seqlens, chunk_indices)
 
     actual = torch.ops.ascend_ops.chunk_fwd_o(
-        q.npu(), k.npu(), v.npu(), h.npu(), g.npu(), scale, chunk_size, cu_seqlens=None, chunk_offsets=None
+        q.npu(), k.npu(), v.npu(), h.npu(), g.npu(), scale, chunk_size, cu_seqlens=None, chunk_indices=None
     )
 
     assert_close(actual, expected)
@@ -172,10 +172,10 @@ def test_chunk_fwd_o_fix(B, HK, HV, T, K, V, chunk_size, scale, input_dtype, g_d
 @pytest.mark.skipif(not torch.npu.is_available(), reason="NPU device not found")
 @pytest.mark.parametrize("B,HK,HV,T,K,V,chunk_size,scale,token_batch,input_dtype,g_dtype", VARIABLE_TEST_CONFIGS)
 def test_chunk_fwd_o_variable(B, HK, HV, T, K, V, chunk_size, scale, token_batch, input_dtype, g_dtype):
-    q, k, v, h, g, cu_seqlens, chunk_offsets = make_inputs(
+    q, k, v, h, g, cu_seqlens, chunk_indices = make_inputs(
         B, HK, HV, T, K, V, chunk_size, input_dtype, g_dtype, variable=True, token_batch=token_batch
     )
-    expected = chunk_fwd_o_ref(q, k, v, h, g, scale, chunk_size, cu_seqlens, chunk_offsets)
+    expected = chunk_fwd_o_ref(q, k, v, h, g, scale, chunk_size, cu_seqlens, chunk_indices)
 
     actual = torch.ops.ascend_ops.chunk_fwd_o(
         q.npu(),
@@ -186,7 +186,7 @@ def test_chunk_fwd_o_variable(B, HK, HV, T, K, V, chunk_size, scale, token_batch
         scale,
         chunk_size,
         cu_seqlens=cu_seqlens.tolist(),
-        chunk_offsets=chunk_offsets.flatten().tolist(),
+        chunk_indices=chunk_indices.flatten().tolist(),
     )
 
     assert_close(actual, expected)

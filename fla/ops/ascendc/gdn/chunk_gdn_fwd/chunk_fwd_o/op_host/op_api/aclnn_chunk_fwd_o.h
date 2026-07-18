@@ -23,7 +23,7 @@ extern "C" {
  * h : required
  * g : required
  * cuSeqlensOptional : optional
- * chunkOffsetsOptional : optional
+ * chunkIndicesOptional : optional
  * scale : required
  * chunkSize : required
  * oOut : required
@@ -38,7 +38,7 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
     const aclTensor *h,
     const aclTensor *g,
     const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkOffsetsOptional,
+    const aclIntArray *chunkIndicesOptional,
     double scale,
     int64_t chunkSize,
     const aclTensor *oOut,
