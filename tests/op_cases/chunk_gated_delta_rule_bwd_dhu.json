@@ -27,7 +27,7 @@
       "torch_ops_npu"
     ],
     "features": [
-      "fixed/varlen",
+      "定长/变长序列",
       "标量 g",
       "FP16/BF16 主张量",
       "FP16/BF16/FP32 gate"
@@ -56396,11 +56396,11 @@
       "min": 0.0,
       "max": 1.0
     },
-    "structured_inputs": "由 case.optional_inputs 和 reference runner 构造 gate、状态及 varlen 索引"
+    "structured_inputs": "由 case.optional_inputs 和 reference runner 构造 gate、状态及变长序列索引"
   },
   "coverage_requirements": {
     "public_modes": [
-      "fixed/varlen",
+      "定长/变长序列",
       "标量 g",
       "FP16/BF16 主张量",
       "FP16/BF16/FP32 gate"
@@ -56409,7 +56409,7 @@
       "`K <= 128`、`V <= 256`；交付矩阵覆盖 K=128、V=128/256。",
       "`chunk_size` 仅支持 64/128；`H_v % H_k == 0`。",
       "`g` 必须提供；`gK`、`h0`、`dht` 和 `dh0` 当前为预留，必须为空。",
-      "varlen 当前仅支持物理 `B=1`，两个索引必须同时提供。",
+      "变长序列当前仅支持物理 `B=1`，两个索引必须同时提供。",
       "`use_exp2` 与 `transpose_state_layout` 当前必须为 false。"
     ],
     "required_outputs": [

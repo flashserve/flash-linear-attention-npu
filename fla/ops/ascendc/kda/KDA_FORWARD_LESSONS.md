@@ -128,7 +128,7 @@ layout/cast/output copy:
 
 ### 3.4 有脏数据不等于必须小颗粒度切分
 
-尾块、mask、varlen 场景里，常见错误是为了避开脏数据，把 full tile 切成很多小循环。正确思路通常是：
+尾块、mask、变长序列场景里，常见错误是为了避开脏数据，把 full tile 切成很多小循环。正确思路通常是：
 
 ```text
 读入完整 tile
@@ -175,7 +175,7 @@ tiling.safeGate
 不能擅自声明：
 
 - KDA backward 已完成。
-- 高 `K/V` 非 chunk 对齐 varlen 已优化。
+- 高 `K/V` 非 chunk 对齐变长序列已优化。
 - 所有中间量无效区都有公开语义。
 - sanitizer 已覆盖 race/mem/init/sync，除非实际跑过并确认命中 sanitizer kernel。
 
@@ -457,7 +457,7 @@ AIC: 对所有 tile 都 wait ready
 
 结果：
 
-- partial chunk 或 varlen 下 timeout。
+- partial chunk 或变长序列下 timeout。
 - 小 dense case 正常，大 shape 或随机 cu_seqlens 卡死。
 
 正确做法：
@@ -897,7 +897,7 @@ gate:
 目标性能:
     B=1, H_K=1,  H_V=2,  T=16384, K=128, V=128, chunk=64
     B=1, H_K=32, H_V=64, T=4096,  K=128, V=128, chunk=64
-    B=1, H_K=32, H_V=32, T=65536, mean_len=1024 varlen, where supported
+    B=1, H_K=32, H_V=32, T=65536, mean_len=1024 变长序列, where supported
 
 边界:
     tail length 1..63
@@ -1067,7 +1067,7 @@ WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent);
 
 ## 18. 后续重点
 
-1. 为 high `K/V` non-aligned varlen 实现 dedicated partial-chunk 性能模板；正确性路径继续保持完整 tile 补中性值、仅回写有效区。
+1. 为 high `K/V` non-aligned 变长序列实现 dedicated partial-chunk 性能模板；正确性路径继续保持完整 tile 补中性值、仅回写有效区。
 2. 对 `return_intermediate=True` 的 BSND/TND/BNSD/NTD 中间量逐项定义有效区语义。
 3. 对新增流水路径跑 sanitizer race/mem/init/sync，确认实际命中 sanitizer kernel。
 4. 若继续探索 MXR/MXH，必须同时提交精度、性能和流水驻留证据，不能只提交公式替换。

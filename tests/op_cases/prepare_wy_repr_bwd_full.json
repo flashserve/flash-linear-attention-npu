@@ -1508,7 +1508,7 @@
       "min": 0.0,
       "max": 1.0
     },
-    "structured_inputs": "由 case.optional_inputs 和 reference runner 构造 gate、状态及 varlen 索引"
+    "structured_inputs": "由 case.optional_inputs 和 reference runner 构造 gate、状态及变长序列索引"
   },
   "coverage_requirements": {
     "public_modes": [
@@ -1519,7 +1519,7 @@
     "known_limits": [
       "`K` 仅支持 128，`V` 仅支持 128/256。",
       "`chunk_size` 仅支持 64/128，并须等于 A/dA 最后一维。",
-      "必须满足 `H_v % H_k == 0`；varlen 当前仅支持物理 `B=1`。",
+      "必须满足 `H_v % H_k == 0`；变长序列当前仅支持物理 `B=1`。",
       "`cu_seqlens` 与 `chunk_indices` 必须同时提供或同时省略。"
     ],
     "required_outputs": [

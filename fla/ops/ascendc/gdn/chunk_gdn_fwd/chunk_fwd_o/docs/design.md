@@ -8,7 +8,7 @@ Gated Delta Rule 的 chunk 输出阶段。算子把当前 chunk 的 Q/K/V、chun
 
 ### 2.1 目标
 
-- README 所列 `fixed/varlen、GVA、整块/尾块；g 为必选标量 gate` 场景精度与仓内参考实现一致。
+- README 所列 `定长/变长序列、GVA、整块/尾块；g 为必选标量 gate` 场景精度与仓内参考实现一致。
 - A2/A3/A5 均能构建和执行，`--cce-auto-sync=off`。
 - 若本算子用于替换 Triton，同一 shape/dtype/layout 下 Ascend C 性能优于被替换实现。
 - aclnn、`fla_npu.ops.ascendc`、`<<<>>>` 使用同一接口语义。
@@ -20,7 +20,7 @@ Gated Delta Rule 的 chunk 输出阶段。算子把当前 chunk 的 Q/K/V、chun
 
 ## 3. 能力边界
 
-实现类型：`ascendc`。Dtype：Q/K/V/H 为 FP16/BF16；g 可为 FP32。Layout：BNSD；状态使用 `[B,H_v,N_c,K,V]`。模式：fixed/varlen、GVA、整块/尾块；g 为必选标量 gate。
+实现类型：`ascendc`。Dtype：Q/K/V/H 为 FP16/BF16；g 可为 FP32。Layout：BNSD；状态使用 `[B,H_v,N_c,K,V]`。模式：定长/变长序列、GVA、整块/尾块；g 为必选标量 gate。
 Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
 
 ## 4. 数学与接口语义
@@ -76,7 +76,7 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 
 ### 6.3 模板化方案与 tiling key
 
-不使用 tiling key 分派 shape。主 dtype、gate dtype、fixed/varlen、K/V/C 均写入 tiling data，kernel 通过统一 Catlass 调度器处理，避免把 B/H/T 组合固化为 key。
+不使用 tiling key 分派 shape。主 dtype、gate dtype、定长/变长序列、K/V/C 均写入 tiling data，kernel 通过统一 Catlass 调度器处理，避免把 B/H/T 组合固化为 key。
 
 ## 7. Kernel 设计
 
@@ -101,7 +101,7 @@ AIC/AIV 通过按 core/head 划分的 workspace 槽交接 score，ready/free fla
 
 ### 7.4 边界处理
 
-dense/fixed 尾块与 varlen 尾段均按每条逻辑序列的有效长度计算，任何补齐元素在参与指数、矩阵乘或归约前使用中性值或 mask，并按公开输出语义写零。非法累计长度和索引由 host 拦截。
+定长尾块与变长序列尾段均按每条逻辑序列的有效长度计算，任何补齐元素在参与指数、矩阵乘或归约前使用中性值或 mask，并按公开输出语义写零。非法累计长度和索引由 host 拦截。
 
 ## 8. 平台设计
 
@@ -134,7 +134,7 @@ A2/A3/A5 使用相同 case ID，平台只决定编译与运行目标。
 
 - `K` 仅支持 128，`V` 仅支持 128/256，`chunk_size` 仅支持 64/128。
 - 必须满足 `H_v % H_k == 0`，h 的 chunk 数必须与索引推导一致。
-- varlen 当前仅支持物理 `B=1`，两个索引必须同时提供。
+- 变长序列当前仅支持物理 `B=1`，两个索引必须同时提供。
 - `g` 是 kernel 必选输入；`g_gamma` 必须为 None，`transpose_state_layout` 必须为 false。
 
 后续扩展任何限制时，必须同时修改 host 拦截、API 错误码、README、JSON 与三平台回归；模板实例增长前先评估二进制体积和编译耗时。

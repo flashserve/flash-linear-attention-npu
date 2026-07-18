@@ -2,13 +2,13 @@
 
 ## 1. 背景
 
-CausalConv1d 的训练反向算子。它支持 dense/varlen 和五种公开 layout，根据 x/weight/dy 及可选预激活 y、initial_state、dht 计算 dx/dw/db/dh0。 本实现通过统一 aclnn 与 ctypes 稳定入口接入 Gated Delta Network (GDN) 链路。
+CausalConv1d 的训练反向算子。它支持定长/变长序列和五种公开 layout，根据 x/weight/dy 及可选预激活 y、initial_state、dht 计算 dx/dw/db/dh0。 本实现通过统一 aclnn 与 ctypes 稳定入口接入 Gated Delta Network (GDN) 链路。
 
 ## 2. 目标与非目标
 
 ### 2.1 目标
 
-- README 所列 `dense/varlen、无激活/SiLU、可选初末状态` 场景精度与仓内参考实现一致。
+- README 所列 `定长/变长序列、无激活/SiLU、可选初末状态` 场景精度与仓内参考实现一致。
 - A2/A3/A5 均能构建和执行，`--cce-auto-sync=off`。
 - 若本算子用于替换 Triton，同一 shape/dtype/layout 下 Ascend C 性能优于被替换实现。
 - aclnn、`fla_npu.ops.ascendc`、`<<<>>>` 使用同一接口语义。
@@ -20,7 +20,7 @@ CausalConv1d 的训练反向算子。它支持 dense/varlen 和五种公开 layo
 
 ## 3. 能力边界
 
-实现类型：`ascendc`。Dtype：FP32/FP16/BF16，同次调用所有浮点输入一致。Layout：x/dx 始终逻辑 BSH/TH；y/dy 按 BSH、BSND、BNSD、TND 或 NTD。模式：dense/varlen、无激活/SiLU、可选初末状态。
+实现类型：`ascendc`。Dtype：FP32/FP16/BF16，同次调用所有浮点输入一致。Layout：x/dx 始终逻辑 BSH/TH；y/dy 按 BSH、BSND、BNSD、TND 或 NTD。模式：定长/变长序列、无激活/SiLU、可选初末状态。
 Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
 
 ## 4. 数学与接口语义
@@ -53,7 +53,7 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 
 ### 6.1 任务划分
 
-dx 按 token/channel tile 计算，dw/db 按 channel/width 分核并在 workspace 归约；varlen 不跨序列边界读取。
+dx 按 token/channel tile 计算，dw/db 按 channel/width 分核并在 workspace 归约；变长序列不跨序列边界读取。
 
 ### 6.2 Tiling Data
 

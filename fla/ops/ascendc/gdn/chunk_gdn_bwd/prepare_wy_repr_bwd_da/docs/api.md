@@ -26,7 +26,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | `dw` | 必选 | `[B,H_v,T,K]` | FP16/BF16 | BNSD | W 梯度 |
 | `du` | 必选 | `[B,H_v,T,V]` | FP16/BF16 | BNSD | U 梯度 |
 | `g` | 必选 | `[B,H_v,T]` | FP16/BF16/FP32 | BNS | chunk-local gate |
-| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | varlen 累计长度 |
+| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | 变长序列累计长度 |
 | `chunk_indices` | 可选 | `[2*N_c]` | INT64 | ND | 展平 chunk 索引 |
 
 ### 2.2 输出
@@ -172,7 +172,7 @@ assert dA.shape == A.shape
 
 - `K` 仅支持 128，`V` 仅支持 128/256。
 - `chunk_size` 仅支持 64/128，并须等于 A/dA 的最后一维。
-- 必须满足 `H_v % H_k == 0`；varlen 当前仅支持物理 `B=1`。
+- 必须满足 `H_v % H_k == 0`；变长序列当前仅支持物理 `B=1`。
 - `cu_seqlens` 与 `chunk_indices` 必须同时提供或同时省略。
 
 ## 9. 异常与返回码
@@ -180,7 +180,7 @@ assert dA.shape == A.shape
 | 条件 | 返回码/异常 |
 | --- | --- |
 | workspaceSize 或 executor 为空 | ACLNN_ERR_PARAM_NULLPTR |
-| 必选 tensor 为空，chunk_size 非 64/128，或 varlen 元数据只提供一个 | ACLNN_ERR_PARAM_INVALID |
+| 必选 tensor 为空，chunk_size 非 64/128，或变长序列元数据只提供一个 | ACLNN_ERR_PARAM_INVALID |
 | shape/dtype/GVA 不受模板支持 | tiling 失败；aclnn 执行返回 ACLNN_ERR_INNER |
 | 执行器或 kernel launch 失败 | ACLNN_ERR_INNER |
 
@@ -190,5 +190,5 @@ assert dA.shape == A.shape
 
 - [x] aclnn、Python 与 `<<<>>>` 均提供签名和调用示例。
 - [x] Shape 使用模型符号，固定值仅列在已知限制。
-- [x] A2/A3/A5、fixed 与 varlen，支持 GVA 与错误码均有说明。
+- [x] A2/A3/A5、定长与变长序列，支持 GVA 与错误码均有说明。
 - [x] 主入口为 `fla_npu.ops.ascendc`，未把 Triton 声明为并列正式入口。

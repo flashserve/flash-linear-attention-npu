@@ -223,7 +223,7 @@ git diff --check
 
 - 改动是否只覆盖本次任务需要的文件。
 - 实现类型、调用通路、Python 导出、文档、报错、返回码、schema、JSON 用例和测试是否与代码一致。
-- 是否遗漏 A2/A3/A5、layout、dtype、varlen/dense、边界和泛化 case。
+- 是否遗漏 A2/A3/A5、layout、dtype、变长序列/dense、边界和泛化 case。
 - 算子三份文档、Shape 变量附录和所属模型符号表是否同步。
 - 是否有未跟踪生成物或敏感信息混入。
 - 是否清楚说明已执行和未执行的验证。

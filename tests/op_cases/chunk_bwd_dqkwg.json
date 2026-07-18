@@ -29,7 +29,7 @@
     "features": [
       "fixed",
       "varlen",
-      "varlen 的两个索引必须同时提供"
+      "变长序列的两个索引必须同时提供"
     ]
   },
   "tolerance": {
@@ -13459,18 +13459,18 @@
       "min": 0.0,
       "max": 1.0
     },
-    "structured_inputs": "由 case.optional_inputs 和 reference runner 构造 gate、状态及 varlen 索引"
+    "structured_inputs": "由 case.optional_inputs 和 reference runner 构造 gate、状态及变长序列索引"
   },
   "coverage_requirements": {
     "public_modes": [
       "fixed",
       "varlen",
-      "varlen 的两个索引必须同时提供"
+      "变长序列的两个索引必须同时提供"
     ],
     "known_limits": [
       "`K` 仅支持 128，`V` 仅支持 128/256。",
       "`chunk_size` 仅支持 64/128，尾块按有效长度处理。",
-      "必须满足 `H_v % H_k == 0`；varlen 当前仅支持物理 `B=1`。",
+      "必须满足 `H_v % H_k == 0`；变长序列当前仅支持物理 `B=1`。",
       "`w`、`g_gamma` 当前为预留输入，必须传 `None`。",
       "`use_exp2` 与 `transpose_state_layout` 当前必须为 `false`。"
     ],

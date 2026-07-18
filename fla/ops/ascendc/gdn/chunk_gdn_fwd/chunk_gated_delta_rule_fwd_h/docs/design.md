@@ -8,7 +8,7 @@ Gated Delta Rule 的跨 chunk 状态推进算子。它根据 K/W/U、标量 gate
 
 ### 2.1 目标
 
-- README 所列 `fixed/varlen、g/gk、可选 initial/final state` 场景精度与仓内参考实现一致。
+- README 所列 `定长/变长序列、g/gk、可选 initial/final state` 场景精度与仓内参考实现一致。
 - A2/A3/A5 均能构建和执行，`--cce-auto-sync=off`。
 - 若本算子用于替换 Triton，同一 shape/dtype/layout 下 Ascend C 性能优于被替换实现。
 - aclnn、`fla_npu.ops.ascendc`、`<<<>>>` 使用同一接口语义。
@@ -20,7 +20,7 @@ Gated Delta Rule 的跨 chunk 状态推进算子。它根据 K/W/U、标量 gate
 
 ## 3. 能力边界
 
-实现类型：`ascendc`。Dtype：K/W/U 为 FP16/BF16；gate/state 可为 FP32。Layout：BNSD；initial/final state 为 `[N,H_v,K,V]`。模式：fixed/varlen、g/gk、可选 initial/final state。
+实现类型：`ascendc`。Dtype：K/W/U 为 FP16/BF16；gate/state 可为 FP32。Layout：BNSD；initial/final state 为 `[N,H_v,K,V]`。模式：定长/变长序列、g/gk、可选 initial/final state。
 Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
 
 ## 4. 数学与接口语义
@@ -83,7 +83,7 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 
 ### 6.3 模板化方案与 tiling key
 
-仅保留 2 个 key：V<=128 选择 key 1 的 128 列 Cube tile，128<V<=256 选择 key 2 的 256 列 tile。必须使用 key 是因为两种 Cube tile 和 KERNEL_TASK_TYPE 在编译期不同；dtype、g/gk、initial/final、fixed/varlen 均由 tiling data 处理，不继续扩张 key。
+仅保留 2 个 key：V<=128 选择 key 1 的 128 列 Cube tile，128<V<=256 选择 key 2 的 256 列 tile。必须使用 key 是因为两种 Cube tile 和 KERNEL_TASK_TYPE 在编译期不同；dtype、g/gk、initial/final、定长/变长序列均由 tiling data 处理，不继续扩张 key。
 
 ## 7. Kernel 设计
 
@@ -108,7 +108,7 @@ AIC 计算 W@S 与 K^T@V_new，AIV 计算门控衰减、V_new 和状态合并；
 
 ### 7.4 边界处理
 
-dense/fixed 尾块与 varlen 尾段均按每条逻辑序列的有效长度计算，任何补齐元素在参与指数、矩阵乘或归约前使用中性值或 mask，并按公开输出语义写零。非法累计长度和索引由 host 拦截。
+定长尾块与变长序列尾段均按每条逻辑序列的有效长度计算，任何补齐元素在参与指数、矩阵乘或归约前使用中性值或 mask，并按公开输出语义写零。非法累计长度和索引由 host 拦截。
 
 ## 8. 平台设计
 
@@ -138,7 +138,7 @@ A2/A3/A5 使用相同 case ID，平台只决定编译与运行目标。
 
 - `K` 仅支持 128，`V` 仅支持 128/256，`chunk_size` 仅支持 64/128。
 - `g` 与 `gk` 至少提供一个；`H_v % H_k == 0`。
-- varlen 当前仅支持物理 `B=1`，索引必须完整且 sequence-major。
+- 变长序列当前仅支持物理 `B=1`，索引必须完整且 sequence-major。
 - `save_new_value=true`、`use_exp2=false`、`transpose_state_layout=false`。
 
 后续扩展任何限制时，必须同时修改 host 拦截、API 错误码、README、JSON 与三平台回归；模板实例增长前先评估二进制体积和编译耗时。

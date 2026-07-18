@@ -21,7 +21,7 @@
       "TH"
     ],
     "features": [
-      "dense/varlen forward",
+      "定长/变长序列 forward",
       "decode/update",
       "投机接受 token"
     ],
@@ -49,7 +49,7 @@
   },
   "coverage_requirements": {
     "public_modes": [
-      "dense/varlen forward",
+      "定长/变长序列 forward",
       "decode/update",
       "投机接受 token"
     ],

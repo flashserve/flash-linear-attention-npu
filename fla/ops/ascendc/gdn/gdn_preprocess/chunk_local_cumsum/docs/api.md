@@ -20,8 +20,8 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
 | --- | --- | --- | --- | --- | --- |
 | `g` | 必选 | `[B,H_v,T] 或 [B,H_v,T,...]` | FP32 | head-first | 待累加 gate/特征 |
-| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | varlen 累计长度；aclnn 使用 host `aclIntArray`，Python 使用整数序列 |
-| `chunk_indices_out` | 可选 | `[N_b,2] 或 [2*N_b]` | INT64 | ND | varlen 块映射；aclnn 使用展平的 host `aclIntArray` |
+| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | 变长序列累计长度；aclnn 使用 host `aclIntArray`，Python 使用整数序列 |
+| `chunk_indices_out` | 可选 | `[N_b,2] 或 [2*N_b]` | INT64 | ND | 变长序列块映射；aclnn 使用展平的 host `aclIntArray` |
 
 ### 2.2 输出
 
@@ -72,7 +72,7 @@ aclrtStream stream = nullptr;
 ACL_CHECK(aclrtCreateStream(&stream));
 
 // 按 2.1/2.2 的 shape、dtype 和 layout 创建输入/输出 aclTensor。
-// varlen 时在 host 创建 cuSeqlens/chunkIndicesOut 两个 aclIntArray；后者按 [seq_id, block_id, ...] 展平。
+// 变长序列时在 host 创建 cuSeqlens/chunkIndicesOut 两个 aclIntArray；后者按 [seq_id, block_id, ...] 展平。
 uint64_t workspaceSize = 0;
 aclOpExecutor *executor = nullptr;
 aclnnStatus status = aclnnChunkLocalCumsumGetWorkspaceSize(
@@ -167,10 +167,10 @@ assert out.shape == g.shape and out.dtype == torch.float32
 ## 8. 已知限制
 
 - g rank 至少 3，所有维度为正；head_first 当前必须 true。
-- chunk_size 必须为 2 的幂，且满足 `B_T >= C`；交付矩阵至少覆盖 `P=1,C=64` 的 varlen 尾块和
+- chunk_size 必须为 2 的幂，且满足 `B_T >= C`；交付矩阵至少覆盖 `P=1,C=64` 的变长序列尾块和
   `P=16,C=64` 的 dense 尾块。
 - output_dtype 仅支持 FP32 别名。
-- varlen 物理 B=1，两个 host 整数数组必须同时提供；cu_seqlens 首项为 0、末项为 T 且非递减。
+- 变长序列物理 B=1，两个 host 整数数组必须同时提供；cu_seqlens 首项为 0、末项为 T 且非递减。
 - chunk_indices_out 必须按 sequence-major 完整列出内部处理块；处理块长度 B_T 由 UB、C 和 P 共同决定，不能直接按 C 构造。
 
 ## 9. 异常与返回码
@@ -180,7 +180,7 @@ assert out.shape == g.shape and out.dtype == torch.float32
 | g/out、workspaceSize 或 executor 为空 | ACLNN_ERR_PARAM_NULLPTR / ACLNN_ERR_PARAM_INVALID |
 | g 非 FP32、rank<3、存在非正维或 head_first=false | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
 | chunk_size 非正 2 的幂，或 output_dtype 非 FP32 别名 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
-| 两个 varlen 索引未成对、非 INT64、shape/值/顺序非法或物理 B!=1 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
+| 两个变长序列索引未成对、非 INT64、shape/值/顺序非法或物理 B!=1 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
 
 负向 case 的 `expect.return_code` 与消息片段集中定义在 `tests/op_cases/chunk_local_cumsum.json`，修改拦截时必须同步更新。
 
@@ -188,5 +188,5 @@ assert out.shape == g.shape and out.dtype == torch.float32
 
 - [x] aclnn、Python 与 `<<<>>>` 均提供签名和调用示例。
 - [x] Shape 使用模型符号，固定值仅列在已知限制。
-- [x] A2/A3/A5、fixed/varlen、forward/reverse、任意连续尾部 P 与错误码均有说明。
+- [x] A2/A3/A5、定长/变长序列、forward/reverse、任意连续尾部 P 与错误码均有说明。
 - [x] 主入口为 `fla_npu.ops.ascendc`，未把 Triton 声明为并列正式入口。

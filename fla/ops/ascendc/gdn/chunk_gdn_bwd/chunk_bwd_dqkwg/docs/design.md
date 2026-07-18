@@ -8,7 +8,7 @@ Gated Delta Rule 分块反向链路的主梯度算子。它消费前向激活、
 
 ### 2.1 目标
 
-- README 所列 `fixed 与 varlen；varlen 的两个索引必须同时提供` 场景精度与仓内参考实现一致。
+- README 所列 `定长与变长序列；变长序列的两个索引必须同时提供` 场景精度与仓内参考实现一致。
 - A2/A3/A5 均能构建和执行，`--cce-auto-sync=off`。
 - 若本算子用于替换 Triton，同一 shape/dtype/layout 下 Ascend C 性能优于被替换实现。
 - aclnn、`fla_npu.ops.ascendc`、`<<<>>>` 使用同一接口语义。
@@ -20,7 +20,7 @@ Gated Delta Rule 分块反向链路的主梯度算子。它消费前向激活、
 
 ## 3. 能力边界
 
-实现类型：`ascendc`。Dtype：主张量 FP16/BF16；gate 可为 FP32；输出跟随对应输入。Layout：BNSD；状态张量为 `[B,H_v,N_c,K,V]`。模式：fixed 与 varlen；varlen 的两个索引必须同时提供。
+实现类型：`ascendc`。Dtype：主张量 FP16/BF16；gate 可为 FP32；输出跟随对应输入。Layout：BNSD；状态张量为 `[B,H_v,N_c,K,V]`。模式：定长与变长序列；变长序列的两个索引必须同时提供。
 Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
 
 ## 4. 数学与接口语义
@@ -54,7 +54,7 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 
 ### 6.1 任务划分
 
-fixed 按 `B*N_c` 分配 chunk，varlen 按 `chunk_indices` 分配；每个 chunk 内再按 value head 划分 AIC/AIV 工作。
+定长按 `B*N_c` 分配 chunk，变长序列按 `chunk_indices` 分配；每个 chunk 内再按 value head 划分 AIC/AIV 工作。
 
 ### 6.2 Tiling Data
 
@@ -127,7 +127,7 @@ AIC 写 workspace 后用跨核阶段 flag 通知 AIV；AIV 消费后通过反向
 
 ### 7.4 边界处理
 
-dense/fixed 尾块与 varlen 尾段均按每条逻辑序列的有效长度计算，任何补齐元素在参与指数、矩阵乘或归约前使用中性值或 mask，并按公开输出语义写零。非法累计长度和索引由 host 拦截。
+定长尾块与变长序列尾段均按每条逻辑序列的有效长度计算，任何补齐元素在参与指数、矩阵乘或归约前使用中性值或 mask，并按公开输出语义写零。非法累计长度和索引由 host 拦截。
 
 ## 8. 平台设计
 
@@ -157,7 +157,7 @@ A2/A3/A5 使用相同 case ID，平台只决定编译与运行目标。
 
 - `K` 仅支持 128，`V` 仅支持 128/256。
 - `chunk_size` 仅支持 64/128，尾块按有效长度处理。
-- 必须满足 `H_v % H_k == 0`；varlen 当前仅支持物理 `B=1`。
+- 必须满足 `H_v % H_k == 0`；变长序列当前仅支持物理 `B=1`。
 - `w`、`g_gamma` 当前为预留输入，必须传 `None`。
 - `use_exp2` 与 `transpose_state_layout` 当前必须为 `false`。
 

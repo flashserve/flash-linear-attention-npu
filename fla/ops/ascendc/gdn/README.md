@@ -12,9 +12,9 @@
 
 | 符号 | 语义 | 典型张量维度 |
 | --- | --- | --- |
-| `B` | Batch size；varlen 打包场景通常为 1 | dense 张量 batch 维 |
-| `N` | varlen 逻辑序列数 | `cu_seqlens` 的长度为 `N+1` |
-| `T` | dense 序列长度或 varlen 打包后的 token 总数 | Q/K/V 的 token 维 |
+| `B` | Batch size；变长序列打包场景通常为 1 | 定长张量 batch 维 |
+| `N` | 变长序列的逻辑序列数 | `cu_seqlens` 的长度为 `N+1` |
+| `T` | 定长序列长度或变长序列打包后的 token 总数 | Q/K/V 的 token 维 |
 | `H_k` | Query/Key head 数 | `q`、`k` 的 head 维 |
 | `H_v` | Value/Output/State head 数 | `v`、`o`、`g` 的 head 维 |
 | `R_h` | Value head 与 Q/K head 的分组比 H_v/H_k | GVA head 映射 |
@@ -23,7 +23,7 @@
 | `C` | chunk_size | chunk 内 token 数、三角块宽度 |
 | `N_c` | 当前调用中的 chunk 总数 | `chunk_indices` 的 pair 数、状态 chunk 维 |
 | `N_{c,b}` | dense 场景每个 batch 的 chunk 数，`ceil(T/C)` | dense 状态 chunk 维 |
-| `S_n` | 第 n 条 varlen 序列的有效长度 | `cu_seqlens[n+1]-cu_seqlens[n]` |
+| `S_n` | 第 n 条变长序列的有效长度 | `cu_seqlens[n+1]-cu_seqlens[n]` |
 
 `H_v` 必须能按组映射到 `H_k` 时，统一写作 `H_v % H_k == 0`，映射关系为 `h_k=floor(h_v/R_h)`。不得使用 `H`、`Hq`、`Hk`、`Hv`、`query_head` 或 `value_head` 替代模型级符号。
 
@@ -36,8 +36,8 @@
 | `L_s` | convolution state 保存的历史长度 | decode/update 状态维 |
 | `M` | 三角矩阵有效阶数 | `solve_tri` |
 | `P` | token 后连续尾部元素乘积 | `chunk_local_cumsum` |
-| `B_T` | 单个 varlen 处理块覆盖的 token 数，由 tiling 根据 UB、C、P 计算 | `chunk_local_cumsum` varlen 分块 |
-| `N_b` | varlen 内部处理块总数；由各序列 ceil(seq_len/B_T) 求和 | `chunk_local_cumsum` 的 `chunk_indices_out` pair 数 |
+| `B_T` | 单个变长序列处理块覆盖的 token 数，由 tiling 根据 UB、C、P 计算 | `chunk_local_cumsum` 变长序列分块 |
+| `N_b` | 变长序列内部处理块总数；由各序列 ceil(seq_len/B_T) 求和 | `chunk_local_cumsum` 的 `chunk_indices_out` pair 数 |
 | `D_s` | 状态槽位数 | recurrent decode state 第一维 |
 | `Q_a` | 单次调用实际接受的 token 数 | speculative decode |
 
@@ -49,13 +49,13 @@
 | --- | --- | --- |
 | `BNSD` | `[B,H,T,D]` | head-first；GDN chunk 算子的主要内部布局 |
 | `BSND` | `[B,T,H,D]` | sequence-first 四维布局 |
-| `TND` | `[T,H,D]` | varlen token-first 打包布局 |
-| `NTD` | `[H,T,D]` | varlen head-first 打包布局 |
+| `TND` | `[T,H,D]` | 变长序列 token-first 打包布局 |
+| `NTD` | `[H,T,D]` | 变长序列 head-first 打包布局 |
 | `BSH` | `[B,T,D]` | 合并 head 的 dense 布局 |
 
 当 `D` 在具体算子中表示 Q/K 特征时应改写为 `K`，表示 Value/Output 特征时应改写为 `V`。API 文档必须同时写明逻辑 Shape 与实际 layout。
 
-## 4. varlen 元数据
+## 4. 变长序列元数据
 
 | 名称 | Shape | Dtype | 语义 |
 | --- | --- | --- | --- |

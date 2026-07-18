@@ -25,7 +25,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | `h` | 必选 | `[B,H_v,N_c,K,V]` | FP16/BF16 | ND | 每个 chunk 的起始状态 |
 | `g` | 必选 | `[B,H_v,T]` | FP16/BF16/FP32 | BNS | 累积标量 gate |
 | `g_gamma` | 预留 | `-` | - | - | 上层兼容参数，当前必须为 None |
-| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | varlen 累计长度 |
+| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | 变长序列累计长度 |
 | `chunk_indices` | 可选 | `[2*N_c]` | INT64 | ND | 展平 chunk 索引 |
 
 ### 2.2 输出
@@ -170,7 +170,7 @@ assert o.shape == v.shape
 
 - `K` 仅支持 128，`V` 仅支持 128/256，`chunk_size` 仅支持 64/128。
 - 必须满足 `H_v % H_k == 0`，h 的 chunk 数必须与索引推导一致。
-- varlen 当前仅支持物理 `B=1`，两个索引必须同时提供。
+- 变长序列当前仅支持物理 `B=1`，两个索引必须同时提供。
 - `g` 是 kernel 必选输入；`g_gamma` 必须为 None，`transpose_state_layout` 必须为 false。
 
 ## 9. 异常与返回码
@@ -188,5 +188,5 @@ assert o.shape == v.shape
 
 - [x] aclnn、Python 与 `<<<>>>` 均提供签名和调用示例。
 - [x] Shape 使用模型符号，固定值仅列在已知限制。
-- [x] A2/A3/A5、fixed/varlen、GVA、整块/尾块；g 为必选标量 gate 与错误码均有说明。
+- [x] A2/A3/A5、定长/变长序列、GVA、整块/尾块；g 为必选标量 gate 与错误码均有说明。
 - [x] 主入口为 `fla_npu.ops.ascendc`，未把 Triton 声明为并列正式入口。

@@ -8,7 +8,7 @@ WY 表示完整反向算子。它消费 `dA/dW/dU`，在 chunk 内反传到 K、
 
 ### 2.1 目标
 
-- README 所列 `fixed 与 varlen，支持 GVA` 场景精度与仓内参考实现一致。
+- README 所列 `定长与变长序列，支持 GVA` 场景精度与仓内参考实现一致。
 - A2/A3/A5 均能构建和执行，`--cce-auto-sync=off`。
 - 若本算子用于替换 Triton，同一 shape/dtype/layout 下 Ascend C 性能优于被替换实现。
 - aclnn、`fla_npu.ops.ascendc`、`<<<>>>` 使用同一接口语义。
@@ -20,7 +20,7 @@ WY 表示完整反向算子。它消费 `dA/dW/dU`，在 chunk 内反传到 K、
 
 ## 3. 能力边界
 
-实现类型：`ascendc`。Dtype：主张量 FP16/BF16；beta/g 可为 FP32。Layout：BNSD；A/dA 最后一维为 C。模式：fixed 与 varlen，支持 GVA。
+实现类型：`ascendc`。Dtype：主张量 FP16/BF16；beta/g 可为 FP32。Layout：BNSD；A/dA 最后一维为 C。模式：定长与变长序列，支持 GVA。
 Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
 
 ## 4. 数学与接口语义
@@ -101,7 +101,7 @@ Cube 结果通过 workspace ready flag 交给 Vector，Vector 完成逐元素处
 
 ### 7.4 边界处理
 
-dense/fixed 尾块与 varlen 尾段均按每条逻辑序列的有效长度计算，任何补齐元素在参与指数、矩阵乘或归约前使用中性值或 mask，并按公开输出语义写零。非法累计长度和索引由 host 拦截。
+定长尾块与变长序列尾段均按每条逻辑序列的有效长度计算，任何补齐元素在参与指数、矩阵乘或归约前使用中性值或 mask，并按公开输出语义写零。非法累计长度和索引由 host 拦截。
 
 ## 8. 平台设计
 
@@ -131,7 +131,7 @@ A2/A3/A5 使用相同 case ID，平台只决定编译与运行目标。
 
 - `K` 仅支持 128，`V` 仅支持 128/256。
 - `chunk_size` 仅支持 64/128，并须等于 A/dA 最后一维。
-- 必须满足 `H_v % H_k == 0`；varlen 当前仅支持物理 `B=1`。
+- 必须满足 `H_v % H_k == 0`；变长序列当前仅支持物理 `B=1`。
 - `cu_seqlens` 与 `chunk_indices` 必须同时提供或同时省略。
 
 后续扩展任何限制时，必须同时修改 host 拦截、API 错误码、README、JSON 与三平台回归；模板实例增长前先评估二进制体积和编译耗时。

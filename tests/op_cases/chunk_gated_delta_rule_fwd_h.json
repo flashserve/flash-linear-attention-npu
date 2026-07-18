@@ -19,7 +19,7 @@
       "BNSD"
     ],
     "features": [
-      "fixed/varlen",
+      "定长/变长序列",
       "g/gk",
       "可选 initial/final state"
     ],
@@ -42,7 +42,7 @@
         "initial_state"
       ]
     },
-    "structured_inputs": "k 做 L2 normalize；g 由 logsigmoid 增量在每个 chunk 内 cumsum；W/U 按 A=I 的 GDN WY 公式由 k/value/beta/g 推导；varlen 索引按 sequence-major 构造。"
+    "structured_inputs": "k 做 L2 normalize；g 由 logsigmoid 增量在每个 chunk 内 cumsum；W/U 按 A=I 的 GDN WY 公式由 k/value/beta/g 推导；变长序列索引按 sequence-major 构造。"
   },
   "accuracy_policy": {
     "method": "element_error_ratio",
@@ -52,14 +52,14 @@
   },
   "coverage_requirements": {
     "public_modes": [
-      "fixed/varlen",
+      "定长/变长序列",
       "g/gk",
       "可选 initial/final state"
     ],
     "known_limits": [
       "`K` 仅支持 128，`V` 仅支持 128/256，`chunk_size` 仅支持 64/128。",
       "`g` 与 `gk` 至少提供一个；`H_v % H_k == 0`。",
-      "varlen 当前仅支持物理 `B=1`，索引必须完整且 sequence-major。",
+      "变长序列当前仅支持物理 `B=1`，索引必须完整且 sequence-major。",
       "`save_new_value=true`、`use_exp2=false`、`transpose_state_layout=false`。"
     ],
     "required_outputs": [

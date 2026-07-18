@@ -2,13 +2,13 @@
 
 ## 1. 背景
 
-GDN 输入预处理的因果一维卷积。run_mode=0 执行 dense/varlen 前向并维护卷积状态，run_mode=1 执行 decode/投机更新；可选 SiLU 激活和 head layout 转换。 本实现通过统一 aclnn 与 ctypes 稳定入口接入 Gated Delta Network (GDN) 链路。
+GDN 输入预处理的因果一维卷积。run_mode=0 执行定长/变长序列前向并维护卷积状态，run_mode=1 执行 decode/投机更新；可选 SiLU 激活和 head layout 转换。 本实现通过统一 aclnn 与 ctypes 稳定入口接入 Gated Delta Network (GDN) 链路。
 
 ## 2. 目标与非目标
 
 ### 2.1 目标
 
-- README 所列 `dense/varlen forward、decode/update、投机接受 token` 场景精度与仓内参考实现一致。
+- README 所列 `定长/变长序列 forward、decode/update、投机接受 token` 场景精度与仓内参考实现一致。
 - A2/A3/A5 均能构建和执行，`--cce-auto-sync=off`。
 - 若本算子用于替换 Triton，同一 shape/dtype/layout 下 Ascend C 性能优于被替换实现。
 - aclnn、`fla_npu.ops.ascendc`、`<<<>>>` 使用同一接口语义。
@@ -20,7 +20,7 @@ GDN 输入预处理的因果一维卷积。run_mode=0 执行 dense/varlen 前向
 
 ## 3. 能力边界
 
-实现类型：`ascendc`。Dtype：x/weight/bias/state/y 为 FP16/BF16；元数据 INT64。Layout：输入 BSH/TH；head_num>0 时输出 BNSD/NTD。模式：dense/varlen forward、decode/update、投机接受 token。
+实现类型：`ascendc`。Dtype：x/weight/bias/state/y 为 FP16/BF16；元数据 INT64。Layout：输入 BSH/TH；head_num>0 时输出 BNSD/NTD。模式：定长/变长序列 forward、decode/update、投机接受 token。
 Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
 
 ## 4. 数学与接口语义

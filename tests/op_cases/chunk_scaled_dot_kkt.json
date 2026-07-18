@@ -19,7 +19,7 @@
       "BNSD"
     ],
     "features": [
-      "fixed/varlen",
+      "定长/变长序列",
       "GVA 输入",
       "整块/尾块"
     ],
@@ -47,15 +47,15 @@
   },
   "coverage_requirements": {
     "public_modes": [
-      "fixed/varlen",
+      "定长/变长序列",
       "GVA 输入",
       "整块/尾块"
     ],
     "known_limits": [
       "chunk_size 仅支持 16/32/64/128。",
       "必须满足 H_v % H_k == 0；A 的 head 维为 H_k。",
-      "cu_seqlens/chunk_indices 必须同时提供或同时省略；varlen 物理 B 必须为 1。",
-      "varlen 累计长度必须覆盖 [0,T]，chunk_indices 必须按 sequence-major 完整列出每个 C 大小的 chunk。",
+      "cu_seqlens/chunk_indices 必须同时提供或同时省略；变长序列物理 B 必须为 1。",
+      "变长序列累计长度必须覆盖 [0,T]，chunk_indices 必须按 sequence-major 完整列出每个 C 大小的 chunk。",
       "指数差固定 clip 到 [-50,50]；H_v>H_k 时当前实现读取 g/beta 的前 H_k 个 head。"
     ],
     "required_outputs": [

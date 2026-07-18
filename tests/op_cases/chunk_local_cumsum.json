@@ -18,7 +18,7 @@
       "BNS"
     ],
     "features": [
-      "fixed/varlen",
+      "定长/变长序列",
       "forward/reverse",
       "任意连续尾部 P"
     ],
@@ -46,15 +46,15 @@
   },
   "coverage_requirements": {
     "public_modes": [
-      "fixed/varlen",
+      "定长/变长序列",
       "forward/reverse",
       "任意连续尾部 P"
     ],
     "known_limits": [
       "g rank 至少 3，所有维度为正；head_first 当前必须 true。",
-      "chunk_size 必须为 2 的幂且满足 B_T >= C；交付矩阵至少覆盖 P=1,C=64 的 varlen 尾块和 P=16,C=64 的 dense 尾块。",
+      "chunk_size 必须为 2 的幂且满足 B_T >= C；交付矩阵至少覆盖 P=1,C=64 的变长序列尾块和 P=16,C=64 的 dense 尾块。",
       "output_dtype 仅支持 FP32 别名。",
-      "varlen 物理 B=1，两个 host 整数数组必须同时提供；cu_seqlens 首项为 0、末项为 T 且非递减。",
+      "变长序列物理 B=1，两个 host 整数数组必须同时提供；cu_seqlens 首项为 0、末项为 T 且非递减。",
       "chunk_indices_out 必须按 sequence-major 完整列出内部处理块；处理块长度 B_T 由 UB、C 和 P 共同决定，不能直接按 C 构造。"
     ],
     "required_outputs": [

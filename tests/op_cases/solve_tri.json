@@ -21,7 +21,7 @@
     ],
     "features": [
       "dense BHTD/BSND",
-      "varlen TND",
+      "变长序列 TND",
       "支持尾块"
     ],
     "routes": [
@@ -49,12 +49,12 @@
   "coverage_requirements": {
     "public_modes": [
       "dense BHTD/BSND",
-      "varlen TND",
+      "变长序列 TND",
       "支持尾块"
     ],
     "known_limits": [
       "矩阵阶/最后一维 C 支持 16/32/64/128。",
-      "layout 仅支持小写 `bhtd`、`bsnd`、`tnd`；TND 必须提供两个 varlen 索引，dense layout 不接受 varlen 索引。",
+      "layout 仅支持小写 `bhtd`、`bsnd`、`tnd`；TND 必须提供两个变长序列索引，定长布局 不接受变长序列索引。",
       "输入必须表示严格下三角 A；对角线由算子加单位阵。"
     ],
     "required_outputs": [

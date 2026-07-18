@@ -28,7 +28,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | `gK` | 预留 | `[B,H_v,T,K]` | FP16/BF16 | BNSD | 当前必须为 None/nullptr |
 | `h0` | 预留 | `[B,H_v,K,V]` | FP16/BF16 | ND | 当前必须为 None/nullptr |
 | `dht` | 预留 | `[B,H_v,K,V]` | FP16/BF16 | ND | 当前必须为 None/nullptr |
-| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | varlen 累计长度 |
+| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | 变长序列累计长度 |
 | `chunk_indices` | 可选 | `[2*N_c]` | INT64 | ND | 展平 chunk 索引 |
 
 ### 2.2 输出
@@ -183,7 +183,7 @@ assert dv2.shape == dv.shape
 - `K <= 128`、`V <= 256`；交付矩阵覆盖 K=128、V=128/256。
 - `chunk_size` 仅支持 64/128；`H_v % H_k == 0`。
 - `g` 必须提供；`gK`、`h0`、`dht` 和 `dh0` 当前为预留，必须为空。
-- varlen 当前仅支持物理 `B=1`，两个索引必须同时提供。
+- 变长序列当前仅支持物理 `B=1`，两个索引必须同时提供。
 - `use_exp2` 与 `transpose_state_layout` 当前必须为 false。
 
 ## 9. 异常与返回码
@@ -193,7 +193,7 @@ assert dv2.shape == dv.shape
 | workspaceSize 或 executor 为空 | ACLNN_ERR_PARAM_NULLPTR |
 | 必选 tensor 为空，或 g 未提供 | ACLNN_ERR_PARAM_INVALID |
 | gK/h0/dht/dh0 非空 | ACLNN_ERR_PARAM_INVALID |
-| chunk_size 不是 64/128，或 varlen 索引只提供一个 | ACLNN_ERR_PARAM_INVALID |
+| chunk_size 不是 64/128，或变长序列索引只提供一个 | ACLNN_ERR_PARAM_INVALID |
 | Python use_exp2/transpose_state_layout 为 true | RuntimeError |
 | 执行器或 kernel launch 失败 | ACLNN_ERR_INNER |
 
@@ -203,5 +203,5 @@ assert dv2.shape == dv.shape
 
 - [x] aclnn、Python 与 `<<<>>>` 均提供签名和调用示例。
 - [x] Shape 使用模型符号，固定值仅列在已知限制。
-- [x] A2/A3/A5、fixed/varlen、标量 g、FP16/BF16 主张量、FP16/BF16/FP32 gate 与错误码均有说明。
+- [x] A2/A3/A5、定长/变长序列、标量 g、FP16/BF16 主张量、FP16/BF16/FP32 gate 与错误码均有说明。
 - [x] 主入口为 `fla_npu.ops.ascendc`，未把 Triton 声明为并列正式入口。
