@@ -498,6 +498,7 @@ docs/templates/operator/
 - `docs/design.md` 在数学公式和接口语义章节链接算子 README 附录；`docs/api.md` 在参数 Shape 和接口语义章节链接算子 README 附录。两者不得复制变量语义表。
 - 同一模型内相同符号必须保持相同含义、大小写和下标形式。例如 GDN 各算子中的 `H_k` 不能在一个算子表示 Q/K head 数，在另一个算子表示单 head 特征维度。
 - 不同语义必须使用不同符号，禁止通过局部文字重新解释已有模型符号。
+- 模型同时支持 Dense 与序列打包（Sequence Packing）时，模型符号表必须定义两种存储组织中 `B`、`T`、逻辑序列数和序列边界的语义。Layout 只表示维度排列，不能直接与存储组织画等号；算子 README 应明确列出实际支持的“存储组织 + Layout”组合。
 - 修改模型符号名称或语义时，必须在同一个 PR 中同步模型根 README、所有受影响算子 README、公式、API Shape、JSON case 字段和测试代码。
 - `tests/op_cases/<op_name>.json` 中的 Shape 字段名必须与所属模型符号表一致，不能为同一维度另起别名。
 

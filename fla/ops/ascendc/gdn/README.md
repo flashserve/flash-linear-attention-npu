@@ -43,15 +43,32 @@
 
 辅助符号只能在对应算子使用，不能覆盖核心符号的语义。
 
-## 3. 统一布局
+## 3. 序列存储组织与统一布局
+
+### 3.1 序列存储组织
+
+`Dense` 与序列打包（Sequence Packing）描述多条逻辑序列在张量中的存储方式，不描述计算阶段，也不等同于
+prefill 或 decode：
+
+| 存储组织 | 定义 | `T` 的语义 | 序列边界 |
+| --- | --- | --- | --- |
+| `Dense` | 每个 batch 元素占用独立的序列存储区域，张量通常显式保留 `B` 维 | 每个 batch 元素的物理序列长度 | 由 `B` 维天然分隔，不使用 `cu_seqlens` 划分逻辑序列 |
+| 序列打包（Sequence Packing） | 将 `N` 条变长序列沿 token 维连续拼接，避免为不同长度补齐到同一长度 | 所有变长序列的 token 总数，即 `T=sum(S_n)` | 由 `cu_seqlens` 划分；需要 chunk 元数据时，再由 `chunk_indices` 标识每个 chunk 所属序列及序列内编号 |
+
+Layout 只描述各维的排列顺序，不能单独决定存储组织。序列打包可以省略物理 `B` 维，使用 `TND`、`NTD` 或
+`TH`；部分算子也会保留四维 layout，但要求物理 `B=1`，并在 `T` 维存放全部打包 token。具体算子是否支持
+某种组合，以该算子 README 的“支持范围”和“已知限制”为准。
+
+### 3.2 统一布局
 
 | Layout | Shape | 说明 |
 | --- | --- | --- |
-| `BNSD` | `[B,H,T,D]` | head-first；GDN chunk 算子的主要内部布局 |
-| `BSND` | `[B,T,H,D]` | sequence-first 四维布局 |
-| `TND` | `[T,H,D]` | 变长序列 token-first 打包布局 |
-| `NTD` | `[H,T,D]` | 变长序列 head-first 打包布局 |
-| `BSH` | `[B,T,D]` | 合并 head 的 dense 布局 |
+| `BNSD` | `[B,H,T,D]` | head-first 四维布局；常用于 Dense，也可在算子明确支持时以 `B=1` 承载序列打包数据 |
+| `BSND` | `[B,T,H,D]` | sequence-first 四维布局；常用于 Dense，也可在算子明确支持时以 `B=1` 承载序列打包数据 |
+| `TND` | `[T,H,D]` | token-first 的序列打包布局，不保留物理 `B` 维 |
+| `NTD` | `[H,T,D]` | head-first 的序列打包布局，不保留物理 `B` 维 |
+| `BSH` | `[B,T,D]` | 不显式拆分 head 的三维布局；当前用于因果卷积的 Dense 输入与输出 |
+| `TH` | `[T,D]` | 不显式拆分 head 的二维序列打包布局；当前用于因果卷积的变长序列输入与输出 |
 
 当 `D` 在具体算子中表示 Q/K 特征时应改写为 `K`，表示 Value/Output 特征时应改写为 `V`。API 文档必须同时写明逻辑 Shape 与实际 layout。
 
