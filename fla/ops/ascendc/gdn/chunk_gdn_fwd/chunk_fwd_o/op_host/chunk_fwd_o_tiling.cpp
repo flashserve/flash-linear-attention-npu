@@ -77,15 +77,15 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(), "g must use float32 or match q dtype."),
                 return ge::GRAPH_FAILED);
     auto cuSeqlensDesc = context->GetOptionalInputDesc(CHUNK_FWD_O_INPUT_SEQLENS_IDX);
-    auto chunkOffsetsDesc = context->GetOptionalInputDesc(CHUNK_FWD_O_INPUT_CHUNK_OFFSETS_IDX);
-    OP_CHECK_IF((cuSeqlensDesc == nullptr) != (chunkOffsetsDesc == nullptr),
+    auto chunkIndicesDesc = context->GetOptionalInputDesc(CHUNK_FWD_O_INPUT_CHUNK_INDICES_IDX);
+    OP_CHECK_IF((cuSeqlensDesc == nullptr) != (chunkIndicesDesc == nullptr),
                 OP_LOGE(context->GetNodeName(),
-                        "cu_seqlens and chunk_offsets must both be provided or both be absent."),
+                        "cu_seqlens and chunk_indices must both be provided or both be absent."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(cuSeqlensDesc != nullptr &&
                     (cuSeqlensDesc->GetDataType() != ge::DT_INT64 ||
-                     chunkOffsetsDesc->GetDataType() != ge::DT_INT64),
-                OP_LOGE(context->GetNodeName(), "cu_seqlens and chunk_offsets must use int64."),
+                     chunkIndicesDesc->GetDataType() != ge::DT_INT64),
+                OP_LOGE(context->GetNodeName(), "cu_seqlens and chunk_indices must use int64."),
                 return ge::GRAPH_FAILED);
     int64_t dataType = (qDtype == ge::DT_BF16) ? CHUNK_FWD_O_DTYPE_BF16 : CHUNK_FWD_O_DTYPE_FP16;
     int64_t gDataType = CHUNK_FWD_O_DTYPE_FP32;
@@ -113,6 +113,8 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     OP_CHECK_IF(aicCoreNum == 0, OP_LOGE(context->GetNodeName(), "AIC core count must be positive."),
                 return ge::GRAPH_FAILED);
     size_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+    const auto *cuSeqlensTensor = context->GetOptionalInputTensor(CHUNK_FWD_O_INPUT_SEQLENS_IDX);
+    const auto *chunkIndicesTensor = context->GetOptionalInputTensor(CHUNK_FWD_O_INPUT_CHUNK_INDICES_IDX);
 
     ChunkFwdOTilingContext ctx{
         context->GetNodeName(),
@@ -123,9 +125,9 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
         context->GetOptionalInputShape(CHUNK_FWD_O_INPUT_G_IDX),
         context->GetOutputShape(CHUNK_FWD_O_OUTPUT_O_IDX),
         context->GetOptionalInputShape(CHUNK_FWD_O_INPUT_SEQLENS_IDX),
-        context->GetOptionalInputShape(CHUNK_FWD_O_INPUT_CHUNK_OFFSETS_IDX),
-        context->GetOptionalInputTensor(CHUNK_FWD_O_INPUT_SEQLENS_IDX),
-        context->GetOptionalInputTensor(CHUNK_FWD_O_INPUT_CHUNK_OFFSETS_IDX),
+        context->GetOptionalInputShape(CHUNK_FWD_O_INPUT_CHUNK_INDICES_IDX),
+        cuSeqlensTensor == nullptr ? nullptr : cuSeqlensTensor->GetData<int64_t>(),
+        chunkIndicesTensor == nullptr ? nullptr : chunkIndicesTensor->GetData<int64_t>(),
         *scalePtr,
         *chunkSizePtr,
         dataType,

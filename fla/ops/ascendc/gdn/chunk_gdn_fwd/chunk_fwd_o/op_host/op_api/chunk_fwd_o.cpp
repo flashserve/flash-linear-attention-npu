@@ -25,13 +25,13 @@ const std::array<const aclTensor *, 1> ChunkFwdO(
     const aclTensor *h,
     const aclTensor *g,
     const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkOffsetsOptional,
+    const aclIntArray *chunkIndicesOptional,
     double scale,
     int64_t chunkSize,
     const aclTensor *oOut,
     aclOpExecutor *executor)
 {
-    L0_DFX(ChunkFwdO, q, k, v, h, g, cuSeqlensOptional, chunkOffsetsOptional, scale, chunkSize, oOut);
+    L0_DFX(ChunkFwdO, q, k, v, h, g, cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, oOut);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional) {
@@ -43,18 +43,18 @@ const std::array<const aclTensor *, 1> ChunkFwdO(
         actualCuSeqlens = nullptr;
     }
 
-    const aclTensor *actualChunkOffsets = nullptr;
-    if (chunkOffsetsOptional) {
-        actualChunkOffsets = executor->ConvertToTensor(chunkOffsetsOptional, DataType::DT_INT64);
-        const_cast<aclTensor *>(actualChunkOffsets)->SetStorageFormat(Format::FORMAT_ND);
-        const_cast<aclTensor *>(actualChunkOffsets)->SetViewFormat(Format::FORMAT_ND);
-        const_cast<aclTensor *>(actualChunkOffsets)->SetOriginalFormat(Format::FORMAT_ND);
+    const aclTensor *actualChunkIndices = nullptr;
+    if (chunkIndicesOptional) {
+        actualChunkIndices = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
+        const_cast<aclTensor *>(actualChunkIndices)->SetStorageFormat(Format::FORMAT_ND);
+        const_cast<aclTensor *>(actualChunkIndices)->SetViewFormat(Format::FORMAT_ND);
+        const_cast<aclTensor *>(actualChunkIndices)->SetOriginalFormat(Format::FORMAT_ND);
     } else {
-        actualChunkOffsets = nullptr;
+        actualChunkIndices = nullptr;
     }
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkFwdO,
-        OP_INPUT(q, k, v, h, g, actualCuSeqlens, actualChunkOffsets),
+        OP_INPUT(q, k, v, h, g, actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(oOut),
         OP_ATTR(scale, chunkSize));
     if (ret != ACLNN_SUCCESS) {

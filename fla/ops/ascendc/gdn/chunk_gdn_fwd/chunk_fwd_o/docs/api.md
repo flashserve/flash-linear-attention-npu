@@ -54,7 +54,7 @@ const aclTensor *v,
 const aclTensor *h,
 const aclTensor *g,
 const aclIntArray *cuSeqlensOptional,
-const aclIntArray *chunkOffsetsOptional,
+const aclIntArray *chunkIndicesOptional,
 double scale,
 int64_t chunkSize,
 const aclTensor *oOut,
@@ -132,7 +132,7 @@ assert o.shape == v.shape
 `blockDim`、workspace 和序列化 tiling data 必须来自同一组 host tiling 结果，不能手写猜测。参数顺序与 kernel 定义保持一致：
 
 ```cpp
-chunk_fwd_o<<<blockDim, nullptr, stream>>>(q, k, v, h, g, cu_seqlens, chunk_offsets, o, workspace, tiling);
+chunk_fwd_o<<<blockDim, nullptr, stream>>>(q, k, v, h, g, cu_seqlens, chunk_indices, o, workspace, tiling);
 ACL_CHECK(aclrtSynchronizeStream(stream));
 ```
 
