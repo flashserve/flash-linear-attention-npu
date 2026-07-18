@@ -13,6 +13,8 @@
 
 > **填写示例：** `chunk_bwd_dv_local` 是 Ascend C 算子，因此填写 `fla_npu.ops.ascendc.chunk_bwd_dv_local`、`aclnnChunkBwdDvLocal*`、Ascend C `<<<>>>` 直调，以及可选的 `torch.ops.npu.npu_chunk_bwd_dv_local`；不填写 `fla_npu.ops.triton`。
 
+公共 API 只表达完整算子语义，不得暴露 `stage`、`stage_id` 等内部 phase 编号，也不得要求调用者先执行 L2 Cast 或理解 kernel 间 dtype 转换。Ascend C `<<<>>>` 示例必须展示完整语义入口，而不是单个内部 stage 的诊断 launch。
+
 ## 2. 公共参数与约束
 
 本文不重复定义 Shape 符号。参数 Shape 和接口语义统一引用[算子 README 的 Shape 变量说明附录](../README.md#shape-symbols)，并与所属模型的权威符号表保持一致。

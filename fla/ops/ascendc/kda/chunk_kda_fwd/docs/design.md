@@ -20,7 +20,7 @@ Kimi Delta Attention 正向主算子。它消费已经按 chunk 累加的 key ga
 
 ## 3. 能力边界
 
-实现类型：`ascendc`。Dtype：q/k/v 为同一 FP16 或 BF16；gk/beta 为 FP32 或 BF16并在 L2 转 FP32；状态为 FP32。Layout：BSND/BNSD/TND/NTD；BNSD/NTD 为内部性能布局，BSND/TND 通过 KdaLayoutSwap12 转换。模式：dense/varlen、四种显式 layout、可选初始/最终状态、可选中间量。
+实现类型：`ascendc`。Dtype：q/k/v 为同一 FP16 或 BF16；gk/beta 为 FP32 或 BF16，当前实现在 L2 转 FP32；状态为 FP32。Layout：BSND/BNSD/TND/NTD；BNSD/NTD 为内部性能布局，BSND/TND 通过 KdaLayoutSwap12 转换。模式：dense/varlen、四种显式 layout、可选初始/最终状态、可选中间量。
 Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
 
 ## 4. 数学与接口语义
@@ -50,9 +50,20 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 2. InferShape、op_api 与 tiling host 共同按 README 校验必选参数、shape、dtype、layout、属性和可选输入组合，并构造或核对输出。
 3. tiling processor 计算任务数、边界块、workspace 偏移和模板实例。
 4. `op_kernel/` 按本算子的计算流程完成搬运、计算、同步和写回。
-5. aclnn 两段式接口负责 contiguous、workspace/executor 和 stream 异步发射；内部布局的中间结果通过
-   `ViewCopy` 按原逻辑 shape 回写，只有 BSND/TND 等外部布局转换才调用 `KdaLayoutSwap12`。
+5. aclnn 两段式接口负责 contiguous、workspace/executor 和 stream 异步发射；当前内部布局中间结果通过 `ViewCopy` 回写，BSND/TND 外部布局转换调用 `KdaLayoutSwap12`，这些现状均需随架构整改重新收口。
 6. `fla_npu.ops.ascendc` 仅通过 ctypes 调用 aclnn，不依赖 torch_npu dispatcher。
+
+### 5.1 算子边界与 L2/L0 分工
+
+当前实现通过 `stage=1/3/2` 复用同一 L0，并由 L2 拼接 gate cast、阶段间 cast/scale 和状态 kernel；
+`<<<>>>` 调用者需要理解内部 stage，属于开发规范明确列出的反面样例。整改应优先收敛为一个完整入口下
+的两个语义 phase，在 L0 内闭合必要的全核同步和 `TPipe::Reset()`，并把输入、阶段间和输出 cast
+融入 kernel；若两个 phase 没有共同归并语义或片上复用价值，再拆成两个语义独立的 L0。
+
+正面结构参考 [ops-nn PR #4803 的 GroupNormSwishGrad A5 实现](https://gitcode.com/cann/ops-nn/pull/4803/diffs)：
+公共 kernel 不暴露 stage，第一 phase 生成输出和 workspace，`pipe.Reset()` 后在第二 phase 消费 workspace
+前执行 `SyncAll()`，再重建 buffer 并在 kernel 内 reduce/cast。KDA 重构必须结合自身参与核和状态依赖
+重新证明同步顺序，不能机械复制。
 
 ## 6. Tiling 设计
 

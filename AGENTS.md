@@ -81,6 +81,9 @@ ctypes 算子如果会通过 data pointer 修改输入 tensor，必须在公共 
 - [ ] Ascend C 算子的 `op_host`、InferShape、tiling、op_api、kernel、CMake 和平台配置已同步，并支持 aclnn、`<<<>>>` 和 `fla_npu.ops.ascendc`。
 - [ ] Ascend C 算子优先使用 tiling 数据加编译期模板化；如必须使用 tiling key，已说明原因、语义、组合范围和维护影响。
 - [ ] Ascend C 算子的 `add_ops_compile_options` 保持 `--cce-auto-sync=off`，未改为 `on`。
+- [ ] 公开接口、文档、example 和 JSON 未暴露内部 `stage` 编号；强生产消费关系使用 L0 内语义 phase，弱相关计算拆成独立 L0，均未通过整数 stage 泄漏内部调度。
+- [ ] aclnn L2 未在核心 L0 前后或之间拼接独立 Cast；输入、阶段间和输出类型转换已融合进对应 kernel。
+- [ ] 同一 L0 内存在多个紧耦合 phase 时，`docs/design.md` 已说明 `SyncAll` 参与条件、schedule mode、三平台支持及 `pipe->Reset()` 前后的资源生命周期。
 - [ ] Triton 算子的 Python wrapper、Triton kernel、grid/config、launch 和 `fla_npu.ops.triton` 导出已同步。
 - [ ] 如实现可选 `torch.ops.npu`，相关 YAML、生成入口和 `fla_npu.load_legacy_torch_ops()` 显式加载路径已同步。
 - [ ] 用例设计已归一到 `tests/op_cases/<op_name>.json`，执行代码已归档到 `tests/operators/<op_name>/`；脚本中没有散落未登记的关键用例。

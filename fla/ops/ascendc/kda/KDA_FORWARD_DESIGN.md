@@ -1,5 +1,10 @@
 # Kimi Delta Attention（KDA）正向 AscendC 算子设计
 
+> **注意：本文第 4 节记录的是当前历史实现，不是推荐架构。** `stage=1/3/2` 复用同一 L0、直调通路暴露
+> stage 语义、L2 拼接 Cast 均违反当前开发规范。整改应收敛为一个完整入口下的两个语义 phase，在 L0
+> 内闭合必要的全核同步和 `TPipe::Reset()`，并把 cast 融入 kernel。阶段边界可参考
+> [ops-nn PR #4803](https://gitcode.com/cann/ops-nn/pull/4803/diffs)，但必须按 KDA 自身参与核和状态依赖重新证明。
+
 ## 1. 范围
 
 本文档说明本代码合入请求（Pull Request, PR）中 KDA 正向算子的实现设计。目标是提供一套支持 `gk` 的 AscendC 算子栈，并在语义完全一致的地方复用已有 Gated DeltaNet（GDN）正向状态传播逻辑。
@@ -145,7 +150,7 @@ o, final_state, g, Aqk, Akk, w, u, qg, kg, v_new, h, initial_state = \
 - 当前 PR 中 PyTorch wrapper 拦截 `safe_gate=True`。
 - 当前 PR 中 PyTorch wrapper 拦截 `transpose_state_layout=True`。
 
-## 4. L2 组合设计
+## 4. 现状 L2 组合设计（反面样例）
 
 `aclnn_chunk_kda_fwd.cpp` 中的 L2 实现流程：
 

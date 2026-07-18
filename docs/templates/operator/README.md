@@ -65,6 +65,8 @@
 | Ascend C `<<<>>>` | Ascend C 算子必须 | Triton 算子删除本行 |
 | `torch.ops.npu` | 可选 | 未实现时删除本行 |
 
+表中正式入口必须表达一次完整算子语义，不得要求调用者理解或传入内部 `stage` 编号，也不得把 L2 Cast 写成调用前置步骤。现有实现不满足时，应明确标为架构债务和待整改通路，不能填写为“支持”。
+
 完整接口和调用示例见 [API 文档](docs/api.md)，实现方案见 [设计文档](docs/design.md)。
 
 > **Hint：** `chunk_bwd_dv_local` 的实现类型为 `ascendc`，因此填写 aclnn 入口 `aclnnChunkBwdDvLocal*`、Python 入口 `fla_npu.ops.ascendc.chunk_bwd_dv_local`、Ascend C `<<<>>>` 直调，以及可选 legacy 入口 `torch.ops.npu.npu_chunk_bwd_dv_local`；不要再列 `fla_npu.ops.triton.chunk_bwd_dv_local`。

@@ -44,6 +44,21 @@ Ascend C 算子说明 op_host、InferShape、tiling、kernel、aclnn 和 `fla_np
 
 > **Hint：** `chunk_bwd_dv_local` 可说明 op_host 校验 shape 并生成 tiling，kernel 使用 AIC/AIV 混合任务：AIC 计算 `K @ Q^T`，AIV 完成 gating/mask，AIC 再计算 `Ws_gated @ dO`，workspace 用于阶段间数据交换。
 
+### 5.1 算子边界与 L2/L0 分工
+
+逐项说明：
+
+- 一个完整 L0 入口内各语义 phase 的强生产消费关系，或拆成多个独立 L0 的必要性。
+- 公共 aclnn、`fla_npu`、`<<<>>>`、legacy 接口是否完全隐藏内部 phase；不得出现要求调用者传入的 `stage`/`stage_id`。
+- L2 负责的参数校验、layout/view、workspace/executor 和 launch 编排。
+- 输入、阶段间和输出 cast 融入哪个生产者或消费者 kernel；L2 不得拼接独立 Cast L0。
+- 中间 tensor/workspace owner、dtype、layout、stream 顺序和生命周期；不得用 stage 编号替代所有权协议。
+- 同一 L0 内有多个紧耦合 phase 时，`SyncAll` 的参与核、schedule mode、A2/A3/A5 支持，以及 `TPipe::Reset()` 前排空和后续重建的 queue/buffer；Reset 与 SyncAll 的先后要按真实依赖说明。
+
+> **反面样例：KDA 当前实现。** `ChunkKdaFwd(stage=1/3/2)` 把关系不强的分支放进同一 L0，直调调用者需要理解 stage，L2 还拼接 gate/阶段间 cast。新增算子不得照搬；整改应优先收敛为一个完整入口下的两个语义 phase，在 L0 内完成同步和 `TPipe::Reset()` 隔离，并把 cast 融进 kernel；若无共同归并语义或片上复用价值，再拆成独立 L0。
+
+> **参考样例：** [ops-nn PR #4803 的 GroupNormSwishGrad A5 实现](https://gitcode.com/cann/ops-nn/pull/4803/diffs)对外保持一个完整 kernel 入口，内部第一 phase 生成输出和 workspace，调用 `pipe.Reset()` 释放本地资源，在第二 phase 消费 workspace 前执行 `SyncAll()`，随后重建 buffer 并在 kernel 内完成 reduce/cast。填写时需结合本算子的参与核和数据依赖说明，不能只写“参考该实现”。
+
 ## 6. Tiling 设计（仅 Ascend C 算子）
 
 Triton 算子删除本章节，并在整体架构或 Kernel 设计中说明其 grid/config 选择策略。
@@ -76,7 +91,7 @@ Triton 算子删除本章节，并在整体架构或 Kernel 设计中说明其 g
 
 按执行顺序说明数据搬运、计算和写回过程。
 
-> **Hint：** `chunk_bwd_dv_local` 可写成 Phase 1（AIC 生成每个 Q/K head 的 score）、Phase 1.5（AIV 按 dO head 应用 gate 与 mask）、Phase 2（AIC 生成 `dV`），并说明 `hRatio` 下 score 的共享方式。
+> **Hint：** `chunk_bwd_dv_local` 可用“score 生成”“gate/mask 修饰”“dV 生成”等语义名称说明同一 kernel 内的 phase，并说明 `hRatio` 下 score 的共享方式；不要把 phase 编号设计成公开 `stage` 属性。
 
 ### 7.2 内存规划
 
@@ -94,6 +109,8 @@ Triton 算子删除本章节，并在整体架构或 Kernel 设计中说明其 g
 Ascend C 算子说明 MTE/Cube/Vector/Fixpipe 流水、event/flag、buffer slot 复用、跨核依赖及 ready/free 协议，且 `--cce-auto-sync` 必须保持为 `off`。Triton 算子说明对应的 load/compute/store 流水和同步边界。
 
 > **Hint：** 对 `chunk_bwd_dv_local`，应逐项写明 AIC 写 workspace 后如何通知 AIV、AIV 完成 gating 后如何通知第二阶段 AIC，以及 producer 复用 slot 前如何确认 consumer 已完成。实际 event/flag 名称和数量必须与源码一致。
+
+若多个 phase 位于同一 L0 kernel，还必须写明 `AscendC::SyncAll<false>()` 的一致参与条件、schedule mode 和平台支持，以及 `pipe->Reset()` 前已完成的异步操作、被释放的本地资源和 Reset 后重新初始化的 queue/buffer。若拆成独立 L0，则说明同一 stream 顺序和显式中间量如何建立依赖，不写不存在的 kernel 间 `SyncAll`。
 
 ### 7.4 边界处理
 
@@ -114,6 +131,8 @@ Ascend C 算子说明 MTE/Cube/Vector/Fixpipe 流水、event/flag、buffer slot 
 ## 9. 精度设计
 
 说明累加精度、类型转换、数值稳定性风险、特殊值处理、标杆选择和阈值依据。
+
+所有公开输入到内部计算 dtype、阶段间 dtype 和内部结果到公开输出 dtype 的 cast 都必须定位到具体 kernel 的读入/写回或片上计算步骤；不得写成由 L2 调用独立 Cast 完成。
 
 > **Hint：** `chunk_bwd_dv_local` 需要关注 `exp(g_col-g_row)` 的溢出/下溢、FP16/BF16 输入的累加类型、FP32 gate 路径，以及 fixed/varlen 标杆的一致性。
 

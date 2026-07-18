@@ -6,10 +6,12 @@
 | --- | --- | --- |
 | Python 主入口 | `fla_npu.ops.ascendc.chunk_kda_fwd` | 支持 |
 | aclnn | `aclnnChunkKdaFwdGetWorkspaceSize` / `aclnnChunkKdaFwd` | 支持 |
-| Ascend C `<<<>>>` | `chunk_kda_fwd<<<blockDim, nullptr, stream>>>` | 支持 |
+| Ascend C `<<<>>>` | `chunk_kda_fwd<<<blockDim, nullptr, stream>>>` | 历史诊断通路，待整改 |
 | legacy | `npu_chunk_kda_fwd` | 支持（显式加载） |
 
-各已实现入口使用 README 中定义的同一公式、shape、dtype、边界和可选参数语义。
+表中标记为“支持”的正式入口使用 README 中定义的同一公式、shape、dtype、边界和可选参数语义；待整改诊断通路不据此宣称已经满足完整公开语义。
+
+公共 API 应只表达完整算子语义，不要求调用者传入或理解内部 stage 编号；类型转换应由 kernel 完成，不由 L2 Cast 组成调用前置步骤。现有实现不满足时，必须像本页一样明确标为架构债务和待整改通路。
 
 ## 2. 公共参数与约束
 
@@ -45,9 +47,9 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 
 | 名称 | 类型 | 默认值 | 取值范围 | 说明 |
 | --- | --- | --- | --- | --- |
-| `layout` | str | `BSND` | `{"BSND", "BNSD", "TND", "NTD"}` | 仅接受大写取值 |
+| `layout` | str | `BSND` | `{"BSND", "BNSD", "TND", "NTD"}` | 只接受大写 BSND/BNSD/TND/NTD |
 | `scale` | double | `无` | - | 通常为 1/sqrt(K) |
-| `chunk_size` | int | `无` | `{64, 128}` | chunk 长度 |
+| `chunk_size` | int | `无` | `{64, 128}` | 64 或 128 |
 | `output_final_state` | bool | `false` | `{false, true}` | 是否返回有效 final_state |
 | `return_intermediate` | bool | `false` | `{false, true}` | 是否物化八个中间张量 |
 | `safe_gate` | bool | `false` | `{false}` | 预留，当前必须 false |
@@ -154,6 +156,9 @@ assert o.shape == v.shape and final_state.dtype == torch.float32
 
 ## 5. Ascend C `<<<>>>` 直调
 
+
+> **架构债务：** 下述 stage launch 仅记录当前历史实现和诊断通路，不满足“`<<<>>>` 对外提供完整算子语义、
+> 不暴露内部 stage、L2 不拼接 Cast”的开发规范。新增算子不得照搬，KDA 后续必须按设计文档整改。
 
 `chunk_kda_fwd` 是复合算子，完整直调通路必须使用 host 为同一 case 生成的四组 launch 配置，
 并按同一 stream 串行执行以下流水；单独发射一次 `chunk_kda_fwd` 不构成公开算子语义：
