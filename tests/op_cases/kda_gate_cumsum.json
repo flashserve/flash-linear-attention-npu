@@ -19,7 +19,7 @@
       "NTD"
     ],
     "features": [
-      "dense/varlen",
+      "定长/变长序列",
       "step-gate/safe raw-gate",
       "四种 layout",
       "整块/尾块"
@@ -48,7 +48,7 @@
   },
   "coverage_requirements": {
     "public_modes": [
-      "dense/varlen",
+      "定长/变长序列",
       "step-gate/safe raw-gate",
       "四种 layout",
       "整块/尾块"
@@ -58,7 +58,7 @@
       "use_gate_in_kernel=true 时 A_log 必须为 [H_v]、safe_gate 必须 true，dt_bias 若存在须为 [H_v*K] 或 [H_v,K]。",
       "lower_bound 仅支持 [-5,0)；use_gate_in_kernel=false 时 safe_gate 必须 false。",
       "use_gate_in_kernel=false 时 A_log 与 dt_bias 必须为空，避免未消费输入在不同通路产生歧义。",
-      "rank4 varlen 物理 B 必须为 1；cu_seqlens 首项为 0、非递减且末项等于 T。"
+      "rank4 变长序列物理 B 必须为 1；cu_seqlens 首项为 0、非递减且末项等于 T。"
     ],
     "required_outputs": [
       "gk"

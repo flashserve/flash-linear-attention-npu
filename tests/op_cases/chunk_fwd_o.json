@@ -19,7 +19,7 @@
       "BNSD"
     ],
     "features": [
-      "fixed/varlen",
+      "定长/变长序列",
       "GVA",
       "整块/尾块",
       "g 为必选标量 gate"
@@ -44,11 +44,11 @@
         "h"
       ]
     },
-    "structured_inputs": "g 在 [-0.25, 0.25] 上按 T 线性生成；varlen 索引按 sequence-major 构造。该生成规则与仓内 direct-launch 精度用例一致。"
+    "structured_inputs": "g 在 [-0.25, 0.25] 上按 T 线性生成；变长序列索引按 sequence-major 构造。该生成规则与仓内 direct-launch 精度用例一致。"
   },
   "coverage_requirements": {
     "public_modes": [
-      "fixed/varlen",
+      "定长/变长序列",
       "GVA",
       "整块/尾块",
       "g 为必选标量 gate"
@@ -56,7 +56,7 @@
     "known_limits": [
       "`K` 仅支持 128，`V` 仅支持 128/256，`chunk_size` 仅支持 64/128。",
       "必须满足 `H_v % H_k == 0`，h 的 chunk 数必须与索引推导一致。",
-      "varlen 当前仅支持物理 `B=1`，两个索引必须同时提供。",
+      "变长序列当前仅支持物理 `B=1`，两个索引必须同时提供。",
       "`g` 是 kernel 必选输入；`g_gamma` 必须为 None，`transpose_state_layout` 必须为 false。"
     ],
     "required_outputs": [

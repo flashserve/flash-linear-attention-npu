@@ -8,7 +8,7 @@ Kimi Delta Attention 正向主算子。它消费已经按 chunk 累加的 key ga
 
 ### 2.1 目标
 
-- README 所列 `dense/varlen、四种显式 layout、可选初始/最终状态、可选中间量` 场景精度与仓内参考实现一致。
+- README 所列 `定长/变长序列、四种显式 layout、可选初始/最终状态、可选中间量` 场景精度与仓内参考实现一致。
 - A2/A3/A5 均能构建和执行，`--cce-auto-sync=off`。
 - 若本算子用于替换 Triton，同一 shape/dtype/layout 下 Ascend C 性能优于被替换实现。
 - aclnn、`fla_npu.ops.ascendc`、`<<<>>>` 使用同一接口语义。
@@ -20,7 +20,7 @@ Kimi Delta Attention 正向主算子。它消费已经按 chunk 累加的 key ga
 
 ## 3. 能力边界
 
-实现类型：`ascendc`。Dtype：q/k/v 为同一 FP16 或 BF16；gk/beta 为 FP32 或 BF16，当前实现在 L2 转 FP32；状态为 FP32。Layout：BSND/BNSD/TND/NTD；BNSD/NTD 为内部性能布局，BSND/TND 通过 KdaLayoutSwap12 转换。模式：dense/varlen、四种显式 layout、可选初始/最终状态、可选中间量。
+实现类型：`ascendc`。Dtype：q/k/v 为同一 FP16 或 BF16；gk/beta 为 FP32 或 BF16，当前实现在 L2 转 FP32；状态为 FP32。Layout：BSND/BNSD/TND/NTD；BNSD/NTD 为内部性能布局，BSND/TND 通过 KdaLayoutSwap12 转换。模式：定长/变长序列、四种显式 layout、可选初始/最终状态、可选中间量。
 Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
 
 ## 4. 数学与接口语义
@@ -69,7 +69,7 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 
 ### 6.1 任务划分
 
-stage1/3/2 按 (sequence,value_head,chunk) 分配无跨 chunk 的矩阵任务；状态传播复用 ChunkGatedDeltaRuleFwdH 并保持同一序列的 chunk 顺序。varlen tiling 保存每序列起止与累计 chunk offset，不按每个 chunk 膨胀。
+stage1/3/2 按 (sequence,value_head,chunk) 分配无跨 chunk 的矩阵任务；状态传播复用 ChunkGatedDeltaRuleFwdH 并保持同一序列的 chunk 顺序。变长序列 tiling 保存每序列起止与累计 chunk offset，不按每个 chunk 膨胀。
 
 ### 6.2 Tiling Data
 
@@ -122,7 +122,7 @@ stage1 的 AIV producer 与 AIC consumer 使用深度 2 的 ready/free 双向 cr
 
 ### 7.4 边界处理
 
-dense/fixed 尾块与 varlen 尾段均按每条逻辑序列的有效长度计算，任何补齐元素在参与指数、矩阵乘或归约前使用中性值或 mask，并按公开输出语义写零。非法累计长度和索引由 host 拦截。
+定长尾块与变长序列尾段均按每条逻辑序列的有效长度计算，任何补齐元素在参与指数、矩阵乘或归约前使用中性值或 mask，并按公开输出语义写零。非法累计长度和索引由 host 拦截。
 
 ## 8. 平台设计
 
@@ -152,7 +152,7 @@ A2/A3/A5 使用相同 case ID，平台只决定编译与运行目标。
 
 - chunk_size 仅支持 64/128；K/V 均须在 [16,256] 且为 16 的倍数；交付矩阵覆盖 K=128、V=128/256。
 - H_k/H_v 必须在 [1,128] 且 H_v % H_k == 0；TND 仅支持 H_k=1，多 head rank3 使用 NTD。
-- varlen 的 cu_seqlens 至少含首尾、非递减且末项等于 T；单次最多 1024 条逻辑序列。
+- 变长序列的 cu_seqlens 至少含首尾、非递减且末项等于 T；单次最多 1024 条逻辑序列。
 - 显式 chunk_indices 必须完整、合法并严格采用 sequence-major 规范顺序。
 - safe_gate 与 transpose_state_layout 当前必须为 false；raw gate 应先调用 kda_gate_cumsum。
 

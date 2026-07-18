@@ -21,7 +21,7 @@
       "NTD"
     ],
     "features": [
-      "dense/varlen",
+      "定长/变长序列",
       "无激活/SiLU",
       "可选初末状态"
     ],
@@ -49,7 +49,7 @@
   },
   "coverage_requirements": {
     "public_modes": [
-      "dense/varlen",
+      "定长/变长序列",
       "无激活/SiLU",
       "可选初末状态"
     ],

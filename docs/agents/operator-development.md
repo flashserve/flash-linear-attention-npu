@@ -18,7 +18,7 @@
   -> cube/vector/搬运/同步分工
   -> 小 shape 单算子精度
   -> 目标 shape 和组合路径精度
-  -> 特殊值、极端值域、尾块、varlen
+  -> 特殊值、极端值域、尾块、变长序列
   -> profiling 性能定位
   -> 回归用例、文档和 PR 描述
 ```
@@ -98,7 +98,7 @@ L2 负责校验、executor/workspace、layout/view 和 launch 编排，不负责
 
 这种模式下，workspace 不是随手申请一大片临时内存，而是 producer-consumer 队列。每个 slot 都要有清晰含义：哪个阶段写、哪个阶段读、可被哪些 head 或 chunk 复用、什么时候 free。若一个 Q/K head 对应多个输出 head，workspace 和调度要按 head ratio 扩展，不能默认所有 head 一一对应。
 
-跨核协同时，ready/free flag 要成对设计。AIC 产出一个 tile 后通知 AIV；AIV 完成 gate/mask 后通知 AIC；生产者复用 slot 前必须确认消费者释放。空任务、tail chunk、varlen 无效区也要维持同样的计数协议，避免某一侧等待一个永远不会发送的 flag。
+跨核协同时，ready/free flag 要成对设计。AIC 产出一个 tile 后通知 AIV；AIV 完成 gate/mask 后通知 AIC；生产者复用 slot 前必须确认消费者释放。空任务、tail chunk、变长序列无效区也要维持同样的计数协议，避免某一侧等待一个永远不会发送的 flag。
 
 ## 硬件分工
 
@@ -116,9 +116,9 @@ L2 负责校验、executor/workspace、layout/view 和 launch 编排，不负责
 
 - 输出或梯度输出的 head 数可能是 Q/K head 数的整数倍，需要显式推导 head ratio，并将输出 head 映射回对应的 Q/K head。
 - `K`、`V`、`chunkSize` 往往决定模板、tile shape、UB/L1 预算和 workspace slot 数。
-- fixed length 和 varlen 的 loop index 到 `(batch, token_start, chunk_len)` 映射不同，不应把两套 offset 逻辑散落在 kernel 内层。
+- 定长序列和变长序列的 loop index 到 `(batch, token_start, chunk_len)` 映射不同，不应把两套 offset 逻辑散落在 kernel 内层。
 
-推荐把 fixed/varlen 抽成 strategy：对外提供统一的 `calculate(loopIdx)`，返回当前 batch、token 起点和 chunk 有效长度。kernel 热路径只消费这个结果；host tiling 负责校验 `cu_seqlens`、`chunk_indices` 是否成对出现，以及当前实现是否限制 `B`、chunk 索引形状或尾块行为。
+推荐把定长/变长序列抽成 strategy：对外提供统一的 `calculate(loopIdx)`，返回当前 batch、token 起点和 chunk 有效长度。kernel 热路径只消费这个结果；host tiling 负责校验 `cu_seqlens`、`chunk_indices` 是否成对出现，以及当前实现是否限制 `B`、chunk 索引形状或尾块行为。
 
 ## 搬运和生命周期
 

@@ -4,7 +4,7 @@
 
 - 符号表版本：`kda-shape-v1`
 - 适用范围：KDA chunk 前向、gate 预处理和 layout 转换辅助算子
-- 内部主布局：dense 使用 `BNSD`，varlen 使用 `NTD`
+- 内部主布局：dense 使用 `BNSD`，变长序列使用 `NTD`
 
 <a id="model-shape-symbols"></a>
 
@@ -13,8 +13,8 @@
 | 符号 | 语义 | 典型张量维度 |
 | --- | --- | --- |
 | `B` | Batch size | dense 输入第 0 维 |
-| `N` | varlen 逻辑序列数 | `cu_seqlens` 长度为 `N+1` |
-| `T` | dense 序列长度或 varlen 打包 token 总数 | token 维 |
+| `N` | 变长序列的逻辑序列数 | `cu_seqlens` 长度为 `N+1` |
+| `T` | 定长序列长度或变长序列打包 token 总数 | token 维 |
 | `H_k` | Query/Key head 数 | `q`、`k` 的 head 维 |
 | `H_v` | Value/Output head 数 | `v`、`o`、`beta` 的 head 维 |
 | `R_h` | H_v/H_k 的 head 分组比 | GVA head 映射 |
@@ -22,7 +22,7 @@
 | `V` | Value 单 head 特征维 | `v`、`o` 的最后一维 |
 | `C` | chunk_size | chunk 计算粒度和三角块宽度 |
 | `N_c` | 当前调用中的 chunk 总数 | 中间状态 `h` 的 chunk 维 |
-| `S_n` | 第 n 条 varlen 序列的有效长度 | `cu_seqlens[n+1]-cu_seqlens[n]` |
+| `S_n` | 第 n 条变长序列的有效长度 | `cu_seqlens[n+1]-cu_seqlens[n]` |
 
 KDA 的 head 关系统一写为 `H_v % H_k == 0`，`h_k=floor(h_v/R_h)`。不得混用 `H`、`HV`、`qHeadNum`、`vHeadNum` 等实现字段作为公开 Shape 符号。
 
@@ -51,12 +51,12 @@ KDA 的 head 关系统一写为 `H_v % H_k == 0`，`h_k=floor(h_v/R_h)`。不得
 | --- | --- | --- | --- | --- |
 | `BSND` | `[B,T,H_k,K]` | `[B,T,H_v,V]` | `gk=[B,T,H_v,K]`、`beta=[B,T,H_v]` | 对外兼容布局，op_api 转换到内部布局 |
 | `BNSD` | `[B,H_k,T,K]` | `[B,H_v,T,V]` | `gk=[B,H_v,T,K]`、`beta=[B,H_v,T]` | dense 性能布局 |
-| `TND` | `[T,H_k,K]` | `[T,H_v,V]` | `gk=[T,H_v,K]`、`beta=[T,H_v]` | 单 head 或兼容 varlen 布局 |
-| `NTD` | `[H_k,T,K]` | `[H_v,T,V]` | `gk=[H_v,T,K]`、`beta=[H_v,T]` | multi-head varlen 性能布局 |
+| `TND` | `[T,H_k,K]` | `[T,H_v,V]` | `gk=[T,H_v,K]`、`beta=[T,H_v]` | 单 head 或兼容变长序列布局 |
+| `NTD` | `[H_k,T,K]` | `[H_v,T,V]` | `gk=[H_v,T,K]`、`beta=[H_v,T]` | multi-head 变长序列性能布局 |
 
 `kda_layout_swap12` 只交换 layout 中第 1、2 个逻辑维度，不改变元素值、batch 维和尾部连续特征维。
 
-## 4. varlen 元数据
+## 4. 变长序列元数据
 
 | 名称 | Shape | Dtype | 语义 |
 | --- | --- | --- | --- |

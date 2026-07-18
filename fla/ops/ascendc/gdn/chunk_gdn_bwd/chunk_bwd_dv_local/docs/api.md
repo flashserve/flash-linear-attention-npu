@@ -25,7 +25,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | `g` | 必选 | `[B,H_v,T]` | FP16/BF16/FP32 | BNS | chunk-local 累积 gate |
 | `g_gamma` | 预留 | `-` | FP32 | ND | 当前必须为 None |
 | `A` | 预留 | `-` | FP16/BF16 | ND | 当前必须为 None |
-| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | varlen 累计长度 |
+| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | 变长序列累计长度 |
 | `chunk_indices` | 可选 | `[2*N_c]` | INT64 | ND | 展平的 (seq_id,chunk_id) |
 
 ### 2.2 输出
@@ -166,7 +166,7 @@ assert d_v.shape == d_o.shape
 
 - `K` 仅支持 128，`V` 仅支持 128/256。
 - `chunk_size` 仅支持 64/128。
-- 必须满足 `H_v % H_k == 0`；varlen 当前仅支持物理 `B=1`。
+- 必须满足 `H_v % H_k == 0`；变长序列当前仅支持物理 `B=1`。
 - `g_gamma` 和 `A` 尚未实现，必须传 `None`。
 
 ## 9. 异常与返回码
@@ -175,7 +175,7 @@ assert d_v.shape == d_o.shape
 | --- | --- |
 | workspaceSize 或 executor 为空 | ACLNN_ERR_PARAM_NULLPTR |
 | 必选 tensor 为空 | ACLNN_ERR_PARAM_INVALID |
-| g_gamma/A 非空，或 varlen 元数据只提供一个 | ACLNN_ERR_PARAM_INVALID |
+| g_gamma/A 非空，或变长序列元数据只提供一个 | ACLNN_ERR_PARAM_INVALID |
 | shape/dtype/GVA/chunk_size 不受模板支持 | tiling 失败；aclnn 执行返回 ACLNN_ERR_INNER |
 | Python g_gamma/A 非空 | RuntimeError |
 
@@ -185,5 +185,5 @@ assert d_v.shape == d_o.shape
 
 - [x] aclnn、Python 与 `<<<>>>` 均提供签名和调用示例。
 - [x] Shape 使用模型符号，固定值仅列在已知限制。
-- [x] A2/A3/A5、fixed 与 varlen；varlen 的两个索引必须同时提供 与错误码均有说明。
+- [x] A2/A3/A5、定长与变长序列；变长序列的两个索引必须同时提供 与错误码均有说明。
 - [x] 主入口为 `fla_npu.ops.ascendc`，未把 Triton 声明为并列正式入口。

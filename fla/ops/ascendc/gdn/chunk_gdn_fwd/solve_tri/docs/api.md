@@ -20,7 +20,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
 | --- | --- | --- | --- | --- | --- |
 | `x` | 必选 | `[B,H_v,T,C]、[B,T,H_v,C] 或 [T,H_v,C]` | FP16/BF16 | BHTD/BSND/TND | 严格下三角 A 的行存储 |
-| `cu_seqlens` | TND 必选 | `[N+1]` | INT64 | ND | varlen 累计长度 |
+| `cu_seqlens` | TND 必选 | `[N+1]` | INT64 | ND | 变长序列累计长度 |
 | `chunk_indices` | TND 必选 | `[2*N_c]` | INT64 | ND | 展平 chunk 索引 |
 
 ### 2.2 输出
@@ -146,7 +146,7 @@ assert y.shape == x.shape
 ## 8. 已知限制
 
 - 矩阵阶/最后一维 C 支持 16/32/64/128。
-- layout 仅支持小写 `bhtd`、`bsnd`、`tnd`；TND 必须提供两个 varlen 索引，dense layout 不接受 varlen 索引。
+- layout 仅支持小写 `bhtd`、`bsnd`、`tnd`；TND 必须提供两个变长序列索引，定长布局 不接受变长序列索引。
 - 输入必须表示严格下三角 A；对角线由算子加单位阵。
 
 ## 9. 异常与返回码
@@ -155,7 +155,7 @@ assert y.shape == x.shape
 | --- | --- |
 | x/xOut/layout、workspaceSize 或 executor 为空 | ACLNN_ERR_PARAM_INVALID；workspaceSize/executor 为空为 ACLNN_ERR_PARAM_NULLPTR |
 | layout 不是小写 bhtd/bsnd/tnd，或 layout 与 rank 不匹配 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
-| TND 缺少任一 varlen 索引，或 dense layout 携带 varlen 索引 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
+| TND 缺少任一变长序列索引，或定长布局 携带变长序列索引 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
 | C 非 16/32/64/128、xOut shape/dtype 不匹配 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
 
 负向 case 的 `expect.return_code` 与消息片段集中定义在 `tests/op_cases/solve_tri.json`，修改拦截时必须同步更新。
@@ -164,5 +164,5 @@ assert y.shape == x.shape
 
 - [x] aclnn、Python 与 `<<<>>>` 均提供签名和调用示例。
 - [x] Shape 使用模型符号，固定值仅列在已知限制。
-- [x] A2/A3/A5、dense BHTD/BSND 与 varlen TND，支持尾块 与错误码均有说明。
+- [x] A2/A3/A5、dense BHTD/BSND 与变长序列 TND，支持尾块 与错误码均有说明。
 - [x] 主入口为 `fla_npu.ops.ascendc`，未把 Triton 声明为并列正式入口。

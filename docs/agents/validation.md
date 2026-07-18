@@ -14,7 +14,7 @@
 - 主精度验证：Ascend C 算子通过 `fla_npu.ops.ascendc`，Triton 算子通过 `fla_npu.ops.triton`，覆盖 JSON 中的精度、泛化、边界、功能分支和回归用例。
 - 调用通路验证：Ascend C 算子覆盖 aclnn 与 `<<<>>>`；`torch.ops.npu` 仅在算子实现该可选入口时验证。
 - 端到端验证：运行 `examples/flash_gated_delta_rule.py` 或 `ci/run_example_st_cases.py`。
-- 精度验证：对比参考实现，覆盖关键 shape、dtype、layout、dense/varlen 和边界 case。
+- 精度验证：对比参考实现，覆盖关键 shape、dtype、layout、定长/变长序列和边界 case。
 - 性能验证：使用合适 profiling 工具，不用 Python wall time 直接作为性能结论。
 - 内存/同步验证：疑似越界、未初始化、流水 hazard 或同步问题时，使用对应 sanitizer/profiling 方法验证。
 
@@ -25,7 +25,7 @@
 - 所有关键 shape、dtype、layout、属性、平台和用途标签先登记到 `tests/op_cases/<op_name>.json`；测试脚本不另建一套用例列表。
 - 合规检查必须确认算子源码树没有 test/、tests/、ATK/，example/torch_custom 没有主线算子的独立用例目录，tests/operators 下没有第二份持久化 case JSON；ATK 输入只能从 manifest 临时物化。
 - 平台至少覆盖 A2、A3、A5，并分别包含基础功能和实现类型对应主入口的精度验证。
-- fixed length 和 varlen 都要覆盖；varlen 场景要覆盖 `cu_seqlens` 与 `chunk_indices` 成对出现、尾 chunk、短序列和多 chunk。
+- 定长序列和变长序列都要覆盖；变长序列场景要覆盖 `cu_seqlens` 与 `chunk_indices` 成对出现、尾 chunk、短序列和多 chunk。
 - head 关系要覆盖一一对应和 GVA/grouped 场景，例如输出 head 数是 Q/K head 数的 1、2、4 倍，确认 head 映射和 workspace slot 没有串头；JSON 字段名使用所属模型根 README 规定的符号。
 - 目标维度要覆盖关键模板组合，例如 `chunkSize=64/128`、`V=128/256`、主 dtype 为 `fp16/bf16`，以及 gate/scale 等辅助输入与主输入 dtype 不同的 mixed 场景。
 - 可选但当前不支持的参数要有反向用例，确认代码会明确拦截，而不是静默忽略或在 kernel 内崩溃。

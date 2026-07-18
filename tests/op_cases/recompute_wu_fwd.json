@@ -19,7 +19,7 @@
       "BNSD"
     ],
     "features": [
-      "fixed/varlen",
+      "定长/变长序列",
       "GVA",
       "标量 gate g"
     ],
@@ -47,14 +47,14 @@
   },
   "coverage_requirements": {
     "public_modes": [
-      "fixed/varlen",
+      "定长/变长序列",
       "GVA",
       "标量 gate g"
     ],
     "known_limits": [
       "当前实现仅支持 `K=128`、`V=128/256`、`chunk_size=64/128`。",
       "必须满足 `H_v % H_k == 0`，A 最后一维等于 chunk_size。",
-      "g 必须提供；gk 当前未实现且必须为 None；varlen 物理 B=1。"
+      "g 必须提供；gk 当前未实现且必须为 None；变长序列物理 B=1。"
     ],
     "required_outputs": [
       "w",

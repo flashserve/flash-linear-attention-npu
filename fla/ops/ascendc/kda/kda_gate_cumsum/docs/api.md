@@ -22,7 +22,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | `g` | 必选 | `[B,T,H_v,K]/[B,H_v,T,K]/[T,H_v,K]/[H_v,T,K]` | FP16/BF16/FP32 | BSND/BNSD/TND/NTD | step gate 或 raw gate |
 | `A_log` | 条件必选 | `[H_v]` | FP32 | ND | use_gate_in_kernel=true 时必选 |
 | `dt_bias` | 可选 | `[H_v*K] 或 [H_v,K]` | FP32 | ND | safe-gate 偏置 |
-| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | varlen 累计长度 |
+| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | 变长序列累计长度 |
 
 ### 2.2 输出
 
@@ -168,7 +168,7 @@ assert gk.shape == raw.shape and gk.dtype == torch.float32
 - use_gate_in_kernel=true 时 A_log 必须为 [H_v]、safe_gate 必须 true，dt_bias 若存在须为 [H_v*K] 或 [H_v,K]。
 - lower_bound 仅支持 [-5,0)；use_gate_in_kernel=false 时 safe_gate 必须 false。
 - use_gate_in_kernel=false 时 A_log 与 dt_bias 必须为空，避免未消费输入在不同通路产生歧义。
-- rank4 varlen 物理 B 必须为 1；cu_seqlens 首项为 0、非递减且末项等于 T。
+- rank4 变长序列物理 B 必须为 1；cu_seqlens 首项为 0、非递减且末项等于 T。
 
 ## 9. 异常与返回码
 
@@ -185,5 +185,5 @@ assert gk.shape == raw.shape and gk.dtype == torch.float32
 
 - [x] aclnn、Python 与 `<<<>>>` 均提供签名和调用示例。
 - [x] Shape 使用模型符号，固定值仅列在已知限制。
-- [x] A2/A3/A5、dense/varlen、step-gate/safe raw-gate、四种 layout、整块/尾块 与错误码均有说明。
+- [x] A2/A3/A5、定长/变长序列、step-gate/safe raw-gate、四种 layout、整块/尾块 与错误码均有说明。
 - [x] 主入口为 `fla_npu.ops.ascendc`，未把 Triton 声明为并列正式入口。

@@ -20,7 +20,7 @@
 不在当前 PR 范围：
 
 - KDA 反向算子。
-- 为非 chunk 对齐变长序列（varlen）单独设计的高吞吐 partial-chunk 模板。当前实现已支持 partial chunk 的正确性，并采用完整 tile 补中性值计算、只回写有效区；其性能仍有进一步优化空间。
+- 为非 chunk 对齐变长序列单独设计的高吞吐 partial-chunk 模板。当前实现已支持 partial chunk 的正确性，并采用完整 tile 补中性值计算、只回写有效区；其性能仍有进一步优化空间。
 
 ## 2. 对标语义
 
@@ -123,7 +123,7 @@ BNSD 和 NTD 是性能布局，适用于上游 causal conv 已经完成数据排
 
 当前 TND 兼容布局仅支持 `H=1` 的 rank3 输入。多 K head 的 rank3 输入必须使用 NTD 性能布局 `[H, T, D]`；host 侧会直接拦截 `layout=TND && H>1`，避免进入 `fwd_h` kernel 后触发非法访存。当前 `H/HV` 均要求不超过 128。
 
-变长序列（varlen）单次调用最多支持 1024 条序列，不限制单条序列或单次调用的 chunk 数。
+变长序列单次调用最多支持 1024 条序列，不限制单条序列或单次调用的 chunk 数。
 kernel 的 tiling 仅保存每条序列的起止位置与累计 chunk 偏移，通过二分定位当前 chunk，避免把
 逐 chunk metadata 塞入 tiling。显式传入的 `chunk_indices` 必须是按 sequence-major 排列的规范序列
 `(seq_id, local_chunk_id)`；省略时由稳定 Python 入口和 L2 接口按同一规则生成。空序列仍按
@@ -419,7 +419,7 @@ UB 使用原则：
 - Stage 1 每个 AIV tile 根据同时驻留的输入/输出张量数量计算最大连续行数，在 192 KiB UB 预算内尽量拉长单次搬运和 vector repeat；ping/pong slot 生命周期由事件闭合。
 - Output cube 的 V 维按 128 列分块；`V=256` 连续执行两个 128 列 tile，避免扩大单次 L0/UB 驻留。
 - `fwd_h` 的状态行 tile 按 `floor(32 KiB / (V * sizeof(ElementH)))` 计算，每个 ping/pong slot 最多 32 KiB；`V=256` 时每次搬运 32 行，两个 slot 分别位于独立 UB 区间，总 UB 不超过 192 KiB。
-- `initial_state=None` 的 varlen 首状态清零路径把整段 chunk offset metadata 一次 `DataCopyPad` 到 UB，再用于任务 offset 推导；不在逐 sequence/task 循环里下发单元素 GM 读取。
+- `initial_state=None` 的变长序列首状态清零路径把整段 chunk offset metadata 一次 `DataCopyPad` 到 UB，再用于任务 offset 推导；不在逐 sequence/task 循环里下发单元素 GM 读取。
 
 ## 7. 验证结果
 
@@ -450,7 +450,7 @@ UB 使用原则：
 - `chunk_size=128` 的 C9-C12、C26、C30 规格，以及 `V=256` 的 C21-C24、C27-C29、C31-C33 规格完成 sampled CPU FP32 reference 对比和 `ct viz -wl 1 -sc 100000` 可视化：
   - 16 个重点用例 `o` 的 cosine 范围为 `0.9999845~0.9999936`。
   - `max_abs` 范围为 `5.21e-6~1.55e-5`，未观察到块状、条纹状或序列边界相关的结构性误差。
-  - 覆盖 BF16、BSND/NTD、dense/varlen、随机非对齐尾块、`chunk_size=64/128` 和 `V=128/256`。
+  - 覆盖 BF16、BSND/NTD、定长/变长序列、随机非对齐尾块、`chunk_size=64/128` 和 `V=128/256`。
 - `return_intermediate=False` 与 `return_intermediate=True` 在相同输入下逐位一致；两者均与 CPU FP32 reference 对齐。该用例专门看护 L0 中间量生命周期和 workspace 复用依赖。
 
 性能验证使用 `msopprof --aic-metrics=BasicInfo`：
@@ -470,7 +470,7 @@ Stage 3 双 AIV 大块搬运/后处理相对优化前降低 `84.8%~92.2%`；Stag
 `wait_id4` 平均等待分别由 `29.94/20.43/12.26 ms` 降到 `14.92/7.20/3.40 ms`，说明
 AIV 准备和 Catlass 消费已经形成有效重叠。
 
-`fwd_h` 的 varlen chunk offset 元数据由逐任务 GM 标量读取改为单次 `DataCopyPad` 搬入 UB，
+`fwd_h` 的变长序列 chunk offset 元数据由逐任务 GM 标量读取改为单次 `DataCopyPad` 搬入 UB，
 随后在 UB 中索引；目标 NTD 长序列的 `fwd_h` 从 `6.545 ms` 降至 `5.505 ms`。
 
 当前剩余主瓶颈是 Stage 1，占优化后长序列链路的约 `62%~72%`；下一轮应优先减少 score

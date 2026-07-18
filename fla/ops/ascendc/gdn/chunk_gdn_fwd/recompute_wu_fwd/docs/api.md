@@ -25,7 +25,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | `A` | 必选 | `[B,H_v,T,C]` | FP16/BF16 | BNSD | 局部矩阵 |
 | `g` | 必选 | `[B,H_v,T]` | FP16/BF16/FP32 | BNS | 标量 gate |
 | `gk` | 预留 | `-` | - | - | 当前 kernel 不消费，必须为 None |
-| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | varlen 累计长度 |
+| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | 变长序列累计长度 |
 | `chunk_indices` | 可选 | `[2*N_c]` | INT64 | ND | 展平 chunk 索引 |
 
 ### 2.2 输出
@@ -168,7 +168,7 @@ assert w.shape == (B, H_v, T, K) and u.shape == v.shape
 
 - 当前实现仅支持 `K=128`、`V=128/256`、`chunk_size=64/128`。
 - 必须满足 `H_v % H_k == 0`，A 最后一维等于 chunk_size。
-- g 必须提供；gk 当前未实现且必须为 None；varlen 物理 B=1。
+- g 必须提供；gk 当前未实现且必须为 None；变长序列物理 B=1。
 
 ## 9. 异常与返回码
 
@@ -185,5 +185,5 @@ assert w.shape == (B, H_v, T, K) and u.shape == v.shape
 
 - [x] aclnn、Python 与 `<<<>>>` 均提供签名和调用示例。
 - [x] Shape 使用模型符号，固定值仅列在已知限制。
-- [x] A2/A3/A5、fixed/varlen、GVA、标量 gate g 与错误码均有说明。
+- [x] A2/A3/A5、定长/变长序列、GVA、标量 gate g 与错误码均有说明。
 - [x] 主入口为 `fla_npu.ops.ascendc`，未把 Triton 声明为并列正式入口。

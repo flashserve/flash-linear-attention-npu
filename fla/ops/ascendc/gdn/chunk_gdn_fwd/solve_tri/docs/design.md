@@ -8,7 +8,7 @@
 
 ### 2.1 目标
 
-- README 所列 `dense BHTD/BSND 与 varlen TND，支持尾块` 场景精度与仓内参考实现一致。
+- README 所列 `dense BHTD/BSND 与变长序列 TND，支持尾块` 场景精度与仓内参考实现一致。
 - A2/A3/A5 均能构建和执行，`--cce-auto-sync=off`。
 - 若本算子用于替换 Triton，同一 shape/dtype/layout 下 Ascend C 性能优于被替换实现。
 - aclnn、`fla_npu.ops.ascendc`、`<<<>>>` 使用同一接口语义。
@@ -20,7 +20,7 @@
 
 ## 3. 能力边界
 
-实现类型：`ascendc`。Dtype：FP16/BF16。Layout：BHTD `[B,H_v,T,C]`、BSND `[B,T,H_v,C]`、TND `[T,H_v,C]`；layout 字符串必须小写。模式：dense BHTD/BSND 与 varlen TND，支持尾块。
+实现类型：`ascendc`。Dtype：FP16/BF16。Layout：BHTD `[B,H_v,T,C]`、BSND `[B,T,H_v,C]`、TND `[T,H_v,C]`；layout 字符串必须小写。模式：dense BHTD/BSND 与变长序列 TND，支持尾块。
 Shape 符号统一引用[算子 README 的 Shape 变量说明](../README.md#shape-symbols)。
 
 ## 4. 数学与接口语义
@@ -73,7 +73,7 @@ layout 规范化，不改变公式、边界 mask、head 映射或可选输入语
 
 ### 6.3 模板化方案与 tiling key
 
-固定使用 key 1 作为既有 kernel launch ABI，key 不承载 shape 或模式分派。C、dtype、layout、尾块和 varlen 全部由 tiling data 处理，因此不会随 B/H/T 产生组合爆炸；保留 key 1 是因为 kernel 入口现有 TILING_KEY_IS(1) 编译契约。
+固定使用 key 1 作为既有 kernel launch ABI，key 不承载 shape 或模式分派。C、dtype、layout、尾块和变长序列全部由 tiling data 处理，因此不会随 B/H/T 产生组合爆炸；保留 key 1 是因为 kernel 入口现有 TILING_KEY_IS(1) 编译契约。
 
 ## 7. Kernel 设计
 
@@ -98,7 +98,7 @@ UB/L1 保存当前三角 tile 和单位阵，L0/Cube 处理块乘更新；GM 输
 
 ### 7.4 边界处理
 
-dense/fixed 尾块与 varlen 尾段均按每条逻辑序列的有效长度计算，任何补齐元素在参与指数、矩阵乘或归约前使用中性值或 mask，并按公开输出语义写零。非法累计长度和索引由 host 拦截。
+定长尾块与变长序列尾段均按每条逻辑序列的有效长度计算，任何补齐元素在参与指数、矩阵乘或归约前使用中性值或 mask，并按公开输出语义写零。非法累计长度和索引由 host 拦截。
 
 ## 8. 平台设计
 
@@ -127,7 +127,7 @@ A2/A3/A5 使用相同 case ID，平台只决定编译与运行目标。
 ## 12. 已知限制与演进计划
 
 - 矩阵阶/最后一维 C 支持 16/32/64/128。
-- layout 仅支持小写 `bhtd`、`bsnd`、`tnd`；TND 必须提供两个 varlen 索引，dense layout 不接受 varlen 索引。
+- layout 仅支持小写 `bhtd`、`bsnd`、`tnd`；TND 必须提供两个变长序列索引，定长布局 不接受变长序列索引。
 - 输入必须表示严格下三角 A；对角线由算子加单位阵。
 
 后续扩展任何限制时，必须同时修改 host 拦截、API 错误码、README、JSON 与三平台回归；模板实例增长前先评估二进制体积和编译耗时。

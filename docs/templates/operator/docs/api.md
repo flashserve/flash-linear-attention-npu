@@ -376,7 +376,7 @@ torch.npu.synchronize()
 
 Triton 算子删除本章节。
 
-说明直调参数顺序、tiling data、block dim、workspace、stream、平台特化要求，以及 fixed/varlen 时可选参数的空指针处理。
+说明直调参数顺序、tiling data、block dim、workspace、stream、平台特化要求，以及定长/变长序列时可选参数的空指针处理。
 
 ### 6.1 调用示例
 
@@ -439,14 +439,14 @@ output = torch.ops.npu.<op_name>(...)
 | A3 | `ascend910_93` | 支持 | `<limitation>` |
 | A5 | `ascend950` | 支持 | `<limitation>` |
 
-> **填写示例：** `chunk_bwd_dv_local` 应分别说明 A2/A3 的公共 kernel 路径和 A5 `arch35/` 特化路径，并给出各平台是否支持 fixed/varlen、全部受支持 `V` 和 FP32 gate。
+> **填写示例：** `chunk_bwd_dv_local` 应分别说明 A2/A3 的公共 kernel 路径和 A5 `arch35/` 特化路径，并给出各平台是否支持定长/变长序列、全部受支持 `V` 和 FP32 gate。
 
 ## 9. 已知限制
 
 - `<fixed dimension or cross-parameter limitation>`
 - `<unsupported optional input or mode>`
 
-> **填写示例：** `chunk_bwd_dv_local` 在这里集中说明 `K` 仅支持 128、`V` 仅支持 128/256、varlen 仅支持 `B=1`，以及 `g_gamma/A` 当前必须为空。`chunk_size` 的合法值 `{64, 128}` 已写入属性表“取值范围”；只有平台差异或跨参数组合约束需要在本节补充。输入输出表中的 Shape 仍只写符号变量。
+> **填写示例：** `chunk_bwd_dv_local` 在这里集中说明 `K` 仅支持 128、`V` 仅支持 128/256、变长序列仅支持 `B=1`，以及 `g_gamma/A` 当前必须为空。`chunk_size` 的合法值 `{64, 128}` 已写入属性表“取值范围”；只有平台差异或跨参数组合约束需要在本节补充。输入输出表中的 Shape 仍只写符号变量。
 
 ## 10. 异常与返回码
 
@@ -465,7 +465,7 @@ output = torch.ops.npu.<op_name>(...)
 - 负向测试：每类公开约束和每类代码拦截至少有一个负向用例，`expected_return_code` 和错误信息断言必须与实际分支一致；用例 ID 统一指向 `tests/op_cases/<op_name>.json`。
 - 同步修改：新增、删除或收紧任一约束时，必须在同一个改动中同步代码拦截、错误日志、返回码、本节表格和负向测试。
 
-> **填写示例：** `chunk_bwd_dv_local` 应为“已知限制”中的每项约束分别填写实际校验函数或分支、返回码、日志关键字和 JSON 负向用例 ID，并补充 `H_v % H_k != 0`、varlen 两个索引只传一个等组合错误。若某项文档约束找不到代码拦截，必须先补代码；若某个代码拦截找不到文档条目，必须先补文档，不能只在“说明”中笼统写“参数非法”。
+> **填写示例：** `chunk_bwd_dv_local` 应为“已知限制”中的每项约束分别填写实际校验函数或分支、返回码、日志关键字和 JSON 负向用例 ID，并补充 `H_v % H_k != 0`、变长序列两个索引只传一个等组合错误。若某项文档约束找不到代码拦截，必须先补代码；若某个代码拦截找不到文档条目，必须先补文档，不能只在“说明”中笼统写“参数非法”。
 
 ## 11. 文档自检
 

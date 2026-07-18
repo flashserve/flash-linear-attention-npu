@@ -21,7 +21,7 @@
       "NTD"
     ],
     "features": [
-      "dense/varlen",
+      "定长/变长序列",
       "四种显式 layout",
       "可选初始/最终状态",
       "可选中间量"
@@ -50,7 +50,7 @@
   },
   "coverage_requirements": {
     "public_modes": [
-      "dense/varlen",
+      "定长/变长序列",
       "四种显式 layout",
       "可选初始/最终状态",
       "可选中间量"
@@ -58,7 +58,7 @@
     "known_limits": [
       "chunk_size 仅支持 64/128；K/V 均须在 [16,256] 且为 16 的倍数；交付矩阵覆盖 K=128、V=128/256。",
       "H_k/H_v 必须在 [1,128] 且 H_v % H_k == 0；TND 仅支持 H_k=1，多 head rank3 使用 NTD。",
-      "varlen 的 cu_seqlens 至少含首尾、非递减且末项等于 T；单次最多 1024 条逻辑序列。",
+      "变长序列的 cu_seqlens 至少含首尾、非递减且末项等于 T；单次最多 1024 条逻辑序列。",
       "显式 chunk_indices 必须完整、合法并严格采用 sequence-major 规范顺序。",
       "safe_gate 与 transpose_state_layout 当前必须为 false；raw gate 应先调用 kda_gate_cumsum。"
     ],

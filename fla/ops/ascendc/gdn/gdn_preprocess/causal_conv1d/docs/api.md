@@ -23,7 +23,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | `weight` | 必选 | `[W,D]` | FP16/BF16 | ND | depthwise 卷积权重 |
 | `bias` | 可选 | `[D]` | FP16/BF16 | ND | 偏置 |
 | `conv_states` | 必选/可变 | `[D_s,L_s,D]` | FP16/BF16 | ND | 历史输入状态，原地更新 |
-| `query_start_loc` | 可选 | `[B+1]` | INT64 | ND | varlen 序列边界 |
+| `query_start_loc` | 可选 | `[B+1]` | INT64 | ND | 变长序列边界 |
 | `cache_indices` | 可选 | `[B]` | INT64 | ND | 序列到状态槽的映射 |
 | `initial_state_mode` | 可选 | `[B]` | INT64 | ND | 是否使用已有初始状态 |
 | `num_accepted_tokens` | 可选 | `[B]` | INT64 | ND | 投机解码接受数 |
@@ -179,5 +179,5 @@ assert y.shape == x.shape
 
 - [x] aclnn、Python 与 `<<<>>>` 均提供签名和调用示例。
 - [x] Shape 使用模型符号，固定值仅列在已知限制。
-- [x] A2/A3/A5、dense/varlen forward、decode/update、投机接受 token 与错误码均有说明。
+- [x] A2/A3/A5、定长/变长序列 forward、decode/update、投机接受 token 与错误码均有说明。
 - [x] 主入口为 `fla_npu.ops.ascendc`，未把 Triton 声明为并列正式入口。

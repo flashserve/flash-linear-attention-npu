@@ -22,7 +22,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | `k` | 必选 | `[B,H_k,T,K]` | FP16/BF16 | BNSD | Key |
 | `g` | 必选 | `[B,H_v,T]` | FP32 | BNS | 累积 gate |
 | `beta` | 必选 | `[B,H_v,T]` | FP32 | BNS | 行缩放 |
-| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | varlen 累计长度 |
+| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | 变长序列累计长度 |
 | `chunk_indices` | 可选 | `[2*N_c]` | INT64 | ND | 展平 chunk 索引 |
 
 ### 2.2 输出
@@ -147,8 +147,8 @@ assert A.shape == (B, H_k, T, C) and A.dtype == torch.float32
 
 - chunk_size 仅支持 16/32/64/128。
 - 必须满足 H_v % H_k == 0；A 的 head 维为 H_k。
-- cu_seqlens/chunk_indices 必须同时提供或同时省略；varlen 物理 B 必须为 1。
-- varlen 累计长度必须覆盖 [0,T]，chunk_indices 必须按 sequence-major 完整列出每个 C 大小的 chunk。
+- cu_seqlens/chunk_indices 必须同时提供或同时省略；变长序列物理 B 必须为 1。
+- 变长序列累计长度必须覆盖 [0,T]，chunk_indices 必须按 sequence-major 完整列出每个 C 大小的 chunk。
 - 指数差固定 clip 到 [-50,50]；H_v>H_k 时当前实现读取 g/beta 的前 H_k 个 head。
 
 ## 9. 异常与返回码
@@ -158,7 +158,7 @@ assert A.shape == (B, H_k, T, C) and A.dtype == torch.float32
 | k/g/beta/A、workspaceSize 或 executor 为空 | ACLNN_ERR_PARAM_NULLPTR / ACLNN_ERR_PARAM_INVALID |
 | k 非 FP16/BF16，g/beta 非 FP32，或 B/T/H_v shape 不匹配 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
 | H_v 不能被 H_k 整除，或 chunk_size 不在 16/32/64/128 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
-| varlen 索引未成对、累计长度/索引顺序非法或物理 B!=1 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
+| 变长序列索引未成对、累计长度/索引顺序非法或物理 B!=1 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
 
 负向 case 的 `expect.return_code` 与消息片段集中定义在 `tests/op_cases/chunk_scaled_dot_kkt.json`，修改拦截时必须同步更新。
 
@@ -166,5 +166,5 @@ assert A.shape == (B, H_k, T, C) and A.dtype == torch.float32
 
 - [x] aclnn、Python 与 `<<<>>>` 均提供签名和调用示例。
 - [x] Shape 使用模型符号，固定值仅列在已知限制。
-- [x] A2/A3/A5、fixed/varlen、GVA 输入、整块/尾块 与错误码均有说明。
+- [x] A2/A3/A5、定长/变长序列、GVA 输入、整块/尾块 与错误码均有说明。
 - [x] 主入口为 `fla_npu.ops.ascendc`，未把 Triton 声明为并列正式入口。

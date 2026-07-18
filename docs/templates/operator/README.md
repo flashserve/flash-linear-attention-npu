@@ -48,11 +48,11 @@
 | Dtype | `<dtypes>` |
 | Format/Layout | `<formats/layouts>` |
 | Shape | `<shape range>` |
-| fixed/varlen | `<support status>` |
+| 定长/变长序列 | `<support status>` |
 
 说明状态输入输出、padding、无效区域、尾块、空输入和其他边界语义，以及各平台存在的限制或差异。
 
-> **Hint：** `chunk_bwd_dv_local` 同时支持 fixed 和 varlen。正文说明 varlen 需要同时提供 `cu_seqlens` 和 `chunk_indices`，并说明 `T` 非 `chunk_size` 整数倍和 `hRatio>1` 的行为；固定维度和 batch 限制写入“已知限制”。
+> **Hint：** `chunk_bwd_dv_local` 同时支持定长和变长序列。正文说明变长序列需要同时提供 `cu_seqlens` 和 `chunk_indices`，并说明 `T` 非 `chunk_size` 整数倍和 `hRatio>1` 的行为；固定维度和 batch 限制写入“已知限制”。
 
 ## 5. 调用入口
 
@@ -78,13 +78,13 @@
 - 性能目标：`<target shapes and target>`
 - Triton 对比范围：`<benchmark matrix>`
 
-> **Hint：** `chunk_bwd_dv_local` 的矩阵至少覆盖 fixed/varlen、支持的 Q/K/V dtype、支持的 gate dtype、全部 `chunk_size`、全部 `V` 和不同 `hRatio`。若 Ascend C 替换 Triton，应列出相同输入下的 profiling 结果。
+> **Hint：** `chunk_bwd_dv_local` 的矩阵至少覆盖定长/变长序列、支持的 Q/K/V dtype、支持的 gate dtype、全部 `chunk_size`、全部 `V` 和不同 `hRatio`。若 Ascend C 替换 Triton，应列出相同输入下的 profiling 结果。
 
 ## 7. 已知限制
 
 - `<unsupported case or limitation>`
 
-> **Hint：** 不要只写“部分场景不支持”。例如应明确写出 `K` 仅支持 128、`V` 仅支持 128/256、`chunk_size` 仅支持 64/128、varlen 仅支持 `B=1`，以及预留输入 `g_gamma`、`A` 当前必须为空。
+> **Hint：** 不要只写“部分场景不支持”。例如应明确写出 `K` 仅支持 128、`V` 仅支持 128/256、`chunk_size` 仅支持 64/128、变长序列仅支持 `B=1`，以及预留输入 `g_gamma`、`A` 当前必须为空。
 
 ## 8. 构建与验证
 

@@ -25,7 +25,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | `dy` | 必选 | `与 y 同形` | 与 x 一致 | 由 input_layout 决定 | 上游梯度 |
 | `initial_state` | 可选 | `[B,W,D]` | 与 x 一致 | ND | 前向初始状态 |
 | `dht` | 可选 | `[B,W,D]` | 与 x 一致 | ND | 末状态梯度 |
-| `query_start_loc` | TND/NTD 必选 | `[B+1]` | INT64 | ND | varlen 序列边界 |
+| `query_start_loc` | TND/NTD 必选 | `[B+1]` | INT64 | ND | 变长序列边界 |
 
 ### 2.2 输出
 
@@ -166,7 +166,7 @@ assert dx.shape == x.shape and dw.shape == weight.shape
 | activation 不在 0/1/2，或启用激活时 y 缺失/shape 不匹配 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
 | layout 不在 BSH/BSND/BNSD/TND/NTD，或物理 rank/shape 不匹配 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
 | W 不在 2/3/4、D/V 未按 16 对齐、浮点 dtype 不一致 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
-| varlen 缺 query_start_loc 或累计长度非法 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
+| 变长序列缺 query_start_loc 或累计长度非法 | ACLNN_ERR_PARAM_INVALID / Python RuntimeError |
 
 负向 case 的 `expect.return_code` 与消息片段集中定义在 `tests/op_cases/causal_conv1d_bwd.json`，修改拦截时必须同步更新。
 
@@ -174,5 +174,5 @@ assert dx.shape == x.shape and dw.shape == weight.shape
 
 - [x] aclnn、Python 与 `<<<>>>` 均提供签名和调用示例。
 - [x] Shape 使用模型符号，固定值仅列在已知限制。
-- [x] A2/A3/A5、dense/varlen、无激活/SiLU、可选初末状态 与错误码均有说明。
+- [x] A2/A3/A5、定长/变长序列、无激活/SiLU、可选初末状态 与错误码均有说明。
 - [x] 主入口为 `fla_npu.ops.ascendc`，未把 Triton 声明为并列正式入口。

@@ -25,7 +25,7 @@
 必须说明并验证：
 
 - 输入、输出、属性、可选参数和预留参数语义。
-- 支持的 dtype、format、layout、shape 范围、batch/head/chunk 关系和 varlen/dense 场景。
+- 支持的 dtype、format、layout、shape 范围、batch/head/chunk 关系和变长序列/dense 场景。
 - 特殊值、空输入、尾块、padding、无效 token、partial chunk、初始状态和最终状态的语义。
 - workspace 大小、对齐要求、输出别名、原地写入或禁止原地写入的约束。
 - 不支持场景的拦截条件、返回码和报错文本。
@@ -122,8 +122,8 @@ from fla_npu.ops.triton import op_name
 
 - host tiling 负责校验入参、推导 shape/layout/workspace/任务划分，并写入结构化 tiling data。
 - kernel 入口根据少量字段选择模板实例。
-- 模板内部使用 `if constexpr` 或模板参数裁剪 dtype、固定维度、layout、safe gate、是否 varlen 等热路径分支。
-- fixed/varlen、layout、head ratio、chunk 映射等策略应封装为清晰的 strategy 或 helper，避免散落在 kernel 内层循环。
+- 模板内部使用 `if constexpr` 或模板参数裁剪 dtype、固定维度、layout、safe gate、是否变长序列等热路径分支。
+- 定长/变长序列、layout、head ratio、chunk 映射等策略应封装为清晰的 strategy 或 helper，避免散落在 kernel 内层循环。
 
 tiling key 只应用于少量确实需要独立 kernel 变体或框架注册机制要求的场景。若必须使用 tiling key，PR 中必须说明：
 
@@ -200,7 +200,7 @@ L2 与类型转换还必须遵守：
 - Ascend C 算子的主验证入口为 `fla_npu.ops.ascendc`，Triton 算子的主验证入口为 `fla_npu.ops.triton`。
 - 对比基准应来自可信 PyTorch/Triton/数学参考实现，阈值来源应写入测试或算子文档。
 - 所有公开输出都要验证，包括中间返回、最终状态、workspace 派生输出和可选输出。
-- 检查 NaN/Inf、重复运行一致性、边界 shape、尾块、padding、varlen、head ratio、dtype 转换和极值范围。
+- 检查 NaN/Inf、重复运行一致性、边界 shape、尾块、padding、变长序列、head ratio、dtype 转换和极值范围。
 - 修改 bug 时必须保留能稳定复现原问题的回归用例，并回到原始 shape/layout/dtype/调用链确认问题消失。
 
 禁止通过以下方式制造精度通过：
@@ -279,7 +279,7 @@ tests/
 | op_host | Ascend C 算子覆盖输入输出数量、required/optional、dtype、format、shape 推导、workspace、block dim、tiling data、模板选择和非法参数拦截。 |
 | 主精度 | 通过实现类型对应的 `fla_npu` 入口调用，逐项比较全部公开输出，并检查 NaN/Inf；覆盖支持的 dtype、layout、format、shape、属性和平台。 |
 | 泛化 | 最小、典型、最大目标 shape，非整除尾块，batch/head/sequence/chunk/K/V 等关键维度组合，以及会切换 tiling/template 的场景。 |
-| 功能分支 | fixed/varlen、正向/反向、初始/最终状态、可选输入为空或非空、padding、无效 token、partial chunk 等算子声明支持的分支。 |
+| 功能分支 | 定长/变长序列、正向/反向、初始/最终状态、可选输入为空或非空、padding、无效 token、partial chunk 等算子声明支持的分支。 |
 | 边界与异常 | 空输入、单元素、维度上下界、非法 dtype/layout/shape/属性、空指针、预留参数非法值；校验实际返回码和错误类型。 |
 | 回归 | 每个已修复问题保留稳定复现用例，保持原始 shape、dtype、layout、属性、随机种子和调用链。 |
 | 调用通路 | Ascend C 算子覆盖 aclnn、`<<<>>>` 和 `fla_npu.ops.ascendc`；Triton 算子覆盖 `fla_npu.ops.triton`；`torch.ops.npu` 如实现则必须覆盖。 |
@@ -439,7 +439,7 @@ docs/templates/operator/
 - 输入、输出和属性表，包括参数顺序、含义、required/optional、shape、dtype、format、取值范围、默认值和约束。
 - Shape 使用 `B`、`H_k`、`H_v`、`T`、`K`、`V` 等符号变量表达，不在 Shape 中直接写固定数值；固定维度写入“已知限制”。枚举或离散属性必须在属性表的“取值范围”中完整列出合法值，平台差异和跨参数组合约束再补充到“已知限制”。
 - A2/A3/A5 支持情况，以及各平台存在的限制或实现差异。
-- 支持的 fixed/varlen、layout、状态输入输出、padding、无效区域和边界语义。
+- 支持的定长/变长序列、layout、状态输入输出、padding、无效区域和边界语义。
 - 实现类型，以及对应的 `fla_npu.ops.ascendc` 或 `fla_npu.ops.triton` 入口概览。
 - Ascend C 算子的 aclnn、`<<<>>>` 入口概览，以及可选 `torch.ops.npu`；如 Ascend C 替换 Triton，写明仓内 example 已迁移到 Ascend C。
 - 精度标杆和阈值、性能测试范围、已知限制和不支持场景。

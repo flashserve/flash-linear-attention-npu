@@ -27,7 +27,7 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 | `gk` | 必选 | `与 k 的 token/head/K 维对应` | FP32/BF16 | 同 layout | chunk 内 log2 累积 key gate |
 | `beta` | 必选 | `去掉 K 维的 gk shape` | FP32/BF16 | 同 layout | Delta 更新系数 |
 | `initial_state` | 可选 | `[N,H_v,K,V]` | FP32 | ND | 每条逻辑序列的初始状态 |
-| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | varlen 累计长度 |
+| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | 变长序列累计长度 |
 | `chunk_indices` | 可选 | `[2*N_c]` | INT64 | ND | sequence-major chunk 二元组 |
 
 ### 2.2 输出
@@ -215,7 +215,7 @@ assert o.shape == v.shape and final_state.dtype == torch.float32
 
 - chunk_size 仅支持 64/128；K/V 均须在 [16,256] 且为 16 的倍数；交付矩阵覆盖 K=128、V=128/256。
 - H_k/H_v 必须在 [1,128] 且 H_v % H_k == 0；TND 仅支持 H_k=1，多 head rank3 使用 NTD。
-- varlen 的 cu_seqlens 至少含首尾、非递减且末项等于 T；单次最多 1024 条逻辑序列。
+- 变长序列的 cu_seqlens 至少含首尾、非递减且末项等于 T；单次最多 1024 条逻辑序列。
 - 显式 chunk_indices 必须完整、合法并严格采用 sequence-major 规范顺序。
 - safe_gate 与 transpose_state_layout 当前必须为 false；raw gate 应先调用 kda_gate_cumsum。
 
@@ -226,7 +226,7 @@ assert o.shape == v.shape and final_state.dtype == torch.float32
 | workspaceSize 或 executor 为空 | ACLNN_ERR_PARAM_NULLPTR |
 | q/k/v/gk/beta 或任一必选输出为空 | ACLNN_ERR_PARAM_INVALID（CheckParams 外层映射） |
 | layout、rank、shape、dtype、GVA、K/V、chunk_size 或 scale 不合法 | ACLNN_ERR_PARAM_INVALID |
-| varlen 累计长度、chunk 顺序、物理 B 或状态 shape 不合法 | ACLNN_ERR_PARAM_INVALID |
+| 变长序列累计长度、chunk 顺序、物理 B 或状态 shape 不合法 | ACLNN_ERR_PARAM_INVALID |
 | return_intermediate 与中间输出的全有/全无契约不一致 | ACLNN_ERR_PARAM_INVALID |
 | 执行器创建、内部布局转换或 kernel 执行失败 | ACLNN_ERR_INNER/内部错误码 |
 
@@ -236,5 +236,5 @@ assert o.shape == v.shape and final_state.dtype == torch.float32
 
 - [x] aclnn、Python 与 `<<<>>>` 均提供签名和调用示例。
 - [x] Shape 使用模型符号，固定值仅列在已知限制。
-- [x] A2/A3/A5、dense/varlen、四种显式 layout、可选初始/最终状态、可选中间量 与错误码均有说明。
+- [x] A2/A3/A5、定长/变长序列、四种显式 layout、可选初始/最终状态、可选中间量 与错误码均有说明。
 - [x] 主入口为 `fla_npu.ops.ascendc`，未把 Triton 声明为并列正式入口。
