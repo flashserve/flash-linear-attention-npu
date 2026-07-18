@@ -38,7 +38,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `<attr>` | `<required>` | `<type>` | `<default>` | `<range>` | `<description>` |
 
-> **Hint：** `chunk_bwd_dv_local` 的 `scale` 为必选浮点属性，通常取 `1/sqrt(K)`；`chunk_size` 为必选整数属性，具体支持值写入“已知限制”。
+> **Hint：** `chunk_bwd_dv_local` 的 `scale` 为必选浮点属性，通常取 `1/sqrt(K)`；`chunk_size` 为必选整数属性，应在“取值范围”中完整列出 `{64, 128}`。推荐值写入“说明”，不得与硬约束混写。
 
 ## 4. 支持范围
 
@@ -52,7 +52,7 @@
 
 说明状态输入输出、padding、无效区域、尾块、空输入和其他边界语义，以及各平台存在的限制或差异。
 
-> **Hint：** `chunk_bwd_dv_local` 同时支持 fixed 和 varlen。正文说明 varlen 需要同时提供 `cu_seqlens` 和 `chunk_indices`，并说明 `T` 非 `chunk_size` 整数倍和 `hRatio>1` 的行为；固定取值和 batch 限制写入“已知限制”。
+> **Hint：** `chunk_bwd_dv_local` 同时支持 fixed 和 varlen。正文说明 varlen 需要同时提供 `cu_seqlens` 和 `chunk_indices`，并说明 `T` 非 `chunk_size` 整数倍和 `hRatio>1` 的行为；固定维度和 batch 限制写入“已知限制”。
 
 ## 5. 调用入口
 

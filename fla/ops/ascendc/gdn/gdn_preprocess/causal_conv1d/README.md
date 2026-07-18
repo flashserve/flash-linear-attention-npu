@@ -40,12 +40,12 @@ y[t,d] = z[t,d] * sigmoid(z[t,d]) activation_mode=1
 
 ### 3.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `activation_mode` | int | `0` | 0=无激活，1=SiLU |
-| `pad_slot_id` | int | `-1` | 跳过的缓存槽 |
-| `run_mode` | int | `0` | 0=forward，1=update |
-| `head_num` | int | `0` | forward 输出拆分 head；0 保持 BSH/TH |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `activation_mode` | int | `0` | `{0, 1}` | 0=无激活，1=SiLU |
+| `pad_slot_id` | int | `-1` | int64 可表示范围 | 与 `cache_indices` 中表示跳过的槽位值一致 |
+| `run_mode` | int | `0` | `{0, 1}` | 0=forward，1=update |
+| `head_num` | int | `0` | `>=0` | forward 输出拆分 head；0 保持 BSH/TH，正值还须满足整除约束 |
 
 ## 4. 支持范围
 

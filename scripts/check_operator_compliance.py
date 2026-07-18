@@ -103,6 +103,18 @@ def validate_documents(op: str, root: Path, errors: list[str]) -> None:
             errors.append(f"{path.relative_to(ROOT)}: must link to the README Shape appendix")
         if "附录：Shape 变量说明" in text:
             errors.append(f"{path.relative_to(ROOT)}: Shape appendix must only appear in README")
+    for relative, heading in (("README.md", "### 3.3 属性"), ("docs/api.md", "### 2.3 属性")):
+        path = root / relative
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if heading not in text:
+            errors.append(f"{path.relative_to(ROOT)}: missing attribute section {heading!r}")
+            continue
+        attribute_section = text.split(heading, 1)[1].split("\n## ", 1)[0]
+        table_header = next((line for line in attribute_section.splitlines() if line.startswith("|")), "")
+        if "取值范围" not in table_header:
+            errors.append(f"{path.relative_to(ROOT)}: attribute table must include a value-range column")
     for path in root.glob("docs/aclnn*.md"):
         errors.append(f"legacy standalone API document: {path.relative_to(ROOT)}")
 

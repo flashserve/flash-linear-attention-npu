@@ -39,9 +39,9 @@ dA = causal_mask(dA) + A-dependent triangular correction
 
 ### 3.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `chunk_size` | int | `无` | 必须等于 A/dA 最后一维 |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `chunk_size` | int | `无` | `{64, 128}` | 必须等于 A/dA 最后一维 |
 
 ## 4. 支持范围
 

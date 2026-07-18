@@ -37,9 +37,9 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 
 ### 2.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `chunk_size` | int | `无` | chunk 长度并等于 A 最后一维 |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `chunk_size` | int | `无` | `{64, 128}` | chunk 长度并等于 A 最后一维 |
 
 ## 3. aclnn API
 

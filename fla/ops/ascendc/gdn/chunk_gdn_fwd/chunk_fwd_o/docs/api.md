@@ -36,11 +36,11 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 
 ### 2.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `scale` | double | `无` | Query 缩放 |
-| `chunk_size` | int | `64` | chunk 长度 |
-| `transpose_state_layout` | bool | `false` | 预留参数，当前必须 false |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `scale` | double | `无` | - | Query 缩放 |
+| `chunk_size` | int | `64` | `{64, 128}` | chunk 长度 |
+| `transpose_state_layout` | bool | `false` | `{false}` | 预留参数，当前必须 false |
 
 ## 3. aclnn API
 

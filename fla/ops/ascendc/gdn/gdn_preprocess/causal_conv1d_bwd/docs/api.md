@@ -38,10 +38,10 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 
 ### 2.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `activation` | int | `0` | 0=无激活，1=SiLU，2=Swish(同 SiLU) |
-| `input_layout` | str | `BSND` | BSH/BSND/BNSD/TND/NTD |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `activation` | int | `0` | `{0, 1, 2}` | 0=无激活，1=SiLU，2=Swish（同 SiLU） |
+| `input_layout` | str | `BSND` | `{"BSH", "BSND", "BNSD", "TND", "NTD"}` | 输入输出布局 |
 
 ## 3. aclnn API
 

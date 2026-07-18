@@ -399,7 +399,7 @@ docs/templates/operator/
     └── api.md
 ```
 
-新增算子必须以该目录中的模板为基础创建文档；不适用章节应说明原因或删除，不能保留未替换的占位符。模板中的 `> **Hint：**` 使用 `chunk_bwd_dv_local` 展示填写粒度，完成具体算子文档后应删除这些 Hint。
+新增算子必须以该目录中的模板为基础创建文档；不适用章节应说明原因或删除，不能保留未替换的占位符。模板中的“提示”和“示例”使用 `chunk_bwd_dv_local` 展示填写粒度，完成具体算子文档后应删除这些辅助内容。
 
 模板入口：[算子 README 模板](templates/operator/README.md)、[设计文档模板](templates/operator/docs/design.md)、[统一 API 文档模板](templates/operator/docs/api.md)。
 
@@ -409,7 +409,7 @@ docs/templates/operator/
 
 - 算子功能、数学定义、输入输出关系和典型使用场景。
 - 输入、输出和属性表，包括参数顺序、含义、required/optional、shape、dtype、format、取值范围、默认值和约束。
-- Shape 使用 `B`、`H_k`、`H_v`、`T`、`K`、`V` 等符号变量表达，不在 Shape 中直接写固定数值；固定维度和属性取值统一写入“已知限制”。
+- Shape 使用 `B`、`H_k`、`H_v`、`T`、`K`、`V` 等符号变量表达，不在 Shape 中直接写固定数值；固定维度写入“已知限制”。枚举或离散属性必须在属性表的“取值范围”中完整列出合法值，平台差异和跨参数组合约束再补充到“已知限制”。
 - A2/A3/A5 支持情况，以及各平台存在的限制或实现差异。
 - 支持的 fixed/varlen、layout、状态输入输出、padding、无效区域和边界语义。
 - 实现类型，以及对应的 `fla_npu.ops.ascendc` 或 `fla_npu.ops.triton` 入口概览。
@@ -443,7 +443,7 @@ docs/templates/operator/
 
 - API 总览：按实现类型列出 `fla_npu.ops.ascendc` 或 `fla_npu.ops.triton`；Ascend C 算子同时列出 aclnn、`<<<>>>`，实现时再列出可选的 `torch.ops.npu`。
 - 每个 API 的完整签名、参数顺序、输入输出、属性、required/optional、shape、dtype、format、取值范围、默认值和约束。
-- API 参数表中的 Shape 只使用符号变量，固定支持值写入“已知限制”；Shape 和接口语义处链接算子 README 的 Shape 变量附录，`docs/api.md` 不重复维护符号表。
+- API 参数表中的 Shape 只使用符号变量，固定维度写入“已知限制”；枚举或离散属性的全部合法值写入属性表的“取值范围”。Shape 和接口语义处链接算子 README 的 Shape 变量附录，`docs/api.md` 不重复维护符号表。
 - aclnn 的 `GetWorkspaceSize`、执行接口、workspace、executor、stream、异步执行、返回值和错误码，仅 Ascend C 算子需要。
 - 与实现类型对应的 `fla_npu` 公开函数导入方式、参数和返回值；Ascend C 路径还需说明默认解耦调用约定。
 - Ascend C `<<<>>>` 直调所需的 tiling data、block dim、workspace、stream 和参数顺序说明，仅 Ascend C 算子需要。
@@ -506,6 +506,7 @@ PR 提交前至少完成以下检查：
 - [ ] 算子 `README.md`、`docs/design.md` 和统一 `docs/api.md` 已新增或同步更新，未拆分 aclnn 专用文档。
 - [ ] 新增算子文档已使用 `docs/templates/operator/` 模板，且不存在未替换占位符。
 - [ ] Shape 已使用符号变量表达，固定取值已归入“已知限制”；只有算子 README 保留变量附录，设计文档和 API 文档已链接该附录且未复制符号表。
+- [ ] 枚举或离散属性的全部合法值已在属性表“取值范围”中列出，未只写入“已知限制”或说明文字。
 - [ ] 算子符号与所属模型根 README 的权威符号表一致；模型符号变更已同步所有受影响算子、JSON case 和测试。
 - [ ] `docs/api.md` 已包含实现类型对应的 `fla_npu` 示例；Ascend C 算子还包含 aclnn、`<<<>>>` 示例，`torch.ops.npu` 实现时包含可选示例。
 - [ ] Python 导出、schema、测试、仓内 Example/ST 和文档已同步。

@@ -39,10 +39,10 @@ dV_local = Ws_gated @ dO[h_v]
 
 ### 3.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `scale` | double | `无` | 通常为 1/sqrt(K) |
-| `chunk_size` | int | `无` | chunk 长度 |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `scale` | double | `无` | - | 通常为 1/sqrt(K) |
+| `chunk_size` | int | `无` | `{64, 128}` | chunk 长度 |
 
 ## 4. 支持范围
 

@@ -39,9 +39,9 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 
 ### 2.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `scale_value` | float | `1.0` | 推荐 1/sqrt(K) |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `scale_value` | float | `1.0` | - | 推荐 1/sqrt(K) |
 
 ## 3. aclnn API
 

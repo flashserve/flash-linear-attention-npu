@@ -43,12 +43,12 @@ Shape 符号见[算子 README 附录](../README.md#shape-symbols)。
 
 ### 2.3 属性
 
-| 名称 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `scale` | float | `None` | Python 的 None 按 1.0 传入；注意力缩放需显式传 1/sqrt(K) |
-| `chunk_size` | int | `64` | chunk 长度 |
-| `use_exp2` | bool | `false` | 预留，当前仅 false |
-| `transpose_state_layout` | bool | `false` | 预留，当前仅 false |
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `scale` | float | `None` | - | Python 的 None 按 1.0 传入；注意力缩放需显式传 1/sqrt(K) |
+| `chunk_size` | int | `64` | `{64, 128}` | chunk 长度 |
+| `use_exp2` | bool | `false` | `{false}` | 预留，当前仅支持 false |
+| `transpose_state_layout` | bool | `false` | `{false}` | 预留，当前仅支持 false |
 
 ## 3. aclnn API
 
