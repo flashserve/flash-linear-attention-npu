@@ -308,18 +308,18 @@ jobs:
       pull-requests: read
       statuses: write
     env:
-      CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
-      CI_OPS: ${{ needs.prepare.outputs.ops }}
-      CI_RUN_EXAMPLE_ST: 'true'
-      CI_RUN_OPERATOR_GENERALIZATION: 'true'
-      CI_RUN_OPERATOR_ACCURACY: 'true'
-      CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK: 'true'
-      CI_RUN_SCOPED_WHEEL_INSTALL_CHECK: 'true'
-      CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report.json
-      CI_ACCURACY_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
-      CI_ACCURACY_RUN_ID: ${{ github.run_id }}
-      CI_ACCURACY_RUN_ATTEMPT: ${{ github.run_attempt }}
-      CI_IMAGE: fla-npu-ci:8.5.0-910b
+      CI_MODE: ${{ needs.prepare.outputs.ci_mode }} # 选择 quick 构建或 full 全量验证流程
+      CI_OPS: ${{ needs.prepare.outputs.ops }} # 限定待验证算子；为空时覆盖全部已注册算子
+      CI_RUN_EXAMPLE_ST: 'true' # 安装 OPP 和 torch_custom 后运行 Example/ST
+      CI_RUN_OPERATOR_GENERALIZATION: 'true' # 运行目标算子的 JSON 泛化用例
+      CI_RUN_OPERATOR_ACCURACY: 'true' # 运行目标算子的主精度测试
+      CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK: 'true' # 检查独立 torch_custom wheel 的目录布局
+      CI_RUN_SCOPED_WHEEL_INSTALL_CHECK: 'true' # 检查按算子裁剪 wheel 的 OPP 安装结果
+      CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report.json # 指定 Example/ST 精度汇总报告路径
+      CI_ACCURACY_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }} # 在精度报告中记录本次验证的 PR head commit
+      CI_ACCURACY_RUN_ID: ${{ github.run_id }} # 在精度报告中记录 GitHub Actions run ID
+      CI_ACCURACY_RUN_ATTEMPT: ${{ github.run_attempt }} # 在精度报告中记录本次 run 的重试序号
+      CI_IMAGE: fla-npu-ci:8.5.0-910b # 指定 Ascend NPU CI 使用的容器镜像
     steps:
       - name: 拉取当前目标分支代码（第 1 次）
         id: checkout_pr_1
