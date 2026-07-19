@@ -72,7 +72,9 @@ if [[ -n "$OP_NAME" ]]; then
 else
     for dir in tests/*/; do
         test_dir=$(basename "$dir")
-        pytest "tests/$test_dir" -v
+        if [[ -d "csrc/$test_dir" ]]; then
+            pytest "tests/$test_dir" -v
+        fi
     done
     while IFS= read -r test_file; do
         PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}" pytest "$test_file" -v
