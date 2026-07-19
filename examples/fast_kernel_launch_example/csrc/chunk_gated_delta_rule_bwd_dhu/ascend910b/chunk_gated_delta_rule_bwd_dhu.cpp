@@ -352,6 +352,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_np
     };
 
     at_npu::native::OpCommand::RunOpApi("ChunkGatedDeltaRuleBwdDhu", aclCall);
+    c10_npu::getCurrentNPUStream().synchronize();
 
     if (workspacePtr != nullptr) {
         aclrtFree(workspacePtr);

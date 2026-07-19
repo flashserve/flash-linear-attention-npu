@@ -314,6 +314,7 @@ std::tuple<at::Tensor, at::Tensor> recompute_wu_fwd_npu(
     };
 
     at_npu::native::OpCommand::RunOpApi("RecomputeWUFwd", aclCall);
+    c10_npu::getCurrentNPUStream().synchronize();
 
     if (workspacePtr != nullptr) {
         aclrtFree(workspacePtr);

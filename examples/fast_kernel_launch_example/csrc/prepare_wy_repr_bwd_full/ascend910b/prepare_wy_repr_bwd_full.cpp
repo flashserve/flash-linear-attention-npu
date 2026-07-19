@@ -325,8 +325,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> prepare_wy_repr_bwd_f
     };
 
     at_npu::native::OpCommand::RunOpApi("PrepareWyReprBwdFull", aclCall);
-    auto syncRet = aclrtSynchronizeStream(stream);
-    TORCH_CHECK(syncRet == ACL_SUCCESS, "aclrtSynchronizeStream failed. ERROR: ", syncRet);
+    c10_npu::getCurrentNPUStream().synchronize();
 
     if (workspacePtr != nullptr) {
         aclrtFree(workspacePtr);
