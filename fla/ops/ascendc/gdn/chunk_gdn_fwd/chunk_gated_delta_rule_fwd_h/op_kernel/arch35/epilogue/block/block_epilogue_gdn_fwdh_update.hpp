@@ -60,13 +60,12 @@ public:
         constexpr uint32_t PONG_BUF_1_OFFSET = 112 * 1024;
         constexpr uint32_t PONG_BUF_2_OFFSET = 128 * 1024;
         constexpr uint32_t PONG_BUF_3_OFFSET = 144 * 1024;
-        constexpr uint32_t PING_G_BUF_OFFSET = 160 * 1024;
-        constexpr uint32_t PONG_G_BUF_OFFSET = 161 * 1024;
-        constexpr uint32_t PING_G_SUB_BUF_OFFSET = 162 * 1024;
-        constexpr uint32_t PONG_G_SUB_BUF_OFFSET = 163 * 1024;
-        constexpr uint32_t PING_G_INPUT_BUF_OFFSET = 164 * 1024;
-        constexpr uint32_t PONG_G_INPUT_BUF_OFFSET = 165 * 1024;
-        constexpr uint32_t SHARE_BUF_OFFSET = 166 * 1024;
+        constexpr uint32_t PING_G_BUF_OFFSET = 168 * 1024;
+        constexpr uint32_t PONG_G_BUF_OFFSET = 169 * 1024;
+        constexpr uint32_t PING_G_SUB_BUF_OFFSET = 170 * 1024;
+        constexpr uint32_t PONG_G_SUB_BUF_OFFSET = 171 * 1024;
+        constexpr uint32_t PING_G_INPUT_BUF_OFFSET = 172 * 1024;
+        constexpr uint32_t PONG_G_INPUT_BUF_OFFSET = 173 * 1024;
         constexpr uint32_t UPDATE_SCRATCH_BUF_OFFSET = 160 * 1024;
         constexpr uint32_t UPDATE_G_BUF_OFFSET = 176 * 1024;
 
@@ -88,7 +87,8 @@ public:
             gkLastUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(PONG_G_SUB_BUF_OFFSET);
             gkInputUbTensor_ping = resource.ubBuf.template GetBufferByByte<GElementInput>(PING_G_INPUT_BUF_OFFSET);
             gkInputUbTensor_pong = resource.ubBuf.template GetBufferByByte<GElementInput>(PONG_G_INPUT_BUF_OFFSET);
-            shareBufferGk_ = resource.ubBuf.template GetBufferByByte<uint8_t>(SHARE_BUF_OFFSET);
+            gkBrcbUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(PING_G_INPUT_BUF_OFFSET);
+            gkBrcbUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(PONG_G_INPUT_BUF_OFFSET);
         }
 
     }
@@ -139,6 +139,32 @@ public:
             static_cast<uint32_t>((dstStride - cols) * sizeof(Element)),
             0};
         AscendC::DataCopyPad(dst, src, copyParams);
+    }
+
+    CATLASS_DEVICE
+    void ApplyRowScale(
+        AscendC::LocalTensor<float> matrix,
+        AscendC::LocalTensor<float> rowScale,
+        AscendC::LocalTensor<float> rowScaleBrcb,
+        uint32_t rows,
+        uint32_t cols)
+    {
+        constexpr uint32_t FP32_PER_BLOCK = 8;
+        constexpr uint32_t FP32_PER_REPEAT = 64;
+        uint8_t rowStride = static_cast<uint8_t>(cols / FP32_PER_BLOCK);
+        AscendC::BinaryRepeatParams params(1, 1, 0, rowStride, rowStride, 1);
+        for (uint32_t row = 0; row < rows; row += FP32_PER_BLOCK) {
+            uint32_t rowsThisBlock = Min(FP32_PER_BLOCK, rows - row);
+            AscendC::Brcb(rowScaleBrcb, rowScale[row], 1, {1, FP32_PER_BLOCK});
+            AscendC::PipeBarrier<PIPE_V>();
+            for (uint32_t col = 0; col < cols; col += FP32_PER_REPEAT) {
+                uint32_t count = Min(FP32_PER_REPEAT, cols - col);
+                uint32_t offset = row * cols + col;
+                AscendC::Mul(matrix[offset], matrix[offset], rowScaleBrcb,
+                             count, rowsThisBlock, params);
+            }
+            AscendC::PipeBarrier<PIPE_V>();
+        }
     }
 
     CATLASS_DEVICE
@@ -253,6 +279,8 @@ public:
                     isPing ? gkLastUbTensor_ping : gkLastUbTensor_pong;
                 AscendC::LocalTensor<GElementInput> gkInputUbTensor =
                     isPing ? gkInputUbTensor_ping : gkInputUbTensor_pong;
+                AscendC::LocalTensor<float> gkBrcbUbTensor =
+                    isPing ? gkBrcbUbTensor_ping : gkBrcbUbTensor_pong;
 
                 if (rowStart == rowBegin) {
                     AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(EVENT_ID1 + pingpongFlag);
@@ -277,15 +305,8 @@ public:
                 AscendC::Exp(gkLastUbTensor, gkLastUbTensor, rowsThisTile);
                 AscendC::PipeBarrier<PIPE_V>();
 
-                uint32_t gkBrcReptime = (rowsThisTile + 8 - 1) / 8;
-                uint32_t dstShapeGk[2] = {gkBrcReptime * 8, nActual};
-                uint32_t srcShapeGk[2] = {gkBrcReptime * 8, 1};
-                AscendC::Broadcast<float, 2, 1>(hUpdateUbTensor, gkLastUbTensor,
-                                                dstShapeGk, srcShapeGk, shareBufferGk_);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Mul(calcUbTensor, calcUbTensor, hUpdateUbTensor,
-                             rowsThisTile * nActual);
-                AscendC::PipeBarrier<PIPE_V>();
+                ApplyRowScale(calcUbTensor, gkLastUbTensor, gkBrcbUbTensor,
+                              rowsThisTile, nActual);
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
             }
 
@@ -370,7 +391,8 @@ private:
     AscendC::LocalTensor<float> gkLastUbTensor_pong;
     AscendC::LocalTensor<GElementInput> gkInputUbTensor_ping;
     AscendC::LocalTensor<GElementInput> gkInputUbTensor_pong;
-    AscendC::LocalTensor<uint8_t> shareBufferGk_;
+    AscendC::LocalTensor<float> gkBrcbUbTensor_ping;
+    AscendC::LocalTensor<float> gkBrcbUbTensor_pong;
 };
 }
 

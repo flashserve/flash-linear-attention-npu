@@ -692,10 +692,11 @@ at::Tensor npu_kda_gate_cumsum(
     at::Tensor gk = at::empty(g.sizes(), g.options().dtype(at::kFloat));
     const at::Tensor &A_log_ = c10::value_or_else(A_log, [] { return at::Tensor(); });
     const at::Tensor &dt_bias_ = c10::value_or_else(dt_bias, [] { return at::Tensor(); });
+    const char *layout_cstr = layout_str.c_str();
     EXEC_NPU_CMD_EXT(
         aclnnKdaGateCumsum,
         g, A_log_, dt_bias_, cu_seqlens,
-        chunk_size, use_gate, safe, lower, layout_str.c_str(), gk
+        chunk_size, use_gate, safe, lower, layout_cstr, gk
     );
     return gk;
 }

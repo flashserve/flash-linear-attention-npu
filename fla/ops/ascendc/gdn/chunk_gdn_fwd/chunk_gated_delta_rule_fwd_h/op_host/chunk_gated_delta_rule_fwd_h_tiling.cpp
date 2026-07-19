@@ -91,7 +91,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     OP_CHECK_IF(gTensor == nullptr && gkTensor == nullptr,
                 OP_LOGE(context->GetNodeName(), "Either g or gk must be provided."),
                 return ge::GRAPH_FAILED);
-    auto gateTensor = gTensor != nullptr ? gTensor : gkTensor;
+    auto gateTensor = useGk ? gkTensor : gTensor;
 
     auto attrPtr = context->GetAttrs();
     bool storeFinalState = *(attrPtr->GetAttrPointer<bool>(ATTR_STORE_FINAL_STATE_IDX));

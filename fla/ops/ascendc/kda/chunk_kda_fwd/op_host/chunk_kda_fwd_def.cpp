@@ -15,48 +15,92 @@ public:
     explicit ChunkKdaFwd(const char *name) : OpDef(name)
     {
         const std::initializer_list<ge::DataType> dataTypes = {
-            ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16,
-            ge::DT_FLOAT16, ge::DT_BF16
+            ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16
+        };
+        const std::initializer_list<ge::DataType> gateTypes = {
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_BF16
+        };
+        const std::initializer_list<ge::DataType> betaTypes = {
+            ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16
         };
         const std::initializer_list<ge::DataType> stateTypes = {
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_FLOAT, ge::DT_FLOAT
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT
         };
         const std::initializer_list<ge::DataType> akkTypes = {
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_FLOAT16, ge::DT_BF16
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16
         };
         const std::initializer_list<ge::DataType> outputDataTypes = {
-            ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_FLOAT16, ge::DT_BF16
+            ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16
         };
         const std::initializer_list<ge::Format> formats = {
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
-            ge::FORMAT_ND, ge::FORMAT_ND
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND
         };
 
         this->Input("q").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
         this->Input("k").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
         this->Input("v").ParamType(REQUIRED).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
         this->Input("gk").ParamType(REQUIRED)
-            .DataType(stateTypes)
+            .DataType(gateTypes)
             .Format(formats).UnknownShapeFormat(formats);
         this->Input("beta").ParamType(REQUIRED)
-            .DataType(stateTypes)
+            .DataType(betaTypes)
             .Format(formats).UnknownShapeFormat(formats);
         this->Input("initial_state").ParamType(OPTIONAL).DataType(stateTypes).Format(formats).UnknownShapeFormat(formats);
         this->Input("cu_seqlens").ParamType(OPTIONAL).ValueDepend(OPTIONAL)
-            .DataType({ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
-                       ge::DT_INT64, ge::DT_INT64})
+            .DataType({ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+                       ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+                       ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+                       ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+                       ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+                       ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64})
             .Format(formats).UnknownShapeFormat(formats);
         this->Input("chunk_indices").ParamType(OPTIONAL).ValueDepend(OPTIONAL)
-            .DataType({ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
-                       ge::DT_INT64, ge::DT_INT64})
+            .DataType({ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+                       ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+                       ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+                       ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+                       ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+                       ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64})
             .Format(formats).UnknownShapeFormat(formats);
-        this->Input("stage_qg").ParamType(OPTIONAL).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Input("stage_aqk").ParamType(OPTIONAL).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Input("stage_v_new").ParamType(OPTIONAL).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Input("stage_h").ParamType(OPTIONAL).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Input("w_seed_or_qg").ParamType(OPTIONAL).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Input("matrix").ParamType(OPTIONAL).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Input("u_seed_or_v_new").ParamType(OPTIONAL).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Input("state").ParamType(OPTIONAL).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
 
         this->Output("o").ParamType(REQUIRED).DataType(outputDataTypes).Format(formats).UnknownShapeFormat(formats);
         this->Output("final_state").ParamType(REQUIRED).DataType(stateTypes).Format(formats).UnknownShapeFormat(formats);
@@ -73,7 +117,6 @@ public:
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
         this->Attr("output_final_state").AttrType(REQUIRED).Bool(false);
         this->Attr("total_chunks").AttrType(REQUIRED).Int(1);
-        this->Attr("stage").AttrType(OPTIONAL).Int(0);
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)

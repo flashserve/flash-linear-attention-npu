@@ -9,7 +9,6 @@
 
 #include "chunk_kda_fwd_tiling.h"
 #include <algorithm>
-#include <array>
 #include <register/op_impl_registry.h>
 #include "tiling/platform/platform_ascendc.h"
 
@@ -21,11 +20,14 @@ constexpr size_t INPUT_GK_IDX = 3;
 constexpr size_t INPUT_INITIAL_IDX = 5;
 constexpr size_t INPUT_CU_SEQLENS_IDX = 6;
 constexpr size_t INPUT_CHUNK_INDICES_IDX = 7;
+constexpr size_t INPUT_W_SEED_IDX = 8;
+constexpr size_t INPUT_MATRIX_IDX = 9;
+constexpr size_t INPUT_U_SEED_IDX = 10;
+constexpr size_t INPUT_STATE_IDX = 11;
 constexpr size_t ATTR_SCALE_IDX = 0;
 constexpr size_t ATTR_CHUNK_SIZE_IDX = 1;
 constexpr size_t ATTR_OUTPUT_FINAL_STATE_IDX = 2;
 constexpr size_t ATTR_TOTAL_CHUNKS_IDX = 3;
-constexpr size_t ATTR_STAGE_IDX = 4;
 constexpr uint64_t KDA_SOLVE_SCRATCH_SLOTS = 5;
 constexpr uint64_t KDA_SCORE_QUEUE_SLOTS = 2;
 constexpr uint64_t KDA_SCORE_SCRATCH_PLANES = 3;
@@ -37,15 +39,25 @@ constexpr size_t DIM_H = 1;
 constexpr size_t DIM_T = 2;
 constexpr size_t DIM_D = 3;
 
-int64_t DTypeCode(ge::DataType dtype)
+enum class KdaCorePhase : uint32_t {
+    PREPARE = 1,
+    POST_WU = 2,
+    OUTPUT = 3,
+};
+
+KdaCorePhase ResolvePhase(const gert::TilingContext *context)
 {
-    if (dtype == ge::DT_BF16) {
-        return 1;
+    const bool hasWSeed = context->GetOptionalInputTensor(INPUT_W_SEED_IDX) != nullptr;
+    const bool hasMatrix = context->GetOptionalInputTensor(INPUT_MATRIX_IDX) != nullptr;
+    const bool hasUSeed = context->GetOptionalInputTensor(INPUT_U_SEED_IDX) != nullptr;
+    const bool hasState = context->GetOptionalInputTensor(INPUT_STATE_IDX) != nullptr;
+    if (hasWSeed && hasMatrix && hasUSeed && hasState) {
+        return KdaCorePhase::OUTPUT;
     }
-    if (dtype == ge::DT_FLOAT) {
-        return 2;
+    if (hasWSeed && hasMatrix && hasUSeed) {
+        return KdaCorePhase::POST_WU;
     }
-    return 0;
+    return KdaCorePhase::PREPARE;
 }
 } // namespace
 
@@ -56,8 +68,7 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     auto qShape = context->GetOptionalInputShape(INPUT_Q_IDX)->GetStorageShape();
     auto vShape = context->GetOptionalInputShape(INPUT_V_IDX)->GetStorageShape();
     auto qDesc = context->GetInputDesc(INPUT_Q_IDX);
-    auto gDesc = context->GetInputDesc(INPUT_GK_IDX);
-    if (qDesc == nullptr || gDesc == nullptr) {
+    if (qDesc == nullptr || context->GetInputDesc(INPUT_GK_IDX) == nullptr) {
         return ge::GRAPH_FAILED;
     }
 
@@ -69,23 +80,16 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     int64_t chunkSize = *(attrPtr->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_IDX));
     bool outputFinalState = *(attrPtr->GetAttrPointer<bool>(ATTR_OUTPUT_FINAL_STATE_IDX));
     int64_t totalChunks = *(attrPtr->GetAttrPointer<int64_t>(ATTR_TOTAL_CHUNKS_IDX));
-    int64_t stage = 0;
-    const int64_t *stagePtr = attrPtr->GetAttrPointer<int64_t>(ATTR_STAGE_IDX);
-    if (stagePtr != nullptr) {
-        stage = *stagePtr;
-    }
+    const KdaCorePhase phase = ResolvePhase(context);
 
     bool isVarLen = context->GetOptionalInputTensor(INPUT_CU_SEQLENS_IDX) != nullptr;
     int64_t batch = qShape.GetDim(DIM_B);
     int64_t seqNum = batch;
-    std::array<int64_t, KDA_MAX_TILING_SEQUENCES> seqStart{};
-    std::array<int64_t, KDA_MAX_TILING_SEQUENCES> seqEnd{};
-    std::array<int64_t, KDA_MAX_TILING_SEQUENCE_OFFSETS> seqChunkOffset{};
     if (isVarLen) {
         auto cuTensor = context->GetOptionalInputTensor(INPUT_CU_SEQLENS_IDX);
         seqNum = cuTensor->GetStorageShape().GetDim(0) - 1;
         auto chunkMetadata = context->GetOptionalInputTensor(INPUT_CHUNK_INDICES_IDX);
-        if (seqNum <= 0 || seqNum > KDA_MAX_TILING_SEQUENCES || chunkMetadata == nullptr ||
+        if (seqNum <= 0 || chunkMetadata == nullptr ||
             chunkMetadata->GetStorageShape().GetShapeSize() != totalChunks * 4) {
             return ge::GRAPH_FAILED;
         }
@@ -98,13 +102,9 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
             if (cu[seq] < 0 || cu[seq + 1] < cu[seq]) {
                 return ge::GRAPH_FAILED;
             }
-            seqStart[seq] = cu[seq];
-            seqEnd[seq] = cu[seq + 1];
-            seqChunkOffset[seq] = chunkOffset;
             const int64_t seqLength = cu[seq + 1] - cu[seq];
             chunkOffset += (seqLength + chunkSize - 1) / chunkSize;
         }
-        seqChunkOffset[seqNum] = chunkOffset;
         if (chunkOffset != totalChunks) {
             return ge::GRAPH_FAILED;
         }
@@ -114,18 +114,13 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint32_t coreNum = ascendcPlatform.GetCoreNumAic();
     int64_t taskNum = seqNum * vShape.GetDim(DIM_H);
-    if (stage == 1 || stage == 2 || stage == 3) {
-        taskNum = (isVarLen ? totalChunks : batch * totalChunks) * vShape.GetDim(DIM_H);
-    }
+    taskNum = (isVarLen ? totalChunks : batch * totalChunks) * vShape.GetDim(DIM_H);
     uint32_t blockDim = static_cast<uint32_t>(std::min<int64_t>(taskNum, coreNum));
-    if (stage == 1 || stage == 2 || stage == 3 ||
-        (qDesc->GetDataType() != ge::DT_FLOAT && qShape.GetDim(DIM_D) >= 16)) {
-        blockDim = coreNum;
-    }
+    blockDim = coreNum;
     context->SetBlockDim(blockDim == 0 ? 1 : blockDim);
     size_t *workspace = context->GetWorkspaceSizes(1);
     uint64_t kernelScratch = 0;
-    if (stage == 1) {
+    if (phase == KdaCorePhase::PREPARE) {
         const uint64_t usedCoreNum = static_cast<uint64_t>(blockDim == 0 ? 1 : blockDim);
         const uint64_t solveScratch = usedCoreNum * KDA_SOLVE_SCRATCH_SLOTS *
                                       static_cast<uint64_t>(chunkSize) * static_cast<uint64_t>(chunkSize) *
@@ -137,7 +132,7 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
                                       static_cast<uint64_t>(chunkSize) *
                                       static_cast<uint64_t>(qShape.GetDim(DIM_D)) * scoreElementBytes;
         kernelScratch = alignedSolveScratch + scoreScratch;
-    } else if (stage == 2) {
+    } else if (phase == KdaCorePhase::OUTPUT) {
         const uint64_t outputElements = static_cast<uint64_t>(batch) *
                                         static_cast<uint64_t>(vShape.GetDim(DIM_H)) *
                                         static_cast<uint64_t>(qShape.GetDim(DIM_T)) *
@@ -160,21 +155,9 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     tiling.set_hasInitialState(hasInitialState);
     tiling.set_outputFinalState(outputFinalState);
     tiling.set_isVarLen(isVarLen);
-    tiling.set_dataType(DTypeCode(qDesc->GetDataType()));
-    tiling.set_gateDataType(DTypeCode(gDesc->GetDataType()));
     tiling.set_usedCoreNum(blockDim == 0 ? 1 : blockDim);
-    tiling.set_stage(stage);
-    tiling.set_seqStart(seqStart.data());
-    tiling.set_seqEnd(seqEnd.data());
-    tiling.set_seqChunkOffset(seqChunkOffset.data());
 
-    if (qDesc->GetDataType() == ge::DT_FLOAT) {
-        context->SetTilingKey(0);
-    } else if (qShape.GetDim(DIM_D) < 16) {
-        context->SetTilingKey(2);
-    } else {
-        context->SetTilingKey(1);
-    }
+    context->SetTilingKey(static_cast<uint64_t>(phase));
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
     return ge::GRAPH_SUCCESS;
