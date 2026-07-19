@@ -174,6 +174,30 @@ def test_interface_exist():
         "operator chunk_gated_delta_rule_fwd_h is not registered under torch.ops.ascend_ops"
 
 
+@pytest.mark.skipif(not torch.npu.is_available(), reason="NPU device not found")
+def test_generated_accuracy():
+    torch.manual_seed(2026)
+    B, HK, HV, T, K, V, chunk_size = 1, 2, 4, 128, 128, 128, 64
+    k = torch.nn.functional.normalize(torch.randn(B, HK, T, K), p=2, dim=-1).to(torch.float16)
+    g = torch.nn.functional.logsigmoid(torch.randn(B, HV, T, dtype=torch.float32))
+    for start in range(0, T, chunk_size):
+        g[:, :, start:start + chunk_size] = g[:, :, start:start + chunk_size].cumsum(dim=2)
+
+    beta = torch.rand(B, HV, T, dtype=torch.float32).sigmoid()
+    expanded_k = k.float().repeat_interleave(HV // HK, dim=1)
+    w = (expanded_k * beta[..., None] * g.exp()[..., None]).to(k.dtype)
+    u = (torch.randn(B, HV, T, V) * beta[..., None]).to(k.dtype)
+
+    h_ref, v_ref, fs_ref = forward_h_trans_cpu(
+        k, w, u, g, output_final_state=True, chunk_size=chunk_size)
+    h, v_new, final_state = torch.ops.ascend_ops.chunk_gated_delta_rule_fwd_h(
+        k.npu(), w.npu(), u.npu(), g.npu(), output_final_state=True, chunk_size=chunk_size)
+
+    assert_close(h, h_ref, 4e-3, name="h")
+    assert_close(v_new, v_ref, 4e-3, name="v_new")
+    assert_close(final_state, fs_ref, 4e-3, name="final_state")
+
+
 # --------------------------------------------------------------------------------------
 # model-distributed fixtures (produced by dump_model_data.py)
 #
@@ -187,7 +211,6 @@ FIXTURES = sorted(DATA_DIR.glob("*.pt")) if DATA_DIR.exists() else []
 
 
 @pytest.mark.skipif(not torch.npu.is_available(), reason="NPU device not found")
-@pytest.mark.skipif(len(FIXTURES) == 0, reason="no model-dump fixtures found, run dump_model_data.py first")
 @pytest.mark.parametrize("fixture_path", FIXTURES, ids=[p.stem for p in FIXTURES])
 def test_model_dump(fixture_path):
     payload = torch.load(fixture_path, map_location="cpu")
@@ -219,3 +242,6 @@ def test_model_dump(fixture_path):
     assert_close(v_new, v_ref, diff_thd, name="v_new")
     assert_close(final_state, fs_ref, diff_thd, name="final_state")
 
+
+if not FIXTURES:
+    test_model_dump.__test__ = False

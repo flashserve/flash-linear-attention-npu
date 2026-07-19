@@ -308,8 +308,7 @@ at::Tensor prepare_wy_repr_bwd_da_npu(
     };
 
     at_npu::native::OpCommand::RunOpApi("PrepareWyReprBwdDa", aclCall);
-    auto syncRet = aclrtSynchronizeStream(stream);
-    TORCH_CHECK(syncRet == ACL_SUCCESS, "aclrtSynchronizeStream failed. ERROR: ", syncRet);
+    c10_npu::getCurrentNPUStream().synchronize();
 
     if (workspacePtr != nullptr) {
         aclrtFree(workspacePtr);

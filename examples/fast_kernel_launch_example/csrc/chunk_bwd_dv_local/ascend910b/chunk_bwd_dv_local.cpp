@@ -223,8 +223,7 @@ at::Tensor chunk_bwd_dv_local_npu(const at::Tensor & q, const at::Tensor & k, co
     };
 
     at_npu::native::OpCommand::RunOpApi("ChunkBwdDvLocal", acl_call);
-    auto sync_ret = aclrtSynchronizeStream(stream);
-    TORCH_CHECK(sync_ret == ACL_SUCCESS, "aclrtSynchronizeStream failed. ERROR: ", sync_ret);
+    c10_npu::getCurrentNPUStream().synchronize();
 
     if (workspaceSize > 0 && workspace_ptr != nullptr) {
         aclrtFree(workspace_ptr);
