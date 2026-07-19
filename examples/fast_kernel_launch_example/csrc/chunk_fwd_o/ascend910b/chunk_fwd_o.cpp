@@ -238,6 +238,7 @@ at::Tensor chunk_fwd_o_npu(const at::Tensor &q, const at::Tensor &k, const at::T
     };
 
     at_npu::native::OpCommand::RunOpApi("ChunkFwdO", aclCall);
+    c10_npu::getCurrentNPUStream().synchronize();
 
     if (workspacePtr != nullptr) {
         aclrtFree(workspacePtr);
