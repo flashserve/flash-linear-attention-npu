@@ -21,6 +21,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#include "opdev/tensor_view_utils.h"
 
 #include <cstring>
 
@@ -331,6 +332,28 @@ aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     return ACLNN_SUCCESS;
 }
 
+void SetTensorOriginalShape(const aclTensor *tensor)
+{
+    if (tensor != nullptr) {
+        tensor->SetOriginalShape(tensor->GetViewShape());
+    }
+}
+
+void SetInputOriginalShape(RecurrentKdaParams &params)
+{
+    SetTensorOriginalShape(params.query);
+    SetTensorOriginalShape(params.key);
+    SetTensorOriginalShape(params.value);
+    SetTensorOriginalShape(params.gate);
+    SetTensorOriginalShape(params.beta);
+    SetTensorOriginalShape(params.initialState);
+    SetTensorOriginalShape(params.ssmStateIndicesOptional);
+    SetTensorOriginalShape(params.aLogOptional);
+    SetTensorOriginalShape(params.dtBiasOptional);
+    SetTensorOriginalShape(params.numAcceptedTokensOptional);
+    SetTensorOriginalShape(params.finalState);
+}
+
 const aclTensor *MaybeCast(const aclTensor *tensor, DataType dataType, aclOpExecutor *executor)
 {
     if (tensor == nullptr || tensor->GetDataType() == dataType) {
@@ -343,12 +366,12 @@ aclnnStatus PreProcess(RecurrentKdaParams &params, aclOpExecutor *executor)
 {
     bool hasSsmStateIndices = params.ssmStateIndicesOptional != nullptr;
     bool hasNumAcceptedTokens = params.numAcceptedTokensOptional != nullptr;
+    SetInputOriginalShape(params);
     CHECK_RET(DataContiguous(params.query, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.key, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.value, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.gate, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.beta, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(DataContiguous(params.initialState, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.ssmStateIndicesOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
@@ -419,14 +442,25 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     CHECK_RET(CheckShape(params, parsedLayout), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(PreProcess(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
+    const aclTensor *initialStateForKernel = params.initialState;
+    CHECK_RET(DataContiguous(initialStateForKernel, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+    const aclTensor *finalStateForKernel = params.finalState;
+    bool finalStateNeedViewCopy = !IsContiguous(params.finalState);
+    if (finalStateNeedViewCopy) {
+        CHECK_RET(DataContiguous(finalStateForKernel, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+    }
+
     auto result = l0op::RecurrentKda(params.query, params.key, params.value, params.gate, params.beta,
-                                     params.initialState, params.cuSeqlensOptional, params.ssmStateIndicesOptional,
+                                     initialStateForKernel, params.cuSeqlensOptional, params.ssmStateIndicesOptional,
                                      params.aLogOptional, params.dtBiasOptional, params.numAcceptedTokensOptional,
                                      params.layout, params.scale, params.useQkL2normInKernel,
                                      params.useGateInKernel, params.useBetaSigmoidInKernel, params.allowNegEigval,
                                      params.safeGate, params.lowerBound, params.stateVFirst, params.out,
-                                     params.finalState, executorPtr);
+                                     finalStateForKernel, executorPtr);
     CHECK_RET(result[0] != nullptr && result[1] != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (finalStateNeedViewCopy) {
+        CHECK_RET(l0op::ViewCopy(result[1], params.finalState, executorPtr) != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

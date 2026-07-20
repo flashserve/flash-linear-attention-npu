@@ -24,6 +24,7 @@
       "raw gate 与预计算 log gate",
       "safe_gate lower_bound clamp",
       "beta sigmoid",
+      "state 输入/输出支持非连续 view",
       "可选初始/最终状态",
       "state_v_first=True"
     ],
@@ -57,6 +58,7 @@
       "q/k/v 当前支持 bfloat16；g/beta 支持 float32/bfloat16/float16，A_log 与 dt_bias 必须为 float32。",
       "layout 当前仅支持 BSND 和 TND；H_v 必须能被 H 整除。",
       "K/V 当前仅支持 K=128,V=128 或 K=128,V=256 两档枚举。",
+      "Python/aclnn/legacy 入口支持非连续 initial_state；底层 aclnn final_state 输出按 recurrent_gdn state 语义支持非连续 view。",
       "每条 recurrent 序列长度当前必须 <= 8；BSND 变长序列物理 B 必须为 1。",
       "state_v_first 当前必须为 true，状态布局为 [seq_num,H_v,V,K]。",
       "use_gate_in_kernel=true 时 A_log 必传；dt_bias 若存在须为 [H_v*K] 或 [H_v,K]。",
@@ -77,7 +79,8 @@
       "recurrent_kda_bsnd_varlen_precomputed_zero_segment",
       "recurrent_kda_tnd_raw_gate_no_dt_bias_no_beta_sigmoid",
       "recurrent_kda_tnd_ssm_accepted_flat_dt_bias_fp16_gate",
-      "recurrent_kda_tnd_precomputed_v256_general"
+      "recurrent_kda_tnd_precomputed_v256_general",
+      "recurrent_kda_tnd_non_contiguous_state_v256"
     ],
     "generalization_case_ids": [
       "recurrent_kda_bsnd_safe_gate_beta_sigmoid",
@@ -89,6 +92,7 @@
       "recurrent_kda_tnd_raw_gate_no_dt_bias_no_beta_sigmoid",
       "recurrent_kda_tnd_ssm_accepted_flat_dt_bias_fp16_gate",
       "recurrent_kda_tnd_precomputed_v256_general",
+      "recurrent_kda_tnd_non_contiguous_state_v256",
       "recurrent_kda_kimi_tnd_h96_d128_runtime_cu_smoke"
     ],
     "stress_case_ids": [
@@ -762,6 +766,78 @@
         ]
       },
       "seed": 2038
+    },
+    {
+      "id": "recurrent_kda_tnd_non_contiguous_state_v256",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "varlen",
+        "raw_gate",
+        "safe_gate",
+        "beta_sigmoid",
+        "non_contiguous_state",
+        "v256_shape"
+      ],
+      "shape": {
+        "seq_num": 2,
+        "T_total": 4,
+        "max_seq_len": 3,
+        "H": 2,
+        "H_v": 4,
+        "K": 128,
+        "V": 256
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g_beta": "float32",
+        "state": "float32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "layout": "TND",
+        "scale": null,
+        "output_final_state": true,
+        "use_qk_l2norm_in_kernel": true,
+        "use_gate_in_kernel": true,
+        "use_beta_sigmoid_in_kernel": true,
+        "allow_neg_eigval": false,
+        "safe_gate": true,
+        "lower_bound": -1.0,
+        "state_v_first": true
+      },
+      "optional_inputs": {
+        "initial_state": "present",
+        "cu_seqlens": [
+          0,
+          1,
+          4
+        ],
+        "A_log": "[H_v]",
+        "dt_bias": "[H_v,K]",
+        "ssm_state_indices": null,
+        "num_accepted_tokens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "torch_ops_npu"
+      ],
+      "reference": "tests/reference/recurrent_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "out",
+          "final_state"
+        ]
+      },
+      "seed": 2039
     },
     {
       "id": "recurrent_kda_kimi_tnd_h96_d128_runtime_cu_smoke",

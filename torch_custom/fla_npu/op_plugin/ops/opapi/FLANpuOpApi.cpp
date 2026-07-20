@@ -869,8 +869,9 @@ at::Tensor npu_kda_gate_cumsum(
                     "npu_recurrent_kda: dt_bias must be omitted when use_gate_in_kernel=False.");
     }
 
+    at::Tensor initial_state_arg = initial_state_work.contiguous();
     at::Tensor out = at::empty_like(v);
-    at::Tensor final_state_work = at::empty_like(initial_state_work);
+    at::Tensor final_state_work = at::empty_like(initial_state_arg);
     bool output_final_state_ = output_final_state.value_or(false);
     double scale_ = scale.value_or(std::pow(static_cast<double>(k_dim), -0.5));
     bool use_qk_l2norm_ = use_qk_l2norm_in_kernel.value_or(false);
@@ -884,7 +885,7 @@ at::Tensor npu_kda_gate_cumsum(
 
     EXEC_NPU_CMD_EXT(
         aclnnRecurrentKda,
-        q, k, v, g, beta, initial_state_work, cu_seqlens,
+        q, k, v, g, beta, initial_state_arg, cu_seqlens,
         ssm_state_indices_, A_log_, dt_bias_, num_accepted_tokens_,
         layout_cstr, scale_, output_final_state_, use_qk_l2norm_, use_gate,
         use_beta_sigmoid_, allow_neg_eigval_, safe, lower, state_v_first_,
@@ -892,7 +893,7 @@ at::Tensor npu_kda_gate_cumsum(
     );
 
     at::Tensor final_state = output_final_state_ ? final_state_work :
-        at::empty({0}, initial_state_work.options());
+        at::empty({0}, initial_state_arg.options());
     return std::make_tuple(out, final_state);
 }
 

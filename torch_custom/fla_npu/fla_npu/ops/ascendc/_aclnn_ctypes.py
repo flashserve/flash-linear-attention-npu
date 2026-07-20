@@ -1148,6 +1148,13 @@ def npu_recurrent_kda(
         if A_log is not None or dt_bias is not None:
             raise RuntimeError("npu_recurrent_kda: A_log and dt_bias must be None when use_gate_in_kernel=False.")
 
+    keepalive_inputs = []
+
+    initial_state_arg = initial_state_work.contiguous()
+    if initial_state is None or initial_state_arg is not initial_state_work:
+        keepalive_inputs.append(initial_state_arg)
+    initial_state_work = initial_state_arg
+
     out = _empty_like(v)
     final_state_work = _empty_like(initial_state_work)
     final_state = final_state_work if _optional_bool(output_final_state, False) else _empty((0,), initial_state_work)
@@ -1155,9 +1162,10 @@ def npu_recurrent_kda(
     kernel_outputs = (out, final_state_work)
     scale_value = _optional_float(scale, key_dim ** -0.5)
     layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
-    _call_aclnn(
-        "aclnnRecurrentKda",
-        lambda ctx: [
+
+    def build_args(ctx):
+        ctx.keepalive_tensors.extend(keepalive_inputs)
+        return [
             ctx.tensor(q, "q"),
             ctx.tensor(k, "k"),
             ctx.tensor(v, "v"),
@@ -1181,7 +1189,11 @@ def npu_recurrent_kda(
             ctypes.c_bool(state_v_first),
             ctx.tensor(out, "out"),
             ctx.tensor(final_state_work, "final_state"),
-        ],
+        ]
+
+    _call_aclnn(
+        "aclnnRecurrentKda",
+        build_args,
         kernel_outputs,
     )
     return user_outputs

@@ -90,6 +90,8 @@ aclnnStatus aclnnRecurrentKda(void *workspace, uint64_t workspaceSize, aclOpExec
 ```
 
 `GetWorkspaceSize` 完成参数校验、连续化/cast 预处理和 executor 创建；第二段在传入 stream 上异步执行。
+state 路径对齐 recurrent_gdn：Python/legacy 接受非连续 `initial_state`，底层 aclnn 的 `final_state`
+输出支持非连续 view。
 输入、输出、workspace 和 executor 必须保持有效，直到 stream 完成。
 
 ### 3.2 调用示例
@@ -126,7 +128,8 @@ recurrent_kda(q, k, v, g, beta, initial_state=None, *,
 ```
 
 稳定入口通过 ctypes 直调 aclnn，不依赖 `torch.ops.npu` 注册。`initial_state=None` 时由 wrapper 创建
-`[seq_num,H_v,V,K]` 的全零 FP32 状态。
+`[seq_num,H_v,V,K]` 的全零 FP32 状态。若 `initial_state` 为非连续 view，wrapper 会传入连续化
+state work tensor；返回的 `final_state` 为 wrapper 分配的连续 tensor。
 
 ### 4.2 调用示例
 
@@ -159,7 +162,8 @@ recurrent_kda<<<blockDim, nullptr, stream>>>(
     aLog, dtBias, numAcceptedTokens, out, finalState, workspace, tiling);
 ```
 
-直调通路只作为 route/诊断入口；公开 Python 和 aclnn API 负责完整参数校验。
+直调通路只作为 route/诊断入口；公开 Python 和 aclnn API 负责完整参数校验。直调通路按连续物理
+布局解释 GM 地址，非连续 state 需要先由调用侧连续化。
 
 ## 6. `torch.ops.npu` API（可选）
 
@@ -177,6 +181,8 @@ out, final_state = torch.ops.npu.npu_recurrent_kda(
 
 - `q/k/v/out` 当前仅支持 BF16。
 - `K/V` 当前仅支持 `K=128,V=128` 或 `K=128,V=256` 两档枚举。
+- Python/legacy 入口支持非连续 `initial_state`；底层 aclnn `final_state` 输出支持非连续 view。
+- Ascend C `<<<>>>` 直调入口要求 state 为连续物理布局。
 - 每条 recurrent 序列长度必须 `<=8`；dense 模式未传 `cu_seqlens` 时 `T<=8`。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`；BSND 变长序列物理 `B` 必须为 1。
 - 仅支持 `state_v_first=True`。

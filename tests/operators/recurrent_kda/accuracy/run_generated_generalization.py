@@ -247,6 +247,7 @@ def generate_case(i: int, seed: int) -> dict[str, Any]:
             "dt_kind": dt_kind,
             "ssm": ssm,
             "accepted": ssm and (i % 22 == 3),
+            "non_contiguous_state": combo["initial_state"] and i % 13 == 5,
         },
     }
 
@@ -322,6 +323,16 @@ def make_inputs(case: dict[str, Any]):
 
 def to_device(inputs, device):
     return {key: (value.to(device) if torch.is_tensor(value) else value) for key, value in inputs.items()}
+
+
+def make_non_contiguous_last_dim(tensor):
+    base_shape = tuple(tensor.shape[:-1]) + (int(tensor.shape[-1]) * 2,)
+    base = torch.empty(base_shape, dtype=tensor.dtype, device=tensor.device)
+    view = base[..., ::2]
+    view.copy_(tensor)
+    if view.is_contiguous():
+        raise AssertionError("failed to create a non-contiguous state test tensor")
+    return view
 
 
 def call_op(inputs, attrs):
@@ -405,6 +416,7 @@ def branch_keys(case: dict[str, Any]) -> list[str]:
         f"initial_state={opt['initial_state']}",
         f"ssm={opt['ssm']}",
         f"accepted={opt['accepted']}",
+        f"non_contiguous_state={opt['non_contiguous_state']}",
         f"g_dtype={case['dtype']['g']}",
         f"beta_dtype={case['dtype']['beta']}",
         f"state_dtype={case['dtype']['state']}",
@@ -471,6 +483,8 @@ def main() -> None:
             cpu_inputs = make_inputs(case)
             expected = recurrent_kda_reference(**cpu_inputs, **case["attrs"])
             dev_inputs = to_device(cpu_inputs, device)
+            if case["optional"]["non_contiguous_state"]:
+                dev_inputs["initial_state"] = make_non_contiguous_last_dim(dev_inputs["initial_state"])
             out, final_state, elapsed = timed_call(dev_inputs, case["attrs"], max(1, args.repeats))
             out_stats = assert_close_with_stats("out", out.cpu(), expected[0], rtol=args.rtol, atol=args.atol)
             out_max_abs.append(out_stats["max_abs"])
