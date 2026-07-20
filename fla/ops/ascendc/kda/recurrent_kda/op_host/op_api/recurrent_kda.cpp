@@ -80,13 +80,15 @@ const std::array<const aclTensor *, 2> RecurrentKda(
         return {nullptr, nullptr};
     }
 
+    float scaleAttr = static_cast<float>(scale);
+    float lowerBoundAttr = static_cast<float>(lowerBound);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         RecurrentKda,
         OP_INPUT(query, key, value, gate, beta, initialState, actualCuSeqlens, ssmStateIndicesOptional, aLogOptional,
                  dtBiasOptional, numAcceptedTokensOptional),
         OP_OUTPUT(out, finalState),
-        OP_ATTR(layout, scale, useQkL2normInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, safeGate,
-                lowerBound, stateVFirst));
+        OP_ATTR(layout, scaleAttr, useQkL2normInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval,
+                safeGate, lowerBoundAttr, stateVFirst));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "RecurrentKda ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr};

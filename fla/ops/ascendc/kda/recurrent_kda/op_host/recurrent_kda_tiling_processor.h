@@ -49,17 +49,17 @@ static constexpr size_t RKDA_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
 
 struct RecurrentKdaTilingContext {
     const char *nodeName = "RecurrentKda";
-    const gert::Shape *queryShape = nullptr;
-    const gert::Shape *keyShape = nullptr;
-    const gert::Shape *valueShape = nullptr;
-    const gert::Shape *gateShape = nullptr;
-    const gert::Shape *betaShape = nullptr;
-    const gert::Shape *stateShape = nullptr;
-    const gert::Shape *cuSeqlensShape = nullptr;
-    const gert::Shape *ssmStateShape = nullptr;
-    const gert::Shape *aLogShape = nullptr;
-    const gert::Shape *dtBiasShape = nullptr;
-    const gert::Shape *acceptedTokensShape = nullptr;
+    gert::Shape queryShape;
+    gert::Shape keyShape;
+    gert::Shape valueShape;
+    gert::Shape gateShape;
+    gert::Shape betaShape;
+    gert::Shape stateShape;
+    gert::Shape cuSeqlensShape;
+    gert::Shape ssmStateShape;
+    gert::Shape aLogShape;
+    gert::Shape dtBiasShape;
+    gert::Shape acceptedTokensShape;
     float scale = 1.0f;
     float lowerBound = -5.0f;
     uint32_t layout = RKDA_LAYOUT_BSND;
@@ -184,10 +184,6 @@ private:
     ge::graphStatus CheckMetadataShapes(const gert::Shape &queryShape, const gert::Shape &cuSeqlensShape) const
     {
         if (ctx_.hasCuSeqlens) {
-            if (ctx_.cuSeqlensShape == nullptr) {
-                OP_LOGE(ctx_.nodeName, "cu_seqlens shape is null.");
-                return ge::GRAPH_FAILED;
-            }
             if (!CheckDim(cuSeqlensShape, RKDA_METADATA_DIM_NUM, "cu_seqlens")) {
                 return ge::GRAPH_FAILED;
             }
@@ -202,26 +198,18 @@ private:
                          ((ctx_.layout == RKDA_LAYOUT_TND) ? 1 : queryShape.GetDim(RKDA_DIM_0));
 
         if (ctx_.hasSsmStateIndices) {
-            if (ctx_.ssmStateShape == nullptr) {
-                OP_LOGE(ctx_.nodeName, "ssm_state_indices shape is null.");
+            if (!CheckDim(ctx_.ssmStateShape, RKDA_METADATA_DIM_NUM, "ssm_state_indices")) {
                 return ge::GRAPH_FAILED;
             }
-            if (!CheckDim(*ctx_.ssmStateShape, RKDA_METADATA_DIM_NUM, "ssm_state_indices")) {
-                return ge::GRAPH_FAILED;
-            }
-            OP_CHECK_IF(ctx_.ssmStateShape->GetDim(RKDA_DIM_0) < totalTokens,
+            OP_CHECK_IF(ctx_.ssmStateShape.GetDim(RKDA_DIM_0) < totalTokens,
                         OP_LOGE(ctx_.nodeName, "ssm_state_indices length must be >= total tokens."),
                         return ge::GRAPH_FAILED);
         }
         if (ctx_.hasAcceptedTokens) {
-            if (ctx_.acceptedTokensShape == nullptr) {
-                OP_LOGE(ctx_.nodeName, "num_accepted_tokens shape is null.");
+            if (!CheckDim(ctx_.acceptedTokensShape, RKDA_METADATA_DIM_NUM, "num_accepted_tokens")) {
                 return ge::GRAPH_FAILED;
             }
-            if (!CheckDim(*ctx_.acceptedTokensShape, RKDA_METADATA_DIM_NUM, "num_accepted_tokens")) {
-                return ge::GRAPH_FAILED;
-            }
-            OP_CHECK_IF(ctx_.acceptedTokensShape->GetDim(RKDA_DIM_0) != seqNum,
+            OP_CHECK_IF(ctx_.acceptedTokensShape.GetDim(RKDA_DIM_0) != seqNum,
                         OP_LOGE(ctx_.nodeName, "num_accepted_tokens length must equal sequence number."),
                         return ge::GRAPH_FAILED);
         }
@@ -235,24 +223,18 @@ private:
             return ge::GRAPH_FAILED;
         }
         if (ctx_.hasALog) {
-            if (ctx_.aLogShape == nullptr) {
-                OP_LOGE(ctx_.nodeName, "A_log shape is null.");
+            if (!CheckDim(ctx_.aLogShape, RKDA_METADATA_DIM_NUM, "A_log")) {
                 return ge::GRAPH_FAILED;
             }
-            if (!CheckDim(*ctx_.aLogShape, RKDA_METADATA_DIM_NUM, "A_log")) {
-                return ge::GRAPH_FAILED;
-            }
-            OP_CHECK_IF(ctx_.aLogShape->GetDim(RKDA_DIM_0) != hvNum,
+            OP_CHECK_IF(ctx_.aLogShape.GetDim(RKDA_DIM_0) != hvNum,
                         OP_LOGE(ctx_.nodeName, "A_log shape must be [HV]."),
                         return ge::GRAPH_FAILED);
         }
         if (ctx_.hasDtBias) {
-            OP_CHECK_IF(ctx_.dtBiasShape == nullptr, OP_LOGE(ctx_.nodeName, "dt_bias shape is null."),
-                        return ge::GRAPH_FAILED);
-            size_t rank = ctx_.dtBiasShape->GetDimNum();
-            bool valid = (rank == 1 && ctx_.dtBiasShape->GetDim(RKDA_DIM_0) == hvNum * kDim) ||
-                         (rank == 2 && ctx_.dtBiasShape->GetDim(RKDA_DIM_0) == hvNum &&
-                          ctx_.dtBiasShape->GetDim(RKDA_DIM_1) == kDim);
+            size_t rank = ctx_.dtBiasShape.GetDimNum();
+            bool valid = (rank == 1 && ctx_.dtBiasShape.GetDim(RKDA_DIM_0) == hvNum * kDim) ||
+                         (rank == 2 && ctx_.dtBiasShape.GetDim(RKDA_DIM_0) == hvNum &&
+                          ctx_.dtBiasShape.GetDim(RKDA_DIM_1) == kDim);
             OP_CHECK_IF(!valid, OP_LOGE(ctx_.nodeName, "dt_bias must be [HV*K] or [HV, K]."),
                         return ge::GRAPH_FAILED);
         }
@@ -437,20 +419,13 @@ private:
     ge::graphStatus RuleCheckShapeDimAndRelation(RecurrentKdaTilingData &tiling) const
     {
         (void)tiling;
-        OP_CHECK_IF(ctx_.queryShape == nullptr || ctx_.keyShape == nullptr || ctx_.valueShape == nullptr ||
-                        ctx_.gateShape == nullptr || ctx_.betaShape == nullptr || ctx_.stateShape == nullptr,
-                    OP_LOGE(ctx_.nodeName, "Required shape pointer is null."), return ge::GRAPH_FAILED);
-        gert::Shape emptyCuShape;
-        const gert::Shape &cuShape = (ctx_.cuSeqlensShape == nullptr) ? emptyCuShape : *ctx_.cuSeqlensShape;
-        return CheckShapeDimAndRelation(*ctx_.queryShape, *ctx_.keyShape, *ctx_.valueShape, *ctx_.gateShape,
-                                        *ctx_.betaShape, *ctx_.stateShape, cuShape);
+        return CheckShapeDimAndRelation(ctx_.queryShape, ctx_.keyShape, ctx_.valueShape, ctx_.gateShape,
+                                        ctx_.betaShape, ctx_.stateShape, ctx_.cuSeqlensShape);
     }
 
     ge::graphStatus RuleFillTilingShapeData(RecurrentKdaTilingData &tiling) const
     {
-        gert::Shape emptyCuShape;
-        const gert::Shape &cuShape = (ctx_.cuSeqlensShape == nullptr) ? emptyCuShape : *ctx_.cuSeqlensShape;
-        FillTilingShapeData(*ctx_.queryShape, *ctx_.valueShape, *ctx_.stateShape, cuShape, tiling);
+        FillTilingShapeData(ctx_.queryShape, ctx_.valueShape, ctx_.stateShape, ctx_.cuSeqlensShape, tiling);
         return ge::GRAPH_SUCCESS;
     }
 

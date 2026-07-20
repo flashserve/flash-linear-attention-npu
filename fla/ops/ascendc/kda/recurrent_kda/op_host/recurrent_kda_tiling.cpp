@@ -66,13 +66,12 @@ void RecurrentKdaTiling::InitCompileInfo()
 }
 
 namespace {
-const gert::Shape *OptionalOriginShape(gert::TilingContext *context, size_t index)
+void CopyOptionalOriginShape(gert::TilingContext *context, size_t index, gert::Shape &dst)
 {
     auto shape = context->GetOptionalInputShape(index);
-    if (shape == nullptr) {
-        return nullptr;
+    if (shape != nullptr) {
+        dst = shape->GetOriginShape();
     }
-    return &shape->GetOriginShape();
 }
 } // namespace
 
@@ -80,17 +79,17 @@ RecurrentKdaTilingContext RecurrentKdaTiling::BuildProcessorContext() const
 {
     RecurrentKdaTilingContext ctx;
     ctx.nodeName = context_->GetNodeName();
-    ctx.queryShape = &context_->GetInputShape(QUERY_INDEX)->GetOriginShape();
-    ctx.keyShape = &context_->GetInputShape(KEY_INDEX)->GetOriginShape();
-    ctx.valueShape = &context_->GetInputShape(VALUE_INDEX)->GetOriginShape();
-    ctx.gateShape = &context_->GetInputShape(GATE_INDEX)->GetOriginShape();
-    ctx.betaShape = &context_->GetInputShape(BETA_INDEX)->GetOriginShape();
-    ctx.stateShape = &context_->GetInputShape(STATE_INDEX)->GetOriginShape();
-    ctx.cuSeqlensShape = OptionalOriginShape(context_, CUSEQLENS_INDEX);
-    ctx.ssmStateShape = OptionalOriginShape(context_, SSM_STATE_INDICES_INDEX);
-    ctx.aLogShape = OptionalOriginShape(context_, A_LOG_INDEX);
-    ctx.dtBiasShape = OptionalOriginShape(context_, DT_BIAS_INDEX);
-    ctx.acceptedTokensShape = OptionalOriginShape(context_, ACC_TOKEN_INDEX);
+    ctx.queryShape = context_->GetInputShape(QUERY_INDEX)->GetOriginShape();
+    ctx.keyShape = context_->GetInputShape(KEY_INDEX)->GetOriginShape();
+    ctx.valueShape = context_->GetInputShape(VALUE_INDEX)->GetOriginShape();
+    ctx.gateShape = context_->GetInputShape(GATE_INDEX)->GetOriginShape();
+    ctx.betaShape = context_->GetInputShape(BETA_INDEX)->GetOriginShape();
+    ctx.stateShape = context_->GetInputShape(STATE_INDEX)->GetOriginShape();
+    CopyOptionalOriginShape(context_, CUSEQLENS_INDEX, ctx.cuSeqlensShape);
+    CopyOptionalOriginShape(context_, SSM_STATE_INDICES_INDEX, ctx.ssmStateShape);
+    CopyOptionalOriginShape(context_, A_LOG_INDEX, ctx.aLogShape);
+    CopyOptionalOriginShape(context_, DT_BIAS_INDEX, ctx.dtBiasShape);
+    CopyOptionalOriginShape(context_, ACC_TOKEN_INDEX, ctx.acceptedTokensShape);
     ctx.aivNum = compileInfo_.aivNum;
     ctx.ubSize = compileInfo_.ubSize;
     ctx.stateDtype = context_->GetInputDesc(STATE_INDEX)->GetDataType();
