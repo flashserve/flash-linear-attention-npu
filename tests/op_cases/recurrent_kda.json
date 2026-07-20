@@ -1,0 +1,337 @@
+{
+  "schema_version": 1,
+  "op": "recurrent_kda",
+  "implementation": "ascendc",
+  "model": "kda",
+  "symbol_table_version": "kda-shape-v1",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": [
+      "bfloat16",
+      "float32"
+    ],
+    "layouts": [
+      "BSND",
+      "TND"
+    ],
+    "features": [
+      "定长/变长序列",
+      "raw gate 与预计算 log gate",
+      "safe_gate lower_bound clamp",
+      "beta sigmoid",
+      "可选初始/最终状态",
+      "state_v_first=True"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ],
+    "optional_routes": [
+      "torch_ops_npu"
+    ]
+  },
+  "data_generation": {
+    "floating_inputs": {
+      "distribution": "normal",
+      "mean": 0.0,
+      "std": 0.5
+    },
+    "structured_inputs": "由 tests/reference/recurrent_kda_reference.py 构造 q/k/v、raw gate、beta、初始状态和变长索引"
+  },
+  "coverage_requirements": {
+    "public_modes": [
+      "fused recurrent 单 kernel",
+      "raw gate: gate + dt_bias -> safe/unsafe log gate",
+      "预计算 log gate",
+      "beta sigmoid 与 allow_neg_eigval",
+      "BSND/TND",
+      "初始状态为空或显式传入"
+    ],
+    "known_limits": [
+      "q/k/v 当前支持 bfloat16；g/beta 支持 float32/bfloat16/float16，A_log 与 dt_bias 必须为 float32。",
+      "layout 当前仅支持 BSND 和 TND；H_v 必须能被 H 整除。",
+      "每条 recurrent 序列长度当前必须 <= 8；BSND 变长序列物理 B 必须为 1。",
+      "state_v_first 当前必须为 true，状态布局为 [seq_num,H_v,V,K]。",
+      "use_gate_in_kernel=true 时 A_log 必传；dt_bias 若存在须为 [H_v*K] 或 [H_v,K]。",
+      "use_gate_in_kernel=false 时 A_log、dt_bias 和 safe_gate 必须为空或 false，避免两段式 gate 语义混入 recurrent API。",
+      "num_accepted_tokens 需要和 ssm_state_indices 一起传入，长度为 seq_num。"
+    ],
+    "required_outputs": [
+      "out",
+      "final_state"
+    ],
+    "accuracy_case_ids": [
+      "recurrent_kda_bsnd_raw_gate_accuracy",
+      "recurrent_kda_bsnd_safe_gate_beta_sigmoid",
+      "recurrent_kda_tnd_precomputed_gate_zero_state"
+    ],
+    "generalization_case_ids": [
+      "recurrent_kda_bsnd_safe_gate_beta_sigmoid",
+      "recurrent_kda_tnd_precomputed_gate_zero_state"
+    ],
+    "negative_case_ids": [
+      "recurrent_kda_negative_contract"
+    ],
+    "route_case_ids": [
+      "recurrent_kda_bsnd_raw_gate_accuracy",
+      "recurrent_kda_tnd_precomputed_gate_zero_state"
+    ]
+  },
+  "tolerance": {
+    "bfloat16": {
+      "rtol": 0.02,
+      "atol": 0.01
+    },
+    "float32": {
+      "rtol": 0.002,
+      "atol": 0.002
+    }
+  },
+  "cases": [
+    {
+      "id": "recurrent_kda_bsnd_raw_gate_accuracy",
+      "tags": [
+        "accuracy",
+        "route",
+        "raw_gate"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 2,
+        "H": 2,
+        "H_v": 4,
+        "K": 64,
+        "V": 64
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g_beta": "float32",
+        "state": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "layout": "BSND",
+        "scale": null,
+        "output_final_state": true,
+        "use_qk_l2norm_in_kernel": true,
+        "use_gate_in_kernel": true,
+        "use_beta_sigmoid_in_kernel": true,
+        "allow_neg_eigval": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "state_v_first": true
+      },
+      "optional_inputs": {
+        "initial_state": "present",
+        "cu_seqlens": null,
+        "A_log": "[H_v]",
+        "dt_bias": "[H_v,K]",
+        "ssm_state_indices": null,
+        "num_accepted_tokens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch",
+        "torch_ops_npu"
+      ],
+      "reference": "tests/reference/recurrent_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "out",
+          "final_state"
+        ]
+      },
+      "seed": 2026
+    },
+    {
+      "id": "recurrent_kda_bsnd_safe_gate_beta_sigmoid",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "safe_gate",
+        "beta_sigmoid"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 2,
+        "H": 2,
+        "H_v": 4,
+        "K": 64,
+        "V": 64
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g_beta": "float32",
+        "state": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "layout": "BSND",
+        "scale": null,
+        "output_final_state": true,
+        "use_qk_l2norm_in_kernel": true,
+        "use_gate_in_kernel": true,
+        "use_beta_sigmoid_in_kernel": true,
+        "allow_neg_eigval": true,
+        "safe_gate": true,
+        "lower_bound": -4.0,
+        "state_v_first": true
+      },
+      "optional_inputs": {
+        "initial_state": "present",
+        "cu_seqlens": null,
+        "A_log": "[H_v]",
+        "dt_bias": "[H_v,K]"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch"
+      ],
+      "reference": "tests/reference/recurrent_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "out",
+          "final_state"
+        ]
+      },
+      "seed": 2027
+    },
+    {
+      "id": "recurrent_kda_tnd_precomputed_gate_zero_state",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "varlen"
+      ],
+      "shape": {
+        "seq_num": 2,
+        "T_total": 4,
+        "max_seq_len": 2,
+        "H": 2,
+        "H_v": 4,
+        "K": 64,
+        "V": 64
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g_beta": "float32",
+        "state": "float32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "layout": "TND",
+        "scale": null,
+        "output_final_state": true,
+        "use_qk_l2norm_in_kernel": false,
+        "use_gate_in_kernel": false,
+        "use_beta_sigmoid_in_kernel": false,
+        "allow_neg_eigval": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "state_v_first": true
+      },
+      "optional_inputs": {
+        "initial_state": null,
+        "cu_seqlens": [
+          0,
+          2,
+          4
+        ],
+        "A_log": null,
+        "dt_bias": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch"
+      ],
+      "reference": "tests/reference/recurrent_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "out",
+          "final_state"
+        ]
+      },
+      "seed": 2028
+    },
+    {
+      "id": "recurrent_kda_negative_contract",
+      "tags": [
+        "negative",
+        "contract"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 9,
+        "H": 1,
+        "H_v": 1,
+        "K": 64,
+        "V": 64
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g_beta": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "layout": "BSND",
+        "use_gate_in_kernel": false,
+        "safe_gate": true,
+        "state_v_first": false
+      },
+      "optional_inputs": {
+        "initial_state": "present",
+        "A_log": "[H_v]",
+        "dt_bias": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "torch_ops_npu"
+      ],
+      "reference": "tests/reference/recurrent_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains_any": [
+          "dense sequence length must be <= 8",
+          "safe_gate only applies when use_gate_in_kernel=True",
+          "state_v_first=false is not supported"
+        ]
+      },
+      "seed": 2029
+    }
+  ]
+}
