@@ -1,9 +1,9 @@
 # KDA 模型符号表
 
-本文是 `fla/ops/ascendc/kda/` 下 KDA 算子的模型级符号权威来源。`chunk_kda_fwd`、`kda_gate_cumsum`、`kda_layout_swap12` 的 README、设计文档、API 文档和 JSON 用例必须引用本表。
+本文是 `fla/ops/ascendc/kda/` 下 KDA 算子的模型级符号权威来源。`chunk_kda_fwd`、`kda_gate_cumsum`、`kda_layout_swap12`、`recurrent_kda` 的 README、设计文档、API 文档和 JSON 用例必须引用本表。
 
 - 符号表版本：`kda-shape-v1`
-- 适用范围：KDA chunk 前向、gate 预处理和 layout 转换辅助算子
+- 适用范围：KDA chunk 前向、recurrent 前向、gate 预处理和 layout 转换辅助算子
 - 内部主布局：dense 使用 `BNSD`，变长序列使用 `NTD`
 
 <a id="model-shape-symbols"></a>
@@ -30,8 +30,8 @@ KDA 的 head 关系统一写为 `H_v % H_k == 0`，`h_k=floor(h_v/R_h)`。不得
 
 | 符号 | 语义 | 典型 Shape |
 | --- | --- | --- |
-| `S_0` | 可选初始状态 | `[N,H_v,K,V]` 或 dense `[B,H_v,K,V]` |
-| `S_f` | 最终状态 | 与 `S_0` 相同 |
+| `S_0` | 可选初始状态 | chunk 使用 `[N,H_v,K,V]` 或 dense `[B,H_v,K,V]`；recurrent `state_v_first=True` 使用 `[N,H_v,V,K]` 或 dense `[B,H_v,V,K]` |
+| `S_f` | 最终状态 | 与对应算子的 `S_0` 相同 |
 | `A_{qk}` | chunk 内 QK 严格因果权重 | token 维后附加 `chunk_size` |
 | `A_{kk}` | chunk 内 KK/WY 权重 | token 维后附加 `chunk_size` |
 | `W_k` | WY key-side 中间量 | 与 `q` 的特征维一致并按 `H_v` 展开 |

@@ -45,6 +45,7 @@ _ASCENDC_OPS = (
     "npu_chunk_kda_fwd",
     "npu_kda_gate_cumsum",
     "npu_kda_layout_swap12",
+    "npu_recurrent_kda",
     "npu_recurrent_gated_delta_rule",
 )
 
