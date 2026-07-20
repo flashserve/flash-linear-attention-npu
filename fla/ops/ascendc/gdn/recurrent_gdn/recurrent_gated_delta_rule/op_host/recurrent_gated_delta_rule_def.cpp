@@ -91,7 +91,11 @@ public:
             .ExtendCfgInfo("softsync.flag", "true");
         this->AICore().AddConfig("ascend910b", aicConfig);
         this->AICore().AddConfig("ascend910_93", aicConfig);
-        this->AICore().AddConfig("ascend950", aicConfig);
+#ifdef ASCEND_SOC_VERSION
+        if (std::string(ASCEND_SOC_VERSION) == "ascend950") {
+            this->AICore().AddConfig("ascend950", aicConfig);
+        }
+#endif
     }
 };
 

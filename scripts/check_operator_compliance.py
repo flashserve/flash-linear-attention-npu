@@ -434,6 +434,17 @@ def validate_source_rules(operators: dict[str, Path], errors: list[str]) -> None
         text = cmake.read_text(encoding="utf-8")
         if "--cce-auto-sync=on" in text:
             errors.append(f"{cmake.relative_to(ROOT)}: --cce-auto-sync must be off")
+    for build_file in (ROOT / "CMakeLists.txt", ROOT / "cmake" / "custom_build.cmake"):
+        build_text = read_text(build_file, errors)
+        for target in ("op_host_aclnn", "op_host_aclnnExc"):
+            definition_pattern = (
+                rf"target_compile_definitions\s*\(\s*{target}\s+PRIVATE\s+"
+                r'ASCEND_SOC_VERSION="\$\{ASCEND_COMPUTE_UNIT\}"\s*\)'
+            )
+            if not re.search(definition_pattern, build_text, re.S):
+                errors.append(
+                    f"{build_file.relative_to(ROOT)}: {target} must define ASCEND_SOC_VERSION"
+                )
     for op, root in operators.items():
         definition = next(root.glob("op_host/*_def.cpp"), None)
         if definition is None:
@@ -443,6 +454,17 @@ def validate_source_rules(operators: dict[str, Path], errors: list[str]) -> None
         missing = [soc for soc in REQUIRED_SOCS if f'AddConfig("{soc}"' not in text]
         if missing:
             errors.append(f"{definition.relative_to(ROOT)}: missing SOC configs {missing}")
+        a5_guard = re.compile(
+            r"#ifdef\s+ASCEND_SOC_VERSION\s+"
+            r"if\s*\(\s*std::string\s*\(\s*ASCEND_SOC_VERSION\s*\)\s*==\s*\"ascend950\"\s*\)\s*\{\s*"
+            r"this->AICore\(\)\.AddConfig\(\s*\"ascend950\"(?:\s*,[^;]+)?\s*\);\s*\}\s*"
+            r"#endif",
+            re.S,
+        )
+        if not a5_guard.search(text):
+            errors.append(
+                f"{definition.relative_to(ROOT)}: ascend950 config must be guarded by ASCEND_SOC_VERSION"
+            )
         class_match = re.search(r"class\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*public\s+OpDef", text)
         if class_match is None:
             errors.append(f"{definition.relative_to(ROOT)}: cannot determine OpDef class")

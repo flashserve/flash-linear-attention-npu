@@ -42,6 +42,9 @@ if (BUILD_OPEN_PROJECT)
     target_compile_options(op_host_aclnn PRIVATE
             $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++1z>
     )
+    target_compile_definitions(op_host_aclnn PRIVATE
+            ASCEND_SOC_VERSION="${ASCEND_COMPUTE_UNIT}"
+    )
 
     add_library(op_host_aclnnInner SHARED EXCLUDE_FROM_ALL)
     target_link_libraries(op_host_aclnnInner PRIVATE
@@ -57,6 +60,9 @@ if (BUILD_OPEN_PROJECT)
     )
     target_compile_options(op_host_aclnnExc PRIVATE
             $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++1z>
+    )
+    target_compile_definitions(op_host_aclnnExc PRIVATE
+            ASCEND_SOC_VERSION="${ASCEND_COMPUTE_UNIT}"
     )
 
     # op api
