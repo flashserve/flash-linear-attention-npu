@@ -84,8 +84,9 @@ public:
         restUbSize_ = tilingData->ubRestBytes;
         alignK_ = Ceil(tilingData->dk, BF16_NUM_PER_BLOCK) * BF16_NUM_PER_BLOCK;
         alignV_ = Ceil(tilingData->dv, BF16_NUM_PER_BLOCK) * BF16_NUM_PER_BLOCK;
-        load = 0;
-        usedblk = 0;
+        eventMte2ToVInitialized_ = false;
+        eventVToMte2Initialized_ = false;
+        eventVToSInitialized_ = false;
     }
 
     __aicore__ inline void Init(const RKDAInitParams &initParams, TPipe *pipe)
@@ -154,29 +155,54 @@ public:
         betaInUb = tmpBuff.GetWithOffset<float>(static_cast<uint32_t>(betaUbSize / sizeof(float)), buffOffset);
     }
 
-    __aicore__ inline void ComputeAvgload()
+    __aicore__ inline void SyncMte2ToV()
     {
-        uint64_t realT = 0;
-        if (hasCuSeqlens_) {
-            for (uint64_t batch_i = 0; batch_i < B_; batch_i++) {
-                int64_t seq0 = cuSeqlensGm_.GetValue(batch_i);
-                int64_t seq1 = cuSeqlensGm_.GetValue(batch_i + 1);
-                if (seq1 > seq0) {
-                    realT += static_cast<uint64_t>(seq1 - seq0);
-                }
-            }
-        } else {
-            realT = static_cast<uint64_t>(B_) * static_cast<uint64_t>(seqLen_);
+        if (!eventMte2ToVInitialized_) {
+            eventIdMte2ToV_ = GetTPipePtr()->FetchEventID(HardEvent::MTE2_V);
+            eventMte2ToVInitialized_ = true;
         }
-        avgload = Ceil(realT * NV_, GetBlockNum());
-        if (avgload == 0) {
-            avgload = 1;
+        SetFlag<HardEvent::MTE2_V>(eventIdMte2ToV_);
+        WaitFlag<HardEvent::MTE2_V>(eventIdMte2ToV_);
+    }
+
+    __aicore__ inline void SyncVToMte2()
+    {
+        if (!eventVToMte2Initialized_) {
+            eventIdVToMte2_ = GetTPipePtr()->FetchEventID(HardEvent::V_MTE2);
+            eventVToMte2Initialized_ = true;
+        }
+        SetFlag<HardEvent::V_MTE2>(eventIdVToMte2_);
+        WaitFlag<HardEvent::V_MTE2>(eventIdVToMte2_);
+    }
+
+    __aicore__ inline void SyncVToS()
+    {
+        if (!eventVToSInitialized_) {
+            eventIdVToS_ = GetTPipePtr()->FetchEventID(HardEvent::V_S);
+            eventVToSInitialized_ = true;
+        }
+        SetFlag<HardEvent::V_S>(eventIdVToS_);
+        WaitFlag<HardEvent::V_S>(eventIdVToS_);
+    }
+
+    __aicore__ inline void ReleaseEvents()
+    {
+        if (eventMte2ToVInitialized_) {
+            GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(eventIdMte2ToV_);
+            eventMte2ToVInitialized_ = false;
+        }
+        if (eventVToMte2Initialized_) {
+            GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE2>(eventIdVToMte2_);
+            eventVToMte2Initialized_ = false;
+        }
+        if (eventVToSInitialized_) {
+            GetTPipePtr()->ReleaseEventID<HardEvent::V_S>(eventIdVToS_);
+            eventVToSInitialized_ = false;
         }
     }
 
     __aicore__ inline void Process()
     {
-        ComputeAvgload();
         for (uint64_t batch_i = 0; batch_i < B_; batch_i++) {
             int64_t seq0 = 0;
             int64_t seq1 = 0;
@@ -189,25 +215,29 @@ public:
             }
             int32_t seqLen = static_cast<int32_t>(seq1 - seq0);
             if (seqLen <= 0) {
+                CopyZeroLengthState(batch_i);
                 continue;
             }
             if (seqLen > static_cast<int32_t>(MAX_MTP)) {
+                ReleaseEvents();
                 return;
             }
             if (seq0 < 0 || seq1 > static_cast<int64_t>(T_)) {
+                ReleaseEvents();
                 return;
             }
 
             uint32_t copyFlag = 0;
             uint64_t stateSlot = batch_i;
             for (uint64_t head_i = 0; head_i < NV_; head_i++) {
-                if (!IsCurrentBlock(seqLen)) {
+                if (!IsCurrentTask(batch_i, head_i)) {
                     continue;
                 }
                 copyFlag++;
                 if (copyFlag == 1) {
                     stateSlot = ResolveInitialStateSlot(batch_i, seq0, seqLen);
                     if (stateSlot == INVALID_STATE_SLOT) {
+                        ReleaseEvents();
                         return;
                     }
                     CopyInBeta(seq0, seq1);
@@ -215,6 +245,7 @@ public:
                 ProcessHead(seq0, seq1, head_i, stateSlot);
             }
         }
+        ReleaseEvents();
     }
 
 private:
@@ -253,14 +284,10 @@ private:
         DataCopyParams params{1, static_cast<uint16_t>(sizeof(float)), 0, 0};
         DataCopyPadParams padParams{false, 0, 0, 0};
         DataCopyPad(scalar, tensor[offset], params, padParams);
-        TEventID eventIdMte2ToV = GetTPipePtr()->FetchEventID(HardEvent::MTE2_V);
-        SetFlag<HardEvent::MTE2_V>(eventIdMte2ToV);
-        WaitFlag<HardEvent::MTE2_V>(eventIdMte2ToV);
+        SyncMte2ToV();
         Adds(scalar, scalar, 0.0f, 1);
         PipeBarrier<PIPE_V>();
-        TEventID eventIdVToS = GetTPipePtr()->FetchEventID(HardEvent::V_S);
-        SetFlag<HardEvent::V_S>(eventIdVToS);
-        WaitFlag<HardEvent::V_S>(eventIdVToS);
+        SyncVToS();
         __ubuf__ float *ptr = (__ubuf__ float *)scalar.GetPhyAddr();
         return ptr[0];
     }
@@ -272,9 +299,7 @@ private:
         PipeBarrier<PIPE_V>();
         Exp(scalar, scalar, 1);
         PipeBarrier<PIPE_V>();
-        TEventID eventIdVToS = GetTPipePtr()->FetchEventID(HardEvent::V_S);
-        SetFlag<HardEvent::V_S>(eventIdVToS);
-        WaitFlag<HardEvent::V_S>(eventIdVToS);
+        SyncVToS();
         __ubuf__ float *ptr = (__ubuf__ float *)scalar.GetPhyAddr();
         return ptr[0];
     }
@@ -295,9 +320,7 @@ private:
             PipeBarrier<PIPE_V>();
             Sqrt(deltaInUb, deltaInUb, 1);
             PipeBarrier<PIPE_V>();
-            TEventID eventIdVToS = GetTPipePtr()->FetchEventID(HardEvent::V_S);
-            SetFlag<HardEvent::V_S>(eventIdVToS);
-            WaitFlag<HardEvent::V_S>(eventIdVToS);
+            SyncVToS();
             float norm = deltaInUb.GetValue(0);
             if (norm > 0.0f) {
                 Muls(tensor[rowOffset], tensor[rowOffset], 1.0f / norm, alignK_);
@@ -313,9 +336,7 @@ private:
 
         if (hasDtBias_) {
             CopyFloatVectorIn(broadTmpInUb, dtBiasGm_, head * realK_, realK_);
-            TEventID eventIdMte2ToV = GetTPipePtr()->FetchEventID(HardEvent::MTE2_V);
-            SetFlag<HardEvent::MTE2_V>(eventIdMte2ToV);
-            WaitFlag<HardEvent::MTE2_V>(eventIdMte2ToV);
+            SyncMte2ToV();
             for (int32_t row = 0; row < seqLen; ++row) {
                 Add(gateInUb[row * alignK_], gateInUb[row * alignK_], broadTmpInUb, alignK_);
                 PipeBarrier<PIPE_V>();
@@ -357,9 +378,7 @@ private:
         LocalTensor<inType> vLocal = vInQueue_.AllocTensor<inType>();
         LocalTensor<float> gateLocal = gateInQueue_.AllocTensor<float>();
         Duplicate<float>(gateLocal, 0, alignK_ * static_cast<uint32_t>(seqLen));
-        TEventID eventIdVToMte2 = GetTPipePtr()->FetchEventID(HardEvent::V_MTE2);
-        SetFlag<HardEvent::V_MTE2>(eventIdVToMte2);
-        WaitFlag<HardEvent::V_MTE2>(eventIdVToMte2);
+        SyncVToMte2();
 
         DataCopyExtParams qkInParams{static_cast<uint16_t>(seqLen), static_cast<uint32_t>(realK_ * sizeof(inType)),
                                      static_cast<uint32_t>((NK_ - 1) * realK_ * sizeof(inType)), 0, 0};
@@ -424,6 +443,29 @@ private:
             Cast(stateInUb, stateLocal, AscendC::RoundMode::CAST_NONE, alignK_ * curSingleV);
         }
         stateInQueue_.FreeTensor(stateLocal);
+    }
+
+    __aicore__ inline void CopyZeroLengthState(uint64_t batchIdx)
+    {
+        for (uint64_t head = 0; head < NV_; ++head) {
+            if (((batchIdx * NV_ + head) % GetBlockNum()) != blockIdx) {
+                continue;
+            }
+            for (uint64_t vIdx = 0; vIdx < realV_; vIdx += vStep_) {
+                uint32_t curSingleV = vIdx + vStep_ > realV_ ? realV_ - vIdx : vStep_;
+                uint64_t stateOffset = ((batchIdx * NV_ + head) * realV_ + vIdx) * realK_;
+                PrefetchState(stateOffset, curSingleV);
+                LoadPrefetchedState(curSingleV);
+                LocalTensor<stateType> stateOutLocal = stateOutQueue_.AllocTensor<stateType>();
+                if constexpr (std::is_same<stateType, float32_t>()) {
+                    DataCopy(stateOutLocal, stateInUb, alignK_ * curSingleV);
+                } else {
+                    Cast(stateOutLocal, stateInUb, AscendC::RoundMode::CAST_RINT, alignK_ * curSingleV);
+                }
+                stateOutQueue_.EnQue<stateType>(stateOutLocal);
+                CopyOutState(stateOffset, curSingleV);
+            }
+        }
     }
 
     __aicore__ inline void MatVecMul(const LocalTensor<float> &cubeTensor, const LocalTensor<float> &vecTensor,
@@ -572,9 +614,8 @@ private:
         int64_t seqLen = seq1 - seq0;
         uint64_t betaBatchSize = Ceil(static_cast<uint64_t>(seqLen) * NV_, FP32_NUM_PER_BLOCK) * FP32_NUM_PER_BLOCK;
         LocalTensor<float> betaLocal = betaInQueue_.AllocTensor<float>();
-        DataCopyParams betaInParams{1, static_cast<uint16_t>(seqLen * NV_ * sizeof(float)), 0, 0};
-        DataCopyPadParams padParams;
-        DataCopyPad(betaLocal, betaGm_[seq0 * NV_], betaInParams, padParams);
+        CopyFloatVectorIn(betaLocal, betaGm_, static_cast<uint64_t>(seq0) * NV_,
+                          static_cast<uint64_t>(seqLen) * NV_);
         betaInQueue_.EnQue<float>(betaLocal);
         betaLocal = betaInQueue_.DeQue<float>();
         DataCopy(betaInUb, betaLocal, betaBatchSize);
@@ -666,15 +707,9 @@ private:
         gateInQueue_.FreeTensor(gateInUb);
     }
 
-    __aicore__ inline bool IsCurrentBlock(int32_t seqlen)
+    __aicore__ inline bool IsCurrentTask(uint64_t batchIdx, uint64_t headIdx) const
     {
-        load += seqlen;
-        bool ret = (blockIdx == usedblk && seqlen > 0);
-        if (load >= avgload) {
-            load = 0;
-            usedblk++;
-        }
-        return ret;
+        return ((batchIdx * NV_ + headIdx) % GetBlockNum()) == blockIdx;
     }
 
 private:
@@ -711,6 +746,12 @@ private:
     LocalTensor<float> broadTmpInUb;
     LocalTensor<float> attnInUb;
     LocalTensor<float> stateInUb;
+    TEventID eventIdMte2ToV_;
+    TEventID eventIdVToMte2_;
+    TEventID eventIdVToS_;
+    bool eventMte2ToVInitialized_;
+    bool eventVToMte2Initialized_;
+    bool eventVToSInitialized_;
     uint32_t B_;
     uint32_t T_;
     uint32_t seqLen_;
@@ -724,9 +765,6 @@ private:
     uint32_t stateOutBufferNum_;
     uint32_t attnOutBufferNum_;
     uint32_t restUbSize_;
-    uint32_t load;
-    uint32_t usedblk;
-    uint32_t avgload;
     bool hasCuSeqlens_;
     bool hasSsmStateIndices_;
     bool hasAcceptedTokens_;

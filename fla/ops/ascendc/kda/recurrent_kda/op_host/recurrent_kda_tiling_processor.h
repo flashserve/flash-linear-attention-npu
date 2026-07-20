@@ -45,6 +45,7 @@ static constexpr size_t RKDA_DIM_3 = 3;
 static constexpr uint32_t RKDA_LAYOUT_BSND = 0;
 static constexpr uint32_t RKDA_LAYOUT_TND = 1;
 static constexpr size_t RKDA_MAX_MTP = 8;
+static constexpr int64_t RKDA_UB_GUARD_BYTES = 2048;
 static constexpr size_t RKDA_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
 
 struct RecurrentKdaTilingContext {
@@ -446,7 +447,7 @@ private:
         usedUbBytes += RKDA_MAX_MTP * (4 * aDk + 2 * aDv);   // q/k/v input queues, bf16.
         usedUbBytes += RKDA_MAX_MTP * 4 * aDk;               // gate input queue, fp32.
         usedUbBytes += RKDA_MAX_MTP * 4 * aNv;               // beta input queue, fp32.
-        usedUbBytes += 128;                                  // scalar buffer and guard.
+        usedUbBytes += 64 + RKDA_UB_GUARD_BYTES;             // scalar buffer and guard.
         return usedUbBytes;
     }
 
