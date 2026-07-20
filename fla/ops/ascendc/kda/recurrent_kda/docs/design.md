@@ -165,12 +165,21 @@ Q/K/V 公开输入为 BF16，gate/beta 在 aclnn 预处理后以 FP32 进入 ker
 - BSND raw gate + unsafe gate + beta sigmoid。
 - BSND safe gate + `allow_neg_eigval`。
 - TND 预计算 log gate + 空 initial_state。
+- Kimi/KDA 关键泛化 shape：GVA head 映射、`K=128,V=128` dense raw gate、`K=128,V=256` TND safe gate。
 - 负向参数组合：长序列、`safe_gate` 与 raw gate 组合、`state_v_first=false`。
 
 设备侧主入口为 `tests/operators/recurrent_kda/accuracy/test_recurrent_kda.py`，底层 PTA 入口为
 `fla/ops/ascendc/kda/recurrent_kda/tests/pta/test_accuracy.py`。
 
-## 12. 已知限制与演进计划
+## 12. 验证修复记录
+
+A2/A5 精度验证过程中修复以下问题：
+
+- `scale/lower_bound` 的 aclnn 公开参数为 `double`，AICore attr 为 `float`；L0 加入显式 cast，避免 tiling 读取到错误标量。
+- A5 tiling 对 `GetOriginShape()` 返回对象生命周期更敏感；tiling context 改为持有 shape 副本，避免 optional/required shape 指针悬挂。
+- q/k L2 normalize 后从 UB 标量读取 norm 前补充 V->S 同步，避免 scalar 读到旧值导致 raw/safe gate case 精度偏差。
+
+## 13. 已知限制与演进计划
 
 - 当前仅支持 BF16 QKV。
 - 当前每段 recurrent 序列长度限制为 `<=8`。
