@@ -50,7 +50,7 @@ Shape 符号统一引用[KDA 模型符号表](../../README.md#model-shape-symbol
 | `scale` | double | `无` | - | 通常为 1/sqrt(K) |
 | `chunk_size` | int | `无` | `{64, 128}` | 64 或 128 |
 | `output_final_state` | bool | `false` | `{false, true}` | 是否返回有效 final_state |
-| `return_intermediate` | bool | `false` | `{false, true}` | 是否物化八个中间张量 |
+| `return_intermediate` | bool | `false` | `{false, true}` | 是否生成并返回需为反向计算保存的中间张量（`Aqk`、`Akk`、`w`、`u`、`qg`、`kg`、`v_new`、`h`）；为 `false` 时对应返回槽为空张量 |
 | `safe_gate` | bool | `false` | `{false, true}` | 数值稳定模式；输入仍为 chunk 内累计 `gk` |
 | `transpose_state_layout` | bool | `false` | `{false}` | 预留，当前必须 false |
 
