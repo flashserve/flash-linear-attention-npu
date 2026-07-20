@@ -156,9 +156,10 @@ jobs:
             };
 
             if (context.eventName === 'workflow_dispatch') {
-              prNumber = Number(core.getInput('pr_number', { required: true }));
-              ciMode = core.getInput('ci_mode') || 'quick';
-              ops = core.getInput('ops') || '';
+              const inputs = context.payload.inputs || {};
+              prNumber = Number(inputs.pr_number || '');
+              ciMode = inputs.ci_mode || 'quick';
+              ops = inputs.ops || '';
               opsSpecified = ops.trim() !== '';
             } else {
               prNumber = context.payload.issue.number;

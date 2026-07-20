@@ -4,6 +4,14 @@
     "description": "Current flash_gated_delta_rule Example/ST smoke shape with explicit uneven TND output accuracy check.",
     "script": "examples/flash_gated_delta_rule.py",
     "enabled": true,
+    "required_ops": [
+      "chunk_local_cumsum",
+      "chunk_scaled_dot_kkt",
+      "solve_tri",
+      "recompute_wu_fwd",
+      "chunk_gated_delta_rule_fwd_h",
+      "chunk_fwd_o"
+    ],
     "B": 1,
     "T": 4087,
     "chunk_size": 64,
@@ -34,6 +42,14 @@
     "description": "Dense GDR accuracy case against cached CPU recurrent reference.",
     "script": "examples/flash_gated_delta_rule.py",
     "enabled": true,
+    "required_ops": [
+      "chunk_local_cumsum",
+      "chunk_scaled_dot_kkt",
+      "solve_tri",
+      "recompute_wu_fwd",
+      "chunk_gated_delta_rule_fwd_h",
+      "chunk_fwd_o"
+    ],
     "B": 2,
     "T": 128,
     "chunk_size": 64,
@@ -63,6 +79,14 @@
     "description": "TND GDR accuracy case with two 64-token sequences.",
     "script": "examples/flash_gated_delta_rule.py",
     "enabled": true,
+    "required_ops": [
+      "chunk_local_cumsum",
+      "chunk_scaled_dot_kkt",
+      "solve_tri",
+      "recompute_wu_fwd",
+      "chunk_gated_delta_rule_fwd_h",
+      "chunk_fwd_o"
+    ],
     "B": 1,
     "T": 128,
     "chunk_size": 64,
@@ -93,6 +117,14 @@
     "description": "TND GDR accuracy case with three sequences and total T=3991.",
     "script": "examples/flash_gated_delta_rule.py",
     "enabled": true,
+    "required_ops": [
+      "chunk_local_cumsum",
+      "chunk_scaled_dot_kkt",
+      "solve_tri",
+      "recompute_wu_fwd",
+      "chunk_gated_delta_rule_fwd_h",
+      "chunk_fwd_o"
+    ],
     "B": 1,
     "T": 3991,
     "chunk_size": 64,
