@@ -187,6 +187,14 @@ def _assert_sample_finite(torch, tensor, name):
             raise AssertionError(f"{name} contains NaN or Inf in sampled values")
 
 
+def _device_full(torch, shape, value, dtype, device):
+    return torch.full(shape, value, dtype=dtype).to(device).contiguous()
+
+
+def _device_zeros(torch, shape, dtype, device):
+    return torch.zeros(shape, dtype=dtype).to(device).contiguous()
+
+
 @pytest.mark.npu
 def test_json_large_shape_cases():
     if os.environ.get("FLA_NPU_RUN_OPERATOR_TESTS") != "1":
@@ -212,16 +220,16 @@ def test_json_large_shape_cases():
         assert max(lengths) <= int(case["shape"]["max_seq_len"])
         assert {0, 1, 2, 3, 4, 5, 6, 7, 8} <= set(lengths)
 
-        q = torch.full(shapes["q"], 0.125, dtype=torch.bfloat16, device=device)
-        k = torch.full(shapes["q"], 0.125, dtype=torch.bfloat16, device=device)
-        v = torch.full(shapes["v"], 0.25, dtype=torch.bfloat16, device=device)
-        g = torch.zeros(shapes["g"], dtype=torch.float32, device=device)
-        beta = torch.zeros(shapes["beta"], dtype=torch.float32, device=device)
+        q = _device_full(torch, shapes["q"], 0.125, torch.bfloat16, device)
+        k = _device_full(torch, shapes["q"], 0.125, torch.bfloat16, device)
+        v = _device_full(torch, shapes["v"], 0.25, torch.bfloat16, device)
+        g = _device_zeros(torch, shapes["g"], torch.float32, device)
+        beta = _device_zeros(torch, shapes["beta"], torch.float32, device)
         state_dtype = _torch_dtype(torch, case["dtype"]["state"])
         state_shape = (shapes["seq_num"], shapes["v"][-2], shapes["v"][-1], shapes["q"][-1])
-        initial_state = torch.zeros(state_shape, dtype=state_dtype, device=device)
-        A_log = torch.zeros((shapes["v"][-2],), dtype=torch.float32, device=device)
-        dt_bias = torch.zeros((shapes["v"][-2], shapes["q"][-1]), dtype=torch.float32, device=device)
+        initial_state = _device_zeros(torch, state_shape, state_dtype, device)
+        A_log = _device_zeros(torch, (shapes["v"][-2],), torch.float32, device)
+        dt_bias = _device_zeros(torch, (shapes["v"][-2], shapes["q"][-1]), torch.float32, device)
 
         attrs = dict(case["attrs"])
         attrs["output_final_state"] = True
