@@ -23,6 +23,7 @@
 #include "kernel_operator.h"
 #include "platform/platform_ascendc.h"
 
+#include "common/fast_kernel_launch_workspace.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/op_host/chunk_fwd_o_tiling_processor.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/op_kernel/chunk_fwd_o.cpp"
 
@@ -206,19 +207,16 @@ at::Tensor chunk_fwd_o_npu(const at::Tensor &q, const at::Tensor &k, const at::T
         chunkIndicesPtr = (GM_ADDR)chunkIndicesTensor.data_ptr();
     }
 
-    void *workspacePtr = nullptr;
-    if (tilingResult.workspaceSize > 0) {
-        auto ret = aclrtMalloc(&workspacePtr, tilingResult.workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: ", ret);
-    }
-    GM_ADDR workspaceGm = (GM_ADDR)workspacePtr;
+    at::Tensor workspaceTensor =
+        fast_kernel_launch::AllocateDeviceBuffer(q, tilingResult.workspaceSize, "ChunkFwdO workspace");
+    GM_ADDR workspaceGm = fast_kernel_launch::TensorGmAddr(workspaceTensor);
 
     auto qDtype = q.scalar_type();
     auto gDtype = g.scalar_type();
     auto tiling = tilingResult.tiling;
     auto blockDim = tilingResult.blockDim;
 
-    auto aclCall = [=]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor]() -> int {
         if (qDtype == at::kBFloat16 && gDtype == at::kBFloat16) {
             LaunchChunkFwdO<bfloat16_t, bfloat16_t>(blockDim, stream, qPtr, kPtr, vPtr, hPtr, gPtr, cuSeqlensPtr,
                                                     chunkIndicesPtr, oPtr, workspaceGm, tiling);
@@ -239,10 +237,6 @@ at::Tensor chunk_fwd_o_npu(const at::Tensor &q, const at::Tensor &k, const at::T
 
     at_npu::native::OpCommand::RunOpApi("ChunkFwdO", aclCall);
     c10_npu::getCurrentNPUStream().synchronize();
-
-    if (workspacePtr != nullptr) {
-        aclrtFree(workspacePtr);
-    }
 
     return output;
 }

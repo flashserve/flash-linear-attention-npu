@@ -15,6 +15,8 @@
 #ifndef CHUNK_BWD_DQKWG_STRUCT_H
 #define CHUNK_BWD_DQKWG_STRUCT_H
 
+#include <cstdint>
+
 #ifndef TORCH_MODE
 #include "ascendc/host_api/tiling/template_argument.h"
 #endif
@@ -161,5 +163,7 @@ struct ChunkBwdDqkwgTilingData {
 };
 
 } // namespace GDN
+
+using GDN::ChunkBwdDqkwgTilingData;
 
 #endif // CHUNK_BWD_DQKWG_STRUCT_H

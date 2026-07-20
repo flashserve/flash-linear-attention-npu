@@ -13,6 +13,8 @@ import math
 # import custom_ops
 from fla_npu.ops import ascendc as ascendc_ops
 
+fla_npu.load_legacy_torch_ops()
+
 torch.npu.config.allow_internal_format = False
 torch.npu.set_compile_mode(jit_compile=False)
 

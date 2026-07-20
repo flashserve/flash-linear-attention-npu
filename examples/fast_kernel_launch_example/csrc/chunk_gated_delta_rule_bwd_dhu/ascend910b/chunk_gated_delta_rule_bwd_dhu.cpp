@@ -25,6 +25,7 @@
 #include "kernel_operator.h"
 #include "platform/platform_ascendc.h"
 
+#include "common/fast_kernel_launch_workspace.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu/op_host/op_tiling/chunk_gated_delta_rule_bwd_dhu_tiling_processor.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu/op_kernel/chunk_gated_delta_rule_bwd_dhu.cpp"
 
@@ -316,19 +317,16 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_np
         chunkIndicesPtr = (GM_ADDR)chunkIndicesTensor.data_ptr();
     }
 
-    void *workspacePtr = nullptr;
-    if (tilingResult.workspaceSize > 0) {
-        auto ret = aclrtMalloc(&workspacePtr, tilingResult.workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: ", ret);
-    }
-    GM_ADDR workspaceGm = (GM_ADDR)workspacePtr;
+    at::Tensor workspaceTensor =
+        fast_kernel_launch::AllocateDeviceBuffer(q, tilingResult.workspaceSize, "ChunkGatedDeltaRuleBwdDhu workspace");
+    GM_ADDR workspaceGm = fast_kernel_launch::TensorGmAddr(workspaceTensor);
 
     auto qDtype = q.scalar_type();
     auto gDtype = gTensor.scalar_type();
     auto tiling = tilingResult.tiling;
     auto blockDim = tilingResult.blockDim;
 
-    auto aclCall = [=]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor]() -> int {
         if (qDtype == at::kBFloat16 && gDtype == at::kBFloat16) {
             LaunchChunkGatedDeltaRuleBwdDhu<bfloat16_t, bfloat16_t>(
                 blockDim, stream, qPtr, kPtr, wPtr, doPtr, dvPtr, gPtr, cuSeqlensPtr, chunkIndicesPtr, dhPtr, dh0Ptr,
@@ -353,10 +351,6 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_np
 
     at_npu::native::OpCommand::RunOpApi("ChunkGatedDeltaRuleBwdDhu", aclCall);
     c10_npu::getCurrentNPUStream().synchronize();
-
-    if (workspacePtr != nullptr) {
-        aclrtFree(workspacePtr);
-    }
 
     return std::make_tuple(dh, dh0, dv2);
 }

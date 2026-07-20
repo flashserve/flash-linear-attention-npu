@@ -1,0 +1,103 @@
+digraph ReverseVsFree {
+    graph [
+        charset="UTF-8",
+        rankdir=TB,
+        bgcolor="#ffffff",
+        pad="0.35",
+        nodesep="0.42",
+        ranksep="0.58",
+        splines=polyline,
+        fontname="Microsoft YaHei",
+        fontsize=20,
+        label="Reverse ACK 与 workspace slot FREE 是两种协议",
+        labelloc=t
+    ];
+    node [
+        shape=box,
+        style="rounded,filled",
+        color="#64748b",
+        fillcolor="#f8fafc",
+        fontname="Microsoft YaHei",
+        fontsize=11,
+        margin="0.15,0.09"
+    ];
+    edge [
+        color="#64748b",
+        fontname="Microsoft YaHei",
+        fontsize=9,
+        arrowsize=0.72,
+        penwidth=1.35
+    ];
+
+    title_note [
+        label="CrossCoreFlagWithReverse<2> 中的 2 表示每两个 forward Wait 返回一次 ACK\n即使 workspace 也有两个 slot，数值相等仍不是生命周期证明",
+        fillcolor="#fef3c7",
+        color="#d97706"
+    ];
+
+    subgraph cluster_counter {
+        label="协议 A：flag 计数器反压（ACK 可早于 payload 消费完成）";
+        color="#fca5a5";
+        style="rounded";
+
+        a_set0 [label="AIC\nSet READY(0)", fillcolor="#dbeafe", color="#2563eb"];
+        a_set1 [label="AIC\nSet READY(1)", fillcolor="#dbeafe", color="#2563eb"];
+        a_wait [label="AIC\nWait REVERSE ACK", fillcolor="#dbeafe", color="#2563eb"];
+        a_reuse [label="AIC 认为窗口已释放\n准备复用 slot 0", fillcolor="#fee2e2", color="#dc2626"];
+
+        v_wait0 [label="AIV\nWait READY(0)\nwaitCount=1", fillcolor="#fef3c7", color="#d97706"];
+        v_wait1 [label="AIV\nWait READY(1)\nwaitCount=2", fillcolor="#fef3c7", color="#d97706"];
+        v_ack [label="AIV\n立即 Set REVERSE ACK", fillcolor="#fef3c7", color="#d97706"];
+        v_copy [label="MTE2/Vector\nslot 0/1 异步读取仍在途", fillcolor="#fee2e2", color="#dc2626"];
+        v_done [label="LastAsyncReadDone", fillcolor="#dcfce7", color="#059669"];
+
+        a_set0 -> a_set1 -> a_wait -> a_reuse;
+        v_wait0 -> v_wait1 -> v_ack -> v_copy -> v_done;
+        a_set0 -> v_wait0 [color="#2563eb", label="forward 0"];
+        a_set1 -> v_wait1 [color="#2563eb", label="forward 1"];
+        v_ack -> a_wait [color="#d97706", label="批量 ACK"];
+        a_reuse -> v_copy [color="#dc2626", penwidth=2.2, label="可能提前覆盖"];
+    }
+
+    unsafe_rule [
+        label="危险判据：t(reverse_ack) < t(last_async_read_done)\nACK 只证明 Wait 次数，不证明 payload 已消费",
+        fillcolor="#fee2e2",
+        color="#dc2626",
+        penwidth=2.0
+    ];
+
+    subgraph cluster_slot {
+        label="协议 B：按 slot 闭合所有权（允许安全复用）";
+        color="#6ee7b7";
+        style="rounded";
+
+        p_wait [label="Producer\nWait FREE(slot 0)", fillcolor="#dbeafe", color="#2563eb"];
+        p_write [label="写 slot 0\n等待写 pipe 完成", fillcolor="#dbeafe", color="#2563eb"];
+        p_ready [label="Set READY(slot 0)", fillcolor="#dbeafe", color="#2563eb"];
+        p_next [label="下一轮再次\nWait FREE(slot 0)", fillcolor="#dbeafe", color="#2563eb"];
+        p_reuse [label="安全复用 slot 0", fillcolor="#dcfce7", color="#059669"];
+
+        c_wait [label="Consumer\nWait READY(slot 0)", fillcolor="#fef3c7", color="#d97706"];
+        c_read [label="DataCopy/计算\n消费 slot 0", fillcolor="#fef3c7", color="#d97706"];
+        c_done [label="等待最后消费 pipe 完成", fillcolor="#fef3c7", color="#d97706"];
+        c_free [label="Set FREE(slot 0)", fillcolor="#dcfce7", color="#059669"];
+
+        p_wait -> p_write -> p_ready;
+        p_ready -> c_wait [color="#2563eb"];
+        c_wait -> c_read -> c_done -> c_free;
+        c_free -> p_next [color="#059669", penwidth=2.0];
+        p_next -> p_reuse;
+    }
+
+    safe_rule [
+        label="安全判据：LastAsyncReadDone(slot, n) happens-before SetFree(slot, n)\nSetFree(slot, n) happens-before Write(slot, n+1)",
+        fillcolor="#dcfce7",
+        color="#059669",
+        penwidth=2.0
+    ];
+
+    title_note -> a_set0 [style=invis];
+    title_note -> p_wait [style=invis];
+    v_done -> unsafe_rule [style=invis];
+    p_reuse -> safe_rule [style=invis];
+}

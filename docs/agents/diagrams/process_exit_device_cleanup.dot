@@ -1,0 +1,102 @@
+digraph ProcessExitCleanup {
+    graph [
+        charset="UTF-8",
+        rankdir=TB,
+        bgcolor="#ffffff",
+        pad="0.35",
+        nodesep="0.42",
+        ranksep="0.72",
+        splines=polyline,
+        fontname="Microsoft YaHei",
+        fontsize=20,
+        label="为什么 PID 已消失，Device 仍可能暂时不可用",
+        labelloc=t
+    ];
+    node [
+        shape=box,
+        style="rounded,filled",
+        color="#64748b",
+        fillcolor="#f8fafc",
+        fontname="Microsoft YaHei",
+        fontsize=11,
+        margin="0.15,0.09"
+    ];
+    edge [
+        color="#64748b",
+        fontname="Microsoft YaHei",
+        fontsize=9,
+        arrowsize=0.72,
+        penwidth=1.35
+    ];
+
+    subgraph cluster_layers {
+        label="同一时刻的五层状态";
+        color="#93c5fd";
+        style="rounded";
+
+        host [label="Host PID\n已退出", fillcolor="#e0f2fe", color="#0284c7"];
+        context [label="Runtime Context/Stream\n可能仍在 teardown", fillcolor="#fef3c7", color="#d97706"];
+        sq [label="Device SQ/CQ\n仍有 pending task/resource", fillcolor="#fef3c7", color="#d97706"];
+        kernel [label="AIC/AIV kernel\n仍卡在跨核同步", fillcolor="#fee2e2", color="#dc2626"];
+        flag [label="该在途 kernel 的\nflag/slot 协议状态未结束", fillcolor="#fee2e2", color="#dc2626"];
+
+        host -> context -> sq -> kernel -> flag [style=dashed, label="状态不同时清零"];
+    }
+
+    subgraph cluster_cleanup {
+        label="A5/David 清理路径";
+        color="#cbd5e1";
+        style="rounded";
+
+        detect [label="系统检测进程退出", fillcolor="#f1f5f9"];
+        recycle [label="提交 stream recycle\n轮询 task resource", fillcolor="#fef3c7", color="#d97706"];
+        pending [label="task resource 非空\npendingNum=1\nSQ head 不前进", fillcolor="#fee2e2", color="#dc2626"];
+        abort [label="受支持时进入 abort\n停发 SQ -> TS terminate", fillcolor="#fef3c7", color="#d97706"];
+        query [label="轮询 terminate/recover\n清理并更新 SQ/CQ", fillcolor="#fef3c7", color="#d97706"];
+        release [label="释放 stream/task/event ID\n清理完成", fillcolor="#dcfce7", color="#059669"];
+
+        detect -> recycle -> pending;
+        pending -> release [label="旧任务自然完成", color="#059669"];
+        pending -> abort [label="需要终止", color="#dc2626"];
+        abort -> query -> release;
+    }
+
+    subgraph cluster_probe {
+        label="新进程观察";
+        color="#a7f3d0";
+        style="rounded";
+
+        early [label="清理完成前启动健康探针", fillcolor="#fee2e2", color="#dc2626"];
+        early_fail [label="创建资源失败\n或 synchronize 再次卡住", fillcolor="#fee2e2", color="#dc2626"];
+        late [label="确认 release 后启动探针", fillcolor="#dcfce7", color="#059669"];
+        late_pass [label="探针完成\nDevice 恢复可用", fillcolor="#dcfce7", color="#059669"];
+
+        early -> early_fail;
+        late -> late_pass;
+    }
+
+    reset_note [
+        label="aclrtResetDeviceForce 仍会等待未完成任务\nForce 不是 kill-stuck-kernel",
+        fillcolor="#fef3c7",
+        color="#d97706"
+    ];
+    api_note [
+        label="9.1.0 文档将 DeviceTaskAbort 标为预留\n源码存在路径不等于业务可依赖",
+        fillcolor="#f1f5f9",
+        color="#64748b"
+    ];
+    boundary [
+        label="只有确认 pending=0、SQ/CQ 已 reset、资源已释放后\n简单探针仍失败，才支持更深层设备残留假设",
+        fillcolor="#f1f5f9",
+        color="#64748b",
+        penwidth=2.0
+    ];
+
+    host -> detect [penwidth=1.8];
+    pending -> early [color="#dc2626", label="PID 已不可见的窗口"];
+    release -> late [color="#059669", penwidth=2.0];
+    reset_note -> pending [style=dashed];
+    api_note -> abort [style=dashed];
+    early_fail -> boundary [style=dashed];
+    late_pass -> boundary [style=dashed];
+}

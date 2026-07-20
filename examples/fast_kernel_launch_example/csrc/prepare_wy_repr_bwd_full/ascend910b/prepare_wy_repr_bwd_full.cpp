@@ -25,6 +25,7 @@
 #include "torch_npu/csrc/core/npu/NPUStream.h"
 #include "torch_npu/csrc/framework/OpCommand.h"
 
+#include "common/fast_kernel_launch_workspace.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd_full/op_host/prepare_wy_repr_bwd_full_tiling_processor.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd_full/op_kernel/prepare_wy_repr_bwd_full.cpp"
 
@@ -289,19 +290,16 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> prepare_wy_repr_bwd_f
         chunkIndicesPtr = (GM_ADDR)chunkIndicesTensor.data_ptr();
     }
 
-    void *workspacePtr = nullptr;
-    if (tilingResult.workspaceSize > 0) {
-        auto ret = aclrtMalloc(&workspacePtr, tilingResult.workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: ", ret);
-    }
-    GM_ADDR workspaceGm = (GM_ADDR)workspacePtr;
+    at::Tensor workspaceTensor =
+        fast_kernel_launch::AllocateDeviceBuffer(k, tilingResult.workspaceSize, "PrepareWyReprBwdFull workspace");
+    GM_ADDR workspaceGm = fast_kernel_launch::TensorGmAddr(workspaceTensor);
 
     auto kDtype = k.scalar_type();
     auto betaDtype = beta.scalar_type();
     auto tiling = tilingResult.tiling;
     auto blockDim = tilingResult.blockDim;
 
-    auto aclCall = [=]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor]() -> int {
         if (kDtype == at::kBFloat16 && betaDtype == at::kBFloat16) {
             LaunchPrepareWyReprBwdFull<bfloat16_t, bfloat16_t>(
                 blockDim, stream, kPtr, vPtr, betaPtr, APtr, dAPtr, dwPtr, duPtr, gPtr, cuSeqlensPtr,
@@ -325,11 +323,6 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> prepare_wy_repr_bwd_f
     };
 
     at_npu::native::OpCommand::RunOpApi("PrepareWyReprBwdFull", aclCall);
-    c10_npu::getCurrentNPUStream().synchronize();
-
-    if (workspacePtr != nullptr) {
-        aclrtFree(workspacePtr);
-    }
 
     return std::make_tuple(std::move(dk), std::move(dv), std::move(dbeta), std::move(dg));
 }

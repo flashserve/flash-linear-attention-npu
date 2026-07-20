@@ -1,0 +1,195 @@
+digraph ReverseSourceAndSlotState {
+    graph [
+        charset="UTF-8",
+        rankdir=TB,
+        bgcolor="#ffffff",
+        pad="0.30",
+        nodesep="0.58",
+        ranksep="0.50",
+        splines=ortho,
+        newrank=true,
+        fontname="Microsoft YaHei",
+        fontsize=22,
+        label="CrossCoreFlagWithReverse：源码 ACK、workspace slot 与 FREE",
+        labelloc=t
+    ];
+    node [
+        shape=box,
+        style="rounded,filled",
+        color="#64748b",
+        fillcolor="#f8fafc",
+        fontname="Microsoft YaHei",
+        fontsize=12,
+        margin="0.18,0.12"
+    ];
+    edge [
+        color="#64748b",
+        penwidth=1.4,
+        arrowsize=0.75
+    ];
+
+    source_ref [
+        label="1. 先看真实源码：Catlass 41bf90da655bba3c66d0acd7e00abe33960ecfd6\ninclude/catlass/arch/cross_core_sync.hpp · line 23: MAX_REVERSE_DEPTH = 15",
+        fillcolor="#eff6ff",
+        color="#2563eb",
+        penwidth=1.8
+    ];
+
+    flag_fields [
+        shape=plain,
+        label=<
+            <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="7" COLOR="#64748b">
+                <TR><TD COLSPAN="3" BGCOLOR="#f1f5f9"><B>CrossCoreFlagWithReverse 的真实字段 · lines 41-52</B></TD></TR>
+                <TR>
+                    <TD><FONT FACE="Consolas">FlagID id;</FONT><BR/><B>forward 通知 flag</B></TD>
+                    <TD><FONT FACE="Consolas">FlagID reverseId;</FONT><BR/><B>reverse ACK flag</B></TD>
+                    <TD><FONT FACE="Consolas">uint32_t count&#123; 0 &#125;;</FONT><BR/><B>本地累计计数</B></TD>
+                </TR>
+            </TABLE>
+        >
+    ];
+
+    producer_code [
+        shape=plain,
+        label=<
+            <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="7" COLOR="#2563eb">
+                <TR><TD BGCOLOR="#dbeafe" ALIGN="LEFT"><B>Producer · lines 96-105</B></TD></TR>
+                <TR><TD ALIGN="LEFT"><FONT FACE="Consolas" POINT-SIZE="11">
+                    96  template &lt;uint8_t MODE, pipe_t PIPE, uint32_t REVERSE_DEPTH&gt;<BR ALIGN="LEFT"/>
+                    97  CATLASS_DEVICE<BR ALIGN="LEFT"/>
+                    98  void CrossCoreSetFlagWithReverse(CrossCoreFlagWithReverse&lt;REVERSE_DEPTH&gt; &amp;flag)<BR ALIGN="LEFT"/>
+                    99  &#123;<BR ALIGN="LEFT"/>
+                    100     AscendC::CrossCoreSetFlag&lt;MODE, PIPE&gt;(flag.id);<BR ALIGN="LEFT"/>
+                    101     if (++flag.count &gt;= REVERSE_DEPTH) &#123;
+                </FONT></TD></TR>
+                <TR><TD BGCOLOR="#dbeafe" ALIGN="LEFT"><FONT FACE="Consolas" POINT-SIZE="11" COLOR="#1d4ed8"><B>
+                    102         AscendC::CrossCoreWaitFlag(flag.reverseId);
+                </B></FONT></TD></TR>
+                <TR><TD ALIGN="LEFT"><FONT FACE="Consolas" POINT-SIZE="11">
+                    103         flag.count = 0;<BR ALIGN="LEFT"/>
+                    104     &#125;<BR ALIGN="LEFT"/>
+                    105 &#125;
+                </FONT></TD></TR>
+                <TR><TD BGCOLOR="#eff6ff" ALIGN="LEFT">每累计 <B>Depth 次 Set(id)</B>，等待一次 reverse ACK</TD></TR>
+            </TABLE>
+        >
+    ];
+
+    consumer_code [
+        shape=plain,
+        label=<
+            <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="7" COLOR="#d97706">
+                <TR><TD BGCOLOR="#fef3c7" ALIGN="LEFT"><B>Consumer · lines 107-116</B></TD></TR>
+                <TR><TD ALIGN="LEFT"><FONT FACE="Consolas" POINT-SIZE="11">
+                    107 template &lt;uint8_t MODE, pipe_t PIPE, uint32_t REVERSE_DEPTH&gt;<BR ALIGN="LEFT"/>
+                    108 CATLASS_DEVICE<BR ALIGN="LEFT"/>
+                    109 void CrossCoreWaitFlagWithReverse(CrossCoreFlagWithReverse&lt;REVERSE_DEPTH&gt; &amp;flag)<BR ALIGN="LEFT"/>
+                    110 &#123;<BR ALIGN="LEFT"/>
+                    111     AscendC::CrossCoreWaitFlag(flag.id);<BR ALIGN="LEFT"/>
+                    112     if (++flag.count &gt;= REVERSE_DEPTH) &#123;
+                </FONT></TD></TR>
+                <TR><TD BGCOLOR="#fee2e2" ALIGN="LEFT"><FONT FACE="Consolas" POINT-SIZE="11" COLOR="#b91c1c"><B>
+                    113         AscendC::CrossCoreSetFlag&lt;MODE, PIPE&gt;(flag.reverseId);  // ACK
+                </B></FONT></TD></TR>
+                <TR><TD ALIGN="LEFT"><FONT FACE="Consolas" POINT-SIZE="11">
+                    114         flag.count = 0;<BR ALIGN="LEFT"/>
+                    115     &#125;<BR ALIGN="LEFT"/>
+                    116 &#125;
+                </FONT></TD></TR>
+                <TR><TD BGCOLOR="#fff7ed" ALIGN="LEFT">每累计 <B>Depth 次 Wait(id)</B>，立即发送一次 reverse ACK</TD></TR>
+            </TABLE>
+        >
+    ];
+
+    source_meaning [
+        label="源码能证明的只有通知计数\nACK = consumer 已执行 Depth 次 Wait(id)\n源码没有 payload 地址、slotIndex、DataCopy 完成事件或最后读 pipe",
+        fillcolor="#fee2e2",
+        color="#dc2626",
+        penwidth=2.0
+    ];
+
+    section_model [
+        label="2. 再看 payload：slot 是地址所有权，不是 flag 计数",
+        fillcolor="#f8fafc",
+        color="#475569",
+        penwidth=1.6
+    ];
+
+    slot_panel [
+        shape=plain,
+        label=<
+            <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="8" COLOR="#7c3aed">
+                <TR><TD COLSPAN="2" BGCOLOR="#f3e8ff"><B>workspace 双缓冲的 slot</B></TD></TR>
+                <TR><TD COLSPAN="2">slot = <B>固定地址区间 + 当前 epoch + owner</B></TD></TR>
+                <TR>
+                    <TD BGCOLOR="#ede9fe"><B>slot 0</B><BR/>[base, base + S)</TD>
+                    <TD BGCOLOR="#f5f3ff"><B>slot 1</B><BR/>[base + S, base + 2S)</TD>
+                </TR>
+                <TR>
+                    <TD>epoch n<BR/><FONT COLOR="#7c3aed"><B>↓ 同一地址复用</B></FONT><BR/>epoch n + 2</TD>
+                    <TD>epoch n + 1<BR/><FONT COLOR="#7c3aed"><B>↓ 同一地址复用</B></FONT><BR/>epoch n + 3</TD>
+                </TR>
+                <TR><TD COLSPAN="2" BGCOLOR="#fee2e2"><FONT COLOR="#b91c1c"><B>复用 = producer 覆盖旧 payload；不是获得一块新内存</B></FONT></TD></TR>
+            </TABLE>
+        >
+    ];
+
+    free_panel [
+        shape=plain,
+        label=<
+            <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="8" COLOR="#059669">
+                <TR><TD COLSPAN="7" BGCOLOR="#dcfce7"><B>单个 slot 的期望所有权状态</B></TD></TR>
+                <TR>
+                    <TD BGCOLOR="#dcfce7"><B>FREE</B><BR/>owner=Producer</TD>
+                    <TD>→</TD>
+                    <TD BGCOLOR="#dbeafe"><B>WRITING</B><BR/>producer 写</TD>
+                    <TD>→</TD>
+                    <TD BGCOLOR="#fef3c7"><B>READY</B><BR/>写完成并移交</TD>
+                    <TD>→</TD>
+                    <TD BGCOLOR="#ffedd5"><B>READING</B><BR/>consumer 异步读取</TD>
+                </TR>
+                <TR><TD COLSPAN="7">↓ 等待真实最后消费 pipe 完成</TD></TR>
+                <TR><TD COLSPAN="7" BGCOLOR="#ecfdf5"><B>LastAsyncReadDone → SetFree(slot, epoch) → FREE(next epoch)</B></TD></TR>
+                <TR><TD COLSPAN="7" ALIGN="LEFT"><B>FREE 的状态谓词：</B><BR ALIGN="LEFT"/>
+                    owner = Producer<BR ALIGN="LEFT"/>
+                    AND LastAsyncReadDone(previous epoch)<BR ALIGN="LEFT"/>
+                    AND NoAsyncPipeReferences(previous payload)
+                </TD></TR>
+            </TABLE>
+        >
+    ];
+
+    ack_vs_free [
+        shape=plain,
+        label=<
+            <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="8" COLOR="#dc2626">
+                <TR>
+                    <TD BGCOLOR="#fee2e2"><B>reverse ACK</B><BR/>第 Depth 次 Wait(id) 后即可产生<BR/><FONT COLOR="#b91c1c">此时 slot 可能仍是 READING</FONT></TD>
+                    <TD BGCOLOR="#f8fafc"><B>≠</B></TD>
+                    <TD BGCOLOR="#dcfce7"><B>slot FREE</B><BR/>最后异步读取已经完成<BR/><FONT COLOR="#047857">producer 才能覆盖该地址</FONT></TD>
+                </TR>
+            </TABLE>
+        >
+    ];
+
+    safe_condition [
+        label="只有额外证明以下条件，reverse ACK 才能兼任 FREE\nt(ACK for slot i) >= t(LastAsyncReadDone for slot i)\n并且 ACK 与具体 slot/epoch 一一对应",
+        fillcolor="#ecfdf5",
+        color="#059669",
+        penwidth=2.0
+    ];
+
+    source_ref -> flag_fields;
+    flag_fields -> producer_code;
+    flag_fields -> consumer_code;
+    { rank=same; producer_code; consumer_code; }
+    producer_code -> source_meaning;
+    consumer_code -> source_meaning [color="#dc2626", penwidth=2.0];
+    source_meaning -> section_model;
+    section_model -> slot_panel;
+    section_model -> free_panel;
+    { rank=same; slot_panel; free_panel; }
+    slot_panel -> ack_vs_free;
+    free_panel -> ack_vs_free;
+    ack_vs_free -> safe_condition;
+}

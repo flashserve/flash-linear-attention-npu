@@ -16,6 +16,8 @@ import torch
 from fla_npu.ops import ascendc as ascendc_ops
 
 
+fla_npu.load_legacy_torch_ops()
+
 torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
 
 

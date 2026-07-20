@@ -97,7 +97,11 @@ class CMakeBuildCommand(Command):
         Use multi-core to speed up compilation.
         """
         cpu_count = os.cpu_count() or 2
-        num_jobs = str(cpu_count)
+        num_jobs = os.environ.get("FAST_KERNEL_BUILD_JOBS")
+        if not num_jobs:
+            num_jobs = os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL")
+        if not num_jobs:
+            num_jobs = str(min(cpu_count, 8))
         # Get Torch and Torch NPU paths
         import torch
         TORCH_CMAKE_PATH = torch.utils.cmake_prefix_path

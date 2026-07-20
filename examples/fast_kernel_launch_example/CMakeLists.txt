@@ -13,6 +13,10 @@ cmake_minimum_required(VERSION 3.16)
 set(PKG_NAME AscendOps)
 project(${PKG_NAME} VERSION 1.0.0)
 
+# CCE's linker does not accept the linker dependency-file option emitted by
+# recent CMake versions.  Keep link dependency tracking in CMake instead.
+set(CMAKE_LINK_DEPENDS_USE_LINKER FALSE)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -35,6 +39,7 @@ set(INCLUDE_DIRECTORIES
     ${TORCH_INCLUDE_DIRS}
     ${TORCH_NPU_INCLUDE_PATH}
     ${ASCEND_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/csrc
     ${CMAKE_CURRENT_SOURCE_DIR}/../..
     ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../fla/ops/ascendc/common
@@ -83,6 +88,12 @@ set(OBJECTS_LIST "" CACHE INTERNAL "List of objects")
 message(STATUS "OBJECTS_LIST before adding sources: ${OBJECTS_LIST}")
 add_subdirectory(csrc)
 message(STATUS "OBJECTS_LIST after adding sources: ${OBJECTS_LIST}")
+
+if(FAST_KERNEL_OP_NAME AND NOT OBJECTS_LIST)
+    message(FATAL_ERROR
+        "FAST_KERNEL_OP_NAME='${FAST_KERNEL_OP_NAME}' has no source for NPU_ARCH='${NPU_ARCH}'. "
+        "Add the platform-specific source directory before building this fast route.")
+endif()
 
 # create shared library
 set("EXTENSION_CPP" ${CMAKE_CURRENT_SOURCE_DIR}/csrc/extension.cpp)

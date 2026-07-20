@@ -23,6 +23,8 @@ import numpy as np
 import torch
 from fla_npu.ops import ascendc as ascendc_ops
 
+fla_npu.load_legacy_torch_ops()
+
 
 
 import pathlib as _pathlib

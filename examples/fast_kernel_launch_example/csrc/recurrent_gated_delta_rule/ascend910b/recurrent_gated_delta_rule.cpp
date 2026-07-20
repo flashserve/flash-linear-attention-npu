@@ -25,6 +25,7 @@
 #include "platform/platform_ascendc.h"
 #include "lib/matmul_intf.h"
 
+#include "common/fast_kernel_launch_workspace.h"
 #include "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/op_kernel/recurrent_gated_delta_rule_struct.h"
 #include "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/op_host/recurrent_gated_delta_rule_tiling_processor.h"
 #include "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/op_kernel/recurrent_gated_delta_rule_tiling_data.h"
@@ -248,17 +249,14 @@ static void RunRecurrentGatedDeltaRuleKernel(const at::Tensor &query, const at::
         numAcceptedTokensPtr = (GM_ADDR)num_accepted_tokens.value().data_ptr();
     }
 
-    void *workspacePtr = nullptr;
-    if (workspaceSize > 0) {
-        auto ret = aclrtMalloc(&workspacePtr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: ", ret);
-        ret = aclrtMemsetAsync(workspacePtr, workspaceSize, 0, workspaceSize, stream);
-        TORCH_CHECK(ret == ACL_SUCCESS, "memset workspace failed. ERROR: ", ret);
-    }
-    GM_ADDR workspaceGm = (GM_ADDR)workspacePtr;
+    at::Tensor workspaceTensor =
+        fast_kernel_launch::AllocateDeviceBuffer(query, workspaceSize, "RecurrentGatedDeltaRule workspace");
+    fast_kernel_launch::ZeroDeviceBufferAsync(workspaceTensor, workspaceSize, stream,
+                                             "RecurrentGatedDeltaRule workspace");
+    GM_ADDR workspaceGm = fast_kernel_launch::TensorGmAddr(workspaceTensor);
 
     auto stateDtype = state.scalar_type();
-    auto aclCall = [=]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor]() -> int {
         if (stateDtype == at::kBFloat16) {
             LaunchRecurrentGatedDeltaRule<bfloat16_t>(blockDim, stream, queryPtr, keyPtr, valuePtr, betaPtr, statePtr,
                                                       cuSeqlensPtr, ssmStateIndicesPtr, gPtr, gkPtr,
@@ -275,11 +273,6 @@ static void RunRecurrentGatedDeltaRuleKernel(const at::Tensor &query, const at::
 
     at_npu::native::OpCommand::RunOpApi(functional ? "RecurrentGatedDeltaRuleFunctional" : "RecurrentGatedDeltaRule",
                                         aclCall);
-    c10_npu::getCurrentNPUStream().synchronize();
-
-    if (workspacePtr != nullptr) {
-        aclrtFree(workspacePtr);
-    }
 }
 
 at::Tensor recurrent_gated_delta_rule_npu(const at::Tensor &query, const at::Tensor &key, const at::Tensor &value,

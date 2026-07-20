@@ -24,6 +24,7 @@
 #include "torch_npu/csrc/core/npu/NPUStream.h"
 #include "torch_npu/csrc/framework/OpCommand.h"
 
+#include "common/fast_kernel_launch_workspace.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd_da/op_host/prepare_wy_repr_bwd_da_tiling_processor.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd_da/op_kernel/prepare_wy_repr_bwd_da.cpp"
 
@@ -272,19 +273,16 @@ at::Tensor prepare_wy_repr_bwd_da_npu(
         chunkIndicesPtr = (GM_ADDR)chunkIndicesTensor.data_ptr();
     }
 
-    void *workspacePtr = nullptr;
-    if (tilingResult.workspaceSize > 0) {
-        auto ret = aclrtMalloc(&workspacePtr, tilingResult.workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: ", ret);
-    }
-    GM_ADDR workspaceGm = (GM_ADDR)workspacePtr;
+    at::Tensor workspaceTensor =
+        fast_kernel_launch::AllocateDeviceBuffer(k, tilingResult.workspaceSize, "PrepareWyReprBwdDa workspace");
+    GM_ADDR workspaceGm = fast_kernel_launch::TensorGmAddr(workspaceTensor);
 
     auto kDtype = k.scalar_type();
     auto betaDtype = beta.scalar_type();
     auto tiling = tilingResult.tiling;
     auto blockDim = tilingResult.blockDim;
 
-    auto aclCall = [=]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor]() -> int {
         if (kDtype == at::kBFloat16 && betaDtype == at::kBFloat16) {
             LaunchPrepareWyReprBwdDa<bfloat16_t, bfloat16_t>(
                 blockDim, stream, kPtr, vPtr, betaPtr, APtr, dwPtr, duPtr, gPtr,
@@ -308,11 +306,6 @@ at::Tensor prepare_wy_repr_bwd_da_npu(
     };
 
     at_npu::native::OpCommand::RunOpApi("PrepareWyReprBwdDa", aclCall);
-    c10_npu::getCurrentNPUStream().synchronize();
-
-    if (workspacePtr != nullptr) {
-        aclrtFree(workspacePtr);
-    }
 
     return dA;
 }

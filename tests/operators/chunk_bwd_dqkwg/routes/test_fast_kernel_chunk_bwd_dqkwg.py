@@ -452,6 +452,12 @@ def chunk_bwd_dqkwg_ref(
     dw_out = dw_ref.permute(0, 2, 1, 3).contiguous()#.to(torch.float32)
     dg_out = dg_ref.permute(0, 2, 1).contiguous()#.to(torch.float32)
 
+    if n_ratio > 1:
+        B, HV, T, K = dq_out.shape
+        HK = HV // n_ratio
+        dq_out = dq_out.reshape(B, HK, n_ratio, T, K).sum(dim=2).contiguous()
+        dk_out = dk_out.reshape(B, HK, n_ratio, T, K).sum(dim=2).contiguous()
+
     return dq_out, dk_out, dw_out, dg_out
 
 
