@@ -842,7 +842,8 @@ def flash_chunk_gated_delta_rule_bwd(
         scale,
         chunk_size,
         g_gamma=None,
-        A=A,
+        # The current chunk_bwd_dv_local interface reserves A.
+        A=None,
         cu_seqlens=cu_seqlens_list,
         chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
     )
