@@ -220,10 +220,11 @@ public:
         if (aicNum < 1) {
             aicNum = 1;
         }
-        int64_t ringCoreSlots = std::min(aicNum, coreLoops);
-        if (ringCoreSlots < 1) {
-            ringCoreSlots = 1;
+        int64_t usedAicNum = std::min(aicNum, coreLoops);
+        if (usedAicNum < 1) {
+            usedAicNum = 1;
         }
+        const int64_t ringCoreSlots = usedAicNum;
 
         const size_t mainDgLastSize = align32(static_cast<size_t>(B) * HV * numChunks * FP32_SIZE);
         const size_t mainMm5Size = static_cast<size_t>(B) * HV * T * K * FP16_SIZE;
@@ -294,7 +295,7 @@ public:
         tiling_.numChunks = static_cast<uint64_t>(numChunks);
         tiling_.scale = ctx_.scale;
         tiling_.mul0RowNum = (V == V_SIZE_256) ? 16 : 32;
-        tiling_.aicCoreNum = static_cast<uint32_t>(aicNum);
+        tiling_.aicCoreNum = static_cast<uint32_t>(usedAicNum);
         tiling_.wsDwOffset = static_cast<uint64_t>(wsDwOffset);
         tiling_.wsBtxKSyncSlotsPerHead = static_cast<uint64_t>(groupRingDepth);
         tiling_.wsDgLastOffset = static_cast<uint64_t>(wsDgLastOffset);
