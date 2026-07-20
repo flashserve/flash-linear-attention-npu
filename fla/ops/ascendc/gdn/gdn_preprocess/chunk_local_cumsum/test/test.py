@@ -94,6 +94,14 @@ def _tolerances(dtype: torch.dtype) -> Tuple[float, float]:
     return 2e-2, 5e-2
 
 
+def call_chunk_local_cumsum(g: torch.Tensor, chunk_size: int, **kwargs) -> torch.Tensor:
+    try:
+        op = torch.ops.npu.npu_chunk_local_cumsum
+    except AttributeError:
+        from fla_npu.ops.ascendc import npu_chunk_local_cumsum as op
+    return op(g, chunk_size, **kwargs)
+
+
 def run_case(
     name: str,
     shape: Tuple[int, ...],
@@ -128,7 +136,7 @@ def run_case(
     }
     if output_dtype is not None:
         kwargs["output_dtype"] = output_dtype
-    actual = torch.ops.npu.npu_chunk_local_cumsum(g_cpu.npu(), chunk_size, **kwargs).cpu()
+    actual = call_chunk_local_cumsum(g_cpu.npu(), chunk_size, **kwargs).cpu()
     expected_dtype = resolve_output_dtype(dtype, output_dtype)
     expected = reference_impl(g_cpu, chunk_size, reverse, scale, cu_seqlens_cpu, expected_dtype)
 
@@ -164,6 +172,14 @@ def main() -> int:
             dtype=dtype,
         )
         run_case(f"fixed_odd_t_forward_{suffix}", (2, 3, 129), chunk_size=64, dtype=dtype)
+        if dtype is not torch.float32:
+            run_case(
+                f"fixed_long_low_precision_row_path_{suffix}",
+                (1, 1, 8192),
+                chunk_size=64,
+                dtype=dtype,
+                output_dtype="same",
+            )
         run_case(
             f"varlen_forward_{suffix}",
             (1, 8, 3580),

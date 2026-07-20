@@ -98,6 +98,8 @@ public:
                 pipe_.InitBuffer(outCastQueue_, BUFFER_NUM, outputRowBufferBytes);
             }
         }
+        vToMte3Event_ = GetTPipePtr()->AllocEventID<HardEvent::V_MTE3>();
+        mte3ToVEvent_ = GetTPipePtr()->AllocEventID<HardEvent::MTE3_V>();
     }
 
     __aicore__ inline void Process()
@@ -107,21 +109,21 @@ public:
         } else {
             ProcessFixed();
         }
+        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE3>(vToMte3Event_);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_V>(mte3ToVEvent_);
     }
 
 private:
     __aicore__ inline void WaitVToMte3()
     {
-        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
-        SetFlag<HardEvent::V_MTE3>(eventId);
-        WaitFlag<HardEvent::V_MTE3>(eventId);
+        SetFlag<HardEvent::V_MTE3>(vToMte3Event_);
+        WaitFlag<HardEvent::V_MTE3>(vToMte3Event_);
     }
 
     __aicore__ inline void WaitMte3ToV()
     {
-        event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
-        SetFlag<HardEvent::MTE3_V>(eventId);
-        WaitFlag<HardEvent::MTE3_V>(eventId);
+        SetFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
+        WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
     }
 
     __aicore__ inline LocalTensor<float> LoadRowToUb(int64_t gmOffset, int64_t elementCount)
@@ -433,6 +435,8 @@ private:
     const ChunkLocalCumsumTilingData *tiling_ = nullptr;
     int64_t fastHTileSize_ = H_TILE_SIZE;
     bool chunkFastPath_ = false;
+    TEventID vToMte3Event_;
+    TEventID mte3ToVEvent_;
 };
 } // namespace
 
