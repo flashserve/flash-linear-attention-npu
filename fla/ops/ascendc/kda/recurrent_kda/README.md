@@ -47,6 +47,7 @@ out, final_state = recurrent_kda(
   - `safe_gate=False`：`gate = -exp(A_log) * softplus(g + dt_bias)`。
   - `safe_gate=True`：`gate = lower_bound * sigmoid(exp(A_log) * (g + dt_bias))`。
 - `use_beta_sigmoid_in_kernel=True` 时，kernel 使用 `sigmoid(beta)`；若 `allow_neg_eigval=True`，再乘 2。
+- Python/aclnn/legacy 入口支持非连续 `initial_state`；底层 aclnn 的 `final_state` 输出按 recurrent_gdn state 语义支持非连续 view。
 
 每个 token 的 recurrent 更新为：
 

@@ -33,7 +33,8 @@ public:
             .ParamType(REQUIRED)
             .DataType(stateTypes)
             .Format(formats)
-            .UnknownShapeFormat(formats);
+            .UnknownShapeFormat(formats)
+            .IgnoreContiguous();
         this->Input("cu_seqlens")
             .ParamType(OPTIONAL)
             .ValueDepend(OPTIONAL)
@@ -57,7 +58,8 @@ public:
             .ParamType(REQUIRED)
             .DataType(stateTypes)
             .Format(formats)
-            .UnknownShapeFormat(formats);
+            .UnknownShapeFormat(formats)
+            .IgnoreContiguous();
 
         this->Attr("layout").AttrType(OPTIONAL).String("BSND");
         this->Attr("scale").AttrType(OPTIONAL).Float(1.0);

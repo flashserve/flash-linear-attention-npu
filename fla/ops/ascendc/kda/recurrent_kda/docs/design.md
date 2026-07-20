@@ -71,7 +71,9 @@ o_t = S @ q_t
 
 ## 5. 整体架构
 
-- `op_host/op_api/aclnn_recurrent_kda.cpp`：校验 dtype、layout、shape、可选输入组合；对 gate/beta 和可选 int tensor 做连续化与必要 cast；创建 L0 executor。
+- `op_host/op_api/aclnn_recurrent_kda.cpp`：校验 dtype、layout、shape、可选输入组合；保留 view original shape，
+  对 q/k/v、gate/beta、初始状态和可选 tensor 做连续化与必要 cast；非连续 `final_state` 通过临时连续 state
+  和 `ViewCopy` 回写；创建 L0 executor。
 - `op_host/recurrent_kda_tiling.cpp`：读取属性和可选输入存在性，填充 `RecurrentKdaTilingData`，计算 block dim 与 UB 切分。
 - `op_kernel/recurrent_kda.cpp`：单个 AIV kernel 完成 q/k normalize、raw gate 转换、state decay、delta 更新、输出和最终状态写回。
 - `torch_custom/fla_npu/fla_npu/ops/ascendc/_aclnn_ctypes.py`：提供解耦 Python ctypes 入口，不注册 `torch.ops.npu`。

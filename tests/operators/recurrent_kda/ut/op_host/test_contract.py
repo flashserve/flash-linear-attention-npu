@@ -1,6 +1,14 @@
 """Static op_host contract for recurrent_kda; device execution lives in accuracy/routes."""
 
+from pathlib import Path
+
 from tests.operators.recurrent_kda.common.case_matrix import manifest
+
+ROOT = Path(__file__).resolve().parents[5]
+
+
+def _read_repo_file(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
 
 
 def test_host_contract_has_platform_and_negative_matrix():
@@ -37,3 +45,24 @@ def test_positive_cases_stay_inside_supported_kv_enums():
         (int(case["shape"]["K"]), int(case["shape"]["V"]))
         for case in positive_cases
     } <= supported_kv
+
+
+def test_state_tensors_allow_non_contiguous_views():
+    source = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/recurrent_kda_def.cpp")
+    initial_state_block = source[
+        source.index('this->Input("initial_state")'):source.index('this->Input("cu_seqlens")')
+    ]
+    final_state_block = source[
+        source.index('this->Output("final_state")'):source.index('this->Attr("layout")')
+    ]
+
+    assert ".IgnoreContiguous()" in initial_state_block
+    assert ".IgnoreContiguous()" in final_state_block
+
+
+def test_state_view_contract_uses_work_tensors():
+    source = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/op_api/aclnn_recurrent_kda.cpp")
+
+    assert "DataContiguous(initialStateForKernel" in source
+    assert "finalStateNeedViewCopy" in source
+    assert "ViewCopy(result[1], params.finalState" in source

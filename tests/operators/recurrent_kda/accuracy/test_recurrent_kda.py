@@ -40,6 +40,7 @@ def test_case_manifest_covers_required_matrix():
     assert any(int(case["shape"]["H"]) == 96 and int(case["shape"]["H_v"]) == 96 for case in positive_cases)
     assert any(int(case["shape"]["H_v"]) // int(case["shape"]["H"]) > 1 for case in positive_cases)
     assert any(int(case["shape"].get("max_seq_len", case["shape"].get("T", 1))) == 8 for case in positive_cases)
+    assert any("non_contiguous_state" in case["tags"] for case in positive_cases)
 
 
 def test_selected_case_ids_are_unique():
@@ -197,6 +198,16 @@ def _make_inputs(case, torch):
     }
 
 
+def _make_non_contiguous_last_dim(torch, tensor):
+    base_shape = tuple(tensor.shape[:-1]) + (int(tensor.shape[-1]) * 2,)
+    base = torch.empty(base_shape, dtype=tensor.dtype, device=tensor.device)
+    view = base[..., ::2]
+    view.copy_(tensor)
+    assert tuple(view.shape) == tuple(tensor.shape)
+    assert not view.is_contiguous()
+    return view
+
+
 @pytest.mark.npu
 def test_json_accuracy_cases():
     if os.environ.get("FLA_NPU_RUN_OPERATOR_TESTS") != "1":
@@ -247,6 +258,65 @@ def test_json_accuracy_cases():
         torch.testing.assert_close(out.cpu().float(), expected[0].float(), rtol=tol["rtol"], atol=tol["atol"])
         if attrs.get("output_final_state", False):
             torch.testing.assert_close(final_state.cpu().float(), expected[1].float(), rtol=tol["rtol"], atol=tol["atol"])
+        else:
+            assert tuple(final_state.shape) == (0,)
+
+
+@pytest.mark.npu
+def test_non_contiguous_state_cases():
+    if os.environ.get("FLA_NPU_RUN_OPERATOR_TESTS") != "1":
+        pytest.skip("set FLA_NPU_RUN_OPERATOR_TESTS=1 on an NPU test host")
+
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch_npu")
+    from fla_npu.ops.ascendc import npu_recurrent_kda as recurrent_kda
+    from tests.reference.recurrent_kda_reference import recurrent_kda_reference
+
+    device_id = int(os.environ.get("TEST_DEVICE_ID", "0"))
+    device = torch.device(f"npu:{device_id}")
+    torch.npu.set_device(device)
+    cases = select_cases(OP, tags=("non_contiguous_state",), route="ascendc", include_negative=False)
+    assert cases, f"{OP} has no non_contiguous_state cases"
+    tol = load_cases(OP)["tolerance"]["bfloat16"]
+    for case in cases:
+        inputs = _make_inputs(case, torch)
+        attrs = dict(case["attrs"])
+        expected = recurrent_kda_reference(**inputs, **attrs)
+        call_kwargs = {
+            key: value
+            for key, value in attrs.items()
+            if key not in ("scale",) or value is not None
+        }
+        if inputs["cu_seqlens"] is not None:
+            call_kwargs["cu_seqlens"] = inputs["cu_seqlens"]
+        optional_tensor_kwargs = {
+            "ssm_state_indices": inputs["ssm_state_indices"],
+            "A_log": inputs["A_log"],
+            "dt_bias": inputs["dt_bias"],
+            "num_accepted_tokens": inputs["num_accepted_tokens"],
+        }
+        optional_tensor_kwargs = {
+            key: value.to(device) if value is not None else None
+            for key, value in optional_tensor_kwargs.items()
+        }
+        initial_state = _make_non_contiguous_last_dim(torch, inputs["initial_state"].to(device))
+        out, final_state = recurrent_kda(
+            inputs["q"].to(device),
+            inputs["k"].to(device),
+            inputs["v"].to(device),
+            inputs["g"].to(device),
+            inputs["beta"].to(device),
+            initial_state,
+            **optional_tensor_kwargs,
+            **call_kwargs,
+        )
+        torch.npu.synchronize()
+        assert out.is_contiguous()
+        torch.testing.assert_close(out.cpu().float(), expected[0].float(), rtol=tol["rtol"], atol=tol["atol"])
+        if attrs.get("output_final_state", False):
+            assert final_state.is_contiguous()
+            torch.testing.assert_close(final_state.cpu().float(), expected[1].float(),
+                                       rtol=tol["rtol"], atol=tol["atol"])
         else:
             assert tuple(final_state.shape) == (0,)
 
