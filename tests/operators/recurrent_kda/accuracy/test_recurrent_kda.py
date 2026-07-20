@@ -21,6 +21,19 @@ def test_case_manifest_covers_required_matrix():
     assert {"accuracy", "generalization", "negative", "route"} <= tags
     assert {"ascend910b", "ascend910_93", "ascend950"} <= set(manifest["capability"]["soc"])
     assert all("ascendc" in case["run_on"] for case in cases if "accuracy" in case["tags"])
+    positive_cases = [case for case in cases if "negative" not in case["tags"]]
+    assert any(case["layout"] == "BSND" and case["optional_inputs"].get("cu_seqlens") for case in positive_cases)
+    assert any(case["layout"] == "TND" and case["optional_inputs"].get("cu_seqlens") for case in positive_cases)
+    assert any(case["attrs"].get("use_gate_in_kernel") for case in positive_cases)
+    assert any(not case["attrs"].get("use_gate_in_kernel") for case in positive_cases)
+    assert any(case["attrs"].get("safe_gate") for case in positive_cases)
+    assert any(case["attrs"].get("use_gate_in_kernel") and case["optional_inputs"].get("dt_bias") is None
+               for case in positive_cases)
+    assert any(case["optional_inputs"].get("dt_bias") == "[H_v*K]" for case in positive_cases)
+    assert any(case["attrs"].get("output_final_state") is False for case in positive_cases)
+    assert any(case["optional_inputs"].get("ssm_state_indices") is not None for case in positive_cases)
+    assert any(case["dtype"].get("g_beta") in ("float16", "bfloat16") for case in positive_cases)
+    assert any(int(case["shape"]["K"]) == 256 for case in positive_cases)
 
 
 def test_selected_case_ids_are_unique():
@@ -39,13 +52,14 @@ def _shape_from_case(case):
     if layout == "BSND":
         batch = int(shape["B"])
         seq_len = int(shape["T"])
+        cu_seqlens = _cu_seqlens_from_case(case)
         return {
             "q": (batch, seq_len, heads, key_dim),
             "v": (batch, seq_len, value_heads, value_dim),
             "g": (batch, seq_len, value_heads, key_dim),
             "beta": (batch, seq_len, value_heads),
-            "seq_num": batch,
-            "cu_seqlens": None,
+            "seq_num": int(shape.get("seq_num", len(cu_seqlens) - 1 if cu_seqlens is not None else batch)),
+            "cu_seqlens": cu_seqlens,
         }
     if layout == "TND":
         total_tokens = int(shape["T_total"])
@@ -95,26 +109,73 @@ def _torch_dtype(torch, name):
     return mapping[name]
 
 
+def _randn(torch, shape, generator, dtype, scale=1.0):
+    return (torch.randn(shape, generator=generator, dtype=torch.float32) * scale).to(dtype)
+
+
+def _sequence_lengths(cu_seqlens):
+    if cu_seqlens is None:
+        return None
+    return [right - left for left, right in zip(cu_seqlens, cu_seqlens[1:])]
+
+
+def _generated_sequence_slots(cu_seqlens):
+    slots = []
+    for seq_idx, length in enumerate(_sequence_lengths(cu_seqlens)):
+        slots.extend([seq_idx] * length)
+    return slots
+
+
+def _generated_last_token_accepts(cu_seqlens):
+    return [max(1, length) for length in _sequence_lengths(cu_seqlens)]
+
+
+def _make_optional_index_tensor(case, torch, key, cu_seqlens):
+    spec = case["optional_inputs"].get(key)
+    if spec is None:
+        return None
+    if isinstance(spec, list):
+        return torch.tensor(spec, dtype=torch.int64)
+    if key == "ssm_state_indices" and spec == "generated_sequence_slots_int32":
+        return torch.tensor(_generated_sequence_slots(cu_seqlens), dtype=torch.int32)
+    if key == "ssm_state_indices" and spec == "generated_sequence_slots_int64":
+        return torch.tensor(_generated_sequence_slots(cu_seqlens), dtype=torch.int64)
+    if key == "num_accepted_tokens" and spec == "generated_last_token_int32":
+        return torch.tensor(_generated_last_token_accepts(cu_seqlens), dtype=torch.int32)
+    if key == "num_accepted_tokens" and spec == "generated_last_token_int64":
+        return torch.tensor(_generated_last_token_accepts(cu_seqlens), dtype=torch.int64)
+    raise ValueError(f"{case['id']}: unsupported {key} generator {spec!r}")
+
+
 def _make_inputs(case, torch):
     shapes = _shape_from_case(case)
     generator = torch.Generator().manual_seed(int(case["seed"]))
-    q = torch.randn(shapes["q"], generator=generator, dtype=torch.bfloat16)
-    k = torch.randn(shapes["q"], generator=generator, dtype=torch.bfloat16)
-    v = torch.randn(shapes["v"], generator=generator, dtype=torch.bfloat16)
-    g = torch.randn(shapes["g"], generator=generator, dtype=torch.float32) * 0.5
-    beta = torch.randn(shapes["beta"], generator=generator, dtype=torch.float32)
+    qkv_dtype = _torch_dtype(torch, case["dtype"].get("q_k_v", "bfloat16"))
+    g_dtype = _torch_dtype(torch, case["dtype"].get("g", case["dtype"].get("g_beta", "float32")))
+    beta_dtype = _torch_dtype(torch, case["dtype"].get("beta", case["dtype"].get("g_beta", "float32")))
+    q = _randn(torch, shapes["q"], generator, qkv_dtype)
+    k = _randn(torch, shapes["q"], generator, qkv_dtype)
+    v = _randn(torch, shapes["v"], generator, qkv_dtype)
+    g = _randn(torch, shapes["g"], generator, g_dtype, scale=0.5)
+    beta = _randn(torch, shapes["beta"], generator, beta_dtype)
     state_shape = (shapes["seq_num"], shapes["v"][-2], shapes["v"][-1], shapes["q"][-1])
     initial_spec = case["optional_inputs"].get("initial_state")
     initial_state = None
     if initial_spec == "present":
-        initial_state = torch.randn(state_shape, generator=generator, dtype=torch.float32) * 0.02
+        state_dtype = _torch_dtype(torch, case["dtype"].get("state", "float32"))
+        initial_state = _randn(torch, state_shape, generator, state_dtype, scale=0.02)
     attrs = case["attrs"]
     A_log = None
     dt_bias = None
     if attrs.get("use_gate_in_kernel", False):
-        A_log = torch.randn((shapes["v"][-2],), generator=generator, dtype=torch.float32) * 0.1
-        if case["optional_inputs"].get("dt_bias") is not None:
-            dt_bias = torch.randn((shapes["v"][-2], shapes["q"][-1]), generator=generator, dtype=torch.float32) * 0.1
+        A_log = _randn(torch, (shapes["v"][-2],), generator, torch.float32, scale=0.1)
+        dt_bias_spec = case["optional_inputs"].get("dt_bias")
+        if dt_bias_spec == "[H_v,K]":
+            dt_bias = _randn(torch, (shapes["v"][-2], shapes["q"][-1]), generator, torch.float32, scale=0.1)
+        elif dt_bias_spec == "[H_v*K]":
+            dt_bias = _randn(torch, (shapes["v"][-2] * shapes["q"][-1],), generator, torch.float32, scale=0.1)
+        elif dt_bias_spec is not None:
+            raise ValueError(f"{case['id']}: unsupported dt_bias spec {dt_bias_spec!r}")
     return {
         "q": q,
         "k": k,
@@ -123,8 +184,10 @@ def _make_inputs(case, torch):
         "beta": beta,
         "initial_state": initial_state,
         "cu_seqlens": shapes["cu_seqlens"],
+        "ssm_state_indices": _make_optional_index_tensor(case, torch, "ssm_state_indices", shapes["cu_seqlens"]),
         "A_log": A_log,
         "dt_bias": dt_bias,
+        "num_accepted_tokens": _make_optional_index_tensor(case, torch, "num_accepted_tokens", shapes["cu_seqlens"]),
     }
 
 
@@ -146,7 +209,6 @@ def test_json_accuracy_cases():
     for case in cases:
         inputs = _make_inputs(case, torch)
         attrs = dict(case["attrs"])
-        attrs["output_final_state"] = True
         expected = recurrent_kda_reference(**inputs, **attrs)
         call_kwargs = {
             key: value
@@ -155,6 +217,16 @@ def test_json_accuracy_cases():
         }
         if inputs["cu_seqlens"] is not None:
             call_kwargs["cu_seqlens"] = inputs["cu_seqlens"]
+        optional_tensor_kwargs = {
+            "ssm_state_indices": inputs["ssm_state_indices"],
+            "A_log": inputs["A_log"],
+            "dt_bias": inputs["dt_bias"],
+            "num_accepted_tokens": inputs["num_accepted_tokens"],
+        }
+        optional_tensor_kwargs = {
+            key: value.to(device) if value is not None else None
+            for key, value in optional_tensor_kwargs.items()
+        }
         out, final_state = recurrent_kda(
             inputs["q"].to(device),
             inputs["k"].to(device),
@@ -162,13 +234,15 @@ def test_json_accuracy_cases():
             inputs["g"].to(device),
             inputs["beta"].to(device),
             inputs["initial_state"].to(device) if inputs["initial_state"] is not None else None,
-            A_log=inputs["A_log"].to(device) if inputs["A_log"] is not None else None,
-            dt_bias=inputs["dt_bias"].to(device) if inputs["dt_bias"] is not None else None,
+            **optional_tensor_kwargs,
             **call_kwargs,
         )
         torch.npu.synchronize()
         torch.testing.assert_close(out.cpu().float(), expected[0].float(), rtol=tol["rtol"], atol=tol["atol"])
-        torch.testing.assert_close(final_state.cpu().float(), expected[1].float(), rtol=tol["rtol"], atol=tol["atol"])
+        if attrs.get("output_final_state", False):
+            torch.testing.assert_close(final_state.cpu().float(), expected[1].float(), rtol=tol["rtol"], atol=tol["atol"])
+        else:
+            assert tuple(final_state.shape) == (0,)
 
 
 def _assert_sample_finite(torch, tensor, name):
