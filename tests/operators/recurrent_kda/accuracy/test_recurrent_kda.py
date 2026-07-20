@@ -253,6 +253,9 @@ def test_json_large_shape_cases():
         torch.npu.synchronize()
         assert tuple(out.shape) == shapes["v"]
         assert tuple(final_state.shape) == state_shape
+        for zero_idx in [idx for idx, length in enumerate(lengths) if length == 0][:2]:
+            zero_state_max = final_state[zero_idx].float().abs().max().cpu().item()
+            assert zero_state_max == 0.0, f"{case['id']} zero-length seq {zero_idx} final_state changed"
         _assert_sample_finite(torch, out, f"{case['id']}/out")
         _assert_sample_finite(torch, final_state, f"{case['id']}/final_state")
         print(
