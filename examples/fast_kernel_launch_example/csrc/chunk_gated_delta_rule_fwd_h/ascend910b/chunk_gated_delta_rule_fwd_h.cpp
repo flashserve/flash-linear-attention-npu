@@ -210,7 +210,9 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_npu(
     auto g_dtype = g.scalar_type();
     auto state_dtype = initial_state.has_value() ? initial_state.value().scalar_type() : at::kFloat;
 
-    auto acl_call = [=, workspaceTensor = workspaceTensor, tilingTensor = tilingTensor]() -> int {
+    auto acl_call = [=, workspaceTensor = workspaceTensor, tilingTensor = tilingTensor,
+                     initial_state = initial_state, cu_seqlens_tensor = cu_seqlens_tensor,
+                     chunk_indices_tensor = chunk_indices_tensor]() -> int {
         bool gIsFp32 = (g_dtype == at::kFloat);
         bool stateIsFp32 = (!initial_state.has_value()) || (state_dtype == at::kFloat);
         if (in_dtype == at::kBFloat16) {

@@ -216,7 +216,8 @@ at::Tensor chunk_fwd_o_npu(const at::Tensor &q, const at::Tensor &k, const at::T
     auto tiling = tilingResult.tiling;
     auto blockDim = tilingResult.blockDim;
 
-    auto aclCall = [=, workspaceTensor = workspaceTensor]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor, cuSeqlensTensor = cuSeqlensTensor,
+                    chunkIndicesTensor = chunkIndicesTensor]() -> int {
         if (qDtype == at::kBFloat16 && gDtype == at::kBFloat16) {
             LaunchChunkFwdO<bfloat16_t, bfloat16_t>(blockDim, stream, qPtr, kPtr, vPtr, hPtr, gPtr, cuSeqlensPtr,
                                                     chunkIndicesPtr, oPtr, workspaceGm, tiling);

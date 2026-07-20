@@ -299,7 +299,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> prepare_wy_repr_bwd_f
     auto tiling = tilingResult.tiling;
     auto blockDim = tilingResult.blockDim;
 
-    auto aclCall = [=, workspaceTensor = workspaceTensor]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor, cuSeqlensTensor = cuSeqlensTensor,
+                    chunkIndicesTensor = chunkIndicesTensor]() -> int {
         if (kDtype == at::kBFloat16 && betaDtype == at::kBFloat16) {
             LaunchPrepareWyReprBwdFull<bfloat16_t, bfloat16_t>(
                 blockDim, stream, kPtr, vPtr, betaPtr, APtr, dAPtr, dwPtr, duPtr, gPtr, cuSeqlensPtr,

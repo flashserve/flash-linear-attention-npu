@@ -282,7 +282,8 @@ at::Tensor prepare_wy_repr_bwd_da_npu(
     auto tiling = tilingResult.tiling;
     auto blockDim = tilingResult.blockDim;
 
-    auto aclCall = [=, workspaceTensor = workspaceTensor]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor, cuSeqlensTensor = cuSeqlensTensor,
+                    chunkIndicesTensor = chunkIndicesTensor]() -> int {
         if (kDtype == at::kBFloat16 && betaDtype == at::kBFloat16) {
             LaunchPrepareWyReprBwdDa<bfloat16_t, bfloat16_t>(
                 blockDim, stream, kPtr, vPtr, betaPtr, APtr, dwPtr, duPtr, gPtr,

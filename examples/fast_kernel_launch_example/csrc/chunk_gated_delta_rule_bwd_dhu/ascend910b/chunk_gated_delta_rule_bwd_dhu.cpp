@@ -326,7 +326,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_np
     auto tiling = tilingResult.tiling;
     auto blockDim = tilingResult.blockDim;
 
-    auto aclCall = [=, workspaceTensor = workspaceTensor]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor, gTensor = gTensor,
+                    cuSeqlensTensor = cuSeqlensTensor, chunkIndicesTensor = chunkIndicesTensor]() -> int {
         if (qDtype == at::kBFloat16 && gDtype == at::kBFloat16) {
             LaunchChunkGatedDeltaRuleBwdDhu<bfloat16_t, bfloat16_t>(
                 blockDim, stream, qPtr, kPtr, wPtr, doPtr, dvPtr, gPtr, cuSeqlensPtr, chunkIndicesPtr, dhPtr, dh0Ptr,

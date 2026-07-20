@@ -292,7 +292,8 @@ std::tuple<at::Tensor, at::Tensor> recompute_wu_fwd_npu(
     auto tiling = tilingResult.tiling;
     auto blockDim = tilingResult.blockDim;
 
-    auto aclCall = [=, workspaceTensor = workspaceTensor]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor, gTensor = gTensor,
+                    cuSeqlensTensor = cuSeqlensTensor, chunkIndicesTensor = chunkIndicesTensor]() -> int {
         if (kDtype == at::kBFloat16 && betaDtype == at::kBFloat16) {
             DispatchByV<bfloat16_t, bfloat16_t>(blockDim, stream, kPtr, vPtr, betaPtr, aPtr, gPtr, cuSeqlensPtr,
                                                 chunkIndicesPtr, wPtr, uPtr, workspaceGm, tiling);

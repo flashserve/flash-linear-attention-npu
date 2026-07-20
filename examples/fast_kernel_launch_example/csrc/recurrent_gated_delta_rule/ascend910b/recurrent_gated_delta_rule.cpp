@@ -256,7 +256,9 @@ static void RunRecurrentGatedDeltaRuleKernel(const at::Tensor &query, const at::
     GM_ADDR workspaceGm = fast_kernel_launch::TensorGmAddr(workspaceTensor);
 
     auto stateDtype = state.scalar_type();
-    auto aclCall = [=, workspaceTensor = workspaceTensor]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor, betaTensor = betaTensor,
+                    actualSeqLengths = actualSeqLengths, ssmStateIndices = ssmStateIndices,
+                    g = g, gk = gk, num_accepted_tokens = num_accepted_tokens]() -> int {
         if (stateDtype == at::kBFloat16) {
             LaunchRecurrentGatedDeltaRule<bfloat16_t>(blockDim, stream, queryPtr, keyPtr, valuePtr, betaPtr, statePtr,
                                                       cuSeqlensPtr, ssmStateIndicesPtr, gPtr, gkPtr,

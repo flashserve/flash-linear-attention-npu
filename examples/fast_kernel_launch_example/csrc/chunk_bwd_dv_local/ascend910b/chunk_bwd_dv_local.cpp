@@ -173,7 +173,8 @@ at::Tensor chunk_bwd_dv_local_npu(const at::Tensor & q, const at::Tensor & k, co
 
     auto workspace_gm = fast_kernel_launch::TensorGmAddr(workspaceTensor);
 
-    auto acl_call = [=, workspaceTensor = workspaceTensor]() -> int {
+    auto acl_call = [=, workspaceTensor = workspaceTensor, cu_seqlens_tensor = cu_seqlens_tensor,
+                     chunk_indices_tensor = chunk_indices_tensor]() -> int {
         if (q_dtype == at::kBFloat16 && g_dtype == at::kBFloat16) {
             using QKVT = bfloat16_t;
             using GT = bfloat16_t;
