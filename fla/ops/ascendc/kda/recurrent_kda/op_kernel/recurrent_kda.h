@@ -295,6 +295,9 @@ private:
             PipeBarrier<PIPE_V>();
             Sqrt(deltaInUb, deltaInUb, 1);
             PipeBarrier<PIPE_V>();
+            TEventID eventIdVToS = GetTPipePtr()->FetchEventID(HardEvent::V_S);
+            SetFlag<HardEvent::V_S>(eventIdVToS);
+            WaitFlag<HardEvent::V_S>(eventIdVToS);
             float norm = deltaInUb.GetValue(0);
             if (norm > 0.0f) {
                 Muls(tensor[rowOffset], tensor[rowOffset], 1.0f / norm, alignK_);
