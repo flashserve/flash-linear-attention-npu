@@ -13,7 +13,7 @@
  */
 
 #include "chunk_bwd_dqkwg_tiling.h"
-#include "../op_kernel/chunk_bwd_dqkwg_struct.h"
+#include "../../op_kernel/chunk_bwd_dqkwg_struct.h"
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
