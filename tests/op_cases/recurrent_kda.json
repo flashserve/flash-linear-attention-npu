@@ -76,7 +76,11 @@
       "recurrent_kda_bsnd_safe_gate_beta_sigmoid",
       "recurrent_kda_tnd_precomputed_gate_zero_state",
       "recurrent_kda_kimi_bsnd_gva_k128_v128",
-      "recurrent_kda_kimi_tnd_safe_gate_v256"
+      "recurrent_kda_kimi_tnd_safe_gate_v256",
+      "recurrent_kda_kimi_tnd_h96_d128_runtime_cu_smoke"
+    ],
+    "stress_case_ids": [
+      "recurrent_kda_kimi_tnd_long_safe_gate_h96_d128"
     ],
     "negative_case_ids": [
       "recurrent_kda_negative_contract"
@@ -414,6 +418,130 @@
         ]
       },
       "seed": 2031
+    },
+    {
+      "id": "recurrent_kda_kimi_tnd_h96_d128_runtime_cu_smoke",
+      "tags": [
+        "generalization",
+        "kimi_shape",
+        "large_shape",
+        "varlen",
+        "safe_gate",
+        "runtime_cu_seqlens"
+      ],
+      "shape": {
+        "seq_num": 70,
+        "T_total": 512,
+        "max_seq_len": 8,
+        "H": 96,
+        "H_v": 96,
+        "K": 128,
+        "V": 128
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g_beta": "float32",
+        "state": "bfloat16"
+      },
+      "layout": "TND",
+      "attrs": {
+        "layout": "TND",
+        "scale": null,
+        "output_final_state": true,
+        "use_qk_l2norm_in_kernel": true,
+        "use_gate_in_kernel": true,
+        "use_beta_sigmoid_in_kernel": true,
+        "allow_neg_eigval": true,
+        "safe_gate": true,
+        "lower_bound": -4.0,
+        "state_v_first": true
+      },
+      "optional_inputs": {
+        "initial_state": "present",
+        "cu_seqlens": "generated_varlen_max8_total",
+        "A_log": "[H_v]",
+        "dt_bias": "[H_v,K]",
+        "ssm_state_indices": null,
+        "num_accepted_tokens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "shape_and_finite_npu_smoke",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": []
+      },
+      "seed": 2032
+    },
+    {
+      "id": "recurrent_kda_kimi_tnd_long_safe_gate_h96_d128",
+      "tags": [
+        "stress",
+        "kimi_shape",
+        "long_context",
+        "varlen",
+        "safe_gate",
+        "runtime_cu_seqlens"
+      ],
+      "shape": {
+        "seq_num": 1542,
+        "T_total": 12288,
+        "max_seq_len": 8,
+        "H": 96,
+        "H_v": 96,
+        "K": 128,
+        "V": 128
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g_beta": "float32",
+        "state": "bfloat16"
+      },
+      "layout": "TND",
+      "attrs": {
+        "layout": "TND",
+        "scale": null,
+        "output_final_state": true,
+        "use_qk_l2norm_in_kernel": true,
+        "use_gate_in_kernel": true,
+        "use_beta_sigmoid_in_kernel": true,
+        "allow_neg_eigval": true,
+        "safe_gate": true,
+        "lower_bound": -4.0,
+        "state_v_first": true
+      },
+      "optional_inputs": {
+        "initial_state": "present",
+        "cu_seqlens": "generated_varlen_max8_total",
+        "A_log": "[H_v]",
+        "dt_bias": "[H_v,K]",
+        "ssm_state_indices": null,
+        "num_accepted_tokens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "manual_long_context_stress",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": []
+      },
+      "seed": 2033
     },
     {
       "id": "recurrent_kda_negative_contract",

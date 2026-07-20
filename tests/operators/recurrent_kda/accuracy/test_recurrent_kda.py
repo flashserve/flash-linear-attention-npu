@@ -56,9 +56,43 @@ def _shape_from_case(case):
             "g": (total_tokens, value_heads, key_dim),
             "beta": (total_tokens, value_heads),
             "seq_num": seq_num,
-            "cu_seqlens": case["optional_inputs"].get("cu_seqlens"),
+            "cu_seqlens": _cu_seqlens_from_case(case),
         }
     raise ValueError(layout)
+
+
+def _cu_seqlens_from_case(case):
+    spec = case["optional_inputs"].get("cu_seqlens")
+    if spec is None or isinstance(spec, list):
+        return spec
+    if spec != "generated_varlen_max8_total":
+        raise ValueError(f"{case['id']}: unsupported cu_seqlens generator {spec!r}")
+
+    shape = case["shape"]
+    total = int(shape["T_total"])
+    max_seq_len = int(shape["max_seq_len"])
+    if max_seq_len != 8:
+        raise ValueError(f"{case['id']}: generated_varlen_max8_total expects max_seq_len=8")
+    special_lengths = [0, 8, 1, 7, 2, 6, 3, 5, 4, 4, 0, 8]
+    remaining = total - sum(special_lengths)
+    if remaining < 0 or remaining % max_seq_len != 0:
+        raise ValueError(f"{case['id']}: cannot generate cu_seqlens for total={total}")
+    lengths = [max_seq_len] * (remaining // max_seq_len) + special_lengths
+    cu = [0]
+    for length in lengths:
+        cu.append(cu[-1] + length)
+    if cu[-1] != total or len(cu) - 1 != int(shape["seq_num"]):
+        raise ValueError(f"{case['id']}: generated cu_seqlens does not match manifest shape")
+    return cu
+
+
+def _torch_dtype(torch, name):
+    mapping = {
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+        "float32": torch.float32,
+    }
+    return mapping[name]
 
 
 def _make_inputs(case, torch):
@@ -101,7 +135,7 @@ def test_json_accuracy_cases():
 
     torch = pytest.importorskip("torch")
     pytest.importorskip("torch_npu")
-    from fla_npu.ops.ascendc import recurrent_kda
+    from fla_npu.ops.ascendc import npu_recurrent_kda as recurrent_kda
     from tests.reference.recurrent_kda_reference import recurrent_kda_reference
 
     device_id = int(os.environ.get("TEST_DEVICE_ID", "0"))
@@ -135,3 +169,88 @@ def test_json_accuracy_cases():
         torch.npu.synchronize()
         torch.testing.assert_close(out.cpu().float(), expected[0].float(), rtol=tol["rtol"], atol=tol["atol"])
         torch.testing.assert_close(final_state.cpu().float(), expected[1].float(), rtol=tol["rtol"], atol=tol["atol"])
+
+
+def _assert_sample_finite(torch, tensor, name):
+    if not tensor.is_floating_point() or tensor.numel() == 0:
+        return
+    flat = tensor.reshape(-1)
+    sample_size = min(int(flat.numel()), 4096)
+    samples = [flat[:sample_size]]
+    if flat.numel() > sample_size:
+        samples.append(flat[-sample_size:])
+    if tensor.dim() >= 1 and tensor.shape[0] > 1:
+        samples.append(tensor[0].reshape(-1)[:sample_size])
+        samples.append(tensor[-1].reshape(-1)[:sample_size])
+    for sample in samples:
+        if sample.numel() and not bool(torch.isfinite(sample.float()).all().item()):
+            raise AssertionError(f"{name} contains NaN or Inf in sampled values")
+
+
+@pytest.mark.npu
+def test_json_large_shape_cases():
+    if os.environ.get("FLA_NPU_RUN_OPERATOR_TESTS") != "1":
+        pytest.skip("set FLA_NPU_RUN_OPERATOR_TESTS=1 on an NPU test host")
+    if os.environ.get("FLA_NPU_RUN_LARGE_SHAPE_TESTS") != "1":
+        pytest.skip("set FLA_NPU_RUN_LARGE_SHAPE_TESTS=1 for long-context Kimi shape smoke")
+
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch_npu")
+    from fla_npu.ops.ascendc import npu_recurrent_kda as recurrent_kda
+
+    device_id = int(os.environ.get("TEST_DEVICE_ID", "0"))
+    device = torch.device(f"npu:{device_id}")
+    torch.npu.set_device(device)
+    cases = select_cases(OP, tags=("large_shape",), route="ascendc", include_negative=False)
+    assert cases, f"{OP} has no executable large-shape cases"
+    for case in cases:
+        shapes = _shape_from_case(case)
+        cu_seqlens = shapes["cu_seqlens"]
+        lengths = [right - left for left, right in zip(cu_seqlens, cu_seqlens[1:])]
+        assert len(cu_seqlens) == int(case["shape"]["seq_num"]) + 1
+        assert cu_seqlens[-1] == int(case["shape"]["T_total"])
+        assert max(lengths) <= int(case["shape"]["max_seq_len"])
+        assert {0, 1, 2, 3, 4, 5, 6, 7, 8} <= set(lengths)
+
+        q = torch.full(shapes["q"], 0.125, dtype=torch.bfloat16, device=device)
+        k = torch.full(shapes["q"], 0.125, dtype=torch.bfloat16, device=device)
+        v = torch.full(shapes["v"], 0.25, dtype=torch.bfloat16, device=device)
+        g = torch.zeros(shapes["g"], dtype=torch.float32, device=device)
+        beta = torch.zeros(shapes["beta"], dtype=torch.float32, device=device)
+        state_dtype = _torch_dtype(torch, case["dtype"]["state"])
+        state_shape = (shapes["seq_num"], shapes["v"][-2], shapes["v"][-1], shapes["q"][-1])
+        initial_state = torch.zeros(state_shape, dtype=state_dtype, device=device)
+        A_log = torch.zeros((shapes["v"][-2],), dtype=torch.float32, device=device)
+        dt_bias = torch.zeros((shapes["v"][-2], shapes["q"][-1]), dtype=torch.float32, device=device)
+
+        attrs = dict(case["attrs"])
+        attrs["output_final_state"] = True
+        call_kwargs = {
+            key: value
+            for key, value in attrs.items()
+            if key not in ("scale",) or value is not None
+        }
+        out, final_state = recurrent_kda(
+            q,
+            k,
+            v,
+            g,
+            beta,
+            initial_state,
+            cu_seqlens=cu_seqlens,
+            A_log=A_log,
+            dt_bias=dt_bias,
+            **call_kwargs,
+        )
+        torch.npu.synchronize()
+        assert tuple(out.shape) == shapes["v"]
+        assert tuple(final_state.shape) == state_shape
+        _assert_sample_finite(torch, out, f"{case['id']}/out")
+        _assert_sample_finite(torch, final_state, f"{case['id']}/final_state")
+        print(
+            f"[PASS] {OP}/{case['id']} T_total={case['shape']['T_total']} "
+            f"H={case['shape']['H']} HV={case['shape']['H_v']} D={case['shape']['K']}"
+        )
+
+        del q, k, v, g, beta, initial_state, A_log, dt_bias, out, final_state
+        torch.npu.empty_cache()

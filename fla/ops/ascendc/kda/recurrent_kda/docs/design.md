@@ -166,6 +166,10 @@ Q/K/V 公开输入为 BF16，gate/beta 在 aclnn 预处理后以 FP32 进入 ker
 - BSND safe gate + `allow_neg_eigval`。
 - TND 预计算 log gate + 空 initial_state。
 - Kimi/KDA 关键泛化 shape：GVA head 映射、`K=128,V=128` dense raw gate、`K=128,V=256` TND safe gate。
+- Kimi H96/D128 smoke：`H=H_v=96,K=V=128,safe_gate=True`，运行时生成非等距 `cu_seqlens`，
+  覆盖 `cu_seqlens` 长度和值泛化；每段 recurrent 长度仍遵循当前 `<=8` 限制。
+- Kimi 完整长上下文 stress target：`T_total=12288,H=H_v=96,K=V=128,safe_gate=True` 记录在 JSON，
+  因当前单 kernel 计算量较大，不纳入默认通过矩阵。
 - 负向参数组合：长序列、`safe_gate` 与 raw gate 组合、`state_v_first=false`。
 
 设备侧主入口为 `tests/operators/recurrent_kda/accuracy/test_recurrent_kda.py`，底层 PTA 入口为
