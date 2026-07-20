@@ -13,6 +13,7 @@
  */
 
 #include "chunk_bwd_dqkwg_tiling.h"
+#include "../op_kernel/chunk_bwd_dqkwg_struct.h"
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
@@ -21,6 +22,8 @@
 #include <algorithm>
 
 namespace optiling {
+
+using namespace GDN;
 
 constexpr int64_t CONST_B = 1;
 constexpr int64_t CONST_HV = 4;
@@ -163,8 +166,37 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     auto sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     const int64_t physicalAicNum = ascendcPlatform.GetCoreNumAic();
 
-    // 设置 TilingKey
-    context->SetTilingKey(1);
+    const auto qInputDesc = context->GetInputDesc(INPUT_Q_IDX);
+    const auto gInputDesc = context->GetInputDesc(INPUT_G_IDX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, qInputDesc);
+    OP_CHECK_NULL_WITH_CONTEXT(context, gInputDesc);
+
+    const ge::DataType qDtype = qInputDesc->GetDataType();
+    const ge::DataType gDtype = gInputDesc->GetDataType();
+    int dTQ = 0;
+    if (qDtype == ge::DT_BF16) {
+        dTQ = CHUNK_BWD_DQKWG_TPL_BF16;
+    } else if (qDtype == ge::DT_FLOAT16) {
+        dTQ = CHUNK_BWD_DQKWG_TPL_FP16;
+    } else {
+        OP_LOGE(context->GetNodeName(), "q only supports FP16/BF16, but got dtype %d.", qDtype);
+        return ge::GRAPH_FAILED;
+    }
+
+    int dTG = 0;
+    if (gDtype == ge::DT_FLOAT) {
+        dTG = CHUNK_BWD_DQKWG_TPL_FP32;
+    } else if (gDtype == qDtype) {
+        dTG = dTQ;
+    } else {
+        OP_LOGE(context->GetNodeName(), "g must use FP32 or match q dtype, but got q dtype %d and g dtype %d.",
+                qDtype, gDtype);
+        return ge::GRAPH_FAILED;
+    }
+
+    const uint64_t strategyKey = isVarLen ? CHUNK_BWD_DQKWG_STRATEGY_VAR_LEN : CHUNK_BWD_DQKWG_STRATEGY_FIX_LEN;
+    const uint64_t tilingKey = GET_TPL_TILING_KEY(strategyKey, dTQ, dTG, V);
+    context->SetTilingKey(tilingKey);
 
     auto align32 = [](size_t value) -> size_t {
         return ((value + 31) / 32) * 32;

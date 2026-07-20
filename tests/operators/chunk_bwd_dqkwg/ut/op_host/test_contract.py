@@ -1,5 +1,7 @@
 """Static op_host contract for chunk_bwd_dqkwg; device execution lives in accuracy/routes."""
 
+from pathlib import Path
+
 from tests.operators.chunk_bwd_dqkwg.common.case_matrix import manifest
 
 
@@ -19,3 +21,13 @@ def test_route_case_uses_one_shape_definition():
     route_cases = [case for case in data["cases"] if "route" in case["tags"]]
     assert route_cases
     assert any({"ascendc", "aclnn", "direct_launch"} <= set(case["run_on"]) for case in route_cases)
+
+
+def test_tiling_key_selects_the_declared_dtype_templates():
+    source = (
+        Path(__file__).resolve().parents[5]
+        / "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/op_host/op_tiling/chunk_bwd_dqkwg_tiling.cpp"
+    ).read_text(encoding="utf-8")
+    assert "GET_TPL_TILING_KEY(strategyKey, dTQ, dTG, V)" in source
+    assert "CHUNK_BWD_DQKWG_TPL_FP32" in source
+    assert "context->SetTilingKey(1);" not in source
