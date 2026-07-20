@@ -173,7 +173,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
 
     const ge::DataType qDtype = qInputDesc->GetDataType();
     const ge::DataType gDtype = gInputDesc->GetDataType();
-    int dTQ = 0;
+    uint64_t dTQ = 0;
     if (qDtype == ge::DT_BF16) {
         dTQ = CHUNK_BWD_DQKWG_TPL_BF16;
     } else if (qDtype == ge::DT_FLOAT16) {
@@ -183,7 +183,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
         return ge::GRAPH_FAILED;
     }
 
-    int dTG = 0;
+    uint64_t dTG = 0;
     if (gDtype == ge::DT_FLOAT) {
         dTG = CHUNK_BWD_DQKWG_TPL_FP32;
     } else if (gDtype == qDtype) {
@@ -195,7 +195,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     }
 
     const uint64_t strategyKey = isVarLen ? CHUNK_BWD_DQKWG_STRATEGY_VAR_LEN : CHUNK_BWD_DQKWG_STRATEGY_FIX_LEN;
-    const uint64_t tilingKey = GET_TPL_TILING_KEY(strategyKey, dTQ, dTG, V);
+    const uint64_t tilingKey = GET_TPL_TILING_KEY(strategyKey, dTQ, dTG, static_cast<uint64_t>(V));
     context->SetTilingKey(tilingKey);
 
     auto align32 = [](size_t value) -> size_t {

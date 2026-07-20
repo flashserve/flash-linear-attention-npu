@@ -28,6 +28,6 @@ def test_tiling_key_selects_the_declared_dtype_templates():
         Path(__file__).resolve().parents[5]
         / "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/op_host/op_tiling/chunk_bwd_dqkwg_tiling.cpp"
     ).read_text(encoding="utf-8")
-    assert "GET_TPL_TILING_KEY(strategyKey, dTQ, dTG, V)" in source
+    assert "GET_TPL_TILING_KEY(strategyKey, dTQ, dTG, static_cast<uint64_t>(V))" in source
     assert "CHUNK_BWD_DQKWG_TPL_FP32" in source
     assert "context->SetTilingKey(1);" not in source
