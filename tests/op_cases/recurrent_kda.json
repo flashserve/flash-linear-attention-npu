@@ -70,13 +70,23 @@
       "recurrent_kda_bsnd_safe_gate_beta_sigmoid",
       "recurrent_kda_tnd_precomputed_gate_zero_state",
       "recurrent_kda_kimi_bsnd_gva_k128_v128",
-      "recurrent_kda_kimi_tnd_safe_gate_v256"
+      "recurrent_kda_kimi_tnd_safe_gate_v256",
+      "recurrent_kda_bsnd_precomputed_output_only_bf16_gate",
+      "recurrent_kda_bsnd_varlen_precomputed_zero_segment",
+      "recurrent_kda_tnd_raw_gate_no_dt_bias_no_beta_sigmoid",
+      "recurrent_kda_tnd_ssm_accepted_flat_dt_bias_fp16_gate",
+      "recurrent_kda_tnd_precomputed_k256_reduce_general"
     ],
     "generalization_case_ids": [
       "recurrent_kda_bsnd_safe_gate_beta_sigmoid",
       "recurrent_kda_tnd_precomputed_gate_zero_state",
       "recurrent_kda_kimi_bsnd_gva_k128_v128",
       "recurrent_kda_kimi_tnd_safe_gate_v256",
+      "recurrent_kda_bsnd_precomputed_output_only_bf16_gate",
+      "recurrent_kda_bsnd_varlen_precomputed_zero_segment",
+      "recurrent_kda_tnd_raw_gate_no_dt_bias_no_beta_sigmoid",
+      "recurrent_kda_tnd_ssm_accepted_flat_dt_bias_fp16_gate",
+      "recurrent_kda_tnd_precomputed_k256_reduce_general",
       "recurrent_kda_kimi_tnd_h96_d128_runtime_cu_smoke"
     ],
     "stress_case_ids": [
@@ -418,6 +428,338 @@
         ]
       },
       "seed": 2031
+    },
+    {
+      "id": "recurrent_kda_bsnd_precomputed_output_only_bf16_gate",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "precomputed_gate",
+        "output_only",
+        "bf16_gate_beta"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 1,
+        "H": 1,
+        "H_v": 1,
+        "K": 64,
+        "V": 32
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g_beta": "bfloat16",
+        "state": "bfloat16"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "layout": "BSND",
+        "scale": 0.5,
+        "output_final_state": false,
+        "use_qk_l2norm_in_kernel": false,
+        "use_gate_in_kernel": false,
+        "use_beta_sigmoid_in_kernel": false,
+        "allow_neg_eigval": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "state_v_first": true
+      },
+      "optional_inputs": {
+        "initial_state": "present",
+        "cu_seqlens": null,
+        "A_log": null,
+        "dt_bias": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "tests/reference/recurrent_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "out"
+        ]
+      },
+      "seed": 2034
+    },
+    {
+      "id": "recurrent_kda_bsnd_varlen_precomputed_zero_segment",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "varlen",
+        "bsnd_varlen",
+        "precomputed_gate",
+        "zero_length"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 8,
+        "seq_num": 5,
+        "max_seq_len": 4,
+        "H": 2,
+        "H_v": 4,
+        "K": 64,
+        "V": 32
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g_beta": "float32",
+        "state": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "layout": "BSND",
+        "scale": null,
+        "output_final_state": true,
+        "use_qk_l2norm_in_kernel": true,
+        "use_gate_in_kernel": false,
+        "use_beta_sigmoid_in_kernel": true,
+        "allow_neg_eigval": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "state_v_first": true
+      },
+      "optional_inputs": {
+        "initial_state": "present",
+        "cu_seqlens": [
+          0,
+          1,
+          1,
+          4,
+          4,
+          8
+        ],
+        "A_log": null,
+        "dt_bias": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "tests/reference/recurrent_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "out",
+          "final_state"
+        ]
+      },
+      "seed": 2035
+    },
+    {
+      "id": "recurrent_kda_tnd_raw_gate_no_dt_bias_no_beta_sigmoid",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "varlen",
+        "raw_gate",
+        "no_dt_bias"
+      ],
+      "shape": {
+        "seq_num": 3,
+        "T_total": 6,
+        "max_seq_len": 3,
+        "H": 2,
+        "H_v": 2,
+        "K": 96,
+        "V": 32
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g_beta": "float32",
+        "state": "float32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "layout": "TND",
+        "scale": null,
+        "output_final_state": true,
+        "use_qk_l2norm_in_kernel": false,
+        "use_gate_in_kernel": true,
+        "use_beta_sigmoid_in_kernel": false,
+        "allow_neg_eigval": true,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "state_v_first": true
+      },
+      "optional_inputs": {
+        "initial_state": "present",
+        "cu_seqlens": [
+          0,
+          3,
+          4,
+          6
+        ],
+        "A_log": "[H_v]",
+        "dt_bias": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "tests/reference/recurrent_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "out",
+          "final_state"
+        ]
+      },
+      "seed": 2036
+    },
+    {
+      "id": "recurrent_kda_tnd_ssm_accepted_flat_dt_bias_fp16_gate",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "varlen",
+        "raw_gate",
+        "safe_gate",
+        "beta_sigmoid",
+        "ssm_state_indices",
+        "num_accepted_tokens",
+        "dt_bias_flat",
+        "fp16_gate_beta"
+      ],
+      "shape": {
+        "seq_num": 2,
+        "T_total": 5,
+        "max_seq_len": 3,
+        "H": 1,
+        "H_v": 2,
+        "K": 64,
+        "V": 32
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g_beta": "float16",
+        "state": "bfloat16"
+      },
+      "layout": "TND",
+      "attrs": {
+        "layout": "TND",
+        "scale": 0.75,
+        "output_final_state": true,
+        "use_qk_l2norm_in_kernel": true,
+        "use_gate_in_kernel": true,
+        "use_beta_sigmoid_in_kernel": true,
+        "allow_neg_eigval": false,
+        "safe_gate": true,
+        "lower_bound": -0.5,
+        "state_v_first": true
+      },
+      "optional_inputs": {
+        "initial_state": "present",
+        "cu_seqlens": [
+          0,
+          2,
+          5
+        ],
+        "A_log": "[H_v]",
+        "dt_bias": "[H_v*K]",
+        "ssm_state_indices": "generated_sequence_slots_int32",
+        "num_accepted_tokens": "generated_last_token_int32"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "tests/reference/recurrent_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "out",
+          "final_state"
+        ]
+      },
+      "seed": 2037
+    },
+    {
+      "id": "recurrent_kda_tnd_precomputed_k256_reduce_general",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "precomputed_gate",
+        "reduce_general"
+      ],
+      "shape": {
+        "seq_num": 1,
+        "T_total": 2,
+        "max_seq_len": 2,
+        "H": 1,
+        "H_v": 1,
+        "K": 256,
+        "V": 16
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g_beta": "float32",
+        "state": "float32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "layout": "TND",
+        "scale": null,
+        "output_final_state": true,
+        "use_qk_l2norm_in_kernel": false,
+        "use_gate_in_kernel": false,
+        "use_beta_sigmoid_in_kernel": false,
+        "allow_neg_eigval": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "state_v_first": true
+      },
+      "optional_inputs": {
+        "initial_state": "present",
+        "cu_seqlens": null,
+        "A_log": null,
+        "dt_bias": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "tests/reference/recurrent_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "out",
+          "final_state"
+        ]
+      },
+      "seed": 2038
     },
     {
       "id": "recurrent_kda_kimi_tnd_h96_d128_runtime_cu_smoke",
