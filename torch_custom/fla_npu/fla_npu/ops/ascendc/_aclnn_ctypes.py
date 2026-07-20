@@ -76,6 +76,7 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_double,
         ctypes.c_int64,
         ctypes.c_bool,
+        ctypes.c_bool,
         ctypes.c_int64,
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -639,8 +640,7 @@ def npu_chunk_kda_fwd(
     layout = str(layout)
     if layout not in {"BSND", "BNSD", "TND", "NTD"}:
         raise RuntimeError("npu_chunk_kda_fwd: layout must be one of BSND, BNSD, TND, NTD and must be uppercase.")
-    if _optional_bool(safe_gate, False):
-        raise RuntimeError("npu_chunk_kda_fwd: safe_gate=True is not supported.")
+    safe_gate = _optional_bool(safe_gate, False)
     if _optional_bool(transpose_state_layout, False):
         raise RuntimeError("npu_chunk_kda_fwd: transpose_state_layout=True is not supported.")
 
@@ -812,6 +812,7 @@ def npu_chunk_kda_fwd(
             ctypes.c_double(float(scale)),
             ctypes.c_int64(chunk_size),
             ctypes.c_bool(True),
+            ctypes.c_bool(safe_gate),
             ctypes.c_int64(total_chunks),
             ctx.tensor(o, "o"),
             ctx.tensor(final_state_work, "final_state"),

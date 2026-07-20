@@ -13,7 +13,8 @@ ROOT = Path(__file__).resolve().parents[4]
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-def test_chunk_kda_fwd_direct_matches_aclnn(dtype):
+@pytest.mark.parametrize("safe_gate", [False, True])
+def test_chunk_kda_fwd_direct_matches_aclnn(dtype, safe_gate):
     manifest = json.loads((ROOT / "tests/op_cases/chunk_kda_fwd.json").read_text(encoding="utf-8"))
     case = next(item for item in manifest["cases"] if item["id"] == "chunk_kda_fwd_main_accuracy")
     shape = case["shape"]
@@ -34,11 +35,12 @@ def test_chunk_kda_fwd_direct_matches_aclnn(dtype):
 
     direct = torch.ops.ascend_ops.chunk_kda_fwd_direct(
         q, k, v, gk, beta, scale, chunk_size,
-        initial_state=initial_state, output_final_state=True,
+        initial_state=initial_state, output_final_state=True, safe_gate=safe_gate,
     )
     aclnn = fla_ascendc.chunk_kda_fwd(
         q, k, v, gk, beta, scale, chunk_size, layout="BNSD",
         initial_state=initial_state, output_final_state=True, return_intermediate=True,
+        safe_gate=safe_gate,
     )
     for name, actual, reference in zip(
         (

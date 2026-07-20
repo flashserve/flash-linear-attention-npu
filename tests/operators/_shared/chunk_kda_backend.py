@@ -333,6 +333,7 @@ def _run_chunk_kda_fwd_model_shape_with_stats(
         cu_seqlens=cu_seqlens,
         output_final_state=True,
         return_intermediate=True,
+        safe_gate=safe_gate,
     )
     torch.npu.synchronize()
     print(
@@ -452,6 +453,7 @@ def test_chunk_kda_fwd_matches_reference():
         initial_state=initial_state,
         output_final_state=True,
         return_intermediate=True,
+        safe_gate=True,
     )
     ref = chunk_kda_forward_reference(
         q.detach().cpu(),
@@ -506,6 +508,7 @@ def test_chunk_kda_fwd_upper_triangle_dirty_zero():
         initial_state=initial_state,
         output_final_state=True,
         return_intermediate=True,
+        safe_gate=True,
     )
     ref = chunk_kda_forward_reference(
         q.detach().cpu(),
@@ -546,6 +549,18 @@ def test_chunk_kda_fwd_upper_triangle_dirty_zero():
     assert (akk_ref[upper] == 0).all().item()
     torch.testing.assert_close(akk_npu[diag, diag], torch.ones(t), rtol=0, atol=0)
     torch.testing.assert_close(akk_ref[diag, diag], torch.ones(t), rtol=0, atol=0)
+    for name, actual, expected in (
+        ("safe gate o", got[0], ref.o),
+        ("safe gate final_state", got[1], ref.final_state),
+        ("safe gate Aqk", got[3], ref.Aqk),
+        ("safe gate Akk", got[4], ref.Akk),
+        ("safe gate w", got[5], ref.w),
+        ("safe gate u", got[6], ref.u),
+        ("safe gate qg", got[7], ref.qg),
+        ("safe gate kg", got[8], ref.kg),
+        ("safe gate v_new", got[9], ref.v_new),
+    ):
+        _assert_close(name, actual, expected, rtol=2e-2, atol=2e-2)
 
 
 def test_chunk_kda_fwd_vdim256_matches_reference():
@@ -1475,6 +1490,7 @@ if __name__ == "__main__":
         test_chunk_kda_fwd_ntd_direct_matches_reference()
         test_chunk_kda_fwd_vdim256_matches_reference()
         test_chunk_kda_fwd_chunk128_matches_reference()
+        test_chunk_kda_fwd_upper_triangle_dirty_zero()
         test_chunk_kda_fwd_without_intermediate_matches_export_and_reference()
         test_chunk_kda_fwd_invalid_head_mapping_rejected()
         test_chunk_kda_fwd_invalid_chunk_indices_rejected()

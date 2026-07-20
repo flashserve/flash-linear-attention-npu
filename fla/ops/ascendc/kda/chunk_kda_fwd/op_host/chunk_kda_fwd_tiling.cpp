@@ -28,6 +28,7 @@ constexpr size_t ATTR_SCALE_IDX = 0;
 constexpr size_t ATTR_CHUNK_SIZE_IDX = 1;
 constexpr size_t ATTR_OUTPUT_FINAL_STATE_IDX = 2;
 constexpr size_t ATTR_TOTAL_CHUNKS_IDX = 3;
+constexpr size_t ATTR_SAFE_GATE_IDX = 4;
 constexpr uint64_t KDA_SOLVE_SCRATCH_SLOTS = 5;
 constexpr uint64_t KDA_SCORE_QUEUE_SLOTS = 2;
 constexpr uint64_t KDA_SCORE_SCRATCH_PLANES = 3;
@@ -80,6 +81,7 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     int64_t chunkSize = *(attrPtr->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_IDX));
     bool outputFinalState = *(attrPtr->GetAttrPointer<bool>(ATTR_OUTPUT_FINAL_STATE_IDX));
     int64_t totalChunks = *(attrPtr->GetAttrPointer<int64_t>(ATTR_TOTAL_CHUNKS_IDX));
+    bool safeGate = *(attrPtr->GetAttrPointer<bool>(ATTR_SAFE_GATE_IDX));
     const KdaCorePhase phase = ResolvePhase(context);
 
     bool isVarLen = context->GetOptionalInputTensor(INPUT_CU_SEQLENS_IDX) != nullptr;
@@ -155,6 +157,7 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     tiling.set_hasInitialState(hasInitialState);
     tiling.set_outputFinalState(outputFinalState);
     tiling.set_isVarLen(isVarLen);
+    tiling.set_safeGate(safeGate);
     tiling.set_usedCoreNum(blockDim == 0 ? 1 : blockDim);
 
     context->SetTilingKey(static_cast<uint64_t>(phase));

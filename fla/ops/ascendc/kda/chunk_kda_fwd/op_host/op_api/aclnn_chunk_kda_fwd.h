@@ -29,6 +29,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     double scale,
     int64_t chunkSize,
     bool outputFinalState,
+    bool safeGate,
     int64_t totalChunks,
     const aclTensor *oOut,
     const aclTensor *finalStateOut,

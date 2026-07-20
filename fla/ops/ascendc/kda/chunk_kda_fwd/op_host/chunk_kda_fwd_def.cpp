@@ -117,6 +117,7 @@ public:
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
         this->Attr("output_final_state").AttrType(REQUIRED).Bool(false);
         this->Attr("total_chunks").AttrType(REQUIRED).Int(1);
+        this->Attr("safe_gate").AttrType(REQUIRED).Bool(false);
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)

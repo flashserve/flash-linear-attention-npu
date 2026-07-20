@@ -54,6 +54,7 @@ struct ChunkKdaFwdParams {
     double scale = 1.0;
     int64_t chunkSize = 64;
     bool outputFinalState = false;
+    bool safeGate = false;
     int64_t totalChunks = 1;
     const aclTensor *oOut = nullptr;
     const aclTensor *finalStateOut = nullptr;
@@ -414,6 +415,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     double scale,
     int64_t chunkSize,
     bool outputFinalState,
+    bool safeGate,
     int64_t totalChunks,
     const aclTensor *oOut,
     const aclTensor *finalStateOut,
@@ -429,7 +431,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     aclOpExecutor **executor)
 {
     ChunkKdaFwdParams params{q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional, layout,
-                             scale, chunkSize, outputFinalState, totalChunks, oOut, finalStateOut, aqkOut,
+                             scale, chunkSize, outputFinalState, safeGate, totalChunks, oOut, finalStateOut, aqkOut,
                              akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut};
     L2_DFX_PHASE_1(aclnnChunkKdaFwd,
                    DFX_IN(q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional),
@@ -667,7 +669,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         auto prepResult = l0op::KdaChunkPrepare(
             qBnsd, kBnsd, vBnsd, gkBnsd, betaBns, params.initialStateOptional,
             params.cuSeqlensOptional, params.chunkIndicesOptional, params.scale, params.chunkSize,
-            params.outputFinalState, params.totalChunks, aqkForOutBnst, prepareFinalStateDummy,
+            params.outputFinalState, params.totalChunks, params.safeGate, aqkForOutBnst, prepareFinalStateDummy,
             aqkComputeBnst, akkComputeBnst, wPreComputeBnsd, akkPostBnst, qgComputeBnsd,
             kgScratchComputeBnsd, vNewComputeBnsd, prepareHDummy, executorPtr);
         for (auto tensor : prepResult) {
@@ -700,7 +702,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             qBnsd, kBnsd, vBnsd, gkBnsd, betaBns, params.initialStateOptional,
             params.cuSeqlensOptional, params.chunkIndicesOptional, wPreComputeBnsd, akkPostBnst,
             vNewComputeBnsd, params.scale, params.chunkSize, params.outputFinalState,
-            params.totalChunks, postODummy, postFinalStateDummy, postAqkDummy, postAkkDummy,
+            params.totalChunks, params.safeGate, postODummy, postFinalStateDummy, postAqkDummy, postAkkDummy,
             wComputeBnsd, uComputeBnsd, postQGDummy, kgComputeBnsd, postVNewDummy, wScratchBntd,
             executorPtr);
         for (auto tensor : postResult) {
@@ -743,7 +745,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             qBnsd, kBnsd, vBnsd, gkBnsd, betaBns, params.initialStateOptional,
             params.cuSeqlensOptional, params.chunkIndicesOptional, qgScaledBnsd, aqkForOutBnst,
             vNewComputeBnsd, hComputeBnst, params.scale, params.chunkSize, false, params.totalChunks,
-            oOutComputeBnsd, outputFinalStateDummy, outputAqkDummy, outputAkkDummy, outputWDummy,
+            params.safeGate, oOutComputeBnsd, outputFinalStateDummy, outputAqkDummy, outputAkkDummy, outputWDummy,
             oLocalDummy, outputQGDummy, outputKGDummy, oBnsd, outputHDummy, executorPtr);
         for (auto tensor : outResult) {
             CHECK_RET(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR);

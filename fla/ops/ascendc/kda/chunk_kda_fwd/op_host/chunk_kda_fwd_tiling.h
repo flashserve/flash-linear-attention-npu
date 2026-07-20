@@ -29,6 +29,7 @@ TILING_DATA_FIELD_DEF(float, scale);
 TILING_DATA_FIELD_DEF(bool, hasInitialState);
 TILING_DATA_FIELD_DEF(bool, outputFinalState);
 TILING_DATA_FIELD_DEF(bool, isVarLen);
+TILING_DATA_FIELD_DEF(bool, safeGate);
 TILING_DATA_FIELD_DEF(int64_t, usedCoreNum);
 END_TILING_DATA_DEF;
 

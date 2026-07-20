@@ -160,7 +160,7 @@ enum class KdaPhase : uint8_t {
     OUTPUT,
 };
 
-template <KdaPhase PHASE, typename T, typename OUT_T = T, typename AKK_T = float,
+template <KdaPhase PHASE, bool SAFE_GATE, typename T, typename OUT_T = T, typename AKK_T = float,
           typename GK_T = float, typename BETA_T = float>
 class ChunkKdaFwdKernel {
 public:
@@ -218,6 +218,9 @@ public:
         BT_ = tiling.chunkSize;
         NT_ = tiling.totalChunks;
         scale_ = tiling.scale;
+        // safe_gate is a numerical implementation mode, not a different KDA formula. Both template
+        // instances use the reference-centered score path and FP32 block solve; keeping the flag in
+        // the type prevents a runtime branch from entering the chunk hot path.
         hasInitial_ = tiling.hasInitialState;
         isVarLen_ = tiling.isVarLen;
         usedCoreNum_ = tiling.usedCoreNum;
@@ -2387,31 +2390,48 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(GM_ADDR q, GM_ADDR k, GM_ADD
     TPipe pipe;
     if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
-        if ASCEND_IS_AIC {
-            ChunkKdaFwdKernel<KdaPhase::PREPARE, DTYPE_Q, DTYPE_Q, float, DTYPE_GK, DTYPE_BETA> op;
-            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
-                    propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
-                    tilingData, &pipe, false);
-            op.ProcessAic();
-        }
-        if ASCEND_IS_AIV {
-            ChunkKdaFwdKernel<KdaPhase::PREPARE, DTYPE_Q, DTYPE_Q, float, DTYPE_GK, DTYPE_BETA> op;
-            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
-                    propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
-                    tilingData, &pipe);
-            op.ProcessAiv();
+        if (tilingData.safeGate) {
+            if ASCEND_IS_AIC {
+                ChunkKdaFwdKernel<KdaPhase::PREPARE, true, DTYPE_Q, DTYPE_Q, float, DTYPE_GK, DTYPE_BETA> op;
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
+                        propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
+                        tilingData, &pipe, false);
+                op.ProcessAic();
+            }
+            if ASCEND_IS_AIV {
+                ChunkKdaFwdKernel<KdaPhase::PREPARE, true, DTYPE_Q, DTYPE_Q, float, DTYPE_GK, DTYPE_BETA> op;
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
+                        propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
+                        tilingData, &pipe);
+                op.ProcessAiv();
+            }
+        } else {
+            if ASCEND_IS_AIC {
+                ChunkKdaFwdKernel<KdaPhase::PREPARE, false, DTYPE_Q, DTYPE_Q, float, DTYPE_GK, DTYPE_BETA> op;
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
+                        propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
+                        tilingData, &pipe, false);
+                op.ProcessAic();
+            }
+            if ASCEND_IS_AIV {
+                ChunkKdaFwdKernel<KdaPhase::PREPARE, false, DTYPE_Q, DTYPE_Q, float, DTYPE_GK, DTYPE_BETA> op;
+                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
+                        propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
+                        tilingData, &pipe);
+                op.ProcessAiv();
+            }
         }
     } else if (TILING_KEY_IS(2)) {
         KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
         if ASCEND_IS_AIC {
-            ChunkKdaFwdKernel<KdaPhase::POST_WU, DTYPE_Q, DTYPE_Q, DTYPE_Q, DTYPE_GK, DTYPE_BETA> op;
+            ChunkKdaFwdKernel<KdaPhase::POST_WU, false, DTYPE_Q, DTYPE_Q, DTYPE_Q, DTYPE_GK, DTYPE_BETA> op;
             op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
                     propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
                     tilingData, &pipe, false);
             op.ProcessAic();
         }
         if ASCEND_IS_AIV {
-            ChunkKdaFwdKernel<KdaPhase::POST_WU, DTYPE_Q, DTYPE_Q, DTYPE_Q, DTYPE_GK, DTYPE_BETA> op;
+            ChunkKdaFwdKernel<KdaPhase::POST_WU, false, DTYPE_Q, DTYPE_Q, DTYPE_Q, DTYPE_GK, DTYPE_BETA> op;
             op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
                     propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
                     tilingData, &pipe);
@@ -2420,14 +2440,14 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(GM_ADDR q, GM_ADDR k, GM_ADD
     } else if (TILING_KEY_IS(3)) {
         KERNEL_TASK_TYPE(3, KERNEL_TYPE_MIX_AIC_1_2);
         if ASCEND_IS_AIC {
-            ChunkKdaFwdKernel<KdaPhase::OUTPUT, DTYPE_Q, float, float, DTYPE_GK, DTYPE_BETA> op;
+            ChunkKdaFwdKernel<KdaPhase::OUTPUT, false, DTYPE_Q, float, float, DTYPE_GK, DTYPE_BETA> op;
             op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
                     propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
                     tilingData, &pipe, false);
             op.ProcessAic();
         }
         if ASCEND_IS_AIV {
-            ChunkKdaFwdKernel<KdaPhase::OUTPUT, DTYPE_Q, float, float, DTYPE_GK, DTYPE_BETA> op;
+            ChunkKdaFwdKernel<KdaPhase::OUTPUT, false, DTYPE_Q, float, float, DTYPE_GK, DTYPE_BETA> op;
             op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
                     propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
                     tilingData, &pipe);

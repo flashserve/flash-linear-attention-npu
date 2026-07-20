@@ -484,7 +484,7 @@ npu_chunk_kda_fwd(
     std::string layout_str(layout.data(), layout.size());
     TORCH_CHECK(layout_str == "BSND" || layout_str == "BNSD" || layout_str == "TND" || layout_str == "NTD",
                 "npu_chunk_kda_fwd: layout must be one of BSND, BNSD, TND, NTD and must be uppercase.");
-    TORCH_CHECK(!safe_gate.value_or(false), "npu_chunk_kda_fwd: safe_gate=True is not supported.");
+    bool safe_gate_ = safe_gate.value_or(false);
     TORCH_CHECK(!transpose_state_layout.value_or(false),
                 "npu_chunk_kda_fwd: transpose_state_layout=True is not supported.");
     TORCH_CHECK(chunk_size == 32 || chunk_size == 64 || chunk_size == 128,
@@ -619,7 +619,7 @@ npu_chunk_kda_fwd(
         aclnnChunkKdaFwd,
         q, k, v, gk, beta, initial_state_,
         cu_seqlens, chunk_indices_for_call,
-        layout_cstr, scale_, chunk_size_, recompute_output_final_state, total_chunks_,
+        layout_cstr, scale_, chunk_size_, recompute_output_final_state, safe_gate_, total_chunks_,
         o, final_state_work, aqk, akk, w, u, qg, kg, v_new, h
     );
 

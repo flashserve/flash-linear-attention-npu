@@ -31,7 +31,8 @@
       "定长/变长序列",
       "四种显式 layout",
       "可选初始/最终状态",
-      "可选中间量"
+      "可选中间量",
+      "safe_gate 数值稳定模式"
     ],
     "routes": [
       "ascendc",
@@ -67,7 +68,7 @@
       "H_k/H_v 必须在 [1,128] 且 H_v % H_k == 0；TND 仅支持 H_k=1，多 head rank3 使用 NTD。",
       "变长序列的 cu_seqlens 至少含首尾、非递减且末项等于 T；单次最多 1024 条逻辑序列。",
       "显式 chunk_indices 必须完整、合法并严格采用 sequence-major 规范顺序。",
-      "safe_gate 与 transpose_state_layout 当前必须为 false；raw gate 应先调用 kda_gate_cumsum。"
+      "safe_gate 支持 false/true；raw gate 仍应先调用 kda_gate_cumsum，transpose_state_layout 当前必须为 false。"
     ],
     "required_outputs": [
       "o",
@@ -147,7 +148,7 @@
         "chunk_size": 64,
         "output_final_state": true,
         "return_intermediate": true,
-        "safe_gate": false,
+        "safe_gate": true,
         "transpose_state_layout": false
       },
       "optional_inputs": {

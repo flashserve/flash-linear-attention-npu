@@ -140,10 +140,11 @@ o, final_state, g, Aqk, Akk, w, u, qg, kg, v_new, h, initial_state = \
 
 其中 `initial_state` 输出为预留槽。未传入时返回空 tensor；传入时透传输入 `initial_state`，便于后续扩展到更完整的 state 语义。
 
-预留或拦截：
+属性支持：
 
-- 当前 PR 中 PyTorch wrapper 拦截 `safe_gate=True`。
-- 当前 PR 中 PyTorch wrapper 拦截 `transpose_state_layout=True`。
+- `safe_gate` 支持 `false/true`。KDA 主 kernel 通过 `SAFE_GATE` 编译期模板选择数值模式；当前 NPU
+  两个实例统一使用参考点因子化和 FP32 分块求逆，不在 AIV 热路径增加 runtime 分支。
+- `transpose_state_layout=True` 仍由 PyTorch wrapper 拦截。
 
 ## 4. L2 组合设计
 

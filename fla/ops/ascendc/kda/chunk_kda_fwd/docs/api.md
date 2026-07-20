@@ -51,7 +51,7 @@ Shape 符号统一引用[KDA 模型符号表](../../README.md#model-shape-symbol
 | `chunk_size` | int | `无` | `{64, 128}` | 64 或 128 |
 | `output_final_state` | bool | `false` | `{false, true}` | 是否返回有效 final_state |
 | `return_intermediate` | bool | `false` | `{false, true}` | 是否物化八个中间张量 |
-| `safe_gate` | bool | `false` | `{false}` | 预留，当前必须 false |
+| `safe_gate` | bool | `false` | `{false, true}` | 数值稳定模式；输入仍为 chunk 内累计 `gk` |
 | `transpose_state_layout` | bool | `false` | `{false}` | 预留，当前必须 false |
 
 ## 3. aclnn API
@@ -72,6 +72,7 @@ const char *layout,
 double scale,
 int64_t chunkSize,
 bool outputFinalState,
+bool safeGate,
 int64_t totalChunks,
 const aclTensor *oOut,
 const aclTensor *finalStateOut,
@@ -104,7 +105,9 @@ ACL_CHECK(aclrtCreateStream(&stream));
 uint64_t workspaceSize = 0;
 aclOpExecutor *executor = nullptr;
 aclnnStatus status = aclnnChunkKdaFwdGetWorkspaceSize(
-    q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices, layout, scale, chunkSize, outputFinalState, totalChunks, o, finalState, aqk, akk, w, u, qg, kg, vNew, h, &workspaceSize, &executor);
+    q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices, layout, scale, chunkSize,
+    outputFinalState, safeGate, totalChunks, o, finalState, aqk, akk, w, u, qg, kg,
+    vNew, h, &workspaceSize, &executor);
 ACLNN_CHECK(status);
 void *workspace = nullptr;
 if (workspaceSize != 0) {
@@ -162,6 +165,7 @@ outputs = torch.ops.ascend_ops.chunk_kda_fwd_direct(
     q, k, v, gk, beta, scale, chunk_size,
     initial_state=initial_state,
     output_final_state=True,
+    safe_gate=True,
 )
 ```
 
@@ -172,12 +176,12 @@ chunk_size=64/128。它返回与稳定 Python 入口相同顺序的 12 个槽位
 host 包装内部在同一 stream 上执行以下真实 `<<<>>>` 发射：
 
 ```cpp
-ChunkKdaPhaseKernel<KdaPhase::PREPARE, T><<<blockDim, nullptr, stream>>>(...);
-ChunkKdaPhaseKernel<KdaPhase::POST_WU, T><<<blockDim, nullptr, stream>>>(...);
+ChunkKdaPhaseKernel<KdaPhase::PREPARE, SAFE_GATE, T><<<blockDim, nullptr, stream>>>(...);
+ChunkKdaPhaseKernel<KdaPhase::POST_WU, false, T><<<blockDim, nullptr, stream>>>(...);
 ChunkKdaStateKernel<T, TileShapes><<<blockDim, nullptr, stream>>>(
     kg, w, u, neutralG, gk, initialState, cuSeqlens, chunkIndices,
     h, vNew, finalState, state.workspace, state.tiling);
-ChunkKdaPhaseKernel<KdaPhase::OUTPUT, T><<<blockDim, nullptr, stream>>>(...);
+ChunkKdaPhaseKernel<KdaPhase::OUTPUT, false, T><<<blockDim, nullptr, stream>>>(...);
 ```
 
 `KdaPhase`、数据类型和 gate 类型均为模板参数；公共 schema 中没有阶段参数。可编译源码位于
@@ -220,7 +224,7 @@ assert o.shape == v.shape and final_state.dtype == torch.float32
 - H_k/H_v 必须在 [1,128] 且 H_v % H_k == 0；TND 仅支持 H_k=1，多 head rank3 使用 NTD。
 - 变长序列的 cu_seqlens 至少含首尾、非递减且末项等于 T；单次最多 1024 条逻辑序列。
 - 显式 chunk_indices 必须完整、合法并严格采用 sequence-major 规范顺序。
-- safe_gate 与 transpose_state_layout 当前必须为 false；raw gate 应先调用 kda_gate_cumsum。
+- safe_gate 支持 false/true。raw gate 应先调用 kda_gate_cumsum；transpose_state_layout 当前必须为 false。
 
 ## 9. 异常与返回码
 
