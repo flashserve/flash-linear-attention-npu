@@ -21,14 +21,7 @@
 #include "torch_npu/csrc/core/npu/NPUStream.h"
 #include "torch_npu/csrc/framework/OpCommand.h"
 
-#include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling_processor.h"
-
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-#include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
-#else
-#include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
-#endif
 
 #define KDA_FAST_KERNEL_LAUNCH
 #include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/chunk_kda_fwd.cpp"
@@ -56,7 +49,40 @@ struct DirectKdaTilingData {
     bool outputFinalState;
     bool isVarLen;
     bool safeGate;
-    int64_t usedCoreNum;
+    int64_t prepareUsedCoreNum;
+    int64_t prepareQgScaledOffset;
+    int64_t prepareWSeedOffset;
+    int64_t prepareUSeedOffset;
+    int64_t prepareAqkFp32Offset;
+    int64_t prepareAkkFp32Offset;
+    int64_t prepareScratchOffset;
+    int64_t postWuUsedCoreNum;
+    int64_t postWuQgScaledOffset;
+    int64_t postWuWSeedOffset;
+    int64_t postWuUSeedOffset;
+    int64_t postWuScratchOffset;
+    int64_t fwdHBatch;
+    int64_t fwdHSeqlen;
+    int64_t fwdHKNumHead;
+    int64_t fwdHVNumHead;
+    int64_t fwdHKHeadDim;
+    int64_t fwdHVHeadDim;
+    int64_t fwdHChunkSize;
+    bool fwdHUseInitialState;
+    bool fwdHStoreFinalState;
+    int64_t fwdHIsVariedLen;
+    int64_t fwdHShapeBatch;
+    int64_t fwdHTokenBatch;
+    int64_t fwdHVWorkspaceOffset;
+    int64_t fwdHVUpdateWorkspaceOffset;
+    int64_t fwdHKDecayWorkspaceOffset;
+    int64_t fwdHHWorkspaceOffset;
+    int64_t fwdHNumSeqWorkspaceOffset;
+    int64_t fwdHNumChunksWorkspaceOffset;
+    int64_t fwdHWorkspaceBaseOffset;
+    int64_t outputUsedCoreNum;
+    int64_t outputQgScaledOffset;
+    int64_t outputScratchOffset;
 };
 
 struct DirectOutputs {
@@ -70,13 +96,6 @@ struct DirectOutputs {
     at::Tensor kg;
     at::Tensor vNew;
     at::Tensor h;
-};
-
-enum class DirectLaunchPhase : uint8_t {
-    PREPARE,
-    POST_WU,
-    STATE,
-    OUTPUT,
 };
 
 class DeviceBuffer {
@@ -121,10 +140,9 @@ uint64_t AlignUp(uint64_t value)
     return (value + WORKSPACE_ALIGN - 1) / WORKSPACE_ALIGN * WORKSPACE_ALIGN;
 }
 
-template <KdaPhase PHASE, bool SAFE_GATE, typename T>
-__global__ __aicore__ void ChunkKdaPhaseKernel(
+template <bool SAFE_GATE, typename T>
+__global__ __aicore__ void ChunkKdaFusedDirectKernel(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR initialState,
-    GM_ADDR preparedQG, GM_ADDR preparedAqk, GM_ADDR propagatedVNew, GM_ADDR propagatedH,
     GM_ADDR o, GM_ADDR finalState, GM_ADDR aqk, GM_ADDR akk, GM_ADDR w, GM_ADDR u,
     GM_ADDR qg, GM_ADDR kg, GM_ADDR vNew, GM_ADDR h, GM_ADDR workspace,
     DirectKdaTilingData tiling)
@@ -135,155 +153,29 @@ __global__ __aicore__ void ChunkKdaPhaseKernel(
     if (userWorkspace == nullptr) {
         return;
     }
-
     AscendC::TPipe pipe;
-    if constexpr (PHASE == KdaPhase::PREPARE) {
-        if ASCEND_IS_AIC {
-            ChunkKdaFwdKernel<KdaPhase::PREPARE, SAFE_GATE, T, T, float, float, float> op;
-            op.Init(q, k, v, gk, beta, initialState, nullptr, nullptr, preparedQG, preparedAqk,
-                    propagatedVNew, propagatedH, o, finalState, aqk, akk, w, u, qg, kg, vNew, h,
-                    userWorkspace, tiling, &pipe, false);
-            op.ProcessAic();
-        }
-        if ASCEND_IS_AIV {
-            ChunkKdaFwdKernel<KdaPhase::PREPARE, SAFE_GATE, T, T, float, float, float> op;
-            op.Init(q, k, v, gk, beta, initialState, nullptr, nullptr, preparedQG, preparedAqk,
-                    propagatedVNew, propagatedH, o, finalState, aqk, akk, w, u, qg, kg, vNew, h,
-                    userWorkspace, tiling, &pipe);
-            op.ProcessAiv();
-        }
-    } else if constexpr (PHASE == KdaPhase::POST_WU) {
-        if ASCEND_IS_AIC {
-            ChunkKdaFwdKernel<KdaPhase::POST_WU, false, T, T, T, float, float> op;
-            op.Init(q, k, v, gk, beta, initialState, nullptr, nullptr, preparedQG, preparedAqk,
-                    propagatedVNew, propagatedH, o, finalState, aqk, akk, w, u, qg, kg, vNew, h,
-                    userWorkspace, tiling, &pipe, false);
-            op.ProcessAic();
-        }
-        if ASCEND_IS_AIV {
-            ChunkKdaFwdKernel<KdaPhase::POST_WU, false, T, T, T, float, float> op;
-            op.Init(q, k, v, gk, beta, initialState, nullptr, nullptr, preparedQG, preparedAqk,
-                    propagatedVNew, propagatedH, o, finalState, aqk, akk, w, u, qg, kg, vNew, h,
-                    userWorkspace, tiling, &pipe);
-            op.ProcessAiv();
-        }
-    } else {
-        if ASCEND_IS_AIC {
-            ChunkKdaFwdKernel<KdaPhase::OUTPUT, false, T, float, float, float, float> op;
-            op.Init(q, k, v, gk, beta, initialState, nullptr, nullptr, preparedQG, preparedAqk,
-                    propagatedVNew, propagatedH, o, finalState, aqk, akk, w, u, qg, kg, vNew, h,
-                    userWorkspace, tiling, &pipe, false);
-            op.ProcessAic();
-        }
-        if ASCEND_IS_AIV {
-            ChunkKdaFwdKernel<KdaPhase::OUTPUT, false, T, float, float, float, float> op;
-            op.Init(q, k, v, gk, beta, initialState, nullptr, nullptr, preparedQG, preparedAqk,
-                    propagatedVNew, propagatedH, o, finalState, aqk, akk, w, u, qg, kg, vNew, h,
-                    userWorkspace, tiling, &pipe);
-            op.ProcessAiv();
-        }
-    }
+    RunChunkKdaFused<SAFE_GATE, T, float, float>(
+        q, k, v, gk, beta, initialState, nullptr, nullptr, o, finalState,
+        aqk, akk, w, u, qg, kg, vNew, h, userWorkspace, tiling, pipe);
 }
 
-template <typename T, typename TileShapes>
-__aicore__ inline void RunChunkKdaState(
-    GM_ADDR kg, GM_ADDR w, GM_ADDR u, GM_ADDR neutralG, GM_ADDR gk, GM_ADDR initialState,
-    GM_ADDR h, GM_ADDR vNew, GM_ADDR finalState, GM_ADDR workspace, GM_ADDR tiling)
-{
-    AscendC::SetSysWorkspaceForce(workspace);
-    GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
-    if (userWorkspace == nullptr) {
-        return;
-    }
-    using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<T, float, float, float, TileShapes, true>;
-    Kernel kernel;
-    kernel.Init(kg, w, u, neutralG, gk, initialState, nullptr, nullptr,
-                h, vNew, finalState, tiling, userWorkspace);
-    kernel.Process();
-}
-
-#define DEFINE_KDA_STATE_KERNEL(kernelName, ElementType, TileType)                                      \
-    __global__ __aicore__ void kernelName(                                                              \
-        GM_ADDR kg, GM_ADDR w, GM_ADDR u, GM_ADDR neutralG, GM_ADDR gk, GM_ADDR initialState,           \
-        GM_ADDR h, GM_ADDR vNew, GM_ADDR finalState, GM_ADDR workspace, GM_ADDR tiling)                  \
-    {                                                                                                    \
-        KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);                                              \
-        RunChunkKdaState<ElementType, TileType>(kg, w, u, neutralG, gk, initialState, h, vNew,          \
-                                                 finalState, workspace, tiling);                          \
-    }
-
-DEFINE_KDA_STATE_KERNEL(ChunkKdaStateFp16V128, half, Catlass::Gemm::Kernel::GDNFwdHTileShapes128)
-DEFINE_KDA_STATE_KERNEL(ChunkKdaStateFp16V256, half, Catlass::Gemm::Kernel::GDNFwdHTileShapes256)
-DEFINE_KDA_STATE_KERNEL(ChunkKdaStateBf16V128, bfloat16_t, Catlass::Gemm::Kernel::GDNFwdHTileShapes128)
-DEFINE_KDA_STATE_KERNEL(ChunkKdaStateBf16V256, bfloat16_t, Catlass::Gemm::Kernel::GDNFwdHTileShapes256)
-
-#undef DEFINE_KDA_STATE_KERNEL
-
-template <KdaPhase PHASE, bool SAFE_GATE, typename T>
-void LaunchKdaPhase(
+template <bool SAFE_GATE, typename T>
+void LaunchFused(
     uint32_t blockDim, aclrtStream stream, const DirectKdaTilingData &tiling,
     const at::Tensor &q, const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk,
     const at::Tensor &beta, const c10::optional<at::Tensor> &initialState,
-    const at::Tensor &preparedQG, const at::Tensor &preparedAqk,
-    const at::Tensor &propagatedVNew, const at::Tensor &propagatedH,
-    const at::Tensor &o, const at::Tensor &finalState, const at::Tensor &aqk,
-    const at::Tensor &akk, const at::Tensor &w, const at::Tensor &u,
-    const at::Tensor &qg, const at::Tensor &kg, const at::Tensor &vNew,
-    const at::Tensor &h, const DeviceBuffer &workspace)
+    DirectOutputs &outputs, const DeviceBuffer &workspace)
 {
     auto ptr = [](const at::Tensor &tensor) -> GM_ADDR {
         return tensor.defined() ? (GM_ADDR)tensor.data_ptr() : nullptr;
     };
     GM_ADDR initialPtr = initialState.has_value() ?
         (GM_ADDR)initialState.value().data_ptr() : nullptr;
-    ChunkKdaPhaseKernel<PHASE, SAFE_GATE, T><<<blockDim, nullptr, stream>>>(
+    ChunkKdaFusedDirectKernel<SAFE_GATE, T><<<blockDim, nullptr, stream>>>(
         ptr(q), ptr(k), ptr(v), ptr(gk), ptr(beta), initialPtr,
-        ptr(preparedQG), ptr(preparedAqk), ptr(propagatedVNew), ptr(propagatedH),
-        ptr(o), ptr(finalState), ptr(aqk), ptr(akk), ptr(w), ptr(u), ptr(qg), ptr(kg),
-        ptr(vNew), ptr(h), (GM_ADDR)workspace.Get(), tiling);
-}
-
-template <typename T, typename TileShapes>
-void LaunchState(
-    uint32_t blockDim, aclrtStream stream, const at::Tensor &kg, const at::Tensor &w,
-    const at::Tensor &u, const at::Tensor &neutralG, const at::Tensor &gk,
-    const c10::optional<at::Tensor> &initialState, const at::Tensor &h,
-    const at::Tensor &vNew, const at::Tensor &finalState, const DeviceBuffer &workspace,
-    const DeviceBuffer &tiling)
-{
-    GM_ADDR initialPtr = initialState.has_value() ?
-        (GM_ADDR)initialState.value().data_ptr() : nullptr;
-    GM_ADDR kgPtr = (GM_ADDR)kg.data_ptr();
-    GM_ADDR wPtr = (GM_ADDR)w.data_ptr();
-    GM_ADDR uPtr = (GM_ADDR)u.data_ptr();
-    GM_ADDR neutralGPtr = (GM_ADDR)neutralG.data_ptr();
-    GM_ADDR gkPtr = (GM_ADDR)gk.data_ptr();
-    GM_ADDR hPtr = (GM_ADDR)h.data_ptr();
-    GM_ADDR vNewPtr = (GM_ADDR)vNew.data_ptr();
-    GM_ADDR finalStatePtr = (GM_ADDR)finalState.data_ptr();
-    GM_ADDR workspacePtr = (GM_ADDR)workspace.Get();
-    GM_ADDR tilingPtr = (GM_ADDR)tiling.Get();
-    if constexpr (std::is_same_v<T, half>) {
-        if constexpr (std::is_same_v<TileShapes, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>) {
-            ChunkKdaStateFp16V256<<<blockDim, nullptr, stream>>>(
-                kgPtr, wPtr, uPtr, neutralGPtr, gkPtr, initialPtr, hPtr, vNewPtr,
-                finalStatePtr, workspacePtr, tilingPtr);
-        } else {
-            ChunkKdaStateFp16V128<<<blockDim, nullptr, stream>>>(
-                kgPtr, wPtr, uPtr, neutralGPtr, gkPtr, initialPtr, hPtr, vNewPtr,
-                finalStatePtr, workspacePtr, tilingPtr);
-        }
-    } else {
-        if constexpr (std::is_same_v<TileShapes, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>) {
-            ChunkKdaStateBf16V256<<<blockDim, nullptr, stream>>>(
-                kgPtr, wPtr, uPtr, neutralGPtr, gkPtr, initialPtr, hPtr, vNewPtr,
-                finalStatePtr, workspacePtr, tilingPtr);
-        } else {
-            ChunkKdaStateBf16V128<<<blockDim, nullptr, stream>>>(
-                kgPtr, wPtr, uPtr, neutralGPtr, gkPtr, initialPtr, hPtr, vNewPtr,
-                finalStatePtr, workspacePtr, tilingPtr);
-        }
-    }
+        ptr(outputs.o), ptr(outputs.finalState), ptr(outputs.aqk), ptr(outputs.akk),
+        ptr(outputs.w), ptr(outputs.u), ptr(outputs.qg), ptr(outputs.kg),
+        ptr(outputs.vNew), ptr(outputs.h), (GM_ADDR)workspace.Get(), tiling);
 }
 
 DirectOutputs MakeOutputs(
@@ -367,59 +259,6 @@ ChunkKdaFwdDirectMeta(
             outputs.u, outputs.qg, outputs.kg, outputs.vNew, outputs.h, initialState};
 }
 
-template <typename T, bool SAFE_GATE>
-void LaunchOne(
-    DirectLaunchPhase phase,
-    uint32_t blockDim, aclrtStream stream, const DirectKdaTilingData &tiling,
-    const at::Tensor &q, const at::Tensor &k, const at::Tensor &v, const at::Tensor &gk,
-    const at::Tensor &beta, const c10::optional<at::Tensor> &initialState,
-    DirectOutputs &outputs, const at::Tensor &aqkFp32, const at::Tensor &akkFp32,
-    const at::Tensor &wPre, const at::Tensor &akkPost, const at::Tensor &qgScaled,
-    const at::Tensor &uSeed, const at::Tensor &wScratch, const at::Tensor &neutralG,
-    const DeviceBuffer &prepareWorkspace, const DeviceBuffer &postWorkspace,
-    const DeviceBuffer &stateWorkspace, const DeviceBuffer &stateTiling,
-    const DeviceBuffer &outputWorkspace)
-{
-    auto dummyT = at::empty({1}, q.options());
-    auto dummyFloat = at::empty({1}, q.options().dtype(at::kFloat));
-
-    switch (phase) {
-        case DirectLaunchPhase::PREPARE:
-            LaunchKdaPhase<KdaPhase::PREPARE, SAFE_GATE, T>(
-                blockDim, stream, tiling, q, k, v, gk, beta, initialState,
-                at::Tensor(), at::Tensor(), at::Tensor(), at::Tensor(), outputs.aqk,
-                dummyFloat, aqkFp32, akkFp32, wPre, akkPost, outputs.qg, qgScaled,
-                uSeed, dummyFloat, prepareWorkspace);
-            break;
-        case DirectLaunchPhase::POST_WU:
-            LaunchKdaPhase<KdaPhase::POST_WU, false, T>(
-                blockDim, stream, tiling, q, k, v, gk, beta, initialState,
-                wPre, akkPost, uSeed, at::Tensor(), dummyT, dummyFloat, dummyFloat,
-                dummyT, outputs.w, outputs.u, dummyT, outputs.kg, dummyT, wScratch,
-                postWorkspace);
-            break;
-        case DirectLaunchPhase::STATE:
-            if (outputs.vNew.size(3) == 256) {
-                LaunchState<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
-                    blockDim, stream, outputs.kg, outputs.w, outputs.u, neutralG, gk,
-                    initialState, outputs.h, outputs.vNew, outputs.finalState,
-                    stateWorkspace, stateTiling);
-            } else {
-                LaunchState<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
-                    blockDim, stream, outputs.kg, outputs.w, outputs.u, neutralG, gk,
-                    initialState, outputs.h, outputs.vNew, outputs.finalState,
-                    stateWorkspace, stateTiling);
-            }
-            break;
-        case DirectLaunchPhase::OUTPUT:
-            LaunchKdaPhase<KdaPhase::OUTPUT, false, T>(
-                blockDim, stream, tiling, q, k, v, gk, beta, initialState,
-                qgScaled, outputs.aqk, outputs.vNew, outputs.h, dummyFloat, dummyFloat,
-                dummyFloat, dummyFloat, dummyT, dummyFloat, dummyT, dummyT, outputs.o,
-                dummyFloat, outputWorkspace);
-            break;
-    }
-}
 
 DirectReturn
 ChunkKdaFwdDirectNpu(
@@ -436,36 +275,31 @@ ChunkKdaFwdDirectNpu(
     uint32_t blockDim = static_cast<uint32_t>(platform->GetCoreNumAic());
     size_t sysWorkspace = static_cast<size_t>(platform->GetLibApiWorkSpaceSize());
     int64_t totalChunks = (q.size(2) + chunkSize - 1) / chunkSize;
-    DirectKdaTilingData tiling{
-        q.size(0), q.size(0), q.size(1), v.size(1), q.size(2), q.size(3), v.size(3),
-        chunkSize, totalChunks, static_cast<float>(scale), initialState.has_value(),
-        outputFinalState, false, safeGate, static_cast<int64_t>(blockDim)};
-
-    uint64_t solveScratch = static_cast<uint64_t>(blockDim) * SOLVE_SCRATCH_SLOTS *
-                            chunkSize * chunkSize * sizeof(float);
-    uint64_t scoreScratch = static_cast<uint64_t>(blockDim) * SCORE_QUEUE_SLOTS *
-                            SCORE_SCRATCH_PLANES * chunkSize * q.size(3) * q.element_size();
-    uint64_t prepareScratch = AlignUp(solveScratch) + scoreScratch;
-    uint64_t outputElements = static_cast<uint64_t>(q.size(0)) * v.size(1) * q.size(2) * v.size(3);
-    DeviceBuffer prepareWorkspace(sysWorkspace + std::max<uint64_t>(AlignUp(prepareScratch), WORKSPACE_ALIGN));
-    DeviceBuffer postWorkspace(sysWorkspace + WORKSPACE_ALIGN);
-    DeviceBuffer outputWorkspace(sysWorkspace + AlignUp(2 * outputElements * sizeof(float)));
-
-    auto qOptions = q.options();
-    auto fp32Options = qOptions.dtype(at::kFloat);
-    at::Tensor aqkFp32 = at::empty({q.size(0), v.size(1), q.size(2), chunkSize}, fp32Options);
-    at::Tensor akkFp32 = at::empty_like(aqkFp32);
-    at::Tensor wPre = at::empty({q.size(0), v.size(1), q.size(2), q.size(3)}, qOptions);
-    at::Tensor akkPost = outputs.akk;
-    at::Tensor qgScaled = at::empty_like(wPre);
-    at::Tensor uSeed = at::empty({q.size(0), v.size(1), q.size(2), v.size(3)}, qOptions);
-    at::Tensor wScratch = at::empty({q.size(0), v.size(1), totalChunks, chunkSize, q.size(3)}, fp32Options);
-    at::Tensor neutralG = at::zeros({q.size(0), v.size(1), q.size(2)}, fp32Options);
+    const uint64_t dataBytes = q.element_size();
+    const uint64_t tokenHeadCount =
+        static_cast<uint64_t>(q.size(0)) * v.size(1) * q.size(2);
+    const uint64_t qgScaledOffset = 0;
+    const uint64_t qgScaledBytes = tokenHeadCount * q.size(3) * dataBytes;
+    const uint64_t phaseBaseOffset = AlignUp(qgScaledBytes);
+    const uint64_t wSeedOffset = phaseBaseOffset;
+    const uint64_t uSeedOffset = AlignUp(wSeedOffset + qgScaledBytes);
+    const uint64_t uSeedBytes = tokenHeadCount * v.size(3) * dataBytes;
+    const uint64_t aqkFp32Offset = AlignUp(uSeedOffset + uSeedBytes);
+    const uint64_t matrixFp32Bytes = tokenHeadCount * chunkSize * sizeof(float);
+    const uint64_t akkFp32Offset = AlignUp(aqkFp32Offset + matrixFp32Bytes);
+    const uint64_t prepareScratchOffset = AlignUp(akkFp32Offset + matrixFp32Bytes);
+    const uint64_t solveScratch = static_cast<uint64_t>(blockDim) * SOLVE_SCRATCH_SLOTS *
+                                  chunkSize * chunkSize * sizeof(float);
+    const uint64_t scoreScratch = static_cast<uint64_t>(blockDim) * SCORE_QUEUE_SLOTS *
+                                  SCORE_SCRATCH_PLANES * chunkSize * q.size(3) * dataBytes;
+    const uint64_t prepareEnd = prepareScratchOffset + AlignUp(solveScratch) + scoreScratch;
+    const uint64_t postScratchOffset = AlignUp(uSeedOffset + uSeedBytes);
+    const uint64_t postScratchBytes = static_cast<uint64_t>(q.size(0)) * v.size(1) *
+                                      totalChunks * chunkSize * q.size(3) * sizeof(float);
+    const uint64_t postEnd = postScratchOffset + postScratchBytes;
 
     optiling::ChunkGatedDeltaRuleFwdHTilingContext stateContext{};
     stateContext.seqlen = q.size(2);
-    // The state kernel consumes post-WU kg, whose head axis has already been
-    // expanded from H_k to H_v.
     stateContext.kNumHead = v.size(1);
     stateContext.kHeadDim = q.size(3);
     stateContext.vNumHead = v.size(1);
@@ -482,61 +316,94 @@ ChunkKdaFwdDirectNpu(
     stateContext.storeFinalState = outputFinalState;
     stateContext.chunkSize = chunkSize;
     stateContext.aicCoreNum = blockDim;
-    stateContext.libApiWorkSpaceSize = sysWorkspace;
+    stateContext.libApiWorkSpaceSize = 0;
     ChunkGatedDeltaRuleFwdHTilingData stateTilingHost{};
     size_t stateWorkspaceSize = 0;
     uint32_t stateBlockDim = 0;
     optiling::ChunkGatedDeltaRuleFwdHTilingProcessor(stateContext).Process(
         stateTilingHost, stateBlockDim, stateWorkspaceSize);
     TORCH_CHECK(stateBlockDim == blockDim, "chunk_kda_fwd_direct: inconsistent state block dim");
-    DeviceBuffer stateWorkspace(stateWorkspaceSize);
-    DeviceBuffer stateTiling(sizeof(stateTilingHost));
+
+    const uint64_t stateEnd = phaseBaseOffset + stateWorkspaceSize;
+    const uint64_t outputScratchOffset = phaseBaseOffset;
+    const uint64_t outputElements = tokenHeadCount * v.size(3);
+    const uint64_t outputEnd = outputScratchOffset + 2 * outputElements * sizeof(float);
+    const uint64_t userWorkspaceBytes = AlignUp(std::max({prepareEnd, postEnd, stateEnd, outputEnd}));
+    DeviceBuffer workspace(sysWorkspace + userWorkspaceBytes);
+
+    DirectKdaTilingData tiling{};
+    tiling.batch = q.size(0);
+    tiling.seqNum = q.size(0);
+    tiling.qHeadNum = q.size(1);
+    tiling.vHeadNum = v.size(1);
+    tiling.seqlen = q.size(2);
+    tiling.kHeadDim = q.size(3);
+    tiling.vHeadDim = v.size(3);
+    tiling.chunkSize = chunkSize;
+    tiling.totalChunks = totalChunks;
+    tiling.scale = static_cast<float>(scale);
+    tiling.hasInitialState = initialState.has_value();
+    tiling.outputFinalState = outputFinalState;
+    tiling.isVarLen = false;
+    tiling.safeGate = safeGate;
+    tiling.prepareUsedCoreNum = static_cast<int64_t>(blockDim);
+    tiling.prepareQgScaledOffset = static_cast<int64_t>(qgScaledOffset);
+    tiling.prepareWSeedOffset = static_cast<int64_t>(wSeedOffset);
+    tiling.prepareUSeedOffset = static_cast<int64_t>(uSeedOffset);
+    tiling.prepareAqkFp32Offset = static_cast<int64_t>(aqkFp32Offset);
+    tiling.prepareAkkFp32Offset = static_cast<int64_t>(akkFp32Offset);
+    tiling.prepareScratchOffset = static_cast<int64_t>(prepareScratchOffset);
+    tiling.postWuUsedCoreNum = static_cast<int64_t>(blockDim);
+    tiling.postWuQgScaledOffset = static_cast<int64_t>(qgScaledOffset);
+    tiling.postWuWSeedOffset = static_cast<int64_t>(wSeedOffset);
+    tiling.postWuUSeedOffset = static_cast<int64_t>(uSeedOffset);
+    tiling.postWuScratchOffset = static_cast<int64_t>(postScratchOffset);
+    tiling.fwdHBatch = stateTilingHost.batch;
+    tiling.fwdHSeqlen = stateTilingHost.seqlen;
+    tiling.fwdHKNumHead = stateTilingHost.kNumHead;
+    tiling.fwdHVNumHead = stateTilingHost.vNumHead;
+    tiling.fwdHKHeadDim = stateTilingHost.kHeadDim;
+    tiling.fwdHVHeadDim = stateTilingHost.vHeadDim;
+    tiling.fwdHChunkSize = stateTilingHost.chunkSize;
+    tiling.fwdHUseInitialState = stateTilingHost.useInitialState;
+    tiling.fwdHStoreFinalState = stateTilingHost.storeFinalState;
+    tiling.fwdHIsVariedLen = stateTilingHost.isVariedLen;
+    tiling.fwdHShapeBatch = stateTilingHost.shapeBatch;
+    tiling.fwdHTokenBatch = stateTilingHost.tokenBatch;
+    tiling.fwdHVWorkspaceOffset = stateTilingHost.vWorkspaceOffset;
+    tiling.fwdHVUpdateWorkspaceOffset = stateTilingHost.vUpdateWorkspaceOffset;
+    tiling.fwdHKDecayWorkspaceOffset = stateTilingHost.kDecayWorkspaceOffset;
+    tiling.fwdHHWorkspaceOffset = stateTilingHost.hWorkspaceOffset;
+    tiling.fwdHNumSeqWorkspaceOffset = stateTilingHost.numSeqWorkspaceOffset;
+    tiling.fwdHNumChunksWorkspaceOffset = stateTilingHost.numChunksWorkspaceOffset;
+    tiling.fwdHWorkspaceBaseOffset = static_cast<int64_t>(phaseBaseOffset);
+    tiling.outputUsedCoreNum = static_cast<int64_t>(blockDim);
+    tiling.outputQgScaledOffset = static_cast<int64_t>(qgScaledOffset);
+    tiling.outputScratchOffset = static_cast<int64_t>(outputScratchOffset);
 
     auto stream = c10_npu::getCurrentNPUStream().stream(false);
-    for (const DeviceBuffer *buffer : {&prepareWorkspace, &postWorkspace, &outputWorkspace, &stateWorkspace}) {
-        auto ret = aclrtMemsetAsync(buffer->Get(), buffer->Size(), 0, buffer->Size(), stream);
-        TORCH_CHECK(ret == ACL_SUCCESS, "chunk_kda_fwd_direct: workspace memset failed: ", ret);
-    }
-    auto ret = aclrtMemcpy(stateTiling.Get(), stateTiling.Size(), &stateTilingHost,
-                           sizeof(stateTilingHost), ACL_MEMCPY_HOST_TO_DEVICE);
-    TORCH_CHECK(ret == ACL_SUCCESS, "chunk_kda_fwd_direct: state tiling copy failed: ", ret);
+    auto ret = aclrtMemsetAsync(workspace.Get(), workspace.Size(), 0, workspace.Size(), stream);
+    TORCH_CHECK(ret == ACL_SUCCESS, "chunk_kda_fwd_direct: workspace memset failed: ", ret);
 
-    auto launchPhase = [&](DirectLaunchPhase phase) -> int {
+    auto launch = [&]() -> int {
         if (q.scalar_type() == at::kBFloat16) {
             if (safeGate) {
-                LaunchOne<bfloat16_t, true>(phase, blockDim, stream, tiling, q, k, v, gk, beta, initialState,
-                                            outputs, aqkFp32, akkFp32, wPre, akkPost, qgScaled, uSeed, wScratch,
-                                            neutralG, prepareWorkspace, postWorkspace, stateWorkspace, stateTiling,
-                                            outputWorkspace);
+                LaunchFused<true, bfloat16_t>(
+                    blockDim, stream, tiling, q, k, v, gk, beta, initialState, outputs, workspace);
             } else {
-                LaunchOne<bfloat16_t, false>(phase, blockDim, stream, tiling, q, k, v, gk, beta, initialState,
-                                             outputs, aqkFp32, akkFp32, wPre, akkPost, qgScaled, uSeed, wScratch,
-                                             neutralG, prepareWorkspace, postWorkspace, stateWorkspace, stateTiling,
-                                             outputWorkspace);
+                LaunchFused<false, bfloat16_t>(
+                    blockDim, stream, tiling, q, k, v, gk, beta, initialState, outputs, workspace);
             }
+        } else if (safeGate) {
+            LaunchFused<true, half>(
+                blockDim, stream, tiling, q, k, v, gk, beta, initialState, outputs, workspace);
         } else {
-            if (safeGate) {
-                LaunchOne<half, true>(phase, blockDim, stream, tiling, q, k, v, gk, beta, initialState,
-                                      outputs, aqkFp32, akkFp32, wPre, akkPost, qgScaled, uSeed, wScratch,
-                                      neutralG, prepareWorkspace, postWorkspace, stateWorkspace, stateTiling,
-                                      outputWorkspace);
-            } else {
-                LaunchOne<half, false>(phase, blockDim, stream, tiling, q, k, v, gk, beta, initialState,
-                                       outputs, aqkFp32, akkFp32, wPre, akkPost, qgScaled, uSeed, wScratch,
-                                       neutralG, prepareWorkspace, postWorkspace, stateWorkspace, stateTiling,
-                                       outputWorkspace);
-            }
+            LaunchFused<false, half>(
+                blockDim, stream, tiling, q, k, v, gk, beta, initialState, outputs, workspace);
         }
         return 0;
     };
-    at_npu::native::OpCommand::RunOpApi(
-        "ChunkKdaFwdDirectPrepare", [&]() -> int { return launchPhase(DirectLaunchPhase::PREPARE); });
-    at_npu::native::OpCommand::RunOpApi(
-        "ChunkKdaFwdDirectPostWu", [&]() -> int { return launchPhase(DirectLaunchPhase::POST_WU); });
-    at_npu::native::OpCommand::RunOpApi(
-        "ChunkKdaFwdDirectState", [&]() -> int { return launchPhase(DirectLaunchPhase::STATE); });
-    at_npu::native::OpCommand::RunOpApi(
-        "ChunkKdaFwdDirectOutput", [&]() -> int { return launchPhase(DirectLaunchPhase::OUTPUT); });
+    at_npu::native::OpCommand::RunOpApi("ChunkKdaFwdDirect", launch);
     c10_npu::getCurrentNPUStream().synchronize();
 
     c10::optional<at::Tensor> finalState = outputFinalState ?

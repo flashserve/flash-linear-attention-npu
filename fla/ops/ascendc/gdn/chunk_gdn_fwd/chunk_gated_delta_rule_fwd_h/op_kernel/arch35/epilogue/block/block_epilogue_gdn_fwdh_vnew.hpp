@@ -40,6 +40,7 @@ class BlockEpilogue <
     KGatedTag
 > {
     static constexpr bool kGated = KGatedTag::value;
+    static constexpr bool scalarGated = KGatedTag::scalarGated;
 public:
     using DispatchPolicy = EpilogueAtlasGDNFwdHVnew;
     using ArchTag = typename DispatchPolicy::ArchTag;
@@ -157,6 +158,11 @@ public:
         uint32_t pingpongFlag)
     {
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+        if constexpr (!scalarGated) {
+            AscendC::Duplicate<float>(gUbTensor, 1.0f, mActual);
+            AscendC::PipeBarrier<PIPE_V>();
+            return;
+        }
         if (mActual == 1) {
             AscendC::Duplicate<float>(gUbTensor, 1.0f, 1);
             AscendC::PipeBarrier<PIPE_V>();

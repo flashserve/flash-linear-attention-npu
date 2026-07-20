@@ -759,6 +759,8 @@ def test_chunk_kda_fwd_without_intermediate_matches_export_and_reference():
     )
     assert torch.isfinite(got_without[0]).all().item()
     assert torch.isfinite(got_with[0]).all().item()
+    assert all(value is None for value in got_without[3:11])
+    assert all(torch.is_tensor(value) for value in got_with[3:11])
     _assert_close("BSND no intermediate o", got_without[0], ref.o, rtol=2e-2, atol=2e-2)
     _assert_close("BSND exported intermediate o", got_with[0], ref.o, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(got_without[0], got_with[0], rtol=0, atol=0)

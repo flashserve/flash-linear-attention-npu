@@ -8,32 +8,20 @@
  */
 
 #include "kernel_operator.h"
-
+#if __has_include("../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h")
+#include "../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-#define CATLASS_ARCH 3510
-#include "catlass/arch/arch.hpp"
-#include "catlass/catlass.hpp"
-#include "catlass/gemm/block/block_mmad.hpp"
-#include "catlass/gemm/dispatch_policy.hpp"
-#include "catlass/gemm/gemm_type.hpp"
-#include "catlass/gemm_coord.hpp"
-#include "catlass/layout/layout.hpp"
-#include "catlass/arch/cross_core_sync.hpp"
-#include "tla/layout.hpp"
-#include "tla/tensor.hpp"
-using _128 = tla::Int<128>;
+#include "../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
 #else
-#define CATLASS_ARCH 2201
-#include "catlass/arch/arch.hpp"
-#include "catlass/catlass.hpp"
-#include "catlass/gemm/block/block_mmad.hpp"
-#include "catlass/gemm/dispatch_policy.hpp"
-#include "catlass/gemm/gemm_type.hpp"
-#include "catlass/gemm_coord.hpp"
-#include "catlass/layout/layout.hpp"
-#include "catlass/arch/cross_core_sync.hpp"
-#include "tla/layout.hpp"
-#include "tla/tensor.hpp"
+#include "../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
+#endif
+#else
+#include "../../chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "../../chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
+#else
+#include "../../chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
+#endif
 #endif
 
 #ifndef TORCH_MODE
@@ -41,7 +29,8 @@ using _128 = tla::Int<128>;
 #endif
 
 using namespace AscendC;
-using _64 = tla::Int<64>;
+using KdaInt64 = tla::Int<64>;
+using KdaInt128 = tla::Int<128>;
 
 namespace {
 constexpr float LN2 = 0.69314718055994530942f;
@@ -94,9 +83,9 @@ using KdaArchTag = Catlass::Arch::AtlasA2;
 using KdaDispatchPolicy = Catlass::Gemm::MmadPingpong<KdaArchTag, true, false>;
 using KdaSolveDispatchPolicy = Catlass::Gemm::MmadPingpong<KdaArchTag, true, false>;
 static_assert(!KdaSolveDispatchPolicy::USE_HF32_MODE, "KDA triangular solve must use IEEE FP32 Cube mode");
-using KdaL1TileShape = tla::Shape<_64, _128, _128>;
+using KdaL1TileShape = tla::Shape<KdaInt64, KdaInt128, KdaInt128>;
 using KdaL0TileShape = KdaL1TileShape;
-using KdaSolveL1TileShape = tla::Shape<_64, _64, _64>;
+using KdaSolveL1TileShape = tla::Shape<KdaInt64, KdaInt64, KdaInt64>;
 using KdaSolveL0TileShape = KdaSolveL1TileShape;
 
 __aicore__ inline uint32_t FloatToBits(float value)
@@ -223,7 +212,13 @@ public:
         // the type prevents a runtime branch from entering the chunk hot path.
         hasInitial_ = tiling.hasInitialState;
         isVarLen_ = tiling.isVarLen;
-        usedCoreNum_ = tiling.usedCoreNum;
+        if constexpr (PHASE == KdaPhase::PREPARE) {
+            usedCoreNum_ = tiling.prepareUsedCoreNum;
+        } else if constexpr (PHASE == KdaPhase::POST_WU) {
+            usedCoreNum_ = tiling.postWuUsedCoreNum;
+        } else {
+            usedCoreNum_ = tiling.outputUsedCoreNum;
+        }
         if constexpr (PHASE == KdaPhase::PREPARE) {
             const uint64_t solveBytes = usedCoreNum_ * KDA_SOLVE_SCRATCH_SLOTS * BT_ * BT_ * sizeof(float);
             const uint64_t alignedSolveBytes =
@@ -1704,10 +1699,10 @@ private:
                                                                  LayoutTagB, float, LayoutTagC>;
         using UTileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KdaArchTag, ElementA, LayoutTagA, ElementB,
                                                                  LayoutTagB, OUT_T, LayoutTagC>;
-        using PostL1TileShape128 = tla::Shape<_128, _128, tla::_256>;
-        using PostL0TileShape128 = tla::Shape<_128, _128, _128>;
-        using PostL1TileShape256 = tla::Shape<_128, tla::_256, tla::_256>;
-        using PostL0TileShape256 = tla::Shape<_128, tla::_256, _64>;
+        using PostL1TileShape128 = tla::Shape<KdaInt128, KdaInt128, tla::_256>;
+        using PostL0TileShape128 = tla::Shape<KdaInt128, KdaInt128, KdaInt128>;
+        using PostL1TileShape256 = tla::Shape<KdaInt128, tla::_256, tla::_256>;
+        using PostL0TileShape256 = tla::Shape<KdaInt128, tla::_256, KdaInt64>;
         using WBlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape128,
                                                                PostL0TileShape128,
                                                                ElementA, ElementB, float, void, WTileCopy>;
@@ -2376,82 +2371,137 @@ private:
 };
 } // namespace
 
+template <bool SAFE_GATE, typename T, typename GK_T, typename BETA_T, typename TilingData>
+__aicore__ inline void RunChunkKdaFused(
+    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR initialState,
+    GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o, GM_ADDR finalState,
+    GM_ADDR aqk, GM_ADDR akk, GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg,
+    GM_ADDR vNew, GM_ADDR h, GM_ADDR userWorkspace, const TilingData& tiling, TPipe& pipe)
+{
+    GM_ADDR qgScaled = userWorkspace + tiling.prepareQgScaledOffset;
+    GM_ADDR wSeed = userWorkspace + tiling.prepareWSeedOffset;
+    GM_ADDR uSeed = userWorkspace + tiling.prepareUSeedOffset;
+    GM_ADDR aqkFp32 = userWorkspace + tiling.prepareAqkFp32Offset;
+    GM_ADDR akkFp32 = userWorkspace + tiling.prepareAkkFp32Offset;
+    GM_ADDR prepareScratch = userWorkspace + tiling.prepareScratchOffset;
+
+    {
+        if ASCEND_IS_AIC {
+            ChunkKdaFwdKernel<KdaPhase::PREPARE, SAFE_GATE, T, T, float, GK_T, BETA_T> op;
+            op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
+                    nullptr, nullptr, nullptr, nullptr, aqk, finalState, aqkFp32, akkFp32,
+                    wSeed, akk, qg, qgScaled, uSeed, h, prepareScratch, tiling, &pipe, false);
+            op.ProcessAic();
+        }
+        if ASCEND_IS_AIV {
+            ChunkKdaFwdKernel<KdaPhase::PREPARE, SAFE_GATE, T, T, float, GK_T, BETA_T> op;
+            op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
+                    nullptr, nullptr, nullptr, nullptr, aqk, finalState, aqkFp32, akkFp32,
+                    wSeed, akk, qg, qgScaled, uSeed, h, prepareScratch, tiling, &pipe);
+            op.ProcessAiv();
+        }
+    }
+    pipe.Reset();
+    AscendC::SyncAll<false>();
+
+    GM_ADDR postScratch = userWorkspace + tiling.postWuScratchOffset;
+    {
+        if ASCEND_IS_AIC {
+            ChunkKdaFwdKernel<KdaPhase::POST_WU, false, T, T, T, GK_T, BETA_T> op;
+            op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
+                    wSeed, akk, uSeed, nullptr, o, finalState, aqk, akk, w, u,
+                    qg, kg, vNew, postScratch, postScratch, tiling, &pipe, false);
+            op.ProcessAic();
+        }
+        if ASCEND_IS_AIV {
+            ChunkKdaFwdKernel<KdaPhase::POST_WU, false, T, T, T, GK_T, BETA_T> op;
+            op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
+                    wSeed, akk, uSeed, nullptr, o, finalState, aqk, akk, w, u,
+                    qg, kg, vNew, postScratch, postScratch, tiling, &pipe);
+            op.ProcessAiv();
+        }
+    }
+    pipe.Reset();
+    AscendC::SyncAll<false>();
+
+    ChunkGatedDeltaRuleFwdHTilingData fwdHTiling{};
+    fwdHTiling.batch = tiling.fwdHBatch;
+    fwdHTiling.seqlen = tiling.fwdHSeqlen;
+    fwdHTiling.kNumHead = tiling.fwdHKNumHead;
+    fwdHTiling.vNumHead = tiling.fwdHVNumHead;
+    fwdHTiling.kHeadDim = tiling.fwdHKHeadDim;
+    fwdHTiling.vHeadDim = tiling.fwdHVHeadDim;
+    fwdHTiling.chunkSize = tiling.fwdHChunkSize;
+    fwdHTiling.useInitialState = tiling.fwdHUseInitialState;
+    fwdHTiling.storeFinalState = tiling.fwdHStoreFinalState;
+    fwdHTiling.isVariedLen = tiling.fwdHIsVariedLen;
+    fwdHTiling.shapeBatch = tiling.fwdHShapeBatch;
+    fwdHTiling.tokenBatch = tiling.fwdHTokenBatch;
+    fwdHTiling.vWorkspaceOffset = tiling.fwdHVWorkspaceOffset;
+    fwdHTiling.vUpdateWorkspaceOffset = tiling.fwdHVUpdateWorkspaceOffset;
+    fwdHTiling.kDecayWorkspaceOffset = tiling.fwdHKDecayWorkspaceOffset;
+    fwdHTiling.hWorkspaceOffset = tiling.fwdHHWorkspaceOffset;
+    fwdHTiling.numSeqWorkspaceOffset = tiling.fwdHNumSeqWorkspaceOffset;
+    fwdHTiling.numChunksWorkspaceOffset = tiling.fwdHNumChunksWorkspaceOffset;
+    GM_ADDR fwdHWorkspace = userWorkspace + tiling.fwdHWorkspaceBaseOffset;
+    if (tiling.vHeadDim > 128) {
+        using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
+            T, GK_T, float, float, Catlass::Gemm::Kernel::GDNFwdHTileShapes256, true, false>;
+        FwdHKernel stateOp;
+        stateOp.InitFromData(kg, w, u, gk, gk, initialState, cuSeqlens, chunkIndices,
+                             h, vNew, finalState, fwdHTiling, fwdHWorkspace);
+        stateOp.Process();
+    } else {
+        using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
+            T, GK_T, float, float, Catlass::Gemm::Kernel::GDNFwdHTileShapes128, true, false>;
+        FwdHKernel stateOp;
+        stateOp.InitFromData(kg, w, u, gk, gk, initialState, cuSeqlens, chunkIndices,
+                             h, vNew, finalState, fwdHTiling, fwdHWorkspace);
+        stateOp.Process();
+    }
+    pipe.Reset();
+    AscendC::SyncAll<false>();
+
+    GM_ADDR outputScratch = userWorkspace + tiling.outputScratchOffset;
+    {
+        if ASCEND_IS_AIC {
+            ChunkKdaFwdKernel<KdaPhase::OUTPUT, false, T, float, float, GK_T, BETA_T> op;
+            op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
+                    qgScaled, aqk, vNew, h, o, finalState, aqk, akk, w, u,
+                    qg, kg, o, h, outputScratch, tiling, &pipe, false);
+            op.ProcessAic();
+        }
+        if ASCEND_IS_AIV {
+            ChunkKdaFwdKernel<KdaPhase::OUTPUT, false, T, float, float, GK_T, BETA_T> op;
+            op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
+                    qgScaled, aqk, vNew, h, o, finalState, aqk, akk, w, u,
+                    qg, kg, o, h, outputScratch, tiling, &pipe);
+            op.ProcessAiv();
+        }
+    }
+}
+
 #ifndef KDA_FAST_KERNEL_LAUNCH
 extern "C" __global__ __aicore__ void chunk_kda_fwd(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta,
                                                       GM_ADDR initial_state, GM_ADDR cu_seqlens,
-                                                      GM_ADDR chunk_indices, GM_ADDR prepared_qg, GM_ADDR prepared_aqk,
-                                                      GM_ADDR propagated_v_new, GM_ADDR propagated_h, GM_ADDR o,
-                                                      GM_ADDR final_state, GM_ADDR aqk, GM_ADDR akk, GM_ADDR w,
-                                                      GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR v_new, GM_ADDR h,
+                                                      GM_ADDR chunk_indices, GM_ADDR o, GM_ADDR final_state,
+                                                      GM_ADDR aqk, GM_ADDR akk, GM_ADDR w, GM_ADDR u,
+                                                      GM_ADDR qg, GM_ADDR kg, GM_ADDR v_new, GM_ADDR h,
                                                       GM_ADDR workspace, GM_ADDR tiling)
 {
     GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
-    GET_TILING_DATA(tilingData, tiling);
-    TPipe pipe;
+    GET_TILING_DATA_WITH_STRUCT(ChunkKdaFwdTilingData, tilingData, tiling);
     if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
+        TPipe pipe;
         if (tilingData.safeGate) {
-            if ASCEND_IS_AIC {
-                ChunkKdaFwdKernel<KdaPhase::PREPARE, true, DTYPE_Q, DTYPE_Q, float, DTYPE_GK, DTYPE_BETA> op;
-                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
-                        propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
-                        tilingData, &pipe, false);
-                op.ProcessAic();
-            }
-            if ASCEND_IS_AIV {
-                ChunkKdaFwdKernel<KdaPhase::PREPARE, true, DTYPE_Q, DTYPE_Q, float, DTYPE_GK, DTYPE_BETA> op;
-                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
-                        propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
-                        tilingData, &pipe);
-                op.ProcessAiv();
-            }
+            RunChunkKdaFused<true, DTYPE_Q, DTYPE_GK, DTYPE_BETA>(
+                q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state,
+                aqk, akk, w, u, qg, kg, v_new, h, userWS, tilingData, pipe);
         } else {
-            if ASCEND_IS_AIC {
-                ChunkKdaFwdKernel<KdaPhase::PREPARE, false, DTYPE_Q, DTYPE_Q, float, DTYPE_GK, DTYPE_BETA> op;
-                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
-                        propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
-                        tilingData, &pipe, false);
-                op.ProcessAic();
-            }
-            if ASCEND_IS_AIV {
-                ChunkKdaFwdKernel<KdaPhase::PREPARE, false, DTYPE_Q, DTYPE_Q, float, DTYPE_GK, DTYPE_BETA> op;
-                op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
-                        propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
-                        tilingData, &pipe);
-                op.ProcessAiv();
-            }
-        }
-    } else if (TILING_KEY_IS(2)) {
-        KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
-        if ASCEND_IS_AIC {
-            ChunkKdaFwdKernel<KdaPhase::POST_WU, false, DTYPE_Q, DTYPE_Q, DTYPE_Q, DTYPE_GK, DTYPE_BETA> op;
-            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
-                    propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
-                    tilingData, &pipe, false);
-            op.ProcessAic();
-        }
-        if ASCEND_IS_AIV {
-            ChunkKdaFwdKernel<KdaPhase::POST_WU, false, DTYPE_Q, DTYPE_Q, DTYPE_Q, DTYPE_GK, DTYPE_BETA> op;
-            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
-                    propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
-                    tilingData, &pipe);
-            op.ProcessAiv();
-        }
-    } else if (TILING_KEY_IS(3)) {
-        KERNEL_TASK_TYPE(3, KERNEL_TYPE_MIX_AIC_1_2);
-        if ASCEND_IS_AIC {
-            ChunkKdaFwdKernel<KdaPhase::OUTPUT, false, DTYPE_Q, float, float, DTYPE_GK, DTYPE_BETA> op;
-            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
-                    propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
-                    tilingData, &pipe, false);
-            op.ProcessAic();
-        }
-        if ASCEND_IS_AIV {
-            ChunkKdaFwdKernel<KdaPhase::OUTPUT, false, DTYPE_Q, float, float, DTYPE_GK, DTYPE_BETA> op;
-            op.Init(q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, prepared_qg, prepared_aqk,
-                    propagated_v_new, propagated_h, o, final_state, aqk, akk, w, u, qg, kg, v_new, h, userWS,
-                    tilingData, &pipe);
-            op.ProcessAiv();
+            RunChunkKdaFused<false, DTYPE_Q, DTYPE_GK, DTYPE_BETA>(
+                q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices, o, final_state,
+                aqk, akk, w, u, qg, kg, v_new, h, userWS, tilingData, pipe);
         }
     }
 }

@@ -50,7 +50,7 @@ Shape 符号统一引用[KDA 模型符号表](../../README.md#model-shape-symbol
 | `scale` | double | `无` | - | 通常为 1/sqrt(K) |
 | `chunk_size` | int | `无` | `{64, 128}` | 64 或 128 |
 | `output_final_state` | bool | `false` | `{false, true}` | 是否返回有效 final_state |
-| `return_intermediate` | bool | `false` | `{false, true}` | 是否生成并返回需为反向计算保存的中间张量（`Aqk`、`Akk`、`w`、`u`、`qg`、`kg`、`v_new`、`h`）；为 `false` 时对应返回槽为空张量 |
+| `return_intermediate` | bool | `false` | `{false, true}` | 是否保存并返回反向计算所需的中间张量（`Aqk`、`Akk`、`w`、`u`、`qg`、`kg`、`v_new`、`h`）；为 `false` 时 Python 对应返回槽为 `None`，aclnn 内部仍保留阶段传递缓冲区 |
 | `safe_gate` | bool | `false` | `{false, true}` | 数值稳定模式；输入仍为 chunk 内累计 `gk` |
 | `transpose_state_layout` | bool | `false` | `{false}` | 预留，当前必须 false |
 
@@ -173,18 +173,14 @@ outputs = torch.ops.ascend_ops.chunk_kda_fwd_direct(
 chunk_size=64/128。它返回与稳定 Python 入口相同顺序的 12 个槽位：
 `o, final_state, g, Aqk, Akk, w, u, qg, kg, v_new, h, initial_state_out`。
 
-host 包装内部在同一 stream 上执行以下真实 `<<<>>>` 发射：
+host 包装在同一 stream 上只发射一次完整 kernel：
 
 ```cpp
-ChunkKdaPhaseKernel<KdaPhase::PREPARE, SAFE_GATE, T><<<blockDim, nullptr, stream>>>(...);
-ChunkKdaPhaseKernel<KdaPhase::POST_WU, false, T><<<blockDim, nullptr, stream>>>(...);
-ChunkKdaStateKernel<T, TileShapes><<<blockDim, nullptr, stream>>>(
-    kg, w, u, neutralG, gk, initialState, cuSeqlens, chunkIndices,
-    h, vNew, finalState, state.workspace, state.tiling);
-ChunkKdaPhaseKernel<KdaPhase::OUTPUT, false, T><<<blockDim, nullptr, stream>>>(...);
+ChunkKdaFusedDirectKernel<SAFE_GATE, T><<<blockDim, nullptr, stream>>>(...);
 ```
 
-`KdaPhase`、数据类型和 gate 类型均为模板参数；公共 schema 中没有阶段参数。可编译源码位于
+kernel 内依次执行 `PREPARE`、`POST_WU`、复用 GDN Catlass 实现的 `FWD_H`、`OUTPUT`，阶段边界依次执行
+`TPipe::Reset()` 和 `SyncAll<false>`。`KdaPhase`、数据类型和 gate 类型均为模板参数；公共 schema 中没有阶段参数。可编译源码位于
 `examples/fast_kernel_launch_example/csrc/chunk_kda_fwd/`，运行精度测试位于
 `examples/fast_kernel_launch_example/tests/chunk_kda_fwd/`。
 

@@ -60,7 +60,7 @@ o        = (qg @ h_prev + Aqk @ v_new) * scale
 | `scale` | double | `无` | - | 通常为 1/sqrt(K) |
 | `chunk_size` | int | `无` | `{64, 128}` | 64 或 128 |
 | `output_final_state` | bool | `false` | `{false, true}` | 是否返回有效 final_state |
-| `return_intermediate` | bool | `false` | `{false, true}` | 是否生成并返回需为反向计算保存的中间张量（`Aqk`、`Akk`、`w`、`u`、`qg`、`kg`、`v_new`、`h`）；为 `false` 时对应返回槽为空张量 |
+| `return_intermediate` | bool | `false` | `{false, true}` | 是否保存并返回反向计算所需的中间张量（`Aqk`、`Akk`、`w`、`u`、`qg`、`kg`、`v_new`、`h`）；为 `false` 时 Python 对应返回槽为 `None`，aclnn 内部仍分配阶段传递缓冲区 |
 | `safe_gate` | bool | `false` | `{false, true}` | 数值稳定模式；输入仍为 chunk 内累计 `gk` |
 | `transpose_state_layout` | bool | `false` | `{false}` | 预留，当前必须 false |
 
@@ -75,9 +75,15 @@ o        = (qg @ h_prev + Aqk @ v_new) * scale
 
 变长序列模式中，`cu_seqlens[0]` 必须为 0、末项等于 `T` 且序列非递减。`chunk_indices` 必须按 sequence-major 列出全部 `(seq_id, local_chunk_id)`；其条目数和当前调用的 `N_c` 一致。定长与变长序列、尾块与整块遵循同一数学定义。
 
-完整调用内部按 `PREPARE -> POST_WU -> STATE -> OUTPUT` 四个语义阶段执行。阶段仅在 L0 和
-kernel 模板中可见，公共 Python/aclnn/直调 API 均不接收数值 `stage`。gk、beta 和阶段输出类型由
+完整调用在一个 Ascend C kernel 内按 `PREPARE -> POST_WU -> FWD_H -> OUTPUT` 四个语义阶段执行。
+阶段仅在 kernel 模板中可见，公共 Python/aclnn/直调 API 均不接收数值 `stage`。每个阶段结束时先用
+`TPipe::Reset()` 回收本阶段 UB/事件资源，再用 `SyncAll<false>` 完成全核收敛；host 使用 BATCH_MODE
+调度，避免多 stream 抢占部分核后在阶段同步处形成死锁。gk、beta 和阶段输出类型由
 编译期模板选择，不在 L2 通过 Cast 拼出计算主路径。
+
+KDA 的状态传播只使用逐 key gate `gk`，不包含 GDN 的标量 gate `g`。内嵌 `FWD_H` 通过编译期策略
+把标量 gate 路径固定为中性系数 1，并保留 `gk` 衰减，不生成额外零 gate 张量，也不读取错误 shape 的
+`gk` 作为标量 gate。
 
 ## 5. 调用入口
 
@@ -87,7 +93,7 @@ kernel 模板中可见，公共 Python/aclnn/直调 API 均不接收数值 `stag
 | --- | --- |
 | Python 主入口 | `fla_npu.ops.ascendc.chunk_kda_fwd` |
 | aclnn | `aclnnChunkKdaFwdGetWorkspaceSize` / `aclnnChunkKdaFwd` |
-| Ascend C `<<<>>>` | `torch.ops.ascend_ops.chunk_kda_fwd_direct`（内部真实发射四阶段 kernel） |
+| Ascend C `<<<>>>` | `torch.ops.ascend_ops.chunk_kda_fwd_direct`（一次发射内部完成四阶段） |
 | legacy（可选） | `torch.ops.npu.npu_chunk_kda_fwd` |
 
 所有正式入口都表达一次完整算子语义，不要求调用者理解或传入内部阶段编号。直调示例当前覆盖连续

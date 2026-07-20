@@ -785,10 +785,10 @@ def npu_chunk_kda_fwd(
         kernel_v_new = v_new = _empty_like(v)
         kernel_h = h = _empty(h_shape, q)
     else:
-        aqk, akk, w, u = (_empty((0,), q) for _ in range(4))
-        qg, kg, v_new, h = (_empty((0,), q) for _ in range(4))
-        kernel_aqk, kernel_akk, kernel_w, kernel_u = aqk, akk, w, u
-        kernel_qg, kernel_kg, kernel_v_new, kernel_h = qg, kg, v_new, h
+        kernel_aqk, kernel_akk, kernel_w, kernel_u = (_empty((0,), q) for _ in range(4))
+        kernel_qg, kernel_kg, kernel_v_new, kernel_h = (_empty((0,), q) for _ in range(4))
+        aqk = akk = w = u = None
+        qg = kg = v_new = h = None
     empty = _empty((0,), q)
     final_state = final_state_work if _optional_bool(output_final_state, False) else _empty((0,), q, dtype=torch.float32)
     g = gk if gk.dtype == torch.float32 else gk.to(torch.float32)

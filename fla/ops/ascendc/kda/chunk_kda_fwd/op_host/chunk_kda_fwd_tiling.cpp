@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <register/op_impl_registry.h>
 #include "tiling/platform/platform_ascendc.h"
+#include "../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling_processor.h"
 
 namespace optiling {
 namespace {
@@ -20,10 +21,6 @@ constexpr size_t INPUT_GK_IDX = 3;
 constexpr size_t INPUT_INITIAL_IDX = 5;
 constexpr size_t INPUT_CU_SEQLENS_IDX = 6;
 constexpr size_t INPUT_CHUNK_INDICES_IDX = 7;
-constexpr size_t INPUT_W_SEED_IDX = 8;
-constexpr size_t INPUT_MATRIX_IDX = 9;
-constexpr size_t INPUT_U_SEED_IDX = 10;
-constexpr size_t INPUT_STATE_IDX = 11;
 constexpr size_t ATTR_SCALE_IDX = 0;
 constexpr size_t ATTR_CHUNK_SIZE_IDX = 1;
 constexpr size_t ATTR_OUTPUT_FINAL_STATE_IDX = 2;
@@ -34,31 +31,27 @@ constexpr uint64_t KDA_SCORE_QUEUE_SLOTS = 2;
 constexpr uint64_t KDA_SCORE_SCRATCH_PLANES = 3;
 constexpr uint64_t KDA_FP32_BYTES = sizeof(float);
 constexpr uint64_t KDA_WORKSPACE_ALIGN = 512;
+constexpr uint32_t KDA_BATCH_MODE = 1;
 
 constexpr size_t DIM_B = 0;
 constexpr size_t DIM_H = 1;
 constexpr size_t DIM_T = 2;
 constexpr size_t DIM_D = 3;
 
-enum class KdaCorePhase : uint32_t {
-    PREPARE = 1,
-    POST_WU = 2,
-    OUTPUT = 3,
-};
-
-KdaCorePhase ResolvePhase(const gert::TilingContext *context)
+uint64_t AlignWorkspace(uint64_t bytes)
 {
-    const bool hasWSeed = context->GetOptionalInputTensor(INPUT_W_SEED_IDX) != nullptr;
-    const bool hasMatrix = context->GetOptionalInputTensor(INPUT_MATRIX_IDX) != nullptr;
-    const bool hasUSeed = context->GetOptionalInputTensor(INPUT_U_SEED_IDX) != nullptr;
-    const bool hasState = context->GetOptionalInputTensor(INPUT_STATE_IDX) != nullptr;
-    if (hasWSeed && hasMatrix && hasUSeed && hasState) {
-        return KdaCorePhase::OUTPUT;
+    return (bytes + KDA_WORKSPACE_ALIGN - 1) / KDA_WORKSPACE_ALIGN * KDA_WORKSPACE_ALIGN;
+}
+
+int64_t KdaDtypeToEnum(ge::DataType dtype)
+{
+    if (dtype == ge::DT_BF16) {
+        return GDN_FWD_H_DTYPE_BF16;
     }
-    if (hasWSeed && hasMatrix && hasUSeed) {
-        return KdaCorePhase::POST_WU;
+    if (dtype == ge::DT_FLOAT16) {
+        return GDN_FWD_H_DTYPE_FP16;
     }
-    return KdaCorePhase::PREPARE;
+    return GDN_FWD_H_DTYPE_FP32;
 }
 } // namespace
 
@@ -82,7 +75,6 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     bool outputFinalState = *(attrPtr->GetAttrPointer<bool>(ATTR_OUTPUT_FINAL_STATE_IDX));
     int64_t totalChunks = *(attrPtr->GetAttrPointer<int64_t>(ATTR_TOTAL_CHUNKS_IDX));
     bool safeGate = *(attrPtr->GetAttrPointer<bool>(ATTR_SAFE_GATE_IDX));
-    const KdaCorePhase phase = ResolvePhase(context);
 
     bool isVarLen = context->GetOptionalInputTensor(INPUT_CU_SEQLENS_IDX) != nullptr;
     int64_t batch = qShape.GetDim(DIM_B);
@@ -115,34 +107,75 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
 
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint32_t coreNum = ascendcPlatform.GetCoreNumAic();
-    int64_t taskNum = seqNum * vShape.GetDim(DIM_H);
-    taskNum = (isVarLen ? totalChunks : batch * totalChunks) * vShape.GetDim(DIM_H);
-    uint32_t blockDim = static_cast<uint32_t>(std::min<int64_t>(taskNum, coreNum));
-    blockDim = coreNum;
+    uint32_t blockDim = coreNum;
     context->SetBlockDim(blockDim == 0 ? 1 : blockDim);
-    size_t *workspace = context->GetWorkspaceSizes(1);
-    uint64_t kernelScratch = 0;
-    if (phase == KdaCorePhase::PREPARE) {
-        const uint64_t usedCoreNum = static_cast<uint64_t>(blockDim == 0 ? 1 : blockDim);
-        const uint64_t solveScratch = usedCoreNum * KDA_SOLVE_SCRATCH_SLOTS *
-                                      static_cast<uint64_t>(chunkSize) * static_cast<uint64_t>(chunkSize) *
-                                      KDA_FP32_BYTES;
-        const uint64_t alignedSolveScratch =
-            (solveScratch + KDA_WORKSPACE_ALIGN - 1) / KDA_WORKSPACE_ALIGN * KDA_WORKSPACE_ALIGN;
-        const uint64_t scoreElementBytes = qDesc->GetDataType() == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
-        const uint64_t scoreScratch = usedCoreNum * KDA_SCORE_QUEUE_SLOTS * KDA_SCORE_SCRATCH_PLANES *
-                                      static_cast<uint64_t>(chunkSize) *
-                                      static_cast<uint64_t>(qShape.GetDim(DIM_D)) * scoreElementBytes;
-        kernelScratch = alignedSolveScratch + scoreScratch;
-    } else if (phase == KdaCorePhase::OUTPUT) {
-        const uint64_t outputElements = static_cast<uint64_t>(batch) *
-                                        static_cast<uint64_t>(vShape.GetDim(DIM_H)) *
-                                        static_cast<uint64_t>(qShape.GetDim(DIM_T)) *
-                                        static_cast<uint64_t>(vShape.GetDim(DIM_D));
-        kernelScratch = 2 * outputElements * KDA_FP32_BYTES;
+    const uint64_t usedCoreNum = static_cast<uint64_t>(blockDim == 0 ? 1 : blockDim);
+    const uint64_t dataBytes = qDesc->GetDataType() == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
+    const uint64_t tokenHeadCount = static_cast<uint64_t>(batch) *
+                                    static_cast<uint64_t>(vShape.GetDim(DIM_H)) *
+                                    static_cast<uint64_t>(qShape.GetDim(DIM_T));
+    const uint64_t qgScaledOffset = 0;
+    const uint64_t qgScaledBytes = tokenHeadCount * static_cast<uint64_t>(qShape.GetDim(DIM_D)) * dataBytes;
+    const uint64_t phaseBaseOffset = AlignWorkspace(qgScaledBytes);
+    const uint64_t wSeedOffset = phaseBaseOffset;
+    const uint64_t wSeedBytes = qgScaledBytes;
+    const uint64_t uSeedOffset = AlignWorkspace(wSeedOffset + wSeedBytes);
+    const uint64_t uSeedBytes = tokenHeadCount * static_cast<uint64_t>(vShape.GetDim(DIM_D)) * dataBytes;
+    const uint64_t aqkFp32Offset = AlignWorkspace(uSeedOffset + uSeedBytes);
+    const uint64_t matrixFp32Bytes = tokenHeadCount * static_cast<uint64_t>(chunkSize) * KDA_FP32_BYTES;
+    const uint64_t akkFp32Offset = AlignWorkspace(aqkFp32Offset + matrixFp32Bytes);
+    const uint64_t prepareScratchOffset = AlignWorkspace(akkFp32Offset + matrixFp32Bytes);
+    const uint64_t solveScratch = usedCoreNum * KDA_SOLVE_SCRATCH_SLOTS *
+                                  static_cast<uint64_t>(chunkSize) * static_cast<uint64_t>(chunkSize) *
+                                  KDA_FP32_BYTES;
+    const uint64_t scoreScratch = usedCoreNum * KDA_SCORE_QUEUE_SLOTS * KDA_SCORE_SCRATCH_PLANES *
+                                  static_cast<uint64_t>(chunkSize) *
+                                  static_cast<uint64_t>(qShape.GetDim(DIM_D)) * dataBytes;
+    const uint64_t prepareEnd = prepareScratchOffset + AlignWorkspace(solveScratch) + scoreScratch;
+
+    const uint64_t postScratchOffset = AlignWorkspace(uSeedOffset + uSeedBytes);
+    const uint64_t postScratchBytes = static_cast<uint64_t>(batch) *
+                                      static_cast<uint64_t>(vShape.GetDim(DIM_H)) *
+                                      static_cast<uint64_t>(totalChunks) * static_cast<uint64_t>(chunkSize) *
+                                      static_cast<uint64_t>(qShape.GetDim(DIM_D)) * KDA_FP32_BYTES;
+    const uint64_t postEnd = postScratchOffset + postScratchBytes;
+
+    ChunkGatedDeltaRuleFwdHTilingContext fwdHContext{};
+    fwdHContext.seqlen = qShape.GetDim(DIM_T);
+    // POST_WU expands kg from H_k to H_v before state propagation.
+    fwdHContext.kNumHead = vShape.GetDim(DIM_H);
+    fwdHContext.kHeadDim = qShape.GetDim(DIM_D);
+    fwdHContext.vNumHead = vShape.GetDim(DIM_H);
+    fwdHContext.vHeadDim = vShape.GetDim(DIM_D);
+    fwdHContext.shapeBatchDim = batch;
+    fwdHContext.hasCuSeqlens = isVarLen;
+    fwdHContext.cuSeqlensDim0 = isVarLen ? seqNum + 1 : 0;
+    fwdHContext.dataType = KdaDtypeToEnum(qDesc->GetDataType());
+    fwdHContext.gDataType = KdaDtypeToEnum(context->GetInputDesc(INPUT_GK_IDX)->GetDataType());
+    fwdHContext.useInitialState = hasInitialState;
+    fwdHContext.stateDataType = GDN_FWD_H_DTYPE_FP32;
+    fwdHContext.useGk = true;
+    fwdHContext.storeFinalState = outputFinalState;
+    fwdHContext.chunkSize = chunkSize;
+    fwdHContext.aicCoreNum = blockDim;
+    // GetUserWorkspace() already skips the system workspace in the fused kernel.
+    fwdHContext.libApiWorkSpaceSize = 0;
+    ::ChunkGatedDeltaRuleFwdHTilingData fwdHTiling{};
+    uint32_t fwdHBlockDim = 0;
+    size_t fwdHWorkspaceBytes = 0;
+    ChunkGatedDeltaRuleFwdHTilingProcessor(fwdHContext).Process(
+        fwdHTiling, fwdHBlockDim, fwdHWorkspaceBytes);
+    if (fwdHBlockDim != blockDim) {
+        return ge::GRAPH_FAILED;
     }
-    kernelScratch = (kernelScratch + KDA_WORKSPACE_ALIGN - 1) / KDA_WORKSPACE_ALIGN * KDA_WORKSPACE_ALIGN;
-    workspace[0] = ascendcPlatform.GetLibApiWorkSpaceSize() + kernelScratch;
+    const uint64_t fwdHEnd = phaseBaseOffset + static_cast<uint64_t>(fwdHWorkspaceBytes);
+
+    const uint64_t outputElements = tokenHeadCount * static_cast<uint64_t>(vShape.GetDim(DIM_D));
+    const uint64_t outputScratchOffset = phaseBaseOffset;
+    const uint64_t outputEnd = outputScratchOffset + 2 * outputElements * KDA_FP32_BYTES;
+    const uint64_t userWorkspaceBytes = AlignWorkspace(std::max({prepareEnd, postEnd, fwdHEnd, outputEnd}));
+    size_t *workspace = context->GetWorkspaceSizes(1);
+    workspace[0] = ascendcPlatform.GetLibApiWorkSpaceSize() + userWorkspaceBytes;
 
     tiling.set_batch(batch);
     tiling.set_seqNum(seqNum);
@@ -158,9 +191,62 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     tiling.set_outputFinalState(outputFinalState);
     tiling.set_isVarLen(isVarLen);
     tiling.set_safeGate(safeGate);
-    tiling.set_usedCoreNum(blockDim == 0 ? 1 : blockDim);
+    const int64_t stageUsedCoreNum = static_cast<int64_t>(usedCoreNum);
+    const ChunkKdaPrepareTilingData prepareTiling{
+        stageUsedCoreNum, static_cast<int64_t>(qgScaledOffset), static_cast<int64_t>(wSeedOffset),
+        static_cast<int64_t>(uSeedOffset), static_cast<int64_t>(aqkFp32Offset),
+        static_cast<int64_t>(akkFp32Offset), static_cast<int64_t>(prepareScratchOffset)};
+    const ChunkKdaPostWuTilingData postWuTiling{
+        stageUsedCoreNum, static_cast<int64_t>(qgScaledOffset), static_cast<int64_t>(wSeedOffset),
+        static_cast<int64_t>(uSeedOffset), static_cast<int64_t>(postScratchOffset)};
+    const ChunkKdaFwdHStageTilingData fwdHStageTiling{
+        fwdHTiling.batch, fwdHTiling.seqlen, fwdHTiling.kNumHead, fwdHTiling.vNumHead,
+        fwdHTiling.kHeadDim, fwdHTiling.vHeadDim, fwdHTiling.chunkSize,
+        fwdHTiling.useInitialState, fwdHTiling.storeFinalState, fwdHTiling.isVariedLen,
+        fwdHTiling.shapeBatch, fwdHTiling.tokenBatch, fwdHTiling.vWorkspaceOffset,
+        fwdHTiling.vUpdateWorkspaceOffset, fwdHTiling.kDecayWorkspaceOffset,
+        fwdHTiling.hWorkspaceOffset, fwdHTiling.numSeqWorkspaceOffset,
+        fwdHTiling.numChunksWorkspaceOffset, static_cast<int64_t>(phaseBaseOffset)};
+    const ChunkKdaOutputTilingData outputTiling{
+        stageUsedCoreNum, static_cast<int64_t>(qgScaledOffset), static_cast<int64_t>(outputScratchOffset)};
 
-    context->SetTilingKey(static_cast<uint64_t>(phase));
+    tiling.set_prepareUsedCoreNum(prepareTiling.usedCoreNum);
+    tiling.set_prepareQgScaledOffset(prepareTiling.qgScaledOffset);
+    tiling.set_prepareWSeedOffset(prepareTiling.wSeedOffset);
+    tiling.set_prepareUSeedOffset(prepareTiling.uSeedOffset);
+    tiling.set_prepareAqkFp32Offset(prepareTiling.aqkFp32Offset);
+    tiling.set_prepareAkkFp32Offset(prepareTiling.akkFp32Offset);
+    tiling.set_prepareScratchOffset(prepareTiling.scratchOffset);
+    tiling.set_postWuUsedCoreNum(postWuTiling.usedCoreNum);
+    tiling.set_postWuQgScaledOffset(postWuTiling.qgScaledOffset);
+    tiling.set_postWuWSeedOffset(postWuTiling.wSeedOffset);
+    tiling.set_postWuUSeedOffset(postWuTiling.uSeedOffset);
+    tiling.set_postWuScratchOffset(postWuTiling.scratchOffset);
+    tiling.set_fwdHBatch(fwdHStageTiling.batch);
+    tiling.set_fwdHSeqlen(fwdHStageTiling.seqlen);
+    tiling.set_fwdHKNumHead(fwdHStageTiling.kNumHead);
+    tiling.set_fwdHVNumHead(fwdHStageTiling.vNumHead);
+    tiling.set_fwdHKHeadDim(fwdHStageTiling.kHeadDim);
+    tiling.set_fwdHVHeadDim(fwdHStageTiling.vHeadDim);
+    tiling.set_fwdHChunkSize(fwdHStageTiling.chunkSize);
+    tiling.set_fwdHUseInitialState(fwdHStageTiling.useInitialState);
+    tiling.set_fwdHStoreFinalState(fwdHStageTiling.storeFinalState);
+    tiling.set_fwdHIsVariedLen(fwdHStageTiling.isVariedLen);
+    tiling.set_fwdHShapeBatch(fwdHStageTiling.shapeBatch);
+    tiling.set_fwdHTokenBatch(fwdHStageTiling.tokenBatch);
+    tiling.set_fwdHVWorkspaceOffset(fwdHStageTiling.vWorkspaceOffset);
+    tiling.set_fwdHVUpdateWorkspaceOffset(fwdHStageTiling.vUpdateWorkspaceOffset);
+    tiling.set_fwdHKDecayWorkspaceOffset(fwdHStageTiling.kDecayWorkspaceOffset);
+    tiling.set_fwdHHWorkspaceOffset(fwdHStageTiling.hWorkspaceOffset);
+    tiling.set_fwdHNumSeqWorkspaceOffset(fwdHStageTiling.numSeqWorkspaceOffset);
+    tiling.set_fwdHNumChunksWorkspaceOffset(fwdHStageTiling.numChunksWorkspaceOffset);
+    tiling.set_fwdHWorkspaceBaseOffset(fwdHStageTiling.workspaceBaseOffset);
+    tiling.set_outputUsedCoreNum(outputTiling.usedCoreNum);
+    tiling.set_outputQgScaledOffset(outputTiling.qgScaledOffset);
+    tiling.set_outputScratchOffset(outputTiling.scratchOffset);
+
+    context->SetTilingKey(1);
+    context->SetScheduleMode(KDA_BATCH_MODE);
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
     return ge::GRAPH_SUCCESS;

@@ -6,6 +6,9 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # -----------------------------------------------------------------------------------------------------------
 add_op_to_compiled_list()
+set(chunk_kda_fwd_depends
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h;fla/ops/ascendc/kda/kda_layout_swap12"
+    CACHE STRING "Kernel source dependencies for chunk_kda_fwd" FORCE)
 if (BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnnExc PRIVATE
         chunk_kda_fwd_def.cpp

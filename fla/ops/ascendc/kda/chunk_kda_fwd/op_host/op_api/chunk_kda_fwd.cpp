@@ -79,7 +79,7 @@ const aclIntArray *BuildPackedChunkMetadata(const aclIntArray *cuSeqlens,
 }
 } // namespace
 
-KdaCoreOutputs LaunchChunkKdaCore(
+KdaCoreOutputs KdaChunkForward(
     const aclTensor *q,
     const aclTensor *k,
     const aclTensor *v,
@@ -88,10 +88,6 @@ KdaCoreOutputs LaunchChunkKdaCore(
     const aclTensor *initialStateOptional,
     const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional,
-    const aclTensor *wSeedOrQGOptional,
-    const aclTensor *matrixOptional,
-    const aclTensor *uSeedOrVNewOptional,
-    const aclTensor *stateOptional,
     double scale,
     int64_t chunkSize,
     bool outputFinalState,
@@ -109,8 +105,8 @@ KdaCoreOutputs LaunchChunkKdaCore(
     const aclTensor *hOut,
     aclOpExecutor *executor)
 {
-    L0_DFX(LaunchChunkKdaCore, q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional,
-           wSeedOrQGOptional, matrixOptional, uSeedOrVNewOptional, stateOptional, scale, chunkSize,
+    L0_DFX(KdaChunkForward, q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional,
+           scale, chunkSize,
            outputFinalState, totalChunks, safeGate, oOut, finalStateOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut,
            vNewOut, hOut);
 
@@ -142,8 +138,7 @@ KdaCoreOutputs LaunchChunkKdaCore(
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         ChunkKdaFwd,
-        OP_INPUT(q, k, v, gk, beta, initialStateOptional, actualCuSeqlens, actualChunkIndices,
-                 wSeedOrQGOptional, matrixOptional, uSeedOrVNewOptional, stateOptional),
+        OP_INPUT(q, k, v, gk, beta, initialStateOptional, actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(oOut, finalStateOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut),
         OP_ATTR(scale, chunkSize, outputFinalState, totalChunks, safeGate));
     if (ret != ACLNN_SUCCESS) {
@@ -151,53 +146,6 @@ KdaCoreOutputs LaunchChunkKdaCore(
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     return {oOut, finalStateOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut};
-}
-
-KdaCoreOutputs KdaChunkPrepare(
-    const aclTensor *q, const aclTensor *k, const aclTensor *v, const aclTensor *gk, const aclTensor *beta,
-    const aclTensor *initialStateOptional, const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkIndicesOptional, double scale, int64_t chunkSize, bool outputFinalState,
-    int64_t totalChunks, bool safeGate, const aclTensor *oOut, const aclTensor *finalStateOut,
-    const aclTensor *aqkOut,
-    const aclTensor *akkOut, const aclTensor *wOut, const aclTensor *uOut, const aclTensor *qgOut,
-    const aclTensor *kgOut, const aclTensor *vNewOut, const aclTensor *hOut, aclOpExecutor *executor)
-{
-    return LaunchChunkKdaCore(q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional,
-                              chunkIndicesOptional, nullptr, nullptr, nullptr, nullptr, scale, chunkSize,
-                              outputFinalState, totalChunks, safeGate,
-                              oOut, finalStateOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut,
-                              executor);
-}
-
-KdaCoreOutputs KdaPostWu(
-    const aclTensor *q, const aclTensor *k, const aclTensor *v, const aclTensor *gk, const aclTensor *beta,
-    const aclTensor *initialStateOptional, const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkIndicesOptional, const aclTensor *wSeed, const aclTensor *matrix,
-    const aclTensor *uSeed, double scale, int64_t chunkSize, bool outputFinalState, int64_t totalChunks,
-    bool safeGate, const aclTensor *oOut, const aclTensor *finalStateOut, const aclTensor *aqkOut,
-    const aclTensor *akkOut,
-    const aclTensor *wOut, const aclTensor *uOut, const aclTensor *qgOut, const aclTensor *kgOut,
-    const aclTensor *vNewOut, const aclTensor *hOut, aclOpExecutor *executor)
-{
-    return LaunchChunkKdaCore(q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional,
-                              wSeed, matrix, uSeed, nullptr, scale, chunkSize, outputFinalState, totalChunks, safeGate,
-                              oOut, finalStateOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut,
-                              executor);
-}
-
-KdaCoreOutputs KdaChunkOutput(
-    const aclTensor *q, const aclTensor *k, const aclTensor *v, const aclTensor *gk, const aclTensor *beta,
-    const aclTensor *initialStateOptional, const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkIndicesOptional, const aclTensor *qg, const aclTensor *aqk,
-    const aclTensor *vNew, const aclTensor *state, double scale, int64_t chunkSize, bool outputFinalState,
-    int64_t totalChunks, bool safeGate, const aclTensor *oOut, const aclTensor *finalStateOut, const aclTensor *aqkOut,
-    const aclTensor *akkOut, const aclTensor *wOut, const aclTensor *uOut, const aclTensor *qgOut,
-    const aclTensor *kgOut, const aclTensor *vNewOut, const aclTensor *hOut, aclOpExecutor *executor)
-{
-    return LaunchChunkKdaCore(q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional,
-                              qg, aqk, vNew, state, scale, chunkSize, outputFinalState, totalChunks, safeGate,
-                              oOut, finalStateOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut,
-                              executor);
 }
 
 } // namespace l0op
