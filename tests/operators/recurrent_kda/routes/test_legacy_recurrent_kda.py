@@ -27,7 +27,7 @@ def test_legacy_route_case():
     device_id = int(os.environ.get("TEST_DEVICE_ID", "0"))
     device = torch.device(f"npu:{device_id}")
     torch.npu.set_device(device)
-    batch, seq_len, heads, value_heads, key_dim, value_dim = 2, 2, 2, 4, 64, 64
+    batch, seq_len, heads, value_heads, key_dim, value_dim = 2, 2, 2, 4, 128, 128
     q = torch.randn(batch, seq_len, heads, key_dim, device=device, dtype=torch.bfloat16)
     k = torch.randn_like(q)
     v = torch.randn(batch, seq_len, value_heads, value_dim, device=device, dtype=torch.bfloat16)

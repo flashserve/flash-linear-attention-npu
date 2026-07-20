@@ -17,7 +17,7 @@ def _device():
     return torch.device(f"npu:{device_id}")
 
 
-def make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=64, vdim=64, seed=0,
+def make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim=128, seed=0,
                 with_initial_state=True):
     torch.manual_seed(seed)
     if layout == "BSND":

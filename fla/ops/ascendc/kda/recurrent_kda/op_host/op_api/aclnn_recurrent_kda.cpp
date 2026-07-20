@@ -206,6 +206,12 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: HV must be divisible by H.");
         return false;
     }
+    if (kDim != 128 || (vDim != 128 && vDim != 256)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "npu_recurrent_kda: K/V currently support only K=128,V=128 or K=128,V=256, but K=%ld,V=%ld.",
+                kDim, vDim);
+        return false;
+    }
     if (params.cuSeqlensOptional == nullptr && denseSeqLen > static_cast<int64_t>(MAX_MTP)) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: dense sequence length must be <= %zu.", MAX_MTP);
         return false;

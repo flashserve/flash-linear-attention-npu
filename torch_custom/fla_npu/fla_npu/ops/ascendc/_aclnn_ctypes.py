@@ -1088,6 +1088,8 @@ def npu_recurrent_kda(
         raise RuntimeError("npu_recurrent_kda: all shape dimensions must be positive.")
     if value_heads % heads != 0:
         raise RuntimeError("npu_recurrent_kda: HV must be divisible by H.")
+    if (key_dim, value_dim) not in ((128, 128), (128, 256)):
+        raise RuntimeError("npu_recurrent_kda: K/V currently support only K=128,V=128 or K=128,V=256.")
     cu_values = _flatten_int_values(cu_seqlens, "npu_recurrent_kda: cu_seqlens")
     if cu_values is None:
         if dense_seq_len > 8:

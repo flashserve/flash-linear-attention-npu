@@ -134,7 +134,7 @@ recurrent_kda(q, k, v, g, beta, initial_state=None, *,
 import torch
 from fla_npu.ops.ascendc import recurrent_kda
 
-B, T, H, H_v, K, V = 2, 2, 2, 4, 64, 64
+B, T, H, H_v, K, V = 2, 2, 2, 4, 128, 128
 q = torch.randn(B, T, H, K, device="npu", dtype=torch.bfloat16)
 k = torch.randn_like(q)
 v = torch.randn(B, T, H_v, V, device="npu", dtype=torch.bfloat16)
@@ -176,6 +176,7 @@ out, final_state = torch.ops.npu.npu_recurrent_kda(
 ## 7. 已知限制
 
 - `q/k/v/out` 当前仅支持 BF16。
+- `K/V` 当前仅支持 `K=128,V=128` 或 `K=128,V=256` 两档枚举。
 - 每条 recurrent 序列长度必须 `<=8`；dense 模式未传 `cu_seqlens` 时 `T<=8`。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`；BSND 变长序列物理 `B` 必须为 1。
 - 仅支持 `state_v_first=True`。

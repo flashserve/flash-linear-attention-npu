@@ -802,6 +802,8 @@ at::Tensor npu_kda_gate_cumsum(
     TORCH_CHECK(h > 0 && hv > 0 && k_dim > 0 && v_dim > 0 && total_tokens > 0,
                 "npu_recurrent_kda: all shape dimensions must be positive.");
     TORCH_CHECK(hv % h == 0, "npu_recurrent_kda: HV must be divisible by H.");
+    TORCH_CHECK(k_dim == 128 && (v_dim == 128 || v_dim == 256),
+                "npu_recurrent_kda: K/V currently support only K=128,V=128 or K=128,V=256.");
     TORCH_CHECK(dense_seq_len <= 8 || cu_seqlens.has_value(),
                 "npu_recurrent_kda: dense sequence length must be <= 8.");
     CheckKdaRecurrentCuSeqlens(cu_seqlens, total_tokens, 8, "npu_recurrent_kda");

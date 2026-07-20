@@ -12,6 +12,7 @@
     ],
     "dtypes": [
       "bfloat16",
+      "float16",
       "float32"
     ],
     "layouts": [
@@ -55,6 +56,7 @@
     "known_limits": [
       "q/k/v 当前支持 bfloat16；g/beta 支持 float32/bfloat16/float16，A_log 与 dt_bias 必须为 float32。",
       "layout 当前仅支持 BSND 和 TND；H_v 必须能被 H 整除。",
+      "K/V 当前仅支持 K=128,V=128 或 K=128,V=256 两档枚举。",
       "每条 recurrent 序列长度当前必须 <= 8；BSND 变长序列物理 B 必须为 1。",
       "state_v_first 当前必须为 true，状态布局为 [seq_num,H_v,V,K]。",
       "use_gate_in_kernel=true 时 A_log 必传；dt_bias 若存在须为 [H_v*K] 或 [H_v,K]。",
@@ -75,7 +77,7 @@
       "recurrent_kda_bsnd_varlen_precomputed_zero_segment",
       "recurrent_kda_tnd_raw_gate_no_dt_bias_no_beta_sigmoid",
       "recurrent_kda_tnd_ssm_accepted_flat_dt_bias_fp16_gate",
-      "recurrent_kda_tnd_precomputed_k256_reduce_general"
+      "recurrent_kda_tnd_precomputed_v256_general"
     ],
     "generalization_case_ids": [
       "recurrent_kda_bsnd_safe_gate_beta_sigmoid",
@@ -86,7 +88,7 @@
       "recurrent_kda_bsnd_varlen_precomputed_zero_segment",
       "recurrent_kda_tnd_raw_gate_no_dt_bias_no_beta_sigmoid",
       "recurrent_kda_tnd_ssm_accepted_flat_dt_bias_fp16_gate",
-      "recurrent_kda_tnd_precomputed_k256_reduce_general",
+      "recurrent_kda_tnd_precomputed_v256_general",
       "recurrent_kda_kimi_tnd_h96_d128_runtime_cu_smoke"
     ],
     "stress_case_ids": [
@@ -123,8 +125,8 @@
         "T": 2,
         "H": 2,
         "H_v": 4,
-        "K": 64,
-        "V": 64
+        "K": 128,
+        "V": 128
       },
       "dtype": {
         "q_k_v": "bfloat16",
@@ -187,8 +189,8 @@
         "T": 2,
         "H": 2,
         "H_v": 4,
-        "K": 64,
-        "V": 64
+        "K": 128,
+        "V": 128
       },
       "dtype": {
         "q_k_v": "bfloat16",
@@ -248,8 +250,8 @@
         "max_seq_len": 2,
         "H": 2,
         "H_v": 4,
-        "K": 64,
-        "V": 64
+        "K": 128,
+        "V": 128
       },
       "dtype": {
         "q_k_v": "bfloat16",
@@ -443,8 +445,8 @@
         "T": 1,
         "H": 1,
         "H_v": 1,
-        "K": 64,
-        "V": 32
+        "K": 128,
+        "V": 128
       },
       "dtype": {
         "q_k_v": "bfloat16",
@@ -506,8 +508,8 @@
         "max_seq_len": 4,
         "H": 2,
         "H_v": 4,
-        "K": 64,
-        "V": 32
+        "K": 128,
+        "V": 128
       },
       "dtype": {
         "q_k_v": "bfloat16",
@@ -575,8 +577,8 @@
         "max_seq_len": 3,
         "H": 2,
         "H_v": 2,
-        "K": 96,
-        "V": 32
+        "K": 128,
+        "V": 128
       },
       "dtype": {
         "q_k_v": "bfloat16",
@@ -647,8 +649,8 @@
         "max_seq_len": 3,
         "H": 1,
         "H_v": 2,
-        "K": 64,
-        "V": 32
+        "K": 128,
+        "V": 256
       },
       "dtype": {
         "q_k_v": "bfloat16",
@@ -701,12 +703,12 @@
       "seed": 2037
     },
     {
-      "id": "recurrent_kda_tnd_precomputed_k256_reduce_general",
+      "id": "recurrent_kda_tnd_precomputed_v256_general",
       "tags": [
         "accuracy",
         "generalization",
         "precomputed_gate",
-        "reduce_general"
+        "v256_shape"
       ],
       "shape": {
         "seq_num": 1,
@@ -714,8 +716,8 @@
         "max_seq_len": 2,
         "H": 1,
         "H_v": 1,
-        "K": 256,
-        "V": 16
+        "K": 128,
+        "V": 256
       },
       "dtype": {
         "q_k_v": "bfloat16",
@@ -896,8 +898,8 @@
         "T": 9,
         "H": 1,
         "H_v": 1,
-        "K": 64,
-        "V": 64
+        "K": 128,
+        "V": 128
       },
       "dtype": {
         "q_k_v": "bfloat16",
