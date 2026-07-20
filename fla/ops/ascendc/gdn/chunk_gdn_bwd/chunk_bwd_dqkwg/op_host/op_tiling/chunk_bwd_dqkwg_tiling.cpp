@@ -207,11 +207,10 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     if (aicNum < 1) {
         aicNum = 1;
     }
-    int64_t usedAicNum = std::min(aicNum, coreLoops);
-    if (usedAicNum < 1) {
-        usedAicNum = 1;
+    int64_t ringCoreSlots = std::min(aicNum, coreLoops);
+    if (ringCoreSlots < 1) {
+        ringCoreSlots = 1;
     }
-    const int64_t ringCoreSlots = usedAicNum;
 
     const size_t mainDgLastSize = align32(static_cast<size_t>(B) * HV *numChunks * FP32_SIZE);
     const size_t mainMm5Size = static_cast<size_t>(B) * HV *T * K * FP16_SIZE;
@@ -295,7 +294,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     workspaces[0] = static_cast<size_t>(sysWorkspaceSize + totalUserWorkspace);
 
     // 设置 block 数量
-    context->SetBlockDim(usedAicNum);
+    context->SetBlockDim(aicNum);
     context->SetScheduleMode(1); // mixed AIC/AIV schedule
 
     // 填充 TilingData
@@ -310,7 +309,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     tilingData.set_numChunks(numChunks);
     tilingData.set_scale(scale);
     tilingData.set_mul0RowNum(V == 256 ? 16 : 32);
-    tilingData.set_aicCoreNum(static_cast<uint32_t>(usedAicNum));
+    tilingData.set_aicCoreNum(static_cast<uint32_t>(aicNum));
 
     tilingData.set_wsDwOffset(wsDwOffset);
     tilingData.set_wsBtxKSyncSlotsPerHead(static_cast<uint64_t>(groupRingDepth));
