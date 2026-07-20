@@ -25,8 +25,11 @@
 ```bash
 pytest -q tests/operators/recurrent_kda/accuracy/test_recurrent_kda.py
 FLA_NPU_RUN_OPERATOR_TESTS=1 pytest -q tests/operators/recurrent_kda/accuracy/test_recurrent_kda.py
+FLA_NPU_RUN_OPERATOR_TESTS=1 FLA_NPU_RUN_LARGE_SHAPE_TESTS=1 FLA_NPU_CASE_IDS=recurrent_kda_kimi_tnd_h96_d128_runtime_cu_smoke pytest -q tests/operators/recurrent_kda/accuracy/test_recurrent_kda.py
 pytest -q tests/operators/recurrent_kda/ut
 FLA_NPU_RUN_LEGACY_TESTS=1 FLA_NPU_RUN_OPERATOR_TESTS=1 pytest -q tests/operators/recurrent_kda/routes/test_legacy_recurrent_kda.py
 ```
 
-A2/A3/A5 通过 `FLA_NPU_SOC` 选择。测试结果只记录平台、case 总数、通过数和失败 case ID，不记录本地环境路径。
+A2/A3/A5 通过 `FLA_NPU_SOC` 选择。Kimi H96/D128 smoke 仅检查 NPU launch、输出 shape 和抽样 finite，不跑 CPU golden。
+完整 `T_total=12288` 长上下文规格保留为 stress case，不纳入默认通过矩阵。
+测试结果只记录平台、case 总数、通过数和失败 case ID，不记录本地环境路径。
