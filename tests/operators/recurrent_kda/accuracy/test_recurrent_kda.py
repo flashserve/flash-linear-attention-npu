@@ -33,7 +33,13 @@ def test_case_manifest_covers_required_matrix():
     assert any(case["attrs"].get("output_final_state") is False for case in positive_cases)
     assert any(case["optional_inputs"].get("ssm_state_indices") is not None for case in positive_cases)
     assert any(case["dtype"].get("g_beta") in ("float16", "bfloat16") for case in positive_cases)
-    assert any(int(case["shape"]["K"]) == 256 for case in positive_cases)
+    supported_kv = {(128, 128), (128, 256)}
+    positive_kv = {(int(case["shape"]["K"]), int(case["shape"]["V"])) for case in positive_cases}
+    assert positive_kv <= supported_kv
+    assert supported_kv <= positive_kv
+    assert any(int(case["shape"]["H"]) == 96 and int(case["shape"]["H_v"]) == 96 for case in positive_cases)
+    assert any(int(case["shape"]["H_v"]) // int(case["shape"]["H"]) > 1 for case in positive_cases)
+    assert any(int(case["shape"].get("max_seq_len", case["shape"].get("T", 1))) == 8 for case in positive_cases)
 
 
 def test_selected_case_ids_are_unique():

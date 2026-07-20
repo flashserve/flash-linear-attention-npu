@@ -66,4 +66,4 @@ o_t = S @ (q_t * scale)
 - Dense 输入未传 `cu_seqlens` 时，`T <= 8`。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`。
 - 仅支持 `state_v_first=True`，state layout 为 `[seq_num, HV, V, K]`；底层 aclnn 接口要求显式传入 `initialState`。
-- `HV` 必须能被 `H` 整除；`H/HV <= 256`，`K/V <= 512`。
+- `HV` 必须能被 `H` 整除；`H/HV <= 256`；`K/V` 仅支持 `K=128,V=128` 或 `K=128,V=256`。

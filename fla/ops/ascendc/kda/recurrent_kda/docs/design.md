@@ -33,6 +33,7 @@ GDN recurrent 的函数接口。
 | SOC | `ascend910b`、`ascend910_93`、`ascend950` |
 | Layout | `BSND`、`TND` |
 | Q/K/V dtype | BF16 |
+| K/V | `K=128,V=128` 或 `K=128,V=256` |
 | Gate/Beta dtype | FP32/BF16/FP16，aclnn 预处理为 FP32 |
 | State dtype | FP32/BF16 |
 | Gate 模式 | 预计算 step log gate；kernel 内 raw gate |
@@ -186,6 +187,7 @@ A2/A5 精度验证过程中修复以下问题：
 ## 13. 已知限制与演进计划
 
 - 当前仅支持 BF16 QKV。
+- 当前 `K/V` 仅支持 `K=128,V=128` 或 `K=128,V=256`。
 - 当前每段 recurrent 序列长度限制为 `<=8`。
 - 当前仅支持 `state_v_first=True`。
 - 后续若扩展长序列或更多 dtype，需要同步更新 op_host 校验、tiling、kernel、JSON case 和 API 文档。

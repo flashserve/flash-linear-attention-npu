@@ -23,7 +23,7 @@ def _device():
     return device
 
 
-def _make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=64, vdim=64, seed=0,
+def _make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim=128, seed=0,
                  with_initial_state=True):
     torch.manual_seed(seed)
     if layout == "BSND":

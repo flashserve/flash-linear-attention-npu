@@ -26,3 +26,14 @@ def test_raw_gate_contract_is_single_operator():
     raw_gate_cases = [case for case in data["cases"] if case["attrs"].get("use_gate_in_kernel")]
     assert raw_gate_cases
     assert all(case["optional_inputs"].get("A_log") == "[H_v]" for case in raw_gate_cases)
+
+
+def test_positive_cases_stay_inside_supported_kv_enums():
+    data = manifest()
+    supported_kv = {(128, 128), (128, 256)}
+    positive_cases = [case for case in data["cases"] if "negative" not in case["tags"]]
+    assert positive_cases
+    assert {
+        (int(case["shape"]["K"]), int(case["shape"]["V"]))
+        for case in positive_cases
+    } <= supported_kv

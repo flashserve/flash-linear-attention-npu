@@ -385,10 +385,14 @@ private:
 
     ge::graphStatus CheckShapeValueRangeAndRule(const RecurrentKdaTilingData &tiling) const
     {
-        OP_CHECK_IF(tiling.nk > 256 || tiling.nv > 256 || tiling.dk > 512 || tiling.dv > 512,
+        OP_CHECK_IF(tiling.nk > 256 || tiling.nv > 256,
                     OP_LOGE(ctx_.nodeName,
-                            "H/HV must be <= 256 and K/V must be <= 512, but H=%u, HV=%u, K=%u, V=%u.",
-                            tiling.nk, tiling.nv, tiling.dk, tiling.dv),
+                            "H/HV must be <= 256, but H=%u, HV=%u.", tiling.nk, tiling.nv),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(tiling.dk != 128 || (tiling.dv != 128 && tiling.dv != 256),
+                    OP_LOGE(ctx_.nodeName,
+                            "K/V currently support only K=128,V=128 or K=128,V=256, but K=%u, V=%u.",
+                            tiling.dk, tiling.dv),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(tiling.nv % tiling.nk != 0,
                     OP_LOGE(ctx_.nodeName, "HV must be divisible by H, but HV=%u and H=%u.",
