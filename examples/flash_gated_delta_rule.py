@@ -50,7 +50,9 @@ from fla_npu.ops.triton import (
 
 _disable_compile = getattr(getattr(torch, "compiler", None), "disable", lambda fn: fn)
 _DEFAULT_VARLEN_CHUNK_SIZES = (16, 32, 64, 128, 608 * 2)
-_ACCURACY_REFERENCE_VERSION = 1
+_ACCURACY_REFERENCE_VERSION = 2
+
+
 def _make_gate(shape: tuple[int, ...], dtype: torch.dtype, device: str, gate_function: str) -> torch.Tensor:
     if gate_function == "logsigmoid":
         return F.logsigmoid(torch.randn(*shape, dtype=dtype, device=device))
@@ -1053,8 +1055,8 @@ def flash_gated_delta_rule(
     This port keeps the xtuner NPU layout:
         q, k: [B, H, T, K]
         v:    [B, H, T, V]
-        g:    [B, T, H]
-        beta: [B, T, H]
+        g:    [B, T, H] FP32
+        beta: [B, T, H] FP32
 
     It returns:
         o: [B, T, H, V]
@@ -1075,6 +1077,8 @@ def flash_gated_delta_rule(
         raise ValueError(f"q/k/v shape prefixes must match, got {q.shape}, {k.shape}, {v.shape}.")
     if g.shape != beta.shape:
         raise ValueError(f"g and beta shapes must match, got {g.shape} and {beta.shape}.")
+    if g.dtype != torch.float32 or beta.dtype != torch.float32:
+        raise ValueError("g and beta must use float32 for the chunk_scaled_dot_kkt path.")
     if g.shape[0] != q.shape[0] or g.shape[1] != q.shape[2] or g.shape[2] != q.shape[1]:
         raise ValueError(
             "Expected q/k/v in [B, H, T, D] and g/beta in [B, T, H]; "
@@ -1239,7 +1243,7 @@ class DemoGatedDeltaNet(nn.Module):
         key = mixed_qkv[:, self.num_k_heads : 2 * self.num_k_heads].contiguous()
         value = mixed_qkv[:, 2 * self.num_k_heads :].contiguous()
 
-        beta = b.sigmoid()
+        beta = b.float().sigmoid()
         g = -self.A_log.float().exp() * torch.nn.functional.softplus(a.float() + self.dt_bias)
 
         repeat = self.num_v_heads // self.num_k_heads
@@ -1434,7 +1438,7 @@ def _make_cpu_direct_inputs(
     q = q.to(dtype)
     k = k.to(dtype)
     v = torch.rand(batch, value_heads, tokens, value_dim, dtype=torch.float32, generator=generator).to(dtype)
-    beta = torch.rand(batch, tokens, value_heads, dtype=torch.float32, generator=generator).to(dtype).sigmoid()
+    beta = torch.rand(batch, tokens, value_heads, dtype=torch.float32, generator=generator).sigmoid()
     if gate_function == "logsigmoid":
         g = F.logsigmoid(torch.randn(batch, tokens, value_heads, dtype=torch.float32, generator=generator))
     elif gate_function == "negative_linear":
@@ -1955,8 +1959,8 @@ def _main():
     q = torch.randn(batch, query_heads, args.tokens, key_dim, dtype=dtype, device=device)
     k = torch.randn(batch, query_heads, args.tokens, key_dim, dtype=dtype, device=device)
     v = torch.randn(batch, value_heads, args.tokens, value_dim, dtype=dtype, device=device)
-    beta = torch.rand(batch, args.tokens, value_heads, dtype=dtype, device=device).sigmoid()
-    g = _make_gate((batch, args.tokens, value_heads), dtype, device, args.gate_function)
+    beta = torch.rand(batch, args.tokens, value_heads, dtype=torch.float32, device=device).sigmoid()
+    g = _make_gate((batch, args.tokens, value_heads), torch.float32, device, args.gate_function)
 
     q.requires_grad_(True)
     k.requires_grad_(True)
