@@ -400,6 +400,8 @@ def chunk_scaled_dot_kkt_fwd(
             USE_EXP2=use_exp2,
             num_warps=_NUM_WARPS,
         )
+        if k.device.type == "npu":
+            torch.npu.synchronize()
         return A
 
     BC = min(16, BT)
@@ -441,4 +443,6 @@ def chunk_scaled_dot_kkt_fwd(
         BK=BK,
         num_warps=4,
     )
+    if k.device.type == "npu":
+        torch.npu.synchronize()
     return A

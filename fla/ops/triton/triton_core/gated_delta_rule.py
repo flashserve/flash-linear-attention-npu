@@ -467,6 +467,8 @@ def recompute_w_u_fwd_triton_ascend(
         num_warps=_NUM_WARPS,
         num_stages=3,
     )
+    if k.device.type == "npu":
+        torch.npu.synchronize()
     return w_t.transpose(1, 2).contiguous(), u_t.transpose(1, 2).contiguous()
 
 

@@ -5,13 +5,6 @@ This module keeps the public package path stable:
     from fla_npu.ops.triton import chunk_local_cumsum
 """
 
-import os
-
-# Triton-Ascend taskqueue launchers enqueue raw device pointers but do not retain
-# Python tensor objects. Keep launches immediate so local contiguous temporaries
-# used by wrappers remain alive until the kernel is submitted.
-os.environ["TRITON_ENABLE_TASKQUEUE"] = "0"
-
 from fla.ops.triton.triton_core.causal_conv1d import causal_conv1d_triton
 from fla.ops.triton.triton_core.chunk_scaled_dot_kkt import chunk_scaled_dot_kkt_fwd
 from fla.ops.triton.triton_core.cumsum import (
