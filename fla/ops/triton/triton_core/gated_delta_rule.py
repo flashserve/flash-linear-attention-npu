@@ -421,7 +421,7 @@ def recompute_w_u_fwd_triton_ascend(
     v: torch.Tensor,
     beta: torch.Tensor,
     A: torch.Tensor,
-    g_exp2: Optional[torch.Tensor] = None,
+    g_log2: Optional[torch.Tensor] = None,
     cu_seqlens: Optional[torch.LongTensor] = None,
     chunk_indices: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -437,7 +437,7 @@ def recompute_w_u_fwd_triton_ascend(
     NT = triton.cdiv(T, BT) if cu_seqlens is None else len(chunk_indices)
 
     beta_t = beta.transpose(1, 2).contiguous()
-    g_t = g_exp2.transpose(1, 2).contiguous() if g_exp2 is not None else beta_t
+    g_t = g_log2.transpose(1, 2).contiguous() if g_log2 is not None else beta_t
     w_t = k_t.new_empty(B, T, HV, K)
     u_t = torch.empty_like(v_t)
 
@@ -482,10 +482,11 @@ def chunk_gated_delta_rule_fwd_intra_triton_ascend(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if chunk_indices is None and cu_seqlens is not None:
         chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
-    g_exp2 = (g * RCP_LN2).contiguous()
+    # Triton-Ascend kernels use exp2, so convert natural-log gates to log2-domain.
+    g_log2 = (g * RCP_LN2).contiguous()
     A = chunk_scaled_dot_kkt_fwd(
         k=k,
-        g=g_exp2,
+        g=g_log2,
         beta=beta,
         cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices,
@@ -504,7 +505,7 @@ def chunk_gated_delta_rule_fwd_intra_triton_ascend(
         v=v,
         beta=beta,
         A=A,
-        g_exp2=g_exp2,
+        g_log2=g_log2,
         cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices,
     )

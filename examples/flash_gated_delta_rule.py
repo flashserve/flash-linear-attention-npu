@@ -644,7 +644,7 @@ def flash_chunk_gated_delta_rule_bwd(
         v=v,
         beta=beta.transpose(1, 2).contiguous(),
         A=A.transpose(1, 2).contiguous(),
-        g_exp2=g.transpose(1, 2).contiguous() * RCP_LN2,
+        g_log2=g.transpose(1, 2).contiguous() * RCP_LN2,
         cu_seqlens=cu_seqlens,
         chunk_indices=_chunk_tensor(chunk_indices, chunk_size),
     )

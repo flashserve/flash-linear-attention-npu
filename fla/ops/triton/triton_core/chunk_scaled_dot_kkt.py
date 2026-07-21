@@ -92,7 +92,6 @@ def chunk_scaled_dot_kkt_fwd_kernel(
                 p_g = tl.make_block_ptr(g + g_batch_off + bos + i_h * T_max, (T_local,), (1,), (i_t * BT,), (BT,), (0,))
                 b_g = tl.load(p_g, boundary_check=(0,))
                 b_g_diff = b_g[:, None] - b_g[None, :]
-                b_g_diff = tl.minimum(tl.maximum(b_g_diff, -50.0), 50.0)
                 b_A *= tl.exp(b_g_diff)
             b_A *= b_beta[:, None]
 
@@ -184,7 +183,6 @@ def chunk_scaled_dot_kkt_fwd_kernel_tiled(
                     p_gc = tl.make_block_ptr(g_base, (T_local,), (1,), (col_start,), (BC,), (0,))
                     b_gc = tl.load(p_gc, boundary_check=(0,))
                     b_gdiff = b_gs[:, None] - b_gc[None, :]
-                    b_gdiff = tl.minimum(tl.maximum(b_gdiff, -50.0), 50.0)
                     if USE_EXP2:
                         b_A *= tl.math.exp2(b_gdiff)
                     else:
