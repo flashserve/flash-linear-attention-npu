@@ -37,6 +37,30 @@ from ._runtime import (
 # strings or otherwise ambiguous scalar conversion are listed here to prevent
 # ctypes from narrowing or mis-converting arguments.
 _GET_WORKSPACE_ARGTYPES = {
+    "aclnnPrepareWyReprBwd": [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnCausalConv1dBwd": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -171,6 +195,74 @@ def npu_prepare_wy_repr_bwd_full(
             ctx.tensor(dv, "dv"),
             ctx.tensor(dbeta, "dbeta"),
             ctx.tensor(dg, "dg"),
+        ],
+        outputs,
+    )
+
+
+def npu_prepare_wy_repr_bwd_stage0_debug(
+    k,
+    v,
+    beta,
+    A,
+    dw,
+    du,
+    g,
+    chunk_size,
+    *,
+    cu_seqlens=None,
+    chunk_indices=None,
+):
+    k_shape = _shape(k)
+    v_shape = _shape(v)
+    batch_size = int(k_shape[0])
+    total_tokens = int(k_shape[2])
+    key_num_heads = int(k_shape[1])
+    value_num_heads = int(v_shape[1])
+    key_dim = int(k_shape[3])
+    value_dim = int(v_shape[3])
+    chunk_size = int(chunk_size)
+    task_num = _chunk_num(total_tokens, chunk_size, chunk_indices)
+    if chunk_indices is None:
+        task_num *= batch_size
+
+    # Stage0 debug only writes the six temporary debug tensors below.  Keep the
+    # final backward outputs as tiny placeholders so large debug-only cases do
+    # not OOM before the kernel is launched.
+    dk = _empty((1,), k)
+    dv = _empty((1,), v)
+    dbeta = _empty((1,), beta)
+    dg = _empty((1,), g)
+    debug_kbg = _empty((task_num, value_num_heads, chunk_size, key_dim), k)
+    debug_vb = _empty((task_num, value_num_heads, chunk_size, value_dim), k)
+    debug_kbeta = _empty((task_num, value_num_heads, chunk_size, key_dim), k)
+    debug_dkbg = _empty((task_num, value_num_heads, chunk_size, key_dim), k)
+    debug_dvb = _empty((task_num, value_num_heads, chunk_size, value_dim), k)
+    debug_kkt = _empty((task_num, key_num_heads, chunk_size, chunk_size), k)
+    outputs = (dk, dv, dbeta, dg, debug_kbg, debug_vb, debug_kbeta, debug_dkbg, debug_dvb, debug_kkt)
+    return _call_aclnn(
+        "aclnnPrepareWyReprBwd",
+        lambda ctx: [
+            ctx.tensor(k, "k"),
+            ctx.tensor(v, "v"),
+            ctx.tensor(beta, "beta"),
+            ctx.tensor(A, "A"),
+            ctx.tensor(dw, "dw"),
+            ctx.tensor(du, "du"),
+            ctx.tensor(g, "g"),
+            ctx.int_array(cu_seqlens),
+            ctx.int_array(chunk_indices),
+            ctypes.c_int64(chunk_size),
+            ctx.tensor(dk, "dk"),
+            ctx.tensor(dv, "dv"),
+            ctx.tensor(dbeta, "dbeta"),
+            ctx.tensor(dg, "dg"),
+            ctx.tensor(debug_kbg, "debug_kbg"),
+            ctx.tensor(debug_vb, "debug_vb"),
+            ctx.tensor(debug_kbeta, "debug_kbeta"),
+            ctx.tensor(debug_dkbg, "debug_dkbg"),
+            ctx.tensor(debug_dvb, "debug_dvb"),
+            ctx.tensor(debug_kkt, "debug_kkt"),
         ],
         outputs,
     )

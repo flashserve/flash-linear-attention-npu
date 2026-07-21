@@ -79,6 +79,73 @@ ctypes 算子如果会通过 data pointer 修改输入 tensor，必须在公共 
 
 ABI 敏感路径包括 `*_def.cpp`、`aclnn_*.h/.cpp`、`torch_custom/fla_npu/*.yaml` 和 `torch_custom/fla_npu/op_plugin/ops/opapi/**`。修改这些文件时，PR 需要明确说明 ABI 影响，并按 `.github/CODEOWNERS` 请求对应 owner 检视。
 
+## prepare_wy_repr_bwd 专项约束
+
+继续实现或修改 `prepare_wy_repr_bwd` 时，必须遵守以下已确认方案：
+
+- 如果代码改动涉及计算阶段划分、Cube/Vector 依赖关系、workspace 布局、L1/L0/UB 分配、同步协议、分核逻辑、tiling key、tiling data 或公开接口语义变化，必须先说明方案修改点并询问用户确认；不得直接改代码。
+- Cube/Vector 侧 process 类和通用文件名不要携带 `Stage0`，后续新增 stage 时复用通用类承载整体流程，例如 `PrepareWyReprBwdCubeProcess`、`PrepareWyReprBwdVectorProcess`。
+- Vector 侧 scale 路径需要用语义化模板参数区分：生成 `Kbg` 使用 `beta * exp(g)`，生成 `Kbeta` 和 `Vb` 只使用 `beta`；模板布尔名使用类似 `APPLY_EXP_G_SCALE` 的正向语义名，不使用难解释缩写。
+- Tiling data 不保存 `usedCoreNum`。host 侧 `SetBlockDim` 直接使用平台 AIC 核数；kernel 侧分核步长直接使用 `AscendC::GetBlockNum()`。
+- workspace 大小按实际 `blockDim * workspaceCoreSize` 申请；每个 AIC core 保留两个 per-hv GM workspace slot，若某个中间量按 HK 作用域共享（如 `KKT`），其 cache buffer 计入 `workspaceCoreSize` 但不计入 per-hv `workspaceSlotSize`。
+- `KKT = K @ K.T` 只依赖 `HK`，GVA 场景下不得按 `HV` 重复计算。stage0 debug 的 `debug_kkt` 输出 shape 使用 `[taskNum, HK, chunkSize, chunkSize]`；`Kbg/Vb/Kbeta/Dkbg/Dvb` 仍按 `[taskNum, HV, ...]` 输出。后续正式 workspace 中 KKT 应作为 HK-scoped cache，由当前 head slot 记录的 `kktSlotForSlot_[slot]` 映射读取，不放进每个 per-hv workspace slot 私有布局里重复生产。为覆盖 GVA 1:3 这类 2-head 窗口跨 group 边界的场景，每个 core 至少保留两块 KKT cache，`workspaceCoreSize = 2 * workspaceSlotSize + 2 * mBytes`。
+- Cube 侧 K 需要独立 L1 resident ping/pang buffer。遇到新 `hk` 时才把 `K[BT,128]` 从 GM 搬入当前 `curKResidentSlot_`，同一 GVA group 内后续 `hv` 复用 `cachedKResidentSlot_`，不得用 `hv & 1` 推导。K resident ping/pang 需要独立核内事件组，不能复用 L1A/L1B operand ping/pong 的 EventID。`KKT=K@K.T` 使用同一块 resident K 同时构造 row-major `K` 视图和 column-major `K.T` 视图；resident free flag 必须等 K 和 K.T 两次 L1->L0 搬运都发出后再释放。
+- Cube 侧 `Dvb = A^T @ du` 的 tile 配置必须区分模板 `V_DIM`：`V_DIM=128` 保持 L1/L0 的 MNK 为 `128,128,128`；`V_DIM=256` 时 L1 tile 使用 MNK `128,256,128`，L0 tile 使用 MNK `128,256,64`，在 K 方向循环完成两次 MMAD 累加后再统一 Fixpipe 写出。不得把 `V_DIM=256` 拆成 N=128 的两次输出，也不得在 K 循环内提前 Fixpipe。K 分片 MMAD 的 `unitFlag` 必须区分中间/最终分片：非最后 K 分片使用 `0b10`，最后 K 分片使用 `0b11`。
+- Cube 侧使用 `TileMmadTla` 时，实际 `M/N/K` 必须由当前 `L0A/L0B/L0C` tensor 的 layout/originShape 表达，调用点只传 `initC/unitFlag`，不得退回手传显式 `m/n/k` 的写法。
+- A2 上 Cube 侧 L0C->GM 的 Fixpipe copyout 对齐原 `prepare_wy_repr_bwd_full` block 级写法：`Dkbg/Dvb/KKT` 写 GM 时完整 tile、尾块和 small-M 都使用 `unitFlag=0b11`。stage0 已验证尾块 copyout 传 `0` 会导致后续 cube 任务卡死。
+- Cube 侧同一个 L0C 计算结果只允许执行一次 Fixpipe copyout，不能从同一份 L0C 连续 Fixpipe 到 workspace 和 debug 等两个目的地。stage 调试需要中间结果时，只能选择一个 Fixpipe 目的地；若确实还需要另一份数据，必须从已落地 GM 结果走非 Fixpipe 路径另行复制，或在该 debug run 中用 debug 输出替代 workspace 输出。正式路径只写 workspace，不保留双写调试通路。
+- Cube/Vector 分核按 `B * chunkNum` 或变长 `chunk_indices` 任务数分配，`HV` 在 core 内顺序遍历；不得用 `hv & 1` 或 `hv % 2` 推导 workspace slot。
+- 新 `prepare_wy_repr_bwd` 的核间同步只允许使用 `Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_*>(...)` 和 `Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_*>(...)`。旧 `prepare_wy_repr_bwd_full` / `prepare_wy_repr_bwd_da` 中不带 reverse 的 `CrossCoreSetFlag` / `CrossCoreWaitFlag` 只能作为历史实现阅读，不作为新算子同步写法参考。
+- 新 `prepare_wy_repr_bwd` 的 Cube/Vector 双向同步使用方向独立的 `CrossCoreFlagWithReverse`：Vector->Cube 和 Cube->Vector 各一套 ready/reverse flag；workspace 两个 slot 不再额外拆 CrossCoreFlag。
+- 新 `prepare_wy_repr_bwd` 的核内同步必须按实际 ping/pong buffer 拆事件组，不允许多个 ping/pong buffer 共用同一个 EventID：Vector input ping/pong 分别维护 `MTE2_V` 与 `V_MTE2`，Vector output ping/pong 分别维护 `V_MTE3` 与 `MTE3_V`；Cube 侧 L1A/L1B/L0A/L0B 等双缓冲事件也必须带 slot。
+- `stage_0` 的 Cube 与 Vector 都只依赖原始输入，二者在 `stage_0` 内独立向 GM workspace 生产中间结果，不能在 `stage_0` 尾部互相 `WaitFlagWithReverse`。跨 stage 的 `CrossCoreWaitFlagWithReverse` 必须放在下一阶段消费者入口，例如 `cube stage_1` 读取 `Kbg/Vb` 前等待 Vector stage0 ready，Vector 后续读取 `Dkbg/Dvb/KKT` 前等待 Cube stage0 ready。当前只实现 stage0 调试输出时，不发也不等跨核 ready，避免出现没有真实消费者的信号。
+- stage 级精度验收必须临时导出该 stage 的中间产物并写专门 golden 逐项比对；不能只用最终 `dk/dv/dbeta/dg` 与 `da + full` 等价来判定某个 stage 内部正确。当前 stage0 验收时，需要临时把 stage0 写入 GM/workspace 的阶段输出导出，例如 Vector 侧 `Kbg/Vb/Kbeta` 以及 Cube 侧对应 stage0 产物；具体输出清单、shape、dtype、layout、有效区和无效区语义必须在写调试代码前说明清楚。
+- stage 调试输出通路只允许作为临时验证代码存在。可以临时增加 debug-only 输出、独立 debug op、workspace dump 或额外 GM copy，但凡涉及 op schema、aclnn 接口、tiling/workspace 或 Python API 变化，都属于调试方案变更，编码前必须先说明并征得用户确认。stage golden 对比通过后，必须删除对应调试输出、调试 schema/aclnn/kernel/python 适配和临时测试入口，恢复正式接口；不得把调试输出通路提交或保留到最终 run 包。
+- stage 中间产物 debug golden 使用临时 NPU PyTorch 公式 golden：actual 来自 `prepare_wy_repr_bwd_stage*_debug` 的 NPU 输出，expected 由同一用例输入在 NPU 上用 PyTorch 张量公式计算并逐中间产物比较；精度判定使用 `ct.single`，不要另写一套阈值或 bad-count 规则。这类脚本不能称作 ATK 对比；ATK 适合正式 API/全量泛化精度。
+- stage 中间产物 debug golden 的超时结论必须分清 `kernel` 超时和 `golden/compare` 超时。测试脚本应先单独执行待测 op 并 `torch.npu.synchronize()`，打印 `kernel_sync` 耗时；如果没有打印该阶段结果，才按 kernel 未返回/疑似 kernel 超时定位。如果 `kernel_sync` 已返回但后续超时，应按 NPU PyTorch golden 生成或逐输出精度比对超时处理，不能误报为 kernel 超时。全量 run 期间如果日志超过 100 秒没有出现新的 case 行、`phase_time kernel_sync` 或结果行，可按最后一个未完成阶段判定卡死；最后日志已经进入某 case 但没有打印 `kernel_sync` 时，按该 case 的 kernel 阶段卡死处理。必要时先跑 `--kernel-only` 只确认 kernel 返回，再跑完整精度比对。
+- 正式回归可保留最终四输出等价测试：先用 `fla_npu.ops.ascendc.prepare_wy_repr_bwd_da` 在 NPU 上计算 `dA`，再用 `fla_npu.ops.ascendc.prepare_wy_repr_bwd_full` 在 NPU 上计算 `dk/dv/dbeta/dg` 作为 golden，并与 `fla_npu.ops.ascendc.prepare_wy_repr_bwd` 的四个正式输出逐项 `ct.single` 比较。测试脚本路径为 `fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd/test/test_stage0_golden.py`，该脚本只能作为 stage0 后的最终输出回归护栏，不能替代 stage0 临时中间产物 golden。stage0 测试默认输入为对称随机分布 `[-1, 1]`；如需缩小定位数值问题，可临时调整 `--input-scale`，但最终结论必须回到默认分布。
+- stage0 以及后续每个 stage 的默认验证不跑完整 F1-F22、L1-L12；只有用户明确要求“全量验证”时，才运行 `test_stage0_debug_golden.py --suite all` 或对应正式回归全量。日常精度修复和阶段验收优先选择典型 case 集，必须覆盖 GVA 1:2、1:3，`chunk_size=64/128`，`V=128/256`，以及变长尾块；当前 stage0 debug 典型集可使用 `--cases F1,F3,F19,F20,L9`，其中 F19 覆盖 1:2/V256/chunk64，F20 覆盖 1:3/V256/chunk64，L9 覆盖 V256/chunk128/变长尾块，F1/F3 覆盖 V128 的 chunk64/chunk128。若怀疑执行卡死，先用同一典型集加 `--kernel-only` 确认 kernel 返回；只有典型集失败或用户要求时再扩大到全量。正式四输出入口接入后，再用 `test_stage0_golden.py` 按相同“典型优先、明确要求才全量”的规则验证正式输出。`--input-scale` 表示 `[-scale, scale]` 的半宽，默认 `1.0`。
+- 用户说“测性能”时，`prepare_wy_repr_bwd` 默认只测 4 个 stage0 性能 case：`B=1, H=32, T=65536, K=128`，变长 64 个 sequence（即 `cu_seqlens` 长度为 65），`V=128/256` 与 `chunk_size=64/128` 两两组合；不要自动跑精度全量或其它大 case。若用户未额外指定 dtype，默认按当前调测主路径使用 `kType=bf16, gType=fp32`。性能结论以 `msprof` 为准，采集时打开 `--aic-metrics=PipeUtilization`，同时记录 operator task time 和 AIC/AIV pipe 指标；Python 同步耗时只作为辅助日志，不作为性能结论。性能数据汇报单位统一使用 `us`，不要把 `msprof` 导出的 `us` 换成 `ms`。
+- stage0 性能脚本路径为 `fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd/test/profile_stage0_perf.py`。运行前需确认已安装当前 scoped run 包，并加载 CANN/custom OPP 环境；从源码树调用时设置 `PYTHONPATH=<repo_root>/torch_custom/fla_npu:<repo_root>:$PYTHONPATH`、`FLA_NPU_OPP_PATH=<当前 wheel 的 opp 根目录>`、`TORCH_EXTENSIONS_DIR=/tmp/torch_ext_prepare_wy_repr_bwd_stage0`、`ASCEND_RT_VISIBLE_DEVICES=<device_id>`。
+- stage0 性能采集命令模板：
+
+```bash
+export PREPARE_WY_STAGE0_PERF_WARMUP=0
+export PREPARE_WY_STAGE0_PERF_REPEAT=1
+# 可选：只跑单个或部分 case，例如 P1_V128_C64,P4_V256_C128
+export PREPARE_WY_STAGE0_PERF_CASES=
+msprof \
+  --output=<profile_output_dir> \
+  --task-time=l2 \
+  --ai-core=on \
+  --aic-mode=task-based \
+  --aic-metrics=PipeUtilization \
+  --application=<repo_root>/fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd/test/profile_stage0_perf.py
+```
+
+- stage0 性能结果读取 `mindstudio_profiler_output/op_summary_*.csv`，过滤 `OP Type == PrepareWyReprBwd`；按执行顺序映射 `P1_V128_C64`、`P2_V128_C128`、`P3_V256_C64`、`P4_V256_C128`。汇报字段至少包含 `Task Duration(us)`、`aicore_time(us)`、`aic_mac_time(us)`、`aic_scalar_time(us)`、`aic_mte1_time(us)`、`aic_mte2_time(us)`、`aic_fixpipe_time(us)`、`aiv_time(us)`、`aiv_vec_time(us)`、`aiv_scalar_time(us)`、`aiv_mte2_time(us)`、`aiv_mte3_time(us)` 和 `cube_utilization(%)`；需要核对 kernel task 时可辅助查看 `task_time_*.csv`。各 pipe 耗时存在 overlap，不能相加得到 task duration。
+- A2/A3 调测 `prepare_wy_repr_bwd` 时，第一步允许使用仓库一键全量编包确认全工程生成链路：`bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu -j16`。后续定位优先只编相关三个算子的 run 包：`bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu --ops=prepare_wy_repr_bwd,prepare_wy_repr_bwd_da,prepare_wy_repr_bwd_full -j16`。
+- 三算子 scoped run 包安装到当前 `fla_npu` wheel 内部 OPP 时，使用 `bash build/fla-npu-fla_npu_linux-aarch64.run --install --quiet`，不要带 `--install-path`。安装 scoped 包会替换当前 wheel 的共享 opapi/tiling/proto 库，因此该环境只保证包内三个算子可用于 stage0 golden 验证；验证前需要重新启动 Python 进程并 source CANN 环境。
+
+### prepare_wy_repr_bwd 已踩坑
+
+- 修改 `PrepareWyReprBwd` 的 op schema、输出数量或 `aclnnPrepareWyReprBwdGetWorkspaceSize` 参数表后，必须同步 `torch_custom/fla_npu/fla_npu/ops/ascendc/_aclnn_ctypes.py` 的 `_GET_WORKSPACE_ARGTYPES`、Python wrapper 入参顺序和输出申请；否则 ctypes 会按旧 ABI 传参，常见表现是 `GetWorkspaceSize` 返回成功但 `workspaceSize=0`、`executor=nullptr`，随后 launch 报错或进程崩溃。
+- stage 临时 debug 输出 shape 必须和 kernel 写回 layout 完全一致。fixed case 下 debug 输出第 0 维是 `B * chunk_num_per_b`，varlen case 下是 `chunk_indices_len / 2`；不要只按 `T / chunk_size` 申请，否则 batch 大于 1 时会出现 Python 索引越界或 kernel 写 debug GM 越界。
+- 如果该算子还需要走 legacy C++/dispatcher 路径，必须同步检查 `torch_custom/fla_npu/op_plugin/ops/opapi/FLANpuOpApi.cpp`、PyTorch schema/yaml 和导出注册。当前 stage 临时 debug 入口若只通过 `fla_npu.ops.ascendc` ctypes 调用，可以暂不接入 `op_plugin`，但验证说明中必须明确当前测试路径，避免误以为 legacy 路径也已适配。
+- ABI 或输出数量变更后，不要只依赖增量编译结论。遇到 ABI 异常时需要检查 `libcust_opapi.so` 里的 `l0op::PrepareWyReprBwd` 符号签名是否与当前源码一致；若符号仍是旧签名，先清理 `build/` 或至少强制重编 host opapi，再重新生成 scoped run 包。
+- 安装 run 包后必须确认实际加载的动态库和符号。建议检查 run 包、安装后 wheel OPP 中的 `libcust_opapi.so`：`nm -D -C <libcust_opapi.so> | grep 'l0op::PrepareWyReprBwd'`，确认输出参数数量与当前 aclnn/op_host 源码一致；必要时用 `strings <libcust_opapi.so> | grep PrepareWyReprBwd` 辅助确认。
+- `bash build/fla-npu-fla_npu_linux-aarch64.run --install --quiet` 默认把 scoped run 包合入当前 Python 环境的 `site-packages/fla_npu/opp`。如果随后用源码树 `PYTHONPATH=<repo>/torch_custom/fla_npu` 调 `fla_npu.ops.ascendc`，需要确认源码 wrapper 实际解析到的 OPP 路径；源码 wrapper 调试时应显式设置 `FLA_NPU_OPP_PATH=<当前已安装 wheel 的 opp 根目录>`，或重新构建并安装包含最新 Python wrapper 的 wheel 后再验证。
+- `fla_npu.ops.ascendc` 的 OPP 解析顺序会优先看 `FLA_NPU_OPP_PATH`，再看包内 embedded `opp`，然后看 `ASCEND_CUSTOM_OPP_PATH` / `ASCEND_OPP_PATH`。验证 ABI 问题时先在 Python 进程中打印 `fla_npu.__file__`、解析到的 vendor 目录和已加载 `CDLL._name`，避免源码 wrapper 与旧 OPP 库混用。
+- `CrossCoreFlagWithReverse` 不会在每次 `Set/Wait` 后自动切到 `reverseId`；它只是在连续 `Set` 或连续 `Wait` 达到 `REVERSE_DEPTH` 后才用 `reverseId` 做反向握手防止 flag 溢出。涉及该类信号的方案变更时，必须在方案说明中列出每侧 `Set/Wait` 次数、方向和同步粒度，并询问用户确认。
+- `KERNEL_TYPE_MIX_AIC_1_2` 下 Vector 存在 subBlock 维度。任何跨 AIC/AIV 的 stage/line 同步都要先明确同步粒度是“每个 value head 一次”还是“每个 subBlock 一次”。
+- Cube 侧手写 L0A/L0B 双缓冲时，`InitPipeFlags` 里预置的 `MTE1_MTE2`、`M_MTE1`、`FIX_M` 事件必须在 kernel 结束前被消费掉，避免同一 Python 进程下下一次 op 调用再次 `SetFlag` 已置位事件。stage0 已验证需要在每个 chunk task 结束后对全部 L0A/L0B free 事件做一次 `WaitFlag` 后重新 `SetFlag`，并在 `ProcessImpl` 退出前只 `WaitFlag` 不再 `SetFlag`。
+- GVA 场景下 `KKT` 必须按 `HK` 去重生产：每个新 `hk` 只计算一次，debug/golden 按 `HK` 维度比对；同一 `hk` 组内后续 `hv` 不再重复做 KKT GEMM。KKT cache 不能只有每 core 一块，否则 GVA 1:3 的 `hv2/hv3` 双 head 窗口会在 `hv2` 仍需 `hk0` 时被 `hv3` 的 `hk1` 覆盖；应使用两块 HK-scoped KKT cache，并把每个 head workspace slot 映射到对应 `kktSlotForSlot_[slot]`。stage0 已验证 KKT 尾部需要同时闭环 L0C/fixpipe 和本次 KKT 使用的 L0A/L0B free 事件：`copyL0CToGm(KKT)` 后等待并重新设置 `FIX_M`，再等待并重新设置对应 `M_MTE1`，否则多 head 或多 chunk 下可能出现 `L0A/L0B read/write conflict`。
+- `A/A.T`、`KKT` 的 L1/UB 分块驻留、`beta/g/exp(g)` 的 UB 复用、`Kbg/Kbeta/Vb` 的 L1 驻留都只是后续优化点；本轮只实现 K resident，不扩展其它 resident 方案。
+- `V_DIM=256` 的 `Dvb` 会在 K 方向拆成多个 L0 MMAD 分片。stage0 已验证如果每个 K 分片都用 `unitFlag=0b11`，L9 类 `V=256/chunkSize=128/varlen` 用例会在 cube 侧卡死；必须按 block 级 unit flag 语义处理中间分片和最后分片。
+- Vector 侧同一 V pipe 内也要显式保护 RAW 顺序：`CopyInRows` 将 GM 数据搬入 UB 并 cast 到 fp32 目标 tensor 后，如果后续马上用 `Adds/Mul/Brcb` 消费该目标 tensor，需要在消费前插入 `PipeBarrier<PIPE_V>()`。stage0 已验证 Vb 路径在 `CopyInRows(beta)` 后缺少消费前 V pipe barrier 会导致 L9 类 V=256/varlen 用例出现大量 `Vb` 精度失败；纯 beta broadcast 不需要先 `Adds(..., 0.0f)` 复制到 scale tensor，可直接 `Brcb(..., betaFp32Tensor_, ...)`。
+- `fla_npu.ops.ascendc` ctypes runtime 会用 `_RECENT_LAUNCH_STORAGE` 保活最近 launch 的输出和 workspace。全量同进程跑 stage debug/正式回归时，每次 `torch.npu.synchronize()` 后应清理该保活队列，避免旧 case 的大 debug 输出继续占用 NPU 显存；这种 OOM 属于测试 wrapper 生命周期问题，不能归类为 kernel 超时。
+- stage0 临时 debug op 当前只写 6 个中间产物输出，不写 `dk/dv/dbeta/dg`。在 `prepare_wy_repr_bwd_stage0_debug` 的 Python ctypes wrapper 中，这 4 个未写最终输出可使用 1 元素占位 tensor，避免 L12 这类大 shape 在 kernel launch 前因调试输出分配 OOM；`prepare_wy_repr_bwd_full` 等正式四输出 wrapper 仍必须使用真实 shape，不能套用该占位策略。
+
 ## 构建命令
 
 先准备环境：
