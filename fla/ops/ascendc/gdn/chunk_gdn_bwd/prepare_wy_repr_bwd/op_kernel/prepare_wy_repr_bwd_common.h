@@ -27,6 +27,7 @@ constexpr uint32_t PREPARE_WY_REPR_BWD_UB_IO_BYTES = 16 * 1024;
 constexpr uint32_t PREPARE_WY_REPR_BWD_WORKSPACE_BUFFER_COUNT = 2;
 constexpr uint32_t PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT = 2;
 constexpr uint32_t PREPARE_WY_REPR_BWD_FP32_PER_REPEAT = 64;
+constexpr uint32_t PREPARE_WY_REPR_BWD_MASK_BITS_PER_BYTE = 8;
 
 struct PrepareWyReprBwdTaskInfo {
     uint32_t valueBos = 0;

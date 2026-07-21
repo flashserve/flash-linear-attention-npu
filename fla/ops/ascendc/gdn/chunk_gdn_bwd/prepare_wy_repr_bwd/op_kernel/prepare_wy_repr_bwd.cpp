@@ -65,7 +65,7 @@ PrepareWyReprBwdKernelImpl(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADD
     if ASCEND_IS_AIV {
         AscendC::TPipe tPipe;
         ::PrepareWyReprBwdVectorProcess<KType, GType, V_DIM, CHUNK_SIZE> vectorProcess(
-            k, v, beta, g, cuSeqlens, chunkIndices, workspace, debugKbg, debugVb, debugKbeta);
+            k, v, beta, g, cuSeqlens, chunkIndices, workspace, debugKbg, debugVb, debugKbeta, debugDkbg);
         vectorProcess.Init(*tilingData, &tPipe);
         vectorProcess.Process();
     }

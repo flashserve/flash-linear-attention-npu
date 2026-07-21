@@ -1,6 +1,8 @@
 import argparse
+import contextlib
 import gc
 import importlib
+import io
 import random
 import time
 from dataclasses import dataclass
@@ -29,7 +31,7 @@ def release_aclnn_keepalive():
 
 
 @dataclass(frozen=True)
-class Stage0Case:
+class Stage1Case:
     name: str
     B: int
     KH: int
@@ -74,52 +76,52 @@ def prepare_chunk_indices(cu_seqlens: list[int], chunk_size: int) -> list[int]:
     return indices
 
 
-FULL_GDN_CASES: tuple[Stage0Case, ...] = (
-    Stage0Case("F1", 64, 8, 8, 1024, 128, 128, 64, "fp16", "fp16"),
-    Stage0Case("F2", 32, 16, 16, 2048, 128, 128, 64, "bf16", "bf16"),
-    Stage0Case("F3", 16, 32, 32, 4096, 128, 128, 128, "fp16", "fp32"),
-    Stage0Case("F4", 8, 32, 32, 8192, 128, 128, 128, "bf16", "bf16"),
-    Stage0Case("F5", 128, 4, 4, 1024, 128, 128, 64, "fp16", "fp16"),
-    Stage0Case("F6", 64, 8, 8, 2048, 128, 128, 64, "bf16", "fp32"),
-    Stage0Case("F7", 32, 16, 16, 4096, 128, 128, 128, "fp16", "fp16"),
-    Stage0Case("F8", 16, 32, 32, 8192, 128, 128, 128, "bf16", "bf16"),
-    Stage0Case("F9", 64, 8, 8, 4096, 128, 128, 128, "fp16", "fp16"),
-    Stage0Case("F10", 32, 16, 16, 8192, 128, 128, 128, "bf16", "bf16"),
-    Stage0Case("F11", 16, 32, 32, 16384, 128, 128, 64, "fp16", "fp32"),
-    Stage0Case("F12", 8, 32, 32, 32768, 128, 128, 64, "bf16", "bf16"),
-    Stage0Case("F13", 64, 8, 8, 1024, 128, 128, 64, "fp16", "fp16"),
-    Stage0Case("F14", 32, 16, 16, 2048, 128, 128, 64, "bf16", "bf16"),
-    Stage0Case("F15", 16, 32, 32, 4096, 128, 128, 128, "fp16", "fp32"),
-    Stage0Case("F16", 8, 32, 32, 8192, 128, 128, 128, "bf16", "bf16"),
-    Stage0Case("F17", 64, 8, 8, 2048, 128, 128, 64, "bf16", "bf16"),
-    Stage0Case("F18", 32, 16, 16, 4096, 128, 128, 128, "fp16", "fp16"),
-    Stage0Case("L1", 1, 32, 32, 65536, 128, 128, 64, "bf16", "bf16", 64),
-    Stage0Case("L2", 1, 16, 16, 65536, 128, 128, 64, "fp16", "fp16", 33),
-    Stage0Case("L3", 1, 8, 8, 131072, 128, 128, 64, "bf16", "bf16", 333),
-    Stage0Case("L4", 1, 4, 4, 262144, 128, 128, 64, "fp16", "fp32", 567),
-    Stage0Case("L5", 1, 16, 16, 32768, 128, 128, 64, "bf16", "bf16", 7),
-    Stage0Case("L6", 1, 8, 8, 65536, 128, 128, 64, "fp16", "fp16", 25),
-    Stage0Case("L7", 1, 16, 32, 16384, 128, 256, 64, "fp16", "fp32", 128),
-    Stage0Case("L8", 1, 21, 63, 16384, 128, 256, 64, "bf16", "fp32", 2),
-    Stage0Case("L9", 1, 8, 32, 65536, 128, 256, 128, "bf16", "fp32", 172),
-    Stage0Case("L10", 1, 16, 32, 65536, 128, 128, 64, "fp16", "fp32", 668),
-    Stage0Case("L11", 1, 4, 32, 65536, 128, 128, 128, "bf16", "fp32", 17),
-    Stage0Case("L12", 1, 2, 64, 262144, 128, 256, 64, "fp16", "fp32", 32),
-    Stage0Case("F19", 1, 16, 32, 4096, 128, 256, 64, "fp16", "fp32"),
-    Stage0Case("F20", 16, 21, 63, 2048, 128, 256, 64, "bf16", "fp32"),
-    Stage0Case("F21", 711, 4, 32, 196, 128, 128, 128, "fp16", "fp32"),
-    Stage0Case("F22", 176, 2, 64, 24, 128, 256, 64, "bf16", "fp32"),
+FULL_GDN_CASES: tuple[Stage1Case, ...] = (
+    Stage1Case("F1", 64, 8, 8, 1024, 128, 128, 64, "fp16", "fp16"),
+    Stage1Case("F2", 32, 16, 16, 2048, 128, 128, 64, "bf16", "bf16"),
+    Stage1Case("F3", 16, 32, 32, 4096, 128, 128, 128, "fp16", "fp32"),
+    Stage1Case("F4", 8, 32, 32, 8192, 128, 128, 128, "bf16", "bf16"),
+    Stage1Case("F5", 128, 4, 4, 1024, 128, 128, 64, "fp16", "fp16"),
+    Stage1Case("F6", 64, 8, 8, 2048, 128, 128, 64, "bf16", "fp32"),
+    Stage1Case("F7", 32, 16, 16, 4096, 128, 128, 128, "fp16", "fp16"),
+    Stage1Case("F8", 16, 32, 32, 8192, 128, 128, 128, "bf16", "bf16"),
+    Stage1Case("F9", 64, 8, 8, 4096, 128, 128, 128, "fp16", "fp16"),
+    Stage1Case("F10", 32, 16, 16, 8192, 128, 128, 128, "bf16", "bf16"),
+    Stage1Case("F11", 16, 32, 32, 16384, 128, 128, 64, "fp16", "fp32"),
+    Stage1Case("F12", 8, 32, 32, 32768, 128, 128, 64, "bf16", "bf16"),
+    Stage1Case("F13", 64, 8, 8, 1024, 128, 128, 64, "fp16", "fp16"),
+    Stage1Case("F14", 32, 16, 16, 2048, 128, 128, 64, "bf16", "bf16"),
+    Stage1Case("F15", 16, 32, 32, 4096, 128, 128, 128, "fp16", "fp32"),
+    Stage1Case("F16", 8, 32, 32, 8192, 128, 128, 128, "bf16", "bf16"),
+    Stage1Case("F17", 64, 8, 8, 2048, 128, 128, 64, "bf16", "bf16"),
+    Stage1Case("F18", 32, 16, 16, 4096, 128, 128, 128, "fp16", "fp16"),
+    Stage1Case("L1", 1, 32, 32, 65536, 128, 128, 64, "bf16", "bf16", 64),
+    Stage1Case("L2", 1, 16, 16, 65536, 128, 128, 64, "fp16", "fp16", 33),
+    Stage1Case("L3", 1, 8, 8, 131072, 128, 128, 64, "bf16", "bf16", 333),
+    Stage1Case("L4", 1, 4, 4, 262144, 128, 128, 64, "fp16", "fp32", 567),
+    Stage1Case("L5", 1, 16, 16, 32768, 128, 128, 64, "bf16", "bf16", 7),
+    Stage1Case("L6", 1, 8, 8, 65536, 128, 128, 64, "fp16", "fp16", 25),
+    Stage1Case("L7", 1, 16, 32, 16384, 128, 256, 64, "fp16", "fp32", 128),
+    Stage1Case("L8", 1, 21, 63, 16384, 128, 256, 64, "bf16", "fp32", 2),
+    Stage1Case("L9", 1, 8, 32, 65536, 128, 256, 128, "bf16", "fp32", 172),
+    Stage1Case("L10", 1, 16, 32, 65536, 128, 128, 64, "fp16", "fp32", 668),
+    Stage1Case("L11", 1, 4, 32, 65536, 128, 128, 128, "bf16", "fp32", 17),
+    Stage1Case("L12", 1, 2, 64, 262144, 128, 256, 64, "fp16", "fp32", 32),
+    Stage1Case("F19", 1, 16, 32, 4096, 128, 256, 64, "fp16", "fp32"),
+    Stage1Case("F20", 16, 21, 63, 2048, 128, 256, 64, "bf16", "fp32"),
+    Stage1Case("F21", 711, 4, 32, 196, 128, 128, 128, "fp16", "fp32"),
+    Stage1Case("F22", 176, 2, 64, 24, 128, 256, 64, "bf16", "fp32"),
 )
 
 
-SMOKE_CASE_NAMES = {"F1", "F19", "F22", "L2", "L7", "L8"}
+SMOKE_CASE_NAMES = {"F1", "F3", "F19", "F20", "L9"}
 
 
 def rand_symmetric(shape: tuple[int, ...], device: str, dtype: torch.dtype, input_scale: float):
     return (torch.rand(shape, device=device, dtype=dtype) * 2.0 - 1.0) * input_scale
 
 
-def make_inputs(case: Stage0Case, device: str, seed: int, input_scale: float):
+def make_inputs(case: Stage1Case, device: str, seed: int, input_scale: float):
     torch.manual_seed(seed)
     torch.npu.manual_seed_all(seed)
     ktype = DTYPES[case.ktype]
@@ -134,7 +136,7 @@ def make_inputs(case: Stage0Case, device: str, seed: int, input_scale: float):
     return k, v, beta, A, dw, du, g
 
 
-def build_tasks(case: Stage0Case, cu_seqlens: list[int] | None, chunk_indices: list[int] | None) -> list[TaskRange]:
+def build_tasks(case: Stage1Case, cu_seqlens: list[int] | None, chunk_indices: list[int] | None) -> list[TaskRange]:
     tasks: list[TaskRange] = []
     if cu_seqlens is None:
         chunk_num_per_b = (case.T + case.chunk_size - 1) // case.chunk_size
@@ -187,9 +189,13 @@ def ct_failure_summary(result) -> str:
     )
 
 
-def compare_with_ct(name: str, actual: torch.Tensor, expected: torch.Tensor, failures: list[str]):
+def compare_with_ct(name: str, actual: torch.Tensor, expected: torch.Tensor, failures: list[str], verbose_ct: bool):
     try:
-        result = ct.single(actual.detach().cpu(), expected.detach().cpu(), dtype=ct_dtype(actual.dtype))
+        if verbose_ct:
+            result = ct.single(actual.detach().cpu(), expected.detach().cpu(), dtype=ct_dtype(actual.dtype))
+        else:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                result = ct.single(actual.detach().cpu(), expected.detach().cpu(), dtype=ct_dtype(actual.dtype))
     except Exception as exc:
         failures.append(f"{name}: ct.single failed: {exc}")
     else:
@@ -197,7 +203,7 @@ def compare_with_ct(name: str, actual: torch.Tensor, expected: torch.Tensor, fai
             failures.append(f"{name}: ct.single failed ({ct_failure_summary(result)})")
 
 
-def run_case(case: Stage0Case, args) -> list[str]:
+def run_case(case: Stage1Case, args) -> list[str]:
     k, v, beta, A, dw, du, g = make_inputs(case, args.device, args.seed, args.input_scale)
     cu_seqlens = None
     chunk_indices = None
@@ -210,7 +216,7 @@ def run_case(case: Stage0Case, args) -> list[str]:
     with torch.no_grad():
         case_start = time.perf_counter()
         kernel_start = time.perf_counter()
-        outputs = fla_ascendc.prepare_wy_repr_bwd_stage0_debug(
+        outputs = fla_ascendc.prepare_wy_repr_bwd_stage1_debug(
             k, v, beta, A, dw, du, g, case.chunk_size, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices
         )
         torch.npu.synchronize()
@@ -224,52 +230,43 @@ def run_case(case: Stage0Case, args) -> list[str]:
             return []
 
         compare_start = time.perf_counter()
-        debug_kbg, debug_vb, debug_kbeta, debug_dkbg, debug_dvb, debug_kkt = outputs[4:]
+        debug_da4 = outputs[7]
         failures: list[str] = []
         checked_lines = 0
 
         for task_idx, task in enumerate(tasks):
             cur = task.end - task.begin
-            expect_kbg_all = torch.empty((case.VH, cur, case.K), device=args.device, dtype=k.dtype)
-            expect_vb_all = torch.empty((case.VH, cur, case.V), device=args.device, dtype=k.dtype)
-            expect_kbeta_all = torch.empty((case.VH, cur, case.K), device=args.device, dtype=k.dtype)
-            expect_dkbg_all = torch.empty((case.VH, cur, case.K), device=args.device, dtype=k.dtype)
-            expect_dvb_all = torch.empty((case.VH, cur, case.V), device=args.device, dtype=k.dtype)
-            expect_kkt_all = torch.empty((case.KH, cur, cur), device=args.device, dtype=k.dtype)
-            for hk in range(case.KH):
-                k_chunk = k[task.batch, hk, task.begin:task.end, :]
-                expect_kkt_all[hk].copy_(torch.matmul(k_chunk.float(), k_chunk.transpose(0, 1).float()).to(k.dtype))
+            expect_da4_all = torch.empty((case.VH, cur, cur), device=args.device, dtype=k.dtype)
+            mask = torch.tril(torch.ones((cur, cur), device=args.device, dtype=torch.bool), diagonal=-1)
             for hv in range(case.VH):
                 hk = hv // group_size
                 k_chunk = k[task.batch, hk, task.begin:task.end, :]
                 v_chunk = v[task.batch, hv, task.begin:task.end, :]
                 beta_chunk = beta[task.batch, hv, task.begin:task.end].float()
                 g_chunk = g[task.batch, hv, task.begin:task.end].float()
-                A_chunk = A[task.batch, hv, task.begin:task.end, :cur]
                 dw_chunk = dw[task.batch, hv, task.begin:task.end, :]
                 du_chunk = du[task.batch, hv, task.begin:task.end, :]
 
-                scale_bg = beta_chunk * torch.exp(g_chunk)
-                expect_kbg = (k_chunk.float() * scale_bg[:, None]).to(k.dtype)
-                expect_kbeta = (k_chunk.float() * beta_chunk[:, None]).to(k.dtype)
-                expect_vb = (v_chunk.float() * beta_chunk[:, None]).to(k.dtype)
-                expect_dkbg = torch.matmul(A_chunk.transpose(0, 1).float(), dw_chunk.float()).to(k.dtype)
-                expect_dvb = torch.matmul(A_chunk.transpose(0, 1).float(), du_chunk.float()).to(k.dtype)
+                kbg = (k_chunk.float() * (beta_chunk * torch.exp(g_chunk))[:, None]).to(k.dtype)
+                vb = (v_chunk.float() * beta_chunk[:, None]).to(k.dtype)
+                da1 = torch.matmul(dw_chunk, kbg.transpose(0, 1)).to(k.dtype)
+                da2 = torch.matmul(du_chunk, vb.transpose(0, 1)).to(k.dtype)
+                da4 = torch.where(mask, da1.float() + da2.float(), 0.0)
+                expect_da4_all[hv].copy_(da4.to(k.dtype))
+            checked_lines += case.VH
 
-                expect_kbg_all[hv].copy_(expect_kbg)
-                expect_kbeta_all[hv].copy_(expect_kbeta)
-                expect_vb_all[hv].copy_(expect_vb)
-                expect_dkbg_all[hv].copy_(expect_dkbg)
-                expect_dvb_all[hv].copy_(expect_dvb)
-            checked_lines += case.VH + case.KH
-
-            compare_with_ct(f"{case.name}.task{task_idx}.Kbg", debug_kbg[task_idx, :, :cur, :], expect_kbg_all, failures)
-            compare_with_ct(f"{case.name}.task{task_idx}.Kbeta", debug_kbeta[task_idx, :, :cur, :], expect_kbeta_all, failures)
-            compare_with_ct(f"{case.name}.task{task_idx}.Vb", debug_vb[task_idx, :, :cur, :], expect_vb_all, failures)
-            compare_with_ct(f"{case.name}.task{task_idx}.Dkbg", debug_dkbg[task_idx, :, :cur, :], expect_dkbg_all, failures)
-            compare_with_ct(f"{case.name}.task{task_idx}.Dvb", debug_dvb[task_idx, :, :cur, :], expect_dvb_all, failures)
-            compare_with_ct(f"{case.name}.task{task_idx}.Kkt", debug_kkt[task_idx, :, :cur, :cur], expect_kkt_all, failures)
-            del expect_kbg_all, expect_kbeta_all, expect_vb_all, expect_dkbg_all, expect_dvb_all, expect_kkt_all
+            compare_with_ct(
+                f"{case.name}.task{task_idx}.DA4",
+                debug_da4[task_idx, :, :cur, :cur],
+                expect_da4_all,
+                failures,
+                args.verbose_ct,
+            )
+            del expect_da4_all, mask
+            if args.progress_interval > 0 and (
+                (task_idx + 1) % args.progress_interval == 0 or task_idx + 1 == len(tasks)
+            ):
+                print(f"  compare_progress tasks={task_idx + 1}/{len(tasks)}", flush=True)
 
         torch.npu.synchronize()
         compare_seconds = time.perf_counter() - compare_start
@@ -284,7 +281,7 @@ def run_case(case: Stage0Case, args) -> list[str]:
     return failures
 
 
-def select_cases(args) -> list[Stage0Case]:
+def select_cases(args) -> list[Stage1Case]:
     if args.cases:
         wanted = {case.strip() for case in args.cases.split(",") if case.strip()}
         return [case for case in FULL_GDN_CASES if case.name in wanted]
@@ -297,7 +294,7 @@ def select_cases(args) -> list[Stage0Case]:
     return list(FULL_GDN_CASES)
 
 
-def run_cases(cases: Iterable[Stage0Case], args) -> int:
+def run_cases(cases: Iterable[Stage1Case], args) -> int:
     all_failures: list[str] = []
     for idx, case in enumerate(cases, start=1):
         print(
@@ -309,13 +306,13 @@ def run_cases(cases: Iterable[Stage0Case], args) -> int:
         failures = run_case(case, args)
         if failures:
             all_failures.extend(failures)
-            print(f"  RESULT: FAIL ({len(failures)} outputs)")
+            print(f"  RESULT: FAIL ({len(failures)} outputs)", flush=True)
             if args.stop_on_fail:
                 break
         elif args.kernel_only:
-            print("  RESULT: KERNEL_ONLY_PASS (precision not checked)")
+            print("  RESULT: KERNEL_ONLY_PASS (precision not checked)", flush=True)
         else:
-            print("  RESULT: PASS")
+            print("  RESULT: PASS", flush=True)
 
     if all_failures:
         print("FAILED CASES:")
@@ -330,7 +327,7 @@ def run_cases(cases: Iterable[Stage0Case], args) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="prepare_wy_repr_bwd stage1 DA4 golden precision test")
     parser.add_argument("--suite", choices=("smoke", "fixed", "varlen", "all"), default="smoke")
     parser.add_argument("--cases", default="")
     parser.add_argument("--device", default="npu")
@@ -343,6 +340,8 @@ def main() -> int:
     )
     parser.add_argument("--stop-on-fail", action="store_true")
     parser.add_argument("--kernel-only", action="store_true")
+    parser.add_argument("--verbose-ct", action="store_true", help="Print every ct.single report.")
+    parser.add_argument("--progress-interval", type=int, default=64, help="Task interval for compare progress logs.")
     args = parser.parse_args()
     selected = select_cases(args)
     if not selected:

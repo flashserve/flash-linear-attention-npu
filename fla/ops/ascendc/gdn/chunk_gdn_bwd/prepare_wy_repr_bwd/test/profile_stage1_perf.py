@@ -99,7 +99,7 @@ def run_once(case: PerfCase, device: str, seed: int, tag: str):
         flush=True,
     )
     start = time.perf_counter()
-    outputs = fla_ascendc.prepare_wy_repr_bwd_stage0_debug(
+    outputs = fla_ascendc.prepare_wy_repr_bwd_stage1_debug(
         k, v, beta, A, dw, du, g, case.chunk_size, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices
     )
     torch.npu.synchronize()
@@ -112,7 +112,7 @@ def run_once(case: PerfCase, device: str, seed: int, tag: str):
 
 
 def selected_cases() -> list[PerfCase]:
-    wanted = os.environ.get("PREPARE_WY_STAGE0_PERF_CASES", "").strip()
+    wanted = os.environ.get("PREPARE_WY_STAGE1_PERF_CASES", "").strip()
     if not wanted:
         return list(PERF_CASES)
     names = {name.strip() for name in wanted.split(",") if name.strip()}
@@ -120,10 +120,10 @@ def selected_cases() -> list[PerfCase]:
 
 
 def main() -> int:
-    device = os.environ.get("PREPARE_WY_STAGE0_PERF_DEVICE", "npu")
-    seed = int(os.environ.get("PREPARE_WY_STAGE0_PERF_SEED", "2026"))
-    warmup = int(os.environ.get("PREPARE_WY_STAGE0_PERF_WARMUP", "1"))
-    repeat = int(os.environ.get("PREPARE_WY_STAGE0_PERF_REPEAT", "1"))
+    device = os.environ.get("PREPARE_WY_STAGE1_PERF_DEVICE", "npu")
+    seed = int(os.environ.get("PREPARE_WY_STAGE1_PERF_SEED", "2026"))
+    warmup = int(os.environ.get("PREPARE_WY_STAGE1_PERF_WARMUP", "0"))
+    repeat = int(os.environ.get("PREPARE_WY_STAGE1_PERF_REPEAT", "1"))
     cases = selected_cases()
     if not cases:
         raise RuntimeError("No perf cases selected.")
