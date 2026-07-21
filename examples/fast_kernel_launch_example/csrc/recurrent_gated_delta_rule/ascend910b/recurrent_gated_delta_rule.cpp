@@ -12,8 +12,9 @@
  * \brief Recurrent gated delta rule operator with fast kernel launch (<<<>>>).
  */
 
-#include <vector>
+#include <limits>
 #include <tuple>
+#include <vector>
 #include <ATen/Operators.h>
 #include <torch/all.h>
 #include <torch/library.h>
@@ -24,6 +25,7 @@
 #include "platform/platform_ascendc.h"
 #include "lib/matmul_intf.h"
 
+#include "common/fast_kernel_launch_workspace.h"
 #include "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/op_kernel/recurrent_gated_delta_rule_struct.h"
 #include "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/op_host/recurrent_gated_delta_rule_tiling_processor.h"
 #include "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/op_kernel/recurrent_gated_delta_rule_tiling_data.h"
@@ -157,6 +159,17 @@ static RecurrentGatedDeltaRuleTilingData CalcTilingParams(const at::Tensor &quer
     optiling::RecurrentGatedDeltaRuleTilingProcessor processor(ctx);
     TORCH_CHECK(processor.Process(tiling, blockDim, workspaceSize) == ge::GRAPH_SUCCESS,
                 "recurrent_gated_delta_rule tiling failed.");
+
+    auto stateStrides = state.strides();
+    TORCH_CHECK(stateStrides.size() == 4, "state must have four strides.");
+    for (size_t index = 0; index < 3; ++index) {
+        TORCH_CHECK(stateStrides[index] >= 0 &&
+                        static_cast<uint64_t>(stateStrides[index]) <= std::numeric_limits<uint32_t>::max(),
+                    "state stride ", index, " is out of uint32 range: ", stateStrides[index]);
+    }
+    tiling.stateStride0 = static_cast<uint32_t>(stateStrides[0]);
+    tiling.stateStride1 = static_cast<uint32_t>(stateStrides[1]);
+    tiling.stateStride2 = static_cast<uint32_t>(stateStrides[2]);
     return tiling;
 }
 
@@ -236,17 +249,16 @@ static void RunRecurrentGatedDeltaRuleKernel(const at::Tensor &query, const at::
         numAcceptedTokensPtr = (GM_ADDR)num_accepted_tokens.value().data_ptr();
     }
 
-    void *workspacePtr = nullptr;
-    if (workspaceSize > 0) {
-        auto ret = aclrtMalloc(&workspacePtr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: ", ret);
-        ret = aclrtMemsetAsync(workspacePtr, workspaceSize, 0, workspaceSize, stream);
-        TORCH_CHECK(ret == ACL_SUCCESS, "memset workspace failed. ERROR: ", ret);
-    }
-    GM_ADDR workspaceGm = (GM_ADDR)workspacePtr;
+    at::Tensor workspaceTensor =
+        fast_kernel_launch::AllocateDeviceBuffer(query, workspaceSize, "RecurrentGatedDeltaRule workspace");
+    fast_kernel_launch::ZeroDeviceBufferAsync(workspaceTensor, workspaceSize, stream,
+                                             "RecurrentGatedDeltaRule workspace");
+    GM_ADDR workspaceGm = fast_kernel_launch::TensorGmAddr(workspaceTensor);
 
     auto stateDtype = state.scalar_type();
-    auto aclCall = [=]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor, betaTensor = betaTensor,
+                    actualSeqLengths = actualSeqLengths, ssmStateIndices = ssmStateIndices,
+                    g = g, gk = gk, num_accepted_tokens = num_accepted_tokens]() -> int {
         if (stateDtype == at::kBFloat16) {
             LaunchRecurrentGatedDeltaRule<bfloat16_t>(blockDim, stream, queryPtr, keyPtr, valuePtr, betaPtr, statePtr,
                                                       cuSeqlensPtr, ssmStateIndicesPtr, gPtr, gkPtr,
@@ -263,11 +275,6 @@ static void RunRecurrentGatedDeltaRuleKernel(const at::Tensor &query, const at::
 
     at_npu::native::OpCommand::RunOpApi(functional ? "RecurrentGatedDeltaRuleFunctional" : "RecurrentGatedDeltaRule",
                                         aclCall);
-    c10_npu::getCurrentNPUStream().synchronize();
-
-    if (workspacePtr != nullptr) {
-        aclrtFree(workspacePtr);
-    }
 }
 
 at::Tensor recurrent_gated_delta_rule_npu(const at::Tensor &query, const at::Tensor &key, const at::Tensor &value,

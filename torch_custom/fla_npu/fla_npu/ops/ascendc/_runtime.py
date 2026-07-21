@@ -73,14 +73,6 @@ def stride(tensor) -> tuple[int, ...]:
     return tuple(int(dim) for dim in tensor.stride())
 
 
-def storage_numel(tensor) -> int:
-    try:
-        nbytes = tensor.untyped_storage().nbytes()
-    except AttributeError:
-        nbytes = tensor.storage().nbytes()
-    return int(nbytes // tensor.element_size())
-
-
 def storage_data_ptr(tensor) -> int:
     try:
         return int(tensor.untyped_storage().data_ptr())
@@ -224,7 +216,9 @@ class _AclTensor:
         self._tensor = tensor
         self._shape = (ctypes.c_int64 * tensor.dim())(*shape(tensor))
         self._stride = (ctypes.c_int64 * tensor.dim())(*stride(tensor))
-        self._storage_shape = (ctypes.c_int64 * 1)(storage_numel(tensor))
+        # 本仓算子按 ND 逻辑维度做 tiling；连续 tensor 的 storage shape 与
+        # view shape 相同。传入一维 numel 会让 GetStorageShape() 丢失 rank。
+        self._storage_shape = (ctypes.c_int64 * tensor.dim())(*shape(tensor))
         self.ptr = runtime.acl_create_tensor(
             self._shape,
             ctypes.c_uint64(tensor.dim()),
@@ -233,7 +227,7 @@ class _AclTensor:
             ctypes.c_int64(int(tensor.storage_offset())),
             ctypes.c_int(acl_format(tensor)),
             self._storage_shape,
-            ctypes.c_uint64(1),
+            ctypes.c_uint64(tensor.dim()),
             ctypes.c_void_p(storage_data_ptr(tensor)),
         )
         if not self.ptr:

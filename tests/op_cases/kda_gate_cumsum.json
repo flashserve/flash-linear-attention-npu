@@ -1,0 +1,501 @@
+{
+  "schema_version": 1,
+  "op": "kda_gate_cumsum",
+  "implementation": "ascendc",
+  "model": "kda",
+  "symbol_table_version": "kda-shape-v1",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": [
+      "bfloat16",
+      "float32"
+    ],
+    "layouts": [
+      "BSND",
+      "NTD"
+    ],
+    "features": [
+      "定长/变长序列",
+      "step-gate/safe raw-gate",
+      "四种 layout",
+      "整块/尾块"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ],
+    "optional_routes": [
+      "torch_ops_npu"
+    ]
+  },
+  "data_generation": {
+    "floating_inputs": {
+      "distribution": "uniform",
+      "min": -1.0,
+      "max": 1.0
+    },
+    "positive_inputs": {
+      "distribution": "uniform",
+      "min": 0.0,
+      "max": 1.0
+    },
+    "structured_inputs": "由 reference 名称对应的 runner 构造 gate、三角矩阵、状态和索引"
+  },
+  "coverage_requirements": {
+    "public_modes": [
+      "定长/变长序列",
+      "step-gate/safe raw-gate",
+      "四种 layout",
+      "整块/尾块"
+    ],
+    "known_limits": [
+      "K<=256，chunk_size 仅支持 32/64/128。",
+      "use_gate_in_kernel=true 时 A_log 必须为 [H_v]、safe_gate 必须 true，dt_bias 若存在须为 [H_v*K] 或 [H_v,K]。",
+      "lower_bound 仅支持 [-5,0)；use_gate_in_kernel=false 时 safe_gate 必须 false。",
+      "use_gate_in_kernel=false 时 A_log 与 dt_bias 必须为空，避免未消费输入在不同通路产生歧义。",
+      "rank4 变长序列物理 B 必须为 1；cu_seqlens 首项为 0、非递减且末项等于 T。"
+    ],
+    "required_outputs": [
+      "gk"
+    ],
+    "accuracy_case_ids": [
+      "kda_gate_cumsum_main_accuracy",
+      "kda_gate_cumsum_dtype_layout_generalization",
+      "kda_gate_cumsum_tail_or_varlen"
+    ],
+    "generalization_case_ids": [
+      "kda_gate_cumsum_dtype_layout_generalization",
+      "kda_gate_cumsum_tail_or_varlen"
+    ],
+    "negative_case_ids": [
+      "kda_gate_cumsum_negative_contract",
+      "kda_gate_cumsum_raw_gate_requires_a_log",
+      "kda_gate_cumsum_step_rejects_raw_inputs",
+      "kda_gate_cumsum_varlen_requires_b1"
+    ],
+    "route_case_ids": [
+      "kda_gate_cumsum_main_accuracy",
+      "kda_gate_cumsum_performance",
+      "kda_gate_cumsum_step_rejects_raw_inputs"
+    ],
+    "performance_case_ids": [
+      "kda_gate_cumsum_performance"
+    ]
+  },
+  "tolerance": {
+    "float16": {
+      "rtol": 0.002,
+      "atol": 0.002
+    },
+    "bfloat16": {
+      "rtol": 0.003,
+      "atol": 0.003
+    },
+    "float32": {
+      "rtol": 0.0002,
+      "atol": 0.0002
+    }
+  },
+  "cases": [
+    {
+      "id": "kda_gate_cumsum_main_accuracy",
+      "tags": [
+        "accuracy",
+        "example",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 128,
+        "H_v": 4,
+        "K": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "g": "float32",
+        "gk": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "chunk_size": 64,
+        "use_gate_in_kernel": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "layout": "BSND"
+      },
+      "optional_inputs": {
+        "A_log": null,
+        "dt_bias": null,
+        "cu_seqlens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch",
+        "torch_ops_npu"
+      ],
+      "reference": "_kda_gate_cumsum_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "gk"
+        ]
+      },
+      "seed": 2026
+    },
+    {
+      "id": "kda_gate_cumsum_dtype_layout_generalization",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary"
+      ],
+      "shape": {
+        "H_v": 4,
+        "T": 1536,
+        "K": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "g": "bfloat16",
+        "A_log_dt_bias_gk": "float32"
+      },
+      "layout": "NTD",
+      "attrs": {
+        "chunk_size": 64,
+        "use_gate_in_kernel": true,
+        "safe_gate": true,
+        "lower_bound": -5.0,
+        "layout": "NTD"
+      },
+      "optional_inputs": {
+        "A_log": "[H_v]",
+        "dt_bias": "[H_v,K]",
+        "cu_seqlens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "_kda_gate_cumsum_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "gk"
+        ]
+      },
+      "seed": 2027
+    },
+    {
+      "id": "kda_gate_cumsum_tail_or_varlen",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "tail"
+      ],
+      "shape": {
+        "B": 1,
+        "N": 2,
+        "T": 193,
+        "H_v": 4,
+        "K": 128,
+        "chunk_size": 32
+      },
+      "dtype": {
+        "g": "bfloat16",
+        "A_log_dt_bias_gk": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "chunk_size": 32,
+        "use_gate_in_kernel": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "layout": "BSND"
+      },
+      "optional_inputs": {
+        "A_log": null,
+        "dt_bias": null,
+        "cu_seqlens": [
+          0,
+          65,
+          193
+        ]
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "_kda_gate_cumsum_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "gk"
+        ]
+      },
+      "seed": 2028
+    },
+    {
+      "id": "kda_gate_cumsum_performance",
+      "tags": [
+        "performance",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 128,
+        "H_v": 4,
+        "K": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "g": "float32",
+        "gk": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "chunk_size": 64,
+        "use_gate_in_kernel": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "layout": "BSND"
+      },
+      "optional_inputs": {
+        "A_log": null,
+        "dt_bias": null,
+        "cu_seqlens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "direct_launch"
+      ],
+      "reference": "current_mainline_ascendc_profile",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "metric": "msopprof",
+        "requirement": "no_regression"
+      },
+      "seed": 2029
+    },
+    {
+      "id": "kda_gate_cumsum_negative_contract",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 128,
+        "H_v": 4,
+        "K": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "g": "float32",
+        "gk": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "chunk_size": 64,
+        "use_gate_in_kernel": false,
+        "safe_gate": true,
+        "lower_bound": -5.0,
+        "layout": "BSND"
+      },
+      "optional_inputs": {
+        "A_log": null,
+        "dt_bias": null,
+        "cu_seqlens": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "safeGate only takes effect"
+      },
+      "seed": 2030
+    },
+    {
+      "id": "kda_gate_cumsum_raw_gate_requires_a_log",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 128,
+        "H_v": 4,
+        "K": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "g": "bfloat16",
+        "gk": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "chunk_size": 64,
+        "use_gate_in_kernel": true,
+        "safe_gate": true,
+        "lower_bound": -5.0,
+        "layout": "BSND"
+      },
+      "optional_inputs": {
+        "A_log": null,
+        "dt_bias": null,
+        "cu_seqlens": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "torch_ops_npu"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "A_log is required"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2031
+    },
+    {
+      "id": "kda_gate_cumsum_step_rejects_raw_inputs",
+      "tags": [
+        "negative",
+        "boundary",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 128,
+        "H_v": 4,
+        "K": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "g": "float32",
+        "A_log_dt_bias_gk": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "chunk_size": 64,
+        "use_gate_in_kernel": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "layout": "BSND"
+      },
+      "optional_inputs": {
+        "A_log": "[H_v]",
+        "dt_bias": "[H_v,K]",
+        "cu_seqlens": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "torch_ops_npu"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "must be omitted"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2032
+    },
+    {
+      "id": "kda_gate_cumsum_varlen_requires_b1",
+      "tags": [
+        "negative",
+        "boundary",
+        "varlen"
+      ],
+      "shape": {
+        "B": 2,
+        "N": 2,
+        "T": 193,
+        "H_v": 4,
+        "K": 128,
+        "chunk_size": 32
+      },
+      "dtype": {
+        "g": "float32",
+        "gk": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 32,
+        "use_gate_in_kernel": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "layout": "BNSD"
+      },
+      "optional_inputs": {
+        "A_log": null,
+        "dt_bias": null,
+        "cu_seqlens": [
+          0,
+          65,
+          193
+        ]
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "B=1"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2033
+    }
+  ]
+}

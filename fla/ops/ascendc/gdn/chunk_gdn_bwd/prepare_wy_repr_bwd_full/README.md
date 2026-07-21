@@ -1,335 +1,101 @@
-# PrepareWyReprBwdFull 算子说明
-`PrepareWyReprBwdFull` 是一个用于分块门控 delta 规则（Chunk Gated Delta Rule）中 WY 表示（WY Representation）反向传播过程的自定义算子。该算子根据前向保存的中间矩阵、权重及上游梯度，计算并输出针对 Key（k）、Value（v）、Beta（β）和 Gate（g）的梯度，并支持 Key head 数（`HK`）与 Value head 数（`HV`）分离的 GVA 形态。
+# PrepareWyReprBwdFull
 
----
+## 1. 功能概述
 
-## 1. 算子功能
+WY 表示完整反向算子。它消费 `dA/dW/dU`，在 chunk 内反传到 K、V、beta 与 gate，是 `prepare_wy_repr_bwd_da` 之后的主梯度阶段。
 
-在分块序列模型的 WY 表示反向传播阶段，计算以下张量的梯度：
+## 2. 数学定义
 
-- **dk**：Key 的梯度
-- **dv**：Value 的梯度
-- **dbeta**：Beta（衰减/缩放参数）的梯度
-- **dg**：Gate（门控）的梯度
-
----
-
-## 2. 接口定义
-
-### 2.1 ACLNN 接口
-
-每个算子分为两段式调用流程：
-
-1. **获取 workspace 与执行器**  
-   调用 `aclnnPrepareWyReprBwdFullGetWorkspaceSize` 接口，获取算子执行所需的 workspace 大小，并创建执行器（executor）。
-
-2. **执行算子计算**  
-   调用 `aclnnPrepareWyReprBwdFull` 接口，在指定的 workspace 和执行器下完成计算。
-
-对应以下 C++ 接口：
-```cpp
-// 获取执行所需的 workspace 大小
-aclnnStatus aclnnPrepareWyReprBwdFullGetWorkspaceSize(
-    const aclTensor *k, const aclTensor *v, const aclTensor *beta,
-    const aclTensor *a, const aclTensor *dA, const aclTensor *dw, const aclTensor *du,
-    const aclTensor *g,
-    const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional,
-    int64_t chunkSize,
-    const aclTensor *dkOut, const aclTensor *dvOut,
-    const aclTensor *dbetaOut, const aclTensor *dgOut,
-    uint64_t *workspaceSize, aclOpExecutor **executor);
-
-// 执行算子
-aclnnStatus aclnnPrepareWyReprBwdFull(
-    void *workspace,
-    uint64_t workspaceSize,
-    aclOpExecutor *executor,
-    aclrtStream stream
-);
-```
-
----
-
-## 3. 参数说明
-
-### 3.1 输入参数（Inputs）
-
-| 参数名 | 输入/输出 | 必选/可选 | 描述 | 使用说明 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
-|---|---|---|---|---|---|---|---|---|
-| `k` | 输入 | 必选 | Key 输入张量 | 参与反向计算 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HK, T, K]` | 支持 |
-| `v` | 输入 | 必选 | Value 输入张量 | 参与反向计算 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
-| `beta` | 输入 | 必选 | Beta 缩放参数张量 | 三维 Beta 参数 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
-| `a` | 输入 | 必选 | 前向保存的块内因果注意力矩阵 A | 每个 chunk 内的下三角因果矩阵，最后一维为 `chunkSize` | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, chunkSize]` | 支持 |
-| `dA` | 输入 | 必选 | 矩阵 A 的上游梯度 | 与 `a` 形状相同 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, chunkSize]` | 支持 |
-| `dw` | 输入 | 必选 | Weight w 的上游梯度 | 形状与 `k` 相同 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HK, T, K]` | 支持 |
-| `du` | 输入 | 必选 | 更新量 u 的上游梯度 | 形状与 `v` 相同 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
-| `g` | 输入 | 必选 | Gate 输入张量 | 三维 Gate 参数 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
-| `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | 变长模式输入，形状为 `[N+1]`，首元素须为 `0` | `INT64` | `ND` | 1 维 | - |
-| `chunkIndicesOptional` | 输入 | 可选 | 分块索引信息 | 变长模式输入，扁平化存储 `[seqIdx0, chunkIdx0, seqIdx1, chunkIdx1, ...]`，长度为 `2 * numChunks` | `INT64` | `ND` | 1 维 | - |
-
-### 3.2 属性参数（Attributes）
-
-| 参数名 | 输入/输出 | 必选/可选 | 描述 | 使用说明 | 数据类型 | 取值约束 |
-|---|---|---|---|---|---|---|
-| `chunkSize` | 输入 | 必选属性 | 分块大小 | 默认值为 `64`，仅支持 `64` 或 `128` | `int64_t` | 仅支持 `64` / `128` |
-
-### 3.3 输出参数（Outputs）
-
-| 参数名 | 输入/输出 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
-|---|---|---|---|---|---|---|
-| `dkOut` | 输出 | Key 梯度输出张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HK, T, K]` | 支持 |
-| `dvOut` | 输出 | Value 梯度输出张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
-| `dbetaOut` | 输出 | Beta 梯度输出张量 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
-| `dgOut` | 输出 | Gate 梯度输出张量 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
-| `workspaceSize` | 输出 | Device 侧所需 workspace 大小 | `uint64_t` | - | 标量 | - |
-| `executor` | 输出 | 算子执行器，封装了计算流程 | `aclOpExecutor*` | - | - | - |
-
-### 3.4 形状与约束
-
-- `k`、`dw` 的形状必须为 `[B, HK, T, K]`。
-- `v`、`du` 的形状必须为 `[B, HV, T, V]`。
-- `beta`、`g` 的形状必须为 `[B, HV, T]`。
-- `a`、`dA` 的形状必须为 `[B, HV, T, chunkSize]`。
-- `v` 与 `k` 的 batch 维（`B`）和 time 维（`T`）必须一致。
-- `HK` 与 `HV` 均须为正数，且 `HV` 必须是 `HK` 的整数倍。
-- `v` 与 `du` 的全部四维必须一致。
-- `k` 与 `dw` 的全部四维必须一致。
-- `a` 与 `dA` 的全部四维必须一致。
-- `beta` 与 `g` 的全部三维必须一致，且二者的 `[B, HV, T]` 必须与 `v` 对齐。
-- `a` 与 `dA` 的 `[B, HV, T]` 必须与 `v` 对齐。
-- `V` 当前仅支持 `128` 或 `256`。
-- `chunkSize` 当前仅支持 `64` 或 `128`。
-- 当启用变长模式时，`cuSeqlensOptional` 和 `chunkIndicesOptional` 须同时提供，且仅支持 `B = 1`。
-
----
-
-## 4. 调用约束与执行语义
-
-### 4.1 可选参数约束
-
-- `cuSeqlensOptional` 和 `chunkIndicesOptional`：
-  - 必须同时提供或同时省略
-  - 同时出现时启用变长模式（varlen）
-  - `cuSeqlensOptional` 的首元素（`cuSeqlens[0]`）必须为 `0`，且各序列长度严格为正
-  - `chunkIndicesOptional` 为扁平化 1D 数组，内容格式为 `[seqIdx0, chunkIdx0, seqIdx1, chunkIdx1, ...]`，长度为 `2 * numChunks`
-  - `chunkIndicesOptional` 的内容须与 `cuSeqlensOptional` 严格对应
-  - 变长模式仅支持 `B = 1`
-
----
-
-### 4.2 形状约束（强约束）
-
-必须满足以下条件：
-
-- `k, dw`: `[B, HK, T, K]`
-- `v, du`: `[B, HV, T, V]`
-- `beta, g`: `[B, HV, T]`
-- `a, dA`: `[B, HV, T, chunkSize]`
-
-额外限制：
-
-- `HK > 0`，`HV > 0`，且 `HV % HK == 0`
-- `V ∈ {128, 256}`
-- `chunkSize ∈ {64, 128}`
-
----
-
-### 4.3 变长模式（VarLen）
-
-当提供 `cuSeqlensOptional` 时：
-
-- `chunkIndicesOptional` 必须同时提供
-- `numChunks` 由 `chunkIndices` 的长度推导（`len(chunkIndices) / 2`）
-- 要求 `cuSeqlens[0] == 0`，且各段序列长度严格为正
-- 当前实现仅支持：
+对每个 chunk，令 `Kb=K*beta*exp(g)`、`Vb=V*beta`，则链式法则包含：
 
 ```text
-B = 1
+dV     = A^T @ dU * beta
+dK     = A^T @ dW * beta * exp(g) + dA-related terms
+dBeta  = reduce_V(dVb * V) + reduce_K(dKb * K)
+dG     = reverse_chunk_reduce(dKb * K)
 ```
 
----
+`dA` 的因果区域和 GVA head 映射与前一阶段完全一致。
 
-### 4.4 数值语义
+## 3. 输入、输出和属性
 
-算子在每个 chunk 内执行以下反向传播计算（以伪代码表示）。当 `HK` 与 `HV` 不相等时，Value head `h_v` 对应的 Key head 为 `h_k = h_v // (HV / HK)`，`k`、`dw`、`dk` 使用 `HK` 维，其余张量使用 `HV` 维。
+本文使用的 Shape 符号统一引用[GDN 模型符号表](../../README.md#model-shape-symbols)，不在算子 README 中重复定义。
 
-**dv**（Value 的梯度）：
-```text
-dv_chunk = A_chunk^T @ du_chunk * beta_chunk[:, None]
+### 3.1 输入
+
+| 名称 | 必选/可选 | Shape | Dtype | Layout | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| `k` | 必选 | `[B,H_k,T,K]` | FP16/BF16 | BNSD | Key |
+| `v` | 必选 | `[B,H_v,T,V]` | FP16/BF16 | BNSD | Value |
+| `beta` | 必选 | `[B,H_v,T]` | FP16/BF16/FP32 | BNS | WY 权重 |
+| `A` | 必选 | `[B,H_v,T,chunk_size]` | FP16/BF16 | BNSD | 前向局部矩阵 |
+| `dA` | 必选 | `[B,H_v,T,chunk_size]` | FP16/BF16 | BNSD | A 梯度 |
+| `dw` | 必选 | `[B,H_v,T,K]` | FP16/BF16 | BNSD | W 梯度 |
+| `du` | 必选 | `[B,H_v,T,V]` | FP16/BF16 | BNSD | U 梯度 |
+| `g` | 必选 | `[B,H_v,T]` | FP16/BF16/FP32 | BNS | chunk-local gate |
+| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | 变长序列累计长度 |
+| `chunk_indices` | 可选 | `[2*N_c]` | INT64 | ND | 展平 chunk 索引 |
+
+### 3.2 输出
+
+| 名称 | Shape | Dtype | 说明 |
+| --- | --- | --- | --- |
+| `dk` | `[B,H_k,T,K]` | 与 k 一致 | Key 梯度；GVA value head 已归约 |
+| `dv` | `[B,H_v,T,V]` | 与 v 一致 | Value 梯度 |
+| `dbeta` | `[B,H_v,T]` | 与 beta 一致 | beta 梯度 |
+| `dg` | `[B,H_v,T]` | 与 g 一致 | gate 梯度 |
+
+### 3.3 属性
+
+| 名称 | 类型 | 默认值 | 取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `chunk_size` | int | `无` | `{64, 128}` | 必须等于 A/dA 最后一维 |
+
+## 4. 支持范围
+
+| 项目 | 支持范围 |
+| --- | --- |
+| SOC | A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`) |
+| Dtype | 主张量 FP16/BF16；beta/g 可为 FP32 |
+| Format/Layout | BNSD；A/dA 最后一维为 chunk_size |
+| 模式 | 定长与变长序列，支持 GVA |
+
+变长序列模式中，`cu_seqlens[0]` 必须为 0、末项等于 `T` 且序列非递减。`chunk_indices` 必须按 sequence-major 列出全部 `(seq_id, local_chunk_id)`；其条目数和当前调用的 `N_c` 一致。定长与变长序列、尾块与整块遵循同一数学定义。
+
+## 5. 调用入口
+
+实现类型：`ascendc`
+
+| 入口 | API |
+| --- | --- |
+| Python 主入口 | `fla_npu.ops.ascendc.prepare_wy_repr_bwd_full` |
+| aclnn | `aclnnPrepareWyReprBwdFullGetWorkspaceSize` / `aclnnPrepareWyReprBwdFull` |
+| Ascend C `<<<>>>` | `prepare_wy_repr_bwd_full<<<blockDim, l2ctrl, stream>>>(...)` |
+| legacy（可选） | `torch.ops.npu.npu_prepare_wy_repr_bwd_full` |
+
+完整签名和示例见 [API 文档](docs/api.md)，kernel、tiling、同步与内存设计见[设计文档](docs/design.md)。
+
+## 6. 精度与性能
+
+- 主精度入口：`tests/operators/prepare_wy_repr_bwd_full/accuracy/test_prepare_wy_repr_bwd_full.py`，主调用使用 `fla_npu.ops.ascendc`。
+- 用例规格：`tests/op_cases/prepare_wy_repr_bwd_full.json`；覆盖定长与变长序列，支持 GVA。
+- 参考实现：`仓内 PyTorch/CPU reference`；容差按 JSON 中各 dtype 的 `rtol/atol` 执行，不允许为规避失败而收窄输入范围。
+- 性能：使用 msopprof 覆盖 JSON performance case，并与当前主线基线比较设备侧 kernel duration，禁止性能回退。
+
+## 7. 已知限制
+
+- `K` 仅支持 128，`V` 仅支持 128/256。
+- `chunk_size` 仅支持 64/128，并须等于 A/dA 最后一维。
+- 必须满足 `H_v % H_k == 0`；变长序列当前仅支持物理 `B=1`。
+- `cu_seqlens` 与 `chunk_indices` 必须同时提供或同时省略。
+
+## 8. 构建与验证
+
+```bash
+FLA_NPU_SOC=ascend910b FLA_NPU_OPS=prepare_wy_repr_bwd_full python -m pip wheel --no-build-isolation --no-deps . -w dist
+pytest -q tests/operators/prepare_wy_repr_bwd_full/accuracy/test_prepare_wy_repr_bwd_full.py
+python scripts/check_operator_compliance.py
 ```
 
-**dk**（Key 的梯度）：
-```text
-b_dk  = dA_chunk @ (k_chunk * beta_chunk[:, None])
-      + dA_chunk^T @ k_chunk * beta_chunk[:, None]
-      + A_chunk^T @ dw_chunk * (beta_chunk * exp(g_chunk))[:, None]
-```
-
-**dbeta**（Beta 的梯度）：
-```text
-dbeta_chunk = sum(dA_chunk^T @ k_chunk * k_chunk, dim=1)
-            + sum(A_chunk^T @ dw_chunk * k_chunk * exp(g_chunk)[:, None], dim=1)
-            + sum(A_chunk^T @ du_chunk * v_chunk, dim=1)
-```
-
-**dg**（Gate 的梯度）：
-```text
-b_kkt = k_chunk @ k_chunk^T * beta_chunk[:, None]
-dg_chunk = sum(A_chunk^T @ dw_chunk * k_chunk * beta_chunk[:, None] * exp(g_chunk)[:, None], dim=1)
-         + sum(dA_chunk^T * b_kkt, dim=1) - sum(dA_chunk^T * b_kkt, dim=0)
-```
-
----
-
-## 5. Torch 测试调用示例
-
-### 5.1 固定长度模式
-
-```python
-import torch
-import torch_npu
-
-def test_prepare_wy_repr_bwd_full_fix():
-    # 参数设置
-    B, HK, HV, T, K, V = 1, 16, 32, 512, 128, 256
-    chunk_size = 64
-    device = "npu:0"
-    ktype = torch.float16
-    btype = torch.float16
-
-    # 构造输入
-    k    = torch.rand(B, HK, T, K,          dtype=ktype).to(device)
-    v    = torch.rand(B, HV, T, V,          dtype=ktype).to(device)
-    beta = torch.rand(B, HV, T,             dtype=btype).to(device)
-    A    = torch.rand(B, HV, T, chunk_size, dtype=ktype).to(device)
-    dA   = torch.rand(B, HV, T, chunk_size, dtype=ktype).to(device)
-    dw   = torch.rand(B, HK, T, K,          dtype=ktype).to(device)
-    du   = torch.rand(B, HV, T, V,          dtype=ktype).to(device)
-    g    = torch.rand(B, HV, T,             dtype=btype).to(device)
-
-    # 调用算子（固定长度模式）
-    dk, dv, dbeta, dg = torch_npu.npu_prepare_wy_repr_bwd_full(
-        k, v, beta, A, dA, dw, du, g,
-        cu_seqlens=None,
-        chunk_indices=None,
-        chunk_size=chunk_size
-    )
-
-    print("dk    shape:", dk.shape)
-    print("dv    shape:", dv.shape)
-    print("dbeta shape:", dbeta.shape)
-    print("dg    shape:", dg.shape)
-    assert dk.shape    == (B, HK, T, K)
-    assert dv.shape    == (B, HV, T, V)
-    assert dbeta.shape == (B, HV, T)
-    assert dg.shape    == (B, HV, T)
-    print("Fix-length Execution Successful!")
-
-if __name__ == "__main__":
-    test_prepare_wy_repr_bwd_full_fix()
-```
-
-### 5.2 变长模式
-
-```python
-import torch
-import torch_npu
-import random
-
-def prepare_cu_seqlens(total_length: int, num_seqs: int, seed: int = 42):
-    """生成随机 cu_seqlens，首元素为 0，末元素为 total_length"""
-    random.seed(seed)
-    if num_seqs < 2 or num_seqs > total_length + 1:
-        raise ValueError("num_seqs must satisfy 2 <= num_seqs <= total_length + 1")
-    if num_seqs == 2:
-        return [0, total_length]
-    middle = sorted(random.sample(range(1, total_length), num_seqs - 2))
-    return [0] + middle + [total_length]
-
-def prepare_chunk_indices(cu_seqlens, chunk_size: int):
-    """根据 cu_seqlens 生成扁平化 chunk_indices"""
-    chunk_indices = []
-    for seq_idx in range(len(cu_seqlens) - 1):
-        seq_len = cu_seqlens[seq_idx + 1] - cu_seqlens[seq_idx]
-        chunk_num = (seq_len + chunk_size - 1) // chunk_size
-        for chunk_idx in range(chunk_num):
-            chunk_indices.append(seq_idx)
-            chunk_indices.append(chunk_idx)
-    return chunk_indices
-
-def test_prepare_wy_repr_bwd_full_varlen():
-    # 参数设置（变长模式要求 B = 1）
-    B, HK, HV, T, K, V = 1, 16, 32, 512, 128, 256
-    chunk_size = 64
-    device = "npu:0"
-    ktype = torch.float16
-    btype = torch.float16
-
-    # 生成变长序列信息（将 T 个 token 随机切分为 4 段）
-    cu_seqlens    = prepare_cu_seqlens(total_length=T, num_seqs=5)
-    chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
-
-    # 构造输入
-    k    = torch.rand(B, HK, T, K,          dtype=ktype).to(device)
-    v    = torch.rand(B, HV, T, V,          dtype=ktype).to(device)
-    beta = torch.rand(B, HV, T,             dtype=btype).to(device)
-    A    = torch.rand(B, HV, T, chunk_size, dtype=ktype).to(device)
-    dA   = torch.rand(B, HV, T, chunk_size, dtype=ktype).to(device)
-    dw   = torch.rand(B, HK, T, K,          dtype=ktype).to(device)
-    du   = torch.rand(B, HV, T, V,          dtype=ktype).to(device)
-    g    = torch.rand(B, HV, T,             dtype=btype).to(device)
-
-    # 调用算子（变长模式）
-    dk, dv, dbeta, dg = torch_npu.npu_prepare_wy_repr_bwd_full(
-        k, v, beta, A, dA, dw, du, g,
-        cu_seqlens=cu_seqlens,
-        chunk_indices=chunk_indices,
-        chunk_size=chunk_size
-    )
-
-    print("dk    shape:", dk.shape)
-    print("dv    shape:", dv.shape)
-    print("dbeta shape:", dbeta.shape)
-    print("dg    shape:", dg.shape)
-    assert dk.shape    == (B, HK, T, K)
-    assert dv.shape    == (B, HV, T, V)
-    assert dbeta.shape == (B, HV, T)
-    assert dg.shape    == (B, HV, T)
-    print("Variable-length Execution Successful!")
-
-if __name__ == "__main__":
-    test_prepare_wy_repr_bwd_full_varlen()
-```
-
----
-
-## 6. 目录结构
-
-```text
-prepare_wy_repr_bwd_full/
-├── examples/
-│   └── test_aclnn_prepare_wy_repr_bwd_full.cpp
-├── op_host/
-│   ├── op_api/
-│   │   ├── aclnn_prepare_wy_repr_bwd_full.cpp
-│   │   ├── aclnn_prepare_wy_repr_bwd_full.h
-│   │   ├── prepare_wy_repr_bwd_full.cpp
-│   │   └── prepare_wy_repr_bwd_full.h
-│   ├── op_tiling/
-│   │   ├── prepare_wy_repr_bwd_full_tiling.cpp
-│   │   └── prepare_wy_repr_bwd_full_tiling.h
-│   ├── prepare_wy_repr_bwd_full_def.cpp
-│   └── CMakeLists.txt
-├── op_kernel/
-│   ├── prepare_wy_repr_bwd_full_common.h
-│   ├── prepare_wy_repr_bwd_full_cube.h
-│   ├── prepare_wy_repr_bwd_full_vector.h
-│   └── prepare_wy_repr_bwd_full.cpp
-└── test/
-    ├── test.py
-    └── ATK/
-        ├── generator_prepare_wy_repr_bwd_full.py
-        ├── executor_prepare_wy_repr_bwd_full.py
-        ├── all_prepare_wy_repr_bwd_full.json
-        └── aclnn_prepare_wy_repr_bwd_full.yaml
-```
+A3/A5 分别将 `FLA_NPU_SOC` 替换为 `ascend910_93`/`ascend950`。aclnn 与直调通路源文件位于
+`tests/operators/prepare_wy_repr_bwd_full/routes/`，均使用同一份 JSON 规格。

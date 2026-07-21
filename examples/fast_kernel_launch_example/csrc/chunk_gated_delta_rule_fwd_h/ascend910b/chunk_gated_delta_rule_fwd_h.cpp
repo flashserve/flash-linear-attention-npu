@@ -22,6 +22,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "common/fast_kernel_launch_workspace.h"
 // Plain tiling struct (global ChunkGatedDeltaRuleFwdHTilingData) must be visible before the kernel header.
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling_processor.h"
@@ -139,7 +140,7 @@ __global__ __aicore__ void chunk_gated_delta_rule_fwd_h_kernel(
 
     using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<INPUT_TYPE, G_TYPE, STATE_TYPE, float>;
     GDNFwdHKernel gdnFwdH;
-    gdnFwdH.Init(k, w, u, g, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+    gdnFwdH.Init(k, w, u, g, nullptr, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
     gdnFwdH.Process();
 }
 
@@ -193,34 +194,25 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_npu(
         chunk_indices_ptr = (GM_ADDR)chunk_indices_tensor.data_ptr();
     }
 
-    void *workspace_ptr = nullptr;
-    if (workspaceSize > 0) {
-        auto ret = aclrtMalloc(&workspace_ptr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: ", ret);
-        // The kernel uses AscendC::SyncAll(), whose cross-core counter lives in the system
-        // workspace region. A raw aclrtMalloc buffer is not zero-initialized, so the counter must
-        // be cleared before launch, otherwise the cores desync and trigger an aicore exception.
-        ret = aclrtMemsetAsync(workspace_ptr, workspaceSize, 0, workspaceSize, stream);
-        TORCH_CHECK(ret == ACL_SUCCESS, "memset workspace failed. ERROR: ", ret);
-    }
-    auto workspace_gm = (GM_ADDR)workspace_ptr;
+    at::Tensor workspaceTensor =
+        fast_kernel_launch::AllocateDeviceBuffer(k, workspaceSize, "ChunkGatedDeltaRuleFwdH workspace");
+    fast_kernel_launch::ZeroDeviceBufferAsync(workspaceTensor, workspaceSize, stream,
+                                             "ChunkGatedDeltaRuleFwdH workspace");
+    auto workspace_gm = fast_kernel_launch::TensorGmAddr(workspaceTensor);
 
     // The kernel reads the tiling data from GM, so copy the plain tiling struct to a device buffer.
-    void *tiling_ptr = nullptr;
     const size_t tiling_bytes = sizeof(::ChunkGatedDeltaRuleFwdHTilingData);
-    {
-        auto ret = aclrtMalloc(&tiling_ptr, tiling_bytes, ACL_MEM_MALLOC_HUGE_FIRST);
-        TORCH_CHECK(ret == ACL_SUCCESS, "allocate tiling buffer failed. ERROR: ", ret);
-        ret = aclrtMemcpy(tiling_ptr, tiling_bytes, &tiling, tiling_bytes, ACL_MEMCPY_HOST_TO_DEVICE);
-        TORCH_CHECK(ret == ACL_SUCCESS, "copy tiling to device failed. ERROR: ", ret);
-    }
-    auto tiling_gm = (GM_ADDR)tiling_ptr;
+    at::Tensor tilingTensor =
+        fast_kernel_launch::CopyHostStructToDevice(k, &tiling, tiling_bytes, "ChunkGatedDeltaRuleFwdH tiling");
+    auto tiling_gm = fast_kernel_launch::TensorGmAddr(tilingTensor);
 
     auto in_dtype = k.scalar_type();
     auto g_dtype = g.scalar_type();
     auto state_dtype = initial_state.has_value() ? initial_state.value().scalar_type() : at::kFloat;
 
-    auto acl_call = [=]() -> int {
+    auto acl_call = [=, workspaceTensor = workspaceTensor, tilingTensor = tilingTensor,
+                     initial_state = initial_state, cu_seqlens_tensor = cu_seqlens_tensor,
+                     chunk_indices_tensor = chunk_indices_tensor]() -> int {
         bool gIsFp32 = (g_dtype == at::kFloat);
         bool stateIsFp32 = (!initial_state.has_value()) || (state_dtype == at::kFloat);
         if (in_dtype == at::kBFloat16) {
@@ -276,23 +268,6 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_npu(
     };
 
     at_npu::native::OpCommand::RunOpApi("ChunkGatedDeltaRuleFwdH", acl_call);
-
-    // The tiling/workspace buffers are raw aclrtMalloc (not stream-ordered), so the kernel must
-    // finish before freeing them. RunOpApi only ENQUEUES the launch into torch_npu's async task
-    // queue; a raw aclrtSynchronizeStream does NOT drain that software queue, so the launch could
-    // still be pending and the frees below would race with the (later) kernel reading the tiling
-    // from GM. NPUStream::synchronize() empties the task queue first and then syncs the hardware
-    // stream, guaranteeing the kernel has run before we free.
-    c10_npu::getCurrentNPUStream().synchronize();
-
-    if (workspace_ptr != nullptr) {
-        aclrtFree(workspace_ptr);
-        workspace_ptr = nullptr;
-    }
-    if (tiling_ptr != nullptr) {
-        aclrtFree(tiling_ptr);
-        tiling_ptr = nullptr;
-    }
 
     if (output_final_state) {
         return std::make_tuple(h_out, v_new_out, final_state_out);

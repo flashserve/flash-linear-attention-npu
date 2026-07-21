@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -122,6 +123,21 @@ def _select_cases(cases: list[dict[str, Any]], case_filter: str) -> list[dict[st
     if disabled:
         raise ValueError(f"requested Example/ST case(s) are disabled: {', '.join(disabled)}")
     return [by_name[name] for name in wanted]
+
+
+def _required_ops(cases: list[dict[str, Any]]) -> list[str]:
+    ops: list[str] = []
+    for case in cases:
+        raw_ops = case.get("required_ops")
+        if not isinstance(raw_ops, list) or not raw_ops:
+            raise ValueError(f"Example/ST case {case['name']} must declare non-empty required_ops.")
+        for raw_op in raw_ops:
+            op = str(raw_op).strip()
+            if not re.fullmatch(r"[a-z][a-z0-9_]*", op):
+                raise ValueError(f"Example/ST case {case['name']} has invalid required_ops entry: {raw_op!r}.")
+            if op not in ops:
+                ops.append(op)
+    return ops
 
 
 def _build_command(repo_root: Path, device: int, case: dict[str, Any]) -> list[str]:
@@ -305,6 +321,7 @@ def main() -> int:
     parser.add_argument("--cases-file", default="ci/example_st_cases.json")
     parser.add_argument("--case-filter", default="", help="Comma-separated case names to run")
     parser.add_argument("--accuracy-report-file", default=os.environ.get("CI_ACCURACY_REPORT_FILE", ""))
+    parser.add_argument("--print-required-ops", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -313,6 +330,9 @@ def main() -> int:
     cases = _select_cases(_read_cases(cases_file), args.case_filter)
     if not cases:
         raise SystemExit(f"No enabled Example/ST cases found in {cases_file}.")
+    if args.print_required_ops:
+        print(",".join(_required_ops(cases)))
+        return 0
 
     report_path = Path(args.accuracy_report_file) if args.accuracy_report_file else None
     if report_path is not None and not report_path.is_absolute():

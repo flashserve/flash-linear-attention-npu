@@ -1,0 +1,144 @@
+digraph ChunkBwdDvLocalNormalVsDeadlock {
+    graph [
+        charset="UTF-8",
+        rankdir=TB,
+        bgcolor="#ffffff",
+        pad="0.30",
+        nodesep="0.55",
+        ranksep="0.48",
+        splines=ortho,
+        newrank=true,
+        fontname="Microsoft YaHei",
+        fontsize=22,
+        label="ChunkBwdDvLocal：预期正常流水与旧协议卡死流水",
+        labelloc=t
+    ];
+    node [
+        shape=box,
+        style="rounded,filled",
+        color="#64748b",
+        fillcolor="#f8fafc",
+        fontname="Microsoft YaHei",
+        fontsize=12,
+        margin="0.18,0.12"
+    ];
+    edge [
+        color="#64748b",
+        penwidth=1.4,
+        arrowsize=0.75
+    ];
+
+    actual_layout [
+        shape=plain,
+        label=<
+            <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="8" COLOR="#64748b">
+                <TR><TD COLSPAN="6" BGCOLOR="#f1f5f9"><B>真实计算与 workspace 布局（当前 shape：H_qk = H_do = 32，hRatio = 1）</B></TD></TR>
+                <TR>
+                    <TD BGCOLOR="#dbeafe"><B>Cube / AIC</B><BR/>K @ Q^T</TD>
+                    <TD>→</TD>
+                    <TD BGCOLOR="#fef3c7"><B>Vector / AIV</B><BR/>gate · mask · scale<BR/>逐元素乘 KQ^T</TD>
+                    <TD>→</TD>
+                    <TD BGCOLOR="#dcfce7"><B>Cube / AIC</B><BR/>gated(KQ^T) @ dO</TD>
+                    <TD BGCOLOR="#ecfdf5"><B>dV_local</B></TD>
+                </TR>
+                <TR>
+                    <TD COLSPAN="3">逻辑 slot 组：s = qkHead % 3</TD>
+                    <TD COLSPAN="3">物理 block：QK[s] = 0..2；GATED[s] = 3..5</TD>
+                </TR>
+                <TR><TD COLSPAN="6" BGCOLOR="#fff7ed"><B>3 组 slot 约束地址复用；CrossCore reverse 窗口约束同步状态。二者是两套容量。</B></TD></TR>
+            </TABLE>
+        >
+    ];
+
+    normal_title [
+        label="A. 预期正确：payload 所有权闭环 + flag 反向窗口闭环",
+        fillcolor="#ecfdf5",
+        color="#059669",
+        penwidth=2.0
+    ];
+
+    deadlock_title [
+        label="B. 旧 QK 协议：3-slot 已约束 outstanding；精确设备卡点仍需定位",
+        fillcolor="#fef2f2",
+        color="#dc2626",
+        penwidth=2.0
+    ];
+
+    normal_flow [
+        shape=plain,
+        label=<
+            <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="7" COLOR="#059669">
+                <TR><TD WIDTH="90" BGCOLOR="#dbeafe"><B>AIC</B></TD><TD ALIGN="LEFT">① Wait QK_FREE[s] → Cube: K @ Q^T → 写 QK[s] → WriteDone</TD></TR>
+                <TR><TD BGCOLOR="#e0f2fe"><B>通知</B></TD><TD ALIGN="LEFT"><B>SET QK_READY</B>；第 Depth 次后等待 QK_REVERSE_ACK</TD></TR>
+                <TR><TD BGCOLOR="#fef3c7"><B>AIV</B></TD><TD ALIGN="LEFT">② WAIT QK_READY + Wait GATED_FREE[s] → 读 QK[s] → gate/mask/scale → 写 GATED[s]</TD></TR>
+                <TR><TD BGCOLOR="#ecfdf5"><B>释放 QK</B></TD><TD ALIGN="LEFT">LastAsyncReadDone(QK[s]) → SET QK_FREE[s]</TD></TR>
+                <TR><TD BGCOLOR="#fff7ed"><B>通知</B></TD><TD ALIGN="LEFT"><B>SET GATED_READY</B>；写 GATED[s] 的 pipe 已完成</TD></TR>
+                <TR><TD BGCOLOR="#dcfce7"><B>AIC</B></TD><TD ALIGN="LEFT">③ WAIT GATED_READY → 读 GATED[s] → Cube: gated(KQ^T) @ dO → dV</TD></TR>
+                <TR><TD BGCOLOR="#ecfdf5"><B>释放 GATED</B></TD><TD ALIGN="LEFT">LastAsyncReadDone(GATED[s]) → SET GATED_FREE[s]</TD></TR>
+                <TR><TD BGCOLOR="#f0fdf4"><B>轮转</B></TD><TD ALIGN="LEFT">下一个 head 使用 (s + 1) % 3；回到 s 前必须拿到对应 FREE</TD></TR>
+            </TABLE>
+        >
+    ];
+
+    normal_window [
+        shape=plain,
+        label=<
+            <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="7" COLOR="#2563eb">
+                <TR><TD COLSPAN="4" BGCOLOR="#eff6ff"><B>QK flag 的有界 reverse 窗口（与 3-slot 环独立）</B></TD></TR>
+                <TR>
+                    <TD>SET #1 ... SET #15</TD>
+                    <TD BGCOLOR="#dbeafe"><B>AIC WAIT reverseId</B></TD>
+                    <TD BGCOLOR="#fef3c7"><B>AIV 第 15 次 WAIT 后 SET reverseId</B></TD>
+                    <TD BGCOLOR="#dcfce7"><B>count 清零，继续 #16</B></TD>
+                </TR>
+            </TABLE>
+        >
+    ];
+
+    deadlock_flow [
+        shape=plain,
+        label=<
+            <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="7" COLOR="#dc2626">
+                <TR><TD COLSPAN="2" BGCOLOR="#fef2f2"><B>代码级上界推导：第 16 次总 SET 不等于积压 16 个 token</B></TD></TR>
+                <TR><TD WIDTH="90" BGCOLOR="#dbeafe"><B>AIC</B></TD><TD ALIGN="LEFT">slot 按 0 → 1 → 2 → 0 轮转，持续计算各 head 的 K @ Q^T</TD></TR>
+                <TR><TD BGCOLOR="#fee2e2"><B>QK counter</B></TD><TD ALIGN="LEFT">AIC SET: counter + 1；AIV WAIT: counter - 1；最大值为 15</TD></TR>
+                <TR><TD BGCOLOR="#fff7ed"><B>slot 证明</B></TD><TD ALIGN="LEFT">SET QK[h] 前先 WAIT GATED[h-3]；这蕴含 AIV 已 WAIT QK[h-3]</TD></TR>
+                <TR><TD BGCOLOR="#fef3c7"><B>第 16 次 SET</B></TD><TD ALIGN="LEFT">h=15 时累计 SET=16、累计 WAIT 至少=13，所以 outstanding ≤ 3</TD></TR>
+                <TR><TD BGCOLOR="#fecaca"><B>排除简化解释</B></TD><TD ALIGN="LEFT"><B>按顺序语义，不能解释成 hardware counter 单纯累到 15 后永久卡死</B></TD></TR>
+                <TR><TD BGCOLOR="#dbeafe"><B>1978b63 效果</B></TD><TD ALIGN="LEFT">每 15 次总调用增加反向握手/顺序收敛点；它不证明旧 counter 峰值为 15</TD></TR>
+                <TR><TD BGCOLOR="#7f1d1d"><FONT COLOR="#ffffff"><B>证据边界</B></FONT></TD><TD BGCOLOR="#fee2e2" ALIGN="LEFT"><B>仍缺设备 PC、pipe 在途状态和 flag 快照；精确卡点尚未确认</B></TD></TR>
+            </TABLE>
+        >
+    ];
+
+    deadlock_cycle [
+        label="仍待验证的机制\n1. PIPE_FIX / PIPE_MTE2 等异步指令的在途顺序\n2. 同一 flagId 长期单向重复使用的实现约束\n3. reverse 握手改变时序后掩盖了其它竞态\n\n不能再把其中任何一个写成已确认根因",
+        fillcolor="#fee2e2",
+        color="#dc2626",
+        penwidth=2.2
+    ];
+
+    distinction [
+        shape=plain,
+        label=<
+            <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="8" COLOR="#475569">
+                <TR><TD BGCOLOR="#f3e8ff"><B>slot 环深度 = 3</B><BR/>payload 最大在途距离</TD>
+                    <TD BGCOLOR="#eff6ff"><B>wrapper flag.count = 总调用数</B><BR/>到 15 就做 reverse 握手</TD>
+                    <TD BGCOLOR="#ecfdf5"><B>hardware counter = SET - WAIT</B><BR/>顺序模型下应不超过 3</TD></TR>
+                <TR><TD COLSPAN="3"><B>第 16 次总 SET 可以在 slot 反复释放和复用后发生；它与“同时有 16 个未消费 SET”不是一回事。</B></TD></TR>
+            </TABLE>
+        >
+    ];
+
+    actual_layout -> normal_title;
+    actual_layout -> deadlock_title;
+    { rank=same; normal_title; deadlock_title; }
+    normal_title -> normal_flow;
+    normal_flow -> normal_window;
+    deadlock_title -> deadlock_flow;
+    deadlock_flow -> deadlock_cycle [color="#dc2626", penwidth=2.0];
+    { rank=same; normal_flow; deadlock_flow; }
+    { rank=same; normal_window; deadlock_cycle; }
+    normal_window -> distinction;
+    deadlock_cycle -> distinction;
+}

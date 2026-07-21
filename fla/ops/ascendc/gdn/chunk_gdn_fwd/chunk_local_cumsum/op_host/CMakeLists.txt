@@ -16,3 +16,9 @@ if (BUILD_OPEN_PROJECT)
 endif()
 
 add_modules_sources(OPTYPE chunk_local_cumsum ACLNNTYPE aclnn_exclude)
+
+add_ops_compile_options(
+    OP_NAME ChunkLocalCumsum
+    OPTIONS --cce-auto-sync=off
+            -Wno-deprecated-declarations
+)

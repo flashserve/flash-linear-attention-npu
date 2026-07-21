@@ -131,27 +131,15 @@ python scripts/check_packaged_wheel_api.py
 
 ```sh
 # 运行测试
-cd torch_custom/fla_npu/test
-bash test.sh --device 0                      # 全量测试
-bash test.sh --device 0 --op causal_conv1d   # 单个 AscendC 测试任务
+bash tests/operators/run.sh --device 0                      # 全部已注册 Ascend C 算子
+bash tests/operators/run.sh --device 0 --op causal_conv1d   # 指定算子
 ```
 
-`--op` 当前仅覆盖 `test.sh` 已接入的 AscendC 测试任务，可选值：
-
-- `prepare_wy_repr_bwd_full`
-- `chunk_gated_delta_rule_bwd_dhu`
-- `chunk_bwd_dv_local`
-- `causal_conv1d`
-- `prepare_wy_repr_bwd_da`
-- `chunk_bwd_dqkwg`
-- `gdn_fwd_o`
-- `gdn_fwd_h`
-- `recompute_wu_fwd`
-
+`--op` 可取 `tests/op_cases/*.json` 中注册的 Ascend C 算子名。用例设计以对应 JSON 为唯一来源，执行代码统一位于 `tests/operators/<op_name>/`。
 
 ### 算子调用方式参考
 
-推荐通过 `fla_npu.ops.ascendc` 或 `fla_npu.ops.triton` 导入对应算子；具体入参可参考 `torch_custom/fla_npu/test` 下的对应算子测试脚本。
+推荐通过 `fla_npu.ops.ascendc` 或 `fla_npu.ops.triton` 导入对应算子；具体入参可参考算子 `docs/api.md` 和 `tests/operators/<op_name>/accuracy/backend.py`。
 
 例如：
 

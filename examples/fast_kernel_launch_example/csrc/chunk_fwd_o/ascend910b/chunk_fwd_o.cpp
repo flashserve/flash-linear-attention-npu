@@ -23,6 +23,7 @@
 #include "kernel_operator.h"
 #include "platform/platform_ascendc.h"
 
+#include "common/fast_kernel_launch_workspace.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/op_host/chunk_fwd_o_tiling_processor.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/op_kernel/chunk_fwd_o.cpp"
 
@@ -33,12 +34,12 @@ using TilingData = GDN::ChunkFwdOTilingData;
 
 TORCH_LIBRARY_FRAGMENT(EXTENSION_MODULE_NAME, m)
 {
-    m.def("chunk_fwd_o(Tensor q, Tensor k, Tensor v, Tensor h, Tensor g, float scale, int chunk_size, *, int[]? cu_seqlens=None, int[]? chunk_offsets=None) -> Tensor");
+    m.def("chunk_fwd_o(Tensor q, Tensor k, Tensor v, Tensor h, Tensor g, float scale, int chunk_size, *, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> Tensor");
 }
 
 at::Tensor chunk_fwd_o_meta(const at::Tensor &q, const at::Tensor &k, const at::Tensor &v, const at::Tensor &h,
                             const at::Tensor &g, double scale, int64_t chunk_size,
-                            at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_offsets)
+                            at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices)
 {
     (void)q;
     (void)k;
@@ -47,7 +48,7 @@ at::Tensor chunk_fwd_o_meta(const at::Tensor &q, const at::Tensor &k, const at::
     (void)scale;
     (void)chunk_size;
     (void)cu_seqlens;
-    (void)chunk_offsets;
+    (void)chunk_indices;
     return at::empty_like(v);
 }
 
@@ -80,7 +81,7 @@ int64_t ToChunkFwdODtype(at::ScalarType dtype)
 ChunkFwdOTilingResult CalcTilingParams(const at::Tensor &q, const at::Tensor &k, const at::Tensor &v,
                                        const at::Tensor &h, const at::Tensor &g, double scale,
                                        int64_t chunk_size, at::OptionalIntArrayRef cu_seqlens,
-                                       at::OptionalIntArrayRef chunk_offsets)
+                                       at::OptionalIntArrayRef chunk_indices)
 {
     auto qSizes = q.sizes();
     auto kSizes = k.sizes();
@@ -97,21 +98,23 @@ ChunkFwdOTilingResult CalcTilingParams(const at::Tensor &q, const at::Tensor &k,
     gert::StorageShape hShape({hSizes[0], hSizes[1], hSizes[2], hSizes[3], hSizes[4]},
                               {hSizes[0], hSizes[1], hSizes[2], hSizes[3], hSizes[4]});
     gert::StorageShape gShape({gSizes[0], gSizes[1], gSizes[2]}, {gSizes[0], gSizes[1], gSizes[2]});
+    gert::StorageShape oShape({vSizes[0], vSizes[1], vSizes[2], vSizes[3]},
+                              {vSizes[0], vSizes[1], vSizes[2], vSizes[3]});
 
     gert::StorageShape *cuSeqlensShapePtr = nullptr;
-    gert::StorageShape *chunkOffsetsShapePtr = nullptr;
+    gert::StorageShape *chunkIndicesShapePtr = nullptr;
     gert::StorageShape cuSeqlensShape;
-    gert::StorageShape chunkOffsetsShape;
+    gert::StorageShape chunkIndicesShape;
 
     if (cu_seqlens.has_value()) {
         int64_t cuDim0 = static_cast<int64_t>(cu_seqlens.value().size());
         cuSeqlensShape = gert::StorageShape({cuDim0}, {cuDim0});
         cuSeqlensShapePtr = &cuSeqlensShape;
     }
-    if (chunk_offsets.has_value()) {
-        int64_t offsetsDim0 = static_cast<int64_t>(chunk_offsets.value().size());
-        chunkOffsetsShape = gert::StorageShape({offsetsDim0}, {offsetsDim0});
-        chunkOffsetsShapePtr = &chunkOffsetsShape;
+    if (chunk_indices.has_value()) {
+        int64_t indicesDim0 = static_cast<int64_t>(chunk_indices.value().size());
+        chunkIndicesShape = gert::StorageShape({indicesDim0}, {indicesDim0});
+        chunkIndicesShapePtr = &chunkIndicesShape;
     }
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
@@ -126,8 +129,11 @@ ChunkFwdOTilingResult CalcTilingParams(const at::Tensor &q, const at::Tensor &k,
         &vShape,
         &hShape,
         &gShape,
+        &oShape,
         cuSeqlensShapePtr,
-        chunkOffsetsShapePtr,
+        chunkIndicesShapePtr,
+        cu_seqlens.has_value() ? cu_seqlens.value().data() : nullptr,
+        chunk_indices.has_value() ? chunk_indices.value().data() : nullptr,
         scale,
         chunk_size,
         ToChunkFwdODtype(q.scalar_type()),
@@ -144,7 +150,7 @@ ChunkFwdOTilingResult CalcTilingParams(const at::Tensor &q, const at::Tensor &k,
 
 template <typename InputT, typename GT>
 __global__ __aicore__ void chunk_fwd_o_kernel(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g,
-                                               GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, GM_ADDR o,
+                                               GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR o,
                                                GM_ADDR workspace, const GDN::ChunkFwdOTilingData tilingData)
 {
     AscendC::SetSysWorkspaceForce(workspace);
@@ -153,28 +159,28 @@ __global__ __aicore__ void chunk_fwd_o_kernel(GM_ADDR q, GM_ADDR k, GM_ADDR v, G
         return;
     }
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
-    GDN::ChunkFwdOKernelImpl<InputT, GT, float>(q, k, v, h, g, cu_seqlens, chunk_offsets, o, user, &tilingData);
+    GDN::ChunkFwdOKernelImpl<InputT, GT, float>(q, k, v, h, g, cu_seqlens, chunk_indices, o, user, &tilingData);
 }
 
 template <typename InputT, typename GT>
 void LaunchChunkFwdO(uint32_t blockDim, aclrtStream stream, GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g,
-                     GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, GM_ADDR o, GM_ADDR workspace,
+                     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR o, GM_ADDR workspace,
                      const GDN::ChunkFwdOTilingData &tiling)
 {
     chunk_fwd_o_kernel<InputT, GT><<<blockDim, nullptr, stream>>>(
-        q, k, v, h, g, cu_seqlens, chunk_offsets, o, workspace, tiling);
+        q, k, v, h, g, cu_seqlens, chunk_indices, o, workspace, tiling);
 }
 
 at::Tensor chunk_fwd_o_npu(const at::Tensor &q, const at::Tensor &k, const at::Tensor &v, const at::Tensor &h,
                            const at::Tensor &g, double scale, int64_t chunk_size,
-                           at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_offsets)
+                           at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices)
 {
     const c10::OptionalDeviceGuard guard(q.device());
-    auto output = chunk_fwd_o_meta(q, k, v, h, g, scale, chunk_size, cu_seqlens, chunk_offsets);
+    auto output = chunk_fwd_o_meta(q, k, v, h, g, scale, chunk_size, cu_seqlens, chunk_indices);
     auto stream = c10_npu::getCurrentNPUStream().stream(false);
 
     ChunkFwdOTilingResult tilingResult =
-        CalcTilingParams(q, k, v, h, g, scale, chunk_size, cu_seqlens, chunk_offsets);
+        CalcTilingParams(q, k, v, h, g, scale, chunk_size, cu_seqlens, chunk_indices);
 
     GM_ADDR qPtr = (GM_ADDR)q.data_ptr();
     GM_ADDR kPtr = (GM_ADDR)k.data_ptr();
@@ -184,48 +190,46 @@ at::Tensor chunk_fwd_o_npu(const at::Tensor &q, const at::Tensor &k, const at::T
     GM_ADDR oPtr = (GM_ADDR)output.data_ptr();
 
     GM_ADDR cuSeqlensPtr = nullptr;
-    GM_ADDR chunkOffsetsPtr = nullptr;
+    GM_ADDR chunkIndicesPtr = nullptr;
     std::vector<int64_t> cuSeqlensVec;
-    std::vector<int64_t> chunkOffsetsVec;
+    std::vector<int64_t> chunkIndicesVec;
     at::Tensor cuSeqlensTensor;
-    at::Tensor chunkOffsetsTensor;
+    at::Tensor chunkIndicesTensor;
 
     if (cu_seqlens.has_value()) {
         cuSeqlensVec = std::vector<int64_t>(cu_seqlens.value().begin(), cu_seqlens.value().end());
         cuSeqlensTensor = at::tensor(cuSeqlensVec, at::dtype(at::kLong).device(q.device()));
         cuSeqlensPtr = (GM_ADDR)cuSeqlensTensor.data_ptr();
     }
-    if (chunk_offsets.has_value()) {
-        chunkOffsetsVec = std::vector<int64_t>(chunk_offsets.value().begin(), chunk_offsets.value().end());
-        chunkOffsetsTensor = at::tensor(chunkOffsetsVec, at::dtype(at::kLong).device(q.device()));
-        chunkOffsetsPtr = (GM_ADDR)chunkOffsetsTensor.data_ptr();
+    if (chunk_indices.has_value()) {
+        chunkIndicesVec = std::vector<int64_t>(chunk_indices.value().begin(), chunk_indices.value().end());
+        chunkIndicesTensor = at::tensor(chunkIndicesVec, at::dtype(at::kLong).device(q.device()));
+        chunkIndicesPtr = (GM_ADDR)chunkIndicesTensor.data_ptr();
     }
 
-    void *workspacePtr = nullptr;
-    if (tilingResult.workspaceSize > 0) {
-        auto ret = aclrtMalloc(&workspacePtr, tilingResult.workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: ", ret);
-    }
-    GM_ADDR workspaceGm = (GM_ADDR)workspacePtr;
+    at::Tensor workspaceTensor =
+        fast_kernel_launch::AllocateDeviceBuffer(q, tilingResult.workspaceSize, "ChunkFwdO workspace");
+    GM_ADDR workspaceGm = fast_kernel_launch::TensorGmAddr(workspaceTensor);
 
     auto qDtype = q.scalar_type();
     auto gDtype = g.scalar_type();
     auto tiling = tilingResult.tiling;
     auto blockDim = tilingResult.blockDim;
 
-    auto aclCall = [=]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor, cuSeqlensTensor = cuSeqlensTensor,
+                    chunkIndicesTensor = chunkIndicesTensor]() -> int {
         if (qDtype == at::kBFloat16 && gDtype == at::kBFloat16) {
             LaunchChunkFwdO<bfloat16_t, bfloat16_t>(blockDim, stream, qPtr, kPtr, vPtr, hPtr, gPtr, cuSeqlensPtr,
-                                                    chunkOffsetsPtr, oPtr, workspaceGm, tiling);
+                                                    chunkIndicesPtr, oPtr, workspaceGm, tiling);
         } else if (qDtype == at::kHalf && gDtype == at::kHalf) {
             LaunchChunkFwdO<half, half>(blockDim, stream, qPtr, kPtr, vPtr, hPtr, gPtr, cuSeqlensPtr,
-                                        chunkOffsetsPtr, oPtr, workspaceGm, tiling);
+                                        chunkIndicesPtr, oPtr, workspaceGm, tiling);
         } else if (qDtype == at::kBFloat16 && gDtype == at::kFloat) {
             LaunchChunkFwdO<bfloat16_t, float>(blockDim, stream, qPtr, kPtr, vPtr, hPtr, gPtr, cuSeqlensPtr,
-                                               chunkOffsetsPtr, oPtr, workspaceGm, tiling);
+                                               chunkIndicesPtr, oPtr, workspaceGm, tiling);
         } else if (qDtype == at::kHalf && gDtype == at::kFloat) {
             LaunchChunkFwdO<half, float>(blockDim, stream, qPtr, kPtr, vPtr, hPtr, gPtr, cuSeqlensPtr,
-                                         chunkOffsetsPtr, oPtr, workspaceGm, tiling);
+                                         chunkIndicesPtr, oPtr, workspaceGm, tiling);
         } else {
             TORCH_CHECK(false, "Unsupported dtype combination: q=", qDtype, ", g=", gDtype);
         }
@@ -233,10 +237,7 @@ at::Tensor chunk_fwd_o_npu(const at::Tensor &q, const at::Tensor &k, const at::T
     };
 
     at_npu::native::OpCommand::RunOpApi("ChunkFwdO", aclCall);
-
-    if (workspacePtr != nullptr) {
-        aclrtFree(workspacePtr);
-    }
+    c10_npu::getCurrentNPUStream().synchronize();
 
     return output;
 }

@@ -33,7 +33,8 @@ static constexpr size_t CHUNK_FWD_O_INPUT_V_IDX = 2;
 static constexpr size_t CHUNK_FWD_O_INPUT_H_IDX = 3;
 static constexpr size_t CHUNK_FWD_O_INPUT_G_IDX = 4;
 static constexpr size_t CHUNK_FWD_O_INPUT_SEQLENS_IDX = 5;
-static constexpr size_t CHUNK_FWD_O_INPUT_CHUNK_OFFSETS_IDX = 6;
+static constexpr size_t CHUNK_FWD_O_INPUT_CHUNK_INDICES_IDX = 6;
+static constexpr size_t CHUNK_FWD_O_OUTPUT_O_IDX = 0;
 
 static constexpr size_t CHUNK_FWD_O_ATTR_SCALE_IDX = 0;
 static constexpr size_t CHUNK_FWD_O_ATTR_CHUNK_SIZE_IDX = 1;
@@ -42,7 +43,7 @@ static constexpr size_t CHUNK_FWD_O_QKV_DIM_NUM = 4;
 static constexpr size_t CHUNK_FWD_O_H_DIM_NUM = 5;
 static constexpr size_t CHUNK_FWD_O_G_DIM_NUM = 3;
 static constexpr size_t CHUNK_FWD_O_SEQLENS_DIM_NUM = 1;
-static constexpr size_t CHUNK_FWD_O_CHUNK_OFFSETS_DIM_NUM = 1;
+static constexpr size_t CHUNK_FWD_O_CHUNK_INDICES_DIM_NUM = 1;
 
 static constexpr size_t CHUNK_FWD_O_DIM_BATCH = 0;
 static constexpr size_t CHUNK_FWD_O_DIM_HEAD_NUM = 1;
@@ -59,8 +60,10 @@ static constexpr int64_t CHUNK_FWD_O_DTYPE_FP32 = 2;
 static constexpr size_t CHUNK_FWD_O_WORKSPACE_RSV_BYTE = 16 * 1024 * 1024;
 static constexpr size_t CHUNK_FWD_O_GM_ALIGN = 512;
 static constexpr int64_t CHUNK_FWD_O_PINGPONG_STAGES = 2;
-static constexpr int64_t CHUNK_FWD_O_CHUNK_OFFSETS_PAIR_SIZE = 2;
+static constexpr int64_t CHUNK_FWD_O_CHUNK_INDICES_PAIR_SIZE = 2;
 static constexpr int64_t CHUNK_FWD_O_MAX_V_HEAD_DIM = 256;
+static constexpr int64_t CHUNK_FWD_O_K_HEAD_DIM = 128;
+static constexpr int64_t CHUNK_FWD_O_MIN_V_HEAD_DIM = 128;
 
 static constexpr const char *const CHUNK_FWD_O_INPUT_Q_NAME = "q";
 static constexpr const char *const CHUNK_FWD_O_INPUT_K_NAME = "k";
@@ -68,7 +71,7 @@ static constexpr const char *const CHUNK_FWD_O_INPUT_V_NAME = "v";
 static constexpr const char *const CHUNK_FWD_O_INPUT_H_NAME = "h";
 static constexpr const char *const CHUNK_FWD_O_INPUT_G_NAME = "g";
 static constexpr const char *const CHUNK_FWD_O_INPUT_SEQLENS_NAME = "cu_seqlens";
-static constexpr const char *const CHUNK_FWD_O_INPUT_CHUNK_OFFSETS_NAME = "chunk_offsets";
+static constexpr const char *const CHUNK_FWD_O_INPUT_CHUNK_INDICES_NAME = "chunk_indices";
 
 struct ChunkFwdOTilingContext {
     const char *nodeName;
@@ -77,8 +80,11 @@ struct ChunkFwdOTilingContext {
     const gert::StorageShape *vShape;
     const gert::StorageShape *hShape;
     const gert::StorageShape *gShape;
+    const gert::StorageShape *oShape;
     const gert::StorageShape *cuSeqlensShape;
-    const gert::StorageShape *chunkOffsetsShape;
+    const gert::StorageShape *chunkIndicesShape;
+    const int64_t *cuSeqlensData;
+    const int64_t *chunkIndicesData;
     double scale;
     int64_t chunkSize;
     int64_t dataType;
@@ -105,7 +111,7 @@ public:
 
     bool IsVariableLength() const
     {
-        return ctx_.cuSeqlensShape != nullptr || ctx_.chunkOffsetsShape != nullptr;
+        return ctx_.cuSeqlensShape != nullptr || ctx_.chunkIndicesShape != nullptr;
     }
 
     ge::graphStatus RequiredInputDimNumCheck(const gert::StorageShape *curShape, size_t validDimNum,
@@ -114,18 +120,18 @@ public:
         OP_CHECK_IF(curShape == nullptr,
                     OP_LOGE(ctx_.nodeName, "Input %s is required, but got nullptr.", inputName),
                     return ge::GRAPH_FAILED);
-        const gert::Shape storageShape = curShape->GetStorageShape();
-        size_t dimNum = storageShape.GetDimNum();
+        const gert::Shape logicalShape = curShape->GetOriginShape();
+        size_t dimNum = logicalShape.GetDimNum();
         OP_CHECK_IF(dimNum != validDimNum,
                     OP_LOGE(ctx_.nodeName,
                             "Check input %s shape failed, the dim num should be %zu, but get %zu.",
                             inputName, validDimNum, dimNum),
                     return ge::GRAPH_FAILED);
         for (size_t dimIndex = 0; dimIndex < dimNum; ++dimIndex) {
-            OP_CHECK_IF(storageShape.GetDim(dimIndex) == 0,
+            OP_CHECK_IF(logicalShape.GetDim(dimIndex) <= 0,
                         OP_LOGE(ctx_.nodeName,
-                                "Check input %s shape failed, the dim %zu should be non-zero, but get 0.",
-                                inputName, dimIndex),
+                                "Check input %s shape failed, the dim %zu should be positive, but get %ld.",
+                                inputName, dimIndex, logicalShape.GetDim(dimIndex)),
                         return ge::GRAPH_FAILED);
         }
         return ge::GRAPH_SUCCESS;
@@ -153,11 +159,11 @@ public:
 
     ge::graphStatus ShapeCheck()
     {
-        const gert::Shape qShape = ctx_.qShape->GetStorageShape();
-        const gert::Shape kShape = ctx_.kShape->GetStorageShape();
-        const gert::Shape vShape = ctx_.vShape->GetStorageShape();
-        const gert::Shape hShape = ctx_.hShape->GetStorageShape();
-        const gert::Shape gShape = ctx_.gShape->GetStorageShape();
+        const gert::Shape qShape = ctx_.qShape->GetOriginShape();
+        const gert::Shape kShape = ctx_.kShape->GetOriginShape();
+        const gert::Shape vShape = ctx_.vShape->GetOriginShape();
+        const gert::Shape hShape = ctx_.hShape->GetOriginShape();
+        const gert::Shape gShape = ctx_.gShape->GetOriginShape();
 
         OP_CHECK_IF(qShape.GetDim(CHUNK_FWD_O_DIM_BATCH) != kShape.GetDim(CHUNK_FWD_O_DIM_BATCH) ||
                         qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) != kShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) ||
@@ -188,9 +194,14 @@ public:
                     OP_LOGE(ctx_.nodeName, "Check head num failed, vNumHead should be divisible by kNumHead."),
                     return ge::GRAPH_FAILED);
 
-        OP_CHECK_IF(vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) > CHUNK_FWD_O_MAX_V_HEAD_DIM,
-                    OP_LOGE(ctx_.nodeName, "Check v shape failed, vHeadDim should be <= %ld, but get %ld.",
-                            CHUNK_FWD_O_MAX_V_HEAD_DIM, vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM)),
+        OP_CHECK_IF(qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) != CHUNK_FWD_O_K_HEAD_DIM,
+                    OP_LOGE(ctx_.nodeName, "Check q shape failed, K must be %ld, but get %ld.",
+                            CHUNK_FWD_O_K_HEAD_DIM, qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM)),
+                    return ge::GRAPH_FAILED);
+        const int64_t vHeadDim = vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM);
+        OP_CHECK_IF(vHeadDim != CHUNK_FWD_O_MIN_V_HEAD_DIM && vHeadDim != CHUNK_FWD_O_MAX_V_HEAD_DIM,
+                    OP_LOGE(ctx_.nodeName, "Check v shape failed, V must be %ld or %ld, but get %ld.",
+                            CHUNK_FWD_O_MIN_V_HEAD_DIM, CHUNK_FWD_O_MAX_V_HEAD_DIM, vHeadDim),
                     return ge::GRAPH_FAILED);
 
         return ge::GRAPH_SUCCESS;
@@ -198,13 +209,14 @@ public:
 
     size_t AlignWorkspaceSize(size_t value)
     {
-        return (value + CHUNK_FWD_O_GM_ALIGN) / CHUNK_FWD_O_GM_ALIGN * CHUNK_FWD_O_GM_ALIGN;
+        return (value + CHUNK_FWD_O_GM_ALIGN - 1) / CHUNK_FWD_O_GM_ALIGN * CHUNK_FWD_O_GM_ALIGN;
     }
 
     ge::graphStatus CommonTiling()
     {
-        const gert::Shape qShape = ctx_.qShape->GetStorageShape();
-        const gert::Shape vShape = ctx_.vShape->GetStorageShape();
+        const gert::Shape qShape = ctx_.qShape->GetOriginShape();
+        const gert::Shape vShape = ctx_.vShape->GetOriginShape();
+        const gert::Shape hShape = ctx_.hShape->GetOriginShape();
 
         tiling_.seqlen = static_cast<int64_t>(qShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN));
         tiling_.kNumHead = static_cast<int64_t>(qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM));
@@ -224,15 +236,50 @@ public:
             OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.cuSeqlensShape, CHUNK_FWD_O_SEQLENS_DIM_NUM,
                                                  CHUNK_FWD_O_INPUT_SEQLENS_NAME) != ge::GRAPH_SUCCESS,
                         , return ge::GRAPH_FAILED);
-            OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.chunkOffsetsShape, CHUNK_FWD_O_CHUNK_OFFSETS_DIM_NUM,
-                                                 CHUNK_FWD_O_INPUT_CHUNK_OFFSETS_NAME) != ge::GRAPH_SUCCESS,
+            OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.chunkIndicesShape, CHUNK_FWD_O_CHUNK_INDICES_DIM_NUM,
+                                                 CHUNK_FWD_O_INPUT_CHUNK_INDICES_NAME) != ge::GRAPH_SUCCESS,
                         , return ge::GRAPH_FAILED);
-            const gert::Shape cuSeqlensShape = ctx_.cuSeqlensShape->GetStorageShape();
-            const gert::Shape chunkOffsetsShape = ctx_.chunkOffsetsShape->GetStorageShape();
-            OP_CHECK_IF(chunkOffsetsShape.GetDim(CHUNK_FWD_O_DIM_BATCH) % CHUNK_FWD_O_CHUNK_OFFSETS_PAIR_SIZE != 0,
+            const gert::Shape cuSeqlensShape = ctx_.cuSeqlensShape->GetOriginShape();
+            const gert::Shape chunkIndicesShape = ctx_.chunkIndicesShape->GetOriginShape();
+            OP_CHECK_IF(chunkIndicesShape.GetDim(CHUNK_FWD_O_DIM_BATCH) % CHUNK_FWD_O_CHUNK_INDICES_PAIR_SIZE != 0,
                         OP_LOGE(ctx_.nodeName,
-                                "Check chunk_offsets shape failed, the dim 0 of chunk_offsets needs to be divisible by 2, but get %ld.",
-                                chunkOffsetsShape.GetDim(CHUNK_FWD_O_DIM_BATCH)),
+                                "Check chunk_indices shape failed, the dim 0 of chunk_indices needs to be divisible by 2, but get %ld.",
+                                chunkIndicesShape.GetDim(CHUNK_FWD_O_DIM_BATCH)),
+                        return ge::GRAPH_FAILED);
+            const int64_t *cuSeqlens = ctx_.cuSeqlensData;
+            const int64_t *chunkIndices = ctx_.chunkIndicesData;
+            OP_CHECK_IF(cuSeqlens == nullptr || chunkIndices == nullptr,
+                        OP_LOGE(ctx_.nodeName, "cu_seqlens and chunk_indices data must be available to tiling."),
+                        return ge::GRAPH_FAILED);
+            OP_CHECK_IF(qShape.GetDim(CHUNK_FWD_O_DIM_BATCH) != 1,
+                        OP_LOGE(ctx_.nodeName, "B must be 1 in varlen mode."),
+                        return ge::GRAPH_FAILED);
+            const int64_t sequenceCount = cuSeqlensShape.GetDim(0) - 1;
+            OP_CHECK_IF(cuSeqlens[0] != 0 || cuSeqlens[sequenceCount] != tiling_.seqlen,
+                        OP_LOGE(ctx_.nodeName, "cu_seqlens must start at 0 and end at T."),
+                        return ge::GRAPH_FAILED);
+            int64_t expectedChunks = 0;
+            const int64_t suppliedChunks = chunkIndicesShape.GetDim(0) / CHUNK_FWD_O_CHUNK_INDICES_PAIR_SIZE;
+            for (int64_t seq = 0; seq < sequenceCount; ++seq) {
+                OP_CHECK_IF(cuSeqlens[seq] < 0 || cuSeqlens[seq] > cuSeqlens[seq + 1] ||
+                                cuSeqlens[seq + 1] > tiling_.seqlen,
+                            OP_LOGE(ctx_.nodeName, "cu_seqlens must be nondecreasing and within [0,T]."),
+                            return ge::GRAPH_FAILED);
+                const int64_t localChunkCount =
+                    (cuSeqlens[seq + 1] - cuSeqlens[seq] + tiling_.chunkSize - 1) / tiling_.chunkSize;
+                for (int64_t localChunk = 0; localChunk < localChunkCount; ++localChunk) {
+                    OP_CHECK_IF(expectedChunks >= suppliedChunks || chunkIndices[expectedChunks * 2] != seq ||
+                                    chunkIndices[expectedChunks * 2 + 1] != localChunk,
+                                OP_LOGE(ctx_.nodeName,
+                                        "chunk_indices must use canonical sequence-major chunk order."),
+                                return ge::GRAPH_FAILED);
+                    ++expectedChunks;
+                }
+            }
+            OP_CHECK_IF(expectedChunks != suppliedChunks ||
+                            hShape.GetDim(CHUNK_FWD_O_H_DIM_CHUNKS) != expectedChunks,
+                        OP_LOGE(ctx_.nodeName,
+                                "chunk_indices and h N_c must match the chunk count derived from cu_seqlens."),
                         return ge::GRAPH_FAILED);
             tiling_.isVariedLen = 1;
             tiling_.shapeBatch = 1;
@@ -241,6 +288,10 @@ public:
                         OP_LOGE(ctx_.nodeName, "Check cu_seqlens shape failed, tokenBatch should be positive."),
                         return ge::GRAPH_FAILED);
         } else {
+            const int64_t expectedChunks = (tiling_.seqlen + tiling_.chunkSize - 1) / tiling_.chunkSize;
+            OP_CHECK_IF(hShape.GetDim(CHUNK_FWD_O_H_DIM_CHUNKS) != expectedChunks,
+                        OP_LOGE(ctx_.nodeName, "h N_c must equal ceil(T/chunk_size)."),
+                        return ge::GRAPH_FAILED);
             tiling_.isVariedLen = 0;
             tiling_.shapeBatch = static_cast<int64_t>(qShape.GetDim(CHUNK_FWD_O_DIM_BATCH));
             tiling_.tokenBatch = 1;

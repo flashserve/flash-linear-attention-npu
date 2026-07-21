@@ -1,0 +1,4673 @@
+{
+  "op": "chunk_bwd_dv_local",
+  "schema_version": 1,
+  "model": "gdn",
+  "symbol_table_version": "gdn-shape-v1",
+  "implementation": "ascendc",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": [
+      "float16",
+      "bfloat16",
+      "float32_gate"
+    ],
+    "layouts": [
+      "BNSD"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ],
+    "optional_routes": [
+      "torch_ops_npu"
+    ],
+    "features": [
+      "fixed",
+      "varlen",
+      "变长序列的两个索引必须同时提供"
+    ]
+  },
+  "tolerance": {
+    "float16": {
+      "rtol": 0.003,
+      "atol": 0.003
+    },
+    "bfloat16": {
+      "rtol": 0.02,
+      "atol": 0.02
+    }
+  },
+  "cases": [
+    {
+      "id": "dense_fp16_c64_v128",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "route",
+        "example"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch",
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/common/legacy_golden.py::chunk_bwd_dv_local_fix",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "d_v"
+        ]
+      },
+      "seed": 2026
+    },
+    {
+      "id": "dense_bf16_c128_v256_gva",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "performance"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 4,
+        "H_v": 8,
+        "T": 257,
+        "K": 128,
+        "V": 256,
+        "chunk_size": 128
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/common/legacy_golden.py::chunk_bwd_dv_local_fix",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "metric": "msopprof",
+        "requirement": "no_regression",
+        "baseline": "current_mainline_ascendc_profile",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "d_v"
+        ]
+      },
+      "seed": 2027
+    },
+    {
+      "id": "varlen_tail_fp16",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "N": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 256,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 5
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": [
+          0,
+          191,
+          256
+        ],
+        "chunk_indices": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          2,
+          1,
+          0,
+          1,
+          1
+        ]
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/common/legacy_golden.py::chunk_bwd_dv_local_variable",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "d_v"
+        ]
+      },
+      "seed": 2028
+    },
+    {
+      "id": "negative_reserved_A",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float32",
+        "A": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": "non_empty",
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "parameter_validation",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "A"
+      },
+      "seed": 2029
+    },
+    {
+      "id": "negative_reserved_g_gamma",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float32",
+        "g_gamma": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": "non_empty",
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "parameter_validation",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "g_gamma"
+      },
+      "seed": 2030
+    },
+    {
+      "id": "negative_partial_varlen_metadata",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "N": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0883883476,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": [
+          0,
+          64,
+          128
+        ],
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "parameter_validation",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "both be provided"
+      },
+      "seed": 2031
+    },
+    {
+      "id": "legacy_atk_regression_0000",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 6,
+        "T": 57,
+        "K": 128,
+        "H_v": 6,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 1
+      },
+      "dtype": {
+        "q": "float16",
+        "k": "float16",
+        "d_o": "float16",
+        "g": "float32",
+        "upper_tri_matrix": "uint8",
+        "g_gamma": "float32",
+        "A": "float16",
+        "cu_seqlens": "int64",
+        "chunk_indices": "int64"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 1.0,
+        "chunk_size": 64,
+        "is_mix": true,
+        "is_fix": false,
+        "qkv_type": "fp16"
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "aclnn"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/atk/executor_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2026,
+      "legacy": {
+        "format": "atk-v2.1",
+        "suite": "atk_regression",
+        "original_id": 0,
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/atk/executor_chunk_bwd_dv_local.py",
+        "raw": {
+          "id": 0,
+          "default_seed": null,
+          "name": "aclnn.chunk.bwd.dv.local",
+          "aclnn_name": "ChunkBwdDvLocal",
+          "triton_name": null,
+          "kernel_name": null,
+          "version": "v2.1",
+          "expected_error_msg": null,
+          "api": "pytorch",
+          "api_type": "executor_chunk_bwd_dv_local",
+          "aclnn_api_type": "aclnn_function",
+          "triton_api_type": "triton_function",
+          "fusion_api_type": "fusion_function",
+          "fusion_mode": null,
+          "dist_api_type": "dist_function",
+          "kernel_api_type": "kernel_function",
+          "backward": false,
+          "standard": {
+            "acc": "single_bm",
+            "perf": "not_key",
+            "mem": 1.1
+          },
+          "outputs": null,
+          "inputs": [
+            {
+              "name": "q",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp16",
+              "shape": [
+                1,
+                6,
+                57,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "k",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp16",
+              "shape": [
+                1,
+                6,
+                57,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "d_o",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp16",
+              "shape": [
+                1,
+                6,
+                57,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "g",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp32",
+              "shape": [
+                14,
+                14,
+                64
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "upper_tri_matrix",
+              "type": "tensor",
+              "required": true,
+              "dtype": "uint8",
+              "shape": [
+                64,
+                64
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "g_gamma",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp32",
+              "shape": [
+                1,
+                1
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "A",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp16",
+              "shape": [
+                1,
+                2
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "cu_seqlens",
+              "type": "tensor",
+              "required": true,
+              "dtype": "int64",
+              "shape": [
+                27
+              ],
+              "range_values": [
+                1,
+                100
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "chunk_indices",
+              "type": "tensor",
+              "required": true,
+              "dtype": "int64",
+              "shape": [
+                2,
+                2
+              ],
+              "range_values": [
+                1,
+                100
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "scale",
+              "type": "attr",
+              "required": true,
+              "dtype": "float",
+              "shape": null,
+              "range_values": 1.0,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "chunk_size",
+              "type": "attr",
+              "required": true,
+              "dtype": "int",
+              "shape": null,
+              "range_values": 64,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "is_mix",
+              "type": "attr",
+              "required": true,
+              "dtype": "bool",
+              "shape": null,
+              "range_values": true,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "is_fix",
+              "type": "attr",
+              "required": true,
+              "dtype": "bool",
+              "shape": null,
+              "range_values": false,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "qkv_type",
+              "type": "attr",
+              "required": true,
+              "dtype": "string",
+              "shape": null,
+              "range_values": "fp16",
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            }
+          ],
+          "acl_json": "",
+          "method_inputs": null,
+          "tensor_input": null,
+          "compute_times": null,
+          "save_name": null,
+          "uuid": null,
+          "downloaded": false,
+          "is_boundary": false,
+          "xrun_cs_name": null,
+          "xrun_data": null
+        }
+      }
+    },
+    {
+      "id": "legacy_atk_regression_0001",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 18,
+        "H_k": 32,
+        "T": 51,
+        "K": 128,
+        "H_v": 32,
+        "V": 128,
+        "chunk_size": 128,
+        "N_c": 1
+      },
+      "dtype": {
+        "q": "bfloat16",
+        "k": "bfloat16",
+        "d_o": "bfloat16",
+        "g": "bfloat16",
+        "upper_tri_matrix": "uint8",
+        "g_gamma": "float32",
+        "A": "bfloat16",
+        "cu_seqlens": "int64",
+        "chunk_indices": "int64"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 1.0,
+        "chunk_size": 128,
+        "is_mix": false,
+        "is_fix": true,
+        "qkv_type": "bf16"
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "aclnn"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/atk/executor_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2027,
+      "legacy": {
+        "format": "atk-v2.1",
+        "suite": "atk_regression",
+        "original_id": 1,
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/atk/executor_chunk_bwd_dv_local.py",
+        "raw": {
+          "id": 1,
+          "default_seed": null,
+          "name": "aclnn.chunk.bwd.dv.local",
+          "aclnn_name": "ChunkBwdDvLocal",
+          "triton_name": null,
+          "kernel_name": null,
+          "version": "v2.1",
+          "expected_error_msg": null,
+          "api": "pytorch",
+          "api_type": "executor_chunk_bwd_dv_local",
+          "aclnn_api_type": "aclnn_function",
+          "triton_api_type": "triton_function",
+          "fusion_api_type": "fusion_function",
+          "fusion_mode": null,
+          "dist_api_type": "dist_function",
+          "kernel_api_type": "kernel_function",
+          "backward": false,
+          "standard": {
+            "acc": "single_bm",
+            "perf": "not_key",
+            "mem": 1.1
+          },
+          "outputs": null,
+          "inputs": [
+            {
+              "name": "q",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                18,
+                32,
+                51,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "k",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                18,
+                32,
+                51,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "d_o",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                18,
+                32,
+                51,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "g",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                94,
+                15,
+                35
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "upper_tri_matrix",
+              "type": "tensor",
+              "required": true,
+              "dtype": "uint8",
+              "shape": [
+                128,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "g_gamma",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp32",
+              "shape": [
+                2,
+                2
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "A",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                1,
+                2
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "cu_seqlens",
+              "type": "tensor",
+              "required": true,
+              "dtype": "int64",
+              "shape": [
+                57
+              ],
+              "range_values": [
+                1,
+                100
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "chunk_indices",
+              "type": "tensor",
+              "required": true,
+              "dtype": "int64",
+              "shape": [
+                23,
+                53
+              ],
+              "range_values": [
+                1,
+                100
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "scale",
+              "type": "attr",
+              "required": true,
+              "dtype": "float",
+              "shape": null,
+              "range_values": 1.0,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "chunk_size",
+              "type": "attr",
+              "required": true,
+              "dtype": "int",
+              "shape": null,
+              "range_values": 128,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "is_mix",
+              "type": "attr",
+              "required": true,
+              "dtype": "bool",
+              "shape": null,
+              "range_values": false,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "is_fix",
+              "type": "attr",
+              "required": true,
+              "dtype": "bool",
+              "shape": null,
+              "range_values": true,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "qkv_type",
+              "type": "attr",
+              "required": true,
+              "dtype": "string",
+              "shape": null,
+              "range_values": "bf16",
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            }
+          ],
+          "acl_json": "",
+          "method_inputs": null,
+          "tensor_input": null,
+          "compute_times": null,
+          "save_name": null,
+          "uuid": null,
+          "downloaded": false,
+          "is_boundary": false,
+          "xrun_cs_name": null,
+          "xrun_data": null
+        }
+      }
+    },
+    {
+      "id": "legacy_atk_regression_0002",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 4,
+        "T": 128,
+        "K": 128,
+        "H_v": 8,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "q": "float16",
+        "k": "float16",
+        "d_o": "float16",
+        "g": "float32",
+        "upper_tri_matrix": "uint8",
+        "g_gamma": "float32",
+        "A": "float16",
+        "cu_seqlens": "int64",
+        "chunk_indices": "int64"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 1.0,
+        "chunk_size": 64,
+        "is_mix": true,
+        "is_fix": true,
+        "qkv_type": "fp16",
+        "h_ratio": 2
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "aclnn"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/atk/executor_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2028,
+      "legacy": {
+        "format": "atk-v2.1",
+        "suite": "atk_regression",
+        "original_id": 2,
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/atk/executor_chunk_bwd_dv_local.py",
+        "raw": {
+          "id": 2,
+          "default_seed": null,
+          "name": "aclnn.chunk.bwd.dv.local",
+          "aclnn_name": "ChunkBwdDvLocal",
+          "triton_name": null,
+          "kernel_name": null,
+          "version": "v2.1",
+          "expected_error_msg": null,
+          "api": "pytorch",
+          "api_type": "executor_chunk_bwd_dv_local",
+          "aclnn_api_type": "aclnn_function",
+          "triton_api_type": "triton_function",
+          "fusion_api_type": "fusion_function",
+          "fusion_mode": null,
+          "dist_api_type": "dist_function",
+          "kernel_api_type": "kernel_function",
+          "backward": false,
+          "standard": {
+            "acc": "single_bm",
+            "perf": "not_key",
+            "mem": 1.1
+          },
+          "outputs": null,
+          "inputs": [
+            {
+              "name": "q",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp16",
+              "shape": [
+                1,
+                4,
+                128,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "k",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp16",
+              "shape": [
+                1,
+                4,
+                128,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "d_o",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp16",
+              "shape": [
+                1,
+                8,
+                128,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "g",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp32",
+              "shape": [
+                1,
+                8,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "upper_tri_matrix",
+              "type": "tensor",
+              "required": true,
+              "dtype": "uint8",
+              "shape": [
+                64,
+                64
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "g_gamma",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp32",
+              "shape": [
+                1,
+                1
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "A",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp16",
+              "shape": [
+                1,
+                2
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "cu_seqlens",
+              "type": "tensor",
+              "required": true,
+              "dtype": "int64",
+              "shape": [
+                2
+              ],
+              "range_values": [
+                1,
+                100
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "chunk_indices",
+              "type": "tensor",
+              "required": true,
+              "dtype": "int64",
+              "shape": [
+                4,
+                2
+              ],
+              "range_values": [
+                1,
+                100
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "scale",
+              "type": "attr",
+              "required": true,
+              "dtype": "float",
+              "shape": null,
+              "range_values": 1.0,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "chunk_size",
+              "type": "attr",
+              "required": true,
+              "dtype": "int",
+              "shape": null,
+              "range_values": 64,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "is_mix",
+              "type": "attr",
+              "required": true,
+              "dtype": "bool",
+              "shape": null,
+              "range_values": true,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "is_fix",
+              "type": "attr",
+              "required": true,
+              "dtype": "bool",
+              "shape": null,
+              "range_values": true,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "qkv_type",
+              "type": "attr",
+              "required": true,
+              "dtype": "string",
+              "shape": null,
+              "range_values": "fp16",
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "h_ratio",
+              "type": "attr",
+              "required": true,
+              "dtype": "int",
+              "shape": null,
+              "range_values": 2,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            }
+          ],
+          "acl_json": "",
+          "method_inputs": null,
+          "tensor_input": null,
+          "compute_times": null,
+          "save_name": null,
+          "uuid": null,
+          "downloaded": false,
+          "is_boundary": false,
+          "xrun_cs_name": null,
+          "xrun_data": null
+        }
+      }
+    },
+    {
+      "id": "legacy_atk_regression_0003",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "T": 128,
+        "K": 128,
+        "H_v": 8,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "q": "bfloat16",
+        "k": "bfloat16",
+        "d_o": "bfloat16",
+        "g": "float32",
+        "upper_tri_matrix": "uint8",
+        "g_gamma": "float32",
+        "A": "bfloat16",
+        "cu_seqlens": "int64",
+        "chunk_indices": "int64"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 1.0,
+        "chunk_size": 64,
+        "is_mix": true,
+        "is_fix": true,
+        "qkv_type": "bf16",
+        "h_ratio": 4
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "aclnn"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/atk/executor_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2029,
+      "legacy": {
+        "format": "atk-v2.1",
+        "suite": "atk_regression",
+        "original_id": 3,
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/atk/executor_chunk_bwd_dv_local.py",
+        "raw": {
+          "id": 3,
+          "default_seed": null,
+          "name": "aclnn.chunk.bwd.dv.local",
+          "aclnn_name": "ChunkBwdDvLocal",
+          "triton_name": null,
+          "kernel_name": null,
+          "version": "v2.1",
+          "expected_error_msg": null,
+          "api": "pytorch",
+          "api_type": "executor_chunk_bwd_dv_local",
+          "aclnn_api_type": "aclnn_function",
+          "triton_api_type": "triton_function",
+          "fusion_api_type": "fusion_function",
+          "fusion_mode": null,
+          "dist_api_type": "dist_function",
+          "kernel_api_type": "kernel_function",
+          "backward": false,
+          "standard": {
+            "acc": "single_bm",
+            "perf": "not_key",
+            "mem": 1.1
+          },
+          "outputs": null,
+          "inputs": [
+            {
+              "name": "q",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                2,
+                2,
+                128,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "k",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                2,
+                2,
+                128,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "d_o",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                2,
+                8,
+                128,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "g",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp32",
+              "shape": [
+                2,
+                8,
+                128
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "upper_tri_matrix",
+              "type": "tensor",
+              "required": true,
+              "dtype": "uint8",
+              "shape": [
+                64,
+                64
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "g_gamma",
+              "type": "tensor",
+              "required": true,
+              "dtype": "fp32",
+              "shape": [
+                1,
+                1
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "A",
+              "type": "tensor",
+              "required": true,
+              "dtype": "bf16",
+              "shape": [
+                1,
+                2
+              ],
+              "range_values": [
+                -5,
+                5
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "cu_seqlens",
+              "type": "tensor",
+              "required": true,
+              "dtype": "int64",
+              "shape": [
+                3
+              ],
+              "range_values": [
+                1,
+                100
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "chunk_indices",
+              "type": "tensor",
+              "required": true,
+              "dtype": "int64",
+              "shape": [
+                8,
+                2
+              ],
+              "range_values": [
+                1,
+                100
+              ],
+              "backward": true,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "scale",
+              "type": "attr",
+              "required": true,
+              "dtype": "float",
+              "shape": null,
+              "range_values": 1.0,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "chunk_size",
+              "type": "attr",
+              "required": true,
+              "dtype": "int",
+              "shape": null,
+              "range_values": 64,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "is_mix",
+              "type": "attr",
+              "required": true,
+              "dtype": "bool",
+              "shape": null,
+              "range_values": true,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "is_fix",
+              "type": "attr",
+              "required": true,
+              "dtype": "bool",
+              "shape": null,
+              "range_values": true,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "qkv_type",
+              "type": "attr",
+              "required": true,
+              "dtype": "string",
+              "shape": null,
+              "range_values": "bf16",
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            },
+            {
+              "name": "h_ratio",
+              "type": "attr",
+              "required": true,
+              "dtype": "int",
+              "shape": null,
+              "range_values": 4,
+              "backward": false,
+              "align_32B": null,
+              "outlier_values": null
+            }
+          ],
+          "acl_json": "",
+          "method_inputs": null,
+          "tensor_input": null,
+          "compute_times": null,
+          "save_name": null,
+          "uuid": null,
+          "downloaded": false,
+          "is_boundary": false,
+          "xrun_cs_name": null,
+          "xrun_data": null
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c1",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 64,
+        "H_k": 8,
+        "H_v": 8,
+        "T": 1024,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.088,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5000,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C1",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 64,
+          "H_qk": 8,
+          "T": 1024,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.088,
+          "ktype": "float16",
+          "gtype": "float16",
+          "case_name": "C1",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c2",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 32,
+        "H_k": 16,
+        "H_v": 16,
+        "T": 2048,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5001,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C2",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 32,
+          "H_qk": 16,
+          "T": 2048,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "case_name": "C2",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c3",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 16,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 4096,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0442,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5002,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C3",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 16,
+          "H_qk": 32,
+          "T": 4096,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0442,
+          "ktype": "float16",
+          "gtype": "float16",
+          "case_name": "C3",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c4",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 8,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 8192,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.03125,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5003,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C4",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 8,
+          "H_qk": 32,
+          "T": 8192,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.03125,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "case_name": "C4",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c5",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 128,
+        "H_k": 4,
+        "H_v": 4,
+        "T": 1024,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.088,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5004,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C5",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 128,
+          "H_qk": 4,
+          "T": 1024,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.088,
+          "ktype": "float16",
+          "gtype": "float16",
+          "case_name": "C5",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c6",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 64,
+        "H_k": 8,
+        "H_v": 8,
+        "T": 4096,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5005,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C6",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 64,
+          "H_qk": 8,
+          "T": 4096,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "case_name": "C6",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c7",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 32,
+        "H_k": 16,
+        "H_v": 16,
+        "T": 8192,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0442,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5006,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C7",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 32,
+          "H_qk": 16,
+          "T": 8192,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0442,
+          "ktype": "float16",
+          "gtype": "float16",
+          "case_name": "C7",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c8",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 16,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 16384,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.03125,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5007,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C8",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 16,
+          "H_qk": 32,
+          "T": 16384,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.03125,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "case_name": "C8",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c9",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 64,
+        "H_k": 8,
+        "H_v": 8,
+        "T": 2048,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 128
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5008,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C9",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 64,
+          "H_qk": 8,
+          "T": 2048,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 128,
+          "scale": 0.0625,
+          "ktype": "float16",
+          "gtype": "float16",
+          "case_name": "C9",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c10",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 32,
+        "H_k": 16,
+        "H_v": 16,
+        "T": 4096,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 128
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0442,
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5009,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C10",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 32,
+          "H_qk": 16,
+          "T": 4096,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 128,
+          "scale": 0.0442,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "case_name": "C10",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c11",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 16,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 8192,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 128
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.03125,
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5010,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C11",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 16,
+          "H_qk": 32,
+          "T": 8192,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 128,
+          "scale": 0.03125,
+          "ktype": "float16",
+          "gtype": "float16",
+          "case_name": "C11",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c12",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 8,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 16384,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 128
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0221,
+        "chunk_size": 128
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5011,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C12",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 8,
+          "H_qk": 32,
+          "T": 16384,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 128,
+          "scale": 0.0221,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "case_name": "C12",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c13",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 4,
+        "H_v": 4,
+        "T": 1024,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.088,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5012,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C13",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 1,
+          "H_qk": 4,
+          "T": 1024,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.088,
+          "ktype": "float16",
+          "gtype": "float16",
+          "case_name": "C13",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c14",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 48,
+        "H_k": 8,
+        "H_v": 8,
+        "T": 2048,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5013,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C14",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 48,
+          "H_qk": 8,
+          "T": 2048,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "case_name": "C14",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c15",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 24,
+        "H_k": 16,
+        "H_v": 16,
+        "T": 4096,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0442,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5014,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C15",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 24,
+          "H_qk": 16,
+          "T": 4096,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0442,
+          "ktype": "float16",
+          "gtype": "float16",
+          "case_name": "C15",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_c16",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 12,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 8192,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.03125,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5015,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "C16",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 12,
+          "H_qk": 32,
+          "T": 8192,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.03125,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "case_name": "C16",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_v1",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 16,
+        "H_v": 16,
+        "T": 32768,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": {
+          "generator": "count",
+          "count": 512
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5016,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "V1",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 1,
+          "H_qk": 16,
+          "T": 32768,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "cu_seqlens_len": 512,
+          "ktype": "float16",
+          "gtype": "float32",
+          "case_name": "V1",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_v2",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 8,
+        "H_v": 8,
+        "T": 65536,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": {
+          "generator": "count",
+          "count": 1024
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5017,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "V2",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 1,
+          "H_qk": 8,
+          "T": 65536,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "cu_seqlens_len": 1024,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "case_name": "V2",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_v3",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 65536,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0442,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": {
+          "generator": "count",
+          "count": 1024
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5018,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "V3",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 1,
+          "H_qk": 32,
+          "T": 65536,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0442,
+          "cu_seqlens_len": 1024,
+          "ktype": "float16",
+          "gtype": "float32",
+          "case_name": "V3",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_v4",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 32,
+        "H_v": 32,
+        "T": 16384,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.03125,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": {
+          "generator": "count",
+          "count": 256
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5019,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "V4",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 1,
+          "H_qk": 32,
+          "T": 16384,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.03125,
+          "cu_seqlens_len": 256,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "case_name": "V4",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_vdim256_f1",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 512,
+        "K": 128,
+        "V": 256,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5020,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "Vdim256_F1",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 2,
+          "H_qk": 2,
+          "T": 512,
+          "K": 128,
+          "V": 256,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "case_name": "Vdim256_F1",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_vdim256_v1",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 512,
+        "K": 128,
+        "V": 256,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.011,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": {
+          "generator": "count",
+          "count": 4
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5021,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "Vdim256_V1",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 1,
+          "H_qk": 2,
+          "T": 512,
+          "K": 128,
+          "V": 256,
+          "chunk_size": 64,
+          "scale": 0.011,
+          "cu_seqlens_len": 4,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "case_name": "Vdim256_V1",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_gva_f1",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 4,
+        "H_v": 8,
+        "T": 512,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5022,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "GVA_F1",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 2,
+          "H_qk": 4,
+          "T": 512,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "h_ratio": 2,
+          "case_name": "GVA_F1",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_gva_f2",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 8,
+        "H_v": 16,
+        "T": 1024,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5023,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "GVA_F2",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 2,
+          "H_qk": 8,
+          "T": 1024,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "h_ratio": 2,
+          "case_name": "GVA_F2",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_gva_f3",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 4,
+        "H_v": 16,
+        "T": 512,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5024,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "GVA_F3",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 2,
+          "H_qk": 4,
+          "T": 512,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "h_ratio": 4,
+          "case_name": "GVA_F3",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_gva_f4",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 4,
+        "H_v": 8,
+        "T": 512,
+        "K": 128,
+        "V": 256,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5025,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "GVA_F4",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 2,
+          "H_qk": 4,
+          "T": 512,
+          "K": 128,
+          "V": 256,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "h_ratio": 2,
+          "case_name": "GVA_F4",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_gva_f5",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 8,
+        "H_v": 16,
+        "T": 1024,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5026,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "GVA_F5",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 2,
+          "H_qk": 8,
+          "T": 1024,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "ktype": "float16",
+          "gtype": "float16",
+          "h_ratio": 2,
+          "case_name": "GVA_F5",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_gva_fix4",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 176,
+        "H_k": 2,
+        "H_v": 64,
+        "T": 24,
+        "K": 128,
+        "V": 256,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "float16",
+        "g": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5027,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "GVA-FIX4",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 176,
+          "H_qk": 2,
+          "T": 24,
+          "K": 128,
+          "V": 256,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "ktype": "float16",
+          "gtype": "float32",
+          "h_ratio": 32,
+          "case_name": "GVA-FIX4",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_gva_v1",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 4,
+        "H_v": 8,
+        "T": 512,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": {
+          "generator": "count",
+          "count": 4
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5028,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "GVA_V1",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 1,
+          "H_qk": 4,
+          "T": 512,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "cu_seqlens_len": 4,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "h_ratio": 2,
+          "case_name": "GVA_V1",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_gva_v2",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 4,
+        "H_v": 16,
+        "T": 512,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "qkdo": "bfloat16",
+        "g": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "scale": 0.0625,
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "g_gamma": null,
+        "A": null,
+        "cu_seqlens": {
+          "generator": "count",
+          "count": 4
+        },
+        "chunk_indices": "generated_from_cu_seqlens"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 5029,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "GVA_V2",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 1,
+          "H_qk": 4,
+          "T": 512,
+          "K": 128,
+          "V": 128,
+          "chunk_size": 64,
+          "scale": 0.0625,
+          "cu_seqlens_len": 4,
+          "ktype": "bfloat16",
+          "gtype": "bfloat16",
+          "h_ratio": 4,
+          "case_name": "GVA_V2",
+          "_args": []
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0000",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.0625
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2026,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0000",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "H_qk",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "ktype",
+            "gtype",
+            "h_ratio"
+          ],
+          "values": [
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.0625,
+            "float16",
+            "float16",
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0001",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.0625
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2027,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0001",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "H_qk",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "ktype",
+            "gtype",
+            "h_ratio"
+          ],
+          "values": [
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.0625,
+            "bfloat16",
+            "bfloat16",
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0002",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.0625
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2028,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0002",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "H_qk",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "ktype",
+            "gtype",
+            "h_ratio"
+          ],
+          "values": [
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.0625,
+            "bfloat16",
+            "float32",
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0003",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.0625
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2029,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0003",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "H_qk",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "ktype",
+            "gtype",
+            "h_ratio"
+          ],
+          "values": [
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.0625,
+            "float16",
+            "float32",
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0004",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.0625
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2030,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0004",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "H_qk",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "ktype",
+            "gtype",
+            "h_ratio"
+          ],
+          "values": [
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.0625,
+            "bfloat16",
+            "bfloat16",
+            2
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_fixed_0005",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 2,
+        "H_k": 2,
+        "H_v": 8,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.0625
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2031,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "fixed_0005",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+        "raw": {
+          "group": "fixed",
+          "param_names": [
+            "B",
+            "H_qk",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "ktype",
+            "gtype",
+            "h_ratio"
+          ],
+          "values": [
+            2,
+            2,
+            65,
+            128,
+            128,
+            64,
+            0.0625,
+            "bfloat16",
+            "bfloat16",
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_variable_0000",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 64,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 1
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.011
+      },
+      "optional_inputs": {
+        "cu_seqlens": "generated",
+        "chunk_indices": "generated"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2026,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "variable_0000",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+        "raw": {
+          "group": "variable",
+          "param_names": [
+            "B",
+            "H_qk",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "cu_seqlens_len",
+            "ktype",
+            "gtype",
+            "h_ratio"
+          ],
+          "values": [
+            1,
+            2,
+            64,
+            128,
+            128,
+            64,
+            0.011,
+            2,
+            "float16",
+            "float16",
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_variable_0001",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 64,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 1
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.011
+      },
+      "optional_inputs": {
+        "cu_seqlens": "generated",
+        "chunk_indices": "generated"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2027,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "variable_0001",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+        "raw": {
+          "group": "variable",
+          "param_names": [
+            "B",
+            "H_qk",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "cu_seqlens_len",
+            "ktype",
+            "gtype",
+            "h_ratio"
+          ],
+          "values": [
+            1,
+            2,
+            64,
+            128,
+            128,
+            64,
+            0.011,
+            2,
+            "bfloat16",
+            "bfloat16",
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_variable_0002",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 64,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 1
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.011
+      },
+      "optional_inputs": {
+        "cu_seqlens": "generated",
+        "chunk_indices": "generated"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2028,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "variable_0002",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+        "raw": {
+          "group": "variable",
+          "param_names": [
+            "B",
+            "H_qk",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "cu_seqlens_len",
+            "ktype",
+            "gtype",
+            "h_ratio"
+          ],
+          "values": [
+            1,
+            2,
+            64,
+            128,
+            128,
+            64,
+            0.011,
+            2,
+            "bfloat16",
+            "float32",
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_variable_0003",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 64,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 1
+      },
+      "dtype": {
+        "data": "float16",
+        "gate": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.011
+      },
+      "optional_inputs": {
+        "cu_seqlens": "generated",
+        "chunk_indices": "generated"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2029,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "variable_0003",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+        "raw": {
+          "group": "variable",
+          "param_names": [
+            "B",
+            "H_qk",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "cu_seqlens_len",
+            "ktype",
+            "gtype",
+            "h_ratio"
+          ],
+          "values": [
+            1,
+            2,
+            64,
+            128,
+            128,
+            64,
+            0.011,
+            2,
+            "float16",
+            "float32",
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_variable_0004",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 4,
+        "T": 64,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 1
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.011
+      },
+      "optional_inputs": {
+        "cu_seqlens": "generated",
+        "chunk_indices": "generated"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2030,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "variable_0004",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+        "raw": {
+          "group": "variable",
+          "param_names": [
+            "B",
+            "H_qk",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "cu_seqlens_len",
+            "ktype",
+            "gtype",
+            "h_ratio"
+          ],
+          "values": [
+            1,
+            2,
+            64,
+            128,
+            128,
+            64,
+            0.011,
+            2,
+            "bfloat16",
+            "bfloat16",
+            2
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_fast_kernel_variable_0005",
+      "tags": [
+        "legacy",
+        "regression",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 8,
+        "T": 64,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 1
+      },
+      "dtype": {
+        "data": "bfloat16",
+        "gate": "bfloat16"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "chunk_size": 64,
+        "scale": 0.011
+      },
+      "optional_inputs": {
+        "cu_seqlens": "generated",
+        "chunk_indices": "generated"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "direct_launch"
+      ],
+      "reference": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 2031,
+      "legacy": {
+        "format": "pytest-parametrize-v1",
+        "suite": "fast_kernel_launch",
+        "original_id": "variable_0005",
+        "enabled": true,
+        "asset": "tests/operators/chunk_bwd_dv_local/routes/test_fast_kernel_chunk_bwd_dv_local.py",
+        "raw": {
+          "group": "variable",
+          "param_names": [
+            "B",
+            "H_qk",
+            "T",
+            "K",
+            "V",
+            "chunk_size",
+            "scale",
+            "cu_seqlens_len",
+            "ktype",
+            "gtype",
+            "h_ratio"
+          ],
+          "values": [
+            1,
+            2,
+            64,
+            128,
+            128,
+            64,
+            0.011,
+            2,
+            "bfloat16",
+            "bfloat16",
+            4
+          ]
+        }
+      }
+    }
+  ],
+  "data_generation": {
+    "floating_inputs": {
+      "distribution": "uniform",
+      "min": -1.0,
+      "max": 1.0
+    },
+    "positive_inputs": {
+      "distribution": "uniform",
+      "min": 0.0,
+      "max": 1.0
+    },
+    "structured_inputs": "由 case.optional_inputs 和 reference runner 构造 gate、状态及变长序列索引"
+  },
+  "coverage_requirements": {
+    "public_modes": [
+      "fixed",
+      "varlen",
+      "变长序列的两个索引必须同时提供"
+    ],
+    "known_limits": [
+      "`K` 仅支持 128，`V` 仅支持 128/256。",
+      "`chunk_size` 仅支持 64/128。",
+      "必须满足 `H_v % H_k == 0`；变长序列当前仅支持物理 `B=1`。",
+      "`g_gamma` 和 `A` 尚未实现，必须传 `None`。"
+    ],
+    "required_outputs": [
+      "d_v"
+    ],
+    "accuracy_case_ids": [
+      "dense_fp16_c64_v128",
+      "dense_bf16_c128_v256_gva",
+      "varlen_tail_fp16"
+    ],
+    "generalization_case_ids": [
+      "dense_fp16_c64_v128",
+      "dense_bf16_c128_v256_gva",
+      "varlen_tail_fp16"
+    ],
+    "negative_case_ids": [
+      "negative_reserved_A",
+      "negative_reserved_g_gamma",
+      "negative_partial_varlen_metadata"
+    ],
+    "route_case_ids": [
+      "dense_fp16_c64_v128",
+      "varlen_tail_fp16"
+    ],
+    "performance_case_ids": [
+      "dense_bf16_c128_v256_gva"
+    ],
+    "legacy_regression_case_ids": [
+      "legacy_atk_regression_0000",
+      "legacy_atk_regression_0001",
+      "legacy_atk_regression_0002",
+      "legacy_atk_regression_0003",
+      "legacy_direct_c1",
+      "legacy_direct_c2",
+      "legacy_direct_c3",
+      "legacy_direct_c4",
+      "legacy_direct_c5",
+      "legacy_direct_c6",
+      "legacy_direct_c7",
+      "legacy_direct_c8",
+      "legacy_direct_c9",
+      "legacy_direct_c10",
+      "legacy_direct_c11",
+      "legacy_direct_c12",
+      "legacy_direct_c13",
+      "legacy_direct_c14",
+      "legacy_direct_c15",
+      "legacy_direct_c16",
+      "legacy_direct_v1",
+      "legacy_direct_v2",
+      "legacy_direct_v3",
+      "legacy_direct_v4",
+      "legacy_direct_vdim256_f1",
+      "legacy_direct_vdim256_v1",
+      "legacy_direct_gva_f1",
+      "legacy_direct_gva_f2",
+      "legacy_direct_gva_f3",
+      "legacy_direct_gva_f4",
+      "legacy_direct_gva_f5",
+      "legacy_direct_gva_fix4",
+      "legacy_direct_gva_v1",
+      "legacy_direct_gva_v2",
+      "legacy_fast_kernel_fixed_0000",
+      "legacy_fast_kernel_fixed_0001",
+      "legacy_fast_kernel_fixed_0002",
+      "legacy_fast_kernel_fixed_0003",
+      "legacy_fast_kernel_fixed_0004",
+      "legacy_fast_kernel_fixed_0005",
+      "legacy_fast_kernel_variable_0000",
+      "legacy_fast_kernel_variable_0001",
+      "legacy_fast_kernel_variable_0002",
+      "legacy_fast_kernel_variable_0003",
+      "legacy_fast_kernel_variable_0004",
+      "legacy_fast_kernel_variable_0005"
+    ]
+  }
+}

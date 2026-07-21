@@ -11,15 +11,91 @@
  * \file chunk_bwd_dqkwg.cpp
  */
 
- #include "kernel_operator.h"
- #include "chunk_bwd_dqkwg_common.h"
- #include "chunk_bwd_dqkwg_cube.h"
- #include "chunk_bwd_dqkwg_vector.h"
- #include "lib/matmul_intf.h"
+#include "chunk_bwd_dqkwg_struct.h"
+#include "kernel_operator.h"
+#include "chunk_bwd_dqkwg_common.h"
+#include "chunk_bwd_dqkwg_cube.h"
+#include "chunk_bwd_dqkwg_vector.h"
+#ifndef TORCH_MODE
+#include "lib/matmul_intf.h"
+#endif
 
  using namespace AscendC;
 
- __global__ __aicore__ void chunk_bwd_dqkwg(
+namespace GDN {
+
+ template <typename DT, typename GT>
+ __aicore__ inline void ChunkBwdDqkwgKernelImpl(
+     GM_ADDR q,              // [B, HK, T, K]
+     GM_ADDR k,              // [B, HK, T, K]
+     GM_ADDR v,              // [B, HV, T, V]
+     GM_ADDR g,              // [B, HV, T]
+     GM_ADDR h,              // [B, HV, num_chunks, K, V]
+     GM_ADDR do_,            // [B, HV, T, V]
+     GM_ADDR dh,             // [B, HV, num_chunks, K, V]
+     GM_ADDR dv,             // [B, HV, T, V]
+     GM_ADDR cu_seqlens,     // [N+1] (optional)
+     GM_ADDR chunk_indices,  // [num_chunks, 2] (optional)
+     GM_ADDR w,
+     GM_ADDR g_gamma,
+     GM_ADDR dq,             // [B, HK, T, K] - output
+     GM_ADDR dk,             // [B, HK, T, K] - output
+     GM_ADDR dw,             // [B, HV, T, K] - output
+     GM_ADDR dg,             // [B, HV, T] - output (fp32)
+     GM_ADDR userWorkspace,
+     const ChunkBwdDqkwgTilingData *tilingData
+ )
+ {
+     (void)w;
+     (void)g_gamma;
+
+     if ASCEND_IS_AIC {
+         ChunkBwdDqkwgCubeProcess<DT, GT> cubeProcess(
+             q, k, v, g, h,
+             do_, dh, dv, cu_seqlens, chunk_indices,
+             dq, dk, dw, dg,
+             userWorkspace
+         );
+         cubeProcess.Init(*tilingData);
+         cubeProcess.Process();
+     }
+
+     if ASCEND_IS_AIV {
+         TPipe tPipe;
+         ChunkBwdDqkwgVectorProcess<DT, GT> vectorProcess(
+             q, k, v, g, h,
+             do_, dh, dv, cu_seqlens, chunk_indices, nullptr,
+             dq, dk, dw, dg,
+             userWorkspace
+         );
+         vectorProcess.Init(*tilingData, &tPipe);
+         vectorProcess.Process();
+     }
+ }
+
+} // namespace GDN
+
+#ifndef TORCH_MODE
+template <int D_T>
+struct DqkwgDTypeTraits;
+
+template <>
+struct DqkwgDTypeTraits<CHUNK_BWD_DQKWG_TPL_BF16> {
+    using type = bfloat16_t;
+};
+
+template <>
+struct DqkwgDTypeTraits<CHUNK_BWD_DQKWG_TPL_FP16> {
+    using type = half;
+};
+
+template <>
+struct DqkwgDTypeTraits<CHUNK_BWD_DQKWG_TPL_FP32> {
+    using type = float;
+};
+
+template <uint64_t strategy, int D_T_Q, int D_T_G, int V>
+__global__ __aicore__ void chunk_bwd_dqkwg(
      GM_ADDR q,              // [B, HK, T, K]
      GM_ADDR k,              // [B, HK, T, K]
      GM_ADDR v,              // [B, HV, T, V]
@@ -39,48 +115,25 @@
      GM_ADDR workspace,      // workspace buffer
      GM_ADDR tiling          // . data
  )
- {
+{
 
-     // 设置溢出处理
+     (void)strategy;
+     (void)V;
      AscendCUtils::SetOverflow(1);
-
-     // 根据 TilingKey 选择执行路径
-     if (TILING_KEY_IS(1)) {
-
-         // 使用 C-V 融合模式
-         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
-         GET_TILING_DATA(tilingData, tiling);
-         GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
-         if (userWorkspace == nullptr) {
-             return;
-         }
-         // AIC (Cube) 端执行
-
-         if ASCEND_IS_AIC {
-             ChunkBwdDqkwgCubeProcess<DTYPE_Q, DTYPE_G> cubeProcess(
-                 q, k, v, g, h,
-                 do_, dh, dv, cu_seqlens, chunk_indices,
-                 dq, dk, dw, dg,
-                 userWorkspace
-             );
-             cubeProcess.Init(tilingData);
-             cubeProcess.Process();
-         }
-
-         // AIV (Vector) 端执行
-         if ASCEND_IS_AIV {
-             TPipe tPipe; // 创建 TPipe 用于 Vector 端流水
-             ChunkBwdDqkwgVectorProcess<DTYPE_Q, DTYPE_G> vectorProcess(
-                 q, k, v, g, h,
-                 do_, dh, dv, cu_seqlens, chunk_indices, nullptr,        //mask = nullptr
-                 dq, dk, dw, dg,
-                 userWorkspace
-             );
-             vectorProcess.Init(tilingData, &tPipe);
-             vectorProcess.Process();
-         }
-
+     GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
+     if (userWorkspace == nullptr) {
+         return;
      }
+
+     REGISTER_TILING_DEFAULT(GDN::ChunkBwdDqkwgTilingData);
+     GET_TILING_DATA_WITH_STRUCT(GDN::ChunkBwdDqkwgTilingData, tilingData, tiling);
+     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+
+     GDN::ChunkBwdDqkwgKernelImpl<typename DqkwgDTypeTraits<D_T_Q>::type,
+                                  typename DqkwgDTypeTraits<D_T_G>::type>(
+         q, k, v, g, h, do_, dh, dv, cu_seqlens, chunk_indices, w, g_gamma,
+         dq, dk, dw, dg, userWorkspace, &tilingData);
 
      return;
  }
+#endif

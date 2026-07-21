@@ -1,0 +1,94 @@
+digraph EvidenceChain {
+    graph [
+        charset="UTF-8",
+        rankdir=TB,
+        bgcolor="#ffffff",
+        pad="0.35",
+        nodesep="0.45",
+        ranksep="0.75",
+        splines=polyline,
+        fontname="Microsoft YaHei",
+        fontsize=20,
+        label="chunk_bwd_dv_local 超时：从现象到根因的证据链",
+        labelloc=t
+    ];
+    node [
+        shape=box,
+        style="rounded,filled",
+        color="#64748b",
+        fillcolor="#f8fafc",
+        fontname="Microsoft YaHei",
+        fontsize=12,
+        margin="0.16,0.10"
+    ];
+    edge [
+        color="#64748b",
+        fontname="Microsoft YaHei",
+        fontsize=10,
+        arrowsize=0.75,
+        penwidth=1.4
+    ];
+
+    subgraph cluster_observation {
+        label="直接现象";
+        color="#93c5fd";
+        style="rounded";
+
+        shape_case [label="A5/DT, BSND\nB=2, H=32, T=8192\nK=V=128, chunk=64", fillcolor="#e0f2fe", color="#0284c7"];
+        nondeterministic [label="固定输入循环\n前三轮完整通过\n后续一轮在 step 125 卡住", fillcolor="#e0f2fe", color="#0284c7"];
+        batch_control [label="B=4 对照未观察到卡死\nB=2 更容易触发", fillcolor="#e0f2fe", color="#0284c7"];
+        one_process [label="单进程单算子即可复现\n排除多进程互锁为必要条件", fillcolor="#e0f2fe", color="#0284c7"];
+    }
+
+    subgraph cluster_runtime {
+        label="运行时证据";
+        color="#fca5a5";
+        style="rounded";
+
+        op_sync [label="watchdog 固定停在\nop_sync", fillcolor="#fee2e2", color="#dc2626"];
+        pending [label="同一 stream/task 反复超时\nsqHead 长时间不变\npendingNum = 1", fillcolor="#fee2e2", color="#dc2626"];
+        health [label="Health = OK\nFault Event = 0", fillcolor="#e0f2fe", color="#0284c7"];
+    }
+
+    subgraph cluster_source {
+        label="源码与修复证据";
+        color="#fcd34d";
+        style="rounded";
+
+        gated_fix [label="第一阶段只补齐\nAIV -> AIC gated reverse\n问题仍可复现", fillcolor="#fef3c7", color="#d97706"];
+        qk_raw [label="源码发现 QK 通道仍为 raw\nAIC Set(flag 3)\nAIV Wait(flag 3)", fillcolor="#fef3c7", color="#d97706"];
+        qk_pressure [label="AIC 领先 AIV 时\nforward flag outstanding 增长\n有限计数窗口失去反压", fillcolor="#fee2e2", color="#dc2626"];
+        cycle [label="AIC/AIV 流水无法继续\nkernel 不返回", fillcolor="#fee2e2", color="#dc2626"];
+        fix_1978 [label="1978b63 只修改 QK 同步\nraw Set/Wait -> WithReverse\n数学与接口未改", fillcolor="#dcfce7", color="#059669"];
+        ab_pass [label="同一环境、原 shape\n替换修复 kernel 后不再卡死", fillcolor="#dcfce7", color="#059669"];
+    }
+
+    subgraph cluster_conclusion {
+        label="结论边界";
+        color="#94a3b8";
+        style="rounded";
+
+        root [label="高置信根因\nQK 跨核通知缺少有界反压", fillcolor="#dcfce7", color="#059669", penwidth=2.2];
+        cann [label="CANN 包版本影响复现概率\n但不是必要根因", fillcolor="#f1f5f9", color="#64748b"];
+        slot [label="仍需独立检查\nworkspace slot 最后消费完成点\nreverse ACK 不天然等于 FREE", fillcolor="#f1f5f9", color="#64748b"];
+    }
+
+    shape_case -> nondeterministic;
+    shape_case -> batch_control;
+    shape_case -> one_process;
+    nondeterministic -> op_sync;
+    op_sync -> pending;
+    health -> pending [style=dashed, label="不排除 kernel 死锁"];
+    batch_control -> qk_pressure [style=dashed, label="速度/调度敏感"];
+    one_process -> qk_raw [label="转向 kernel 内协议"];
+    gated_fix -> qk_raw [label="第一次修复未闭环"];
+    qk_raw -> qk_pressure;
+    qk_pressure -> cycle;
+    cycle -> pending;
+    qk_raw -> fix_1978;
+    fix_1978 -> ab_pass;
+    pending -> root;
+    ab_pass -> root [penwidth=2.2];
+    root -> cann [style=dashed, label="降级早期版本假设"];
+    root -> slot [style=dashed, label="不外推"];
+}

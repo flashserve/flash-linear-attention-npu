@@ -13,23 +13,27 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 
-ASCENDC_NAMES = (
-    "causal_conv1d",
-    "causal_conv1d_bwd",
-    "chunk_bwd_dqkwg",
-    "chunk_bwd_dv_local",
-    "chunk_fwd_o",
-    "chunk_gated_delta_rule_bwd_dhu",
-    "chunk_gated_delta_rule_fwd_h",
-    "prepare_wy_repr_bwd_da",
-    "prepare_wy_repr_bwd_full",
-    "recompute_w_u_fwd",
-    "solve_tri",
-)
+ROOT = Path(__file__).resolve().parents[1]
+CASE_ROOT = ROOT / "tests" / "op_cases"
+
+
+def _ascendc_names() -> tuple[str, ...]:
+    names = []
+    for path in sorted(CASE_ROOT.glob("*.json")):
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        if manifest.get("implementation") == "ascendc":
+            names.append(manifest["op"])
+    if not names:
+        raise AssertionError("no Ascend C operator manifests found")
+    return tuple(names)
+
+
+ASCENDC_NAMES = _ascendc_names()
 
 TRITON_NAMES = (
     "autocast_custom_bwd",

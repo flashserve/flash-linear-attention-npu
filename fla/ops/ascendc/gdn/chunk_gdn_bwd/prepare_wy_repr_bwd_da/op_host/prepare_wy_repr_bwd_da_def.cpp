@@ -88,7 +88,11 @@ public:
 
         this->AICore().AddConfig("ascend910b");
         this->AICore().AddConfig("ascend910_93");
-        this->AICore().AddConfig("ascend950", aicore_config);
+#ifdef ASCEND_SOC_VERSION
+        if (std::string(ASCEND_SOC_VERSION) == "ascend950") {
+            this->AICore().AddConfig("ascend950", aicore_config);
+        }
+#endif
     }
 };
 OP_ADD(PrepareWyReprBwdDa);

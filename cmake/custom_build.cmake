@@ -42,6 +42,9 @@ if (BUILD_OPEN_PROJECT)
     target_compile_options(op_host_aclnn PRIVATE
             $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++1z>
     )
+    target_compile_definitions(op_host_aclnn PRIVATE
+            ASCEND_SOC_VERSION="${ASCEND_COMPUTE_UNIT}"
+    )
 
     add_library(op_host_aclnnInner SHARED EXCLUDE_FROM_ALL)
     target_link_libraries(op_host_aclnnInner PRIVATE
@@ -57,6 +60,9 @@ if (BUILD_OPEN_PROJECT)
     )
     target_compile_options(op_host_aclnnExc PRIVATE
             $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++1z>
+    )
+    target_compile_definitions(op_host_aclnnExc PRIVATE
+            ASCEND_SOC_VERSION="${ASCEND_COMPUTE_UNIT}"
     )
 
     # op api
@@ -99,8 +105,22 @@ if (BUILD_OPEN_PROJECT)
     set_target_properties(cust_opapi PROPERTIES OUTPUT_NAME
             cust_opapi
     )
+    add_library(opapi_compat SHARED
+            ${CMAKE_CURRENT_BINARY_DIR}/cust_opapi_stub.cpp
+    )
+    target_compile_options(opapi_compat PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++1z>
+    )
+    target_link_libraries(opapi_compat PRIVATE
+            -Wl,--no-as-needed
+            cust_opapi
+            -Wl,--as-needed
+    )
+    set_target_properties(opapi_compat PROPERTIES
+            OUTPUT_NAME opapi
+    )
     if (NOT ENABLE_BUILT_IN)
-        install(TARGETS cust_opapi
+        install(TARGETS cust_opapi opapi_compat
                 LIBRARY DESTINATION packages/vendors/${VENDOR_NAME}_transformer/op_api/lib
         )
     endif()
@@ -251,15 +271,14 @@ op_add_subdirectory(OP_LIST OP_DIR_LIST)
 
 if (BUILD_OPEN_PROJECT)
     if (ENABLE_TEST)
-        set(OP_UT_LIST)
-        set(OP_UT_DIR_LIST)
-        op_add_ut_subdirectory(OP_UT_LIST OP_UT_DIR_LIST)
-        foreach (OP_UT_LIST ${OP_UT_DIR_LIST})
-            # 仅通过op_add_subdirectory添加的算子目录，需要在这里add tests
-            if(OP_UT_LIST IN_LIST OP_DIR_LIST)
-                if (EXISTS "${OP_UT_LIST}/tests/CMakeLists.txt")
-                    add_subdirectory(${OP_UT_LIST}/tests)
-                endif()
+        foreach (OP_TEST_OP_DIR ${OP_DIR_LIST})
+            get_filename_component(OP_TEST_OP_NAME "${OP_TEST_OP_DIR}" NAME)
+            set(OP_TEST_DIR "${OP_TEST_OP_DIR}/tests")
+            set(CANONICAL_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/operators/${OP_TEST_OP_NAME}")
+            if (EXISTS "${CANONICAL_TEST_DIR}/CMakeLists.txt")
+                add_subdirectory(${CANONICAL_TEST_DIR})
+            elseif (EXISTS "${OP_TEST_DIR}/CMakeLists.txt")
+                add_subdirectory(${OP_TEST_DIR})
             endif()
         endforeach ()
 
@@ -325,11 +344,16 @@ endif()
 
 if(ENABLE_TEST)
     foreach (OP_DIR ${OP_DIR_LIST})
-        if (NOT EXISTS "${OP_DIR}/tests/CMakeLists.txt")
+        get_filename_component(OP_TEST_OP_NAME "${OP_DIR}" NAME)
+        set(OP_TEST_CMAKE "${OP_DIR}/tests/CMakeLists.txt")
+        set(CANONICAL_TEST_CMAKE "${CMAKE_CURRENT_SOURCE_DIR}/tests/operators/${OP_TEST_OP_NAME}/CMakeLists.txt")
+        if (EXISTS "${CANONICAL_TEST_CMAKE}")
+            set(OP_TEST_CMAKE "${CANONICAL_TEST_CMAKE}")
+        elseif (NOT EXISTS "${OP_TEST_CMAKE}")
             continue()
         endif()
 
-        file(READ "${OP_DIR}/tests/CMakeLists.txt" CML_CONTENT)
+        file(READ "${OP_TEST_CMAKE}" CML_CONTENT)
         if (CML_CONTENT MATCHES "OpsTest_Level2_AddOp")
             set(UTEST_FRAMEWORK_OLD TRUE CACHE BOOL "UTEST_FRAMEWORK_OLD" FORCE)
         else()

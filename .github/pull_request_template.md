@@ -126,12 +126,10 @@ bash build.sh --pkg --soc=ascend950 --ops=<op_name> --vendor_name=fla_npu
 `torch_custom` 适配验证:
 
 ```sh
-cd torch_custom/fla_npu
-bash build.sh
-cd test
-python3 test_npu_<op_name>.py
-# 或执行全部 GDN 单算子测试
-bash test.sh
+(cd torch_custom/fla_npu && bash build.sh)
+bash tests/operators/run.sh --device 0 --op <op_name>
+# 或执行全部已注册 Ascend C 算子
+bash tests/operators/run.sh --device 0
 ```
 
 `examples/fast_kernel_launch_example` 验证:
@@ -159,7 +157,7 @@ bash build_and_test.sh
 python examples/flash_gated_delta_rule.py
 ```
 
-也可以由仓库 Admin 权限账号触发 CI 验证：`/run-npu-ci quick`。CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例，默认覆盖当前 `case1_current_default`，仅覆盖容器内逻辑设备号 `--device`。
+也可以由仓库 Admin 权限账号触发 CI 验证：`/run-npu-ci quick`。CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例，默认覆盖当前 `case1_current_default`，仅覆盖容器内逻辑设备号 `--device`。需要同时验证本 PR 修改算子的泛化和主精度矩阵时，使用 `/run-npu-ci quick ops=<op_a>,<op_b>`；多个算子名使用英文逗号连接且逗号后不加空格。
 
 通过标准:
 

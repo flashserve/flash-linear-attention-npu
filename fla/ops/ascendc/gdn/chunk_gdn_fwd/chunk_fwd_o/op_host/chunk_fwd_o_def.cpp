@@ -65,7 +65,7 @@ public:
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .AutoContiguous();
 
-        this->Input("chunk_offsets")
+        this->Input("chunk_indices")
             .ParamType(OPTIONAL)
             .ValueDepend(OPTIONAL)
             .DataType({ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64})
@@ -95,7 +95,11 @@ public:
 
         this->AICore().AddConfig("ascend910b", aicore_config);
         this->AICore().AddConfig("ascend910_93", aicore_config);
-        this->AICore().AddConfig("ascend950", aicore_config);
+#ifdef ASCEND_SOC_VERSION
+        if (std::string(ASCEND_SOC_VERSION) == "ascend950") {
+            this->AICore().AddConfig("ascend950", aicore_config);
+        }
+#endif
     }
 };
 

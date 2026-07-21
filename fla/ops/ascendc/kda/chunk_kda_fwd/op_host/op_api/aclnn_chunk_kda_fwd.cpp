@@ -13,6 +13,7 @@
 #include "../../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_host/op_api/chunk_gated_delta_rule_fwd_h.h"
 
 #include <cstring>
+#include <cmath>
 
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
@@ -116,18 +117,6 @@ int64_t KdaFwdNumel(const aclTensor *tensor)
         numel *= shape.GetDim(idx);
     }
     return numel;
-}
-
-aclnnStatus KdaFwdCopyMaybeCastAfter(const aclTensor *src, const aclTensor *dependency,
-                                     const aclTensor *dst, aclOpExecutor *executor)
-{
-    const aclTensor *castSrc = KdaFwdMaybeCast(src, dst->GetDataType(), executor);
-    CHECK_RET(castSrc != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    const aclTensor *linearSrc = l0op::Reshape(castSrc, KdaFwdMakeShape({1, 1, 1, KdaFwdNumel(castSrc)}), executor);
-    CHECK_RET(linearSrc != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(l0op::KdaLayoutSwap12(linearSrc, dependency, dst, executor)[0] != nullptr,
-              ACLNN_ERR_INNER_NULLPTR);
-    return ACLNN_SUCCESS;
 }
 
 size_t KdaFwdRank(const aclTensor *tensor)
@@ -256,6 +245,25 @@ bool KdaFwdSameShape(const aclTensor *lhs, const aclTensor *rhs)
     return true;
 }
 
+bool KdaFwdHasShape(const aclTensor *tensor, std::initializer_list<int64_t> dims)
+{
+    if (tensor == nullptr || KdaFwdRank(tensor) != dims.size()) {
+        return false;
+    }
+    size_t idx = 0;
+    for (int64_t dim : dims) {
+        if (KdaFwdDim(tensor, idx++) != dim) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool KdaFwdHasDtype(const aclTensor *tensor, DataType dtype)
+{
+    return tensor != nullptr && tensor->GetDataType() == dtype;
+}
+
 aclnnStatus KdaFwdParseLayout(const char *layout, KdaFwdLayout &parsed)
 {
     CHECK_COND(layout != nullptr, ACLNN_ERR_PARAM_INVALID,
@@ -361,6 +369,19 @@ aclnnStatus KdaFwdCheckParams(const ChunkKdaFwdParams &params)
                ACLNN_ERR_PARAM_NULLPTR, "ChunkKdaFwd outputs must not be nullptr.");
     CHECK_COND(params.chunkSize > 0, ACLNN_ERR_PARAM_INVALID, "chunkSize must be positive.");
     CHECK_COND(params.totalChunks > 0, ACLNN_ERR_PARAM_INVALID, "totalChunks must be positive.");
+    CHECK_COND(std::isfinite(params.scale), ACLNN_ERR_PARAM_INVALID, "scale must be finite.");
+    const DataType qDtype = params.q->GetDataType();
+    CHECK_COND((qDtype == DataType::DT_FLOAT16 || qDtype == DataType::DT_BF16) &&
+                   params.k->GetDataType() == qDtype && params.v->GetDataType() == qDtype,
+               ACLNN_ERR_PARAM_INVALID, "q, k and v must have the same float16 or bfloat16 dtype.");
+    CHECK_COND((params.gk->GetDataType() == DataType::DT_FLOAT ||
+                params.gk->GetDataType() == DataType::DT_BF16) &&
+                   (params.beta->GetDataType() == DataType::DT_FLOAT ||
+                    params.beta->GetDataType() == DataType::DT_BF16),
+               ACLNN_ERR_PARAM_INVALID, "gk and beta must be float32 or bfloat16.");
+    CHECK_COND(params.initialStateOptional == nullptr ||
+                   params.initialStateOptional->GetDataType() == DataType::DT_FLOAT,
+               ACLNN_ERR_PARAM_INVALID, "initialStateOptional must be float32.");
     size_t qRank = KdaFwdRank(params.q);
     size_t betaRank = KdaFwdRank(params.beta);
     CHECK_COND((qRank == 4 && betaRank == 3) || (qRank == 3 && betaRank == 2), ACLNN_ERR_PARAM_INVALID,
@@ -368,6 +389,80 @@ aclnnStatus KdaFwdCheckParams(const ChunkKdaFwdParams &params)
     size_t kDimIdx = (qRank == 4) ? 3 : 2;
     CHECK_COND(params.q->GetViewShape().GetDim(kDimIdx) <= MAX_KDA_K_DIM, ACLNN_ERR_PARAM_INVALID,
                "k head dimension must be less than or equal to 256.");
+    for (const aclTensor *tensor : {params.q, params.k, params.v, params.gk, params.beta}) {
+        for (size_t idx = 0; idx < KdaFwdRank(tensor); ++idx) {
+            CHECK_COND(KdaFwdDim(tensor, idx) > 0, ACLNN_ERR_PARAM_INVALID,
+                       "all q/k/v/gk/beta dimensions must be positive.");
+        }
+    }
+    return ACLNN_SUCCESS;
+}
+
+aclnnStatus KdaFwdCheckOutputContract(const ChunkKdaFwdParams &params, KdaFwdLayout layout,
+                                      int64_t batch, int64_t seqlen, int64_t hvNum, int64_t kDim,
+                                      int64_t vDim, int64_t seqNum)
+{
+    const bool isRank3 = layout == KdaFwdLayout::TND || layout == KdaFwdLayout::NTD;
+    const bool isInternalLayout = layout == KdaFwdLayout::BNSD || layout == KdaFwdLayout::NTD;
+    CHECK_COND(KdaFwdSameShape(params.oOut, params.v) && params.oOut->GetDataType() == params.v->GetDataType(),
+               ACLNN_ERR_PARAM_INVALID, "oOut must match v shape and dtype.");
+    CHECK_COND(KdaFwdHasShape(params.finalStateOut, {seqNum, hvNum, kDim, vDim}) &&
+                   KdaFwdHasDtype(params.finalStateOut, DataType::DT_FLOAT),
+               ACLNN_ERR_PARAM_INVALID,
+               "finalStateOut must always be float32 [seq_num, HV, K, V]; Python may hide it when disabled.");
+
+    const bool returnIntermediates = KdaFwdNumel(params.aqkOut) != 0;
+    const aclTensor *intermediates[] = {params.aqkOut, params.akkOut, params.wOut, params.uOut,
+                                        params.qgOut, params.kgOut, params.vNewOut, params.hOut};
+    if (!returnIntermediates) {
+        for (const aclTensor *tensor : intermediates) {
+            CHECK_COND(KdaFwdNumel(tensor) == 0, ACLNN_ERR_PARAM_INVALID,
+                       "all intermediate outputs must be empty when Aqk is empty.");
+        }
+        return ACLNN_SUCCESS;
+    }
+    for (const aclTensor *tensor : intermediates) {
+        CHECK_COND(KdaFwdNumel(tensor) > 0, ACLNN_ERR_PARAM_INVALID,
+                   "all intermediate outputs must be materialized together.");
+    }
+
+    bool aqkShapeOk = false;
+    bool wShapeOk = false;
+    bool hShapeOk = false;
+    if (isRank3) {
+        aqkShapeOk = isInternalLayout ? KdaFwdHasShape(params.aqkOut, {hvNum, seqlen, params.chunkSize}) :
+                                        KdaFwdHasShape(params.aqkOut, {seqlen, hvNum, params.chunkSize});
+        wShapeOk = isInternalLayout ? KdaFwdHasShape(params.wOut, {hvNum, seqlen, kDim}) :
+                                      KdaFwdHasShape(params.wOut, {seqlen, hvNum, kDim});
+        hShapeOk = isInternalLayout ?
+            KdaFwdHasShape(params.hOut, {hvNum, params.totalChunks, kDim, vDim}) :
+            KdaFwdHasShape(params.hOut, {params.totalChunks, hvNum, kDim, vDim});
+    } else {
+        aqkShapeOk = isInternalLayout ?
+            KdaFwdHasShape(params.aqkOut, {batch, hvNum, seqlen, params.chunkSize}) :
+            KdaFwdHasShape(params.aqkOut, {batch, seqlen, hvNum, params.chunkSize});
+        wShapeOk = isInternalLayout ? KdaFwdHasShape(params.wOut, {batch, hvNum, seqlen, kDim}) :
+                                      KdaFwdHasShape(params.wOut, {batch, seqlen, hvNum, kDim});
+        hShapeOk = isInternalLayout ?
+            KdaFwdHasShape(params.hOut, {batch, hvNum, params.totalChunks, kDim, vDim}) :
+            KdaFwdHasShape(params.hOut, {batch, params.totalChunks, hvNum, kDim, vDim});
+    }
+    CHECK_COND(aqkShapeOk && KdaFwdSameShape(params.akkOut, params.aqkOut), ACLNN_ERR_PARAM_INVALID,
+               "AqkOut/AkkOut shape must follow layout with trailing [T, chunkSize].");
+    CHECK_COND(wShapeOk && KdaFwdSameShape(params.qgOut, params.wOut) &&
+                   KdaFwdSameShape(params.kgOut, params.wOut),
+               ACLNN_ERR_PARAM_INVALID, "wOut/qgOut/kgOut must follow layout with trailing [T, K].");
+    CHECK_COND(KdaFwdSameShape(params.uOut, params.v) && KdaFwdSameShape(params.vNewOut, params.v),
+               ACLNN_ERR_PARAM_INVALID, "uOut and vNewOut must match v shape.");
+    CHECK_COND(hShapeOk, ACLNN_ERR_PARAM_INVALID, "hOut shape must follow layout and [totalChunks, K, V].");
+
+    const DataType qDtype = params.q->GetDataType();
+    const DataType vDtype = params.v->GetDataType();
+    CHECK_COND(KdaFwdHasDtype(params.aqkOut, qDtype) && KdaFwdHasDtype(params.akkOut, qDtype) &&
+                   KdaFwdHasDtype(params.wOut, qDtype) && KdaFwdHasDtype(params.qgOut, qDtype) &&
+                   KdaFwdHasDtype(params.kgOut, qDtype) && KdaFwdHasDtype(params.hOut, qDtype) &&
+                   KdaFwdHasDtype(params.uOut, vDtype) && KdaFwdHasDtype(params.vNewOut, vDtype),
+               ACLNN_ERR_PARAM_INVALID, "intermediate output dtypes must follow q or v as documented.");
     return ACLNN_SUCCESS;
 }
 
@@ -428,6 +523,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     L2_DFX_PHASE_1(aclnnChunkKdaFwd,
                    DFX_IN(q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional),
                    DFX_OUT(oOut, finalStateOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut));
+    CHECK_COND(workspaceSize != nullptr, ACLNN_ERR_PARAM_NULLPTR, "workspaceSize must not be nullptr.");
+    CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "executor must not be nullptr.");
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
@@ -479,6 +576,9 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     CHECK_COND(KdaFwdSplitCubePathSupported(params, kDim, vDim), ACLNN_ERR_PARAM_INVALID,
                "npu_chunk_kda_fwd only supports the AscendC split cube/vector path: q/k/v dtype must be the same "
                "fp16/bf16 type, chunkSize must be 64 or 128, K/V must be multiples of 16, and V must be <= 256.");
+    CHECK_RET(KdaFwdCheckOutputContract(params, parsedLayout, batch, seqlen, hvNum, kDim, vDim, seqNum) ==
+                  ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
 
     const aclTensor *qBsnd = params.q;
     const aclTensor *kBsnd = params.k;
@@ -515,9 +615,17 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *gkBnsdRaw = isInternalLayout ? gkBsnd :
         executorPtr->AllocTensor(KdaFwdMakeShape({batch, hvNum, seqlen, kDim}),
                                  params.gk->GetDataType(), Format::FORMAT_ND);
-    const aclTensor *betaBnsRaw = isInternalLayout ? betaBsn :
-        executorPtr->AllocTensor(KdaFwdMakeShape({batch, hvNum, seqlen}),
-                                 params.beta->GetDataType(), Format::FORMAT_ND);
+    const aclTensor *betaBsnd4 = nullptr;
+    const aclTensor *betaBnsd4 = nullptr;
+    const aclTensor *betaBnsRaw = betaBsn;
+    if (!isInternalLayout) {
+        // KdaLayoutSwap12 的公开 rank-3 语义是交换维 0/1。beta 带 batch 的
+        // [B,T,Hv] 需要交换维 1/2，因此临时补一个尾维，统一走 rank-4 模板。
+        betaBsnd4 = l0op::Reshape(betaBsn, KdaFwdMakeShape({batch, seqlen, hvNum, 1}), executorPtr);
+        betaBnsd4 = executorPtr->AllocTensor(KdaFwdMakeShape({batch, hvNum, seqlen, 1}),
+                                             params.beta->GetDataType(), Format::FORMAT_ND);
+        betaBnsRaw = l0op::Reshape(betaBnsd4, KdaFwdMakeShape({batch, hvNum, seqlen}), executorPtr);
+    }
     bool returnIntermediates = KdaFwdNumel(params.aqkOut) != 0;
     const aclTensor *oBnsd = nullptr;
     const aclTensor *aqkBnst = nullptr;
@@ -581,9 +689,11 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const bool externalComputeBuffersReady = isInternalLayout ||
         (wBnsd != nullptr && uBnsd != nullptr && qgBnsd != nullptr && kgBnsd != nullptr &&
          vNewBnsd != nullptr && hBnst != nullptr);
+    const bool externalBetaBuffersReady = isInternalLayout ||
+        (betaBsnd4 != nullptr && betaBnsd4 != nullptr && betaBnsRaw != nullptr);
     CHECK_RET(qBnsd != nullptr && kBnsd != nullptr && vBnsd != nullptr && gkBnsdRaw != nullptr &&
-                  betaBnsRaw != nullptr && oBnsd != nullptr && internalIntermediateOutputsReady &&
-                  externalComputeBuffersReady,
+                  betaBnsRaw != nullptr && externalBetaBuffersReady && oBnsd != nullptr &&
+                  internalIntermediateOutputsReady && externalComputeBuffersReady,
               ACLNN_ERR_INNER_NULLPTR);
 
     if (!isInternalLayout) {
@@ -591,7 +701,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         CHECK_RET(l0op::KdaLayoutSwap12(kBsnd, kBnsd, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(l0op::KdaLayoutSwap12(vBsnd, vBnsd, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(l0op::KdaLayoutSwap12(gkBsnd, gkBnsdRaw, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::KdaLayoutSwap12(betaBsn, betaBnsRaw, executorPtr)[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        CHECK_RET(l0op::KdaLayoutSwap12(betaBsnd4, betaBnsd4, executorPtr)[0] != nullptr,
+                  ACLNN_ERR_INNER_NULLPTR);
     }
 
     const aclTensor *gkBnsd = gkBnsdRaw;
@@ -772,21 +883,21 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
                           ACLNN_ERR_INNER_NULLPTR);
             }
             if (returnIntermediates) {
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[2], oBnsd, aqkBnst, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[2], aqkBnst, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[3], aqkBnst, akkBnst, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[3], akkBnst, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[4], akkBnst, wBnsd, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[4], wBnsd, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[5], wBnsd, uBnsd, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[5], uBnsd, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[6], uBnsd, qgBnsd, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[6], qgBnsd, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[7], qgBnsd, kgBnsd, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[7], kgBnsd, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[8], kgBnsd, vNewBnsd, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[8], vNewBnsd, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
-                CHECK_RET(KdaFwdCopyMaybeCastAfter(result[9], vNewBnsd, hBnst, executorPtr) == ACLNN_SUCCESS,
+                CHECK_RET(KdaFwdViewCopyMaybeCast(result[9], hBnst, executorPtr) == ACLNN_SUCCESS,
                           ACLNN_ERR_INNER_NULLPTR);
             }
         }
@@ -897,6 +1008,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
 aclnnStatus aclnnChunkKdaFwd(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkKdaFwd);
+    CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "executor must not be nullptr.");
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
                "ChunkKdaFwd launch failed.");
     return ACLNN_SUCCESS;

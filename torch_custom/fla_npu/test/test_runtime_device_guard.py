@@ -42,6 +42,23 @@ class FakeTensor:
         return self._data_ptr
 
 
+class FakeDescriptorTensor(FakeTensor):
+    def __init__(self, index: int, shape, strides, data_ptr: int = 0x1234):
+        super().__init__(index, data_ptr)
+        self.shape = tuple(shape)
+        self.dtype = object()
+        self._strides = tuple(strides)
+
+    def dim(self) -> int:
+        return len(self.shape)
+
+    def stride(self):
+        return self._strides
+
+    def storage_offset(self) -> int:
+        return 0
+
+
 class FakeNpu:
     def __init__(self, current_device: int = 0):
         self.current_device_index = current_device
@@ -175,6 +192,44 @@ class RuntimeDeviceGuardTest(unittest.TestCase):
             ],
         )
         self.assertEqual(npu.current_device(), 0)
+
+    def test_acl_tensor_preserves_logical_rank_in_storage_shape(self):
+        captured = {}
+
+        def acl_create_tensor(
+            view_shape,
+            view_rank,
+            dtype,
+            strides,
+            storage_offset,
+            tensor_format,
+            storage_shape,
+            storage_rank,
+            data_ptr,
+        ):
+            captured["view_shape"] = tuple(view_shape[index] for index in range(view_rank.value))
+            captured["strides"] = tuple(strides[index] for index in range(view_rank.value))
+            captured["storage_shape"] = tuple(storage_shape[index] for index in range(storage_rank.value))
+            captured["storage_rank"] = storage_rank.value
+            return 0xCAFE
+
+        runtime = types.SimpleNamespace(
+            acl_create_tensor=acl_create_tensor,
+            acl_destroy_tensor=mock.Mock(),
+        )
+        tensor = FakeDescriptorTensor(0, shape=(2, 3, 5, 7), strides=(105, 35, 7, 1))
+
+        with mock.patch.object(RUNTIME, "dtype_to_acl", return_value=1):
+            with mock.patch.object(RUNTIME, "acl_format", return_value=RUNTIME.ACL_FORMAT_ND):
+                with mock.patch.object(RUNTIME, "storage_data_ptr", return_value=0x1234):
+                    descriptor = RUNTIME._AclTensor(runtime, tensor)
+
+        self.assertEqual(captured["view_shape"], (2, 3, 5, 7))
+        self.assertEqual(captured["strides"], (105, 35, 7, 1))
+        self.assertEqual(captured["storage_shape"], (2, 3, 5, 7))
+        self.assertEqual(captured["storage_rank"], 4)
+        descriptor.destroy()
+        runtime.acl_destroy_tensor.assert_called_once_with(0xCAFE)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@
 #include "kernel_operator.h"
 #include "platform/platform_ascendc.h"
 
+#include "common/fast_kernel_launch_workspace.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/recompute_wu_fwd/op_host/op_tiling/recompute_wu_fwd_tiling_processor.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/recompute_wu_fwd/op_kernel/recompute_wu_fwd.cpp"
 
@@ -282,19 +283,17 @@ std::tuple<at::Tensor, at::Tensor> recompute_wu_fwd_npu(
         chunkIndicesPtr = (GM_ADDR)chunkIndicesTensor.data_ptr();
     }
 
-    void *workspacePtr = nullptr;
-    if (tilingResult.workspaceSize > 0) {
-        auto ret = aclrtMalloc(&workspacePtr, tilingResult.workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: ", ret);
-    }
-    GM_ADDR workspaceGm = (GM_ADDR)workspacePtr;
+    at::Tensor workspaceTensor =
+        fast_kernel_launch::AllocateDeviceBuffer(k, tilingResult.workspaceSize, "RecomputeWUFwd workspace");
+    GM_ADDR workspaceGm = fast_kernel_launch::TensorGmAddr(workspaceTensor);
 
     auto kDtype = k.scalar_type();
     auto betaDtype = beta.scalar_type();
     auto tiling = tilingResult.tiling;
     auto blockDim = tilingResult.blockDim;
 
-    auto aclCall = [=]() -> int {
+    auto aclCall = [=, workspaceTensor = workspaceTensor, gTensor = gTensor,
+                    cuSeqlensTensor = cuSeqlensTensor, chunkIndicesTensor = chunkIndicesTensor]() -> int {
         if (kDtype == at::kBFloat16 && betaDtype == at::kBFloat16) {
             DispatchByV<bfloat16_t, bfloat16_t>(blockDim, stream, kPtr, vPtr, betaPtr, aPtr, gPtr, cuSeqlensPtr,
                                                 chunkIndicesPtr, wPtr, uPtr, workspaceGm, tiling);
@@ -314,10 +313,7 @@ std::tuple<at::Tensor, at::Tensor> recompute_wu_fwd_npu(
     };
 
     at_npu::native::OpCommand::RunOpApi("RecomputeWUFwd", aclCall);
-
-    if (workspacePtr != nullptr) {
-        aclrtFree(workspacePtr);
-    }
+    c10_npu::getCurrentNPUStream().synchronize();
 
     return std::make_tuple(w, u);
 }

@@ -137,7 +137,6 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
 {
     OP_CHECK_NULL_WITH_CONTEXT(context, context->GetInputShape(G_INDEX));
     OP_CHECK_NULL_WITH_CONTEXT(context, context->GetInputDesc(G_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context, context->GetOutputShape(OUT_INDEX));
     OP_CHECK_NULL_WITH_CONTEXT(context, context->GetOutputDesc(OUT_INDEX));
     OP_CHECK_NULL_WITH_CONTEXT(context, context->GetAttrs());
 
@@ -157,7 +156,6 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
                 OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
                                             "out dtype must be float32, float16, or bfloat16."),
                 return ge::GRAPH_FAILED);
-
     auto chunkSizePtr = context->GetAttrs()->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_INDEX);
     auto reversePtr = context->GetAttrs()->GetAttrPointer<bool>(ATTR_REVERSE_INDEX);
     auto scalePtr = context->GetAttrs()->GetAttrPointer<float>(ATTR_SCALE_INDEX);
@@ -206,21 +204,40 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     int64_t outer = batch * head;
 
     int64_t cuSeqlensElements = 0;
+    int64_t chunkIndicesElements = 0;
     auto cuSeqlensShapePtr = context->GetInputShape(CU_SEQLENS_INDEX);
     if (context->GetOptionalInputDesc(CU_SEQLENS_INDEX) != nullptr && cuSeqlensShapePtr != nullptr) {
         cuSeqlensElements = cuSeqlensShapePtr->GetStorageShape().GetShapeSize();
     }
-    bool isVarlen = cuSeqlensElements > 0;
+    auto chunkIndicesShapePtr = context->GetInputShape(CHUNK_INDICES_INDEX);
+    if (context->GetOptionalInputDesc(CHUNK_INDICES_INDEX) != nullptr && chunkIndicesShapePtr != nullptr) {
+        chunkIndicesElements = chunkIndicesShapePtr->GetStorageShape().GetShapeSize();
+    }
+    const bool hasCuSeqlens = cuSeqlensElements > 0;
+    const bool hasChunkIndices = chunkIndicesElements > 0;
+    OP_CHECK_IF(hasCuSeqlens != hasChunkIndices,
+                OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
+                                            "cu_seqlens and chunk_indices_out must be provided together."),
+                return ge::GRAPH_FAILED);
+    bool isVarlen = hasCuSeqlens;
     if (isVarlen) {
-        auto chunkIndicesShapePtr = context->GetInputShape(CHUNK_INDICES_INDEX);
-        OP_CHECK_IF(context->GetOptionalInputDesc(CHUNK_INDICES_INDEX) == nullptr,
-                    OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
-                                                "chunk_indices_out is required when cu_seqlens is provided."),
-                    return ge::GRAPH_FAILED);
         OP_CHECK_NULL_WITH_CONTEXT(context, chunkIndicesShapePtr);
-        OP_CHECK_IF(chunkIndicesShapePtr->GetStorageShape().GetShapeSize() == 0,
+        const auto &cuSeqlensShape = cuSeqlensShapePtr->GetStorageShape();
+        const auto &chunkIndicesShape = chunkIndicesShapePtr->GetStorageShape();
+        OP_CHECK_IF(cuSeqlensShape.GetDimNum() != 1 || cuSeqlensShape.GetDim(0) < 2,
                     OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
-                                                "chunk_indices_out is required when cu_seqlens is not empty."),
+                                                "cu_seqlens must be rank 1 with at least two elements."),
+                    return ge::GRAPH_FAILED);
+        const bool validFlatIndices = chunkIndicesShape.GetDimNum() == 1 && chunkIndicesElements % 2 == 0;
+        const bool validPairIndices = chunkIndicesShape.GetDimNum() == 2 && chunkIndicesShape.GetDim(1) == 2;
+        OP_CHECK_IF(!validFlatIndices && !validPairIndices,
+                    OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
+                                                "chunk_indices_out must be [2*N_b] or [N_b,2]."),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(context->GetOptionalInputDesc(CU_SEQLENS_INDEX)->GetDataType() != ge::DT_INT64 ||
+                        context->GetOptionalInputDesc(CHUNK_INDICES_INDEX)->GetDataType() != ge::DT_INT64,
+                    OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
+                                                "cu_seqlens and chunk_indices_out must use int64."),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(batch != 1,
                     OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
@@ -238,10 +255,45 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     int64_t nt = (t + blockT - 1) / blockT;
     if (isVarlen) {
         const auto &chunkIndicesShape = context->GetInputShape(CHUNK_INDICES_INDEX)->GetStorageShape();
-        OP_CHECK_IF(chunkIndicesShape.GetShapeSize() % 2 != 0,
-                    OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "chunk_indices_out element count must be even."),
+        const gert::Tensor *cuSeqlensTensor = context->GetOptionalInputTensor(CU_SEQLENS_INDEX);
+        const gert::Tensor *chunkIndicesTensor = context->GetOptionalInputTensor(CHUNK_INDICES_INDEX);
+        const int64_t *cuSeqlensData = cuSeqlensTensor == nullptr ? nullptr : cuSeqlensTensor->GetData<int64_t>();
+        const int64_t *chunkIndicesData =
+            chunkIndicesTensor == nullptr ? nullptr : chunkIndicesTensor->GetData<int64_t>();
+        OP_CHECK_NULL_WITH_CONTEXT(context, cuSeqlensData);
+        OP_CHECK_NULL_WITH_CONTEXT(context, chunkIndicesData);
+        const int64_t sequenceCount = cuSeqlensShapePtr->GetStorageShape().GetDim(0) - 1;
+        OP_CHECK_IF(cuSeqlensData[0] != 0 || cuSeqlensData[sequenceCount] != t,
+                    OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
+                                                "cu_seqlens must start at 0 and end at T=%ld.", t),
                     return ge::GRAPH_FAILED);
-        nt = chunkIndicesShape.GetShapeSize() / 2;
+        const int64_t suppliedBlockCount = chunkIndicesShape.GetShapeSize() / 2;
+        int64_t expectedBlockCount = 0;
+        for (int64_t seqId = 0; seqId < sequenceCount; ++seqId) {
+            const int64_t seqStart = cuSeqlensData[seqId];
+            const int64_t seqEnd = cuSeqlensData[seqId + 1];
+            OP_CHECK_IF(seqStart < 0 || seqEnd < seqStart || seqEnd > t,
+                        OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
+                                                    "cu_seqlens must be non-decreasing and within [0,T]."),
+                        return ge::GRAPH_FAILED);
+            const int64_t localBlockCount = CeilDiv(seqEnd - seqStart, blockT);
+            for (int64_t localBlock = 0; localBlock < localBlockCount; ++localBlock) {
+                OP_CHECK_IF(expectedBlockCount >= suppliedBlockCount ||
+                                chunkIndicesData[expectedBlockCount * 2] != seqId ||
+                                chunkIndicesData[expectedBlockCount * 2 + 1] != localBlock,
+                            OPS_REPORT_VECTOR_INNER_ERR(
+                                context->GetNodeName(),
+                                "chunk_indices_out must list every processing block in sequence-major order."),
+                            return ge::GRAPH_FAILED);
+                ++expectedBlockCount;
+            }
+        }
+        nt = suppliedBlockCount;
+        OP_CHECK_IF(nt != expectedBlockCount,
+                    OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
+                                                "chunk_indices_out has %ld pairs, expected %ld.", nt,
+                                                expectedBlockCount),
+                    return ge::GRAPH_FAILED);
     }
 
     auto platformInfoPtr = context->GetPlatformInfo();

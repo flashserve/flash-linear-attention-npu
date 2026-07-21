@@ -6,7 +6,7 @@
 
 - `chunk_size=128`：C9-C12、C26、C30。
 - `Vdim=256`：C21-C24、C27-C29、C31-C33。
-- BF16、`Kdim=128`、BSND/NTD、dense/varlen、随机非对齐尾块。
+- BF16、`Kdim=128`、BSND/NTD、定长/变长序列、随机非对齐尾块。
 - Stage 1 AIV/Cube 双槽流水和 Stage 3 双 AIV 大块路径的性能收益。
 
 本轮不使用双标杆。精度标杆使用 CPU FP32 中间计算：汇总指标比较 NPU BF16 输出转 FP32后的值与 CPU FP32 结果；CT 可视化前再把 CPU 结果 cast 到 BF16 输出边界，与 NPU BF16 输出保持同一公开 dtype。每条用例使用：
@@ -78,23 +78,23 @@ test_chunk_kda_fwd_ntd_direct_matches_reference
 
 | 用例 | 优化前 | 优化后 | 降幅 | 优化后主要耗时 |
 | --- | ---: | ---: | ---: | --- |
-| BNSD `B=1,H_K=1,H_V=2,T=16384,K=V=128,C=64` | 4.751 ms | 3.531 ms | 25.7% | stage 1 1.512 ms，fwd_h 1.385 ms |
-| NTD `B=1,H_K=H_V=32,T=65536,K=V=128,C=64` | 206.142 ms | 127.648 ms | 38.1% | stage 1 93.123 ms，stage 2 21.991 ms |
-| BSND C9 `B=64,H_K=H_V=8,T=2048,K=V=128,C=128` | 114.572 ms | 68.035 ms | 40.6% | stage 1 42.374 ms，layout 10.011 ms |
-| NTD C33 `B=1,H_K=16,H_V=48,T=8999,K=128,V=256,C=128` | 48.621 ms | 27.210 ms | 44.0% | stage 1 19.064 ms，stage 2 5.114 ms |
+| BNSD `B=1,H_K=1,H_V=2,T=16384,K=V=128,chunk_size=64` | 4.751 ms | 3.531 ms | 25.7% | stage 1 1.512 ms，fwd_h 1.385 ms |
+| NTD `B=1,H_K=H_V=32,T=65536,K=V=128,chunk_size=64` | 206.142 ms | 127.648 ms | 38.1% | stage 1 93.123 ms，stage 2 21.991 ms |
+| BSND C9 `B=64,H_K=H_V=8,T=2048,K=V=128,chunk_size=128` | 114.572 ms | 68.035 ms | 40.6% | stage 1 42.374 ms，layout 10.011 ms |
+| NTD C33 `B=1,H_K=16,H_V=48,T=8999,K=128,V=256,chunk_size=128` | 48.621 ms | 27.210 ms | 44.0% | stage 1 19.064 ms，stage 2 5.114 ms |
 
 优化项与证据：
 
 - Stage 3 使用两个 AIV subblock 分摊连续行，并把逐行搬运改为 UB 预算内的大块搬运/向量处理，耗时降低 `84.8%~92.2%`。
 - Stage 1 使用两槽 `ready/free` 生产者消费者队列，使 AIV factor 准备与 AIC Catlass score GEMM 重叠，耗时降低 `10.0%~31.7%`。
-- `fwd_h` 的 varlen chunk offset 元数据由逐任务 GM 标量读取改为一次 `DataCopyPad` 批量搬入 UB，随后只在 UB 中索引；长序列 `fwd_h` 从 `6.545 ms` 降至 `5.505 ms`。
+- `fwd_h` 的变长序列 chunk offset 元数据由逐任务 GM 标量读取改为一次 `DataCopyPad` 批量搬入 UB，随后只在 UB 中索引；长序列 `fwd_h` 从 `6.545 ms` 降至 `5.505 ms`。
 - 三个长序列/大 shape 的 Stage 1 AIC `wait_id4` 由 `29.94/20.43/12.26 ms` 降到 `14.92/7.20/3.40 ms`。
 - score workspace 按 core 数和固定队列深度分配，不随 T 或 chunk 数线性增长。
 
 ## 5. 当前边界与后续优化
 
 - 当前交付验证范围为 `Kdim=128`、`Vdim=128/256`、`chunk_size=64/128`、FP16/BF16。
-- varlen partial chunk 已保证正确性，当前使用完整 tile 补中性值并只回写有效区；仍可增加专用 partial 性能模板。
+- 变长序列 partial chunk 已保证正确性，当前使用完整 tile 补中性值并只回写有效区；仍可增加专用 partial 性能模板。
 - Stage 1 仍占长序列链路约 `62%~72%`，后续优先降低 score scratch 往返、score block 控制开销和 solve 串行段。
 - BSND 大 head 场景还受到 layout swap 影响；上游已提供 BNSD/NTD 时应直接使用性能 layout。
 - 本报告不覆盖 KDA 反向算子，也不把未执行的 sanitizer 检查写成通过结论。

@@ -18,6 +18,8 @@
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
 
+#include <cmath>
+
 namespace optiling {
 
 static void ChunkFwdOTilingDataPrint(gert::TilingContext *context, const ChunkFwdOTilingData &tiling)
@@ -41,6 +43,9 @@ static void ChunkFwdOTilingDataPrint(gert::TilingContext *context, const ChunkFw
 
 ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
 {
+    if (context == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
     OP_LOGD(context->GetNodeName(), "Tiling4ChunkFwdO start.");
     ChunkFwdOTilingData *tiling = context->GetTilingData<ChunkFwdOTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
@@ -49,12 +54,39 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, attrPtr);
 
     auto qInputDesc = context->GetInputDesc(CHUNK_FWD_O_INPUT_Q_IDX);
+    auto kInputDesc = context->GetInputDesc(CHUNK_FWD_O_INPUT_K_IDX);
+    auto vInputDesc = context->GetInputDesc(CHUNK_FWD_O_INPUT_V_IDX);
+    auto hInputDesc = context->GetInputDesc(CHUNK_FWD_O_INPUT_H_IDX);
     auto gInputDesc = context->GetInputDesc(CHUNK_FWD_O_INPUT_G_IDX);
+    auto oOutputDesc = context->GetOutputDesc(CHUNK_FWD_O_OUTPUT_O_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, qInputDesc);
+    OP_CHECK_NULL_WITH_CONTEXT(context, kInputDesc);
+    OP_CHECK_NULL_WITH_CONTEXT(context, vInputDesc);
+    OP_CHECK_NULL_WITH_CONTEXT(context, hInputDesc);
     OP_CHECK_NULL_WITH_CONTEXT(context, gInputDesc);
+    OP_CHECK_NULL_WITH_CONTEXT(context, oOutputDesc);
 
     ge::DataType qDtype = qInputDesc->GetDataType();
     ge::DataType gDtype = gInputDesc->GetDataType();
+    OP_CHECK_IF((qDtype != ge::DT_FLOAT16 && qDtype != ge::DT_BF16) ||
+                    kInputDesc->GetDataType() != qDtype || vInputDesc->GetDataType() != qDtype ||
+                    hInputDesc->GetDataType() != qDtype || oOutputDesc->GetDataType() != qDtype,
+                OP_LOGE(context->GetNodeName(), "q/k/v/h/o must use matching float16 or bfloat16 dtype."),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(gDtype != ge::DT_FLOAT && gDtype != qDtype,
+                OP_LOGE(context->GetNodeName(), "g must use float32 or match q dtype."),
+                return ge::GRAPH_FAILED);
+    auto cuSeqlensDesc = context->GetOptionalInputDesc(CHUNK_FWD_O_INPUT_SEQLENS_IDX);
+    auto chunkIndicesDesc = context->GetOptionalInputDesc(CHUNK_FWD_O_INPUT_CHUNK_INDICES_IDX);
+    OP_CHECK_IF((cuSeqlensDesc == nullptr) != (chunkIndicesDesc == nullptr),
+                OP_LOGE(context->GetNodeName(),
+                        "cu_seqlens and chunk_indices must both be provided or both be absent."),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(cuSeqlensDesc != nullptr &&
+                    (cuSeqlensDesc->GetDataType() != ge::DT_INT64 ||
+                     chunkIndicesDesc->GetDataType() != ge::DT_INT64),
+                OP_LOGE(context->GetNodeName(), "cu_seqlens and chunk_indices must use int64."),
+                return ge::GRAPH_FAILED);
     int64_t dataType = (qDtype == ge::DT_BF16) ? CHUNK_FWD_O_DTYPE_BF16 : CHUNK_FWD_O_DTYPE_FP16;
     int64_t gDataType = CHUNK_FWD_O_DTYPE_FP32;
     if (gDtype == ge::DT_BF16) {
@@ -63,9 +95,26 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
         gDataType = CHUNK_FWD_O_DTYPE_FP16;
     }
 
-    const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    auto scalePtr = attrPtr->GetAttrPointer<double>(CHUNK_FWD_O_ATTR_SCALE_IDX);
+    auto chunkSizePtr = attrPtr->GetAttrPointer<int64_t>(CHUNK_FWD_O_ATTR_CHUNK_SIZE_IDX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, scalePtr);
+    OP_CHECK_NULL_WITH_CONTEXT(context, chunkSizePtr);
+    OP_CHECK_IF(!std::isfinite(*scalePtr),
+                OP_LOGE(context->GetNodeName(), "scale must be finite."),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(*chunkSizePtr != 64 && *chunkSizePtr != 128,
+                OP_LOGE(context->GetNodeName(), "chunk_size must be 64 or 128."),
+                return ge::GRAPH_FAILED);
+
+    auto platformInfo = context->GetPlatformInfo();
+    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    const auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     uint32_t aicCoreNum = ascendcPlatform.GetCoreNumAic();
+    OP_CHECK_IF(aicCoreNum == 0, OP_LOGE(context->GetNodeName(), "AIC core count must be positive."),
+                return ge::GRAPH_FAILED);
     size_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+    const auto *cuSeqlensTensor = context->GetOptionalInputTensor(CHUNK_FWD_O_INPUT_SEQLENS_IDX);
+    const auto *chunkIndicesTensor = context->GetOptionalInputTensor(CHUNK_FWD_O_INPUT_CHUNK_INDICES_IDX);
 
     ChunkFwdOTilingContext ctx{
         context->GetNodeName(),
@@ -74,10 +123,13 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
         context->GetOptionalInputShape(CHUNK_FWD_O_INPUT_V_IDX),
         context->GetOptionalInputShape(CHUNK_FWD_O_INPUT_H_IDX),
         context->GetOptionalInputShape(CHUNK_FWD_O_INPUT_G_IDX),
+        context->GetOutputShape(CHUNK_FWD_O_OUTPUT_O_IDX),
         context->GetOptionalInputShape(CHUNK_FWD_O_INPUT_SEQLENS_IDX),
-        context->GetOptionalInputShape(CHUNK_FWD_O_INPUT_CHUNK_OFFSETS_IDX),
-        *(attrPtr->GetAttrPointer<double>(CHUNK_FWD_O_ATTR_SCALE_IDX)),
-        *(attrPtr->GetAttrPointer<int64_t>(CHUNK_FWD_O_ATTR_CHUNK_SIZE_IDX)),
+        context->GetOptionalInputShape(CHUNK_FWD_O_INPUT_CHUNK_INDICES_IDX),
+        cuSeqlensTensor == nullptr ? nullptr : cuSeqlensTensor->GetData<int64_t>(),
+        chunkIndicesTensor == nullptr ? nullptr : chunkIndicesTensor->GetData<int64_t>(),
+        *scalePtr,
+        *chunkSizePtr,
         dataType,
         gDataType,
         aicCoreNum,
@@ -89,6 +141,7 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
 
     context->SetBlockDim(aicCoreNum);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
     currentWorkspace[0] = processor.GetWorkspaceSize();
 
     ChunkFwdOTilingDataPrint(context, *tiling);

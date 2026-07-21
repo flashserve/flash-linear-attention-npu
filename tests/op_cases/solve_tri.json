@@ -1,0 +1,1492 @@
+{
+  "schema_version": 1,
+  "op": "solve_tri",
+  "implementation": "ascendc",
+  "model": "gdn",
+  "symbol_table_version": "gdn-shape-v1",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": [
+      "bfloat16",
+      "float16"
+    ],
+    "layouts": [
+      "bhtd",
+      "bsnd",
+      "tnd"
+    ],
+    "features": [
+      "dense BHTD/BSND",
+      "变长序列 TND",
+      "支持尾块"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ],
+    "optional_routes": [
+      "torch_ops_npu"
+    ]
+  },
+  "data_generation": {
+    "floating_inputs": {
+      "distribution": "uniform",
+      "min": -1.0,
+      "max": 1.0
+    },
+    "positive_inputs": {
+      "distribution": "uniform",
+      "min": 0.0,
+      "max": 1.0
+    },
+    "structured_inputs": "由 reference 名称对应的 runner 构造 gate、三角矩阵、状态和索引"
+  },
+  "coverage_requirements": {
+    "public_modes": [
+      "dense BHTD/BSND",
+      "变长序列 TND",
+      "支持尾块"
+    ],
+    "known_limits": [
+      "矩阵阶/最后一维 chunk_size 支持 16/32/64/128。",
+      "layout 仅支持小写 `bhtd`、`bsnd`、`tnd`；TND 必须提供两个变长序列索引，定长布局 不接受变长序列索引。",
+      "输入必须表示严格下三角 A；对角线由算子加单位阵。"
+    ],
+    "required_outputs": [
+      "x_out"
+    ],
+    "accuracy_case_ids": [
+      "solve_tri_main_accuracy",
+      "solve_tri_dtype_layout_generalization",
+      "solve_tri_tail_or_varlen",
+      "solve_tri_c16_boundary"
+    ],
+    "generalization_case_ids": [
+      "solve_tri_dtype_layout_generalization",
+      "solve_tri_tail_or_varlen",
+      "solve_tri_c16_boundary"
+    ],
+    "negative_case_ids": [
+      "solve_tri_negative_contract",
+      "solve_tri_invalid_chunk_size",
+      "solve_tri_invalid_layout_case"
+    ],
+    "route_case_ids": [
+      "solve_tri_main_accuracy",
+      "solve_tri_performance"
+    ],
+    "performance_case_ids": [
+      "solve_tri_performance"
+    ],
+    "legacy_regression_case_ids": [
+      "legacy_direct_b1_h1_t16_c16",
+      "legacy_direct_b2_h4_t32_c16",
+      "legacy_direct_b1_h2_t32_c32",
+      "legacy_direct_b2_h4_t64_c32",
+      "legacy_direct_b1_h2_t64_c64",
+      "legacy_direct_b2_h4_t128_c64",
+      "legacy_direct_b1_h2_t128_c128",
+      "legacy_tnd_generated_0000",
+      "legacy_tnd_generated_0001",
+      "legacy_tnd_generated_0002",
+      "legacy_tnd_generated_0003",
+      "legacy_tnd_generated_0004",
+      "legacy_tnd_generated_0005",
+      "legacy_tnd_generated_0006",
+      "legacy_tnd_generated_0007",
+      "legacy_tnd_generated_0008",
+      "legacy_tnd_generated_0009",
+      "legacy_triton_comparison_generated_0000"
+    ]
+  },
+  "tolerance": {
+    "float16": {
+      "rtol": 0.003,
+      "atol": 0.003
+    },
+    "bfloat16": {
+      "rtol": 0.006,
+      "atol": 0.006
+    }
+  },
+  "cases": [
+    {
+      "id": "solve_tri_main_accuracy",
+      "tags": [
+        "accuracy",
+        "example",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 128,
+        "H_v": 4,
+        "chunk_size": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "x": "float16"
+      },
+      "layout": "bsnd",
+      "attrs": {
+        "layout": "bsnd"
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch",
+        "torch_ops_npu"
+      ],
+      "reference": "torch_linalg_triangular_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "x_out"
+        ]
+      },
+      "seed": 2026
+    },
+    {
+      "id": "solve_tri_dtype_layout_generalization",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary"
+      ],
+      "shape": {
+        "B": 2,
+        "T": 256,
+        "H_v": 8,
+        "chunk_size": 128,
+        "N_c": 2
+      },
+      "dtype": {
+        "x": "bfloat16"
+      },
+      "layout": "bhtd",
+      "attrs": {
+        "layout": "bhtd"
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_linalg_triangular_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "x_out"
+        ]
+      },
+      "seed": 2027
+    },
+    {
+      "id": "solve_tri_tail_or_varlen",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "tail"
+      ],
+      "shape": {
+        "N": 2,
+        "T": 193,
+        "H_v": 4,
+        "chunk_size": 64,
+        "N_c": 4
+      },
+      "dtype": {
+        "x": "bfloat16"
+      },
+      "layout": "tnd",
+      "attrs": {
+        "layout": "tnd"
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          65,
+          193
+        ],
+        "chunk_indices": [
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          1,
+          1
+        ]
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_linalg_triangular_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "x_out"
+        ]
+      },
+      "seed": 2028
+    },
+    {
+      "id": "solve_tri_performance",
+      "tags": [
+        "performance",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 128,
+        "H_v": 4,
+        "chunk_size": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "x": "float16"
+      },
+      "layout": "bsnd",
+      "attrs": {
+        "layout": "bsnd"
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "direct_launch"
+      ],
+      "reference": "fla_npu.ops.triton.solve_tril_npu",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "metric": "msopprof",
+        "requirement": "faster_than_triton"
+      },
+      "seed": 2029
+    },
+    {
+      "id": "solve_tri_negative_contract",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 128,
+        "H_v": 4,
+        "chunk_size": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "x": "float16"
+      },
+      "layout": "tnd",
+      "attrs": {
+        "layout": "tnd"
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "cu_seqlens"
+      },
+      "seed": 2030
+    },
+    {
+      "id": "solve_tri_c16_boundary",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 33,
+        "H_v": 2,
+        "chunk_size": 16,
+        "N_c": 3
+      },
+      "dtype": {
+        "x": "float16"
+      },
+      "layout": "bsnd",
+      "attrs": {
+        "layout": "bsnd"
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "torch_linalg_triangular_reference",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "x_out"
+        ]
+      },
+      "seed": 2031
+    },
+    {
+      "id": "solve_tri_invalid_chunk_size",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 48,
+        "H_v": 2,
+        "chunk_size": 48,
+        "N_c": 1
+      },
+      "dtype": {
+        "x": "float16"
+      },
+      "layout": "bsnd",
+      "attrs": {
+        "layout": "bsnd"
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "16, 32, 64 or 128"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2032
+    },
+    {
+      "id": "solve_tri_invalid_layout_case",
+      "tags": [
+        "negative",
+        "boundary"
+      ],
+      "shape": {
+        "B": 1,
+        "T": 64,
+        "H_v": 2,
+        "chunk_size": 32,
+        "N_c": 2
+      },
+      "dtype": {
+        "x": "float16"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "layout": "BSND"
+      },
+      "optional_inputs": {
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "error_contract",
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "message_contains": "lowercase"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "seed": 2033
+    },
+    {
+      "id": "legacy_direct_b1_h1_t16_c16",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_v": 1,
+        "T": 16,
+        "chunk_size": 16
+      },
+      "dtype": {
+        "A": "float16"
+      },
+      "layout": "BHTD",
+      "attrs": {
+        "layout": "bhtd"
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 8000,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "b1_h1_t16_c16",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 1,
+          "H": 1,
+          "T": 16,
+          "BT": 16
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_b2_h4_t32_c16",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_v": 4,
+        "T": 32,
+        "chunk_size": 16
+      },
+      "dtype": {
+        "A": "float16"
+      },
+      "layout": "BHTD",
+      "attrs": {
+        "layout": "bhtd"
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 8001,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "b2_h4_t32_c16",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 2,
+          "H": 4,
+          "T": 32,
+          "BT": 16
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_b1_h2_t32_c32",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_v": 2,
+        "T": 32,
+        "chunk_size": 32
+      },
+      "dtype": {
+        "A": "float16"
+      },
+      "layout": "BHTD",
+      "attrs": {
+        "layout": "bhtd"
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 8002,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "b1_h2_t32_c32",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 1,
+          "H": 2,
+          "T": 32,
+          "BT": 32
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_b2_h4_t64_c32",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_v": 4,
+        "T": 64,
+        "chunk_size": 32
+      },
+      "dtype": {
+        "A": "float16"
+      },
+      "layout": "BHTD",
+      "attrs": {
+        "layout": "bhtd"
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 8003,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "b2_h4_t64_c32",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 2,
+          "H": 4,
+          "T": 64,
+          "BT": 32
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_b1_h2_t64_c64",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_v": 2,
+        "T": 64,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "A": "float16"
+      },
+      "layout": "BHTD",
+      "attrs": {
+        "layout": "bhtd"
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 8004,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "b1_h2_t64_c64",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 1,
+          "H": 2,
+          "T": 64,
+          "BT": 64
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_b2_h4_t128_c64",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 2,
+        "H_v": 4,
+        "T": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "A": "float16"
+      },
+      "layout": "BHTD",
+      "attrs": {
+        "layout": "bhtd"
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 8005,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "b2_h4_t128_c64",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 2,
+          "H": 4,
+          "T": 128,
+          "BT": 64
+        }
+      }
+    },
+    {
+      "id": "legacy_direct_b1_h2_t128_c128",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_v": 2,
+        "T": 128,
+        "chunk_size": 128
+      },
+      "dtype": {
+        "A": "float16"
+      },
+      "layout": "BHTD",
+      "attrs": {
+        "layout": "bhtd"
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "torch_ops_npu"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 8006,
+      "legacy": {
+        "format": "python-main-v0",
+        "suite": "direct_regression",
+        "original_id": "b1_h2_t128_c128",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_direct.py",
+        "raw": {
+          "B": 1,
+          "H": 2,
+          "T": 128,
+          "BT": 128
+        }
+      }
+    },
+    {
+      "id": "legacy_tnd_generated_0000",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "N": 1,
+        "T": 3580,
+        "chunk_size": 64,
+        "N_c": 56,
+        "H_v": 8
+      },
+      "dtype": {
+        "A_out": "float16"
+      },
+      "layout": "TND",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          3580
+        ],
+        "chunk_indices": "derived"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 42,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "tnd_generated",
+        "original_id": "seed42_00",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+        "raw": {
+          "values": [
+            [
+              3580
+            ],
+            8,
+            64
+          ],
+          "param_names": [
+            "seq_lens",
+            "H",
+            "chunk_size"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_tnd_generated_0001",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "N": 1,
+        "T": 3580,
+        "chunk_size": 64,
+        "N_c": 56,
+        "H_v": 8
+      },
+      "dtype": {
+        "A_out": "float16"
+      },
+      "layout": "TND",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          3580
+        ],
+        "chunk_indices": "derived"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 43,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "tnd_generated",
+        "original_id": "seed42_01",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+        "raw": {
+          "values": [
+            [
+              3580
+            ],
+            8,
+            64
+          ],
+          "param_names": [
+            "seq_lens",
+            "H",
+            "chunk_size"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_tnd_generated_0002",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "N": 1,
+        "T": 3580,
+        "chunk_size": 64,
+        "N_c": 56,
+        "H_v": 8
+      },
+      "dtype": {
+        "A_out": "float16"
+      },
+      "layout": "TND",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          3580
+        ],
+        "chunk_indices": "derived"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 44,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "tnd_generated",
+        "original_id": "seed42_02",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+        "raw": {
+          "values": [
+            [
+              3580
+            ],
+            8,
+            64
+          ],
+          "param_names": [
+            "seq_lens",
+            "H",
+            "chunk_size"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_tnd_generated_0003",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "N": 1,
+        "T": 3580,
+        "chunk_size": 64,
+        "N_c": 56,
+        "H_v": 8
+      },
+      "dtype": {
+        "A_out": "float16"
+      },
+      "layout": "TND",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          3580
+        ],
+        "chunk_indices": "derived"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 45,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "tnd_generated",
+        "original_id": "seed42_03",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+        "raw": {
+          "values": [
+            [
+              3580
+            ],
+            8,
+            64
+          ],
+          "param_names": [
+            "seq_lens",
+            "H",
+            "chunk_size"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_tnd_generated_0004",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "N": 1,
+        "T": 3580,
+        "chunk_size": 64,
+        "N_c": 56,
+        "H_v": 8
+      },
+      "dtype": {
+        "A_out": "float16"
+      },
+      "layout": "TND",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          3580
+        ],
+        "chunk_indices": "derived"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 46,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "tnd_generated",
+        "original_id": "seed42_04",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+        "raw": {
+          "values": [
+            [
+              3580
+            ],
+            8,
+            64
+          ],
+          "param_names": [
+            "seq_lens",
+            "H",
+            "chunk_size"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_tnd_generated_0005",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "N": 1,
+        "T": 3580,
+        "chunk_size": 64,
+        "N_c": 56,
+        "H_v": 8
+      },
+      "dtype": {
+        "A_out": "float16"
+      },
+      "layout": "TND",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          3580
+        ],
+        "chunk_indices": "derived"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 47,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "tnd_generated",
+        "original_id": "seed42_05",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+        "raw": {
+          "values": [
+            [
+              3580
+            ],
+            8,
+            64
+          ],
+          "param_names": [
+            "seq_lens",
+            "H",
+            "chunk_size"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_tnd_generated_0006",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "N": 1,
+        "T": 3580,
+        "chunk_size": 64,
+        "N_c": 56,
+        "H_v": 8
+      },
+      "dtype": {
+        "A_out": "float16"
+      },
+      "layout": "TND",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          3580
+        ],
+        "chunk_indices": "derived"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 48,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "tnd_generated",
+        "original_id": "seed42_06",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+        "raw": {
+          "values": [
+            [
+              3580
+            ],
+            8,
+            64
+          ],
+          "param_names": [
+            "seq_lens",
+            "H",
+            "chunk_size"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_tnd_generated_0007",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "N": 1,
+        "T": 3580,
+        "chunk_size": 64,
+        "N_c": 56,
+        "H_v": 8
+      },
+      "dtype": {
+        "A_out": "float16"
+      },
+      "layout": "TND",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          3580
+        ],
+        "chunk_indices": "derived"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 49,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "tnd_generated",
+        "original_id": "seed42_07",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+        "raw": {
+          "values": [
+            [
+              3580
+            ],
+            8,
+            64
+          ],
+          "param_names": [
+            "seq_lens",
+            "H",
+            "chunk_size"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_tnd_generated_0008",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "N": 1,
+        "T": 3580,
+        "chunk_size": 64,
+        "N_c": 56,
+        "H_v": 8
+      },
+      "dtype": {
+        "A_out": "float16"
+      },
+      "layout": "TND",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          3580
+        ],
+        "chunk_indices": "derived"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 50,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "tnd_generated",
+        "original_id": "seed42_08",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+        "raw": {
+          "values": [
+            [
+              3580
+            ],
+            8,
+            64
+          ],
+          "param_names": [
+            "seq_lens",
+            "H",
+            "chunk_size"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_tnd_generated_0009",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "N": 1,
+        "T": 3580,
+        "chunk_size": 64,
+        "N_c": 56,
+        "H_v": 8
+      },
+      "dtype": {
+        "A_out": "float16"
+      },
+      "layout": "TND",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {
+        "cu_seqlens": [
+          0,
+          3580
+        ],
+        "chunk_indices": "derived"
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 51,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "tnd_generated",
+        "original_id": "seed42_09",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_tnd.py",
+        "raw": {
+          "values": [
+            [
+              3580
+            ],
+            8,
+            64
+          ],
+          "param_names": [
+            "seq_lens",
+            "H",
+            "chunk_size"
+          ]
+        }
+      }
+    },
+    {
+      "id": "legacy_triton_comparison_generated_0000",
+      "tags": [
+        "legacy",
+        "regression"
+      ],
+      "shape": {
+        "B": 9,
+        "T": 128,
+        "chunk_size": 64,
+        "N_c": 2,
+        "H_v": 2
+      },
+      "dtype": {
+        "A_out": "float16"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "chunk_size": 64
+      },
+      "optional_inputs": {},
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/operators/solve_tri/accuracy/legacy_triton_bsnd.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true
+      },
+      "seed": 42,
+      "legacy": {
+        "format": "python-matrix-v1",
+        "suite": "triton_comparison_generated",
+        "original_id": "seed42_00",
+        "enabled": true,
+        "asset": "tests/operators/solve_tri/accuracy/legacy_triton_bsnd.py",
+        "raw": {
+          "values": [
+            9,
+            128,
+            2,
+            64
+          ],
+          "param_names": [
+            "B",
+            "T",
+            "H",
+            "chunk_size"
+          ]
+        }
+      }
+    }
+  ]
+}

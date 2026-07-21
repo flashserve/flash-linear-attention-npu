@@ -11,6 +11,7 @@
  * \file aclnn_recurrent_gated_delta_rule.cpp
  * \brief
  */
+#include <cmath>
 #include <dlfcn.h>
 #include "aclnn_recurrent_gated_delta_rule.h"
 #include "recurrent_gated_delta_rule.h"
@@ -112,10 +113,70 @@ static inline bool CheckDtypeVaild(const RecurrentGatedDeltaRuleParams &params)
     return true;
 }
 
+static inline bool CheckShapeValid(const RecurrentGatedDeltaRuleParams &params)
+{
+    const auto queryShape = params.query->GetViewShape();
+    const auto keyShape = params.key->GetViewShape();
+    const auto valueShape = params.value->GetViewShape();
+    const auto betaShape = params.beta->GetViewShape();
+    const auto stateShape = params.state->GetViewShape();
+    const auto seqShape = params.actual_seq_lengths->GetViewShape();
+    const auto indexShape = params.ssm_state_indices->GetViewShape();
+    const auto outShape = params.out->GetViewShape();
+    CHECK_COND(queryShape.GetDimNum() == QUERY_DIM_NUM && keyShape.GetDimNum() == KEY_DIM_NUM &&
+                   valueShape.GetDimNum() == VALUE_DIM_NUM && betaShape.GetDimNum() == BETA_DIM_NUM &&
+                   stateShape.GetDimNum() == STATE_DIM_NUM,
+               false, "query/key/value must be rank-3, beta rank-2 and state rank-4.");
+    CHECK_COND(seqShape.GetDimNum() == 1 && seqShape.GetDim(0) >= 2, false,
+               "actual_seq_lengths must be rank-1 with B+1 entries.");
+    CHECK_COND(indexShape.GetDimNum() == 1 && indexShape.GetDim(0) == queryShape.GetDim(0), false,
+               "ssm_state_indices must be rank-1 with T entries.");
+    CHECK_COND(queryShape.GetDim(0) == keyShape.GetDim(0) && queryShape.GetDim(1) == keyShape.GetDim(1) &&
+                   queryShape.GetDim(2) == keyShape.GetDim(2),
+               false, "key must match query shape [T, HK, K].");
+    CHECK_COND(valueShape.GetDim(0) == queryShape.GetDim(0) && betaShape.GetDim(0) == queryShape.GetDim(0) &&
+                   betaShape.GetDim(1) == valueShape.GetDim(1),
+               false, "value must be [T, HV, V] and beta must be [T, HV].");
+    CHECK_COND(queryShape.GetDim(1) > 0 && valueShape.GetDim(1) > 0 &&
+                   valueShape.GetDim(1) % queryShape.GetDim(1) == 0,
+               false, "GVA requires HV divisible by HK.");
+    CHECK_COND(queryShape.GetDim(0) > 0 && queryShape.GetDim(2) > 0 && valueShape.GetDim(2) > 0,
+               false, "T, K and V must be positive.");
+    CHECK_COND(stateShape.GetDim(0) > 0 && stateShape.GetDim(1) == valueShape.GetDim(1) &&
+                   stateShape.GetDim(2) == valueShape.GetDim(2) && stateShape.GetDim(3) == queryShape.GetDim(2),
+               false, "stateRef must be [D_s, HV, V, K] with D_s positive.");
+    CHECK_COND(queryShape.GetDim(1) <= 256 && valueShape.GetDim(1) <= 256 &&
+                   queryShape.GetDim(2) <= 512 && valueShape.GetDim(2) <= 512,
+               false, "HK/HV must be <= 256 and K/V must be <= 512.");
+    CHECK_COND(outShape.GetDimNum() == VALUE_DIM_NUM && outShape.GetDim(0) == valueShape.GetDim(0) &&
+                   outShape.GetDim(1) == valueShape.GetDim(1) && outShape.GetDim(2) == valueShape.GetDim(2),
+               false, "out must match value shape [T, HV, V].");
+    if (params.g != nullptr) {
+        const auto gShape = params.g->GetViewShape();
+        CHECK_COND(gShape.GetDimNum() == 2 && gShape.GetDim(0) == valueShape.GetDim(0) &&
+                       gShape.GetDim(1) == valueShape.GetDim(1),
+                   false, "g must be [T, HV].");
+    }
+    if (params.gk != nullptr) {
+        const auto gkShape = params.gk->GetViewShape();
+        CHECK_COND(gkShape.GetDimNum() == 3 && gkShape.GetDim(0) == valueShape.GetDim(0) &&
+                       gkShape.GetDim(1) == valueShape.GetDim(1) && gkShape.GetDim(2) == queryShape.GetDim(2),
+                   false, "gk must be [T, HV, K].");
+    }
+    if (params.num_accepted_tokens != nullptr) {
+        const auto acceptedShape = params.num_accepted_tokens->GetViewShape();
+        CHECK_COND(acceptedShape.GetDimNum() == 1 && acceptedShape.GetDim(0) == seqShape.GetDim(0) - 1,
+                   false, "num_accepted_tokens must be rank-1 with B entries.");
+    }
+    return true;
+}
+
 static aclnnStatus CheckParams(RecurrentGatedDeltaRuleParams &params)
 {
     // 检查输入参数是否在支持的数据类型范围内
     CHECK_RET(CheckDtypeVaild(params), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckShapeValid(params), ACLNN_ERR_PARAM_INVALID);
+    CHECK_COND(std::isfinite(params.scale), ACLNN_ERR_PARAM_INVALID, "scaleValue must be finite.");
 
     OP_LOGD("RecurrentGatedDeltaRule check params sucess.");
 
@@ -144,6 +205,8 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
                                                          float scaleValue, aclTensor *out, uint64_t *workspaceSize,
                                                          aclOpExecutor **executor)
 {
+    CHECK_COND(workspaceSize != nullptr, ACLNN_ERR_PARAM_NULLPTR, "workspaceSize must not be nullptr.");
+    CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "executor must not be nullptr.");
     L2_DFX_PHASE_1(aclnnRecurrentGatedDeltaRule,
                    DFX_IN(query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk,
                           numAcceptedTokens, scaleValue),
@@ -152,9 +215,10 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
-    RecurrentGatedDeltaRuleParams params {query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk, numAcceptedTokens,scaleValue, out};
+    RecurrentGatedDeltaRuleParams params {query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices,
+                                          g, gk, numAcceptedTokens, scaleValue, out};
 
-    CHECK_RET(CheckNotNull(params), ACLNN_ERR_PARAM_INVALID);
+    CHECK_COND(CheckNotNull(params), ACLNN_ERR_PARAM_NULLPTR, "required inputs and out must not be nullptr.");
     CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     auto ret = PreProcess(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
@@ -184,6 +248,9 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
     }
 
     auto out_ = l0op::Contiguous(out, uniqueExecutor.get());
+    CHECK_RET(query_ != nullptr && key_ != nullptr && value_ != nullptr && beta_ != nullptr &&
+                  actualSeqLengths_ != nullptr && ssmStateIndices_ != nullptr && out_ != nullptr,
+              ACLNN_ERR_INNER_NULLPTR);
 
     // 调用l0接口
     auto outRet =

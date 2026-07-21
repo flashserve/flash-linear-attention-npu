@@ -21,6 +21,7 @@
 #include "platform/platform_ascendc.h"
 #include <type_traits>
 
+#include "common/fast_kernel_launch_workspace.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dv_local/op_host/chunk_bwd_dv_local_tiling_processor.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dv_local/op_kernel/chunk_bwd_dv_local_common.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dv_local/op_kernel/chunk_bwd_dv_local.cpp"
@@ -164,18 +165,16 @@ at::Tensor chunk_bwd_dv_local_npu(const at::Tensor & q, const at::Tensor & k, co
     uint64_t userWorkspaceSize =
         optiling::QKV_DTYPE_SIZE * blockDim * tiling.headBufNum * tiling.chunkSize * tiling.chunkSize;
     uint64_t workspaceSize = sysWorkspaceSize + userWorkspaceSize;
-    void *workspace_ptr = nullptr;
-    if (workspaceSize > 0) {
-        auto ret = aclrtMalloc(&workspace_ptr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: %d", ret);
-    }
+    at::Tensor workspaceTensor =
+        fast_kernel_launch::AllocateDeviceBuffer(q, workspaceSize, "ChunkBwdDvLocal workspace");
 
     auto q_dtype = q.scalar_type();
     auto g_dtype = g.scalar_type();
 
-    auto workspace_gm = (GM_ADDR)workspace_ptr;
+    auto workspace_gm = fast_kernel_launch::TensorGmAddr(workspaceTensor);
 
-    auto acl_call = [=]() -> int {
+    auto acl_call = [=, workspaceTensor = workspaceTensor, cu_seqlens_tensor = cu_seqlens_tensor,
+                     chunk_indices_tensor = chunk_indices_tensor]() -> int {
         if (q_dtype == at::kBFloat16 && g_dtype == at::kBFloat16) {
             using QKVT = bfloat16_t;
             using GT = bfloat16_t;
@@ -223,13 +222,6 @@ at::Tensor chunk_bwd_dv_local_npu(const at::Tensor & q, const at::Tensor & k, co
     };
 
     at_npu::native::OpCommand::RunOpApi("ChunkBwdDvLocal", acl_call);
-    auto sync_ret = aclrtSynchronizeStream(stream);
-    TORCH_CHECK(sync_ret == ACL_SUCCESS, "aclrtSynchronizeStream failed. ERROR: ", sync_ret);
-
-    if (workspaceSize > 0 && workspace_ptr != nullptr) {
-        aclrtFree(workspace_ptr);
-        workspace_ptr = nullptr;
-    }
 
     return dv;
 }

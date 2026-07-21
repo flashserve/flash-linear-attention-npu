@@ -127,9 +127,16 @@ def load_ascendc_opapi_libraries() -> list[ctypes.CDLL]:
             f"Unable to load embedded FLA NPU custom op_api library: {custom_opapi}. "
             f"Dynamic loader error: {exc}"
         ) from exc
+
     libraries = [custom_library]
     if opapi_alias.exists():
-        libraries.append(_load_shared_library_required(opapi_alias))
+        try:
+            libraries.append(_load_shared_library_required(opapi_alias))
+        except OSError as exc:
+            raise RuntimeError(
+                f"Unable to load embedded FLA NPU op_api compatibility shim: {opapi_alias}. "
+                f"Dynamic loader error: {exc}"
+            ) from exc
 
     _ASCENDC_OPAPI_LIBRARIES = libraries
     return libraries

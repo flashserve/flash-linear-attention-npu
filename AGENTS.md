@@ -10,18 +10,21 @@
 
 - `README.md`：构建、安装、调用、测试入口和目录结构。
 - `CONTRIBUTING.md`：贡献流程和新增算子交付要求。
+- `docs/operator-development-standard.md`：算子功能、平台、调用通路、编码、测试、文档和交付准入规范。
 - `docs/repository-rules.md`：分支、ABI、NPU CI 和合入规则。
-- `docs/agents/torch-npu-decoupled-architecture.md`：默认 `fla_npu.ops.ascendc` 解耦运行时、依赖确定与兼容性门禁、wheel 产物、多卡 device guard、stream、数据依赖、autograd 和 ACL 私有格式透传设计。
+- `docs/templates/operator/`：算子 README、设计文档和统一 API 文档模板。
+- `docs/agents/torch-npu-decoupled-architecture.md`：Ascend C 算子的 `fla_npu.ops.ascendc` 解耦运行时、依赖确定与兼容性门禁、wheel 产物、多卡 device guard、stream、数据依赖、autograd 和 ACL 私有格式透传设计。
 - `docs/agents/README.md`：面向 AI agent 的开发原理、方法论、验证和经验总结索引。
 - `.github/pull_request_template.md`：PR 必填信息和验证矩阵。
-- 当前修改算子的 `README.md`、`docs/aclnn*.md`、测试脚本和相邻算子实现。
+- 当前修改算子的 `README.md`、`docs/design.md`、`docs/api.md`、`tests/op_cases/<op_name>.json`、`tests/operators/<op_name>/` 和相邻算子实现。
 
 ## 工作原则
 
 - 开始前先看 `git status --short`，不要回滚或覆盖用户已有改动。
 - 先用 `rg` / `rg --files` 找代码和文档，再修改；不要凭记忆猜目录。
 - 改动保持聚焦，避免无关格式化、批量重排和生成物噪声。
-- 公共接口、shape/dtype/layout/range、预留参数、平台差异、返回码或报错文本变化，必须同步检查代码、README、aclnn 文档、PyTorch API 文档、测试和示例。
+- 公共接口、shape/dtype/layout/range、预留参数、平台差异、返回码或报错文本变化，必须同步检查代码、算子 README、`docs/design.md`、统一 `docs/api.md`、JSON 用例、测试和示例。
+- 每个算子 `docs/api.md` 的“异常与返回码”必须与代码拦截双向一致：文档中的每项约束都能定位到代码校验，代码中的每个公开参数拒绝分支也能定位到文档条目，并与返回码、错误日志和 JSON 负向用例一致。
 - 公开 PR、issue、评论和总结中不要暴露内网地址、机器名、用户名、绝对路径、临时目录、日志路径、token 或本地调测环境细节。
 - 构建和测试默认面向 Linux + CANN + NPU 环境；其他平台只做静态阅读、文本编辑或格式检查，不把未验证命令写成已验证结论。
 
@@ -30,25 +33,32 @@
 - `fla/ops/ascendc/`：Ascend C 算子实现。
 - `fla/ops/ascendc/common/`：公共 Ascend C 组件。
 - `fla/ops/ascendc/gdn/`：GDN 相关算子。
+- `fla/ops/triton/`：Triton 算子实现。
 - `torch_custom/fla_npu/`：PyTorch 自定义算子适配、YAML schema、Python 包和测试。
-- `torch_custom/fla_npu/fla_npu/ops/ascendc/__init__.py`：推荐 Python 稳定入口导出。
+- `torch_custom/fla_npu/fla_npu/ops/ascendc/`：Ascend C 算子的稳定 Python 入口。
+- `torch_custom/fla_npu/fla_npu/ops/triton/`：Triton 算子的稳定 Python 入口。
+- `tests/op_cases/`：按算子归档的 JSON 用例唯一设计来源。
+- `tests/operators/`：按算子归档的精度、通路、UT、性能和 ST 执行代码。
+- `docs/templates/operator/`：算子三份文档的统一模板。
 - `examples/`：端到端调用示例。
 - `ci/`：NPU CI、Example/ST case 和本地 CI 脚本。
 - `scripts/`：构建、打包、环境检查和代码生成辅助脚本。
-- `tests/`：工程级 UT。
+- `tests/`：统一算子测试资产和工程级 UT。
 
 ## 调用约定
 
 安装后的 wheel 公开 Python import 面只使用 `fla_npu`。不要让新代码依赖顶层
 `fla` 包；`fla/` 目录主要作为源码树内实现来源存在。
 
-Ascend C 新代码优先使用稳定 Python 入口：
+新增或重要修改算子必须先声明实现类型。Ascend C 与 Triton 的稳定 Python 入口二选一，不要求同一算子同时提供两者。
+
+Ascend C 算子必须支持 aclnn、Ascend C `<<<>>>` 直调和 `fla_npu.ops.ascendc`，默认 Python 入口为：
 
 ```python
 from fla_npu.ops.ascendc import chunk_bwd_dv_local
 ```
 
-Triton 算子同样使用 `fla_npu` 下的稳定入口：
+Triton 算子必须支持 `fla_npu.ops.triton`，默认 Python 入口为：
 
 ```python
 from fla_npu.ops.triton import chunk_local_cumsum
@@ -56,7 +66,7 @@ from fla_npu.ops.triton import chunk_local_cumsum
 
 默认 Ascend C 调用路径必须保持与 `torch_npu` dispatcher、PyTorch C++ extension ABI、CPython ABI 和 C++ ABI 解耦。`fla_npu.ops.ascendc` 通过 Python ctypes 直调 `aclnn*`，不得在普通 import 或默认算子调用时 import `torch_npu`、注册 `torch.ops.npu`，或依赖 `custom_aclnn_extension_lib*.so`。
 
-`torch.ops.npu.*` 是兼容旧调用的过渡路径，仅在兼容性测试或旧 API 验证中使用。需要旧路径时先确认 `fla_npu.load_legacy_torch_ops()` 的加载逻辑，并在 PR 中说明为什么不能使用 `fla_npu.ops.ascendc.<op>`。
+`torch.ops.npu.*` 是可选的 legacy 兼容入口，仅在实现该入口时通过 `fla_npu.load_legacy_torch_ops()` 显式加载；不得作为新增算子的主文档入口或主测试入口。
 
 修改 `torch_custom/fla_npu/fla_npu/ops/ascendc/_runtime.py`、`_aclnn_ctypes.py`、`torch_custom/fla_npu/setup.py` 或根目录 `setup.py` 时，必须同步检查 `docs/agents/torch-npu-decoupled-architecture.md`。涉及依赖确定阶段、版本或能力门禁、SOC/host/CANN 兼容范围、多卡 device guard、stream 感知、异步 launch 保活、正反向绑定、ACL 私有 format 透传、OPP wheel 安装位置或 legacy `torch_npu` 兼容路径的行为变化时，文档必须一起更新。
 
@@ -64,18 +74,26 @@ ctypes 算子如果会通过 data pointer 修改输入 tensor，必须在公共 
 
 ## 算子开发交付 checklist
 
-新增或修改 Ascend C 算子时，交付前逐项核对：
+新增或重要修改算子时，交付前逐项核对：
 
-- [ ] `fla/ops/ascendc/**/op_host/*_def.cpp` 已同步输入、输出、属性、dtype、format、required/optional 定义。
-- [ ] `fla/ops/ascendc/**/op_host/*tiling*` / `*infershape*` 已同步参数校验、shape 推导和 tiling。
-- [ ] `fla/ops/ascendc/**/op_host/op_api/aclnn_*.h/.cpp` 已同步 aclnn 接口签名、返回和执行器逻辑。
-- [ ] `fla/ops/ascendc/**/op_kernel/` 已同步 Kernel 实现、tiling data 和 tiling key。
-- [ ] `torch_custom/fla_npu/npu_custom.yaml`、`test_native_functions.yaml`、`deprecated.yaml` 已同步 PyTorch schema 和适配生成输入。
-- [ ] `torch_custom/fla_npu/fla_npu/ops/ascendc/__init__.py` 已同步 Python 稳定导出。
-- [ ] `torch_custom/fla_npu/test/test_npu_<op>.py` 已补充或更新单算子测试和参考实现。
-- [ ] 当前算子的 `README.md`、`docs/aclnn*.md`、示例和 CI case 已同步更新。
-- [ ] 参数校验、shape/dtype/layout/range、平台差异、预留参数语义和报错文本保持一致。
-- [ ] 正向、反向、边界、异常、dense/varlen、关键 SOC 和目标 dtype/layout 场景已按改动风险覆盖。
+- [ ] 已声明 `ascendc` 或 `triton` 实现类型，并提供与实现类型匹配的 `fla_npu.ops.ascendc` 或 `fla_npu.ops.triton` 主入口。
+- [ ] 已覆盖 A2（`ascend910b`）、A3（`ascend910_93`）、A5（`ascend950`）的编译、基础功能和主通路精度验证；无法覆盖时已按规范说明原因和补齐计划。
+- [ ] Ascend C 算子的 `op_host`、InferShape、tiling、op_api、kernel、CMake 和平台配置已同步，并支持 aclnn、`<<<>>>` 和 `fla_npu.ops.ascendc`。
+- [ ] Ascend C 算子优先使用 tiling 数据加编译期模板化；如必须使用 tiling key，已说明原因、语义、组合范围和维护影响。
+- [ ] Ascend C 算子的 `add_ops_compile_options` 保持 `--cce-auto-sync=off`，未改为 `on`。
+- [ ] 公开接口、文档、example 和 JSON 未暴露内部 `stage` 编号；强生产消费关系使用 L0 内语义 phase，弱相关计算拆成独立 L0，均未通过整数 stage 泄漏内部调度。
+- [ ] aclnn L2 未在核心 L0 前后或之间拼接独立 Cast；输入、阶段间和输出类型转换已融合进对应 kernel。
+- [ ] 同一 L0 内存在多个紧耦合 phase 时，`docs/design.md` 已说明 `SyncAll` 参与条件、schedule mode、三平台支持及 `pipe->Reset()` 前后的资源生命周期。
+- [ ] Triton 算子的 Python wrapper、Triton kernel、grid/config、launch 和 `fla_npu.ops.triton` 导出已同步。
+- [ ] 如实现可选 `torch.ops.npu`，相关 YAML、生成入口和 `fla_npu.load_legacy_torch_ops()` 显式加载路径已同步。
+- [ ] 用例设计已归一到 `tests/op_cases/<op_name>.json`，执行代码已归档到 `tests/operators/<op_name>/`；脚本中没有散落未登记的关键用例。
+- [ ] 算子源码目录中没有残留 test/、tests/、ATK/，example/torch_custom 中没有主线算子的第二份用例目录；历史 JSON/Python case 表已合并到唯一 manifest，旧 case 文件已删除。
+- [ ] 实现类型对应的 `fla_npu` 入口覆盖主精度、泛化、边界、功能分支和回归矩阵；Ascend C 算子另有 aclnn、`<<<>>>` 通路测试，可选 legacy 入口实现时另有通路测试。
+- [ ] 当前算子的 `README.md`、`docs/design.md`、统一 `docs/api.md`、示例和 CI case 已同步；未新增独立 `aclnn<OpName>.md`。
+- [ ] 新增算子文档基于 `docs/templates/operator/`，Shape 固定取值写入“已知限制”；README、设计和 API 文档直接链接模型根 README 的权威符号表，不复制公共符号定义。
+- [ ] 算子符号与所属模型根 README 的模型符号表一致，符号变更已同步受影响的 README、公式、API Shape、JSON case 和测试。
+- [ ] 参数校验、shape/dtype/layout/range、平台差异、预留参数语义、返回码和报错文本保持一致。
+- [ ] 如用 Ascend C 替换 Triton，目标场景性能优于 Triton，仓内 example 默认路径已切换到 `fla_npu.ops.ascendc`。
 
 ABI 敏感路径包括 `*_def.cpp`、`aclnn_*.h/.cpp`、`torch_custom/fla_npu/*.yaml` 和 `torch_custom/fla_npu/op_plugin/ops/opapi/**`。修改这些文件时，PR 需要明确说明 ABI 影响，并按 `.github/CODEOWNERS` 请求对应 owner 检视。
 
@@ -136,20 +154,14 @@ python -m pip install --force-reinstall --no-deps dist/flash_linear_attention_np
 python scripts/check_packaged_wheel_api.py
 ```
 
-运行 GDN 单算子测试：
+以下是历史 GDN 回归入口：
 
 ```sh
-cd torch_custom/fla_npu/test
-bash test.sh --device 0
-bash test.sh --device 0 --op causal_conv1d
+bash tests/operators/run.sh --device 0
+bash tests/operators/run.sh --device 0 --op causal_conv1d
 ```
 
-`test.sh` 只覆盖已接入脚本的 GDN 算子。未纳入 `test.sh` 的算子按对应测试脚本直接运行，例如：
-
-```sh
-cd torch_custom/fla_npu/test
-python3 test_npu_<op>.py
-```
+该入口读取全部 `tests/op_cases/*.json`，不维护第二份算子清单。新增算子及历史算子新增的测试用例必须写入 `tests/op_cases/<op_name>.json`，并按 `tests/operators/<op_name>/README.md` 中的命令执行。
 
 端到端 Example/ST：
 
@@ -169,11 +181,16 @@ CI_MODE=full bash ci/run_checks.sh
 
 ## 测试要求
 
+- 每个算子的唯一用例设计来源为 `tests/op_cases/<op_name>.json`；测试脚本只读取 JSON、构造输入、调用被测入口并判断结果。
+- 主精度、泛化、边界、功能分支和回归测试归档到 `tests/operators/<op_name>/accuracy/`，调用通路、UT、性能和 ST 分别归档到对应子目录。
+- Ascend C 算子以 `fla_npu.ops.ascendc` 为主测试入口，并覆盖 aclnn 与 `<<<>>>` 通路；Triton 算子以 `fla_npu.ops.triton` 为主测试入口；`torch.ops.npu` 仅在实现时增加可选通路测试。
+- A2、A3、A5 均需覆盖编译、基础功能和主通路精度；平台差异应在 JSON 用例和测试结果中显式体现。
 - 修改参数校验、shape、dtype、layout、range、平台差异或预留参数语义时，补充反向测试和边界测试。
 - 修改 Kernel 时至少覆盖对应单算子测试；涉及 GDN 端到端链路时跑 Example/ST。
 - 修改 ABI、公共模块或共享路径时扩大回归范围，至少说明影响到的算子。
 - 精度失败不能通过收窄输入 range、跳过 case、降低覆盖强度或放宽阈值来制造通过结论；应先定位误差来源，再修 kernel、标杆或后处理语义。
 - 性能结论以合适的 profiling/CI 结果为准，不用 Python wall time 直接下结论。
+- 新增 Ascend C 算子替换 Triton 算子时，必须用同一场景证明性能优于 Triton，并验证 example 已改走 Ascend C 主入口。
 
 ## 构建产物与提交规范
 
@@ -196,7 +213,7 @@ git diff --check
 
 - PR 描述使用 `.github/pull_request_template.md`，不要自创栏目替代模板。
 - PR 应关联 Issue，或在模板中说明无需 Issue 的原因。
-- NPU CI 不会在每次 push 后自动跑；需要仓库 Admin 在 Actions 手动触发，或在 PR 评论 `/run-npu-ci quick` / `/run-npu-ci full`。
+- NPU CI 不会在每次 push 后自动跑；需要仓库 Admin 在 Actions 手动触发，或在 PR 评论 `/run-npu-ci quick` / `/run-npu-ci full`。quick 需要验证指定算子矩阵时使用 `/run-npu-ci quick ops=<op_a>,<op_b>`，算子名之间使用英文逗号且不加空格；quick 未指定 `ops=` 时不得默认运行全算子泛化和主精度矩阵。
 - 当前 head commit 需要通过 `NPU CI / 手动验证` 和 `NPU CI / 精度检查`，并满足 2 个 approval。
 - push 新 commit 后旧 commit 的 CI 结果失效，需要重新触发。
 
@@ -205,7 +222,8 @@ git diff --check
 结束任务前确认：
 
 - 改动是否只覆盖本次任务需要的文件。
-- 文档、报错、返回码、schema、Python 导出和测试是否与代码语义一致。
-- 是否遗漏对应 SOC、layout、dtype、varlen/dense、边界 case。
+- 实现类型、调用通路、Python 导出、文档、报错、返回码、schema、JSON 用例和测试是否与代码一致。
+- 是否遗漏 A2/A3/A5、layout、dtype、变长序列/dense、边界和泛化 case。
+- 算子三份文档是否直接引用所属模型的权威符号表，且没有复制公共符号定义。
 - 是否有未跟踪生成物或敏感信息混入。
 - 是否清楚说明已执行和未执行的验证。

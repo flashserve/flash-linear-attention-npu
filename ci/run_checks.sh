@@ -124,9 +124,44 @@ ci_ops="${CI_OPS:-}"
 ci_jobs="${CI_JOBS:-$(nproc)}"
 ci_cpack_jobs="${CI_CPACK_JOBS:-$ci_jobs}"
 ci_test_device="${CI_CONTAINER_DEVICE:-0}"
+example_st_cases_file="${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}"
+example_st_case_filter="${CI_EXAMPLE_CASE_FILTER:-}"
+operator_matrix_scope_enabled=false
+if [[ "$ci_mode" == "full" || -n "$ci_ops" ]]; then
+    operator_matrix_scope_enabled=true
+fi
 
 if [[ "$ci_soc" == "unknown" ]]; then
     ci_soc="ascend910b"
+fi
+
+merge_operator_csv() {
+    python3 - "$@" <<'PY'
+import sys
+
+ops = []
+for group in sys.argv[1:]:
+    for op in group.split(","):
+        op = op.strip()
+        if op and op not in ops:
+            ops.append(op)
+print(",".join(ops))
+PY
+}
+
+ci_build_ops="$ci_ops"
+if [[ "${CI_RUN_EXAMPLE_ST:-true}" == "true" ]] && \
+   [[ "$ci_mode" != "full" || -n "$ci_ops" ]]; then
+    required_ops_args=(
+        --device "$ci_test_device"
+        --cases-file "$example_st_cases_file"
+        --print-required-ops
+    )
+    if [[ -n "$example_st_case_filter" ]]; then
+        required_ops_args+=(--case-filter "$example_st_case_filter")
+    fi
+    example_st_required_ops="$(python3 ci/run_example_st_cases.py "${required_ops_args[@]}")"
+    ci_build_ops="$(merge_operator_csv "$ci_ops" "$example_st_required_ops")"
 fi
 
 export CMAKE_BUILD_PARALLEL_LEVEL="$ci_cpack_jobs"
@@ -472,14 +507,15 @@ PY
 }
 
 ops_arg=()
-if [[ -n "$ci_ops" ]]; then
-    ops_arg=(--ops="$ci_ops")
+if [[ -n "$ci_build_ops" ]]; then
+    ops_arg=(--ops="$ci_build_ops")
 fi
 
-echo "[CI] mode=$ci_mode soc=$ci_soc ops=${ci_ops:-<all>} jobs=$ci_jobs cpack_jobs=$ci_cpack_jobs"
+echo "[CI] mode=$ci_mode soc=$ci_soc build_ops=${ci_build_ops:-<all>} matrix_ops=${ci_ops:-<none>} jobs=$ci_jobs cpack_jobs=$ci_cpack_jobs"
 
 python3 torch_custom/fla_npu/test/test_runtime_device_guard.py
 python3 torch_custom/fla_npu/test/test_ascendc_mutation_contract.py
+python3 scripts/check_operator_compliance.py
 
 case "$ci_mode" in
     quick)
@@ -507,7 +543,7 @@ if [[ "${CI_RUN_TORCH_TESTS:-false}" == "true" ]]; then
     if [[ -n "${CI_TEST_OP:-}" ]]; then
         test_args+=(--op "$CI_TEST_OP")
     fi
-    (cd torch_custom/fla_npu/test && bash test.sh "${test_args[@]}")
+    bash tests/operators/run.sh "${test_args[@]}" --soc "$ci_soc"
 fi
 
 if [[ "${CI_RUN_WHEEL_API_CHECK:-false}" == "true" ]]; then
@@ -522,14 +558,32 @@ if [[ "${CI_RUN_EXAMPLE_ST:-true}" == "true" ]]; then
     install_custom_opp_package
     check_example_python_deps
     build_torch_custom
-    example_st_args=(--device "$ci_test_device" --cases-file "${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}")
+    if [[ "${CI_RUN_OPERATOR_GENERALIZATION:-false}" == "true" && "$operator_matrix_scope_enabled" == "true" ]]; then
+        generalization_args=(--soc "$ci_soc" --device "$ci_test_device")
+        if [[ -n "$ci_ops" ]]; then
+            generalization_args+=(--ops "$ci_ops")
+        fi
+        python3 ci/run_operator_generalization.py "${generalization_args[@]}"
+    else
+        echo "[CI] Operator generalization matrix skipped (mode=$ci_mode, ops=${ci_ops:-<none>}, enabled=${CI_RUN_OPERATOR_GENERALIZATION:-false})."
+    fi
+    if [[ "${CI_RUN_OPERATOR_ACCURACY:-false}" == "true" && "$operator_matrix_scope_enabled" == "true" ]]; then
+        operator_accuracy_args=(--soc "$ci_soc" --device "$ci_test_device")
+        if [[ -n "$ci_ops" ]]; then
+            operator_accuracy_args+=(--ops "$ci_ops")
+        fi
+        python3 ci/run_operator_accuracy.py "${operator_accuracy_args[@]}"
+    else
+        echo "[CI] Operator accuracy matrix skipped (mode=$ci_mode, ops=${ci_ops:-<none>}, enabled=${CI_RUN_OPERATOR_ACCURACY:-false})."
+    fi
+    example_st_args=(--device "$ci_test_device" --cases-file "$example_st_cases_file")
     accuracy_report_file="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}"
     mkdir -p "$(dirname "$accuracy_report_file")"
     rm -f "$accuracy_report_file" "$accuracy_report_file.tmp"
     export CI_ACCURACY_HEAD_SHA="${CI_ACCURACY_HEAD_SHA:-${NPU_CI_TARGET_SHA:-}}"
     example_st_args+=(--accuracy-report-file "$accuracy_report_file")
-    if [[ -n "${CI_EXAMPLE_CASE_FILTER:-}" ]]; then
-        example_st_args+=(--case-filter "$CI_EXAMPLE_CASE_FILTER")
+    if [[ -n "$example_st_case_filter" ]]; then
+        example_st_args+=(--case-filter "$example_st_case_filter")
     fi
     python3 ci/run_example_st_cases.py "${example_st_args[@]}"
     if [[ -f "$accuracy_report_file" ]]; then
