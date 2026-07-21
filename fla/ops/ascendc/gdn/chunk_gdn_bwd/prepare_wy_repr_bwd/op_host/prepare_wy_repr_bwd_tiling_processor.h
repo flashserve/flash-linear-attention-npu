@@ -345,9 +345,12 @@ public:
     ge::graphStatus VectorRowTiling()
     {
         uint64_t kTypeBytes = DtypeSize(ctx_.kDataType);
-        uint64_t gTypeBytes = DtypeSize(ctx_.gDataType);
-        uint64_t computeBytes = ctx_.ubSize > PREPARE_WY_REPR_BWD_FIXED_IO_BYTES
-                                    ? ctx_.ubSize - PREPARE_WY_REPR_BWD_FIXED_IO_BYTES
+        uint64_t betaGInputBytes =
+            2 * AlignUp(static_cast<uint64_t>(tiling_.chunkSize) * PREPARE_WY_REPR_BWD_SIZE_FP32,
+                        PREPARE_WY_REPR_BWD_ONE_BLOCK_32);
+        uint64_t fixedUbBytes = PREPARE_WY_REPR_BWD_FIXED_IO_BYTES + betaGInputBytes;
+        uint64_t computeBytes = ctx_.ubSize > fixedUbBytes
+                                    ? ctx_.ubSize - fixedUbBytes
                                     : PREPARE_WY_REPR_BWD_VEC_COMPUTE_BYTES;
         computeBytes = std::min(computeBytes, PREPARE_WY_REPR_BWD_VEC_COMPUTE_BYTES);
 
@@ -355,12 +358,11 @@ public:
             uint64_t row = static_cast<uint64_t>(tiling_.chunkSize) / 2;
             while (row >= 8) {
                 uint64_t matrixBytes = row * cols * kTypeBytes;
-                uint64_t scaleBytes = row * gTypeBytes;
+                uint64_t scaleFp32Bytes = AlignUp(row * PREPARE_WY_REPR_BWD_SIZE_FP32,
+                                                  PREPARE_WY_REPR_BWD_ONE_BLOCK_32);
                 uint64_t brcbBytes = row * PREPARE_WY_REPR_BWD_ONE_BLOCK_32;
                 uint64_t tempBytes = tempFactor * row * cols * PREPARE_WY_REPR_BWD_SIZE_FP32 +
-                                     4 * AlignUp(row * PREPARE_WY_REPR_BWD_SIZE_FP32,
-                                                 PREPARE_WY_REPR_BWD_ONE_BLOCK_32) +
-                                     brcbBytes + 2 * AlignUp(scaleBytes, PREPARE_WY_REPR_BWD_ONE_BLOCK_32);
+                                     3 * scaleFp32Bytes + brcbBytes;
                 if (matrixBytes <= PREPARE_WY_REPR_BWD_UB_IO_BYTES &&
                     tempBytes <= computeBytes) {
                     break;
