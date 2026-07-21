@@ -8,6 +8,10 @@ from typing import Dict, Optional
 
 # Large default smoke shapes can exceed Triton-NPU's default launch-grid limit.
 os.environ["TRITON_ALL_BLOCKS_PARALLEL"] = "1"
+# Triton-Ascend's queued launcher only captures raw data pointers. GDN creates
+# contiguous temporary tensors before several Triton calls, so launch Triton
+# kernels immediately to keep those temporaries alive through the kernel launch.
+os.environ["TRITON_ENABLE_TASKQUEUE"] = "0"
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
