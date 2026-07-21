@@ -224,6 +224,20 @@ public:
     }
 
     CATLASS_DEVICE
+    void ComputeVNew(
+        AscendC::LocalTensor<float> workspace,
+        AscendC::LocalTensor<UElementInput> uInput,
+        uint32_t count)
+    {
+        __ubuf__ float *workspaceAddr = reinterpret_cast<__ubuf__ float *>(workspace.GetPhyAddr());
+        __ubuf__ UElementInput *uInputAddr =
+            reinterpret_cast<__ubuf__ UElementInput *>(uInput.GetPhyAddr());
+        AscendC::VF_CALL<detail::ComputeVNewRegbaseDualIssue<UElementInput>>(
+            workspaceAddr, uInputAddr, count);
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    CATLASS_DEVICE
     void operator()(
         AscendC::GlobalTensor<VElementOutput> vnewOutput,
         AscendC::GlobalTensor<VElementOutput> vnewdecayOutput,
@@ -294,7 +308,10 @@ public:
             AscendC::DataCopy(uUbTensor, uInputThisSubBlock, mActualThisSubBlock * nvActual);
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
-            AscendC::Cast(calcUbTensor, uUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nvActual);
+            if constexpr (scalarGated) {
+                AscendC::Cast(calcUbTensor, uUbTensor, AscendC::RoundMode::CAST_NONE,
+                              mActualThisSubBlock * nvActual);
+            }
 
             if constexpr (scalarGated) {
                 PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock, mActual, pingpongFlag);
@@ -312,13 +329,14 @@ public:
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
 
-            AscendC::Sub<float>(wsUbTensor, calcUbTensor, wsUbTensor, mActualThisSubBlock * nvActual);
-            AscendC::PipeBarrier<PIPE_V>();
-
-            AscendC::Copy(calcUbTensor, wsUbTensor, mActualThisSubBlock * nvActual);
-            AscendC::PipeBarrier<PIPE_V>();
             if constexpr (scalarGated) {
+                AscendC::Sub<float>(wsUbTensor, calcUbTensor, wsUbTensor, mActualThisSubBlock * nvActual);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Copy(calcUbTensor, wsUbTensor, mActualThisSubBlock * nvActual);
+                AscendC::PipeBarrier<PIPE_V>();
                 ApplyRowScale(calcUbTensor, gUbTensor, rowBegin, mActualThisSubBlock, nvActual);
+            } else {
+                ComputeVNew(wsUbTensor, uUbTensor, mActualThisSubBlock * nvActual);
             }
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
 
@@ -326,7 +344,8 @@ public:
             for (uint32_t nLoop = 0; nLoop < nvLoops; nLoop++) {
                 uint32_t castSrcOffset = nLoop * FLOAT_NUM_PER_REPEAT;
                 uint32_t castDstOffset = nLoop * mActualThisSubBlock * FLOAT_NUM_PER_REPEAT;
-                AscendC::Cast(vNewDecayUbTensor[castDstOffset], calcUbTensor[castSrcOffset], AscendC::RoundMode::CAST_RINT, FLOAT_NUM_PER_REPEAT, mActualThisSubBlock, {(uint16_t)mActualThisSubBlock, 1, 1, (uint8_t)(nvLoops * 8)});
+                AscendC::LocalTensor<float> decayInput = scalarGated ? calcUbTensor : wsUbTensor;
+                AscendC::Cast(vNewDecayUbTensor[castDstOffset], decayInput[castSrcOffset], AscendC::RoundMode::CAST_RINT, FLOAT_NUM_PER_REPEAT, mActualThisSubBlock, {(uint16_t)mActualThisSubBlock, 1, 1, (uint8_t)(nvLoops * 8)});
             }
 
             AscendC::PipeBarrier<PIPE_V>();
@@ -401,8 +420,10 @@ public:
             CopyGmToUb(uUbTensor, uInputThisTile, rowsThisTile, nvActual, inputStride);
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
-            AscendC::Cast(calcUbTensor, uUbTensor, AscendC::RoundMode::CAST_NONE, rowsThisTile * nvActual);
-            AscendC::PipeBarrier<PIPE_V>();
+            if constexpr (scalarGated) {
+                AscendC::Cast(calcUbTensor, uUbTensor, AscendC::RoundMode::CAST_NONE, rowsThisTile * nvActual);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
 
             if (waitWsThisTileFromMte3) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
@@ -413,20 +434,22 @@ public:
             CopyGmToUb(wsUbTensorThisTile, wsInputThisTile, rowsThisTile, nvActual, nvActual);
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
-            AscendC::Sub<float>(wsUbTensorThisTile, calcUbTensor, wsUbTensorThisTile, rowsThisTile * nvActual);
-            AscendC::PipeBarrier<PIPE_V>();
-
-            AscendC::Copy(calcUbTensor, wsUbTensorThisTile, rowsThisTile * nvActual);
-            AscendC::PipeBarrier<PIPE_V>();
             if constexpr (scalarGated) {
+                AscendC::Sub<float>(wsUbTensorThisTile, calcUbTensor, wsUbTensorThisTile, rowsThisTile * nvActual);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Copy(calcUbTensor, wsUbTensorThisTile, rowsThisTile * nvActual);
+                AscendC::PipeBarrier<PIPE_V>();
                 ApplyRowScale(calcUbTensor, gUbTensor, rowStart, rowsThisTile, nvActual);
+            } else {
+                ComputeVNew(wsUbTensorThisTile, uUbTensor, rowsThisTile * nvActual);
             }
 
             uint32_t nvLoops = nvActual / FLOAT_NUM_PER_REPEAT;
             for (uint32_t nLoop = 0; nLoop < nvLoops; nLoop++) {
                 uint32_t castSrcOffset = nLoop * FLOAT_NUM_PER_REPEAT;
                 uint32_t castDstOffset = nLoop * rowsThisTile * FLOAT_NUM_PER_REPEAT;
-                AscendC::Cast(vNewDecayUbTensor[castDstOffset], calcUbTensor[castSrcOffset], AscendC::RoundMode::CAST_RINT, FLOAT_NUM_PER_REPEAT, rowsThisTile, {(uint16_t)rowsThisTile, 1, 1, (uint8_t)(nvLoops * 8)});
+                AscendC::LocalTensor<float> decayInput = scalarGated ? calcUbTensor : wsUbTensorThisTile;
+                AscendC::Cast(vNewDecayUbTensor[castDstOffset], decayInput[castSrcOffset], AscendC::RoundMode::CAST_RINT, FLOAT_NUM_PER_REPEAT, rowsThisTile, {(uint16_t)rowsThisTile, 1, 1, (uint8_t)(nvLoops * 8)});
             }
 
             AscendC::PipeBarrier<PIPE_V>();

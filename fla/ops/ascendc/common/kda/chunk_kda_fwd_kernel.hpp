@@ -25,6 +25,7 @@
 #include "catlass/gemm/dispatch_policy.hpp"
 #include "catlass/gemm/tile/tile_copy.hpp"
 #include "catlass/gemm_coord.hpp"
+#include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
 #include "catlass/layout/layout.hpp"
 #include "kernel_operator.h"
 #include "tla/layout.hpp"
@@ -83,6 +84,12 @@ using KdaArchTag = Catlass::Arch::Ascend950;
 using KdaArchTag = Catlass::Arch::AtlasA2;
 #endif
 using KdaDispatchPolicy = Catlass::Gemm::MmadPingpong<KdaArchTag, true, false>;
+using KdaScoreDispatchPolicy =
+    Catlass::Gemm::MmadPingpongTlaMulti<KdaArchTag, true, false, 1, true, 2, 1, 2, 2>;
+static_assert(KdaScoreDispatchPolicy::ENABLE_L1_RESIDENT,
+              "KDA Aqk/Akk score MMAD must keep the shared right matrix resident in L1");
+static_assert(KdaScoreDispatchPolicy::L1B_STAGES == 1,
+              "KDA Aqk/Akk score MMAD needs one L1 B slot so the second MMAD reuses it");
 using KdaSolveDispatchPolicy = Catlass::Gemm::MmadPingpong<KdaArchTag, true, false>;
 static_assert(!KdaSolveDispatchPolicy::USE_HF32_MODE, "KDA triangular solve must use IEEE FP32 Cube mode");
 using KdaL1TileShape = tla::Shape<KdaInt64, KdaInt128, KdaInt128>;
@@ -879,7 +886,7 @@ private:
         using LayoutTagC = Catlass::layout::RowMajor;
         using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KdaArchTag, ElementA, LayoutTagA, ElementB,
                                                                 LayoutTagB, ElementC, LayoutTagC>;
-        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, KdaL1TileShape, KdaL0TileShape,
+        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaScoreDispatchPolicy, KdaL1TileShape, KdaL0TileShape,
                                                               ElementA, ElementB, ElementC, void, TileCopy>;
 
         Catlass::Arch::Resource<KdaArchTag> resource;
@@ -919,10 +926,10 @@ private:
         auto blockAqk = GetTile(tensorAqk, tla::MakeCoord(rowBegin, 0), tla::MakeShape(shape.m(), shape.n()));
         auto blockAkk = GetTile(tensorAkk, tla::MakeCoord(rowBegin, 0), tla::MakeShape(shape.m(), shape.n()));
 
+        blockMmad.preSetFlags();
         blockMmad(blockQPos, blockKNeg, blockAqk, shape);
-        PipeBarrier<PIPE_ALL>();
         blockMmad(blockKPos, blockKNeg, blockAkk, shape);
-        PipeBarrier<PIPE_ALL>();
+        blockMmad.finalWaitFlags();
     }
 
     __aicore__ inline bool UseAkkCubeSolve(uint64_t curT) const

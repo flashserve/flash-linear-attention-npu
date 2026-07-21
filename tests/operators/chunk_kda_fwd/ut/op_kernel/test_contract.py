@@ -169,7 +169,7 @@ def test_fwd_h_supports_exp_and_exp2_on_a2_and_a5():
         assert "LN2" in update and "LN2" in vnew
 
 
-def test_a5_fwd_h_row_scale_uses_dual_issue_regbase():
+def test_a5_fwd_h_kda_hot_path_uses_fused_dual_issue_regbase():
     block_root = (
         ROOT
         / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
@@ -185,12 +185,43 @@ def test_a5_fwd_h_row_scale_uses_dual_issue_regbase():
     assert "StoreAlign" in regbase
     assert "MaskReg mask0" in regbase and "MaskReg mask1" in regbase
     assert "row + 1" in regbase
-    for filename in (
-        "block_epilogue_gdn_fwdh_update.hpp",
-        "block_epilogue_gdn_fwdh_vnew.hpp",
-    ):
-        text = (block_root / filename).read_text(encoding="utf-8")
-        assert "VF_CALL<detail::ApplyRowScaleDualIssue>" in text
+    assert "ComputeVNewRegbaseDualIssue" in regbase
+    assert "PrepareKGateRegbase" in regbase
+    assert "ApplyKGateUpdateRegbaseDualIssue" in regbase
+
+    update = (block_root / "block_epilogue_gdn_fwdh_update.hpp").read_text(
+        encoding="utf-8"
+    )
+    vnew = (block_root / "block_epilogue_gdn_fwdh_vnew.hpp").read_text(
+        encoding="utf-8"
+    )
+    assert "VF_CALL<detail::PrepareKGateRegbase" in update
+    assert "VF_CALL<detail::ApplyKGateUpdateRegbaseDualIssue" in update
+    assert "if constexpr (kGated && !scalarGated)" in update
+    assert "VF_CALL<detail::ComputeVNewRegbaseDualIssue" in vnew
+    assert "AscendC::LocalTensor<float> decayInput = scalarGated ?" in vnew
+
+
+def test_aqk_akk_share_one_l1_resident_right_matrix_slot():
+    common = COMMON_KERNEL.read_text(encoding="utf-8")
+    resident_mmad = (
+        ROOT
+        / "fla/ops/ascendc/common/kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
+    ).read_text(encoding="utf-8")
+    assert "using KdaScoreDispatchPolicy" in common
+    assert "MmadPingpongTlaMulti<KdaArchTag, true, false, 1, true, 2, 1, 2, 2>" in common
+    assert "KdaScoreDispatchPolicy::ENABLE_L1_RESIDENT" in common
+    assert "KdaScoreDispatchPolicy::L1B_STAGES == 1" in common
+    score_block = common.split(
+        "__aicore__ inline void ComputeRawAqkAkkCubeBlock", 1
+    )[1].split("__aicore__ inline bool UseAkkCubeSolve", 1)[0]
+    assert "BlockMmadTla<KdaScoreDispatchPolicy" in score_block
+    assert score_block.count("blockMmad(block") == 2
+    assert "blockMmad.preSetFlags();" in score_block
+    assert "blockMmad.finalWaitFlags();" in score_block
+    assert "PipeBarrier<PIPE_ALL>()" not in score_block
+    assert resident_mmad.count("static_cast<uint32_t>(tla::get<0>(tensorTile") == 4
+    assert resident_mmad.count("static_cast<uint32_t>(tla::get<1>(tensorTile") == 4
 
 
 def test_fwd_h_gk_only_path_skips_scalar_gate_scaling():
@@ -207,7 +238,8 @@ def test_fwd_h_gk_only_path_skips_scalar_gate_scaling():
         assert text.count("if constexpr (scalarGated)") >= 4
         assert "WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag)" in text
         if arch:
-            assert text.count("if constexpr (scalarGated) {\n                ApplyRowScale") == 2
+            assert text.count("ApplyRowScale(calcUbTensor, gUbTensor") == 2
+            assert text.count("ComputeVNew(wsUbTensor") == 2
         else:
             assert text.count("Adds<float>(calcUbTensor, wsUbTensor, 0.0f") == 2
 
