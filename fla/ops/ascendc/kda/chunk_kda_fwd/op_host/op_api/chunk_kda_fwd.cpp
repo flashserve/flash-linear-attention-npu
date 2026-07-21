@@ -8,6 +8,7 @@
  */
 
 #include "chunk_kda_fwd.h"
+#include "../../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_host/op_api/chunk_gated_delta_rule_fwd_h.h"
 
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
@@ -18,7 +19,9 @@
 using namespace op;
 
 namespace l0op {
-OP_TYPE_REGISTER(ChunkKdaFwd);
+OP_TYPE_REGISTER(ChunkKdaFwdPrepare);
+OP_TYPE_REGISTER(ChunkKdaFwdPostWu);
+OP_TYPE_REGISTER(ChunkKdaFwdFinalize);
 
 namespace {
 const aclIntArray *BuildPackedChunkMetadata(const aclIntArray *cuSeqlens,
@@ -93,6 +96,7 @@ KdaCoreOutputs KdaChunkForward(
     bool outputFinalState,
     int64_t totalChunks,
     bool safeGate,
+    bool outputSequenceMajor,
     const aclTensor *oOut,
     const aclTensor *finalStateOut,
     const aclTensor *aqkOut,
@@ -107,8 +111,8 @@ KdaCoreOutputs KdaChunkForward(
 {
     L0_DFX(KdaChunkForward, q, k, v, gk, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional,
            scale, chunkSize,
-           outputFinalState, totalChunks, safeGate, oOut, finalStateOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut,
-           vNewOut, hOut);
+           outputFinalState, totalChunks, safeGate, outputSequenceMajor, oOut, finalStateOut, aqkOut, akkOut,
+           wOut, uOut, qgOut, kgOut, vNewOut, hOut);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional != nullptr) {
@@ -136,13 +140,52 @@ KdaCoreOutputs KdaChunkForward(
         const_cast<aclTensor *>(actualChunkIndices)->SetOriginalFormat(Format::FORMAT_ND);
     }
 
+    auto qgScaled = executor->AllocTensor(qgOut->GetViewShape(), qgOut->GetDataType(), Format::FORMAT_ND);
+    auto wSeed = executor->AllocTensor(wOut->GetViewShape(), wOut->GetDataType(), Format::FORMAT_ND);
+    auto uSeed = executor->AllocTensor(uOut->GetViewShape(), uOut->GetDataType(), Format::FORMAT_ND);
+    if (qgScaled == nullptr || wSeed == nullptr || uSeed == nullptr) {
+        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "failed to allocate KDA stage tensors.");
+        return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    }
+
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
-        ChunkKdaFwd,
+        ChunkKdaFwdPrepare,
         OP_INPUT(q, k, v, gk, beta, initialStateOptional, actualCuSeqlens, actualChunkIndices),
-        OP_OUTPUT(oOut, finalStateOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut),
+        OP_OUTPUT(aqkOut, akkOut, qgOut, qgScaled, wSeed, uSeed),
         OP_ATTR(scale, chunkSize, outputFinalState, totalChunks, safeGate));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaFwd failed.");
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaFwdPrepare failed.");
+        return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    }
+
+    ret = ADD_TO_LAUNCHER_LIST_AICORE(
+        ChunkKdaFwdPostWu,
+        OP_INPUT(q, k, v, gk, beta, initialStateOptional, actualCuSeqlens, actualChunkIndices,
+                 wSeed, akkOut, uSeed),
+        OP_OUTPUT(wOut, uOut, kgOut, vNewOut),
+        OP_ATTR(scale, chunkSize, outputFinalState, totalChunks, safeGate));
+    if (ret != ACLNN_SUCCESS) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaFwdPostWu failed.");
+        return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    }
+
+    auto hResult = ChunkGatedDeltaRuleFwdH(
+        kgOut, wOut, uOut, nullptr, gk, initialStateOptional, cuSeqlensOptional,
+        chunkIndicesOptional, outputFinalState, chunkSize, true, hOut, vNewOut,
+        finalStateOut, executor);
+    if (hResult[0] == nullptr || hResult[1] == nullptr || hResult[2] == nullptr) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ChunkGatedDeltaRuleFwdH launch failed.");
+        return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    }
+
+    ret = ADD_TO_LAUNCHER_LIST_AICORE(
+        ChunkKdaFwdFinalize,
+        OP_INPUT(q, k, v, gk, beta, initialStateOptional, actualCuSeqlens, actualChunkIndices,
+                 qgScaled, aqkOut, vNewOut, hOut),
+        OP_OUTPUT(oOut),
+        OP_ATTR(scale, chunkSize, outputFinalState, totalChunks, safeGate, outputSequenceMajor));
+    if (ret != ACLNN_SUCCESS) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaFwdFinalize failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     return {oOut, finalStateOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut};

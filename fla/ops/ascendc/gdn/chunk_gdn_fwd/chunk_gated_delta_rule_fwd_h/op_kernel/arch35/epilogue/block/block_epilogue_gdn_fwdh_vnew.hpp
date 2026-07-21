@@ -15,6 +15,7 @@
 #include "catlass/gemm_coord.hpp"
 #include "catlass/matrix_coord.hpp"
 #include "catlass/epilogue/tile/tile_copy.hpp"
+#include "block_epilogue_gdn_fwdh_regbase.hpp"
 
 
 
@@ -41,6 +42,8 @@ class BlockEpilogue <
 > {
     static constexpr bool kGated = KGatedTag::value;
     static constexpr bool scalarGated = KGatedTag::scalarGated;
+    static constexpr bool useExp2 = KGatedTag::useExp2;
+    static constexpr float LN2 = 0.6931471805599453f;
 public:
     using DispatchPolicy = EpilogueAtlasGDNFwdHVnew;
     using ArchTag = typename DispatchPolicy::ArchTag;
@@ -196,6 +199,10 @@ public:
 
         AscendC::Sub<float>(gUbTensor, gLastUbTensor, gUbTensor, mActual);
         AscendC::PipeBarrier<PIPE_V>();
+        if constexpr (useExp2) {
+            AscendC::Muls(gUbTensor, gUbTensor, LN2, mActual);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
         AscendC::Exp(gUbTensor, gUbTensor, mActual);
         AscendC::PipeBarrier<PIPE_V>();
     }
@@ -208,28 +215,12 @@ public:
         uint32_t rows,
         uint32_t cols)
     {
-        constexpr uint32_t FP32_PER_BLOCK = 8;
-        constexpr uint32_t FP32_PER_REPEAT = 64;
-        uint8_t rowStride = static_cast<uint8_t>(cols / FP32_PER_BLOCK);
-        AscendC::BinaryRepeatParams params(1, 1, 0, rowStride, rowStride, 1);
-        uint32_t localRow = 0;
-        while (localRow < rows) {
-            uint32_t scaleRow = rowScaleOffset + localRow;
-            uint32_t alignedScaleRow = scaleRow & ~(FP32_PER_BLOCK - 1);
-            uint32_t firstScaleLane = scaleRow - alignedScaleRow;
-            uint32_t rowsThisBlock = Min(FP32_PER_BLOCK - firstScaleLane, rows - localRow);
-            AscendC::Brcb(gBrcbUbTensor_, rowScale[alignedScaleRow], 1, {1, FP32_PER_BLOCK});
-            AscendC::PipeBarrier<PIPE_V>();
-            for (uint32_t col = 0; col < cols; col += FP32_PER_REPEAT) {
-                uint32_t count = Min(FP32_PER_REPEAT, cols - col);
-                uint32_t matrixOffset = localRow * cols + col;
-                AscendC::Mul(matrix[matrixOffset], matrix[matrixOffset],
-                             gBrcbUbTensor_[firstScaleLane * FP32_PER_BLOCK], count,
-                             rowsThisBlock, params);
-            }
-            AscendC::PipeBarrier<PIPE_V>();
-            localRow += rowsThisBlock;
-        }
+        __ubuf__ float *matrixAddr = reinterpret_cast<__ubuf__ float *>(matrix.GetPhyAddr());
+        __ubuf__ float *rowScaleAddr = reinterpret_cast<__ubuf__ float *>(rowScale.GetPhyAddr());
+        AscendC::VF_CALL<detail::ApplyRowScaleDualIssue>(
+            matrixAddr, rowScaleAddr, rowScaleOffset,
+            static_cast<uint16_t>(rows), static_cast<uint16_t>(cols));
+        AscendC::PipeBarrier<PIPE_V>();
     }
 
     CATLASS_DEVICE
@@ -305,7 +296,11 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
             AscendC::Cast(calcUbTensor, uUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nvActual);
 
-            PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock, mActual, pingpongFlag);
+            if constexpr (scalarGated) {
+                PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock, mActual, pingpongFlag);
+            } else {
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+            }
             Arch::CrossCoreWaitFlag(cube1Done);
 
             if (waitWsFromMte3) {
@@ -322,7 +317,9 @@ public:
 
             AscendC::Copy(calcUbTensor, wsUbTensor, mActualThisSubBlock * nvActual);
             AscendC::PipeBarrier<PIPE_V>();
-            ApplyRowScale(calcUbTensor, gUbTensor, rowBegin, mActualThisSubBlock, nvActual);
+            if constexpr (scalarGated) {
+                ApplyRowScale(calcUbTensor, gUbTensor, rowBegin, mActualThisSubBlock, nvActual);
+            }
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
 
             uint32_t nvLoops = nvActual / FLOAT_NUM_PER_REPEAT;
@@ -377,7 +374,11 @@ public:
             return;
         }
 
-        PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock, mActual, pingpongFlag);
+        if constexpr (scalarGated) {
+            PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock, mActual, pingpongFlag);
+        } else {
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+        }
         Arch::CrossCoreWaitFlag(cube1Done);
 
         uint32_t mActualPadded = (mActual + NZ_BLOCK_SIZE - 1) / NZ_BLOCK_SIZE * NZ_BLOCK_SIZE;
@@ -417,7 +418,9 @@ public:
 
             AscendC::Copy(calcUbTensor, wsUbTensorThisTile, rowsThisTile * nvActual);
             AscendC::PipeBarrier<PIPE_V>();
-            ApplyRowScale(calcUbTensor, gUbTensor, rowStart, rowsThisTile, nvActual);
+            if constexpr (scalarGated) {
+                ApplyRowScale(calcUbTensor, gUbTensor, rowStart, rowsThisTile, nvActual);
+            }
 
             uint32_t nvLoops = nvActual / FLOAT_NUM_PER_REPEAT;
             for (uint32_t nLoop = 0; nLoop < nvLoops; nLoop++) {

@@ -14,8 +14,6 @@
 
 #include "aclnn_kernels/transdata.h"
 #include "aclnn_kernels/contiguous.h"
-#include "aclnn_kernels/reshape.h"
-#include "aclnn_kernels/slice.h"
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
 #include "aclnn_kernels/common/op_error_check.h"
@@ -32,10 +30,6 @@
 
 
 using namespace op;
-
-namespace l0op {
-const aclTensor *ZerosLike(const aclTensor *self, aclOpExecutor *executor);
-}
 
 #ifdef __cplusplus
 extern "C" {
@@ -97,32 +91,6 @@ static aclnnStatus CheckShape(ChunkGatedDeltaRuleFwdHParams params)
                    ACLNN_ERR_PARAM_INVALID, "g must have shape [B, HV, T].");
     }
     return ACLNN_SUCCESS;
-}
-
-static const aclTensor *MakeNeutralGate(const ChunkGatedDeltaRuleFwdHParams &params, aclOpExecutor *executor)
-{
-    auto gkShape = params.gkOptional->GetViewShape();
-    int64_t offsetsData[] = {0, 0, 0, 0};
-    int64_t sizesData[] = {gkShape.GetDim(0), gkShape.GetDim(1), gkShape.GetDim(2), 1};
-    auto offsets = executor->AllocIntArray(offsetsData, 4);
-    auto sizes = executor->AllocIntArray(sizesData, 4);
-    if (offsets == nullptr || sizes == nullptr) {
-        return nullptr;
-    }
-    auto gateLane = l0op::Slice(params.gkOptional, offsets, sizes, executor);
-    if (gateLane == nullptr) {
-        return nullptr;
-    }
-    gateLane = l0op::Contiguous(gateLane, executor);
-    if (gateLane == nullptr) {
-        return nullptr;
-    }
-    op::Shape gateShape;
-    gateShape.AppendDim(gkShape.GetDim(0));
-    gateShape.AppendDim(gkShape.GetDim(1));
-    gateShape.AppendDim(gkShape.GetDim(2));
-    gateLane = l0op::Reshape(gateLane, gateShape, executor);
-    return gateLane == nullptr ? nullptr : l0op::ZerosLike(gateLane, executor);
 }
 
 static aclnnStatus CheckDtype(ChunkGatedDeltaRuleFwdHParams params)
@@ -194,8 +162,6 @@ static aclnnStatus CheckReservedOptions(const ChunkGatedDeltaRuleFwdHParams &par
 {
     CHECK_COND(params.saveNewValue, ACLNN_ERR_PARAM_INVALID,
                "save_new_value is reserved and only true is supported.");
-    CHECK_COND(!params.useExp2, ACLNN_ERR_PARAM_INVALID,
-               "use_exp2 is reserved and only false is supported.");
     CHECK_COND(!params.transposeStateLayout, ACLNN_ERR_PARAM_INVALID,
                "transpose_state_layout is reserved and only false is supported.");
     return ACLNN_SUCCESS;
@@ -282,11 +248,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
-    if (params.gOptional == nullptr) {
-        params.gOptional = MakeNeutralGate(params, executorPtr);
-        CHECK_RET(params.gOptional != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    }
-    auto result = l0op::ChunkGatedDeltaRuleFwdH(params.k, params.w, params.u, params.gOptional, params.gkOptional, params.initalStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize, params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
+    auto result = l0op::ChunkGatedDeltaRuleFwdH(params.k, params.w, params.u, params.gOptional, params.gkOptional, params.initalStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize, params.useExp2, params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.

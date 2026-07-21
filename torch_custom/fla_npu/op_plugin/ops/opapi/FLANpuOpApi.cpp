@@ -377,9 +377,6 @@ at::Tensor npu_chunk_fwd_o(
         save_new_value.value_or(true),
         "npu_chunk_gated_delta_rule_fwd_h: save_new_value is reserved and only true is supported.");
     TORCH_CHECK(
-        !use_exp2.value_or(false),
-        "npu_chunk_gated_delta_rule_fwd_h: use_exp2 is reserved and only false is supported.");
-    TORCH_CHECK(
         !transpose_state_layout.value_or(false),
         "npu_chunk_gated_delta_rule_fwd_h: transpose_state_layout is reserved and only false is supported.");
 

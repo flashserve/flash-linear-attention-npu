@@ -1,5 +1,6 @@
 # Copyright (c) 2026 Tianjin University, Ltd.
 
+import json
 import os
 import pathlib
 import subprocess
@@ -159,6 +160,10 @@ def _make_inputs(device, b=1, h=2, hv=2, t=64, kdim=128, vdim=128, dtype=torch.b
 
 def _assert_close(name, actual, expected, rtol=2e-3, atol=2e-3):
     torch.testing.assert_close(actual.cpu(), expected.cpu(), rtol=rtol, atol=atol, msg=name)
+
+
+def _bsnd_intermediate_to_bnsd(tensor):
+    return tensor.permute(0, 2, 1, *range(3, tensor.ndim))
 
 
 def _kda_gate_cumsum_reference(g, chunk_size, A_log=None, dt_bias=None, cu_seqlens=None,
@@ -441,20 +446,6 @@ def test_chunk_kda_fwd_matches_reference():
     q, k, v, gk, beta, initial_state = _make_inputs(device, h=1, hv=1, t=64)
     scale = q.shape[-1] ** -0.5
 
-    got = fla_ascendc.chunk_kda_fwd(
-        q,
-        k,
-        v,
-        gk,
-        beta,
-        scale,
-        64,
-        layout="BSND",
-        initial_state=initial_state,
-        output_final_state=True,
-        return_intermediate=True,
-        safe_gate=True,
-    )
     ref = chunk_kda_forward_reference(
         q.detach().cpu(),
         k.detach().cpu(),
@@ -467,17 +458,39 @@ def test_chunk_kda_fwd_matches_reference():
         output_final_state=True,
     )
 
-    _assert_close("o", got[0], ref.o, rtol=2e-2, atol=2e-2)
-    _assert_close("final_state", got[1], ref.final_state, rtol=2e-2, atol=2e-2)
-    _assert_close("g", got[2], gk)
-    _assert_close("Aqk", got[3], ref.Aqk, rtol=2e-2, atol=2e-2)
-    _assert_close("Akk", got[4], ref.Akk, rtol=2e-2, atol=2e-2)
-    _assert_close("w", got[5], ref.w, rtol=2e-2, atol=2e-2)
-    _assert_close("u", got[6], ref.u, rtol=2e-2, atol=2e-2)
-    _assert_close("qg", got[7], ref.qg, rtol=2e-2, atol=2e-2)
-    _assert_close("kg", got[8], ref.kg, rtol=2e-2, atol=2e-2)
-    _assert_close("v_new", got[9], ref.v_new, rtol=2e-2, atol=2e-2)
-    _assert_close("initial_state", got[11], initial_state)
+    for safe_gate in (False, True):
+        mode = f"safe_gate={safe_gate}"
+        got = fla_ascendc.chunk_kda_fwd(
+            q,
+            k,
+            v,
+            gk,
+            beta,
+            scale,
+            64,
+            layout="BSND",
+            initial_state=initial_state,
+            output_final_state=True,
+            return_intermediate=True,
+            safe_gate=safe_gate,
+        )
+        for name, tensor in zip(
+            ("o", "final_state", "g", "Aqk", "Akk", "w", "u", "qg", "kg", "v_new", "h"),
+            got[:11],
+        ):
+            assert torch.isfinite(tensor).all().item(), f"{mode} {name} contains NaN or Inf"
+        _assert_close(f"{mode} o", got[0], ref.o, rtol=2e-2, atol=2e-2)
+        _assert_close(f"{mode} final_state", got[1], ref.final_state, rtol=2e-2, atol=2e-2)
+        _assert_close(f"{mode} g", got[2], gk)
+        _assert_close(f"{mode} Aqk", got[3], _bsnd_intermediate_to_bnsd(ref.Aqk), rtol=2e-2, atol=2e-2)
+        _assert_close(f"{mode} Akk", got[4], _bsnd_intermediate_to_bnsd(ref.Akk), rtol=2e-2, atol=2e-2)
+        _assert_close(f"{mode} w", got[5], _bsnd_intermediate_to_bnsd(ref.w), rtol=2e-2, atol=2e-2)
+        _assert_close(f"{mode} u", got[6], _bsnd_intermediate_to_bnsd(ref.u), rtol=2e-2, atol=2e-2)
+        _assert_close(f"{mode} qg", got[7], _bsnd_intermediate_to_bnsd(ref.qg), rtol=2e-2, atol=2e-2)
+        _assert_close(f"{mode} kg", got[8], _bsnd_intermediate_to_bnsd(ref.kg), rtol=2e-2, atol=2e-2)
+        _assert_close(f"{mode} v_new", got[9], _bsnd_intermediate_to_bnsd(ref.v_new), rtol=2e-2, atol=2e-2)
+        _assert_close(f"{mode} h", got[10], _bsnd_intermediate_to_bnsd(ref.h), rtol=2e-2, atol=2e-2)
+        _assert_close(f"{mode} initial_state", got[11], initial_state)
 
 
 def test_chunk_kda_fwd_upper_triangle_dirty_zero():
@@ -538,8 +551,8 @@ def test_chunk_kda_fwd_upper_triangle_dirty_zero():
 
     upper = torch.triu(torch.ones(t, t, dtype=torch.bool), diagonal=1)
     diag = torch.arange(t)
-    aqk_npu = got[3].detach().float().cpu()[0, :, 0, :]
-    akk_npu = got[4].detach().float().cpu()[0, :, 0, :]
+    aqk_npu = got[3].detach().float().cpu()[0, 0, :, :]
+    akk_npu = got[4].detach().float().cpu()[0, 0, :, :]
     aqk_ref = ref.Aqk.detach().float()[0, :, 0, :]
     akk_ref = ref.Akk.detach().float()[0, :, 0, :]
 
@@ -552,13 +565,13 @@ def test_chunk_kda_fwd_upper_triangle_dirty_zero():
     for name, actual, expected in (
         ("safe gate o", got[0], ref.o),
         ("safe gate final_state", got[1], ref.final_state),
-        ("safe gate Aqk", got[3], ref.Aqk),
-        ("safe gate Akk", got[4], ref.Akk),
-        ("safe gate w", got[5], ref.w),
-        ("safe gate u", got[6], ref.u),
-        ("safe gate qg", got[7], ref.qg),
-        ("safe gate kg", got[8], ref.kg),
-        ("safe gate v_new", got[9], ref.v_new),
+        ("safe gate Aqk", got[3], _bsnd_intermediate_to_bnsd(ref.Aqk)),
+        ("safe gate Akk", got[4], _bsnd_intermediate_to_bnsd(ref.Akk)),
+        ("safe gate w", got[5], _bsnd_intermediate_to_bnsd(ref.w)),
+        ("safe gate u", got[6], _bsnd_intermediate_to_bnsd(ref.u)),
+        ("safe gate qg", got[7], _bsnd_intermediate_to_bnsd(ref.qg)),
+        ("safe gate kg", got[8], _bsnd_intermediate_to_bnsd(ref.kg)),
+        ("safe gate v_new", got[9], _bsnd_intermediate_to_bnsd(ref.v_new)),
     ):
         _assert_close(name, actual, expected, rtol=2e-2, atol=2e-2)
 
@@ -601,14 +614,14 @@ def test_chunk_kda_fwd_vdim256_matches_reference():
         for name, actual, expected in (
             ("o", got[0], ref.o),
             ("final_state", got[1], ref.final_state),
-            ("Aqk", got[3], ref.Aqk),
-            ("Akk", got[4], ref.Akk),
-            ("w", got[5], ref.w),
-            ("u", got[6], ref.u),
-            ("qg", got[7], ref.qg),
-            ("kg", got[8], ref.kg),
-            ("v_new", got[9], ref.v_new),
-            ("h", got[10], ref.h),
+            ("Aqk", got[3], _bsnd_intermediate_to_bnsd(ref.Aqk)),
+            ("Akk", got[4], _bsnd_intermediate_to_bnsd(ref.Akk)),
+            ("w", got[5], _bsnd_intermediate_to_bnsd(ref.w)),
+            ("u", got[6], _bsnd_intermediate_to_bnsd(ref.u)),
+            ("qg", got[7], _bsnd_intermediate_to_bnsd(ref.qg)),
+            ("kg", got[8], _bsnd_intermediate_to_bnsd(ref.kg)),
+            ("v_new", got[9], _bsnd_intermediate_to_bnsd(ref.v_new)),
+            ("h", got[10], _bsnd_intermediate_to_bnsd(ref.h)),
         ):
             assert torch.isfinite(actual).all().item(), f"{dtype_name} V256 {name} contains NaN or Inf"
             _assert_close(f"{dtype_name} V256 {name}", actual, expected, rtol=2e-2, atol=2e-2)
@@ -655,14 +668,14 @@ def test_chunk_kda_fwd_chunk128_matches_reference():
         for name, actual, expected in (
             ("o", got[0], ref.o),
             ("final_state", got[1], ref.final_state),
-            ("Aqk", got[3], ref.Aqk),
-            ("Akk", got[4], ref.Akk),
-            ("w", got[5], ref.w),
-            ("u", got[6], ref.u),
-            ("qg", got[7], ref.qg),
-            ("kg", got[8], ref.kg),
-            ("v_new", got[9], ref.v_new),
-            ("h", got[10], ref.h),
+            ("Aqk", got[3], _bsnd_intermediate_to_bnsd(ref.Aqk)),
+            ("Akk", got[4], _bsnd_intermediate_to_bnsd(ref.Akk)),
+            ("w", got[5], _bsnd_intermediate_to_bnsd(ref.w)),
+            ("u", got[6], _bsnd_intermediate_to_bnsd(ref.u)),
+            ("qg", got[7], _bsnd_intermediate_to_bnsd(ref.qg)),
+            ("kg", got[8], _bsnd_intermediate_to_bnsd(ref.kg)),
+            ("v_new", got[9], _bsnd_intermediate_to_bnsd(ref.v_new)),
+            ("h", got[10], _bsnd_intermediate_to_bnsd(ref.h)),
         ):
             assert torch.isfinite(actual).all().item(), f"{case_name} {name} contains NaN or Inf"
             _assert_close(f"{case_name} {name}", actual, expected, rtol=2e-2, atol=2e-2)
@@ -703,9 +716,9 @@ def test_chunk_kda_fwd_bsnd_export_dependency_matches_reference():
     )
     for name, actual, expected in (
         ("o", got[0], ref.o),
-        ("w", got[5], ref.w),
-        ("v_new", got[9], ref.v_new),
-        ("h", got[10], ref.h),
+        ("w", got[5], _bsnd_intermediate_to_bnsd(ref.w)),
+        ("v_new", got[9], _bsnd_intermediate_to_bnsd(ref.v_new)),
+        ("h", got[10], _bsnd_intermediate_to_bnsd(ref.h)),
     ):
         assert torch.isfinite(actual).all().item(), f"BSND dependency {name} contains NaN or Inf"
         _assert_close(f"BSND dependency {name}", actual, expected, rtol=2e-2, atol=2e-2)
@@ -896,19 +909,20 @@ def test_chunk_kda_fwd_fp16_matches_reference():
     _assert_close("o fp16", got[0], ref.o, rtol=2e-2, atol=2e-2)
     _assert_close("final_state fp16", got[1], ref.final_state, rtol=2e-2, atol=2e-2)
     _assert_close("g fp16", got[2], gk)
-    _assert_close("Aqk fp16", got[3], ref.Aqk, rtol=2e-2, atol=2e-2)
-    _assert_close("Akk fp16", got[4], ref.Akk, rtol=2e-2, atol=2e-2)
-    _assert_close("w fp16", got[5], ref.w, rtol=2e-2, atol=2e-2)
-    _assert_close("u fp16", got[6], ref.u, rtol=2e-2, atol=2e-2)
-    _assert_close("qg fp16", got[7], ref.qg, rtol=2e-2, atol=2e-2)
-    _assert_close("kg fp16", got[8], ref.kg, rtol=2e-2, atol=2e-2)
-    _assert_close("v_new fp16", got[9], ref.v_new, rtol=2e-2, atol=2e-2)
+    _assert_close("Aqk fp16", got[3], _bsnd_intermediate_to_bnsd(ref.Aqk), rtol=2e-2, atol=2e-2)
+    _assert_close("Akk fp16", got[4], _bsnd_intermediate_to_bnsd(ref.Akk), rtol=2e-2, atol=2e-2)
+    _assert_close("w fp16", got[5], _bsnd_intermediate_to_bnsd(ref.w), rtol=2e-2, atol=2e-2)
+    _assert_close("u fp16", got[6], _bsnd_intermediate_to_bnsd(ref.u), rtol=2e-2, atol=2e-2)
+    _assert_close("qg fp16", got[7], _bsnd_intermediate_to_bnsd(ref.qg), rtol=2e-2, atol=2e-2)
+    _assert_close("kg fp16", got[8], _bsnd_intermediate_to_bnsd(ref.kg), rtol=2e-2, atol=2e-2)
+    _assert_close("v_new fp16", got[9], _bsnd_intermediate_to_bnsd(ref.v_new), rtol=2e-2, atol=2e-2)
+    _assert_close("h fp16", got[10], _bsnd_intermediate_to_bnsd(ref.h), rtol=2e-2, atol=2e-2)
     _assert_close("initial_state fp16", got[11], initial_state)
 
 
 def test_chunk_kda_fwd_tnd_matches_reference():
     device = _device()
-    q, k, v, gk, beta, initial_state = _make_inputs(device, b=1, h=1, hv=2, t=8)
+    q, k, v, gk, beta, initial_state = _make_inputs(device, b=1, h=1, hv=2, t=128)
     scale = q.shape[-1] ** -0.5
 
     got = fla_ascendc.chunk_kda_fwd(
@@ -939,14 +953,14 @@ def test_chunk_kda_fwd_tnd_matches_reference():
     _assert_close("o tnd", got[0], ref.o.squeeze(0), rtol=2e-2, atol=2e-2)
     _assert_close("final_state tnd", got[1], ref.final_state, rtol=2e-2, atol=2e-2)
     _assert_close("g tnd", got[2], gk.squeeze(0), rtol=2e-2, atol=2e-2)
-    _assert_close("Aqk tnd", got[3], ref.Aqk.squeeze(0), rtol=2e-2, atol=2e-2)
-    _assert_close("Akk tnd", got[4], ref.Akk.squeeze(0), rtol=2e-2, atol=2e-2)
-    _assert_close("w tnd", got[5], ref.w.squeeze(0), rtol=2e-2, atol=2e-2)
-    _assert_close("u tnd", got[6], ref.u.squeeze(0), rtol=2e-2, atol=2e-2)
-    _assert_close("qg tnd", got[7], ref.qg.squeeze(0), rtol=2e-2, atol=2e-2)
-    _assert_close("kg tnd", got[8], ref.kg.squeeze(0), rtol=2e-2, atol=2e-2)
-    _assert_close("v_new tnd", got[9], ref.v_new.squeeze(0), rtol=2e-2, atol=2e-2)
-    _assert_close("h tnd", got[10], ref.h.squeeze(0), rtol=2e-2, atol=2e-2)
+    _assert_close("Aqk tnd", got[3], ref.Aqk.squeeze(0).permute(1, 0, 2), rtol=2e-2, atol=2e-2)
+    _assert_close("Akk tnd", got[4], ref.Akk.squeeze(0).permute(1, 0, 2), rtol=2e-2, atol=2e-2)
+    _assert_close("w tnd", got[5], ref.w.squeeze(0).permute(1, 0, 2), rtol=2e-2, atol=2e-2)
+    _assert_close("u tnd", got[6], ref.u.squeeze(0).permute(1, 0, 2), rtol=2e-2, atol=2e-2)
+    _assert_close("qg tnd", got[7], ref.qg.squeeze(0).permute(1, 0, 2), rtol=2e-2, atol=2e-2)
+    _assert_close("kg tnd", got[8], ref.kg.squeeze(0).permute(1, 0, 2), rtol=2e-2, atol=2e-2)
+    _assert_close("v_new tnd", got[9], ref.v_new.squeeze(0).permute(1, 0, 2), rtol=2e-2, atol=2e-2)
+    _assert_close("h tnd", got[10], ref.h.squeeze(0).permute(1, 0, 2, 3), rtol=2e-2, atol=2e-2)
     _assert_close("initial_state tnd", got[11], initial_state)
 
 
@@ -1396,30 +1410,35 @@ def test_chunk_gdn_fwd_h_gk_only_matches_neutral_g():
     kg = kg.to(torch.float16)
     gk = gk_chunks.reshape(b, hv, t, kdim)
 
-    state = torch.zeros(b, hv, kdim, vdim, dtype=torch.float32)
-    h_ref = torch.zeros(b, hv, t // 64, kdim, vdim, dtype=torch.float32)
-    v_new_ref = torch.zeros(b, hv, t, vdim, dtype=torch.float32)
-    for chunk_idx in range(t // 64):
-        start = chunk_idx * 64
-        end = start + 64
-        h_ref[:, :, chunk_idx] = state
-        v_new = u.cpu().float()[:, :, start:end] - torch.einsum(
-            "bhtk,bhkv->bhtv", w.cpu().float()[:, :, start:end], state,
-        )
-        v_new_ref[:, :, start:end] = v_new
-        state = state * torch.exp2(gk[:, :, end - 1]).unsqueeze(-1) + torch.einsum(
-            "bhtk,bhtv->bhkv", kg.float()[:, :, start:end], v_new,
-        )
+    def reference(exp_fn):
+        state = torch.zeros(b, hv, kdim, vdim, dtype=torch.float32)
+        h_ref = torch.zeros(b, hv, t // 64, kdim, vdim, dtype=torch.float32)
+        v_new_ref = torch.zeros(b, hv, t, vdim, dtype=torch.float32)
+        for chunk_idx in range(t // 64):
+            start = chunk_idx * 64
+            end = start + 64
+            h_ref[:, :, chunk_idx] = state
+            v_new = u.cpu().float()[:, :, start:end] - torch.einsum(
+                "bhtk,bhkv->bhtv", w.cpu().float()[:, :, start:end], state,
+            )
+            v_new_ref[:, :, start:end] = v_new
+            state = state * exp_fn(gk[:, :, end - 1]).unsqueeze(-1) + torch.einsum(
+                "bhtk,bhtv->bhkv", kg.float()[:, :, start:end], v_new,
+            )
+        return h_ref, v_new_ref, state
+
+    h_ref, v_new_ref, state = reference(torch.exp2)
+    h_ref_exp, v_new_ref_exp, state_exp = reference(torch.exp)
 
     kg = kg.to(device)
     gk = gk.to(device)
     neutral_g = torch.zeros(b, hv, t, dtype=torch.float32, device=device)
 
     gk_only = fla_ascendc.chunk_gated_delta_rule_fwd_h(
-        kg, w, u, gk=gk, output_final_state=True, chunk_size=64,
+        kg, w, u, gk=gk, output_final_state=True, chunk_size=64, use_exp2=True,
     )
     explicit_neutral = fla_ascendc.chunk_gated_delta_rule_fwd_h(
-        kg, w, u, g=neutral_g, gk=gk, output_final_state=True, chunk_size=64,
+        kg, w, u, g=neutral_g, gk=gk, output_final_state=True, chunk_size=64, use_exp2=True,
     )
     for name, outputs in (("gk-only", gk_only), ("explicit-neutral", explicit_neutral)):
         assert outputs[2].dtype == torch.float32, f"{name} final_state must be float32 without initial_state"
@@ -1429,6 +1448,15 @@ def test_chunk_gdn_fwd_h_gk_only_matches_neutral_g():
     _assert_close("gk h formula", gk_only[0], h_ref.to(torch.float16), rtol=2e-2, atol=2e-3)
     _assert_close("gk v_new formula", gk_only[1], v_new_ref.to(torch.float16), rtol=2e-2, atol=2e-3)
     _assert_close("gk final_state formula", gk_only[2], state, rtol=2e-2, atol=2e-3)
+
+    natural_exp = fla_ascendc.chunk_gated_delta_rule_fwd_h(
+        kg, w, u, gk=gk, output_final_state=True, chunk_size=64, use_exp2=False,
+    )
+    _assert_close("natural-exp h formula", natural_exp[0], h_ref_exp.to(torch.float16), rtol=2e-2, atol=2e-3)
+    _assert_close(
+        "natural-exp v_new formula", natural_exp[1], v_new_ref_exp.to(torch.float16), rtol=2e-2, atol=2e-3,
+    )
+    _assert_close("natural-exp final_state formula", natural_exp[2], state_exp, rtol=2e-2, atol=2e-3)
 
 
 def test_kda_layout_swap12_matches_reference():
@@ -1465,9 +1493,63 @@ def _run_single_test_in_subprocess(name):
     subprocess.run([sys.executable, __file__, "--single-test", name], check=True)
 
 
+def profile_chunk_kda_fwd_from_manifest():
+    manifest_path = pathlib.Path(os.environ["FLA_NPU_CASE_MANIFEST"])
+    selected_ids = set(filter(None, os.environ.get("FLA_NPU_CASE_IDS", "").split(",")))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    cases = [
+        case for case in manifest["cases"]
+        if case["id"] in selected_ids and "performance" in case["tags"]
+    ]
+    if len(cases) != 1:
+        raise RuntimeError(f"expected exactly one performance case, got {len(cases)}")
+    case = cases[0]
+    shape, attrs = case["shape"], case["attrs"]
+    if attrs["layout"] != "NTD":
+        raise RuntimeError("the KDA performance runner currently requires NTD layout")
+
+    device = _device()
+    if device.type == "cpu":
+        raise RuntimeError("KDA performance profiling requires an NPU")
+    h = int(shape["H_k"])
+    hv = int(shape["H_v"])
+    t = int(shape["T"])
+    kdim = int(shape["K"])
+    vdim = int(shape["V"])
+    chunk_size = int(shape["chunk_size"])
+    nt = int(shape["N_c"])
+    if h != hv or t != nt * chunk_size:
+        raise RuntimeError("the NTD performance case must use H_k=H_v and full chunks")
+
+    data_dtype = torch.float16
+    q = torch.zeros((h, t, kdim), dtype=data_dtype).to(device)
+    k = torch.zeros_like(q)
+    v = torch.zeros((hv, t, vdim), dtype=data_dtype).to(device)
+    gate_row = -0.005 * torch.arange(1, chunk_size + 1, dtype=torch.float32)
+    gk_cpu = gate_row.view(1, 1, chunk_size, 1).expand(hv, nt, chunk_size, kdim)
+    gk = gk_cpu.contiguous().view(hv, t, kdim).to(device)
+    beta = torch.ones((hv, t), dtype=torch.float32).to(device)
+    initial_state = torch.zeros((1, hv, kdim, vdim), dtype=torch.float32).to(device)
+
+    for _ in range(8):
+        outputs = fla_ascendc.chunk_kda_fwd(
+            q, k, v, gk, beta, float(attrs["scale"]), chunk_size,
+            layout="NTD", initial_state=initial_state,
+            output_final_state=bool(attrs["output_final_state"]),
+            return_intermediate=bool(attrs["return_intermediate"]),
+            safe_gate=bool(attrs["safe_gate"]),
+        )
+        torch.npu.synchronize()
+        del outputs
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--single-test":
         globals()[sys.argv[2]]()
+        raise SystemExit(0)
+
+    if os.environ.get("FLA_NPU_PROFILE_ONLY") == "1":
+        profile_chunk_kda_fwd_from_manifest()
         raise SystemExit(0)
 
     selected_operator = os.environ.get("FLA_NPU_OPERATOR")
@@ -1484,6 +1566,7 @@ if __name__ == "__main__":
         test_kda_layout_swap12_rejects_invalid_shape()
         raise SystemExit(0)
     if selected_operator == "chunk_kda_fwd":
+        test_chunk_gdn_fwd_h_gk_only_matches_neutral_g()
         test_chunk_kda_fwd_matches_reference()
         test_chunk_kda_fwd_bf16_gate_matches_reference()
         test_chunk_kda_fwd_fp16_matches_reference()

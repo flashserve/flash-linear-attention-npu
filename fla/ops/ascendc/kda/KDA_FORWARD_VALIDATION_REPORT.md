@@ -7,9 +7,9 @@
 - `chunk_size=128`：C9-C12、C26、C30。
 - `Vdim=256`：C21-C24、C27-C29、C31-C33。
 - BF16、`Kdim=128`、BSND/NTD、dense/varlen、随机非对齐尾块。
-- Stage 1 AIV/Cube 双槽流水和 Stage 3 双 AIV 大块路径的性能收益。
+- Prepare AIV/Cube 双槽流水和 PostWu 双 AIV 大块路径的性能收益。
 
-本轮不使用双标杆。精度标杆使用 CPU FP32 中间计算：汇总指标比较 NPU BF16 输出转 FP32后的值与 CPU FP32 结果；CT 可视化前再把 CPU 结果 cast 到 BF16 输出边界，与 NPU BF16 输出保持同一公开 dtype。每条用例使用：
+第 2 至 5 节记录的 C128/V256 历史矩阵不使用双标杆。该矩阵的精度标杆使用 CPU FP32 中间计算：汇总指标比较 NPU BF16 输出转 FP32 后的值与 CPU FP32 结果；CT 可视化前再把 CPU 结果 cast 到 BF16 输出边界，与 NPU BF16 输出保持同一公开 dtype。PR228 四阶段拆分后的 fla-org 三方对标见第 6 节。每条历史用例使用：
 
 ```text
 ct viz <npu.pt> <cpu_fp32.pt> -wl 1 -sc 100000
@@ -68,7 +68,7 @@ test_chunk_kda_fwd_ntd_direct_matches_reference
 
 重点覆盖 FP16/BF16、C64/C128、V128/V256、四种公开 layout 和 `return_intermediate` 两种模式。`return_intermediate=False/True` 在相同输入下逐位一致，专门看护 split L0 中间量的输入依赖和 workspace 生命周期。
 
-另对 NTD、`chunk_size=128`、`Vdim=256`、4 条非对齐变长序列固定输入连续执行 10 次；全部公开输出逐元素二进制一致，用于看护 Stage 1 双槽 `ready/free` 同步协议的确定性。
+另对 NTD、`chunk_size=128`、`Vdim=256`、4 条非对齐变长序列固定输入连续执行 10 次；全部公开输出逐元素二进制一致，用于看护 Prepare 双槽 `ready/free` 同步协议的确定性。
 
 完整组合包还执行了 NTD 模型形状回归：`T=131072`、`H_K=H_V=2`、`Kdim=Vdim=128`、8 条非对齐序列、`initial_state=None`。`o`、`final_state` 和全部中间量均为 finite；`o` 与 BF16 CPU 参考一致，FP32 `final_state` 最大绝对误差约 `4e-4`。
 
@@ -78,23 +78,56 @@ test_chunk_kda_fwd_ntd_direct_matches_reference
 
 | 用例 | 优化前 | 优化后 | 降幅 | 优化后主要耗时 |
 | --- | ---: | ---: | ---: | --- |
-| BNSD `B=1,H_K=1,H_V=2,T=16384,K=V=128,C=64` | 4.751 ms | 3.531 ms | 25.7% | stage 1 1.512 ms，fwd_h 1.385 ms |
-| NTD `B=1,H_K=H_V=32,T=65536,K=V=128,C=64` | 206.142 ms | 127.648 ms | 38.1% | stage 1 93.123 ms，stage 2 21.991 ms |
-| BSND C9 `B=64,H_K=H_V=8,T=2048,K=V=128,C=128` | 114.572 ms | 68.035 ms | 40.6% | stage 1 42.374 ms，layout 10.011 ms |
-| NTD C33 `B=1,H_K=16,H_V=48,T=8999,K=128,V=256,C=128` | 48.621 ms | 27.210 ms | 44.0% | stage 1 19.064 ms，stage 2 5.114 ms |
+| BNSD `B=1,H_K=1,H_V=2,T=16384,K=V=128,C=64` | 4.751 ms | 3.531 ms | 25.7% | Prepare 1.512 ms，fwd_h 1.385 ms |
+| NTD `B=1,H_K=H_V=32,T=65536,K=V=128,C=64` | 206.142 ms | 127.648 ms | 38.1% | Prepare 93.123 ms，Finalize 21.991 ms |
+| BSND C9 `B=64,H_K=H_V=8,T=2048,K=V=128,C=128` | 114.572 ms | 68.035 ms | 40.6% | Prepare 42.374 ms，layout 10.011 ms |
+| NTD C33 `B=1,H_K=16,H_V=48,T=8999,K=128,V=256,C=128` | 48.621 ms | 27.210 ms | 44.0% | Prepare 19.064 ms，Finalize 5.114 ms |
 
 优化项与证据：
 
-- Stage 3 使用两个 AIV subblock 分摊连续行，并把逐行搬运改为 UB 预算内的大块搬运/向量处理，耗时降低 `84.8%~92.2%`。
-- Stage 1 使用两槽 `ready/free` 生产者消费者队列，使 AIV factor 准备与 AIC Catlass score GEMM 重叠，耗时降低 `10.0%~31.7%`。
+- PostWu 使用两个 AIV subblock 分摊连续行，并把逐行搬运改为 UB 预算内的大块搬运/向量处理，耗时降低 `84.8%~92.2%`。
+- Prepare 使用两槽 `ready/free` 生产者消费者队列，使 AIV factor 准备与 AIC Catlass score GEMM 重叠，耗时降低 `10.0%~31.7%`。
 - `fwd_h` 的 varlen chunk offset 元数据由逐任务 GM 标量读取改为一次 `DataCopyPad` 批量搬入 UB，随后只在 UB 中索引；长序列 `fwd_h` 从 `6.545 ms` 降至 `5.505 ms`。
-- 三个长序列/大 shape 的 Stage 1 AIC `wait_id4` 由 `29.94/20.43/12.26 ms` 降到 `14.92/7.20/3.40 ms`。
+- 三个长序列/大 shape 的 Prepare AIC `wait_id4` 由 `29.94/20.43/12.26 ms` 降到 `14.92/7.20/3.40 ms`。
 - score workspace 按 core 数和固定队列深度分配，不随 T 或 chunk 数线性增长。
 
 ## 5. 当前边界与后续优化
 
 - 当前交付验证范围为 `Kdim=128`、`Vdim=128/256`、`chunk_size=64/128`、FP16/BF16。
 - varlen partial chunk 已保证正确性，当前使用完整 tile 补中性值并只回写有效区；仍可增加专用 partial 性能模板。
-- Stage 1 仍占长序列链路约 `62%~72%`，后续优先降低 score scratch 往返、score block 控制开销和 solve 串行段。
+- Prepare 仍占长序列链路约 `62%~72%`，后续优先降低 score scratch 往返、score block 控制开销和 solve 串行段。
 - BSND 大 head 场景还受到 layout swap 影响；上游已提供 BNSD/NTD 时应直接使用性能 layout。
 - 本报告不覆盖 KDA 反向算子，也不把未执行的 sanitizer 检查写成通过结论。
+
+## 6. PR228 四阶段拆分增量复测
+
+PR228 将正向通路拆为 `ChunkKdaFwdPrepare`、`ChunkKdaFwdPostWu`、独立
+`ChunkGatedDeltaRuleFwdH` 和 `ChunkKdaFwdFinalize`。A2/A5 使用
+fla-org/flash-linear-attention 的 Triton 实现作为实际三方参考，固定目标用例为 NTD
+`[32,8192,128]`、`K=V=128`、`chunk_size=64`、FP16：
+
+| 平台 | 输出 | max abs | mean abs | bad ratio |
+| --- | --- | ---: | ---: | ---: |
+| A2 | `o` | 4.76837e-7 | 2.19373e-8 | 0 |
+| A2 | `final_state` | 6.35767e-6 | 8.23598e-7 | 0 |
+| A2 | `g` | 0 | 0 | 0 |
+| A5 | `o` | 4.76837e-7 | 2.19394e-8 | 0 |
+| A5 | `final_state` | 6.40936e-6 | 8.23737e-7 | 0 |
+| A5 | `g` | 0 | 0 | 0 |
+
+A2/A5 的小 shape 全中间量对比覆盖 `safe_gate=false/true`，所有输出 `bad_ratio=0`；
+独立 `fwd_h` 的 `h`、`v_new`、`final_state` 也与三方 `exp2` 公式对齐。A2/A5 另覆盖
+TND/BNSD、FP16/BF16、V=256 和极端负 gate；A3 完成全量算子包编译验证。
+
+A5 对目标用例执行 `msopprof --aic-metrics=BasicInfo`，四阶段设备侧均值如下：
+
+| 阶段 | 均值 |
+| --- | ---: |
+| Prepare | 7.964 ms |
+| PostWu | 0.606 ms |
+| FwdH | 1.162 ms |
+| Finalize | 0.600 ms |
+| 合计 | 10.332 ms |
+
+对照 Triton 同用例约 11 ms，AscendC 四阶段合计时延降低约 6.1%。profile 中一次
+`ZerosLike` 来自测试输入 `k = torch.zeros_like(q)` 的准备过程，不属于 KDA 四阶段通路。

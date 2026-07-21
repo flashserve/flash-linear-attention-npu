@@ -24,6 +24,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--output", default="outputs/chunk_kda_fwd_msopprof")
+    parser.add_argument("--launch-count", type=int, default=20)
+    parser.add_argument("--warm-up", type=int, default=5)
     args = parser.parse_args()
     ids = case_ids(tag="performance", route="ascendc")
     if not ids:
@@ -33,11 +35,13 @@ def main():
         "FLA_NPU_OPERATOR": "chunk_kda_fwd",
         "FLA_NPU_CASE_MANIFEST": str(ROOT / "tests/op_cases/chunk_kda_fwd.json"),
         "FLA_NPU_CASE_IDS": ",".join(ids),
+        "FLA_NPU_PROFILE_ONLY": "1",
     })
     application = f"{shlex.quote(sys.executable)} {shlex.quote(str(RUNNER))}"
     command = [
         "msopprof", f"--application={application}", f"--output={args.output}",
-        "--aic-metrics=BasicInfo", "--launch-count=20", "--warm-up=5", "--kill=off",
+        "--aic-metrics=BasicInfo", f"--launch-count={args.launch_count}",
+        f"--warm-up={args.warm_up}", "--kill=off",
     ]
     if args.dry_run:
         print(" ".join(shlex.quote(part) for part in command))

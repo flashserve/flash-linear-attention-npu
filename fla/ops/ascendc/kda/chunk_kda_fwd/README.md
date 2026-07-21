@@ -75,15 +75,15 @@ o        = (qg @ h_prev + Aqk @ v_new) * scale
 
 变长序列模式中，`cu_seqlens[0]` 必须为 0、末项等于 `T` 且序列非递减。`chunk_indices` 必须按 sequence-major 列出全部 `(seq_id, local_chunk_id)`；其条目数和当前调用的 `N_c` 一致。定长与变长序列、尾块与整块遵循同一数学定义。
 
-完整调用在一个 Ascend C kernel 内按 `PREPARE -> POST_WU -> FWD_H -> OUTPUT` 四个语义阶段执行。
-阶段仅在 kernel 模板中可见，公共 Python/aclnn/直调 API 均不接收数值 `stage`。每个阶段结束时先用
-`TPipe::Reset()` 回收本阶段 UB/事件资源，再用 `SyncAll<false>` 完成全核收敛；host 使用 BATCH_MODE
-调度，避免多 stream 抢占部分核后在阶段同步处形成死锁。gk、beta 和阶段输出类型由
-编译期模板选择，不在 L2 通过 Cast 拼出计算主路径。
+完整调用在同一 stream 上依次发射 `ChunkKdaFwdPrepare`、`ChunkKdaFwdPostWu`、
+`ChunkGatedDeltaRuleFwdH` 和 `ChunkKdaFwdFinalize` 四个独立 kernel。公共 Python/aclnn/直调 API
+均不接收数值 `stage`；kernel launch 边界负责阶段间 GM 可见性，不在单个 L0 kernel 内用全核 barrier
+跨越另一个算子。gk、beta 和阶段输出类型由编译期模板选择，不在 L2 通过 Cast 拼出计算主路径。
 
-KDA 的状态传播只使用逐 key gate `gk`，不包含 GDN 的标量 gate `g`。内嵌 `FWD_H` 通过编译期策略
-把标量 gate 路径固定为中性系数 1，并保留 `gk` 衰减，不生成额外零 gate 张量，也不读取错误 shape 的
-`gk` 作为标量 gate。
+KDA 的状态传播只使用逐 key gate `gk`。独立 `FWD_H` 接收全零标量 gate 作为中性因子，并以
+`use_exp2=true` 对 `gk` 执行与三方仓一致的 log2 gate 衰减。`o` 由 OUTPUT kernel 直接按调用方
+TND/BNSD 布局搬出，`final_state` 由 FWD_H kernel 直接写公开布局；供反向使用的中间量始终保持
+NTD/BNSD 内部布局。
 
 ## 5. 调用入口
 

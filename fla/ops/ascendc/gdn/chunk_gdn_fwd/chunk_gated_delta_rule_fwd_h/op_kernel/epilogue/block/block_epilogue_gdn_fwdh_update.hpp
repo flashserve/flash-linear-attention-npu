@@ -37,6 +37,8 @@ class BlockEpilogue <
 > {
     static constexpr bool kGated = KGatedTag::value;
     static constexpr bool scalarGated = KGatedTag::scalarGated;
+    static constexpr bool useExp2 = KGatedTag::useExp2;
+    static constexpr float LN2 = 0.6931471805599453f;
 public:
     using DispatchPolicy = EpilogueAtlasGDNFwdHUpdate;
     using ArchTag = typename DispatchPolicy::ArchTag;
@@ -203,6 +205,10 @@ public:
 
             AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+            if constexpr (useExp2) {
+                AscendC::Muls(glastUbTensor, glastUbTensor, LN2, 1);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
             AscendC::Exp(glastUbTensor, glastUbTensor, 1);
             AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
@@ -258,9 +264,10 @@ public:
                     AscendC::Cast(gkLastUbTensor, gkInputUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock);
                 }
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Muls(gkLastUbTensor, gkLastUbTensor, 0.6931471805599453f,
-                              mActualThisSubBlock);
-                AscendC::PipeBarrier<PIPE_V>();
+                if constexpr (useExp2) {
+                    AscendC::Muls(gkLastUbTensor, gkLastUbTensor, LN2, mActualThisSubBlock);
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
                 AscendC::Exp(gkLastUbTensor, gkLastUbTensor, mActualThisSubBlock);
                 AscendC::PipeBarrier<PIPE_V>();
 
@@ -381,9 +388,10 @@ public:
                     AscendC::Cast(gkLastUbTensor, gkInputUbTensor, AscendC::RoundMode::CAST_NONE, rowsThisTile);
                 }
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Muls(gkLastUbTensor, gkLastUbTensor, 0.6931471805599453f,
-                              rowsThisTile);
-                AscendC::PipeBarrier<PIPE_V>();
+                if constexpr (useExp2) {
+                    AscendC::Muls(gkLastUbTensor, gkLastUbTensor, LN2, rowsThisTile);
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
                 AscendC::Exp(gkLastUbTensor, gkLastUbTensor, rowsThisTile);
                 AscendC::PipeBarrier<PIPE_V>();
 

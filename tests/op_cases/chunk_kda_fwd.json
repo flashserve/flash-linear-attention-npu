@@ -83,11 +83,13 @@
     "accuracy_case_ids": [
       "chunk_kda_fwd_main_accuracy",
       "chunk_kda_fwd_dtype_layout_generalization",
-      "chunk_kda_fwd_tail_or_varlen"
+      "chunk_kda_fwd_tail_or_varlen",
+      "chunk_kda_fwd_tnd_layout"
     ],
     "generalization_case_ids": [
       "chunk_kda_fwd_dtype_layout_generalization",
-      "chunk_kda_fwd_tail_or_varlen"
+      "chunk_kda_fwd_tail_or_varlen",
+      "chunk_kda_fwd_tnd_layout"
     ],
     "negative_case_ids": [
       "chunk_kda_fwd_negative_contract",
@@ -321,15 +323,16 @@
       "seed": 2028
     },
     {
-      "id": "chunk_kda_fwd_performance",
+      "id": "chunk_kda_fwd_tnd_layout",
       "tags": [
-        "performance",
-        "route"
+        "accuracy",
+        "generalization",
+        "layout"
       ],
       "shape": {
-        "B": 1,
-        "H_k": 2,
-        "H_v": 4,
+        "N": 1,
+        "H_k": 1,
+        "H_v": 2,
         "T": 128,
         "K": 128,
         "V": 128,
@@ -337,12 +340,72 @@
         "N_c": 2
       },
       "dtype": {
+        "q_k_v": "bfloat16",
+        "gk_beta_state": "float32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "layout": "TND",
+        "scale": 0.0883883476,
+        "chunk_size": 64,
+        "output_final_state": true,
+        "return_intermediate": true,
+        "safe_gate": false,
+        "transpose_state_layout": false
+      },
+      "optional_inputs": {
+        "initial_state": "present",
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "tests/reference/chunk_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "o",
+          "final_state",
+          "g",
+          "Aqk/Akk",
+          "w/qg/kg",
+          "u/v_new",
+          "h",
+          "initial_state_out"
+        ]
+      },
+      "seed": 2034
+    },
+    {
+      "id": "chunk_kda_fwd_performance",
+      "tags": [
+        "performance",
+        "route"
+      ],
+      "shape": {
+        "H_k": 32,
+        "H_v": 32,
+        "T": 8192,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 128
+      },
+      "dtype": {
         "q_k_v": "float16",
         "gk_beta_state": "float32"
       },
-      "layout": "BNSD",
+      "layout": "NTD",
       "attrs": {
-        "layout": "BNSD",
+        "layout": "NTD",
         "scale": 0.0883883476,
         "chunk_size": 64,
         "output_final_state": true,
@@ -364,7 +427,7 @@
         "ascendc",
         "direct_launch"
       ],
-      "reference": "current_mainline_ascendc_profile",
+      "reference": "fla_org_flash_linear_attention_triton_profile",
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "metric": "msopprof",

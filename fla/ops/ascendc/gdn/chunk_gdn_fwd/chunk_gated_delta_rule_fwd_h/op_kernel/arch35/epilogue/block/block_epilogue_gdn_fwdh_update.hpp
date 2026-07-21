@@ -15,6 +15,7 @@
 #include "catlass/gemm_coord.hpp"
 #include "catlass/matrix_coord.hpp"
 #include "catlass/epilogue/tile/tile_copy.hpp"
+#include "block_epilogue_gdn_fwdh_regbase.hpp"
 
 namespace Catlass::Epilogue::Block {
 
@@ -37,6 +38,8 @@ class BlockEpilogue <
 > {
     static constexpr bool kGated = KGatedTag::value;
     static constexpr bool scalarGated = KGatedTag::scalarGated;
+    static constexpr bool useExp2 = KGatedTag::useExp2;
+    static constexpr float LN2 = 0.6931471805599453f;
 public:
     // Type aliases
     using DispatchPolicy = EpilogueAtlasGDNFwdHUpdate;
@@ -146,26 +149,14 @@ public:
     void ApplyRowScale(
         AscendC::LocalTensor<float> matrix,
         AscendC::LocalTensor<float> rowScale,
-        AscendC::LocalTensor<float> rowScaleBrcb,
         uint32_t rows,
         uint32_t cols)
     {
-        constexpr uint32_t FP32_PER_BLOCK = 8;
-        constexpr uint32_t FP32_PER_REPEAT = 64;
-        uint8_t rowStride = static_cast<uint8_t>(cols / FP32_PER_BLOCK);
-        AscendC::BinaryRepeatParams params(1, 1, 0, rowStride, rowStride, 1);
-        for (uint32_t row = 0; row < rows; row += FP32_PER_BLOCK) {
-            uint32_t rowsThisBlock = Min(FP32_PER_BLOCK, rows - row);
-            AscendC::Brcb(rowScaleBrcb, rowScale[row], 1, {1, FP32_PER_BLOCK});
-            AscendC::PipeBarrier<PIPE_V>();
-            for (uint32_t col = 0; col < cols; col += FP32_PER_REPEAT) {
-                uint32_t count = Min(FP32_PER_REPEAT, cols - col);
-                uint32_t offset = row * cols + col;
-                AscendC::Mul(matrix[offset], matrix[offset], rowScaleBrcb,
-                             count, rowsThisBlock, params);
-            }
-            AscendC::PipeBarrier<PIPE_V>();
-        }
+        __ubuf__ float *matrixAddr = reinterpret_cast<__ubuf__ float *>(matrix.GetPhyAddr());
+        __ubuf__ float *rowScaleAddr = reinterpret_cast<__ubuf__ float *>(rowScale.GetPhyAddr());
+        AscendC::VF_CALL<detail::ApplyRowScaleDualIssue>(
+            matrixAddr, rowScaleAddr, 0, static_cast<uint16_t>(rows), static_cast<uint16_t>(cols));
+        AscendC::PipeBarrier<PIPE_V>();
     }
 
     CATLASS_DEVICE
@@ -229,6 +220,10 @@ public:
 
             AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+            if constexpr (useExp2) {
+                AscendC::Muls(glastUbTensor, glastUbTensor, LN2, 1);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
             AscendC::Exp(glastUbTensor, glastUbTensor, 1);
             AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
@@ -285,8 +280,6 @@ public:
                     isPing ? gkLastUbTensor_ping : gkLastUbTensor_pong;
                 AscendC::LocalTensor<GElementInput> gkInputUbTensor =
                     isPing ? gkInputUbTensor_ping : gkInputUbTensor_pong;
-                AscendC::LocalTensor<float> gkBrcbUbTensor =
-                    isPing ? gkBrcbUbTensor_ping : gkBrcbUbTensor_pong;
 
                 if (rowStart == rowBegin) {
                     AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(EVENT_ID1 + pingpongFlag);
@@ -305,14 +298,14 @@ public:
                                   AscendC::RoundMode::CAST_NONE, rowsThisTile);
                 }
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Muls(gkLastUbTensor, gkLastUbTensor, 0.6931471805599453f,
-                              rowsThisTile);
-                AscendC::PipeBarrier<PIPE_V>();
+                if constexpr (useExp2) {
+                    AscendC::Muls(gkLastUbTensor, gkLastUbTensor, LN2, rowsThisTile);
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
                 AscendC::Exp(gkLastUbTensor, gkLastUbTensor, rowsThisTile);
                 AscendC::PipeBarrier<PIPE_V>();
 
-                ApplyRowScale(calcUbTensor, gkLastUbTensor, gkBrcbUbTensor,
-                              rowsThisTile, nActual);
+                ApplyRowScale(calcUbTensor, gkLastUbTensor, rowsThisTile, nActual);
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
             }
 

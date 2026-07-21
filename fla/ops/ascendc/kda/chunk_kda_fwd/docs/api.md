@@ -173,14 +173,17 @@ outputs = torch.ops.ascend_ops.chunk_kda_fwd_direct(
 chunk_size=64/128。它返回与稳定 Python 入口相同顺序的 12 个槽位：
 `o, final_state, g, Aqk, Akk, w, u, qg, kg, v_new, h, initial_state_out`。
 
-host 包装在同一 stream 上只发射一次完整 kernel：
+host 包装在同一 stream 上依次发射四个独立 kernel：
 
 ```cpp
-ChunkKdaFusedDirectKernel<SAFE_GATE, T><<<blockDim, nullptr, stream>>>(...);
+ChunkKdaPrepareDirectKernel<SAFE_GATE, T><<<blockDim, nullptr, stream>>>(...);
+ChunkKdaPostWuDirectKernel<T><<<blockDim, nullptr, stream>>>(...);
+ChunkKdaFwdHDirectKernel<T><<<blockDim, nullptr, stream>>>(...);
+ChunkKdaOutputDirectKernel<T><<<blockDim, nullptr, stream>>>(...);
 ```
 
-kernel 内依次执行 `PREPARE`、`POST_WU`、复用 GDN Catlass 实现的 `FWD_H`、`OUTPUT`，阶段边界依次执行
-`TPipe::Reset()` 和 `SyncAll<false>`。`KdaPhase`、数据类型和 gate 类型均为模板参数；公共 schema 中没有阶段参数。可编译源码位于
+四个 launch 复用同一 workspace 并由 stream 顺序建立依赖；任何单个 kernel 都不跨越另一个算子。
+数据类型和 gate 类型均为模板参数，公共 schema 中没有阶段参数。可编译源码位于
 `examples/fast_kernel_launch_example/csrc/chunk_kda_fwd/`，运行精度测试位于
 `examples/fast_kernel_launch_example/tests/chunk_kda_fwd/`。
 

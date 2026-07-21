@@ -408,8 +408,6 @@ def npu_chunk_gated_delta_rule_fwd_h(
     transpose_state_layout = _optional_bool(transpose_state_layout, False)
     if not save_new_value:
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: save_new_value must be True.")
-    if use_exp2:
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: use_exp2 must be False.")
     if transpose_state_layout:
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: transpose_state_layout must be False.")
 
@@ -658,7 +656,6 @@ def npu_chunk_kda_fwd(
     is_bsnd = layout == "BSND"
     is_bnsd = layout == "BNSD"
     is_rank3 = is_tnd or is_ntd
-    is_internal_layout = is_bnsd or is_ntd
     rank_ok = (
         (is_rank3 and len(q_shape) == 3 and len(k_shape) == 3 and len(v_shape) == 3 and
          len(gk_shape) == 3 and len(beta_shape) == 2) or
@@ -764,25 +761,23 @@ def npu_chunk_kda_fwd(
     o = _empty_like(v)
     final_state_work = _empty((seq_num, hv_num, k_dim, v_dim), q, dtype=torch.float32)
     if is_rank3:
-        bnst_shape = (hv_num, seqlen, chunk_size) if is_internal_layout else (seqlen, hv_num, chunk_size)
-        bnsd_k_shape = (hv_num, seqlen, k_dim) if is_internal_layout else (seqlen, hv_num, k_dim)
-        h_shape = ((hv_num, total_chunks, k_dim, v_dim) if is_internal_layout
-                   else (total_chunks, hv_num, k_dim, v_dim))
+        bnst_shape = (hv_num, seqlen, chunk_size)
+        bnsd_k_shape = (hv_num, seqlen, k_dim)
+        bnsd_v_shape = (hv_num, seqlen, v_dim)
+        h_shape = (hv_num, total_chunks, k_dim, v_dim)
     else:
-        bnst_shape = ((batch, hv_num, seqlen, chunk_size) if is_internal_layout
-                      else (batch, seqlen, hv_num, chunk_size))
-        bnsd_k_shape = ((batch, hv_num, seqlen, k_dim) if is_internal_layout
-                        else (batch, seqlen, hv_num, k_dim))
-        h_shape = ((batch, hv_num, total_chunks, k_dim, v_dim) if is_internal_layout
-                   else (batch, total_chunks, hv_num, k_dim, v_dim))
+        bnst_shape = (batch, hv_num, seqlen, chunk_size)
+        bnsd_k_shape = (batch, hv_num, seqlen, k_dim)
+        bnsd_v_shape = (batch, hv_num, seqlen, v_dim)
+        h_shape = (batch, hv_num, total_chunks, k_dim, v_dim)
     if return_intermediate:
         kernel_aqk = aqk = _empty(bnst_shape, q)
         kernel_akk = akk = _empty(bnst_shape, q)
         kernel_w = w = _empty(bnsd_k_shape, q)
-        kernel_u = u = _empty_like(v)
+        kernel_u = u = _empty(bnsd_v_shape, q)
         kernel_qg = qg = _empty(bnsd_k_shape, q)
         kernel_kg = kg = _empty(bnsd_k_shape, q)
-        kernel_v_new = v_new = _empty_like(v)
+        kernel_v_new = v_new = _empty(bnsd_v_shape, q)
         kernel_h = h = _empty(h_shape, q)
     else:
         kernel_aqk, kernel_akk, kernel_w, kernel_u = (_empty((0,), q) for _ in range(4))
