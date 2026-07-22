@@ -36,6 +36,13 @@ def test_kernel_is_not_wired_to_gdn_recurrent_interface():
     assert "aclnnRecurrentGatedDeltaRule" not in text
 
 
+def test_kernel_uses_generated_state_dtype_macro():
+    text = (OP_ROOT / "op_kernel/recurrent_kda.cpp").read_text(encoding="utf-8")
+
+    assert "DTYPE_STATE" in text
+    assert "DTYPE_INITIAL_STATE" not in text
+
+
 def test_kernel_validates_device_metadata_before_state_access():
     text = (OP_ROOT / "op_kernel/recurrent_kda.h").read_text(encoding="utf-8")
 
