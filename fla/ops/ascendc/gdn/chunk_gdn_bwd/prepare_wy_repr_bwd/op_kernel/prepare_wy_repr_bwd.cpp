@@ -9,7 +9,7 @@
 
 /*!
  * \file prepare_wy_repr_bwd.cpp
- * \brief Fused prepare_wy_repr_bwd kernel entry for A2/A3.
+ * \brief Fused prepare_wy_repr_bwd kernel entry.
  */
 
 #include "kernel_operator.h"
@@ -17,11 +17,19 @@
 #include "lib/matmul_intf.h"
 #endif
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "arch35/prepare_wy_repr_bwd_struct.h"
+#include "arch35/prepare_wy_repr_bwd_tiling_key.h"
+#include "arch35/prepare_wy_repr_bwd_common.h"
+#include "arch35/prepare_wy_repr_bwd_cube.h"
+#include "arch35/prepare_wy_repr_bwd_vector.h"
+#else
 #include "prepare_wy_repr_bwd_struct.h"
 #include "prepare_wy_repr_bwd_tiling_key.h"
 #include "prepare_wy_repr_bwd_common.h"
 #include "prepare_wy_repr_bwd_cube.h"
 #include "prepare_wy_repr_bwd_vector.h"
+#endif
 
 using namespace AscendC;
 

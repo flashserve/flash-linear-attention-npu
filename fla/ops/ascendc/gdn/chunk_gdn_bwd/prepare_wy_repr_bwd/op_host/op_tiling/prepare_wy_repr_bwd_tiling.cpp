@@ -52,9 +52,6 @@ ge::graphStatus Tiling4PrepareWyReprBwd(gert::TilingContext *context)
 {
     OP_LOGD(context->GetNodeName(), "Tiling4PrepareWyReprBwd start.");
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
-    OP_CHECK_IF(ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510,
-                OP_LOGE(context->GetNodeName(), "PrepareWyReprBwd arch35 tiling is not implemented yet."),
-                return ge::GRAPH_FAILED);
 
     PrepareWyReprBwdTilingData *tiling = context->GetTilingData<PrepareWyReprBwdTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
