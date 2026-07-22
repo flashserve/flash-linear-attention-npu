@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[5]
 OP_ROOT = ROOT / "fla/ops/ascendc/kda/chunk_kda_fwd"
-COMMON_KERNEL = ROOT / "fla/ops/ascendc/common/kda/chunk_kda_fwd_kernel.hpp"
+LEGACY_COMMON_KERNEL = ROOT / "fla/ops/ascendc/common/kda/chunk_kda_fwd_kernel.hpp"
 CASE_MANIFEST = ROOT / "tests/op_cases/chunk_kda_fwd.json"
 DIRECT_SOURCE = (
     ROOT
@@ -20,6 +20,13 @@ STAGE_KERNELS = {
     "output": ROOT
     / "fla/ops/ascendc/kda/chunk_kda_fwd_finalize/op_kernel/chunk_kda_fwd_finalize.cpp",
 }
+STAGE_IMPLEMENTATIONS = {
+    stage: path.with_name(f"chunk_kda_fwd_{stage}_kernel.hpp")
+    for stage, path in STAGE_KERNELS.items()
+}
+STAGE_IMPLEMENTATIONS["output"] = STAGE_KERNELS["output"].with_name(
+    "chunk_kda_fwd_finalize_kernel.hpp"
+)
 STAGE_TILINGS = {
     "prepare": STAGE_KERNELS["prepare"].parent.parent
     / "op_host/chunk_kda_fwd_prepare_tiling.h",
@@ -47,25 +54,35 @@ def test_direct_launch_uses_four_real_stage_kernels():
 
 
 def test_each_device_kernel_owns_exactly_one_stage():
-    common = COMMON_KERNEL.read_text(encoding="utf-8")
-    assert "template <KdaPhase PHASE, bool SAFE_GATE, typename T" in common
-    assert "RunChunkKdaFused" not in common
-    assert "SyncAll" not in common
+    assert not LEGACY_COMMON_KERNEL.exists()
     assert not (OP_ROOT / "op_kernel/chunk_kda_fwd.cpp").exists()
     assert not (OP_ROOT / "op_host/chunk_kda_fwd_tiling.cpp").exists()
 
     expected = {
-        "prepare": "RunChunkKdaPrepare",
-        "post_wu": "RunChunkKdaPostWu",
-        "output": "RunChunkKdaOutput",
+        "prepare": ("RunChunkKdaPrepare", "ChunkKdaFwdPrepareKernel"),
+        "post_wu": ("RunChunkKdaPostWu", "ChunkKdaFwdPostWuKernel"),
+        "output": ("RunChunkKdaOutput", "ChunkKdaFwdFinalizeKernel"),
     }
     for stage, path in STAGE_KERNELS.items():
-        text = path.read_text(encoding="utf-8")
-        assert text.count(expected[stage]) >= 1
-        assert "SyncAll" not in text
-        for other_stage, runner in expected.items():
+        entry = path.read_text(encoding="utf-8")
+        implementation_path = STAGE_IMPLEMENTATIONS[stage]
+        implementation = implementation_path.read_text(encoding="utf-8")
+        runner, kernel_class = expected[stage]
+        assert f'#include "{implementation_path.name}"' in entry
+        assert runner in entry and runner in implementation
+        assert kernel_class in implementation
+        assert "KdaPhase" not in implementation
+        assert "RunChunkKdaFused" not in implementation
+        assert "SyncAll" not in entry and "SyncAll" not in implementation
+        for other_stage, (other_runner, other_class) in expected.items():
             if other_stage != stage:
-                assert runner not in text
+                assert other_runner not in entry and other_runner not in implementation
+                assert other_class not in implementation
+
+    direct = DIRECT_SOURCE.read_text(encoding="utf-8")
+    for implementation_path in STAGE_IMPLEMENTATIONS.values():
+        assert implementation_path.as_posix().split("fla/", 1)[1] in direct
+    assert "common/kda/chunk_kda_fwd_kernel.hpp" not in direct
 
 
 def test_each_stage_declares_generated_matmul_workspace_dependency():
@@ -133,12 +150,14 @@ def test_safe_gate_is_supported_across_public_and_direct_routes():
     assert "bool safe_gate=False" in direct
     assert "RunChunkKdaPrepare<true" in prepare
     assert "RunChunkKdaPrepare<false" in prepare
-    assert "ScoreRefBlockSize" in COMMON_KERNEL.read_text(encoding="utf-8")
+    assert "ScoreRefBlockSize" in STAGE_IMPLEMENTATIONS["prepare"].read_text(
+        encoding="utf-8"
+    )
 
 
 def test_fp16_score_pipeline_does_not_fall_back_to_two_row_cube_tiles():
-    common = COMMON_KERNEL.read_text(encoding="utf-8")
-    score_ref_block = common.split(
+    prepare = STAGE_IMPLEMENTATIONS["prepare"].read_text(encoding="utf-8")
+    score_ref_block = prepare.split(
         "__aicore__ inline uint64_t ScoreRefBlockSize() const", 1
     )[1].split("__aicore__ inline uint64_t ScoreRowBlockCount", 1)[0]
     assert "return KDA_SCORE_REF_BC;" in score_ref_block
@@ -218,16 +237,16 @@ def test_a5_fwd_h_kda_hot_path_uses_fused_dual_issue_regbase():
 
 
 def test_aqk_akk_share_one_l1_resident_right_matrix_slot():
-    common = COMMON_KERNEL.read_text(encoding="utf-8")
+    prepare = STAGE_IMPLEMENTATIONS["prepare"].read_text(encoding="utf-8")
     resident_mmad = (
         ROOT
         / "fla/ops/ascendc/common/kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
     ).read_text(encoding="utf-8")
-    assert "using KdaScoreDispatchPolicy" in common
-    assert "MmadPingpongTlaMulti<KdaArchTag, true, false, 1, true, 2, 1, 2, 2>" in common
-    assert "KdaScoreDispatchPolicy::ENABLE_L1_RESIDENT" in common
-    assert "KdaScoreDispatchPolicy::L1B_STAGES == 1" in common
-    score_block = common.split(
+    assert "using KdaScoreDispatchPolicy" in prepare
+    assert "MmadPingpongTlaMulti<KdaArchTag, true, false, 1, true, 2, 1, 2, 2>" in prepare
+    assert "KdaScoreDispatchPolicy::ENABLE_L1_RESIDENT" in prepare
+    assert "KdaScoreDispatchPolicy::L1B_STAGES == 1" in prepare
+    score_block = prepare.split(
         "__aicore__ inline void ComputeRawAqkAkkCubeBlock", 1
     )[1].split("__aicore__ inline bool UseAkkCubeSolve", 1)[0]
     assert "BlockMmadTla<KdaScoreDispatchPolicy" in score_block
@@ -277,25 +296,25 @@ def test_arch22_fwd_h_direct_init_does_not_use_a5_local_buffers():
 
 
 def test_output_layout_conversion_stays_in_kernel_copy_out():
-    common = COMMON_KERNEL.read_text(encoding="utf-8")
+    finalize = STAGE_IMPLEMENTATIONS["output"].read_text(encoding="utf-8")
     aclnn = (OP_ROOT / "op_host/op_api/aclnn_chunk_kda_fwd.cpp").read_text(
         encoding="utf-8"
     )
     runtime = (
         ROOT / "torch_custom/fla_npu/fla_npu/ops/ascendc/_aclnn_ctypes.py"
     ).read_text(encoding="utf-8")
-    assert "OutputOffset" in common
-    assert "outputSequenceMajor_" in common
-    assert "const uint64_t rowBegin = (curT * subBlockIdx) / subBlockNum;" in common
-    assert "CopyVectorOut(vNew_, OutputOffset(b, hv, ti, 0), outTyped, elems);" in common
+    assert "OutputOffset" in finalize
+    assert "outputSequenceMajor_" in finalize
+    assert "const uint64_t rowBegin = (curT * subBlockIdx) / subBlockNum;" in finalize
+    assert "CopyVectorOut(vNew_, OutputOffset(b, hv, ti, 0), outTyped, elems);" in finalize
     assert "!isInternalLayout" in aclnn
     assert "KdaFwdCopyAfter" not in aclnn
     assert "bnsd_k_shape" in runtime and "bnsd_v_shape" in runtime
 
 
 def test_finalize_keeps_fp32_cube_outputs_in_workspace():
-    common = COMMON_KERNEL.read_text(encoding="utf-8")
-    output_runner = common.split("__aicore__ inline void RunChunkKdaOutput(", 1)[1]
+    finalize = STAGE_IMPLEMENTATIONS["output"].read_text(encoding="utf-8")
+    output_runner = finalize.split("__aicore__ inline void RunChunkKdaOutput(", 1)[1]
     assert "GM_ADDR stateScratch = outputScratch;" in output_runner
     assert "GM_ADDR localScratch = outputScratch + outputElements * sizeof(float);" in output_runner
     assert "propagatedVNew, propagatedH, stateScratch" in output_runner

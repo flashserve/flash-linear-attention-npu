@@ -29,7 +29,9 @@
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
 #endif
 
-#include "fla/ops/ascendc/common/kda/chunk_kda_fwd_kernel.hpp"
+#include "fla/ops/ascendc/kda/chunk_kda_fwd_prepare/op_kernel/chunk_kda_fwd_prepare_kernel.hpp"
+#include "fla/ops/ascendc/kda/chunk_kda_fwd_post_wu/op_kernel/chunk_kda_fwd_post_wu_kernel.hpp"
+#include "fla/ops/ascendc/kda/chunk_kda_fwd_finalize/op_kernel/chunk_kda_fwd_finalize_kernel.hpp"
 
 namespace ascend_ops::ChunkKdaFwdDirect {
 namespace {
@@ -158,7 +160,7 @@ __global__ __aicore__ void ChunkKdaPrepareDirectKernel(
         return;
     }
     AscendC::TPipe pipe;
-    RunChunkKdaPrepare<SAFE_GATE, T, float, float>(
+    KdaPrepare::RunChunkKdaPrepare<SAFE_GATE, T, float, float>(
         q, k, v, gk, beta, initialState, nullptr, nullptr, aqk, akk, qg,
         userWorkspace + tiling.prepareQgScaledOffset,
         userWorkspace + tiling.prepareWSeedOffset,
@@ -179,7 +181,7 @@ __global__ __aicore__ void ChunkKdaPostWuDirectKernel(
         return;
     }
     AscendC::TPipe pipe;
-    RunChunkKdaPostWu<T, float, float>(
+    KdaPostWu::RunChunkKdaPostWu<T, float, float>(
         q, k, v, gk, beta, initialState, nullptr, nullptr,
         userWorkspace + tiling.postWuWSeedOffset, akk,
         userWorkspace + tiling.postWuUSeedOffset,
@@ -258,7 +260,7 @@ __global__ __aicore__ void ChunkKdaOutputDirectKernel(
         return;
     }
     AscendC::TPipe pipe;
-    RunChunkKdaOutput<T, float, float>(
+    KdaFinalize::RunChunkKdaOutput<T, float, float>(
         q, k, v, gk, beta, initialState, nullptr, nullptr,
         userWorkspace + tiling.outputQgScaledOffset, aqk, vNew, h, o,
         userWorkspace, tiling, pipe);

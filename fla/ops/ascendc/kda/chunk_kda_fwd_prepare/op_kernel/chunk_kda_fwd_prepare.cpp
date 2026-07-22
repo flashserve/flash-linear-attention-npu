@@ -4,7 +4,7 @@
  * the BSD 3-Clause License (the "License").
  */
 
-#include "kda/chunk_kda_fwd_kernel.hpp"
+#include "chunk_kda_fwd_prepare_kernel.hpp"
 #include "lib/matmul_intf.h"
 
 extern "C" __global__ __aicore__ void chunk_kda_fwd_prepare(
@@ -18,11 +18,11 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd_prepare(
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
         TPipe pipe;
         if (tilingData.safeGate) {
-            RunChunkKdaPrepare<true, DTYPE_Q, DTYPE_GK, DTYPE_BETA>(
+            KdaPrepare::RunChunkKdaPrepare<true, DTYPE_Q, DTYPE_GK, DTYPE_BETA>(
                 q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices,
                 aqk, akk, qg, qg_scaled, w_seed, u_seed, userWorkspace, tilingData, pipe);
         } else {
-            RunChunkKdaPrepare<false, DTYPE_Q, DTYPE_GK, DTYPE_BETA>(
+            KdaPrepare::RunChunkKdaPrepare<false, DTYPE_Q, DTYPE_GK, DTYPE_BETA>(
                 q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices,
                 aqk, akk, qg, qg_scaled, w_seed, u_seed, userWorkspace, tilingData, pipe);
         }

@@ -4,7 +4,7 @@
  * the BSD 3-Clause License (the "License").
  */
 
-#include "kda/chunk_kda_fwd_kernel.hpp"
+#include "chunk_kda_fwd_post_wu_kernel.hpp"
 #include "lib/matmul_intf.h"
 
 extern "C" __global__ __aicore__ void chunk_kda_fwd_post_wu(
@@ -17,7 +17,7 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd_post_wu(
     if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
         TPipe pipe;
-        RunChunkKdaPostWu<DTYPE_Q, DTYPE_GK, DTYPE_BETA>(
+        KdaPostWu::RunChunkKdaPostWu<DTYPE_Q, DTYPE_GK, DTYPE_BETA>(
             q, k, v, gk, beta, initial_state, cu_seqlens, chunk_indices,
             w_seed, akk, u_seed, w, u, kg, v_new, userWorkspace, tilingData, pipe);
     }
