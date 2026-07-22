@@ -35,8 +35,7 @@ template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
 class PrepareWyReprBwdCubeProcess {
 public:
     __aicore__ inline PrepareWyReprBwdCubeProcess(GM_ADDR k, GM_ADDR A, GM_ADDR dw, GM_ADDR du, GM_ADDR cuSeqlens,
-                                                  GM_ADDR chunkIndices, GM_ADDR workspace, GM_ADDR debugDkbg,
-                                                  GM_ADDR debugDvb, GM_ADDR debugKkt);
+                                                  GM_ADDR chunkIndices, GM_ADDR workspace);
     __aicore__ inline void Init(const GDN::PrepareWyReprBwdTilingData &tiling);
     __aicore__ inline void Process();
 
@@ -298,9 +297,6 @@ private:
     GM_ADDR cuSeqlens_ = nullptr;
     GM_ADDR chunkIndices_ = nullptr;
     GM_ADDR workspace_ = nullptr;
-    GM_ADDR debugDkbg_ = nullptr;
-    GM_ADDR debugDvb_ = nullptr;
-    GM_ADDR debugKkt_ = nullptr;
     GDN::PrepareWyReprBwdTilingData tiling_{};
     uint32_t curSlot_ = 0;
     uint32_t nextKResidentSlot_ = 0;
@@ -321,10 +317,8 @@ private:
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
 __aicore__ inline PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::PrepareWyReprBwdCubeProcess(
-    GM_ADDR k, GM_ADDR A, GM_ADDR dw, GM_ADDR du, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace,
-    GM_ADDR debugDkbg, GM_ADDR debugDvb, GM_ADDR debugKkt)
-    : k_(k), A_(A), dw_(dw), du_(du), cuSeqlens_(cuSeqlens), chunkIndices_(chunkIndices), workspace_(workspace),
-      debugDkbg_(debugDkbg), debugDvb_(debugDvb), debugKkt_(debugKkt)
+    GM_ADDR k, GM_ADDR A, GM_ADDR dw, GM_ADDR du, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace)
+    : k_(k), A_(A), dw_(dw), du_(du), cuSeqlens_(cuSeqlens), chunkIndices_(chunkIndices), workspace_(workspace)
 {
 }
 
@@ -1106,8 +1100,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint64_t hv = hvBase + headIdx;
                 uint64_t hk = hv / groupSize;
-                uint64_t keyBase = hk * tiling_.T + task.keyBos;
-                (void)keyBase;
                 GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
 
                 gmD.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dOffset));

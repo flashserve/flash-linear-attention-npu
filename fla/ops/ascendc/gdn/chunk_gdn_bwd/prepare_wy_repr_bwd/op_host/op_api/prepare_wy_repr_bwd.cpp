@@ -18,17 +18,14 @@ using namespace op;
 namespace l0op {
 OP_TYPE_REGISTER(PrepareWyReprBwd);
 
-const std::array<const aclTensor *, 10> PrepareWyReprBwd(
+const std::array<const aclTensor *, 4> PrepareWyReprBwd(
     const aclTensor *k, const aclTensor *v, const aclTensor *beta, const aclTensor *a, const aclTensor *dw,
     const aclTensor *du, const aclTensor *g, const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional, int64_t chunkSize, const aclTensor *dkOut, const aclTensor *dvOut,
-    const aclTensor *dbetaOut, const aclTensor *dgOut, const aclTensor *debugKbgOut,
-    const aclTensor *debugVbOut, const aclTensor *debugKbetaOut, const aclTensor *debugDkbgOut,
-    const aclTensor *debugDvbOut, const aclTensor *debugKktOut, aclOpExecutor *executor)
+    const aclTensor *dbetaOut, const aclTensor *dgOut, aclOpExecutor *executor)
 {
     L0_DFX(PrepareWyReprBwd, k, v, beta, a, dw, du, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize, dkOut,
-           dvOut, dbetaOut, dgOut, debugKbgOut, debugVbOut, debugKbetaOut, debugDkbgOut, debugDvbOut,
-           debugKktOut);
+           dvOut, dbetaOut, dgOut);
 
     const aclTensor *actualCuSeqQLen = nullptr;
     if (cuSeqlensOptional != nullptr) {
@@ -48,15 +45,13 @@ const std::array<const aclTensor *, 10> PrepareWyReprBwd(
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(PrepareWyReprBwd,
         OP_INPUT(k, v, beta, a, dw, du, g, actualCuSeqQLen, actualChunkIndices),
-        OP_OUTPUT(dkOut, dvOut, dbetaOut, dgOut, debugKbgOut, debugVbOut, debugKbetaOut, debugDkbgOut,
-                  debugDvbOut, debugKktOut),
+        OP_OUTPUT(dkOut, dvOut, dbetaOut, dgOut),
         OP_ATTR(chunkSize));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
-        return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+        return {nullptr, nullptr, nullptr, nullptr};
     }
-    return {dkOut, dvOut, dbetaOut, dgOut, debugKbgOut, debugVbOut, debugKbetaOut, debugDkbgOut, debugDvbOut,
-            debugKktOut};
+    return {dkOut, dvOut, dbetaOut, dgOut};
 }
 
 } // namespace l0op

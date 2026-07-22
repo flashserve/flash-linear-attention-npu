@@ -1,26 +1,21 @@
 import argparse
-import contextlib
 import gc
-import importlib
-import io
 import time
 from dataclasses import dataclass
 from typing import Iterable
 
-import ct
 import torch
 import torch_npu
 
 from fla_npu.ops import ascendc as fla_ascendc
-from test_stage3_debug_golden import (
+from case_utils import (
     FULL_GDN_CASES,
-    Stage3Case,
-    ct_dtype,
-    ct_failure_summary,
-    ct_success,
+    GdnCase,
+    compare_with_ct,
     make_inputs,
     prepare_chunk_indices,
     prepare_cu_seqlens,
+    release_aclnn_keepalive,
 )
 
 
@@ -48,15 +43,7 @@ FINAL_SMOKE_CASES: tuple[FinalCase, ...] = (
 )
 
 
-def release_aclnn_keepalive():
-    try:
-        runtime_mod = importlib.import_module("fla_npu.ops.ascendc._runtime")
-        runtime_mod._RECENT_LAUNCH_STORAGE.clear()
-    except Exception:
-        pass
-
-
-def convert_case(case: Stage3Case | FinalCase) -> FinalCase:
+def convert_case(case: GdnCase | FinalCase) -> FinalCase:
     if isinstance(case, FinalCase):
         return case
     return FinalCase(
@@ -74,22 +61,8 @@ def convert_case(case: Stage3Case | FinalCase) -> FinalCase:
     )
 
 
-def compare_with_ct(name: str, actual: torch.Tensor, expected: torch.Tensor, failures: list[str], verbose_ct: bool):
-    try:
-        if verbose_ct:
-            result = ct.single(actual.detach().cpu(), expected.detach().cpu(), dtype=ct_dtype(actual.dtype))
-        else:
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                result = ct.single(actual.detach().cpu(), expected.detach().cpu(), dtype=ct_dtype(actual.dtype))
-    except Exception as exc:
-        failures.append(f"{name}: ct.single failed: {exc}")
-    else:
-        if not ct_success(result):
-            failures.append(f"{name}: ct.single failed ({ct_failure_summary(result)})")
-
-
 def make_case_inputs(case: FinalCase, args):
-    stage_case = Stage3Case(
+    gdn_case = GdnCase(
         case.name,
         case.B,
         case.KH,
@@ -102,7 +75,7 @@ def make_case_inputs(case: FinalCase, args):
         case.gtype,
         case.cu_seqlens_len,
     )
-    return make_inputs(stage_case, args.device, args.seed, args.input_scale)
+    return make_inputs(gdn_case, args.device, args.seed, args.input_scale)
 
 
 def run_case(case: FinalCase, args) -> list[str]:

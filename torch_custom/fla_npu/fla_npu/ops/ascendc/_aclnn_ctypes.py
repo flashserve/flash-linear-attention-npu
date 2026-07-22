@@ -52,12 +52,6 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
@@ -217,12 +211,6 @@ def npu_prepare_wy_repr_bwd(
     dv = _empty_like(v)
     dbeta = _empty_like(beta)
     dg = _empty_like(g)
-    debug_kbg = _empty((1,), k)
-    debug_vb = _empty((1,), k)
-    debug_kbeta = _empty((1,), k)
-    debug_dkb = _empty((1,), k)
-    debug_dk = _empty((1,), k)
-    debug_kkt = _empty((1,), k)
     outputs = (dk, dv, dbeta, dg)
     return _call_aclnn(
         "aclnnPrepareWyReprBwd",
@@ -241,156 +229,6 @@ def npu_prepare_wy_repr_bwd(
             ctx.tensor(dv, "dv"),
             ctx.tensor(dbeta, "dbeta"),
             ctx.tensor(dg, "dg"),
-            ctx.tensor(debug_kbg, "debug_kbg"),
-            ctx.tensor(debug_vb, "debug_vb"),
-            ctx.tensor(debug_kbeta, "debug_kbeta"),
-            ctx.tensor(debug_dkb, "debug_dkb"),
-            ctx.tensor(debug_dk, "debug_dk"),
-            ctx.tensor(debug_kkt, "debug_kkt"),
-        ],
-        outputs,
-    )
-
-
-def npu_prepare_wy_repr_bwd_stage1_debug(
-    k,
-    v,
-    beta,
-    A,
-    dw,
-    du,
-    g,
-    chunk_size,
-    *,
-    cu_seqlens=None,
-    chunk_indices=None,
-):
-    k_shape = _shape(k)
-    v_shape = _shape(v)
-    batch_size = int(k_shape[0])
-    total_tokens = int(k_shape[2])
-    value_num_heads = int(v_shape[1])
-    chunk_size = int(chunk_size)
-    task_num = _chunk_num(total_tokens, chunk_size, chunk_indices)
-    if chunk_indices is None:
-        task_num *= batch_size
-
-    dk = _empty((1,), k)
-    dv = _empty((1,), v)
-    dbeta = _empty((1,), beta)
-    dg = _empty((1,), g)
-    debug_kbg = _empty((1,), k)
-    debug_vb = _empty((1,), k)
-    debug_kbeta = _empty((1,), k)
-    debug_da4 = _empty((task_num, value_num_heads, chunk_size, chunk_size), k)
-    debug_dvb = _empty((1,), k)
-    debug_kkt = _empty((1,), k)
-    outputs = (dk, dv, dbeta, dg, debug_kbg, debug_vb, debug_kbeta, debug_da4, debug_dvb, debug_kkt)
-    return _call_aclnn(
-        "aclnnPrepareWyReprBwd",
-        lambda ctx: [
-            ctx.tensor(k, "k"),
-            ctx.tensor(v, "v"),
-            ctx.tensor(beta, "beta"),
-            ctx.tensor(A, "A"),
-            ctx.tensor(dw, "dw"),
-            ctx.tensor(du, "du"),
-            ctx.tensor(g, "g"),
-            ctx.int_array(cu_seqlens),
-            ctx.int_array(chunk_indices),
-            ctypes.c_int64(chunk_size),
-            ctx.tensor(dk, "dk"),
-            ctx.tensor(dv, "dv"),
-            ctx.tensor(dbeta, "dbeta"),
-            ctx.tensor(dg, "dg"),
-            ctx.tensor(debug_kbg, "debug_kbg"),
-            ctx.tensor(debug_vb, "debug_vb"),
-            ctx.tensor(debug_kbeta, "debug_kbeta"),
-            ctx.tensor(debug_da4, "debug_da4"),
-            ctx.tensor(debug_dvb, "debug_dvb"),
-            ctx.tensor(debug_kkt, "debug_kkt"),
-        ],
-        outputs,
-    )
-
-
-def npu_prepare_wy_repr_bwd_stage2_debug(
-    k,
-    v,
-    beta,
-    A,
-    dw,
-    du,
-    g,
-    chunk_size,
-    *,
-    cu_seqlens=None,
-    chunk_indices=None,
-):
-    raise RuntimeError(
-        "prepare_wy_repr_bwd_stage2_debug is no longer maintained after stage3 landed; "
-        "use prepare_wy_repr_bwd_stage3_debug for current stage validation."
-    )
-
-
-def npu_prepare_wy_repr_bwd_stage3_debug(
-    k,
-    v,
-    beta,
-    A,
-    dw,
-    du,
-    g,
-    chunk_size,
-    *,
-    cu_seqlens=None,
-    chunk_indices=None,
-):
-    k_shape = _shape(k)
-    v_shape = _shape(v)
-    batch_size = int(k_shape[0])
-    total_tokens = int(k_shape[2])
-    key_dim = int(k_shape[3])
-    value_num_heads = int(v_shape[1])
-    chunk_size = int(chunk_size)
-    task_num = _chunk_num(total_tokens, chunk_size, chunk_indices)
-    if chunk_indices is None:
-        task_num *= batch_size
-
-    dk = _empty((1,), k)
-    dv = _empty((1,), v)
-    dbeta = _empty((1,), beta)
-    dg = _empty((1,), g)
-    debug_kbg = _empty((1,), k)
-    debug_vb = _empty((1,), k)
-    debug_kbeta = _empty((1,), k)
-    debug_dkb = _empty((task_num, value_num_heads, chunk_size, key_dim), k)
-    debug_dk = _empty((task_num, value_num_heads, chunk_size, key_dim), k)
-    debug_kkt = _empty((1,), k)
-    outputs = (dk, dv, dbeta, dg, debug_kbg, debug_vb, debug_kbeta, debug_dkb, debug_dk, debug_kkt)
-    return _call_aclnn(
-        "aclnnPrepareWyReprBwd",
-        lambda ctx: [
-            ctx.tensor(k, "k"),
-            ctx.tensor(v, "v"),
-            ctx.tensor(beta, "beta"),
-            ctx.tensor(A, "A"),
-            ctx.tensor(dw, "dw"),
-            ctx.tensor(du, "du"),
-            ctx.tensor(g, "g"),
-            ctx.int_array(cu_seqlens),
-            ctx.int_array(chunk_indices),
-            ctypes.c_int64(chunk_size),
-            ctx.tensor(dk, "dk"),
-            ctx.tensor(dv, "dv"),
-            ctx.tensor(dbeta, "dbeta"),
-            ctx.tensor(dg, "dg"),
-            ctx.tensor(debug_kbg, "debug_kbg"),
-            ctx.tensor(debug_vb, "debug_vb"),
-            ctx.tensor(debug_kbeta, "debug_kbeta"),
-            ctx.tensor(debug_dkb, "debug_dkb"),
-            ctx.tensor(debug_dk, "debug_dk"),
-            ctx.tensor(debug_kkt, "debug_kkt"),
         ],
         outputs,
     )

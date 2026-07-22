@@ -20,10 +20,7 @@ __attribute__((visibility("default"))) aclnnStatus aclnnPrepareWyReprBwdGetWorks
     const aclTensor *k, const aclTensor *v, const aclTensor *beta, const aclTensor *a, const aclTensor *dw,
     const aclTensor *du, const aclTensor *g, const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional, int64_t chunkSize, const aclTensor *dkOut, const aclTensor *dvOut,
-    const aclTensor *dbetaOut, const aclTensor *dgOut, const aclTensor *debugKbgOut,
-    const aclTensor *debugVbOut, const aclTensor *debugKbetaOut, const aclTensor *debugDkbgOut,
-    const aclTensor *debugDvbOut, const aclTensor *debugKktOut, uint64_t *workspaceSize,
-    aclOpExecutor **executor);
+    const aclTensor *dbetaOut, const aclTensor *dgOut, uint64_t *workspaceSize, aclOpExecutor **executor);
 
 __attribute__((visibility("default"))) aclnnStatus aclnnPrepareWyReprBwd(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream);

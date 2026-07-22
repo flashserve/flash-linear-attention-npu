@@ -49,20 +49,18 @@ template <typename KType, typename GType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
 __aicore__ inline void
 PrepareWyReprBwdKernelImpl(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADDR dw, GM_ADDR du, GM_ADDR g,
                            GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dk, GM_ADDR dv, GM_ADDR dbeta, GM_ADDR dg,
-                           GM_ADDR debugKbg, GM_ADDR debugVb, GM_ADDR debugKbeta, GM_ADDR debugDkbg, GM_ADDR debugDvb,
-                           GM_ADDR debugKkt, GM_ADDR workspace, const PrepareWyReprBwdTilingData *tilingData)
+                           GM_ADDR workspace, const PrepareWyReprBwdTilingData *tilingData)
 {
     if ASCEND_IS_AIC {
         ::PrepareWyReprBwdCubeProcess<KType, GType, V_DIM, CHUNK_SIZE> cubeProcess(
-            k, A, dw, du, cuSeqlens, chunkIndices, workspace, debugDkbg, debugDvb, debugKkt);
+            k, A, dw, du, cuSeqlens, chunkIndices, workspace);
         cubeProcess.Init(*tilingData);
         cubeProcess.Process();
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe tPipe;
         ::PrepareWyReprBwdVectorProcess<KType, GType, V_DIM, CHUNK_SIZE> vectorProcess(
-            k, v, beta, g, cuSeqlens, chunkIndices, dk, dv, dbeta, dg, workspace, debugKbg, debugVb, debugKbeta,
-            debugDkbg, debugDvb);
+            k, v, beta, g, cuSeqlens, chunkIndices, dk, dv, dbeta, dg, workspace);
         vectorProcess.Init(*tilingData, &tPipe);
         vectorProcess.Process();
     }
@@ -74,9 +72,8 @@ PrepareWyReprBwdKernelImpl(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADD
 template <uint32_t D_T_K, uint32_t D_T_G, uint32_t V_DIM, uint32_t CHUNK_SIZE>
 __global__ __aicore__ void prepare_wy_repr_bwd(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADDR dw, GM_ADDR du,
                                                GM_ADDR g, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR dk,
-                                               GM_ADDR dv, GM_ADDR dbeta, GM_ADDR dg, GM_ADDR debug_kbg,
-                                               GM_ADDR debug_vb, GM_ADDR debug_kbeta, GM_ADDR debug_dkbg,
-                                               GM_ADDR debug_dvb, GM_ADDR debug_kkt, GM_ADDR workspace, GM_ADDR tiling)
+                                               GM_ADDR dv, GM_ADDR dbeta, GM_ADDR dg, GM_ADDR workspace,
+                                               GM_ADDR tiling)
 {
     AscendC::AscendCUtils::SetOverflow(1);
     GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
@@ -91,7 +88,6 @@ __global__ __aicore__ void prepare_wy_repr_bwd(GM_ADDR k, GM_ADDR v, GM_ADDR bet
     using KType = typename GDN::PrepareWyReprBwdDTypeTraits<D_T_K>::type;
     using GType = typename GDN::PrepareWyReprBwdDTypeTraits<D_T_G>::type;
     GDN::PrepareWyReprBwdKernelImpl<KType, GType, V_DIM, CHUNK_SIZE>(
-        k, v, beta, A, dw, du, g, cu_seqlens, chunk_indices, dk, dv, dbeta, dg, debug_kbg, debug_vb, debug_kbeta,
-        debug_dkbg, debug_dvb, debug_kkt, userWorkspace, &tilingData);
+        k, v, beta, A, dw, du, g, cu_seqlens, chunk_indices, dk, dv, dbeta, dg, userWorkspace, &tilingData);
 }
 #endif

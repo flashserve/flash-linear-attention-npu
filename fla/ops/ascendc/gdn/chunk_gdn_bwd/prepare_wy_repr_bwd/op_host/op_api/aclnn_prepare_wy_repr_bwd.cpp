@@ -50,12 +50,6 @@ struct PrepareWyReprBwdParams {
     const aclTensor *dvOut = nullptr;
     const aclTensor *dbetaOut = nullptr;
     const aclTensor *dgOut = nullptr;
-    const aclTensor *debugKbgOut = nullptr;
-    const aclTensor *debugVbOut = nullptr;
-    const aclTensor *debugKbetaOut = nullptr;
-    const aclTensor *debugDkbgOut = nullptr;
-    const aclTensor *debugDvbOut = nullptr;
-    const aclTensor *debugKktOut = nullptr;
 };
 
 static aclnnStatus CheckNotNull(PrepareWyReprBwdParams params)
@@ -71,12 +65,6 @@ static aclnnStatus CheckNotNull(PrepareWyReprBwdParams params)
     CHECK_COND(params.dvOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dvOut must not be nullptr.");
     CHECK_COND(params.dbetaOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dbetaOut must not be nullptr.");
     CHECK_COND(params.dgOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dgOut must not be nullptr.");
-    CHECK_COND(params.debugKbgOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "debugKbgOut must not be nullptr.");
-    CHECK_COND(params.debugVbOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "debugVbOut must not be nullptr.");
-    CHECK_COND(params.debugKbetaOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "debugKbetaOut must not be nullptr.");
-    CHECK_COND(params.debugDkbgOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "debugDkbgOut must not be nullptr.");
-    CHECK_COND(params.debugDvbOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "debugDvbOut must not be nullptr.");
-    CHECK_COND(params.debugKktOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "debugKktOut must not be nullptr.");
     return ACLNN_SUCCESS;
 }
 
@@ -137,18 +125,13 @@ aclnnStatus aclnnPrepareWyReprBwdGetWorkspaceSize(
     const aclTensor *k, const aclTensor *v, const aclTensor *beta, const aclTensor *a, const aclTensor *dw,
     const aclTensor *du, const aclTensor *g, const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional, int64_t chunkSize, const aclTensor *dkOut, const aclTensor *dvOut,
-    const aclTensor *dbetaOut, const aclTensor *dgOut, const aclTensor *debugKbgOut,
-    const aclTensor *debugVbOut, const aclTensor *debugKbetaOut, const aclTensor *debugDkbgOut,
-    const aclTensor *debugDvbOut, const aclTensor *debugKktOut, uint64_t *workspaceSize,
-    aclOpExecutor **executor)
+    const aclTensor *dbetaOut, const aclTensor *dgOut, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
     PrepareWyReprBwdParams params{k, v, beta, a, dw, du, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize,
-                                  dkOut, dvOut, dbetaOut, dgOut, debugKbgOut, debugVbOut, debugKbetaOut,
-                                  debugDkbgOut, debugDvbOut, debugKktOut};
+                                  dkOut, dvOut, dbetaOut, dgOut};
     L2_DFX_PHASE_1_WITHOUT_CACHE(
         aclnnPrepareWyReprBwd, DFX_IN(k, v, beta, a, dw, du, g, cuSeqlensOptional, chunkIndicesOptional),
-        DFX_OUT(dkOut, dvOut, dbetaOut, dgOut, debugKbgOut, debugVbOut, debugKbetaOut, debugDkbgOut, debugDvbOut,
-                debugKktOut));
+        DFX_OUT(dkOut, dvOut, dbetaOut, dgOut));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
@@ -160,19 +143,11 @@ aclnnStatus aclnnPrepareWyReprBwdGetWorkspaceSize(
 
     auto result = l0op::PrepareWyReprBwd(params.k, params.v, params.beta, params.a, params.dw, params.du, params.g,
                                          params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize,
-                                         params.dkOut, params.dvOut, params.dbetaOut, params.dgOut,
-                                         params.debugKbgOut, params.debugVbOut, params.debugKbetaOut,
-                                         params.debugDkbgOut, params.debugDvbOut, params.debugKktOut, executorPtr);
+                                         params.dkOut, params.dvOut, params.dbetaOut, params.dgOut, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[2] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[3] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[4] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[5] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[6] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[7] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[8] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[9] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.dkOut, executorPtr);
     CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
@@ -181,18 +156,6 @@ aclnnStatus aclnnPrepareWyReprBwdGetWorkspaceSize(
     viewCopyResult = l0op::ViewCopy(result[2], params.dbetaOut, executorPtr);
     CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
     viewCopyResult = l0op::ViewCopy(result[3], params.dgOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    viewCopyResult = l0op::ViewCopy(result[4], params.debugKbgOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    viewCopyResult = l0op::ViewCopy(result[5], params.debugVbOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    viewCopyResult = l0op::ViewCopy(result[6], params.debugKbetaOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    viewCopyResult = l0op::ViewCopy(result[7], params.debugDkbgOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    viewCopyResult = l0op::ViewCopy(result[8], params.debugDvbOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    viewCopyResult = l0op::ViewCopy(result[9], params.debugKktOut, executorPtr);
     CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
