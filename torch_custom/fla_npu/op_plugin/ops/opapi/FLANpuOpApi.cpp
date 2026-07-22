@@ -757,8 +757,8 @@ at::Tensor npu_kda_gate_cumsum(
     const at::Tensor &v,
     const at::Tensor &g,
     const at::Tensor &beta,
-    const c10::optional<at::Tensor> &initial_state,
-    at::OptionalIntArrayRef cu_seqlens,
+    at::Tensor &initial_state,
+    const at::Tensor &actual_seq_lengths,
     const c10::optional<at::Tensor> &ssm_state_indices,
     const c10::optional<at::Tensor> &A_log,
     const c10::optional<at::Tensor> &dt_bias,
@@ -787,6 +787,9 @@ at::Tensor npu_kda_gate_cumsum(
     TORCH_CHECK(q.scalar_type() == at::kBFloat16 && k.scalar_type() == at::kBFloat16 &&
                     v.scalar_type() == at::kBFloat16,
                 "npu_recurrent_kda: q/k/v currently support bfloat16 only.");
+    TORCH_CHECK(k.device() == q.device() && v.device() == q.device() && g.device() == q.device() &&
+                    beta.device() == q.device(),
+                "npu_recurrent_kda: q/k/v/g/beta must be on the same device.");
     TORCH_CHECK((g.scalar_type() == at::kFloat || g.scalar_type() == at::kBFloat16 || g.scalar_type() == at::kHalf) &&
                     (beta.scalar_type() == at::kFloat || beta.scalar_type() == at::kBFloat16 ||
                      beta.scalar_type() == at::kHalf),
@@ -804,11 +807,12 @@ at::Tensor npu_kda_gate_cumsum(
     TORCH_CHECK(hv % h == 0, "npu_recurrent_kda: HV must be divisible by H.");
     TORCH_CHECK(k_dim == 128 && (v_dim == 128 || v_dim == 256),
                 "npu_recurrent_kda: K/V currently support only K=128,V=128 or K=128,V=256.");
-    TORCH_CHECK(dense_seq_len <= 8 || cu_seqlens.has_value(),
-                "npu_recurrent_kda: dense sequence length must be <= 8.");
-    CheckKdaRecurrentCuSeqlens(cu_seqlens, total_tokens, 8, "npu_recurrent_kda");
-    TORCH_CHECK(!cu_seqlens.has_value() || is_tnd || batch == 1,
-                "npu_recurrent_kda: BSND varlen input with cu_seqlens requires B=1.");
+    TORCH_CHECK(actual_seq_lengths.dim() == 1 && actual_seq_lengths.size(0) >= 2,
+                "npu_recurrent_kda: actual_seq_lengths must be a 1D device tensor with at least two elements.");
+    TORCH_CHECK(actual_seq_lengths.scalar_type() == at::kInt || actual_seq_lengths.scalar_type() == at::kLong,
+                "npu_recurrent_kda: actual_seq_lengths must be int32 or int64.");
+    TORCH_CHECK(actual_seq_lengths.device() == q.device(),
+                "npu_recurrent_kda: actual_seq_lengths must be on the same device as q.");
     TORCH_CHECK((is_tnd && v.size(0) == total_tokens && g.size(0) == total_tokens &&
                  beta.size(0) == total_tokens && g.size(1) == hv && beta.size(1) == hv &&
                  g.size(2) == k_dim) ||
@@ -818,31 +822,41 @@ at::Tensor npu_kda_gate_cumsum(
                      beta.size(2) == hv),
                 "npu_recurrent_kda: v/g/beta shape mismatch.");
 
-    int64_t seq_num = GetKdaSeqNum(batch, cu_seqlens);
+    int64_t seq_num = actual_seq_lengths.size(0) - 1;
     bool state_v_first_ = state_v_first.value_or(true);
     TORCH_CHECK(state_v_first_, "npu_recurrent_kda: state_v_first=false is not supported.");
-    at::Tensor initial_state_work;
-    if (initial_state.has_value() && initial_state->defined()) {
-        TORCH_CHECK(initial_state->scalar_type() == at::kFloat || initial_state->scalar_type() == at::kBFloat16,
-                    "npu_recurrent_kda: initial_state must be float32 or bfloat16.");
-        TORCH_CHECK(initial_state->dim() == 4 && initial_state->size(0) == seq_num &&
-                        initial_state->size(1) == hv && initial_state->size(2) == v_dim &&
-                        initial_state->size(3) == k_dim,
-                    "npu_recurrent_kda: initial_state must be [seq_num,HV,V,K] when state_v_first=True.");
-        initial_state_work = *initial_state;
-    } else {
-        initial_state_work = at::zeros({seq_num, hv, v_dim, k_dim}, q.options().dtype(at::kFloat));
-    }
-
-    if (ssm_state_indices.has_value() && ssm_state_indices->defined()) {
-        TORCH_CHECK(ssm_state_indices->dim() == 1 && ssm_state_indices->size(0) >= total_tokens,
-                    "npu_recurrent_kda: ssm_state_indices must be 1D with length >= total tokens.");
+    bool has_state_indices = ssm_state_indices.has_value() && ssm_state_indices->defined();
+    TORCH_CHECK(initial_state.scalar_type() == at::kFloat || initial_state.scalar_type() == at::kBFloat16,
+                "npu_recurrent_kda: initial_state must be float32 or bfloat16.");
+    TORCH_CHECK(initial_state.device() == q.device(),
+                "npu_recurrent_kda: initial_state must be on the same device as q.");
+    TORCH_CHECK(initial_state.dim() == 4 && initial_state.size(0) > 0 &&
+                    initial_state.size(1) == hv && initial_state.size(2) == v_dim &&
+                    initial_state.size(3) == k_dim && (has_state_indices || initial_state.size(0) == seq_num),
+                "npu_recurrent_kda: initial_state must be [state_capacity,HV,V,K]; without "
+                "ssm_state_indices, state_capacity must equal seq_num.");
+    if (has_state_indices) {
+        bool packed_1d = ssm_state_indices->dim() == 1 && ssm_state_indices->size(0) >= total_tokens;
+        bool speculative_2d = ssm_state_indices->dim() == 2 && ssm_state_indices->size(0) == seq_num &&
+                              ssm_state_indices->size(1) > 0;
+        TORCH_CHECK(packed_1d || speculative_2d,
+                    "npu_recurrent_kda: ssm_state_indices must be packed [T] or "
+                    "speculative [seq_num,max_step].");
+        TORCH_CHECK(ssm_state_indices->scalar_type() == at::kInt || ssm_state_indices->scalar_type() == at::kLong,
+                    "npu_recurrent_kda: ssm_state_indices must be int32 or int64.");
+        TORCH_CHECK(ssm_state_indices->device() == q.device(),
+                    "npu_recurrent_kda: ssm_state_indices must be on the same device as q.");
     }
     if (num_accepted_tokens.has_value() && num_accepted_tokens->defined()) {
-        TORCH_CHECK(ssm_state_indices.has_value() && ssm_state_indices->defined(),
+        TORCH_CHECK(has_state_indices,
                     "npu_recurrent_kda: num_accepted_tokens requires ssm_state_indices.");
         TORCH_CHECK(num_accepted_tokens->dim() == 1 && num_accepted_tokens->size(0) == seq_num,
                     "npu_recurrent_kda: num_accepted_tokens length must equal sequence number.");
+        TORCH_CHECK(num_accepted_tokens->scalar_type() == at::kInt ||
+                        num_accepted_tokens->scalar_type() == at::kLong,
+                    "npu_recurrent_kda: num_accepted_tokens must be int32 or int64.");
+        TORCH_CHECK(num_accepted_tokens->device() == q.device(),
+                    "npu_recurrent_kda: num_accepted_tokens must be on the same device as q.");
     }
 
     bool use_gate = use_gate_in_kernel.value_or(false);
@@ -853,6 +867,8 @@ at::Tensor npu_kda_gate_cumsum(
                     "npu_recurrent_kda: A_log is required when use_gate_in_kernel=True.");
         TORCH_CHECK(A_log->scalar_type() == at::kFloat && A_log->dim() == 1 && A_log->size(0) == hv,
                     "npu_recurrent_kda: A_log must be float32 with shape [HV].");
+        TORCH_CHECK(A_log->device() == q.device(),
+                    "npu_recurrent_kda: A_log must be on the same device as q.");
         TORCH_CHECK(!safe || (lower >= -5.0 && lower < 0.0),
                     "npu_recurrent_kda: lower_bound must be in [-5, 0) when safe_gate=True.");
         if (dt_bias.has_value() && dt_bias->defined()) {
@@ -860,6 +876,8 @@ at::Tensor npu_kda_gate_cumsum(
                 ((dt_bias->dim() == 1 && dt_bias->size(0) == hv * k_dim) ||
                  (dt_bias->dim() == 2 && dt_bias->size(0) == hv && dt_bias->size(1) == k_dim));
             TORCH_CHECK(valid_bias, "npu_recurrent_kda: dt_bias must be float32 with shape [HV*K] or [HV,K].");
+            TORCH_CHECK(dt_bias->device() == q.device(),
+                        "npu_recurrent_kda: dt_bias must be on the same device as q.");
         }
     } else {
         TORCH_CHECK(!safe, "npu_recurrent_kda: safe_gate only applies when use_gate_in_kernel=True.");
@@ -869,9 +887,8 @@ at::Tensor npu_kda_gate_cumsum(
                     "npu_recurrent_kda: dt_bias must be omitted when use_gate_in_kernel=False.");
     }
 
-    at::Tensor initial_state_arg = initial_state_work.contiguous();
     at::Tensor out = at::empty_like(v);
-    at::Tensor final_state_work = at::empty_like(initial_state_arg);
+    at::Tensor final_state_work = initial_state;
     bool output_final_state_ = output_final_state.value_or(false);
     double scale_ = scale.value_or(std::pow(static_cast<double>(k_dim), -0.5));
     bool use_qk_l2norm_ = use_qk_l2norm_in_kernel.value_or(false);
@@ -885,15 +902,15 @@ at::Tensor npu_kda_gate_cumsum(
 
     EXEC_NPU_CMD_EXT(
         aclnnRecurrentKda,
-        q, k, v, g, beta, initial_state_arg, cu_seqlens,
+        q, k, v, g, beta, initial_state, actual_seq_lengths,
         ssm_state_indices_, A_log_, dt_bias_, num_accepted_tokens_,
         layout_cstr, scale_, output_final_state_, use_qk_l2norm_, use_gate,
         use_beta_sigmoid_, allow_neg_eigval_, safe, lower, state_v_first_,
-        out, final_state_work
+        out
     );
 
     at::Tensor final_state = output_final_state_ ? final_state_work :
-        at::empty({0}, initial_state_arg.options());
+        at::empty({0}, initial_state.options());
     return std::make_tuple(out, final_state);
 }
 

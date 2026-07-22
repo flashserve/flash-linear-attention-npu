@@ -44,7 +44,7 @@ struct RKDAInitParams {
     GM_ADDR gate;
     GM_ADDR beta;
     GM_ADDR initState;
-    GM_ADDR cuSeqlens;
+    GM_ADDR actualSeqLengths;
     GM_ADDR ssmStateIndices;
     GM_ADDR aLog;
     GM_ADDR dtBias;
@@ -60,14 +60,14 @@ public:
     {
         B_ = tilingData->b;
         T_ = tilingData->t;
-        seqLen_ = tilingData->seqLen;
         NK_ = tilingData->nk;
         realK_ = tilingData->dk;
         NV_ = tilingData->nv;
         realV_ = tilingData->dv;
+        stateCapacity_ = tilingData->sBlockNum;
+        ssmStateStride_ = tilingData->ssmStateStride;
         scale_ = tilingData->scale;
         lowerBound_ = tilingData->lowerBound;
-        hasCuSeqlens_ = (tilingData->hasCuSeqlens == 1);
         hasSsmStateIndices_ = (tilingData->hasSsmStateIndices == 1);
         hasAcceptedTokens_ = (tilingData->hasAcceptedTokens == 1);
         hasALog_ = (tilingData->hasALog == 1);
@@ -109,7 +109,7 @@ public:
         gateGm_.SetGlobalBuffer((__gm__ float *)initParams.gate);
         betaGm_.SetGlobalBuffer((__gm__ float *)initParams.beta);
         initStateGm_.SetGlobalBuffer((__gm__ stateType *)initParams.initState);
-        cuSeqlensGm_.SetGlobalBuffer((__gm__ int64_t *)initParams.cuSeqlens);
+        actualSeqLengthsGm_.SetGlobalBuffer((__gm__ int64_t *)initParams.actualSeqLengths);
         ssmStateIndicesGm_.SetGlobalBuffer((__gm__ int64_t *)initParams.ssmStateIndices);
         aLogGm_.SetGlobalBuffer((__gm__ float *)initParams.aLog);
         dtBiasGm_.SetGlobalBuffer((__gm__ float *)initParams.dtBias);
@@ -203,26 +203,19 @@ public:
 
     __aicore__ inline void Process()
     {
+        if (!ValidateActualSeqLengths()) {
+            ReleaseEvents();
+            return;
+        }
+        int64_t seq0 = actualSeqLengthsGm_.GetValue(0);
         for (uint64_t batch_i = 0; batch_i < B_; batch_i++) {
-            int64_t seq0 = 0;
-            int64_t seq1 = 0;
-            if (hasCuSeqlens_) {
-                seq0 = cuSeqlensGm_.GetValue(batch_i);
-                seq1 = cuSeqlensGm_.GetValue(batch_i + 1);
-            } else {
-                seq0 = static_cast<int64_t>(batch_i * seqLen_);
-                seq1 = seq0 + static_cast<int64_t>(seqLen_);
-            }
-            int32_t seqLen = static_cast<int32_t>(seq1 - seq0);
-            if (seqLen <= 0) {
-                CopyZeroLengthState(batch_i);
+            int64_t seqLen64 = actualSeqLengthsGm_.GetValue(batch_i + 1);
+            int64_t seq1 = seq0 + seqLen64;
+            if (seqLen64 == 0) {
                 continue;
             }
-            if (seqLen > static_cast<int32_t>(MAX_MTP)) {
-                ReleaseEvents();
-                return;
-            }
-            if (seq0 < 0 || seq1 > static_cast<int64_t>(T_)) {
+            int32_t seqLen = static_cast<int32_t>(seqLen64);
+            if (!ValidateStateSlots(batch_i, seq0, seqLen)) {
                 ReleaseEvents();
                 return;
             }
@@ -242,27 +235,75 @@ public:
                     }
                     CopyInBeta(seq0, seq1);
                 }
-                ProcessHead(seq0, seq1, head_i, stateSlot);
+                ProcessHead(batch_i, seq0, seq1, head_i, stateSlot);
             }
+            seq0 = seq1;
         }
         ReleaseEvents();
     }
 
 private:
-    __aicore__ inline uint64_t ResolveInitialStateSlot(uint64_t batchIdx, int64_t seq0, int32_t seqLen)
+    __aicore__ inline bool ValidateActualSeqLengths() const
+    {
+        int64_t total = 0;
+        for (uint64_t i = 0; i < B_ + 1; i++) {
+            int64_t length = actualSeqLengthsGm_.GetValue(i);
+            if (length < 0 || length > static_cast<int64_t>(T_) - total ||
+                (i > 0 && length > static_cast<int64_t>(MAX_MTP)) ||
+                (i > 0 && hasSsmStateIndices_ && ssmStateStride_ > 0 && length > ssmStateStride_)) {
+                return false;
+            }
+            total += length;
+        }
+        return total == static_cast<int64_t>(T_);
+    }
+
+    __aicore__ inline uint64_t StateMetadataOffset(uint64_t batchIdx, int64_t seq0, int64_t tokenIdx) const
+    {
+        if (ssmStateStride_ == 0) {
+            return static_cast<uint64_t>(tokenIdx);
+        }
+        return batchIdx * ssmStateStride_ + static_cast<uint64_t>(tokenIdx - seq0);
+    }
+
+    __aicore__ inline uint64_t LoadStateSlot(uint64_t batchIdx, int64_t seq0, int64_t tokenIdx) const
+    {
+        int64_t stateSlot = ssmStateIndicesGm_.GetValue(StateMetadataOffset(batchIdx, seq0, tokenIdx));
+        if (stateSlot < 0 || stateSlot >= static_cast<int64_t>(stateCapacity_)) {
+            return INVALID_STATE_SLOT;
+        }
+        return static_cast<uint64_t>(stateSlot);
+    }
+
+    __aicore__ inline bool ValidateStateSlots(uint64_t batchIdx, int64_t seq0, int32_t seqLen) const
+    {
+        if (!hasSsmStateIndices_) {
+            return batchIdx < stateCapacity_;
+        }
+        if (hasAcceptedTokens_) {
+            int64_t acceptedTokenNum = numAcceptedTokensGm_.GetValue(batchIdx);
+            if (acceptedTokenNum <= 0 || acceptedTokenNum > seqLen) {
+                return false;
+            }
+        }
+        for (int32_t step = 0; step < seqLen; ++step) {
+            if (LoadStateSlot(batchIdx, seq0, seq0 + step) == INVALID_STATE_SLOT) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    __aicore__ inline uint64_t ResolveInitialStateSlot(uint64_t batchIdx, int64_t seq0, int32_t seqLen) const
     {
         if (!hasSsmStateIndices_) {
             return batchIdx;
         }
         int64_t tokenIdx = seq0;
-            if (hasAcceptedTokens_) {
-                int64_t acceptedTokenNum = numAcceptedTokensGm_.GetValue(batchIdx);
-                if (acceptedTokenNum <= 0 || acceptedTokenNum > seqLen) {
-                    return INVALID_STATE_SLOT;
-                }
-                tokenIdx = seq0 + acceptedTokenNum - 1;
-            }
-        return static_cast<uint64_t>(ssmStateIndicesGm_.GetValue(tokenIdx));
+        if (hasAcceptedTokens_) {
+            tokenIdx = seq0 + numAcceptedTokensGm_.GetValue(batchIdx) - 1;
+        }
+        return LoadStateSlot(batchIdx, seq0, tokenIdx);
     }
 
     __aicore__ inline void CopyFloatVectorIn(LocalTensor<float> &dst, GlobalTensor<float> &src, uint64_t offset,
@@ -445,29 +486,6 @@ private:
         stateInQueue_.FreeTensor(stateLocal);
     }
 
-    __aicore__ inline void CopyZeroLengthState(uint64_t batchIdx)
-    {
-        for (uint64_t head = 0; head < NV_; ++head) {
-            if (((batchIdx * NV_ + head) % GetBlockNum()) != blockIdx) {
-                continue;
-            }
-            for (uint64_t vIdx = 0; vIdx < realV_; vIdx += vStep_) {
-                uint32_t curSingleV = vIdx + vStep_ > realV_ ? realV_ - vIdx : vStep_;
-                uint64_t stateOffset = ((batchIdx * NV_ + head) * realV_ + vIdx) * realK_;
-                PrefetchState(stateOffset, curSingleV);
-                LoadPrefetchedState(curSingleV);
-                LocalTensor<stateType> stateOutLocal = stateOutQueue_.AllocTensor<stateType>();
-                if constexpr (std::is_same<stateType, float32_t>()) {
-                    DataCopy(stateOutLocal, stateInUb, alignK_ * curSingleV);
-                } else {
-                    Cast(stateOutLocal, stateInUb, AscendC::RoundMode::CAST_RINT, alignK_ * curSingleV);
-                }
-                stateOutQueue_.EnQue<stateType>(stateOutLocal);
-                CopyOutState(stateOffset, curSingleV);
-            }
-        }
-    }
-
     __aicore__ inline void MatVecMul(const LocalTensor<float> &cubeTensor, const LocalTensor<float> &vecTensor,
                                      LocalTensor<float> &dstTensor, uint32_t cols, bool isAdd)
     {
@@ -622,10 +640,10 @@ private:
         betaInQueue_.FreeTensor(betaLocal);
     }
 
-    __aicore__ inline uint64_t StateSlotForToken(uint64_t batchIdx, int64_t tokenIdx) const
+    __aicore__ inline uint64_t StateSlotForToken(uint64_t batchIdx, int64_t seq0, int64_t tokenIdx) const
     {
         if (hasSsmStateIndices_) {
-            return static_cast<uint64_t>(ssmStateIndicesGm_.GetValue(tokenIdx));
+            return LoadStateSlot(batchIdx, seq0, tokenIdx);
         }
         return batchIdx;
     }
@@ -642,7 +660,8 @@ private:
         return beta;
     }
 
-    __aicore__ inline void ProcessHead(int64_t seq0, int64_t seq1, uint64_t head_i, uint64_t stateSlot)
+    __aicore__ inline void ProcessHead(uint64_t batchIdx, int64_t seq0, int64_t seq1,
+                                      uint64_t head_i, uint64_t stateSlot)
     {
         uint64_t vOffset = (static_cast<uint64_t>(seq0) * NV_ + head_i) * realV_;
         uint64_t qkOffset = (static_cast<uint64_t>(seq0) * NK_ + head_i / (NV_ / NK_)) * realK_;
@@ -674,7 +693,7 @@ private:
                 uint64_t curQKOffset = static_cast<uint64_t>(seq_i - seq0) * alignK_;
                 uint64_t curVOffset = static_cast<uint64_t>(seq_i - seq0) * alignV_ + v_i;
                 uint64_t attnOffset = (static_cast<uint64_t>(seq_i) * NV_ + head_i) * realV_ + v_i;
-                uint64_t curStateSlot = StateSlotForToken(stateSlot, seq_i);
+                uint64_t curStateSlot = StateSlotForToken(batchIdx, seq0, seq_i);
                 uint64_t curStateOutOffset = ((curStateSlot * NV_ + head_i) * realV_ + v_i) * realK_;
                 beta_ = LoadBeta(gbOffset);
                 Compute(curSingleV, curQKOffset, curVOffset);
@@ -719,7 +738,7 @@ private:
     GlobalTensor<float> gateGm_;
     GlobalTensor<float> betaGm_;
     GlobalTensor<stateType> initStateGm_;
-    GlobalTensor<int64_t> cuSeqlensGm_;
+    GlobalTensor<int64_t> actualSeqLengthsGm_;
     GlobalTensor<int64_t> ssmStateIndicesGm_;
     GlobalTensor<float> aLogGm_;
     GlobalTensor<float> dtBiasGm_;
@@ -754,18 +773,18 @@ private:
     bool eventVToSInitialized_;
     uint32_t B_;
     uint32_t T_;
-    uint32_t seqLen_;
     uint32_t NK_;
     uint32_t alignK_;
     uint32_t realK_;
     uint32_t NV_;
     uint32_t alignV_;
     uint32_t realV_;
+    uint32_t stateCapacity_;
+    uint32_t ssmStateStride_;
     uint32_t vStep_;
     uint32_t stateOutBufferNum_;
     uint32_t attnOutBufferNum_;
     uint32_t restUbSize_;
-    bool hasCuSeqlens_;
     bool hasSsmStateIndices_;
     bool hasAcceptedTokens_;
     bool hasALog_;

@@ -35,7 +35,8 @@ static constexpr size_t RKDA_RANK4_QKV_DIM_NUM = 4;
 static constexpr size_t RKDA_RANK2_BETA_DIM_NUM = 2;
 static constexpr size_t RKDA_RANK3_BETA_DIM_NUM = 3;
 static constexpr size_t RKDA_STATE_DIM_NUM = 4;
-static constexpr size_t RKDA_METADATA_DIM_NUM = 1;
+static constexpr size_t RKDA_METADATA_RANK1 = 1;
+static constexpr size_t RKDA_METADATA_RANK2 = 2;
 
 static constexpr size_t RKDA_DIM_0 = 0;
 static constexpr size_t RKDA_DIM_1 = 1;
@@ -56,7 +57,7 @@ struct RecurrentKdaTilingContext {
     gert::Shape gateShape;
     gert::Shape betaShape;
     gert::Shape stateShape;
-    gert::Shape cuSeqlensShape;
+    gert::Shape actualSeqLengthsShape;
     gert::Shape ssmStateShape;
     gert::Shape aLogShape;
     gert::Shape dtBiasShape;
@@ -64,7 +65,6 @@ struct RecurrentKdaTilingContext {
     float scale = 1.0f;
     float lowerBound = -5.0f;
     uint32_t layout = RKDA_LAYOUT_BSND;
-    uint32_t hasCuSeqlens = 0;
     uint32_t hasSsmStateIndices = 0;
     uint32_t hasALog = 0;
     uint32_t hasDtBias = 0;
@@ -147,7 +147,7 @@ private:
         bool valid = false;
     };
 
-    const RecurrentKdaTilingContext &ctx_;
+    RecurrentKdaTilingContext ctx_;
 
     bool CheckDim(const gert::Shape &shape, const size_t dim, const std::string &dimDesc) const
     {
@@ -171,43 +171,38 @@ private:
         return true;
     }
 
-    int64_t SeqNum(const gert::Shape &queryShape, const gert::Shape &cuSeqlensShape) const
+    int64_t SeqNum(const gert::Shape &actualSeqLengthsShape) const
     {
-        if (ctx_.hasCuSeqlens) {
-            return cuSeqlensShape.GetDim(RKDA_DIM_0) - 1;
-        }
-        if (ctx_.layout == RKDA_LAYOUT_TND) {
-            return 1;
-        }
-        return queryShape.GetDim(RKDA_DIM_0);
+        return actualSeqLengthsShape.GetDim(RKDA_DIM_0) - 1;
     }
 
-    ge::graphStatus CheckMetadataShapes(const gert::Shape &queryShape, const gert::Shape &cuSeqlensShape) const
+    ge::graphStatus CheckMetadataShapes(const gert::Shape &queryShape, const gert::Shape &actualSeqLengthsShape) const
     {
-        if (ctx_.hasCuSeqlens) {
-            if (!CheckDim(cuSeqlensShape, RKDA_METADATA_DIM_NUM, "cu_seqlens")) {
-                return ge::GRAPH_FAILED;
-            }
-            OP_CHECK_IF(cuSeqlensShape.GetDim(RKDA_DIM_0) < 2,
-                        OP_LOGE(ctx_.nodeName, "cu_seqlens must contain at least 2 elements."),
-                        return ge::GRAPH_FAILED);
+        if (!CheckDim(actualSeqLengthsShape, RKDA_METADATA_RANK1, "actual_seq_lengths")) {
+            return ge::GRAPH_FAILED;
         }
+        OP_CHECK_IF(actualSeqLengthsShape.GetDim(RKDA_DIM_0) < 2,
+                    OP_LOGE(ctx_.nodeName, "actual_seq_lengths must contain at least 2 elements."),
+                    return ge::GRAPH_FAILED);
         int64_t totalTokens =
             (ctx_.layout == RKDA_LAYOUT_TND) ? queryShape.GetDim(RKDA_DIM_0) :
             queryShape.GetDim(RKDA_DIM_0) * queryShape.GetDim(RKDA_DIM_1);
-        int64_t seqNum = ctx_.hasCuSeqlens ? cuSeqlensShape.GetDim(RKDA_DIM_0) - 1 :
-                         ((ctx_.layout == RKDA_LAYOUT_TND) ? 1 : queryShape.GetDim(RKDA_DIM_0));
+        int64_t seqNum = actualSeqLengthsShape.GetDim(RKDA_DIM_0) - 1;
 
         if (ctx_.hasSsmStateIndices) {
-            if (!CheckDim(ctx_.ssmStateShape, RKDA_METADATA_DIM_NUM, "ssm_state_indices")) {
-                return ge::GRAPH_FAILED;
-            }
-            OP_CHECK_IF(ctx_.ssmStateShape.GetDim(RKDA_DIM_0) < totalTokens,
-                        OP_LOGE(ctx_.nodeName, "ssm_state_indices length must be >= total tokens."),
+            size_t rank = ctx_.ssmStateShape.GetDimNum();
+            bool packed1d = rank == RKDA_METADATA_RANK1 &&
+                            ctx_.ssmStateShape.GetDim(RKDA_DIM_0) >= totalTokens;
+            bool speculative2d = rank == RKDA_METADATA_RANK2 &&
+                                 ctx_.ssmStateShape.GetDim(RKDA_DIM_0) == seqNum &&
+                                 ctx_.ssmStateShape.GetDim(RKDA_DIM_1) > 0;
+            OP_CHECK_IF(!packed1d && !speculative2d,
+                        OP_LOGE(ctx_.nodeName,
+                                "ssm_state_indices must be packed [T] or speculative [seq_num,max_step]."),
                         return ge::GRAPH_FAILED);
         }
         if (ctx_.hasAcceptedTokens) {
-            if (!CheckDim(ctx_.acceptedTokensShape, RKDA_METADATA_DIM_NUM, "num_accepted_tokens")) {
+            if (!CheckDim(ctx_.acceptedTokensShape, RKDA_METADATA_RANK1, "num_accepted_tokens")) {
                 return ge::GRAPH_FAILED;
             }
             OP_CHECK_IF(ctx_.acceptedTokensShape.GetDim(RKDA_DIM_0) != seqNum,
@@ -224,7 +219,7 @@ private:
             return ge::GRAPH_FAILED;
         }
         if (ctx_.hasALog) {
-            if (!CheckDim(ctx_.aLogShape, RKDA_METADATA_DIM_NUM, "A_log")) {
+            if (!CheckDim(ctx_.aLogShape, RKDA_METADATA_RANK1, "A_log")) {
                 return ge::GRAPH_FAILED;
             }
             OP_CHECK_IF(ctx_.aLogShape.GetDim(RKDA_DIM_0) != hvNum,
@@ -245,7 +240,7 @@ private:
     ge::graphStatus CheckShapeDimAndRelation(const gert::Shape &queryShape, const gert::Shape &keyShape,
                                              const gert::Shape &valueShape, const gert::Shape &gateShape,
                                              const gert::Shape &betaShape, const gert::Shape &stateShape,
-                                             const gert::Shape &cuSeqlensShape) const
+                                             const gert::Shape &actualSeqLengthsShape) const
     {
         int64_t totalTokens = 0;
         int64_t denseSeqLen = 0;
@@ -303,9 +298,6 @@ private:
                         OP_LOGE(ctx_.nodeName,
                                 "BSND expects q/k [B,T,H,K], value [B,T,HV,V], gate [B,T,HV,K], beta [B,T,HV]."),
                         return ge::GRAPH_FAILED);
-            OP_CHECK_IF(ctx_.hasCuSeqlens && batch != 1,
-                        OP_LOGE(ctx_.nodeName, "BSND varlen with cu_seqlens requires B=1."),
-                        return ge::GRAPH_FAILED);
         }
 
         if (!CheckDimEqual(queryShape, RKDA_DIM_0, keyShape, RKDA_DIM_0, "query", "key",
@@ -329,15 +321,18 @@ private:
         OP_CHECK_IF(!ctx_.stateVFirst,
                     OP_LOGE(ctx_.nodeName, "state_v_first=false is not supported by RecurrentKda."),
                     return ge::GRAPH_FAILED);
-        int64_t seqNum = SeqNum(queryShape, cuSeqlensShape);
-        OP_CHECK_IF(stateShape.GetDim(RKDA_DIM_0) != seqNum ||
+        int64_t seqNum = SeqNum(actualSeqLengthsShape);
+        OP_CHECK_IF(stateShape.GetDim(RKDA_DIM_0) <= 0 ||
+                        (!ctx_.hasSsmStateIndices && stateShape.GetDim(RKDA_DIM_0) != seqNum) ||
                         stateShape.GetDim(RKDA_DIM_1) != hvNum ||
                         stateShape.GetDim(RKDA_DIM_2) != vDim ||
                         stateShape.GetDim(RKDA_DIM_3) != kDim,
-                    OP_LOGE(ctx_.nodeName, "initial_state must be [seq_num, HV, V, K] when state_v_first is true."),
+                    OP_LOGE(ctx_.nodeName,
+                            "state must be [state_capacity, HV, V, K]; without ssm_state_indices, "
+                            "state_capacity must equal seq_num."),
                     return ge::GRAPH_FAILED);
 
-        if (CheckMetadataShapes(queryShape, cuSeqlensShape) != ge::GRAPH_SUCCESS ||
+        if (CheckMetadataShapes(queryShape, actualSeqLengthsShape) != ge::GRAPH_SUCCESS ||
             CheckOptionalGateShapes(hvNum, kDim) != ge::GRAPH_SUCCESS) {
             return ge::GRAPH_FAILED;
         }
@@ -345,7 +340,7 @@ private:
     }
 
     void FillTilingShapeData(const gert::Shape &queryShape, const gert::Shape &valueShape,
-                             const gert::Shape &stateShape, const gert::Shape &cuSeqlensShape,
+                             const gert::Shape &stateShape, const gert::Shape &actualSeqLengthsShape,
                              RecurrentKdaTilingData &tiling) const
     {
         if (ctx_.layout == RKDA_LAYOUT_TND) {
@@ -355,7 +350,7 @@ private:
             tiling.dk = static_cast<uint32_t>(queryShape.GetDim(RKDA_DIM_2));
             tiling.nv = static_cast<uint32_t>(valueShape.GetDim(RKDA_DIM_1));
             tiling.dv = static_cast<uint32_t>(valueShape.GetDim(RKDA_DIM_2));
-            tiling.b = ctx_.hasCuSeqlens ? static_cast<uint32_t>(cuSeqlensShape.GetDim(RKDA_DIM_0) - 1) : 1;
+            tiling.b = static_cast<uint32_t>(actualSeqLengthsShape.GetDim(RKDA_DIM_0) - 1);
         } else {
             tiling.seqLen = static_cast<uint32_t>(queryShape.GetDim(RKDA_DIM_1));
             tiling.t = static_cast<uint32_t>(queryShape.GetDim(RKDA_DIM_0) * queryShape.GetDim(RKDA_DIM_1));
@@ -363,14 +358,14 @@ private:
             tiling.dk = static_cast<uint32_t>(queryShape.GetDim(RKDA_DIM_3));
             tiling.nv = static_cast<uint32_t>(valueShape.GetDim(RKDA_DIM_2));
             tiling.dv = static_cast<uint32_t>(valueShape.GetDim(RKDA_DIM_3));
-            tiling.b = ctx_.hasCuSeqlens ? static_cast<uint32_t>(cuSeqlensShape.GetDim(RKDA_DIM_0) - 1) :
-                       static_cast<uint32_t>(queryShape.GetDim(RKDA_DIM_0));
+            tiling.b = static_cast<uint32_t>(actualSeqLengthsShape.GetDim(RKDA_DIM_0) - 1);
         }
         tiling.sBlockNum = static_cast<uint32_t>(stateShape.GetDim(RKDA_DIM_0));
+        tiling.ssmStateStride = (ctx_.hasSsmStateIndices && ctx_.ssmStateShape.GetDimNum() == RKDA_METADATA_RANK2) ?
+                                static_cast<uint32_t>(ctx_.ssmStateShape.GetDim(RKDA_DIM_1)) : 0;
         tiling.scale = ctx_.scale;
         tiling.lowerBound = ctx_.lowerBound;
         tiling.layout = ctx_.layout;
-        tiling.hasCuSeqlens = ctx_.hasCuSeqlens;
         tiling.hasSsmStateIndices = ctx_.hasSsmStateIndices;
         tiling.hasALog = ctx_.hasALog;
         tiling.hasDtBias = ctx_.hasDtBias;
@@ -398,10 +393,6 @@ private:
                     OP_LOGE(ctx_.nodeName, "HV must be divisible by H, but HV=%u and H=%u.",
                             tiling.nv, tiling.nk),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(!tiling.hasCuSeqlens && tiling.seqLen > RKDA_MAX_MTP,
-                    OP_LOGE(ctx_.nodeName, "dense sequence length must be <= %zu, but got %u.",
-                            RKDA_MAX_MTP, tiling.seqLen),
-                    return ge::GRAPH_FAILED);
         OP_CHECK_IF(tiling.safeGate && (tiling.lowerBound < -5.0f || tiling.lowerBound >= 0.0f),
                     OP_LOGE(ctx_.nodeName, "lower_bound must be in [-5, 0) when safe_gate is true."),
                     return ge::GRAPH_FAILED);
@@ -425,12 +416,12 @@ private:
     {
         (void)tiling;
         return CheckShapeDimAndRelation(ctx_.queryShape, ctx_.keyShape, ctx_.valueShape, ctx_.gateShape,
-                                        ctx_.betaShape, ctx_.stateShape, ctx_.cuSeqlensShape);
+                                        ctx_.betaShape, ctx_.stateShape, ctx_.actualSeqLengthsShape);
     }
 
     ge::graphStatus RuleFillTilingShapeData(RecurrentKdaTilingData &tiling) const
     {
-        FillTilingShapeData(ctx_.queryShape, ctx_.valueShape, ctx_.stateShape, ctx_.cuSeqlensShape, tiling);
+        FillTilingShapeData(ctx_.queryShape, ctx_.valueShape, ctx_.stateShape, ctx_.actualSeqLengthsShape, tiling);
         return ge::GRAPH_SUCCESS;
     }
 

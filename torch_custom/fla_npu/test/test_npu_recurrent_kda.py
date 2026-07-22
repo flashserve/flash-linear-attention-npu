@@ -31,7 +31,7 @@ def _make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim
         v_shape = (batch, seq_len, hv, vdim)
         g_shape = (batch, seq_len, hv, kdim)
         beta_shape = (batch, seq_len, hv)
-        cu_seqlens = None
+        actual_seq_lengths = [0] + [seq_len] * batch
         seq_num = batch
     elif layout == "TND":
         total_tokens = batch * seq_len
@@ -39,7 +39,7 @@ def _make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim
         v_shape = (total_tokens, hv, vdim)
         g_shape = (total_tokens, hv, kdim)
         beta_shape = (total_tokens, hv)
-        cu_seqlens = [i * seq_len for i in range(batch + 1)]
+        actual_seq_lengths = [0] + [seq_len] * batch
         seq_num = batch
     else:
         raise ValueError(layout)
@@ -55,7 +55,7 @@ def _make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim
         "g": torch.randn(g_shape, dtype=torch.float32) * 0.5,
         "beta": torch.randn(beta_shape, dtype=torch.float32),
         "initial_state": initial_state,
-        "cu_seqlens": cu_seqlens,
+        "actual_seq_lengths": actual_seq_lengths,
         "A_log": torch.randn((hv,), dtype=torch.float32) * 0.1,
         "dt_bias": torch.randn((hv, kdim), dtype=torch.float32) * 0.1,
         "layout": layout,
@@ -77,16 +77,18 @@ def _run_case(desc, input_kwargs, op_kwargs):
     from fla_npu.ops.ascendc import recurrent_kda
 
     call_kwargs = {**op_kwargs, "output_final_state": True, "layout": inputs["layout"]}
-    if inputs["cu_seqlens"] is not None:
-        call_kwargs["cu_seqlens"] = inputs["cu_seqlens"]
+    call_kwargs["actual_seq_lengths"] = torch.tensor(
+        inputs["actual_seq_lengths"], dtype=torch.int64, device=device
+    )
     initial_state = inputs["initial_state"]
+    state_npu = initial_state.to(device) if initial_state is not None else None
     out, final_state = recurrent_kda(
         inputs["q"].to(device),
         inputs["k"].to(device),
         inputs["v"].to(device),
         inputs["g"].to(device),
         inputs["beta"].to(device),
-        initial_state.to(device) if initial_state is not None else None,
+        state_npu,
         A_log=inputs["A_log"].to(device) if op_kwargs.get("use_gate_in_kernel", False) else None,
         dt_bias=inputs["dt_bias"].to(device) if op_kwargs.get("use_gate_in_kernel", False) else None,
         **call_kwargs,
@@ -95,6 +97,8 @@ def _run_case(desc, input_kwargs, op_kwargs):
 
     _assert_close("out", expected[0], out.cpu())
     _assert_close("final_state", expected[1], final_state.cpu())
+    if state_npu is not None:
+        assert final_state.data_ptr() == state_npu.data_ptr()
 
 
 def main():

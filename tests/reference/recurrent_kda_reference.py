@@ -25,12 +25,30 @@ def _restore_layout(x: torch.Tensor, ref: torch.Tensor, layout: str) -> torch.Te
     return x.reshape(ref.shape)
 
 
-def _seq_ranges(total_tokens: int, batch: int, seq_len: int, cu_seqlens: Optional[Sequence[int]]):
-    if cu_seqlens is None:
-        if batch == 1 and seq_len == total_tokens:
-            return [(0, total_tokens)]
-        return [(b * seq_len, (b + 1) * seq_len) for b in range(batch)]
-    return [(int(cu_seqlens[i]), int(cu_seqlens[i + 1])) for i in range(len(cu_seqlens) - 1)]
+def _seq_ranges(total_tokens: int, actual_seq_lengths: Sequence[int]):
+    if len(actual_seq_lengths) < 2:
+        raise ValueError("actual_seq_lengths must contain the invalid-token length and at least one sequence length")
+    cursor = int(actual_seq_lengths[0])
+    if cursor < 0:
+        raise ValueError("actual_seq_lengths values must be nonnegative")
+    ranges = []
+    for length_value in actual_seq_lengths[1:]:
+        length = int(length_value)
+        if length < 0:
+            raise ValueError("actual_seq_lengths values must be nonnegative")
+        ranges.append((cursor, cursor + length))
+        cursor += length
+    if cursor != total_tokens:
+        raise ValueError("the sum of actual_seq_lengths must equal the packed token count")
+    return ranges
+
+
+def _state_slot(ssm_state_indices: torch.Tensor, seq_idx: int, start: int, token: int) -> int:
+    if ssm_state_indices.ndim == 1:
+        return int(ssm_state_indices[token].item())
+    if ssm_state_indices.ndim == 2:
+        return int(ssm_state_indices[seq_idx, token - start].item())
+    raise ValueError("ssm_state_indices must be packed [T] or speculative [seq_num,max_step]")
 
 
 def recurrent_kda_reference(
@@ -41,7 +59,7 @@ def recurrent_kda_reference(
     beta: torch.Tensor,
     initial_state: Optional[torch.Tensor] = None,
     *,
-    cu_seqlens: Optional[Sequence[int]] = None,
+    actual_seq_lengths: Sequence[int],
     ssm_state_indices: Optional[torch.Tensor] = None,
     A_log: Optional[torch.Tensor] = None,
     dt_bias: Optional[torch.Tensor] = None,
@@ -68,8 +86,6 @@ def recurrent_kda_reference(
     beta_flat = _flatten_bsnd(beta, layout).float()
     total_tokens, h, dk = q_flat.shape
     _, hv, dv = v_flat.shape
-    batch = 1 if layout == "TND" else q.shape[0]
-    seq_len = total_tokens if layout == "TND" else q.shape[1]
     scale = (dk ** -0.5) if scale is None else scale
 
     if use_qk_l2norm_in_kernel:
@@ -98,7 +114,7 @@ def recurrent_kda_reference(
         if allow_neg_eigval:
             beta_eff = beta_eff * 2.0
 
-    ranges = _seq_ranges(total_tokens, batch, seq_len, cu_seqlens)
+    ranges = _seq_ranges(total_tokens, actual_seq_lengths)
     state_dtype = initial_state.dtype if initial_state is not None else torch.float32
     if initial_state is None:
         state = torch.zeros((len(ranges), hv, dv, dk), dtype=torch.float32, device=q.device)
@@ -114,7 +130,7 @@ def recurrent_kda_reference(
             token = start
             if num_accepted_tokens is not None:
                 token = start + int(num_accepted_tokens[seq_idx].item()) - 1
-            state_slot = int(ssm_state_indices[token].item())
+            state_slot = _state_slot(ssm_state_indices, seq_idx, start, token)
         for hv_idx in range(hv):
             h_idx = hv_idx // (hv // h)
             state_cur = state[state_slot, hv_idx].clone()
@@ -124,7 +140,7 @@ def recurrent_kda_reference(
                 delta = delta * beta_eff[token, hv_idx]
                 state_cur = state_cur + torch.outer(delta, k_flat[token, h_idx])
                 out_flat[token, hv_idx] = torch.mv(state_cur, q_flat[token, h_idx])
-                out_slot = int(ssm_state_indices[token].item()) if ssm_state_indices is not None else seq_idx
+                out_slot = _state_slot(ssm_state_indices, seq_idx, start, token) if ssm_state_indices is not None else seq_idx
                 state[out_slot, hv_idx] = state_cur
 
     return _restore_layout(out_flat.to(q.dtype), v, layout), state.to(state_dtype)

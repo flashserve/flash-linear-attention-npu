@@ -22,8 +22,8 @@ const std::array<const aclTensor *, 2> RecurrentKda(
     const aclTensor *value,
     const aclTensor *gate,
     const aclTensor *beta,
-    const aclTensor *initialState,
-    const aclIntArray *cuSeqlensOptional,
+    aclTensor *stateRef,
+    const aclTensor *actualSeqLengths,
     const aclTensor *ssmStateIndicesOptional,
     const aclTensor *aLogOptional,
     const aclTensor *dtBiasOptional,
@@ -38,7 +38,6 @@ const std::array<const aclTensor *, 2> RecurrentKda(
     double lowerBound,
     bool stateVFirst,
     const aclTensor *out,
-    const aclTensor *finalState,
     aclOpExecutor *executor);
 }
 

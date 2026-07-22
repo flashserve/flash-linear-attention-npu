@@ -127,7 +127,6 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_double,
         ctypes.c_bool,
         ctypes.c_void_p,
-        ctypes.c_void_p,
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
@@ -1013,7 +1012,7 @@ def npu_recurrent_kda(
     beta,
     initial_state=None,
     *,
-    cu_seqlens=None,
+    actual_seq_lengths,
     ssm_state_indices=None,
     A_log=None,
     dt_bias=None,
@@ -1057,6 +1056,8 @@ def npu_recurrent_kda(
         raise RuntimeError("npu_recurrent_kda: q and k must have identical shape.")
     if q.dtype != torch.bfloat16 or k.dtype != torch.bfloat16 or v.dtype != torch.bfloat16:
         raise RuntimeError("npu_recurrent_kda: q/k/v currently support bfloat16 only.")
+    if any(tensor.device != q.device for tensor in (k, v, g, beta)):
+        raise RuntimeError("npu_recurrent_kda: q/k/v/g/beta must be on the same device.")
     if g.dtype not in (torch.float16, torch.bfloat16, torch.float32):
         raise RuntimeError("npu_recurrent_kda: g must use FP16, BF16 or FP32.")
     if beta.dtype not in (torch.float16, torch.bfloat16, torch.float32):
@@ -1090,45 +1091,59 @@ def npu_recurrent_kda(
         raise RuntimeError("npu_recurrent_kda: HV must be divisible by H.")
     if (key_dim, value_dim) not in ((128, 128), (128, 256)):
         raise RuntimeError("npu_recurrent_kda: K/V currently support only K=128,V=128 or K=128,V=256.")
-    cu_values = _flatten_int_values(cu_seqlens, "npu_recurrent_kda: cu_seqlens")
-    if cu_values is None:
-        if dense_seq_len > 8:
-            raise RuntimeError("npu_recurrent_kda: dense sequence length must be <= 8.")
-        seq_num = batch
-    else:
-        if not is_tnd and batch != 1:
-            raise RuntimeError("npu_recurrent_kda: BSND varlen input with cu_seqlens requires B=1.")
-        if len(cu_values) < 2 or cu_values[0] != 0 or cu_values[-1] != total_tokens:
-            raise RuntimeError("npu_recurrent_kda: cu_seqlens must start at 0 and end at total tokens.")
-        if any(right < left for left, right in zip(cu_values, cu_values[1:])):
-            raise RuntimeError("npu_recurrent_kda: cu_seqlens must be non-decreasing.")
-        if any(right - left > 8 for left, right in zip(cu_values, cu_values[1:])):
-            raise RuntimeError("npu_recurrent_kda: each recurrent sequence length must be <= 8.")
-        seq_num = len(cu_values) - 1
+    if (not isinstance(actual_seq_lengths, torch.Tensor) or actual_seq_lengths.dim() != 1 or
+            actual_seq_lengths.numel() < 2):
+        raise RuntimeError(
+            "npu_recurrent_kda: actual_seq_lengths must be a 1D device tensor with at least two elements."
+        )
+    if actual_seq_lengths.dtype not in (torch.int32, torch.int64):
+        raise RuntimeError("npu_recurrent_kda: actual_seq_lengths must be INT32 or INT64.")
+    if actual_seq_lengths.device != q.device:
+        raise RuntimeError("npu_recurrent_kda: actual_seq_lengths must be on the same device as q.")
+    seq_num = int(actual_seq_lengths.shape[0]) - 1
 
     state_v_first = _optional_bool(state_v_first, True)
     if not state_v_first:
         raise RuntimeError("npu_recurrent_kda: state_v_first=False is not supported.")
-    state_shape = (seq_num, value_heads, value_dim, key_dim)
+    expected_tail = (value_heads, value_dim, key_dim)
     if initial_state is None:
+        state_shape = (seq_num, *expected_tail)
         initial_state_work = _zeros(state_shape, q, dtype=torch.float32)
     else:
         if initial_state.dtype not in (torch.float32, torch.bfloat16):
-            raise RuntimeError("npu_recurrent_kda: initial_state must be FP32 or BF16.")
-        if _shape(initial_state) != state_shape:
-            raise RuntimeError("npu_recurrent_kda: initial_state must be [seq_num,HV,V,K].")
+            raise RuntimeError("npu_recurrent_kda: initial_state must be a mutable FP32 or BF16 state tensor.")
+        if initial_state.device != q.device:
+            raise RuntimeError("npu_recurrent_kda: initial_state must be on the same device as q.")
+        state_shape = _shape(initial_state)
+        if len(state_shape) != 4 or state_shape[0] <= 0 or state_shape[1:] != expected_tail:
+            raise RuntimeError("npu_recurrent_kda: initial_state must be [state_capacity,HV,V,K].")
         initial_state_work = initial_state
 
     if ssm_state_indices is not None:
-        if ssm_state_indices.dtype not in (torch.int32, torch.int64) or ssm_state_indices.dim() != 1:
-            raise RuntimeError("npu_recurrent_kda: ssm_state_indices must be an INT32/INT64 1D tensor.")
-        if int(ssm_state_indices.shape[0]) < total_tokens:
-            raise RuntimeError("npu_recurrent_kda: ssm_state_indices length must be >= total tokens.")
+        packed_1d = ssm_state_indices.dim() == 1 and int(ssm_state_indices.shape[0]) >= total_tokens
+        speculative_2d = (
+            ssm_state_indices.dim() == 2
+            and int(ssm_state_indices.shape[0]) == seq_num
+            and int(ssm_state_indices.shape[1]) > 0
+        )
+        if ssm_state_indices.dtype not in (torch.int32, torch.int64) or not (packed_1d or speculative_2d):
+            raise RuntimeError(
+                "npu_recurrent_kda: ssm_state_indices must be INT32/INT64 packed [T] "
+                "or speculative [seq_num,max_step]."
+            )
+        if ssm_state_indices.device != q.device:
+            raise RuntimeError("npu_recurrent_kda: ssm_state_indices must be on the same device as q.")
+    elif state_shape[0] != seq_num:
+        raise RuntimeError(
+            "npu_recurrent_kda: without ssm_state_indices, state_capacity must equal seq_num."
+        )
     if num_accepted_tokens is not None:
         if ssm_state_indices is None:
             raise RuntimeError("npu_recurrent_kda: num_accepted_tokens requires ssm_state_indices.")
         if num_accepted_tokens.dtype not in (torch.int32, torch.int64) or _shape(num_accepted_tokens) != (seq_num,):
             raise RuntimeError("npu_recurrent_kda: num_accepted_tokens must be INT32/INT64 [seq_num].")
+        if num_accepted_tokens.device != q.device:
+            raise RuntimeError("npu_recurrent_kda: num_accepted_tokens must be on the same device as q.")
 
     use_gate = _optional_bool(use_gate_in_kernel, False)
     safe = _optional_bool(safe_gate, False)
@@ -1136,27 +1151,24 @@ def npu_recurrent_kda(
     if use_gate:
         if A_log is None or A_log.dtype != torch.float32 or _shape(A_log) != (value_heads,):
             raise RuntimeError("npu_recurrent_kda: A_log must be FP32 [HV] when use_gate_in_kernel=True.")
+        if A_log.device != q.device:
+            raise RuntimeError("npu_recurrent_kda: A_log must be on the same device as q.")
         if safe and not -5.0 <= lower < 0.0:
             raise RuntimeError("npu_recurrent_kda: lower_bound must be in [-5,0) when safe_gate=True.")
         if dt_bias is not None:
             valid_bias_shape = _shape(dt_bias) in ((value_heads * key_dim,), (value_heads, key_dim))
             if dt_bias.dtype != torch.float32 or not valid_bias_shape:
                 raise RuntimeError("npu_recurrent_kda: dt_bias must be FP32 [HV*K] or [HV,K].")
+            if dt_bias.device != q.device:
+                raise RuntimeError("npu_recurrent_kda: dt_bias must be on the same device as q.")
     else:
         if safe:
             raise RuntimeError("npu_recurrent_kda: safe_gate only applies when use_gate_in_kernel=True.")
         if A_log is not None or dt_bias is not None:
             raise RuntimeError("npu_recurrent_kda: A_log and dt_bias must be None when use_gate_in_kernel=False.")
 
-    keepalive_inputs = []
-
-    initial_state_arg = initial_state_work.contiguous()
-    if initial_state is None or initial_state_arg is not initial_state_work:
-        keepalive_inputs.append(initial_state_arg)
-    initial_state_work = initial_state_arg
-
     out = _empty_like(v)
-    final_state_work = _empty_like(initial_state_work)
+    final_state_work = initial_state_work
     final_state = final_state_work if _optional_bool(output_final_state, False) else _empty((0,), initial_state_work)
     user_outputs = (out, final_state)
     kernel_outputs = (out, final_state_work)
@@ -1164,7 +1176,6 @@ def npu_recurrent_kda(
     layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
 
     def build_args(ctx):
-        ctx.keepalive_tensors.extend(keepalive_inputs)
         return [
             ctx.tensor(q, "q"),
             ctx.tensor(k, "k"),
@@ -1172,7 +1183,7 @@ def npu_recurrent_kda(
             ctx.tensor(g, "g"),
             ctx.tensor(beta, "beta"),
             ctx.tensor(initial_state_work, "initial_state"),
-            ctx.int_array(cu_values),
+            ctx.tensor(actual_seq_lengths, "actual_seq_lengths"),
             ctx.tensor(ssm_state_indices, "ssm_state_indices"),
             ctx.tensor(A_log, "A_log"),
             ctx.tensor(dt_bias, "dt_bias"),
@@ -1188,7 +1199,6 @@ def npu_recurrent_kda(
             ctypes.c_double(lower),
             ctypes.c_bool(state_v_first),
             ctx.tensor(out, "out"),
-            ctx.tensor(final_state_work, "final_state"),
         ]
 
     _call_aclnn(

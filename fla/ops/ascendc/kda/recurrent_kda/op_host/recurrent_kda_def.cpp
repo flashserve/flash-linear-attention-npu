@@ -29,15 +29,14 @@ public:
         this->Input("value").ParamType(REQUIRED).DataType(qkvTypes).Format(formats).UnknownShapeFormat(formats);
         this->Input("gate").ParamType(REQUIRED).DataType(f32Types).Format(formats).UnknownShapeFormat(formats);
         this->Input("beta").ParamType(REQUIRED).DataType(f32Types).Format(formats).UnknownShapeFormat(formats);
-        this->Input("initial_state")
+        this->Input("state")
             .ParamType(REQUIRED)
             .DataType(stateTypes)
             .Format(formats)
             .UnknownShapeFormat(formats)
             .IgnoreContiguous();
-        this->Input("cu_seqlens")
-            .ParamType(OPTIONAL)
-            .ValueDepend(OPTIONAL)
+        this->Input("actual_seq_lengths")
+            .ParamType(REQUIRED)
             .DataType(i64Types)
             .Format(formats)
             .UnknownShapeFormat(formats);
@@ -54,7 +53,7 @@ public:
             .Format(formats)
             .UnknownShapeFormat(formats);
         this->Output("out").ParamType(REQUIRED).DataType(qkvTypes).Format(formats).UnknownShapeFormat(formats);
-        this->Output("final_state")
+        this->Output("state")
             .ParamType(REQUIRED)
             .DataType(stateTypes)
             .Format(formats)

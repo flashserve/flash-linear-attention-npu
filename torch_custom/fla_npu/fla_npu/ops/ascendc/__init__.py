@@ -58,6 +58,7 @@ BACKWARD_OPS = {
 MUTATED_ARGUMENTS = {
     "causal_conv1d": ("conv_states",),
     "npu_causal_conv1d": ("conv_states",),
+    "npu_recurrent_kda": ("initial_state",),
 }
 
 _LEGACY_TORCH_OPS_WARNING = (
