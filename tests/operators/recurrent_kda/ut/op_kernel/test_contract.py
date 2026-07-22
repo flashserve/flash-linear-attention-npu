@@ -43,6 +43,17 @@ def test_kernel_uses_generated_state_dtype_macro():
     assert "DTYPE_INITIAL_STATE" not in text
 
 
+def test_arch35_kernel_has_dedicated_micro_api_implementation():
+    text = (OP_ROOT / "op_kernel/arch35/recurrent_kda.h").read_text(encoding="utf-8")
+
+    assert '#include "../recurrent_kda.h"' not in text
+    assert "using namespace AscendC::MicroAPI;" in text
+    assert "__VEC_SCOPE__" in text
+    assert "inline void MatVecMul" in text
+    assert "inline void ProcessKQ" in text
+    assert "inline void ReduceSumDispatch" in text
+
+
 def test_kernel_validates_device_metadata_before_state_access():
     text = (OP_ROOT / "op_kernel/recurrent_kda.h").read_text(encoding="utf-8")
 
