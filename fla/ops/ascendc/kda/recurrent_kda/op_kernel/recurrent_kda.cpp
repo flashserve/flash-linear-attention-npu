@@ -33,7 +33,7 @@ recurrent_kda(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR gate, GM_ADDR b
     GET_TILING_DATA(tilingData, tilingGM);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     TPipe pipe;
-    RKDA<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE> op(&tilingData);
+    RKDA<bfloat16_t, bfloat16_t, DTYPE_STATE> op(&tilingData);
     RKDAInitParams initParams{query, key, value, gate, beta, initialState, actualSeqLengths, ssmStateIndices,
                               aLog, dtBias, numAcceptedTokens, out, finalState};
     op.Init(initParams, &pipe);

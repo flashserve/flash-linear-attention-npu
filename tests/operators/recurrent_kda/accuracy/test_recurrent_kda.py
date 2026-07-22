@@ -457,8 +457,10 @@ def test_kimi_k3_tp16_device_metadata_and_state_pool():
     beta = torch.rand(tokens, heads, dtype=torch.float32)
     state = torch.randn(13, heads, dim, dim, dtype=torch.float32) * 0.01
     state_before = state.clone()
+    # Active sequences own disjoint slots; draft steps within one sequence may
+    # reuse a slot.
     state_indices = torch.tensor(
-        [[8, 8, 8, 8, 8], [2, 11, 6, 2, 2], [4, 4, 4, 4, 4], [6, 8, 11, 4, 2]],
+        [[8, 8, 8, 8, 8], [2, 11, 6, 2, 2], [4, 4, 4, 4, 4], [1, 3, 5, 7, 9]],
         dtype=torch.int64,
     )
     accepted = torch.tensor([1, 2, 1, 1], dtype=torch.int64)
@@ -509,7 +511,8 @@ def test_kimi_k3_tp16_device_metadata_and_state_pool():
     assert final_state.data_ptr() == state_npu.data_ptr()
     torch.testing.assert_close(out.cpu().float(), expected[0].float(), rtol=0.02, atol=0.02)
     torch.testing.assert_close(final_state.cpu().float(), expected[1].float(), rtol=0.02, atol=0.02)
-    untouched = [slot for slot in range(state.shape[0]) if slot not in {2, 4, 6, 8, 11}]
+    touched = {1, 2, 3, 4, 5, 6, 7, 8, 9, 11}
+    untouched = [slot for slot in range(state.shape[0]) if slot not in touched]
     torch.testing.assert_close(final_state.cpu()[untouched], state_before[untouched], rtol=0, atol=0)
 
 
