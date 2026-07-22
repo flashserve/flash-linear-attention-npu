@@ -310,7 +310,7 @@ def build_cpu_small_op_chain(
     )
 
 
-def compare_with_dual_small_op(
+def compare_with_cpu_dual(
     case: FinalCase,
     actual: tuple[torch.Tensor, ...],
     inputs: tuple[torch.Tensor, ...],
@@ -334,13 +334,13 @@ def compare_with_dual_small_op(
                     result = ct.dual(to_cpu(actual_tensor), golden_tensor, to_cpu(bench_tensor))
         except Exception as exc:
             failures.append(f"{case.name}.{name}: ct.dual failed: {exc}")
-            print(f"  ct.dual_small_op {case.name}.{name}: ERROR {exc}", flush=True)
+            print(f"  ct.dual_cpu {case.name}.{name}: ERROR {exc}", flush=True)
         else:
             if ct_success(result):
-                print(f"  ct.dual_small_op {case.name}.{name}: PASS", flush=True)
+                print(f"  ct.dual_cpu {case.name}.{name}: PASS", flush=True)
             else:
                 failures.append(f"{case.name}.{name}: ct.dual failed ({ct_failure_summary(result)})")
-                print(f"  ct.dual_small_op {case.name}.{name}: FAIL ({ct_failure_summary(result)})", flush=True)
+                print(f"  ct.dual_cpu {case.name}.{name}: FAIL ({ct_failure_summary(result)})", flush=True)
 
 
 def run_case(case: FinalCase, args) -> list[str]:
@@ -368,9 +368,9 @@ def run_case(case: FinalCase, args) -> list[str]:
             return []
 
         failures: list[str] = []
-        if args.dual_small_op:
+        if args.golden_mode == "cpu-dual":
             compare_start = time.perf_counter()
-            compare_with_dual_small_op(
+            compare_with_cpu_dual(
                 case,
                 actual,
                 (k, v, beta, A, dw, du, g),
@@ -489,11 +489,22 @@ def main() -> int:
     parser.add_argument("--kernel-only", action="store_true")
     parser.add_argument("--verbose-ct", action="store_true", help="Print every ct report.")
     parser.add_argument(
+        "--golden-mode",
+        choices=("cpu-dual", "npu-single"),
+        default="cpu-dual",
+        help=(
+            "Precision mode. Default cpu-dual uses fused output as test, CPU high precision da+full as gt, "
+            "and CPU normal da+full as bench. npu-single compares against NPU da+full with ct.single."
+        ),
+    )
+    parser.add_argument(
         "--dual-small-op",
         action="store_true",
-        help="Use ct.dual with fused output as test, CPU high precision da+full as gt, and CPU normal da+full as bench.",
+        help="Deprecated alias for --golden-mode cpu-dual.",
     )
     args = parser.parse_args()
+    if args.dual_small_op:
+        args.golden_mode = "cpu-dual"
     selected = select_cases(args)
     if not selected:
         raise RuntimeError("No cases selected.")
