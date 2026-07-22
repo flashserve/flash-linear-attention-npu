@@ -37,7 +37,7 @@ template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
 class PrepareWyReprBwdCubeProcess {
 public:
     __aicore__ inline PrepareWyReprBwdCubeProcess(GM_ADDR k, GM_ADDR A, GM_ADDR dw, GM_ADDR du, GM_ADDR cuSeqlens,
-                                                  GM_ADDR chunkIndices, GM_ADDR workspace);
+                                                  GM_ADDR chunkIndices, GM_ADDR dv, GM_ADDR workspace);
     __aicore__ inline void Init(const GDN::PrepareWyReprBwdTilingData &tiling);
     __aicore__ inline void Process();
 
@@ -298,6 +298,7 @@ private:
     GM_ADDR du_ = nullptr;
     GM_ADDR cuSeqlens_ = nullptr;
     GM_ADDR chunkIndices_ = nullptr;
+    GM_ADDR dv_ = nullptr;
     GM_ADDR workspace_ = nullptr;
     GDN::PrepareWyReprBwdTilingData tiling_{};
     uint32_t curSlot_ = 0;
@@ -317,8 +318,10 @@ private:
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
 __aicore__ inline PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::PrepareWyReprBwdCubeProcess(
-    GM_ADDR k, GM_ADDR A, GM_ADDR dw, GM_ADDR du, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace)
-    : k_(k), A_(A), dw_(dw), du_(du), cuSeqlens_(cuSeqlens), chunkIndices_(chunkIndices), workspace_(workspace)
+    GM_ADDR k, GM_ADDR A, GM_ADDR dw, GM_ADDR du, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dv,
+    GM_ADDR workspace)
+    : k_(k), A_(A), dw_(dw), du_(du), cuSeqlens_(cuSeqlens), chunkIndices_(chunkIndices), dv_(dv),
+      workspace_(workspace)
 {
 }
 
@@ -364,7 +367,9 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
 __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::Process()
 {
+    AscendC::SetMMLayoutTransform(true);
     ProcessImpl();
+    AscendC::SetMMLayoutTransform(false);
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
@@ -386,6 +391,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     LayoutTagDK tagDK = LayoutTagDK::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
     LayoutTagDA1 tagDA1 = LayoutTagDA1::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagDA2 tagDA2 = LayoutTagDA2::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
+    LayoutTagDA1 tagDebugDA1 = LayoutTagDA1::MakeLayout<kType>(CHUNK_SIZE, V_DIM);
+    LayoutTagDA2 tagDebugDA2 = LayoutTagDA2::MakeLayout<kType>(CHUNK_SIZE, V_DIM);
     LayoutTagDA4 tagDA4 = LayoutTagDA4::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagDA5 tagDA5 = LayoutTagDA5::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagDA5T tagDA5T = LayoutTagDA5T::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
@@ -407,6 +414,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     auto layoutDK = MakeLayoutFromTag(tagDK);
     auto layoutDA1 = MakeLayoutFromTag(tagDA1);
     auto layoutDA2 = MakeLayoutFromTag(tagDA2);
+    auto layoutDebugDA1 = MakeLayoutFromTag(tagDebugDA1);
+    auto layoutDebugDA2 = MakeLayoutFromTag(tagDebugDA2);
     auto layoutDA4 = MakeLayoutFromTag(tagDA4);
     auto layoutDA5 = MakeLayoutFromTag(tagDA5);
     auto layoutDA5T = MakeLayoutFromTag(tagDA5T);
@@ -482,6 +491,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     AscendC::GlobalTensor<kType> gmKbeta;
     AscendC::GlobalTensor<kType> gmDkb;
     AscendC::GlobalTensor<kType> gmDK;
+    AscendC::GlobalTensor<kType> gmDebugDv;
 
     uint32_t coreIdx = AscendC::GetBlockIdx();
     uint32_t coreNum = AscendC::GetBlockNum();
@@ -593,9 +603,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(dwResidentEvent);
 
                 uint32_t mActualDkbg = shapeK.m();
-                if (mActualDkbg == 1) {
-                    mActualDkbg = 16;
-                }
                 uint32_t dkbgL0Idx = curL0_;
                 int32_t dkbgL0AEvent = dkbgL0Idx == 0 ? EVENT_L0A_PING : EVENT_L0A_PONG;
                 int32_t dkbgL0BEvent = dkbgL0Idx == 0 ? EVENT_L0B_PING : EVENT_L0B_PONG;
@@ -615,6 +622,9 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(dwResidentEvent);
                 AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(dkbgL0BEvent);
                 copyL1ToL0B_Dkbg(tensorL0B_DW, tensorTileL1B_DW);
+#if PREPARE_WY_REPR_BWD_DEBUG_STAGE1_VECTOR
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(dwResidentEvent);
+#endif
                 AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(dkbgL0ReadyEvent);
                 curL0_ ^= 1U;
 
@@ -635,15 +645,13 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                     GetTile(tensorL0C_Dkbg, tla::MakeCoord(0, 0), tla::MakeShape(mActualDkbg, shapeK.n()));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(dkbgL0ReadyEvent);
                 AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
-                tileMmadDkbg(tensorTileL0C_Dkbg, tensorL0A_AT, tensorL0B_DW, true, 0b11);
+                tileMmadDkbg(tensorTileL0C_Dkbg, tensorL0A_AT, tensorL0B_DW, mActualDkbg, shapeK.n(),
+                              shapeK.k(), true, 0b11);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkbgL0AEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkbgL0BEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
 
                 uint32_t mActualDvb = shapeV.m();
-                if (mActualDvb == 1) {
-                    mActualDvb = 16;
-                }
                 AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
                 copyL0CToGm_Dkbg(blockDkbg, tensorL0C_Dkbg, fixpipeUnitFlag);
                 AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
@@ -695,8 +703,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                             AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
                         }
                         uint8_t dvbMmadUnitFlag = lastK ? 0b11 : 0b10;
-                        tileMmadDvb(tensorTileL0C_Dvb, tensorL0A_ATForDU, tensorL0B_DU, kOffset == 0,
-                                    dvbMmadUnitFlag);
+                        tileMmadDvb(tensorTileL0C_Dvb, tensorL0A_ATForDU, tensorL0B_DU, mActualDvb, curN, curK,
+                                    kOffset == 0, dvbMmadUnitFlag);
                         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dvbL0AEvent);
                         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dvbL0BEvent);
                         if (lastK) {
@@ -708,6 +716,9 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                     copyL0CToGm_DvbN(blockDvbN, tensorL0C_Dvb, fixpipeUnitFlag);
                     AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
                 }
+#if PREPARE_WY_REPR_BWD_DEBUG_STAGE1_VECTOR
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(duResidentEvent);
+#endif
                 if (needComputeKkt) {
                     uint32_t kResidentSlot = cachedKResidentSlot_;
                     int32_t kResidentEvent =
@@ -723,9 +734,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                     }
 
                     uint32_t mActualKkt = shapeKkt.m();
-                    if (mActualKkt == 1) {
-                        mActualKkt = 16;
-                    }
                     uint32_t kktL0Idx = curL0_;
                     int32_t kktL0AEvent = kktL0Idx == 0 ? EVENT_L0A_PING : EVENT_L0A_PONG;
                     int32_t kktL0BEvent = kktL0Idx == 0 ? EVENT_L0B_PING : EVENT_L0B_PONG;
@@ -758,7 +766,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                         GetTile(tensorL0C_Kkt, tla::MakeCoord(0, 0), tla::MakeShape(mActualKkt, shapeKkt.n()));
                     AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(kktL0ReadyEvent);
                     AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
-                    tileMmadKkt(tensorTileL0C_Kkt, tensorL0A_K, tensorL0B_KT, true, 0b11);
+                    tileMmadKkt(tensorTileL0C_Kkt, tensorL0A_K, tensorL0B_KT, mActualKkt, shapeKkt.n(),
+                                shapeKkt.k(), true, 0b11);
                     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kktL0AEvent);
                     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kktL0BEvent);
                     AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
@@ -770,10 +779,20 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 curSlot_ ^= 1U;
             }
 
+#if PREPARE_WY_REPR_BWD_DEBUG_STAGE1_VECTOR
+            ++windowIdx;
+            continue;
+#endif
+
             curSlot_ = windowStartSlot;
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint32_t residentSlot = curSlot_ & 1U;
                 GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
+#if PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE
+                uint64_t hv = hvBase + headIdx;
+                uint64_t valueBase = hv * tiling_.T + task.valueBos;
+                gmDebugDv.SetGlobalBuffer((__gm__ kType *)dv_ + valueBase * V_DIM);
+#endif
 
                 gmKbg.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.kbgOffset));
                 gmVb.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.vbOffset));
@@ -784,6 +803,10 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 auto tensorVbT = tla::MakeTensor(gmVb, layoutVbT, Arch::PositionGM{});
                 auto tensorDA1 = tla::MakeTensor(gmDA1, layoutDA1, Arch::PositionGM{});
                 auto tensorDA2 = tla::MakeTensor(gmDA2, layoutDA2, Arch::PositionGM{});
+#if PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE
+                auto tensorDebugDA1 = tla::MakeTensor(gmDebugDv, layoutDebugDA1, Arch::PositionGM{});
+                auto tensorDebugDA2 = tla::MakeTensor(gmDebugDv, layoutDebugDA2, Arch::PositionGM{});
+#endif
                 uint8_t fixpipeUnitFlag = 0b11;
 
                 auto blockKbgT =
@@ -794,11 +817,23 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                     GetTile(tensorVbT, tla::MakeCoord(0, 0), tla::MakeShape(shapeDA2.k(), shapeDA2.n()));
                 auto blockDA2 =
                     GetTile(tensorDA2, tla::MakeCoord(0, 0), tla::MakeShape(shapeDA2.m(), shapeDA2.n()));
+#if PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE
+                auto blockDebugDA1 =
+                    GetTile(tensorDebugDA1, tla::MakeCoord(0, 0), tla::MakeShape(shapeDA1.m(), shapeDA1.n()));
+                auto blockDebugDA2 =
+                    GetTile(tensorDebugDA2, tla::MakeCoord(0, 0), tla::MakeShape(shapeDA2.m(), shapeDA2.n()));
+#endif
 
                 CopyGmToL1B_DA1<decltype(blockKbgT)> copyGmToL1B_KbgT;
                 CopyL0CToGm_DA1<decltype(blockDA1)> copyL0CToGm_DA1;
+#if PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE == 1
+                CopyL0CToGm_DA1<decltype(blockDebugDA1)> copyL0CToGm_DebugDA1;
+#endif
                 CopyGmToL1B_DA2<decltype(blockVbT)> copyGmToL1B_VbT;
                 CopyL0CToGm_DA2<decltype(blockDA2)> copyL0CToGm_DA2;
+#if PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE == 2
+                CopyL0CToGm_DA2<decltype(blockDebugDA2)> copyL0CToGm_DebugDA2;
+#endif
 
                 Arch::CrossCoreWaitFlag(vecToCubeFlag_);
 
@@ -817,9 +852,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 curL1_ ^= 1U;
 
                 uint32_t mActualDA1 = shapeDA1.m();
-                if (mActualDA1 == 1) {
-                    mActualDA1 = 16;
-                }
                 uint32_t da1L0Idx = curL0_;
                 int32_t da1L0AEvent = da1L0Idx == 0 ? EVENT_L0A_PING : EVENT_L0A_PONG;
                 int32_t da1L0BEvent = da1L0Idx == 0 ? EVENT_L0B_PING : EVENT_L0B_PONG;
@@ -850,13 +882,26 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                     GetTile(tensorL0C_DA1, tla::MakeCoord(0, 0), tla::MakeShape(mActualDA1, shapeDA1.n()));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(da1L0ReadyEvent);
                 AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
-                tileMmadDA1(tensorTileL0C_DA1, tensorL0A_DWForDA1, tensorL0B_KbgT, true, 0b11);
+                tileMmadDA1(tensorTileL0C_DA1, tensorL0A_DWForDA1, tensorL0B_KbgT, mActualDA1, shapeDA1.n(),
+                             shapeDA1.k(), true, 0b11);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da1L0AEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da1L0BEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
                 AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+#if PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE == 1
+                copyL0CToGm_DebugDA1(blockDebugDA1, tensorL0C_DA1, fixpipeUnitFlag);
+#elif PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE == 0
                 copyL0CToGm_DA1(blockDA1, tensorL0C_DA1, fixpipeUnitFlag);
+#endif
                 AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+#if PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE == 1
+                int32_t duResidentEventForSkipDA2 =
+                    residentSlot == 0 ? EVENT_DU_RESIDENT_PING : EVENT_DU_RESIDENT_PONG;
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(duResidentEventForSkipDA2);
+                Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
+                curSlot_ ^= 1U;
+                continue;
+#endif
 
                 uint32_t da2L1Idx = curL1_;
                 int32_t da2L1AEvent = da2L1Idx == 0 ? EVENT_L1_SCRATCH_PING : EVENT_L1_SCRATCH_PONG;
@@ -873,9 +918,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 curL1_ ^= 1U;
 
                 uint32_t mActualDA2 = shapeDA2.m();
-                if (mActualDA2 == 1) {
-                    mActualDA2 = 16;
-                }
                 auto layoutL0C_DA2 = tla::MakeLayoutL0C(mActualDA2, shapeDA2.n());
                 auto tensorL0C_DA2 = tla::MakeTensor(l0C, layoutL0C_DA2, Arch::PositionL0C{});
                 auto tensorTileL0C_DA2 =
@@ -922,8 +964,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
                     }
                     uint8_t da2MmadUnitFlag = lastK ? 0b11 : 0b10;
-                    tileMmadDA2(tensorTileL0C_DA2, tensorL0A_DUForDA2, tensorL0B_VbT, kOffset == 0,
-                                da2MmadUnitFlag);
+                    tileMmadDA2(tensorTileL0C_DA2, tensorL0A_DUForDA2, tensorL0B_VbT, mActualDA2, shapeDA2.n(),
+                                curK, kOffset == 0, da2MmadUnitFlag);
                     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da2L0AEvent);
                     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da2L0BEvent);
                     if (lastK) {
@@ -932,11 +974,25 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 }
 
                 AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+#if PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE == 2
+                copyL0CToGm_DebugDA2(blockDebugDA2, tensorL0C_DA2, fixpipeUnitFlag);
+#else
                 copyL0CToGm_DA2(blockDA2, tensorL0C_DA2, fixpipeUnitFlag);
+#endif
                 AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+#if PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE
+                Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
+                curSlot_ ^= 1U;
+                continue;
+#endif
                 Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
                 curSlot_ ^= 1U;
             }
+
+#if PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE
+            ++windowIdx;
+            continue;
+#endif
 
             curSlot_ = windowStartSlot;
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
@@ -973,9 +1029,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(da5L1AEvent);
 
                 uint32_t mActualDA5 = shapeM.m();
-                if (mActualDA5 == 1) {
-                    mActualDA5 = 16;
-                }
                 uint32_t da5L0Idx = curL0_;
                 int32_t da5L0AEvent = da5L0Idx == 0 ? EVENT_L0A_PING : EVENT_L0A_PONG;
                 int32_t da5L0BEvent = da5L0Idx == 0 ? EVENT_L0B_PING : EVENT_L0B_PONG;
@@ -1005,7 +1058,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                     GetTile(tensorL0C_DA5, tla::MakeCoord(0, 0), tla::MakeShape(mActualDA5, shapeM.n()));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(da5L0ReadyEvent);
                 AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
-                tileMmadDA5(tensorTileL0C_DA5, tensorL0A_DA4, tensorL0B_ATForDA5, true, 0b11);
+                tileMmadDA5(tensorTileL0C_DA5, tensorL0A_DA4, tensorL0B_ATForDA5, mActualDA5, shapeM.n(),
+                             shapeM.k(), true, 0b11);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da5L0AEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da5L0BEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
@@ -1053,9 +1107,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(da6L1AEvent);
 
                 uint32_t mActualDA6T = shapeM.m();
-                if (mActualDA6T == 1) {
-                    mActualDA6T = 16;
-                }
                 uint32_t da6L0Idx = curL0_;
                 int32_t da6L0AEvent = da6L0Idx == 0 ? EVENT_L0A_PING : EVENT_L0A_PONG;
                 int32_t da6L0BEvent = da6L0Idx == 0 ? EVENT_L0B_PING : EVENT_L0B_PONG;
@@ -1085,7 +1136,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                     GetTile(tensorL0C_DA6T, tla::MakeCoord(0, 0), tla::MakeShape(mActualDA6T, shapeM.n()));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(da6L0ReadyEvent);
                 AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
-                tileMmadDA6T(tensorTileL0C_DA6T, tensorL0A_DA5T, tensorL0B_AForDA6T, true, 0b11);
+                tileMmadDA6T(tensorTileL0C_DA6T, tensorL0A_DA5T, tensorL0B_AForDA6T, mActualDA6T, shapeM.n(),
+                              shapeM.k(), true, 0b11);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da6L0AEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da6L0BEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
@@ -1141,9 +1193,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(dkbL1AEvent);
 
                 uint32_t mActualDkb = shapeK.m();
-                if (mActualDkb == 1) {
-                    mActualDkb = 16;
-                }
                 uint32_t dkbL0Idx = curL0_;
                 int32_t dkbL0AEvent = dkbL0Idx == 0 ? EVENT_L0A_PING : EVENT_L0A_PONG;
                 int32_t dkbL0BEvent = dkbL0Idx == 0 ? EVENT_L0B_PING : EVENT_L0B_PONG;
@@ -1173,7 +1222,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                     GetTile(tensorL0C_Dkb, tla::MakeCoord(0, 0), tla::MakeShape(mActualDkb, shapeK.n()));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(dkbL0ReadyEvent);
                 AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
-                tileMmadDkb(tensorTileL0C_Dkb, tensorL0A_DT, tensorL0B_KForDkb, true, 0b11);
+                tileMmadDkb(tensorTileL0C_Dkb, tensorL0A_DT, tensorL0B_KForDkb, mActualDkb, shapeK.n(),
+                             shapeK.k(), true, 0b11);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkbL0AEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkbL0BEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
@@ -1196,9 +1246,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(dkL1BEvent);
 
                 uint32_t mActualDK = shapeK.m();
-                if (mActualDK == 1) {
-                    mActualDK = 16;
-                }
                 uint32_t dkL0Idx = curL0_;
                 int32_t dkL0AEvent = dkL0Idx == 0 ? EVENT_L0A_PING : EVENT_L0A_PONG;
                 int32_t dkL0BEvent = dkL0Idx == 0 ? EVENT_L0B_PING : EVENT_L0B_PONG;
@@ -1229,7 +1276,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                     GetTile(tensorL0C_DK, tla::MakeCoord(0, 0), tla::MakeShape(mActualDK, shapeK.n()));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(dkL0ReadyEvent);
                 AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
-                tileMmadDK(tensorTileL0C_DK, tensorL0A_D, tensorL0B_Kbeta, true, 0b11);
+                tileMmadDK(tensorTileL0C_DK, tensorL0A_D, tensorL0B_Kbeta, mActualDK, shapeK.n(), shapeK.k(), true,
+                            0b11);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkL0AEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkL0BEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);

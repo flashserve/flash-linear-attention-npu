@@ -60,8 +60,13 @@ PrepareWyReprBwdKernelImpl(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADD
                            GM_ADDR workspace, const PrepareWyReprBwdTilingData *tilingData)
 {
     if ASCEND_IS_AIC {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        ::PrepareWyReprBwdCubeProcess<KType, GType, V_DIM, CHUNK_SIZE> cubeProcess(
+            k, A, dw, du, cuSeqlens, chunkIndices, dv, workspace);
+#else
         ::PrepareWyReprBwdCubeProcess<KType, GType, V_DIM, CHUNK_SIZE> cubeProcess(
             k, A, dw, du, cuSeqlens, chunkIndices, workspace);
+#endif
         cubeProcess.Init(*tilingData);
         cubeProcess.Process();
     }

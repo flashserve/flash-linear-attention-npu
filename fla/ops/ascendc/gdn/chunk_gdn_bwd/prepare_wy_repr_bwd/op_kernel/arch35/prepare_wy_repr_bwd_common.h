@@ -28,6 +28,9 @@ constexpr uint32_t PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT = 2;
 constexpr uint32_t PREPARE_WY_REPR_BWD_FP32_PER_REPEAT = 64;
 constexpr uint32_t PREPARE_WY_REPR_BWD_MASK_BITS_PER_BYTE = 8;
 
+#define PREPARE_WY_REPR_BWD_DEBUG_STAGE1_VECTOR 0
+#define PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE 0
+
 struct PrepareWyReprBwdTaskInfo {
     uint32_t valueBos = 0;
     uint32_t valueEos = 0;

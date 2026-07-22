@@ -52,6 +52,11 @@ private:
     __aicore__ inline void CastOutputRows(AscendC::LocalTensor<float32_t> srcTensor, uint32_t elements);
     __aicore__ inline void CopyOutRows(AscendC::GlobalTensor<kType> &outTensor,
                                        AscendC::LocalTensor<kType> srcTensor, uint64_t outOffset, uint32_t elements);
+#if PREPARE_WY_REPR_BWD_DEBUG_STAGE1_VECTOR
+    __aicore__ inline void CopyOutRowsStrided(AscendC::GlobalTensor<kType> &outTensor,
+                                              AscendC::LocalTensor<kType> srcTensor, uint64_t outOffset,
+                                              uint32_t outStride, uint32_t colCount, uint32_t rowCount);
+#endif
     __aicore__ inline void CopyOutBetaGRows(AscendC::GlobalTensor<gType> &outTensor,
                                             AscendC::LocalTensor<float32_t> srcTensor, uint64_t outOffset,
                                             uint32_t elements);
@@ -402,6 +407,22 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE>::CopyOutRows(Asce
     curOutputPingPong_ ^= 1U;
 }
 
+#if PREPARE_WY_REPR_BWD_DEBUG_STAGE1_VECTOR
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE>::CopyOutRowsStrided(
+    AscendC::GlobalTensor<kType> &outTensor, AscendC::LocalTensor<kType> srcTensor, uint64_t outOffset,
+    uint32_t outStride, uint32_t colCount, uint32_t rowCount)
+{
+    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[outputIdx_]);
+    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[outputIdx_]);
+    for (uint32_t row = 0; row < rowCount; ++row) {
+        DataCopy(outTensor[outOffset + row * outStride], srcTensor[row * colCount], colCount);
+    }
+    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[outputIdx_]);
+    curOutputPingPong_ ^= 1U;
+}
+#endif
+
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
 __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE>::CopyOutBetaGRows(
     AscendC::GlobalTensor<gType> &outTensor, AscendC::LocalTensor<float32_t> srcTensor, uint64_t outOffset,
@@ -476,7 +497,12 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         }
         PipeBarrier<PIPE_V>();
         CastOutputRows(calcFp32BTensor_, curRow_ * K_DIM);
+#if PREPARE_WY_REPR_BWD_DEBUG_STAGE1_VECTOR == 1
+        CopyOutRowsStrided(dvTensor_, outputBuf_[outputIdx_], (valueBase_ + rowOffset_) * V_DIM, V_DIM, K_DIM,
+                           curRow_);
+#else
         CopyOutRows(gmKbg_, outputBuf_[outputIdx_], rowOffset_ * K_DIM, curRow_ * K_DIM);
+#endif
 
         Brcb(brcbFp32Tensor_, betaAllFp32Tensor_[rowOffset_],
              static_cast<uint8_t>(PrepareWyReprBwdCeilDiv(curRow_, 8)), {1, 8});
@@ -488,7 +514,12 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         }
         PipeBarrier<PIPE_V>();
         CastOutputRows(calcFp32BTensor_, curRow_ * K_DIM);
+#if PREPARE_WY_REPR_BWD_DEBUG_STAGE1_VECTOR == 2
+        CopyOutRowsStrided(dvTensor_, outputBuf_[outputIdx_], (valueBase_ + rowOffset_) * V_DIM, V_DIM, K_DIM,
+                           curRow_);
+#else
         CopyOutRows(gmKbeta_, outputBuf_[outputIdx_], rowOffset_ * K_DIM, curRow_ * K_DIM);
+#endif
     }
 
     rowTaskIdx_ = 0;
@@ -515,9 +546,16 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         }
         PipeBarrier<PIPE_V>();
         CastOutputRows(calcFp32BTensor_, curRow_ * V_DIM);
+#if PREPARE_WY_REPR_BWD_DEBUG_STAGE1_VECTOR == 3
+        CopyOutRows(dvTensor_, outputBuf_[outputIdx_], (valueBase_ + rowOffset_) * V_DIM, curRow_ * V_DIM);
+#else
         CopyOutRows(gmVb_, outputBuf_[outputIdx_], rowOffset_ * V_DIM, curRow_ * V_DIM);
+#endif
     }
 
+#if PREPARE_WY_REPR_BWD_DEBUG_STAGE1_VECTOR
+    return;
+#endif
     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
 }
 
@@ -915,9 +953,17 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                 }
                 kktSlotForSlot_[curSlot_] = cachedKktSlot_;
                 ProcessVectorTask(task, hv, hk, slotBase);
+#if PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE
+                Arch::CrossCoreWaitFlag(cubeToVecFlag_);
+#endif
 
                 curSlot_ ^= 1U;
             }
+
+#if PREPARE_WY_REPR_BWD_DEBUG_STAGE1_VECTOR || PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE
+            ++windowIdx;
+            continue;
+#endif
 
             curSlot_ = windowStartSlot;
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
