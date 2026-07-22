@@ -252,13 +252,13 @@ private:
     static constexpr uint32_t K_RESIDENT_BUFFER_COUNT = 2;
     static constexpr uint32_t K_RESIDENT_TILE_BYTES = CHUNK_SIZE * K_DIM * sizeof(kType);
     static constexpr uint32_t K_RESIDENT_OFFSET = L1_SCRATCH_TILE_BYTES * L1_SCRATCH_BUFFER_COUNT;
-    static constexpr uint32_t DW_RESIDENT_BUFFER_COUNT = PREPARE_WY_REPR_BWD_WORKSPACE_BUFFER_COUNT;
+    static constexpr uint32_t DW_RESIDENT_BUFFER_COUNT = BUFFER_COUNT_2;
     static constexpr uint32_t DW_RESIDENT_TILE_BYTES = CHUNK_SIZE * K_DIM * sizeof(kType);
     static constexpr uint32_t DW_RESIDENT_OFFSET = K_RESIDENT_OFFSET + K_RESIDENT_TILE_BYTES * K_RESIDENT_BUFFER_COUNT;
-    static constexpr uint32_t DU_RESIDENT_BUFFER_COUNT = PREPARE_WY_REPR_BWD_WORKSPACE_BUFFER_COUNT;
+    static constexpr uint32_t DU_RESIDENT_BUFFER_COUNT = BUFFER_COUNT_2;
     static constexpr uint32_t DU_RESIDENT_TILE_BYTES = CHUNK_SIZE * V_DIM * sizeof(kType);
     static constexpr uint32_t DU_RESIDENT_OFFSET = DW_RESIDENT_OFFSET + DW_RESIDENT_TILE_BYTES * DW_RESIDENT_BUFFER_COUNT;
-    static constexpr uint32_t A_RESIDENT_BUFFER_COUNT = PREPARE_WY_REPR_BWD_WORKSPACE_BUFFER_COUNT;
+    static constexpr uint32_t A_RESIDENT_BUFFER_COUNT = BUFFER_COUNT_2;
     static constexpr uint32_t A_RESIDENT_TILE_BYTES = CHUNK_SIZE * CHUNK_SIZE * sizeof(kType);
     static constexpr uint32_t A_RESIDENT_OFFSET = DU_RESIDENT_OFFSET + DU_RESIDENT_TILE_BYTES * DU_RESIDENT_BUFFER_COUNT;
     static constexpr uint32_t L1_TOTAL_BYTES = 512 * 1024;
@@ -309,8 +309,8 @@ private:
     uint32_t nextKktSlot_ = 0;
     uint32_t cachedKktSlot_ = 0;
     uint64_t cachedKktHk_ = static_cast<uint64_t>(-1);
-    uint32_t kResidentSlotForSlot_[PREPARE_WY_REPR_BWD_WORKSPACE_BUFFER_COUNT] = {0, 0};
-    uint32_t kktSlotForSlot_[PREPARE_WY_REPR_BWD_WORKSPACE_BUFFER_COUNT] = {0, 0};
+    uint32_t kResidentSlotForSlot_[BUFFER_COUNT_2] = {0, 0};
+    uint32_t kktSlotForSlot_[BUFFER_COUNT_2] = {0, 0};
     uint32_t curL1_ = 0;
     uint32_t curL0_ = 0;
     Arch::CrossCoreFlagWithReverse<> vecToCubeFlag_{PREPARE_WY_REPR_BWD_VEC_TO_CUBE_FLAG_READY,
@@ -514,9 +514,9 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
         kktSlotForSlot_[1] = 0;
 
         uint64_t hvTotal = static_cast<uint64_t>(tiling_.HV);
-        for (uint64_t hvBase = 0; hvBase < hvTotal; hvBase += PREPARE_WY_REPR_BWD_WORKSPACE_BUFFER_COUNT) {
-            uint32_t headCnt = hvBase + PREPARE_WY_REPR_BWD_WORKSPACE_BUFFER_COUNT <= hvTotal ?
-                                   PREPARE_WY_REPR_BWD_WORKSPACE_BUFFER_COUNT :
+        for (uint64_t hvBase = 0; hvBase < hvTotal; hvBase += BUFFER_COUNT_2) {
+            uint32_t headCnt = hvBase + BUFFER_COUNT_2 <= hvTotal ?
+                                   BUFFER_COUNT_2 :
                                    static_cast<uint32_t>(hvTotal - hvBase);
             uint32_t windowStartSlot = curSlot_;
 

@@ -21,10 +21,10 @@ constexpr uint64_t PREPARE_WY_REPR_BWD_VEC_TO_CUBE_FLAG_READY = 2;
 constexpr uint64_t PREPARE_WY_REPR_BWD_VEC_TO_CUBE_FLAG_REVERSE = 3;
 constexpr uint64_t PREPARE_WY_REPR_BWD_CUBE_TO_VEC_FLAG_READY = 4;
 constexpr uint64_t PREPARE_WY_REPR_BWD_CUBE_TO_VEC_FLAG_REVERSE = 5;
-constexpr uint64_t PREPARE_WY_REPR_BWD_ONE_BLOCK_BYTES = 32;
+constexpr uint64_t PRONE_BLOCK_BYTES_32 = 32;
 constexpr uint32_t K_DIM = 128;
-constexpr uint32_t PREPARE_WY_REPR_BWD_UB_IO_BYTES = 16 * 1024;
-constexpr uint32_t PREPARE_WY_REPR_BWD_WORKSPACE_BUFFER_COUNT = 2;
+constexpr uint32_t UB_BYTES_16K = 16 * 1024;
+constexpr uint32_t BUFFER_COUNT_2 = 2;
 constexpr uint32_t PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT = 2;
 constexpr uint32_t PREPARE_WY_REPR_BWD_FP32_PER_REPEAT = 64;
 constexpr uint32_t PREPARE_WY_REPR_BWD_MASK_BITS_PER_BYTE = 8;
@@ -44,10 +44,10 @@ __aicore__ inline uint64_t PrepareWyReprBwdCeilDiv(uint64_t dividend, uint64_t d
     return (dividend + divisor - 1) / divisor;
 }
 
-__aicore__ inline uint64_t PrepareWyReprBwdAlign32(uint64_t bytes)
+__aicore__ inline uint64_t Align32(uint64_t bytes)
 {
-    return (bytes + PREPARE_WY_REPR_BWD_ONE_BLOCK_BYTES - 1) / PREPARE_WY_REPR_BWD_ONE_BLOCK_BYTES *
-           PREPARE_WY_REPR_BWD_ONE_BLOCK_BYTES;
+    return (bytes + PRONE_BLOCK_BYTES_32 - 1) / PRONE_BLOCK_BYTES_32 *
+           PRONE_BLOCK_BYTES_32;
 }
 
 __aicore__ inline void PrepareWyReprBwdGetTaskInfo(GM_ADDR cuSeqlens, GM_ADDR chunkIndices,

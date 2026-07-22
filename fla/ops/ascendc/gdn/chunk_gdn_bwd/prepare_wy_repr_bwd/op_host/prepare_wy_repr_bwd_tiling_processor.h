@@ -73,10 +73,10 @@ static constexpr const char *const PREPARE_WY_REPR_BWD_INPUT_SEQLENS_NAME = "cu_
 static constexpr uint64_t PREPARE_WY_REPR_BWD_SIZE_HALF = 2;
 static constexpr uint64_t PREPARE_WY_REPR_BWD_SIZE_FP32 = 4;
 static constexpr uint64_t PREPARE_WY_REPR_BWD_ONE_BLOCK_32 = 32;
-static constexpr uint64_t PREPARE_WY_REPR_BWD_UB_IO_BYTES = 16 * 1024;
-static constexpr uint64_t PREPARE_WY_REPR_BWD_FIXED_IO_BYTES = 4 * PREPARE_WY_REPR_BWD_UB_IO_BYTES;
+static constexpr uint64_t UB_BYTES_16K = 16 * 1024;
+static constexpr uint64_t PREPARE_WY_REPR_BWD_FIXED_IO_BYTES = 4 * UB_BYTES_16K;
 static constexpr uint64_t PREPARE_WY_REPR_BWD_VEC_COMPUTE_BYTES = 128 * 1024;
-static constexpr uint64_t PREPARE_WY_REPR_BWD_WORKSPACE_BUFFER_COUNT = 2;
+static constexpr uint64_t BUFFER_COUNT_2 = 2;
 
 struct PrepareWyReprBwdTilingContext {
     const char *nodeName;
@@ -363,7 +363,7 @@ public:
                 uint64_t brcbBytes = row * PREPARE_WY_REPR_BWD_ONE_BLOCK_32;
                 uint64_t tempBytes = tempFactor * row * cols * PREPARE_WY_REPR_BWD_SIZE_FP32 +
                                      3 * scaleFp32Bytes + brcbBytes;
-                if (matrixBytes <= PREPARE_WY_REPR_BWD_UB_IO_BYTES &&
+                if (matrixBytes <= UB_BYTES_16K &&
                     tempBytes <= computeBytes) {
                     break;
                 }
@@ -382,7 +382,7 @@ public:
     ge::graphStatus WorkspaceTiling()
     {
         uint64_t kTypeBytes = DtypeSize(ctx_.kDataType);
-        tiling_.workspaceBufferCount = static_cast<int64_t>(PREPARE_WY_REPR_BWD_WORKSPACE_BUFFER_COUNT);
+        tiling_.workspaceBufferCount = static_cast<int64_t>(BUFFER_COUNT_2);
         tiling_.kBytes = static_cast<int64_t>(
             AlignUp(static_cast<uint64_t>(tiling_.chunkSize * tiling_.K) * kTypeBytes,
                     PREPARE_WY_REPR_BWD_ONE_BLOCK_32));
