@@ -169,6 +169,21 @@ def test_fwd_h_supports_exp_and_exp2_on_a2_and_a5():
         assert "LN2" in update and "LN2" in vnew
 
 
+def test_fwd_h_uses_static_op_dtypes_without_runtime_template_expansion():
+    dispatch = (
+        ROOT
+        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
+        / "op_kernel/chunk_gated_delta_rule_fwd_h.cpp"
+    ).read_text(encoding="utf-8")
+    assert (
+        "ChunkGatedDeltaRuleFwdHLaunchTyped<DTYPE_K, DTYPE_GK, "
+        "DTYPE_INITAL_STATE, TileShapes, useExp2>" in dispatch
+    )
+    assert "ChunkGatedDeltaRuleFwdHDispatchGate" not in dispatch
+    for runtime_dtype in ("->dataType", "->gDataType", "->stateDataType"):
+        assert runtime_dtype not in dispatch
+
+
 def test_a5_fwd_h_kda_hot_path_uses_fused_dual_issue_regbase():
     block_root = (
         ROOT
