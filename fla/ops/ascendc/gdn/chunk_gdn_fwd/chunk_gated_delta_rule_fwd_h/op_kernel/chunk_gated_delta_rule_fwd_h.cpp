@@ -24,16 +24,55 @@ using namespace Catlass;
 
 namespace GDN {
 
-template <typename InputT, typename GT, typename StateT, typename WorkspaceT, typename TileShapes, bool kGated>
+template <typename InputT, typename GT, typename StateT, typename WorkspaceT, typename TileShapes,
+          bool kGated, bool scalarGated, bool useExp2>
 __aicore__ inline void ChunkGatedDeltaRuleFwdHKernelImpl(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk,
                                                          GM_ADDR inital_state, GM_ADDR cu_seqlens,
                                                          GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
                                                          GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user)
 {
-    using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<InputT, GT, StateT, WorkspaceT, TileShapes, kGated>;
+    using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
+        InputT, GT, StateT, WorkspaceT, TileShapes, kGated, scalarGated, useExp2>;
     GDNFwdHKernel gdnFwdH;
     gdnFwdH.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
     gdnFwdH.Process();
+}
+
+template <typename DataT, typename GateT, typename StateT, typename TileShapes, bool useExp2>
+__aicore__ inline void ChunkGatedDeltaRuleFwdHLaunchTyped(
+    GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state,
+    GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
+                                                         GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user,
+                                                         bool useGk, bool useG)
+{
+    using WorkspaceT = float;
+    if (useGk) {
+        if (useG) {
+            ChunkGatedDeltaRuleFwdHKernelImpl<DataT, GateT, StateT, WorkspaceT, TileShapes, true, true, useExp2>(
+                k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+        } else {
+            ChunkGatedDeltaRuleFwdHKernelImpl<DataT, GateT, StateT, WorkspaceT, TileShapes, true, false, useExp2>(
+                k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+        }
+    } else {
+        ChunkGatedDeltaRuleFwdHKernelImpl<DataT, GateT, StateT, WorkspaceT, TileShapes, false, true, useExp2>(
+            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+    }
+}
+
+template <typename TileShapes, bool useExp2>
+__aicore__ inline void ChunkGatedDeltaRuleFwdHDispatchExp(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk,
+                                                       GM_ADDR inital_state, GM_ADDR cu_seqlens,
+                                                       GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
+                                                       GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user)
+{
+    __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData =
+        reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
+    bool useGk = gdnFwdHTilingData->useGk;
+    bool useG = gdnFwdHTilingData->useG;
+    ChunkGatedDeltaRuleFwdHLaunchTyped<DTYPE_K, DTYPE_GK, DTYPE_INITAL_STATE, TileShapes, useExp2>(
+        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
+        final_state, tiling, user, useGk, useG);
 }
 
 template <typename TileShapes>
@@ -42,87 +81,16 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHDispatch(GM_ADDR k, GM_ADDR w, GM_
                                                        GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
                                                        GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user)
 {
-    __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData =
+    __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict tilingData =
         reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
-    using WorkspaceT = float;
-    bool useGk = gdnFwdHTilingData->useGk;
-    // dtype: 0 - fp16, 1 - bf16, 2 - fp32
-    if (gdnFwdHTilingData->dataType == 1) {
-        if (gdnFwdHTilingData->stateDataType == 2) {
-            if (gdnFwdHTilingData->gDataType == 2) {
-                if (useGk) {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<bfloat16_t, float, float, WorkspaceT, TileShapes, true>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                } else {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<bfloat16_t, float, float, WorkspaceT, TileShapes, false>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                }
-            } else {
-                if (useGk) {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<bfloat16_t, bfloat16_t, float, WorkspaceT, TileShapes, true>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                } else {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<bfloat16_t, bfloat16_t, float, WorkspaceT, TileShapes, false>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                }
-            }
-        } else {
-            if (gdnFwdHTilingData->gDataType == 2) {
-                if (useGk) {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<bfloat16_t, float, bfloat16_t, WorkspaceT, TileShapes, true>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                } else {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<bfloat16_t, float, bfloat16_t, WorkspaceT, TileShapes, false>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                }
-            } else {
-                if (useGk) {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<bfloat16_t, bfloat16_t, bfloat16_t, WorkspaceT, TileShapes, true>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                } else {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<bfloat16_t, bfloat16_t, bfloat16_t, WorkspaceT, TileShapes, false>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                }
-            }
-        }
+    if (tilingData->useExp2) {
+        ChunkGatedDeltaRuleFwdHDispatchExp<TileShapes, true>(
+            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
+            final_state, tiling, user);
     } else {
-        if (gdnFwdHTilingData->stateDataType == 2) {
-            if (gdnFwdHTilingData->gDataType == 2) {
-                if (useGk) {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<half, float, float, WorkspaceT, TileShapes, true>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                } else {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<half, float, float, WorkspaceT, TileShapes, false>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                }
-            } else {
-                if (useGk) {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<half, half, float, WorkspaceT, TileShapes, true>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                } else {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<half, half, float, WorkspaceT, TileShapes, false>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                }
-            }
-        } else {
-            if (gdnFwdHTilingData->gDataType == 2) {
-                if (useGk) {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<half, float, half, WorkspaceT, TileShapes, true>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                } else {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<half, float, half, WorkspaceT, TileShapes, false>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                }
-            } else {
-                if (useGk) {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<half, half, half, WorkspaceT, TileShapes, true>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                } else {
-                    ChunkGatedDeltaRuleFwdHKernelImpl<half, half, half, WorkspaceT, TileShapes, false>(
-                        k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-                }
-            }
-        }
+        ChunkGatedDeltaRuleFwdHDispatchExp<TileShapes, false>(
+            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
+            final_state, tiling, user);
     }
 }
 

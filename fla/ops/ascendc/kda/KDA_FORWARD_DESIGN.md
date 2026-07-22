@@ -140,10 +140,11 @@ o, final_state, g, Aqk, Akk, w, u, qg, kg, v_new, h, initial_state = \
 
 其中 `initial_state` 输出为预留槽。未传入时返回空 tensor；传入时透传输入 `initial_state`，便于后续扩展到更完整的 state 语义。
 
-预留或拦截：
+属性支持：
 
-- 当前 PR 中 PyTorch wrapper 拦截 `safe_gate=True`。
-- 当前 PR 中 PyTorch wrapper 拦截 `transpose_state_layout=True`。
+- `safe_gate` 支持 `false/true`。KDA 主 kernel 通过 `SAFE_GATE` 编译期模板选择数值模式；当前 NPU
+  两个实例统一使用参考点因子化和 FP32 分块求逆，不在 AIV 热路径增加 runtime 分支。
+- `transpose_state_layout=True` 仍由 PyTorch wrapper 拦截。
 
 ## 4. L2 组合设计
 
@@ -153,21 +154,23 @@ o, final_state, g, Aqk, Akk, w, u, qg, kg, v_new, h, initial_state = \
 2. 校验显式 `layout` 参数和输入 rank/shape 是否一致，不做 layout 自动推导。
 3. 对 BNSD/NTD，NTD reshape 为 `[1, HV, T, D]` view 后直接进入 kernel，不触发布局转换。
 4. 对 BSND/TND，TND reshape 为 `[1, T, H, D]` 后通过 `KdaLayoutSwap12` 转成 BNSD。
-5. 如有需要，将 `gk/beta` cast 到 `fp32`。
-6. 校验并进入 split forward 路径。公开接口不再使用 monolithic `stage=0` scalar 路径兜底：
+5. 保留 `gk/beta` 的公开 dtype，由各独立 kernel 的编译实例在内部转为 FP32 计算。
+6. 校验并进入 split forward 路径。公开接口不再使用 monolithic kernel 或 scalar 路径兜底：
    - `q/k/v` 必须同为 `fp16` 或 `bf16`，`chunk_size` 必须为 `64` 或 `128`。
    - `K/V` 必须不小于 16 且按 16 对齐，当前 `V` 上限为 256；交付验证覆盖 `K=128, V=128/256`。
    - 求逆使用固定 16x16 对角块和 64x64 cube tile；`chunk_size=128` 继续用分块合并，不扩大单次 UB 驻留矩阵。
    - 不满足 cube 模板的 shape 由 host 明确拦截，不能回落到 scalar/逐元素计算。
-7. 对 BNSD/NTD，split 路径的临时输出 copy 回相同 layout 的用户输出。对 BSND/TND，将 BNSD 中间结果转回公开输出 layout。
+7. `ChunkKdaFwdFinalize` 的两路 Cube FP32 结果保存在 workspace，AIV 在 kernel 内相加、cast，
+   并按 BNSD/NTD 或 BSND/TND 偏移直接写入用户 `o`；host 不再追加输出 copy/layout-swap。
+   `final_state` 由独立 `ChunkGatedDeltaRuleFwdH` 直接写出。反向需要的中间量保持 BNSD/NTD。
 
-split 路径包含三个 `ChunkKdaFwd` 阶段以及一次 GDN 状态传播：
+split 路径包含四个按 launcher 顺序排队的独立算子：
 
 ```text
-stage 1: 准备 qg/kg_seed/w_seed/Aqk/Akk 并求解 chunk 内部项
-stage 3: 消费 Akk/w_seed/v_new_seed，使用 cube 生成最终 w/u/kg
-GDN fwd_h: 使用 kg、w、u、gk 更新 h/v_new/final_state
-stage 2: 消费 h/v_new/Aqk/qg，计算 output cube 主路径和最终 o 行
+ChunkKdaFwdPrepare: 准备 qg/qg_scaled/w_seed/u_seed/Aqk/Akk 并求解 chunk 内部项
+ChunkKdaFwdPostWu: 消费 Akk/w_seed/u_seed，生成最终 w/u/kg/v_new
+ChunkGatedDeltaRuleFwdH: 使用 kg/w/u/gk 更新 h/v_new/final_state，KDA 固定 use_exp2=true
+ChunkKdaFwdFinalize: 消费 h/v_new/Aqk/qg_scaled，计算 output cube 并写出最终 o
 ```
 
 这样设计的原因：
@@ -183,20 +186,20 @@ KDA 正向的核心依赖关系如下：
 ```text
 KdaGateCumsum(raw gate) -> gk
 
-ChunkKdaFwd stage 1:
+ChunkKdaFwdPrepare:
     输入 q/k/v/gk/beta
-    产出 Aqk/Akk/qg/kg/w/u
+    产出 Aqk/Akk/qg/qg_scaled/w_seed/u_seed
 
-ChunkKdaFwd stage 3:
-    输入 stage 1 scratch
-    产出 post-WU 后的 w/u/kg
+ChunkKdaFwdPostWu:
+    输入 Akk/w_seed/u_seed
+    产出 post-WU 后的 w/u/kg/v_new
 
 ChunkGatedDeltaRuleFwdH:
     输入 kg/w/u/gk/initial_state
     产出 h/v_new/final_state
 
-ChunkKdaFwd stage 2:
-    输入 qg/Aqk/h/v_new
+ChunkKdaFwdFinalize:
+    输入 qg_scaled/Aqk/h/v_new
     产出 o
 ```
 
@@ -215,47 +218,42 @@ flowchart LR
     In["输入: q/k/v/gk/beta<br/>initial_state/cu_seqlens/chunk_indices/layout"] --> Prep["L2: contiguous + layout 校验"]
     Prep -->|BSND/TND| SwapIn["L0: KdaLayoutSwap12<br/>转 BNSD 内部布局"]
     Prep -->|BNSD/NTD| ViewIn["L2: Reshape/View<br/>直通 BNSD 内部布局"]
-    SwapIn --> CastGate["L0: Cast<br/>gk/beta -> fp32"]
-    ViewIn --> CastGate
-
-    CastGate --> S1["L0: ChunkKdaFwd(stage=1)<br/>产出 Aqk/Akk/w_pre/qg/kg_seed"]
-    S1 --> AqkScale["L0: Muls<br/>Aqk * scale"]
-    S1 --> S3["L0: ChunkKdaFwd(stage=3)<br/>post-WU 后处理"]
-    S3 --> CastW["L0: Cast<br/>w -> fwd_h dtype"]
-    S3 --> FwdH["L0: ChunkGatedDeltaRuleFwdH<br/>消费 kg/w/u/gk"]
-    CastW --> FwdH
-    FwdH --> S2["L0: ChunkKdaFwd(stage=2)<br/>消费 qg/Aqk/v_new/h"]
+    SwapIn --> S1["L0: ChunkKdaFwdPrepare<br/>产出 Aqk/Akk/qg 和 stage seed"]
+    ViewIn --> S1
+    S1 --> S3["L0: ChunkKdaFwdPostWu<br/>产出 w/u/kg/v_new"]
+    S3 --> FwdH["L0: ChunkGatedDeltaRuleFwdH<br/>消费 kg/w/u/gk, use_exp2=true"]
+    FwdH --> S2["L0: ChunkKdaFwdFinalize<br/>FP32 workspace 合并、cast、按公开 layout 写 o"]
     S1 --> S2
 
-    S2 --> OScale["L0: Muls<br/>o * scale"]
-    OScale --> WriteO["L0: ViewCopy 或 KdaLayoutSwap12<br/>按公开 layout 回写"]
-    WriteO --> OutO["输出: o"]
-    AqkScale --> WriteAqk["L0: ViewCopy 或 KdaLayoutSwap12"]
-    WriteAqk --> OutAqk["输出: Aqk"]
-    S1 --> WriteAkk["L0: ViewCopy 或 KdaLayoutSwap12"]
-    WriteAkk --> OutAkk["输出: Akk"]
-    S3 --> WriteWu["L0: ViewCopy 或 KdaLayoutSwap12"]
-    WriteWu --> OutWu["输出: w/u/qg/kg"]
-    FwdH --> WriteState["L0: ViewCopy 或 KdaLayoutSwap12"]
-    WriteState --> OutState["输出: h/v_new"]
+    S2 --> OutO["输出: o"]
+    S1 --> OutAqk["输出: Aqk/Akk/qg"]
+    S3 --> OutWu["输出: w/u/kg/v_new"]
+    FwdH --> OutState["输出: h/v_new"]
     FwdH --> OutFinal["输出: final_state"]
-    CastGate --> OutG["输出: g"]
+    In --> OutG["输出: g"]
     In --> OutInitial["输出: initial_state 预留槽"]
 ```
 
 `ChunkGatedDeltaRuleFwdH` 扩展为可接收可选 `gk`。这是 KDA 复用状态传播的最小依赖；除该正向状态传播复用点外，不扩大修改 GDN 算子族。
 
-BNSD/NTD split forward 中，未做最终后处理（raw）的 `o/Aqk/Akk/w/u/qg/kg/v_new/h` 存放在 executor 管理的临时张量里。L2 最后一步使用同 layout 的 `ViewCopy` 写入用户输出。这样可以避免把用户输出张量作为 custom L0 和逐元素 L0 算子（elementwise L0, elewise L0）之间的生产者-消费者中间张量，否则可能触发非法 tiling 或 workspace 推导。
+BNSD/NTD split forward 中，`Aqk/Akk/w/u/qg/kg/v_new/h` 以 BNSD/NTD 图视图连接各独立
+算子；即使调用方输出的 physical storage metadata 是一维，L2 也会为下一 stage 建立规范 view，
+不发生数据 copy。`o` 的两路 raw FP32 Cube 输出只存在于 finalize workspace，不能借用用户
+FP16/BF16 输出缓冲区；最终 cast 和公开 layout 写回都在 finalize kernel 内完成。
 
 ### 4.2 L0 输入输出所有权
 
 每个 stage 读取的中间张量必须出现在该 L0 算子的显式输入列表中，每个被生产的中间张量必须出现在显式输出列表中。不能把前一 stage 的输出仅作为后一 stage 的“输出参数”原地读取，也不能依赖 `return_intermediate=True` 恰好延长张量生命周期。
 
-本实现为 stage 1 分配独立 `w_pre/kg_scratch`，stage 3 通过 `stage_qg/stage_aqk/stage_v_new` 显式消费 `w_pre/Akk/v_new_seed`，再写入独立的最终 `w/u/kg`。这样 executor 能构建真实的读后写依赖；`return_intermediate=False` 时也不会提前复用 workspace。
+本实现为 Prepare 分配独立 `qg_scaled/w_seed/u_seed`，PostWu 显式消费 `w_seed/Akk/u_seed`，
+Finalize 显式消费 `qg_scaled/Aqk/v_new/h`。这样 executor 能构建真实的读后写依赖；
+`return_intermediate=False` 时也不会提前复用 workspace。任何单个 L0 kernel 都只实现自己的阶段，
+不在 kernel 内调用另一算子的 stage。
 
 ## 5. L0 Kernel 设计
 
-`ChunkKdaFwd` 内部包含向量侧（AI Vector, AIV）和矩阵侧（AI Core/Cube, AIC）两类工作，通过跨核 flag 成对协作。
+Prepare、PostWu 和 Finalize 各自包含向量侧（AI Vector, AIV）和矩阵侧（AI Core/Cube, AIC）
+工作，并只在本算子内部通过跨核 flag 成对协作。
 
 关键路径：
 
@@ -282,9 +280,9 @@ BNSD/NTD split forward 中，未做最终后处理（raw）的 `o/Aqk/Akk/w/u/qg
 
 对于 half/bfloat16 且 `K>=16` 的目标路径，tiling 使用完整 AICore block 数启动，确保每个 AIC producer 都有成对的 AIV consumer，反之亦然。这是 cross-core flag 计数保持平衡的必要条件。
 
-### 5.1 Stage 1 双槽生产者消费者流水
+### 5.1 Prepare 双槽生产者消费者流水
 
-Stage 1 的 gate factor 准备和 `Aqk/Akk` Catlass GEMM 没有 chunk 间数据依赖。实现按 score 行块建立深度为 2 的生产者消费者队列，使同一 chunk 内以及相邻 chunk 之间都能连续流水：
+Prepare 的 gate factor 准备和 `Aqk/Akk` Catlass GEMM 没有 chunk 间数据依赖。实现按 score 行块建立深度为 2 的生产者消费者队列，使同一 chunk 内以及相邻 chunk 之间都能连续流水：
 
 ```text
 AIV producer:
@@ -315,7 +313,7 @@ solve_scratch = core_num * 5 slots * BT * BT * sizeof(fp32)
 
 向量准备按连续 row range 分给两个 AIV subblock，并用大块 `DataCopy/DataCopyPad` 与 repeat vector 指令处理。不能用 `subBlockIdx >= curT` 提前退出，因为连续切分时 `curT=1` 的唯一有效行可能分给 AIV1；应先按 `subBlockNum` 校验参与者，再由 `[rowBegin, rowEnd)` 判断当前 subblock 是否有工作，同时保持 flag 协议闭环。
 
-Stage 3 同样启用两个 AIV subblock，按连续有效行大块搬运和后处理，避免单 AIV 以及逐行小搬运成为长序列瓶颈。
+PostWu 同样启用两个 AIV subblock，按连续有效行大块搬运和后处理，避免单 AIV 以及逐行小搬运成为长序列瓶颈。
 
 ### 5.2 AIV/MTE 生命周期
 
@@ -411,7 +409,7 @@ UB 使用原则：
 - 全局内存/统一缓冲（GM/UB）搬运使用 `DataCopy` 或 `DataCopyPad`。
 - 目标路径避免使用 `GetValue` 和 `SetValue`。
 - 复用大块 UB arena 做矩阵和向量 staging。
-- Stage 1 每个 AIV tile 根据同时驻留的输入/输出张量数量计算最大连续行数，在 192 KiB UB 预算内尽量拉长单次搬运和 vector repeat；ping/pong slot 生命周期由事件闭合。
+- Prepare 每个 AIV tile 根据同时驻留的输入/输出张量数量计算最大连续行数，在 192 KiB UB 预算内尽量拉长单次搬运和 vector repeat；ping/pong slot 生命周期由事件闭合。
 - Output cube 的 V 维按 128 列分块；`V=256` 连续执行两个 128 列 tile，避免扩大单次 L0/UB 驻留。
 - `fwd_h` 的状态行 tile 按 `floor(32 KiB / (V * sizeof(ElementH)))` 计算，每个 ping/pong slot 最多 32 KiB；`V=256` 时每次搬运 32 行，两个 slot 分别位于独立 UB 区间，总 UB 不超过 192 KiB。
 - `initial_state=None` 的 varlen 首状态清零路径把整段 chunk offset metadata 一次 `DataCopyPad` 到 UB，再用于任务 offset 推导；不在逐 sequence/task 循环里下发单元素 GM 读取。
@@ -450,25 +448,25 @@ UB 使用原则：
 
 性能验证使用 `msopprof --aic-metrics=BasicInfo`：
 
-下表时间均为设备侧 kernel duration，不使用 Python wall time。`总计` 包含表中三段 `ChunkKdaFwd`、
-`ChunkGatedDeltaRuleFwdH`，BSND C9 还包含 6 次必要的 layout swap。
+下表时间均为设备侧 kernel duration，不使用 Python wall time。`总计` 包含 Prepare、PostWu、
+`ChunkGatedDeltaRuleFwdH` 和 Finalize，BSND C9 还包含必要的输入 layout swap。
 
-| 用例 | stage 1 | stage 3 | fwd_h | stage 2 | layout | 优化前总计 | 优化后总计 | 降幅 |
+| 用例 | Prepare | PostWu | fwd_h | Finalize | layout | 优化前总计 | 优化后总计 | 降幅 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | BNSD `B=1,H_K=1,H_V=2,T=16384,K=V=128,C=64` | 1.512 ms | 0.190 ms | 1.385 ms | 0.444 ms | 0 | 4.751 ms | 3.531 ms | 25.7% |
 | NTD `B=1,H_K=H_V=32,T=65536,K=V=128,C=64` | 93.123 ms | 7.029 ms | 5.505 ms | 21.991 ms | 0 | 206.142 ms | 127.648 ms | 38.1% |
 | BSND C9 `B=64,H_K=H_V=8,T=2048,K=V=128,C=128` | 42.374 ms | 2.785 ms | 1.754 ms | 11.111 ms | 10.011 ms | 114.572 ms | 68.035 ms | 40.6% |
 | NTD C33 `B=1,H_K=16,H_V=48,T=8999,K=128,V=256,C=128` | 19.064 ms | 1.413 ms | 1.619 ms | 5.114 ms | 0 | 48.621 ms | 27.210 ms | 44.0% |
 
-Stage 3 双 AIV 大块搬运/后处理相对优化前降低 `84.8%~92.2%`；Stage 1 两槽 score
-生产者消费者流水降低 `10.0%~31.7%`。在三个长序列/大 shape 中，Stage 1 的 AIC
+PostWu 双 AIV 大块搬运/后处理相对优化前降低 `84.8%~92.2%`；Prepare 两槽 score
+生产者消费者流水降低 `10.0%~31.7%`。在三个长序列/大 shape 中，Prepare 的 AIC
 `wait_id4` 平均等待分别由 `29.94/20.43/12.26 ms` 降到 `14.92/7.20/3.40 ms`，说明
 AIV 准备和 Catlass 消费已经形成有效重叠。
 
 `fwd_h` 的 varlen chunk offset 元数据由逐任务 GM 标量读取改为单次 `DataCopyPad` 搬入 UB，
 随后在 UB 中索引；目标 NTD 长序列的 `fwd_h` 从 `6.545 ms` 降至 `5.505 ms`。
 
-当前剩余主瓶颈是 Stage 1，占优化后长序列链路的约 `62%~72%`；下一轮应优先减少 score
+当前剩余主瓶颈是 Prepare，占优化后长序列链路的约 `62%~72%`；下一轮应优先减少 score
 scratch 往返、score block 控制开销和 solve 串行段。BSND 大 head 场景还需要继续降低 layout
 转换成本。不能把矩阵数值计算迁到 scalar/vector 路径来换取局部计时改善。
 
@@ -508,6 +506,6 @@ KDA forward 的开发应按“语义 -> 结构 -> 单算子 -> 组合 -> 精度 
 
 建议后续工作：
 
-1. 继续降低长序列 stage 1 的 GM score scratch 往返，并基于 profiling 评估 Catlass score/solve tile；当前两槽深度已能形成稳定流水，不能在没有流水证据时盲目扩大队列和 workspace。
+1. 继续降低长序列 Prepare 的 GM score scratch 往返，并基于 profiling 评估 Catlass score/solve tile；当前两槽深度已能形成稳定流水，不能在没有流水证据时盲目扩大队列和 workspace。
 2. 将 KDA 反向算子放到独立 PR 中实现，并复用相同的 `gk` 和 state dtype 约定。
 3. 补充 race、memory、init 和 sync 内存/同步检查工具（sanitizer）验证。

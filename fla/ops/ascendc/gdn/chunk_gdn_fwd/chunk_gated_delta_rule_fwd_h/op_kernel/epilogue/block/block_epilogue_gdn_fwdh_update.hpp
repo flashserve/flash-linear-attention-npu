@@ -36,6 +36,9 @@ class BlockEpilogue <
     KGatedTag
 > {
     static constexpr bool kGated = KGatedTag::value;
+    static constexpr bool scalarGated = KGatedTag::scalarGated;
+    static constexpr bool useExp2 = KGatedTag::useExp2;
+    static constexpr float LN2 = 0.6931471805599453f;
 public:
     using DispatchPolicy = EpilogueAtlasGDNFwdHUpdate;
     using ArchTag = typename DispatchPolicy::ArchTag;
@@ -187,28 +190,37 @@ public:
         AscendC::LocalTensor<FinalStateElement> finalOutputUbTensor = isPing ? finalOutputUbTensor_ping : finalOutputUbTensor_pong;
         AscendC::LocalTensor<float> glastUbTensor = isPing ? glastUbTensor_ping : glastUbTensor_pong;
 
-        GElementInput gLastVal = gInputThisSubBlock.GetValue(chunkSize-1);
-        float gLastFloat = 0.0f;
-        if constexpr(std::is_same<GElementInput, float>::value) {
-            gLastFloat = gLastVal;
-        } else if constexpr(std::is_same<GElementInput, half>::value) {
-            gLastFloat = (float)gLastVal;
-        } else if constexpr(std::is_same<GElementInput, bfloat16_t>::value) {
-            gLastFloat = AscendC::ToFloat(gLastVal);
-        }
-        glastUbTensor.SetValue(0, gLastFloat);
+        float muls = 1.0f;
+        if constexpr (scalarGated) {
+            GElementInput gLastVal = gInputThisSubBlock.GetValue(chunkSize-1);
+            float gLastFloat = 0.0f;
+            if constexpr(std::is_same<GElementInput, float>::value) {
+                gLastFloat = gLastVal;
+            } else if constexpr(std::is_same<GElementInput, half>::value) {
+                gLastFloat = (float)gLastVal;
+            } else if constexpr(std::is_same<GElementInput, bfloat16_t>::value) {
+                gLastFloat = AscendC::ToFloat(gLastVal);
+            }
+            glastUbTensor.SetValue(0, gLastFloat);
 
-        AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
-        AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
-        AscendC::Exp(glastUbTensor, glastUbTensor, 1);
-        AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
-        AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
-        float muls = glastUbTensor.GetValue(0);
+            AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+            if constexpr (useExp2) {
+                AscendC::Muls(glastUbTensor, glastUbTensor, LN2, 1);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
+            AscendC::Exp(glastUbTensor, glastUbTensor, 1);
+            AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
+            muls = glastUbTensor.GetValue(0);
+        }
         if constexpr (kGated) {
             AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(EVENT_ID2 + pingpongFlag);
         }
-        AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
-        AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+        if constexpr (scalarGated) {
+            AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+        }
 
         if (nActual <= 128 && nActual == outputStride) {
             uint32_t mActualThisSubBlock = rowEnd - rowBegin;
@@ -252,9 +264,10 @@ public:
                     AscendC::Cast(gkLastUbTensor, gkInputUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock);
                 }
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Muls(gkLastUbTensor, gkLastUbTensor, 0.6931471805599453f,
-                              mActualThisSubBlock);
-                AscendC::PipeBarrier<PIPE_V>();
+                if constexpr (useExp2) {
+                    AscendC::Muls(gkLastUbTensor, gkLastUbTensor, LN2, mActualThisSubBlock);
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
                 AscendC::Exp(gkLastUbTensor, gkLastUbTensor, mActualThisSubBlock);
                 AscendC::PipeBarrier<PIPE_V>();
 
@@ -375,9 +388,10 @@ public:
                     AscendC::Cast(gkLastUbTensor, gkInputUbTensor, AscendC::RoundMode::CAST_NONE, rowsThisTile);
                 }
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Muls(gkLastUbTensor, gkLastUbTensor, 0.6931471805599453f,
-                              rowsThisTile);
-                AscendC::PipeBarrier<PIPE_V>();
+                if constexpr (useExp2) {
+                    AscendC::Muls(gkLastUbTensor, gkLastUbTensor, LN2, rowsThisTile);
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
                 AscendC::Exp(gkLastUbTensor, gkLastUbTensor, rowsThisTile);
                 AscendC::PipeBarrier<PIPE_V>();
 

@@ -54,7 +54,9 @@ struct ChunkGatedDeltaRuleFwdHTilingContext {
     int64_t gDataType;     // g dtype
     bool useInitialState;
     int64_t stateDataType; // initial/final state dtype
+    bool useG;
     bool useGk;
+    bool useExp2;
     // attrs
     bool storeFinalState;
     int64_t chunkSize;
@@ -134,7 +136,9 @@ public:
         tiling.isVariedLen = isVariedLen;
         tiling.shapeBatch = shapeBatch;
         tiling.tokenBatch = tokenBatch;
+        tiling.useG = ctx_.useG;
         tiling.useGk = ctx_.useGk;
+        tiling.useExp2 = ctx_.useExp2;
     }
 
 private:

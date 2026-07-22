@@ -120,7 +120,11 @@ def _setup_legacy_extension():
             f"{aten_dir}/python_functionsEverything.cpp",
             f"{aten_dir}/RegisterFunctionalizationEverything.cpp",
         }
-        return [source for source in sources if source not in excluded]
+        return [
+            os.path.relpath(source, SETUP_DIR)
+            for source in sources
+            if source not in excluded
+        ]
 
     def get_include_dirs():
         torch_npu_path = os.path.dirname(os.path.realpath(torch_npu.__file__))

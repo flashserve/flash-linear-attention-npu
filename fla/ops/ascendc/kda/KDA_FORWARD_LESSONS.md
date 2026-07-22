@@ -200,12 +200,11 @@ Python/PyTorch 层调用多个已有 torch op 拼出 KDA
 ```text
 PyTorch API
   -> aclnn L2
-      -> KdaLayoutSwap12 / Cast
-      -> ChunkKdaFwd stage 1
-      -> ChunkKdaFwd stage 3
+      -> KdaLayoutSwap12 / Reshape
+      -> ChunkKdaFwdPrepare
+      -> ChunkKdaFwdPostWu
       -> ChunkGatedDeltaRuleFwdH
-      -> ChunkKdaFwd stage 2
-      -> ViewCopy / KdaLayoutSwap12
+      -> ChunkKdaFwdFinalize（kernel 内 cast/layout 写回）
 ```
 
 L2 可以拼 L0，但核心矩阵准备、求逆、post-WU、output 都必须在 AscendC L0 算子中完成。
@@ -231,9 +230,9 @@ chunk 间:
 
 合理做法：
 
-- `ChunkKdaFwd stage 1/3` 处理 chunk 内可并行项。
+- `ChunkKdaFwdPrepare/ChunkKdaFwdPostWu` 处理 chunk 内可并行项。
 - 复用 GDN `ChunkGatedDeltaRuleFwdH` 串起状态传播。
-- `ChunkKdaFwd stage 2` 在 `h/v_new` 可用后计算 `o`。
+- `ChunkKdaFwdFinalize` 在 `h/v_new` 可用后计算并写出 `o`。
 
 ### 5.3 把 `kg` 和 `gk` 混淆
 
@@ -617,12 +616,14 @@ ChunkGatedDeltaRuleFwdH(... userOutKg, userOutW, ...);
 
 正确模式：
 
-- split path 内部全部用 executor-owned BNSD temporaries。
-- 最后一步 `ViewCopy` 或 layout swap 回用户输出。
+- 反向需要的中间量使用规范 BNSD/NTD 图视图连接独立算子。
+- Finalize 的 raw FP32 输出使用独立 workspace，最终 cast/layout 写回在 kernel 内完成。
 
 ### 9.4 L0 读取必须注册为输入
 
-错误模式：stage 1 把 `Akk/w_pre/v_new` 写到某个输出槽，stage 3 又把同一地址只作为“输出”传入并在 kernel 内读取。代码地址看似连通，但 executor 看不到 stage 3 对这些张量的读依赖，可能在 `return_intermediate=False` 时提前复用 workspace。
+错误模式：Prepare 把 `Akk/w_seed/u_seed` 写到某个输出槽，PostWu 又把同一地址只作为“输出”
+传入并在 kernel 内读取。代码地址看似连通，但 executor 看不到 PostWu 对这些张量的读依赖，
+可能在 `return_intermediate=False` 时提前复用 workspace。
 
 典型现象：
 
@@ -633,9 +634,11 @@ ChunkGatedDeltaRuleFwdH(... userOutKg, userOutW, ...);
 正确做法：
 
 ```text
-stage 1 outputs: w_pre, Akk, v_new_seed
-stage 3 inputs:  stage_qg=w_pre, stage_aqk=Akk, stage_v_new=v_new_seed
-stage 3 outputs: w, u, kg
+Prepare outputs: Aqk, Akk, qg, qg_scaled, w_seed, u_seed
+PostWu inputs:   w_seed, Akk, u_seed
+PostWu outputs:  w, u, kg, v_new
+Finalize inputs: qg_scaled, Aqk, v_new, h
+Finalize output: o
 ```
 
 任何 kernel 读取的 GM tensor 都必须是该 L0 的 `OP_INPUT`，写入的 tensor 必须是 `OP_OUTPUT`。需要原地语义时，也要让图构建层看见真实的读写依赖，不能靠地址别名或导出选项维持生命周期。
@@ -687,10 +690,10 @@ KDA 的逐阶段定位顺序：
 
 ```text
 1. KdaGateCumsum: gk
-2. Stage 1: qg/kg/Aqk/Akk/w/u
-3. Stage 3: post-WU 后的 w/u/kg
-4. GDN fwd_h: v_new/h/final_state
-5. Stage 2: qg @ h, Aqk @ v_new, o
+2. ChunkKdaFwdPrepare: qg/Aqk/Akk 和 stage seed
+3. ChunkKdaFwdPostWu: post-WU 后的 w/u/kg/v_new
+4. ChunkGatedDeltaRuleFwdH: v_new/h/final_state
+5. ChunkKdaFwdFinalize: qg @ h, Aqk @ v_new, o
 ```
 
 每一步都应该能单独 dump 或以 `return_intermediate=True` 验证。

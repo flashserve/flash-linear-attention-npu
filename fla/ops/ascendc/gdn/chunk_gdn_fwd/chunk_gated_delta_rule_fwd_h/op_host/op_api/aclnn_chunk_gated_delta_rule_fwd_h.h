@@ -28,7 +28,7 @@ extern "C" {
  * saveNewValue : reserved (must be true)
  * cuSeqlensOptional : optional
  * chunkIndicesOptional : optional
- * useExp2 : reserved (must be false)
+ * useExp2 : use exp2 for scalar and per-channel gate decay when true, exp otherwise
  * transposeStateLayout : reserved (must be false)
  * hOut : required
  * vNewOut : required

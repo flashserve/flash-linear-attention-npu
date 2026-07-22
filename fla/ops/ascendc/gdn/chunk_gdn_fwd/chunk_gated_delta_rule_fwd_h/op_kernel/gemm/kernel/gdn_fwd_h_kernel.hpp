@@ -47,13 +47,22 @@ struct GDNFwdHTileShapes256 {
     using L0TileShape = Shape<_128, _256, _64>;
 };
 
+template <bool KGated, bool ScalarGated, bool UseExp2>
+struct GDNFwdHGateTag {
+    static constexpr bool value = KGated;
+    static constexpr bool scalarGated = ScalarGated;
+    static constexpr bool useExp2 = UseExp2;
+};
+
 template<
     typename INPUT_TYPE,
     typename G_TYPE,
     typename STATE_TYPE,
     typename WORKSPACE_TYPE,
     typename TileShapes = GDNFwdHTileShapes128,
-    bool kGated = false
+    bool kGated = false,
+    bool scalarGated = true,
+    bool useExp2 = false
 >
 class GDNFwdHKernel {
 public:
@@ -86,11 +95,12 @@ public:
 
     // vec 1
     using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnew;
-    using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, FinalStateType, std::bool_constant<kGated>>;
+    using GateTag = GDNFwdHGateTag<kGated, scalarGated, useExp2>;
+    using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, FinalStateType, GateTag>;
 
     // vec 2
     using DispatchPolicyGDNFwdHUpdate = Epilogue::EpilogueAtlasGDNFwdHUpdate;
-    using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType, FinalStateType, std::bool_constant<kGated>>;
+    using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType, FinalStateType, GateTag>;
 
     using GDNFwdHOffsets = Catlass::Gemm::Block::GDNFwdHOffsets;
 
@@ -184,7 +194,7 @@ public:
         gmK.SetGlobalBuffer((__gm__ ElementK *)k);
         gmW.SetGlobalBuffer((__gm__ ElementW *)w);
         gmU.SetGlobalBuffer((__gm__ ElementU *)u);
-        gmG.SetGlobalBuffer((__gm__ ElementG *)g);
+        gmG.SetGlobalBuffer((__gm__ ElementG *)(scalarGated ? g : gk));
         gmInitialState.SetGlobalBuffer((__gm__ ElementInitialState *)inital_state);
         gmH.SetGlobalBuffer((__gm__ ElementH *)h);
         gmV.SetGlobalBuffer((__gm__ ElementV *)v_new);
@@ -192,7 +202,7 @@ public:
         gmVWorkspace.SetGlobalBuffer((__gm__ ElementVWork *)(user + vWorkspaceOffset));
         gmVUpdateWorkspace.SetGlobalBuffer((__gm__ ElementV *)(user + vUpdateWorkspaceOffset));
         gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
-        gmGk.SetGlobalBuffer((__gm__ ElementG *)gk);
+        gmGk.SetGlobalBuffer((__gm__ ElementG *)(kGated ? gk : g));
         gmKDecayWorkspace.SetGlobalBuffer((__gm__ ElementK *)(user + kDecayWorkspaceOffset));
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
@@ -205,6 +215,55 @@ public:
 
         if ASCEND_IS_AIV {
             vecBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user);
+        }
+    }
+
+    template <typename TilingData>
+    __aicore__ inline void InitFromData(
+        GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state,
+        GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
+        GM_ADDR final_state, const TilingData& tilingData, GM_ADDR user) {
+        batch = tilingData.batch;
+        seqlen = tilingData.seqlen;
+        kNumHead = tilingData.kNumHead;
+        vNumHead = tilingData.vNumHead;
+        kHeadDim = tilingData.kHeadDim;
+        vHeadDim = tilingData.vHeadDim;
+        chunkSize = tilingData.chunkSize;
+        useInitialState = tilingData.useInitialState;
+        storeFinalState = tilingData.storeFinalState;
+        isVariedLen = tilingData.isVariedLen;
+        shapeBatch = tilingData.shapeBatch;
+        tokenBatch = tilingData.tokenBatch;
+        vWorkspaceOffset = tilingData.vWorkspaceOffset;
+        vUpdateWorkspaceOffset = tilingData.vUpdateWorkspaceOffset;
+        hWorkspaceOffset = tilingData.hWorkspaceOffset;
+        numSeqWorkspaceOffset = tilingData.numSeqWorkspaceOffset;
+        numChunksWorkspaceOffset = tilingData.numChunksWorkspaceOffset;
+        kDecayWorkspaceOffset = tilingData.kDecayWorkspaceOffset;
+
+        gmK.SetGlobalBuffer((__gm__ ElementK *)k);
+        gmW.SetGlobalBuffer((__gm__ ElementW *)w);
+        gmU.SetGlobalBuffer((__gm__ ElementU *)u);
+        gmG.SetGlobalBuffer((__gm__ ElementG *)(scalarGated ? g : gk));
+        gmInitialState.SetGlobalBuffer((__gm__ ElementInitialState *)inital_state);
+        gmH.SetGlobalBuffer((__gm__ ElementH *)h);
+        gmV.SetGlobalBuffer((__gm__ ElementV *)v_new);
+        gmFinalState.SetGlobalBuffer((__gm__ ElementFinalState *)final_state);
+        gmVWorkspace.SetGlobalBuffer((__gm__ ElementVWork *)(user + vWorkspaceOffset));
+        gmVUpdateWorkspace.SetGlobalBuffer((__gm__ ElementV *)(user + vUpdateWorkspaceOffset));
+        gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
+        gmGk.SetGlobalBuffer((__gm__ ElementG *)(kGated ? gk : g));
+        gmKDecayWorkspace.SetGlobalBuffer((__gm__ ElementK *)(user + kDecayWorkspaceOffset));
+        gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
+        gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
+        gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
+
+        if ASCEND_IS_AIC {
+            cubeBlockScheduler.InitFromData(cu_seqlens, chunk_indices, tilingData, user);
+        }
+        if ASCEND_IS_AIV {
+            vecBlockScheduler.InitFromData(cu_seqlens, chunk_indices, tilingData, user);
         }
     }
 

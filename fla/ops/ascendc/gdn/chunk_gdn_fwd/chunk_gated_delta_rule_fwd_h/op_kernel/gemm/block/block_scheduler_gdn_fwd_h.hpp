@@ -130,6 +130,20 @@ struct BlockSchedulerGdnFwdH {
     BlockSchedulerGdnFwdH() {}
 
     CATLASS_DEVICE
+    void UseEmbeddedStageFlags() {
+        // The enclosing KDA phases own flags 2..5. FWD_H alternates C1/V1/C2/V2 per stream, so each
+        // direction can reuse one clean flag after the matching wait has consumed it.
+        cube1Done[0].id = 0;
+        cube1Done[1].id = 1;
+        cube2Done[0].id = 0;
+        cube2Done[1].id = 1;
+        vec1Done[0].id = 6;
+        vec1Done[1].id = 7;
+        vec2Done[0].id = 6;
+        vec2Done[1].id = 7;
+    }
+
+    CATLASS_DEVICE
     void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user, uint32_t coreIdx, uint32_t coreNum) {
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
 
@@ -147,6 +161,35 @@ struct BlockSchedulerGdnFwdH {
         storeFinalState = gdnFwdHTilingData->storeFinalState;
         numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
         numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
+
+        InitRuntime(cu_seqlens, chunk_indices, user, coreIdx, coreNum);
+    }
+
+    template <typename TilingData>
+    CATLASS_DEVICE
+    void InitFromData(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const TilingData& tilingData,
+                      GM_ADDR user, uint32_t coreIdx, uint32_t coreNum) {
+        batch = tilingData.batch;
+        seqlen = tilingData.seqlen;
+        kNumHead = tilingData.kNumHead;
+        vNumHead = tilingData.vNumHead;
+        kHeadDim = tilingData.kHeadDim;
+        vHeadDim = tilingData.vHeadDim;
+        chunkSize = tilingData.chunkSize;
+        isVariedLen = tilingData.isVariedLen;
+        shapeBatch = tilingData.shapeBatch;
+        tokenBatch = tilingData.tokenBatch;
+        useInitialState = tilingData.useInitialState;
+        storeFinalState = tilingData.storeFinalState;
+        numSeqWorkspaceOffset = tilingData.numSeqWorkspaceOffset;
+        numChunksWorkspaceOffset = tilingData.numChunksWorkspaceOffset;
+
+        InitRuntime(cu_seqlens, chunk_indices, user, coreIdx, coreNum);
+    }
+
+    CATLASS_DEVICE
+    void InitRuntime(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR user,
+                     uint32_t coreIdx, uint32_t coreNum) {
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
         gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
@@ -319,6 +362,14 @@ struct BlockSchedulerGdnFwdHCube : public BlockSchedulerGdnFwdH {
         BlockSchedulerGdnFwdH::Init(cu_seqlens, chunk_indices, tiling, user, AscendC::GetBlockIdx(), AscendC::GetBlockNum());
     }
 
+    template <typename TilingData>
+    CATLASS_DEVICE
+    void InitFromData(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const TilingData& tilingData, GM_ADDR user) {
+        BlockSchedulerGdnFwdH::InitFromData(
+            cu_seqlens, chunk_indices, tilingData, user, AscendC::GetBlockIdx(), AscendC::GetBlockNum());
+        UseEmbeddedStageFlags();
+    }
+
 };
 
 struct BlockSchedulerGdnFwdHVec : public BlockSchedulerGdnFwdH {
@@ -331,6 +382,16 @@ struct BlockSchedulerGdnFwdHVec : public BlockSchedulerGdnFwdH {
             cu_seqlens, chunk_indices, tiling, user,
             AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(),
             AscendC::GetBlockNum());
+    }
+
+    template <typename TilingData>
+    CATLASS_DEVICE
+    void InitFromData(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const TilingData& tilingData, GM_ADDR user) {
+        BlockSchedulerGdnFwdH::InitFromData(
+            cu_seqlens, chunk_indices, tilingData, user,
+            AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(),
+            AscendC::GetBlockNum());
+        UseEmbeddedStageFlags();
     }
 
 };

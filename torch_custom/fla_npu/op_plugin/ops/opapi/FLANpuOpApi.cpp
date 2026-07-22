@@ -406,9 +406,6 @@ at::Tensor npu_chunk_fwd_o(
         save_new_value.value_or(true),
         "npu_chunk_gated_delta_rule_fwd_h: save_new_value is reserved and only true is supported.");
     TORCH_CHECK(
-        !use_exp2.value_or(false),
-        "npu_chunk_gated_delta_rule_fwd_h: use_exp2 is reserved and only false is supported.");
-    TORCH_CHECK(
         !transpose_state_layout.value_or(false),
         "npu_chunk_gated_delta_rule_fwd_h: transpose_state_layout is reserved and only false is supported.");
 
@@ -513,7 +510,7 @@ npu_chunk_kda_fwd(
     std::string layout_str(layout.data(), layout.size());
     TORCH_CHECK(layout_str == "BSND" || layout_str == "BNSD" || layout_str == "TND" || layout_str == "NTD",
                 "npu_chunk_kda_fwd: layout must be one of BSND, BNSD, TND, NTD and must be uppercase.");
-    TORCH_CHECK(!safe_gate.value_or(false), "npu_chunk_kda_fwd: safe_gate=True is not supported.");
+    bool safe_gate_ = safe_gate.value_or(false);
     TORCH_CHECK(!transpose_state_layout.value_or(false),
                 "npu_chunk_kda_fwd: transpose_state_layout=True is not supported.");
     TORCH_CHECK(chunk_size == 32 || chunk_size == 64 || chunk_size == 128,
@@ -648,7 +645,7 @@ npu_chunk_kda_fwd(
         aclnnChunkKdaFwd,
         q, k, v, gk, beta, initial_state_,
         cu_seqlens, chunk_indices_for_call,
-        layout_cstr, scale_, chunk_size_, recompute_output_final_state, total_chunks_,
+        layout_cstr, scale_, chunk_size_, recompute_output_final_state, safe_gate_, total_chunks_,
         o, final_state_work, aqk, akk, w, u, qg, kg, v_new, h
     );
 
@@ -721,10 +718,11 @@ at::Tensor npu_kda_gate_cumsum(
     at::Tensor gk = at::empty(g.sizes(), g.options().dtype(at::kFloat));
     const at::Tensor &A_log_ = c10::value_or_else(A_log, [] { return at::Tensor(); });
     const at::Tensor &dt_bias_ = c10::value_or_else(dt_bias, [] { return at::Tensor(); });
+    const char *layout_cstr = layout_str.c_str();
     EXEC_NPU_CMD_EXT(
         aclnnKdaGateCumsum,
         g, A_log_, dt_bias_, cu_seqlens,
-        chunk_size, use_gate, safe, lower, layout_str.c_str(), gk
+        chunk_size, use_gate, safe, lower, layout_cstr, gk
     );
     return gk;
 }

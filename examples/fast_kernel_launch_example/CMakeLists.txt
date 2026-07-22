@@ -17,6 +17,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# Bisheng/cce-ld does not implement GNU link dependency files. CMake 3.27+
+# may otherwise inject -Wl,--dependency-file for shared-library targets.
+set(CMAKE_LINK_DEPENDS_USE_LINKER FALSE)
 
 include(cmake/ascend.cmake)
 include(cmake/python.cmake)
@@ -92,6 +95,7 @@ add_library(_C SHARED
 )
 set_target_properties(_C PROPERTIES
     POSITION_INDEPENDENT_CODE ON
+    LINK_DEPENDS_NO_SHARED TRUE
     PREFIX ""
     SUFFIX ".abi3.so"
     OUTPUT_NAME "_C"
