@@ -101,24 +101,31 @@ def _setup_legacy_extension():
 
     def get_sources():
         sources = []
-        aten_dir = os.path.join(os.path.dirname(__file__), "torch_npu/csrc/aten")
+        setup_dir = os.path.dirname(__file__)  # setup.py 所在目录
+        
+        aten_dir = os.path.join(setup_dir, "torch_npu/csrc/aten")  # 改为相对基准
         if os.path.exists(aten_dir):
             for root, _, files in os.walk(aten_dir):
                 for file in files:
                     if file.endswith((".cpp", ".cc")):
-                        sources.append(os.path.join(root, file))
-        ops_dir = os.path.join(os.path.dirname(__file__), "op_plugin")
+                        # 转换为相对于 setup.py 的路径
+                        rel_path = os.path.relpath(os.path.join(root, file), setup_dir)
+                        sources.append(rel_path)
+        
+        ops_dir = os.path.join(setup_dir, "op_plugin")
         if os.path.exists(ops_dir):
             for root, _, files in os.walk(ops_dir):
                 for file in files:
                     if file.endswith((".cpp", ".cc")):
-                        sources.append(os.path.join(root, file))
-
+                        rel_path = os.path.relpath(os.path.join(root, file), setup_dir)
+                        sources.append(rel_path)
+        
+        # 排除的文件也需要用相对路径
         excluded = {
-            f"{aten_dir}/VariableTypeEverything.cpp",
-            f"{aten_dir}/ADInplaceOrViewTypeEverything.cpp",
-            f"{aten_dir}/python_functionsEverything.cpp",
-            f"{aten_dir}/RegisterFunctionalizationEverything.cpp",
+            os.path.join("torch_npu/csrc/aten", "VariableTypeEverything.cpp"),
+            os.path.join("torch_npu/csrc/aten", "ADInplaceOrViewTypeEverything.cpp"),
+            os.path.join("torch_npu/csrc/aten", "python_functionsEverything.cpp"),
+            os.path.join("torch_npu/csrc/aten", "RegisterFunctionalizationEverything.cpp"),
         }
         return [source for source in sources if source not in excluded]
 
