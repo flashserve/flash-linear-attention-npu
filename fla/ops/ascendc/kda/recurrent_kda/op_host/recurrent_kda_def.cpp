@@ -35,7 +35,7 @@ public:
             .Format(formats)
             .UnknownShapeFormat(formats)
             .IgnoreContiguous();
-        this->Input("actual_seq_lengths")
+        this->Input("cu_seqlens")
             .ParamType(REQUIRED)
             .DataType(i64Types)
             .Format(formats)

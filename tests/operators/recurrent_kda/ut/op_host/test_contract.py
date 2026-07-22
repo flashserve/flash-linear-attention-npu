@@ -50,7 +50,7 @@ def test_positive_cases_stay_inside_supported_kv_enums():
 def test_state_tensors_allow_non_contiguous_views():
     source = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/recurrent_kda_def.cpp")
     state_input_block = source[
-        source.index('this->Input("state")'):source.index('this->Input("actual_seq_lengths")')
+        source.index('this->Input("state")'):source.index('this->Input("cu_seqlens")')
     ]
     state_output_block = source[
         source.index('this->Output("state")'):source.index('this->Attr("layout")')
@@ -73,22 +73,22 @@ def test_device_metadata_and_capacity_state_contract():
     op_def = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/recurrent_kda_def.cpp")
     tiling = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/recurrent_kda_tiling_processor.h")
 
-    assert "const aclTensor *actualSeqLengths" in api
+    assert "const aclTensor *cuSeqlens" in api
     assert "aclIntArray" not in api
-    actual_input = op_def[op_def.index('this->Input("actual_seq_lengths")'):]
+    actual_input = op_def[op_def.index('this->Input("cu_seqlens")'):]
     assert ".ParamType(REQUIRED)" in actual_input.split('this->Input("ssm_state_indices")', 1)[0]
     assert "speculative [seq_num,max_step]" in tiling
     assert "state_capacity must equal seq_num" in tiling
 
 
-def test_actual_seq_lengths_uses_gdn_value_semantics():
+def test_cu_seqlens_uses_fla_prefix_sum_semantics():
     kernel = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_kernel/recurrent_kda.h")
 
-    assert "int64_t seq0 = actualSeqLengthsGm_.GetValue(0)" in kernel
-    assert "int64_t seqLen64 = actualSeqLengthsGm_.GetValue(batch_i + 1)" in kernel
-    assert "total += length" in kernel
-    assert "return total == static_cast<int64_t>(T_)" in kernel
-    assert "seqLen64 = seq1 - seq0" not in kernel
+    assert "int64_t seq0 = cuSeqlensGm_.GetValue(batch_i)" in kernel
+    assert "int64_t seq1 = cuSeqlensGm_.GetValue(batch_i + 1)" in kernel
+    assert "int64_t seqLen64 = seq1 - seq0" in kernel
+    assert "if (seq0 != 0)" in kernel
+    assert "return seq0 == static_cast<int64_t>(T_)" in kernel
 
 
 def test_tiling_processor_owns_its_context():
@@ -107,5 +107,5 @@ def test_mutable_state_is_wired_as_an_inplace_output():
 
     assert "OP_OUTPUT(out, stateRef)" in l0_source
     assert "Tensor(a!) initial_state" in schema
-    assert "Tensor actual_seq_lengths" in schema
+    assert "Tensor cu_seqlens" in schema
     assert '"npu_recurrent_kda": ("initial_state",)' in ctypes_init

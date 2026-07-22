@@ -23,7 +23,7 @@ const std::array<const aclTensor *, 2> RecurrentKda(
     const aclTensor *gate,
     const aclTensor *beta,
     aclTensor *stateRef,
-    const aclTensor *actualSeqLengths,
+    const aclTensor *cuSeqlens,
     const aclTensor *ssmStateIndicesOptional,
     const aclTensor *aLogOptional,
     const aclTensor *dtBiasOptional,

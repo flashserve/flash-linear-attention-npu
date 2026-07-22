@@ -24,7 +24,7 @@ ACLNN_API aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     const aclTensor *gate,
     const aclTensor *beta,
     aclTensor *stateRef,
-    const aclTensor *actualSeqLengths,
+    const aclTensor *cuSeqlens,
     const aclTensor *ssmStateIndicesOptional,
     const aclTensor *aLogOptional,
     const aclTensor *dtBiasOptional,

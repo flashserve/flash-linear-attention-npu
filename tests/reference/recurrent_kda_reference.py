@@ -25,22 +25,17 @@ def _restore_layout(x: torch.Tensor, ref: torch.Tensor, layout: str) -> torch.Te
     return x.reshape(ref.shape)
 
 
-def _seq_ranges(total_tokens: int, actual_seq_lengths: Sequence[int]):
-    if len(actual_seq_lengths) < 2:
-        raise ValueError("actual_seq_lengths must contain the invalid-token length and at least one sequence length")
-    cursor = int(actual_seq_lengths[0])
-    if cursor < 0:
-        raise ValueError("actual_seq_lengths values must be nonnegative")
-    ranges = []
-    for length_value in actual_seq_lengths[1:]:
-        length = int(length_value)
-        if length < 0:
-            raise ValueError("actual_seq_lengths values must be nonnegative")
-        ranges.append((cursor, cursor + length))
-        cursor += length
-    if cursor != total_tokens:
-        raise ValueError("the sum of actual_seq_lengths must equal the packed token count")
-    return ranges
+def _seq_ranges(total_tokens: int, cu_seqlens: Sequence[int]):
+    if len(cu_seqlens) < 2:
+        raise ValueError("cu_seqlens must contain at least two cumulative offsets")
+    offsets = [int(offset) for offset in cu_seqlens]
+    if offsets[0] != 0:
+        raise ValueError("cu_seqlens must start at zero")
+    if any(end < start for start, end in zip(offsets, offsets[1:])):
+        raise ValueError("cu_seqlens must be nondecreasing")
+    if offsets[-1] != total_tokens:
+        raise ValueError("the last cu_seqlens offset must equal the packed token count")
+    return list(zip(offsets, offsets[1:]))
 
 
 def _state_slot(ssm_state_indices: torch.Tensor, seq_idx: int, start: int, token: int) -> int:
@@ -59,7 +54,7 @@ def recurrent_kda_reference(
     beta: torch.Tensor,
     initial_state: Optional[torch.Tensor] = None,
     *,
-    actual_seq_lengths: Sequence[int],
+    cu_seqlens: Sequence[int],
     ssm_state_indices: Optional[torch.Tensor] = None,
     A_log: Optional[torch.Tensor] = None,
     dt_bias: Optional[torch.Tensor] = None,
@@ -114,7 +109,7 @@ def recurrent_kda_reference(
         if allow_neg_eigval:
             beta_eff = beta_eff * 2.0
 
-    ranges = _seq_ranges(total_tokens, actual_seq_lengths)
+    ranges = _seq_ranges(total_tokens, cu_seqlens)
     state_dtype = initial_state.dtype if initial_state is not None else torch.float32
     if initial_state is None:
         state = torch.zeros((len(ranges), hv, dv, dk), dtype=torch.float32, device=q.device)

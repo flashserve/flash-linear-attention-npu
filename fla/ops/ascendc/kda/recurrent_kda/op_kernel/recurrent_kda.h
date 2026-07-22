@@ -44,7 +44,7 @@ struct RKDAInitParams {
     GM_ADDR gate;
     GM_ADDR beta;
     GM_ADDR initState;
-    GM_ADDR actualSeqLengths;
+    GM_ADDR cuSeqlens;
     GM_ADDR ssmStateIndices;
     GM_ADDR aLog;
     GM_ADDR dtBias;
@@ -109,7 +109,7 @@ public:
         gateGm_.SetGlobalBuffer((__gm__ float *)initParams.gate);
         betaGm_.SetGlobalBuffer((__gm__ float *)initParams.beta);
         initStateGm_.SetGlobalBuffer((__gm__ stateType *)initParams.initState);
-        actualSeqLengthsGm_.SetGlobalBuffer((__gm__ int64_t *)initParams.actualSeqLengths);
+        cuSeqlensGm_.SetGlobalBuffer((__gm__ int64_t *)initParams.cuSeqlens);
         ssmStateIndicesGm_.SetGlobalBuffer((__gm__ int64_t *)initParams.ssmStateIndices);
         aLogGm_.SetGlobalBuffer((__gm__ float *)initParams.aLog);
         dtBiasGm_.SetGlobalBuffer((__gm__ float *)initParams.dtBias);
@@ -203,14 +203,14 @@ public:
 
     __aicore__ inline void Process()
     {
-        if (!ValidateActualSeqLengths()) {
+        if (!ValidateCuSeqlens()) {
             ReleaseEvents();
             return;
         }
-        int64_t seq0 = actualSeqLengthsGm_.GetValue(0);
         for (uint64_t batch_i = 0; batch_i < B_; batch_i++) {
-            int64_t seqLen64 = actualSeqLengthsGm_.GetValue(batch_i + 1);
-            int64_t seq1 = seq0 + seqLen64;
+            int64_t seq0 = cuSeqlensGm_.GetValue(batch_i);
+            int64_t seq1 = cuSeqlensGm_.GetValue(batch_i + 1);
+            int64_t seqLen64 = seq1 - seq0;
             if (seqLen64 == 0) {
                 continue;
             }
@@ -237,25 +237,28 @@ public:
                 }
                 ProcessHead(batch_i, seq0, seq1, head_i, stateSlot);
             }
-            seq0 = seq1;
         }
         ReleaseEvents();
     }
 
 private:
-    __aicore__ inline bool ValidateActualSeqLengths() const
+    __aicore__ inline bool ValidateCuSeqlens() const
     {
-        int64_t total = 0;
-        for (uint64_t i = 0; i < B_ + 1; i++) {
-            int64_t length = actualSeqLengthsGm_.GetValue(i);
-            if (length < 0 || length > static_cast<int64_t>(T_) - total ||
-                (i > 0 && length > static_cast<int64_t>(MAX_MTP)) ||
-                (i > 0 && hasSsmStateIndices_ && ssmStateStride_ > 0 && length > ssmStateStride_)) {
+        int64_t seq0 = cuSeqlensGm_.GetValue(0);
+        if (seq0 != 0) {
+            return false;
+        }
+        for (uint64_t i = 0; i < B_; i++) {
+            int64_t seq1 = cuSeqlensGm_.GetValue(i + 1);
+            int64_t length = seq1 - seq0;
+            if (seq1 < seq0 || seq1 > static_cast<int64_t>(T_) ||
+                length > static_cast<int64_t>(MAX_MTP) ||
+                (hasSsmStateIndices_ && ssmStateStride_ > 0 && length > ssmStateStride_)) {
                 return false;
             }
-            total += length;
+            seq0 = seq1;
         }
-        return total == static_cast<int64_t>(T_);
+        return seq0 == static_cast<int64_t>(T_);
     }
 
     __aicore__ inline uint64_t StateMetadataOffset(uint64_t batchIdx, int64_t seq0, int64_t tokenIdx) const
@@ -738,7 +741,7 @@ private:
     GlobalTensor<float> gateGm_;
     GlobalTensor<float> betaGm_;
     GlobalTensor<stateType> initStateGm_;
-    GlobalTensor<int64_t> actualSeqLengthsGm_;
+    GlobalTensor<int64_t> cuSeqlensGm_;
     GlobalTensor<int64_t> ssmStateIndicesGm_;
     GlobalTensor<float> aLogGm_;
     GlobalTensor<float> dtBiasGm_;

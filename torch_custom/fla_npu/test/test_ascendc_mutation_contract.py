@@ -63,8 +63,8 @@ def load_ascendc_module(raw_calls):
         raw_calls.append(conv_states)
         return "output"
 
-    def npu_recurrent_kda(q, k, v, g, beta, initial_state=None, *, actual_seq_lengths, **kwargs):
-        del q, k, v, g, beta, actual_seq_lengths, kwargs
+    def npu_recurrent_kda(q, k, v, g, beta, initial_state=None, *, cu_seqlens, **kwargs):
+        del q, k, v, g, beta, cu_seqlens, kwargs
         raw_calls.append(initial_state)
         return "output", initial_state
 
@@ -133,7 +133,7 @@ class AscendCMutationContractTest(unittest.TestCase):
             spec.loader.exec_module(module)
             inputs = [FakeTensor() for _ in range(5)]
             state = FakeTensor()
-            result = module.npu_recurrent_kda(*inputs, state, actual_seq_lengths=FakeTensor())
+            result = module.npu_recurrent_kda(*inputs, state, cu_seqlens=FakeTensor())
 
         self.assertEqual(result, ("output", state))
         self.assertEqual(raw_calls, [state])

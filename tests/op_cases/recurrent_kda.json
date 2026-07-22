@@ -25,7 +25,7 @@
       "safe_gate lower_bound clamp",
       "beta sigmoid",
       "state 输入/输出支持非连续 view",
-      "device actual_seq_lengths 与 ACLGraph replay",
+      "device cu_seqlens 与 ACLGraph replay",
       "容量化 state pool 与二维 speculative slot 索引",
       "可选初始/最终状态",
       "state_v_first=True"
@@ -61,13 +61,13 @@
       "layout 当前仅支持 BSND 和 TND；H_v 必须能被 H 整除。",
       "K/V 当前仅支持 K=128,V=128 或 K=128,V=256 两档枚举。",
       "Python/aclnn/legacy 入口支持非连续 initial_state；state 原位更新，显式 final_state 与输入共享 storage 和 stride。",
-      "actual_seq_lengths 必传；首项为前置无效 token 数，后续各项为有效序列长度，元素总和必须等于 packed token 数。",
+      "cu_seqlens 必传；首项为 0，offset 单调不减，末项等于 packed token 数，相邻差值为有效序列长度。",
       "每条 recurrent 有效序列长度当前必须 <= 8。",
       "state_v_first 当前必须为 true，状态布局为 [state_capacity,H_v,V,K]；未传 ssm_state_indices 时 state_capacity 必须等于 seq_num。",
       "use_gate_in_kernel=true 时 A_log 必传；dt_bias 若存在须为 [H_v*K] 或 [H_v,K]。",
       "use_gate_in_kernel=false 时 A_log、dt_bias 和 safe_gate 必须为空或 false，避免两段式 gate 语义混入 recurrent API。",
       "num_accepted_tokens 需要和 ssm_state_indices 一起传入，长度为 seq_num。",
-      "actual_seq_lengths 必须是与 q 同设备的 INT32/INT64 tensor；值由 device kernel 消费，不触发 host 同步。",
+      "cu_seqlens 必须是与 q 同设备的 INT32/INT64 tensor；值由 device kernel 消费，不触发 host 同步。",
       "ssm_state_indices 支持 packed [T] 或 speculative [seq_num,max_step]；空序列不读取索引或 state。"
     ],
     "required_outputs": [
@@ -98,7 +98,7 @@
       "recurrent_kda_tnd_ssm_accepted_flat_dt_bias_fp16_gate",
       "recurrent_kda_tnd_precomputed_v256_general",
       "recurrent_kda_tnd_non_contiguous_state_v256",
-      "recurrent_kda_kimi_tnd_h96_d128_runtime_actual_seq_lengths_smoke"
+      "recurrent_kda_kimi_tnd_h96_d128_runtime_cu_seqlens_smoke"
     ],
     "stress_case_ids": [
       "recurrent_kda_kimi_tnd_long_safe_gate_h96_d128"
@@ -157,10 +157,10 @@
       },
       "optional_inputs": {
         "initial_state": "present",
-        "actual_seq_lengths": [
-          1,
-          1,
-          2
+        "cu_seqlens": [
+          0,
+          2,
+          4
         ],
         "A_log": "[H_v]",
         "dt_bias": "[H_v,K]",
@@ -225,10 +225,10 @@
       },
       "optional_inputs": {
         "initial_state": "present",
-        "actual_seq_lengths": [
+        "cu_seqlens": [
           0,
           2,
-          2
+          4
         ],
         "A_log": "[H_v]",
         "dt_bias": "[H_v,K]"
@@ -290,10 +290,10 @@
       },
       "optional_inputs": {
         "initial_state": null,
-        "actual_seq_lengths": [
+        "cu_seqlens": [
           0,
           2,
-          2
+          4
         ],
         "A_log": null,
         "dt_bias": null
@@ -356,7 +356,7 @@
       },
       "optional_inputs": {
         "initial_state": "present",
-        "actual_seq_lengths": [
+        "cu_seqlens": [
           0,
           4
         ],
@@ -422,10 +422,10 @@
       },
       "optional_inputs": {
         "initial_state": null,
-        "actual_seq_lengths": [
+        "cu_seqlens": [
           0,
           2,
-          2
+          4
         ],
         "A_log": "[H_v]",
         "dt_bias": "[H_v,K]"
@@ -488,10 +488,10 @@
       },
       "optional_inputs": {
         "initial_state": "present",
-        "actual_seq_lengths": [
+        "cu_seqlens": [
           0,
           1,
-          1
+          2
         ],
         "A_log": null,
         "dt_bias": null
@@ -555,13 +555,13 @@
       },
       "optional_inputs": {
         "initial_state": "present",
-        "actual_seq_lengths": [
+        "cu_seqlens": [
           0,
           1,
-          0,
-          3,
-          0,
-          4
+          1,
+          4,
+          4,
+          8
         ],
         "A_log": null,
         "dt_bias": null
@@ -624,11 +624,11 @@
       },
       "optional_inputs": {
         "initial_state": "present",
-        "actual_seq_lengths": [
+        "cu_seqlens": [
           0,
           3,
-          1,
-          2
+          4,
+          6
         ],
         "A_log": "[H_v]",
         "dt_bias": null
@@ -696,10 +696,10 @@
       },
       "optional_inputs": {
         "initial_state": "present",
-        "actual_seq_lengths": [
+        "cu_seqlens": [
           0,
           2,
-          3
+          5
         ],
         "A_log": "[H_v]",
         "dt_bias": "[H_v*K]",
@@ -763,7 +763,7 @@
       },
       "optional_inputs": {
         "initial_state": "present",
-        "actual_seq_lengths": [
+        "cu_seqlens": [
           0,
           2
         ],
@@ -831,10 +831,10 @@
       },
       "optional_inputs": {
         "initial_state": "present",
-        "actual_seq_lengths": [
+        "cu_seqlens": [
           0,
           1,
-          3
+          4
         ],
         "A_log": "[H_v]",
         "dt_bias": "[H_v,K]",
@@ -863,14 +863,14 @@
       "seed": 2039
     },
     {
-      "id": "recurrent_kda_kimi_tnd_h96_d128_runtime_actual_seq_lengths_smoke",
+      "id": "recurrent_kda_kimi_tnd_h96_d128_runtime_cu_seqlens_smoke",
       "tags": [
         "generalization",
         "kimi_shape",
         "large_shape",
         "varlen",
         "safe_gate",
-        "runtime_actual_seq_lengths"
+        "runtime_cu_seqlens"
       ],
       "shape": {
         "seq_num": 70,
@@ -901,7 +901,7 @@
       },
       "optional_inputs": {
         "initial_state": "present",
-        "actual_seq_lengths": "generated_varlen_max8_total",
+        "cu_seqlens": "generated_varlen_max8_total",
         "A_log": "[H_v]",
         "dt_bias": "[H_v,K]",
         "ssm_state_indices": null,
@@ -932,7 +932,7 @@
         "long_context",
         "varlen",
         "safe_gate",
-        "runtime_actual_seq_lengths"
+        "runtime_cu_seqlens"
       ],
       "shape": {
         "seq_num": 1542,
@@ -963,7 +963,7 @@
       },
       "optional_inputs": {
         "initial_state": "present",
-        "actual_seq_lengths": "generated_varlen_max8_total",
+        "cu_seqlens": "generated_varlen_max8_total",
         "A_log": "[H_v]",
         "dt_bias": "[H_v,K]",
         "ssm_state_indices": null,
@@ -1030,7 +1030,7 @@
       "expect": {
         "return_code": "ACLNN_ERR_PARAM_INVALID",
         "message_contains_any": [
-          "actual_seq_lengths",
+          "cu_seqlens",
           "safe_gate only applies when use_gate_in_kernel=True",
           "state_v_first=false is not supported"
         ]

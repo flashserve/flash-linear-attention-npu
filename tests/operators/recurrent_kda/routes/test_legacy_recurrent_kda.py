@@ -34,7 +34,7 @@ def test_legacy_route_case():
     g = torch.randn(batch, seq_len, value_heads, key_dim, device=device, dtype=torch.float32)
     beta = torch.randn(batch, seq_len, value_heads, device=device, dtype=torch.float32)
     A_log = torch.randn(value_heads, device=device, dtype=torch.float32)
-    actual_seq_lengths = torch.tensor([0] + [seq_len] * batch, device=device, dtype=torch.int32)
+    cu_seqlens = torch.arange(batch + 1, device=device, dtype=torch.int32) * seq_len
     state = torch.zeros(batch, value_heads, value_dim, key_dim, device=device, dtype=torch.float32)
     out, final_state = torch.ops.npu.npu_recurrent_kda(
         q,
@@ -43,7 +43,7 @@ def test_legacy_route_case():
         g,
         beta,
         state,
-        actual_seq_lengths=actual_seq_lengths,
+        cu_seqlens=cu_seqlens,
         A_log=A_log,
         layout="BSND",
         output_final_state=True,

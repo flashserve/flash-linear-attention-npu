@@ -31,7 +31,7 @@ const size_t VALUE_INDEX = 2;
 const size_t GATE_INDEX = 3;
 const size_t BETA_INDEX = 4;
 const size_t STATE_INDEX = 5;
-const size_t ACTUAL_SEQ_LENGTHS_INDEX = 6;
+const size_t CU_SEQLENS_INDEX = 6;
 const size_t SSM_STATE_INDICES_INDEX = 7;
 const size_t A_LOG_INDEX = 8;
 const size_t DT_BIAS_INDEX = 9;
@@ -85,7 +85,7 @@ RecurrentKdaTilingContext RecurrentKdaTiling::BuildProcessorContext() const
     ctx.gateShape = context_->GetInputShape(GATE_INDEX)->GetOriginShape();
     ctx.betaShape = context_->GetInputShape(BETA_INDEX)->GetOriginShape();
     ctx.stateShape = context_->GetInputShape(STATE_INDEX)->GetOriginShape();
-    ctx.actualSeqLengthsShape = context_->GetInputShape(ACTUAL_SEQ_LENGTHS_INDEX)->GetOriginShape();
+    ctx.cuSeqlensShape = context_->GetInputShape(CU_SEQLENS_INDEX)->GetOriginShape();
     CopyOptionalOriginShape(context_, SSM_STATE_INDICES_INDEX, ctx.ssmStateShape);
     CopyOptionalOriginShape(context_, A_LOG_INDEX, ctx.aLogShape);
     CopyOptionalOriginShape(context_, DT_BIAS_INDEX, ctx.dtBiasShape);
@@ -197,8 +197,8 @@ ge::graphStatus RecurrentKdaTiling::CheckContext()
     OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(BETA_INDEX));
     OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputShape(STATE_INDEX));
     OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(STATE_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputShape(ACTUAL_SEQ_LENGTHS_INDEX));
-    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(ACTUAL_SEQ_LENGTHS_INDEX));
+    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputShape(CU_SEQLENS_INDEX));
+    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(CU_SEQLENS_INDEX));
     return ge::GRAPH_SUCCESS;
 }
 
@@ -220,8 +220,8 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeDtype()
     OP_CHECK_IF(stateDtype != ge::DT_FLOAT && stateDtype != ge::DT_BF16,
                 OP_LOGE(context_->GetNodeName(), "initial_state dtype should be bfloat16 or float32"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(context_->GetInputDesc(ACTUAL_SEQ_LENGTHS_INDEX)->GetDataType() != ge::DT_INT64,
-                OP_LOGE(context_->GetNodeName(), "actual_seq_lengths dtype should be int64"),
+    OP_CHECK_IF(context_->GetInputDesc(CU_SEQLENS_INDEX)->GetDataType() != ge::DT_INT64,
+                OP_LOGE(context_->GetNodeName(), "cu_seqlens dtype should be int64"),
                 return ge::GRAPH_FAILED);
     if (context_->GetOptionalInputDesc(SSM_STATE_INDICES_INDEX) != nullptr) {
         OP_CHECK_IF(context_->GetOptionalInputDesc(SSM_STATE_INDICES_INDEX)->GetDataType() != ge::DT_INT64,
@@ -269,7 +269,7 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeFormat()
         !CheckFormat(context_->GetInputDesc(GATE_INDEX)->GetStorageFormat(), "gate") ||
         !CheckFormat(context_->GetInputDesc(BETA_INDEX)->GetStorageFormat(), "beta") ||
         !CheckFormat(context_->GetInputDesc(STATE_INDEX)->GetStorageFormat(), "initial_state") ||
-        !CheckFormat(context_->GetInputDesc(ACTUAL_SEQ_LENGTHS_INDEX)->GetStorageFormat(), "actual_seq_lengths")) {
+        !CheckFormat(context_->GetInputDesc(CU_SEQLENS_INDEX)->GetStorageFormat(), "cu_seqlens")) {
         return ge::GRAPH_FAILED;
     }
 
