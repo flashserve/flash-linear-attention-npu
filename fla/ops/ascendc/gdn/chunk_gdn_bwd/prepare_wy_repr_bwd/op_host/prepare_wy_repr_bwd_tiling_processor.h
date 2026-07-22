@@ -77,6 +77,7 @@ static constexpr uint64_t UB_BYTES_16K = 16 * 1024;
 static constexpr uint64_t PREPARE_WY_REPR_BWD_FIXED_IO_BYTES = 4 * UB_BYTES_16K;
 static constexpr uint64_t PREPARE_WY_REPR_BWD_VEC_COMPUTE_BYTES = 128 * 1024;
 static constexpr uint64_t BUFFER_COUNT_2 = 2;
+static constexpr uint64_t BUFFER_COUNT_4 = 4;
 
 struct PrepareWyReprBwdTilingContext {
     const char *nodeName;
@@ -382,7 +383,7 @@ public:
     ge::graphStatus WorkspaceTiling()
     {
         uint64_t kTypeBytes = DtypeSize(ctx_.kDataType);
-        tiling_.workspaceBufferCount = static_cast<int64_t>(BUFFER_COUNT_2);
+        tiling_.workspaceBufferCount = static_cast<int64_t>(BUFFER_COUNT_4);
         tiling_.kBytes = static_cast<int64_t>(
             AlignUp(static_cast<uint64_t>(tiling_.chunkSize * tiling_.K) * kTypeBytes,
                     PREPARE_WY_REPR_BWD_ONE_BLOCK_32));

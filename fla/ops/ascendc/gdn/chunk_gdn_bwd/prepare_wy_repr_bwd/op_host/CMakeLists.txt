@@ -17,6 +17,5 @@ add_modules_sources(OPTYPE prepare_wy_repr_bwd ACLNNTYPE aclnn_exclude)
 add_ops_compile_options(
     OP_NAME PrepareWyReprBwd
     OPTIONS --cce-auto-sync=off
-            -g
             -Wno-deprecated-declarations
 )

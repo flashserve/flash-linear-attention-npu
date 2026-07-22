@@ -25,6 +25,7 @@ constexpr uint64_t PRONE_BLOCK_BYTES_32 = 32;
 constexpr uint32_t K_DIM = 128;
 constexpr uint32_t UB_BYTES_16K = 16 * 1024;
 constexpr uint32_t BUFFER_COUNT_2 = 2;
+constexpr uint32_t BUFFER_COUNT_4 = 4;
 constexpr uint32_t PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT = 2;
 constexpr uint32_t PREPARE_WY_REPR_BWD_FP32_PER_REPEAT = 64;
 constexpr uint32_t PREPARE_WY_REPR_BWD_MASK_BITS_PER_BYTE = 8;
