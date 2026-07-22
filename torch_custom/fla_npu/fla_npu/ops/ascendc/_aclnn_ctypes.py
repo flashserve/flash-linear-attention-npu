@@ -1012,7 +1012,7 @@ def npu_recurrent_kda(
     beta,
     initial_state=None,
     *,
-    actual_seq_lengths,
+    cu_seqlens,
     ssm_state_indices=None,
     A_log=None,
     dt_bias=None,
@@ -1091,16 +1091,16 @@ def npu_recurrent_kda(
         raise RuntimeError("npu_recurrent_kda: HV must be divisible by H.")
     if (key_dim, value_dim) not in ((128, 128), (128, 256)):
         raise RuntimeError("npu_recurrent_kda: K/V currently support only K=128,V=128 or K=128,V=256.")
-    if (not isinstance(actual_seq_lengths, torch.Tensor) or actual_seq_lengths.dim() != 1 or
-            actual_seq_lengths.numel() < 2):
+    if (not isinstance(cu_seqlens, torch.Tensor) or cu_seqlens.dim() != 1 or
+            cu_seqlens.numel() < 2):
         raise RuntimeError(
-            "npu_recurrent_kda: actual_seq_lengths must be a 1D device tensor with at least two elements."
+            "npu_recurrent_kda: cu_seqlens must be a 1D device tensor with at least two elements."
         )
-    if actual_seq_lengths.dtype not in (torch.int32, torch.int64):
-        raise RuntimeError("npu_recurrent_kda: actual_seq_lengths must be INT32 or INT64.")
-    if actual_seq_lengths.device != q.device:
-        raise RuntimeError("npu_recurrent_kda: actual_seq_lengths must be on the same device as q.")
-    seq_num = int(actual_seq_lengths.shape[0]) - 1
+    if cu_seqlens.dtype not in (torch.int32, torch.int64):
+        raise RuntimeError("npu_recurrent_kda: cu_seqlens must be INT32 or INT64.")
+    if cu_seqlens.device != q.device:
+        raise RuntimeError("npu_recurrent_kda: cu_seqlens must be on the same device as q.")
+    seq_num = int(cu_seqlens.shape[0]) - 1
 
     state_v_first = _optional_bool(state_v_first, True)
     if not state_v_first:
@@ -1183,7 +1183,7 @@ def npu_recurrent_kda(
             ctx.tensor(g, "g"),
             ctx.tensor(beta, "beta"),
             ctx.tensor(initial_state_work, "initial_state"),
-            ctx.tensor(actual_seq_lengths, "actual_seq_lengths"),
+            ctx.tensor(cu_seqlens, "cu_seqlens"),
             ctx.tensor(ssm_state_indices, "ssm_state_indices"),
             ctx.tensor(A_log, "A_log"),
             ctx.tensor(dt_bias, "dt_bias"),

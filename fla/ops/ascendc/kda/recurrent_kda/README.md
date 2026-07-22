@@ -18,7 +18,7 @@ out, final_state = recurrent_kda(
     beta,
     initial_state=None,
     *,
-    actual_seq_lengths,
+    cu_seqlens,
     ssm_state_indices=None,
     A_log=None,
     dt_bias=None,
@@ -49,8 +49,9 @@ out, final_state = recurrent_kda(
   - `safe_gate=True`：`gate = lower_bound * sigmoid(exp(A_log) * (g + dt_bias))`。
 - `use_beta_sigmoid_in_kernel=True` 时，kernel 使用 `sigmoid(beta)`；若 `allow_neg_eigval=True`，再乘 2。
 - Python/aclnn/legacy 入口支持非连续 `initial_state`；返回 `final_state` 时与输入保持相同 storage 和 stride。
-- `actual_seq_lengths` 是必传的同设备 INT32/INT64 tensor，shape 为 `[seq_num+1]`。第 0 项是前置无效 token 数，
-  后续 `seq_num` 项分别是各有效序列长度，所有元素之和必须等于 packed token 总数。host 不读取其值，兼容 ACLGraph capture/replay。
+- `cu_seqlens` 是必传的同设备 INT32/INT64 tensor，shape 为 `[seq_num+1]`，使用与 fla-org 一致的
+  累积 offset 语义。首项必须为 0，末项等于 packed token 总数，相邻差值是各序列长度。host 不读取其值，
+  兼容 ACLGraph capture/replay。
 - `ssm_state_indices` 支持 packed `[T]` 和 speculative `[seq_num,max_step]`。显式索引模式允许 `state_capacity > seq_num`，并仅更新命中的槽。
 - 空序列不读取索引或 state，适用于 packed batch 中的 padding sequence。
 
@@ -68,7 +69,7 @@ o_t = S @ (q_t * scale)
 - `q/k/v/out` 仅支持 `BF16`。
 - `g/beta` Python 入口支持 `FP32/BF16/FP16`，aclnn 预处理后以 `FP32` 输入 kernel。
 - `A_log/dt_bias` 支持 `FP32`。
-- `actual_seq_lengths` 为必传、与 q 同设备的 INT32/INT64 Tensor；各有效序列长度必须不超过 8。
+- `cu_seqlens` 为必传、与 q 同设备的 INT32/INT64 Tensor；offset 必须单调不减，各相邻差值必须不超过 8。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`。
 - 仅支持 `state_v_first=True`，state layout 为 `[state_capacity, HV, V, K]`；底层 aclnn 接口要求显式传入可变 state。
 - `HV` 必须能被 `H` 整除；`H/HV <= 256`；`K/V` 仅支持 `K=128,V=128` 或 `K=128,V=256`。

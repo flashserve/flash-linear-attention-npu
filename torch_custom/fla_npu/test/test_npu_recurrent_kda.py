@@ -31,7 +31,7 @@ def _make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim
         v_shape = (batch, seq_len, hv, vdim)
         g_shape = (batch, seq_len, hv, kdim)
         beta_shape = (batch, seq_len, hv)
-        actual_seq_lengths = [0] + [seq_len] * batch
+        cu_seqlens = [seq_len * i for i in range(batch + 1)]
         seq_num = batch
     elif layout == "TND":
         total_tokens = batch * seq_len
@@ -39,7 +39,7 @@ def _make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim
         v_shape = (total_tokens, hv, vdim)
         g_shape = (total_tokens, hv, kdim)
         beta_shape = (total_tokens, hv)
-        actual_seq_lengths = [0] + [seq_len] * batch
+        cu_seqlens = [seq_len * i for i in range(batch + 1)]
         seq_num = batch
     else:
         raise ValueError(layout)
@@ -55,7 +55,7 @@ def _make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim
         "g": torch.randn(g_shape, dtype=torch.float32) * 0.5,
         "beta": torch.randn(beta_shape, dtype=torch.float32),
         "initial_state": initial_state,
-        "actual_seq_lengths": actual_seq_lengths,
+        "cu_seqlens": cu_seqlens,
         "A_log": torch.randn((hv,), dtype=torch.float32) * 0.1,
         "dt_bias": torch.randn((hv, kdim), dtype=torch.float32) * 0.1,
         "layout": layout,
@@ -77,8 +77,8 @@ def _run_case(desc, input_kwargs, op_kwargs):
     from fla_npu.ops.ascendc import recurrent_kda
 
     call_kwargs = {**op_kwargs, "output_final_state": True, "layout": inputs["layout"]}
-    call_kwargs["actual_seq_lengths"] = torch.tensor(
-        inputs["actual_seq_lengths"], dtype=torch.int64, device=device
+    call_kwargs["cu_seqlens"] = torch.tensor(
+        inputs["cu_seqlens"], dtype=torch.int64, device=device
     )
     initial_state = inputs["initial_state"]
     state_npu = initial_state.to(device) if initial_state is not None else None

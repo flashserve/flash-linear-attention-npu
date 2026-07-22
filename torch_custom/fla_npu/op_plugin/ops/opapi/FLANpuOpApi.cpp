@@ -758,7 +758,7 @@ at::Tensor npu_kda_gate_cumsum(
     const at::Tensor &g,
     const at::Tensor &beta,
     at::Tensor &initial_state,
-    const at::Tensor &actual_seq_lengths,
+    const at::Tensor &cu_seqlens,
     const c10::optional<at::Tensor> &ssm_state_indices,
     const c10::optional<at::Tensor> &A_log,
     const c10::optional<at::Tensor> &dt_bias,
@@ -807,12 +807,12 @@ at::Tensor npu_kda_gate_cumsum(
     TORCH_CHECK(hv % h == 0, "npu_recurrent_kda: HV must be divisible by H.");
     TORCH_CHECK(k_dim == 128 && (v_dim == 128 || v_dim == 256),
                 "npu_recurrent_kda: K/V currently support only K=128,V=128 or K=128,V=256.");
-    TORCH_CHECK(actual_seq_lengths.dim() == 1 && actual_seq_lengths.size(0) >= 2,
-                "npu_recurrent_kda: actual_seq_lengths must be a 1D device tensor with at least two elements.");
-    TORCH_CHECK(actual_seq_lengths.scalar_type() == at::kInt || actual_seq_lengths.scalar_type() == at::kLong,
-                "npu_recurrent_kda: actual_seq_lengths must be int32 or int64.");
-    TORCH_CHECK(actual_seq_lengths.device() == q.device(),
-                "npu_recurrent_kda: actual_seq_lengths must be on the same device as q.");
+    TORCH_CHECK(cu_seqlens.dim() == 1 && cu_seqlens.size(0) >= 2,
+                "npu_recurrent_kda: cu_seqlens must be a 1D device tensor with at least two elements.");
+    TORCH_CHECK(cu_seqlens.scalar_type() == at::kInt || cu_seqlens.scalar_type() == at::kLong,
+                "npu_recurrent_kda: cu_seqlens must be int32 or int64.");
+    TORCH_CHECK(cu_seqlens.device() == q.device(),
+                "npu_recurrent_kda: cu_seqlens must be on the same device as q.");
     TORCH_CHECK((is_tnd && v.size(0) == total_tokens && g.size(0) == total_tokens &&
                  beta.size(0) == total_tokens && g.size(1) == hv && beta.size(1) == hv &&
                  g.size(2) == k_dim) ||
@@ -822,7 +822,7 @@ at::Tensor npu_kda_gate_cumsum(
                      beta.size(2) == hv),
                 "npu_recurrent_kda: v/g/beta shape mismatch.");
 
-    int64_t seq_num = actual_seq_lengths.size(0) - 1;
+    int64_t seq_num = cu_seqlens.size(0) - 1;
     bool state_v_first_ = state_v_first.value_or(true);
     TORCH_CHECK(state_v_first_, "npu_recurrent_kda: state_v_first=false is not supported.");
     bool has_state_indices = ssm_state_indices.has_value() && ssm_state_indices->defined();
@@ -902,7 +902,7 @@ at::Tensor npu_kda_gate_cumsum(
 
     EXEC_NPU_CMD_EXT(
         aclnnRecurrentKda,
-        q, k, v, g, beta, initial_state, actual_seq_lengths,
+        q, k, v, g, beta, initial_state, cu_seqlens,
         ssm_state_indices_, A_log_, dt_bias_, num_accepted_tokens_,
         layout_cstr, scale_, output_final_state_, use_qk_l2norm_, use_gate,
         use_beta_sigmoid_, allow_neg_eigval_, safe, lower, state_v_first_,

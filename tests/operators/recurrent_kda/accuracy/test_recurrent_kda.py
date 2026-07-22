@@ -22,9 +22,9 @@ def test_case_manifest_covers_required_matrix():
     assert {"ascend910b", "ascend910_93", "ascend950"} <= set(manifest["capability"]["soc"])
     assert all("ascendc" in case["run_on"] for case in cases if "accuracy" in case["tags"])
     positive_cases = [case for case in cases if "negative" not in case["tags"]]
-    assert all(case["optional_inputs"].get("actual_seq_lengths") is not None for case in positive_cases)
-    assert any(case["layout"] == "BSND" and case["optional_inputs"].get("actual_seq_lengths") for case in positive_cases)
-    assert any(case["layout"] == "TND" and case["optional_inputs"].get("actual_seq_lengths") for case in positive_cases)
+    assert all(case["optional_inputs"].get("cu_seqlens") is not None for case in positive_cases)
+    assert any(case["layout"] == "BSND" and case["optional_inputs"].get("cu_seqlens") for case in positive_cases)
+    assert any(case["layout"] == "TND" and case["optional_inputs"].get("cu_seqlens") for case in positive_cases)
     assert any(case["attrs"].get("use_gate_in_kernel") for case in positive_cases)
     assert any(not case["attrs"].get("use_gate_in_kernel") for case in positive_cases)
     assert any(case["attrs"].get("safe_gate") for case in positive_cases)
@@ -60,14 +60,14 @@ def _shape_from_case(case):
     if layout == "BSND":
         batch = int(shape["B"])
         seq_len = int(shape["T"])
-        actual_seq_lengths = _actual_seq_lengths_from_case(case)
+        cu_seqlens = _cu_seqlens_from_case(case)
         return {
             "q": (batch, seq_len, heads, key_dim),
             "v": (batch, seq_len, value_heads, value_dim),
             "g": (batch, seq_len, value_heads, key_dim),
             "beta": (batch, seq_len, value_heads),
-            "seq_num": int(shape.get("seq_num", len(actual_seq_lengths) - 1)),
-            "actual_seq_lengths": actual_seq_lengths,
+            "seq_num": int(shape.get("seq_num", len(cu_seqlens) - 1)),
+            "cu_seqlens": cu_seqlens,
         }
     if layout == "TND":
         total_tokens = int(shape["T_total"])
@@ -78,17 +78,17 @@ def _shape_from_case(case):
             "g": (total_tokens, value_heads, key_dim),
             "beta": (total_tokens, value_heads),
             "seq_num": seq_num,
-            "actual_seq_lengths": _actual_seq_lengths_from_case(case),
+            "cu_seqlens": _cu_seqlens_from_case(case),
         }
     raise ValueError(layout)
 
 
-def _actual_seq_lengths_from_case(case):
-    spec = case["optional_inputs"].get("actual_seq_lengths")
+def _cu_seqlens_from_case(case):
+    spec = case["optional_inputs"].get("cu_seqlens")
     if isinstance(spec, list):
         return spec
     if spec != "generated_varlen_max8_total":
-        raise ValueError(f"{case['id']}: unsupported actual_seq_lengths generator {spec!r}")
+        raise ValueError(f"{case['id']}: unsupported cu_seqlens generator {spec!r}")
 
     shape = case["shape"]
     total = int(shape["T_total"])
@@ -98,12 +98,19 @@ def _actual_seq_lengths_from_case(case):
     special_lengths = [0, 8, 1, 7, 2, 6, 3, 5, 4, 4, 0, 8]
     remaining = total - sum(special_lengths)
     if remaining < 0 or remaining % max_seq_len != 0:
-        raise ValueError(f"{case['id']}: cannot generate actual_seq_lengths for total={total}")
+        raise ValueError(f"{case['id']}: cannot generate cu_seqlens for total={total}")
     lengths = [max_seq_len] * (remaining // max_seq_len) + special_lengths
-    actual_seq_lengths = [0] + lengths
-    if sum(actual_seq_lengths) != total or len(actual_seq_lengths) - 1 != int(shape["seq_num"]):
-        raise ValueError(f"{case['id']}: generated actual_seq_lengths does not match manifest shape")
-    return actual_seq_lengths
+    cu_seqlens = _prefix_offsets(lengths)
+    if cu_seqlens[-1] != total or len(cu_seqlens) - 1 != int(shape["seq_num"]):
+        raise ValueError(f"{case['id']}: generated cu_seqlens does not match manifest shape")
+    return cu_seqlens
+
+
+def _prefix_offsets(lengths):
+    offsets = [0]
+    for length in lengths:
+        offsets.append(offsets[-1] + int(length))
+    return offsets
 
 
 def _torch_dtype(torch, name):
@@ -119,35 +126,35 @@ def _randn(torch, shape, generator, dtype, scale=1.0):
     return (torch.randn(shape, generator=generator, dtype=torch.float32) * scale).to(dtype)
 
 
-def _sequence_lengths(actual_seq_lengths):
-    return [int(length) for length in actual_seq_lengths[1:]]
+def _sequence_lengths(cu_seqlens):
+    return [int(end) - int(start) for start, end in zip(cu_seqlens, cu_seqlens[1:])]
 
 
-def _generated_sequence_slots(actual_seq_lengths):
-    slots = [0] * int(actual_seq_lengths[0])
-    for seq_idx, length in enumerate(_sequence_lengths(actual_seq_lengths)):
+def _generated_sequence_slots(cu_seqlens):
+    slots = []
+    for seq_idx, length in enumerate(_sequence_lengths(cu_seqlens)):
         slots.extend([seq_idx] * length)
     return slots
 
 
-def _generated_last_token_accepts(actual_seq_lengths):
-    return [max(1, length) for length in _sequence_lengths(actual_seq_lengths)]
+def _generated_last_token_accepts(cu_seqlens):
+    return _sequence_lengths(cu_seqlens)
 
 
-def _make_optional_index_tensor(case, torch, key, actual_seq_lengths):
+def _make_optional_index_tensor(case, torch, key, cu_seqlens):
     spec = case["optional_inputs"].get(key)
     if spec is None:
         return None
     if isinstance(spec, list):
         return torch.tensor(spec, dtype=torch.int64)
     if key == "ssm_state_indices" and spec == "generated_sequence_slots_int32":
-        return torch.tensor(_generated_sequence_slots(actual_seq_lengths), dtype=torch.int32)
+        return torch.tensor(_generated_sequence_slots(cu_seqlens), dtype=torch.int32)
     if key == "ssm_state_indices" and spec == "generated_sequence_slots_int64":
-        return torch.tensor(_generated_sequence_slots(actual_seq_lengths), dtype=torch.int64)
+        return torch.tensor(_generated_sequence_slots(cu_seqlens), dtype=torch.int64)
     if key == "num_accepted_tokens" and spec == "generated_last_token_int32":
-        return torch.tensor(_generated_last_token_accepts(actual_seq_lengths), dtype=torch.int32)
+        return torch.tensor(_generated_last_token_accepts(cu_seqlens), dtype=torch.int32)
     if key == "num_accepted_tokens" and spec == "generated_last_token_int64":
-        return torch.tensor(_generated_last_token_accepts(actual_seq_lengths), dtype=torch.int64)
+        return torch.tensor(_generated_last_token_accepts(cu_seqlens), dtype=torch.int64)
     raise ValueError(f"{case['id']}: unsupported {key} generator {spec!r}")
 
 
@@ -187,11 +194,11 @@ def _make_inputs(case, torch):
         "g": g,
         "beta": beta,
         "initial_state": initial_state,
-        "actual_seq_lengths": shapes["actual_seq_lengths"],
-        "ssm_state_indices": _make_optional_index_tensor(case, torch, "ssm_state_indices", shapes["actual_seq_lengths"]),
+        "cu_seqlens": shapes["cu_seqlens"],
+        "ssm_state_indices": _make_optional_index_tensor(case, torch, "ssm_state_indices", shapes["cu_seqlens"]),
         "A_log": A_log,
         "dt_bias": dt_bias,
-        "num_accepted_tokens": _make_optional_index_tensor(case, torch, "num_accepted_tokens", shapes["actual_seq_lengths"]),
+        "num_accepted_tokens": _make_optional_index_tensor(case, torch, "num_accepted_tokens", shapes["cu_seqlens"]),
     }
 
 
@@ -205,13 +212,8 @@ def _make_non_contiguous_last_dim(torch, tensor):
     return view
 
 
-def _device_actual_seq_lengths(torch, actual_seq_lengths, device):
-    return torch.tensor(actual_seq_lengths, dtype=torch.int64, device=device)
-
-
-def _active_output(tensor, invalid_tokens):
-    flat = tensor.reshape(-1, tensor.shape[-2], tensor.shape[-1])
-    return flat[int(invalid_tokens):]
+def _device_cu_seqlens(torch, cu_seqlens, device):
+    return torch.tensor(cu_seqlens, dtype=torch.int64, device=device)
 
 
 @pytest.mark.npu
@@ -238,7 +240,7 @@ def test_json_accuracy_cases():
             for key, value in attrs.items()
             if key not in ("scale",) or value is not None
         }
-        call_kwargs["actual_seq_lengths"] = _device_actual_seq_lengths(torch, inputs["actual_seq_lengths"], device)
+        call_kwargs["cu_seqlens"] = _device_cu_seqlens(torch, inputs["cu_seqlens"], device)
         optional_tensor_kwargs = {
             "ssm_state_indices": inputs["ssm_state_indices"],
             "A_log": inputs["A_log"],
@@ -260,10 +262,9 @@ def test_json_accuracy_cases():
             **call_kwargs,
         )
         torch.npu.synchronize()
-        invalid_tokens = inputs["actual_seq_lengths"][0]
         torch.testing.assert_close(
-            _active_output(out.cpu(), invalid_tokens).float(),
-            _active_output(expected[0], invalid_tokens).float(),
+            out.cpu().float(),
+            expected[0].float(),
             rtol=tol["rtol"],
             atol=tol["atol"],
         )
@@ -298,7 +299,7 @@ def test_non_contiguous_state_cases():
             for key, value in attrs.items()
             if key not in ("scale",) or value is not None
         }
-        call_kwargs["actual_seq_lengths"] = _device_actual_seq_lengths(torch, inputs["actual_seq_lengths"], device)
+        call_kwargs["cu_seqlens"] = _device_cu_seqlens(torch, inputs["cu_seqlens"], device)
         optional_tensor_kwargs = {
             "ssm_state_indices": inputs["ssm_state_indices"],
             "A_log": inputs["A_log"],
@@ -322,10 +323,9 @@ def test_non_contiguous_state_cases():
         )
         torch.npu.synchronize()
         assert out.is_contiguous()
-        invalid_tokens = inputs["actual_seq_lengths"][0]
         torch.testing.assert_close(
-            _active_output(out.cpu(), invalid_tokens).float(),
-            _active_output(expected[0], invalid_tokens).float(),
+            out.cpu().float(),
+            expected[0].float(),
             rtol=tol["rtol"],
             atol=tol["atol"],
         )
@@ -380,10 +380,10 @@ def test_json_large_shape_cases():
     assert cases, f"{OP} has no executable large-shape cases"
     for case in cases:
         shapes = _shape_from_case(case)
-        actual_seq_lengths = shapes["actual_seq_lengths"]
-        lengths = _sequence_lengths(actual_seq_lengths)
-        assert len(actual_seq_lengths) == int(case["shape"]["seq_num"]) + 1
-        assert sum(actual_seq_lengths) == int(case["shape"]["T_total"])
+        cu_seqlens = shapes["cu_seqlens"]
+        lengths = _sequence_lengths(cu_seqlens)
+        assert len(cu_seqlens) == int(case["shape"]["seq_num"]) + 1
+        assert cu_seqlens[-1] == int(case["shape"]["T_total"])
         assert max(lengths) <= int(case["shape"]["max_seq_len"])
         assert {0, 1, 2, 3, 4, 5, 6, 7, 8} <= set(lengths)
 
@@ -412,7 +412,7 @@ def test_json_large_shape_cases():
             g,
             beta,
             initial_state,
-            actual_seq_lengths=_device_actual_seq_lengths(torch, actual_seq_lengths, device),
+            cu_seqlens=_device_cu_seqlens(torch, cu_seqlens, device),
             A_log=A_log,
             dt_bias=dt_bias,
             **call_kwargs,
@@ -448,8 +448,8 @@ def test_kimi_k3_tp16_device_metadata_and_state_pool():
     torch.npu.set_device(device)
     torch.manual_seed(20260722)
 
-    actual_host = [0, 1, 4, 4, 5]
-    tokens, heads, dim = sum(actual_host), 6, 128
+    cu_seqlens_host = [0, 1, 4, 4, 5]
+    tokens, heads, dim = cu_seqlens_host[-1], 6, 128
     q = torch.randn(tokens, heads, dim, dtype=torch.bfloat16)
     k = torch.randn_like(q)
     v = torch.randn_like(q)
@@ -463,7 +463,7 @@ def test_kimi_k3_tp16_device_metadata_and_state_pool():
         [[8, 8, 8, 8, 8], [2, 11, 6, 2, 2], [4, 4, 4, 4, 4], [1, 3, 5, 7, 9]],
         dtype=torch.int64,
     )
-    accepted = torch.tensor([1, 2, 1, 1], dtype=torch.int64)
+    accepted = torch.tensor([1, 2, 0, 1], dtype=torch.int64)
     a_log = torch.randn(heads, dtype=torch.float32) * 0.05
     dt_bias = torch.randn(heads, dim, dtype=torch.float32) * 0.05
 
@@ -474,7 +474,7 @@ def test_kimi_k3_tp16_device_metadata_and_state_pool():
         raw_gate,
         beta,
         state,
-        actual_seq_lengths=actual_host,
+        cu_seqlens=cu_seqlens_host,
         ssm_state_indices=state_indices,
         A_log=a_log,
         dt_bias=dt_bias,
@@ -494,7 +494,7 @@ def test_kimi_k3_tp16_device_metadata_and_state_pool():
         raw_gate.to(device),
         beta.to(device),
         state_npu,
-        actual_seq_lengths=torch.tensor(actual_host, dtype=torch.int32, device=device),
+        cu_seqlens=torch.tensor(cu_seqlens_host, dtype=torch.int32, device=device),
         ssm_state_indices=state_indices.to(device),
         A_log=a_log.to(device),
         dt_bias=dt_bias.to(device),
@@ -511,7 +511,7 @@ def test_kimi_k3_tp16_device_metadata_and_state_pool():
     assert final_state.data_ptr() == state_npu.data_ptr()
     torch.testing.assert_close(out.cpu().float(), expected[0].float(), rtol=0.02, atol=0.02)
     torch.testing.assert_close(final_state.cpu().float(), expected[1].float(), rtol=0.02, atol=0.02)
-    touched = {1, 2, 3, 4, 5, 6, 7, 8, 9, 11}
+    touched = {1, 2, 6, 8, 11}
     untouched = [slot for slot in range(state.shape[0]) if slot not in touched]
     torch.testing.assert_close(final_state.cpu()[untouched], state_before[untouched], rtol=0, atol=0)
 
@@ -532,8 +532,8 @@ def test_kimi_k3_tp16_tnd_mtp_lengths_1_to_8():
     torch.manual_seed(20260722)
 
     lengths = list(range(1, 9))
-    actual_host = [0] + lengths
-    tokens, heads, dim = sum(actual_host), 6, 128
+    cu_seqlens_host = _prefix_offsets(lengths)
+    tokens, heads, dim = cu_seqlens_host[-1], 6, 128
     q = torch.randn(tokens, heads, dim, dtype=torch.bfloat16)
     k = torch.randn_like(q)
     v = torch.randn_like(q)
@@ -553,7 +553,7 @@ def test_kimi_k3_tp16_tnd_mtp_lengths_1_to_8():
         raw_gate,
         beta,
         state,
-        actual_seq_lengths=actual_host,
+        cu_seqlens=cu_seqlens_host,
         ssm_state_indices=state_indices,
         A_log=a_log,
         dt_bias=dt_bias,
@@ -573,7 +573,7 @@ def test_kimi_k3_tp16_tnd_mtp_lengths_1_to_8():
         raw_gate.to(device),
         beta.to(device),
         state_npu,
-        actual_seq_lengths=torch.tensor(actual_host, dtype=torch.int32, device=device),
+        cu_seqlens=torch.tensor(cu_seqlens_host, dtype=torch.int32, device=device),
         ssm_state_indices=state_indices.to(device),
         A_log=a_log.to(device),
         dt_bias=dt_bias.to(device),

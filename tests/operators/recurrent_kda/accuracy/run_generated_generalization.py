@@ -121,8 +121,11 @@ def make_lengths(rng: random.Random, seq_num: int, allow_zero: bool) -> list[int
     return lengths
 
 
-def make_actual_seq_lengths(lengths: list[int]) -> list[int]:
-    return [0] + [int(length) for length in lengths]
+def make_cu_seqlens(lengths: list[int]) -> list[int]:
+    offsets = [0]
+    for length in lengths:
+        offsets.append(offsets[-1] + int(length))
+    return offsets
 
 
 def choose_heads(i: int, rng: random.Random) -> tuple[int, int]:
@@ -185,22 +188,22 @@ def choose_shape(i: int, rng: random.Random, layout: str, varlen: bool, ssm: boo
         batch = rng.choice([1, 2, 3, 4] if not heavy_shape else [1, 2])
         seq_len = 8 if i % 41 == 0 else rng.randint(1, 8)
         return {"B": batch, "T": seq_len, "H": h, "H_v": hv, "K": kdim, "V": vdim,
-                "actual_seq_lengths": make_actual_seq_lengths([seq_len] * batch), "seq_num": batch,
+                "cu_seqlens": make_cu_seqlens([seq_len] * batch), "seq_num": batch,
                 "varlen": False}
     if layout == "BSND":
         seq_num = choose_seq_num(i, rng, hv, vdim)
         lengths = make_lengths(rng, seq_num, allow_zero=not ssm and (i % 5 == 0))
         total = sum(lengths)
         return {"B": 1, "T": total, "H": h, "H_v": hv, "K": kdim, "V": vdim,
-                "actual_seq_lengths": make_actual_seq_lengths(lengths), "seq_num": seq_num, "varlen": True}
+                "cu_seqlens": make_cu_seqlens(lengths), "seq_num": seq_num, "varlen": True}
     if layout == "TND" and not varlen:
         total = 8 if i % 43 == 0 else rng.randint(1, 8)
         return {"T_total": total, "H": h, "H_v": hv, "K": kdim, "V": vdim,
-                "actual_seq_lengths": make_actual_seq_lengths([total]), "seq_num": 1, "varlen": False}
+                "cu_seqlens": make_cu_seqlens([total]), "seq_num": 1, "varlen": False}
     seq_num = choose_seq_num(i, rng, hv, vdim)
     lengths = make_lengths(rng, seq_num, allow_zero=not ssm and (i % 7 == 0))
     return {"T_total": sum(lengths), "H": h, "H_v": hv, "K": kdim, "V": vdim,
-            "actual_seq_lengths": make_actual_seq_lengths(lengths), "seq_num": seq_num, "varlen": True}
+            "cu_seqlens": make_cu_seqlens(lengths), "seq_num": seq_num, "varlen": True}
 
 
 def generate_case(i: int, seed: int) -> dict[str, Any]:
@@ -293,12 +296,12 @@ def make_inputs(case: dict[str, Any]):
             dt_bias = randn((hv, kdim), gen, torch.float32, scale=0.1)
         elif case["optional"]["dt_kind"] == "flat":
             dt_bias = randn((hv * kdim,), gen, torch.float32, scale=0.1)
-    actual_seq_lengths = s["actual_seq_lengths"]
+    cu_seqlens = s["cu_seqlens"]
     ssm_state_indices = None
     num_accepted_tokens = None
     if case["optional"]["ssm"]:
-        lengths = actual_seq_lengths[1:]
-        slots = [0] * actual_seq_lengths[0]
+        lengths = [end - start for start, end in zip(cu_seqlens, cu_seqlens[1:])]
+        slots = []
         for seq_idx, length in enumerate(lengths):
             slots.extend([seq_idx] * length)
         ssm_state_indices = torch.tensor(slots, dtype=torch.int32 if case["seed"] % 2 else torch.int64)
@@ -311,7 +314,7 @@ def make_inputs(case: dict[str, Any]):
         "g": g,
         "beta": beta,
         "initial_state": initial_state,
-        "actual_seq_lengths": actual_seq_lengths,
+        "cu_seqlens": cu_seqlens,
         "ssm_state_indices": ssm_state_indices,
         "A_log": a_log,
         "dt_bias": dt_bias,
@@ -321,8 +324,8 @@ def make_inputs(case: dict[str, Any]):
 
 def to_device(inputs, device):
     converted = {key: (value.to(device) if torch.is_tensor(value) else value) for key, value in inputs.items()}
-    converted["actual_seq_lengths"] = torch.tensor(
-        converted["actual_seq_lengths"], dtype=torch.int64, device=device
+    converted["cu_seqlens"] = torch.tensor(
+        converted["cu_seqlens"], dtype=torch.int64, device=device
     )
     return converted
 
@@ -345,7 +348,7 @@ def call_op(inputs, attrs):
         inputs["g"],
         inputs["beta"],
         inputs["initial_state"],
-        actual_seq_lengths=inputs["actual_seq_lengths"],
+        cu_seqlens=inputs["cu_seqlens"],
         ssm_state_indices=inputs["ssm_state_indices"],
         A_log=inputs["A_log"],
         dt_bias=inputs["dt_bias"],
@@ -429,7 +432,7 @@ def branch_keys(case: dict[str, Any]) -> list[str]:
         f"beta_dtype={case['dtype']['beta']}",
         f"state_dtype={case['dtype']['state']}",
     ]
-    lengths = s["actual_seq_lengths"][1:]
+    lengths = [end - start for start, end in zip(s["cu_seqlens"], s["cu_seqlens"][1:])]
     keys.append(f"max_segment={max(lengths)}")
     keys.append(f"min_segment={min(lengths)}")
     if s["H"] == 96 and s["H_v"] == 96 and s["K"] == 128 and s["V"] == 128:

@@ -34,7 +34,7 @@ const std::array<const aclTensor *, 2> RecurrentKda(
     const aclTensor *gate,
     const aclTensor *beta,
     aclTensor *stateRef,
-    const aclTensor *actualSeqLengths,
+    const aclTensor *cuSeqlens,
     const aclTensor *ssmStateIndicesOptional,
     const aclTensor *aLogOptional,
     const aclTensor *dtBiasOptional,
@@ -51,7 +51,7 @@ const std::array<const aclTensor *, 2> RecurrentKda(
     const aclTensor *out,
     aclOpExecutor *executor)
 {
-    L0_DFX(RecurrentKda, query, key, value, gate, beta, stateRef, actualSeqLengths, ssmStateIndicesOptional,
+    L0_DFX(RecurrentKda, query, key, value, gate, beta, stateRef, cuSeqlens, ssmStateIndicesOptional,
            aLogOptional, dtBiasOptional, numAcceptedTokensOptional, layout, scale, useQkL2normInKernel,
            useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, safeGate, lowerBound, stateVFirst, out,
            stateRef);
@@ -60,7 +60,7 @@ const std::array<const aclTensor *, 2> RecurrentKda(
     float lowerBoundAttr = static_cast<float>(lowerBound);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         RecurrentKda,
-        OP_INPUT(query, key, value, gate, beta, stateRef, actualSeqLengths, ssmStateIndicesOptional, aLogOptional,
+        OP_INPUT(query, key, value, gate, beta, stateRef, cuSeqlens, ssmStateIndicesOptional, aLogOptional,
                  dtBiasOptional, numAcceptedTokensOptional),
         OP_OUTPUT(out, stateRef),
         OP_ATTR(layout, scaleAttr, useQkL2normInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval,

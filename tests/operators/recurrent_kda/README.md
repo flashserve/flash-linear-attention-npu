@@ -26,7 +26,7 @@
 ```bash
 pytest -q tests/operators/recurrent_kda/accuracy/test_recurrent_kda.py
 FLA_NPU_RUN_OPERATOR_TESTS=1 pytest -q tests/operators/recurrent_kda/accuracy/test_recurrent_kda.py
-FLA_NPU_RUN_OPERATOR_TESTS=1 FLA_NPU_RUN_LARGE_SHAPE_TESTS=1 FLA_NPU_CASE_IDS=recurrent_kda_kimi_tnd_h96_d128_runtime_actual_seq_lengths_smoke pytest -q tests/operators/recurrent_kda/accuracy/test_recurrent_kda.py
+FLA_NPU_RUN_OPERATOR_TESTS=1 FLA_NPU_RUN_LARGE_SHAPE_TESTS=1 FLA_NPU_CASE_IDS=recurrent_kda_kimi_tnd_h96_d128_runtime_cu_seqlens_smoke pytest -q tests/operators/recurrent_kda/accuracy/test_recurrent_kda.py
 python3 tests/operators/recurrent_kda/accuracy/run_generated_generalization.py --cases 500 --seed 20260720 --device 0 --repeats 1 --state-atol 0.03
 pytest -q tests/operators/recurrent_kda/ut
 FLA_NPU_RUN_LEGACY_TESTS=1 FLA_NPU_RUN_OPERATOR_TESTS=1 pytest -q tests/operators/recurrent_kda/routes/test_legacy_recurrent_kda.py

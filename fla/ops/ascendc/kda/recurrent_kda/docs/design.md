@@ -13,7 +13,7 @@ GDN recurrent 的函数接口。
 
 - 提供 Ascend C 实现类型的 `recurrent_kda`，覆盖 `fla_npu.ops.ascendc`、aclnn、`<<<>>>` 和可选 legacy 入口。
 - 对齐常用上游 API：`raw gate`、`A_log`、`dt_bias`、`lower_bound`、`safe_gate`、`beta sigmoid`、`allow_neg_eigval`。
-- 支持 `BSND` 和 `TND`，支持 device `actual_seq_lengths` 变长序列、容量化 state pool 和 speculative slot 索引。
+- 支持 `BSND` 和 `TND`，支持 device `cu_seqlens` 变长序列、容量化 state pool 和 speculative slot 索引。
 - 保持 KDA recurrent 与 GDN recurrent 接口解耦。
 
 ### 2.2 非目标
@@ -83,9 +83,9 @@ o_t = S @ q_t
 
 ### 6.1 任务划分
 
-Tiling 按逻辑序列和 value head 拆分任务。`actual_seq_lengths` 必传，`seq_num=len(actual_seq_lengths)-1`；第 0 项
-表示前置无效 token 数，后续每项直接表示一条有效序列的长度，不是累计边界。当前单任务面向 recurrent 小步长，
-每条有效序列长度限制为 `<=8`。
+Tiling 按逻辑序列和 value head 拆分任务。`cu_seqlens` 必传，`seq_num=len(cu_seqlens)-1`，使用与
+fla-org 一致的累计边界语义；第 `i` 条序列范围为 `[cu_seqlens[i], cu_seqlens[i+1])`。当前单任务面向
+recurrent 小步长，每个相邻 offset 的差值限制为 `<=8`。
 
 ### 6.2 Tiling Data
 
@@ -138,9 +138,8 @@ tiling data 驱动，避免把 runtime shape 组合扩张到 tiling key。
 
 ### 7.4 边界处理
 
-- `actual_seq_lengths` 所有值必须非负；第 0 项是前置无效 token 数，后续每项是对应有效序列长度，所有元素之和必须等于 token 总数。host 只检查 rank/dtype，device kernel 校验值。
-- 第 0 项覆盖的无效 token 不参与计算，其输出值没有语义，调用侧不应消费。
-- 每段长度为 0 的序列不产生 token 输出，也不读取 `ssm_state_indices/num_accepted_tokens` 或 state。
+- `cu_seqlens` 首项必须为 0，offset 必须单调不减且末项等于 token 总数。host 只检查 rank/dtype，device kernel 校验值。
+- 相邻 offset 相等时表示空序列；该序列不产生 token 输出，也不读取 `ssm_state_indices/num_accepted_tokens` 或 state。
 - 一维 `ssm_state_indices` 按 packed token 偏移读取；二维索引按 `[seq_idx,step]` 读取，第二维必须覆盖对应序列长度。
 - `num_accepted_tokens` 只在提供 `ssm_state_indices` 时有效，用于定位 MTP decode 的初始状态槽。
 
@@ -173,9 +172,9 @@ Q/K/V 公开输入为 BF16，gate/beta 在 aclnn 预处理后以 FP32 进入 ker
 - Kimi/KDA 关键泛化 shape：GVA head 映射、`K=128,V=128` dense raw gate、`K=128,V=256` TND safe gate。
 - Kimi K3 TP16：本地 head 数 6、`K=V=128`、BF16 Q/K/V、raw+safe gate、TND packed decode/MTP 1-8；
   覆盖 `[0,1,4,4,5]` 非等长序列、二维 slot 索引、容量化 state pool、非连续槽更新和未命中槽保持不变。
-- 空序列覆盖 `[0,1,0,3,0,4]`，确认空序列不读取索引或 state。
-- Kimi H96/D128 smoke：`H=H_v=96,K=V=128,safe_gate=True`，运行时生成非等距 `actual_seq_lengths`，
-  覆盖 `actual_seq_lengths` 长度和值泛化；每段 recurrent 长度仍遵循当前 `<=8` 限制。
+- 空序列覆盖 `[0,1,1,4,4,8]`，确认重复 offset 对应的空序列不读取索引或 state。
+- Kimi H96/D128 smoke：`H=H_v=96,K=V=128,safe_gate=True`，运行时生成非等距 `cu_seqlens`，
+  覆盖 `cu_seqlens` 长度和值泛化；每段 recurrent 长度仍遵循当前 `<=8` 限制。
 - Kimi 完整长上下文 stress target：`T_total=12288,H=H_v=96,K=V=128,safe_gate=True` 记录在 JSON，
   因当前单 kernel 计算量较大，不纳入默认通过矩阵。
 - 负向参数组合：长序列、`safe_gate` 与 raw gate 组合、`state_v_first=false`。

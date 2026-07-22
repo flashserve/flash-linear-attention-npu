@@ -25,7 +25,7 @@ def make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim=
         v_shape = (batch, seq_len, hv, vdim)
         g_shape = (batch, seq_len, hv, kdim)
         beta_shape = (batch, seq_len, hv)
-        actual_seq_lengths = [0] + [seq_len] * batch
+        cu_seqlens = [seq_len * i for i in range(batch + 1)]
         seq_num = batch
     elif layout == "TND":
         total_tokens = batch * seq_len
@@ -33,7 +33,7 @@ def make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim=
         v_shape = (total_tokens, hv, vdim)
         g_shape = (total_tokens, hv, kdim)
         beta_shape = (total_tokens, hv)
-        actual_seq_lengths = [0] + [seq_len] * batch
+        cu_seqlens = [seq_len * i for i in range(batch + 1)]
         seq_num = batch
     else:
         raise ValueError(layout)
@@ -56,7 +56,7 @@ def make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim=
         "g": g,
         "beta": beta,
         "initial_state": initial_state,
-        "actual_seq_lengths": actual_seq_lengths,
+        "cu_seqlens": cu_seqlens,
         "A_log": A_log,
         "dt_bias": dt_bias,
         "layout": layout,
@@ -73,7 +73,7 @@ def run_case(desc, kwargs, op_kwargs, rtol=0.02, atol=0.01):
     from fla_npu.ops.ascendc import recurrent_kda
 
     call_kwargs = {**op_kwargs, "output_final_state": True, "layout": inp["layout"]}
-    call_kwargs["actual_seq_lengths"] = torch.tensor(inp["actual_seq_lengths"], dtype=torch.int64, device=dev)
+    call_kwargs["cu_seqlens"] = torch.tensor(inp["cu_seqlens"], dtype=torch.int64, device=dev)
     initial_state_arg = inp["initial_state"].to(dev) if inp["initial_state"] is not None else None
     out, final_state = recurrent_kda(
         inp["q"].to(dev),

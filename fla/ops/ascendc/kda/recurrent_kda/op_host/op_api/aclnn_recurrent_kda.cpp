@@ -49,7 +49,7 @@ struct RecurrentKdaParams {
     const aclTensor *gate = nullptr;
     const aclTensor *beta = nullptr;
     aclTensor *stateRef = nullptr;
-    const aclTensor *actualSeqLengths = nullptr;
+    const aclTensor *cuSeqlens = nullptr;
     const aclTensor *ssmStateIndicesOptional = nullptr;
     const aclTensor *aLogOptional = nullptr;
     const aclTensor *dtBiasOptional = nullptr;
@@ -114,10 +114,10 @@ bool ParseLayout(const char *layout, RecurrentKdaLayout &parsed)
     return false;
 }
 
-bool CheckActualSeqLengthsShape(const aclTensor *actualSeqLengths, const char *opName)
+bool CheckCuSeqlensShape(const aclTensor *cuSeqlens, const char *opName)
 {
-    if (Rank(actualSeqLengths) != 1 || Dim(actualSeqLengths, DIM0) < 2) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "%s: actual_seq_lengths must be a 1D tensor with at least two elements.", opName);
+    if (Rank(cuSeqlens) != 1 || Dim(cuSeqlens, DIM0) < 2) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "%s: cu_seqlens must be a 1D tensor with at least two elements.", opName);
         return false;
     }
     return true;
@@ -190,10 +190,10 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
                 kDim, vDim);
         return false;
     }
-    if (!CheckActualSeqLengthsShape(params.actualSeqLengths, "npu_recurrent_kda")) {
+    if (!CheckCuSeqlensShape(params.cuSeqlens, "npu_recurrent_kda")) {
         return false;
     }
-    int64_t seqNum = Dim(params.actualSeqLengths, DIM0) - 1;
+    int64_t seqNum = Dim(params.cuSeqlens, DIM0) - 1;
     if (!params.stateVFirst) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: state_v_first=false is not supported.");
         return false;
@@ -270,7 +270,7 @@ bool CheckNotNull(const RecurrentKdaParams &params)
     OP_CHECK_NULL(params.gate, return false);
     OP_CHECK_NULL(params.beta, return false);
     OP_CHECK_NULL(params.stateRef, return false);
-    OP_CHECK_NULL(params.actualSeqLengths, return false);
+    OP_CHECK_NULL(params.cuSeqlens, return false);
     OP_CHECK_NULL(params.out, return false);
     return true;
 }
@@ -284,7 +284,7 @@ bool CheckDtypeValid(const RecurrentKdaParams &params)
     OP_CHECK_DTYPE_NOT_SUPPORT(params.beta, GATE_TYPE_SUPPORT_LIST, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(params.stateRef, STATE_TYPE_SUPPORT_LIST, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(params.out, QKV_TYPE_SUPPORT_LIST, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(params.actualSeqLengths, INT_TYPE_SUPPORT_LIST, return false);
+    OP_CHECK_DTYPE_NOT_SUPPORT(params.cuSeqlens, INT_TYPE_SUPPORT_LIST, return false);
     if (params.ssmStateIndicesOptional != nullptr) {
         OP_CHECK_DTYPE_NOT_SUPPORT(params.ssmStateIndicesOptional, INT_TYPE_SUPPORT_LIST, return false);
     }
@@ -325,7 +325,7 @@ void SetInputOriginalShape(RecurrentKdaParams &params)
     SetTensorOriginalShape(params.gate);
     SetTensorOriginalShape(params.beta);
     SetTensorOriginalShape(params.stateRef);
-    SetTensorOriginalShape(params.actualSeqLengths);
+    SetTensorOriginalShape(params.cuSeqlens);
     SetTensorOriginalShape(params.ssmStateIndicesOptional);
     SetTensorOriginalShape(params.aLogOptional);
     SetTensorOriginalShape(params.dtBiasOptional);
@@ -350,17 +350,17 @@ aclnnStatus PreProcess(RecurrentKdaParams &params, aclOpExecutor *executor)
     CHECK_RET(DataContiguous(params.value, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.gate, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.beta, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(DataContiguous(params.actualSeqLengths, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+    CHECK_RET(DataContiguous(params.cuSeqlens, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.ssmStateIndicesOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.numAcceptedTokensOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     params.gate = MaybeCast(params.gate, DataType::DT_FLOAT, executor);
     params.beta = MaybeCast(params.beta, DataType::DT_FLOAT, executor);
-    params.actualSeqLengths = MaybeCast(params.actualSeqLengths, DataType::DT_INT64, executor);
+    params.cuSeqlens = MaybeCast(params.cuSeqlens, DataType::DT_INT64, executor);
     params.ssmStateIndicesOptional = MaybeCast(params.ssmStateIndicesOptional, DataType::DT_INT64, executor);
     params.numAcceptedTokensOptional = MaybeCast(params.numAcceptedTokensOptional, DataType::DT_INT64, executor);
-    CHECK_RET(params.gate != nullptr && params.beta != nullptr && params.actualSeqLengths != nullptr,
+    CHECK_RET(params.gate != nullptr && params.beta != nullptr && params.cuSeqlens != nullptr,
               ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(!hasSsmStateIndices || params.ssmStateIndicesOptional != nullptr, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(!hasNumAcceptedTokens || params.numAcceptedTokensOptional != nullptr, ACLNN_ERR_INNER_NULLPTR);
@@ -380,7 +380,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     const aclTensor *gate,
     const aclTensor *beta,
     aclTensor *stateRef,
-    const aclTensor *actualSeqLengths,
+    const aclTensor *cuSeqlens,
     const aclTensor *ssmStateIndicesOptional,
     const aclTensor *aLogOptional,
     const aclTensor *dtBiasOptional,
@@ -400,7 +400,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     aclOpExecutor **executor)
 {
     L2_DFX_PHASE_1(aclnnRecurrentKda,
-                   DFX_IN(query, key, value, gate, beta, stateRef, actualSeqLengths, ssmStateIndicesOptional,
+                   DFX_IN(query, key, value, gate, beta, stateRef, cuSeqlens, ssmStateIndicesOptional,
                           aLogOptional, dtBiasOptional, numAcceptedTokensOptional, layout, scale, outputFinalState,
                           useQkL2normInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, safeGate,
                           lowerBound, stateVFirst),
@@ -410,7 +410,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
 
-    RecurrentKdaParams params{query, key, value, gate, beta, stateRef, actualSeqLengths, ssmStateIndicesOptional,
+    RecurrentKdaParams params{query, key, value, gate, beta, stateRef, cuSeqlens, ssmStateIndicesOptional,
                               aLogOptional, dtBiasOptional, numAcceptedTokensOptional, layout, scale,
                               outputFinalState, useQkL2normInKernel, useGateInKernel, useBetaSigmoidInKernel,
                               allowNegEigval, safeGate, lowerBound, stateVFirst, out};
@@ -431,7 +431,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     }
 
     auto result = l0op::RecurrentKda(params.query, params.key, params.value, params.gate, params.beta,
-                                     stateForKernel, params.actualSeqLengths, params.ssmStateIndicesOptional,
+                                     stateForKernel, params.cuSeqlens, params.ssmStateIndicesOptional,
                                      params.aLogOptional, params.dtBiasOptional, params.numAcceptedTokensOptional,
                                      params.layout, params.scale, params.useQkL2normInKernel,
                                      params.useGateInKernel, params.useBetaSigmoidInKernel, params.allowNegEigval,
