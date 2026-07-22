@@ -18,9 +18,7 @@
 #include "prepare_wy_repr_bwd_struct.h"
 
 constexpr uint64_t PREPARE_WY_REPR_BWD_VEC_TO_CUBE_FLAG_READY = 2;
-constexpr uint64_t PREPARE_WY_REPR_BWD_VEC_TO_CUBE_FLAG_REVERSE = 3;
 constexpr uint64_t PREPARE_WY_REPR_BWD_CUBE_TO_VEC_FLAG_READY = 4;
-constexpr uint64_t PREPARE_WY_REPR_BWD_CUBE_TO_VEC_FLAG_REVERSE = 5;
 constexpr uint64_t PRONE_BLOCK_BYTES_32 = 32;
 constexpr uint32_t K_DIM = 128;
 constexpr uint32_t UB_BYTES_16K = 16 * 1024;

@@ -309,10 +309,8 @@ private:
     uint32_t kktSlotForSlot_[BUFFER_COUNT_4] = {0, 0, 0, 0};
     uint32_t curL1_ = 0;
     uint32_t curL0_ = 0;
-    Arch::CrossCoreFlagWithReverse<> vecToCubeFlag_{PREPARE_WY_REPR_BWD_VEC_TO_CUBE_FLAG_READY,
-                                                    PREPARE_WY_REPR_BWD_VEC_TO_CUBE_FLAG_REVERSE};
-    Arch::CrossCoreFlagWithReverse<> cubeToVecFlag_{PREPARE_WY_REPR_BWD_CUBE_TO_VEC_FLAG_READY,
-                                                    PREPARE_WY_REPR_BWD_CUBE_TO_VEC_FLAG_REVERSE};
+    Arch::CrossCoreFlag vecToCubeFlag_{PREPARE_WY_REPR_BWD_VEC_TO_CUBE_FLAG_READY};
+    Arch::CrossCoreFlag cubeToVecFlag_{PREPARE_WY_REPR_BWD_CUBE_TO_VEC_FLAG_READY};
 };
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
@@ -800,7 +798,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 CopyGmToL1B_DA2<decltype(blockVbT)> copyGmToL1B_VbT;
                 CopyL0CToGm_DA2<decltype(blockDA2)> copyL0CToGm_DA2;
 
-                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(vecToCubeFlag_);
+                Arch::CrossCoreWaitFlag(vecToCubeFlag_);
 
                 uint32_t da1L1Idx = curL1_;
                 int32_t da1L1AEvent = da1L1Idx == 0 ? EVENT_L1_SCRATCH_PING : EVENT_L1_SCRATCH_PONG;
@@ -934,7 +932,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
                 copyL0CToGm_DA2(blockDA2, tensorL0C_DA2, fixpipeUnitFlag);
                 AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
-                Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(cubeToVecFlag_);
+                Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
                 curSlot_ ^= 1U;
             }
 
@@ -958,7 +956,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 CopyGmToL1A_DA5<decltype(blockDA4)> copyGmToL1A_DA4;
                 CopyL0CToGm_DA5<decltype(blockDA5)> copyL0CToGm_DA5;
 
-                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(vecToCubeFlag_);
+                Arch::CrossCoreWaitFlag(vecToCubeFlag_);
                 int32_t da5FixToMte2Event =
                     residentSlot == 0 ? EVENT_FIX_TO_MTE2_PING : EVENT_FIX_TO_MTE2_PONG;
 
@@ -1092,7 +1090,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
                 copyL0CToGm_DA6T(blockDA6T, tensorL0C_DA6T, fixpipeUnitFlag);
                 AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
-                Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(cubeToVecFlag_);
+                Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
                 curSlot_ ^= 1U;
             }
 
@@ -1128,7 +1126,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 CopyGmToL1B_DK<decltype(blockKbeta)> copyGmToL1B_Kbeta;
                 CopyL0CToGm_DK<decltype(blockDK)> copyL0CToGm_DK;
 
-                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(vecToCubeFlag_);
+                Arch::CrossCoreWaitFlag(vecToCubeFlag_);
 
                 uint32_t dkbL1AIdx = curL1_;
                 int32_t dkbL1AEvent = dkbL1AIdx == 0 ? EVENT_L1_SCRATCH_PING : EVENT_L1_SCRATCH_PONG;
@@ -1237,7 +1235,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 copyL0CToGm_DK(blockDK, tensorL0C_DK, fixpipeUnitFlag);
                 AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
 
-                Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(cubeToVecFlag_);
+                Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
                 curSlot_ ^= 1U;
             }
             ++windowIdx;

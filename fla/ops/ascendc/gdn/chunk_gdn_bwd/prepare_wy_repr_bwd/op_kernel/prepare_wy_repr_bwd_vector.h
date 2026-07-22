@@ -68,10 +68,8 @@ private:
     uint32_t curInputPingPong_ = 0;
     uint32_t curBetaGInputPingPong_ = 0;
     uint32_t curOutputPingPong_ = 0;
-    Arch::CrossCoreFlagWithReverse<> vecToCubeFlag_{PREPARE_WY_REPR_BWD_VEC_TO_CUBE_FLAG_READY,
-                                                    PREPARE_WY_REPR_BWD_VEC_TO_CUBE_FLAG_REVERSE};
-    Arch::CrossCoreFlagWithReverse<> cubeToVecFlag_{PREPARE_WY_REPR_BWD_CUBE_TO_VEC_FLAG_READY,
-                                                    PREPARE_WY_REPR_BWD_CUBE_TO_VEC_FLAG_REVERSE};
+    Arch::CrossCoreFlag vecToCubeFlag_{PREPARE_WY_REPR_BWD_VEC_TO_CUBE_FLAG_READY};
+    Arch::CrossCoreFlag cubeToVecFlag_{PREPARE_WY_REPR_BWD_CUBE_TO_VEC_FLAG_READY};
 
     GM_ADDR k_ = nullptr;
     GM_ADDR v_ = nullptr;
@@ -520,7 +518,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         CopyOutRows(gmVb_, outputBuf_[outputIdx_], rowOffset_ * V_DIM, curRow_ * V_DIM);
     }
 
-    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(vecToCubeFlag_);
+    Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
@@ -534,7 +532,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     subBlockNum_ = AscendC::GetSubBlockNum();
     subBlockIdx_ = AscendC::GetSubBlockIdx();
     rowTaskIdx_ = 0;
-    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(cubeToVecFlag_);
+    Arch::CrossCoreWaitFlag(cubeToVecFlag_);
     for (rowOffset_ = 0; rowOffset_ < task.curChunkSize; rowOffset_ += static_cast<uint32_t>(tiling_.mVecRow)) {
         localRowTask_ = rowTaskIdx_++;
         if (localRowTask_ % subBlockNum_ != subBlockIdx_) {
@@ -564,7 +562,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         CopyOutRows(gmDA4_, outputBuf_[outputIdx_], rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
     }
 
-    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(vecToCubeFlag_);
+    Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
@@ -580,7 +578,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     subBlockNum_ = AscendC::GetSubBlockNum();
     subBlockIdx_ = AscendC::GetSubBlockIdx();
     rowTaskIdx_ = 0;
-    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(cubeToVecFlag_);
+    Arch::CrossCoreWaitFlag(cubeToVecFlag_);
     for (rowOffset_ = 0; rowOffset_ < task.curChunkSize; rowOffset_ += static_cast<uint32_t>(tiling_.mVecRow)) {
         localRowTask_ = rowTaskIdx_++;
         if (localRowTask_ % subBlockNum_ != subBlockIdx_) {
@@ -629,7 +627,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         CopyOutRows(gmD_, outputBuf_[outputIdx_], rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
     }
 
-    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(vecToCubeFlag_);
+    Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
@@ -664,7 +662,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     subBlockNum_ = AscendC::GetSubBlockNum();
     subBlockIdx_ = AscendC::GetSubBlockIdx();
 
-    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(cubeToVecFlag_);
+    Arch::CrossCoreWaitFlag(cubeToVecFlag_);
     for (rowOffset_ = subBlockIdx_ * rowOwned; rowOffset_ < task.curChunkSize; rowOffset_ += rowOwned * subBlockNum_) {
         curRow_ = rowOffset_ + rowOwned > task.curChunkSize ? task.curChunkSize - rowOffset_ : rowOwned;
         repeatStride_ = K_DIM * sizeof(float32_t) / PRONE_BLOCK_BYTES_32;
