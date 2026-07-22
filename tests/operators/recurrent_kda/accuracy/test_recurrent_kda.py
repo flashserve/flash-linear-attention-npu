@@ -22,8 +22,9 @@ def test_case_manifest_covers_required_matrix():
     assert {"ascend910b", "ascend910_93", "ascend950"} <= set(manifest["capability"]["soc"])
     assert all("ascendc" in case["run_on"] for case in cases if "accuracy" in case["tags"])
     positive_cases = [case for case in cases if "negative" not in case["tags"]]
-    assert any(case["layout"] == "BSND" and case["optional_inputs"].get("cu_seqlens") for case in positive_cases)
-    assert any(case["layout"] == "TND" and case["optional_inputs"].get("cu_seqlens") for case in positive_cases)
+    assert all(case["optional_inputs"].get("actual_seq_lengths") is not None for case in positive_cases)
+    assert any(case["layout"] == "BSND" and case["optional_inputs"].get("actual_seq_lengths") for case in positive_cases)
+    assert any(case["layout"] == "TND" and case["optional_inputs"].get("actual_seq_lengths") for case in positive_cases)
     assert any(case["attrs"].get("use_gate_in_kernel") for case in positive_cases)
     assert any(not case["attrs"].get("use_gate_in_kernel") for case in positive_cases)
     assert any(case["attrs"].get("safe_gate") for case in positive_cases)
@@ -59,14 +60,14 @@ def _shape_from_case(case):
     if layout == "BSND":
         batch = int(shape["B"])
         seq_len = int(shape["T"])
-        cu_seqlens = _cu_seqlens_from_case(case)
+        actual_seq_lengths = _actual_seq_lengths_from_case(case)
         return {
             "q": (batch, seq_len, heads, key_dim),
             "v": (batch, seq_len, value_heads, value_dim),
             "g": (batch, seq_len, value_heads, key_dim),
             "beta": (batch, seq_len, value_heads),
-            "seq_num": int(shape.get("seq_num", len(cu_seqlens) - 1 if cu_seqlens is not None else batch)),
-            "cu_seqlens": cu_seqlens,
+            "seq_num": int(shape.get("seq_num", len(actual_seq_lengths) - 1)),
+            "actual_seq_lengths": actual_seq_lengths,
         }
     if layout == "TND":
         total_tokens = int(shape["T_total"])
@@ -77,17 +78,17 @@ def _shape_from_case(case):
             "g": (total_tokens, value_heads, key_dim),
             "beta": (total_tokens, value_heads),
             "seq_num": seq_num,
-            "cu_seqlens": _cu_seqlens_from_case(case),
+            "actual_seq_lengths": _actual_seq_lengths_from_case(case),
         }
     raise ValueError(layout)
 
 
-def _cu_seqlens_from_case(case):
-    spec = case["optional_inputs"].get("cu_seqlens")
-    if spec is None or isinstance(spec, list):
+def _actual_seq_lengths_from_case(case):
+    spec = case["optional_inputs"].get("actual_seq_lengths")
+    if isinstance(spec, list):
         return spec
     if spec != "generated_varlen_max8_total":
-        raise ValueError(f"{case['id']}: unsupported cu_seqlens generator {spec!r}")
+        raise ValueError(f"{case['id']}: unsupported actual_seq_lengths generator {spec!r}")
 
     shape = case["shape"]
     total = int(shape["T_total"])
@@ -97,14 +98,12 @@ def _cu_seqlens_from_case(case):
     special_lengths = [0, 8, 1, 7, 2, 6, 3, 5, 4, 4, 0, 8]
     remaining = total - sum(special_lengths)
     if remaining < 0 or remaining % max_seq_len != 0:
-        raise ValueError(f"{case['id']}: cannot generate cu_seqlens for total={total}")
+        raise ValueError(f"{case['id']}: cannot generate actual_seq_lengths for total={total}")
     lengths = [max_seq_len] * (remaining // max_seq_len) + special_lengths
-    cu = [0]
-    for length in lengths:
-        cu.append(cu[-1] + length)
-    if cu[-1] != total or len(cu) - 1 != int(shape["seq_num"]):
-        raise ValueError(f"{case['id']}: generated cu_seqlens does not match manifest shape")
-    return cu
+    actual_seq_lengths = [0] + lengths
+    if sum(actual_seq_lengths) != total or len(actual_seq_lengths) - 1 != int(shape["seq_num"]):
+        raise ValueError(f"{case['id']}: generated actual_seq_lengths does not match manifest shape")
+    return actual_seq_lengths
 
 
 def _torch_dtype(torch, name):
@@ -120,37 +119,35 @@ def _randn(torch, shape, generator, dtype, scale=1.0):
     return (torch.randn(shape, generator=generator, dtype=torch.float32) * scale).to(dtype)
 
 
-def _sequence_lengths(cu_seqlens):
-    if cu_seqlens is None:
-        return None
-    return [right - left for left, right in zip(cu_seqlens, cu_seqlens[1:])]
+def _sequence_lengths(actual_seq_lengths):
+    return [int(length) for length in actual_seq_lengths[1:]]
 
 
-def _generated_sequence_slots(cu_seqlens):
-    slots = []
-    for seq_idx, length in enumerate(_sequence_lengths(cu_seqlens)):
+def _generated_sequence_slots(actual_seq_lengths):
+    slots = [0] * int(actual_seq_lengths[0])
+    for seq_idx, length in enumerate(_sequence_lengths(actual_seq_lengths)):
         slots.extend([seq_idx] * length)
     return slots
 
 
-def _generated_last_token_accepts(cu_seqlens):
-    return [max(1, length) for length in _sequence_lengths(cu_seqlens)]
+def _generated_last_token_accepts(actual_seq_lengths):
+    return [max(1, length) for length in _sequence_lengths(actual_seq_lengths)]
 
 
-def _make_optional_index_tensor(case, torch, key, cu_seqlens):
+def _make_optional_index_tensor(case, torch, key, actual_seq_lengths):
     spec = case["optional_inputs"].get(key)
     if spec is None:
         return None
     if isinstance(spec, list):
         return torch.tensor(spec, dtype=torch.int64)
     if key == "ssm_state_indices" and spec == "generated_sequence_slots_int32":
-        return torch.tensor(_generated_sequence_slots(cu_seqlens), dtype=torch.int32)
+        return torch.tensor(_generated_sequence_slots(actual_seq_lengths), dtype=torch.int32)
     if key == "ssm_state_indices" and spec == "generated_sequence_slots_int64":
-        return torch.tensor(_generated_sequence_slots(cu_seqlens), dtype=torch.int64)
+        return torch.tensor(_generated_sequence_slots(actual_seq_lengths), dtype=torch.int64)
     if key == "num_accepted_tokens" and spec == "generated_last_token_int32":
-        return torch.tensor(_generated_last_token_accepts(cu_seqlens), dtype=torch.int32)
+        return torch.tensor(_generated_last_token_accepts(actual_seq_lengths), dtype=torch.int32)
     if key == "num_accepted_tokens" and spec == "generated_last_token_int64":
-        return torch.tensor(_generated_last_token_accepts(cu_seqlens), dtype=torch.int64)
+        return torch.tensor(_generated_last_token_accepts(actual_seq_lengths), dtype=torch.int64)
     raise ValueError(f"{case['id']}: unsupported {key} generator {spec!r}")
 
 
@@ -190,11 +187,11 @@ def _make_inputs(case, torch):
         "g": g,
         "beta": beta,
         "initial_state": initial_state,
-        "cu_seqlens": shapes["cu_seqlens"],
-        "ssm_state_indices": _make_optional_index_tensor(case, torch, "ssm_state_indices", shapes["cu_seqlens"]),
+        "actual_seq_lengths": shapes["actual_seq_lengths"],
+        "ssm_state_indices": _make_optional_index_tensor(case, torch, "ssm_state_indices", shapes["actual_seq_lengths"]),
         "A_log": A_log,
         "dt_bias": dt_bias,
-        "num_accepted_tokens": _make_optional_index_tensor(case, torch, "num_accepted_tokens", shapes["cu_seqlens"]),
+        "num_accepted_tokens": _make_optional_index_tensor(case, torch, "num_accepted_tokens", shapes["actual_seq_lengths"]),
     }
 
 
@@ -206,6 +203,15 @@ def _make_non_contiguous_last_dim(torch, tensor):
     assert tuple(view.shape) == tuple(tensor.shape)
     assert not view.is_contiguous()
     return view
+
+
+def _device_actual_seq_lengths(torch, actual_seq_lengths, device):
+    return torch.tensor(actual_seq_lengths, dtype=torch.int64, device=device)
+
+
+def _active_output(tensor, invalid_tokens):
+    flat = tensor.reshape(-1, tensor.shape[-2], tensor.shape[-1])
+    return flat[int(invalid_tokens):]
 
 
 @pytest.mark.npu
@@ -232,8 +238,7 @@ def test_json_accuracy_cases():
             for key, value in attrs.items()
             if key not in ("scale",) or value is not None
         }
-        if inputs["cu_seqlens"] is not None:
-            call_kwargs["cu_seqlens"] = inputs["cu_seqlens"]
+        call_kwargs["actual_seq_lengths"] = _device_actual_seq_lengths(torch, inputs["actual_seq_lengths"], device)
         optional_tensor_kwargs = {
             "ssm_state_indices": inputs["ssm_state_indices"],
             "A_log": inputs["A_log"],
@@ -255,7 +260,13 @@ def test_json_accuracy_cases():
             **call_kwargs,
         )
         torch.npu.synchronize()
-        torch.testing.assert_close(out.cpu().float(), expected[0].float(), rtol=tol["rtol"], atol=tol["atol"])
+        invalid_tokens = inputs["actual_seq_lengths"][0]
+        torch.testing.assert_close(
+            _active_output(out.cpu(), invalid_tokens).float(),
+            _active_output(expected[0], invalid_tokens).float(),
+            rtol=tol["rtol"],
+            atol=tol["atol"],
+        )
         if attrs.get("output_final_state", False):
             torch.testing.assert_close(final_state.cpu().float(), expected[1].float(), rtol=tol["rtol"], atol=tol["atol"])
         else:
@@ -287,8 +298,7 @@ def test_non_contiguous_state_cases():
             for key, value in attrs.items()
             if key not in ("scale",) or value is not None
         }
-        if inputs["cu_seqlens"] is not None:
-            call_kwargs["cu_seqlens"] = inputs["cu_seqlens"]
+        call_kwargs["actual_seq_lengths"] = _device_actual_seq_lengths(torch, inputs["actual_seq_lengths"], device)
         optional_tensor_kwargs = {
             "ssm_state_indices": inputs["ssm_state_indices"],
             "A_log": inputs["A_log"],
@@ -312,9 +322,16 @@ def test_non_contiguous_state_cases():
         )
         torch.npu.synchronize()
         assert out.is_contiguous()
-        torch.testing.assert_close(out.cpu().float(), expected[0].float(), rtol=tol["rtol"], atol=tol["atol"])
+        invalid_tokens = inputs["actual_seq_lengths"][0]
+        torch.testing.assert_close(
+            _active_output(out.cpu(), invalid_tokens).float(),
+            _active_output(expected[0], invalid_tokens).float(),
+            rtol=tol["rtol"],
+            atol=tol["atol"],
+        )
         if attrs.get("output_final_state", False):
-            assert final_state.is_contiguous()
+            assert final_state.data_ptr() == initial_state.data_ptr()
+            assert not final_state.is_contiguous()
             torch.testing.assert_close(final_state.cpu().float(), expected[1].float(),
                                        rtol=tol["rtol"], atol=tol["atol"])
         else:
@@ -363,10 +380,10 @@ def test_json_large_shape_cases():
     assert cases, f"{OP} has no executable large-shape cases"
     for case in cases:
         shapes = _shape_from_case(case)
-        cu_seqlens = shapes["cu_seqlens"]
-        lengths = [right - left for left, right in zip(cu_seqlens, cu_seqlens[1:])]
-        assert len(cu_seqlens) == int(case["shape"]["seq_num"]) + 1
-        assert cu_seqlens[-1] == int(case["shape"]["T_total"])
+        actual_seq_lengths = shapes["actual_seq_lengths"]
+        lengths = _sequence_lengths(actual_seq_lengths)
+        assert len(actual_seq_lengths) == int(case["shape"]["seq_num"]) + 1
+        assert sum(actual_seq_lengths) == int(case["shape"]["T_total"])
         assert max(lengths) <= int(case["shape"]["max_seq_len"])
         assert {0, 1, 2, 3, 4, 5, 6, 7, 8} <= set(lengths)
 
@@ -395,7 +412,7 @@ def test_json_large_shape_cases():
             g,
             beta,
             initial_state,
-            cu_seqlens=cu_seqlens,
+            actual_seq_lengths=_device_actual_seq_lengths(torch, actual_seq_lengths, device),
             A_log=A_log,
             dt_bias=dt_bias,
             **call_kwargs,
@@ -412,6 +429,161 @@ def test_json_large_shape_cases():
             f"[PASS] {OP}/{case['id']} T_total={case['shape']['T_total']} "
             f"H={case['shape']['H']} HV={case['shape']['H_v']} D={case['shape']['K']}"
         )
-
         del q, k, v, g, beta, initial_state, A_log, dt_bias, out, final_state
         torch.npu.empty_cache()
+
+
+@pytest.mark.npu
+def test_kimi_k3_tp16_device_metadata_and_state_pool():
+    if os.environ.get("FLA_NPU_RUN_OPERATOR_TESTS") != "1":
+        pytest.skip("set FLA_NPU_RUN_OPERATOR_TESTS=1 on an NPU test host")
+
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch_npu")
+    from fla_npu.ops.ascendc import npu_recurrent_kda as recurrent_kda
+    from tests.reference.recurrent_kda_reference import recurrent_kda_reference
+
+    device_id = int(os.environ.get("TEST_DEVICE_ID", "0"))
+    device = torch.device(f"npu:{device_id}")
+    torch.npu.set_device(device)
+    torch.manual_seed(20260722)
+
+    actual_host = [0, 1, 4, 4, 5]
+    tokens, heads, dim = sum(actual_host), 6, 128
+    q = torch.randn(tokens, heads, dim, dtype=torch.bfloat16)
+    k = torch.randn_like(q)
+    v = torch.randn_like(q)
+    raw_gate = torch.randn(tokens, heads, dim, dtype=torch.float32) * 0.25
+    beta = torch.rand(tokens, heads, dtype=torch.float32)
+    state = torch.randn(13, heads, dim, dim, dtype=torch.float32) * 0.01
+    state_before = state.clone()
+    state_indices = torch.tensor(
+        [[8, 8, 8, 8, 8], [2, 11, 6, 2, 2], [4, 4, 4, 4, 4], [6, 8, 11, 4, 2]],
+        dtype=torch.int64,
+    )
+    accepted = torch.tensor([1, 2, 1, 1], dtype=torch.int64)
+    a_log = torch.randn(heads, dtype=torch.float32) * 0.05
+    dt_bias = torch.randn(heads, dim, dtype=torch.float32) * 0.05
+
+    expected = recurrent_kda_reference(
+        q,
+        k,
+        v,
+        raw_gate,
+        beta,
+        state,
+        actual_seq_lengths=actual_host,
+        ssm_state_indices=state_indices,
+        A_log=a_log,
+        dt_bias=dt_bias,
+        num_accepted_tokens=accepted,
+        layout="TND",
+        scale=dim**-0.5,
+        use_qk_l2norm_in_kernel=True,
+        use_gate_in_kernel=True,
+        safe_gate=True,
+    )
+
+    state_npu = state.to(device)
+    out, final_state = recurrent_kda(
+        q.to(device),
+        k.to(device),
+        v.to(device),
+        raw_gate.to(device),
+        beta.to(device),
+        state_npu,
+        actual_seq_lengths=torch.tensor(actual_host, dtype=torch.int32, device=device),
+        ssm_state_indices=state_indices.to(device),
+        A_log=a_log.to(device),
+        dt_bias=dt_bias.to(device),
+        num_accepted_tokens=accepted.to(device),
+        layout="TND",
+        scale=dim**-0.5,
+        output_final_state=True,
+        use_qk_l2norm_in_kernel=True,
+        use_gate_in_kernel=True,
+        safe_gate=True,
+    )
+    torch.npu.synchronize()
+
+    assert final_state.data_ptr() == state_npu.data_ptr()
+    torch.testing.assert_close(out.cpu().float(), expected[0].float(), rtol=0.02, atol=0.02)
+    torch.testing.assert_close(final_state.cpu().float(), expected[1].float(), rtol=0.02, atol=0.02)
+    untouched = [slot for slot in range(state.shape[0]) if slot not in {2, 4, 6, 8, 11}]
+    torch.testing.assert_close(final_state.cpu()[untouched], state_before[untouched], rtol=0, atol=0)
+
+
+@pytest.mark.npu
+def test_kimi_k3_tp16_tnd_mtp_lengths_1_to_8():
+    if os.environ.get("FLA_NPU_RUN_OPERATOR_TESTS") != "1":
+        pytest.skip("set FLA_NPU_RUN_OPERATOR_TESTS=1 on an NPU test host")
+
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch_npu")
+    from fla_npu.ops.ascendc import npu_recurrent_kda as recurrent_kda
+    from tests.reference.recurrent_kda_reference import recurrent_kda_reference
+
+    device_id = int(os.environ.get("TEST_DEVICE_ID", "0"))
+    device = torch.device(f"npu:{device_id}")
+    torch.npu.set_device(device)
+    torch.manual_seed(20260722)
+
+    lengths = list(range(1, 9))
+    actual_host = [0] + lengths
+    tokens, heads, dim = sum(actual_host), 6, 128
+    q = torch.randn(tokens, heads, dim, dtype=torch.bfloat16)
+    k = torch.randn_like(q)
+    v = torch.randn_like(q)
+    raw_gate = torch.randn(tokens, heads, dim, dtype=torch.float32) * 0.25
+    beta = torch.rand(tokens, heads, dtype=torch.float32)
+    state = torch.randn(16, heads, dim, dim, dtype=torch.float32) * 0.01
+    slots = [8, 2, 11, 6, 4, 15, 1, 13]
+    state_indices = torch.tensor([[slot] * 8 for slot in slots], dtype=torch.int64)
+    accepted = torch.tensor(lengths, dtype=torch.int64)
+    a_log = torch.randn(heads, dtype=torch.float32) * 0.05
+    dt_bias = torch.randn(heads, dim, dtype=torch.float32) * 0.05
+
+    expected = recurrent_kda_reference(
+        q,
+        k,
+        v,
+        raw_gate,
+        beta,
+        state,
+        actual_seq_lengths=actual_host,
+        ssm_state_indices=state_indices,
+        A_log=a_log,
+        dt_bias=dt_bias,
+        num_accepted_tokens=accepted,
+        layout="TND",
+        scale=dim**-0.5,
+        use_qk_l2norm_in_kernel=True,
+        use_gate_in_kernel=True,
+        safe_gate=True,
+    )
+
+    state_npu = state.to(device)
+    out, final_state = recurrent_kda(
+        q.to(device),
+        k.to(device),
+        v.to(device),
+        raw_gate.to(device),
+        beta.to(device),
+        state_npu,
+        actual_seq_lengths=torch.tensor(actual_host, dtype=torch.int32, device=device),
+        ssm_state_indices=state_indices.to(device),
+        A_log=a_log.to(device),
+        dt_bias=dt_bias.to(device),
+        num_accepted_tokens=accepted.to(device),
+        layout="TND",
+        scale=dim**-0.5,
+        output_final_state=True,
+        use_qk_l2norm_in_kernel=True,
+        use_gate_in_kernel=True,
+        safe_gate=True,
+    )
+    torch.npu.synchronize()
+
+    assert final_state.data_ptr() == state_npu.data_ptr()
+    torch.testing.assert_close(out.cpu().float(), expected[0].float(), rtol=0.02, atol=0.02)
+    torch.testing.assert_close(final_state.cpu().float(), expected[1].float(), rtol=0.02, atol=0.02)

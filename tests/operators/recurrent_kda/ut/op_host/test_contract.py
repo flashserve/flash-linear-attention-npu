@@ -49,20 +49,63 @@ def test_positive_cases_stay_inside_supported_kv_enums():
 
 def test_state_tensors_allow_non_contiguous_views():
     source = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/recurrent_kda_def.cpp")
-    initial_state_block = source[
-        source.index('this->Input("initial_state")'):source.index('this->Input("cu_seqlens")')
+    state_input_block = source[
+        source.index('this->Input("state")'):source.index('this->Input("actual_seq_lengths")')
     ]
-    final_state_block = source[
-        source.index('this->Output("final_state")'):source.index('this->Attr("layout")')
+    state_output_block = source[
+        source.index('this->Output("state")'):source.index('this->Attr("layout")')
     ]
 
-    assert ".IgnoreContiguous()" in initial_state_block
-    assert ".IgnoreContiguous()" in final_state_block
+    assert ".IgnoreContiguous()" in state_input_block
+    assert ".IgnoreContiguous()" in state_output_block
 
 
 def test_state_view_contract_uses_work_tensors():
     source = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/op_api/aclnn_recurrent_kda.cpp")
 
-    assert "DataContiguous(initialStateForKernel" in source
-    assert "finalStateNeedViewCopy" in source
-    assert "ViewCopy(result[1], params.finalState" in source
+    assert "DataContiguous(contiguousState" in source
+    assert "stateNeedViewCopy" in source
+    assert "ViewCopy(result[1], params.stateRef" in source
+
+
+def test_device_metadata_and_capacity_state_contract():
+    api = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/op_api/aclnn_recurrent_kda.h")
+    op_def = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/recurrent_kda_def.cpp")
+    tiling = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/recurrent_kda_tiling_processor.h")
+
+    assert "const aclTensor *actualSeqLengths" in api
+    assert "aclIntArray" not in api
+    actual_input = op_def[op_def.index('this->Input("actual_seq_lengths")'):]
+    assert ".ParamType(REQUIRED)" in actual_input.split('this->Input("ssm_state_indices")', 1)[0]
+    assert "speculative [seq_num,max_step]" in tiling
+    assert "state_capacity must equal seq_num" in tiling
+
+
+def test_actual_seq_lengths_uses_gdn_value_semantics():
+    kernel = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_kernel/recurrent_kda.h")
+
+    assert "int64_t seq0 = actualSeqLengthsGm_.GetValue(0)" in kernel
+    assert "int64_t seqLen64 = actualSeqLengthsGm_.GetValue(batch_i + 1)" in kernel
+    assert "total += length" in kernel
+    assert "return total == static_cast<int64_t>(T_)" in kernel
+    assert "seqLen64 = seq1 - seq0" not in kernel
+
+
+def test_tiling_processor_owns_its_context():
+    source = _read_repo_file(
+        "fla/ops/ascendc/kda/recurrent_kda/op_host/recurrent_kda_tiling_processor.h"
+    )
+
+    assert "RecurrentKdaTilingContext ctx_;" in source
+    assert "const RecurrentKdaTilingContext &ctx_;" not in source
+
+
+def test_mutable_state_is_wired_as_an_inplace_output():
+    l0_source = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/op_api/recurrent_kda.cpp")
+    schema = _read_repo_file("torch_custom/fla_npu/npu_custom.yaml")
+    ctypes_init = _read_repo_file("torch_custom/fla_npu/fla_npu/ops/ascendc/__init__.py")
+
+    assert "OP_OUTPUT(out, stateRef)" in l0_source
+    assert "Tensor(a!) initial_state" in schema
+    assert "Tensor actual_seq_lengths" in schema
+    assert '"npu_recurrent_kda": ("initial_state",)' in ctypes_init

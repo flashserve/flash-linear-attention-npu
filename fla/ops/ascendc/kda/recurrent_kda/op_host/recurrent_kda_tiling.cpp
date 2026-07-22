@@ -31,7 +31,7 @@ const size_t VALUE_INDEX = 2;
 const size_t GATE_INDEX = 3;
 const size_t BETA_INDEX = 4;
 const size_t STATE_INDEX = 5;
-const size_t CUSEQLENS_INDEX = 6;
+const size_t ACTUAL_SEQ_LENGTHS_INDEX = 6;
 const size_t SSM_STATE_INDICES_INDEX = 7;
 const size_t A_LOG_INDEX = 8;
 const size_t DT_BIAS_INDEX = 9;
@@ -85,7 +85,7 @@ RecurrentKdaTilingContext RecurrentKdaTiling::BuildProcessorContext() const
     ctx.gateShape = context_->GetInputShape(GATE_INDEX)->GetOriginShape();
     ctx.betaShape = context_->GetInputShape(BETA_INDEX)->GetOriginShape();
     ctx.stateShape = context_->GetInputShape(STATE_INDEX)->GetOriginShape();
-    CopyOptionalOriginShape(context_, CUSEQLENS_INDEX, ctx.cuSeqlensShape);
+    ctx.actualSeqLengthsShape = context_->GetInputShape(ACTUAL_SEQ_LENGTHS_INDEX)->GetOriginShape();
     CopyOptionalOriginShape(context_, SSM_STATE_INDICES_INDEX, ctx.ssmStateShape);
     CopyOptionalOriginShape(context_, A_LOG_INDEX, ctx.aLogShape);
     CopyOptionalOriginShape(context_, DT_BIAS_INDEX, ctx.dtBiasShape);
@@ -96,7 +96,6 @@ RecurrentKdaTilingContext RecurrentKdaTiling::BuildProcessorContext() const
     ctx.scale = tilingData_.scale;
     ctx.lowerBound = tilingData_.lowerBound;
     ctx.layout = tilingData_.layout;
-    ctx.hasCuSeqlens = tilingData_.hasCuSeqlens;
     ctx.hasSsmStateIndices = tilingData_.hasSsmStateIndices;
     ctx.hasALog = tilingData_.hasALog;
     ctx.hasDtBias = tilingData_.hasDtBias;
@@ -198,6 +197,8 @@ ge::graphStatus RecurrentKdaTiling::CheckContext()
     OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(BETA_INDEX));
     OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputShape(STATE_INDEX));
     OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(STATE_INDEX));
+    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputShape(ACTUAL_SEQ_LENGTHS_INDEX));
+    OP_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(ACTUAL_SEQ_LENGTHS_INDEX));
     return ge::GRAPH_SUCCESS;
 }
 
@@ -219,11 +220,9 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeDtype()
     OP_CHECK_IF(stateDtype != ge::DT_FLOAT && stateDtype != ge::DT_BF16,
                 OP_LOGE(context_->GetNodeName(), "initial_state dtype should be bfloat16 or float32"),
                 return ge::GRAPH_FAILED);
-    if (context_->GetOptionalInputDesc(CUSEQLENS_INDEX) != nullptr) {
-        OP_CHECK_IF(context_->GetOptionalInputDesc(CUSEQLENS_INDEX)->GetDataType() != ge::DT_INT64,
-                    OP_LOGE(context_->GetNodeName(), "cu_seqlens dtype should be int64"),
-                    return ge::GRAPH_FAILED);
-    }
+    OP_CHECK_IF(context_->GetInputDesc(ACTUAL_SEQ_LENGTHS_INDEX)->GetDataType() != ge::DT_INT64,
+                OP_LOGE(context_->GetNodeName(), "actual_seq_lengths dtype should be int64"),
+                return ge::GRAPH_FAILED);
     if (context_->GetOptionalInputDesc(SSM_STATE_INDICES_INDEX) != nullptr) {
         OP_CHECK_IF(context_->GetOptionalInputDesc(SSM_STATE_INDICES_INDEX)->GetDataType() != ge::DT_INT64,
                     OP_LOGE(context_->GetNodeName(), "ssm_state_indices dtype should be int64"),
@@ -269,12 +268,12 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeFormat()
         !CheckFormat(context_->GetInputDesc(VALUE_INDEX)->GetStorageFormat(), "value") ||
         !CheckFormat(context_->GetInputDesc(GATE_INDEX)->GetStorageFormat(), "gate") ||
         !CheckFormat(context_->GetInputDesc(BETA_INDEX)->GetStorageFormat(), "beta") ||
-        !CheckFormat(context_->GetInputDesc(STATE_INDEX)->GetStorageFormat(), "initial_state")) {
+        !CheckFormat(context_->GetInputDesc(STATE_INDEX)->GetStorageFormat(), "initial_state") ||
+        !CheckFormat(context_->GetInputDesc(ACTUAL_SEQ_LENGTHS_INDEX)->GetStorageFormat(), "actual_seq_lengths")) {
         return ge::GRAPH_FAILED;
     }
 
-    const std::array<std::pair<size_t, const char *>, 5> optionalInputs = {{
-        {CUSEQLENS_INDEX, "cu_seqlens"},
+    const std::array<std::pair<size_t, const char *>, 4> optionalInputs = {{
         {SSM_STATE_INDICES_INDEX, "ssm_state_indices"},
         {A_LOG_INDEX, "A_log"},
         {DT_BIAS_INDEX, "dt_bias"},
@@ -315,7 +314,6 @@ ge::graphStatus RecurrentKdaTiling::GetAttrsInfo()
 
 ge::graphStatus RecurrentKdaTiling::GetOptionalInput()
 {
-    tilingData_.hasCuSeqlens = (context_->GetOptionalInputDesc(CUSEQLENS_INDEX) == nullptr) ? 0 : 1;
     tilingData_.hasSsmStateIndices = (context_->GetOptionalInputDesc(SSM_STATE_INDICES_INDEX) == nullptr) ? 0 : 1;
     tilingData_.hasALog = (context_->GetOptionalInputDesc(A_LOG_INDEX) == nullptr) ? 0 : 1;
     tilingData_.hasDtBias = (context_->GetOptionalInputDesc(DT_BIAS_INDEX) == nullptr) ? 0 : 1;
@@ -335,6 +333,7 @@ void RecurrentKdaTiling::PrintTilingData()
     OP_LOGD(context_->GetNodeName(), "nv: [%u]", tilingData_.nv);
     OP_LOGD(context_->GetNodeName(), "dv: [%u]", tilingData_.dv);
     OP_LOGD(context_->GetNodeName(), "sBlockNum: [%u]", tilingData_.sBlockNum);
+    OP_LOGD(context_->GetNodeName(), "ssmStateStride: [%u]", tilingData_.ssmStateStride);
     OP_LOGD(context_->GetNodeName(), "b: [%u]", tilingData_.b);
     OP_LOGD(context_->GetNodeName(), "vStep: [%u]", tilingData_.vStep);
     OP_LOGD(context_->GetNodeName(), "stateOutBufferNum: [%u]", tilingData_.stateOutBufferNum);
@@ -342,7 +341,6 @@ void RecurrentKdaTiling::PrintTilingData()
     OP_LOGD(context_->GetNodeName(), "scale: [%f]", tilingData_.scale);
     OP_LOGD(context_->GetNodeName(), "lowerBound: [%f]", tilingData_.lowerBound);
     OP_LOGD(context_->GetNodeName(), "layout: [%u]", tilingData_.layout);
-    OP_LOGD(context_->GetNodeName(), "hasCuSeqlens: [%u]", tilingData_.hasCuSeqlens);
     OP_LOGD(context_->GetNodeName(), "hasSsmStateIndices: [%u]", tilingData_.hasSsmStateIndices);
     OP_LOGD(context_->GetNodeName(), "hasALog: [%u]", tilingData_.hasALog);
     OP_LOGD(context_->GetNodeName(), "hasDtBias: [%u]", tilingData_.hasDtBias);

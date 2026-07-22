@@ -27,31 +27,14 @@ namespace l0op {
 
 OP_TYPE_REGISTER(RecurrentKda);
 
-namespace {
-const aclTensor *ConvertCuSeqlens(const aclIntArray *cuSeqlensOptional, aclOpExecutor *executor)
-{
-    if (cuSeqlensOptional == nullptr) {
-        return nullptr;
-    }
-    const aclTensor *actualCuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
-    if (actualCuSeqlens == nullptr) {
-        return nullptr;
-    }
-    const_cast<aclTensor *>(actualCuSeqlens)->SetStorageFormat(Format::FORMAT_ND);
-    const_cast<aclTensor *>(actualCuSeqlens)->SetViewFormat(Format::FORMAT_ND);
-    const_cast<aclTensor *>(actualCuSeqlens)->SetOriginalFormat(Format::FORMAT_ND);
-    return actualCuSeqlens;
-}
-} // namespace
-
 const std::array<const aclTensor *, 2> RecurrentKda(
     const aclTensor *query,
     const aclTensor *key,
     const aclTensor *value,
     const aclTensor *gate,
     const aclTensor *beta,
-    const aclTensor *initialState,
-    const aclIntArray *cuSeqlensOptional,
+    aclTensor *stateRef,
+    const aclTensor *actualSeqLengths,
     const aclTensor *ssmStateIndicesOptional,
     const aclTensor *aLogOptional,
     const aclTensor *dtBiasOptional,
@@ -66,27 +49,20 @@ const std::array<const aclTensor *, 2> RecurrentKda(
     double lowerBound,
     bool stateVFirst,
     const aclTensor *out,
-    const aclTensor *finalState,
     aclOpExecutor *executor)
 {
-    L0_DFX(RecurrentKda, query, key, value, gate, beta, initialState, cuSeqlensOptional, ssmStateIndicesOptional,
+    L0_DFX(RecurrentKda, query, key, value, gate, beta, stateRef, actualSeqLengths, ssmStateIndicesOptional,
            aLogOptional, dtBiasOptional, numAcceptedTokensOptional, layout, scale, useQkL2normInKernel,
            useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, safeGate, lowerBound, stateVFirst, out,
-           finalState);
-
-    const aclTensor *actualCuSeqlens = ConvertCuSeqlens(cuSeqlensOptional, executor);
-    if (cuSeqlensOptional != nullptr && actualCuSeqlens == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert cu_seqlens to tensor failed.");
-        return {nullptr, nullptr};
-    }
+           stateRef);
 
     float scaleAttr = static_cast<float>(scale);
     float lowerBoundAttr = static_cast<float>(lowerBound);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         RecurrentKda,
-        OP_INPUT(query, key, value, gate, beta, initialState, actualCuSeqlens, ssmStateIndicesOptional, aLogOptional,
+        OP_INPUT(query, key, value, gate, beta, stateRef, actualSeqLengths, ssmStateIndicesOptional, aLogOptional,
                  dtBiasOptional, numAcceptedTokensOptional),
-        OP_OUTPUT(out, finalState),
+        OP_OUTPUT(out, stateRef),
         OP_ATTR(layout, scaleAttr, useQkL2normInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval,
                 safeGate, lowerBoundAttr, stateVFirst));
     if (ret != ACLNN_SUCCESS) {
@@ -94,6 +70,6 @@ const std::array<const aclTensor *, 2> RecurrentKda(
         return {nullptr, nullptr};
     }
 
-    return {out, finalState};
+    return {out, stateRef};
 }
 } // namespace l0op

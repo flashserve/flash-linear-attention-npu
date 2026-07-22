@@ -25,9 +25,9 @@ Shape 符号统一引用 [KDA 模型符号表](../../README.md#model-shape-symbo
 | `v` | 必选 | `BSND=[B,T,H_v,V]` 或 `TND=[T,H_v,V]` | BF16 | BSND/TND | value |
 | `g` | 必选 | `BSND=[B,T,H_v,K]` 或 `TND=[T,H_v,K]` | FP32/BF16/FP16 | BSND/TND | 预计算 step log gate 或 raw gate |
 | `beta` | 必选 | `BSND=[B,T,H_v]` 或 `TND=[T,H_v]` | FP32/BF16/FP16 | BSND/TND | delta 更新系数 |
-| `initial_state` | 可选 | `[seq_num,H_v,V,K]` | FP32/BF16 | ND | Python 入口为空时创建全零 FP32 状态 |
-| `cu_seqlens` | 可选 | `[N+1]` | INT64 | ND | Python/legacy 为 `int[]`，aclnn 为 `aclIntArray` |
-| `ssm_state_indices` | 可选 | `[>=T]` | INT32/INT64 | ND | MTP decode 状态槽索引 |
+| `initial_state` | Python 可选，aclnn/legacy 必选 | `[state_capacity,H_v,V,K]` | FP32/BF16 | ND | 可变 state pool；Python 入口为空时创建 `[seq_num,...]` 全零 FP32 状态 |
+| `actual_seq_lengths` | 必选 | `[seq_num+1]` | INT32/INT64 | ND | 第 0 项为前置无效 token 数，后续为各有效序列长度；元素总和为 packed token 数 |
+| `ssm_state_indices` | 可选 | packed `[>=T]` 或 speculative `[seq_num,max_step]` | INT32/INT64 | ND | 每个 token 对应的 state pool 槽索引 |
 | `A_log` | 条件必选 | `[H_v]` | FP32 | ND | `use_gate_in_kernel=True` 时必选 |
 | `dt_bias` | 可选 | `[H_v*K]` 或 `[H_v,K]` | FP32 | ND | raw gate 偏置 |
 | `num_accepted_tokens` | 可选 | `[seq_num]` | INT32/INT64 | ND | 必须与 `ssm_state_indices` 一起传 |
@@ -37,7 +37,7 @@ Shape 符号统一引用 [KDA 模型符号表](../../README.md#model-shape-symbo
 | 名称 | Shape | Dtype | 说明 |
 | --- | --- | --- | --- |
 | `out` | 与 `v` 相同 | BF16 | recurrent 输出 |
-| `final_state` | 与 `initial_state` 相同；`output_final_state=False` 时 Python/legacy 返回空 tensor | FP32/BF16 | 最终状态 |
+| `final_state` | 与 `initial_state` 同一 tensor；`output_final_state=False` 时 Python/legacy 返回空 tensor | FP32/BF16 | `initial_state` 始终原位更新；显式返回时保持同一 storage |
 
 ### 2.3 属性
 
@@ -52,7 +52,7 @@ Shape 符号统一引用 [KDA 模型符号表](../../README.md#model-shape-symbo
 | `allow_neg_eigval` | bool | `false` | `{false, true}` | beta sigmoid 后是否乘 2 |
 | `safe_gate` | bool | `false` | `{false, true}` | raw gate 的 safe 分支 |
 | `lower_bound` | float? | `-5.0` | `[-5,0)` when `safe_gate=True` | safe gate 下界 |
-| `state_v_first` | bool | `true` | 当前必须为 `true` | 状态布局为 `[seq_num,H_v,V,K]` |
+| `state_v_first` | bool | `true` | 当前必须为 `true` | 状态布局为 `[state_capacity,H_v,V,K]` |
 
 ## 3. aclnn API
 
@@ -65,8 +65,8 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     const aclTensor *value,
     const aclTensor *gate,
     const aclTensor *beta,
-    const aclTensor *initialState,
-    const aclIntArray *cuSeqlensOptional,
+    aclTensor *stateRef,
+    const aclTensor *actualSeqLengths,
     const aclTensor *ssmStateIndicesOptional,
     const aclTensor *aLogOptional,
     const aclTensor *dtBiasOptional,
@@ -82,7 +82,6 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     double lowerBound,
     bool stateVFirst,
     const aclTensor *out,
-    const aclTensor *finalState,
     uint64_t *workspaceSize,
     aclOpExecutor **executor);
 
@@ -90,8 +89,10 @@ aclnnStatus aclnnRecurrentKda(void *workspace, uint64_t workspaceSize, aclOpExec
 ```
 
 `GetWorkspaceSize` 完成参数校验、连续化/cast 预处理和 executor 创建；第二段在传入 stream 上异步执行。
-state 路径对齐 recurrent_gdn：Python/legacy 接受非连续 `initial_state`，底层 aclnn 的 `final_state`
-输出支持非连续 view。
+`stateRef` 同时是输入和输出。非连续 state 使用临时连续 tensor 执行，并通过 `ViewCopy` 回写原 view；调用结束后
+stateRef 的对象、storage 和 stride 均保持不变。`actualSeqLengths` 仅在 host 检查 rank/dtype，具体长度值由
+device kernel 读取，因而可在 ACLGraph capture/replay 中变化。所有值必须非负，第 0 项表示前置无效 token 数，
+后续每项表示对应有效序列长度；所有元素之和必须等于输入 token 总数，且每条有效序列长度不超过 8。
 输入、输出、workspace 和 executor 必须保持有效，直到 stream 完成。
 
 ### 3.2 调用示例
@@ -101,9 +102,9 @@ state 路径对齐 recurrent_gdn：Python/legacy 接受非连续 `initial_state`
 uint64_t workspaceSize = 0;
 aclOpExecutor *executor = nullptr;
 ACLNN_CHECK(aclnnRecurrentKdaGetWorkspaceSize(
-    q, k, v, g, beta, initialState, cuSeqlens, ssmStateIndices,
+    q, k, v, g, beta, state, actualSeqLengths, ssmStateIndices,
     aLog, dtBias, numAcceptedTokens, "BSND", scale, true, true, true,
-    true, false, false, -5.0, true, out, finalState,
+    true, false, false, -5.0, true, out,
     &workspaceSize, &executor));
 void *workspace = nullptr;
 if (workspaceSize != 0) {
@@ -119,7 +120,7 @@ ACL_CHECK(aclrtSynchronizeStream(stream));
 
 ```python
 recurrent_kda(q, k, v, g, beta, initial_state=None, *,
-              cu_seqlens=None, ssm_state_indices=None, A_log=None,
+              actual_seq_lengths, ssm_state_indices=None, A_log=None,
               dt_bias=None, num_accepted_tokens=None, layout="BSND",
               scale=None, output_final_state=False,
               use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False,
@@ -128,8 +129,8 @@ recurrent_kda(q, k, v, g, beta, initial_state=None, *,
 ```
 
 稳定入口通过 ctypes 直调 aclnn，不依赖 `torch.ops.npu` 注册。`initial_state=None` 时由 wrapper 创建
-`[seq_num,H_v,V,K]` 的全零 FP32 状态。若 `initial_state` 为非连续 view，wrapper 会传入连续化
-state work tensor；返回的 `final_state` 为 wrapper 分配的连续 tensor。
+`[seq_num,H_v,V,K]` 的全零 FP32 状态。显式传入的 state 会原位更新；若它是非连续 view，aclnn 在内部
+连续化并回写，`final_state` 仍引用原 tensor。
 
 ### 4.2 调用示例
 
@@ -144,9 +145,12 @@ v = torch.randn(B, T, H_v, V, device="npu", dtype=torch.bfloat16)
 g = torch.randn(B, T, H_v, K, device="npu", dtype=torch.float32)
 beta = torch.randn(B, T, H_v, device="npu", dtype=torch.float32)
 A_log = torch.randn(H_v, device="npu", dtype=torch.float32)
+state = torch.zeros(B, H_v, V, K, device="npu", dtype=torch.float32)
+actual_seq_lengths = torch.tensor([0] + [T] * B, device="npu", dtype=torch.int32)
 
 out, final_state = recurrent_kda(
-    q, k, v, g, beta, A_log=A_log, layout="BSND",
+    q, k, v, g, beta, state, actual_seq_lengths=actual_seq_lengths,
+    A_log=A_log, layout="BSND",
     output_final_state=True, use_gate_in_kernel=True,
     use_beta_sigmoid_in_kernel=True)
 torch.npu.synchronize()
@@ -158,7 +162,7 @@ torch.npu.synchronize()
 
 ```cpp
 recurrent_kda<<<blockDim, nullptr, stream>>>(
-    q, k, v, g, beta, initialState, cuSeqlens, ssmStateIndices,
+    q, k, v, g, beta, initialState, actualSeqLengths, ssmStateIndices,
     aLog, dtBias, numAcceptedTokens, out, finalState, workspace, tiling);
 ```
 
@@ -173,7 +177,8 @@ import fla_npu
 
 fla_npu.load_legacy_torch_ops()
 out, final_state = torch.ops.npu.npu_recurrent_kda(
-    q, k, v, g, beta, None, A_log=A_log, layout="BSND",
+    q, k, v, g, beta, state, actual_seq_lengths=actual_seq_lengths,
+    A_log=A_log, layout="BSND",
     output_final_state=True, use_gate_in_kernel=True)
 ```
 
@@ -181,10 +186,14 @@ out, final_state = torch.ops.npu.npu_recurrent_kda(
 
 - `q/k/v/out` 当前仅支持 BF16。
 - `K/V` 当前仅支持 `K=128,V=128` 或 `K=128,V=256` 两档枚举。
-- Python/legacy 入口支持非连续 `initial_state`；底层 aclnn `final_state` 输出支持非连续 view。
+- Python/legacy 入口支持非连续 `initial_state`，并保持原 tensor 的原位更新与 alias 语义。
+- 未传 `ssm_state_indices` 时 `state_capacity=seq_num`；传入后容量可大于序列数，所有有效 slot 必须位于 `[0,state_capacity)`。
+- `ssm_state_indices` 支持 packed `[T]` 和 speculative `[seq_num,max_step]`；活跃序列不得共享正在写入的 state slot。
+- 空序列不读取 `ssm_state_indices/num_accepted_tokens`，也不读写 state pool。
+- `actual_seq_lengths` 必传且所有值非负；第 0 项是前置无效 token 数，后续为各有效序列长度，元素总和等于 token 总数。这些值约束由 device kernel 检查，host 只检查 shape/dtype。
 - Ascend C `<<<>>>` 直调入口要求 state 为连续物理布局。
-- 每条 recurrent 序列长度必须 `<=8`；dense 模式未传 `cu_seqlens` 时 `T<=8`。
-- 仅支持 `layout="BSND"` 和 `layout="TND"`；BSND 变长序列物理 `B` 必须为 1。
+- 每条 recurrent 有效序列长度必须 `<=8`。
+- 仅支持 `layout="BSND"` 和 `layout="TND"`。
 - 仅支持 `state_v_first=True`。
 - `use_gate_in_kernel=false` 时 `A_log/dt_bias/safe_gate` 必须为空或 false。
 
@@ -193,7 +202,7 @@ out, final_state = torch.ops.npu.npu_recurrent_kda(
 | 条件 | 返回码/异常 |
 | --- | --- |
 | 必选 tensor、workspaceSize 或 executor 为空 | `ACLNN_ERR_PARAM_NULLPTR` |
-| rank/shape/dtype/layout、序列长度或属性组合非法 | `ACLNN_ERR_PARAM_INVALID` |
+| rank/shape/dtype/layout 或属性组合非法 | `ACLNN_ERR_PARAM_INVALID` |
 | 内部 tensor 创建或 L0 调用失败 | `ACLNN_ERR_INNER_NULLPTR` |
 | Python 输入不是 NPU tensor 或 runtime/op_api 未加载 | `RuntimeError` |
 
