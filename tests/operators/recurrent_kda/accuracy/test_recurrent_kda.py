@@ -600,6 +600,49 @@ def test_kimi_k3_tp16_bsnd_graph_padding_capacity():
 
 
 @pytest.mark.npu
+def test_bsnd_multisequence_beta_scalar_visibility():
+    if os.environ.get("FLA_NPU_RUN_OPERATOR_TESTS") != "1":
+        pytest.skip("set FLA_NPU_RUN_OPERATOR_TESTS=1 on an NPU test host")
+
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch_npu")
+    from fla_npu.ops.ascendc import npu_recurrent_kda as recurrent_kda
+    from tests.operators.recurrent_kda.accuracy.run_generated_generalization import (
+        generate_case,
+        make_inputs,
+        to_device,
+    )
+    from tests.reference.recurrent_kda_reference import recurrent_kda_reference
+
+    device_id = int(os.environ.get("TEST_DEVICE_ID", "0"))
+    device = torch.device(f"npu:{device_id}")
+    torch.npu.set_device(device)
+
+    case = generate_case(26, 20260720)
+    assert case["layout"] == "BSND"
+    assert case["shape"]["cu_seqlens"] == [0, 4, 11, 13, 18, 21]
+    assert (case["shape"]["H"], case["shape"]["H_v"]) == (8, 32)
+    assert (case["shape"]["K"], case["shape"]["V"]) == (128, 256)
+    assert case["attrs"]["use_beta_sigmoid_in_kernel"]
+    assert case["attrs"]["allow_neg_eigval"]
+    assert not case["attrs"]["use_gate_in_kernel"]
+    assert case["attrs"]["output_final_state"]
+    assert not case["optional"]["initial_state"]
+
+    cpu_inputs = make_inputs(case)
+    expected = recurrent_kda_reference(**cpu_inputs, **case["attrs"])
+    actual = recurrent_kda(**to_device(cpu_inputs, device), **case["attrs"])
+    torch.npu.synchronize()
+
+    torch.testing.assert_close(
+        actual[0].cpu().float(), expected[0].float(), rtol=0.02, atol=0.01
+    )
+    torch.testing.assert_close(
+        actual[1].cpu().float(), expected[1].float(), rtol=0.02, atol=0.01
+    )
+
+
+@pytest.mark.npu
 def test_kimi_k3_tp16_tnd_mtp_lengths_1_to_8():
     if os.environ.get("FLA_NPU_RUN_OPERATOR_TESTS") != "1":
         pytest.skip("set FLA_NPU_RUN_OPERATOR_TESTS=1 on an NPU test host")

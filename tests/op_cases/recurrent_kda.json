@@ -61,7 +61,7 @@
       "layout 当前仅支持 BSND 和 TND；H_v 必须能被 H 整除。",
       "K/V 当前仅支持 K=128,V=128 或 K=128,V=256 两档枚举。",
       "Python/aclnn/legacy 入口支持非连续 initial_state；state 原位更新，显式 final_state 与输入共享 storage 和 stride。",
-      "cu_seqlens 必传；首项为 0，offset 单调不减，末项等于 packed token 数，相邻差值为有效序列长度。",
+      "cu_seqlens 必传；首项为 0，offset 单调不减，末项不超过输入 token 容量，相邻差值为有效序列长度。",
       "每条 recurrent 有效序列长度当前必须 <= 8。",
       "state_v_first 当前必须为 true，状态布局为 [state_capacity,H_v,V,K]；未传 ssm_state_indices 时 state_capacity 必须等于 seq_num。",
       "use_gate_in_kernel=true 时 A_log 必传；dt_bias 若存在须为 [H_v*K] 或 [H_v,K]。",
