@@ -687,7 +687,11 @@ private:
         betaInQueue_.EnQue<float>(betaLocal);
         betaLocal = betaInQueue_.DeQue<float>();
         DataCopy(betaInUb, betaLocal, betaBatchSize);
+        SyncMte2ToV();
         betaInQueue_.FreeTensor(betaLocal);
+        Adds(betaInUb, betaInUb, 0.0f, betaBatchSize);
+        PipeBarrier<PIPE_V>();
+        SyncVToS();
     }
 
     __aicore__ inline uint64_t StateSlotForToken(uint64_t batchIdx, int64_t seq0, int64_t tokenIdx) const

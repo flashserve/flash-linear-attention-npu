@@ -82,13 +82,17 @@ def test_device_metadata_and_capacity_state_contract():
 
 
 def test_cu_seqlens_uses_fla_prefix_sum_semantics():
-    kernel = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_kernel/recurrent_kda.h")
-
-    assert "int64_t seq0 = cuSeqlensGm_.GetValue(batch_i)" in kernel
-    assert "int64_t seq1 = cuSeqlensGm_.GetValue(batch_i + 1)" in kernel
-    assert "int64_t seqLen64 = seq1 - seq0" in kernel
-    assert "if (seq0 != 0)" in kernel
-    assert "return seq0 == static_cast<int64_t>(T_)" in kernel
+    kernel_paths = (
+        "fla/ops/ascendc/kda/recurrent_kda/op_kernel/recurrent_kda.h",
+        "fla/ops/ascendc/kda/recurrent_kda/op_kernel/arch35/recurrent_kda.h",
+    )
+    for path in kernel_paths:
+        kernel = _read_repo_file(path)
+        assert "int64_t seq0 = cuSeqlensGm_.GetValue(batch_i)" in kernel
+        assert "int64_t seq1 = cuSeqlensGm_.GetValue(batch_i + 1)" in kernel
+        assert "int64_t seqLen64 = seq1 - seq0" in kernel
+        assert "if (seq0 != 0)" in kernel
+        assert "return seq0 <= static_cast<int64_t>(T_)" in kernel
 
 
 def test_tiling_processor_owns_its_context():
