@@ -335,120 +335,6 @@ __simd_vf__ inline void PrepareWyReprBwdDkktRowDgRegbase(__ubuf__ float *dgOut, 
     }
 }
 
-template <typename kType, bool INIT_ACC>
-__simd_vf__ inline void PrepareWyReprBwdDkktColDgRegbase(__ubuf__ float *accOut, __ubuf__ kType *dIn,
-                                                         __ubuf__ kType *kktIn, __ubuf__ float *beta,
-                                                         uint16_t srcRowCount, uint16_t colCount,
-                                                         uint16_t targetColOffset, uint16_t targetColCount)
-{
-    uint32_t eleNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(float);
-    uint32_t colLoop = (targetColCount + eleNumPerVf - 1) / eleNumPerVf;
-
-    RegTensor<kType> dReg;
-    RegTensor<kType> kktReg;
-    RegTensor<float> dRegFp32;
-    RegTensor<float> kktRegFp32;
-    RegTensor<float> prodReg;
-    RegTensor<float> sumReg;
-    RegTensor<float> betaReg;
-    RegTensor<float> accReg;
-
-    MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
-    MaskReg maskFull16 = CreateMask<kType, MaskPattern::ALL>();
-    MaskReg maskStore;
-    MaskReg maskLoad;
-    UnalignRegForStore uStore;
-
-    for (uint32_t colIdx = 0; colIdx < colLoop; ++colIdx) {
-        uint32_t targetElemOffset = colIdx * eleNumPerVf;
-        uint32_t elemOffset = targetColOffset + targetElemOffset;
-        uint32_t curEleNum = eleNumPerVf;
-        if (targetElemOffset + curEleNum > targetColCount) {
-            curEleNum = targetColCount - targetElemOffset;
-        }
-        maskStore = UpdateMask<float>(curEleNum);
-        maskLoad = UpdateMask<kType>(curEleNum);
-        if (elemOffset + eleNumPerVf <= colCount) {
-            Duplicate(sumReg, 0.0f, maskFull32);
-            for (uint16_t row = 0; row < srcRowCount; ++row) {
-                uint32_t srcElemOffset = row * colCount + elemOffset;
-                DataCopy<kType, LoadDist::DIST_UNPACK_B16>(dReg, dIn + srcElemOffset);
-                DataCopy<kType, LoadDist::DIST_UNPACK_B16>(kktReg, kktIn + srcElemOffset);
-                Cast<float, kType, ctHalf2Fp32Zero>(dRegFp32, dReg, maskLoad);
-                Cast<float, kType, ctHalf2Fp32Zero>(kktRegFp32, kktReg, maskLoad);
-                Mul(prodReg, dRegFp32, kktRegFp32, maskFull32);
-                Add(sumReg, sumReg, prodReg, maskFull32);
-            }
-            DataCopy<float, LoadDist::DIST_NORM>(betaReg, beta + elemOffset);
-            Mul(sumReg, sumReg, betaReg, maskFull32);
-            if constexpr (!INIT_ACC) {
-                DataCopy<float, LoadDist::DIST_NORM>(accReg, accOut + targetElemOffset);
-                Add(sumReg, sumReg, accReg, maskFull32);
-            }
-            DataCopy<float, StoreDist::DIST_NORM_B32>(accOut + targetElemOffset, sumReg, maskStore);
-        } else {
-            for (uint32_t col = 0; col < curEleNum; ++col) {
-                Duplicate(sumReg, 0.0f, maskFull32);
-                for (uint16_t row = 0; row < srcRowCount; ++row) {
-                    uint32_t srcElemOffset = row * colCount + elemOffset + col;
-                    LoadIn<kType, true>(dReg, dIn + srcElemOffset);
-                    LoadIn<kType, true>(kktReg, kktIn + srcElemOffset);
-                    Cast<float, kType, ctHalf2Fp32Zero>(dRegFp32, dReg, maskFull16);
-                    Cast<float, kType, ctHalf2Fp32Zero>(kktRegFp32, kktReg, maskFull16);
-                    Mul(prodReg, dRegFp32, kktRegFp32, maskFull32);
-                    Add(sumReg, sumReg, prodReg, maskFull32);
-                }
-                LoadIn<float, true>(betaReg, beta + elemOffset + col);
-                Mul(sumReg, sumReg, betaReg, maskFull32);
-                if constexpr (!INIT_ACC) {
-                    LoadIn<float, true>(accReg, accOut + targetElemOffset + col);
-                    Add(sumReg, sumReg, accReg, maskFull32);
-                }
-                StoreUnAlignOut<float>(accOut + targetElemOffset + col, sumReg, maskFull32, uStore, 1);
-            }
-        }
-    }
-}
-
-__simd_vf__ inline void PrepareWyReprBwdAddFp32RowsRegbase(__ubuf__ float *out, __ubuf__ float *lhs,
-                                                           __ubuf__ float *rhs, uint16_t colOffset,
-                                                           uint16_t elements, uint16_t colCount)
-{
-    uint32_t eleNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(float);
-    uint32_t loopCnt = (elements + eleNumPerVf - 1) / eleNumPerVf;
-
-    RegTensor<float> lhsReg;
-    RegTensor<float> rhsReg;
-    RegTensor<float> outReg;
-
-    MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
-    MaskReg maskStore;
-    UnalignRegForStore uStore;
-
-    for (uint32_t loopIdx = 0; loopIdx < loopCnt; ++loopIdx) {
-        uint32_t elemOffset = loopIdx * eleNumPerVf;
-        uint32_t globalElemOffset = colOffset + elemOffset;
-        uint32_t curEleNum = eleNumPerVf;
-        if (elemOffset + curEleNum > elements) {
-            curEleNum = elements - elemOffset;
-        }
-        maskStore = UpdateMask<float>(curEleNum);
-        if (globalElemOffset + eleNumPerVf <= colCount) {
-            DataCopy<float, LoadDist::DIST_NORM>(lhsReg, lhs + globalElemOffset);
-            DataCopy<float, LoadDist::DIST_NORM>(rhsReg, rhs + elemOffset);
-            Add(outReg, lhsReg, rhsReg, maskFull32);
-            DataCopy<float, StoreDist::DIST_NORM_B32>(out + globalElemOffset, outReg, maskStore);
-        } else {
-            for (uint32_t col = 0; col < curEleNum; ++col) {
-                LoadIn<float, true>(lhsReg, lhs + globalElemOffset + col);
-                LoadIn<float, true>(rhsReg, rhs + elemOffset + col);
-                Add(outReg, lhsReg, rhsReg, maskFull32);
-                StoreUnAlignOut<float>(out + globalElemOffset + col, outReg, maskFull32, uStore, 1);
-            }
-        }
-    }
-}
-
 template <typename gType>
 __simd_vf__ inline void PrepareWyReprBwdCastBetaGRegbase(__ubuf__ float *dst, __ubuf__ gType *src, uint16_t elements)
 {
@@ -1386,40 +1272,6 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
             static_cast<uint16_t>(curRow_), static_cast<uint16_t>(K_DIM));
         ReleaseInputRows(inputIdxA_);
         ReleaseInputRows(inputIdxB_);
-        for (uint32_t srcOffset = 0; srcOffset < task.curChunkSize; srcOffset += rowOwned) {
-            uint32_t curSrcRow = srcOffset + rowOwned > task.curChunkSize ? task.curChunkSize - srcOffset : rowOwned;
-            inputIdxA_ = CopyInRows<kType>(gmD_, matrixInputBuf_[curInputPingPong_], srcOffset * CHUNK_SIZE,
-                                                  curSrcRow * CHUNK_SIZE);
-            inputIdxB_ = CopyInRows<kType>(gmKKT_, matrixInputBuf_[curInputPingPong_], srcOffset * CHUNK_SIZE,
-                                                  curSrcRow * CHUNK_SIZE);
-            WaitInputRows(inputIdxA_);
-            WaitInputRows(inputIdxB_);
-            if (srcOffset == 0) {
-                PrepareWyReprBwdDkktColDgRegbase<kType, true>(
-                    (__ubuf__ float *)reinterpret_cast<uint64_t>(scaleFp32Tensor_.GetPhyAddr()),
-                    (__ubuf__ kType *)reinterpret_cast<uint64_t>(matrixInputBuf_[inputIdxA_].GetPhyAddr()),
-                    (__ubuf__ kType *)reinterpret_cast<uint64_t>(matrixInputBuf_[inputIdxB_].GetPhyAddr()),
-                    (__ubuf__ float *)reinterpret_cast<uint64_t>(betaAllFp32Tensor_.GetPhyAddr()),
-                    static_cast<uint16_t>(curSrcRow), static_cast<uint16_t>(CHUNK_SIZE),
-                    static_cast<uint16_t>(rowOffset_), static_cast<uint16_t>(curRow_));
-            } else {
-                PrepareWyReprBwdDkktColDgRegbase<kType, false>(
-                    (__ubuf__ float *)reinterpret_cast<uint64_t>(scaleFp32Tensor_.GetPhyAddr()),
-                    (__ubuf__ kType *)reinterpret_cast<uint64_t>(matrixInputBuf_[inputIdxA_].GetPhyAddr()),
-                    (__ubuf__ kType *)reinterpret_cast<uint64_t>(matrixInputBuf_[inputIdxB_].GetPhyAddr()),
-                    (__ubuf__ float *)reinterpret_cast<uint64_t>(betaAllFp32Tensor_.GetPhyAddr()),
-                    static_cast<uint16_t>(curSrcRow), static_cast<uint16_t>(CHUNK_SIZE),
-                    static_cast<uint16_t>(rowOffset_), static_cast<uint16_t>(curRow_));
-            }
-            ReleaseInputRows(inputIdxA_);
-            ReleaseInputRows(inputIdxB_);
-        }
-        PrepareWyReprBwdAddFp32RowsRegbase(
-            (__ubuf__ float *)reinterpret_cast<uint64_t>(dgAccFp32Tensor_.GetPhyAddr()),
-            (__ubuf__ float *)reinterpret_cast<uint64_t>(dgAccFp32Tensor_.GetPhyAddr()),
-            (__ubuf__ float *)reinterpret_cast<uint64_t>(scaleFp32Tensor_.GetPhyAddr()),
-            static_cast<uint16_t>(rowOffset_), static_cast<uint16_t>(curRow_), static_cast<uint16_t>(CHUNK_SIZE));
-
         inputIdxC_ =
             CopyInRows<kType>(gmDkbg_, matrixInputBuf_[curInputPingPong_], rowOffset_ * K_DIM, curRow_ * K_DIM);
 
@@ -1435,7 +1287,6 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
             (__ubuf__ float *)reinterpret_cast<uint64_t>(dbetaAccFp32Tensor_[rowOffset_].GetPhyAddr()),
             static_cast<uint16_t>(curRow_), static_cast<uint16_t>(K_DIM));
         ReleaseInputRows(inputIdxC_);
-        PipeBarrier<PIPE_V>();
         inputIdxC_ =
             CopyInRows<kType>(gmDK_, matrixInputBuf_[curInputPingPong_], rowOffset_ * K_DIM, curRow_ * K_DIM);
         if (!isFirstValueHeadInGroup) {
@@ -1470,6 +1321,40 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         }
         ReleaseInputRows(inputIdxC_);
         CopyOutRows(dkTensor_, outputBuf_[outputIdx_], (keyBase_ + rowOffset_) * K_DIM, curRow_ * K_DIM);
+    }
+
+    for (rowOffset_ = subBlockIdx_ * rowOwned; rowOffset_ < task.curChunkSize; rowOffset_ += rowOwned * subBlockNum_) {
+        curRow_ = rowOffset_ + rowOwned > task.curChunkSize ? task.curChunkSize - rowOffset_ : rowOwned;
+        for (uint32_t srcOffset = 0; srcOffset < task.curChunkSize; srcOffset += rowOwned) {
+            uint32_t curSrcRow = srcOffset + rowOwned > task.curChunkSize ? task.curChunkSize - srcOffset : rowOwned;
+            inputIdxA_ = CopyInRows<kType>(gmD_, matrixInputBuf_[curInputPingPong_], srcOffset * CHUNK_SIZE,
+                                                  curSrcRow * CHUNK_SIZE);
+            inputIdxB_ = CopyInRows<kType>(gmKKT_, matrixInputBuf_[curInputPingPong_], srcOffset * CHUNK_SIZE,
+                                                  curSrcRow * CHUNK_SIZE);
+            CastInputRows(calcFp32BTensor_, matrixInputBuf_[inputIdxA_], curSrcRow * CHUNK_SIZE, inputIdxA_);
+            CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxB_], curSrcRow * CHUNK_SIZE, inputIdxB_);
+            PipeBarrier<PIPE_V>();
+            Mul(calcFp32ATensor_, calcFp32BTensor_, calcFp32ATensor_, curSrcRow * CHUNK_SIZE);
+            PipeBarrier<PIPE_V>();
+            uint32_t remainRow = curSrcRow;
+            while (remainRow > 1) {
+                uint32_t calcCnt = (remainRow / 2) * CHUNK_SIZE;
+                remainRow = static_cast<uint32_t>(PrepareWyReprBwdCeilDiv(remainRow, 2));
+                uint32_t offset = remainRow * CHUNK_SIZE;
+                Add(calcFp32ATensor_, calcFp32ATensor_, calcFp32ATensor_[offset], calcCnt);
+                PipeBarrier<PIPE_V>();
+            }
+            if (srcOffset == 0) {
+                Mul(scaleFp32Tensor_, calcFp32ATensor_[rowOffset_], betaAllFp32Tensor_[rowOffset_], curRow_);
+            } else {
+                Mul(gFp32Tensor_, calcFp32ATensor_[rowOffset_], betaAllFp32Tensor_[rowOffset_], curRow_);
+                PipeBarrier<PIPE_V>();
+                Add(scaleFp32Tensor_, scaleFp32Tensor_, gFp32Tensor_, curRow_);
+            }
+            PipeBarrier<PIPE_V>();
+        }
+        Add(dgAccFp32Tensor_[rowOffset_], dgAccFp32Tensor_[rowOffset_], scaleFp32Tensor_, curRow_);
+        PipeBarrier<PIPE_V>();
     }
 
     for (rowOffset_ = subBlockIdx_ * rowOwned; rowOffset_ < task.curChunkSize; rowOffset_ += rowOwned * subBlockNum_) {
