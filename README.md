@@ -47,6 +47,38 @@ source /usr/local/Ascend/ascend-toolkit/set_env.sh
 FLA_NPU_SOC=ascend910b python -m pip wheel --no-build-isolation --no-deps . -w dist
 ```
 
+##### 方式 A 离线编译
+
+如果目标环境无法访问第三方源码站点，可以先在一台可联网机器上准备并打包固定版本的第三方依赖：
+
+```sh
+python3 scripts/tools/third_lib_download.py \
+  --output-dir /tmp/fla_npu-third-party \
+  --bundle /tmp/fla_npu-third-party-v26.6.0.tar.gz
+```
+
+将仓库源码和生成的 `fla_npu-third-party-v26.6.0.tar.gz` 一起传到离线机器，解压并校验：
+
+```sh
+mkdir -p /path/to/fla_npu-third-party
+tar -xzf fla_npu-third-party-v26.6.0.tar.gz -C /path/to/fla_npu-third-party
+python3 scripts/tools/third_lib_download.py \
+  --verify-only \
+  --output-dir /path/to/fla_npu-third-party
+```
+
+校验通过后，方式 A 仍使用根目录的一键 wheel 命令，只需增加两个环境变量：
+
+```sh
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+FLA_NPU_SOC=ascend910b \
+FLA_NPU_OFFLINE_BUILD=TRUE \
+FLA_NPU_THIRD_PARTY_DIR=/path/to/fla_npu-third-party \
+python -m pip wheel --no-build-isolation --no-deps . -w dist
+```
+
+离线模式会在编译开始前校验全部归档的 SHA256，以及 `opbase`、`catlass` 的固定提交版本；任一文件缺失、损坏或版本不匹配都会一次性列出并终止，不会回退到网络下载。第三方离线包只包含本仓 CMake 构建所需的源码依赖，不包含 CANN、Python、PyTorch、torch-npu、torchnpugen 或 triton-ascend；这些环境依赖仍需提前在离线机器上安装。
+
 如果已经做过一次完整编译，之后只修改少量算子源码，可以复用上一次 CMake build 目录做完整 wheel 的真增量构建：
 
 ```sh
@@ -60,6 +92,8 @@ FLA_NPU_SOC=ascend910b FLA_NPU_INCREMENTAL_BUILD=1 python -m pip wheel --no-buil
 | 环境变量 | 可选范围 | 作用 / 建议 | 默认 |
 |---|---|---|---|
 | `FLA_NPU_SOC` | `ascend910b` / `ascend910_93` / `ascend950` | 目标芯片；按实际运行机器选择 | `ascend910b` |
+| `FLA_NPU_OFFLINE_BUILD` | `TRUE` / `FALSE` | 启用严格离线构建；编译前校验第三方缓存且禁止回退到网络下载 | `FALSE` |
+| `FLA_NPU_THIRD_PARTY_DIR` | 第三方缓存目录 | 离线包解压目录；启用离线构建时建议显式设置，未设置时使用仓库内 `third_party/` | 空 |
 | `FLA_NPU_INCREMENTAL_BUILD` | `TRUE` / `FALSE` | 复用 `build/` 做完整 wheel 的真增量构建；本地反复调试可设 `TRUE`，release wheel 或干净验证建议保持 `FALSE` | `FALSE` |
 | `FLA_NPU_OPS` | 逗号分隔的算子名，如 `chunk_fwd_o,recompute_wu_fwd` | 仅构建指定算子；用于单算子定位，不要用于 release wheel | 空 |
 | `FLA_NPU_SKIP_RUN_BUILD` | `TRUE` / `FALSE` | 跳过 run 包编译；仅在已准备好匹配的 `build_out/fla-npu-*.run` 且只重打 wheel 时可设 `TRUE`，常规构建建议保持 `FALSE` | `FALSE` |
@@ -80,6 +114,13 @@ bash build.sh --soc=ascend910b --pkg --vendor_name=fla_npu
 cd torch_custom/fla_npu
 bash gen.sh npu_custom.yaml
 python3 setup.py bdist_wheel
+```
+
+方式 B 也可复用同一个离线依赖目录：
+
+```sh
+bash build.sh --soc=ascend910b --pkg --vendor_name=fla_npu \
+  --offline --cann_3rd_lib_path=/path/to/fla_npu-third-party
 ```
 
 ### Step 3. 安装

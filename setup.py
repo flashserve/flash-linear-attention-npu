@@ -330,6 +330,8 @@ def _build_run_package():
     soc = os.getenv("FLA_NPU_SOC", DEFAULT_SOC)
     ops_filter = os.getenv("FLA_NPU_OPS", "").strip()
     incremental = _env_flag("FLA_NPU_INCREMENTAL_BUILD")
+    offline_build = _env_flag("FLA_NPU_OFFLINE_BUILD")
+    third_party_value = os.getenv("FLA_NPU_THIRD_PARTY_DIR", "").strip()
     if incremental and ops_filter:
         raise RuntimeError(
             "FLA_NPU_INCREMENTAL_BUILD reuses the full CMake build graph so unchanged "
@@ -352,6 +354,33 @@ def _build_run_package():
             cmd.append("--incremental")
         if ops_filter:
             cmd.append(f"--ops={ops_filter}")
+        if offline_build:
+            third_party_dir = (
+                Path(third_party_value).expanduser()
+                if third_party_value
+                else REPO_ROOT / "third_party"
+            )
+            if not third_party_dir.is_dir():
+                raise RuntimeError(
+                    "FLA_NPU_OFFLINE_BUILD is enabled, but the third-party cache directory "
+                    f"does not exist: {third_party_dir}. Prepare it with "
+                    "scripts/tools/third_lib_download.py on a networked machine, transfer "
+                    "the bundle, and set FLA_NPU_THIRD_PARTY_DIR to the extracted directory."
+                )
+            cmd.extend(
+                [
+                    "--offline",
+                    f"--cann_3rd_lib_path={third_party_dir.resolve()}",
+                ]
+            )
+        elif third_party_value:
+            third_party_dir = Path(third_party_value).expanduser()
+            if not third_party_dir.is_dir():
+                raise RuntimeError(
+                    "FLA_NPU_THIRD_PARTY_DIR does not exist: "
+                    f"{third_party_dir}"
+                )
+            cmd.append(f"--cann_3rd_lib_path={third_party_dir.resolve()}")
         _run(cmd, REPO_ROOT)
 
     return _find_single_run_package()

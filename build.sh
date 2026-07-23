@@ -39,6 +39,7 @@ ENABLE_BUILT_JIT=FALSE
 ENABLE_AICPU=TRUE
 ENABLE_BUILT_CUSTOM=FALSE
 ENABLE_INCREMENTAL=FALSE
+OFFLINE_BUILD=FALSE
 ENABLE_STATIC=FALSE
 ENABLE_EXPERIMENTAL=FALSE
 KERNEL_TEMPLATE_INPUT=""
@@ -103,6 +104,7 @@ function help_info() {
                 echo "    --experimental         Build experimental version"
                 echo "    --cann_3rd_lib_path=<PATH>"
                 echo "                           Set ascend third_party package install path, default ./third_party"
+                echo "    --offline              Disable third-party network access; requires a complete cache"
                 echo "    --oom                  Build with oom mode on the kernel side, with options: '-g --cce-enable-oom'"
                 echo "    --kernel_template_input=args0,args1"
                 echo "                           Specify kernel template input arguments (comma-separated for multiple)"
@@ -112,6 +114,7 @@ function help_info() {
                 echo "    bash build.sh --pkg --soc=ascend910b --vendor_name=customize -j16 -O3"
                 echo "    bash build.sh --pkg --ops=add,sub"
                 echo "    bash build.sh --pkg --experimental --soc=ascend910b"
+                echo "    bash build.sh --pkg --offline --cann_3rd_lib_path=/path/to/third_party"
                 echo "    bash build.sh --pkg --experimental --soc=ascend910b --ops=abs --oom"
                 echo "    bash build.sh --pkg --experimental --soc=ascend910b --ops=abs --bisheng_flags=dumc_cce"
                 return
@@ -1065,6 +1068,10 @@ while [[ $# -gt 0 ]]; do
         ENABLE_INCREMENTAL=TRUE
         shift
         ;;
+    --offline)
+        OFFLINE_BUILD=TRUE
+        shift
+        ;;
     --noaicpu)
         ENABLE_AICPU=FALSE
         shift
@@ -1352,7 +1359,12 @@ while [[ $# -gt 0 ]]; do
         ;;
     --cann_3rd_lib_path=*)
         OPTARG=$1
-        CANN_3RD_LIB_PATH="$(realpath ${OPTARG#*=})"
+        THIRD_PARTY_INPUT="${OPTARG#*=}"
+        if [[ ! -d "${THIRD_PARTY_INPUT}" ]]; then
+            echo "[ERROR] third-party cache directory does not exist: ${THIRD_PARTY_INPUT}"
+            exit 1
+        fi
+        CANN_3RD_LIB_PATH="$(realpath "${THIRD_PARTY_INPUT}")"
         shift
         ;;
     --oom)
@@ -1366,6 +1378,18 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 set_ut_mode
+
+if [[ "${OFFLINE_BUILD}" == "TRUE" ]]; then
+    if [[ "${ENABLE_BUILD_PKG}" != "TRUE" ]]; then
+        echo "[ERROR] --offline currently supports package builds only; add --pkg"
+        exit 1
+    fi
+    echo "[INFO] Verifying offline third-party cache: ${CANN_3RD_LIB_PATH}"
+    python3 "${CURRENT_DIR}/scripts/tools/third_lib_download.py" \
+        --verify-only \
+        --output-dir "${CANN_3RD_LIB_PATH}"
+    CUSTOM_OPTION="${CUSTOM_OPTION} -DFLA_NPU_OFFLINE_BUILD=ON"
+fi
 
 if [ -n "$KERNEL_TEMPLATE_INPUT" ]; then
     if [[ -z "${ascend_op_name}" || "$ascend_op_name" == *","* ]]; then
