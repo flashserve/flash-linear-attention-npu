@@ -36,6 +36,7 @@ MODEL_SHAPE_CASE = {
 MODEL_SHAPE_DUMP = pathlib.Path(os.environ.get("KDA_MODEL_SHAPE_DUMP", "/tmp/kda_model_shape_case.pt"))
 STAT_SAMPLE_COUNT = int(os.environ.get("KDA_STAT_SAMPLE_COUNT", "262144"))
 REFERENCE_NUM_THREADS = int(os.environ.get("KDA_REFERENCE_NUM_THREADS", "16"))
+FWD_H_DETERMINISM_REPEATS = int(os.environ.get("FWD_H_DETERMINISM_REPEATS", "50"))
 
 
 def _device(device_id=None):
@@ -167,6 +168,28 @@ def _make_inputs(device, b=1, h=2, hv=2, t=64, kdim=128, vdim=128, dtype=torch.b
 
 def _assert_close(name, actual, expected, rtol=2e-3, atol=2e-3):
     torch.testing.assert_close(actual.cpu(), expected.cpu(), rtol=rtol, atol=atol, msg=name)
+
+
+def _snapshot_fwd_h_outputs(outputs):
+    torch.npu.synchronize()
+    snapshots = tuple(output.detach().cpu().contiguous() for output in outputs)
+    for name, output in zip(("h", "v_new", "final_state"), snapshots):
+        assert torch.isfinite(output.float()).all().item(), f"{name} contains NaN or Inf"
+    return snapshots
+
+
+def _assert_fwd_h_outputs_bitwise_equal(expected, actual, repeat):
+    for name, expected_output, actual_output in zip(
+        ("h", "v_new", "final_state"), expected, actual
+    ):
+        same_metadata = (
+            expected_output.shape == actual_output.shape
+            and expected_output.dtype == actual_output.dtype
+        )
+        same_bits = same_metadata and torch.equal(
+            expected_output.view(torch.uint8), actual_output.view(torch.uint8)
+        )
+        assert same_bits, f"repeat={repeat} output={name} is not bitwise deterministic"
 
 
 def _kda_gate_cumsum_reference(g, chunk_size, A_log=None, dt_bias=None, cu_seqlens=None,
@@ -1424,6 +1447,76 @@ def test_chunk_gdn_fwd_h_gk_only_matches_neutral_g():
     _assert_close("gk final_state formula", gk_only[2], state, rtol=2e-2, atol=2e-3)
 
 
+def test_chunk_gdn_fwd_h_a5_model_shape_is_bitwise_deterministic():
+    device = _device()
+    if device.type == "cpu":
+        return
+
+    torch.manual_seed(20260722)
+    batch, heads, seqlen, kdim, vdim = 1, 12, 4096, 128, 128
+    chunk_size = 64
+    cu_seqlens = (0, seqlen // 3, seqlen)
+    chunk_indices = []
+    for seq_idx, (seq_start, seq_end) in enumerate(
+        zip(cu_seqlens[:-1], cu_seqlens[1:])
+    ):
+        chunk_count = (seq_end - seq_start + chunk_size - 1) // chunk_size
+        for chunk_idx in range(chunk_count):
+            chunk_indices.extend((seq_idx, chunk_idx))
+    chunk_indices = tuple(chunk_indices)
+    assert len(cu_seqlens) == 3
+    assert len(chunk_indices) == 130
+
+    dtype = torch.bfloat16
+    k = (torch.randn(batch, heads, seqlen, kdim, dtype=dtype) * 0.04).to(device)
+    w = (torch.randn(batch, heads, seqlen, kdim, dtype=dtype) * 0.04).to(device)
+    u = (torch.randn(batch, heads, seqlen, vdim, dtype=dtype) * 0.04).to(device)
+    g = torch.zeros(batch, heads, seqlen, dtype=torch.float32, device=device)
+    raw_gk = -torch.rand(
+        batch, heads, seqlen, kdim, dtype=torch.float32
+    ) * 0.04
+    gk = torch.empty_like(raw_gk)
+    rcp_ln2 = 1.4426950408889634
+    for seq_start, seq_end in zip(cu_seqlens[:-1], cu_seqlens[1:]):
+        for chunk_start in range(seq_start, seq_end, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, seq_end)
+            gk[:, :, chunk_start:chunk_end] = torch.cumsum(
+                raw_gk[:, :, chunk_start:chunk_end] * rcp_ln2,
+                dim=2,
+            )
+    gk = gk.to(device)
+    initial_state = (
+        torch.randn(2, heads, kdim, vdim, dtype=torch.float32) * 0.01
+    ).to(device)
+
+    def run_fwd_h():
+        return fla_ascendc.chunk_gated_delta_rule_fwd_h(
+            k,
+            w,
+            u,
+            g=g,
+            gk=gk,
+            initial_state=initial_state,
+            output_final_state=True,
+            chunk_size=chunk_size,
+            save_new_value=True,
+            cu_seqlens=cu_seqlens,
+            chunk_indices=chunk_indices,
+        )
+
+    run_fwd_h()
+    torch.npu.synchronize()
+    expected = _snapshot_fwd_h_outputs(run_fwd_h())
+    assert [tuple(output.shape) for output in expected] == [
+        (1, 12, 65, 128, 128),
+        (1, 12, 4096, 128),
+        (2, 12, 128, 128),
+    ]
+    for repeat in range(1, FWD_H_DETERMINISM_REPEATS):
+        actual = _snapshot_fwd_h_outputs(run_fwd_h())
+        _assert_fwd_h_outputs_bitwise_equal(expected, actual, repeat)
+
+
 def _run_single_test_in_subprocess(name):
     subprocess.run([sys.executable, __file__, "--single-test", name], check=True)
 
@@ -1450,6 +1543,7 @@ if __name__ == "__main__":
     test_chunk_kda_fwd_varlen_sequence_count_capacity_rejected()
     test_chunk_kda_fwd_varlen_large_chunk_indices_not_prechecked()
     test_chunk_gdn_fwd_h_gk_only_matches_neutral_g()
+    test_chunk_gdn_fwd_h_a5_model_shape_is_bitwise_deterministic()
     test_chunk_kda_fwd_upper_triangle_dirty_zero()
     test_chunk_kda_fwd_vdim256_matches_reference()
     test_chunk_kda_fwd_chunk128_matches_reference()
