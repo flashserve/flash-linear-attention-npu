@@ -63,3 +63,15 @@ def test_kernel_validates_device_metadata_before_state_access():
     assert empty_skip < slot_validation < state_prefetch
     assert "batchIdx * ssmStateStride_" in text
     assert "stateSlot >= static_cast<int64_t>(stateCapacity_)" in text
+
+
+def test_cu_seqlens_terminal_offset_may_be_below_capture_capacity():
+    kernel_paths = [
+        OP_ROOT / "op_kernel/recurrent_kda.h",
+        OP_ROOT / "op_kernel/arch35/recurrent_kda.h",
+    ]
+
+    for kernel_path in kernel_paths:
+        text = kernel_path.read_text(encoding="utf-8")
+        assert "return seq0 <= static_cast<int64_t>(T_)" in text
+        assert "return seq0 == static_cast<int64_t>(T_)" not in text

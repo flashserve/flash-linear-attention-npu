@@ -517,6 +517,89 @@ def test_kimi_k3_tp16_device_metadata_and_state_pool():
 
 
 @pytest.mark.npu
+def test_kimi_k3_tp16_bsnd_graph_padding_capacity():
+    if os.environ.get("FLA_NPU_RUN_OPERATOR_TESTS") != "1":
+        pytest.skip("set FLA_NPU_RUN_OPERATOR_TESTS=1 on an NPU test host")
+
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch_npu")
+    from fla_npu.ops.ascendc import npu_recurrent_kda as recurrent_kda
+    from tests.reference.recurrent_kda_reference import recurrent_kda_reference
+
+    device_id = int(os.environ.get("TEST_DEVICE_ID", "0"))
+    device = torch.device(f"npu:{device_id}")
+    torch.npu.set_device(device)
+    torch.manual_seed(20260723)
+
+    graph_tokens, active_tokens, heads, dim = 16, 1, 6, 128
+    active_slot, state_capacity = 2, 17
+    q = torch.zeros(1, graph_tokens, heads, dim, dtype=torch.bfloat16)
+    k = torch.zeros_like(q)
+    v = torch.zeros_like(q)
+    raw_gate = torch.zeros_like(q)
+    beta = torch.zeros(1, graph_tokens, heads, dtype=torch.float32)
+    q[:, :active_tokens].normal_()
+    k[:, :active_tokens].normal_()
+    v[:, :active_tokens].normal_()
+    raw_gate[:, :active_tokens].normal_(std=0.25)
+    beta[:, :active_tokens].uniform_().sigmoid_()
+
+    state = torch.randn(state_capacity, heads, dim, dim, dtype=torch.float32) * 0.01
+    state_before = state.clone()
+    cu_seqlens = [0, 1] + [1] * (graph_tokens - 1)
+    state_indices = torch.tensor([active_slot] + [0] * (graph_tokens - 1), dtype=torch.int64)
+    a_log = torch.linspace(-0.43, 1.26, heads, dtype=torch.float32)
+    dt_bias = torch.linspace(-9.0, -1.47, heads * dim, dtype=torch.float32)
+
+    expected = recurrent_kda_reference(
+        q[:, :active_tokens],
+        k[:, :active_tokens],
+        v[:, :active_tokens],
+        raw_gate[:, :active_tokens],
+        beta[:, :active_tokens],
+        state,
+        cu_seqlens=[0, active_tokens],
+        ssm_state_indices=state_indices[:active_tokens],
+        A_log=a_log,
+        dt_bias=dt_bias,
+        layout="BSND",
+        scale=dim**-0.5,
+        use_qk_l2norm_in_kernel=True,
+        use_gate_in_kernel=True,
+        safe_gate=True,
+    )
+
+    state_npu = state.to(device)
+    out, final_state = recurrent_kda(
+        q.to(device),
+        k.to(device),
+        v.to(device),
+        raw_gate.to(device),
+        beta.to(device),
+        state_npu,
+        cu_seqlens=torch.tensor(cu_seqlens, dtype=torch.int32, device=device),
+        ssm_state_indices=state_indices.to(device),
+        A_log=a_log.to(device),
+        dt_bias=dt_bias.to(device),
+        layout="BSND",
+        scale=dim**-0.5,
+        output_final_state=True,
+        use_qk_l2norm_in_kernel=True,
+        use_gate_in_kernel=True,
+        safe_gate=True,
+    )
+    torch.npu.synchronize()
+
+    assert final_state.data_ptr() == state_npu.data_ptr()
+    torch.testing.assert_close(
+        out[:, :active_tokens].cpu().float(), expected[0].float(), rtol=0.02, atol=0.02
+    )
+    torch.testing.assert_close(final_state.cpu().float(), expected[1].float(), rtol=0.02, atol=0.02)
+    untouched = [slot for slot in range(state_capacity) if slot != active_slot]
+    torch.testing.assert_close(final_state.cpu()[untouched], state_before[untouched], rtol=0, atol=0)
+
+
+@pytest.mark.npu
 def test_kimi_k3_tp16_tnd_mtp_lengths_1_to_8():
     if os.environ.get("FLA_NPU_RUN_OPERATOR_TESTS") != "1":
         pytest.skip("set FLA_NPU_RUN_OPERATOR_TESTS=1 on an NPU test host")

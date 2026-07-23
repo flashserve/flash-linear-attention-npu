@@ -50,8 +50,8 @@ out, final_state = recurrent_kda(
 - `use_beta_sigmoid_in_kernel=True` 时，kernel 使用 `sigmoid(beta)`；若 `allow_neg_eigval=True`，再乘 2。
 - Python/aclnn/legacy 入口支持非连续 `initial_state`；返回 `final_state` 时与输入保持相同 storage 和 stride。
 - `cu_seqlens` 是必传的同设备 INT32/INT64 tensor，shape 为 `[seq_num+1]`，使用与 fla-org 一致的
-  累积 offset 语义。首项必须为 0，末项等于 packed token 总数，相邻差值是各序列长度。host 不读取其值，
-  兼容 ACLGraph capture/replay。
+  累积 offset 语义。首项必须为 0，末项等于有效 packed token 数且可小于图捕获的 token capacity，
+  相邻差值是各序列长度。host 不读取其值，兼容 ACLGraph capture/replay。
 - `ssm_state_indices` 支持 packed `[T]` 和 speculative `[seq_num,max_step]`。显式索引模式允许 `state_capacity > seq_num`，并仅更新命中的槽。
 - 空序列不读取索引或 state，适用于 packed batch 中的 padding sequence。
 
@@ -69,7 +69,9 @@ o_t = S @ (q_t * scale)
 - `q/k/v/out` 仅支持 `BF16`。
 - `g/beta` Python 入口支持 `FP32/BF16/FP16`，aclnn 预处理后以 `FP32` 输入 kernel。
 - `A_log/dt_bias` 支持 `FP32`。
-- `cu_seqlens` 为必传、与 q 同设备的 INT32/INT64 Tensor；offset 必须单调不减，各相邻差值必须不超过 8。
+- `cu_seqlens` 为必传、与 q 同设备的 INT32/INT64 Tensor；offset 必须单调不减，末项不得超过输入
+  token capacity，各相邻差值必须不超过 8。末项小于 capacity 时，仅有效 token 对应的输出和 state
+  更新有定义，padding tail 输出不作保证。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`。
 - 仅支持 `state_v_first=True`，state layout 为 `[state_capacity, HV, V, K]`；底层 aclnn 接口要求显式传入可变 state。
 - `HV` 必须能被 `H` 整除；`H/HV <= 256`；`K/V` 仅支持 `K=128,V=128` 或 `K=128,V=256`。
