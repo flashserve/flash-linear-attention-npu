@@ -85,7 +85,8 @@ o_t = S @ q_t
 
 Tiling 按逻辑序列和 value head 拆分任务。`cu_seqlens` 必传，`seq_num=len(cu_seqlens)-1`，使用与
 fla-org 一致的累计边界语义；第 `i` 条序列范围为 `[cu_seqlens[i], cu_seqlens[i+1])`。当前单任务面向
-recurrent 小步长，每个相邻 offset 的差值限制为 `<=8`。
+recurrent 小步长，每个相邻 offset 的差值限制为 `<=8`。末项表示有效 token 数，可小于图捕获的
+token capacity。
 
 ### 6.2 Tiling Data
 
@@ -138,8 +139,10 @@ tiling data 驱动，避免把 runtime shape 组合扩张到 tiling key。
 
 ### 7.4 边界处理
 
-- `cu_seqlens` 首项必须为 0，offset 必须单调不减且末项等于 token 总数。host 只检查 rank/dtype，device kernel 校验值。
+- `cu_seqlens` 首项必须为 0，offset 必须单调不减，末项为有效 token 数且不得超过输入 token
+  capacity。host 只检查 rank/dtype，device kernel 校验值。
 - 相邻 offset 相等时表示空序列；该序列不产生 token 输出，也不读取 `ssm_state_indices/num_accepted_tokens` 或 state。
+- 末项小于 capacity 时，仅 `[0,cu_seqlens[-1])` 的有效输出和 state side effect 有定义；padding tail 输出不作保证。
 - 一维 `ssm_state_indices` 按 packed token 偏移读取；二维索引按 `[seq_idx,step]` 读取，第二维必须覆盖对应序列长度。
 - `num_accepted_tokens` 只在提供 `ssm_state_indices` 时有效，用于定位 MTP decode 的初始状态槽。
 

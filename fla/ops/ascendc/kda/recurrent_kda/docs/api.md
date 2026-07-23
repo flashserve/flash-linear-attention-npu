@@ -26,7 +26,7 @@ Shape 符号统一引用 [KDA 模型符号表](../../README.md#model-shape-symbo
 | `g` | 必选 | `BSND=[B,T,H_v,K]` 或 `TND=[T,H_v,K]` | FP32/BF16/FP16 | BSND/TND | 预计算 step log gate 或 raw gate |
 | `beta` | 必选 | `BSND=[B,T,H_v]` 或 `TND=[T,H_v]` | FP32/BF16/FP16 | BSND/TND | delta 更新系数 |
 | `initial_state` | Python 可选，aclnn/legacy 必选 | `[state_capacity,H_v,V,K]` | FP32/BF16 | ND | 可变 state pool；Python 入口为空时创建 `[seq_num,...]` 全零 FP32 状态 |
-| `cu_seqlens` | 必选 | `[seq_num+1]` | INT32/INT64 | ND | fla-org 累积 offset；首项为 0，末项为 packed token 数，相邻差值为各序列长度 |
+| `cu_seqlens` | 必选 | `[seq_num+1]` | INT32/INT64 | ND | fla-org 累积 offset；首项为 0，末项为有效 packed token 数且不超过输入 token capacity，相邻差值为各序列长度 |
 | `ssm_state_indices` | 可选 | packed `[>=T]` 或 speculative `[seq_num,max_step]` | INT32/INT64 | ND | 每个 token 对应的 state pool 槽索引 |
 | `A_log` | 条件必选 | `[H_v]` | FP32 | ND | `use_gate_in_kernel=True` 时必选 |
 | `dt_bias` | 可选 | `[H_v*K]` 或 `[H_v,K]` | FP32 | ND | raw gate 偏置 |
@@ -190,7 +190,9 @@ out, final_state = torch.ops.npu.npu_recurrent_kda(
 - 未传 `ssm_state_indices` 时 `state_capacity=seq_num`；传入后容量可大于序列数，所有有效 slot 必须位于 `[0,state_capacity)`。
 - `ssm_state_indices` 支持 packed `[T]` 和 speculative `[seq_num,max_step]`；活跃序列不得共享正在写入的 state slot。
 - 空序列不读取 `ssm_state_indices/num_accepted_tokens`，也不读写 state pool。
-- `cu_seqlens` 必传，首项必须为 0，offset 必须单调不减且末项等于 token 总数；相邻差值为序列长度。这些值约束由 device kernel 检查，host 只检查 shape/dtype。
+- `cu_seqlens` 必传，首项必须为 0，offset 必须单调不减，末项为有效 token 数且不得超过输入
+  token capacity；相邻差值为序列长度。这些值约束由 device kernel 检查，host 只检查 shape/dtype。
+- 末项小于 capacity 时，kernel 仅处理有效前缀并逐行跳过零长度序列；padding tail 输出不作保证。
 - Ascend C `<<<>>>` 直调入口要求 state 为连续物理布局。
 - 每条 recurrent 有效序列长度必须 `<=8`。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`。

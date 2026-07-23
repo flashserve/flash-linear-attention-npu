@@ -261,7 +261,7 @@ private:
             }
             seq0 = seq1;
         }
-        return seq0 == static_cast<int64_t>(T_);
+        return seq0 <= static_cast<int64_t>(T_);
     }
 
     __aicore__ inline uint64_t StateMetadataOffset(uint64_t batchIdx, int64_t seq0, int64_t tokenIdx) const
