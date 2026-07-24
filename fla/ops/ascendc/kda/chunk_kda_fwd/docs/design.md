@@ -116,7 +116,14 @@ safe gate、B/H/T、layout、shape 或阶段，也不是公共接口属性。
 
 `safe_gate` 不改变 KDA 数学公式。三方对标实现用它选择更稳定的 chunk 内数值路径；本实现的两个模板
 实例都采用参考点因子化、FP32 16x16 对角求逆和块合并，因此 `false` 不会退化为容易溢出的实现，
-`true` 也不需要在 AIV 热循环增加条件判断。
+`true` 也不需要在 AIV 热循环增加条件判断。PREPARE 的 `false` 模板使用 32 行 score reference block，
+将 64-token chunk 的跨核 ready/done 往返从 4 次降为 2 次；`true` 模板保持 16 行，限制大负累计 gate
+的参考点跨度。最后一个 score MMAD/Fixpipe 与独立的完整 gate writeback 重叠，AIV 在读取 Aqk/Akk 前
+再等待最终 score done。AIV gate 路径使用两个 16 行 UB 输入槽：VEC 消费当前槽时由 MTE2 预取下一
+槽，q/k 输入槽在消费后原地承接写回结果；槽复用由 `MTE3_MTE2` 保护，共享 kg 写回区由 `MTE3_V`
+保护。A5 将 gate 的类型转换、参考点差分、指数、乘法、饱和与写回融合到 regbase 循环中，保留
+`safe_gate=true/false` 的相同裁剪和无效行清零语义；A2/A3 继续使用原有高阶 Vector API 路径。
+tile 行数还会按 192 KiB UB 预算向下收缩，避免较大 head dim 越过本地内存上限。
 
 公共 aclnn API 没有 `stage` 参数。增加 dtype 或阶段时必须扩展受控模板实例和阶段 tiling，不允许恢复
 runtime `dataType/gateDataType/stage` 分派。
@@ -140,7 +147,8 @@ PREPARE user workspace 包含每 core 两槽、三 plane 的 score scratch，以
 executor 显式持有。八个反向中间量始终采用 BNSD/NTD 内部布局并直接承担阶段间 GM 存储；
 `return_intermediate=false` 时 aclnn 仍创建完整隐藏缓冲区供后续阶段读取，但 Python 边界返回 `None`。
 `o` 由 OUTPUT kernel 在 GM 搬出时直接写成调用方 BSND/TND 或 BNSD/NTD 布局；`final_state` 由
-FWD_H kernel 直接写公开状态布局，不再追加 layout-swap kernel。
+FWD_H kernel 直接写公开状态布局，不再追加 layout-swap kernel。即使 `output_final_state=false`，
+L0 也会分配内部 FP32 state scratch，保证 chunk 间递推精度不依赖是否返回最终状态。
 
 | 层级/资源 | 生命周期与所有权 |
 | --- | --- |

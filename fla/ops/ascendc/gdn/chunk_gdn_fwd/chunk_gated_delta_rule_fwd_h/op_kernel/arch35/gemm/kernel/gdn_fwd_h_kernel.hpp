@@ -624,8 +624,10 @@ public:
                                 gmH[vec2Offsets.hSrcOffset],
                                 gmHWorkspace[vec2Offsets.hWorkOffset],
                                 gmGk[vec2Offsets.gkOffset],
+                                gmInitialState[vec2Offsets.initialStateOffset],
                                 vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, vHeadDim, vecBlockScheduler.cube2Done[streamId],
-                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, (i == 0)
+                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState,
+                                useInitialState, (i == 0)
                             );
                         } else {
                             Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done[streamId]);

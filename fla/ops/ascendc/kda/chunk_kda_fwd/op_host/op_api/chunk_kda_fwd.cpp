@@ -19,6 +19,8 @@
 using namespace op;
 
 namespace l0op {
+const aclTensor *ZerosLike(const aclTensor *self, aclOpExecutor *executor);
+
 OP_TYPE_REGISTER(ChunkKdaFwdPrepare);
 OP_TYPE_REGISTER(ChunkKdaFwdPostWu);
 OP_TYPE_REGISTER(ChunkKdaFwdFinalize);
@@ -169,9 +171,14 @@ KdaCoreOutputs KdaChunkForward(
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
 
+    const aclTensor *neutralGForH = ZerosLike(beta, executor);
+    if (neutralGForH == nullptr) {
+        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "failed to allocate neutral scalar gate for fwd_h.");
+        return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    }
     auto hResult = ChunkGatedDeltaRuleFwdH(
-        kgOut, wOut, uOut, nullptr, gk, initialStateOptional, cuSeqlensOptional,
-        chunkIndicesOptional, outputFinalState, chunkSize, true, hOut, vNewOut,
+        kgOut, wOut, uOut, neutralGForH, gk, initialStateOptional, cuSeqlensOptional,
+        chunkIndicesOptional, true, chunkSize, false, hOut, vNewOut,
         finalStateOut, executor);
     if (hResult[0] == nullptr || hResult[1] == nullptr || hResult[2] == nullptr) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ChunkGatedDeltaRuleFwdH launch failed.");

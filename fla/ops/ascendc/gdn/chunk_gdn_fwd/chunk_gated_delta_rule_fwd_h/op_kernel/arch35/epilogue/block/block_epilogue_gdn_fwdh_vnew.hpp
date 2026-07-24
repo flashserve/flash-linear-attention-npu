@@ -276,6 +276,13 @@ public:
             rowEnd = mActual;
         }
         if (rowBegin >= mActual) {
+            if (waitWsFromMte3) {
+                uint32_t pingpongFlag = isPing ? 0 : pongBaseEvent;
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(
+                    EVENT_ID0 + pingpongFlag);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
+                    EVENT_ID0 + pingpongFlag);
+            }
             Arch::CrossCoreWaitFlag(cube1Done);
             Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
             return;

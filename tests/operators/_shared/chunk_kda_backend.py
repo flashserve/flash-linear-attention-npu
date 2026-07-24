@@ -599,6 +599,20 @@ def test_chunk_kda_fwd_vdim256_matches_reference():
             output_final_state=True,
             return_intermediate=True,
         )
+        repeated = fla_ascendc.chunk_kda_fwd(
+            q,
+            k,
+            v,
+            gk,
+            beta,
+            scale,
+            64,
+            layout="BSND",
+            initial_state=initial_state,
+            output_final_state=True,
+            return_intermediate=True,
+        )
+        assert torch.equal(got[1], repeated[1]), f"{dtype} V256 final_state must be deterministic"
         ref = chunk_kda_forward_reference(
             q.detach().cpu(),
             k.detach().cpu(),
@@ -1410,7 +1424,7 @@ def test_chunk_gdn_fwd_h_gk_only_matches_neutral_g():
     kg = kg.to(torch.float16)
     gk = gk_chunks.reshape(b, hv, t, kdim)
 
-    def reference(exp_fn):
+    def reference():
         state = torch.zeros(b, hv, kdim, vdim, dtype=torch.float32)
         h_ref = torch.zeros(b, hv, t // 64, kdim, vdim, dtype=torch.float32)
         v_new_ref = torch.zeros(b, hv, t, vdim, dtype=torch.float32)
@@ -1422,13 +1436,12 @@ def test_chunk_gdn_fwd_h_gk_only_matches_neutral_g():
                 "bhtk,bhkv->bhtv", w.cpu().float()[:, :, start:end], state,
             )
             v_new_ref[:, :, start:end] = v_new
-            state = state * exp_fn(gk[:, :, end - 1]).unsqueeze(-1) + torch.einsum(
+            state = state * torch.exp2(gk[:, :, end - 1]).unsqueeze(-1) + torch.einsum(
                 "bhtk,bhtv->bhkv", kg.float()[:, :, start:end], v_new,
             )
         return h_ref, v_new_ref, state
 
-    h_ref, v_new_ref, state = reference(torch.exp2)
-    h_ref_exp, v_new_ref_exp, state_exp = reference(torch.exp)
+    h_ref, v_new_ref, state = reference()
 
     kg = kg.to(device)
     gk = gk.to(device)
@@ -1449,14 +1462,13 @@ def test_chunk_gdn_fwd_h_gk_only_matches_neutral_g():
     _assert_close("gk v_new formula", gk_only[1], v_new_ref.to(torch.float16), rtol=2e-2, atol=2e-3)
     _assert_close("gk final_state formula", gk_only[2], state, rtol=2e-2, atol=2e-3)
 
-    natural_exp = fla_ascendc.chunk_gated_delta_rule_fwd_h(
+    gk_only_use_exp_false = fla_ascendc.chunk_gated_delta_rule_fwd_h(
         kg, w, u, gk=gk, output_final_state=True, chunk_size=64, use_exp2=False,
     )
-    _assert_close("natural-exp h formula", natural_exp[0], h_ref_exp.to(torch.float16), rtol=2e-2, atol=2e-3)
-    _assert_close(
-        "natural-exp v_new formula", natural_exp[1], v_new_ref_exp.to(torch.float16), rtol=2e-2, atol=2e-3,
-    )
-    _assert_close("natural-exp final_state formula", natural_exp[2], state_exp, rtol=2e-2, atol=2e-3)
+    for name, actual, expected in zip(
+        ("h", "v_new", "final_state"), gk_only_use_exp_false, gk_only
+    ):
+        _assert_close(f"gk ignores scalar use_exp2 {name}", actual, expected, rtol=0, atol=0)
 
 
 def test_kda_layout_swap12_matches_reference():

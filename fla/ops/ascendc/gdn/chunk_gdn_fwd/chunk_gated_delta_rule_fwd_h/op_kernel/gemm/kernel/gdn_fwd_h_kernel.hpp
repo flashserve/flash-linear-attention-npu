@@ -564,7 +564,7 @@ public:
                         const GDNFwdHOffsets& vec2Offsets = vecBlockScheduler.GetCurTaskOffsets(stream);
                         if (vecBlockScheduler.NeedProcessStage2(stream)) {
                             if (storeFinalState && std::is_same<ElementFinalState, float>::value) {
-                                event0FromMte3[streamId] = vec2Offsets.isFinalState;
+                                event0FromMte3[streamId] = true;
                                 event2FromMte3[streamId] = !vec2Offsets.isFinalState;
                             }
                             // step 4:  h[i+1] += h_work if i < num_chunks - 1 else None
@@ -574,8 +574,10 @@ public:
                                 gmH[vec2Offsets.hSrcOffset],
                                 gmHWorkspace[vec2Offsets.hWorkOffset],
                                 gmGk[vec2Offsets.gkOffset],
+                                gmInitialState[vec2Offsets.initialStateOffset],
                                 vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, vHeadDim, vecBlockScheduler.cube2Done[streamId],
-                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, (streamId == 0)
+                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState,
+                                useInitialState, (streamId == 0)
                             );
                         } else {
                             Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done[streamId]);

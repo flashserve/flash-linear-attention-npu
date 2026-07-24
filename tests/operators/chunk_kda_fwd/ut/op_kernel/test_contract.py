@@ -115,9 +115,9 @@ def test_l0_queues_standalone_fwd_h_between_kda_stages():
         l0.index("ADD_TO_LAUNCHER_LIST_AICORE(\n        ChunkKdaFwdFinalize"),
     )
     assert launches == tuple(sorted(launches))
-    assert "chunkSize, true, hOut" in l0
-    assert "kgOut, wOut, uOut, nullptr, gk" in l0
-    assert "ZerosLike" not in l0
+    assert "chunkIndicesOptional, true, chunkSize, false, hOut, vNewOut" in l0
+    assert "kgOut, wOut, uOut, neutralGForH, gk" in l0
+    assert "const aclTensor *neutralGForH = ZerosLike(beta, executor);" in l0
     assert "RunChunkKdaFused" not in l0
 
 
@@ -160,8 +160,56 @@ def test_fp16_score_pipeline_does_not_fall_back_to_two_row_cube_tiles():
     score_ref_block = prepare.split(
         "__aicore__ inline uint64_t ScoreRefBlockSize() const", 1
     )[1].split("__aicore__ inline uint64_t ScoreRowBlockCount", 1)[0]
+    assert "KDA_SCORE_REF_BC = 32" in prepare
+    assert "KDA_SAFE_SCORE_REF_BC = 16" in prepare
+    assert "return KDA_SAFE_SCORE_REF_BC;" in score_ref_block
     assert "return KDA_SCORE_REF_BC;" in score_ref_block
     assert "return 2;" not in score_ref_block
+
+
+def test_prepare_aiv_overlaps_gate_mte2_with_vec_using_two_ub_slots():
+    prepare = STAGE_IMPLEMENTATIONS["prepare"].read_text(encoding="utf-8")
+    gate_bulk = prepare.split(
+        "__aicore__ inline void PrepareGateProductsBulk", 1
+    )[1].split("__aicore__ inline void PrepareGateProducts(", 1)[0]
+    signal_output = prepare.split(
+        "__aicore__ inline void SignalGateOutputDone()", 1
+    )[1].split("template <typename CopyT>", 1)[0]
+    pipelined_loop = gate_bulk.split(
+        "for (uint64_t tileRow = rowBegin", 1
+    )[1]
+
+    assert "KDA_GATE_TILE_ROWS = 16" in prepare
+    assert "KDA_GATE_PIPELINE_DEPTH = 2" in prepare
+    assert "GatePipelineRows() * K_" in prepare
+    assert "PrefetchQKGate(gateSlot" in gate_bulk
+    assert "PrefetchQKGate(gateSlot ^ 1" in gate_bulk
+    assert pipelined_loop.index("WaitGateInputReady();") < pipelined_loop.index(
+        "PrefetchQKGate(gateSlot ^ 1"
+    ) < pipelined_loop.index("if (useRef) {")
+    assert pipelined_loop.index("WaitGateOutputForMte2();") < pipelined_loop.index(
+        "PrefetchQKGate(gateSlot ^ 1"
+    )
+    assert "SetFlag<HardEvent::MTE3_MTE2>" in signal_output
+    assert "SetFlag<HardEvent::MTE3_V>" in signal_output
+    assert "WaitFlag" not in signal_output
+
+
+def test_prepare_uses_a5_regbase_gate_math_with_a2_a3_fallback():
+    prepare = STAGE_IMPLEMENTATIONS["prepare"].read_text(encoding="utf-8")
+    assert '#include "kernel_utils/vector/regbase.hpp"' in prepare
+    assert "static __simd_vf__ inline void PrepareKdaGateQwRegbase" in prepare
+    assert "static __simd_vf__ inline void PrepareKdaGateKgRegbase" in prepare
+    assert "PrepareKdaGateQwRegbase<T, GK_T, true>" in prepare
+    assert "PrepareKdaGateQwRegbase<T, GK_T, false>" in prepare
+    assert "PrepareKdaGateKgRegbase<T, GK_T, true>" in prepare
+    assert "PrepareKdaGateKgRegbase<T, GK_T, false>" in prepare
+    assert "ClampKdaGateRegbaseOutput" in prepare
+    assert "KDA_EXP_INPUT_MAX" in prepare
+    assert "KDA_EXP_INPUT_MIN" in prepare
+    assert "row >= validRows" in prepare
+    assert "#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310" in prepare
+    assert "Cast(qTyped, outFp32, RoundMode::CAST_RINT" in prepare
 
 
 def test_fwd_h_supports_exp_and_exp2_on_a2_and_a5():
@@ -188,18 +236,100 @@ def test_fwd_h_supports_exp_and_exp2_on_a2_and_a5():
         assert "LN2" in update and "LN2" in vnew
 
 
-def test_fwd_h_uses_static_op_dtypes_without_runtime_template_expansion():
+def test_a2_fwd_h_keeps_fp32_recurrence_state():
+    fwd_h_kernel = (
+        ROOT
+        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
+        / "op_kernel"
+    )
+    update = (
+        fwd_h_kernel / "epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
+    ).read_text(encoding="utf-8")
+    vnew = (
+        fwd_h_kernel / "epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
+    ).read_text(encoding="utf-8")
+    kernel = (fwd_h_kernel / "gemm/kernel/gdn_fwd_h_kernel.hpp").read_text(
+        encoding="utf-8"
+    )
+
+    assert "bool useFp32Recurrence" in update
+    assert "AscendC::GlobalTensor<FinalStateElement> initialState" in update
+    assert "initialState[rowStart * outputStride]" in update
+    assert "CopyGmToUb(calcUbTensor, finalStateThisTile" in update
+    assert "CopyUbToGm(finalStateThisTile, hUpdateUbTensor" in update
+    assert "CopyUbToGm(hOutputThisTile, hUbTensor" in update
+    assert "gmInitialState[vec2Offsets.initialStateOffset]" in kernel
+    assert "useInitialState, " in kernel
+    assert "event0FromMte3[streamId] = true;" in kernel
+    empty_subblock = vnew.split("if (rowBegin >= mActual) {", 1)[1].split(
+        "return;", 1
+    )[0]
+    assert "if (waitWsFromMte3)" in empty_subblock
+    assert "WaitFlag<AscendC::HardEvent::MTE3_MTE2>" in empty_subblock
+    assert "SetFlag<AscendC::HardEvent::V_MTE2>" in empty_subblock
+
+
+def test_a5_fwd_h_uses_canonical_h_recurrence_and_fp32_final_state():
+    fwd_h_kernel = (
+        ROOT
+        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
+        / "op_kernel/arch35"
+    )
+    update = (
+        fwd_h_kernel / "epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
+    ).read_text(encoding="utf-8")
+    vnew = (
+        fwd_h_kernel / "epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
+    ).read_text(encoding="utf-8")
+    kernel = (fwd_h_kernel / "gemm/kernel/gdn_fwd_h_kernel.hpp").read_text(
+        encoding="utf-8"
+    )
+
+    assert "CopyGmToUb(hUbTensor, hInputThisTile" in update
+    assert "AscendC::Cast(calcUbTensor, hUbTensor" in update
+    assert "ApplyRowScale(calcUbTensor, gkLastUbTensor" in update
+    assert "AscendC::Add<float>(hUpdateUbTensor, calcUbTensor" in update
+    assert "CopyUbToGm(finalStateThisTile, hUpdateUbTensor" in update
+    assert "CopyUbToGm(hOutputThisTile, hUbTensor" in update
+    assert "gmInitialState[vec2Offsets.initialStateOffset]" in kernel
+    assert "event0FromMte3[streamId] = vec2Offsets.isFinalState;" in kernel
+    empty_subblock = vnew.split("if (rowBegin >= mActual) {", 1)[1].split(
+        "return;", 1
+    )[0]
+    assert "if (waitWsFromMte3)" in empty_subblock
+    assert "WaitFlag<AscendC::HardEvent::MTE3_MTE2>" in empty_subblock
+    assert "SetFlag<AscendC::HardEvent::V_MTE2>" in empty_subblock
+
+
+def test_kda_keeps_fp32_recurrence_when_final_state_is_not_returned():
+    aclnn = (OP_ROOT / "op_host/op_api/aclnn_chunk_kda_fwd.cpp").read_text(
+        encoding="utf-8"
+    )
+    l0 = (OP_ROOT / "op_host/op_api/chunk_kda_fwd.cpp").read_text(encoding="utf-8")
+    assert "const aclTensor *finalStateCompute = params.finalStateOut;" in aclnn
+    assert "if (!params.outputFinalState)" in aclnn
+    assert "KdaFwdMakeShape({seqNum, hvNum, kDim, vDim})" in aclnn
+    assert "DataType::DT_FLOAT, Format::FORMAT_ND" in aclnn
+    assert "oBnsd, finalStateCompute," in aclnn
+    assert "chunkIndicesOptional, true, chunkSize, false, hOut, vNewOut," in l0
+
+
+def test_fwd_h_dispatches_optional_gate_dtype_without_full_runtime_expansion():
     dispatch = (
         ROOT
         / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
         / "op_kernel/chunk_gated_delta_rule_fwd_h.cpp"
     ).read_text(encoding="utf-8")
     assert (
-        "ChunkGatedDeltaRuleFwdHLaunchTyped<DTYPE_K, DTYPE_GK, "
-        "DTYPE_INITAL_STATE, TileShapes, useExp2>" in dispatch
+        "ChunkGatedDeltaRuleFwdHDispatchGate<DTYPE_K, DTYPE_INITAL_STATE, "
+        "TileShapes, useExp2>" in dispatch
     )
-    assert "ChunkGatedDeltaRuleFwdHDispatchGate" not in dispatch
-    for runtime_dtype in ("->dataType", "->gDataType", "->stateDataType"):
+    assert "ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, float, StateT" in dispatch
+    assert "ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, bfloat16_t, StateT" in dispatch
+    assert "ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, half, StateT" in dispatch
+    assert "gdnFwdHTilingData->gDataType" in dispatch
+    assert "DTYPE_GK" not in dispatch
+    for runtime_dtype in ("->dataType", "->stateDataType"):
         assert runtime_dtype not in dispatch
 
 
@@ -221,7 +351,6 @@ def test_a5_fwd_h_kda_hot_path_uses_fused_dual_issue_regbase():
     assert "row + 1" in regbase
     assert "ComputeVNewRegbaseDualIssue" in regbase
     assert "PrepareKGateRegbase" in regbase
-    assert "ApplyKGateUpdateRegbaseDualIssue" in regbase
 
     update = (block_root / "block_epilogue_gdn_fwdh_update.hpp").read_text(
         encoding="utf-8"
@@ -229,10 +358,11 @@ def test_a5_fwd_h_kda_hot_path_uses_fused_dual_issue_regbase():
     vnew = (block_root / "block_epilogue_gdn_fwdh_vnew.hpp").read_text(
         encoding="utf-8"
     )
-    assert "VF_CALL<detail::PrepareKGateRegbase" in update
-    assert "VF_CALL<detail::ApplyKGateUpdateRegbaseDualIssue" in update
-    assert "if constexpr (kGated && !scalarGated)" in update
+    assert "VF_CALL<detail::PrepareKGateRegbase<GElementInput, true>>" in update
+    assert "VF_CALL<detail::ApplyRowScaleDualIssue>" in update
+    assert "PrepareKGate(gkLastUbTensor, gkInputUbTensor" in update
     assert "VF_CALL<detail::ComputeVNewRegbaseDualIssue" in vnew
+    assert "VF_CALL<detail::ApplyRowScaleDualIssue>" in vnew
     assert "AscendC::LocalTensor<float> decayInput = scalarGated ?" in vnew
 
 

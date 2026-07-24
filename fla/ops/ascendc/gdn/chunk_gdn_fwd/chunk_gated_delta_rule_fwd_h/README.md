@@ -55,7 +55,7 @@ $$
  * saveNewValue : reserved (must be true)
  * cuSeqlensOptional : optional
  * chunkIndicesOptional : optional
- * useExp2 : use exp2 for scalar and per-channel gate decay when true, exp otherwise
+ * useExp2 : use exp2 instead of exp for scalar gate decay; per-channel gk always uses exp2
  * transposeStateLayout : reserved (must be false)
  * hOut : required
  * vNewOut : required
@@ -125,7 +125,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdH(
 | `outputFinalState` | 输入 | 必选 | 是否输出最终隐藏状态 `finalStateOut` | `bool` | `true` / `false` |
 | `chunkSize` | 输入 | 必选 | 分块大小 | `int64_t` | 仅支持 `64` / `128` |
 | `saveNewValue` | 输入 | 接口为必传；当前实现要求 `true` | 是否保存修正后的 `v_new` | `bool` | 仅支持 `true` |
-| `useExp2` | 输入 | 必传 | 是否以 `exp2` 而非 `exp` 计算标量及逐通道门控衰减 | `bool` | `true` / `false` |
+| `useExp2` | 输入 | 必传 | 标量 gate 是否以 `exp2` 而非 `exp` 计算；逐 K gate 固定使用 `exp2` | `bool` | `true` / `false` |
 | `transposeStateLayout` | 输入 | 接口为必传；当前实现要求 `false` | 是否转置状态张量布局 | `bool` | 仅支持 `false` |
 
 ### 3.3 输出参数（Outputs）
@@ -171,7 +171,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdH(
   - 二者须同时提供或同时省略；同时提供时启用变长模式（varlen）
   - 变长模式仅支持 `B = 1`
 - `saveNewValue` / `transposeStateLayout`：当前实现下分别只允许 `true` / `false`
-- `useExp2`：`false` 使用自然指数 `exp`；`true` 使用二进制指数 `exp2`，适用于标量 gate 和逐 K 通道 gate
+- `useExp2`：仅控制标量 gate；`false` 使用自然指数 `exp`，`true` 使用二进制指数 `exp2`
+- `gkOptional`：与 fla-org `chunk_delta_h` 一致，逐 K 通道累计 gate 固定使用 `exp2`
 
 ### 4.2 形状约束（强约束）
 
@@ -220,8 +221,8 @@ v_new[c] = u[c] - w[c] @ S[c]
 S[c+1] = exp2(gk_last[c]) * S[c] + kg[c]^T @ v_new[c]
 ```
 
-其中逐通道衰减沿 K 维作用于旧状态。`useExp2=true` 时使用上式的 `exp2` 语义；
-`useExp2=false` 时相同位置改用自然指数 `exp`。
+其中逐通道衰减沿 K 维作用于旧状态，并固定采用上式的 `exp2` 语义；
+`useExp2` 不改变 `gkOptional` 的计算。
 
 - 当前算子实现配置为：
 
@@ -254,7 +255,7 @@ h, v_new, final_state = fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd_h(
     save_new_value=True,         # 预留，必须为 True
     cu_seqlens=None,             # 变长模式下传 list[int]
     chunk_indices=None,          # 变长模式下传扁平化的 [tb, c] list[int]
-    use_exp2=False,              # False 使用 exp；True 使用 exp2
+    use_exp2=False,              # 仅控制标量 g：False 使用 exp，True 使用 exp2
     transpose_state_layout=False # 预留，必须为 False
 )
 ```

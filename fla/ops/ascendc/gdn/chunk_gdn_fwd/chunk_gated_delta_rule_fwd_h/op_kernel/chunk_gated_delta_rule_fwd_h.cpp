@@ -60,6 +60,30 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHLaunchTyped(
     }
 }
 
+template <typename DataT, typename StateT, typename TileShapes, bool useExp2>
+__aicore__ inline void ChunkGatedDeltaRuleFwdHDispatchGate(
+    GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state,
+    GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
+    GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user, int64_t gateDataType,
+    bool useGk, bool useG)
+{
+    constexpr int64_t DTYPE_BF16 = 1;
+    constexpr int64_t DTYPE_FP32 = 2;
+    if (gateDataType == DTYPE_FP32) {
+        ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, float, StateT, TileShapes, useExp2>(
+            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
+            final_state, tiling, user, useGk, useG);
+    } else if (gateDataType == DTYPE_BF16) {
+        ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, bfloat16_t, StateT, TileShapes, useExp2>(
+            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
+            final_state, tiling, user, useGk, useG);
+    } else {
+        ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, half, StateT, TileShapes, useExp2>(
+            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
+            final_state, tiling, user, useGk, useG);
+    }
+}
+
 template <typename TileShapes, bool useExp2>
 __aicore__ inline void ChunkGatedDeltaRuleFwdHDispatchExp(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk,
                                                        GM_ADDR inital_state, GM_ADDR cu_seqlens,
@@ -70,9 +94,9 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHDispatchExp(GM_ADDR k, GM_ADDR w, 
         reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
     bool useGk = gdnFwdHTilingData->useGk;
     bool useG = gdnFwdHTilingData->useG;
-    ChunkGatedDeltaRuleFwdHLaunchTyped<DTYPE_K, DTYPE_GK, DTYPE_INITAL_STATE, TileShapes, useExp2>(
+    ChunkGatedDeltaRuleFwdHDispatchGate<DTYPE_K, DTYPE_INITAL_STATE, TileShapes, useExp2>(
         k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
-        final_state, tiling, user, useGk, useG);
+        final_state, tiling, user, gdnFwdHTilingData->gDataType, useGk, useG);
 }
 
 template <typename TileShapes>

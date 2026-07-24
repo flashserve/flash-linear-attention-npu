@@ -28,6 +28,9 @@
 #include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
 #include "catlass/layout/layout.hpp"
 #include "kernel_operator.h"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "kernel_utils/vector/regbase.hpp"
+#endif
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 
@@ -56,7 +59,10 @@ constexpr uint32_t KDA_SOLVE_SCRATCH_SLOTS = 5;
 constexpr uint32_t KDA_SOLVE_DIAG_BT = 16;
 constexpr uint32_t KDA_SOLVE_DIAG_BLOCKS = KDA_SOLVE_BT / KDA_SOLVE_DIAG_BT;
 constexpr uint32_t KDA_SOLVE_DIAG_MCH_ITERS = 3;
-constexpr uint32_t KDA_SCORE_REF_BC = 16;
+// Raw gate uses two score blocks to reduce AIV/AIC handshakes. Safe gate
+// keeps the smaller reference span needed by large negative cumulative gates.
+constexpr uint32_t KDA_SCORE_REF_BC = 32;
+constexpr uint32_t KDA_SAFE_SCORE_REF_BC = 16;
 constexpr uint32_t KDA_VEC_ARENA_ELEMENTS = 32768;
 constexpr uint32_t KDA_BITS_PER_MASK_BYTE = 8;
 constexpr uint32_t KDA_SELECT_COL_BLOCKS = 2;
@@ -77,7 +83,182 @@ constexpr uint32_t KDA_SCORE_SCRATCH_QG = 0;
 constexpr uint32_t KDA_SCORE_SCRATCH_W = 1;
 constexpr uint32_t KDA_SCORE_SCRATCH_KG = 2;
 constexpr uint64_t KDA_WORKSPACE_ALIGN = 512;
-constexpr uint32_t KDA_GATE_TILE_ROWS = 32;
+constexpr uint32_t KDA_GATE_TILE_ROWS = 16;
+constexpr uint32_t KDA_GATE_PIPELINE_DEPTH = 2;
+constexpr uint32_t KDA_AIV_UB_BUDGET_BYTES = 192 * 1024;
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+template <typename InputT>
+__simd_callee__ inline void LoadKdaGateRegbasePair(
+    AscendC::MicroAPI::RegTensor<float> &zeroReg,
+    AscendC::MicroAPI::RegTensor<float> &oneReg,
+    __ubuf__ InputT *src,
+    AscendC::MicroAPI::MaskReg &inputMask)
+{
+    using namespace AscendC::MicroAPI;
+    if constexpr (std::is_same<InputT, float>()) {
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(zeroReg, oneReg, src);
+    } else {
+        RegTensor<InputT> inputReg;
+        LoadIn<InputT, false>(inputReg, src);
+        CastHalf2Float<InputT>(zeroReg, oneReg, inputReg, inputMask);
+    }
+}
+
+template <typename OutputT>
+__simd_callee__ inline void ClampKdaGateRegbaseOutput(
+    AscendC::MicroAPI::RegTensor<float> &zeroReg,
+    AscendC::MicroAPI::RegTensor<float> &oneReg,
+    AscendC::MicroAPI::MaskReg &floatMask)
+{
+    using namespace AscendC::MicroAPI;
+    if constexpr (std::is_same<OutputT, half>()) {
+        Mins(zeroReg, zeroReg, KDA_FP16_MAX, floatMask);
+        Mins(oneReg, oneReg, KDA_FP16_MAX, floatMask);
+        Maxs(zeroReg, zeroReg, -KDA_FP16_MAX, floatMask);
+        Maxs(oneReg, oneReg, -KDA_FP16_MAX, floatMask);
+    }
+}
+
+template <bool USE_REF, bool NEGATIVE>
+__simd_callee__ inline void BuildKdaGateRegbaseExp(
+    AscendC::MicroAPI::RegTensor<float> &expZeroReg,
+    AscendC::MicroAPI::RegTensor<float> &expOneReg,
+    AscendC::MicroAPI::RegTensor<float> &gateZeroReg,
+    AscendC::MicroAPI::RegTensor<float> &gateOneReg,
+    __ubuf__ float *ref,
+    AscendC::MicroAPI::MaskReg &floatMask)
+{
+    using namespace AscendC::MicroAPI;
+    if constexpr (USE_REF) {
+        RegTensor<float> refZeroReg;
+        RegTensor<float> refOneReg;
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(refZeroReg, refOneReg, ref);
+        if constexpr (NEGATIVE) {
+            SubFloatTwoReg(expZeroReg, expOneReg, refZeroReg, refOneReg,
+                           gateZeroReg, gateOneReg, floatMask);
+        } else {
+            SubFloatTwoReg(expZeroReg, expOneReg, gateZeroReg, gateOneReg,
+                           refZeroReg, refOneReg, floatMask);
+        }
+    } else if constexpr (NEGATIVE) {
+        Muls(expZeroReg, gateZeroReg, -1.0f, floatMask);
+        Muls(expOneReg, gateOneReg, -1.0f, floatMask);
+    } else {
+        Adds(expZeroReg, gateZeroReg, 0.0f, floatMask);
+        Adds(expOneReg, gateOneReg, 0.0f, floatMask);
+    }
+    Muls(expZeroReg, expZeroReg, LN2, floatMask);
+    Muls(expOneReg, expOneReg, LN2, floatMask);
+    MinsFloatTwoReg(expZeroReg, expOneReg, expZeroReg, expOneReg,
+                    KDA_EXP_INPUT_MAX, floatMask);
+    Maxs(expZeroReg, expZeroReg, KDA_EXP_INPUT_MIN, floatMask);
+    Maxs(expOneReg, expOneReg, KDA_EXP_INPUT_MIN, floatMask);
+    ExpFloatTwoReg(expZeroReg, expOneReg, expZeroReg, expOneReg, floatMask);
+}
+
+template <typename OutputT>
+__simd_callee__ inline void StoreKdaGateRegbasePair(
+    __ubuf__ OutputT *dst,
+    AscendC::MicroAPI::RegTensor<float> &zeroReg,
+    AscendC::MicroAPI::RegTensor<float> &oneReg,
+    AscendC::MicroAPI::MaskReg &inputMask,
+    AscendC::MicroAPI::MaskReg &floatMask)
+{
+    using namespace AscendC::MicroAPI;
+    RegTensor<OutputT> outputReg;
+    ClampKdaGateRegbaseOutput<OutputT>(zeroReg, oneReg, floatMask);
+    CastFloat2Half<OutputT>(outputReg, zeroReg, oneReg, floatMask);
+    StoreAlign(dst, outputReg, inputMask);
+}
+
+template <typename T, typename GK_T, bool USE_REF>
+static __simd_vf__ inline void PrepareKdaGateQwRegbase(
+    __ubuf__ T *q, __ubuf__ T *k, __ubuf__ GK_T *gate, __ubuf__ float *ref,
+    uint16_t rows, uint16_t cols)
+{
+    using namespace AscendC::MicroAPI;
+    constexpr uint16_t ELEMENTS_PER_REG = AscendC::VECTOR_REG_WIDTH / sizeof(T);
+
+    MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
+    for (uint16_t row = 0; row < rows; ++row) {
+        uint32_t rowOffset = static_cast<uint32_t>(row) * cols;
+        for (uint16_t col = 0; col < cols; col += ELEMENTS_PER_REG) {
+            uint32_t activeCount = static_cast<uint32_t>(cols - col);
+            MaskReg inputMask = UpdateMask<T>(activeCount);
+            uint32_t offset = rowOffset + col;
+
+            RegTensor<float> gateZeroReg;
+            RegTensor<float> gateOneReg;
+            RegTensor<float> expZeroReg;
+            RegTensor<float> expOneReg;
+            RegTensor<float> inputZeroReg;
+            RegTensor<float> inputOneReg;
+            RegTensor<float> outputZeroReg;
+            RegTensor<float> outputOneReg;
+
+            LoadKdaGateRegbasePair<GK_T>(gateZeroReg, gateOneReg, gate + offset, inputMask);
+            BuildKdaGateRegbaseExp<USE_REF, false>(
+                expZeroReg, expOneReg, gateZeroReg, gateOneReg, ref + col, floatMask);
+
+            LoadKdaGateRegbasePair<T>(inputZeroReg, inputOneReg, q + offset, inputMask);
+            MulFloatTwoReg(outputZeroReg, outputOneReg, inputZeroReg, inputOneReg,
+                           expZeroReg, expOneReg, floatMask);
+            StoreKdaGateRegbasePair<T>(q + offset, outputZeroReg, outputOneReg,
+                                       inputMask, floatMask);
+
+            LoadKdaGateRegbasePair<T>(inputZeroReg, inputOneReg, k + offset, inputMask);
+            MulFloatTwoReg(outputZeroReg, outputOneReg, inputZeroReg, inputOneReg,
+                           expZeroReg, expOneReg, floatMask);
+            StoreKdaGateRegbasePair<T>(k + offset, outputZeroReg, outputOneReg,
+                                       inputMask, floatMask);
+        }
+    }
+}
+
+template <typename T, typename GK_T, bool USE_REF>
+static __simd_vf__ inline void PrepareKdaGateKgRegbase(
+    __ubuf__ T *kg, __ubuf__ T *k, __ubuf__ GK_T *gate, __ubuf__ float *ref,
+    uint16_t rows, uint16_t cols, uint16_t validRows)
+{
+    using namespace AscendC::MicroAPI;
+    constexpr uint16_t ELEMENTS_PER_REG = AscendC::VECTOR_REG_WIDTH / sizeof(T);
+
+    MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
+    for (uint16_t row = 0; row < rows; ++row) {
+        uint32_t rowOffset = static_cast<uint32_t>(row) * cols;
+        for (uint16_t col = 0; col < cols; col += ELEMENTS_PER_REG) {
+            uint32_t activeCount = static_cast<uint32_t>(cols - col);
+            MaskReg inputMask = UpdateMask<T>(activeCount);
+            uint32_t offset = rowOffset + col;
+
+            RegTensor<float> gateZeroReg;
+            RegTensor<float> gateOneReg;
+            RegTensor<float> expZeroReg;
+            RegTensor<float> expOneReg;
+            RegTensor<float> inputZeroReg;
+            RegTensor<float> inputOneReg;
+            RegTensor<float> outputZeroReg;
+            RegTensor<float> outputOneReg;
+
+            LoadKdaGateRegbasePair<GK_T>(gateZeroReg, gateOneReg, gate + offset, inputMask);
+            BuildKdaGateRegbaseExp<USE_REF, true>(
+                expZeroReg, expOneReg, gateZeroReg, gateOneReg, ref + col, floatMask);
+            LoadKdaGateRegbasePair<T>(inputZeroReg, inputOneReg, k + offset, inputMask);
+            MulFloatTwoReg(outputZeroReg, outputOneReg, inputZeroReg, inputOneReg,
+                           expZeroReg, expOneReg, floatMask);
+            if constexpr (USE_REF) {
+                if (row >= validRows) {
+                    Duplicate(outputZeroReg, 0.0f, floatMask);
+                    Duplicate(outputOneReg, 0.0f, floatMask);
+                }
+            }
+            StoreKdaGateRegbasePair<T>(kg + offset, outputZeroReg, outputOneReg,
+                                       inputMask, floatMask);
+        }
+    }
+}
+#endif
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 using KdaArchTag = Catlass::Arch::Ascend950;
@@ -229,11 +410,11 @@ public:
         if (pipe_ != nullptr && initVecBuffers) {
             pipe_->InitBuffer(exp2Buf_, EXP2_UB_BYTES);
             pipe_->InitBuffer(vecBuf_, KDA_VEC_ARENA_ELEMENTS * sizeof(float));
-            const uint64_t gateWritebackRows =
-                ScoreVectorMaxRows(5 * sizeof(float) + 2 * sizeof(T) + sizeof(GK_T));
-            pipe_->InitBuffer(gateWritebackBuf_,
-                              static_cast<uint32_t>(gateWritebackRows * K_ *
-                                                    (3 * sizeof(T) + sizeof(GK_T))));
+            const uint64_t gateStageElems = GatePipelineRows() * K_;
+            const uint64_t gateInputSlotBytes = gateStageElems * (2 * sizeof(T) + sizeof(GK_T));
+            const uint64_t gatePipelineBytes =
+                KDA_GATE_PIPELINE_DEPTH * gateInputSlotBytes + gateStageElems * sizeof(T);
+            pipe_->InitBuffer(gateWritebackBuf_, static_cast<uint32_t>(gatePipelineBytes));
             AllocVectorEvents();
         }
     }
@@ -341,6 +522,9 @@ private:
 
     __aicore__ inline uint64_t ScoreRefBlockSize() const
     {
+        if constexpr (SAFE_GATE) {
+            return KDA_SAFE_SCORE_REF_BC;
+        }
         return KDA_SCORE_REF_BC;
     }
 
@@ -437,6 +621,93 @@ private:
         return vecBuf_.Get<float>()[slot * EXP2_UB_ELEMENTS];
     }
 
+    __aicore__ inline uint64_t GateStageElems() const
+    {
+        return GatePipelineRows() * K_;
+    }
+
+    __aicore__ inline uint64_t GatePipelineRows() const
+    {
+        constexpr uint64_t fixedBytes =
+            static_cast<uint64_t>(KDA_VEC_ARENA_ELEMENTS) * sizeof(float) + EXP2_UB_BYTES;
+        constexpr uint64_t availableBytes = KDA_AIV_UB_BUDGET_BYTES - fixedBytes;
+        uint64_t bytesPerRow = K_ * (5 * sizeof(T) + 2 * sizeof(GK_T));
+        uint64_t rows = bytesPerRow == 0 ? 0 : availableBytes / bytesPerRow;
+        return rows < KDA_GATE_TILE_ROWS ? rows : KDA_GATE_TILE_ROWS;
+    }
+
+    __aicore__ inline uint64_t GateInputSlotBytes() const
+    {
+        return GateStageElems() * (2 * sizeof(T) + sizeof(GK_T));
+    }
+
+    __aicore__ inline LocalTensor<T> GateQTyped(uint64_t slot)
+    {
+        uint64_t byteOffset = slot * GateInputSlotBytes();
+        return gateWritebackBuf_.Get<T>()[byteOffset / sizeof(T)];
+    }
+
+    __aicore__ inline LocalTensor<T> GateKTyped(uint64_t slot)
+    {
+        uint64_t byteOffset = slot * GateInputSlotBytes() + GateStageElems() * sizeof(T);
+        return gateWritebackBuf_.Get<T>()[byteOffset / sizeof(T)];
+    }
+
+    __aicore__ inline LocalTensor<GK_T> GateGTyped(uint64_t slot)
+    {
+        uint64_t byteOffset = slot * GateInputSlotBytes() + 2 * GateStageElems() * sizeof(T);
+        return gateWritebackBuf_.Get<GK_T>()[byteOffset / sizeof(GK_T)];
+    }
+
+    __aicore__ inline LocalTensor<T> GateKgTyped()
+    {
+        uint64_t byteOffset = KDA_GATE_PIPELINE_DEPTH * GateInputSlotBytes();
+        return gateWritebackBuf_.Get<T>()[byteOffset / sizeof(T)];
+    }
+
+    __aicore__ inline void PrefetchQKGate(uint64_t slot, uint64_t b, uint64_t h, uint64_t hv,
+                                          uint64_t token, uint64_t elems)
+    {
+        LocalTensor<T> qTyped = GateQTyped(slot);
+        LocalTensor<T> kTyped = GateKTyped(slot);
+        LocalTensor<GK_T> gateTyped = GateGTyped(slot);
+        CopyVectorIn(qTyped, q_, QOffset(b, h, token, 0), elems);
+        CopyVectorIn(kTyped, k_, QOffset(b, h, token, 0), elems);
+        CopyVectorIn(gateTyped, gk_, KVOffset(b, hv, token, 0, K_), elems);
+        SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+    }
+
+    __aicore__ inline void PrefetchKGate(uint64_t slot, uint64_t b, uint64_t h, uint64_t hv,
+                                         uint64_t token, uint64_t elems)
+    {
+        LocalTensor<T> kTyped = GateQTyped(slot);
+        LocalTensor<GK_T> gateTyped = GateGTyped(slot);
+        CopyVectorIn(kTyped, k_, QOffset(b, h, token, 0), elems);
+        CopyVectorIn(gateTyped, gk_, KVOffset(b, hv, token, 0, K_), elems);
+        SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+    }
+
+    __aicore__ inline void WaitGateInputReady()
+    {
+        WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+    }
+
+    __aicore__ inline void WaitGateOutputForMte2()
+    {
+        WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
+    }
+
+    __aicore__ inline void WaitGateOutputForVector()
+    {
+        WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
+    }
+
+    __aicore__ inline void SignalGateOutputDone()
+    {
+        SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
+        SetFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
+    }
+
     template <typename CopyT>
     __aicore__ inline void LoadAsFloatRow(GlobalTensor<CopyT> &src, uint64_t srcOffset, LocalTensor<float> &dst,
                                           uint64_t count)
@@ -519,15 +790,6 @@ private:
     }
 
 
-    __aicore__ inline uint64_t ScoreVectorMaxRows(uint64_t bytesPerElem) const
-    {
-        constexpr uint64_t arenaBytes = static_cast<uint64_t>(KDA_VEC_ARENA_ELEMENTS) * sizeof(float);
-        uint64_t maxRows = (arenaBytes / bytesPerElem) / K_;
-        if (K_ >= 128 && maxRows > 32) {
-            maxRows = 32;
-        }
-        return maxRows;
-    }
     __aicore__ inline void PrepareScoreFactorsBulk(uint64_t b, uint64_t h, uint64_t hv, uint64_t start,
                                                     uint64_t subBlockIdx, uint64_t subBlockNum,
                                                     uint64_t refToken, uint64_t scoreRowBegin,
@@ -539,31 +801,63 @@ private:
 
         uint64_t qwBegin = scoreRowBegin + (scoreRowCount * subBlockIdx) / subBlockNum;
         uint64_t qwEnd = scoreRowBegin + (scoreRowCount * (subBlockIdx + 1)) / subBlockNum;
-        uint64_t qwMaxRows = ScoreVectorMaxRows(5 * sizeof(float) + 2 * sizeof(T) + sizeof(GK_T));
-        for (uint64_t tileRow = qwBegin; tileRow < qwEnd; tileRow += qwMaxRows) {
+        uint64_t qwMaxRows = GatePipelineRows();
+        bool qwOutputPending = false;
+        uint64_t qwSlot = 0;
+        if (qwBegin < qwEnd && qwMaxRows > 0) {
+            uint64_t firstRows = qwEnd - qwBegin;
+            if (firstRows > qwMaxRows) {
+                firstRows = qwMaxRows;
+            }
+            PrefetchQKGate(qwSlot, b, h, hv, start + qwBegin, firstRows * K_);
+        }
+        for (uint64_t tileRow = qwBegin; tileRow < qwEnd && qwMaxRows > 0; tileRow += qwMaxRows) {
             uint64_t tileRows = qwEnd - tileRow;
             if (tileRows > qwMaxRows) {
                 tileRows = qwMaxRows;
             }
             uint64_t elems = tileRows * K_;
+            LocalTensor<T> qTyped = GateQTyped(qwSlot);
+            LocalTensor<T> kTyped = GateKTyped(qwSlot);
+            LocalTensor<GK_T> gateTyped = GateGTyped(qwSlot);
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
             LocalTensor<float> arena = vecBuf_.Get<float>();
             LocalTensor<float> qFp32 = arena;
             LocalTensor<float> kFp32 = arena[elems];
             LocalTensor<float> gFp32 = arena[2 * elems];
             LocalTensor<float> expFp32 = arena[3 * elems];
             LocalTensor<float> outFp32 = arena[4 * elems];
-            LocalTensor<T> typedBase = gateWritebackBuf_.Get<T>();
-            LocalTensor<T> qTyped = typedBase;
-            LocalTensor<T> kTyped = typedBase[elems];
-            LocalTensor<GK_T> gateTyped =
-                gateWritebackBuf_.Get<GK_T>()[3 * elems * sizeof(T) / sizeof(GK_T)];
+#endif
 
-            uint64_t token = start + tileRow;
-            CopyVectorIn(qTyped, q_, QOffset(b, h, token, 0), elems);
-            CopyVectorIn(kTyped, k_, QOffset(b, h, token, 0), elems);
-            LoadAsFloatVector(gk_, KVOffset(b, hv, token, 0, K_), gFp32, gateTyped, elems);
+            WaitGateInputReady();
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
             Cast(qFp32, qTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
             Cast(kFp32, kTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            if constexpr (IsSameType<GK_T, float>::value) {
+                gFp32 = gateTyped;
+            } else {
+                Cast(gFp32, gateTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            }
+#endif
+            if (qwOutputPending) {
+                WaitGateOutputForMte2();
+            }
+            uint64_t nextTileRow = tileRow + qwMaxRows;
+            if (nextTileRow < qwEnd) {
+                uint64_t nextRows = qwEnd - nextTileRow;
+                if (nextRows > qwMaxRows) {
+                    nextRows = qwMaxRows;
+                }
+                PrefetchQKGate(qwSlot ^ 1, b, h, hv, start + nextTileRow, nextRows * K_);
+            }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            PrepareKdaGateQwRegbase<T, GK_T, true>(
+                (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
+                (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
+                (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
+                (__ubuf__ float *)reinterpret_cast<uint64_t>(refFp32.GetPhyAddr()),
+                static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_));
+#else
             PipeBarrier<PIPE_V>();
             for (uint64_t row = 0; row < tileRows; ++row) {
                 Sub(expFp32[row * K_], gFp32[row * K_], refFp32, static_cast<uint32_t>(K_));
@@ -585,41 +879,83 @@ private:
             ClampFp32ToOutputType(outFp32, static_cast<uint32_t>(elems));
             Cast(kTyped, outFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(elems));
             PipeBarrier<PIPE_V>();
+#endif
 
+            if (qwOutputPending) {
+                WaitGateOutputForVector();
+            }
             SetFlag<HardEvent::V_MTE3>(vToMte3Event_);
             WaitFlag<HardEvent::V_MTE3>(vToMte3Event_);
             CopyVectorOut(scoreWorkspace_, ScoreScratchOffset(scoreSlot, KDA_SCORE_SCRATCH_QG, tileRow),
                           qTyped, elems);
             CopyVectorOut(scoreWorkspace_, ScoreScratchOffset(scoreSlot, KDA_SCORE_SCRATCH_W, tileRow),
                           kTyped, elems);
-            SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
-            WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
-            SetFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
-            WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
+            SignalGateOutputDone();
+            qwOutputPending = true;
+            qwSlot ^= 1;
+        }
+        if (qwOutputPending) {
+            WaitGateOutputForMte2();
+            WaitGateOutputForVector();
         }
 
         uint64_t kgBegin = (validColEnd * subBlockIdx) / subBlockNum;
         uint64_t kgEnd = (validColEnd * (subBlockIdx + 1)) / subBlockNum;
-        uint64_t kgMaxRows = ScoreVectorMaxRows(4 * sizeof(float) + sizeof(T) + sizeof(GK_T));
-        for (uint64_t tileRow = kgBegin; tileRow < kgEnd; tileRow += kgMaxRows) {
+        uint64_t kgMaxRows = GatePipelineRows();
+        bool kgOutputPending = false;
+        uint64_t kgSlot = 0;
+        if (kgBegin < kgEnd && kgMaxRows > 0) {
+            uint64_t firstRows = kgEnd - kgBegin;
+            if (firstRows > kgMaxRows) {
+                firstRows = kgMaxRows;
+            }
+            PrefetchKGate(kgSlot, b, h, hv, start + kgBegin, firstRows * K_);
+        }
+        for (uint64_t tileRow = kgBegin; tileRow < kgEnd && kgMaxRows > 0; tileRow += kgMaxRows) {
             uint64_t tileRows = kgEnd - tileRow;
             if (tileRows > kgMaxRows) {
                 tileRows = kgMaxRows;
             }
             uint64_t elems = tileRows * K_;
+            LocalTensor<T> kTyped = GateQTyped(kgSlot);
+            LocalTensor<GK_T> gateTyped = GateGTyped(kgSlot);
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
             LocalTensor<float> arena = vecBuf_.Get<float>();
             LocalTensor<float> kFp32 = arena;
             LocalTensor<float> gFp32 = arena[elems];
             LocalTensor<float> expFp32 = arena[2 * elems];
             LocalTensor<float> outFp32 = arena[3 * elems];
-            LocalTensor<T> kTyped = gateWritebackBuf_.Get<T>();
-            LocalTensor<GK_T> gateTyped =
-                gateWritebackBuf_.Get<GK_T>()[3 * elems * sizeof(T) / sizeof(GK_T)];
+#endif
 
-            uint64_t token = start + tileRow;
-            CopyVectorIn(kTyped, k_, QOffset(b, h, token, 0), elems);
-            LoadAsFloatVector(gk_, KVOffset(b, hv, token, 0, K_), gFp32, gateTyped, elems);
+            WaitGateInputReady();
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
             Cast(kFp32, kTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            if constexpr (IsSameType<GK_T, float>::value) {
+                gFp32 = gateTyped;
+            } else {
+                Cast(gFp32, gateTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            }
+#endif
+            if (kgOutputPending) {
+                WaitGateOutputForMte2();
+            }
+            uint64_t nextTileRow = tileRow + kgMaxRows;
+            if (nextTileRow < kgEnd) {
+                uint64_t nextRows = kgEnd - nextTileRow;
+                if (nextRows > kgMaxRows) {
+                    nextRows = kgMaxRows;
+                }
+                PrefetchKGate(kgSlot ^ 1, b, h, hv, start + nextTileRow, nextRows * K_);
+            }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            PrepareKdaGateKgRegbase<T, GK_T, true>(
+                (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
+                (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
+                (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
+                (__ubuf__ float *)reinterpret_cast<uint64_t>(refFp32.GetPhyAddr()),
+                static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_),
+                static_cast<uint16_t>(tileRows));
+#else
             PipeBarrier<PIPE_V>();
             for (uint64_t row = 0; row < tileRows; ++row) {
                 Sub(expFp32[row * K_], refFp32, gFp32[row * K_], static_cast<uint32_t>(K_));
@@ -635,15 +971,22 @@ private:
             ClampFp32ToOutputType(outFp32, static_cast<uint32_t>(elems));
             Cast(kTyped, outFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(elems));
             PipeBarrier<PIPE_V>();
+#endif
 
+            if (kgOutputPending) {
+                WaitGateOutputForVector();
+            }
             SetFlag<HardEvent::V_MTE3>(vToMte3Event_);
             WaitFlag<HardEvent::V_MTE3>(vToMte3Event_);
             CopyVectorOut(scoreWorkspace_, ScoreScratchOffset(scoreSlot, KDA_SCORE_SCRATCH_KG, tileRow),
                           kTyped, elems);
-            SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
-            WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
-            SetFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
-            WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
+            SignalGateOutputDone();
+            kgOutputPending = true;
+            kgSlot ^= 1;
+        }
+        if (kgOutputPending) {
+            WaitGateOutputForMte2();
+            WaitGateOutputForVector();
         }
     }
 
@@ -664,16 +1007,7 @@ private:
             return;
         }
 
-        constexpr uint64_t arenaBytes = static_cast<uint64_t>(KDA_VEC_ARENA_ELEMENTS) * sizeof(float);
-        constexpr uint64_t bytesPerElem = 5 * sizeof(float) + 3 * sizeof(T) + sizeof(GK_T);
-        uint64_t maxElems = arenaBytes / bytesPerElem;
-        uint64_t maxRows = maxElems / K_;
-        // Keep the multi-row SIMD tile below the 192 KiB per-core UB budget.
-        // K=128 uses five FP32 work planes plus three typed planes; 32 rows
-        // leaves headroom for alignment and the surrounding pipeline buffers.
-        if (K_ >= 128 && maxRows > 32) {
-            maxRows = 32;
-        }
+        uint64_t maxRows = GatePipelineRows();
         if (maxRows == 0) {
             return;
         }
@@ -682,33 +1016,92 @@ private:
             LoadAsFloatRow(gk_, KVOffset(b, hv, refToken, 0, K_), refFp32, K_);
         }
 
+        bool outputPending = false;
+        uint64_t gateSlot = 0;
+        uint64_t firstRows = rowEnd - rowBegin;
+        if (firstRows > maxRows) {
+            firstRows = maxRows;
+        }
+        PrefetchQKGate(gateSlot, b, h, hv, start + rowBegin, firstRows * K_);
         for (uint64_t tileRow = rowBegin; tileRow < rowEnd; tileRow += maxRows) {
             uint64_t tileRows = rowEnd - tileRow;
             if (tileRows > maxRows) {
                 tileRows = maxRows;
             }
             uint64_t elems = tileRows * K_;
+            LocalTensor<T> qTyped = GateQTyped(gateSlot);
+            LocalTensor<T> kTyped = GateKTyped(gateSlot);
+            LocalTensor<T> kgTyped = GateKgTyped();
+            LocalTensor<GK_T> gateTyped = GateGTyped(gateSlot);
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
             LocalTensor<float> arena = vecBuf_.Get<float>();
             LocalTensor<float> qFp32 = arena;
             LocalTensor<float> kFp32 = arena[elems];
             LocalTensor<float> gFp32 = arena[2 * elems];
             LocalTensor<float> expFp32 = arena[3 * elems];
             LocalTensor<float> outFp32 = arena[4 * elems];
-
-            LocalTensor<T> typedBase = gateWritebackBuf_.Get<T>();
-            LocalTensor<T> qTyped = typedBase;
-            LocalTensor<T> kTyped = typedBase[elems];
-            LocalTensor<T> kgTyped = typedBase[2 * elems];
-            LocalTensor<GK_T> gateTyped =
-                gateWritebackBuf_.Get<GK_T>()[3 * elems * sizeof(T) / sizeof(GK_T)];
+#endif
 
             uint64_t token = start + tileRow;
-            CopyVectorIn(qTyped, q_, QOffset(b, h, token, 0), elems);
-            CopyVectorIn(kTyped, k_, QOffset(b, h, token, 0), elems);
-            LoadAsFloatVector(gk_, KVOffset(b, hv, token, 0, K_), gFp32, gateTyped, elems);
-
+            WaitGateInputReady();
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
             Cast(qFp32, qTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
             Cast(kFp32, kTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            if constexpr (IsSameType<GK_T, float>::value) {
+                gFp32 = gateTyped;
+            } else {
+                Cast(gFp32, gateTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            }
+#endif
+            if (outputPending) {
+                WaitGateOutputForMte2();
+            }
+            uint64_t nextTileRow = tileRow + maxRows;
+            if (nextTileRow < rowEnd) {
+                uint64_t nextRows = rowEnd - nextTileRow;
+                if (nextRows > maxRows) {
+                    nextRows = maxRows;
+                }
+                PrefetchQKGate(gateSlot ^ 1, b, h, hv, start + nextTileRow, nextRows * K_);
+            }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            if (outputPending) {
+                WaitGateOutputForVector();
+            }
+            uint16_t validRows = static_cast<uint16_t>(tileRows);
+            if (useRef && tileRow >= validColEnd) {
+                validRows = 0;
+            } else if (useRef && tileRow + tileRows > validColEnd) {
+                validRows = static_cast<uint16_t>(validColEnd - tileRow);
+            }
+            if (useRef) {
+                PrepareKdaGateKgRegbase<T, GK_T, true>(
+                    (__ubuf__ T *)reinterpret_cast<uint64_t>(kgTyped.GetPhyAddr()),
+                    (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
+                    (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
+                    (__ubuf__ float *)reinterpret_cast<uint64_t>(refFp32.GetPhyAddr()),
+                    static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_), validRows);
+                PrepareKdaGateQwRegbase<T, GK_T, true>(
+                    (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
+                    (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
+                    (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
+                    (__ubuf__ float *)reinterpret_cast<uint64_t>(refFp32.GetPhyAddr()),
+                    static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_));
+            } else {
+                PrepareKdaGateKgRegbase<T, GK_T, false>(
+                    (__ubuf__ T *)reinterpret_cast<uint64_t>(kgTyped.GetPhyAddr()),
+                    (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
+                    (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
+                    (__ubuf__ float *)reinterpret_cast<uint64_t>(refFp32.GetPhyAddr()),
+                    static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_), validRows);
+                PrepareKdaGateQwRegbase<T, GK_T, false>(
+                    (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
+                    (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
+                    (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
+                    (__ubuf__ float *)reinterpret_cast<uint64_t>(refFp32.GetPhyAddr()),
+                    static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_));
+            }
+#else
             PipeBarrier<PIPE_V>();
 
             if (useRef) {
@@ -761,8 +1154,12 @@ private:
                 PipeBarrier<PIPE_V>();
             }
             ClampFp32ToOutputType(outFp32, static_cast<uint32_t>(elems));
+            if (outputPending) {
+                WaitGateOutputForVector();
+            }
             Cast(kgTyped, outFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(elems));
             PipeBarrier<PIPE_V>();
+#endif
 
             SetFlag<HardEvent::V_MTE3>(vToMte3Event_);
             WaitFlag<HardEvent::V_MTE3>(vToMte3Event_);
@@ -778,10 +1175,13 @@ private:
                 CopyVectorOut(w_, KVOffset(b, hv, token, 0, K_), kTyped, elems);
                 CopyVectorOut(kg_, KVOffset(b, hv, token, 0, K_), kgTyped, elems);
             }
-            SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
-            WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
-            SetFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
-            WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
+            SignalGateOutputDone();
+            outputPending = true;
+            gateSlot ^= 1;
+        }
+        if (outputPending) {
+            WaitGateOutputForMte2();
+            WaitGateOutputForVector();
         }
         return;
     }
@@ -1730,10 +2130,12 @@ private:
                 Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(scoreDoneFlag_);
             }
         }
+        // The final score MMAD only consumes scoreWorkspace_. Run the
+        // independent gate writeback while AIC drains its MMAD/Fixpipe path.
+        PrepareGateProducts(b, h, hv, start, curT, subBlockIdx, subBlockNum);
         if (pipelineBlockCount > 0) {
             Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(scoreDoneFlag_);
         }
-        PrepareGateProducts(b, h, hv, start, curT, subBlockIdx, subBlockNum);
         if (useAkkCubeSolve) {
             bool fullChunk = curT == BT_;
             PrepareAqkAkkSolveInputRows(b, hv, chunkIdx, start, curT, solveRowBegin, solveRowEnd,

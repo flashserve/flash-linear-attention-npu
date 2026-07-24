@@ -549,6 +549,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *kgComputeBnsd = kgBnsd;
     const aclTensor *vNewComputeBnsd = vNewBnsd;
     const aclTensor *hComputeBnst = hBnst;
+    const aclTensor *finalStateCompute = params.finalStateOut;
 
     if (!returnIntermediates) {
         aqkComputeBnst = executorPtr->AllocTensor(
@@ -571,15 +572,20 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             KdaFwdMakeShape({batch, hvNum, params.totalChunks, kDim, vDim}),
             qBnsd->GetDataType(), Format::FORMAT_ND);
     }
+    if (!params.outputFinalState) {
+        finalStateCompute = executorPtr->AllocTensor(
+            KdaFwdMakeShape({seqNum, hvNum, kDim, vDim}),
+            DataType::DT_FLOAT, Format::FORMAT_ND);
+    }
     CHECK_RET(aqkComputeBnst != nullptr && akkComputeBnst != nullptr && wComputeBnsd != nullptr &&
                   uComputeBnsd != nullptr && qgComputeBnsd != nullptr && kgComputeBnsd != nullptr &&
-                  vNewComputeBnsd != nullptr && hComputeBnst != nullptr,
+                  vNewComputeBnsd != nullptr && hComputeBnst != nullptr && finalStateCompute != nullptr,
               ACLNN_ERR_INNER_NULLPTR);
 
     result = l0op::KdaChunkForward(
         qBnsd, kBnsd, vBnsd, gkBnsd, betaBns, params.initialStateOptional,
         params.cuSeqlensOptional, params.chunkIndicesOptional, params.scale, params.chunkSize,
-        params.outputFinalState, params.totalChunks, params.safeGate, !isInternalLayout, oBnsd, params.finalStateOut,
+        params.outputFinalState, params.totalChunks, params.safeGate, !isInternalLayout, oBnsd, finalStateCompute,
         aqkComputeBnst, akkComputeBnst, wComputeBnsd, uComputeBnsd, qgComputeBnsd,
         kgComputeBnsd, vNewComputeBnsd, hComputeBnst, executorPtr);
     for (auto tensor : result) {

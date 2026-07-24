@@ -150,6 +150,7 @@ public:
         AscendC::GlobalTensor<HElementInput> hInput,
         AscendC::GlobalTensor<float> hUpdateInput,
         AscendC::GlobalTensor<GElementInput> gkInput,
+        AscendC::GlobalTensor<FinalStateElement> initialState,
         uint32_t chunkSize,
         uint32_t kHeadDim,
         uint32_t vBlockDim,
@@ -158,6 +159,7 @@ public:
         bool isInitialState,
         bool isFinalState,
         bool storeFinalState,
+        bool useInitialState,
         bool isPing
     )
     {
@@ -189,6 +191,8 @@ public:
         AscendC::LocalTensor<HElementOutput> hUbTensor = isPing ? hUbTensor_ping : hUbTensor_pong;
         AscendC::LocalTensor<FinalStateElement> finalOutputUbTensor = isPing ? finalOutputUbTensor_ping : finalOutputUbTensor_pong;
         AscendC::LocalTensor<float> glastUbTensor = isPing ? glastUbTensor_ping : glastUbTensor_pong;
+        bool useFp32Recurrence = storeFinalState && std::is_same<FinalStateElement, float>::value &&
+                                 (!isInitialState || useInitialState);
 
         float muls = 1.0f;
         if constexpr (scalarGated) {
@@ -234,12 +238,31 @@ public:
             } else {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
             }
-            AscendC::DataCopy(hUbTensor, hInputThisSubBlock, mActualThisSubBlock * nActual);
+            if constexpr (std::is_same<FinalStateElement, float>::value) {
+                if (useFp32Recurrence) {
+                    if (isInitialState) {
+                        AscendC::DataCopy(calcUbTensor, initialState[rowBegin * outputStride],
+                                          mActualThisSubBlock * nActual);
+                    } else {
+                        AscendC::DataCopy(calcUbTensor, finalStateThisSubBlock,
+                                          mActualThisSubBlock * nActual);
+                    }
+                } else {
+                    AscendC::DataCopy(hUbTensor, hInputThisSubBlock,
+                                      mActualThisSubBlock * nActual);
+                }
+            } else {
+                AscendC::DataCopy(hUbTensor, hInputThisSubBlock,
+                                  mActualThisSubBlock * nActual);
+            }
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
 
-            AscendC::Cast(calcUbTensor, hUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nActual);
-            AscendC::PipeBarrier<PIPE_V>();
+            if (!useFp32Recurrence) {
+                AscendC::Cast(calcUbTensor, hUbTensor, AscendC::RoundMode::CAST_NONE,
+                              mActualThisSubBlock * nActual);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
             if (storeFinalState && isFinalState && std::is_same<FinalStateElement, float>::value) {
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
             }
@@ -264,19 +287,19 @@ public:
                     AscendC::Cast(gkLastUbTensor, gkInputUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock);
                 }
                 AscendC::PipeBarrier<PIPE_V>();
-                if constexpr (useExp2) {
-                    AscendC::Muls(gkLastUbTensor, gkLastUbTensor, LN2, mActualThisSubBlock);
-                    AscendC::PipeBarrier<PIPE_V>();
-                }
+                AscendC::Muls(gkLastUbTensor, gkLastUbTensor, LN2, mActualThisSubBlock);
+                AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Exp(gkLastUbTensor, gkLastUbTensor, mActualThisSubBlock);
                 AscendC::PipeBarrier<PIPE_V>();
 
                 uint32_t gkBrcReptime = (mActualThisSubBlock + 8 - 1) / 8;
                 uint32_t dstShapeGk[2] = {gkBrcReptime * 8, nActual};
                 uint32_t srcShapeGk[2] = {gkBrcReptime * 8, 1};
-                AscendC::Broadcast<float, 2, 1>(hUpdateUbTensor, gkLastUbTensor, dstShapeGk, srcShapeGk, shareBufferGk_);
+                AscendC::Broadcast<float, 2, 1>(hUpdateUbTensor, gkLastUbTensor,
+                                                dstShapeGk, srcShapeGk, shareBufferGk_);
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Mul(calcUbTensor, calcUbTensor, hUpdateUbTensor, mActualThisSubBlock * nActual);
+                AscendC::Mul(calcUbTensor, calcUbTensor, hUpdateUbTensor,
+                             mActualThisSubBlock * nActual);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
             }
@@ -294,11 +317,20 @@ public:
             AscendC::PipeBarrier<PIPE_V>();
 
             if constexpr(std::is_same<FinalStateElement, float>::value) {
-                if (storeFinalState && isFinalState) {
+                if (storeFinalState) {
+                    if (!isFinalState) {
+                        AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT,
+                                      mActualThisSubBlock * nActual);
+                        AscendC::PipeBarrier<PIPE_V>();
+                    }
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                     AscendC::DataCopy(finalStateThisSubBlock, hUpdateUbTensor, mActualThisSubBlock * nActual);
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+                    if (!isFinalState) {
+                        AscendC::DataCopy(hOutputThisSubBlock, hUbTensor, mActualThisSubBlock * nActual);
+                        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
+                    }
                 } else {
                     AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nActual);
                     AscendC::PipeBarrier<PIPE_V>();
@@ -333,6 +365,7 @@ public:
 
         bool waitHFromV = storeFinalState && isInitialState && std::is_same<FinalStateElement, float>::value;
         bool waitUpdateFromMte3 = false;
+        uint32_t updateReadyEvent = EVENT_ID3 + pingpongFlag;
         bool waitGkFromScalar = true;
         for (uint32_t rowStart = rowBegin; rowStart < rowEnd; rowStart += ROW_TILE) {
             uint32_t rowsThisTile = rowEnd - rowStart;
@@ -350,12 +383,29 @@ public:
             } else {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
             }
-            CopyGmToUb(hUbTensor, hInputThisTile, rowsThisTile, nActual, outputStride);
+            if constexpr (std::is_same<FinalStateElement, float>::value) {
+                if (useFp32Recurrence) {
+                    if (isInitialState) {
+                        CopyGmToUb(calcUbTensor, initialState[rowStart * outputStride],
+                                   rowsThisTile, nActual, outputStride);
+                    } else {
+                        CopyGmToUb(calcUbTensor, finalStateThisTile, rowsThisTile, nActual,
+                                   outputStride);
+                    }
+                } else {
+                    CopyGmToUb(hUbTensor, hInputThisTile, rowsThisTile, nActual,
+                               outputStride);
+                }
+            } else {
+                CopyGmToUb(hUbTensor, hInputThisTile, rowsThisTile, nActual, outputStride);
+            }
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
 
-            AscendC::Cast(calcUbTensor, hUbTensor, AscendC::RoundMode::CAST_NONE, rowsThisTile * nActual);
-            AscendC::PipeBarrier<PIPE_V>();
+            if (!useFp32Recurrence) {
+                AscendC::Cast(calcUbTensor, hUbTensor, AscendC::RoundMode::CAST_NONE, rowsThisTile * nActual);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
             if (storeFinalState && isFinalState && std::is_same<FinalStateElement, float>::value) {
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
                 waitHFromV = true;
@@ -388,18 +438,16 @@ public:
                     AscendC::Cast(gkLastUbTensor, gkInputUbTensor, AscendC::RoundMode::CAST_NONE, rowsThisTile);
                 }
                 AscendC::PipeBarrier<PIPE_V>();
-                if constexpr (useExp2) {
-                    AscendC::Muls(gkLastUbTensor, gkLastUbTensor, LN2, rowsThisTile);
-                    AscendC::PipeBarrier<PIPE_V>();
-                }
+                AscendC::Muls(gkLastUbTensor, gkLastUbTensor, LN2, rowsThisTile);
+                AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Exp(gkLastUbTensor, gkLastUbTensor, rowsThisTile);
                 AscendC::PipeBarrier<PIPE_V>();
 
                 uint32_t gkBrcReptime = (rowsThisTile + 8 - 1) / 8;
                 uint32_t dstShapeGk[2] = {gkBrcReptime * 8, nActual};
                 uint32_t srcShapeGk[2] = {gkBrcReptime * 8, 1};
-                AscendC::Broadcast<float, 2, 1>(gkBroadcastUbTensor, gkLastUbTensor, dstShapeGk, srcShapeGk,
-                                                shareBufferGk_);
+                AscendC::Broadcast<float, 2, 1>(gkBroadcastUbTensor, gkLastUbTensor,
+                                                dstShapeGk, srcShapeGk, shareBufferGk_);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Mul(calcUbTensor, calcUbTensor, gkBroadcastUbTensor, rowsThisTile * nActual);
                 AscendC::PipeBarrier<PIPE_V>();
@@ -407,7 +455,7 @@ public:
             }
 
             if (waitUpdateFromMte3) {
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(updateReadyEvent);
             } else {
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
             }
@@ -418,12 +466,25 @@ public:
             AscendC::PipeBarrier<PIPE_V>();
 
             if constexpr(std::is_same<FinalStateElement, float>::value) {
-                if (storeFinalState && isFinalState) {
+                if (storeFinalState) {
+                    if (!isFinalState) {
+                        AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT,
+                                      rowsThisTile * nActual);
+                        AscendC::PipeBarrier<PIPE_V>();
+                    }
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                     CopyUbToGm(finalStateThisTile, hUpdateUbTensor, rowsThisTile, nActual, outputStride);
-                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+                    // A2 wide-V tiles reuse this UB in the next iteration; retire MTE3 before either writer advances.
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(updateReadyEvent);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(updateReadyEvent);
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(updateReadyEvent);
                     waitUpdateFromMte3 = true;
+                    if (!isFinalState) {
+                        CopyUbToGm(hOutputThisTile, hUbTensor, rowsThisTile, nActual, outputStride);
+                        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
+                    }
                 } else {
                     AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT, rowsThisTile * nActual);
                     AscendC::PipeBarrier<PIPE_V>();
@@ -453,6 +514,17 @@ public:
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
                 waitUpdateFromMte3 = false;
             }
+        }
+        if (storeFinalState && std::is_same<FinalStateElement, float>::value) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(updateReadyEvent);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+            if (!isFinalState) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
+            }
+        } else {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
         }
         if constexpr (kGated) {
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
