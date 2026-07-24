@@ -48,7 +48,8 @@ out, final_state = recurrent_kda(
   - `safe_gate=False`：`gate = -exp(A_log) * softplus(g + dt_bias)`。
   - `safe_gate=True`：`gate = lower_bound * sigmoid(exp(A_log) * (g + dt_bias))`。
 - `use_beta_sigmoid_in_kernel=True` 时，kernel 使用 `sigmoid(beta)`；若 `allow_neg_eigval=True`，再乘 2。
-- Python/aclnn/legacy 入口支持非连续 `initial_state`；返回 `final_state` 时与输入保持相同 storage 和 stride。
+- Python/aclnn/legacy 入口支持非连续 `initial_state`。Python 主入口返回 `final_state` 时与输入保持相同
+  storage 和 stride；legacy Torch 入口只返回 `out`，最终状态通过 `initial_state` 原位更新。
 - `cu_seqlens` 是必传的同设备 INT32/INT64 tensor，shape 为 `[seq_num+1]`，使用与 fla-org 一致的
   累积 offset 语义。首项必须为 0，末项等于有效 packed token 数且可小于图捕获的 token capacity，
   相邻差值是各序列长度。host 不读取其值，兼容 ACLGraph capture/replay。

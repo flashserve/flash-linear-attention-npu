@@ -37,7 +37,7 @@ Shape 符号统一引用 [KDA 模型符号表](../../README.md#model-shape-symbo
 | 名称 | Shape | Dtype | 说明 |
 | --- | --- | --- | --- |
 | `out` | 与 `v` 相同 | BF16 | recurrent 输出 |
-| `final_state` | 与 `initial_state` 同一 tensor；`output_final_state=False` 时 Python/legacy 返回空 tensor | FP32/BF16 | `initial_state` 始终原位更新；显式返回时保持同一 storage |
+| `final_state` | 与 `initial_state` 同一 tensor；`output_final_state=False` 时 Python 主入口返回空 tensor | FP32/BF16 | `initial_state` 始终原位更新；仅 Python 主入口显式返回，legacy Torch 入口只返回 `out` |
 
 ### 2.3 属性
 
@@ -45,7 +45,7 @@ Shape 符号统一引用 [KDA 模型符号表](../../README.md#model-shape-symbo
 | --- | --- | --- | --- | --- |
 | `layout` | str | `BSND` | `{"BSND", "TND"}` | 输入布局 |
 | `scale` | float? | Python/legacy 为 `K ** -0.5` | 任意有限浮点 | 乘到 query 上 |
-| `output_final_state` | bool | `false` | `{false, true}` | 是否返回最终状态 |
+| `output_final_state` | bool | `false` | `{false, true}` | Python 主入口是否返回最终状态；legacy Torch 入口不暴露该属性 |
 | `use_qk_l2norm_in_kernel` | bool | `false` | `{false, true}` | 是否在 kernel 内对 q/k 做 L2 normalize |
 | `use_gate_in_kernel` | bool | `false` | `{false, true}` | 是否把 `g` 解释为 raw gate |
 | `use_beta_sigmoid_in_kernel` | bool | `false` | `{false, true}` | 是否在 kernel 内计算 `sigmoid(beta)` |
@@ -176,11 +176,15 @@ import torch
 import fla_npu
 
 fla_npu.load_legacy_torch_ops()
-out, final_state = torch.ops.npu.npu_recurrent_kda(
+out = torch.ops.npu.npu_recurrent_kda(
     q, k, v, g, beta, state, cu_seqlens=cu_seqlens,
     A_log=A_log, layout="BSND",
-    output_final_state=True, use_gate_in_kernel=True)
+    use_gate_in_kernel=True)
 ```
+
+legacy Torch schema 将 `initial_state` 声明为 `Tensor(a!)` 并只返回 `out`；最终状态通过
+`initial_state` 原位更新，不再额外返回与输入 alias 的 tensor。该契约与 vLLM Ascend
+recurrent KDA 的 Torch 接口保持一致。
 
 ## 7. 已知限制
 
