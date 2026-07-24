@@ -773,15 +773,39 @@ __aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::LoadInputTile(int64_t gmOff
 {
     // MCH 路径：批量搬运所有对角 fractals
     // 使用 Nd2Nz 的 ndNum + srcNdMatrixStride 一次性搬运所有对角块
-    // validSize < MATRIX_SIZE 时为尾块，最后一个对角块如果不足 16x16，硬件自动补零
     ClearSlot(SLOT_INPUT);
     PipeBarrier<PIPE_MTE2>();
 
-    int32_t numDiagFracs = (static_cast<int32_t>(validSize) + FRAC - 1) / FRAC;
+    int32_t fullDiagFracs = static_cast<int32_t>(validSize) / FRAC;
+    int32_t tailSize = static_cast<int32_t>(validSize) % FRAC;
 
-    // 使用预计算的参数模板，只修改变化的字段
-    diagLoadParams_.ndNum = numDiagFracs;
-    DataCopy(l1_[SLOT_INPUT * L1_SLOT_ELEMS], inputGM_[gmOffset], diagLoadParams_);
+    if (fullDiagFracs > 0) {
+        // 使用预计算的参数模板批量搬运完整的 16x16 对角块。
+        diagLoadParams_.ndNum = fullDiagFracs;
+        DataCopy(l1_[SLOT_INPUT * L1_SLOT_ELEMS], inputGM_[gmOffset], diagLoadParams_);
+    }
+
+    if (tailSize > 0) {
+        // 尾部对角块只搬运实际有效区域。若仍按 16x16 搬运，最后一个
+        // TND 序列会越过输入末尾读取，并把相邻显存中的 NaN 带入矩阵求逆。
+        Nd2NzParams tailParams;
+        tailParams.ndNum = 1;
+        tailParams.nValue = tailSize;
+        tailParams.dValue = tailSize;
+        tailParams.srcDValue = static_cast<uint32_t>(rowStride_);
+        tailParams.srcNdMatrixStride = 0;
+        tailParams.dstNzNStride = 1;
+        tailParams.dstNzC0Stride = FRAC;
+        tailParams.dstNzMatrixStride = 0;
+
+        int32_t tailSrcOffset = fullDiagFracs * (FRAC * static_cast<int32_t>(rowStride_) + FRAC);
+        int32_t tailDstOffset = fullDiagFracs * (NUM_FRACS + 1) * FRAC_LEN;
+        DataCopy(
+            l1_[SLOT_INPUT * L1_SLOT_ELEMS + tailDstOffset],
+            inputGM_[gmOffset + tailSrcOffset],
+            tailParams);
+    }
+
     SetFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_MTE1);
     WaitFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_MTE1);
 }

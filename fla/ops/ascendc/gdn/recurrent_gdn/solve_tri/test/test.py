@@ -195,6 +195,88 @@ def test_tnd_invalid_region_zero_fill():
     return passed
 
 
+def generate_tnd_input(seq_lens, heads, chunk_size, dtype):
+    """Generate packed TND input and a float32 inverse reference."""
+    total_tokens = sum(seq_lens)
+    x = torch.zeros(total_tokens, heads, chunk_size, dtype=dtype)
+    golden = torch.zeros(total_tokens, heads, chunk_size, dtype=torch.float32)
+    cu_seqlens = [0]
+    chunk_indices = []
+
+    bos = 0
+    for seq_idx, seq_len in enumerate(seq_lens):
+        for chunk_idx, chunk_start in enumerate(range(0, seq_len, chunk_size)):
+            valid_size = min(chunk_size, seq_len - chunk_start)
+            chunk_indices.extend([seq_idx, chunk_idx])
+            for head_idx in range(heads):
+                block = torch.tril(
+                    torch.randn(valid_size, valid_size, dtype=torch.float32) * 0.01,
+                    diagonal=-1,
+                )
+                row_start = bos + chunk_start
+                x[row_start:row_start + valid_size, head_idx, :valid_size] = block.to(dtype)
+                golden[row_start:row_start + valid_size, head_idx, :valid_size] = torch.linalg.inv(
+                    torch.eye(valid_size, dtype=torch.float32) + block
+                )
+        bos += seq_len
+        cu_seqlens.append(bos)
+
+    return x, golden, cu_seqlens, chunk_indices
+
+
+def test_solve_tri_tnd_tail(chunk_size, tail_size, dtype):
+    """Verify a non-16-aligned final TND chunk without reading past the input."""
+    seq_lens = [chunk_size, tail_size]
+    heads = 2
+    x, golden, cu_seqlens, chunk_indices = generate_tnd_input(
+        seq_lens,
+        heads,
+        chunk_size,
+        dtype,
+    )
+
+    # Keep NaNs immediately after the logical input. A tail loader that rounds the
+    # final diagonal block up to 16x16 will read these guard rows and poison output.
+    backing = torch.full(
+        (x.shape[0] + 16, heads, chunk_size),
+        float("nan"),
+        dtype=dtype,
+        device="npu",
+    )
+    x_npu = backing[:x.shape[0]]
+    x_npu.copy_(x.npu())
+    assert x_npu.is_contiguous()
+
+    out = npu_solve_tri(
+        x_npu,
+        cu_seqlens=cu_seqlens,
+        chunk_indices=chunk_indices,
+        layout="tnd",
+    ).float().cpu()
+
+    max_diff = 0.0
+    all_finite = True
+    bos = 0
+    for seq_len in seq_lens:
+        for chunk_start in range(0, seq_len, chunk_size):
+            valid_size = min(chunk_size, seq_len - chunk_start)
+            row_start = bos + chunk_start
+            actual_block = out[row_start:row_start + valid_size, :, :valid_size]
+            golden_block = golden[row_start:row_start + valid_size, :, :valid_size]
+            all_finite = all_finite and bool(torch.isfinite(actual_block).all().item())
+            max_diff = max(max_diff, float((actual_block - golden_block).abs().max().item()))
+        bos += seq_len
+
+    tolerance = 5e-3 if dtype == torch.float16 else 2e-2
+    passed = all_finite and max_diff <= tolerance
+    status = "PASS" if passed else "FAIL"
+    print(
+        f"  [{status}] TND chunk_size={chunk_size}, tail_size={tail_size}, dtype={dtype}, "
+        f"finite={all_finite}, max_diff={max_diff:.6f}, tolerance={tolerance:.6f}"
+    )
+    return passed
+
+
 def main():
     print("=" * 60)
     print("SolveTri NPU Test")
@@ -220,6 +302,16 @@ def main():
     results.append(test_mch_fp32_intermediates(torch.bfloat16))
     results.append(test_fp16_partial_chunk())
     results.append(test_tnd_invalid_region_zero_fill())
+
+    tnd_tail_cases = [
+        (64, 39, torch.bfloat16),
+        (64, 63, torch.float16),
+        (128, 95, torch.bfloat16),
+        (128, 127, torch.float16),
+    ]
+    for chunk_size, tail_size, dtype in tnd_tail_cases:
+        passed = test_solve_tri_tnd_tail(chunk_size, tail_size, dtype)
+        results.append(passed)
 
     print("\n" + "=" * 60)
     total = len(results)
