@@ -243,18 +243,22 @@ def compute_dA_cpu(
                 # 步骤1: b_dA_1
                 # b_dA_1 = dw_chunk @ b_k_beta_g.T
                 b_k_beta_g = k_chunk.to(torch.float32) * (beta_chunk.to(torch.float32) * g_exp_chunk.to(torch.float32))[:, None]
+                b_k_beta_g = b_k_beta_g.to(A.dtype).to(torch.float32)
                 if chunk_len == 1:
                     b_dA_1 = torch.sum(dw_chunk.to(torch.float32) * b_k_beta_g.to(torch.float32)).reshape(chunk_len, chunk_len)
                 else:
                     b_dA_1 = torch.matmul(dw_chunk.to(torch.float32), b_k_beta_g.T.to(torch.float32))
+                b_dA_1 = b_dA_1.to(A.dtype).to(torch.float32)
 
                 # 步骤2: b_dA_2
                 # b_dA_2 = du_chunk @ b_v_beta.T
                 b_v_beta = v_chunk.to(torch.float32) * beta_chunk.to(torch.float32)[:, None]
+                b_v_beta = b_v_beta.to(A.dtype).to(torch.float32)
                 if chunk_len == 1:
                     b_dA_2 = torch.sum(du_chunk.to(torch.float32) * b_v_beta.to(torch.float32)).reshape(chunk_len, chunk_len)
                 else:
                     b_dA_2 = torch.matmul(du_chunk.to(torch.float32), b_v_beta.T.to(torch.float32))
+                b_dA_2 = b_dA_2.to(A.dtype).to(torch.float32)
 
                 # # 步骤3：b_dA_3
                 b_dA_3 = b_dA_1 + b_dA_2
@@ -262,6 +266,7 @@ def compute_dA_cpu(
                 # 步骤4：b_dA_4
                 # b_dA_4 = tl.where(m_A, b_dA_3, 0)
                 b_dA_4 = torch.where(m_A[:chunk_len, :chunk_len], b_dA_3.to(torch.float32), 0.0)
+                b_dA_4 = b_dA_4.to(A.dtype).to(torch.float32)
 
                 # 步骤5：b_dA_5
                 # b_dA_5 = b_dA_4 @ A_chunk.T
@@ -269,6 +274,7 @@ def compute_dA_cpu(
                     b_dA_5 = torch.sum(b_dA_4.to(torch.float32) * A_chunk.T.to(torch.float32)).reshape(chunk_len, chunk_len)
                 else:
                     b_dA_5 = torch.matmul(b_dA_4.to(torch.float32), A_chunk.T.to(torch.float32))
+                b_dA_5 = b_dA_5.to(A.dtype).to(torch.float32)
 
                 # 步骤6：b_dA_6
                 # b_dA_6 = A_chunk.T @ b_dA_5
@@ -276,9 +282,11 @@ def compute_dA_cpu(
                     b_dA_6 = torch.sum(A_chunk.T.to(torch.float32) * b_dA_5.to(torch.float32)).reshape(chunk_len, chunk_len)
                 else:
                     b_dA_6 = torch.matmul(A_chunk.T.to(torch.float32), b_dA_5.to(torch.float32))
+                b_dA_6 = b_dA_6.to(A.dtype).to(torch.float32)
 
                 # 并行步骤1~6：b_g_sub_exp
-                b_g_sub_exp = torch.exp(g_chunk.to(torch.float32)[:, None] - g_chunk.to(torch.float32)[None, :]) 
+                g_diff = g_chunk.to(torch.float32)[:, None] - g_chunk.to(torch.float32)[None, :]
+                b_g_sub_exp = torch.exp(torch.minimum(g_diff, torch.zeros_like(g_diff)))
                 
                 # 步骤7：b_dA_7
                 b_dA_7 = -b_dA_6.to(torch.float32) * b_g_sub_exp.to(torch.float32)
@@ -286,9 +294,101 @@ def compute_dA_cpu(
                 # 步骤8：b_dA
                 # b_dA = tl.where(m_A, b_dA_7, 0)
                 b_dA = torch.where(m_A[:chunk_len, :chunk_len], b_dA_7.to(torch.float32), 0.0)
+                b_dA = b_dA.to(A.dtype)
 
                 # 存储结果
                 dA[i_b, i_h, bos : eos, : chunk_len] = b_dA.T.to(A.dtype)
+
+    return dA
+
+
+def compute_dA_cpu_high_precision(
+    A: torch.Tensor,      # [B, H, T, BT] - 每个chunk的A值
+    dw: torch.Tensor,     # [B, H, T, K]
+    g: torch.Tensor,     # [B, H, T]
+    beta: torch.Tensor,   # [B, H, T] - beta参数
+    k: torch.Tensor,     # [B, H, T, K]
+    v: torch.Tensor,      # [B, H, T, V]
+    du: torch.Tensor,     # [B, H, T, V]
+    chunk_indices: list[int],  # 扁平化的chunk索引 [seq_idx0, chunk_idx0, seq_idx1, chunk_idx1, ...]
+    cu_seqlens: list[int],  # 累积序列长度
+    B: int,
+    H: int,
+    T: int,
+    D: int,
+    BT: int,  # BT
+    NT: int,  # T / BT
+) -> torch.Tensor:
+    dA = torch.zeros_like(A).to(torch.float64)
+    IS_VARLEN = cu_seqlens is not None
+    for idx in range(NT):
+        bos, eos = get_bos_eos(idx, T, BT, cu_seqlens, chunk_indices)
+        chunk_len = eos - bos
+        if IS_VARLEN:
+            seq_idx = chunk_indices[idx * 2]
+            chunk_idx = chunk_indices[idx * 2 + 1]
+            i_t = chunk_idx
+            T = cu_seqlens[seq_idx + 1] - cu_seqlens[seq_idx]
+        else:
+            i_t = idx
+
+        o_t = i_t * BT + torch.arange(0, BT, dtype=torch.int32)
+        m_t = o_t < T
+        m_A = (o_t[:, None] > o_t[None, :]) & (m_t[:, None] & m_t)
+
+        for i_b in range(B):
+            for i_h in range(H):
+                dw_chunk = dw[i_b, i_h, bos : eos, :]
+                k_chunk = k[i_b, i_h, bos : eos, :]
+                beta_chunk = beta[i_b, i_h, bos : eos]
+                g_chunk = g[i_b, i_h, bos : eos]
+                du_chunk = du[i_b, i_h, bos : eos, :]
+                v_chunk = v[i_b, i_h, bos : eos, :]
+                A_chunk = A[i_b, i_h, bos : eos, : chunk_len]
+
+                g_exp_chunk = torch.exp(g_chunk.to(torch.float64))
+
+                b_k_beta_g = k_chunk.to(torch.float64) * (
+                    beta_chunk.to(torch.float64) * g_exp_chunk.to(torch.float64)
+                )[:, None]
+                if chunk_len == 1:
+                    b_dA_1 = torch.sum(dw_chunk.to(torch.float64) * b_k_beta_g.to(torch.float64)).reshape(
+                        chunk_len, chunk_len
+                    )
+                else:
+                    b_dA_1 = torch.matmul(dw_chunk.to(torch.float64), b_k_beta_g.T.to(torch.float64))
+
+                b_v_beta = v_chunk.to(torch.float64) * beta_chunk.to(torch.float64)[:, None]
+                if chunk_len == 1:
+                    b_dA_2 = torch.sum(du_chunk.to(torch.float64) * b_v_beta.to(torch.float64)).reshape(
+                        chunk_len, chunk_len
+                    )
+                else:
+                    b_dA_2 = torch.matmul(du_chunk.to(torch.float64), b_v_beta.T.to(torch.float64))
+
+                b_dA_3 = b_dA_1 + b_dA_2
+                b_dA_4 = torch.where(m_A[:chunk_len, :chunk_len], b_dA_3.to(torch.float64), 0.0)
+
+                if chunk_len == 1:
+                    b_dA_5 = torch.sum(b_dA_4.to(torch.float64) * A_chunk.T.to(torch.float64)).reshape(
+                        chunk_len, chunk_len
+                    )
+                else:
+                    b_dA_5 = torch.matmul(b_dA_4.to(torch.float64), A_chunk.T.to(torch.float64))
+
+                if chunk_len == 1:
+                    b_dA_6 = torch.sum(A_chunk.T.to(torch.float64) * b_dA_5.to(torch.float64)).reshape(
+                        chunk_len, chunk_len
+                    )
+                else:
+                    b_dA_6 = torch.matmul(A_chunk.T.to(torch.float64), b_dA_5.to(torch.float64))
+
+                g_diff = g_chunk.to(torch.float64)[:, None] - g_chunk.to(torch.float64)[None, :]
+                b_g_sub_exp = torch.exp(torch.minimum(g_diff, torch.zeros_like(g_diff)))
+                b_dA_7 = -b_dA_6.to(torch.float64) * b_g_sub_exp.to(torch.float64)
+                b_dA = torch.where(m_A[:chunk_len, :chunk_len], b_dA_7.to(torch.float64), 0.0)
+
+                dA[i_b, i_h, bos : eos, : chunk_len] = b_dA.T.to(torch.float64)
 
     return dA
 
@@ -360,6 +460,14 @@ def test_prepare_wy_repr_bwd_da_variable(
     NT = len(chunk_indices) // 2
     print("==== NT = ", NT)
     dA_cpu = compute_dA_cpu(A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, H, T, K, BT, NT)
+    try:
+        import ct
+        dA_cpu_high_precision = compute_dA_cpu_high_precision(
+            A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, H, T, K, BT, NT
+        )
+        ct.dual(dA_npu.cpu(), dA_cpu_high_precision, dA_cpu)
+    finally:
+        pass
     save_path2 = os.path.join(output_dir, "test_dA_var_cpu.pt")
     # torch.save(dA_cpu, save_path2)
 
@@ -424,6 +532,14 @@ def test_prepare_wy_repr_bwd_da_fix(
     NT = (T + BT - 1) // BT
     print("==== NT = ", NT)
     dA_cpu = compute_dA_cpu(A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, H, T, K, BT, NT)
+    try:
+        import ct
+        dA_cpu_high_precision = compute_dA_cpu_high_precision(
+            A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, H, T, K, BT, NT
+        )
+        ct.dual(dA_npu.cpu(), dA_cpu_high_precision, dA_cpu)
+    finally:
+        pass
     save_path4 = os.path.join(output_dir, "test_dA_cpu.pt")
     # torch.save(dA_cpu, save_path4)
 

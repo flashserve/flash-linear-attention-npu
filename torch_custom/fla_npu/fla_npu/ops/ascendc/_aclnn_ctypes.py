@@ -37,6 +37,24 @@ from ._runtime import (
 # strings or otherwise ambiguous scalar conversion are listed here to prevent
 # ctypes from narrowing or mis-converting arguments.
 _GET_WORKSPACE_ARGTYPES = {
+    "aclnnPrepareWyReprBwd": [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnCausalConv1dBwd": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -185,6 +203,46 @@ def npu_prepare_wy_repr_bwd_full(
             ctx.tensor(beta, "beta"),
             ctx.tensor(A, "A"),
             ctx.tensor(dA, "dA"),
+            ctx.tensor(dw, "dw"),
+            ctx.tensor(du, "du"),
+            ctx.tensor(g, "g"),
+            ctx.int_array(cu_seqlens),
+            ctx.int_array(chunk_indices),
+            ctypes.c_int64(int(chunk_size)),
+            ctx.tensor(dk, "dk"),
+            ctx.tensor(dv, "dv"),
+            ctx.tensor(dbeta, "dbeta"),
+            ctx.tensor(dg, "dg"),
+        ],
+        outputs,
+    )
+
+
+def npu_prepare_wy_repr_bwd(
+    k,
+    v,
+    beta,
+    A,
+    dw,
+    du,
+    g,
+    chunk_size,
+    *,
+    cu_seqlens=None,
+    chunk_indices=None,
+):
+    dk = _empty_like(k)
+    dv = _empty_like(v)
+    dbeta = _empty_like(beta)
+    dg = _empty_like(g)
+    outputs = (dk, dv, dbeta, dg)
+    return _call_aclnn(
+        "aclnnPrepareWyReprBwd",
+        lambda ctx: [
+            ctx.tensor(k, "k"),
+            ctx.tensor(v, "v"),
+            ctx.tensor(beta, "beta"),
+            ctx.tensor(A, "A"),
             ctx.tensor(dw, "dw"),
             ctx.tensor(du, "du"),
             ctx.tensor(g, "g"),
