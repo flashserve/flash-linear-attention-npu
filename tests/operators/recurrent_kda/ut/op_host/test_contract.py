@@ -107,9 +107,19 @@ def test_tiling_processor_owns_its_context():
 def test_mutable_state_is_wired_as_an_inplace_output():
     l0_source = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/op_api/recurrent_kda.cpp")
     schema = _read_repo_file("torch_custom/fla_npu/npu_custom.yaml")
+    torch_adapter = _read_repo_file("torch_custom/fla_npu/op_plugin/ops/opapi/FLANpuOpApi.cpp")
     ctypes_init = _read_repo_file("torch_custom/fla_npu/fla_npu/ops/ascendc/__init__.py")
+    schema_line = next(line for line in schema.splitlines() if "func: npu_recurrent_kda(" in line)
+    adapter_start = torch_adapter.index("at::Tensor npu_recurrent_kda(")
+    adapter_end = torch_adapter.index("at::Tensor npu_chunk_scaled_dot_kkt(", adapter_start)
+    adapter = torch_adapter[adapter_start:adapter_end]
 
     assert "OP_OUTPUT(out, stateRef)" in l0_source
-    assert "Tensor(a!) initial_state" in schema
-    assert "Tensor cu_seqlens" in schema
+    assert "Tensor(a!) initial_state" in schema_line
+    assert "Tensor cu_seqlens" in schema_line
+    assert "output_final_state" not in schema_line
+    assert schema_line.endswith(") -> Tensor")
+    assert "bool output_final_state_ = true;" in adapter
+    assert "return out;" in adapter
+    assert "std::make_tuple" not in adapter
     assert '"npu_recurrent_kda": ("initial_state",)' in ctypes_init

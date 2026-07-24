@@ -743,15 +743,16 @@ at::Tensor npu_kda_gate_cumsum(
     at::Tensor gk = at::empty(g.sizes(), g.options().dtype(at::kFloat));
     const at::Tensor &A_log_ = c10::value_or_else(A_log, [] { return at::Tensor(); });
     const at::Tensor &dt_bias_ = c10::value_or_else(dt_bias, [] { return at::Tensor(); });
+    const char *layout_cstr = layout_str.c_str();
     EXEC_NPU_CMD_EXT(
         aclnnKdaGateCumsum,
         g, A_log_, dt_bias_, cu_seqlens,
-        chunk_size, use_gate, safe, lower, layout_str.c_str(), gk
+        chunk_size, use_gate, safe, lower, layout_cstr, gk
     );
     return gk;
 }
 
-::std::tuple<at::Tensor, at::Tensor> npu_recurrent_kda(
+at::Tensor npu_recurrent_kda(
     const at::Tensor &q,
     const at::Tensor &k,
     const at::Tensor &v,
@@ -765,7 +766,6 @@ at::Tensor npu_kda_gate_cumsum(
     const c10::optional<at::Tensor> &num_accepted_tokens,
     c10::string_view layout,
     c10::optional<double> scale,
-    c10::optional<bool> output_final_state,
     c10::optional<bool> use_qk_l2norm_in_kernel,
     c10::optional<bool> use_gate_in_kernel,
     c10::optional<bool> use_beta_sigmoid_in_kernel,
@@ -888,8 +888,7 @@ at::Tensor npu_kda_gate_cumsum(
     }
 
     at::Tensor out = at::empty_like(v);
-    at::Tensor final_state_work = initial_state;
-    bool output_final_state_ = output_final_state.value_or(false);
+    bool output_final_state_ = true;
     double scale_ = scale.value_or(std::pow(static_cast<double>(k_dim), -0.5));
     bool use_qk_l2norm_ = use_qk_l2norm_in_kernel.value_or(false);
     bool use_beta_sigmoid_ = use_beta_sigmoid_in_kernel.value_or(false);
@@ -909,9 +908,7 @@ at::Tensor npu_kda_gate_cumsum(
         out
     );
 
-    at::Tensor final_state = output_final_state_ ? final_state_work :
-        at::empty({0}, initial_state.options());
-    return std::make_tuple(out, final_state);
+    return out;
 }
 
 at::Tensor npu_chunk_scaled_dot_kkt(
