@@ -37,13 +37,15 @@ from fla_npu.ops.ascendc import (
     solve_tri as ascendc_solve_tri,
 )
 from fla_npu.ops.triton import (
+    RCP_LN2,
     autocast_custom_bwd,
     autocast_custom_fwd,
+    chunk_gated_delta_rule_fwd_intra_triton_ascend,
     chunk_local_cumsum,
-    chunk_scaled_dot_kkt_fwd,
     input_guard,
     l2norm_bwd,
     l2norm_fwd,
+    recompute_w_u_fwd_triton_ascend,
     solve_tril_npu as solve_tril,
 )
 
@@ -567,40 +569,18 @@ def flash_chunk_gated_delta_rule_fwd(
         head_first=False,
     )
 
-    # A is the WY lower-triangular representation before inversion.
-    A = chunk_scaled_dot_kkt_fwd(
+    w, u, A = chunk_gated_delta_rule_fwd_intra_triton_ascend(
         k=k,
+        v=v,
         g=g,
         beta=beta,
         cu_seqlens=cu_seqlens,
         chunk_indices=_chunk_tensor(chunk_indices, chunk_size),
         chunk_size=chunk_size,
-        output_dtype=torch.float32,
-    )
-
-    A = solve_tri_auto(
-        A,
-        cu_seqlens=cu_seqlens,
-        chunk_indices_out=chunk_indices,
-        cu_seqlens_list=cu_seqlens_list,
-        chunk_indices_list=_chunk_list(chunk_indices_list, chunk_size),
-        output_dtype=k.dtype,
     )
 
     g = g.transpose(1, 2).contiguous()
-    beta = beta.transpose(1, 2).contiguous().float()
     A = A.transpose(1, 2).contiguous()
-
-    w, u = recompute_w_u(
-        k,
-        v,
-        beta,
-        A,
-        g,
-        chunk_size=chunk_size,
-        cu_seqlens=cu_seqlens_list,
-        chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
-    )
 
     h, v_new, final_state = ascendc_chunk_gated_delta_rule_fwd_h(
         k,
@@ -659,15 +639,14 @@ def flash_chunk_gated_delta_rule_bwd(
     g = g.transpose(1, 2).contiguous()
     beta = beta.transpose(1, 2).contiguous().float()
 
-    w, u = recompute_w_u(
-        k,
-        v,
-        beta,
-        A,
-        g,
-        chunk_size=chunk_size,
-        cu_seqlens=cu_seqlens_list,
-        chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
+    w, u = recompute_w_u_fwd_triton_ascend(
+        k=k,
+        v=v,
+        beta=beta.transpose(1, 2).contiguous(),
+        A=A.transpose(1, 2).contiguous(),
+        g_log2=g.transpose(1, 2).contiguous() * RCP_LN2,
+        cu_seqlens=cu_seqlens,
+        chunk_indices=_chunk_tensor(chunk_indices, chunk_size),
     )
 
     do = do.transpose(1, 2).contiguous()
