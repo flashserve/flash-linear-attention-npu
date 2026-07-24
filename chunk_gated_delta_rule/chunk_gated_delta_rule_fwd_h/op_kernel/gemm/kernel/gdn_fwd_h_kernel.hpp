@@ -18,7 +18,7 @@
 #include "../../epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
 #include "../../epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
 #include "catlass/gemm/block/block_mmad.hpp"
-#include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
+#include "kernel_utils/block/block_mmad_pingpong_tla_preloadA.hpp"
 #include "catlass/gemm/block/block_swizzle.hpp"
 #include "../block/block_scheduler_gdn_fwd_h.hpp"
 #include "catlass/gemm/dispatch_policy.hpp"
@@ -50,7 +50,7 @@ public:
     using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHCube;
     using VecScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHVec;
 
-    using DispatchPolicyTla = Gemm::MmadPingpongTlaMulti<ArchTag, true, false>;
+    using DispatchPolicyTla = Gemm::MmadPingpongTlaPreloadA<ArchTag, true, false>;
     using L1TileShapeTla = Shape<_128, _128, _128>;
     using L0TileShapeTla = L1TileShapeTla;
 
