@@ -41,6 +41,8 @@ public:
 
 private:
     __aicore__ inline void InitPipeFlags();
+    __aicore__ inline int32_t GetL0CEvent(uint32_t l0CIdx) const;
+    __aicore__ inline void SwitchL0C();
     __aicore__ inline void ProcessImpl();
 
 private:
@@ -272,6 +274,13 @@ private:
     static constexpr uint32_t L0B_TILE_BYTES =
         L0B_DVB_TILE_BYTES > L0B_K_TILE_BYTES ? L0B_DVB_TILE_BYTES : L0B_K_TILE_BYTES;
     static constexpr uint32_t L0_BUFFER_COUNT = 2;
+    static constexpr uint32_t L0C_MAX_BUFFER_COUNT = 2;
+    static constexpr uint32_t L0C_TILE_COLS = V_DIM > K_DIM ? V_DIM : K_DIM;
+    static constexpr uint32_t L0C_TILE_BYTES = CHUNK_SIZE * L0C_TILE_COLS * sizeof(ElementAccumulator);
+    static constexpr bool ENABLE_L0C_DOUBLE_BUFFER = L0C_TILE_BYTES * L0C_MAX_BUFFER_COUNT <= ArchTag::L0C_SIZE;
+    static constexpr uint32_t L0C_BUFFER_COUNT = ENABLE_L0C_DOUBLE_BUFFER ? L0C_MAX_BUFFER_COUNT : 1;
+    static_assert(L0C_TILE_BYTES * L0C_BUFFER_COUNT <= ArchTag::L0C_SIZE,
+                  "prepare_wy_repr_bwd cube L0C usage exceeds arch L0C size.");
     static constexpr int32_t EVENT_L1_SCRATCH_PING = 0;
     static constexpr int32_t EVENT_DU_RESIDENT_PING = 1;
     static constexpr int32_t EVENT_L1_SCRATCH_PONG = 2;
@@ -286,7 +295,8 @@ private:
     static constexpr int32_t EVENT_L0B_PONG = 3;
     static constexpr int32_t EVENT_L0_READY_PING = 0;
     static constexpr int32_t EVENT_L0_READY_PONG = 1;
-    static constexpr int32_t EVENT_L0C = 0;
+    static constexpr int32_t EVENT_L0C_PING = 0;
+    static constexpr int32_t EVENT_L0C_PONG = 1;
     static constexpr int32_t EVENT_FIX_TO_MTE2_PING = 0;
     static constexpr int32_t EVENT_FIX_TO_MTE2_PONG = 1;
 
@@ -309,6 +319,7 @@ private:
     uint32_t kktSlotForSlot_[BUFFER_COUNT_4] = {0, 0, 0, 0};
     uint32_t curL1_ = 0;
     uint32_t curL0_ = 0;
+    uint32_t curL0C_ = 0;
     Arch::CrossCoreFlag vecToCubeFlag_{PREPARE_WY_REPR_BWD_VEC_TO_CUBE_FLAG_READY};
     Arch::CrossCoreFlag cubeToVecFlag_{PREPARE_WY_REPR_BWD_CUBE_TO_VEC_FLAG_READY};
 };
@@ -338,6 +349,7 @@ PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::Init(const GDN::Pr
     }
     curL1_ = 0;
     curL0_ = 0;
+    curL0C_ = 0;
     InitPipeFlags();
 }
 
@@ -356,7 +368,25 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B_PING);
     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A_PONG);
     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B_PONG);
-    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C_PING);
+    if constexpr (L0C_BUFFER_COUNT > 1) {
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C_PONG);
+    }
+}
+
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
+__aicore__ inline int32_t
+PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::GetL0CEvent(uint32_t l0CIdx) const
+{
+    return l0CIdx == 0 ? EVENT_L0C_PING : EVENT_L0C_PONG;
+}
+
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
+__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::SwitchL0C()
+{
+    if constexpr (L0C_BUFFER_COUNT > 1) {
+        curL0C_ ^= 1U;
+    }
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
@@ -432,7 +462,11 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     AscendC::LocalTensor<kType> l0B[L0_BUFFER_COUNT] = {
         resource.l0BBuf.template GetBufferByByte<kType>(0),
         resource.l0BBuf.template GetBufferByByte<kType>(L0B_TILE_BYTES)};
-    auto l0C = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
+    AscendC::LocalTensor<ElementAccumulator> l0C[L0C_BUFFER_COUNT];
+    l0C[0] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
+    if constexpr (L0C_BUFFER_COUNT > 1) {
+        l0C[1] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(L0C_TILE_BYTES);
+    }
 
     CopyL1ToL0A_Dkbg copyL1ToL0A_Dkbg;
     CopyL1ToL0B_Dkbg copyL1ToL0B_Dkbg;
@@ -627,29 +661,34 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 copyGmToL1B_DU(tensorL1ResidentDUForDvb, blockDu);
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(duResidentEvent);
 
+                uint32_t dkbgL0CIdx = curL0C_;
+                int32_t dkbgL0CEvent = GetL0CEvent(dkbgL0CIdx);
                 auto layoutL0C_Dkbg = tla::MakeLayoutL0C(mActualDkbg, shapeK.n());
-                auto tensorL0C_Dkbg = tla::MakeTensor(l0C, layoutL0C_Dkbg, Arch::PositionL0C{});
+                auto tensorL0C_Dkbg = tla::MakeTensor(l0C[dkbgL0CIdx], layoutL0C_Dkbg, Arch::PositionL0C{});
                 auto tensorTileL0C_Dkbg =
                     GetTile(tensorL0C_Dkbg, tla::MakeCoord(0, 0), tla::MakeShape(mActualDkbg, shapeK.n()));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(dkbgL0ReadyEvent);
-                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(dkbgL0CEvent);
                 tileMmadDkbg(tensorTileL0C_Dkbg, tensorL0A_AT, tensorL0B_DW, true, 0b11);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkbgL0AEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkbgL0BEvent);
-                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(dkbgL0CEvent);
+                SwitchL0C();
 
                 uint32_t mActualDvb = shapeV.m();
                 if (mActualDvb == 1) {
                     mActualDvb = 16;
                 }
-                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(dkbgL0CEvent);
                 copyL0CToGm_Dkbg(blockDkbg, tensorL0C_Dkbg, fixpipeUnitFlag);
-                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(dkbgL0CEvent);
                 bool dvbL1BReadyConsumed = false;
                 for (uint32_t nOffset = 0; nOffset < shapeV.n(); nOffset += L0_DVB_N_TILE) {
                     uint32_t curN = nOffset + L0_DVB_N_TILE > shapeV.n() ? shapeV.n() - nOffset : L0_DVB_N_TILE;
+                    uint32_t dvbL0CIdx = curL0C_;
+                    int32_t dvbL0CEvent = GetL0CEvent(dvbL0CIdx);
                     auto layoutL0C_Dvb = tla::MakeLayoutL0C(mActualDvb, curN);
-                    auto tensorL0C_Dvb = tla::MakeTensor(l0C, layoutL0C_Dvb, Arch::PositionL0C{});
+                    auto tensorL0C_Dvb = tla::MakeTensor(l0C[dvbL0CIdx], layoutL0C_Dvb, Arch::PositionL0C{});
                     auto tensorTileL0C_Dvb =
                         GetTile(tensorL0C_Dvb, tla::MakeCoord(0, 0), tla::MakeShape(mActualDvb, curN));
                     auto blockDvbN =
@@ -690,7 +729,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
 
                         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(dvbL0ReadyEvent);
                         if (kOffset == 0) {
-                            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(dvbL0CEvent);
                         }
                         uint8_t dvbMmadUnitFlag = lastK ? 0b11 : 0b10;
                         tileMmadDvb(tensorTileL0C_Dvb, tensorL0A_ATForDU, tensorL0B_DU, kOffset == 0,
@@ -698,13 +737,14 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dvbL0AEvent);
                         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dvbL0BEvent);
                         if (lastK) {
-                            AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+                            AscendC::SetFlag<AscendC::HardEvent::M_FIX>(dvbL0CEvent);
                         }
                     }
 
-                    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+                    SwitchL0C();
+                    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(dvbL0CEvent);
                     copyL0CToGm_DvbN(blockDvbN, tensorL0C_Dvb, fixpipeUnitFlag);
-                    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(dvbL0CEvent);
                 }
                 if (needComputeKkt) {
                     uint32_t kResidentSlot = cachedKResidentSlot_;
@@ -750,19 +790,22 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                     AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(kktL0ReadyEvent);
                     curL0_ ^= 1U;
 
+                    uint32_t kktL0CIdx = curL0C_;
+                    int32_t kktL0CEvent = GetL0CEvent(kktL0CIdx);
                     auto layoutL0C_Kkt = tla::MakeLayoutL0C(mActualKkt, shapeKkt.n());
-                    auto tensorL0C_Kkt = tla::MakeTensor(l0C, layoutL0C_Kkt, Arch::PositionL0C{});
+                    auto tensorL0C_Kkt = tla::MakeTensor(l0C[kktL0CIdx], layoutL0C_Kkt, Arch::PositionL0C{});
                     auto tensorTileL0C_Kkt =
                         GetTile(tensorL0C_Kkt, tla::MakeCoord(0, 0), tla::MakeShape(mActualKkt, shapeKkt.n()));
                     AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(kktL0ReadyEvent);
-                    AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                    AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(kktL0CEvent);
                     tileMmadKkt(tensorTileL0C_Kkt, tensorL0A_K, tensorL0B_KT, true, 0b11);
                     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kktL0AEvent);
                     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(kktL0BEvent);
-                    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
-                    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+                    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(kktL0CEvent);
+                    SwitchL0C();
+                    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(kktL0CEvent);
                     copyL0CToGm_Kkt(blockKkt, tensorL0C_Kkt, fixpipeUnitFlag);
-                    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(kktL0CEvent);
                 }
 
                 curSlot_ ^= 1U;
@@ -842,19 +885,22 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(da1L0ReadyEvent);
                 curL0_ ^= 1U;
 
+                uint32_t da1L0CIdx = curL0C_;
+                int32_t da1L0CEvent = GetL0CEvent(da1L0CIdx);
                 auto layoutL0C_DA1 = tla::MakeLayoutL0C(mActualDA1, shapeDA1.n());
-                auto tensorL0C_DA1 = tla::MakeTensor(l0C, layoutL0C_DA1, Arch::PositionL0C{});
+                auto tensorL0C_DA1 = tla::MakeTensor(l0C[da1L0CIdx], layoutL0C_DA1, Arch::PositionL0C{});
                 auto tensorTileL0C_DA1 =
                     GetTile(tensorL0C_DA1, tla::MakeCoord(0, 0), tla::MakeShape(mActualDA1, shapeDA1.n()));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(da1L0ReadyEvent);
-                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(da1L0CEvent);
                 tileMmadDA1(tensorTileL0C_DA1, tensorL0A_DWForDA1, tensorL0B_KbgT, true, 0b11);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da1L0AEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da1L0BEvent);
-                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
-                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(da1L0CEvent);
+                SwitchL0C();
+                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(da1L0CEvent);
                 copyL0CToGm_DA1(blockDA1, tensorL0C_DA1, fixpipeUnitFlag);
-                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(da1L0CEvent);
 
                 uint32_t da2L1Idx = curL1_;
                 int32_t da2L1AEvent = da2L1Idx == 0 ? EVENT_L1_SCRATCH_PING : EVENT_L1_SCRATCH_PONG;
@@ -874,8 +920,10 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 if (mActualDA2 == 1) {
                     mActualDA2 = 16;
                 }
+                uint32_t da2L0CIdx = curL0C_;
+                int32_t da2L0CEvent = GetL0CEvent(da2L0CIdx);
                 auto layoutL0C_DA2 = tla::MakeLayoutL0C(mActualDA2, shapeDA2.n());
-                auto tensorL0C_DA2 = tla::MakeTensor(l0C, layoutL0C_DA2, Arch::PositionL0C{});
+                auto tensorL0C_DA2 = tla::MakeTensor(l0C[da2L0CIdx], layoutL0C_DA2, Arch::PositionL0C{});
                 auto tensorTileL0C_DA2 =
                     GetTile(tensorL0C_DA2, tla::MakeCoord(0, 0), tla::MakeShape(mActualDA2, shapeDA2.n()));
                 bool da2VbTReadyConsumed = false;
@@ -917,7 +965,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
 
                     AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(da2L0ReadyEvent);
                     if (kOffset == 0) {
-                        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(da2L0CEvent);
                     }
                     uint8_t da2MmadUnitFlag = lastK ? 0b11 : 0b10;
                     tileMmadDA2(tensorTileL0C_DA2, tensorL0A_DUForDA2, tensorL0B_VbT, kOffset == 0,
@@ -925,13 +973,14 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da2L0AEvent);
                     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da2L0BEvent);
                     if (lastK) {
-                        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+                        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(da2L0CEvent);
                     }
                 }
 
-                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+                SwitchL0C();
+                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(da2L0CEvent);
                 copyL0CToGm_DA2(blockDA2, tensorL0C_DA2, fixpipeUnitFlag);
-                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(da2L0CEvent);
                 Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
                 curSlot_ ^= 1U;
             }
@@ -997,19 +1046,22 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(da5L0ReadyEvent);
                 curL0_ ^= 1U;
 
+                uint32_t da5L0CIdx = curL0C_;
+                int32_t da5L0CEvent = GetL0CEvent(da5L0CIdx);
                 auto layoutL0C_DA5 = tla::MakeLayoutL0C(mActualDA5, shapeM.n());
-                auto tensorL0C_DA5 = tla::MakeTensor(l0C, layoutL0C_DA5, Arch::PositionL0C{});
+                auto tensorL0C_DA5 = tla::MakeTensor(l0C[da5L0CIdx], layoutL0C_DA5, Arch::PositionL0C{});
                 auto tensorTileL0C_DA5 =
                     GetTile(tensorL0C_DA5, tla::MakeCoord(0, 0), tla::MakeShape(mActualDA5, shapeM.n()));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(da5L0ReadyEvent);
-                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(da5L0CEvent);
                 tileMmadDA5(tensorTileL0C_DA5, tensorL0A_DA4, tensorL0B_ATForDA5, true, 0b11);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da5L0AEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da5L0BEvent);
-                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
-                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(da5L0CEvent);
+                SwitchL0C();
+                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(da5L0CEvent);
                 copyL0CToGm_DA5(blockDA5, tensorL0C_DA5, fixpipeUnitFlag);
-                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(da5L0CEvent);
                 AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(da5FixToMte2Event);
                 curSlot_ ^= 1U;
             }
@@ -1077,19 +1129,22 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(da6L0ReadyEvent);
                 curL0_ ^= 1U;
 
+                uint32_t da6L0CIdx = curL0C_;
+                int32_t da6L0CEvent = GetL0CEvent(da6L0CIdx);
                 auto layoutL0C_DA6T = tla::MakeLayoutL0C(mActualDA6T, shapeM.n());
-                auto tensorL0C_DA6T = tla::MakeTensor(l0C, layoutL0C_DA6T, Arch::PositionL0C{});
+                auto tensorL0C_DA6T = tla::MakeTensor(l0C[da6L0CIdx], layoutL0C_DA6T, Arch::PositionL0C{});
                 auto tensorTileL0C_DA6T =
                     GetTile(tensorL0C_DA6T, tla::MakeCoord(0, 0), tla::MakeShape(mActualDA6T, shapeM.n()));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(da6L0ReadyEvent);
-                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(da6L0CEvent);
                 tileMmadDA6T(tensorTileL0C_DA6T, tensorL0A_DA5T, tensorL0B_AForDA6T, true, 0b11);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da6L0AEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(da6L0BEvent);
-                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
-                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(da6L0CEvent);
+                SwitchL0C();
+                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(da6L0CEvent);
                 copyL0CToGm_DA6T(blockDA6T, tensorL0C_DA6T, fixpipeUnitFlag);
-                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(da6L0CEvent);
                 Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
                 curSlot_ ^= 1U;
             }
@@ -1165,19 +1220,22 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(dkbL0ReadyEvent);
                 curL0_ ^= 1U;
 
+                uint32_t dkbL0CIdx = curL0C_;
+                int32_t dkbL0CEvent = GetL0CEvent(dkbL0CIdx);
                 auto layoutL0C_Dkb = tla::MakeLayoutL0C(mActualDkb, shapeK.n());
-                auto tensorL0C_Dkb = tla::MakeTensor(l0C, layoutL0C_Dkb, Arch::PositionL0C{});
+                auto tensorL0C_Dkb = tla::MakeTensor(l0C[dkbL0CIdx], layoutL0C_Dkb, Arch::PositionL0C{});
                 auto tensorTileL0C_Dkb =
                     GetTile(tensorL0C_Dkb, tla::MakeCoord(0, 0), tla::MakeShape(mActualDkb, shapeK.n()));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(dkbL0ReadyEvent);
-                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(dkbL0CEvent);
                 tileMmadDkb(tensorTileL0C_Dkb, tensorL0A_DT, tensorL0B_KForDkb, true, 0b11);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkbL0AEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkbL0BEvent);
-                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
-                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(dkbL0CEvent);
+                SwitchL0C();
+                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(dkbL0CEvent);
                 copyL0CToGm_Dkb(blockDkb, tensorL0C_Dkb, fixpipeUnitFlag);
-                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(dkbL0CEvent);
 
                 uint32_t dkL1AIdx = curL1_;
                 uint32_t dkL1BIdx = curL1_ ^ 1U;
@@ -1221,19 +1279,22 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(dkL0ReadyEvent);
                 curL0_ ^= 1U;
 
+                uint32_t dkL0CIdx = curL0C_;
+                int32_t dkL0CEvent = GetL0CEvent(dkL0CIdx);
                 auto layoutL0C_DK = tla::MakeLayoutL0C(mActualDK, shapeK.n());
-                auto tensorL0C_DK = tla::MakeTensor(l0C, layoutL0C_DK, Arch::PositionL0C{});
+                auto tensorL0C_DK = tla::MakeTensor(l0C[dkL0CIdx], layoutL0C_DK, Arch::PositionL0C{});
                 auto tensorTileL0C_DK =
                     GetTile(tensorL0C_DK, tla::MakeCoord(0, 0), tla::MakeShape(mActualDK, shapeK.n()));
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(dkL0ReadyEvent);
-                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(dkL0CEvent);
                 tileMmadDK(tensorTileL0C_DK, tensorL0A_D, tensorL0B_Kbeta, true, 0b11);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkL0AEvent);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkL0BEvent);
-                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
-                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
+                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(dkL0CEvent);
+                SwitchL0C();
+                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(dkL0CEvent);
                 copyL0CToGm_DK(blockDK, tensorL0C_DK, fixpipeUnitFlag);
-                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(dkL0CEvent);
 
                 Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
                 curSlot_ ^= 1U;
@@ -1261,7 +1322,10 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B_PING);
     AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A_PONG);
     AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B_PONG);
-    AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
+    AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C_PING);
+    if constexpr (L0C_BUFFER_COUNT > 1) {
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C_PONG);
+    }
 }
 
 #endif // PREPARE_WY_REPR_BWD_CUBE_H
