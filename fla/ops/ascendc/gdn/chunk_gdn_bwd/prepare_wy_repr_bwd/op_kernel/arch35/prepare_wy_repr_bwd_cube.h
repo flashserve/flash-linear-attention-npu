@@ -46,8 +46,8 @@ private:
     __aicore__ inline int32_t GetL0CEvent(uint32_t l0CIdx) const;
     __aicore__ inline void ProcessImpl();
     template <class TensorDst, class TensorSrc>
-    __aicore__ inline void CopyDA6TToUB(TensorDst const &dstTensor, TensorSrc const &srcTensor, uint32_t ubRowNum,
-                                        uint8_t beginSubBlockIdx, uint8_t sendVecNum, uint8_t unitFlag) const;
+    __aicore__ inline void CopyL0CToUB(TensorDst const &dstTensor, TensorSrc const &srcTensor, uint32_t ubRowNum,
+                                       uint8_t beginSubBlockIdx, uint8_t sendVecNum, uint8_t unitFlag) const;
 
 private:
     using ArchTag = Arch::Ascend950;
@@ -208,8 +208,6 @@ private:
     using CopyGmToL1A_DK = typename TileCopyDK::template CopyGmToL1A<Tensor>;
     template <typename Tensor>
     using CopyGmToL1B_DK = typename TileCopyDK::template CopyGmToL1B<Tensor>;
-    template <typename Tensor>
-    using CopyL0CToGm_DK = typename TileCopyDK::template CopyL0CToDst<Tensor>;
 
     static constexpr auto L1A_LAYOUT_AT =
         tla::MakeLayout<kType, LayoutTagL1A_Dkbg>(tla::Int<CHUNK_SIZE>{}, tla::Int<CHUNK_SIZE>{});
@@ -241,6 +239,8 @@ private:
         tla::MakeLayout<kType, LayoutTagL1B_DA6T>(tla::Int<CHUNK_SIZE>{}, tla::Int<CHUNK_SIZE>{});
     static constexpr auto UB_LAYOUT_DA6_T =
         tla::MakeLayout<kType, LayoutTagDA6T>(tla::Int<CHUNK_SIZE>{}, tla::Int<CHUNK_SIZE>{});
+    static constexpr auto UB_LAYOUT_DK =
+        tla::MakeLayout<kType, LayoutTagDK>(tla::Int<CHUNK_SIZE>{}, tla::Int<K_DIM>{});
     static constexpr auto L1A_LAYOUT_D_T =
         tla::MakeLayout<kType, LayoutTagL1A_Dkb>(tla::Int<CHUNK_SIZE>{}, tla::Int<CHUNK_SIZE>{});
     static constexpr auto L1B_LAYOUT_K_FOR_DKB =
@@ -287,6 +287,8 @@ private:
     static_assert(L0C_TILE_BYTES * L0C_BUFFER_COUNT <= L0C_TOTAL_BYTES,
                   "prepare_wy_repr_bwd A5 cube L0C double buffer exceeds 256KB.");
     static constexpr uint32_t DA6_CV_BUFFER_STRIDE_BYTES = UB_BYTES_16K;
+    static constexpr uint32_t DK_CV_BUFFER_OFFSET_BYTES = 2 * UB_BYTES_16K;
+    static constexpr uint32_t DK_CV_BUFFER_STRIDE_BYTES = UB_BYTES_16K;
     static constexpr int32_t EVENT_L1_SCRATCH_PING = 0;
     static constexpr int32_t EVENT_DU_RESIDENT_PING = 1;
     static constexpr int32_t EVENT_L1_SCRATCH_PONG = 2;
@@ -390,14 +392,14 @@ PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::GetL0CEvent(uint32
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
 template <class TensorDst, class TensorSrc>
-__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::CopyDA6TToUB(
+__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::CopyL0CToUB(
     TensorDst const &dstTensor, TensorSrc const &srcTensor, uint32_t ubRowNum, uint8_t beginSubBlockIdx,
     uint8_t sendVecNum, uint8_t unitFlag) const
 {
     static_assert(tla::detail::isRowMajor<typename TensorDst::Layout>::value &&
                       TensorSrc::position == AscendC::TPosition::CO1 &&
                       TensorDst::position == AscendC::TPosition::VECCALC,
-                  "DA6_T L0C->UB copy expects row-major UB destination and L0C source.");
+                  "L0C->UB copy expects row-major UB destination and L0C source.");
 
     using ElementDst = typename TensorDst::Element;
     using ElementSrc = typename TensorSrc::Element;
@@ -455,7 +457,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     LayoutTagDT tagDT = LayoutTagDT::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagKbeta tagKbeta = LayoutTagKbeta::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
     LayoutTagDkb tagDkb = LayoutTagDkb::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
-    LayoutTagDK tagDK = LayoutTagDK::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
     LayoutTagDA1 tagDA1 = LayoutTagDA1::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagDA2 tagDA2 = LayoutTagDA2::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagDA1 tagDebugDA1 = LayoutTagDA1::MakeLayout<kType>(CHUNK_SIZE, V_DIM);
@@ -477,7 +478,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     auto layoutDT = MakeLayoutFromTag(tagDT);
     auto layoutKbeta = MakeLayoutFromTag(tagKbeta);
     auto layoutDkb = MakeLayoutFromTag(tagDkb);
-    auto layoutDK = MakeLayoutFromTag(tagDK);
     auto layoutDA1 = MakeLayoutFromTag(tagDA1);
     auto layoutDA2 = MakeLayoutFromTag(tagDA2);
     auto layoutDebugDA1 = MakeLayoutFromTag(tagDebugDA1);
@@ -514,6 +514,9 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     AscendC::LocalTensor<kType> da6CvBuf[PREPARE_WY_REPR_BWD_DA6_CV_BUFFER_COUNT] = {
         resource.ubBuf.template GetBufferByByte<kType>(0),
         resource.ubBuf.template GetBufferByByte<kType>(DA6_CV_BUFFER_STRIDE_BYTES)};
+    AscendC::LocalTensor<kType> dkCvBuf[PREPARE_WY_REPR_BWD_DK_CV_BUFFER_COUNT] = {
+        resource.ubBuf.template GetBufferByByte<kType>(DK_CV_BUFFER_OFFSET_BYTES),
+        resource.ubBuf.template GetBufferByByte<kType>(DK_CV_BUFFER_OFFSET_BYTES + DK_CV_BUFFER_STRIDE_BYTES)};
 
     CopyL1ToL0A_Dkbg copyL1ToL0A_Dkbg;
     CopyL1ToL0B_Dkbg copyL1ToL0B_Dkbg;
@@ -559,7 +562,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     AscendC::GlobalTensor<kType> gmD;
     AscendC::GlobalTensor<kType> gmKbeta;
     AscendC::GlobalTensor<kType> gmDkb;
-    AscendC::GlobalTensor<kType> gmDK;
     AscendC::GlobalTensor<kType> gmDebugDv;
 
     uint32_t coreIdx = AscendC::GetBlockIdx();
@@ -1246,7 +1248,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
                         PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN +
                         PREPARE_WY_REPR_BWD_CV_FLAG_ID_MAX + da6CvListId);
-                    CopyDA6TToUB(blockDA6Cv, blockDA6L0C, da6VecRow, beginSubBlockIdx, sendVecNum, 0b11);
+                    CopyL0CToUB(blockDA6Cv, blockDA6L0C, da6VecRow, beginSubBlockIdx, sendVecNum, 0b11);
                     AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
                         PREPARE_WY_REPR_BWD_DA6_CV_AIC_TO_AIV_FLAG_BEGIN + da6CvListId);
                     AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
@@ -1270,13 +1272,11 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 gmD.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dOffset));
                 gmKbeta.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.kbetaOffset));
                 gmDkb.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dkbOffset));
-                gmDK.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dkOffset));
 
                 auto tensorD = tla::MakeTensor(gmD, layoutD, Arch::PositionGM{});
                 auto tensorDT = tla::MakeTensor(gmD, layoutDT, Arch::PositionGM{});
                 auto tensorKbeta = tla::MakeTensor(gmKbeta, layoutKbeta, Arch::PositionGM{});
                 auto tensorDkb = tla::MakeTensor(gmDkb, layoutDkb, Arch::PositionGM{});
-                auto tensorDK = tla::MakeTensor(gmDK, layoutDK, Arch::PositionGM{});
                 uint8_t fixpipeUnitFlag = 0b11;
 
                 auto blockDT = GetTile(tensorDT, tla::MakeCoord(0, 0), tla::MakeShape(shapeK.m(), shapeK.k()));
@@ -1285,13 +1285,11 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 auto blockDkb =
                     GetTile(tensorDkb, tla::MakeCoord(0, 0), tla::MakeShape(shapeK.m(), shapeK.n()));
                 auto blockD = GetTile(tensorD, tla::MakeCoord(0, 0), tla::MakeShape(shapeK.m(), shapeK.k()));
-                auto blockDK = GetTile(tensorDK, tla::MakeCoord(0, 0), tla::MakeShape(shapeK.m(), shapeK.n()));
 
                 CopyGmToL1A_Dkb<decltype(blockDT)> copyGmToL1A_DT;
                 CopyL0CToGm_Dkb<decltype(blockDkb)> copyL0CToGm_Dkb;
                 CopyGmToL1A_DK<decltype(blockD)> copyGmToL1A_D;
                 CopyGmToL1B_DK<decltype(blockKbeta)> copyGmToL1B_Kbeta;
-                CopyL0CToGm_DK<decltype(blockDK)> copyL0CToGm_DK;
 
                 Arch::CrossCoreWaitFlag(vecToCubeFlag_);
 
@@ -1346,6 +1344,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(dkbL0CEvent);
                 copyL0CToGm_Dkb(blockDkb, tensorL0C_Dkb, fixpipeUnitFlag);
                 AscendC::SetFlag<AscendC::HardEvent::FIX_M>(dkbL0CEvent);
+                Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
 
                 uint32_t dkL1AIdx = curL1_;
                 uint32_t dkL1BIdx = curL1_ ^ 1U;
@@ -1401,10 +1400,44 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 AscendC::SetFlag<AscendC::HardEvent::M_FIX>(dkL0CEvent);
                 curL0C_ ^= 1U;
                 AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(dkL0CEvent);
-                copyL0CToGm_DK(blockDK, tensorL0C_DK, fixpipeUnitFlag);
+                uint32_t dkCvListId = 0;
+                uint8_t beginSubBlockIdx = 0;
+                uint8_t sendVecNum = BUFFER_COUNT_2;
+                uint32_t dkVecRow = static_cast<uint32_t>(tiling_.kVecRow);
+                dkVecRow = dkVecRow < static_cast<uint32_t>(tiling_.vVecRow) ?
+                               dkVecRow :
+                               static_cast<uint32_t>(tiling_.vVecRow);
+                dkVecRow = dkVecRow < static_cast<uint32_t>(tiling_.kktVecRow) ?
+                               dkVecRow :
+                               static_cast<uint32_t>(tiling_.kktVecRow);
+                uint32_t leftRowNum = mActualDK;
+                uint32_t twoVecRowNum = dkVecRow * sendVecNum;
+                uint32_t rowIdx = 0;
+                uint32_t dkCvTileNum = static_cast<uint32_t>(PrepareWyReprBwdCeilDiv(mActualDK, twoVecRowNum));
+                for (uint32_t tileIdx = 0; tileIdx < dkCvTileNum; ++tileIdx) {
+                    uint32_t cvRowNum = leftRowNum > twoVecRowNum ? twoVecRowNum : leftRowNum;
+                    auto tensorDKCv = tla::MakeTensor(dkCvBuf[dkCvListId], UB_LAYOUT_DK, Arch::PositionUB{});
+                    auto blockDKCv =
+                        GetTile(tensorDKCv, tla::MakeCoord(0, 0), tla::MakeShape(cvRowNum, shapeK.n()));
+                    auto blockDKL0C =
+                        GetTile(tensorL0C_DK, tla::MakeCoord(rowIdx, 0), tla::MakeShape(cvRowNum, shapeK.n()));
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
+                        PREPARE_WY_REPR_BWD_DK_CV_AIV_TO_AIC_FLAG_BEGIN + dkCvListId);
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
+                        PREPARE_WY_REPR_BWD_DK_CV_AIV_TO_AIC_FLAG_BEGIN +
+                        PREPARE_WY_REPR_BWD_CV_FLAG_ID_MAX + dkCvListId);
+                    CopyL0CToUB(blockDKCv, blockDKL0C, dkVecRow, beginSubBlockIdx, sendVecNum, 0b11);
+                    AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
+                        PREPARE_WY_REPR_BWD_DK_CV_AIC_TO_AIV_FLAG_BEGIN + dkCvListId);
+                    AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
+                        PREPARE_WY_REPR_BWD_DK_CV_AIC_TO_AIV_FLAG_BEGIN +
+                        PREPARE_WY_REPR_BWD_CV_FLAG_ID_MAX + dkCvListId);
+                    rowIdx += cvRowNum;
+                    leftRowNum -= cvRowNum;
+                    dkCvListId =
+                        (dkCvListId + 1 < PREPARE_WY_REPR_BWD_DK_CV_BUFFER_COUNT) ? dkCvListId + 1 : 0;
+                }
                 AscendC::SetFlag<AscendC::HardEvent::FIX_M>(dkL0CEvent);
-
-                Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
                 curSlot_ ^= 1U;
             }
             ++windowIdx;
@@ -1435,6 +1468,11 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     for (uint32_t cvIdx = 0; cvIdx < PREPARE_WY_REPR_BWD_DA6_CV_BUFFER_COUNT; ++cvIdx) {
         AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN + cvIdx);
         AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN +
+                                                  PREPARE_WY_REPR_BWD_CV_FLAG_ID_MAX + cvIdx);
+    }
+    for (uint32_t cvIdx = 0; cvIdx < PREPARE_WY_REPR_BWD_DK_CV_BUFFER_COUNT; ++cvIdx) {
+        AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(PREPARE_WY_REPR_BWD_DK_CV_AIV_TO_AIC_FLAG_BEGIN + cvIdx);
+        AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(PREPARE_WY_REPR_BWD_DK_CV_AIV_TO_AIC_FLAG_BEGIN +
                                                   PREPARE_WY_REPR_BWD_CV_FLAG_ID_MAX + cvIdx);
     }
 }
