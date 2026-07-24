@@ -2,10 +2,9 @@ import torch
 import torch_npu
 from typing import Optional
 import math
-import ct
 import random
-import fla_npu
 import os
+import fla_npu
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -20,7 +19,7 @@ def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
       - 严格单调递增，无重复
       - 所有值在 [0, T] 范围内
       - 可复现（固定随机种子）
-      
+
     此函数完全避开 torch.Tensor，直接返回 Python 原生 list，
     完美适配 npu 算子对 'Optional[list[int]]' 的类型要求。
 
@@ -48,7 +47,7 @@ def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
     # 候选集合：1, 2, ..., T-1
     # random.sample 直接返回不重复的列表，无需担心重复
     middle_points = random.sample(range(1, T), L - 2)
-    
+
     # 必须排序以保证单调递增
     middle_points.sort()
 
@@ -62,21 +61,21 @@ def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
 def prepare_chunk_indices(
     cu_seqlens: list[int],
     chunk_size: int
-) -> list[int]: 
+) -> list[int]:
     """
     基于 cu_seqlens (list[int]) 生成 chunk 索引。
-    
+
     注意：原 PyTorch 版本返回的是 shape [N, 2] 的 Tensor。
     为了保持纯 Python 兼容性，这里返回 list[tuple[start_seq_idx, chunk_idx_in_seq]]。
     如果算子需要扁平化的 list[int] (如 [s0, c0, s1, c1, ...])，请在调用前展开。
-    
+
     逻辑复刻原代码：
     1. 计算每个序列的长度: lens[i] = cu_seqlens[i+1] - cu_seqlens[i]
     2. 计算每个序列需要的 chunk 数: ceil(lens[i] / chunk_size)
     3. 生成对应的 (sequence_id, chunk_id) 对
     """
     indices = []
-    
+
     # 遍历每个序列段
     for i in range(len(cu_seqlens) - 1):
         start = cu_seqlens[i]
@@ -98,18 +97,6 @@ def prepare_chunk_indices(
 
     return indices
 
-def create_incremental_tensor(shape, dtype=torch.float16, start=1, step=1):
-    total_elements = 1
-    for dim in shape:
-        total_elements *= dim
-    tensor = torch.arange(
-        start, 
-        start + total_elements * step, 
-        step, 
-        dtype=dtype
-    ).reshape(shape)
-    return tensor
-
 
 def create_tensor(shape, dtype=torch.float16):
     # return create_incremental_tensor(shape,dtype)
@@ -117,44 +104,41 @@ def create_tensor(shape, dtype=torch.float16):
     return torch.rand(shape, dtype=dtype) * 2 - 1
 
 
-def test_prepare_wy_repr_bwd_da_variable(
+def test_prepare_wy_repr_bwd_full_variable(
     B: int,
-    HK: int,
-    HV: int,
+    KH: int,
+    VH: int,
     T: int,
     K: int,
     V: int,
     chunk_size: int,
     cu_seqlens_len: int,
     ktype,
-    gtype,
+    btype,
     seed: int = 0,
 ):
     torch.manual_seed(seed)
-    if not hasattr(test_prepare_wy_repr_bwd_da_variable, "call_count"):
-        test_prepare_wy_repr_bwd_da_variable.call_count = 1
+    if not hasattr(test_prepare_wy_repr_bwd_full_variable, "call_count"):
+        test_prepare_wy_repr_bwd_full_variable.call_count = 1
     else:
-        test_prepare_wy_repr_bwd_da_variable.call_count += 1
+        test_prepare_wy_repr_bwd_full_variable.call_count += 1
 
-    BT = chunk_size
-    group_size = HV // HK
-
-    k = create_tensor((B, HK, T, K), dtype=ktype)
+    k = create_tensor((B, KH, T, K), dtype=ktype)
     print(f"==== k.shape = {k.shape} ")
-    v = create_tensor((B, HV, T, V), dtype=ktype)
+    v = create_tensor((B, VH, T, V), dtype=ktype)
     print(f"==== v.shape = {v.shape} ")
-    beta = create_tensor((B, HV, T), dtype=gtype)
+    beta = create_tensor((B, VH, T), dtype=btype)
     print(f"==== beta.shape = {beta.shape} ")
-    A = create_tensor((B, HV, T, BT), dtype=ktype)
+    A = create_tensor((B, VH, T, chunk_size), dtype=ktype)
     print(f"==== A.shape = {A.shape} ")
-    dw = create_tensor((B, HV, T, K), dtype=ktype)
+    dw = create_tensor((B, VH, T, K), dtype=ktype)
     print(f"==== dw.shape = {dw.shape} ")
-    du = create_tensor((B, HV, T, V), dtype=ktype)
+    du = create_tensor((B, VH, T, V), dtype=ktype)
     print(f"==== du.shape = {du.shape} ")
-    # g = create_tensor((B, HV, T), dtype=gtype)
-    g = torch.arange(-1, -(B * HV * T + 1), -1).reshape((B, HV, T)).to(gtype)
+    # 构造满足约束的 g：负数且沿 T 单调递减
+    base = torch.rand(B, VH, T, dtype=btype) * 0.1 + 0.01
+    g = -torch.cumsum(base, dim=-1).to(btype)
     print(f"==== g.shape = {g.shape} ")
-    # print(f"==== g = {g} ")
 
     cu_seqlens = prepare_cu_seqlens(T=T, L=cu_seqlens_len)
     chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
@@ -174,50 +158,58 @@ def test_prepare_wy_repr_bwd_da_variable(
     )
     print(f"==== dA_npu.shape = {dA_npu.shape} ")
     print(f"==== dA_npu.dtype = {dA_npu.dtype} ")
-    # print(f"==== dA_npu = {dA_npu} ")
-    # 测试dA_npu里是否包含nan值
     print(f"==== dA_npu has NaN: {torch.isnan(dA_npu).any().item()}")
 
-    print(f"test_prepare_wy_repr_bwd_da_variable 被调用了第 {test_prepare_wy_repr_bwd_da_variable.call_count} 次")
+    dk, dv, dbeta, dg = torch.ops.npu.npu_prepare_wy_repr_bwd_full(
+        k_npu, v_npu, beta_npu, A_npu, dA_npu, dw_npu, du_npu, g_npu,
+        cu_seqlens=cu_seqlens, chunk_indices=chunk_indices, chunk_size=chunk_size
+    )
+    print(f"==== dk.shape = {dk.shape} ")
+    print(f"==== dv.shape = {dv.shape} ")
+    print(f"==== dbeta.shape = {dbeta.shape} ")
+    print(f"==== dg.shape = {dg.shape} ")
+    print(f"==== dk has NaN: {torch.isnan(dk).any().item()}")
+    print(f"==== dv has NaN: {torch.isnan(dv).any().item()}")
+    print(f"==== dbeta has NaN: {torch.isnan(dbeta).any().item()}")
+    print(f"==== dg has NaN: {torch.isnan(dg).any().item()}")
+
+    print(f"test_prepare_wy_repr_bwd_full_variable 被调用了第 {test_prepare_wy_repr_bwd_full_variable.call_count} 次")
 
 
-def test_prepare_wy_repr_bwd_da_fix(
+def test_prepare_wy_repr_bwd_full_fix(
     B: int,
-    HK: int,
-    HV: int,
+    KH: int,
+    VH: int,
     T: int,
     K: int,
     V: int,
     chunk_size: int,
     ktype,
-    gtype,
+    btype,
     seed: int = 0,
 ):
     torch.manual_seed(seed)
-    if not hasattr(test_prepare_wy_repr_bwd_da_fix, "call_count"):
-        test_prepare_wy_repr_bwd_da_fix.call_count = 1
+    if not hasattr(test_prepare_wy_repr_bwd_full_fix, "call_count"):
+        test_prepare_wy_repr_bwd_full_fix.call_count = 1
     else:
-        test_prepare_wy_repr_bwd_da_fix.call_count += 1
+        test_prepare_wy_repr_bwd_full_fix.call_count += 1
 
-    BT = chunk_size
-    group_size = HV // HK
-
-    k = create_tensor((B, HK, T, K), dtype=ktype)
+    k = create_tensor((B, KH, T, K), dtype=ktype)
     print(f"==== k.shape = {k.shape} ")
-    v = create_tensor((B, HV, T, V), dtype=ktype)
+    v = create_tensor((B, VH, T, V), dtype=ktype)
     print(f"==== v.shape = {v.shape} ")
-    beta = create_tensor((B, HV, T), dtype=gtype)
+    beta = create_tensor((B, VH, T), dtype=btype)
     print(f"==== beta.shape = {beta.shape} ")
-    A = create_tensor((B, HV, T, BT), dtype=ktype)
+    A = create_tensor((B, VH, T, chunk_size), dtype=ktype)
     print(f"==== A.shape = {A.shape} ")
-    dw = create_tensor((B, HV, T, K), dtype=ktype)
+    dw = create_tensor((B, VH, T, K), dtype=ktype)
     print(f"==== dw.shape = {dw.shape} ")
-    du = create_tensor((B, HV, T, V), dtype=ktype)
+    du = create_tensor((B, VH, T, V), dtype=ktype)
     print(f"==== du.shape = {du.shape} ")
-    # g = create_tensor((B, HV, T), dtype=gtype)
-    g = torch.arange(-1, -(B * HV * T + 1), -1).reshape((B, HV, T)).to(gtype)
+    # 构造满足约束的 g：负数且沿 T 单调递减
+    base = torch.rand(B, VH, T, dtype=btype) * 0.1 + 0.01
+    g = -torch.cumsum(base, dim=-1).to(btype)
     print(f"==== g.shape = {g.shape} ")
-    # print(f"==== g = {g} ")
 
     k_npu = k.npu()
     v_npu = v.npu()
@@ -233,11 +225,22 @@ def test_prepare_wy_repr_bwd_da_fix(
     )
     print(f"==== dA_npu.shape = {dA_npu.shape} ")
     print(f"==== dA_npu.dtype = {dA_npu.dtype} ")
-    # print(f"==== dA_npu = {dA_npu} ")
-    # 测试dA_npu里是否包含nan值
     print(f"==== dA_npu has NaN: {torch.isnan(dA_npu).any().item()}")
 
-    print(f"test_prepare_wy_repr_bwd_da_fix 被调用了第 {test_prepare_wy_repr_bwd_da_fix.call_count} 次")
+    dk, dv, dbeta, dg = torch.ops.npu.npu_prepare_wy_repr_bwd_full(
+        k_npu, v_npu, beta_npu, A_npu, dA_npu, dw_npu, du_npu, g_npu,
+        cu_seqlens=None, chunk_indices=None, chunk_size=chunk_size
+    )
+    print(f"==== dk.shape = {dk.shape} ")
+    print(f"==== dv.shape = {dv.shape} ")
+    print(f"==== dbeta.shape = {dbeta.shape} ")
+    print(f"==== dg.shape = {dg.shape} ")
+    print(f"==== dk has NaN: {torch.isnan(dk).any().item()}")
+    print(f"==== dv has NaN: {torch.isnan(dv).any().item()}")
+    print(f"==== dbeta has NaN: {torch.isnan(dbeta).any().item()}")
+    print(f"==== dg has NaN: {torch.isnan(dg).any().item()}")
+
+    print(f"test_prepare_wy_repr_bwd_full_fix 被调用了第 {test_prepare_wy_repr_bwd_full_fix.call_count} 次")
 
 
 DTYPE_MAP = {
@@ -261,34 +264,34 @@ def run_cases_from_json(json_path: str):
         name = case.get("name", f"case_{i}")
         varlen = case.get("varlen", False)
         B = case["B"]
-        HK = case["query_head"]
-        HV = case["value_head"]
+        KH = case["query_head"]
+        VH = case["value_head"]
         T = case["T"]
         K = case["Kdim"]
         V = case["Vdim"]
         chunk_size = case["chunk_size"]
         ktype = DTYPE_MAP[case["dtype"]]
-        gtype = DTYPE_MAP[case["gtype"]]
+        btype = DTYPE_MAP[case["gtype"]]
         print(f"\n{'='*60}")
-        print(f"[RUN] {name}  varlen={varlen}  B={B} HK={HK} HV={HV} T={T} K={K} V={V} chunk_size={chunk_size}")
+        print(f"[RUN] {name}  varlen={varlen}  B={B} KH={KH} VH={VH} T={T} K={K} V={V} chunk_size={chunk_size}")
         print(f"{'='*60}")
         if varlen:
             cu_seqlens_len = case["mean_len"]
-            test_prepare_wy_repr_bwd_da_variable(
-                B=B, HK=HK, HV=HV, T=T, K=K, V=V,
+            test_prepare_wy_repr_bwd_full_variable(
+                B=B, KH=KH, VH=VH, T=T, K=K, V=V,
                 chunk_size=chunk_size, cu_seqlens_len=cu_seqlens_len,
-                ktype=ktype, gtype=gtype,
+                ktype=ktype, btype=btype,
             )
         else:
-            test_prepare_wy_repr_bwd_da_fix(
-                B=B, HK=HK, HV=HV, T=T, K=K, V=V,
-                chunk_size=chunk_size, ktype=ktype, gtype=gtype,
+            test_prepare_wy_repr_bwd_full_fix(
+                B=B, KH=KH, VH=VH, T=T, K=K, V=V,
+                chunk_size=chunk_size, ktype=ktype, btype=btype,
             )
 
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="prepare_wy_repr_bwd_da performance test")
+    parser = argparse.ArgumentParser(description="prepare_wy_repr_bwd performance test")
     parser.add_argument("--json", type=str, default=None,
                         help="Path to JSON case file; if omitted, runs built-in cases")
     parser.add_argument("--device", type=int, default=0,
@@ -302,15 +305,15 @@ if __name__ == "__main__":
         run_cases_from_json(args.json)
     else:
         # Fix length tests (HK == HV, compatible with old behavior)
-        test_prepare_wy_repr_bwd_da_fix(B=1, HK=2, HV=2, T=128, K=128, V=128, chunk_size=64, ktype=torch.float16, gtype=torch.float16)
-        test_prepare_wy_repr_bwd_da_fix(B=2, HK=4, HV=4, T=256, K=128, V=128, chunk_size=128, ktype=torch.bfloat16, gtype=torch.bfloat16)
-        test_prepare_wy_repr_bwd_da_fix(B=4, HK=8, HV=8, T=512, K=128, V=256, chunk_size=64, ktype=torch.float16, gtype=torch.float32)
-        test_prepare_wy_repr_bwd_da_fix(B=8, HK=16, HV=16, T=1024, K=128, V=256, chunk_size=128, ktype=torch.bfloat16, gtype=torch.float32)
-        test_prepare_wy_repr_bwd_da_fix(B=1, HK=32, HV=32, T=2048, K=128, V=128, chunk_size=64, ktype=torch.float16, gtype=torch.float32)
+        test_prepare_wy_repr_bwd_full_fix(B=1, KH=2, VH=2, T=128, K=128, V=128, chunk_size=64, ktype=torch.float16, btype=torch.float16)
+        test_prepare_wy_repr_bwd_full_fix(B=2, KH=4, VH=4, T=256, K=128, V=128, chunk_size=128, ktype=torch.bfloat16, btype=torch.bfloat16)
+        test_prepare_wy_repr_bwd_full_fix(B=4, KH=8, HV=8, T=512, K=128, V=256, chunk_size=64, ktype=torch.float16, btype=torch.float32)
+        test_prepare_wy_repr_bwd_full_fix(B=8, KH=16, HV=16, T=1024, K=128, V=256, chunk_size=128, ktype=torch.bfloat16, btype=torch.float32)
+        test_prepare_wy_repr_bwd_full_fix(B=1, KH=32, VH=32, T=2048, K=128, V=128, chunk_size=64, ktype=torch.float16, btype=torch.float32)
 
         # Variable length tests (HK == HV, compatible with old behavior)
-        test_prepare_wy_repr_bwd_da_variable(B=1, HK=4, HV=4, T=128, K=128, V=128, chunk_size=64, cu_seqlens_len=2, ktype=torch.float16, gtype=torch.float16)
-        test_prepare_wy_repr_bwd_da_variable(B=1, HK=8, HV=8, T=256, K=128, V=128, chunk_size=128, cu_seqlens_len=3, ktype=torch.bfloat16, gtype=torch.bfloat16)
-        test_prepare_wy_repr_bwd_da_variable(B=1, HK=16, HV=16, T=512, K=128, V=256, chunk_size=64, cu_seqlens_len=4, ktype=torch.float16, gtype=torch.float32)
-        test_prepare_wy_repr_bwd_da_variable(B=1, HK=32, HV=32, T=1024, K=128, V=256, chunk_size=128, cu_seqlens_len=5, ktype=torch.bfloat16, gtype=torch.float32)
-        test_prepare_wy_repr_bwd_da_variable(B=1, HK=32, HV=32, T=2048, K=128, V=128, chunk_size=64, cu_seqlens_len=16, ktype=torch.bfloat16, gtype=torch.float32)
+        test_prepare_wy_repr_bwd_full_variable(B=1, KH=4, VH=4, T=128, K=128, V=128, chunk_size=64, cu_seqlens_len=2, ktype=torch.float16, btype=torch.float16)
+        test_prepare_wy_repr_bwd_full_variable(B=1, KH=8, VH=8, T=256, K=128, V=128, chunk_size=128, cu_seqlens_len=3, ktype=torch.bfloat16, btype=torch.bfloat16)
+        test_prepare_wy_repr_bwd_full_variable(B=1, KH=16, VH=16, T=512, K=128, V=256, chunk_size=64, cu_seqlens_len=4, ktype=torch.float16, btype=torch.float32)
+        test_prepare_wy_repr_bwd_full_variable(B=1, KH=32, VH=32, T=1024, K=128, V=256, chunk_size=128, cu_seqlens_len=5, ktype=torch.bfloat16, btype=torch.float32)
+        test_prepare_wy_repr_bwd_full_variable(B=1, KH=32, VH=32, T=2048, K=128, V=128, chunk_size=64, cu_seqlens_len=16, ktype=torch.bfloat16, btype=torch.float32)
