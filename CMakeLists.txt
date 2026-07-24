@@ -35,6 +35,7 @@ option(OP_KERNEL_AICPU_UT         "Enable aicpu kernel ut"          OFF)
 option(UT_TEST_ALL                "Enable all ut"                   OFF)
 option(ENABLE_OOM                 "Enable kernel oom"               OFF)
 option(UT_INFERSHAPE_FLAG         "Enable infershape ut"            OFF)
+option(FLA_NPU_OFFLINE_BUILD      "Build without third-party network access" OFF)
 
 set(ASCEND_COMPUTE_UNIT           "ascend910b"           CACHE   STRING   "soc that need to be compiled")
 set(ASCEND_OP_NAME                "ALL"                           CACHE   STRING   "operators that need to be compiled")
@@ -122,6 +123,7 @@ set_directory_properties(PROPERTIES
     ADDITIONAL_MAKE_CLEAN_FILES "${CMAKE_BINARY_DIR}/_CPack_Packages"
 )
 
+include(cmake/third_party/offline_deps.cmake)
 include(cmake/third_party/opbase.cmake)
 include(cmake/third_party/catlass.cmake)
 include(cmake/config.cmake)

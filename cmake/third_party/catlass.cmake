@@ -43,6 +43,7 @@ else()
             "[ThirdPartyLib][catlass] Still missing ${_CATLASS_MARK} after FetchContent. "
             "Check network and gitcode.com access. If ${_CATLASS_SOURCE_DIR} is incomplete, remove it and re-run CMake configure.")
   endif()
+  file(WRITE "${_CATLASS_SOURCE_DIR}/.fla_npu_revision" "${CATLASS_VENDOR_GIT_TAG}\n")
   get_filename_component(OPS_ADV_CATLASS_INC "${_CATLASS_SOURCE_DIR}/include" REALPATH)
   message(STATUS "[ThirdPartyLib][catlass] Populated at ${OPS_ADV_CATLASS_INC}")
 endif()
