@@ -19,6 +19,11 @@
  #include "chunk_bwd_dqkwg_common.h"
  #include "catlass/arch/arch.hpp"
  #include "catlass/catlass.hpp"
+ namespace Catlass::Gemm::Tile {
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
+ constexpr AscendC::FixpipeConfig CFG_ROW_MAJOR_UB = {AscendC::CO2Layout::ROW_MAJOR, true};
+#endif
+ } // namespace Catlass::Gemm::Tile
  #include "catlass/gemm/block/block_mmad.hpp"
  #include "catlass/gemm/block/block_swizzle.hpp"
  #include "catlass/gemm/device/device_gemm.hpp"
