@@ -624,6 +624,10 @@ private:
     __aicore__ inline void ProcessDTask(const PrepareWyReprBwdTaskInfo &task, uint64_t hv, GM_ADDR slotBase);
     __aicore__ inline void ProcessOutputTask(const PrepareWyReprBwdTaskInfo &task, uint64_t hv, uint64_t hk,
                                              uint64_t groupSize, GM_ADDR slotBase);
+    template <uint64_t READY_FLAG_BEGIN>
+    __aicore__ inline void WaitCvReady(uint32_t cvListId) const;
+    template <uint64_t FREE_FLAG_BEGIN>
+    __aicore__ inline void SetCvFree(uint32_t cvListId) const;
 
 private:
     GDN::PrepareWyReprBwdTilingData tiling_{};
@@ -658,6 +662,8 @@ private:
 
     AscendC::TBuf<AscendC::TPosition::VECCALC> inputPing_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> inputPong_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> dkbCvPing_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> dkbCvPong_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> dkCvPing_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> dkCvPong_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> betaGInputPing_;
@@ -682,6 +688,7 @@ private:
 
     AscendC::LocalTensor<kType> outputBuf_[PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT];
     AscendC::LocalTensor<kType> matrixInputBuf_[PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT];
+    AscendC::LocalTensor<kType> dkbCvBuf_[PREPARE_WY_REPR_BWD_DKB_CV_BUFFER_COUNT];
     AscendC::LocalTensor<kType> dkCvBuf_[PREPARE_WY_REPR_BWD_DK_CV_BUFFER_COUNT];
     AscendC::LocalTensor<gType> betaGInputBuf_[PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT];
     AscendC::LocalTensor<gType> betaGOutputBuf_[PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT];
@@ -711,7 +718,6 @@ private:
     AscendC::GlobalTensor<kType> gmDA2_;
     AscendC::GlobalTensor<kType> gmDA4_;
     AscendC::GlobalTensor<kType> gmD_;
-    AscendC::GlobalTensor<kType> gmDkb_;
 
     event_t mte2ToVEvent_[PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT]{};
     event_t vToMte2Event_[PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT]{};
@@ -773,6 +779,8 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE>::Init(const GDN::
     maxRow = maxRow > static_cast<uint32_t>(tiling_.kktVecRow) ? maxRow : static_cast<uint32_t>(tiling_.kktVecRow);
     pipe_->InitBuffer(inputPing_, UB_BYTES_16K);
     pipe_->InitBuffer(inputPong_, UB_BYTES_16K);
+    pipe_->InitBuffer(dkbCvPing_, UB_BYTES_16K);
+    pipe_->InitBuffer(dkbCvPong_, UB_BYTES_16K);
     pipe_->InitBuffer(dkCvPing_, UB_BYTES_16K);
     pipe_->InitBuffer(dkCvPong_, UB_BYTES_16K);
     pipe_->InitBuffer(betaGInputPing_, Align32(CHUNK_SIZE * sizeof(float32_t)));
@@ -803,6 +811,8 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE>::Init(const GDN::
 
     matrixInputBuf_[0] = inputPing_.Get<kType>();
     matrixInputBuf_[1] = inputPong_.Get<kType>();
+    dkbCvBuf_[0] = dkbCvPing_.Get<kType>();
+    dkbCvBuf_[1] = dkbCvPong_.Get<kType>();
     dkCvBuf_[0] = dkCvPing_.Get<kType>();
     dkCvBuf_[1] = dkCvPong_.Get<kType>();
     betaGInputBuf_[0] = betaGInputPing_.Get<gType>();
@@ -864,9 +874,28 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     for (eventIdx_ = 0; eventIdx_ < PREPARE_WY_REPR_BWD_DA6_CV_BUFFER_COUNT; ++eventIdx_) {
         AscendC::CrossCoreSetFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN + eventIdx_);
     }
+    for (eventIdx_ = 0; eventIdx_ < PREPARE_WY_REPR_BWD_DKB_CV_BUFFER_COUNT; ++eventIdx_) {
+        AscendC::CrossCoreSetFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DKB_CV_AIV_TO_AIC_FLAG_BEGIN + eventIdx_);
+    }
     for (eventIdx_ = 0; eventIdx_ < PREPARE_WY_REPR_BWD_DK_CV_BUFFER_COUNT; ++eventIdx_) {
         AscendC::CrossCoreSetFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DK_CV_AIV_TO_AIC_FLAG_BEGIN + eventIdx_);
     }
+}
+
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
+template <uint64_t READY_FLAG_BEGIN>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE>::WaitCvReady(
+    uint32_t cvListId) const
+{
+    AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(READY_FLAG_BEGIN + cvListId);
+}
+
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
+template <uint64_t FREE_FLAG_BEGIN>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE>::SetCvFree(
+    uint32_t cvListId) const
+{
+    AscendC::CrossCoreSetFlag<0x4, PIPE_V>(FREE_FLAG_BEGIN + cvListId);
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
@@ -1226,14 +1255,14 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                   task.curChunkSize - rowOffset_ :
                   static_cast<uint32_t>(tiling_.mVecRow);
 
-        AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DA6_CV_AIC_TO_AIV_FLAG_BEGIN + da6CvListId);
+        WaitCvReady<PREPARE_WY_REPR_BWD_DA6_CV_AIC_TO_AIV_FLAG_BEGIN>(da6CvListId);
         PrepareOutputRows();
         PrepareWyReprBwdBuildDStrictUpperRegbase<kType>(
             (__ubuf__ kType *)reinterpret_cast<uint64_t>(outputBuf_[outputIdx_].GetPhyAddr()),
             (__ubuf__ kType *)reinterpret_cast<uint64_t>(matrixInputBuf_[da6CvListId].GetPhyAddr()),
             (__ubuf__ float *)reinterpret_cast<uint64_t>(gRawAllFp32Tensor_.GetPhyAddr()),
             static_cast<uint16_t>(curRow_), static_cast<uint16_t>(CHUNK_SIZE), static_cast<uint16_t>(rowOffset_));
-        AscendC::CrossCoreSetFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN + da6CvListId);
+        SetCvFree<PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN>(da6CvListId);
         CopyOutRows(gmD_, outputBuf_[outputIdx_], rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
         da6CvListId =
             (da6CvListId + 1 < PREPARE_WY_REPR_BWD_DA6_CV_BUFFER_COUNT) ? da6CvListId + 1 : 0;
@@ -1241,8 +1270,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     }
 
     for (; dealTaskNum < taskNumPerSubBlock; ++dealTaskNum) {
-        AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DA6_CV_AIC_TO_AIV_FLAG_BEGIN + da6CvListId);
-        AscendC::CrossCoreSetFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN + da6CvListId);
+        WaitCvReady<PREPARE_WY_REPR_BWD_DA6_CV_AIC_TO_AIV_FLAG_BEGIN>(da6CvListId);
+        SetCvFree<PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN>(da6CvListId);
         da6CvListId =
             (da6CvListId + 1 < PREPARE_WY_REPR_BWD_DA6_CV_BUFFER_COUNT) ? da6CvListId + 1 : 0;
     }
@@ -1259,7 +1288,6 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     gmDkbg_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dkbgOffset));
     gmDvb_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dvbOffset));
     gmD_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dOffset));
-    gmDkb_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dkbOffset));
     GM_ADDR kktBase = PrepareWyReprBwdGetKktBase(workspace_, AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(),
                                                  kktSlotForSlot_[curSlot_], tiling_);
     gmKKT_.SetGlobalBuffer((__gm__ kType *)kktBase);
@@ -1275,6 +1303,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     subBlockIdx_ = AscendC::GetSubBlockIdx();
 
     Arch::CrossCoreWaitFlag(cubeToVecFlag_);
+    uint32_t dkbCvListId = 0;
     uint32_t dkCvListId = 0;
     uint32_t totalRowTask =
         static_cast<uint32_t>(PrepareWyReprBwdCeilDiv(task.curChunkSize, rowOwned));
@@ -1286,20 +1315,18 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 
         inputIdxA_ = CopyInRows<kType>(kTensor_, matrixInputBuf_[curInputPingPong_],
                                               (keyBase_ + rowOffset_) * K_DIM, curRow_ * K_DIM);
-        inputIdxB_ =
-            CopyInRows<kType>(gmDkb_, matrixInputBuf_[curInputPingPong_], rowOffset_ * K_DIM, curRow_ * K_DIM);
+        WaitCvReady<PREPARE_WY_REPR_BWD_DKB_CV_AIC_TO_AIV_FLAG_BEGIN>(dkbCvListId);
         WaitInputRows(inputIdxA_);
-        WaitInputRows(inputIdxB_);
         PrepareWyReprBwdDkbFirstRegbase<kType>(
             (__ubuf__ float *)reinterpret_cast<uint64_t>(calcFp32ATensor_.GetPhyAddr()),
             (__ubuf__ float *)reinterpret_cast<uint64_t>(calcFp32BTensor_.GetPhyAddr()),
             (__ubuf__ float *)reinterpret_cast<uint64_t>(dbetaAccFp32Tensor_[rowOffset_].GetPhyAddr()),
             (__ubuf__ kType *)reinterpret_cast<uint64_t>(matrixInputBuf_[inputIdxA_].GetPhyAddr()),
-            (__ubuf__ kType *)reinterpret_cast<uint64_t>(matrixInputBuf_[inputIdxB_].GetPhyAddr()),
+            (__ubuf__ kType *)reinterpret_cast<uint64_t>(dkbCvBuf_[dkbCvListId].GetPhyAddr()),
             (__ubuf__ float *)reinterpret_cast<uint64_t>(betaAllFp32Tensor_[rowOffset_].GetPhyAddr()),
             static_cast<uint16_t>(curRow_), static_cast<uint16_t>(K_DIM));
         ReleaseInputRows(inputIdxA_);
-        ReleaseInputRows(inputIdxB_);
+        SetCvFree<PREPARE_WY_REPR_BWD_DKB_CV_AIV_TO_AIC_FLAG_BEGIN>(dkbCvListId);
         inputIdxC_ =
             CopyInRows<kType>(gmDkbg_, matrixInputBuf_[curInputPingPong_], rowOffset_ * K_DIM, curRow_ * K_DIM);
 
@@ -1323,7 +1350,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         if (!isFirstValueHeadInGroup) {
             WaitInputRows(inputIdxD_);
         }
-        AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DK_CV_AIC_TO_AIV_FLAG_BEGIN + dkCvListId);
+        WaitCvReady<PREPARE_WY_REPR_BWD_DK_CV_AIC_TO_AIV_FLAG_BEGIN>(dkCvListId);
         PrepareOutputRows();
         if (!isFirstValueHeadInGroup) {
             PrepareWyReprBwdDkOutputRegbase<kType, true>(
@@ -1345,15 +1372,21 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                 (__ubuf__ float *)reinterpret_cast<uint64_t>(betaAllFp32Tensor_[rowOffset_].GetPhyAddr()),
                 static_cast<uint16_t>(curRow_), static_cast<uint16_t>(K_DIM));
         }
-        AscendC::CrossCoreSetFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DK_CV_AIV_TO_AIC_FLAG_BEGIN + dkCvListId);
+        SetCvFree<PREPARE_WY_REPR_BWD_DK_CV_AIV_TO_AIC_FLAG_BEGIN>(dkCvListId);
         CopyOutRows(dkTensor_, outputBuf_[outputIdx_], (keyBase_ + rowOffset_) * K_DIM, curRow_ * K_DIM);
+        dkbCvListId =
+            (dkbCvListId + 1 < PREPARE_WY_REPR_BWD_DKB_CV_BUFFER_COUNT) ? dkbCvListId + 1 : 0;
         dkCvListId = (dkCvListId + 1 < PREPARE_WY_REPR_BWD_DK_CV_BUFFER_COUNT) ? dkCvListId + 1 : 0;
         ++dkDealTaskNum;
     }
 
     for (; dkDealTaskNum < taskNumPerSubBlock; ++dkDealTaskNum) {
-        AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DK_CV_AIC_TO_AIV_FLAG_BEGIN + dkCvListId);
-        AscendC::CrossCoreSetFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DK_CV_AIV_TO_AIC_FLAG_BEGIN + dkCvListId);
+        WaitCvReady<PREPARE_WY_REPR_BWD_DKB_CV_AIC_TO_AIV_FLAG_BEGIN>(dkbCvListId);
+        SetCvFree<PREPARE_WY_REPR_BWD_DKB_CV_AIV_TO_AIC_FLAG_BEGIN>(dkbCvListId);
+        WaitCvReady<PREPARE_WY_REPR_BWD_DK_CV_AIC_TO_AIV_FLAG_BEGIN>(dkCvListId);
+        SetCvFree<PREPARE_WY_REPR_BWD_DK_CV_AIV_TO_AIC_FLAG_BEGIN>(dkCvListId);
+        dkbCvListId =
+            (dkbCvListId + 1 < PREPARE_WY_REPR_BWD_DKB_CV_BUFFER_COUNT) ? dkbCvListId + 1 : 0;
         dkCvListId = (dkCvListId + 1 < PREPARE_WY_REPR_BWD_DK_CV_BUFFER_COUNT) ? dkCvListId + 1 : 0;
     }
 
