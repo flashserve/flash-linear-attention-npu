@@ -707,7 +707,6 @@ private:
     AscendC::GlobalTensor<kType> gmDA1_;
     AscendC::GlobalTensor<kType> gmDA2_;
     AscendC::GlobalTensor<kType> gmDA4_;
-    AscendC::GlobalTensor<kType> gmDA6T_;
     AscendC::GlobalTensor<kType> gmD_;
     AscendC::GlobalTensor<kType> gmDkb_;
     AscendC::GlobalTensor<kType> gmDK_;
@@ -855,6 +854,9 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(vToMte2Event_[eventIdx_]);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(betaGVToMte2Event_[eventIdx_]);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[eventIdx_]);
+    }
+    for (eventIdx_ = 0; eventIdx_ < PREPARE_WY_REPR_BWD_DA6_CV_BUFFER_COUNT; ++eventIdx_) {
+        AscendC::CrossCoreSetFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN + eventIdx_);
     }
 }
 
@@ -1194,34 +1196,46 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 {
     SetBetaGResidentTensors(curSlot_ & 1U);
 
-    gmDA6T_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da6Offset));
     gmD_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dOffset));
     valueBase_ = hv * tiling_.T + task.valueBos;
 
     subBlockNum_ = AscendC::GetSubBlockNum();
     subBlockIdx_ = AscendC::GetSubBlockIdx();
     rowTaskIdx_ = 0;
-    Arch::CrossCoreWaitFlag(cubeToVecFlag_);
+    uint32_t da6CvListId = 0;
+    uint32_t totalRowTask = static_cast<uint32_t>(
+        PrepareWyReprBwdCeilDiv(task.curChunkSize, static_cast<uint32_t>(tiling_.mVecRow)));
+    uint32_t taskNumPerSubBlock =
+        static_cast<uint32_t>(PrepareWyReprBwdCeilDiv(totalRowTask, subBlockNum_));
+    uint32_t dealTaskNum = 0;
     for (rowOffset_ = 0; rowOffset_ < task.curChunkSize; rowOffset_ += static_cast<uint32_t>(tiling_.mVecRow)) {
         localRowTask_ = rowTaskIdx_++;
         if (localRowTask_ % subBlockNum_ != subBlockIdx_) {
             continue;
         }
         curRow_ = rowOffset_ + static_cast<uint32_t>(tiling_.mVecRow) > task.curChunkSize ?
-                      task.curChunkSize - rowOffset_ :
-                      static_cast<uint32_t>(tiling_.mVecRow);
+                  task.curChunkSize - rowOffset_ :
+                  static_cast<uint32_t>(tiling_.mVecRow);
 
-        inputIdx_ = CopyInRows<kType>(gmDA6T_, matrixInputBuf_[curInputPingPong_],
-                                             rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
-        WaitInputRows(inputIdx_);
+        AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DA6_CV_AIC_TO_AIV_FLAG_BEGIN + da6CvListId);
         PrepareOutputRows();
         PrepareWyReprBwdBuildDStrictUpperRegbase<kType>(
             (__ubuf__ kType *)reinterpret_cast<uint64_t>(outputBuf_[outputIdx_].GetPhyAddr()),
-            (__ubuf__ kType *)reinterpret_cast<uint64_t>(matrixInputBuf_[inputIdx_].GetPhyAddr()),
+            (__ubuf__ kType *)reinterpret_cast<uint64_t>(matrixInputBuf_[da6CvListId].GetPhyAddr()),
             (__ubuf__ float *)reinterpret_cast<uint64_t>(gRawAllFp32Tensor_.GetPhyAddr()),
             static_cast<uint16_t>(curRow_), static_cast<uint16_t>(CHUNK_SIZE), static_cast<uint16_t>(rowOffset_));
-        ReleaseInputRows(inputIdx_);
+        AscendC::CrossCoreSetFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN + da6CvListId);
         CopyOutRows(gmD_, outputBuf_[outputIdx_], rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
+        da6CvListId =
+            (da6CvListId + 1 < PREPARE_WY_REPR_BWD_DA6_CV_BUFFER_COUNT) ? da6CvListId + 1 : 0;
+        ++dealTaskNum;
+    }
+
+    for (; dealTaskNum < taskNumPerSubBlock; ++dealTaskNum) {
+        AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DA6_CV_AIC_TO_AIV_FLAG_BEGIN + da6CvListId);
+        AscendC::CrossCoreSetFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN + da6CvListId);
+        da6CvListId =
+            (da6CvListId + 1 < PREPARE_WY_REPR_BWD_DA6_CV_BUFFER_COUNT) ? da6CvListId + 1 : 0;
     }
 
     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
