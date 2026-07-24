@@ -123,6 +123,8 @@
      uint64_t wsMm6Offset;
      uint64_t wsMm7Offset;
      uint64_t wsMul1Offset;
+     uint64_t wsGvaBtxKOffset;
+     uint64_t wsGvaShortBtxKOffset;
      int BUFFER_NUM = 1;
 
      // Pipeline
@@ -138,6 +140,7 @@
      GlobalTensor<float> gmDgLast;
      GlobalTensor<DataType> gmDwWorkspace;
      GlobalTensor<DataType> gmMm5, gmDsTemp, gmMul1, gmMm6, gmMm7;
+     GlobalTensor<float> gmGvaBtxK, gmGvaShortBtxK;
 
      // Queues (用于流水)
      TQue<TPosition::VECIN, 2> inQue1;
@@ -200,6 +203,8 @@
      wsMm6Offset = tiling.wsMm6Offset;
      wsMm7Offset = tiling.wsMm7Offset;
      wsMul1Offset = tiling.wsMul1Offset;
+     wsGvaBtxKOffset = tiling.wsGvaBtxKOffset;
+     wsGvaShortBtxKOffset = tiling.wsGvaShortBtxKOffset;
      uint64_t dgLastSize = tiling.dgLastSize;
      isVarLen = tiling.isVarLen;
      mul0RowNum = tiling.mul0RowNum;
@@ -233,6 +238,8 @@
      gmMm6.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm6Offset));
      gmMm7.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMm7Offset));
      gmMul1.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsMul1Offset));
+     gmGvaBtxK.SetGlobalBuffer((__gm__ float *)((__gm__ uint8_t*)ptrWorkspace + wsGvaBtxKOffset));
+     gmGvaShortBtxK.SetGlobalBuffer((__gm__ float *)((__gm__ uint8_t*)ptrWorkspace + wsGvaShortBtxKOffset));
  }
 
  // ============== 主处理函数 (CV 深融合: A -> B -> C -> D, 每 stage 内 chunk 级与 cube 流水) ==============
@@ -943,8 +950,10 @@
      uint32_t dqSize = BT * K;
      const uint32_t gSize = BT;
      const bool gvaMode = HV != HK;
+     const bool gvaUbAccum = gvaMode && (BT == 64);
+     const int32_t cBufferNum = gvaUbAccum ? 1 : BUFFER_NUM;
 
-     pipe->InitBuffer(inQue1, BUFFER_NUM, dqSize * sizeof(float));    // dq_inner from Cube
+     pipe->InitBuffer(inQue1, cBufferNum, dqSize * sizeof(float));    // dq_inner from Cube
      pipe->InitBuffer(inQue2, BUFFER_NUM, dqSize * sizeof(float));    // q / mm6 复用
      pipe->InitBuffer(inQue3, BUFFER_NUM, gSize * sizeof(GType));     // g
      pipe->InitBuffer(inQue4, BUFFER_NUM, gSize * sizeof(GType));     // dg
@@ -955,6 +964,11 @@
      pipe->InitBuffer(gBuf, gSize * sizeof(float));
      pipe->InitBuffer(dgBuf, gSize * sizeof(float));
 
+     LocalTensor<float> tensorDqGvaAccum;
+     if (gvaUbAccum) {
+         pipe->InitBuffer(calcBuf1, dqSize * sizeof(float));
+         tensorDqGvaAccum = calcBuf1.Get<float>();
+     }
      auto tensorShareTmpFp32 = calcBuf3.Get<float>();
      auto tensorGFp32 = gBuf.Get<float>();
      auto tensorDgAdd = dgBuf.Get<float>();
@@ -989,7 +1003,7 @@
                  auto tensorGIn = inQue3.AllocTensor<GType>();
                  auto tensorDgIn = inQue4.AllocTensor<GType>();
                  if (gvaMode) {
-                     DataCopy(tensorDqIn[dqSize_sub], gmMm5[dqTempOffset], dqSize_sub);
+                     DataCopy(tensorDqIn.template ReinterpretCast<float>(), gmGvaBtxK[dqTempOffset], dqSize_sub);
                  } else {
                      DataCopy(tensorDqIn[dqSize_sub], gmDq[dqOutOffset], dqSize_sub);
                  }
@@ -1010,7 +1024,9 @@
                  auto tensorDgIn = inQue4.DeQue<GType>();
                  auto tensorDgOut = outQue2.AllocTensor<float>();
 
-                 Cast(tensorDqInFp32, tensorDqInFp16[dqSize_sub], RoundMode::CAST_NONE, dqSize_sub);
+                 if (!gvaMode) {
+                     Cast(tensorDqInFp32, tensorDqInFp16[dqSize_sub], RoundMode::CAST_NONE, dqSize_sub);
+                 }
                  Cast(tensorQInFp32, tensorQInFp16[dqSize_sub], RoundMode::CAST_NONE, dqSize_sub);
                  if constexpr (std::is_same<GType, float>::value) {
                      DataCopy(tensorGFp32, tensorGIn, gSize);
@@ -1079,39 +1095,65 @@
                      auto tensorMm6In = inQue2.AllocTensor<DataType>();
                      uint64_t mm6RingOffset = DqkwgShortBtxKRingElemOffset(coreIdx, loopIdx, coreNum, h, HV, BT, K,
                                                                            DqkwgShortRingDepthFromGroup((uint32_t)wsBtxKSyncSlotsPerHead));
-                     DataCopy(tensorMm6In[dqSize_sub], gmMm6[mm6RingOffset], dqSize_sub);  // mm6 compact ring
+                     if (gvaMode) {
+                         DataCopy(tensorMm6In.template ReinterpretCast<float>(), gmGvaShortBtxK[mm6RingOffset], dqSize_sub);
+                     } else {
+                         DataCopy(tensorMm6In[dqSize_sub], gmMm6[mm6RingOffset], dqSize_sub);  // mm6 compact ring
+                     }
                      inQue2.EnQue(tensorMm6In);
                  }
                  {
                      auto tensorMm6InFp16 = inQue2.DeQue<DataType>();
                      auto tensorMm6Fp32 = tensorMm6InFp16.template ReinterpretCast<float>();
-                     Cast(tensorMm6Fp32, tensorMm6InFp16[dqSize_sub], RoundMode::CAST_NONE, dqSize_sub);
+                     if (!gvaMode) {
+                         Cast(tensorMm6Fp32, tensorMm6InFp16[dqSize_sub], RoundMode::CAST_NONE, dqSize_sub);
+                     }
                      PipeBarrier<PIPE_V>();
                      Add(tensorDqInFp32, tensorDqInFp32, tensorMm6Fp32, dqSize_sub);
                      PipeBarrier<PIPE_V>();
                      inQue2.FreeTensor(tensorMm6InFp16);
-                     if (gvaMode && (h % n_ratio != 0)) {
-                         FenceGvaAccumReadAfterWrite();
-                         auto tensorDqAccumIn = inQue2.AllocTensor<DataType>();
-                         DataCopy(tensorDqAccumIn[dqSize_sub], gmDq[dqOutOffset], dqSize_sub);
-                         inQue2.EnQue(tensorDqAccumIn);
-                         auto tensorDqAccumInFp16 = inQue2.DeQue<DataType>();
-                         auto tensorDqAccumFp32 = tensorDqAccumInFp16.template ReinterpretCast<float>();
-                         Cast(tensorDqAccumFp32, tensorDqAccumInFp16[dqSize_sub], RoundMode::CAST_NONE, dqSize_sub);
+                     if (gvaUbAccum) {
+                         bool firstHeadInGroup = (h % n_ratio) == 0;
+                         bool lastHeadInGroup = (h % n_ratio) == (n_ratio - 1);
+                         if (firstHeadInGroup) {
+                             Duplicate(tensorDqGvaAccum, 0.0f, dqSize_sub);
+                             PipeBarrier<PIPE_V>();
+                         }
+                         Add(tensorDqGvaAccum, tensorDqGvaAccum, tensorDqInFp32, dqSize_sub);
                          PipeBarrier<PIPE_V>();
-                         Add(tensorDqInFp32, tensorDqInFp32, tensorDqAccumFp32, dqSize_sub);
-                         PipeBarrier<PIPE_V>();
-                         inQue2.FreeTensor(tensorDqAccumInFp16);
+                         if (lastHeadInGroup) {
+                             auto tensorDqOut = outQue1.AllocTensor<DataType>();
+                             Cast(tensorDqOut, tensorDqGvaAccum, RoundMode::CAST_RINT, dqSize_sub);
+                             inQue1.FreeTensor(tensorDqInFp16);
+                             outQue1.EnQue(tensorDqOut);
+                             auto tensorDqOutDeq = outQue1.DeQue<DataType>();
+                             DataCopy(gmDq[dqOutOffset], tensorDqOutDeq, dqSize_sub);
+                             outQue1.FreeTensor(tensorDqOutDeq);
+                         } else {
+                             inQue1.FreeTensor(tensorDqInFp16);
+                         }
+                     } else {
+                         if (gvaMode && (h % n_ratio != 0)) {
+                             FenceGvaAccumReadAfterWrite();
+                             auto tensorDqAccumIn = inQue2.AllocTensor<DataType>();
+                             DataCopy(tensorDqAccumIn[dqSize_sub], gmDq[dqOutOffset], dqSize_sub);
+                             inQue2.EnQue(tensorDqAccumIn);
+                             auto tensorDqAccumInFp16 = inQue2.DeQue<DataType>();
+                             auto tensorDqAccumFp32 = tensorDqAccumInFp16.template ReinterpretCast<float>();
+                             Cast(tensorDqAccumFp32, tensorDqAccumInFp16[dqSize_sub], RoundMode::CAST_NONE, dqSize_sub);
+                             PipeBarrier<PIPE_V>();
+                             Add(tensorDqInFp32, tensorDqInFp32, tensorDqAccumFp32, dqSize_sub);
+                             PipeBarrier<PIPE_V>();
+                             inQue2.FreeTensor(tensorDqAccumInFp16);
+                         }
+                         auto tensorDqOut = outQue1.AllocTensor<DataType>();
+                         Cast(tensorDqOut, tensorDqInFp32, RoundMode::CAST_RINT, dqSize_sub);
+                         inQue1.FreeTensor(tensorDqInFp16);
+                         outQue1.EnQue(tensorDqOut);
+                         auto tensorDqOutDeq = outQue1.DeQue<DataType>();
+                         DataCopy(gmDq[dqOutOffset], tensorDqOutDeq, dqSize_sub);
+                         outQue1.FreeTensor(tensorDqOutDeq);
                      }
-                     auto tensorDqOut = outQue1.AllocTensor<DataType>();
-                     Cast(tensorDqOut, tensorDqInFp32, RoundMode::CAST_RINT, dqSize_sub);
-                     inQue1.FreeTensor(tensorDqInFp16);
-                     outQue1.EnQue(tensorDqOut);
-                 }
-                 {
-                     auto tensorDqOut = outQue1.DeQue<DataType>();
-                     DataCopy(gmDq[dqOutOffset], tensorDqOut, dqSize_sub);
-                     outQue1.FreeTensor(tensorDqOut);
                  }
              }
              PipeBarrier<PIPE_MTE3>();
@@ -1135,6 +1177,7 @@
      uint32_t dkSize = BT * K;
      const uint32_t gSize = BT;
      const bool gvaMode = HV != HK;
+     const bool gvaUbAccum = gvaMode && (BT == 64);
 
      constexpr int32_t part5BufferNum = 1;
      pipe->InitBuffer(inQue1, part5BufferNum, dkSize * sizeof(float));
@@ -1146,6 +1189,11 @@
 
      pipe->InitBuffer(calcBuf1, gSize * 8 * sizeof(float));  // gLast
      pipe->InitBuffer(calcBuf2, gSize * 8 * sizeof(float));  // dgLast
+     LocalTensor<float> tensorDkGvaAccum;
+     if (gvaUbAccum) {
+         pipe->InitBuffer(calcBuf3, dkSize * sizeof(float));
+         tensorDkGvaAccum = calcBuf3.Get<float>();
+     }
      pipe->InitBuffer(calcBuf4, gSize * sizeof(float));
      pipe->InitBuffer(gBuf, gSize * sizeof(float));
      pipe->InitBuffer(dgBuf, gSize * 8 * sizeof(float));
@@ -1207,7 +1255,7 @@
                  auto tensorGIn = inQue3.AllocTensor<GType>();
                  auto tensorDgIn = inQue4.AllocTensor<GType>();
                  if (gvaMode) {
-                     DataCopy(tensorDkIn[dkSize], gmMm6[dkTempOffset], dkSize);
+                     DataCopy(tensorDkIn.template ReinterpretCast<float>(), gmGvaShortBtxK[dkTempOffset], dkSize);
                  } else {
                      DataCopy(tensorDkIn[dkSize], gmDk[dkOutOffset], dkSize);
                  }
@@ -1228,7 +1276,9 @@
                  auto tensorDgIn = inQue4.DeQue<GType>();
                  auto tensorDgOut = outQue2.AllocTensor<GType>();
 
-                 Cast(tensorDkFp32, tensorDkIn[dkSize], RoundMode::CAST_NONE, dkSize);
+                 if (!gvaMode) {
+                     Cast(tensorDkFp32, tensorDkIn[dkSize], RoundMode::CAST_NONE, dkSize);
+                 }
                  Cast(tensorKFp32, tensorKIn[dkSize], RoundMode::CAST_NONE, dkSize);
                  PipeBarrier<PIPE_V>();
 
@@ -1332,39 +1382,65 @@
                      auto tensorMm7In = inQue2.AllocTensor<DataType>();
                      uint64_t mm7RingOffset = DqkwgBtxKRingElemOffset(coreIdx, loopBase, loopIdx, coreNum, h, HV, BT, K,
                                                                       (uint32_t)wsBtxKSyncSlotsPerHead);  // mm7 用 group 环 (与 cube 一致)
-                     DataCopy(tensorMm7In[dkSize], gmMm7[mm7RingOffset], dkSize);
+                     if (gvaMode) {
+                         DataCopy(tensorMm7In.template ReinterpretCast<float>(), gmGvaBtxK[mm7RingOffset], dkSize);
+                     } else {
+                         DataCopy(tensorMm7In[dkSize], gmMm7[mm7RingOffset], dkSize);
+                     }
                      inQue2.EnQue(tensorMm7In);
                  }
                  {
                      auto tensorMm7In = inQue2.DeQue<DataType>();
                      auto tensorMm7Fp32 = tensorMm7In.template ReinterpretCast<float>();
-                     Cast(tensorMm7Fp32, tensorMm7In[dkSize], RoundMode::CAST_NONE, dkSize);
+                     if (!gvaMode) {
+                         Cast(tensorMm7Fp32, tensorMm7In[dkSize], RoundMode::CAST_NONE, dkSize);
+                     }
                      PipeBarrier<PIPE_V>();
                      Add(tensorDkFp32, tensorDkFp32, tensorMm7Fp32, dkSize);
                      PipeBarrier<PIPE_V>();
                      inQue2.FreeTensor(tensorMm7In);
-                     if (gvaMode && (h % n_ratio != 0)) {
-                         FenceGvaAccumReadAfterWrite();
-                         auto tensorDkAccumIn = inQue2.AllocTensor<DataType>();
-                         DataCopy(tensorDkAccumIn[dkSize], gmDk[dkOutOffset], dkSize);
-                         inQue2.EnQue(tensorDkAccumIn);
-                         auto tensorDkAccumInFp16 = inQue2.DeQue<DataType>();
-                         auto tensorDkAccumFp32 = tensorDkAccumInFp16.template ReinterpretCast<float>();
-                         Cast(tensorDkAccumFp32, tensorDkAccumInFp16[dkSize], RoundMode::CAST_NONE, dkSize);
+                     if (gvaUbAccum) {
+                         bool firstHeadInGroup = (h % n_ratio) == 0;
+                         bool lastHeadInGroup = (h % n_ratio) == (n_ratio - 1);
+                         if (firstHeadInGroup) {
+                             Duplicate(tensorDkGvaAccum, 0.0f, dkSize);
+                             PipeBarrier<PIPE_V>();
+                         }
+                         Add(tensorDkGvaAccum, tensorDkGvaAccum, tensorDkFp32, dkSize);
                          PipeBarrier<PIPE_V>();
-                         Add(tensorDkFp32, tensorDkFp32, tensorDkAccumFp32, dkSize);
-                         PipeBarrier<PIPE_V>();
-                         inQue2.FreeTensor(tensorDkAccumInFp16);
+                         if (lastHeadInGroup) {
+                             auto tensorDkOut = outQue1.AllocTensor<DataType>();
+                             Cast(tensorDkOut, tensorDkGvaAccum, RoundMode::CAST_RINT, dkSize);
+                             inQue1.FreeTensor(tensorDkIn);
+                             outQue1.EnQue(tensorDkOut);
+                             auto tensorDkOutDeq = outQue1.DeQue<DataType>();
+                             DataCopy(gmDk[dkOutOffset], tensorDkOutDeq, dkSize);
+                             outQue1.FreeTensor(tensorDkOutDeq);
+                         } else {
+                             inQue1.FreeTensor(tensorDkIn);
+                         }
+                     } else {
+                         if (gvaMode && (h % n_ratio != 0)) {
+                             FenceGvaAccumReadAfterWrite();
+                             auto tensorDkAccumIn = inQue2.AllocTensor<DataType>();
+                             DataCopy(tensorDkAccumIn[dkSize], gmDk[dkOutOffset], dkSize);
+                             inQue2.EnQue(tensorDkAccumIn);
+                             auto tensorDkAccumInFp16 = inQue2.DeQue<DataType>();
+                             auto tensorDkAccumFp32 = tensorDkAccumInFp16.template ReinterpretCast<float>();
+                             Cast(tensorDkAccumFp32, tensorDkAccumInFp16[dkSize], RoundMode::CAST_NONE, dkSize);
+                             PipeBarrier<PIPE_V>();
+                             Add(tensorDkFp32, tensorDkFp32, tensorDkAccumFp32, dkSize);
+                             PipeBarrier<PIPE_V>();
+                             inQue2.FreeTensor(tensorDkAccumInFp16);
+                         }
+                         auto tensorDkOut = outQue1.AllocTensor<DataType>();
+                         Cast(tensorDkOut, tensorDkFp32, RoundMode::CAST_RINT, dkSize);
+                         inQue1.FreeTensor(tensorDkIn);
+                         outQue1.EnQue(tensorDkOut);
+                         auto tensorDkOutDeq = outQue1.DeQue<DataType>();
+                         DataCopy(gmDk[dkOutOffset], tensorDkOutDeq, dkSize);
+                         outQue1.FreeTensor(tensorDkOutDeq);
                      }
-                     auto tensorDkOut = outQue1.AllocTensor<DataType>();
-                     Cast(tensorDkOut, tensorDkFp32, RoundMode::CAST_RINT, dkSize);
-                     inQue1.FreeTensor(tensorDkIn);
-                     outQue1.EnQue(tensorDkOut);
-                 }
-                 {
-                     auto tensorDkOut = outQue1.DeQue<DataType>();
-                     DataCopy(gmDk[dkOutOffset], tensorDkOut, dkSize);
-                     outQue1.FreeTensor(tensorDkOut);
                  }
              }
              PipeBarrier<PIPE_MTE3>();
