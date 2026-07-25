@@ -1,0 +1,563 @@
+#!/usr/bin/env python3
+"""Pure-asynchronous 100-layer GDN reproduction workload.
+
+The workload intentionally performs no host/device synchronization while steps
+are being submitted. All outputs and input gradients remain on the NPU until
+every requested step has finished launching; finite checks are queued only at
+the end and then copied to the host once.
+"""
+
+from __future__ import annotations
+
+import argparse
+import functools
+import hashlib
+import importlib.metadata
+import sys
+from pathlib import Path
+from typing import Callable, Optional
+
+import torch
+import torch_npu
+from torch.utils.checkpoint import checkpoint
+
+
+EXAMPLES_DIR = Path(__file__).resolve().parent
+if str(EXAMPLES_DIR) not in sys.path:
+    sys.path.insert(0, str(EXAMPLES_DIR))
+
+import flash_gated_delta_rule as gdr  # noqa: E402
+
+
+DEFAULT_CU_SEQLENS = [
+    0,
+    796,
+    1560,
+    2262,
+    2914,
+    3535,
+    4137,
+    4734,
+    5319,
+    5893,
+    6415,
+    6925,
+    7422,
+    7898,
+    8358,
+    8802,
+    9234,
+    9656,
+    10073,
+    10488,
+    10878,
+    11226,
+    11550,
+    11860,
+    12162,
+    12462,
+    12758,
+    13047,
+    13333,
+    13613,
+    13893,
+    14173,
+    14451,
+    14728,
+    15004,
+    15279,
+    15551,
+    15822,
+    16089,
+    16354,
+    16616,
+    16876,
+    17135,
+    17394,
+    17647,
+    17899,
+    18151,
+    18401,
+    18650,
+    18896,
+    19138,
+    19376,
+    19611,
+    19842,
+    20072,
+    20302,
+    20530,
+    20756,
+    20981,
+    21204,
+    21419,
+    21633,
+    21844,
+    22041,
+    32768,
+]
+
+
+def parse_cu_seqlens(value: str, tokens: int) -> list[int]:
+    offsets = DEFAULT_CU_SEQLENS if not value.strip() else [
+        int(item.strip()) for item in value.split(",") if item.strip()
+    ]
+    if len(offsets) < 2:
+        raise ValueError("cu_seqlens must contain at least two offsets")
+    if offsets[0] != 0 or offsets[-1] != tokens:
+        raise ValueError(
+            f"cu_seqlens must start at 0 and end at --tokens={tokens}, "
+            f"got ({offsets[0]}, {offsets[-1]})"
+        )
+    if any(right <= left for left, right in zip(offsets, offsets[1:])):
+        raise ValueError("cu_seqlens must be strictly increasing")
+    return offsets
+
+
+def build_chunk_indices(offsets: list[int], chunk_size: int) -> tuple[list[list[int]], list[int]]:
+    pairs: list[list[int]] = []
+    flattened: list[int] = []
+    for sequence_index, (begin, end) in enumerate(zip(offsets, offsets[1:])):
+        chunk_count = (end - begin + chunk_size - 1) // chunk_size
+        for chunk_index in range(chunk_count):
+            pairs.append([sequence_index, chunk_index])
+            flattened.extend([sequence_index, chunk_index])
+    return pairs, flattened
+
+
+def prepare_varlen_metadata(
+    offsets: list[int],
+    chunk_size: int,
+    device: torch.device,
+) -> tuple[
+    torch.Tensor,
+    dict[str, torch.Tensor],
+    dict[str, list[int]],
+]:
+    cu_seqlens = torch.tensor(offsets, dtype=torch.int64, device=device)
+    tensor_indices: dict[str, torch.Tensor] = {}
+    list_indices: dict[str, list[int]] = {}
+    required_sizes = set(gdr._DEFAULT_VARLEN_CHUNK_SIZES)
+    required_sizes.add(chunk_size)
+    for size in sorted(required_sizes):
+        pairs, flattened = build_chunk_indices(offsets, size)
+        tensor_indices[str(size)] = torch.tensor(pairs, dtype=torch.int64, device=device)
+        list_indices[str(size)] = flattened
+    return cu_seqlens, tensor_indices, list_indices
+
+
+def install_pure_async_overrides(
+    cu_seqlens: torch.Tensor,
+    cu_seqlens_list: list[int],
+) -> None:
+    """Bypass capability probes and cached-metadata host synchronization."""
+
+    def recompute_w_u_async(
+        k: torch.Tensor,
+        v: torch.Tensor,
+        beta: torch.Tensor,
+        A: torch.Tensor,
+        g: torch.Tensor,
+        *,
+        chunk_size: int,
+        cu_seqlens: Optional[list[int]],
+        chunk_indices: Optional[list[int]],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return gdr.ascendc_recompute_w_u_fwd(
+            k,
+            v,
+            beta,
+            A,
+            chunk_size,
+            g=g,
+            gk=None,
+            cu_seqlens=cu_seqlens,
+            chunk_indices=chunk_indices,
+        )
+
+    gdr.recompute_w_u = recompute_w_u_async
+    gdr._SOLVE_TRI_ASCENDC_AVAILABLE = True
+    gdr._SOLVE_TRI_ASCENDC_UNAVAILABLE_REASON = ""
+
+    original_as_int_list = gdr._as_int_list
+
+    def as_int_list_cached(value):
+        if value is cu_seqlens:
+            return cu_seqlens_list
+        return original_as_int_list(value)
+
+    # causal_conv1d_ascendc normally converts the NPU cu_seqlens tensor to a
+    # Python list on every layer. Reuse the already validated host metadata so
+    # the 100-layer workload contains no per-layer device-to-host wait.
+    gdr._as_int_list = as_int_list_cached
+
+
+def install_stage_tracing() -> None:
+    names = (
+        "l2norm_fwd",
+        "chunk_local_cumsum",
+        "chunk_scaled_dot_kkt_fwd",
+        "causal_conv1d_ascendc",
+        "ascendc_causal_conv1d",
+        "ascendc_causal_conv1d_bwd",
+        "solve_tri_auto",
+        "solve_tri_ascendc",
+        "ascendc_solve_tri",
+        "recompute_w_u",
+        "ascendc_recompute_w_u_fwd",
+        "ascendc_chunk_gated_delta_rule_fwd_h",
+        "ascendc_chunk_fwd_o",
+        "ascendc_chunk_bwd_dv_local",
+        "ascendc_chunk_gated_delta_rule_bwd_dhu",
+        "ascendc_chunk_bwd_dqkwg",
+        "ascendc_prepare_wy_repr_bwd_da",
+        "ascendc_prepare_wy_repr_bwd_full",
+    )
+    for name in names:
+        function = getattr(gdr, name)
+
+        @functools.wraps(function)
+        def traced(*args, __function=function, __name=name, **kwargs):
+            print(f"stage enter: {__name}", flush=True)
+            result = __function(*args, **kwargs)
+            print(f"stage return: {__name}", flush=True)
+            return result
+
+        setattr(gdr, name, traced)
+
+
+def make_layer(
+    *,
+    q_weight: torch.Tensor,
+    k_weight: torch.Tensor,
+    v_weight: torch.Tensor,
+    conv_weight: torch.Tensor,
+    beta_weight: torch.Tensor,
+    beta_bias: torch.Tensor,
+    gate_weight: torch.Tensor,
+    gate_bias: torch.Tensor,
+    norm_weight: torch.Tensor,
+    cu_seqlens: torch.Tensor,
+    cu_seqlens_list: list[int],
+    chunk_indices: dict[str, torch.Tensor],
+    chunk_indices_list: dict[str, list[int]],
+    chunk_size: int,
+    residual_scale: float,
+    norm_eps: float,
+) -> Callable[[torch.Tensor], torch.Tensor]:
+    def layer(state: torch.Tensor) -> torch.Tensor:
+        batch, heads, tokens, dim = state.shape
+        hidden = state.transpose(1, 2).contiguous().view(
+            batch,
+            tokens,
+            heads * dim,
+        )
+
+        # Head-wise diagonal projections make every layer numerically distinct
+        # without introducing the cost of a full 2048x2048 model projection.
+        mixed_qkv = torch.cat(
+            (
+                hidden.mul(q_weight),
+                hidden.mul(k_weight),
+                hidden.mul(v_weight),
+            ),
+            dim=-1,
+        )
+        mixed_qkv, _ = gdr.causal_conv1d_ascendc(
+            mixed_qkv,
+            weight=conv_weight,
+            H=3 * heads,
+            bias=None,
+            residual=None,
+            initial_state=None,
+            activation="silu",
+            cu_seqlens=cu_seqlens,
+            output_final_state=False,
+        )
+        q = mixed_qkv[:, :heads].contiguous()
+        k = mixed_qkv[:, heads : 2 * heads].contiguous()
+        v = mixed_qkv[:, 2 * heads :].contiguous()
+        gate_input = state.float().mean(dim=-1).transpose(1, 2)
+        beta = torch.sigmoid(gate_input.mul(beta_weight).add(beta_bias)).to(state.dtype)
+        gate = torch.nn.functional.logsigmoid(
+            gate_input.mul(gate_weight).add(gate_bias)
+        ).to(state.dtype)
+        beta = beta.contiguous()
+        gate = gate.contiguous()
+        output, _ = gdr.flash_gated_delta_rule(
+            q,
+            k,
+            v,
+            g=gate,
+            beta=beta,
+            scale=None,
+            initial_state=None,
+            output_final_state=False,
+            use_qk_l2norm_in_kernel=True,
+            cu_seqlens=cu_seqlens,
+            cu_seqlens_list=cu_seqlens_list,
+            chunk_indices=chunk_indices,
+            chunk_indices_list=chunk_indices_list,
+            chunk_size=chunk_size,
+        )
+        output = output.transpose(1, 2).contiguous()
+        residual = torch.add(state, output, alpha=residual_scale)
+        hidden = residual.transpose(1, 2).contiguous().view(
+            batch,
+            tokens,
+            heads * dim,
+        )
+        hidden = torch_npu.npu_rms_norm(hidden, norm_weight, norm_eps)[0]
+        return hidden.view(batch, tokens, heads, dim).transpose(1, 2).contiguous()
+
+    return layer
+
+
+def tensor_md5(tensor: torch.Tensor) -> str:
+    host = tensor.float().cpu().contiguous()
+    return hashlib.md5(host.numpy().tobytes()).hexdigest()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--device", type=int, default=0)
+    parser.add_argument("--tokens", type=int, default=32768)
+    parser.add_argument("--heads", type=int, default=16)
+    parser.add_argument("--dim", type=int, default=128)
+    parser.add_argument("--chunk-size", type=int, default=64)
+    parser.add_argument("--conv-width", type=int, default=4)
+    parser.add_argument("--layers", type=int, default=100)
+    parser.add_argument("--steps", type=int, default=3)
+    parser.add_argument("--dtype", choices=("fp16", "bf16"), default="bf16")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--residual-scale", type=float, default=0.1)
+    parser.add_argument("--norm-eps", type=float, default=1e-6)
+    parser.add_argument(
+        "--cu-seqlens",
+        default="",
+        help="Comma-separated offsets. Empty uses the exact 32768-token reproduction offsets.",
+    )
+    parser.add_argument(
+        "--no-checkpoint",
+        action="store_true",
+        help="Disable activation checkpointing; 100 layers may require substantially more HBM.",
+    )
+    parser.add_argument("--forward-only", action="store_true")
+    parser.add_argument(
+        "--md5",
+        action="store_true",
+        help="Copy full retained outputs/gradients after all steps and print MD5 values.",
+    )
+    parser.add_argument(
+        "--trace-stages",
+        action="store_true",
+        help="Print Python call boundaries without reading NPU tensors or synchronizing.",
+    )
+    args = parser.parse_args()
+
+    for name in (
+        "tokens",
+        "heads",
+        "dim",
+        "chunk_size",
+        "conv_width",
+        "layers",
+        "steps",
+    ):
+        if getattr(args, name) <= 0:
+            raise ValueError(f"--{name.replace('_', '-')} must be positive")
+
+    offsets = parse_cu_seqlens(args.cu_seqlens, args.tokens)
+    device = torch.device(f"npu:{args.device}")
+    dtype = torch.float16 if args.dtype == "fp16" else torch.bfloat16
+
+    torch.npu.set_device(device)
+    torch.npu.set_compile_mode(jit_compile=False)
+    torch.manual_seed(args.seed)
+    torch.npu.manual_seed_all(args.seed)
+
+    try:
+        package_version = importlib.metadata.version("flash-linear-attention-npu")
+    except importlib.metadata.PackageNotFoundError:
+        package_version = "source-tree"
+    try:
+        triton_ascend_version = importlib.metadata.version("triton-ascend")
+    except importlib.metadata.PackageNotFoundError:
+        triton_ascend_version = "unknown"
+
+    cu_seqlens, chunk_indices, chunk_indices_list = prepare_varlen_metadata(
+        offsets,
+        args.chunk_size,
+        device,
+    )
+    install_pure_async_overrides(cu_seqlens, offsets)
+    if args.trace_stages:
+        install_stage_tracing()
+
+    layers: list[Callable[[torch.Tensor], torch.Tensor]] = []
+    for _ in range(args.layers):
+        hidden_size = args.heads * args.dim
+        projection_shape = (1, 1, hidden_size)
+        gate_shape = (1, 1, args.heads)
+        layers.append(
+            make_layer(
+                q_weight=torch.randn(
+                    projection_shape,
+                    dtype=dtype,
+                    device=device,
+                ).mul(0.1).add(1.0),
+                k_weight=torch.randn(
+                    projection_shape,
+                    dtype=dtype,
+                    device=device,
+                ).mul(0.1).add(1.0),
+                v_weight=torch.randn(
+                    projection_shape,
+                    dtype=dtype,
+                    device=device,
+                ).mul(0.1).add(0.5),
+                conv_weight=torch.randn(
+                    3 * hidden_size,
+                    args.conv_width,
+                    dtype=dtype,
+                    device=device,
+                ).mul(0.1),
+                beta_weight=torch.randn(
+                    gate_shape,
+                    dtype=torch.float32,
+                    device=device,
+                ).mul(0.1).add(1.0),
+                beta_bias=torch.randn(
+                    gate_shape,
+                    dtype=torch.float32,
+                    device=device,
+                ).mul(0.1),
+                gate_weight=torch.randn(
+                    gate_shape,
+                    dtype=torch.float32,
+                    device=device,
+                ).mul(0.1).add(1.0),
+                gate_bias=torch.randn(
+                    gate_shape,
+                    dtype=torch.float32,
+                    device=device,
+                ).mul(0.1),
+                norm_weight=torch.randn(
+                    args.heads * args.dim,
+                    dtype=dtype,
+                    device=device,
+                ).mul(0.01).add(1.0),
+                cu_seqlens=cu_seqlens,
+                cu_seqlens_list=offsets,
+                chunk_indices=chunk_indices,
+                chunk_indices_list=chunk_indices_list,
+                chunk_size=args.chunk_size,
+                residual_scale=args.residual_scale,
+                norm_eps=args.norm_eps,
+            )
+        )
+
+    retained_outputs: list[torch.Tensor] = []
+    retained_grads: list[torch.Tensor] = []
+
+    print(
+        "config:",
+        f"fla_npu={package_version}",
+        f"triton_ascend={triton_ascend_version}",
+        f"device={device}",
+        f"dtype={args.dtype}",
+        f"tokens={args.tokens}",
+        f"heads={args.heads}",
+        f"dim={args.dim}",
+        f"chunk_size={args.chunk_size}",
+        f"conv_width={args.conv_width}",
+        f"sequences={len(offsets) - 1}",
+        f"layers={args.layers}",
+        f"steps={args.steps}",
+        f"checkpoint={not args.no_checkpoint and not args.forward_only}",
+        f"backward={not args.forward_only}",
+        flush=True,
+    )
+
+    for step_index in range(args.steps):
+        input_state = torch.randn(
+            1,
+            args.heads,
+            args.tokens,
+            args.dim,
+            dtype=dtype,
+            device=device,
+            requires_grad=not args.forward_only,
+        )
+        state = input_state
+        for layer in layers:
+            if args.no_checkpoint or args.forward_only:
+                state = layer(state)
+            else:
+                state = checkpoint(
+                    layer,
+                    state,
+                    use_reentrant=False,
+                    preserve_rng_state=False,
+                )
+
+        if not args.forward_only:
+            upstream = torch.randn_like(state)
+            state.backward(upstream)
+            if input_state.grad is None:
+                raise RuntimeError("input gradient was not produced")
+            retained_grads.append(input_state.grad.detach())
+
+        retained_outputs.append(state.detach())
+        print(f"queued step {step_index + 1}/{args.steps}", flush=True)
+        del state
+        del input_state
+
+    # These reductions are submitted only after all requested steps. The first
+    # host copy below is the workload's only intentional host/device wait.
+    finite_checks: list[torch.Tensor] = []
+    magnitudes: list[torch.Tensor] = []
+    for output in retained_outputs:
+        finite_checks.append(torch.isfinite(output).all())
+        magnitudes.append(output.float().abs().max())
+    for grad in retained_grads:
+        finite_checks.append(torch.isfinite(grad).all())
+        magnitudes.append(grad.float().abs().max())
+
+    finite_host = torch.stack(finite_checks).cpu().tolist()
+    magnitude_host = torch.stack(magnitudes).cpu().tolist()
+
+    all_finite = True
+    for step_index in range(args.steps):
+        output_finite = bool(finite_host[step_index])
+        output_absmax = float(magnitude_host[step_index])
+        all_finite = all_finite and output_finite
+        message = (
+            f"step={step_index + 1} output_finite={output_finite} "
+            f"output_absmax={output_absmax:.8g}"
+        )
+        if retained_grads:
+            grad_index = args.steps + step_index
+            grad_finite = bool(finite_host[grad_index])
+            grad_absmax = float(magnitude_host[grad_index])
+            all_finite = all_finite and grad_finite
+            message += f" grad_finite={grad_finite} grad_absmax={grad_absmax:.8g}"
+        print(message)
+
+    if args.md5:
+        for step_index, output in enumerate(retained_outputs, start=1):
+            message = f"step={step_index} output_md5={tensor_md5(output)}"
+            if retained_grads:
+                message += f" grad_md5={tensor_md5(retained_grads[step_index - 1])}"
+            print(message)
+
+    print(
+        "result:",
+        "PASS" if all_finite else "NONFINITE",
+        f"max_memory_allocated={torch.npu.max_memory_allocated(args.device)}",
+    )
+    return 0 if all_finite else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
