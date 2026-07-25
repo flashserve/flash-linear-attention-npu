@@ -29,6 +29,9 @@ if str(EXAMPLES_DIR) not in sys.path:
 import flash_gated_delta_rule as gdr  # noqa: E402
 
 
+_TRACE_APPLY = False
+
+
 DEFAULT_CU_SEQLENS = [
     0,
     796,
@@ -193,6 +196,9 @@ def install_pure_async_overrides(
 
 
 def install_stage_tracing() -> None:
+    global _TRACE_APPLY
+
+    _TRACE_APPLY = True
     names = (
         "l2norm_fwd",
         "chunk_local_cumsum",
@@ -224,6 +230,176 @@ def install_stage_tracing() -> None:
             return result
 
         setattr(gdr, name, traced)
+
+
+def trace_apply(message: str) -> None:
+    if _TRACE_APPLY:
+        print(message, flush=True)
+
+
+class StressCausalConv1dFunction(torch.autograd.Function):
+    """Reproduction-only causal conv node using NTD output layout."""
+
+    @staticmethod
+    def forward(
+        ctx,
+        x: torch.Tensor,
+        weight: torch.Tensor,
+        head_num: int,
+        query_start_loc: list[int],
+        activation_mode: int,
+    ) -> torch.Tensor:
+        trace_apply("stage enter: StressCausalConv1dFunction.forward")
+        if x.ndim != 3 or x.shape[0] != 1:
+            raise ValueError(f"stress causal conv expects [1, T, D] input, got {tuple(x.shape)}")
+        if head_num <= 0:
+            raise ValueError(f"stress causal conv requires NTD output head_num > 0, got {head_num}")
+
+        op_weight = weight.transpose(-1, -2).contiguous()
+        width, dim = op_weight.shape
+        op_x = x.reshape(x.shape[1], x.shape[2]).contiguous()
+        conv_states = torch.zeros(
+            len(query_start_loc) - 1,
+            width - 1,
+            dim,
+            dtype=x.dtype,
+            device=x.device,
+        )
+
+        preactivation = gdr.ascendc_causal_conv1d(
+            op_x,
+            op_weight,
+            None,
+            conv_states,
+            query_start_loc=query_start_loc,
+            initial_state_mode=None,
+            activation_mode=0,
+            pad_slot_id=-1,
+            run_mode=0,
+            head_num=head_num,
+        )
+        y = torch.nn.functional.silu(preactivation) if activation_mode != 0 else preactivation
+
+        ctx.save_for_backward(x, op_weight, preactivation)
+        ctx.query_start_loc = query_start_loc
+        ctx.activation_mode = activation_mode
+        trace_apply("stage return: StressCausalConv1dFunction.forward")
+        return y
+
+    @staticmethod
+    def backward(ctx, dy: torch.Tensor):
+        trace_apply("stage enter: StressCausalConv1dFunction.backward")
+        x, op_weight, preactivation = ctx.saved_tensors
+        op_x = x.reshape(x.shape[1], x.shape[2]).contiguous()
+        dx, dw, _db, _dh0 = gdr.ascendc_causal_conv1d_bwd(
+            x=op_x,
+            y=preactivation if ctx.activation_mode != 0 else None,
+            weight=op_weight,
+            dy=dy.contiguous(),
+            initial_state=None,
+            dht=None,
+            query_start_loc=ctx.query_start_loc,
+            activation=ctx.activation_mode,
+            input_layout="NTD",
+        )
+        trace_apply("stage return: StressCausalConv1dFunction.backward")
+        return dx.reshape_as(x), dw.transpose(0, 1).contiguous(), None, None, None
+
+
+class StressGatedDeltaRuleFunction(torch.autograd.Function):
+    """Reproduction-only GDR node exposing one apply boundary."""
+
+    @staticmethod
+    def forward(
+        ctx,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        g: torch.Tensor,
+        beta: torch.Tensor,
+        scale: float,
+        cu_seqlens: torch.Tensor,
+        cu_seqlens_list: list[int],
+        chunk_indices: dict[str, torch.Tensor],
+        chunk_indices_list: dict[str, list[int]],
+        chunk_size: int,
+        use_qk_l2norm_in_kernel: bool,
+    ) -> torch.Tensor:
+        trace_apply("stage enter: StressGatedDeltaRuleFunction.forward")
+        if use_qk_l2norm_in_kernel:
+            q, q_rstd = gdr.l2norm_fwd(q)
+            k, k_rstd = gdr.l2norm_fwd(k)
+        else:
+            q_rstd, k_rstd = None, None
+
+        g, o, A, _final_state = gdr.flash_chunk_gated_delta_rule_fwd(
+            q=q,
+            k=k,
+            v=v,
+            g=g,
+            beta=beta,
+            scale=scale,
+            initial_state=None,
+            output_final_state=False,
+            cu_seqlens=cu_seqlens,
+            cu_seqlens_list=cu_seqlens_list,
+            chunk_indices=chunk_indices,
+            chunk_indices_list=chunk_indices_list,
+            chunk_size=chunk_size,
+        )
+
+        ctx.save_for_backward(q, k, v, g, beta, A)
+        ctx.q_rstd = q_rstd
+        ctx.k_rstd = k_rstd
+        ctx.scale = scale
+        ctx.cu_seqlens = cu_seqlens
+        ctx.cu_seqlens_list = cu_seqlens_list
+        ctx.chunk_indices = chunk_indices
+        ctx.chunk_indices_list = chunk_indices_list
+        ctx.chunk_size = chunk_size
+        ctx.use_qk_l2norm_in_kernel = use_qk_l2norm_in_kernel
+        trace_apply("stage return: StressGatedDeltaRuleFunction.forward")
+        return o.to(q.dtype)
+
+    @staticmethod
+    def backward(ctx, do: torch.Tensor):
+        trace_apply("stage enter: StressGatedDeltaRuleFunction.backward")
+        q, k, v, g, beta, A = ctx.saved_tensors
+        dq, dk, dv, db, dg, _dh0 = gdr.flash_chunk_gated_delta_rule_bwd(
+            q=q,
+            k=k,
+            v=v,
+            g=g,
+            beta=beta,
+            A=A,
+            scale=ctx.scale,
+            initial_state=None,
+            do=do,
+            dht=None,
+            cu_seqlens=ctx.cu_seqlens,
+            cu_seqlens_list=ctx.cu_seqlens_list,
+            chunk_indices=ctx.chunk_indices,
+            chunk_indices_list=ctx.chunk_indices_list,
+            chunk_size=ctx.chunk_size,
+        )
+        if ctx.use_qk_l2norm_in_kernel:
+            dq = gdr.l2norm_bwd(q, ctx.q_rstd, dq)
+            dk = gdr.l2norm_bwd(k, ctx.k_rstd, dk)
+        trace_apply("stage return: StressGatedDeltaRuleFunction.backward")
+        return (
+            dq.to(q),
+            dk.to(k),
+            dv.to(v),
+            dg.to(g),
+            db.to(beta),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
 
 
 def make_layer(
@@ -263,20 +439,16 @@ def make_layer(
             ),
             dim=-1,
         )
-        mixed_qkv, _ = gdr.causal_conv1d_ascendc(
+        mixed_qkv = StressCausalConv1dFunction.apply(
             mixed_qkv,
-            weight=conv_weight,
-            H=3 * heads,
-            bias=None,
-            residual=None,
-            initial_state=None,
-            activation="silu",
-            cu_seqlens=cu_seqlens,
-            output_final_state=False,
+            conv_weight,
+            3 * heads,
+            cu_seqlens_list,
+            1,
         )
-        q = mixed_qkv[:, :heads].contiguous()
-        k = mixed_qkv[:, heads : 2 * heads].contiguous()
-        v = mixed_qkv[:, 2 * heads :].contiguous()
+        q = mixed_qkv[:heads].unsqueeze(0).contiguous()
+        k = mixed_qkv[heads : 2 * heads].unsqueeze(0).contiguous()
+        v = mixed_qkv[2 * heads :].unsqueeze(0).contiguous()
         gate_input = state.float().mean(dim=-1).transpose(1, 2)
         beta = torch.sigmoid(gate_input.mul(beta_weight).add(beta_bias)).to(state.dtype)
         gate = torch.nn.functional.logsigmoid(
@@ -284,21 +456,19 @@ def make_layer(
         ).to(state.dtype)
         beta = beta.contiguous()
         gate = gate.contiguous()
-        output, _ = gdr.flash_gated_delta_rule(
+        output = StressGatedDeltaRuleFunction.apply(
             q,
             k,
             v,
-            g=gate,
-            beta=beta,
-            scale=None,
-            initial_state=None,
-            output_final_state=False,
-            use_qk_l2norm_in_kernel=True,
-            cu_seqlens=cu_seqlens,
-            cu_seqlens_list=cu_seqlens_list,
-            chunk_indices=chunk_indices,
-            chunk_indices_list=chunk_indices_list,
-            chunk_size=chunk_size,
+            gate,
+            beta,
+            dim ** -0.5,
+            cu_seqlens,
+            cu_seqlens_list,
+            chunk_indices,
+            chunk_indices_list,
+            chunk_size,
+            True,
         )
         output = output.transpose(1, 2).contiguous()
         residual = torch.add(state, output, alpha=residual_scale)
@@ -476,6 +646,8 @@ def main() -> int:
         f"steps={args.steps}",
         f"checkpoint={not args.no_checkpoint and not args.forward_only}",
         f"backward={not args.forward_only}",
+        "causal_conv_output_layout=NTD",
+        "apply_wrappers=causal_conv1d,gdr",
         flush=True,
     )
 
