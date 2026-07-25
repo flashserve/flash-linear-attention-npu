@@ -68,22 +68,16 @@ __simd_vf__ inline void PrepareWyReprBwdScaleRowsRegbase(__ubuf__ kType *out, __
 }
 
 template <typename kType>
-__simd_vf__ inline void PrepareWyReprBwdAddStrictLowerRegbase(__ubuf__ kType *out, __ubuf__ kType *lhs,
-                                                              __ubuf__ kType *rhs, uint16_t rowCount,
-                                                              uint16_t colCount, uint16_t rowOffset)
+__simd_vf__ inline void PrepareWyReprBwdStrictLowerRegbase(__ubuf__ kType *out, __ubuf__ kType *in,
+                                                          uint16_t rowCount, uint16_t colCount, uint16_t rowOffset)
 {
     uint32_t eleNumPerVf = AscendC::VECTOR_REG_WIDTH / sizeof(kType);
     uint32_t colLoop = (colCount + eleNumPerVf - 1) / eleNumPerVf;
 
-    RegTensor<kType> lhsReg;
-    RegTensor<kType> rhsReg;
+    RegTensor<kType> inputReg;
     RegTensor<kType> outputReg;
-    RegTensor<float> lhsZeroReg;
-    RegTensor<float> lhsOneReg;
-    RegTensor<float> rhsZeroReg;
-    RegTensor<float> rhsOneReg;
-    RegTensor<float> resultZeroReg;
-    RegTensor<float> resultOneReg;
+    RegTensor<float> inputZeroReg;
+    RegTensor<float> inputOneReg;
     RegTensor<half> colIdxReg;
     RegTensor<float> colBaseZeroReg;
     RegTensor<float> colBaseOneReg;
@@ -111,19 +105,15 @@ __simd_vf__ inline void PrepareWyReprBwdAddStrictLowerRegbase(__ubuf__ kType *ou
                 curEleNum = colCount - colIdx * eleNumPerVf;
             }
             maskStore = UpdateMask<kType>(curEleNum);
-            LoadIn<kType, false>(lhsReg, lhs + elemOffset);
-            LoadIn<kType, false>(rhsReg, rhs + elemOffset);
-            CastHalf2Float<kType>(lhsZeroReg, lhsOneReg, lhsReg, maskStore);
-            CastHalf2Float<kType>(rhsZeroReg, rhsOneReg, rhsReg, maskStore);
-            Add(resultZeroReg, lhsZeroReg, rhsZeroReg, maskFull32);
-            Add(resultOneReg, lhsOneReg, rhsOneReg, maskFull32);
+            LoadIn<kType, false>(inputReg, in + elemOffset);
+            CastHalf2Float<kType>(inputZeroReg, inputOneReg, inputReg, maskStore);
             Adds(colIdxZeroReg, colBaseZeroReg, static_cast<float>(colIdx * eleNumPerVf), maskFull32);
             Adds(colIdxOneReg, colBaseOneReg, static_cast<float>(colIdx * eleNumPerVf), maskFull32);
             CompareTwoReg<float, CMPMODE::GE>(maskZeroSelect, maskOneSelect, colIdxZeroReg, colIdxOneReg,
                                               rowIdxReg, rowIdxReg, maskFull32);
-            SelectTwoReg(resultZeroReg, resultOneReg, zeroReg, zeroReg, resultZeroReg, resultOneReg, maskZeroSelect,
+            SelectTwoReg(inputZeroReg, inputOneReg, zeroReg, zeroReg, inputZeroReg, inputOneReg, maskZeroSelect,
                          maskOneSelect);
-            CastFloat2Half<kType>(outputReg, resultZeroReg, resultOneReg, maskFull32);
+            CastFloat2Half<kType>(outputReg, inputZeroReg, inputOneReg, maskFull32);
             StoreAlign(out + elemOffset, outputReg, maskStore);
         }
         Adds(rowIdxReg, rowIdxReg, 1.0f, maskFull32);
@@ -714,8 +704,6 @@ private:
     AscendC::GlobalTensor<kType> gmDkbg_;
     AscendC::GlobalTensor<kType> gmDvb_;
     AscendC::GlobalTensor<kType> gmKKT_;
-    AscendC::GlobalTensor<kType> gmDA1_;
-    AscendC::GlobalTensor<kType> gmDA2_;
     AscendC::GlobalTensor<kType> gmDA4_;
     AscendC::GlobalTensor<kType> gmD_;
 
@@ -871,8 +859,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(betaGVToMte2Event_[eventIdx_]);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[eventIdx_]);
     }
-    for (eventIdx_ = 0; eventIdx_ < PREPARE_WY_REPR_BWD_DA6_CV_BUFFER_COUNT; ++eventIdx_) {
-        AscendC::CrossCoreSetFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN + eventIdx_);
+    for (eventIdx_ = 0; eventIdx_ < PREPARE_WY_REPR_BWD_MATRIX_CV_BUFFER_COUNT; ++eventIdx_) {
+        AscendC::CrossCoreSetFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + eventIdx_);
     }
     for (eventIdx_ = 0; eventIdx_ < PREPARE_WY_REPR_BWD_DKB_CV_BUFFER_COUNT; ++eventIdx_) {
         AscendC::CrossCoreSetFlag<0x4, PIPE_V>(PREPARE_WY_REPR_BWD_DKB_CV_AIV_TO_AIC_FLAG_BEGIN + eventIdx_);
@@ -1191,14 +1179,17 @@ template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
 __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE>::ProcessDa4Task(
     const PrepareWyReprBwdTaskInfo &task, GM_ADDR slotBase)
 {
-    gmDA1_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da1Offset));
-    gmDA2_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da2Offset));
     gmDA4_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da4Offset));
 
     subBlockNum_ = AscendC::GetSubBlockNum();
     subBlockIdx_ = AscendC::GetSubBlockIdx();
     rowTaskIdx_ = 0;
-    Arch::CrossCoreWaitFlag(cubeToVecFlag_);
+    uint32_t matrixCvListId = 0;
+    uint32_t totalRowTask = static_cast<uint32_t>(
+        PrepareWyReprBwdCeilDiv(task.curChunkSize, static_cast<uint32_t>(tiling_.mVecRow)));
+    uint32_t taskNumPerSubBlock =
+        static_cast<uint32_t>(PrepareWyReprBwdCeilDiv(totalRowTask, subBlockNum_));
+    uint32_t dealTaskNum = 0;
     for (rowOffset_ = 0; rowOffset_ < task.curChunkSize; rowOffset_ += static_cast<uint32_t>(tiling_.mVecRow)) {
         localRowTask_ = rowTaskIdx_++;
         if (localRowTask_ % subBlockNum_ != subBlockIdx_) {
@@ -1208,21 +1199,24 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                       task.curChunkSize - rowOffset_ :
                       static_cast<uint32_t>(tiling_.mVecRow);
 
-        inputIdxA_ = CopyInRows<kType>(gmDA1_, matrixInputBuf_[curInputPingPong_],
-                                              rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
-        inputIdxB_ = CopyInRows<kType>(gmDA2_, matrixInputBuf_[curInputPingPong_],
-                                              rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
-        WaitInputRows(inputIdxA_);
-        WaitInputRows(inputIdxB_);
+        WaitCvReady<PREPARE_WY_REPR_BWD_MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN>(matrixCvListId);
         PrepareOutputRows();
-        PrepareWyReprBwdAddStrictLowerRegbase<kType>(
+        PrepareWyReprBwdStrictLowerRegbase<kType>(
             (__ubuf__ kType *)reinterpret_cast<uint64_t>(outputBuf_[outputIdx_].GetPhyAddr()),
-            (__ubuf__ kType *)reinterpret_cast<uint64_t>(matrixInputBuf_[inputIdxA_].GetPhyAddr()),
-            (__ubuf__ kType *)reinterpret_cast<uint64_t>(matrixInputBuf_[inputIdxB_].GetPhyAddr()),
+            (__ubuf__ kType *)reinterpret_cast<uint64_t>(matrixInputBuf_[matrixCvListId].GetPhyAddr()),
             static_cast<uint16_t>(curRow_), static_cast<uint16_t>(CHUNK_SIZE), static_cast<uint16_t>(rowOffset_));
-        ReleaseInputRows(inputIdxA_);
-        ReleaseInputRows(inputIdxB_);
+        SetCvFree<PREPARE_WY_REPR_BWD_MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN>(matrixCvListId);
         CopyOutRows(gmDA4_, outputBuf_[outputIdx_], rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
+        matrixCvListId =
+            (matrixCvListId + 1 < PREPARE_WY_REPR_BWD_MATRIX_CV_BUFFER_COUNT) ? matrixCvListId + 1 : 0;
+        ++dealTaskNum;
+    }
+
+    for (; dealTaskNum < taskNumPerSubBlock; ++dealTaskNum) {
+        WaitCvReady<PREPARE_WY_REPR_BWD_MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN>(matrixCvListId);
+        SetCvFree<PREPARE_WY_REPR_BWD_MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN>(matrixCvListId);
+        matrixCvListId =
+            (matrixCvListId + 1 < PREPARE_WY_REPR_BWD_MATRIX_CV_BUFFER_COUNT) ? matrixCvListId + 1 : 0;
     }
 
     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
@@ -1255,25 +1249,25 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                   task.curChunkSize - rowOffset_ :
                   static_cast<uint32_t>(tiling_.mVecRow);
 
-        WaitCvReady<PREPARE_WY_REPR_BWD_DA6_CV_AIC_TO_AIV_FLAG_BEGIN>(da6CvListId);
+        WaitCvReady<PREPARE_WY_REPR_BWD_MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN>(da6CvListId);
         PrepareOutputRows();
         PrepareWyReprBwdBuildDStrictUpperRegbase<kType>(
             (__ubuf__ kType *)reinterpret_cast<uint64_t>(outputBuf_[outputIdx_].GetPhyAddr()),
             (__ubuf__ kType *)reinterpret_cast<uint64_t>(matrixInputBuf_[da6CvListId].GetPhyAddr()),
             (__ubuf__ float *)reinterpret_cast<uint64_t>(gRawAllFp32Tensor_.GetPhyAddr()),
             static_cast<uint16_t>(curRow_), static_cast<uint16_t>(CHUNK_SIZE), static_cast<uint16_t>(rowOffset_));
-        SetCvFree<PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN>(da6CvListId);
+        SetCvFree<PREPARE_WY_REPR_BWD_MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN>(da6CvListId);
         CopyOutRows(gmD_, outputBuf_[outputIdx_], rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
         da6CvListId =
-            (da6CvListId + 1 < PREPARE_WY_REPR_BWD_DA6_CV_BUFFER_COUNT) ? da6CvListId + 1 : 0;
+            (da6CvListId + 1 < PREPARE_WY_REPR_BWD_MATRIX_CV_BUFFER_COUNT) ? da6CvListId + 1 : 0;
         ++dealTaskNum;
     }
 
     for (; dealTaskNum < taskNumPerSubBlock; ++dealTaskNum) {
-        WaitCvReady<PREPARE_WY_REPR_BWD_DA6_CV_AIC_TO_AIV_FLAG_BEGIN>(da6CvListId);
-        SetCvFree<PREPARE_WY_REPR_BWD_DA6_CV_AIV_TO_AIC_FLAG_BEGIN>(da6CvListId);
+        WaitCvReady<PREPARE_WY_REPR_BWD_MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN>(da6CvListId);
+        SetCvFree<PREPARE_WY_REPR_BWD_MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN>(da6CvListId);
         da6CvListId =
-            (da6CvListId + 1 < PREPARE_WY_REPR_BWD_DA6_CV_BUFFER_COUNT) ? da6CvListId + 1 : 0;
+            (da6CvListId + 1 < PREPARE_WY_REPR_BWD_MATRIX_CV_BUFFER_COUNT) ? da6CvListId + 1 : 0;
     }
 
     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
@@ -1515,14 +1509,10 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                 }
                 kktSlotForSlot_[curSlot_] = cachedKktSlot_;
                 ProcessVectorTask(task, hv, hk, slotBase);
-#if PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE
-                Arch::CrossCoreWaitFlag(cubeToVecFlag_);
-#endif
-
                 curSlot_ ^= 1U;
             }
 
-#if PREPARE_WY_REPR_BWD_DEBUG_STAGE1_VECTOR || PREPARE_WY_REPR_BWD_DEBUG_DA12_CUBE
+#if PREPARE_WY_REPR_BWD_DEBUG_STAGE1_VECTOR
             ++windowIdx;
             continue;
 #endif
