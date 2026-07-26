@@ -6,9 +6,6 @@ import json
 from pathlib import Path
 from typing import Dict, Optional
 
-# Large default smoke shapes can exceed Triton-NPU's default launch-grid limit.
-os.environ["TRITON_ALL_BLOCKS_PARALLEL"] = "1"
-
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -1444,12 +1441,15 @@ def _run_npu_accuracy_candidate(
     chunk_size: int,
     tensors: list[str],
 ) -> dict[str, torch.Tensor]:
-    q = inputs["q"].to(device).contiguous().requires_grad_("dq" in tensors)
-    k = inputs["k"].to(device).contiguous().requires_grad_("dk" in tensors)
-    v = inputs["v"].to(device).contiguous().requires_grad_("dv" in tensors)
-    beta = inputs["beta"].to(device).contiguous().requires_grad_("dbeta" in tensors)
-    g = inputs["g"].to(device).contiguous().requires_grad_("dg" in tensors)
-    do = inputs["do"].to(device).contiguous()
+    def to_base_format(value: torch.Tensor) -> torch.Tensor:
+        return torch_npu.npu_format_cast(value.to(device).contiguous(), 2)
+
+    q = to_base_format(inputs["q"]).requires_grad_("dq" in tensors)
+    k = to_base_format(inputs["k"]).requires_grad_("dk" in tensors)
+    v = to_base_format(inputs["v"]).requires_grad_("dv" in tensors)
+    beta = to_base_format(inputs["beta"]).requires_grad_("dbeta" in tensors)
+    g = to_base_format(inputs["g"]).requires_grad_("dg" in tensors)
+    do = to_base_format(inputs["do"])
 
     attn_q = q
     attn_k = k
