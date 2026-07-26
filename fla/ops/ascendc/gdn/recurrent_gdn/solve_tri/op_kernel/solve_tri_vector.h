@@ -133,4 +133,3 @@ __aicore__ inline void SolveTriVector<MATRIX_SIZE, T>::GenerateAuxMatrices()
  }  // namespace NsSolveTri
  
  #endif  // SOLVE_TRI_VECTOR_H
- 

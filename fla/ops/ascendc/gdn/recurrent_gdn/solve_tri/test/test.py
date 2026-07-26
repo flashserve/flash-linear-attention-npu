@@ -8,6 +8,7 @@ import torch
 import torch_npu
 import numpy as np
 import fla_npu
+from fla_npu.ops.ascendc import npu_solve_tri
 
 torch.npu.utils.set_device(0)
 
@@ -30,7 +31,7 @@ def solve_tril_golden(A_tensor):
                 M_inv = np.linalg.inv(M)
                 result[b, h, row_start:row_end, :BT] = M_inv
 
-    return torch.from_numpy(result).half()
+    return torch.from_numpy(result).to(A_tensor.dtype)
 
 
 def generate_lower_tri_input(B, H, T, BT, dtype=torch.float16):
@@ -78,7 +79,7 @@ def test_solve_tri(B, H, T, BT, dtype=torch.float16):
 
     # Call NPU operator
     A_npu = A.npu()
-    out_npu = torch.ops.npu.npu_solve_tri(A_npu, layout="bhtd")
+    out_npu = npu_solve_tri(A_npu, layout="bhtd")
     out_cpu = out_npu.cpu()
 
     # Compare with golden
@@ -90,6 +91,46 @@ def test_solve_tri(B, H, T, BT, dtype=torch.float16):
     passed, verify_err = verify_inverse(A, out_cpu)
     status = "PASS" if passed else "FAIL"
     print(f"    [{status}] max_diff={max_diff:.6f}, mean_diff={mean_diff:.8f}, verify_err={verify_err:.6f}")
+    return passed
+
+
+def test_mch_fp32_intermediates(dtype):
+    """Cover a large finite inverse while MCH intermediates stay in FP32."""
+    B, H, T, BT = 1, 1, 64, 64
+    A = torch.zeros(B, H, T, BT, dtype=dtype)
+    block = torch.tril(torch.full((16, 16), 1.45, dtype=dtype), diagonal=-1)
+    A[0, 0, :16, :16] = block
+
+    golden = solve_tril_golden(A)
+    out = npu_solve_tri(A.npu(), layout="bhtd").cpu()
+    finite = torch.isfinite(out).all().item()
+    max_diff = (out.float() - golden.float()).abs().max().item()
+    passed = finite and max_diff < 2e-2
+    status = "PASS" if passed else "FAIL"
+    print(
+        f"  [{status}] {dtype} MCH FP32 intermediates: "
+        f"finite={finite}, max_diff={max_diff:.6f}"
+    )
+    return passed
+
+
+def test_fp16_partial_chunk():
+    """Cover the unaligned DataCopyPad path for a short final chunk."""
+    A = torch.zeros(1, 70, 1, 64, dtype=torch.float16)
+    generator = torch.Generator().manual_seed(20260726)
+    tail = torch.tril(
+        torch.randn(6, 6, generator=generator, dtype=torch.float32) * 0.1,
+        diagonal=-1,
+    ).half()
+    A[0, 64:70, 0, :6] = tail
+
+    out = npu_solve_tri(A.npu(), layout="bsnd").cpu()[0, 64:70, 0, :6].float()
+    golden = torch.linalg.inv(torch.eye(6, dtype=torch.float64) + tail.double()).float()
+    finite = torch.isfinite(out).all().item()
+    max_diff = (out - golden).abs().max().item()
+    passed = finite and max_diff < 2e-2
+    status = "PASS" if passed else "FAIL"
+    print(f"  [{status}] FP16 partial chunk: finite={finite}, max_diff={max_diff:.6f}")
     return passed
 
 
@@ -113,6 +154,10 @@ def main():
     for B, H, T, BT in test_cases:
         passed = test_solve_tri(B, H, T, BT)
         results.append(passed)
+
+    results.append(test_mch_fp32_intermediates(torch.float16))
+    results.append(test_mch_fp32_intermediates(torch.bfloat16))
+    results.append(test_fp16_partial_chunk())
 
     print("\n" + "=" * 60)
     total = len(results)

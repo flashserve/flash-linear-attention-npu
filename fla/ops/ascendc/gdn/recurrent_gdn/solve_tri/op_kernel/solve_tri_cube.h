@@ -1038,4 +1038,3 @@ __aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::ProcessPartialTile(int64_t 
 }  // namespace NsSolveTri
 
 #endif  // SOLVE_TRI_CUBE_H
- 
