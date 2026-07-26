@@ -42,6 +42,9 @@ from fla_npu.ops.triton import (  # noqa: E402
 
 
 _TRACE_APPLY = False
+_STAGE_GRAD_RECORDS: Optional[
+    dict[str, list[Optional[torch.Tensor]]]
+] = None
 _DEFAULT_VARLEN_CHUNK_SIZES = (16, 32, 64, 128, 608 * 2)
 
 
@@ -204,6 +207,12 @@ def install_stage_tracing() -> None:
 def trace_apply(message: str) -> None:
     if _TRACE_APPLY:
         print(message, flush=True)
+
+
+def record_stage_grad(name: str, tensor: Optional[torch.Tensor]) -> None:
+    if _STAGE_GRAD_RECORDS is not None:
+        record = None if tensor is None else tensor.detach().clone()
+        _STAGE_GRAD_RECORDS.setdefault(name, []).append(record)
 
 
 def _chunk_tensor(
@@ -417,7 +426,10 @@ def gated_delta_rule_bwd(
         chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
     )
 
-    dh, _dh0, dv = ascendc_chunk_gated_delta_rule_bwd_dhu(
+    diagnostic_h0 = (
+        torch.zeros_like(h) if _STAGE_GRAD_RECORDS is not None else None
+    )
+    dh, dh0, dv = ascendc_chunk_gated_delta_rule_bwd_dhu(
         q,
         k,
         w,
@@ -427,7 +439,7 @@ def gated_delta_rule_bwd(
         chunk_size,
         g=g_head,
         gK=None,
-        h0=None,
+        h0=diagnostic_h0,
         dht=None,
         cu_seqlens=cu_seqlens_list,
         chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
@@ -497,6 +509,13 @@ def gated_delta_rule_bwd(
         head_first=False,
     )
 
+    record_stage_grad("gdr_dq", dq)
+    record_stage_grad("gdr_dk", dk)
+    record_stage_grad("gdr_dv", dv)
+    record_stage_grad("gdr_db", db)
+    record_stage_grad("gdr_dg", dg)
+    record_stage_grad("gdr_dh", dh)
+    record_stage_grad("gdr_dh0", dh0)
     return dq, dk, dv, db, dg
 
 
@@ -528,7 +547,6 @@ class StressCausalConv1dFunction(torch.autograd.Function):
             dtype=x.dtype,
             device=x.device,
         )
-
         preactivation = ascendc_causal_conv1d(
             op_x,
             op_weight,
@@ -543,7 +561,22 @@ class StressCausalConv1dFunction(torch.autograd.Function):
         )
         y = torch.nn.functional.silu(preactivation) if activation_mode != 0 else preactivation
 
-        ctx.save_for_backward(x, op_weight, preactivation)
+        if _STAGE_GRAD_RECORDS is None:
+            ctx.save_for_backward(x, op_weight, preactivation)
+        else:
+            bwd_initial_state = torch.zeros(
+                len(query_start_loc) - 1,
+                width,
+                dim,
+                dtype=x.dtype,
+                device=x.device,
+            )
+            ctx.save_for_backward(
+                x,
+                op_weight,
+                preactivation,
+                bwd_initial_state,
+            )
         ctx.query_start_loc = query_start_loc
         ctx.activation_mode = activation_mode
         trace_apply("stage return: StressCausalConv1dFunction.forward")
@@ -552,19 +585,24 @@ class StressCausalConv1dFunction(torch.autograd.Function):
     @staticmethod
     def backward(ctx, dy: torch.Tensor):
         trace_apply("stage enter: StressCausalConv1dFunction.backward")
-        x, op_weight, preactivation = ctx.saved_tensors
+        x, op_weight, preactivation, *optional_state = ctx.saved_tensors
+        bwd_initial_state = optional_state[0] if optional_state else None
         op_x = x.reshape(x.shape[1], x.shape[2]).contiguous()
-        dx, dw, _db, _dh0 = ascendc_causal_conv1d_bwd(
+        dx, dw, db, dh0 = ascendc_causal_conv1d_bwd(
             x=op_x,
             y=preactivation if ctx.activation_mode != 0 else None,
             weight=op_weight,
             dy=dy.contiguous(),
-            initial_state=None,
+            initial_state=bwd_initial_state,
             dht=None,
             query_start_loc=ctx.query_start_loc,
             activation=ctx.activation_mode,
             input_layout="NTD",
         )
+        record_stage_grad("causal_conv_dx", dx)
+        record_stage_grad("causal_conv_dw", dw)
+        record_stage_grad("causal_conv_db", db)
+        record_stage_grad("causal_conv_dh0", dh0)
         trace_apply("stage return: StressCausalConv1dFunction.backward")
         return dx.reshape_as(x), dw.transpose(0, 1).contiguous(), None, None, None
 
@@ -644,6 +682,8 @@ class StressGatedDeltaRuleFunction(torch.autograd.Function):
         if ctx.use_qk_l2norm_in_kernel:
             dq = l2norm_bwd(q, ctx.q_rstd, dq)
             dk = l2norm_bwd(k, ctx.k_rstd, dk)
+        record_stage_grad("gdr_wrapper_dq", dq)
+        record_stage_grad("gdr_wrapper_dk", dk)
         trace_apply("stage return: StressGatedDeltaRuleFunction.backward")
         return (
             dq.to(q),
@@ -747,6 +787,11 @@ def tensor_md5(tensor: torch.Tensor) -> str:
     return hashlib.md5(host.numpy().tobytes()).hexdigest()
 
 
+def tensor_binary_md5(tensor: torch.Tensor) -> str:
+    host = tensor.cpu().contiguous().view(torch.uint8)
+    return hashlib.md5(host.numpy().tobytes()).hexdigest()
+
+
 def global_grad_norm_and_clip_(
     parameters: list[torch.nn.Parameter],
     max_norm: float,
@@ -827,6 +872,14 @@ def main() -> int:
             "npu_rms_norm weight gradients are nondeterministic on the target stack."
         ),
     )
+    parser.add_argument(
+        "--check-stage-grad-binary",
+        action="store_true",
+        help=(
+            "For a one-layer replay, retain direct backward stage outputs and compare "
+            "their original-dtype bytes after all steps finish."
+        ),
+    )
     args = parser.parse_args()
 
     for name in (
@@ -842,6 +895,17 @@ def main() -> int:
             raise ValueError(f"--{name.replace('_', '-')} must be positive")
     if args.max_grad_norm <= 0:
         raise ValueError("--max-grad-norm must be positive")
+    if args.check_stage_grad_binary:
+        if args.forward_only:
+            raise ValueError("--check-stage-grad-binary requires backward")
+        if not args.replay_step_inputs:
+            raise ValueError(
+                "--check-stage-grad-binary requires --replay-step-inputs"
+            )
+        if args.layers != 1:
+            raise ValueError("--check-stage-grad-binary requires --layers=1")
+        if args.steps < 2:
+            raise ValueError("--check-stage-grad-binary requires --steps >= 2")
 
     offsets = parse_cu_seqlens(args.cu_seqlens, args.tokens)
     device = torch.device(f"npu:{args.device}")
@@ -868,6 +932,9 @@ def main() -> int:
     )
     if args.trace_stages:
         install_stage_tracing()
+    if args.check_stage_grad_binary:
+        global _STAGE_GRAD_RECORDS
+        _STAGE_GRAD_RECORDS = {}
 
     layers: list[Callable[[torch.Tensor], torch.Tensor]] = []
     parameters: list[torch.nn.Parameter] = []
@@ -1004,6 +1071,7 @@ def main() -> int:
         f"max_grad_norm={args.max_grad_norm}",
         f"replay_step_inputs={args.replay_step_inputs}",
         f"train_norm_weight={args.train_norm_weight}",
+        f"check_stage_grad_binary={args.check_stage_grad_binary}",
         "causal_conv_output_layout=NTD",
         "apply_wrappers=causal_conv1d,gated_delta_rule",
         flush=True,
@@ -1236,6 +1304,36 @@ def main() -> int:
                 )
         all_deterministic = all_deterministic and step_deterministic
         print(message)
+
+    if args.check_stage_grad_binary:
+        if _STAGE_GRAD_RECORDS is None:
+            raise RuntimeError("stage gradient recording was not initialized")
+        for name in sorted(_STAGE_GRAD_RECORDS):
+            tensors = _STAGE_GRAD_RECORDS[name]
+            if len(tensors) != args.steps:
+                raise RuntimeError(
+                    f"{name} produced {len(tensors)} records for {args.steps} steps"
+                )
+            if all(tensor is None for tensor in tensors):
+                print(f"stage_grad={name} value=None binary_equal=True")
+                continue
+            if any(tensor is None for tensor in tensors):
+                all_deterministic = False
+                print(f"stage_grad={name} optional_presence_equal=False")
+                continue
+            present_tensors = [
+                tensor for tensor in tensors if tensor is not None
+            ]
+            hashes = [tensor_binary_md5(tensor) for tensor in present_tensors]
+            binary_equal = all(item == hashes[0] for item in hashes[1:])
+            all_deterministic = all_deterministic and binary_equal
+            print(
+                f"stage_grad={name}"
+                f" dtype={present_tensors[0].dtype}"
+                f" shape={tuple(present_tensors[0].shape)}"
+                f" binary_equal={binary_equal}"
+                f" md5={','.join(hashes)}"
+            )
 
     if args.md5:
         for step_index, output in enumerate(retained_outputs, start=1):
