@@ -578,6 +578,9 @@ def flash_chunk_gated_delta_rule_fwd(
         output_dtype=torch.float32,
     )
 
+    # The KKT result above is FP32. solve_tri_auto casts its kernel input to
+    # k.dtype; the 64x64 AscendC path then computes in FP32 and casts the
+    # returned inverse back to k.dtype.
     A = solve_tri_auto(
         A,
         cu_seqlens=cu_seqlens,

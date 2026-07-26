@@ -124,13 +124,74 @@ def test_fp16_partial_chunk():
     ).half()
     A[0, 64:70, 0, :6] = tail
 
-    out = npu_solve_tri(A.npu(), layout="bsnd").cpu()[0, 64:70, 0, :6].float()
+    out_full = npu_solve_tri(A.npu(), layout="bsnd").cpu()
+    out = out_full[0, 64:70, 0, :6].float()
     golden = torch.linalg.inv(torch.eye(6, dtype=torch.float64) + tail.double()).float()
     finite = torch.isfinite(out).all().item()
     max_diff = (out - golden).abs().max().item()
-    passed = finite and max_diff < 2e-2
+    row = torch.arange(70).remainder(64)
+    col = torch.arange(64)
+    valid = col.unsqueeze(0) <= row.unsqueeze(1)
+    invalid_zero = bool((out_full.masked_select(~valid.view(1, 70, 1, 64)) == 0).all())
+    passed = finite and invalid_zero and max_diff < 2e-2
     status = "PASS" if passed else "FAIL"
-    print(f"  [{status}] FP16 partial chunk: finite={finite}, max_diff={max_diff:.6f}")
+    print(
+        f"  [{status}] FP16 partial chunk: finite={finite}, "
+        f"invalid_zero={invalid_zero}, max_diff={max_diff:.6f}"
+    )
+    return passed
+
+
+def test_tnd_invalid_region_zero_fill():
+    """The stable adapter must zero upper triangles and short-tail padding."""
+    cu_seqlens = [0, 70, 135]
+    chunk_size = 64
+    heads = 2
+    x = torch.zeros(135, heads, chunk_size, dtype=torch.bfloat16)
+    generator = torch.Generator().manual_seed(20260727)
+    for bos, eos in zip(cu_seqlens[:-1], cu_seqlens[1:]):
+        for chunk_start in range(bos, eos, chunk_size):
+            valid = min(chunk_size, eos - chunk_start)
+            block = torch.tril(
+                torch.randn(
+                    valid,
+                    valid,
+                    generator=generator,
+                    dtype=torch.float32,
+                )
+                * 0.05,
+                diagonal=-1,
+            ).bfloat16()
+            x[chunk_start : chunk_start + valid, :, :valid] = block.unsqueeze(1)
+
+    chunk_indices = []
+    for sequence_index, (bos, eos) in enumerate(
+        zip(cu_seqlens[:-1], cu_seqlens[1:])
+    ):
+        for chunk_index in range((eos - bos + chunk_size - 1) // chunk_size):
+            chunk_indices.extend([sequence_index, chunk_index])
+
+    out = npu_solve_tri(
+        x.npu(),
+        cu_seqlens=cu_seqlens,
+        chunk_indices=chunk_indices,
+        layout="tnd",
+    ).cpu()
+    local_rows = []
+    for bos, eos in zip(cu_seqlens[:-1], cu_seqlens[1:]):
+        local_rows.extend(index % chunk_size for index in range(eos - bos))
+    row = torch.tensor(local_rows)
+    col = torch.arange(chunk_size)
+    valid = col.unsqueeze(0) <= row.unsqueeze(1)
+    invalid = out.masked_select(~valid.unsqueeze(1))
+    invalid_zero = bool((invalid == 0).all())
+    valid_finite = bool(torch.isfinite(out.masked_select(valid.unsqueeze(1))).all())
+    passed = invalid_zero and valid_finite
+    status = "PASS" if passed else "FAIL"
+    print(
+        f"  [{status}] BF16 TND invalid-region zero fill: "
+        f"invalid_zero={invalid_zero}, valid_finite={valid_finite}"
+    )
     return passed
 
 
@@ -158,6 +219,7 @@ def main():
     results.append(test_mch_fp32_intermediates(torch.float16))
     results.append(test_mch_fp32_intermediates(torch.bfloat16))
     results.append(test_fp16_partial_chunk())
+    results.append(test_tnd_invalid_region_zero_fill())
 
     print("\n" + "=" * 60)
     total = len(results)

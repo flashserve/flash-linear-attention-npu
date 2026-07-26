@@ -120,17 +120,23 @@ torch.ops.npu.npu_solve_tri(
 |--------|------|------|
 | output | Tensor | 输出矩阵，shape 与输入一致 |
 
+通过稳定入口 `fla_npu.ops.ascendc.npu_solve_tri` 调用时，适配层会在当前
+NPU stream 上将每个 chunk 的上三角以及短尾块的无效列填充为 0，不产生
+Device 到 Host 的数据同步。TND 模式应传入 Host 侧 `cu_seqlens` 整数列表。
+直接调用 ACLNN 接口时不包含该 Python 适配层后处理。
+
 ### 使用示例
 
 ```python
 import torch
 import torch_npu
 import fla_npu
+from fla_npu.ops.ascendc import npu_solve_tri
 
 # 基本用法 (BSND layout)
 B, T, H, chunkSize = 2, 128, 4, 64
 x = torch.randn(B, T, H, chunkSize, dtype=torch.float16, device="npu")
-y = torch.ops.npu.npu_solve_tri(x, layout="bsnd")
+y = npu_solve_tri(x, layout="bsnd")
 
 
 # 变长序列模式 (TND layout)
@@ -145,7 +151,7 @@ for seq_idx, seq_len in enumerate(seq_lens):
         chunk_indices.extend([seq_idx, chunk_id])
 
 x_tnd = torch.randn(total_T, H, chunkSize, dtype=torch.float16, device="npu")
-y_tnd = torch.ops.npu.npu_solve_tri(
+y_tnd = npu_solve_tri(
     x_tnd,
     cu_seqlens=cu_seqlens,
     chunk_indices=chunk_indices,

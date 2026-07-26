@@ -298,6 +298,9 @@ def gated_delta_rule_fwd(
         output_dtype=torch.float32,
     )
 
+    # A is FP32 here. The adapter casts the solve_tri input to k.dtype, while
+    # the 64x64 kernel keeps its internal MCH/MXR calculations in FP32 and
+    # returns k.dtype.
     A = solve_tri_ascendc(
         A,
         cu_seqlens=cu_seqlens_list,
