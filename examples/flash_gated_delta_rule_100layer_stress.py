@@ -3,8 +3,9 @@
 
 The workload intentionally performs no host/device synchronization while steps
 are being submitted. All outputs and input gradients remain on the NPU until
-every requested step has finished launching; finite checks are queued only at
-the end and then copied to the host once.
+every requested step has finished launching. Parameter gradient norms use the
+same global L2 definition as ``clip_grad_norm_`` and are clipped on device.
+Finite checks are queued only at the end and then copied to the host once.
 """
 
 from __future__ import annotations
@@ -746,6 +747,29 @@ def tensor_md5(tensor: torch.Tensor) -> str:
     return hashlib.md5(host.numpy().tobytes()).hexdigest()
 
 
+def global_grad_norm_and_clip_(
+    parameters: list[torch.nn.Parameter],
+    max_norm: float,
+) -> torch.Tensor:
+    """Return the pre-clip global FP32 L2 norm and clip gradients in place."""
+    grads = [
+        parameter.grad.detach()
+        for parameter in parameters
+        if parameter.grad is not None
+    ]
+    if not grads:
+        raise RuntimeError("no parameter gradients were produced")
+
+    per_parameter_norms = torch.stack(
+        [torch.linalg.vector_norm(grad.float(), 2) for grad in grads]
+    )
+    total_norm = torch.linalg.vector_norm(per_parameter_norms, 2)
+    clip_coefficient = torch.clamp(max_norm / (total_norm + 1e-6), max=1.0)
+    for grad in grads:
+        grad.mul_(clip_coefficient.to(dtype=grad.dtype))
+    return total_norm
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", type=int, default=0)
@@ -760,6 +784,12 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--residual-scale", type=float, default=0.1)
     parser.add_argument("--norm-eps", type=float, default=1e-6)
+    parser.add_argument(
+        "--max-grad-norm",
+        type=float,
+        default=1.0,
+        help="Clip parameter gradients to this global L2 norm after each backward.",
+    )
     parser.add_argument(
         "--cu-seqlens",
         default="",
@@ -781,6 +811,22 @@ def main() -> int:
         action="store_true",
         help="Print Python call boundaries without reading NPU tensors or synchronizing.",
     )
+    parser.add_argument(
+        "--replay-step-inputs",
+        action="store_true",
+        help=(
+            "Reuse identical input and upstream tensors for every step and compare "
+            "outputs plus every pre-clip parameter gradient for exact determinism."
+        ),
+    )
+    parser.add_argument(
+        "--train-norm-weight",
+        action="store_true",
+        help=(
+            "Include RMSNorm weights in global grad norm. Disabled by default because "
+            "npu_rms_norm weight gradients are nondeterministic on the target stack."
+        ),
+    )
     args = parser.parse_args()
 
     for name in (
@@ -794,6 +840,8 @@ def main() -> int:
     ):
         if getattr(args, name) <= 0:
             raise ValueError(f"--{name.replace('_', '-')} must be positive")
+    if args.max_grad_norm <= 0:
+        raise ValueError("--max-grad-norm must be positive")
 
     offsets = parse_cu_seqlens(args.cu_seqlens, args.tokens)
     device = torch.device(f"npu:{args.device}")
@@ -822,58 +870,100 @@ def main() -> int:
         install_stage_tracing()
 
     layers: list[Callable[[torch.Tensor], torch.Tensor]] = []
-    for _ in range(args.layers):
+    parameters: list[torch.nn.Parameter] = []
+    parameter_names: list[str] = []
+
+    def make_parameter(
+        name: str,
+        shape: tuple[int, ...],
+        parameter_dtype: torch.dtype,
+        scale: float,
+        bias: float = 0.0,
+        trainable: bool = True,
+    ) -> torch.nn.Parameter:
+        tensor = torch.randn(
+            shape,
+            dtype=parameter_dtype,
+            device=device,
+        ).mul_(scale)
+        if bias:
+            tensor.add_(bias)
+        parameter = torch.nn.Parameter(
+            tensor,
+            requires_grad=not args.forward_only and trainable,
+        )
+        if parameter.requires_grad:
+            parameters.append(parameter)
+            parameter_names.append(name)
+        return parameter
+
+    for layer_index in range(args.layers):
         hidden_size = args.heads * args.dim
         projection_shape = (1, 1, hidden_size)
         gate_shape = (1, 1, args.heads)
         layers.append(
             make_layer(
-                q_weight=torch.randn(
+                q_weight=make_parameter(
+                    f"layers.{layer_index}.q_weight",
                     projection_shape,
-                    dtype=dtype,
-                    device=device,
-                ).mul(0.1).add(1.0),
-                k_weight=torch.randn(
+                    dtype,
+                    0.1,
+                    1.0,
+                ),
+                k_weight=make_parameter(
+                    f"layers.{layer_index}.k_weight",
                     projection_shape,
-                    dtype=dtype,
-                    device=device,
-                ).mul(0.1).add(1.0),
-                v_weight=torch.randn(
+                    dtype,
+                    0.1,
+                    1.0,
+                ),
+                v_weight=make_parameter(
+                    f"layers.{layer_index}.v_weight",
                     projection_shape,
-                    dtype=dtype,
-                    device=device,
-                ).mul(0.1).add(0.5),
-                conv_weight=torch.randn(
-                    3 * hidden_size,
-                    args.conv_width,
-                    dtype=dtype,
-                    device=device,
-                ).mul(0.1),
-                beta_weight=torch.randn(
+                    dtype,
+                    0.1,
+                    0.5,
+                ),
+                conv_weight=make_parameter(
+                    f"layers.{layer_index}.conv_weight",
+                    (3 * hidden_size, args.conv_width),
+                    dtype,
+                    0.1,
+                ),
+                beta_weight=make_parameter(
+                    f"layers.{layer_index}.beta_weight",
                     gate_shape,
-                    dtype=torch.float32,
-                    device=device,
-                ).mul(0.1).add(1.0),
-                beta_bias=torch.randn(
+                    torch.float32,
+                    0.1,
+                    1.0,
+                ),
+                beta_bias=make_parameter(
+                    f"layers.{layer_index}.beta_bias",
                     gate_shape,
-                    dtype=torch.float32,
-                    device=device,
-                ).mul(0.1),
-                gate_weight=torch.randn(
+                    torch.float32,
+                    0.1,
+                ),
+                gate_weight=make_parameter(
+                    f"layers.{layer_index}.gate_weight",
                     gate_shape,
-                    dtype=torch.float32,
-                    device=device,
-                ).mul(0.1).add(1.0),
-                gate_bias=torch.randn(
+                    torch.float32,
+                    0.1,
+                    1.0,
+                ),
+                gate_bias=make_parameter(
+                    f"layers.{layer_index}.gate_bias",
                     gate_shape,
-                    dtype=torch.float32,
-                    device=device,
-                ).mul(0.1),
-                norm_weight=torch.randn(
-                    args.heads * args.dim,
-                    dtype=dtype,
-                    device=device,
-                ).mul(0.01).add(1.0),
+                    torch.float32,
+                    0.1,
+                ),
+                norm_weight=make_parameter(
+                    f"layers.{layer_index}.norm_weight",
+                    (args.heads * args.dim,),
+                    dtype,
+                    0.01,
+                    1.0,
+                    trainable=args.train_norm_weight,
+                ),
                 cu_seqlens=cu_seqlens,
                 cu_seqlens_list=offsets,
                 chunk_indices=chunk_indices,
@@ -886,6 +976,13 @@ def main() -> int:
 
     retained_outputs: list[torch.Tensor] = []
     retained_grads: list[torch.Tensor] = []
+    retained_grad_norms: list[torch.Tensor] = []
+    reference_parameter_grads: Optional[list[torch.Tensor]] = None
+    parameter_grad_equal_checks: list[torch.Tensor] = []
+    parameter_grad_max_diffs: list[torch.Tensor] = []
+    trainable_parameter_count = sum(
+        parameter.numel() for parameter in parameters if parameter.requires_grad
+    )
 
     print(
         "config:",
@@ -903,21 +1000,40 @@ def main() -> int:
         f"steps={args.steps}",
         f"checkpoint={not args.no_checkpoint and not args.forward_only}",
         f"backward={not args.forward_only}",
+        f"trainable_parameters={trainable_parameter_count}",
+        f"max_grad_norm={args.max_grad_norm}",
+        f"replay_step_inputs={args.replay_step_inputs}",
+        f"train_norm_weight={args.train_norm_weight}",
         "causal_conv_output_layout=NTD",
         "apply_wrappers=causal_conv1d,gated_delta_rule",
         flush=True,
     )
 
-    for step_index in range(args.steps):
-        input_state = torch.randn(
+    replay_input: Optional[torch.Tensor] = None
+    replay_upstream: Optional[torch.Tensor] = None
+    if args.replay_step_inputs:
+        replay_input = torch.randn(
             1,
             args.heads,
             args.tokens,
             args.dim,
             dtype=dtype,
             device=device,
-            requires_grad=not args.forward_only,
         )
+
+    for step_index in range(args.steps):
+        if replay_input is None:
+            input_state = torch.randn(
+                1,
+                args.heads,
+                args.tokens,
+                args.dim,
+                dtype=dtype,
+                device=device,
+                requires_grad=not args.forward_only,
+            )
+        else:
+            input_state = replay_input.clone().requires_grad_(not args.forward_only)
         state = input_state
         for layer in layers:
             if args.no_checkpoint or args.forward_only:
@@ -931,11 +1047,58 @@ def main() -> int:
                 )
 
         if not args.forward_only:
-            upstream = torch.randn_like(state)
+            if replay_upstream is None:
+                upstream = torch.randn_like(state)
+                if args.replay_step_inputs:
+                    replay_upstream = upstream
+            else:
+                upstream = replay_upstream
             state.backward(upstream)
             if input_state.grad is None:
                 raise RuntimeError("input gradient was not produced")
             retained_grads.append(input_state.grad.detach())
+            if args.replay_step_inputs:
+                current_parameter_grads = [
+                    parameter.grad.detach()
+                    for parameter in parameters
+                    if parameter.grad is not None
+                ]
+                if len(current_parameter_grads) != len(parameters):
+                    raise RuntimeError(
+                        "determinism check requires every parameter to produce a gradient"
+                    )
+                if reference_parameter_grads is None:
+                    reference_parameter_grads = [
+                        grad.clone() for grad in current_parameter_grads
+                    ]
+                else:
+                    parameter_grad_equal_checks.append(
+                        torch.stack(
+                            [
+                                torch.eq(grad, reference).all()
+                                for grad, reference in zip(
+                                    current_parameter_grads,
+                                    reference_parameter_grads,
+                                )
+                            ]
+                        )
+                    )
+                    parameter_grad_max_diffs.append(
+                        torch.stack(
+                            [
+                                (grad.float() - reference.float()).abs().max()
+                                for grad, reference in zip(
+                                    current_parameter_grads,
+                                    reference_parameter_grads,
+                                )
+                            ]
+                        )
+                    )
+            retained_grad_norms.append(
+                global_grad_norm_and_clip_(parameters, args.max_grad_norm).detach()
+            )
+            for parameter in parameters:
+                parameter.grad = None
 
         retained_outputs.append(state.detach())
         print(f"queued step {step_index + 1}/{args.steps}", flush=True)
@@ -952,9 +1115,46 @@ def main() -> int:
     for grad in retained_grads:
         finite_checks.append(torch.isfinite(grad).all())
         magnitudes.append(grad.float().abs().max())
+    for grad_norm in retained_grad_norms:
+        finite_checks.append(torch.isfinite(grad_norm))
+        magnitudes.append(grad_norm.float())
+
+    replay_equal_checks: list[torch.Tensor] = []
+    if args.replay_step_inputs and args.steps > 1:
+        for step_index in range(1, args.steps):
+            checks = [
+                torch.eq(retained_outputs[step_index], retained_outputs[0]).all(),
+            ]
+            if retained_grads:
+                checks.extend(
+                    (
+                        torch.eq(retained_grads[step_index], retained_grads[0]).all(),
+                        torch.eq(
+                            retained_grad_norms[step_index],
+                            retained_grad_norms[0],
+                        ),
+                        parameter_grad_equal_checks[step_index - 1].all(),
+                    )
+                )
+            replay_equal_checks.append(torch.stack(checks))
 
     finite_host = torch.stack(finite_checks).cpu().tolist()
     magnitude_host = torch.stack(magnitudes).cpu().tolist()
+    replay_equal_host = (
+        torch.stack(replay_equal_checks).cpu().tolist()
+        if replay_equal_checks
+        else []
+    )
+    parameter_grad_equal_host = (
+        torch.stack(parameter_grad_equal_checks).cpu().tolist()
+        if parameter_grad_equal_checks
+        else []
+    )
+    parameter_grad_max_diff_host = (
+        torch.stack(parameter_grad_max_diffs).cpu().tolist()
+        if parameter_grad_max_diffs
+        else []
+    )
 
     all_finite = True
     for step_index in range(args.steps):
@@ -967,10 +1167,74 @@ def main() -> int:
         )
         if retained_grads:
             grad_index = args.steps + step_index
+            grad_norm_index = 2 * args.steps + step_index
             grad_finite = bool(finite_host[grad_index])
             grad_absmax = float(magnitude_host[grad_index])
-            all_finite = all_finite and grad_finite
-            message += f" grad_finite={grad_finite} grad_absmax={grad_absmax:.8g}"
+            grad_norm_finite = bool(finite_host[grad_norm_index])
+            grad_norm = float(magnitude_host[grad_norm_index])
+            all_finite = all_finite and grad_finite and grad_norm_finite
+            message += (
+                f" grad_finite={grad_finite} grad_absmax={grad_absmax:.8g}"
+                f" grad_norm={grad_norm:.8g}"
+                f" grad_norm_finite={grad_norm_finite}"
+            )
+        print(message)
+
+    all_deterministic = True
+    for replay_index, checks in enumerate(replay_equal_host, start=2):
+        output_equal = bool(checks[0])
+        message = f"replay_step={replay_index} output_equal={output_equal}"
+        step_deterministic = output_equal
+        if retained_grads:
+            input_grad_equal = bool(checks[1])
+            grad_norm_equal = bool(checks[2])
+            parameter_grads_equal = bool(checks[3])
+            step_deterministic = (
+                step_deterministic
+                and input_grad_equal
+                and grad_norm_equal
+                and parameter_grads_equal
+            )
+            message += (
+                f" input_grad_equal={input_grad_equal}"
+                f" grad_norm_equal={grad_norm_equal}"
+                f" parameter_grads_equal={parameter_grads_equal}"
+            )
+            if not parameter_grads_equal:
+                equal_row = parameter_grad_equal_host[replay_index - 2]
+                mismatch_indices = [
+                    index
+                    for index, equal in enumerate(equal_row)
+                    if not equal
+                ]
+                first_mismatch = mismatch_indices[0]
+                worst_mismatch = max(
+                    mismatch_indices,
+                    key=lambda index: parameter_grad_max_diff_host[
+                        replay_index - 2
+                    ][index],
+                )
+                max_diff = parameter_grad_max_diff_host[replay_index - 2][
+                    first_mismatch
+                ]
+                worst_max_diff = parameter_grad_max_diff_host[replay_index - 2][
+                    worst_mismatch
+                ]
+                mismatch_types = sorted(
+                    {
+                        parameter_names[index].rsplit(".", 1)[-1]
+                        for index in mismatch_indices
+                    }
+                )
+                message += (
+                    f" parameter_mismatch_count={len(mismatch_indices)}"
+                    f" parameter_mismatch_types={','.join(mismatch_types)}"
+                    f" first_parameter_mismatch={parameter_names[first_mismatch]}"
+                    f" first_parameter_maxdiff={max_diff:.8g}"
+                    f" worst_parameter_mismatch={parameter_names[worst_mismatch]}"
+                    f" worst_parameter_maxdiff={worst_max_diff:.8g}"
+                )
+        all_deterministic = all_deterministic and step_deterministic
         print(message)
 
     if args.md5:
@@ -980,12 +1244,19 @@ def main() -> int:
                 message += f" grad_md5={tensor_md5(retained_grads[step_index - 1])}"
             print(message)
 
+    if not all_finite:
+        result = "NONFINITE"
+    elif not all_deterministic:
+        result = "NONDETERMINISTIC"
+    else:
+        result = "PASS"
     print(
         "result:",
-        "PASS" if all_finite else "NONFINITE",
+        result,
+        f"deterministic={all_deterministic}",
         f"max_memory_allocated={torch.npu.max_memory_allocated(args.device)}",
     )
-    return 0 if all_finite else 2
+    return 0 if all_finite and all_deterministic else 2
 
 
 if __name__ == "__main__":
