@@ -43,6 +43,7 @@ _ASCENDC_OPS = (
     "npu_solve_tri",
     "npu_chunk_kda_fwd",
     "npu_kda_gate_cumsum",
+    "npu_recurrent_kda",
 )
 
 BACKWARD_OPS = {
@@ -57,6 +58,7 @@ BACKWARD_OPS = {
 MUTATED_ARGUMENTS = {
     "causal_conv1d": ("conv_states",),
     "npu_causal_conv1d": ("conv_states",),
+    "npu_recurrent_kda": ("initial_state",),
 }
 
 _LEGACY_TORCH_OPS_WARNING = (

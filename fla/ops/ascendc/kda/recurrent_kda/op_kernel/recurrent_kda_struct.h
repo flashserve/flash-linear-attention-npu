@@ -1,0 +1,57 @@
+/**
+ * Copyright (c) 2025-2026 Tianjin University, Ltd.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ */
+
+/*!
+ * \file recurrent_kda_struct.h
+ * \brief Plain tiling struct shared by aclnn tiling and fast kernel launch.
+ */
+
+#ifndef RECURRENT_KDA_STRUCT_H
+#define RECURRENT_KDA_STRUCT_H
+
+#include <cstdint>
+
+namespace RecurrentKda {
+
+#pragma pack(push, 8)
+struct alignas(8) RecurrentKdaTilingData {
+    uint32_t vectorCoreNum;
+    uint32_t ubCalSize;
+    uint32_t ubRestBytes;
+    uint32_t t;
+    uint32_t seqLen;
+    uint32_t nk;
+    uint32_t dk;
+    uint32_t nv;
+    uint32_t dv;
+    uint32_t sBlockNum;
+    uint32_t ssmStateStride;
+    uint32_t b;
+    uint32_t vStep;
+    uint32_t stateOutBufferNum;
+    uint32_t attnOutBufferNum;
+    float scale;
+    float lowerBound;
+    uint32_t layout;
+    uint32_t hasSsmStateIndices;
+    uint32_t hasALog;
+    uint32_t hasDtBias;
+    uint32_t hasAcceptedTokens;
+    uint32_t useQkL2norm;
+    uint32_t useGateInKernel;
+    uint32_t useBetaSigmoid;
+    uint32_t allowNegEigval;
+    uint32_t safeGate;
+    uint32_t stateVFirst;
+};
+#pragma pack(pop)
+
+} // namespace RecurrentKda
+
+#endif // RECURRENT_KDA_STRUCT_H
