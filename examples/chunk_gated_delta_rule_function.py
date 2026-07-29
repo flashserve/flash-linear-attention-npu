@@ -1,4 +1,4 @@
-"""Complete autograd adapter for the AscendC chunk gated-delta-rule chain.
+"""Complete autograd adapter for the mixed-backend chunk gated-delta-rule chain.
 
 The public entry is ``ChunkGatedDeltaRuleFunction.apply`` with this signature::
 
@@ -20,7 +20,9 @@ The public entry is ``ChunkGatedDeltaRuleFunction.apply`` with this signature::
     )
 
 The adapter implements the full forward and backward chains, including GVA
-head reduction. The current v26.6.0 ``bwd_dhu`` kernel does not consume
+head reduction. ``solve_tri`` uses the Triton-Ascend implementation while the
+remaining GDR stages use their existing fla_npu implementations. The current
+v26.6.0 ``bwd_dhu`` kernel does not consume
 ``h0``/``dht`` or produce ``dh0``. This wrapper therefore supports
 ``initial_state`` as a constant forward input, but rejects initial-state
 gradients and final-state-gradient propagation instead of silently returning
@@ -44,13 +46,13 @@ from fla_npu.ops.ascendc import (
     npu_prepare_wy_repr_bwd_da as ascendc_prepare_wy_repr_bwd_da,
     npu_prepare_wy_repr_bwd_full as ascendc_prepare_wy_repr_bwd_full,
     npu_recompute_w_u_fwd as ascendc_recompute_w_u_fwd,
-    solve_tri as ascendc_solve_tri,
 )
 from fla_npu.ops.triton import (
     chunk_local_cumsum,
     chunk_scaled_dot_kkt_fwd,
     l2norm_bwd,
     l2norm_fwd,
+    solve_tril_npu as triton_solve_tril,
 )
 
 
@@ -427,20 +429,19 @@ def _solve_tri(
     A: torch.Tensor,
     *,
     output_dtype: torch.dtype,
-    cu_seqlens_list: Optional[list[int]],
-    chunk_indices_list: Optional[list[int]],
+    cu_seqlens: Optional[torch.Tensor],
+    chunk_indices: Optional[TensorIndexDict],
 ) -> torch.Tensor:
-    A_input = A.to(output_dtype).contiguous()
-    if cu_seqlens_list is None:
-        return ascendc_solve_tri(A_input, layout="bsnd")
-    if chunk_indices_list is None:
-        raise ValueError("varlen solve_tri requires chunk_indices_list")
-    return ascendc_solve_tri(
-        A_input.squeeze(0),
-        cu_seqlens=cu_seqlens_list,
-        chunk_indices=chunk_indices_list,
-        layout="tnd",
-    ).unsqueeze(0)
+    # Keep KKT's FP32 output as the solve input. Triton-Ascend performs the
+    # triangular recurrence in FP32 and casts only the merged result.
+    if cu_seqlens is not None and chunk_indices is None:
+        raise ValueError("varlen solve_tri requires tensor chunk metadata")
+    return triton_solve_tril(
+        A=A.contiguous(),
+        cu_seqlens=cu_seqlens,
+        chunk_indices_out=chunk_indices,
+        output_dtype=output_dtype,
+    )
 
 
 def _recompute_w_u(
@@ -503,8 +504,8 @@ def _forward_chain(
     A = _solve_tri(
         A,
         output_dtype=k.dtype,
-        cu_seqlens_list=cu_seqlens_list,
-        chunk_indices_list=_chunk_list(chunk_indices_list, chunk_size),
+        cu_seqlens=cu_seqlens,
+        chunk_indices=chunk_indices,
     )
 
     g_head = cumulative_g.transpose(1, 2).contiguous()
