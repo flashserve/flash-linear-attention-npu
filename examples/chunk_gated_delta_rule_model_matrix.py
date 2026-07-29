@@ -4,7 +4,8 @@
 The cases model the local GDR tensors seen after TP, SP, or sequence-packed CP
 partitioning. Run a case on one process to emulate a rank, or use torchrun with
 the case's declared world size to exercise concurrent multi-NPU submission.
-Results are emitted as one JSON object from rank 0.
+Set ``FLA_ORG_ROOT`` to fla-org/flash-linear-attention for the default
+Triton-Ascend solve backend. Results are emitted as one JSON object from rank 0.
 """
 
 from __future__ import annotations
@@ -334,7 +335,7 @@ def _install_ascendc_solve_reference() -> None:
             layout="tnd",
         ).unsqueeze(0)
 
-    gdr_adapter.triton_solve_tril = solve_reference
+    gdr_adapter.fla_org_solve_tril = solve_reference
 
 
 def main() -> int:
@@ -345,8 +346,8 @@ def main() -> int:
     parser.add_argument("--determinism-runs", type=int, default=2)
     parser.add_argument(
         "--solve-backend",
-        choices=("triton", "ascendc-reference"),
-        default="triton",
+        choices=("fla-org", "ascendc-reference"),
+        default="fla-org",
         help="The reference mode is diagnostic and may synchronize metadata.",
     )
     args = parser.parse_args()
@@ -362,6 +363,9 @@ def main() -> int:
     case = CASES[args.case]
     if args.solve_backend == "ascendc-reference":
         _install_ascendc_solve_reference()
+        solve_module = ascendc_solve_tri.__module__
+    else:
+        solve_module = gdr_adapter.get_fla_org_solve_tril().__module__
     rank, world_size = _init_distributed()
     if world_size not in (1, case.world_size):
         raise ValueError(
@@ -436,6 +440,7 @@ def main() -> int:
         **asdict(case),
         "dtype": args.dtype,
         "solve_backend": args.solve_backend,
+        "solve_module": solve_module,
         "local_tokens": _local_shape(case)[0],
         "local_key_heads": _local_shape(case)[1],
         "local_value_heads": _local_shape(case)[2],

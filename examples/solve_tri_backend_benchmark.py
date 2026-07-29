@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Compare the AscendC and Triton-Ascend solve_tri paths on GDR KKT input."""
+"""Compare AscendC with fla-org's Triton-Ascend solve on GDR KKT input.
+
+Set ``FLA_ORG_ROOT`` to the fla-org/flash-linear-attention source checkout.
+"""
 
 from __future__ import annotations
 
@@ -14,9 +17,9 @@ from fla_npu.ops.ascendc import solve_tri as ascendc_solve_tri
 from fla_npu.ops.triton import (
     chunk_local_cumsum,
     chunk_scaled_dot_kkt_fwd,
-    solve_tril_npu,
 )
 
+from chunk_gated_delta_rule_function import get_fla_org_solve_tril
 from flash_gated_delta_rule_100layer_stress import (
     DEFAULT_CU_SEQLENS,
     prepare_varlen_metadata,
@@ -94,17 +97,18 @@ def _build_kkt_input(
     return A, cu_seqlens, offsets, chunk_indices, chunk_indices_list
 
 
-def _run_triton(
+def _run_fla_org(
     A: torch.Tensor,
     *,
     cu_seqlens: torch.Tensor,
     chunk_indices: dict[str, torch.Tensor],
     output_dtype: torch.dtype,
 ) -> torch.Tensor:
-    return solve_tril_npu(
+    solve_tril = get_fla_org_solve_tril()
+    return solve_tril(
         A=A,
         cu_seqlens=cu_seqlens,
-        chunk_indices_out=chunk_indices,
+        chunk_indices=chunk_indices[str(A.shape[-1])],
         output_dtype=output_dtype,
     )
 
@@ -129,7 +133,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--backend",
-        choices=("triton", "ascendc", "compare"),
+        choices=("fla-org", "ascendc", "compare"),
         default="compare",
     )
     parser.add_argument("--device", type=int, default=0)
@@ -158,8 +162,8 @@ def main() -> int:
     )
 
     def run(backend: str) -> torch.Tensor:
-        if backend == "triton":
-            return _run_triton(
+        if backend == "fla-org":
+            return _run_fla_org(
                 A,
                 cu_seqlens=cu_seqlens,
                 chunk_indices=chunk_indices,
@@ -174,15 +178,17 @@ def main() -> int:
         )
 
     if args.backend == "compare":
-        triton_output = run("triton")
+        fla_org_output = run("fla-org")
         ascendc_output = run("ascendc")
         torch.npu.synchronize()
-        difference = triton_output.float() - ascendc_output.float()
+        difference = fla_org_output.float() - ascendc_output.float()
         denominator = torch.linalg.vector_norm(ascendc_output.float()).clamp_min(
             1e-12
         )
         result = {
-            "triton_finite": bool(torch.isfinite(triton_output).all().item()),
+            "fla_org_finite": bool(
+                torch.isfinite(fla_org_output).all().item()
+            ),
             "ascendc_finite": bool(torch.isfinite(ascendc_output).all().item()),
             "max_abs_diff": float(difference.abs().max().item()),
             "relative_l2": float(
@@ -190,7 +196,11 @@ def main() -> int:
             ),
         }
         print(json.dumps(result, sort_keys=True))
-        return 0 if result["triton_finite"] and result["ascendc_finite"] else 1
+        return (
+            0
+            if result["fla_org_finite"] and result["ascendc_finite"]
+            else 1
+        )
 
     output = run(args.backend)
     torch.npu.synchronize()

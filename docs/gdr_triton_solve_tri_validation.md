@@ -1,39 +1,46 @@
-# GDR 适配层 Triton-Ascend `solve_tri` 泛化验证报告
+# GDR 适配层 fla-org Triton-Ascend `solve_tri` 泛化验证报告
 
 ## 1. 结论
 
 PR #249 的 `examples/chunk_gated_delta_rule_function.py` 仅将
-`solve_tri` 回切到 `fla_npu.ops.triton.solve_tril_npu` 后，在 A2 上完成
-源码编包、原问题 shape 单层验证、100 层 20 step 压测、4 卡模型分片
-矩阵、内存和确定性验证：
+`solve_tri` 回切到
+[fla-org/flash-linear-attention `triton_ascend` backend](https://github.com/fla-org/flash-linear-attention/blob/9c8e42e762fce087c27b673af4922795d9edb85e/fla/ops/utils/backends/triton_ascend/solve_tril.py)
+后，在 A2 上完成源码编包、原问题 shape 单层验证、100 层 20 step
+压测、4 卡模型分片矩阵、内存和确定性验证。测试使用 fla-org
+`main@9c8e42e762fce087c27b673af4922795d9edb85e`：
 
 - 所有纳入结论的 forward、`dq`、`dk`、`dv`、`dg`、`dbeta` 均为
   finite，没有出现 NaN/Inf。
 - 相同输入重复执行时，输出和全部被检查梯度均二进制一致。
 - 100 层 × 20 step 的纯异步主体通过，20 个 step 的输出、输入梯度、
   grad norm 和全部参数梯度逐 step 一致。
-- 对原始 `T=32768, H=16, BT=64` 变长用例，Triton 与原 AscendC
+- 对原始 `T=32768, H=16, BT=64` 变长用例，fla-org 与原 AscendC
   路径的输出相对 L2 误差为 `4.62254e-5`，最大绝对误差为
   `9.765625e-4`。
-- `msopprof` 显示，Triton 三段 solve 核心计算约 `9.038 ms`，原
-  AscendC `SolveTri` 核心约 `11.561 ms`，核心计算提升约 `1.28x`；
-  计入原适配层 cast/mask 和 Triton 输出初始化后，单次调用估算分别为
-  `12.537 ms` 与 `9.089 ms`，提升约 `1.38x`。
+- `msopprof` 显示，fla-org 的 64 × 64 merge kernel 约 `10.692 ms`，
+  原 AscendC `SolveTri` 核心约 `11.285 ms`，核心计算提升约
+  `1.06x`；计入原适配层 cast/mask 和 fla-org 输出初始化后，单次调用
+  估算分别为 `12.118 ms` 与 `10.715 ms`，提升约 `1.13x`。
 
 因此，就本报告覆盖的 adapter 调用链和本地 GDR shard 而言，可以使用
-Triton-Ascend `solve_tri` 替代当前 AscendC `solve_tri`。
+fla-org Triton-Ascend `solve_tri` 替代当前 AscendC `solve_tri`。
 
 ## 2. 代码变更
 
-变更只发生在独立适配脚本：
+功能变更只发生在独立适配脚本：
 
 1. 删除 `fla_npu.ops.ascendc.solve_tri` 导入。
-2. 从 `fla_npu.ops.triton` 导入 `solve_tril_npu`。
-3. KKT 的 FP32 输出 `A` 保持 FP32 输入 Triton solve，只在 64 × 64
+2. 从 `FLA_ORG_ROOT` 显式加载
+   `fla.ops.utils.backends.triton_ascend.solve_tril.solve_tril_npu`，不再
+   经过本仓 `fla_npu.ops.triton` 的 solve 重导出。
+3. 校验加载模块必须位于 `FLA_ORG_ROOT`，并在首个本仓 Triton kernel
+   launch 前完成 namespace 切换。缺少 fla-org checkout 时直接报错，
+   不静默 fallback。
+4. KKT 的 FP32 输出 `A` 保持 FP32 输入 fla-org solve，只在 64 × 64
    合并输出阶段按 `output_dtype` 转回 BF16/FP16。
-4. 变长场景直接传 device tensor `cu_seqlens` 和 `chunk_indices_out`，
-   solve 路径不再把 metadata 拷回 host。
-5. GDR 其余正反向算子和 causal-conv 调用保持不变。
+5. 变长场景直接传 device tensor `cu_seqlens` 和当前 chunk size 对应的
+   `chunk_indices`；solve 路径不再把 metadata 拷回 host。
+6. GDR 其余正反向算子和 causal-conv 调用保持不变。
 
 ## 3. 环境与测试口径
 
@@ -43,6 +50,7 @@ Triton-Ascend `solve_tri` 替代当前 AscendC `solve_tri`。
 - torch-npu：2.10.0.post2
 - triton-ascend：3.2.1
 - fla-npu：PR #249 当前源码构建的 v26.6.0 wheel，不使用 release wheel
+- fla-org：`main@9c8e42e762fce087c27b673af4922795d9edb85e`
 - 主精度 dtype：BF16；补充训练 dtype：FP16
 - chunk size：64
 - 原问题用例：`T=32768, H=16, K=V=128`，使用
@@ -54,6 +62,9 @@ Triton-Ascend `solve_tri` 替代当前 AscendC `solve_tri`。
 `torch.npu.synchronize()`；所有 step 提交完成后才统一做 finite 和
 确定性结果回读。模型矩阵脚本仅在每个 case 结束时同步，用于读取
 finite、显存和确定性统计。
+
+压力日志和每个矩阵 JSON 均确认
+`solve_module=fla.ops.utils.backends.triton_ascend.solve_tril`。
 
 ## 4. 模型 shape 来源与映射
 
@@ -79,10 +90,10 @@ attention、模型权重和 optimizer state 不在本适配层报告的显存统
 表中 shape 为单 rank 的
 `T / key_heads / value_heads / key_dim / value_dim`。显存是两次重复
 执行期间所有 rank 的 `torch.npu.max_memory_allocated()` 最大值。
-“确定”表示相同输入的 output、final state（如有）和全部训练梯度
+“确定性”表示相同输入的 output、final state（如有）和全部训练梯度
 使用 `torch.equal` 比较均一致。
 
-| 场景 | 本地 shape | 模式 | dtype | finite | 确定 | 峰值显存 |
+| 场景 | 本地 shape | 模式 | dtype | finite | 确定性 | 峰值显存 |
 | --- | --- | --- | --- | --- | --- | ---: |
 | Qwen3.5-4B TP4 | 32768 / 4 / 8 / 128 / 128 | 训练、packed | BF16 | 通过 | 通过 | 1692.09 MiB |
 | Qwen3.5-4B SP4 | 8192 / 16 / 32 / 128 / 128 | 训练、dense local shard | BF16 | 通过 | 通过 | 1692.03 MiB |
@@ -132,7 +143,7 @@ BF16 训练 case 的 grad norm 分别为 `2.26e-6` 或 `2.27e-6`。FP16
 
 | 指标 | 结果 |
 | --- | ---: |
-| Triton 输出 finite | 是 |
+| fla-org Triton-Ascend 输出 finite | 是 |
 | AscendC 输出 finite | 是 |
 | 最大绝对误差 | 0.0009765625 |
 | 相对 L2 误差 | 4.6225377e-5 |
@@ -144,13 +155,13 @@ BF16 训练 case 的 grad norm 分别为 `2.26e-6` 或 `2.27e-6`。FP16
 
 | 路径 | 组成 | 单次估算 |
 | --- | --- | ---: |
-| Triton 核心 | 16×16 solve 3113.40 us + 16→32 merge 3870.32 us + 32→64 merge 2054.17 us | 9037.89 us |
-| Triton 含输出初始化 | 核心 + 两个 zeros-like 26.43 us/24.43 us | 9088.76 us |
-| AscendC 核心 | SolveTri | 11560.50 us |
-| 原 AscendC 适配层 | SolveTri + BF16 cast 108.96 us + mask 8.95 us/858.16 us | 12536.57 us |
+| fla-org 核心 | `merge_16x16_to_64x64_inverse_kernel_npu` | 10692.24 us |
+| fla-org 含输出初始化 | 核心 + zeros-like 23.01 us | 10715.25 us |
+| AscendC 核心 | SolveTri | 11285.32 us |
+| 原 AscendC 适配层 | SolveTri + BF16 cast 106.73 us + mask 9.25 us/716.30 us | 12117.61 us |
 
 不同 kernel 的 profiler 捕获次数因 warmup 和 launch-count 边界为
-17～22 次，因此上表按每种 kernel 的独立平均值组合；结论用于同场景
+21～22 次，因此上表按每种 kernel 的独立平均值组合；结论用于同场景
 路径比较，不代表完整 GDR 层耗时。
 
 ## 8. 复现方式
@@ -162,6 +173,14 @@ FLA_NPU_SOC=ascend910b \
 python -m pip wheel --no-build-isolation --no-deps . -w dist
 python -m pip install --force-reinstall --no-deps \
   dist/flash_linear_attention_npu-*.whl
+```
+
+指定经过验证的 fla-org checkout：
+
+```bash
+export FLA_ORG_ROOT=/path/to/flash-linear-attention
+git -C "$FLA_ORG_ROOT" rev-parse HEAD
+# 本报告使用 9c8e42e762fce087c27b673af4922795d9edb85e
 ```
 
 单层和 100 层压力测试。`--cu-seqlens` 为空时使用脚本内置的原始
@@ -202,7 +221,7 @@ python examples/solve_tri_backend_benchmark.py \
   --heads 16
 
 python examples/solve_tri_backend_benchmark.py \
-  --backend triton \
+  --backend fla-org \
   --tokens 32768 \
   --heads 16 \
   --repeats 20
@@ -221,4 +240,6 @@ python examples/solve_tri_backend_benchmark.py \
   `solve_tri` 后端切换无关。
 - 显存数字是 adapter workload 的 allocated peak，不包含完整模型权重、
   KV/cache 之外的模型状态、optimizer state 和通信 buffer。
+- fla-org checkout 是运行时依赖，不包含在 fla-npu wheel 中；执行脚本
+  前必须设置 `FLA_ORG_ROOT`。加载器不会 fallback 到本仓同名实现。
 - 本报告只验证 A2；A3/A5 需要分别编包后补充平台验证。
