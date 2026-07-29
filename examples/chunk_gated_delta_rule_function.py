@@ -20,24 +20,18 @@ The public entry is ``ChunkGatedDeltaRuleFunction.apply`` with this signature::
     )
 
 The adapter implements the full forward and backward chains, including GVA
-head reduction. ``solve_tri`` uses fla-org/flash-linear-attention's
-``triton_ascend`` backend while the remaining GDR stages use their existing
-fla_npu implementations. Set ``FLA_ORG_ROOT`` to the fla-org source checkout
-that contains the backend. The current v26.6.0 ``bwd_dhu`` kernel does not consume
-``h0``/``dht`` or produce ``dh0``. This wrapper therefore supports
-``initial_state`` as a constant forward input, but rejects initial-state
-gradients and final-state-gradient propagation instead of silently returning
-incorrect gradients. Other unsupported combinations are rejected before the
-first compute kernel is launched.
+head reduction. ``solve_tri`` and the remaining AscendC GDR stages use the
+stable ``fla_npu.ops.ascendc`` entry points. The current v26.6.0 ``bwd_dhu``
+kernel does not consume ``h0``/``dht`` or produce ``dh0``. This wrapper
+therefore supports ``initial_state`` as a constant forward input, but rejects
+initial-state gradients and final-state-gradient propagation instead of
+silently returning incorrect gradients. Other unsupported combinations are
+rejected before the first compute kernel is launched.
 """
 
 from __future__ import annotations
 
-import importlib
 import math
-import os
-import sys
-from pathlib import Path
 from typing import Dict, Optional
 
 import torch
@@ -51,6 +45,7 @@ from fla_npu.ops.ascendc import (
     npu_prepare_wy_repr_bwd_da as ascendc_prepare_wy_repr_bwd_da,
     npu_prepare_wy_repr_bwd_full as ascendc_prepare_wy_repr_bwd_full,
     npu_recompute_w_u_fwd as ascendc_recompute_w_u_fwd,
+    npu_solve_tri as ascendc_solve_tri,
 )
 from fla_npu.ops.triton import (
     chunk_local_cumsum,
@@ -62,78 +57,11 @@ from fla_npu.ops.triton import (
 
 TensorIndexDict = Dict[str, Optional[torch.Tensor]]
 ListIndexDict = Dict[str, Optional[list[int]]]
-fla_org_solve_tril = None
 
 _SUPPORTED_DTYPES = (torch.float16, torch.bfloat16)
 _SUPPORTED_CHUNK_SIZES = (64, 128)
 _SUPPORTED_VALUE_DIMS = (128, 256)
 _REQUIRED_METADATA_CHUNK_SIZES = (16, 32, 64, 128, 608 * 2)
-
-
-def get_fla_org_solve_tril():
-    """Load and verify fla-org's Triton-Ascend solve implementation."""
-
-    global fla_org_solve_tril
-    if fla_org_solve_tril is not None:
-        return fla_org_solve_tril
-
-    root_value = os.environ.get("FLA_ORG_ROOT")
-    if not root_value:
-        raise RuntimeError(
-            "FLA_ORG_ROOT must point to a fla-org/flash-linear-attention "
-            "source checkout"
-        )
-    root = Path(root_value).expanduser().resolve()
-    marker = (
-        root
-        / "fla"
-        / "ops"
-        / "utils"
-        / "backends"
-        / "triton_ascend"
-        / "solve_tril.py"
-    )
-    if not marker.is_file():
-        raise RuntimeError(
-            "FLA_ORG_ROOT does not contain fla-org's Triton-Ascend "
-            f"solve backend: {marker}"
-        )
-
-    loaded_fla = sys.modules.get("fla")
-    if loaded_fla is not None:
-        origin_value = getattr(loaded_fla, "__file__", "")
-        origin = Path(origin_value).resolve() if origin_value else None
-        if origin is None or not origin.is_relative_to(root):
-            # fla_npu has already captured its local Triton function objects.
-            # Free the shared namespace before importing fla-org, matching the
-            # mixed-backend ablation loader.
-            for module_name in tuple(sys.modules):
-                if module_name == "fla" or module_name.startswith("fla."):
-                    del sys.modules[module_name]
-
-    root_text = str(root)
-    while root_text in sys.path:
-        sys.path.remove(root_text)
-    sys.path.insert(0, root_text)
-    importlib.invalidate_caches()
-    module = importlib.import_module(
-        "fla.ops.utils.backends.triton_ascend.solve_tril"
-    )
-    module_path = Path(module.__file__).resolve()
-    if not module_path.is_relative_to(root):
-        raise RuntimeError(
-            "resolved solve_tri backend is not from FLA_ORG_ROOT: "
-            f"{module_path}"
-        )
-    fla_org_solve_tril = module.solve_tril_npu
-    return fla_org_solve_tril
-
-
-if os.environ.get("FLA_ORG_ROOT"):
-    # Import before the first local Triton launch. Loading fla-org after a
-    # Triton-Ascend kernel has already initialized the runtime can make its
-    # package-level autotuners observe a partially initialized backend.
-    get_fla_org_solve_tril()
 
 
 def _require_npu_tensor(name: str, tensor: torch.Tensor) -> None:
@@ -500,20 +428,20 @@ def _solve_tri(
     A: torch.Tensor,
     *,
     output_dtype: torch.dtype,
-    cu_seqlens: Optional[torch.Tensor],
-    chunk_indices: Optional[TensorIndexDict],
+    cu_seqlens: Optional[list[int]],
+    chunk_indices: Optional[list[int]],
 ) -> torch.Tensor:
-    # Keep KKT's FP32 output as the solve input. Triton-Ascend performs the
-    # triangular recurrence in FP32 and casts only the merged result.
     if cu_seqlens is not None and chunk_indices is None:
-        raise ValueError("varlen solve_tri requires tensor chunk metadata")
-    solve_tril = get_fla_org_solve_tril()
-    return solve_tril(
-        A=A.contiguous(),
+        raise ValueError("varlen solve_tri requires host chunk metadata")
+    A_input = A.to(output_dtype).contiguous()
+    if cu_seqlens is None:
+        return ascendc_solve_tri(A_input, layout="bsnd")
+    return ascendc_solve_tri(
+        A_input.squeeze(0),
         cu_seqlens=cu_seqlens,
-        chunk_indices=_chunk_tensor(chunk_indices, A.shape[-1]),
-        output_dtype=output_dtype,
-    )
+        chunk_indices=chunk_indices,
+        layout="tnd",
+    ).unsqueeze(0)
 
 
 def _recompute_w_u(
@@ -573,17 +501,17 @@ def _forward_chain(
         chunk_size=chunk_size,
         output_dtype=torch.float32,
     )
+    chunk_list = _chunk_list(chunk_indices_list, chunk_size)
     A = _solve_tri(
         A,
         output_dtype=k.dtype,
-        cu_seqlens=cu_seqlens,
-        chunk_indices=chunk_indices,
+        cu_seqlens=cu_seqlens_list,
+        chunk_indices=chunk_list,
     )
 
     g_head = cumulative_g.transpose(1, 2).contiguous()
     beta_head = beta.transpose(1, 2).contiguous().float()
     A_head = A.transpose(1, 2).contiguous()
-    chunk_list = _chunk_list(chunk_indices_list, chunk_size)
     w, u = _recompute_w_u(
         k,
         v,

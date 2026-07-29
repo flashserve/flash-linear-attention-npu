@@ -4,9 +4,8 @@
 All workload generation, causal-conv forward/backward, checkpointing,
 determinism checks, memory accounting, and end-of-run reporting come from
 ``flash_gated_delta_rule_100layer_stress.py``. Only the GDR apply boundary is
-redirected to ``ChunkGatedDeltaRuleFunction``. The adapter requires
-``FLA_ORG_ROOT`` and sources only solve_tri from fla-org's Triton-Ascend
-backend.
+redirected to ``ChunkGatedDeltaRuleFunction``. All AscendC stages, including
+``solve_tri``, are loaded from the installed fla-npu wheel.
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ import torch
 import flash_gated_delta_rule_100layer_stress as stress
 from chunk_gated_delta_rule_function import (
     ChunkGatedDeltaRuleFunction,
-    get_fla_org_solve_tril,
 )
 
 
@@ -58,12 +56,7 @@ class _StressSignatureAdapter:
 
 
 def main() -> int:
-    solve_tril = get_fla_org_solve_tril()
-    print(
-        "solve_tri_backend=fla-org/triton-ascend "
-        f"module={solve_tril.__module__}",
-        flush=True,
-    )
+    print("solve_tri_backend=fla-npu/ascendc", flush=True)
     stress.StressGatedDeltaRuleFunction = _StressSignatureAdapter
     return stress.main()
 

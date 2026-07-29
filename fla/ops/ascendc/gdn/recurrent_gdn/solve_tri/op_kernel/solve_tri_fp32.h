@@ -4,9 +4,9 @@
  *
  * FP32 implementation for the 64 x 64 solve_tri path.
  *
- * The AIC performs only native FP32 GEMMs. The paired AIV cores prepare the
- * MCH blocks, apply the FP32 additions/masks between GEMMs, and cast the final
- * merged 64 x 64 result back to the input dtype.
+ * The AIC performs only native FP32 GEMMs. The paired AIV cores prepare and
+ * update the MCH blocks, assemble the two sparse block-inverse merges, and
+ * cast the final 64 x 64 result back to the input dtype.
  */
 #ifndef SOLVE_TRI_FP32_H
 #define SOLVE_TRI_FP32_H
@@ -28,16 +28,14 @@ using namespace AscendC;
 
 constexpr int32_t FP32_MATRIX_SIZE = 64;
 constexpr int32_t FP32_MATRIX_ELEMS = FP32_MATRIX_SIZE * FP32_MATRIX_SIZE;
-constexpr int32_t FP32_MATRIX_STRIDE = 128;
+constexpr int32_t FP32_MATRIX_STRIDE = FP32_MATRIX_SIZE;
 constexpr int32_t FP32_SLOT_ELEMS = FP32_MATRIX_SIZE * FP32_MATRIX_STRIDE;
-constexpr int32_t FP32_WORKSPACE_SLOTS = 6;
+constexpr int32_t FP32_WORKSPACE_SLOTS = 4;
 
 constexpr int32_t FP32_SLOT_X = 0;       // MCH input A, then the running inverse X
 constexpr int32_t FP32_SLOT_Y = 1;       // running power Y, then merge temporary Y
 constexpr int32_t FP32_SLOT_TMP = 2;     // GEMM output
 constexpr int32_t FP32_SLOT_MNEG = 3;    // full -M
-constexpr int32_t FP32_SLOT_DRIVE = 4;   // selected diagonal blocks that drive a merge
-constexpr int32_t FP32_SLOT_OTHER = 5;   // the other selected diagonal blocks
 
 // Two independent ready/free pairs. The reverse flag prevents a producer from
 // overflowing the hardware flag counter during long, fully asynchronous runs.
@@ -54,7 +52,6 @@ protected:
         numHeads_ = tilingData->numHeads;
         seqLen_ = tilingData->seqLen;
         batchSize_ = tilingData->batchSize;
-        isLower_ = tilingData->isLower;
         tilesPerCore_ = tilingData->tilesPerCore;
         numChunks_ = tilingData->numChunks;
         lastChunkValidSize_ = tilingData->lastChunkValidSize;
@@ -112,7 +109,6 @@ protected:
     int64_t numHeads_;
     int64_t seqLen_;
     int64_t batchSize_;
-    int64_t isLower_;
     int64_t tilesPerCore_;
     int64_t numChunks_;
     int64_t lastChunkValidSize_;
@@ -120,6 +116,114 @@ protected:
     int64_t rowStride_;
     GlobalTensor<int64_t> cuSeqlensGM_;
     GlobalTensor<int64_t> chunkIndicesGM_;
+};
+
+template <typename ArchTag, typename TensorSrc, bool StackBlocksByRow>
+struct SolveTriPackedBlockGmToL1 {
+    template <typename TensorDst, typename TensorTileSrc>
+    __aicore__ inline void operator()(
+        const TensorDst& dstTensor, const TensorTileSrc& srcTensor)
+    {
+        using namespace Catlass;
+        constexpr int32_t MCH_BLOCK_SIZE = 16;
+        int32_t blockCount;
+        int32_t blockStride;
+        if constexpr (StackBlocksByRow) {
+            blockCount = static_cast<int32_t>(
+                tla::get<0>(srcTensor.originShape())) / MCH_BLOCK_SIZE;
+            blockStride = static_cast<int32_t>(
+                tla::get<0, 1>(srcTensor.layout().stride()));
+        } else {
+            blockCount = static_cast<int32_t>(
+                tla::get<1>(srcTensor.originShape())) / MCH_BLOCK_SIZE;
+            blockStride = static_cast<int32_t>(
+                tla::get<1, 1>(srcTensor.layout().stride()));
+        }
+
+        auto blockLayout = tla::MakeLayout(
+            tla::MakeShape(MCH_BLOCK_SIZE, MCH_BLOCK_SIZE),
+            tla::MakeStride(
+                static_cast<int64_t>(FP32_MATRIX_STRIDE), tla::Int<1>{}),
+            tla::MakeShape(MCH_BLOCK_SIZE, MCH_BLOCK_SIZE));
+        for (int32_t block = 0; block < blockCount; ++block) {
+            auto srcBlock = tla::MakeTensor(
+                srcTensor.data()[
+                    block * blockStride],
+                blockLayout,
+                Arch::PositionGM{});
+            auto dstCoord = StackBlocksByRow
+                ? tla::MakeCoord(block * MCH_BLOCK_SIZE, 0)
+                : tla::MakeCoord(0, block * MCH_BLOCK_SIZE);
+            auto dstBlock = GetTile(
+                dstTensor,
+                dstCoord,
+                tla::MakeShape(MCH_BLOCK_SIZE, MCH_BLOCK_SIZE));
+            using BlockCopy = Catlass::Gemm::Tile::TileCopyTla<
+                ArchTag, decltype(srcBlock), decltype(dstBlock)>;
+            BlockCopy blockCopy;
+            blockCopy(dstBlock, srcBlock);
+        }
+    }
+};
+
+template <
+    typename ArchTag,
+    typename BaseTileCopy,
+    typename TensorSrc,
+    bool IsMchLayout = (TensorSrc::Layout::depth > 1)>
+struct SolveTriBlockCopyASelector {
+    using Type =
+        typename BaseTileCopy::template CopyGmToL1A<TensorSrc>;
+};
+
+template <typename ArchTag, typename BaseTileCopy, typename TensorSrc>
+struct SolveTriBlockCopyASelector<ArchTag, BaseTileCopy, TensorSrc, true> {
+    using Type = SolveTriPackedBlockGmToL1<ArchTag, TensorSrc, true>;
+};
+
+template <
+    typename ArchTag,
+    typename BaseTileCopy,
+    typename TensorSrc,
+    bool IsMchLayout = (TensorSrc::Layout::depth > 1)>
+struct SolveTriBlockCopyBSelector {
+    using Type =
+        typename BaseTileCopy::template CopyGmToL1B<TensorSrc>;
+};
+
+template <typename ArchTag, typename BaseTileCopy, typename TensorSrc>
+struct SolveTriBlockCopyBSelector<ArchTag, BaseTileCopy, TensorSrc, true> {
+    using Type = SolveTriPackedBlockGmToL1<ArchTag, TensorSrc, false>;
+};
+
+template <typename ArchTag>
+struct SolveTriTileCopy
+    : Catlass::Gemm::Tile::PackedTileCopyTla<
+          ArchTag,
+          float,
+          Catlass::layout::RowMajor,
+          float,
+          Catlass::layout::RowMajor,
+          float,
+          Catlass::layout::RowMajor> {
+    using Base = Catlass::Gemm::Tile::PackedTileCopyTla<
+        ArchTag,
+        float,
+        Catlass::layout::RowMajor,
+        float,
+        Catlass::layout::RowMajor,
+        float,
+        Catlass::layout::RowMajor>;
+
+    template <typename TensorA>
+    using CopyGmToL1A =
+        typename SolveTriBlockCopyASelector<
+            ArchTag, Base, TensorA>::Type;
+
+    template <typename TensorB>
+    using CopyGmToL1B =
+        typename SolveTriBlockCopyBSelector<
+            ArchTag, Base, TensorB>::Type;
 };
 
 template <typename T>
@@ -160,12 +264,9 @@ public:
         using ArchTag = Catlass::Arch::AtlasA2;
 #endif
         using DispatchPolicy = Catlass::Gemm::MmadPingpong<ArchTag, false, false>;
-        using L1TileShape = tla::Shape<tla::_128, tla::_128, tla::_64>;
-        using L0TileShape = tla::Shape<tla::_128, tla::_128, tla::_64>;
-        using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
-            ArchTag, float, Catlass::layout::RowMajor,
-            float, Catlass::layout::RowMajor,
-            float, Catlass::layout::RowMajor>;
+        using L1TileShape = tla::Shape<tla::_64, tla::_64, tla::_64>;
+        using L0TileShape = tla::Shape<tla::_64, tla::_64, tla::_64>;
+        using TileCopy = SolveTriTileCopy<ArchTag>;
         using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<
             DispatchPolicy, L1TileShape, L0TileShape,
             float, float, float, void, TileCopy>;
@@ -177,18 +278,18 @@ public:
             WaitAiv();
 
             // MCH initialization: Y=A^2. AIV converts A to X=I-A afterwards.
-            RunGemm(blockMmad, FP32_SLOT_X, FP32_SLOT_X, FP32_SLOT_Y);
+            RunMchGemm(blockMmad, FP32_SLOT_X, FP32_SLOT_X, FP32_SLOT_Y);
             SignalAiv();
             WaitAiv();
 
             // X <- X + X*Y, Y <- Y*Y. Three iterations invert each 16x16 MCH block.
             for (int32_t iter = 0; iter < 3; ++iter) {
-                RunGemm(blockMmad, FP32_SLOT_X, FP32_SLOT_Y, FP32_SLOT_TMP);
+                RunMchGemm(blockMmad, FP32_SLOT_X, FP32_SLOT_Y, FP32_SLOT_TMP);
                 SignalAiv();
                 WaitAiv();
 
                 if (iter < 2) {
-                    RunGemm(blockMmad, FP32_SLOT_Y, FP32_SLOT_Y, FP32_SLOT_TMP);
+                    RunMchGemm(blockMmad, FP32_SLOT_Y, FP32_SLOT_Y, FP32_SLOT_TMP);
                     SignalAiv();
                     WaitAiv();
                 }
@@ -198,11 +299,11 @@ public:
             for (int32_t blockSize = 16; blockSize < FP32_MATRIX_SIZE; blockSize *= 2) {
                 WaitAiv();
 
-                RunGemm(blockMmad, FP32_SLOT_DRIVE, FP32_SLOT_MNEG, FP32_SLOT_TMP);
+                RunMergeFirstGemm(blockMmad, blockSize);
                 SignalAiv();
                 WaitAiv();
 
-                RunGemm(blockMmad, FP32_SLOT_Y, FP32_SLOT_OTHER, FP32_SLOT_TMP);
+                RunMergeSecondGemm(blockMmad, blockSize);
                 SignalAiv();
                 WaitAiv();
             }
@@ -214,8 +315,20 @@ public:
 
 private:
     template <typename BlockMmad>
-    __aicore__ inline void RunGemm(
-        BlockMmad& blockMmad, int32_t slotA, int32_t slotB, int32_t slotC)
+    __aicore__ inline void RunGemmRegion(
+        BlockMmad& blockMmad,
+        int32_t slotA,
+        int32_t slotB,
+        int32_t slotC,
+        int32_t rowA,
+        int32_t colA,
+        int32_t rowB,
+        int32_t colB,
+        int32_t rowC,
+        int32_t colC,
+        int32_t m,
+        int32_t n,
+        int32_t k)
     {
         using namespace Catlass;
         auto layout = tla::MakeLayout(
@@ -229,17 +342,177 @@ private:
         auto tensorC = tla::MakeTensor(
             coreWorkspaceGM_[slotC * FP32_SLOT_ELEMS], layout, Arch::PositionGM{});
         Catlass::GemmCoord actualShape{
-            FP32_MATRIX_SIZE, FP32_MATRIX_SIZE, FP32_MATRIX_SIZE};
+            static_cast<Catlass::GemmCoord::Index>(m),
+            static_cast<Catlass::GemmCoord::Index>(n),
+            static_cast<Catlass::GemmCoord::Index>(k)};
         auto blockA = GetTile(
-            tensorA, tla::MakeCoord(0, 0),
+            tensorA, tla::MakeCoord(rowA, colA),
             tla::MakeShape(actualShape.m(), actualShape.k()));
         auto blockB = GetTile(
-            tensorB, tla::MakeCoord(0, 0),
+            tensorB, tla::MakeCoord(rowB, colB),
             tla::MakeShape(actualShape.k(), actualShape.n()));
         auto blockC = GetTile(
-            tensorC, tla::MakeCoord(0, 0),
+            tensorC, tla::MakeCoord(rowC, colC),
             tla::MakeShape(actualShape.m(), actualShape.n()));
         blockMmad(blockA, blockB, blockC, actualShape);
+    }
+
+    template <typename BlockMmad>
+    __aicore__ inline void RunMchGemm(
+        BlockMmad& blockMmad, int32_t slotA, int32_t slotB, int32_t slotC)
+    {
+        RunDenseGemm(blockMmad, slotA, slotB, slotC);
+    }
+
+    template <typename BlockMmad>
+    __aicore__ inline void RunDenseGemm(
+        BlockMmad& blockMmad, int32_t slotA, int32_t slotB, int32_t slotC)
+    {
+        RunGemmRegion(
+            blockMmad,
+            slotA,
+            slotB,
+            slotC,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            FP32_MATRIX_SIZE,
+            FP32_MATRIX_SIZE,
+            FP32_MATRIX_SIZE);
+    }
+
+    template <typename BlockMmad>
+    __aicore__ inline void RunPackedPairGemm(
+        BlockMmad& blockMmad,
+        int32_t slotA,
+        int32_t baseA,
+        int32_t blockStrideA,
+        int32_t slotB,
+        int32_t baseB,
+        int32_t blockStrideB,
+        int32_t slotC)
+    {
+        using namespace Catlass;
+        constexpr int32_t BLOCK_SIZE = 16;
+        constexpr int32_t BLOCK_COUNT = 2;
+        constexpr int32_t PACKED_SIZE = BLOCK_SIZE * BLOCK_COUNT;
+
+        auto layoutA = tla::MakeLayout(
+            tla::MakeShape(
+                tla::MakeShape(BLOCK_SIZE, BLOCK_COUNT),
+                BLOCK_SIZE),
+            tla::MakeStride(
+                tla::MakeStride(FP32_MATRIX_STRIDE, blockStrideA),
+                1),
+            tla::MakeShape(PACKED_SIZE, BLOCK_SIZE));
+        auto layoutB = tla::MakeLayout(
+            tla::MakeShape(
+                BLOCK_SIZE,
+                tla::MakeShape(BLOCK_SIZE, BLOCK_COUNT)),
+            tla::MakeStride(
+                FP32_MATRIX_STRIDE,
+                tla::MakeStride(1, blockStrideB)),
+            tla::MakeShape(BLOCK_SIZE, PACKED_SIZE));
+        auto layoutC = tla::MakeLayout(
+            tla::MakeShape(PACKED_SIZE, PACKED_SIZE),
+            tla::MakeStride(
+                static_cast<int64_t>(FP32_MATRIX_STRIDE), tla::Int<1>{}),
+            tla::MakeShape(PACKED_SIZE, PACKED_SIZE));
+
+        auto tensorA = tla::MakeTensor(
+            coreWorkspaceGM_[slotA * FP32_SLOT_ELEMS + baseA],
+            layoutA,
+            Arch::PositionGM{});
+        auto tensorB = tla::MakeTensor(
+            coreWorkspaceGM_[slotB * FP32_SLOT_ELEMS + baseB],
+            layoutB,
+            Arch::PositionGM{});
+        auto tensorC = tla::MakeTensor(
+            coreWorkspaceGM_[slotC * FP32_SLOT_ELEMS],
+            layoutC,
+            Arch::PositionGM{});
+        Catlass::GemmCoord actualShape{
+            PACKED_SIZE, PACKED_SIZE, BLOCK_SIZE};
+        blockMmad(tensorA, tensorB, tensorC, actualShape);
+    }
+
+    template <typename BlockMmad>
+    __aicore__ inline void RunMergeFirstGemm(
+        BlockMmad& blockMmad, int32_t blockSize)
+    {
+        if (blockSize == 16) {
+            constexpr int32_t DIAGONAL_BLOCK_1 =
+                16 * FP32_MATRIX_STRIDE + 16;
+            constexpr int32_t LOWER_BLOCK_1 =
+                16 * FP32_MATRIX_STRIDE;
+            constexpr int32_t PAIR_STRIDE =
+                32 * FP32_MATRIX_STRIDE + 32;
+            RunPackedPairGemm(
+                blockMmad,
+                FP32_SLOT_X,
+                DIAGONAL_BLOCK_1,
+                PAIR_STRIDE,
+                FP32_SLOT_MNEG,
+                LOWER_BLOCK_1,
+                PAIR_STRIDE,
+                FP32_SLOT_TMP);
+            return;
+        }
+
+        RunGemmRegion(
+            blockMmad,
+            FP32_SLOT_X,
+            FP32_SLOT_MNEG,
+            FP32_SLOT_TMP,
+            32,
+            32,
+            32,
+            0,
+            0,
+            0,
+            32,
+            32,
+            32);
+    }
+
+    template <typename BlockMmad>
+    __aicore__ inline void RunMergeSecondGemm(
+        BlockMmad& blockMmad, int32_t blockSize)
+    {
+        if (blockSize == 16) {
+            constexpr int32_t PACKED_DIAGONAL_STRIDE =
+                16 * FP32_MATRIX_STRIDE + 16;
+            constexpr int32_t EVEN_DIAGONAL_STRIDE =
+                32 * FP32_MATRIX_STRIDE + 32;
+            RunPackedPairGemm(
+                blockMmad,
+                FP32_SLOT_TMP,
+                0,
+                PACKED_DIAGONAL_STRIDE,
+                FP32_SLOT_X,
+                0,
+                EVEN_DIAGONAL_STRIDE,
+                FP32_SLOT_Y);
+            return;
+        }
+
+        RunGemmRegion(
+            blockMmad,
+            FP32_SLOT_TMP,
+            FP32_SLOT_X,
+            FP32_SLOT_Y,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            32,
+            32,
+            32);
     }
 
     __aicore__ inline void WaitAiv()
@@ -332,15 +605,13 @@ public:
             }
 
             for (int32_t blockSize = 16; blockSize < FP32_MATRIX_SIZE; blockSize *= 2) {
-                SplitX(blockSize);
                 SignalAic();
 
                 WaitAic();
-                AddIdentity(validSize);
                 SignalAic();
 
                 WaitAic();
-                AddDrivingToX();
+                MergeResultToX(blockSize);
                 SignalAic();
             }
 
@@ -395,6 +666,70 @@ private:
             copyParams);
         SetFlag<HardEvent::MTE3_V>(0);
         WaitFlag<HardEvent::MTE3_V>(0);
+    }
+
+    __aicore__ inline void LoadMergeResult(
+        const LocalTensor<float>& dst,
+        int32_t srcRow,
+        int32_t srcCol,
+        int32_t dstRow,
+        int32_t dstCol,
+        int32_t rows,
+        int32_t cols)
+    {
+        uint32_t blockBytes = cols * sizeof(float);
+        DataCopyExtParams copyParams{
+            static_cast<uint16_t>(rows),
+            blockBytes,
+            static_cast<uint32_t>(
+                (FP32_MATRIX_SIZE - cols) * sizeof(float)),
+            static_cast<uint32_t>(
+                (FP32_MATRIX_SIZE - cols) * sizeof(float) / 32),
+            0};
+        DataCopyPadExtParams<float> padParams{false, 0, 0, 0};
+        SetFlag<HardEvent::V_MTE2>(0);
+        WaitFlag<HardEvent::V_MTE2>(0);
+        DataCopyPad(
+            dst[dstRow * FP32_MATRIX_SIZE + dstCol],
+            coreWorkspaceGM_[
+                FP32_SLOT_Y * FP32_SLOT_ELEMS +
+                srcRow * FP32_MATRIX_STRIDE +
+                srcCol],
+            copyParams,
+            padParams);
+        SetFlag<HardEvent::MTE2_V>(0);
+        WaitFlag<HardEvent::MTE2_V>(0);
+    }
+
+    __aicore__ inline void MergeResultToX(int32_t blockSize)
+    {
+        if (blockSize == 16) {
+            LoadSlot(FP32_SLOT_X, fp32LocalA_);
+            int32_t packedBlock = static_cast<int32_t>(subBlockIdx_);
+            LoadMergeResult(
+                fp32LocalA_,
+                packedBlock * 16,
+                packedBlock * 16,
+                16,
+                packedBlock * 32,
+                16,
+                16);
+            StoreSlot(FP32_SLOT_X, fp32LocalA_);
+            return;
+        }
+
+        if (subBlockIdx_ == 1) {
+            LoadSlot(FP32_SLOT_X, fp32LocalA_);
+            LoadMergeResult(
+                fp32LocalA_,
+                0,
+                0,
+                0,
+                0,
+                32,
+                32);
+            StoreSlot(FP32_SLOT_X, fp32LocalA_);
+        }
     }
 
     __aicore__ inline void PrepareInput(int64_t gmOffset, int64_t validSize)
@@ -472,48 +807,6 @@ private:
         StoreSlot(dstSlot, fp32LocalA_);
     }
 
-    __aicore__ inline void SplitX(int32_t blockSize)
-    {
-        LoadSlot(FP32_SLOT_X, fp32LocalA_);
-        Duplicate(fp32LocalB_, 0.0f, STRIP_ELEMS);
-        Duplicate(fp32LocalC_, 0.0f, STRIP_ELEMS);
-        PipeBarrier<PIPE_V>();
-
-        int32_t driveParity = isLower_ ? 1 : 0;
-        for (int32_t localRow = 0; localRow < STRIP_ROWS; ++localRow) {
-            int32_t globalRow = rowBegin_ + localRow;
-            bool rowDrives = ((globalRow / blockSize) & 1) == driveParity;
-            for (int32_t col = 0; col < FP32_MATRIX_SIZE; col += blockSize) {
-                bool colDrives = ((col / blockSize) & 1) == driveParity;
-                if (rowDrives && colDrives) {
-                    Adds(
-                        fp32LocalB_[localRow * FP32_MATRIX_SIZE + col],
-                        fp32LocalA_[localRow * FP32_MATRIX_SIZE + col],
-                        0.0f,
-                        blockSize);
-                } else if (!rowDrives && !colDrives) {
-                    Adds(
-                        fp32LocalC_[localRow * FP32_MATRIX_SIZE + col],
-                        fp32LocalA_[localRow * FP32_MATRIX_SIZE + col],
-                        0.0f,
-                        blockSize);
-                }
-            }
-        }
-        PipeBarrier<PIPE_V>();
-        StoreSlot(FP32_SLOT_DRIVE, fp32LocalB_);
-        StoreSlot(FP32_SLOT_OTHER, fp32LocalC_);
-    }
-
-    __aicore__ inline void AddIdentity(int64_t validSize)
-    {
-        LoadSlot(FP32_SLOT_TMP, fp32LocalA_);
-        BuildIdentity(fp32LocalB_, validSize);
-        Add(fp32LocalA_, fp32LocalA_, fp32LocalB_, STRIP_ELEMS);
-        PipeBarrier<PIPE_V>();
-        StoreSlot(FP32_SLOT_Y, fp32LocalA_);
-    }
-
     __aicore__ inline void BuildIdentity(
         const LocalTensor<float>& identity, int64_t validSize)
     {
@@ -532,15 +825,6 @@ private:
                 8);
         }
         PipeBarrier<PIPE_V>();
-    }
-
-    __aicore__ inline void AddDrivingToX()
-    {
-        LoadSlot(FP32_SLOT_TMP, fp32LocalA_);
-        LoadSlot(FP32_SLOT_DRIVE, fp32LocalB_);
-        Add(fp32LocalA_, fp32LocalA_, fp32LocalB_, STRIP_ELEMS);
-        PipeBarrier<PIPE_V>();
-        StoreSlot(FP32_SLOT_X, fp32LocalA_);
     }
 
     __aicore__ inline void CastAndStore(int64_t gmOffset, int64_t validSize)

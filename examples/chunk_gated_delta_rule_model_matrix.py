@@ -4,8 +4,8 @@
 The cases model the local GDR tensors seen after TP, SP, or sequence-packed CP
 partitioning. Run a case on one process to emulate a rank, or use torchrun with
 the case's declared world size to exercise concurrent multi-NPU submission.
-Set ``FLA_ORG_ROOT`` to fla-org/flash-linear-attention for the default
-Triton-Ascend solve backend. Results are emitted as one JSON object from rank 0.
+The standalone adapter uses fla-npu's AscendC solve backend. Results are emitted
+as one JSON object from rank 0.
 """
 
 from __future__ import annotations
@@ -306,50 +306,12 @@ def _init_distributed() -> tuple[int, int]:
     return rank, world_size
 
 
-def _install_ascendc_solve_reference() -> None:
-    """Install the pre-change solve path for controlled A/B validation."""
-
-    def solve_reference(
-        A: torch.Tensor,
-        cu_seqlens: Optional[torch.Tensor] = None,
-        chunk_indices_out: Optional[dict[str, Optional[torch.Tensor]]] = None,
-        output_dtype: torch.dtype = torch.float32,
-    ) -> torch.Tensor:
-        A_input = A.to(output_dtype).contiguous()
-        if cu_seqlens is None:
-            return ascendc_solve_tri(A_input, layout="bsnd")
-        if chunk_indices_out is None:
-            raise ValueError("AscendC reference requires chunk metadata")
-        chunk_indices = chunk_indices_out[str(A.shape[-1])]
-        if chunk_indices is None:
-            raise ValueError("AscendC reference is missing current chunk metadata")
-        offsets = [int(item) for item in cu_seqlens.detach().cpu().tolist()]
-        flattened = [
-            int(item)
-            for item in chunk_indices.detach().cpu().reshape(-1).tolist()
-        ]
-        return ascendc_solve_tri(
-            A_input.squeeze(0),
-            cu_seqlens=offsets,
-            chunk_indices=flattened,
-            layout="tnd",
-        ).unsqueeze(0)
-
-    gdr_adapter.fla_org_solve_tril = solve_reference
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", choices=tuple(CASES), required=False)
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--dtype", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--determinism-runs", type=int, default=2)
-    parser.add_argument(
-        "--solve-backend",
-        choices=("fla-org", "ascendc-reference"),
-        default="fla-org",
-        help="The reference mode is diagnostic and may synchronize metadata.",
-    )
     args = parser.parse_args()
     if args.list:
         for case in CASES.values():
@@ -361,11 +323,7 @@ def main() -> int:
         parser.error("--determinism-runs must be at least 2")
 
     case = CASES[args.case]
-    if args.solve_backend == "ascendc-reference":
-        _install_ascendc_solve_reference()
-        solve_module = ascendc_solve_tri.__module__
-    else:
-        solve_module = gdr_adapter.get_fla_org_solve_tril().__module__
+    solve_module = ascendc_solve_tri.__module__
     rank, world_size = _init_distributed()
     if world_size not in (1, case.world_size):
         raise ValueError(
@@ -439,7 +397,7 @@ def main() -> int:
     result = {
         **asdict(case),
         "dtype": args.dtype,
-        "solve_backend": args.solve_backend,
+        "solve_backend": "ascendc",
         "solve_module": solve_module,
         "local_tokens": _local_shape(case)[0],
         "local_key_heads": _local_shape(case)[1],

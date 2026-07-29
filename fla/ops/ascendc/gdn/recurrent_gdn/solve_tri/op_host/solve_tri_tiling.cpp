@@ -131,14 +131,14 @@ constexpr uint32_t ATTR_LAYOUT_IDX = 0;
      if (usedCoreNum > coreNum) usedCoreNum = coreNum;
      context->SetBlockDim(usedCoreNum);
  
-     // 64x64: 每个 AIC 使用 6 个 FP32 矩阵槽保存 MCH 和两级合并的中间结果。
+     // 64x64: 每个 AIC 使用 4 个 FP32 矩阵槽保存 MCH 和两级合并的中间结果。
      // 其他尺寸沿用共享辅助矩阵和每核双中转缓冲区。
      // 需要加上系统 workspace 大小
      uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
      size_t userWorkspaceSize;
      if (chunkSize == 64) {
-         constexpr size_t fp32WorkspaceSlots = 6;
-         constexpr size_t fp32WorkspaceStride = 128;
+         constexpr size_t fp32WorkspaceSlots = 4;
+         constexpr size_t fp32WorkspaceStride = 64;
          userWorkspaceSize =
              usedCoreNum * fp32WorkspaceSlots * chunkSize * fp32WorkspaceStride * sizeof(float);
      } else {

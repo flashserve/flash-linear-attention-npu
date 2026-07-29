@@ -7,7 +7,11 @@ Set ``FLA_ORG_ROOT`` to the fla-org/flash-linear-attention source checkout.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
+import os
+import sys
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F
@@ -19,11 +23,68 @@ from fla_npu.ops.triton import (
     chunk_scaled_dot_kkt_fwd,
 )
 
-from chunk_gated_delta_rule_function import get_fla_org_solve_tril
 from flash_gated_delta_rule_100layer_stress import (
     DEFAULT_CU_SEQLENS,
     prepare_varlen_metadata,
 )
+
+_FLA_ORG_SOLVE_TRIL = None
+
+
+def get_fla_org_solve_tril():
+    """Load and verify fla-org's Triton-Ascend solve implementation."""
+
+    global _FLA_ORG_SOLVE_TRIL
+    if _FLA_ORG_SOLVE_TRIL is not None:
+        return _FLA_ORG_SOLVE_TRIL
+
+    root_value = os.environ.get("FLA_ORG_ROOT")
+    if not root_value:
+        raise RuntimeError(
+            "FLA_ORG_ROOT must point to a fla-org/flash-linear-attention "
+            "source checkout"
+        )
+    root = Path(root_value).expanduser().resolve()
+    marker = (
+        root
+        / "fla"
+        / "ops"
+        / "utils"
+        / "backends"
+        / "triton_ascend"
+        / "solve_tril.py"
+    )
+    if not marker.is_file():
+        raise RuntimeError(
+            "FLA_ORG_ROOT does not contain fla-org's Triton-Ascend "
+            f"solve backend: {marker}"
+        )
+
+    loaded_fla = sys.modules.get("fla")
+    if loaded_fla is not None:
+        origin_value = getattr(loaded_fla, "__file__", "")
+        origin = Path(origin_value).resolve() if origin_value else None
+        if origin is None or not origin.is_relative_to(root):
+            for module_name in tuple(sys.modules):
+                if module_name == "fla" or module_name.startswith("fla."):
+                    del sys.modules[module_name]
+
+    root_text = str(root)
+    while root_text in sys.path:
+        sys.path.remove(root_text)
+    sys.path.insert(0, root_text)
+    importlib.invalidate_caches()
+    module = importlib.import_module(
+        "fla.ops.utils.backends.triton_ascend.solve_tril"
+    )
+    module_path = Path(module.__file__).resolve()
+    if not module_path.is_relative_to(root):
+        raise RuntimeError(
+            "resolved solve_tri backend is not from FLA_ORG_ROOT: "
+            f"{module_path}"
+        )
+    _FLA_ORG_SOLVE_TRIL = module.solve_tril_npu
+    return _FLA_ORG_SOLVE_TRIL
 
 
 def _build_input(
@@ -176,6 +237,12 @@ def main() -> int:
     args = parser.parse_args()
     if args.repeats <= 0:
         parser.error("--repeats must be positive")
+
+    if args.backend in ("fla-org", "compare"):
+        # Import fla-org before the first local Triton kernel initializes the
+        # runtime. Loading it after KKT has launched can leave its autotuner
+        # observing a partially initialized backend.
+        get_fla_org_solve_tril()
 
     device = torch.device(f"npu:{args.device}")
     dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float16

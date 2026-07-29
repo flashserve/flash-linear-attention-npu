@@ -100,6 +100,12 @@ npu_solve_tri(
 3. 通过 AIC 核执行 CUBE 矩阵乘法，AIV 核生成辅助矩阵
 4. 64×64 路径将输入提升为 FP32，MCH 基块和后续 MXR 合并均保持 FP32，
    并显式关闭 HF32；仅在最终写回输出时转换为 FLOAT16/BFLOAT16
+5. A2 的 64×64 路径保留连续 MCH GEMM；两级 MXR 合并按真实下三角
+   非零块计算。16→32 阶段将两组独立 16×16 块组合为
+   `32×16 @ 16×32`，32→64 阶段执行两次 32×32 GEMM，不再为稀疏辅助
+   矩阵执行完整 64×64 GEMM
+6. 每个参与的 AIC 使用 4 个连续 64×64 FP32 workspace 槽，分别保存
+   递推逆、幂矩阵、GEMM 临时结果和 `-A`
 
 GDN 调用链中，`chunk_scaled_dot_kkt_fwd` 生成的 `A` 为 FP32；
 进入 `npu_solve_tri` 前会转换为 `k.dtype`。64×64 kernel 内部重新提升为
