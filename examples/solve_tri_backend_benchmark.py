@@ -26,12 +26,14 @@ from flash_gated_delta_rule_100layer_stress import (
 )
 
 
-def _build_kkt_input(
+def _build_input(
     *,
     tokens: int,
     heads: int,
     chunk_size: int,
     dtype: torch.dtype,
+    a_dtype: torch.dtype,
+    input_source: str,
     device: torch.device,
 ) -> tuple[
     torch.Tensor,
@@ -49,6 +51,17 @@ def _build_kkt_input(
         chunk_size,
         device,
     )
+    if input_source == "zeros":
+        A = torch.zeros(
+            1,
+            tokens,
+            heads,
+            chunk_size,
+            dtype=a_dtype,
+            device=device,
+        )
+        return A, cu_seqlens, offsets, chunk_indices, chunk_indices_list
+
     k = F.normalize(
         torch.randn(
             1,
@@ -92,7 +105,7 @@ def _build_kkt_input(
         cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices[str(chunk_size)],
         chunk_size=chunk_size,
-        output_dtype=torch.float32,
+        output_dtype=a_dtype,
     )
     return A, cu_seqlens, offsets, chunk_indices, chunk_indices_list
 
@@ -142,21 +155,44 @@ def main() -> int:
     parser.add_argument("--chunk-size", type=int, default=64)
     parser.add_argument("--repeats", type=int, default=50)
     parser.add_argument("--dtype", choices=("bf16", "fp16"), default="bf16")
+    parser.add_argument(
+        "--a-dtype",
+        choices=("fp32", "bf16"),
+        default="fp32",
+        help=(
+            "KKT output dtype passed to solve; fp32 matches the real GDR "
+            "adapter"
+        ),
+    )
+    parser.add_argument(
+        "--input-source",
+        choices=("kkt", "zeros"),
+        default="kkt",
+        help=(
+            "kkt uses the real GDR producer; zeros isolates solve performance "
+            "from producer/cast stream dependencies"
+        ),
+    )
     args = parser.parse_args()
     if args.repeats <= 0:
         parser.error("--repeats must be positive")
 
     device = torch.device(f"npu:{args.device}")
     dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float16
+    a_dtype = (
+        torch.float32 if args.a_dtype == "fp32" else torch.bfloat16
+    )
     torch.npu.set_device(device)
     torch.manual_seed(20260729)
     torch.npu.manual_seed_all(20260729)
     A, cu_seqlens, offsets, chunk_indices, chunk_indices_list = (
-        _build_kkt_input(
+        _build_input(
             tokens=args.tokens,
             heads=args.heads,
             chunk_size=args.chunk_size,
             dtype=dtype,
+            a_dtype=a_dtype,
+            input_source=args.input_source,
             device=device,
         )
     )
@@ -186,6 +222,9 @@ def main() -> int:
             1e-12
         )
         result = {
+            "a_dtype": str(A.dtype),
+            "input_source": args.input_source,
+            "output_dtype": str(dtype),
             "fla_org_finite": bool(
                 torch.isfinite(fla_org_output).all().item()
             ),
@@ -214,7 +253,9 @@ def main() -> int:
                 "repeats": args.repeats,
                 "finite": bool(torch.isfinite(output).all().item()),
                 "shape": list(output.shape),
-                "dtype": str(output.dtype),
+                "a_dtype": str(A.dtype),
+                "input_source": args.input_source,
+                "output_dtype": str(output.dtype),
             },
             sort_keys=True,
         )

@@ -21,6 +21,10 @@ PR #249 的 `examples/chunk_gated_delta_rule_function.py` 仅将
   `5.351 ms`，原 AscendC 核心约 `5.581 ms`，只提升 `1.04x`；计入
   两边适配辅助算子后约为 `5.364 ms` 与 `5.972 ms`，只提升
   `1.11x`。
+- 将 solve 输入 `A` 也改成 BF16 时，fla-org Triton-Ascend 在缩小到
+  `T=1024, H=8, BT=64` 的零输入用例上仍无法完成；相同 BF16 输入的
+  AscendC 路径可以正常运行。该环境下不能使用 fla-org 的 BF16 `A`
+  specialization。
 
 因此，fla-org Triton-Ascend `solve_tri` 的正确性和确定性满足本报告
 覆盖的 adapter 调用链，但 H=8/H=16 主场景的性能收益均不可接受，
@@ -176,6 +180,35 @@ H=8 的变长 metadata 包含 544 个 chunk，Triton grid 为
 内部执行四个 16 × 16 递推块和多次 FP32 IEEE dot，是当前耗时的主要
 来源。
 
+### 7.3 实验性 BF16 `A`
+
+真实 adapter 保持 KKT 输出 `A=FP32`。为判断减少一半输入带宽是否能
+改善 solve 性能，benchmark 额外支持让 KKT 直接写出 BF16 `A`，以及
+使用 BF16 零输入隔离 solve：
+
+- FP32 KKT 输出后执行 NPU `A.to(torch.bfloat16)` 时，进程停在
+  `rtStreamSynchronize`，没有进入 solve。
+- 改成 KKT 直接写 BF16 后，组合调用仍无法完成。
+- 进一步绕过 KKT，在 `T=1024, H=8, BT=64` 上直接构造 BF16 零输入，
+  单独调用 fla-org solve 仍无法完成，说明问题位于 fla-org BF16 `A`
+  specialization，而不是大 shape 或 KKT 数值。
+- 相同缩小输入的 AscendC solve 正常完成。
+
+对可运行的 AscendC 路径补测完整 `T=32768, H=8, BT=64` BF16 零输入，
+20 次 `msopprof BasicInfo` 平均结果为：
+
+| 组成 | 单次耗时 |
+| --- | ---: |
+| AscendC SolveTri | 5552.48 us |
+| logical-not | 8.25 us |
+| masked-fill | 331.03 us |
+| 合计 | 5891.76 us |
+
+该路径不再包含 FP32→BF16 cast，但相比真实 FP32 `A` 适配路径的
+`5971.80 us` 只减少约 `80 us`，改善约 `1.4%`。因此即使忽略
+fla-org BF16 specialization 无法完成的问题，单纯把 `A` 改成 BF16
+也不能解决当前性能瓶颈。
+
 ## 8. 复现方式
 
 从 PR 当前源码构建 wheel：
@@ -240,6 +273,17 @@ python examples/solve_tri_backend_benchmark.py \
   --heads 8 \
   --chunk-size 64 \
   --dtype bf16 \
+  --repeats 20
+
+# 实验性 BF16 A；默认仍为真实 adapter 使用的 --a-dtype fp32
+python examples/solve_tri_backend_benchmark.py \
+  --backend ascendc \
+  --tokens 32768 \
+  --heads 8 \
+  --chunk-size 64 \
+  --dtype bf16 \
+  --a-dtype bf16 \
+  --input-source zeros \
   --repeats 20
 ```
 
