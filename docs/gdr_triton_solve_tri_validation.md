@@ -17,13 +17,15 @@ PR #249 的 `examples/chunk_gated_delta_rule_function.py` 仅将
 - 对原始 `T=32768, H=16, BT=64` 变长用例，fla-org 与原 AscendC
   路径的输出相对 L2 误差为 `4.62254e-5`，最大绝对误差为
   `9.765625e-4`。
-- `msopprof` 显示，fla-org 的 64 × 64 merge kernel 约 `10.692 ms`，
-  原 AscendC `SolveTri` 核心约 `11.285 ms`，核心计算提升约
-  `1.06x`；计入原适配层 cast/mask 和 fla-org 输出初始化后，单次调用
-  估算分别为 `12.118 ms` 与 `10.715 ms`，提升约 `1.13x`。
+- 补测 `T=32768, H=8, BT=64, BF16` 后，fla-org 核心耗时约
+  `5.351 ms`，原 AscendC 核心约 `5.581 ms`，只提升 `1.04x`；计入
+  两边适配辅助算子后约为 `5.364 ms` 与 `5.972 ms`，只提升
+  `1.11x`。
 
-因此，就本报告覆盖的 adapter 调用链和本地 GDR shard 而言，可以使用
-fla-org Triton-Ascend `solve_tri` 替代当前 AscendC `solve_tri`。
+因此，fla-org Triton-Ascend `solve_tri` 的正确性和确定性满足本报告
+覆盖的 adapter 调用链，但 H=8/H=16 主场景的性能收益均不可接受，
+不能作为 `solve_tri` 性能问题的最终解决方案。当前切换仅适合继续做
+后端对照和优化定位。
 
 ## 2. 代码变更
 
@@ -137,32 +139,42 @@ BF16 训练 case 的 grad norm 分别为 `2.26e-6` 或 `2.27e-6`。FP16
 
 ### 7.1 精度
 
-输入 `A` 由真实 `chunk_local_cumsum` +
+输入 `A` 由 BF16 的 `k/g/beta` 经过真实 `chunk_local_cumsum` +
 `chunk_scaled_dot_kkt_fwd(output_dtype=torch.float32)` 生成，不使用独立
-随机三角矩阵。比较 shape 为 `T=32768, H=16, BT=64`：
+随机三角矩阵。按照实际 adapter 语义，传入 solve 的 `A` 是 FP32，
+solve 输出为 BF16。比较结果如下：
 
-| 指标 | 结果 |
-| --- | ---: |
-| fla-org Triton-Ascend 输出 finite | 是 |
-| AscendC 输出 finite | 是 |
-| 最大绝对误差 | 0.0009765625 |
-| 相对 L2 误差 | 4.6225377e-5 |
+| shape | fla-org finite | AscendC finite | 最大绝对误差 | 相对 L2 误差 |
+| --- | --- | --- | ---: | ---: |
+| T=32768, H=8, BT=64 | 是 | 是 | 0.0009765625 | 4.6058543e-5 |
+| T=32768, H=16, BT=64 | 是 | 是 | 0.0009765625 | 4.6225377e-5 |
 
 ### 7.2 `msopprof` 性能
 
 在相同输入上分别循环调用 20 次。以下时间取 `msopprof BasicInfo`
 中对应 kernel 的平均 Task Duration，不使用 Python wall time。
 
-| 路径 | 组成 | 单次估算 |
-| --- | --- | ---: |
-| fla-org 核心 | `merge_16x16_to_64x64_inverse_kernel_npu` | 10692.24 us |
-| fla-org 含输出初始化 | 核心 + zeros-like 23.01 us | 10715.25 us |
-| AscendC 核心 | SolveTri | 11285.32 us |
-| 原 AscendC 适配层 | SolveTri + BF16 cast 106.73 us + mask 9.25 us/716.30 us | 12117.61 us |
+| shape | 路径 | 组成 | 单次估算 |
+| --- | --- | --- | ---: |
+| H=8 | fla-org 核心 | `merge_16x16_to_64x64_inverse_kernel_npu` | 5350.82 us |
+| H=8 | fla-org 适配路径 | 核心 + zeros-like 13.44 us | 5364.25 us |
+| H=8 | AscendC 核心 | SolveTri | 5581.43 us |
+| H=8 | 原 AscendC 适配层 | SolveTri + BF16 cast 49.61 us + logical-not 9.36 us + masked-fill 331.39 us | 5971.80 us |
+| H=16 | fla-org 核心 | `merge_16x16_to_64x64_inverse_kernel_npu` | 10692.24 us |
+| H=16 | fla-org 适配路径 | 核心 + zeros-like 23.01 us | 10715.25 us |
+| H=16 | AscendC 核心 | SolveTri | 11285.32 us |
+| H=16 | 原 AscendC 适配层 | SolveTri + BF16 cast 106.73 us + logical-not 9.25 us + masked-fill 716.30 us | 12117.61 us |
 
-不同 kernel 的 profiler 捕获次数因 warmup 和 launch-count 边界为
-21～22 次，因此上表按每种 kernel 的独立平均值组合；结论用于同场景
-路径比较，不代表完整 GDR 层耗时。
+每条路径执行一次 warmup 和 20 次计时循环，因此 solve、输出初始化和
+mask 均捕获 21 次。AscendC 日志中的同类型 cast 还包含一次输入构造
+阶段的 cast；表中已排除该次输入构造，只统计 21 次 adapter cast。
+上表按每种 kernel 的独立平均值组合，不代表完整 GDR 层耗时。
+
+H=8 的变长 metadata 包含 544 个 chunk，Triton grid 为
+`544 × 8 = 4352` 个 programs，与 profiler 记录的 Block Dim 一致；
+没有发现重复展开 chunk/head 的调用错误。64 × 64 kernel 每个 program
+内部执行四个 16 × 16 递推块和多次 FP32 IEEE dot，是当前耗时的主要
+来源。
 
 ## 8. 复现方式
 
@@ -218,12 +230,16 @@ python examples/chunk_gated_delta_rule_model_matrix.py --list
 python examples/solve_tri_backend_benchmark.py \
   --backend compare \
   --tokens 32768 \
-  --heads 16
+  --heads 8 \
+  --chunk-size 64 \
+  --dtype bf16
 
 python examples/solve_tri_backend_benchmark.py \
   --backend fla-org \
   --tokens 32768 \
-  --heads 16 \
+  --heads 8 \
+  --chunk-size 64 \
+  --dtype bf16 \
   --repeats 20
 ```
 
