@@ -114,28 +114,30 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_void_p),
     ],
     "aclnnRecurrentKda": [
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
+        ctypes.c_void_p,  # query
+        ctypes.c_void_p,  # key
+        ctypes.c_void_p,  # value
+        ctypes.c_void_p,  # gate
+        ctypes.c_void_p,  # beta
+        ctypes.c_void_p,  # initialStateRef
+        ctypes.c_void_p,  # cuSeqlensOptional
+        ctypes.c_void_p,  # ssmStateIndicesOptional
+        ctypes.c_void_p,  # aLogOptional
+        ctypes.c_void_p,  # dtBiasOptional
+        ctypes.c_void_p,  # numAcceptedTokensOptional
         ctypes.c_char_p,
         ctypes.c_double,
-        ctypes.c_bool,
-        ctypes.c_bool,
-        ctypes.c_bool,
-        ctypes.c_bool,
-        ctypes.c_bool,
-        ctypes.c_bool,
+        ctypes.c_bool,  # outputFinalState
+        ctypes.c_bool,  # inplaceFinalState
+        ctypes.c_bool,  # useQkL2normInKernel
+        ctypes.c_bool,  # useGateInKernel
+        ctypes.c_bool,  # useBetaSigmoidInKernel
+        ctypes.c_bool,  # allowNegEigval
+        ctypes.c_bool,  # safeGate
         ctypes.c_double,
-        ctypes.c_bool,
-        ctypes.c_void_p,
+        ctypes.c_bool,  # stateVFirst
+        ctypes.c_void_p,  # attnOut
+        ctypes.c_void_p,  # finalState
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
@@ -1003,7 +1005,7 @@ def npu_recurrent_kda(
     beta,
     initial_state=None,
     *,
-    cu_seqlens,
+    cu_seqlens=None,
     ssm_state_indices=None,
     A_log=None,
     dt_bias=None,
@@ -1011,13 +1013,14 @@ def npu_recurrent_kda(
     layout="BSND",
     scale=None,
     output_final_state=False,
+    inplace_final_state=True,
     use_qk_l2norm_in_kernel=False,
     use_gate_in_kernel=False,
     use_beta_sigmoid_in_kernel=False,
     allow_neg_eigval=False,
     safe_gate=False,
     lower_bound=None,
-    state_v_first=True,
+    state_v_first=False,
 ):
     import torch
 
@@ -1025,11 +1028,8 @@ def npu_recurrent_kda(
     if layout not in ("BSND", "TND"):
         raise RuntimeError("npu_recurrent_kda: layout must be BSND or TND.")
     is_tnd = layout == "TND"
-    q_shape = _shape(q)
-    k_shape = _shape(k)
-    v_shape = _shape(v)
-    g_shape = _shape(g)
-    beta_shape = _shape(beta)
+    q_shape, k_shape, v_shape = _shape(q), _shape(k), _shape(v)
+    g_shape, beta_shape = _shape(g), _shape(beta)
     expected_q_rank = 3 if is_tnd else 4
     if (
         len(q_shape) != expected_q_rank
@@ -1056,9 +1056,8 @@ def npu_recurrent_kda(
 
     if is_tnd:
         total_tokens, heads, key_dim = q_shape
+        batch, dense_seq_len = 1, total_tokens
         value_heads, value_dim = v_shape[1], v_shape[2]
-        dense_seq_len = total_tokens
-        batch = 1
         value_shape_ok = (
             v_shape[0] == total_tokens
             and g_shape == (total_tokens, value_heads, key_dim)
@@ -1066,11 +1065,10 @@ def npu_recurrent_kda(
         )
     else:
         batch, dense_seq_len, heads, key_dim = q_shape
-        value_heads, value_dim = v_shape[2], v_shape[3]
         total_tokens = batch * dense_seq_len
+        value_heads, value_dim = v_shape[2], v_shape[3]
         value_shape_ok = (
-            v_shape[0] == batch
-            and v_shape[1] == dense_seq_len
+            v_shape[:2] == (batch, dense_seq_len)
             and g_shape == (batch, dense_seq_len, value_heads, key_dim)
             and beta_shape == (batch, dense_seq_len, value_heads)
         )
@@ -1082,32 +1080,42 @@ def npu_recurrent_kda(
         raise RuntimeError("npu_recurrent_kda: HV must be divisible by H.")
     if (key_dim, value_dim) not in ((128, 128), (128, 256)):
         raise RuntimeError("npu_recurrent_kda: K/V currently support only K=128,V=128 or K=128,V=256.")
-    if (not isinstance(cu_seqlens, torch.Tensor) or cu_seqlens.dim() != 1 or
-            cu_seqlens.numel() < 2):
-        raise RuntimeError(
-            "npu_recurrent_kda: cu_seqlens must be a 1D device tensor with at least two elements."
-        )
-    if cu_seqlens.dtype not in (torch.int32, torch.int64):
-        raise RuntimeError("npu_recurrent_kda: cu_seqlens must be INT32 or INT64.")
-    if cu_seqlens.device != q.device:
-        raise RuntimeError("npu_recurrent_kda: cu_seqlens must be on the same device as q.")
-    seq_num = int(cu_seqlens.shape[0]) - 1
 
-    state_v_first = _optional_bool(state_v_first, True)
-    if not state_v_first:
-        raise RuntimeError("npu_recurrent_kda: state_v_first=False is not supported.")
-    expected_tail = (value_heads, value_dim, key_dim)
+    if cu_seqlens is None:
+        seq_num = batch if not is_tnd else 1
+    else:
+        if (
+            not isinstance(cu_seqlens, torch.Tensor)
+            or cu_seqlens.dim() != 1
+            or cu_seqlens.numel() < 2
+            or cu_seqlens.dtype not in (torch.int32, torch.int64)
+        ):
+            raise RuntimeError("npu_recurrent_kda: cu_seqlens must be a 1D INT32 or INT64 tensor.")
+        if cu_seqlens.device != q.device:
+            raise RuntimeError("npu_recurrent_kda: cu_seqlens must be on the same device as q.")
+        seq_num = int(cu_seqlens.shape[0]) - 1
+
+    state_v_first = _optional_bool(state_v_first, False)
+    expected_tail = (
+        (value_heads, value_dim, key_dim)
+        if state_v_first
+        else (value_heads, key_dim, value_dim)
+    )
+    inplace = _optional_bool(inplace_final_state, True)
     if initial_state is None:
+        if inplace:
+            raise RuntimeError("npu_recurrent_kda: inplace_final_state=True requires initial_state.")
         state_shape = (seq_num, *expected_tail)
         initial_state_work = _zeros(state_shape, q, dtype=torch.float32)
     else:
         if initial_state.dtype not in (torch.float32, torch.bfloat16):
-            raise RuntimeError("npu_recurrent_kda: initial_state must be a mutable FP32 or BF16 state tensor.")
+            raise RuntimeError("npu_recurrent_kda: initial_state must use FP32 or BF16.")
         if initial_state.device != q.device:
             raise RuntimeError("npu_recurrent_kda: initial_state must be on the same device as q.")
         state_shape = _shape(initial_state)
         if len(state_shape) != 4 or state_shape[0] <= 0 or state_shape[1:] != expected_tail:
-            raise RuntimeError("npu_recurrent_kda: initial_state must be [state_capacity,HV,V,K].")
+            layout_desc = "[state_capacity,HV,V,K]" if state_v_first else "[state_capacity,HV,K,V]"
+            raise RuntimeError(f"npu_recurrent_kda: initial_state must be {layout_desc}.")
         initial_state_work = initial_state
 
     if ssm_state_indices is not None:
@@ -1125,9 +1133,7 @@ def npu_recurrent_kda(
         if ssm_state_indices.device != q.device:
             raise RuntimeError("npu_recurrent_kda: ssm_state_indices must be on the same device as q.")
     elif state_shape[0] != seq_num:
-        raise RuntimeError(
-            "npu_recurrent_kda: without ssm_state_indices, state_capacity must equal seq_num."
-        )
+        raise RuntimeError("npu_recurrent_kda: without ssm_state_indices, state_capacity must equal seq_num.")
     if num_accepted_tokens is not None:
         if ssm_state_indices is None:
             raise RuntimeError("npu_recurrent_kda: num_accepted_tokens requires ssm_state_indices.")
@@ -1152,17 +1158,13 @@ def npu_recurrent_kda(
                 raise RuntimeError("npu_recurrent_kda: dt_bias must be FP32 [HV*K] or [HV,K].")
             if dt_bias.device != q.device:
                 raise RuntimeError("npu_recurrent_kda: dt_bias must be on the same device as q.")
-    else:
-        if safe:
-            raise RuntimeError("npu_recurrent_kda: safe_gate only applies when use_gate_in_kernel=True.")
-        if A_log is not None or dt_bias is not None:
-            raise RuntimeError("npu_recurrent_kda: A_log and dt_bias must be None when use_gate_in_kernel=False.")
+    elif safe or A_log is not None or dt_bias is not None:
+        raise RuntimeError("npu_recurrent_kda: A_log, dt_bias and safe_gate require use_gate_in_kernel=True.")
 
     out = _empty_like(v)
-    final_state_work = initial_state_work
-    final_state = final_state_work if _optional_bool(output_final_state, False) else _empty((0,), initial_state_work)
-    user_outputs = (out, final_state)
-    kernel_outputs = (out, final_state_work)
+    final_state_work = initial_state_work if inplace else _empty(state_shape, initial_state_work)
+    final_state_arg = _empty(state_shape, initial_state_work) if inplace else final_state_work
+    output_final = _optional_bool(output_final_state, False)
     scale_value = _optional_float(scale, key_dim ** -0.5)
     layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
 
@@ -1181,7 +1183,8 @@ def npu_recurrent_kda(
             ctx.tensor(num_accepted_tokens, "num_accepted_tokens"),
             ctypes.cast(layout_buffer, ctypes.c_char_p),
             ctypes.c_double(float(scale_value)),
-            ctypes.c_bool(_optional_bool(output_final_state, False)),
+            ctypes.c_bool(output_final),
+            ctypes.c_bool(inplace),
             ctypes.c_bool(_optional_bool(use_qk_l2norm_in_kernel, False)),
             ctypes.c_bool(use_gate),
             ctypes.c_bool(_optional_bool(use_beta_sigmoid_in_kernel, False)),
@@ -1189,16 +1192,17 @@ def npu_recurrent_kda(
             ctypes.c_bool(safe),
             ctypes.c_double(lower),
             ctypes.c_bool(state_v_first),
-            ctx.tensor(out, "out"),
+            ctx.tensor(out, "attn_out"),
+            ctx.tensor(final_state_arg, "final_state"),
         ]
 
     _call_aclnn(
         "aclnnRecurrentKda",
         build_args,
-        kernel_outputs,
+        (out, initial_state_work, final_state_arg),
     )
-    return user_outputs
-
+    final_state = final_state_work if output_final else None
+    return out, final_state
 
 # Dense BSND Host code transposes all ten inputs to BNSD. Its four internal
 # outputs alias the transposed gradient inputs, so bounding this input footprint

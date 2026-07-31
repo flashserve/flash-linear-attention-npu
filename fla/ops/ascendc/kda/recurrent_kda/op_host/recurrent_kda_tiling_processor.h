@@ -65,6 +65,7 @@ struct RecurrentKdaTilingContext {
     float scale = 1.0f;
     float lowerBound = -5.0f;
     uint32_t layout = RKDA_LAYOUT_BSND;
+    uint32_t hasCuSeqlens = 0;
     uint32_t hasSsmStateIndices = 0;
     uint32_t hasALog = 0;
     uint32_t hasDtBias = 0;
@@ -74,8 +75,15 @@ struct RecurrentKdaTilingContext {
     uint32_t useBetaSigmoid = 0;
     uint32_t allowNegEigval = 0;
     uint32_t safeGate = 0;
-    uint32_t stateVFirst = 1;
+    uint32_t stateVFirst = 0;
+    uint32_t outputFinalState = 0;
+    uint32_t inplaceFinalState = 1;
     ge::DataType stateDtype = ge::DT_BF16;
+    ge::DataType gateDtype = ge::DT_FLOAT;
+    ge::DataType betaDtype = ge::DT_FLOAT;
+    ge::DataType cuSeqlensDtype = ge::DT_INT64;
+    ge::DataType ssmStateIndicesDtype = ge::DT_INT64;
+    ge::DataType acceptedTokensDtype = ge::DT_INT64;
     uint64_t aivNum = 0;
     uint64_t ubSize = 0;
 };
@@ -171,23 +179,28 @@ private:
         return true;
     }
 
-    int64_t SeqNum(const gert::Shape &cuSeqlensShape) const
+    int64_t SeqNum(const gert::Shape &queryShape, const gert::Shape &cuSeqlensShape) const
     {
-        return cuSeqlensShape.GetDim(RKDA_DIM_0) - 1;
+        if (ctx_.hasCuSeqlens) {
+            return cuSeqlensShape.GetDim(RKDA_DIM_0) - 1;
+        }
+        return ctx_.layout == RKDA_LAYOUT_BSND ? queryShape.GetDim(RKDA_DIM_0) : 1;
     }
 
     ge::graphStatus CheckMetadataShapes(const gert::Shape &queryShape, const gert::Shape &cuSeqlensShape) const
     {
-        if (!CheckDim(cuSeqlensShape, RKDA_METADATA_RANK1, "cu_seqlens")) {
-            return ge::GRAPH_FAILED;
+        if (ctx_.hasCuSeqlens) {
+            if (!CheckDim(cuSeqlensShape, RKDA_METADATA_RANK1, "cu_seqlens")) {
+                return ge::GRAPH_FAILED;
+            }
+            OP_CHECK_IF(cuSeqlensShape.GetDim(RKDA_DIM_0) < 2,
+                        OP_LOGE(ctx_.nodeName, "cu_seqlens must contain at least 2 elements."),
+                        return ge::GRAPH_FAILED);
         }
-        OP_CHECK_IF(cuSeqlensShape.GetDim(RKDA_DIM_0) < 2,
-                    OP_LOGE(ctx_.nodeName, "cu_seqlens must contain at least 2 elements."),
-                    return ge::GRAPH_FAILED);
         int64_t totalTokens =
             (ctx_.layout == RKDA_LAYOUT_TND) ? queryShape.GetDim(RKDA_DIM_0) :
             queryShape.GetDim(RKDA_DIM_0) * queryShape.GetDim(RKDA_DIM_1);
-        int64_t seqNum = cuSeqlensShape.GetDim(RKDA_DIM_0) - 1;
+        int64_t seqNum = SeqNum(queryShape, cuSeqlensShape);
 
         if (ctx_.hasSsmStateIndices) {
             size_t rank = ctx_.ssmStateShape.GetDimNum();
@@ -318,17 +331,16 @@ private:
         if (!CheckDim(stateShape, RKDA_STATE_DIM_NUM, "initial_state")) {
             return ge::GRAPH_FAILED;
         }
-        OP_CHECK_IF(!ctx_.stateVFirst,
-                    OP_LOGE(ctx_.nodeName, "state_v_first=false is not supported by RecurrentKda."),
-                    return ge::GRAPH_FAILED);
-        int64_t seqNum = SeqNum(cuSeqlensShape);
+        int64_t seqNum = SeqNum(queryShape, cuSeqlensShape);
+        bool stateTailMatches = ctx_.stateVFirst ?
+            (stateShape.GetDim(RKDA_DIM_2) == vDim && stateShape.GetDim(RKDA_DIM_3) == kDim) :
+            (stateShape.GetDim(RKDA_DIM_2) == kDim && stateShape.GetDim(RKDA_DIM_3) == vDim);
         OP_CHECK_IF(stateShape.GetDim(RKDA_DIM_0) <= 0 ||
                         (!ctx_.hasSsmStateIndices && stateShape.GetDim(RKDA_DIM_0) != seqNum) ||
-                        stateShape.GetDim(RKDA_DIM_1) != hvNum ||
-                        stateShape.GetDim(RKDA_DIM_2) != vDim ||
-                        stateShape.GetDim(RKDA_DIM_3) != kDim,
+                        stateShape.GetDim(RKDA_DIM_1) != hvNum || !stateTailMatches,
                     OP_LOGE(ctx_.nodeName,
-                            "state must be [state_capacity, HV, V, K]; without ssm_state_indices, "
+                            "state must be [state_capacity, HV, V, K] when state_v_first=true or "
+                            "[state_capacity, HV, K, V] otherwise; without ssm_state_indices, "
                             "state_capacity must equal seq_num."),
                     return ge::GRAPH_FAILED);
 
@@ -350,7 +362,7 @@ private:
             tiling.dk = static_cast<uint32_t>(queryShape.GetDim(RKDA_DIM_2));
             tiling.nv = static_cast<uint32_t>(valueShape.GetDim(RKDA_DIM_1));
             tiling.dv = static_cast<uint32_t>(valueShape.GetDim(RKDA_DIM_2));
-            tiling.b = static_cast<uint32_t>(cuSeqlensShape.GetDim(RKDA_DIM_0) - 1);
+            tiling.b = static_cast<uint32_t>(SeqNum(queryShape, cuSeqlensShape));
         } else {
             tiling.seqLen = static_cast<uint32_t>(queryShape.GetDim(RKDA_DIM_1));
             tiling.t = static_cast<uint32_t>(queryShape.GetDim(RKDA_DIM_0) * queryShape.GetDim(RKDA_DIM_1));
@@ -358,7 +370,7 @@ private:
             tiling.dk = static_cast<uint32_t>(queryShape.GetDim(RKDA_DIM_3));
             tiling.nv = static_cast<uint32_t>(valueShape.GetDim(RKDA_DIM_2));
             tiling.dv = static_cast<uint32_t>(valueShape.GetDim(RKDA_DIM_3));
-            tiling.b = static_cast<uint32_t>(cuSeqlensShape.GetDim(RKDA_DIM_0) - 1);
+            tiling.b = static_cast<uint32_t>(SeqNum(queryShape, cuSeqlensShape));
         }
         tiling.sBlockNum = static_cast<uint32_t>(stateShape.GetDim(RKDA_DIM_0));
         tiling.ssmStateStride = (ctx_.hasSsmStateIndices && ctx_.ssmStateShape.GetDimNum() == RKDA_METADATA_RANK2) ?
@@ -366,6 +378,7 @@ private:
         tiling.scale = ctx_.scale;
         tiling.lowerBound = ctx_.lowerBound;
         tiling.layout = ctx_.layout;
+        tiling.hasCuSeqlens = ctx_.hasCuSeqlens;
         tiling.hasSsmStateIndices = ctx_.hasSsmStateIndices;
         tiling.hasALog = ctx_.hasALog;
         tiling.hasDtBias = ctx_.hasDtBias;
@@ -376,6 +389,13 @@ private:
         tiling.allowNegEigval = ctx_.allowNegEigval;
         tiling.safeGate = ctx_.safeGate;
         tiling.stateVFirst = ctx_.stateVFirst;
+        tiling.outputFinalState = ctx_.outputFinalState;
+        tiling.inplaceFinalState = ctx_.inplaceFinalState;
+        tiling.gateDtype = ctx_.gateDtype == ge::DT_FLOAT ? 0 : (ctx_.gateDtype == ge::DT_BF16 ? 1 : 2);
+        tiling.betaDtype = ctx_.betaDtype == ge::DT_FLOAT ? 0 : (ctx_.betaDtype == ge::DT_BF16 ? 1 : 2);
+        tiling.cuSeqlensDtype = ctx_.cuSeqlensDtype == ge::DT_INT32 ? 0 : 1;
+        tiling.ssmStateIndicesDtype = ctx_.ssmStateIndicesDtype == ge::DT_INT32 ? 0 : 1;
+        tiling.acceptedTokensDtype = ctx_.acceptedTokensDtype == ge::DT_INT32 ? 0 : 1;
     }
 
     ge::graphStatus CheckShapeValueRangeAndRule(const RecurrentKdaTilingData &tiling) const
@@ -449,7 +469,7 @@ private:
     int64_t CalcWorkingUbBytes(int64_t aNv, int64_t aDv, int64_t aDk) const
     {
         int64_t usedUbBytes = CalcFixedUbBytes(aNv, aDv, aDk);
-        usedUbBytes += RKDA_MAX_MTP * (4 * aDv + 8 * aDk + 4 * aNv);
+        usedUbBytes += RKDA_MAX_MTP * (4 * aDv + 12 * aDk + 4 * aNv);
         return usedUbBytes;
     }
 

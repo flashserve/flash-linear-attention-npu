@@ -39,8 +39,8 @@ def test_kernel_is_not_wired_to_gdn_recurrent_interface():
 def test_kernel_uses_generated_state_dtype_macro():
     text = (OP_ROOT / "op_kernel/recurrent_kda.cpp").read_text(encoding="utf-8")
 
-    assert "DTYPE_STATE" in text
-    assert "DTYPE_INITIAL_STATE" not in text
+    assert "DTYPE_INITIAL_STATE" in text
+    assert "DTYPE_STATE" not in text
 
 
 def test_arch35_kernel_has_dedicated_micro_api_implementation():
@@ -59,7 +59,7 @@ def test_kernel_validates_device_metadata_before_state_access():
 
     empty_skip = text.index("if (seqLen64 == 0)")
     slot_validation = text.index("ValidateStateSlots(batch_i, seq0, seqLen)")
-    state_prefetch = text.index("PrefetchState(nextStateOffset, nextSingleV)")
+    state_prefetch = text.index("PrefetchState(stateSlot, head_i, 0, nextSingleV)")
     assert empty_skip < slot_validation < state_prefetch
     assert "batchIdx * ssmStateStride_" in text
     assert "stateSlot >= static_cast<int64_t>(stateCapacity_)" in text

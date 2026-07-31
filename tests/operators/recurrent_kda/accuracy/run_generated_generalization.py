@@ -229,6 +229,7 @@ def generate_case(i: int, seed: int) -> dict[str, Any]:
             "layout": layout,
             "scale": None if (i % 4) else rng.choice([0.125, 0.25, 0.5, 0.75]),
             "output_final_state": combo["output_final_state"],
+            "inplace_final_state": combo["initial_state"],
             "use_qk_l2norm_in_kernel": combo["use_qk_l2norm_in_kernel"],
             "use_gate_in_kernel": combo["use_gate_in_kernel"],
             "use_beta_sigmoid_in_kernel": combo["use_beta_sigmoid_in_kernel"],
@@ -377,7 +378,7 @@ def timed_call(inputs, attrs, repeats: int):
             out, final_state = call_op(inputs, attrs)
             torch.npu.synchronize()
             times.append((time.perf_counter() - begin) * 1000.0)
-        if (attrs["output_final_state"] and inputs["initial_state"] is not None and
+        if (attrs["output_final_state"] and attrs["inplace_final_state"] and
                 final_state.data_ptr() != inputs["initial_state"].data_ptr()):
             raise AssertionError("final_state must alias the mutable initial_state tensor")
     return out, final_state, float(statistics.median(times))

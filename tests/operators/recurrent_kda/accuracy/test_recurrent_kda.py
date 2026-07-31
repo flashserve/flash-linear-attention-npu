@@ -241,6 +241,7 @@ def test_json_accuracy_cases():
             if key not in ("scale",) or value is not None
         }
         call_kwargs["cu_seqlens"] = _device_cu_seqlens(torch, inputs["cu_seqlens"], device)
+        call_kwargs["inplace_final_state"] = inputs["initial_state"] is not None
         optional_tensor_kwargs = {
             "ssm_state_indices": inputs["ssm_state_indices"],
             "A_log": inputs["A_log"],
@@ -271,7 +272,7 @@ def test_json_accuracy_cases():
         if attrs.get("output_final_state", False):
             torch.testing.assert_close(final_state.cpu().float(), expected[1].float(), rtol=tol["rtol"], atol=tol["atol"])
         else:
-            assert tuple(final_state.shape) == (0,)
+            assert final_state is None
 
 
 @pytest.mark.npu
@@ -505,6 +506,7 @@ def test_kimi_k3_tp16_device_metadata_and_state_pool():
         use_qk_l2norm_in_kernel=True,
         use_gate_in_kernel=True,
         safe_gate=True,
+        state_v_first=True,
     )
     torch.npu.synchronize()
 
@@ -587,6 +589,7 @@ def test_kimi_k3_tp16_bsnd_graph_padding_capacity():
         use_qk_l2norm_in_kernel=True,
         use_gate_in_kernel=True,
         safe_gate=True,
+        state_v_first=True,
     )
     torch.npu.synchronize()
 
@@ -710,6 +713,7 @@ def test_kimi_k3_tp16_tnd_mtp_lengths_1_to_8():
         use_qk_l2norm_in_kernel=True,
         use_gate_in_kernel=True,
         safe_gate=True,
+        state_v_first=True,
     )
     torch.npu.synchronize()
 

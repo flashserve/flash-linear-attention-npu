@@ -50,22 +50,23 @@ def test_positive_cases_stay_inside_supported_kv_enums():
 def test_state_tensors_allow_non_contiguous_views():
     source = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/recurrent_kda_def.cpp")
     state_input_block = source[
-        source.index('this->Input("state")'):source.index('this->Input("cu_seqlens")')
+        source.index('this->Input("initial_state")'):source.index('this->Input("cu_seqlens")')
     ]
     state_output_block = source[
-        source.index('this->Output("state")'):source.index('this->Attr("layout")')
+        source.index('this->Output("initial_state")'):source.index('this->Attr("layout")')
     ]
 
     assert ".IgnoreContiguous()" in state_input_block
-    assert ".IgnoreContiguous()" in state_output_block
+    assert state_output_block.count(".IgnoreContiguous()") == 2
 
 
 def test_state_view_contract_uses_work_tensors():
     source = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/op_api/aclnn_recurrent_kda.cpp")
 
-    assert "DataContiguous(contiguousState" in source
-    assert "stateNeedViewCopy" in source
-    assert "ViewCopy(result[1], params.stateRef" in source
+    assert "DataContiguous(initialStateForKernel" in source
+    assert "initialStateNeedViewCopy" in source
+    assert "ViewCopy(result[1], params.initialStateRef" in source
+    assert "finalStateNeedViewCopy" in source
 
 
 def test_device_metadata_and_capacity_state_contract():
@@ -76,7 +77,9 @@ def test_device_metadata_and_capacity_state_contract():
     assert "const aclTensor *cuSeqlens" in api
     assert "aclIntArray" not in api
     actual_input = op_def[op_def.index('this->Input("cu_seqlens")'):]
-    assert ".ParamType(REQUIRED)" in actual_input.split('this->Input("ssm_state_indices")', 1)[0]
+    cu_block = actual_input.split('this->Input("ssm_state_indices")', 1)[0]
+    assert ".ParamType(OPTIONAL)" in cu_block
+    assert "DT_INT32" in cu_block and "DT_INT64" in cu_block
     assert "speculative [seq_num,max_step]" in tiling
     assert "state_capacity must equal seq_num" in tiling
 
@@ -88,8 +91,10 @@ def test_cu_seqlens_uses_fla_prefix_sum_semantics():
     )
     for path in kernel_paths:
         kernel = _read_repo_file(path)
-        assert "int64_t seq0 = cuSeqlensGm_.GetValue(batch_i)" in kernel
-        assert "int64_t seq1 = cuSeqlensGm_.GetValue(batch_i + 1)" in kernel
+        assert "int64_t seq0 = SequenceStart(batch_i)" in kernel
+        assert "int64_t seq1 = SequenceEnd(batch_i)" in kernel
+        assert "LoadCuSeqlens" in kernel
+        assert "cuSeqlensInt32Gm_" in kernel and "cuSeqlensInt64Gm_" in kernel
         assert "int64_t seqLen64 = seq1 - seq0" in kernel
         assert "if (seq0 != 0)" in kernel
         assert "return seq0 <= static_cast<int64_t>(T_)" in kernel
@@ -107,19 +112,14 @@ def test_tiling_processor_owns_its_context():
 def test_mutable_state_is_wired_as_an_inplace_output():
     l0_source = _read_repo_file("fla/ops/ascendc/kda/recurrent_kda/op_host/op_api/recurrent_kda.cpp")
     schema = _read_repo_file("torch_custom/fla_npu/npu_custom.yaml")
-    torch_adapter = _read_repo_file("torch_custom/fla_npu/op_plugin/ops/opapi/FLANpuOpApi.cpp")
     ctypes_init = _read_repo_file("torch_custom/fla_npu/fla_npu/ops/ascendc/__init__.py")
     schema_line = next(line for line in schema.splitlines() if "func: npu_recurrent_kda(" in line)
-    adapter_start = torch_adapter.index("at::Tensor npu_recurrent_kda(")
-    adapter_end = torch_adapter.index("at::Tensor npu_chunk_scaled_dot_kkt(", adapter_start)
-    adapter = torch_adapter[adapter_start:adapter_end]
 
-    assert "OP_OUTPUT(out, stateRef)" in l0_source
+    assert "OP_OUTPUT(attnOut, initialStateRef, finalState)" in l0_source
     assert "Tensor(a!) initial_state" in schema_line
-    assert "Tensor cu_seqlens" in schema_line
-    assert "output_final_state" not in schema_line
-    assert schema_line.endswith(") -> Tensor")
-    assert "bool output_final_state_ = true;" in adapter
-    assert "return out;" in adapter
-    assert "std::make_tuple" not in adapter
+    assert "Tensor? cu_seqlens=None" in schema_line
+    assert "output_final_state" in schema_line
+    assert "inplace_final_state" in schema_line
+    assert schema_line.endswith(") -> (Tensor, Tensor)")
     assert '"npu_recurrent_kda": ("initial_state",)' in ctypes_init
+    assert '"npu_recurrent_kda": lambda arguments: bool(arguments["inplace_final_state"])' in ctypes_init

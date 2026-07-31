@@ -54,7 +54,7 @@ def recurrent_kda_reference(
     beta: torch.Tensor,
     initial_state: Optional[torch.Tensor] = None,
     *,
-    cu_seqlens: Sequence[int],
+    cu_seqlens: Optional[Sequence[int]] = None,
     ssm_state_indices: Optional[torch.Tensor] = None,
     A_log: Optional[torch.Tensor] = None,
     dt_bias: Optional[torch.Tensor] = None,
@@ -62,6 +62,7 @@ def recurrent_kda_reference(
     layout: str = "BSND",
     scale: Optional[float] = None,
     output_final_state: bool = True,
+    inplace_final_state: bool = True,
     use_qk_l2norm_in_kernel: bool = False,
     use_gate_in_kernel: bool = False,
     use_beta_sigmoid_in_kernel: bool = False,
@@ -70,9 +71,7 @@ def recurrent_kda_reference(
     lower_bound: float = -5.0,
     state_v_first: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    del output_final_state
-    if not state_v_first:
-        raise ValueError("reference only supports state_v_first=True")
+    del output_final_state, inplace_final_state
 
     q_flat = _flatten_bsnd(q, layout).float()
     k_flat = _flatten_bsnd(k, layout).float()
@@ -109,12 +108,20 @@ def recurrent_kda_reference(
         if allow_neg_eigval:
             beta_eff = beta_eff * 2.0
 
+    if cu_seqlens is None:
+        if layout.upper() == "BSND":
+            dense_seq_len = q.shape[1]
+            cu_seqlens = [i * dense_seq_len for i in range(q.shape[0] + 1)]
+        else:
+            cu_seqlens = [0, total_tokens]
     ranges = _seq_ranges(total_tokens, cu_seqlens)
     state_dtype = initial_state.dtype if initial_state is not None else torch.float32
     if initial_state is None:
         state = torch.zeros((len(ranges), hv, dv, dk), dtype=torch.float32, device=q.device)
     else:
         state = initial_state.float().clone()
+        if not state_v_first:
+            state = state.transpose(-1, -2).contiguous()
     out_flat = torch.zeros_like(v_flat, dtype=torch.float32)
 
     for seq_idx, (start, end) in enumerate(ranges):
@@ -138,4 +145,6 @@ def recurrent_kda_reference(
                 out_slot = _state_slot(ssm_state_indices, seq_idx, start, token) if ssm_state_indices is not None else seq_idx
                 state[out_slot, hv_idx] = state_cur
 
+    if not state_v_first:
+        state = state.transpose(-1, -2).contiguous()
     return _restore_layout(out_flat.to(q.dtype), v, layout), state.to(state_dtype)

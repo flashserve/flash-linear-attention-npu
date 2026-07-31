@@ -18,7 +18,8 @@ def _device():
 
 
 def make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim=128, seed=0,
-                with_initial_state=True):
+                with_initial_state=True, gate_dtype=torch.float32, beta_dtype=torch.float32,
+                state_v_first=True):
     torch.manual_seed(seed)
     if layout == "BSND":
         q_shape = (batch, seq_len, h, kdim)
@@ -41,10 +42,11 @@ def make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim=
     q = torch.randn(q_shape, dtype=torch.bfloat16)
     k = torch.randn(q_shape, dtype=torch.bfloat16)
     v = torch.randn(v_shape, dtype=torch.bfloat16)
-    g = torch.randn(g_shape, dtype=torch.float32) * 0.5
-    beta = torch.randn(beta_shape, dtype=torch.float32)
+    g = torch.randn(g_shape, dtype=gate_dtype) * 0.5
+    beta = torch.randn(beta_shape, dtype=beta_dtype)
+    state_tail = (vdim, kdim) if state_v_first else (kdim, vdim)
     initial_state = (
-        torch.randn((seq_num, hv, vdim, kdim), dtype=torch.float32) * 0.02
+        torch.randn((seq_num, hv, *state_tail), dtype=torch.float32) * 0.02
         if with_initial_state else None
     )
     A_log = torch.randn((hv,), dtype=torch.float32) * 0.1
@@ -63,7 +65,8 @@ def make_inputs(*, layout="BSND", batch=2, seq_len=2, h=2, hv=4, kdim=128, vdim=
     }
 
 
-def run_case(desc, kwargs, op_kwargs, rtol=0.02, atol=0.01):
+def run_case(desc, kwargs, op_kwargs, rtol=0.02, atol=0.01, metadata_dtype=torch.int64,
+             use_cu_seqlens=True):
     print(f"\n=== {desc} ===")
     inp = make_inputs(**kwargs)
     golden = recurrent_kda_golden(**inp, output_final_state=True, **op_kwargs)
@@ -73,7 +76,10 @@ def run_case(desc, kwargs, op_kwargs, rtol=0.02, atol=0.01):
     from fla_npu.ops.ascendc import recurrent_kda
 
     call_kwargs = {**op_kwargs, "output_final_state": True, "layout": inp["layout"]}
-    call_kwargs["cu_seqlens"] = torch.tensor(inp["cu_seqlens"], dtype=torch.int64, device=dev)
+    call_kwargs["cu_seqlens"] = (
+        torch.tensor(inp["cu_seqlens"], dtype=metadata_dtype, device=dev)
+        if use_cu_seqlens else None
+    )
     initial_state_arg = inp["initial_state"].to(dev) if inp["initial_state"] is not None else None
     out, final_state = recurrent_kda(
         inp["q"].to(dev),
@@ -104,6 +110,7 @@ def main():
                 "use_beta_sigmoid_in_kernel": True,
                 "allow_neg_eigval": False,
                 "safe_gate": False,
+                "state_v_first": True,
             },
         ),
         run_case(
@@ -116,6 +123,7 @@ def main():
                 "allow_neg_eigval": True,
                 "safe_gate": True,
                 "lower_bound": -4.0,
+                "state_v_first": True,
             },
         ),
         run_case(
@@ -126,7 +134,36 @@ def main():
                 "use_gate_in_kernel": False,
                 "use_beta_sigmoid_in_kernel": False,
                 "safe_gate": False,
+                "inplace_final_state": False,
+                "state_v_first": True,
             },
+        ),
+        run_case(
+            "BSND FP16 gate, BF16 beta, INT32 metadata",
+            {
+                "layout": "BSND", "batch": 2, "seq_len": 2, "vdim": 256, "seed": 4,
+                "gate_dtype": torch.float16, "beta_dtype": torch.bfloat16,
+            },
+            {
+                "use_gate_in_kernel": False,
+                "use_beta_sigmoid_in_kernel": True,
+                "state_v_first": True,
+            },
+            metadata_dtype=torch.int32,
+        ),
+        run_case(
+            "BSND BF16 gate, FP16 beta, dense K-first state",
+            {
+                "layout": "BSND", "batch": 2, "seq_len": 2, "vdim": 256, "seed": 5,
+                "gate_dtype": torch.bfloat16, "beta_dtype": torch.float16,
+                "state_v_first": False,
+            },
+            {
+                "use_gate_in_kernel": False,
+                "use_beta_sigmoid_in_kernel": False,
+                "state_v_first": False,
+            },
+            use_cu_seqlens=False,
         ),
     ]
     if not all(results):

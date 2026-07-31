@@ -124,8 +124,12 @@ def load_ascendc_opapi_libraries() -> list[ctypes.CDLL]:
 
     vendor_dir = _prepare_embedded_opp()
     op_api_dir = vendor_dir / "op_api" / "lib"
+    tiling_library = vendor_dir / "op_impl" / "ai_core" / "tbe" / "op_tiling" / "liboptiling.so"
     custom_opapi = op_api_dir / "libcust_opapi.so"
 
+    libraries = []
+    if tiling_library.exists():
+        libraries.append(_load_shared_library_required(tiling_library))
     try:
         custom_library = _load_shared_library_required(custom_opapi)
     except OSError as exc:

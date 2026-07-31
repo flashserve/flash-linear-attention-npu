@@ -110,6 +110,7 @@ def main():
             "use_gate_in_kernel": True,
             "use_beta_sigmoid_in_kernel": True,
             "safe_gate": False,
+            "state_v_first": True,
         },
     )
     _run_case(
@@ -122,6 +123,7 @@ def main():
             "allow_neg_eigval": True,
             "safe_gate": True,
             "lower_bound": -4.0,
+            "state_v_first": True,
         },
     )
     _run_case(
@@ -131,6 +133,8 @@ def main():
             "use_gate_in_kernel": False,
             "use_beta_sigmoid_in_kernel": False,
             "safe_gate": False,
+            "inplace_final_state": False,
+            "state_v_first": True,
         },
     )
 
