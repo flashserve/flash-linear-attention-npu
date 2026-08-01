@@ -58,13 +58,16 @@ void RecurrentKdaTiling::InitCompileInfo()
     }
     const auto &ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfo_.ubSize);
+    compileInfo_.aicNum = ascendcPlatform.GetCoreNumAic();
     compileInfo_.aivNum = ascendcPlatform.GetCoreNumAiv();
+    compileInfo_.isA5 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
 
-    if (compileInfo_.aivNum <= 0) {
-        OP_LOGE(context_->GetNodeName(), "aivNum <= 0");
+    const uint64_t selectedCoreNum = compileInfo_.isA5 ? compileInfo_.aicNum : compileInfo_.aivNum;
+    if (selectedCoreNum == 0) {
+        OP_LOGE(context_->GetNodeName(), "selected core num is zero");
         return;
     }
-    tilingData_.vectorCoreNum = static_cast<uint32_t>(compileInfo_.aivNum);
+    tilingData_.vectorCoreNum = static_cast<uint32_t>(selectedCoreNum);
 }
 
 namespace {
@@ -92,7 +95,7 @@ RecurrentKdaTilingContext RecurrentKdaTiling::BuildProcessorContext() const
     CopyOptionalOriginShape(context_, A_LOG_INDEX, ctx.aLogShape);
     CopyOptionalOriginShape(context_, DT_BIAS_INDEX, ctx.dtBiasShape);
     CopyOptionalOriginShape(context_, ACC_TOKEN_INDEX, ctx.acceptedTokensShape);
-    ctx.aivNum = compileInfo_.aivNum;
+    ctx.aivNum = compileInfo_.isA5 ? compileInfo_.aicNum : compileInfo_.aivNum;
     ctx.ubSize = compileInfo_.ubSize;
     ctx.stateDtype = context_->GetInputDesc(STATE_INDEX)->GetDataType();
     ctx.gateDtype = context_->GetInputDesc(GATE_INDEX)->GetDataType();
@@ -164,7 +167,7 @@ ge::graphStatus RecurrentKdaTiling::DoOpTiling()
 
 ge::graphStatus RecurrentKdaTiling::DoLibApiTiling()
 {
-    tilingKey_ = 0;
+    tilingKey_ = compileInfo_.isA5 ? 1 : 0;
     return ge::GRAPH_SUCCESS;
 };
 
@@ -176,15 +179,29 @@ uint64_t RecurrentKdaTiling::GetTilingKey() const
 ge::graphStatus RecurrentKdaTiling::GetWorkspaceSize()
 {
     workspaceSize_ = static_cast<int64_t>(RKDA_SYS_WORKSPACE_SIZE);
+    if (compileInfo_.isA5) {
+        tilingData_.vStep = std::min(tilingData_.vStep, static_cast<uint32_t>(32));
+        const RecurrentKdaA5Plan plan =
+            BuildRecurrentKdaA5Plan(tilingData_.vectorCoreNum, tilingData_.dk, tilingData_.vStep);
+        tilingDataA5_.base = tilingData_;
+        tilingDataA5_.aicCoreNum = tilingData_.vectorCoreNum;
+        tilingDataA5_.workspaceStride = plan.workspaceStride;
+        tilingDataA5_.cubeVecRows = plan.cubeVecRows;
+        tilingDataA5_.cubeVecBufferNum = plan.cubeVecBufferNum;
+        workspaceSize_ += static_cast<int64_t>(plan.userWorkspaceSize);
+    }
     return ge::GRAPH_SUCCESS;
 };
 
 ge::graphStatus RecurrentKdaTiling::PostTiling()
 {
     context_->SetBlockDim(tilingData_.vectorCoreNum);
-    auto tilingDataSize = sizeof(RecurrentKdaTilingData);
+    const void *rawTilingData = compileInfo_.isA5 ? static_cast<const void *>(&tilingDataA5_) :
+                                                   static_cast<const void *>(&tilingData_);
+    const size_t tilingDataSize =
+        compileInfo_.isA5 ? sizeof(RecurrentKdaTilingDataA5) : sizeof(RecurrentKdaTilingData);
     errno_t ret = memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(),
-                           reinterpret_cast<void *>(&tilingData_), tilingDataSize);
+                           rawTilingData, tilingDataSize);
     if (ret != EOK) {
         OP_LOGE(context_->GetNodeName(), "memcpy_s failed, ret=%d", ret);
         return ge::GRAPH_FAILED;
@@ -196,6 +213,9 @@ ge::graphStatus RecurrentKdaTiling::PostTiling()
                 return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
 
+    if (compileInfo_.isA5) {
+        context_->SetScheduleMode(1);
+    }
     return ge::GRAPH_SUCCESS;
 }
 

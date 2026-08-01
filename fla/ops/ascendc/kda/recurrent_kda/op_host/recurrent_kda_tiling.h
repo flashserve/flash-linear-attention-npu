@@ -18,14 +18,18 @@
 #include "tiling_base/tiling_base.h"
 #include "err/ops_err.h"
 #include "../op_kernel/recurrent_kda_tiling_data.h"
+#include "../op_kernel/arch35/recurrent_kda_tiling_data_apt.h"
+#include "op_tiling/arch35/recurrent_kda_tiling_a5.h"
 #include "recurrent_kda_tiling_processor.h"
 
 namespace optiling {
 using namespace RecurrentKda;
 
 struct RecurrentKdaCompileInfo {
+    uint64_t aicNum{0UL};
     uint64_t aivNum{0UL};
     uint64_t ubSize{0UL};
+    bool isA5{false};
 };
 
 struct RecurrentKdaInfo {
@@ -71,6 +75,7 @@ protected:
 
     RecurrentKdaCompileInfo compileInfo_;
     RecurrentKdaTilingData tilingData_;
+    RecurrentKdaTilingDataA5 tilingDataA5_;
     RecurrentKdaInfo inputParams_;
 };
 
