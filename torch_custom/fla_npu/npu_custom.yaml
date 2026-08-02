@@ -47,6 +47,8 @@ custom:
     op_api: all_version
   - func: npu_kda_gate_cumsum(Tensor g, int chunk_size, *, Tensor? A_log=None, Tensor? dt_bias=None, int[]? cu_seqlens=None, bool? use_gate_in_kernel=False, bool? safe_gate=False, float? lower_bound=None) -> Tensor
     op_api: all_version
+  - func: npu_chunk_kda_fwd_intra_sub_chunk(Tensor q, Tensor k, Tensor g, Tensor beta, float scale, int chunk_size, *, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> (Tensor, Tensor)
+    op_api: all_version
 
 autograd:
 

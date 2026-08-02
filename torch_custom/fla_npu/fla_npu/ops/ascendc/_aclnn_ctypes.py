@@ -942,6 +942,66 @@ def npu_kda_gate_cumsum(
     )
 
 
+def npu_chunk_kda_fwd_intra_sub_chunk(
+    q,
+    k,
+    g,
+    beta,
+    scale,
+    chunk_size,
+    *,
+    cu_seqlens=None,
+    chunk_indices=None,
+):
+    """Safe-gate diagonal intra sub-chunk: Aqk diag blocks + fp32 Akkd=(I-L)^-1.
+
+    Layout is BNSD:
+      q/k [B,H,T,K], g [B,HV,T,K], beta [B,HV,T],
+      aqk [B,HV,T,BT], akkd [B,HV,T,16].
+    GVA: HV >= H and HV % H == 0 (i_h = i_hv // (HV/H)), same as GPU Triton.
+    """
+    import torch
+
+    B, H, T, K = q.shape
+    if q.shape != k.shape:
+        raise ValueError("q/k must share shape [B,H,T,K]")
+    if K != 128:
+        raise ValueError("npu_chunk_kda_fwd_intra_sub_chunk: K must be 128 (DESIGN v1)")
+    if g.ndim != 4 or g.shape[0] != B or g.shape[2] != T or g.shape[3] != K:
+        raise ValueError("g must be [B,HV,T,K] matching q on B/T/K")
+    HV = int(g.shape[1])
+    if HV < H or (HV % H) != 0:
+        raise ValueError(f"GVA requires HV>=H and HV%H==0, got H={H} HV={HV}")
+    if tuple(beta.shape) != (B, HV, T):
+        raise ValueError("beta must be [B,HV,T]")
+    BT = int(chunk_size)
+    BC = 16
+    if BT not in (32, 64, 128):
+        raise ValueError("chunk_size must be 32, 64 or 128")
+    # Aqk is diagonal-block sparse in this stage; zero so off-block columns
+    # are not left as recycled allocator garbage after larger prior calls.
+    aqk = _zeros((B, HV, T, BT), q, dtype=q.dtype)
+    akkd = _zeros((B, HV, T, BC), q, dtype=torch.float32)
+    cu = None if cu_seqlens is None else tuple(int(v) for v in cu_seqlens)
+    idx = None if chunk_indices is None else tuple(int(v) for v in chunk_indices)
+    return _call_aclnn(
+        "aclnnChunkKdaFwdIntraSubChunk",
+        lambda ctx: [
+            ctx.tensor(q, "q"),
+            ctx.tensor(k, "k"),
+            ctx.tensor(g, "g"),
+            ctx.tensor(beta, "beta"),
+            ctx.int_array(cu),
+            ctx.int_array(idx),
+            ctypes.c_double(float(scale)),
+            ctypes.c_int64(BT),
+            ctx.tensor(aqk, "aqk"),
+            ctx.tensor(akkd, "akkd"),
+        ],
+        (aqk, akkd),
+    )
+
+
 def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
     x_contig = x.contiguous()
     out = _empty_like(x_contig)
