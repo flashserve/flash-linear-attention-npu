@@ -113,6 +113,34 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
+    "aclnnRecurrentKda": [
+        ctypes.c_void_p,  # query
+        ctypes.c_void_p,  # key
+        ctypes.c_void_p,  # value
+        ctypes.c_void_p,  # gate
+        ctypes.c_void_p,  # beta
+        ctypes.c_void_p,  # initialStateRef
+        ctypes.c_void_p,  # cuSeqlensOptional
+        ctypes.c_void_p,  # ssmStateIndicesOptional
+        ctypes.c_void_p,  # aLogOptional
+        ctypes.c_void_p,  # dtBiasOptional
+        ctypes.c_void_p,  # numAcceptedTokensOptional
+        ctypes.c_char_p,
+        ctypes.c_double,
+        ctypes.c_bool,  # outputFinalState
+        ctypes.c_bool,  # inplaceFinalState
+        ctypes.c_bool,  # useQkL2normInKernel
+        ctypes.c_bool,  # useGateInKernel
+        ctypes.c_bool,  # useBetaSigmoidInKernel
+        ctypes.c_bool,  # allowNegEigval
+        ctypes.c_bool,  # safeGate
+        ctypes.c_double,
+        ctypes.c_bool,  # stateVFirst
+        ctypes.c_void_p,  # attnOut
+        ctypes.c_void_p,  # finalState
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnChunkLocalCumsum": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -969,6 +997,212 @@ def npu_kda_gate_cumsum(
         out,
     )
 
+def npu_recurrent_kda(
+    q,
+    k,
+    v,
+    g,
+    beta,
+    initial_state=None,
+    *,
+    cu_seqlens=None,
+    ssm_state_indices=None,
+    A_log=None,
+    dt_bias=None,
+    num_accepted_tokens=None,
+    layout="BSND",
+    scale=None,
+    output_final_state=False,
+    inplace_final_state=True,
+    use_qk_l2norm_in_kernel=False,
+    use_gate_in_kernel=False,
+    use_beta_sigmoid_in_kernel=False,
+    allow_neg_eigval=False,
+    safe_gate=False,
+    lower_bound=None,
+    state_v_first=False,
+):
+    import torch
+
+    layout = str(layout)
+    if layout not in ("BSND", "TND"):
+        raise RuntimeError("npu_recurrent_kda: layout must be BSND or TND.")
+    is_tnd = layout == "TND"
+    q_shape, k_shape, v_shape = _shape(q), _shape(k), _shape(v)
+    g_shape, beta_shape = _shape(g), _shape(beta)
+    expected_q_rank = 3 if is_tnd else 4
+    if (
+        len(q_shape) != expected_q_rank
+        or len(k_shape) != expected_q_rank
+        or len(v_shape) != expected_q_rank
+        or len(g_shape) != expected_q_rank
+        or len(beta_shape) != (2 if is_tnd else 3)
+    ):
+        raise RuntimeError(
+            "npu_recurrent_kda: layout/rank mismatch. TND expects q/k [T,H,K], v [T,HV,V], "
+            "g [T,HV,K], beta [T,HV]; BSND expects q/k [B,T,H,K], v [B,T,HV,V], "
+            "g [B,T,HV,K], beta [B,T,HV]."
+        )
+    if q_shape != k_shape:
+        raise RuntimeError("npu_recurrent_kda: q and k must have identical shape.")
+    if q.dtype != torch.bfloat16 or k.dtype != torch.bfloat16 or v.dtype != torch.bfloat16:
+        raise RuntimeError("npu_recurrent_kda: q/k/v currently support bfloat16 only.")
+    if any(tensor.device != q.device for tensor in (k, v, g, beta)):
+        raise RuntimeError("npu_recurrent_kda: q/k/v/g/beta must be on the same device.")
+    if g.dtype not in (torch.float16, torch.bfloat16, torch.float32):
+        raise RuntimeError("npu_recurrent_kda: g must use FP16, BF16 or FP32.")
+    if beta.dtype not in (torch.float16, torch.bfloat16, torch.float32):
+        raise RuntimeError("npu_recurrent_kda: beta must use FP16, BF16 or FP32.")
+
+    if is_tnd:
+        total_tokens, heads, key_dim = q_shape
+        batch, dense_seq_len = 1, total_tokens
+        value_heads, value_dim = v_shape[1], v_shape[2]
+        value_shape_ok = (
+            v_shape[0] == total_tokens
+            and g_shape == (total_tokens, value_heads, key_dim)
+            and beta_shape == (total_tokens, value_heads)
+        )
+    else:
+        batch, dense_seq_len, heads, key_dim = q_shape
+        total_tokens = batch * dense_seq_len
+        value_heads, value_dim = v_shape[2], v_shape[3]
+        value_shape_ok = (
+            v_shape[:2] == (batch, dense_seq_len)
+            and g_shape == (batch, dense_seq_len, value_heads, key_dim)
+            and beta_shape == (batch, dense_seq_len, value_heads)
+        )
+    if not value_shape_ok:
+        raise RuntimeError("npu_recurrent_kda: v/g/beta shape mismatch.")
+    if min(total_tokens, dense_seq_len, heads, value_heads, key_dim, value_dim) <= 0:
+        raise RuntimeError("npu_recurrent_kda: all shape dimensions must be positive.")
+    if value_heads % heads != 0:
+        raise RuntimeError("npu_recurrent_kda: HV must be divisible by H.")
+    if (key_dim, value_dim) not in ((128, 128), (128, 256)):
+        raise RuntimeError("npu_recurrent_kda: K/V currently support only K=128,V=128 or K=128,V=256.")
+
+    if cu_seqlens is None:
+        seq_num = batch if not is_tnd else 1
+    else:
+        if (
+            not isinstance(cu_seqlens, torch.Tensor)
+            or cu_seqlens.dim() != 1
+            or cu_seqlens.numel() < 2
+            or cu_seqlens.dtype not in (torch.int32, torch.int64)
+        ):
+            raise RuntimeError("npu_recurrent_kda: cu_seqlens must be a 1D INT32 or INT64 tensor.")
+        if cu_seqlens.device != q.device:
+            raise RuntimeError("npu_recurrent_kda: cu_seqlens must be on the same device as q.")
+        seq_num = int(cu_seqlens.shape[0]) - 1
+
+    state_v_first = _optional_bool(state_v_first, False)
+    expected_tail = (
+        (value_heads, value_dim, key_dim)
+        if state_v_first
+        else (value_heads, key_dim, value_dim)
+    )
+    inplace = _optional_bool(inplace_final_state, True)
+    if initial_state is None:
+        if inplace:
+            raise RuntimeError("npu_recurrent_kda: inplace_final_state=True requires initial_state.")
+        state_shape = (seq_num, *expected_tail)
+        initial_state_work = _zeros(state_shape, q, dtype=torch.float32)
+    else:
+        if initial_state.dtype not in (torch.float32, torch.bfloat16):
+            raise RuntimeError("npu_recurrent_kda: initial_state must use FP32 or BF16.")
+        if initial_state.device != q.device:
+            raise RuntimeError("npu_recurrent_kda: initial_state must be on the same device as q.")
+        state_shape = _shape(initial_state)
+        if len(state_shape) != 4 or state_shape[0] <= 0 or state_shape[1:] != expected_tail:
+            layout_desc = "[state_capacity,HV,V,K]" if state_v_first else "[state_capacity,HV,K,V]"
+            raise RuntimeError(f"npu_recurrent_kda: initial_state must be {layout_desc}.")
+        initial_state_work = initial_state
+
+    if ssm_state_indices is not None:
+        packed_1d = ssm_state_indices.dim() == 1 and int(ssm_state_indices.shape[0]) >= total_tokens
+        speculative_2d = (
+            ssm_state_indices.dim() == 2
+            and int(ssm_state_indices.shape[0]) == seq_num
+            and int(ssm_state_indices.shape[1]) > 0
+        )
+        if ssm_state_indices.dtype not in (torch.int32, torch.int64) or not (packed_1d or speculative_2d):
+            raise RuntimeError(
+                "npu_recurrent_kda: ssm_state_indices must be INT32/INT64 packed [T] "
+                "or speculative [seq_num,max_step]."
+            )
+        if ssm_state_indices.device != q.device:
+            raise RuntimeError("npu_recurrent_kda: ssm_state_indices must be on the same device as q.")
+    elif state_shape[0] != seq_num:
+        raise RuntimeError("npu_recurrent_kda: without ssm_state_indices, state_capacity must equal seq_num.")
+    if num_accepted_tokens is not None:
+        if ssm_state_indices is None:
+            raise RuntimeError("npu_recurrent_kda: num_accepted_tokens requires ssm_state_indices.")
+        if num_accepted_tokens.dtype not in (torch.int32, torch.int64) or _shape(num_accepted_tokens) != (seq_num,):
+            raise RuntimeError("npu_recurrent_kda: num_accepted_tokens must be INT32/INT64 [seq_num].")
+        if num_accepted_tokens.device != q.device:
+            raise RuntimeError("npu_recurrent_kda: num_accepted_tokens must be on the same device as q.")
+
+    use_gate = _optional_bool(use_gate_in_kernel, False)
+    safe = _optional_bool(safe_gate, False)
+    lower = _optional_float(lower_bound, -5.0)
+    if use_gate:
+        if A_log is None or A_log.dtype != torch.float32 or _shape(A_log) != (value_heads,):
+            raise RuntimeError("npu_recurrent_kda: A_log must be FP32 [HV] when use_gate_in_kernel=True.")
+        if A_log.device != q.device:
+            raise RuntimeError("npu_recurrent_kda: A_log must be on the same device as q.")
+        if safe and not -5.0 <= lower < 0.0:
+            raise RuntimeError("npu_recurrent_kda: lower_bound must be in [-5,0) when safe_gate=True.")
+        if dt_bias is not None:
+            valid_bias_shape = _shape(dt_bias) in ((value_heads * key_dim,), (value_heads, key_dim))
+            if dt_bias.dtype != torch.float32 or not valid_bias_shape:
+                raise RuntimeError("npu_recurrent_kda: dt_bias must be FP32 [HV*K] or [HV,K].")
+            if dt_bias.device != q.device:
+                raise RuntimeError("npu_recurrent_kda: dt_bias must be on the same device as q.")
+    elif safe or A_log is not None or dt_bias is not None:
+        raise RuntimeError("npu_recurrent_kda: A_log, dt_bias and safe_gate require use_gate_in_kernel=True.")
+
+    out = _empty_like(v)
+    final_state_work = initial_state_work if inplace else _empty(state_shape, initial_state_work)
+    final_state_arg = _empty(state_shape, initial_state_work) if inplace else final_state_work
+    output_final = _optional_bool(output_final_state, False)
+    scale_value = _optional_float(scale, key_dim ** -0.5)
+    layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
+
+    def build_args(ctx):
+        return [
+            ctx.tensor(q, "q"),
+            ctx.tensor(k, "k"),
+            ctx.tensor(v, "v"),
+            ctx.tensor(g, "g"),
+            ctx.tensor(beta, "beta"),
+            ctx.tensor(initial_state_work, "initial_state"),
+            ctx.tensor(cu_seqlens, "cu_seqlens"),
+            ctx.tensor(ssm_state_indices, "ssm_state_indices"),
+            ctx.tensor(A_log, "A_log"),
+            ctx.tensor(dt_bias, "dt_bias"),
+            ctx.tensor(num_accepted_tokens, "num_accepted_tokens"),
+            ctypes.cast(layout_buffer, ctypes.c_char_p),
+            ctypes.c_double(float(scale_value)),
+            ctypes.c_bool(output_final),
+            ctypes.c_bool(inplace),
+            ctypes.c_bool(_optional_bool(use_qk_l2norm_in_kernel, False)),
+            ctypes.c_bool(use_gate),
+            ctypes.c_bool(_optional_bool(use_beta_sigmoid_in_kernel, False)),
+            ctypes.c_bool(_optional_bool(allow_neg_eigval, False)),
+            ctypes.c_bool(safe),
+            ctypes.c_double(lower),
+            ctypes.c_bool(state_v_first),
+            ctx.tensor(out, "attn_out"),
+            ctx.tensor(final_state_arg, "final_state"),
+        ]
+
+    _call_aclnn(
+        "aclnnRecurrentKda",
+        build_args,
+        (out, initial_state_work, final_state_arg),
+    )
+    final_state = final_state_work if output_final else None
+    return out, final_state
 
 # Dense BSND Host code transposes all ten inputs to BNSD. Its four internal
 # outputs alias the transposed gradient inputs, so bounding this input footprint
