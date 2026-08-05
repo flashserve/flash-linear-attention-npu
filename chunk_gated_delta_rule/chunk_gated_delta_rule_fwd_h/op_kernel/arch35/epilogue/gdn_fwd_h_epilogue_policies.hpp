@@ -15,11 +15,11 @@
 namespace Catlass::Epilogue {
 
 struct EpilogueAtlasGDNFwdHVnew {
-    using ArchTag = Arch::AtlasA2;
+    using ArchTag = Arch::Ascend950;
 };
 
 struct EpilogueAtlasGDNFwdHUpdate {
-    using ArchTag = Arch::AtlasA2;
+    using ArchTag = Arch::Ascend950;
 };
 
 }  // namespace Catlass::Epilogue
