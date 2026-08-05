@@ -7,6 +7,7 @@ compatibility shim for older ``torch_npu.ops`` call sites.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 import functools
 import types
 from typing import Callable
@@ -33,6 +34,9 @@ BACKWARD_OPS = {
     "causal_conv1d": "causal_conv1d_bwd",
     "npu_causal_conv1d": "npu_causal_conv1d_bwd",
 }
+
+_SOLVE_TRI_MASK_CACHE_MAX_SIZE = 16
+_SOLVE_TRI_MASK_CACHE: OrderedDict[tuple, object] = OrderedDict()
 
 
 def _torch_npu_namespace():
@@ -76,6 +80,160 @@ def _has_tensor_requiring_grad(*values) -> bool:
         if isinstance(value, torch.Tensor) and value.requires_grad:
             return True
     return False
+
+
+def _current_stream_cache_key(torch_module, tensor):
+    if tensor.device.type == "cpu":
+        return None
+
+    device_api = getattr(torch_module, tensor.device.type, None)
+    if device_api is None or not hasattr(device_api, "current_stream"):
+        return None
+
+    stream = device_api.current_stream(tensor.device)
+    for attribute in ("npu_stream", "cuda_stream", "stream_id"):
+        value = getattr(stream, attribute, None)
+        if value is not None:
+            return int(value)
+    return id(stream)
+
+
+def _solve_tri_row_indices(
+    torch_module,
+    output,
+    *,
+    token_count: int,
+    chunk_size: int,
+    cu_seqlens,
+    layout: str,
+):
+    if layout != "tnd":
+        return torch_module.arange(
+            token_count,
+            dtype=torch_module.int64,
+            device=output.device,
+        ).remainder(chunk_size)
+
+    if cu_seqlens is None:
+        raise ValueError("solve_tri TND layout requires cu_seqlens")
+    if isinstance(cu_seqlens, torch_module.Tensor):
+        if cu_seqlens.device.type != "cpu":
+            raise ValueError(
+                "fla_npu.ops.ascendc.solve_tri requires host cu_seqlens for "
+                "TND invalid-region zero filling"
+            )
+        cu_values = cu_seqlens.tolist()
+    else:
+        cu_values = list(cu_seqlens)
+
+    if (
+        len(cu_values) < 2
+        or int(cu_values[0]) != 0
+        or int(cu_values[-1]) != token_count
+    ):
+        raise ValueError(
+            "solve_tri TND cu_seqlens must start at 0 and end at total_T"
+        )
+
+    local_rows = [0] * token_count
+    for bos, eos in zip(cu_values[:-1], cu_values[1:]):
+        bos = int(bos)
+        eos = int(eos)
+        if bos < 0 or eos < bos or eos > token_count:
+            raise ValueError("solve_tri TND cu_seqlens must be non-decreasing")
+        local_rows[bos:eos] = range(eos - bos)
+    return torch_module.tensor(
+        local_rows,
+        dtype=torch_module.int64,
+        device=output.device,
+    ).remainder(chunk_size)
+
+
+def _solve_tri_valid_mask(output, *, cu_seqlens, layout: str):
+    import torch
+
+    normalized_layout = layout.lower()
+    if normalized_layout == "bhtd":
+        token_count = output.shape[2]
+    elif normalized_layout == "bsnd":
+        token_count = output.shape[1]
+    elif normalized_layout == "tnd":
+        token_count = output.shape[0]
+    else:
+        raise ValueError(
+            f"solve_tri layout must be one of bhtd, bsnd, or tnd, got {layout!r}"
+        )
+
+    chunk_size = output.shape[-1]
+    cu_key = None
+    if normalized_layout == "tnd":
+        if isinstance(cu_seqlens, torch.Tensor):
+            if cu_seqlens.device.type != "cpu":
+                raise ValueError(
+                    "fla_npu.ops.ascendc.solve_tri requires host cu_seqlens for "
+                    "TND invalid-region zero filling"
+                )
+            cu_key = tuple(int(value) for value in cu_seqlens.tolist())
+        elif cu_seqlens is not None:
+            cu_key = tuple(int(value) for value in cu_seqlens)
+
+    cache_key = (
+        str(output.device),
+        _current_stream_cache_key(torch, output),
+        normalized_layout,
+        token_count,
+        chunk_size,
+        cu_key,
+    )
+    mask = _SOLVE_TRI_MASK_CACHE.get(cache_key)
+    if mask is None:
+        row_indices = _solve_tri_row_indices(
+            torch,
+            output,
+            token_count=token_count,
+            chunk_size=chunk_size,
+            cu_seqlens=cu_key,
+            layout=normalized_layout,
+        )
+        col_indices = torch.arange(
+            chunk_size,
+            dtype=torch.int64,
+            device=output.device,
+        )
+        mask = col_indices.unsqueeze(0) <= row_indices.unsqueeze(1)
+        _SOLVE_TRI_MASK_CACHE[cache_key] = mask
+        if len(_SOLVE_TRI_MASK_CACHE) > _SOLVE_TRI_MASK_CACHE_MAX_SIZE:
+            _SOLVE_TRI_MASK_CACHE.popitem(last=False)
+    else:
+        _SOLVE_TRI_MASK_CACHE.move_to_end(cache_key)
+
+    if normalized_layout == "bhtd":
+        return mask.view(1, 1, token_count, chunk_size)
+    if normalized_layout == "bsnd":
+        return mask.view(1, token_count, 1, chunk_size)
+    return mask.view(token_count, 1, chunk_size)
+
+
+def solve_tri(
+    x,
+    cu_seqlens=None,
+    chunk_indices=None,
+    layout="bsnd",
+):
+    """Run SolveTri and zero every element outside each valid lower triangle."""
+
+    output = _get_torch_op("npu_solve_tri")(
+        x,
+        cu_seqlens=cu_seqlens,
+        chunk_indices=chunk_indices,
+        layout=layout,
+    )
+    valid_mask = _solve_tri_valid_mask(
+        output,
+        cu_seqlens=cu_seqlens,
+        layout=layout,
+    )
+    return output.masked_fill_(~valid_mask, 0)
 
 
 class _FastGeluCustomFunction:
@@ -216,12 +374,18 @@ def install_torch_npu_ops_compat() -> None:
         setattr(ops, _strip_npu_prefix(name), globals()[_strip_npu_prefix(name)])
 
 
+_fast_gelu_custom_autograd = fast_gelu_custom
+_causal_conv1d_autograd = causal_conv1d
+_solve_tri_zero_filled = solve_tri
+
 for _name in _ASCENDC_OPS:
     globals()[_name] = _make_raw_wrapper(_name)
     globals()[_strip_npu_prefix(_name)] = globals()[_name]
 
-globals()["fast_gelu_custom"] = fast_gelu_custom
-globals()["causal_conv1d"] = causal_conv1d
+globals()["fast_gelu_custom"] = _fast_gelu_custom_autograd
+globals()["causal_conv1d"] = _causal_conv1d_autograd
+globals()["npu_solve_tri"] = _solve_tri_zero_filled
+globals()["solve_tri"] = _solve_tri_zero_filled
 
 __all__ = [
     "BACKWARD_OPS",

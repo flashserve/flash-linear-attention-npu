@@ -42,7 +42,9 @@ aclnnStatus aclnnSolveTri(
 ### 2.2 PyTorch 接口
 
 ```python
-torch.ops.npu.npu_solve_tri(
+from fla_npu.ops.ascendc import npu_solve_tri
+
+npu_solve_tri(
     x: Tensor,
     cu_seqlens: Optional[List[int]] = None,
     chunk_indices: Optional[List[int]] = None,
@@ -80,6 +82,11 @@ torch.ops.npu.npu_solve_tri(
 |------|----------|------|
 | xOut | FLOAT16/BFLOAT16 | 输出矩阵，shape 与输入一致 |
 
+稳定 Python 入口 `fla_npu.ops.ascendc.npu_solve_tri` 会在原始算子返回后，
+使用当前 NPU stream 将每个 chunk 的上三角和短尾块无效列显式填充为 0。
+该处理不读取 Device 数据到 Host；TND 模式的 `cu_seqlens` 仍应以 Host
+整数列表传入。下三角有效区域（包含对角线）保持不变。
+
 ---
 
 ## 6. 算子实现
@@ -91,6 +98,18 @@ torch.ops.npu.npu_solve_tri(
 1. 将矩阵分块为 $2 \times 2$ 块矩阵
 2. 利用下三角矩阵的结构特性递归求解
 3. 通过 AIC 核执行 CUBE 矩阵乘法，AIV 核生成辅助矩阵
+4. 64×64 路径将输入提升为 FP32，MCH 基块和后续 MXR 合并均保持 FP32，
+   并显式关闭 HF32；仅在最终写回输出时转换为 FLOAT16/BFLOAT16
+5. A2 的 64×64 路径保留连续 MCH GEMM；两级 MXR 合并按真实下三角
+   非零块计算。16→32 阶段将两组独立 16×16 块组合为
+   `32×16 @ 16×32`，32→64 阶段执行两次 32×32 GEMM，不再为稀疏辅助
+   矩阵执行完整 64×64 GEMM
+6. 每个参与的 AIC 使用 4 个连续 64×64 FP32 workspace 槽，分别保存
+   递推逆、幂矩阵、GEMM 临时结果和 `-A`
+
+GDN 调用链中，`chunk_scaled_dot_kkt_fwd` 生成的 `A` 为 FP32；
+进入 `npu_solve_tri` 前会转换为 `k.dtype`。64×64 kernel 内部重新提升为
+FP32 计算，返回值与 `k.dtype` 一致。
 
 ## 7. 目录结构
 

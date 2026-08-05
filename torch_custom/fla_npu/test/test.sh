@@ -23,7 +23,8 @@ usage() {
     echo "算子列表:"
     echo "  prepare_wy_repr_bwd_full, chunk_gated_delta_rule_bwd_dhu,"
     echo "  chunk_bwd_dv_local, causal_conv1d, prepare_wy_repr_bwd_da,"
-    echo "  chunk_bwd_dqkwg, gdn_fwd_o, gdn_fwd_h, recompute_wu_fwd"
+    echo "  chunk_bwd_dqkwg, gdn_fwd_o, gdn_fwd_h, recompute_wu_fwd,"
+    echo "  triton_l2norm_tail"
     exit 1
 }
 
@@ -106,6 +107,7 @@ run_test "chunk_bwd_dqkwg"                 "python3 test_npu_chunk_bwd_dqkwg.py"
 run_test "gdn_fwd_o"                       "bash run_gdn_fwd_o.sh"
 run_test "gdn_fwd_h"                       "bash run_gdn_fwd_h.sh"
 run_test "recompute_wu_fwd"                "python3 test_npu_recompute_w_u_fwd.py"
+run_test "triton_l2norm_tail"              "python3 test_triton_l2norm_tail.py"
 
 echo ""
 echo "=========================================="

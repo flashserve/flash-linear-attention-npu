@@ -31,4 +31,3 @@
  };
  
  #endif  // SOLVE_TRI_COMMON_H
- 

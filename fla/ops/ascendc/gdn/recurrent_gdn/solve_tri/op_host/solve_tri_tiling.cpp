@@ -6,7 +6,7 @@
  #include "register/op_impl_registry.h"
  #include "tiling/platform/platform_ascendc.h"
  #include <string>
- 
+
  namespace optiling {
  
  constexpr uint32_t INPUT_X_IDX = 0;
@@ -131,12 +131,21 @@ constexpr uint32_t ATTR_LAYOUT_IDX = 0;
      if (usedCoreNum > coreNum) usedCoreNum = coreNum;
      context->SetBlockDim(usedCoreNum);
  
-     // Workspace: 用于存储辅助矩阵 (-I, ZERO, +I) + 每核中转缓冲区
+     // 64x64: 每个 AIC 使用 4 个 FP32 矩阵槽保存 MCH 和两级合并的中间结果。
+     // 其他尺寸沿用共享辅助矩阵和每核双中转缓冲区。
      // 需要加上系统 workspace 大小
      uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
-     size_t sharedSize = 3 * chunkSize * chunkSize * sizeof(uint16_t);  // I + -I + ZERO
-     size_t perCoreSize = 2 * chunkSize * chunkSize * sizeof(uint16_t);  // 每核 2 个中转区（X 流 + Y 流双缓冲）
-     size_t userWorkspaceSize = sharedSize + usedCoreNum * perCoreSize;
+     size_t userWorkspaceSize;
+     if (chunkSize == 64) {
+         constexpr size_t fp32WorkspaceSlots = 4;
+         constexpr size_t fp32WorkspaceStride = 64;
+         userWorkspaceSize =
+             usedCoreNum * fp32WorkspaceSlots * chunkSize * fp32WorkspaceStride * sizeof(float);
+     } else {
+         size_t sharedSize = 3 * chunkSize * chunkSize * sizeof(uint16_t);
+         size_t perCoreSize = 2 * chunkSize * chunkSize * sizeof(uint16_t);
+         userWorkspaceSize = sharedSize + usedCoreNum * perCoreSize;
+     }
      // 对齐到 512 字节
      userWorkspaceSize = ((userWorkspaceSize + 511) / 512) * 512;
      // 总 workspace = 用户 workspace + 系统 workspace
@@ -158,4 +167,3 @@ constexpr uint32_t ATTR_LAYOUT_IDX = 0;
      .TilingParse<SolveTriCompileInfo>(SolveTriTilingParse);
  
  }  // namespace optiling
- 
