@@ -13,7 +13,11 @@
  */
 
 #include "chunk_fwd_o_struct.h"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "arch35/gemm/kernel/gdn_fwd_o_kernel.hpp"
+#else
 #include "gemm/kernel/gdn_fwd_o_kernel.hpp"
+#endif
 #ifndef TORCH_MODE
 #include "lib/matmul_intf.h"
 #endif
