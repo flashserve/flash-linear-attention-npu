@@ -58,9 +58,9 @@
 
          if ASCEND_IS_AIC {
              ChunkBwdDqkwgCubeProcess<DTYPE_Q, DTYPE_G> cubeProcess(
-                 q, k, v, g, h,
+                 q, k, v, h,
                  do_, dh, dv, cu_seqlens, chunk_indices,
-                 dq, dk, dw, dg,
+                 dq, dk,
                  userWorkspace
              );
              cubeProcess.Init(tilingData);
@@ -72,7 +72,7 @@
              TPipe tPipe; // 创建 TPipe 用于 Vector 端流水
              ChunkBwdDqkwgVectorProcess<DTYPE_Q, DTYPE_G> vectorProcess(
                  q, k, v, g, h,
-                 do_, dh, dv, cu_seqlens, chunk_indices, nullptr,        //mask = nullptr
+                 do_, dh, dv, cu_seqlens, chunk_indices,
                  dq, dk, dw, dg,
                  userWorkspace
              );

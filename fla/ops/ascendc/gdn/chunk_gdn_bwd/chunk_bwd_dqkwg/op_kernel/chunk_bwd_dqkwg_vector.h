@@ -40,7 +40,7 @@
  public:
      __aicore__ inline ChunkBwdDqkwgVectorProcess(
          GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR h,
-         GM_ADDR do_, GM_ADDR dh, GM_ADDR dv, GM_ADDR cu_seqlen, GM_ADDR chunk_indices, GM_ADDR mask_a,
+         GM_ADDR do_, GM_ADDR dh, GM_ADDR dv, GM_ADDR cu_seqlen, GM_ADDR chunk_indices,
          GM_ADDR dq, GM_ADDR dk, GM_ADDR dw, GM_ADDR dg,
          GM_ADDR workspace
      );
@@ -63,15 +63,8 @@
                                                 uint64_t gOffset, uint32_t BT_sub_start, uint32_t real_BT,
                                                 uint32_t actual_chunk_len);
 
-     // 辅助函数
-     __aicore__ inline void ComputeExpScalar(float input, float &output);
-     __aicore__ inline void ApplyLowerTriangularMask(LocalTensor<float> &tensor, uint32_t size);
-     __aicore__ inline void ReduceSumX(LocalTensor<float> &src, LocalTensor<float> &dst,
-                                       uint32_t rows, uint32_t cols, int axis);
      __aicore__ inline void CopyGateWithPad(LocalTensor<GType> &dst, GlobalTensor<GType> &src,
                                             uint64_t offset, uint32_t validLen, uint32_t totalLen);
-     __aicore__ inline void RefineSmallDw(LocalTensor<float> &dw, uint64_t dvOffset,
-                                          uint64_t hOffset, uint32_t rows);
      __aicore__ inline void RepairDwChunkHeadBlock(LocalTensor<DataType> &dwOut,
                                                    LocalTensor<DataType> &tmp,
                                                    LocalTensor<float> &work,
@@ -92,7 +85,6 @@
      GM_ADDR ptrDv;
      GM_ADDR ptrCuSeqLen;
      GM_ADDR ptrChunkIndices;
-     GM_ADDR ptrMaskA;
      GM_ADDR ptrDq;
      GM_ADDR ptrDk;
      GM_ADDR ptrDw;
@@ -134,7 +126,6 @@
      GlobalTensor<DataType> gmQ, gmK, gmV, gmDo, gmH, gmDh, gmDv;
      GlobalTensor<DataType> gmDq, gmDk, gmDw;
      GlobalTensor<GType> gmG, gmDg;
-     GlobalTensor<DataType> gmWorkspace;
      GlobalTensor<float> gmDgLast;
      GlobalTensor<DataType> gmDwWorkspace;
      GlobalTensor<DataType> gmMm5, gmDsTemp, gmMul1, gmMm6, gmMm7;
@@ -144,8 +135,6 @@
      TQue<TPosition::VECIN, 2> inQue2;
      TQue<TPosition::VECIN, 2> inQue3;
      TQue<TPosition::VECIN, 2> inQue4;  //用于Add0累加
-     TQue<TPosition::VECIN, 2> inQue5;  //用于Part5 Add4中间结果
-     TQue<TPosition::VECIN, 2> inQue6;  //用于Part5 gLast中间结果
      TQue<TPosition::VECOUT, 2> outQue1;
      TQue<TPosition::VECOUT, 2> outQue2;
 
@@ -168,11 +157,11 @@
  template <typename DataType, typename GType>
  __aicore__ inline ChunkBwdDqkwgVectorProcess<DataType, GType>::ChunkBwdDqkwgVectorProcess(
      GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR h,
-     GM_ADDR do_, GM_ADDR dh, GM_ADDR dv, GM_ADDR cu_seqlen, GM_ADDR chunk_indices, GM_ADDR mask_a,
+     GM_ADDR do_, GM_ADDR dh, GM_ADDR dv, GM_ADDR cu_seqlen, GM_ADDR chunk_indices,
      GM_ADDR dq, GM_ADDR dk, GM_ADDR dw, GM_ADDR dg,
      GM_ADDR workspace
  ) : ptrQ(q), ptrK(k), ptrV(v), ptrG(g), ptrH(h),
-     ptrDo(do_), ptrDh(dh), ptrDv(dv), ptrCuSeqLen(cu_seqlen), ptrChunkIndices(chunk_indices), ptrMaskA(mask_a),
+     ptrDo(do_), ptrDh(dh), ptrDv(dv), ptrCuSeqLen(cu_seqlen), ptrChunkIndices(chunk_indices),
      ptrDq(dq), ptrDk(dk), ptrDw(dw), ptrDg(dg),
      ptrWorkspace(workspace) {}
 
@@ -200,7 +189,6 @@
      wsMm6Offset = tiling.wsMm6Offset;
      wsMm7Offset = tiling.wsMm7Offset;
      wsMul1Offset = tiling.wsMul1Offset;
-     uint64_t dgLastSize = tiling.dgLastSize;
      isVarLen = tiling.isVarLen;
      mul0RowNum = tiling.mul0RowNum;
 
@@ -224,7 +212,6 @@
      gmDw.SetGlobalBuffer((__gm__ DataType *)ptrDw);
      gmDg.SetGlobalBuffer((__gm__ GType *)ptrDg);
 
-     gmWorkspace.SetGlobalBuffer((__gm__ DataType *)ptrWorkspace);
      gmDwWorkspace.SetGlobalBuffer((__gm__ DataType *)((__gm__ uint8_t*)ptrWorkspace + wsDwOffset));
      gmDgLast.SetGlobalBuffer((__gm__ float *)((__gm__ uint8_t*)ptrWorkspace + wsDgLastOffset));     //中间结果使用float
 
@@ -312,36 +299,6 @@
      uint8_t rightPadding = static_cast<uint8_t>((elemsPerBlock - (validLen % elemsPerBlock)) % elemsPerBlock);
      DataCopyPadExtParams<GType> padParams{true, 0, rightPadding, 0};
      DataCopyPad(dst, src[offset], copyParams, padParams);
- }
-
- template <typename DataType, typename GType>
- __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::RefineSmallDw(
-     LocalTensor<float> &dw, uint64_t dvOffset, uint64_t hOffset, uint32_t rows) {
-     if constexpr (std::is_same<DataType, half>::value) {
-         constexpr float refineAbsMin = 3.0e-5f;
-         constexpr float refineAbsMax = 2.0e-4f;
-         uint32_t kLimit = static_cast<uint32_t>(K);
-         uint32_t vLimit = static_cast<uint32_t>(V);
-         for (uint32_t r = 0; r < rows; ++r) {
-             for (uint32_t kIdx = 0; kIdx < kLimit; ++kIdx) {
-                 uint32_t outIdx = r * kLimit + kIdx;
-                 float val = dw.GetValue(outIdx);
-                 float absVal = val >= 0.0f ? val : -val;
-                 bool refineSmall = absVal >= refineAbsMin && absVal <= refineAbsMax;
-                 bool refineChunkHeadZero = r == 0 && absVal <= refineAbsMax;
-                 bool refineChunkHeadRepairCols = r == 0 && kIdx < FP16_ELEMENTS_PER_BLOCK;
-                 if (refineSmall || refineChunkHeadZero || refineChunkHeadRepairCols) {
-                     float sum = 0.0f;
-                     for (uint32_t vIdx = 0; vIdx < vLimit; ++vIdx) {
-                         float dvVal = static_cast<float>(gmDv.GetValue(dvOffset + r * vLimit + vIdx));
-                         float hVal = static_cast<float>(gmH.GetValue(hOffset + kIdx * vLimit + vIdx));
-                         sum += dvVal * hVal;
-                     }
-                     dw.SetValue(outIdx, sum);
-                 }
-             }
-         }
-     }
  }
 
  template <typename DataType, typename GType>

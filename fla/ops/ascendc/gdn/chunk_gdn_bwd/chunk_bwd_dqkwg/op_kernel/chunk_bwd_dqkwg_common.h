@@ -17,14 +17,6 @@
 
  #include "kernel_operator.h"
 
- constexpr uint64_t CONST_B = 1;
- constexpr uint64_t CONST_HV = 4;
- constexpr uint64_t CONST_HK = 4;
- constexpr uint64_t CONST_T = 2816;
- constexpr uint64_t CONST_K = 128;
- constexpr uint64_t CONST_V = 128;
- constexpr uint64_t CONST_BT = 64;
- constexpr uint64_t CONST_NUM_CHUNKS = 44;//CONST_T / CONST_BT;  // 32
  constexpr int32_t CAL_NUM_FLOAT = 64; // API一次能处理256B，能计算64个float元素
 
  // ============================================================================
@@ -56,11 +48,6 @@
  // ============================================================================
  constexpr uint64_t SYNC_AIC_AIV_FLAG_0 = 5;  // cube -> vector: 数据 ready (与基线一致)
  constexpr uint64_t SYNC_AIV_AIC_FLAG_0 = 3;  // vector -> cube: 信用 credit (与基线一致)
-
- // Cross-stage temporaries use a per-core group-aligned ring. Short-lived
- // temporaries use an independent shallow ring. The host passes the cross ring
- // depth in wsBtxKSyncSlotsPerHead; short depth is fixed here.
- constexpr uint32_t DqkwgShortRingDepth = 8;
 
  // short 环深自适应: dw/mm6/mul1 的存活窗口只需 2G-1 个 slot (G=groupRingDepth/4)。固定 8 是按最大 G=4 配的,
  // 但大 H / 大 BT 的 memory-bound case 实际 G=1~2 时, 深度 8 严重过配 -> 环装不进 L2 -> FixPipe/MTE2 疯狂 miss。
@@ -156,29 +143,9 @@
      AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_0);
  }
 
- constexpr uint32_t UB_SIZE = 192 * 1024;  // 192KB
- constexpr uint32_t ONE_BLOCK_32 = 32;
  constexpr uint32_t FP32_PER_REPEAT = 64;
- constexpr uint32_t FP16_PER_BLOCK = 16;  // 32 bytes / 2 bytes per fp16
-
- constexpr uint32_t FP16_SIZE = 2;
- constexpr uint32_t FP32_SIZE = 4;
- constexpr uint32_t BF16_SIZE = 2;
 
  #define CEIL_DIV(x, y) (((x) + (y) - 1) / (y))
- #define ALIGN_UP(x, align) (((x) + (align) - 1) / (align) * (align))
-
- template<typename T>
- struct TypeTraits {
-     using ComputeType = float;  // 默认计算类型为 fp32
-     static constexpr bool needsCast = true;
- };
-
- template<>
- struct TypeTraits<half> {
-     using ComputeType = float;
-     static constexpr bool needsCast = true;
- };
 
  __aicore__ void inline GetChunkOffset(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, uint64_t B, uint64_t HV, uint64_t T,
                                        uint64_t chunkSize, uint32_t loopIdx, uint32_t &bos, uint32_t &eos)
