@@ -14,6 +14,7 @@
  */
 
 #include "kernel_operator.h"
+#include "adv_api/math/cumsum.h"
 #include "chunk_local_cumsum_tiling_data.h"
 #include <type_traits>
 
@@ -25,6 +26,8 @@ constexpr int64_t UB_ALIGN_BYTES = 32;
 constexpr int64_t FLOAT_ALIGN_ELEMS = UB_ALIGN_BYTES / static_cast<int64_t>(sizeof(float));
 constexpr int64_t FAST_CHUNK_BUFFER_LIMIT = 160 * 1024;
 constexpr int64_t FAST_CHUNK_SCAN_BUFFER_NUM = 2;
+constexpr int64_t FAST_HEAD_FIRST_PIPE_BUFFER_NUM = 4;
+constexpr int64_t FAST_HEAD_FIRST_CHUNK_GROUP_SIZE = 2;
 constexpr int64_t FP32_REPEAT_ELEMS = 64;
 constexpr int64_t VECTOR_MAX_REPEAT_TIMES = 255;
 constexpr int64_t VECTOR_MAX_CALC_ELEMS = FP32_REPEAT_ELEMS * VECTOR_MAX_REPEAT_TIMES;
@@ -32,6 +35,7 @@ constexpr int64_t DTYPE_FP32 = 0;
 constexpr int64_t DTYPE_FP16 = 1;
 constexpr int64_t DTYPE_BF16 = 2;
 constexpr int32_t BUFFER_NUM = 1;
+constexpr int32_t FAST_BUFFER_NUM = 2;
 
 __aicore__ inline int64_t MinInt64(int64_t a, int64_t b)
 {
@@ -53,6 +57,11 @@ __aicore__ inline int64_t AlignDownInt64(int64_t value, int64_t align)
     return (value / align) * align;
 }
 
+__aicore__ inline int64_t GetFastHeadFirstChunkGroupSize(int64_t chunkSize)
+{
+    return (chunkSize % FLOAT_ALIGN_ELEMS == 0) ? FAST_HEAD_FIRST_CHUNK_GROUP_SIZE : 1;
+}
+
 template <typename GType, typename OType>
 class ChunkLocalCumsumKernel {
 public:
@@ -68,20 +77,49 @@ public:
             cuSeqlensGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cuSeqlens));
             chunkIndicesGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(chunkIndices), tiling_->numBlocks * 2);
         }
+        optimizedHeadFirst_ = tiling_->optimizedHeadFirst != 0;
+        headFirstPipeline_ = optimizedHeadFirst_ && (tiling_->isVarlen != 0);
+        fastChunkGroupSize_ = headFirstPipeline_ ? GetFastHeadFirstChunkGroupSize(tiling_->chunkSize) : 1;
+        int64_t fastBufferNum = headFirstPipeline_ ? FAST_HEAD_FIRST_PIPE_BUFFER_NUM : FAST_CHUNK_SCAN_BUFFER_NUM;
         int64_t maxFastHLen = FAST_CHUNK_BUFFER_LIMIT /
-                              (FAST_CHUNK_SCAN_BUFFER_NUM * tiling_->chunkSize *
+                              (fastBufferNum * fastChunkGroupSize_ * tiling_->chunkSize *
                                static_cast<int64_t>(sizeof(float)));
-        fastHTileSize_ = AlignDownInt64(MinInt64(MinInt64(H_TILE_SIZE, tiling_->h), maxFastHLen),
-                                        FLOAT_ALIGN_ELEMS);
+        if (optimizedHeadFirst_) {
+            fastHTileSize_ = MinInt64(MinInt64(H_TILE_SIZE, tiling_->h), maxFastHLen);
+            if (fastHTileSize_ < 1) {
+                fastHTileSize_ = 1;
+            }
+        } else {
+            fastHTileSize_ = AlignDownInt64(MinInt64(MinInt64(H_TILE_SIZE, tiling_->h), maxFastHLen),
+                                            FLOAT_ALIGN_ELEMS);
+            if (tiling_->h == 1) {
+                fastHTileSize_ = 1;
+            }
+        }
         // The log-step scan needs two chunk buffers; shrink only the fast H tile, not the whole fast path.
+        bool alignedFastPath = optimizedHeadFirst_ || (((tiling_->h & (FLOAT_ALIGN_ELEMS - 1)) == 0) &&
+                                                       (fastHTileSize_ >= FLOAT_ALIGN_ELEMS));
+        bool scalarHeadFastPath = !optimizedHeadFirst_ && (tiling_->headFirst != 0) &&
+                                  (tiling_->h == 1) && (tiling_->reverse == 0);
         chunkFastPath_ = std::is_same<GType, float>::value && std::is_same<OType, float>::value &&
-                         ((tiling_->h & (FLOAT_ALIGN_ELEMS - 1)) == 0) &&
-                         (fastHTileSize_ >= FLOAT_ALIGN_ELEMS);
+                         (alignedFastPath || scalarHeadFastPath);
         if (chunkFastPath_) {
-            int64_t chunkBufferBytes = AlignUpInt64(tiling_->chunkSize * fastHTileSize_ *
-                                                    static_cast<int64_t>(sizeof(float)), UB_ALIGN_BYTES);
-            pipe_.InitBuffer(chunkQueue_, BUFFER_NUM, chunkBufferBytes);
-            pipe_.InitBuffer(scanBuf_, chunkBufferBytes);
+            int64_t chunkElems = tiling_->chunkSize * fastHTileSize_;
+            if (optimizedHeadFirst_) {
+                chunkElems = AlignUpInt64(tiling_->chunkSize * fastChunkGroupSize_, FLOAT_ALIGN_ELEMS) *
+                             fastHTileSize_;
+            }
+            if (scalarHeadFastPath) {
+                chunkElems = AlignUpInt64(tiling_->chunkSize, FLOAT_ALIGN_ELEMS);
+            }
+            int64_t chunkBufferBytes = AlignUpInt64(chunkElems * static_cast<int64_t>(sizeof(float)), UB_ALIGN_BYTES);
+            if (headFirstPipeline_) {
+                pipe_.InitBuffer(headFirstChunkQueue_, FAST_BUFFER_NUM, chunkBufferBytes);
+                pipe_.InitBuffer(headFirstOutQueue_, FAST_BUFFER_NUM, chunkBufferBytes);
+            } else {
+                pipe_.InitBuffer(chunkQueue_, BUFFER_NUM, chunkBufferBytes);
+                pipe_.InitBuffer(scanBuf_, chunkBufferBytes);
+            }
         } else {
             int64_t rowBufferBytes = AlignUpInt64(H_TILE_SIZE * static_cast<int64_t>(sizeof(float)), UB_ALIGN_BYTES);
             pipe_.InitBuffer(rowQueue_, BUFFER_NUM, rowBufferBytes);
@@ -219,6 +257,194 @@ private:
         }
     }
 
+    __aicore__ inline LocalTensor<float> LoadHeadFirstChunkToUb(int64_t gmOffset, int64_t chunkLen,
+                                                                int64_t hLen, int64_t chunkLenAlign)
+    {
+        LocalTensor<float> chunkLocal = chunkQueue_.AllocTensor<float>();
+        DataCopyExtParams copyParams{static_cast<uint16_t>(hLen),
+                                     static_cast<uint32_t>(chunkLen * static_cast<int64_t>(sizeof(float))),
+                                     static_cast<uint32_t>((tiling_->t - chunkLen) *
+                                                          static_cast<int64_t>(sizeof(float))),
+                                     0,
+                                     0};
+        DataCopyPadExtParams<float> padParams{chunkLenAlign != chunkLen,
+                                              0,
+                                              static_cast<uint8_t>(chunkLenAlign - chunkLen),
+                                              0.0f};
+        DataCopyPad(chunkLocal, gGm_[gmOffset], copyParams, padParams);
+        chunkQueue_.EnQue(chunkLocal);
+        return chunkQueue_.DeQue<float>();
+    }
+
+    __aicore__ inline void CopyHeadFirstChunkUbToGm(int64_t gmOffset, LocalTensor<float> chunkLocal,
+                                                    int64_t chunkLen, int64_t hLen, int64_t chunkLenAlign)
+    {
+        DataCopyExtParams copyParams{static_cast<uint16_t>(hLen),
+                                     static_cast<uint32_t>(chunkLen * static_cast<int64_t>(sizeof(float))),
+                                     static_cast<uint32_t>((chunkLenAlign - chunkLen) *
+                                                          static_cast<int64_t>(sizeof(float)) / UB_ALIGN_BYTES),
+                                     static_cast<uint32_t>((tiling_->t - chunkLen) *
+                                                          static_cast<int64_t>(sizeof(float))),
+                                     0};
+        DataCopyPad(outGm_[gmOffset], chunkLocal, copyParams);
+    }
+
+    __aicore__ inline int64_t GetHeadFirstGroupEnd(int64_t chunkStart, int64_t tEnd)
+    {
+        int64_t remaining = tEnd - chunkStart;
+        int64_t fullChunks = remaining / tiling_->chunkSize;
+        int64_t groupChunks = MinInt64(fastChunkGroupSize_, fullChunks);
+        if (groupChunks > 1) {
+            return chunkStart + groupChunks * tiling_->chunkSize;
+        }
+        return MinInt64(chunkStart + tiling_->chunkSize, tEnd);
+    }
+
+    __aicore__ inline void CopyInHeadFirstGroup(int64_t gmOffset, int64_t groupLen, int64_t hLen,
+                                                int64_t groupLenAlign)
+    {
+        LocalTensor<float> groupLocal = headFirstChunkQueue_.AllocTensor<float>();
+        DataCopyExtParams copyParams{static_cast<uint16_t>(hLen),
+                                     static_cast<uint32_t>(groupLen * static_cast<int64_t>(sizeof(float))),
+                                     static_cast<uint32_t>((tiling_->t - groupLen) *
+                                                          static_cast<int64_t>(sizeof(float))),
+                                     0,
+                                     0};
+        DataCopyPadExtParams<float> padParams{groupLenAlign != groupLen,
+                                              0,
+                                              static_cast<uint8_t>(groupLenAlign - groupLen),
+                                              0.0f};
+        DataCopyPad(groupLocal, gGm_[gmOffset], copyParams, padParams);
+        headFirstChunkQueue_.EnQue(groupLocal);
+    }
+
+    __aicore__ inline void ComputeHeadFirstGroup(int64_t groupLen, int64_t hLen, int64_t groupLenAlign)
+    {
+        LocalTensor<float> inLocal = headFirstChunkQueue_.DeQue<float>();
+        LocalTensor<float> outLocal = headFirstOutQueue_.AllocTensor<float>();
+        if (groupLen > tiling_->chunkSize && groupLenAlign == groupLen) {
+            int64_t groupChunks = groupLen / tiling_->chunkSize;
+            CumSumInfo cumSumInfo{static_cast<uint32_t>(hLen * groupChunks),
+                                  static_cast<uint32_t>(tiling_->chunkSize)};
+            CumSum<float>(outLocal, inLocal, inLocal, cumSumInfo);
+        } else {
+            CumSumInfo cumSumInfo{static_cast<uint32_t>(hLen), static_cast<uint32_t>(groupLenAlign)};
+            CumSum<float>(outLocal, inLocal, inLocal, cumSumInfo);
+        }
+        PipeBarrier<PIPE_V>();
+        if (tiling_->scale != 1.0f) {
+            MulsBatched(outLocal, outLocal, tiling_->scale, hLen * groupLenAlign);
+            PipeBarrier<PIPE_V>();
+        }
+        headFirstOutQueue_.EnQue(outLocal);
+        headFirstChunkQueue_.FreeTensor(inLocal);
+    }
+
+    __aicore__ inline void CopyOutHeadFirstGroup(int64_t gmOffset, int64_t groupLen, int64_t hLen,
+                                                 int64_t groupLenAlign)
+    {
+        LocalTensor<float> outLocal = headFirstOutQueue_.DeQue<float>();
+        DataCopyExtParams copyParams{static_cast<uint16_t>(hLen),
+                                     static_cast<uint32_t>(groupLen * static_cast<int64_t>(sizeof(float))),
+                                     static_cast<uint32_t>((groupLenAlign - groupLen) *
+                                                          static_cast<int64_t>(sizeof(float)) / UB_ALIGN_BYTES),
+                                     static_cast<uint32_t>((tiling_->t - groupLen) *
+                                                          static_cast<int64_t>(sizeof(float))),
+                                     0};
+        DataCopyPad(outGm_[gmOffset], outLocal, copyParams);
+        headFirstOutQueue_.FreeTensor(outLocal);
+    }
+
+    __aicore__ inline void ProcessHeadFirstFastRange(int64_t baseOffset, int64_t tStart, int64_t tEnd,
+                                                     int64_t hStart, int64_t hLen)
+    {
+        if (tStart >= tEnd) {
+            return;
+        }
+        int64_t curStart = tStart;
+        int64_t curEnd = GetHeadFirstGroupEnd(curStart, tEnd);
+        int64_t curLen = curEnd - curStart;
+        int64_t curLenAlign = AlignUpInt64(curLen, FLOAT_ALIGN_ELEMS);
+        CopyInHeadFirstGroup(baseOffset + hStart * tiling_->t + curStart, curLen, hLen, curLenAlign);
+
+        int64_t nextStart = curEnd;
+        int64_t nextEnd = tEnd;
+        if (nextStart < tEnd) {
+            nextEnd = GetHeadFirstGroupEnd(nextStart, tEnd);
+            int64_t nextLen = nextEnd - nextStart;
+            int64_t nextLenAlign = AlignUpInt64(nextLen, FLOAT_ALIGN_ELEMS);
+            CopyInHeadFirstGroup(baseOffset + hStart * tiling_->t + nextStart, nextLen, hLen, nextLenAlign);
+        }
+
+        bool hasPendingOut = false;
+        int64_t pendingStart = 0;
+        int64_t pendingLen = 0;
+        int64_t pendingLenAlign = 0;
+        while (curStart < tEnd) {
+            if (hasPendingOut) {
+                CopyOutHeadFirstGroup(baseOffset + hStart * tiling_->t + pendingStart, pendingLen, hLen,
+                                      pendingLenAlign);
+            }
+            ComputeHeadFirstGroup(curLen, hLen, curLenAlign);
+            pendingStart = curStart;
+            pendingLen = curLen;
+            pendingLenAlign = curLenAlign;
+            hasPendingOut = true;
+
+            curStart = nextStart;
+            curEnd = nextEnd;
+            curLen = curEnd - curStart;
+            curLenAlign = AlignUpInt64(curLen, FLOAT_ALIGN_ELEMS);
+            nextStart = curEnd;
+            if (nextStart < tEnd) {
+                nextEnd = GetHeadFirstGroupEnd(nextStart, tEnd);
+                int64_t nextLen = nextEnd - nextStart;
+                int64_t nextLenAlign = AlignUpInt64(nextLen, FLOAT_ALIGN_ELEMS);
+                CopyInHeadFirstGroup(baseOffset + hStart * tiling_->t + nextStart, nextLen, hLen, nextLenAlign);
+            }
+        }
+        if (hasPendingOut) {
+            CopyOutHeadFirstGroup(baseOffset + hStart * tiling_->t + pendingStart, pendingLen, hLen, pendingLenAlign);
+        }
+    }
+
+    __aicore__ inline LocalTensor<float> LoadScalarHeadChunkToUb(int64_t gmOffset, int64_t chunkLen,
+                                                                 int64_t chunkLenAlign)
+    {
+        LocalTensor<float> chunkLocal = chunkQueue_.AllocTensor<float>();
+        if (((gmOffset & (FLOAT_ALIGN_ELEMS - 1)) == 0) && ((chunkLen & (FLOAT_ALIGN_ELEMS - 1)) == 0)) {
+            DataCopy(chunkLocal, gGm_[gmOffset], static_cast<uint32_t>(chunkLen));
+        } else {
+            DataCopyExtParams copyParams{1,
+                                         static_cast<uint32_t>(chunkLen * static_cast<int64_t>(sizeof(float))),
+                                         0,
+                                         0,
+                                         0};
+            DataCopyPadExtParams<float> padParams{chunkLenAlign != chunkLen,
+                                                  0,
+                                                  static_cast<uint8_t>(chunkLenAlign - chunkLen),
+                                                  0.0f};
+            DataCopyPad(chunkLocal, gGm_[gmOffset], copyParams, padParams);
+        }
+        chunkQueue_.EnQue(chunkLocal);
+        return chunkQueue_.DeQue<float>();
+    }
+
+    __aicore__ inline void CopyScalarHeadChunkUbToGm(int64_t gmOffset, LocalTensor<float> chunkLocal,
+                                                     int64_t chunkLen)
+    {
+        if (((gmOffset & (FLOAT_ALIGN_ELEMS - 1)) == 0) && ((chunkLen & (FLOAT_ALIGN_ELEMS - 1)) == 0)) {
+            DataCopy(outGm_[gmOffset], chunkLocal, static_cast<uint32_t>(chunkLen));
+        } else {
+            DataCopyExtParams copyParams{1,
+                                         static_cast<uint32_t>(chunkLen * static_cast<int64_t>(sizeof(float))),
+                                         0,
+                                         0,
+                                         0};
+            DataCopyPad(outGm_[gmOffset], chunkLocal, copyParams);
+        }
+    }
+
     __aicore__ inline void AddBatched(LocalTensor<float> dstLocal, LocalTensor<float> src0Local,
                                       LocalTensor<float> src1Local, int64_t elementCount)
     {
@@ -291,6 +517,42 @@ private:
                                                     int64_t hStart, int64_t hLen)
     {
         int64_t chunkLen = chunkEnd - chunkStart;
+        if (optimizedHeadFirst_) {
+            int64_t rowOffset = baseOffset + hStart * tiling_->t + chunkStart;
+            int64_t chunkLenAlign = AlignUpInt64(chunkLen, FLOAT_ALIGN_ELEMS);
+            LocalTensor<float> chunkLocal = LoadHeadFirstChunkToUb(rowOffset, chunkLen, hLen, chunkLenAlign);
+            LocalTensor<float> outLocal = scanBuf_.Get<float>();
+            CumSumInfo cumSumInfo{static_cast<uint32_t>(hLen), static_cast<uint32_t>(chunkLenAlign)};
+            CumSum<float>(outLocal, chunkLocal, chunkLocal, cumSumInfo);
+            PipeBarrier<PIPE_V>();
+            if (tiling_->scale != 1.0f) {
+                MulsBatched(outLocal, outLocal, tiling_->scale, hLen * chunkLenAlign);
+                PipeBarrier<PIPE_V>();
+            }
+            WaitVToMte3();
+            CopyHeadFirstChunkUbToGm(rowOffset, outLocal, chunkLen, hLen, chunkLenAlign);
+            WaitMte3ToV();
+            chunkQueue_.FreeTensor(chunkLocal);
+            return;
+        }
+        if (tiling_->h == 1 && hLen == 1) {
+            int64_t rowOffset = baseOffset + chunkStart;
+            int64_t chunkLenAlign = AlignUpInt64(chunkLen, FLOAT_ALIGN_ELEMS);
+            LocalTensor<float> chunkLocal = LoadScalarHeadChunkToUb(rowOffset, chunkLen, chunkLenAlign);
+            LocalTensor<float> outLocal = scanBuf_.Get<float>();
+            CumSumInfo cumSumInfo{1, static_cast<uint32_t>(chunkLenAlign)};
+            CumSum<float>(outLocal, chunkLocal, chunkLocal, cumSumInfo);
+            PipeBarrier<PIPE_V>();
+            if (tiling_->scale != 1.0f) {
+                MulsBatched(outLocal, outLocal, tiling_->scale, chunkLenAlign);
+                PipeBarrier<PIPE_V>();
+            }
+            WaitVToMte3();
+            CopyScalarHeadChunkUbToGm(rowOffset, outLocal, chunkLen);
+            WaitMte3ToV();
+            chunkQueue_.FreeTensor(chunkLocal);
+            return;
+        }
         int64_t hLenAlign = AlignUpInt64(hLen, FLOAT_ALIGN_ELEMS);
         int64_t rowOffset = baseOffset + chunkStart * tiling_->h + hStart;
         LocalTensor<float> chunkLocal = LoadChunkToUb(rowOffset, chunkLen, hLen, hLenAlign);
@@ -403,7 +665,14 @@ private:
             int64_t seqLen = eos - bos;
             int64_t tStart = localBlock * tiling_->blockT;
             int64_t tEnd = MinInt64(tStart + tiling_->blockT, seqLen);
-            int64_t baseOffset = outerIdx * tiling_->t * tiling_->h + bos * tiling_->h;
+            int64_t baseOffset = optimizedHeadFirst_ ? (outerIdx * tiling_->h * tiling_->t + bos) :
+                                                        (outerIdx * tiling_->t * tiling_->h + bos * tiling_->h);
+            if constexpr (std::is_same<GType, float>::value && std::is_same<OType, float>::value) {
+                if (headFirstPipeline_) {
+                    ProcessHeadFirstFastRange(baseOffset, tStart, tEnd, hStart, hLen);
+                    continue;
+                }
+            }
             for (int64_t chunkStart = tStart; chunkStart < tEnd; chunkStart += tiling_->chunkSize) {
                 int64_t chunkEnd = MinInt64(chunkStart + tiling_->chunkSize, tEnd);
                 if constexpr (std::is_same<GType, float>::value && std::is_same<OType, float>::value) {
@@ -421,6 +690,8 @@ private:
 
 private:
     TPipe pipe_;
+    TQue<QuePosition::VECIN, FAST_BUFFER_NUM> headFirstChunkQueue_;
+    TQue<QuePosition::VECOUT, FAST_BUFFER_NUM> headFirstOutQueue_;
     TQue<QuePosition::VECIN, BUFFER_NUM> chunkQueue_;
     TQue<QuePosition::VECIN, BUFFER_NUM> rowQueue_;
     TQue<QuePosition::VECIN, BUFFER_NUM> inputRowQueue_;
@@ -434,7 +705,10 @@ private:
     GlobalTensor<int64_t> chunkIndicesGm_;
     const ChunkLocalCumsumTilingData *tiling_ = nullptr;
     int64_t fastHTileSize_ = H_TILE_SIZE;
+    int64_t fastChunkGroupSize_ = 1;
     bool chunkFastPath_ = false;
+    bool optimizedHeadFirst_ = false;
+    bool headFirstPipeline_ = false;
     TEventID vToMte3Event_;
     TEventID mte3ToVEvent_;
 };

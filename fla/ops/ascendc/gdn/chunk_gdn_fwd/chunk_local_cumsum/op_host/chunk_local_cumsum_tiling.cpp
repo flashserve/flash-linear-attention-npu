@@ -37,6 +37,11 @@ constexpr size_t ATTR_HEAD_FIRST_INDEX = 3;
 constexpr size_t ATTR_OUTPUT_DTYPE_INDEX = 4;
 constexpr uint32_t SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
 constexpr int64_t H_TILE_SIZE = 512;
+constexpr int64_t FAST_CHUNK_BUFFER_LIMIT = 160 * 1024;
+constexpr int64_t FAST_CHUNK_SCAN_BUFFER_NUM = 2;
+constexpr int64_t FAST_HEAD_FIRST_PIPE_BUFFER_NUM = 4;
+constexpr int64_t FAST_HEAD_FIRST_CHUNK_GROUP_SIZE = 2;
+constexpr int64_t FLOAT_ALIGN_ELEMS = 8;
 constexpr int64_t DTYPE_FP32 = 0;
 constexpr int64_t DTYPE_FP16 = 1;
 constexpr int64_t DTYPE_BF16 = 2;
@@ -63,6 +68,11 @@ static bool IsPowerOfTwo(int64_t value)
 static int64_t CeilDiv(int64_t a, int64_t b)
 {
     return (a + b - 1) / b;
+}
+
+static int64_t GetFastHeadFirstChunkGroupSize(int64_t chunkSize)
+{
+    return (chunkSize % FLOAT_ALIGN_ELEMS == 0) ? FAST_HEAD_FIRST_CHUNK_GROUP_SIZE : 1;
 }
 
 static bool IsSupportedDataType(ge::DataType dtype)
@@ -251,17 +261,30 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     OP_CHECK_IF(aivNum <= 0,
                 OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "aivNum is invalid."),
                 return ge::GRAPH_FAILED);
-    int64_t hTileNum = CeilDiv(tail, H_TILE_SIZE);
-    int64_t fixedTaskNum = outer * CeilDiv(t, chunkSize) * hTileNum;
-    int64_t varlenTaskNum = outer * nt * hTileNum;
+    bool optimizedHeadFirst = (inDtype == ge::DT_FLOAT) && (expectedOutDtype == ge::DT_FLOAT) &&
+                              *headFirstPtr && !*reversePtr;
+    int64_t tilingB = optimizedHeadFirst ? batch : outer;
+    int64_t tilingH = optimizedHeadFirst ? head : tail;
+    int64_t hTileSize = H_TILE_SIZE;
+    if (optimizedHeadFirst) {
+        bool headFirstPipeline = isVarlen;
+        int64_t chunkGroupSize = headFirstPipeline ? GetFastHeadFirstChunkGroupSize(chunkSize) : 1;
+        int64_t bufferNum = headFirstPipeline ? FAST_HEAD_FIRST_PIPE_BUFFER_NUM : FAST_CHUNK_SCAN_BUFFER_NUM;
+        int64_t maxFastHLen = FAST_CHUNK_BUFFER_LIMIT /
+                              (bufferNum * chunkGroupSize * chunkSize * static_cast<int64_t>(sizeof(float)));
+        hTileSize = std::max<int64_t>(1, std::min<int64_t>(std::min<int64_t>(H_TILE_SIZE, tilingH), maxFastHLen));
+    }
+    int64_t hTileNum = CeilDiv(tilingH, hTileSize);
+    int64_t fixedTaskNum = tilingB * CeilDiv(t, chunkSize) * hTileNum;
+    int64_t varlenTaskNum = tilingB * nt * hTileNum;
     int64_t taskNum = isVarlen ? varlenTaskNum : fixedTaskNum;
     int64_t blockDim = std::max<int64_t>(1, std::min<int64_t>(aivNum, taskNum));
 
     auto tiling = context->GetTilingData<ChunkLocalCumsumTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
-    tiling->b = outer;
+    tiling->b = tilingB;
     tiling->t = t;
-    tiling->h = tail;
+    tiling->h = tilingH;
     tiling->chunkSize = chunkSize;
     tiling->blockT = blockT;
     tiling->numBlocks = nt;
@@ -269,6 +292,7 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     tiling->isVarlen = isVarlen ? 1 : 0;
     tiling->reverse = *reversePtr ? 1 : 0;
     tiling->headFirst = *headFirstPtr ? 1 : 0;
+    tiling->optimizedHeadFirst = optimizedHeadFirst ? 1 : 0;
     tiling->inputDtype = ToTilingDataType(inDtype);
     tiling->outputDtype = ToTilingDataType(outDtype);
     tiling->scale = *scalePtr;
