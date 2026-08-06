@@ -79,6 +79,18 @@
   #### 4. PR 上库  
   Committer 检视通过后，Maintainer 将进行最终审核。确认无误后，将标注 `/lgtm` 和 `/approve` 标签合入PR。
 
+### 本仓特有的贡献要求
+
+本仓在 CANN 算子上层还维护了 `torch_custom/fla_npu` 的 Python runtime 适配，新增算子除上述最小交付件外，还必须满足：
+
+- **提供稳定 Python 入口**：新增算子必须在 `fla_npu.ops.ascendc` 下提供可调用的 Python 接口（经 `_aclnn_ctypes.py` wrapper + `_ASCENDC_OPS` 注册），不得仅以 legacy `torch.ops.npu.*` / `torch_npu.ops.*` 路径交付。
+- **交付内容**：至少包含
+  - `torch_custom/fla_npu/fla_npu/ops/ascendc/_aclnn_ctypes.py` 中的 `npu_<op>(...)` wrapper；
+  - `torch_custom/fla_npu/fla_npu/ops/ascendc/__init__.py` 的 `_ASCENDC_OPS` 注册（需要时同步 `BACKWARD_OPS` 正反向映射与 `MUTATED_ARGUMENTS` mutation 契约）；
+  - `torch_custom/fla_npu/test/test_npu_<op>.py` 单算子测试并接入 `test.sh`。
+- **默认调用路径**：新增算子与测试默认使用 `fla_npu.ops.ascendc`，新代码不要默认依赖 legacy 路径（legacy 路径仅用于兼容性验证，且需要 `FLA_NPU_BUILD_LEGACY_EXTENSION=1` 额外构建）。
+- 具体接入步骤见根 README 的"在 torch_custom 新增 Python 接口"与 `torch_custom/fla_npu/README.md`。
+
 ### 文档纠错
 
   如果您在本项目中发现某些算子文档描述错误，欢迎您新建Issue进行反馈和修复。

@@ -16,12 +16,21 @@ from fla_npu.ops.ascendc import chunk_fwd_o
 
 默认路径通过 Python `ctypes` 直调已安装 OPP 里的 `libcust_opapi.so`，不依赖 PyTorch dispatcher 注册，也不会默认编译或加载 `torch_npu` 自定义扩展。旧的 `torch.ops.npu.*` / `torch_npu.ops.*` 兼容路径仍可做，但只作为迁移期可选能力，不推荐新增代码使用，也不会默认使能。
 
-`import fla_npu` 会立即加载 OPP 中的 `libcust_opapi.so`。导入前必须先 source CANN
-的 `set_env.sh`；使用方式 B standalone wheel 时，还必须先安装算子 run 包，或设置
-`FLA_NPU_OPP_PATH` 指向已有 OPP root / vendor 目录。CANN 环境未初始化、OPP 不完整
-或动态库加载失败时，import 会直接报错。FLA 自定义 op_api 只使用
-`libcust_opapi.so`，不要在 custom OPP 的 `op_api/lib` 目录创建会遮蔽 CANN 运行库
-的 `libopapi.so` 别名。
+## 导入契约
+
+`import fla_npu` 会定位 OPP 并加载 `libcust_opapi.so`。**导入 / 构建前请先 source CANN 的 `set_env.sh`**（默认路径为 `/usr/local/Ascend/ascend-toolkit/set_env.sh`；自定义安装路径时替换为实际路径下对应的 `set_env.sh`）；CANN 环境未初始化、OPP 不完整或动态库加载失败时，import 会直接报错：
+
+```sh
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+```
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| 导入失败，`fla_npu/opp/vendors/fla_npu_transformer` 下找不到 `libcust_opapi.so` | 安装的是 standalone wheel（不内嵌 OPP）：需先安装算子 run 包，或通过环境变量 `FLA_NPU_OPP_PATH` 指向外部 OPP 目录 |
+| `dlopen` 报错、找不到依赖库 | 未 source CANN `set_env.sh`，或新开 shell 后环境变量丢失，需要重新 source |
+| 安装 run 包后调用接口报 ABI / 行为异常 | 已加载的 `libcust_opapi.so` 不会在同一 Python 进程内热替换，请重启 Python 进程 |
+
+FLA 自定义 op_api 只使用 `libcust_opapi.so`，不要在 custom OPP 的 `op_api/lib` 目录创建会遮蔽 CANN 运行库的 `libopapi.so` 别名。
 
 ## 默认交付件
 
@@ -96,8 +105,9 @@ torch.ops.npu.npu_xxx(...)
 3. 在 wrapper 内申请输出 tensor，并把输出传给 `_call_aclnn(...)`。
 4. 如果 aclnn 参数里有 `char *`、字符串、或 ctypes 不能安全自动转换的参数，在 `_GET_WORKSPACE_ARGTYPES` 中补充 `GetWorkspaceSize` 的 `argtypes`。
 5. 在 `fla_npu/ops/ascendc/__init__.py` 的 `_ASCENDC_OPS` 中加入 `npu_xxx`，这样会自动导出 `npu_xxx` 和去掉 `npu_` 前缀后的短名。
-6. 如果存在明确的正反向关系，在 `BACKWARD_OPS` 中补充映射；需要 autograd 自动绑定时，在 `__init__.py` 中增加对应 `torch.autograd.Function` 包装。
-7. 新增或更新测试，默认调用 `fla_npu.ops.ascendc` 路径。
+6. 如果存在明确的正反向关系，在 `BACKWARD_OPS` 中补充映射（例如 `causal_conv1d` → `causal_conv1d_bwd`）；需要 autograd 自动绑定时，在 `__init__.py` 中增加对应 `torch.autograd.Function` 包装。
+7. 如果算子会就地修改某个输入 tensor（例如 `causal_conv1d` 会更新 `conv_states`），在 `MUTATED_ARGUMENTS` 中登记对应参数名。ctypes 直接写 tensor storage 时 PyTorch 无法从 Python 调用自动发现副作用，登记后 wrapper 会负责 grad 限制与版本计数（mutation 契约测试参考 `test/test_ascendc_mutation_contract.py`）。
+8. 新增或更新测试，默认调用 `fla_npu.ops.ascendc` 路径。
 
 新增算子通常不需要修改 `_runtime.py`，也不需要感知 `_AclTensor`、`_AclIntArray`、workspace 申请或 stream launch 细节。只有公共 ctypes 调发框架本身需要演进时，才修改 `_runtime.py`。
 
@@ -125,7 +135,9 @@ def npu_my_op(x, weight, *, scale=1.0, indices=None):
 
 ```bash
 python3 setup.py bdist_wheel
-python3 -m pip install --force-reinstall --no-deps dist/flash_linear_attention_npu-*.whl
+# WHEEL_PATH 使用构建日志输出的准确文件名（勿用通配符，避免匹配多个产物）
+WHEEL_PATH="dist/<准确wheel文件名>.whl"
+python3 -m pip install --force-reinstall --no-cache-dir --no-deps "$WHEEL_PATH"
 ```
 
 这个 standalone wheel 会先安装 Python runtime 和空的 OPP vendor 骨架：
@@ -148,7 +160,9 @@ bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu
 
 ```bash
 FLA_NPU_SOC=ascend910b python3 -m pip wheel --no-build-isolation --no-deps . -w dist
-python3 -m pip install --force-reinstall --no-deps dist/flash_linear_attention_npu-*.whl
+# WHEEL_PATH 使用构建日志输出的准确文件名（勿用通配符，避免匹配多个产物）
+WHEEL_PATH="dist/<准确wheel文件名>.whl"
+python3 -m pip install --force-reinstall --no-cache-dir --no-deps "$WHEEL_PATH"
 python3 scripts/check_packaged_wheel_api.py
 ```
 
@@ -162,6 +176,8 @@ bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu --ops=chunk_fwd_o
 安装器会列出 scoped run 包覆盖后的算子状态。`WARNING` 表示安装后不可用，`NOTICE` 表示需要人工关注，`OK` 表示 ABI 一致并继续可用。
 覆盖完成后只保留 `libcust_opapi.so`，并同步刷新已安装 wheel 的 `RECORD`；重复安装
 同一个 run 包不会重复追加 OPP 路径。
+
+> 安装流程看护（PR #274 新增）：`scripts/check_install_workflows.py` 用于校验 wheel / run 包 / 安装流程是否符合约定。构建与安装完成后执行 `python scripts/check_install_workflows.py`，CI 也会自动运行该检查。
 
 ## legacy torch_npu / torch.ops.npu 路径
 
@@ -199,6 +215,8 @@ legacy 路径会生成或使用：
 - `npu_custom.yaml`、`test_native_functions.yaml`、`deprecated.yaml`
 
 这些兼容路径不会默认使能。`torch.ops.npu` legacy extension 会重新绑定 PyTorch、Python、C++ ABI 和 torch_npu dispatcher 行为，因此只用于历史接口兼容或专项验证。新增算子默认不要以 legacy extension 作为唯一调用方式。
+
+`torch.ops.npu.*` / `torch_npu.ops.*` 只支持到 v26.6.0，从旧版本迁移到最新版本的完整步骤见[根 README 的"从旧版本升级"章节](../../README.md)。新代码请勿使用 legacy 路径。
 
 ## 测试要求
 

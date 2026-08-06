@@ -109,6 +109,7 @@ ABI 敏感路径包括 `*_def.cpp`、`aclnn_*.h/.cpp`、`torch_custom/fla_npu/*.
 先准备环境：
 
 ```sh
+# CANN 安装于自定义路径时，请替换为实际路径下对应的 set_env.sh
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
 python -m pip install -r requirements.txt
 python scripts/check_npu_env.py --build-only
@@ -126,17 +127,18 @@ FLA_NPU_SOC=ascend910b python -m pip wheel --no-build-isolation --no-deps . -w d
 - A3：`ascend910_93`
 - A5：`ascend950`
 
-源码或适配修改后仍执行完整 wheel 构建；构建流程会清理上一轮中间产物：
+源码或适配修改后仍执行完整 wheel 构建；构建流程会清理上一轮 `build/`、`build_out/`、`output/` 中间产物，不再支持增量构建：
 
 ```sh
 FLA_NPU_SOC=ascend910b python -m pip wheel --no-build-isolation --no-deps . -w dist
 ```
 
 只构建部分算子用于定位时，显式构建单算子 run 包；该产物不能替代完整 wheel
-的全量重编：
+的全量重编（`--soc` 需指定为实际芯片类型）：
 
 ```sh
 bash build.sh --soc=ascend910b --pkg --vendor_name=fla_npu --ops=chunk_fwd_o
+```
 ```
 
 分开编 OPP run 包和 `torch_custom` 适配时：
