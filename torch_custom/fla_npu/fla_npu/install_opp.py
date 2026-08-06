@@ -16,11 +16,29 @@ def _write_set_env(vendor_dir: Path) -> None:
         "\n".join(
             [
                 "#!/bin/bash",
-                'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-                'VENDOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"',
-                'OPP_ROOT="$(cd "${VENDOR_DIR}/../.." && pwd)"',
-                'export ASCEND_CUSTOM_OPP_PATH="${OPP_ROOT}:${VENDOR_DIR}:${ASCEND_CUSTOM_OPP_PATH}"',
-                'export LD_LIBRARY_PATH="${VENDOR_DIR}/op_api/lib:${LD_LIBRARY_PATH}"',
+                '_FLA_NPU_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+                '_FLA_NPU_VENDOR_DIR="$(cd "${_FLA_NPU_SCRIPT_DIR}/.." && pwd)"',
+                '_FLA_NPU_OPP_ROOT="$(cd "${_FLA_NPU_VENDOR_DIR}/../.." && pwd)"',
+                "_fla_npu_prepend_path() {",
+                '    local name="$1"',
+                '    local value="$2"',
+                "    local current=\"\"",
+                '    if [[ -v "${name}" ]]; then',
+                '        current="${!name}"',
+                "    fi",
+                '    case ":${current}:" in',
+                '        *":${value}:"*) return 0 ;;',
+                "    esac",
+                '    printf -v "${name}" "%s" "${value}${current:+:${current}}"',
+                '    export "${name}"',
+                "}",
+                '_fla_npu_prepend_path ASCEND_CUSTOM_OPP_PATH "${_FLA_NPU_VENDOR_DIR}"',
+                '_fla_npu_prepend_path ASCEND_CUSTOM_OPP_PATH "${_FLA_NPU_OPP_ROOT}"',
+                '_fla_npu_prepend_path LD_LIBRARY_PATH "${_FLA_NPU_VENDOR_DIR}/op_api/lib"',
+                'export FLA_NPU_OPP_PATH="${_FLA_NPU_OPP_ROOT}"',
+                'export FLA_NPU_OP_API_LIB="${_FLA_NPU_VENDOR_DIR}/op_api/lib/libcust_opapi.so"',
+                "unset -f _fla_npu_prepend_path",
+                "unset _FLA_NPU_SCRIPT_DIR _FLA_NPU_VENDOR_DIR _FLA_NPU_OPP_ROOT",
                 "",
             ]
         ),
@@ -57,6 +75,9 @@ def install_opp(install_path: Path, force: bool = False) -> None:
                 raise FileExistsError(f"{vendor_dst} already exists. Use --force to replace it.")
             shutil.rmtree(vendor_dst)
         shutil.copytree(vendor_src, vendor_dst)
+        op_api_alias = vendor_dst / "op_api" / "lib" / "libopapi.so"
+        if op_api_alias.exists() or op_api_alias.is_symlink():
+            op_api_alias.unlink()
         _write_set_env(vendor_dst)
         copied.append(vendor_dst)
 

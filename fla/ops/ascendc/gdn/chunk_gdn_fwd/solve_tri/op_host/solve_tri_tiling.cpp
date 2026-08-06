@@ -22,56 +22,75 @@ constexpr uint32_t ATTR_LAYOUT_IDX = 0;
      int64_t coreNum = ascendcPlatform.GetCoreNumAic();
      if (coreNum == 0) return ge::GRAPH_FAILED;
  
-     // Get input shape: [B, H, T, BT] (BHTD), [B, T, H, BT] (BSND), or [total_T, H, BT] (THD)
+     // Get input shape:
+     //   BNSD (mode 0): [B, H, S, BT]            (4D, chunks contiguous)
+     //   BSND (mode 1): [B, S, H, BT]            (4D, chunks non-contiguous)
+     //   TND  (mode 2): [total_T, H, BT]         (3D, varlen, chunks non-contiguous)
+     //   NTD  (mode 3): [H, total_T, BT]         (3D, varlen, chunks contiguous; transpose of TND)
      auto inputShape = context->GetInputShape(INPUT_X_IDX);
      if (inputShape == nullptr) return ge::GRAPH_FAILED;
      auto shape = inputShape->GetStorageShape();
      int64_t ndim = shape.GetDimNum();
      if (ndim != 3 && ndim != 4) return ge::GRAPH_FAILED;
-
+ 
      // Get layout attribute to determine shape parsing
      auto attrs = context->GetAttrs();
      const char *layoutStr = attrs->GetStr(ATTR_LAYOUT_IDX);
      std::string layout = layoutStr ? layoutStr : "bsnd";
-
-     // layoutMode: 0=BHTD, 1=BSND, 2=THD
+ 
+     // layoutMode: 0=BNSD, 1=BSND, 2=TND, 3=NTD
+     // "bhtd" 保留为 mode 0 的兼容别名（等价于 bnsd）
      int64_t layoutMode = 1;  // default to BSND
-     if (layout == "bhtd") {
+     if (layout == "bnsd" || layout == "bhtd") {
          layoutMode = 0;
      } else if (layout == "bsnd") {
          layoutMode = 1;
      } else if (layout == "tnd") {
          layoutMode = 2;
+     } else if (layout == "ntd") {
+         layoutMode = 3;
      }
-
+ 
      int64_t B, H, T, BT;
      if (ndim == 4) {
          if (layoutMode == 0) {
-             // BHTD: [B, H, T, BT]
+             // BNSD: [B, H, S, BT]
              B = shape.GetDim(0);
              H = shape.GetDim(1);
              T = shape.GetDim(2);
              BT = shape.GetDim(3);
          } else {
-             // BSND: [B, T, H, BT]
+             // BSND: [B, S, H, BT]
              B = shape.GetDim(0);
              T = shape.GetDim(1);
              H = shape.GetDim(2);
              BT = shape.GetDim(3);
          }
      } else {
-         // 3D THD: [total_T, H, BT]
-         B = 1;
-         T = shape.GetDim(0);
-         H = shape.GetDim(1);
-         BT = shape.GetDim(2);
+         // 3D varlen
+         if (layoutMode == 3) {
+             // NTD: [H, total_T, BT]
+             B = 1;
+             H = shape.GetDim(0);
+             T = shape.GetDim(1);
+             BT = shape.GetDim(2);
+         } else {
+             // TND: [total_T, H, BT]
+             B = 1;
+             T = shape.GetDim(0);
+             H = shape.GetDim(1);
+             BT = shape.GetDim(2);
+         }
      }
-
+ 
      int64_t chunkSize = BT;
-
-    // isVarlen only for THD mode
-    int64_t isVarlen = (layoutMode == 2) ? 1 : 0;
+ 
+    // isVarlen only for TND/NTD mode
+    int64_t isVarlen = (layoutMode == 2 || layoutMode == 3) ? 1 : 0;
     int64_t hasCuSeqlens = isVarlen;
+
+    // totalTokens: NTD 偏移计算需要（= T，即 total_T）；其余模式置 0
+    int64_t totalTokens = (layoutMode == 3) ? T : 0;
 
     int64_t totalChunks = 0;
     int64_t numChunks = 0;
@@ -121,6 +140,7 @@ constexpr uint32_t ATTR_LAYOUT_IDX = 0;
     tiling.set_totalChunks(totalChunks);
     tiling.set_layoutMode(layoutMode);
     tiling.set_dtypeMode(dtypeMode);
+    tiling.set_totalTokens(totalTokens);
  
      context->SetTilingKey(1);
      tiling.SaveToBuffer(context->GetRawTilingData()->GetData(),

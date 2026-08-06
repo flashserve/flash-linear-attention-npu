@@ -37,7 +37,11 @@ public:
         this->Attr("use_gate_in_kernel").AttrType(REQUIRED).Bool(false);
         this->Attr("safe_gate").AttrType(REQUIRED).Bool(false);
         this->Attr("lower_bound").AttrType(REQUIRED).Float(-5.0);
-        this->Attr("layout").AttrType(OPTIONAL).String("BSND");
+        this->Attr("logical_rank").AttrType(REQUIRED).Int(4);
+        this->Attr("logical_batch").AttrType(REQUIRED).Int(1);
+        this->Attr("logical_seqlen").AttrType(REQUIRED).Int(1);
+        this->Attr("logical_heads").AttrType(REQUIRED).Int(1);
+        this->Attr("logical_head_dim").AttrType(REQUIRED).Int(1);
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)

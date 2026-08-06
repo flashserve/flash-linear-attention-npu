@@ -857,11 +857,8 @@ def flash_chunk_gated_delta_rule_fwd(
         initial_state=initial_state,
         output_final_state=output_final_state,
         chunk_size=chunk_size,
-        save_new_value=True,
         cu_seqlens=cu_seqlens_list,
         chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
-        use_exp2=False,
-        transpose_state_layout=False,
     )
     if not output_final_state:
         final_state = None
@@ -877,7 +874,6 @@ def flash_chunk_gated_delta_rule_fwd(
         cu_seqlens=cu_seqlens_list,
         chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
         chunk_size=chunk_size,
-        transpose_state_layout=False,
     )
 
     g = g.transpose(1, 2).contiguous()
@@ -927,11 +923,8 @@ def flash_chunk_gated_delta_rule_bwd(
         initial_state=initial_state,
         output_final_state=False,
         chunk_size=chunk_size,
-        save_new_value=True,
         cu_seqlens=cu_seqlens_list,
         chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
-        use_exp2=False,
-        transpose_state_layout=False,
     )
 
     dv = ascendc_chunk_bwd_dv_local(

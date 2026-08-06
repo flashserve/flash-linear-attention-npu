@@ -17,6 +17,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# Bisheng/cce-ld does not implement GNU link dependency files. CMake 3.27+
+# may otherwise inject -Wl,--dependency-file for shared-library targets.
+set(CMAKE_LINK_DEPENDS_USE_LINKER FALSE)
 
 include(cmake/ascend.cmake)
 include(cmake/python.cmake)
@@ -42,7 +45,7 @@ set(INCLUDE_DIRECTORIES
     ${CMAKE_CURRENT_SOURCE_DIR}/../../fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu/op_kernel
     ${CMAKE_CURRENT_SOURCE_DIR}/../../fla/ops/ascendc/gdn/chunk_gdn_fwd
     ${CMAKE_CURRENT_SOURCE_DIR}/../../fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/op_kernel
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../fla/ops/ascendc/gdn/chunk_gdn_fwd/recompute_wu_fwd/op_kernel
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../fla/ops/ascendc/gdn/chunk_gdn_fwd/recompute_w_u_fwd/op_kernel
     ${CMAKE_CURRENT_SOURCE_DIR}/../../fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/op_kernel
     ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/catlass/include
     ${ASCEND_DIR}/pkg_inc/op_common/op_host
@@ -92,6 +95,7 @@ add_library(_C SHARED
 )
 set_target_properties(_C PROPERTIES
     POSITION_INDEPENDENT_CODE ON
+    LINK_DEPENDS_NO_SHARED TRUE
     PREFIX ""
     SUFFIX ".abi3.so"
     OUTPUT_NAME "_C"

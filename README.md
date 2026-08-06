@@ -47,23 +47,23 @@ source /usr/local/Ascend/ascend-toolkit/set_env.sh
 FLA_NPU_SOC=ascend910b python -m pip wheel --no-build-isolation --no-deps . -w dist
 ```
 
-如果已经做过一次完整编译，之后只修改少量算子源码，可以复用上一次 CMake build 目录做完整 wheel 的真增量构建：
+修改任何源码或适配后，重新执行同一条命令做全量构建。构建流程会清理上一轮
+`build/`、`build_out/` 和 `output/` 中间产物，不依赖 Git diff 或旧 CMake 状态决定
+编译范围：
 
 ```sh
-FLA_NPU_SOC=ascend910b FLA_NPU_INCREMENTAL_BUILD=1 python -m pip wheel --no-build-isolation --no-deps . -w dist
+FLA_NPU_SOC=ascend910b python -m pip wheel --no-build-isolation --no-deps . -w dist
 ```
 
-增量构建仅建议用于本地反复调试。构建完成后，wheel 会输出到 `dist/` 目录，按 Step 3 安装即可。
+构建完成后，wheel 仍统一输出到 `dist/`。该目录可能同时存在不同版本或构建标签
+的 wheel，因此安装时必须传入本轮构建生成的准确文件名，并使用 Step 3 的强制覆盖
+命令，避免通配符选中旧产物。
 
 方式 A 编译可用环境变量：
 
 | 环境变量 | 可选范围 | 作用 / 建议 | 默认 |
 |---|---|---|---|
 | `FLA_NPU_SOC` | `ascend910b` / `ascend910_93` / `ascend950` | 目标芯片；按实际运行机器选择 | `ascend910b` |
-| `FLA_NPU_INCREMENTAL_BUILD` | `TRUE` / `FALSE` | 复用 `build/` 做完整 wheel 的真增量构建；本地反复调试可设 `TRUE`，release wheel 或干净验证建议保持 `FALSE` | `FALSE` |
-| `FLA_NPU_OPS` | 逗号分隔的算子名，如 `chunk_fwd_o,recompute_wu_fwd` | 仅构建指定算子；用于单算子定位，不要用于 release wheel | 空 |
-| `FLA_NPU_SKIP_RUN_BUILD` | `TRUE` / `FALSE` | 跳过 run 包编译；仅在已准备好匹配的 `build_out/fla-npu-*.run` 且只重打 wheel 时可设 `TRUE`，常规构建建议保持 `FALSE` | `FALSE` |
-| `FLA_NPU_SKIP_RUN_INSTALL` | `TRUE` / `FALSE` | 跳过将 run 包安装产物内嵌到 wheel；会得到不含内嵌 OPP 的 wheel，除非使用外部 OPP 调试，否则建议保持 `FALSE` | `FALSE` |
 | `FLA_NPU_DISABLE_LOCAL_VERSION` | `TRUE` / `FALSE` | wheel 版本号不追加 SOC/torch/ABI 本地版本；内部统一发版需要固定版本号时可设 `TRUE`，日常构建建议保持 `FALSE` 以区分产物兼容范围 | `FALSE` |
 
 布尔变量设为 `TRUE` 时也接受 `1`、`YES`、`ON`；未设置或其他值按 `FALSE` 处理。
@@ -92,10 +92,19 @@ FLA_NPU_BUILD_LEGACY_EXTENSION=1 python3 setup.py bdist_wheel
 方式 A 产物可以来自本地源码一键编译，也可以直接使用 [Release v26.6.0](https://github.com/flashserve/flash-linear-attention-npu/releases/tag/v26.6.0) 提供的官方验证 wheel。下载或构建完成后执行：
 
 ```sh
-python -m pip install --force-reinstall --no-deps dist/flash_linear_attention_npu-*.whl
+WHEEL_PATH="dist/本轮构建生成的-wheel-文件名.whl"
+python -m pip install --force-reinstall --no-cache-dir --no-deps "$WHEEL_PATH"
 ```
 
-如果使用 Release 下载的 wheel，将命令中的 `dist/flash_linear_attention_npu-*.whl` 替换为实际下载路径。
+将 `WHEEL_PATH` 设置为本轮构建日志中输出的准确 wheel 文件；如果使用 Release
+下载的 wheel，则设置为实际下载路径。
+
+方式 A wheel 不安装或执行 shell 环境钩子。无论使用系统 Python、Conda、venv
+还是 Docker，每次进入新的 shell 后都需要先按 Step 1 手工 source CANN 的
+`set_env.sh`。调用 `fla_npu.ops.ascendc` 算子时会在当前 Python 进程内定位并加载
+wheel 内嵌 OPP；wheel 通过绝对路径加载 `libcust_opapi.so`，不会再生成或加载
+可能覆盖 CANN 运行库的自定义 `libopapi.so`。如果旧版 run 包曾在 wheel 中遗留该别名，
+新 runtime 会在首次加载 OPP 时删除它；目录不可写时会给出明确的手工清理提示。
 
 #### 方式 B 产物安装
 
@@ -108,22 +117,64 @@ python -m pip install --force-reinstall --no-deps dist/flash_linear_attention_np
 ./build_out/fla-npu-*.run --full
 
 # 如果 Python wrapper 也有修改，再安装单独编译出的 wheel
-python -m pip install --force-reinstall --no-deps torch_custom/fla_npu/dist/flash_linear_attention_npu-*.whl
+WHEEL_PATH="dist/本轮构建生成的-wheel-文件名.whl"
+python -m pip install --force-reinstall --no-cache-dir --no-deps "$WHEEL_PATH"
 ```
 
-安装 run 包后需要重启 Python 进程，已经 `dlopen` 的 `libcust_opapi.so` 不会在同一进程内热替换。
+run 包覆盖完成后会重写幂等的 `set_env.bash`，并把实际 OPP 文件清单刷新到 wheel
+的 `RECORD`。因此重复覆盖同一个 run 包不会累积环境变量或文件记录，后续
+`pip --force-reinstall` 也能先清理 run 包增加的文件，再安装新 wheel。
 
-`import fla_npu` 是轻量导入，不会自动导入 `torch` / `torch_npu`，也不会自动注册 `torch.ops.npu`。默认 wheel 通过 Python ctypes 直调 aclnn/opapi，推荐使用 `fla_npu.ops.ascendc`；`torch_npu.ops.*` 会在导入 `fla_npu.ops.ascendc` 后挂到同一套 Python wrapper。只有用 `FLA_NPU_BUILD_LEGACY_EXTENSION=1` 额外编出 legacy 扩展时，才可显式调用 `fla_npu.load_legacy_torch_ops()` 兼容旧 `torch.ops.npu.*`。
+`import fla_npu` 会定位 OPP 并加载 `libcust_opapi.so`。执行前必须先 source CANN
+的 `set_env.sh`；CANN 环境未初始化、OPP 不完整或动态库加载失败时，import 会直接
+报错。该过程不会自动导入 `torch` / `torch_npu`，也不会注册 `torch.ops.npu`。
+默认 wheel 通过 Python ctypes 直调 aclnn/opapi，推荐使用 `fla_npu.ops.ascendc`；
+只有用 `FLA_NPU_BUILD_LEGACY_EXTENSION=1` 额外编出 legacy 扩展时，才可显式调用
+`fla_npu.load_legacy_torch_ops()` 兼容旧 `torch.ops.npu.*`。
+
+`fla_npu.ops.ascendc` 调用会优先使用 wheel 内嵌 OPP，找不到时会继续从 `FLA_NPU_OPP_PATH`、`ASCEND_CUSTOM_OPP_PATH` 和 `ASCEND_OPP_PATH` 查找已安装 OPP。外部 OPP 的 `op_api/lib` 目录同样不得包含自定义 `libopapi.so`；runtime 会先尝试删除旧版本遗留的别名，目录不可写时再明确报错并要求手工清理。
 
 ### Step 4. 测试安装成功
 
 安装后两种方式均可用以下命令验证：
 
 ```sh
-python -c "import fla_npu; print(fla_npu.is_legacy_torch_ops_loaded())"
+python -c "import fla_npu; print('fla_npu runtime loaded')"
 python -c "from fla_npu.ops import ascendc; import torch_npu; print(hasattr(torch_npu.ops, 'chunk_fwd_o'))"
 python scripts/check_packaged_wheel_api.py
 ```
+
+不再使用时，按 distribution 名卸载：
+
+```sh
+python -m pip uninstall -y flash-linear-attention-npu
+```
+
+wheel 原始文件、pip 安装期生成的 `__pycache__`、单算子 run 包覆盖写入的 OPP 文件
+及对应 metadata 都由安装后的 `RECORD` 管理；卸载后不应残留 `fla_npu/` 或
+`flash_linear_attention_npu-*.dist-info/`。
+
+修改源码、Python 适配或单算子 run 包后，可以用安装流程看护脚本在隔离 venv 中
+检查重复安装、卸载和主要调用通路。参数必须指向确定的单个产物；下面的 base wheel、
+run 包和 updated wheel 会分别安装两次，每次都在新 Python 进程中检查 OPP 布局、
+`RECORD`、环境变量、公开 API 和 `libcust_opapi.so` 动态库映射。run 包覆盖后及最终
+整包验证后还会执行 `pip uninstall`，确认包目录、distribution metadata 和
+`RECORD` 登记文件均无残留：
+
+```sh
+python scripts/check_install_workflows.py \
+  --wheel dist/<exact-base-wheel>.whl \
+  --run-package build_out/<exact-scoped-run-package>.run \
+  --updated-wheel dist/<exact-updated-wheel>.whl \
+  --wheel-op chunk_gated_delta_rule_fwd_h \
+  --run-op chunk_gated_delta_rule_fwd_h \
+  --updated-wheel-op chunk_gated_delta_rule_fwd_h \
+  --work-cwd .
+```
+
+新增适配时，用 `--updated-wheel-op` 声明新增的公开 API。只验证 standalone
+Python wheel 加单算子 run 包时，将 `--base-mode` 设为 `skeleton`。该脚本看护
+打包安装和主要加载通路，不替代算子自身的精度、泛化或性能测试。
 
 `torch.ops.npu.*` 是 legacy extension 的过渡用法，后续版本不再支持。新代码优先使用 `fla_npu.ops.ascendc` 下的稳定 Python 入口。
 
@@ -146,7 +197,7 @@ bash test.sh --device 0 --op causal_conv1d   # 单个 AscendC 测试任务
 - `chunk_bwd_dqkwg`
 - `gdn_fwd_o`
 - `gdn_fwd_h`
-- `recompute_wu_fwd`
+- `recompute_w_u_fwd`
 
 
 ### 算子调用方式参考
@@ -192,7 +243,7 @@ NPU CI 维护说明见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部
 │       │       ├── chunk_gdn_fwd      # 前向传播算子
 │       │       │   ├── chunk_fwd_o
 │       │       │   ├── chunk_gated_delta_rule_fwd_h
-│       │       │   └── recompute_wu_fwd
+│       │       │   └── recompute_w_u_fwd
 │       │       ├── chunk_gdn_bwd      # 反向传播算子
 │       │       │   ├── chunk_bwd_dqkwg
 │       │       │   ├── chunk_bwd_dv_local

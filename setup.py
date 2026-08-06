@@ -58,9 +58,6 @@ TORCHNPUGEN_MODULES = (
     "torchnpugen.gen_backend_stubs",
     "torchnpugen.struct.gen_struct_opapi",
 )
-RUNTIME_CONFIG_ALIASES = {
-    "recompute_wu_fwd": "recompute_w_u_fwd",
-}
 
 
 def _read_requirements():
@@ -322,31 +319,17 @@ def _install_run_package(run_file, install_path):
 
 def _build_run_package():
     soc = os.getenv("FLA_NPU_SOC", DEFAULT_SOC)
-    ops_filter = os.getenv("FLA_NPU_OPS", "").strip()
-    incremental = _env_flag("FLA_NPU_INCREMENTAL_BUILD")
-    if incremental and ops_filter:
-        raise RuntimeError(
-            "FLA_NPU_INCREMENTAL_BUILD reuses the full CMake build graph so unchanged "
-            "operators stay packaged. Do not set FLA_NPU_OPS at the same time; "
-            "FLA_NPU_OPS intentionally builds a partial custom OPP package."
-        )
-
-    if not _env_flag("FLA_NPU_SKIP_RUN_BUILD"):
-        build_out = REPO_ROOT / "build_out"
-        if build_out.exists():
-            shutil.rmtree(build_out)
-        cmd = [
-            "bash",
-            "build.sh",
-            f"--soc={soc}",
-            "--pkg",
-            f"--vendor_name={DEFAULT_VENDOR_NAME}",
-        ]
-        if incremental:
-            cmd.append("--incremental")
-        if ops_filter:
-            cmd.append(f"--ops={ops_filter}")
-        _run(cmd, REPO_ROOT)
+    build_out = REPO_ROOT / "build_out"
+    if build_out.exists():
+        shutil.rmtree(build_out)
+    cmd = [
+        "bash",
+        "build.sh",
+        f"--soc={soc}",
+        "--pkg",
+        f"--vendor_name={DEFAULT_VENDOR_NAME}",
+    ]
+    _run(cmd, REPO_ROOT)
 
     return _find_single_run_package()
 
@@ -380,11 +363,29 @@ def _rewrite_set_env(vendor_dir):
         "\n".join(
             [
                 "#!/bin/bash",
-                'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-                'VENDOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"',
-                'OPP_ROOT="$(cd "${VENDOR_DIR}/../.." && pwd)"',
-                'export ASCEND_CUSTOM_OPP_PATH="${OPP_ROOT}:${VENDOR_DIR}:${ASCEND_CUSTOM_OPP_PATH}"',
-                'export LD_LIBRARY_PATH="${VENDOR_DIR}/op_api/lib:${LD_LIBRARY_PATH}"',
+                '_FLA_NPU_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+                '_FLA_NPU_VENDOR_DIR="$(cd "${_FLA_NPU_SCRIPT_DIR}/.." && pwd)"',
+                '_FLA_NPU_OPP_ROOT="$(cd "${_FLA_NPU_VENDOR_DIR}/../.." && pwd)"',
+                "_fla_npu_prepend_path() {",
+                '    local name="$1"',
+                '    local value="$2"',
+                "    local current=\"\"",
+                '    if [[ -v "${name}" ]]; then',
+                '        current="${!name}"',
+                "    fi",
+                '    case ":${current}:" in',
+                '        *":${value}:"*) return 0 ;;',
+                "    esac",
+                '    printf -v "${name}" "%s" "${value}${current:+:${current}}"',
+                '    export "${name}"',
+                "}",
+                '_fla_npu_prepend_path ASCEND_CUSTOM_OPP_PATH "${_FLA_NPU_VENDOR_DIR}"',
+                '_fla_npu_prepend_path ASCEND_CUSTOM_OPP_PATH "${_FLA_NPU_OPP_ROOT}"',
+                '_fla_npu_prepend_path LD_LIBRARY_PATH "${_FLA_NPU_VENDOR_DIR}/op_api/lib"',
+                'export FLA_NPU_OPP_PATH="${_FLA_NPU_OPP_ROOT}"',
+                'export FLA_NPU_OP_API_LIB="${_FLA_NPU_VENDOR_DIR}/op_api/lib/libcust_opapi.so"',
+                "unset -f _fla_npu_prepend_path",
+                "unset _FLA_NPU_SCRIPT_DIR _FLA_NPU_VENDOR_DIR _FLA_NPU_OPP_ROOT",
                 "",
             ]
         ),
@@ -398,36 +399,6 @@ def _write_vendors_config(vendor_dir):
     config_file.write_text(f"load_priority={vendor_dir.name}\n", encoding="utf-8")
 
 
-def _ensure_runtime_config_aliases(vendor_dir):
-    config_root = (
-        Path(vendor_dir)
-        / "op_impl"
-        / "ai_core"
-        / "tbe"
-        / "kernel"
-        / "config"
-    )
-    if not config_root.exists():
-        return
-
-    copied = []
-    for soc_dir in config_root.iterdir():
-        if not soc_dir.is_dir():
-            continue
-        for source_name, alias_name in RUNTIME_CONFIG_ALIASES.items():
-            source = soc_dir / f"{source_name}.json"
-            alias = soc_dir / f"{alias_name}.json"
-            if source.exists() and not alias.exists():
-                shutil.copy2(source, alias)
-                copied.append(alias.relative_to(Path(vendor_dir)))
-
-    if copied:
-        print(
-            "[fla-npu build] Added runtime OPP config aliases: "
-            + ", ".join(str(path) for path in copied)
-        )
-
-
 def _has_glob(root, pattern):
     return any(Path(root).glob(pattern))
 
@@ -438,6 +409,13 @@ def _has_any_glob(root, patterns):
 
 def _validate_staged_opp(vendor_dir):
     vendor_dir = Path(vendor_dir)
+    conflicting_opapi = vendor_dir / "op_api" / "lib" / "libopapi.so"
+    if conflicting_opapi.exists() or conflicting_opapi.is_symlink():
+        raise RuntimeError(
+            "Embedded OPP must not contain libopapi.so because it shadows the "
+            f"CANN runtime library: {conflicting_opapi}"
+        )
+
     required_groups = {
         "custom op_api library": ("op_api/lib/libcust_opapi.so",),
         "host/proto shared library": (
@@ -472,10 +450,6 @@ def _validate_staged_opp(vendor_dir):
 
 
 def _stage_run_package(run_file, opp_root):
-    if _env_flag("FLA_NPU_SKIP_RUN_INSTALL"):
-        print("[fla-npu build] Skipping embedded OPP staging because FLA_NPU_SKIP_RUN_INSTALL is set")
-        return
-
     opp_root = Path(opp_root).resolve()
     if opp_root.exists():
         shutil.rmtree(opp_root)
@@ -485,7 +459,6 @@ def _stage_run_package(run_file, opp_root):
     vendor_dir = _find_staged_vendor_dir(opp_root)
     _write_vendors_config(vendor_dir)
     _rewrite_set_env(vendor_dir)
-    _ensure_runtime_config_aliases(vendor_dir)
 
     op_api_lib = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
     if not op_api_lib.exists():
@@ -493,7 +466,10 @@ def _stage_run_package(run_file, opp_root):
     op_api_alias = op_api_lib.with_name("libopapi.so")
     if op_api_alias.exists() or op_api_alias.is_symlink():
         op_api_alias.unlink()
-    shutil.copy2(op_api_lib, op_api_alias)
+        print(
+            "[fla-npu build] Removed conflicting custom libopapi.so alias; "
+            "CANN must provide libopapi.so"
+        )
     _validate_staged_opp(vendor_dir)
     print(f"[fla-npu build] Embedded OPP staged at {vendor_dir}")
 
@@ -536,6 +512,9 @@ class FlaNpuBuildPy(_build_py):
             _build_torch_extension_inplace()
             _EXTERNAL_BUILD_DONE = True
 
+        built_package_dir = Path(self.build_lib) / "fla_npu"
+        if built_package_dir.exists():
+            shutil.rmtree(built_package_dir)
         super().run()
         run_package = _RUN_PACKAGE or _find_single_run_package()
         _stage_run_package(run_package, Path(self.build_lib) / "fla_npu" / "opp")

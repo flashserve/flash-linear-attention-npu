@@ -471,32 +471,6 @@ function(add_ops_src_copy)
 
 endfunction()
 
-# Match the runtime config lookup rule derived from OpType: every uppercase
-# letter starts a new snake_case segment, so RecomputeWUFwd maps to
-# recompute_w_u_fwd instead of the source op_file name recompute_wu_fwd.
-function(camel_to_runtime_snake INPUT OUTPUT)
-    string(LENGTH "${INPUT}" _input_len)
-    if (_input_len EQUAL 0)
-        set(${OUTPUT} "" PARENT_SCOPE)
-        return()
-    endif()
-
-    set(_result "")
-    math(EXPR _last_index "${_input_len} - 1")
-    foreach(_idx RANGE 0 ${_last_index})
-        string(SUBSTRING "${INPUT}" ${_idx} 1 _char)
-        string(TOUPPER "${_char}" _upper_char)
-        string(TOLOWER "${_char}" _lower_char)
-        if (_idx GREATER 0 AND "${_char}" STREQUAL "${_upper_char}" AND NOT "${_char}" STREQUAL "${_lower_char}")
-            string(APPEND _result "_${_lower_char}")
-        else()
-            string(APPEND _result "${_lower_char}")
-        endif()
-    endforeach()
-
-    set(${OUTPUT} "${_result}" PARENT_SCOPE)
-endfunction()
-
 function(add_bin_compile_target)
     cmake_parse_arguments(BINARY "" "COMPUTE_UNIT" "OP_INFO" ${ARGN})
 
@@ -610,17 +584,6 @@ function(add_bin_compile_target)
                 install(FILES ${BIN_OUT_DIR}/${op_file}.json
                         DESTINATION ${_INSTALL_DIR}/config/${BINARY_COMPUTE_UNIT}/ops_transformer OPTIONAL
                 )
-                # Keep the source op_file config and also install the runtime
-                # alias. Some source names preserve acronym runs in op_file,
-                # while the runtime looks up config by the split OpType name.
-                camel_to_runtime_snake("${op_type}" runtime_op_file)
-                if (NOT "${runtime_op_file}" STREQUAL "${op_file}")
-                    install(FILES ${BIN_OUT_DIR}/${op_file}.json
-                            DESTINATION ${_INSTALL_DIR}/config/${BINARY_COMPUTE_UNIT}/ops_transformer
-                            RENAME ${runtime_op_file}.json
-                            OPTIONAL
-                    )
-                endif()
             else()
                 install(DIRECTORY ${OP_BIN_OUT_DIR}
                         DESTINATION ${_INSTALL_DIR}/${BINARY_COMPUTE_UNIT} OPTIONAL
@@ -628,17 +591,6 @@ function(add_bin_compile_target)
                 install(FILES ${BIN_OUT_DIR}/${op_file}.json
                         DESTINATION ${_INSTALL_DIR}/config/${BINARY_COMPUTE_UNIT} OPTIONAL
                 )
-                # Keep the source op_file config and also install the runtime
-                # alias. Some source names preserve acronym runs in op_file,
-                # while the runtime looks up config by the split OpType name.
-                camel_to_runtime_snake("${op_type}" runtime_op_file)
-                if (NOT "${runtime_op_file}" STREQUAL "${op_file}")
-                    install(FILES ${BIN_OUT_DIR}/${op_file}.json
-                            DESTINATION ${_INSTALL_DIR}/config/${BINARY_COMPUTE_UNIT}
-                            RENAME ${runtime_op_file}.json
-                            OPTIONAL
-                    )
-                endif()
             endif()
         endif ()
 

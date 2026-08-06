@@ -22,14 +22,12 @@ extern "C" {
  * u : required
  * gOptional : optional, scalar gate tensor; either gOptional or gkOptional must be non-null
  * gkOptional : optional, key-wise gate tensor; either gOptional or gkOptional must be non-null
- * initalStateOptional : optional
+ * initialStateOptional : optional
  * outputFinalState : required
  * chunkSize : required
- * saveNewValue : reserved (must be true)
  * cuSeqlensOptional : optional
  * chunkIndicesOptional : optional
- * useExp2 : reserved (must be false)
- * transposeStateLayout : reserved (must be false)
+ * stateVFirst : whether initial/final state and h use [..., V, K] instead of [..., K, V]
  * hOut : required
  * vNewOut : required
  * finalStateOut : optional
@@ -43,14 +41,12 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     const aclTensor *u,
     const aclTensor *gOptional,
     const aclTensor *gkOptional,
-    const aclTensor *initalStateOptional,
+    const aclTensor *initialStateOptional,
     bool outputFinalState,
     int64_t chunkSize,
-    bool saveNewValue,
     const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional,
-    bool useExp2,
-    bool transposeStateLayout,
+    bool stateVFirst,
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,

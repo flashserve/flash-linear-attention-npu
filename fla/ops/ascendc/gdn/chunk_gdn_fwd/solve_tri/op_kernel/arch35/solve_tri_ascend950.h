@@ -34,9 +34,9 @@ using namespace AscendC;
 //   - 注：原 SyncAll 固定调度版已整体替换为 CrossCoreFlag（MBH 一并切换）。
 //
 // 【布局 / 变长 TND】
-//   - GM 偏移按 [B,H,T,BT](bhtd) / [B,T,H,BT](bsnd) / [total_T,H,BT](tnd 变长) 完整公式；
-//     tnd 由 cu_seqlens / chunk_indices（INT64，GetValue）确定每 tile 偏移与序列长度。
-//   - 行跨度 row_stride = (bhtd) chunk_size : num_head*chunk_size。
+//   - GM 偏移按 [B,H,T,BT](bnsd) / [B,T,H,BT](bsnd) / [total_T,H,BT](tnd 变长) / [H,total_T,BT](ntd 变长) 完整公式；
+//     tnd/ntd 由 cu_seqlens / chunk_indices（INT64，GetValue）确定每 tile 偏移与序列长度。
+//   - 行跨度 row_stride = (bnsd/ntd) chunk_size : (bsnd/tnd) num_head*chunk_size。
 //
 // 【尾块（partial chunk）正确性】
 //   - actual_size = 该 chunk 的有效行数（尾块 < cur）。cur = ChunkAlign(actual_size)。
@@ -62,9 +62,10 @@ public:
         chunk_size = tilingData->chunkSize;
         chunk_num_in_seq = tilingData->numChunks;
         chunk_num_total = tilingData->totalTiles; // 主循环上界 = 全部 tile 数
-        mode = tilingData->layoutMode;            // 0=bhtd, 1=bsnd, 2=tnd
+        mode = tilingData->layoutMode;            // 0=bnsd, 1=bsnd, 2=tnd, 3=ntd
         is_lower = tilingData->isLower;
         tiles_per_core = tilingData->tilesPerCore;
+        total_tokens = tilingData->totalTokens;   // NTD: total_T（head 维在外的偏移计算）
 
         // GM（INT64 索引）
         gm_a.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(aGm));
@@ -252,21 +253,21 @@ public:
         int64_t local_seq_length = seq_length;
         int64_t local_chunk_num_in_seq = chunk_num_in_seq;
 
-        if (mode == 0) { // BHTD: [B, H, T, BT]
+        if (mode == 0) { // BNSD: [B, H, S, BT]  (chunks contiguous, row_stride = BT)
             seq_idx = loop_idx / (chunk_num_in_seq * num_head);
             head_idx = (loop_idx / chunk_num_in_seq) % num_head;
             chunk_in_seq_idx = loop_idx % chunk_num_in_seq;
             x_gm_offset = seq_idx * num_head * seq_length * chunk_size +
                           head_idx * seq_length * chunk_size +
                           chunk_in_seq_idx * chunk_size * chunk_size;
-        } else if (mode == 1) { // BSND: [B, T, H, BT]
+        } else if (mode == 1) { // BSND: [B, S, H, BT]  (non-contiguous, row_stride = H*BT)
             seq_idx = loop_idx / (chunk_num_in_seq * num_head);
             chunk_in_seq_idx = loop_idx % (chunk_num_in_seq * num_head) / num_head;
             head_idx = loop_idx % (chunk_num_in_seq * num_head) % num_head;
             x_gm_offset = seq_idx * seq_length * num_head * chunk_size +
                           chunk_in_seq_idx * chunk_size * num_head * chunk_size +
                           head_idx * chunk_size;
-        } else { // TND varlen: [total_T, H, BT]; B = 1
+        } else if (mode == 2) { // TND varlen: [total_T, H, BT]; B = 1  (non-contiguous, row_stride = H*BT)
             chunk_idx = loop_idx / num_head;
             head_idx = loop_idx % num_head;
             seq_idx = gm_chunk_indices.GetValue(chunk_idx * 2);
@@ -276,6 +277,17 @@ public:
             int64_t bos = gm_cu_seqlens.GetValue(seq_idx);
             x_gm_offset = (bos + chunk_in_seq_idx * chunk_size) * num_head * chunk_size +
                           head_idx * chunk_size;
+        } else { // NTD varlen: [H, total_T, BT]; B = 1  (contiguous, row_stride = BT)
+            chunk_idx = loop_idx / num_head;
+            head_idx = loop_idx % num_head;
+            seq_idx = gm_chunk_indices.GetValue(chunk_idx * 2);
+            chunk_in_seq_idx = gm_chunk_indices.GetValue(chunk_idx * 2 + 1);
+            local_seq_length = gm_cu_seqlens.GetValue(seq_idx + 1) - gm_cu_seqlens.GetValue(seq_idx);
+            local_chunk_num_in_seq = CeilDiv(local_seq_length, chunk_size);
+            int64_t bos = gm_cu_seqlens.GetValue(seq_idx);
+            // head 在最外维: head_idx * total_T * BT + (bos + chunk*BT) * BT
+            x_gm_offset = head_idx * total_tokens * chunk_size +
+                          (bos + chunk_in_seq_idx * chunk_size) * chunk_size;
         }
 
         bool is_last = (chunk_in_seq_idx == (local_chunk_num_in_seq - 1));
@@ -298,15 +310,24 @@ public:
         }
 
         // 对角 16x16 块 GM(ND) -> ub_A(NZ 块对角)；尾块只读 actual_size 行（逐分形裁剪）。
-        uint16_t src_blk_stride = static_cast<uint16_t>(row_stride / 16 - 1);
-        uint64_t num_valid_fracs = static_cast<uint64_t>(CeilDiv(actual_size, 16));
-        for (uint64_t i = 0; i < num_valid_fracs; i++) {
-            int64_t rows64 = actual_size - static_cast<int64_t>(i) * 16;
-            uint16_t rows = static_cast<uint16_t>(rows64 >= 16 ? 16 : rows64);
-            uint64_t srcOffset = i * (16 * (uint64_t)row_stride + 16);
-            uint64_t dstOffset = i * ((uint64_t)cur * 16 + 16 * 16);
-            AscendC::DataCopy(ub_A[dstOffset], gm_a[x_gm_offset + srcOffset],
-                              AscendC::DataCopyParams(rows, 1, src_blk_stride, 0));
+        // 连续布局 (BNSD/NTD, row_stride == chunk_size) 下，当 cur == 16 时整个 chunk 在 GM
+        // 中连续，可用 blockCount=1, blockLen=16 一次性搬运 256 个元素，避免多行 DataCopy 开销。
+        // cur > 16 时对角块仍非连续，保留逐分形搬运。
+        bool contiguous = (row_stride == cur);
+        if (contiguous && cur == 16) {
+            AscendC::DataCopy(ub_A[0], gm_a[x_gm_offset],
+                              AscendC::DataCopyParams(1, 16, 0, 0));
+        } else {
+            uint16_t src_blk_stride = static_cast<uint16_t>(row_stride / 16 - 1);
+            uint64_t num_valid_fracs = static_cast<uint64_t>(CeilDiv(actual_size, 16));
+            for (uint64_t i = 0; i < num_valid_fracs; i++) {
+                int64_t rows64 = actual_size - static_cast<int64_t>(i) * 16;
+                uint16_t rows = static_cast<uint16_t>(rows64 >= 16 ? 16 : rows64);
+                uint64_t srcOffset = i * (16 * (uint64_t)row_stride + 16);
+                uint64_t dstOffset = i * ((uint64_t)cur * 16 + 16 * 16);
+                AscendC::DataCopy(ub_A[dstOffset], gm_a[x_gm_offset + srcOffset],
+                                  AscendC::DataCopyParams(rows, 1, src_blk_stride, 0));
+            }
         }
         SetFlag<AscendC::HardEvent::MTE2_MTE3>(0);   // gather(MTE2, 写 ub_A) -> ub_to_l1(MTE3, 读 ub_A)
         WaitFlag<AscendC::HardEvent::MTE2_MTE3>(0);
@@ -504,7 +525,9 @@ public:
     {
         int32_t drvStart = is_lower ? 1 : 0;
         int32_t othStart = is_lower ? 0 : 1;
-        int64_t row_stride = (mode == 0) ? chunk_size : (num_head * chunk_size);
+        // BNSD(0)/NTD(3): 单 chunk 内数据连续, row_stride = BT
+        // BSND(1)/TND(2): 单 chunk 内数据不连续, row_stride = H*BT
+        int64_t row_stride = (mode == 0 || mode == 3) ? chunk_size : (num_head * chunk_size);
 
         if ASCEND_IS_AIV {
             if (sub_block_idx == 0) {
@@ -594,6 +617,7 @@ private:
     int64_t mode;
     int64_t is_lower;
     int64_t tiles_per_core;
+    int64_t total_tokens;   // NTD: total_T，用于 head 维在外的偏移计算
 
     // Core
     int64_t num_core;

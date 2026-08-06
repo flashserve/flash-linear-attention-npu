@@ -25,6 +25,28 @@
 - 公开 PR、issue、评论和总结中不要暴露内网地址、机器名、用户名、绝对路径、临时目录、日志路径、token 或本地调测环境细节。
 - 构建和测试默认面向 Linux + CANN + NPU 环境；其他平台只做静态阅读、文本编辑或格式检查，不把未验证命令写成已验证结论。
 
+## 算子原型和公开接口兼容性红线
+
+本规则统一适用于仓库内所有算子。算子原型、aclnn 接口和 `fla_npu.ops.ascendc.<op_name>` 接口一旦确定，除非仓库管理账号 `@weinachuan` 针对本次具体变更明确下达命令，否则任何功能开发、问题修复、精度或性能优化、tiling、平台适配和重构都不得修改以下内容：
+
+1. `op_host/*_def.cpp` 中已有的输入、输出和属性，包括名称、数量、顺序、必选/可选、默认值和既有语义。允许在不删除或改变现有 dtype 支持和语义的前提下增加 dtype；新增 dtype 时仍需同步代码校验、文档和测试。
+2. 算子 aclnn 接口，包括接口参数名称、数量、数据类型、顺序、默认值语义和原始默认行为，必须保持 ABI 和源码调用兼容。
+3. `fla_npu.ops.ascendc.<op_name>` 公开接口，包括参数名称、数量、顺序、默认值语义和原始默认行为，必须保证现有用户代码兼容。
+
+任何改动上述原型或接口的想法、方案和试验，都必须在实施、提交代码或修改文档前向 `@weinachuan` 说明并等待明确命令。说明至少包括：拟修改前后的完整接口、为什么一定要修改、为什么不能通过已有输入或属性、InferShape、origin/view/storage shape、tiling data、workspace、内部结构或内部算子让实现获得所需信息，以及 ABI、源码和用户调用兼容性影响。未获得明确命令时不得先改后问，也不得以“内部属性”“带默认值”“只影响 L0”或“调用方可以适配”为由变更。
+
+对于已经发布的原型或接口，默认优先保留原接口并新增独立 V2 实现，由旧接口继续维持原始默认行为；是否新增 V2 以及 V2 的具体原型同样需要 `@weinachuan` 明确确认，不得直接在原接口上做不兼容演进。
+
+## L0 单路径、泛化和实现信息归属红线
+
+本规则适用于 Ascend C 算子的内部 L0 设计、融合和性能优化。L0 即使没有直接暴露给用户，也属于需要长期维护的算子契约和调用路径。
+
+1. **模板覆盖范围**：分别声明性能目标、功能支持范围和模板优势域。需求没有明确限制的维度必须保持泛化；模板边界必须基于核心计算结构或资源规划的实质差异，不能按单个规则 shape 或普通边界形态随意拆分。同一模板应覆盖其完整优势域，并同时保证目标性能和范围内的正确性。
+2. **L0 路径统一**：同一算子在所有支持的 SOC 上复用同一个 L0 算子定义、原型和 L2 调用路径。平台和 shape 差异只能在该 L0 内部通过 host tiling、tiling data、workspace 规划、kernel 模板参数或架构 trait 表达；内部可以有多个模板实例，但不能形成多个 L0 契约。
+3. **融合路径收敛**：融合实现覆盖既有功能范围、通过精度验证并达到目标性能后，必须删除被替代的未融合 L0 调用路径、注册和构建入口。仍需复用的算法只能迁入统一 L0 的内部模板或组件，不能以第二套 L0 fallback 长期存在。
+4. **实现信息内聚**：L0 输入、输出和属性只承载不可由现有语义信息推导的数据。shape、平台能力、模板选择、tile、任务划分和 workspace 等实现信息应由 host tiling 推导，并通过 tiling data、workspace 或编译期模板参数传给 kernel，不得编码成冗余 L0 入参。
+5. **设计前置确认**：新增或修改 L0 原型、拆分或融合 L0、增加 V2 L0，或确需保留多条 L0 路径时，必须在实现、文档和测试变更前向 `@weinachuan` 提交设计并取得明确确认。设计说明至少包含修改前后的调用图和原型、复用现有 L0 不可行的原因、信息推导方案、泛化与性能影响、ABI 影响，以及旧路径迁移或删除计划；默认方案是只保留一套 L0 路径。
+
 ## 关键目录
 
 - `fla/ops/ascendc/`：Ascend C 算子实现。
@@ -76,6 +98,9 @@ ctypes 算子如果会通过 data pointer 修改输入 tensor，必须在公共 
 - [ ] 当前算子的 `README.md`、`docs/aclnn*.md`、示例和 CI case 已同步更新。
 - [ ] 参数校验、shape/dtype/layout/range、平台差异、预留参数语义和报错文本保持一致。
 - [ ] 正向、反向、边界、异常、dense/varlen、关键 SOC 和目标 dtype/layout 场景已按改动风险覆盖。
+- [ ] 所有支持的 SOC 复用同一 L0 定义、原型和 L2 调用路径，平台差异只存在于该 L0 的 tiling/kernel 内部。
+- [ ] 性能目标、功能支持范围和模板优势域已分别声明；模板覆盖完整优势域，且没有以未声明的限制缩窄功能范围或规避目标性能。
+- [ ] L0 原型没有承载可由 tensor descriptor、已有属性或 host tiling 推导的冗余信息；如新增或修改 L0、V2 或多路径，已在实现前取得 `@weinachuan` 的明确确认。
 
 ABI 敏感路径包括 `*_def.cpp`、`aclnn_*.h/.cpp`、`torch_custom/fla_npu/*.yaml` 和 `torch_custom/fla_npu/op_plugin/ops/opapi/**`。修改这些文件时，PR 需要明确说明 ABI 影响，并按 `.github/CODEOWNERS` 请求对应 owner 检视。
 
@@ -101,16 +126,17 @@ FLA_NPU_SOC=ascend910b python -m pip wheel --no-build-isolation --no-deps . -w d
 - A3：`ascend910_93`
 - A5：`ascend950`
 
-本地增量调试可以使用：
+源码或适配修改后仍执行完整 wheel 构建；构建流程会清理上一轮中间产物：
 
 ```sh
-FLA_NPU_SOC=ascend910b FLA_NPU_INCREMENTAL_BUILD=1 python -m pip wheel --no-build-isolation --no-deps . -w dist
+FLA_NPU_SOC=ascend910b python -m pip wheel --no-build-isolation --no-deps . -w dist
 ```
 
-只构建部分算子用于定位时使用 `FLA_NPU_OPS`，不要和 `FLA_NPU_INCREMENTAL_BUILD` 同时使用：
+只构建部分算子用于定位时，显式构建单算子 run 包；该产物不能替代完整 wheel
+的全量重编：
 
 ```sh
-FLA_NPU_SOC=ascend910b FLA_NPU_OPS=chunk_fwd_o python -m pip wheel --no-build-isolation --no-deps . -w dist
+bash build.sh --soc=ascend910b --pkg --vendor_name=fla_npu --ops=chunk_fwd_o
 ```
 
 分开编 OPP run 包和 `torch_custom` 适配时：

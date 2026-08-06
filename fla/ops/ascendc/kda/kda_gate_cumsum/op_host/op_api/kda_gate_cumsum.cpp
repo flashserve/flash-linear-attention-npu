@@ -25,12 +25,11 @@ const std::array<const aclTensor *, 1> KdaGateCumsum(
     bool useGateInKernel,
     bool safeGate,
     double lowerBound,
-    const char *layout,
     const aclTensor *gkOut,
     aclOpExecutor *executor)
 {
     L0_DFX(KdaGateCumsum, g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize, useGateInKernel,
-           safeGate, lowerBound, layout, gkOut);
+           safeGate, lowerBound, gkOut);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional != nullptr) {
@@ -40,11 +39,18 @@ const std::array<const aclTensor *, 1> KdaGateCumsum(
         const_cast<aclTensor *>(actualCuSeqlens)->SetOriginalFormat(Format::FORMAT_ND);
     }
 
+    const auto &gShape = g->GetViewShape();
+    const int64_t rank = static_cast<int64_t>(gShape.GetDimNum());
+    const int64_t batch = rank == 4 ? gShape.GetDim(0) : 1;
+    const int64_t heads = gShape.GetDim(rank == 4 ? 1 : 0);
+    const int64_t seqlen = gShape.GetDim(rank == 4 ? 2 : 1);
+    const int64_t headDim = gShape.GetDim(rank == 4 ? 3 : 2);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         KdaGateCumsum,
         OP_INPUT(g, aLogOptional, dtBiasOptional, actualCuSeqlens),
         OP_OUTPUT(gkOut),
-        OP_ATTR(chunkSize, useGateInKernel, safeGate, static_cast<float>(lowerBound), layout));
+        OP_ATTR(chunkSize, useGateInKernel, safeGate, static_cast<float>(lowerBound),
+                rank, batch, seqlen, heads, headDim));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE KdaGateCumsum failed.");
         return {nullptr};

@@ -106,7 +106,6 @@ docker run --rm \
     -e CI_TMPDIR_CANDIDATES="${CI_TMPDIR_CANDIDATES:-}" \
     -e CI_TMPDIR_MIN_KB="${CI_TMPDIR_MIN_KB:-}" \
     -e FLA_NPU_SOC=ascend950 \
-    -e FLA_NPU_INCREMENTAL_BUILD="${FLA_NPU_INCREMENTAL_BUILD:-false}" \
     -e FLA_NPU_LOCAL_VERSION="${FLA_NPU_LOCAL_VERSION:-}" \
     "$image" \
     "${container_command[@]}"

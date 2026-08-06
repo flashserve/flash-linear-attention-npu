@@ -18,8 +18,6 @@
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 
-#include <cstring>
-
 using namespace op;
 
 #ifdef __cplusplus
@@ -28,13 +26,6 @@ extern "C" {
 
 namespace {
 constexpr int64_t MAX_KDA_K_DIM = 256;
-
-enum class KdaGateLayout : int64_t {
-    BSND = 0,
-    BNSD = 1,
-    TND = 2,
-    NTD = 3,
-};
 
 aclnnStatus KdaGateDataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 {
@@ -70,42 +61,6 @@ bool KdaGateSameShape(const aclTensor *lhs, const aclTensor *rhs)
     return true;
 }
 
-aclnnStatus ParseKdaGateLayout(const char *layout, KdaGateLayout &parsed)
-{
-    CHECK_COND(layout != nullptr, ACLNN_ERR_PARAM_INVALID,
-               "layout must be one of BSND, BNSD, TND or NTD.");
-    if (std::strcmp(layout, "BSND") == 0) {
-        parsed = KdaGateLayout::BSND;
-        return ACLNN_SUCCESS;
-    }
-    if (std::strcmp(layout, "BNSD") == 0) {
-        parsed = KdaGateLayout::BNSD;
-        return ACLNN_SUCCESS;
-    }
-    if (std::strcmp(layout, "TND") == 0) {
-        parsed = KdaGateLayout::TND;
-        return ACLNN_SUCCESS;
-    }
-    if (std::strcmp(layout, "NTD") == 0) {
-        parsed = KdaGateLayout::NTD;
-        return ACLNN_SUCCESS;
-    }
-    CHECK_COND(false, ACLNN_ERR_PARAM_INVALID,
-               "layout must be uppercase and one of BSND, BNSD, TND or NTD.");
-    return ACLNN_ERR_PARAM_INVALID;
-}
-
-int64_t KdaGateSeqLen(const aclTensor *g, KdaGateLayout layout)
-{
-    if (layout == KdaGateLayout::TND) {
-        return KdaGateDim(g, 0);
-    }
-    if (layout == KdaGateLayout::NTD) {
-        return KdaGateDim(g, 1);
-    }
-    return layout == KdaGateLayout::BNSD ? KdaGateDim(g, 2) : KdaGateDim(g, 1);
-}
-
 aclnnStatus KdaGateCheckCuSeqlens(const aclIntArray *cuSeqlensOptional, int64_t seqlen)
 {
     if (cuSeqlensOptional == nullptr) {
@@ -133,7 +88,6 @@ aclnnStatus KdaGateCheckParams(
     bool useGateInKernel,
     bool safeGate,
     double lowerBound,
-    const char *layoutText,
     const aclTensor *gkOut)
 {
     CHECK_COND(g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
@@ -142,46 +96,38 @@ aclnnStatus KdaGateCheckParams(
                "chunkSize must be 32, 64 or 128.");
     size_t rank = KdaGateRank(g);
     CHECK_COND(rank == 3 || rank == 4, ACLNN_ERR_PARAM_INVALID,
-               "g must be BSND/BNSD rank4 or TND/NTD rank3.");
+               "g must be head-major BNSD rank4 or NTD rank3.");
     size_t kDimIdx = rank == 4 ? 3 : 2;
     CHECK_COND(KdaGateDim(g, kDimIdx) <= MAX_KDA_K_DIM, ACLNN_ERR_PARAM_INVALID,
                "K must be less than or equal to 256.");
     CHECK_COND(gkOut->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
                "gkOut must be float32.");
     CHECK_COND(KdaGateSameShape(gkOut, g), ACLNN_ERR_PARAM_INVALID, "gkOut shape must match g shape.");
-    KdaGateLayout layout = KdaGateLayout::BSND;
-    CHECK_RET(ParseKdaGateLayout(layoutText, layout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    bool rankMatchesLayout = (rank == 4 && (layout == KdaGateLayout::BSND || layout == KdaGateLayout::BNSD)) ||
-                             (rank == 3 && (layout == KdaGateLayout::TND || layout == KdaGateLayout::NTD));
-    CHECK_COND(rankMatchesLayout, ACLNN_ERR_PARAM_INVALID,
-               "layout rank does not match g rank: BSND/BNSD require rank 4 and TND/NTD require rank 3.");
-    CHECK_RET(KdaGateCheckCuSeqlens(cuSeqlensOptional, KdaGateSeqLen(g, layout)) == ACLNN_SUCCESS,
+    const int64_t seqlen = KdaGateDim(g, rank == 4 ? 2 : 1);
+    CHECK_RET(KdaGateCheckCuSeqlens(cuSeqlensOptional, seqlen) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(cuSeqlensOptional == nullptr || rank == 3 || KdaGateDim(g, 0) == 1, ACLNN_ERR_PARAM_INVALID,
                "rank4 varlen input with cuSeqlensOptional currently requires B=1.");
-    int64_t hv = (layout == KdaGateLayout::BNSD) ? KdaGateDim(g, 1) :
-                 ((layout == KdaGateLayout::NTD) ? KdaGateDim(g, 0) :
-                  ((rank == 4) ? KdaGateDim(g, 2) : KdaGateDim(g, 1)));
+    int64_t hv = KdaGateDim(g, rank == 4 ? 1 : 0);
     if (useGateInKernel) {
         CHECK_COND(aLogOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
                    "aLogOptional must be provided when useGateInKernel is true.");
-        CHECK_COND(safeGate, ACLNN_ERR_PARAM_INVALID,
-                   "Only safe_gate raw-gate path is supported; set safeGate=true with lowerBound.");
-        CHECK_COND(lowerBound >= -5.0 && lowerBound < 0.0, ACLNN_ERR_PARAM_INVALID,
-                   "lowerBound must be in [-5, 0).");
+        CHECK_COND(aLogOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
+                   "aLogOptional must be float32.");
+        if (safeGate) {
+            CHECK_COND(lowerBound >= -5.0 && lowerBound < 0.0, ACLNN_ERR_PARAM_INVALID,
+                       "lowerBound must be in [-5, 0) when safeGate is true.");
+        }
         int64_t k = KdaGateDim(g, kDimIdx);
         CHECK_COND(KdaGateRank(aLogOptional) == 1 && KdaGateDim(aLogOptional, 0) == hv,
                    ACLNN_ERR_PARAM_INVALID, "aLogOptional shape must be [HV].");
         if (dtBiasOptional != nullptr) {
-            size_t biasRank = KdaGateRank(dtBiasOptional);
-            bool validBias = (biasRank == 1 && KdaGateDim(dtBiasOptional, 0) == hv * k) ||
-                             (biasRank == 2 && KdaGateDim(dtBiasOptional, 0) == hv &&
-                              KdaGateDim(dtBiasOptional, 1) == k);
-            CHECK_COND(validBias, ACLNN_ERR_PARAM_INVALID, "dtBiasOptional shape must be [HV*K] or [HV, K].");
+            CHECK_COND(dtBiasOptional->GetDataType() == DataType::DT_FLOAT &&
+                           KdaGateRank(dtBiasOptional) == 1 &&
+                           KdaGateDim(dtBiasOptional, 0) == hv * k,
+                       ACLNN_ERR_PARAM_INVALID,
+                       "dtBiasOptional must be float32 with shape [HV*K].");
         }
-    } else {
-        CHECK_COND(!safeGate, ACLNN_ERR_PARAM_INVALID,
-                   "safeGate only takes effect when useGateInKernel is true.");
     }
     return ACLNN_SUCCESS;
 }
@@ -196,24 +142,27 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
     bool useGateInKernel,
     bool safeGate,
     double lowerBound,
-    const char *layout,
     const aclTensor *gkOut,
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
-    L2_DFX_PHASE_1(aclnnKdaGateCumsum, DFX_IN(g, aLogOptional, dtBiasOptional, cuSeqlensOptional), DFX_OUT(gkOut));
+    L2_DFX_PHASE_1(
+        aclnnKdaGateCumsum,
+        DFX_IN(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize,
+               useGateInKernel, safeGate, lowerBound),
+        DFX_OUT(gkOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
     CHECK_RET(KdaGateCheckParams(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize, useGateInKernel,
-                                 safeGate, lowerBound, layout, gkOut) == ACLNN_SUCCESS,
+                                 safeGate, lowerBound, gkOut) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(KdaGateDataContiguous(g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(KdaGateDataContiguous(aLogOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(KdaGateDataContiguous(dtBiasOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
     auto result = l0op::KdaGateCumsum(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize,
-                                      useGateInKernel, safeGate, lowerBound, layout, gkOut, executorPtr);
+                                      useGateInKernel, safeGate, lowerBound, gkOut, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();

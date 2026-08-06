@@ -122,11 +122,9 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> npu_chunk_gated_delta_rule_fwd_h(
     const c10::optional<at::Tensor> &initial_state,
     c10::optional<bool> output_final_state,
     c10::optional<int64_t> chunk_size,
-    c10::optional<bool> save_new_value,
     at::OptionalIntArrayRef cu_seqlens,
     at::OptionalIntArrayRef chunk_indices,
-    c10::optional<bool> use_exp2,
-    c10::optional<bool> transpose_state_layout);
+    c10::optional<bool> state_v_first);
 
 std::tuple<at::Tensor, at::Tensor> npu_recompute_w_u_fwd(
     const at::Tensor &k,
@@ -376,11 +374,9 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> py_npu_chunk_gated_delta_rule_fwd
     const py::object &initial_state,
     const py::object &output_final_state,
     const py::object &chunk_size,
-    const py::object &save_new_value,
     const py::object &cu_seqlens,
     const py::object &chunk_indices,
-    const py::object &use_exp2,
-    const py::object &transpose_state_layout)
+    const py::object &state_v_first)
 {
     const auto cu_seqlens_vec = optional_int_array(cu_seqlens);
     const auto chunk_indices_vec = optional_int_array(chunk_indices);
@@ -391,11 +387,9 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> py_npu_chunk_gated_delta_rule_fwd
         optional_tensor(initial_state),
         optional_value<bool>(output_final_state),
         optional_value<int64_t>(chunk_size),
-        optional_value<bool>(save_new_value),
         optional_int_array_ref(cu_seqlens_vec),
         optional_int_array_ref(chunk_indices_vec),
-        optional_value<bool>(use_exp2),
-        optional_value<bool>(transpose_state_layout));
+        optional_value<bool>(state_v_first));
 }
 
 std::tuple<at::Tensor, at::Tensor> py_npu_recompute_w_u_fwd(
@@ -633,11 +627,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
         py::arg("initial_state") = py::none(),
         py::arg("output_final_state") = false,
         py::arg("chunk_size") = py::none(),
-        py::arg("save_new_value") = true,
         py::arg("cu_seqlens") = py::none(),
         py::arg("chunk_indices") = py::none(),
-        py::arg("use_exp2") = false,
-        py::arg("transpose_state_layout") = false);
+        py::arg("state_v_first") = false);
     m.def(
         "npu_recompute_w_u_fwd",
         &py_npu_recompute_w_u_fwd,

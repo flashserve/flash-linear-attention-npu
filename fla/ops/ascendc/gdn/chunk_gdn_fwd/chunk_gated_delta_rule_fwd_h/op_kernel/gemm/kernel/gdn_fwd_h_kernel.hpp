@@ -47,13 +47,22 @@ struct GDNFwdHTileShapes256 {
     using L0TileShape = Shape<_128, _256, _64>;
 };
 
+template <bool KGated, bool ScalarGated, bool UseExp2>
+struct GDNFwdHGateTag {
+    static constexpr bool value = KGated;
+    static constexpr bool scalarGated = ScalarGated;
+    static constexpr bool useExp2 = UseExp2;
+};
+
 template<
     typename INPUT_TYPE,
     typename G_TYPE,
     typename STATE_TYPE,
     typename WORKSPACE_TYPE,
     typename TileShapes = GDNFwdHTileShapes128,
-    bool kGated = false
+    bool kGated = false,
+    bool scalarGated = true,
+    bool useExp2 = false
 >
 class GDNFwdHKernel {
 public:
@@ -86,11 +95,12 @@ public:
 
     // vec 1
     using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnew;
-    using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, FinalStateType, std::bool_constant<kGated>>;
+    using GateTag = GDNFwdHGateTag<kGated, scalarGated, useExp2>;
+    using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, FinalStateType, GateTag>;
 
     // vec 2
     using DispatchPolicyGDNFwdHUpdate = Epilogue::EpilogueAtlasGDNFwdHUpdate;
-    using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType, FinalStateType, std::bool_constant<kGated>>;
+    using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType, FinalStateType, GateTag>;
 
     using GDNFwdHOffsets = Catlass::Gemm::Block::GDNFwdHOffsets;
 
@@ -184,7 +194,7 @@ public:
         gmK.SetGlobalBuffer((__gm__ ElementK *)k);
         gmW.SetGlobalBuffer((__gm__ ElementW *)w);
         gmU.SetGlobalBuffer((__gm__ ElementU *)u);
-        gmG.SetGlobalBuffer((__gm__ ElementG *)g);
+        gmG.SetGlobalBuffer((__gm__ ElementG *)(scalarGated ? g : gk));
         gmInitialState.SetGlobalBuffer((__gm__ ElementInitialState *)inital_state);
         gmH.SetGlobalBuffer((__gm__ ElementH *)h);
         gmV.SetGlobalBuffer((__gm__ ElementV *)v_new);
@@ -192,7 +202,7 @@ public:
         gmVWorkspace.SetGlobalBuffer((__gm__ ElementVWork *)(user + vWorkspaceOffset));
         gmVUpdateWorkspace.SetGlobalBuffer((__gm__ ElementV *)(user + vUpdateWorkspaceOffset));
         gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
-        gmGk.SetGlobalBuffer((__gm__ ElementG *)gk);
+        gmGk.SetGlobalBuffer((__gm__ ElementG *)(kGated ? gk : g));
         gmKDecayWorkspace.SetGlobalBuffer((__gm__ ElementK *)(user + kDecayWorkspaceOffset));
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
@@ -205,6 +215,55 @@ public:
 
         if ASCEND_IS_AIV {
             vecBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user);
+        }
+    }
+
+    template <typename TilingData>
+    __aicore__ inline void InitFromData(
+        GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state,
+        GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
+        GM_ADDR final_state, const TilingData& tilingData, GM_ADDR user) {
+        batch = tilingData.batch;
+        seqlen = tilingData.seqlen;
+        kNumHead = tilingData.kNumHead;
+        vNumHead = tilingData.vNumHead;
+        kHeadDim = tilingData.kHeadDim;
+        vHeadDim = tilingData.vHeadDim;
+        chunkSize = tilingData.chunkSize;
+        useInitialState = tilingData.useInitialState;
+        storeFinalState = tilingData.storeFinalState;
+        isVariedLen = tilingData.isVariedLen;
+        shapeBatch = tilingData.shapeBatch;
+        tokenBatch = tilingData.tokenBatch;
+        vWorkspaceOffset = tilingData.vWorkspaceOffset;
+        vUpdateWorkspaceOffset = tilingData.vUpdateWorkspaceOffset;
+        hWorkspaceOffset = tilingData.hWorkspaceOffset;
+        numSeqWorkspaceOffset = tilingData.numSeqWorkspaceOffset;
+        numChunksWorkspaceOffset = tilingData.numChunksWorkspaceOffset;
+        kDecayWorkspaceOffset = tilingData.kDecayWorkspaceOffset;
+
+        gmK.SetGlobalBuffer((__gm__ ElementK *)k);
+        gmW.SetGlobalBuffer((__gm__ ElementW *)w);
+        gmU.SetGlobalBuffer((__gm__ ElementU *)u);
+        gmG.SetGlobalBuffer((__gm__ ElementG *)(scalarGated ? g : gk));
+        gmInitialState.SetGlobalBuffer((__gm__ ElementInitialState *)inital_state);
+        gmH.SetGlobalBuffer((__gm__ ElementH *)h);
+        gmV.SetGlobalBuffer((__gm__ ElementV *)v_new);
+        gmFinalState.SetGlobalBuffer((__gm__ ElementFinalState *)final_state);
+        gmVWorkspace.SetGlobalBuffer((__gm__ ElementVWork *)(user + vWorkspaceOffset));
+        gmVUpdateWorkspace.SetGlobalBuffer((__gm__ ElementV *)(user + vUpdateWorkspaceOffset));
+        gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
+        gmGk.SetGlobalBuffer((__gm__ ElementG *)(kGated ? gk : g));
+        gmKDecayWorkspace.SetGlobalBuffer((__gm__ ElementK *)(user + kDecayWorkspaceOffset));
+        gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
+        gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
+        gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
+
+        if ASCEND_IS_AIC {
+            cubeBlockScheduler.InitFromData(cu_seqlens, chunk_indices, tilingData, user);
+        }
+        if ASCEND_IS_AIV {
+            vecBlockScheduler.InitFromData(cu_seqlens, chunk_indices, tilingData, user);
         }
     }
 
@@ -255,6 +314,7 @@ public:
                         blockMmadWH.preSetFlags();
                         blockMmadWH(tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape);
                         blockMmadWH.finalWaitFlags();
+                        AscendC::PipeBarrier<PIPE_ALL>();
                         Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube1Done[streamId]);
                     }
                 } else {
@@ -285,6 +345,7 @@ public:
                             blockMmadKV.preSetFlags();
                             blockMmadKV(tensorBlockK, tensorBlockVwork, tensorBlockHwork, cube2Shape);
                             blockMmadKV.finalWaitFlags();
+                            AscendC::PipeBarrier<PIPE_ALL>();
                         }
                         Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube2Done[streamId]);
                     }
@@ -297,143 +358,91 @@ public:
         }
 
         if ASCEND_IS_AIV {
-            uint32_t coreIdx = AscendC::GetBlockIdx();
+            uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
+            uint32_t subBlockNum = AscendC::GetSubBlockNum();
+            uint32_t coreIdx = AscendC::GetBlockIdx() / subBlockNum;
             uint32_t coreNum = AscendC::GetBlockNum();
-
-            if (useInitialState) {
-                AscendC::LocalTensor<ElementInitialState> stateUbTensorPing = resource.ubBuf.template GetBufferByByte<ElementInitialState>(0);
-                AscendC::LocalTensor<ElementInitialState> stateUbTensorPong = resource.ubBuf.template GetBufferByByte<ElementInitialState>(96 * 1024);
-                AscendC::LocalTensor<ElementH> hUbTensorPing = resource.ubBuf.template GetBufferByByte<ElementH>(64 * 1024);
-                AscendC::LocalTensor<ElementH> hUbTensorPong = resource.ubBuf.template GetBufferByByte<ElementH>(160 * 1024);
-                uint32_t totalChunks = isVariedLen ? vecBlockScheduler.totalChunks : ((seqlen + chunkSize - 1) / chunkSize);
-                uint32_t transferCount = isVariedLen ? (vecBlockScheduler.tokenBatch * vNumHead / coreNum) : (shapeBatch * vNumHead / coreNum);
-                uint32_t remainderFlag = isVariedLen ? (((vecBlockScheduler.tokenBatch * vNumHead) % coreNum) != 0): (((shapeBatch * vNumHead) % coreNum) != 0);
-                uint32_t step = transferCount + remainderFlag;
-                uint32_t stateBlockSize = kHeadDim * vHeadDim;
-                uint32_t pingpongFlag = 1;
-                uint32_t start = coreIdx * step;
-                uint32_t end = start + step;
-                uint32_t maxLimit = isVariedLen ? vecBlockScheduler.tokenBatch * vNumHead : shapeBatch * vNumHead;
-                uint32_t realEnd = min(end, maxLimit);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
-                for (uint32_t initialStateBlockOffset = start; initialStateBlockOffset >= start && initialStateBlockOffset < realEnd; initialStateBlockOffset++) {
-                    uint32_t batchIdx = initialStateBlockOffset / vNumHead;
-                    uint32_t vHeadIdx = initialStateBlockOffset % vNumHead;
-                    uint32_t chunkOffset = isVariedLen ? gmNumChunks.GetValue(batchIdx) : 0;
-                    uint32_t initialStateBaseOffset = initialStateBlockOffset * stateBlockSize;
-                    uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
-                    uint32_t hBaseOffset = (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset) * stateBlockSize;
-                    if (vHeadDim <= 128) {
-                        AscendC::LocalTensor<ElementInitialState> stateUbTensor = pingpongFlag ? stateUbTensorPing : stateUbTensorPong;
-                        AscendC::LocalTensor<ElementH> hUbTensor = pingpongFlag ? hUbTensorPing : hUbTensorPong;
-                        auto event_id = pingpongFlag ? EVENT_ID1 : EVENT_ID0;
-                        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(event_id);
-                        if constexpr(!std::is_same<ElementInitialState, ElementH>::value) {
-                            AscendC::DataCopy(stateUbTensor, gmInitialState[initialStateBaseOffset], stateBlockSize);
-                            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(event_id);
-                            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(event_id);
-                            AscendC::Cast(hUbTensor, stateUbTensor, AscendC::RoundMode::CAST_RINT, stateBlockSize);
-                            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(event_id);
-                            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(event_id);
-                            AscendC::DataCopy(gmH[hBaseOffset], hUbTensor, stateBlockSize);
-                        } else {
-                            AscendC::DataCopy(stateUbTensor, gmInitialState[initialStateBaseOffset], stateBlockSize);
-                            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(event_id);
-                            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(event_id);
-                            AscendC::DataCopy(gmH[hBaseOffset], stateUbTensor, stateBlockSize);
-                        }
-                        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(event_id);
-                        pingpongFlag = 1 - pingpongFlag;
-                    } else {
-                        uint32_t stateRowTile = (32 * 1024) / (vHeadDim * sizeof(ElementH));
-                        for (uint32_t rowOffset = 0; rowOffset < kHeadDim; rowOffset += stateRowTile) {
-                            uint32_t rowsThisTile = Min(stateRowTile, kHeadDim - rowOffset);
-                            uint32_t stateTileElems = rowsThisTile * vHeadDim;
-                            uint32_t initialStateOffset = initialStateBaseOffset + rowOffset * vHeadDim;
-                            uint32_t hOffset = hBaseOffset + rowOffset * vHeadDim;
-                            AscendC::LocalTensor<ElementInitialState> stateUbTensor = pingpongFlag ? stateUbTensorPing : stateUbTensorPong;
-                            AscendC::LocalTensor<ElementH> hUbTensor = pingpongFlag ? hUbTensorPing : hUbTensorPong;
-                            auto event_id = pingpongFlag ? EVENT_ID1 : EVENT_ID0;
-                            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(event_id);
-                            if constexpr(!std::is_same<ElementInitialState, ElementH>::value) {
-                                AscendC::DataCopy(stateUbTensor, gmInitialState[initialStateOffset], stateTileElems);
-                                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(event_id);
-                                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(event_id);
-                                AscendC::Cast(hUbTensor, stateUbTensor, AscendC::RoundMode::CAST_RINT, stateTileElems);
-                                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(event_id);
-                                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(event_id);
-                                AscendC::DataCopy(gmH[hOffset], hUbTensor, stateTileElems);
-                            } else {
-                                AscendC::DataCopy(stateUbTensor, gmInitialState[initialStateOffset], stateTileElems);
-                                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(event_id);
-                                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(event_id);
-                                AscendC::DataCopy(gmH[hOffset], stateUbTensor, stateTileElems);
-                            }
-                            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(event_id);
-                            pingpongFlag = 1 - pingpongFlag;
-                        }
-                    }
-                }
-
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
-            } else {
-                uint32_t stateRowTile = (32 * 1024) / (vHeadDim * sizeof(ElementH));
-                AscendC::LocalTensor<int64_t> chunkOffsetsUb =
-                    resource.ubBuf.template GetBufferByByte<int64_t>(0);
-                if (isVariedLen) {
-                    uint32_t chunkOffsetBytes = (vecBlockScheduler.tokenBatch + 1) * sizeof(int64_t);
-                    AscendC::DataCopyParams copyParams{
-                        1, static_cast<uint16_t>(chunkOffsetBytes), 0, 0};
-                    AscendC::DataCopyPadParams padParams{false, 0, 0, 0};
-                    AscendC::DataCopyPad(chunkOffsetsUb, gmNumChunks[0], copyParams, padParams);
-                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID3);
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID3);
-                    AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3);
-                    AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3);
-                }
-                auto chunkOffsets = reinterpret_cast<__ubuf__ int64_t *>(chunkOffsetsUb.GetPhyAddr());
-                AscendC::LocalTensor<ElementH> hUbTensorPing =
-                    resource.ubBuf.template GetBufferByByte<ElementH>(64 * 1024);
-                AscendC::LocalTensor<ElementH> hUbTensorPong =
-                    resource.ubBuf.template GetBufferByByte<ElementH>(160 * 1024);
-                uint32_t totalChunks =
-                    isVariedLen ? vecBlockScheduler.totalChunks : ((seqlen + chunkSize - 1) / chunkSize);
-                uint32_t taskCount =
-                    (isVariedLen ? vecBlockScheduler.tokenBatch : shapeBatch) * vNumHead;
-                uint32_t step = taskCount / coreNum + ((taskCount % coreNum) != 0);
-                uint32_t start = coreIdx * step;
-                uint32_t realEnd = Min(start + step, taskCount);
-                uint32_t pingpongFlag = 1;
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
-                for (uint32_t taskIdx = start; taskIdx < realEnd; ++taskIdx) {
+            uint32_t taskCount =
+                (isVariedLen ? vecBlockScheduler.tokenBatch : shapeBatch) * vNumHead;
+            uint32_t tasksPerCore = 1;
+            uint32_t taskStride = coreNum * tasksPerCore;
+            uint32_t rowsPerSubBlock = (kHeadDim + subBlockNum - 1) / subBlockNum;
+            uint32_t rowBegin = subBlockIdx * rowsPerSubBlock;
+            uint32_t rowEnd = Min(rowBegin + rowsPerSubBlock, kHeadDim);
+            uint32_t hRowsPerTile = (32 * 1024) / (vHeadDim * sizeof(ElementH));
+            uint32_t stateRowsPerTile =
+                (64 * 1024) / (vHeadDim * sizeof(ElementInitialState));
+            uint32_t rowsPerTile = Min(hRowsPerTile, stateRowsPerTile);
+            uint32_t totalChunks =
+                isVariedLen ? vecBlockScheduler.totalChunks : ((seqlen + chunkSize - 1) / chunkSize);
+            uint32_t stateBlockSize = kHeadDim * vHeadDim;
+            uint32_t pingpongFlag = 1;
+            AscendC::LocalTensor<ElementInitialState> stateUbTensorPing =
+                resource.ubBuf.template GetBufferByByte<ElementInitialState>(0);
+            AscendC::LocalTensor<ElementInitialState> stateUbTensorPong =
+                resource.ubBuf.template GetBufferByByte<ElementInitialState>(96 * 1024);
+            AscendC::LocalTensor<ElementH> hUbTensorPing =
+                resource.ubBuf.template GetBufferByByte<ElementH>(64 * 1024);
+            AscendC::LocalTensor<ElementH> hUbTensorPong =
+                resource.ubBuf.template GetBufferByByte<ElementH>(160 * 1024);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
+            for (uint32_t slot = 0; slot < tasksPerCore; ++slot) {
+                for (uint32_t taskIdx = coreIdx * tasksPerCore + slot;
+                     taskIdx < taskCount; taskIdx += taskStride) {
                     uint32_t batchIdx = taskIdx / vNumHead;
                     uint32_t vHeadIdx = taskIdx % vNumHead;
-                    uint32_t chunkOffset = isVariedLen ? static_cast<uint32_t>(chunkOffsets[batchIdx]) : 0;
+                    uint32_t chunkOffset =
+                        isVariedLen ? vecBlockScheduler.GetVarlenChunkOffset(batchIdx) : 0;
                     uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
                     uint32_t hBaseOffset =
                         (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset) *
-                        kHeadDim * vHeadDim;
-                    for (uint32_t rowOffset = 0; rowOffset < kHeadDim; rowOffset += stateRowTile) {
-                        uint32_t rowsThisTile = Min(stateRowTile, kHeadDim - rowOffset);
+                        stateBlockSize;
+                    uint32_t initialStateBaseOffset = taskIdx * stateBlockSize;
+                    for (uint32_t rowOffset = rowBegin; rowOffset < rowEnd; rowOffset += rowsPerTile) {
+                        uint32_t rowsThisTile = Min(rowsPerTile, rowEnd - rowOffset);
                         uint32_t stateTileElems = rowsThisTile * vHeadDim;
+                        uint32_t hOffset = hBaseOffset + rowOffset * vHeadDim;
+                        AscendC::LocalTensor<ElementInitialState> stateUbTensor =
+                            pingpongFlag ? stateUbTensorPing : stateUbTensorPong;
                         AscendC::LocalTensor<ElementH> hUbTensor =
                             pingpongFlag ? hUbTensorPing : hUbTensorPong;
                         auto eventId = pingpongFlag ? EVENT_ID1 : EVENT_ID0;
                         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
-                        AscendC::Duplicate(hUbTensor, static_cast<ElementH>(0), stateTileElems);
-                        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventId);
-                        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventId);
-                        AscendC::DataCopy(gmH[hBaseOffset + rowOffset * vHeadDim], hUbTensor, stateTileElems);
+                        if (useInitialState) {
+                            uint32_t initialStateOffset =
+                                initialStateBaseOffset + rowOffset * vHeadDim;
+                            if constexpr (!std::is_same<ElementInitialState, ElementH>::value) {
+                                AscendC::DataCopy(
+                                    stateUbTensor, gmInitialState[initialStateOffset], stateTileElems);
+                                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventId);
+                                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventId);
+                                AscendC::Cast(
+                                    hUbTensor, stateUbTensor, AscendC::RoundMode::CAST_RINT,
+                                    stateTileElems);
+                                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventId);
+                                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventId);
+                                AscendC::DataCopy(gmH[hOffset], hUbTensor, stateTileElems);
+                            } else {
+                                AscendC::DataCopy(
+                                    stateUbTensor, gmInitialState[initialStateOffset], stateTileElems);
+                                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(eventId);
+                                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(eventId);
+                                AscendC::DataCopy(gmH[hOffset], stateUbTensor, stateTileElems);
+                            }
+                        } else {
+                            AscendC::Duplicate(hUbTensor, static_cast<ElementH>(0), stateTileElems);
+                            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventId);
+                            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventId);
+                            AscendC::DataCopy(gmH[hOffset], hUbTensor, stateTileElems);
+                        }
                         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
                         pingpongFlag = 1 - pingpongFlag;
                     }
                 }
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
             }
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
 
             AscendC::SyncAll<false>();
 
@@ -459,11 +468,19 @@ public:
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pongBaseEvent);
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3); // preset g
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pongBaseEvent);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0); // preset h_update
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + pongBaseEvent);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2); // preset h
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + pongBaseEvent);
             uint32_t currStage = 0; // 0: V1, 1: V2
+            bool waitStageFence = false;
             bool event0FromMte3[PING_PONG_STAGES] = {false, false};
             bool event2FromMte3[PING_PONG_STAGES] = {!(storeFinalState && std::is_same<ElementFinalState, float>::value),
                                                       !(storeFinalState && std::is_same<ElementFinalState, float>::value)};
             while (vecBlockScheduler.isRunning) {
+                if (waitStageFence) {
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
+                }
                 if (currStage == 0) {
                     /* V1:
                      * gmV = gmU - gmVWorkspace
@@ -490,6 +507,8 @@ public:
                             vec1Offsets.isInitialState, vec1Offsets.isFinalState, storeFinalState,
                             waitWsFromMte3, (streamId == 0)
                         );
+                        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
+                        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
                         if (storeFinalState && std::is_same<ElementFinalState, float>::value) {
                             event0FromMte3[streamId] = false;
                         }
@@ -505,7 +524,7 @@ public:
                         const GDNFwdHOffsets& vec2Offsets = vecBlockScheduler.GetCurTaskOffsets(stream);
                         if (vecBlockScheduler.NeedProcessStage2(stream)) {
                             if (storeFinalState && std::is_same<ElementFinalState, float>::value) {
-                                event0FromMte3[streamId] = vec2Offsets.isFinalState;
+                                event0FromMte3[streamId] = true;
                                 event2FromMte3[streamId] = !vec2Offsets.isFinalState;
                             }
                             // step 4:  h[i+1] += h_work if i < num_chunks - 1 else None
@@ -515,14 +534,22 @@ public:
                                 gmH[vec2Offsets.hSrcOffset],
                                 gmHWorkspace[vec2Offsets.hWorkOffset],
                                 gmGk[vec2Offsets.gkOffset],
+                                gmInitialState[vec2Offsets.initialStateOffset],
                                 vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, vHeadDim, vecBlockScheduler.cube2Done[streamId],
-                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, (streamId == 0)
+                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState,
+                                useInitialState, (streamId == 0)
                             );
+                            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
+                            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
                         } else {
                             Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done[streamId]);
                         }
                         Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);
                     }
+                }
+                waitStageFence = vecBlockScheduler.isRunning;
+                if (waitStageFence) {
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
                 }
                 currStage ^= 0x01;
             }
@@ -558,6 +585,10 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pongBaseEvent);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3); // preset g
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pongBaseEvent);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0); // drain h_update
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + pongBaseEvent);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2); // drain h
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + pongBaseEvent);
 
         }
     }

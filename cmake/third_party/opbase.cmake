@@ -8,7 +8,23 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
-set(OPBASE_TAG_ID c8d83f3e57a63a7375e89a2d6937452c0ae2e522)
+set(OPBASE_LEGACY_TAG_ID c8d83f3e57a63a7375e89a2d6937452c0ae2e522)
+set(OPBASE_CONST_API_TAG_ID c8cfc45e350d4e07cd8cab8448d3b40f9727ea4c)
+set(OPBASE_TAG_ID ${OPBASE_LEGACY_TAG_ID})
+
+set(OPBASE_ELEWISE_TILING_HEADER
+    "${ASCEND_CANN_PACKAGE_PATH}/${SYSTEM_PREFIX}/pkg_inc/op_common/atvoss/elewise/elewise_tiling.h")
+if(EXISTS "${OPBASE_ELEWISE_TILING_HEADER}")
+  file(READ "${OPBASE_ELEWISE_TILING_HEADER}" OPBASE_ELEWISE_TILING_CONTENT)
+  string(FIND "${OPBASE_ELEWISE_TILING_CONTENT}" "int64_t GetBlockDim() const;" OPBASE_CONST_API_POSITION)
+  if(NOT OPBASE_CONST_API_POSITION EQUAL -1)
+    set(OPBASE_TAG_ID ${OPBASE_CONST_API_TAG_ID})
+  endif()
+endif()
+message(STATUS "Select opbase revision: ${OPBASE_TAG_ID}")
+unset(OPBASE_ELEWISE_TILING_CONTENT)
+unset(OPBASE_CONST_API_POSITION)
+unset(OPBASE_ELEWISE_TILING_HEADER)
 
 if(EXISTS "${PROJECT_SOURCE_DIR}/../../ops-base")
   get_filename_component(OPBASE_SOURCE_PATH

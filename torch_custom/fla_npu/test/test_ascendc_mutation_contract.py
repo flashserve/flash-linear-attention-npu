@@ -63,7 +63,15 @@ def load_ascendc_module(raw_calls):
         raw_calls.append(conv_states)
         return "output"
 
-    ctypes_module.ASCENDC_CTYPES_OPS = {"npu_causal_conv1d": npu_causal_conv1d}
+    def npu_recurrent_kda(q, k, v, g, beta, initial_state=None, *, cu_seqlens, **kwargs):
+        del q, k, v, g, beta, cu_seqlens, kwargs
+        raw_calls.append(initial_state)
+        return "output", initial_state
+
+    ctypes_module.ASCENDC_CTYPES_OPS = {
+        "npu_causal_conv1d": npu_causal_conv1d,
+        "npu_recurrent_kda": npu_recurrent_kda,
+    }
     modules = {
         "fla_npu": fake_fla_npu,
         "fla_npu.ops": fake_ops,
@@ -113,6 +121,24 @@ class AscendCMutationContractTest(unittest.TestCase):
 
         self.assertEqual(raw_calls, [])
         self.assertEqual(incremented, [])
+
+    def test_recurrent_kda_increments_mutable_state_version(self):
+        raw_calls = []
+        incremented = []
+        module, spec, modules = load_ascendc_module(raw_calls)
+        modules["torch"] = fake_torch(incremented)
+
+        with mock.patch.dict(sys.modules, modules):
+            assert spec.loader is not None
+            spec.loader.exec_module(module)
+            inputs = [FakeTensor() for _ in range(5)]
+            state = FakeTensor()
+            result = module.npu_recurrent_kda(*inputs, state, cu_seqlens=FakeTensor())
+
+        self.assertEqual(result, ("output", state))
+        self.assertEqual(raw_calls, [state])
+        self.assertEqual(incremented, [state])
+        self.assertEqual(module.MUTATED_ARGUMENTS["npu_recurrent_kda"], ("initial_state",))
 
 
 if __name__ == "__main__":

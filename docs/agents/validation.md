@@ -44,6 +44,10 @@
 - `python scripts/check_packaged_wheel_api.py` 通过。
 - 安装后的 wheel 不依赖顶层 `fla` 包；Ascend C 入口是 `fla_npu.ops.ascendc`，Triton 入口是 `fla_npu.ops.triton`。
 - standalone wheel + run 包 `--full` 或 `--install` 后，`site-packages/fla_npu/opp/vendors/fla_npu_transformer` 下能看到当前 run 包覆盖后的 op_api、tiling、kernel 和配置产物。
+- wheel 和 run 包都要覆盖重复安装：同一个 wheel 连续强制安装两次、同一个 scoped run 包连续覆盖两次，最终 OPP 内容、`RECORD`、`set_env.bash` 和动态库选择保持一致。
+- 源码或 Python 适配修改后重新构建 wheel，再覆盖旧 wheel 两次；新增公开适配时同时检查 API 可发现性和主要动态库加载通路。
+- run 包覆盖后再强制安装新 wheel，确认 run 包增加的文件由更新后的 `RECORD` 清理，新 wheel 的 OPP 内容与归档完全一致。
+- 使用 `python scripts/check_install_workflows.py --help` 查看统一看护入口。源码检查环境可用 `--skip-runtime-load`，但不能据此声明动态库加载通过；算子精度、泛化和性能仍使用各算子的专用测试。
 
 ## 精度问题处理
 

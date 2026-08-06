@@ -57,6 +57,8 @@ set(ASCEND_CUSTOM_TILING_KEYS     ${ASCEND_AUTOGEN_DIR}/custom_tiling_keys.ini)
 set(ASCEND_CUSTOM_OPC_OPTIONS     ${ASCEND_AUTOGEN_DIR}/custom_opc_options.ini)
 set(OP_BUILD_TOOL                 ${ASCEND_CANN_PACKAGE_PATH}/tools/opbuild/op_build   CACHE   STRING   "op_build tool")
 file(MAKE_DIRECTORY ${ASCEND_AUTOGEN_DIR})
+# Static-shape adapt generation writes directly under this directory.
+file(MAKE_DIRECTORY ${ASCEND_IMPL_OUT_DIR})
 file(REMOVE ${ASCEND_CUSTOM_OPTIONS})
 file(TOUCH ${ASCEND_CUSTOM_OPTIONS})
 file(REMOVE ${ASCEND_CUSTOM_TILING_KEYS})

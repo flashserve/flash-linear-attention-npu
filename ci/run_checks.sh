@@ -141,6 +141,8 @@ PY
 fi
 export PYTORCH_VERSION
 
+python3 tests/test_wheel_environment.py
+
 bash ci/prepare_ci_cache.sh
 
 cleanup_installed_fla_npu_python_packages() {
@@ -275,7 +277,6 @@ check_standalone_torch_custom_wheel_layout() {
     local check_dir="$TMPDIR/fla-npu-standalone-wheel-check"
     local dist_dir="$check_dir/dist"
     local target_dir="$check_dir/site"
-    local external_opp_root="$check_dir/external_opp"
     local run_file
 
     echo "[CI] Checking standalone torch_custom wheel plus run package OPP layout"
@@ -294,11 +295,13 @@ check_standalone_torch_custom_wheel_layout() {
 
     python3 -m pip install --force-reinstall --no-deps --target "$target_dir" "${wheels[0]}"
     PYTHONPATH="$target_dir" python3 - <<'PY'
+import importlib.util
 from pathlib import Path
 
-import fla_npu
-
-package_dir = Path(fla_npu.__file__).resolve().parent
+spec = importlib.util.find_spec("fla_npu")
+if spec is None or spec.origin is None:
+    raise SystemExit("Standalone fla_npu wheel is not discoverable")
+package_dir = Path(spec.origin).resolve().parent
 required = [
     package_dir / "opp" / "vendors" / "config.ini",
     package_dir / "opp" / "vendors" / "fla_npu_transformer" / "README.txt",
@@ -309,41 +312,12 @@ if missing:
 print("[CI] Standalone torch_custom wheel OPP skeleton check passed.")
 PY
 
-    mkdir -p "$external_opp_root/vendors/fla_npu_transformer/op_api/lib"
-    touch "$external_opp_root/vendors/fla_npu_transformer/op_api/lib/libcust_opapi.so"
-    PYTHONPATH="$target_dir" ASCEND_OPP_PATH="$external_opp_root" ASCEND_CUSTOM_OPP_PATH= FLA_NPU_OPP_PATH= python3 - <<'PY'
-import os
-from pathlib import Path
-
-import fla_npu
-
-expected = (Path(os.environ["ASCEND_OPP_PATH"]) / "vendors" / "fla_npu_transformer").resolve()
-actual = fla_npu._resolve_vendor_dir()
-if actual != expected:
-    raise SystemExit(f"Standalone OPP skeleton shadows external OPP: actual={actual}, expected={expected}")
-print("[CI] Standalone torch_custom wheel does not shadow external OPP check passed.")
-PY
-
     run_file="$(find_single_run_package)"
-    chmod +x "$run_file"
-    PYTHONPATH="$target_dir${PYTHONPATH:+:$PYTHONPATH}" "$run_file" --full --quiet
-
-    PYTHONPATH="$target_dir" python3 - <<'PY'
-from pathlib import Path
-
-import fla_npu
-
-package_dir = Path(fla_npu.__file__).resolve().parent
-vendor_dir = package_dir / "opp" / "vendors" / "fla_npu_transformer"
-required = [
-    vendor_dir / "op_api" / "lib" / "libcust_opapi.so",
-    vendor_dir / "op_api" / "lib" / "libopapi.so",
-]
-missing = [str(path.relative_to(package_dir)) for path in required if not path.exists()]
-if missing:
-    raise SystemExit("Standalone fla_npu wheel run-package install is missing OPP files: " + ", ".join(missing))
-print("[CI] Standalone torch_custom wheel plus run package OPP layout check passed.")
-PY
+    python3 scripts/check_install_workflows.py \
+        --wheel "${wheels[0]}" \
+        --base-mode skeleton \
+        --run-package "$run_file" \
+        --work-cwd "$repo_dir"
 }
 
 find_single_run_package() {
@@ -431,15 +405,36 @@ import fla_npu
 
 package_dir = pathlib.Path(fla_npu.__file__).resolve().parent
 vendor_dir = package_dir / "opp" / "vendors" / "fla_npu_transformer"
-required = [
-    vendor_dir / "op_api" / "lib" / "libcust_opapi.so",
-    vendor_dir / "op_api" / "lib" / "libopapi.so",
-]
+required = [vendor_dir / "op_api" / "lib" / "libcust_opapi.so"]
 missing = [path.name for path in required if not path.exists()]
 if missing:
     raise SystemExit("Missing scoped wheel OPP files: " + ", ".join(missing))
+alias = vendor_dir / "op_api" / "lib" / "libopapi.so"
+if alias.exists() or alias.is_symlink():
+    raise SystemExit(f"Scoped wheel OPP contains conflicting alias: {alias}")
+first = fla_npu.load_ascendc_opapi_libraries()
+second = fla_npu.load_ascendc_opapi_libraries()
+if first is not second or not first:
+    raise SystemExit("Scoped wheel OPP runtime loading is not idempotent")
 print("[CI] Scoped wheel OPP install check passed.")
 PY
+
+    shopt -s nullglob
+    local wheels=(dist/flash_linear_attention_npu-*.whl)
+    shopt -u nullglob
+    if (( ${#wheels[@]} != 1 )); then
+        echo "[CI][ERROR] Expected exactly one wheel for install workflow checks, found ${#wheels[@]}." >&2
+        exit 1
+    fi
+
+    local workflow_args=(
+        --wheel "${wheels[0]}"
+        --run-package "$run_file"
+        --wheel-op "$scoped_op"
+        --run-op "$scoped_op"
+        --work-cwd "$repo_dir"
+    )
+    python3 scripts/check_install_workflows.py "${workflow_args[@]}"
 }
 
 check_example_python_deps() {

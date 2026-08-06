@@ -88,13 +88,6 @@ print(package_dir / "opp")
 PY
 }
 
-copy_wheel_file() {
-    local src_file="$1"
-    local dst_file="$2"
-    mkdir -p "$(dirname "${dst_file}")"
-    cp -a "${src_file}" "${dst_file}"
-}
-
 to_snake_name() {
     echo "$1" | sed -E 's/([A-Z]+)([A-Z][a-z])/\1_\2/g; s/([a-z0-9])([A-Z])/\1_\2/g' | tr '[:upper:]' '[:lower:]'
 }
@@ -357,8 +350,24 @@ merge_vendor_to_wheel_opp() {
         cp -a "${src_vendor}/." "${dst_vendor}/"
     fi
 
-    if [ -f "${dst_vendor}/op_api/lib/libcust_opapi.so" ]; then
-        copy_wheel_file "${dst_vendor}/op_api/lib/libcust_opapi.so" "${dst_vendor}/op_api/lib/libopapi.so"
+}
+
+finalize_wheel_opp() {
+    local wheel_opp_root="$1"
+    local python_bin
+    local script_dir
+    python_bin=$(get_python_bin)
+    script_dir=$(dirname "$(readlink -f "$0")")
+    if [ -z "${python_bin}" ]; then
+        log "[ERROR] python is required to finalize the installed wheel OPP."
+        exit 1
+    fi
+
+    if ! "${python_bin}" "${script_dir}/finalize_wheel_opp.py" \
+        --package-dir "$(dirname "${wheel_opp_root}")" \
+        --vendor-name "${vendor_name}"; then
+        log "[ERROR] Failed to finalize the installed wheel OPP and refresh wheel RECORD."
+        exit 1
     fi
 }
 
@@ -410,6 +419,7 @@ install_wheel_opp_package() {
     confirm_partial_shared_lib_impact "${src_vendor}" "${dst_vendor}"
     merge_vendor_to_wheel_opp "${src_vendor}" "${dst_vendor}"
     update_wheel_vendors_config "${wheel_opp_root}/vendors"
+    finalize_wheel_opp "${wheel_opp_root}"
 
     log "[INFO] FLA NPU wheel OPP update completed. Restart Python processes to load the new libcust_opapi.so and kernels."
     echo "SUCCESS"

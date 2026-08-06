@@ -24,7 +24,6 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
     bool useGateInKernel,
     bool safeGate,
     double lowerBound,
-    const char *layout,
     const aclTensor *gkOut,
     uint64_t *workspaceSize,
     aclOpExecutor **executor);

@@ -112,6 +112,8 @@ static ::ChunkGatedDeltaRuleFwdHTilingData calc_tiling_params(
     ctx.useInitialState = initial_state.has_value();
     ctx.stateDataType =
         initial_state.has_value() ? DtypeToEnum(initial_state.value().scalar_type()) : optiling::GDN_FWD_H_DTYPE_FP32;
+    ctx.useG = true;
+    ctx.useGk = false;
     ctx.storeFinalState = output_final_state;
     ctx.chunkSize = chunk_size;
 

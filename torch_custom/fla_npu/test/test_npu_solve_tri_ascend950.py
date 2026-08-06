@@ -11,11 +11,15 @@
 """
 test_npu_solve_tri_ascend950.py - Test SolveTri custom operator on ascend950 via fla_npu.ops.ascendc
 
-支持 BSND [B,T,H,BT] 与 TND [total_T,H,BT]（变长）两种布局。
+支持四种布局：
+  - BSND [B,T,H,BT]              (单 chunk 内数据不连续)
+  - BNSD [B,H,T,BT]              (单 chunk 内数据连续, BSND 的转置)
+  - TND  [total_T,H,BT]          (变长, 单 chunk 内数据不连续)
+  - NTD  [H,total_T,BT]          (变长, 单 chunk 内数据连续, TND 的转置)
 
 用例覆盖：
-  - 泛化用例（BSND + TND）。
-  - 组合用例（chunk_size ∈ {16,32,64,128} × 定长(BSND)/变长(TND) × 有尾块/无尾块）。
+  - 泛化用例（BSND + BNSD + TND + NTD）。
+  - 组合用例（chunk_size ∈ {16,32,64,128} × 定长(BSND/BNSD)/变长(TND/NTD) × 有尾块/无尾块）。
   - 上述每条用例分别以 fp16 与 bf16 输入各跑一遍（bf16 判据阈值放宽，见 tol_for）。
 """
 import os
@@ -47,7 +51,12 @@ def solve_tril_golden(A_tensor, chunk_size, layout="bsnd"):
     if layout == "tnd":
         T, H, BT = A.shape
         B = 1
-    else:
+    elif layout == "ntd":
+        H, T, BT = A.shape
+        B = 1
+    elif layout == "bnsd":
+        B, H, T, BT = A.shape
+    else:  # bsnd
         B, T, H, BT = A.shape
     num_chunks = (T + chunk_size - 1) // chunk_size
     result = np.zeros_like(A)
@@ -60,6 +69,10 @@ def solve_tril_golden(A_tensor, chunk_size, layout="bsnd"):
                 actual_size = e - s
                 if layout == "tnd":
                     block = A[s:e, h, :actual_size]
+                elif layout == "ntd":
+                    block = A[h, s:e, :actual_size]
+                elif layout == "bnsd":
+                    block = A[b, h, s:e, :actual_size]
                 else:
                     block = A[b, s:e, h, :actual_size]
                 eye = np.eye(actual_size, dtype=np.float32)
@@ -67,6 +80,10 @@ def solve_tril_golden(A_tensor, chunk_size, layout="bsnd"):
                 M_inv = np.linalg.inv(M)
                 if layout == "tnd":
                     result[s:e, h, :actual_size] = M_inv
+                elif layout == "ntd":
+                    result[h, s:e, :actual_size] = M_inv
+                elif layout == "bnsd":
+                    result[b, h, s:e, :actual_size] = M_inv
                 else:
                     result[b, s:e, h, :actual_size] = M_inv
     return torch.from_numpy(result)   # float32 golden（与 dtype 无关，仅用于诊断 max_diff）
@@ -77,7 +94,11 @@ def generate_lower_tri_input(B, H, T, chunk_size, dtype=torch.float16, seed=42, 
     torch.manual_seed(seed)
     if layout == "tnd":
         A = torch.zeros(T, H, chunk_size, dtype=dtype)
-    else:
+    elif layout == "ntd":
+        A = torch.zeros(H, T, chunk_size, dtype=dtype)
+    elif layout == "bnsd":
+        A = torch.zeros(B, H, T, chunk_size, dtype=dtype)
+    else:  # bsnd
         A = torch.zeros(B, T, H, chunk_size, dtype=dtype)
     num_chunks = (T + chunk_size - 1) // chunk_size
 
@@ -93,13 +114,17 @@ def generate_lower_tri_input(B, H, T, chunk_size, dtype=torch.float16, seed=42, 
                         one_chunk[i, j] = 0.0
                 if layout == "tnd":
                     A[s:e, h, :actual_size] = one_chunk
+                elif layout == "ntd":
+                    A[h, s:e, :actual_size] = one_chunk
+                elif layout == "bnsd":
+                    A[b, h, s:e, :actual_size] = one_chunk
                 else:
                     A[b, s:e, h, :actual_size] = one_chunk
     return A
 
 
 def test_solve_tri(B, H, T, chunk_size, layout="bsnd", dtype=torch.float16):
-    """定长用例（BSND / BHTD）。chunk_size = 输入末维 BT。"""
+    """定长用例（BSND / BNSD）。chunk_size = 输入末维 BT。"""
     torch.manual_seed(42)
     tol = tol_for(dtype)
     dt = dtype_name(dtype)
@@ -131,6 +156,14 @@ def test_solve_tri(B, H, T, chunk_size, layout="bsnd", dtype=torch.float16):
                     block = A_np[s:e, h, :actual_size]
                     inv_block = R_np[s:e, h, :actual_size]
                     golden_chunk = golden[s:e, h, :actual_size].float().numpy()
+                elif layout == "ntd":
+                    block = A_np[h, s:e, :actual_size]
+                    inv_block = R_np[h, s:e, :actual_size]
+                    golden_chunk = golden[h, s:e, :actual_size].float().numpy()
+                elif layout == "bnsd":
+                    block = A_np[b, h, s:e, :actual_size]
+                    inv_block = R_np[b, h, s:e, :actual_size]
+                    golden_chunk = golden[b, h, s:e, :actual_size].float().numpy()
                 else:
                     block = A_np[b, s:e, h, :actual_size]
                     inv_block = R_np[b, s:e, h, :actual_size]
@@ -154,8 +187,8 @@ def test_solve_tri(B, H, T, chunk_size, layout="bsnd", dtype=torch.float16):
     return passed
 
 
-def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16):
-    """变长 TND 用例 [total_T, H, BT]。chunk_size = 输入末维 BT。"""
+def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16, layout="tnd"):
+    """变长用例 TND [total_T,H,BT] 或 NTD [H,total_T,BT]。chunk_size = 输入末维 BT。"""
     tol = tol_for(dtype)
     dt = dtype_name(dtype)
     total_T = sum(seq_lens)
@@ -175,7 +208,10 @@ def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16):
     ], dim=1)
 
     torch.manual_seed(42)
-    A = torch.zeros(total_T, H, chunk_size, dtype=dtype)
+    if layout == "tnd":
+        A = torch.zeros(total_T, H, chunk_size, dtype=dtype)
+    else:  # ntd
+        A = torch.zeros(H, total_T, chunk_size, dtype=dtype)
     num_seqs = len(seq_lens)
     for seq_idx in range(num_seqs):
         bos = cu_seqlens[seq_idx].item()
@@ -191,7 +227,10 @@ def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16):
                 for i in range(actual_size):
                     for j in range(i, actual_size):
                         one_chunk[i, j] = 0.0
-                A[s:e, h, :actual_size] = one_chunk
+                if layout == "tnd":
+                    A[s:e, h, :actual_size] = one_chunk
+                else:  # ntd
+                    A[h, s:e, :actual_size] = one_chunk
 
     A_np = A.float().numpy()
     golden = np.zeros_like(A_np)
@@ -205,11 +244,17 @@ def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16):
                 s = bos + c * chunk_size
                 e = min(s + chunk_size, eos)
                 actual_size = e - s
-                block = A_np[s:e, h, :actual_size]
+                if layout == "tnd":
+                    block = A_np[s:e, h, :actual_size]
+                else:  # ntd
+                    block = A_np[h, s:e, :actual_size]
                 eye = np.eye(actual_size, dtype=np.float32)
                 M = eye + block
                 M_inv = np.linalg.inv(M)
-                golden[s:e, h, :actual_size] = M_inv
+                if layout == "tnd":
+                    golden[s:e, h, :actual_size] = M_inv
+                else:  # ntd
+                    golden[h, s:e, :actual_size] = M_inv
     golden = torch.from_numpy(golden)   # float32 golden（仅用于诊断 max_diff）
 
     A_npu = A.npu()
@@ -219,13 +264,13 @@ def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16):
     out_npu = ascendc_ops.npu_solve_tri(A_npu,
                                           cu_seqlens=cu_seqlens_list,
                                           chunk_indices=chunk_indices_flat,
-                                          layout="tnd")
+                                          layout=layout)
     out_cpu = out_npu.cpu()
 
     max_verify_err = 0.0
     total_chunks = chunk_indices.shape[0]
     if PRINT_POINT_DETAIL:
-        print(f"\n--- Varlen test (seqs={seq_lens}, H={H}, BT={chunk_size}, "
+        print(f"\n--- Varlen test (layout={layout}, seqs={seq_lens}, H={H}, BT={chunk_size}, "
               f"total_T={total_T}, total_chunks={total_chunks}) ---")
 
     for seq_idx in range(num_seqs):
@@ -238,15 +283,22 @@ def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16):
                 s = bos + c * chunk_size
                 e = min(s + chunk_size, eos)
                 actual_size = e - s
-                block = A_np[s:e, h, :actual_size]
-                inv_block = out_cpu[s:e, h, :actual_size].float().numpy()
+                if layout == "tnd":
+                    block = A_np[s:e, h, :actual_size]
+                    inv_block = out_cpu[s:e, h, :actual_size].float().numpy()
+                else:  # ntd
+                    block = A_np[h, s:e, :actual_size]
+                    inv_block = out_cpu[h, s:e, :actual_size].float().numpy()
                 eye = np.eye(actual_size, dtype=np.float32)
                 product = (eye + block) @ inv_block
                 err = np.abs(product - eye).max()
                 max_verify_err = max(max_verify_err, err)
 
                 if PRINT_POINT_DETAIL:
-                    golden_chunk = golden[s:e, h, :actual_size].float().numpy()
+                    if layout == "tnd":
+                        golden_chunk = golden[s:e, h, :actual_size].float().numpy()
+                    else:
+                        golden_chunk = golden[h, s:e, :actual_size].float().numpy()
                     chunk_diff = np.abs(inv_block - golden_chunk).max()
                     is_partial = (actual_size < chunk_size)
                     partial_tag = f" [partial {actual_size}x{actual_size}]" if is_partial else ""
@@ -256,8 +308,8 @@ def test_solve_tri_varlen(seq_lens, H, chunk_size, dtype=torch.float16):
 
     passed = max_verify_err < tol
     status = "PASS" if passed else "FAIL"
-    print(f"  [{status}] {dt} varlen seqs={seq_lens}, H={H}, BT={chunk_size} (tol={tol:g}): "
-          f"max_verify_err={max_verify_err:.6f}")
+    print(f"  [{status}] {dt} varlen layout={layout} seqs={seq_lens}, H={H}, BT={chunk_size} "
+          f"(tol={tol:g}): max_verify_err={max_verify_err:.6f}")
     return passed
 
 
@@ -270,9 +322,9 @@ def run_all_cases(dtype):
     print(f"{'#' * 60}")
 
     # ================================================================
-    # Group 1: 泛化用例（BSND + TND）
+    # Group 1: 泛化用例（BSND + BNSD + TND + NTD）
     # ================================================================
-    print("\n########## [Group 1] generalized cases (bsnd + varlen) ##########")
+    print("\n########## [Group 1] generalized cases (bsnd + bnsd + tnd + ntd) ##########")
     print("\n--- BSND layout [B, T, H, BT] ---")
     results.append(test_solve_tri(1, 2, 40, 32, layout="bsnd", dtype=dtype))
     results.append(test_solve_tri(2, 2, 64, 32, layout="bsnd", dtype=dtype))
@@ -283,22 +335,42 @@ def run_all_cases(dtype):
     results.append(test_solve_tri(8, 8, 4096, 64, layout="bsnd", dtype=dtype))
     results.append(test_solve_tri(8, 8, 4096, 128, layout="bsnd", dtype=dtype))
 
+    print("\n--- BNSD layout [B, H, T, BT] (contiguous) ---")
+    results.append(test_solve_tri(1, 2, 40, 32, layout="bnsd", dtype=dtype))
+    results.append(test_solve_tri(2, 2, 64, 32, layout="bnsd", dtype=dtype))
+    results.append(test_solve_tri(1, 1, 35, 32, layout="bnsd", dtype=dtype))
+    results.append(test_solve_tri(2, 2, 100, 32, layout="bnsd", dtype=dtype))
+    results.append(test_solve_tri(1, 4, 32768, 64, layout="bnsd", dtype=dtype))
+    results.append(test_solve_tri(1, 4, 32768, 128, layout="bnsd", dtype=dtype))
+    results.append(test_solve_tri(8, 8, 4096, 64, layout="bnsd", dtype=dtype))
+    results.append(test_solve_tri(8, 8, 4096, 128, layout="bnsd", dtype=dtype))
+
     print("\n--- TND varlen layout [total_T, H, BT] ---")
-    results.append(test_solve_tri_varlen([64], 1, 32, dtype=dtype))
-    results.append(test_solve_tri_varlen([32, 32, 32], 2, 32, dtype=dtype))
-    results.append(test_solve_tri_varlen([45], 1, 32, dtype=dtype))
-    results.append(test_solve_tri_varlen([100, 50, 35], 2, 32, dtype=dtype))
-    results.append(test_solve_tri_varlen([4, 18], 1, 32, dtype=dtype))
-    results.append(test_solve_tri_varlen([35], 1, 32, dtype=dtype))
-    results.append(test_solve_tri_varlen([3], 1, 32, dtype=dtype))
-    results.append(test_solve_tri_varlen([18], 2, 32, dtype=dtype))
+    results.append(test_solve_tri_varlen([64], 1, 32, dtype=dtype, layout="tnd"))
+    results.append(test_solve_tri_varlen([32, 32, 32], 2, 32, dtype=dtype, layout="tnd"))
+    results.append(test_solve_tri_varlen([45], 1, 32, dtype=dtype, layout="tnd"))
+    results.append(test_solve_tri_varlen([100, 50, 35], 2, 32, dtype=dtype, layout="tnd"))
+    results.append(test_solve_tri_varlen([4, 18], 1, 32, dtype=dtype, layout="tnd"))
+    results.append(test_solve_tri_varlen([35], 1, 32, dtype=dtype, layout="tnd"))
+    results.append(test_solve_tri_varlen([3], 1, 32, dtype=dtype, layout="tnd"))
+    results.append(test_solve_tri_varlen([18], 2, 32, dtype=dtype, layout="tnd"))
+
+    print("\n--- NTD varlen layout [H, total_T, BT] (contiguous) ---")
+    results.append(test_solve_tri_varlen([64], 1, 32, dtype=dtype, layout="ntd"))
+    results.append(test_solve_tri_varlen([32, 32, 32], 2, 32, dtype=dtype, layout="ntd"))
+    results.append(test_solve_tri_varlen([45], 1, 32, dtype=dtype, layout="ntd"))
+    results.append(test_solve_tri_varlen([100, 50, 35], 2, 32, dtype=dtype, layout="ntd"))
+    results.append(test_solve_tri_varlen([4, 18], 1, 32, dtype=dtype, layout="ntd"))
+    results.append(test_solve_tri_varlen([35], 1, 32, dtype=dtype, layout="ntd"))
+    results.append(test_solve_tri_varlen([3], 1, 32, dtype=dtype, layout="ntd"))
+    results.append(test_solve_tri_varlen([18], 2, 32, dtype=dtype, layout="ntd"))
 
     # ================================================================
-    # Group 2: chunk_size ∈ {16,32,64,128} × 定长/变长 × 有尾块/无尾块
+    # Group 2: chunk_size ∈ {16,32,64,128} × 定长(BSND/BNSD)/变长(TND/NTD) × 有尾块/无尾块
     #   - tb = 大尾块（cs>16 时 ChunkAlign→cs，触发 MBH 尾块路径），恒 < cs
     #   - ts = 小尾块（ChunkAlign→16，触发 MCH-only 尾块 + cur<cs 写回路径）
     # ================================================================
-    print("\n########## [Group 2] combined cases (chunk_size sweep x bsnd/tnd x tail/no-tail) ##########")
+    print("\n########## [Group 2] combined cases (chunk_size sweep x 4 layouts x tail/no-tail) ##########")
     for cs in (16, 32, 64, 128):
         tb = (cs // 2 + 8) if cs > 16 else 8   # 大尾块（< cs）
         ts = 8                                  # 小尾块（→ cur=16）
@@ -311,11 +383,23 @@ def run_all_cases(dtype):
         print(f"[BSND, with-tail] T={2 * cs + tb} (tail={tb})")
         results.append(test_solve_tri(2, 2, 2 * cs + tb, cs, layout="bsnd", dtype=dtype))
 
+        # ---- 定长 BNSD（BSND 的转置，单 chunk 内数据连续）----
+        print(f"[BNSD, no-tail]  T={2 * cs}")
+        results.append(test_solve_tri(2, 2, 2 * cs, cs, layout="bnsd", dtype=dtype))
+        print(f"[BNSD, with-tail] T={2 * cs + tb} (tail={tb})")
+        results.append(test_solve_tri(2, 2, 2 * cs + tb, cs, layout="bnsd", dtype=dtype))
+
         # ---- 变长 TND ----
         print(f"[TND, no-tail]  seqs=[{2 * cs},{cs}]")
-        results.append(test_solve_tri_varlen([2 * cs, cs], 2, cs, dtype=dtype))
+        results.append(test_solve_tri_varlen([2 * cs, cs], 2, cs, dtype=dtype, layout="tnd"))
         print(f"[TND, with-tail] seqs=[{2 * cs + tb},{cs + ts}] (tails={tb},{ts})")
-        results.append(test_solve_tri_varlen([2 * cs + tb, cs + ts], 2, cs, dtype=dtype))
+        results.append(test_solve_tri_varlen([2 * cs + tb, cs + ts], 2, cs, dtype=dtype, layout="tnd"))
+
+        # ---- 变长 NTD（TND 的转置，单 chunk 内数据连续）----
+        print(f"[NTD, no-tail]  seqs=[{2 * cs},{cs}]")
+        results.append(test_solve_tri_varlen([2 * cs, cs], 2, cs, dtype=dtype, layout="ntd"))
+        print(f"[NTD, with-tail] seqs=[{2 * cs + tb},{cs + ts}] (tails={tb},{ts})")
+        results.append(test_solve_tri_varlen([2 * cs + tb, cs + ts], 2, cs, dtype=dtype, layout="ntd"))
 
     return results
 

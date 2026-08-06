@@ -19,7 +19,7 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleFwdH(
     const aclTensor *u,
     const aclTensor *g,
     const aclTensor *gkOptional,
-    const aclTensor *initalStateOptional,
+    const aclTensor *initialStateOptional,
     const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional,
     bool outputFinalState,

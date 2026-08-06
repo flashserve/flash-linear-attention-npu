@@ -1,6 +1,8 @@
 
 using namespace AscendC::MicroAPI;
 
+#pragma once
+
 constexpr static CastTrait ctHalf2Fp32Zero = {
     RegLayout::ZERO,
     SatMode::SAT,

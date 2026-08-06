@@ -10,9 +10,13 @@
 
 $$Y = (I + A)^{-1}$$
 
-该算子支持两种数据布局：
-- **BSND**: `[Batch, T, Head, chunkSize]`
-- **TND**: `[num_tokens, Head, chunkSize]`（变长序列模式）
+该算子支持四种数据布局：
+- **BSND**: `[Batch, T, Head, chunkSize]`，单 chunk 内数据不连续（行步长 = H×BT）
+- **BNSD**: `[Batch, Head, T, chunkSize]`，单 chunk 内数据连续（行步长 = BT，BSND 的转置）
+- **TND**: `[total_T, Head, chunkSize]`，变长序列模式，单 chunk 内数据不连续
+- **NTD**: `[Head, total_T, chunkSize]`，变长序列模式，单 chunk 内数据连续（TND 的转置）
+
+> BNSD/NTD 由于单 chunk 内数据连续，DataCopy 可使用 blockCount=1 实现连续搬运，效率高于 BSND/TND。
 
 ---
 
@@ -59,7 +63,7 @@ torch.ops.npu.npu_solve_tri(
 | x | FLOAT16/BFLOAT16 | 是 | 输入下三角矩阵 |
 | cu_seqlens | INT64 | TND 模式必须 | 累积序列长度 |
 | chunk_indices | INT64 | TND 模式必须 | chunk 索引数组 |
-| layout | string | 否 | 数据布局，默认 "bsnd" |
+| layout | string | 否 | 数据布局，支持 "bsnd"、"bnsd"、"tnd"、"ntd"，默认 "bsnd" |
 
 ---
 
@@ -68,9 +72,9 @@ torch.ops.npu.npu_solve_tri(
 1. **数据类型**：仅支持 FLOAT16 和 BFLOAT16
 2. **chunkSize**：最后一维仅支持 64 或 128
 3. **输入维度**：
-   - BHTD/BSND: 4D tensor
-   - TND: 3D tensor
-4. **变长模式**：TND layout 必须提供 cu_seqlens 和 chunk_indices
+   - BNSD/BSND: 4D tensor
+   - TND/NTD: 3D tensor
+4. **变长模式**：TND/NTD layout 必须提供 cu_seqlens 和 chunk_indices
 
 ---
 

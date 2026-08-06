@@ -419,13 +419,6 @@ print(package_dir / "opp")
 PY
 }
 
-copy_wheel_file() {
-  local src_file="$1"
-  local dst_file="$2"
-  mkdir -p "$(dirname "${dst_file}")"
-  cp -a "${src_file}" "${dst_file}"
-}
-
 to_snake_name() {
   echo "$1" | sed -E 's/([A-Z]+)([A-Z][a-z])/\1_\2/g; s/([a-z0-9])([A-Z])/\1_\2/g' | tr '[:upper:]' '[:lower:]'
 }
@@ -701,20 +694,25 @@ merge_vendor_to_wheel_opp() {
     cp -a "${src_vendor}/." "${dst_vendor}/"
   fi
 
-  if [ -f "${dst_vendor}/op_api/lib/libcust_opapi.so" ]; then
-    copy_wheel_file "${dst_vendor}/op_api/lib/libcust_opapi.so" "${dst_vendor}/op_api/lib/libopapi.so"
+}
+
+finalize_wheel_opp() {
+  local wheel_opp_root="$1"
+  local python_bin
+  python_bin=$(get_python_bin)
+  if [ -z "${python_bin}" ]; then
+    logandprint "[ERROR]: python is required to finalize the installed wheel OPP."
+    exitlog
+    exit 1
   fi
 
-  mkdir -p "${dst_vendor}/bin"
-  cat >"${dst_vendor}/bin/set_env.bash" <<'EOF'
-#!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENDOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-OPP_ROOT="$(cd "${VENDOR_DIR}/../.." && pwd)"
-export ASCEND_CUSTOM_OPP_PATH="${OPP_ROOT}:${VENDOR_DIR}:${ASCEND_CUSTOM_OPP_PATH}"
-export LD_LIBRARY_PATH="${VENDOR_DIR}/op_api/lib:${LD_LIBRARY_PATH}"
-EOF
-  chmod 755 "${dst_vendor}/bin/set_env.bash" 2>/dev/null
+  if ! "${python_bin}" "${CURR_PATH}/finalize_wheel_opp.py" \
+      --package-dir "$(dirname "${wheel_opp_root}")" \
+      --vendor-name "fla_npu_transformer"; then
+    logandprint "[ERROR]: Failed to finalize the installed wheel OPP and refresh wheel RECORD."
+    exitlog
+    exit 1
+  fi
 }
 
 update_wheel_vendors_config() {
@@ -776,6 +774,7 @@ install_wheel_opp_package() {
   confirm_partial_shared_lib_impact "${src_vendor}" "${dst_vendor}"
   merge_vendor_to_wheel_opp "${src_vendor}" "${dst_vendor}"
   update_wheel_vendors_config "${wheel_opp_root}/vendors" "fla_npu_transformer"
+  finalize_wheel_opp "${wheel_opp_root}"
 
   logandprint "[INFO]: FLA NPU wheel OPP update completed. Restart Python processes to load the new libcust_opapi.so and kernels."
   exitlog

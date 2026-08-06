@@ -16,6 +16,13 @@ from fla_npu.ops.ascendc import chunk_fwd_o
 
 默认路径通过 Python `ctypes` 直调已安装 OPP 里的 `libcust_opapi.so`，不依赖 PyTorch dispatcher 注册，也不会默认编译或加载 `torch_npu` 自定义扩展。旧的 `torch.ops.npu.*` / `torch_npu.ops.*` 兼容路径仍可做，但只作为迁移期可选能力，不推荐新增代码使用，也不会默认使能。
 
+`import fla_npu` 会立即加载 OPP 中的 `libcust_opapi.so`。导入前必须先 source CANN
+的 `set_env.sh`；使用方式 B standalone wheel 时，还必须先安装算子 run 包，或设置
+`FLA_NPU_OPP_PATH` 指向已有 OPP root / vendor 目录。CANN 环境未初始化、OPP 不完整
+或动态库加载失败时，import 会直接报错。FLA 自定义 op_api 只使用
+`libcust_opapi.so`，不要在 custom OPP 的 `op_api/lib` 目录创建会遮蔽 CANN 运行库
+的 `libopapi.so` 别名。
+
 ## 默认交付件
 
 ### Python runtime wheel
@@ -45,7 +52,6 @@ fla_npu/opp/vendors/fla_npu_transformer
 关键产物包括：
 
 - `op_api/lib/libcust_opapi.so`：自定义 aclnn op_api 动态库。
-- `op_api/lib/libopapi.so`：wheel 内优先解析用的同名兼容副本。
 - `op_api/include/aclnnop/aclnn_*.h`：Python ctypes ABI 对齐依据。
 - `op_impl/ai_core/tbe/op_host/...`、`op_tiling/...`、`op_proto/...`：host、tiling、proto 动态库。
 - `op_impl/ai_core/tbe/kernel/...`：AI Core kernel `.o` 和 config。
@@ -136,7 +142,7 @@ bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu
 ./build_out/fla-npu-*.run --full
 ```
 
-安装完成后，`site-packages/fla_npu/opp/vendors/fla_npu_transformer` 下会包含 `libcust_opapi.so`、`libopapi.so`、aclnn 头文件、host/tiling/proto 动态库和 kernel 产物，`from fla_npu.ops.ascendc import 算子名` 的运行时布局与一键 wheel 保持一致。standalone wheel 的分发包名与一键 wheel 保持一致，均为 `flash-linear-attention-npu`；Python 导入名仍为 `fla_npu`。
+安装完成后，`site-packages/fla_npu/opp/vendors/fla_npu_transformer` 下会包含 `libcust_opapi.so`、aclnn 头文件、host/tiling/proto 动态库和 kernel 产物，`from fla_npu.ops.ascendc import 算子名` 的运行时布局与一键 wheel 保持一致。standalone wheel 的分发包名与一键 wheel 保持一致，均为 `flash-linear-attention-npu`；Python 导入名仍为 `fla_npu`。
 
 如果使用仓库根目录的一键 wheel，OPP 会内嵌到 `site-packages/fla_npu/opp`：
 
@@ -154,6 +160,8 @@ bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu --ops=chunk_fwd_o
 ```
 
 安装器会列出 scoped run 包覆盖后的算子状态。`WARNING` 表示安装后不可用，`NOTICE` 表示需要人工关注，`OK` 表示 ABI 一致并继续可用。
+覆盖完成后只保留 `libcust_opapi.so`，并同步刷新已安装 wheel 的 `RECORD`；重复安装
+同一个 run 包不会重复追加 OPP 路径。
 
 ## legacy torch_npu / torch.ops.npu 路径
 

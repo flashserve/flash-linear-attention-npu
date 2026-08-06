@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import os
 import pathlib
+import warnings
 from typing import Optional
 
 
@@ -75,7 +76,7 @@ def _prepare_embedded_opp() -> pathlib.Path:
     if not (os.environ.get("ASCEND_HOME_PATH") or os.environ.get("ASCEND_OPP_PATH")):
         raise RuntimeError(
             "CANN environment is not initialized. Please source the CANN set_env.sh "
-            "before calling fla_npu Ascend C operators."
+            "before importing fla_npu."
         )
 
     vendor_dir = _resolve_vendor_dir()
@@ -83,6 +84,23 @@ def _prepare_embedded_opp() -> pathlib.Path:
     op_api_lib = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
     if not op_api_lib.exists():
         raise FileNotFoundError(f"Embedded custom op_api library not found: {op_api_lib}")
+    op_api_alias = op_api_lib.with_name("libopapi.so")
+    if op_api_alias.exists() or op_api_alias.is_symlink():
+        try:
+            op_api_alias.unlink()
+        except OSError as exc:
+            raise RuntimeError(
+                "The FLA NPU custom OPP contains a stale libopapi.so that can "
+                "shadow the CANN runtime library, and automatic cleanup failed. "
+                f"Remove the stale alias and retry: {op_api_alias}"
+            ) from exc
+        warnings.warn(
+            "Removed a stale FLA NPU libopapi.so alias left by an older package. "
+            "CANN must provide libopapi.so; the custom package only provides "
+            "libcust_opapi.so.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     _prepend_env_path("ASCEND_CUSTOM_OPP_PATH", vendor_dir)
     _prepend_env_path("ASCEND_CUSTOM_OPP_PATH", opp_root)
@@ -118,7 +136,6 @@ def load_ascendc_opapi_libraries() -> list[ctypes.CDLL]:
     vendor_dir = _prepare_embedded_opp()
     op_api_dir = vendor_dir / "op_api" / "lib"
     custom_opapi = op_api_dir / "libcust_opapi.so"
-    opapi_alias = op_api_dir / "libopapi.so"
 
     try:
         custom_library = _load_shared_library_required(custom_opapi)
@@ -128,8 +145,6 @@ def load_ascendc_opapi_libraries() -> list[ctypes.CDLL]:
             f"Dynamic loader error: {exc}"
         ) from exc
     libraries = [custom_library]
-    if opapi_alias.exists():
-        libraries.append(_load_shared_library_required(opapi_alias))
 
     _ASCENDC_OPAPI_LIBRARIES = libraries
     return libraries
@@ -173,10 +188,11 @@ def load_ascendc_extension():
 def load_legacy_torch_ops() -> pathlib.Path:
     """Load the legacy PyTorch dispatcher custom ops.
 
-    ``import fla_npu`` is intentionally lightweight and does not import torch,
-    torch_npu, or register ``torch.ops.npu`` kernels.  Call this function only
-    when old call sites such as ``torch.ops.npu.npu_chunk_fwd_o(...)`` must keep
-    working during the migration to the decoupled ``fla_npu.ops.ascendc`` API.
+    ``import fla_npu`` initializes the decoupled Ascend C runtime, but does not
+    import torch, torch_npu, or register ``torch.ops.npu`` kernels. Call this
+    function only when old call sites such as
+    ``torch.ops.npu.npu_chunk_fwd_o(...)`` must keep working during the
+    migration to the decoupled ``fla_npu.ops.ascendc`` API.
     """
 
     global _LEGACY_TORCH_OPS_LOADED, _LEGACY_TORCH_OPS_LIBRARY
@@ -209,3 +225,6 @@ __all__ = [
     "load_ascendc_opapi_libraries",
     "load_legacy_torch_ops",
 ]
+
+
+load_ascendc_opapi_libraries()
