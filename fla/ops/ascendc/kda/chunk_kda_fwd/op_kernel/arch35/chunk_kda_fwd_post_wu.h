@@ -103,9 +103,76 @@ constexpr uint16_t KDA_POST_PIPELINE_STAGE_COUNT = 2;
 constexpr uint16_t KDA_POST_FUSED_BATCH_TASKS = 4;
 constexpr uint16_t KDA_POST_HEAD_PAIR_LANES = 2;
 constexpr uint16_t KDA_POST_PIPELINE_U_EVENT = KDA_POST_EVENT_FIX;
+constexpr uint16_t KDA_POST_REGBASE_TAIL_LIMIT = 16;
 constexpr bool KDA_ENABLE_POST_AIC_PIPELINE = true;
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+static __simd_vf__ inline void ComputeKdaTailWuRegbase(
+    __ubuf__ float *wOut, __ubuf__ float *uOut, __ubuf__ bfloat16_t *akk,
+    __ubuf__ bfloat16_t *wSeed, __ubuf__ bfloat16_t *uSeed,
+    uint16_t rows, uint16_t curT)
+{
+    using namespace AscendC::MicroAPI;
+    constexpr uint16_t DIM = 128;
+    constexpr uint16_t FP32_REG_ELEMENTS = AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    constexpr uint16_t AKK_ROW_ELEMENTS = 64;
+    MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
+
+    for (uint16_t row = 0; row < rows; ++row) {
+        RegTensor<float> wAcc0;
+        RegTensor<float> wAcc1;
+        RegTensor<float> uAcc0;
+        RegTensor<float> uAcc1;
+        Duplicate(wAcc0, 0.0f, fullMask);
+        Duplicate(wAcc1, 0.0f, fullMask);
+        Duplicate(uAcc0, 0.0f, fullMask);
+        Duplicate(uAcc1, 0.0f, fullMask);
+
+        for (uint16_t token = 0; token < curT; ++token) {
+            RegTensor<bfloat16_t> wRaw0;
+            RegTensor<bfloat16_t> wRaw1;
+            RegTensor<bfloat16_t> uRaw0;
+            RegTensor<bfloat16_t> uRaw1;
+            RegTensor<bfloat16_t> weightRaw;
+            RegTensor<float> w0;
+            RegTensor<float> w1;
+            RegTensor<float> u0;
+            RegTensor<float> u1;
+            RegTensor<float> weight;
+            RegTensor<float> product;
+            DataCopy<bfloat16_t, LoadDist::DIST_UNPACK_B16>(
+                wRaw0, wSeed + static_cast<uint32_t>(token) * DIM);
+            DataCopy<bfloat16_t, LoadDist::DIST_UNPACK_B16>(
+                wRaw1, wSeed + static_cast<uint32_t>(token) * DIM + FP32_REG_ELEMENTS);
+            DataCopy<bfloat16_t, LoadDist::DIST_UNPACK_B16>(
+                uRaw0, uSeed + static_cast<uint32_t>(token) * DIM);
+            DataCopy<bfloat16_t, LoadDist::DIST_UNPACK_B16>(
+                uRaw1, uSeed + static_cast<uint32_t>(token) * DIM + FP32_REG_ELEMENTS);
+            LoadAlign<bfloat16_t, LoadDist::DIST_BRC_B16>(
+                weightRaw, akk + static_cast<uint32_t>(row) * AKK_ROW_ELEMENTS + token);
+            Cast<float, bfloat16_t, ctHalf2Fp32Zero>(w0, wRaw0, fullMask);
+            Cast<float, bfloat16_t, ctHalf2Fp32Zero>(w1, wRaw1, fullMask);
+            Cast<float, bfloat16_t, ctHalf2Fp32Zero>(u0, uRaw0, fullMask);
+            Cast<float, bfloat16_t, ctHalf2Fp32Zero>(u1, uRaw1, fullMask);
+            Cast<float, bfloat16_t, ctHalf2Fp32Zero>(weight, weightRaw, fullMask);
+            Mul(product, w0, weight, fullMask);
+            Add(wAcc0, wAcc0, product, fullMask);
+            Mul(product, w1, weight, fullMask);
+            Add(wAcc1, wAcc1, product, fullMask);
+            Mul(product, u0, weight, fullMask);
+            Add(uAcc0, uAcc0, product, fullMask);
+            Mul(product, u1, weight, fullMask);
+            Add(uAcc1, uAcc1, product, fullMask);
+        }
+
+        uint32_t outputOffset = static_cast<uint32_t>(row) * DIM;
+        DataCopy(wOut + outputOffset, wAcc0, fullMask);
+        DataCopy(wOut + outputOffset + FP32_REG_ELEMENTS, wAcc1, fullMask);
+        DataCopy(uOut + outputOffset, uAcc0, fullMask);
+        DataCopy(uOut + outputOffset + FP32_REG_ELEMENTS, uAcc1, fullMask);
+    }
+}
+
 template <typename InputT>
 __simd_callee__ inline void LoadPostKdaGateRegbasePair(
     AscendC::MicroAPI::RegTensor<float> &zeroReg,
@@ -1541,6 +1608,67 @@ private:
                 KVOffset(b, hv, start + row, 0, V_), curT, V_);
         }
     }
+
+    __aicore__ inline void ComputeTailWuRegbaseArch35(
+        uint64_t b, uint64_t hv, uint64_t start, uint64_t curT,
+        uint64_t subBlockIdx, uint64_t subBlockNum)
+    {
+        // W aliases W-seed in GM: one AIV must stage every seed row before either output is overwritten.
+        constexpr uint64_t dim = 128;
+        constexpr uint64_t maxTailRows = KDA_POST_REGBASE_TAIL_LIMIT - 1;
+        constexpr uint64_t tileRowsLimit = 32;
+        constexpr uint64_t akkStagedCols = 64;
+        constexpr uint64_t wSeedOffset = 0;
+        constexpr uint64_t uSeedOffset = wSeedOffset + maxTailRows * dim;
+        constexpr uint64_t akkOffset = uSeedOffset + maxTailRows * dim;
+        (void)subBlockNum;
+        if (subBlockIdx != 0 || curT == 0 || curT > maxTailRows) {
+            return;
+        }
+
+        LocalTensor<bfloat16_t> staging = gateWritebackBuf_.Get<bfloat16_t>();
+        LocalTensor<bfloat16_t> wSeedLocal = staging[wSeedOffset];
+        LocalTensor<bfloat16_t> uSeedLocal = staging[uSeedOffset];
+        LocalTensor<bfloat16_t> akkLocal = staging[akkOffset];
+        CopyVectorIn(
+            wSeedLocal, preparedQG_, KVOffset(b, hv, start, 0, K_), curT * dim);
+        CopyVectorIn(
+            uSeedLocal, propagatedVNew_, KVOffset(b, hv, start, 0, V_), curT * dim);
+        for (uint64_t row = 0; row < curT; ++row) {
+            LocalTensor<bfloat16_t> akkRow = akkLocal[row * akkStagedCols];
+            CopyVectorIn(
+                akkRow, preparedAqk_, AOffset(b, hv, start + row, 0),
+                akkStagedCols);
+        }
+        SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+        WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+
+        for (uint64_t tileRow = 0; tileRow < curT; tileRow += tileRowsLimit) {
+            const uint64_t tileRows = (curT - tileRow) > tileRowsLimit
+                ? tileRowsLimit
+                : (curT - tileRow);
+            LocalTensor<float> wFloat = vecBuf_.Get<float>();
+            LocalTensor<float> uFloat = wFloat[tileRows * dim];
+            LocalTensor<bfloat16_t> akkTile = akkLocal[tileRow * akkStagedCols];
+            AscendC::VF_CALL<ComputeKdaTailWuRegbase>(
+                reinterpret_cast<__ubuf__ float *>(wFloat.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(uFloat.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ bfloat16_t *>(akkTile.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ bfloat16_t *>(wSeedLocal.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ bfloat16_t *>(uSeedLocal.GetPhyAddr()),
+                static_cast<uint16_t>(tileRows), static_cast<uint16_t>(curT));
+            PipeBarrier<PIPE_V>();
+
+            for (uint64_t row = 0; row < tileRows; ++row) {
+                LocalTensor<float> wRow = wFloat[row * dim];
+                LocalTensor<float> uRow = uFloat[row * dim];
+                StoreFloatRow(
+                    w_, KVOffset(b, hv, start + tileRow + row, 0, K_), wRow, dim);
+                StoreFloatRow(
+                    u_, KVOffset(b, hv, start + tileRow + row, 0, V_), uRow, dim);
+            }
+        }
+    }
 #endif
     __aicore__ inline bool ResolveFlatChunk(uint64_t task, uint64_t &seq, uint64_t &b, uint64_t &h, uint64_t &hv,
                                             uint64_t &chunkIdx, uint64_t &start, uint64_t &end)
@@ -1708,7 +1836,19 @@ private:
         }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         if (curT < BT_) {
-            ComputeTailWuVector(b, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum);
+            if constexpr (IsSameType<T, bfloat16_t>::value) {
+                if (BT_ == 64 && K_ == 128 && V_ == 128 &&
+                    curT < KDA_POST_REGBASE_TAIL_LIMIT) {
+                    ComputeTailWuRegbaseArch35(
+                        b, hv, start, curT, subBlockIdx, subBlockNum);
+                } else {
+                    ComputeTailWuVector(
+                        b, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum);
+                }
+            } else {
+                ComputeTailWuVector(
+                    b, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum);
+            }
             CopyScratchWAndFinalizeKg(
                 b, h, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum);
             return;

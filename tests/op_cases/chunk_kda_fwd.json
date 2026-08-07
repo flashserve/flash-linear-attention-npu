@@ -97,6 +97,9 @@
       "chunk_kda_fwd_tail_or_varlen",
       "chunk_kda_fwd_a5_varlen_tail_finalize",
       "chunk_kda_fwd_a5_bf16_full_chunk_finalize",
+      "chunk_kda_fwd_a5_bf16_sub16_varlen_h96",
+      "chunk_kda_fwd_a5_bf16_sub16_dense_h29",
+      "chunk_kda_fwd_a5_bf16_sub16_minimal_h1",
       "chunk_kda_fwd_tnd_layout",
       "chunk_kda_fwd_state_v_first",
       "chunk_kda_fwd_optional_output_matrix",
@@ -107,6 +110,9 @@
       "chunk_kda_fwd_tail_or_varlen",
       "chunk_kda_fwd_a5_varlen_tail_finalize",
       "chunk_kda_fwd_a5_bf16_full_chunk_finalize",
+      "chunk_kda_fwd_a5_bf16_sub16_varlen_h96",
+      "chunk_kda_fwd_a5_bf16_sub16_dense_h29",
+      "chunk_kda_fwd_a5_bf16_sub16_minimal_h1",
       "chunk_kda_fwd_tnd_layout",
       "chunk_kda_fwd_state_v_first",
       "chunk_kda_fwd_chunk128_writeback_boundary"
@@ -482,6 +488,205 @@
         ]
       },
       "seed": 20260731
+    },
+    {
+      "id": "chunk_kda_fwd_a5_bf16_sub16_varlen_h96",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "tail",
+        "regression",
+        "determinism"
+      ],
+      "shape": {
+        "N": 4,
+        "H_k": 96,
+        "H_v": 96,
+        "T": 281,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 8
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g": "float32",
+        "beta": "bfloat16",
+        "state": "float32"
+      },
+      "layout": "NTD",
+      "attrs": {
+        "layout": "NTD",
+        "scale": 0.0883883476,
+        "chunk_size": 64,
+        "output_final_state": true,
+        "disable_recompute": true,
+        "return_intermediate_states": true,
+        "safe_gate": true,
+        "lower_bound": -5.0,
+        "use_gate_in_kernel": true,
+        "state_v_first": false
+      },
+      "optional_inputs": {
+        "initial_state": null,
+        "cu_seqlens": [
+          0,
+          65,
+          131,
+          202,
+          281
+        ],
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/reference/chunk_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "binary_deterministic_runs": 50,
+        "compare_outputs": [
+          "attn_out",
+          "final_state",
+          "gk",
+          "Aqk/Akk",
+          "w/qg/kg",
+          "u/v_new",
+          "h"
+        ]
+      },
+      "seed": 20260929
+    },
+    {
+      "id": "chunk_kda_fwd_a5_bf16_sub16_dense_h29",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "tail",
+        "regression"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 29,
+        "H_v": 29,
+        "T": 79,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g": "float32",
+        "beta": "bfloat16",
+        "state": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "layout": "BSND",
+        "scale": 0.0883883476,
+        "chunk_size": 64,
+        "output_final_state": true,
+        "disable_recompute": true,
+        "return_intermediate_states": true,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "use_gate_in_kernel": true,
+        "state_v_first": false
+      },
+      "optional_inputs": {
+        "initial_state": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/reference/chunk_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "attn_out",
+          "final_state",
+          "gk",
+          "Aqk/Akk",
+          "w/qg/kg",
+          "u/v_new",
+          "h"
+        ]
+      },
+      "seed": 20260844
+    },
+    {
+      "id": "chunk_kda_fwd_a5_bf16_sub16_minimal_h1",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "tail",
+        "regression",
+        "optional_output"
+      ],
+      "shape": {
+        "B": 1,
+        "H_k": 1,
+        "H_v": 1,
+        "T": 65,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 2
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g": "float32",
+        "beta": "bfloat16",
+        "state": "float32"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "layout": "BSND",
+        "scale": 0.0883883476,
+        "chunk_size": 64,
+        "output_final_state": false,
+        "disable_recompute": false,
+        "return_intermediate_states": false,
+        "safe_gate": true,
+        "lower_bound": -5.0,
+        "use_gate_in_kernel": true,
+        "state_v_first": false
+      },
+      "optional_inputs": {
+        "initial_state": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc"
+      ],
+      "reference": "tests/reference/chunk_kda_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": [
+          "attn_out",
+          "Aqk/Akk"
+        ]
+      },
+      "seed": 20260866
     },
     {
       "id": "chunk_kda_fwd_tnd_layout",

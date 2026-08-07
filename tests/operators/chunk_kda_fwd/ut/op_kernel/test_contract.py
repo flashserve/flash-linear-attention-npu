@@ -45,7 +45,7 @@ def test_direct_launch_keeps_registered_public_entry():
     assert registration.count('m.impl("chunk_kda_fwd_direct"') == 2
 
 
-def test_a5_reuses_public_physical_entry_with_internal_stage_implementations():
+def test_a5_reuses_chunk_kda_fwd_kernel_launch_entry_with_internal_arch35_stages():
     assert not LEGACY_COMMON_KERNEL.exists()
     assert KERNEL_ENTRY.exists()
     assert TILING_ENTRY.exists()
@@ -195,13 +195,50 @@ def test_optional_output_workspace_uses_ir_instantiation_state():
     assert "hExport == nullptr ? placeholderShape : hShape5" in aclnn
 
 
-def test_varlen_and_tail_use_the_same_physical_l0():
+def test_varlen_and_tail_reuse_chunk_kda_fwd_l0_registration_and_launcher():
     l0 = (OP_ROOT / "op_host/op_api/chunk_kda_fwd.cpp").read_text(encoding="utf-8")
     assert l0.count("l0op::ChunkKdaFwd(") == 0
     assert l0.count("OP_TYPE_REGISTER(ChunkKdaFwd);") == 1
     assert l0.count("ADD_TO_LAUNCHER_LIST_AICORE(") == 1
     for stage in ("ChunkKdaFwdPrepare", "ChunkKdaFwdPostWu", "ChunkKdaFwdFinalize"):
         assert stage not in l0
+
+
+def test_a5_bf16_sub16_tail_uses_bounded_regbase_templates():
+    finalize = ARCH35_STAGE_IMPLEMENTATIONS["output"].read_text(encoding="utf-8")
+    post_wu = ARCH35_STAGE_IMPLEMENTATIONS["post_wu"].read_text(encoding="utf-8")
+    manifest = json.loads(CASE_MANIFEST.read_text(encoding="utf-8"))
+    cases = {case["id"]: case for case in manifest["cases"]}
+
+    assert "ComputeKdaTailOutputRegbase" in finalize
+    assert "ComputeTailOutputRegbaseRows" in finalize
+    output_dispatch = finalize.rsplit(
+        "ComputeTailOutputRegbaseRows(", 1
+    )[0][-500:]
+    assert "BT_ == 64 && K_ == 128 && V_ == 128" in output_dispatch
+    assert "curT < KDA_CUBE_MIN_REDUCTION" in finalize
+
+    assert "ComputeKdaTailWuRegbase" in post_wu
+    assert "ComputeTailWuRegbaseArch35" in post_wu
+    assert "subBlockIdx != 0" in post_wu
+    assert "curT > maxTailRows" in post_wu
+    assert "BT_ == 64 && K_ == 128 && V_ == 128" in post_wu
+    assert "curT < KDA_POST_REGBASE_TAIL_LIMIT" in post_wu
+
+    h96 = cases["chunk_kda_fwd_a5_bf16_sub16_varlen_h96"]
+    assert h96["shape"] == {
+        "N": 4,
+        "H_k": 96,
+        "H_v": 96,
+        "T": 281,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "N_c": 8,
+    }
+    cu = h96["optional_inputs"]["cu_seqlens"]
+    assert [length % 64 for length in (b - a for a, b in zip(cu, cu[1:]))] == [1, 2, 7, 15]
+    assert h96["expect"]["binary_deterministic_runs"] == 50
 
 
 def test_l0_keeps_the_public_result_contract():
@@ -231,7 +268,7 @@ def test_l0_keeps_the_public_result_contract():
     assert "ChunkKdaFwdFusedArch35" not in l0
 
 
-def test_prepare_post_wu_fusion_stays_inside_chunk_kda_fwd():
+def test_a5_dense_aligned_prepare_post_wu_fusion_stays_inside_chunk_kda_fwd():
     common = KERNEL_COMMON.read_text(encoding="utf-8")
     prepare = STAGE_IMPLEMENTATIONS["prepare"].read_text(encoding="utf-8")
     post_wu = STAGE_IMPLEMENTATIONS["post_wu"].read_text(encoding="utf-8")
@@ -1181,6 +1218,40 @@ def test_tiling_key_has_design_rationale():
     design = (OP_ROOT / "docs/design.md").read_text(encoding="utf-8")
     assert "模板化方案与 tiling key" in design
     assert "编译期" in design and "独立" in design
+
+
+def test_design_documents_all_internal_template_families_by_interface_layer():
+    design = (OP_ROOT / "docs/design.md").read_text(encoding="utf-8")
+    for interface_layer in (
+        "fla_npu.ops.ascendc.chunk_kda_fwd",
+        "aclnnChunkKdaFwd",
+        "ChunkKdaFwd L0",
+        "chunk_kda_fwd device kernel launch 入口",
+    ):
+        assert interface_layer in design
+    for template_family in (
+        "key=1` 通用 shape 模板",
+        "key=2` chunk64/K128/V128 模板",
+        "standalone Gate",
+        "Prepare 内联 Gate",
+        "Prepare/Post-WU 阶段内流水融合",
+        "Post-WU/FwdH 阶段内流水融合",
+        "独立内部 Post-WU 阶段",
+        "Prepare arch35 safe-gate head-pair",
+        "Post-WU arch35 BF16 sub-16",
+        "GDNFwdHTileShapes128",
+        "GDNFwdHTileShapes256",
+        "ChunkKdaFwdFwdH",
+        "Finalize arch35 dense-aligned pipeline",
+        "Finalize arch35 BF16 sub-16",
+        "ComputeTailWuRegbaseArch35",
+        "ComputeTailOutputRegbaseRows",
+    ):
+        assert template_family in design
+    assert "9,600 B" in design
+    assert "40,928 B" in design and "40,960 B" in design
+    assert "物理入口" not in design
+    assert "物理 L0" not in design
 
 
 def test_a5_gate_chunk_bulk_regbase_is_arch_guarded():
