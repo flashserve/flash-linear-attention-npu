@@ -17,12 +17,32 @@ __global__ __aicore__ void chunk_scaled_dot_kkt(GM_ADDR k,
     GET_TILING_DATA_WITH_STRUCT(ChunkScaledDotKktTilingData, tilingData, tiling);
 
     TPipe pipe;
-    NsChunkScaledDotKkt::ChunkScaledDotKkt<DTYPE_K> op;
-    REGIST_MATMUL_OBJ(&pipe, GetSysWorkSpacePtr(), op.scoreMatmul, &tilingData.cubeTilingData);
+    NsChunkScaledDotKkt::ChunkScaledDotKkt<DTYPE_K, CHUNK_KEY> op;
     GM_ADDR userWorkspace = GetUserWorkspace(workspace);
+
+    if constexpr (CHUNK_KEY == CHUNK_SCALED_DOT_KKT_BT64 || CHUNK_KEY == CHUNK_SCALED_DOT_KKT_BT128) {
+        const bool useCatlassScore = tilingData.isVarlen == 0 && tilingData.T > 0 && tilingData.BT > 0 &&
+                                     tilingData.K > 0 && (tilingData.T % tilingData.BT) == 0 &&
+                                     (tilingData.K % 16) == 0;
+        if (useCatlassScore) {
+            op.Init(k, g, beta, cuSeqlens, chunkIndices, A, userWorkspace, tilingData.B, tilingData.Hk,
+                    tilingData.Hv, tilingData.hvPerHk, tilingData.T, tilingData.K, tilingData.BT, tilingData.NT,
+                    tilingData.taskNum, tilingData.usedAicNum, tilingData.usedAivNum, tilingData.btAlign,
+                    tilingData.isVarlen, &pipe);
+            if ASCEND_IS_AIC {
+                op.ProcessAic();
+            }
+            if ASCEND_IS_AIV {
+                op.ProcessAiv();
+            }
+            return;
+        }
+    }
+
+    REGIST_MATMUL_OBJ(&pipe, GetSysWorkSpacePtr(), op.scoreMatmul, &tilingData.cubeTilingData);
     op.Init(k, g, beta, cuSeqlens, chunkIndices, A, userWorkspace, tilingData.B, tilingData.Hk, tilingData.Hv,
-            tilingData.hvPerHk, tilingData.T, tilingData.K, tilingData.BT, tilingData.NT, tilingData.taskNum, tilingData.usedAicNum,
-            tilingData.usedAivNum, tilingData.btAlign, tilingData.isVarlen, &pipe);
+            tilingData.hvPerHk, tilingData.T, tilingData.K, tilingData.BT, tilingData.NT, tilingData.taskNum,
+            tilingData.usedAicNum, tilingData.usedAivNum, tilingData.btAlign, tilingData.isVarlen, &pipe);
 
     if ASCEND_IS_AIV {
         op.ProcessAiv();

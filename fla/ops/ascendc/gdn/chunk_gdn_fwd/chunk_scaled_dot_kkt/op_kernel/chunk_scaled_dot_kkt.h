@@ -5,6 +5,27 @@
 #include "kernel_tiling/kernel_tiling.h"
 #include "lib/matmul_intf.h"
 
+#ifndef CATLASS_ARCH
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#define CATLASS_ARCH 3510
+#else
+#define CATLASS_ARCH 2201
+#endif
+#endif
+
+#include "catlass/arch/arch.hpp"
+#include "catlass/arch/cross_core_sync.hpp"
+#include "catlass/arch/resource.hpp"
+#include "catlass/catlass.hpp"
+#include "catlass/gemm/block/block_mmad.hpp"
+#include "catlass/gemm/dispatch_policy.hpp"
+#include "catlass/gemm/tile/tile_copy.hpp"
+#include "catlass/gemm_coord.hpp"
+#include "catlass/layout/layout.hpp"
+#include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
+#include "tla/layout.hpp"
+#include "tla/tensor.hpp"
+
 struct ChunkScaledDotKktTilingData;
 
 namespace NsChunkScaledDotKkt {
@@ -17,12 +38,19 @@ constexpr int32_t FP32_BLOCK_ELEMS = 8;
 constexpr int32_t FP32_REPEAT_ELEMS = 64;
 constexpr int32_t BRCB_ROWS = 8;
 constexpr int32_t UB_ALIGN_BYTES = 32;
+constexpr uint8_t SCORE_DONE_FLAG0 = 2;
+constexpr uint8_t SCORE_DONE_FLAG1 = 3;
+constexpr uint8_t SCORE_READY_FLAG0 = 4;
+constexpr uint8_t SCORE_READY_FLAG1 = 5;
 constexpr MatmulConfig CHUNK_SCALED_DOT_KKT_MM_CFG = GetNormalConfig(true);
 
 using CType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, float>;
 using BiasType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, float>;
+using KktArchTag = Catlass::Arch::AtlasA2;
+using KktScoreDispatchPolicy = Catlass::Gemm::MmadPingpongTlaMulti<KktArchTag, true, false>;
+using KktInt128 = tla::Int<128>;
 
-template <typename KType>
+template <typename KType, uint32_t CHUNK_KEY>
 class ChunkScaledDotKkt {
     struct TaskMeta {
         int64_t b = 0;
@@ -98,6 +126,10 @@ public:
 
     __aicore__ inline void ProcessAiv()
     {
+        if (UseCatlassScore()) {
+            ProcessAivCatlass();
+            return;
+        }
         const int64_t vecIdx = static_cast<int64_t>(GetBlockIdx());
         if (vecIdx >= usedAivNum_ || usedAivNum_ <= 0) {
             return;
@@ -139,6 +171,26 @@ public:
         }
     }
 
+    __aicore__ inline void ProcessAic()
+    {
+        if (!UseCatlassScore()) {
+            return;
+        }
+        if constexpr (CHUNK_KEY == 0) {
+            ProcessAicCatlassImpl<64>();
+        } else if constexpr (CHUNK_KEY == 3) {
+            ProcessAicCatlassImpl<128>();
+        }
+    }
+
+    __aicore__ inline bool UseCatlassScore() const
+    {
+        if constexpr (CHUNK_KEY != 0 && CHUNK_KEY != 3) {
+            return false;
+        }
+        return isVarlen_ == 0 && T_ > 0 && BT_ > 0 && K_ > 0 && (T_ % BT_) == 0 && (K_ % 16) == 0;
+    }
+
     matmul::Matmul<AType, BType, CType, BiasType, CHUNK_SCALED_DOT_KKT_MM_CFG> scoreMatmul;
 
 private:
@@ -170,6 +222,12 @@ private:
         }
     }
 
+    __aicore__ inline void DecodeScoreTask(int64_t scoreTask, TaskMeta &meta) const
+    {
+        DecodeChunkTask(scoreTask / Hk_, meta);
+        meta.h = scoreTask % Hk_;
+    }
+
     __aicore__ inline int64_t GetScoreOffset(int64_t vecIdx, int64_t scoreSlot, int64_t headIdx) const
     {
         return (vecIdx * static_cast<int64_t>(SCORE_WORKSPACE_BUFFER_NUM) * SCORE_WORKSPACE_HEAD_BATCH +
@@ -198,6 +256,99 @@ private:
     __aicore__ inline void WaitScoreTask()
     {
         scoreMatmul.WaitIterateAll();
+    }
+
+    template <int32_t BT_VALUE>
+    __aicore__ inline void ProcessAicCatlassImpl()
+    {
+        const int64_t cubeIdx = static_cast<int64_t>(GetBlockIdx());
+        if (cubeIdx >= usedAicNum_ || usedAicNum_ <= 0) {
+            return;
+        }
+        using L1TileShape = tla::Shape<tla::Int<BT_VALUE>, tla::Int<BT_VALUE>, KktInt128>;
+        using L0TileShape = L1TileShape;
+        using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KktArchTag, KType, Catlass::layout::RowMajor, KType,
+                                                                Catlass::layout::ColumnMajor, float,
+                                                                Catlass::layout::RowMajor>;
+        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KktScoreDispatchPolicy, L1TileShape, L0TileShape, KType,
+                                                              KType, float, void, TileCopy>;
+
+        int64_t scoreSeq = 0;
+        const int64_t scoreTaskNum = B_ * NT_ * Hk_;
+        for (int64_t scoreTask = cubeIdx; scoreTask < scoreTaskNum; scoreTask += usedAicNum_) {
+            TaskMeta meta;
+            DecodeScoreTask(scoreTask, meta);
+            if (meta.valid <= 0) {
+                continue;
+            }
+            const int64_t scoreSlot = scoreSeq & 1;
+            if (scoreSeq >= SCORE_WORKSPACE_BUFFER_NUM) {
+                Catlass::Arch::CrossCoreWaitFlag(scoreDoneFlag_[scoreSlot]);
+            }
+            const int64_t scoreOffset = GetScoreOffset(cubeIdx, scoreSlot, 0);
+            Catlass::Arch::Resource<KktArchTag> resource;
+            BlockMmad blockMmad(resource);
+            ComputeCatlassScoreTask(meta, scoreOffset, blockMmad);
+            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(scoreReadyFlag_[scoreSlot]);
+            ++scoreSeq;
+        }
+        const int64_t pendingSlots = MinI64(scoreSeq, static_cast<int64_t>(SCORE_WORKSPACE_BUFFER_NUM));
+        for (int64_t slot = 0; slot < pendingSlots; ++slot) {
+            Catlass::Arch::CrossCoreWaitFlag(scoreDoneFlag_[slot]);
+        }
+    }
+
+    template <typename BlockMmad>
+    __aicore__ inline void ComputeCatlassScoreTask(const TaskMeta &meta, int64_t scoreOffset, BlockMmad &blockMmad)
+    {
+        using LayoutTagA = Catlass::layout::RowMajor;
+        using LayoutTagB = Catlass::layout::ColumnMajor;
+        using LayoutTagC = Catlass::layout::RowMajor;
+        const int64_t kOffset = ((meta.b * Hk_ + meta.h) * T_ + meta.rowStart) * K_;
+        auto layoutA = tla::MakeLayout<KType, LayoutTagA>(BT_, K_);
+        auto layoutB = tla::MakeLayout<KType, LayoutTagB>(K_, BT_);
+        auto layoutC = tla::MakeLayout<float, LayoutTagC>(BT_, BT_);
+        Catlass::GemmCoord shape{static_cast<uint32_t>(meta.valid), static_cast<uint32_t>(meta.valid),
+                                 static_cast<uint32_t>(K_)};
+
+        auto tensorA = tla::MakeTensor(kGm[kOffset], layoutA, Catlass::Arch::PositionGM{});
+        auto tensorB = tla::MakeTensor(kGm[kOffset], layoutB, Catlass::Arch::PositionGM{});
+        auto tensorC = tla::MakeTensor(scoreGm[scoreOffset], layoutC, Catlass::Arch::PositionGM{});
+        auto blockA = GetTile(tensorA, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.k()));
+        auto blockB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
+        auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
+
+        blockMmad.preSetFlags();
+        blockMmad(blockA, blockB, blockC, shape);
+        blockMmad.finalWaitFlags();
+    }
+
+    __aicore__ inline void ProcessAivCatlass()
+    {
+        const int64_t subBlockNum = static_cast<int64_t>(GetSubBlockNum());
+        if (subBlockNum <= 0) {
+            return;
+        }
+        const int64_t subBlockIdx = static_cast<int64_t>(GetSubBlockIdx());
+        const int64_t cubeIdx = static_cast<int64_t>(GetBlockIdx()) / subBlockNum;
+        if (cubeIdx >= usedAicNum_ || usedAicNum_ <= 0) {
+            return;
+        }
+        int64_t scoreSeq = 0;
+        const int64_t scoreTaskNum = B_ * NT_ * Hk_;
+        for (int64_t scoreTask = cubeIdx; scoreTask < scoreTaskNum; scoreTask += usedAicNum_) {
+            TaskMeta meta;
+            DecodeScoreTask(scoreTask, meta);
+            if (meta.valid <= 0) {
+                continue;
+            }
+            const int64_t scoreSlot = scoreSeq & 1;
+            Catlass::Arch::CrossCoreWaitFlag(scoreReadyFlag_[scoreSlot]);
+            const int64_t scoreOffset = GetScoreOffset(cubeIdx, scoreSlot, 0);
+            ComputeEpilogueTaskRows(meta, scoreOffset, subBlockIdx, subBlockNum);
+            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(scoreDoneFlag_[scoreSlot]);
+            ++scoreSeq;
+        }
     }
 
     __aicore__ inline void ComputeEpilogueTask(const TaskMeta &meta, int64_t scoreBaseOffset)
@@ -232,6 +383,48 @@ private:
             }
         }
         CopyOutTile(outBaseOffset, outRowStride, outTileLocal, meta.valid);
+
+        gQueue_.FreeTensor(gLocal);
+        betaQueue_.FreeTensor(betaLocal);
+    }
+
+    __aicore__ inline void ComputeEpilogueTaskRows(const TaskMeta &meta,
+                                                   int64_t scoreBaseOffset,
+                                                   int64_t subBlockIdx,
+                                                   int64_t subBlockNum)
+    {
+        const int64_t ghOffset = (meta.b * Hv_ + meta.h) * T_ + meta.rowStart;
+        CopyTaskVector(gGm, ghOffset, gQueue_, meta.valid);
+        CopyTaskVector(betaGm, ghOffset, betaQueue_, meta.valid);
+        LocalTensor<float> gLocal = gQueue_.template DeQue<float>();
+        LocalTensor<float> betaLocal = betaQueue_.template DeQue<float>();
+
+        const int64_t outBaseOffset = ((meta.b * Hk_ + meta.h) * T_ + meta.rowStart) * BT_;
+        const int64_t outRowStride = BT_;
+        LocalTensor<float> scoreTileLocal = scoreTileBuf_.Get<float>();
+        LocalTensor<float> outTileLocal = outTileBuf_.Get<float>();
+        LocalTensor<float> gateLocal = gateBuf_.Get<float>();
+        LocalTensor<float> rowBrcbLocal = rowBrcbBuf_.Get<float>();
+        DuplicateZero(outTileLocal, BT_ * btAlign_);
+        PipeBarrier<PIPE_V>();
+        CopyScoreTile(scoreBaseOffset, scoreTileLocal, meta.valid);
+        bool scoreReady = false;
+        const int64_t firstRowBase = subBlockIdx * static_cast<int64_t>(BRCB_ROWS);
+        const int64_t rowStep = subBlockNum * static_cast<int64_t>(BRCB_ROWS);
+        for (int64_t rowBase = firstRowBase; rowBase < meta.valid; rowBase += rowStep) {
+            const int64_t rows = MinI64(static_cast<int64_t>(BRCB_ROWS), meta.valid - rowBase);
+            const int64_t cols = rowBase + rows;
+            ComputeGateBlock(rowBase, rows, cols, gLocal, betaLocal, gateLocal, rowBrcbLocal);
+            if (!scoreReady) {
+                WaitMte2ToV();
+                scoreReady = true;
+            }
+            for (int64_t lane = 0; lane < rows; ++lane) {
+                const int64_t row = rowBase + lane;
+                ComputeEpilogueRow(scoreTileLocal, outTileLocal, row, gateLocal[lane * btAlign_]);
+            }
+        }
+        CopyOutRowBlocks(outBaseOffset, outRowStride, outTileLocal, meta.valid, subBlockIdx, subBlockNum);
 
         gQueue_.FreeTensor(gLocal);
         betaQueue_.FreeTensor(betaLocal);
@@ -285,6 +478,30 @@ private:
         outParams.dstStride = static_cast<uint32_t>((outRowStride - BT_) * static_cast<int64_t>(sizeof(float)));
         outParams.rsv = 0;
         DataCopyPad(aGm[outBaseOffset], outTileLocal, outParams);
+        WaitMte3ToV();
+    }
+
+    __aicore__ inline void CopyOutRowBlocks(int64_t outBaseOffset,
+                                            int64_t outRowStride,
+                                            LocalTensor<float> outTileLocal,
+                                            int64_t valid,
+                                            int64_t subBlockIdx,
+                                            int64_t subBlockNum)
+    {
+        WaitVToMte3();
+        const int64_t firstRowBase = subBlockIdx * static_cast<int64_t>(BRCB_ROWS);
+        const int64_t rowStep = subBlockNum * static_cast<int64_t>(BRCB_ROWS);
+        for (int64_t rowBase = firstRowBase; rowBase < valid; rowBase += rowStep) {
+            const int64_t rows = MinI64(static_cast<int64_t>(BRCB_ROWS), valid - rowBase);
+            DataCopyExtParams outParams;
+            outParams.blockCount = static_cast<uint16_t>(rows);
+            outParams.blockLen = static_cast<uint32_t>(BT_ * static_cast<int64_t>(sizeof(float)));
+            outParams.srcStride = static_cast<uint32_t>((btAlign_ - BT_) * static_cast<int64_t>(sizeof(float)) /
+                                                        UB_ALIGN_BYTES);
+            outParams.dstStride = static_cast<uint32_t>((outRowStride - BT_) * static_cast<int64_t>(sizeof(float)));
+            outParams.rsv = 0;
+            DataCopyPad(aGm[outBaseOffset + rowBase * outRowStride], outTileLocal[rowBase * btAlign_], outParams);
+        }
         WaitMte3ToV();
     }
 
@@ -392,6 +609,9 @@ private:
     GlobalTensor<float> scoreGm;
     GlobalTensor<int64_t> cuSeqlensGm;
     GlobalTensor<int64_t> chunkIndicesGm;
+    Catlass::Arch::CrossCoreFlag scoreReadyFlag_[SCORE_WORKSPACE_BUFFER_NUM] = {SCORE_READY_FLAG0,
+                                                                                SCORE_READY_FLAG1};
+    Catlass::Arch::CrossCoreFlag scoreDoneFlag_[SCORE_WORKSPACE_BUFFER_NUM] = {SCORE_DONE_FLAG0, SCORE_DONE_FLAG1};
 
     int64_t B_ = 0;
     int64_t Hk_ = 0;
