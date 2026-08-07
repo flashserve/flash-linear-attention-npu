@@ -164,6 +164,24 @@ private:
         WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
     }
 
+    __aicore__ inline int64_t GetDenseBaseOffset(int64_t bIdx)
+    {
+        return bIdx * tiling_->t * tiling_->h;
+    }
+
+    __aicore__ inline int64_t GetVarlenBaseOffset(int64_t outerIdx, int64_t bos)
+    {
+        if (optimizedHeadFirst_) {
+            return outerIdx * tiling_->h * tiling_->t + bos;
+        }
+        return outerIdx * tiling_->t * tiling_->h + bos * tiling_->h;
+    }
+
+    __aicore__ inline int64_t GetChunkEnd(int64_t chunkStart, int64_t tEnd)
+    {
+        return MinInt64(chunkStart + tiling_->chunkSize, tEnd);
+    }
+
     __aicore__ inline LocalTensor<float> LoadRowToUb(int64_t gmOffset, int64_t elementCount)
     {
         LocalTensor<float> rowLocal = rowQueue_.AllocTensor<float>();
@@ -324,17 +342,9 @@ private:
         LocalTensor<float> outLocal = headFirstOutQueue_.AllocTensor<float>();
         if (groupLen > tiling_->chunkSize && groupLenAlign == groupLen) {
             int64_t groupChunks = groupLen / tiling_->chunkSize;
-            CumSumInfo cumSumInfo{static_cast<uint32_t>(hLen * groupChunks),
-                                  static_cast<uint32_t>(tiling_->chunkSize)};
-            CumSum<float>(outLocal, inLocal, inLocal, cumSumInfo);
+            ComputeCumSumAndScale(outLocal, inLocal, hLen * groupChunks, tiling_->chunkSize, hLen * groupLenAlign);
         } else {
-            CumSumInfo cumSumInfo{static_cast<uint32_t>(hLen), static_cast<uint32_t>(groupLenAlign)};
-            CumSum<float>(outLocal, inLocal, inLocal, cumSumInfo);
-        }
-        PipeBarrier<PIPE_V>();
-        if (tiling_->scale != 1.0f) {
-            MulsBatched(outLocal, outLocal, tiling_->scale, hLen * groupLenAlign);
-            PipeBarrier<PIPE_V>();
+            ComputeCumSumAndScale(outLocal, inLocal, hLen, groupLenAlign, hLen * groupLenAlign);
         }
         headFirstOutQueue_.EnQue(outLocal);
         headFirstChunkQueue_.FreeTensor(inLocal);
@@ -472,6 +482,23 @@ private:
         }
     }
 
+    __aicore__ inline void ApplyScaleInplace(LocalTensor<float> local, int64_t elementCount)
+    {
+        if (tiling_->scale != 1.0f) {
+            MulsBatched(local, local, tiling_->scale, elementCount);
+            PipeBarrier<PIPE_V>();
+        }
+    }
+
+    __aicore__ inline void ComputeCumSumAndScale(LocalTensor<float> dstLocal, LocalTensor<float> srcLocal,
+                                                 int64_t outer, int64_t inner, int64_t elementCount)
+    {
+        CumSumInfo cumSumInfo{static_cast<uint32_t>(outer), static_cast<uint32_t>(inner)};
+        CumSum<float>(dstLocal, srcLocal, srcLocal, cumSumInfo);
+        PipeBarrier<PIPE_V>();
+        ApplyScaleInplace(dstLocal, elementCount);
+    }
+
     __aicore__ inline void ComputeForwardScanStep(LocalTensor<float> dstLocal, LocalTensor<float> srcLocal,
                                                   int64_t chunkLen, int64_t hLenAlign, int64_t step)
     {
@@ -505,11 +532,8 @@ private:
             nextSrcIsChunk = !nextSrcIsChunk;
         }
 
-        if (tiling_->scale != 1.0f) {
-            LocalTensor<float> resultLocal = nextSrcIsChunk ? chunkLocal : scanLocal;
-            MulsBatched(resultLocal, resultLocal, tiling_->scale, chunkLen * hLenAlign);
-            PipeBarrier<PIPE_V>();
-        }
+        LocalTensor<float> resultLocal = nextSrcIsChunk ? chunkLocal : scanLocal;
+        ApplyScaleInplace(resultLocal, chunkLen * hLenAlign);
         return nextSrcIsChunk;
     }
 
@@ -522,13 +546,7 @@ private:
             int64_t chunkLenAlign = AlignUpInt64(chunkLen, FLOAT_ALIGN_ELEMS);
             LocalTensor<float> chunkLocal = LoadHeadFirstChunkToUb(rowOffset, chunkLen, hLen, chunkLenAlign);
             LocalTensor<float> outLocal = scanBuf_.Get<float>();
-            CumSumInfo cumSumInfo{static_cast<uint32_t>(hLen), static_cast<uint32_t>(chunkLenAlign)};
-            CumSum<float>(outLocal, chunkLocal, chunkLocal, cumSumInfo);
-            PipeBarrier<PIPE_V>();
-            if (tiling_->scale != 1.0f) {
-                MulsBatched(outLocal, outLocal, tiling_->scale, hLen * chunkLenAlign);
-                PipeBarrier<PIPE_V>();
-            }
+            ComputeCumSumAndScale(outLocal, chunkLocal, hLen, chunkLenAlign, hLen * chunkLenAlign);
             WaitVToMte3();
             CopyHeadFirstChunkUbToGm(rowOffset, outLocal, chunkLen, hLen, chunkLenAlign);
             WaitMte3ToV();
@@ -540,13 +558,7 @@ private:
             int64_t chunkLenAlign = AlignUpInt64(chunkLen, FLOAT_ALIGN_ELEMS);
             LocalTensor<float> chunkLocal = LoadScalarHeadChunkToUb(rowOffset, chunkLen, chunkLenAlign);
             LocalTensor<float> outLocal = scanBuf_.Get<float>();
-            CumSumInfo cumSumInfo{1, static_cast<uint32_t>(chunkLenAlign)};
-            CumSum<float>(outLocal, chunkLocal, chunkLocal, cumSumInfo);
-            PipeBarrier<PIPE_V>();
-            if (tiling_->scale != 1.0f) {
-                MulsBatched(outLocal, outLocal, tiling_->scale, chunkLenAlign);
-                PipeBarrier<PIPE_V>();
-            }
+            ComputeCumSumAndScale(outLocal, chunkLocal, 1, chunkLenAlign, chunkLenAlign);
             WaitVToMte3();
             CopyScalarHeadChunkUbToGm(rowOffset, outLocal, chunkLen);
             WaitMte3ToV();
@@ -614,6 +626,29 @@ private:
         }
     }
 
+    __aicore__ inline void ProcessSequenceChunkByPath(int64_t baseOffset, int64_t chunkStart, int64_t chunkEnd,
+                                                      int64_t hStart, int64_t hLen)
+    {
+        if constexpr (std::is_same<GType, float>::value && std::is_same<OType, float>::value) {
+            if (chunkFastPath_) {
+                ProcessSequenceChunkFast(baseOffset, chunkStart, chunkEnd, hStart, hLen);
+            } else {
+                ProcessSequenceChunk(baseOffset, chunkStart, chunkEnd, hStart, hLen);
+            }
+        } else {
+            ProcessSequenceChunk(baseOffset, chunkStart, chunkEnd, hStart, hLen);
+        }
+    }
+
+    __aicore__ inline void ProcessChunkRange(int64_t baseOffset, int64_t tStart, int64_t tEnd,
+                                             int64_t hStart, int64_t hLen)
+    {
+        for (int64_t chunkStart = tStart; chunkStart < tEnd; chunkStart += tiling_->chunkSize) {
+            int64_t chunkEnd = GetChunkEnd(chunkStart, tEnd);
+            ProcessSequenceChunkByPath(baseOffset, chunkStart, chunkEnd, hStart, hLen);
+        }
+    }
+
     __aicore__ inline void ProcessFixed()
     {
         int64_t blockNum = static_cast<int64_t>(GetBlockNum());
@@ -630,17 +665,8 @@ private:
             int64_t hStart = hTileIdx * hTileSize;
             int64_t hLen = MinInt64(hTileSize, tiling_->h - hStart);
             int64_t chunkStart = chunkIdx * tiling_->chunkSize;
-            int64_t chunkEnd = MinInt64(chunkStart + tiling_->chunkSize, tiling_->t);
-            int64_t baseOffset = bIdx * tiling_->t * tiling_->h;
-            if constexpr (std::is_same<GType, float>::value && std::is_same<OType, float>::value) {
-                if (chunkFastPath_) {
-                    ProcessSequenceChunkFast(baseOffset, chunkStart, chunkEnd, hStart, hLen);
-                } else {
-                    ProcessSequenceChunk(baseOffset, chunkStart, chunkEnd, hStart, hLen);
-                }
-            } else {
-                ProcessSequenceChunk(baseOffset, chunkStart, chunkEnd, hStart, hLen);
-            }
+            int64_t chunkEnd = GetChunkEnd(chunkStart, tiling_->t);
+            ProcessChunkRange(GetDenseBaseOffset(bIdx), chunkStart, chunkEnd, hStart, hLen);
         }
     }
 
@@ -665,26 +691,14 @@ private:
             int64_t seqLen = eos - bos;
             int64_t tStart = localBlock * tiling_->blockT;
             int64_t tEnd = MinInt64(tStart + tiling_->blockT, seqLen);
-            int64_t baseOffset = optimizedHeadFirst_ ? (outerIdx * tiling_->h * tiling_->t + bos) :
-                                                        (outerIdx * tiling_->t * tiling_->h + bos * tiling_->h);
+            int64_t baseOffset = GetVarlenBaseOffset(outerIdx, bos);
             if constexpr (std::is_same<GType, float>::value && std::is_same<OType, float>::value) {
                 if (headFirstPipeline_) {
                     ProcessHeadFirstFastRange(baseOffset, tStart, tEnd, hStart, hLen);
                     continue;
                 }
             }
-            for (int64_t chunkStart = tStart; chunkStart < tEnd; chunkStart += tiling_->chunkSize) {
-                int64_t chunkEnd = MinInt64(chunkStart + tiling_->chunkSize, tEnd);
-                if constexpr (std::is_same<GType, float>::value && std::is_same<OType, float>::value) {
-                    if (chunkFastPath_) {
-                        ProcessSequenceChunkFast(baseOffset, chunkStart, chunkEnd, hStart, hLen);
-                    } else {
-                        ProcessSequenceChunk(baseOffset, chunkStart, chunkEnd, hStart, hLen);
-                    }
-                } else {
-                    ProcessSequenceChunk(baseOffset, chunkStart, chunkEnd, hStart, hLen);
-                }
-            }
+            ProcessChunkRange(baseOffset, tStart, tEnd, hStart, hLen);
         }
     }
 
