@@ -11,6 +11,8 @@ namespace NsChunkScaledDotKkt {
 using namespace AscendC;
 
 constexpr int32_t BUFFER_NUM = 1;
+constexpr int32_t SCORE_WORKSPACE_BUFFER_NUM = 2;
+constexpr int32_t SCORE_WORKSPACE_HEAD_BATCH = 1;
 constexpr int32_t FP32_BLOCK_ELEMS = 8;
 constexpr int32_t FP32_REPEAT_ELEMS = 64;
 constexpr int32_t BRCB_ROWS = 8;
@@ -22,6 +24,14 @@ using BiasType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, float>;
 
 template <typename KType>
 class ChunkScaledDotKkt {
+    struct TaskMeta {
+        int64_t b = 0;
+        int64_t h = 0;
+        int64_t chunk = 0;
+        int64_t rowStart = 0;
+        int64_t valid = 0;
+    };
+
 public:
     using AType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, KType>;
     using BType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, KType, true, LayoutMode::NONE, false>;
@@ -69,7 +79,8 @@ public:
         gGm.SetGlobalBuffer((__gm__ float *)g, B_ * Hv_ * T_);
         betaGm.SetGlobalBuffer((__gm__ float *)beta, B_ * Hv_ * T_);
         aGm.SetGlobalBuffer((__gm__ float *)a, B_ * Hk_ * T_ * BT_);
-        scoreGm.SetGlobalBuffer((__gm__ float *)scoreWorkspace, taskNum_ * BT_ * BT_);
+        scoreGm.SetGlobalBuffer((__gm__ float *)scoreWorkspace,
+                                usedAivNum_ * SCORE_WORKSPACE_BUFFER_NUM * SCORE_WORKSPACE_HEAD_BATCH * BT_ * BT_);
         if (isVarlen_ != 0) {
             cuSeqlensGm.SetGlobalBuffer((__gm__ int64_t *)cuSeqlens);
             chunkIndicesGm.SetGlobalBuffer((__gm__ int64_t *)chunkIndices, NT_ * 2);
@@ -91,9 +102,40 @@ public:
         if (vecIdx >= usedAivNum_ || usedAivNum_ <= 0) {
             return;
         }
-        for (int64_t task = vecIdx; task < taskNum_; task += usedAivNum_) {
-            ComputeScoreTask(task);
-            ComputeEpilogueTask(task);
+        int64_t scoreSlot = 0;
+        int64_t cachedScoreValid = -1;
+        bool scoreUsed = false;
+        bool pendingEpilogue = false;
+        TaskMeta pendingMeta;
+        int64_t pendingScoreOffset = 0;
+        const int64_t chunkTaskNum = B_ * NT_;
+        for (int64_t chunkTask = vecIdx; chunkTask < chunkTaskNum; chunkTask += usedAivNum_) {
+            TaskMeta chunkMeta;
+            DecodeChunkTask(chunkTask, chunkMeta);
+            if (chunkMeta.valid <= 0) {
+                continue;
+            }
+            for (int64_t h = 0; h < Hk_; ++h) {
+                TaskMeta meta = chunkMeta;
+                meta.h = h;
+                const int64_t scoreOffset = GetScoreOffset(vecIdx, scoreSlot, 0);
+                LaunchScoreTask(meta, scoreOffset, cachedScoreValid);
+                scoreUsed = true;
+                if (pendingEpilogue) {
+                    ComputeEpilogueTask(pendingMeta, pendingScoreOffset);
+                }
+                WaitScoreTask();
+                pendingMeta = meta;
+                pendingScoreOffset = scoreOffset;
+                pendingEpilogue = true;
+                scoreSlot ^= 1;
+            }
+        }
+        if (pendingEpilogue) {
+            ComputeEpilogueTask(pendingMeta, pendingScoreOffset);
+        }
+        if (scoreUsed) {
+            scoreMatmul.End();
         }
     }
 
@@ -105,84 +147,79 @@ private:
         return lhs < rhs ? lhs : rhs;
     }
 
-    __aicore__ inline void DecodeTask(int64_t task, int64_t &b, int64_t &h, int64_t &chunk, int64_t &rowStart,
-                                      int64_t &valid) const
+    __aicore__ inline void DecodeChunkTask(int64_t chunkTask, TaskMeta &meta) const
     {
-        chunk = task % NT_;
-        h = (task / NT_) % Hk_;
-        b = task / (Hk_ * NT_);
+        meta.chunk = chunkTask % NT_;
+        meta.h = 0;
+        meta.b = chunkTask / NT_;
         if (isVarlen_ != 0) {
-            const int64_t seqId = chunkIndicesGm.GetValue(chunk * 2);
-            const int64_t localChunk = chunkIndicesGm.GetValue(chunk * 2 + 1);
+            const int64_t seqId = chunkIndicesGm.GetValue(meta.chunk * 2);
+            const int64_t localChunk = chunkIndicesGm.GetValue(meta.chunk * 2 + 1);
             const int64_t bos = cuSeqlensGm.GetValue(seqId);
             const int64_t eos = cuSeqlensGm.GetValue(seqId + 1);
-            chunk = localChunk;
-            rowStart = bos + localChunk * BT_;
-            valid = MinI64(BT_, eos - rowStart);
-            valid = MinI64(valid, T_ - rowStart);
+            meta.chunk = localChunk;
+            meta.rowStart = bos + localChunk * BT_;
+            meta.valid = MinI64(BT_, eos - meta.rowStart);
+            meta.valid = MinI64(meta.valid, T_ - meta.rowStart);
         } else {
-            rowStart = chunk * BT_;
-            valid = MinI64(BT_, T_ - rowStart);
+            meta.rowStart = meta.chunk * BT_;
+            meta.valid = MinI64(BT_, T_ - meta.rowStart);
         }
-        if (valid < 0) {
-            valid = 0;
+        if (meta.valid < 0) {
+            meta.valid = 0;
         }
     }
 
-    __aicore__ inline void ComputeScoreTask(int64_t task)
+    __aicore__ inline int64_t GetScoreOffset(int64_t vecIdx, int64_t scoreSlot, int64_t headIdx) const
     {
-        int64_t b = 0;
-        int64_t h = 0;
-        int64_t chunk = 0;
-        int64_t rowStart = 0;
-        int64_t valid = 0;
-        DecodeTask(task, b, h, chunk, rowStart, valid);
-        if (valid <= 0) {
-            return;
-        }
+        return (vecIdx * static_cast<int64_t>(SCORE_WORKSPACE_BUFFER_NUM) * SCORE_WORKSPACE_HEAD_BATCH +
+                scoreSlot * static_cast<int64_t>(SCORE_WORKSPACE_HEAD_BATCH) + headIdx) *
+               BT_ * BT_;
+    }
 
-        const int64_t hk = h;
-        const int64_t kOffset = ((b * Hk_ + hk) * T_ + rowStart) * K_;
-        const int64_t scoreOffset = task * BT_ * BT_;
-        scoreMatmul.SetOrgShape(static_cast<int32_t>(BT_), static_cast<int32_t>(BT_), static_cast<int32_t>(K_));
-        scoreMatmul.SetSingleShape(static_cast<int32_t>(valid), static_cast<int32_t>(valid), static_cast<int32_t>(K_));
+    __aicore__ inline void LaunchScoreTask(const TaskMeta &meta, int64_t scoreOffset, int64_t &cachedScoreValid)
+    {
+        const int64_t kOffset = ((meta.b * Hk_ + meta.h) * T_ + meta.rowStart) * K_;
+        if (cachedScoreValid != meta.valid) {
+            if (cachedScoreValid < 0) {
+                scoreMatmul.SetOrgShape(static_cast<int32_t>(BT_), static_cast<int32_t>(BT_), static_cast<int32_t>(K_));
+            }
+            scoreMatmul.SetSingleShape(static_cast<int32_t>(meta.valid), static_cast<int32_t>(meta.valid),
+                                       static_cast<int32_t>(K_));
+            scoreMatmul.SetTail(static_cast<int32_t>(meta.valid), static_cast<int32_t>(meta.valid),
+                                static_cast<int32_t>(K_));
+            cachedScoreValid = meta.valid;
+        }
         scoreMatmul.SetTensorA(kGm[kOffset]);
         scoreMatmul.SetTensorB(kGm[kOffset], true);
-        scoreMatmul.SetTail(static_cast<int32_t>(valid), static_cast<int32_t>(valid), static_cast<int32_t>(K_));
         scoreMatmul.template IterateAll<false>(scoreGm[scoreOffset], 0, false, true);
-        scoreMatmul.WaitIterateAll();
-        scoreMatmul.End();
     }
 
-    __aicore__ inline void ComputeEpilogueTask(int64_t task)
+    __aicore__ inline void WaitScoreTask()
     {
-        int64_t b = 0;
-        int64_t h = 0;
-        int64_t chunk = 0;
-        int64_t rowStart = 0;
-        int64_t valid = 0;
-        DecodeTask(task, b, h, chunk, rowStart, valid);
-        if (valid <= 0) {
-            return;
-        }
+        scoreMatmul.WaitIterateAll();
+    }
 
-        const int64_t ghOffset = (b * Hv_ + h) * T_ + rowStart;
-        CopyTaskVector(gGm, ghOffset, gQueue_, valid);
-        CopyTaskVector(betaGm, ghOffset, betaQueue_, valid);
+    __aicore__ inline void ComputeEpilogueTask(const TaskMeta &meta, int64_t scoreBaseOffset)
+    {
+        const int64_t ghOffset = (meta.b * Hv_ + meta.h) * T_ + meta.rowStart;
+        CopyTaskVector(gGm, ghOffset, gQueue_, meta.valid);
+        CopyTaskVector(betaGm, ghOffset, betaQueue_, meta.valid);
         LocalTensor<float> gLocal = gQueue_.template DeQue<float>();
         LocalTensor<float> betaLocal = betaQueue_.template DeQue<float>();
 
-        const int64_t scoreBaseOffset = task * BT_ * BT_;
-        const int64_t outBaseOffset = ((b * Hk_ + h) * T_ + rowStart) * BT_;
+        const int64_t outBaseOffset = ((meta.b * Hk_ + meta.h) * T_ + meta.rowStart) * BT_;
         const int64_t outRowStride = BT_;
         LocalTensor<float> scoreTileLocal = scoreTileBuf_.Get<float>();
         LocalTensor<float> outTileLocal = outTileBuf_.Get<float>();
         LocalTensor<float> gateLocal = gateBuf_.Get<float>();
         LocalTensor<float> rowBrcbLocal = rowBrcbBuf_.Get<float>();
-        CopyScoreTile(scoreBaseOffset, scoreTileLocal, valid);
+        DuplicateZero(outTileLocal, BT_ * btAlign_);
+        PipeBarrier<PIPE_V>();
+        CopyScoreTile(scoreBaseOffset, scoreTileLocal, meta.valid);
         bool scoreReady = false;
-        for (int64_t rowBase = 0; rowBase < valid; rowBase += BRCB_ROWS) {
-            const int64_t rows = MinI64(static_cast<int64_t>(BRCB_ROWS), valid - rowBase);
+        for (int64_t rowBase = 0; rowBase < meta.valid; rowBase += BRCB_ROWS) {
+            const int64_t rows = MinI64(static_cast<int64_t>(BRCB_ROWS), meta.valid - rowBase);
             const int64_t cols = rowBase + rows;
             ComputeGateBlock(rowBase, rows, cols, gLocal, betaLocal, gateLocal, rowBrcbLocal);
             if (!scoreReady) {
@@ -194,7 +231,7 @@ private:
                 ComputeEpilogueRow(scoreTileLocal, outTileLocal, row, gateLocal[lane * btAlign_]);
             }
         }
-        CopyOutTile(outBaseOffset, outRowStride, outTileLocal, valid);
+        CopyOutTile(outBaseOffset, outRowStride, outTileLocal, meta.valid);
 
         gQueue_.FreeTensor(gLocal);
         betaQueue_.FreeTensor(betaLocal);
@@ -264,6 +301,15 @@ private:
         queue.EnQue(local);
     }
 
+    __aicore__ inline void DuplicateZero(const LocalTensor<float> &dstLocal, int64_t count)
+    {
+        constexpr int64_t maxDuplicateElems = FP32_REPEAT_ELEMS * 255;
+        for (int64_t offset = 0; offset < count; offset += maxDuplicateElems) {
+            const int64_t cur = MinI64(maxDuplicateElems, count - offset);
+            Duplicate(dstLocal[offset], 0.0f, static_cast<int32_t>(cur));
+        }
+    }
+
     __aicore__ inline void ComputeGateBlock(int64_t rowBase,
                                             int64_t rows,
                                             int64_t cols,
@@ -323,9 +369,6 @@ private:
     {
         LocalTensor<float> scoreRowLocal = scoreTileLocal[row * btAlign_];
         LocalTensor<float> outRowLocal = outTileLocal[row * btAlign_];
-        Duplicate(outRowLocal, 0.0f, static_cast<int32_t>(BT_));
-        PipeBarrier<PIPE_V>();
-
         if (row > 0) {
             const int32_t prefix = static_cast<int32_t>(row);
             Mul(outRowLocal, scoreRowLocal, gateRowLocal, prefix);

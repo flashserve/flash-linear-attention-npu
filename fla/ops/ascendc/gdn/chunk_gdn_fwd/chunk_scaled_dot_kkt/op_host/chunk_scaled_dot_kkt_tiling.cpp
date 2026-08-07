@@ -14,6 +14,8 @@ constexpr uint64_t kDefaultAivNum = 40;
 constexpr uint64_t kDefaultLibApiWorkspace = 32ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kFp32BlockElems = 8;
 constexpr uint64_t kWorkspaceAlign = 512;
+constexpr uint64_t kScoreWorkspaceBufferNum = 2;
+constexpr uint64_t kScoreWorkspaceHeadBatch = 1;
 constexpr uint64_t kMaxInt32 = static_cast<uint64_t>(std::numeric_limits<int32_t>::max());
 constexpr uint32_t kInputKIndex = 0;
 constexpr uint32_t kInputGIndex = 1;
@@ -222,13 +224,9 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
 
     uint64_t bh = 0;
     uint64_t taskNum = 0;
-    uint64_t scoreElems = 0;
-    uint64_t scoreBytes = 0;
-    if (MulOverflow(b, hk, &bh) || MulOverflow(bh, nt, &taskNum) || MulOverflow(taskNum, bt * bt, &scoreElems) ||
-        MulOverflow(scoreElems, sizeof(float), &scoreBytes) || taskNum == 0) {
+    if (MulOverflow(b, hk, &bh) || MulOverflow(bh, nt, &taskNum) || taskNum == 0) {
         return ge::GRAPH_FAILED;
     }
-    scoreBytes = AlignUp(scoreBytes, kWorkspaceAlign);
 
     uint64_t aicNum = kDefaultAicNum;
     uint64_t aivNum = kDefaultAivNum;
@@ -261,6 +259,15 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     if (blockDim == 0) {
         return ge::GRAPH_FAILED;
     }
+    uint64_t scoreSlots = 0;
+    uint64_t scoreElems = 0;
+    uint64_t scoreBytes = 0;
+    if (MulOverflow(usedAivNum, kScoreWorkspaceBufferNum * kScoreWorkspaceHeadBatch, &scoreSlots) ||
+        MulOverflow(scoreSlots, bt * bt, &scoreElems) ||
+        MulOverflow(scoreElems, sizeof(float), &scoreBytes)) {
+        return ge::GRAPH_FAILED;
+    }
+    scoreBytes = AlignUp(scoreBytes, kWorkspaceAlign);
 
     ChunkScaledDotKktTilingData tiling;
     tiling.set_B(b);
