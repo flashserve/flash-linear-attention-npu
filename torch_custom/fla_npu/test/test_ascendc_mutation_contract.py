@@ -63,8 +63,19 @@ def load_ascendc_module(raw_calls):
         raw_calls.append(conv_states)
         return "output"
 
-    def npu_recurrent_kda(q, k, v, g, beta, initial_state=None, *, cu_seqlens, **kwargs):
-        del q, k, v, g, beta, cu_seqlens, kwargs
+    def npu_recurrent_kda(
+        q,
+        k,
+        v,
+        g,
+        beta,
+        initial_state=None,
+        *,
+        cu_seqlens,
+        inplace_final_state=True,
+        **kwargs,
+    ):
+        del q, k, v, g, beta, cu_seqlens, inplace_final_state, kwargs
         raw_calls.append(initial_state)
         return "output", initial_state
 

@@ -473,6 +473,7 @@ fi
 
 echo "[CI] mode=$ci_mode soc=$ci_soc ops=${ci_ops:-<all>} jobs=$ci_jobs cpack_jobs=$ci_cpack_jobs"
 
+python3 torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py
 python3 torch_custom/fla_npu/test/test_runtime_device_guard.py
 python3 torch_custom/fla_npu/test/test_ascendc_mutation_contract.py
 
