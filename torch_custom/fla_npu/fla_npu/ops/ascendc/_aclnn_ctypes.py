@@ -40,20 +40,21 @@ from ._runtime import (
 # ctypes from narrowing or mis-converting arguments.
 _GET_WORKSPACE_ARGTYPES = {
     "aclnnCausalConv1dBwd": [
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_int64,
-        ctypes.c_char_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_uint64),
-        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_void_p,  # x
+        ctypes.c_void_p,  # yOptional
+        ctypes.c_void_p,  # weight
+        ctypes.c_void_p,  # dy
+        ctypes.c_void_p,  # initialStateOptional
+        ctypes.c_void_p,  # dhtOptional
+        ctypes.c_void_p,  # queryStartLocOptional
+        ctypes.c_int64,  # activation
+        ctypes.c_char_p,  # inputLayoutOptional
+        ctypes.c_void_p,  # dxOut
+        ctypes.c_void_p,  # dwOutOptional
+        ctypes.c_void_p,  # dbOutOptional
+        ctypes.c_void_p,  # dh0OutOptional
+        ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
+        ctypes.POINTER(ctypes.c_void_p),  # executor
     ],
     "aclnnSolveTri": [
         ctypes.c_void_p,

@@ -88,6 +88,13 @@ from fla_npu.ops.triton import chunk_local_cumsum
 
 ctypes 算子如果会通过 data pointer 修改输入 tensor，必须在公共 wrapper 中显式维护 alias/mutation 契约：列出 mutated args，处理 eager autograd 版本计数，明确被修改状态的 grad 限制，并补充 mutation 测试。未增加 `torch.library` mutation schema、FakeTensor 和 `opcheck` 前，不得宣称该 mutable 路径支持 `torch.compile`、functionalization 或 `torch.export`；需要完整图编译支持时优先提供纯 Python custom-op 适配或返回新状态的 functional API，不得为此退回 PyTorch C++ extension。
 
+## ctypes aclnn ABI 一致性红线
+
+1. `torch_custom/fla_npu/fla_npu/ops/ascendc/_aclnn_ctypes.py` 中显式声明的 `GetWorkspaceSize` 参数类型，必须逐项对照对应 `aclnn*GetWorkspaceSize` 原型，严格保持输入、可选输入、属性、输出、`workspaceSize` 和 `executor` 的数量、顺序与 C 类型一致。每一项必须用行内注释标明对应参数名，禁止仅凭相邻算子、旧版本或参数总数推测。
+2. wrapper 构造的实参数量和顺序必须与参数类型表去掉末尾 `workspaceSize`、`executor` 后完全一致。新增或修改显式参数类型时，必须补充不依赖 NPU 的 ABI 契约测试，同时断言完整类型序列、wrapper 实参数量和逐项 ctypes 类型；不能只依赖上板执行发现 `ctypes.ArgumentError`。
+3. `_aclnn_ctypes.py`、`_runtime.py` 等共享适配文件中的无关算子条目不得随当前算子重构被删除、重排或改型。修改共享 ABI 表后必须检查聚焦 diff，并运行所有 ctypes ABI 契约测试；PR 的验证范围不能只覆盖当前功能算子。
+4. 修改 aclnn C++ 原型时，必须在同一变更中同步 Python ctypes 类型表、wrapper 实参、schema、公开文档和 ABI 测试。仅修改 Python 适配但不改变公开 C++ 原型时，也必须明确说明 ABI 不变，并以对应原型作为修复依据。
+
 ## 算子开发交付 checklist
 
 新增或修改 Ascend C 算子时，交付前逐项核对：
