@@ -9,140 +9,22 @@ import torch
 
 _LN2 = 0.69314718055994530942
 
-_SCRIPT_DIR = os.path.dirname(__file__)
-_PTA_TEST_CANDIDATES = [
-    os.path.abspath(
-        os.path.join(
-            _SCRIPT_DIR,
-            "../../../fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu/test/test_chunk_gated_delta_rule_bwd_dhu.py",
-        )
-    ),
-    os.path.abspath(
-        os.path.join(
-            _SCRIPT_DIR,
-            "../../../examples/fast_kernel_launch_example/tests/chunk_gated_delta_rule_bwd_dhu/test_chunk_gated_delta_rule_bwd_dhu.py",
-        )
-    ),
-]
-_PTA_TEST = next((path for path in _PTA_TEST_CANDIDATES if os.path.exists(path)), _PTA_TEST_CANDIDATES[0])
-try:
-    _spec = importlib.util.spec_from_file_location("pta_bwd_dhu", _PTA_TEST)
-    _pta = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(_pta)
+_PTA_TEST = os.path.abspath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "../../../fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu/test/test_chunk_gated_delta_rule_bwd_dhu.py",
+    )
+)
+_spec = importlib.util.spec_from_file_location("pta_bwd_dhu", _PTA_TEST)
+_pta = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_pta)
 
-    create_bwd_dhu_random_inputs = _pta.create_bwd_dhu_random_inputs
-    create_gate_g = _pta.create_gate_g
-    effective_scale = _pta.effective_scale
-    generate_cu_seqlens = _pta.generate_cu_seqlens
-    prepare_chunk_indices = _pta.prepare_chunk_indices
-    scale_for_compute_dtype = _pta.scale_for_compute_dtype
-except (FileNotFoundError, ModuleNotFoundError):
-    _LOW_PRECISION_INPUT_HALF_RANGE_QK = 6.5e-3
-    _LOW_PRECISION_INPUT_HALF_RANGE_WO = 6.5e-3
-    _LOW_PRECISION_INPUT_HALF_RANGE_DV = 9e-3
-    _LOW_PRECISION_SCALE_FACTOR = 0.92
-
-    def prepare_chunk_indices(cu_seqlens: List[int], chunk_size: int = 64) -> List[int]:
-        chunk_indices = []
-        for seq_idx in range(len(cu_seqlens) - 1):
-            seq_len = cu_seqlens[seq_idx + 1] - cu_seqlens[seq_idx]
-            chunk_num = (seq_len + chunk_size - 1) // chunk_size
-            for chunk_idx in range(chunk_num):
-                chunk_indices.append(seq_idx)
-                chunk_indices.append(chunk_idx)
-        return chunk_indices
-
-    def create_gate_g(B: int, Hv: int, T: int, gtype, narrow: bool = False):
-        if narrow:
-            lo, hi = -1e-2, -1e-6
-        else:
-            lo, hi = -5e-2, -5e-5
-        span = hi - lo
-        margin = max(span * 1e-7, 1e-12)
-        g_t = torch.linspace(float(hi) - margin, float(lo) + margin, T, dtype=torch.float64)
-        return g_t.unsqueeze(0).unsqueeze(0).expand(B, Hv, T).contiguous().to(gtype)
-
-    def generate_cu_seqlens(cu_seqlens_len: int, total_length: int, seg_min: int = 64,
-                            seg_max: int = 128) -> List[int]:
-        batchsize = cu_seqlens_len - 1
-        if batchsize <= 0:
-            return [0, total_length]
-
-        lengths = [
-            (total_length * (i + 1)) // batchsize - (total_length * i) // batchsize
-            for i in range(batchsize)
-        ]
-        for i in range(batchsize):
-            lengths[i] = max(seg_min, min(seg_max, lengths[i]))
-
-        diff = total_length - sum(lengths)
-        while diff > 0:
-            cand = [i for i in range(batchsize) if lengths[i] < seg_max]
-            if not cand:
-                break
-            i = min(cand, key=lambda j: lengths[j])
-            lengths[i] += 1
-            diff -= 1
-        while diff < 0:
-            cand = [i for i in range(batchsize) if lengths[i] > seg_min]
-            if not cand:
-                break
-            i = max(cand, key=lambda j: lengths[j])
-            lengths[i] -= 1
-            diff += 1
-
-        sorted_l = sorted(lengths)
-        seq_lengths: List[int] = []
-        i, j = 0, len(sorted_l) - 1
-        while i <= j:
-            if i == j:
-                seq_lengths.append(sorted_l[i])
-            else:
-                seq_lengths.append(sorted_l[i])
-                seq_lengths.append(sorted_l[j])
-            i += 1
-            j -= 1
-
-        cu_seqlens = [0]
-        for seq_len in seq_lengths:
-            cu_seqlens.append(cu_seqlens[-1] + seq_len)
-        return cu_seqlens
-
-    def _rand_symmetric_uniform(shape, dtype: torch.dtype, half_range: float) -> torch.Tensor:
-        x = torch.rand(shape, dtype=torch.float32, device="cpu")
-        x = (x * 2.0 - 1.0) * float(half_range)
-        return x.to(dtype=dtype)
-
-    def create_bwd_dhu_random_inputs(
-        B: int, Hk: int, Hv: int, T: int, K: int, V: int, ktype: torch.dtype, gtype: torch.dtype
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        low = ktype in (torch.float16, torch.bfloat16)
-        if low:
-            hr_qk = _LOW_PRECISION_INPUT_HALF_RANGE_QK
-            hr_wo = _LOW_PRECISION_INPUT_HALF_RANGE_WO
-            hr_dv = _LOW_PRECISION_INPUT_HALF_RANGE_DV
-            narrow_g = True
-        else:
-            hr_qk = 2e-2
-            hr_wo = 2e-2
-            hr_dv = 3e-2
-            narrow_g = False
-
-        q = _rand_symmetric_uniform((B, Hk, T, K), ktype, half_range=hr_qk)
-        k = _rand_symmetric_uniform((B, Hk, T, K), ktype, half_range=hr_qk)
-        w = _rand_symmetric_uniform((B, Hv, T, K), ktype, half_range=hr_qk)
-        d_o = _rand_symmetric_uniform((B, Hv, T, V), ktype, half_range=hr_wo)
-        dv = _rand_symmetric_uniform((B, Hv, T, V), ktype, half_range=hr_dv)
-        g = create_gate_g(B, Hv, T, gtype, narrow=narrow_g)
-        return q, k, w, d_o, dv, g
-
-    def effective_scale(scale: float, K: int) -> float:
-        return float(min(scale, 1.0 / (float(K) ** 0.5)))
-
-    def scale_for_compute_dtype(scale: float, ktype: torch.dtype) -> float:
-        if ktype in (torch.float16, torch.bfloat16):
-            return float(scale * _LOW_PRECISION_SCALE_FACTOR)
-        return float(scale)
+create_bwd_dhu_random_inputs = _pta.create_bwd_dhu_random_inputs
+create_gate_g = _pta.create_gate_g
+effective_scale = _pta.effective_scale
+generate_cu_seqlens = _pta.generate_cu_seqlens
+prepare_chunk_indices = _pta.prepare_chunk_indices
+scale_for_compute_dtype = _pta.scale_for_compute_dtype
 
 
 def _round_elem(x: torch.Tensor, elem_dtype: torch.dtype) -> torch.Tensor:

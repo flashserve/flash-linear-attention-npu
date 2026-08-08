@@ -63,6 +63,7 @@ HV % HK == 0
 varlen 模式下 B = 1
 第一版 state_v_first = false
 g 和 gK 必须刚好传入一个，按参数是否传入选择分支
+g 或 gK 使用低精度类型时必须与 q/k 同为 fp16 或同为 bf16；也支持 fp32 gate
 ```
 
 说明：上游 Triton 实现支持 `K <= 256`、`state_v_first` 等更宽配置。本仓当前相邻算子和测试主要围绕 `K=128`、head-major 布局展开，第一版先收敛到该范围。

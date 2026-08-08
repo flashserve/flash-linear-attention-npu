@@ -295,6 +295,10 @@ private:
                     static_cast<int>(ctx_.hasG), static_cast<int>(ctx_.hasGk));
             return ge::GRAPH_FAILED;
         }
+        if (ctx_.gDataType != ge::DT_FLOAT && ctx_.gDataType != ctx_.qDataType) {
+            OP_LOGE(ctx_.nodeName, "The dtype of g or gk must be float32 or match q and k.");
+            return ge::GRAPH_FAILED;
+        }
         if (ctx_.hasG) {
             if (RequiredInputDimNumCheck(ctx_.gShape, DIM_NUM_3,
                                          CGDR_BWD_DHU_INPUT_G_NAME) != ge::GRAPH_SUCCESS) {

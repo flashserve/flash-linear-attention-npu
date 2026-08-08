@@ -259,12 +259,19 @@ def npu_chunk_gated_delta_rule_bwd_dhu(
     use_exp2=False,
     transpose_state_layout=False,
 ):
+    import torch
+
     q_shape = _shape(q)
     dv_shape = _shape(dv)
     B, _, T, K = q_shape
     Hv, V = dv_shape[1], dv_shape[3]
     if (g is None) == (gK is None):
         raise ValueError("Exactly one of g and gK must be provided.")
+    if any(tensor.dtype != q.dtype for tensor in (k, w, d_o, dv)):
+        raise ValueError("q, k, w, d_o and dv must have the same dtype.")
+    gate = g if g is not None else gK
+    if gate.dtype not in (q.dtype, torch.float32):
+        raise ValueError("g or gK must be float32 or have the same dtype as q and k.")
     if g is not None and _shape(g) != (B, Hv, T):
         raise ValueError(f"g must have shape {(B, Hv, T)}, got {_shape(g)}.")
     if gK is not None and _shape(gK) != (B, Hv, T, K):
