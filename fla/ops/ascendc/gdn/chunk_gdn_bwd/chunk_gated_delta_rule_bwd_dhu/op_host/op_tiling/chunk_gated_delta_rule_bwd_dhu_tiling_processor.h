@@ -9,7 +9,7 @@
 
 /*!
  * \file chunk_gated_delta_rule_bwd_dhu_tiling_processor.h
- * \brief Tiling processor decoupled from gert::TilingContext, reusable in both aclnn and kernel launch modes.
+ * \brief Tiling processor shared by aclnn tiling and fast kernel launch.
  */
 
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
@@ -18,87 +18,80 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include "exe_graph/runtime/storage_shape.h"
+
+#include <exe_graph/runtime/storage_shape.h>
 #include <register/op_impl_registry.h>
-#include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
+
 #include "../../op_kernel/chunk_gated_delta_rule_bwd_dhu_struct.h"
 
 using GDN::ChunkGatedDeltaRuleBwdDhuTilingData;
 
 namespace optiling {
 
-static constexpr size_t CHUNK_GDR_BWD_DHU_INPUT_Q_IDX = 0;
-static constexpr size_t CHUNK_GDR_BWD_DHU_INPUT_K_IDX = 1;
-static constexpr size_t CHUNK_GDR_BWD_DHU_INPUT_W_IDX = 2;
-static constexpr size_t CHUNK_GDR_BWD_DHU_INPUT_DO_IDX = 3;
-static constexpr size_t CHUNK_GDR_BWD_DHU_INPUT_DV_IDX = 4;
-static constexpr size_t CHUNK_GDR_BWD_DHU_INPUT_G_IDX = 5;
+static constexpr size_t DIM_NUM_1 = 1;
+static constexpr size_t DIM_NUM_3 = 3;
+static constexpr size_t DIM_NUM_4 = 4;
 
-static constexpr size_t CHUNK_GDR_BWD_DHU_DIM_0 = 0;
-static constexpr size_t CHUNK_GDR_BWD_DHU_DIM_1 = 1;
-static constexpr size_t CHUNK_GDR_BWD_DHU_DIM_2 = 2;
-static constexpr size_t CHUNK_GDR_BWD_DHU_DIM_3 = 3;
+static constexpr size_t DIM_0 = 0;
+static constexpr size_t DIM_1 = 1;
+static constexpr size_t DIM_2 = 2;
+static constexpr size_t DIM_3 = 3;
 
-static constexpr uint32_t CHUNK_GDR_BWD_DHU_NUM_64 = 64;
-static constexpr uint32_t CHUNK_GDR_BWD_DHU_NUM_128 = 128;
-static constexpr uint32_t CHUNK_GDR_BWD_DHU_NUM_2 = 2;
-static constexpr uint32_t CHUNK_GDR_BWD_DHU_NUM_3 = 3;
-static constexpr uint32_t CHUNK_GDR_BWD_DHU_BLOCK_SIZE = 32;
+static constexpr int64_t K_SIZE_128 = 128;
+static constexpr int64_t V_SIZE_128 = 128;
+static constexpr int64_t V_SIZE_256 = 256;
+static constexpr int64_t CHUNK_SIZE_64 = 64;
+static constexpr int64_t CHUNK_SIZE_128 = 128;
+static constexpr int64_t CHUNK_INDICES_PAIR = 2;
+static constexpr int64_t VAR_LEN_B = 1;
+static constexpr int64_t HEADS_PER_TASK = 4;
+static constexpr int64_t WORKSPACE_BUFFER_COUNT = 8;
+static constexpr uint64_t VECTOR_SUB_BLOCK_NUM = 2;
+static constexpr uint64_t DTYPE_SIZE_HALF = 2;
+static constexpr uint64_t DTYPE_SIZE_FLOAT = 4;
+static constexpr uint64_t ALIGN_BYTES_32 = 32;
+static constexpr uint64_t ALIGN_BYTES_512 = 512;
+static constexpr uint64_t UB_GUARD_BYTES = 16 * 1024;
 
-static constexpr uint32_t CHUNK_GDR_BWD_DHU_HALF_DTYPE_SIZE = 2;
-static constexpr uint32_t CHUNK_GDR_BWD_DHU_FP32_DTYPE_SIZE = 4;
-
-static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_Q_NAME = "q";
-static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_K_NAME = "k";
-static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_W_NAME = "w";
-static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_DO_NAME = "d_o";
-static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_DV_NAME = "dv";
-static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_G_NAME = "g";
-static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_CHUNK_INDICES_NAME = "chunk_indices";
-static constexpr const char *const CHUNK_GDR_BWD_DHU_INPUT_SEQLENS_NAME = "cu_seqlens";
+static constexpr const char *const CGDR_BWD_DHU_INPUT_Q_NAME = "q";
+static constexpr const char *const CGDR_BWD_DHU_INPUT_K_NAME = "k";
+static constexpr const char *const CGDR_BWD_DHU_INPUT_W_NAME = "w";
+static constexpr const char *const CGDR_BWD_DHU_INPUT_DO_NAME = "d_o";
+static constexpr const char *const CGDR_BWD_DHU_INPUT_DV_NAME = "dv";
+static constexpr const char *const CGDR_BWD_DHU_INPUT_G_NAME = "g";
+static constexpr const char *const CGDR_BWD_DHU_INPUT_GK_NAME = "gk";
+static constexpr const char *const CGDR_BWD_DHU_INPUT_SEQLENS_NAME = "cu_seqlens";
+static constexpr const char *const CGDR_BWD_DHU_INPUT_CHUNK_INDICES_NAME = "chunk_indices";
 
 struct ChunkGatedDeltaRuleBwdDhuTilingContext {
     const char *nodeName;
     const gert::StorageShape *qShape;
     const gert::StorageShape *kShape;
     const gert::StorageShape *wShape;
-    const gert::StorageShape *doShape;
+    const gert::StorageShape *dOShape;
     const gert::StorageShape *dvShape;
     const gert::StorageShape *gShape;
+    const gert::StorageShape *gkShape;
     const gert::StorageShape *cuSeqlensShape;
     const gert::StorageShape *chunkIndicesShape;
-    ge::DataType qDtype;
-    ge::DataType gDtype;
+    ge::DataType qDataType;
+    ge::DataType gDataType;
     bool hasG;
-    bool hasScaleAttr;
-    double scaleAttr;
+    bool hasGk;
+    bool hasDh0;
+    bool stage0Debug;
+    double scale;
     int32_t chunkSize;
     uint64_t ubSize;
-    uint32_t totalCoreNum;
+    uint32_t aicCoreNum;
     size_t sysWorkspaceSize;
 };
 
 class ChunkGatedDeltaRuleBwdDhuTilingProcessor {
-    ChunkGatedDeltaRuleBwdDhuTilingContext &ctx_;
-    ChunkGatedDeltaRuleBwdDhuTilingData &tiling_;
-
-    bool isVariableLen_ = false;
-    uint32_t tilingKey_ = GDN::CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_KEY;
-    size_t workspaceSize_ = 0;
-    uint32_t blockDim_ = 0;
-
-    uint64_t B_ = 0;
-    uint64_t Hv_ = 0;
-    uint64_t Hk_ = 0;
-    uint64_t T_ = 0;
-    uint64_t K_ = 0;
-    uint64_t V_ = 0;
-    uint64_t chunkSize_ = CHUNK_GDR_BWD_DHU_NUM_64;
-
 public:
     explicit ChunkGatedDeltaRuleBwdDhuTilingProcessor(ChunkGatedDeltaRuleBwdDhuTilingContext &ctx,
-                                                        ChunkGatedDeltaRuleBwdDhuTilingData &tiling)
+                                                       ChunkGatedDeltaRuleBwdDhuTilingData &tiling)
         : ctx_(ctx), tiling_(tiling)
     {
     }
@@ -120,207 +113,406 @@ public:
 
     bool IsVariableLength() const
     {
-        return isVariableLen_;
-    }
-
-    template <typename T>
-    static T CeilDiv(T a, T b)
-    {
-        if (b == 0) {
-            return a;
-        }
-        return (a + b - 1) / b;
-    }
-
-    ge::graphStatus Init()
-    {
-        const gert::Shape qShape = ctx_.qShape->GetStorageShape();
-        const gert::Shape kShape = ctx_.kShape->GetStorageShape();
-        const gert::Shape wShape = ctx_.wShape->GetStorageShape();
-        const gert::Shape doShape = ctx_.doShape->GetStorageShape();
-        const gert::Shape dvShape = ctx_.dvShape->GetStorageShape();
-
-        B_ = static_cast<uint64_t>(qShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_0));
-        Hk_ = static_cast<uint64_t>(qShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_1));
-        T_ = static_cast<uint64_t>(qShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_2));
-        K_ = static_cast<uint64_t>(qShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_3));
-        Hv_ = static_cast<uint64_t>(doShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_1));
-        V_ = static_cast<uint64_t>(doShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_3));
-
-        OP_CHECK_IF(
-            kShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_0) != static_cast<int64_t>(B_) ||
-                kShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_1) != static_cast<int64_t>(Hk_) ||
-                kShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_2) != static_cast<int64_t>(T_) ||
-                kShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_3) != static_cast<int64_t>(K_),
-            OP_LOGE(ctx_.nodeName,
-                    "k must match q as [B,Hk,T,K]; q [%lu,%lu,%lu,%lu], k [%ld,%ld,%ld,%ld].", B_, Hk_, T_, K_,
-                    kShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_0), kShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_1),
-                    kShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_2), kShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_3)),
-            return ge::GRAPH_FAILED);
-        OP_CHECK_IF(
-            wShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_0) != static_cast<int64_t>(B_) ||
-                wShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_1) != static_cast<int64_t>(Hv_) ||
-                wShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_2) != static_cast<int64_t>(T_) ||
-                wShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_3) != static_cast<int64_t>(K_),
-            OP_LOGE(ctx_.nodeName,
-                    "w must be [B,Hv,T,K] with Hv=dO.dim1; expect [%lu,%lu,%lu,%lu], got [%ld,%ld,%ld,%ld].", B_, Hv_,
-                    T_, K_, wShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_0), wShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_1),
-                    wShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_2), wShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_3)),
-            return ge::GRAPH_FAILED);
-        OP_CHECK_IF(doShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_0) != static_cast<int64_t>(B_) ||
-                        doShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_2) != static_cast<int64_t>(T_),
-                    OP_LOGE(ctx_.nodeName, "dO batch/time must match q."), return ge::GRAPH_FAILED);
-        OP_CHECK_IF(
-            dvShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_0) != static_cast<int64_t>(B_) ||
-                dvShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_1) != static_cast<int64_t>(Hv_) ||
-                dvShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_2) != static_cast<int64_t>(T_) ||
-                dvShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_3) != static_cast<int64_t>(V_),
-            OP_LOGE(ctx_.nodeName, "dv must be [B,Hv,T,V] aligned with dO."), return ge::GRAPH_FAILED);
-        OP_CHECK_IF(Hv_ == 0 || Hk_ == 0 || (Hv_ % Hk_) != 0,
-                    OP_LOGE(ctx_.nodeName,
-                            "GVA: Hv (value heads) must be an integer multiple of Hk (q/k heads); require Hv mod Hk "
-                            "== 0; got Hk=%lu Hv=%lu.",
-                            Hk_, Hv_),
-                    return ge::GRAPH_FAILED);
-
-        const bool isScale = ctx_.hasScaleAttr;
-        const float scale = isScale ? static_cast<float>(ctx_.scaleAttr) : 1.0f;
-        chunkSize_ = static_cast<uint64_t>(ctx_.chunkSize);
-        OP_CHECK_IF(!(chunkSize_ == CHUNK_GDR_BWD_DHU_NUM_64 || chunkSize_ == CHUNK_GDR_BWD_DHU_NUM_128),
-                    OP_LOGE(ctx_.nodeName, "chunk_size should be 64 or 128, but got %lu.", chunkSize_),
-                    return ge::GRAPH_FAILED);
-
-        tiling_.B = B_;
-        tiling_.Hv = Hv_;
-        tiling_.Hk = Hk_;
-        tiling_.T = T_;
-        tiling_.K = K_;
-        tiling_.V = V_;
-        tiling_.isScale = isScale ? 1 : 0;
-        tiling_.scale = scale;
-        tiling_.chunkSize = chunkSize_;
-        return ge::GRAPH_SUCCESS;
-    }
-
-    ge::graphStatus VarLenSetting()
-    {
-        const bool hasCuSeqlens = ctx_.cuSeqlensShape != nullptr;
-        const bool hasChunkIndices = ctx_.chunkIndicesShape != nullptr;
-        if (hasCuSeqlens && hasChunkIndices) {
-            isVariableLen_ = true;
-        } else if (!hasCuSeqlens && !hasChunkIndices) {
-            isVariableLen_ = false;
-        } else {
-            OP_LOGE(ctx_.nodeName, "cu_seqlens and chunk_indices must both be provided or both be omitted.");
-            return ge::GRAPH_FAILED;
-        }
-        tiling_.isVarLen = isVariableLen_ ? 1 : 0;
-
-        if (!isVariableLen_) {
-            tiling_.chunkNum = static_cast<uint64_t>(CeilDiv(T_, chunkSize_));
-            tiling_.seqNum = 1;
-        } else {
-            const gert::Shape cuSeqlensShape = ctx_.cuSeqlensShape->GetStorageShape();
-            const gert::Shape chunkIndicesShape = ctx_.chunkIndicesShape->GetStorageShape();
-            auto seqNum = cuSeqlensShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_0) - 1;
-            auto chunkNum = chunkIndicesShape.GetDim(CHUNK_GDR_BWD_DHU_DIM_0) / CHUNK_GDR_BWD_DHU_NUM_2;
-            tiling_.seqNum = static_cast<uint64_t>(seqNum);
-            tiling_.chunkNum = static_cast<uint64_t>(chunkNum);
-        }
-        return ge::GRAPH_SUCCESS;
-    }
-
-    ge::graphStatus CheckInputShape()
-    {
-        OP_CHECK_IF(isVariableLen_ && B_ != 1,
-                    OP_LOGE(ctx_.nodeName, "B must be 1 when sequence is variable len, but got %lu.", B_),
-                    return ge::GRAPH_FAILED);
-        return ge::GRAPH_SUCCESS;
-    }
-
-    ge::graphStatus CheckInputDtype()
-    {
-        if (!ctx_.hasG) {
-            OP_LOGE(ctx_.nodeName, "Input g is required for chunk_gated_delta_rule_bwd_dhu kernel.");
-            return ge::GRAPH_FAILED;
-        }
-        const ge::DataType qDtype = ctx_.qDtype;
-        const ge::DataType gDtype = ctx_.gDtype;
-        if (gDtype != qDtype && gDtype != ge::DT_FLOAT) {
-            OP_LOGE(ctx_.nodeName, "gDtype must be DT_FLOAT or as same as qDtype");
-            return ge::GRAPH_FAILED;
-        }
-        if (gDtype == ge::DT_FLOAT) {
-            tilingKey_ = GDN::CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_KEY_G_FP32;
-        } else {
-            tilingKey_ = GDN::CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_KEY;
-        }
-        return ge::GRAPH_SUCCESS;
-    }
-
-    ge::graphStatus CalcUb()
-    {
-        const uint32_t halfBT = CeilDiv(static_cast<uint32_t>(chunkSize_), CHUNK_GDR_BWD_DHU_NUM_2);
-        const uint32_t halfK = CeilDiv(static_cast<uint32_t>(K_), CHUNK_GDR_BWD_DHU_NUM_2);
-        const uint32_t gBrcbBufByte = halfBT * CHUNK_GDR_BWD_DHU_BLOCK_SIZE;
-        const uint32_t dvBufByte = halfBT * static_cast<uint32_t>(V_) * CHUNK_GDR_BWD_DHU_HALF_DTYPE_SIZE;
-        const uint32_t dvCastBufByte = halfBT * static_cast<uint32_t>(V_) * CHUNK_GDR_BWD_DHU_FP32_DTYPE_SIZE;
-        const uint32_t dqkBufByte = halfBT * static_cast<uint32_t>(K_) * CHUNK_GDR_BWD_DHU_HALF_DTYPE_SIZE;
-        const uint32_t dqkCastBufByte = halfBT * static_cast<uint32_t>(K_) * CHUNK_GDR_BWD_DHU_FP32_DTYPE_SIZE;
-        const uint32_t dhCastBufByte = halfK * static_cast<uint32_t>(V_) * CHUNK_GDR_BWD_DHU_FP32_DTYPE_SIZE;
-
-        const uint32_t dvPeak =
-            static_cast<uint32_t>(chunkSize_) * CHUNK_GDR_BWD_DHU_FP32_DTYPE_SIZE + gBrcbBufByte + dvBufByte +
-            CHUNK_GDR_BWD_DHU_NUM_2 * dvCastBufByte;
-        const uint32_t gatedQPeak = CHUNK_GDR_BWD_DHU_NUM_2 * static_cast<uint32_t>(chunkSize_) *
-                                        CHUNK_GDR_BWD_DHU_FP32_DTYPE_SIZE +
-                                    dqkBufByte + dqkCastBufByte + gBrcbBufByte;
-        const uint32_t dhPeak = CHUNK_GDR_BWD_DHU_NUM_2 * dhCastBufByte;
-        const uint32_t tBufByte = std::max(dhPeak, std::max(dvPeak, gatedQPeak));
-
-        OP_CHECK_IF(tBufByte > ctx_.ubSize,
-                    OP_LOGE(ctx_.nodeName, "K/V is too large, K should less than 128 and V should less than 256."),
-                    return ge::GRAPH_FAILED);
-        tiling_.gBufSize = halfBT;
-        tiling_.dvBufSize = halfBT * static_cast<uint64_t>(V_);
-        tiling_.qBufSize = halfBT * static_cast<uint64_t>(K_);
-        tiling_.dhBufSize = halfK * static_cast<uint64_t>(V_);
-        tiling_.totalTbufByte = tBufByte;
-        return ge::GRAPH_SUCCESS;
-    }
-
-    ge::graphStatus SetWorkspaceSize()
-    {
-        const uint32_t taskNum = static_cast<uint32_t>(B_ * Hk_ * tiling_.seqNum);
-        const uint32_t usedCoreNum = taskNum > ctx_.totalCoreNum ? ctx_.totalCoreNum : taskNum;
-        tiling_.usedCoreNum = usedCoreNum;
-        blockDim_ = usedCoreNum;
-
-        const uint64_t bdvWs = chunkSize_ * V_ * usedCoreNum;
-        const uint64_t qWs = K_ * chunkSize_ * usedCoreNum;
-        const uint64_t wDv2Ws = K_ * V_ * usedCoreNum;
-        const uint64_t qDoWs = K_ * V_ * usedCoreNum;
-        const size_t usrWsSize =
-            static_cast<size_t>((bdvWs + qWs + wDv2Ws + qDoWs) * CHUNK_GDR_BWD_DHU_HALF_DTYPE_SIZE);
-
-        workspaceSize_ = usrWsSize + ctx_.sysWorkspaceSize;
-        tiling_.bdvWs = bdvWs;
-        tiling_.qWs = qWs;
-        tiling_.wDv2Ws = wDv2Ws;
-        tiling_.qDoWs = qDoWs;
-        return ge::GRAPH_SUCCESS;
+        return ctx_.cuSeqlensShape != nullptr || ctx_.chunkIndicesShape != nullptr;
     }
 
     ge::graphStatus Process()
     {
-        OP_CHECK_IF(Init() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(VarLenSetting() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CheckInputShape() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CheckInputDtype() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CalcUb() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(SetWorkspaceSize() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+        if (PreCheck() != ge::GRAPH_SUCCESS) {
+            OP_LOGE(ctx_.nodeName, "ChunkGatedDeltaRuleBwdDhu PreCheck failed.");
+            return ge::GRAPH_FAILED;
+        }
+        if (CommonTiling() != ge::GRAPH_SUCCESS) {
+            OP_LOGE(ctx_.nodeName, "ChunkGatedDeltaRuleBwdDhu CommonTiling failed.");
+            return ge::GRAPH_FAILED;
+        }
+        if (IsVariableLength()) {
+            if (VariableLenTiling() != ge::GRAPH_SUCCESS) {
+                OP_LOGE(ctx_.nodeName, "ChunkGatedDeltaRuleBwdDhu VariableLenTiling failed.");
+                return ge::GRAPH_FAILED;
+            }
+            tiling_.isVariable = 1;
+        } else {
+            tiling_.chunkNumForT = CeilDiv(tiling_.T, tiling_.chunkSize);
+            tiling_.totalChunkNum = tiling_.chunkNumForT;
+            tiling_.chunkTaskNum = tiling_.B * tiling_.chunkNumForT;
+            tiling_.seqNum = tiling_.B;
+            tiling_.isVariable = 0;
+        }
+        if (WorkspaceTiling() != ge::GRAPH_SUCCESS) {
+            OP_LOGE(ctx_.nodeName, "ChunkGatedDeltaRuleBwdDhu WorkspaceTiling failed.");
+            return ge::GRAPH_FAILED;
+        }
         return ge::GRAPH_SUCCESS;
     }
+
+private:
+    ge::graphStatus RequiredInputDimNumCheck(const gert::StorageShape *curShape, size_t validDimNum,
+                                             const char *inputName)
+    {
+        if (curShape == nullptr) {
+            OP_LOGE(ctx_.nodeName, "Input %s is required, but got nullptr.", inputName);
+            return ge::GRAPH_FAILED;
+        }
+        const gert::Shape storageShape = curShape->GetStorageShape();
+        size_t dimNum = storageShape.GetDimNum();
+        if (dimNum != validDimNum) {
+            OP_LOGE(ctx_.nodeName, "Check input %s shape failed, dim num should be %zu, but got %zu.",
+                    inputName, validDimNum, dimNum);
+            return ge::GRAPH_FAILED;
+        }
+        for (size_t dimIndex = 0; dimIndex < dimNum; ++dimIndex) {
+            if (storageShape.GetDim(dimIndex) == 0) {
+                OP_LOGE(ctx_.nodeName, "Check input %s shape failed, dim %zu is 0.", inputName, dimIndex);
+                return ge::GRAPH_FAILED;
+            }
+        }
+        return ge::GRAPH_SUCCESS;
+    }
+
+    ge::graphStatus CompareDim(const gert::Shape &shape1, const gert::Shape &shape2, const char *inputName1,
+                               const char *inputName2, size_t dimIndex)
+    {
+        const size_t dim1 = shape1.GetDim(dimIndex);
+        const size_t dim2 = shape2.GetDim(dimIndex);
+        if (dim1 != dim2) {
+            OP_LOGE(ctx_.nodeName,
+                    "Compare input shape of %s and %s failed, dim %zu should be same, but got %zu and %zu.",
+                    inputName1, inputName2, dimIndex, dim1, dim2);
+            return ge::GRAPH_FAILED;
+        }
+        return ge::GRAPH_SUCCESS;
+    }
+
+    ge::graphStatus CompareShape(const gert::Shape &shape1, const gert::Shape &shape2, const char *inputName1,
+                                 const char *inputName2, size_t compareDimNum)
+    {
+        for (size_t dimIndex = 0; dimIndex < compareDimNum; ++dimIndex) {
+            if (CompareDim(shape1, shape2, inputName1, inputName2, dimIndex) != ge::GRAPH_SUCCESS) {
+                return ge::GRAPH_FAILED;
+            }
+        }
+        return ge::GRAPH_SUCCESS;
+    }
+
+    int64_t CeilDiv(int64_t a, int64_t b) const
+    {
+        if (b == 0) {
+            return 0;
+        }
+        return (a + b - 1) / b;
+    }
+
+    uint64_t DtypeSize(ge::DataType dtype) const
+    {
+        return dtype == ge::DT_FLOAT ? DTYPE_SIZE_FLOAT : DTYPE_SIZE_HALF;
+    }
+
+    uint64_t Align32(uint64_t bytes) const
+    {
+        return (bytes + ALIGN_BYTES_32 - 1) / ALIGN_BYTES_32 * ALIGN_BYTES_32;
+    }
+
+    uint64_t AlignDown(uint64_t bytes, uint64_t align) const
+    {
+        return align == 0 ? bytes : bytes / align * align;
+    }
+
+    uint64_t VectorTileBytes(uint64_t row, uint64_t maxDim, uint64_t qSize) const
+    {
+        uint64_t bytes = 4 * Align32(row * maxDim * qSize) +
+                         2 * Align32(row * maxDim * DTYPE_SIZE_FLOAT) +
+                         2 * Align32(row * static_cast<uint64_t>(tiling_.V) * DTYPE_SIZE_FLOAT);
+        if (ctx_.qDataType == ge::DT_BF16) {
+            bytes += 2 * Align32(row * static_cast<uint64_t>(tiling_.V) * qSize);
+        }
+        return bytes;
+    }
+
+    int64_t GetVecRow(uint64_t qSize) const
+    {
+        const uint64_t maxDim = static_cast<uint64_t>(std::max(tiling_.K, tiling_.V));
+        const uint64_t gateElems = static_cast<uint64_t>(std::max(tiling_.K, tiling_.chunkSize));
+        const uint64_t gateSize = DtypeSize(ctx_.gDataType);
+        const uint64_t gateFactorResidentCount = ctx_.hasG ? 3UL : 1UL;
+        const uint64_t maxRows = static_cast<uint64_t>(tiling_.K);
+        uint64_t row = maxRows;
+        if (ctx_.ubSize > UB_GUARD_BYTES) {
+            while (row > 8) {
+                const uint64_t fixedBytes =
+                    2 * Align32(gateElems * gateSize) +
+                    gateFactorResidentCount *
+                        Align32(static_cast<uint64_t>(HEADS_PER_TASK) * gateElems * DTYPE_SIZE_FLOAT);
+                if (fixedBytes + VectorTileBytes(row, maxDim, qSize) + UB_GUARD_BYTES <= ctx_.ubSize) {
+                    break;
+                }
+                row /= 2;
+            }
+        } else {
+            row = 8;
+        }
+        if (row < 8) {
+            row = 8;
+        }
+        return static_cast<int64_t>(row);
+    }
+
+    int DtypeKey(ge::DataType dtype) const
+    {
+        if (dtype == ge::DT_BF16) {
+            return TPL_BF16;
+        }
+        if (dtype == ge::DT_FLOAT) {
+            return TPL_FP32;
+        }
+        return TPL_FP16;
+    }
+
+    ge::graphStatus PreCheck()
+    {
+        if (RequiredInputDimNumCheck(ctx_.qShape, DIM_NUM_4,
+                                     CGDR_BWD_DHU_INPUT_Q_NAME) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (RequiredInputDimNumCheck(ctx_.kShape, DIM_NUM_4,
+                                     CGDR_BWD_DHU_INPUT_K_NAME) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (RequiredInputDimNumCheck(ctx_.wShape, DIM_NUM_4,
+                                     CGDR_BWD_DHU_INPUT_W_NAME) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (RequiredInputDimNumCheck(ctx_.dOShape, DIM_NUM_4,
+                                     CGDR_BWD_DHU_INPUT_DO_NAME) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (RequiredInputDimNumCheck(ctx_.dvShape, DIM_NUM_4,
+                                     CGDR_BWD_DHU_INPUT_DV_NAME) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx_.hasG == ctx_.hasGk) {
+            OP_LOGE(ctx_.nodeName, "Exactly one of g and gk must be provided, but hasG=%d hasGk=%d.",
+                    static_cast<int>(ctx_.hasG), static_cast<int>(ctx_.hasGk));
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx_.hasG) {
+            if (RequiredInputDimNumCheck(ctx_.gShape, DIM_NUM_3,
+                                         CGDR_BWD_DHU_INPUT_G_NAME) != ge::GRAPH_SUCCESS) {
+                return ge::GRAPH_FAILED;
+            }
+        } else {
+            if (RequiredInputDimNumCheck(ctx_.gkShape, DIM_NUM_4,
+                                         CGDR_BWD_DHU_INPUT_GK_NAME) != ge::GRAPH_SUCCESS) {
+                return ge::GRAPH_FAILED;
+            }
+        }
+        return ge::GRAPH_SUCCESS;
+    }
+
+    ge::graphStatus CommonTiling()
+    {
+        const gert::Shape qShape = ctx_.qShape->GetStorageShape();
+        const gert::Shape kShape = ctx_.kShape->GetStorageShape();
+        const gert::Shape wShape = ctx_.wShape->GetStorageShape();
+        const gert::Shape dOShape = ctx_.dOShape->GetStorageShape();
+        const gert::Shape dvShape = ctx_.dvShape->GetStorageShape();
+
+        if (CompareShape(qShape, kShape, CGDR_BWD_DHU_INPUT_Q_NAME,
+                         CGDR_BWD_DHU_INPUT_K_NAME, DIM_NUM_4) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (CompareShape(dOShape, dvShape, CGDR_BWD_DHU_INPUT_DO_NAME,
+                         CGDR_BWD_DHU_INPUT_DV_NAME, DIM_NUM_4) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+
+        tiling_.B = static_cast<int64_t>(qShape.GetDim(DIM_0));
+        tiling_.HK = static_cast<int64_t>(qShape.GetDim(DIM_1));
+        tiling_.T = static_cast<int64_t>(qShape.GetDim(DIM_2));
+        tiling_.K = static_cast<int64_t>(qShape.GetDim(DIM_3));
+        tiling_.HV = static_cast<int64_t>(dvShape.GetDim(DIM_1));
+        tiling_.V = static_cast<int64_t>(dvShape.GetDim(DIM_3));
+        tiling_.scale = static_cast<float>(ctx_.scale);
+
+        if (CompareDim(qShape, wShape, CGDR_BWD_DHU_INPUT_Q_NAME,
+                       CGDR_BWD_DHU_INPUT_W_NAME, DIM_0) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (CompareDim(qShape, wShape, CGDR_BWD_DHU_INPUT_Q_NAME,
+                       CGDR_BWD_DHU_INPUT_W_NAME, DIM_2) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (CompareDim(qShape, wShape, CGDR_BWD_DHU_INPUT_Q_NAME,
+                       CGDR_BWD_DHU_INPUT_W_NAME, DIM_3) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (static_cast<int64_t>(wShape.GetDim(DIM_1)) != tiling_.HV) {
+            return ge::GRAPH_FAILED;
+        }
+        if (CompareDim(qShape, dOShape, CGDR_BWD_DHU_INPUT_Q_NAME,
+                       CGDR_BWD_DHU_INPUT_DO_NAME, DIM_0) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (CompareDim(qShape, dOShape, CGDR_BWD_DHU_INPUT_Q_NAME,
+                       CGDR_BWD_DHU_INPUT_DO_NAME, DIM_2) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx_.hasG) {
+            const gert::Shape gShape = ctx_.gShape->GetStorageShape();
+            if (CompareShape(dOShape, gShape, CGDR_BWD_DHU_INPUT_DO_NAME,
+                             CGDR_BWD_DHU_INPUT_G_NAME, DIM_NUM_3) != ge::GRAPH_SUCCESS) {
+                return ge::GRAPH_FAILED;
+            }
+        } else {
+            const gert::Shape gkShape = ctx_.gkShape->GetStorageShape();
+            if (CompareShape(dOShape, gkShape, CGDR_BWD_DHU_INPUT_DO_NAME,
+                             CGDR_BWD_DHU_INPUT_GK_NAME, DIM_NUM_3) != ge::GRAPH_SUCCESS) {
+                return ge::GRAPH_FAILED;
+            }
+            if (CompareDim(qShape, gkShape, CGDR_BWD_DHU_INPUT_Q_NAME,
+                           CGDR_BWD_DHU_INPUT_GK_NAME, DIM_3) != ge::GRAPH_SUCCESS) {
+                return ge::GRAPH_FAILED;
+            }
+        }
+
+        if (tiling_.HV % tiling_.HK != 0) {
+            return ge::GRAPH_FAILED;
+        }
+        tiling_.HRatio = tiling_.HV / tiling_.HK;
+        tiling_.hasDh0 = ctx_.hasDh0 ? 1 : 0;
+        tiling_.hasGk = ctx_.hasGk ? 1 : 0;
+
+        if (tiling_.K != K_SIZE_128) {
+            return ge::GRAPH_FAILED;
+        }
+        if (tiling_.V != V_SIZE_128 && tiling_.V != V_SIZE_256) {
+            return ge::GRAPH_FAILED;
+        }
+
+        const int64_t chunkSize = static_cast<int64_t>(ctx_.chunkSize);
+        if (chunkSize != CHUNK_SIZE_64 && chunkSize != CHUNK_SIZE_128) {
+            return ge::GRAPH_FAILED;
+        }
+        tiling_.chunkSize = chunkSize;
+        tiling_.headWindowNum = CeilDiv(tiling_.HV, HEADS_PER_TASK);
+        return ge::GRAPH_SUCCESS;
+    }
+
+    ge::graphStatus VariableLenTiling()
+    {
+        if (ctx_.cuSeqlensShape == nullptr || ctx_.chunkIndicesShape == nullptr) {
+            return ge::GRAPH_FAILED;
+        }
+        if (tiling_.B != VAR_LEN_B) {
+            return ge::GRAPH_FAILED;
+        }
+        if (RequiredInputDimNumCheck(ctx_.cuSeqlensShape, DIM_NUM_1,
+                                     CGDR_BWD_DHU_INPUT_SEQLENS_NAME) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (RequiredInputDimNumCheck(ctx_.chunkIndicesShape, DIM_NUM_1,
+                                     CGDR_BWD_DHU_INPUT_CHUNK_INDICES_NAME) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+
+        const gert::Shape cuSeqlensShape = ctx_.cuSeqlensShape->GetStorageShape();
+        const gert::Shape chunkIndicesShape = ctx_.chunkIndicesShape->GetStorageShape();
+        const int64_t cuDim0 = static_cast<int64_t>(cuSeqlensShape.GetDim(DIM_0));
+        const int64_t chunkIndicesDim0 =
+            static_cast<int64_t>(chunkIndicesShape.GetDim(DIM_0));
+        if (cuDim0 < 2) {
+            return ge::GRAPH_FAILED;
+        }
+        if (chunkIndicesDim0 % CHUNK_INDICES_PAIR != 0) {
+            return ge::GRAPH_FAILED;
+        }
+        tiling_.seqNum = cuDim0 - 1;
+        tiling_.chunkNumForT = CeilDiv(tiling_.T, tiling_.chunkSize);
+        tiling_.totalChunkNum = chunkIndicesDim0 / CHUNK_INDICES_PAIR;
+        tiling_.chunkTaskNum = tiling_.totalChunkNum;
+        return ge::GRAPH_SUCCESS;
+    }
+
+    ge::graphStatus WorkspaceTiling()
+    {
+        tiling_.taskNum = tiling_.seqNum * tiling_.headWindowNum;
+        blockDim_ = ctx_.aicCoreNum == 0 ? 1U : ctx_.aicCoreNum;
+
+        const uint64_t qSize = DtypeSize(ctx_.qDataType);
+        tiling_.dh0ClearCoreNum = 0;
+        tiling_.dh0ClearElemsPerCore = 0;
+        tiling_.dh0ClearTailElems = 0;
+        if (ctx_.hasDh0) {
+            const uint64_t dh0Elems =
+                static_cast<uint64_t>(tiling_.B) * static_cast<uint64_t>(tiling_.HV) *
+                static_cast<uint64_t>(tiling_.totalChunkNum) * static_cast<uint64_t>(tiling_.K) *
+                static_cast<uint64_t>(tiling_.V);
+            const uint64_t dh0Bytes = dh0Elems * qSize;
+            if (dh0Bytes > 0) {
+                const uint64_t maxVecCoreNum =
+                    static_cast<uint64_t>(blockDim_) * VECTOR_SUB_BLOCK_NUM;
+                uint64_t clearCoreNum = dh0Bytes / ALIGN_BYTES_512;
+                if (clearCoreNum == 0) {
+                    clearCoreNum = 1;
+                }
+                clearCoreNum = std::min(clearCoreNum, maxVecCoreNum);
+                uint64_t clearBytesPerCore = 0;
+                if (clearCoreNum > 1) {
+                    clearBytesPerCore = AlignDown(dh0Bytes / clearCoreNum, ALIGN_BYTES_512);
+                    if (clearBytesPerCore == 0) {
+                        clearCoreNum = 1;
+                    }
+                }
+                const uint64_t clearTailBytes = dh0Bytes - clearBytesPerCore * (clearCoreNum - 1);
+                tiling_.dh0ClearCoreNum = static_cast<int64_t>(clearCoreNum);
+                tiling_.dh0ClearElemsPerCore = static_cast<int64_t>(clearBytesPerCore / qSize);
+                tiling_.dh0ClearTailElems = static_cast<int64_t>(clearTailBytes / qSize);
+            }
+        }
+        tiling_.vecRow = GetVecRow(qSize);
+        tiling_.qgWorkspaceElems = tiling_.chunkSize * tiling_.K;
+        tiling_.stateWorkspaceElems = static_cast<int64_t>(
+            Align32(static_cast<uint64_t>(tiling_.K) * static_cast<uint64_t>(tiling_.V) * DTYPE_SIZE_FLOAT) / qSize);
+        tiling_.dvStateWorkspaceElems = tiling_.chunkSize * tiling_.V;
+        tiling_.termQWorkspaceElems = tiling_.K * tiling_.V;
+        tiling_.dv2WorkspaceElems = 0;
+        tiling_.termWWorkspaceElems = tiling_.K * tiling_.V;
+
+        int64_t offset = 0;
+        tiling_.qgWorkspaceOffset = offset;
+        offset += tiling_.qgWorkspaceElems;
+        offset = static_cast<int64_t>(Align32(static_cast<uint64_t>(offset) * qSize) / qSize);
+        tiling_.stateWorkspaceOffset = offset;
+        offset += tiling_.stateWorkspaceElems;
+        tiling_.dvStateWorkspaceOffset = offset;
+        offset += tiling_.dvStateWorkspaceElems;
+        tiling_.termQWorkspaceOffset = offset;
+        offset += tiling_.termQWorkspaceElems;
+        tiling_.dv2WorkspaceOffset = offset;
+        offset += tiling_.dv2WorkspaceElems;
+        tiling_.termWWorkspaceOffset = offset;
+        offset += tiling_.termWWorkspaceElems;
+        tiling_.workspaceElemsPerSubBlock = offset;
+
+        const uint64_t workspaceSlotNum =
+            static_cast<uint64_t>(blockDim_) * WORKSPACE_BUFFER_COUNT;
+        const uint64_t userWorkspaceBytes =
+            workspaceSlotNum *
+            static_cast<uint64_t>(tiling_.workspaceElemsPerSubBlock) * qSize;
+        workspaceSize_ = ctx_.sysWorkspaceSize + static_cast<size_t>(userWorkspaceBytes);
+
+        using namespace GDN;
+        tilingKey_ = GET_TPL_TILING_KEY(
+            static_cast<uint64_t>(DtypeKey(ctx_.qDataType)), static_cast<uint64_t>(DtypeKey(ctx_.gDataType)),
+            static_cast<uint64_t>(tiling_.V), static_cast<uint64_t>(ctx_.hasGk ? 1 : 0));
+        return ge::GRAPH_SUCCESS;
+    }
+
+    ChunkGatedDeltaRuleBwdDhuTilingContext &ctx_;
+    ChunkGatedDeltaRuleBwdDhuTilingData &tiling_;
+    size_t workspaceSize_ = 0;
+    uint32_t blockDim_ = 1;
+    uint32_t tilingKey_ = 1U;
 };
 
 } // namespace optiling

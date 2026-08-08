@@ -34,7 +34,7 @@ def prepare_chunk_indices_original(cu_seqlens, chunk_size=64):
         # 添加 [seq_idx, chunk_idx] 对
         for chunk_idx in range(chunk_num):
             chunk_indices.append(seq_idx)
-            chunk_indices.append(chunk_idx + 1)  # chunk_idx从1开始
+            chunk_indices.append(chunk_idx)
 
     return chunk_indices
 

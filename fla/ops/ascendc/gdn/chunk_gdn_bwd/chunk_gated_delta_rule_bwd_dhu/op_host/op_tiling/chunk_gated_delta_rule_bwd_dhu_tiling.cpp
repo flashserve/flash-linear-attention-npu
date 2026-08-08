@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Tianjin University, Ltd.
+ * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * the BSD 3-Clause License (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -9,132 +9,140 @@
 
 /*!
  * \file chunk_gated_delta_rule_bwd_dhu_tiling.cpp
- * \brief
+ * \brief Tiling implementation for chunk_gated_delta_rule_bwd_dhu.
  */
 
-#include "chunk_gated_delta_rule_bwd_dhu_tiling_processor.h"
 #include "chunk_gated_delta_rule_bwd_dhu_tiling.h"
-#include "err/ops_err.h"
-
-using namespace GDN;
+#include <register/op_impl_registry.h>
+#include "platform/platform_ascendc.h"
 
 namespace optiling {
+
 namespace {
-constexpr uint32_t INPUT_Q_IDX = 0;
-constexpr uint32_t INPUT_K_IDX = 1;
-constexpr uint32_t INPUT_W_IDX = 2;
-constexpr uint32_t INPUT_DO_IDX = 3;
-constexpr uint32_t INPUT_DV_IDX = 4;
-constexpr uint32_t INPUT_G_IDX = 5;
-constexpr uint32_t INPUT_CU_SEQLENS_IDX = 9;
-constexpr uint32_t INPUT_CHUNK_INDICES_IDX = 10;
 
-constexpr uint32_t ATTR_SCALE_IDX = 0;
-constexpr uint32_t ATTR_CHUNK_SIZE_IDX = 1;
-
-static void ChunkGatedDeltaRuleBwdDhuTilingDataPrint(gert::TilingContext *context,
-                                                     const ChunkGatedDeltaRuleBwdDhuTilingData &tiling)
+void ChunkGatedDeltaRuleBwdDhuTilingDataPrint(
+    gert::TilingContext *context, const ChunkGatedDeltaRuleBwdDhuTilingData &tiling)
 {
-    auto nodeName = context->GetNodeName();
-    OP_LOGD(nodeName, "End Run ChunkGatedDeltaRuleBwdDhu Tiling");
-    OP_LOGD(nodeName, "B is %lu.", tiling.B);
-    OP_LOGD(nodeName, "Hv is %lu.", tiling.Hv);
-    OP_LOGD(nodeName, "Hk is %lu.", tiling.Hk);
-    OP_LOGD(nodeName, "T is %lu.", tiling.T);
-    OP_LOGD(nodeName, "K is %lu.", tiling.K);
-    OP_LOGD(nodeName, "V is %lu.", tiling.V);
-    OP_LOGD(nodeName, "chunkSize is %lu.", tiling.chunkSize);
-    OP_LOGD(nodeName, "chunkNum is %lu.", tiling.chunkNum);
-    OP_LOGD(nodeName, "seqNum is %lu.", tiling.seqNum);
-    OP_LOGD(nodeName, "gBufSize is %lu.", tiling.gBufSize);
-    OP_LOGD(nodeName, "dvBufSize is %lu.", tiling.dvBufSize);
-    OP_LOGD(nodeName, "qBufSize is %lu.", tiling.qBufSize);
-    OP_LOGD(nodeName, "dhBufSize is %lu.", tiling.dhBufSize);
-    OP_LOGD(nodeName, "totalTbufByte is %lu.", tiling.totalTbufByte);
-    OP_LOGD(nodeName, "bdvWs is %lu.", tiling.bdvWs);
-    OP_LOGD(nodeName, "qWs is %lu.", tiling.qWs);
-    OP_LOGD(nodeName, "wDv2Ws is %lu.", tiling.wDv2Ws);
-    OP_LOGD(nodeName, "qDoWs is %lu.", tiling.qDoWs);
-    OP_LOGD(nodeName, "isVarLen is %lu.", tiling.isVarLen);
-    OP_LOGD(nodeName, "isScale is %lu.", tiling.isScale);
-    OP_LOGD(nodeName, "usedCoreNum is %u.", tiling.usedCoreNum);
-    OP_LOGD(nodeName, "scale is %f.", tiling.scale);
+    const auto nodeName = context->GetNodeName();
+    OP_LOGD(nodeName, ">>>>>>>>>>>>>>> Start to print ChunkGatedDeltaRuleBwdDhu tiling data <<<<<<<<<<<<<<<<");
+    OP_LOGD(nodeName, "=== B: %ld", tiling.B);
+    OP_LOGD(nodeName, "=== HK: %ld", tiling.HK);
+    OP_LOGD(nodeName, "=== HV: %ld", tiling.HV);
+    OP_LOGD(nodeName, "=== T: %ld", tiling.T);
+    OP_LOGD(nodeName, "=== K: %ld", tiling.K);
+    OP_LOGD(nodeName, "=== V: %ld", tiling.V);
+    OP_LOGD(nodeName, "=== HRatio: %ld", tiling.HRatio);
+    OP_LOGD(nodeName, "=== chunkSize: %ld", tiling.chunkSize);
+    OP_LOGD(nodeName, "=== chunkNumForT: %ld", tiling.chunkNumForT);
+    OP_LOGD(nodeName, "=== totalChunkNum: %ld", tiling.totalChunkNum);
+    OP_LOGD(nodeName, "=== chunkTaskNum: %ld", tiling.chunkTaskNum);
+    OP_LOGD(nodeName, "=== seqNum: %ld", tiling.seqNum);
+    OP_LOGD(nodeName, "=== headWindowNum: %ld", tiling.headWindowNum);
+    OP_LOGD(nodeName, "=== taskNum: %ld", tiling.taskNum);
+    OP_LOGD(nodeName, "=== isVariable: %ld", tiling.isVariable);
+    OP_LOGD(nodeName, "=== hasDh0: %ld", tiling.hasDh0);
+    OP_LOGD(nodeName, "=== dh0ClearCoreNum: %ld", tiling.dh0ClearCoreNum);
+    OP_LOGD(nodeName, "=== dh0ClearElemsPerCore: %ld", tiling.dh0ClearElemsPerCore);
+    OP_LOGD(nodeName, "=== dh0ClearTailElems: %ld", tiling.dh0ClearTailElems);
+    OP_LOGD(nodeName, "=== hasGk: %ld", tiling.hasGk);
+    OP_LOGD(nodeName, "=== workspaceElemsPerSubBlock: %ld", tiling.workspaceElemsPerSubBlock);
+    OP_LOGD(nodeName, "=== qgWorkspaceOffset: %ld", tiling.qgWorkspaceOffset);
+    OP_LOGD(nodeName, "=== stateWorkspaceOffset: %ld", tiling.stateWorkspaceOffset);
+    OP_LOGD(nodeName, "=== dvStateWorkspaceOffset: %ld", tiling.dvStateWorkspaceOffset);
+    OP_LOGD(nodeName, "=== termQWorkspaceOffset: %ld", tiling.termQWorkspaceOffset);
+    OP_LOGD(nodeName, "=== dv2WorkspaceOffset: %ld", tiling.dv2WorkspaceOffset);
+    OP_LOGD(nodeName, "=== termWWorkspaceOffset: %ld", tiling.termWWorkspaceOffset);
+    OP_LOGD(nodeName, "=== qgWorkspaceElems: %ld", tiling.qgWorkspaceElems);
+    OP_LOGD(nodeName, "=== stateWorkspaceElems: %ld", tiling.stateWorkspaceElems);
+    OP_LOGD(nodeName, "=== dvStateWorkspaceElems: %ld", tiling.dvStateWorkspaceElems);
+    OP_LOGD(nodeName, "=== termQWorkspaceElems: %ld", tiling.termQWorkspaceElems);
+    OP_LOGD(nodeName, "=== dv2WorkspaceElems: %ld", tiling.dv2WorkspaceElems);
+    OP_LOGD(nodeName, "=== termWWorkspaceElems: %ld", tiling.termWWorkspaceElems);
+    OP_LOGD(nodeName, "=== vecRow: %ld", tiling.vecRow);
+    OP_LOGD(nodeName, "=== scale: %f", tiling.scale);
+    OP_LOGD(nodeName, ">>>>>>>>>>>>>>> Print ChunkGatedDeltaRuleBwdDhu tiling data end <<<<<<<<<<<<<<<<");
 }
+
 } // namespace
 
-ASCENDC_EXTERN_C ge::graphStatus Tiling4ChunkGDRBwdDhu(gert::TilingContext *context)
+ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
 {
-    OP_LOGD(context->GetNodeName(), "Tiling4ChunkGDRBwdDhu start.");
-    ChunkGatedDeltaRuleBwdDhuTilingData *tiling = context->GetTilingData<ChunkGatedDeltaRuleBwdDhuTilingData>();
+    OP_LOGD(context->GetNodeName(), "Tiling4ChunkGatedDeltaRuleBwdDhu start.");
+    const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
 
-    auto attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE(context->GetNodeName(), "attrs is nullptr."), return ge::GRAPH_FAILED);
-    const double *scalePtr = attrs->GetAttrPointer<double>(ATTR_SCALE_IDX);
-    const uint32_t *chunkSizePtr = attrs->GetAttrPointer<uint32_t>(ATTR_CHUNK_SIZE_IDX);
+    ChunkGatedDeltaRuleBwdDhuTilingData *tiling =
+        context->GetTilingData<ChunkGatedDeltaRuleBwdDhuTilingData>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
 
-    auto platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfoPtr == nullptr,
-                OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "platformInfoPtr is null!"),
-                return ge::GRAPH_FAILED);
-    auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
-    uint64_t maxUbSize = 0;
-    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, maxUbSize);
+    auto attrPtr = context->GetAttrs();
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrPtr);
 
-    const auto gInputDesc = context->GetOptionalInputDesc(INPUT_G_IDX);
-    const auto qInputDesc = context->GetInputDesc(INPUT_Q_IDX);
+    auto qInputDesc = context->GetInputDesc(CGDR_BWD_DHU_INPUT_Q_IDX);
+    auto gInputDesc = context->GetOptionalInputDesc(CGDR_BWD_DHU_INPUT_G_IDX);
+    auto gkInputDesc = context->GetOptionalInputDesc(CGDR_BWD_DHU_INPUT_GK_IDX);
+    auto gInputShape = context->GetOptionalInputShape(CGDR_BWD_DHU_INPUT_G_IDX);
+    auto gkInputShape = context->GetOptionalInputShape(CGDR_BWD_DHU_INPUT_GK_IDX);
+    auto h0InputShape = context->GetOptionalInputShape(CGDR_BWD_DHU_INPUT_H0_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, qInputDesc);
 
-    const gert::StorageShape *gShapePtr = nullptr;
-    gert::StorageShape gShape;
-    if (context->GetOptionalInputShape(INPUT_G_IDX) != nullptr) {
-        gShape = *context->GetOptionalInputShape(INPUT_G_IDX);
-        gShapePtr = &gShape;
-    }
+    const bool hasG = gInputShape != nullptr;
+    const bool hasGk = gkInputShape != nullptr;
+    const ge::DataType gateDataType =
+        hasG ? gInputDesc->GetDataType() : (hasGk ? gkInputDesc->GetDataType() : ge::DT_FLOAT);
+
+    const double *scalePtr = attrPtr->GetAttrPointer<double>(CGDR_BWD_DHU_ATTR_SCALE_IDX);
+    const int32_t *chunkSizePtr = attrPtr->GetAttrPointer<int32_t>(CGDR_BWD_DHU_ATTR_CHUNK_SIZE_IDX);
+
+    uint64_t ubSize = 0;
+    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
 
     ChunkGatedDeltaRuleBwdDhuTilingContext ctx{
         context->GetNodeName(),
-        context->GetInputShape(INPUT_Q_IDX),
-        context->GetInputShape(INPUT_K_IDX),
-        context->GetInputShape(INPUT_W_IDX),
-        context->GetInputShape(INPUT_DO_IDX),
-        context->GetInputShape(INPUT_DV_IDX),
-        gShapePtr,
-        context->GetOptionalInputShape(INPUT_CU_SEQLENS_IDX),
-        context->GetOptionalInputShape(INPUT_CHUNK_INDICES_IDX),
+        context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_Q_IDX),
+        context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_K_IDX),
+        context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_W_IDX),
+        context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_DO_IDX),
+        context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_DV_IDX),
+        gInputShape,
+        gkInputShape,
+        context->GetOptionalInputShape(CGDR_BWD_DHU_INPUT_CU_SEQLENS_IDX),
+        context->GetOptionalInputShape(CGDR_BWD_DHU_INPUT_CHUNK_INDICES_IDX),
         qInputDesc->GetDataType(),
-        gInputDesc != nullptr ? gInputDesc->GetDataType() : ge::DT_FLOAT,
-        gShapePtr != nullptr,
-        scalePtr != nullptr,
-        scalePtr != nullptr ? *scalePtr : 1.0,
-        chunkSizePtr != nullptr ? static_cast<int32_t>(*chunkSizePtr) : static_cast<int32_t>(64),
-        maxUbSize,
+        gateDataType,
+        hasG,
+        hasGk,
+        h0InputShape != nullptr,
+        true,
+        scalePtr != nullptr ? static_cast<double>(*scalePtr) : 1.0,
+        chunkSizePtr != nullptr ? *chunkSizePtr : 64,
+        ubSize,
         static_cast<uint32_t>(ascendcPlatform.GetCoreNumAic()),
         static_cast<size_t>(ascendcPlatform.GetLibApiWorkSpaceSize()),
     };
 
     ChunkGatedDeltaRuleBwdDhuTilingProcessor processor(ctx, *tiling);
-    OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS,
-                OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "tiling process failed"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
 
     context->SetTilingKey(processor.GetTilingKey());
     context->SetBlockDim(processor.GetBlockDim());
-    size_t *workspace = context->GetWorkspaceSizes(1);
-    workspace[0] = processor.GetWorkspaceSize();
+    size_t *currentWorkspace = context->GetWorkspaceSizes(1);
+    currentWorkspace[0] = processor.GetWorkspaceSize();
+    context->SetScheduleMode(1);
 
+    OP_LOGD(context->GetNodeName(), "tilingKey: %u", context->GetTilingKey());
     ChunkGatedDeltaRuleBwdDhuTilingDataPrint(context, *tiling);
-    OP_LOGD(context->GetNodeName(), "Tiling4ChunkGDRBwdDhu end.");
+    OP_LOGD(context->GetNodeName(), "Tiling4ChunkGatedDeltaRuleBwdDhu end.");
     return ge::GRAPH_SUCCESS;
 }
 
-ASCENDC_EXTERN_C ge::graphStatus TilingPrepare4ChunkGDRBwdDhu(gert::TilingParseContext *context)
+ge::graphStatus TilingPrepareForChunkGatedDeltaRuleBwdDhu(gert::TilingParseContext *context)
 {
     (void)context;
     return ge::GRAPH_SUCCESS;
 }
 
 IMPL_OP_OPTILING(ChunkGatedDeltaRuleBwdDhu)
-    .Tiling(Tiling4ChunkGDRBwdDhu)
-    .TilingParse<ChunkGatedDeltaRuleBwdDhuCompileInfo>(TilingPrepare4ChunkGDRBwdDhu);
+    .Tiling(Tiling4ChunkGatedDeltaRuleBwdDhu)
+    .TilingParse<ChunkGatedDeltaRuleBwdDhuCompileInfo>(TilingPrepareForChunkGatedDeltaRuleBwdDhu);
 
 } // namespace optiling

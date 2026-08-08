@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Tianjin University, Ltd.
+ * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * the BSD 3-Clause License (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -9,56 +9,77 @@
 
 /*!
  * \file chunk_gated_delta_rule_bwd_dhu.cpp
- * \brief
+ * \brief Kernel entry for chunk_gated_delta_rule_bwd_dhu.
  */
 
-#if defined(ORIG_DTYPE_G) && defined(DT_BF16) && ORIG_DTYPE_G == DT_BF16
-    #define G_BF16
-#endif
-
-#include "chunk_gated_delta_rule_bwd_dhu_struct.h"
-#include "chunk_gated_delta_rule_bwd_dhu_vec.h"
-#include "chunk_gated_delta_rule_bwd_dhu_cube.h"
-
+#include "kernel_operator.h"
 #ifndef TORCH_MODE
-#include "kernel_operator.h"
 #include "lib/matmul_intf.h"
-#else
-#include "kernel_operator.h"
 #endif
 
-using namespace AscendC;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "arch35/chunk_gated_delta_rule_bwd_dhu_struct.h"
+#include "arch35/chunk_gated_delta_rule_bwd_dhu_cube.h"
+#include "arch35/chunk_gated_delta_rule_bwd_dhu_vector.h"
+#else
+#include "chunk_gated_delta_rule_bwd_dhu_struct.h"
+#include "chunk_gated_delta_rule_bwd_dhu_cube.h"
+#include "chunk_gated_delta_rule_bwd_dhu_vector.h"
+#endif
 
 namespace GDN {
 
-template <typename DT, typename GT>
+template <typename DT, typename GT, int V_DIM, int USE_GK>
 __aicore__ inline void ChunkGatedDeltaRuleBwdDhuKernelImpl(
-    GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
-    GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2, GM_ADDR userWS, const ChunkGatedDeltaRuleBwdDhuTilingData *tilingData)
+    GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR gate,
+    GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2,
+    GM_ADDR workspace, const ChunkGatedDeltaRuleBwdDhuTilingData *tilingData)
 {
-    (void)dh0;
     if ASCEND_IS_AIC {
-        GDRCube<DT, GT> cubeOp(k, w, d_o, dh, dv2, cu_seqlens, chunk_indices, userWS);
-        cubeOp.Init(*tilingData);
-        cubeOp.Process();
+        ChunkGatedDeltaRuleBwdDhuCube<DT, V_DIM> cube;
+        cube.Init(k, w, d_o, dh, dv2, cu_seqlens, chunk_indices, workspace, tilingData);
+        cube.Process();
     }
     if ASCEND_IS_AIV {
-        ChunkGDRBwdDhu::GDRVec<DT, GT> op;
-        op.Init(q, k, w, d_o, dv, g, cu_seqlens, dv2, dh, userWS, *tilingData);
-        op.Process();
+        AscendC::TPipe pipe;
+        ChunkGatedDeltaRuleBwdDhuVector<DT, GT, USE_GK> vec;
+        vec.Init(q, gate, dv, cu_seqlens, chunk_indices, dh, dh0, dv2, workspace, tilingData, &pipe);
+        vec.Process();
     }
 }
+
+template <int D_T>
+struct ChunkGatedDeltaRuleBwdDhuDTypeTraits;
+
+template <>
+struct ChunkGatedDeltaRuleBwdDhuDTypeTraits<TPL_BF16> {
+    using type = bfloat16_t;
+};
+
+template <>
+struct ChunkGatedDeltaRuleBwdDhuDTypeTraits<TPL_FP16> {
+    using type = half;
+};
+
+template <>
+struct ChunkGatedDeltaRuleBwdDhuDTypeTraits<TPL_FP32> {
+    using type = float;
+};
 
 } // namespace GDN
 
 #ifndef TORCH_MODE
-extern "C" __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
-    GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g, GM_ADDR gk, GM_ADDR h0, GM_ADDR dht,
-    GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace, GM_ADDR tiling)
+template <int D_T_Q, int D_T_G, int V, int USE_GK>
+__global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
+    GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g,
+    GM_ADDR gk, GM_ADDR h0, GM_ADDR dht, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
+    GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace, GM_ADDR tiling)
 {
-    (void)gk;
     (void)h0;
     (void)dht;
+
+    AscendC::AscendCUtils::SetOverflow(1);
+
     GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
     if (userWS == nullptr) {
         return;
@@ -66,15 +87,12 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
 
     REGISTER_TILING_DEFAULT(GDN::ChunkGatedDeltaRuleBwdDhuTilingData);
     GET_TILING_DATA_WITH_STRUCT(GDN::ChunkGatedDeltaRuleBwdDhuTilingData, tilingData, tiling);
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
 
-    if (TILING_KEY_IS(1)) {
-        KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
-        GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<DTYPE_Q, DTYPE_Q>(
-            q, k, w, d_o, dv, g, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
-    } else if (TILING_KEY_IS(2)) {
-        KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
-        GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<DTYPE_Q, float>(
-            q, k, w, d_o, dv, g, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
-    }
+    using QType = typename GDN::ChunkGatedDeltaRuleBwdDhuDTypeTraits<D_T_Q>::type;
+    using GType = typename GDN::ChunkGatedDeltaRuleBwdDhuDTypeTraits<D_T_G>::type;
+    GM_ADDR gate = (USE_GK == 0) ? g : gk;
+    GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<QType, GType, V, USE_GK>(
+        q, k, w, d_o, dv, gate, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
 }
 #endif

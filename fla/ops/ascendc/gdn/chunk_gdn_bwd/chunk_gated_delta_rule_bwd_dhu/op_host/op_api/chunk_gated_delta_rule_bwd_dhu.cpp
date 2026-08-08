@@ -1,21 +1,53 @@
 /**
- * Copyright (c) 2025 Tianjin University, Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * the BSD 3-Clause License (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- */
+ * Copyright (c) 2026 Tianjin University, Ltd.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * the BSD 3-Clause License (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ */
 
-#include "opdev/op_log.h"
-#include "opdev/op_dfx.h"
-#include "opdev/make_op_executor.h"
 #include "chunk_gated_delta_rule_bwd_dhu.h"
+
+#include <initializer_list>
+
+#include "opdev/make_op_executor.h"
+#include "opdev/op_dfx.h"
+#include "opdev/op_log.h"
 
 using namespace op;
 
 namespace l0op {
+
 OP_TYPE_REGISTER(ChunkGatedDeltaRuleBwdDhu);
+
+namespace {
+
+op::Shape MakeShape(std::initializer_list<int64_t> dims)
+{
+    op::Shape shape;
+    for (int64_t dim : dims) {
+        shape.AppendDim(dim);
+    }
+    return shape;
+}
+
+const aclTensor *ConvertIntArrayToTensor(const aclIntArray *array, aclOpExecutor *executor)
+{
+    if (array == nullptr) {
+        return nullptr;
+    }
+    const aclTensor *tensor = executor->ConvertToTensor(array, DataType::DT_INT64);
+    if (tensor == nullptr) {
+        return nullptr;
+    }
+    const_cast<aclTensor *>(tensor)->SetStorageFormat(Format::FORMAT_ND);
+    const_cast<aclTensor *>(tensor)->SetViewFormat(Format::FORMAT_ND);
+    const_cast<aclTensor *>(tensor)->SetOriginalFormat(Format::FORMAT_ND);
+    return tensor;
+}
+
+} // namespace
 
 const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
     const aclTensor *q,
@@ -36,39 +68,30 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
     const aclTensor *dv2Out,
     aclOpExecutor *executor)
 {
-    L0_DFX(ChunkGatedDeltaRuleBwdDhu, q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional, cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, dhOut, dh0Out, dv2Out);
-    
-    const aclTensor *actualCuSeqQLen = nullptr;
-    if (cuSeqlensOptional != nullptr) {
-        actualCuSeqQLen = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
-        const_cast<aclTensor *>(actualCuSeqQLen)->SetStorageFormat(Format::FORMAT_ND);
-        const_cast<aclTensor *>(actualCuSeqQLen)->SetViewFormat(Format::FORMAT_ND);
-        const_cast<aclTensor *>(actualCuSeqQLen)->SetOriginalFormat(Format::FORMAT_ND);
-    } else {
-        actualCuSeqQLen = nullptr;
+    L0_DFX(ChunkGatedDeltaRuleBwdDhu, q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional,
+           cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, dhOut, dh0Out, dv2Out);
+
+    const aclTensor *actualCuSeqlens = ConvertIntArrayToTensor(cuSeqlensOptional, executor);
+    const aclTensor *actualChunkIndices = ConvertIntArrayToTensor(chunkIndicesOptional, executor);
+    if ((cuSeqlensOptional != nullptr && actualCuSeqlens == nullptr) ||
+        (chunkIndicesOptional != nullptr && actualChunkIndices == nullptr)) {
+        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert optional int array to tensor failed.");
+        return {nullptr, nullptr, nullptr};
     }
 
-    const aclTensor *actualChunkIndices = nullptr;
-    if (chunkIndicesOptional != nullptr) {
-        actualChunkIndices = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
-        const_cast<aclTensor *>(actualChunkIndices)->SetStorageFormat(Format::FORMAT_ND);
-        const_cast<aclTensor *>(actualChunkIndices)->SetViewFormat(Format::FORMAT_ND);
-        const_cast<aclTensor *>(actualChunkIndices)->SetOriginalFormat(Format::FORMAT_ND);
-    } else {
-        actualChunkIndices = nullptr;
+    const aclTensor *dh0OutKernel = dh0Out;
+    if (dh0OutKernel == nullptr) {
+        dh0OutKernel = executor->AllocTensor(MakeShape({0}), dhOut->GetDataType(), Format::FORMAT_ND);
+        if (dh0OutKernel == nullptr) {
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Alloc dh0 placeholder failed.");
+            return {nullptr, nullptr, nullptr};
+        }
     }
 
-    const aclTensor* dh0OutKernel = nullptr;
-    if (dh0Out == nullptr) {
-        op::Shape zeroShape;
-        zeroShape.AppendDim(0);
-        dh0OutKernel = executor->AllocTensor(zeroShape, q->GetDataType(), op::Format::FORMAT_ND);
-    } else {
-        dh0OutKernel = dh0Out;
-    }
-
-    auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkGatedDeltaRuleBwdDhu,
-        OP_INPUT(q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional, actualCuSeqQLen, actualChunkIndices),
+    auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
+        ChunkGatedDeltaRuleBwdDhu,
+        OP_INPUT(q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional,
+                 actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(dhOut, dh0OutKernel, dv2Out),
         OP_ATTR(scale, chunkSize));
     if (ret != ACLNN_SUCCESS) {
