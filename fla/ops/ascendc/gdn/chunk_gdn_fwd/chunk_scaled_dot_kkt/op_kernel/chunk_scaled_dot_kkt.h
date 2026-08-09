@@ -495,7 +495,6 @@ private:
                 const int64_t row = rowBase + lane;
                 ComputeEpilogueRow(scoreTileLocal, outTileLocal, row, gateLocal[lane * btAlign_]);
             }
-            PipeBarrier<PIPE_V>();
         }
         CopyOutTile(outBaseOffset, outRowStride, outTileLocal, meta.valid);
 
@@ -538,7 +537,6 @@ private:
                 const int64_t row = rowBase + lane;
                 ComputeEpilogueRow(scoreTileLocal, outTileLocal, row, gateLocal[lane * btAlign_]);
             }
-            PipeBarrier<PIPE_V>();
         }
         CopyOutRowBlocks(outBaseOffset, outRowStride, outTileLocal, meta.valid, subBlockIdx, subBlockNum);
 
@@ -586,7 +584,6 @@ private:
                 const int64_t localRow = row - rowBegin;
                 ComputeEpilogueBlockRow(scoreTileLocal, outTileLocal, localRow, row, gateLocal[lane * btAlign_]);
             }
-            PipeBarrier<PIPE_V>();
         }
         CopyOutScoreBlockRows(outBaseOffset, outRowStride, outTileLocal, rowBegin, rowCount, subBlockIdx,
                               subBlockNum);
@@ -790,6 +787,7 @@ private:
         if (row > 0) {
             const int32_t prefix = static_cast<int32_t>(row);
             Mul(outRowLocal, scoreRowLocal, gateRowLocal, prefix);
+            PipeBarrier<PIPE_V>();
         }
     }
 
@@ -804,6 +802,7 @@ private:
         if (globalRow > 0) {
             const int32_t prefix = static_cast<int32_t>(globalRow);
             Mul(outRowLocal, scoreRowLocal, gateRowLocal, prefix);
+            PipeBarrier<PIPE_V>();
         }
     }
 
