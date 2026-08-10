@@ -27,6 +27,7 @@ constexpr int64_t FLOAT_ALIGN_ELEMS = UB_ALIGN_BYTES / static_cast<int64_t>(size
 constexpr int64_t FAST_CHUNK_BUFFER_LIMIT = 160 * 1024;
 constexpr int64_t FAST_CHUNK_SCAN_BUFFER_NUM = 2;
 constexpr int64_t FAST_HEAD_FIRST_PIPE_BUFFER_NUM = 4;
+constexpr int64_t FAST_HEAD_FIRST_CUMSUM_BUFFER_NUM = FAST_HEAD_FIRST_PIPE_BUFFER_NUM + 1;
 constexpr int64_t FAST_HEAD_FIRST_MAX_CHUNK_GROUP_SIZE = 8;
 constexpr int64_t FAST_HEAD_FIRST_RANGE_GROUPS = 1;
 constexpr int64_t FP32_REPEAT_ELEMS = 64;
@@ -58,7 +59,15 @@ __aicore__ inline int64_t AlignDownInt64(int64_t value, int64_t align)
     return (value / align) * align;
 }
 
-__aicore__ inline int64_t GetFastHeadFirstChunkGroupSize(int64_t chunkSize, int64_t head)
+__aicore__ inline int64_t GetFastBufferLimit(const ChunkLocalCumsumTilingData *tiling)
+{
+    if (tiling != nullptr && tiling->fastBufferLimit > 0) {
+        return tiling->fastBufferLimit;
+    }
+    return FAST_CHUNK_BUFFER_LIMIT;
+}
+
+__aicore__ inline int64_t GetFastHeadFirstChunkGroupSize(int64_t chunkSize, int64_t head, int64_t fastBufferLimit)
 {
     if (chunkSize % FLOAT_ALIGN_ELEMS != 0) {
         return 1;
@@ -67,8 +76,8 @@ __aicore__ inline int64_t GetFastHeadFirstChunkGroupSize(int64_t chunkSize, int6
     if (hLen < 1) {
         hLen = 1;
     }
-    int64_t groupSize = FAST_CHUNK_BUFFER_LIMIT /
-                        (FAST_HEAD_FIRST_PIPE_BUFFER_NUM * hLen * chunkSize *
+    int64_t groupSize = fastBufferLimit /
+                        (FAST_HEAD_FIRST_CUMSUM_BUFFER_NUM * hLen * chunkSize *
                          static_cast<int64_t>(sizeof(float)));
     int64_t maxGroupSize = 2;
     if (chunkSize <= 16) {
@@ -77,6 +86,15 @@ __aicore__ inline int64_t GetFastHeadFirstChunkGroupSize(int64_t chunkSize, int6
         maxGroupSize = 4;
     }
     return MinInt64(maxGroupSize, groupSize < 1 ? 1 : groupSize);
+}
+
+__aicore__ inline int64_t GetCumSumWorkspaceBytes(int64_t inner)
+{
+    constexpr int64_t cumsumWorkspaceRows = 16;
+    constexpr int64_t cumsumWorkspacePlanes = 2;
+    return AlignUpInt64(cumsumWorkspaceRows * inner * cumsumWorkspacePlanes *
+                            static_cast<int64_t>(sizeof(float)),
+                        UB_ALIGN_BYTES);
 }
 
 template <typename GType, typename OType>
@@ -94,11 +112,15 @@ public:
             cuSeqlensGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cuSeqlens));
             chunkIndicesGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(chunkIndices), tiling_->numBlocks * 2);
         }
-        optimizedHeadFirst_ = tiling_->optimizedHeadFirst != 0;
+        enableCumSumFastPath_ = tiling_->enableCumSumFastPath != 0;
+        optimizedHeadFirst_ = (tiling_->optimizedHeadFirst != 0) && enableCumSumFastPath_;
         headFirstPipeline_ = optimizedHeadFirst_;
-        fastChunkGroupSize_ = headFirstPipeline_ ? GetFastHeadFirstChunkGroupSize(tiling_->chunkSize, tiling_->h) : 1;
-        int64_t fastBufferNum = headFirstPipeline_ ? FAST_HEAD_FIRST_PIPE_BUFFER_NUM : FAST_CHUNK_SCAN_BUFFER_NUM;
-        int64_t maxFastHLen = FAST_CHUNK_BUFFER_LIMIT /
+        const int64_t fastBufferLimit = GetFastBufferLimit(tiling_);
+        fastChunkGroupSize_ = headFirstPipeline_
+                                  ? GetFastHeadFirstChunkGroupSize(tiling_->chunkSize, tiling_->h, fastBufferLimit)
+                                  : 1;
+        int64_t fastBufferNum = headFirstPipeline_ ? FAST_HEAD_FIRST_CUMSUM_BUFFER_NUM : FAST_CHUNK_SCAN_BUFFER_NUM;
+        int64_t maxFastHLen = fastBufferLimit /
                               (fastBufferNum * fastChunkGroupSize_ * tiling_->chunkSize *
                                static_cast<int64_t>(sizeof(float)));
         if (optimizedHeadFirst_) {
@@ -116,8 +138,9 @@ public:
         // The log-step scan needs two chunk buffers; shrink only the fast H tile, not the whole fast path.
         bool alignedFastPath = optimizedHeadFirst_ || (((tiling_->h & (FLOAT_ALIGN_ELEMS - 1)) == 0) &&
                                                        (fastHTileSize_ >= FLOAT_ALIGN_ELEMS));
-        bool scalarHeadFastPath = !optimizedHeadFirst_ && (tiling_->headFirst != 0) &&
+        bool scalarHeadFastPath = enableCumSumFastPath_ && !optimizedHeadFirst_ && (tiling_->headFirst != 0) &&
                                   (tiling_->h == 1) && (tiling_->reverse == 0);
+        cumsumFastPath_ = optimizedHeadFirst_ || scalarHeadFastPath;
         chunkFastPath_ = std::is_same<GType, float>::value && std::is_same<OType, float>::value &&
                          (alignedFastPath || scalarHeadFastPath);
         if (chunkFastPath_) {
@@ -136,6 +159,12 @@ public:
             } else {
                 pipe_.InitBuffer(chunkQueue_, BUFFER_NUM, chunkBufferBytes);
                 pipe_.InitBuffer(scanBuf_, chunkBufferBytes);
+            }
+            if (cumsumFastPath_) {
+                int64_t maxCumSumInner = AlignUpInt64(tiling_->chunkSize * fastChunkGroupSize_, FLOAT_ALIGN_ELEMS);
+                pipe_.InitBuffer(cumsumLastRowBuf_,
+                                 AlignUpInt64(maxCumSumInner * static_cast<int64_t>(sizeof(float)), UB_ALIGN_BYTES));
+                pipe_.InitBuffer(cumsumWorkspaceBuf_, GetCumSumWorkspaceBytes(maxCumSumInner));
             }
         } else {
             int64_t rowBufferBytes = AlignUpInt64(H_TILE_SIZE * static_cast<int64_t>(sizeof(float)), UB_ALIGN_BYTES);
@@ -511,7 +540,9 @@ private:
                                                  int64_t outer, int64_t inner, int64_t elementCount)
     {
         CumSumInfo cumSumInfo{static_cast<uint32_t>(outer), static_cast<uint32_t>(inner)};
-        CumSum<float>(dstLocal, srcLocal, srcLocal, cumSumInfo);
+        LocalTensor<float> lastRowLocal = cumsumLastRowBuf_.Get<float>();
+        LocalTensor<uint8_t> workspaceLocal = cumsumWorkspaceBuf_.Get<uint8_t>();
+        CumSum<float>(dstLocal, lastRowLocal, srcLocal, workspaceLocal, cumSumInfo);
         PipeBarrier<PIPE_V>();
         ApplyScaleInplace(dstLocal, elementCount);
     }
@@ -752,6 +783,8 @@ private:
     TQue<QuePosition::VECOUT, BUFFER_NUM> outQueue_;
     TQue<QuePosition::VECOUT, BUFFER_NUM> outCastQueue_;
     TBuf<> scanBuf_;
+    TBuf<> cumsumLastRowBuf_;
+    TBuf<> cumsumWorkspaceBuf_;
     TBuf<> accBuf_;
     GlobalTensor<GType> gGm_;
     GlobalTensor<OType> outGm_;
@@ -761,6 +794,8 @@ private:
     int64_t fastHTileSize_ = H_TILE_SIZE;
     int64_t fastChunkGroupSize_ = 1;
     bool chunkFastPath_ = false;
+    bool cumsumFastPath_ = false;
+    bool enableCumSumFastPath_ = false;
     bool optimizedHeadFirst_ = false;
     bool headFirstPipeline_ = false;
     TEventID vToMte3Event_;

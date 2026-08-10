@@ -5,10 +5,10 @@ The custom op covers the gk=None fixed-length path and uses head-first layout:
   k    : [B, Hk, T, K]
   g    : [B, Hv, T]
   beta : [B, Hv, T]
-  out  : [B, Hk, T, BT]
+  out  : [B, Hv, T, BT]
 
-For this KKT op, GVA inputs may provide g/beta with Hv heads while A remains
-key-head aligned. The dumped GPU path uses the first Hk g/beta heads.
+For this KKT op, GVA inputs provide g/beta with Hv heads while K remains
+key-head aligned. A is value-head aligned and uses hk = hv // (Hv // Hk).
 
 Fixed-length mode omits cu_seqlens/chunk_indices. Varlen mode passes flat
 chunk_indices as [seq0, chunk0, seq1, chunk1, ...].
@@ -80,21 +80,25 @@ def chunk_scaled_dot_kkt_reference(
             f"got g={tuple(g.shape)}, beta={tuple(beta.shape)}, k={tuple(k.shape)}"
         )
 
-    out = torch.zeros((B, Hk, T, chunk_size), dtype=torch.float32)
+    head_ratio = Hv // Hk
+    out = torch.zeros((B, Hv, T, chunk_size), dtype=torch.float32)
     k_f = k.float()
     g_f = g.float()
     beta_f = beta.float()
 
     for b in range(B):
-        for h in range(Hk):
+        for hv in range(Hv):
+            hk = hv // head_ratio
             for start, end in iter_chunk_ranges(T, chunk_size, cu_seqlens, chunk_indices):
                 valid = end - start
-                k_block = k_f[b, h, start:end, :]
+                k_block = k_f[b, hk, start:end, :]
                 score = k_block @ k_block.T
-                gate = torch.exp(torch.clamp(g_f[b, h, start:end, None] - g_f[b, h, None, start:end], -50.0, 50.0))
-                scaled = score * gate * beta_f[b, h, start:end, None]
+                gate = torch.exp(
+                    torch.clamp(g_f[b, hv, start:end, None] - g_f[b, hv, None, start:end], -50.0, 50.0)
+                )
+                scaled = score * gate * beta_f[b, hv, start:end, None]
                 mask = torch.tril(torch.ones((valid, valid), dtype=torch.bool), diagonal=-1)
-                out[b, h, start:end, :valid] = torch.where(mask, scaled, torch.zeros_like(scaled))
+                out[b, hv, start:end, :valid] = torch.where(mask, scaled, torch.zeros_like(scaled))
 
     return out
 
@@ -189,13 +193,13 @@ def run_case(case: Case, seed: int, cpu_only: bool) -> bool:
 
     if cpu_only:
         max_zero = _check_zero_regions(golden, case)
-        passed = golden.shape == (case.B, case.Hk, case.T, case.BT) and max_zero <= ZERO_TOL
+        passed = golden.shape == (case.B, case.Hv, case.T, case.BT) and max_zero <= ZERO_TOL
         cu_seqlens, chunk_indices = make_varlen_metadata(case.T, case.BT)
         varlen_golden = chunk_scaled_dot_kkt_reference(k, g, beta, case.BT, cu_seqlens, chunk_indices)
         varlen_max_zero = _check_zero_regions(varlen_golden, case, cu_seqlens, chunk_indices)
         passed = (
             passed
-            and varlen_golden.shape == (case.B, case.Hk, case.T, case.BT)
+            and varlen_golden.shape == (case.B, case.Hv, case.T, case.BT)
             and varlen_max_zero <= ZERO_TOL
         )
         print(
@@ -216,7 +220,7 @@ def run_case(case: Case, seed: int, cpu_only: bool) -> bool:
     max_abs = diff.max().item()
     mean_abs = diff.mean().item()
     max_zero = _check_zero_regions(out.float(), case)
-    shape_ok = tuple(out.shape) == (case.B, case.Hk, case.T, case.BT)
+    shape_ok = tuple(out.shape) == (case.B, case.Hv, case.T, case.BT)
     dtype_ok = out.dtype == torch.float32
     passed = shape_ok and dtype_ok and max_abs <= MAX_ABS_TOL and mean_abs <= MEAN_ABS_TOL and max_zero <= ZERO_TOL
     print(
@@ -241,7 +245,7 @@ def run_case(case: Case, seed: int, cpu_only: bool) -> bool:
     varlen_mean_abs = varlen_diff.mean().item()
     varlen_max_zero = _check_zero_regions(varlen_out.float(), case, cu_seqlens, chunk_indices)
     varlen_passed = (
-        tuple(varlen_out.shape) == (case.B, case.Hk, case.T, case.BT)
+        tuple(varlen_out.shape) == (case.B, case.Hv, case.T, case.BT)
         and varlen_out.dtype == torch.float32
         and varlen_max_abs <= MAX_ABS_TOL
         and varlen_mean_abs <= MEAN_ABS_TOL

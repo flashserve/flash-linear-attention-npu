@@ -38,7 +38,9 @@ constexpr size_t ATTR_OUTPUT_DTYPE_INDEX = 4;
 constexpr uint32_t SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
 constexpr int64_t H_TILE_SIZE = 512;
 constexpr int64_t FAST_CHUNK_BUFFER_LIMIT = 160 * 1024;
+constexpr int64_t FAST_CHUNK_BUFFER_RESERVE = 32 * 1024;
 constexpr int64_t FAST_HEAD_FIRST_PIPE_BUFFER_NUM = 4;
+constexpr int64_t FAST_HEAD_FIRST_CUMSUM_BUFFER_NUM = FAST_HEAD_FIRST_PIPE_BUFFER_NUM + 1;
 constexpr int64_t FAST_HEAD_FIRST_MAX_CHUNK_GROUP_SIZE = 8;
 constexpr int64_t FAST_HEAD_FIRST_RANGE_GROUPS = 1;
 constexpr int64_t FLOAT_ALIGN_ELEMS = 8;
@@ -70,14 +72,30 @@ static int64_t CeilDiv(int64_t a, int64_t b)
     return (a + b - 1) / b;
 }
 
-static int64_t GetFastHeadFirstChunkGroupSize(int64_t chunkSize, int64_t head)
+static bool IsCumSumFastPathSocSupported(platform_ascendc::SocVersion socVersion)
+{
+    return socVersion == platform_ascendc::SocVersion::ASCEND910B ||
+           socVersion == platform_ascendc::SocVersion::ASCEND910_93 ||
+           socVersion == platform_ascendc::SocVersion::ASCEND950;
+}
+
+static int64_t GetFastBufferLimit(int64_t ubSize)
+{
+    if (ubSize <= 0) {
+        return FAST_CHUNK_BUFFER_LIMIT;
+    }
+    int64_t usable = ubSize > FAST_CHUNK_BUFFER_RESERVE ? ubSize - FAST_CHUNK_BUFFER_RESERVE : ubSize / 2;
+    return std::max<int64_t>(1, std::min<int64_t>(FAST_CHUNK_BUFFER_LIMIT, usable));
+}
+
+static int64_t GetFastHeadFirstChunkGroupSize(int64_t chunkSize, int64_t head, int64_t fastBufferLimit)
 {
     if (chunkSize % FLOAT_ALIGN_ELEMS != 0) {
         return 1;
     }
     int64_t hLen = std::max<int64_t>(1, std::min<int64_t>(H_TILE_SIZE, head));
-    int64_t groupSize = FAST_CHUNK_BUFFER_LIMIT /
-                        (FAST_HEAD_FIRST_PIPE_BUFFER_NUM * hLen * chunkSize * static_cast<int64_t>(sizeof(float)));
+    int64_t groupSize = fastBufferLimit /
+                        (FAST_HEAD_FIRST_CUMSUM_BUFFER_NUM * hLen * chunkSize * static_cast<int64_t>(sizeof(float)));
     int64_t maxGroupSize = 2;
     if (chunkSize <= 16) {
         maxGroupSize = FAST_HEAD_FIRST_MAX_CHUNK_GROUP_SIZE;
@@ -275,19 +293,23 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     int64_t aivNum = ascendcPlatform.GetCoreNumAiv();
+    uint64_t ubSize = 0;
+    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
+    bool enableCumSumFastPath = IsCumSumFastPathSocSupported(ascendcPlatform.GetSocVersion());
+    int64_t fastBufferLimit = GetFastBufferLimit(static_cast<int64_t>(ubSize));
     OP_CHECK_IF(aivNum <= 0,
                 OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "aivNum is invalid."),
                 return ge::GRAPH_FAILED);
-    bool optimizedHeadFirst = (inDtype == ge::DT_FLOAT) && (expectedOutDtype == ge::DT_FLOAT) &&
+    bool optimizedHeadFirst = enableCumSumFastPath && (inDtype == ge::DT_FLOAT) && (expectedOutDtype == ge::DT_FLOAT) &&
                               *headFirstPtr && !*reversePtr;
     int64_t tilingB = optimizedHeadFirst ? batch : outer;
     int64_t tilingH = optimizedHeadFirst ? head : tail;
     int64_t hTileSize = H_TILE_SIZE;
     int64_t chunkGroupSize = 1;
     if (optimizedHeadFirst) {
-        chunkGroupSize = GetFastHeadFirstChunkGroupSize(chunkSize, tilingH);
-        int64_t bufferNum = FAST_HEAD_FIRST_PIPE_BUFFER_NUM;
-        int64_t maxFastHLen = FAST_CHUNK_BUFFER_LIMIT /
+        chunkGroupSize = GetFastHeadFirstChunkGroupSize(chunkSize, tilingH, fastBufferLimit);
+        int64_t bufferNum = FAST_HEAD_FIRST_CUMSUM_BUFFER_NUM;
+        int64_t maxFastHLen = fastBufferLimit /
                               (bufferNum * chunkGroupSize * chunkSize * static_cast<int64_t>(sizeof(float)));
         hTileSize = std::max<int64_t>(1, std::min<int64_t>(std::min<int64_t>(H_TILE_SIZE, tilingH), maxFastHLen));
     }
@@ -314,6 +336,8 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     tiling->reverse = *reversePtr ? 1 : 0;
     tiling->headFirst = *headFirstPtr ? 1 : 0;
     tiling->optimizedHeadFirst = optimizedHeadFirst ? 1 : 0;
+    tiling->enableCumSumFastPath = enableCumSumFastPath ? 1 : 0;
+    tiling->fastBufferLimit = fastBufferLimit;
     tiling->inputDtype = ToTilingDataType(inDtype);
     tiling->outputDtype = ToTilingDataType(outDtype);
     tiling->scale = *scalePtr;

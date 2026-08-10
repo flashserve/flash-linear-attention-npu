@@ -38,6 +38,7 @@ constexpr int32_t FP32_BLOCK_ELEMS = 8;
 constexpr int32_t FP32_REPEAT_ELEMS = 64;
 constexpr int32_t BRCB_ROWS = 8;
 constexpr int32_t SCORE_ROW_BLOCK = 64;
+constexpr int32_t CATLASS_SCORE_MIN_BT = 32;
 constexpr int32_t UB_ALIGN_BYTES = 32;
 constexpr uint8_t SCORE_DONE_FLAG0 = 2;
 constexpr uint8_t SCORE_DONE_FLAG1 = 3;
@@ -47,7 +48,11 @@ constexpr MatmulConfig CHUNK_SCALED_DOT_KKT_MM_CFG = GetNormalConfig(true);
 
 using CType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, float>;
 using BiasType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, float>;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+using KktArchTag = Catlass::Arch::Ascend950;
+#else
 using KktArchTag = Catlass::Arch::AtlasA2;
+#endif
 using KktScoreDispatchPolicy = Catlass::Gemm::MmadPingpongTlaMulti<KktArchTag, true, false>;
 using KktInt128 = tla::Int<128>;
 
@@ -56,6 +61,7 @@ class ChunkScaledDotKkt {
     struct TaskMeta {
         int64_t b = 0;
         int64_t h = 0;
+        int64_t hv = 0;
         int64_t chunk = 0;
         int64_t rowStart = 0;
         int64_t valid = 0;
@@ -109,7 +115,7 @@ public:
         kGm.SetGlobalBuffer((__gm__ KType *)k, B_ * Hk_ * T_ * K_);
         gGm.SetGlobalBuffer((__gm__ float *)g, B_ * Hv_ * T_);
         betaGm.SetGlobalBuffer((__gm__ float *)beta, B_ * Hv_ * T_);
-        aGm.SetGlobalBuffer((__gm__ float *)a, B_ * Hk_ * T_ * BT_);
+        aGm.SetGlobalBuffer((__gm__ float *)a, B_ * Hv_ * T_ * BT_);
         scoreGm.SetGlobalBuffer((__gm__ float *)scoreWorkspace,
                                 usedAivNum_ * SCORE_WORKSPACE_BUFFER_NUM * SCORE_WORKSPACE_HEAD_BATCH * BT_ * BT_);
         if (isVarlen_ != 0) {
@@ -159,6 +165,7 @@ public:
             if (chunkMeta.valid <= 0) {
                 continue;
             }
+            // Compute each key-head score once, then write all value heads in that key group.
             for (int64_t h = 0; h < Hk_; ++h) {
                 TaskMeta meta = chunkMeta;
                 meta.h = h;
@@ -166,7 +173,7 @@ public:
                 LaunchScoreTask(meta, scoreOffset, cachedScoreValid);
                 scoreUsed = true;
                 if (pendingEpilogue) {
-                    ComputeEpilogueTask(pendingMeta, pendingScoreOffset);
+                    ComputeEpilogueTaskHvGroup(pendingMeta, pendingScoreOffset);
                 }
                 WaitScoreTask();
                 pendingMeta = meta;
@@ -176,7 +183,7 @@ public:
             }
         }
         if (pendingEpilogue) {
-            ComputeEpilogueTask(pendingMeta, pendingScoreOffset);
+            ComputeEpilogueTaskHvGroup(pendingMeta, pendingScoreOffset);
         }
         if (scoreUsed) {
             scoreMatmul.End();
@@ -204,7 +211,7 @@ public:
         if constexpr (CHUNK_KEY != 0 && CHUNK_KEY != 1 && CHUNK_KEY != 2 && CHUNK_KEY != 3) {
             return false;
         }
-        return useCatlassScore_ != 0 && T_ > 0 && BT_ > 0 && K_ > 0 && (K_ % 16) == 0;
+        return useCatlassScore_ != 0 && T_ > 0 && BT_ >= CATLASS_SCORE_MIN_BT && K_ > 0 && (K_ % 16) == 0;
     }
 
     matmul::Matmul<AType, BType, CType, BiasType, CHUNK_SCALED_DOT_KKT_MM_CFG> scoreMatmul;
@@ -219,6 +226,7 @@ private:
     {
         meta.chunk = chunkTask % NT_;
         meta.h = 0;
+        meta.hv = 0;
         meta.b = chunkTask / NT_;
         if (isVarlen_ != 0) {
             const int64_t seqId = chunkIndicesGm.GetValue(meta.chunk * 2);
@@ -242,6 +250,7 @@ private:
     {
         DecodeChunkTask(scoreTask / Hk_, meta);
         meta.h = scoreTask % Hk_;
+        meta.hv = meta.h * hvPerHk_;
     }
 
     __aicore__ inline int64_t GetScoreOffset(int64_t vecIdx, int64_t scoreSlot, int64_t headIdx) const
@@ -262,6 +271,11 @@ private:
         return blockRows <= 0 ? 0 : (BT_ + blockRows - 1) / blockRows;
     }
 
+    __aicore__ inline bool CanUseCatlassChunk(const TaskMeta &meta) const
+    {
+        return meta.valid == BT_;
+    }
+
     __aicore__ inline bool DecodeScoreBlockTask(int64_t scoreBlockTask,
                                                 TaskMeta &meta,
                                                 int64_t &rowBegin,
@@ -276,6 +290,9 @@ private:
         const int64_t scoreTask = scoreBlockTask / blocksPerScore;
         const int64_t rowBlockIdx = scoreBlockTask - scoreTask * blocksPerScore;
         DecodeScoreTask(scoreTask, meta);
+        if (!CanUseCatlassChunk(meta)) {
+            return false;
+        }
         rowBegin = rowBlockIdx * blockRows;
         rowCount = MinI64(blockRows, meta.valid - rowBegin);
         if (rowCount <= 0) {
@@ -318,7 +335,8 @@ private:
         if (cubeIdx >= usedAicNum_ || usedAicNum_ <= 0) {
             return;
         }
-        using L1TileShape = tla::Shape<tla::Int<BT_VALUE>, tla::Int<BT_VALUE>, KktInt128>;
+        constexpr int32_t ROW_BLOCK_VALUE = BT_VALUE < SCORE_ROW_BLOCK ? BT_VALUE : SCORE_ROW_BLOCK;
+        using L1TileShape = tla::Shape<tla::Int<ROW_BLOCK_VALUE>, tla::Int<BT_VALUE>, KktInt128>;
         using L0TileShape = L1TileShape;
         using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KktArchTag, KType, Catlass::layout::RowMajor, KType,
                                                                 Catlass::layout::ColumnMajor, float,
@@ -327,6 +345,7 @@ private:
                                                               KType, float, void, TileCopy>;
 
         int64_t scoreGroupSeq = 0;
+        // Score blocks are computed once per key head; epilogue fans each block out to hvPerHk value heads.
         const int64_t scoreBlockTaskNum = B_ * NT_ * Hk_ * ScoreRowBlockCount();
         const int64_t scoreGroupStride = usedAicNum_ * static_cast<int64_t>(SCORE_WORKSPACE_HEAD_BATCH);
         for (int64_t scoreGroupBase = cubeIdx; scoreGroupBase < scoreBlockTaskNum;
@@ -428,6 +447,7 @@ private:
             return;
         }
         int64_t scoreGroupSeq = 0;
+        // Score blocks are computed once per key head; epilogue fans each block out to hvPerHk value heads.
         const int64_t scoreBlockTaskNum = B_ * NT_ * Hk_ * ScoreRowBlockCount();
         const int64_t scoreGroupStride = usedAicNum_ * static_cast<int64_t>(SCORE_WORKSPACE_HEAD_BATCH);
         for (int64_t scoreGroupBase = cubeIdx; scoreGroupBase < scoreBlockTaskNum;
@@ -460,20 +480,49 @@ private:
                 continue;
             }
             const int64_t scoreOffset = GetScoreOffset(cubeIdx, scoreSlot, batchIdx);
-            ComputeEpilogueScoreBlockRows(meta, rowBegin, rowCount, colCount, scoreOffset, subBlockIdx,
+            ComputeEpilogueScoreBlockRowsHvGroup(meta, rowBegin, rowCount, colCount, scoreOffset, subBlockIdx,
+                                                 subBlockNum);
+        }
+    }
+
+    __aicore__ inline void ComputeEpilogueTaskHvGroup(const TaskMeta &scoreMeta, int64_t scoreBaseOffset)
+    {
+        const int64_t hvBegin = scoreMeta.h * hvPerHk_;
+        const int64_t hvEnd = MinI64(hvBegin + hvPerHk_, Hv_);
+        for (int64_t hv = hvBegin; hv < hvEnd; ++hv) {
+            TaskMeta meta = scoreMeta;
+            meta.hv = hv;
+            ComputeEpilogueTask(meta, scoreBaseOffset);
+        }
+    }
+
+    __aicore__ inline void ComputeEpilogueScoreBlockRowsHvGroup(const TaskMeta &scoreMeta,
+                                                                int64_t rowBegin,
+                                                                int64_t rowCount,
+                                                                int64_t colCount,
+                                                                int64_t scoreBaseOffset,
+                                                                int64_t subBlockIdx,
+                                                                int64_t subBlockNum)
+    {
+        const int64_t hvBegin = scoreMeta.h * hvPerHk_;
+        const int64_t hvEnd = MinI64(hvBegin + hvPerHk_, Hv_);
+        for (int64_t hv = hvBegin; hv < hvEnd; ++hv) {
+            TaskMeta meta = scoreMeta;
+            meta.hv = hv;
+            ComputeEpilogueScoreBlockRows(meta, rowBegin, rowCount, colCount, scoreBaseOffset, subBlockIdx,
                                           subBlockNum);
         }
     }
 
     __aicore__ inline void ComputeEpilogueTask(const TaskMeta &meta, int64_t scoreBaseOffset)
     {
-        const int64_t ghOffset = (meta.b * Hv_ + meta.h) * T_ + meta.rowStart;
+        const int64_t ghOffset = (meta.b * Hv_ + meta.hv) * T_ + meta.rowStart;
         CopyTaskVector(gGm, ghOffset, gQueue_, meta.valid);
         CopyTaskVector(betaGm, ghOffset, betaQueue_, meta.valid);
         LocalTensor<float> gLocal = gQueue_.template DeQue<float>();
         LocalTensor<float> betaLocal = betaQueue_.template DeQue<float>();
 
-        const int64_t outBaseOffset = ((meta.b * Hk_ + meta.h) * T_ + meta.rowStart) * BT_;
+        const int64_t outBaseOffset = ((meta.b * Hv_ + meta.hv) * T_ + meta.rowStart) * BT_;
         const int64_t outRowStride = BT_;
         LocalTensor<float> scoreTileLocal = scoreTileBuf_.Get<float>();
         LocalTensor<float> outTileLocal = outTileBuf_.Get<float>();
@@ -507,13 +556,13 @@ private:
                                                    int64_t subBlockIdx,
                                                    int64_t subBlockNum)
     {
-        const int64_t ghOffset = (meta.b * Hv_ + meta.h) * T_ + meta.rowStart;
+        const int64_t ghOffset = (meta.b * Hv_ + meta.hv) * T_ + meta.rowStart;
         CopyTaskVector(gGm, ghOffset, gQueue_, meta.valid);
         CopyTaskVector(betaGm, ghOffset, betaQueue_, meta.valid);
         LocalTensor<float> gLocal = gQueue_.template DeQue<float>();
         LocalTensor<float> betaLocal = betaQueue_.template DeQue<float>();
 
-        const int64_t outBaseOffset = ((meta.b * Hk_ + meta.h) * T_ + meta.rowStart) * BT_;
+        const int64_t outBaseOffset = ((meta.b * Hv_ + meta.hv) * T_ + meta.rowStart) * BT_;
         const int64_t outRowStride = BT_;
         LocalTensor<float> scoreTileLocal = scoreTileBuf_.Get<float>();
         LocalTensor<float> outTileLocal = outTileBuf_.Get<float>();
@@ -552,13 +601,13 @@ private:
                                                          int64_t subBlockIdx,
                                                          int64_t subBlockNum)
     {
-        const int64_t ghOffset = (meta.b * Hv_ + meta.h) * T_ + meta.rowStart;
+        const int64_t ghOffset = (meta.b * Hv_ + meta.hv) * T_ + meta.rowStart;
         CopyTaskVector(gGm, ghOffset, gQueue_, meta.valid);
         CopyTaskVector(betaGm, ghOffset, betaQueue_, meta.valid);
         LocalTensor<float> gLocal = gQueue_.template DeQue<float>();
         LocalTensor<float> betaLocal = betaQueue_.template DeQue<float>();
 
-        const int64_t outBaseOffset = ((meta.b * Hk_ + meta.h) * T_ + meta.rowStart) * BT_;
+        const int64_t outBaseOffset = ((meta.b * Hv_ + meta.hv) * T_ + meta.rowStart) * BT_;
         const int64_t outRowStride = BT_;
         LocalTensor<float> scoreTileLocal = scoreTileBuf_.Get<float>();
         LocalTensor<float> outTileLocal = outTileBuf_.Get<float>();

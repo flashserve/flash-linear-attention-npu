@@ -781,7 +781,7 @@ at::Tensor npu_chunk_scaled_dot_kkt(
     at::Tensor k_contig = k.contiguous();
     at::Tensor g_contig = g.contiguous();
     at::Tensor beta_contig = beta.contiguous();
-    at::Tensor A = at::empty({B, Hk, T, chunk_size}, k.options().dtype(c10::ScalarType::Float));
+    at::Tensor A = at::empty({B, Hv, T, chunk_size}, k.options().dtype(c10::ScalarType::Float));
 
     EXEC_NPU_CMD_EXT(
         aclnnChunkScaledDotKkt,
