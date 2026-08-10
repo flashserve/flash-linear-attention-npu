@@ -25,6 +25,7 @@ struct ChunkLocalCumsumTilingData {
     int64_t chunkSize;
     int64_t blockT;
     int64_t numBlocks;
+    int64_t seqNum;
     int64_t totalElements;
     int64_t isVarlen;
     int64_t reverse;

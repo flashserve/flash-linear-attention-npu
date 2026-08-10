@@ -38,9 +38,9 @@ constexpr size_t ATTR_OUTPUT_DTYPE_INDEX = 4;
 constexpr uint32_t SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
 constexpr int64_t H_TILE_SIZE = 512;
 constexpr int64_t FAST_CHUNK_BUFFER_LIMIT = 160 * 1024;
-constexpr int64_t FAST_CHUNK_SCAN_BUFFER_NUM = 2;
 constexpr int64_t FAST_HEAD_FIRST_PIPE_BUFFER_NUM = 4;
-constexpr int64_t FAST_HEAD_FIRST_CHUNK_GROUP_SIZE = 2;
+constexpr int64_t FAST_HEAD_FIRST_MAX_CHUNK_GROUP_SIZE = 8;
+constexpr int64_t FAST_HEAD_FIRST_RANGE_GROUPS = 1;
 constexpr int64_t FLOAT_ALIGN_ELEMS = 8;
 constexpr int64_t DTYPE_FP32 = 0;
 constexpr int64_t DTYPE_FP16 = 1;
@@ -70,9 +70,21 @@ static int64_t CeilDiv(int64_t a, int64_t b)
     return (a + b - 1) / b;
 }
 
-static int64_t GetFastHeadFirstChunkGroupSize(int64_t chunkSize)
+static int64_t GetFastHeadFirstChunkGroupSize(int64_t chunkSize, int64_t head)
 {
-    return (chunkSize % FLOAT_ALIGN_ELEMS == 0) ? FAST_HEAD_FIRST_CHUNK_GROUP_SIZE : 1;
+    if (chunkSize % FLOAT_ALIGN_ELEMS != 0) {
+        return 1;
+    }
+    int64_t hLen = std::max<int64_t>(1, std::min<int64_t>(H_TILE_SIZE, head));
+    int64_t groupSize = FAST_CHUNK_BUFFER_LIMIT /
+                        (FAST_HEAD_FIRST_PIPE_BUFFER_NUM * hLen * chunkSize * static_cast<int64_t>(sizeof(float)));
+    int64_t maxGroupSize = 2;
+    if (chunkSize <= 16) {
+        maxGroupSize = FAST_HEAD_FIRST_MAX_CHUNK_GROUP_SIZE;
+    } else if (chunkSize <= 32) {
+        maxGroupSize = 4;
+    }
+    return std::max<int64_t>(1, std::min<int64_t>(maxGroupSize, groupSize));
 }
 
 static bool IsSupportedDataType(ge::DataType dtype)
@@ -221,7 +233,12 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
         cuSeqlensElements = cuSeqlensShapePtr->GetStorageShape().GetShapeSize();
     }
     bool isVarlen = cuSeqlensElements > 0;
+    int64_t seqNum = isVarlen ? cuSeqlensElements - 1 : batch;
     if (isVarlen) {
+        OP_CHECK_IF(seqNum <= 0,
+                    OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
+                                                "cu_seqlens must contain at least 2 elements when provided."),
+                    return ge::GRAPH_FAILED);
         auto chunkIndicesShapePtr = context->GetInputShape(CHUNK_INDICES_INDEX);
         OP_CHECK_IF(context->GetOptionalInputDesc(CHUNK_INDICES_INDEX) == nullptr,
                     OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
@@ -266,17 +283,20 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     int64_t tilingB = optimizedHeadFirst ? batch : outer;
     int64_t tilingH = optimizedHeadFirst ? head : tail;
     int64_t hTileSize = H_TILE_SIZE;
+    int64_t chunkGroupSize = 1;
     if (optimizedHeadFirst) {
-        bool headFirstPipeline = isVarlen;
-        int64_t chunkGroupSize = headFirstPipeline ? GetFastHeadFirstChunkGroupSize(chunkSize) : 1;
-        int64_t bufferNum = headFirstPipeline ? FAST_HEAD_FIRST_PIPE_BUFFER_NUM : FAST_CHUNK_SCAN_BUFFER_NUM;
+        chunkGroupSize = GetFastHeadFirstChunkGroupSize(chunkSize, tilingH);
+        int64_t bufferNum = FAST_HEAD_FIRST_PIPE_BUFFER_NUM;
         int64_t maxFastHLen = FAST_CHUNK_BUFFER_LIMIT /
                               (bufferNum * chunkGroupSize * chunkSize * static_cast<int64_t>(sizeof(float)));
         hTileSize = std::max<int64_t>(1, std::min<int64_t>(std::min<int64_t>(H_TILE_SIZE, tilingH), maxFastHLen));
     }
     int64_t hTileNum = CeilDiv(tilingH, hTileSize);
-    int64_t fixedTaskNum = tilingB * CeilDiv(t, chunkSize) * hTileNum;
-    int64_t varlenTaskNum = tilingB * nt * hTileNum;
+    int64_t fastRangeLen = chunkGroupSize * FAST_HEAD_FIRST_RANGE_GROUPS * chunkSize;
+    int64_t fixedRangeNum = optimizedHeadFirst ? CeilDiv(t, fastRangeLen) : CeilDiv(t, chunkSize);
+    int64_t fixedTaskNum = tilingB * fixedRangeNum * hTileNum;
+    bool varlenSeqTask = optimizedHeadFirst && isVarlen && (nt > seqNum);
+    int64_t varlenTaskNum = varlenSeqTask ? tilingB * seqNum * hTileNum : tilingB * nt * hTileNum;
     int64_t taskNum = isVarlen ? varlenTaskNum : fixedTaskNum;
     int64_t blockDim = std::max<int64_t>(1, std::min<int64_t>(aivNum, taskNum));
 
@@ -288,6 +308,7 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     tiling->chunkSize = chunkSize;
     tiling->blockT = blockT;
     tiling->numBlocks = nt;
+    tiling->seqNum = seqNum;
     tiling->totalElements = gShape.GetShapeSize();
     tiling->isVarlen = isVarlen ? 1 : 0;
     tiling->reverse = *reversePtr ? 1 : 0;

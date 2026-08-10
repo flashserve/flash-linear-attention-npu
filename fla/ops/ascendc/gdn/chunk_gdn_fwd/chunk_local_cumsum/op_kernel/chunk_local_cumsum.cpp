@@ -27,7 +27,8 @@ constexpr int64_t FLOAT_ALIGN_ELEMS = UB_ALIGN_BYTES / static_cast<int64_t>(size
 constexpr int64_t FAST_CHUNK_BUFFER_LIMIT = 160 * 1024;
 constexpr int64_t FAST_CHUNK_SCAN_BUFFER_NUM = 2;
 constexpr int64_t FAST_HEAD_FIRST_PIPE_BUFFER_NUM = 4;
-constexpr int64_t FAST_HEAD_FIRST_CHUNK_GROUP_SIZE = 2;
+constexpr int64_t FAST_HEAD_FIRST_MAX_CHUNK_GROUP_SIZE = 8;
+constexpr int64_t FAST_HEAD_FIRST_RANGE_GROUPS = 1;
 constexpr int64_t FP32_REPEAT_ELEMS = 64;
 constexpr int64_t VECTOR_MAX_REPEAT_TIMES = 255;
 constexpr int64_t VECTOR_MAX_CALC_ELEMS = FP32_REPEAT_ELEMS * VECTOR_MAX_REPEAT_TIMES;
@@ -57,9 +58,25 @@ __aicore__ inline int64_t AlignDownInt64(int64_t value, int64_t align)
     return (value / align) * align;
 }
 
-__aicore__ inline int64_t GetFastHeadFirstChunkGroupSize(int64_t chunkSize)
+__aicore__ inline int64_t GetFastHeadFirstChunkGroupSize(int64_t chunkSize, int64_t head)
 {
-    return (chunkSize % FLOAT_ALIGN_ELEMS == 0) ? FAST_HEAD_FIRST_CHUNK_GROUP_SIZE : 1;
+    if (chunkSize % FLOAT_ALIGN_ELEMS != 0) {
+        return 1;
+    }
+    int64_t hLen = MinInt64(H_TILE_SIZE, head);
+    if (hLen < 1) {
+        hLen = 1;
+    }
+    int64_t groupSize = FAST_CHUNK_BUFFER_LIMIT /
+                        (FAST_HEAD_FIRST_PIPE_BUFFER_NUM * hLen * chunkSize *
+                         static_cast<int64_t>(sizeof(float)));
+    int64_t maxGroupSize = 2;
+    if (chunkSize <= 16) {
+        maxGroupSize = FAST_HEAD_FIRST_MAX_CHUNK_GROUP_SIZE;
+    } else if (chunkSize <= 32) {
+        maxGroupSize = 4;
+    }
+    return MinInt64(maxGroupSize, groupSize < 1 ? 1 : groupSize);
 }
 
 template <typename GType, typename OType>
@@ -78,8 +95,8 @@ public:
             chunkIndicesGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(chunkIndices), tiling_->numBlocks * 2);
         }
         optimizedHeadFirst_ = tiling_->optimizedHeadFirst != 0;
-        headFirstPipeline_ = optimizedHeadFirst_ && (tiling_->isVarlen != 0);
-        fastChunkGroupSize_ = headFirstPipeline_ ? GetFastHeadFirstChunkGroupSize(tiling_->chunkSize) : 1;
+        headFirstPipeline_ = optimizedHeadFirst_;
+        fastChunkGroupSize_ = headFirstPipeline_ ? GetFastHeadFirstChunkGroupSize(tiling_->chunkSize, tiling_->h) : 1;
         int64_t fastBufferNum = headFirstPipeline_ ? FAST_HEAD_FIRST_PIPE_BUFFER_NUM : FAST_CHUNK_SCAN_BUFFER_NUM;
         int64_t maxFastHLen = FAST_CHUNK_BUFFER_LIMIT /
                               (fastBufferNum * fastChunkGroupSize_ * tiling_->chunkSize *
@@ -643,6 +660,12 @@ private:
     __aicore__ inline void ProcessChunkRange(int64_t baseOffset, int64_t tStart, int64_t tEnd,
                                              int64_t hStart, int64_t hLen)
     {
+        if constexpr (std::is_same<GType, float>::value && std::is_same<OType, float>::value) {
+            if (headFirstPipeline_) {
+                ProcessHeadFirstFastRange(baseOffset, tStart, tEnd, hStart, hLen);
+                return;
+            }
+        }
         for (int64_t chunkStart = tStart; chunkStart < tEnd; chunkStart += tiling_->chunkSize) {
             int64_t chunkEnd = GetChunkEnd(chunkStart, tEnd);
             ProcessSequenceChunkByPath(baseOffset, chunkStart, chunkEnd, hStart, hLen);
@@ -656,16 +679,19 @@ private:
         int64_t chunkNum = CeilDivInt64(tiling_->t, tiling_->chunkSize);
         int64_t hTileSize = chunkFastPath_ ? fastHTileSize_ : H_TILE_SIZE;
         int64_t hTileNum = CeilDivInt64(tiling_->h, hTileSize);
-        int64_t taskNum = tiling_->b * chunkNum * hTileNum;
+        int64_t rangeLen = fastChunkGroupSize_ * FAST_HEAD_FIRST_RANGE_GROUPS * tiling_->chunkSize;
+        int64_t rangeNum = headFirstPipeline_ ? CeilDivInt64(tiling_->t, rangeLen) : chunkNum;
+        int64_t taskNum = tiling_->b * rangeNum * hTileNum;
         for (int64_t taskIdx = blockIdx; taskIdx < taskNum; taskIdx += blockNum) {
             int64_t hTileIdx = taskIdx % hTileNum;
-            int64_t chunkLinear = taskIdx / hTileNum;
-            int64_t chunkIdx = chunkLinear % chunkNum;
-            int64_t bIdx = chunkLinear / chunkNum;
+            int64_t rangeLinear = taskIdx / hTileNum;
+            int64_t rangeIdx = rangeLinear % rangeNum;
+            int64_t bIdx = rangeLinear / rangeNum;
             int64_t hStart = hTileIdx * hTileSize;
             int64_t hLen = MinInt64(hTileSize, tiling_->h - hStart);
-            int64_t chunkStart = chunkIdx * tiling_->chunkSize;
-            int64_t chunkEnd = GetChunkEnd(chunkStart, tiling_->t);
+            int64_t chunkStart = headFirstPipeline_ ? rangeIdx * rangeLen : rangeIdx * tiling_->chunkSize;
+            int64_t chunkEnd = headFirstPipeline_ ? MinInt64(chunkStart + rangeLen, tiling_->t)
+                                                  : GetChunkEnd(chunkStart, tiling_->t);
             ProcessChunkRange(GetDenseBaseOffset(bIdx), chunkStart, chunkEnd, hStart, hLen);
         }
     }
@@ -676,6 +702,26 @@ private:
         int64_t blockIdx = static_cast<int64_t>(GetBlockIdx());
         int64_t hTileSize = chunkFastPath_ ? fastHTileSize_ : H_TILE_SIZE;
         int64_t hTileNum = CeilDivInt64(tiling_->h, hTileSize);
+        if constexpr (std::is_same<GType, float>::value && std::is_same<OType, float>::value) {
+            bool varlenSeqTask = headFirstPipeline_ && (tiling_->numBlocks > tiling_->seqNum);
+            if (varlenSeqTask) {
+                int64_t seqTaskNum = tiling_->b * tiling_->seqNum * hTileNum;
+                for (int64_t taskIdx = blockIdx; taskIdx < seqTaskNum; taskIdx += blockNum) {
+                    int64_t hTileIdx = taskIdx % hTileNum;
+                    int64_t hStart = hTileIdx * hTileSize;
+                    int64_t hLen = MinInt64(hTileSize, tiling_->h - hStart);
+                    int64_t seqLinear = taskIdx / hTileNum;
+                    int64_t seqId = seqLinear % tiling_->seqNum;
+                    int64_t outerIdx = seqLinear / tiling_->seqNum;
+                    int64_t bos = cuSeqlensGm_.GetValue(seqId);
+                    int64_t eos = cuSeqlensGm_.GetValue(seqId + 1);
+                    int64_t baseOffset = GetVarlenBaseOffset(outerIdx, bos);
+                    ProcessHeadFirstFastRange(baseOffset, 0, eos - bos, hStart, hLen);
+                }
+                return;
+            }
+        }
+
         int64_t taskNum = tiling_->b * tiling_->numBlocks * hTileNum;
         for (int64_t taskIdx = blockIdx; taskIdx < taskNum; taskIdx += blockNum) {
             int64_t hTileIdx = taskIdx % hTileNum;
@@ -692,12 +738,6 @@ private:
             int64_t tStart = localBlock * tiling_->blockT;
             int64_t tEnd = MinInt64(tStart + tiling_->blockT, seqLen);
             int64_t baseOffset = GetVarlenBaseOffset(outerIdx, bos);
-            if constexpr (std::is_same<GType, float>::value && std::is_same<OType, float>::value) {
-                if (headFirstPipeline_) {
-                    ProcessHeadFirstFastRange(baseOffset, tStart, tEnd, hStart, hLen);
-                    continue;
-                }
-            }
             ProcessChunkRange(baseOffset, tStart, tEnd, hStart, hLen);
         }
     }
