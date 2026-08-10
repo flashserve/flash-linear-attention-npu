@@ -511,17 +511,25 @@ public:
                         AscendC::LocalTensor<float> outFp32 = outFp32Buf_.template Get<float>();
                         uint32_t dvIdx = 0;
                         if constexpr (std::is_same<DT, bfloat16_t>::value) {
+                            const bool useGmDvState = V_ == 256 && chunkInfo.chunkLen > 64;
+                            if (useGmDvState) {
+                                const uint32_t dvStateIdx = CopyInRows(
+                                    workspaceGm_, qInputBuf_[curQInputPingPong_], dvStateBase + rowElems, elems);
+                                CastInputRows(outFp32, qInputBuf_[dvStateIdx], elems, dvStateIdx);
+                                AscendC::PipeBarrier<PIPE_V>();
+                            } else {
+                                AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
+                                    MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN + cvListId);
+                                CastLocalToFloatRegbase<DT>(
+                                    (__ubuf__ float *)reinterpret_cast<uint64_t>(outFp32.GetPhyAddr()),
+                                    (__ubuf__ DT *)reinterpret_cast<uint64_t>(matrixCvBuf_[cvListId].GetPhyAddr()),
+                                    static_cast<uint16_t>(elems));
+                                AscendC::CrossCoreSetFlag<0x4, PIPE_V>(
+                                    MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + cvListId);
+                                cvListId ^= 1U;
+                            }
                             dvIdx = CopyInRows(
                                 dvGm_, qInputBuf_[curQInputPingPong_], dvBase + rowElems, elems);
-                            AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
-                                MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN + cvListId);
-                            CastLocalToFloatRegbase<DT>(
-                                (__ubuf__ float *)reinterpret_cast<uint64_t>(outFp32.GetPhyAddr()),
-                                (__ubuf__ DT *)reinterpret_cast<uint64_t>(matrixCvBuf_[cvListId].GetPhyAddr()),
-                                static_cast<uint16_t>(elems));
-                            AscendC::CrossCoreSetFlag<0x4, PIPE_V>(
-                                MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + cvListId);
-                            cvListId ^= 1U;
                         } else {
                             const uint32_t dvStateIdx = CopyInRows(
                                 workspaceGm_, qInputBuf_[curQInputPingPong_], dvStateBase + rowElems, elems);
@@ -574,15 +582,23 @@ public:
                         const uint32_t stateIdx = CopyInStateRows(
                             stateBuf_[curStatePingPong_], stateBase + rowElems, elems);
                         if constexpr (std::is_same<DT, bfloat16_t>::value) {
-                            AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
-                                MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN + cvListId);
-                            CastLocalToFloatRegbase<DT>(
-                                (__ubuf__ float *)reinterpret_cast<uint64_t>(outFp32.GetPhyAddr()),
-                                (__ubuf__ DT *)reinterpret_cast<uint64_t>(matrixCvBuf_[cvListId].GetPhyAddr()),
-                                static_cast<uint16_t>(elems));
-                            AscendC::CrossCoreSetFlag<0x4, PIPE_V>(
-                                MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + cvListId);
-                            cvListId ^= 1U;
+                            const bool useGmTermW = V_ == 256 && chunkInfo.chunkLen > 64;
+                            if (useGmTermW) {
+                                const int64_t termWBase = workspaceBase + termWWorkspaceOffset_;
+                                const uint32_t termWIdx = CopyInRows(
+                                    workspaceGm_, qInputBuf_[curQInputPingPong_], termWBase + rowElems, elems);
+                                CastInputRows(outFp32, qInputBuf_[termWIdx], elems, termWIdx);
+                            } else {
+                                AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
+                                    MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN + cvListId);
+                                CastLocalToFloatRegbase<DT>(
+                                    (__ubuf__ float *)reinterpret_cast<uint64_t>(outFp32.GetPhyAddr()),
+                                    (__ubuf__ DT *)reinterpret_cast<uint64_t>(matrixCvBuf_[cvListId].GetPhyAddr()),
+                                    static_cast<uint16_t>(elems));
+                                AscendC::CrossCoreSetFlag<0x4, PIPE_V>(
+                                    MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + cvListId);
+                                cvListId ^= 1U;
+                            }
                         } else {
                             const int64_t termWBase = workspaceBase + termWWorkspaceOffset_;
                             const uint32_t termWIdx = CopyInRows(
@@ -640,7 +656,6 @@ public:
                 }
             }
 
-            Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
         }
 
         ReleaseVectorEvents();

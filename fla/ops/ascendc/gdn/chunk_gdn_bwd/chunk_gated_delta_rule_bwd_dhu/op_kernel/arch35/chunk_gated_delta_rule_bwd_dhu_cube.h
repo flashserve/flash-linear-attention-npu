@@ -258,122 +258,133 @@ public:
                     copyGmToL1B_State(tensorL1State, blockState);
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(stateScratchEvent);
                     if constexpr (std::is_same<DT, bfloat16_t>::value) {
-                        uint32_t mActual = static_cast<uint32_t>(chunkInfo.chunkLen);
-                        if (mActual == 1) {
-                            mActual = 16;
+                        const bool useGmDvState = V_DIM == 256 && chunkInfo.chunkLen > 64;
+                        if (useGmDvState) {
+                            CopyL0CToGm_DvState<decltype(blockDvState)> copyL0CToGm_DvState;
+                            RunResidentMmad<LayoutTagL0A_DvState, LayoutTagL0B_DvState>(
+                                copyL1ToL0A_DvState, copyL1ToL0B_DvState, tileMmadDvState, copyL0CToGm_DvState,
+                                tensorL1K, tensorL1State, blockDvState, l0A, l0B, l0C,
+                                needLoadKResident, releaseKAfterUse, kResidentEvent, true, true, stateScratchEvent,
+                                static_cast<uint32_t>(chunkInfo.chunkLen), static_cast<uint32_t>(V_DIM),
+                                static_cast<uint32_t>(K_));
+                        } else {
+                            uint32_t mActual = static_cast<uint32_t>(chunkInfo.chunkLen);
+                            if (mActual == 1) {
+                                mActual = 16;
+                            }
+                            const uint32_t l0CSlot = curL0C_;
+                            const int32_t l0CEvent = L0CEvent(l0CSlot);
+                            auto layoutL0C = tla::MakeLayoutL0C(mActual, static_cast<uint32_t>(V_DIM));
+                            auto tensorL0C =
+                                tla::MakeTensor(l0C[l0CSlot], layoutL0C, Catlass::Arch::PositionL0C{});
+                            auto tensorTileL0C = tla::GetTile(
+                                tensorL0C, tla::MakeCoord(0, 0),
+                                tla::MakeShape(mActual, static_cast<uint32_t>(V_DIM)));
+
+                            bool waitKReady = needLoadKResident;
+                            bool waitStateReady = true;
+                            for (uint32_t kOffset = 0; kOffset < static_cast<uint32_t>(K_); kOffset += L0_K_TILE) {
+                                const uint32_t curK = kOffset + L0_K_TILE > static_cast<uint32_t>(K_) ?
+                                                          static_cast<uint32_t>(K_) - kOffset :
+                                                          L0_K_TILE;
+                                const bool firstK = kOffset == 0;
+                                const bool lastK = kOffset + curK >= static_cast<uint32_t>(K_);
+                                const uint32_t l0Slot = curL0_;
+                                const int32_t l0AEvent = L0AEvent(l0Slot);
+                                const int32_t l0BEvent = L0BEvent(l0Slot);
+                                const int32_t l0ReadyEvent = L0ReadyEvent(l0Slot);
+
+                                auto layoutL0A = tla::MakeLayout<DT, LayoutTagL0A_DvState>(mActual, curK);
+                                auto tensorL0A =
+                                    tla::MakeTensor(l0A[l0Slot], layoutL0A, Catlass::Arch::PositionL0A{});
+                                auto tensorTileL1A = tla::GetTile(
+                                    tensorL1K, tla::MakeCoord(0, kOffset), tla::MakeShape(mActual, curK));
+                                if (!useL0KResident || needLoadKResident) {
+                                    if (waitKReady) {
+                                        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kResidentEvent);
+                                        waitKReady = false;
+                                    }
+                                    AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
+                                    copyL1ToL0A_DvState(tensorL0A, tensorTileL1A);
+                                    if (lastK && (releaseKAfterUse || useL0KResident)) {
+                                        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kResidentEvent);
+                                        cachedKResidentValid_ = false;
+                                    }
+                                    if (lastK && useL0KResident) {
+                                        cachedL0KValid_ = true;
+                                    }
+                                }
+
+                                auto layoutL0B = tla::MakeLayout<DT, LayoutTagL0B_DvState>(
+                                    curK, static_cast<uint32_t>(V_DIM));
+                                auto tensorL0B =
+                                    tla::MakeTensor(l0B[l0Slot], layoutL0B, Catlass::Arch::PositionL0B{});
+                                auto tensorTileL1B = tla::GetTile(
+                                    tensorL1State, tla::MakeCoord(kOffset, 0),
+                                    tla::MakeShape(curK, static_cast<uint32_t>(V_DIM)));
+                                if (waitStateReady) {
+                                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(stateScratchEvent);
+                                    waitStateReady = false;
+                                }
+                                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
+                                copyL1ToL0B_DvState(tensorL0B, tensorTileL1B);
+                                if (lastK) {
+                                    AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(stateScratchEvent);
+                                }
+                                AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
+                                if (!useL0KResident) {
+                                    curL0_ ^= 1U;
+                                }
+
+                                AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
+                                if (firstK) {
+                                    AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0CEvent);
+                                }
+                                const uint8_t unitFlag = lastK ? 0b11 : 0b10;
+                                tileMmadDvState(tensorTileL0C, tensorL0A, tensorL0B, firstK, unitFlag);
+                                if (!useL0KResident || releaseKAfterUse) {
+                                    AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
+                                    if (useL0KResident) {
+                                        cachedL0KValid_ = false;
+                                    }
+                                }
+                                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
+                                if (lastK) {
+                                    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
+                                }
+                            }
+
+                            SwitchL0C();
+                            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
+                            uint32_t cvListId = 0;
+                            uint32_t rowIdx = 0;
+                            const uint64_t subBlockFlagOffset =
+                                (headOffset & 1) == 0 ? 0 : CV_SUBBLOCK_FLAG_STRIDE;
+                            while (rowIdx < static_cast<uint32_t>(chunkInfo.chunkLen)) {
+                                const uint32_t leftRows = static_cast<uint32_t>(chunkInfo.chunkLen) - rowIdx;
+                                const uint32_t cvRows = leftRows > static_cast<uint32_t>(vecRow_) ?
+                                                            static_cast<uint32_t>(vecRow_) :
+                                                            leftRows;
+                                auto tensorCv = tla::MakeTensor(
+                                    matrixCvBuf[cvListId], UB_LAYOUT_DVSTATE_CV, Catlass::Arch::PositionUB{});
+                                auto blockCv = tla::GetTile(
+                                    tensorCv, tla::MakeCoord(0, 0),
+                                    tla::MakeShape(cvRows, static_cast<uint32_t>(V_DIM)));
+                                auto blockL0C = tla::GetTile(
+                                    tensorL0C, tla::MakeCoord(rowIdx, 0),
+                                    tla::MakeShape(cvRows, static_cast<uint32_t>(V_DIM)));
+                                CopyL0CToUB_DvState<decltype(blockCv)> copyL0CToUB;
+                                AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
+                                    MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + subBlockFlagOffset + cvListId);
+                                copyL0CToUB(blockCv, blockL0C, cvRows,
+                                              static_cast<uint8_t>(headOffset & 1), 1, 0b11);
+                                AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
+                                    MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN + subBlockFlagOffset + cvListId);
+                                rowIdx += cvRows;
+                                cvListId ^= 1U;
+                            }
+                            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0CEvent);
                         }
-                        const uint32_t l0CSlot = curL0C_;
-                        const int32_t l0CEvent = L0CEvent(l0CSlot);
-                        auto layoutL0C = tla::MakeLayoutL0C(mActual, static_cast<uint32_t>(V_DIM));
-                        auto tensorL0C =
-                            tla::MakeTensor(l0C[l0CSlot], layoutL0C, Catlass::Arch::PositionL0C{});
-                        auto tensorTileL0C = tla::GetTile(
-                            tensorL0C, tla::MakeCoord(0, 0),
-                            tla::MakeShape(mActual, static_cast<uint32_t>(V_DIM)));
-
-                        bool waitKReady = needLoadKResident;
-                        bool waitStateReady = true;
-                        for (uint32_t kOffset = 0; kOffset < static_cast<uint32_t>(K_); kOffset += L0_K_TILE) {
-                            const uint32_t curK = kOffset + L0_K_TILE > static_cast<uint32_t>(K_) ?
-                                                      static_cast<uint32_t>(K_) - kOffset :
-                                                      L0_K_TILE;
-                            const bool firstK = kOffset == 0;
-                            const bool lastK = kOffset + curK >= static_cast<uint32_t>(K_);
-                            const uint32_t l0Slot = curL0_;
-                            const int32_t l0AEvent = L0AEvent(l0Slot);
-                            const int32_t l0BEvent = L0BEvent(l0Slot);
-                            const int32_t l0ReadyEvent = L0ReadyEvent(l0Slot);
-
-                            auto layoutL0A = tla::MakeLayout<DT, LayoutTagL0A_DvState>(mActual, curK);
-                            auto tensorL0A =
-                                tla::MakeTensor(l0A[l0Slot], layoutL0A, Catlass::Arch::PositionL0A{});
-                            auto tensorTileL1A = tla::GetTile(
-                                tensorL1K, tla::MakeCoord(0, kOffset), tla::MakeShape(mActual, curK));
-                            if (!useL0KResident || needLoadKResident) {
-                                if (waitKReady) {
-                                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kResidentEvent);
-                                    waitKReady = false;
-                                }
-                                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
-                                copyL1ToL0A_DvState(tensorL0A, tensorTileL1A);
-                                if (lastK && (releaseKAfterUse || useL0KResident)) {
-                                    AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kResidentEvent);
-                                    cachedKResidentValid_ = false;
-                                }
-                                if (lastK && useL0KResident) {
-                                    cachedL0KValid_ = true;
-                                }
-                            }
-
-                            auto layoutL0B = tla::MakeLayout<DT, LayoutTagL0B_DvState>(
-                                curK, static_cast<uint32_t>(V_DIM));
-                            auto tensorL0B =
-                                tla::MakeTensor(l0B[l0Slot], layoutL0B, Catlass::Arch::PositionL0B{});
-                            auto tensorTileL1B = tla::GetTile(
-                                tensorL1State, tla::MakeCoord(kOffset, 0),
-                                tla::MakeShape(curK, static_cast<uint32_t>(V_DIM)));
-                            if (waitStateReady) {
-                                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(stateScratchEvent);
-                                waitStateReady = false;
-                            }
-                            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
-                            copyL1ToL0B_DvState(tensorL0B, tensorTileL1B);
-                            if (lastK) {
-                                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(stateScratchEvent);
-                            }
-                            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
-                            if (!useL0KResident) {
-                                curL0_ ^= 1U;
-                            }
-
-                            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
-                            if (firstK) {
-                                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0CEvent);
-                            }
-                            const uint8_t unitFlag = lastK ? 0b11 : 0b10;
-                            tileMmadDvState(tensorTileL0C, tensorL0A, tensorL0B, firstK, unitFlag);
-                            if (!useL0KResident || releaseKAfterUse) {
-                                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
-                                if (useL0KResident) {
-                                    cachedL0KValid_ = false;
-                                }
-                            }
-                            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
-                            if (lastK) {
-                                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
-                            }
-                        }
-
-                        SwitchL0C();
-                        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
-                        uint32_t cvListId = 0;
-                        uint32_t rowIdx = 0;
-                        const uint64_t subBlockFlagOffset =
-                            (headOffset & 1) == 0 ? 0 : CV_SUBBLOCK_FLAG_STRIDE;
-                        while (rowIdx < static_cast<uint32_t>(chunkInfo.chunkLen)) {
-                            const uint32_t leftRows = static_cast<uint32_t>(chunkInfo.chunkLen) - rowIdx;
-                            const uint32_t cvRows = leftRows > static_cast<uint32_t>(vecRow_) ?
-                                                        static_cast<uint32_t>(vecRow_) :
-                                                        leftRows;
-                            auto tensorCv = tla::MakeTensor(
-                                matrixCvBuf[cvListId], UB_LAYOUT_DVSTATE_CV, Catlass::Arch::PositionUB{});
-                            auto blockCv = tla::GetTile(
-                                tensorCv, tla::MakeCoord(0, 0),
-                                tla::MakeShape(cvRows, static_cast<uint32_t>(V_DIM)));
-                            auto blockL0C = tla::GetTile(
-                                tensorL0C, tla::MakeCoord(rowIdx, 0),
-                                tla::MakeShape(cvRows, static_cast<uint32_t>(V_DIM)));
-                            CopyL0CToUB_DvState<decltype(blockCv)> copyL0CToUB;
-                            AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
-                                MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + subBlockFlagOffset + cvListId);
-                            copyL0CToUB(blockCv, blockL0C, cvRows,
-                                          static_cast<uint8_t>(headOffset & 1), 1, 0b11);
-                            AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
-                                MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN + subBlockFlagOffset + cvListId);
-                            rowIdx += cvRows;
-                            cvListId ^= 1U;
-                        }
-                        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0CEvent);
                     } else {
                         CopyL0CToGm_DvState<decltype(blockDvState)> copyL0CToGm_DvState;
                         RunResidentMmad<LayoutTagL0A_DvState, LayoutTagL0B_DvState>(
@@ -476,108 +487,121 @@ public:
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(dv2ScratchEvent);
 
                     if constexpr (std::is_same<DT, bfloat16_t>::value) {
-                        const uint32_t l0CSlot = curL0C_;
-                        const int32_t l0CEvent = L0CEvent(l0CSlot);
-                        auto layoutL0C = tla::MakeLayoutL0C(static_cast<uint32_t>(K_),
-                                                            static_cast<uint32_t>(V_DIM));
-                        auto tensorL0C =
-                            tla::MakeTensor(l0C[l0CSlot], layoutL0C, Catlass::Arch::PositionL0C{});
-                        auto tensorTileL0C = tla::GetTile(
-                            tensorL0C, tla::MakeCoord(0, 0),
-                            tla::MakeShape(static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM)));
-                        bool waitWReady = true;
-                        bool waitDv2Ready = true;
-                        for (uint32_t kOffset = 0; kOffset < static_cast<uint32_t>(chunkInfo.chunkLen);
-                             kOffset += L0_K_TILE) {
-                            const uint32_t leftK = static_cast<uint32_t>(chunkInfo.chunkLen) - kOffset;
-                            const uint32_t curK = leftK > L0_K_TILE ? L0_K_TILE : leftK;
-                            const bool firstK = kOffset == 0;
-                            const bool lastK = kOffset + curK >= static_cast<uint32_t>(chunkInfo.chunkLen);
-                            const uint32_t l0Slot = curL0_;
-                            const int32_t l0AEvent = L0AEvent(l0Slot);
-                            const int32_t l0BEvent = L0BEvent(l0Slot);
-                            const int32_t l0ReadyEvent = L0ReadyEvent(l0Slot);
+                        const bool useGmTermW = V_DIM == 256 && chunkInfo.chunkLen > 64;
+                        if (useGmTermW) {
+                            CopyL0CToGm_TermW<decltype(blockTermW)> copyL0CToGm_TermW;
+                            RunResidentMmad<LayoutTagL0A_TermW, LayoutTagL0B_TermW>(
+                                copyL1ToL0A_TermW, copyL1ToL0B_TermW, tileMmadTermW, copyL0CToGm_TermW,
+                                tensorL1WT, tensorL1Dv2, blockTermW, l0A, l0B, l0C,
+                                true, true, wEvent, true, true, dv2ScratchEvent,
+                                static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM),
+                                static_cast<uint32_t>(chunkInfo.chunkLen));
+                            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
+                        } else {
+                            const uint32_t l0CSlot = curL0C_;
+                            const int32_t l0CEvent = L0CEvent(l0CSlot);
+                            auto layoutL0C = tla::MakeLayoutL0C(static_cast<uint32_t>(K_),
+                                                                static_cast<uint32_t>(V_DIM));
+                            auto tensorL0C =
+                                tla::MakeTensor(l0C[l0CSlot], layoutL0C, Catlass::Arch::PositionL0C{});
+                            auto tensorTileL0C = tla::GetTile(
+                                tensorL0C, tla::MakeCoord(0, 0),
+                                tla::MakeShape(static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM)));
+                            bool waitWReady = true;
+                            bool waitDv2Ready = true;
 
-                            auto layoutL0A = tla::MakeLayout<DT, LayoutTagL0A_TermW>(
-                                static_cast<uint32_t>(K_), curK);
-                            auto tensorL0A =
-                                tla::MakeTensor(l0A[l0Slot], layoutL0A, Catlass::Arch::PositionL0A{});
-                            auto tensorTileL1A = tla::GetTile(
-                                tensorL1WT, tla::MakeCoord(0, kOffset),
-                                tla::MakeShape(static_cast<uint32_t>(K_), curK));
-                            if (waitWReady) {
-                                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(wEvent);
-                                waitWReady = false;
-                            }
-                            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
-                            copyL1ToL0A_TermW(tensorL0A, tensorTileL1A);
-                            if (lastK) {
-                                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(wEvent);
+                            for (uint32_t kOffset = 0; kOffset < static_cast<uint32_t>(chunkInfo.chunkLen);
+                                 kOffset += L0_K_TILE) {
+                                const uint32_t leftK = static_cast<uint32_t>(chunkInfo.chunkLen) - kOffset;
+                                const uint32_t curK = leftK > L0_K_TILE ? L0_K_TILE : leftK;
+                                const bool firstK = kOffset == 0;
+                                const bool lastK = kOffset + curK >= static_cast<uint32_t>(chunkInfo.chunkLen);
+                                const uint32_t l0Slot = curL0_;
+                                const int32_t l0AEvent = L0AEvent(l0Slot);
+                                const int32_t l0BEvent = L0BEvent(l0Slot);
+                                const int32_t l0ReadyEvent = L0ReadyEvent(l0Slot);
+
+                                auto layoutL0A = tla::MakeLayout<DT, LayoutTagL0A_TermW>(
+                                    static_cast<uint32_t>(K_), curK);
+                                auto tensorL0A =
+                                    tla::MakeTensor(l0A[l0Slot], layoutL0A, Catlass::Arch::PositionL0A{});
+                                auto tensorTileL1A = tla::GetTile(
+                                    tensorL1WT, tla::MakeCoord(0, kOffset),
+                                    tla::MakeShape(static_cast<uint32_t>(K_), curK));
+                                if (waitWReady) {
+                                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(wEvent);
+                                    waitWReady = false;
+                                }
+                                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
+                                copyL1ToL0A_TermW(tensorL0A, tensorTileL1A);
+                                if (lastK) {
+                                    AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(wEvent);
+                                }
+
+                                auto layoutL0B = tla::MakeLayout<DT, LayoutTagL0B_TermW>(
+                                    curK, static_cast<uint32_t>(V_DIM));
+                                auto tensorL0B =
+                                    tla::MakeTensor(l0B[l0Slot], layoutL0B, Catlass::Arch::PositionL0B{});
+                                auto tensorTileL1B = tla::GetTile(
+                                    tensorL1Dv2, tla::MakeCoord(kOffset, 0),
+                                    tla::MakeShape(curK, static_cast<uint32_t>(V_DIM)));
+                                if (waitDv2Ready) {
+                                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(dv2ScratchEvent);
+                                    waitDv2Ready = false;
+                                }
+                                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
+                                copyL1ToL0B_TermW(tensorL0B, tensorTileL1B);
+                                if (lastK) {
+                                    AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(dv2ScratchEvent);
+                                }
+                                AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
+                                curL0_ ^= 1U;
+
+                                AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
+                                if (firstK) {
+                                    AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0CEvent);
+                                }
+                                const uint8_t unitFlag = lastK ? 0b11 : 0b10;
+                                tileMmadTermW(tensorTileL0C, tensorL0A, tensorL0B, firstK, unitFlag);
+                                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
+                                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
+                                if (lastK) {
+                                    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
+                                }
                             }
 
-                            auto layoutL0B = tla::MakeLayout<DT, LayoutTagL0B_TermW>(
-                                curK, static_cast<uint32_t>(V_DIM));
-                            auto tensorL0B =
-                                tla::MakeTensor(l0B[l0Slot], layoutL0B, Catlass::Arch::PositionL0B{});
-                            auto tensorTileL1B = tla::GetTile(
-                                tensorL1Dv2, tla::MakeCoord(kOffset, 0),
-                                tla::MakeShape(curK, static_cast<uint32_t>(V_DIM)));
-                            if (waitDv2Ready) {
-                                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(dv2ScratchEvent);
-                                waitDv2Ready = false;
+                            SwitchL0C();
+                            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
+                            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
+                            uint32_t rowIdx = 0;
+                            uint32_t cvListId = 0;
+                            const uint64_t subBlockFlagOffset =
+                                (headOffset & 1) == 0 ? 0 : CV_SUBBLOCK_FLAG_STRIDE;
+                            while (rowIdx < static_cast<uint32_t>(K_)) {
+                                const uint32_t leftRows = static_cast<uint32_t>(K_) - rowIdx;
+                                const uint32_t cvRows = leftRows > static_cast<uint32_t>(vecRow_) ?
+                                                            static_cast<uint32_t>(vecRow_) :
+                                                            leftRows;
+                                auto tensorCv = tla::MakeTensor(
+                                    matrixCvBuf[cvListId], UB_LAYOUT_TERMW_CV, Catlass::Arch::PositionUB{});
+                                auto blockCv = tla::GetTile(
+                                    tensorCv, tla::MakeCoord(0, 0),
+                                    tla::MakeShape(cvRows, static_cast<uint32_t>(V_DIM)));
+                                auto blockL0C = tla::GetTile(
+                                    tensorL0C, tla::MakeCoord(rowIdx, 0),
+                                    tla::MakeShape(cvRows, static_cast<uint32_t>(V_DIM)));
+                                CopyL0CToUB_TermW<decltype(blockCv)> copyL0CToUB;
+                                AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
+                                    MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + subBlockFlagOffset + cvListId);
+                                copyL0CToUB(blockCv, blockL0C, cvRows,
+                                              static_cast<uint8_t>(headOffset & 1), 1, 0b11);
+                                AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
+                                    MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN + subBlockFlagOffset + cvListId);
+                                rowIdx += cvRows;
+                                cvListId ^= 1U;
                             }
-                            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
-                            copyL1ToL0B_TermW(tensorL0B, tensorTileL1B);
-                            if (lastK) {
-                                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(dv2ScratchEvent);
-                            }
-                            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
-                            curL0_ ^= 1U;
-
-                            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
-                            if (firstK) {
-                                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0CEvent);
-                            }
-                            const uint8_t unitFlag = lastK ? 0b11 : 0b10;
-                            tileMmadTermW(tensorTileL0C, tensorL0A, tensorL0B, firstK, unitFlag);
-                            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
-                            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
-                            if (lastK) {
-                                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
-                            }
+                            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0CEvent);
                         }
-
-                        SwitchL0C();
-                        Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
-                        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
-                        uint32_t cvListId = 0;
-                        uint32_t rowIdx = 0;
-                        const uint64_t subBlockFlagOffset =
-                            (headOffset & 1) == 0 ? 0 : CV_SUBBLOCK_FLAG_STRIDE;
-                        while (rowIdx < static_cast<uint32_t>(K_)) {
-                            const uint32_t leftRows = static_cast<uint32_t>(K_) - rowIdx;
-                            const uint32_t cvRows = leftRows > static_cast<uint32_t>(vecRow_) ?
-                                                        static_cast<uint32_t>(vecRow_) :
-                                                        leftRows;
-                            auto tensorCv = tla::MakeTensor(
-                                matrixCvBuf[cvListId], UB_LAYOUT_TERMW_CV, Catlass::Arch::PositionUB{});
-                            auto blockCv = tla::GetTile(
-                                tensorCv, tla::MakeCoord(0, 0),
-                                tla::MakeShape(cvRows, static_cast<uint32_t>(V_DIM)));
-                            auto blockL0C = tla::GetTile(
-                                tensorL0C, tla::MakeCoord(rowIdx, 0),
-                                tla::MakeShape(cvRows, static_cast<uint32_t>(V_DIM)));
-                            CopyL0CToUB_TermW<decltype(blockCv)> copyL0CToUB;
-                            AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
-                                MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + subBlockFlagOffset + cvListId);
-                            copyL0CToUB(blockCv, blockL0C, cvRows,
-                                          static_cast<uint8_t>(headOffset & 1), 1, 0b11);
-                            AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
-                                MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN + subBlockFlagOffset + cvListId);
-                            rowIdx += cvRows;
-                            cvListId ^= 1U;
-                        }
-                        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0CEvent);
                     } else {
                         CopyL0CToGm_TermW<decltype(blockTermW)> copyL0CToGm_TermW;
                         RunResidentMmad<LayoutTagL0A_TermW, LayoutTagL0B_TermW>(
