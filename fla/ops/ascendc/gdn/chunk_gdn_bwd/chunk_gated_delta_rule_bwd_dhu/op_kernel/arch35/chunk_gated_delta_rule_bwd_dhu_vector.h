@@ -639,6 +639,8 @@ public:
                     }
                 }
             }
+
+            Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
         }
 
         ReleaseVectorEvents();

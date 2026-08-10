@@ -29,8 +29,8 @@ constexpr uint64_t VEC_TO_CUBE_FLAG_READY = 2;
 constexpr uint64_t CUBE_TO_VEC_FLAG_READY = 4;
 constexpr uint32_t CV_BUFFER_COUNT = 2;
 constexpr uint64_t CV_SUBBLOCK_FLAG_STRIDE = 16;
-constexpr uint64_t MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN = 8;
-constexpr uint64_t MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN = 12;
+constexpr uint64_t MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN = 0;
+constexpr uint64_t MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN = 6;
 constexpr int64_t HEADS_PER_TASK = 4;
 constexpr int64_t WORKSPACE_BUFFER_COUNT = 8;
 
