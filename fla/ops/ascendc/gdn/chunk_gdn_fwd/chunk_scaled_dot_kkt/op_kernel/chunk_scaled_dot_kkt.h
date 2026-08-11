@@ -26,6 +26,10 @@
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "arch35/chunk_scaled_dot_kkt_vector.h"
+#endif
+
 struct ChunkScaledDotKktTilingData;
 
 namespace NsChunkScaledDotKkt {
@@ -613,9 +617,19 @@ private:
         LocalTensor<float> outTileLocal = outTileBuf_.Get<float>();
         LocalTensor<float> gateLocal = gateBuf_.Get<float>();
         LocalTensor<float> rowBrcbLocal = rowBrcbBuf_.Get<float>();
-        DuplicateZero(outTileLocal, rowCount * btAlign_);
-        PipeBarrier<PIPE_V>();
+        const bool useA5RegBase = CanUseA5RegBaseEpilogue(rowBegin, rowCount, colCount);
+        if (!useA5RegBase) {
+            DuplicateZero(outTileLocal, rowCount * btAlign_);
+            PipeBarrier<PIPE_V>();
+        }
         CopyScoreBlock(scoreBaseOffset, scoreTileLocal, rowCount, colCount);
+        if (useA5RegBase) {
+            ComputeEpilogueScoreBlockRowsA5RegBase(scoreTileLocal, outTileLocal, gLocal, betaLocal, rowBegin, rowCount,
+                                                   colCount, outBaseOffset, outRowStride, subBlockIdx, subBlockNum);
+            gQueue_.FreeTensor(gLocal);
+            betaQueue_.FreeTensor(betaLocal);
+            return;
+        }
         bool scoreReady = false;
         const int64_t rowEnd = rowBegin + rowCount;
         const int64_t firstRowBase = rowBegin + subBlockIdx * static_cast<int64_t>(BRCB_ROWS);
@@ -639,6 +653,59 @@ private:
 
         gQueue_.FreeTensor(gLocal);
         betaQueue_.FreeTensor(betaLocal);
+    }
+
+    __aicore__ inline bool CanUseA5RegBaseEpilogue(int64_t rowBegin, int64_t rowCount, int64_t colCount) const
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        return BT_ == static_cast<int64_t>(KKT_A5_BT64) && btAlign_ == static_cast<int64_t>(KKT_A5_BT64) &&
+               rowBegin >= 0 && rowCount > 0 && rowBegin + rowCount <= static_cast<int64_t>(KKT_A5_BT64) &&
+               colCount > 0 && colCount <= static_cast<int64_t>(KKT_A5_BT64);
+#else
+        (void)rowBegin;
+        (void)rowCount;
+        (void)colCount;
+        return false;
+#endif
+    }
+
+    __aicore__ inline void ComputeEpilogueScoreBlockRowsA5RegBase(const LocalTensor<float> &scoreTileLocal,
+                                                                  const LocalTensor<float> &outTileLocal,
+                                                                  const LocalTensor<float> &gLocal,
+                                                                  const LocalTensor<float> &betaLocal,
+                                                                  int64_t rowBegin,
+                                                                  int64_t rowCount,
+                                                                  int64_t colCount,
+                                                                  int64_t outBaseOffset,
+                                                                  int64_t outRowStride,
+                                                                  int64_t subBlockIdx,
+                                                                  int64_t subBlockNum)
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        WaitMte2ToV();
+        auto scoreAddr = reinterpret_cast<uint64_t>(scoreTileLocal.GetPhyAddr());
+        auto outAddr = reinterpret_cast<uint64_t>(outTileLocal.GetPhyAddr());
+        auto gAddr = reinterpret_cast<uint64_t>(gLocal.GetPhyAddr());
+        auto betaAddr = reinterpret_cast<uint64_t>(betaLocal.GetPhyAddr());
+        ProcessKktEpilogue64VF((__ubuf__ float *)outAddr, (__ubuf__ float *)scoreAddr, (__ubuf__ float *)gAddr,
+                               (__ubuf__ float *)betaAddr, static_cast<uint16_t>(rowBegin),
+                               static_cast<uint16_t>(rowCount), static_cast<uint16_t>(colCount),
+                               static_cast<uint16_t>(subBlockIdx), static_cast<uint16_t>(subBlockNum),
+                               static_cast<uint16_t>(BRCB_ROWS));
+        CopyOutScoreBlockRows(outBaseOffset, outRowStride, outTileLocal, rowBegin, rowCount, subBlockIdx, subBlockNum);
+#else
+        (void)scoreTileLocal;
+        (void)outTileLocal;
+        (void)gLocal;
+        (void)betaLocal;
+        (void)rowBegin;
+        (void)rowCount;
+        (void)colCount;
+        (void)outBaseOffset;
+        (void)outRowStride;
+        (void)subBlockIdx;
+        (void)subBlockNum;
+#endif
     }
 
     __aicore__ inline void WaitMte2ToV()
