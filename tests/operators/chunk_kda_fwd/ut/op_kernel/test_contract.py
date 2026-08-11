@@ -77,6 +77,48 @@ def test_a5_reuses_public_physical_entry_with_internal_stage_implementations():
         assert "Arch35" not in generic
 
 
+def test_a5_dense_fwd_h_uses_independent_bounded_slot_handshakes():
+    text = ARCH35_FWD_H.read_text(encoding="utf-8")
+    assert "constexpr uint64_t KDA_FWD_H_DIRECT_FREE_FLAG = 6;" in text
+    assert "constexpr uint64_t KDA_FWD_H_DIRECT_READY_FLAG = 7;" in text
+    assert "constexpr uint64_t KDA_FWD_H_SUBBLOCK_FLAG_OFFSET = 16;" in text
+    assert "CrossCoreWaitFlag<0x4, PIPE_FIX>(KDA_FWD_H_DIRECT_FREE_FLAG);" in text
+    assert "KDA_FWD_H_DIRECT_FREE_FLAG + KDA_FWD_H_SUBBLOCK_FLAG_OFFSET" in text
+    assert "CrossCoreSetFlag<0x4, PIPE_FIX>(KDA_FWD_H_DIRECT_READY_FLAG);" in text
+    assert "KDA_FWD_H_DIRECT_READY_FLAG + KDA_FWD_H_SUBBLOCK_FLAG_OFFSET" in text
+    assert "CrossCoreWaitFlag<0x4, PIPE_V>(KDA_FWD_H_DIRECT_READY_FLAG);" in text
+    assert "CrossCoreSetFlag<0x4, PIPE_V>(KDA_FWD_H_DIRECT_FREE_FLAG);" in text
+    assert "CrossCoreSetFlag<0x2, PIPE_FIX>(KDA_FWD_H_DIRECT_READY_FLAG)" not in text
+    assert "CrossCoreSetFlag<0x2, PIPE_V>(KDA_FWD_H_DIRECT_FREE_FLAG)" not in text
+    assert "constexpr uint64_t KDA_FWD_H_STATE_FREE_FLAG = KDA_FWD_H_L1_FREE_FLAG;" in text
+    assert "constexpr uint64_t KDA_FWD_H_STATE_READY_FLAG = KDA_FWD_H_L1_READY_FLAG;" in text
+    assert "constexpr uint64_t KDA_FWD_H_VNEW_FREE_FLAG = 10;" in text
+    assert "constexpr uint64_t KDA_FWD_H_VNEW_READY_FLAG = 10;" in text
+    assert "uint32_t wPublishCount_" not in text
+
+    compute_state = text.split("ComputeStateProductsAic(", 1)[1].split(
+        "ComputeVnewProductsAic(", 1
+    )[0]
+    assert compute_state.count(
+        "SetL1SlotFlagAicToAiv<PIPE_FIX>(KDA_FWD_H_STATE_FREE_FLAG);"
+    ) == 1
+
+    process_aic = text.split("void ProcessAic()", 1)[1].split(
+        "void CopyOutputRows(", 1
+    )[0]
+    assert process_aic.count(
+        "WaitL1SlotReadyMte1(KDA_FWD_H_STATE_READY_FLAG);"
+    ) == 1
+
+    store_state = text.split("void StoreCurrentStateAiv(", 1)[1].split(
+        "void ProcessChunkAiv(", 1
+    )[0]
+    assert "if (!fusePostWuIntoFwdH_)" in store_state
+    assert store_state.index("WaitFlag<HardEvent::MTE3_V>") < store_state.index(
+        "SetL1SlotFlagAivToAic<PIPE_MTE3>(KDA_FWD_H_STATE_READY_FLAG);"
+    )
+
+
 def test_mode4_cross_core_sync_is_isolated_to_arch35():
     generic_sources = [
         KERNEL_ENTRY,
@@ -496,7 +538,8 @@ def test_prepare_uses_a5_regbase_gate_math_with_a2_a3_fallback():
     assert '#include "kernel_utils/vector/regbase.hpp"' in prepare
     assert "static __simd_vf__ inline void PrepareKdaGateQwRegbase" in prepare
     assert "static __simd_vf__ inline void PrepareKdaGateKgRegbase" in prepare
-    assert "T, SCORE_T, GK_T, true, true, exportFinalKg, true>" in prepare
+    assert "T, SCORE_T, GK_T, true, true, false, true>" in prepare
+    assert "PrepareKdaGateKgRegbase<T, T, GK_T, true>" in prepare
     assert "PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true," in prepare
     assert "PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, false, false>" in prepare
     assert "PrepareKdaGateQwKgRegbase<T, T, GK_T, true, false, false>" in prepare
