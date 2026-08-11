@@ -12,6 +12,19 @@
 - [ ] 公开参数名称、数量、顺序、默认值和行为保持兼容；任何例外已事前取得明确确认。
 - [ ] 所有支持 SOC 复用同一个 L0 定义、原型和 L2 调用路径。
 
+## 编码结构
+
+- [ ] C/C++ 文件已按仓库 `.clang-format` 格式化，include 顺序、缩进和换行没有手工形成另一套风格。
+- [ ] kernel 入口只负责架构选择、tiling 解码、空指针保护、AIC/AIV 分派和模板实例化，热路径实现没有堆在入口文件。
+- [ ] tiling ABI、公共 helper、Cube 路径、Vector 路径和 SOC 专项实现各自归属清晰，没有循环 include 或跨层反向依赖。
+- [ ] 类型使用 PascalCase，局部变量和参数使用 camelCase，编译期常量使用 UPPER_SNAKE_CASE，类成员使用尾缀 `_`。
+- [ ] kernel 类公开接口收敛为构造、`Init` 和 `Process`；搬运、计算、offset、event 和资源回收放在命名明确的 private helper。
+- [ ] dtype、固定维度和功能模式等结构性差异由模板与 `if constexpr` 裁剪；运行时 tiling 只承载规模、offset、有效长度和调度信息。
+- [ ] workspace segment、物理 buffer、event ID、flag 编号和容量均有命名常量；资源容量在可静态推导时使用 `static_assert`。
+- [ ] event/flag 在初始化、使用、drain 和 release 四个阶段闭环；ping/pong 覆盖前等待 free，生产完成后才发布 ready。
+- [ ] fixed/varlen、tail 和无效任务通过统一 helper 返回有效任务信息，地址计算使用足够宽的整数类型并显式处理边界。
+- [ ] A5 实现已额外执行 [`operator-optimization/soc/a5.md`](operator-optimization/soc/a5.md) 中的编码规范检查。
+
 ## 算法与优化
 
 - [ ] 数学语义、初始/最终状态和有效输出区域已经固定。

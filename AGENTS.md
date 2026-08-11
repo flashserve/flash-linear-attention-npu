@@ -12,6 +12,7 @@
 - `CONTRIBUTING.md`：贡献流程和新增算子交付要求。
 - `docs/repository-rules.md`：分支、ABI、NPU CI 和合入规则。
 - `docs/agents/foundation.md`：项目分层、调用链、关键术语、shape/layout、chunk 依赖和内存生命周期基础。
+- `docs/agents/operator-coding-standard.md`：Ascend C 算子的文件分层、命名、kernel/tiling 职责、资源预算和同步生命周期编码规范。
 - `docs/agents/operator-optimization/README.md`：算子性能设计与优化的依赖模型、技术分类、SOC 差异和检查清单入口。
 - `docs/agents/torch-npu-decoupled-architecture.md`：默认 `fla_npu.ops.ascendc` 解耦运行时、依赖确定与兼容性门禁、wheel 产物、多卡 device guard、stream、数据依赖、autograd 和 ACL 私有格式透传设计。
 - `docs/agents/README.md`：面向 AI agent 的开发原理、方法论、验证和经验总结索引。
@@ -24,6 +25,7 @@
 - 先用 `rg` / `rg --files` 找代码和文档，再修改；不要凭记忆猜目录。
 - 改动保持聚焦，避免无关格式化、批量重排和生成物噪声。
 - 公共接口、shape/dtype/layout/range、预留参数、平台差异、返回码或报错文本变化，必须同步检查代码、README、aclnn 文档、PyTorch API 文档、测试和示例。
+- 编写或重构 Ascend C 算子代码时必须遵守 `docs/agents/operator-coding-standard.md`；涉及 A5 时同时遵守 `docs/agents/operator-optimization/soc/a5.md` 的 A5 编码约束。
 - 性能设计或优化前必须先判断 chunk 间是否存在 carry，并按 `docs/agents/operator-optimization/README.md` 阅读对应依赖模型、技术分类和目标 SOC 文档。不得把具体算子的窗口数、slot 数、容量或同步协议未经重新推导直接复制到其他算子。
 - 公开 PR、issue、评论和总结中不要暴露内网地址、机器名、用户名、绝对路径、临时目录、日志路径、token 或本地调测环境细节。
 - 构建和测试默认面向 Linux + CANN + NPU 环境；其他平台只做静态阅读、文本编辑或格式检查，不把未验证命令写成已验证结论。

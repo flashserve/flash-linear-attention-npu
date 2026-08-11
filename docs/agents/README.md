@@ -10,8 +10,8 @@
 
 | 任务 | 必读文档 |
 |---|---|
-| 新增或修改 Ascend C 算子 | [`operator-development.md`](operator-development.md) -> [`operator-checklist.md`](operator-checklist.md) -> [`validation.md`](validation.md) |
-| 算子性能设计或优化 | [`operator-optimization/README.md`](operator-optimization/README.md) 按依赖类型和目标 SOC 路由 -> [`validation.md`](validation.md) |
+| 新增或修改 Ascend C 算子 | [`operator-development.md`](operator-development.md) -> [`operator-coding-standard.md`](operator-coding-standard.md) -> [`operator-checklist.md`](operator-checklist.md) -> [`validation.md`](validation.md) |
+| 算子性能设计或优化 | [`operator-coding-standard.md`](operator-coding-standard.md) -> [`operator-optimization/README.md`](operator-optimization/README.md) 按依赖类型和目标 SOC 路由 -> [`validation.md`](validation.md) |
 | 修改 Python runtime、wheel、OPP 或兼容路径 | [`torch-npu-decoupled-architecture.md`](torch-npu-decoupled-architecture.md) -> [`validation.md`](validation.md) |
 | 定位精度、ABI、生成代码或跨 SOC 问题 | [`lessons.md`](lessons.md) 和对应任务文档 |
 | 整理交付和测试结果 | [`operator-checklist.md`](operator-checklist.md) -> [`validation.md`](validation.md) |

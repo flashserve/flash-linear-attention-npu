@@ -38,6 +38,7 @@
 
 ## Tiling 和模板
 
+- [ ] 实现结构符合上层 [`../operator-coding-standard.md`](../operator-coding-standard.md)，A5 路径同时符合 [`soc/a5.md`](soc/a5.md) 的编码规范。
 - [ ] row tile 按真实 UB 预算和 API 临时空间生成。
 - [ ] 归约维分块只在末块后执行一次 Fixpipe。
 - [ ] 物理布局调整与数学语义、workspace 和 reference 一致。
