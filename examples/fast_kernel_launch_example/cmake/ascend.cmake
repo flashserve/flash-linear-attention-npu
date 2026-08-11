@@ -55,8 +55,12 @@ set(ASCEND_INCLUDE_DIRS
     ${ASCEND_DIR}/include/op_common
     ${ASCEND_DIR}/${SYSTEM_PREFIX}/include
     ${ASCEND_DIR}/${SYSTEM_PREFIX}/include/op_common
+    ${ASCEND_DIR}/${SYSTEM_PREFIX}/include/op_common/op_host
     ${ASCEND_DIR}/pkg_inc
     ${ASCEND_DIR}/pkg_inc/op_common
+    ${ASCEND_DIR}/${SYSTEM_PREFIX}/pkg_inc
+    ${ASCEND_DIR}/${SYSTEM_PREFIX}/pkg_inc/op_common
+    ${ASCEND_DIR}/${SYSTEM_PREFIX}/pkg_inc/op_common/op_host
     ${ASCEND_DIR}/${SYSTEM_PREFIX}/pkg_inc/base
     ${ASCEND_DIR}/include/hcomm
     ${ASCEND_DIR}/compiler/tikcpp/include
