@@ -43,7 +43,7 @@ Python 用户代码
 
 例如仅支持 3 种 SoC、2 种 host 架构、5 个 torch 版本和 3 个 Python 版本，理论组合就已达到 90 个；再加入 torch_npu 和 C++ ABI 差异，发布、测试和回归成本会继续扩大。
 
-![旧路径的版本依赖与新路径的解耦边界](../assets/fla-npu-version-dependency.svg)
+![旧路径的版本依赖与新路径的解耦边界](../../assets/fla-npu-version-dependency.svg)
 
 ### 1.2 真正需要解决的不是“有没有依赖”
 
@@ -72,7 +72,7 @@ Python 用户代码
 
 下图把构建期和运行期放在同一张 UML 风格组件图中。实线箭头表示实际调用或产物输入，虚线表示可选能力适配，红色隔离框表示默认构建明确不引入的组件。
 
-![fla_npu 构建期与运行期组件关系](../assets/fla-npu-build-runtime-components.svg)
+![fla_npu 构建期与运行期组件关系](../../assets/fla-npu-build-runtime-components.svg)
 
 图中的关键边界如下：
 
@@ -101,7 +101,7 @@ legacy `torch.ops.npu.*` 兼容路径仍可通过 `FLA_NPU_BUILD_LEGACY_EXTENSIO
 
 ### 2.4 依赖在哪个阶段确定
 
-![依赖确定阶段](../assets/fla-npu-dependency-lifecycle.svg)
+![依赖确定阶段](../../assets/fla-npu-dependency-lifecycle.svg)
 
 | 阶段 | 此时确定的内容 | 此时不应确定的内容 |
 | --- | --- | --- |
@@ -284,7 +284,7 @@ fla_npu.load_legacy_torch_ops()
 
 dispatcher schema 可以用 `Tensor(a!)` 表示某个 tensor 会被原地修改，并通过 alias 标记表达返回值与输入共享 storage。ctypes 直接把 data pointer 交给 kernel 时，PyTorch 无法自动发现这些事实。
 
-![ctypes 状态修改的 wrapper 契约](../assets/fla-npu-mutation-contract.svg)
+![ctypes 状态修改的 wrapper 契约](../../assets/fla-npu-mutation-contract.svg)
 
 wrapper 必须明确选择以下一种语义：
 
@@ -370,7 +370,7 @@ wrapper 的原则是“透传描述，不自行解释私有 layout”。默认�
 
 ### 6.1 兼容性闭环
 
-![兼容性门禁、当前缺口与建议闭环](../assets/fla-npu-compatibility-guardrails.svg)
+![兼容性门禁、当前缺口与建议闭环](../../assets/fla-npu-compatibility-guardrails.svg)
 
 当前已经硬检查：
 

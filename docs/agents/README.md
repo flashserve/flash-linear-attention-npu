@@ -2,6 +2,17 @@
 
 本目录沉淀给 AI coding agent 和开发者使用的基础知识、开发方法、优化方法、验证流程和经验。根目录 `AGENTS.md` 只负责全仓强制规则和任务路由；进入具体任务后，再按本页选择需要阅读的文档。
 
+## 目录分层
+
+| 路径 | 内容 | 加载时机 |
+|---|---|---|
+| [`foundation.md`](foundation.md) | 项目组件、调用链和基础术语 | 首次进入仓库 |
+| [`development/`](development/) | 算子开发、编码规范、验证、清单和经验 | 新增、修改或检视算子 |
+| [`optimization/`](optimization/) | 依赖模型、通用优化技术、SOC 约束和性能清单 | 性能设计或优化 |
+| [`architecture/`](architecture/) | 运行时、打包和解耦架构 | 修改对应公共架构 |
+
+根 `AGENTS.md` 和本页只做路由，不复制子文档规则。任务命中哪个领域就读取哪个目录，避免无关内容占用 agent 上下文。
+
 ## 首次进入仓库
 
 先读 [`foundation.md`](foundation.md)，建立项目组件、调用链、L2/L0、Tiling、workspace、OPP 和 wheel 的共同心智模型。构建、安装和测试命令以根目录 `README.md` 为准。
@@ -10,11 +21,11 @@
 
 | 任务 | 必读文档 |
 |---|---|
-| 新增或修改 Ascend C 算子 | [`operator-development.md`](operator-development.md) -> [`operator-coding-standard.md`](operator-coding-standard.md) -> [`operator-checklist.md`](operator-checklist.md) -> [`validation.md`](validation.md) |
-| 算子性能设计或优化 | [`operator-coding-standard.md`](operator-coding-standard.md) -> [`operator-optimization/README.md`](operator-optimization/README.md) 按依赖类型和目标 SOC 路由 -> [`validation.md`](validation.md) |
-| 修改 Python runtime、wheel、OPP 或兼容路径 | [`torch-npu-decoupled-architecture.md`](torch-npu-decoupled-architecture.md) -> [`validation.md`](validation.md) |
-| 定位精度、ABI、生成代码或跨 SOC 问题 | [`lessons.md`](lessons.md) 和对应任务文档 |
-| 整理交付和测试结果 | [`operator-checklist.md`](operator-checklist.md) -> [`validation.md`](validation.md) |
+| 新增或修改 Ascend C 算子 | [`development/operator.md`](development/operator.md) -> [`development/coding-standard.md`](development/coding-standard.md) -> [`development/checklist.md`](development/checklist.md) -> [`development/validation.md`](development/validation.md) |
+| 算子性能设计或优化 | [`development/coding-standard.md`](development/coding-standard.md) -> [`optimization/README.md`](optimization/README.md) 按依赖类型和目标 SOC 路由 -> [`development/validation.md`](development/validation.md) |
+| 修改 Python runtime、wheel、OPP 或兼容路径 | [`architecture/torch-npu-decoupled.md`](architecture/torch-npu-decoupled.md) -> [`development/validation.md`](development/validation.md) |
+| 定位精度、ABI、生成代码或跨 SOC 问题 | [`development/lessons.md`](development/lessons.md) 和对应任务文档 |
+| 整理交付和测试结果 | [`development/checklist.md`](development/checklist.md) -> [`development/validation.md`](development/validation.md) |
 
 具体算子的 README 和设计文档只说明该算子的接口、语义、实现和验证，不作为其他算子可以直接复制的通用优化规则。
 

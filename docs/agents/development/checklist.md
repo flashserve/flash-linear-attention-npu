@@ -23,7 +23,7 @@
 - [ ] workspace segment、物理 buffer、event ID、flag 编号和容量均有命名常量；资源容量在可静态推导时使用 `static_assert`。
 - [ ] event/flag 在初始化、使用、drain 和 release 四个阶段闭环；ping/pong 覆盖前等待 free，生产完成后才发布 ready。
 - [ ] fixed/varlen、tail 和无效任务通过统一 helper 返回有效任务信息，地址计算使用足够宽的整数类型并显式处理边界。
-- [ ] A5 实现已额外执行 [`operator-optimization/soc/a5.md`](operator-optimization/soc/a5.md) 中的编码规范检查。
+- [ ] A5 实现已额外执行 [`../optimization/soc/a5.md`](../optimization/soc/a5.md) 中的编码规范检查。
 
 ## 算法与优化
 

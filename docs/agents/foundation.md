@@ -102,7 +102,7 @@ GM 容量大但搬运成本高；UB、L1、L0 容量依次受限，但更接近�
 | 接口与 ABI | `*_def.cpp`、aclnn 原型、schema 和稳定 Python API |
 | Tiling 与 kernel | 当前代码、TilingData、TilingKey 和模板定义 |
 | 构建安装 | 根目录 `README.md` 和现有脚本 |
-| 验证要求 | `validation.md`、算子测试和 CI 配置 |
-| 性能方法 | `operator-optimization/` 下对应分类文档 |
+| 验证要求 | `development/validation.md`、算子测试和 CI 配置 |
+| 性能方法 | `optimization/` 下对应分类文档 |
 
 代码、文档、schema 和测试出现冲突时，不要自行选择一个版本继续实现；先定位真实契约并同步修正所有受影响位置。

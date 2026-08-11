@@ -153,4 +153,4 @@ Cube 和 Vector 类的公开接口收敛为：
 
 ## 提交前检查
 
-交付时同时执行 [`operator-checklist.md`](operator-checklist.md)。性能优化还要执行 [`operator-optimization/checklist.md`](operator-optimization/checklist.md)，A5 实现额外执行 [`operator-optimization/soc/a5.md`](operator-optimization/soc/a5.md) 的编码与架构检查。
+交付时同时执行 [`checklist.md`](checklist.md)。性能优化还要执行 [`../optimization/checklist.md`](../optimization/checklist.md)，A5 实现额外执行 [`../optimization/soc/a5.md`](../optimization/soc/a5.md) 的编码与架构检查。

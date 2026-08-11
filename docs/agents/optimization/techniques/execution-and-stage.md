@@ -35,7 +35,7 @@
 
 ## Head Window
 
-窗口大小先按 [`README.md`](README.md) 中的服务时间模型与 profiling 选择，再按 stage 成组推进：
+窗口大小先按 [`../README.md`](../README.md) 中的服务时间模型与 profiling 选择，再按 stage 成组推进：
 
 ```text
 for task in core_tasks:
