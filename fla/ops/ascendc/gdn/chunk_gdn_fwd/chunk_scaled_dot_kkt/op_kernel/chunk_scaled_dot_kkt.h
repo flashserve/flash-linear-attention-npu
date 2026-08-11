@@ -3,7 +3,9 @@
 
 #include "kernel_operator.h"
 #include "kernel_tiling/kernel_tiling.h"
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
 #include "lib/matmul_intf.h"
+#endif
 
 #ifndef CATLASS_ARCH
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -48,10 +50,12 @@ constexpr uint8_t SCORE_DONE_FLAG0 = 2;
 constexpr uint8_t SCORE_DONE_FLAG1 = 3;
 constexpr uint8_t SCORE_READY_FLAG0 = 4;
 constexpr uint8_t SCORE_READY_FLAG1 = 5;
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
 constexpr MatmulConfig CHUNK_SCALED_DOT_KKT_MM_CFG = GetNormalConfig(true);
 
 using CType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, float>;
 using BiasType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, float>;
+#endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 using KktArchTag = Catlass::Arch::Ascend950;
 #else
@@ -72,8 +76,10 @@ class ChunkScaledDotKkt {
     };
 
 public:
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
     using AType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, KType>;
     using BType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, KType, true, LayoutMode::NONE, false>;
+#endif
 
     __aicore__ inline ChunkScaledDotKkt() {}
 
@@ -148,6 +154,15 @@ public:
 
     __aicore__ inline void ProcessAiv()
     {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if constexpr (CHUNK_KEY != 0) {
+            return;
+        }
+        if (!UseCatlassScore()) {
+            return;
+        }
+        ProcessAivCatlass();
+#else
         if (UseCatlassScore()) {
             ProcessAivCatlass();
             return;
@@ -192,6 +207,7 @@ public:
         if (scoreUsed) {
             scoreMatmul.End();
         }
+#endif
     }
 
     __aicore__ inline void ProcessAic()
@@ -218,7 +234,9 @@ public:
         return useCatlassScore_ != 0 && T_ > 0 && BT_ >= CATLASS_SCORE_MIN_BT && K_ > 0 && (K_ % 16) == 0;
     }
 
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
     matmul::Matmul<AType, BType, CType, BiasType, CHUNK_SCALED_DOT_KKT_MM_CFG> scoreMatmul;
+#endif
 
 private:
     __aicore__ inline int64_t MinI64(int64_t lhs, int64_t rhs) const
@@ -309,6 +327,7 @@ private:
         return colCount > 0;
     }
 
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
     __aicore__ inline void LaunchScoreTask(const TaskMeta &meta, int64_t scoreOffset, int64_t &cachedScoreValid)
     {
         const int64_t kOffset = ((meta.b * Hk_ + meta.h) * T_ + meta.rowStart) * K_;
@@ -331,6 +350,7 @@ private:
     {
         scoreMatmul.WaitIterateAll();
     }
+#endif
 
     template <int32_t BT_VALUE>
     __aicore__ inline void ProcessAicCatlassImpl()
@@ -605,6 +625,26 @@ private:
                                                          int64_t subBlockIdx,
                                                          int64_t subBlockNum)
     {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if constexpr (CHUNK_KEY != 0) {
+            return;
+        }
+        const int64_t ghOffset = (meta.b * Hv_ + meta.hv) * T_ + meta.rowStart;
+        CopyTaskVector(gGm, ghOffset, gQueue_, meta.valid);
+        CopyTaskVector(betaGm, ghOffset, betaQueue_, meta.valid);
+        LocalTensor<float> gLocal = gQueue_.template DeQue<float>();
+        LocalTensor<float> betaLocal = betaQueue_.template DeQue<float>();
+
+        const int64_t outBaseOffset = ((meta.b * Hv_ + meta.hv) * T_ + meta.rowStart) * BT_;
+        const int64_t outRowStride = BT_;
+        LocalTensor<float> scoreTileLocal = scoreTileBuf_.Get<float>();
+        LocalTensor<float> outTileLocal = outTileBuf_.Get<float>();
+        CopyScoreBlock(scoreBaseOffset, scoreTileLocal, rowCount, colCount);
+        ComputeEpilogueScoreBlockRowsA5RegBase(scoreTileLocal, outTileLocal, gLocal, betaLocal, rowBegin, rowCount,
+                                               colCount, outBaseOffset, outRowStride, subBlockIdx, subBlockNum);
+        gQueue_.FreeTensor(gLocal);
+        betaQueue_.FreeTensor(betaLocal);
+#else
         const int64_t ghOffset = (meta.b * Hv_ + meta.hv) * T_ + meta.rowStart;
         CopyTaskVector(gGm, ghOffset, gQueue_, meta.valid);
         CopyTaskVector(betaGm, ghOffset, betaQueue_, meta.valid);
@@ -653,6 +693,7 @@ private:
 
         gQueue_.FreeTensor(gLocal);
         betaQueue_.FreeTensor(betaLocal);
+#endif
     }
 
     __aicore__ inline bool CanUseA5RegBaseEpilogue(int64_t rowBegin, int64_t rowCount, int64_t colCount) const
@@ -687,11 +728,11 @@ private:
         auto outAddr = reinterpret_cast<uint64_t>(outTileLocal.GetPhyAddr());
         auto gAddr = reinterpret_cast<uint64_t>(gLocal.GetPhyAddr());
         auto betaAddr = reinterpret_cast<uint64_t>(betaLocal.GetPhyAddr());
-        ProcessKktEpilogue64VF((__ubuf__ float *)outAddr, (__ubuf__ float *)scoreAddr, (__ubuf__ float *)gAddr,
-                               (__ubuf__ float *)betaAddr, static_cast<uint16_t>(rowBegin),
-                               static_cast<uint16_t>(rowCount), static_cast<uint16_t>(colCount),
-                               static_cast<uint16_t>(subBlockIdx), static_cast<uint16_t>(subBlockNum),
-                               static_cast<uint16_t>(BRCB_ROWS));
+        asc_vf_call<ProcessKktEpilogue64VF>(
+            (__ubuf__ float *)outAddr, (__ubuf__ float *)scoreAddr, (__ubuf__ float *)gAddr,
+            (__ubuf__ float *)betaAddr, static_cast<uint16_t>(rowBegin), static_cast<uint16_t>(rowCount),
+            static_cast<uint16_t>(colCount), static_cast<uint16_t>(subBlockIdx), static_cast<uint16_t>(subBlockNum),
+            static_cast<uint16_t>(BRCB_ROWS));
         CopyOutScoreBlockRows(outBaseOffset, outRowStride, outTileLocal, rowBegin, rowCount, subBlockIdx, subBlockNum);
 #else
         (void)scoreTileLocal;

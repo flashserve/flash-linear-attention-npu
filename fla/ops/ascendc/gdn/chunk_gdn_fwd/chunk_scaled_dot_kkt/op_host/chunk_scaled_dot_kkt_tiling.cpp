@@ -17,6 +17,7 @@ constexpr uint64_t kWorkspaceAlign = 512;
 constexpr uint64_t kScoreWorkspaceBufferNum = 2;
 constexpr uint64_t kScoreWorkspaceHeadBatch = 8;
 constexpr uint64_t kCatlassScoreMinBt = 32;
+constexpr uint64_t kA5RegBaseBt = 64;
 constexpr uint64_t kMaxInt32 = static_cast<uint64_t>(std::numeric_limits<int32_t>::max());
 constexpr uint32_t kInputKIndex = 0;
 constexpr uint32_t kInputGIndex = 1;
@@ -339,8 +340,12 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     tiling.set_btAlign(AlignUp(bt, kFp32BlockElems));
     tiling.set_isVarlen(isVarlen);
     const bool onlyFullChunks = HasOnlyFullChunks(t, bt, nt, isVarlen, cuSeqlensTensor, chunkIndicesTensor);
-    tiling.set_useCatlassScore((catlassScoreSocSupported && onlyFullChunks && bt >= kCatlassScoreMinBt &&
-                                (k % 16) == 0) ? 1 : 0);
+    const bool useCatlassScore = catlassScoreSocSupported && onlyFullChunks && bt == kA5RegBaseBt &&
+                                 bt >= kCatlassScoreMinBt && (k % 16) == 0;
+    if (catlassScoreSocSupported && !useCatlassScore) {
+        return ge::GRAPH_FAILED;
+    }
+    tiling.set_useCatlassScore(useCatlassScore ? 1 : 0);
     tiling.set_scoreWorkspaceBytes(scoreBytes);
     if (BuildCubeTiling(bt, k, kDtype, tiling) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;

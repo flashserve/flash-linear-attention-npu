@@ -73,43 +73,35 @@ __simd_vf__ inline void ProcessKktEpilogue64VF(__ubuf__ float *out,
     MaskReg maskInvalidOne;
 
     Duplicate(zeroReg, 0.0f, maskFull32);
+    Duplicate(rowIdxReg, 0.0f, maskFull32);
     Duplicate(validColReg, static_cast<float>(validCols), maskFull32);
     Arange(colIdxReg, 0);
     CastHalf2Float<half>(colIdxZeroReg, colIdxOneReg, colIdxReg, maskFull16);
     LoadKktFloatPair(gZeroReg, gOneReg, g);
 
-    const uint16_t rowEnd = rowBegin + rowCount;
-    const uint16_t firstRowBase = rowBegin + subBlockIdx * rowGroupRows;
-    const uint16_t rowStep = subBlockNum * rowGroupRows;
-    for (uint16_t rowBase = firstRowBase; rowBase < rowEnd; rowBase += rowStep) {
-        const uint16_t rows = (rowBase + rowGroupRows <= rowEnd) ? rowGroupRows : (rowEnd - rowBase);
-        for (uint16_t lane = 0; lane < rows; ++lane) {
-            const uint16_t row = rowBase + lane;
-            const uint16_t localRow = row - rowBegin;
-            Duplicate(rowIdxReg, static_cast<float>(row), maskFull32);
-            LoadKktFloatPair(scoreZeroReg, scoreOneReg, score + localRow * KKT_A5_BT64);
-            LoadIn<float, true>(gRowReg, g + row);
-            LoadIn<float, true>(betaRowReg, beta + row);
+    for (uint16_t row = 0; row < KKT_A5_BT64; ++row) {
+        LoadKktFloatPair(scoreZeroReg, scoreOneReg, score + row * KKT_A5_BT64);
+        LoadIn<float, true>(gRowReg, g + row);
+        LoadIn<float, true>(betaRowReg, beta + row);
 
-            SubFloatTwoReg(gateZeroReg, gateOneReg, gRowReg, gRowReg, gZeroReg, gOneReg, maskFull32);
-            MaxsKktFloatPair(gateZeroReg, gateOneReg, gateZeroReg, gateOneReg, -50.0f, maskFull32);
-            MinsFloatTwoReg(gateZeroReg, gateOneReg, gateZeroReg, gateOneReg, 50.0f, maskFull32);
-            ExpFloatTwoReg(gateZeroReg, gateOneReg, gateZeroReg, gateOneReg, maskFull32);
-            Mul(gateZeroReg, gateZeroReg, betaRowReg, maskFull32);
-            Mul(gateOneReg, gateOneReg, betaRowReg, maskFull32);
+        SubFloatTwoReg(gateZeroReg, gateOneReg, gRowReg, gRowReg, gZeroReg, gOneReg, maskFull32);
+        MaxsKktFloatPair(gateZeroReg, gateOneReg, gateZeroReg, gateOneReg, -50.0f, maskFull32);
+        MinsFloatTwoReg(gateZeroReg, gateOneReg, gateZeroReg, gateOneReg, 50.0f, maskFull32);
+        ExpFloatTwoReg(gateZeroReg, gateOneReg, gateZeroReg, gateOneReg, maskFull32);
+        Mul(gateZeroReg, gateZeroReg, betaRowReg, maskFull32);
+        Mul(gateOneReg, gateOneReg, betaRowReg, maskFull32);
 
-            MulFloatTwoReg(resultZeroReg, resultOneReg, scoreZeroReg, scoreOneReg, gateZeroReg, gateOneReg,
-                           maskFull32);
-            CompareTwoReg<float, CMPMODE::GE>(maskUpperZero, maskUpperOne, colIdxZeroReg, colIdxOneReg, rowIdxReg,
-                                              rowIdxReg, maskFull32);
-            SelectTwoReg(resultZeroReg, resultOneReg, zeroReg, zeroReg, resultZeroReg, resultOneReg, maskUpperZero,
-                         maskUpperOne);
-            CompareTwoReg<float, CMPMODE::GE>(maskInvalidZero, maskInvalidOne, colIdxZeroReg, colIdxOneReg,
-                                              validColReg, validColReg, maskFull32);
-            SelectTwoReg(resultZeroReg, resultOneReg, zeroReg, zeroReg, resultZeroReg, resultOneReg, maskInvalidZero,
-                         maskInvalidOne);
-            StoreKktFloatPair(out + localRow * KKT_A5_BT64, resultZeroReg, resultOneReg, maskFull32);
-        }
+        MulFloatTwoReg(resultZeroReg, resultOneReg, scoreZeroReg, scoreOneReg, gateZeroReg, gateOneReg, maskFull32);
+        CompareTwoReg<float, CMPMODE::GE>(maskUpperZero, maskUpperOne, colIdxZeroReg, colIdxOneReg, rowIdxReg,
+                                          rowIdxReg, maskFull32);
+        SelectTwoReg(resultZeroReg, resultOneReg, zeroReg, zeroReg, resultZeroReg, resultOneReg, maskUpperZero,
+                     maskUpperOne);
+        CompareTwoReg<float, CMPMODE::GE>(maskInvalidZero, maskInvalidOne, colIdxZeroReg, colIdxOneReg, validColReg,
+                                          validColReg, maskFull32);
+        SelectTwoReg(resultZeroReg, resultOneReg, zeroReg, zeroReg, resultZeroReg, resultOneReg, maskInvalidZero,
+                     maskInvalidOne);
+        StoreKktFloatPair(out + row * KKT_A5_BT64, resultZeroReg, resultOneReg, maskFull32);
+        Adds(rowIdxReg, rowIdxReg, 1.0f, maskFull32);
     }
 }
 
