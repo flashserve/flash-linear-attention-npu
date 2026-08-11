@@ -54,14 +54,15 @@ workspace 状态段必须明确 old/new state 的地址、更新顺序和最后�
 - 非 canonical 输入进入显式低频路径，不污染主流水。
 - 空 sequence、短尾 chunk 和反向递推起点单独覆盖。
 
-## 4-Head Window
+## Head Window
 
-4-head window 只组织同一递推 task 内互不共享 carry 或具有明确共享关系的 head。每个 head 的完整状态责任由一个 Vector subblock 持有，避免 row tile 和 state owner 在两个 subblock 之间来回切换。
+Head window 只组织同一递推 task 内互不共享 carry 或具有明确共享关系的 head。每个 head 的完整状态责任由一个 Vector subblock 持有，避免 row tile 和 state owner 在两个 subblock 之间来回切换。
 
 - 两个 Vector subblock 可以交替承包完整 head。
+- 采用上述 owner 模型时先评估 2-head；只有服务时间和完整 timeline 证明额外在飞 head 能隐藏流水空洞时才扩大到 4-head。
 - owner 生产 payload，非 owner 仍按协议完成必要的 flag 配平。
-- 4-head 完整窗口和 1 至 3 个 tail head 使用相同状态与信号模型。
-- 两个 window bank 轮转时规划 8 个逻辑 per-head workspace slot。
+- 完整窗口和不足 `windowSize` 的 tail 使用相同状态与信号模型。
+- 两个 window bank 轮转时规划 `2 * windowSize` 个逻辑 per-head workspace slot。
 - carry slot 和普通矩阵中间量 slot 分开定义生命周期。
 
 ## Stage 结构
@@ -83,6 +84,6 @@ next/previous state ready
 - 正向和反向递推分别确认初始状态与输出状态语义。
 - 单 chunk、两 chunk、长递推链和短尾 chunk。
 - fixed/varlen、单 sequence、多 sequence 和空 sequence。
-- 完整 4-head window 与 1 至 3 个 tail head。
+- 所选完整 head window、尾窗口及多个连续窗口。
 - grouped/GVA、可选初始/最终状态和全部互斥分支。
 - state 使用 FP32 carry 时检查每个有效输出，并确认无未初始化或提前覆盖。

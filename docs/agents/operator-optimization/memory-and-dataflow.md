@@ -38,7 +38,7 @@ workspace 不只是地址集合。每个 segment/slot 都要定义：
 | free | 最后一次读取何时完成 |
 | reuse point | 哪个后续 window/task 可以覆盖 |
 
-默认 4-head window 配合双 bank 时规划 8 个逻辑 per-head workspace slot。地址轮转和 ready/free 使用一致的 `bank/headOffset`，但不能把 workspace slot 与 UB、L1 或 L0 的物理 ping/pong 混为一谈。
+所选 head window 配合双 bank 时规划 `2 * windowSize` 个逻辑 per-head workspace slot。地址轮转和 ready/free 使用一致的 `bank/headOffset`，但不能把 workspace slot 与 UB、L1 或 L0 的物理 ping/pong 混为一谈。
 
 混合 dtype workspace 按 byte 规划，再转换为对应类型指针。segment 起点满足真实 DataCopy、矩阵布局和原子访问的对齐要求。
 
@@ -72,7 +72,7 @@ gate、scale、metadata、token 系数和重复使用的指数结果等小 tenso
 
 - 在首次需要时搬入并转换到计算 dtype。
 - 跨 stage 复用，避免重复 DataCopy、cast 和 exp。
-- 按 4-head window 的 active head 分配或按共享键去重。
+- 按所选 head window 的 active head 分配或按共享键去重。
 - resident slot 与普通 matrix input/output ping/pong 分离。
 - tail 和变长场景只读取有效范围，padding lane 按消费者语义处理。
 
@@ -95,7 +95,7 @@ gate、scale、metadata、token 系数和重复使用的指数结果等小 tenso
 引入直连时同步更新：
 
 1. UB/L1/L0 容量和临时空间。
-2. 每个 4-head window 的 per-head 或共享 slot。
+2. 每个所选 head window 的 per-head 或共享 slot。
 3. 数据格式转换和真实物理跨度。
 4. ready/free、tail drain 和 fallback。
 5. sanitizer、流水和固定性能基线。

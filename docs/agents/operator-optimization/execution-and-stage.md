@@ -1,6 +1,6 @@
 # 执行模型与 Stage 设计
 
-本文描述与 chunk 依赖类型和目标 SOC 无关的 task、stage、4-head window 及 AIC/AIV 分工方法。
+本文描述与 chunk 依赖类型和目标 SOC 无关的 task、stage、head window 及 AIC/AIV 分工方法。
 
 ## 先画数据依赖图
 
@@ -33,14 +33,14 @@
 - 中间量只由一侧生产，另一侧消费，不在两侧重复计算。
 - 分工由数据规模和 pipe 能力决定，不能把矩阵主体改成 Vector/scalar 作为性能兜底。
 
-## 默认 4-Head Window
+## Head Window
 
-多 head 算子默认按 4 个 head 组成逻辑窗口，并按 stage 成组推进：
+窗口大小先按 [`README.md`](README.md) 中的服务时间模型与 profiling 选择，再按 stage 成组推进：
 
 ```text
 for task in core_tasks:
-    for headBase in range(0, headCount, 4):
-        activeHeads = min(4, headCount - headBase)
+    for headBase in range(0, headCount, windowSize):
+        activeHeads = min(windowSize, headCount - headBase)
         bank = windowIndex & 1
 
         for head in activeHeads: stage_0(head, bank)
@@ -54,20 +54,23 @@ for task in core_tasks:
 标准约束：
 
 - AIC 和 AIV 使用一致的 `task -> window -> stage -> head` 逻辑顺序。
-- 一个 bank 提供 4 个逻辑 per-head slot；双 bank 共 8 个。
-- `activeHeads` 覆盖 tail 的 1 至 3 个 head，不能假设 head 数为 4 的倍数。
+- 一个 bank 提供 `windowSize` 个逻辑 per-head slot；双 bank 共 `2 * windowSize` 个。
+- `activeHeads` 覆盖不足一个完整窗口的 tail，不能假设 head 数为窗口大小的倍数。
 - window bank、GM workspace slot、UB ping/pong 和 L1/L0 slot 是不同层次的概念。
 - 同组 head 共享数据时，按最小依赖键只生成一次，并保持到组内最后一次消费。
 - 下一窗口覆盖 bank 前，所有数据边都必须完成最后消费和 free。
 
-## 受控例外
+## 窗口选择证据
 
-缩小窗口或使用不同窗口大小前，必须给出：
+确定窗口大小前，必须给出：
 
-1. 4-head 方案的 UB、L1、L0、workspace 和 EventID 预算。
-2. 完整窗口与 tail 的 set/wait、ready/free 和 owner 配平表。
-3. 目标 shape 的性能对比和主要 bound。
-4. 泛化范围、回退路径和多 SOC 影响。
+1. 归一到单个 head 的 `T_C`、`T_V`、有效 `N_V`，以及 subblock 是否独立持有完整 head。
+2. 1/2/4-head 候选的 UB、L1、L0、workspace 和 EventID 预算。
+3. 完整窗口与 tail 的 set/wait、ready/free 和 owner 配平表。
+4. 目标 shape 的 Task Duration、完整 timeline、wait 和主要 bound 对比。
+5. 泛化范围、回退路径和多 SOC 影响。
+
+两个 Vector subblock 各自持有完整 head 时，2-head 是首个候选。只有 Cube 明显快于聚合 Vector，且额外在飞 head 能消除 2-head 的流水空洞时，才选择 4-head；窗口扩大不能提升已经由 Vector 决定的稳态吞吐。
 
 窗口大小不能按单个 shape 随意形成第二套 L0 路径；差异应由同一 L0 的 TilingData、模板或内部调度表达。
 

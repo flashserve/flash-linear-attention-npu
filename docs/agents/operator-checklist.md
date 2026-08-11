@@ -32,7 +32,7 @@
 - [ ] producer-consumer DAG、并行轴、stage 边界和中间量落点已经记录。
 - [ ] workspace segment、slot、dtype、layout、ready 和 free 生命周期完整。
 - [ ] 性能目标、功能范围和模板优势域分别声明，没有用 shape 特例缩窄功能范围。
-- [ ] 4-head window 默认方案或受控例外已经完成容量、同步和性能论证。
+- [ ] head window 已按 Cube/Vector 服务时间、owner 数、容量、同步和端到端性能选择，并保留最小有效窗口。
 - [ ] L1/L0/UB resident、双缓冲、直连通路和缓存都按最后消费点释放。
 - [ ] 优化没有引入第二套 L0、冗余 L0 参数或长期 fallback 路径。
 

@@ -81,4 +81,4 @@ TilingKey 只编码会改变编译期布局、指令路径或容量规划的维�
 - Host 生成 key 与 kernel 模板参数一一对应。
 - 不同 SOC 仍复用同一个 L0 和模板体系。
 - 新模板声明性能优势域和完整功能范围，不把边界 shape 变成长期 fallback。
-- 所有模板覆盖完整/尾 chunk、完整/尾 4-head window 和支持的 dtype/layout。
+- 所有模板覆盖完整/尾 chunk、所选完整/尾 head window 和支持的 dtype/layout。

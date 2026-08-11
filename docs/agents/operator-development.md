@@ -2,7 +2,7 @@
 
 本文面向 AI coding agent 和开发者，说明在本仓开发 AscendC 算子时应该怎样拆问题、定边界、写实现和做验证。这里优先沉淀通用方法论；具体算子的设计细节应放在对应算子的 README 或设计文档中。
 
-首次参与本仓开发时先读 [`foundation.md`](foundation.md)。开始编写或重构代码前阅读 [`operator-coding-standard.md`](operator-coding-standard.md)。涉及性能设计、stage、resident、4-head window、流水或 SOC 优化时，按 [`operator-optimization/README.md`](operator-optimization/README.md) 加载对应分类文档。
+首次参与本仓开发时先读 [`foundation.md`](foundation.md)。开始编写或重构代码前阅读 [`operator-coding-standard.md`](operator-coding-standard.md)。涉及性能设计、stage、resident、head window、流水或 SOC 优化时，按 [`operator-optimization/README.md`](operator-optimization/README.md) 加载对应分类文档。
 
 ## 推荐开发顺序
 
@@ -90,33 +90,6 @@ L0 是 L2 与 kernel 之间的内部算子契约。设计时先确定稳定的 L
 5. ABI、注册、构建、测试和维护影响，以及旧 L0 路径的迁移或删除计划。
 
 默认评审方向是只保留一套 L0 路径。公开接口的 V2 兼容策略不能作为平台性能优化时复制 L0 的默认理由；确实无法统一时，必须先提供可验证的技术证据和后续收敛计划。
-
-### 示例：KDA 性能优化设计
-
-#### 背景
-
-KDA 前向需要优化 `A5 + chunk_size=64 + K=V=128` 场景，同时保持算子已有能力泛化，并复用 A2、A3、A5 的统一 L0 契约。
-
-#### 问题
-
-1. 如果只让最规则的 shape 命中优化模板，其他需求未限制的维度触发回退，就把性能目标错误地变成了模板支持边界，也没有覆盖该模板的完整优势域。
-2. 如果为 A5 新建独立 L0，而 A2/A3 继续调用旧 L0，平台差异会泄漏到 L2 调用图，形成两套需要长期维护的原型、注册和构建路径。
-3. 如果把可推导的 shape、平台标识或模板开关增加为 L0 入参，调用方需要重复实现 tiling 判断，内部策略也会固化成接口负担。
-4. 如果融合方案已经满足功能和性能要求但仍保留未融合 L0 fallback，后续修改需要维护和验证两套调用链。
-
-#### 改进建议
-
-1. 将 A5、`chunk_size=64`、`K=128`、`V=128` 记录为本次性能目标；其他需求未限制的维度继承 KDA 现有支持范围。优化模板按其计算结构和资源规划覆盖完整优势域，普通边界差异在模板内部处理。
-2. A2、A3、A5 的 L2 统一调用同一 KDA L0；host tiling 根据平台能力和输入描述选择内部 tiling/kernel 模板，平台实现差异不改变 L0 原型。
-3. 从 tensor descriptor 和已有属性推导 shape 与模板选择信息，只通过 tiling data、workspace 或编译期模板参数传给 kernel。
-4. 融合实现通过完整功能、精度和性能验证后，删除被替代的未融合 L0 路径；确需新增或修改 L0 时，先提交设计确认材料。
-
-#### 验收要点
-
-1. L2 调用图能够证明 A2、A3、A5 进入同一 L0。
-2. 测试矩阵分别覆盖性能目标、现有功能范围和模板优势域，且没有通过新增隐含限制规避泛化。
-3. profiling 证明目标场景达到性能要求，泛化场景通过正确性验证。
-4. L0 参数逐项说明语义和信息来源，确认没有可由 tiling 推导的冗余入参。
 
 ## 先定能力边界
 
@@ -209,7 +182,7 @@ KDA 前向需要优化 `A5 + chunk_size=64 + K=V=128` 场景，同时保持算�
 
 不要在 `for d` 里塞大量小搬运和小 vector 指令。优先整行/整 tile 搬入，一次 vector 指令处理大块数据，再整块写回。
 
-完整的依赖模型、4-head window、内存数据流、流水同步、Tiling、SOC 差异和调优顺序见 [`operator-optimization/README.md`](operator-optimization/README.md)。本文件只保留开发方法论，不复制具体优化机制。
+完整的依赖模型、head window、内存数据流、流水同步、Tiling、SOC 差异和调优顺序见 [`operator-optimization/README.md`](operator-optimization/README.md)。本文件只保留开发方法论，不复制具体优化机制。
 
 ## 交付闭环
 

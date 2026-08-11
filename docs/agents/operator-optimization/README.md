@@ -35,14 +35,20 @@
 
 不要只写“可使用双缓冲”“可尝试驻留”一类口号，也不要把特定 shape 的 slot 数、容量结果或代码位置写成全仓规则。
 
-## 默认调度基线
+## Head Window 选择基线
 
-多 head 的线性 attention 类算子默认以 4-head window 组织 stage：
+Head window 是 Tiling、模板或内部调度参数，不是固定为 4 的全仓常量。先定义：
 
-- 一个逻辑窗口最多处理 4 个 head。
-- tail window 处理剩余 1 至 3 个 head。
-- 两个 window bank 轮转时，规划 8 个逻辑 per-head workspace slot。
-- AIC 和 AIV 使用一致的 `task -> window -> stage -> head` 顺序。
-- 跨窗口覆盖前必须完成上一代 slot 的最后消费和 free。
+- `T_C`：AIC/Cube 相关生产阶段归一到单个 head 的服务时间。
+- `T_V`：单个 AIV/Vector subblock 处理一个完整 head 的服务时间。
+- `N_V`：能够并行、独立且负载均衡地处理完整 head 的 Vector subblock 数。
 
-4-head window 是设计基线，不是无需证明的常量。容量、事件或性能无法满足时可以缩小窗口，但必须记录预算、同步协议、实测对比和验证结果，不得静默退回。
+只有各 subblock 独立持有完整 head 时，聚合 Vector 消费间隔才可近似为 `T_V / N_V`。如果 subblock 共同拆分一个 head、存在串行依赖或负载不均衡，应直接从完整 timeline 读取实际消费间隔，不能机械套用除法。
+
+- 选择能够填满预期 owner 并形成稳定流水的最小窗口。两个 Vector subblock 各自承包完整 head 时，先评估 2-head；只有一个 owner 时可以先评估 1-head。
+- 当 `T_C` 不小于聚合 Vector 消费间隔，或者 2-head 已无明显流水空洞时，不应仅为让 Cube 领先而扩大到 4-head。
+- 只有 Cube 明显快于聚合 Vector，且 2-head timeline 中存在可由额外在飞 head 隐藏的空洞、背压或排空间隔时，才评估 4-head。
+- 4-head 也可以由跨 head/group 驻留等独立复用收益驱动，但必须单独证明容量、生命周期和端到端收益。
+- 不设固定比例阈值；在相同功能、shape 和环境下固定比较 1/2/4-head 的 Task Duration、完整 pipe、wait 和资源占用。
+
+AIC 和 AIV 始终使用一致的 `task -> window -> stage -> head` 顺序。双 bank 轮转时逻辑 per-head workspace slot 数为 `2 * windowSize`；覆盖 bank 前必须完成上一代 slot 的最后消费和 free。

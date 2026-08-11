@@ -8,9 +8,12 @@
 - [ ] 数学语义、有效输出、递推方向和状态边界已经固定。
 - [ ] 每个中间量的 producer、consumer、location、dtype/layout、生命周期和复用键已形成 DAG。
 - [ ] 独立轴、归约 owner 和 task 所有权明确。
-- [ ] 默认 4-head window 使用两个 bank 和 8 个逻辑 per-head workspace slot。
-- [ ] 完整窗口和 1 至 3 个 tail head 使用一致的调度和同步模型。
-- [ ] 调整窗口大小时已提供容量、同步、性能和泛化证据。
+- [ ] 已测量或从完整 timeline 得到 `T_C`、`T_V`、有效 `N_V` 和实际聚合 Vector 消费间隔。
+- [ ] 已选择能够填满预期 owner 并形成稳定流水的最小 head window；两个 subblock 各自持有完整 head 时已先评估 2-head。
+- [ ] 选择 4-head 时已有 Cube 明显更快且额外在飞 head 消除流水空洞的证据，或独立的驻留复用收益证据。
+- [ ] 双 bank 使用 `2 * windowSize` 个逻辑 per-head workspace slot。
+- [ ] 完整窗口和不足 `windowSize` 的 tail 使用一致的调度和同步模型。
+- [ ] 窗口大小已有容量、同步、性能和泛化证据。
 
 ## 内存和数据通路
 
@@ -32,7 +35,7 @@
 - [ ] 每个核内事件的 producer pipe、consumer pipe、slot、方向和复用点明确。
 - [ ] 每条跨 AIC/AIV 数据边的 set/wait、ready/free 按 head 和分支配平。
 - [ ] owner 与非 owner Vector subblock均完成必要协议。
-- [ ] 4-head window 不依赖只支持 2 次积压的旧 raw flag 假设。
+- [ ] 所选 head window 不依赖低于最大在飞深度的旧 raw flag 假设。
 - [ ] wait 紧贴第一条真实 RAW 消费，独立搬运先执行。
 - [ ] tail、空 payload、跳过计算和 kernel 收尾均归还 free。
 
@@ -51,7 +54,7 @@
 - [ ] 每轮只修改一个可测因素，并记录预期 bound。
 - [ ] Release 编译和完整精度矩阵通过。
 - [ ] 固定环境比较修改前后 Task Duration 和全部 pipe 字段。
-- [ ] 4-head 完整窗口、tail、多 window 复用、grouped/GVA 和 fixed/varlen 已覆盖。
+- [ ] 所选完整窗口、tail、多 window 复用、grouped/GVA 和 fixed/varlen 已覆盖。
 - [ ] 额外 shape 用于验证泛化，没有替代固定性能锚点。
 - [ ] 流水图确认预期 overlap 和 wait 位置。
 - [ ] race、越界、未初始化和同步修改已执行对应 sanitizer，并确认命中目标 kernel。

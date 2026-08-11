@@ -1,6 +1,6 @@
 # 流水与同步
 
-本文描述 AIC/AIV 多阶段算子的核内事件、跨核 flag、双缓冲和 4-head window 背压协议。
+本文描述 AIC/AIV 多阶段算子的核内事件、跨核 flag、双缓冲和 head window 背压协议。
 
 ## AIC 矩阵流水
 
@@ -57,19 +57,19 @@ CopyIn
 
 MIX AIC 1:2 下，非 owner Vector subblock 即使没有 payload，也必须执行协议要求的配平或 drain。完整窗口、tail、空任务和跳过计算的分支都要核算次数。
 
-## 4-Head Window 背压
+## Head Window 背压
 
-4-head window 不能继续依赖“同一 raw flag 最多积压两次”的隐含假设。默认使用以下一种显式协议：
+当所选窗口允许的最大在飞深度超过 raw flag 已证明的积压能力时，必须使用以下一种显式协议：
 
 - 每个 `bank/headOffset/data-edge` 独立 ready/free。
 - 每条数据边使用容量至少覆盖最大在飞深度的 credit/free 计数。
 - 严格证明 producer/consumer 顺序后复用 raw flag，并记录最大未消费 set 深度。
 
-推荐按两个 bank、每 bank 四个 head 管理逻辑 slot：
+两个 bank 的逻辑 slot 按所选窗口管理：
 
 ```text
-bank 0: head slot 0..3
-bank 1: head slot 0..3
+bank 0: head slot 0..windowSize-1
+bank 1: head slot 0..windowSize-1
 ```
 
 ready 在 producer 对应 pipe 写入完成后发出；free 在最后消费者完成读取后归还。地址 bank、flag bank 和 generation 必须同步轮转。下一窗口覆盖 bank 前，全部 data edge 都已经 free。

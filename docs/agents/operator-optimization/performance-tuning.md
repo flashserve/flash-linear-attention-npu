@@ -7,7 +7,7 @@
 每轮只改变一个可测因素：
 
 1. 固定数学语义、有效输出和 task 所有权。
-2. 确认 chunk 依赖模型、4-head window 和 fixed/varlen 映射。
+2. 确认 chunk 依赖模型、head window 和 fixed/varlen 映射。
 3. 完成 workspace、carry、slot 和内存容量方案。
 4. 闭环 stage DAG、ready/free、ping/pong 和 tail 配平。
 5. 删除不必要的清零、cast、重复计算和 GM 镜像。
@@ -16,6 +16,18 @@
 8. 将 wait 下沉到第一条真实消费。
 9. 调整 row tile、双缓冲和窗口内 overlap。
 10. 最后优化向量循环、寄存器依赖和双发。
+
+## Head Window 调优
+
+窗口大小应由服务时间和完整流水决定：
+
+1. 测量 AIC/Cube 相关生产阶段归一到单个 head 的 `T_C`，以及单个 AIV/Vector subblock 处理完整 head 的 `T_V`。
+2. 确认可并行且负载均衡的完整 head owner 数 `N_V`；只有 owner 相互独立时，才用 `T_V / N_V` 近似聚合 Vector 消费间隔。
+3. 两个 Vector subblock 各自承包完整 head 时先测 2-head，并与 1-head、4-head 固定对比。
+4. 当 `T_C` 不小于聚合 Vector 消费间隔，或 2-head 已形成稳定 overlap 时，保留较小窗口。
+5. 只有 Cube 明显更快且 2-head timeline 存在可被额外在飞 head 隐藏的空洞、背压或排空间隔时，才保留 4-head。
+
+扩大窗口不会改变由 Vector 决定的稳态吞吐上限，还会增加 slot、event、容量和尾窗口复杂度。跨 head/group 驻留带来的独立收益应单独 A/B，不与流水领先收益混在一起。
 
 每轮执行：
 
@@ -63,7 +75,7 @@ pipe 字段可能重叠，不能相加得到 Task Duration。
 | AIV scalar 高 | 逐元素标量、循环条件、地址计算和 helper 控制流 |
 | AIV VEC 高 | 重复 cast/exp、循环不变量、粒度、融合和双发 |
 | AIV MTE2/MTE3 高 | row tile、重复 workspace、非连续 layout、过多 copyout |
-| Task 高但单 pipe 不高 | AIC/AIV wait、4-head slot 背压、跨核 flag、任务粒度 |
+| Task 高但单 pipe 不高 | AIC/AIV wait、head-window slot 背压、跨核 flag、任务粒度 |
 
 VEC 时间下降而 Task Duration 不变，通常说明总耗时已由 MTE 或同步主导，应停止继续展开向量循环，转向数据搬运和 producer-consumer overlap。
 

@@ -30,14 +30,14 @@
 
 不能让多个 core 无协议地读改写同一输出。
 
-## 4-Head Window
+## Head Window
 
-每个 task 内按 4 个 head 组成逻辑窗口：
+每个 task 内按已验证的 `windowSize` 组成逻辑窗口：
 
 ```text
 for task in core_tasks:
-    for headBase in range(0, headCount, 4):
-        activeHeads = min(4, headCount - headBase)
+    for headBase in range(0, headCount, windowSize):
+        activeHeads = min(windowSize, headCount - headBase)
         bank = windowIndex & 1
         run all active heads of stage 0
         run all active heads of stage 1
@@ -48,7 +48,7 @@ for task in core_tasks:
 - head window 只组织 chunk 内 stage，不改变 chunk 之间的独立性。
 - 共享只读输入或公共中间量时，按最小依赖键在窗口内生成一次并复用。
 - tail head 保持与完整窗口相同的数据边和同步协议，只缩小有效 payload。
-- 两个 bank 轮转时使用 8 个逻辑 per-head workspace slot；UB/L1/L0 buffer 另行规划。
+- 两个 bank 轮转时使用 `2 * windowSize` 个逻辑 per-head workspace slot；UB/L1/L0 buffer 另行规划。
 
 ## Stage 与同步
 
@@ -64,7 +64,7 @@ for task in core_tasks:
 ## 验证重点
 
 - 同一个 core 连续处理多个 task，触发 workspace bank 复用。
-- head 数分别覆盖 1、2、3、4、5 以及大于一个完整窗口的场景。
+- head 数覆盖 1、2、所选完整窗口、尾窗口以及大于一个完整窗口的场景。
 - grouped/GVA 覆盖同组复用和跨组切换。
 - chunk 数大于 core 数时验证 task 轮转和输出下标。
 - fixed/varlen、尾 chunk 和空 sequence 不产生跨 task 串扰。

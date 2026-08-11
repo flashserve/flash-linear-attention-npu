@@ -24,8 +24,8 @@
 - 可选但当前不支持的参数要有反向用例，确认代码会明确拦截，而不是静默忽略或在 kernel 内崩溃。
 - 输出支持非连续视图时，要验证最终 `ViewCopy` 或等价路径；不要只测 contiguous 输出。
 - 多阶段 AIC/AIV 协同算子要覆盖长序列、多 chunk、多 head ratio，让同一个 core 连续处理多个 task，触发 workspace slot 复用和 ready/free flag 协议。
-- 默认 4-head window 要分别覆盖 1、2、3、4、5 个 head 和多个连续完整窗口，验证两个 window bank、8 个逻辑 per-head workspace slot、tail、owner/非 owner subblock 和所有数据边的 ready/free 配平。
-- 如果采用非 4-head window 的受控例外，测试要覆盖例外触发条件、默认路径、回退路径和窗口切换边界。
+- 所选 head window 要覆盖 1-head、2-head、完整窗口、尾窗口和多个连续窗口，验证两个 window bank、`2 * windowSize` 个逻辑 per-head workspace slot、owner/非 owner subblock 和所有数据边的 ready/free 配平。
+- 如果选择 4-head，测试要同时保留 2-head 对照，并用 Task Duration、完整 timeline 和资源预算证明额外在飞 head 的收益；窗口切换边界和回退路径也必须覆盖。
 
 ## 构建矩阵
 
