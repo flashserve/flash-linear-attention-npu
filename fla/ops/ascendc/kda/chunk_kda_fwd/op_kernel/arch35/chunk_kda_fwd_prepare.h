@@ -1718,7 +1718,7 @@ private:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             bool fuseQwKg = SAFE_GATE && BT_ == 64 && K_ == 128 && V_ == 128 && subBlockNum == 1;
             if (fuseQwKg) {
-                PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true, exportFinalKg, true>(
+                PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true, false, true>(
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
                     (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(qScore.GetPhyAddr()),
@@ -1728,13 +1728,26 @@ private:
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(directW.GetPhyAddr()),
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(vTyped.GetPhyAddr()),
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(directV.GetPhyAddr()),
-                    (__ubuf__ T *)reinterpret_cast<uint64_t>(vTyped.GetPhyAddr()),
+                    nullptr,
                     (__ubuf__ float *)reinterpret_cast<uint64_t>(betaFp32.GetPhyAddr()),
                     (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
                     (__ubuf__ float *)reinterpret_cast<uint64_t>(refFp32.GetPhyAddr()),
-                    (__ubuf__ float *)reinterpret_cast<uint64_t>(finalRefFp32.GetPhyAddr()),
+                    nullptr,
                     static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_),
                     static_cast<uint16_t>(tileRows));
+                if constexpr (exportFinalKg) {
+                    // vTyped remains an input to the fused direct-V write. Produce finalKg only
+                    // after that call completes so its writeback cannot race the first V load.
+                    // The typed helper also keeps BF16 finalKg within the score-safe exp range.
+                    PipeBarrier<PIPE_V>();
+                    PrepareKdaGateKgRegbase<T, T, GK_T, true>(
+                        (__ubuf__ T *)reinterpret_cast<uint64_t>(vTyped.GetPhyAddr()),
+                        (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
+                        (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
+                        (__ubuf__ float *)reinterpret_cast<uint64_t>(finalRefFp32.GetPhyAddr()),
+                        static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_),
+                        static_cast<uint16_t>(tileRows));
+                }
             } else {
                 PrepareKdaGateQwRegbase<T, SCORE_T, GK_T, true>(
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
