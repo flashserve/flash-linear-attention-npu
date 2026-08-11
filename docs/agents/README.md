@@ -1,17 +1,27 @@
 # AI 开发指南
 
-本目录用于沉淀给 AI coding agent 阅读的开发原理、方法论、验证流程和经验总结。根目录 `AGENTS.md` 保持为短入口；需要深入开发时，再阅读本目录中与任务相关的文档。
+本目录沉淀给 AI coding agent 和开发者使用的基础知识、开发方法、优化方法、验证流程和经验。根目录 `AGENTS.md` 只负责全仓强制规则和任务路由；进入具体任务后，再按本页选择需要阅读的文档。
 
-## 使用方式
+## 首次进入仓库
 
-- 修改算子实现前，先读 [`operator-development.md`](operator-development.md)。
-- 修改 `fla_npu` Python runtime、wheel 打包、OPP 安装、依赖版本门禁、legacy `torch.ops.npu` 兼容路径、多卡 device guard、stream、autograd、alias/mutation 或图编译适配前，先读 [`torch-npu-decoupled-architecture.md`](torch-npu-decoupled-architecture.md)；该文档也包含构建/运行组件关系和基础术语表。
-- 设计验证方案或整理测试结果前，先读 [`validation.md`](validation.md)。
-- 遇到精度、ABI、生成代码、跨 SOC 或提交范围问题时，先读 [`lessons.md`](lessons.md)。
+先读 [`foundation.md`](foundation.md)，建立项目组件、调用链、L2/L0、Tiling、workspace、OPP 和 wheel 的共同心智模型。构建、安装和测试命令以根目录 `README.md` 为准。
+
+## 按任务阅读
+
+| 任务 | 必读文档 |
+|---|---|
+| 新增或修改 Ascend C 算子 | [`operator-development.md`](operator-development.md) -> [`operator-checklist.md`](operator-checklist.md) -> [`validation.md`](validation.md) |
+| 算子性能设计或优化 | [`operator-optimization/README.md`](operator-optimization/README.md) 按依赖类型和目标 SOC 路由 -> [`validation.md`](validation.md) |
+| 修改 Python runtime、wheel、OPP 或兼容路径 | [`torch-npu-decoupled-architecture.md`](torch-npu-decoupled-architecture.md) -> [`validation.md`](validation.md) |
+| 定位精度、ABI、生成代码或跨 SOC 问题 | [`lessons.md`](lessons.md) 和对应任务文档 |
+| 整理交付和测试结果 | [`operator-checklist.md`](operator-checklist.md) -> [`validation.md`](validation.md) |
+
+具体算子的 README 和设计文档只说明该算子的接口、语义、实现和验证，不作为其他算子可以直接复制的通用优化规则。
 
 ## 编写原则
 
 - 这里记录可复用的方法论和经验，不记录个人机器、内网路径、临时目录、账号或 token。
 - 新增经验时优先写触发条件、判断方法、推荐处理方式，避免只写口号。
-- 与具体算子强绑定的细节优先放在该算子的 README 或设计文档中，再从这里链接过去。
+- 通用优化方法按依赖模型、技术类别和 SOC 能力归档，不按具体算子组织。
+- 具体算子的变量名、固定窗口数字、代码路径和性能结果不得反向写成全仓通用规则。
 - 与仓库规则、PR 模板、CI 机制有关的事实，以根目录和 `.github/` 下的现有文件为准。

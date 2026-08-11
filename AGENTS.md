@@ -11,6 +11,8 @@
 - `README.md`：构建、安装、调用、测试入口和目录结构。
 - `CONTRIBUTING.md`：贡献流程和新增算子交付要求。
 - `docs/repository-rules.md`：分支、ABI、NPU CI 和合入规则。
+- `docs/agents/foundation.md`：项目分层、调用链、关键术语、shape/layout、chunk 依赖和内存生命周期基础。
+- `docs/agents/operator-optimization/README.md`：算子性能设计与优化的依赖模型、技术分类、SOC 差异和检查清单入口。
 - `docs/agents/torch-npu-decoupled-architecture.md`：默认 `fla_npu.ops.ascendc` 解耦运行时、依赖确定与兼容性门禁、wheel 产物、多卡 device guard、stream、数据依赖、autograd 和 ACL 私有格式透传设计。
 - `docs/agents/README.md`：面向 AI agent 的开发原理、方法论、验证和经验总结索引。
 - `.github/pull_request_template.md`：PR 必填信息和验证矩阵。
@@ -22,6 +24,7 @@
 - 先用 `rg` / `rg --files` 找代码和文档，再修改；不要凭记忆猜目录。
 - 改动保持聚焦，避免无关格式化、批量重排和生成物噪声。
 - 公共接口、shape/dtype/layout/range、预留参数、平台差异、返回码或报错文本变化，必须同步检查代码、README、aclnn 文档、PyTorch API 文档、测试和示例。
+- 性能设计或优化前必须先判断 chunk 间是否存在 carry，并按 `docs/agents/operator-optimization/README.md` 阅读对应依赖模型、技术分类和目标 SOC 文档。不得把具体算子的窗口数、slot 数、容量或同步协议未经重新推导直接复制到其他算子。
 - 公开 PR、issue、评论和总结中不要暴露内网地址、机器名、用户名、绝对路径、临时目录、日志路径、token 或本地调测环境细节。
 - 构建和测试默认面向 Linux + CANN + NPU 环境；其他平台只做静态阅读、文本编辑或格式检查，不把未验证命令写成已验证结论。
 
@@ -97,112 +100,36 @@ ctypes 算子如果会通过 data pointer 修改输入 tensor，必须在公共 
 
 ## 算子开发交付 checklist
 
-新增或修改 Ascend C 算子时，交付前逐项核对：
-
-- [ ] `fla/ops/ascendc/**/op_host/*_def.cpp` 已同步输入、输出、属性、dtype、format、required/optional 定义。
-- [ ] `fla/ops/ascendc/**/op_host/*tiling*` / `*infershape*` 已同步参数校验、shape 推导和 tiling。
-- [ ] `fla/ops/ascendc/**/op_host/op_api/aclnn_*.h/.cpp` 已同步 aclnn 接口签名、返回和执行器逻辑。
-- [ ] `fla/ops/ascendc/**/op_kernel/` 已同步 Kernel 实现、tiling data 和 tiling key。
-- [ ] `torch_custom/fla_npu/npu_custom.yaml`、`test_native_functions.yaml`、`deprecated.yaml` 已同步 PyTorch schema 和适配生成输入。
-- [ ] `torch_custom/fla_npu/fla_npu/ops/ascendc/__init__.py` 已同步 Python 稳定导出。
-- [ ] `torch_custom/fla_npu/test/test_npu_<op>.py` 已补充或更新单算子测试和参考实现。
-- [ ] 当前算子的 `README.md`、`docs/aclnn*.md`、示例和 CI case 已同步更新。
-- [ ] 参数校验、shape/dtype/layout/range、平台差异、预留参数语义和报错文本保持一致。
-- [ ] 正向、反向、边界、异常、dense/varlen、关键 SOC 和目标 dtype/layout 场景已按改动风险覆盖。
-- [ ] 所有支持的 SOC 复用同一 L0 定义、原型和 L2 调用路径，平台差异只存在于该 L0 的 tiling/kernel 内部。
-- [ ] 性能目标、功能支持范围和模板优势域已分别声明；模板覆盖完整优势域，且没有以未声明的限制缩窄功能范围或规避目标性能。
-- [ ] L0 原型没有承载可由 tensor descriptor、已有属性或 host tiling 推导的冗余信息；如新增或修改 L0、V2 或多路径，已在实现前取得 `@weinachuan` 的明确确认。
+新增或修改 Ascend C 算子时，交付前执行 `docs/agents/operator-checklist.md`。涉及性能设计或优化时同时执行 `docs/agents/operator-optimization/checklist.md`。至少确认接口、host、kernel、schema、Python 导出、测试、文档和目标 SOC 保持一致。
 
 ABI 敏感路径包括 `*_def.cpp`、`aclnn_*.h/.cpp`、`torch_custom/fla_npu/*.yaml` 和 `torch_custom/fla_npu/op_plugin/ops/opapi/**`。修改这些文件时，PR 需要明确说明 ABI 影响，并按 `.github/CODEOWNERS` 请求对应 owner 检视。
 
 ## 构建命令
 
-先准备环境：
+完整的环境、构建、安装和调用方法以根目录 `README.md` 为准。开始前先执行环境检查：
 
 ```sh
-source /usr/local/Ascend/ascend-toolkit/set_env.sh
-python -m pip install -r requirements.txt
 python scripts/check_npu_env.py --build-only
 ```
 
-推荐的一体化 wheel 构建：
+源码或 Python 适配修改后使用目标 SOC 完整重编一体化 wheel：
 
 ```sh
-FLA_NPU_SOC=ascend910b python -m pip wheel --no-build-isolation --no-deps . -w dist
+FLA_NPU_SOC=<soc> python -m pip wheel --no-build-isolation --no-deps . -w dist
 ```
 
-常用 SOC：
-
-- A2：`ascend910b`
-- A3：`ascend910_93`
-- A5：`ascend950`
-
-源码或适配修改后仍执行完整 wheel 构建；构建流程会清理上一轮中间产物：
-
-```sh
-FLA_NPU_SOC=ascend910b python -m pip wheel --no-build-isolation --no-deps . -w dist
-```
-
-只构建部分算子用于定位时，显式构建单算子 run 包；该产物不能替代完整 wheel
-的全量重编：
-
-```sh
-bash build.sh --soc=ascend910b --pkg --vendor_name=fla_npu --ops=chunk_fwd_o
-```
-
-分开编 OPP run 包和 `torch_custom` 适配时：
-
-```sh
-bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu
-cd torch_custom/fla_npu
-bash build.sh
-```
-
-一体化 wheel 和 `torch_custom/fla_npu` 单独编出的 wheel 使用相同 pip 项目名
-`flash-linear-attention-npu`，Python import 名均为 `fla_npu`。单独编出的
-standalone wheel 只提供 Python 适配和 OPP 骨架；配套 run 包使用 `--full` 或
-`--install` 安装时，会把 run 包里的 `packages/vendors/fla_npu_transformer`
-合并覆盖到当前 Python 环境的 `site-packages/fla_npu/opp/vendors/fla_npu_transformer`。
+SOC 映射：A2 为 `ascend910b`，A3 为 `ascend910_93`，A5 为 `ascend950`。单算子 run 包只用于定位，不能替代完整 wheel 重编。
 
 ## 安装和验证
 
-安装一体化 wheel：
+验证方法和矩阵见 `docs/agents/validation.md`。安装 wheel 后至少检查公开 API：
 
 ```sh
 python -m pip install --force-reinstall --no-deps dist/flash_linear_attention_npu-*.whl
 python scripts/check_packaged_wheel_api.py
 ```
 
-运行 GDN 单算子测试：
-
-```sh
-cd torch_custom/fla_npu/test
-bash test.sh --device 0
-bash test.sh --device 0 --op causal_conv1d
-```
-
-`test.sh` 只覆盖已接入脚本的 GDN 算子。未纳入 `test.sh` 的算子按对应测试脚本直接运行，例如：
-
-```sh
-cd torch_custom/fla_npu/test
-python3 test_npu_<op>.py
-```
-
-端到端 Example/ST：
-
-```sh
-python examples/flash_gated_delta_rule.py
-python3 ci/run_example_st_cases.py --device 0 --cases-file ci/example_st_cases.json
-```
-
-本地复现 CI 主流程：
-
-```sh
-CI_MODE=quick CI_SOC=ascend910b CI_OPS=<op_name> bash ci/run_checks.sh
-CI_MODE=full bash ci/run_checks.sh
-```
-
-如果缺少 CANN、NPU、`torch_npu`、`torchnpugen` 或 `triton-ascend`，不要伪造验证结论；在回复中说明未执行的命令和阻塞原因。
+单算子、Example/ST 和 CI 命令从 `README.md`、当前算子 README 和现有脚本选择。缺少 CANN、NPU 或运行时依赖时，不得把未执行命令写成已验证结论。
 
 ## 测试要求
 

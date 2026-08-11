@@ -24,6 +24,8 @@
 - 可选但当前不支持的参数要有反向用例，确认代码会明确拦截，而不是静默忽略或在 kernel 内崩溃。
 - 输出支持非连续视图时，要验证最终 `ViewCopy` 或等价路径；不要只测 contiguous 输出。
 - 多阶段 AIC/AIV 协同算子要覆盖长序列、多 chunk、多 head ratio，让同一个 core 连续处理多个 task，触发 workspace slot 复用和 ready/free flag 协议。
+- 默认 4-head window 要分别覆盖 1、2、3、4、5 个 head 和多个连续完整窗口，验证两个 window bank、8 个逻辑 per-head workspace slot、tail、owner/非 owner subblock 和所有数据边的 ready/free 配平。
+- 如果采用非 4-head window 的受控例外，测试要覆盖例外触发条件、默认路径、回退路径和窗口切换边界。
 
 ## 构建矩阵
 
@@ -62,3 +64,5 @@
 ## 结果记录
 
 对外描述测试结果时，只写测试项和结果，不写本地机器、账号、绝对路径、临时目录或日志路径。若没有执行某项验证，写清楚原因，例如缺少 NPU、缺少 CANN 环境或依赖版本不满足。
+
+算子优化交付还应执行 [`operator-optimization/checklist.md`](operator-optimization/checklist.md)，确保依赖模型、容量、slot、同步、流水和性能证据完整。

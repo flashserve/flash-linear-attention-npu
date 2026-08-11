@@ -2,6 +2,8 @@
 
 本文面向 AI coding agent 和开发者，说明在本仓开发 AscendC 算子时应该怎样拆问题、定边界、写实现和做验证。这里优先沉淀通用方法论；具体算子的设计细节应放在对应算子的 README 或设计文档中。
 
+首次参与本仓开发时先读 [`foundation.md`](foundation.md)。涉及性能设计、stage、resident、4-head window、流水或 SOC 优化时，按 [`operator-optimization/README.md`](operator-optimization/README.md) 加载对应分类文档。
+
 ## 推荐开发顺序
 
 不要从“先写一个 kernel 试试”开始。推荐顺序是：
@@ -206,9 +208,11 @@ KDA 前向需要优化 `A5 + chunk_size=64 + K=V=128` 场景，同时保持算�
 
 不要在 `for d` 里塞大量小搬运和小 vector 指令。优先整行/整 tile 搬入，一次 vector 指令处理大块数据，再整块写回。
 
+完整的依赖模型、4-head window、内存数据流、流水同步、Tiling、SOC 差异和调优顺序见 [`operator-optimization/README.md`](operator-optimization/README.md)。本文件只保留开发方法论，不复制具体优化机制。
+
 ## 交付闭环
 
-交付前按根目录 `AGENTS.md` 的“算子开发交付 checklist”逐项核对。尤其注意：
+交付前按 [`operator-checklist.md`](operator-checklist.md) 逐项核对；性能优化同时执行 [`operator-optimization/checklist.md`](operator-optimization/checklist.md)。尤其注意：
 
 - 接口契约、代码拦截、报错文本、返回码和文档约束必须一致。
 - `op_host`、`op_api`、kernel、PyTorch schema、Python 导出、测试和示例要同步。
