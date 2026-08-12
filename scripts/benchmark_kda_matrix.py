@@ -98,6 +98,9 @@ DETAIL_ALIASES = {
 DIAGNOSTIC_TREE_LIMIT = 500
 DIAGNOSTIC_CSV_LIMIT = 100
 DIAGNOSTIC_LOG_LINES = 240
+INVALID_XML_CHARACTERS = re.compile(
+    "[\x00-\x08\x0B\x0C\x0E-\x1F\uD800-\uDFFF\uFFFE\uFFFF]"
+)
 
 
 @dataclass(frozen=True)
@@ -221,6 +224,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--decode-step", type=int, default=1, help=argparse.SUPPRESS)
     parser.add_argument("--aic-metrics", default="Default")
     parser.add_argument("--list-cases", action="store_true")
+    parser.add_argument(
+        "--repair-workbook",
+        type=Path,
+        metavar="RESULTS_DIR",
+        help="rebuild kernel_detail.xlsx from an existing results directory",
+    )
     parser.add_argument("--worker")
     return parser.parse_args()
 
@@ -1130,7 +1139,7 @@ def xlsx_cell(reference: str, value, style: int = 0) -> str:
             f'<c r={quoteattr(reference)} s={quoteattr(str(style or numeric_style))}>'
             f"<v>{value}</v></c>"
         )
-    text = escape(str(value))
+    text = escape(INVALID_XML_CHARACTERS.sub("", str(value)))
     preserve = ' xml:space="preserve"' if text != text.strip() else ""
     return (
         f'<c r={quoteattr(reference)} s={quoteattr(str(style))} t="inlineStr">'
@@ -1218,7 +1227,6 @@ def xlsx_sheet_xml(case: Case, result: Optional[dict], columns: tuple[str, ...])
   <cols>{''.join(widths)}</cols>
   <sheetData>{''.join(rows)}</sheetData>
   <mergeCells count="1"><mergeCell ref="A1:H1"/></mergeCells>
-  <autoFilter ref="A5:{excel_column_name(len(columns) - 1)}{last_row}"/>
 </worksheet>'''
 
 
@@ -1299,6 +1307,24 @@ def write_kernel_detail_workbook(args: argparse.Namespace, results: list[dict]) 
                 f"xl/worksheets/sheet{index}.xml",
                 xlsx_sheet_xml(case, result_by_case.get(case.case_id), columns),
             )
+
+
+def repair_kernel_detail_workbook(results_dir: Path) -> Path:
+    results_dir = results_dir.resolve()
+    results_file = results_dir / "results.json"
+    if not results_file.is_file():
+        raise FileNotFoundError(f"results file not found: {results_file}")
+    payload = json.loads(results_file.read_text(encoding="utf-8"))
+    results = payload.get("results")
+    if not isinstance(results, list):
+        raise ValueError(f"invalid results payload: {results_file}")
+    for result in results:
+        profile_dir = result.get("selected_profile_dir")
+        result["_kernel_detail"] = (
+            read_kernel_detail_rows(Path(profile_dir)) if profile_dir else []
+        )
+    write_kernel_detail_workbook(argparse.Namespace(output_dir=results_dir), results)
+    return results_dir / "kernel_detail.xlsx"
 
 
 def write_reports(args: argparse.Namespace, results: list[dict]) -> None:
@@ -1429,6 +1455,9 @@ def main() -> int:
         )
     if not args.aic_metrics:
         raise ValueError("--aic-metrics must not be empty")
+    if args.repair_workbook:
+        print(f"Rebuilt workbook: {repair_kernel_detail_workbook(args.repair_workbook)}")
+        return 0
     if args.list_cases:
         rows = [case_matrix_row(case, {item.case_id for item in CASES}) for case in CASES]
         writer = csv.DictWriter(sys.stdout, fieldnames=tuple(rows[0]))

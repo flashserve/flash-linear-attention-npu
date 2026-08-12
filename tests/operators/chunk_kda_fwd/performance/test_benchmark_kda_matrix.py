@@ -163,6 +163,7 @@ def test_workbook_has_one_sheet_per_pr297_case(tmp_path):
                 "sub_block_id": "cube0",
                 "Op Name": "ChunkKdaFwd",
                 "Op Type": "mix",
+                "diagnostic": "valid\x00text",
                 "aic_cube_time(us)": "8.0",
                 "aic_mte2_time(us)": "3.0",
                 "aiv_vec_time(us)": "4.0",
@@ -181,7 +182,40 @@ def test_workbook_has_one_sheet_per_pr297_case(tmp_path):
         assert names == [f"case_{case_id}" for case_id in range(250, 298)]
         assert len(names) == 48
         first_sheet = workbook.read("xl/worksheets/sheet1.xml").decode("utf-8")
+        sheet_tree = ElementTree.fromstring(first_sheet)
+        child_names = [node.tag.rsplit("}", 1)[-1] for node in sheet_tree]
+        assert "autoFilter" not in child_names
+        assert child_names.index("sheetData") < child_names.index("mergeCells")
         assert "mac_time_us" in first_sheet
         assert "aic_mte2_time_us" in first_sheet
         assert "vec_time_us" in first_sheet
         assert "ChunkKdaFwd" in first_sheet
+        assert "validtext" in first_sheet
+
+
+def test_repair_workbook_reuses_existing_profile_data(tmp_path):
+    runner = load_runner()
+    profile_dir = tmp_path / "profile"
+    write_default_metrics(profile_dir)
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    result = {
+        **runner.asdict(runner.CASES[0]),
+        "sequence_count": 1,
+        "chunk_count": 16,
+        "status": "PASS",
+        "profile_mode": "application_kernel_filter",
+        "aic_metrics": "Default",
+        "selected_profile_dir": str(profile_dir),
+    }
+    (results_dir / "results.json").write_text(
+        runner.json.dumps({"results": [result]}), encoding="utf-8"
+    )
+
+    workbook_path = runner.repair_kernel_detail_workbook(results_dir)
+
+    assert workbook_path == results_dir / "kernel_detail.xlsx"
+    with zipfile.ZipFile(workbook_path) as workbook:
+        first_sheet = workbook.read("xl/worksheets/sheet1.xml").decode("utf-8")
+        assert "ChunkKdaFwd" in first_sheet
+        assert "12.5" in first_sheet

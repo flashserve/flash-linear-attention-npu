@@ -115,6 +115,16 @@ Scalar 的时间、占比和带宽列，并保留 `PipeUtilization`、`Arithmeti
 `aic_cube_time(us)` 的易读别名，原始字段仍会保留。AIC 与 AIV 的 MTE 指标分别记录，
 不合并为单一数值。使用 `Default` 时若缺少任一资源表，该 case 会判为 `ERROR` 并保留诊断。
 
+若已有运行目录只需重新生成 `kernel_detail.xlsx`，无需重跑 NPU profiling：
+
+```bash
+python scripts/benchmark_kda_matrix.py \
+  --repair-workbook /path/to/run_YYYYMMDD_HHMMSS_PID/results
+```
+
+该命令读取原有 `results.json` 及其中记录的 msopprof CSV，覆盖结果目录内的
+`kernel_detail.xlsx`，不会启动算子或修改其他报告文件。
+
 任一 case 出现 `ERROR`、`OOM` 或 `TIMEOUT` 时，入口返回非零状态并保留逐 case 诊断。
 
 A5 PR264 一键构建、隔离安装和基础验收：
