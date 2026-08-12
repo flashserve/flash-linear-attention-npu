@@ -80,8 +80,8 @@ python test/chunk_kda_fwd/stress_npu_determinism.py \
   --repeats 100
 ```
 
-可先通过 `--tokens 128` 快速复现第一个 chunk 边界；不传该参数时保持 case 250 中的原始
-`T=1024`。所有轮次一致时脚本返回 0，出现任意二进制差异时返回 1。
+可先通过 `--tokens 128` 快速复现第一个 chunk 边界；不传该参数时保持 case JSON 中的原始
+`T=8192`。所有轮次一致时脚本返回 0，出现任意二进制差异时返回 1。
 
 A5 PR264 一键构建、隔离安装和基础验收：
 

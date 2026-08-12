@@ -61,7 +61,7 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: [ascend950]
+        values: [ascend910b, ascend950]
       invalid:
         values: []
   - name: route
@@ -71,7 +71,7 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: [ascendc]
+        values: [ascendc, aclnn, direct_launch]
       invalid:
         values: []
   - name: batch
@@ -91,9 +91,9 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [96]
+        values: [2, 96]
       invalid:
-        values: []
+        values: [0, 129]
   - name: value_head
     type: attr
     required: true
@@ -101,9 +101,9 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [96]
+        values: [4, 96]
       invalid:
-        values: []
+        values: [0, 2, 129]
   - name: total_tokens
     type: attr
     required: true
@@ -111,7 +111,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1024, 8192, 16384, 65536]
+        values: [128, 8192, 16384]
       invalid:
         values: []
   - name: key_dim
@@ -151,9 +151,9 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: [BSND]
+        values: [BSND, BNSD, TND, NTD]
       invalid:
-        values: []
+        values: [bsnd, INVALID]
   - name: q_dtype
     type: attr
     required: true
@@ -161,9 +161,9 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: [bf16]
+        values: [bf16, fp16]
       invalid:
-        values: []
+        values: [fp32]
   - name: g_dtype
     type: attr
     required: true
@@ -181,9 +181,9 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: [bf16]
+        values: [bf16, fp32]
       invalid:
-        values: []
+        values: [fp16]
   - name: initial_state
     type: attr
     required: true
@@ -191,7 +191,7 @@ inputs:
       values: [bool]
     ranges:
       valid:
-        values: [false]
+        values: [false, true]
       invalid:
         values: []
   - name: output_final_state
@@ -201,7 +201,7 @@ inputs:
       values: [bool]
     ranges:
       valid:
-        values: [false]
+        values: [false, true]
       invalid:
         values: []
   - name: varlen
@@ -211,7 +211,7 @@ inputs:
       values: [bool]
     ranges:
       valid:
-        values: [false]
+        values: [false, true]
       invalid:
         values: []
   - name: safe_gate
@@ -261,7 +261,7 @@ inputs:
       values: [bool]
     ranges:
       valid:
-        values: [false]
+        values: [false, true]
       invalid:
         values: []
   - name: state_v_first
@@ -271,7 +271,7 @@ inputs:
       values: [bool]
     ranges:
       valid:
-        values: [true]
+        values: [false, true]
       invalid:
         values: []
   - name: negative_case
@@ -281,6 +281,6 @@ inputs:
       values: [bool]
     ranges:
       valid:
-        values: [false]
+        values: [false, true]
       invalid:
         values: []
