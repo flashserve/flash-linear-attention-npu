@@ -131,6 +131,44 @@ python scripts/benchmark_kda_matrix.py \
 
 任一 case 出现 `ERROR`、`OOM` 或 `TIMEOUT` 时，入口返回非零状态并保留逐 case 诊断。
 
+### B200 FLA Triton 性能对比
+
+`scripts/benchmark_kda_b200_triton.py` 在单张 NVIDIA B200 上直接调用当前 Python
+环境已经安装的 `flash-linear-attention==0.5.2`，不会拉取 fla-org 仓库，也不会执行
+`pip install`。脚本使用与 A5 完全相同的 case 250 至 257、输入 shape、随机种子和功能属性，
+并强制关闭 FlashKDA、TileLang 等可选后端分发，确保执行 FLA 默认 Triton 实现。
+
+在已经安装 FLA 0.5.2 的 B200 环境中一键执行：
+
+```bash
+python scripts/benchmark_kda_b200_triton.py --device 0
+```
+
+默认每条 case 预热 5 次，随后正式执行 10 次。每次使用 CUDA event 记录完整低层
+`chunk_kda_fwd` 前向耗时并同步，最终取 10 次的算术平均值。输入生成、首次 Triton 编译、
+自动调优和预热耗时不计入正式结果。可显式写出默认参数或指定部分 case：
+
+```bash
+python scripts/benchmark_kda_b200_triton.py \
+  --device 0 \
+  --warmup 5 \
+  --runs 10 \
+  --cases 250,251,252,253,254,255,256,257 \
+  --output-dir "$PWD/output/kda-b200-triton"
+```
+
+结果目录包含：
+
+| 文件 | 内容 |
+| --- | --- |
+| `results.md` | B200 平均耗时、MFU、A5 耗时和 A5/B200 耗时比汇总表 |
+| `results.csv` | 每条 case 的平均值、中位数、最小值、最大值、标准差和峰值显存 |
+| `timings.csv` | 每条 case 的 10 次原始 CUDA event 耗时 |
+| `results.json` | GPU、PyTorch、Triton、FLA 版本、FLA 安装位置校验状态和完整结果 |
+
+脚本默认按单张 B200 的 BF16 dense 峰值 `2250 TFLOPS` 计算 MFU。若测试环境采用其他
+功耗或频率口径，可通过 `--peak-tflops <value>` 覆盖；耗时本身不受该参数影响。
+
 A5 PR264 一键构建、隔离安装和基础验收：
 
 ```bash
