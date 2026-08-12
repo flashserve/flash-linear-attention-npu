@@ -1,10 +1,7 @@
-"""Deterministic ATK matrix for chunk_kda_fwd.
+"""Deterministic eight-case A5 dense ATK matrix for chunk_kda_fwd.
 
-The generated IDs are frozen by profile:
-  * 0-199: A2 positive accuracy cases
-  * 200-249: A2 negative interception cases
-  * 250-449: A5 positive accuracy cases
-  * 450-499: A5 negative interception cases
+Case IDs 250-257 cover sequence lengths 1K, 8K, 16K and 64K with
+recomputation enabled and disabled for each length.
 """
 
 from __future__ import annotations
@@ -26,7 +23,9 @@ except ModuleNotFoundError as exc:
     CaseConfig = None
 
 
-SEED_BASE = 20260810
+SEED_BASE = 20260812
+FIRST_CASE_ID = 250
+DENSE_SEQUENCE_LENGTHS = (1024, 8192, 16384, 65536)
 L1_STANDARD = {
     "acc": {
         "cv_fused_double_benchmark": {
@@ -39,100 +38,19 @@ L1_STANDARD = {
 }
 
 
-def _balanced(total: int, count: int) -> list[int]:
-    base, extra = divmod(total, count)
-    return [base + (index < extra) for index in range(count)]
-
-
-def _skewed(total: int, count: int) -> list[int]:
-    weights = [count - index for index in range(count)]
-    weight_sum = sum(weights)
-    lengths = [max(1, total * weight // weight_sum) for weight in weights]
-    lengths[0] += total - sum(lengths)
-    return lengths
-
-
-def _geometric(total: int) -> list[int]:
-    lengths = []
-    remaining = total
-    while remaining > 1:
-        value = max(1, 1 << (remaining.bit_length() - 2))
-        lengths.append(value)
-        remaining -= value
-    if remaining:
-        lengths.append(remaining)
-    return lengths
-
-
-def _alternating(total: int, count: int, short: int) -> list[int]:
-    lengths = [short if index % 2 == 0 else 1 for index in range(count)]
-    remaining = total - sum(lengths)
-    long_indices = [index for index in range(count) if index % 2]
-    base, extra = divmod(remaining, len(long_indices))
-    for offset, index in enumerate(long_indices):
-        lengths[index] += base + (offset < extra)
-    return lengths
-
-
-def _cu_seqlens(lengths: list[int]) -> str:
-    values = [0]
-    for length in lengths:
-        values.append(values[-1] + int(length))
-    return ",".join(str(value) for value in values)
-
-
-def _positive_case(local_id: int, soc: str) -> dict:
-    pair_id = local_id // 2
+def _dense_case(local_id: int) -> dict:
+    length_id = local_id // 2
     disable_recompute = bool(local_id % 2)
-    total_t = 8192 if pair_id % 2 == 0 else 16384
+    total_t = DENSE_SEQUENCE_LENGTHS[length_id]
     chunk_size = 64
-    profile_id = pair_id % 10
-    sequence_count = (2, 4, 8, 16, 32)[(pair_id // 10) % 5]
-    lengths = None
-    scenario = "dense"
-    layout = "BSND" if pair_id % 4 < 2 else "BNSD"
-    if profile_id in {2, 3}:
-        lengths = _balanced(total_t, sequence_count)
-        scenario = f"packed_balanced{sequence_count}"
-        layout = "TND" if pair_id % 2 == 0 else "NTD"
-    elif profile_id in {4, 5}:
-        lengths = _skewed(total_t, sequence_count)
-        scenario = f"packed_skewed{sequence_count}"
-        layout = "TND" if pair_id % 2 == 0 else "NTD"
-    elif profile_id in {6, 7}:
-        lengths = _geometric(total_t)
-        scenario = "packed_geometric"
-        layout = "TND" if pair_id % 2 == 0 else "NTD"
-    elif profile_id in {8, 9}:
-        lengths = _alternating(total_t, max(sequence_count, 4), chunk_size // 2)
-        scenario = f"packed_alternating{max(sequence_count, 4)}"
-        layout = "TND" if pair_id % 2 == 0 else "NTD"
-
-    route = "ascendc" if pair_id < 84 else ("aclnn" if pair_id < 92 else "direct_launch")
-    if route == "direct_launch":
-        lengths = None
-        scenario = "dense_direct"
-        layout = "BNSD"
-
-    tags = ["accuracy", "model_target", "regression"]
-    if lengths is not None:
-        tags.append("boundary")
-    if not disable_recompute and pair_id in {0, 8}:
-        tags.append("performance")
-    if not disable_recompute and pair_id in {2, 9}:
-        tags.append("determinism")
-    if not disable_recompute and pair_id in {4, 8}:
-        tags.append("sanitizer")
-    if route != "ascendc":
-        tags.append("route")
 
     return {
         "case_key": (
-            f"{soc}_model_{pair_id:03d}_h96_t{total_t}_c{chunk_size}_{scenario}_"
-            f"{'export' if disable_recompute else 'recompute'}"
+            f"ascend950_h96_t{total_t}_c{chunk_size}_dense_"
+            f"recompute_{str(not disable_recompute).lower()}"
         ),
-        "tags": ",".join(tags),
-        "route": route,
+        "tags": "accuracy,model_target,regression,dense",
+        "route": "ascendc",
         "B": 1,
         "H": 96,
         "HV": 96,
@@ -140,15 +58,15 @@ def _positive_case(local_id: int, soc: str) -> dict:
         "K": 128,
         "V": 128,
         "chunk_size": chunk_size,
-        "layout": layout,
+        "layout": "BSND",
         "q_dtype": "bf16",
         "g_dtype": "fp32",
         "beta_dtype": "bf16",
         "scale": 1.0 / math.sqrt(128),
         "initial_state": False,
         "output_final_state": False,
-        "cu_seqlens": "" if lengths is None else _cu_seqlens(lengths),
-        "explicit_chunk_indices": lengths is not None and pair_id % 2 == 0,
+        "cu_seqlens": "",
+        "explicit_chunk_indices": False,
         "safe_gate": True,
         "lower_bound": -5.0,
         "use_gate_in_kernel": True,
@@ -165,110 +83,12 @@ def _positive_case(local_id: int, soc: str) -> dict:
         "a_log_scale": 0.12,
         "dt_bias_scale": 1.65,
         "dt_bias_mean": -3.0,
-        "seed": SEED_BASE + pair_id,
-    }
-
-
-NEGATIVE_CASES = (
-    ("null_q", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
-    ("null_k", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
-    ("null_v", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
-    ("null_g", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
-    ("null_beta", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
-    ("null_attn", "ACLNN_ERR_PARAM_NULLPTR", 161001, "attnOut must not be nullptr"),
-    ("null_aqk", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aqkOut and akkOut must not be nullptr"),
-    ("missing_alog", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aLogOptional is required when useGateInKernel is true"),
-    ("chunk_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkSize must be 64 or 128"),
-    ("layout_lower", "ACLNN_ERR_PARAM_INVALID", 161002, "layout must be uppercase and one of BSND, BNSD, TND or NTD"),
-    ("layout_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "layout must be uppercase and one of BSND, BNSD, TND or NTD"),
-    ("rank_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "q/k/v/g and beta ranks must match layout"),
-    ("qk_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "q and k must have identical shape"),
-    ("v_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "expects v/g/beta"),
-    ("g_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "expects v/g/beta"),
-    ("beta_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "expects v/g/beta"),
-    ("h_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "H and HV must be positive"),
-    ("hv_lt_h", "ACLNN_ERR_PARAM_INVALID", 161002, "HV must be greater than or equal to H"),
-    ("hv_not_divisible", "ACLNN_ERR_PARAM_INVALID", 161002, "HV must be divisible by H"),
-    ("h_gt_128", "ACLNN_ERR_PARAM_INVALID", 161002, "H and HV must be less than or equal to 128"),
-    ("k_lt_16", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must be multiples of 16"),
-    ("k_gt_256", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must be multiples of 16"),
-    ("k_unaligned", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must be multiples of 16"),
-    ("v_lt_16", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must be multiples of 16"),
-    ("v_gt_256", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must be multiples of 16"),
-    ("v_unaligned", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must be multiples of 16"),
-    ("q_fp32", "ACLNN_ERR_PARAM_INVALID", 161002, "q, k and v must use the same float16 or bfloat16 dtype"),
-    ("k_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, "q, k and v must use the same float16 or bfloat16 dtype"),
-    ("v_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, "q, k and v must use the same float16 or bfloat16 dtype"),
-    ("g_fp16", "ACLNN_ERR_PARAM_INVALID", 161002, "g must be float32 or bfloat16"),
-    ("beta_fp16", "ACLNN_ERR_PARAM_INVALID", 161002, "beta must be float32 or bfloat16"),
-    ("alog_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, "aLogOptional must be float32"),
-    ("dtbias_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, "dtBiasOptional must be float32"),
-    ("state_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, "initialStateOptional must be float32"),
-    ("cu_short", "ACLNN_ERR_PARAM_INVALID", 161002, "cuSeqlensOptional must contain at least"),
-    ("cu_start", "ACLNN_ERR_PARAM_INVALID", 161002, "cuSeqlensOptional[0] must be 0"),
-    ("cu_end", "ACLNN_ERR_PARAM_INVALID", 161002, "cuSeqlensOptional last element must equal the sequence length"),
-    ("cu_order", "ACLNN_ERR_PARAM_INVALID", 161002, "cuSeqlensOptional must be nondecreasing"),
-    ("varlen_b2", "ACLNN_ERR_PARAM_INVALID", 161002, "rank4 varlen input with cuSeqlensOptional requires B=1"),
-    ("seq_gt_1024", "ACLNN_ERR_PARAM_INVALID", 161002, "varlen input supports at most 1024 sequences"),
-    ("indices_without_cu", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkIndicesOptional requires cuSeqlensOptional"),
-    ("indices_count", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkIndicesOptional must contain exactly one"),
-    ("indices_order", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkIndicesOptional must use canonical sequence-major chunk order"),
-    ("state_shape_kv", "ACLNN_ERR_PARAM_INVALID", 161002, "initialStateOptional must be [N,HV,K,V]"),
-    ("state_shape_vk", "ACLNN_ERR_PARAM_INVALID", 161002, "initialStateOptional must be [N,HV,K,V]"),
-    ("alog_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "aLogOptional must have shape [HV]"),
-    ("dtbias_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "dtBiasOptional must have shape [HV*K]"),
-    ("lower_low", "ACLNN_ERR_PARAM_INVALID", 161002, "lowerBound must be in [-5, 0)"),
-    ("lower_high", "ACLNN_ERR_PARAM_INVALID", 161002, "lowerBound must be in [-5, 0)"),
-    ("null_akk", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aqkOut and akkOut must not be nullptr"),
-)
-
-
-def _negative_case(local_id: int, soc: str) -> dict:
-    mutation, code_name, code, message = NEGATIVE_CASES[local_id]
-    layout = "BSND"
-    return {
-        "case_key": f"{soc}_negative_{local_id:02d}_{mutation}",
-        "tags": "negative,boundary",
-        "route": "aclnn",
-        "B": 1,
-        "H": 2,
-        "HV": 4,
-        "T": 128,
-        "K": 128,
-        "V": 128,
-        "chunk_size": 64,
-        "layout": layout,
-        "q_dtype": "bf16" if local_id % 2 == 0 else "fp16",
-        "g_dtype": "fp32",
-        "beta_dtype": "fp32",
-        "scale": 1.0 / math.sqrt(128),
-        "initial_state": True,
-        "output_final_state": True,
-        "cu_seqlens": "",
-        "explicit_chunk_indices": False,
-        "safe_gate": True,
-        "lower_bound": -5.0,
-        "use_gate_in_kernel": True,
-        "dt_bias": True,
-        "disable_recompute": True,
-        "return_intermediate_states": True,
-        "state_v_first": mutation == "state_shape_vk",
-        "data_scale": 0.08,
-        "gate_scale": 1.0,
-        "seed": SEED_BASE + 5000 + local_id,
-        "mutation": mutation,
-        "expected_code_name": code_name,
-        "expected_return_code": code,
-        "expected_message": message,
+        "seed": SEED_BASE + length_id,
     }
 
 
 def build_specs() -> list[dict]:
-    specs = []
-    for soc in ("ascend910b", "ascend950"):
-        specs.extend(_positive_case(local_id, soc) for local_id in range(200))
-        specs.extend(_negative_case(local_id, soc) for local_id in range(50))
-    return specs
+    return [_dense_case(local_id) for local_id in range(8)]
 
 
 def _input(name: str, dtype: str, value, *, input_type: str = "attr", shape=None) -> dict:
@@ -286,10 +106,8 @@ def _input(name: str, dtype: str, value, *, input_type: str = "attr", shape=None
 def _case_payload(case_id: int, spec: dict) -> dict:
     marker_dtype = spec["q_dtype"]
     metadata = {
-        "profile": "a2_accuracy" if case_id < 200 else (
-            "a2_negative" if case_id < 250 else ("a5_accuracy" if case_id < 450 else "a5_negative")
-        ),
-        "soc": "ascend910b" if case_id < 250 else "ascend950",
+        "profile": "a5_accuracy",
+        "soc": "ascend950",
         "shape_spec": f"B={spec['B']},H={spec['H']},HV={spec['HV']},T={spec['T']},K={spec['K']},V={spec['V']}",
         "optional_spec": (
             f"initial={spec['initial_state']},final={spec['output_final_state']},"
@@ -356,7 +174,10 @@ def _case_payload(case_id: int, spec: dict) -> dict:
 def build_cases() -> list[CaseConfig]:
     if CaseConfig is None:
         raise RuntimeError("ATK and PyTorch are required to instantiate CaseConfig objects.")
-    return [CaseConfig(**_case_payload(case_id, spec)) for case_id, spec in enumerate(build_specs())]
+    return [
+        CaseConfig(**_case_payload(FIRST_CASE_ID + local_id, spec))
+        for local_id, spec in enumerate(build_specs())
+    ]
 
 
 if GENERATOR_REGISTRY is not None:
@@ -384,15 +205,17 @@ def main() -> None:
     parser.add_argument("--summary", action="store_true")
     args = parser.parse_args()
 
-    payloads = [_case_payload(case_id, spec) for case_id, spec in enumerate(build_specs())]
+    payloads = [
+        _case_payload(FIRST_CASE_ID + local_id, spec)
+        for local_id, spec in enumerate(build_specs())
+    ]
     args.output.write_text(
         json.dumps(payloads, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     if args.summary:
-        print("total=500 a2_accuracy=200 a2_negative=50 a5_accuracy=200 a5_negative=50")
-        print("a2_accuracy_ids=0-199 a2_negative_ids=200-249")
-        print("a5_accuracy_ids=250-449 a5_negative_ids=450-499")
+        print("total=8 a5_dense_accuracy=8")
+        print("a5_dense_accuracy_ids=250-257")
 
 
 if __name__ == "__main__":

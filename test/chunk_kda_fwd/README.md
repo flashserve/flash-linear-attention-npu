@@ -176,8 +176,8 @@ atk node --name npu_dut --backend npu \
     --task accuracy \
     --bm_device gpu \
     -p ./executor_chunk_kda_fwd.py \
-    -s 250 \
-    -e 251 \
+    -s 0 \
+    -e 1 \
     --save_data output \
     --syc_dataset \
     -mt 1 \
@@ -186,7 +186,9 @@ atk node --name npu_dut --backend npu \
 unset KDA_ATK_TRACE_SEED
 ```
 
-case 250 是 A5 `H=96, T=8192, chunk_size=64` 模型 case，GPU FP64 真值需要较多显存。
+这版 ATK 的 `-s/-e` 选择 JSON 列表序号，不是用例的 `id`；因此 `-s 0 -e 1`
+执行列表第一条 `id=250`。该用例是 A5 `H=96, T=1024, chunk_size=64` dense
+模型场景，并启用重计算（`disable_recompute=false`）。
 烟测前应确认目标卡空闲；显存不足时不要换卡并发跑，也不要改输入范围，先释放该卡上的其他
 任务。只验证链路时可从 JSON 选择同属 A5 正向范围的小 shape case。
 
@@ -201,13 +203,29 @@ GPU control: benchmark=False high_precision=False triton_control=True
 `gpu_benchmark` 目录保存 Torch FP64 真值；普通 `gpu_*` 目录保存同输入 dtype 的 Triton
 对照；`npu_*` 目录保存 A5 DUT 输出。
 
-## 8. 全量和单 case 定位
+## 8. 八条用例与单 case 定位
 
-A5 正向范围为 `250-449`，ATK 的 `-e` 是开区间：
+用例只保留 A5 dense 模型场景。公共配置为 `B=1`、`H=HV=96`、`K=V=128`、
+`chunk_size=64`、BF16、BSND、`initial_state=None`、`output_final_state=false`、
+`use_gate_in_kernel=true`、`safe_gate=true`、`return_intermediate_states=false` 和
+`state_v_first=true`。
+
+| case ID | 序列长度 | 重计算 | `disable_recompute` |
+| ---: | ---: | --- | --- |
+| 250 | 1K（1024 tokens） | 启用 | `false` |
+| 251 | 1K（1024 tokens） | 禁用 | `true` |
+| 252 | 8K（8192 tokens） | 启用 | `false` |
+| 253 | 8K（8192 tokens） | 禁用 | `true` |
+| 254 | 16K（16384 tokens） | 启用 | `false` |
+| 255 | 16K（16384 tokens） | 禁用 | `true` |
+| 256 | 64K（65536 tokens） | 启用 | `false` |
+| 257 | 64K（65536 tokens） | 禁用 | `true` |
+
+A5 用例 ID 为 `250-257`；其 JSON 列表序号为 `0-7`，ATK 的 `-e` 是开区间：
 
 ```bash
 # 将烟测命令中的范围替换为：
--s 250 -e 450
+-s 0 -e 8
 ```
 
 定位某一条失败 case 时保留 `--save_data output`，并分析三路结果：
