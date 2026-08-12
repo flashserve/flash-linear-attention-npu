@@ -29,6 +29,18 @@ ARCH35_KERNEL = OP_ROOT / "op_kernel/arch35/chunk_kda_fwd_impl.h"
 ARCH35_FWD_H = OP_ROOT / "op_kernel/arch35/chunk_kda_fwd_fwd_h.h"
 KERNEL_COMMON = OP_ROOT / "op_kernel/chunk_kda_fwd_common.h"
 ARCH35_TILING = OP_ROOT / "op_host/arch35/chunk_kda_fwd_tiling_impl.h"
+ARCH35_GDN_SCHEDULER = (
+    ROOT
+    / "fla/ops/ascendc/gdn/chunk_gdn_fwd/"
+    "chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/block/"
+    "block_scheduler_gdn_fwd_h.hpp"
+)
+ARCH35_GDN_KERNEL = (
+    ROOT
+    / "fla/ops/ascendc/gdn/chunk_gdn_fwd/"
+    "chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/"
+    "gdn_fwd_h_kernel.hpp"
+)
 REMOVED_FUSED_ROOT = ROOT / "fla/ops/ascendc/kda/chunk_kda_fwd_fused_a5"
 REMOVED_STAGE_ROOTS = (
     ROOT / "fla/ops/ascendc/kda/chunk_kda_fwd_prepare",
@@ -240,12 +252,25 @@ def test_prepare_post_wu_fusion_stays_inside_chunk_kda_fwd():
     assert "op.ProcessAicFused(postWu);" in prepare
     assert "if (!tiling.fusePostWu && !tiling.fusePostWuIntoFwdH)" in common
     assert "const bool canFusePreparePostWu =" in arch35
-    assert "denseAligned && qIsBf16 && safeGate && vHeads % 2 == 0;" in arch35
-    assert "options.useDenseFwdH = denseAligned && qIsBf16;" in arch35
+    can_fuse_selection = arch35.split(
+        "const bool canFusePreparePostWu =", 1
+    )[1].split(";", 1)[0]
+    assert "isVarLen" in can_fuse_selection
+    assert "hasVarlenTail" not in can_fuse_selection
+    assert "const bool sequenceAwareVarlen = isVarLen && seqNum > 0;" in arch35
+    dense_fwd_h_selection = arch35.split(
+        "options.useDenseFwdH =", 1
+    )[1].split(";", 1)[0]
+    assert "denseAligned" in dense_fwd_h_selection
+    assert "sequenceAwareVarlen" in dense_fwd_h_selection
     fuse_into_selection = arch35.split(
         "options.fusePostWuIntoFwdH =", 1
     )[1].split(";", 1)[0]
     assert "canFusePreparePostWu" in fuse_into_selection
+    assert "!hasVarlenTail" in fuse_into_selection
+    assert "!storeQG" in fuse_into_selection
+    assert "!storeVNew" in fuse_into_selection
+    assert "!storeH" in fuse_into_selection
     fuse_selection = arch35.split("options.fusePostWu =", 1)[1].split(";", 1)[0]
     assert "canFusePreparePostWu" in fuse_selection
     assert "denseAligned" not in fuse_selection
@@ -254,9 +279,124 @@ def test_prepare_post_wu_fusion_stays_inside_chunk_kda_fwd():
     assert "batchChunkIdx" not in prepare and "batchEnd" in prepare
     assert "ProcessPreparedFullHeadPairBatchArch35" in post_wu
     assert "batchEnd[task] - batchStart[task] == BT_" in post_wu
-    assert "ProcessPreparedTailHeadPairArch35" in post_wu
+    assert "ProcessPreparedTailHeadPairArch35" not in post_wu
+    assert "RunChunkKdaPostWuTailSeedCopy" in common
+    assert "cuSeqlens, chunkIndices, addresses.w, addresses.u" in common
+    assert "RunChunkKdaPostWuTail" in common
+    tail_dispatch = common.split(
+        "if (tiling.fusePostWu && tiling.hasVarlenTail)", 1
+    )[0]
+    assert tail_dispatch.rstrip().endswith(
+        "#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310"
+    )
+    assert "#endif\n    if (!tiling.fusePostWu" in common
+    assert "CopyTailSeedRows" in post_wu
+    assert "ProcessTailAic" in post_wu
+    assert "ProcessVarlenTailAic" in post_wu
     assert "if (curT < BT_)" in post_wu
     assert "ComputeTailWuVector(" in post_wu
+
+
+def test_a5_varlen_fwd_h_uses_sequence_aware_full_chunks_and_splits_mixed_tail():
+    tiling = TILING_ENTRY.read_text(encoding="utf-8")
+    arch35 = ARCH35_TILING.read_text(encoding="utf-8")
+    impl = ARCH35_KERNEL.read_text(encoding="utf-8")
+    fwd_h = ARCH35_FWD_H.read_text(encoding="utf-8")
+    common = KERNEL_COMMON.read_text(encoding="utf-8")
+    finalize = ARCH35_STAGE_IMPLEMENTATIONS["output"].read_text(encoding="utf-8")
+
+    assert "hasVarlenTail = hasVarlenTail || seqLen % chunkSize != 0;" in tiling
+    assert "tiling.set_hasVarlenTail(hasVarlenTail);" in tiling
+    assert "const bool sequenceAwareVarlen = isVarLen && seqNum > 0;" in arch35
+    assert "if (tiling.hasVarlenTail)" in impl
+    assert "RunGenericTailBackEnd" in impl
+    assert "sequenceChunks_ = sequenceTokens / KDA_FWD_H_CHUNK;" in fwd_h
+    assert "sequenceTailTokens_ = sequenceTokens % KDA_FWD_H_CHUNK;" in fwd_h
+    assert "sequenceTotalChunks_ = sequenceChunks_ + (sequenceTailTokens_ != 0);" in fwd_h
+    assert "if (sequenceChunks == 0)" in fwd_h
+    assert "tailOnly ? 2 : (tiling.isVarLen ? 1 : 0)" in common
+    assert "tailOnly || tiling.hasInitialState" in common
+    assert "tailOnly_ = tiling.useDenseFwdH && tiling.hasVarlenTail;" in finalize
+    assert "ProcessVarlenTailOutAic" in finalize
+    assert "ProcessVarlenTailOutAiv" in finalize
+
+
+def test_a5_varlen_tail_scheduler_preserves_sequence_state_and_full_chunk_fast_path():
+    scheduler = ARCH35_GDN_SCHEDULER.read_text(encoding="utf-8")
+    kernel = ARCH35_GDN_KERNEL.read_text(encoding="utf-8")
+
+    assert "tailOnly = isVariedLen > 1;" in scheduler
+    assert "batchTokens % chunkSize != 0" in scheduler
+    assert "stream.batchIdx = b - 1;" in scheduler
+    assert "newStream.chunkIdx = tailOnly ? newStream.fullChunks : 0;" in scheduler
+    assert "stream.active = stream.chunkIdx < stream.batchChunks;" in scheduler
+    assert "stream.chunkOffset + (tailOnly ? stream.fullChunks : 0)" in scheduler
+    assert "GetVarlenStateBatchIdx" in scheduler
+    assert "cachedVarlenSequenceValid" in scheduler
+    assert "stream.chunkIdx < stream.fullChunks" in scheduler
+    assert "useChunkAwareMmad" in kernel
+    assert "cube1Offsets.blockTokens != chunkSize" in kernel
+    assert "cube2Offsets.blockTokens != chunkSize" in kernel
+    assert "GetVarlenStateBatchIdx(batchIdx)" in kernel
+    assert "(stateBatchIdx * vNumHead + vHeadIdx) * stateBlockSize" in kernel
+
+
+def test_a5_varlen_chunk_plan_covers_requested_lengths_and_distributions():
+    chunk_size = 64
+
+    def distributions(total):
+        quotient, remainder = divmod(total, 8)
+        balanced = [quotient + (index < remainder) for index in range(8)]
+        base = total // 8
+        mixed = [
+            base - 47,
+            base + 31,
+            base - 1,
+            base + 17,
+            base - 33,
+            base + 49,
+            base - 15,
+        ]
+        mixed.append(total - sum(mixed))
+        short = [chunk_size] * (total // chunk_size)
+        if total % chunk_size:
+            short.append(total % chunk_size)
+        return {
+            "single": [total],
+            "balanced8": balanced,
+            "mixed_tail": mixed,
+            "short64": short,
+        }
+
+    for total in (1024, 1536, 2048, 4096, 8192, 16384):
+        for name, lengths in distributions(total).items():
+            assert sum(lengths) == total
+            chunk_prefix = 0
+            tails = []
+            for state_index, length in enumerate(lengths):
+                full_chunks, tail_tokens = divmod(length, chunk_size)
+                if tail_tokens:
+                    tails.append(
+                        {
+                            "state_index": state_index,
+                            "flat_chunk": chunk_prefix + full_chunks,
+                            "tokens": tail_tokens,
+                        }
+                    )
+                chunk_prefix += full_chunks + bool(tail_tokens)
+
+            assert chunk_prefix == sum(
+                (length + chunk_size - 1) // chunk_size for length in lengths
+            )
+            if name in {"single", "balanced8", "short64"}:
+                assert not tails
+            else:
+                assert tails
+                assert all(0 < tail["tokens"] < chunk_size for tail in tails)
+                assert [tail["state_index"] for tail in tails] == [
+                    index for index, length in enumerate(lengths)
+                    if length % chunk_size
+                ]
 
 
 def test_u_seed_does_not_alias_post_wu_output():
@@ -496,7 +636,6 @@ def test_prepare_uses_a5_regbase_gate_math_with_a2_a3_fallback():
     assert '#include "kernel_utils/vector/regbase.hpp"' in prepare
     assert "static __simd_vf__ inline void PrepareKdaGateQwRegbase" in prepare
     assert "static __simd_vf__ inline void PrepareKdaGateKgRegbase" in prepare
-    assert "T, SCORE_T, GK_T, true, true, exportFinalKg, true>" in prepare
     assert "PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true," in prepare
     assert "PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, false, false>" in prepare
     assert "PrepareKdaGateQwKgRegbase<T, T, GK_T, true, false, false>" in prepare
@@ -507,6 +646,20 @@ def test_prepare_uses_a5_regbase_gate_math_with_a2_a3_fallback():
     assert "row >= validRows" in prepare
     assert "#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310" in prepare
     assert "Cast(qTyped, outFp32, RoundMode::CAST_RINT" in prepare
+
+
+def test_a5_fused_prepare_exports_final_kg_with_post_wu_semantics():
+    prepare = STAGE_IMPLEMENTATIONS["prepare"].read_text(encoding="utf-8")
+    score_factors = prepare.split(
+        "__aicore__ inline void PrepareScoreFactorsBulk", 1
+    )[1].split("__aicore__ inline void PrepareGateProductsBulk", 1)[0]
+    fused_call = score_factors.split(
+        "PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true, true, true>", 1
+    )[1].split("} else {", 1)[0]
+
+    assert "reinterpret_cast<uint64_t>(vTyped.GetPhyAddr())" in fused_call
+    assert "reinterpret_cast<uint64_t>(finalRefFp32.GetPhyAddr())" in fused_call
+    assert "KdaPostWu::ComputePostKdaKgRegbase<T, GK_T>" not in fused_call
 
 
 def test_a5_typical_post_wu_uses_regbase_kg_double_buffer():
@@ -530,32 +683,38 @@ def test_a5_typical_post_wu_uses_regbase_kg_double_buffer():
     assert "CrossCoreWaitFlagWithReverse" not in post_aiv.split("#else", 1)[0]
 
 
-def test_a5_post_wu_tail_uses_two_slot_arch35_pipeline_with_bounded_tiles():
+def test_a5_post_wu_keeps_full_chunks_fused_and_runs_tail_cube_from_snapshots():
     post_wu = STAGE_IMPLEMENTATIONS["post_wu"].read_text(encoding="utf-8")
     full_pipeline_dispatch = post_wu.split(
         "__aicore__ inline bool UseFullPostWuPipelineArch35", 1
     )[1].split("__aicore__ inline void ComputePostWuCubeFusedArch35", 1)[0]
-    tail_pipeline = post_wu.split(
-        "__aicore__ inline void ProcessPreparedTailHeadPairArch35", 1
-    )[1].split("__aicore__ inline void ProcessPreparedHeadPairBatchArch35", 1)[0]
-    prefetch = post_wu.split(
-        "__aicore__ inline void PrefetchPostWuPipelineArch35", 1
-    )[1].split("__aicore__ inline void PrefetchPostWuPipelineU", 1)[0]
-    bounded_mmad = post_wu.split(
-        "__aicore__ inline void ComputePrefetchedPostWuPipelineArch35", 1
-    )[1].split("__aicore__ inline void ComputePostWuCube", 1)[0]
+    fused_batch = post_wu.split(
+        "__aicore__ inline void ProcessPreparedHeadPairBatchArch35", 1
+    )[1].split("#endif", 1)[0]
+    tail_aiv = post_wu.split(
+        "__aicore__ inline void ProcessVarlenTailAiv", 1
+    )[1].split("__aicore__ inline void ProcessVarlenTailAic", 1)[0]
+    tail_aic = post_wu.split(
+        "__aicore__ inline void ProcessVarlenTailAic", 1
+    )[1].split("__aicore__ inline void ProcessVarlenTailSeedCopyAiv", 1)[0]
 
     assert "curT == 64" in full_pipeline_dispatch
-    assert "InitializePostWuPipelineEvents();" in tail_pipeline
-    assert "lane < KDA_POST_HEAD_PAIR_LANES" in tail_pipeline
-    assert "start, curT, false" in tail_pipeline
-    assert "FinalizePostWuPipelineEvents(KDA_POST_HEAD_PAIR_LANES);" in tail_pipeline
-    assert "const uint32_t m = static_cast<uint32_t>(curT);" in prefetch
-    assert "const uint32_t k = static_cast<uint32_t>(curT);" in prefetch
-    assert "const uint32_t m = static_cast<uint32_t>(curT);" in bounded_mmad
-    assert "const uint32_t k = static_cast<uint32_t>(curT);" in bounded_mmad
-    assert "copyL0CToDst(blockWOut, tileL0CW);" in bounded_mmad
-    assert "copyL0CToDst(blockUOut, tileL0CU);" in bounded_mmad
+    assert "ProcessPreparedFullHeadPairBatchArch35" in fused_batch
+    assert "ProcessPreparedTailHeadPairArch35" not in fused_batch
+    assert "curT == 0 || curT == BT_" in tail_aiv
+    assert "ComputeTailWuVector" not in tail_aiv
+    assert "ComputeTailUVector" not in tail_aiv
+    assert "CopyScratchWAndFinalizeKg" in tail_aiv
+    assert "curT == 0 || curT == BT_" in tail_aic
+    assert "ProcessChunkPostAicTyped" in tail_aic
+    assert "scratchW, akk, scratchV" in post_wu
+    tail_runner = post_wu.split(
+        "__aicore__ inline void RunChunkKdaPostWuTail(", 1
+    )[1].split("} // namespace KdaPostWu", 1)[0]
+    assert "scratchW, akk, scratchV" in tail_runner
+    assert "op.ProcessTailAic();" in tail_runner
+    assert "op.ProcessTailAiv();" in tail_runner
+    assert "tiling, &pipe, false" in tail_runner
 
 
 def test_a5_post_wu_initializes_only_slots_consumed_by_each_full_run():
@@ -768,7 +927,7 @@ def test_a5_fwd_h_routes_sub_16_token_tail_away_from_cube_mmad():
     assert "else if (!cube2AlreadyWaited)" in update
 
 
-def test_a5_fwd_h_uses_bounded_single_stage_cube_for_aligned_tail_rows():
+def test_a5_fwd_h_uses_regular_cube_for_full_chunks_and_bounded_cube_for_tails():
     kernel = (
         ROOT
         / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
@@ -779,7 +938,13 @@ def test_a5_fwd_h_uses_bounded_single_stage_cube_for_aligned_tail_rows():
     assert "BlockMmadWHTail" in kernel
     assert "BlockMmadKVTail" in kernel
     assert kernel.count("EmptyClass{}, true") == 2
-    assert "bool useBoundedMmad = isVariedLen || (seqlen % chunkSize != 0);" in kernel
+    assert "bool useChunkAwareMmad = isVariedLen || (seqlen % chunkSize != 0);" in kernel
+    assert "cube1Offsets.blockTokens != chunkSize" in kernel
+    assert "cube2Offsets.blockTokens != chunkSize" in kernel
+    assert "blockMmadWH(" in kernel
+    assert "blockMmadKV(" in kernel
+    assert "blockMmadWHTail(" in kernel
+    assert "blockMmadKVTail(" in kernel
     assert kernel.count("seqlen % chunkSize == 0") == 2
 
 

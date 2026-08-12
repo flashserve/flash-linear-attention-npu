@@ -518,7 +518,7 @@ public:
             BlockMmadKV blockMmadKV(resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
             BlockMmadWHTail blockMmadWHTail(resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
             BlockMmadKVTail blockMmadKVTail(resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
-            bool useBoundedMmad = isVariedLen || (seqlen % chunkSize != 0);
+            bool useChunkAwareMmad = isVariedLen || (seqlen % chunkSize != 0);
 
             auto wLayout = tla::MakeLayout<ElementW, LayoutW>(shapeBatch * kNumHead * cubeBlockScheduler.totalTokens, kHeadDim);
             auto hLayout = tla::MakeLayout<ElementH, LayoutH>(shapeBatch * vNumHead * cubeBlockScheduler.totalChunks * kHeadDim, vHeadDim);
@@ -572,7 +572,19 @@ public:
                                 DIRECT_UB_FREE_FLAG_BEGIN, DIRECT_UB_READY_FLAG_BEGIN, ubListId,
                                 DIRECT_VEC_NUM, DIRECT_UB_STAGES);
                         }
-                    } else if (useBoundedMmad) {
+                    } else if (useChunkAwareMmad) {
+                        bool hasFullChunk = false;
+                        for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                            const auto& stream = cubeBlockScheduler.GetStream(i);
+                            if (!cubeBlockScheduler.StreamIsDone(stream) &&
+                                cubeBlockScheduler.GetCurTaskOffsets(stream).blockTokens ==
+                                    chunkSize) {
+                                hasFullChunk = true;
+                            }
+                        }
+                        if (hasFullChunk) {
+                            blockMmadWH.preSetFlags();
+                        }
                         for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
                             uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
                             const auto& stream = cubeBlockScheduler.GetStream(i);
@@ -581,6 +593,9 @@ public:
                             }
 
                             const GDNFwdHOffsets& cube1Offsets = cubeBlockScheduler.GetCurTaskOffsets(stream);
+                            if (cube1Offsets.blockTokens != chunkSize) {
+                                continue;
+                            }
                             Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[streamId]);
                             auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(
                                 cube1Offsets.blockTokens, cube1Offsets.vBlockDim);
@@ -603,18 +618,60 @@ public:
                                 tensorV, tla::MakeCoord(0, 0),
                                 tla::MakeShape(cube1Shape.m(), cube1Shape.n()));
 
-                            if (cube1Offsets.blockTokens < chunkSize) {
-                                blockMmadWHTail.preSetFlags();
-                                blockMmadWHTail(
-                                    tensorBlockW, tensorBlockH, tensorBlockV,
-                                    cube1Shape, EmptyClass{}, true);
-                                blockMmadWHTail.finalWaitFlags();
-                            } else {
-                                blockMmadWH.preSetFlags();
-                                blockMmadWH(
-                                    tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape);
-                                blockMmadWH.finalWaitFlags();
+                            blockMmadWH(
+                                tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape);
+                            Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                                cubeBlockScheduler.cube1Done[streamId]);
+                        }
+                        if (hasFullChunk) {
+                            blockMmadWH.finalWaitFlags();
+                        }
+                        for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                            uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
+                            const auto& stream = cubeBlockScheduler.GetStream(i);
+                            if (cubeBlockScheduler.StreamIsDone(stream)) {
+                                continue;
                             }
+
+                            const GDNFwdHOffsets& cube1Offsets =
+                                cubeBlockScheduler.GetCurTaskOffsets(stream);
+                            if (cube1Offsets.blockTokens == chunkSize) {
+                                continue;
+                            }
+                            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[streamId]);
+                            if (cube1Offsets.blockTokens < 16) {
+                                Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(
+                                    cubeBlockScheduler.cube1Done[streamId]);
+                                continue;
+                            }
+                            auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(
+                                cube1Offsets.blockTokens, cube1Offsets.vBlockDim);
+                            auto tensorW = tla::MakeTensor(
+                                gmW[cube1Offsets.wOffset], wLayout,
+                                Catlass::Arch::PositionGM{});
+                            auto tensorH = tla::MakeTensor(
+                                gmH[cube1Offsets.hSrcOffset], hLayout,
+                                Catlass::Arch::PositionGM{});
+                            auto tensorV = tla::MakeTensor(
+                                gmVWorkspace[cube1Offsets.vWorkOffset], vLayout,
+                                Catlass::Arch::PositionGM{});
+                            GemmCoord cube1Shape{
+                                cube1Offsets.blockTokens, cube1Offsets.vBlockDim,
+                                kHeadDim};
+                            auto tensorBlockW = GetTile(
+                                tensorW, tla::MakeCoord(0, 0),
+                                tla::MakeShape(cube1Shape.m(), cube1Shape.k()));
+                            auto tensorBlockH = GetTile(
+                                tensorH, tla::MakeCoord(0, 0),
+                                tla::MakeShape(cube1Shape.k(), cube1Shape.n()));
+                            auto tensorBlockV = GetTile(
+                                tensorV, tla::MakeCoord(0, 0),
+                                tla::MakeShape(cube1Shape.m(), cube1Shape.n()));
+                            blockMmadWHTail.preSetFlags();
+                            blockMmadWHTail(
+                                tensorBlockW, tensorBlockH, tensorBlockV,
+                                cube1Shape, EmptyClass{}, true);
+                            blockMmadWHTail.finalWaitFlags();
                             AscendC::PipeBarrier<PIPE_ALL>();
                             Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
                                 cubeBlockScheduler.cube1Done[streamId]);
@@ -699,7 +756,19 @@ public:
                                     DIRECT_VEC_NUM, DIRECT_UB_STAGES);
                             }
                         }
-                    } else if (useBoundedMmad) {
+                    } else if (useChunkAwareMmad) {
+                        bool hasFullChunk = false;
+                        for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                            const auto& stream = cubeBlockScheduler.GetStream(i);
+                            if (!cubeBlockScheduler.StreamIsDone(stream) &&
+                                cubeBlockScheduler.GetCurTaskOffsets(stream).blockTokens ==
+                                    chunkSize) {
+                                hasFullChunk = true;
+                            }
+                        }
+                        if (hasFullChunk) {
+                            blockMmadKV.preSetFlags();
+                        }
                         for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
                             uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
                             const auto& stream = cubeBlockScheduler.GetStream(i);
@@ -708,6 +777,9 @@ public:
                             }
                             const GDNFwdHOffsets& cube2Offsets =
                                 cubeBlockScheduler.GetCurTaskOffsets(stream);
+                            if (cube2Offsets.blockTokens != chunkSize) {
+                                continue;
+                            }
                             Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done[streamId]);
 
                             if (cubeBlockScheduler.NeedProcessStage2(stream)) {
@@ -741,23 +813,78 @@ public:
                                     tensorHwork, tla::MakeCoord(0, 0),
                                     tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
 
-                                if (cube2Offsets.blockTokens < chunkSize) {
-                                    blockMmadKVTail.preSetFlags();
-                                    blockMmadKVTail(
-                                        tensorBlockK, tensorBlockVwork, tensorBlockHwork,
-                                        cube2Shape, EmptyClass{}, true);
-                                    blockMmadKVTail.finalWaitFlags();
-                                } else {
-                                    blockMmadKV.preSetFlags();
-                                    blockMmadKV(
-                                        tensorBlockK, tensorBlockVwork, tensorBlockHwork,
-                                        cube2Shape);
-                                    blockMmadKV.finalWaitFlags();
-                                }
-                                AscendC::PipeBarrier<PIPE_ALL>();
+                                blockMmadKV(
+                                    tensorBlockK, tensorBlockVwork, tensorBlockHwork,
+                                    cube2Shape);
                             }
                             Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
                                 cubeBlockScheduler.cube2Done[streamId]);
+                        }
+                        if (hasFullChunk) {
+                            blockMmadKV.finalWaitFlags();
+                        }
+                        for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                            uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
+                            const auto& stream = cubeBlockScheduler.GetStream(i);
+                            if (cubeBlockScheduler.StreamIsDone(stream)) {
+                                continue;
+                            }
+
+                            const GDNFwdHOffsets& cube2Offsets =
+                                cubeBlockScheduler.GetCurTaskOffsets(stream);
+                            if (cube2Offsets.blockTokens == chunkSize) {
+                                continue;
+                            }
+                            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done[streamId]);
+                            if (cubeBlockScheduler.NeedProcessStage2(stream) &&
+                                cube2Offsets.blockTokens >= 16) {
+                                int64_t cube2OffsetK = kGated
+                                    ? cube2Offsets.kDecayWorkOffset
+                                    : cube2Offsets.wkOffset;
+                                auto tensorK = kGated
+                                    ? tla::MakeTensor(
+                                          gmKDecayWorkspace[cube2OffsetK], kLayout,
+                                          Catlass::Arch::PositionGM{})
+                                    : tla::MakeTensor(
+                                          gmK[cube2OffsetK], kLayout,
+                                          Catlass::Arch::PositionGM{});
+                                auto vUpdateLayout = tla::MakeLayout<
+                                    ElementVUpdate, LayoutVUpdate>(
+                                    cube2Offsets.blockTokens,
+                                    cube2Offsets.vBlockDim);
+                                auto tensorVwork = tla::MakeTensor(
+                                    gmVUpdateWorkspace[cube2Offsets.vWorkOffset],
+                                    vUpdateLayout, Catlass::Arch::PositionGM{});
+                                auto tensorHwork = tla::MakeTensor(
+                                    gmHWorkspace[cube2Offsets.hWorkOffset], hworkLayout,
+                                    Catlass::Arch::PositionGM{});
+                                GemmCoord cube2Shape{
+                                    kHeadDim, cube2Offsets.vBlockDim,
+                                    cube2Offsets.blockTokens};
+                                auto tensorBlockK = GetTile(
+                                    tensorK, tla::MakeCoord(0, 0),
+                                    tla::MakeShape(cube2Shape.m(), cube2Shape.k()));
+                                auto tensorBlockVwork = GetTile(
+                                    tensorVwork, tla::MakeCoord(0, 0),
+                                    tla::MakeShape(cube2Shape.k(), cube2Shape.n()));
+                                auto tensorBlockHwork = GetTile(
+                                    tensorHwork, tla::MakeCoord(0, 0),
+                                    tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
+                                blockMmadKVTail.preSetFlags();
+                                blockMmadKVTail(
+                                    tensorBlockK, tensorBlockVwork, tensorBlockHwork,
+                                    cube2Shape, EmptyClass{}, true);
+                                blockMmadKVTail.finalWaitFlags();
+                                AscendC::PipeBarrier<PIPE_ALL>();
+                            }
+                            if (cube2Offsets.blockTokens < 16 &&
+                                cubeBlockScheduler.NeedProcessStage2(stream)) {
+                                Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(
+                                    cubeBlockScheduler.cube2Done[streamId]);
+                            } else {
+                                Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                                    cubeBlockScheduler.cube2Done[streamId]);
+                            }
                         }
                     } else {
                         blockMmadKV.preSetFlags();
@@ -812,7 +939,6 @@ public:
         }
 
         if ASCEND_IS_AIV {
-            bool useBoundedMmad = isVariedLen || (seqlen % chunkSize != 0);
             uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
             uint32_t subBlockNum = AscendC::GetSubBlockNum();
             uint32_t coreIdx = AscendC::GetBlockIdx() / subBlockNum;
@@ -849,11 +975,15 @@ public:
                     uint32_t vHeadIdx = taskIdx % vNumHead;
                     uint32_t chunkOffset =
                         isVariedLen ? vecBlockScheduler.GetVarlenChunkOffset(batchIdx) : 0;
+                    uint32_t stateBatchIdx = isVariedLen
+                        ? vecBlockScheduler.GetVarlenStateBatchIdx(batchIdx)
+                        : batchIdx;
                     uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
                     uint32_t hBaseOffset =
                         (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset) *
                         stateBlockSize;
-                    uint32_t initialStateBaseOffset = taskIdx * stateBlockSize;
+                    uint32_t initialStateBaseOffset =
+                        (stateBatchIdx * vNumHead + vHeadIdx) * stateBlockSize;
                     for (uint32_t rowOffset = rowBegin; rowOffset < rowEnd; rowOffset += rowsPerTile) {
                         uint32_t rowsThisTile = Min(rowsPerTile, rowEnd - rowOffset);
                         uint32_t stateTileElems = rowsThisTile * vHeadDim;
@@ -953,8 +1083,7 @@ public:
                         }
                         const GDNFwdHOffsets& vec1Offsets = vecBlockScheduler.GetCurTaskOffsets(stream);
                         AscendC::LocalTensor<ElementV> l1VUpdate = (i == 0) ? l1VUpdatePing : l1VUpdatePong;
-                        bool tailVectorPath =
-                            vec1Offsets.blockTokens < 16 && !useBoundedMmad;
+                        bool tailVectorPath = vec1Offsets.blockTokens < 16;
                         if (tailVectorPath) {
                             Arch::CrossCoreWaitFlag(
                                 vecBlockScheduler.cube1Done[streamId]);
@@ -988,8 +1117,7 @@ public:
                         }
                         const GDNFwdHOffsets& vec2Offsets = vecBlockScheduler.GetCurTaskOffsets(stream);
                         if (vecBlockScheduler.NeedProcessStage2(stream)) {
-                            bool tailVectorPath =
-                                vec2Offsets.blockTokens < 16 && !useBoundedMmad;
+                            bool tailVectorPath = vec2Offsets.blockTokens < 16;
                             if (tailVectorPath) {
                                 Arch::CrossCoreWaitFlag(
                                     vecBlockScheduler.cube2Done[streamId]);

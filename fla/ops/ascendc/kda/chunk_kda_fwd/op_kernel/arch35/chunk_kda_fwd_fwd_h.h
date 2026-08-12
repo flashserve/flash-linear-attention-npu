@@ -99,7 +99,7 @@ public:
     __aicore__ inline void Init(
         GM_ADDR gk, GM_ADDR initialState, GM_ADDR attnOut, GM_ADDR finalState,
         GM_ADDR aqk, GM_ADDR akk, GM_ADDR w, GM_ADDR u, GM_ADDR qgScaled, GM_ADDR kg,
-        GM_ADDR vNew, GM_ADDR h, const TilingData &tiling)
+        GM_ADDR vNew, GM_ADDR h, GM_ADDR cuSeqlens, const TilingData &tiling)
     {
         gk_.SetGlobalBuffer(reinterpret_cast<__gm__ GK_T *>(gk));
         if (initialState != nullptr) {
@@ -115,10 +115,15 @@ public:
         kg_.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(kg));
         vNew_.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(vNew));
         h_.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(h));
+        if (cuSeqlens != nullptr) {
+            cuSeqlens_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cuSeqlens));
+        }
         batch_ = tiling.batch;
+        seqNum_ = tiling.seqNum;
         heads_ = tiling.vHeadNum;
         seqlen_ = tiling.seqlen;
         totalChunks_ = tiling.totalChunks;
+        isVarLen_ = tiling.isVarLen;
         hasInitialState_ = tiling.hasInitialState;
         storeFinalState_ = tiling.storeFinalState;
         storeVNew_ = tiling.storeVNew;
@@ -191,56 +196,122 @@ private:
         CrossCoreSetFlag<0x4, PIPE_V>(KDA_FWD_H_DIRECT_FREE_FLAG);
     }
 
-    __aicore__ inline uint64_t MatrixOffset(uint64_t b, uint64_t hv, uint64_t t) const
+    __aicore__ inline void SelectSequence(uint64_t entity)
     {
-        return ((b * heads_ + hv) * seqlen_ + t) * KDA_FWD_H_DIM;
+        if (!isVarLen_) {
+            sequenceStart_ = 0;
+            sequenceChunkStart_ = 0;
+            sequenceChunks_ = totalChunks_;
+            sequenceTotalChunks_ = totalChunks_;
+            sequenceTailTokens_ = 0;
+            return;
+        }
+        if (!selectedSequenceValid_ || entity != selectedSequence_ + 1) {
+            sequenceChunkStart_ = 0;
+            for (uint64_t seq = 0; seq < entity; ++seq) {
+                const uint64_t seqStart =
+                    static_cast<uint64_t>(cuSeqlens_.GetValue(seq));
+                const uint64_t seqEnd =
+                    static_cast<uint64_t>(cuSeqlens_.GetValue(seq + 1));
+                sequenceChunkStart_ +=
+                    (seqEnd - seqStart + KDA_FWD_H_CHUNK - 1) /
+                    KDA_FWD_H_CHUNK;
+            }
+        } else {
+            sequenceChunkStart_ += sequenceTotalChunks_;
+        }
+        sequenceStart_ = static_cast<uint64_t>(cuSeqlens_.GetValue(entity));
+        const uint64_t sequenceEnd =
+            static_cast<uint64_t>(cuSeqlens_.GetValue(entity + 1));
+        const uint64_t sequenceTokens = sequenceEnd - sequenceStart_;
+        sequenceChunks_ = sequenceTokens / KDA_FWD_H_CHUNK;
+        sequenceTailTokens_ = sequenceTokens % KDA_FWD_H_CHUNK;
+        sequenceTotalChunks_ = sequenceChunks_ + (sequenceTailTokens_ != 0);
+        selectedSequence_ = entity;
+        selectedSequenceValid_ = true;
+    }
+
+    __aicore__ inline uint64_t SequenceChunks() const
+    {
+        return sequenceChunks_;
+    }
+
+    __aicore__ inline uint64_t SequenceChunkStart() const
+    {
+        return sequenceChunkStart_;
+    }
+
+    __aicore__ inline uint64_t SequenceTailTokens() const
+    {
+        return sequenceTailTokens_;
+    }
+
+    __aicore__ inline uint64_t MatrixOffset(
+        uint64_t entity, uint64_t hv, uint64_t t) const
+    {
+        if (isVarLen_) {
+            return (hv * seqlen_ + sequenceStart_ + t) * KDA_FWD_H_DIM;
+        }
+        return ((entity * heads_ + hv) * seqlen_ + t) * KDA_FWD_H_DIM;
     }
 
     __aicore__ inline uint64_t ChunkMatrixOffset(
-        uint64_t b, uint64_t hv, uint64_t chunk, uint64_t row = 0) const
+        uint64_t entity, uint64_t hv, uint64_t chunk, uint64_t row = 0) const
     {
-        return ((b * heads_ + hv) * seqlen_ +
-                chunk * KDA_FWD_H_CHUNK + row) * KDA_FWD_H_DIM;
+        return MatrixOffset(
+            entity, hv, chunk * KDA_FWD_H_CHUNK + row);
     }
 
-    __aicore__ inline uint64_t ScoreOffset(uint64_t b, uint64_t hv, uint64_t t) const
+    __aicore__ inline uint64_t ScoreOffset(
+        uint64_t entity, uint64_t hv, uint64_t t) const
     {
-        return ((b * heads_ + hv) * seqlen_ + t) * KDA_FWD_H_CHUNK;
+        if (isVarLen_) {
+            return (hv * seqlen_ + sequenceStart_ + t) * KDA_FWD_H_CHUNK;
+        }
+        return ((entity * heads_ + hv) * seqlen_ + t) * KDA_FWD_H_CHUNK;
     }
 
     __aicore__ inline uint64_t ChunkScoreOffset(
-        uint64_t b, uint64_t hv, uint64_t chunk) const
+        uint64_t entity, uint64_t hv, uint64_t chunk) const
     {
-        return ((b * heads_ + hv) * seqlen_ +
-                chunk * KDA_FWD_H_CHUNK) * KDA_FWD_H_CHUNK;
+        return ScoreOffset(entity, hv, chunk * KDA_FWD_H_CHUNK);
     }
 
-    __aicore__ inline uint64_t StateOffset(uint64_t b, uint64_t hv) const
+    __aicore__ inline uint64_t StateOffset(uint64_t entity, uint64_t hv) const
     {
-        return (b * heads_ + hv) * KDA_FWD_H_DIM * KDA_FWD_H_DIM;
+        return (entity * heads_ + hv) * KDA_FWD_H_DIM * KDA_FWD_H_DIM;
     }
 
-    __aicore__ inline uint64_t HOffset(uint64_t b, uint64_t hv, uint64_t chunk) const
+    __aicore__ inline uint64_t HOffset(
+        uint64_t entity, uint64_t hv, uint64_t chunk) const
     {
         if (!storeH_) {
-            return StateOffset(b, hv);
+            return StateOffset(entity, hv);
         }
-        return ((b * heads_ + hv) * totalChunks_ + chunk) *
+        const uint64_t flatChunk = SequenceChunkStart() + chunk;
+        const uint64_t chunkIndex = isVarLen_
+            ? hv * totalChunks_ + flatChunk
+            : (entity * heads_ + hv) * totalChunks_ + chunk;
+        return chunkIndex *
                KDA_FWD_H_DIM * KDA_FWD_H_DIM;
     }
 
     __aicore__ inline uint64_t VNewOffset(
-        uint64_t b, uint64_t hv, uint64_t chunk, uint64_t row = 0) const
+        uint64_t entity, uint64_t hv, uint64_t chunk, uint64_t row = 0) const
     {
         if (!storeVNew_) {
-            return ((b * heads_ + hv) * KDA_FWD_H_CHUNK + row) * KDA_FWD_H_DIM;
+            return ((entity * heads_ + hv) * KDA_FWD_H_CHUNK + row) *
+                   KDA_FWD_H_DIM;
         }
-        return ChunkMatrixOffset(b, hv, chunk, row);
+        return ChunkMatrixOffset(entity, hv, chunk, row);
     }
 
-    __aicore__ inline uint64_t OutputOffset(uint64_t b, uint64_t hv, uint64_t t) const
+    __aicore__ inline uint64_t OutputOffset(
+        uint64_t entity, uint64_t hv, uint64_t t) const
     {
-        return ((b * seqlen_ + t) * heads_ + hv) * KDA_FWD_H_DIM;
+        const uint64_t token = isVarLen_ ? sequenceStart_ + t
+                                         : entity * seqlen_ + t;
+        return (token * heads_ + hv) * KDA_FWD_H_DIM;
     }
 
     __aicore__ inline uint32_t L1WOffset(uint32_t slot) const
@@ -691,21 +762,48 @@ private:
         }
         const uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx());
         const uint64_t coreNum = coreNum_ == 0 ? 1 : coreNum_;
-        for (uint64_t task = coreIdx; task < batch_ * heads_; task += coreNum) {
-            const uint64_t b = task / heads_;
-            const uint64_t hv = task % heads_;
-            PrefetchIndependentProductsAic(b, hv, 0);
-            for (uint64_t chunk = 0; chunk < totalChunks_; ++chunk) {
-                if (fusePostWuIntoFwdH_) {
-                    ComputePostWuAic(chunk);
+        if (isVarLen_) {
+            for (uint64_t b = 0; b < seqNum_; ++b) {
+                SelectSequence(b);
+                const uint64_t sequenceChunks = SequenceChunks();
+                if (sequenceChunks == 0) {
+                    continue;
                 }
-                WaitL1SlotReadyMte1(KDA_FWD_H_STATE_READY_FLAG);
-                ComputeStateProductsAic(b, hv, chunk, fusePostWuIntoFwdH_);
-                WaitL1SlotReadyMte1(KDA_FWD_H_VNEW_READY_FLAG);
-                ComputeVnewProductsAic(
-                    b, hv, chunk, chunk + 1 < totalChunks_);
+                for (uint64_t hv = coreIdx; hv < heads_; hv += coreNum) {
+                    PrefetchIndependentProductsAic(b, hv, 0);
+                    for (uint64_t chunk = 0; chunk < sequenceChunks; ++chunk) {
+                        if (fusePostWuIntoFwdH_) {
+                            ComputePostWuAic(chunk);
+                        }
+                        WaitL1SlotReadyMte1(KDA_FWD_H_STATE_READY_FLAG);
+                        ComputeStateProductsAic(
+                            b, hv, chunk, fusePostWuIntoFwdH_);
+                        WaitL1SlotReadyMte1(KDA_FWD_H_VNEW_READY_FLAG);
+                        ComputeVnewProductsAic(
+                            b, hv, chunk, chunk + 1 < sequenceChunks);
+                    }
+                    WaitDirectFreeAic();
+                }
             }
-            WaitDirectFreeAic();
+        } else {
+            for (uint64_t task = coreIdx; task < batch_ * heads_; task += coreNum) {
+                const uint64_t b = task / heads_;
+                const uint64_t hv = task % heads_;
+                SelectSequence(b);
+                const uint64_t sequenceChunks = SequenceChunks();
+                PrefetchIndependentProductsAic(b, hv, 0);
+                for (uint64_t chunk = 0; chunk < sequenceChunks; ++chunk) {
+                    if (fusePostWuIntoFwdH_) {
+                        ComputePostWuAic(chunk);
+                    }
+                    WaitL1SlotReadyMte1(KDA_FWD_H_STATE_READY_FLAG);
+                    ComputeStateProductsAic(b, hv, chunk, fusePostWuIntoFwdH_);
+                    WaitL1SlotReadyMte1(KDA_FWD_H_VNEW_READY_FLAG);
+                    ComputeVnewProductsAic(
+                        b, hv, chunk, chunk + 1 < sequenceChunks);
+                }
+                WaitDirectFreeAic();
+            }
         }
         WaitFlag<HardEvent::M_MTE1>(stateL0FreeEvent_);
         for (uint32_t slot = 0; slot < KDA_FWD_H_L1_STAGING_DEPTH; ++slot) {
@@ -940,29 +1038,56 @@ private:
             resource_.ubBuf.template GetBufferByByte<float>(KDA_FWD_H_UB_GATE_OFFSET);
 
         SetFlag<HardEvent::MTE3_MTE2>(aivMte3ToMte2Event_);
-        for (uint64_t task = coreIdx; task < batch_ * heads_; task += coreNum) {
-            const uint64_t b = task / heads_;
-            const uint64_t hv = task % heads_;
-            const uint32_t stateRowBegin = subBlockIdx * KDA_FWD_H_SUB_DIM;
-            InitializeStateAiv(b, hv, stateRowBegin, state);
+        if (isVarLen_) {
+            for (uint64_t b = 0; b < seqNum_; ++b) {
+                SelectSequence(b);
+                const uint32_t sequenceChunks =
+                    static_cast<uint32_t>(SequenceChunks());
+                for (uint64_t hv = coreIdx; hv < heads_; hv += coreNum) {
+                    ProcessSequenceHeadAiv(
+                        b, hv, sequenceChunks, subBlockIdx, state, stateTyped,
+                        direct, out1, vnew, ioTyped, gate);
+                }
+            }
+        } else {
+            for (uint64_t task = coreIdx; task < batch_ * heads_; task += coreNum) {
+                const uint64_t b = task / heads_;
+                const uint64_t hv = task % heads_;
+                SelectSequence(b);
+                ProcessSequenceHeadAiv(
+                    b, hv, static_cast<uint32_t>(SequenceChunks()), subBlockIdx,
+                    state, stateTyped, direct, out1, vnew, ioTyped, gate);
+            }
+        }
+        WaitFlag<HardEvent::MTE3_MTE2>(aivMte3ToMte2Event_);
+    }
+
+    __aicore__ inline void ProcessSequenceHeadAiv(
+        uint64_t b, uint64_t hv, uint32_t sequenceChunks,
+        uint32_t subBlockIdx, LocalTensor<float> state,
+        LocalTensor<T> stateTyped, LocalTensor<float> direct,
+        LocalTensor<float> out1, LocalTensor<float> vnew,
+        LocalTensor<T> ioTyped, LocalTensor<float> gate)
+    {
+        const uint32_t stateRowBegin = subBlockIdx * KDA_FWD_H_SUB_DIM;
+        InitializeStateAiv(b, hv, stateRowBegin, state);
+        if (sequenceChunks != 0) {
             SetDirectFreeAiv();
-            for (uint32_t chunk = 0;
-                 chunk < static_cast<uint32_t>(totalChunks_); ++chunk) {
+            for (uint32_t chunk = 0; chunk < sequenceChunks; ++chunk) {
                 ProcessChunkAiv(
                     b, hv, chunk, subBlockIdx,
                     state, stateTyped, direct, out1, vnew, ioTyped, gate);
             }
-            if (storeFinalState_) {
-                SetFlag<HardEvent::V_MTE3>(aivVToMte3Event_);
-                WaitFlag<HardEvent::V_MTE3>(aivVToMte3Event_);
-                DataCopy(finalState_[StateOffset(b, hv) +
-                         stateRowBegin * KDA_FWD_H_DIM],
-                         state, KDA_FWD_H_STATE_SUB_ELEMS);
-                SetFlag<HardEvent::MTE3_V>(aivMte3ToVEvent_);
-                WaitFlag<HardEvent::MTE3_V>(aivMte3ToVEvent_);
-            }
         }
-        WaitFlag<HardEvent::MTE3_MTE2>(aivMte3ToMte2Event_);
+        if (storeFinalState_ || (isVarLen_ && SequenceTailTokens() != 0)) {
+            SetFlag<HardEvent::V_MTE3>(aivVToMte3Event_);
+            WaitFlag<HardEvent::V_MTE3>(aivVToMte3Event_);
+            DataCopy(finalState_[StateOffset(b, hv) +
+                     stateRowBegin * KDA_FWD_H_DIM],
+                     state, KDA_FWD_H_STATE_SUB_ELEMS);
+            SetFlag<HardEvent::MTE3_V>(aivMte3ToVEvent_);
+            WaitFlag<HardEvent::MTE3_V>(aivMte3ToVEvent_);
+        }
     }
 
 private:
@@ -978,6 +1103,7 @@ private:
     GlobalTensor<T> kg_;
     GlobalTensor<T> vNew_;
     GlobalTensor<T> h_;
+    GlobalTensor<int64_t> cuSeqlens_;
     uint32_t statePublishCount_[2] = {0, 0};
     uint32_t vnewPublishCount_[2] = {0, 0};
     TEventID aicMte2ToMte1Event_ = KDA_FWD_H_MTE_W_EVENT;
@@ -993,11 +1119,20 @@ private:
     TEventID aivMte3ToMte2Event_ = KDA_FWD_H_IO_REUSE_EVENT;
     Catlass::Arch::Resource<ArchTag> resource_;
     uint64_t batch_ = 0;
+    uint64_t seqNum_ = 0;
     uint64_t heads_ = 0;
     uint64_t seqlen_ = 0;
     uint64_t totalChunks_ = 0;
+    uint64_t sequenceStart_ = 0;
+    uint64_t sequenceChunkStart_ = 0;
+    uint64_t sequenceChunks_ = 0;
+    uint64_t sequenceTotalChunks_ = 0;
+    uint64_t sequenceTailTokens_ = 0;
+    uint64_t selectedSequence_ = 0;
     uint64_t coreNum_ = 1;
+    bool selectedSequenceValid_ = false;
     bool hasInitialState_ = false;
+    bool isVarLen_ = false;
     bool storeFinalState_ = false;
     bool storeVNew_ = false;
     bool storeH_ = false;

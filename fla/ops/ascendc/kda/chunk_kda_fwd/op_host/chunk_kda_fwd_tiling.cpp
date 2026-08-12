@@ -124,12 +124,13 @@ bool ResolveShape(gert::TilingContext *context, const char *layout, ShapeInfo &i
 
 bool ResolveSequenceInfo(gert::TilingContext *context, int64_t seqlen, int64_t chunkSize,
                          int64_t batch, bool &isVarLen, int64_t &seqNum,
-                         int64_t &totalChunks)
+                         int64_t &totalChunks, bool &hasVarlenTail)
 {
     const auto cuTensor = context->GetOptionalInputTensor(INPUT_CU_SEQLENS_IDX);
     isVarLen = cuTensor != nullptr;
     seqNum = batch;
     totalChunks = (seqlen + chunkSize - 1) / chunkSize;
+    hasVarlenTail = false;
     if (!isVarLen) {
         return totalChunks > 0;
     }
@@ -140,11 +141,14 @@ bool ResolveSequenceInfo(gert::TilingContext *context, int64_t seqlen, int64_t c
         return false;
     }
     totalChunks = 0;
+    hasVarlenTail = false;
     for (int64_t seq = 0; seq < seqNum; ++seq) {
         if (cu[seq] < 0 || cu[seq + 1] < cu[seq]) {
             return false;
         }
-        totalChunks += (cu[seq + 1] - cu[seq] + chunkSize - 1) / chunkSize;
+        const int64_t seqLen = cu[seq + 1] - cu[seq];
+        hasVarlenTail = hasVarlenTail || seqLen % chunkSize != 0;
+        totalChunks += (seqLen + chunkSize - 1) / chunkSize;
     }
 
     const auto chunkShape = context->GetOptionalInputShape(INPUT_CHUNK_INDICES_IDX);
@@ -182,8 +186,9 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     bool isVarLen = false;
     int64_t seqNum = 0;
     int64_t totalChunks = 0;
+    bool hasVarlenTail = false;
     if (!ResolveSequenceInfo(context, shape.seqlen, chunkSize, shape.batch,
-                             isVarLen, seqNum, totalChunks)) {
+                             isVarLen, seqNum, totalChunks, hasVarlenTail)) {
         return ge::GRAPH_FAILED;
     }
 
@@ -208,8 +213,9 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     const auto arch35Options = arch35::ConfigureChunkKdaFwdArch35(
         isAscend950, qDesc->GetDataType() == ge::DT_BF16,
         gDesc->GetDataType() == ge::DT_FLOAT, hasALog, useGateInKernel,
-        safeGate, isVarLen, shape.seqlen, shape.vHeads, chunkSize,
-        shape.kDim, shape.vDim, storeQG, storeVNew, storeH);
+        safeGate, isVarLen, hasVarlenTail, seqNum, shape.seqlen,
+        shape.vHeads, chunkSize, shape.kDim, shape.vDim, storeQG, storeVNew,
+        storeH);
 
     const uint64_t dataBytes =
         qDesc->GetDataType() == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
@@ -235,15 +241,17 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     const uint64_t qgStorageOffset = storeQG ? 0 : AllocateWorkspace(cursor, kTensorBytes);
     const uint64_t kgStorageOffset = storeKg ? 0 : AllocateWorkspace(cursor, kTensorBytes);
     const uint64_t vNewStorageBytes =
-        arch35Options.useDenseFwdH && !storeVNew
-            ? static_cast<uint64_t>(shape.batch) * shape.vHeads * chunkSize *
+        arch35Options.useDenseFwdH && !hasVarlenTail && !storeVNew
+            ? static_cast<uint64_t>(isVarLen ? seqNum : shape.batch) *
+                  shape.vHeads * chunkSize *
                   shape.vDim * dataBytes
             : vTensorBytes;
     const uint64_t vNewStorageOffset = storeVNew ? 0 :
         AllocateWorkspace(cursor, vNewStorageBytes);
     const uint64_t hStorageBytes =
-        arch35Options.useDenseFwdH && !storeH
-            ? static_cast<uint64_t>(shape.batch) * shape.vHeads * shape.kDim *
+        arch35Options.useDenseFwdH && !hasVarlenTail && !storeH
+            ? static_cast<uint64_t>(isVarLen ? seqNum : shape.batch) *
+                  shape.vHeads * shape.kDim *
                   shape.vDim * dataBytes
             : hBytes;
     const uint64_t hStorageOffset = storeH ? 0 : AllocateWorkspace(cursor, hStorageBytes);
@@ -320,6 +328,7 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     tiling.set_fusePostWu(arch35Options.fusePostWu);
     tiling.set_fusePostWuIntoFwdH(arch35Options.fusePostWuIntoFwdH);
     tiling.set_useDenseFwdH(arch35Options.useDenseFwdH);
+    tiling.set_hasVarlenTail(hasVarlenTail);
     tiling.set_storeFinalState(storeFinalState);
     tiling.set_storeGk(storeGk);
     tiling.set_storeW(storeW);

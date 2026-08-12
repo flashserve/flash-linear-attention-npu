@@ -26,8 +26,15 @@ __aicore__ inline void Run(
         fwdH.Init(
             addresses.gk, initialState, attnOut, addresses.finalState,
             aqk, akk, addresses.w, addresses.u, addresses.qgScaled,
-            addresses.kg, addresses.vNew, addresses.h, tiling);
+            addresses.kg, addresses.vNew, addresses.h, cuSeqlens, tiling);
         fwdH.Process();
+        if (tiling.hasVarlenTail) {
+            SyncAll<false>();
+            pipe.Destroy();
+            RunGenericTailBackEnd<T, BETA_T, TilingData>(
+                q, k, v, beta, cuSeqlens, chunkIndices, aqk, attnOut,
+                addresses, userWorkspace, tiling);
+        }
         return;
     }
 

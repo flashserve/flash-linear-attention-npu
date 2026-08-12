@@ -76,6 +76,8 @@ struct GDNFwdHStream {
     uint32_t chunkOffset;
     uint32_t tokenOffset;
     uint32_t batchChunks{0};
+    uint32_t fullChunks{0};
+    uint32_t tailTokens{0};
     uint32_t batchTokens;
     uint32_t nextTaskIdx{0};
     bool active{false};
@@ -100,6 +102,7 @@ struct BlockSchedulerGdnFwdH {
     uint32_t shapeBatch;
     uint32_t tokenBatch;
     uint32_t inputTokenBatch;
+    bool tailOnly{false};
     bool useInitialState;
     bool storeFinalState;
     uint32_t numSeqWorkspaceOffset;
@@ -117,6 +120,15 @@ struct BlockSchedulerGdnFwdH {
     GDNFwdHRunningQ runningQ;
 
     bool isRunning;
+    bool cachedVarlenSequenceValid{false};
+    uint32_t cachedCompactBatchIdx{0};
+    uint32_t cachedChunkOffset{0};
+    uint32_t cachedTokenOffset{0};
+    uint32_t cachedBatchChunks{0};
+    uint32_t cachedFullChunks{0};
+    uint32_t cachedTailTokens{0};
+    uint32_t cachedBatchTokens{0};
+    uint32_t cachedStateBatchIdx{0};
 
     AscendC::GlobalTensor<int64_t> gmSeqlen;
     AscendC::GlobalTensor<int64_t> gmNumSeq;
@@ -181,6 +193,7 @@ struct BlockSchedulerGdnFwdH {
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
         gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
         gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
+        tailOnly = isVariedLen > 1;
 
         if (isVariedLen) {
             inputTokenBatch = tokenBatch;
@@ -191,9 +204,11 @@ struct BlockSchedulerGdnFwdH {
                 currSeq = gmSeqlen.GetValue(b);
                 int64_t batchSeqLen = currSeq - prevSeq;
                 if (batchSeqLen > 0) {
-                    actualBatch++;
                     int64_t batchChunk = (batchSeqLen + chunkSize - 1) / chunkSize;
                     chunkPrefix += batchChunk;
+                    if (!tailOnly || batchSeqLen % chunkSize != 0) {
+                        actualBatch++;
+                    }
                 }
                 prevSeq = currSeq;
             }
@@ -227,6 +242,19 @@ struct BlockSchedulerGdnFwdH {
 
     CATLASS_DEVICE
     void ResolveVarlenSequence(uint32_t compactBatchIdx, GDNFwdHStream& stream) {
+        if (cachedVarlenSequenceValid &&
+            cachedCompactBatchIdx == compactBatchIdx) {
+            stream.chunkOffset = cachedChunkOffset;
+            stream.tokenOffset = cachedTokenOffset;
+            stream.batchChunks = cachedBatchChunks;
+            stream.fullChunks = cachedFullChunks;
+            stream.tailTokens = cachedTailTokens;
+            stream.batchTokens = cachedBatchTokens;
+            if (tailOnly) {
+                stream.batchIdx = cachedStateBatchIdx;
+            }
+            return;
+        }
         uint32_t actualBatch = 0;
         int64_t chunkPrefix = 0;
         int64_t prevSeq = 0;
@@ -235,20 +263,39 @@ struct BlockSchedulerGdnFwdH {
             int64_t batchTokens = currSeq - prevSeq;
             if (batchTokens > 0) {
                 int64_t batchChunks = (batchTokens + chunkSize - 1) / chunkSize;
-                if (actualBatch == compactBatchIdx) {
+                const bool eligible = !tailOnly || batchTokens % chunkSize != 0;
+                if (eligible && actualBatch == compactBatchIdx) {
                     stream.chunkOffset = static_cast<uint32_t>(chunkPrefix);
                     stream.batchChunks = static_cast<uint32_t>(batchChunks);
+                    stream.fullChunks = static_cast<uint32_t>(batchTokens / chunkSize);
+                    stream.tailTokens = static_cast<uint32_t>(batchTokens % chunkSize);
                     stream.tokenOffset = static_cast<uint32_t>(prevSeq);
                     stream.batchTokens = static_cast<uint32_t>(batchTokens);
+                    if (tailOnly) {
+                        stream.batchIdx = b - 1;
+                    }
+                    cachedVarlenSequenceValid = true;
+                    cachedCompactBatchIdx = compactBatchIdx;
+                    cachedChunkOffset = stream.chunkOffset;
+                    cachedTokenOffset = stream.tokenOffset;
+                    cachedBatchChunks = stream.batchChunks;
+                    cachedFullChunks = stream.fullChunks;
+                    cachedTailTokens = stream.tailTokens;
+                    cachedBatchTokens = stream.batchTokens;
+                    cachedStateBatchIdx = stream.batchIdx;
                     return;
                 }
-                ++actualBatch;
+                if (eligible) {
+                    ++actualBatch;
+                }
                 chunkPrefix += batchChunks;
             }
             prevSeq = currSeq;
         }
         stream.chunkOffset = 0;
         stream.batchChunks = 0;
+        stream.fullChunks = 0;
+        stream.tailTokens = 0;
         stream.tokenOffset = 0;
         stream.batchTokens = 0;
     }
@@ -256,26 +303,38 @@ struct BlockSchedulerGdnFwdH {
     CATLASS_DEVICE
     uint32_t GetVarlenChunkOffset(uint32_t compactBatchIdx) {
         GDNFwdHStream stream;
+        stream.batchIdx = compactBatchIdx;
         ResolveVarlenSequence(compactBatchIdx, stream);
-        return stream.chunkOffset;
+        return stream.chunkOffset + (tailOnly ? stream.fullChunks : 0);
+    }
+
+    CATLASS_DEVICE
+    uint32_t GetVarlenStateBatchIdx(uint32_t compactBatchIdx) {
+        GDNFwdHStream stream;
+        stream.batchIdx = compactBatchIdx;
+        ResolveVarlenSequence(compactBatchIdx, stream);
+        return stream.batchIdx;
     }
 
     CATLASS_DEVICE
     void InitNewStream(GDNFwdHStream& newStream) {
-        newStream.batchIdx = taskIdx / vNumHead;
+        const uint32_t compactBatchIdx = taskIdx / vNumHead;
+        newStream.batchIdx = compactBatchIdx;
         newStream.vHeadIdx = taskIdx % vNumHead;
         newStream.kHeadIdx = newStream.vHeadIdx / headGroups;
         newStream.shapeBatchIdx = isVariedLen ? 0 : newStream.batchIdx;
-        newStream.tokenBatchIdx = isVariedLen ? newStream.batchIdx : 0;
+        newStream.tokenBatchIdx = isVariedLen ? compactBatchIdx : 0;
         if (isVariedLen) {
             ResolveVarlenSequence(newStream.tokenBatchIdx, newStream);
         } else {
             newStream.chunkOffset = 0;
             newStream.batchChunks = totalChunks;
+            newStream.fullChunks = totalTokens / chunkSize;
+            newStream.tailTokens = totalTokens % chunkSize;
             newStream.tokenOffset = 0;
             newStream.batchTokens = totalTokens;
         }
-        newStream.chunkIdx = 0;
+        newStream.chunkIdx = tailOnly ? newStream.fullChunks : 0;
     }
 
     CATLASS_DEVICE
@@ -290,7 +349,7 @@ struct BlockSchedulerGdnFwdH {
 
         stream.nextTaskIdx += taskStride;
         InitNewStream(stream);
-        stream.active = stream.batchChunks > 0;
+        stream.active = stream.chunkIdx < stream.batchChunks;
         if (stream.active) {
             UpdateTask(streamId);
         }
@@ -301,7 +360,7 @@ struct BlockSchedulerGdnFwdH {
         auto& stream = runningQ.streams[streamId];
         auto& offset = stream.offset;
 
-        offset.isInitialState = stream.chunkIdx == 0;
+        offset.isInitialState = tailOnly || stream.chunkIdx == 0;
         offset.isFinalState = stream.chunkIdx == (stream.batchChunks - 1);
         uint32_t vBlockOffset = 0;
         uint32_t vBlockDim = vBlockSize;
@@ -322,7 +381,9 @@ struct BlockSchedulerGdnFwdH {
         offset.kDecayWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * chunkSize * kHeadDim;
         offset.vBlockOffset = vBlockOffset;
         offset.vBlockDim = vBlockDim;
-        offset.blockTokens = offset.isFinalState ? (stream.batchTokens - stream.chunkIdx * chunkSize) : chunkSize;
+        offset.blockTokens = stream.chunkIdx < stream.fullChunks
+            ? chunkSize
+            : stream.tailTokens;
         offset.streamId = streamId;
         offset.batchIdx = stream.batchIdx;
         offset.headIdx = stream.vHeadIdx;

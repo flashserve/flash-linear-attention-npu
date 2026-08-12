@@ -215,6 +215,7 @@ public:
         scale_ = tiling.scale;
         hasInitial_ = tiling.hasInitialState;
         isVarLen_ = tiling.isVarLen;
+        tailOnly_ = tiling.useDenseFwdH && tiling.hasVarlenTail;
         usedCoreNum_ = tiling.outputUsedCoreNum;
         const uint64_t outputElements = B_ * HV_ * T_ * V_;
         o_.SetGlobalBuffer((__gm__ OUT_T *)workspace);
@@ -1260,7 +1261,7 @@ private:
                                               uint64_t end, uint64_t subBlockIdx, uint64_t subBlockNum)
     {
         uint64_t curT = end - start;
-        if (curT == 0) {
+        if (curT == 0 || (tailOnly_ && curT == BT_)) {
             return;
         }
         if constexpr (IsSameType<T, float>::value) {
@@ -1274,11 +1275,60 @@ private:
                                              uint64_t end)
     {
         uint64_t curT = end - start;
-        if (curT == 0) {
+        if (curT == 0 || (tailOnly_ && curT == BT_)) {
             return;
         }
         ComputeOutputCube(b, hv, chunkIdx, start, curT);
         Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(syncDoneFlag_);
+    }
+
+    __aicore__ inline void ProcessVarlenTailOutAiv(
+        uint64_t coreIdx, uint64_t coreNum, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        uint64_t chunkPrefix = 0;
+        for (uint64_t seq = 0; seq < N_; ++seq) {
+            const uint64_t seqStart =
+                static_cast<uint64_t>(cuSeqlensAddr_[seq]);
+            const uint64_t seqEnd =
+                static_cast<uint64_t>(cuSeqlensAddr_[seq + 1]);
+            const uint64_t seqTokens = seqEnd - seqStart;
+            const uint64_t fullChunks = seqTokens / BT_;
+            const uint64_t tailTokens = seqTokens % BT_;
+            if (tailTokens != 0) {
+                const uint64_t chunkIdx = chunkPrefix + fullChunks;
+                const uint64_t start = seqStart + fullChunks * BT_;
+                for (uint64_t hv = coreIdx; hv < HV_; hv += coreNum) {
+                    ProcessChunkOutAiv(
+                        0, hv, chunkIdx, start, seqEnd,
+                        subBlockIdx, subBlockNum);
+                }
+            }
+            chunkPrefix += fullChunks + (tailTokens != 0);
+        }
+    }
+
+    __aicore__ inline void ProcessVarlenTailOutAic(
+        uint64_t coreIdx, uint64_t coreNum)
+    {
+        uint64_t chunkPrefix = 0;
+        for (uint64_t seq = 0; seq < N_; ++seq) {
+            const uint64_t seqStart =
+                static_cast<uint64_t>(cuSeqlensAddr_[seq]);
+            const uint64_t seqEnd =
+                static_cast<uint64_t>(cuSeqlensAddr_[seq + 1]);
+            const uint64_t seqTokens = seqEnd - seqStart;
+            const uint64_t fullChunks = seqTokens / BT_;
+            const uint64_t tailTokens = seqTokens % BT_;
+            if (tailTokens != 0) {
+                const uint64_t chunkIdx = chunkPrefix + fullChunks;
+                const uint64_t start = seqStart + fullChunks * BT_;
+                for (uint64_t hv = coreIdx; hv < HV_; hv += coreNum) {
+                    ProcessChunkOutAic(0, hv, chunkIdx, start, seqEnd);
+                }
+            }
+            chunkPrefix += fullChunks + (tailTokens != 0);
+        }
     }
 
     __aicore__ inline void ProcessOutAiv()
@@ -1300,6 +1350,11 @@ private:
         uint64_t subBlockIdx = static_cast<uint64_t>(GetSubBlockIdx());
         uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
         uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
+        if (tailOnly_) {
+            ProcessVarlenTailOutAiv(
+                coreIdx, coreNum, subBlockIdx, subBlockNum);
+            return;
+        }
         uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
         for (uint64_t task = coreIdx; task < taskNum; task += coreNum) {
             uint64_t seq = 0;
@@ -1329,6 +1384,11 @@ private:
             return;
         }
 #endif
+        if (tailOnly_) {
+            const uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
+            ProcessVarlenTailOutAic(GetBlockIdx(), coreNum);
+            return;
+        }
         uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
         uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
         for (uint64_t task = GetBlockIdx(); task < taskNum; task += coreNum) {
@@ -1406,6 +1466,7 @@ private:
     float scale_ = 1.0f;
     bool hasInitial_ = false;
     bool isVarLen_ = false;
+    bool tailOnly_ = false;
     bool isAivOnly_ = false;
     uint64_t usedCoreNum_ = 1;
     uint64_t solveCoreIdx_ = 0;

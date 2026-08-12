@@ -86,7 +86,8 @@ struct FwdHTilingView {
 };
 
 template <typename TilingData>
-__aicore__ inline FwdHTilingView MakeFwdHTiling(const TilingData &tiling)
+__aicore__ inline FwdHTilingView MakeFwdHTiling(
+    const TilingData &tiling, bool tailOnly = false)
 {
     return {
         tiling.isVarLen ? tiling.seqNum : tiling.batch,
@@ -96,9 +97,9 @@ __aicore__ inline FwdHTilingView MakeFwdHTiling(const TilingData &tiling)
         tiling.kHeadDim,
         tiling.vHeadDim,
         tiling.chunkSize,
-        tiling.hasInitialState,
+        tailOnly || tiling.hasInitialState,
         tiling.storeFinalState,
-        tiling.isVarLen ? 1 : 0,
+        tailOnly ? 2 : (tiling.isVarLen ? 1 : 0),
         tiling.isVarLen ? 1 : tiling.batch,
         tiling.isVarLen ? tiling.seqNum : 1,
         tiling.vWorkspaceOffset,
@@ -211,6 +212,22 @@ __aicore__ inline void RunFrontEnd(
     SyncAll<false>();
     pipe.Reset();
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    if (tiling.fusePostWu && tiling.hasVarlenTail) {
+        KdaPostWu::RunChunkKdaPostWuTailSeedCopy<T, GK_T, BETA_T>(
+            cuSeqlens, chunkIndices, addresses.w, addresses.u,
+            userWorkspace, tiling, pipe);
+        SyncAll<false>();
+        pipe.Reset();
+        KdaPostWu::RunChunkKdaPostWuTail<T, GK_T, BETA_T>(
+            q, k, v, addresses.gk, beta, initialState, cuSeqlens,
+            chunkIndices, akk, addresses.vNew, addresses.w, addresses.u,
+            addresses.kg, userWorkspace,
+            tiling, pipe);
+        SyncAll<false>();
+        pipe.Reset();
+    } else
+#endif
     if (!tiling.fusePostWu && !tiling.fusePostWuIntoFwdH) {
         KdaPostWu::RunChunkKdaPostWu<T, GK_T, BETA_T>(
             q, k, v, addresses.gk, beta, initialState, cuSeqlens,
@@ -226,18 +243,43 @@ template <typename T, typename TileShapes, typename TilingData>
 __aicore__ inline void RunFwdH(
     GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
     const ChunkKdaFwdAddresses &addresses, GM_ADDR userWorkspace,
-    const TilingData &tiling)
+    const TilingData &tiling, bool tailOnly = false)
 {
     using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         T, float, float, float, TileShapes, true, false, true>;
-    const auto fwdHTiling = MakeFwdHTiling(tiling);
+    const auto fwdHTiling = MakeFwdHTiling(tiling, tailOnly);
+    GM_ADDR stateInput = tailOnly ? addresses.finalState : initialState;
     FwdHKernel stateOp;
     stateOp.InitFromData(
         addresses.kg, addresses.w, addresses.u, addresses.gk, addresses.gk,
-        initialState, cuSeqlens, chunkIndices, addresses.h, addresses.vNew,
+        stateInput, cuSeqlens, chunkIndices, addresses.h, addresses.vNew,
         addresses.finalState, fwdHTiling,
         userWorkspace + tiling.fwdHWorkspaceBaseOffset);
     stateOp.Process();
+}
+
+template <typename T, typename BETA_T, typename TilingData>
+__aicore__ inline void RunGenericTailBackEnd(
+    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta,
+    GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR aqk, GM_ADDR attnOut,
+    const ChunkKdaFwdAddresses &addresses, GM_ADDR userWorkspace,
+    const TilingData &tiling)
+{
+    if (tiling.vHeadDim > 128) {
+        RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
+            addresses.finalState, cuSeqlens, chunkIndices, addresses,
+            userWorkspace, tiling, true);
+    } else {
+        RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
+            addresses.finalState, cuSeqlens, chunkIndices, addresses,
+            userWorkspace, tiling, true);
+    }
+    SyncAll<false>();
+    TPipe pipe;
+    KdaFinalize::RunChunkKdaOutput<T, float, BETA_T>(
+        q, k, v, addresses.gk, beta, addresses.finalState, cuSeqlens,
+        chunkIndices, addresses.qgScaled, aqk,
+        addresses.vNew, addresses.h, attnOut, userWorkspace, tiling, pipe);
 }
 
 template <typename T, typename BETA_T, typename TilingData>

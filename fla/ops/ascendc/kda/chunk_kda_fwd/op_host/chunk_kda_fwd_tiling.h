@@ -29,6 +29,7 @@ TILING_DATA_FIELD_DEF(bool, computeGateInPrepare);
 TILING_DATA_FIELD_DEF(bool, fusePostWu);
 TILING_DATA_FIELD_DEF(bool, fusePostWuIntoFwdH);
 TILING_DATA_FIELD_DEF(bool, useDenseFwdH);
+TILING_DATA_FIELD_DEF(bool, hasVarlenTail);
 TILING_DATA_FIELD_DEF(bool, storeFinalState);
 TILING_DATA_FIELD_DEF(bool, storeGk);
 TILING_DATA_FIELD_DEF(bool, storeW);
