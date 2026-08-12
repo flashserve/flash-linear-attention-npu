@@ -5,17 +5,17 @@
 - `dependency/`：先判断 chunk 间是否存在 carry，确定并行与串行边界。
 - `techniques/`：存放与具体算子和 SOC 无关的执行、内存、同步、Tiling 和调优方法。
 - `soc/`：只补充各 SOC 落地时的能力和资源约束。
-- `checklist.md`：汇总优化设计与交付检查项。
+- `算子优化检查清单.md`：汇总优化设计与交付检查项。
 
 ## 阅读顺序
 
 1. 先判断不同 chunk 是否共享递推 carry。
-2. 无 carry 阅读 [`dependency/chunk-independent.md`](dependency/chunk-independent.md)，有 carry 阅读 [`dependency/chunk-dependent.md`](dependency/chunk-dependent.md)。
-3. 所有优化任务阅读 [`techniques/execution-and-stage.md`](techniques/execution-and-stage.md)、[`techniques/memory-and-dataflow.md`](techniques/memory-and-dataflow.md) 和 [`techniques/pipeline-and-synchronization.md`](techniques/pipeline-and-synchronization.md)。
-4. 涉及 tile、模板和物理布局时阅读 [`techniques/tiling-and-layout.md`](techniques/tiling-and-layout.md)。
-5. 开始性能试验和分析 profiling 前阅读 [`techniques/performance-tuning.md`](techniques/performance-tuning.md)。
-6. 根据目标平台阅读 [`soc/a2-a3.md`](soc/a2-a3.md) 或 [`soc/a5.md`](soc/a5.md)。
-7. 交付前执行 [`checklist.md`](checklist.md) 和 [`../development/validation.md`](../development/validation.md)。
+2. 无 carry 阅读 [`分块间无依赖算子`](dependency/分块间无依赖算子.md)，有 carry 阅读 [`分块间有依赖算子`](dependency/分块间有依赖算子.md)。
+3. 所有优化任务阅读 [`执行模型与阶段设计`](techniques/执行模型与阶段设计.md)、[`内存规划与数据通路`](techniques/内存规划与数据通路.md) 和 [`流水与同步`](techniques/流水与同步.md)。
+4. 涉及 tile、模板和物理布局时阅读 [`Tiling 与物理布局`](techniques/Tiling与物理布局.md)。
+5. 开始性能试验和分析 profiling 前阅读 [`性能调优与瓶颈分析`](techniques/性能调优与瓶颈分析.md)。
+6. 根据目标平台阅读 [`A2/A3 优化约束`](soc/A2-A3优化约束.md) 或 [`A5 优化约束`](soc/A5优化约束.md)。
+7. 交付前执行 [`算子优化检查清单.md`](算子优化检查清单.md) 和 [`../development/验证方法与矩阵.md`](../development/验证方法与矩阵.md)。
 
 ## 分类边界
 

@@ -6,7 +6,7 @@
 
 | 路径 | 内容 | 加载时机 |
 |---|---|---|
-| [`foundation.md`](foundation.md) | 项目组件、调用链和基础术语 | 首次进入仓库 |
+| [`基础知识.md`](基础知识.md) | 项目组件、调用链和基础术语 | 首次进入仓库 |
 | [`development/`](development/) | 算子开发、编码规范、验证、清单和经验 | 新增、修改或检视算子 |
 | [`optimization/`](optimization/) | 依赖模型、通用优化技术、SOC 约束和性能清单 | 性能设计或优化 |
 | [`architecture/`](architecture/) | 运行时、打包和解耦架构 | 修改对应公共架构 |
@@ -15,17 +15,17 @@
 
 ## 首次进入仓库
 
-先读 [`foundation.md`](foundation.md)，建立项目组件、调用链、L2/L0、Tiling、workspace、OPP 和 wheel 的共同心智模型。构建、安装和测试命令以根目录 `README.md` 为准。
+先读 [`基础知识.md`](基础知识.md)，建立项目组件、调用链、L2/L0、Tiling、workspace、OPP 和 wheel 的共同心智模型。构建、安装和测试命令以根目录 `README.md` 为准。
 
 ## 按任务阅读
 
 | 任务 | 必读文档 |
 |---|---|
-| 新增或修改 Ascend C 算子 | [`development/operator.md`](development/operator.md) -> [`development/coding-standard.md`](development/coding-standard.md) -> [`development/checklist.md`](development/checklist.md) -> [`development/validation.md`](development/validation.md) |
-| 算子性能设计或优化 | [`development/coding-standard.md`](development/coding-standard.md) -> [`optimization/README.md`](optimization/README.md) 按依赖类型和目标 SOC 路由 -> [`development/validation.md`](development/validation.md) |
-| 修改 Python runtime、wheel、OPP 或兼容路径 | [`architecture/torch-npu-decoupled.md`](architecture/torch-npu-decoupled.md) -> [`development/validation.md`](development/validation.md) |
-| 定位精度、ABI、生成代码或跨 SOC 问题 | [`development/lessons.md`](development/lessons.md) 和对应任务文档 |
-| 整理交付和测试结果 | [`development/checklist.md`](development/checklist.md) -> [`development/validation.md`](development/validation.md) |
+| 新增或修改 Ascend C 算子 | [`算子开发方法论`](development/算子开发方法论.md) -> [`算子编码规范`](development/算子编码规范.md) -> [`算子开发交付清单`](development/算子开发交付清单.md) -> [`验证方法与矩阵`](development/验证方法与矩阵.md) |
+| 算子性能设计或优化 | [`算子编码规范`](development/算子编码规范.md) -> [`optimization/README.md`](optimization/README.md) 按依赖类型和目标 SOC 路由 -> [`验证方法与矩阵`](development/验证方法与矩阵.md) |
+| 修改 Python runtime、wheel、OPP 或兼容路径 | [`PyTorch 与 NPU 解耦架构`](architecture/PyTorch与NPU解耦架构.md) -> [`验证方法与矩阵`](development/验证方法与矩阵.md) |
+| 定位精度、ABI、生成代码或跨 SOC 问题 | [`经验与注意事项`](development/经验与注意事项.md) 和对应任务文档 |
+| 整理交付和测试结果 | [`算子开发交付清单`](development/算子开发交付清单.md) -> [`验证方法与矩阵`](development/验证方法与矩阵.md) |
 
 具体算子的 README 和设计文档只说明该算子的接口、语义、实现和验证，不作为其他算子可以直接复制的通用优化规则。
 

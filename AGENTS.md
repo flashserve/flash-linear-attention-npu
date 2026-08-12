@@ -11,10 +11,10 @@
 - `README.md`：构建、安装、调用、测试入口和目录结构。
 - `CONTRIBUTING.md`：贡献流程和新增算子交付要求。
 - `docs/repository-rules.md`：分支、ABI、NPU CI 和合入规则。
-- `docs/agents/foundation.md`：项目分层、调用链、关键术语、shape/layout、chunk 依赖和内存生命周期基础。
-- `docs/agents/development/coding-standard.md`：Ascend C 算子的文件分层、命名、kernel/tiling 职责、资源预算和同步生命周期编码规范。
+- `docs/agents/基础知识.md`：项目分层、调用链、关键术语、shape/layout、chunk 依赖和内存生命周期基础。
+- `docs/agents/development/算子编码规范.md`：Ascend C 算子的文件分层、命名、kernel/tiling 职责、资源预算和同步生命周期编码规范。
 - `docs/agents/optimization/README.md`：算子性能设计与优化的依赖模型、技术分类、SOC 差异和检查清单入口。
-- `docs/agents/architecture/torch-npu-decoupled.md`：默认 `fla_npu.ops.ascendc` 解耦运行时、依赖确定与兼容性门禁、wheel 产物、多卡 device guard、stream、数据依赖、autograd 和 ACL 私有格式透传设计。
+- `docs/agents/architecture/PyTorch与NPU解耦架构.md`：默认 `fla_npu.ops.ascendc` 解耦运行时、依赖确定与兼容性门禁、wheel 产物、多卡 device guard、stream、数据依赖、autograd 和 ACL 私有格式透传设计。
 - `docs/agents/README.md`：面向 AI agent 的开发原理、方法论、验证和经验总结索引。
 - `.github/pull_request_template.md`：PR 必填信息和验证矩阵。
 - 当前修改算子的 `README.md`、`docs/aclnn*.md`、测试脚本和相邻算子实现。
@@ -25,7 +25,7 @@
 - 先用 `rg` / `rg --files` 找代码和文档，再修改；不要凭记忆猜目录。
 - 改动保持聚焦，避免无关格式化、批量重排和生成物噪声。
 - 公共接口、shape/dtype/layout/range、预留参数、平台差异、返回码或报错文本变化，必须同步检查代码、README、aclnn 文档、PyTorch API 文档、测试和示例。
-- 编写或重构 Ascend C 算子代码时必须遵守 `docs/agents/development/coding-standard.md`；涉及 A5 时同时遵守 `docs/agents/optimization/soc/a5.md` 的 A5 编码约束。
+- 编写或重构 Ascend C 算子代码时必须遵守 `docs/agents/development/算子编码规范.md`；涉及 A5 时同时遵守 `docs/agents/optimization/soc/A5优化约束.md` 的 A5 编码约束。
 - 性能设计或优化前必须先判断 chunk 间是否存在 carry，并按 `docs/agents/optimization/README.md` 阅读对应依赖模型、技术分类和目标 SOC 文档。不得把具体算子的窗口数、slot 数、容量或同步协议未经重新推导直接复制到其他算子。
 - 公开 PR、issue、评论和总结中不要暴露内网地址、机器名、用户名、绝对路径、临时目录、日志路径、token 或本地调测环境细节。
 - 构建和测试默认面向 Linux + CANN + NPU 环境；其他平台只做静态阅读、文本编辑或格式检查，不把未验证命令写成已验证结论。
@@ -89,7 +89,7 @@ from fla_npu.ops.triton import chunk_local_cumsum
 
 `torch.ops.npu.*` 是兼容旧调用的过渡路径，仅在兼容性测试或旧 API 验证中使用。需要旧路径时先确认 `fla_npu.load_legacy_torch_ops()` 的加载逻辑，并在 PR 中说明为什么不能使用 `fla_npu.ops.ascendc.<op>`。
 
-修改 `torch_custom/fla_npu/fla_npu/ops/ascendc/_runtime.py`、`_aclnn_ctypes.py`、`torch_custom/fla_npu/setup.py` 或根目录 `setup.py` 时，必须同步检查 `docs/agents/architecture/torch-npu-decoupled.md`。涉及依赖确定阶段、版本或能力门禁、SOC/host/CANN 兼容范围、多卡 device guard、stream 感知、异步 launch 保活、正反向绑定、ACL 私有 format 透传、OPP wheel 安装位置或 legacy `torch_npu` 兼容路径的行为变化时，文档必须一起更新。
+修改 `torch_custom/fla_npu/fla_npu/ops/ascendc/_runtime.py`、`_aclnn_ctypes.py`、`torch_custom/fla_npu/setup.py` 或根目录 `setup.py` 时，必须同步检查 `docs/agents/architecture/PyTorch与NPU解耦架构.md`。涉及依赖确定阶段、版本或能力门禁、SOC/host/CANN 兼容范围、多卡 device guard、stream 感知、异步 launch 保活、正反向绑定、ACL 私有 format 透传、OPP wheel 安装位置或 legacy `torch_npu` 兼容路径的行为变化时，文档必须一起更新。
 
 ctypes 算子如果会通过 data pointer 修改输入 tensor，必须在公共 wrapper 中显式维护 alias/mutation 契约：列出 mutated args，处理 eager autograd 版本计数，明确被修改状态的 grad 限制，并补充 mutation 测试。未增加 `torch.library` mutation schema、FakeTensor 和 `opcheck` 前，不得宣称该 mutable 路径支持 `torch.compile`、functionalization 或 `torch.export`；需要完整图编译支持时优先提供纯 Python custom-op 适配或返回新状态的 functional API，不得为此退回 PyTorch C++ extension。
 
@@ -102,7 +102,7 @@ ctypes 算子如果会通过 data pointer 修改输入 tensor，必须在公共 
 
 ## 算子开发交付 checklist
 
-新增或修改 Ascend C 算子时，交付前执行 `docs/agents/development/checklist.md`。涉及性能设计或优化时同时执行 `docs/agents/optimization/checklist.md`。至少确认接口、host、kernel、schema、Python 导出、测试、文档和目标 SOC 保持一致。
+新增或修改 Ascend C 算子时，交付前执行 `docs/agents/development/算子开发交付清单.md`。涉及性能设计或优化时同时执行 `docs/agents/optimization/算子优化检查清单.md`。至少确认接口、host、kernel、schema、Python 导出、测试、文档和目标 SOC 保持一致。
 
 ABI 敏感路径包括 `*_def.cpp`、`aclnn_*.h/.cpp`、`torch_custom/fla_npu/*.yaml` 和 `torch_custom/fla_npu/op_plugin/ops/opapi/**`。修改这些文件时，PR 需要明确说明 ABI 影响，并按 `.github/CODEOWNERS` 请求对应 owner 检视。
 
@@ -124,7 +124,7 @@ SOC 映射：A2 为 `ascend910b`，A3 为 `ascend910_93`，A5 为 `ascend950`。
 
 ## 安装和验证
 
-验证方法和矩阵见 `docs/agents/development/validation.md`。安装 wheel 后至少检查公开 API：
+验证方法和矩阵见 `docs/agents/development/验证方法与矩阵.md`。安装 wheel 后至少检查公开 API：
 
 ```sh
 python -m pip install --force-reinstall --no-deps dist/flash_linear_attention_npu-*.whl
