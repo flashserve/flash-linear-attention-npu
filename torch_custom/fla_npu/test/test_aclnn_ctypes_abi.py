@@ -66,6 +66,24 @@ class FakeCallContext:
 
 
 class AclnnCtypesAbiTest(unittest.TestCase):
+    def test_recurrent_gated_delta_rule_requires_at_least_one_gate_before_launch(self):
+        with mock.patch.object(ACLNN_CTYPES, "_call_aclnn") as call_aclnn:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"^npu_recurrent_gated_delta_rule: either g or gk must be provided\.$",
+            ):
+                ACLNN_CTYPES.npu_recurrent_gated_delta_rule(
+                    None,
+                    None,
+                    None,
+                    None,
+                    beta=None,
+                    actual_seq_lengths=None,
+                    ssm_state_indices=None,
+                )
+
+        call_aclnn.assert_not_called()
+
     def test_causal_conv1d_bwd_signature_matches_aclnn_prototype(self):
         expected_argtypes = [
             *([ctypes.c_void_p] * 7),

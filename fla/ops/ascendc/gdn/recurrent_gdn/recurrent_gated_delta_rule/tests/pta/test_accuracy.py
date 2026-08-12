@@ -10,6 +10,7 @@ import torch_npu
 
 from golden import recurrent_gated_delta_rule_golden
 from utils import compare_tensors_by_ratio
+from fla_npu.ops import ascendc as ascendc_ops
 
 
 def make_inputs(bs, mtp, nk, nv, dk, dv, use_g=True, use_gk=False,
@@ -97,7 +98,7 @@ def run_npu(inp, device):
     
     print("start run npu_recurrent_gated_delta_rule")
 
-    result = torch_npu.npu_recurrent_gated_delta_rule(
+    result = ascendc_ops.npu_recurrent_gated_delta_rule(
         q_npu, k_npu, v_npu, s_npu,
         beta=b_npu,
         scale=inp["scale"],
