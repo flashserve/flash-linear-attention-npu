@@ -69,10 +69,10 @@ def test_summary_uses_the_arithmetic_mean_of_all_measurements():
     summary = runner.summarize_timings(
         runner.CASES[0], timings, peak_tflops=2250.0
     )
-    assert summary["mean_us"] == 5.5
-    assert summary["median_us"] == 5.5
-    assert summary["min_us"] == 1.0
-    assert summary["max_us"] == 10.0
+    assert summary["device_mean_us"] == 5.5
+    assert summary["device_median_us"] == 5.5
+    assert summary["device_min_us"] == 1.0
+    assert summary["device_max_us"] == 10.0
     assert summary["a5_over_b200"] == runner.CASES[0].a5_us / 5.5
 
 

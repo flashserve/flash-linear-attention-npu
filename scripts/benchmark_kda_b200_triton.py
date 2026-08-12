@@ -97,7 +97,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run the eight dense KDA cases with the installed FLA Triton "
-            "implementation and report the mean of 10 CUDA-event timings."
+            "implementation and report the mean of 10 CUDA device-stream "
+            "timings."
         )
     )
     parser.add_argument("--device", type=int, default=0)
@@ -366,11 +367,11 @@ def summarize_timings(
     mean_us = sum(timings_us) / len(timings_us)
     effective_tflops = kda_flops(case) / (mean_us * 1e-6) / 1e12
     return {
-        "mean_us": mean_us,
-        "median_us": statistics.median(timings_us),
-        "min_us": min(timings_us),
-        "max_us": max(timings_us),
-        "stddev_us": statistics.pstdev(timings_us),
+        "device_mean_us": mean_us,
+        "device_median_us": statistics.median(timings_us),
+        "device_min_us": min(timings_us),
+        "device_max_us": max(timings_us),
+        "device_stddev_us": statistics.pstdev(timings_us),
         "effective_tflops": effective_tflops,
         "mfu_percent": effective_tflops / peak_tflops * 100.0,
         "a5_over_b200": case.a5_us / mean_us,
@@ -403,7 +404,7 @@ def benchmark_case(
         del outputs
         outputs = None
 
-    timings_us = []
+    device_timings_us = []
     for run_index in range(runs):
         if outputs is not None:
             del outputs
@@ -415,16 +416,16 @@ def benchmark_case(
         end.record()
         end.synchronize()
         elapsed_us = float(start.elapsed_time(end) * 1000.0)
-        timings_us.append(elapsed_us)
+        device_timings_us.append(elapsed_us)
         print(
             f"case={case.case_id} run={run_index + 1:02d}/{runs} "
-            f"elapsed_us={elapsed_us:.3f}",
+            f"device_elapsed_us={elapsed_us:.3f}",
             flush=True,
         )
 
     validate_outputs(torch, outputs, case)
     peak_memory_bytes = int(torch.cuda.max_memory_allocated(device))
-    summary = summarize_timings(case, timings_us, peak_tflops)
+    summary = summarize_timings(case, device_timings_us, peak_tflops)
     del outputs
     del inputs
     torch.cuda.synchronize(device)
@@ -439,7 +440,7 @@ def benchmark_case(
         "status": "PASS",
         "warmup": warmup,
         "runs": runs,
-        "timings_us": timings_us,
+        "device_timings_us": device_timings_us,
         "peak_memory_gib": peak_memory_bytes / 2**30,
         "total_flops": kda_flops(case),
         **summary,
@@ -458,14 +459,14 @@ def error_result(case: Case, warmup: int, runs: int, error: Exception) -> dict:
         "status": "ERROR",
         "warmup": warmup,
         "runs": runs,
-        "timings_us": [],
+        "device_timings_us": [],
         "peak_memory_gib": None,
         "total_flops": kda_flops(case),
-        "mean_us": None,
-        "median_us": None,
-        "min_us": None,
-        "max_us": None,
-        "stddev_us": None,
+        "device_mean_us": None,
+        "device_median_us": None,
+        "device_min_us": None,
+        "device_max_us": None,
+        "device_stddev_us": None,
         "effective_tflops": None,
         "mfu_percent": None,
         "a5_over_b200": None,
@@ -487,16 +488,18 @@ def markdown_report(metadata: dict, results: Sequence[dict]) -> str:
         f"- Triton: `{metadata['triton_version']}`",
         f"- warmup runs per case: `{metadata['warmup']}`",
         f"- measured runs per case: `{metadata['runs']}`",
+        "- timing: `CUDA device-stream elapsed time; host/Python time excluded`",
         f"- BF16 dense peak for MFU: `{metadata['peak_tflops']:.1f} TFLOPS`",
         "",
         "| Case | total tokens | layout mode | sequence count | chunk count | "
-        "recompute enabled | status | B200 mean us | B200 MFU | A5 us | "
+        "recompute enabled | status | B200 device mean us | B200 MFU | "
+        "A5 device profiler us | "
         "A5/B200 |",
         "| ---: | ---: | --- | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for result in results:
         values = dict(result)
-        values["mean_us_text"] = _number(result["mean_us"])
+        values["device_mean_us_text"] = _number(result["device_mean_us"])
         values["mfu_text"] = (
             ""
             if result["mfu_percent"] is None
@@ -509,7 +512,8 @@ def markdown_report(metadata: dict, results: Sequence[dict]) -> str:
         )
         lines.append(
             "| {case_id} | {total_tokens} | dense | 1 | {chunk_count} | "
-            "{recompute_enabled} | {status} | {mean_us_text} | {mfu_text} | "
+            "{recompute_enabled} | {status} | {device_mean_us_text} | "
+            "{mfu_text} | "
             "{a5_us:.3f} | {speedup_text} |".format(**values)
         )
     errors = [result for result in results if result["status"] != "PASS"]
@@ -539,11 +543,11 @@ def write_reports(output_dir: Path, metadata: dict, results: Sequence[dict]) -> 
         "status",
         "warmup",
         "runs",
-        "mean_us",
-        "median_us",
-        "min_us",
-        "max_us",
-        "stddev_us",
+        "device_mean_us",
+        "device_median_us",
+        "device_min_us",
+        "device_max_us",
+        "device_stddev_us",
         "effective_tflops",
         "mfu_percent",
         "peak_memory_gib",
@@ -563,16 +567,18 @@ def write_reports(output_dir: Path, metadata: dict, results: Sequence[dict]) -> 
         "w", newline="", encoding="utf-8"
     ) as stream:
         writer = csv.DictWriter(
-            stream, fieldnames=("case_id", "run", "elapsed_us")
+            stream, fieldnames=("case_id", "run", "device_elapsed_us")
         )
         writer.writeheader()
         for result in results:
-            for run, elapsed_us in enumerate(result["timings_us"], start=1):
+            for run, elapsed_us in enumerate(
+                result["device_timings_us"], start=1
+            ):
                 writer.writerow(
                     {
                         "case_id": result["case_id"],
                         "run": run,
-                        "elapsed_us": elapsed_us,
+                        "device_elapsed_us": elapsed_us,
                     }
                 )
 
@@ -641,7 +647,13 @@ def main() -> int:
         "warmup": args.warmup,
         "runs": args.runs,
         "peak_tflops": args.peak_tflops,
-        "timing_scope": "complete low-level FLA chunk_kda_fwd via CUDA events",
+        "timing_domain": "CUDA device",
+        "timing_scope": (
+            "complete low-level FLA chunk_kda_fwd device-stream elapsed time"
+        ),
+        "host_python_time_included": False,
+        "input_generation_time_included": False,
+        "compile_autotune_warmup_time_included": False,
         "backend_env": {
             "FLA_DISABLE_BACKEND_DISPATCH": "1",
             "FLA_TILELANG": "0",

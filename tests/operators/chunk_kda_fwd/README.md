@@ -144,9 +144,11 @@ python scripts/benchmark_kda_matrix.py \
 python scripts/benchmark_kda_b200_triton.py --device 0
 ```
 
-默认每条 case 预热 5 次，随后正式执行 10 次。每次使用 CUDA event 记录完整低层
-`chunk_kda_fwd` 前向耗时并同步，最终取 10 次的算术平均值。输入生成、首次 Triton 编译、
-自动调优和预热耗时不计入正式结果。可显式写出默认参数或指定部分 case：
+默认每条 case 预热 5 次，随后正式执行 10 次。每次在当前 CUDA stream 上、紧邻完整低层
+`chunk_kda_fwd` 调用前后记录 CUDA event，最终取 10 次 device elapsed time 的算术平均值。
+该结果是一次 `chunk_kda_fwd` 的 CUDA device-stream 执行时间，不是 Python/脚本耗时；
+不包含输入生成、Python wall time、首次 Triton 编译、自动调优和预热耗时。可显式写出
+默认参数或指定部分 case：
 
 ```bash
 python scripts/benchmark_kda_b200_triton.py \
@@ -161,9 +163,9 @@ python scripts/benchmark_kda_b200_triton.py \
 
 | 文件 | 内容 |
 | --- | --- |
-| `results.md` | B200 平均耗时、MFU、A5 耗时和 A5/B200 耗时比汇总表 |
-| `results.csv` | 每条 case 的平均值、中位数、最小值、最大值、标准差和峰值显存 |
-| `timings.csv` | 每条 case 的 10 次原始 CUDA event 耗时 |
+| `results.md` | B200 device 平均耗时、MFU、A5 device profiler 耗时和耗时比汇总表 |
+| `results.csv` | 每条 case 的 device 平均值、中位数、最小值、最大值和标准差 |
+| `timings.csv` | 每条 case 的 10 次原始 CUDA device elapsed time |
 | `results.json` | GPU、PyTorch、Triton、FLA 版本、FLA 安装位置校验状态和完整结果 |
 
 脚本默认按单张 B200 的 BF16 dense 峰值 `2250 TFLOPS` 计算 MFU。若测试环境采用其他
