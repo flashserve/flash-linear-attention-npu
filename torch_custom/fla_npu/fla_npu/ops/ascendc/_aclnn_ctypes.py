@@ -260,13 +260,16 @@ def npu_chunk_gated_delta_rule_bwd_dhu(
     use_exp2=False,
     transpose_state_layout=False,
 ):
+    import torch
+
     q_shape = _shape(q)
     dv_shape = _shape(dv)
     B, _, T, K = q_shape
     Hv, V = dv_shape[1], dv_shape[3]
     NT = _chunk_num(T, int(chunk_size), chunk_indices)
     dh = _empty((B, Hv, NT, K, V), q)
-    dh0 = _empty((B, Hv, NT, K, V), q) if h0 is not None else None
+    state_batch = len(cu_seqlens) - 1 if cu_seqlens is not None else B
+    dh0 = _empty((state_batch, Hv, K, V), q, dtype=torch.float32) if h0 is not None else None
     dv2 = _empty_like(dv)
     outputs = (dh, dh0, dv2)
     return _call_aclnn(

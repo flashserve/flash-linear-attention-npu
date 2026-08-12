@@ -62,7 +62,7 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
     if (dh0Out == nullptr) {
         op::Shape zeroShape;
         zeroShape.AppendDim(0);
-        dh0OutKernel = executor->AllocTensor(zeroShape, q->GetDataType(), op::Format::FORMAT_ND);
+        dh0OutKernel = executor->AllocTensor(zeroShape, op::DataType::DT_FLOAT, op::Format::FORMAT_ND);
     } else {
         dh0OutKernel = dh0Out;
     }

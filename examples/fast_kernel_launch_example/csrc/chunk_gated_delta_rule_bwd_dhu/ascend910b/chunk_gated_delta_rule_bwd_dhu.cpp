@@ -45,8 +45,6 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_me
     at::OptionalIntArrayRef chunk_indices)
 {
     (void)scale;
-    (void)gK;
-    (void)dht;
 
     int64_t B = q.size(0);
     int64_t Hk = q.size(1);
@@ -63,7 +61,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_me
     at::Tensor dv2 = at::empty_like(dv);
     at::Tensor dh0;
     if (h0.has_value()) {
-        dh0 = at::empty({B, Hv, chunkNum, K, V}, q.options());
+        int64_t stateBatch = cu_seqlens.has_value() ? static_cast<int64_t>(cu_seqlens.value().size()) - 1 : B;
+        dh0 = at::empty({stateBatch, Hv, K, V}, q.options().dtype(at::kFloat));
     } else {
         dh0 = at::empty({0}, q.options());
     }
@@ -92,7 +91,8 @@ void CheckSameDevice(const at::Tensor &base, const at::Tensor &tensor, const cha
 }
 
 void CheckInputs(const at::Tensor &q, const at::Tensor &k, const at::Tensor &w, const at::Tensor &d_o,
-                 const at::Tensor &dv, const at::Tensor &g, at::OptionalIntArrayRef cu_seqlens,
+                 const at::Tensor &dv, const at::Tensor &g, const c10::optional<at::Tensor> &gK,
+                 const c10::optional<at::Tensor> &h0, const c10::optional<at::Tensor> &dht, at::OptionalIntArrayRef cu_seqlens,
                  at::OptionalIntArrayRef chunk_indices)
 {
     CheckInputRank(q, 4, "q");
@@ -127,6 +127,24 @@ void CheckInputs(const at::Tensor &q, const at::Tensor &k, const at::Tensor &w, 
               "GVA requires Hv divisible by Hk; Hk=", Hk, " Hv=", Hv);
     TORCH_CHECK(g.size(0) == B && g.size(1) == Hv && g.size(2) == T,
               "g must be [B,Hv,T]; g=", g.sizes());
+    int64_t stateBatch = cu_seqlens.has_value() ? static_cast<int64_t>(cu_seqlens.value().size()) - 1 : B;
+    if (gK.has_value()) {
+        CheckInputRank(gK.value(), 4, "gK");
+        CheckSameDevice(q, gK.value(), "gK");
+        TORCH_CHECK(gK.value().sizes() == at::IntArrayRef({B, Hv, T, K}), "gK must be [B,Hv,T,K].");
+        TORCH_CHECK(gK.value().scalar_type() == g.scalar_type(), "gK must have the same dtype as g.");
+    }
+    if (h0.has_value()) {
+        CheckInputRank(h0.value(), 4, "h0");
+        CheckSameDevice(q, h0.value(), "h0");
+        TORCH_CHECK(h0.value().sizes() == at::IntArrayRef({stateBatch, Hv, K, V}), "h0 must be [N,Hv,K,V].");
+    }
+    if (dht.has_value()) {
+        CheckInputRank(dht.value(), 4, "dht");
+        CheckSameDevice(q, dht.value(), "dht");
+        TORCH_CHECK(dht.value().sizes() == at::IntArrayRef({stateBatch, Hv, K, V}), "dht must be [N,Hv,K,V].");
+        TORCH_CHECK(dht.value().scalar_type() == at::kFloat, "dht must be float32.");
+    }
 
     auto qDtype = q.scalar_type();
     auto gDtype = g.scalar_type();
@@ -158,7 +176,8 @@ ge::DataType ToGeDtype(at::ScalarType dtype)
 
 ChunkGatedDeltaRuleBwdDhuTilingResult CalcTilingParams(
     const at::Tensor &q, const at::Tensor &k, const at::Tensor &w, const at::Tensor &d_o, const at::Tensor &dv,
-    const at::Tensor &g, double scale, int64_t chunk_size, at::OptionalIntArrayRef cu_seqlens,
+    const at::Tensor &g, const c10::optional<at::Tensor> &gK, const c10::optional<at::Tensor> &h0,
+    const c10::optional<at::Tensor> &dht, double scale, int64_t chunk_size, at::OptionalIntArrayRef cu_seqlens,
     at::OptionalIntArrayRef chunk_indices)
 {
     auto qSizes = q.sizes();
@@ -180,10 +199,35 @@ ChunkGatedDeltaRuleBwdDhuTilingResult CalcTilingParams(
                                 {dvSizes[0], dvSizes[1], dvSizes[2], dvSizes[3]});
     gert::StorageShape gShape({gSizes[0], gSizes[1], gSizes[2]}, {gSizes[0], gSizes[1], gSizes[2]});
 
+    gert::StorageShape *gkShapePtr = nullptr;
+    gert::StorageShape *h0ShapePtr = nullptr;
+    gert::StorageShape *dhtShapePtr = nullptr;
+    gert::StorageShape gkShape;
+    gert::StorageShape h0Shape;
+    gert::StorageShape dhtShape;
     gert::StorageShape *cuSeqlensShapePtr = nullptr;
     gert::StorageShape *chunkIndicesShapePtr = nullptr;
     gert::StorageShape cuSeqlensShape;
     gert::StorageShape chunkIndicesShape;
+
+    if (gK.has_value()) {
+        auto sizes = gK.value().sizes();
+        gkShape = gert::StorageShape({sizes[0], sizes[1], sizes[2], sizes[3]},
+                                     {sizes[0], sizes[1], sizes[2], sizes[3]});
+        gkShapePtr = &gkShape;
+    }
+    if (h0.has_value()) {
+        auto sizes = h0.value().sizes();
+        h0Shape = gert::StorageShape({sizes[0], sizes[1], sizes[2], sizes[3]},
+                                     {sizes[0], sizes[1], sizes[2], sizes[3]});
+        h0ShapePtr = &h0Shape;
+    }
+    if (dht.has_value()) {
+        auto sizes = dht.value().sizes();
+        dhtShape = gert::StorageShape({sizes[0], sizes[1], sizes[2], sizes[3]},
+                                      {sizes[0], sizes[1], sizes[2], sizes[3]});
+        dhtShapePtr = &dhtShape;
+    }
 
     if (cu_seqlens.has_value()) {
         int64_t cuDim0 = static_cast<int64_t>(cu_seqlens.value().size());
@@ -212,11 +256,19 @@ ChunkGatedDeltaRuleBwdDhuTilingResult CalcTilingParams(
         &doShape,
         &dvShape,
         &gShape,
+        gkShapePtr,
+        h0ShapePtr,
+        dhtShapePtr,
         cuSeqlensShapePtr,
         chunkIndicesShapePtr,
         ToGeDtype(q.scalar_type()),
         ToGeDtype(g.scalar_type()),
+        gK.has_value() ? ToGeDtype(gK.value().scalar_type()) : ge::DT_FLOAT,
+        dht.has_value() ? ToGeDtype(dht.value().scalar_type()) : ge::DT_FLOAT,
         true,
+        gK.has_value(),
+        h0.has_value(),
+        dht.has_value(),
         true,
         scale,
         static_cast<int32_t>(chunk_size),
@@ -236,9 +288,6 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu_kernel(
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace,
     const GDN::ChunkGatedDeltaRuleBwdDhuTilingData tilingData)
 {
-    (void)gk;
-    (void)h0;
-    (void)dht;
     AscendC::AscendCUtils::SetOverflow(1);
     AscendC::SetSysWorkspaceForce(workspace);
     GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
@@ -251,17 +300,17 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu_kernel(
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
     }
     GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<DT, GT>(
-        q, k, w, d_o, dv, g, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
+        q, k, w, d_o, dv, g, gk, h0, dht, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
 }
 
 template <typename DT, typename GT>
 void LaunchChunkGatedDeltaRuleBwdDhu(uint32_t blockDim, aclrtStream stream, GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o,
-                                     GM_ADDR dv, GM_ADDR g, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR dh,
-                                     GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace,
+                                     GM_ADDR dv, GM_ADDR g, GM_ADDR gk, GM_ADDR h0, GM_ADDR dht, GM_ADDR cu_seqlens,
+                                     GM_ADDR chunk_indices, GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace,
                                      const GDN::ChunkGatedDeltaRuleBwdDhuTilingData &tiling)
 {
     chunk_gated_delta_rule_bwd_dhu_kernel<DT, GT><<<blockDim, nullptr, stream>>>(
-        q, k, w, d_o, dv, g, nullptr, nullptr, nullptr, cu_seqlens, chunk_indices, dh, dh0, dv2, workspace, tiling);
+        q, k, w, d_o, dv, g, gk, h0, dht, cu_seqlens, chunk_indices, dh, dh0, dv2, workspace, tiling);
 }
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_npu(
@@ -271,13 +320,9 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_np
     at::OptionalIntArrayRef chunk_indices)
 {
     TORCH_CHECK(g.has_value(), "chunk_gated_delta_rule_bwd_dhu requires g to be provided.");
-    TORCH_CHECK(!gK.has_value(), "gK is not supported and must be None.");
-    TORCH_CHECK(!h0.has_value(), "h0 is not supported in fast kernel launch and must be None.");
-    TORCH_CHECK(!dht.has_value(), "dht is not supported in fast kernel launch and must be None.");
-
     const c10::OptionalDeviceGuard guard(q.device());
     const at::Tensor &gTensor = g.value();
-    CheckInputs(q, k, w, d_o, dv, gTensor, cu_seqlens, chunk_indices);
+    CheckInputs(q, k, w, d_o, dv, gTensor, gK, h0, dht, cu_seqlens, chunk_indices);
 
     auto outputs = chunk_gated_delta_rule_bwd_dhu_meta(q, k, w, d_o, dv, scale, chunk_size, g, gK, h0, dht,
                                                        cu_seqlens, chunk_indices);
@@ -286,7 +331,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_np
     auto dv2 = std::get<2>(outputs);
 
     auto stream = c10_npu::getCurrentNPUStream().stream(false);
-    auto tilingResult = CalcTilingParams(q, k, w, d_o, dv, gTensor, scale, chunk_size, cu_seqlens, chunk_indices);
+    auto tilingResult = CalcTilingParams(q, k, w, d_o, dv, gTensor, gK, h0, dht, scale, chunk_size,
+                                         cu_seqlens, chunk_indices);
 
     GM_ADDR qPtr = (GM_ADDR)q.data_ptr();
     GM_ADDR kPtr = (GM_ADDR)k.data_ptr();
@@ -294,6 +340,9 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_np
     GM_ADDR doPtr = (GM_ADDR)d_o.data_ptr();
     GM_ADDR dvPtr = (GM_ADDR)dv.data_ptr();
     GM_ADDR gPtr = (GM_ADDR)gTensor.data_ptr();
+    GM_ADDR gkPtr = gK.has_value() ? (GM_ADDR)gK.value().data_ptr() : nullptr;
+    GM_ADDR h0Ptr = h0.has_value() ? (GM_ADDR)h0.value().data_ptr() : nullptr;
+    GM_ADDR dhtPtr = dht.has_value() ? (GM_ADDR)dht.value().data_ptr() : nullptr;
     GM_ADDR dhPtr = (GM_ADDR)dh.data_ptr();
     GM_ADDR dh0Ptr = dh0.numel() > 0 ? (GM_ADDR)dh0.data_ptr() : nullptr;
     GM_ADDR dv2Ptr = (GM_ADDR)dv2.data_ptr();
@@ -331,19 +380,19 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_np
     auto aclCall = [=]() -> int {
         if (qDtype == at::kBFloat16 && gDtype == at::kBFloat16) {
             LaunchChunkGatedDeltaRuleBwdDhu<bfloat16_t, bfloat16_t>(
-                blockDim, stream, qPtr, kPtr, wPtr, doPtr, dvPtr, gPtr, cuSeqlensPtr, chunkIndicesPtr, dhPtr, dh0Ptr,
+                blockDim, stream, qPtr, kPtr, wPtr, doPtr, dvPtr, gPtr, gkPtr, h0Ptr, dhtPtr, cuSeqlensPtr, chunkIndicesPtr, dhPtr, dh0Ptr,
                 dv2Ptr, workspaceGm, tiling);
         } else if (qDtype == at::kHalf && gDtype == at::kHalf) {
             LaunchChunkGatedDeltaRuleBwdDhu<half, half>(
-                blockDim, stream, qPtr, kPtr, wPtr, doPtr, dvPtr, gPtr, cuSeqlensPtr, chunkIndicesPtr, dhPtr, dh0Ptr,
+                blockDim, stream, qPtr, kPtr, wPtr, doPtr, dvPtr, gPtr, gkPtr, h0Ptr, dhtPtr, cuSeqlensPtr, chunkIndicesPtr, dhPtr, dh0Ptr,
                 dv2Ptr, workspaceGm, tiling);
         } else if (qDtype == at::kBFloat16 && gDtype == at::kFloat) {
             LaunchChunkGatedDeltaRuleBwdDhu<bfloat16_t, float>(
-                blockDim, stream, qPtr, kPtr, wPtr, doPtr, dvPtr, gPtr, cuSeqlensPtr, chunkIndicesPtr, dhPtr, dh0Ptr,
+                blockDim, stream, qPtr, kPtr, wPtr, doPtr, dvPtr, gPtr, gkPtr, h0Ptr, dhtPtr, cuSeqlensPtr, chunkIndicesPtr, dhPtr, dh0Ptr,
                 dv2Ptr, workspaceGm, tiling);
         } else if (qDtype == at::kHalf && gDtype == at::kFloat) {
             LaunchChunkGatedDeltaRuleBwdDhu<half, float>(
-                blockDim, stream, qPtr, kPtr, wPtr, doPtr, dvPtr, gPtr, cuSeqlensPtr, chunkIndicesPtr, dhPtr, dh0Ptr,
+                blockDim, stream, qPtr, kPtr, wPtr, doPtr, dvPtr, gPtr, gkPtr, h0Ptr, dhtPtr, cuSeqlensPtr, chunkIndicesPtr, dhPtr, dh0Ptr,
                 dv2Ptr, workspaceGm, tiling);
         } else {
             TORCH_CHECK(false, "Unsupported dtype combination: q=", qDtype, ", g=", gDtype);

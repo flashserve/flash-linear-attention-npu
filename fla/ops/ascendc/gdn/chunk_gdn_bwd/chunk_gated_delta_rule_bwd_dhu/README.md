@@ -60,10 +60,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 | `w` | 输入 | 必选 | Weight（衰减权重）输入张量 | 参与隐藏状态更新 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, K]` | 支持 |
 | `dO` | 输入 | 必选 | 前向输出 `o` 的梯度张量 | 即上游输出梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `dv` | 输入 | 必选 | Value 的上游梯度张量 | 将与来自 `dh` 的贡献叠加后输出为 `dv2` | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
-| `gOptional` | 输入 | 可选 | Gate 张量 | 对隐藏状态递推施加指数门控 `exp(g)` | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
-| `gkOptional` | 输入 | 可选 | Key-wise Gate 张量 | 对每个 Key 维度施加额外门控 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, K]` | 支持 |
-| `h0Optional` | 输入 | 可选 | 初始隐藏状态张量 | 提供时参与递推初始化 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
-| `dhtOptional` | 输入 | 可选 | 末尾隐藏状态的梯度张量 | 反向递推的起始梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
+| `gOptional` | 输入 | 必选 | 标量 Gate 张量 | 对隐藏状态递推施加 base-2 门控 `exp2(g)` | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
+| `gkOptional` | 输入 | 可选 | Key-wise Gate 张量 | 对每个 Key 维度施加 base-2 门控 `exp2(gk)` | `FLOAT16`、`BFLOAT16`、`FLOAT`（与 `g` 同 dtype） | `ND` | `[B, HV, T, K]` | 支持 |
+| `h0Optional` | 输入 | 可选 | 初始隐藏状态张量 | 提供时声明需要输出 `dh0`；其数值不参与本算子的反向递推 | `FLOAT16`、`BFLOAT16` | `ND` | `[N, HV, K, V]` | 支持 |
+| `dhtOptional` | 输入 | 可选 | 末尾隐藏状态的梯度张量 | 反向递推的起始梯度 | `FLOAT` | `ND` | `[B, HV, K, V]` | 支持 |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | 变长模式输入，形状为 `[N+1]` | `INT64` | `ND` | 1 维 | - |
 | `chunkIndicesOptional` | 输入 | 可选 | 分块索引信息 | 变长模式输入，扁平化存储 `[seqIdx0, chunkIdx0, ...]`，长度为 `2 * numChunks` | `INT64` | `ND` | 1 维 | - |
 
@@ -79,7 +79,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 | 参数名 | 输入/输出 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|
 | `dhOut` | 输出 | 各 chunk 起始时刻的隐藏状态梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, NT, K, V]` | 支持 |
-| `dh0Out` | 输出 | 初始隐藏状态 `h0` 的梯度（仅当 `h0Optional` 非空时有意义）| `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
+| `dh0Out` | 输出 | 初始隐藏状态 `h0` 的梯度（仅当 `h0Optional` 非空时有意义）| `FLOAT` | `ND` | `[N, HV, K, V]` | 支持 |
 | `dv2Out` | 输出 | 融合了隐藏状态贡献后的 Value 梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `workspaceSize` | 输出 | Device 侧所需 workspace 大小 | `uint64_t` | - | 标量 | - |
 | `executor` | 输出 | 算子执行器，封装了计算流程 | `aclOpExecutor*` | - | - | - |
@@ -114,9 +114,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
   - 同时出现时启用变长模式（varlen）
   - 变长模式仅支持 `B = 1`
 
-- `gOptional`：
-  - 数据类型可以为 `FLOAT16`、`BFLOAT16` 或 `FLOAT`
-  - 数据类型需与 `q` 类型一致，或为 `FLOAT`（FP32）
+- `gOptional`：必须提供；数据类型可以为 `FLOAT16`、`BFLOAT16` 或 `FLOAT`，且需与 `q` 类型一致或为 `FLOAT`（FP32）。
+- `gkOptional`：若提供，形状为 `[B, HV, T, K]`，数据类型必须与 `gOptional` 相同；其最后一个 token 的 gate 以 `exp2` 作用于对应 K 行。
+- `dhtOptional`：若提供，必须为 FP32，并作为最后一个 chunk 的反向状态梯度；不要求同时提供 `h0Optional`。
+- `h0Optional`：数值本身仅用于声明需要 `dh0Out`；`dh0Out` 为 FP32，定长形状为 `[B, HV, K, V]`，变长形状为 `[N, HV, K, V]`。
 
 ---
 
@@ -162,7 +163,7 @@ B = 1
 # dv2：叠加来自隐藏状态的 Value 梯度
 b_dv  = k_chunk @ b_dh                        # 从当前 dh 产生的 dv 贡献
 if g:
-    b_dv *= exp(g_last - g_chunk)[:, None]     # 门控衰减
+    b_dv *= exp2(g_last - g_chunk)[:, None]    # 门控衰减
 dv2_chunk = b_dv + dv_chunk                   # 与上游 dv 叠加
 
 # dh 存储（在更新前记录当前 chunk 的 dh）
@@ -170,8 +171,8 @@ dh[:, :, i_t] = b_dh
 
 # 反向递推更新 b_dh（传递给上一 chunk）
 if g:
-    b_dh *= exp(g_last)
-term1 = (q_chunk * exp(g_chunk))^T @ dO_chunk * scale
+    b_dh *= exp2(g_last)
+term1 = (q_chunk * exp2(g_chunk))^T @ dO_chunk * scale
 term2 = w_chunk^T @ dv2_chunk
 b_dh = b_dh + term1 - term2
 ```

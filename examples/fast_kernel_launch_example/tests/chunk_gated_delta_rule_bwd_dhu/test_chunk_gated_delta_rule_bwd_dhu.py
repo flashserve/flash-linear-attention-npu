@@ -222,7 +222,7 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
             if g is not None:
                 bg_last = g[:, :, global_last_idx]
                 b_g = g[:, :, global_start_t:global_end_t]
-                gate_factor = torch.exp(bg_last.unsqueeze(-1) - b_g).unsqueeze(-1)
+                gate_factor = torch.exp2(bg_last.unsqueeze(-1) - b_g).unsqueeze(-1)
                 m_t = torch.arange(block_size_t, device=device, dtype=torch.float32) < float(block_size_t)
                 mask_expanded = m_t.view(1, 1, block_size_t, 1)
                 b_dv = b_dv * gate_factor * mask_expanded
@@ -234,8 +234,8 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
             b_w_t = w_blk.transpose(-1, -2)
 
             if g is not None:
-                bg_last_exp = torch.exp(bg_last)
-                b_g_exp = torch.exp(b_g)
+                bg_last_exp = torch.exp2(bg_last)
+                b_g_exp = torch.exp2(b_g)
                 b_dh_for_update = b_dh * bg_last_exp.unsqueeze(-1).unsqueeze(-1)
                 b_q_gated = b_q_t * b_g_exp.unsqueeze(-2)
             else:
@@ -268,8 +268,8 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
                     if g is not None:
                         bg_last = g[b, i_h, global_last_idx]
                         b_g = g[b, i_h, global_start_t:global_end_t]
-                        bg_last_exp = torch.exp(bg_last)
-                        b_g_exp = torch.exp(b_g)
+                        bg_last_exp = torch.exp2(bg_last)
+                        b_g_exp = torch.exp2(b_g)
 
                     b_do = do[b, i_h, global_start_t:global_end_t, :]
                     b_dv_existing = dv[b, i_h, global_start_t:global_end_t, :]
@@ -278,7 +278,7 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
 
                     if g is not None:
                         m_t = torch.arange(block_size_t, device=device) < block_size_t
-                        gate_factor = torch.exp(bg_last - b_g).unsqueeze(-1)
+                        gate_factor = torch.exp2(bg_last - b_g).unsqueeze(-1)
                         mask_expanded = m_t.unsqueeze(-1).float()
                         b_dv *= gate_factor * mask_expanded
 
