@@ -65,17 +65,15 @@ bash scripts/benchmark_kda_main.sh \
   --work-root "$PWD/outputs/kda-main-benchmark"
 ```
 
-该入口复用 PR297 的 48 条 A5 正向用例（case ID 250 至 297）。所有用例固定为
+该入口固定运行 8 条 A5 dense 正向用例（case ID 250 至 257）。所有用例固定为
 BF16、`H=96`、`K=V=128`、`chunk_size=64`、
 `initial_state=None`、`output_final_state=False`、`use_gate_in_kernel=True`、
-`safe_gate=True`、`return_intermediate_states=False`、`state_v_first=True`，并覆盖：
+`safe_gate=True`、`return_intermediate_states=False`、`state_v_first=True`、
+`cu_seqlens=None`，并覆盖：
 
-- 总 token 数：1024、1536、2048、4096、8192、16384；
-- 单序列：全部 token 属于一个序列；
-- 8 个近似等长序列：将全部 token 尽量平均分给 8 个序列；
-- 8 个带不同尾块的序列：序列长度刻意不按 64 对齐，用于覆盖完整 chunk 与尾 chunk 混合执行；
-- 每个序列 64 个 token：一个序列恰好占一个完整 chunk；
-- `disable_recompute=False` 和 `disable_recompute=True` 两种模式。
+- dense 序列长度：1024、8192、16384、65536；
+- 每种长度覆盖启用重计算和关闭重计算两种模式，即底层
+  `disable_recompute=False/True`。
 
 可先查看固定矩阵，或只运行部分 ATK case ID / case key：
 
@@ -86,12 +84,13 @@ bash scripts/benchmark_kda_main.sh \
   --soc ascend950 \
   --device 0 \
   --work-root "$PWD/outputs/kda-main-benchmark" \
-  --cases 282,283,290,291
+  --cases 252,253,254,255
 ```
 
 为兼容旧的一键命令，`--decode-step 1` 会被接受但不参与 KDA 正向测试；旧 case 名
 `prefill_fwd_b1_s1024`、`prefill_fwd_b1_s8192`、`prefill_fwd_b1_s16384`
-分别映射到 ATK case 250、282、290。新增测试应直接使用 ATK case ID 或 case key。
+分别映射到 case 250、252、254；`prefill_fwd_b1_s65536` 映射到 case 256。
+新增测试应直接使用 case ID 或 case key。
 脚本会优先使用当前已加载的 CANN 环境；未加载时自动尝试标准安装位置
 `/usr/local/Ascend/cann/set_env.sh` 和 `/usr/local/Ascend/ascend-toolkit/set_env.sh`。
 每次运行会将 CANN 应用日志重定向到当前 `run_*/ascend_logs/`，避免继续写入默认
@@ -107,12 +106,12 @@ kernel replay 均由 msopprof 在同一个 application 进程内完成，不会�
 
 | 文件 | 内容 |
 | --- | --- |
-| `case_matrix.csv` | 48 条固定用例及 `cu_seqlens`、序列数、chunk 数、随机种子和功能属性 |
+| `case_matrix.csv` | 8 条固定 dense 用例及序列长度、chunk 数、重计算开关、随机种子和功能属性 |
 | `results.csv` / `results.md` | 每条用例的端到端 kernel 聚合耗时和执行状态 |
-| `kernel_detail.xlsx` | 48 个 case sheet；每个 sheet 保存该用例的 kernel、replay、block/sub-block 完整性能明细 |
+| `kernel_detail.xlsx` | 8 个 case sheet；每个 sheet 保存该用例的 kernel、replay、block/sub-block 完整性能明细 |
 | `results.json` | 环境元数据、用例汇总和 kernel 耗时分解 |
 
-`kernel_detail.xlsx` 固定包含 `case_250` 至 `case_297` 共 48 个 sheet，每个 sheet
+`kernel_detail.xlsx` 固定包含 `case_250` 至 `case_257` 共 8 个 sheet，每个 sheet
 提供 Cube、MAC、Vector、MTE1、MTE2、MTE3、Fixpipe、
 Scalar 的时间、占比和带宽列，并保留 `PipeUtilization`、`ArithmeticUtilization`、
 `Memory`、`MemoryL0`、`MemoryUB`、`L2Cache`、`ResourceConflictRatio` 和

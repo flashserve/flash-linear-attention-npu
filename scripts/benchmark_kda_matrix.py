@@ -30,8 +30,7 @@ VALUE_DIM = 128
 CHUNK_SIZE = 64
 PROFILE_RANGE = "FLA_NPU_KDA_BENCH"
 ATK_CASE_ID_START = 250
-SEQUENCE_LENGTHS = (1024, 1536, 2048, 4096, 8192, 16384)
-DISTRIBUTIONS = ("single", "balanced8", "mixed_tail", "short64")
+SEQUENCE_LENGTHS = (1024, 8192, 16384, 65536)
 SEED_BASE = 20260812
 PREFILL_KERNEL_FILTER = "|".join(
     (
@@ -115,88 +114,48 @@ class Case:
     distribution: str
     disable_recompute: bool
     layout: str
-    cu_seqlens: tuple[int, ...]
+    cu_seqlens: Optional[tuple[int, ...]]
     explicit_chunk_indices: bool
     seed: int
     h100_us: Optional[float]
     optimized_npu_us: Optional[float]
 
 
-def distribution_lengths(total: int, distribution: str) -> list[int]:
-    if distribution == "single":
-        return [total]
-    if distribution == "balanced8":
-        quotient, remainder = divmod(total, 8)
-        return [quotient + (index < remainder) for index in range(8)]
-    if distribution == "mixed_tail":
-        base = total // 8
-        values = [
-            base - 47,
-            base + 31,
-            base - 1,
-            base + 17,
-            base - 33,
-            base + 49,
-            base - 15,
-        ]
-        values.append(total - sum(values))
-        return values
-    if distribution == "short64":
-        quotient, remainder = divmod(total, CHUNK_SIZE)
-        values = [CHUNK_SIZE] * quotient
-        if remainder:
-            values.append(remainder)
-        return values
-    raise ValueError(f"unknown distribution: {distribution}")
-
-
-def cumulative_lengths(lengths: Iterable[int]) -> tuple[int, ...]:
-    values = [0]
-    for length in lengths:
-        if length <= 0:
-            raise ValueError(f"sequence length must be positive, got {length}")
-        values.append(values[-1] + int(length))
-    return tuple(values)
-
-
 def build_atk_cases() -> tuple[Case, ...]:
     cases = []
-    pair_id = 0
-    for sequence in SEQUENCE_LENGTHS:
-        for distribution in DISTRIBUTIONS:
-            cu_seqlens = cumulative_lengths(
-                distribution_lengths(sequence, distribution)
+    for sequence_index, sequence in enumerate(SEQUENCE_LENGTHS):
+        for disable_recompute in (False, True):
+            atk_case_id = (
+                ATK_CASE_ID_START + sequence_index * 2 + int(disable_recompute)
             )
-            for disable_recompute in (False, True):
-                atk_case_id = ATK_CASE_ID_START + pair_id * 2 + int(disable_recompute)
-                mode = "export" if disable_recompute else "recompute"
-                case_key = (
-                    f"ascend950_h96_t{sequence}_c64_packed_{distribution}_{mode}"
+            recompute_enabled = not disable_recompute
+            case_key = (
+                f"ascend950_h96_t{sequence}_c64_dense_"
+                f"recompute_{str(recompute_enabled).lower()}"
+            )
+            cases.append(
+                Case(
+                    atk_case_id=atk_case_id,
+                    case_id=str(atk_case_id),
+                    case_key=case_key,
+                    phase="prefill",
+                    direction="fwd",
+                    batch=1,
+                    sequence=sequence,
+                    distribution="dense",
+                    disable_recompute=disable_recompute,
+                    layout="BSND",
+                    cu_seqlens=None,
+                    explicit_chunk_indices=False,
+                    seed=SEED_BASE + sequence_index,
+                    h100_us=None,
+                    optimized_npu_us=None,
                 )
-                cases.append(
-                    Case(
-                        atk_case_id=atk_case_id,
-                        case_id=str(atk_case_id),
-                        case_key=case_key,
-                        phase="prefill",
-                        direction="fwd",
-                        batch=1,
-                        sequence=sequence,
-                        distribution=distribution,
-                        disable_recompute=disable_recompute,
-                        layout="BSND",
-                        cu_seqlens=cu_seqlens,
-                        explicit_chunk_indices=False,
-                        seed=SEED_BASE + pair_id,
-                        h100_us=None,
-                        optimized_npu_us=None,
-                    )
-                )
-            pair_id += 1
+            )
     result = tuple(cases)
     ids = tuple(case.atk_case_id for case in result)
-    if len(result) != 48 or ids != tuple(range(250, 298)):
-        raise RuntimeError("PR297 performance matrix must contain case IDs 250-297")
+    if len(result) != 8 or ids != tuple(range(250, 258)):
+        raise RuntimeError("dense performance matrix must contain case IDs 250-257")
     return result
 
 
@@ -205,8 +164,9 @@ CASE_BY_ID = {case.case_id: case for case in CASES}
 CASE_BY_KEY = {case.case_key: case for case in CASES}
 LEGACY_CASE_ALIASES = {
     "prefill_fwd_b1_s1024": "250",
-    "prefill_fwd_b1_s8192": "282",
-    "prefill_fwd_b1_s16384": "290",
+    "prefill_fwd_b1_s8192": "252",
+    "prefill_fwd_b1_s16384": "254",
+    "prefill_fwd_b1_s65536": "256",
 }
 
 
@@ -347,7 +307,7 @@ def run_prefill_forward(torch, case: Case, device) -> None:
     q, k, v, gate, beta, a_log, dt_bias = make_prefill_inputs(torch, case, device)
     chunk_indices = (
         canonical_chunk_indices(case.cu_seqlens, CHUNK_SIZE)
-        if case.explicit_chunk_indices
+        if case.explicit_chunk_indices and case.cu_seqlens is not None
         else None
     )
     torch.npu.synchronize()
@@ -364,7 +324,7 @@ def run_prefill_forward(torch, case: Case, device) -> None:
             layout="BSND",
             initial_state=None,
             output_final_state=False,
-            cu_seqlens=list(case.cu_seqlens),
+            cu_seqlens=(list(case.cu_seqlens) if case.cu_seqlens else None),
             chunk_indices=chunk_indices,
             safe_gate=True,
             lower_bound=-5.0,
@@ -769,6 +729,8 @@ def executed_shape(case: Case) -> str:
 
 
 def case_chunk_count(case: Case) -> int:
+    if case.cu_seqlens is None:
+        return case.batch * ((case.sequence + CHUNK_SIZE - 1) // CHUNK_SIZE)
     return sum(
         (end - start + CHUNK_SIZE - 1) // CHUNK_SIZE
         for start, end in zip(case.cu_seqlens, case.cu_seqlens[1:])
@@ -832,8 +794,9 @@ def run_profile(args: argparse.Namespace, case: Case) -> dict:
     env["TEST_DEVICE_ID"] = str(args.device_visible_id)
     result = {
         **asdict(case),
-        "sequence_count": len(case.cu_seqlens) - 1,
+        "sequence_count": case.batch if case.cu_seqlens is None else len(case.cu_seqlens) - 1,
         "chunk_count": case_chunk_count(case),
+        "recompute_enabled": not case.disable_recompute,
         "requested_qkv_shape": requested_shape(case),
         "executed_shape": executed_shape(case),
         "status": "PASS",
@@ -1023,8 +986,9 @@ def case_matrix_row(case: Case, selected_ids: set[str]) -> dict:
         "case_key": case.case_key,
         "total_token_count": case.sequence,
         "sequence_distribution": case.distribution,
-        "sequence_count": len(case.cu_seqlens) - 1,
+        "sequence_count": case.batch if case.cu_seqlens is None else len(case.cu_seqlens) - 1,
         "chunk_count": case_chunk_count(case),
+        "recompute_enabled": not case.disable_recompute,
         "disable_recompute": case.disable_recompute,
         "layout": case.layout,
         "batch": case.batch,
@@ -1070,6 +1034,7 @@ def build_kernel_detail_rows(results: list[dict]) -> list[dict]:
                 "sequence_count": result["sequence_count"],
                 "chunk_count": result["chunk_count"],
                 "disable_recompute": result["disable_recompute"],
+                "recompute_enabled": not result["disable_recompute"],
                 "layout": result["layout"],
                 "batch": result["batch"],
                 "head_num": HEADS,
@@ -1179,7 +1144,7 @@ def xlsx_sheet_xml(case: Case, result: Optional[dict], columns: tuple[str, ...])
     detail_rows = detail_rows or ({},)
     metadata_rows = (
         ("ATK case ID", case.atk_case_id, "Status", status, "Total tokens", case.sequence, "Distribution", case.distribution),
-        ("Sequence count", len(case.cu_seqlens) - 1, "Chunk count", case_chunk_count(case), "Disable recompute", case.disable_recompute, "Seed", case.seed),
+        ("Sequence count", case.batch if case.cu_seqlens is None else len(case.cu_seqlens) - 1, "Chunk count", case_chunk_count(case), "Recompute enabled", not case.disable_recompute, "Seed", case.seed),
         ("Case key", case.case_key, "cu_seqlens", csv_value(case.cu_seqlens), "Layout", case.layout, "Chunk size", CHUNK_SIZE),
     )
     rows = [xlsx_row(1, (f"Chunk KDA performance detail - ATK case {case.atk_case_id}",), 1)]
@@ -1232,7 +1197,7 @@ def write_kernel_detail_workbook(args: argparse.Namespace, results: list[dict]) 
     all_columns = {key for row in rows for key in row}
     case_columns = {
         "atk_case_id", "case_id", "case_key", "case_status", "total_token_count",
-        "sequence_distribution", "sequence_count", "chunk_count", "disable_recompute",
+        "sequence_distribution", "sequence_count", "chunk_count", "disable_recompute", "recompute_enabled",
         "layout", "batch", "head_num", "key_dim", "value_dim", "chunk_size",
         "cu_seqlens", "seed", "profile_mode", "aic_metrics",
     }
@@ -1327,7 +1292,7 @@ def write_reports(args: argparse.Namespace, results: list[dict]) -> None:
         "launch_count": args.launch_count,
         "case_timeout": args.case_timeout,
         "aic_metrics": args.aic_metrics,
-        "matrix_contract": "PR297 A5 positive case IDs 250-297",
+        "matrix_contract": "A5 dense case IDs 250-257",
         "profile_attempt_order": [
             "single application launch with KDA kernel filtering and kernel replay",
         ],
@@ -1372,6 +1337,7 @@ def write_reports(args: argparse.Namespace, results: list[dict]) -> None:
         "distribution",
         "sequence_count",
         "chunk_count",
+        "recompute_enabled",
         "disable_recompute",
         "cu_seqlens",
         "seed",
@@ -1407,18 +1373,18 @@ def write_reports(args: argparse.Namespace, results: list[dict]) -> None:
         f"- SOC: `{args.soc}`",
         "- unit: microseconds",
         f"- msopprof AI Core metrics: `{args.aic_metrics}`",
-        "- matrix: PR297 A5 positive cases 250-297",
+        "- matrix: A5 dense cases 250-257",
         "- metric: msopprof BasicInfo duration for one selected KDA kernel",
         "- full per-case kernel resources: `kernel_detail.xlsx` (one sheet per case)",
         "",
-        "| ATK case | total tokens | sequence distribution | sequence count | chunk count | "
-        "disable recompute | status | profiler | fla_npu us |",
+        "| Case | total tokens | layout mode | sequence count | chunk count | "
+        "recompute enabled | status | profiler | fla_npu us |",
         "| ---: | ---: | --- | ---: | ---: | --- | --- | --- | ---: |",
     ]
     for result in results:
         lines.append(
             "| {atk_case_id} | {sequence} | {distribution} | {sequence_count} | "
-            "{chunk_count} | {disable_recompute} | {status} | {profile_mode} | "
+            "{chunk_count} | {recompute_enabled} | {status} | {profile_mode} | "
             "{actual} |".format(
                 **result,
                 actual=format_number(result["fla_npu_us"]),

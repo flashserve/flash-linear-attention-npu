@@ -76,29 +76,24 @@ def write_default_metrics(directory: Path) -> None:
         write_metric(directory / f"{name}_sample.csv", header, row)
 
 
-def test_pr297_case_matrix_contract():
+def test_dense_case_matrix_contract():
     runner = load_runner()
-    assert len(runner.CASES) == 48
-    assert [case.atk_case_id for case in runner.CASES] == list(range(250, 298))
+    assert len(runner.CASES) == 8
+    assert [case.atk_case_id for case in runner.CASES] == list(range(250, 258))
     assert {case.sequence for case in runner.CASES} == {
         1024,
-        1536,
-        2048,
-        4096,
         8192,
         16384,
+        65536,
     }
-    assert {case.distribution for case in runner.CASES} == {
-        "single",
-        "balanced8",
-        "mixed_tail",
-        "short64",
-    }
+    assert {case.distribution for case in runner.CASES} == {"dense"}
+    assert {case.disable_recompute for case in runner.CASES} == {False, True}
     for case in runner.CASES:
-        assert case.cu_seqlens[0] == 0
-        assert case.cu_seqlens[-1] == case.sequence
+        assert case.cu_seqlens is None
+        assert runner.case_chunk_count(case) == case.sequence // runner.CHUNK_SIZE
         assert case.case_key.startswith("ascend950_h96_")
-    assert runner.selected_cases("prefill_fwd_b1_s16384") == [runner.CASE_BY_ID["290"]]
+    assert runner.selected_cases("prefill_fwd_b1_s16384") == [runner.CASE_BY_ID["254"]]
+    assert runner.selected_cases("prefill_fwd_b1_s65536") == [runner.CASE_BY_ID["256"]]
 
 
 def test_profile_uses_one_application_launch(tmp_path):
@@ -132,7 +127,7 @@ def test_flat_default_metrics_are_merged_and_aliased(tmp_path):
         "sequence_count": 1,
         "chunk_count": 16,
         "status": "PASS",
-        "profile_mode": "application_mstx",
+        "profile_mode": "kernel_filter",
         "aic_metrics": "Default",
         "_kernel_detail": rows,
     }
@@ -159,14 +154,14 @@ def test_hierarchical_default_metrics_are_merged(tmp_path):
     assert rows[0]["sub_block_id"] == "cube0"
 
 
-def test_workbook_has_one_sheet_per_pr297_case(tmp_path):
+def test_workbook_has_one_sheet_per_dense_case(tmp_path):
     runner = load_runner()
     result = {
         **runner.asdict(runner.CASES[0]),
         "sequence_count": 1,
         "chunk_count": 16,
         "status": "PASS",
-        "profile_mode": "application_mstx",
+        "profile_mode": "kernel_filter",
         "aic_metrics": "Default",
         "_kernel_detail": [
             {
@@ -194,8 +189,8 @@ def test_workbook_has_one_sheet_per_pr297_case(tmp_path):
         }
         tree = ElementTree.fromstring(workbook.read("xl/workbook.xml"))
         names = [sheet.attrib["name"] for sheet in tree.findall(".//x:sheet", namespace)]
-        assert names == [f"case_{case_id}" for case_id in range(250, 298)]
-        assert len(names) == 48
+        assert names == [f"case_{case_id}" for case_id in range(250, 258)]
+        assert len(names) == 8
         first_sheet = workbook.read("xl/worksheets/sheet1.xml").decode("utf-8")
         sheet_tree = ElementTree.fromstring(first_sheet)
         child_names = [node.tag.rsplit("}", 1)[-1] for node in sheet_tree]

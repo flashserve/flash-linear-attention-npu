@@ -26,7 +26,7 @@ usage() {
 Usage: bash scripts/benchmark_kda_main.sh [options]
 
 Build the current checkout into an isolated fla_npu wheel, then profile the KDA
-PR297 A5 positive matrix (case IDs 250-297) with msopprof. Results are written
+A5 dense matrix (case IDs 250-257) with msopprof. Results are written
 as CSV, Markdown, and JSON. Remote
 fetching is opt-in; pass both --repo-url and --ref when it is required.
 
@@ -40,7 +40,7 @@ Options:
   --cann-env FILE        CANN set_env.sh to source before building
   --conda-init FILE      Conda profile script; required with --conda-env
   --conda-env NAME       Conda environment to activate
-  --cases IDS            Comma-separated PR297 IDs/keys, or all (default: all)
+  --cases IDS            Comma-separated dense case IDs/keys, or all (default: all)
   --warm-up N            msopprof replay warm-up count (default: 5)
   --launch-count N       Maximum matching kernels to collect (default: 1)
   --case-timeout SEC     Timeout for one worker/profile command (default: 900)
