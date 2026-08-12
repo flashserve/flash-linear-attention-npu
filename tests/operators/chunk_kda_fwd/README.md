@@ -94,6 +94,8 @@ bash scripts/benchmark_kda_main.sh \
 分别映射到 ATK case 250、282、290。新增测试应直接使用 ATK case ID 或 case key。
 脚本会优先使用当前已加载的 CANN 环境；未加载时自动尝试标准安装位置
 `/usr/local/Ascend/cann/set_env.sh` 和 `/usr/local/Ascend/ascend-toolkit/set_env.sh`。
+每次运行会将 CANN 应用日志重定向到当前 `run_*/ascend_logs/`，避免继续写入默认
+`$HOME/ascend/log`；preflight 和 profiler 输出同时实时显示在终端并保存到结果日志。
 
 报告使用 `msopprof` 设备侧耗时，默认 `--aic-metrics Default`。不要改为
 `BasicInfo`，否则只能得到基础耗时，不能生成完整资源明细。结果目录包含：

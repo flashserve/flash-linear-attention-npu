@@ -189,10 +189,14 @@ wheel_dir="$run_dir/wheel"
 pip_cache_dir="$cache_root/pip"
 tmp_dir="$run_dir/tmp"
 result_dir="$run_dir/results"
+ascend_log_dir="$run_dir/ascend_logs"
 base_python="$(realpath "$(command -v python3)")"
 python_key="$("$base_python" -c 'import sys; print(sys.executable, sys.prefix, sys.version_info[:2])' | cksum | awk '{print $1}')"
 venv_dir="$cache_root/venv_${python_key}"
-mkdir -p -- "$run_dir" "$cache_root" "$pip_cache_dir" "$wheel_dir" "$tmp_dir" "$result_dir"
+mkdir -p -- "$run_dir" "$cache_root" "$pip_cache_dir" "$wheel_dir" "$tmp_dir" "$result_dir" "$ascend_log_dir"
+export ASCEND_PROCESS_LOG_PATH="$ascend_log_dir"
+export ASCEND_HOST_LOG_FILE_NUM="${ASCEND_HOST_LOG_FILE_NUM:-10}"
+echo "Ascend process logs: $ASCEND_PROCESS_LOG_PATH"
 
 on_error() {
     status=$?

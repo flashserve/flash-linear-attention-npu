@@ -15,6 +15,7 @@ import signal
 import statistics
 import subprocess
 import sys
+import threading
 import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -711,12 +712,28 @@ def run_logged(command, *, cwd: Path, env: dict, log, timeout: int) -> tuple[int
         command,
         cwd=cwd,
         env=env,
-        stdout=log,
+        stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
         start_new_session=True,
     )
+
+    def copy_output() -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            log.write(line)
+            log.flush()
+            print(f"    {line}", end="", flush=True)
+
+    output_thread = threading.Thread(target=copy_output, daemon=True)
+    output_thread.start()
     try:
-        return process.wait(timeout=timeout), False
+        returncode = process.wait(timeout=timeout)
+        output_thread.join(timeout=10)
+        return returncode, False
     except subprocess.TimeoutExpired:
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -730,6 +747,7 @@ def run_logged(command, *, cwd: Path, env: dict, log, timeout: int) -> tuple[int
             except ProcessLookupError:
                 pass
             process.wait()
+        output_thread.join(timeout=10)
         return process.returncode, True
 
 
@@ -844,6 +862,11 @@ def run_profile(args: argparse.Namespace, case: Case) -> dict:
         "profiled_segment_us": None,
     }
     with preflight_log_path.open("w", encoding="utf-8") as preflight_log:
+        print(
+            f"    preflight started (timeout={args.case_timeout}s, "
+            f"log={preflight_log_path})",
+            flush=True,
+        )
         preflight_returncode, preflight_timed_out = run_logged(
             worker,
             cwd=args.repo_dir,
@@ -851,6 +874,7 @@ def run_profile(args: argparse.Namespace, case: Case) -> dict:
             log=preflight_log,
             timeout=args.case_timeout,
         )
+    print(f"    preflight finished (status={preflight_returncode})", flush=True)
     if preflight_timed_out:
         result["status"] = "TIMEOUT"
         result["log"] = str(preflight_log_path)
@@ -891,6 +915,11 @@ def run_profile(args: argparse.Namespace, case: Case) -> dict:
         with log_path.open("w", encoding="utf-8") as log:
             log.write(f"command={shell_join(command)}\n")
             log.flush()
+            print(
+                f"    profiler started (mode={mode}, timeout={args.case_timeout}s, "
+                f"log={log_path})",
+                flush=True,
+            )
             profile_returncode, profile_timed_out = run_logged(
                 command,
                 cwd=args.repo_dir,
@@ -898,6 +927,10 @@ def run_profile(args: argparse.Namespace, case: Case) -> dict:
                 log=log,
                 timeout=args.case_timeout,
             )
+        print(
+            f"    profiler finished (mode={mode}, status={profile_returncode})",
+            flush=True,
+        )
         log_text = log_path.read_text(encoding="utf-8", errors="replace")
         if profile_timed_out:
             attempt_statuses.append("TIMEOUT")
