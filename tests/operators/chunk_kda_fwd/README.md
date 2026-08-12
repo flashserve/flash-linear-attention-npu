@@ -92,6 +92,8 @@ bash scripts/benchmark_kda_main.sh \
 为兼容旧的一键命令，`--decode-step 1` 会被接受但不参与 KDA 正向测试；旧 case 名
 `prefill_fwd_b1_s1024`、`prefill_fwd_b1_s8192`、`prefill_fwd_b1_s16384`
 分别映射到 ATK case 250、282、290。新增测试应直接使用 ATK case ID 或 case key。
+脚本会优先使用当前已加载的 CANN 环境；未加载时自动尝试标准安装位置
+`/usr/local/Ascend/cann/set_env.sh` 和 `/usr/local/Ascend/ascend-toolkit/set_env.sh`。
 
 报告使用 `msopprof` 设备侧耗时，默认 `--aic-metrics Default`。不要改为
 `BasicInfo`，否则只能得到基础耗时，不能生成完整资源明细。结果目录包含：

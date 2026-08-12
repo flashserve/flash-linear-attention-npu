@@ -143,6 +143,18 @@ if [[ -n "$cann_env" ]]; then
     source_env_file "$cann_env"
 fi
 
+if [[ -z "${ASCEND_HOME_PATH:-}" && -z "${ASCEND_OPP_PATH:-}" ]]; then
+    for candidate in \
+        /usr/local/Ascend/cann/set_env.sh \
+        /usr/local/Ascend/ascend-toolkit/set_env.sh; do
+        if [[ -f "$candidate" ]]; then
+            echo "Auto-loading CANN environment: $candidate"
+            source_env_file "$candidate"
+            break
+        fi
+    done
+fi
+
 for command_name in cksum git python3 npu-smi msopprof realpath timeout; do
     command -v "$command_name" >/dev/null 2>&1 || {
         echo "Required command not found: $command_name" >&2
@@ -319,7 +331,7 @@ if ((${#wheels[@]} != 1)); then
     exit 1
 fi
 "$venv_python" -m pip install --force-reinstall --no-deps "${wheels[0]}"
-"$venv_python" "$source_dir/scripts/check_packaged_wheel_api.py"
+"$venv_python" "$source_dir/scripts/check_kda_benchmark_wheel.py"
 
 echo "[6/6] Profiling the KDA forward matrix with msopprof"
 runner=(
