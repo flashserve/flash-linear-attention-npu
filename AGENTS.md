@@ -12,6 +12,7 @@
 - `CONTRIBUTING.md`：贡献流程和新增算子交付要求。
 - `docs/repository-rules.md`：分支、ABI、NPU CI 和合入规则。
 - `docs/agents/基础知识.md`：项目分层、调用链、关键术语、shape/layout、chunk 依赖和内存生命周期基础。
+- `docs/agents/development/算子开发通用约束.md`：算子开发开始前必须生效的文档、ABI、生成代码、公开入口、维度关系、workspace 和交付约束。
 - `docs/agents/development/算子编码规范.md`：Ascend C 算子的文件分层、命名、kernel/tiling 职责、资源预算和同步生命周期编码规范。
 - `docs/agents/optimization/README.md`：算子性能设计与优化的依赖模型、技术分类、SOC 差异和检查清单入口。
 - `docs/agents/architecture/PyTorch与NPU解耦架构.md`：默认 `fla_npu.ops.ascendc` 解耦运行时、依赖确定与兼容性门禁、wheel 产物、多卡 device guard、stream、数据依赖、autograd 和 ACL 私有格式透传设计。
@@ -24,6 +25,7 @@
 - 开始前先看 `git status --short`，不要回滚或覆盖用户已有改动。
 - 先用 `rg` / `rg --files` 找代码和文档，再修改；不要凭记忆猜目录。
 - 改动保持聚焦，避免无关格式化、批量重排和生成物噪声。
+- 新增、修改、优化或检视算子前，必须先阅读 `docs/agents/development/算子开发通用约束.md`，再按任务加载开发方法、编码规范、优化指南和验证文档。
 - 公共接口、shape/dtype/layout/range、预留参数、平台差异、返回码或报错文本变化，必须同步检查代码、README、aclnn 文档、PyTorch API 文档、测试和示例。
 - 编写或重构 Ascend C 算子代码时必须遵守 `docs/agents/development/算子编码规范.md`；涉及 A5 时同时遵守 `docs/agents/optimization/soc/A5优化约束.md` 的 A5 编码约束。
 - 性能设计或优化前必须先判断 chunk 间是否存在 carry，并按 `docs/agents/optimization/README.md` 阅读对应依赖模型、技术分类和目标 SOC 文档。不得把具体算子的窗口数、slot 数、容量或同步协议未经重新推导直接复制到其他算子。
