@@ -219,7 +219,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device-visible-id", type=int, default=0)
     parser.add_argument("--cases", default="all")
     parser.add_argument("--warm-up", type=int, default=5)
-    parser.add_argument("--launch-count", type=int, default=5000)
+    parser.add_argument("--launch-count", type=int, default=1)
     parser.add_argument("--case-timeout", type=int, default=900)
     parser.add_argument("--decode-step", type=int, default=1, help=argparse.SUPPRESS)
     parser.add_argument("--aic-metrics", default="Default")
@@ -795,34 +795,20 @@ def profile_attempts(
         f"--aic-metrics={args.aic_metrics}",
         f"--launch-count={args.launch_count}",
         f"--warm-up={args.warm_up}",
-        "--replay-mode=application",
+        "--replay-mode=kernel",
         "--kill=off",
     ]
     return [
         {
-            "mode": "application_mstx",
-            "profile_dir": case_dir / "application_mstx",
+            "mode": "kernel_filter",
+            "profile_dir": case_dir / "kernel_filter",
             "metric_scope": (
-                "sum of median msopprof BasicInfo durations in the KDA MSTX range "
-                "using application replay"
+                "msopprof BasicInfo duration for one selected KDA kernel using "
+                "a single application launch and kernel replay"
             ),
             "command": [
                 *common_options,
-                f"--output={case_dir / 'application_mstx'}",
-                "--mstx=on",
-                f"--mstx-include={PROFILE_RANGE}",
-            ],
-        },
-        {
-            "mode": "application_kernel_filter",
-            "profile_dir": case_dir / "application_kernel_filter",
-            "metric_scope": (
-                "sum of median msopprof BasicInfo durations for explicitly selected "
-                "KDA stages using application replay"
-            ),
-            "command": [
-                *common_options,
-                f"--output={case_dir / 'application_kernel_filter'}",
+                f"--output={case_dir / 'kernel_filter'}",
                 f"--kernel-name={kernel_name_filter(case)}",
             ],
         },
@@ -1343,8 +1329,7 @@ def write_reports(args: argparse.Namespace, results: list[dict]) -> None:
         "aic_metrics": args.aic_metrics,
         "matrix_contract": "PR297 A5 positive case IDs 250-297",
         "profile_attempt_order": [
-            "application replay with MSTX range filtering",
-            "application replay with explicit KDA stage filtering",
+            "single application launch with KDA kernel filtering and kernel replay",
         ],
     }
     try:
@@ -1423,7 +1408,7 @@ def write_reports(args: argparse.Namespace, results: list[dict]) -> None:
         "- unit: microseconds",
         f"- msopprof AI Core metrics: `{args.aic_metrics}`",
         "- matrix: PR297 A5 positive cases 250-297",
-        "- metric: sum of median msopprof BasicInfo durations for selected KDA stages",
+        "- metric: msopprof BasicInfo duration for one selected KDA kernel",
         "- full per-case kernel resources: `kernel_detail.xlsx` (one sheet per case)",
         "",
         "| ATK case | total tokens | sequence distribution | sequence count | chunk count | "

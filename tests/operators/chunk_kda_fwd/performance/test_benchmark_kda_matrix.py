@@ -101,6 +101,21 @@ def test_pr297_case_matrix_contract():
     assert runner.selected_cases("prefill_fwd_b1_s16384") == [runner.CASE_BY_ID["290"]]
 
 
+def test_profile_uses_one_application_launch(tmp_path):
+    runner = load_runner()
+    args = Namespace(aic_metrics="Default", launch_count=1, warm_up=5)
+    worker = ["python", "benchmark_kda_matrix.py", "--worker", "250"]
+
+    attempts = runner.profile_attempts(args, runner.CASES[0], tmp_path, worker)
+
+    assert len(attempts) == 1
+    command = attempts[0]["command"]
+    assert "--launch-count=1" in command
+    assert "--warm-up=5" in command
+    assert "--replay-mode=kernel" in command
+    assert "--replay-mode=application" not in command
+
+
 def test_flat_default_metrics_are_merged_and_aliased(tmp_path):
     runner = load_runner()
     profile_dir = tmp_path / "OPPROF_flat"

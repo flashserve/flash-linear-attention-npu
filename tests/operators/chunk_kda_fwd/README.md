@@ -100,6 +100,11 @@ bash scripts/benchmark_kda_main.sh \
 报告使用 `msopprof` 设备侧耗时，默认 `--aic-metrics Default`。不要改为
 `BasicInfo`，否则只能得到基础耗时，不能生成完整资源明细。结果目录包含：
 
+每个 ATK case 只启动一次 application，固定使用 `--launch-count 1` 和
+`--replay-mode=kernel`；`--warm-up 5` 保持开启。预热以及 Default 全指标所需的
+kernel replay 均由 msopprof 在同一个 application 进程内完成，不会重复调用 case worker，
+每个 case 日志中应只出现一次 `BENCH_OK`。
+
 | 文件 | 内容 |
 | --- | --- |
 | `case_matrix.csv` | 48 条固定用例及 `cu_seqlens`、序列数、chunk 数、随机种子和功能属性 |

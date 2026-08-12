@@ -14,7 +14,7 @@ conda_init=""
 conda_env=""
 case_filter="all"
 warm_up="5"
-launch_count="5000"
+launch_count="1"
 case_timeout="900"
 decode_step="1"
 clone_retries="3"
@@ -42,7 +42,7 @@ Options:
   --conda-env NAME       Conda environment to activate
   --cases IDS            Comma-separated PR297 IDs/keys, or all (default: all)
   --warm-up N            msopprof replay warm-up count (default: 5)
-  --launch-count N       Maximum matching kernels to collect (default: 5000)
+  --launch-count N       Maximum matching kernels to collect (default: 1)
   --case-timeout SEC     Timeout for one worker/profile command (default: 900)
   --decode-step N        Deprecated compatibility option; only 1 is accepted
   --aic-metrics NAME     msopprof AI Core metrics set (default: Default)
