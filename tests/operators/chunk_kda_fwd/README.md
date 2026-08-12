@@ -54,6 +54,65 @@ FLA_NPU_RUN_OPERATOR_TESTS=1 pytest -q tests/operators/chunk_kda_fwd/st/test_exa
 cd examples/fast_kernel_launch_example && FAST_KERNEL_OP_NAME=chunk_kda_fwd pytest -q tests/chunk_kda_fwd
 ```
 
+`scripts/benchmark_kda_main.sh` 提供独立 wheel 构建、安装、打包 API 自检和 `msopprof`
+报告聚合入口。默认直接使用当前
+checkout，不访问远端仓库；需要验证远端 ref 时才同时传入 `--repo-url` 和 `--ref`：
+
+```bash
+bash scripts/benchmark_kda_main.sh \
+  --soc ascend950 \
+  --device 0 \
+  --work-root "$PWD/outputs/kda-main-benchmark"
+```
+
+该入口复用 PR297 的 48 条 A5 正向用例（case ID 250 至 297）。所有用例固定为
+BF16、`H=96`、`K=V=128`、`chunk_size=64`、
+`initial_state=None`、`output_final_state=False`、`use_gate_in_kernel=True`、
+`safe_gate=True`、`return_intermediate_states=False`、`state_v_first=True`，并覆盖：
+
+- 总 token 数：1024、1536、2048、4096、8192、16384；
+- 单序列：全部 token 属于一个序列；
+- 8 个近似等长序列：将全部 token 尽量平均分给 8 个序列；
+- 8 个带不同尾块的序列：序列长度刻意不按 64 对齐，用于覆盖完整 chunk 与尾 chunk 混合执行；
+- 每个序列 64 个 token：一个序列恰好占一个完整 chunk；
+- `disable_recompute=False` 和 `disable_recompute=True` 两种模式。
+
+可先查看固定矩阵，或只运行部分 ATK case ID / case key：
+
+```bash
+python scripts/benchmark_kda_matrix.py --list-cases
+
+bash scripts/benchmark_kda_main.sh \
+  --soc ascend950 \
+  --device 0 \
+  --work-root "$PWD/outputs/kda-main-benchmark" \
+  --cases 282,283,290,291
+```
+
+为兼容旧的一键命令，`--decode-step 1` 会被接受但不参与 KDA 正向测试；旧 case 名
+`prefill_fwd_b1_s1024`、`prefill_fwd_b1_s8192`、`prefill_fwd_b1_s16384`
+分别映射到 ATK case 250、282、290。新增测试应直接使用 ATK case ID 或 case key。
+
+报告使用 `msopprof` 设备侧耗时，默认 `--aic-metrics Default`。不要改为
+`BasicInfo`，否则只能得到基础耗时，不能生成完整资源明细。结果目录包含：
+
+| 文件 | 内容 |
+| --- | --- |
+| `case_matrix.csv` | 48 条固定用例及 `cu_seqlens`、序列数、chunk 数、随机种子和功能属性 |
+| `results.csv` / `results.md` | 每条用例的端到端 kernel 聚合耗时和执行状态 |
+| `kernel_detail.xlsx` | 48 个 case sheet；每个 sheet 保存该用例的 kernel、replay、block/sub-block 完整性能明细 |
+| `results.json` | 环境元数据、用例汇总和 kernel 耗时分解 |
+
+`kernel_detail.xlsx` 固定包含 `case_250` 至 `case_297` 共 48 个 sheet，每个 sheet
+提供 Cube、MAC、Vector、MTE1、MTE2、MTE3、Fixpipe、
+Scalar 的时间、占比和带宽列，并保留 `PipeUtilization`、`ArithmeticUtilization`、
+`Memory`、`MemoryL0`、`MemoryUB`、`L2Cache`、`ResourceConflictRatio` 和
+`OpBasicInfo` 中出现的全部原始字段。`mac_time_us` 是 profiler
+`aic_cube_time(us)` 的易读别名，原始字段仍会保留。AIC 与 AIV 的 MTE 指标分别记录，
+不合并为单一数值。使用 `Default` 时若缺少任一资源表，该 case 会判为 `ERROR` 并保留诊断。
+
+任一 case 出现 `ERROR`、`OOM` 或 `TIMEOUT` 时，入口返回非零状态并保留逐 case 诊断。
+
 A5 PR264 一键构建、隔离安装和基础验收：
 
 ```bash
