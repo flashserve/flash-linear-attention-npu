@@ -103,6 +103,7 @@ while (($#)); do
         --case-timeout) case_timeout="$2"; shift 2 ;;
         --decode-step) decode_step="$2"; shift 2 ;;
         --aic-metrics) aic_metrics="$2"; shift 2 ;;
+        --aic-metrics=*) aic_metrics="${1#*=}"; shift ;;
         --ops) ops="$2"; shift 2 ;;
         --clone-retries) clone_retries="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
