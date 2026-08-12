@@ -589,18 +589,6 @@ private:
                                                     int64_t hStart, int64_t hLen)
     {
         int64_t chunkLen = chunkEnd - chunkStart;
-        if (optimizedHeadFirst_) {
-            int64_t rowOffset = baseOffset + hStart * tiling_->t + chunkStart;
-            int64_t chunkLenAlign = AlignUpInt64(chunkLen, FLOAT_ALIGN_ELEMS);
-            LocalTensor<float> chunkLocal = LoadHeadFirstChunkToUb(rowOffset, chunkLen, hLen, chunkLenAlign);
-            LocalTensor<float> outLocal = scanBuf_.Get<float>();
-            ComputeCumSumAndScale(outLocal, chunkLocal, hLen, chunkLenAlign, hLen * chunkLenAlign);
-            WaitVToMte3();
-            CopyHeadFirstChunkUbToGm(rowOffset, outLocal, chunkLen, hLen, chunkLenAlign);
-            WaitMte3ToV();
-            chunkQueue_.FreeTensor(chunkLocal);
-            return;
-        }
         if (tiling_->h == 1 && hLen == 1) {
             int64_t rowOffset = baseOffset + chunkStart;
             int64_t chunkLenAlign = AlignUpInt64(chunkLen, FLOAT_ALIGN_ELEMS);
@@ -734,7 +722,7 @@ private:
         int64_t hTileSize = chunkFastPath_ ? fastHTileSize_ : H_TILE_SIZE;
         int64_t hTileNum = CeilDivInt64(tiling_->h, hTileSize);
         if constexpr (std::is_same<GType, float>::value && std::is_same<OType, float>::value) {
-            bool varlenSeqTask = headFirstPipeline_ && (tiling_->numBlocks > tiling_->seqNum);
+            bool varlenSeqTask = headFirstPipeline_ && (tiling_->varlenSeqTask != 0);
             if (varlenSeqTask) {
                 int64_t seqTaskNum = tiling_->b * tiling_->seqNum * hTileNum;
                 for (int64_t taskIdx = blockIdx; taskIdx < seqTaskNum; taskIdx += blockNum) {

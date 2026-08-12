@@ -317,7 +317,7 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     int64_t fastRangeLen = chunkGroupSize * FAST_HEAD_FIRST_RANGE_GROUPS * chunkSize;
     int64_t fixedRangeNum = optimizedHeadFirst ? CeilDiv(t, fastRangeLen) : CeilDiv(t, chunkSize);
     int64_t fixedTaskNum = tilingB * fixedRangeNum * hTileNum;
-    bool varlenSeqTask = optimizedHeadFirst && isVarlen && (nt > seqNum);
+    bool varlenSeqTask = optimizedHeadFirst && isVarlen && (nt > seqNum) && (batch * seqNum * hTileNum >= aivNum);
     int64_t varlenTaskNum = varlenSeqTask ? tilingB * seqNum * hTileNum : tilingB * nt * hTileNum;
     int64_t taskNum = isVarlen ? varlenTaskNum : fixedTaskNum;
     int64_t blockDim = std::max<int64_t>(1, std::min<int64_t>(aivNum, taskNum));
@@ -336,6 +336,7 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     tiling->reverse = *reversePtr ? 1 : 0;
     tiling->headFirst = *headFirstPtr ? 1 : 0;
     tiling->optimizedHeadFirst = optimizedHeadFirst ? 1 : 0;
+    tiling->varlenSeqTask = varlenSeqTask ? 1 : 0;
     tiling->enableCumSumFastPath = enableCumSumFastPath ? 1 : 0;
     tiling->fastBufferLimit = fastBufferLimit;
     tiling->inputDtype = ToTilingDataType(inDtype);

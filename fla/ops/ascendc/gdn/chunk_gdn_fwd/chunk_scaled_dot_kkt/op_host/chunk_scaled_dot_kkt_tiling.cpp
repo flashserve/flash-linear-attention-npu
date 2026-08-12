@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <limits>
 
+#include "../op_kernel/chunk_scaled_dot_kkt_common.h"
 #include "register/op_impl_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 
@@ -14,10 +15,6 @@ constexpr uint64_t kDefaultAivNum = 40;
 constexpr uint64_t kDefaultLibApiWorkspace = 32ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kFp32BlockElems = 8;
 constexpr uint64_t kWorkspaceAlign = 512;
-constexpr uint64_t kScoreWorkspaceBufferNum = 2;
-constexpr uint64_t kScoreWorkspaceHeadBatch = 8;
-constexpr uint64_t kCatlassScoreMinBt = 32;
-constexpr uint64_t kA5RegBaseBt = 64;
 constexpr uint64_t kMaxInt32 = static_cast<uint64_t>(std::numeric_limits<int32_t>::max());
 constexpr uint32_t kInputKIndex = 0;
 constexpr uint32_t kInputGIndex = 1;
@@ -112,47 +109,15 @@ bool IsCatlassScoreSocSupported(platform_ascendc::SocVersion socVersion)
     return socVersion == platform_ascendc::SocVersion::ASCEND950;
 }
 
-bool HasOnlyFullChunks(uint64_t t,
-                       uint64_t bt,
-                       uint64_t nt,
-                       uint64_t isVarlen,
-                       const gert::Tensor *cuSeqlensTensor,
-                       const gert::Tensor *chunkIndicesTensor)
+uint64_t ScoreRowBlockSize(uint64_t bt)
 {
-    if (t == 0 || bt == 0 || nt == 0) {
-        return false;
-    }
-    if (isVarlen == 0) {
-        return (t % bt) == 0;
-    }
-    if (cuSeqlensTensor == nullptr || chunkIndicesTensor == nullptr) {
-        return false;
-    }
-    const int64_t *cuSeqlens = cuSeqlensTensor->GetData<int64_t>();
-    const int64_t *chunkIndices = chunkIndicesTensor->GetData<int64_t>();
-    if (cuSeqlens == nullptr || chunkIndices == nullptr) {
-        return false;
-    }
-    const int64_t seqCount = cuSeqlensTensor->GetStorageShape().GetDim(0) - 1;
-    if (seqCount <= 0) {
-        return false;
-    }
-    for (uint64_t chunk = 0; chunk < nt; ++chunk) {
-        const int64_t seqId = chunkIndices[chunk * 2];
-        const int64_t localChunk = chunkIndices[chunk * 2 + 1];
-        if (seqId < 0 || seqId >= seqCount || localChunk < 0) {
-            return false;
-        }
-        const int64_t bos = cuSeqlens[seqId];
-        const int64_t eos = cuSeqlens[seqId + 1];
-        const int64_t rowStart = bos + localChunk * static_cast<int64_t>(bt);
-        int64_t valid = std::min<int64_t>(static_cast<int64_t>(bt), eos - rowStart);
-        valid = std::min<int64_t>(valid, static_cast<int64_t>(t) - rowStart);
-        if (valid != static_cast<int64_t>(bt)) {
-            return false;
-        }
-    }
-    return true;
+    return std::min<uint64_t>(bt, static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK));
+}
+
+uint64_t ScoreRowBlockCount(uint64_t bt)
+{
+    const uint64_t rowBlockSize = ScoreRowBlockSize(bt);
+    return rowBlockSize == 0 ? 0 : CeilDiv(bt, rowBlockSize);
 }
 
 ge::graphStatus BuildCubeTiling(uint64_t bt, uint64_t k, ge::DataType kDtype, ChunkScaledDotKktTilingData &tiling)
@@ -255,8 +220,6 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     const auto *chunkIndicesDesc = context->GetOptionalInputDesc(kInputChunkIndicesIndex);
     const auto *cuSeqlensShapePtr = context->GetOptionalInputShape(kInputCuSeqlensIndex);
     const auto *chunkIndicesShapePtr = context->GetOptionalInputShape(kInputChunkIndicesIndex);
-    const gert::Tensor *cuSeqlensTensor = context->GetOptionalInputTensor(kInputCuSeqlensIndex);
-    const gert::Tensor *chunkIndicesTensor = context->GetOptionalInputTensor(kInputChunkIndicesIndex);
     const bool hasCuSeqlens = cuSeqlensDesc != nullptr && cuSeqlensShapePtr != nullptr;
     const bool hasChunkIndices = chunkIndicesDesc != nullptr && chunkIndicesShapePtr != nullptr;
     if (hasCuSeqlens != hasChunkIndices) {
@@ -281,6 +244,10 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     if (MulOverflow(b, hk, &bh) || MulOverflow(bh, nt, &scoreTaskNum) || scoreTaskNum == 0) {
         return ge::GRAPH_FAILED;
     }
+    uint64_t scoreBlockTaskNum = 0;
+    if (MulOverflow(scoreTaskNum, ScoreRowBlockCount(bt), &scoreBlockTaskNum) || scoreBlockTaskNum == 0) {
+        return ge::GRAPH_FAILED;
+    }
 
     uint64_t aicNum = kDefaultAicNum;
     uint64_t aivNum = kDefaultAivNum;
@@ -301,10 +268,20 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
         aivNum = kDefaultAivNum;
     }
 
-    const uint64_t usedAicNum = std::max<uint64_t>(1, std::min(scoreTaskNum, aicNum));
-    const uint64_t pairedAivNum = std::min<uint64_t>(aivNum, usedAicNum * 2);
-    const uint64_t usedAivNum = std::max<uint64_t>(1, std::min<uint64_t>(std::max<uint64_t>(scoreTaskNum, pairedAivNum),
-                                                                        pairedAivNum));
+    const uint64_t pairableAicNum = std::min<uint64_t>(aicNum, aivNum / 2);
+    const bool useCatlassScore =
+        catlassScoreSocSupported && pairableAicNum > 0 &&
+        bt >= static_cast<uint64_t>(NsChunkScaledDotKkt::CATLASS_SCORE_MIN_BT) && (k % 16) == 0;
+    if (catlassScoreSocSupported && !useCatlassScore) {
+        return ge::GRAPH_FAILED;
+    }
+    const uint64_t aicTaskNum = useCatlassScore ? scoreBlockTaskNum : scoreTaskNum;
+    const uint64_t usedAicNum = std::max<uint64_t>(1, std::min(aicTaskNum, useCatlassScore ? pairableAicNum : aicNum));
+    const uint64_t pairedAivNum = useCatlassScore ? usedAicNum * 2 : std::min<uint64_t>(aivNum, usedAicNum * 2);
+    const uint64_t usedAivNum =
+        useCatlassScore
+            ? pairedAivNum
+            : std::max<uint64_t>(1, std::min<uint64_t>(std::max<uint64_t>(scoreTaskNum, pairedAivNum), pairedAivNum));
     uint32_t blockDim = static_cast<uint32_t>(usedAicNum);
     if (platformInfo != nullptr) {
         platform_ascendc::PlatformAscendC platform(platformInfo);
@@ -318,7 +295,10 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     uint64_t scoreSlots = 0;
     uint64_t scoreElems = 0;
     uint64_t scoreBytes = 0;
-    if (MulOverflow(usedAivNum, kScoreWorkspaceBufferNum * kScoreWorkspaceHeadBatch, &scoreSlots) ||
+    if (MulOverflow(usedAivNum,
+                    static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_WORKSPACE_BUFFER_NUM) *
+                        static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_WORKSPACE_HEAD_BATCH),
+                    &scoreSlots) ||
         MulOverflow(scoreSlots, bt * bt, &scoreElems) ||
         MulOverflow(scoreElems, sizeof(float), &scoreBytes)) {
         return ge::GRAPH_FAILED;
@@ -339,12 +319,6 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     tiling.set_usedAivNum(usedAivNum);
     tiling.set_btAlign(AlignUp(bt, kFp32BlockElems));
     tiling.set_isVarlen(isVarlen);
-    const bool onlyFullChunks = HasOnlyFullChunks(t, bt, nt, isVarlen, cuSeqlensTensor, chunkIndicesTensor);
-    const bool useCatlassScore = catlassScoreSocSupported && onlyFullChunks && bt == kA5RegBaseBt &&
-                                 bt >= kCatlassScoreMinBt && (k % 16) == 0;
-    if (catlassScoreSocSupported && !useCatlassScore) {
-        return ge::GRAPH_FAILED;
-    }
     tiling.set_useCatlassScore(useCatlassScore ? 1 : 0);
     tiling.set_scoreWorkspaceBytes(scoreBytes);
     if (BuildCubeTiling(bt, k, kDtype, tiling) != ge::GRAPH_SUCCESS) {

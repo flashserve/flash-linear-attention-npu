@@ -24,6 +24,7 @@
 #include "catlass/gemm/tile/tile_copy.hpp"
 #include "catlass/gemm_coord.hpp"
 #include "catlass/layout/layout.hpp"
+#include "chunk_scaled_dot_kkt_common.h"
 #include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
@@ -38,18 +39,16 @@ namespace NsChunkScaledDotKkt {
 using namespace AscendC;
 
 constexpr int32_t BUFFER_NUM = 1;
-constexpr int32_t SCORE_WORKSPACE_BUFFER_NUM = 2;
-constexpr int32_t SCORE_WORKSPACE_HEAD_BATCH = 8;
 constexpr int32_t FP32_BLOCK_ELEMS = 8;
 constexpr int32_t FP32_REPEAT_ELEMS = 64;
 constexpr int32_t BRCB_ROWS = 8;
-constexpr int32_t SCORE_ROW_BLOCK = 64;
-constexpr int32_t CATLASS_SCORE_MIN_BT = 32;
 constexpr int32_t UB_ALIGN_BYTES = 32;
 constexpr uint8_t SCORE_DONE_FLAG0 = 2;
 constexpr uint8_t SCORE_DONE_FLAG1 = 3;
+constexpr uint8_t SCORE_DONE_FLAG2 = 6;
 constexpr uint8_t SCORE_READY_FLAG0 = 4;
 constexpr uint8_t SCORE_READY_FLAG1 = 5;
+constexpr uint8_t SCORE_READY_FLAG2 = 7;
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
 constexpr MatmulConfig CHUNK_SCALED_DOT_KKT_MM_CFG = GetNormalConfig(true);
 
@@ -155,9 +154,6 @@ public:
     __aicore__ inline void ProcessAiv()
     {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if constexpr (CHUNK_KEY != 0) {
-            return;
-        }
         if (!UseCatlassScore()) {
             return;
         }
@@ -182,6 +178,10 @@ public:
             TaskMeta chunkMeta;
             DecodeChunkTask(chunkTask, chunkMeta);
             if (chunkMeta.valid <= 0) {
+                if (pendingEpilogue) {
+                    ComputeEpilogueTaskHvGroup(pendingMeta, pendingScoreOffset);
+                    pendingEpilogue = false;
+                }
                 continue;
             }
             // Compute each key-head score once, then write all value heads in that key group.
@@ -295,7 +295,21 @@ private:
 
     __aicore__ inline bool CanUseCatlassChunk(const TaskMeta &meta) const
     {
-        return meta.valid == BT_;
+        return meta.valid > 0;
+    }
+
+    __aicore__ inline int64_t ScoreSlot(int64_t scoreGroupSeq) const
+    {
+        return scoreGroupSeq % static_cast<int64_t>(SCORE_WORKSPACE_BUFFER_NUM);
+    }
+
+    __aicore__ inline int64_t ScoreGroupBatch(int64_t scoreBlockTaskNum) const
+    {
+        if (usedAicNum_ <= 0 || scoreBlockTaskNum <= 0) {
+            return 1;
+        }
+        const int64_t waves = (scoreBlockTaskNum + usedAicNum_ - 1) / usedAicNum_;
+        return MinI64(static_cast<int64_t>(SCORE_WORKSPACE_HEAD_BATCH), waves);
     }
 
     __aicore__ inline bool DecodeScoreBlockTask(int64_t scoreBlockTask,
@@ -371,14 +385,18 @@ private:
         int64_t scoreGroupSeq = 0;
         // Score blocks are computed once per key head; epilogue fans each block out to hvPerHk value heads.
         const int64_t scoreBlockTaskNum = B_ * NT_ * Hk_ * ScoreRowBlockCount();
-        const int64_t scoreGroupStride = usedAicNum_ * static_cast<int64_t>(SCORE_WORKSPACE_HEAD_BATCH);
+        const int64_t scoreGroupBatch = ScoreGroupBatch(scoreBlockTaskNum);
+        const int64_t scoreGroupStride = usedAicNum_ * scoreGroupBatch;
         for (int64_t scoreGroupBase = cubeIdx; scoreGroupBase < scoreBlockTaskNum;
              scoreGroupBase += scoreGroupStride) {
-            const int64_t scoreSlot = scoreGroupSeq & 1;
+            const int64_t scoreSlot = ScoreSlot(scoreGroupSeq);
             if (scoreGroupSeq >= SCORE_WORKSPACE_BUFFER_NUM) {
                 Catlass::Arch::CrossCoreWaitFlag(scoreDoneFlag_[scoreSlot]);
             }
-            for (int64_t batchIdx = 0; batchIdx < static_cast<int64_t>(SCORE_WORKSPACE_HEAD_BATCH); ++batchIdx) {
+            Catlass::Arch::Resource<KktArchTag> resource;
+            BlockMmad blockMmad(resource);
+            blockMmad.preSetFlags();
+            for (int64_t batchIdx = 0; batchIdx < scoreGroupBatch; ++batchIdx) {
                 const int64_t scoreBlockTask = scoreGroupBase + batchIdx * usedAicNum_;
                 if (scoreBlockTask >= scoreBlockTaskNum) {
                     break;
@@ -391,10 +409,9 @@ private:
                     continue;
                 }
                 const int64_t scoreOffset = GetScoreOffset(cubeIdx, scoreSlot, batchIdx);
-                Catlass::Arch::Resource<KktArchTag> resource;
-                BlockMmad blockMmad(resource);
                 ComputeCatlassScoreBlock(meta, rowBegin, rowCount, colCount, scoreOffset, blockMmad);
             }
+            blockMmad.finalWaitFlags();
             Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(scoreReadyFlag_[scoreSlot]);
             ++scoreGroupSeq;
         }
@@ -424,9 +441,7 @@ private:
         auto blockB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
         auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
 
-        blockMmad.preSetFlags();
         blockMmad(blockA, blockB, blockC, shape);
-        blockMmad.finalWaitFlags();
     }
 
     template <typename BlockMmad>
@@ -454,9 +469,7 @@ private:
         auto blockB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
         auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
 
-        blockMmad.preSetFlags();
         blockMmad(blockA, blockB, blockC, shape);
-        blockMmad.finalWaitFlags();
     }
 
     __aicore__ inline void ProcessAivCatlass()
@@ -473,12 +486,13 @@ private:
         int64_t scoreGroupSeq = 0;
         // Score blocks are computed once per key head; epilogue fans each block out to hvPerHk value heads.
         const int64_t scoreBlockTaskNum = B_ * NT_ * Hk_ * ScoreRowBlockCount();
-        const int64_t scoreGroupStride = usedAicNum_ * static_cast<int64_t>(SCORE_WORKSPACE_HEAD_BATCH);
+        const int64_t scoreGroupBatch = ScoreGroupBatch(scoreBlockTaskNum);
+        const int64_t scoreGroupStride = usedAicNum_ * scoreGroupBatch;
         for (int64_t scoreGroupBase = cubeIdx; scoreGroupBase < scoreBlockTaskNum;
              scoreGroupBase += scoreGroupStride) {
-            const int64_t scoreSlot = scoreGroupSeq & 1;
+            const int64_t scoreSlot = ScoreSlot(scoreGroupSeq);
             Catlass::Arch::CrossCoreWaitFlag(scoreReadyFlag_[scoreSlot]);
-            OutputScoreGroup(scoreGroupBase, scoreSlot, subBlockIdx, subBlockNum, scoreBlockTaskNum);
+            OutputScoreGroup(scoreGroupBase, scoreSlot, subBlockIdx, subBlockNum, scoreBlockTaskNum, scoreGroupBatch);
             Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(scoreDoneFlag_[scoreSlot]);
             ++scoreGroupSeq;
         }
@@ -488,10 +502,11 @@ private:
                                             int64_t scoreSlot,
                                             int64_t subBlockIdx,
                                             int64_t subBlockNum,
-                                            int64_t scoreBlockTaskNum)
+                                            int64_t scoreBlockTaskNum,
+                                            int64_t scoreGroupBatch)
     {
         const int64_t cubeIdx = static_cast<int64_t>(GetBlockIdx()) / subBlockNum;
-        for (int64_t batchIdx = 0; batchIdx < static_cast<int64_t>(SCORE_WORKSPACE_HEAD_BATCH); ++batchIdx) {
+        for (int64_t batchIdx = 0; batchIdx < scoreGroupBatch; ++batchIdx) {
             const int64_t scoreBlockTask = scoreGroupBase + batchIdx * usedAicNum_;
             if (scoreBlockTask >= scoreBlockTaskNum) {
                 break;
@@ -530,6 +545,15 @@ private:
     {
         const int64_t hvBegin = scoreMeta.h * hvPerHk_;
         const int64_t hvEnd = MinI64(hvBegin + hvPerHk_, Hv_);
+        const int64_t hvCount = hvEnd - hvBegin;
+        if (subBlockNum > 1 && hvCount >= subBlockNum) {
+            for (int64_t hv = hvBegin + subBlockIdx; hv < hvEnd; hv += subBlockNum) {
+                TaskMeta meta = scoreMeta;
+                meta.hv = hv;
+                ComputeEpilogueScoreBlockRows(meta, rowBegin, rowCount, colCount, scoreBaseOffset, 0, 1);
+            }
+            return;
+        }
         for (int64_t hv = hvBegin; hv < hvEnd; ++hv) {
             TaskMeta meta = scoreMeta;
             meta.hv = hv;
@@ -625,26 +649,6 @@ private:
                                                          int64_t subBlockIdx,
                                                          int64_t subBlockNum)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if constexpr (CHUNK_KEY != 0) {
-            return;
-        }
-        const int64_t ghOffset = (meta.b * Hv_ + meta.hv) * T_ + meta.rowStart;
-        CopyTaskVector(gGm, ghOffset, gQueue_, meta.valid);
-        CopyTaskVector(betaGm, ghOffset, betaQueue_, meta.valid);
-        LocalTensor<float> gLocal = gQueue_.template DeQue<float>();
-        LocalTensor<float> betaLocal = betaQueue_.template DeQue<float>();
-
-        const int64_t outBaseOffset = ((meta.b * Hv_ + meta.hv) * T_ + meta.rowStart) * BT_;
-        const int64_t outRowStride = BT_;
-        LocalTensor<float> scoreTileLocal = scoreTileBuf_.Get<float>();
-        LocalTensor<float> outTileLocal = outTileBuf_.Get<float>();
-        CopyScoreBlock(scoreBaseOffset, scoreTileLocal, rowCount, colCount);
-        ComputeEpilogueScoreBlockRowsA5RegBase(scoreTileLocal, outTileLocal, gLocal, betaLocal, rowBegin, rowCount,
-                                               colCount, outBaseOffset, outRowStride, subBlockIdx, subBlockNum);
-        gQueue_.FreeTensor(gLocal);
-        betaQueue_.FreeTensor(betaLocal);
-#else
         const int64_t ghOffset = (meta.b * Hv_ + meta.hv) * T_ + meta.rowStart;
         CopyTaskVector(gGm, ghOffset, gQueue_, meta.valid);
         CopyTaskVector(betaGm, ghOffset, betaQueue_, meta.valid);
@@ -693,15 +697,14 @@ private:
 
         gQueue_.FreeTensor(gLocal);
         betaQueue_.FreeTensor(betaLocal);
-#endif
     }
 
     __aicore__ inline bool CanUseA5RegBaseEpilogue(int64_t rowBegin, int64_t rowCount, int64_t colCount) const
     {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         return BT_ == static_cast<int64_t>(KKT_A5_BT64) && btAlign_ == static_cast<int64_t>(KKT_A5_BT64) &&
-               rowBegin >= 0 && rowCount > 0 && rowBegin + rowCount <= static_cast<int64_t>(KKT_A5_BT64) &&
-               colCount > 0 && colCount <= static_cast<int64_t>(KKT_A5_BT64);
+               rowBegin == 0 && rowCount == static_cast<int64_t>(KKT_A5_BT64) &&
+               colCount == static_cast<int64_t>(KKT_A5_BT64);
 #else
         (void)rowBegin;
         (void)rowCount;
@@ -979,9 +982,10 @@ private:
     GlobalTensor<float> scoreGm;
     GlobalTensor<int64_t> cuSeqlensGm;
     GlobalTensor<int64_t> chunkIndicesGm;
-    Catlass::Arch::CrossCoreFlag scoreReadyFlag_[SCORE_WORKSPACE_BUFFER_NUM] = {SCORE_READY_FLAG0,
-                                                                                SCORE_READY_FLAG1};
-    Catlass::Arch::CrossCoreFlag scoreDoneFlag_[SCORE_WORKSPACE_BUFFER_NUM] = {SCORE_DONE_FLAG0, SCORE_DONE_FLAG1};
+    Catlass::Arch::CrossCoreFlag scoreReadyFlag_[SCORE_WORKSPACE_BUFFER_NUM] = {
+        SCORE_READY_FLAG0, SCORE_READY_FLAG1, SCORE_READY_FLAG2};
+    Catlass::Arch::CrossCoreFlag scoreDoneFlag_[SCORE_WORKSPACE_BUFFER_NUM] = {
+        SCORE_DONE_FLAG0, SCORE_DONE_FLAG1, SCORE_DONE_FLAG2};
 
     int64_t B_ = 0;
     int64_t Hk_ = 0;

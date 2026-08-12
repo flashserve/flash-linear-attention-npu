@@ -127,10 +127,18 @@ def iter_chunk_ranges(
             yield start, end
 
 
-def make_varlen_metadata(total_t: int, chunk_size: int) -> tuple[list[int], list[int]]:
+def make_varlen_metadata(total_t: int, chunk_size: int, *, full_chunks: bool = False) -> tuple[list[int], list[int]]:
+    if full_chunks and total_t >= 2 * chunk_size and total_t % chunk_size == 0:
+        cu_seqlens = [0, total_t // 2, total_t]
+        if (cu_seqlens[1] % chunk_size) != 0:
+            cu_seqlens = [0, total_t]
+    elif full_chunks and total_t % chunk_size == 0:
+        cu_seqlens = [0, total_t]
+    elif full_chunks:
+        raise ValueError(f"full chunk varlen metadata requires total_t divisible by chunk_size, got T={total_t}, BT={chunk_size}")
     if total_t <= chunk_size:
         cu_seqlens = [0, total_t]
-    else:
+    elif not full_chunks:
         split = min(total_t - 1, max(1, total_t // 2 + 1))
         cu_seqlens = [0, split, total_t]
 
@@ -194,17 +202,16 @@ def run_case(case: Case, seed: int, cpu_only: bool) -> bool:
     if cpu_only:
         max_zero = _check_zero_regions(golden, case)
         passed = golden.shape == (case.B, case.Hv, case.T, case.BT) and max_zero <= ZERO_TOL
-        cu_seqlens, chunk_indices = make_varlen_metadata(case.T, case.BT)
-        varlen_golden = chunk_scaled_dot_kkt_reference(k, g, beta, case.BT, cu_seqlens, chunk_indices)
-        varlen_max_zero = _check_zero_regions(varlen_golden, case, cu_seqlens, chunk_indices)
-        passed = (
-            passed
-            and varlen_golden.shape == (case.B, case.Hv, case.T, case.BT)
-            and varlen_max_zero <= ZERO_TOL
-        )
+        varlen_reports = []
+        for name, metadata in iter_varlen_metadata(case):
+            cu_seqlens, chunk_indices = metadata
+            varlen_golden = chunk_scaled_dot_kkt_reference(k, g, beta, case.BT, cu_seqlens, chunk_indices)
+            varlen_max_zero = _check_zero_regions(varlen_golden, case, cu_seqlens, chunk_indices)
+            passed = passed and varlen_golden.shape == (case.B, case.Hv, case.T, case.BT) and varlen_max_zero <= ZERO_TOL
+            varlen_reports.append(f"{name}_chunks={len(chunk_indices) // 2} {name}_max_zero={varlen_max_zero:.3e}")
         print(
             f"  CPU golden shape={tuple(golden.shape)} max_zero={max_zero:.3e} "
-            f"varlen_chunks={len(chunk_indices) // 2} varlen_max_zero={varlen_max_zero:.3e} "
+            f"{' '.join(varlen_reports)} "
             f"passed={passed}"
         )
         return passed
@@ -230,34 +237,43 @@ def run_case(case: Case, seed: int, cpu_only: bool) -> bool:
         f"passed={passed}"
     )
 
-    cu_seqlens, chunk_indices = make_varlen_metadata(case.T, case.BT)
-    varlen_golden = chunk_scaled_dot_kkt_reference(k, g, beta, case.BT, cu_seqlens, chunk_indices)
-    varlen_out = chunk_scaled_dot_kkt(
-        k.npu(),
-        g.npu(),
-        beta.npu(),
-        cu_seqlens=cu_seqlens,
-        chunk_indices=chunk_indices,
-        chunk_size=case.BT,
-    ).cpu()
-    varlen_diff = (varlen_out.float() - varlen_golden).abs()
-    varlen_max_abs = varlen_diff.max().item()
-    varlen_mean_abs = varlen_diff.mean().item()
-    varlen_max_zero = _check_zero_regions(varlen_out.float(), case, cu_seqlens, chunk_indices)
-    varlen_passed = (
-        tuple(varlen_out.shape) == (case.B, case.Hv, case.T, case.BT)
-        and varlen_out.dtype == torch.float32
-        and varlen_max_abs <= MAX_ABS_TOL
-        and varlen_mean_abs <= MEAN_ABS_TOL
-        and varlen_max_zero <= ZERO_TOL
-    )
-    print(
-        "  "
-        f"varlen cu={cu_seqlens} chunks={len(chunk_indices) // 2} "
-        f"max_abs={varlen_max_abs:.6e} mean_abs={varlen_mean_abs:.6e} "
-        f"max_zero={varlen_max_zero:.3e} passed={varlen_passed}"
-    )
-    return passed and varlen_passed
+    varlen_passed_all = True
+    for name, metadata in iter_varlen_metadata(case):
+        cu_seqlens, chunk_indices = metadata
+        varlen_golden = chunk_scaled_dot_kkt_reference(k, g, beta, case.BT, cu_seqlens, chunk_indices)
+        varlen_out = chunk_scaled_dot_kkt(
+            k.npu(),
+            g.npu(),
+            beta.npu(),
+            cu_seqlens=cu_seqlens,
+            chunk_indices=chunk_indices,
+            chunk_size=case.BT,
+        ).cpu()
+        varlen_diff = (varlen_out.float() - varlen_golden).abs()
+        varlen_max_abs = varlen_diff.max().item()
+        varlen_mean_abs = varlen_diff.mean().item()
+        varlen_max_zero = _check_zero_regions(varlen_out.float(), case, cu_seqlens, chunk_indices)
+        varlen_passed = (
+            tuple(varlen_out.shape) == (case.B, case.Hv, case.T, case.BT)
+            and varlen_out.dtype == torch.float32
+            and varlen_max_abs <= MAX_ABS_TOL
+            and varlen_mean_abs <= MEAN_ABS_TOL
+            and varlen_max_zero <= ZERO_TOL
+        )
+        varlen_passed_all = varlen_passed_all and varlen_passed
+        print(
+            "  "
+            f"{name} cu={cu_seqlens} chunks={len(chunk_indices) // 2} "
+            f"max_abs={varlen_max_abs:.6e} mean_abs={varlen_mean_abs:.6e} "
+            f"max_zero={varlen_max_zero:.3e} passed={varlen_passed}"
+        )
+    return passed and varlen_passed_all
+
+
+def iter_varlen_metadata(case: Case) -> Iterable[tuple[str, tuple[list[int], list[int]]]]:
+    yield "varlen_tail", make_varlen_metadata(case.T, case.BT)
+    if case.T % case.BT == 0:
+        yield "varlen_full", make_varlen_metadata(case.T, case.BT, full_chunks=True)
 
 
 def iter_cases(limit: int | None) -> Iterable[Case]:
