@@ -6,7 +6,8 @@
 namespace NsChunkScaledDotKkt {
 constexpr int32_t SCORE_WORKSPACE_BUFFER_NUM = 3;
 constexpr int32_t SCORE_WORKSPACE_HEAD_BATCH = 8;
-constexpr int32_t SCORE_ROW_BLOCK = 16;
+constexpr int32_t SCORE_ROW_BLOCK_A2 = 16;
+constexpr int32_t SCORE_ROW_BLOCK_A5 = 64;
 constexpr int32_t CATLASS_SCORE_MIN_BT = 16;
 }  // namespace NsChunkScaledDotKkt
 

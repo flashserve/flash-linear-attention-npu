@@ -109,14 +109,18 @@ bool IsCatlassScoreSocSupported(platform_ascendc::SocVersion socVersion)
     return socVersion == platform_ascendc::SocVersion::ASCEND950;
 }
 
-uint64_t ScoreRowBlockSize(uint64_t bt)
+uint64_t ScoreRowBlockSize(uint64_t bt, platform_ascendc::SocVersion socVersion)
 {
-    return std::min<uint64_t>(bt, static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK));
+    const uint64_t rowBlock =
+        socVersion == platform_ascendc::SocVersion::ASCEND950
+            ? static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK_A5)
+            : static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK_A2);
+    return std::min<uint64_t>(bt, rowBlock);
 }
 
-uint64_t ScoreRowBlockCount(uint64_t bt)
+uint64_t ScoreRowBlockCount(uint64_t bt, platform_ascendc::SocVersion socVersion)
 {
-    const uint64_t rowBlockSize = ScoreRowBlockSize(bt);
+    const uint64_t rowBlockSize = ScoreRowBlockSize(bt, socVersion);
     return rowBlockSize == 0 ? 0 : CeilDiv(bt, rowBlockSize);
 }
 
@@ -238,20 +242,10 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
         isVarlen = 1;
     }
 
-    uint64_t bh = 0;
-    uint64_t scoreTaskNum = 0;
-    // KKT scores are key-head aligned; the kernel epilogue expands each score to hvPerHk value heads.
-    if (MulOverflow(b, hk, &bh) || MulOverflow(bh, nt, &scoreTaskNum) || scoreTaskNum == 0) {
-        return ge::GRAPH_FAILED;
-    }
-    uint64_t scoreBlockTaskNum = 0;
-    if (MulOverflow(scoreTaskNum, ScoreRowBlockCount(bt), &scoreBlockTaskNum) || scoreBlockTaskNum == 0) {
-        return ge::GRAPH_FAILED;
-    }
-
     uint64_t aicNum = kDefaultAicNum;
     uint64_t aivNum = kDefaultAivNum;
     uint64_t libApiWorkspace = kDefaultLibApiWorkspace;
+    platform_ascendc::SocVersion socVersion = platform_ascendc::SocVersion::RESERVED_VERSION;
     bool catlassScoreSocSupported = false;
     auto platformInfo = context->GetPlatformInfo();
     if (platformInfo != nullptr) {
@@ -259,13 +253,25 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
         aicNum = static_cast<uint64_t>(platform.GetCoreNumAic());
         aivNum = static_cast<uint64_t>(platform.GetCoreNumAiv());
         libApiWorkspace = static_cast<uint64_t>(platform.GetLibApiWorkSpaceSize());
-        catlassScoreSocSupported = IsCatlassScoreSocSupported(platform.GetSocVersion());
+        socVersion = platform.GetSocVersion();
+        catlassScoreSocSupported = IsCatlassScoreSocSupported(socVersion);
     }
     if (aicNum == 0) {
         aicNum = kDefaultAicNum;
     }
     if (aivNum == 0) {
         aivNum = kDefaultAivNum;
+    }
+
+    uint64_t bh = 0;
+    uint64_t scoreTaskNum = 0;
+    // KKT scores are key-head aligned; the kernel epilogue expands each score to hvPerHk value heads.
+    if (MulOverflow(b, hk, &bh) || MulOverflow(bh, nt, &scoreTaskNum) || scoreTaskNum == 0) {
+        return ge::GRAPH_FAILED;
+    }
+    uint64_t scoreBlockTaskNum = 0;
+    if (MulOverflow(scoreTaskNum, ScoreRowBlockCount(bt, socVersion), &scoreBlockTaskNum) || scoreBlockTaskNum == 0) {
+        return ge::GRAPH_FAILED;
     }
 
     const uint64_t pairableAicNum = std::min<uint64_t>(aicNum, aivNum / 2);

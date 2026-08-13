@@ -284,7 +284,12 @@ private:
 
     __aicore__ inline int64_t ScoreRowBlockSize() const
     {
-        return BT_ < static_cast<int64_t>(SCORE_ROW_BLOCK) ? BT_ : static_cast<int64_t>(SCORE_ROW_BLOCK);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        constexpr int64_t rowBlock = SCORE_ROW_BLOCK_A5;
+#else
+        constexpr int64_t rowBlock = SCORE_ROW_BLOCK_A2;
+#endif
+        return BT_ < rowBlock ? BT_ : rowBlock;
     }
 
     __aicore__ inline int64_t ScoreRowBlockCount() const
@@ -373,7 +378,12 @@ private:
         if (cubeIdx >= usedAicNum_ || usedAicNum_ <= 0) {
             return;
         }
-        constexpr int32_t ROW_BLOCK_VALUE = BT_VALUE < SCORE_ROW_BLOCK ? BT_VALUE : SCORE_ROW_BLOCK;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        constexpr int32_t ROW_BLOCK_LIMIT = SCORE_ROW_BLOCK_A5;
+#else
+        constexpr int32_t ROW_BLOCK_LIMIT = SCORE_ROW_BLOCK_A2;
+#endif
+        constexpr int32_t ROW_BLOCK_VALUE = BT_VALUE < ROW_BLOCK_LIMIT ? BT_VALUE : ROW_BLOCK_LIMIT;
         using L1TileShape = tla::Shape<tla::Int<ROW_BLOCK_VALUE>, tla::Int<BT_VALUE>, KktInt128>;
         using L0TileShape = L1TileShape;
         using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KktArchTag, KType, Catlass::layout::RowMajor, KType,
