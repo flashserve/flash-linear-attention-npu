@@ -15,6 +15,22 @@ from typing import Optional
 
 import torch
 
+try:
+    import numpy as np
+
+    torch.serialization.add_safe_globals(
+        [
+            np.core.multiarray.scalar,
+            np.dtype,
+            type(np.dtype(np.float32)),
+            type(np.dtype(np.float64)),
+            type(np.dtype(np.int32)),
+            type(np.dtype(np.int64)),
+        ]
+    )
+except (AttributeError, ImportError):
+    pass
+
 from atk.configs.dataset_config import InputDataset
 from atk.configs.results_config import TaskResult
 from atk.tasks.api_execute import register
@@ -523,7 +539,15 @@ def _reference_model_parallel(inputs: _PreparedInputs, spec: dict):
     gk = _gate_cumsum(inputs, spec)
     compute_dtype = torch.float64 if any(
         tensor is not None and tensor.dtype == torch.float64
-        for tensor in (q, k, v, beta, inputs.A_log, inputs.dt_bias)
+        for tensor in (
+            q,
+            k,
+            v,
+            beta,
+            inputs.A_log,
+            inputs.dt_bias,
+            inputs.initial_state,
+        )
     ) else torch.float32
 
     batch, total_t, h_num, k_dim = q.shape
@@ -574,7 +598,15 @@ def _reference_model_parallel(inputs: _PreparedInputs, spec: dict):
 
     def run_head(hv_index: int):
         q_head = hv_index // group
-        state = torch.zeros((seq_num, k_dim, v_dim), dtype=compute_dtype, device=q.device)
+        if inputs.initial_state is None:
+            state = torch.zeros(
+                (seq_num, k_dim, v_dim), dtype=compute_dtype, device=q.device
+            )
+        else:
+            state = inputs.initial_state[:, hv_index].to(compute_dtype)
+            if _as_bool(spec["state_v_first"]):
+                state = state.transpose(-1, -2)
+            state = state.clone()
         for batch_id, seq_id, chunk_id, start, end in spans:
             length = end - start
             q_block = q[batch_id, start:end, q_head].to(compute_dtype)
@@ -731,8 +763,8 @@ def _cached_full_reference(inputs: _PreparedInputs, spec: dict, implementation: 
 
 
 def _torch_fp64_golden(inputs: _PreparedInputs, spec: dict):
-    if inputs.q.device.type != "cuda":
-        raise RuntimeError("Torch FP64 golden must run on an ATK GPU node")
+    if inputs.q.device.type not in {"cpu", "cuda"}:
+        raise RuntimeError("Torch FP64 golden must run on an ATK CPU or GPU node")
     if any(
         tensor is not None and tensor.is_floating_point() and tensor.dtype != torch.float64
         for tensor in (
@@ -747,7 +779,45 @@ def _torch_fp64_golden(inputs: _PreparedInputs, spec: dict):
         )
     ):
         raise RuntimeError("Torch FP64 golden received a non-FP64 floating input")
-    return _cached_full_reference(inputs, spec, "torch_cuda_fp64", _reference_impl)
+    if inputs.q.device.type == "cpu":
+        previous_threads = torch.get_num_threads()
+        try:
+            torch.set_num_threads(1)
+            return _cached_full_reference(
+                inputs,
+                spec,
+                "torch_cpu_fp64_model_parallel",
+                _reference_model_parallel,
+            )
+        finally:
+            torch.set_num_threads(previous_threads)
+    return _cached_full_reference(
+        inputs,
+        spec,
+        "torch_cuda_fp64",
+        _reference_impl,
+    )
+
+
+def _torch_same_precision(inputs: _PreparedInputs, spec: dict):
+    if inputs.q.device.type != "cpu":
+        raise RuntimeError("Torch same-precision control must run on an ATK CPU node")
+    if inputs.q.dtype != _DTYPES[str(spec["q_dtype"])]:
+        raise RuntimeError(
+            "Torch same-precision control received an unexpected q dtype: "
+            f"expected={_DTYPES[str(spec['q_dtype'])]}, actual={inputs.q.dtype}"
+        )
+    previous_threads = torch.get_num_threads()
+    try:
+        torch.set_num_threads(1)
+        return _cached_full_reference(
+            inputs,
+            spec,
+            "torch_cpu_same_precision",
+            _reference_model_parallel,
+        )
+    finally:
+        torch.set_num_threads(previous_threads)
 
 
 def _load_triton_callable():
@@ -1201,12 +1271,14 @@ class ChunkKdaFwdApi(BaseApi):
             for task_type in (task_result.task_type or [])
         }
         self.randomize_values = bool(
-            task_result.disable_id_seed and "accuracy_lt" in task_names
+            getattr(task_result, "disable_id_seed", False)
+            and "accuracy_lt" in task_names
         )
         self.is_benchmark_task = bool(task_result.is_benchmark_task)
-        # --bm_device gpu marks the benchmark task as the high-precision truth;
-        # the regular GPU task is the same-precision remote control.
-        self.high_precision = self.device == "gpu" and self.is_benchmark_task
+        # The benchmark task is the FP64 truth. A regular CPU task is the
+        # quantized Torch control; a regular GPU task remains the Triton control.
+        self.high_precision = self.device in {"cpu", "gpu"} and self.is_benchmark_task
+        self.cpu_control = self.device == "cpu" and not self.is_benchmark_task
         self.triton_control = self.device == "gpu" and not self.is_benchmark_task
 
     def init_by_input_data(self, input_data: InputDataset):
@@ -1231,6 +1303,7 @@ class ChunkKdaFwdApi(BaseApi):
                 self.device,
                 "benchmark=" + str(self.is_benchmark_task),
                 "high_precision=" + str(self.high_precision),
+                "cpu_control=" + str(self.cpu_control),
                 "triton_control=" + str(self.triton_control),
                 "case_id=" + str(self.runtime_case_id),
                 "seed=" + str(runtime_seed),
@@ -1245,13 +1318,15 @@ class ChunkKdaFwdApi(BaseApi):
             return _run_negative_aclnn(self.inputs, self.spec)
         if self.high_precision:
             outputs = _torch_fp64_golden(self.inputs, self.spec)
+        elif self.cpu_control:
+            outputs = _torch_same_precision(self.inputs, self.spec)
         elif self.triton_control:
             outputs = _triton_same_precision(self.inputs, self.spec)
         elif self.device == "npu":
             outputs = _run_positive_npu(self.inputs, self.spec)
         else:
             raise RuntimeError(
-                "positive chunk_kda_fwd cases require one NPU node and one GPU node; "
+                "positive chunk_kda_fwd cases require one NPU node and one CPU or GPU reference node; "
                 f"got device={self.device!r}, benchmark={self.is_benchmark_task}"
             )
         selected_names = _selected_output_names()
@@ -1266,6 +1341,17 @@ class ChunkKdaFwdApi(BaseApi):
             raise RuntimeError("chunk_kda_fwd returned no visible tensor outputs")
         for name, output in named_visible:
             if not torch.isfinite(output).all().item():
+                if os.environ.get("KDA_ATK_ALLOW_NONFINITE_OUTPUT") == "1":
+                    nonfinite_count = int((~torch.isfinite(output)).sum().item())
+                    print(
+                        "KDA_ATK_NONFINITE_OUTPUT",
+                        f"case_id={self.runtime_case_id}",
+                        f"device={self.device}",
+                        f"output={name}",
+                        f"count={nonfinite_count}",
+                        flush=True,
+                    )
+                    continue
                 raise RuntimeError(f"{name} contains NaN or Inf")
         return visible
 

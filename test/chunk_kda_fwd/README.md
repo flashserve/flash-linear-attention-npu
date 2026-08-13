@@ -1,12 +1,121 @@
-# ChunkKdaFwd A5 + GPU 分布式 ATK 归档
+# ChunkKdaFwd ATK 精度测试归档
 
-本文归档已经验证过的执行拓扑：在 A5 节点本机发起 ATK 任务，A5 作为 NPU DUT，
-GPU 位于另一台机器的 Docker 容器中并通过 ATK server 提供 Torch FP64 真值和
-同精度 Triton 对照。所有地址、端口、设备号和安装路径均使用占位符。
+本文归档两种执行拓扑：优先使用同机 CPU 提供 Torch FP64 真值和同精度 Torch
+对照；需要对比 Triton 时，可改用远端 GPU Docker 提供 Torch FP64 真值和同精度
+Triton 对照。所有地址、端口、设备号和安装路径均使用占位符。
 
 通用版本、case 范围、精度标准和复检规则见 [`../README.md`](../README.md)。
 
-## 1. 已验证拓扑
+## 1. CPU 双标杆拓扑
+
+CPU 双标杆不依赖 GPU，也不需要单独启动 ATK server：
+
+```text
+NPU host
+  atk task
+  |-- local NPU DUT
+  |-- local CPU same-precision control
+  `-- local CPU Torch FP64 golden
+```
+
+普通 CPU 任务使用与算子输入一致的 dtype，并按模型计算边界量化中间结果；
+`cpu_benchmark` 任务使用 Torch FP64 计算真值。ATK 仍使用 YAML 中配置的
+`cv_fused_double_benchmark` 原生双标杆标准，不在 executor 中另设精度阈值。
+
+在 NPU 机器加载 ATK、CANN、当前构建的 OPP 和仓内 Python 包后执行：
+
+```bash
+source "$ATK_ENV/bin/activate"
+source <cann_install_path>/set_env.sh
+source <fla_npu_install_path>/vendors/fla_npu_transformer/bin/set_env.bash
+
+export ASCEND_RT_VISIBLE_DEVICES=<physical_npu_device>
+export PYTHONPATH="$REPO_ROOT/torch_custom/fla_npu:$REPO_ROOT:${PYTHONPATH:-}"
+export KDA_ATK_REFERENCE_WORKERS=<cpu_worker_count>
+export KDA_ATK_REFERENCE_CACHE_ENTRIES=2
+
+cd "$REPO_ROOT/test/chunk_kda_fwd"
+atk node --name npu_dut --backend npu --devices 0 \
+    --output_path ./atk_output/cpu_dual_reference \
+  node --name cpu_reference --backend cpu \
+    --output_path ./atk_output/cpu_dual_reference \
+  task \
+    -c ./atk_chunk_kda_fwd.json \
+    --task accuracy \
+    --bm_device cpu \
+    -p ./executor_chunk_kda_fwd.py \
+    -s 0 \
+    -e 48 \
+    -sp \
+    -mt 1 \
+    -to 14400
+```
+
+`-s 0 -e 48` 覆盖 JSON 中 `T=1K/1.5K/2K/4K/8K/16K`、四种 varlen
+分布和 `disable_recompute=True/False` 的 48 条用例。`-sp` 使相邻两条仅
+`disable_recompute` 不同的用例复用 CPU 标杆缓存；每条 NPU DUT 仍独立执行。
+
+只有最终报告同时满足 `Total Task: 48, success 48, failed 0` 和
+`acc_pass_result: Pass` 才能作为 48 条精度通过结论。仅执行成功或输出全为有限值
+不等价于精度通过。
+
+### 已执行结果
+
+使用 CPU 同精度对照、CPU Torch FP64 golden 和 ATK
+`cv_fused_double_benchmark` 原生标准执行 48 条矩阵：
+
+| 产品 | 结果 | 结论 |
+| --- | --- | --- |
+| A5 | 48/48 执行成功，48/48 精度通过 | `acc_pass_result: Pass` |
+| A2 | 48/48 执行成功，37/48 精度通过 | `acc_pass_result: Failed` |
+
+A2 的 single、balanced8、short64 共 36 条全部通过。mixed-tail 中，1K、1.5K、
+2K、4K、8K 的两个 `disable_recompute` 分支共 10 条均出现 NPU NaN/Inf；16K
+`disable_recompute=False` 通过，16K `disable_recompute=True` 的输出均为有限值，但
+`w` 的最大相对误差比例为 30.34、平均相对误差比例为 1.89，超过双标杆阈值。
+因此 A2 不能作为全量精度通过。
+
+定位非有限输出时，可显式允许 executor 将该输出交给 ATK 做失败判定，并保存三路
+输出：
+
+```bash
+export KDA_ATK_ALLOW_NONFINITE_OUTPUT=1
+
+atk node --name npu_dut --backend npu --devices 0 \
+    --output_path ./atk_output/case_debug \
+  node --name cpu_reference --backend cpu \
+    --output_path ./atk_output/case_debug \
+  task \
+    -c ./atk_chunk_kda_fwd.json \
+    --task accuracy \
+    --bm_device cpu \
+    -p ./executor_chunk_kda_fwd.py \
+    -s <case_index> \
+    -e <case_index_plus_one> \
+    --save_data output \
+    -sp \
+    -mt 1 \
+    -to 14400
+```
+
+日志中的 `KDA_ATK_NONFINITE_OUTPUT` 会记录 case、输出名和非有限元素数量。保存后可
+使用 ATK 配套 CT 工具对 `attn_out` 做三路可视化：
+
+```bash
+ct viz \
+  <npu_output_0.pt> \
+  <cpu_benchmark_output_0.pt> \
+  <cpu_control_output_0.pt> \
+  --out_dir <viz_output_dir> \
+  --name chunk_kda_fwd_attn_out \
+  --spatial
+```
+
+A2 mixed-tail 1K 用例的保存输出复检稳定复现 NaN/Inf；`ct viz` 显示 NPU
+`attn_out` 存在成片非有限值及数量级异常，而 CPU FP64 golden 和 CPU 同精度对照
+保持有限，属于结构性输出错误，不是小值域相对误差放大。
+
+## 2. GPU 分布式拓扑
 
 ```text
 A5 host
@@ -25,7 +134,7 @@ GPU 宿主机可达地址和宿主机映射端口，不要填写容器内部 IP�
 NPU 运行时和 `fla_npu.ops.ascendc`；GPU 容器只需要 CUDA Torch、Triton 和配置的
 KDA Triton callable，不需要安装 CANN 或 NPU wheel。
 
-## 2. 固定变量
+## 3. 固定变量
 
 后续命令使用以下占位符：
 
@@ -42,7 +151,7 @@ export TRITON_KDA_ROOT=<fla_org_or_compatible_triton_source_root>
 推荐在两边都把仓库放到各自固定路径；路径本身不要求相同。ATK server 与 A5 发起命令
 都从各自仓库的 `test/chunk_kda_fwd` 目录启动，输出路径使用相对路径。
 
-## 3. GPU Docker 准备
+## 4. GPU Docker 准备
 
 优先在 Docker 边界只暴露物理 GPU 6，并将容器 9090 映射到宿主机端口：
 
@@ -68,7 +177,7 @@ docker exec "$GPU_CONTAINER" nvidia-smi -L
 容器只暴露物理 GPU 6 时，它在容器内是逻辑设备 0。若容器仍能看到所有卡，则先设置
 `CUDA_VISIBLE_DEVICES=6`，ATK 中仍使用重新编号后的 `--devices 0`。
 
-## 4. GPU 容器环境与服务
+## 5. GPU 容器环境与服务
 
 进入容器后，激活 ATK 26.7.8 环境并检查 CUDA/Triton：
 
@@ -107,7 +216,7 @@ atk server \
 不要退出这个终端。日志应显示监听 `0.0.0.0:9090`，而不是只监听
 `127.0.0.1:9090`。
 
-## 5. A5 环境
+## 6. A5 环境
 
 在 A5 上加载 ATK、CANN、当前构建的 OPP 和仓内 Python 包。这里只暴露物理 NPU 6，
 所以后续 ATK 使用逻辑设备 0：
@@ -131,7 +240,7 @@ npu-smi info -i 6
 若没有设置 `ASCEND_RT_VISIBLE_DEVICES=6`，则 `node --devices` 必须传物理编号 6；两种
 写法只能选一种，不要设置可见卡后仍传 6。
 
-## 6. 两端一致性与网络预检
+## 7. 两端一致性与网络预检
 
 在 A5 和 GPU 容器内分别执行，结果必须一致：
 
@@ -154,7 +263,7 @@ curl -fsS "http://${GPU_HOST}:${GPU_HOST_PORT}/openapi.json" >/dev/null
 端口不可达时依次检查：容器内 server 是否仍在运行、是否监听 `0.0.0.0:9090`、
 `docker port` 是否存在、宿主机防火墙和 A5 到 GPU 宿主机的路由。
 
-## 7. 单 case 三路烟测
+## 8. 单 case 三路烟测
 
 在 A5 的 `test/chunk_kda_fwd` 目录执行。远端 GPU 不与 A5 共享文件系统，因此
 `--syc_dataset` 必须保留；分布式任务不要使用 `-sp`，使用 `-mt 1` 限制并发和显存：
@@ -201,7 +310,7 @@ GPU control: benchmark=False high_precision=False triton_control=True
 `gpu_benchmark` 目录保存 Torch FP64 真值；普通 `gpu_*` 目录保存同输入 dtype 的 Triton
 对照；`npu_*` 目录保存 A5 DUT 输出。
 
-## 8. 全量和单 case 定位
+## 9. 全量和单 case 定位
 
 A5 正向范围为 `250-449`，ATK 的 `-e` 是开区间：
 
@@ -227,14 +336,14 @@ python ./stress_npu_determinism.py \
   --repeats 100
 ```
 
-## 9. 常见失败
+## 10. 常见失败
 
 | 现象 | 原因与处理 |
 | --- | --- |
-| NPU 报 `No module named 'fla_npu'` | A5 的 `PYTHONPATH` 未包含 `torch_custom/fla_npu`，或当前 OPP/Python 包不是同一提交。按第 5 节重新加载。 |
+| NPU 报 `No module named 'fla_npu'` | A5 的 `PYTHONPATH` 未包含 `torch_custom/fla_npu`，或当前 OPP/Python 包不是同一提交。按第 6 节重新加载。 |
 | GPU 返回 `input.bin is not exists` / HTTP 404 | 远端节点看不到 A5 本地数据。确认任务带 `--syc_dataset`，两端 output path 可写，server 未切换工作目录。 |
 | A5 进程尝试调用 CUDA，报 `_cuda_setDevice` | 分布式任务误加了 `-sp`，GPU node 被当成本地 backend 执行。移除 `-sp`，使用 `-mt 1`。 |
-| ATK 版本相同但 executor 行为不同 | 版本一致不等于测试资产一致。比较第 6 节四个文件的 SHA256。 |
+| ATK 版本相同但 executor 行为不同 | 版本一致不等于测试资产一致。比较第 7 节四个文件的 SHA256。 |
 | GPU FP64 真值 OOM | 物理 GPU 6 未空闲或存在其他容器/进程。先释放资源；H96 长序列保持 `-mt 1`。 |
 | 设备号不可用 | 物理设备经 `ASCEND_RT_VISIBLE_DEVICES`、`CUDA_VISIBLE_DEVICES` 或 Docker 映射后会重新编号；ATK 使用映射后的逻辑编号。 |
 | 能连接端口但任务立即失败 | 检查 GPU server 启动终端中的 Python traceback、CUDA Torch/Triton 导入和 callable 签名；发起端的 404 只是远端失败的包装。 |
