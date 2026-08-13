@@ -236,6 +236,21 @@ __aicore__ inline void RunFrontEnd(
             userWorkspace, tiling, pipe);
         SyncAll<false>();
         pipe.Reset();
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+        if (tiling.hasVarlenTail && tiling.chunkSize == 64 &&
+            tiling.kHeadDim == 128 && tiling.vHeadDim == 128) {
+            KdaPostWu::RunChunkKdaPostWuTailSeedCopy<T, GK_T, BETA_T>(
+                cuSeqlens, chunkIndices, addresses.w, userWorkspace, tiling, pipe);
+            SyncAll<false>();
+            pipe.Reset();
+            KdaPostWu::RunChunkKdaPostWuTail<T, GK_T, BETA_T>(
+                q, k, v, addresses.gk, beta, initialState, cuSeqlens,
+                chunkIndices, akk, uSeed, addresses.w, addresses.u,
+                addresses.kg, userWorkspace, tiling, pipe);
+            SyncAll<false>();
+            pipe.Reset();
+        }
+#endif
     }
 }
 

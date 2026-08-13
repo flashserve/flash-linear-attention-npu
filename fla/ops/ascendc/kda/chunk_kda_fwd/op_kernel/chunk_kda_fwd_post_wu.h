@@ -240,6 +240,23 @@ public:
         ProcessPostAic();
     }
 
+    __aicore__ inline void ProcessTailSeedCopyAiv()
+    {
+        ProcessVarlenTailSeedCopyAiv();
+        ReleaseVectorEvents();
+    }
+
+    __aicore__ inline void ProcessTailAic()
+    {
+        ProcessVarlenTailAic();
+    }
+
+    __aicore__ inline void ProcessTailAiv()
+    {
+        ProcessVarlenTailAiv();
+        ReleaseVectorEvents();
+    }
+
 private:
     __aicore__ inline void AllocVectorEvents()
     {
@@ -536,6 +553,11 @@ private:
                V_ <= 256 && K_ % 16 == 0 && V_ % 16 == 0;
     }
 
+    __aicore__ inline bool UseVarlenTailCubeSnapshot(uint64_t curT) const
+    {
+        return isVarLen_ && curT > 0 && curT < BT_ && BT_ == 64 &&
+               K_ == 128 && V_ == 128;
+    }
 
     __aicore__ inline void ComputePostWuCube(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
                                              uint64_t curT)
@@ -761,6 +783,25 @@ private:
         }
     }
 
+    __aicore__ inline void CopyTailSeedRows(uint64_t b, uint64_t hv, uint64_t start, uint64_t curT,
+                                            uint64_t subBlockIdx, uint64_t subBlockNum)
+    {
+        const uint64_t rowBegin = (curT * subBlockIdx) / subBlockNum;
+        const uint64_t rowEnd = (curT * (subBlockIdx + 1)) / subBlockNum;
+        const uint64_t rows = rowEnd - rowBegin;
+        if (rows == 0) {
+            return;
+        }
+        LocalTensor<T> typed = vecBuf_.Get<T>();
+        const uint64_t wOffset = KVOffset(b, hv, start + rowBegin, 0, K_);
+        CopyVectorIn(typed, preparedQG_, wOffset, rows * K_);
+        SetFlag<HardEvent::MTE2_MTE3>(mte2ToMte3Event_);
+        WaitFlag<HardEvent::MTE2_MTE3>(mte2ToMte3Event_);
+        CopyVectorOut(w_, wOffset, typed, rows * K_);
+        SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
+        WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
+    }
+
     __aicore__ inline bool ResolveFlatChunk(uint64_t task, uint64_t &seq, uint64_t &b, uint64_t &h, uint64_t &hv,
                                             uint64_t &chunkIdx, uint64_t &start, uint64_t &end)
     {
@@ -797,9 +838,11 @@ private:
             return;
         }
         if (curT < BT_) {
-            ComputeTailWuVector(b, hv, start, curT, subBlockIdx, subBlockNum);
-            CopyScratchWAndFinalizeKg(
-                b, h, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum, false);
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                ComputeTailWuVector(b, hv, start, curT, subBlockIdx, subBlockNum);
+                CopyScratchWAndFinalizeKg(
+                    b, h, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum, false);
+            }
             return;
         }
         Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(syncDoneFlag_);
@@ -854,6 +897,114 @@ private:
                 (void)seq;
                 ProcessChunkPostAiv(b, h, hv, chunkIdx, start, end, subBlockIdx, subBlockNum);
             }
+        }
+    }
+
+    __aicore__ inline void ProcessVarlenTailSeedCopyAiv()
+    {
+        if constexpr (IsSameType<T, float>::value) {
+            return;
+        }
+        if (!isVarLen_) {
+            return;
+        }
+        const uint64_t subBlockNum = static_cast<uint64_t>(GetSubBlockNum());
+        if (subBlockNum == 0) {
+            return;
+        }
+        const uint64_t subBlockIdx = static_cast<uint64_t>(GetSubBlockIdx());
+        const uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
+        const uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
+        const uint64_t taskNum = NT_ * HV_;
+        for (uint64_t task = coreIdx; task < taskNum; task += coreNum) {
+            uint64_t seq = 0;
+            uint64_t b = 0;
+            uint64_t h = 0;
+            uint64_t hv = 0;
+            uint64_t chunkIdx = 0;
+            uint64_t start = 0;
+            uint64_t end = 0;
+            if (!ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end)) {
+                continue;
+            }
+            const uint64_t curT = end - start;
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                continue;
+            }
+            (void)seq;
+            (void)h;
+            (void)chunkIdx;
+            CopyTailSeedRows(b, hv, start, curT, subBlockIdx, subBlockNum);
+        }
+    }
+
+    __aicore__ inline void ProcessVarlenTailAic()
+    {
+        if constexpr (IsSameType<T, float>::value) {
+            return;
+        }
+        if (!isVarLen_) {
+            return;
+        }
+        const uint64_t taskNum = NT_ * HV_;
+        const uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
+        for (uint64_t task = GetBlockIdx(); task < taskNum; task += coreNum) {
+            uint64_t seq = 0;
+            uint64_t b = 0;
+            uint64_t h = 0;
+            uint64_t hv = 0;
+            uint64_t chunkIdx = 0;
+            uint64_t start = 0;
+            uint64_t end = 0;
+            if (!ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end)) {
+                continue;
+            }
+            const uint64_t curT = end - start;
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                continue;
+            }
+            (void)seq;
+            (void)h;
+            ComputePostWuCube(b, hv, chunkIdx, start, curT);
+            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(syncDoneFlag_);
+        }
+    }
+
+    __aicore__ inline void ProcessVarlenTailAiv()
+    {
+        if constexpr (IsSameType<T, float>::value) {
+            return;
+        }
+        if (!isVarLen_) {
+            return;
+        }
+        const uint64_t subBlockNum = static_cast<uint64_t>(GetSubBlockNum());
+        if (subBlockNum == 0) {
+            return;
+        }
+        const uint64_t subBlockIdx = static_cast<uint64_t>(GetSubBlockIdx());
+        const uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
+        const uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
+        const uint64_t taskNum = NT_ * HV_;
+        for (uint64_t task = coreIdx; task < taskNum; task += coreNum) {
+            uint64_t seq = 0;
+            uint64_t b = 0;
+            uint64_t h = 0;
+            uint64_t hv = 0;
+            uint64_t chunkIdx = 0;
+            uint64_t start = 0;
+            uint64_t end = 0;
+            if (!ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end)) {
+                continue;
+            }
+            const uint64_t curT = end - start;
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                continue;
+            }
+            (void)seq;
+            Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(syncDoneFlag_);
+            CopyScratchWAndFinalizeKg(
+                b, h, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum, true);
         }
     }
 
@@ -967,6 +1118,56 @@ __aicore__ inline void RunChunkKdaPostWu(
                 wSeed, akk, uSeed, nullptr, userWorkspace, userWorkspace, userWorkspace, akk, w, u,
                 userWorkspace, kg, vNew, postScratch, postScratch, tiling, &pipe);
         op.ProcessAiv();
+    }
+}
+
+template <typename T, typename GK_T, typename BETA_T, typename TilingData>
+__aicore__ inline void RunChunkKdaPostWuTailSeedCopy(
+    GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR wSeed, GM_ADDR userWorkspace,
+    const TilingData &tiling, TPipe &pipe)
+{
+    if ASCEND_IS_AIV {
+        const uint64_t uSeedBytes = tiling.seqlen * tiling.vHeadNum *
+            tiling.vHeadDim * sizeof(T);
+        GM_ADDR scratchW = userWorkspace + tiling.outputScratchOffset + uSeedBytes;
+        GM_ADDR postScratch = userWorkspace + tiling.postWuScratchOffset;
+        ChunkKdaFwdPostWuKernel<T, GK_T, BETA_T> op;
+        op.Init(wSeed, wSeed, userWorkspace, userWorkspace, userWorkspace,
+                nullptr, cuSeqlens, chunkIndices, wSeed, userWorkspace,
+                userWorkspace, nullptr, userWorkspace, userWorkspace, userWorkspace,
+                userWorkspace, scratchW, userWorkspace, userWorkspace, userWorkspace,
+                userWorkspace, postScratch, postScratch, tiling, &pipe);
+        op.ProcessTailSeedCopyAiv();
+    }
+}
+
+template <typename T, typename GK_T, typename BETA_T, typename TilingData>
+__aicore__ inline void RunChunkKdaPostWuTail(
+    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta,
+    GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
+    GM_ADDR akk, GM_ADDR uSeed, GM_ADDR w, GM_ADDR u,
+    GM_ADDR kg, GM_ADDR userWorkspace, const TilingData &tiling, TPipe &pipe)
+{
+    const uint64_t uSeedBytes = tiling.seqlen * tiling.vHeadNum *
+        tiling.vHeadDim * sizeof(T);
+    GM_ADDR scratchW = userWorkspace + tiling.outputScratchOffset + uSeedBytes;
+    GM_ADDR postScratch = userWorkspace + tiling.postWuScratchOffset;
+    // Tail Cube reads the immutable snapshot before writing the public W tensor.
+    if ASCEND_IS_AIC {
+        ChunkKdaFwdPostWuKernel<T, GK_T, BETA_T> op;
+        op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
+                scratchW, akk, uSeed, nullptr, userWorkspace, userWorkspace,
+                userWorkspace, akk, w, u, userWorkspace, kg, userWorkspace,
+                postScratch, postScratch, tiling, &pipe, false);
+        op.ProcessTailAic();
+    }
+    if ASCEND_IS_AIV {
+        ChunkKdaFwdPostWuKernel<T, GK_T, BETA_T> op;
+        op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
+                scratchW, akk, uSeed, nullptr, userWorkspace, userWorkspace,
+                userWorkspace, akk, w, u, userWorkspace, kg, userWorkspace,
+                postScratch, postScratch, tiling, &pipe);
+        op.ProcessTailAiv();
     }
 }
 

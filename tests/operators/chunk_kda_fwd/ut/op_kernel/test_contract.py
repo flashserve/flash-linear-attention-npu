@@ -207,6 +207,48 @@ def test_optional_output_workspace_uses_ir_instantiation_state():
     assert "hExport == nullptr ? placeholderShape : hShape5" in aclnn
 
 
+def test_generic_post_wu_scratch_covers_varlen_chunk_padding():
+    tiling = TILING_ENTRY.read_text(encoding="utf-8")
+    allocation = tiling.split(
+        "const uint64_t postWuScratchOffset", 1
+    )[1].split("const uint64_t fwdHWorkspaceBaseOffset", 1)[0]
+
+    assert "hChunkCount * shape.vHeads * chunkSize" in allocation
+    assert "shape.kDim * sizeof(float)" in allocation
+    assert "tokenHeads * shape.kDim * sizeof(float)" not in allocation
+
+    lengths = (81, 159, 127, 145, 95, 177, 113, 127)
+    total_chunks = sum((length + 63) // 64 for length in lengths)
+    assert total_chunks * 64 > sum(lengths)
+
+
+def test_generic_tail_w_uses_immutable_seed_snapshot():
+    post_wu = GENERIC_STAGE_IMPLEMENTATIONS["post_wu"].read_text(encoding="utf-8")
+    common = KERNEL_COMMON.read_text(encoding="utf-8")
+    seed_copy = post_wu.split(
+        "void CopyTailSeedRows", 1
+    )[1].split("bool ResolveFlatChunk", 1)[0]
+    tail_cube = post_wu.split(
+        "void ProcessVarlenTailAic", 1
+    )[1].split("void ProcessVarlenTailAiv", 1)[0]
+
+    assert "CopyVectorIn(typed, preparedQG_" in seed_copy
+    assert "CopyVectorOut(w_" in seed_copy
+    assert "CopyVectorOut(u_" not in seed_copy
+    assert "ComputePostWuCube" in tail_cube
+    assert "outputScratchOffset + uSeedBytes" in post_wu
+    snapshot_condition = post_wu.split(
+        "bool UseVarlenTailCubeSnapshot", 1
+    )[1].split(";", 1)[0]
+    assert "BT_ == 64" in snapshot_condition
+    assert "K_ == 128" in snapshot_condition
+    assert "V_ == 128" in snapshot_condition
+    assert "RunChunkKdaPostWuTailSeedCopy" in common
+    assert "RunChunkKdaPostWuTail" in common
+    assert "tiling.hasVarlenTail && tiling.chunkSize == 64" in common
+    assert "tiling.kHeadDim == 128 && tiling.vHeadDim == 128" in common
+
+
 def test_varlen_and_tail_use_the_same_physical_l0():
     l0 = (OP_ROOT / "op_host/op_api/chunk_kda_fwd.cpp").read_text(encoding="utf-8")
     assert l0.count("l0op::ChunkKdaFwd(") == 0
