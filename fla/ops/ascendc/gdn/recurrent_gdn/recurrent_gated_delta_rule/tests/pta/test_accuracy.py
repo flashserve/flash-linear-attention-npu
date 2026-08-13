@@ -4,12 +4,17 @@ Accuracy test for npu_recurrent_gated_delta_rule.
 Compares NPU output against CPU golden reference.
 Tests multiple parameter combinations.
 """
+import os
 import sys
+from pathlib import Path
+
 import torch
 import torch_npu
 
+from fla_npu.ops import ascendc as ascendc_ops
 from golden import recurrent_gated_delta_rule_golden
 from utils import compare_tensors_by_ratio
+from fla_npu.ops import ascendc as ascendc_ops
 
 
 def make_inputs(bs, mtp, nk, nv, dk, dv, use_g=True, use_gk=False,
@@ -97,7 +102,7 @@ def run_npu(inp, device):
     
     print("start run npu_recurrent_gated_delta_rule")
 
-    result = torch_npu.npu_recurrent_gated_delta_rule(
+    result = ascendc_ops.recurrent_gated_delta_rule(
         q_npu, k_npu, v_npu, s_npu,
         beta=b_npu,
         scale=inp["scale"],
@@ -109,13 +114,9 @@ def run_npu(inp, device):
     )
     torch_npu.npu.synchronize()
 
-    # result is (attn_out, final_state)
-    if isinstance(result, (tuple, list)):
-        attn_out = result[0].cpu()
-        final_state = result[1].cpu()
-    else:
-        attn_out = result.cpu()
-        final_state = s_npu.cpu()
+    # The fla_npu wrapper returns attention output and updates state in place.
+    attn_out = result.cpu()
+    final_state = s_npu.cpu()
     attn_out[:asl_npu[0]] = 0
     return attn_out, final_state
 

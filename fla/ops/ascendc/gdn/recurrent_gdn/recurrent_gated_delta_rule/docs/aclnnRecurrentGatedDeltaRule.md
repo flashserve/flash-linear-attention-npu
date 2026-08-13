@@ -135,7 +135,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>stateRef</td>
       <td>输入&输出</td>
       <td>状态矩阵，公式中的S。</td>
-      <td><ul><li>不支持空Tensor。cann版本大于等于9.1.0后支持非连续 Tensor，其余版本不支持</li></td>
+      <td><ul><li>不支持空Tensor。</li><li>CANN版本大于等于9.1.0后支持受限的非连续Tensor：stride必须为(stride0, stride1, Dk, 1)，且stride1 &gt;= Dv * Dk、stride0 &gt;= Nv * stride1；其余版本不支持。</li></ul></td>
       <td>BFLOAT16</td>
       <td>ND</td>
       <td>(BlockNum, Nv, Dv, Dk)</td>

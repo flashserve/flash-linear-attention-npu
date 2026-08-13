@@ -627,6 +627,198 @@ def npu_recompute_w_u_fwd(
     )
 
 
+def npu_recurrent_gated_delta_rule(
+    query,
+    key,
+    value,
+    state,
+    *,
+    beta,
+    scale=1.0,
+    actual_seq_lengths,
+    ssm_state_indices,
+    num_accepted_tokens=None,
+    g=None,
+    gk=None,
+):
+    """
+    Run recurrent GDN and update ``state`` in place.
+
+    ``g`` and ``gk`` are independent optional gates. Passing ``None`` for
+    either input disables that decay term by using an effective factor of one,
+    but one of ``g`` or ``gk`` must be provided. 
+    """
+
+    import math
+    import torch
+
+    op_name = "npu_recurrent_gated_delta_rule"
+    tensors = {
+        "query": query,
+        "key": key,
+        "value": value,
+        "state": state,
+        "beta": beta,
+        "actual_seq_lengths": actual_seq_lengths,
+        "ssm_state_indices": ssm_state_indices,
+    }
+    optional_tensors = {
+        "g": g,
+        "gk": gk,
+        "num_accepted_tokens": num_accepted_tokens,
+    }
+
+    for name, tensor in (*tensors.items(), *optional_tensors.items()):
+        if tensor is None:
+            if name in tensors:
+                raise TypeError(f"{op_name}: {name} must be a torch.Tensor, got None.")
+            continue
+        if not isinstance(tensor, torch.Tensor):
+            raise TypeError(f"{op_name}: {name} must be a torch.Tensor, got {type(tensor)!r}.")
+        if tensor.device.type != "npu":
+            raise TypeError(f"{op_name}: {name} must be a torch NPU tensor, got device {tensor.device}.")
+
+    dtype_requirements = {
+        "query": (torch.bfloat16,),
+        "key": (torch.bfloat16,),
+        "value": (torch.bfloat16,),
+        "beta": (torch.bfloat16,),
+        "state": (torch.bfloat16, torch.float32),
+        "actual_seq_lengths": (torch.int32,),
+        "ssm_state_indices": (torch.int32,),
+        "g": (torch.float32,),
+        "gk": (torch.float32,),
+        "num_accepted_tokens": (torch.int32,),
+    }
+    for name, supported_dtypes in dtype_requirements.items():
+        tensor = tensors.get(name, optional_tensors.get(name))
+        if tensor is not None and tensor.dtype not in supported_dtypes:
+            supported = ", ".join(str(dtype) for dtype in supported_dtypes)
+            raise TypeError(
+                f"{op_name}: {name} dtype must be one of ({supported}), got {tensor.dtype}."
+            )
+
+    shapes = {
+        name: _shape(tensor)
+        for name, tensor in (*tensors.items(), *optional_tensors.items())
+        if tensor is not None
+    }
+    expected_ranks = {
+        "query": 3,
+        "key": 3,
+        "value": 3,
+        "beta": 2,
+        "state": 4,
+        "actual_seq_lengths": 1,
+        "ssm_state_indices": 1,
+        "g": 2,
+        "gk": 3,
+        "num_accepted_tokens": 1,
+    }
+    for name, expected_rank in expected_ranks.items():
+        shape = shapes.get(name)
+        if shape is not None and len(shape) != expected_rank:
+            raise RuntimeError(
+                f"{op_name}: {name} must be rank {expected_rank}, got shape {shape}."
+            )
+
+    query_shape = shapes["query"]
+    key_shape = shapes["key"]
+    value_shape = shapes["value"]
+    state_shape = shapes["state"]
+    actual_seq_lengths_shape = shapes["actual_seq_lengths"]
+    if query_shape != key_shape:
+        raise RuntimeError(
+            f"{op_name}: key shape must equal query shape, got query={query_shape}, key={key_shape}."
+        )
+
+    total_tokens, key_heads, key_dim = query_shape
+    value_tokens, value_heads, value_dim = value_shape
+    state_blocks = state_shape[0]
+    positive_dims = {
+        "T": total_tokens,
+        "Nk": key_heads,
+        "Nv": value_heads,
+        "Dk": key_dim,
+        "Dv": value_dim,
+        "state blocks": state_blocks,
+    }
+    for name, size in positive_dims.items():
+        if size <= 0:
+            raise RuntimeError(f"{op_name}: {name} must be positive, got {size}.")
+
+    if value_tokens != total_tokens:
+        raise RuntimeError(
+            f"{op_name}: value T dimension must be {total_tokens}, got {value_tokens}."
+        )
+    expected_beta_shape = (total_tokens, value_heads)
+    if shapes["beta"] != expected_beta_shape:
+        raise RuntimeError(
+            f"{op_name}: beta shape must be {expected_beta_shape}, got {shapes['beta']}."
+        )
+    expected_state_shape = (state_blocks, value_heads, value_dim, key_dim)
+    if state_shape != expected_state_shape:
+        raise RuntimeError(
+            f"{op_name}: state shape must be {expected_state_shape}, got {state_shape}."
+        )
+    if actual_seq_lengths_shape[0] < 2:
+        raise RuntimeError(
+            f"{op_name}: actual_seq_lengths must contain the prefix entry and at least one sequence length."
+        )
+    if shapes["ssm_state_indices"] != (total_tokens,):
+        raise RuntimeError(
+            f"{op_name}: ssm_state_indices shape must be ({total_tokens},), "
+            f"got {shapes['ssm_state_indices']}."
+        )
+
+    batch_size = actual_seq_lengths_shape[0] - 1
+    optional_shapes = {
+        "g": (total_tokens, value_heads),
+        "gk": (total_tokens, value_heads, key_dim),
+        "num_accepted_tokens": (batch_size,),
+    }
+    for name, expected_shape in optional_shapes.items():
+        shape = shapes.get(name)
+        if shape is not None and shape != expected_shape:
+            raise RuntimeError(
+                f"{op_name}: {name} shape must be {expected_shape}, got {shape}."
+            )
+
+    if key_heads > 256 or value_heads > 256 or key_dim > 512 or value_dim > 512:
+        raise RuntimeError(
+            f"{op_name}: Nk and Nv must be <= 256 and Dk and Dv must be <= 512, "
+            f"got Nk={key_heads}, Nv={value_heads}, Dk={key_dim}, Dv={value_dim}."
+        )
+    if value_heads % key_heads != 0:
+        raise RuntimeError(
+            f"{op_name}: Nv must be an integer multiple of Nk, got Nv={value_heads}, Nk={key_heads}."
+        )
+
+    scale = _optional_float(scale, 1.0)
+    if not math.isfinite(scale):
+        raise ValueError(f"{op_name}: scale must be finite, got {scale}.")
+
+    out = _empty_like(value)
+    return _call_aclnn(
+        "aclnnRecurrentGatedDeltaRule",
+        lambda ctx: [
+            ctx.tensor(query, "query"),
+            ctx.tensor(key, "key"),
+            ctx.tensor(value, "value"),
+            ctx.tensor(beta, "beta"),
+            ctx.tensor(state, "state"),
+            ctx.tensor(actual_seq_lengths, "actual_seq_lengths"),
+            ctx.tensor(ssm_state_indices, "ssm_state_indices"),
+            ctx.tensor(g, "g"),
+            ctx.tensor(gk, "gk"),
+            ctx.tensor(num_accepted_tokens, "num_accepted_tokens"),
+            ctypes.c_float(scale),
+            ctx.tensor(out, "out"),
+        ],
+        out,
+    )
+
+
 def _chunk_local_cumsum_output_dtype(g, output_dtype):
     import torch
 

@@ -110,7 +110,9 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 - `query`、`key` 的形状为 `(T, Nk, Dk)`。
 - `value` 的形状为 `(T, Nv, Dv)`。
 - `beta` 的形状为 `(T, Nv)`。
-- `stateRef` 的形状为 `(BlockNum, Nv, Dv, Dk)`，cann版本大于等于9.1.0后支持非连续 Tensor，其余版本不支持。
+- `stateRef` 的形状为 `(BlockNum, Nv, Dv, Dk)`，CANN 版本大于等于 9.1.0 后支持受限的非连续 Tensor，
+  其 stride 必须为 `(stride0, stride1, Dk, 1)`，且满足 `stride1 >= Dv * Dk`、
+  `stride0 >= Nv * stride1`；其余 CANN 版本不支持非连续 `stateRef`。
 - `actualSeqLengths` 为长度 $B+1$ 的一维 INT32 张量，首元素代表无效序列长度（不参与计算），第 1 至第 $B$ 个元素代表各 batch 的有效序列长度，其元素之和等于 $T$。
 - `ssmStateIndices` 为长度 $T$ 的一维 INT32 张量，取值范围 `[0, BlockNum)`。
 - 当前仅支持 `BFLOAT16` 精度（query/key/value/beta/stateRef/out）。
@@ -119,7 +121,10 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 ### 3.5 补充说明
 
 - 输入张量 `query/key/value/beta/g` 支持非连续 Tensor 输入。
-- `stateRef` 为原地输入输出，cann版本大于等于9.1.0后支持非连续 Tensor，其余版本不支持。
+- `stateRef` 为原地输入输出，CANN 版本大于等于 9.1.0 后支持在 `stride0/stride1` 上带 padding 的
+  非连续 Tensor；内部 `(Dv, Dk)` 矩阵必须连续。
+- `examples/fast_kernel_launch_example` 下的 `<<<>>>` mutable 和 functional 调用遵循相同的 state layout
+  约束；functional 调用返回一个保持输入 state stride 的独立状态 Tensor。
 - `gk` 当前版本暂不支持，须传 `None`。
 
 ---
