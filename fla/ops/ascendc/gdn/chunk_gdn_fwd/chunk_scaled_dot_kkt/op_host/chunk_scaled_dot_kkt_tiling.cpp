@@ -111,10 +111,12 @@ bool IsCatlassScoreSocSupported(platform_ascendc::SocVersion socVersion)
 
 uint64_t ScoreRowBlockSize(uint64_t bt, platform_ascendc::SocVersion socVersion)
 {
-    const uint64_t rowBlock =
-        socVersion == platform_ascendc::SocVersion::ASCEND950
-            ? static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK_A5)
-            : static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK_A2);
+    uint64_t rowBlock = static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK_A2);
+    if (socVersion == platform_ascendc::SocVersion::ASCEND950) {
+        rowBlock = bt <= static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK_A5_BT64)
+                       ? static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK_A5_BT64)
+                       : static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK_A5_BT128);
+    }
     return std::min<uint64_t>(bt, rowBlock);
 }
 
@@ -122,6 +124,25 @@ uint64_t ScoreRowBlockCount(uint64_t bt, platform_ascendc::SocVersion socVersion
 {
     const uint64_t rowBlockSize = ScoreRowBlockSize(bt, socVersion);
     return rowBlockSize == 0 ? 0 : CeilDiv(bt, rowBlockSize);
+}
+
+uint64_t ScoreGroupBatch(uint64_t scoreBlockTaskNum,
+                         uint64_t usedAicNum,
+                         uint64_t bt,
+                         uint64_t t,
+                         uint64_t isVarlen,
+                         bool useCatlassScore)
+{
+    if (!useCatlassScore || usedAicNum == 0 || scoreBlockTaskNum == 0) {
+        return 1;
+    }
+    if (bt == static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK_A5_BT128) &&
+        (isVarlen != 0 || (t % bt) != 0)) {
+        return 1;
+    }
+    const uint64_t waves = CeilDiv(scoreBlockTaskNum, usedAicNum);
+    return std::max<uint64_t>(
+        1, std::min<uint64_t>(static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_WORKSPACE_HEAD_BATCH), waves));
 }
 
 ge::graphStatus BuildCubeTiling(uint64_t bt, uint64_t k, ge::DataType kDtype, ChunkScaledDotKktTilingData &tiling)
@@ -288,6 +309,7 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
         useCatlassScore
             ? pairedAivNum
             : std::max<uint64_t>(1, std::min<uint64_t>(std::max<uint64_t>(scoreTaskNum, pairedAivNum), pairedAivNum));
+    const uint64_t scoreGroupBatch = ScoreGroupBatch(scoreBlockTaskNum, usedAicNum, bt, t, isVarlen, useCatlassScore);
     uint32_t blockDim = static_cast<uint32_t>(usedAicNum);
     if (platformInfo != nullptr) {
         platform_ascendc::PlatformAscendC platform(platformInfo);
@@ -326,6 +348,7 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     tiling.set_btAlign(AlignUp(bt, kFp32BlockElems));
     tiling.set_isVarlen(isVarlen);
     tiling.set_useCatlassScore(useCatlassScore ? 1 : 0);
+    tiling.set_scoreGroupBatch(scoreGroupBatch);
     tiling.set_scoreWorkspaceBytes(scoreBytes);
     if (BuildCubeTiling(bt, k, kDtype, tiling) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;

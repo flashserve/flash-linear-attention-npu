@@ -25,7 +25,7 @@ __global__ __aicore__ void chunk_scaled_dot_kkt(GM_ADDR k,
         op.Init(k, g, beta, cuSeqlens, chunkIndices, A, userWorkspace, tilingData.B, tilingData.Hk, tilingData.Hv,
                 tilingData.hvPerHk, tilingData.T, tilingData.K, tilingData.BT, tilingData.NT, tilingData.taskNum,
                 tilingData.usedAicNum, tilingData.usedAivNum, tilingData.btAlign, tilingData.isVarlen,
-                tilingData.useCatlassScore, &pipe);
+                tilingData.useCatlassScore, tilingData.scoreGroupBatch, &pipe);
         op.ProcessAic();
     }
     if ASCEND_IS_AIV {
@@ -34,7 +34,7 @@ __global__ __aicore__ void chunk_scaled_dot_kkt(GM_ADDR k,
         op.Init(k, g, beta, cuSeqlens, chunkIndices, A, userWorkspace, tilingData.B, tilingData.Hk, tilingData.Hv,
                 tilingData.hvPerHk, tilingData.T, tilingData.K, tilingData.BT, tilingData.NT, tilingData.taskNum,
                 tilingData.usedAicNum, tilingData.usedAivNum, tilingData.btAlign, tilingData.isVarlen,
-                tilingData.useCatlassScore, &pipe);
+                tilingData.useCatlassScore, tilingData.scoreGroupBatch, &pipe);
         op.ProcessAiv();
     }
 #else
@@ -49,7 +49,7 @@ __global__ __aicore__ void chunk_scaled_dot_kkt(GM_ADDR k,
             op.Init(k, g, beta, cuSeqlens, chunkIndices, A, userWorkspace, tilingData.B, tilingData.Hk,
                     tilingData.Hv, tilingData.hvPerHk, tilingData.T, tilingData.K, tilingData.BT, tilingData.NT,
                     tilingData.taskNum, tilingData.usedAicNum, tilingData.usedAivNum, tilingData.btAlign,
-                    tilingData.isVarlen, 1, &pipe);
+                    tilingData.isVarlen, 1, tilingData.scoreGroupBatch, &pipe);
             if ASCEND_IS_AIC {
                 op.ProcessAic();
             }
@@ -63,7 +63,8 @@ __global__ __aicore__ void chunk_scaled_dot_kkt(GM_ADDR k,
     REGIST_MATMUL_OBJ(&pipe, GetSysWorkSpacePtr(), op.scoreMatmul, &tilingData.cubeTilingData);
     op.Init(k, g, beta, cuSeqlens, chunkIndices, A, userWorkspace, tilingData.B, tilingData.Hk, tilingData.Hv,
             tilingData.hvPerHk, tilingData.T, tilingData.K, tilingData.BT, tilingData.NT, tilingData.taskNum,
-            tilingData.usedAicNum, tilingData.usedAivNum, tilingData.btAlign, tilingData.isVarlen, 0, &pipe);
+            tilingData.usedAicNum, tilingData.usedAivNum, tilingData.btAlign, tilingData.isVarlen, 0,
+            tilingData.scoreGroupBatch, &pipe);
 
     if ASCEND_IS_AIV {
         op.ProcessAiv();

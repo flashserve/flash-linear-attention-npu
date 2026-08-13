@@ -103,6 +103,7 @@ public:
                                 uint64_t btAlign,
                                 uint64_t isVarlen,
                                 uint64_t useCatlassScore,
+                                uint64_t scoreGroupBatch,
                                 TPipe *pipe)
     {
         pipe_ = pipe;
@@ -120,6 +121,7 @@ public:
         btAlign_ = static_cast<int64_t>(btAlign);
         isVarlen_ = static_cast<int64_t>(isVarlen);
         useCatlassScore_ = static_cast<int64_t>(useCatlassScore);
+        scoreGroupBatch_ = static_cast<int64_t>(scoreGroupBatch);
 
         kGm.SetGlobalBuffer((__gm__ KType *)k, B_ * Hk_ * T_ * K_);
         gGm.SetGlobalBuffer((__gm__ float *)g, B_ * Hv_ * T_);
@@ -282,10 +284,17 @@ private:
                BT_ * BT_;
     }
 
+    __aicore__ inline int64_t SelectA5ScoreRowBlockLimit(int64_t bt) const
+    {
+        return bt <= static_cast<int64_t>(SCORE_ROW_BLOCK_A5_BT64)
+                   ? static_cast<int64_t>(SCORE_ROW_BLOCK_A5_BT64)
+                   : static_cast<int64_t>(SCORE_ROW_BLOCK_A5_BT128);
+    }
+
     __aicore__ inline int64_t ScoreRowBlockSize() const
     {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        constexpr int64_t rowBlock = SCORE_ROW_BLOCK_A5;
+        const int64_t rowBlock = SelectA5ScoreRowBlockLimit(BT_);
 #else
         constexpr int64_t rowBlock = SCORE_ROW_BLOCK_A2;
 #endif
@@ -312,6 +321,10 @@ private:
     {
         if (usedAicNum_ <= 0 || scoreBlockTaskNum <= 0) {
             return 1;
+        }
+        if (scoreGroupBatch_ > 0) {
+            const int64_t waves = (scoreBlockTaskNum + usedAicNum_ - 1) / usedAicNum_;
+            return MinI64(MinI64(scoreGroupBatch_, static_cast<int64_t>(SCORE_WORKSPACE_HEAD_BATCH)), waves);
         }
         const int64_t waves = (scoreBlockTaskNum + usedAicNum_ - 1) / usedAicNum_;
         return MinI64(static_cast<int64_t>(SCORE_WORKSPACE_HEAD_BATCH), waves);
@@ -379,7 +392,8 @@ private:
             return;
         }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        constexpr int32_t ROW_BLOCK_LIMIT = SCORE_ROW_BLOCK_A5;
+        constexpr int32_t ROW_BLOCK_LIMIT =
+            BT_VALUE <= SCORE_ROW_BLOCK_A5_BT64 ? SCORE_ROW_BLOCK_A5_BT64 : SCORE_ROW_BLOCK_A5_BT128;
 #else
         constexpr int32_t ROW_BLOCK_LIMIT = SCORE_ROW_BLOCK_A2;
 #endif
@@ -1011,6 +1025,7 @@ private:
     int64_t btAlign_ = 0;
     int64_t isVarlen_ = 0;
     int64_t useCatlassScore_ = 0;
+    int64_t scoreGroupBatch_ = 1;
 };
 }  // namespace NsChunkScaledDotKkt
 
