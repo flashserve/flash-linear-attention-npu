@@ -54,6 +54,35 @@ FLA_NPU_RUN_OPERATOR_TESTS=1 pytest -q tests/operators/chunk_kda_fwd/st/test_exa
 cd examples/fast_kernel_launch_example && FAST_KERNEL_OP_NAME=chunk_kda_fwd pytest -q tests/chunk_kda_fwd
 ```
 
+ATK 精度失败使用 `--save_data output` 保存三组输出后，可直接分析 NPU、同精度 Triton 和
+GPU FP64 golden。脚本会自动选择目录下最新的一组三节点完整结果，并输出全局误差、首个异常
+chunk/token、误差最大的 head 和元素索引：
+
+A5 本地 DUT + GPU Docker 远端 server 的完整环境准备、设备映射、数据同步和执行命令见
+[`test/chunk_kda_fwd/README.md`](../../../test/chunk_kda_fwd/README.md)。
+
+```bash
+python test/chunk_kda_fwd/analyze_atk_saved_outputs.py \
+  /path/to/atk/output \
+  --case-id 250
+```
+
+若运行 ATK 时设置了 `KDA_ATK_VISIBLE_OUTPUTS`，需要通过 `--visible-outputs` 传入相同的值，
+保证压缩后的 `output_N.pt` 与输出名称正确对应。
+
+不启动 CPU/GPU 标杆、只检查固定输入下 NPU 二进制确定性时，使用 NPU-only 压力脚本。
+脚本在 NPU 上把后续每轮完整 `attn_out` 与第 0 轮逐 bit 比较，只向 Host 传回摘要：
+
+```bash
+python test/chunk_kda_fwd/stress_npu_determinism.py \
+  --device 0 \
+  --case-id 250 \
+  --repeats 100
+```
+
+可先通过 `--tokens 128` 快速复现第一个 chunk 边界；不传该参数时保持 case JSON 中的原始
+`T=8192`。所有轮次一致时脚本返回 0，出现任意二进制差异时返回 1。
+
 A5 PR264 一键构建、隔离安装和基础验收：
 
 ```bash
