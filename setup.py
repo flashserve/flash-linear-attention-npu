@@ -27,6 +27,8 @@ except Exception:
 REPO_ROOT = Path(__file__).resolve().parent
 TORCH_EXTENSION_DIR = REPO_ROOT / "torch_custom" / "fla_npu"
 FLA_NPU_PACKAGE_DIR = TORCH_EXTENSION_DIR / "fla_npu"
+TRITON_CORE_PACKAGE = "fla_npu.ops.triton.triton_core"
+TRITON_CORE_SOURCE = REPO_ROOT / "fla" / "ops" / "triton" / "triton_core"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from fla_npu_artifacts import get_package_version, get_wheel_build_tag  # noqa: E402
@@ -59,6 +61,23 @@ TORCHNPUGEN_MODULES = (
     "torchnpugen.gen_backend_stubs",
     "torchnpugen.struct.gen_struct_opapi",
 )
+
+
+def _python_packages():
+    packages = find_packages(
+        where=str(TORCH_EXTENSION_DIR),
+        include=["fla_npu", "fla_npu.*"],
+    )
+    if TRITON_CORE_SOURCE.exists() and TRITON_CORE_PACKAGE not in packages:
+        packages.append(TRITON_CORE_PACKAGE)
+    return packages
+
+
+def _python_package_dirs():
+    package_dirs = {"fla_npu": str(FLA_NPU_PACKAGE_DIR.relative_to(REPO_ROOT))}
+    if TRITON_CORE_SOURCE.exists():
+        package_dirs[TRITON_CORE_PACKAGE] = str(TRITON_CORE_SOURCE.relative_to(REPO_ROOT))
+    return package_dirs
 
 
 def _read_requirements():
@@ -567,13 +586,8 @@ setup(
     description="High-performance linear attention operators for Ascend NPU",
     long_description=(REPO_ROOT / "README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
-    packages=(
-        find_packages(
-            where=str(TORCH_EXTENSION_DIR),
-            include=["fla_npu", "fla_npu.*"],
-        )
-    ),
-    package_dir={"fla_npu": str(FLA_NPU_PACKAGE_DIR.relative_to(REPO_ROOT))},
+    packages=_python_packages(),
+    package_dir=_python_package_dirs(),
     package_data={"fla_npu": ["opp/**/*"]},
     include_package_data=True,
     license_files=[

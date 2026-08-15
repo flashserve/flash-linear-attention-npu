@@ -30,8 +30,11 @@ from fla_npu.ops.ascendc import (
     chunk_bwd_dqkwg as ascendc_chunk_bwd_dqkwg,
     chunk_bwd_dv_local as ascendc_chunk_bwd_dv_local,
     chunk_fwd_o as ascendc_chunk_fwd_o,
+    gdn_core_fwd as ascendc_gdn_core_fwd,
     chunk_gated_delta_rule_bwd_dhu as ascendc_chunk_gated_delta_rule_bwd_dhu,
     chunk_gated_delta_rule_fwd_h as ascendc_chunk_gated_delta_rule_fwd_h,
+    chunk_local_cumsum as ascendc_chunk_local_cumsum,
+    chunk_scaled_dot_kkt as ascendc_chunk_scaled_dot_kkt,
     prepare_wy_repr_bwd_da as ascendc_prepare_wy_repr_bwd_da,
     prepare_wy_repr_bwd_full as ascendc_prepare_wy_repr_bwd_full,
     recompute_w_u_fwd as ascendc_recompute_w_u_fwd,
@@ -807,7 +810,28 @@ def flash_chunk_gated_delta_rule_fwd(
     chunk_indices: Optional[Dict[str, Optional[torch.LongTensor]]] = None,
     chunk_indices_list: Optional[Dict[str, Optional[list[int]]]] = None,
     chunk_size: int = 64,
+    use_composite_core: bool = True,
 ):
+    cu_list = cu_seqlens_list
+    chunk_list = _chunk_list(chunk_indices_list, chunk_size)
+    if use_composite_core:
+        o, final_state, g, A = ascendc_gdn_core_fwd(
+            q,
+            k,
+            v,
+            g,
+            beta,
+            initial_state=initial_state,
+            output_final_state=output_final_state,
+            chunk_size=chunk_size,
+            cu_seqlens=cu_list,
+            chunk_indices=chunk_list,
+            scale=scale,
+        )
+        if not output_final_state:
+            final_state = None
+        return g, o.transpose(1, 2).contiguous(), A, final_state
+
     g = chunk_local_cumsum_auto(
         g=g,
         cu_seqlens=cu_seqlens,
@@ -823,7 +847,6 @@ def flash_chunk_gated_delta_rule_fwd(
         cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices,
         chunk_size=chunk_size,
-        output_dtype=torch.float32,
     )
 
     A = solve_tri_auto(
@@ -844,8 +867,8 @@ def flash_chunk_gated_delta_rule_fwd(
         A,
         g,
         chunk_size=chunk_size,
-        cu_seqlens=cu_seqlens_list,
-        chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
+        cu_seqlens=cu_list,
+        chunk_indices=chunk_list,
     )
 
     h, v_new, final_state = ascendc_chunk_gated_delta_rule_fwd_h(
@@ -857,12 +880,12 @@ def flash_chunk_gated_delta_rule_fwd(
         initial_state=initial_state,
         output_final_state=output_final_state,
         chunk_size=chunk_size,
-        cu_seqlens=cu_seqlens_list,
-        chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
+        save_new_value=True,
+        cu_seqlens=cu_list,
+        chunk_indices=chunk_list,
+        use_exp2=False,
+        transpose_state_layout=False,
     )
-    if not output_final_state:
-        final_state = None
-
     o = ascendc_chunk_fwd_o(
         q,
         k,
@@ -871,14 +894,15 @@ def flash_chunk_gated_delta_rule_fwd(
         scale,
         g=g,
         g_gamma=None,
-        cu_seqlens=cu_seqlens_list,
-        chunk_indices=_chunk_list(chunk_indices_list, chunk_size),
+        cu_seqlens=cu_list,
+        chunk_indices=chunk_list,
         chunk_size=chunk_size,
     )
 
-    g = g.transpose(1, 2).contiguous()
+    if not output_final_state:
+        final_state = None
     o = o.transpose(1, 2).contiguous()
-    return g, o, A, final_state
+    return g.transpose(1, 2).contiguous(), o, A, final_state
 
 
 def flash_chunk_gated_delta_rule_bwd(
@@ -1043,6 +1067,7 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
         chunk_indices_list: Optional[Dict[str, Optional[list[int]]]] = None,
         use_qk_l2norm_in_kernel: bool = False,
         chunk_size: int = 64,
+        use_composite_core: bool = True,
     ):
         if use_qk_l2norm_in_kernel:
             q, q_rstd = l2norm_fwd(q)
@@ -1064,6 +1089,7 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
             chunk_indices=chunk_indices,
             chunk_indices_list=chunk_indices_list,
             chunk_size=chunk_size,
+            use_composite_core=use_composite_core,
         )
 
         ctx.save_for_backward(q, k, v, g, beta, A)
@@ -1119,6 +1145,7 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
             None,
             None,
             None,
+            None,
         )
 
 
@@ -1139,6 +1166,7 @@ def flash_gated_delta_rule(
     chunk_indices_list: Optional[Dict[str, Optional[list[int]]] | list[int] | torch.Tensor] = None,
     chunk_size: int = 64,
     head_first: bool = False,
+    use_composite_core: bool = True,
 ):
     r"""
     Flash-linear-attention NPU port of xtuner's GDN entry.
@@ -1224,6 +1252,7 @@ def flash_gated_delta_rule(
         chunk_indices_list,
         use_qk_l2norm_in_kernel,
         chunk_size,
+        use_composite_core,
     )
     return o, final_state
 
@@ -1258,6 +1287,7 @@ class DemoGatedDeltaNet(nn.Module):
         hidden_act: str = "silu",
         rms_norm_eps: float = 1e-6,
         chunk_size: int = 64,
+        use_composite_core: bool = True,
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -1280,6 +1310,7 @@ class DemoGatedDeltaNet(nn.Module):
         self.conv_kernel_size = conv_kernel_dim
         self.activation = hidden_act
         self.chunk_size_default = chunk_size
+        self.use_composite_core = use_composite_core
 
         conv_dim = self.key_dim * 2 + self.value_dim
         self.conv1d = nn.Conv1d(
@@ -1356,6 +1387,7 @@ class DemoGatedDeltaNet(nn.Module):
             chunk_indices=None,
             chunk_indices_list=None,
             chunk_size=self.chunk_size_default,
+            use_composite_core=self.use_composite_core,
         )
 
         core_attn_out = core_attn_out.reshape(-1, self.head_v_dim)
@@ -1883,6 +1915,13 @@ def _main():
         action="store_true",
         help="运行 DemoGatedDeltaNet（从 cu_seqlens 迁移到 tensor 设备及 causal_conv 起始的完整链路）代替裸张量 attn 冒烟",
     )
+    parser.add_argument(
+        "--legacy-unfused-core",
+        dest="use_composite_core",
+        action="store_false",
+        default=True,
+        help="Use the legacy three-aclnn Python path instead of aclnnGdnCoreFwd.",
+    )
     parser.add_argument("--conv-kernel", type=int, default=4, help="depthwise causal conv kernel size")
     parser.add_argument("--accuracy-check", action="store_true")
     parser.add_argument(
@@ -1974,6 +2013,7 @@ def _main():
             value_head_dim=value_dim,
             conv_kernel_dim=args.conv_kernel,
             chunk_size=args.chunk_size,
+            use_composite_core=args.use_composite_core,
         ).to(device=device, dtype=dtype)
         torch.npu.synchronize()
         out = net(x, cu_seqlens=cu_seqlens)
@@ -2086,6 +2126,7 @@ def _main():
         use_qk_l2norm_in_kernel=args.qk_l2norm,
         cu_seqlens=cu_seqlens,
         chunk_size=args.chunk_size,
+        use_composite_core=args.use_composite_core,
     )
     torch.npu.synchronize()
 

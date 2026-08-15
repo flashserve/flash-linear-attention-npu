@@ -476,6 +476,8 @@ echo "[CI] mode=$ci_mode soc=$ci_soc ops=${ci_ops:-<all>} jobs=$ci_jobs cpack_jo
 python3 torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py
 python3 torch_custom/fla_npu/test/test_runtime_device_guard.py
 python3 torch_custom/fla_npu/test/test_ascendc_mutation_contract.py
+python3 torch_custom/fla_npu/test/test_causal_conv1d_ctypes_abi.py
+python3 torch_custom/fla_npu/test/test_gdn_core_fwd_ctypes_abi.py
 
 case "$ci_mode" in
     quick)

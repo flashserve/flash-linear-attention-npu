@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+from collections import deque
 from contextlib import contextmanager
 from typing import Iterable, Optional, Sequence
 
@@ -35,6 +36,38 @@ _ACL_FORMAT_BY_NAME = {
     "NCDHW": ACL_FORMAT_NCDHW,
     "NCL": ACL_FORMAT_NCL,
 }
+
+class _LaunchStorage(deque):
+    """Keep every launch-owned object alive until a synchronized release."""
+
+    def __init__(self, maxlen: int):
+        super().__init__()
+        self._capacity = maxlen
+
+    @staticmethod
+    def _release(entry) -> None:
+        if len(entry) < 3:
+            return
+        release = getattr(entry[2], "destroy", None)
+        if callable(release):
+            release()
+
+    def append(self, entry) -> None:
+        if self._capacity > 0 and len(self) >= self._capacity:
+            self._release(super().popleft())
+        super().append(entry)
+
+    def clear(self) -> None:
+        while self:
+            self._release(super().popleft())
+
+
+# aclnn launch is asynchronous.  The executor may retain aclTensor and
+# aclIntArray descriptors after the Python launch call returns, so retaining
+# only tensors/workspace is insufficient for a later synchronized kernel.
+# Callers clear this ring only after synchronizing the active stream.
+_RECENT_LAUNCH_STORAGE = _LaunchStorage(maxlen=128)
+
 
 def dtype_to_acl(dtype) -> int:
     import torch
@@ -334,9 +367,13 @@ class _CallContext:
         return self.tensor(tensor, "int tensor")
 
     def destroy(self) -> None:
-        for resource in reversed(self.resources):
-            resource.destroy()
-        self.resources.clear()
+        # Descriptor destruction belongs to the tensors' device as well.  A
+        # deferred release commonly happens after the call guard has restored
+        # a different current device.
+        with _npu_device_guard(self.device):
+            for resource in reversed(self.resources):
+                resource.destroy()
+            self.resources.clear()
 
 
 class _AclnnRuntime:
@@ -439,6 +476,10 @@ def runtime() -> _AclnnRuntime:
     return _RUNTIME
 
 
+def finalize(outputs, workspace, context) -> None:
+    _RECENT_LAUNCH_STORAGE.append((tuple(outputs), workspace, context))
+
+
 def _call_device(outputs: Sequence[object]):
     device = None
     device_index = None
@@ -465,18 +506,20 @@ def call_aclnn(name: str, build_args, outputs, *, get_workspace_argtypes=None):
     outputs_tuple = outputs if isinstance(outputs, tuple) else (outputs,)
     device = _call_device(outputs_tuple)
     ctx = _CallContext(aclnn_runtime, device)
-    with _npu_device_guard(device):
-        try:
+    try:
+        with _npu_device_guard(device):
             args = build_args(ctx)
             # runtime.call 在目标 current stream 上分配 workspace 并把 kernel
             # enqueue 到同一 stream。调用返回后可立即释放 Python 引用；NPU
             # caching allocator 会按 stream 生命周期管理底层 block 的安全复用。
-            aclnn_runtime.call(
+            workspace = aclnn_runtime.call(
                 name,
                 args,
                 device,
                 get_workspace_argtypes=get_workspace_argtypes,
             )
-        finally:
-            ctx.destroy()
+    except Exception:
+        ctx.destroy()
+        raise
+    finalize(outputs_tuple, workspace, ctx)
     return outputs

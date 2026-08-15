@@ -295,6 +295,32 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     return ge::GRAPH_SUCCESS;
 }
 
+struct ChunkScaledDotKktCompileInfo {};
+
+ge::graphStatus TilingParse(gert::TilingParseContext *context)
+{
+    return context == nullptr ? ge::GRAPH_FAILED : ge::GRAPH_SUCCESS;
+}
+
 IMPL_OP_OPTILING(ChunkScaledDotKkt)
-    .Tiling(TilingFunc);
+    .Tiling(TilingFunc)
+    .TilingParse<ChunkScaledDotKktCompileInfo>(TilingParse);
+
+ge::graphStatus TilingFusedCumsumKkt(gert::TilingContext *context)
+{
+    if (context == nullptr || context->GetInputShape(kInputKIndex) == nullptr ||
+        context->GetInputShape(kInputGIndex) == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    const gert::Shape &kShape = context->GetInputShape(kInputKIndex)->GetStorageShape();
+    const gert::Shape &gShape = context->GetInputShape(kInputGIndex)->GetStorageShape();
+    if (kShape.GetDimNum() != 4 || gShape.GetDimNum() != 3 || kShape.GetDim(1) != gShape.GetDim(1)) {
+        return ge::GRAPH_FAILED;
+    }
+    return TilingFunc(context);
+}
+
+IMPL_OP_OPTILING(ChunkCumsumKkt)
+    .Tiling(TilingFusedCumsumKkt)
+    .TilingParse<ChunkScaledDotKktCompileInfo>(TilingParse);
 }  // namespace optiling

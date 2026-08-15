@@ -82,7 +82,8 @@ template<
     typename TileShapes = GDNFwdHTileShapes128,
     bool kGated = false,
     bool scalarGated = true,
-    bool useExp2 = false
+    bool useExp2 = false,
+    bool kChunkPipeline = false
 >
 class GDNFwdHKernel {
 public:

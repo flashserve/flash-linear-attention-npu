@@ -83,6 +83,10 @@ function(op_add_subdirectory OP_LIST OP_DIR_LIST)
         )
     endif()
 
+    # Documentation evidence may contain archived source snapshots.  They are
+    # not build inputs and must not be rediscovered as real operator trees.
+    list(FILTER OP_HOST_CMAKE_FILES EXCLUDE REGEX "/docs/")
+
     foreach(OP_CMAKE_FILE ${OP_HOST_CMAKE_FILES})
         if ("${OP_CMAKE_FILE}" MATCHES "op_host")
             get_filename_component(OP_HOST_DIR "${OP_CMAKE_FILE}" DIRECTORY)

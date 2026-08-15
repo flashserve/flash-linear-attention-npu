@@ -42,7 +42,8 @@ using namespace tla;
 namespace Catlass::Gemm::Kernel {
 
 // Template for Matmul kernel. Compute C = A * B
-template <class BlockMmadU_, class BlockMmadW_>
+template <class BlockMmadU_, class BlockMmadW_, bool kFlattenHeadTasks_ = false,
+          bool kAbcTaskOrder_ = false>
 class RecomputeWUFwdTla {
 public:
     using BlockMmadU = BlockMmadU_;
@@ -63,6 +64,8 @@ public:
     using LayoutKbgExp = typename BlockMmadW::LayoutB;
     using ElementW = typename BlockMmadW::ElementC;
     using LayoutW = typename BlockMmadW::LayoutC;
+    static constexpr bool kFlattenHeadTasks = kFlattenHeadTasks_;
+    static constexpr bool kAbcTaskOrder = kAbcTaskOrder_;
     Arch::CrossCoreFlagWithReverse<> flagAivFinishStore{SYNC_AIC_AIV_FLAG_5, SYNC_AIV_AIC_FLAG_3};
     /// Parameters structure
     struct Params {
@@ -123,7 +126,7 @@ public:
     {
         Arch::Resource<ArchTag> resource;
         uint32_t coreIdx = AscendC::GetBlockIdx();
-        uint32_t coreLoops = params.chunkNum;
+        uint32_t coreLoops = kFlattenHeadTasks ? params.chunkNum * params.Hv : params.chunkNum;
         uint32_t bos = 0;
         uint32_t eos = 0;
         { //处理U     V->C
@@ -131,12 +134,29 @@ public:
             AscendC::GlobalTensor<ElementA> gmA;
             AscendC::GlobalTensor<ElementVb> gmVb;
             AscendC::GlobalTensor<ElementU> gmU;
-            for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
+            uint32_t loopBegin = coreIdx;
+            uint32_t loopEnd = coreLoops;
+            uint32_t loopStep = AscendC::GetBlockNum();
+            if constexpr (kAbcTaskOrder) {
+                // Match the contiguous ABC producer range in the fused core.
+                const uint32_t tasksPerCore =
+                    (coreLoops + AscendC::GetBlockNum() - 1) / AscendC::GetBlockNum();
+                loopBegin = coreIdx * tasksPerCore;
+                loopEnd = (loopBegin + tasksPerCore) < coreLoops ? loopBegin + tasksPerCore : coreLoops;
+                loopStep = 1;
+            }
+            for (uint32_t loopIdx = loopBegin; loopIdx < loopEnd; loopIdx += loopStep) {
+                uint32_t chunkIdx = 0;
+                uint32_t hBegin = 0;
+                uint32_t hEnd = 0;
+                DecodeRecomputeTask<kFlattenHeadTasks, kAbcTaskOrder>(
+                    loopIdx, params.ptrCuSeqLens, params.Hv, params.T, params.chunkSize,
+                    params.chunkNum, chunkIdx, hBegin, hEnd);
                 GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv, params.T,
-                               params.chunkSize, loopIdx, bos, eos);
+                               params.chunkSize, chunkIdx, bos, eos);
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
-                for (int h = 0; h < params.Hv; h++) {
+                for (uint32_t h = hBegin; h < hEnd; ++h) {
                     // Represent the full gm
                     gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.chunkSize);
 
@@ -173,13 +193,29 @@ public:
             AscendC::GlobalTensor<ElementA> gmA;
             AscendC::GlobalTensor<ElementKbgExp> gmKbgExp;
             AscendC::GlobalTensor<ElementW> gmW;
-            for (uint32_t loopIdx = coreIdx; loopIdx < coreLoops; loopIdx += AscendC::GetBlockNum()) {
+            uint32_t loopBegin = coreIdx;
+            uint32_t loopEnd = coreLoops;
+            uint32_t loopStep = AscendC::GetBlockNum();
+            if constexpr (kAbcTaskOrder) {
+                const uint32_t tasksPerCore =
+                    (coreLoops + AscendC::GetBlockNum() - 1) / AscendC::GetBlockNum();
+                loopBegin = coreIdx * tasksPerCore;
+                loopEnd = (loopBegin + tasksPerCore) < coreLoops ? loopBegin + tasksPerCore : coreLoops;
+                loopStep = 1;
+            }
+            for (uint32_t loopIdx = loopBegin; loopIdx < loopEnd; loopIdx += loopStep) {
+                uint32_t chunkIdx = 0;
+                uint32_t hBegin = 0;
+                uint32_t hEnd = 0;
+                DecodeRecomputeTask<kFlattenHeadTasks, kAbcTaskOrder>(
+                    loopIdx, params.ptrCuSeqLens, params.Hv, params.T, params.chunkSize,
+                    params.chunkNum, chunkIdx, hBegin, hEnd);
                 GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv, params.T,
-                               params.chunkSize, loopIdx, bos, eos);
+                               params.chunkSize, chunkIdx, bos, eos);
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord blockCoord{0, 0, 0};
                 GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
-                for (int h = 0; h < params.Hv; h++) {
+                for (uint32_t h = hBegin; h < hEnd; ++h) {
                     // Represent the full gm
                     gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.chunkSize);
                     gmKbgExp.SetGlobalBuffer((__gm__ ElementKbgExp *)params.ptrKbgExp +
@@ -212,7 +248,8 @@ public:
 template <class... Dims>
 using GemmCubeTileShape = tla::Shape<Dims...>;
 
-template <typename kType, typename betaType, typename L1TileShape, typename L0TileShape>
+template <typename kType, typename betaType, typename L1TileShape, typename L0TileShape,
+          bool kFlattenHeadTasks = false, bool kAbcTaskOrder = false>
 class RecomputeWUFwdProcess {
 public:
     /** @brief constructor */
@@ -246,16 +283,21 @@ private:
     GM_ADDR workspace;
 };
 
-template <typename kType, typename betaType, typename L1TileShape, typename L0TileShape>
-__aicore__ inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0TileShape>::RecomputeWUFwdProcess(
+template <typename kType, typename betaType, typename L1TileShape, typename L0TileShape,
+          bool kFlattenHeadTasks, bool kAbcTaskOrder>
+__aicore__ inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0TileShape,
+                                        kFlattenHeadTasks, kAbcTaskOrder>::RecomputeWUFwdProcess(
     GM_ADDR k_, GM_ADDR v_, GM_ADDR beta_, GM_ADDR A_, GM_ADDR g_,
     GM_ADDR cu_seqlens_, GM_ADDR chunk_indices_, GM_ADDR w_, GM_ADDR u_,
     GM_ADDR workspace_)
     : k(k_), v(v_), beta(beta_), A(A_), g(g_), cu_seqlens(cu_seqlens_),
       chunk_indices(chunk_indices_), w(w_), u(u_), workspace(workspace_){};
 
-template <typename kType, typename betaType, typename L1TileShape, typename L0TileShape>
-__aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0TileShape>::Init(const RecomputeWUFwdTilingData &tiling)
+template <typename kType, typename betaType, typename L1TileShape, typename L0TileShape,
+          bool kFlattenHeadTasks, bool kAbcTaskOrder>
+__aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0TileShape,
+                                             kFlattenHeadTasks, kAbcTaskOrder>::Init(
+    const RecomputeWUFwdTilingData &tiling)
 {
     B = tiling.B;
     T = tiling.T;
@@ -269,8 +311,10 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
     return;
 }
 
-template <typename kType, typename betaType, typename L1TileShape, typename L0TileShape>
-__aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0TileShape>::Process()
+template <typename kType, typename betaType, typename L1TileShape, typename L0TileShape,
+          bool kFlattenHeadTasks, bool kAbcTaskOrder>
+__aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0TileShape,
+                                             kFlattenHeadTasks, kAbcTaskOrder>::Process()
 {
     //输入
     using LayoutTagA = layout::RowMajor;
@@ -316,8 +360,8 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
     auto layoutW = MakeLayoutFromTag(tagW);
     
     // kernel level
-    using MatmulKernel =
-        Gemm::Kernel::RecomputeWUFwdTla<BlockMmadU, BlockMmadW>;
+    using MatmulKernel = Gemm::Kernel::RecomputeWUFwdTla<
+        BlockMmadU, BlockMmadW, kFlattenHeadTasks, kAbcTaskOrder>;
 
     MatmulKernel kernel;
 

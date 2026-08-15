@@ -25,6 +25,7 @@ BEGIN_TILING_DATA_DEF(ChunkScaledDotKktTilingData)
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkScaledDotKkt, ChunkScaledDotKktTilingData)
+REGISTER_TILING_DATA_CLASS(ChunkCumsumKkt, ChunkScaledDotKktTilingData)
 
 ge::graphStatus TilingFunc(gert::TilingContext *context);
 }  // namespace optiling

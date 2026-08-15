@@ -1,0 +1,234 @@
+{
+  "device": 7,
+  "dtype": "float32",
+  "elapsed_seconds": 9.876038551330566,
+  "heads_matrix": [
+    4,
+    8,
+    16
+  ],
+  "lane_mode": "one AIV per head, 4-byte DataCopyPad per BTH row",
+  "mode_summaries": {
+    "lane": {
+      "cases": 137,
+      "exact_cases": 17,
+      "first_failures": [
+        {
+          "exact": false,
+          "first_difference": {
+            "actual": 32.60140609741211,
+            "actual_bits": 1107453911,
+            "expected": 32.91547775268555,
+            "expected_bits": 1107536243,
+            "index": 10
+          },
+          "guard_mismatch_count": 0,
+          "heads": 4,
+          "mismatch_count": 1,
+          "mode": 0,
+          "rows": 2,
+          "seed": 0
+        },
+        {
+          "exact": false,
+          "first_difference": {
+            "actual": -2.1787893772125244,
+            "actual_bits": -1072991927,
+            "expected": -0.293428897857666,
+            "expected_bits": -1097450416,
+            "index": 12
+          },
+          "guard_mismatch_count": 0,
+          "heads": 4,
+          "mismatch_count": 4,
+          "mode": 0,
+          "rows": 3,
+          "seed": 0
+        },
+        {
+          "exact": false,
+          "first_difference": {
+            "actual": 0.06167725846171379,
+            "actual_bits": 1031577931,
+            "expected": 0.266924113035202,
+            "expected_bits": 1049143879,
+            "index": 12
+          },
+          "guard_mismatch_count": 0,
+          "heads": 4,
+          "mismatch_count": 4,
+          "mode": 0,
+          "rows": 3,
+          "seed": 1
+        },
+        {
+          "exact": false,
+          "first_difference": {
+            "actual": -0.31950026750564575,
+            "actual_bits": -1096575606,
+            "expected": -0.223564013838768,
+            "expected_bits": -1100681737,
+            "index": 12
+          },
+          "guard_mismatch_count": 0,
+          "heads": 4,
+          "mismatch_count": 4,
+          "mode": 0,
+          "rows": 3,
+          "seed": 2
+        },
+        {
+          "exact": false,
+          "first_difference": {
+            "actual": 17.34998321533203,
+            "actual_bits": 1099615428,
+            "expected": 17.322275161743164,
+            "expected_bits": 1099600901,
+            "index": 13
+          },
+          "guard_mismatch_count": 0,
+          "heads": 4,
+          "mismatch_count": 19,
+          "mode": 0,
+          "rows": 7,
+          "seed": 0
+        }
+      ],
+      "guard_mismatches": 0,
+      "mismatch_cases": 120,
+      "mismatch_elements": 557400
+    },
+    "owner_transpose": {
+      "cases": 117,
+      "exact_cases": 117,
+      "first_failures": [],
+      "guard_mismatches": 0,
+      "mismatch_cases": 0,
+      "mismatch_elements": 0
+    },
+    "whole_row": {
+      "cases": 117,
+      "exact_cases": 117,
+      "first_failures": [],
+      "guard_mismatches": 0,
+      "mismatch_cases": 0,
+      "mismatch_elements": 0
+    }
+  },
+  "owner_transpose_exact": true,
+  "probe_outcome": "lane_unsafe",
+  "row_mode": "one AIV, contiguous full-row DataCopyPad control",
+  "rows_matrix": [
+    1,
+    2,
+    3,
+    7,
+    8,
+    9,
+    31,
+    64,
+    65,
+    127,
+    128,
+    1025,
+    4096
+  ],
+  "schema": "gdn-phase6-lane-write-probe/v1",
+  "stress_cases": 20,
+  "timings": [
+    {
+      "heads": 8,
+      "iterations": 100,
+      "lane_median_ms": 0.036796000003814694,
+      "lane_minus_row_us": 22.25360035896301,
+      "lane_ms": [
+        0.03681940078735352,
+        0.036796000003814694,
+        0.036868200302124024,
+        0.03663739919662476,
+        0.03665040016174317
+      ],
+      "owner_median_ms": 0.014203799962997437,
+      "owner_minus_row_us": -0.3385996818542486,
+      "owner_ms": [
+        0.014485399723052978,
+        0.015602999925613403,
+        0.013819199800491334,
+        0.013870600461959839,
+        0.014203799962997437
+      ],
+      "row_median_ms": 0.014542399644851685,
+      "row_ms": [
+        0.014659999608993531,
+        0.016080600023269654,
+        0.013557800054550172,
+        0.014542399644851685,
+        0.013946399688720704
+      ],
+      "rows": 128
+    },
+    {
+      "heads": 8,
+      "iterations": 100,
+      "lane_median_ms": 0.17757780075073243,
+      "lane_minus_row_us": 162.00520038604736,
+      "lane_ms": [
+        0.17809080123901366,
+        0.18403139114379882,
+        0.1767997932434082,
+        0.17722719192504882,
+        0.17757780075073243
+      ],
+      "owner_median_ms": 0.015424000024795532,
+      "owner_minus_row_us": -0.1486003398895267,
+      "owner_ms": [
+        0.015692000389099122,
+        0.015424000024795532,
+        0.016615400314331053,
+        0.01392359972000122,
+        0.012382199764251709
+      ],
+      "row_median_ms": 0.015572600364685059,
+      "row_ms": [
+        0.015572600364685059,
+        0.015292199850082398,
+        0.03291359901428223,
+        0.025273799896240234,
+        0.011873400211334229
+      ],
+      "rows": 1025
+    },
+    {
+      "heads": 8,
+      "iterations": 100,
+      "lane_median_ms": 0.6340480041503906,
+      "lane_minus_row_us": 621.9646036624908,
+      "lane_ms": [
+        0.6352946090698243,
+        0.6341207885742187,
+        0.6340480041503906,
+        0.6333327865600586,
+        0.6336404037475586
+      ],
+      "owner_median_ms": 0.02677759885787964,
+      "owner_minus_row_us": 14.694198369979858,
+      "owner_ms": [
+        0.027005600929260253,
+        0.026840600967407226,
+        0.026552400588989257,
+        0.026547999382019044,
+        0.02677759885787964
+      ],
+      "row_median_ms": 0.01208340048789978,
+      "row_ms": [
+        0.01208340048789978,
+        0.01209879994392395,
+        0.011816999912261962,
+        0.01171239972114563,
+        0.012697999477386474
+      ],
+      "rows": 4096
+    }
+  ],
+  "whole_row_exact": true
+}

@@ -207,8 +207,18 @@ class RuntimeDeviceGuardTest(unittest.TestCase):
                         lambda ctx: [ctx.tensor(FakeTensor(2), "input"), ctx.tensor(output, "output")],
                         output,
                     )
+                    events_before_release = list(events)
+                    RUNTIME._RECENT_LAUNCH_STORAGE.clear()
 
         self.assertIs(result, output)
+        self.assertEqual(
+            events_before_release,
+            [
+                ("descriptor", 2, 2),
+                ("descriptor", 2, 2),
+                ("launch", 2, 2),
+            ],
+        )
         self.assertEqual(
             events,
             [
@@ -221,7 +231,7 @@ class RuntimeDeviceGuardTest(unittest.TestCase):
         )
         self.assertEqual(npu.current_device(), 0)
 
-    def test_call_aclnn_does_not_retain_outputs_workspace_or_helpers(self):
+    def test_call_aclnn_releases_outputs_workspace_and_helpers_after_synchronized_clear(self):
         npu = FakeNpu(current_device=0)
         torch_module = fake_torch(npu)
         workspace_ref = None
@@ -262,8 +272,10 @@ class RuntimeDeviceGuardTest(unittest.TestCase):
                     )
 
         self.assertIsNotNone(workspace_ref)
-        self.assertIsNone(workspace_ref())
+        self.assertIsNotNone(workspace_ref())
         self.assertIs(result, output)
+        with mock.patch.dict(sys.modules, {"torch": torch_module}):
+            RUNTIME._RECENT_LAUNCH_STORAGE.clear()
         del result
         del output
         del helper
