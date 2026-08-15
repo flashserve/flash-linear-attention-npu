@@ -894,8 +894,9 @@ def npu_chunk_scaled_dot_kkt(
     k_contig = k.contiguous()
     g_contig = g.contiguous()
     beta_contig = beta.contiguous()
-    B, Hk, T, _ = _shape(k_contig)
-    out = _empty((B, Hk, T, int(chunk_size)), k_contig, dtype=torch.float32)
+    B, _, T, _ = _shape(k_contig)
+    _, Hv, _ = _shape(g_contig)
+    out = _empty((B, Hv, T, int(chunk_size)), k_contig, dtype=torch.float32)
     return _call_aclnn(
         "aclnnChunkScaledDotKkt",
         lambda ctx: [

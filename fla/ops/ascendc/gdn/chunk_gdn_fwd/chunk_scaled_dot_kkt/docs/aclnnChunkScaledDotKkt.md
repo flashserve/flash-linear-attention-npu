@@ -18,7 +18,7 @@
   \sum_d k_{b,hk,t,d} k_{b,hk,s,d}
   $$
 
-  其中 `BT=chunkSize`，`r=t mod BT`，`s=t-r+c`。GVA 场景下 `k` 使用 `Hk` 个 key head，`g/beta` 使用 `Hv` 个 value head 输入，`A` 与 `k` 的 `Hk` 对齐；当 `Hv > Hk` 时，本 KKT 算子读取 `g/beta` 的前 `Hk` 个 head 参与计算。当 `c >= r` 时输出为 0。
+  其中 `BT=chunkSize`，`r` 为当前 token 在 chunk 内的行号，`s=t-r+c`。GVA 场景下 `k` 使用 `Hk` 个 key head，`g/beta` 使用 `Hv` 个 value head 输入，`A` 与 `Hv` 对齐；每个 value head 通过 `hk = hv / (Hv / Hk)` 复用对应 key head。当 `c >= r` 时输出为 0。
 
 ## 函数原型
 
@@ -57,7 +57,7 @@ aclnnStatus aclnnChunkScaledDotKkt(
 | cuSeqlensOptional | 输入 | 变长序列累计长度，Host 侧 aclIntArray；定长时传 `nullptr` |
 | chunkIndicesOptional | 输入 | 变长 chunk 元数据，Host 侧 aclIntArray，按 `[seq_id, chunk_id]` 成对存放；定长时传 `nullptr` |
 | chunkSize | 输入 | chunk 大小，仅支持 `16`、`32`、`64`、`128` |
-| A | 输出 | 输出张量，Device 侧 aclTensor，shape 为 `[B,Hk,T,chunkSize]`，数据类型为 FLOAT |
+| A | 输出 | 输出张量，Device 侧 aclTensor，shape 为 `[B,Hv,T,chunkSize]`，数据类型为 FLOAT |
 | workspaceSize | 输出 | 返回执行该算子所需的 workspace 大小 |
 | executor | 输出 | 返回算子执行器 |
 
@@ -85,7 +85,7 @@ aclnnStatus aclnnChunkScaledDotKkt(
 
 | 输出 | 数据类型 | Shape | 描述 |
 | -- | -- | -- | -- |
-| A | FLOAT | `[B,Hk,T,chunkSize]` | 每个 chunk 内的严格下三角 scaled dot product |
+| A | FLOAT | `[B,Hv,T,chunkSize]` | 每个 chunk 内的严格下三角 scaled dot product |
 
 ## 返回值
 
@@ -122,7 +122,7 @@ torch.ops.npu.npu_chunk_scaled_dot_kkt(
 
 | 返回值 | 类型 | 描述 |
 | -- | -- | -- |
-| A | Tensor | shape 为 `[B,Hk,T,chunk_size]`，dtype 为 `torch.float32` |
+| A | Tensor | shape 为 `[B,Hv,T,chunk_size]`，dtype 为 `torch.float32` |
 
 ### 使用示例
 
@@ -137,5 +137,5 @@ g = torch.randn(B, Hv, T, dtype=torch.float32, device="npu")
 beta = torch.rand(B, Hv, T, dtype=torch.float32, device="npu")
 
 A = torch.ops.npu.npu_chunk_scaled_dot_kkt(k, g, beta, chunk_size=BT)
-assert A.shape == (B, Hk, T, BT)
+assert A.shape == (B, Hv, T, BT)
 ```

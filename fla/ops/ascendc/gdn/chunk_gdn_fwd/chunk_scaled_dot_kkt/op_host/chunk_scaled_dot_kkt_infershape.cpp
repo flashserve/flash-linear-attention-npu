@@ -42,7 +42,7 @@ static ge::graphStatus InferShapeChunkScaledDotKkt(gert::InferShapeContext *cont
     gert::Shape *outShape = context->GetOutputShape(0);
     outShape->SetDimNum(4);
     outShape->SetDim(0, b);
-    outShape->SetDim(1, hk);
+    outShape->SetDim(1, hv);
     outShape->SetDim(2, t);
     outShape->SetDim(3, chunkSize);
     return ge::GRAPH_SUCCESS;

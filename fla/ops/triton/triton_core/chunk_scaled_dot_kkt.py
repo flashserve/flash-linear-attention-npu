@@ -19,7 +19,8 @@ def chunk_scaled_dot_kkt_fwd_kernel(
     cu_seqlens,
     chunk_indices,
     T,
-    H: tl.constexpr,
+    H_K: tl.constexpr,
+    H_V: tl.constexpr,
     K: tl.constexpr,
     BT: tl.constexpr,
     BK: tl.constexpr,
@@ -58,18 +59,20 @@ def chunk_scaled_dot_kkt_fwd_kernel(
             i_t = local_idx
             T_local = T
 
-        for i_h in range(H):
-            k_batch_off = i_b * T_max * H * K
-            beta_batch_off = i_b * H * T_max
-            g_batch_off = i_b * H * T_max
-            A_batch_off = i_b * T_max * H * BT
+        HV_PER_HK = H_V // H_K
+        for i_hv in range(H_V):
+            i_hk = i_hv // HV_PER_HK
+            k_batch_off = i_b * T_max * H_K * K
+            beta_batch_off = i_b * H_V * T_max
+            g_batch_off = i_b * H_V * T_max
+            A_batch_off = i_b * T_max * H_V * BT
 
-            p_beta = tl.make_block_ptr(beta + beta_batch_off + bos + i_h * T_max, (T_local,), (1,), (i_t * BT,), (BT,), (0,))
+            p_beta = tl.make_block_ptr(beta + beta_batch_off + bos + i_hv * T_max, (T_local,), (1,), (i_t * BT,), (BT,), (0,))
             b_beta = tl.load(p_beta, boundary_check=(0,))
 
             b_A = tl.zeros([BT, BT], dtype=tl.float32)
             for i_k in range(tl.cdiv(K, BK)):
-                p_k = tl.make_block_ptr(k + k_batch_off + i_h * T_max * K + bos * K, (T_local, K), (K, 1), (i_t * BT, i_k * BK), (BT, BK), (1, 0))
+                p_k = tl.make_block_ptr(k + k_batch_off + i_hk * T_max * K + bos * K, (T_local, K), (K, 1), (i_t * BT, i_k * BK), (BT, BK), (1, 0))
                 b_k = tl.load(p_k, boundary_check=(0, 1))
                 dot_product = tl.dot(b_k, tl.trans(b_k))
 
@@ -85,15 +88,107 @@ def chunk_scaled_dot_kkt_fwd_kernel(
                 b_A += masked_dot
 
             if USE_G:
-                p_g = tl.make_block_ptr(g + g_batch_off + bos + i_h * T_max, (T_local,), (1,), (i_t * BT,), (BT,), (0,))
+                p_g = tl.make_block_ptr(g + g_batch_off + bos + i_hv * T_max, (T_local,), (1,), (i_t * BT,), (BT,), (0,))
                 b_g = tl.load(p_g, boundary_check=(0,))
                 b_g_diff = b_g[:, None] - b_g[None, :]
                 b_g_diff = tl.minimum(tl.maximum(b_g_diff, -50.0), 50.0)
                 b_A *= tl.exp(b_g_diff)
             b_A *= b_beta[:, None]
 
-            p_A = tl.make_block_ptr(A + A_batch_off + (bos * H + i_h) * BT, (T_local, BT), (BT * H, 1), (i_t * BT, 0), (BT, BT), (1, 0))
+            p_A = tl.make_block_ptr(A + A_batch_off + (bos * H_V + i_hv) * BT, (T_local, BT), (BT * H_V, 1), (i_t * BT, 0), (BT, BT), (1, 0))
             tl.store(p_A, b_A.to(p_A.dtype.element_ty), boundary_check=(0, 1))
+
+
+@triton.heuristics({
+    'USE_G': lambda args: args['g'] is not None,
+    'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
+})
+@triton.jit(do_not_specialize=['T'])
+def chunk_scaled_dot_kkt_fwd_kernel_sub_block(
+    k,
+    g,
+    beta,
+    A,
+    cu_seqlens,
+    chunk_indices,
+    T,
+    H_K: tl.constexpr,
+    H_V: tl.constexpr,
+    K: tl.constexpr,
+    BT: tl.constexpr,
+    BC: tl.constexpr,
+    BK: tl.constexpr,
+    NC: tl.constexpr,
+    IS_VARLEN: tl.constexpr,
+    USE_G: tl.constexpr,
+):
+    i_t, i_c, i_b = tl.program_id(0), tl.program_id(1), tl.program_id(2)
+    i_i, i_j = i_c // NC, i_c % NC
+    T_max = T
+
+    if IS_VARLEN:
+        i_n = tl.load(chunk_indices + i_t * 2).to(tl.int32)
+        i_t = tl.load(chunk_indices + i_t * 2 + 1).to(tl.int32)
+        bos = tl.load(cu_seqlens + i_n).to(tl.int32)
+        eos = tl.load(cu_seqlens + i_n + 1).to(tl.int32)
+        T_local = eos - bos
+    else:
+        bos, eos = 0, T
+        T_local = T
+
+    should_store = i_t * BT + i_i * BC < T_local
+    if should_store:
+        o_i = tl.arange(0, BC)
+        o_j = tl.arange(0, BC)
+        o_k = tl.arange(0, BK)
+        row_t = i_t * BT + i_i * BC + o_i
+        col_t = i_t * BT + i_j * BC + o_j
+        col_out = i_j * BC + o_j
+        row_mask = row_t < T_local
+        col_mask = col_t < T_local
+        k_mask = o_k < K
+        lower_mask = row_t[:, None] > col_t[None, :]
+        tile_mask = row_mask[:, None]
+
+        hv_per_hk = H_V // H_K
+        for i_hv in range(H_V):
+            i_hk = i_hv // hv_per_hk
+            k_batch_off = i_b * T_max * H_K * K
+            beta_batch_off = i_b * H_V * T_max
+            g_batch_off = i_b * H_V * T_max
+            A_batch_off = i_b * T_max * H_V * BT
+
+            b_A = tl.zeros([BC, BC], dtype=tl.float32)
+            if i_i >= i_j:
+                b_beta = tl.load(beta + beta_batch_off + i_hv * T_max + bos + row_t, mask=row_mask, other=0.0)
+                for i_k in range(tl.cdiv(K, BK)):
+                    k_cols = i_k * BK + o_k
+                    b_k_row = tl.load(
+                        k + k_batch_off + i_hk * T_max * K + (bos + row_t)[:, None] * K + k_cols[None, :],
+                        mask=row_mask[:, None] & k_mask[None, :],
+                        other=0.0,
+                    )
+                    b_k_col = tl.load(
+                        k + k_batch_off + i_hk * T_max * K + (bos + col_t)[:, None] * K + k_cols[None, :],
+                        mask=col_mask[:, None] & k_mask[None, :],
+                        other=0.0,
+                    )
+                    b_A += tl.dot(b_k_row, tl.trans(b_k_col))
+
+                if USE_G:
+                    b_g_row = tl.load(g + g_batch_off + i_hv * T_max + bos + row_t, mask=row_mask, other=0.0)
+                    b_g_col = tl.load(g + g_batch_off + i_hv * T_max + bos + col_t, mask=col_mask, other=0.0)
+                    b_g_diff = b_g_row[:, None] - b_g_col[None, :]
+                    b_g_diff = tl.minimum(tl.maximum(b_g_diff, -50.0), 50.0)
+                    b_A *= tl.exp(b_g_diff)
+                b_A *= b_beta[:, None]
+                b_A = tl.where(lower_mask, b_A, 0.0)
+
+            tl.store(
+                A + A_batch_off + ((bos + row_t)[:, None] * H_V + i_hv) * BT + col_out[None, :],
+                b_A.to(A.dtype.element_ty),
+                mask=tile_mask,
+            )
 
 
 @triton.heuristics({
@@ -258,9 +353,12 @@ def chunk_scaled_dot_kkt_fwd(
             The dtype of the output tensor. Default: `torch.float32`
 
     Returns:
-        beta * K * K^T of shape `[B, T, H, BT]` where `BT` is the chunk size.
+        beta * K * K^T of shape `[B, T, Hv, BT]` where `BT` is the chunk size.
     """
-    B, H, T, K = k.shape
+    B, H_K, T, K = k.shape
+    H_V = beta.shape[-1]
+    if H_V % H_K != 0:
+        raise ValueError(f"Expected beta/g head count Hv to be a multiple of Hk, got Hk={H_K}, Hv={H_V}.")
     BT = chunk_size
     NT = triton.cdiv(T, BT) if cu_seqlens is None else len(chunk_indices)
     beta = beta.transpose(1, 2).contiguous()
@@ -268,8 +366,8 @@ def chunk_scaled_dot_kkt_fwd(
     BK = 128
     kernel_num = 24
 
-    if gk is None:
-        A = torch.empty(B, T, H, BT, device=k.device, dtype=output_dtype)
+    if gk is None and BT <= 64:
+        A = torch.empty(B, T, H_V, BT, device=k.device, dtype=output_dtype)
         chunk_scaled_dot_kkt_fwd_kernel[(kernel_num,)](
             k=k,
             g=g,
@@ -278,7 +376,8 @@ def chunk_scaled_dot_kkt_fwd(
             cu_seqlens=cu_seqlens,
             chunk_indices=chunk_indices,
             T=T,
-            H=H,
+            H_K=H_K,
+            H_V=H_V,
             K=K,
             BT=BT,
             BK=BK,
@@ -288,10 +387,36 @@ def chunk_scaled_dot_kkt_fwd(
         )
         return A
 
+    if gk is None:
+        BC = min(16, BT)
+        NC = triton.cdiv(BT, BC)
+        A = torch.empty(B, T, H_V, BT, device=k.device, dtype=output_dtype)
+        grid = (NT, NC * NC, B)
+        chunk_scaled_dot_kkt_fwd_kernel_sub_block[grid](
+            k=k,
+            g=g,
+            beta=beta,
+            A=A,
+            cu_seqlens=cu_seqlens,
+            chunk_indices=chunk_indices,
+            T=T,
+            H_K=H_K,
+            H_V=H_V,
+            K=K,
+            BT=BT,
+            BC=BC,
+            BK=BK,
+            NC=NC,
+        )
+        return A
+
+    if H_V != H_K:
+        raise NotImplementedError("Triton chunk_scaled_dot_kkt gk path currently requires Hv == Hk.")
+
     BC = min(16, BT)
     NC = triton.cdiv(BT, BC)
     BK = max(triton.next_power_of_2(K), 16)
-    A = torch.zeros(B, T, H, BT, device=k.device, dtype=output_dtype)
+    A = torch.zeros(B, T, H_K, BT, device=k.device, dtype=output_dtype)
     grid = (NT, NC * NC, B)
     chunk_scaled_dot_kkt_fwd_kernel_intra_sub_inter[grid](
         k=k,
@@ -301,7 +426,7 @@ def chunk_scaled_dot_kkt_fwd(
         cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices,
         T=T,
-        H=H,
+        H=H_K,
         K=K,
         BT=BT,
         BC=BC,
@@ -320,7 +445,7 @@ def chunk_scaled_dot_kkt_fwd(
         cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices,
         T=T,
-        H=H,
+        H=H_K,
         K=K,
         BT=BT,
         BC=BC,
