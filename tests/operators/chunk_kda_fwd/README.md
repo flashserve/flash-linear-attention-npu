@@ -54,6 +54,23 @@ FLA_NPU_RUN_OPERATOR_TESTS=1 pytest -q tests/operators/chunk_kda_fwd/st/test_exa
 cd examples/fast_kernel_launch_example && FAST_KERNEL_OP_NAME=chunk_kda_fwd pytest -q tests/chunk_kda_fwd
 ```
 
+`scripts/benchmark_kda_main.sh` 提供独立 wheel 构建、安装、打包 API 自检和 `msopprof`
+报告聚合入口。默认直接使用当前
+checkout，不访问远端仓库；需要验证远端 ref 时才同时传入 `--repo-url` 和 `--ref`：
+
+```bash
+bash scripts/benchmark_kda_main.sh \
+  --soc ascend950 \
+  --device 0 \
+  --work-root "$PWD/outputs/kda-main-benchmark" \
+  --cases prefill_fwd_b1_s8192,prefill_fwd_b1_s16384
+```
+
+该入口的 prefill 固定为 BF16、`H=96`、`K=V=128`、`chunk_size=64`、
+`initial_state=None`、`output_final_state=False`、`use_gate_in_kernel=True`、
+`safe_gate=True`、`state_v_first=True`。报告使用 `msopprof` 设备侧耗时；任一 case 出现
+`ERROR`、`OOM` 或 `TIMEOUT` 时，入口返回非零状态并保留逐 case 诊断。
+
 A5 PR264 一键构建、隔离安装和基础验收：
 
 ```bash
