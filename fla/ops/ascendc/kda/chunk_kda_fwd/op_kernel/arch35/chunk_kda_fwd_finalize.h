@@ -82,6 +82,85 @@ constexpr uint32_t KDA_GATE_TILE_ROWS = 32;
 constexpr uint32_t KDA_CUBE_MIN_REDUCTION = 16;
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+constexpr AscendC::MicroAPI::CastTrait KDA_TAIL_BF16_TO_FP32 = {
+    AscendC::MicroAPI::RegLayout::ZERO,
+    AscendC::MicroAPI::SatMode::SAT,
+    AscendC::MicroAPI::MaskMergeMode::ZEROING,
+    AscendC::RoundMode::CAST_NONE,
+};
+
+static __simd_vf__ inline void ComputeKdaTailOutputRegbase(
+    __ubuf__ float *dst, __ubuf__ bfloat16_t *h, __ubuf__ bfloat16_t *vNew,
+    __ubuf__ bfloat16_t *qgScaled, __ubuf__ bfloat16_t *aqk,
+    uint16_t rows, uint16_t curT)
+{
+    using namespace AscendC::MicroAPI;
+    constexpr uint16_t DIM = 128;
+    constexpr uint16_t FP32_REG_ELEMENTS = AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    constexpr uint16_t AQK_ROW_ELEMENTS = 16;
+    MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
+
+    for (uint16_t row = 0; row < rows; ++row) {
+        RegTensor<float> acc0;
+        RegTensor<float> acc1;
+        Duplicate(acc0, 0.0f, fullMask);
+        Duplicate(acc1, 0.0f, fullMask);
+
+        for (uint16_t d = 0; d < DIM; ++d) {
+            RegTensor<bfloat16_t> matrixRaw0;
+            RegTensor<bfloat16_t> matrixRaw1;
+            RegTensor<bfloat16_t> weightRaw;
+            RegTensor<float> matrix0;
+            RegTensor<float> matrix1;
+            RegTensor<float> weight;
+            RegTensor<float> product0;
+            RegTensor<float> product1;
+            DataCopy<bfloat16_t, LoadDist::DIST_UNPACK_B16>(
+                matrixRaw0, h + static_cast<uint32_t>(d) * DIM);
+            DataCopy<bfloat16_t, LoadDist::DIST_UNPACK_B16>(
+                matrixRaw1, h + static_cast<uint32_t>(d) * DIM + FP32_REG_ELEMENTS);
+            LoadAlign<bfloat16_t, LoadDist::DIST_BRC_B16>(
+                weightRaw, qgScaled + static_cast<uint32_t>(row) * DIM + d);
+            Cast<float, bfloat16_t, KDA_TAIL_BF16_TO_FP32>(matrix0, matrixRaw0, fullMask);
+            Cast<float, bfloat16_t, KDA_TAIL_BF16_TO_FP32>(matrix1, matrixRaw1, fullMask);
+            Cast<float, bfloat16_t, KDA_TAIL_BF16_TO_FP32>(weight, weightRaw, fullMask);
+            Mul(product0, matrix0, weight, fullMask);
+            Mul(product1, matrix1, weight, fullMask);
+            Add(acc0, acc0, product0, fullMask);
+            Add(acc1, acc1, product1, fullMask);
+        }
+
+        for (uint16_t token = 0; token < curT; ++token) {
+            RegTensor<bfloat16_t> matrixRaw0;
+            RegTensor<bfloat16_t> matrixRaw1;
+            RegTensor<bfloat16_t> weightRaw;
+            RegTensor<float> matrix0;
+            RegTensor<float> matrix1;
+            RegTensor<float> weight;
+            RegTensor<float> product0;
+            RegTensor<float> product1;
+            DataCopy<bfloat16_t, LoadDist::DIST_UNPACK_B16>(
+                matrixRaw0, vNew + static_cast<uint32_t>(token) * DIM);
+            DataCopy<bfloat16_t, LoadDist::DIST_UNPACK_B16>(
+                matrixRaw1, vNew + static_cast<uint32_t>(token) * DIM + FP32_REG_ELEMENTS);
+            LoadAlign<bfloat16_t, LoadDist::DIST_BRC_B16>(
+                weightRaw, aqk + static_cast<uint32_t>(row) * AQK_ROW_ELEMENTS + token);
+            Cast<float, bfloat16_t, KDA_TAIL_BF16_TO_FP32>(matrix0, matrixRaw0, fullMask);
+            Cast<float, bfloat16_t, KDA_TAIL_BF16_TO_FP32>(matrix1, matrixRaw1, fullMask);
+            Cast<float, bfloat16_t, KDA_TAIL_BF16_TO_FP32>(weight, weightRaw, fullMask);
+            Mul(product0, matrix0, weight, fullMask);
+            Mul(product1, matrix1, weight, fullMask);
+            Add(acc0, acc0, product0, fullMask);
+            Add(acc1, acc1, product1, fullMask);
+        }
+
+        DataCopy(dst + static_cast<uint32_t>(row) * DIM, acc0, fullMask);
+        DataCopy(dst + static_cast<uint32_t>(row) * DIM + FP32_REG_ELEMENTS, acc1, fullMask);
+    }
+}
+#endif
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 using KdaArchTag = Catlass::Arch::Ascend950;
 #else
 using KdaArchTag = Catlass::Arch::AtlasA2;
@@ -576,6 +655,50 @@ private:
             WaitFlag<HardEvent::S_MTE2>(sToMte2Event_);
         }
     }
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    __aicore__ inline void ComputeTailOutputRegbaseRows(
+        LocalTensor<float> &dst, uint64_t b, uint64_t hv, uint64_t chunkIdx,
+        uint64_t start, uint64_t curT, uint64_t rowBegin, uint64_t rows)
+    {
+        // Keep sub-16 tails on one MTE2-to-V handoff; the scalar event chain can retain stale state.
+        constexpr uint64_t dim = 128;
+        constexpr uint64_t maxTailRows = KDA_CUBE_MIN_REDUCTION - 1;
+        constexpr uint64_t aqkStagedCols = KDA_CUBE_MIN_REDUCTION;
+        constexpr uint64_t hOffset = 0;
+        constexpr uint64_t vNewOffset = hOffset + dim * dim;
+        constexpr uint64_t qgOffset = vNewOffset + maxTailRows * dim;
+        constexpr uint64_t aqkOffset = qgOffset + maxTailRows * dim;
+        LocalTensor<bfloat16_t> staging = gateWritebackBuf_.Get<bfloat16_t>();
+        LocalTensor<bfloat16_t> hLocal = staging[hOffset];
+        LocalTensor<bfloat16_t> vNewLocal = staging[vNewOffset];
+        LocalTensor<bfloat16_t> qgLocal = staging[qgOffset];
+        LocalTensor<bfloat16_t> aqkLocal = staging[aqkOffset];
+
+        CopyVectorIn(
+            hLocal, propagatedH_, HOffset(b, hv, chunkIdx, 0, 0), dim * dim);
+        CopyVectorIn(
+            vNewLocal, propagatedVNew_, KVOffset(b, hv, start, 0, V_), curT * dim);
+        CopyVectorIn(
+            qgLocal, preparedQG_, KVOffset(b, hv, start + rowBegin, 0, K_), rows * dim);
+        for (uint64_t row = 0; row < rows; ++row) {
+            LocalTensor<bfloat16_t> aqkRow = aqkLocal[row * aqkStagedCols];
+            CopyVectorIn(
+                aqkRow, preparedAqk_,
+                AOffset(b, hv, start + rowBegin + row, 0), aqkStagedCols);
+        }
+        SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+        WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+        AscendC::VF_CALL<ComputeKdaTailOutputRegbase>(
+            reinterpret_cast<__ubuf__ float *>(dst.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(hLocal.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(vNewLocal.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(qgLocal.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(aqkLocal.GetPhyAddr()),
+            static_cast<uint16_t>(rows), static_cast<uint16_t>(curT));
+        PipeBarrier<PIPE_V>();
+    }
+#endif
 
     template <typename CopyT>
     __aicore__ inline void LoadAsFloatVector(GlobalTensor<CopyT> &src, uint64_t srcOffset,
@@ -1203,9 +1326,32 @@ private:
             LocalTensor<T> outTyped = gateWritebackBuf_.Get<T>();
 
             if (curT < KDA_CUBE_MIN_REDUCTION) {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                if constexpr (IsSameType<T, bfloat16_t>::value) {
+                    if (BT_ == 64 && K_ == 128 && V_ == 128) {
+                        ComputeTailOutputRegbaseRows(
+                            outLocal, b, hv, chunkIdx, start, curT, tileRow, tileRows);
+                    } else {
+                        ComputeTailStateRows(
+                            stateLocal, b, hv, chunkIdx, start, tileRow, tileRows);
+                        ComputeTailLocalRows(localLocal, b, hv, start, curT, tileRow, tileRows);
+                        Add(outLocal, stateLocal, localLocal, static_cast<uint32_t>(elems));
+                        PipeBarrier<PIPE_V>();
+                    }
+                } else {
+                    ComputeTailStateRows(
+                        stateLocal, b, hv, chunkIdx, start, tileRow, tileRows);
+                    ComputeTailLocalRows(localLocal, b, hv, start, curT, tileRow, tileRows);
+                    Add(outLocal, stateLocal, localLocal, static_cast<uint32_t>(elems));
+                    PipeBarrier<PIPE_V>();
+                }
+#else
                 ComputeTailStateRows(
                     stateLocal, b, hv, chunkIdx, start, tileRow, tileRows);
                 ComputeTailLocalRows(localLocal, b, hv, start, curT, tileRow, tileRows);
+                Add(outLocal, stateLocal, localLocal, static_cast<uint32_t>(elems));
+                PipeBarrier<PIPE_V>();
+#endif
             } else {
                 CopyVectorIn(stateLocal, o_, KVOffset(b, hv, ti, 0, V_), elems);
                 SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
@@ -1213,9 +1359,9 @@ private:
                 CopyVectorIn(localLocal, u_, KVOffset(b, hv, ti, 0, V_), elems);
                 SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
                 WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+                Add(outLocal, stateLocal, localLocal, static_cast<uint32_t>(elems));
+                PipeBarrier<PIPE_V>();
             }
-            Add(outLocal, stateLocal, localLocal, static_cast<uint32_t>(elems));
-            PipeBarrier<PIPE_V>();
             ClampFp32ToOutputType(outLocal, static_cast<uint32_t>(elems));
             Cast(outTyped, outLocal, RoundMode::CAST_RINT, static_cast<uint32_t>(elems));
             PipeBarrier<PIPE_V>();

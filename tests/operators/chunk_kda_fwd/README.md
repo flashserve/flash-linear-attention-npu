@@ -19,6 +19,7 @@
 | `ut/op_kernel/test_contract.py` | kernel 入口、tiling key 说明和 direct launch 静态契约 |
 | `performance/profile.py` | 读取 performance tag 并通过 msopprof 运行设备侧 profiling |
 | `st/test_example.py` | example tag 与仓内数值执行后端的 ST 入口 |
+| `st/validate_a5_tail_template.py` | A5 BF16 chunk64/K128/V128 非对齐尾块逐输出精度、公式重组和确定性回归 |
 | `integration/validate_triton_ascend_adapter.py` | AscendC 正向接入模型现有 Triton 反向，包含 H=96 长序列契约、精度和确定性验证 |
 
 - legacy 通路：`torch.ops.npu.npu_chunk_kda_fwd`，由主 route case 验证显式加载。
@@ -50,6 +51,7 @@ python tests/operators/chunk_kda_fwd/performance/profile.py --case-id chunk_kda_
 python tests/operators/chunk_kda_fwd/performance/profile.py --case-id chunk_kda_fwd_h96_t16k_model_performance
 python tests/operators/chunk_kda_fwd/st/probe_a5_tail.py --device 0
 python tests/operators/chunk_kda_fwd/st/probe_a5_tail.py --device 0 --long-seq
+python tests/operators/chunk_kda_fwd/st/validate_a5_tail_template.py --device 0 --repeats 50
 FLA_NPU_RUN_OPERATOR_TESTS=1 pytest -q tests/operators/chunk_kda_fwd/st/test_example.py
 cd examples/fast_kernel_launch_example && FAST_KERNEL_OP_NAME=chunk_kda_fwd pytest -q tests/chunk_kda_fwd
 ```
