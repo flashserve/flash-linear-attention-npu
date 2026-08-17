@@ -10,6 +10,7 @@
 #
 # 用来配置 CI 如何根据文件变更列表获取对应的芯片型号
 
+
 all_soc:
   module: True
   src:
