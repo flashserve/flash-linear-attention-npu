@@ -581,7 +581,8 @@ npu_chunk_kda_fwd(
                 "npu_chunk_kda_fwd: v/g shapes do not match layout.");
 
     int64_t seq_num = GetKdaSeqNum(B, cu_seqlens);
-    TORCH_CHECK(seq_num <= 1024, "npu_chunk_kda_fwd: at most 1024 sequences are supported.");
+    TORCH_CHECK(!cu_seqlens.has_value() || seq_num <= 1024,
+                "npu_chunk_kda_fwd: varlen input supports at most 1024 sequences.");
     std::vector<int64_t> state_shape =
         state_v_first_ ? std::vector<int64_t>{seq_num, HV, V, K}
                        : std::vector<int64_t>{seq_num, HV, K, V};
@@ -593,13 +594,16 @@ npu_chunk_kda_fwd(
     }
     if (use_gate_in_kernel_) {
         TORCH_CHECK(A_log.has_value() && A_log->defined() &&
-                        A_log->scalar_type() == at::kFloat &&
+                        (A_log->scalar_type() == at::kFloat ||
+                         A_log->scalar_type() == at::kBFloat16) &&
                         A_log->sizes() == at::IntArrayRef({HV}),
-                    "npu_chunk_kda_fwd: A_log must be float32 [HV] when use_gate_in_kernel=True.");
+                    "npu_chunk_kda_fwd: A_log must be float32 or bfloat16 [HV] "
+                    "when use_gate_in_kernel=True.");
         if (dt_bias.has_value() && dt_bias->defined()) {
-            TORCH_CHECK(dt_bias->scalar_type() == at::kFloat &&
+            TORCH_CHECK((dt_bias->scalar_type() == at::kFloat ||
+                         dt_bias->scalar_type() == at::kBFloat16) &&
                             dt_bias->sizes() == at::IntArrayRef({HV * K}),
-                        "npu_chunk_kda_fwd: dt_bias must be float32 [HV*K].");
+                        "npu_chunk_kda_fwd: dt_bias must be float32 or bfloat16 [HV*K].");
         }
         if (safe_gate_) {
             TORCH_CHECK(lower_bound_ >= -5.0 && lower_bound_ < 0.0,
@@ -632,7 +636,7 @@ npu_chunk_kda_fwd(
         is_rank3 ? std::vector<int64_t>{HV, T, V}
                  : std::vector<int64_t>{B, HV, T, V};
     std::vector<int64_t> h_shape =
-        is_rank3
+        (is_rank3 || cu_seqlens.has_value())
             ? (state_v_first_ ? std::vector<int64_t>{total_chunks, HV, V, K}
                               : std::vector<int64_t>{total_chunks, HV, K, V})
             : (state_v_first_ ? std::vector<int64_t>{B, total_chunks, HV, V, K}
@@ -651,7 +655,9 @@ npu_chunk_kda_fwd(
     at::Tensor kg = disable_recompute_ ? at::empty(k_shape, q.options()) : at::Tensor();
     at::Tensor v_new = disable_recompute_ ? at::empty(v_shape, q.options()) : at::Tensor();
     at::Tensor h =
-        return_intermediate_states_ ? at::empty(h_shape, q.options()) : at::Tensor();
+        (disable_recompute_ || return_intermediate_states_)
+            ? at::empty(h_shape, q.options())
+            : at::Tensor();
 
     const at::Tensor &initial_state_ = c10::value_or_else(initial_state, [] { return at::Tensor(); });
     const at::Tensor &A_log_ = c10::value_or_else(A_log, [] { return at::Tensor(); });

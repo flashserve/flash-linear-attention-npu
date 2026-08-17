@@ -145,7 +145,8 @@ static __simd_vf__ inline void AccumulateSafeGateChunk128Regbase(
 
 #endif
 
-template <typename T, bool USE_GATE_IN_KERNEL, bool SAFE_GATE>
+template <typename T, bool USE_GATE_IN_KERNEL, bool SAFE_GATE,
+          typename A_LOG_T = float, typename DT_BIAS_T = float>
 class KdaGateCumsumKernel {
 public:
     template <typename TilingData>
@@ -153,8 +154,16 @@ public:
                                 const TilingData &tiling, TPipe *pipe)
     {
         g_.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(g));
-        aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(aLog));
-        dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dtBias));
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+        // The raw/activated gate input is consumed only by this cumsum pass.
+        // Keep the generated gk output at the default NORMAL mode because
+        // Prepare and FwdH both read it after this stage.
+        g_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
+#endif
+        if constexpr (USE_GATE_IN_KERNEL) {
+            aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ A_LOG_T *>(aLog));
+            dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ DT_BIAS_T *>(dtBias));
+        }
         cuSeqlens_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cuSeqlens));
         gk_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gk));
         pipe_ = pipe;
@@ -178,6 +187,9 @@ public:
         pipe_->InitBuffer(tmpBuf_, GATE_ROW_ELEMENTS * sizeof(float));
         pipe_->InitBuffer(oneBuf_, GATE_ROW_ELEMENTS * sizeof(float));
         pipe_->InitBuffer(biasBuf_, GATE_ROW_ELEMENTS * sizeof(float));
+        if constexpr (USE_GATE_IN_KERNEL) {
+            pipe_->InitBuffer(paramBuf_, GATE_ROW_ELEMENTS * sizeof(float));
+        }
         pipe_->InitBuffer(inBuf_, GATE_PIPELINE_DEPTH * GATE_ROW_ELEMENTS * sizeof(T));
         pipe_->InitBuffer(chunkBuf_, 2 * GATE_BULK_ELEMENTS * sizeof(float));
         pipe_->InitBuffer(scalarBuf_, 32);
@@ -207,6 +219,12 @@ private:
         auxMte2ToVEvent_ = pipe_->AllocEventID<HardEvent::MTE2_V>();
         scalarVToSEvent_ = pipe_->AllocEventID<HardEvent::V_S>();
         bulkMte3ToMte2Event_ = pipe_->AllocEventID<HardEvent::MTE3_MTE2>();
+        if constexpr (USE_GATE_IN_KERNEL &&
+                      (!IsSameType<A_LOG_T, float>::value ||
+                       !IsSameType<DT_BIAS_T, float>::value)) {
+            paramVToMte2Event_ = pipe_->AllocEventID<HardEvent::V_MTE2>();
+            SetFlag<HardEvent::V_MTE2>(paramVToMte2Event_);
+        }
     }
 
     __aicore__ inline void ReleaseEvents()
@@ -220,6 +238,12 @@ private:
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(auxMte2ToVEvent_);
         pipe_->ReleaseEventID<HardEvent::V_S>(scalarVToSEvent_);
         pipe_->ReleaseEventID<HardEvent::MTE3_MTE2>(bulkMte3ToMte2Event_);
+        if constexpr (USE_GATE_IN_KERNEL &&
+                      (!IsSameType<A_LOG_T, float>::value ||
+                       !IsSameType<DT_BIAS_T, float>::value)) {
+            WaitFlag<HardEvent::V_MTE2>(paramVToMte2Event_);
+            pipe_->ReleaseEventID<HardEvent::V_MTE2>(paramVToMte2Event_);
+        }
     }
 
     __aicore__ inline uint64_t InputOffset(uint64_t b, uint64_t t, uint64_t hv, uint64_t k) const
@@ -244,9 +268,11 @@ private:
         return (hv * t_ + t) * k_ + k;
     }
 
-    __aicore__ inline void CopyVectorIn(LocalTensor<T> &dst, GlobalTensor<T> &src, uint64_t offset, uint64_t count)
+    template <typename CopyT>
+    __aicore__ inline void CopyVectorIn(LocalTensor<CopyT> &dst, GlobalTensor<CopyT> &src,
+                                        uint64_t offset, uint64_t count)
     {
-        uint64_t rowBytes = count * static_cast<uint64_t>(sizeof(T));
+        uint64_t rowBytes = count * static_cast<uint64_t>(sizeof(CopyT));
         if (rowBytes >= 32 && rowBytes % 32 == 0) {
             DataCopy(dst, src[offset], static_cast<uint32_t>(count));
         } else {
@@ -256,16 +282,25 @@ private:
         }
     }
 
-    __aicore__ inline void CopyFloatVectorIn(LocalTensor<float> &dst, GlobalTensor<float> &src, uint64_t offset,
-                                             uint64_t count)
+    template <typename ParamT>
+    __aicore__ inline void LoadGateParamAsFloat(LocalTensor<float> &dst,
+                                                GlobalTensor<ParamT> &src,
+                                                uint64_t offset, uint64_t count)
     {
-        uint64_t rowBytes = count * sizeof(float);
-        if (rowBytes >= 32 && rowBytes % 32 == 0) {
-            DataCopy(dst, src[offset], static_cast<uint32_t>(count));
+        if constexpr (IsSameType<ParamT, float>::value) {
+            CopyVectorIn(dst, src, offset, count);
         } else {
-            DataCopyParams params{1, static_cast<uint16_t>(rowBytes), 0, 0};
-            DataCopyPadParams padParams{false, 0, 0, 0};
-            DataCopyPad(dst, src[offset], params, padParams);
+            WaitFlag<HardEvent::V_MTE2>(paramVToMte2Event_);
+            LocalTensor<ParamT> typed = paramBuf_.Get<ParamT>();
+            CopyVectorIn(typed, src, offset, count);
+        }
+        SetFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
+        WaitFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
+        if constexpr (!IsSameType<ParamT, float>::value) {
+            LocalTensor<ParamT> typed = paramBuf_.Get<ParamT>();
+            Cast(dst, typed, RoundMode::CAST_NONE, static_cast<uint32_t>(count));
+            PipeBarrier<PIPE_V>();
+            SetFlag<HardEvent::V_MTE2>(paramVToMte2Event_);
         }
     }
 
@@ -316,14 +351,11 @@ private:
         PipeBarrier<PIPE_V>();
     }
 
-    __aicore__ inline float ReadFloat(GlobalTensor<float> &tensor, uint64_t offset)
+    template <typename ParamT>
+    __aicore__ inline float ReadGateParam(GlobalTensor<ParamT> &tensor, uint64_t offset)
     {
         LocalTensor<float> scalar = scalarBuf_.Get<float>();
-        DataCopyParams params{1, static_cast<uint16_t>(sizeof(float)), 0, 0};
-        DataCopyPadParams padParams{false, 0, 0, 0};
-        DataCopyPad(scalar, tensor[offset], params, padParams);
-        SetFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
-        WaitFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
+        LoadGateParamAsFloat(scalar, tensor, offset, 1);
         Adds(scalar, scalar, 0.0f, 1);
         PipeBarrier<PIPE_V>();
         SetFlag<HardEvent::V_S>(scalarVToSEvent_);
@@ -362,12 +394,10 @@ private:
     __aicore__ inline void PrepareGate(uint64_t hv)
     {
         if constexpr (USE_GATE_IN_KERNEL) {
-            expA_ = ExpScalar(ReadFloat(aLog_, hv));
+            expA_ = ExpScalar(ReadGateParam(aLog_, hv));
             if (hasDtBias_) {
                 LocalTensor<float> bias = biasBuf_.Get<float>();
-                CopyFloatVectorIn(bias, dtBias_, hv * k_, k_);
-                SetFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
-                WaitFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
+                LoadGateParamAsFloat(bias, dtBias_, hv * k_, k_);
             }
         }
     }
@@ -681,8 +711,8 @@ private:
 #endif
 
     GlobalTensor<T> g_;
-    GlobalTensor<float> aLog_;
-    GlobalTensor<float> dtBias_;
+    GlobalTensor<A_LOG_T> aLog_;
+    GlobalTensor<DT_BIAS_T> dtBias_;
     GlobalTensor<int64_t> cuSeqlens_;
     GlobalTensor<float> gk_;
     TPipe *pipe_ = nullptr;
@@ -692,6 +722,7 @@ private:
     TBuf<TPosition::VECCALC> tmpBuf_;
     TBuf<TPosition::VECCALC> oneBuf_;
     TBuf<TPosition::VECCALC> biasBuf_;
+    TBuf<TPosition::VECCALC> paramBuf_;
     TBuf<TPosition::VECCALC> inBuf_;
     TBuf<TPosition::VECCALC> chunkBuf_;
     TBuf<TPosition::VECCALC> scalarBuf_;
@@ -703,6 +734,7 @@ private:
     TEventID auxMte2ToVEvent_;
     TEventID scalarVToSEvent_;
     TEventID bulkMte3ToMte2Event_;
+    TEventID paramVToMte2Event_;
     uint64_t batch_ = 0;
     uint64_t t_ = 0;
     uint64_t hv_ = 0;
@@ -720,11 +752,12 @@ private:
     uint64_t usedCoreNum_ = 1;
 };
 
-template <typename T, bool USE_GATE_IN_KERNEL, bool SAFE_GATE, typename TilingData>
+template <typename T, bool USE_GATE_IN_KERNEL, bool SAFE_GATE, typename TilingData,
+          typename A_LOG_T = float, typename DT_BIAS_T = float>
 __aicore__ inline void RunKdaGateCumsum(GM_ADDR g, GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR cuSeqlens, GM_ADDR gk,
                                         const TilingData &tilingData, TPipe *pipe)
 {
-    KdaGateCumsumKernel<T, USE_GATE_IN_KERNEL, SAFE_GATE> op;
+    KdaGateCumsumKernel<T, USE_GATE_IN_KERNEL, SAFE_GATE, A_LOG_T, DT_BIAS_T> op;
     op.Init(g, aLog, dtBias, cuSeqlens, gk, tilingData, pipe);
     op.Process();
 }

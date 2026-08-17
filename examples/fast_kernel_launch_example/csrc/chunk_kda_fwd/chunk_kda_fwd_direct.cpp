@@ -22,16 +22,21 @@
 #include "torch_npu/csrc/framework/OpCommand.h"
 
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling_processor.h"
+#define KDA_ENABLE_COMPACT_PLAN_VIEW 1
+#include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/chunk_kda_fwd_plan.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
+#include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/arch35/chunk_kda_fwd_finalize.h"
+#include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/arch35/chunk_kda_fwd_post_wu.h"
+#include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/arch35/chunk_kda_fwd_prepare.h"
 #else
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
-#endif
-
+#include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/chunk_kda_fwd_finalize.h"
 #include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/chunk_kda_fwd_post_wu.h"
 #include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/chunk_kda_fwd_prepare.h"
-#include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/chunk_kda_fwd_finalize.h"
+#endif
+#undef KDA_ENABLE_COMPACT_PLAN_VIEW
 
 namespace ascend_ops::ChunkKdaFwdDirect {
 namespace {
@@ -60,6 +65,10 @@ struct DirectKdaTilingData {
     bool inputSequenceMajor;
     bool fusePostWu;
     bool skipPostWu;
+    bool computeGateInPrepare;
+    bool hasALog;
+    bool hasDtBias;
+    float lowerBound;
     int64_t prepareUsedCoreNum;
     int64_t prepareQgScaledOffset;
     int64_t prepareWSeedOffset;
@@ -94,6 +103,33 @@ struct DirectKdaTilingData {
     int64_t outputUsedCoreNum;
     int64_t outputQgScaledOffset;
     int64_t outputScratchOffset;
+};
+
+struct DirectFwdHTilingView {
+    int64_t batch;
+    int64_t seqlen;
+    int64_t kNumHead;
+    int64_t vNumHead;
+    int64_t kHeadDim;
+    int64_t vHeadDim;
+    int64_t chunkSize;
+    bool useInitialState;
+    bool storeFinalState;
+    int64_t isVariedLen;
+    int64_t shapeBatch;
+    int64_t tokenBatch;
+    int64_t vWorkspaceOffset;
+    int64_t vUpdateWorkspaceOffset;
+    int64_t kDecayWorkspaceOffset;
+    int64_t hWorkspaceOffset;
+    int64_t numSeqWorkspaceOffset;
+    int64_t numChunksWorkspaceOffset;
+    bool useCompactSequencePlan;
+    uint32_t sequenceCount;
+    uint32_t compactTotalChunks;
+    uint32_t fwdUsedCoreNum;
+    GM_ADDR compactPlan;
+    uint32_t seqChunkOffsetsOffset;
 };
 
 struct DirectOutputs {
@@ -151,6 +187,21 @@ uint64_t AlignUp(uint64_t value)
     return (value + WORKSPACE_ALIGN - 1) / WORKSPACE_ALIGN * WORKSPACE_ALIGN;
 }
 
+__aicore__ inline void ReleaseAicPipeReservedMmadEvents(AscendC::TPipe &pipe)
+{
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
+    if ASCEND_IS_AIC {
+        pipe.DestroyWithoutPipeAll();
+    }
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+    if ASCEND_IS_AIC {
+        pipe.Destroy();
+    }
+#else
+    (void)pipe;
+#endif
+}
+
 template <bool SAFE_GATE, typename T>
 __global__ __aicore__ void ChunkKdaPrepareDirectKernel(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR initialState,
@@ -164,12 +215,15 @@ __global__ __aicore__ void ChunkKdaPrepareDirectKernel(
         return;
     }
     AscendC::TPipe pipe;
-    KdaPrepare::RunChunkKdaPrepare<SAFE_GATE, T, float, float>(
-        q, k, v, gk, beta, nullptr, nullptr, nullptr, aqk, akk, qg,
+    ReleaseAicPipeReservedMmadEvents(pipe);
+    KdaPrepare::RunChunkKdaPrepare<SAFE_GATE, T, float, float, float, float,
+        DirectKdaTilingData, 0, 0, 0>(
+        q, k, v, gk, nullptr, nullptr, nullptr, beta, initialState,
+        nullptr, nullptr, nullptr, aqk, akk, qg,
         userWorkspace + tiling.prepareQgScaledOffset,
         userWorkspace + tiling.prepareWSeedOffset,
         userWorkspace + tiling.prepareUSeedOffset,
-        kg, userWorkspace, tiling, pipe);
+        kg, userWorkspace, tiling, pipe, true);
 }
 
 template <typename T>
@@ -185,8 +239,9 @@ __global__ __aicore__ void ChunkKdaPostWuDirectKernel(
         return;
     }
     AscendC::TPipe pipe;
+    ReleaseAicPipeReservedMmadEvents(pipe);
     KdaPostWu::RunChunkKdaPostWu<T, float, float>(
-        q, k, v, gk, beta, initialState, nullptr, nullptr,
+        q, k, v, gk, beta, initialState, nullptr, nullptr, nullptr,
         userWorkspace + tiling.postWuWSeedOffset, akk,
         userWorkspace + tiling.postWuUSeedOffset,
         w, u, kg, vNew, userWorkspace, tiling, pipe);
@@ -198,7 +253,7 @@ __aicore__ inline void RunChunkKdaFwdHDirect(
     GM_ADDR h, GM_ADDR vNew, GM_ADDR finalState, GM_ADDR userWorkspace,
     const DirectKdaTilingData &tiling)
 {
-    ChunkGatedDeltaRuleFwdHTilingData stateTiling{};
+    DirectFwdHTilingView stateTiling{};
     stateTiling.batch = tiling.fwdHBatch;
     stateTiling.seqlen = tiling.fwdHSeqlen;
     stateTiling.kNumHead = tiling.fwdHKNumHead;
@@ -217,8 +272,12 @@ __aicore__ inline void RunChunkKdaFwdHDirect(
     stateTiling.hWorkspaceOffset = tiling.fwdHHWorkspaceOffset;
     stateTiling.numSeqWorkspaceOffset = tiling.fwdHNumSeqWorkspaceOffset;
     stateTiling.numChunksWorkspaceOffset = tiling.fwdHNumChunksWorkspaceOffset;
-    stateTiling.useG = false;
-    stateTiling.useGk = true;
+    stateTiling.useCompactSequencePlan = false;
+    stateTiling.sequenceCount = 0;
+    stateTiling.compactTotalChunks = 0;
+    stateTiling.fwdUsedCoreNum = 0;
+    stateTiling.compactPlan = nullptr;
+    stateTiling.seqChunkOffsetsOffset = 0;
 
     using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         T, float, float, float, TileShapes, true, false, true>;
@@ -263,8 +322,9 @@ __global__ __aicore__ void ChunkKdaOutputDirectKernel(
         return;
     }
     AscendC::TPipe pipe;
+    ReleaseAicPipeReservedMmadEvents(pipe);
     KdaFinalize::RunChunkKdaOutput<T, float, float>(
-        q, k, v, gk, beta, initialState, nullptr, nullptr,
+        q, k, v, gk, beta, initialState, nullptr, nullptr, nullptr,
         userWorkspace + tiling.outputQgScaledOffset, aqk, vNew, h, attnOut,
         userWorkspace, tiling, pipe);
 }
@@ -465,13 +525,17 @@ ChunkKdaFwdDirectNpu(
     tiling.chunkSize = chunkSize;
     tiling.totalChunks = totalChunks;
     tiling.scale = static_cast<float>(scale);
-    tiling.hasInitialState = false;
+    tiling.hasInitialState = initialState.has_value();
     tiling.outputFinalState = outputFinalState;
     tiling.isVarLen = false;
     tiling.safeGate = safeGate;
     tiling.inputSequenceMajor = false;
     tiling.fusePostWu = false;
     tiling.skipPostWu = false;
+    tiling.computeGateInPrepare = false;
+    tiling.hasALog = false;
+    tiling.hasDtBias = false;
+    tiling.lowerBound = -5.0f;
     tiling.prepareUsedCoreNum = static_cast<int64_t>(blockDim);
     tiling.prepareQgScaledOffset = static_cast<int64_t>(qgScaledOffset);
     tiling.prepareWSeedOffset = static_cast<int64_t>(wSeedOffset);

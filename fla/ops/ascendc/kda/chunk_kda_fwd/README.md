@@ -38,8 +38,8 @@ gk_i = cumsum(gate)_i / ln(2)
 | `v` | 必选 | 输入 layout 对应 Shape；与 q 同 dtype | Value |
 | `g` | 必选 | 输入 layout 对应 K 维 Shape；FP32/BF16 | raw gate 或已激活自然对数 gate |
 | `beta` | 必选 | 去掉 g 的 K 维；FP32/BF16 | Delta 系数 |
-| `A_log` | 条件必选 | `[H_v]`，FP32 | `use_gate_in_kernel=true` 时必选 |
-| `dt_bias` | 可选 | `[H_v*K]`，FP32 | gate bias |
+| `A_log` | 条件必选 | `[H_v]`，FP32/BF16 | `use_gate_in_kernel=true` 时必选，读取后转 FP32 计算 |
+| `dt_bias` | 可选 | `[H_v*K]`，FP32/BF16 | gate bias，读取后转 FP32 计算；dtype 可与 `A_log` 不同 |
 | `initial_state` | 可选 | `[N,H_v,K,V]` 或 `[N,H_v,V,K]`，FP32 | 由 `state_v_first` 解释 |
 | `cu_seqlens` | 可选 | `[N+1]`，INT64 | 变长序列 |
 | `chunk_indices` | 可选 | `[2*N_c]`，INT64 | canonical chunk 顺序 |
@@ -103,6 +103,8 @@ Python 返回顺序为：
 - `chunk_size` 为 64/128。
 - TND/NTD 均支持多 head。
 - 变长调用最多 1024 条逻辑序列，rank-4 变长输入要求 B=1。
+- `A_log` 与 `dt_bias` 各自支持 FP32/BF16 的任意组合；BF16 输入按 BF16
+  量化值转为 FP32 后参与 gate 计算。`initial_state/final_state/gk` 始终为 FP32。
 
 ## 验证
 

@@ -18,6 +18,8 @@
 | `ut/op_host/test_optional_output_policy.py` | 固定 fla-org 提交并穷举 16 种可选输出策略 |
 | `ut/op_kernel/test_contract.py` | kernel 入口、tiling key 说明和 direct launch 静态契约 |
 | `performance/profile.py` | 读取 performance tag 并通过 msopprof 运行设备侧 profiling |
+| `../../../test/chunk_kda_fwd/canonical_execution_adapter.py` | canonical 92/20/6/6 非精度 executable spec 与 run ATK JSON |
+| `../../../test/chunk_kda_fwd/canonical_execution_runner.py` | cached-input msopprof、stress、sanitizer 执行与报告校验 |
 | `st/test_example.py` | example tag 与仓内数值执行后端的 ST 入口 |
 | `integration/validate_triton_ascend_adapter.py` | AscendC 正向接入模型现有 Triton 反向，包含 H=96 长序列契约、精度和确定性验证 |
 
@@ -48,11 +50,32 @@ pytest -q --import-mode=importlib tests/operators/chunk_kda_fwd/ut
 python tests/operators/chunk_kda_fwd/performance/profile.py --dry-run
 python tests/operators/chunk_kda_fwd/performance/profile.py --case-id chunk_kda_fwd_h96_t8k_model_performance
 python tests/operators/chunk_kda_fwd/performance/profile.py --case-id chunk_kda_fwd_h96_t16k_model_performance
+python test/chunk_kda_fwd/canonical_execution_runner.py msopprof-command --design-id KDA-FWD-M006 --soc ascend950 --variant baseline --output <profile_output>
+python test/chunk_kda_fwd/stress_npu_determinism.py --design-id KDA-FWD-G098 --soc ascend950 --device 0
 python tests/operators/chunk_kda_fwd/st/probe_a5_tail.py --device 0
 python tests/operators/chunk_kda_fwd/st/probe_a5_tail.py --device 0 --long-seq
 FLA_NPU_RUN_OPERATOR_TESTS=1 pytest -q tests/operators/chunk_kda_fwd/st/test_example.py
 cd examples/fast_kernel_launch_example && FAST_KERNEL_OP_NAME=chunk_kda_fwd pytest -q tests/chunk_kda_fwd
 ```
+
+第 21 章的 300 个逻辑用例保存在同一 manifest 的 `design_matrix.cases` 中。下面的入口只读
+取 manifest、校验与设计表同步，并展开平台、路由、GVA 可追踪变形、profiling 子实验和
+sanitizer 工具任务；它不会启动设备任务，也不会把不适用平台计为通过：
+
+```bash
+python tests/operators/chunk_kda_fwd/run_design_matrix.py --summary
+python tests/operators/chunk_kda_fwd/run_design_matrix.py --soc ascend950 --kind accuracy --summary
+python tests/operators/chunk_kda_fwd/run_design_matrix.py --soc ascend910b --case-id KDA-FWD-M011
+```
+
+最后一条会输出 `not_applicable`，因为 M011 是 A3 专项。300 条 executable spec 由
+`canonical_case_adapter.py` 和 `canonical_execution_adapter.py` 提供；计划记录仍然只表示
+`planned`/`not_applicable`，不是测试通过证据。accuracy 的 176 个 logical case 会物化为
+256 个数值缓存 entry（176 个 random、80 个 traceable），再投影为 A5/A2 的 509/329 个
+physical task；同一数值 variant 跨 SOC/route 复用缓存。完整 300 logical 缓存 catalog 包含
+380 个 entry：256 个 accuracy 三分片 entry 和 124 个非精度 input-only entry。A5/A2 的
+124 条非精度 logical case 分别展开为 140/114 个适用 physical task，另有 8/25 个 logical
+N/A 记录；N/A 不计为 PASS。
 
 A5 PR264 一键构建、隔离安装和基础验收：
 
@@ -100,8 +123,8 @@ A2/A3/A5 通过 `FLA_NPU_SOC` 选择。精度逐项比较全部公开输出并�
 - 反向仍使用模型现有 Triton-Ascend KDA 实现；
 - L2Norm 反向不替换，继续使用模型现有实现；
 - 输入保持 BSND，不修改模型张量准备；
-- 模型侧 `A_log` / `dt_bias` 可为 FP32 或 BF16；BF16 仅在 AscendC 正向边界
-  升为 FP32，原张量继续由现有 Triton 反向使用；
+- 模型侧 `A_log` / `dt_bias` 可各自为 FP32 或 BF16；adapter 原样传入 AscendC
+  正向，kernel 按实际 dtype 搬入并在 UB 内转为 FP32 计算，原张量继续由现有 Triton 反向使用；
 - AscendC 的 BNSD 中间量在适配边界转回 BSND，供现有 Triton 反向直接消费；
 - 优先使用 `cu_seqlens_cpu` 一次性构造 L2 metadata，避免逐元素 NPU 到 Host 同步；
 - `disable_recompute=True` 时按 fla-org 低层接口保留 Triton 反向需要的

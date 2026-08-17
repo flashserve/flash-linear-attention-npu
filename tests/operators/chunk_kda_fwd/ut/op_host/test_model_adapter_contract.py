@@ -90,13 +90,13 @@ def _adapter_target_modules(adapter):
     return modules
 
 
-def test_adapter_patches_and_restores_both_bound_forward_symbols():
+def test_adapter_patches_and_restores_both_bound_forward_symbols(monkeypatch):
     adapter = _load_adapter()
     modules = _adapter_target_modules(adapter)
     adapter._load_ascendc_ops = lambda: None
     adapter._load_optimized_l2norm_fwd = lambda: _optimized_l2norm
     adapter._install_triton_extra_ascend_compat = lambda: False
-    adapter.importlib.import_module = modules.__getitem__
+    monkeypatch.setattr(adapter.importlib, "import_module", modules.__getitem__)
 
     assert adapter.install_triton_ascend_kda_adapter() is True
     assert adapter.install_triton_ascend_kda_adapter() is False
@@ -122,7 +122,7 @@ def test_adapter_patches_and_restores_both_bound_forward_symbols():
     )
 
 
-def test_adapter_signature_failure_does_not_leave_partial_install_state():
+def test_adapter_signature_failure_does_not_leave_partial_install_state(monkeypatch):
     adapter = _load_adapter()
 
     def incompatible_original(q):
@@ -140,7 +140,7 @@ def test_adapter_signature_failure_does_not_leave_partial_install_state():
     adapter._load_ascendc_ops = lambda: None
     adapter._load_optimized_l2norm_fwd = lambda: _optimized_l2norm
     adapter._install_triton_extra_ascend_compat = lambda: False
-    adapter.importlib.import_module = modules.__getitem__
+    monkeypatch.setattr(adapter.importlib, "import_module", modules.__getitem__)
 
     try:
         adapter.install_triton_ascend_kda_adapter()
@@ -154,7 +154,7 @@ def test_adapter_signature_failure_does_not_leave_partial_install_state():
     assert modules[adapter._TARGET_MODULES[1]].chunk_kda_fwd is incompatible_original
 
 
-def test_adapter_registers_packaged_opp_before_importing_triton():
+def test_adapter_registers_packaged_opp_before_importing_triton(monkeypatch):
     adapter = _load_adapter()
     events = []
     modules = _adapter_target_modules(adapter)
@@ -174,7 +174,7 @@ def test_adapter_registers_packaged_opp_before_importing_triton():
     adapter._install_triton_extra_ascend_compat = lambda: events.append(
         "triton_compat"
     )
-    adapter.importlib.import_module = import_module
+    monkeypatch.setattr(adapter.importlib, "import_module", import_module)
 
     assert adapter.install_triton_ascend_kda_adapter() is True
     assert events == [
@@ -185,7 +185,7 @@ def test_adapter_registers_packaged_opp_before_importing_triton():
     ]
 
 
-def test_adapter_bridges_pinned_upstream_extra_ascend_eager_import():
+def test_adapter_bridges_pinned_upstream_extra_ascend_eager_import(monkeypatch):
     adapter = _load_adapter()
     extra = types.SimpleNamespace()
     cann = types.SimpleNamespace()
@@ -204,7 +204,7 @@ def test_adapter_bridges_pinned_upstream_extra_ascend_eager_import():
             )
         return modules[name]
 
-    adapter.importlib.import_module = fake_import
+    monkeypatch.setattr(adapter.importlib, "import_module", fake_import)
     sys.modules.pop("triton.language.extra.ascend", None)
     sys.modules.pop("triton.language.extra.ascend.libdevice", None)
     try:
@@ -231,63 +231,52 @@ def test_adapter_does_not_patch_reverse_cumsum_or_backward_modules():
     assert adapter._L2NORM_TARGET_MODULE == adapter._TARGET_MODULES[1]
 
 
-def test_adapter_promotes_bf16_gate_parameters_only_for_ascendc_forward():
+def test_adapter_forwards_gate_parameter_dtypes_without_conversion():
     adapter = _load_adapter()
     bf16 = object()
     fp32 = object()
-    promoted_a_log = object()
-    promoted_dt_bias = object()
     calls = {}
 
     class FakeTensor:
-        def __init__(self, dtype, promoted=None):
+        def __init__(self, dtype):
             self.dtype = dtype
-            self.promoted = promoted
             self.shape = (1, 1, 1, 1)
 
         def dim(self):
             return 4
 
         def float(self):
-            return self.promoted
+            raise AssertionError("gate parameters must not be promoted in the adapter")
 
     def fake_chunk_kda_fwd(*args, **kwargs):
         calls.update(kwargs)
         return (None,) * 12
 
     q = FakeTensor(fp32)
-    a_log = FakeTensor(bf16, promoted_a_log)
+    a_log = FakeTensor(bf16)
     a_log_fp32 = FakeTensor(fp32)
-    dt_bias_bf16 = FakeTensor(bf16, promoted_dt_bias)
+    dt_bias_bf16 = FakeTensor(bf16)
     dt_bias = FakeTensor(fp32)
     observed = []
-    previous_torch = sys.modules.get("torch")
-    sys.modules["torch"] = types.SimpleNamespace(bfloat16=bf16)
     adapter._load_ascendc_ops = lambda: fake_chunk_kda_fwd
-    try:
-        for a_log_input, dt_bias_input in (
-            (a_log, dt_bias),
-            (a_log_fp32, dt_bias_bf16),
-            (a_log, dt_bias_bf16),
-        ):
-            calls.clear()
-            adapter.triton_ascend_chunk_kda_fwd(
-                q, q, q, q, q, 1.0, None, False,
-                use_gate_in_kernel=True,
-                A_log=a_log_input,
-                dt_bias=dt_bias_input,
-            )
-            observed.append((calls["A_log"], calls["dt_bias"]))
-    finally:
-        if previous_torch is None:
-            sys.modules.pop("torch", None)
-        else:
-            sys.modules["torch"] = previous_torch
+    for a_log_input, dt_bias_input in (
+        (a_log, dt_bias),
+        (a_log_fp32, dt_bias_bf16),
+        (a_log, dt_bias_bf16),
+    ):
+        calls.clear()
+        adapter.triton_ascend_chunk_kda_fwd(
+            q, q, q, q, q, 1.0, None, False,
+            use_gate_in_kernel=True,
+            A_log=a_log_input,
+            dt_bias=dt_bias_input,
+        )
+        observed.append((calls["A_log"], calls["dt_bias"]))
 
     assert observed == [
-        (promoted_a_log, dt_bias),
-        (a_log_fp32, promoted_dt_bias),
-        (promoted_a_log, promoted_dt_bias),
+        (a_log, dt_bias),
+        (a_log_fp32, dt_bias_bf16),
+        (a_log, dt_bias_bf16),
     ]
 
 

@@ -331,12 +331,14 @@ aclnnStatus CheckDtypes(const ChunkKdaFwdParams &params)
     CHECK_COND(betaType == DataType::DT_FLOAT || betaType == DataType::DT_BF16,
                ACLNN_ERR_PARAM_INVALID, "beta must be float32 or bfloat16.");
     if (params.aLogOptional != nullptr) {
-        CHECK_COND(params.aLogOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-                   "aLogOptional must be float32.");
+        const DataType aLogType = params.aLogOptional->GetDataType();
+        CHECK_COND(aLogType == DataType::DT_FLOAT || aLogType == DataType::DT_BF16,
+                   ACLNN_ERR_PARAM_INVALID, "aLogOptional must be float32 or bfloat16.");
     }
     if (params.dtBiasOptional != nullptr) {
-        CHECK_COND(params.dtBiasOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-                   "dtBiasOptional must be float32.");
+        const DataType dtBiasType = params.dtBiasOptional->GetDataType();
+        CHECK_COND(dtBiasType == DataType::DT_FLOAT || dtBiasType == DataType::DT_BF16,
+                   ACLNN_ERR_PARAM_INVALID, "dtBiasOptional must be float32 or bfloat16.");
     }
     if (params.initialStateOptional != nullptr) {
         CHECK_COND(params.initialStateOptional->GetDataType() == DataType::DT_FLOAT,
@@ -410,14 +412,16 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
                    "u/vNew must match q dtype and use fixed head-major NTD/BNSD layout.");
     }
     if (params.hOut != nullptr) {
+        const bool usesFlattenedChunkAxis =
+            info.isRank3 || params.cuSeqlensOptional != nullptr;
         const bool valid = params.stateVFirst
-                               ? (info.isRank3
+                               ? (usesFlattenedChunkAxis
                                       ? HasShape(params.hOut,
                                                  {info.totalChunks, info.hvNum, info.vDim, info.kDim})
                                       : HasShape(params.hOut,
                                                  {info.batch, info.totalChunks, info.hvNum,
                                                   info.vDim, info.kDim}))
-                               : (info.isRank3
+                               : (usesFlattenedChunkAxis
                                       ? HasShape(params.hOut,
                                                  {info.totalChunks, info.hvNum, info.kDim, info.vDim})
                                       : HasShape(params.hOut,
@@ -639,9 +643,9 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         qgExport = qgExport == nullptr ? nullptr : AsRank4(qgExport, kShape4, executorPtr);
         kgExport = kgExport == nullptr ? nullptr : AsRank4(kgExport, kShape4, executorPtr);
         vNewExport = vNewExport == nullptr ? nullptr : AsRank4(vNewExport, vShape4, executorPtr);
-        if (hExport != nullptr) {
-            hExport = AsRank4(hExport, hExportShape5, executorPtr);
-        }
+    }
+    if (hExport != nullptr && (info.isRank3 || params.cuSeqlensOptional != nullptr)) {
+        hExport = AsRank4(hExport, hExportShape5, executorPtr);
     }
     CHECK_RET((params.wOut == nullptr || wExport != nullptr) &&
                   (params.uOut == nullptr || uExport != nullptr) &&

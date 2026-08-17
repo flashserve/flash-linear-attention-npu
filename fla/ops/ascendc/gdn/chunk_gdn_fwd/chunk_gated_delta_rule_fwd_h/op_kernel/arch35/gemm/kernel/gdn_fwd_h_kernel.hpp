@@ -131,6 +131,34 @@ public:
     using BlockMmadKVDirectUb = Common::BlockMmadTla<
         DispatchPolicyDirectUb, L1TileShapeVTla, L0TileShapeVTla,
         INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKVDirectUb>;
+    static constexpr uint32_t CUBE2_ROW_TILE_M = tla::get<0>(L0TileShapeVTla{});
+
+    template <typename BlockMmad, typename TensorK, typename TensorVwork, typename TensorHwork>
+    __aicore__ inline void ComputeCube2RowTiles(
+        BlockMmad &blockMmad, TensorK &tensorK, TensorVwork &tensorVwork,
+        TensorHwork &tensorHwork, uint32_t vBlockDim, uint32_t blockTokens,
+        bool clearL1Padding)
+    {
+        auto tensorBlockVwork = GetTile(
+            tensorVwork, tla::MakeCoord(0, 0),
+            tla::MakeShape(blockTokens, vBlockDim));
+        // BlockMmad allocates one static L0C tile per pipeline slot. Keep each
+        // product within that tile instead of constructing a larger L0C layout.
+        for (uint32_t rowOffset = 0; rowOffset < kHeadDim;
+             rowOffset += CUBE2_ROW_TILE_M) {
+            uint32_t rowCount = Min(CUBE2_ROW_TILE_M, kHeadDim - rowOffset);
+            GemmCoord cube2Shape{rowCount, vBlockDim, blockTokens};
+            auto tensorBlockK = GetTile(
+                tensorK, tla::MakeCoord(rowOffset, 0),
+                tla::MakeShape(rowCount, blockTokens));
+            auto tensorBlockHwork = GetTile(
+                tensorHwork, tla::MakeCoord(rowOffset, 0),
+                tla::MakeShape(rowCount, vBlockDim));
+            blockMmad(
+                tensorBlockK, tensorBlockVwork, tensorBlockHwork,
+                cube2Shape, EmptyClass{}, clearL1Padding);
+        }
+    }
 
     // vec 1
     using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnew;
@@ -423,8 +451,11 @@ public:
             AscendC::DataCopy(
                 gmVWorkspace[offsets.vWorkOffset + tokenRow * offsets.vBlockDim],
                 accumUb, offsets.vBlockDim);
+            // MTE2 may reload GM while V reuses accumUb on the next row.
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(tailEventId);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(tailEventId);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
         }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(tailEventId);
     }
@@ -499,8 +530,11 @@ public:
             AscendC::DataCopy(
                 gmHWorkspace[offsets.hWorkOffset + kRow * offsets.vBlockDim],
                 accumUb, offsets.vBlockDim);
+            // MTE2 may reload GM while V reuses accumUb on the next row.
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(tailEventId);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(tailEventId);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
         }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(tailEventId);
     }
@@ -801,21 +835,10 @@ public:
                                 auto tensorHwork = tla::MakeTensor(
                                     gmHWorkspace[cube2Offsets.hWorkOffset], hworkLayout,
                                     Catlass::Arch::PositionGM{});
-                                GemmCoord cube2Shape{
-                                    kHeadDim, cube2Offsets.vBlockDim, cube2Offsets.blockTokens};
-                                auto tensorBlockK = GetTile(
-                                    tensorK, tla::MakeCoord(0, 0),
-                                    tla::MakeShape(cube2Shape.m(), cube2Shape.k()));
-                                auto tensorBlockVwork = GetTile(
-                                    tensorVwork, tla::MakeCoord(0, 0),
-                                    tla::MakeShape(cube2Shape.k(), cube2Shape.n()));
-                                auto tensorBlockHwork = GetTile(
-                                    tensorHwork, tla::MakeCoord(0, 0),
-                                    tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
-
-                                blockMmadKV(
-                                    tensorBlockK, tensorBlockVwork, tensorBlockHwork,
-                                    cube2Shape);
+                                ComputeCube2RowTiles(
+                                    blockMmadKV, tensorK, tensorVwork, tensorHwork,
+                                    cube2Offsets.vBlockDim, cube2Offsets.blockTokens,
+                                    false);
                             }
                             Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
                                 cubeBlockScheduler.cube2Done[streamId]);
@@ -858,22 +881,11 @@ public:
                                 auto tensorHwork = tla::MakeTensor(
                                     gmHWorkspace[cube2Offsets.hWorkOffset], hworkLayout,
                                     Catlass::Arch::PositionGM{});
-                                GemmCoord cube2Shape{
-                                    kHeadDim, cube2Offsets.vBlockDim,
-                                    cube2Offsets.blockTokens};
-                                auto tensorBlockK = GetTile(
-                                    tensorK, tla::MakeCoord(0, 0),
-                                    tla::MakeShape(cube2Shape.m(), cube2Shape.k()));
-                                auto tensorBlockVwork = GetTile(
-                                    tensorVwork, tla::MakeCoord(0, 0),
-                                    tla::MakeShape(cube2Shape.k(), cube2Shape.n()));
-                                auto tensorBlockHwork = GetTile(
-                                    tensorHwork, tla::MakeCoord(0, 0),
-                                    tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
                                 blockMmadKVTail.preSetFlags();
-                                blockMmadKVTail(
-                                    tensorBlockK, tensorBlockVwork, tensorBlockHwork,
-                                    cube2Shape, EmptyClass{}, true);
+                                ComputeCube2RowTiles(
+                                    blockMmadKVTail, tensorK, tensorVwork, tensorHwork,
+                                    cube2Offsets.vBlockDim, cube2Offsets.blockTokens,
+                                    true);
                                 blockMmadKVTail.finalWaitFlags();
                                 AscendC::PipeBarrier<PIPE_ALL>();
                             }
@@ -912,12 +924,10 @@ public:
                                 auto vUpdateLayout = tla::MakeLayout<ElementVUpdate, LayoutVUpdate>(cube2Offsets.blockTokens, cube2Offsets.vBlockDim);
                                 auto tensorVwork = tla::MakeTensor(gmVUpdateWorkspace[cube2OffsetVwork], vUpdateLayout, Catlass::Arch::PositionGM{});
                                 auto tensorHwork = tla::MakeTensor(gmHWorkspace[cube2Offsets.hWorkOffset], hworkLayout, Catlass::Arch::PositionGM{});
-                                GemmCoord cube2Shape{kHeadDim, cube2Offsets.vBlockDim, cube2Offsets.blockTokens};
-                                auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.m(), cube2Shape.k()));
-                                auto tensorBlockVwork = GetTile(tensorVwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.k(), cube2Shape.n()));
-                                auto tensorBlockHwork = GetTile(tensorHwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
-
-                                blockMmadKV(tensorBlockK, tensorBlockVwork, tensorBlockHwork, cube2Shape);
+                                ComputeCube2RowTiles(
+                                    blockMmadKV, tensorK, tensorVwork, tensorHwork,
+                                    cube2Offsets.vBlockDim, cube2Offsets.blockTokens,
+                                    false);
                             }
                             Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube2Done[streamId]);
                         }

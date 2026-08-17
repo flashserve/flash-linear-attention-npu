@@ -1124,10 +1124,16 @@ def npu_chunk_kda_fwd(
     output_final_state = _optional_bool(output_final_state, False)
     state_v_first = _optional_bool(state_v_first, False)
     if use_gate_in_kernel:
-        if A_log is None or _shape(A_log) != (hv_num,) or A_log.dtype != torch.float32:
-            raise RuntimeError("npu_chunk_kda_fwd: A_log must be float32 [HV] when use_gate_in_kernel=True.")
-        if dt_bias is not None and (_shape(dt_bias) != (hv_num * k_dim,) or dt_bias.dtype != torch.float32):
-            raise RuntimeError("npu_chunk_kda_fwd: dt_bias must be float32 [HV*K].")
+        gate_param_dtypes = {torch.float32, torch.bfloat16}
+        if A_log is None or _shape(A_log) != (hv_num,) or A_log.dtype not in gate_param_dtypes:
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: A_log must be float32 or bfloat16 [HV] "
+                "when use_gate_in_kernel=True."
+            )
+        if dt_bias is not None and (
+            _shape(dt_bias) != (hv_num * k_dim,) or dt_bias.dtype not in gate_param_dtypes
+        ):
+            raise RuntimeError("npu_chunk_kda_fwd: dt_bias must be float32 or bfloat16 [HV*K].")
     lower_bound = _optional_float(lower_bound, -5.0)
     if use_gate_in_kernel and safe_gate and not (-5.0 <= lower_bound < 0.0):
         raise RuntimeError("npu_chunk_kda_fwd: lower_bound must be in [-5, 0) for safe gate.")
@@ -1178,7 +1184,7 @@ def npu_chunk_kda_fwd(
     h_shape = (
         ((total_chunks, hv_num, v_dim, k_dim) if state_v_first
          else (total_chunks, hv_num, k_dim, v_dim))
-        if is_rank3
+        if is_rank3 or cu is not None
         else ((batch, total_chunks, hv_num, v_dim, k_dim) if state_v_first
               else (batch, total_chunks, hv_num, k_dim, v_dim))
     )

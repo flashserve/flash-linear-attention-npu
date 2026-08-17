@@ -184,11 +184,11 @@ public:
         "The situation where the basic blocks of L1 and L0 differ on the m and n axes is not supported yet");
     static_assert(L0_TILE_K <= L1_TILE_K, "L0TileShape::K cannot exceed L1TileShape::K");
 #if (defined (CATLASS_ARCH) && CATLASS_ARCH == 2201)
-    static_assert(L1_TILE_M * SizeOfBits<ElementA>::value % _32B == 0, "L1TileShape::M must be 32B aligned.");
-    static_assert(L1_TILE_K * SizeOfBits<ElementA>::value % _32B == 0, "L1TileShape::K must be 32B aligned.");
-    static_assert(L1_TILE_K * SizeOfBits<ElementB>::value % _32B == 0, "L1TileShape::K must be 32B aligned.");
-    static_assert(L1_TILE_N * SizeOfBits<ElementB>::value % _32B == 0, "L1TileShape::N must be 32B aligned.");
-    static_assert(L0_TILE_K * SizeOfBits<ElementB>::value % _32B == 0, "L0TileShape::K must be 32B aligned.");
+    static_assert(L1_TILE_M * AscendC::SizeOfBits<ElementA>::value % _32B == 0, "L1TileShape::M must be 32B aligned.");
+    static_assert(L1_TILE_K * AscendC::SizeOfBits<ElementA>::value % _32B == 0, "L1TileShape::K must be 32B aligned.");
+    static_assert(L1_TILE_K * AscendC::SizeOfBits<ElementB>::value % _32B == 0, "L1TileShape::K must be 32B aligned.");
+    static_assert(L1_TILE_N * AscendC::SizeOfBits<ElementB>::value % _32B == 0, "L1TileShape::N must be 32B aligned.");
+    static_assert(L0_TILE_K * AscendC::SizeOfBits<ElementB>::value % _32B == 0, "L0TileShape::K must be 32B aligned.");
 #endif
 
     static_assert((!HAS_BIAS && (L1A_STAGES + L1B_STAGES) <= 8) || (HAS_BIAS && (L1A_STAGES + L1B_STAGES) <= 7), 

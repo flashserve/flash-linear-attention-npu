@@ -26,6 +26,46 @@ def test_route_case_uses_one_shape_definition():
     assert any({"ascendc", "aclnn", "direct_launch"} <= set(case["run_on"]) for case in route_cases)
 
 
+def test_rank4_varlen_h_uses_flattened_public_abi_across_entrypoints():
+    op_api = (
+        ROOT
+        / "fla/ops/ascendc/kda/chunk_kda_fwd/op_host/op_api/aclnn_chunk_kda_fwd.cpp"
+    ).read_text(encoding="utf-8")
+    plugin = (
+        ROOT / "torch_custom/fla_npu/op_plugin/ops/opapi/FLANpuOpApi.cpp"
+    ).read_text(encoding="utf-8")
+
+    assert "info.isRank3 || params.cuSeqlensOptional != nullptr" in op_api
+    assert "hExport = AsRank4(hExport, hExportShape5, executorPtr);" in op_api
+    assert "(is_rank3 || cu_seqlens.has_value())" in plugin
+
+
+def test_sequence_count_limit_applies_only_to_packed_varlen():
+    op_api = (
+        ROOT
+        / "fla/ops/ascendc/kda/chunk_kda_fwd/op_host/op_api/aclnn_chunk_kda_fwd.cpp"
+    ).read_text(encoding="utf-8")
+    plugin = (
+        ROOT / "torch_custom/fla_npu/op_plugin/ops/opapi/FLANpuOpApi.cpp"
+    ).read_text(encoding="utf-8")
+    ctypes = (
+        ROOT / "torch_custom/fla_npu/fla_npu/ops/ascendc/_aclnn_ctypes.py"
+    ).read_text(encoding="utf-8")
+    api = (
+        ROOT / "fla/ops/ascendc/kda/chunk_kda_fwd/docs/api.md"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "params.cuSeqlensOptional == nullptr || "
+        "info.seqNum <= MAX_KDA_VARLEN_SEQUENCES"
+    ) in op_api
+    assert "!cu_seqlens.has_value() || seq_num <= 1024" in plugin
+    assert 'TORCH_CHECK(seq_num <= 1024' not in plugin
+    assert "if cu is not None:" in ctypes
+    assert "if len(cu) - 1 > 1024:" in ctypes
+    assert "该 1024 上限不适用于" in api
+
+
 def test_a5_h96_model_performance_cases_keep_full_preprocess_contract():
     data = manifest()
     cases = {case["id"]: case for case in data["cases"]}

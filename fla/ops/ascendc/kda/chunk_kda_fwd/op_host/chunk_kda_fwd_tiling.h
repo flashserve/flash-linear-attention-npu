@@ -40,6 +40,8 @@ TILING_DATA_FIELD_DEF(bool, storeVNew);
 TILING_DATA_FIELD_DEF(bool, storeH);
 
 TILING_DATA_FIELD_DEF(int64_t, gateDataType);
+TILING_DATA_FIELD_DEF(int64_t, aLogDataType);
+TILING_DATA_FIELD_DEF(int64_t, dtBiasDataType);
 TILING_DATA_FIELD_DEF(int64_t, gateUsedCoreNum);
 TILING_DATA_FIELD_DEF(int64_t, prepareUsedCoreNum);
 TILING_DATA_FIELD_DEF(int64_t, postWuUsedCoreNum);
@@ -67,6 +69,8 @@ TILING_DATA_FIELD_DEF(int64_t, kDecayWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, hWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, numSeqWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, numChunksWorkspaceOffset);
+TILING_DATA_FIELD_DEF(uint32_t, compactPlanOffset);
+TILING_DATA_FIELD_DEF(uint32_t, compactPlanBytes);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkKdaFwd, ChunkKdaFwdTilingData)

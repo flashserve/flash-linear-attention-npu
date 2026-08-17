@@ -21,9 +21,11 @@
 #include "catlass/gemm/dispatch_policy.hpp"
 #include "catlass/gemm/tile/tile_copy.hpp"
 #include "catlass/gemm_coord.hpp"
+#include "kernel_utils/block/block_mmad_pingpong_tla.hpp"
 #include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
 #include "catlass/layout/layout.hpp"
 #include "kernel_operator.h"
+#include "chunk_kda_fwd_plan.h"
 #include "chunk_kda_fwd_varlen.h"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
@@ -58,8 +60,8 @@ constexpr uint32_t KDA_SOLVE_PIPELINE_DEPTH = 4;
 constexpr uint32_t KDA_SOLVE_DIAG_BT = 16;
 constexpr uint32_t KDA_SOLVE_DIAG_BLOCKS = KDA_SOLVE_BT / KDA_SOLVE_DIAG_BT;
 constexpr uint32_t KDA_SOLVE_DIAG_MCH_ITERS = 3;
-// Keep the local safe-gate exponent span within the BF16 score range while
-// reducing repeated gate-factor work and AIV/AIC handshakes.
+// 将 safe-gate 的局部指数跨度限制在 BF16 score 可表示范围内，同时减少
+// 重复的 gate factor 计算和 AIV/AIC 握手。
 constexpr uint32_t KDA_SCORE_REF_BC = 32;
 constexpr uint32_t KDA_SAFE_SCORE_REF_BC = 32;
 constexpr uint32_t KDA_VEC_ARENA_ELEMENTS = 32768;
@@ -78,8 +80,7 @@ constexpr uint8_t KDA_SCORE_READY_FLAG1 = 5;
 constexpr uint8_t KDA_SOLVE_DONE_FLAG = 6;
 constexpr uint8_t KDA_SOLVE_READY_FLAG = 7;
 constexpr uint32_t KDA_SCORE_QUEUE_DEPTH = 2;
-constexpr uint32_t KDA_SCORE_LANES = 2;
-constexpr uint32_t KDA_SCORE_SCRATCH_SLOTS = KDA_SCORE_QUEUE_DEPTH * KDA_SCORE_LANES;
+constexpr uint32_t KDA_SCORE_SCRATCH_SLOTS = KDA_SCORE_QUEUE_DEPTH;
 constexpr uint32_t KDA_SYNC_REVERSE_DEPTH = 1;
 constexpr uint32_t KDA_SCORE_SCRATCH_PLANES = 3;
 constexpr uint32_t KDA_SCORE_SCRATCH_QG = 0;
@@ -88,19 +89,28 @@ constexpr uint32_t KDA_SCORE_SCRATCH_KG = 2;
 constexpr uint64_t KDA_WORKSPACE_ALIGN = 512;
 constexpr uint32_t KDA_GATE_TILE_ROWS = 16;
 constexpr uint32_t KDA_GATE_PIPELINE_DEPTH = 3;
-constexpr uint32_t KDA_AIV_UB_BUDGET_BYTES = 192 * 1024;
+// Generic A2/A3 vector kernels expose 184 KiB of TBuf-backed VECCALC storage.
+// Keep all managed buffers below the target CANN TOTAL_VEC_LOCAL_SIZE limit.
+constexpr uint32_t KDA_AIV_VEC_LOCAL_BYTES = 184 * 1024;
+static_assert(
+    static_cast<uint64_t>(KDA_VEC_ARENA_ELEMENTS) * sizeof(float) + EXP2_UB_BYTES <
+        KDA_AIV_VEC_LOCAL_BYTES,
+    "generic AIV fixed buffers must leave room for the gate pipeline");
 using KdaArchTag = Catlass::Arch::AtlasA2;
-using KdaDispatchPolicy = Catlass::Gemm::MmadPingpong<KdaArchTag, true, false>;
+// Aqk and Akk share the right operand; the resident-address check reuses
+// each L1 B tile across the two consecutive products.
 using KdaScoreDispatchPolicy =
-    Catlass::Gemm::MmadPingpongTlaMulti<KdaArchTag, true, false, 1, true, 2, 1, 2, 2>;
+    Catlass::Gemm::MmadPingpongTlaMulti<KdaArchTag, false, false, 2, true, 2, 1, 2, 2>;
 static_assert(KdaScoreDispatchPolicy::ENABLE_L1_RESIDENT,
               "KDA Aqk/Akk score MMAD must keep the shared right matrix resident in L1");
 static_assert(KdaScoreDispatchPolicy::L1B_STAGES == 1,
-              "KDA Aqk/Akk score MMAD needs one L1 B slot so the second MMAD reuses it");
-using KdaSolveDispatchPolicy = Catlass::Gemm::MmadPingpong<KdaArchTag, true, false>;
+              "KDA Aqk/Akk score MMAD reuses one resident L1 B stage");
+// Solve 的每次 Cube 输出都会立即作为下一次 MTE2 的 GM 输入，RAW 依赖会
+// 串行化相邻调用；这里明确使用单 L0C，避免把单次调用误标成双缓冲。
+using KdaSolveDispatchPolicy = Common::MmadPingpong<KdaArchTag, false, false, 1>;
 static_assert(!KdaSolveDispatchPolicy::USE_HF32_MODE, "KDA triangular solve must use IEEE FP32 Cube mode");
 using KdaL1TileShape = tla::Shape<KdaInt64, KdaInt128, KdaInt128>;
-using KdaL0TileShape = KdaL1TileShape;
+using KdaL0TileShape = tla::Shape<KdaInt64, KdaInt128, KdaInt128>;
 using KdaSolveL1TileShape = tla::Shape<KdaInt64, KdaInt64, KdaInt64>;
 using KdaSolveL0TileShape = KdaSolveL1TileShape;
 
@@ -242,7 +252,9 @@ public:
             const uint64_t gateInputSlotBytes = gateStageElems * (2 * sizeof(T) + sizeof(GK_T));
             const uint64_t gatePipelineBytes =
                 KDA_GATE_PIPELINE_DEPTH * (gateInputSlotBytes + gateStageElems * sizeof(T));
-            pipe_->InitBuffer(gateWritebackBuf_, static_cast<uint32_t>(gatePipelineBytes));
+            pipe_->InitBuffer(
+                gateWritebackBuf_,
+                static_cast<uint32_t>(gatePipelineBytes + ResidentRawQKBytes()));
             AllocVectorEvents();
         }
     }
@@ -261,10 +273,29 @@ public:
 
     __aicore__ inline void ProcessAic()
     {
+        AllocSolveCubeEvent();
         ProcessPreAic();
+        ReleaseSolveCubeEvent();
+    }
+
+    __aicore__ inline void SetCompactPlan(GM_ADDR compactPlan)
+    {
+        compactPlanAddr_ = compactPlan;
     }
 
 private:
+    __aicore__ inline void AllocSolveCubeEvent()
+    {
+        // Solve 的 BlockMmad 会在同一次 AIC 任务内反复写回 GM，事件在任务级
+        // 生命周期中只分配一次，避免每个 helper 重复占用有限的 EventID。
+        solveFixToMte2Event_ = pipe_->AllocEventID<HardEvent::FIX_MTE2>();
+    }
+
+    __aicore__ inline void ReleaseSolveCubeEvent()
+    {
+        pipe_->ReleaseEventID<HardEvent::FIX_MTE2>(solveFixToMte2Event_);
+    }
+
     __aicore__ inline void AllocVectorEvents()
     {
         mte2ToVEvent_ = pipe_->AllocEventID<HardEvent::MTE2_V>();
@@ -354,13 +385,6 @@ private:
                    K_ +
                d;
     }
-
-    __aicore__ inline uint64_t ScoreScratchSlot(uint64_t queueSlot, uint64_t lane, bool pairHeads) const
-    {
-        return pairHeads ? queueSlot * KDA_SCORE_LANES + lane : queueSlot;
-    }
-
-
 
     __aicore__ inline uint64_t ScoreRefBlockSize() const
     {
@@ -508,11 +532,28 @@ private:
         return GatePipelineRows() * K_;
     }
 
+    __aicore__ inline bool UseRawQKResident() const
+    {
+        if constexpr (IsSameType<T, float>::value) {
+            return false;
+        }
+        return BT_ == 64 && K_ == 128 && V_ == 128;
+    }
+
+    __aicore__ inline uint64_t ResidentRawQKBytes() const
+    {
+        return UseRawQKResident() ? 2 * BT_ * K_ * sizeof(T) : 0;
+    }
+
     __aicore__ inline uint64_t GatePipelineRows() const
     {
         constexpr uint64_t fixedBytes =
             static_cast<uint64_t>(KDA_VEC_ARENA_ELEMENTS) * sizeof(float) + EXP2_UB_BYTES;
-        constexpr uint64_t availableBytes = KDA_AIV_UB_BUDGET_BYTES - fixedBytes;
+        const uint64_t residentBytes = ResidentRawQKBytes();
+        const uint64_t availableBytes =
+            KDA_AIV_VEC_LOCAL_BYTES > fixedBytes + residentBytes
+                ? KDA_AIV_VEC_LOCAL_BYTES - fixedBytes - residentBytes
+                : 0;
         uint64_t bytesPerRow =
             K_ * KDA_GATE_PIPELINE_DEPTH * (3 * sizeof(T) + sizeof(GK_T));
         uint64_t rows = bytesPerRow == 0 ? 0 : availableBytes / bytesPerRow;
@@ -549,6 +590,50 @@ private:
         return gateWritebackBuf_.Get<T>()[byteOffset / sizeof(T)];
     }
 
+    __aicore__ inline uint64_t GatePipelineBytes() const
+    {
+        return KDA_GATE_PIPELINE_DEPTH *
+            (GateInputSlotBytes() + GateStageElems() * sizeof(T));
+    }
+
+    __aicore__ inline LocalTensor<T> ResidentQTyped()
+    {
+        return gateWritebackBuf_.Get<T>()[GatePipelineBytes() / sizeof(T)];
+    }
+
+    __aicore__ inline LocalTensor<T> ResidentKTyped()
+    {
+        return ResidentQTyped()[BT_ * K_];
+    }
+
+    __aicore__ inline void LoadResidentRawQK(
+        uint64_t b, uint64_t h, uint64_t start, uint64_t curT,
+        uint64_t subBlockIdx, uint64_t subBlockNum)
+    {
+        // 复用 resident 槽前先等 V 完成上一组读取；MTE2 搬入完成后再允许
+        // 当前窗口的 V 指令读取，槽位在整个 qHead 生命周期内不再改写。
+        SetFlag<HardEvent::V_MTE2>(vToMte2Event_);
+        WaitFlag<HardEvent::V_MTE2>(vToMte2Event_);
+        LocalTensor<T> qResident = ResidentQTyped();
+        LocalTensor<T> kResident = ResidentKTyped();
+        const uint64_t rowBegin = curT * subBlockIdx / subBlockNum;
+        const uint64_t rowEnd = curT * (subBlockIdx + 1) / subBlockNum;
+        const uint64_t rows = rowEnd - rowBegin;
+        // 两个 AIV 将同一 qHead 的连续行各搬一次，并写入 resident 的原始
+        // row offset；两侧合起来恰好覆盖整个 chunk，不重复读取 GM 行。
+        if (rows > 0) {
+            LocalTensor<T> qOwned = qResident[rowBegin * K_];
+            LocalTensor<T> kOwned = kResident[rowBegin * K_];
+            CopyRowsIn(qOwned, q_, QOffset(b, h, start + rowBegin, 0), rows, K_,
+                       inputSequenceMajor_ ? H_ * K_ : K_);
+            CopyRowsIn(kOwned, k_, QOffset(b, h, start + rowBegin, 0), rows, K_,
+                       inputSequenceMajor_ ? H_ * K_ : K_);
+        }
+        SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+        WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+        residentRawQKActive_ = true;
+    }
+
     __aicore__ inline void PrefetchQKGate(uint64_t slot, uint64_t b, uint64_t h, uint64_t hv,
                                           uint64_t token, uint64_t elems)
     {
@@ -556,10 +641,12 @@ private:
         LocalTensor<T> qTyped = GateQTyped(slot);
         LocalTensor<T> kTyped = GateKTyped(slot);
         LocalTensor<GK_T> gateTyped = GateGTyped(slot);
-        CopyRowsIn(qTyped, q_, QOffset(b, h, token, 0), rows, K_,
-                   inputSequenceMajor_ ? H_ * K_ : K_);
-        CopyRowsIn(kTyped, k_, QOffset(b, h, token, 0), rows, K_,
-                   inputSequenceMajor_ ? H_ * K_ : K_);
+        if (!residentRawQKActive_) {
+            CopyRowsIn(qTyped, q_, QOffset(b, h, token, 0), rows, K_,
+                       inputSequenceMajor_ ? H_ * K_ : K_);
+            CopyRowsIn(kTyped, k_, QOffset(b, h, token, 0), rows, K_,
+                       inputSequenceMajor_ ? H_ * K_ : K_);
+        }
         CopyVectorIn(gateTyped, gk_, KVOffset(b, hv, token, 0, K_), elems);
         SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
     }
@@ -570,8 +657,10 @@ private:
         const uint64_t rows = elems / K_;
         LocalTensor<T> kTyped = GateQTyped(slot);
         LocalTensor<GK_T> gateTyped = GateGTyped(slot);
-        CopyRowsIn(kTyped, k_, QOffset(b, h, token, 0), rows, K_,
-                   inputSequenceMajor_ ? H_ * K_ : K_);
+        if (!residentRawQKActive_) {
+            CopyRowsIn(kTyped, k_, QOffset(b, h, token, 0), rows, K_,
+                       inputSequenceMajor_ ? H_ * K_ : K_);
+        }
         CopyVectorIn(gateTyped, gk_, KVOffset(b, hv, token, 0, K_), elems);
         SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
     }
@@ -685,6 +774,7 @@ private:
 
 
     __aicore__ inline void PrepareScoreFactorsBulk(uint64_t b, uint64_t h, uint64_t hv, uint64_t start,
+                                                    uint64_t curT,
                                                     uint64_t subBlockIdx, uint64_t subBlockNum,
                                                     uint64_t refToken, uint64_t scoreRowBegin,
                                                     uint64_t scoreRowCount, uint64_t validColEnd,
@@ -695,6 +785,16 @@ private:
 
         uint64_t qwBegin = scoreRowBegin + (scoreRowCount * subBlockIdx) / subBlockNum;
         uint64_t qwEnd = scoreRowBegin + (scoreRowCount * (subBlockIdx + 1)) / subBlockNum;
+        if (residentRawQKActive_) {
+            const uint64_t ownerBegin = curT * subBlockIdx / subBlockNum;
+            const uint64_t ownerEnd = curT * (subBlockIdx + 1) / subBlockNum;
+            const uint64_t scoreRowEnd = scoreRowBegin + scoreRowCount;
+            qwBegin = scoreRowBegin > ownerBegin ? scoreRowBegin : ownerBegin;
+            qwEnd = scoreRowEnd < ownerEnd ? scoreRowEnd : ownerEnd;
+            if (qwEnd < qwBegin) {
+                qwEnd = qwBegin;
+            }
+        }
         uint64_t qwMaxRows = GatePipelineRows();
         bool qwOutputPending = false;
         uint64_t qwSlot = 0;
@@ -724,8 +824,15 @@ private:
             LocalTensor<float> outFp32 = arena[4 * elems];
 
             WaitGateInputReady();
-            Cast(qFp32, qTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
-            Cast(kFp32, kTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            if (residentRawQKActive_) {
+                LocalTensor<T> qResident = ResidentQTyped()[tileRow * K_];
+                LocalTensor<T> kResident = ResidentKTyped()[tileRow * K_];
+                Cast(qFp32, qResident, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+                Cast(kFp32, kResident, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            } else {
+                Cast(qFp32, qTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+                Cast(kFp32, kTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            }
             if constexpr (IsSameType<GK_T, float>::value) {
                 gFp32 = gateTyped;
             } else {
@@ -784,6 +891,15 @@ private:
 
         uint64_t kgBegin = (validColEnd * subBlockIdx) / subBlockNum;
         uint64_t kgEnd = (validColEnd * (subBlockIdx + 1)) / subBlockNum;
+        if (residentRawQKActive_) {
+            const uint64_t ownerBegin = curT * subBlockIdx / subBlockNum;
+            const uint64_t ownerEnd = curT * (subBlockIdx + 1) / subBlockNum;
+            kgBegin = ownerBegin;
+            kgEnd = validColEnd < ownerEnd ? validColEnd : ownerEnd;
+            if (kgEnd < kgBegin) {
+                kgEnd = kgBegin;
+            }
+        }
         uint64_t kgMaxRows = GatePipelineRows();
         bool kgOutputPending = false;
         uint64_t kgSlot = 0;
@@ -810,7 +926,12 @@ private:
             LocalTensor<float> outFp32 = arena[3 * elems];
 
             WaitGateInputReady();
-            Cast(kFp32, kTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            if (residentRawQKActive_) {
+                LocalTensor<T> kResident = ResidentKTyped()[tileRow * K_];
+                Cast(kFp32, kResident, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            } else {
+                Cast(kFp32, kTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            }
             if constexpr (IsSameType<GK_T, float>::value) {
                 gFp32 = gateTyped;
             } else {
@@ -915,8 +1036,15 @@ private:
 
             uint64_t token = start + tileRow;
             WaitGateInputReady();
-            Cast(qFp32, qTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
-            Cast(kFp32, kTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            if (residentRawQKActive_) {
+                LocalTensor<T> qResident = ResidentQTyped()[tileRow * K_];
+                LocalTensor<T> kResident = ResidentKTyped()[tileRow * K_];
+                Cast(qFp32, qResident, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+                Cast(kFp32, kResident, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            } else {
+                Cast(qFp32, qTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+                Cast(kFp32, kTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(elems));
+            }
             if constexpr (IsSameType<GK_T, float>::value) {
                 gFp32 = gateTyped;
             } else {
@@ -1055,7 +1183,7 @@ private:
             validColEnd = curT;
         }
         if (writeScoreScratch) {
-            PrepareScoreFactorsBulk(b, h, hv, start, subBlockIdx, subBlockNum, refToken, scoreRowBegin,
+            PrepareScoreFactorsBulk(b, h, hv, start, curT, subBlockIdx, subBlockNum, refToken, scoreRowBegin,
                                     scoreRowCount, validColEnd, scoreSlot);
             return;
         }
@@ -1537,7 +1665,7 @@ private:
         using LayoutTagC = Catlass::layout::RowMajor;
         using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KdaArchTag, ElementA, LayoutTagA, ElementB,
                                                                 LayoutTagB, ElementC, LayoutTagC>;
-        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaSolveDispatchPolicy, KdaSolveL1TileShape,
+        using BlockMmad = Common::BlockMmadTla<KdaSolveDispatchPolicy, KdaSolveL1TileShape,
                                                               KdaSolveL0TileShape, ElementA, ElementB, ElementC,
                                                               void, TileCopy>;
         Catlass::Arch::Resource<KdaArchTag> resource;
@@ -1553,7 +1681,10 @@ private:
         auto blockC = GetTile(tensorLayoutC, tla::MakeCoord(rowC, colC), tla::MakeShape(shape.m(), shape.n()));
         BlockMmad blockMmad(resource);
         blockMmad(blockA, blockB, blockC, shape);
-        PipeBarrier<PIPE_ALL>();
+        // BlockMmad 析构时排空单个 L0C；下一步会从 GM 读取本次结果，
+        // 因此还要闭合 Fixpipe 到 MTE2 的写后读依赖。
+        SetFlag<HardEvent::FIX_MTE2>(solveFixToMte2Event_);
+        WaitFlag<HardEvent::FIX_MTE2>(solveFixToMte2Event_);
     }
 
     __aicore__ inline void AddSolveTmpToX(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
@@ -1927,8 +2058,8 @@ private:
                                                         uint64_t subBlockNum)
     {
         constexpr uint64_t tileRows = 32;
-        // Keep tail rows on the same AIV that owns their padded solve rows. Splitting by curT would
-        // move short-tail export to AIV1 while AIV0 is still writing the solved matrix.
+        // 尾行必须留在负责其补齐 solve 行的同一个 AIV 上。若按 curT 重新切分，
+        // AIV0 尚在写 solve 矩阵时，短尾导出会错误移到 AIV1。
         const uint64_t rowBegin = (BT_ * subBlockIdx) / subBlockNum;
         uint64_t rowEnd = (BT_ * (subBlockIdx + 1)) / subBlockNum;
         if (rowEnd > curT) {
@@ -2060,11 +2191,11 @@ private:
         }
     }
 
-    __aicore__ inline void ProcessChunkPreAivFp32(uint64_t b, uint64_t h, uint64_t hv, uint64_t chunkIdx,
-                                                  uint64_t start, uint64_t end, uint64_t subBlockIdx,
-                                                  uint64_t subBlockNum, bool deferSafeSolve = false,
-                                                  bool waitPendingSafeSolve = false,
-                                                  uint64_t scoreLane = 0, bool pairHeads = false)
+    __attribute__((noinline)) __aicore__ void ProcessChunkPreAivFp32(
+        uint64_t b, uint64_t h, uint64_t hv, uint64_t chunkIdx,
+        uint64_t start, uint64_t end, uint64_t subBlockIdx,
+        uint64_t subBlockNum, bool deferSafeSolve = false,
+        bool waitPendingSafeSolve = false)
     {
         uint64_t curT = end - start;
         if (curT == 0) {
@@ -2091,8 +2222,7 @@ private:
                 uint64_t rowBegin = block * scoreBlockSize;
                 uint64_t rowCount = ScoreRowBlockCount(curT, rowBegin);
                 uint64_t refToken = ScoreRefToken(start, curT, rowBegin, rowCount);
-                uint64_t scoreSlot =
-                    ScoreScratchSlot(block % KDA_SCORE_QUEUE_DEPTH, scoreLane, pairHeads);
+                uint64_t scoreSlot = block % KDA_SCORE_QUEUE_DEPTH;
                 PrepareGateProducts(b, h, hv, start, curT, subBlockIdx, subBlockNum, true, refToken,
                                     rowBegin + rowCount, true, scoreSlot,
                                     rowBegin, rowCount);
@@ -2111,8 +2241,8 @@ private:
         }
         bool fusedScoreWriteback = false;
         if (!fusedScoreWriteback) {
-            // The final score MMAD only consumes scoreWorkspace_. Run the
-            // independent gate writeback while AIC drains its MMAD/Fixpipe path.
+            // 最后一次 score MMAD 只读取 scoreWorkspace_；AIC 排空 MMAD/Fixpipe
+            // 路径时，可并行执行独立的 gate 写回。
             PrepareGateProducts(b, h, hv, start, curT, subBlockIdx, subBlockNum);
         }
         if (pipelineBlockCount > 0) {
@@ -2127,19 +2257,8 @@ private:
         if (useAkkCubeSolve) {
             bool fullChunk = curT == BT_;
             if constexpr (SAFE_GATE) {
-                if (pairHeads) {
-                    for (uint64_t rowPart = 0; rowPart < KDA_SCORE_LANES; ++rowPart) {
-                        uint64_t pairRowBegin = 0;
-                        uint64_t pairRowEnd = 0;
-                        GetSolveRowRange(
-                            BT_, rowPart, KDA_SCORE_LANES, pairRowBegin, pairRowEnd);
-                        PrepareAqkAkkSolveInputRows(
-                            b, hv, chunkIdx, start, curT, pairRowBegin, pairRowEnd, false, false);
-                    }
-                } else {
-                    PrepareAqkAkkSolveInputRows(
-                        b, hv, chunkIdx, start, curT, solveRowBegin, solveRowEnd, false, false);
-                }
+                PrepareAqkAkkSolveInputRows(
+                    b, hv, chunkIdx, start, curT, solveRowBegin, solveRowEnd, false, false);
                 if (deferSafeSolve) {
                     SignalAicSolveReady();
                     return;
@@ -2161,14 +2280,15 @@ private:
                 }
             }
         }
-        // Host validation guarantees every accepted shape has enough workspace for this cube path.
+        // Host 校验保证所有已接受 shape 都为该 Cube 路径预留了足够 workspace。
         PrepareWuCubeInputs(b, hv, start, curT, subBlockIdx, subBlockNum);
         FinalizePrepareIntermediates(b, hv, start, curT, subBlockIdx, subBlockNum);
     }
 
-    __aicore__ inline void FinishDeferredSafeChunk(uint64_t b, uint64_t hv, uint64_t chunkIdx,
-                                                   uint64_t start, uint64_t end, uint64_t subBlockIdx,
-                                                   uint64_t subBlockNum)
+    __attribute__((noinline)) __aicore__ void FinishDeferredSafeChunk(
+        uint64_t b, uint64_t hv, uint64_t chunkIdx,
+        uint64_t start, uint64_t end, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
     {
         uint64_t curT = end - start;
         uint64_t solveRowBegin = 0;
@@ -2179,14 +2299,9 @@ private:
         FinalizePrepareIntermediates(b, hv, start, curT, subBlockIdx, subBlockNum);
     }
 
-    __aicore__ inline void FinishDeferredSafeChunkPair(
-        uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start, uint64_t end)
-    {
-        FinishDeferredSafeChunk(b, hv, chunkIdx, start, end, 0, 1);
-    }
-
-    __aicore__ inline void ProcessChunkPreAic(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
-                                              uint64_t end)
+    __attribute__((noinline)) __aicore__ void ProcessChunkPreAic(
+        uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
+        uint64_t end)
     {
         if constexpr (IsSameType<AKK_T, float>::value) {
             ProcessChunkPreAicFp32(b, hv, chunkIdx, start, end);
@@ -2234,45 +2349,6 @@ private:
         (void)chunkIdx;
     }
 
-    __aicore__ inline void ProcessChunkPreAicHeadPairFp32(
-        uint64_t b, uint64_t hvBase, uint64_t chunkIdx, uint64_t start, uint64_t end,
-        uint64_t localTaskIdx)
-    {
-        uint64_t curT = end - start;
-        if (curT == 0 || K_ < 16) {
-            return;
-        }
-        uint64_t scoreBlockSize = ScoreRefBlockSize();
-        uint64_t scoreBlockCount = (curT + scoreBlockSize - 1) / scoreBlockSize;
-        uint64_t pipelineBlockCount =
-            (scoreBlockCount + KDA_SCORE_QUEUE_DEPTH - 1) / KDA_SCORE_QUEUE_DEPTH * KDA_SCORE_QUEUE_DEPTH;
-        for (uint64_t block = 0; block < pipelineBlockCount; ++block) {
-            Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(scoreReadyFlag_);
-            if (block < scoreBlockCount) {
-                uint64_t rowBegin = block * scoreBlockSize;
-                uint64_t rowCount = ScoreRowBlockCount(curT, rowBegin);
-                for (uint64_t lane = 0; lane < KDA_SCORE_LANES; ++lane) {
-                    uint64_t hv = hvBase + lane;
-                    uint64_t scoreSlot =
-                        ScoreScratchSlot(block % KDA_SCORE_QUEUE_DEPTH, lane, true);
-                    ComputeRawAqkAkkCubeBlock(b, hv, start, curT, rowBegin, rowCount, true,
-                                              scoreSlot, rowBegin + rowCount);
-                }
-            }
-            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(scoreDoneFlag_);
-        }
-
-        if (UseAkkCubeSolve(curT)) {
-            Catlass::Arch::CrossCoreWaitFlag(syncReadyFlag_);
-            for (uint64_t lane = 0; lane < KDA_SCORE_LANES; ++lane) {
-                activeSolveSlot_ =
-                    (localTaskIdx % (KDA_SOLVE_PIPELINE_DEPTH / KDA_SCORE_LANES)) * KDA_SCORE_LANES + lane;
-                ComputeAkkMergeCubeWorkspace(b, hvBase + lane, chunkIdx);
-            }
-            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(syncDoneFlag_);
-        }
-    }
-
     __aicore__ inline bool ResolveFlatChunkForHv(
         uint64_t flatChunk, uint64_t hv, uint64_t &seq, uint64_t &b, uint64_t &h,
         uint64_t &chunkIdx, uint64_t &start, uint64_t &end)
@@ -2299,88 +2375,495 @@ private:
         return start < end;
     }
 
-    __aicore__ inline void ProcessPreAivHeadPair()
-    {
-        const uint64_t subBlockIdx = static_cast<uint64_t>(GetSubBlockIdx());
-        const uint64_t subBlockNum = static_cast<uint64_t>(GetSubBlockNum());
-        const uint64_t coreNum = usedCoreNum_;
-        const uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
-        const uint64_t chunkCount = isVarLen_ ? NT_ : B_ * NT_;
-        const uint64_t headWindows = HV_ / KDA_SCORE_LANES;
-        const uint64_t taskNum = chunkCount * headWindows;
-        bool pendingValid = false;
-        uint64_t pendingB = 0;
-        uint64_t pendingHv = 0;
-        uint64_t pendingChunkIdx = 0;
-        uint64_t pendingStart = 0;
-        uint64_t pendingEnd = 0;
-        uint64_t pendingSlot = 0;
-        uint64_t localTaskIdx = 0;
+    struct OwnedChunkDesc {
+        uint64_t b = 0;
+        uint64_t chunkIdx = 0;
+        uint64_t start = 0;
+        uint64_t end = 0;
+    };
 
-        for (uint64_t task = coreIdx; task < taskNum; task += coreNum, ++localTaskIdx) {
-            uint64_t flatChunk = task / headWindows;
-            uint64_t hv = (task % headWindows) * KDA_SCORE_LANES + subBlockIdx;
-            uint64_t seq = 0;
-            uint64_t b = 0;
-            uint64_t h = 0;
-            uint64_t chunkIdx = 0;
-            uint64_t start = 0;
-            uint64_t end = 0;
-            if (!ResolveFlatChunkForHv(flatChunk, hv, seq, b, h, chunkIdx, start, end)) {
-                continue;
+    struct FullChunkIterator {
+        uint64_t sequence = 0;
+        uint64_t localChunk = 0;
+        uint64_t sequenceStart = 0;
+        uint64_t fullChunkCount = 0;
+        bool sequenceLoaded = false;
+    };
+
+    struct GroupedFullTaskIterator {
+        FullChunkIterator chunks{};
+        OwnedChunkDesc chunk{};
+        uint64_t loadedChunkOrdinal = 0;
+        bool chunkLoaded = false;
+    };
+
+    struct GroupedTailTaskIterator {
+        OwnedChunkDesc chunk{};
+        uint64_t loadedChunkOrdinal = 0;
+        bool chunkLoaded = false;
+    };
+
+    struct DeferredSingleHeadState {
+        bool valid = false;
+        uint64_t b = 0;
+        uint64_t hv = 0;
+        uint64_t chunkIdx = 0;
+        uint64_t start = 0;
+        uint64_t end = 0;
+        uint64_t slot = 0;
+    };
+
+    __aicore__ inline bool LoadOwnedFullChunk(
+        const KdaForward::CompactSequencePlanView &plan,
+        FullChunkIterator &iterator, OwnedChunkDesc &desc)
+    {
+        while (iterator.sequence < plan.SequenceCount()) {
+            if (!iterator.sequenceLoaded) {
+                uint64_t sequenceEnd = T_;
+                iterator.sequenceStart = 0;
+                if (isVarLen_) {
+                    iterator.sequenceStart = static_cast<uint64_t>(
+                        cuSeqlensAddr_[iterator.sequence]);
+                    sequenceEnd = static_cast<uint64_t>(
+                        cuSeqlensAddr_[iterator.sequence + 1]);
+                }
+                iterator.fullChunkCount =
+                    (sequenceEnd - iterator.sequenceStart) / BT_;
+                iterator.sequenceLoaded = true;
             }
-            (void)seq;
-            uint64_t currentSlot =
-                (localTaskIdx % (KDA_SOLVE_PIPELINE_DEPTH / KDA_SCORE_LANES)) *
-                    KDA_SCORE_LANES +
-                subBlockIdx;
-            activeSolveSlot_ = currentSlot;
-            bool deferSolve = UseAkkCubeSolve(end - start);
-            ProcessChunkPreAivFp32(
-                b, h, hv, chunkIdx, start, end, 0, 1, deferSolve, pendingValid, subBlockIdx, true);
-            if (pendingValid) {
-                activeSolveSlot_ = pendingSlot;
-                FinishDeferredSafeChunkPair(
-                    pendingB, pendingHv, pendingChunkIdx, pendingStart, pendingEnd);
+            if (iterator.localChunk < iterator.fullChunkCount) {
+                desc.b = isVarLen_ ? 0 : iterator.sequence;
+                desc.chunkIdx = isVarLen_
+                    ? plan.SequenceChunkOffset(
+                          static_cast<uint32_t>(iterator.sequence)) +
+                          iterator.localChunk
+                    : iterator.localChunk;
+                desc.start =
+                    iterator.sequenceStart + iterator.localChunk * BT_;
+                desc.end = desc.start + BT_;
+                ++iterator.localChunk;
+                if (iterator.localChunk == iterator.fullChunkCount) {
+                    ++iterator.sequence;
+                    iterator.localChunk = 0;
+                    iterator.sequenceLoaded = false;
+                }
+                return true;
             }
-            pendingValid = deferSolve;
-            if (pendingValid) {
-                pendingB = b;
-                pendingHv = hv;
-                pendingChunkIdx = chunkIdx;
-                pendingStart = start;
-                pendingEnd = end;
-                pendingSlot = currentSlot;
-            }
+            ++iterator.sequence;
+            iterator.localChunk = 0;
+            iterator.sequenceLoaded = false;
         }
-        if (pendingValid) {
-            WaitAicSolveDone();
-            activeSolveSlot_ = pendingSlot;
-            FinishDeferredSafeChunkPair(
-                pendingB, pendingHv, pendingChunkIdx, pendingStart, pendingEnd);
+        return false;
+    }
+
+    __aicore__ inline bool LoadOwnedTailChunk(
+        const KdaForward::CompactSequencePlanView &plan,
+        uint64_t tailOrdinal, OwnedChunkDesc &desc)
+    {
+        const uint64_t sequence = plan.TailedSequenceId(
+            static_cast<uint32_t>(tailOrdinal));
+        if (sequence >= plan.SequenceCount()) {
+            return false;
+        }
+        uint64_t sequenceStart = 0;
+        uint64_t sequenceEnd = T_;
+        if (isVarLen_) {
+            sequenceStart = static_cast<uint64_t>(cuSeqlensAddr_[sequence]);
+            sequenceEnd = static_cast<uint64_t>(
+                cuSeqlensAddr_[sequence + 1]);
+        }
+        const uint64_t fullChunks =
+            (sequenceEnd - sequenceStart) / BT_;
+        desc.b = isVarLen_ ? 0 : sequence;
+        desc.chunkIdx = isVarLen_
+            ? plan.SequenceChunkOffset(static_cast<uint32_t>(sequence)) +
+                  fullChunks
+            : fullChunks;
+        desc.start = sequenceStart + fullChunks * BT_;
+        desc.end = sequenceEnd;
+        return desc.start < desc.end;
+    }
+
+    __aicore__ inline bool LoadGroupedFullTask(
+        const KdaForward::CompactSequencePlanView &plan, uint64_t task,
+        GroupedFullTaskIterator &iterator, OwnedChunkDesc &chunk,
+        uint64_t &headBegin, uint64_t &headEnd)
+    {
+        uint32_t chunkOrdinal = 0;
+        uint32_t begin = 0;
+        uint32_t end = 0;
+        if (!plan.DecodeChunkHeadGroupTask(
+                static_cast<uint32_t>(task), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_),
+                chunkOrdinal, begin, end)) {
+            return false;
+        }
+        if (!iterator.chunkLoaded ||
+            iterator.loadedChunkOrdinal != chunkOrdinal) {
+            if (!LoadOwnedFullChunk(plan, iterator.chunks, iterator.chunk)) {
+                return false;
+            }
+            iterator.loadedChunkOrdinal = chunkOrdinal;
+            iterator.chunkLoaded = true;
+        }
+        chunk = iterator.chunk;
+        headBegin = begin;
+        headEnd = end;
+        return true;
+    }
+
+    __aicore__ inline bool LoadGroupedTailTask(
+        const KdaForward::CompactSequencePlanView &plan, uint64_t task,
+        GroupedTailTaskIterator &iterator, OwnedChunkDesc &chunk,
+        uint64_t &headBegin, uint64_t &headEnd)
+    {
+        uint32_t chunkOrdinal = 0;
+        uint32_t begin = 0;
+        uint32_t end = 0;
+        if (!plan.DecodeChunkHeadGroupTask(
+                static_cast<uint32_t>(task), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_),
+                chunkOrdinal, begin, end)) {
+            return false;
+        }
+        if (!iterator.chunkLoaded ||
+            iterator.loadedChunkOrdinal != chunkOrdinal) {
+            if (!LoadOwnedTailChunk(plan, chunkOrdinal, iterator.chunk)) {
+                return false;
+            }
+            iterator.loadedChunkOrdinal = chunkOrdinal;
+            iterator.chunkLoaded = true;
+        }
+        chunk = iterator.chunk;
+        headBegin = begin;
+        headEnd = end;
+        return true;
+    }
+
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactPreAivHead(
+        const OwnedChunkDesc &chunk, uint64_t hv, uint64_t subBlockIdx,
+        uint64_t subBlockNum, uint64_t localTaskIdx,
+        DeferredSingleHeadState &pending)
+    {
+        uint64_t chunkEnd = chunk.start + BT_;
+        if constexpr (IS_TAIL) {
+            chunkEnd = chunk.end;
+        }
+        const uint64_t h = hv / (HV_ / H_);
+        if constexpr (SAFE_GATE && !IsSameType<T, float>::value) {
+            const uint64_t currentSlot =
+                localTaskIdx % KDA_SOLVE_PIPELINE_DEPTH;
+            activeSolveSlot_ = currentSlot;
+            const bool deferSolve =
+                UseAkkCubeSolve(chunkEnd - chunk.start);
+            if (!deferSolve && pending.valid) {
+                WaitAicSolveDone();
+                activeSolveSlot_ = pending.slot;
+                FinishDeferredSafeChunk(
+                    pending.b, pending.hv, pending.chunkIdx,
+                    pending.start, pending.end, subBlockIdx, subBlockNum);
+                pending.valid = false;
+                activeSolveSlot_ = currentSlot;
+            }
+            ProcessChunkPreAivFp32(
+                chunk.b, h, hv, chunk.chunkIdx, chunk.start, chunkEnd,
+                subBlockIdx, subBlockNum, deferSolve, pending.valid);
+            if (pending.valid) {
+                activeSolveSlot_ = pending.slot;
+                FinishDeferredSafeChunk(
+                    pending.b, pending.hv, pending.chunkIdx,
+                    pending.start, pending.end, subBlockIdx, subBlockNum);
+            }
+            pending.valid = deferSolve;
+            if (pending.valid) {
+                pending.b = chunk.b;
+                pending.hv = hv;
+                pending.chunkIdx = chunk.chunkIdx;
+                pending.start = chunk.start;
+                pending.end = chunkEnd;
+                pending.slot = currentSlot;
+            }
+        } else {
+            ProcessChunkPreAiv(
+                chunk.b, h, hv, chunk.chunkIdx, chunk.start, chunkEnd,
+                subBlockIdx, subBlockNum);
         }
     }
 
-    __aicore__ inline void ProcessPreAicHeadPair()
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactPreAivHeadWindow(
+        const OwnedChunkDesc &chunk, uint64_t headBase, uint32_t headCnt,
+        uint64_t subBlockIdx, uint64_t subBlockNum,
+        uint64_t &localTaskIdx, DeferredSingleHeadState &pending)
     {
-        const uint64_t chunkCount = isVarLen_ ? NT_ : B_ * NT_;
-        const uint64_t headWindows = HV_ / KDA_SCORE_LANES;
-        const uint64_t taskNum = chunkCount * headWindows;
-        const uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
+        // flag 操作保留在 runtime 循环内；同一个信号量通过计数深度
+        // 逐个记录窗口内的真实 head，不再按 head 数生成模板。
+        uint64_t curT = BT_;
+        if constexpr (IS_TAIL) {
+            curT = chunk.end - chunk.start;
+        }
+        const uint64_t headRatio = HV_ / H_;
+        uint64_t residentQHead = H_;
+        residentRawQKActive_ = false;
+        for (uint32_t lane = 0; lane < headCnt; ++lane) {
+            const uint64_t hv = headBase + lane;
+            const uint64_t qHead = hv / headRatio;
+            if (UseRawQKResident() && qHead != residentQHead) {
+                // runtime 窗口可能包含多个完整 qHead 组；raw Q/K 只在
+                // qHead 变化时从 GM 搬入。ratio=8 的相邻窗口允许重读。
+                LoadResidentRawQK(
+                    chunk.b, qHead, chunk.start, curT,
+                    subBlockIdx, subBlockNum);
+                residentQHead = qHead;
+            }
+            ProcessCompactPreAivHead<IS_TAIL>(
+                chunk, hv, subBlockIdx, subBlockNum,
+                localTaskIdx, pending);
+            ++localTaskIdx;
+        }
+        residentRawQKActive_ = false;
+    }
+
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactPreAivHeadRange(
+        const OwnedChunkDesc &chunk, uint64_t headBegin, uint64_t headEnd,
+        uint64_t subBlockIdx, uint64_t subBlockNum,
+        uint64_t &localTaskIdx, DeferredSingleHeadState &pending)
+    {
+        for (uint64_t headBase = headBegin; headBase < headEnd;) {
+            const uint32_t headCnt = KdaForward::HeadWindowHeadCount(
+                static_cast<uint32_t>(headBase), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_));
+            if (headCnt == 0 || headCnt > headEnd - headBase) {
+                return;
+            }
+            ProcessCompactPreAivHeadWindow<IS_TAIL>(
+                chunk, headBase, headCnt, subBlockIdx, subBlockNum,
+                localTaskIdx, pending);
+            headBase += headCnt;
+        }
+    }
+
+    __aicore__ inline void FlushGroupedPreAiv(
+        DeferredSingleHeadState &pending, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        if constexpr (SAFE_GATE && !IsSameType<T, float>::value) {
+            if (pending.valid) {
+                WaitAicSolveDone();
+                activeSolveSlot_ = pending.slot;
+                FinishDeferredSafeChunk(
+                    pending.b, pending.hv, pending.chunkIdx,
+                    pending.start, pending.end, subBlockIdx, subBlockNum);
+                pending.valid = false;
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessG1FullPreAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
         uint64_t localTaskIdx = 0;
-        for (uint64_t task = GetBlockIdx(); task < taskNum; task += coreNum, ++localTaskIdx) {
-            uint64_t flatChunk = task / headWindows;
-            uint64_t hvBase = (task % headWindows) * KDA_SCORE_LANES;
-            uint64_t seq = 0;
-            uint64_t b = 0;
-            uint64_t h = 0;
-            uint64_t chunkIdx = 0;
-            uint64_t start = 0;
-            uint64_t end = 0;
-            if (ResolveFlatChunkForHv(flatChunk, hvBase, seq, b, h, chunkIdx, start, end)) {
-                (void)seq;
-                (void)h;
-                ProcessChunkPreAicHeadPairFp32(b, hvBase, chunkIdx, start, end, localTaskIdx);
+        DeferredSingleHeadState pending{};
+        FullChunkIterator iterator{};
+        iterator.sequence = cursor.fullStartSequence;
+        iterator.localChunk = cursor.fullStartLocalChunk;
+        for (uint64_t ordinal = cursor.fullBegin;
+             ordinal < cursor.fullEnd; ++ordinal) {
+            OwnedChunkDesc chunk{};
+            if (!LoadOwnedFullChunk(plan, iterator, chunk)) {
+                continue;
+            }
+            ProcessCompactPreAivHeadRange<false>(
+                chunk, 0, HV_, subBlockIdx, subBlockNum,
+                localTaskIdx, pending);
+        }
+        FlushGroupedPreAiv(pending, subBlockIdx, subBlockNum);
+    }
+
+    __aicore__ inline void ProcessG1TailPreAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        uint64_t localTaskIdx = 0;
+        DeferredSingleHeadState pending{};
+        for (uint64_t ordinal = cursor.tailBegin;
+             ordinal < cursor.tailEnd; ++ordinal) {
+            OwnedChunkDesc chunk{};
+            if (!LoadOwnedTailChunk(plan, ordinal, chunk)) {
+                continue;
+            }
+            ProcessCompactPreAivHeadRange<true>(
+                chunk, 0, HV_, subBlockIdx, subBlockNum,
+                localTaskIdx, pending);
+        }
+        FlushGroupedPreAiv(pending, subBlockIdx, subBlockNum);
+    }
+
+    __aicore__ inline void ProcessGroupedFullPreAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        uint64_t localTaskIdx = 0;
+        DeferredSingleHeadState pending{};
+        GroupedFullTaskIterator fullIterator{};
+        fullIterator.chunks.sequence = cursor.fullStartSequence;
+        fullIterator.chunks.localChunk = cursor.fullStartLocalChunk;
+        for (uint64_t task = cursor.fullBegin;
+             task < cursor.fullEnd; ++task) {
+            OwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (!LoadGroupedFullTask(
+                    plan, task, fullIterator, chunk, headBegin, headEnd)) {
+                continue;
+            }
+            ProcessCompactPreAivHeadRange<false>(
+                chunk, headBegin, headEnd, subBlockIdx, subBlockNum,
+                localTaskIdx, pending);
+        }
+        FlushGroupedPreAiv(pending, subBlockIdx, subBlockNum);
+    }
+
+    __aicore__ inline void ProcessGroupedTailPreAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        uint64_t localTaskIdx = 0;
+        DeferredSingleHeadState pending{};
+        GroupedTailTaskIterator tailIterator{};
+        for (uint64_t task = cursor.tailBegin;
+             task < cursor.tailEnd; ++task) {
+            OwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (!LoadGroupedTailTask(
+                    plan, task, tailIterator, chunk, headBegin, headEnd)) {
+                continue;
+            }
+            ProcessCompactPreAivHeadRange<true>(
+                chunk, headBegin, headEnd, subBlockIdx, subBlockNum,
+                localTaskIdx, pending);
+        }
+        FlushGroupedPreAiv(pending, subBlockIdx, subBlockNum);
+    }
+
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactPreAicHeadWindow(
+        const OwnedChunkDesc &chunk, uint64_t headBase, uint32_t headCnt,
+        uint64_t &localTaskIdx)
+    {
+        uint64_t chunkEnd = chunk.start + BT_;
+        if constexpr (IS_TAIL) {
+            chunkEnd = chunk.end;
+        }
+        // AIC 与 AIV 使用镜像的 runtime head 循环，双方消费完全相同的
+        // 逐 head 信号计数，不再为不同 head 数生成模板特化。
+        for (uint32_t lane = 0; lane < headCnt; ++lane) {
+            if constexpr (SAFE_GATE) {
+                activeSolveSlot_ =
+                    localTaskIdx % KDA_SOLVE_PIPELINE_DEPTH;
+            }
+            ProcessChunkPreAic(
+                chunk.b, headBase + lane, chunk.chunkIdx,
+                chunk.start, chunkEnd);
+            ++localTaskIdx;
+        }
+    }
+
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactPreAicHeadRange(
+        const OwnedChunkDesc &chunk, uint64_t headBegin, uint64_t headEnd,
+        uint64_t &localTaskIdx)
+    {
+        for (uint64_t headBase = headBegin; headBase < headEnd;) {
+            const uint32_t headCnt = KdaForward::HeadWindowHeadCount(
+                static_cast<uint32_t>(headBase), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_));
+            if (headCnt == 0 || headCnt > headEnd - headBase) {
+                return;
+            }
+            ProcessCompactPreAicHeadWindow<IS_TAIL>(
+                chunk, headBase, headCnt, localTaskIdx);
+            headBase += headCnt;
+        }
+    }
+
+    __aicore__ inline void ProcessG1FullPreAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor)
+    {
+        uint64_t localTaskIdx = 0;
+        FullChunkIterator iterator{};
+        iterator.sequence = cursor.fullStartSequence;
+        iterator.localChunk = cursor.fullStartLocalChunk;
+        for (uint64_t ordinal = cursor.fullBegin;
+             ordinal < cursor.fullEnd; ++ordinal) {
+            OwnedChunkDesc chunk{};
+            if (LoadOwnedFullChunk(plan, iterator, chunk)) {
+                ProcessCompactPreAicHeadRange<false>(
+                    chunk, 0, HV_, localTaskIdx);
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessG1TailPreAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor)
+    {
+        uint64_t localTaskIdx = 0;
+        for (uint64_t ordinal = cursor.tailBegin;
+             ordinal < cursor.tailEnd; ++ordinal) {
+            OwnedChunkDesc chunk{};
+            if (LoadOwnedTailChunk(plan, ordinal, chunk)) {
+                ProcessCompactPreAicHeadRange<true>(
+                    chunk, 0, HV_, localTaskIdx);
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessGroupedFullPreAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor)
+    {
+        uint64_t localTaskIdx = 0;
+        GroupedFullTaskIterator iterator{};
+        iterator.chunks.sequence = cursor.fullStartSequence;
+        iterator.chunks.localChunk = cursor.fullStartLocalChunk;
+        for (uint64_t task = cursor.fullBegin;
+             task < cursor.fullEnd; ++task) {
+            OwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (LoadGroupedFullTask(
+                    plan, task, iterator, chunk, headBegin, headEnd)) {
+                ProcessCompactPreAicHeadRange<false>(
+                    chunk, headBegin, headEnd, localTaskIdx);
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessGroupedTailPreAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor)
+    {
+        uint64_t localTaskIdx = 0;
+        GroupedTailTaskIterator iterator{};
+        for (uint64_t task = cursor.tailBegin;
+             task < cursor.tailEnd; ++task) {
+            OwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (LoadGroupedTailTask(
+                    plan, task, iterator, chunk, headBegin, headEnd)) {
+                ProcessCompactPreAicHeadRange<true>(
+                    chunk, headBegin, headEnd, localTaskIdx);
             }
         }
     }
@@ -2398,6 +2881,26 @@ private:
         uint64_t coreNum = isAivOnly_ ? static_cast<uint64_t>(GetBlockNum()) : usedCoreNum_;
         uint64_t coreIdx = isAivOnly_ ? static_cast<uint64_t>(GetBlockIdx()) :
                                         static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
+        KdaForward::CompactSequencePlanView plan(compactPlanAddr_);
+        if (!isAivOnly_ && plan.IsValid()) {
+            KdaForward::ChunkCoreCursor cursor{};
+            if (!plan.LoadChunkCoreCursor(
+                    static_cast<uint32_t>(coreIdx), cursor)) {
+                return;
+            }
+            if (plan.HeadGroupCount() == 1) {
+                ProcessG1FullPreAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum);
+                ProcessG1TailPreAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum);
+            } else {
+                ProcessGroupedFullPreAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum);
+                ProcessGroupedTailPreAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum);
+            }
+            return;
+        }
         uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
         if constexpr (SAFE_GATE && !IsSameType<T, float>::value) {
             bool pendingValid = false;
@@ -2476,6 +2979,22 @@ private:
         if constexpr (IsSameType<T, float>::value) {
             return;
         }
+        KdaForward::CompactSequencePlanView plan(compactPlanAddr_);
+        KdaForward::ChunkCoreCursor cursor{};
+        if (plan.IsValid()) {
+            if (!plan.LoadChunkCoreCursor(
+                    static_cast<uint32_t>(GetBlockIdx()), cursor)) {
+                return;
+            }
+            if (plan.HeadGroupCount() == 1) {
+                ProcessG1FullPreAicPhase(plan, cursor);
+                ProcessG1TailPreAicPhase(plan, cursor);
+            } else {
+                ProcessGroupedFullPreAicPhase(plan, cursor);
+                ProcessGroupedTailPreAicPhase(plan, cursor);
+            }
+            return;
+        }
         uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
         uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
         uint64_t localTaskIdx = 0;
@@ -2523,9 +3042,11 @@ private:
     GlobalTensor<float> solveWorkspace_;
     GlobalTensor<SCORE_T> scoreWorkspace_;
     TPipe *pipe_ = nullptr;
+    TEventID solveFixToMte2Event_ = 0;
     TBuf<TPosition::VECCALC> exp2Buf_;
     TBuf<TPosition::VECCALC> vecBuf_;
     TBuf<TPosition::VECCALC> gateWritebackBuf_;
+    bool residentRawQKActive_ = false;
     TEventID mte2ToVEvent_ = 0;
     TEventID vToMte2Event_ = 0;
     TEventID vToMte3Event_ = 0;
@@ -2537,8 +3058,8 @@ private:
                                                                                   KDA_SCORE_READY_FLAG1};
     Catlass::Arch::CrossCoreFlagWithReverse<KDA_SCORE_QUEUE_DEPTH> scoreDoneFlag_{KDA_SCORE_DONE_FLAG0,
                                                                                  KDA_SCORE_DONE_FLAG1};
-    // Solve has one outstanding task per core. Reuse the primary score IDs as an ordered token stream;
-    // score credits remain on the reverse IDs, so no additional hardware flag IDs are consumed.
+    // 每个核的 Solve 最多只有一个在途任务，因此复用主 score ID 作为有序 token 流；
+    // score credit 仍保留在反向 ID 上，不额外消耗硬件 flag ID。
     Catlass::Arch::CrossCoreFlag syncReadyFlag_{KDA_SOLVE_READY_FLAG};
     Catlass::Arch::CrossCoreFlag syncDoneFlag_{KDA_SOLVE_DONE_FLAG};
     Catlass::Arch::CrossCoreFlagWithReverse<KDA_SYNC_REVERSE_DEPTH> mchSyncReadyFlag_{
@@ -2562,15 +3083,19 @@ private:
     uint64_t usedCoreNum_ = 1;
     uint64_t solveCoreIdx_ = 0;
     uint64_t activeSolveSlot_ = 0;
+    GM_ADDR compactPlanAddr_ = nullptr;
     __gm__ int64_t *chunkIndicesAddr_ = nullptr;
     __gm__ int64_t *cuSeqlensAddr_ = nullptr;
 };
 } // namespace
 
-template <bool SAFE_GATE, typename T, typename GK_T, typename BETA_T, typename TilingData>
+template <bool SAFE_GATE, typename T, typename GK_T,
+          typename BETA_T, typename A_LOG_T, typename DT_BIAS_T,
+          typename TilingData>
 __aicore__ inline void RunChunkKdaPrepare(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR initialState,
-    GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR aqk, GM_ADDR akk, GM_ADDR qg,
+    GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR compactPlan,
+    GM_ADDR aqk, GM_ADDR akk, GM_ADDR qg,
     GM_ADDR qgScaled, GM_ADDR wSeed, GM_ADDR uSeed, GM_ADDR userWorkspace,
     const TilingData &tiling, TPipe &pipe)
 {
@@ -2583,6 +3108,7 @@ __aicore__ inline void RunChunkKdaPrepare(
         op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
                 nullptr, nullptr, nullptr, nullptr, aqk, userWorkspace, aqkFp32, akkFp32,
                 wSeed, akk, qg, qgScaled, uSeed, userWorkspace, prepareScratch, tiling, &pipe, false);
+        op.SetCompactPlan(compactPlan);
         op.ProcessAic();
     }
     if ASCEND_IS_AIV {
@@ -2590,23 +3116,25 @@ __aicore__ inline void RunChunkKdaPrepare(
         op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
                 nullptr, nullptr, nullptr, nullptr, aqk, userWorkspace, aqkFp32, akkFp32,
                 wSeed, akk, qg, qgScaled, uSeed, userWorkspace, prepareScratch, tiling, &pipe);
+        op.SetCompactPlan(compactPlan);
         op.ProcessAiv();
     }
 }
 
-template <bool SAFE_GATE, typename T, typename GK_T, typename BETA_T,
+template <bool SAFE_GATE, typename T, typename GK_T,
+          typename BETA_T, typename A_LOG_T, typename DT_BIAS_T,
           typename TilingData, uint32_t COMPILE_BT, uint32_t COMPILE_K,
           uint32_t COMPILE_V>
 __aicore__ inline void RunChunkKdaPrepare(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR, GM_ADDR,
     GM_ADDR, GM_ADDR beta, GM_ADDR initialState, GM_ADDR cuSeqlens,
-    GM_ADDR chunkIndices, GM_ADDR aqk, GM_ADDR akk, GM_ADDR qg,
+    GM_ADDR chunkIndices, GM_ADDR compactPlan, GM_ADDR aqk, GM_ADDR akk, GM_ADDR qg,
     GM_ADDR qgScaled, GM_ADDR wSeed, GM_ADDR uSeed, GM_ADDR,
     GM_ADDR userWorkspace, const TilingData &tiling, TPipe &pipe,
     bool = true)
 {
-    RunChunkKdaPrepare<SAFE_GATE, T, GK_T, BETA_T>(
-        q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices, aqk,
+    RunChunkKdaPrepare<SAFE_GATE, T, GK_T, BETA_T, A_LOG_T, DT_BIAS_T>(
+        q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices, compactPlan, aqk,
         akk, qg, qgScaled, wSeed, uSeed, userWorkspace, tiling, pipe);
 }
 

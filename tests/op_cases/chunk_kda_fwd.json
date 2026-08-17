@@ -150,6 +150,6494 @@
       "atol": 0.006
     }
   },
+  "design_matrix": {
+    "schema_version": 1,
+    "source": {
+      "document": "fla/ops/ascendc/kda/chunk_kda_fwd/docs/design.md",
+      "chapter": "21",
+      "row_count": 300,
+      "row_sha256": "b4bd2735051423d80773719b12fa23e4d1fc43767c4347c60b69f0b3daed946d"
+    },
+    "logical_case_counts": {
+      "P": 96,
+      "N": 84,
+      "M": 12,
+      "S": 8,
+      "G": 100
+    },
+    "execution_kind_counts": {
+      "accuracy": 176,
+      "run": 92,
+      "msopprof": 20,
+      "stress": 6,
+      "sanitizer": 6
+    },
+    "common_defaults": {
+      "shape": {
+        "B": 1,
+        "H_k": 2,
+        "H_v": 2,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g": "float32",
+        "beta": "float32",
+        "initial_state": "float32"
+      },
+      "layout": "BNSD",
+      "gate_mode": "activated",
+      "safe_gate": true,
+      "initial_state": null,
+      "output_final_state": true,
+      "disable_recompute": true,
+      "return_intermediate_states": true,
+      "state_v_first": false,
+      "default_platforms": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "default_positive_routes": [
+        "ascendc",
+        "aclnn"
+      ],
+      "default_negative_routes": [
+        "aclnn"
+      ]
+    },
+    "entrypoints": {
+      "accuracy": {
+        "backend": "atk_cpu_double_benchmark",
+        "task": "accuracy",
+        "reference_device": "cpu",
+        "precision_standard": "cv_fused_double_benchmark",
+        "adapter_status": "requires_design_case_adapter"
+      },
+      "run": {
+        "backend": "atk_contract",
+        "task": "run",
+        "assertions": [
+          "expected_return_code",
+          "error_message_semantics"
+        ],
+        "adapter_status": "requires_design_case_adapter"
+      },
+      "msopprof": {
+        "backend": "msopprof",
+        "runner": "tests/operators/chunk_kda_fwd/performance/profile.py",
+        "adapter_status": "requires_design_case_adapter"
+      },
+      "stress": {
+        "backend": "npu_bitwise_stress",
+        "runner": "tests/operators/chunk_kda_fwd/st/validate_generalization_determinism.py",
+        "adapter_status": "requires_design_case_adapter"
+      },
+      "sanitizer": {
+        "backend": "mssanitizer",
+        "task": "run",
+        "requires_instrumented_object": true,
+        "adapter_status": "requires_design_case_adapter"
+      }
+    },
+    "aggregation": {
+      "pass_rule": "all applicable platform/route/variant/tool tasks must pass",
+      "not_applicable_is_pass": false,
+      "a3_only_on_a2_a5": "not_applicable"
+    },
+    "cases": [
+      {
+        "id": "KDA-FWD-P001",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "0/0/0/0",
+          "预期可选输出": "gk；无 final、w/u/qg/kg/v_new/h",
+          "目标执行路径": "`ACTIVATED,AD,F=2,T=0`；Post-WU 仍在 Prepare"
+        }
+      },
+      {
+        "id": "KDA-FWD-P002",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "0/0/0/1",
+          "预期可选输出": "gk、h",
+          "目标执行路径": "同 P001；hidden/公开 h 不改变调度"
+        }
+      },
+      {
+        "id": "KDA-FWD-P003",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "0/0/1/0",
+          "预期可选输出": "gk、w/u/qg/kg/v_new、h",
+          "目标执行路径": "同 P001；全部中间量导出"
+        }
+      },
+      {
+        "id": "KDA-FWD-P004",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "0/0/1/1",
+          "预期可选输出": "同 P003",
+          "目标执行路径": "同 P001"
+        }
+      },
+      {
+        "id": "KDA-FWD-P005",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "0/1/0/0",
+          "预期可选输出": "无 gk/final/反向中间量/h",
+          "目标执行路径": "`RAW_SAFE,AD,F=2,T=0`；Gate/Post-WU 都在 Prepare"
+        }
+      },
+      {
+        "id": "KDA-FWD-P006",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "0/1/0/1",
+          "预期可选输出": "仅 h 额外公开",
+          "目标执行路径": "同 P005；不得切到另一 FwdH"
+        }
+      },
+      {
+        "id": "KDA-FWD-P007",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "0/1/1/0",
+          "预期可选输出": "gk、w/u/qg/kg/v_new、h",
+          "目标执行路径": "同 P005；输出 mask 不改变融合"
+        }
+      },
+      {
+        "id": "KDA-FWD-P008",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "0/1/1/1",
+          "预期可选输出": "同 P007",
+          "目标执行路径": "同 P005"
+        }
+      },
+      {
+        "id": "KDA-FWD-P009",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "1/0/0/0",
+          "预期可选输出": "final、gk",
+          "目标执行路径": "`ACTIVATED,AD,F=2,T=0`"
+        }
+      },
+      {
+        "id": "KDA-FWD-P010",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "1/0/0/1",
+          "预期可选输出": "final、gk、h",
+          "目标执行路径": "同 P009"
+        }
+      },
+      {
+        "id": "KDA-FWD-P011",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "1/0/1/0",
+          "预期可选输出": "final、gk、全部反向中间量、h",
+          "目标执行路径": "同 P009"
+        }
+      },
+      {
+        "id": "KDA-FWD-P012",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "1/0/1/1",
+          "预期可选输出": "同 P011",
+          "目标执行路径": "同 P009"
+        }
+      },
+      {
+        "id": "KDA-FWD-P013",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "1/1/0/0",
+          "预期可选输出": "仅 final；gk 和反向中间量隐藏",
+          "目标执行路径": "`RAW_SAFE,AD,F=2,T=0`"
+        }
+      },
+      {
+        "id": "KDA-FWD-P014",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "1/1/0/1",
+          "预期可选输出": "final、h",
+          "目标执行路径": "同 P013"
+        }
+      },
+      {
+        "id": "KDA-FWD-P015",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "1/1/1/0",
+          "预期可选输出": "final、gk、全部反向中间量、h",
+          "目标执行路径": "同 P013"
+        }
+      },
+      {
+        "id": "KDA-FWD-P016",
+        "kind": "accuracy",
+        "section": "21.2.1 可选输出 16 组合",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "F/U/D/R": "1/1/1/1",
+          "预期可选输出": "同 P015",
+          "目标执行路径": "同 P013"
+        }
+      },
+      {
+        "id": "KDA-FWD-P017",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "参数": "BF16、BSND",
+          "分支": "K2；AD,F=2,T=0",
+          "主要断言": "输出固定 BSND/head-major 契约"
+        }
+      },
+      {
+        "id": "KDA-FWD-P018",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn",
+          "direct_launch"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A+D",
+          "参数": "BF16、BNSD",
+          "分支": "K2；AD,F=2,T=0",
+          "主要断言": "三路同输入同结果"
+        }
+      },
+      {
+        "id": "KDA-FWD-P019",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "参数": "BF16、TND，`cu=[0,128]`",
+          "分支": "K2；EP,F=2,T=0",
+          "主要断言": "rank-3 输入和输出 shape"
+        }
+      },
+      {
+        "id": "KDA-FWD-P020",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "参数": "BF16、NTD，`cu=[0,128]`",
+          "分支": "K2；EP,F=2,T=0",
+          "主要断言": "head-major rank-3 输入"
+        }
+      },
+      {
+        "id": "KDA-FWD-P021",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "参数": "FP16、BSND",
+          "分支": "K2；统一后端",
+          "主要断言": "FP16 共享数学和平台 adapter 精度"
+        }
+      },
+      {
+        "id": "KDA-FWD-P022",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn",
+          "direct_launch"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A+D",
+          "参数": "FP16、BNSD",
+          "分支": "K2；统一后端",
+          "主要断言": "直调与 L2 对照"
+        }
+      },
+      {
+        "id": "KDA-FWD-P023",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "参数": "FP16、TND，`cu=[0,64,128]`",
+          "分支": "K2 packed",
+          "主要断言": "多序列 rank-3"
+        }
+      },
+      {
+        "id": "KDA-FWD-P024",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "参数": "FP16、NTD；五个输入均为非连续 view",
+          "分支": "K2",
+          "主要断言": "L2 Contiguous 后结果不变"
+        }
+      },
+      {
+        "id": "KDA-FWD-P025",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "参数": "qkv BF16、g FP32、beta FP32",
+          "分支": "K2",
+          "主要断言": "dtype 组合 1"
+        }
+      },
+      {
+        "id": "KDA-FWD-P026",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "参数": "qkv BF16、g FP32、beta BF16",
+          "分支": "K2",
+          "主要断言": "beta BF16 分支"
+        }
+      },
+      {
+        "id": "KDA-FWD-P027",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "参数": "qkv BF16、g BF16、beta FP32",
+          "分支": "K2",
+          "主要断言": "gate BF16 分支"
+        }
+      },
+      {
+        "id": "KDA-FWD-P028",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "参数": "qkv BF16、g BF16、beta BF16",
+          "分支": "K2",
+          "主要断言": "全 BF16 标量输入"
+        }
+      },
+      {
+        "id": "KDA-FWD-P029",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "参数": "qkv FP16、g FP32、beta FP32",
+          "分支": "K2",
+          "主要断言": "FP16 基线"
+        }
+      },
+      {
+        "id": "KDA-FWD-P030",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "参数": "qkv FP16、g FP32、beta BF16",
+          "分支": "K2",
+          "主要断言": "FP16+BF16 beta"
+        }
+      },
+      {
+        "id": "KDA-FWD-P031",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "参数": "qkv FP16、g BF16、beta FP32",
+          "分支": "K2",
+          "主要断言": "FP16+BF16 gate"
+        }
+      },
+      {
+        "id": "KDA-FWD-P032",
+        "kind": "accuracy",
+        "section": "21.2.2 layout、dtype 与输入存储",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "参数": "qkv FP16、g BF16、beta BF16",
+          "分支": "K2",
+          "主要断言": "全低精度输入组合"
+        }
+      },
+      {
+        "id": "KDA-FWD-P033",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "raw non-safe，A_log FP32、dt_bias FP32",
+          "预期分支/断言": "`RAW_NON_SAFE` typed Gate；三平台均走独立 Gate"
+        }
+      },
+      {
+        "id": "KDA-FWD-P034",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "raw non-safe，A_log BF16、dt_bias FP32",
+          "预期分支/断言": "BF16 A_log 量化后转 FP32；三平台一致"
+        }
+      },
+      {
+        "id": "KDA-FWD-P035",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "raw non-safe，A_log FP32、dt_bias BF16",
+          "预期分支/断言": "BF16 dt_bias loader、group/head 索引正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-P036",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "raw non-safe，A_log BF16、dt_bias BF16",
+          "预期分支/断言": "四组合最后一项；softplus finite"
+        }
+      },
+      {
+        "id": "KDA-FWD-P037",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "raw safe，FP32/FP32，`lower_bound=-5`",
+          "预期分支/断言": "`RAW_SAFE` typed Gate；A5 支持形状可融合，下边界合法"
+        }
+      },
+      {
+        "id": "KDA-FWD-P038",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "raw safe，BF16/FP32，`lower_bound=-0.001`",
+          "预期分支/断言": "上邻域合法且不变号"
+        }
+      },
+      {
+        "id": "KDA-FWD-P039",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "raw safe，FP32/BF16，dt_bias present",
+          "预期分支/断言": "gate 参数异 dtype；独立 typed Gate 后同步"
+        }
+      },
+      {
+        "id": "KDA-FWD-P040",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "raw safe，BF16/BF16，大幅值输入",
+          "预期分支/断言": "BF16 量化后 FP32 激活/累计，无 Inf/NaN"
+        }
+      },
+      {
+        "id": "KDA-FWD-P041",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "initial state present，`state_v_first=false`",
+          "预期分支/断言": "h[0] 等于 initial，final 正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-P042",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "initial state present，`state_v_first=true`",
+          "预期分支/断言": "与 P041 末两维转置等价"
+        }
+      },
+      {
+        "id": "KDA-FWD-P043",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "`H_k=1,H_v=2`",
+          "预期分支/断言": "GVA `group_size=2` 基础映射"
+        }
+      },
+      {
+        "id": "KDA-FWD-P044",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "`H_k=2,H_v=8`",
+          "预期分支/断言": "GVA `group_size=4`，组边界映射"
+        }
+      },
+      {
+        "id": "KDA-FWD-P045",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "参数变化": "`H_k=1,H_v=3`、raw safe",
+          "预期分支/断言": "GVA `R=3`；运行时 `headCnt=3`，窗内 Q/K 只加载一次，三个 value head 独立"
+        }
+      },
+      {
+        "id": "KDA-FWD-P046",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "参数变化": "`H_k=H_v=96,T=1024`、raw safe、隐藏中间量",
+          "预期分支/断言": "K2；AD,F=16,T=0；统一 Prepare/后端"
+        }
+      },
+      {
+        "id": "KDA-FWD-P047",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "`H_k=H_v=128,T=64`",
+          "预期分支/断言": "head 数上边界"
+        }
+      },
+      {
+        "id": "KDA-FWD-P048",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "`B=2,T=128` dense",
+          "预期分支/断言": "两个 batch 状态互不污染"
+        }
+      },
+      {
+        "id": "KDA-FWD-P049",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "`T=1`",
+          "预期分支/断言": "单 token dense tail，`N_c=1`"
+        }
+      },
+      {
+        "id": "KDA-FWD-P050",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "参数变化": "`T=63`",
+          "预期分支/断言": "`C-1` tail，补零区正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-P051",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "参数变化": "`T=65` BF16",
+          "预期分支/断言": "AD,F=1,T=1；完整块模板后循环外 tail"
+        }
+      },
+      {
+        "id": "KDA-FWD-P052",
+        "kind": "accuracy",
+        "section": "21.2.3 Gate、state、head 与 key2 边界",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "参数变化": "`T=129` BF16",
+          "预期分支/断言": "AD,F=2,T=1；前两块不得因 tail 降级"
+        }
+      },
+      {
+        "id": "KDA-FWD-P053",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn",
+          "direct_launch"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A+D",
+          "Shape/属性": "`C=128,T=127,K=V=128`",
+          "覆盖点": "K1；单 tail"
+        }
+      },
+      {
+        "id": "KDA-FWD-P054",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn",
+          "direct_launch"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A+D",
+          "Shape/属性": "`C=128,T=128,K=V=128`",
+          "覆盖点": "K1；单完整 chunk"
+        }
+      },
+      {
+        "id": "KDA-FWD-P055",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "Shape/属性": "`C=128,T=129,K=V=128`",
+          "覆盖点": "K1；full+tail"
+        }
+      },
+      {
+        "id": "KDA-FWD-P056",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "Shape/属性": "`C=128,T=256,K=V=128`",
+          "覆盖点": "K1；多完整 chunk"
+        }
+      },
+      {
+        "id": "KDA-FWD-P057",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=128,T=257,K=128,V=256`",
+          "覆盖点": "K1；V=256 与 tail 写回"
+        }
+      },
+      {
+        "id": "KDA-FWD-P058",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=128,T=256,K=64,V=128`",
+          "覆盖点": "K1；K<128"
+        }
+      },
+      {
+        "id": "KDA-FWD-P059",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=128,T=256,K=256,V=128`",
+          "覆盖点": "K1；K 上边界"
+        }
+      },
+      {
+        "id": "KDA-FWD-P060",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=128,T=128,K=16,V=16`",
+          "覆盖点": "K/V 下边界"
+        }
+      },
+      {
+        "id": "KDA-FWD-P061",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn",
+          "direct_launch"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A+D",
+          "Shape/属性": "`C=64,T=128,K=128,V=256`",
+          "覆盖点": "K1；直调支持的 V=256"
+        }
+      },
+      {
+        "id": "KDA-FWD-P062",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=64,T=128,K=256,V=128`",
+          "覆盖点": "K1；K=256"
+        }
+      },
+      {
+        "id": "KDA-FWD-P063",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=64,T=128,K=64,V=128`",
+          "覆盖点": "K1；K=64"
+        }
+      },
+      {
+        "id": "KDA-FWD-P064",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=64,T=128,K=16,V=128`",
+          "覆盖点": "K1；K=16"
+        }
+      },
+      {
+        "id": "KDA-FWD-P065",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=64,T=128,K=128,V=16`",
+          "覆盖点": "K1；V=16"
+        }
+      },
+      {
+        "id": "KDA-FWD-P066",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=64,T=128,K=128,V=64`",
+          "覆盖点": "K1；V=64"
+        }
+      },
+      {
+        "id": "KDA-FWD-P067",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=64,T=128,K=64,V=64`",
+          "覆盖点": "K1；方形小维度"
+        }
+      },
+      {
+        "id": "KDA-FWD-P068",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=64,T=193,K=64,V=128`、varlen `[65,193]`",
+          "覆盖点": "K1 varlen mixed-tail"
+        }
+      },
+      {
+        "id": "KDA-FWD-P069",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=128,T=384,K=128,V=128`、BSND",
+          "覆盖点": "K1 多 chunk BSND"
+        }
+      },
+      {
+        "id": "KDA-FWD-P070",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=128,T=384,K=128,V=128`、TND packed",
+          "覆盖点": "K1 rank-3 varlen"
+        }
+      },
+      {
+        "id": "KDA-FWD-P071",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=128,T=128,K=256,V=256,H_k=1,H_v=4`",
+          "覆盖点": "K1 最大状态面+GVA `group_size=4`"
+        }
+      },
+      {
+        "id": "KDA-FWD-P072",
+        "kind": "accuracy",
+        "section": "21.2.4 tiling key 1 与维度边界",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL",
+          "Shape/属性": "`C=64,T=64,K=16,V=256,H_k=H_v=1`",
+          "覆盖点": "K1 最小 K、最大 V"
+        }
+      },
+      {
+        "id": "KDA-FWD-P073",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "1024",
+          "分布": "single",
+          "`disable_recompute`": "false",
+          "A5 预期": "EP,F=16,T=0；一份 plan entry"
+        }
+      },
+      {
+        "id": "KDA-FWD-P074",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "1024",
+          "分布": "balanced8",
+          "`disable_recompute`": "true",
+          "A5 预期": "EP,F=16,T=0；八份相同 entry"
+        }
+      },
+      {
+        "id": "KDA-FWD-P075",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "1024",
+          "分布": "mixed",
+          "`disable_recompute`": "false",
+          "A5 预期": "EP,F=13,T=6；每序列 full 后可选 tail"
+        }
+      },
+      {
+        "id": "KDA-FWD-P076",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "1024",
+          "分布": "short64",
+          "`disable_recompute`": "true",
+          "A5 预期": "EP,F=16,T=0；每序列一个 full"
+        }
+      },
+      {
+        "id": "KDA-FWD-P077",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "1536",
+          "分布": "single",
+          "`disable_recompute`": "false",
+          "A5 预期": "EP,F=24,T=0"
+        }
+      },
+      {
+        "id": "KDA-FWD-P078",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "1536",
+          "分布": "balanced8",
+          "`disable_recompute`": "true",
+          "A5 预期": "EP,F=24,T=0；8x192"
+        }
+      },
+      {
+        "id": "KDA-FWD-P079",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "1536",
+          "分布": "mixed",
+          "`disable_recompute`": "false",
+          "A5 预期": "EP,F=21,T=6"
+        }
+      },
+      {
+        "id": "KDA-FWD-P080",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "1536",
+          "分布": "short64",
+          "`disable_recompute`": "true",
+          "A5 预期": "EP,F=24,T=0；24 序列"
+        }
+      },
+      {
+        "id": "KDA-FWD-P081",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "2048",
+          "分布": "single",
+          "`disable_recompute`": "false",
+          "A5 预期": "EP,F=32,T=0"
+        }
+      },
+      {
+        "id": "KDA-FWD-P082",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "2048",
+          "分布": "balanced8",
+          "`disable_recompute`": "true",
+          "A5 预期": "EP,F=32,T=0；8x256"
+        }
+      },
+      {
+        "id": "KDA-FWD-P083",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "2048",
+          "分布": "mixed",
+          "`disable_recompute`": "false",
+          "A5 预期": "EP,F=29,T=6"
+        }
+      },
+      {
+        "id": "KDA-FWD-P084",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "2048",
+          "分布": "short64",
+          "`disable_recompute`": "true",
+          "A5 预期": "EP,F=32,T=0；32 序列"
+        }
+      },
+      {
+        "id": "KDA-FWD-P085",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "4096",
+          "分布": "single",
+          "`disable_recompute`": "false",
+          "A5 预期": "EP,F=64,T=0"
+        }
+      },
+      {
+        "id": "KDA-FWD-P086",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "4096",
+          "分布": "balanced8",
+          "`disable_recompute`": "true",
+          "A5 预期": "EP,F=64,T=0；8x512"
+        }
+      },
+      {
+        "id": "KDA-FWD-P087",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "4096",
+          "分布": "mixed",
+          "`disable_recompute`": "false",
+          "A5 预期": "EP,F=61,T=6；full 指令保持模板路径"
+        }
+      },
+      {
+        "id": "KDA-FWD-P088",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "4096",
+          "分布": "short64",
+          "`disable_recompute`": "true",
+          "A5 预期": "EP,F=64,T=0；64 序列"
+        }
+      },
+      {
+        "id": "KDA-FWD-P089",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "8192",
+          "分布": "single",
+          "`disable_recompute`": "false",
+          "A5 预期": "EP,F=128,T=0"
+        }
+      },
+      {
+        "id": "KDA-FWD-P090",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "8192",
+          "分布": "balanced8",
+          "`disable_recompute`": "true",
+          "A5 预期": "EP,F=128,T=0；8x1024"
+        }
+      },
+      {
+        "id": "KDA-FWD-P091",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "8192",
+          "分布": "mixed",
+          "`disable_recompute`": "false",
+          "A5 预期": "EP,F=125,T=6；tail 状态接续正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-P092",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "8192",
+          "分布": "short64",
+          "`disable_recompute`": "true",
+          "A5 预期": "EP,F=128,T=0；128 序列"
+        }
+      },
+      {
+        "id": "KDA-FWD-P093",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "16384",
+          "分布": "single",
+          "`disable_recompute`": "false",
+          "A5 预期": "EP,F=256,T=0"
+        }
+      },
+      {
+        "id": "KDA-FWD-P094",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "16384",
+          "分布": "balanced8",
+          "`disable_recompute`": "true",
+          "A5 预期": "EP,F=256,T=0；8x2048"
+        }
+      },
+      {
+        "id": "KDA-FWD-P095",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "16384",
+          "分布": "mixed",
+          "`disable_recompute`": "false",
+          "A5 预期": "EP,F=253,T=6；长链 mixed-tail"
+        }
+      },
+      {
+        "id": "KDA-FWD-P096",
+        "kind": "accuracy",
+        "section": "21.2.5 H96 varlen 泛化矩阵",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random"
+        ],
+        "source_fields": {
+          "T": "16384",
+          "分布": "short64",
+          "`disable_recompute`": "true",
+          "A5 预期": "EP,F=256,T=0；256 序列压力"
+        }
+      },
+      {
+        "id": "KDA-FWD-N001",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "A",
+          "非法条件": "q=null",
+          "预期": "`ACLNN_ERR_PARAM_NULLPTR`；主输入不能为空"
+        }
+      },
+      {
+        "id": "KDA-FWD-N002",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "A",
+          "非法条件": "k=null",
+          "预期": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N003",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "A",
+          "非法条件": "v=null",
+          "预期": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N004",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "A",
+          "非法条件": "g=null",
+          "预期": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N005",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "A",
+          "非法条件": "beta=null",
+          "预期": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N006",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "A",
+          "非法条件": "attnOut=null",
+          "预期": "`ACLNN_ERR_PARAM_NULLPTR`；attnOut"
+        }
+      },
+      {
+        "id": "KDA-FWD-N007",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "A",
+          "非法条件": "aqkOut=null",
+          "预期": "`ACLNN_ERR_PARAM_NULLPTR`；Aqk/Akk 必选"
+        }
+      },
+      {
+        "id": "KDA-FWD-N008",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "A",
+          "非法条件": "akkOut=null",
+          "预期": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N009",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "A",
+          "非法条件": "layout=null",
+          "预期": "`ACLNN_ERR_PARAM_INVALID`；四种大写 layout"
+        }
+      },
+      {
+        "id": "KDA-FWD-N010",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "P+A",
+          "非法条件": "layout=`bsnd`",
+          "预期": "invalid/RuntimeError；大小写错误"
+        }
+      },
+      {
+        "id": "KDA-FWD-N011",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "P+A",
+          "非法条件": "layout=`BHSD`",
+          "预期": "invalid/RuntimeError；未知 layout"
+        }
+      },
+      {
+        "id": "KDA-FWD-N012",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "P+A",
+          "非法条件": "layout=BSND 但 q/k/v/g 为 rank-3",
+          "预期": "rank 与 layout 不匹配"
+        }
+      },
+      {
+        "id": "KDA-FWD-N013",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "P+A",
+          "非法条件": "layout=TND 但 q/k/v/g 为 rank-4",
+          "预期": "rank 与 layout 不匹配"
+        }
+      },
+      {
+        "id": "KDA-FWD-N014",
+        "kind": "run",
+        "section": "21.3.1 必选指针、layout 与 rank",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "A",
+          "非法条件": "beta rank 与 layout 不匹配",
+          "预期": "`ACLNN_ERR_PARAM_INVALID`"
+        }
+      },
+      {
+        "id": "KDA-FWD-N015",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "q/k shape 不同",
+          "预期关键语义": "q and k identical shape"
+        }
+      },
+      {
+        "id": "KDA-FWD-N016",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "BSND v 的 B 不同",
+          "预期关键语义": "BSND v/g/beta shape"
+        }
+      },
+      {
+        "id": "KDA-FWD-N017",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "BSND v 的 T 不同",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N018",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "BSND v 的 H_v 与 g/beta 不同",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N019",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "BSND g 的 B 不同",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N020",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "BSND g 的 T 不同",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N021",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "BSND g 的 H_v 不同",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N022",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "BSND g 的 K 不同",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N023",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "BSND beta 的 B 不同",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N024",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "BSND beta 的 T 不同",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N025",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "BSND beta 的 H_v 不同",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N026",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "TND v/g/beta token 维不匹配",
+          "预期关键语义": "TND shape"
+        }
+      },
+      {
+        "id": "KDA-FWD-N027",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "NTD v/g/beta head 维不匹配",
+          "预期关键语义": "NTD shape"
+        }
+      },
+      {
+        "id": "KDA-FWD-N028",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "BNSD v/g/beta shape 不匹配",
+          "预期关键语义": "BNSD shape"
+        }
+      },
+      {
+        "id": "KDA-FWD-N029",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "`H_k=2,H_v=1`",
+          "预期关键语义": "GVA 要求 `0 < H_k <= H_v`"
+        }
+      },
+      {
+        "id": "KDA-FWD-N030",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "`H_k=3,H_v=4`",
+          "预期关键语义": "GVA 要求 `H_v % H_k == 0`"
+        }
+      },
+      {
+        "id": "KDA-FWD-N031",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "`H_k=129,H_v=129`",
+          "预期关键语义": "head <=128"
+        }
+      },
+      {
+        "id": "KDA-FWD-N032",
+        "kind": "run",
+        "section": "21.3.2 输入 shape 与 head 映射",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "`H_k=1,H_v=129`",
+          "预期关键语义": "head <=128"
+        }
+      },
+      {
+        "id": "KDA-FWD-N033",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "q/k/v 均 FP32",
+          "预期关键语义": "q/k/v 仅 FP16/BF16"
+        }
+      },
+      {
+        "id": "KDA-FWD-N034",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "q BF16、k FP16",
+          "预期关键语义": "q/k/v dtype 相同"
+        }
+      },
+      {
+        "id": "KDA-FWD-N035",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "q BF16、v FP16",
+          "预期关键语义": "q/k/v dtype 相同"
+        }
+      },
+      {
+        "id": "KDA-FWD-N036",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "g FP16",
+          "预期关键语义": "g 仅 FP32/BF16"
+        }
+      },
+      {
+        "id": "KDA-FWD-N037",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "g INT32",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N038",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "beta FP16",
+          "预期关键语义": "beta 仅 FP32/BF16"
+        }
+      },
+      {
+        "id": "KDA-FWD-N039",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "beta INT32",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N040",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "A_log FP16",
+          "预期关键语义": "A_log 仅 FP32/BF16"
+        }
+      },
+      {
+        "id": "KDA-FWD-N041",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "dt_bias FP16",
+          "预期关键语义": "dt_bias 仅 FP32/BF16"
+        }
+      },
+      {
+        "id": "KDA-FWD-N042",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "initial_state BF16",
+          "预期关键语义": "initial state FP32"
+        }
+      },
+      {
+        "id": "KDA-FWD-N043",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "attnOut dtype 与 q 不同",
+          "预期关键语义": "attnOut dtype/shape"
+        }
+      },
+      {
+        "id": "KDA-FWD-N044",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "gkOut BF16",
+          "预期关键语义": "gkOut FP32"
+        }
+      },
+      {
+        "id": "KDA-FWD-N045",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "AqkOut dtype 与 q 不同",
+          "预期关键语义": "Aqk/Akk dtype"
+        }
+      },
+      {
+        "id": "KDA-FWD-N046",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "AkkOut dtype 与 q 不同",
+          "预期关键语义": "Aqk/Akk dtype"
+        }
+      },
+      {
+        "id": "KDA-FWD-N047",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "wOut dtype 与 q 不同",
+          "预期关键语义": "w/qg/kg dtype"
+        }
+      },
+      {
+        "id": "KDA-FWD-N048",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "uOut dtype 与 q 不同",
+          "预期关键语义": "u/vNew dtype"
+        }
+      },
+      {
+        "id": "KDA-FWD-N049",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "finalStateOut BF16",
+          "预期关键语义": "final state FP32"
+        }
+      },
+      {
+        "id": "KDA-FWD-N050",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "hOut dtype 与 q 不同",
+          "预期关键语义": "h dtype/shape"
+        }
+      },
+      {
+        "id": "KDA-FWD-N051",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "K=0",
+          "预期关键语义": "K/V 范围和 16 对齐"
+        }
+      },
+      {
+        "id": "KDA-FWD-N052",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "K=15",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N053",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "K=17",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N054",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "K=272",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N055",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "V=0",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N056",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "V=15",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N057",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "V=17",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N058",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "V=272",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N059",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "chunk_size=0",
+          "预期关键语义": "仅 64/128"
+        }
+      },
+      {
+        "id": "KDA-FWD-N060",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "chunk_size=32",
+          "预期关键语义": "仅 64/128"
+        }
+      },
+      {
+        "id": "KDA-FWD-N061",
+        "kind": "run",
+        "section": "21.3.3 dtype、K/V 与 chunk",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "chunk_size=96",
+          "预期关键语义": "仅 64/128"
+        }
+      },
+      {
+        "id": "KDA-FWD-N062",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "`use_gate_in_kernel=true,A_log=None`",
+          "预期关键语义": "`ACLNN_ERR_PARAM_NULLPTR`；A_log 必选"
+        }
+      },
+      {
+        "id": "KDA-FWD-N063",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "A_log shape=`[H_v+1]`",
+          "预期关键语义": "A_log `[H_v]`"
+        }
+      },
+      {
+        "id": "KDA-FWD-N064",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "dt_bias shape=`[H_v*K-1]`",
+          "预期关键语义": "dt_bias `[H_v*K]`"
+        }
+      },
+      {
+        "id": "KDA-FWD-N065",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "safe raw gate，lower_bound=-5.001",
+          "预期关键语义": "`[-5,0)`"
+        }
+      },
+      {
+        "id": "KDA-FWD-N066",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "safe raw gate，lower_bound=0",
+          "预期关键语义": "`[-5,0)`"
+        }
+      },
+      {
+        "id": "KDA-FWD-N067",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "cu_seqlens 仅 `[0]`",
+          "预期关键语义": "至少 `[0,T]`"
+        }
+      },
+      {
+        "id": "KDA-FWD-N068",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "cu 首项为 1",
+          "预期关键语义": "首项必须为 0"
+        }
+      },
+      {
+        "id": "KDA-FWD-N069",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "cu 末项为 T-1",
+          "预期关键语义": "末项必须等于 T"
+        }
+      },
+      {
+        "id": "KDA-FWD-N070",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "cu=`[0,65,64,T]`",
+          "预期关键语义": "非递减"
+        }
+      },
+      {
+        "id": "KDA-FWD-N071",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "1025 个逻辑序列",
+          "预期关键语义": "最多 1024"
+        }
+      },
+      {
+        "id": "KDA-FWD-N072",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "rank-4 varlen 且 B=2",
+          "预期关键语义": "物理 B 必须为 1"
+        }
+      },
+      {
+        "id": "KDA-FWD-N073",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "有 chunk_indices、无 cu_seqlens",
+          "预期关键语义": "indices requires cu"
+        }
+      },
+      {
+        "id": "KDA-FWD-N074",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "chunk_indices pair 数少 1",
+          "预期关键语义": "每个 chunk 恰好一个 pair"
+        }
+      },
+      {
+        "id": "KDA-FWD-N075",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "chunk_indices pair 数多 1",
+          "预期关键语义": "同上"
+        }
+      },
+      {
+        "id": "KDA-FWD-N076",
+        "kind": "run",
+        "section": "21.3.4 raw gate、varlen 和 chunk indices",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "chunk_indices 交换两个 pair",
+          "预期关键语义": "canonical sequence-major order"
+        }
+      },
+      {
+        "id": "KDA-FWD-N077",
+        "kind": "run",
+        "section": "21.3.5 state 与输出 shape",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "`state_v_first=false`，initial 为 `[N,HV,V,K]` 且 K!=V",
+          "预期关键语义": "initial `[N,HV,K,V]`"
+        }
+      },
+      {
+        "id": "KDA-FWD-N078",
+        "kind": "run",
+        "section": "21.3.5 state 与输出 shape",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "`state_v_first=true`，initial 为 `[N,HV,K,V]` 且 K!=V",
+          "预期关键语义": "initial `[N,HV,V,K]`"
+        }
+      },
+      {
+        "id": "KDA-FWD-N079",
+        "kind": "run",
+        "section": "21.3.5 state 与输出 shape",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "finalStateOut 的 N/HV/K/V 任一错误",
+          "预期关键语义": "final state shape"
+        }
+      },
+      {
+        "id": "KDA-FWD-N080",
+        "kind": "run",
+        "section": "21.3.5 state 与输出 shape",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "gkOut 使用 sequence-major shape",
+          "预期关键语义": "gk 固定 head-major"
+        }
+      },
+      {
+        "id": "KDA-FWD-N081",
+        "kind": "run",
+        "section": "21.3.5 state 与输出 shape",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "AqkOut 最后一维不是 C",
+          "预期关键语义": "Aqk/Akk `[...T,C]`"
+        }
+      },
+      {
+        "id": "KDA-FWD-N082",
+        "kind": "run",
+        "section": "21.3.5 state 与输出 shape",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "w/qg/kg 任一使用 V 末维",
+          "预期关键语义": "k 中间量末维 K"
+        }
+      },
+      {
+        "id": "KDA-FWD-N083",
+        "kind": "run",
+        "section": "21.3.5 state 与输出 shape",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "u/vNew 任一使用 K 末维且 K!=V",
+          "预期关键语义": "v 中间量末维 V"
+        }
+      },
+      {
+        "id": "KDA-FWD-N084",
+        "kind": "run",
+        "section": "21.3.5 state 与输出 shape",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "非法条件": "hOut chunk/head 顺序或 state 末维错误",
+          "预期关键语义": "h sequence-major 和 state_v_first"
+        }
+      },
+      {
+        "id": "KDA-FWD-M001",
+        "kind": "msopprof",
+        "section": "21.4 性能：M001-M012（12 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline",
+          "l2_streaming_single_read_disabled"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "dense，H96，T=8K，BF16，K=V=128，C64",
+          "属性": "recompute=false",
+          "判定": "AD,F=128,T=0；RegBase/direct/mode2 基线；handoff NORMAL"
+        }
+      },
+      {
+        "id": "KDA-FWD-M002",
+        "kind": "msopprof",
+        "section": "21.4 性能：M001-M012（12 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "同 M001",
+          "属性": "recompute=true",
+          "判定": "输出 mask 只改变 MTE3 写量，不改变模块拓扑"
+        }
+      },
+      {
+        "id": "KDA-FWD-M003",
+        "kind": "msopprof",
+        "section": "21.4 性能：M001-M012（12 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline",
+          "l2_streaming_single_read_disabled"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "dense，H96，T=16K",
+          "属性": "recompute=false",
+          "判定": "AD,F=256,T=0；128 MiB L2 容量预算，不假定 full-size 中间量全部驻留"
+        }
+      },
+      {
+        "id": "KDA-FWD-M004",
+        "kind": "msopprof",
+        "section": "21.4 性能：M001-M012（12 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "同 M003",
+          "属性": "recompute=true",
+          "判定": "与 M003 对照，记录公开中间量写回开销"
+        }
+      },
+      {
+        "id": "KDA-FWD-M005",
+        "kind": "msopprof",
+        "section": "21.4 性能：M001-M012（12 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "16K single packed",
+          "属性": "recompute=false",
+          "判定": "EP,F=256,T=0；相对 M003 <=5% 且 <12 ms"
+        }
+      },
+      {
+        "id": "KDA-FWD-M006",
+        "kind": "msopprof",
+        "section": "21.4 性能：M001-M012（12 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "16K balanced8",
+          "属性": "recompute=false",
+          "判定": "EP,F=256,T=0；chunk-first、同 sequence 元数据复用，<=5% 且 <12 ms"
+        }
+      },
+      {
+        "id": "KDA-FWD-M007",
+        "kind": "msopprof",
+        "section": "21.4 性能：M001-M012（12 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "16K mixed 分布",
+          "属性": "recompute=false",
+          "判定": "EP,F=253,T=6；full 指令与 M003 同模板；<=5% 且 <12 ms"
+        }
+      },
+      {
+        "id": "KDA-FWD-M008",
+        "kind": "msopprof",
+        "section": "21.4 性能：M001-M012（12 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "16K short64",
+          "属性": "recompute=false",
+          "判定": "256 状态链；记录调度开销，属于极端短链可豁免 5%"
+        }
+      },
+      {
+        "id": "KDA-FWD-M009",
+        "kind": "msopprof",
+        "section": "21.4 性能：M001-M012（12 条）",
+        "platforms": [
+          "ascend910b"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline",
+          "l2_streaming_single_read_disabled"
+        ],
+        "source_fields": {
+          "平台": "A2",
+          "场景": "dense，H96，T=8K",
+          "属性": "recompute=false",
+          "判定": "MemBase/workspace bridge/mode2 基线；bridge NORMAL"
+        }
+      },
+      {
+        "id": "KDA-FWD-M010",
+        "kind": "msopprof",
+        "section": "21.4 性能：M001-M012（12 条）",
+        "platforms": [
+          "ascend910b"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A2",
+          "场景": "8K balanced8",
+          "属性": "recompute=false",
+          "判定": "与 M009 同 chunk/head/chunk scheduler；仅 compact plan/range 变化"
+        }
+      },
+      {
+        "id": "KDA-FWD-M011",
+        "kind": "msopprof",
+        "section": "21.4 性能：M001-M012（12 条）",
+        "platforms": [
+          "ascend910_93"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline",
+          "l2_streaming_single_read_disabled"
+        ],
+        "source_fields": {
+          "平台": "A3",
+          "场景": "dense，H96，T=8K",
+          "属性": "recompute=false",
+          "判定": "MemBase/workspace bridge/mode2 基线"
+        }
+      },
+      {
+        "id": "KDA-FWD-M012",
+        "kind": "msopprof",
+        "section": "21.4 性能：M001-M012（12 条）",
+        "platforms": [
+          "ascend910_93"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A3",
+          "场景": "8K mixed 分布",
+          "属性": "recompute=false",
+          "判定": "full/tail 统一循环；相对 M011 <=5%"
+        }
+      },
+      {
+        "id": "KDA-FWD-S001",
+        "kind": "stress",
+        "section": "21.5 稳定性、确定性与内存安全：S001-S008（8 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "fixed_input"
+        ],
+        "source_fields": {
+          "场景": "A5 dense H96 T8K",
+          "方法": "固定输入重复 100 次",
+          "通过标准": "全部公开输出逐 bit 一致"
+        },
+        "repeat_count": 100
+      },
+      {
+        "id": "KDA-FWD-S002",
+        "kind": "stress",
+        "section": "21.5 稳定性、确定性与内存安全：S001-S008（8 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "fixed_input"
+        ],
+        "source_fields": {
+          "场景": "A5 aligned varlen balanced8 T8K",
+          "方法": "固定输入重复 100 次",
+          "通过标准": "状态链和输出逐 bit 一致"
+        },
+        "repeat_count": 100
+      },
+      {
+        "id": "KDA-FWD-S003",
+        "kind": "stress",
+        "section": "21.5 稳定性、确定性与内存安全：S001-S008（8 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "fixed_input"
+        ],
+        "source_fields": {
+          "场景": "A5 mixed-tail T8K",
+          "方法": "固定输入重复 100 次",
+          "通过标准": "full/tail 接续逐 bit 一致"
+        },
+        "repeat_count": 100
+      },
+      {
+        "id": "KDA-FWD-S004",
+        "kind": "stress",
+        "section": "21.5 稳定性、确定性与内存安全：S001-S008（8 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "all_outputs",
+          "hidden_outputs"
+        ],
+        "source_fields": {
+          "场景": "A5 同输入，全部输出公开 vs 全部可隐藏输出",
+          "方法": "两种 mask 各重复 20 次",
+          "通过标准": "公共输出逐 bit 一致，隐藏存储不改变数学结果"
+        },
+        "repeat_count": 20
+      },
+      {
+        "id": "KDA-FWD-S005",
+        "kind": "sanitizer",
+        "section": "21.5 稳定性、确定性与内存安全：S001-S008（8 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "dense_key2",
+          "mixed_tail_key2"
+        ],
+        "source_fields": {
+          "场景": "A5 key2 dense+mixed-tail",
+          "方法": "sanitizer racecheck",
+          "通过标准": "mode2 direct ready/free 实际命中且无确认的数据竞争"
+        },
+        "sanitizer_tools": [
+          "racecheck"
+        ]
+      },
+      {
+        "id": "KDA-FWD-S006",
+        "kind": "sanitizer",
+        "section": "21.5 稳定性、确定性与内存安全：S001-S008（8 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "dense_key2",
+          "mixed_tail_key2",
+          "max_kv_key1"
+        ],
+        "source_fields": {
+          "场景": "A5 key2 dense+mixed-tail+最大 K/V key1",
+          "方法": "sanitizer memcheck",
+          "通过标准": "RegBase/GM/L1/UB 无越界或泄漏"
+        },
+        "sanitizer_tools": [
+          "memcheck"
+        ]
+      },
+      {
+        "id": "KDA-FWD-S007",
+        "kind": "sanitizer",
+        "section": "21.5 稳定性、确定性与内存安全：S001-S008（8 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "tail_initial_none_hidden_outputs"
+        ],
+        "source_fields": {
+          "场景": "A2+A5 tail、空 initial、隐藏输出",
+          "方法": "sanitizer initcheck",
+          "通过标准": "MemBase/RegBase 均无未初始化读取"
+        },
+        "sanitizer_tools": [
+          "initcheck"
+        ]
+      },
+      {
+        "id": "KDA-FWD-S008",
+        "kind": "sanitizer",
+        "section": "21.5 稳定性、确定性与内存安全：S001-S008（8 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "long_chain",
+          "mixed_tail"
+        ],
+        "source_fields": {
+          "场景": "A2 workspace bridge + A5 mode2 direct，长链/mixed-tail",
+          "方法": "sanitizer synccheck",
+          "通过标准": "两种 protocol 的 mode2 ready/free、EventID 闭环；不以此判断 L2 hint"
+        },
+        "sanitizer_tools": [
+          "synccheck"
+        ]
+      },
+      {
+        "id": "KDA-FWD-G001",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn",
+          "direct_launch"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A+D",
+          "`H_k/H_v/G`": "1/2/2",
+          "主要断言": "两个 value head 均读取 q/k head 0，value-side 结果相互独立"
+        }
+      },
+      {
+        "id": "KDA-FWD-G002",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "`H_k/H_v/G`": "2/4/2",
+          "主要断言": "单个 `headCnt=4` 窗口覆盖两个 Q/K head，hk0/hk1 各加载一次，组边界正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-G003",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "`H_k/H_v/G`": "3/6/2",
+          "主要断言": "三个组均覆盖，扰动中间 Q/K head 仅影响 value head 2/3"
+        }
+      },
+      {
+        "id": "KDA-FWD-G004",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "A5/P+A",
+          "`H_k/H_v/G`": "48/96/2",
+          "主要断言": "H96 模型 head，A5 HeadStateScheduler 与 CPU golden 一致"
+        }
+      },
+      {
+        "id": "KDA-FWD-G005",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "`H_k/H_v/G`": "64/128/2",
+          "主要断言": "value head 上界，首尾组和输出 shape 正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-G006",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn",
+          "direct_launch"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A+D",
+          "`H_k/H_v/G`": "1/3/3",
+          "主要断言": "单个运行时 `headCnt=3` 窗口，Q/K 只加载一次，三个 value head 状态独立"
+        }
+      },
+      {
+        "id": "KDA-FWD-G007",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "A5/P+A",
+          "`H_k/H_v/G`": "2/6/3",
+          "主要断言": "两个 `headCnt=3` 窗口分别使用 hk0/hk1；窗口边界与 GVA 组边界一致"
+        }
+      },
+      {
+        "id": "KDA-FWD-G008",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "A5/P+A",
+          "`H_k/H_v/G`": "32/96/3",
+          "主要断言": "H96、32 个 Q/K head，逐组三 value head 映射"
+        }
+      },
+      {
+        "id": "KDA-FWD-G009",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "`H_k/H_v/G`": "1/4/4",
+          "主要断言": "一个 Q/K head 服务四个独立 value head"
+        }
+      },
+      {
+        "id": "KDA-FWD-G010",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn",
+          "direct_launch"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A+D",
+          "`H_k/H_v/G`": "2/8/4",
+          "主要断言": "两组映射及 L0 直调结果一致"
+        }
+      },
+      {
+        "id": "KDA-FWD-G011",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "A5/P+A",
+          "`H_k/H_v/G`": "24/96/4",
+          "主要断言": "H96 GVA4，四-head 流水不跨错 Q/K 组"
+        }
+      },
+      {
+        "id": "KDA-FWD-G012",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "`H_k/H_v/G`": "1/8/8",
+          "主要断言": "同一 Q/K head 拆成 `4+4` 两个窗口；每窗只加载一次，跨窗允许重读，八条状态链独立"
+        }
+      },
+      {
+        "id": "KDA-FWD-G013",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "A5/P+A",
+          "`H_k/H_v/G`": "6/96/16",
+          "主要断言": "大分组，组 0/1 边界 value head 15/16 正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-G014",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "A5/P+A",
+          "`H_k/H_v/G`": "3/96/32",
+          "主要断言": "value head 31/32 与 63/64 两个边界正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-G015",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "`H_k/H_v/G`": "1/128/128",
+          "主要断言": "最大 group_size，所有 value head 共享唯一 Q/K 且不共享状态"
+        }
+      },
+      {
+        "id": "KDA-FWD-G016",
+        "kind": "accuracy",
+        "section": "21.6.2 基础映射与 group_size：G001-G016（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn",
+          "direct_launch"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A+D",
+          "`H_k/H_v/G`": "96/96/1",
+          "主要断言": "`R=1` 时每个完整窗口 `headCnt=4`，四个 Q/K head 各加载一次；结果与一一映射 golden 完全一致"
+        }
+      },
+      {
+        "id": "KDA-FWD-G017",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "场景": "BSND，BF16，2/8/4",
+          "主要断言": "q/k 与 value-side head 轴解析正确，输出为 BSND"
+        }
+      },
+      {
+        "id": "KDA-FWD-G018",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn",
+          "direct_launch"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A+D",
+          "场景": "BNSD，BF16，2/8/4",
+          "主要断言": "三条调用通路的组边界输出一致"
+        }
+      },
+      {
+        "id": "KDA-FWD-G019",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "场景": "TND，BF16，`cu=[0,128]`，2/8/4",
+          "主要断言": "rank-3 token-major GVA shape 与映射正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-G020",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "场景": "NTD，BF16，`cu=[0,128]`，2/8/4",
+          "主要断言": "rank-3 head-major GVA shape 与映射正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-G021",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "场景": "BSND，FP16，2/6/3",
+          "主要断言": "奇数分组边界与 FP16 阈值内一致"
+        }
+      },
+      {
+        "id": "KDA-FWD-G022",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn",
+          "direct_launch"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A+D",
+          "场景": "BNSD，FP16，2/6/3",
+          "主要断言": "L0 与 L2/Python 结果一致"
+        }
+      },
+      {
+        "id": "KDA-FWD-G023",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "场景": "TND，FP16，`cu=[0,64,128]`，2/6/3",
+          "主要断言": "多序列映射和状态重置"
+        }
+      },
+      {
+        "id": "KDA-FWD-G024",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "场景": "NTD，FP16，`cu=[0,65,128]`，2/6/3",
+          "主要断言": "多序列 tail 与 GVA 组边界"
+        }
+      },
+      {
+        "id": "KDA-FWD-G025",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "场景": "qkv BF16、g/beta FP32，4/8/2",
+          "主要断言": "FP32 value-side 标量输入不按 `H_k` 截断"
+        }
+      },
+      {
+        "id": "KDA-FWD-G026",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "场景": "qkv BF16、g BF16、beta FP32，4/8/2",
+          "主要断言": "g 的八个 value heads 均参与计算"
+        }
+      },
+      {
+        "id": "KDA-FWD-G027",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "场景": "qkv BF16、g FP32、beta BF16，4/8/2",
+          "主要断言": "beta 的八个 value heads 均参与计算"
+        }
+      },
+      {
+        "id": "KDA-FWD-G028",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "场景": "qkv BF16、g/beta BF16，4/8/2",
+          "主要断言": "全 BF16 value-side 输入组合"
+        }
+      },
+      {
+        "id": "KDA-FWD-G029",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "场景": "qkv FP16、g/beta FP32，1/8/8",
+          "主要断言": "单 Q/K 多 value head 的 FP16 精度"
+        }
+      },
+      {
+        "id": "KDA-FWD-G030",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P",
+          "场景": "qkv FP16、g/beta BF16，3/96/32",
+          "主要断言": "大分组低精度输入无串 head"
+        }
+      },
+      {
+        "id": "KDA-FWD-G031",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "场景": "BSND，q/k 为非连续 view，2/8/4",
+          "主要断言": "L2 连续化后 `H_k` 索引保持正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-G032",
+        "kind": "accuracy",
+        "section": "21.6.3 layout、dtype、路由与存储：G017-G032（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/路由": "ALL/P+A",
+          "场景": "NTD，v/g/beta 为非连续 view，2/8/4",
+          "主要断言": "value-side `H_v` 索引和输出布局保持正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-G033",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "场景": "activated gate，safe=false，2/8/4",
+          "主要断言": "每个 `hv` 的 gate 独立累计，不按 `hk` 广播"
+        }
+      },
+      {
+        "id": "KDA-FWD-G034",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "场景": "activated gate，safe=true，2/8/4",
+          "主要断言": "safe 模板不改变 GVA 映射"
+        }
+      },
+      {
+        "id": "KDA-FWD-G035",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "场景": "raw non-safe，A_log/dt_bias FP32，2/8/4",
+          "主要断言": "Prepare GatePolicy 与预先激活等价"
+        }
+      },
+      {
+        "id": "KDA-FWD-G036",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "场景": "raw safe，BF16/FP32，`lower_bound=-5`，2/6/3",
+          "主要断言": "BF16 A_log 按 hv 读取，跨组 finite"
+        }
+      },
+      {
+        "id": "KDA-FWD-G037",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "场景": "raw safe，FP32/BF16，`lower_bound=-0.001`，2/6/3",
+          "主要断言": "BF16 dt_bias 不串 value head"
+        }
+      },
+      {
+        "id": "KDA-FWD-G038",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "场景": "raw safe，A_log BF16、dt_bias=None，2/6/3",
+          "主要断言": "每个 value head 的 bias 按 0"
+        }
+      },
+      {
+        "id": "KDA-FWD-G039",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "raw safe，BF16/BF16，`A_log[hv]` 全不同，24/96/4",
+          "主要断言": "A_log 以 hv 而非 hk 索引；RegBase loader 正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-G040",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend910b"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "A2",
+          "场景": "raw safe，BF16/BF16，`dt_bias[hv,:]` 全不同，32/96/3",
+          "主要断言": "MemBase loader 在组边界保持 value-head 语义"
+        }
+      },
+      {
+        "id": "KDA-FWD-G041",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "场景": "initial present，`state_v_first=false`，2/8/4",
+          "主要断言": "h[0] 等于每个 hv 的 `[K,V]` initial"
+        }
+      },
+      {
+        "id": "KDA-FWD-G042",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "场景": "同 G041，`state_v_first=true`",
+          "主要断言": "与 G041 逐 value head 末两维转置等价"
+        }
+      },
+      {
+        "id": "KDA-FWD-G043",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "场景": "2/6/3，仅 `initial_state[:,2]` 为脉冲",
+          "主要断言": "只影响 hv2；hv3 属下一组且不受影响"
+        }
+      },
+      {
+        "id": "KDA-FWD-G044",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "场景": "2/6/3，仅 `initial_state[:,3]` 为脉冲",
+          "主要断言": "只影响 hv3；验证组边界另一侧"
+        }
+      },
+      {
+        "id": "KDA-FWD-G045",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "`output_final_state=false`，48/96/2",
+          "主要断言": "隐藏 final state 仍正确接续，Python 返回 None"
+        }
+      },
+      {
+        "id": "KDA-FWD-G046",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "`disable_recompute=false,return_intermediate_states=false`，48/96/2",
+          "主要断言": "隐藏中间量不改变公共输出"
+        }
+      },
+      {
+        "id": "KDA-FWD-G047",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "`disable_recompute=true,return_intermediate_states=true`，32/96/3",
+          "主要断言": "全部 value-head 中间量 shape/值正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-G048",
+        "kind": "accuracy",
+        "section": "21.6.4 gate、state 与输出策略：G033-G048（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "`output_final_state=true,disable_recompute=true,return_intermediate_states=false`，24/96/4",
+          "主要断言": "final、全部反向中间量和 h 公开；结果与 GVA golden 一致"
+        }
+      },
+      {
+        "id": "KDA-FWD-G049",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "Shape": "`C64,T1,K128,V128,H_k/H_v=2/6`",
+          "覆盖点": "key2 单 token tail，GVA3"
+        }
+      },
+      {
+        "id": "KDA-FWD-G050",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "Shape": "`C64,T63,K128,V128,2/6`",
+          "覆盖点": "key2 `C-1` tail，补零区正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-G051",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn",
+          "direct_launch"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL/P+A+D",
+          "Shape": "`C64,T64,K128,V128,2/6`",
+          "覆盖点": "key2 单完整 chunk、三路一致"
+        }
+      },
+      {
+        "id": "KDA-FWD-G052",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "Shape": "`C64,T65,K128,V128,2/6`",
+          "覆盖点": "key2 full+tail；tail 接续不改变 hk"
+        }
+      },
+      {
+        "id": "KDA-FWD-G053",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "Shape": "`C64,T127,K128,V128,2/8`",
+          "覆盖点": "key2 长 tail，GVA4"
+        }
+      },
+      {
+        "id": "KDA-FWD-G054",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "Shape": "`C64,T128,K128,V128,2/8`",
+          "覆盖点": "key2 两个完整 chunk"
+        }
+      },
+      {
+        "id": "KDA-FWD-G055",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "Shape": "`C64,T129,K128,V128,2/8`",
+          "覆盖点": "key2 两 full+1 tail"
+        }
+      },
+      {
+        "id": "KDA-FWD-G056",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "Shape": "`C64,T193,K128,V128,32/96`",
+          "覆盖点": "key2 三 full+tail，H96 GVA3"
+        }
+      },
+      {
+        "id": "KDA-FWD-G057",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "Shape": "`C128,T127,K128,V128,2/8`",
+          "覆盖点": "key1 单 tail"
+        }
+      },
+      {
+        "id": "KDA-FWD-G058",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn",
+          "direct_launch"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL/P+A+D",
+          "Shape": "`C128,T128,K128,V128,2/8`",
+          "覆盖点": "key1 单完整 chunk、三路一致"
+        }
+      },
+      {
+        "id": "KDA-FWD-G059",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "Shape": "`C128,T129,K128,V128,2/8`",
+          "覆盖点": "key1 full+tail"
+        }
+      },
+      {
+        "id": "KDA-FWD-G060",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "Shape": "`C64,T128,K16,V16,2/8`",
+          "覆盖点": "key1 最小 K/V 与 GVA4"
+        }
+      },
+      {
+        "id": "KDA-FWD-G061",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "Shape": "`C64,T128,K64,V128,2/6`",
+          "覆盖点": "key1 K64、GVA3"
+        }
+      },
+      {
+        "id": "KDA-FWD-G062",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "Shape": "`C64,T128,K128,V256,2/8`",
+          "覆盖点": "key1 V256，value-side state 最大化"
+        }
+      },
+      {
+        "id": "KDA-FWD-G063",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "Shape": "`C64,T128,K256,V128,2/8`",
+          "覆盖点": "key1 K256，Q/K 映射与大 state"
+        }
+      },
+      {
+        "id": "KDA-FWD-G064",
+        "kind": "accuracy",
+        "section": "21.6.5 chunk、K/V、tail 与 tiling key：G049-G064（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台": "ALL",
+          "Shape": "`C128,T129,K256,V256,1/8`",
+          "覆盖点": "key1 最大 K/V、GVA8、full+tail"
+        }
+      },
+      {
+        "id": "KDA-FWD-G065",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "ALL/TND",
+          "packed 定义": "`T128,cu=[0,64,128]`，2/8/4，indices 派生",
+          "覆盖点": "两个 aligned 序列，状态与 head 双重隔离"
+        }
+      },
+      {
+        "id": "KDA-FWD-G066",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "ALL/NTD",
+          "packed 定义": "同 G065，indices 显式 canonical",
+          "覆盖点": "head-major rank-3 GVA"
+        }
+      },
+      {
+        "id": "KDA-FWD-G067",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "ALL/BSND",
+          "packed 定义": "rank-4 B=1，`cu=[0,64,128]`，2/8/4",
+          "覆盖点": "rank-4 varlen 输出 shape"
+        }
+      },
+      {
+        "id": "KDA-FWD-G068",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "ALL/BNSD",
+          "packed 定义": "同 G067",
+          "覆盖点": "rank-4 head-major 输入解析"
+        }
+      },
+      {
+        "id": "KDA-FWD-G069",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "A5/TND",
+          "packed 定义": "`T128,cu=[0,63,128]`，2/6/3",
+          "覆盖点": "两个 tail，`hv2/hv3` 边界不串扰"
+        }
+      },
+      {
+        "id": "KDA-FWD-G070",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "A5/TND",
+          "packed 定义": "`T128,cu=[0,65,128]`，2/6/3",
+          "覆盖点": "full+tail 后接 tail，状态重置正确"
+        }
+      },
+      {
+        "id": "KDA-FWD-G071",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "ALL/TND",
+          "packed 定义": "`T128,cu=[0,64,64,128]`，2/8/4",
+          "覆盖点": "中间零长序列不消耗/错移 GVA 状态"
+        }
+      },
+      {
+        "id": "KDA-FWD-G072",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "ALL/TND",
+          "packed 定义": "`T128,cu=[0,0,64,128]`，2/8/4",
+          "覆盖点": "前导零长序列"
+        }
+      },
+      {
+        "id": "KDA-FWD-G073",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "ALL/TND",
+          "packed 定义": "`T128,cu=[0,64,128,128]`，2/8/4",
+          "覆盖点": "尾部零长序列"
+        }
+      },
+      {
+        "id": "KDA-FWD-G074",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "A5/TND",
+          "packed 定义": "`T129,cu=[0,1,65,129]`，2/6/3",
+          "覆盖点": "单 token+两个 full 序列，canonical indices"
+        }
+      },
+      {
+        "id": "KDA-FWD-G075",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "A5/TND",
+          "packed 定义": "`T1024,balanced8`，48/96/2",
+          "覆盖点": "H96 EP full 循环，和 dense 共用后端"
+        }
+      },
+      {
+        "id": "KDA-FWD-G076",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "A5/TND",
+          "packed 定义": "`T1536,mixed`，32/96/3",
+          "覆盖点": "H96 每序列 full 后可选 tail；统一使用三-head runtime window，不按双-head边界切换路径"
+        }
+      },
+      {
+        "id": "KDA-FWD-G077",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "A5/TND",
+          "packed 定义": "`T2048,single`，24/96/4",
+          "覆盖点": "packed 单序列不归一 dense，GVA4"
+        }
+      },
+      {
+        "id": "KDA-FWD-G078",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "A5/TND",
+          "packed 定义": "`T4096,short64`，12/96/8",
+          "覆盖点": "64 条独立序列、每序列八 value heads/组"
+        }
+      },
+      {
+        "id": "KDA-FWD-G079",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "A5/TND",
+          "packed 定义": "`T8192,balanced8`，6/96/16",
+          "覆盖点": "长状态链与大 group_size"
+        }
+      },
+      {
+        "id": "KDA-FWD-G080",
+        "kind": "accuracy",
+        "section": "21.6.6 varlen、序列边界与长序列：G065-G080（16 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "random",
+          "traceable_metamorphic"
+        ],
+        "source_fields": {
+          "平台/布局": "A5/TND",
+          "packed 定义": "`T16384,mixed`，3/96/32",
+          "覆盖点": "16K mixed-tail、value head 31/32 和 63/64 边界"
+        }
+      },
+      {
+        "id": "KDA-FWD-G081",
+        "kind": "run",
+        "section": "21.6.7 GVA 反向契约：G081-G088（8 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "P+A",
+          "非法条件": "`H_k=0,H_v=4`",
+          "预期": "PARAM_INVALID/RuntimeError；`H_k` 必须大于 0"
+        }
+      },
+      {
+        "id": "KDA-FWD-G082",
+        "kind": "run",
+        "section": "21.6.7 GVA 反向契约：G081-G088（8 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "P+A",
+          "非法条件": "`H_k=4,H_v=0`",
+          "预期": "PARAM_INVALID/RuntimeError；`H_v` 必须大于 0"
+        }
+      },
+      {
+        "id": "KDA-FWD-G083",
+        "kind": "run",
+        "section": "21.6.7 GVA 反向契约：G081-G088（8 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "P+A",
+          "非法条件": "`H_k=4,H_v=2`",
+          "预期": "PARAM_INVALID/RuntimeError；`H_k <= H_v`"
+        }
+      },
+      {
+        "id": "KDA-FWD-G084",
+        "kind": "run",
+        "section": "21.6.7 GVA 反向契约：G081-G088（8 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "P+A",
+          "非法条件": "`H_k=3,H_v=8`",
+          "预期": "PARAM_INVALID/RuntimeError；`H_v % H_k == 0`"
+        }
+      },
+      {
+        "id": "KDA-FWD-G085",
+        "kind": "run",
+        "section": "21.6.7 GVA 反向契约：G081-G088（8 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "P+A",
+          "非法条件": "`H_k=129,H_v=129`",
+          "预期": "PARAM_INVALID/RuntimeError；head 上界 128"
+        }
+      },
+      {
+        "id": "KDA-FWD-G086",
+        "kind": "run",
+        "section": "21.6.7 GVA 反向契约：G081-G088（8 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "P+A",
+          "非法条件": "`H_k=1,H_v=129`",
+          "预期": "PARAM_INVALID/RuntimeError；value head 上界 128"
+        }
+      },
+      {
+        "id": "KDA-FWD-G087",
+        "kind": "run",
+        "section": "21.6.7 GVA 反向契约：G081-G088（8 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "P+A",
+          "非法条件": "q/k 为 2 heads、v 为 4 heads，但 g/beta 错用 2 heads",
+          "预期": "PARAM_INVALID/RuntimeError；g/beta 必须使用 `H_v`"
+        }
+      },
+      {
+        "id": "KDA-FWD-G088",
+        "kind": "run",
+        "section": "21.6.7 GVA 反向契约：G081-G088（8 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend910_93",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc",
+          "aclnn"
+        ],
+        "variants": [
+          "invalid_contract"
+        ],
+        "source_fields": {
+          "路由": "P+A",
+          "非法条件": "`H_k/H_v=2/4`，initial state 错用 head=2",
+          "预期": "PARAM_INVALID/RuntimeError；state head 必须等于 `H_v`"
+        }
+      },
+      {
+        "id": "KDA-FWD-G089",
+        "kind": "msopprof",
+        "section": "21.6.8 GVA 性能：G089-G096（8 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "dense，`T16K,H_k/H_v=48/96,G2`",
+          "判定": "GVA2 基线；四-head 窗口含两个 Q/K head 且各加载一次，记录三阶段时间和 L2 handoff"
+        }
+      },
+      {
+        "id": "KDA-FWD-G090",
+        "kind": "msopprof",
+        "section": "21.6.8 GVA 性能：G089-G096（8 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "balanced8，参数同 G089",
+          "判定": "相对 G089 <=5% 且 <12 ms"
+        }
+      },
+      {
+        "id": "KDA-FWD-G091",
+        "kind": "msopprof",
+        "section": "21.6.8 GVA 性能：G089-G096（8 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "dense，`T16K,H_k/H_v=32/96,G3`",
+          "判定": "GVA3 dense 基线；记录三-head runtime window 和窗内单次 Q/K 加载开销"
+        }
+      },
+      {
+        "id": "KDA-FWD-G092",
+        "kind": "msopprof",
+        "section": "21.6.8 GVA 性能：G089-G096（8 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A5",
+          "场景": "mixed-tail，参数同 G091",
+          "判定": "仅 tail 补算；相对 G091 <=5% 且 <12 ms"
+        }
+      },
+      {
+        "id": "KDA-FWD-G093",
+        "kind": "msopprof",
+        "section": "21.6.8 GVA 性能：G089-G096（8 条）",
+        "platforms": [
+          "ascend910b"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A2",
+          "场景": "dense，`T8K,H_k/H_v=24/96,G4`",
+          "判定": "通用 key2 GVA4 基线"
+        }
+      },
+      {
+        "id": "KDA-FWD-G094",
+        "kind": "msopprof",
+        "section": "21.6.8 GVA 性能：G089-G096（8 条）",
+        "platforms": [
+          "ascend910b"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A2",
+          "场景": "balanced8，参数同 G093",
+          "判定": "相对 G093 的 varlen 开销并满足项目 5% 目标"
+        }
+      },
+      {
+        "id": "KDA-FWD-G095",
+        "kind": "msopprof",
+        "section": "21.6.8 GVA 性能：G089-G096（8 条）",
+        "platforms": [
+          "ascend910_93"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A3",
+          "场景": "dense，`T8K,H_k/H_v=12/96,G8`",
+          "判定": "A3 通用 key2 GVA8 基线"
+        }
+      },
+      {
+        "id": "KDA-FWD-G096",
+        "kind": "msopprof",
+        "section": "21.6.8 GVA 性能：G089-G096（8 条）",
+        "platforms": [
+          "ascend910_93"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "baseline"
+        ],
+        "source_fields": {
+          "平台": "A3",
+          "场景": "mixed-tail，参数同 G095",
+          "判定": "相对 G095 的 tail/varlen 开销并满足项目 5% 目标"
+        }
+      },
+      {
+        "id": "KDA-FWD-G097",
+        "kind": "stress",
+        "section": "21.6.9 GVA 稳定性与内存安全：G097-G100（4 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "fixed_input"
+        ],
+        "source_fields": {
+          "场景": "A5 dense，`H_k/H_v=32/96,G3,T8K`",
+          "方法": "固定可追踪输入重复 100 次",
+          "通过标准": "全部公开 value-head 输出逐 bit 一致，首次组边界无漂移"
+        },
+        "repeat_count": 100
+      },
+      {
+        "id": "KDA-FWD-G098",
+        "kind": "stress",
+        "section": "21.6.9 GVA 稳定性与内存安全：G097-G100（4 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "all_outputs",
+          "hidden_outputs"
+        ],
+        "source_fields": {
+          "场景": "A5 mixed-tail，`H_k/H_v=32/96,G3,T8K`",
+          "方法": "全输出/隐藏输出两种 mask 各重复 100 次",
+          "通过标准": "各自逐 bit 一致，公共输出跨 mask 一致"
+        },
+        "repeat_count": 100
+      },
+      {
+        "id": "KDA-FWD-G099",
+        "kind": "sanitizer",
+        "section": "21.6.9 GVA 稳定性与内存安全：G097-G100（4 条）",
+        "platforms": [
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "aligned",
+          "mixed_tail"
+        ],
+        "source_fields": {
+          "场景": "A5 GVA3 三-head 窗口、aligned+mixed-tail",
+          "方法": "分别执行 sanitizer racecheck 和 synccheck",
+          "通过标准": "实际命中统一 runtime-window kernel，无确认的数据竞争或同步协议错误"
+        },
+        "sanitizer_tools": [
+          "racecheck",
+          "synccheck"
+        ]
+      },
+      {
+        "id": "KDA-FWD-G100",
+        "kind": "sanitizer",
+        "section": "21.6.9 GVA 稳定性与内存安全：G097-G100（4 条）",
+        "platforms": [
+          "ascend910b",
+          "ascend950"
+        ],
+        "routes": [
+          "ascendc"
+        ],
+        "variants": [
+          "max_group_tail_initial_none"
+        ],
+        "source_fields": {
+          "场景": "A2+A5，最大 group_size 128、tail、initial None",
+          "方法": "分别执行 sanitizer memcheck 和 initcheck",
+          "通过标准": "无 q/k 越界、value-side 越界或未初始化 state 读取"
+        },
+        "sanitizer_tools": [
+          "memcheck",
+          "initcheck"
+        ]
+      }
+    ]
+  },
   "cases": [
     {
       "id": "chunk_kda_fwd_main_accuracy",
