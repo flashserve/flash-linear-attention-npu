@@ -919,8 +919,12 @@ def _reference_model_parallel(inputs: _PreparedInputs, spec: dict):
                 h_out[batch_id, chunk_id, hv_index] = previous.to(output_dtype)
         final_states[:, hv_index] = state
 
-    with ThreadPoolExecutor(max_workers=min(_REFERENCE_WORKERS, hv_num)) as pool:
-        list(pool.map(run_head, range(hv_num)))
+    if q.device.type == "cuda":
+        for hv_index in range(hv_num):
+            run_head(hv_index)
+    else:
+        with ThreadPoolExecutor(max_workers=min(_REFERENCE_WORKERS, hv_num)) as pool:
+            list(pool.map(run_head, range(hv_num)))
 
     final_state = final_states if _as_bool(spec["output_final_state"]) else None
     if _as_bool(spec["state_v_first"]):
@@ -1041,14 +1045,16 @@ def _torch_fp64_golden(inputs: _PreparedInputs, spec: dict):
 
 
 def _torch_same_precision(inputs: _PreparedInputs, spec: dict):
-    if inputs.q.device.type != "cpu":
-        raise RuntimeError("Torch same-precision reference must run on an ATK CPU node")
+    if inputs.q.device.type not in {"cpu", "cuda"}:
+        raise RuntimeError(
+            "Torch same-precision reference must run on an ATK CPU or GPU node"
+        )
     if inputs.q.dtype == torch.float64:
         raise RuntimeError("Torch same-precision reference received FP64 q input")
     return _cached_full_reference(
         inputs,
         spec,
-        "torch_cpu_same_precision",
+        f"torch_{inputs.q.device.type}_same_precision",
         _reference_model_parallel,
     )
 
@@ -1798,19 +1804,34 @@ class ChunkKdaFwdApi(BaseApi):
         self.persistent_cache_mode = _persistent_cache_mode()
         _validate_persistent_cache_task(self.persistent_cache_mode, task_names)
         self.is_benchmark_task = bool(task_result.is_benchmark_task)
-        # --bm_device cpu is the primary topology. GPU retains the legacy truth/control roles.
+        # The benchmark node supplies FP64; the regular reference node supplies
+        # Triton unless this case explicitly requires a Torch control.
         self.high_precision = (
             self.device in {"cpu", "gpu"} and self.is_benchmark_task
         )
         self.cpu_control = self.device == "cpu" and not self.is_benchmark_task
         self.triton_control = self.device == "gpu" and not self.is_benchmark_task
+        self.gpu_torch_control = False
         self.cache_reader = None
         self.cache_validation_receipt = None
         self.execution_device = None
 
     def init_by_input_data(self, input_data: InputDataset):
         self.spec = json.loads(str(input_data.kwargs["case_spec"]))
-        tags = {tag.strip() for tag in str(self.spec["tags"]).split(",")}
+        gpu_control_reference = str(
+            self.spec.get("gpu_control_reference", "triton_same_precision")
+        )
+        if gpu_control_reference not in {
+            "triton_same_precision",
+            "torch_same_precision",
+        }:
+            raise RuntimeError(
+                "gpu_control_reference must be 'triton_same_precision' or "
+                "'torch_same_precision'"
+            )
+        if self.device == "gpu" and not self.is_benchmark_task:
+            self.gpu_torch_control = gpu_control_reference == "torch_same_precision"
+            self.triton_control = not self.gpu_torch_control
         runtime_seed = int(self.spec["seed"])
         if self.randomize_values:
             if self.runtime_case_id is None:
@@ -1819,14 +1840,6 @@ class ChunkKdaFwdApi(BaseApi):
                 runtime_seed * 0x9E3779B185EBCA87 + self.runtime_case_id
             ) % (2**63 - 1)
         self.execution_device = input_data.kwargs["low_precision_marker"].device
-        if (
-            "canonical_300" in tags
-            and not self.randomize_values
-            and self.persistent_cache_mode != "readonly"
-        ):
-            raise ReferenceCacheError(
-                "canonical 300 cases require the prebuilt readonly inputs cache"
-            )
         use_persistent_cache = (
             self.persistent_cache_mode == "readonly" and not self.randomize_values
         )
@@ -1835,8 +1848,16 @@ class ChunkKdaFwdApi(BaseApi):
             self.cache_validation_receipt = dict(
                 self.cache_reader.validation_receipt
             )
-            role = _reference_role(self.device, self.is_benchmark_task)
-            if role in {"cpu_fp64", "cpu_same_precision", "gpu_fp64"}:
+            role = (
+                "gpu_torch_same_precision"
+                if self.gpu_torch_control
+                else _reference_role(self.device, self.is_benchmark_task)
+            )
+            if role in {
+                "cpu_fp64",
+                "cpu_same_precision",
+                "gpu_fp64",
+            }:
                 # Reference values are useful only if the deterministic input shard
                 # they were built from is still present and payload-valid.
                 self.cache_reader.load_shard("inputs")
@@ -1868,6 +1889,7 @@ class ChunkKdaFwdApi(BaseApi):
                 "high_precision=" + str(self.high_precision),
                 "cpu_control=" + str(self.cpu_control),
                 "triton_control=" + str(self.triton_control),
+                "gpu_torch_control=" + str(self.gpu_torch_control),
                 "persistent_cache=" + str(self.cache_reader is not None),
                 "producer_torch="
                 + str(
@@ -1898,13 +1920,21 @@ class ChunkKdaFwdApi(BaseApi):
             if route == "ascendc":
                 return _run_negative_ascendc(self.inputs, self.spec)
             raise RuntimeError(f"negative cases do not support route={route!r}")
-        role = _reference_role(self.device, self.is_benchmark_task)
+        role = (
+            "gpu_torch_same_precision"
+            if self.gpu_torch_control
+            else _reference_role(self.device, self.is_benchmark_task)
+        )
         if self.cache_reader is not None and role in {
             "cpu_fp64",
             "cpu_same_precision",
             "gpu_fp64",
         }:
-            shard = "cpu_fp64" if role in {"cpu_fp64", "gpu_fp64"} else role
+            shard = (
+                "cpu_fp64"
+                if role in {"cpu_fp64", "gpu_fp64"}
+                else "cpu_same_precision"
+            )
             outputs = _outputs_from_cpu(
                 self.cache_reader.load_shard(shard), self.execution_device
             )
@@ -1912,14 +1942,16 @@ class ChunkKdaFwdApi(BaseApi):
             outputs = _torch_fp64_golden(self.inputs, self.spec)
         elif self.cpu_control:
             outputs = _torch_same_precision(self.inputs, self.spec)
+        elif self.gpu_torch_control:
+            outputs = _torch_same_precision(self.inputs, self.spec)
         elif self.triton_control:
             outputs = _triton_same_precision(self.inputs, self.spec)
         elif self.device == "npu":
             outputs = _run_positive_npu(self.inputs, self.spec)
         else:
             raise RuntimeError(
-                "positive chunk_kda_fwd cases require one NPU node and one CPU node "
-                "(or the legacy GPU node); "
+                "positive chunk_kda_fwd cases require one NPU node and a supported "
+                "CPU/GPU reference node; "
                 f"got device={self.device!r}, benchmark={self.is_benchmark_task}"
             )
         selected_names = _selected_output_names()
@@ -1950,4 +1982,7 @@ class ChunkKdaFwdApi(BaseApi):
             "K": int(self.spec["K"]),
             "V": int(self.spec["V"]),
             "chunk_size": int(self.spec["chunk_size"]),
+            "gpu_control_reference": str(
+                self.spec.get("gpu_control_reference", "triton_same_precision")
+            ),
         }

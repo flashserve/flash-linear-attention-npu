@@ -602,6 +602,14 @@ def _validate_spec(spec: dict) -> None:
         raise ValueError(f"{spec['design_id']} has invalid GVA heads")
     if int(spec["chunk_size"]) not in {64, 128}:
         raise ValueError(f"{spec['design_id']} has invalid chunk_size")
+    # The upstream GPU Triton KDA kernel supports chunks 32/64 only.  Keep
+    # chunk-128 design rows executable with an independent GPU Torch
+    # same-precision control, and expose that exception in the generated spec.
+    spec["gpu_control_reference"] = (
+        "triton_same_precision"
+        if int(spec["chunk_size"]) == 64
+        else "torch_same_precision"
+    )
     cu_text = str(spec["cu_seqlens"])
     if cu_text:
         cu_values = [int(value) for value in cu_text.split(",")]

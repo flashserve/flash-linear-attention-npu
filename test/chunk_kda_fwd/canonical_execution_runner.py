@@ -498,10 +498,15 @@ def evaluate_performance(spec: dict, current: dict, baseline: dict | None = None
                 "passed": current_us <= baseline_us * (1.0 + relative_limit),
             }
         )
+    status = (
+        "measured"
+        if not checks
+        else ("passed" if all(check["passed"] for check in checks) else "failed")
+    )
     return {
         "design_id": spec["design_id"],
         "variant": spec["materialized_variant"],
-        "status": "passed" if all(check["passed"] for check in checks) else "failed",
+        "status": status,
         "checks": checks,
         "profiler_result": current,
     }
@@ -790,7 +795,7 @@ def main() -> int:
             )
         result = evaluate_performance(spec, current, baseline)
         print(json.dumps(result, sort_keys=True))
-        return 0 if result["status"] == "passed" else 1
+        return 0 if result["status"] in {"passed", "measured"} else 1
     if args.command == "run-sanitizer":
         nm = subprocess.run(
             ["nm", str(args.operator_object)], text=True, capture_output=True, check=True

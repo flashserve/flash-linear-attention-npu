@@ -1,4 +1,4 @@
-"""Deterministic ATK matrix for chunk_kda_fwd.
+"""Legacy deterministic ATK matrix for chunk_kda_fwd.
 
 The generated IDs are frozen by profile:
   * 0-199: A2 positive accuracy cases
@@ -379,7 +379,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).with_name("atk_chunk_kda_fwd.json"),
+        default=Path(__file__).with_name("atk_chunk_kda_fwd_legacy_500.json"),
     )
     parser.add_argument("--summary", action="store_true")
     args = parser.parse_args()

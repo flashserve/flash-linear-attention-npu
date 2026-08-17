@@ -16,6 +16,15 @@ ROOT = Path(__file__).resolve().parents[5]
 EXECUTOR_PATH = ROOT / "test/chunk_kda_fwd/executor_chunk_kda_fwd.py"
 BUILDER_PATH = ROOT / "test/chunk_kda_fwd/build_reference_cache.py"
 ATK_CASE_PATH = ROOT / "test/chunk_kda_fwd/atk_chunk_kda_fwd.json"
+ACLNN_ACCURACY_CASE_PATH = (
+    ROOT / "test/chunk_kda_fwd/atk_chunk_kda_fwd_accuracy_aclnn.json"
+)
+DIRECT_ACCURACY_CASE_PATH = (
+    ROOT / "test/chunk_kda_fwd/atk_chunk_kda_fwd_accuracy_direct_launch.json"
+)
+LEGACY_ATK_CASE_PATH = ROOT / "test/chunk_kda_fwd/atk_chunk_kda_fwd_pr297_48.json"
+A5_ACLNN_RUN_CASE_PATH = ROOT / "test/chunk_kda_fwd/atk_chunk_kda_fwd_run_aclnn.json"
+A5_ASCENDC_RUN_CASE_PATH = ROOT / "test/chunk_kda_fwd/atk_chunk_kda_fwd_run_ascendc.json"
 CANONICAL_ADAPTER_PATH = ROOT / "test/chunk_kda_fwd/canonical_case_adapter.py"
 CANONICAL_EXECUTION_ADAPTER_PATH = (
     ROOT / "test/chunk_kda_fwd/canonical_execution_adapter.py"
@@ -1121,11 +1130,97 @@ def test_cache_catalog_records_exact_case_ids_and_count(monkeypatch, tmp_path):
     assert with_adapter_v1["catalog_key"] != with_adapter_v2["catalog_key"]
 
 
-def test_current_pr297_cache_source_is_exactly_the_48_case_subset(monkeypatch):
+def test_legacy_pr297_cache_source_is_preserved_as_the_48_case_subset(monkeypatch):
     builder = _load_builder(monkeypatch)
-    cases = builder._load_cases(ATK_CASE_PATH, set(), None)
+    cases = builder._load_cases(LEGACY_ATK_CASE_PATH, set(), None)
     assert len(cases) == 48
     assert [case_id for case_id, _ in cases] == list(range(250, 298))
+
+
+def test_tracked_a5_accuracy_jsons_are_the_full_canonical_route_projections():
+    adapter = _load_canonical_adapter()
+    projections = {
+        "ascendc": (ATK_CASE_PATH, 254),
+        "aclnn": (ACLNN_ACCURACY_CASE_PATH, 234),
+        "direct_launch": (DIRECT_ACCURACY_CASE_PATH, 21),
+    }
+    payloads = {}
+    for route, (path, count) in projections.items():
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        expected = adapter.build_atk_payloads(
+            CANONICAL_MANIFEST_PATH,
+            soc="ascend950",
+            route=route,
+        )
+        assert payload == expected
+        assert len(payload) == count
+        payloads[route] = payload
+
+    assert sum(len(payload) for payload in payloads.values()) == 509
+    payload = payloads["ascendc"]
+    specs = [
+        json.loads(
+            next(
+                item["range_values"]
+                for item in case["inputs"]
+                if item["name"] == "case_spec"
+            )
+        )
+        for case in payload
+    ]
+    assert len({spec["design_id"] for spec in specs}) == 175
+    assert sum(spec["materialized_variant"] == "random" for spec in specs) == 175
+    assert sum(
+        spec["materialized_variant"] == "traceable_metamorphic" for spec in specs
+    ) == 79
+    assert sum(
+        spec["gpu_control_reference"] == "torch_same_precision" for spec in specs
+    ) == 19
+
+    all_specs = [
+        json.loads(
+            next(
+                item["range_values"]
+                for item in case["inputs"]
+                if item["name"] == "case_spec"
+            )
+        )
+        for route_payload in payloads.values()
+        for case in route_payload
+    ]
+    assert sum(
+        spec["gpu_control_reference"] == "triton_same_precision"
+        for spec in all_specs
+    ) == 467
+    assert sum(
+        spec["gpu_control_reference"] == "torch_same_precision"
+        for spec in all_specs
+    ) == 42
+
+
+def test_tracked_a5_run_jsons_match_both_canonical_route_projections():
+    sys.path.insert(0, str(CANONICAL_EXECUTION_ADAPTER_PATH.parent))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "chunk_kda_execution_adapter_for_tracked_json",
+            CANONICAL_EXECUTION_ADAPTER_PATH,
+        )
+        adapter = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = adapter
+        spec.loader.exec_module(adapter)
+    finally:
+        sys.path.remove(str(CANONICAL_EXECUTION_ADAPTER_PATH.parent))
+
+    aclnn = json.loads(A5_ACLNN_RUN_CASE_PATH.read_text(encoding="utf-8"))
+    ascendc = json.loads(A5_ASCENDC_RUN_CASE_PATH.read_text(encoding="utf-8"))
+    assert aclnn == adapter.build_run_atk_payloads(
+        CANONICAL_MANIFEST_PATH, soc="ascend950", route="aclnn"
+    )
+    assert ascendc == adapter.build_run_atk_payloads(
+        CANONICAL_MANIFEST_PATH, soc="ascend950", route="ascendc"
+    )
+    assert len(aclnn) == 92
+    assert len(ascendc) == 12
 
 
 def test_legacy_stress_uses_only_validated_cached_inputs():
@@ -1385,8 +1480,10 @@ def test_accuracy_lt_rejects_fixed_persistent_cache(monkeypatch):
     executor._validate_persistent_cache_task("off", {"accuracy_lt"})
 
 
-def test_canonical_executor_rejects_runtime_input_generation(monkeypatch):
+def test_canonical_executor_allows_online_runtime_input_generation(monkeypatch):
     executor = _load_executor(monkeypatch)
+    prepared = object()
+    monkeypatch.setattr(executor, "_prepare_inputs", lambda *_args, **_kwargs: prepared)
     api = types.SimpleNamespace(
         spec=None,
         randomize_values=False,
@@ -1396,7 +1493,10 @@ def test_canonical_executor_rejects_runtime_input_generation(monkeypatch):
         device="npu",
         is_benchmark_task=False,
         cache_reader=None,
+        cache_validation_receipt=None,
         execution_device=None,
+        gpu_torch_control=False,
+        triton_control=False,
     )
     input_data = types.SimpleNamespace(
         kwargs={
@@ -1411,8 +1511,135 @@ def test_canonical_executor_rejects_runtime_input_generation(monkeypatch):
         }
     )
 
-    with pytest.raises(executor.ReferenceCacheError, match="prebuilt readonly"):
-        executor.ChunkKdaFwdApi.init_by_input_data(api, input_data)
+    executor.ChunkKdaFwdApi.init_by_input_data(api, input_data)
+    assert api.inputs is prepared
+    assert api.cache_reader is None
+
+
+@pytest.mark.parametrize(
+    ("reference", "high_precision", "triton_control", "torch_control"),
+    (
+        ("triton_same_precision", False, True, False),
+        ("torch_same_precision", False, False, True),
+    ),
+)
+def test_gpu_control_reference_is_explicitly_selected(
+    monkeypatch, reference, high_precision, triton_control, torch_control
+):
+    executor = _load_executor(monkeypatch)
+    prepared = object()
+    calls = []
+
+    def prepare(*_args, **kwargs):
+        calls.append(kwargs["high_precision"])
+        return prepared
+
+    monkeypatch.setattr(executor, "_prepare_inputs", prepare)
+    api = types.SimpleNamespace(
+        spec=None,
+        randomize_values=False,
+        runtime_case_id=1001,
+        persistent_cache_mode="off",
+        high_precision=False,
+        device="gpu",
+        is_benchmark_task=False,
+        cpu_control=False,
+        triton_control=True,
+        gpu_torch_control=False,
+        cache_reader=None,
+        cache_validation_receipt=None,
+        execution_device=None,
+    )
+    input_data = types.SimpleNamespace(
+        kwargs={
+            "case_spec": json.dumps(
+                {
+                    "tags": "accuracy,canonical_300",
+                    "seed": 7,
+                    "gpu_control_reference": reference,
+                }
+            ),
+            "low_precision_marker": torch.empty(0),
+            "fp32_marker": torch.empty(0),
+        }
+    )
+
+    executor.ChunkKdaFwdApi.init_by_input_data(api, input_data)
+    assert api.inputs is prepared
+    assert api.high_precision is high_precision
+    assert api.triton_control is triton_control
+    assert api.gpu_torch_control is torch_control
+    assert calls == [high_precision]
+
+
+def test_readonly_gpu_torch_control_restores_inputs_instead_of_cpu_outputs(
+    monkeypatch,
+):
+    executor = _load_executor(monkeypatch)
+    cached_inputs = object()
+    prepared = types.SimpleNamespace(seed=7)
+    loaded = []
+
+    class Reader:
+        validation_receipt = {
+            "producer_torch_version": "producer",
+            "consumer_torch_version": "consumer",
+        }
+
+        def load_shard(self, name):
+            loaded.append(name)
+            return cached_inputs
+
+    monkeypatch.setattr(executor, "_persistent_cache_reader", lambda *_args: Reader())
+    monkeypatch.setattr(
+        executor,
+        "_select_cached_input_payload",
+        lambda payload, _spec: payload,
+    )
+    monkeypatch.setattr(
+        executor,
+        "_prepared_inputs_from_cpu",
+        lambda payload, _device, *, high_precision: (
+            prepared
+            if payload is cached_inputs and high_precision is False
+            else None
+        ),
+    )
+    monkeypatch.setattr(executor, "_apply_input_storage", lambda value, _spec: value)
+    api = types.SimpleNamespace(
+        spec=None,
+        randomize_values=False,
+        runtime_case_id=1001,
+        persistent_cache_mode="readonly",
+        high_precision=False,
+        device="gpu",
+        is_benchmark_task=False,
+        cpu_control=False,
+        triton_control=True,
+        gpu_torch_control=False,
+        cache_reader=None,
+        cache_validation_receipt=None,
+        execution_device=None,
+    )
+    input_data = types.SimpleNamespace(
+        kwargs={
+            "case_spec": json.dumps(
+                {
+                    "tags": "accuracy,canonical_300",
+                    "seed": 7,
+                    "gpu_control_reference": "torch_same_precision",
+                }
+            ),
+            "low_precision_marker": torch.empty(0),
+            "fp32_marker": torch.empty(0),
+        }
+    )
+
+    executor.ChunkKdaFwdApi.init_by_input_data(api, input_data)
+    assert loaded == ["inputs"]
+    assert api.inputs is prepared
+    assert api.gpu_torch_control is True
+    assert api.triton_control is False
 
 
 def test_offline_builder_writes_all_three_readonly_shards(monkeypatch, tmp_path):

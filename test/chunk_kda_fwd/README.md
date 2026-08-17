@@ -1,33 +1,115 @@
-# ChunkKdaFwd canonical 300 持久输入与执行入口
+# ChunkKdaFwd canonical 300 执行入口
 
-本目录保留 PR297 风格的 ATK executor。主精度拓扑现在是本机 `NPU DUT + CPU`：
+先约定两个名词：
 
-- benchmark CPU 角色返回 Torch FP64 golden；
-- 普通 CPU 角色返回按原输入 dtype 量化中间操作的同精度 benchmark；
-- NPU 角色按 spec 执行 `ascendc`、ctypes `aclnn` 或 direct-launch 真实入口；
-- 原 GPU FP64 truth 和 GPU Triton control 仍可兼容使用，但不再是主命令。
+- **设计用例**：[`tests/op_cases/chunk_kda_fwd.json`](../../tests/op_cases/chunk_kda_fwd.json)
+  中 `design_matrix.cases` 的一行。该文件固定有 300 行。
+- **执行项**：一条设计用例按平台、调用路径、输入变体或 sanitizer 工具展开后的一次实际运行。
+  一条设计用例可能对应多个执行项，但仍只计为一条设计用例。
 
-当前 [`atk_chunk_kda_fwd.json`](./atk_chunk_kda_fwd.json) 只有 `id=250-297` 共 48 条
-PR297 子集，不能把它报告成设计矩阵的 176 条 accuracy 数值用例。后续 176 条必须由
-[`canonical_case_adapter.py`](./canonical_case_adapter.py) 从 canonical 300 用例生成显式
-executable spec，再交给本目录的缓存 CLI。
+300 条设计用例固定分为：176 条 `accuracy`、92 条 `run`、20 条 `msopprof`、
+6 条 `stress`、6 条 `sanitizer`。A5 适用其中 291 条：
 
-适配器固定输出 176 个 logical accuracy spec：`P001-P096` 映射为 `id=1001-1096`，
-`G001-G080` 映射为 `id=2001-2080`，spec 内同时保留原始 `design_id`。它不解析设计表中的
-自由文本；shape、dtype、GVA、varlen、state 和输出策略均由显式 ID 规则生成，并锁定 300 行
-source digest。96 条 P case 只生成 `random`，80 条 G case 同时生成 `random` 和
-`traceable_metamorphic`，因此共有 256 个独立数值 spec/cache entry。它们再按 SOC 和 route
-投影：A5/A2 accuracy 分别是 509/329 个 physical task；只有实际执行后才能报告通过，不能用
-176 个 logical spec、256 个缓存 entry 或旧 48 条子集代替。
+| 段 | A5 设计用例 | A5 不适用 |
+| --- | --- | --- |
+| accuracy | `P001-P096`、`G001-G039`、`G041-G080`，共 175 条 | `G040` |
+| run | `N001-N084`、`G081-G088`，共 92 条 | 无 |
+| msopprof | `M001-M008`、`G089-G092`，共 12 条 | `M009-M012`、`G093-G096` |
+| stress | `S001-S004`、`G097-G098`，共 6 条 | 无 |
+| sanitizer | `S005-S008`、`G099-G100`，共 6 条 | 无 |
 
-其余 124 条由 [`canonical_execution_adapter.py`](./canonical_execution_adapter.py)
-逐 ID 显式物化：92 条 `run`、20 条 `msopprof`、6 条 `stress`、6 条
-`sanitizer`。适配器同时锁定 300 行 source digest、完整 case-row digest 和 ID 顺序；任何
-canonical 行变化都会硬失败，不能继续套用旧 executable spec。
+这 291 条 A5 设计用例实际展开为 649 次运行：accuracy 509 次、run 104 次、msopprof
+14 次、stress 8 次、sanitizer 14 次。这里的 649 是执行次数，不是新增设计用例。
+
+五段的含义：
+
+| 段 | 验证内容 |
+| --- | --- |
+| accuracy | 正向调用、全部可见输出 finite、NPU 对 GPU control/FP64 golden 的精度 |
+| run | 非法参数是否命中设计指定的返回码、异常类型和错误信息 |
+| msopprof | `msopprof` 设备侧 kernel 时长；不使用 Python wall time |
+| stress | 固定输入重复执行，检查所有输出是否逐 bit 稳定 |
+| sanitizer | `racecheck`/`memcheck`/`initcheck`/`synccheck` 内存与同步检查 |
+
+主要可执行 JSON：
+
+- [`atk_chunk_kda_fwd.json`](./atk_chunk_kda_fwd.json)：A5/AscendC accuracy，175 条设计用例
+  展开为 254 个执行项，其中 175 个 random、79 个 traceable。
+- [`atk_chunk_kda_fwd_accuracy_aclnn.json`](./atk_chunk_kda_fwd_accuracy_aclnn.json)：A5
+  ACLNN accuracy，234 个执行项。
+- [`atk_chunk_kda_fwd_accuracy_direct_launch.json`](./atk_chunk_kda_fwd_accuracy_direct_launch.json)：
+  A5 `<<<>>>` direct-launch accuracy，21 个执行项。
+- [`atk_chunk_kda_fwd_run_aclnn.json`](./atk_chunk_kda_fwd_run_aclnn.json)：A5 ACLNN
+  参数拦截，92 个执行项。
+- [`atk_chunk_kda_fwd_run_ascendc.json`](./atk_chunk_kda_fwd_run_ascendc.json)：A5 public
+  AscendC 参数拦截，12 个执行项；它们是上述 92 条中的第二调用路径，不是新增设计用例。
+- [`atk_chunk_kda_fwd_pr297_48.json`](./atk_chunk_kda_fwd_pr297_48.json)：只用于复现旧 PR297，
+  不属于完整 300 条入口。
+
+AscendC accuracy JSON 的 254 个执行项中，235 个使用在线 GPU Triton 同精度对照和 GPU FP64 golden。
+其余 19 个执行项来自 15 条 `chunk_size=128` 设计用例；上游 GPU Triton KDA 只支持
+`chunk_size=32/64`，因此这些执行项显式使用 GPU Torch 同精度对照和 GPU FP64 golden，不能报告为
+“Triton 对照通过”。
+
+[`canonical_case_adapter.py`](./canonical_case_adapter.py) 和
+[`canonical_execution_adapter.py`](./canonical_execution_adapter.py) 锁定 300 行摘要、完整
+case-row 摘要和 ID 顺序。任何设计行变化都会使生成器和已跟踪 JSON 的契约测试失败。
+
+重新生成五份 A5 ATK JSON：
+
+```bash
+python ./canonical_case_adapter.py \
+  --source ../../tests/op_cases/chunk_kda_fwd.json \
+  --soc ascend950 --route ascendc \
+  --output ./atk_chunk_kda_fwd.json --summary
+
+python ./canonical_case_adapter.py \
+  --source ../../tests/op_cases/chunk_kda_fwd.json \
+  --soc ascend950 --route aclnn \
+  --output ./atk_chunk_kda_fwd_accuracy_aclnn.json --summary
+
+python ./canonical_case_adapter.py \
+  --source ../../tests/op_cases/chunk_kda_fwd.json \
+  --soc ascend950 --route direct_launch \
+  --output ./atk_chunk_kda_fwd_accuracy_direct_launch.json --summary
+
+python ./canonical_execution_adapter.py \
+  --source ../../tests/op_cases/chunk_kda_fwd.json \
+  --format run-atk --soc ascend950 --route aclnn \
+  --output ./atk_chunk_kda_fwd_run_aclnn.json
+
+python ./canonical_execution_adapter.py \
+  --source ../../tests/op_cases/chunk_kda_fwd.json \
+  --format run-atk --soc ascend950 --route ascendc \
+  --output ./atk_chunk_kda_fwd_run_ascendc.json
+```
+
+## 建议执行顺序
+
+按下面顺序验收，前 3 项有真实问题时先修复，再进入第 4 项：
+
+1. **报错**：第 3 节正向 accuracy 不得出现执行错误；第 6 节负向 run 必须精确命中预期
+   返回码或异常。
+2. **结构性精度错误**：accuracy 未达标时使用已保存输出判断索引、布局、边界、状态链或
+   输出写回是否整体错误。确认只是普通数值误差时记录标注，不阻塞性能段。
+3. **NaN/Inf**：executor 对全部可见输出逐 tensor 检查 finite；第 8、9 节再覆盖重复执行和
+   sanitizer。
+4. **性能**：只有前三项没有待修问题时，执行第 7 节的 12 条 A5 性能设计用例。
+
+这里的“结构性精度错误”是指输出的索引、形状语义、布局映射、有效区、状态递推或整片数值关系
+错误；单纯低精度舍入造成的小幅误差不归入这一类。
+
+下文命令统一使用进程可见设备编号：
+
+```bash
+export KDA_NPU_DEVICE=0
+```
 
 ## 1. 缓存契约
 
-300 条默认只读持久缓存。每个 cache entry 是一个目录；分片按执行类型声明：
+在线 GPU accuracy 和 ATK `run` 默认使用固定 seed 现场生成输入，不要求预建缓存。需要跨机器
+逐 bit 复现、stress、sanitizer 或 msopprof 时，可以显式启用只读持久缓存。每个 cache entry
+是一个目录；分片按执行类型声明：
 
 ```text
 <cache_key>/
@@ -84,30 +166,31 @@ catalog；必须设置 `KDA_ATK_PERSISTENT_CACHE_CATALOG`，或为命令传 `--c
 
 ## 2. 首次离线构建
 
-在安装了 ATK 和 CPU Torch 的环境中进入本目录。先用一条小 case 建缓存并校验：
+本节是可选的离线缓存流程。在安装了 ATK 和 CPU Torch 的环境中进入本目录。复现旧 PR297
+时可先用一条小 case 建缓存并校验：
 
 ```bash
 python ./build_reference_cache.py build \
-  --case-json ./atk_chunk_kda_fwd.json \
+  --case-json ./atk_chunk_kda_fwd_pr297_48.json \
   --cache-dir "$KDA_ATK_PERSISTENT_CACHE_DIR" \
   --case-id 250
 
 python ./build_reference_cache.py validate \
-  --case-json ./atk_chunk_kda_fwd.json \
+  --case-json ./atk_chunk_kda_fwd_pr297_48.json \
   --cache-dir "$KDA_ATK_PERSISTENT_CACHE_DIR" \
   --catalog "$KDA_ATK_PERSISTENT_CACHE_CATALOG" \
   --case-id 250
 ```
 
-构建当前 48 条子集时删除 `--case-id`：
+构建旧 48 条子集时删除 `--case-id`：
 
 ```bash
 python ./build_reference_cache.py build \
-  --case-json ./atk_chunk_kda_fwd.json \
+  --case-json ./atk_chunk_kda_fwd_pr297_48.json \
   --cache-dir "$KDA_ATK_PERSISTENT_CACHE_DIR"
 
 python ./build_reference_cache.py validate \
-  --case-json ./atk_chunk_kda_fwd.json \
+  --case-json ./atk_chunk_kda_fwd_pr297_48.json \
   --cache-dir "$KDA_ATK_PERSISTENT_CACHE_DIR" \
   --catalog "$KDA_ATK_PERSISTENT_CACHE_CATALOG"
 ```
@@ -167,9 +250,9 @@ python ./build_reference_cache.py validate \
 
 catalog 必须精确显示 300 个 logical ID 和 380 个 cache entry；其中 256 个 accuracy 数值
 entry 为三分片，124 个非精度 entry 为 input-only。
-后续 `run`、性能、stress 和 sanitizer 全部只读这个 cache；缺失、陈旧、checksum 不匹配或
-variant 不存在都会失败，不会现场随机生成。负向 case 只在缓存基础输入上施加 mutation，
-mutation 参与 cache identity。
+`canonical_execution_runner.py` 的 msopprof、stress 和 sanitizer 路径只读这个 cache；缺失、
+陈旧、checksum 不匹配或 variant 不存在都会失败。直接使用已跟踪 ATK JSON 的 accuracy 和
+`run` 路径不要求 cache。负向 case 的 mutation 仍由固定 seed 和明确 spec 决定。
 
 `a_log_dtype`、`dt_bias_dtype`、非连续输入策略和可追踪的 head/state 数据构造都属于 normalized
 spec，会参与 cache identity。`route` 和 `soc` 不改变数值输入或 CPU 参考，因此不进入 cache
@@ -266,54 +349,73 @@ executor 按 spec 的 `route` 分别调用 `fla_npu.ops.ascendc.chunk_kda_fwd`�
 会在每个 sequence/chunk 起点注入可区分的 head 值，同时保留 head-distinct gate 和 state-pulse
 等 case 自身构造。任何一个 physical variant 未执行时都不得报告为通过。
 
-## 3. NPU + CPU accuracy
+## 3. A5 accuracy：NPU + GPU control + GPU FP64
 
-准备 ATK、CANN、当前构建的 OPP/Python 包，并只暴露目标 NPU。下面设备号使用进程内逻辑编号：
+accuracy 共运行 509 个执行项，覆盖 A5 适用的 175 条设计用例及其 AscendC、ACLNN、
+direct-launch 路由。默认关闭持久缓存，NPU、GPU control 和 GPU FP64 都按 JSON 中的同一 seed
+在线生成输入。
 
-```bash
-source <atk_environment>/bin/activate
-source <cann_install_path>/set_env.sh
-source <fla_npu_install_path>/vendors/fla_npu_transformer/bin/set_env.bash
-
-export ASCEND_RT_VISIBLE_DEVICES=<physical_npu_id>
-export PYTHONPATH=<repo_root>/torch_custom/fla_npu:<repo_root>:${PYTHONPATH:-}
-export KDA_ATK_PERSISTENT_CACHE_DIR=<persistent_cache_dir>
-export KDA_ATK_PERSISTENT_CACHE_CATALOG=catalog-<catalog_sha256>.json
-export KDA_ATK_PERSISTENT_CACHE_MODE=readonly
-
-cd <repo_root>/test/chunk_kda_fwd
-```
-
-先验证缓存，再跑单 case：
+GPU 机器先启动 server：
 
 ```bash
-python ./build_reference_cache.py validate \
-  --case-json ./atk_chunk_kda_fwd.json \
-  --cache-dir "$KDA_ATK_PERSISTENT_CACHE_DIR" \
-  --catalog "$KDA_ATK_PERSISTENT_CACHE_CATALOG" \
-  --case-id 250
+export KDA_ATK_PERSISTENT_CACHE_MODE=off
+export KDA_GPU_SERVER_PORT=9090
+export KDA_GPU_DEVICE=0
+export KDA_GPU_OUTPUT_DIR=/path/to/gpu_output
 
-atk node --name npu_dut --backend npu \
-    --devices 0 \
-    --output_path <atk_output_dir> \
-  node --name cpu_reference --backend cpu \
-    --is_compare true \
-  task \
-    -c ./atk_chunk_kda_fwd.json \
-    --task accuracy \
-    --bm_device cpu \
-    -p ./executor_chunk_kda_fwd.py \
-    -s 0 \
-    -e 1 \
-    --save_data output \
-    -sp \
-    -to 2000
+atk server \
+  --host 0.0.0.0 \
+  --port "$KDA_GPU_SERVER_PORT" \
+  --devices "$KDA_GPU_DEVICE" \
+  --name gpu_reference \
+  --output_path "$KDA_GPU_OUTPUT_DIR" \
+  --plugin_path ./executor_chunk_kda_fwd.py \
+  --timeout 8000
 ```
 
-这版 ATK 的 `-s/-e` 是 JSON 列表下标，不是 case ID；`-s 0 -e 1` 对应 `id=250`。
-跑当前 48 条时移除 `-s/-e`。spec、seed、executor、adapter 或 producer Torch 版本与 catalog
-不一致时 readonly 初始化会报错。consumer Torch 版本可以不同，但仅限完成第 2.1 节交接检查并
-使用同一个外部 pin 的 catalog；不能删除校验或临时切回目录扫描。
+NPU 机器依次执行三份 JSON；GPU server 保持运行：
+
+```bash
+export KDA_ATK_PERSISTENT_CACHE_MODE=off
+export KDA_NPU_OUTPUT_ROOT=/path/to/npu_output
+export KDA_GPU_SERVER_HOST=gpu-server.example.com
+export KDA_GPU_SERVER_PORT=9090
+export KDA_GPU_DEVICE=0
+
+run_accuracy() {
+  local route="$1"
+  local case_json="$2"
+  local end="$3"
+  atk \
+    node --name npu_dut --backend npu --devices "$KDA_NPU_DEVICE" \
+         --output_path "$KDA_NPU_OUTPUT_ROOT/$route" \
+    node --name gpu_reference --backend gpu \
+         --host "$KDA_GPU_SERVER_HOST" --port "$KDA_GPU_SERVER_PORT" \
+         --devices "$KDA_GPU_DEVICE" --is_compare true \
+    task \
+      -c "$case_json" \
+      --task accuracy \
+      --bm_device gpu \
+      -p ./executor_chunk_kda_fwd.py \
+      --save_data output \
+      --syc_dataset \
+      -s 0 -e "$end" \
+      -mt 1 \
+      -to 2000
+}
+
+run_accuracy ascendc ./atk_chunk_kda_fwd.json 254
+run_accuracy aclnn ./atk_chunk_kda_fwd_accuracy_aclnn.json 234
+run_accuracy direct_launch ./atk_chunk_kda_fwd_accuracy_direct_launch.json 21
+```
+
+direct-launch 段需要先安装本提交生成的 `ascend_ops` 扩展。需要定位时，`-s/-e` 使用 JSON 列表下标且 `-e`
+为开区间，例如 `-s 0 -e 1` 只跑第一个执行项。所有可见输出都会检查 NaN/Inf。
+
+509 个执行项中，467 个 `chunk_size=64` 执行项使用 GPU Triton 同精度对照和 GPU FP64 golden；
+42 个 `chunk_size=128` 执行项的 `gpu_control_reference=torch_same_precision`，使用独立的 GPU
+Torch 同精度对照和 GPU FP64 golden，原因是上游 Triton KDA 不支持 128。报告必须单独列出这 42 项，
+不能把它们计作 Triton 通过。
 
 ## 4. accuracy_lt 禁止固定缓存
 
@@ -330,7 +432,7 @@ atk node --name npu_dut --backend npu --devices 0 \
     --task accuracy_lt \
     --bm_device cpu \
     -p ./executor_chunk_kda_fwd.py \
-    -wl '[250]' \
+    -wl '[1001]' \
     --loop_nums 50 \
     --disable_id_seed \
     -mt 64 \
@@ -340,42 +442,92 @@ atk node --name npu_dut --backend npu --devices 0 \
 复检不要加 `-sp`。关闭缓存后每轮 CPU golden/benchmark 都按当轮 runtime seed 重新计算，
 不能用固定 PT 降低复检成本。
 
-## 5. GPU 兼容拓扑
+## 5. 可选只读缓存拓扑
 
-需要复现旧 PR297 分布式链路时，GPU benchmark 角色仍可返回 FP64 golden，普通 GPU 角色
-仍调用 `KDA_ATK_TRITON_CALLABLE` 指定的同精度 Triton 实现。该在线 GPU 拓扑默认不使用
-持久缓存，无需额外设置 `KDA_ATK_PERSISTENT_CACHE_MODE`。若显式启用 readonly cache，GPU
-benchmark 直接读取 `cpu_fp64.pt` 并搬到 GPU，GPU Triton control 从 `inputs.pt` 恢复同一输入；
-设置 `KDA_ATK_PERSISTENT_CACHE_MODE=off` 也会保持在线 GPU 计算行为。canonical 300 用例仍
-强制要求预构建 readonly cache，不会因为默认值改变而回退到在线随机生成。
-
-分布式 GPU server 的 ATK 版本、executor SHA256、producer identity、pinned catalog 和缓存内容
-必须与发起端一致；consumer Torch 版本不同时也必须先完成第 2.1 节纯 CPU 交接检查。远端文件
-同步仍按 ATK 的 `--syc_dataset` 约束处理。GPU 只是兼容入口，正式精度命令以第 3 节 CPU 双标杆为准。
+第 3 节在线 GPU 拓扑不需要 cache。只有需要跨环境逐 bit 复现时才设置
+`KDA_ATK_PERSISTENT_CACHE_MODE=readonly`，并按第 2 节明确 pin catalog。此时 GPU FP64 从
+`cpu_fp64.pt` 读取；GPU Triton 和 C128 的 GPU Torch 同精度对照都从同一 `inputs.pt` 恢复输入，
+并在 GPU 上执行。缺失或摘要不一致会直接失败。
 
 ## 6. Canonical run 负向契约
 
-每个平台和路由分别生成 ATK JSON。`aclnn` 路由核对实际 ACLNN 数值返回码和
+两份已跟踪 JSON 覆盖 A5 的 92 条 run 设计用例。`aclnn` 路由核对实际 ACLNN 数值返回码和
 `aclGetRecentErrMsg`；`ascendc` 路由核对实际 Python 异常类型和消息。两项任一不匹配都失败，
-不能用 shell 返回 0 代替契约通过。
+不能用 shell 返回 0 代替契约通过。负向测试只需要 NPU，不启动 GPU server。
 
 ```bash
-python ./canonical_execution_adapter.py \
-  --source ../../tests/op_cases/chunk_kda_fwd.json \
-  --format run-atk --soc ascend950 --route aclnn \
-  --output <a5_aclnn_run_json>
-
-atk node --backend npu --devices 0 task \
-  -c <a5_aclnn_run_json> \
+atk node --name npu_dut --backend npu --devices "$KDA_NPU_DEVICE" \
+  --output_path <aclnn_run_output_dir> task \
+  -c ./atk_chunk_kda_fwd_run_aclnn.json \
   --task run \
   -p ./executor_chunk_kda_fwd.py \
-  -sp -to 2000
+  -s 0 -e 92 -sp -to 2000
+
+atk node --name npu_dut --backend npu --devices "$KDA_NPU_DEVICE" \
+  --output_path <ascendc_run_output_dir> task \
+  -c ./atk_chunk_kda_fwd_run_ascendc.json \
+  --task run \
+  -p ./executor_chunk_kda_fwd.py \
+  -s 0 -e 12 -sp -to 2000
 ```
 
-将 `--route` 改为 `ascendc` 可执行 public Python 路由；A2 使用
-`--soc ascend910b`。生成文件只含该 SOC/route 的适用 case，不能把另一条 route 记为已测。
+92 个 ACLNN 执行项覆盖全部 run 设计用例；12 个 AscendC 执行项是公开 Python 路由补充覆盖，
+不增加设计用例计数。A2 使用 `--soc ascend910b` 重新投影。不能把未执行的 route 记为已测。
 
 ## 7. msopprof 性能
+
+本段 A5 设计用例为 `M001-M008`、`G089-G092`，共 12 条。`M001` 和 `M003` 各有
+`baseline` 与 `l2_streaming_single_read_disabled` 两个执行项，因此实际运行 14 次。
+先准备第 2 节完整只读 cache，再依次生成并执行 profiler 命令：
+
+```bash
+export KDA_PERF_OUTPUT_ROOT=<perf_output_root>
+mkdir -p "$KDA_PERF_OUTPUT_ROOT"
+
+for design_id in \
+  KDA-FWD-M001 KDA-FWD-M002 KDA-FWD-M003 KDA-FWD-M004 \
+  KDA-FWD-M005 KDA-FWD-M006 KDA-FWD-M007 KDA-FWD-M008 \
+  KDA-FWD-G089 KDA-FWD-G090 KDA-FWD-G091 KDA-FWD-G092; do
+  variant=baseline
+  name="${design_id}_${variant}"
+  output="$KDA_PERF_OUTPUT_ROOT/$name"
+  mkdir -p "$output"
+  python ./canonical_execution_runner.py msopprof-command \
+    --design-id "$design_id" --soc ascend950 --variant "$variant" \
+    --cache-dir "$KDA_ATK_PERSISTENT_CACHE_DIR" \
+    --catalog "$KDA_ATK_PERSISTENT_CACHE_CATALOG" \
+    --device "$KDA_NPU_DEVICE" --output "$output/profile" \
+    > "$output/run.sh"
+  bash "$output/run.sh" > "$output/run.log" 2>&1
+done
+```
+
+两个 L2-disabled 执行项必须切换到对应编译产物后单独运行；不能在 baseline binary 上仅设置环境
+变量。安装对应产物后执行：
+
+```bash
+export KDA_CANONICAL_BUILD_VARIANT=l2_streaming_single_read_disabled
+
+for design_id in KDA-FWD-M001 KDA-FWD-M003; do
+  variant=l2_streaming_single_read_disabled
+  name="${design_id}_${variant}"
+  output="$KDA_PERF_OUTPUT_ROOT/$name"
+  mkdir -p "$output"
+  python ./canonical_execution_runner.py msopprof-command \
+    --design-id "$design_id" --soc ascend950 --variant "$variant" \
+    --cache-dir "$KDA_ATK_PERSISTENT_CACHE_DIR" \
+    --catalog "$KDA_ATK_PERSISTENT_CACHE_CATALOG" \
+    --device "$KDA_NPU_DEVICE" --output "$output/profile" \
+    > "$output/run.sh"
+  bash "$output/run.sh" > "$output/run.log" 2>&1
+done
+```
+
+每项完成后再用下方 parser 检查 device duration 和相对 baseline。没有相对阈值的 baseline 项只
+记录设备侧时长，不把“成功生成报告”写成性能通过。
+
+有相对阈值的映射固定为：`M005/M006/M007 -> M003`、`G090 -> G089`、`G092 -> G091`。
+其余 baseline 项和两个 L2 A/B 项记录实测值，报告时明确写 `measured`，不伪造 PASS。
 
 先物化命令，再执行并解析结构化 profiler CSV/JSON。runner 只使用报告中的 device duration，
 不读取 Python wall time。相对阈值 case 必须同时提供对应 dense baseline 报告。
@@ -418,23 +570,27 @@ G098 为两种 mask 各 100 次。每个 variant 比较全部 tensor 输出与 r
 公共输出。输入只从 cache 读取。
 
 ```bash
-python ./stress_npu_determinism.py \
-  --design-id KDA-FWD-G098 --soc ascend950 \
-  --cache-dir "$KDA_ATK_PERSISTENT_CACHE_DIR" \
-  --catalog "$KDA_ATK_PERSISTENT_CACHE_CATALOG" \
-  --device 0
+for design_id in \
+  KDA-FWD-S001 KDA-FWD-S002 KDA-FWD-S003 KDA-FWD-S004 \
+  KDA-FWD-G097 KDA-FWD-G098; do
+  python ./stress_npu_determinism.py \
+    --design-id "$design_id" --soc ascend950 \
+    --cache-dir "$KDA_ATK_PERSISTENT_CACHE_DIR" \
+    --catalog "$KDA_ATK_PERSISTENT_CACHE_CATALOG" \
+    --device "$KDA_NPU_DEVICE"
+done
 ```
 
 复现旧 PR297 子集的具体 case 时使用独立兼容入口。先在 CPU 环境一次性构建并校验缓存：
 
 ```bash
 python ./build_reference_cache.py build \
-  --case-json ./atk_chunk_kda_fwd.json \
+  --case-json ./atk_chunk_kda_fwd_pr297_48.json \
   --case-id 254,255 \
   --cache-dir <legacy_cache_dir>
 
 python ./build_reference_cache.py validate \
-  --case-json ./atk_chunk_kda_fwd.json \
+  --case-json ./atk_chunk_kda_fwd_pr297_48.json \
   --case-id 254,255 \
   --cache-dir <legacy_cache_dir> \
   --catalog <legacy_catalog_sha256_or_filename>
@@ -466,15 +622,37 @@ python ./stress_legacy_cached_cases.py \
 出现目标 kernel 的 `Start <tool> sanitizer on kernel ...`。出现
 `No active sanitizer tool on kernel ...`、未命中目标 kernel 或工具错误均失败。
 
+6 条 A5 sanitizer 设计用例展开为下面 14 个 variant/tool 执行项：
+
 ```bash
-python ./canonical_execution_runner.py run-sanitizer \
-  --design-id KDA-FWD-G099 --soc ascend950 --variant mixed_tail \
-  --tool racecheck \
-  --operator-object <sanitizer_operator_object> \
-  --log <raw_sanitizer_log> \
-  --cache-dir "$KDA_ATK_PERSISTENT_CACHE_DIR" \
-  --catalog "$KDA_ATK_PERSISTENT_CACHE_CATALOG" \
-  --device 0
+export KDA_SANITIZER_LOG_ROOT=<sanitizer_log_root>
+mkdir -p "$KDA_SANITIZER_LOG_ROOT"
+
+while read -r design_id variant tool; do
+  python ./canonical_execution_runner.py run-sanitizer \
+    --design-id "$design_id" --soc ascend950 --variant "$variant" \
+    --tool "$tool" \
+    --operator-object <sanitizer_operator_object> \
+    --log "$KDA_SANITIZER_LOG_ROOT/${design_id}_${variant}_${tool}.log" \
+    --cache-dir "$KDA_ATK_PERSISTENT_CACHE_DIR" \
+    --catalog "$KDA_ATK_PERSISTENT_CACHE_CATALOG" \
+    --device "$KDA_NPU_DEVICE"
+done <<'EOF'
+KDA-FWD-S005 dense_key2 racecheck
+KDA-FWD-S005 mixed_tail_key2 racecheck
+KDA-FWD-S006 dense_key2 memcheck
+KDA-FWD-S006 mixed_tail_key2 memcheck
+KDA-FWD-S006 max_kv_key1 memcheck
+KDA-FWD-S007 tail_initial_none_hidden_outputs initcheck
+KDA-FWD-S008 long_chain synccheck
+KDA-FWD-S008 mixed_tail synccheck
+KDA-FWD-G099 aligned racecheck
+KDA-FWD-G099 aligned synccheck
+KDA-FWD-G099 mixed_tail racecheck
+KDA-FWD-G099 mixed_tail synccheck
+KDA-FWD-G100 max_group_tail_initial_none memcheck
+KDA-FWD-G100 max_group_tail_initial_none initcheck
+EOF
 ```
 
 A2/A5 不适用项输出 `status=not_applicable` 并使用退出码 3，独立记录，不能计为 PASS。

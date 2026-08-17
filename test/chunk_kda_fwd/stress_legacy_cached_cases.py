@@ -11,7 +11,7 @@ from persistent_reference_cache import PinnedCatalog, default_catalog_reference
 
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_CASE_JSON = HERE / "atk_chunk_kda_fwd.json"
+DEFAULT_CASE_JSON = HERE / "atk_chunk_kda_fwd_pr297_48.json"
 
 
 def _load_case_specs(path: Path, case_ids: list[int]) -> list[tuple[int, dict]]:

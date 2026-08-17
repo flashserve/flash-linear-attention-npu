@@ -1,6 +1,7 @@
 .reference_cache/
 atk_output/
 atk_chunk_kda_fwd_canonical_accuracy.json
+atk_chunk_kda_fwd_legacy_500.json
 *.log
 *.xlsx
 *.pt

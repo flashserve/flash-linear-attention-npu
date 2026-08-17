@@ -512,6 +512,25 @@ def test_performance_relative_threshold_includes_exact_boundary():
     assert above["status"] == "failed"
 
 
+def test_performance_without_threshold_is_measured_not_passed():
+    runner = _runner()
+    spec = {
+        "design_id": "KDA-FWD-M001",
+        "materialized_variant": "baseline",
+        "performance_expectation": {
+            "absolute_ms_lt": None,
+            "max_relative_regression": None,
+        },
+    }
+
+    result = runner.evaluate_performance(
+        spec, {"mean_application_us": 1000.0}
+    )
+
+    assert result["status"] == "measured"
+    assert result["checks"] == []
+
+
 @pytest.mark.parametrize("tool", ["racecheck", "memcheck", "initcheck", "synccheck"])
 def test_sanitizer_requires_object_symbol_and_actual_kernel_hit(tool):
     runner = _runner()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze saved ATK NPU, Triton, and FP64 golden outputs for chunk_kda_fwd."""
+"""Analyze saved ATK NPU, GPU control, and FP64 golden outputs for chunk_kda_fwd."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ OUTPUT_NAMES = (
     "h",
     "initial_state_out",
 )
-ROLES = ("npu", "triton", "golden")
+ROLES = ("npu", "control", "golden")
 
 
 @dataclass
@@ -81,7 +81,7 @@ def _parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("result_root", type=Path, help="ATK output directory to scan")
-    parser.add_argument("--case-id", type=int, default=250)
+    parser.add_argument("--case-id", type=int, default=1001)
     parser.add_argument(
         "--case-json",
         type=Path,
@@ -122,7 +122,7 @@ def _parse_args() -> argparse.Namespace:
         "--baseline-ratio",
         type=float,
         default=5.0,
-        help="NPU/golden RMSE ratio over Triton/golden used by the onset rule",
+        help="NPU/golden RMSE ratio over control/golden used by the onset rule",
     )
     return parser.parse_args()
 
@@ -134,7 +134,7 @@ def _role_for_part(part: str) -> Optional[str]:
     if lowered.startswith("npu_") or lowered == "npu":
         return "npu"
     if lowered.startswith("gpu_") or lowered == "gpu":
-        return "triton"
+        return "control"
     return None
 
 
@@ -414,7 +414,8 @@ def _ratio(numerator: float, denominator: float) -> float:
 
 def _print_detail(
     npu: Detail,
-    triton: Detail,
+    control: Detail,
+    control_label: str,
     chunk_size: int,
     top_k: int,
     absolute_rmse: float,
@@ -422,14 +423,14 @@ def _print_detail(
 ) -> None:
     significant_chunks = [
         index
-        for index, (npu_item, triton_item) in enumerate(zip(npu.chunks, triton.chunks))
-        if _is_significant(npu_item, triton_item, absolute_rmse, baseline_ratio)
+        for index, (npu_item, control_item) in enumerate(zip(npu.chunks, control.chunks))
+        if _is_significant(npu_item, control_item, absolute_rmse, baseline_ratio)
     ]
     first_chunk = significant_chunks[0] if significant_chunks else None
     print(
         "ONSET_RULE "
         f"npu_rmse>{absolute_rmse:.3e} and "
-        f"npu_rmse>{baseline_ratio:g}*triton_rmse"
+        f"npu_rmse>{baseline_ratio:g}*{control_label}_rmse"
     )
     print(f"FIRST_SIGNIFICANT_CHUNK {first_chunk if first_chunk is not None else 'none'}")
 
@@ -438,35 +439,35 @@ def _print_detail(
         end = min(len(npu.chunks), first_chunk + 6)
     else:
         start, end = 0, min(8, len(npu.chunks))
-    print("CHUNK_WINDOW chunk token_start npu_rmse triton_rmse ratio npu_max_abs")
+    print("CHUNK_WINDOW chunk token_start npu_rmse control_rmse ratio npu_max_abs")
     for index in range(start, end):
         print(
             f"CHUNK {index} {index * chunk_size} "
-            f"{npu.chunks[index].rmse:.9e} {triton.chunks[index].rmse:.9e} "
-            f"{_ratio(npu.chunks[index].rmse, triton.chunks[index].rmse):.6e} "
+            f"{npu.chunks[index].rmse:.9e} {control.chunks[index].rmse:.9e} "
+            f"{_ratio(npu.chunks[index].rmse, control.chunks[index].rmse):.6e} "
             f"{npu.chunks[index].max_abs:.9e}"
         )
 
     top_chunks = sorted(
         range(len(npu.chunks)), key=lambda index: npu.chunks[index].rmse, reverse=True
     )[:top_k]
-    print("TOP_CHUNKS chunk token_start npu_rmse triton_rmse ratio npu_max_abs")
+    print("TOP_CHUNKS chunk token_start npu_rmse control_rmse ratio npu_max_abs")
     for index in top_chunks:
         print(
             f"TOP_CHUNK {index} {index * chunk_size} "
-            f"{npu.chunks[index].rmse:.9e} {triton.chunks[index].rmse:.9e} "
-            f"{_ratio(npu.chunks[index].rmse, triton.chunks[index].rmse):.6e} "
+            f"{npu.chunks[index].rmse:.9e} {control.chunks[index].rmse:.9e} "
+            f"{_ratio(npu.chunks[index].rmse, control.chunks[index].rmse):.6e} "
             f"{npu.chunks[index].max_abs:.9e}"
         )
 
-    if first_chunk is not None and npu.tokens and triton.tokens:
+    if first_chunk is not None and npu.tokens and control.tokens:
         token_start = first_chunk * chunk_size
         token_end = min(token_start + chunk_size, len(npu.tokens))
         significant_tokens = [
             index
             for index in range(token_start, token_end)
             if _is_significant(
-                npu.tokens[index], triton.tokens[index], absolute_rmse, baseline_ratio
+                npu.tokens[index], control.tokens[index], absolute_rmse, baseline_ratio
             )
         ]
         first_token = significant_tokens[0] if significant_tokens else None
@@ -477,25 +478,25 @@ def _print_detail(
             key=lambda index: npu.tokens[index].rmse,
             reverse=True,
         )[:top_k]
-        print("TOP_TOKENS token npu_rmse triton_rmse ratio npu_max_abs")
+        print("TOP_TOKENS token npu_rmse control_rmse ratio npu_max_abs")
         for index in top_tokens:
             print(
                 f"TOP_TOKEN {index} {npu.tokens[index].rmse:.9e} "
-                f"{triton.tokens[index].rmse:.9e} "
-                f"{_ratio(npu.tokens[index].rmse, triton.tokens[index].rmse):.6e} "
+                f"{control.tokens[index].rmse:.9e} "
+                f"{_ratio(npu.tokens[index].rmse, control.tokens[index].rmse):.6e} "
                 f"{npu.tokens[index].max_abs:.9e}"
             )
 
-    if npu.heads and triton.heads:
+    if npu.heads and control.heads:
         top_heads = sorted(
             range(len(npu.heads)), key=lambda index: npu.heads[index].rmse, reverse=True
         )[:top_k]
-        print("TOP_HEADS head npu_rmse triton_rmse ratio npu_max_abs")
+        print("TOP_HEADS head npu_rmse control_rmse ratio npu_max_abs")
         for index in top_heads:
             print(
                 f"TOP_HEAD {index} {npu.heads[index].rmse:.9e} "
-                f"{triton.heads[index].rmse:.9e} "
-                f"{_ratio(npu.heads[index].rmse, triton.heads[index].rmse):.6e} "
+                f"{control.heads[index].rmse:.9e} "
+                f"{_ratio(npu.heads[index].rmse, control.heads[index].rmse):.6e} "
                 f"{npu.heads[index].max_abs:.9e}"
             )
 
@@ -512,6 +513,14 @@ def main() -> int:
     if not root.is_dir():
         raise NotADirectoryError(root)
     spec = _load_case_spec(args.case_json.expanduser().resolve(), args.case_id)
+    control_reference = str(
+        spec.get("gpu_control_reference", "triton_same_precision")
+    )
+    if control_reference not in {"triton_same_precision", "torch_same_precision"}:
+        raise RuntimeError(f"unsupported gpu_control_reference: {control_reference!r}")
+    control_label = (
+        "triton" if control_reference == "triton_same_precision" else "torch_same_precision"
+    )
     run_root, files, complete_count = _select_run(root, args.case_id)
     common_indices = sorted(set.intersection(*(set(files[role]) for role in ROLES)))
     if not common_indices:
@@ -535,7 +544,7 @@ def main() -> int:
 
     summaries: dict[int, dict[str, Metrics]] = {}
     detail_npu = None
-    detail_triton = None
+    detail_control = None
     detail_shape = None
     detail_dtypes = None
     for output_index in common_indices:
@@ -574,8 +583,8 @@ def main() -> int:
             args.top_k,
             detailed,
         )
-        _, triton_dtype, _, triton_golden = _analyze_pair(
-            files["triton"][output_index],
+        _, control_dtype, _, control_golden = _analyze_pair(
+            files["control"][output_index],
             files["golden"][output_index],
             sequence_axis,
             output_chunk_size,
@@ -583,9 +592,9 @@ def main() -> int:
             args.top_k,
             detailed,
         )
-        _, _, _, npu_triton = _analyze_pair(
+        _, _, _, npu_control = _analyze_pair(
             files["npu"][output_index],
-            files["triton"][output_index],
+            files["control"][output_index],
             sequence_axis,
             output_chunk_size,
             None,
@@ -594,33 +603,35 @@ def main() -> int:
         )
         summaries[output_index] = {
             "npu_vs_golden": npu_golden.global_metrics,
-            "triton_vs_golden": triton_golden.global_metrics,
-            "npu_vs_triton": npu_triton.global_metrics,
+            f"{control_label}_vs_golden": control_golden.global_metrics,
+            f"npu_vs_{control_label}": npu_control.global_metrics,
         }
         output_name = names[output_index] if output_index < len(names) else "unknown"
         print(
             f"OUTPUT {output_index} name={output_name} shape={shape_ng} "
-            f"dtype_npu={npu_dtype} dtype_triton={triton_dtype} dtype_golden={golden_dtype}"
+            f"dtype_npu={npu_dtype} dtype_control={control_dtype} "
+            f"control={control_label} dtype_golden={golden_dtype}"
         )
         for pair_name, metrics in summaries[output_index].items():
             print(f"GLOBAL output={output_index} pair={pair_name} {_format_metrics(metrics)}")
         if detailed:
             detail_npu = npu_golden
-            detail_triton = triton_golden
+            detail_control = control_golden
             detail_shape = shape_ng
-            detail_dtypes = (npu_dtype, triton_dtype, golden_dtype)
+            detail_dtypes = (npu_dtype, control_dtype, golden_dtype)
 
-    if detail_npu is None or detail_triton is None:
+    if detail_npu is None or detail_control is None:
         raise RuntimeError(
             f"--detail-output {args.detail_output} is unavailable; common indices={common_indices}"
         )
     print(
         f"DETAIL output={args.detail_output} shape={detail_shape} dtypes={detail_dtypes} "
-        "baseline=triton_vs_golden"
+        f"baseline={control_label}_vs_golden"
     )
     _print_detail(
         detail_npu,
-        detail_triton,
+        detail_control,
+        control_label,
         chunk_size,
         args.top_k,
         args.absolute_rmse,

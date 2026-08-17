@@ -105,6 +105,21 @@ def test_accuracy_variants_materialize_256_distinct_numeric_cache_entries():
     assert g043["data_variant"] == "initial_state_pulse_hv_2"
 
 
+def test_gpu_control_reference_is_explicit_for_every_chunk_size():
+    cases = _specs_by_design_id()
+
+    assert all(
+        spec["gpu_control_reference"] == "triton_same_precision"
+        for spec in cases.values()
+        if spec["chunk_size"] == 64
+    )
+    assert all(
+        spec["gpu_control_reference"] == "torch_same_precision"
+        for spec in cases.values()
+        if spec["chunk_size"] == 128
+    )
+
+
 def test_positive_output_layout_dtype_and_gate_rules_are_explicit():
     cases = _specs_by_design_id()
 
