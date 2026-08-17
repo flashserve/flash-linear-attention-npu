@@ -78,3 +78,12 @@ def test_optional_output_alignment_is_pinned_to_manifest_commit():
     matrix = case["attrs"]["optional_output_matrix"]
     assert all(values == [False, True] for values in matrix.values())
     assert case["expect"]["matrix_size"] == 16
+
+
+def test_legacy_torch_ops_h_follows_the_shared_optional_output_policy():
+    plugin = (
+        ROOT / "torch_custom/fla_npu/op_plugin/ops/opapi/FLANpuOpApi.cpp"
+    ).read_text(encoding="utf-8")
+
+    assert "(disable_recompute_ || return_intermediate_states_)" in plugin
+    assert "return_intermediate_states_ ? at::empty(h_shape" not in plugin

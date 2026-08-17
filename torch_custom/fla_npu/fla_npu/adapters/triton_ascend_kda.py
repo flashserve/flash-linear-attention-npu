@@ -106,16 +106,6 @@ def _head_major_to_sequence_major(tensor):
     return tensor.permute(0, 2, 1, 3).contiguous()
 
 
-def _gate_parameter_for_ascendc(tensor):
-    """Promote model BF16 gate parameters for the FP32 AscendC contract."""
-
-    if tensor is None:
-        return None
-    import torch
-
-    return tensor.float() if tensor.dtype == torch.bfloat16 else tensor
-
-
 def _load_ascendc_ops():
     from fla_npu.ops.ascendc import chunk_kda_fwd
 
@@ -202,8 +192,8 @@ def triton_ascend_chunk_kda_fwd(
             safe_gate=bool(safe_gate),
             lower_bound=lower_bound,
             use_gate_in_kernel=bool(use_gate_in_kernel),
-            A_log=_gate_parameter_for_ascendc(A_log),
-            dt_bias=_gate_parameter_for_ascendc(dt_bias),
+            A_log=A_log,
+            dt_bias=dt_bias,
             disable_recompute=bool(disable_recompute),
             return_intermediate_states=export_h,
             state_v_first=bool(transpose_state_layout),

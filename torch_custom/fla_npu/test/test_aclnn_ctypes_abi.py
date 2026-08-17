@@ -46,8 +46,9 @@ ACLNN_CTYPES = load_aclnn_ctypes_module()
 
 
 class FakeTensor:
-    def __init__(self, shape):
+    def __init__(self, shape, dtype=None):
         self.shape = tuple(shape)
+        self.dtype = dtype
 
 
 class FakeCallContext:
@@ -83,6 +84,138 @@ class AclnnCtypesAbiTest(unittest.TestCase):
                 )
 
         call_aclnn.assert_not_called()
+
+    @staticmethod
+    def _chunk_kda_inputs(dtypes):
+        q = FakeTensor((1, 64, 1, 16), dtypes.float16)
+        return {
+            "q": q,
+            "k": FakeTensor(q.shape, dtypes.float16),
+            "v": FakeTensor(q.shape, dtypes.float16),
+            "g": FakeTensor(q.shape, dtypes.float32),
+            "beta": FakeTensor((1, 64, 1), dtypes.float32),
+        }
+
+    @staticmethod
+    def _chunk_kda_rank4_inputs(dtypes, layout):
+        if layout == "BSND":
+            return {
+                "q": FakeTensor((1, 64, 1, 16), dtypes.float16),
+                "k": FakeTensor((1, 64, 1, 16), dtypes.float16),
+                "v": FakeTensor((1, 64, 2, 32), dtypes.float16),
+                "g": FakeTensor((1, 64, 2, 16), dtypes.float32),
+                "beta": FakeTensor((1, 64, 2), dtypes.float32),
+            }
+        return {
+            "q": FakeTensor((1, 1, 64, 16), dtypes.float16),
+            "k": FakeTensor((1, 1, 64, 16), dtypes.float16),
+            "v": FakeTensor((1, 2, 64, 32), dtypes.float16),
+            "g": FakeTensor((1, 2, 64, 16), dtypes.float32),
+            "beta": FakeTensor((1, 2, 64), dtypes.float32),
+        }
+
+    def test_chunk_kda_gate_parameters_accept_independent_fp32_bf16_dtypes(self):
+        dtypes = types.SimpleNamespace(
+            float16=object(), bfloat16=object(), float32=object()
+        )
+        inputs = self._chunk_kda_inputs(dtypes)
+
+        def fake_empty(shape, like, dtype=None):
+            return FakeTensor(shape, like.dtype if dtype is None else dtype)
+
+        with mock.patch.dict(sys.modules, {"torch": dtypes}):
+            with mock.patch.object(ACLNN_CTYPES, "_empty", side_effect=fake_empty):
+                with mock.patch.object(
+                    ACLNN_CTYPES, "_call_aclnn", side_effect=lambda _name, _args, outputs: outputs
+                ):
+                    for a_log_dtype in (dtypes.float32, dtypes.bfloat16):
+                        for dt_bias_dtype in (dtypes.float32, dtypes.bfloat16):
+                            outputs = ACLNN_CTYPES.npu_chunk_kda_fwd(
+                                **inputs,
+                                scale=0.25,
+                                use_gate_in_kernel=True,
+                                A_log=FakeTensor((1,), a_log_dtype),
+                                dt_bias=FakeTensor((16,), dt_bias_dtype),
+                            )
+                            self.assertEqual(len(outputs), 12)
+
+    def test_chunk_kda_rejects_non_fp32_bf16_gate_parameter_dtypes(self):
+        dtypes = types.SimpleNamespace(
+            float16=object(), bfloat16=object(), float32=object()
+        )
+        inputs = self._chunk_kda_inputs(dtypes)
+        invalid_dtype = object()
+        with mock.patch.dict(sys.modules, {"torch": dtypes}):
+            with self.assertRaisesRegex(RuntimeError, "A_log must be float32 or bfloat16"):
+                ACLNN_CTYPES.npu_chunk_kda_fwd(
+                    **inputs,
+                    scale=0.25,
+                    use_gate_in_kernel=True,
+                    A_log=FakeTensor((1,), invalid_dtype),
+                )
+            with self.assertRaisesRegex(RuntimeError, "dt_bias must be float32 or bfloat16"):
+                ACLNN_CTYPES.npu_chunk_kda_fwd(
+                    **inputs,
+                    scale=0.25,
+                    use_gate_in_kernel=True,
+                    A_log=FakeTensor((1,), dtypes.float32),
+                    dt_bias=FakeTensor((16,), invalid_dtype),
+                )
+
+    def test_chunk_kda_state_dtype_remains_fp32(self):
+        dtypes = types.SimpleNamespace(
+            float16=object(), bfloat16=object(), float32=object()
+        )
+        inputs = self._chunk_kda_inputs(dtypes)
+        with mock.patch.dict(sys.modules, {"torch": dtypes}):
+            with self.assertRaisesRegex(RuntimeError, "initial_state shape/dtype"):
+                ACLNN_CTYPES.npu_chunk_kda_fwd(
+                    **inputs,
+                    scale=0.25,
+                    initial_state=FakeTensor((1, 1, 16, 16), dtypes.bfloat16),
+                )
+
+    def test_chunk_kda_rank4_varlen_h_abi_across_layout_and_state_order(self):
+        dtypes = types.SimpleNamespace(
+            float16=object(), bfloat16=object(), float32=object()
+        )
+
+        def fake_empty(shape, like, dtype=None):
+            return FakeTensor(shape, like.dtype if dtype is None else dtype)
+
+        with mock.patch.dict(sys.modules, {"torch": dtypes}):
+            with mock.patch.object(ACLNN_CTYPES, "_empty", side_effect=fake_empty):
+                with mock.patch.object(
+                    ACLNN_CTYPES,
+                    "_call_aclnn",
+                    side_effect=lambda _name, _args, outputs: outputs,
+                ):
+                    for layout in ("BSND", "BNSD"):
+                        inputs = self._chunk_kda_rank4_inputs(dtypes, layout)
+                        for state_v_first in (False, True):
+                            for return_intermediate_states in (False, True):
+                                with self.subTest(
+                                    layout=layout,
+                                    state_v_first=state_v_first,
+                                    return_intermediate_states=return_intermediate_states,
+                                ):
+                                    outputs = ACLNN_CTYPES.npu_chunk_kda_fwd(
+                                        **inputs,
+                                        layout=layout,
+                                        scale=0.25,
+                                        cu_seqlens=[0, 32, 64],
+                                        state_v_first=state_v_first,
+                                        return_intermediate_states=return_intermediate_states,
+                                    )
+                                    if not return_intermediate_states:
+                                        self.assertIsNone(outputs[10])
+                                    else:
+                                        expected = (
+                                            (2, 2, 32, 16)
+                                            if state_v_first
+                                            else (2, 2, 16, 32)
+                                        )
+                                        self.assertEqual(outputs[10].shape, expected)
 
     def test_causal_conv1d_bwd_signature_matches_aclnn_prototype(self):
         expected_argtypes = [

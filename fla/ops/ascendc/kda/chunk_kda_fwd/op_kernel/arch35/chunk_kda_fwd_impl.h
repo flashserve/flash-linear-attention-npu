@@ -5,29 +5,27 @@
 
 namespace KdaForward::arch35 {
 
-template <bool SAFE_GATE, typename T, typename BETA_T, typename TilingData,
-          uint32_t COMPILE_BT, uint32_t COMPILE_K, uint32_t COMPILE_V>
-__aicore__ inline void Run(
-    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta,
-    GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR initialState,
-    GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR attnOut,
-    GM_ADDR finalState, GM_ADDR gk, GM_ADDR aqk, GM_ADDR akk,
-    GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR vNew, GM_ADDR h,
-    GM_ADDR userWorkspace, const TilingData &tiling, AscendC::TPipe &pipe)
+template <typename T, typename BETA_T, typename TilingData>
+__aicore__ inline void RunBackEnd(
+    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR initialState,
+    GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR attnOut, GM_ADDR aqk,
+    const ChunkKdaFwdAddresses &addresses, GM_ADDR userWorkspace,
+    GM_ADDR compactPlan, const TilingData &tiling, AscendC::TPipe &pipe)
 {
-    const auto addresses = ResolveAddresses(
-        finalState, gk, w, u, qg, kg, vNew, h, userWorkspace, tiling);
-    RunFrontEnd<SAFE_GATE, T, float, BETA_T, TilingData,
-        COMPILE_BT, COMPILE_K, COMPILE_V>(
-        q, k, v, g, beta, aLog, dtBias, initialState, cuSeqlens,
-        chunkIndices, aqk, akk, addresses, userWorkspace, tiling, pipe);
     if (tiling.useDenseFwdH) {
         ChunkKdaFwdFwdH<T, float, TilingData> fwdH;
         fwdH.Init(
-            addresses.gk, initialState, attnOut, addresses.finalState,
-            aqk, akk, addresses.w, addresses.u, addresses.qgScaled,
-            addresses.kg, addresses.vNew, addresses.h, tiling);
+            addresses.gk, initialState, addresses.finalState,
+            addresses.w, addresses.u, addresses.kg,
+            addresses.vNew, addresses.h, cuSeqlens,
+            compactPlan, tiling);
         fwdH.Process();
+        SyncAll<false>();
+        pipe.Reset();
+        KdaFinalize::RunChunkKdaOutput<T, float, BETA_T>(
+            q, k, v, addresses.gk, beta, initialState, cuSeqlens,
+            chunkIndices, compactPlan, addresses.qgScaled, aqk,
+            addresses.vNew, addresses.h, attnOut, userWorkspace, tiling, pipe);
         return;
     }
 
@@ -37,14 +35,16 @@ __aicore__ inline void Run(
         (!tiling.isVarLen && tiling.seqlen % tiling.chunkSize == 0) ||
         fwdHTaskCount > tiling.prepareUsedCoreNum;
     if (isolateGenericBackEnd) {
-        pipe.Destroy();
+        if ASCEND_IS_AIV {
+            pipe.Destroy();
+        }
         RunGenericBackEnd<T, BETA_T, TilingData>(
             q, k, v, beta, initialState, cuSeqlens, chunkIndices, aqk,
-            attnOut, addresses, userWorkspace, tiling);
+            attnOut, addresses, userWorkspace, compactPlan, tiling);
     } else {
         RunGenericBackEnd<T, BETA_T, TilingData>(
             q, k, v, beta, initialState, cuSeqlens, chunkIndices, aqk,
-            attnOut, addresses, userWorkspace, tiling, pipe);
+            attnOut, addresses, userWorkspace, compactPlan, tiling, pipe);
     }
 }
 

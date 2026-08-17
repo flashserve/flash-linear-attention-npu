@@ -22,9 +22,11 @@
 #include "catlass/gemm/tile/tile_copy.hpp"
 #include "catlass/gemm/tile/tile_mmad.hpp"
 #include "catlass/gemm_coord.hpp"
+#include "kernel_utils/block/block_mmad_pingpong_tla.hpp"
 #include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
 #include "catlass/layout/layout.hpp"
 #include "kernel_operator.h"
+#include "chunk_kda_fwd_plan.h"
 #include "chunk_kda_fwd_varlen.h"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
@@ -81,19 +83,14 @@ constexpr uint32_t KDA_POST_EVENT_NEXT = 4;
 constexpr uint32_t KDA_POST_EVENT_FIX = 5;
 
 using KdaArchTag = Catlass::Arch::AtlasA2;
-using KdaDispatchPolicy = Catlass::Gemm::MmadPingpong<KdaArchTag, true, false>;
-using KdaScoreDispatchPolicy =
-    Catlass::Gemm::MmadPingpongTlaMulti<KdaArchTag, true, false, 1, true, 2, 1, 2, 2>;
-static_assert(KdaScoreDispatchPolicy::ENABLE_L1_RESIDENT,
-              "KDA Aqk/Akk score MMAD must keep the shared right matrix resident in L1");
-static_assert(KdaScoreDispatchPolicy::L1B_STAGES == 1,
-              "KDA Aqk/Akk score MMAD needs one L1 B slot so the second MMAD reuses it");
-using KdaSolveDispatchPolicy = Catlass::Gemm::MmadPingpong<KdaArchTag, true, false>;
-static_assert(!KdaSolveDispatchPolicy::USE_HF32_MODE, "KDA triangular solve must use IEEE FP32 Cube mode");
-using KdaL1TileShape = tla::Shape<KdaInt64, KdaInt128, KdaInt128>;
-using KdaL0TileShape = KdaL1TileShape;
-using KdaSolveL1TileShape = tla::Shape<KdaInt64, KdaInt64, KdaInt64>;
-using KdaSolveL0TileShape = KdaSolveL1TileShape;
+// compact 完整块的运行时 head 窗口在整个循环中共用一个实例，
+// Cube 与 Fixpipe 才能通过两个 L0C 槽真正并行。
+using KdaDispatchPolicy = Common::MmadPingpong<KdaArchTag, false, false, 2>;
+// 单项路径没有跨调用的 BlockMmad 生命周期，使用单槽避免假双缓冲。
+using KdaSingleDispatchPolicy = Common::MmadPingpong<KdaArchTag, false, false, 1>;
+// K/V > 128 的 256 列 tile 会占满 A2 L0C，必须使用单槽；窄 tile
+// 保留原有策略，避免改变 K/V <= 128 的热路径。
+using KdaWideDispatchPolicy = Common::MmadPingpong<KdaArchTag, false, false, 1>;
 
 __aicore__ inline uint32_t FloatToBits(float value)
 {
@@ -238,6 +235,28 @@ public:
     __aicore__ inline void ProcessAic()
     {
         ProcessPostAic();
+    }
+
+    __aicore__ inline void SetCompactPlan(GM_ADDR compactPlan)
+    {
+        compactPlanAddr_ = compactPlan;
+    }
+
+    __aicore__ inline void ProcessTailSeedCopyAiv()
+    {
+        ProcessVarlenTailSeedCopyAiv();
+        ReleaseVectorEvents();
+    }
+
+    __aicore__ inline void ProcessTailAic()
+    {
+        ProcessVarlenTailAic();
+    }
+
+    __aicore__ inline void ProcessTailAiv()
+    {
+        ProcessVarlenTailAiv();
+        ReleaseVectorEvents();
     }
 
 private:
@@ -530,15 +549,115 @@ private:
         }
         return maxRows;
     }
+
+    __aicore__ inline bool UseRawKResident() const
+    {
+        return BT_ == 64 && K_ == 128 && V_ == 128;
+    }
+
+    __aicore__ inline LocalTensor<T> ResidentKTyped()
+    {
+        return gateWritebackBuf_.Get<T>();
+    }
+
+    __aicore__ inline void LoadResidentRawK(
+        uint64_t b, uint64_t h, uint64_t start, uint64_t curT,
+        uint64_t subBlockIdx, uint64_t subBlockNum)
+    {
+        // resident K 复用前先闭合上一 qHead 的 V 读取；搬入后分别向 V 和
+        // MTE3 发布可见性，后续同一窗口只读该槽位。
+        SetFlag<HardEvent::V_MTE2>(vToMte2Event_);
+        WaitFlag<HardEvent::V_MTE2>(vToMte2Event_);
+        LocalTensor<T> kResident = ResidentKTyped();
+        const uint64_t rowBegin = curT * subBlockIdx / subBlockNum;
+        const uint64_t rowEnd = curT * (subBlockIdx + 1) / subBlockNum;
+        const uint64_t rows = rowEnd - rowBegin;
+        // 两个 AIV 各自只搬固定 owner 行，并保留原始 row offset；合起来
+        // 每个 distinct qHead 的每个 raw K 行只访问一次 GM。
+        if (rows > 0) {
+            LocalTensor<T> kOwned = kResident[rowBegin * K_];
+            CopyRowsIn(kOwned, k_, QOffset(b, h, start + rowBegin, 0), rows, K_,
+                       inputSequenceMajor_ ? H_ * K_ : K_);
+        }
+        SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+        WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+        SetFlag<HardEvent::MTE2_MTE3>(mte2ToMte3Event_);
+        WaitFlag<HardEvent::MTE2_MTE3>(mte2ToMte3Event_);
+        residentRawKActive_ = true;
+    }
+
     __aicore__ inline bool UsePostWuCube(uint64_t curT) const
     {
         return curT > 0 && curT <= BT_ && (BT_ == 64 || BT_ == 128) && K_ >= 16 && V_ >= 16 &&
                V_ <= 256 && K_ % 16 == 0 && V_ % 16 == 0;
     }
 
+    __aicore__ inline bool UseVarlenTailCubeSnapshot(uint64_t curT) const
+    {
+        return isVarLen_ && curT > 0 && curT < BT_ && BT_ == 64 &&
+               K_ == 128 && V_ == 128;
+    }
 
-    __aicore__ inline void ComputePostWuCube(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
-                                             uint64_t curT)
+    template <typename WBlockMmad>
+    __aicore__ inline void ComputePostWuW(WBlockMmad &wBlockMmad, uint64_t b, uint64_t hv,
+                                         uint64_t chunkIdx, uint64_t start, uint64_t curT)
+    {
+        using ElementA = AKK_T;
+        using ElementB = T;
+        using LayoutTagA = Catlass::layout::RowMajor;
+        using LayoutTagB = Catlass::layout::RowMajor;
+        using LayoutTagC = Catlass::layout::RowMajor;
+        LayoutTagA tagA = LayoutTagA::template MakeLayout<ElementA>(BT_, BT_);
+        auto layoutA = tla::MakeLayoutFromTag(tagA);
+        auto tensorA = tla::MakeTensor(preparedAqk_[AOffset(b, hv, start, 0)], layoutA,
+                                       Catlass::Arch::PositionGM{});
+        LayoutTagB tagB = LayoutTagB::template MakeLayout<ElementB>(BT_, K_);
+        LayoutTagC tagC = LayoutTagC::template MakeLayout<float>(BT_, K_);
+        auto layoutB = tla::MakeLayoutFromTag(tagB);
+        auto layoutC = tla::MakeLayoutFromTag(tagC);
+        Catlass::GemmCoord shape{static_cast<uint32_t>(curT), static_cast<uint32_t>(K_),
+                                 static_cast<uint32_t>(curT)};
+        auto tensorB = tla::MakeTensor(preparedQG_[KVOffset(b, hv, start, 0, K_)], layoutB,
+                                       Catlass::Arch::PositionGM{});
+        auto tensorC = tla::MakeTensor(h_[WScratchOffset(b, hv, chunkIdx, 0, 0)], layoutC,
+                                       Catlass::Arch::PositionGM{});
+        auto blockA = GetTile(tensorA, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.k()));
+        auto blockB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
+        auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
+        wBlockMmad(blockA, blockB, blockC, shape);
+    }
+
+    template <typename UBlockMmad>
+    __aicore__ inline void ComputePostWuU(UBlockMmad &uBlockMmad, uint64_t b, uint64_t hv,
+                                         uint64_t start, uint64_t curT)
+    {
+        using ElementA = AKK_T;
+        using ElementB = T;
+        using LayoutTagA = Catlass::layout::RowMajor;
+        using LayoutTagB = Catlass::layout::RowMajor;
+        using LayoutTagC = Catlass::layout::RowMajor;
+        LayoutTagA tagA = LayoutTagA::template MakeLayout<ElementA>(BT_, BT_);
+        auto layoutA = tla::MakeLayoutFromTag(tagA);
+        auto tensorA = tla::MakeTensor(preparedAqk_[AOffset(b, hv, start, 0)], layoutA,
+                                       Catlass::Arch::PositionGM{});
+        LayoutTagB tagB = LayoutTagB::template MakeLayout<ElementB>(BT_, V_);
+        LayoutTagC tagC = LayoutTagC::template MakeLayout<OUT_T>(BT_, V_);
+        auto layoutB = tla::MakeLayoutFromTag(tagB);
+        auto layoutC = tla::MakeLayoutFromTag(tagC);
+        Catlass::GemmCoord shape{static_cast<uint32_t>(curT), static_cast<uint32_t>(V_),
+                                 static_cast<uint32_t>(curT)};
+        auto tensorB = tla::MakeTensor(propagatedVNew_[KVOffset(b, hv, start, 0, V_)], layoutB,
+                                       Catlass::Arch::PositionGM{});
+        auto tensorC = tla::MakeTensor(u_[KVOffset(b, hv, start, 0, V_)], layoutC,
+                                       Catlass::Arch::PositionGM{});
+        auto blockA = GetTile(tensorA, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.k()));
+        auto blockB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
+        auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
+        uBlockMmad(blockA, blockB, blockC, shape);
+    }
+
+    __attribute__((noinline)) __aicore__ void ComputePostWuCube(uint64_t b, uint64_t hv, uint64_t chunkIdx,
+                                                               uint64_t start, uint64_t curT)
     {
         using ElementA = AKK_T;
         using ElementB = T;
@@ -553,70 +672,92 @@ private:
         using PostL0TileShape128 = tla::Shape<KdaInt128, KdaInt128, KdaInt128>;
         using PostL1TileShape256 = tla::Shape<KdaInt128, tla::_256, tla::_256>;
         using PostL0TileShape256 = tla::Shape<KdaInt128, tla::_256, KdaInt64>;
-        using WBlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape128,
-                                                               PostL0TileShape128,
-                                                               ElementA, ElementB, float, void, WTileCopy>;
-        using UBlockMmad128 = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape128,
-                                                                  PostL0TileShape128,
-                                                                  ElementA, ElementB, OUT_T, void, UTileCopy>;
-        using UBlockMmad256 = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape256,
-                                                                  PostL0TileShape256,
-                                                                  ElementA, ElementB, OUT_T, void, UTileCopy>;
-        LayoutTagA tagA = LayoutTagA::template MakeLayout<ElementA>(BT_, BT_);
-        auto layoutA = tla::MakeLayoutFromTag(tagA);
-        auto tensorA = tla::MakeTensor(preparedAqk_[AOffset(b, hv, start, 0)], layoutA,
-                                       Catlass::Arch::PositionGM{});
-
+        using WBlockMmad128 = Common::BlockMmadTla<KdaSingleDispatchPolicy, PostL1TileShape128,
+                                                   PostL0TileShape128,
+                                                   ElementA, ElementB, float, void, WTileCopy>;
+        using WBlockMmad256 = Common::BlockMmadTla<KdaWideDispatchPolicy, PostL1TileShape256,
+                                                   PostL0TileShape256,
+                                                   ElementA, ElementB, float, void, WTileCopy>;
+        using UBlockMmad128 = Common::BlockMmadTla<KdaSingleDispatchPolicy, PostL1TileShape128,
+                                                   PostL0TileShape128,
+                                                   ElementA, ElementB, OUT_T, void, UTileCopy>;
+        using UBlockMmad256 = Common::BlockMmadTla<KdaWideDispatchPolicy, PostL1TileShape256,
+                                                   PostL0TileShape256,
+                                                   ElementA, ElementB, OUT_T, void, UTileCopy>;
         {
-            LayoutTagB tagB = LayoutTagB::template MakeLayout<ElementB>(BT_, K_);
-            LayoutTagC tagC = LayoutTagC::template MakeLayout<float>(BT_, K_);
-            auto layoutB = tla::MakeLayoutFromTag(tagB);
-            auto layoutC = tla::MakeLayoutFromTag(tagC);
-            Catlass::GemmCoord shape{static_cast<uint32_t>(curT), static_cast<uint32_t>(K_),
-                                     static_cast<uint32_t>(curT)};
-            auto tensorB = tla::MakeTensor(preparedQG_[KVOffset(b, hv, start, 0, K_)], layoutB,
-                                           Catlass::Arch::PositionGM{});
-            auto tensorC = tla::MakeTensor(h_[WScratchOffset(b, hv, chunkIdx, 0, 0)], layoutC,
-                                            Catlass::Arch::PositionGM{});
-            auto blockA = GetTile(tensorA, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.k()));
-            auto blockB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
-            auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
             Catlass::Arch::Resource<KdaArchTag> wResource;
-            WBlockMmad wBlockMmad(wResource);
-            wBlockMmad(blockA, blockB, blockC, shape);
-            PipeBarrier<PIPE_ALL>();
+            if (K_ <= 128) {
+                WBlockMmad128 wBlockMmad(wResource);
+                ComputePostWuW(wBlockMmad, b, hv, chunkIdx, start, curT);
+            } else {
+                WBlockMmad256 wBlockMmad(wResource);
+                ComputePostWuW(wBlockMmad, b, hv, chunkIdx, start, curT);
+            }
+            // 单项路径在本作用域排空唯一 L0C 槽，确保 W 已写回 GM。
         }
-
         {
-            LayoutTagB tagB = LayoutTagB::template MakeLayout<ElementB>(BT_, V_);
-            LayoutTagC tagC = LayoutTagC::template MakeLayout<OUT_T>(BT_, V_);
-            auto layoutB = tla::MakeLayoutFromTag(tagB);
-            auto layoutC = tla::MakeLayoutFromTag(tagC);
-            Catlass::GemmCoord shape{static_cast<uint32_t>(curT), static_cast<uint32_t>(V_),
-                                     static_cast<uint32_t>(curT)};
-            auto tensorB = tla::MakeTensor(propagatedVNew_[KVOffset(b, hv, start, 0, V_)], layoutB,
-                                           Catlass::Arch::PositionGM{});
-            auto tensorC = tla::MakeTensor(u_[KVOffset(b, hv, start, 0, V_)], layoutC,
-                                           Catlass::Arch::PositionGM{});
-            auto blockA = GetTile(tensorA, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.k()));
-            auto blockB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
-            auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
             Catlass::Arch::Resource<KdaArchTag> uResource;
             if (V_ <= 128) {
                 UBlockMmad128 uBlockMmad(uResource);
-                uBlockMmad(blockA, blockB, blockC, shape);
+                ComputePostWuU(uBlockMmad, b, hv, start, curT);
             } else {
                 UBlockMmad256 uBlockMmad(uResource);
-                uBlockMmad(blockA, blockB, blockC, shape);
+                ComputePostWuU(uBlockMmad, b, hv, start, curT);
             }
-            PipeBarrier<PIPE_ALL>();
+            // U 路径同样在分支作用域内排空，发布信号前写回已完成。
         }
-
     }
 
-    __aicore__ inline void CopyScratchWAndFinalizeKg(uint64_t b, uint64_t h, uint64_t hv, uint64_t chunkIdx,
-                                                     uint64_t start, uint64_t curT, uint64_t subBlockIdx,
-                                                     uint64_t subBlockNum, bool copyScratchW)
+    __attribute__((noinline)) __aicore__ void ComputeCompactPostWuCubeHeadWindow(
+        uint64_t b, uint64_t chunkIdx, uint64_t start,
+        uint64_t headBase, uint32_t headCnt)
+    {
+        using ElementA = AKK_T;
+        using ElementB = T;
+        using LayoutTagA = Catlass::layout::RowMajor;
+        using LayoutTagB = Catlass::layout::RowMajor;
+        using LayoutTagC = Catlass::layout::RowMajor;
+        using WTileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KdaArchTag, ElementA, LayoutTagA, ElementB,
+                                                                 LayoutTagB, float, LayoutTagC>;
+        using UTileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KdaArchTag, ElementA, LayoutTagA, ElementB,
+                                                                 LayoutTagB, OUT_T, LayoutTagC>;
+        using PostL1TileShape128 = tla::Shape<KdaInt128, KdaInt128, tla::_256>;
+        using PostL0TileShape128 = tla::Shape<KdaInt128, KdaInt128, KdaInt128>;
+        using WBlockMmad = Common::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape128,
+                                                PostL0TileShape128,
+                                                ElementA, ElementB, float, void, WTileCopy>;
+        using UBlockMmad = Common::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape128,
+                                                PostL0TileShape128,
+                                                ElementA, ElementB, OUT_T, void, UTileCopy>;
+
+        {
+            Catlass::Arch::Resource<KdaArchTag> wResource;
+            WBlockMmad wBlockMmad(wResource);
+            for (uint32_t lane = 0; lane < headCnt; ++lane) {
+                ComputePostWuW(wBlockMmad, b, headBase + lane,
+                               chunkIdx, start, BT_);
+            }
+            // 一个 W BlockMmad 覆盖整个运行时 head 窗口，相邻 head 轮转两个 L0C 槽。
+        }
+        {
+            Catlass::Arch::Resource<KdaArchTag> uResource;
+            UBlockMmad uBlockMmad(uResource);
+            for (uint32_t lane = 0; lane < headCnt; ++lane) {
+                ComputePostWuU(uBlockMmad, b, headBase + lane,
+                               start, BT_);
+            }
+            // W 阶段排空后再用独立实例处理 U，U 内部继续轮转两个 L0C 槽。
+        }
+
+        // W/U 均已写回后，按真实 head 数在同一 mode2 信号量上发布。
+        for (uint32_t lane = 0; lane < headCnt; ++lane) {
+            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(syncDoneFlag_);
+        }
+    }
+
+    __attribute__((noinline)) __aicore__ void CopyScratchWAndFinalizeKg(
+        uint64_t b, uint64_t h, uint64_t hv, uint64_t chunkIdx, uint64_t start, uint64_t curT,
+        uint64_t subBlockIdx, uint64_t subBlockNum, bool copyScratchW)
     {
         constexpr uint64_t typedOffsetFloats = 20480;
         constexpr uint64_t typedOffset = typedOffsetFloats * sizeof(float) / sizeof(T);
@@ -669,10 +810,17 @@ private:
             const uint64_t gateOffsetBytes = (typedOffset + elemCount) * sizeof(T);
             LocalTensor<GK_T> gateTyped = vecBuf_.Get<GK_T>()[
                 (gateOffsetBytes + sizeof(GK_T) - 1) / sizeof(GK_T)];
-            CopyRowsIn(typedLocal, k_, QOffset(b, h, token, 0), tileRows, K_,
-                       inputSequenceMajor_ ? H_ * K_ : K_);
+            if (!residentRawKActive_) {
+                CopyRowsIn(typedLocal, k_, QOffset(b, h, token, 0), tileRows, K_,
+                           inputSequenceMajor_ ? H_ * K_ : K_);
+            }
             LoadAsFloatVector(gk_, KVOffset(b, hv, token, 0, K_), gLocal, gateTyped, elemCount);
-            Cast(kLocal, typedLocal, RoundMode::CAST_NONE, static_cast<uint32_t>(elemCount));
+            if (residentRawKActive_) {
+                LocalTensor<T> kResident = ResidentKTyped()[tileRow * K_];
+                Cast(kLocal, kResident, RoundMode::CAST_NONE, static_cast<uint32_t>(elemCount));
+            } else {
+                Cast(kLocal, typedLocal, RoundMode::CAST_NONE, static_cast<uint32_t>(elemCount));
+            }
             PipeBarrier<PIPE_V>();
 
             for (uint64_t row = 0; row < tileRows; ++row) {
@@ -696,10 +844,15 @@ private:
             WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
         }
         if (rowEnd == curT) {
-            CopyVectorIn(typedLocal, k_, QOffset(b, h, last, 0), K_);
-            SetFlag<HardEvent::MTE2_MTE3>(mte2ToMte3Event_);
-            WaitFlag<HardEvent::MTE2_MTE3>(mte2ToMte3Event_);
-            CopyVectorOut(kg_, KVOffset(b, hv, last, 0, K_), typedLocal, K_);
+            if (residentRawKActive_) {
+                LocalTensor<T> kLast = ResidentKTyped()[(curT - 1) * K_];
+                CopyVectorOut(kg_, KVOffset(b, hv, last, 0, K_), kLast, K_);
+            } else {
+                CopyVectorIn(typedLocal, k_, QOffset(b, h, last, 0), K_);
+                SetFlag<HardEvent::MTE2_MTE3>(mte2ToMte3Event_);
+                WaitFlag<HardEvent::MTE2_MTE3>(mte2ToMte3Event_);
+                CopyVectorOut(kg_, KVOffset(b, hv, last, 0, K_), typedLocal, K_);
+            }
             SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
             WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
         }
@@ -746,8 +899,9 @@ private:
         StoreFloatRow(dst, dstBase, acc, dim);
     }
 
-    __aicore__ inline void ComputeTailWuVector(uint64_t b, uint64_t hv, uint64_t start, uint64_t curT,
-                                               uint64_t subBlockIdx, uint64_t subBlockNum)
+    __attribute__((noinline)) __aicore__ void ComputeTailWuVector(uint64_t b, uint64_t hv, uint64_t start,
+                                                                 uint64_t curT, uint64_t subBlockIdx,
+                                                                 uint64_t subBlockNum)
     {
         uint64_t rowBegin = (curT * subBlockIdx) / subBlockNum;
         uint64_t rowEnd = (curT * (subBlockIdx + 1)) / subBlockNum;
@@ -759,6 +913,26 @@ private:
                 propagatedVNew_, u_, AOffset(b, hv, start + row, 0), KVOffset(b, hv, start, 0, V_),
                 KVOffset(b, hv, start + row, 0, V_), curT, V_);
         }
+    }
+
+    __attribute__((noinline)) __aicore__ void CopyTailSeedRows(uint64_t b, uint64_t hv, uint64_t start,
+                                                              uint64_t curT, uint64_t subBlockIdx,
+                                                              uint64_t subBlockNum)
+    {
+        const uint64_t rowBegin = (curT * subBlockIdx) / subBlockNum;
+        const uint64_t rowEnd = (curT * (subBlockIdx + 1)) / subBlockNum;
+        const uint64_t rows = rowEnd - rowBegin;
+        if (rows == 0) {
+            return;
+        }
+        LocalTensor<T> typed = vecBuf_.Get<T>();
+        const uint64_t wOffset = KVOffset(b, hv, start + rowBegin, 0, K_);
+        CopyVectorIn(typed, preparedQG_, wOffset, rows * K_);
+        SetFlag<HardEvent::MTE2_MTE3>(mte2ToMte3Event_);
+        WaitFlag<HardEvent::MTE2_MTE3>(mte2ToMte3Event_);
+        CopyVectorOut(w_, wOffset, typed, rows * K_);
+        SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
+        WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
     }
 
     __aicore__ inline bool ResolveFlatChunk(uint64_t task, uint64_t &seq, uint64_t &b, uint64_t &h, uint64_t &hv,
@@ -788,6 +962,164 @@ private:
         return start < end;
     }
 
+    struct CompactOwnedChunkDesc {
+        uint64_t b = 0;
+        uint64_t chunkIdx = 0;
+        uint64_t start = 0;
+        uint64_t end = 0;
+    };
+
+    struct CompactFullChunkIterator {
+        uint64_t sequence = 0;
+        uint64_t localChunk = 0;
+        uint64_t sequenceStart = 0;
+        uint64_t fullChunkCount = 0;
+        bool sequenceLoaded = false;
+    };
+
+    struct CompactGroupedFullTaskIterator {
+        CompactFullChunkIterator chunks{};
+        CompactOwnedChunkDesc chunk{};
+        uint64_t loadedChunkOrdinal = 0;
+        bool chunkLoaded = false;
+    };
+
+    struct CompactGroupedTailTaskIterator {
+        CompactOwnedChunkDesc chunk{};
+        uint64_t loadedChunkOrdinal = 0;
+        bool chunkLoaded = false;
+    };
+
+    __aicore__ inline bool LoadCompactFullChunk(
+        const KdaForward::CompactSequencePlanView &plan,
+        CompactFullChunkIterator &iterator, CompactOwnedChunkDesc &chunk)
+    {
+        while (iterator.sequence < plan.SequenceCount()) {
+            if (!iterator.sequenceLoaded) {
+                uint64_t sequenceEnd = T_;
+                iterator.sequenceStart = 0;
+                if (isVarLen_) {
+                    iterator.sequenceStart = static_cast<uint64_t>(
+                        cuSeqlensAddr_[iterator.sequence]);
+                    sequenceEnd = static_cast<uint64_t>(
+                        cuSeqlensAddr_[iterator.sequence + 1]);
+                }
+                iterator.fullChunkCount =
+                    (sequenceEnd - iterator.sequenceStart) / BT_;
+                iterator.sequenceLoaded = true;
+            }
+            if (iterator.localChunk < iterator.fullChunkCount) {
+                chunk.b = isVarLen_ ? 0 : iterator.sequence;
+                chunk.chunkIdx = isVarLen_
+                    ? plan.SequenceChunkOffset(
+                          static_cast<uint32_t>(iterator.sequence)) +
+                          iterator.localChunk
+                    : iterator.localChunk;
+                chunk.start = iterator.sequenceStart +
+                    iterator.localChunk * BT_;
+                chunk.end = chunk.start + BT_;
+                ++iterator.localChunk;
+                if (iterator.localChunk == iterator.fullChunkCount) {
+                    ++iterator.sequence;
+                    iterator.localChunk = 0;
+                    iterator.sequenceLoaded = false;
+                }
+                return true;
+            }
+            ++iterator.sequence;
+            iterator.localChunk = 0;
+            iterator.sequenceLoaded = false;
+        }
+        return false;
+    }
+
+    __aicore__ inline bool LoadCompactTailChunk(
+        const KdaForward::CompactSequencePlanView &plan,
+        uint64_t tailOrdinal, CompactOwnedChunkDesc &chunk)
+    {
+        const uint64_t sequence = plan.TailedSequenceId(
+            static_cast<uint32_t>(tailOrdinal));
+        if (sequence >= plan.SequenceCount()) {
+            return false;
+        }
+        uint64_t sequenceStart = 0;
+        uint64_t sequenceEnd = T_;
+        if (isVarLen_) {
+            sequenceStart = static_cast<uint64_t>(cuSeqlensAddr_[sequence]);
+            sequenceEnd = static_cast<uint64_t>(
+                cuSeqlensAddr_[sequence + 1]);
+        }
+        const uint64_t fullChunkCount =
+            (sequenceEnd - sequenceStart) / BT_;
+        chunk.b = isVarLen_ ? 0 : sequence;
+        chunk.chunkIdx = isVarLen_
+            ? plan.SequenceChunkOffset(static_cast<uint32_t>(sequence)) +
+                  fullChunkCount
+            : fullChunkCount;
+        chunk.start = sequenceStart + fullChunkCount * BT_;
+        chunk.end = sequenceEnd;
+        return chunk.start < chunk.end;
+    }
+
+    __aicore__ inline bool LoadCompactGroupedFullTask(
+        const KdaForward::CompactSequencePlanView &plan, uint64_t task,
+        CompactGroupedFullTaskIterator &iterator,
+        CompactOwnedChunkDesc &chunk, uint64_t &headBegin,
+        uint64_t &headEnd)
+    {
+        uint32_t chunkOrdinal = 0;
+        uint32_t begin = 0;
+        uint32_t end = 0;
+        if (!plan.DecodeChunkHeadGroupTask(
+                static_cast<uint32_t>(task), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_),
+                chunkOrdinal, begin, end)) {
+            return false;
+        }
+        if (!iterator.chunkLoaded ||
+            iterator.loadedChunkOrdinal != chunkOrdinal) {
+            if (!LoadCompactFullChunk(plan, iterator.chunks,
+                                      iterator.chunk)) {
+                return false;
+            }
+            iterator.loadedChunkOrdinal = chunkOrdinal;
+            iterator.chunkLoaded = true;
+        }
+        chunk = iterator.chunk;
+        headBegin = begin;
+        headEnd = end;
+        return true;
+    }
+
+    __aicore__ inline bool LoadCompactGroupedTailTask(
+        const KdaForward::CompactSequencePlanView &plan, uint64_t task,
+        CompactGroupedTailTaskIterator &iterator,
+        CompactOwnedChunkDesc &chunk, uint64_t &headBegin,
+        uint64_t &headEnd)
+    {
+        uint32_t chunkOrdinal = 0;
+        uint32_t begin = 0;
+        uint32_t end = 0;
+        if (!plan.DecodeChunkHeadGroupTask(
+                static_cast<uint32_t>(task), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_),
+                chunkOrdinal, begin, end)) {
+            return false;
+        }
+        if (!iterator.chunkLoaded ||
+            iterator.loadedChunkOrdinal != chunkOrdinal) {
+            if (!LoadCompactTailChunk(plan, chunkOrdinal, iterator.chunk)) {
+                return false;
+            }
+            iterator.loadedChunkOrdinal = chunkOrdinal;
+            iterator.chunkLoaded = true;
+        }
+        chunk = iterator.chunk;
+        headBegin = begin;
+        headEnd = end;
+        return true;
+    }
+
     __aicore__ inline void ProcessChunkPostAiv(uint64_t b, uint64_t h, uint64_t hv, uint64_t chunkIdx,
                                                uint64_t start, uint64_t end, uint64_t subBlockIdx,
                                                uint64_t subBlockNum)
@@ -797,9 +1129,11 @@ private:
             return;
         }
         if (curT < BT_) {
-            ComputeTailWuVector(b, hv, start, curT, subBlockIdx, subBlockNum);
-            CopyScratchWAndFinalizeKg(
-                b, h, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum, false);
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                ComputeTailWuVector(b, hv, start, curT, subBlockIdx, subBlockNum);
+                CopyScratchWAndFinalizeKg(
+                    b, h, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum, false);
+            }
             return;
         }
         Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(syncDoneFlag_);
@@ -829,6 +1163,286 @@ private:
         Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(syncDoneFlag_);
     }
 
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactChunkPostAiv(
+        const CompactOwnedChunkDesc &chunk, uint64_t hv,
+        uint64_t subBlockIdx, uint64_t subBlockNum)
+    {
+        uint64_t curT = BT_;
+        if constexpr (IS_TAIL) {
+            curT = chunk.end - chunk.start;
+        }
+        if (curT == 0 || !UsePostWuCube(curT)) {
+            return;
+        }
+        const uint64_t h = hv / (HV_ / H_);
+        if constexpr (IS_TAIL) {
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                ComputeTailWuVector(
+                    chunk.b, hv, chunk.start, curT,
+                    subBlockIdx, subBlockNum);
+                CopyScratchWAndFinalizeKg(
+                    chunk.b, h, hv, chunk.chunkIdx, chunk.start, curT,
+                    subBlockIdx, subBlockNum, false);
+            }
+        } else {
+            Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(
+                syncDoneFlag_);
+            CopyScratchWAndFinalizeKg(
+                chunk.b, h, hv, chunk.chunkIdx, chunk.start, curT,
+                subBlockIdx, subBlockNum, true);
+        }
+    }
+
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactChunkPostAic(
+        const CompactOwnedChunkDesc &chunk, uint64_t hv)
+    {
+        if constexpr (!IS_TAIL && IsSameType<AKK_T, T>::value) {
+            if (!UsePostWuCube(BT_)) {
+                return;
+            }
+            ComputePostWuCube(
+                chunk.b, hv, chunk.chunkIdx, chunk.start, BT_);
+            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(
+                syncDoneFlag_);
+        }
+    }
+
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactPostAivHeadWindow(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBase,
+        uint32_t headCnt,
+        uint64_t subBlockIdx, uint64_t subBlockNum)
+    {
+        // 每个 runtime head 都推进同一个跨核信号量；无论窗口含一个
+        // 还是四个 head，循环进度都由同一信号量的计数深度承载。
+        uint64_t curT = BT_;
+        if constexpr (IS_TAIL) {
+            curT = chunk.end - chunk.start;
+            if (UseVarlenTailCubeSnapshot(curT)) {
+                // snapshot tail 由后续专用阶段完成；本阶段没有消费者，不能
+                // 提前加载一次 raw K 后再由真实消费阶段重复加载。
+                return;
+            }
+        }
+        const uint64_t headRatio = HV_ / H_;
+        uint64_t residentQHead = H_;
+        residentRawKActive_ = false;
+        for (uint32_t lane = 0; lane < headCnt; ++lane) {
+            const uint64_t hv = headBase + lane;
+            const uint64_t qHead = hv / headRatio;
+            if (UseRawKResident() && qHead != residentQHead) {
+                // 窗口内相邻 Hv 共享同一 qHead 时复用 raw K；窗口边界
+                // 不保留状态，因此 ratio=8 的下一窗口可以重新搬入。
+                LoadResidentRawK(
+                    chunk.b, qHead, chunk.start, curT,
+                    subBlockIdx, subBlockNum);
+                residentQHead = qHead;
+            }
+            ProcessCompactChunkPostAiv<IS_TAIL>(
+                chunk, hv, subBlockIdx, subBlockNum);
+        }
+        residentRawKActive_ = false;
+    }
+
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactPostAivHeadRange(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBegin,
+        uint64_t headEnd, uint64_t subBlockIdx, uint64_t subBlockNum)
+    {
+        for (uint64_t headBase = headBegin; headBase < headEnd;) {
+            const uint32_t headCnt = KdaForward::HeadWindowHeadCount(
+                static_cast<uint32_t>(headBase), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_));
+            if (headCnt == 0 || headCnt > headEnd - headBase) {
+                return;
+            }
+            ProcessCompactPostAivHeadWindow<IS_TAIL>(
+                chunk, headBase, headCnt, subBlockIdx, subBlockNum);
+            headBase += headCnt;
+        }
+    }
+
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactPostAicHeadWindow(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBase,
+        uint32_t headCnt)
+    {
+        if constexpr (!IS_TAIL && IsSameType<AKK_T, T>::value) {
+            if (BT_ == 64 && K_ == 128 && V_ == 128 &&
+                UsePostWuCube(BT_)) {
+                ComputeCompactPostWuCubeHeadWindow(
+                    chunk.b, chunk.chunkIdx, chunk.start,
+                    headBase, headCnt);
+                return;
+            }
+        }
+        for (uint32_t lane = 0; lane < headCnt; ++lane) {
+            ProcessCompactChunkPostAic<IS_TAIL>(chunk, headBase + lane);
+        }
+    }
+
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactPostAicHeadRange(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBegin,
+        uint64_t headEnd)
+    {
+        for (uint64_t headBase = headBegin; headBase < headEnd;) {
+            const uint32_t headCnt = KdaForward::HeadWindowHeadCount(
+                static_cast<uint32_t>(headBase), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_));
+            if (headCnt == 0 || headCnt > headEnd - headBase) {
+                return;
+            }
+            ProcessCompactPostAicHeadWindow<IS_TAIL>(
+                chunk, headBase, headCnt);
+            headBase += headCnt;
+        }
+    }
+
+    __aicore__ inline void ProcessG1FullPostAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        CompactFullChunkIterator iterator{};
+        iterator.sequence = cursor.fullStartSequence;
+        iterator.localChunk = cursor.fullStartLocalChunk;
+        for (uint64_t ordinal = cursor.fullBegin;
+             ordinal < cursor.fullEnd; ++ordinal) {
+            CompactOwnedChunkDesc chunk{};
+            if (!LoadCompactFullChunk(plan, iterator, chunk)) {
+                continue;
+            }
+            ProcessCompactPostAivHeadRange<false>(
+                chunk, 0, HV_, subBlockIdx, subBlockNum);
+        }
+    }
+
+    __aicore__ inline void ProcessG1TailPostAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        for (uint64_t ordinal = cursor.tailBegin;
+             ordinal < cursor.tailEnd; ++ordinal) {
+            CompactOwnedChunkDesc chunk{};
+            if (!LoadCompactTailChunk(plan, ordinal, chunk)) {
+                continue;
+            }
+            ProcessCompactPostAivHeadRange<true>(
+                chunk, 0, HV_, subBlockIdx, subBlockNum);
+        }
+    }
+
+    __aicore__ inline void ProcessGroupedFullPostAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        CompactGroupedFullTaskIterator iterator{};
+        iterator.chunks.sequence = cursor.fullStartSequence;
+        iterator.chunks.localChunk = cursor.fullStartLocalChunk;
+        for (uint64_t task = cursor.fullBegin;
+             task < cursor.fullEnd; ++task) {
+            CompactOwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (LoadCompactGroupedFullTask(
+                    plan, task, iterator, chunk, headBegin, headEnd)) {
+                ProcessCompactPostAivHeadRange<false>(
+                    chunk, headBegin, headEnd, subBlockIdx, subBlockNum);
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessGroupedTailPostAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        CompactGroupedTailTaskIterator iterator{};
+        for (uint64_t task = cursor.tailBegin;
+             task < cursor.tailEnd; ++task) {
+            CompactOwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (LoadCompactGroupedTailTask(
+                    plan, task, iterator, chunk, headBegin, headEnd)) {
+                ProcessCompactPostAivHeadRange<true>(
+                    chunk, headBegin, headEnd, subBlockIdx, subBlockNum);
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessG1FullPostAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor)
+    {
+        CompactFullChunkIterator iterator{};
+        iterator.sequence = cursor.fullStartSequence;
+        iterator.localChunk = cursor.fullStartLocalChunk;
+        for (uint64_t ordinal = cursor.fullBegin;
+             ordinal < cursor.fullEnd; ++ordinal) {
+            CompactOwnedChunkDesc chunk{};
+            if (LoadCompactFullChunk(plan, iterator, chunk)) {
+                ProcessCompactPostAicHeadRange<false>(chunk, 0, HV_);
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessG1TailPostAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor)
+    {
+        for (uint64_t ordinal = cursor.tailBegin;
+             ordinal < cursor.tailEnd; ++ordinal) {
+            CompactOwnedChunkDesc chunk{};
+            if (LoadCompactTailChunk(plan, ordinal, chunk)) {
+                ProcessCompactPostAicHeadRange<true>(chunk, 0, HV_);
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessGroupedFullPostAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor)
+    {
+        CompactGroupedFullTaskIterator iterator{};
+        iterator.chunks.sequence = cursor.fullStartSequence;
+        iterator.chunks.localChunk = cursor.fullStartLocalChunk;
+        for (uint64_t task = cursor.fullBegin;
+             task < cursor.fullEnd; ++task) {
+            CompactOwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (LoadCompactGroupedFullTask(
+                    plan, task, iterator, chunk, headBegin, headEnd)) {
+                ProcessCompactPostAicHeadRange<false>(
+                    chunk, headBegin, headEnd);
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessGroupedTailPostAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor)
+    {
+        CompactGroupedTailTaskIterator iterator{};
+        for (uint64_t task = cursor.tailBegin;
+             task < cursor.tailEnd; ++task) {
+            CompactOwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (LoadCompactGroupedTailTask(
+                    plan, task, iterator, chunk, headBegin, headEnd)) {
+                ProcessCompactPostAicHeadRange<true>(
+                    chunk, headBegin, headEnd);
+            }
+        }
+    }
+
     __aicore__ inline void ProcessPostAiv()
     {
         if constexpr (IsSameType<T, float>::value) {
@@ -839,8 +1453,28 @@ private:
             return;
         }
         uint64_t subBlockIdx = static_cast<uint64_t>(GetSubBlockIdx());
-        uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
         uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
+        KdaForward::CompactSequencePlanView plan(compactPlanAddr_);
+        if (plan.IsValid()) {
+            KdaForward::ChunkCoreCursor cursor{};
+            if (!plan.LoadChunkCoreCursor(
+                    static_cast<uint32_t>(coreIdx), cursor)) {
+                return;
+            }
+            if (plan.HeadGroupCount() == 1) {
+                ProcessG1FullPostAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum);
+                ProcessG1TailPostAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum);
+            } else {
+                ProcessGroupedFullPostAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum);
+                ProcessGroupedTailPostAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum);
+            }
+            return;
+        }
+        uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
         uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
         for (uint64_t task = coreIdx; task < taskNum; task += coreNum) {
             uint64_t seq = 0;
@@ -857,9 +1491,415 @@ private:
         }
     }
 
+    __aicore__ inline void ProcessCompactTailSeedAivHeadWindow(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBase,
+        uint32_t headCnt, uint64_t curT, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        for (uint32_t lane = 0; lane < headCnt; ++lane) {
+            CopyTailSeedRows(
+                chunk.b, headBase + lane, chunk.start, curT,
+                subBlockIdx, subBlockNum);
+        }
+    }
+
+    __aicore__ inline void ProcessCompactTailSeedAivHeadRange(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBegin,
+        uint64_t headEnd, uint64_t curT, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        for (uint64_t headBase = headBegin; headBase < headEnd;) {
+            const uint32_t headCnt = KdaForward::HeadWindowHeadCount(
+                static_cast<uint32_t>(headBase), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_));
+            if (headCnt == 0 || headCnt > headEnd - headBase) {
+                return;
+            }
+            ProcessCompactTailSeedAivHeadWindow(
+                chunk, headBase, headCnt, curT, subBlockIdx, subBlockNum);
+            headBase += headCnt;
+        }
+    }
+
+    __aicore__ inline void ProcessG1TailSeedAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        for (uint64_t ordinal = cursor.tailBegin;
+             ordinal < cursor.tailEnd; ++ordinal) {
+            CompactOwnedChunkDesc chunk{};
+            if (!LoadCompactTailChunk(plan, ordinal, chunk)) {
+                continue;
+            }
+            const uint64_t curT = chunk.end - chunk.start;
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                continue;
+            }
+            ProcessCompactTailSeedAivHeadRange(
+                chunk, 0, HV_, curT, subBlockIdx, subBlockNum);
+        }
+    }
+
+    __aicore__ inline void ProcessGroupedTailSeedAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        CompactGroupedTailTaskIterator iterator{};
+        for (uint64_t task = cursor.tailBegin;
+             task < cursor.tailEnd; ++task) {
+            CompactOwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (!LoadCompactGroupedTailTask(
+                    plan, task, iterator, chunk, headBegin, headEnd)) {
+                continue;
+            }
+            const uint64_t curT = chunk.end - chunk.start;
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                continue;
+            }
+            ProcessCompactTailSeedAivHeadRange(
+                chunk, headBegin, headEnd, curT,
+                subBlockIdx, subBlockNum);
+        }
+    }
+
+    __aicore__ inline void ProcessVarlenTailSeedCopyAiv()
+    {
+        if constexpr (IsSameType<T, float>::value) {
+            return;
+        }
+        if (!isVarLen_) {
+            return;
+        }
+        const uint64_t subBlockNum = static_cast<uint64_t>(GetSubBlockNum());
+        if (subBlockNum == 0) {
+            return;
+        }
+        const uint64_t subBlockIdx = static_cast<uint64_t>(GetSubBlockIdx());
+        const uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
+        KdaForward::CompactSequencePlanView plan(compactPlanAddr_);
+        if (plan.IsValid()) {
+            KdaForward::ChunkCoreCursor cursor{};
+            if (!plan.LoadChunkCoreCursor(
+                    static_cast<uint32_t>(coreIdx), cursor)) {
+                return;
+            }
+            if (plan.HeadGroupCount() == 1) {
+                ProcessG1TailSeedAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum);
+            } else {
+                ProcessGroupedTailSeedAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum);
+            }
+            return;
+        }
+        const uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
+        const uint64_t taskNum = NT_ * HV_;
+        for (uint64_t task = coreIdx; task < taskNum; task += coreNum) {
+            uint64_t seq = 0;
+            uint64_t b = 0;
+            uint64_t h = 0;
+            uint64_t hv = 0;
+            uint64_t chunkIdx = 0;
+            uint64_t start = 0;
+            uint64_t end = 0;
+            if (!ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end)) {
+                continue;
+            }
+            const uint64_t curT = end - start;
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                continue;
+            }
+            (void)seq;
+            (void)h;
+            (void)chunkIdx;
+            CopyTailSeedRows(b, hv, start, curT, subBlockIdx, subBlockNum);
+        }
+    }
+
+    __aicore__ inline void ProcessCompactTailSnapshotAicHeadWindow(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBase,
+        uint32_t headCnt, uint64_t curT)
+    {
+        // 每个 runtime head 都在同一个 flag 上发布一次 ready；流水深度
+        // 由 flag 计数控制，而不是由模板展开控制。
+        for (uint32_t lane = 0; lane < headCnt; ++lane) {
+            ComputePostWuCube(
+                chunk.b, headBase + lane, chunk.chunkIdx, chunk.start, curT);
+            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(
+                syncDoneFlag_);
+        }
+    }
+
+    __aicore__ inline void ProcessCompactTailSnapshotAicHeadRange(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBegin,
+        uint64_t headEnd, uint64_t curT)
+    {
+        for (uint64_t headBase = headBegin; headBase < headEnd;) {
+            const uint32_t headCnt = KdaForward::HeadWindowHeadCount(
+                static_cast<uint32_t>(headBase), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_));
+            if (headCnt == 0 || headCnt > headEnd - headBase) {
+                return;
+            }
+            ProcessCompactTailSnapshotAicHeadWindow(
+                chunk, headBase, headCnt, curT);
+            headBase += headCnt;
+        }
+    }
+
+    __aicore__ inline void ProcessG1TailSnapshotAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor)
+    {
+        for (uint64_t ordinal = cursor.tailBegin;
+             ordinal < cursor.tailEnd; ++ordinal) {
+            CompactOwnedChunkDesc chunk{};
+            if (!LoadCompactTailChunk(plan, ordinal, chunk)) {
+                continue;
+            }
+            const uint64_t curT = chunk.end - chunk.start;
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                continue;
+            }
+            ProcessCompactTailSnapshotAicHeadRange(chunk, 0, HV_, curT);
+        }
+    }
+
+    __aicore__ inline void ProcessGroupedTailSnapshotAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor)
+    {
+        CompactGroupedTailTaskIterator iterator{};
+        for (uint64_t task = cursor.tailBegin;
+             task < cursor.tailEnd; ++task) {
+            CompactOwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (!LoadCompactGroupedTailTask(
+                    plan, task, iterator, chunk, headBegin, headEnd)) {
+                continue;
+            }
+            const uint64_t curT = chunk.end - chunk.start;
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                continue;
+            }
+            ProcessCompactTailSnapshotAicHeadRange(
+                chunk, headBegin, headEnd, curT);
+        }
+    }
+
+    __aicore__ inline void ProcessVarlenTailAic()
+    {
+        if constexpr (IsSameType<T, float>::value) {
+            return;
+        }
+        if (!isVarLen_) {
+            return;
+        }
+        KdaForward::CompactSequencePlanView plan(compactPlanAddr_);
+        if (plan.IsValid()) {
+            KdaForward::ChunkCoreCursor cursor{};
+            if (!plan.LoadChunkCoreCursor(
+                    static_cast<uint32_t>(GetBlockIdx()), cursor)) {
+                return;
+            }
+            if (plan.HeadGroupCount() == 1) {
+                ProcessG1TailSnapshotAicPhase(plan, cursor);
+            } else {
+                ProcessGroupedTailSnapshotAicPhase(plan, cursor);
+            }
+            return;
+        }
+        const uint64_t taskNum = NT_ * HV_;
+        const uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
+        for (uint64_t task = GetBlockIdx(); task < taskNum; task += coreNum) {
+            uint64_t seq = 0;
+            uint64_t b = 0;
+            uint64_t h = 0;
+            uint64_t hv = 0;
+            uint64_t chunkIdx = 0;
+            uint64_t start = 0;
+            uint64_t end = 0;
+            if (!ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end)) {
+                continue;
+            }
+            const uint64_t curT = end - start;
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                continue;
+            }
+            (void)seq;
+            (void)h;
+            ComputePostWuCube(b, hv, chunkIdx, start, curT);
+            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(syncDoneFlag_);
+        }
+    }
+
+    __aicore__ inline void ProcessCompactTailSnapshotAivHeadWindow(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBase,
+        uint32_t headCnt, uint64_t curT, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        const uint64_t headRatio = HV_ / H_;
+        uint64_t residentQHead = H_;
+        residentRawKActive_ = false;
+        for (uint32_t lane = 0; lane < headCnt; ++lane) {
+            const uint64_t hv = headBase + lane;
+            const uint64_t h = hv / headRatio;
+            if (UseRawKResident() && h != residentQHead) {
+                LoadResidentRawK(
+                    chunk.b, h, chunk.start, curT,
+                    subBlockIdx, subBlockNum);
+                residentQHead = h;
+            }
+            Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(
+                syncDoneFlag_);
+            CopyScratchWAndFinalizeKg(
+                chunk.b, h, hv, chunk.chunkIdx, chunk.start, curT,
+                subBlockIdx, subBlockNum, true);
+        }
+        residentRawKActive_ = false;
+    }
+
+    __aicore__ inline void ProcessCompactTailSnapshotAivHeadRange(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBegin,
+        uint64_t headEnd, uint64_t curT, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        for (uint64_t headBase = headBegin; headBase < headEnd;) {
+            const uint32_t headCnt = KdaForward::HeadWindowHeadCount(
+                static_cast<uint32_t>(headBase), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_));
+            if (headCnt == 0 || headCnt > headEnd - headBase) {
+                return;
+            }
+            ProcessCompactTailSnapshotAivHeadWindow(
+                chunk, headBase, headCnt, curT, subBlockIdx, subBlockNum);
+            headBase += headCnt;
+        }
+    }
+
+    __aicore__ inline void ProcessG1TailSnapshotAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        for (uint64_t ordinal = cursor.tailBegin;
+             ordinal < cursor.tailEnd; ++ordinal) {
+            CompactOwnedChunkDesc chunk{};
+            if (!LoadCompactTailChunk(plan, ordinal, chunk)) {
+                continue;
+            }
+            const uint64_t curT = chunk.end - chunk.start;
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                continue;
+            }
+            ProcessCompactTailSnapshotAivHeadRange(
+                chunk, 0, HV_, curT, subBlockIdx, subBlockNum);
+        }
+    }
+
+    __aicore__ inline void ProcessGroupedTailSnapshotAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum)
+    {
+        CompactGroupedTailTaskIterator iterator{};
+        for (uint64_t task = cursor.tailBegin;
+             task < cursor.tailEnd; ++task) {
+            CompactOwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (!LoadCompactGroupedTailTask(
+                    plan, task, iterator, chunk, headBegin, headEnd)) {
+                continue;
+            }
+            const uint64_t curT = chunk.end - chunk.start;
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                continue;
+            }
+            ProcessCompactTailSnapshotAivHeadRange(
+                chunk, headBegin, headEnd, curT,
+                subBlockIdx, subBlockNum);
+        }
+    }
+
+    __aicore__ inline void ProcessVarlenTailAiv()
+    {
+        if constexpr (IsSameType<T, float>::value) {
+            return;
+        }
+        if (!isVarLen_) {
+            return;
+        }
+        const uint64_t subBlockNum = static_cast<uint64_t>(GetSubBlockNum());
+        if (subBlockNum == 0) {
+            return;
+        }
+        const uint64_t subBlockIdx = static_cast<uint64_t>(GetSubBlockIdx());
+        const uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
+        KdaForward::CompactSequencePlanView plan(compactPlanAddr_);
+        if (plan.IsValid()) {
+            KdaForward::ChunkCoreCursor cursor{};
+            if (!plan.LoadChunkCoreCursor(
+                    static_cast<uint32_t>(coreIdx), cursor)) {
+                return;
+            }
+            if (plan.HeadGroupCount() == 1) {
+                ProcessG1TailSnapshotAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum);
+            } else {
+                ProcessGroupedTailSnapshotAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum);
+            }
+            return;
+        }
+        const uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
+        const uint64_t taskNum = NT_ * HV_;
+        for (uint64_t task = coreIdx; task < taskNum; task += coreNum) {
+            uint64_t seq = 0;
+            uint64_t b = 0;
+            uint64_t h = 0;
+            uint64_t hv = 0;
+            uint64_t chunkIdx = 0;
+            uint64_t start = 0;
+            uint64_t end = 0;
+            if (!ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end)) {
+                continue;
+            }
+            const uint64_t curT = end - start;
+            if (!UseVarlenTailCubeSnapshot(curT)) {
+                continue;
+            }
+            (void)seq;
+            Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(syncDoneFlag_);
+            CopyScratchWAndFinalizeKg(
+                b, h, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum, true);
+        }
+    }
+
     __aicore__ inline void ProcessPostAic()
     {
         if constexpr (IsSameType<T, float>::value) {
+            return;
+        }
+        KdaForward::CompactSequencePlanView plan(compactPlanAddr_);
+        if (plan.IsValid()) {
+            KdaForward::ChunkCoreCursor cursor{};
+            if (!plan.LoadChunkCoreCursor(
+                    static_cast<uint32_t>(GetBlockIdx()), cursor)) {
+                return;
+            }
+            if (plan.HeadGroupCount() == 1) {
+                ProcessG1FullPostAicPhase(plan, cursor);
+                ProcessG1TailPostAicPhase(plan, cursor);
+            } else {
+                ProcessGroupedFullPostAicPhase(plan, cursor);
+                ProcessGroupedTailPostAicPhase(plan, cursor);
+            }
             return;
         }
         uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
@@ -908,6 +1948,7 @@ private:
     TBuf<TPosition::VECCALC> exp2Buf_;
     TBuf<TPosition::VECCALC> vecBuf_;
     TBuf<TPosition::VECCALC> gateWritebackBuf_;
+    bool residentRawKActive_ = false;
     TEventID mte2ToVEvent_ = 0;
     TEventID vToMte2Event_ = 0;
     TEventID vToMte3Event_ = 0;
@@ -919,8 +1960,8 @@ private:
                                                                                   KDA_SCORE_READY_FLAG1};
     Catlass::Arch::CrossCoreFlagWithReverse<KDA_SCORE_QUEUE_DEPTH> scoreDoneFlag_{KDA_SCORE_DONE_FLAG0,
                                                                                  KDA_SCORE_DONE_FLAG1};
-    // Score production is fully drained before solve starts, so the solve handshake can safely reuse
-    // the existing score flags without consuming additional hardware flag IDs.
+    // Solve 开始前 score 生产已完全排空，因此 solve 握手可以安全复用现有
+    // score flag，不额外消耗硬件 flag ID。
     Catlass::Arch::CrossCoreFlagWithReverse<KDA_SYNC_REVERSE_DEPTH> syncReadyFlag_{KDA_SCORE_READY_FLAG0,
                                                                                   KDA_SCORE_READY_FLAG1};
     Catlass::Arch::CrossCoreFlagWithReverse<KDA_SYNC_REVERSE_DEPTH> syncDoneFlag_{KDA_SCORE_DONE_FLAG0,
@@ -941,6 +1982,7 @@ private:
     bool inputSequenceMajor_ = false;
     uint64_t usedCoreNum_ = 1;
     uint64_t solveCoreIdx_ = 0;
+    GM_ADDR compactPlanAddr_ = nullptr;
     __gm__ int64_t *chunkIndicesAddr_ = nullptr;
     __gm__ int64_t *cuSeqlensAddr_ = nullptr;
 };
@@ -949,7 +1991,8 @@ private:
 template <typename T, typename GK_T, typename BETA_T, typename TilingData>
 __aicore__ inline void RunChunkKdaPostWu(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR initialState,
-    GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR wSeed, GM_ADDR akk, GM_ADDR uSeed,
+    GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR compactPlan,
+    GM_ADDR wSeed, GM_ADDR akk, GM_ADDR uSeed,
     GM_ADDR w, GM_ADDR u, GM_ADDR kg, GM_ADDR vNew, GM_ADDR userWorkspace,
     const TilingData &tiling, TPipe &pipe)
 {
@@ -959,6 +2002,7 @@ __aicore__ inline void RunChunkKdaPostWu(
         op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
                 wSeed, akk, uSeed, nullptr, userWorkspace, userWorkspace, userWorkspace, akk, w, u,
                 userWorkspace, kg, vNew, postScratch, postScratch, tiling, &pipe, false);
+        op.SetCompactPlan(compactPlan);
         op.ProcessAic();
     }
     if ASCEND_IS_AIV {
@@ -966,7 +2010,62 @@ __aicore__ inline void RunChunkKdaPostWu(
         op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
                 wSeed, akk, uSeed, nullptr, userWorkspace, userWorkspace, userWorkspace, akk, w, u,
                 userWorkspace, kg, vNew, postScratch, postScratch, tiling, &pipe);
+        op.SetCompactPlan(compactPlan);
         op.ProcessAiv();
+    }
+}
+
+template <typename T, typename GK_T, typename BETA_T, typename TilingData>
+__aicore__ inline void RunChunkKdaPostWuTailSeedCopy(
+    GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR compactPlan,
+    GM_ADDR wSeed, GM_ADDR userWorkspace,
+    const TilingData &tiling, TPipe &pipe)
+{
+    if ASCEND_IS_AIV {
+        const uint64_t uSeedBytes = tiling.seqlen * tiling.vHeadNum *
+            tiling.vHeadDim * sizeof(T);
+        GM_ADDR scratchW = userWorkspace + tiling.outputScratchOffset + uSeedBytes;
+        GM_ADDR postScratch = userWorkspace + tiling.postWuScratchOffset;
+        ChunkKdaFwdPostWuKernel<T, GK_T, BETA_T> op;
+        op.Init(wSeed, wSeed, userWorkspace, userWorkspace, userWorkspace,
+                nullptr, cuSeqlens, chunkIndices, wSeed, userWorkspace,
+                userWorkspace, nullptr, userWorkspace, userWorkspace, userWorkspace,
+                userWorkspace, scratchW, userWorkspace, userWorkspace, userWorkspace,
+                userWorkspace, postScratch, postScratch, tiling, &pipe);
+        op.SetCompactPlan(compactPlan);
+        op.ProcessTailSeedCopyAiv();
+    }
+}
+
+template <typename T, typename GK_T, typename BETA_T, typename TilingData>
+__aicore__ inline void RunChunkKdaPostWuTail(
+    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta,
+    GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR compactPlan,
+    GM_ADDR akk, GM_ADDR uSeed, GM_ADDR w, GM_ADDR u,
+    GM_ADDR kg, GM_ADDR userWorkspace, const TilingData &tiling, TPipe &pipe)
+{
+    const uint64_t uSeedBytes = tiling.seqlen * tiling.vHeadNum *
+        tiling.vHeadDim * sizeof(T);
+    GM_ADDR scratchW = userWorkspace + tiling.outputScratchOffset + uSeedBytes;
+    GM_ADDR postScratch = userWorkspace + tiling.postWuScratchOffset;
+    // Tail Cube 先读取不可变快照，再写入公开的 W 张量。
+    if ASCEND_IS_AIC {
+        ChunkKdaFwdPostWuKernel<T, GK_T, BETA_T> op;
+        op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
+                scratchW, akk, uSeed, nullptr, userWorkspace, userWorkspace,
+                userWorkspace, akk, w, u, userWorkspace, kg, userWorkspace,
+                postScratch, postScratch, tiling, &pipe, false);
+        op.SetCompactPlan(compactPlan);
+        op.ProcessTailAic();
+    }
+    if ASCEND_IS_AIV {
+        ChunkKdaFwdPostWuKernel<T, GK_T, BETA_T> op;
+        op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
+                scratchW, akk, uSeed, nullptr, userWorkspace, userWorkspace,
+                userWorkspace, akk, w, u, userWorkspace, kg, userWorkspace,
+                postScratch, postScratch, tiling, &pipe);
+        op.SetCompactPlan(compactPlan);
+        op.ProcessTailAiv();
     }
 }
 

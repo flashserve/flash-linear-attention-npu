@@ -21,9 +21,11 @@
 #include "catlass/gemm/dispatch_policy.hpp"
 #include "catlass/gemm/tile/tile_copy.hpp"
 #include "catlass/gemm_coord.hpp"
+#include "kernel_utils/block/block_mmad_pingpong_tla.hpp"
 #include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
 #include "catlass/layout/layout.hpp"
 #include "kernel_operator.h"
+#include "chunk_kda_fwd_plan.h"
 #include "chunk_kda_fwd_varlen.h"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
@@ -63,12 +65,13 @@ constexpr uint32_t KDA_SELECT_AQK_MASK_BYTE_OFFSET = 120 * 1024;
 constexpr uint32_t KDA_SELECT_AKK_MASK_BYTE_OFFSET = KDA_SELECT_AQK_MASK_BYTE_OFFSET + KDA_SELECT_MASK_BYTES;
 constexpr uint32_t KDA_SELECT_ZERO_BYTE_OFFSET = KDA_SELECT_AKK_MASK_BYTE_OFFSET + KDA_SELECT_MASK_BYTES;
 constexpr uint32_t KDA_SELECT_ZERO_FLOAT_OFFSET = KDA_SELECT_ZERO_BYTE_OFFSET / sizeof(float);
-constexpr uint8_t KDA_SCORE_DONE_FLAG0 = 2;
-constexpr uint8_t KDA_SCORE_DONE_FLAG1 = 3;
-constexpr uint8_t KDA_SCORE_READY_FLAG0 = 4;
-constexpr uint8_t KDA_SCORE_READY_FLAG1 = 5;
 constexpr uint32_t KDA_SCORE_QUEUE_DEPTH = 2;
-constexpr uint32_t KDA_SYNC_REVERSE_DEPTH = 1;
+// Finalize 每完成一个 head 就发布一个 descriptor，并用 mode2 completion
+// 在复用前回收槽位；这里是 descriptor 级双缓冲，不是 dHU 的整组
+// 4-head task-window 双 bank workspace。
+constexpr uint32_t KDA_OUTPUT_SLOT_DEPTH = 2;
+constexpr uint8_t KDA_OUTPUT_DONE_FLAG = 2;
+constexpr uint8_t KDA_OUTPUT_COMPLETION_FLAG = 4;
 constexpr uint32_t KDA_SCORE_SCRATCH_PLANES = 3;
 constexpr uint32_t KDA_SCORE_SCRATCH_QG = 0;
 constexpr uint32_t KDA_SCORE_SCRATCH_W = 1;
@@ -77,19 +80,10 @@ constexpr uint64_t KDA_WORKSPACE_ALIGN = 512;
 constexpr uint32_t KDA_GATE_TILE_ROWS = 32;
 
 using KdaArchTag = Catlass::Arch::AtlasA2;
-using KdaDispatchPolicy = Catlass::Gemm::MmadPingpong<KdaArchTag, true, false>;
-using KdaScoreDispatchPolicy =
-    Catlass::Gemm::MmadPingpongTlaMulti<KdaArchTag, true, false, 1, true, 2, 1, 2, 2>;
-static_assert(KdaScoreDispatchPolicy::ENABLE_L1_RESIDENT,
-              "KDA Aqk/Akk score MMAD must keep the shared right matrix resident in L1");
-static_assert(KdaScoreDispatchPolicy::L1B_STAGES == 1,
-              "KDA Aqk/Akk score MMAD needs one L1 B slot so the second MMAD reuses it");
-using KdaSolveDispatchPolicy = Catlass::Gemm::MmadPingpong<KdaArchTag, true, false>;
-static_assert(!KdaSolveDispatchPolicy::USE_HF32_MODE, "KDA triangular solve must use IEEE FP32 Cube mode");
+// Cube 与 Fixpipe 通过两个 L0C 槽并行，事件只负责槽位所有权交接。
+using KdaDispatchPolicy = Common::MmadPingpong<KdaArchTag, false, false, 2>;
 using KdaL1TileShape = tla::Shape<KdaInt64, KdaInt128, KdaInt128>;
 using KdaL0TileShape = KdaL1TileShape;
-using KdaSolveL1TileShape = tla::Shape<KdaInt64, KdaInt64, KdaInt64>;
-using KdaSolveL0TileShape = KdaSolveL1TileShape;
 
 __aicore__ inline uint32_t FloatToBits(float value)
 {
@@ -207,15 +201,19 @@ public:
         hasInitial_ = tiling.hasInitialState;
         isVarLen_ = tiling.isVarLen;
         usedCoreNum_ = tiling.outputUsedCoreNum;
-        const uint64_t outputElements = B_ * HV_ * T_ * V_;
-        o_.SetGlobalBuffer((__gm__ OUT_T *)workspace);
-        u_.SetGlobalBuffer((__gm__ OUT_T *)workspace + outputElements);
         if ASCEND_IS_AIV {
             uint64_t subBlockNum = static_cast<uint64_t>(GetSubBlockNum());
             solveCoreIdx_ = subBlockNum == 0 ? 0 : static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
         } else {
             solveCoreIdx_ = static_cast<uint64_t>(GetBlockIdx());
         }
+        outputTileElements_ = BT_ * V_;
+        const uint64_t coreScratchOffset =
+            2 * KDA_OUTPUT_SLOT_DEPTH * solveCoreIdx_ * outputTileElements_;
+        o_.SetGlobalBuffer((__gm__ OUT_T *)workspace + coreScratchOffset);
+        u_.SetGlobalBuffer(
+            (__gm__ OUT_T *)workspace + coreScratchOffset +
+            outputTileElements_);
         if (pipe_ != nullptr && initVecBuffers) {
             pipe_->InitBuffer(exp2Buf_, EXP2_UB_BYTES);
             pipe_->InitBuffer(vecBuf_, KDA_VEC_ARENA_ELEMENTS * sizeof(float));
@@ -236,6 +234,11 @@ public:
     __aicore__ inline void ProcessAic()
     {
         ProcessOutAic();
+    }
+
+    __aicore__ inline void SetCompactPlan(GM_ADDR compactPlan)
+    {
+        compactPlanAddr_ = compactPlan;
     }
 
 private:
@@ -277,6 +280,12 @@ private:
     __aicore__ inline uint64_t OutputOffset(uint64_t b, uint64_t hv, uint64_t t, uint64_t d) const
     {
         return ((b * T_ + t) * HV_ + hv) * V_ + d;
+    }
+
+    __aicore__ inline uint64_t OutputScratchOffset(
+        uint64_t row, uint64_t d) const
+    {
+        return activeOutputSlot_ * 2 * outputTileElements_ + row * V_ + d;
     }
 
     __aicore__ inline uint64_t BetaOffset(uint64_t b, uint64_t hv, uint64_t t) const
@@ -540,7 +549,7 @@ private:
         using LayoutTagC = Catlass::layout::RowMajor;
         using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KdaArchTag, ElementA, LayoutTagA, ElementB,
                                                                 LayoutTagB, ElementC, LayoutTagC>;
-        using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, KdaL1TileShape, KdaL0TileShape,
+        using BlockMmad = Common::BlockMmadTla<KdaDispatchPolicy, KdaL1TileShape, KdaL0TileShape,
                                                               ElementA, ElementB, ElementC, void, TileCopy>;
 
         Catlass::Arch::Resource<KdaArchTag> resource;
@@ -558,13 +567,13 @@ private:
                 Catlass::GemmCoord shapeQH{curM, curN, static_cast<uint32_t>(K_)};
                 auto tensorQ = tla::MakeTensor(preparedQG_[KVOffset(b, hv, start + mOffset, 0, K_)], layoutQ,
                                                Catlass::Arch::PositionGM{});
-                auto tensorO = tla::MakeTensor(o_[KVOffset(b, hv, start + mOffset, nOffset, V_)], layoutO,
+                auto tensorO = tla::MakeTensor(o_[OutputScratchOffset(mOffset, nOffset)], layoutO,
                                                Catlass::Arch::PositionGM{});
                 auto blockQ = GetTile(tensorQ, tla::MakeCoord(0, 0), tla::MakeShape(shapeQH.m(), shapeQH.k()));
                 auto blockH = GetTile(tensorH, tla::MakeCoord(0, 0), tla::MakeShape(shapeQH.k(), shapeQH.n()));
                 auto blockO = GetTile(tensorO, tla::MakeCoord(0, 0), tla::MakeShape(shapeQH.m(), shapeQH.n()));
                 blockMmad(blockQ, blockH, blockO, shapeQH);
-                PipeBarrier<PIPE_ALL>();
+                // 输出由下一阶段通过 MTE2 读取，只等待 Fixpipe 写回完成。
             }
         }
 
@@ -579,13 +588,13 @@ private:
                 Catlass::GemmCoord shapeAV{curM, curN, static_cast<uint32_t>(curT)};
                 auto tensorAqk = tla::MakeTensor(preparedAqk_[AOffset(b, hv, start + mOffset, 0)], layoutAqk,
                                                  Catlass::Arch::PositionGM{});
-                auto tensorLocal = tla::MakeTensor(u_[KVOffset(b, hv, start + mOffset, nOffset, V_)], layoutO,
+                auto tensorLocal = tla::MakeTensor(u_[OutputScratchOffset(mOffset, nOffset)], layoutO,
                                                    Catlass::Arch::PositionGM{});
                 auto blockAqk = GetTile(tensorAqk, tla::MakeCoord(0, 0), tla::MakeShape(shapeAV.m(), shapeAV.k()));
                 auto blockVNew = GetTile(tensorVNew, tla::MakeCoord(0, 0), tla::MakeShape(shapeAV.k(), shapeAV.n()));
                 auto blockLocal = GetTile(tensorLocal, tla::MakeCoord(0, 0), tla::MakeShape(shapeAV.m(), shapeAV.n()));
                 blockMmad(blockAqk, blockVNew, blockLocal, shapeAV);
-                PipeBarrier<PIPE_ALL>();
+                // local 项写回完成后才允许 AIV 消费当前输出槽。
             }
         }
     }
@@ -624,8 +633,8 @@ private:
             LocalTensor<float> outLocal = arena[2 * elems];
             LocalTensor<T> outTyped = gateWritebackBuf_.Get<T>();
 
-            CopyVectorIn(stateLocal, o_, KVOffset(b, hv, ti, 0, V_), elems);
-            CopyVectorIn(localLocal, u_, KVOffset(b, hv, ti, 0, V_), elems);
+            CopyVectorIn(stateLocal, o_, OutputScratchOffset(tileRow, 0), elems);
+            CopyVectorIn(localLocal, u_, OutputScratchOffset(tileRow, 0), elems);
             SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
             WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
             Add(outLocal, stateLocal, localLocal, static_cast<uint32_t>(elems));
@@ -670,8 +679,252 @@ private:
         return start < end;
     }
 
-    __aicore__ inline void ProcessChunkOutAiv(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
-                                              uint64_t end, uint64_t subBlockIdx, uint64_t subBlockNum)
+    struct CompactOwnedChunkDesc {
+        uint64_t b = 0;
+        uint64_t chunkIdx = 0;
+        uint64_t start = 0;
+        uint64_t end = 0;
+    };
+
+    struct OutputProducerState {
+        uint64_t descriptorIndex = 0;
+        uint32_t outstandingCount = 0;
+    };
+
+    struct OutputConsumerState {
+        uint64_t descriptorIndex = 0;
+    };
+
+    __aicore__ inline void WaitOutputCompletion()
+    {
+        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(outputCompletionFlag_.id);
+    }
+
+    __aicore__ inline void SetOutputDone()
+    {
+        Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(outputDoneFlag_);
+    }
+
+    __aicore__ inline void WaitOutputDone()
+    {
+        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(outputDoneFlag_.id);
+    }
+
+    __aicore__ inline void SetOutputCompletion()
+    {
+        Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(outputCompletionFlag_);
+    }
+
+    __aicore__ inline void AcquireOutputProducerSlot(
+        OutputProducerState &state)
+    {
+        const uint32_t slot = static_cast<uint32_t>(
+            state.descriptorIndex % KDA_OUTPUT_SLOT_DEPTH);
+        // 两个真实输出槽共享同一条 completion 计数流。未完成描述符达到
+        // 队列深度后，先消费最早的一份聚合 credit，再复用对应物理槽。
+        if (state.outstandingCount >= KDA_OUTPUT_SLOT_DEPTH) {
+            WaitOutputCompletion();
+            --state.outstandingCount;
+        }
+        activeOutputSlot_ = slot;
+    }
+
+    __aicore__ inline void PublishOutputProducerSlot(OutputProducerState &state)
+    {
+        SetOutputDone();
+        ++state.outstandingCount;
+        ++state.descriptorIndex;
+    }
+
+    __aicore__ inline void DrainOutputProducerState(
+        OutputProducerState &state)
+    {
+        while (state.outstandingCount != 0) {
+            WaitOutputCompletion();
+            --state.outstandingCount;
+        }
+        state.descriptorIndex = 0;
+        activeOutputSlot_ = 0;
+    }
+
+    __aicore__ inline void AcquireOutputConsumerSlot(
+        OutputConsumerState &state)
+    {
+        const uint32_t slot = static_cast<uint32_t>(
+            state.descriptorIndex % KDA_OUTPUT_SLOT_DEPTH);
+        activeOutputSlot_ = slot;
+        WaitOutputDone();
+    }
+
+    __aicore__ inline void ReleaseOutputConsumerSlot(OutputConsumerState &state)
+    {
+        // 两个 AIV 对每个真实 head 各回传一次同号 mode2 token；AIC 只在
+        // 两份都到达后得到一份 completion credit。
+        SetOutputCompletion();
+        ++state.descriptorIndex;
+    }
+
+    __aicore__ inline void ResetOutputConsumerState(
+        OutputConsumerState &state)
+    {
+        state.descriptorIndex = 0;
+        activeOutputSlot_ = 0;
+    }
+
+    struct CompactFullChunkIterator {
+        uint64_t sequence = 0;
+        uint64_t localChunk = 0;
+        uint64_t sequenceStart = 0;
+        uint64_t fullChunkCount = 0;
+        bool sequenceLoaded = false;
+    };
+
+    struct CompactGroupedFullTaskIterator {
+        CompactFullChunkIterator chunks{};
+        CompactOwnedChunkDesc chunk{};
+        uint64_t loadedChunkOrdinal = 0;
+        bool chunkLoaded = false;
+    };
+
+    struct CompactGroupedTailTaskIterator {
+        CompactOwnedChunkDesc chunk{};
+        uint64_t loadedChunkOrdinal = 0;
+        bool chunkLoaded = false;
+    };
+
+    __aicore__ inline bool LoadCompactFullChunk(
+        const KdaForward::CompactSequencePlanView &plan,
+        CompactFullChunkIterator &iterator, CompactOwnedChunkDesc &chunk)
+    {
+        while (iterator.sequence < plan.SequenceCount()) {
+            if (!iterator.sequenceLoaded) {
+                uint64_t sequenceEnd = T_;
+                iterator.sequenceStart = 0;
+                if (isVarLen_) {
+                    iterator.sequenceStart = static_cast<uint64_t>(
+                        cuSeqlensAddr_[iterator.sequence]);
+                    sequenceEnd = static_cast<uint64_t>(
+                        cuSeqlensAddr_[iterator.sequence + 1]);
+                }
+                iterator.fullChunkCount =
+                    (sequenceEnd - iterator.sequenceStart) / BT_;
+                iterator.sequenceLoaded = true;
+            }
+            if (iterator.localChunk < iterator.fullChunkCount) {
+                chunk.b = isVarLen_ ? 0 : iterator.sequence;
+                chunk.chunkIdx = isVarLen_
+                    ? plan.SequenceChunkOffset(
+                          static_cast<uint32_t>(iterator.sequence)) +
+                          iterator.localChunk
+                    : iterator.localChunk;
+                chunk.start = iterator.sequenceStart +
+                    iterator.localChunk * BT_;
+                chunk.end = chunk.start + BT_;
+                ++iterator.localChunk;
+                if (iterator.localChunk == iterator.fullChunkCount) {
+                    ++iterator.sequence;
+                    iterator.localChunk = 0;
+                    iterator.sequenceLoaded = false;
+                }
+                return true;
+            }
+            ++iterator.sequence;
+            iterator.localChunk = 0;
+            iterator.sequenceLoaded = false;
+        }
+        return false;
+    }
+
+    __aicore__ inline bool LoadCompactTailChunk(
+        const KdaForward::CompactSequencePlanView &plan,
+        uint64_t tailOrdinal, CompactOwnedChunkDesc &chunk)
+    {
+        const uint64_t sequence = plan.TailedSequenceId(
+            static_cast<uint32_t>(tailOrdinal));
+        if (sequence >= plan.SequenceCount()) {
+            return false;
+        }
+        uint64_t sequenceStart = 0;
+        uint64_t sequenceEnd = T_;
+        if (isVarLen_) {
+            sequenceStart = static_cast<uint64_t>(cuSeqlensAddr_[sequence]);
+            sequenceEnd = static_cast<uint64_t>(
+                cuSeqlensAddr_[sequence + 1]);
+        }
+        const uint64_t fullChunkCount =
+            (sequenceEnd - sequenceStart) / BT_;
+        chunk.b = isVarLen_ ? 0 : sequence;
+        chunk.chunkIdx = isVarLen_
+            ? plan.SequenceChunkOffset(static_cast<uint32_t>(sequence)) +
+                  fullChunkCount
+            : fullChunkCount;
+        chunk.start = sequenceStart + fullChunkCount * BT_;
+        chunk.end = sequenceEnd;
+        return chunk.start < chunk.end;
+    }
+
+    __aicore__ inline bool LoadCompactGroupedFullTask(
+        const KdaForward::CompactSequencePlanView &plan, uint64_t task,
+        CompactGroupedFullTaskIterator &iterator,
+        CompactOwnedChunkDesc &chunk, uint64_t &headBegin,
+        uint64_t &headEnd)
+    {
+        uint32_t chunkOrdinal = 0;
+        uint32_t begin = 0;
+        uint32_t end = 0;
+        if (!plan.DecodeChunkHeadGroupTask(
+                static_cast<uint32_t>(task), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_),
+                chunkOrdinal, begin, end)) {
+            return false;
+        }
+        if (!iterator.chunkLoaded ||
+            iterator.loadedChunkOrdinal != chunkOrdinal) {
+            if (!LoadCompactFullChunk(plan, iterator.chunks,
+                                      iterator.chunk)) {
+                return false;
+            }
+            iterator.loadedChunkOrdinal = chunkOrdinal;
+            iterator.chunkLoaded = true;
+        }
+        chunk = iterator.chunk;
+        headBegin = begin;
+        headEnd = end;
+        return true;
+    }
+
+    __aicore__ inline bool LoadCompactGroupedTailTask(
+        const KdaForward::CompactSequencePlanView &plan, uint64_t task,
+        CompactGroupedTailTaskIterator &iterator,
+        CompactOwnedChunkDesc &chunk, uint64_t &headBegin,
+        uint64_t &headEnd)
+    {
+        uint32_t chunkOrdinal = 0;
+        uint32_t begin = 0;
+        uint32_t end = 0;
+        if (!plan.DecodeChunkHeadGroupTask(
+                static_cast<uint32_t>(task), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_),
+                chunkOrdinal, begin, end)) {
+            return false;
+        }
+        if (!iterator.chunkLoaded ||
+            iterator.loadedChunkOrdinal != chunkOrdinal) {
+            if (!LoadCompactTailChunk(plan, chunkOrdinal, iterator.chunk)) {
+                return false;
+            }
+            iterator.loadedChunkOrdinal = chunkOrdinal;
+            iterator.chunkLoaded = true;
+        }
+        chunk = iterator.chunk;
+        headBegin = begin;
+        headEnd = end;
+        return true;
+    }
+
+    __attribute__((noinline)) __aicore__ void ProcessChunkOutAiv(
+        uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start, uint64_t end, uint64_t subBlockIdx,
+        uint64_t subBlockNum, OutputConsumerState &consumerState)
     {
         uint64_t curT = end - start;
         if (curT == 0) {
@@ -680,19 +933,248 @@ private:
         if constexpr (IsSameType<T, float>::value) {
             return;
         }
-        Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(syncDoneFlag_);
+        AcquireOutputConsumerSlot(consumerState);
         FinalizeOutputRows(b, hv, start, curT, subBlockIdx, subBlockNum);
+        ReleaseOutputConsumerSlot(consumerState);
     }
 
-    __aicore__ inline void ProcessChunkOutAic(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
-                                             uint64_t end)
+    __attribute__((noinline)) __aicore__ void ProcessChunkOutAic(
+        uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start, uint64_t end,
+        OutputProducerState &producerState)
     {
         uint64_t curT = end - start;
         if (curT == 0) {
             return;
         }
+        AcquireOutputProducerSlot(producerState);
         ComputeOutputCube(b, hv, chunkIdx, start, curT);
-        Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(syncDoneFlag_);
+        PublishOutputProducerSlot(producerState);
+    }
+
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactOutAivHeadWindow(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBase,
+        uint32_t headCnt,
+        uint64_t subBlockIdx, uint64_t subBlockNum,
+        OutputConsumerState &consumerState)
+    {
+        uint64_t chunkEnd = chunk.start + BT_;
+        if constexpr (IS_TAIL) {
+            chunkEnd = chunk.end;
+        }
+        // producer/consumer 握手保留在 runtime 循环内，使共享信号量的
+        // 计数深度逐个覆盖窗口内的真实 head。
+        for (uint32_t lane = 0; lane < headCnt; ++lane) {
+            ProcessChunkOutAiv(
+                chunk.b, headBase + lane, chunk.chunkIdx,
+                chunk.start, chunkEnd, subBlockIdx, subBlockNum,
+                consumerState);
+        }
+    }
+
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactOutAivHeadRange(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBegin,
+        uint64_t headEnd, uint64_t subBlockIdx, uint64_t subBlockNum,
+        OutputConsumerState &consumerState)
+    {
+        for (uint64_t headBase = headBegin; headBase < headEnd;) {
+            const uint32_t headCnt = KdaForward::HeadWindowHeadCount(
+                static_cast<uint32_t>(headBase), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_));
+            if (headCnt == 0 || headCnt > headEnd - headBase) {
+                return;
+            }
+            ProcessCompactOutAivHeadWindow<IS_TAIL>(
+                chunk, headBase, headCnt, subBlockIdx, subBlockNum,
+                consumerState);
+            headBase += headCnt;
+        }
+    }
+
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactOutAicHeadWindow(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBase,
+        uint32_t headCnt,
+        OutputProducerState &producerState)
+    {
+        uint64_t chunkEnd = chunk.start + BT_;
+        if constexpr (IS_TAIL) {
+            chunkEnd = chunk.end;
+        }
+        for (uint32_t lane = 0; lane < headCnt; ++lane) {
+            ProcessChunkOutAic(
+                chunk.b, headBase + lane, chunk.chunkIdx,
+                chunk.start, chunkEnd, producerState);
+        }
+    }
+
+    template <bool IS_TAIL>
+    __aicore__ inline void ProcessCompactOutAicHeadRange(
+        const CompactOwnedChunkDesc &chunk, uint64_t headBegin,
+        uint64_t headEnd, OutputProducerState &producerState)
+    {
+        for (uint64_t headBase = headBegin; headBase < headEnd;) {
+            const uint32_t headCnt = KdaForward::HeadWindowHeadCount(
+                static_cast<uint32_t>(headBase), static_cast<uint32_t>(H_),
+                static_cast<uint32_t>(HV_));
+            if (headCnt == 0 || headCnt > headEnd - headBase) {
+                return;
+            }
+            ProcessCompactOutAicHeadWindow<IS_TAIL>(
+                chunk, headBase, headCnt, producerState);
+            headBase += headCnt;
+        }
+    }
+
+    __aicore__ inline void ProcessG1FullOutAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum, OutputConsumerState &consumerState)
+    {
+        CompactFullChunkIterator iterator{};
+        iterator.sequence = cursor.fullStartSequence;
+        iterator.localChunk = cursor.fullStartLocalChunk;
+        for (uint64_t ordinal = cursor.fullBegin;
+             ordinal < cursor.fullEnd; ++ordinal) {
+            CompactOwnedChunkDesc chunk{};
+            if (!LoadCompactFullChunk(plan, iterator, chunk)) {
+                continue;
+            }
+            ProcessCompactOutAivHeadRange<false>(
+                chunk, 0, HV_, subBlockIdx, subBlockNum, consumerState);
+        }
+    }
+
+    __aicore__ inline void ProcessG1TailOutAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum, OutputConsumerState &consumerState)
+    {
+        for (uint64_t ordinal = cursor.tailBegin;
+             ordinal < cursor.tailEnd; ++ordinal) {
+            CompactOwnedChunkDesc chunk{};
+            if (!LoadCompactTailChunk(plan, ordinal, chunk)) {
+                continue;
+            }
+            ProcessCompactOutAivHeadRange<true>(
+                chunk, 0, HV_, subBlockIdx, subBlockNum, consumerState);
+        }
+    }
+
+    __aicore__ inline void ProcessGroupedFullOutAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum, OutputConsumerState &consumerState)
+    {
+        CompactGroupedFullTaskIterator iterator{};
+        iterator.chunks.sequence = cursor.fullStartSequence;
+        iterator.chunks.localChunk = cursor.fullStartLocalChunk;
+        for (uint64_t task = cursor.fullBegin;
+             task < cursor.fullEnd; ++task) {
+            CompactOwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (LoadCompactGroupedFullTask(
+                    plan, task, iterator, chunk, headBegin, headEnd)) {
+                ProcessCompactOutAivHeadRange<false>(
+                    chunk, headBegin, headEnd, subBlockIdx, subBlockNum,
+                    consumerState);
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessGroupedTailOutAivPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor, uint64_t subBlockIdx,
+        uint64_t subBlockNum, OutputConsumerState &consumerState)
+    {
+        CompactGroupedTailTaskIterator iterator{};
+        for (uint64_t task = cursor.tailBegin;
+             task < cursor.tailEnd; ++task) {
+            CompactOwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (LoadCompactGroupedTailTask(
+                    plan, task, iterator, chunk, headBegin, headEnd)) {
+                ProcessCompactOutAivHeadRange<true>(
+                    chunk, headBegin, headEnd, subBlockIdx, subBlockNum,
+                    consumerState);
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessG1FullOutAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor,
+        OutputProducerState &producerState)
+    {
+        CompactFullChunkIterator iterator{};
+        iterator.sequence = cursor.fullStartSequence;
+        iterator.localChunk = cursor.fullStartLocalChunk;
+        for (uint64_t ordinal = cursor.fullBegin;
+             ordinal < cursor.fullEnd; ++ordinal) {
+            CompactOwnedChunkDesc chunk{};
+            if (LoadCompactFullChunk(plan, iterator, chunk)) {
+                ProcessCompactOutAicHeadRange<false>(
+                    chunk, 0, HV_, producerState);
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessG1TailOutAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor,
+        OutputProducerState &producerState)
+    {
+        for (uint64_t ordinal = cursor.tailBegin;
+             ordinal < cursor.tailEnd; ++ordinal) {
+            CompactOwnedChunkDesc chunk{};
+            if (LoadCompactTailChunk(plan, ordinal, chunk)) {
+                ProcessCompactOutAicHeadRange<true>(
+                    chunk, 0, HV_, producerState);
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessGroupedFullOutAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor,
+        OutputProducerState &producerState)
+    {
+        CompactGroupedFullTaskIterator iterator{};
+        iterator.chunks.sequence = cursor.fullStartSequence;
+        iterator.chunks.localChunk = cursor.fullStartLocalChunk;
+        for (uint64_t task = cursor.fullBegin;
+             task < cursor.fullEnd; ++task) {
+            CompactOwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (LoadCompactGroupedFullTask(
+                    plan, task, iterator, chunk, headBegin, headEnd)) {
+                ProcessCompactOutAicHeadRange<false>(
+                    chunk, headBegin, headEnd, producerState);
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessGroupedTailOutAicPhase(
+        const KdaForward::CompactSequencePlanView &plan,
+        const KdaForward::ChunkCoreCursor &cursor,
+        OutputProducerState &producerState)
+    {
+        CompactGroupedTailTaskIterator iterator{};
+        for (uint64_t task = cursor.tailBegin;
+             task < cursor.tailEnd; ++task) {
+            CompactOwnedChunkDesc chunk{};
+            uint64_t headBegin = 0;
+            uint64_t headEnd = 0;
+            if (LoadCompactGroupedTailTask(
+                    plan, task, iterator, chunk, headBegin, headEnd)) {
+                ProcessCompactOutAicHeadRange<true>(
+                    chunk, headBegin, headEnd, producerState);
+            }
+        }
     }
 
     __aicore__ inline void ProcessOutAiv()
@@ -705,9 +1187,35 @@ private:
             return;
         }
         uint64_t subBlockIdx = static_cast<uint64_t>(GetSubBlockIdx());
-        uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
         uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
+        KdaForward::CompactSequencePlanView plan(compactPlanAddr_);
+        if (plan.IsValid()) {
+            KdaForward::ChunkCoreCursor cursor{};
+            if (!plan.LoadChunkCoreCursor(
+                    static_cast<uint32_t>(coreIdx), cursor)) {
+                return;
+            }
+            OutputConsumerState fullState{};
+            OutputConsumerState tailState{};
+            if (plan.HeadGroupCount() == 1) {
+                ProcessG1FullOutAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum, fullState);
+                ResetOutputConsumerState(fullState);
+                ProcessG1TailOutAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum, tailState);
+            } else {
+                ProcessGroupedFullOutAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum, fullState);
+                ResetOutputConsumerState(fullState);
+                ProcessGroupedTailOutAivPhase(
+                    plan, cursor, subBlockIdx, subBlockNum, tailState);
+            }
+            ResetOutputConsumerState(tailState);
+            return;
+        }
+        uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
         uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
+        OutputConsumerState consumerState{};
         for (uint64_t task = coreIdx; task < taskNum; task += coreNum) {
             uint64_t seq = 0;
             uint64_t b = 0;
@@ -720,9 +1228,12 @@ private:
                 (void)seq;
                 (void)h;
                 (void)chunkIdx;
-                ProcessChunkOutAiv(b, hv, chunkIdx, start, end, subBlockIdx, subBlockNum);
+                ProcessChunkOutAiv(
+                    b, hv, chunkIdx, start, end, subBlockIdx, subBlockNum,
+                    consumerState);
             }
         }
+        ResetOutputConsumerState(consumerState);
     }
 
     __aicore__ inline void ProcessOutAic()
@@ -730,8 +1241,30 @@ private:
         if constexpr (IsSameType<T, float>::value) {
             return;
         }
+        KdaForward::CompactSequencePlanView plan(compactPlanAddr_);
+        if (plan.IsValid()) {
+            KdaForward::ChunkCoreCursor cursor{};
+            if (!plan.LoadChunkCoreCursor(
+                    static_cast<uint32_t>(GetBlockIdx()), cursor)) {
+                return;
+            }
+            OutputProducerState fullState{};
+            OutputProducerState tailState{};
+            if (plan.HeadGroupCount() == 1) {
+                ProcessG1FullOutAicPhase(plan, cursor, fullState);
+                DrainOutputProducerState(fullState);
+                ProcessG1TailOutAicPhase(plan, cursor, tailState);
+            } else {
+                ProcessGroupedFullOutAicPhase(plan, cursor, fullState);
+                DrainOutputProducerState(fullState);
+                ProcessGroupedTailOutAicPhase(plan, cursor, tailState);
+            }
+            DrainOutputProducerState(tailState);
+            return;
+        }
         uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
         uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
+        OutputProducerState producerState{};
         for (uint64_t task = GetBlockIdx(); task < taskNum; task += coreNum) {
             uint64_t seq = 0;
             uint64_t b = 0;
@@ -743,9 +1276,11 @@ private:
             if (ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end)) {
                 (void)seq;
                 (void)h;
-                ProcessChunkOutAic(b, hv, chunkIdx, start, end);
+                ProcessChunkOutAic(
+                    b, hv, chunkIdx, start, end, producerState);
             }
         }
+        DrainOutputProducerState(producerState);
     }
 
 private:
@@ -782,16 +1317,10 @@ private:
     TEventID mte2ToMte3Event_ = 0;
     TEventID mte3ToMte2Event_ = 0;
     bool vectorEventsAllocated_ = false;
-    Catlass::Arch::CrossCoreFlagWithReverse<KDA_SCORE_QUEUE_DEPTH> scoreReadyFlag_{KDA_SCORE_READY_FLAG0,
-                                                                                  KDA_SCORE_READY_FLAG1};
-    Catlass::Arch::CrossCoreFlagWithReverse<KDA_SCORE_QUEUE_DEPTH> scoreDoneFlag_{KDA_SCORE_DONE_FLAG0,
-                                                                                 KDA_SCORE_DONE_FLAG1};
-    // Score production is fully drained before solve starts, so the solve handshake can safely reuse
-    // the existing score flags without consuming additional hardware flag IDs.
-    Catlass::Arch::CrossCoreFlagWithReverse<KDA_SYNC_REVERSE_DEPTH> syncReadyFlag_{KDA_SCORE_READY_FLAG0,
-                                                                                  KDA_SCORE_READY_FLAG1};
-    Catlass::Arch::CrossCoreFlagWithReverse<KDA_SYNC_REVERSE_DEPTH> syncDoneFlag_{KDA_SCORE_DONE_FLAG0,
-                                                                                 KDA_SCORE_DONE_FLAG1};
+    // 两个物理输出槽按描述符序号轮转，但所有 head 复用同一组 mode2
+    // done/completion 信号；队列深度负责保护槽位复用。
+    Catlass::Arch::CrossCoreFlag outputDoneFlag_{KDA_OUTPUT_DONE_FLAG};
+    Catlass::Arch::CrossCoreFlag outputCompletionFlag_{KDA_OUTPUT_COMPLETION_FLAG};
     uint64_t B_ = 0;
     uint64_t N_ = 0;
     uint64_t H_ = 0;
@@ -807,6 +1336,9 @@ private:
     bool isAivOnly_ = false;
     uint64_t usedCoreNum_ = 1;
     uint64_t solveCoreIdx_ = 0;
+    uint64_t outputTileElements_ = 0;
+    uint64_t activeOutputSlot_ = 0;
+    GM_ADDR compactPlanAddr_ = nullptr;
     __gm__ int64_t *chunkIndicesAddr_ = nullptr;
     __gm__ int64_t *cuSeqlensAddr_ = nullptr;
 };
@@ -815,23 +1347,21 @@ private:
 template <typename T, typename GK_T, typename BETA_T, typename TilingData>
 __aicore__ inline void RunChunkKdaOutput(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR initialState,
-    GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR qgScaled, GM_ADDR aqk,
+    GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR compactPlan,
+    GM_ADDR qgScaled, GM_ADDR aqk,
     GM_ADDR propagatedVNew, GM_ADDR propagatedH, GM_ADDR o, GM_ADDR userWorkspace,
     const TilingData &tiling, TPipe &pipe)
 {
     GM_ADDR outputScratch = userWorkspace + tiling.outputScratchOffset;
-    uint64_t outputElements = static_cast<uint64_t>(tiling.batch) *
-                              static_cast<uint64_t>(tiling.vHeadNum) *
-                              static_cast<uint64_t>(tiling.seqlen) *
-                              static_cast<uint64_t>(tiling.vHeadDim);
     GM_ADDR stateScratch = outputScratch;
-    GM_ADDR localScratch = outputScratch + outputElements * sizeof(float);
+    GM_ADDR localScratch = outputScratch;
     if ASCEND_IS_AIC {
         ChunkKdaFwdFinalizeKernel<T, GK_T, BETA_T> op;
         op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
                 qgScaled, aqk, propagatedVNew, propagatedH, stateScratch, userWorkspace, aqk, userWorkspace,
                 userWorkspace, localScratch, userWorkspace, userWorkspace, o, propagatedH,
                 outputScratch, tiling, &pipe, false);
+        op.SetCompactPlan(compactPlan);
         op.ProcessAic();
     }
     if ASCEND_IS_AIV {
@@ -840,6 +1370,7 @@ __aicore__ inline void RunChunkKdaOutput(
                 qgScaled, aqk, propagatedVNew, propagatedH, stateScratch, userWorkspace, aqk, userWorkspace,
                 userWorkspace, localScratch, userWorkspace, userWorkspace, o, propagatedH,
                 outputScratch, tiling, &pipe);
+        op.SetCompactPlan(compactPlan);
         op.ProcessAiv();
     }
 }

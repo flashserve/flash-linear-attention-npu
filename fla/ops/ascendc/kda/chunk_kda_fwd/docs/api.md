@@ -98,6 +98,9 @@ aclnn L2 只描述张量与算法契约，不接收或解释 autograd 重计算�
 - `hOut`: dense 为 `[B,N_c,H_v,K,V]`，varlen 为 `[N_c,H_v,K,V]`；
   `stateVFirst=true` 时交换末两维。
 
+packed varlen 调用中，`cuSeqlensOptional` 定义的逻辑序列数 `N` 最多为 1024；rank-4
+varlen 输入还要求 `B=1`。该 1024 上限不适用于 `cuSeqlensOptional == nullptr` 的 dense batch。
+
 完整 Shape 表见 [KDA 模型符号表](../../README.md#model-shape-symbols)。
 
 ## Gate 语义
@@ -113,6 +116,11 @@ gk = chunk_local_cumsum(gate) / ln(2)
 ```
 
 `safeGate` 的 true/false 都支持；`useGateInKernel=false` 时仍支持 `safeGate=true` 的后续稳定计算路径。
+
+`useGateInKernel=true` 时，`aLogOptional` 与 `dtBiasOptional` 各自支持 FP32 或 BF16，
+二者 dtype 可以不同。Kernel 按实际 GM dtype 搬入并统一转换为 FP32 后执行上述公式；BF16
+语义是先按 BF16 量化，再以其 FP32 值参与计算。`initialStateOptional/finalStateOut/gkOut`
+不随 gate 参数 dtype 改变，始终为 FP32。`dtBiasOptional == nullptr` 时不会读取或推断其虚拟 dtype。
 
 ## 示例
 
