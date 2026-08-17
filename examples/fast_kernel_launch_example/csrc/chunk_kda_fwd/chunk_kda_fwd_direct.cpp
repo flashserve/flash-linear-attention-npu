@@ -21,20 +21,19 @@
 #include "torch_npu/csrc/core/npu/NPUStream.h"
 #include "torch_npu/csrc/framework/OpCommand.h"
 
-#include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling_processor.h"
 #define KDA_ENABLE_COMPACT_PLAN_VIEW 1
 #include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/chunk_kda_fwd_plan.h"
 
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
-#include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
 #include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/arch35/chunk_kda_fwd_finalize.h"
 #include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/arch35/chunk_kda_fwd_post_wu.h"
 #include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/arch35/chunk_kda_fwd_prepare.h"
+#include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/common/chunk_kda_head_state_arch35.h"
 #else
-#include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
 #include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/chunk_kda_fwd_finalize.h"
 #include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/chunk_kda_fwd_post_wu.h"
 #include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/chunk_kda_fwd_prepare.h"
+#include "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/common/chunk_kda_head_state.h"
 #endif
 #undef KDA_ENABLE_COMPACT_PLAN_VIEW
 
@@ -46,6 +45,8 @@ constexpr uint64_t SOLVE_SCRATCH_SLOTS = 5;
 constexpr uint64_t SOLVE_PIPELINE_DEPTH = 4;
 constexpr uint64_t SCORE_QUEUE_SLOTS = 4;
 constexpr uint64_t SCORE_SCRATCH_PLANES = 3;
+constexpr uint64_t KDA_HEAD_STATE_WORKSPACE_RESERVE_BYTES = 16 * 1024 * 1024;
+constexpr uint64_t KDA_HEAD_STATE_PIPELINE_STAGES = 2;
 
 struct DirectKdaTilingData {
     int64_t batch;
@@ -81,31 +82,31 @@ struct DirectKdaTilingData {
     int64_t postWuWSeedOffset;
     int64_t postWuUSeedOffset;
     int64_t postWuScratchOffset;
-    int64_t fwdHBatch;
-    int64_t fwdHSeqlen;
-    int64_t fwdHKNumHead;
-    int64_t fwdHVNumHead;
-    int64_t fwdHKHeadDim;
-    int64_t fwdHVHeadDim;
-    int64_t fwdHChunkSize;
-    bool fwdHUseInitialState;
-    bool fwdHStoreFinalState;
-    int64_t fwdHIsVariedLen;
-    int64_t fwdHShapeBatch;
-    int64_t fwdHTokenBatch;
-    int64_t fwdHVWorkspaceOffset;
-    int64_t fwdHVUpdateWorkspaceOffset;
-    int64_t fwdHKDecayWorkspaceOffset;
-    int64_t fwdHHWorkspaceOffset;
-    int64_t fwdHNumSeqWorkspaceOffset;
-    int64_t fwdHNumChunksWorkspaceOffset;
-    int64_t fwdHWorkspaceBaseOffset;
+    int64_t headStateBatch;
+    int64_t headStateSeqlen;
+    int64_t headStateKNumHead;
+    int64_t headStateVNumHead;
+    int64_t headStateKHeadDim;
+    int64_t headStateVHeadDim;
+    int64_t headStateChunkSize;
+    bool headStateUseInitialState;
+    bool headStateStoreFinalState;
+    int64_t headStateIsVariedLen;
+    int64_t headStateShapeBatch;
+    int64_t headStateTokenBatch;
+    int64_t headStateVWorkspaceOffset;
+    int64_t headStateVUpdateWorkspaceOffset;
+    int64_t headStateKDecayWorkspaceOffset;
+    int64_t headStateHWorkspaceOffset;
+    int64_t headStateNumSeqWorkspaceOffset;
+    int64_t headStateNumChunksWorkspaceOffset;
+    int64_t headStateWorkspaceBaseOffset;
     int64_t outputUsedCoreNum;
     int64_t outputQgScaledOffset;
     int64_t outputScratchOffset;
 };
 
-struct DirectFwdHTilingView {
+struct DirectHeadStateTilingView {
     int64_t batch;
     int64_t seqlen;
     int64_t kNumHead;
@@ -130,6 +131,16 @@ struct DirectFwdHTilingView {
     uint32_t fwdUsedCoreNum;
     GM_ADDR compactPlan;
     uint32_t seqChunkOffsetsOffset;
+};
+
+struct DirectHeadStateWorkspaceLayout {
+    uint64_t vWorkspaceOffset;
+    uint64_t vUpdateWorkspaceOffset;
+    uint64_t kDecayWorkspaceOffset;
+    uint64_t hWorkspaceOffset;
+    uint64_t numSeqWorkspaceOffset;
+    uint64_t numChunksWorkspaceOffset;
+    uint64_t workspaceSize;
 };
 
 struct DirectOutputs {
@@ -185,6 +196,48 @@ private:
 uint64_t AlignUp(uint64_t value)
 {
     return (value + WORKSPACE_ALIGN - 1) / WORKSPACE_ALIGN * WORKSPACE_ALIGN;
+}
+
+uint64_t AlignHeadStateWorkspaceExtent(uint64_t value)
+{
+    // Head-state extents retain a full guard block when already aligned.
+    return (value + WORKSPACE_ALIGN) / WORKSPACE_ALIGN * WORKSPACE_ALIGN;
+}
+
+DirectHeadStateWorkspaceLayout BuildDirectHeadStateWorkspaceLayout(
+    uint32_t blockDim, int64_t chunkSize, int64_t kHeadDim, int64_t vHeadDim)
+{
+    DirectHeadStateWorkspaceLayout layout{};
+    uint64_t workspaceOffset = KDA_HEAD_STATE_WORKSPACE_RESERVE_BYTES;
+    const uint64_t stageCount = static_cast<uint64_t>(blockDim) * KDA_HEAD_STATE_PIPELINE_STAGES;
+    const uint64_t chunkExtent = static_cast<uint64_t>(chunkSize);
+    const uint64_t kExtent = static_cast<uint64_t>(kHeadDim);
+    const uint64_t vExtent = static_cast<uint64_t>(vHeadDim);
+
+    layout.vWorkspaceOffset = workspaceOffset;
+    workspaceOffset += AlignHeadStateWorkspaceExtent(
+        stageCount * chunkExtent * vExtent * sizeof(float));
+
+    layout.vUpdateWorkspaceOffset = workspaceOffset;
+    workspaceOffset += AlignHeadStateWorkspaceExtent(
+        stageCount * chunkExtent * vExtent * sizeof(float));
+
+    layout.kDecayWorkspaceOffset = workspaceOffset;
+    workspaceOffset += AlignHeadStateWorkspaceExtent(
+        stageCount * chunkExtent * kExtent * sizeof(float));
+
+    layout.hWorkspaceOffset = workspaceOffset;
+    workspaceOffset += AlignHeadStateWorkspaceExtent(
+        stageCount * kExtent * vExtent * sizeof(float));
+
+    layout.numSeqWorkspaceOffset = workspaceOffset;
+    workspaceOffset += AlignHeadStateWorkspaceExtent(2 * sizeof(int64_t));
+
+    layout.numChunksWorkspaceOffset = workspaceOffset;
+    workspaceOffset += AlignHeadStateWorkspaceExtent(2 * sizeof(int64_t));
+
+    layout.workspaceSize = workspaceOffset + KDA_HEAD_STATE_WORKSPACE_RESERVE_BYTES;
+    return layout;
 }
 
 __aicore__ inline void ReleaseAicPipeReservedMmadEvents(AscendC::TPipe &pipe)
@@ -248,48 +301,47 @@ __global__ __aicore__ void ChunkKdaPostWuDirectKernel(
 }
 
 template <typename T, typename TileShapes>
-__aicore__ inline void RunChunkKdaFwdHDirect(
+__aicore__ inline void RunChunkKdaHeadStateDirect(
     GM_ADDR kg, GM_ADDR w, GM_ADDR u, GM_ADDR gk, GM_ADDR initialState,
     GM_ADDR h, GM_ADDR vNew, GM_ADDR finalState, GM_ADDR userWorkspace,
     const DirectKdaTilingData &tiling)
 {
-    DirectFwdHTilingView stateTiling{};
-    stateTiling.batch = tiling.fwdHBatch;
-    stateTiling.seqlen = tiling.fwdHSeqlen;
-    stateTiling.kNumHead = tiling.fwdHKNumHead;
-    stateTiling.vNumHead = tiling.fwdHVNumHead;
-    stateTiling.kHeadDim = tiling.fwdHKHeadDim;
-    stateTiling.vHeadDim = tiling.fwdHVHeadDim;
-    stateTiling.chunkSize = tiling.fwdHChunkSize;
-    stateTiling.useInitialState = tiling.fwdHUseInitialState;
-    stateTiling.storeFinalState = tiling.fwdHStoreFinalState;
-    stateTiling.isVariedLen = tiling.fwdHIsVariedLen;
-    stateTiling.shapeBatch = tiling.fwdHShapeBatch;
-    stateTiling.tokenBatch = tiling.fwdHTokenBatch;
-    stateTiling.vWorkspaceOffset = tiling.fwdHVWorkspaceOffset;
-    stateTiling.vUpdateWorkspaceOffset = tiling.fwdHVUpdateWorkspaceOffset;
-    stateTiling.kDecayWorkspaceOffset = tiling.fwdHKDecayWorkspaceOffset;
-    stateTiling.hWorkspaceOffset = tiling.fwdHHWorkspaceOffset;
-    stateTiling.numSeqWorkspaceOffset = tiling.fwdHNumSeqWorkspaceOffset;
-    stateTiling.numChunksWorkspaceOffset = tiling.fwdHNumChunksWorkspaceOffset;
-    stateTiling.useCompactSequencePlan = false;
-    stateTiling.sequenceCount = 0;
-    stateTiling.compactTotalChunks = 0;
-    stateTiling.fwdUsedCoreNum = 0;
-    stateTiling.compactPlan = nullptr;
-    stateTiling.seqChunkOffsetsOffset = 0;
+    DirectHeadStateTilingView headStateTiling{};
+    headStateTiling.batch = tiling.headStateBatch;
+    headStateTiling.seqlen = tiling.headStateSeqlen;
+    headStateTiling.kNumHead = tiling.headStateKNumHead;
+    headStateTiling.vNumHead = tiling.headStateVNumHead;
+    headStateTiling.kHeadDim = tiling.headStateKHeadDim;
+    headStateTiling.vHeadDim = tiling.headStateVHeadDim;
+    headStateTiling.chunkSize = tiling.headStateChunkSize;
+    headStateTiling.useInitialState = tiling.headStateUseInitialState;
+    headStateTiling.storeFinalState = tiling.headStateStoreFinalState;
+    headStateTiling.isVariedLen = tiling.headStateIsVariedLen;
+    headStateTiling.shapeBatch = tiling.headStateShapeBatch;
+    headStateTiling.tokenBatch = tiling.headStateTokenBatch;
+    headStateTiling.vWorkspaceOffset = tiling.headStateVWorkspaceOffset;
+    headStateTiling.vUpdateWorkspaceOffset = tiling.headStateVUpdateWorkspaceOffset;
+    headStateTiling.kDecayWorkspaceOffset = tiling.headStateKDecayWorkspaceOffset;
+    headStateTiling.hWorkspaceOffset = tiling.headStateHWorkspaceOffset;
+    headStateTiling.numSeqWorkspaceOffset = tiling.headStateNumSeqWorkspaceOffset;
+    headStateTiling.numChunksWorkspaceOffset = tiling.headStateNumChunksWorkspaceOffset;
+    headStateTiling.useCompactSequencePlan = false;
+    headStateTiling.sequenceCount = 0;
+    headStateTiling.compactTotalChunks = 0;
+    headStateTiling.fwdUsedCoreNum = 0;
+    headStateTiling.compactPlan = nullptr;
+    headStateTiling.seqChunkOffsetsOffset = 0;
 
-    using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
-        T, float, float, float, TileShapes, true, false, true>;
-    FwdHKernel stateOp;
-    stateOp.InitFromData(kg, w, u, gk, gk, initialState, nullptr, nullptr,
-                         h, vNew, finalState, stateTiling,
-                         userWorkspace + tiling.fwdHWorkspaceBaseOffset);
-    stateOp.Process();
+    using HeadState = KdaForward::HeadState<T, TileShapes>;
+    HeadState headState;
+    headState.InitFromData(kg, w, u, gk, gk, initialState, nullptr, nullptr,
+                           h, vNew, finalState, headStateTiling,
+                           userWorkspace + tiling.headStateWorkspaceBaseOffset);
+    headState.Process();
 }
 
 template <typename T>
-__global__ __aicore__ void ChunkKdaFwdHDirectKernel(
+__global__ __aicore__ void ChunkKdaHeadStateDirectKernel(
     GM_ADDR kg, GM_ADDR w, GM_ADDR u, GM_ADDR gk, GM_ADDR initialState,
     GM_ADDR h, GM_ADDR vNew, GM_ADDR finalState, GM_ADDR workspace,
     DirectKdaTilingData tiling)
@@ -301,10 +353,10 @@ __global__ __aicore__ void ChunkKdaFwdHDirectKernel(
         return;
     }
     if (tiling.vHeadDim > 128) {
-        RunChunkKdaFwdHDirect<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
+        RunChunkKdaHeadStateDirect<T, KdaForward::HeadStateTileShapes256>(
             kg, w, u, gk, initialState, h, vNew, finalState, userWorkspace, tiling);
     } else {
-        RunChunkKdaFwdHDirect<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
+        RunChunkKdaHeadStateDirect<T, KdaForward::HeadStateTileShapes128>(
             kg, w, u, gk, initialState, h, vNew, finalState, userWorkspace, tiling);
     }
 }
@@ -349,7 +401,7 @@ void LaunchStages(
         ptr(q), ptr(k), ptr(v), ptr(gk), ptr(beta), initialPtr,
         ptr(outputs.akk), ptr(outputs.w), ptr(outputs.u), ptr(outputs.kg),
         ptr(outputs.vNew), (GM_ADDR)workspace.Get(), tiling);
-    ChunkKdaFwdHDirectKernel<T><<<blockDim, nullptr, stream>>>(
+    ChunkKdaHeadStateDirectKernel<T><<<blockDim, nullptr, stream>>>(
         ptr(outputs.kg), ptr(outputs.w), ptr(outputs.u), ptr(gk), initialPtr,
         ptr(outputs.h), ptr(outputs.vNew), ptr(outputs.finalState),
         (GM_ADDR)workspace.Get(), tiling);
@@ -480,38 +532,13 @@ ChunkKdaFwdDirectNpu(
                                       totalChunks * chunkSize * q.size(3) * sizeof(float);
     const uint64_t postEnd = postScratchOffset + postScratchBytes;
 
-    optiling::ChunkGatedDeltaRuleFwdHTilingContext stateContext{};
-    stateContext.seqlen = q.size(2);
-    stateContext.kNumHead = v.size(1);
-    stateContext.kHeadDim = q.size(3);
-    stateContext.vNumHead = v.size(1);
-    stateContext.vHeadDim = v.size(3);
-    stateContext.shapeBatchDim = q.size(0);
-    stateContext.hasCuSeqlens = false;
-    stateContext.cuSeqlensDim0 = 0;
-    stateContext.dataType = q.scalar_type() == at::kBFloat16 ?
-        optiling::GDN_FWD_H_DTYPE_BF16 : optiling::GDN_FWD_H_DTYPE_FP16;
-    stateContext.gDataType = optiling::GDN_FWD_H_DTYPE_FP32;
-    stateContext.useInitialState = initialState.has_value();
-    stateContext.stateDataType = optiling::GDN_FWD_H_DTYPE_FP32;
-    stateContext.useG = false;
-    stateContext.useGk = true;
-    stateContext.storeFinalState = outputFinalState;
-    stateContext.chunkSize = chunkSize;
-    stateContext.aicCoreNum = blockDim;
-    stateContext.libApiWorkSpaceSize = 0;
-    ChunkGatedDeltaRuleFwdHTilingData stateTilingHost{};
-    size_t stateWorkspaceSize = 0;
-    uint32_t stateBlockDim = 0;
-    optiling::ChunkGatedDeltaRuleFwdHTilingProcessor(stateContext).Process(
-        stateTilingHost, stateBlockDim, stateWorkspaceSize);
-    TORCH_CHECK(stateBlockDim == blockDim, "chunk_kda_fwd_direct: inconsistent state block dim");
-
-    const uint64_t stateEnd = phaseBaseOffset + stateWorkspaceSize;
+    const DirectHeadStateWorkspaceLayout headStateWorkspace = BuildDirectHeadStateWorkspaceLayout(
+        blockDim, chunkSize, q.size(3), v.size(3));
+    const uint64_t headStateEnd = phaseBaseOffset + headStateWorkspace.workspaceSize;
     const uint64_t outputScratchOffset = phaseBaseOffset;
     const uint64_t outputElements = tokenHeadCount * v.size(3);
     const uint64_t outputEnd = outputScratchOffset + 2 * outputElements * sizeof(float);
-    const uint64_t userWorkspaceBytes = AlignUp(std::max({prepareEnd, postEnd, stateEnd, outputEnd}));
+    const uint64_t userWorkspaceBytes = AlignUp(std::max({prepareEnd, postEnd, headStateEnd, outputEnd}));
     DeviceBuffer workspace(sysWorkspace + userWorkspaceBytes);
 
     DirectKdaTilingData tiling{};
@@ -548,25 +575,25 @@ ChunkKdaFwdDirectNpu(
     tiling.postWuWSeedOffset = static_cast<int64_t>(wSeedOffset);
     tiling.postWuUSeedOffset = static_cast<int64_t>(uSeedOffset);
     tiling.postWuScratchOffset = static_cast<int64_t>(postScratchOffset);
-    tiling.fwdHBatch = stateTilingHost.batch;
-    tiling.fwdHSeqlen = stateTilingHost.seqlen;
-    tiling.fwdHKNumHead = stateTilingHost.kNumHead;
-    tiling.fwdHVNumHead = stateTilingHost.vNumHead;
-    tiling.fwdHKHeadDim = stateTilingHost.kHeadDim;
-    tiling.fwdHVHeadDim = stateTilingHost.vHeadDim;
-    tiling.fwdHChunkSize = stateTilingHost.chunkSize;
-    tiling.fwdHUseInitialState = stateTilingHost.useInitialState;
-    tiling.fwdHStoreFinalState = stateTilingHost.storeFinalState;
-    tiling.fwdHIsVariedLen = stateTilingHost.isVariedLen;
-    tiling.fwdHShapeBatch = stateTilingHost.shapeBatch;
-    tiling.fwdHTokenBatch = stateTilingHost.tokenBatch;
-    tiling.fwdHVWorkspaceOffset = stateTilingHost.vWorkspaceOffset;
-    tiling.fwdHVUpdateWorkspaceOffset = stateTilingHost.vUpdateWorkspaceOffset;
-    tiling.fwdHKDecayWorkspaceOffset = stateTilingHost.kDecayWorkspaceOffset;
-    tiling.fwdHHWorkspaceOffset = stateTilingHost.hWorkspaceOffset;
-    tiling.fwdHNumSeqWorkspaceOffset = stateTilingHost.numSeqWorkspaceOffset;
-    tiling.fwdHNumChunksWorkspaceOffset = stateTilingHost.numChunksWorkspaceOffset;
-    tiling.fwdHWorkspaceBaseOffset = static_cast<int64_t>(phaseBaseOffset);
+    tiling.headStateBatch = q.size(0);
+    tiling.headStateSeqlen = q.size(2);
+    tiling.headStateKNumHead = v.size(1);
+    tiling.headStateVNumHead = v.size(1);
+    tiling.headStateKHeadDim = q.size(3);
+    tiling.headStateVHeadDim = v.size(3);
+    tiling.headStateChunkSize = chunkSize;
+    tiling.headStateUseInitialState = initialState.has_value();
+    tiling.headStateStoreFinalState = outputFinalState;
+    tiling.headStateIsVariedLen = 0;
+    tiling.headStateShapeBatch = q.size(0);
+    tiling.headStateTokenBatch = 1;
+    tiling.headStateVWorkspaceOffset = static_cast<int64_t>(headStateWorkspace.vWorkspaceOffset);
+    tiling.headStateVUpdateWorkspaceOffset = static_cast<int64_t>(headStateWorkspace.vUpdateWorkspaceOffset);
+    tiling.headStateKDecayWorkspaceOffset = static_cast<int64_t>(headStateWorkspace.kDecayWorkspaceOffset);
+    tiling.headStateHWorkspaceOffset = static_cast<int64_t>(headStateWorkspace.hWorkspaceOffset);
+    tiling.headStateNumSeqWorkspaceOffset = static_cast<int64_t>(headStateWorkspace.numSeqWorkspaceOffset);
+    tiling.headStateNumChunksWorkspaceOffset = static_cast<int64_t>(headStateWorkspace.numChunksWorkspaceOffset);
+    tiling.headStateWorkspaceBaseOffset = static_cast<int64_t>(phaseBaseOffset);
     tiling.outputUsedCoreNum = static_cast<int64_t>(blockDim);
     tiling.outputQgScaledOffset = static_cast<int64_t>(qgScaledOffset);
     tiling.outputScratchOffset = static_cast<int64_t>(outputScratchOffset);

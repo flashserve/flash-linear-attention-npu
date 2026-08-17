@@ -31,30 +31,55 @@ ARCH35_FWD_H = OP_ROOT / "op_kernel/arch35/chunk_kda_fwd_fwd_h.h"
 KERNEL_COMMON = OP_ROOT / "op_kernel/chunk_kda_fwd_common.h"
 COMPACT_PLAN = OP_ROOT / "op_kernel/chunk_kda_fwd_plan.h"
 ARCH35_TILING = OP_ROOT / "op_host/arch35/chunk_kda_fwd_tiling_impl.h"
-ARCH35_GDN_SCHEDULER = (
-    ROOT
-    / "fla/ops/ascendc/gdn/chunk_gdn_fwd/"
-    "chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/block/"
-    "block_scheduler_gdn_fwd_h.hpp"
-)
-ARCH35_GDN_KERNEL = (
-    ROOT
-    / "fla/ops/ascendc/gdn/chunk_gdn_fwd/"
-    "chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/"
-    "gdn_fwd_h_kernel.hpp"
-)
-GENERIC_GDN_KERNEL = (
-    ROOT
-    / "fla/ops/ascendc/gdn/chunk_gdn_fwd/"
-    "chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/"
-    "gdn_fwd_h_kernel.hpp"
-)
+HEAD_STATE_ROOT = OP_ROOT / "op_kernel/common"
+GENERIC_HEAD_STATE = HEAD_STATE_ROOT / "chunk_kda_head_state.h"
+GENERIC_HEAD_STATE_PLAN = HEAD_STATE_ROOT / "chunk_kda_head_state_plan.h"
+GENERIC_HEAD_STATE_UPDATE = HEAD_STATE_ROOT / "chunk_kda_head_state_update.h"
+GENERIC_HEAD_STATE_VNEW = HEAD_STATE_ROOT / "chunk_kda_head_state_vnew.h"
+ARCH35_HEAD_STATE = HEAD_STATE_ROOT / "chunk_kda_head_state_arch35.h"
+ARCH35_HEAD_STATE_PLAN = HEAD_STATE_ROOT / "chunk_kda_head_state_arch35_plan.h"
+ARCH35_HEAD_STATE_UPDATE = HEAD_STATE_ROOT / "chunk_kda_head_state_arch35_update.h"
+ARCH35_HEAD_STATE_VNEW = HEAD_STATE_ROOT / "chunk_kda_head_state_arch35_vnew.h"
+ARCH35_HEAD_STATE_REGBASE = HEAD_STATE_ROOT / "chunk_kda_head_state_arch35_regbase.h"
 REMOVED_FUSED_ROOT = ROOT / "fla/ops/ascendc/kda/chunk_kda_fwd_fused_a5"
 REMOVED_STAGE_ROOTS = (
     ROOT / "fla/ops/ascendc/kda/chunk_kda_fwd_prepare",
     ROOT / "fla/ops/ascendc/kda/chunk_kda_fwd_post_wu",
     ROOT / "fla/ops/ascendc/kda/chunk_kda_fwd_finalize",
 )
+
+
+def test_kda_sources_do_not_depend_on_gdn_fwd_h():
+    source_files = [
+        path
+        for source_root in (OP_ROOT / "op_kernel", OP_ROOT / "op_host")
+        for path in source_root.rglob("*")
+        if path.is_file()
+        and (
+            path.suffix in {".h", ".hpp", ".cpp"}
+            or path.name == "CMakeLists.txt"
+        )
+    ]
+    source_files.extend((OP_ROOT / "CMakeLists.txt", DIRECT_SOURCE))
+
+    forbidden_tokens = (
+        "chunk_gated_delta_rule_fwd_h",
+        "ChunkGatedDeltaRuleFwdH",
+        "GDNFwdH",
+        "gdn_fwd_h",
+        "gdn_fwdh",
+    )
+    violations = {
+        str(path.relative_to(ROOT)): [
+            token
+            for token in forbidden_tokens
+            if token in path.read_text(encoding="utf-8")
+        ]
+        for path in sorted(set(source_files))
+    }
+    violations = {path: tokens for path, tokens in violations.items() if tokens}
+
+    assert not violations, f"KDA sources still depend on GDN FwdH: {violations}"
 
 
 def test_direct_launch_keeps_registered_public_entry():
@@ -74,7 +99,7 @@ def test_direct_launch_stage_calls_follow_compact_plan_signatures():
     )
     post_wu = " ".join(
         text.split("void ChunkKdaPostWuDirectKernel(", 1)[1]
-        .split("void RunChunkKdaFwdHDirect(", 1)[0]
+        .split("void RunChunkKdaHeadStateDirect(", 1)[0]
         .split()
     )
     output = " ".join(
@@ -122,9 +147,13 @@ def test_direct_launch_stage_calls_follow_compact_plan_signatures():
         'op_kernel/chunk_kda_fwd_prepare.h"'
     )
     assert text.count("ReleaseAicPipeReservedMmadEvents(pipe);") == 3
-    assert "DirectFwdHTilingView stateTiling{};" in text
-    assert "stateTiling.useCompactSequencePlan = false;" in text
-    assert "stateTiling.compactPlan = nullptr;" in text
+    assert "DirectHeadStateTilingView headStateTiling{};" in text
+    assert "headStateTiling.useCompactSequencePlan = false;" in text
+    assert "headStateTiling.compactPlan = nullptr;" in text
+    assert "using HeadState = KdaForward::HeadState<T, TileShapes>;" in text
+    assert "HeadState headState;" in text
+    assert "headState.InitFromData(" in text
+    assert "headState.Process();" in text
     assert "tiling.hasInitialState = initialState.has_value();" in text
 
     plan = COMPACT_PLAN.read_text(encoding="utf-8")
@@ -134,19 +163,21 @@ def test_direct_launch_stage_calls_follow_compact_plan_signatures():
     assert plan.count("defined(KDA_ENABLE_COMPACT_PLAN_VIEW)") == 1
 
 
-def test_a2_block_mmad_alignment_checks_use_target_cann_namespace():
-    block_root = ROOT / "fla/ops/ascendc/common/kernel_utils/block"
-    for name in (
-        "block_mmad_pingpong_tla.hpp",
-        "block_mmad_pingpong_tla_multi.hpp",
-        "block_mmad_pingpong_tla_preloadA_l1B.hpp",
-    ):
-        text = (block_root / name).read_text(encoding="utf-8")
-        alignment_checks = text.split("static constexpr uint32_t _32B", 1)[1].split(
-            "#endif", 1
-        )[0]
-        assert alignment_checks.count("AscendC::SizeOfBits<") == 5
-        assert not re.search(r"(?<!AscendC::)SizeOfBits<", alignment_checks)
+def test_kda_catlass_compat_is_local_and_precedes_shared_headers():
+    compat_path = HEAD_STATE_ROOT / "chunk_kda_catlass_compat.h"
+    compat = compat_path.read_text(encoding="utf-8")
+    assert '#include "kernel_operator.h"' in compat
+    assert "namespace Common {\nusing AscendC::SizeOfBits;\n}" in compat
+    assert "namespace Catlass::Gemm::Block {\nusing AscendC::SizeOfBits;\n}" in compat
+
+    for head_state_path in (GENERIC_HEAD_STATE, ARCH35_HEAD_STATE):
+        head_state = head_state_path.read_text(encoding="utf-8")
+        assert head_state.index('#include "chunk_kda_catlass_compat.h"') < head_state.index(
+            "#define CATLASS_ARCH"
+        )
+        assert head_state.index('#include "chunk_kda_catlass_compat.h"') < head_state.index(
+            '#include "catlass/arch/arch.hpp"'
+        )
 
 
 def test_a5_reuses_public_physical_entry_with_internal_stage_implementations():
@@ -441,14 +472,14 @@ def test_prepare_solve_uses_single_l0c_and_closes_each_fix_to_mte2_raw():
         assert "pipe_->ReleaseEventID<HardEvent::FIX_MTE2>" in text
 
 
-def test_generic_gdn_fwd_h_scopes_l0c_lifecycle_over_runtime_stream_batch():
-    kernel = GENERIC_GDN_KERNEL.read_text(encoding="utf-8")
+def test_generic_head_state_scopes_l0c_lifecycle_over_runtime_stream_batch():
+    kernel = GENERIC_HEAD_STATE.read_text(encoding="utf-8")
     process = kernel.split("__aicore__ inline void Process()", 1)[1]
     process_aic = process.split("if ASCEND_IS_AIC", 1)[1].split(
         "if ASCEND_IS_AIV", 1
     )[0]
 
-    assert "std::is_same<TileShapes, GDNFwdHTileShapes128>::value ? 2 : 1" in kernel
+    assert "std::is_same<TileShapes, KdaHeadStateTileShapes128>::value ? 2 : 1" in kernel
     assert (
         "Gemm::MmadPingpongTlaMulti<ArchTag, false, false, L0C_STAGES>"
         in kernel
@@ -478,9 +509,9 @@ def test_generic_gdn_fwd_h_scopes_l0c_lifecycle_over_runtime_stream_batch():
     assert wh_seed < wh_loop < wh_drain < kv_seed < kv_loop < kv_drain
 
 
-def test_gdn_fwd_h_splits_cube2_rows_to_the_static_l0c_tile():
-    generic = GENERIC_GDN_KERNEL.read_text(encoding="utf-8")
-    arch35 = ARCH35_GDN_KERNEL.read_text(encoding="utf-8")
+def test_head_state_splits_cube2_rows_to_the_static_l0c_tile():
+    generic = GENERIC_HEAD_STATE.read_text(encoding="utf-8")
+    arch35 = ARCH35_HEAD_STATE.read_text(encoding="utf-8")
 
     for kernel in (generic, arch35):
         helper = kernel.split(
@@ -516,7 +547,7 @@ def test_gdn_fwd_h_splits_cube2_rows_to_the_static_l0c_tile():
     assert arch35_process.count("ComputeCube2RowTiles(") == 3
     assert "blockMmadKVDirectUb(" in arch35_process
     assert arch35_process.count("GemmCoord cube2Shape{kHeadDim") == 1
-    assert arch35.count("kHeadDim == 128 && vHeadDim == 128") == 2
+    assert arch35.count("kHeadDim == 128 && vHeadDim == 128") == 1
 
 
 def test_prepare_post_wu_finalize_share_one_runtime_head_window_protocol():
@@ -1292,8 +1323,8 @@ def test_a5_varlen_fwd_h_uses_sequence_aware_full_chunks_and_splits_mixed_tail()
 
 
 def test_a5_varlen_tail_scheduler_preserves_sequence_state_and_full_chunk_fast_path():
-    scheduler = ARCH35_GDN_SCHEDULER.read_text(encoding="utf-8")
-    kernel = ARCH35_GDN_KERNEL.read_text(encoding="utf-8")
+    scheduler = ARCH35_HEAD_STATE_PLAN.read_text(encoding="utf-8")
+    kernel = ARCH35_HEAD_STATE.read_text(encoding="utf-8")
 
     assert "tailOnly = isVariedLen > 1;" in scheduler
     assert "batchTokens % chunkSize != 0" in scheduler
@@ -1584,7 +1615,7 @@ def test_generic_large_unrolled_workhorses_keep_explicit_compiler_boundaries():
             f"__attribute__((noinline)) __aicore__ void {function_name}("
             in finalize
         )
-    assert "__aicore__ inline void RunFwdH(" in common
+    assert "__aicore__ inline void RunHeadState(" in common
 
     assert "__aicore__ inline void RunChunkKdaPrepare(" in prepare
     assert prepare.count("__attribute__((noinline))") == 3
@@ -1666,16 +1697,8 @@ def test_a5_regbase_triangular_state_update_orders_dependent_ub_rows():
 
 
 def test_a5_fwd_h_reads_predecayed_vector_gate_k_from_workspace_without_redecay():
-    kernel = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/"
-        "op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
-    ).read_text(encoding="utf-8")
-    epilogue = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/"
-        "op_kernel/arch35/epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
-    ).read_text(encoding="utf-8")
+    kernel = ARCH35_HEAD_STATE.read_text(encoding="utf-8")
+    epilogue = ARCH35_HEAD_STATE_VNEW.read_text(encoding="utf-8")
 
     assert kernel.count("cube2OffsetK = kGated ? cube2Offsets.kDecayWorkOffset") == 2
     assert kernel.count("auto tensorK = kGated") >= 2
@@ -1707,14 +1730,8 @@ def test_safe_fp16_score_pipeline_uses_bf16_on_all_supported_soc():
 
 def test_fwd_h_varlen_metadata_is_resolved_locally_without_shared_writes():
     schedulers = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/"
-        "chunk_gated_delta_rule_fwd_h/op_kernel/gemm/block/"
-        "block_scheduler_gdn_fwd_h.hpp",
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/"
-        "chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/block/"
-        "block_scheduler_gdn_fwd_h.hpp",
+        GENERIC_HEAD_STATE_PLAN,
+        ARCH35_HEAD_STATE_PLAN,
     )
     for path in schedulers:
         source = path.read_text(encoding="utf-8")
@@ -1741,24 +1758,14 @@ def test_fwd_h_varlen_metadata_is_resolved_locally_without_shared_writes():
         assert "stream.chunkOffset" in resolve
         assert "stream.tokenOffset" in resolve
 
-    generic_kernel = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/"
-        "chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/"
-        "gdn_fwd_h_kernel.hpp"
-    ).read_text(encoding="utf-8")
+    generic_kernel = GENERIC_HEAD_STATE.read_text(encoding="utf-8")
     assert "ResolveWaveStream(waveIdx, initialStream)" in generic_kernel
     assert "const uint32_t chunkOffset = initialStream.chunkOffset;" in generic_kernel
     assert "GetVarlenChunkOffset(batchIdx)" not in generic_kernel
     assert "gmNumChunks.GetValue" not in generic_kernel
     assert "gmNumSeq.GetValue" not in generic_kernel
 
-    arch35_kernel = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/"
-        "chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/"
-        "gdn_fwd_h_kernel.hpp"
-    ).read_text(encoding="utf-8")
+    arch35_kernel = ARCH35_HEAD_STATE.read_text(encoding="utf-8")
     assert "GetVarlenChunkOffset(batchIdx)" in arch35_kernel
     assert "gmNumChunks.GetValue" not in arch35_kernel
     assert "gmNumSeq.GetValue" not in arch35_kernel
@@ -3005,42 +3012,28 @@ def test_manifest_registers_a5_bf16_full_chunk_finalize_regression():
 
 
 def test_fwd_h_uses_fixed_scalar_exp_and_keywise_exp2_on_a2_and_a5():
-    fwd_h_root = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-    )
-    dispatch = (fwd_h_root / "op_kernel/chunk_gated_delta_rule_fwd_h.cpp").read_text(
-        encoding="utf-8"
-    )
-    assert dispatch.count("TileShapes, false>(") == 2
-    assert "tilingData->useExp2" not in dispatch
-    for arch in ("", "arch35/"):
-        epilogue = fwd_h_root / f"op_kernel/{arch}epilogue/block"
-        update = (epilogue / "block_epilogue_gdn_fwdh_update.hpp").read_text(
-            encoding="utf-8"
-        )
-        vnew = (epilogue / "block_epilogue_gdn_fwdh_vnew.hpp").read_text(
-            encoding="utf-8"
-        )
+    for head_state in (GENERIC_HEAD_STATE, ARCH35_HEAD_STATE):
+        facade = head_state.read_text(encoding="utf-8").split(
+            "namespace KdaForward {\n\nusing HeadStateTileShapes128", 1
+        )[1]
+        assert "using HeadState = KdaForward::HeadStateDetail::KdaHeadStateImpl<" in facade
+        assert "T, float, float, float, TileShapes, true, false, true>;" in facade
+        assert "tilingData->useExp2" not in facade
+
+    for update_path, vnew_path in (
+        (GENERIC_HEAD_STATE_UPDATE, GENERIC_HEAD_STATE_VNEW),
+        (ARCH35_HEAD_STATE_UPDATE, ARCH35_HEAD_STATE_VNEW),
+    ):
+        update = update_path.read_text(encoding="utf-8")
+        vnew = vnew_path.read_text(encoding="utf-8")
         assert "LN2" in update and "LN2" in vnew
         assert "AscendC::Exp" in update and "AscendC::Exp" in vnew
 
 
 def test_a2_fwd_h_keeps_fp32_state_updates():
-    fwd_h_kernel = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel"
-    )
-    update = (
-        fwd_h_kernel / "epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
-    ).read_text(encoding="utf-8")
-    vnew = (
-        fwd_h_kernel / "epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
-    ).read_text(encoding="utf-8")
-    kernel = (fwd_h_kernel / "gemm/kernel/gdn_fwd_h_kernel.hpp").read_text(
-        encoding="utf-8"
-    )
+    update = GENERIC_HEAD_STATE_UPDATE.read_text(encoding="utf-8")
+    vnew = GENERIC_HEAD_STATE_VNEW.read_text(encoding="utf-8")
+    kernel = GENERIC_HEAD_STATE.read_text(encoding="utf-8")
 
     assert "bool useFp32StateUpdate" in update
     assert "AscendC::GlobalTensor<FinalStateElement> initialState" in update
@@ -3066,20 +3059,11 @@ def test_a2_fwd_h_keeps_fp32_state_updates():
 
 
 def test_a2_fwd_h_tail_waits_for_recurrent_state_before_reading_h():
-    fwd_h_kernel = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel"
-    )
-    kernel = (fwd_h_kernel / "gemm/kernel/gdn_fwd_h_kernel.hpp").read_text(
-        encoding="utf-8"
-    )
-    vnew = (
-        fwd_h_kernel / "epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
-    ).read_text(encoding="utf-8")
+    kernel = GENERIC_HEAD_STATE.read_text(encoding="utf-8")
+    vnew = GENERIC_HEAD_STATE_VNEW.read_text(encoding="utf-8")
 
     vec1_dispatch = kernel.split(
-        "const GDNFwdHOffsets& vec1Offsets", 1
+        "const KdaHeadStateOffsets& vec1Offsets", 1
     )[1].split("if (storeFinalState", 1)[0]
     ready_wait = "Arch::CrossCoreWaitFlag("
     tail_compute = "ComputeTailVWorkspace(vec1Offsets);"
@@ -3091,11 +3075,7 @@ def test_a2_fwd_h_tail_waits_for_recurrent_state_before_reading_h():
 
 
 def test_a2_fwd_h_tail_stages_coefficients_before_scalar_vector_use():
-    kernel = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
-    ).read_text(encoding="utf-8")
+    kernel = GENERIC_HEAD_STATE.read_text(encoding="utf-8")
     tail_v_workspace = kernel.split("ComputeTailVWorkspace", 1)[1].split(
         "ComputeTailHWorkspace", 1
     )[0]
@@ -3155,11 +3135,7 @@ def test_a2_fwd_h_tail_stages_coefficients_before_scalar_vector_use():
 
 
 def test_a2_fwd_h_contiguous_update_respects_calc_ub_capacity():
-    update = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel/epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
-    ).read_text(encoding="utf-8")
+    update = GENERIC_HEAD_STATE_UPDATE.read_text(encoding="utf-8")
 
     assert "CONTIGUOUS_CALC_BUF_BYTES = 32 * 1024" in update
     assert (
@@ -3200,20 +3176,9 @@ def test_a2_fwd_h_contiguous_update_respects_calc_ub_capacity():
 
 
 def test_a5_fwd_h_uses_canonical_h_state_update_and_fp32_final_state():
-    fwd_h_kernel = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel/arch35"
-    )
-    update = (
-        fwd_h_kernel / "epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
-    ).read_text(encoding="utf-8")
-    vnew = (
-        fwd_h_kernel / "epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
-    ).read_text(encoding="utf-8")
-    kernel = (fwd_h_kernel / "gemm/kernel/gdn_fwd_h_kernel.hpp").read_text(
-        encoding="utf-8"
-    )
+    update = ARCH35_HEAD_STATE_UPDATE.read_text(encoding="utf-8")
+    vnew = ARCH35_HEAD_STATE_VNEW.read_text(encoding="utf-8")
+    kernel = ARCH35_HEAD_STATE.read_text(encoding="utf-8")
 
     assert "CopyGmToUb(hUbTensor, hInputThisTile" in update
     assert "AscendC::Cast(calcUbTensor, hUbTensor" in update
@@ -3244,28 +3209,17 @@ def test_a5_fwd_h_uses_canonical_h_state_update_and_fp32_final_state():
 
 
 def test_a5_fwd_h_routes_sub_16_token_tail_away_from_cube_mmad():
-    fwd_h_kernel = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel/arch35"
-    )
-    kernel = (fwd_h_kernel / "gemm/kernel/gdn_fwd_h_kernel.hpp").read_text(
-        encoding="utf-8"
-    )
-    update = (
-        fwd_h_kernel / "epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
-    ).read_text(encoding="utf-8")
-    vnew = (
-        fwd_h_kernel / "epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
-    ).read_text(encoding="utf-8")
+    kernel = ARCH35_HEAD_STATE.read_text(encoding="utf-8")
+    update = ARCH35_HEAD_STATE_UPDATE.read_text(encoding="utf-8")
+    vnew = ARCH35_HEAD_STATE_VNEW.read_text(encoding="utf-8")
 
     assert kernel.count("blockTokens < 16") >= 6
     assert "ComputeTailVWorkspace(" in kernel
     assert "ComputeTailHWorkspace(" in kernel
     assert "vec1Offsets, EVENT_ID3 + (i == 0 ? 0 : pongBaseEvent)" in kernel
     assert "vec2Offsets, EVENT_ID3 + (i == 0 ? 0 : pongBaseEvent)" in kernel
-    assert "cubeBlockScheduler.cube1Done[streamId]" in kernel
-    assert "cubeBlockScheduler.cube2Done[streamId]" in kernel
+    assert "cubePlan.cube1Done[streamId]" in kernel
+    assert "cubePlan.cube2Done[streamId]" in kernel
     assert "bool useDirectForTask = useDirectFp32Ub && !tailVectorPath;" in kernel
     assert "bool cube1AlreadyWaited" in vnew
     assert "else if (!cube1AlreadyWaited)" in vnew
@@ -3274,11 +3228,7 @@ def test_a5_fwd_h_routes_sub_16_token_tail_away_from_cube_mmad():
 
 
 def test_a5_fwd_h_uses_regular_cube_for_full_chunks_and_bounded_cube_for_tails():
-    kernel = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
-    ).read_text(encoding="utf-8")
+    kernel = ARCH35_HEAD_STATE.read_text(encoding="utf-8")
 
     assert "MmadPingpongTlaMulti<ArchTag, true, false, 1>" in kernel
     assert "BlockMmadWHTail" in kernel
@@ -3299,27 +3249,19 @@ def test_a5_fwd_h_uses_regular_cube_for_full_chunks_and_bounded_cube_for_tails()
     assert "blockMmadKV(" in kernel
     assert "blockMmadWHTail(" in kernel
     assert "blockMmadKVTail(" in kernel
-    assert kernel.count("seqlen % chunkSize == 0") == 2
+    assert kernel.count("seqlen % chunkSize == 0") == 1
 
 
 def test_a5_direct_ub_fwd_h_requires_enough_dense_tasks_for_started_cores():
-    kernel = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
-    ).read_text(encoding="utf-8")
+    kernel = ARCH35_HEAD_STATE.read_text(encoding="utf-8")
 
     assert kernel.count(
         "denseTaskCount >= AscendC::GetBlockNum()"
-    ) == 2
+    ) == 1
 
 
 def test_a5_generic_fwd_h_synchronizes_all_cores_before_stage_handshake():
-    kernel = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
-    ).read_text(encoding="utf-8")
+    kernel = ARCH35_HEAD_STATE.read_text(encoding="utf-8")
     process_prefix = kernel.split("__aicore__ inline void Process()", 1)[1].split(
         "if ASCEND_IS_AIC", 1
     )[0]
@@ -3363,11 +3305,7 @@ def _assert_tail_output_reuse_fence(body: str, event_id: str) -> None:
 
 
 def test_a5_fwd_h_tail_stages_w_coefficients_in_ub_before_scalar_read():
-    kernel = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
-    ).read_text(encoding="utf-8")
+    kernel = ARCH35_HEAD_STATE.read_text(encoding="utf-8")
 
     assert "TAIL_WEIGHT_INPUT_OFFSET" in kernel
     assert "TAIL_WEIGHT_FLOAT_OFFSET" in kernel
@@ -3403,11 +3341,7 @@ def test_a5_fwd_h_tail_stages_w_coefficients_in_ub_before_scalar_read():
 
 
 def test_generic_fwd_h_tail_waits_for_mte3_before_reusing_accumulator():
-    kernel = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
-    ).read_text(encoding="utf-8")
+    kernel = GENERIC_HEAD_STATE.read_text(encoding="utf-8")
     tail_v_workspace = kernel.split("ComputeTailVWorkspace", 1)[1].split(
         "ComputeTailHWorkspace", 1
     )[0]
@@ -3499,32 +3433,8 @@ def test_state_v_first_defaults_false_and_legacy_returns_are_optional():
     assert 'Attr("state_v_first").AttrType(OPTIONAL).Bool(false)' in op_def
 
 
-def test_fwd_h_dispatches_optional_gate_and_state_dtype_without_full_runtime_expansion():
-    dispatch = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel/chunk_gated_delta_rule_fwd_h.cpp"
-    ).read_text(encoding="utf-8")
-    assert "ChunkGatedDeltaRuleFwdHDispatchGate<DTYPE_K, float, TileShapes, false>" in dispatch
-    assert "ChunkGatedDeltaRuleFwdHDispatchGate<DTYPE_K, DTYPE_K, TileShapes, false>" in dispatch
-    assert "ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, float, StateT" in dispatch
-    assert "ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, bfloat16_t, StateT" in dispatch
-    assert "ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, half, StateT" in dispatch
-    assert "tilingData->gDataType" in dispatch
-    assert "tilingData->stateDataType" in dispatch
-    assert "DTYPE_GK" not in dispatch
-    assert "->dataType" not in dispatch
-
-
 def test_a5_fwd_h_kda_hot_path_uses_fused_dual_issue_regbase():
-    block_root = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel/arch35/epilogue/block"
-    )
-    regbase = (block_root / "block_epilogue_gdn_fwdh_regbase.hpp").read_text(
-        encoding="utf-8"
-    )
+    regbase = ARCH35_HEAD_STATE_REGBASE.read_text(encoding="utf-8")
     assert "__simd_vf__" in regbase
     assert "RegTensor<float> matrixReg0" in regbase
     assert "RegTensor<float> matrixReg1" in regbase
@@ -3535,12 +3445,8 @@ def test_a5_fwd_h_kda_hot_path_uses_fused_dual_issue_regbase():
     assert "ComputeVNewRegbaseDualIssue" in regbase
     assert "PrepareKGateRegbase" in regbase
 
-    update = (block_root / "block_epilogue_gdn_fwdh_update.hpp").read_text(
-        encoding="utf-8"
-    )
-    vnew = (block_root / "block_epilogue_gdn_fwdh_vnew.hpp").read_text(
-        encoding="utf-8"
-    )
+    update = ARCH35_HEAD_STATE_UPDATE.read_text(encoding="utf-8")
+    vnew = ARCH35_HEAD_STATE_VNEW.read_text(encoding="utf-8")
     assert "VF_CALL<detail::PrepareKGateRegbase<GElementInput, true>>" in update
     assert "VF_CALL<detail::ApplyRowScaleDualIssue>" in update
     assert "PrepareKGate(gkLastUbTensor, gkInputUbTensor" in update
@@ -3806,32 +3712,8 @@ def test_a5_prepare_fuses_beta_w_and_v_into_score_factor_staging():
     assert prepare.count("FinishDeferredSafeChunk(") > 1
 
 
-def test_fwd_h_gk_only_path_skips_scalar_gate_scaling():
-    block_root = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel"
-    )
-    for arch in ("", "arch35/"):
-        text = (
-            block_root
-            / f"{arch}epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
-        ).read_text(encoding="utf-8")
-        assert text.count("if constexpr (scalarGated)") >= 4
-        assert "WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag)" in text
-        if arch:
-            assert text.count("ApplyRowScale(calcUbTensor, gUbTensor") == 2
-            assert text.count("ComputeVNew(wsUbTensor") == 2
-        else:
-            assert text.count("Adds<float>(calcUbTensor, wsUbTensor, 0.0f") == 2
-
-
 def test_arch22_fwd_h_direct_init_does_not_use_a5_local_buffers():
-    arch22 = (
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h"
-        / "op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
-    ).read_text(encoding="utf-8")
+    arch22 = GENERIC_HEAD_STATE.read_text(encoding="utf-8")
     for a5_only_buffer in (
         "ubHUpdatePing",
         "ubHUpdatePong",

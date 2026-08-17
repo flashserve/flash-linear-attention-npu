@@ -1,4 +1,4 @@
-"""Static contracts for the A2/A3 compact-plan FwdH scheduler."""
+"""Static contracts for the A2/A3 compact-plan HeadState scheduler."""
 
 from pathlib import Path
 
@@ -7,13 +7,9 @@ ROOT = Path(__file__).resolve().parents[5]
 OP_ROOT = ROOT / "fla/ops/ascendc/kda/chunk_kda_fwd"
 COMMON = OP_ROOT / "op_kernel/chunk_kda_fwd_common.h"
 PLAN = OP_ROOT / "op_kernel/chunk_kda_fwd_plan.h"
-GDN_ROOT = (
-    ROOT
-    / "fla/ops/ascendc/gdn/chunk_gdn_fwd/"
-    "chunk_gated_delta_rule_fwd_h/op_kernel/gemm"
-)
-SCHEDULER = GDN_ROOT / "block/block_scheduler_gdn_fwd_h.hpp"
-KERNEL = GDN_ROOT / "kernel/gdn_fwd_h_kernel.hpp"
+HEAD_STATE_ROOT = OP_ROOT / "op_kernel/common"
+SCHEDULER = HEAD_STATE_ROOT / "chunk_kda_head_state_plan.h"
+KERNEL = HEAD_STATE_ROOT / "chunk_kda_head_state.h"
 HOST_TILING = OP_ROOT / "op_host/chunk_kda_fwd_tiling.cpp"
 
 

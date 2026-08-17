@@ -1,32 +1,19 @@
 #pragma once
 
 #include "kernel_operator.h"
+#include "common/chunk_kda_catlass_compat.h"
 #include "chunk_kda_fwd_plan.h"
 #include "../../kda_gate_cumsum/op_kernel/kda_gate_cumsum_kernel.h"
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #include "arch35/chunk_kda_fwd_prepare.h"
 #include "arch35/chunk_kda_fwd_post_wu.h"
 #include "arch35/chunk_kda_fwd_finalize.h"
+#include "common/chunk_kda_head_state_arch35.h"
 #else
 #include "chunk_kda_fwd_prepare.h"
 #include "chunk_kda_fwd_post_wu.h"
 #include "chunk_kda_fwd_finalize.h"
-#endif
-
-#if __has_include("../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h")
-#include "../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-#include "../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
-#else
-#include "../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
-#endif
-#else
-#include "../../chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-#include "../../chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
-#else
-#include "../../chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
-#endif
+#include "common/chunk_kda_head_state.h"
 #endif
 
 namespace KdaForward {
@@ -85,7 +72,7 @@ struct ChunkKdaFwdAddresses {
     GM_ADDR uSeed;
 };
 
-struct FwdHTilingView {
+struct HeadStateTilingView {
     int64_t batch;
     int64_t seqlen;
     int64_t kNumHead;
@@ -113,7 +100,7 @@ struct FwdHTilingView {
 };
 
 template <typename TilingData>
-__aicore__ inline FwdHTilingView MakeFwdHTiling(
+__aicore__ inline HeadStateTilingView MakeHeadStateTiling(
     const TilingData &tiling, GM_ADDR compactPlan, bool tailOnly = false)
 {
     const CompactSequencePlanView plan(compactPlan);
@@ -283,20 +270,19 @@ __aicore__ inline void RunPostWuStage(
 }
 
 template <typename T, typename TileShapes, typename TilingData>
-__aicore__ inline void RunFwdH(
+__aicore__ inline void RunHeadState(
     GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
     const ChunkKdaFwdAddresses &addresses, GM_ADDR userWorkspace,
     GM_ADDR compactPlan, const TilingData &tiling, bool tailOnly = false)
 {
-    using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
-        T, float, float, float, TileShapes, true, false, true>;
-    const auto fwdHTiling = MakeFwdHTiling(tiling, compactPlan, tailOnly);
+    using HeadState = KdaForward::HeadState<T, TileShapes>;
+    const auto headStateTiling = MakeHeadStateTiling(tiling, compactPlan, tailOnly);
     GM_ADDR stateInput = tailOnly ? addresses.finalState : initialState;
-    FwdHKernel stateOp;
+    HeadState stateOp;
     stateOp.InitFromData(
         addresses.kg, addresses.w, addresses.u, addresses.gk, addresses.gk,
         stateInput, cuSeqlens, chunkIndices, addresses.h, addresses.vNew,
-        addresses.finalState, fwdHTiling,
+        addresses.finalState, headStateTiling,
         userWorkspace + tiling.fwdHWorkspaceBaseOffset);
     stateOp.Process();
 }
@@ -309,11 +295,11 @@ __aicore__ inline void RunGenericTailBackEnd(
     GM_ADDR compactPlan, const TilingData &tiling)
 {
     if (tiling.vHeadDim > 128) {
-        RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
+        RunHeadState<T, KdaForward::HeadStateTileShapes256>(
             addresses.finalState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, compactPlan, tiling, true);
     } else {
-        RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
+        RunHeadState<T, KdaForward::HeadStateTileShapes128>(
             addresses.finalState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, compactPlan, tiling, true);
     }
@@ -334,11 +320,11 @@ __aicore__ inline void RunGenericBackEnd(
     GM_ADDR compactPlan, const TilingData &tiling)
 {
     if (tiling.vHeadDim > 128) {
-        RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
+        RunHeadState<T, KdaForward::HeadStateTileShapes256>(
             initialState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, compactPlan, tiling);
     } else {
-        RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
+        RunHeadState<T, KdaForward::HeadStateTileShapes128>(
             initialState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, compactPlan, tiling);
     }
@@ -359,11 +345,11 @@ __aicore__ inline void RunGenericBackEnd(
     GM_ADDR compactPlan, const TilingData &tiling, TPipe &pipe)
 {
     if (tiling.vHeadDim > 128) {
-        RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
+        RunHeadState<T, KdaForward::HeadStateTileShapes256>(
             initialState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, compactPlan, tiling);
     } else {
-        RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
+        RunHeadState<T, KdaForward::HeadStateTileShapes128>(
             initialState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, compactPlan, tiling);
     }

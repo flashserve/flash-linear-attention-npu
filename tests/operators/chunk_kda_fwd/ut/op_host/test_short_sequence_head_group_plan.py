@@ -700,13 +700,11 @@ def test_kernel_only_consumes_host_computed_head_group_policy():
         assert "ComputeChunkHeadGroupCount" not in source
 
 
-def test_fwd_h_does_not_consume_chunk_head_group_cursors():
+def test_head_state_does_not_consume_chunk_head_group_cursors():
+    common_root = KERNEL_ROOT / "common"
     sources = [
-        KERNEL_ROOT / "arch35/chunk_kda_fwd_fwd_h.h",
-        ROOT
-        / "fla/ops/ascendc/gdn/chunk_gdn_fwd/"
-        "chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/"
-        "gdn_fwd_h_kernel.hpp",
+        common_root / "chunk_kda_head_state.h",
+        common_root / "chunk_kda_head_state_arch35.h",
     ]
     for source_path in sources:
         source = source_path.read_text(encoding="utf-8")

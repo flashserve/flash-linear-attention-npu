@@ -7,6 +7,10 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+#pragma once
+
+#include "chunk_kda_catlass_compat.h"
+
 #define CATLASS_ARCH 3510
 
 #include "catlass/arch/arch.hpp"
@@ -14,10 +18,10 @@
 #include "catlass/arch/resource.hpp"
 #include "catlass/catlass.hpp"
 #include "catlass/debug.hpp"
-#include "../block/block_scheduler_gdn_fwd_h.hpp"
+#include "chunk_kda_head_state_arch35_plan.h"
 #include "catlass/epilogue/block/block_epilogue.hpp"
-#include "../../epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
-#include "../../epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
+#include "chunk_kda_head_state_arch35_update.h"
+#include "chunk_kda_head_state_arch35_vnew.h"
 #include "catlass/gemm/block/block_mmad.hpp"
 #include "kernel_utils/block/block_mmad_pingpong_tla.hpp"
 #include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
@@ -55,20 +59,20 @@ using _65536 = tla::Int<65536>;
 using namespace Catlass;
 using namespace tla;
 
-namespace Catlass::Gemm::Kernel {
+namespace KdaForward::HeadStateDetail {
 
-struct GDNFwdHTileShapes128 {
+struct KdaHeadStateTileShapes128 {
     using L1TileShape = tla::Shape<_128, _128, _128>;
     using L0TileShape = L1TileShape;
 };
 
-struct GDNFwdHTileShapes256 {
+struct KdaHeadStateTileShapes256 {
     using L1TileShape = tla::Shape<_128, _256, _128>;
     using L0TileShape = tla::Shape<_128, _256, _64>;
 };
 
 template <bool KGated, bool ScalarGated, bool UseExp2>
-struct GDNFwdHGateTag {
+struct KdaHeadStateGateTag {
     static constexpr bool value = KGated;
     static constexpr bool scalarGated = ScalarGated;
     static constexpr bool useExp2 = UseExp2;
@@ -79,21 +83,21 @@ template<
     typename G_TYPE,
     typename STATE_TYPE,
     typename WORKSPACE_TYPE,
-    typename TileShapes = GDNFwdHTileShapes128,
+    typename TileShapes = KdaHeadStateTileShapes128,
     bool kGated = false,
     bool scalarGated = true,
     bool useExp2 = false
 >
-class GDNFwdHKernel {
+class KdaHeadStateImpl {
 public:
 
     using ArchTag = Arch::Ascend950;
-    using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHCube;
-    using VecScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHVec;
+    using CubePlan = typename KdaForward::HeadStateDetail::KdaHeadStateCubePlan;
+    using VecPlan = typename KdaForward::HeadStateDetail::KdaHeadStateVecPlan;
 
     using DispatchPolicyTlaMulti = Gemm::MmadPingpongTlaMulti<ArchTag, false, false, 2>;
     using DispatchPolicyTlaTail = Gemm::MmadPingpongTlaMulti<ArchTag, true, false, 1>;
-    using DispatchPolicyDirectUb = Common::MmadPingpong<ArchTag, false, false, 2>;
+    using DispatchPolicyDirectUb = ::Common::MmadPingpong<ArchTag, false, false, 2>;
     using DispatchPolicyTlaPreloadAL1B = Gemm::MmadPingpongTlaPreloadAL1B<ArchTag, true>;
     using L1TileShapeVTla = typename TileShapes::L1TileShape;
     using L0TileShapeVTla = typename TileShapes::L0TileShape;
@@ -111,37 +115,65 @@ public:
 
     // cube 1
     using TileCopyWH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
-    using TileCopyWHDirectUb = Common::Tile::PackedTileCopyTlaToUB<
+    using TileCopyWHDirectUb = ::Common::Tile::PackedTileCopyTlaToUB<
         ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor,
         WORKSPACE_TYPE, layout::RowMajor, void, Gemm::Tile::CopyL0CToUBMode::NO_SPLIT>;
     using BlockMmadWH = Gemm::Block::BlockMmadTla<DispatchPolicyTlaMulti, L1TileShapeVTla, L0TileShapeVTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyWH>;
     using BlockMmadWHTail = Gemm::Block::BlockMmadTla<DispatchPolicyTlaTail, L1TileShapeVTla, L0TileShapeVTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyWH>;
-    using BlockMmadWHDirectUb = Common::BlockMmadTla<
+    using BlockMmadWHDirectUb = ::Common::BlockMmadTla<
         DispatchPolicyDirectUb, L1TileShapeVTla, L0TileShapeVTla,
         INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyWHDirectUb>;
 
     // cube 2
     using TileCopyKV = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::ColumnMajor, INPUT_TYPE, layout::zN, WORKSPACE_TYPE, layout::RowMajor>;
-    using TileCopyKVDirectUb = Common::Tile::PackedTileCopyTlaToUB<
+    using TileCopyKVDirectUb = ::Common::Tile::PackedTileCopyTlaToUB<
         ArchTag, INPUT_TYPE, layout::ColumnMajor, INPUT_TYPE, layout::zN,
         WORKSPACE_TYPE, layout::RowMajor, void, Gemm::Tile::CopyL0CToUBMode::NO_SPLIT>;
     using TileMmadKV = Gemm::Tile::TileMmadTla<ArchTag, INPUT_TYPE, typename TileCopyKV::LayoutTagL1A>;
     using BlockMmadKV = Gemm::Block::BlockMmadTla<DispatchPolicyTlaMulti, L1TileShapeVTla, L0TileShapeVTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKV>;
     using BlockMmadKVTail = Gemm::Block::BlockMmadTla<DispatchPolicyTlaTail, L1TileShapeVTla, L0TileShapeVTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKV>;
-    using BlockMmadKVDirectUb = Common::BlockMmadTla<
+    using BlockMmadKVDirectUb = ::Common::BlockMmadTla<
         DispatchPolicyDirectUb, L1TileShapeVTla, L0TileShapeVTla,
         INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKVDirectUb>;
+    static constexpr uint32_t CUBE2_ROW_TILE_M = tla::get<0>(L0TileShapeVTla{});
+
+    template <typename BlockMmad, typename TensorK, typename TensorVwork, typename TensorHwork>
+    __aicore__ inline void ComputeCube2RowTiles(
+        BlockMmad &blockMmad, TensorK &tensorK, TensorVwork &tensorVwork,
+        TensorHwork &tensorHwork, uint32_t vBlockDim, uint32_t blockTokens,
+        bool clearL1Padding)
+    {
+        auto tensorBlockVwork = GetTile(
+            tensorVwork, tla::MakeCoord(0, 0),
+            tla::MakeShape(blockTokens, vBlockDim));
+        // BlockMmad allocates one static L0C tile per pipeline slot. Keep each
+        // product within that tile instead of constructing a larger L0C layout.
+        for (uint32_t rowOffset = 0; rowOffset < kHeadDim;
+             rowOffset += CUBE2_ROW_TILE_M) {
+            uint32_t rowCount = Min(CUBE2_ROW_TILE_M, kHeadDim - rowOffset);
+            GemmCoord cube2Shape{rowCount, vBlockDim, blockTokens};
+            auto tensorBlockK = GetTile(
+                tensorK, tla::MakeCoord(rowOffset, 0),
+                tla::MakeShape(rowCount, blockTokens));
+            auto tensorBlockHwork = GetTile(
+                tensorHwork, tla::MakeCoord(rowOffset, 0),
+                tla::MakeShape(rowCount, vBlockDim));
+            blockMmad(
+                tensorBlockK, tensorBlockVwork, tensorBlockHwork,
+                cube2Shape, EmptyClass{}, clearL1Padding);
+        }
+    }
 
     // vec 1
-    using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnew;
-    using GateTag = GDNFwdHGateTag<kGated, scalarGated, useExp2>;
-    using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, VUpdateType, FinalStateType, GateTag>;
+    using DispatchPolicyKdaHeadStateVNew = Epilogue::EpilogueAtlasKdaHeadStateVNew;
+    using GateTag = KdaHeadStateGateTag<kGated, scalarGated, useExp2>;
+    using EpilogueKdaHeadStateVNew = Epilogue::Block::BlockEpilogue<DispatchPolicyKdaHeadStateVNew, VType, GType, UType, VworkType, VUpdateType, FinalStateType, GateTag>;
 
     // vec 2
-    using DispatchPolicyGDNFwdHUpdate = Epilogue::EpilogueAtlasGDNFwdHUpdate;
-    using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType, FinalStateType, GateTag>;
+    using DispatchPolicyKdaHeadStateUpdate = Epilogue::EpilogueAtlasKdaHeadStateUpdate;
+    using EpilogueKdaHeadStateUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyKdaHeadStateUpdate, HType, GType, HType, HworkType, FinalStateType, GateTag>;
 
-    using GDNFwdHOffsets = Catlass::Gemm::Block::GDNFwdHOffsets;
+    using KdaHeadStateOffsets = KdaForward::HeadStateDetail::KdaHeadStateOffsets;
 
     using ElementK = INPUT_TYPE;
     using ElementW = INPUT_TYPE;
@@ -213,78 +245,13 @@ public:
     AscendC::LocalTensor<ElementV> l1VUpdatePing;
     AscendC::LocalTensor<ElementV> l1VUpdatePong;
 
-    CubeScheduler cubeBlockScheduler;
-    VecScheduler vecBlockScheduler;
+    CubePlan cubePlan;
+    VecPlan vecPlan;
 
     Arch::Resource<ArchTag> resource;
 
 
-    __aicore__ inline GDNFwdHKernel() {}
-
-    __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
-        GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user) {
-
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
-
-        batch = gdnFwdHTilingData->batch;
-        seqlen = gdnFwdHTilingData->seqlen;
-        kNumHead = gdnFwdHTilingData->kNumHead;
-        vNumHead = gdnFwdHTilingData->vNumHead;
-        kHeadDim = gdnFwdHTilingData->kHeadDim;
-        vHeadDim = gdnFwdHTilingData->vHeadDim;
-        chunkSize = gdnFwdHTilingData->chunkSize;
-        useInitialState = gdnFwdHTilingData->useInitialState;
-        storeFinalState = gdnFwdHTilingData->storeFinalState;
-        isVariedLen = gdnFwdHTilingData->isVariedLen;
-        shapeBatch = gdnFwdHTilingData->shapeBatch;
-        tokenBatch = gdnFwdHTilingData->tokenBatch;
-        vWorkspaceOffset = gdnFwdHTilingData->vWorkspaceOffset;
-        vUpdateWorkspaceOffset = gdnFwdHTilingData->vUpdateWorkspaceOffset;
-        hWorkspaceOffset = gdnFwdHTilingData->hWorkspaceOffset;
-        numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
-        numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
-        kDecayWorkspaceOffset = gdnFwdHTilingData->kDecayWorkspaceOffset;
-        uint64_t denseTaskCount = static_cast<uint64_t>(shapeBatch) * vNumHead;
-        useDirectFp32Ub = std::is_same<ElementVWork, float>::value &&
-                          !isVariedLen && chunkSize <= 64 &&
-                          seqlen % chunkSize == 0 &&
-                          kHeadDim == 128 && vHeadDim == 128 &&
-                          denseTaskCount >= AscendC::GetBlockNum();
-
-        gmK.SetGlobalBuffer((__gm__ ElementK *)k);
-        gmW.SetGlobalBuffer((__gm__ ElementW *)w);
-        gmU.SetGlobalBuffer((__gm__ ElementU *)u);
-        gmG.SetGlobalBuffer((__gm__ ElementG *)(scalarGated ? g : gk));
-        gmGk.SetGlobalBuffer((__gm__ ElementG *)(kGated ? gk : g));
-        gmInitialState.SetGlobalBuffer((__gm__ ElementInitialState *)inital_state);
-        gmH.SetGlobalBuffer((__gm__ ElementH *)h);
-        gmV.SetGlobalBuffer((__gm__ ElementV *)v_new);
-        gmFinalState.SetGlobalBuffer((__gm__ ElementFinalState *)final_state);
-        gmVWorkspace.SetGlobalBuffer((__gm__ ElementVWork *)(user + vWorkspaceOffset));
-        gmVUpdateWorkspace.SetGlobalBuffer((__gm__ ElementV *)(user + vUpdateWorkspaceOffset));
-        gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
-        gmKDecayWorkspace.SetGlobalBuffer((__gm__ ElementK *)(user + kDecayWorkspaceOffset));
-
-        gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
-        gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
-        gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
-
-        ubHUpdatePing = resource.ubBuf.template GetBufferByByte<ElementHWork>(32 * 1024);
-        ubHUpdatePong = resource.ubBuf.template GetBufferByByte<ElementHWork>(96 * 1024);
-        ubVWorkPing = resource.ubBuf.template GetBufferByByte<ElementVWork>(32 * 1024);
-        ubVWorkPong = resource.ubBuf.template GetBufferByByte<ElementVWork>(96 * 1024);
-
-        l1VUpdatePing = resource.l1Buf.template GetBufferByByte<ElementV>(0);
-        l1VUpdatePong = resource.l1Buf.template GetBufferByByte<ElementV>(chunkSize * vHeadDim * sizeof(ElementV));
-
-        if ASCEND_IS_AIC {
-            cubeBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user);
-        }
-
-        if ASCEND_IS_AIV {
-            vecBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user);
-        }
-    }
+    __aicore__ inline KdaHeadStateImpl() {}
 
     template <typename TilingData>
     __aicore__ inline void InitFromData(
@@ -342,16 +309,16 @@ public:
         l1VUpdatePong = resource.l1Buf.template GetBufferByByte<ElementV>(chunkSize * vHeadDim * sizeof(ElementV));
 
         if ASCEND_IS_AIC {
-            cubeBlockScheduler.InitFromData(cu_seqlens, chunk_indices, tilingData, user);
+            cubePlan.InitFromData(cu_seqlens, chunk_indices, tilingData, user);
         }
         if ASCEND_IS_AIV {
-            vecBlockScheduler.InitFromData(cu_seqlens, chunk_indices, tilingData, user);
+            vecPlan.InitFromData(cu_seqlens, chunk_indices, tilingData, user);
         }
     }
 
     // Tail helpers borrow the stream's V_MTE2 free token and restore it before returning.
     __aicore__ inline void ComputeTailVWorkspace(
-        const GDNFwdHOffsets& offsets, uint32_t tailEventId)
+        const KdaHeadStateOffsets& offsets, uint32_t tailEventId)
     {
         uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
@@ -423,14 +390,17 @@ public:
             AscendC::DataCopy(
                 gmVWorkspace[offsets.vWorkOffset + tokenRow * offsets.vBlockDim],
                 accumUb, offsets.vBlockDim);
+            // MTE2 may reload GM while V reuses accumUb on the next row.
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(tailEventId);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(tailEventId);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
         }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(tailEventId);
     }
 
     __aicore__ inline void ComputeTailHWorkspace(
-        const GDNFwdHOffsets& offsets, uint32_t tailEventId)
+        const KdaHeadStateOffsets& offsets, uint32_t tailEventId)
     {
         uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
@@ -499,8 +469,11 @@ public:
             AscendC::DataCopy(
                 gmHWorkspace[offsets.hWorkOffset + kRow * offsets.vBlockDim],
                 accumUb, offsets.vBlockDim);
+            // MTE2 may reload GM while V reuses accumUb on the next row.
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(tailEventId);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(tailEventId);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
         }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(tailEventId);
     }
@@ -512,41 +485,41 @@ public:
 
         if ASCEND_IS_AIC {
             uint32_t coreIdx = AscendC::GetBlockIdx();
-            uint32_t coreNum = vecBlockScheduler.cubeCoreNum;
+            uint32_t coreNum = vecPlan.cubeCoreNum;
 
-            BlockMmadWH blockMmadWH(resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
-            BlockMmadKV blockMmadKV(resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
-            BlockMmadWHTail blockMmadWHTail(resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
-            BlockMmadKVTail blockMmadKVTail(resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
-            bool useBoundedMmad = isVariedLen || (seqlen % chunkSize != 0);
+            BlockMmadWH blockMmadWH(resource, chunkSize * cubePlan.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
+            BlockMmadKV blockMmadKV(resource, chunkSize * cubePlan.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
+            BlockMmadWHTail blockMmadWHTail(resource, chunkSize * cubePlan.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
+            BlockMmadKVTail blockMmadKVTail(resource, chunkSize * cubePlan.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
+            bool useChunkAwareMmad = isVariedLen || (seqlen % chunkSize != 0);
 
-            auto wLayout = tla::MakeLayout<ElementW, LayoutW>(shapeBatch * kNumHead * cubeBlockScheduler.totalTokens, kHeadDim);
-            auto hLayout = tla::MakeLayout<ElementH, LayoutH>(shapeBatch * vNumHead * cubeBlockScheduler.totalChunks * kHeadDim, vHeadDim);
+            auto wLayout = tla::MakeLayout<ElementW, LayoutW>(shapeBatch * kNumHead * cubePlan.totalTokens, kHeadDim);
+            auto hLayout = tla::MakeLayout<ElementH, LayoutH>(shapeBatch * vNumHead * cubePlan.totalChunks * kHeadDim, vHeadDim);
 
-            auto kLayout = tla::MakeLayout<ElementK, LayoutK>(kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens);
-            auto hworkLayout = tla::MakeLayout<ElementHWork, LayoutH>(kHeadDim, cubeBlockScheduler.vBlockSize);
+            auto kLayout = tla::MakeLayout<ElementK, LayoutK>(kHeadDim, shapeBatch * kNumHead * cubePlan.totalTokens);
+            auto hworkLayout = tla::MakeLayout<ElementHWork, LayoutH>(kHeadDim, cubePlan.vBlockSize);
 
             AscendC::SyncAll<false>();
             uint32_t currStage = 0; // 0: C1, 1: C2
-            while (cubeBlockScheduler.isRunning) {
+            while (cubePlan.isRunning) {
                 if (currStage == 0) {
                     /* C1: v_work = w @ h[i] */
-                    cubeBlockScheduler.InitTasks();
+                    cubePlan.InitTasks();
                     if (useDirectFp32Ub) {
                         BlockMmadWHDirectUb blockMmadWHDirectUb(
-                            resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
+                            resource, chunkSize * cubePlan.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
                         for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
-                            uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
-                            const auto& stream = cubeBlockScheduler.GetStream(i);
-                            if (cubeBlockScheduler.StreamIsDone(stream)) {
+                            uint32_t streamId = cubePlan.GetStreamId(i);
+                            const auto& stream = cubePlan.GetStream(i);
+                            if (cubePlan.StreamIsDone(stream)) {
                                 continue;
                             }
 
-                            const GDNFwdHOffsets& cube1Offsets = cubeBlockScheduler.GetCurTaskOffsets(stream);
-                            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[streamId]);
+                            const KdaHeadStateOffsets& cube1Offsets = cubePlan.GetCurTaskOffsets(stream);
+                            Arch::CrossCoreWaitFlag(cubePlan.vec2Done[streamId]);
                             if (cube1Offsets.blockTokens < 16) {
                                 Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(
-                                    cubeBlockScheduler.cube1Done[streamId]);
+                                    cubePlan.cube1Done[streamId]);
                                 continue;
                             }
                             int64_t cube1OffsetW = cube1Offsets.wOffset;
@@ -572,16 +545,31 @@ public:
                                 DIRECT_UB_FREE_FLAG_BEGIN, DIRECT_UB_READY_FLAG_BEGIN, ubListId,
                                 DIRECT_VEC_NUM, DIRECT_UB_STAGES);
                         }
-                    } else if (useBoundedMmad) {
+                    } else if (useChunkAwareMmad) {
+                        bool hasFullChunk = false;
                         for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
-                            uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
-                            const auto& stream = cubeBlockScheduler.GetStream(i);
-                            if (cubeBlockScheduler.StreamIsDone(stream)) {
+                            const auto& stream = cubePlan.GetStream(i);
+                            if (!cubePlan.StreamIsDone(stream) &&
+                                cubePlan.GetCurTaskOffsets(stream).blockTokens ==
+                                    chunkSize) {
+                                hasFullChunk = true;
+                            }
+                        }
+                        if (hasFullChunk) {
+                            blockMmadWH.preSetFlags();
+                        }
+                        for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                            uint32_t streamId = cubePlan.GetStreamId(i);
+                            const auto& stream = cubePlan.GetStream(i);
+                            if (cubePlan.StreamIsDone(stream)) {
                                 continue;
                             }
 
-                            const GDNFwdHOffsets& cube1Offsets = cubeBlockScheduler.GetCurTaskOffsets(stream);
-                            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[streamId]);
+                            const KdaHeadStateOffsets& cube1Offsets = cubePlan.GetCurTaskOffsets(stream);
+                            if (cube1Offsets.blockTokens != chunkSize) {
+                                continue;
+                            }
+                            Arch::CrossCoreWaitFlag(cubePlan.vec2Done[streamId]);
                             auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(
                                 cube1Offsets.blockTokens, cube1Offsets.vBlockDim);
                             auto tensorW = tla::MakeTensor(
@@ -603,36 +591,78 @@ public:
                                 tensorV, tla::MakeCoord(0, 0),
                                 tla::MakeShape(cube1Shape.m(), cube1Shape.n()));
 
-                            if (cube1Offsets.blockTokens < chunkSize) {
-                                blockMmadWHTail.preSetFlags();
-                                blockMmadWHTail(
-                                    tensorBlockW, tensorBlockH, tensorBlockV,
-                                    cube1Shape, EmptyClass{}, true);
-                                blockMmadWHTail.finalWaitFlags();
-                            } else {
-                                blockMmadWH.preSetFlags();
-                                blockMmadWH(
-                                    tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape);
-                                blockMmadWH.finalWaitFlags();
+                            blockMmadWH(
+                                tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape);
+                            Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                                cubePlan.cube1Done[streamId]);
+                        }
+                        if (hasFullChunk) {
+                            blockMmadWH.finalWaitFlags();
+                        }
+                        for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                            uint32_t streamId = cubePlan.GetStreamId(i);
+                            const auto& stream = cubePlan.GetStream(i);
+                            if (cubePlan.StreamIsDone(stream)) {
+                                continue;
                             }
+
+                            const KdaHeadStateOffsets& cube1Offsets =
+                                cubePlan.GetCurTaskOffsets(stream);
+                            if (cube1Offsets.blockTokens == chunkSize) {
+                                continue;
+                            }
+                            Arch::CrossCoreWaitFlag(cubePlan.vec2Done[streamId]);
+                            if (cube1Offsets.blockTokens < 16) {
+                                Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(
+                                    cubePlan.cube1Done[streamId]);
+                                continue;
+                            }
+                            auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(
+                                cube1Offsets.blockTokens, cube1Offsets.vBlockDim);
+                            auto tensorW = tla::MakeTensor(
+                                gmW[cube1Offsets.wOffset], wLayout,
+                                Catlass::Arch::PositionGM{});
+                            auto tensorH = tla::MakeTensor(
+                                gmH[cube1Offsets.hSrcOffset], hLayout,
+                                Catlass::Arch::PositionGM{});
+                            auto tensorV = tla::MakeTensor(
+                                gmVWorkspace[cube1Offsets.vWorkOffset], vLayout,
+                                Catlass::Arch::PositionGM{});
+                            GemmCoord cube1Shape{
+                                cube1Offsets.blockTokens, cube1Offsets.vBlockDim,
+                                kHeadDim};
+                            auto tensorBlockW = GetTile(
+                                tensorW, tla::MakeCoord(0, 0),
+                                tla::MakeShape(cube1Shape.m(), cube1Shape.k()));
+                            auto tensorBlockH = GetTile(
+                                tensorH, tla::MakeCoord(0, 0),
+                                tla::MakeShape(cube1Shape.k(), cube1Shape.n()));
+                            auto tensorBlockV = GetTile(
+                                tensorV, tla::MakeCoord(0, 0),
+                                tla::MakeShape(cube1Shape.m(), cube1Shape.n()));
+                            blockMmadWHTail.preSetFlags();
+                            blockMmadWHTail(
+                                tensorBlockW, tensorBlockH, tensorBlockV,
+                                cube1Shape, EmptyClass{}, true);
+                            blockMmadWHTail.finalWaitFlags();
                             AscendC::PipeBarrier<PIPE_ALL>();
                             Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
-                                cubeBlockScheduler.cube1Done[streamId]);
+                                cubePlan.cube1Done[streamId]);
                         }
                     } else {
                         blockMmadWH.preSetFlags();
                         for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
-                            uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
-                            const auto& stream = cubeBlockScheduler.GetStream(i);
-                            if (cubeBlockScheduler.StreamIsDone(stream)) {
+                            uint32_t streamId = cubePlan.GetStreamId(i);
+                            const auto& stream = cubePlan.GetStream(i);
+                            if (cubePlan.StreamIsDone(stream)) {
                                 continue;
                             }
 
-                            const GDNFwdHOffsets& cube1Offsets = cubeBlockScheduler.GetCurTaskOffsets(stream);
-                            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[streamId]);
+                            const KdaHeadStateOffsets& cube1Offsets = cubePlan.GetCurTaskOffsets(stream);
+                            Arch::CrossCoreWaitFlag(cubePlan.vec2Done[streamId]);
                             if (cube1Offsets.blockTokens < 16) {
                                 Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(
-                                    cubeBlockScheduler.cube1Done[streamId]);
+                                    cubePlan.cube1Done[streamId]);
                                 continue;
                             }
                             auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(cube1Offsets.blockTokens, cube1Offsets.vBlockDim);
@@ -648,7 +678,7 @@ public:
                             auto tensorBlockV = GetTile(tensorV, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.m(), cube1Shape.n()));
 
                             blockMmadWH(tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape);
-                            Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube1Done[streamId]);
+                            Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubePlan.cube1Done[streamId]);
                         }
                         blockMmadWH.finalWaitFlags();
                     }
@@ -656,20 +686,20 @@ public:
                     /* C2: h[i+1] = k.T @ v_work */
                     if (useDirectFp32Ub) {
                         BlockMmadKVDirectUb blockMmadKVDirectUb(
-                            resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
+                            resource, chunkSize * cubePlan.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
                         for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
-                            uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
-                            const auto& stream = cubeBlockScheduler.GetStream(i);
-                            if (cubeBlockScheduler.StreamIsDone(stream)) {
+                            uint32_t streamId = cubePlan.GetStreamId(i);
+                            const auto& stream = cubePlan.GetStream(i);
+                            if (cubePlan.StreamIsDone(stream)) {
                                 continue;
                             }
-                            const GDNFwdHOffsets& cube2Offsets = cubeBlockScheduler.GetCurTaskOffsets(stream);
-                            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done[streamId]);
+                            const KdaHeadStateOffsets& cube2Offsets = cubePlan.GetCurTaskOffsets(stream);
+                            Arch::CrossCoreWaitFlag(cubePlan.vec1Done[streamId]);
 
-                            if (cubeBlockScheduler.NeedProcessStage2(stream)) {
+                            if (cubePlan.NeedProcessStage2(stream)) {
                                 if (cube2Offsets.blockTokens < 16) {
                                     Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(
-                                        cubeBlockScheduler.cube2Done[streamId]);
+                                        cubePlan.cube2Done[streamId]);
                                     continue;
                                 }
                                 int64_t cube2OffsetK = kGated ? cube2Offsets.kDecayWorkOffset : cube2Offsets.wkOffset;
@@ -699,18 +729,33 @@ public:
                                     DIRECT_VEC_NUM, DIRECT_UB_STAGES);
                             }
                         }
-                    } else if (useBoundedMmad) {
+                    } else if (useChunkAwareMmad) {
+                        bool hasFullChunk = false;
                         for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
-                            uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
-                            const auto& stream = cubeBlockScheduler.GetStream(i);
-                            if (cubeBlockScheduler.StreamIsDone(stream)) {
+                            const auto& stream = cubePlan.GetStream(i);
+                            if (!cubePlan.StreamIsDone(stream) &&
+                                cubePlan.GetCurTaskOffsets(stream).blockTokens ==
+                                    chunkSize) {
+                                hasFullChunk = true;
+                            }
+                        }
+                        if (hasFullChunk) {
+                            blockMmadKV.preSetFlags();
+                        }
+                        for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                            uint32_t streamId = cubePlan.GetStreamId(i);
+                            const auto& stream = cubePlan.GetStream(i);
+                            if (cubePlan.StreamIsDone(stream)) {
                                 continue;
                             }
-                            const GDNFwdHOffsets& cube2Offsets =
-                                cubeBlockScheduler.GetCurTaskOffsets(stream);
-                            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done[streamId]);
+                            const KdaHeadStateOffsets& cube2Offsets =
+                                cubePlan.GetCurTaskOffsets(stream);
+                            if (cube2Offsets.blockTokens != chunkSize) {
+                                continue;
+                            }
+                            Arch::CrossCoreWaitFlag(cubePlan.vec1Done[streamId]);
 
-                            if (cubeBlockScheduler.NeedProcessStage2(stream)) {
+                            if (cubePlan.NeedProcessStage2(stream)) {
                                 int64_t cube2OffsetK = kGated
                                     ? cube2Offsets.kDecayWorkOffset
                                     : cube2Offsets.wkOffset;
@@ -729,51 +774,84 @@ public:
                                 auto tensorHwork = tla::MakeTensor(
                                     gmHWorkspace[cube2Offsets.hWorkOffset], hworkLayout,
                                     Catlass::Arch::PositionGM{});
-                                GemmCoord cube2Shape{
-                                    kHeadDim, cube2Offsets.vBlockDim, cube2Offsets.blockTokens};
-                                auto tensorBlockK = GetTile(
-                                    tensorK, tla::MakeCoord(0, 0),
-                                    tla::MakeShape(cube2Shape.m(), cube2Shape.k()));
-                                auto tensorBlockVwork = GetTile(
-                                    tensorVwork, tla::MakeCoord(0, 0),
-                                    tla::MakeShape(cube2Shape.k(), cube2Shape.n()));
-                                auto tensorBlockHwork = GetTile(
-                                    tensorHwork, tla::MakeCoord(0, 0),
-                                    tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
-
-                                if (cube2Offsets.blockTokens < chunkSize) {
-                                    blockMmadKVTail.preSetFlags();
-                                    blockMmadKVTail(
-                                        tensorBlockK, tensorBlockVwork, tensorBlockHwork,
-                                        cube2Shape, EmptyClass{}, true);
-                                    blockMmadKVTail.finalWaitFlags();
-                                } else {
-                                    blockMmadKV.preSetFlags();
-                                    blockMmadKV(
-                                        tensorBlockK, tensorBlockVwork, tensorBlockHwork,
-                                        cube2Shape);
-                                    blockMmadKV.finalWaitFlags();
-                                }
-                                AscendC::PipeBarrier<PIPE_ALL>();
+                                ComputeCube2RowTiles(
+                                    blockMmadKV, tensorK, tensorVwork, tensorHwork,
+                                    cube2Offsets.vBlockDim, cube2Offsets.blockTokens,
+                                    false);
                             }
                             Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
-                                cubeBlockScheduler.cube2Done[streamId]);
+                                cubePlan.cube2Done[streamId]);
+                        }
+                        if (hasFullChunk) {
+                            blockMmadKV.finalWaitFlags();
+                        }
+                        for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                            uint32_t streamId = cubePlan.GetStreamId(i);
+                            const auto& stream = cubePlan.GetStream(i);
+                            if (cubePlan.StreamIsDone(stream)) {
+                                continue;
+                            }
+
+                            const KdaHeadStateOffsets& cube2Offsets =
+                                cubePlan.GetCurTaskOffsets(stream);
+                            if (cube2Offsets.blockTokens == chunkSize) {
+                                continue;
+                            }
+                            Arch::CrossCoreWaitFlag(cubePlan.vec1Done[streamId]);
+                            if (cubePlan.NeedProcessStage2(stream) &&
+                                cube2Offsets.blockTokens >= 16) {
+                                int64_t cube2OffsetK = kGated
+                                    ? cube2Offsets.kDecayWorkOffset
+                                    : cube2Offsets.wkOffset;
+                                auto tensorK = kGated
+                                    ? tla::MakeTensor(
+                                          gmKDecayWorkspace[cube2OffsetK], kLayout,
+                                          Catlass::Arch::PositionGM{})
+                                    : tla::MakeTensor(
+                                          gmK[cube2OffsetK], kLayout,
+                                          Catlass::Arch::PositionGM{});
+                                auto vUpdateLayout = tla::MakeLayout<
+                                    ElementVUpdate, LayoutVUpdate>(
+                                    cube2Offsets.blockTokens,
+                                    cube2Offsets.vBlockDim);
+                                auto tensorVwork = tla::MakeTensor(
+                                    gmVUpdateWorkspace[cube2Offsets.vWorkOffset],
+                                    vUpdateLayout, Catlass::Arch::PositionGM{});
+                                auto tensorHwork = tla::MakeTensor(
+                                    gmHWorkspace[cube2Offsets.hWorkOffset], hworkLayout,
+                                    Catlass::Arch::PositionGM{});
+                                blockMmadKVTail.preSetFlags();
+                                ComputeCube2RowTiles(
+                                    blockMmadKVTail, tensorK, tensorVwork, tensorHwork,
+                                    cube2Offsets.vBlockDim, cube2Offsets.blockTokens,
+                                    true);
+                                blockMmadKVTail.finalWaitFlags();
+                                AscendC::PipeBarrier<PIPE_ALL>();
+                            }
+                            if (cube2Offsets.blockTokens < 16 &&
+                                cubePlan.NeedProcessStage2(stream)) {
+                                Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(
+                                    cubePlan.cube2Done[streamId]);
+                            } else {
+                                Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                                    cubePlan.cube2Done[streamId]);
+                            }
                         }
                     } else {
                         blockMmadKV.preSetFlags();
                         for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
-                            uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
-                            const auto& stream = cubeBlockScheduler.GetStream(i);
-                            if (cubeBlockScheduler.StreamIsDone(stream)) {
+                            uint32_t streamId = cubePlan.GetStreamId(i);
+                            const auto& stream = cubePlan.GetStream(i);
+                            if (cubePlan.StreamIsDone(stream)) {
                                 continue;
                             }
-                            const GDNFwdHOffsets& cube2Offsets = cubeBlockScheduler.GetCurTaskOffsets(stream);
-                            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done[streamId]);
+                            const KdaHeadStateOffsets& cube2Offsets = cubePlan.GetCurTaskOffsets(stream);
+                            Arch::CrossCoreWaitFlag(cubePlan.vec1Done[streamId]);
 
-                            if (cubeBlockScheduler.NeedProcessStage2(stream)) {
+                            if (cubePlan.NeedProcessStage2(stream)) {
                                 if (cube2Offsets.blockTokens < 16) {
                                     Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(
-                                        cubeBlockScheduler.cube2Done[streamId]);
+                                        cubePlan.cube2Done[streamId]);
                                     continue;
                                 }
                                 // step 3: h[i+1] = k.T @ v_work
@@ -785,22 +863,20 @@ public:
                                 auto vUpdateLayout = tla::MakeLayout<ElementVUpdate, LayoutVUpdate>(cube2Offsets.blockTokens, cube2Offsets.vBlockDim);
                                 auto tensorVwork = tla::MakeTensor(gmVUpdateWorkspace[cube2OffsetVwork], vUpdateLayout, Catlass::Arch::PositionGM{});
                                 auto tensorHwork = tla::MakeTensor(gmHWorkspace[cube2Offsets.hWorkOffset], hworkLayout, Catlass::Arch::PositionGM{});
-                                GemmCoord cube2Shape{kHeadDim, cube2Offsets.vBlockDim, cube2Offsets.blockTokens};
-                                auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.m(), cube2Shape.k()));
-                                auto tensorBlockVwork = GetTile(tensorVwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.k(), cube2Shape.n()));
-                                auto tensorBlockHwork = GetTile(tensorHwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
-
-                                blockMmadKV(tensorBlockK, tensorBlockVwork, tensorBlockHwork, cube2Shape);
+                                ComputeCube2RowTiles(
+                                    blockMmadKV, tensorK, tensorVwork, tensorHwork,
+                                    cube2Offsets.vBlockDim, cube2Offsets.blockTokens,
+                                    false);
                             }
-                            Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube2Done[streamId]);
+                            Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubePlan.cube2Done[streamId]);
                         }
                         blockMmadKV.finalWaitFlags();
                     }
                 }
                 currStage ^= 0x01;
             }
-            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[0]);
-            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[1]);
+            Arch::CrossCoreWaitFlag(cubePlan.vec2Done[0]);
+            Arch::CrossCoreWaitFlag(cubePlan.vec2Done[1]);
             if (useDirectFp32Ub) {
                 for (uint32_t slot = 0; slot < DIRECT_UB_STAGES; ++slot) {
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(DIRECT_UB_FREE_FLAG_BEGIN + slot);
@@ -812,13 +888,12 @@ public:
         }
 
         if ASCEND_IS_AIV {
-            bool useBoundedMmad = isVariedLen || (seqlen % chunkSize != 0);
             uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
             uint32_t subBlockNum = AscendC::GetSubBlockNum();
             uint32_t coreIdx = AscendC::GetBlockIdx() / subBlockNum;
             uint32_t coreNum = AscendC::GetBlockNum();
             uint32_t taskCount =
-                (isVariedLen ? vecBlockScheduler.tokenBatch : shapeBatch) * vNumHead;
+                (isVariedLen ? vecPlan.tokenBatch : shapeBatch) * vNumHead;
             uint32_t tasksPerCore = taskCount > coreNum ? PING_PONG_STAGES : 1;
             uint32_t taskStride = coreNum * tasksPerCore;
             uint32_t rowsPerSubBlock = (kHeadDim + subBlockNum - 1) / subBlockNum;
@@ -829,7 +904,7 @@ public:
                 (64 * 1024) / (vHeadDim * sizeof(ElementInitialState));
             uint32_t rowsPerTile = Min(hRowsPerTile, stateRowsPerTile);
             uint32_t totalChunks =
-                isVariedLen ? vecBlockScheduler.totalChunks : ((seqlen + chunkSize - 1) / chunkSize);
+                isVariedLen ? vecPlan.totalChunks : ((seqlen + chunkSize - 1) / chunkSize);
             uint32_t stateBlockSize = kHeadDim * vHeadDim;
             uint32_t pingpongFlag = 1;
             AscendC::LocalTensor<ElementInitialState> stateUbTensorPing =
@@ -848,12 +923,16 @@ public:
                     uint32_t batchIdx = taskIdx / vNumHead;
                     uint32_t vHeadIdx = taskIdx % vNumHead;
                     uint32_t chunkOffset =
-                        isVariedLen ? vecBlockScheduler.GetVarlenChunkOffset(batchIdx) : 0;
+                        isVariedLen ? vecPlan.GetVarlenChunkOffset(batchIdx) : 0;
+                    uint32_t stateBatchIdx = isVariedLen
+                        ? vecPlan.GetVarlenStateBatchIdx(batchIdx)
+                        : batchIdx;
                     uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
                     uint32_t hBaseOffset =
                         (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset) *
                         stateBlockSize;
-                    uint32_t initialStateBaseOffset = taskIdx * stateBlockSize;
+                    uint32_t initialStateBaseOffset =
+                        (stateBatchIdx * vNumHead + vHeadIdx) * stateBlockSize;
                     for (uint32_t rowOffset = rowBegin; rowOffset < rowEnd; rowOffset += rowsPerTile) {
                         uint32_t rowsThisTile = Min(rowsPerTile, rowEnd - rowOffset);
                         uint32_t stateTileElems = rowsThisTile * vHeadDim;
@@ -906,11 +985,11 @@ public:
                     AscendC::CrossCoreSetFlag<0x4, PIPE_V>(DIRECT_UB_FREE_FLAG_BEGIN + slot);
                 }
             }
-            Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[0]);
-            Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[1]);
+            Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecPlan.vec2Done[0]);
+            Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecPlan.vec2Done[1]);
 
-            EpilogueGDNFwdHVnew epilogueGDNFwdHVnew(resource);
-            EpilogueGDNFwdHUpdate epilogueGDNFwdHUpdate(resource);
+            EpilogueKdaHeadStateVNew epilogueKdaHeadStateVNew(resource);
+            EpilogueKdaHeadStateUpdate epilogueKdaHeadStateUpdate(resource);
             uint32_t pongBaseEvent = 4;
 
             if (storeFinalState && std::is_same<ElementFinalState, float>::value) {
@@ -936,7 +1015,7 @@ public:
             bool event0FromMte3[PING_PONG_STAGES] = {false, false};
             bool event2FromMte3[PING_PONG_STAGES] = {!(storeFinalState && std::is_same<ElementFinalState, float>::value),
                                                       !(storeFinalState && std::is_same<ElementFinalState, float>::value)};
-            while (vecBlockScheduler.isRunning) {
+            while (vecPlan.isRunning) {
                 if (currStage == 0) {
                     /* V1:
                      * gmV = gmU - gmVWorkspace
@@ -944,32 +1023,31 @@ public:
                      * g_buf = exp(g_buf)
                      * gmVWorkspace = g_buf * gmV
                      */
-                    vecBlockScheduler.InitTasks();
+                    vecPlan.InitTasks();
                     for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
-                        uint32_t streamId = vecBlockScheduler.GetStreamId(i);
-                        const auto& stream = vecBlockScheduler.GetStream(i);
-                        if (vecBlockScheduler.StreamIsDone(stream)) {
+                        uint32_t streamId = vecPlan.GetStreamId(i);
+                        const auto& stream = vecPlan.GetStream(i);
+                        if (vecPlan.StreamIsDone(stream)) {
                             continue;
                         }
-                        const GDNFwdHOffsets& vec1Offsets = vecBlockScheduler.GetCurTaskOffsets(stream);
+                        const KdaHeadStateOffsets& vec1Offsets = vecPlan.GetCurTaskOffsets(stream);
                         AscendC::LocalTensor<ElementV> l1VUpdate = (i == 0) ? l1VUpdatePing : l1VUpdatePong;
-                        bool tailVectorPath =
-                            vec1Offsets.blockTokens < 16 && !useBoundedMmad;
+                        bool tailVectorPath = vec1Offsets.blockTokens < 16;
                         if (tailVectorPath) {
                             Arch::CrossCoreWaitFlag(
-                                vecBlockScheduler.cube1Done[streamId]);
+                                vecPlan.cube1Done[streamId]);
                             ComputeTailVWorkspace(
                                 vec1Offsets, EVENT_ID3 + (i == 0 ? 0 : pongBaseEvent));
                         }
                         bool waitWsFromMte3 = storeFinalState && std::is_same<ElementFinalState, float>::value &&
                                               event0FromMte3[streamId];
                         bool useDirectForTask = useDirectFp32Ub && !tailVectorPath;
-                        epilogueGDNFwdHVnew(
+                        epilogueKdaHeadStateVNew(
                             gmV[vec1Offsets.uvOffset], gmVUpdateWorkspace[vec1Offsets.vWorkOffset], l1VUpdate,
                             gmG[vec1Offsets.gOffset], gmU[vec1Offsets.uvOffset], gmVWorkspace[vec1Offsets.vWorkOffset],
                             gmGk[vec1Offsets.gkOffset], gmK[vec1Offsets.wkOffset], gmKDecayWorkspace[vec1Offsets.kDecayWorkOffset],
                             vec1Offsets.blockTokens, kHeadDim, vec1Offsets.vBlockDim, vHeadDim,
-                            vecBlockScheduler.cube1Done[streamId], vecBlockScheduler.vec1Done[streamId],
+                            vecPlan.cube1Done[streamId], vecPlan.vec1Done[streamId],
                             vec1Offsets.isInitialState, vec1Offsets.isFinalState, storeFinalState,
                             waitWsFromMte3, (i == 0), tailVectorPath, useDirectForTask,
                             DIRECT_UB_FREE_FLAG_BEGIN, DIRECT_UB_READY_FLAG_BEGIN
@@ -981,18 +1059,17 @@ public:
                 } else {
                     /* V2: h[i+1] += h_work if i < num_chunks - 1 else None */
                     for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
-                        uint32_t streamId = vecBlockScheduler.GetStreamId(i);
-                        const auto& stream = vecBlockScheduler.GetStream(i);
-                        if (vecBlockScheduler.StreamIsDone(stream)) {
+                        uint32_t streamId = vecPlan.GetStreamId(i);
+                        const auto& stream = vecPlan.GetStream(i);
+                        if (vecPlan.StreamIsDone(stream)) {
                             continue;
                         }
-                        const GDNFwdHOffsets& vec2Offsets = vecBlockScheduler.GetCurTaskOffsets(stream);
-                        if (vecBlockScheduler.NeedProcessStage2(stream)) {
-                            bool tailVectorPath =
-                                vec2Offsets.blockTokens < 16 && !useBoundedMmad;
+                        const KdaHeadStateOffsets& vec2Offsets = vecPlan.GetCurTaskOffsets(stream);
+                        if (vecPlan.NeedProcessStage2(stream)) {
+                            bool tailVectorPath = vec2Offsets.blockTokens < 16;
                             if (tailVectorPath) {
                                 Arch::CrossCoreWaitFlag(
-                                    vecBlockScheduler.cube2Done[streamId]);
+                                    vecPlan.cube2Done[streamId]);
                                 ComputeTailHWorkspace(
                                     vec2Offsets, EVENT_ID3 + (i == 0 ? 0 : pongBaseEvent));
                             }
@@ -1003,14 +1080,14 @@ public:
                                 event2FromMte3[streamId] = !vec2Offsets.isFinalState;
                             }
                             // step 4:  h[i+1] += h_work if i < num_chunks - 1 else None
-                            epilogueGDNFwdHUpdate(
+                            epilogueKdaHeadStateUpdate(
                                 gmH[vec2Offsets.hDstOffset], gmFinalState[vec2Offsets.finalStateOffset],
                                 gmG[vec2Offsets.gOffset],
                                 gmH[vec2Offsets.hSrcOffset],
                                 gmHWorkspace[vec2Offsets.hWorkOffset],
                                 gmGk[vec2Offsets.gkOffset],
                                 gmInitialState[vec2Offsets.initialStateOffset],
-                                vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, vHeadDim, vecBlockScheduler.cube2Done[streamId],
+                                vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, vHeadDim, vecPlan.cube2Done[streamId],
                                 vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState,
                                 useInitialState, (i == 0), tailVectorPath,
                                 useDirectFp32Ub && !tailVectorPath,
@@ -1018,10 +1095,10 @@ public:
                             );
                         } else {
                             if (!useDirectFp32Ub) {
-                                Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done[streamId]);
+                                Arch::CrossCoreWaitFlag(vecPlan.cube2Done[streamId]);
                             }
                         }
-                        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);
+                        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecPlan.vec2Done[streamId]);
                     }
                 }
                 currStage ^= 0x01;
@@ -1068,4 +1145,15 @@ public:
 
 };
 
-}
+}  // namespace KdaForward::HeadStateDetail
+
+namespace KdaForward {
+
+using HeadStateTileShapes128 = KdaForward::HeadStateDetail::KdaHeadStateTileShapes128;
+using HeadStateTileShapes256 = KdaForward::HeadStateDetail::KdaHeadStateTileShapes256;
+
+template <typename T, typename TileShapes = HeadStateTileShapes128>
+using HeadState = KdaForward::HeadStateDetail::KdaHeadStateImpl<
+    T, float, float, float, TileShapes, true, false, true>;
+
+}  // namespace KdaForward

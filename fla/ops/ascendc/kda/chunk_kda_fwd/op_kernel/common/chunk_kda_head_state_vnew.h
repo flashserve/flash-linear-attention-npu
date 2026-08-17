@@ -7,11 +7,11 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#ifndef CATLASS_EPILOGUE_BLOCK_BLOCK_EPILOGUE_GDN_FWDH_VNEW_HPP
-#define CATLASS_EPILOGUE_BLOCK_BLOCK_EPILOGUE_GDN_FWDH_VNEW_HPP
+#ifndef CATLASS_EPILOGUE_BLOCK_BLOCK_EPILOGUE_KDA_HEAD_STATE_VNEW_HPP
+#define CATLASS_EPILOGUE_BLOCK_BLOCK_EPILOGUE_KDA_HEAD_STATE_VNEW_HPP
 #include "catlass/catlass.hpp"
 #include "catlass/arch/resource.hpp"
-#include "../gdn_fwd_h_epilogue_policies.hpp"
+#include "chunk_kda_head_state_epilogue_policy.h"
 #include "catlass/gemm_coord.hpp"
 #include "catlass/matrix_coord.hpp"
 #include "catlass/epilogue/tile/tile_copy.hpp"
@@ -29,7 +29,7 @@ template <
     class KGatedTag
 >
 class BlockEpilogue <
-    EpilogueAtlasGDNFwdHVnew,
+    EpilogueAtlasKdaHeadStateVNew,
     VOutputType_,
     GInputType_,
     UInputType_,
@@ -43,7 +43,7 @@ class BlockEpilogue <
     static constexpr float LN2 = 0.6931471805599453f;
 public:
     // Type aliases
-    using DispatchPolicy = EpilogueAtlasGDNFwdHVnew;
+    using DispatchPolicy = EpilogueAtlasKdaHeadStateVNew;
     using ArchTag = typename DispatchPolicy::ArchTag;
 
     using VElementOutput = typename VOutputType_::Element;
@@ -218,7 +218,8 @@ public:
         bool isFinalState,
         bool storeFinalState,
         bool waitWsFromMte3,
-        bool isPing
+        bool isPing,
+        bool cube1AlreadyWaited
     )
     {
         static constexpr uint32_t ROW_TILE = 16;
@@ -237,7 +238,9 @@ public:
         }
         uint32_t pingpongFlag = isPing ? 0 : pongBaseEvent;
         if (rowBegin >= mActual) {
-            Arch::CrossCoreWaitFlag(cube1Done);
+            if (!cube1AlreadyWaited) {
+                Arch::CrossCoreWaitFlag(cube1Done);
+            }
             // A zero-row AIV lane still owns the EVENT0 hand-off consumed by V2.
             if (waitWsFromMte3) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(
@@ -285,7 +288,9 @@ public:
             } else {
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
             }
-            Arch::CrossCoreWaitFlag(cube1Done);
+            if (!cube1AlreadyWaited) {
+                Arch::CrossCoreWaitFlag(cube1Done);
+            }
 
             if (waitWsFromMte3) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
@@ -353,7 +358,9 @@ public:
         } else {
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
         }
-        Arch::CrossCoreWaitFlag(cube1Done);
+        if (!cube1AlreadyWaited) {
+            Arch::CrossCoreWaitFlag(cube1Done);
+        }
 
         bool waitWsThisTileFromMte3 = waitWsFromMte3;
         for (uint32_t rowStart = rowBegin; rowStart < rowEnd;) {
