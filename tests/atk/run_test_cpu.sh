@@ -11,7 +11,7 @@ show_usage() {
 
 常用参数：
   -op=chunk_kda_fwd              ATK 算子目录名
-  -npu_device_id=6               传给 ATK node --devices 的 NPU 卡号
+  -npu_device_id=6               物理 NPU 卡号；脚本会映射为进程内逻辑 0 传给 ATK
   -soc=ascend910b                可选：ascend910b/A2、ascend910_93/A3、ascend950/A5
   -scope=all                     可选：all、accuracy、performance、determinism、mssanitizer、gen_cases
 
@@ -28,7 +28,7 @@ show_usage() {
   DETERMINISM_START/END          确定性 case 范围
   MSS_START/MSS_END              mssanitizer case 范围
   MSS_TOOL                       mssanitizer 工具，默认 memcheck
-  MSS_LOG_PATH                   ATK -msl 日志路径，默认使用脚本内置绝对路径
+  MSS_LOG_PATH                   ATK -msl 日志路径，默认写入当前算子的 mindstudio_sanitizer_log
   GEN_CASES_DTYPE_NUMBERS        生成用例时传给 atk case -dt，默认 100；双 dtype 算子生成 200 条
   GEN_CASES_EXTRA_NUMBERS        生成用例时传给 atk case -en，默认 0
   GEN_CASES_SEED                 生成用例随机种子，默认 20260813
@@ -90,7 +90,7 @@ PERFORMANCE_TIMEOUT="${PERFORMANCE_TIMEOUT:-2000}"
 CASE_START="${CASE_START:-}"
 CASE_END="${CASE_END:-}"
 MSS_TOOL="${MSS_TOOL:-memcheck}"
-MSS_LOG_PATH="${MSS_LOG_PATH:-/home/huangjunzhe/gdn/github/alvazu-atk/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/ATK/log.txt}"
+MSS_LOG_PATH="${MSS_LOG_PATH:-}"
 GEN_CASES_DTYPE_NUMBERS="${GEN_CASES_DTYPE_NUMBERS:-100}"
 GEN_CASES_EXTRA_NUMBERS="${GEN_CASES_EXTRA_NUMBERS:-0}"
 GEN_CASES_SEED="${GEN_CASES_SEED:-20260813}"
@@ -181,6 +181,7 @@ CASE_FILE="${OP_DIR}/atk_${OP}.json"
 EXECUTOR_FILE="${OP_DIR}/executor_${OP}.py"
 YAML_FILE="${OP_DIR}/${OP}.yaml"
 GEN_FILE="${OP_DIR}/gen_${OP}.py"
+MSS_LOG_PATH="${MSS_LOG_PATH:-${OP_DIR}/mindstudio_sanitizer_log/atk_mssanitizer.log}"
 
 [[ -d "$OP_DIR" ]] || die "找不到 ATK 算子目录：${OP_DIR}"
 if should_run gen_cases; then
@@ -201,6 +202,12 @@ if [[ -n "${FLA_NPU_ENV:-${FLA_NPU_OPP_ENV:-}}" ]]; then
   source_env_file "fla_npu_transformer环境" "${FLA_NPU_ENV:-${FLA_NPU_OPP_ENV:-}}"
 fi
 
+ATK_DEVICE_ID="$NPU_DEVICE_ID"
+if [[ "$RUN_SCOPE" != "gen_cases" ]]; then
+  export ASCEND_RT_VISIBLE_DEVICES="$NPU_DEVICE_ID"
+  ATK_DEVICE_ID=0
+fi
+
 ATK_BIN="$(command -v atk || true)"
 [[ -n "$ATK_BIN" ]] || die "找不到 atk，请先安装并激活 ATK 环境"
 
@@ -216,11 +223,13 @@ MSS_END="${MSS_END:-$CASE_END}"
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
 mkdir -p "${ATK_OUTPUT_ROOT}/cpu_dual_reference" "${ATK_OUTPUT_ROOT}/perf"
+mkdir -p "$(dirname "$MSS_LOG_PATH")"
 
 log_info "算子：${OP}"
 log_info "SOC：${SOC}"
 if [[ "$RUN_SCOPE" != "gen_cases" ]]; then
   log_info "NPU 设备号：${NPU_DEVICE_ID}"
+  log_info "ATK 逻辑设备号：${ATK_DEVICE_ID}"
 fi
 log_info "ATK 路径：${ATK_BIN}"
 log_info "输出根目录：${ATK_OUTPUT_ROOT}"
@@ -240,7 +249,7 @@ fi
 if should_run accuracy; then
   log_info "开始精度与 NaN 检测：accuracy + CPU高精度标杆 + CPU同精度标杆 + --gm_init_flag"
   set_case_range_args "精度与 NaN 检测 case 范围" "$ACCURACY_START" "$ACCURACY_END"
-  "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+  "$ATK_BIN" node --name npu_dut --backend npu --devices "$ATK_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/cpu_dual_reference" \
     node --name cpu_reference --backend cpu \
       --output_path "${ATK_OUTPUT_ROOT}/cpu_dual_reference" \
@@ -260,7 +269,7 @@ fi
 if should_run performance; then
   log_info "开始性能测试：performance_device"
   set_case_range_args "性能测试 case 范围" "$PERFORMANCE_START" "$PERFORMANCE_END"
-  "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+  "$ATK_BIN" node --name npu_dut --backend npu --devices "$ATK_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/perf" \
     task \
       -c "atk_${OP}.json" \
@@ -276,7 +285,7 @@ fi
 if should_run determinism; then
   log_info "开始确定性测试：accuracy_dc"
   set_case_range_args "确定性测试 case 范围" "$DETERMINISM_START" "$DETERMINISM_END"
-  "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+  "$ATK_BIN" node --name npu_dut --backend npu --devices "$ATK_DEVICE_ID" \
     task \
       -c "atk_${OP}.json" \
       -p "executor_${OP}.py" \
@@ -289,9 +298,10 @@ if should_run mssanitizer; then
   command -v mssanitizer >/dev/null 2>&1 || die "找不到 mssanitizer，请先加载支持 sanitizer 的 CANN/调试环境"
   log_info "开始内存检测：mssanitizer ${MSS_TOOL}"
   log_info "ATK mssanitizer 日志：${MSS_LOG_PATH}"
+  : > "$MSS_LOG_PATH"
   set_case_range_args "内存检测 case 范围" "$MSS_START" "$MSS_END"
-  mssanitizer --tool="$MSS_TOOL" -- \
-    "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+  mssanitizer --tool="$MSS_TOOL" --log-file="$MSS_LOG_PATH" -- \
+    "$ATK_BIN" node --name npu_dut --backend npu --devices "$ATK_DEVICE_ID" \
     task \
       -c "atk_${OP}.json" \
       -p "executor_${OP}.py" \
