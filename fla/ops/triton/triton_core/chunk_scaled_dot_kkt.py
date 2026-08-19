@@ -5,6 +5,10 @@ import triton
 import triton.language as tl
 
 
+_BC = 16
+_MAX_BK = 64
+_NUM_WARPS = 4
+
 
 @triton.heuristics({
     'USE_G': lambda args: args['g'] is not None,
@@ -88,11 +92,117 @@ def chunk_scaled_dot_kkt_fwd_kernel(
                 p_g = tl.make_block_ptr(g + g_batch_off + bos + i_h * T_max, (T_local,), (1,), (i_t * BT,), (BT,), (0,))
                 b_g = tl.load(p_g, boundary_check=(0,))
                 b_g_diff = b_g[:, None] - b_g[None, :]
-                b_g_diff = tl.minimum(tl.maximum(b_g_diff, -50.0), 50.0)
                 b_A *= tl.exp(b_g_diff)
             b_A *= b_beta[:, None]
 
             p_A = tl.make_block_ptr(A + A_batch_off + (bos * H + i_h) * BT, (T_local, BT), (BT * H, 1), (i_t * BT, 0), (BT, BT), (1, 0))
+            tl.store(p_A, b_A.to(p_A.dtype.element_ty), boundary_check=(0, 1))
+
+
+@triton.jit(do_not_specialize=['T'])
+def chunk_scaled_dot_kkt_fwd_kernel_tiled(
+    k,
+    g,
+    beta,
+    A,
+    cu_seqlens,
+    chunk_indices,
+    T,
+    H: tl.constexpr,
+    K: tl.constexpr,
+    BT: tl.constexpr,
+    BC: tl.constexpr,
+    BK: tl.constexpr,
+    IS_VARLEN: tl.constexpr,
+    USE_G: tl.constexpr,
+    USE_EXP2: tl.constexpr,
+):
+    i_t = tl.program_id(0)
+    i_bh = tl.program_id(1)
+    i_b = i_bh // H
+    i_h = i_bh % H
+
+    if IS_VARLEN:
+        i_n = tl.load(chunk_indices + i_t * 2).to(tl.int32)
+        i_t = tl.load(chunk_indices + i_t * 2 + 1).to(tl.int32)
+        bos = tl.load(cu_seqlens + i_n).to(tl.int32)
+        eos = tl.load(cu_seqlens + i_n + 1).to(tl.int32)
+        T_local = eos - bos
+    else:
+        bos = 0
+        T_local = T
+
+    if i_t * BT >= T_local:
+        return
+
+    k_base = k + ((i_b * H + i_h) * T + bos) * K
+    beta_base = beta + (i_b * H + i_h) * T + bos
+    g_base = g + (i_b * H + i_h) * T + bos
+    A_base = A + (i_b * T * H + bos * H + i_h) * BT
+
+    o_i = tl.arange(0, BC)
+    n_sub: tl.constexpr = BT // BC
+
+    for s in range(n_sub):
+        row_start = i_t * BT + s * BC
+        m_s = row_start + o_i < T_local
+        p_beta = tl.make_block_ptr(beta_base, (T_local,), (1,), (row_start,), (BC,), (0,))
+        b_beta = tl.load(p_beta, boundary_check=(0,))
+        if USE_G:
+            p_gs = tl.make_block_ptr(g_base, (T_local,), (1,), (row_start,), (BC,), (0,))
+            b_gs = tl.load(p_gs, boundary_check=(0,))
+
+        for c in range(n_sub):
+            col_start = i_t * BT + c * BC
+            m_c = col_start + o_i < T_local
+            b_A = tl.zeros([BC, BC], dtype=tl.float32)
+
+            if c <= s:
+                for i_k in range(tl.cdiv(K, BK)):
+                    p_ks = tl.make_block_ptr(
+                        k_base,
+                        (T_local, K),
+                        (K, 1),
+                        (row_start, i_k * BK),
+                        (BC, BK),
+                        (1, 0),
+                    )
+                    p_kc = tl.make_block_ptr(
+                        k_base,
+                        (T_local, K),
+                        (K, 1),
+                        (col_start, i_k * BK),
+                        (BC, BK),
+                        (1, 0),
+                    )
+                    b_ks = tl.load(p_ks, boundary_check=(0, 1))
+                    b_kc = tl.load(p_kc, boundary_check=(0, 1))
+                    b_A += tl.dot(b_ks, tl.trans(b_kc), allow_tf32=False)
+
+                if USE_G:
+                    p_gc = tl.make_block_ptr(g_base, (T_local,), (1,), (col_start,), (BC,), (0,))
+                    b_gc = tl.load(p_gc, boundary_check=(0,))
+                    b_gdiff = b_gs[:, None] - b_gc[None, :]
+                    if USE_EXP2:
+                        b_A *= tl.math.exp2(b_gdiff)
+                    else:
+                        b_A *= tl.exp(b_gdiff)
+
+                b_A *= b_beta[:, None]
+                if s == c:
+                    m_blk = (o_i[:, None] > o_i[None, :]) & (m_s[:, None] & m_s[None, :])
+                else:
+                    m_blk = m_s[:, None] & m_c[None, :]
+                b_A = tl.where(m_blk, b_A, 0.0)
+
+            p_A = tl.make_block_ptr(
+                A_base,
+                (T_local, BT),
+                (H * BT, 1),
+                (row_start, c * BC),
+                (BC, BC),
+                (1, 0),
+            )
             tl.store(p_A, b_A.to(p_A.dtype.element_ty), boundary_check=(0, 1))
 
 
@@ -235,7 +345,8 @@ def chunk_scaled_dot_kkt_fwd(
     cu_seqlens: Optional[torch.LongTensor] = None,
     chunk_indices: Optional[torch.Tensor] = None,
     chunk_size: int = 64,
-    output_dtype: torch.dtype = torch.float32
+    output_dtype: torch.dtype = torch.float32,
+    use_exp2: bool = False,
 ) -> torch.Tensor:
     r"""
     Compute beta * K * K^T.
@@ -264,13 +375,14 @@ def chunk_scaled_dot_kkt_fwd(
     BT = chunk_size
     NT = triton.cdiv(T, BT) if cu_seqlens is None else len(chunk_indices)
     beta = beta.transpose(1, 2).contiguous()
-    g = g.transpose(1, 2).contiguous()
-    BK = 128
-    kernel_num = 24
 
     if gk is None:
+        use_g = g is not None
+        g = g.transpose(1, 2).contiguous() if use_g else beta
         A = torch.empty(B, T, H, BT, device=k.device, dtype=output_dtype)
-        chunk_scaled_dot_kkt_fwd_kernel[(kernel_num,)](
+        BK = min(_MAX_BK, triton.next_power_of_2(K))
+        BC = min(_BC, BT)
+        chunk_scaled_dot_kkt_fwd_kernel_tiled[(NT, B * H)](
             k=k,
             g=g,
             beta=beta,
@@ -281,11 +393,15 @@ def chunk_scaled_dot_kkt_fwd(
             H=H,
             K=K,
             BT=BT,
+            BC=BC,
             BK=BK,
-            NT=NT,
-            B=B,
-            TOTAL_TASKS=B * NT,
+            IS_VARLEN=cu_seqlens is not None,
+            USE_G=use_g,
+            USE_EXP2=use_exp2,
+            num_warps=_NUM_WARPS,
         )
+        if k.device.type == "npu":
+            torch.npu.synchronize()
         return A
 
     BC = min(16, BT)
@@ -327,4 +443,6 @@ def chunk_scaled_dot_kkt_fwd(
         BK=BK,
         num_warps=4,
     )
+    if k.device.type == "npu":
+        torch.npu.synchronize()
     return A
