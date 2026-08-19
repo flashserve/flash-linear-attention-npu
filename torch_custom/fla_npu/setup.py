@@ -122,12 +122,10 @@ def get_link_args():
         link_args.append(f"-L{lib_dir}")
 
     if sys.platform == "linux":
-        vendor_dir = get_vendor_dir_name()
         link_args.extend([
             "-Wl,--enable-new-dtags",
             "-Wl,-rpath,$ORIGIN/../torch/lib",
             "-Wl,-rpath,$ORIGIN/../torch_npu/lib",
-            f"-Wl,-rpath,$ORIGIN/opp/vendors/{vendor_dir}/op_api/lib",
         ])
     return link_args
 

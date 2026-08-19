@@ -29,13 +29,22 @@ using namespace op_plugin::utils;
 using namespace op_infer;
 
 namespace {
+int GetLocalOpApiDlopenMode()
+{
+    int mode = RTLD_LOCAL | RTLD_NOW;
+#ifdef RTLD_NODELETE
+    mode |= RTLD_NODELETE;
+#endif
+    return mode;
+}
+
 void* GetEmbeddedOpApiHandler()
 {
     const char* opApiLib = std::getenv("FLA_NPU_OP_API_LIB");
     if (opApiLib == nullptr || opApiLib[0] == '\0') {
         return nullptr;
     }
-    return dlopen(opApiLib, RTLD_LAZY | RTLD_GLOBAL);
+    return dlopen(opApiLib, GetLocalOpApiDlopenMode());
 }
 
 void* GetEmbeddedOpApiFuncAddr(const char* apiName)

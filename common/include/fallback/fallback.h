@@ -99,7 +99,11 @@ inline void* GetOpApiLibHandler(const char* libName) {
   if (std::string(libName) == GetCustOpApiLibName()) {
     const char* embeddedOpApiLib = std::getenv("FLA_NPU_OP_API_LIB");
     if (embeddedOpApiLib != nullptr && embeddedOpApiLib[0] != '\0') {
-      auto handler = dlopen(embeddedOpApiLib, RTLD_LAZY | RTLD_GLOBAL);
+      int mode = RTLD_LOCAL | RTLD_NOW;
+#ifdef RTLD_NODELETE
+      mode |= RTLD_NODELETE;
+#endif
+      auto handler = dlopen(embeddedOpApiLib, mode);
       if (handler != nullptr) {
         return handler;
       }

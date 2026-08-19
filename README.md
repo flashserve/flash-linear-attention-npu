@@ -97,7 +97,7 @@ FLA_NPU_SOC=ascend910b FLA_NPU_INCREMENTAL_BUILD=1 python -m pip wheel --no-buil
 | `FLA_NPU_INCREMENTAL_BUILD` | `TRUE` / `FALSE` | 复用 `build/` 做完整 wheel 的真增量构建；本地反复调试可设 `TRUE`，release wheel 或干净验证建议保持 `FALSE` | `FALSE` |
 | `FLA_NPU_OPS` | 逗号分隔的算子名，如 `chunk_fwd_o,recompute_wu_fwd` | 仅构建指定算子；用于单算子定位，不要用于 release wheel | 空 |
 | `FLA_NPU_SKIP_RUN_BUILD` | `TRUE` / `FALSE` | 跳过 run 包编译；仅在已准备好匹配的 `build_out/fla-npu-*.run` 且只重打 wheel 时可设 `TRUE`，常规构建建议保持 `FALSE` | `FALSE` |
-| `FLA_NPU_SKIP_RUN_INSTALL` | `TRUE` / `FALSE` | 跳过将 run 包安装产物内嵌到 wheel；会得到不含内嵌 OPP 的 wheel，除非使用外部 OPP 调试，否则建议保持 `FALSE` | `FALSE` |
+| `FLA_NPU_SKIP_RUN_INSTALL` | `TRUE` / `FALSE` | 跳过将 run 包安装产物内嵌到 wheel；会得到不能直接导入运行的源码骨架 wheel，仅用于打包流程调试，发布和运行验证必须保持 `FALSE` | `FALSE` |
 | `FLA_NPU_DISABLE_LOCAL_VERSION` | `TRUE` / `FALSE` | wheel 版本号不追加 SOC/torch/ABI 本地版本；内部统一发版需要固定版本号时可设 `TRUE`，日常构建建议保持 `FALSE` 以区分产物兼容范围 | `FALSE` |
 
 布尔变量设为 `TRUE` 时也接受 `1`、`YES`、`ON`；未设置或其他值按 `FALSE` 处理。
@@ -138,12 +138,15 @@ python -m pip install --force-reinstall --no-deps dist/flash_linear_attention_np
 方式 A wheel 不安装或执行 shell 环境钩子。无论使用系统 Python、Conda、venv
 还是 Docker，每次进入新的 shell 后都需要先按 Step 1 手工 source CANN 的
 `set_env.sh`。`import fla_npu` 会在当前 Python 进程内定位并加载 wheel 内嵌 OPP；
-wheel 通过绝对路径加载 `libcust_opapi.so`，不会再生成或加载可能覆盖 CANN
-运行库的自定义 `libopapi.so`。
+wheel 通过当前 `fla_npu.__file__` 推导出的包内绝对路径加载
+`libcust_opapi.so`，不会从外部 OPP 环境回退，也不会生成或加载可能覆盖
+CANN 运行库的自定义 `libopapi.so`。CANN 与 FLA opapi 均以局部符号作用域加载。
 
-#### 方式 B 产物安装
+#### 方式 B 独立产物安装（仅用于 OPP/extension 开发）
 
-先安装 run 包，再安装 torch_custom wheel。运行 Python 前需要 source custom OPP 的 `set_env.bash`，或设置 `FLA_NPU_OPP_PATH` 指向 OPP root / vendor 目录。
+独立 run 包仍可用于 CANN OPP 开发和调试；但 `fla_npu` Python runtime 不再从
+外部 OPP 路径选择 `libcust_opapi.so`。需要运行 Python API 时，请使用方式 A 生成的
+完整一键 wheel，确保 Python、legacy extension 和包内 OPP 来自同一次构建。
 
 ```sh
 export FLA_NPU_OPP_INSTALL_PATH=/path/to/fla_npu_opp
@@ -152,7 +155,9 @@ source ${FLA_NPU_OPP_INSTALL_PATH}/vendors/fla_npu_transformer/bin/set_env.bash
 python -m pip install --force-reinstall --no-deps torch_custom/fla_npu/dist/fla_npu-*.whl
 ```
 
-`import fla_npu` 会优先使用 wheel 内嵌 OPP，找不到时会继续从 `FLA_NPU_OPP_PATH`、`ASCEND_CUSTOM_OPP_PATH` 和 `ASCEND_OPP_PATH` 查找已安装 OPP。外部 OPP 的 `op_api/lib` 目录同样不得包含自定义 `libopapi.so`；如果残留该文件并可能遮蔽 CANN 运行库，导入会明确报错并要求清理旧别名。
+`import fla_npu` 只使用完整 wheel 内嵌的
+`fla_npu/opp/vendors/fla_npu_transformer`。`ASCEND_CUSTOM_OPP_PATH` 仍用于
+CANN 发现 host、tiling 和 kernel，但不参与 FLA Python runtime 动态库选取。
 
 ### Step 4. 测试安装成功
 

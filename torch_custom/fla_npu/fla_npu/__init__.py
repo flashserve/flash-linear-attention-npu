@@ -3,10 +3,12 @@ from __future__ import annotations
 import ctypes
 import os
 import pathlib
+from typing import Optional
 
 
 _PACKAGE_DIR = pathlib.Path(__file__).resolve().parent
 _DEFAULT_VENDOR_DIR = "fla_npu_transformer"
+_ASCENDC_OPAPI_LIBRARIES: Optional[list[ctypes.CDLL]] = None
 
 
 def _prepend_env_path(name: str, value: pathlib.Path) -> None:
@@ -16,48 +18,40 @@ def _prepend_env_path(name: str, value: pathlib.Path) -> None:
         os.environ[name] = os.pathsep.join([value_str, *parts])
 
 
-def _candidate_vendor_names() -> list[str]:
-    return [_DEFAULT_VENDOR_DIR]
-
-
-def _candidate_opp_roots() -> list[pathlib.Path]:
-    roots: list[pathlib.Path] = []
-    override = os.environ.get("FLA_NPU_OPP_PATH", "").strip()
-    if override:
-        roots.append(pathlib.Path(override).expanduser())
-
-    roots.append(_PACKAGE_DIR / "opp")
-
-    for env_name in ("ASCEND_CUSTOM_OPP_PATH", "ASCEND_OPP_PATH"):
-        for part in os.environ.get(env_name, "").split(os.pathsep):
-            if part:
-                roots.append(pathlib.Path(part).expanduser())
-
-    return list(dict.fromkeys(roots))
-
-
 def _resolve_vendor_dir() -> pathlib.Path:
-    for root in _candidate_opp_roots():
-        if (root / "op_api" / "lib" / "libcust_opapi.so").exists():
-            return root.resolve()
-
-        vendors_root = root / "vendors"
-        for name in _candidate_vendor_names():
-            vendor_dir = vendors_root / name
-            if vendor_dir.exists():
-                return vendor_dir.resolve()
-
-        if vendors_root.exists():
-            vendor_dirs = [path for path in vendors_root.iterdir() if path.is_dir()]
-            if len(vendor_dirs) == 1:
-                return vendor_dirs[0].resolve()
+    package_dir = _PACKAGE_DIR.resolve()
+    vendor_dir = package_dir / "opp" / "vendors" / _DEFAULT_VENDOR_DIR
+    if vendor_dir.is_dir():
+        resolved_vendor_dir = vendor_dir.resolve()
+        try:
+            resolved_vendor_dir.relative_to(package_dir)
+        except ValueError:
+            pass
+        else:
+            return resolved_vendor_dir
 
     raise FileNotFoundError(
-        "Unable to find FLA NPU custom OPP. Expected "
-        f"{_PACKAGE_DIR / 'opp' / 'vendors' / _DEFAULT_VENDOR_DIR}. "
-        "If you installed it separately, source the custom OPP set_env.bash, "
-        "or set FLA_NPU_OPP_PATH to either the OPP root containing vendors/ "
-        "or the vendor directory itself."
+        "Unable to find the FLA NPU custom OPP embedded in this Python package. "
+        f"Expected a regular package-local OPP at {vendor_dir}. Reinstall the "
+        "complete wheel. External CANN vendor directories are not used as a "
+        "runtime library fallback."
+    )
+
+
+def _resolve_packaged_opapi(vendor_dir: pathlib.Path) -> pathlib.Path:
+    package_dir = _PACKAGE_DIR.resolve()
+    op_api_lib = (vendor_dir / "op_api" / "lib" / "libcust_opapi.so").resolve()
+    try:
+        op_api_lib.relative_to(package_dir)
+    except ValueError:
+        pass
+    else:
+        if op_api_lib.is_file():
+            return op_api_lib
+    raise FileNotFoundError(
+        "Unable to find the packaged FLA NPU op_api library. Expected "
+        f"{vendor_dir / 'op_api' / 'lib' / 'libcust_opapi.so'}. Reinstall the "
+        "complete wheel."
     )
 
 
@@ -69,10 +63,7 @@ def _prepare_embedded_opp() -> pathlib.Path:
         )
 
     vendor_dir = _resolve_vendor_dir()
-    opp_root = vendor_dir.parent.parent if vendor_dir.parent.name == "vendors" else vendor_dir
-    op_api_lib = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
-    if not op_api_lib.exists():
-        raise FileNotFoundError(f"Embedded custom op_api library not found: {op_api_lib}")
+    op_api_lib = _resolve_packaged_opapi(vendor_dir)
     op_api_alias = op_api_lib.with_name("libopapi.so")
     if op_api_alias.exists() or op_api_alias.is_symlink():
         raise RuntimeError(
@@ -82,13 +73,51 @@ def _prepare_embedded_opp() -> pathlib.Path:
         )
 
     _prepend_env_path("ASCEND_CUSTOM_OPP_PATH", vendor_dir)
-    _prepend_env_path("ASCEND_CUSTOM_OPP_PATH", opp_root)
-    _prepend_env_path("LD_LIBRARY_PATH", op_api_lib.parent)
+    _prepend_env_path("ASCEND_CUSTOM_OPP_PATH", vendor_dir.parent.parent)
     os.environ["FLA_NPU_OP_API_LIB"] = str(op_api_lib)
-
-    mode = getattr(os, "RTLD_GLOBAL", 0) | getattr(os, "RTLD_NOW", 0)
-    ctypes.CDLL(str(op_api_lib), mode=mode)
     return vendor_dir
+
+
+def _load_shared_library_required(path_or_name) -> ctypes.CDLL:
+    mode = (
+        getattr(os, "RTLD_LOCAL", 0)
+        | getattr(os, "RTLD_NOW", 0)
+        | getattr(os, "RTLD_NODELETE", 0)
+    )
+    return ctypes.CDLL(str(path_or_name), mode=mode)
+
+
+def load_ascendc_opapi_libraries() -> list[ctypes.CDLL]:
+    """Load CANN and packaged FLA opapi without publishing global symbols."""
+
+    global _ASCENDC_OPAPI_LIBRARIES
+    if _ASCENDC_OPAPI_LIBRARIES is not None:
+        return _ASCENDC_OPAPI_LIBRARIES
+
+    vendor_dir = _prepare_embedded_opp()
+    custom_opapi = _resolve_packaged_opapi(vendor_dir)
+
+    try:
+        cann_library = _load_shared_library_required("libopapi.so")
+    except OSError as exc:
+        raise RuntimeError(
+            "Unable to load the CANN op_api library libopapi.so. Please source "
+            "the matching CANN set_env.sh before importing fla_npu. "
+            f"Dynamic loader error: {exc}"
+        ) from exc
+
+    try:
+        custom_library = _load_shared_library_required(custom_opapi)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Unable to load packaged FLA NPU custom op_api library: {custom_opapi}. "
+            f"Dynamic loader error: {exc}"
+        ) from exc
+
+    # CANN is loaded first, while the explicit custom handle remains available
+    # to the legacy C++ extension through FLA_NPU_OP_API_LIB.
+    _ASCENDC_OPAPI_LIBRARIES = [custom_library, cann_library]
+    return _ASCENDC_OPAPI_LIBRARIES
 
 
 def _preload_library(path: pathlib.Path) -> None:
@@ -115,7 +144,7 @@ def _preload_torch_npu_dependencies(torch_module, torch_npu_module) -> None:
 
 # Load the custom operator library
 def _load_opextension_so():
-    _prepare_embedded_opp()
+    load_ascendc_opapi_libraries()
 
     import torch
     import torch_npu

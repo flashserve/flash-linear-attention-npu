@@ -433,7 +433,6 @@ def _rewrite_set_env(vendor_dir):
                 "}",
                 '_fla_npu_prepend_path ASCEND_CUSTOM_OPP_PATH "${_FLA_NPU_VENDOR_DIR}"',
                 '_fla_npu_prepend_path ASCEND_CUSTOM_OPP_PATH "${_FLA_NPU_OPP_ROOT}"',
-                '_fla_npu_prepend_path LD_LIBRARY_PATH "${_FLA_NPU_VENDOR_DIR}/op_api/lib"',
                 'export FLA_NPU_OPP_PATH="${_FLA_NPU_OPP_ROOT}"',
                 'export FLA_NPU_OP_API_LIB="${_FLA_NPU_VENDOR_DIR}/op_api/lib/libcust_opapi.so"',
                 "unset -f _fla_npu_prepend_path",

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib
+import os
 import runpy
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,6 +39,13 @@ if not hasattr(importlib, "metadata"):
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_SOURCE = (
+    REPO_ROOT
+    / "torch_custom"
+    / "fla_npu"
+    / "fla_npu"
+    / "__init__.py"
+)
 
 
 def _load_setup() -> tuple[dict[str, object], dict[str, object]]:
@@ -87,6 +96,32 @@ def _create_minimal_vendor(vendor_dir: Path, *, include_alias: bool = False) -> 
         (vendor_dir / "op_api" / "lib" / "libopapi.so").write_bytes(b"unsafe")
 
 
+def _create_runtime_package(site_root: Path) -> tuple[Path, Path, Path]:
+    package_dir = site_root / "fla_npu"
+    package_dir.mkdir(parents=True)
+    runtime_path = package_dir / "__init__.py"
+    shutil.copy2(RUNTIME_SOURCE, runtime_path)
+    vendor_dir = package_dir / "opp" / "vendors" / "fla_npu_transformer"
+    packaged_opapi = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
+    packaged_opapi.parent.mkdir(parents=True)
+    packaged_opapi.write_bytes(b"packaged-test")
+    return runtime_path, vendor_dir, packaged_opapi
+
+
+def _load_runtime_without_legacy_extension(runtime_path: Path) -> dict[str, object]:
+    source = runtime_path.read_text(encoding="utf-8")
+    marker = "\n_load_opextension_so()\n"
+    if marker not in source:
+        raise AssertionError("Unable to isolate fla_npu runtime initialization")
+    source = source.rsplit(marker, 1)[0]
+    namespace = {
+        "__file__": str(runtime_path),
+        "__name__": "fla_npu_runtime_test",
+    }
+    exec(compile(source, str(runtime_path), "exec"), namespace)
+    return namespace
+
+
 class WheelEnvironmentTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -117,6 +152,15 @@ class WheelEnvironmentTest(unittest.TestCase):
             self.assertTrue((lib_dir / "libcust_opapi.so").is_file())
             self.assertFalse((lib_dir / "libopapi.so").exists())
 
+            custom_build = (REPO_ROOT / "cmake" / "custom_build.cmake").read_text(
+                encoding="utf-8"
+            )
+            symbol_build = (REPO_ROOT / "cmake" / "symbol.cmake").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("NO_SONAME ON", custom_build)
+            self.assertIn("NO_SONAME ON", symbol_build)
+
     def test_generated_set_env_is_idempotent(self) -> None:
         rewrite_set_env = self.setup_globals["_rewrite_set_env"]
 
@@ -132,7 +176,7 @@ unset ASCEND_CUSTOM_OPP_PATH LD_LIBRARY_PATH FLA_NPU_OPP_PATH FLA_NPU_OP_API_LIB
 source {set_env!s}
 source {set_env!s}
 [[ "${{ASCEND_CUSTOM_OPP_PATH}}" == "{vendor_dir.parent.parent}:{vendor_dir}" ]]
-[[ "${{LD_LIBRARY_PATH}}" == "{vendor_dir}/op_api/lib" ]]
+[[ -z "${{LD_LIBRARY_PATH-}}" ]]
 [[ "${{FLA_NPU_OPP_PATH}}" == "{vendor_dir.parent.parent}" ]]
 [[ "${{FLA_NPU_OP_API_LIB}}" == "{vendor_dir}/op_api/lib/libcust_opapi.so" ]]
 """
@@ -174,6 +218,132 @@ source {set_env!s}
             self.assertFalse(
                 (installed_vendor / "op_api" / "lib" / "libopapi.so").exists()
             )
+
+            set_env = installed_vendor / "bin" / "set_env.bash"
+            script = f"""
+set -euo pipefail
+unset ASCEND_CUSTOM_OPP_PATH LD_LIBRARY_PATH FLA_NPU_OPP_PATH FLA_NPU_OP_API_LIB
+source {set_env!s}
+[[ -z "${{LD_LIBRARY_PATH-}}" ]]
+"""
+            subprocess.run(["bash", "-c", script], check=True)
+
+    def test_legacy_extension_does_not_publish_packaged_opapi(self) -> None:
+        extension_source = (
+            REPO_ROOT
+            / "torch_custom"
+            / "fla_npu"
+            / "op_plugin"
+            / "ops"
+            / "opapi"
+            / "FLANpuOpApi.cpp"
+        ).read_text(encoding="utf-8")
+        fallback_source = (
+            REPO_ROOT / "common" / "include" / "fallback" / "fallback.h"
+        ).read_text(encoding="utf-8")
+        extension_setup = (
+            REPO_ROOT / "torch_custom" / "fla_npu" / "setup.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("RTLD_LOCAL | RTLD_NOW", extension_source)
+        self.assertNotIn("RTLD_LAZY | RTLD_GLOBAL", extension_source)
+        self.assertIn("RTLD_LOCAL | RTLD_NOW", fallback_source)
+        self.assertNotIn("dlopen(embeddedOpApiLib, RTLD_LAZY | RTLD_GLOBAL)", fallback_source)
+        self.assertNotIn("/opp/vendors/{vendor_dir}/op_api/lib", extension_setup)
+        self.assertIn("$ORIGIN/../torch/lib", extension_setup)
+        self.assertIn("$ORIGIN/../torch_npu/lib", extension_setup)
+
+    def test_runtime_loads_cann_then_packaged_opapi_locally(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_path, vendor_dir, packaged_opapi = _create_runtime_package(
+                Path(temp_dir) / "site-packages"
+            )
+            external_vendor = Path(temp_dir) / "external" / "vendors" / "other"
+            _create_minimal_vendor(external_vendor)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "ASCEND_HOME_PATH": "/fake/cann",
+                    "FLA_NPU_OPP_PATH": str(external_vendor),
+                    "ASCEND_CUSTOM_OPP_PATH": str(external_vendor),
+                    "ASCEND_OPP_PATH": str(external_vendor.parent.parent),
+                },
+                clear=True,
+            ):
+                def fake_cdll(path, *, mode):
+                    if str(path) == "libopapi.so":
+                        return mock.sentinel.cann_opapi
+                    return mock.sentinel.custom_opapi
+
+                with mock.patch("ctypes.CDLL", side_effect=fake_cdll) as cdll:
+                    runtime_globals = _load_runtime_without_legacy_extension(runtime_path)
+                    first = runtime_globals["load_ascendc_opapi_libraries"]()
+                    second = runtime_globals["load_ascendc_opapi_libraries"]()
+
+                self.assertIs(first, second)
+                self.assertEqual(
+                    first,
+                    [mock.sentinel.custom_opapi, mock.sentinel.cann_opapi],
+                )
+                self.assertEqual(len(cdll.call_args_list), 2)
+                self.assertEqual(cdll.call_args_list[0].args, ("libopapi.so",))
+                self.assertEqual(
+                    Path(cdll.call_args_list[1].args[0]).resolve(),
+                    packaged_opapi.resolve(),
+                )
+                expected_mode = (
+                    getattr(os, "RTLD_LOCAL", 0)
+                    | getattr(os, "RTLD_NOW", 0)
+                    | getattr(os, "RTLD_NODELETE", 0)
+                )
+                self.assertEqual(cdll.call_args_list[0].kwargs["mode"], expected_mode)
+                self.assertEqual(cdll.call_args_list[1].kwargs["mode"], expected_mode)
+                self.assertEqual(
+                    expected_mode & getattr(os, "RTLD_GLOBAL", 0),
+                    0,
+                )
+                self.assertNotIn("LD_LIBRARY_PATH", os.environ)
+                self.assertEqual(
+                    os.environ["FLA_NPU_OP_API_LIB"],
+                    str(packaged_opapi.resolve()),
+                )
+                self.assertEqual(
+                    os.environ["ASCEND_CUSTOM_OPP_PATH"],
+                    os.pathsep.join(
+                        [
+                            str(vendor_dir.parent.parent),
+                            str(vendor_dir),
+                            str(external_vendor),
+                        ]
+                    ),
+                )
+
+    def test_runtime_does_not_fallback_to_external_custom_opp(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_path, _, packaged_opapi = _create_runtime_package(
+                Path(temp_dir) / "site-packages"
+            )
+            packaged_opapi.unlink()
+            external_vendor = Path(temp_dir) / "external" / "vendors" / "other"
+            _create_minimal_vendor(external_vendor)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "ASCEND_HOME_PATH": "/fake/cann",
+                    "FLA_NPU_OPP_PATH": str(external_vendor),
+                    "ASCEND_CUSTOM_OPP_PATH": str(external_vendor),
+                    "ASCEND_OPP_PATH": str(external_vendor.parent.parent),
+                },
+                clear=True,
+            ):
+                runtime_globals = _load_runtime_without_legacy_extension(runtime_path)
+                with self.assertRaisesRegex(
+                    FileNotFoundError,
+                    r"packaged FLA NPU op_api library",
+                ):
+                    runtime_globals["load_ascendc_opapi_libraries"]()
 
 if __name__ == "__main__":
     unittest.main()

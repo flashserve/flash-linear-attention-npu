@@ -95,6 +95,7 @@ if (BUILD_OPEN_PROJECT)
     )
     set_target_properties(cust_opapi PROPERTIES OUTPUT_NAME
             cust_opapi
+            NO_SONAME ON
     )
     if (NOT ENABLE_BUILT_IN)
         install(TARGETS cust_opapi

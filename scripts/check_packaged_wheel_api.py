@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 from pathlib import Path
 
 
@@ -97,6 +98,38 @@ def _require_safe_packaged_opapi(fla_npu_module) -> None:
         raise AssertionError(
             "FLA_NPU_OP_API_LIB must point to the packaged libcust_opapi.so"
         )
+
+    packaged_library = next(path for path in custom_libraries if path.is_file())
+    dynamic = subprocess.check_output(
+        ["readelf", "-d", str(packaged_library)],
+        encoding="utf-8",
+        errors="replace",
+    )
+    if "(SONAME)" in dynamic:
+        raise AssertionError(
+            "packaged libcust_opapi.so must not define a SONAME: "
+            f"{packaged_library}"
+        )
+
+    opapi_dirs = {str(path.parent.resolve()) for path in custom_libraries}
+    ld_library_dirs = {
+        str(Path(path).resolve())
+        for path in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)
+        if path
+    }
+    if opapi_dirs & ld_library_dirs:
+        raise AssertionError("packaged FLA op_api directory leaked into LD_LIBRARY_PATH")
+
+    extensions = list(package_root.glob("custom_aclnn_extension_lib*.so"))
+    if not extensions:
+        raise AssertionError("packaged legacy custom_aclnn_extension_lib is missing")
+    extension_dynamic = subprocess.check_output(
+        ["readelf", "-d", str(extensions[0])],
+        encoding="utf-8",
+        errors="replace",
+    )
+    if "/op_api/lib" in extension_dynamic:
+        raise AssertionError("legacy extension still contains the FLA op_api RUNPATH")
 
 
 def main() -> int:
