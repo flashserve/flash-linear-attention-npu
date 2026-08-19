@@ -25,7 +25,7 @@ PROFILES = [
     "H": 1,
     "T": 16,
     "chunk_size": 8,
-    "reverse": false,
+    "reverse": False,
     "scale": 1.0
   },
   {
@@ -35,7 +35,7 @@ PROFILES = [
     "H": 1,
     "T": 16,
     "chunk_size": 8,
-    "reverse": false,
+    "reverse": False,
     "scale": 1.0
   }
 ]
