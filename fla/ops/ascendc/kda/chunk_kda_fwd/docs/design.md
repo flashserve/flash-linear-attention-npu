@@ -120,10 +120,10 @@ Finalize 的内部实现头与统一 kernel 入口同属 `chunk_kda_fwd/op_kerne
 均生成两个 key；同一个 key 内再由编译架构选择根目录通用实现或 `arch35/` 实现。host 的
 `SetTilingKey` 只检查 chunk、K、V，不检查 SoC。
 
-在 arch35 上，key2 的 dense 对齐场景使用单 launch 融合流水和 arch35 FwdH。A5 多 chunk 的
-tail/varlen 以及 key1 泛化场景使用四段 launch，并在 FwdH 阶段复用共享实现。其他架构在同一
-key2 下使用其对应单 launch 实现。tiling key 和私有 `stage` 均不改变公开算子原型、输出契约
-或数学定义。
+在 arch35 上，key2 的 dense 对齐场景使用单 launch 和 arch35 FwdH；融合 score 写回在跳过
+共享 PostWU 时会额外物化以块尾 gate 为参考的最终 `kg`，供 FwdH 和可选公开输出共同使用。
+A5 多 chunk 的 tail/varlen 以及 key1 泛化场景使用四段 launch。其他架构在同一 key 下使用其
+对应单 launch 实现。tiling key 和私有 `stage` 均不改变公开算子原型、输出契约或数学定义。
 
 ## 性能设计
 
