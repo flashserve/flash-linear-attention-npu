@@ -4,7 +4,7 @@ version: v2.1
 name: chunk_local_cumsum
 aclnn_name:
 generate: generator_chunk_local_cumsum
-dtype_numbers: 1
+dtype_numbers: 200
 extra_numbers: 0
 standard:
   acc:

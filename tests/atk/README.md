@@ -71,7 +71,7 @@ npu-smi info
 | `ATK_TIMEOUT` | 精度阶段超时时间，默认 `14400` |
 | `PERFORMANCE_TIMEOUT` | 性能阶段超时时间，默认 `2000` |
 | `MSS_TOOL` | mssanitizer 工具，默认 `memcheck` |
-| `MSS_LOG_PATH` | ATK `-msl` 日志路径；不设置时使用脚本内置路径 |
+| `MSS_LOG_PATH` | mssanitizer 与 ATK `-msl` 共用日志路径；mss 阶段会先截断该文件，默认写入当前算子的 `mindstudio_sanitizer_log/atk_mssanitizer.log` |
 
 ## 统一脚本
 
@@ -86,7 +86,7 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -npu_device_id=<device_id>
 | 参数 | 说明 |
 | --- | --- |
 | `-op=<op_name>` | `tests/atk` 下的算子目录名 |
-| `-npu_device_id=<id>` | 传给 `atk node --devices` 的 NPU 设备号；`gen_cases` 不需要 |
+| `-npu_device_id=<id>` | 物理 NPU 设备号；脚本会通过 `ASCEND_RT_VISIBLE_DEVICES` 映射后传逻辑设备 0 给 ATK，`gen_cases` 不需要 |
 | `-scope=<scope>` | 执行动作，支持 `all/accuracy/performance/determinism/mssanitizer/gen_cases` |
 | `-soc=<soc>` | 生成或运行时的 SOC 标识，支持 `ascend910b/A2`、`ascend910_93/A3`、`ascend950/A5` |
 

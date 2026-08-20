@@ -13,6 +13,8 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from fla_npu.ops import ascendc
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 
 from atk.configs.dataset_config import InputDataset
@@ -76,8 +78,6 @@ def run_cpu(spec: dict[str, Any], high_precision: bool = False):
 def run_npu(spec: dict[str, Any], input_data: InputDataset):
     """运行 NPU DUT。"""
     inputs = build_inputs(spec, _marker_device(input_data), high_precision=False)
-    from fla_npu.ops import ascendc
-
     return ascendc.chunk_local_cumsum(inputs["g"], inputs["chunk_size"], cu_seqlens=None, chunk_indices_out=None, reverse=inputs["reverse"], scale=inputs["scale"], head_first=True, output_dtype="float32")
 
 
