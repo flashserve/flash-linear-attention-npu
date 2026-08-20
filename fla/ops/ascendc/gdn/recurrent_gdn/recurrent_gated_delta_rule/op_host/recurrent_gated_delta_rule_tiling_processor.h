@@ -146,7 +146,11 @@ private:
         bool valid = false;
     };
 
-    const RecurrentGatedDeltaRuleTilingContext &ctx_;
+    // BuildProcessorContext() returns a temporary at the aclnn call sites.
+    // Own the small context object so its shape pointers remain available
+    // throughout ProcessShapes()/ProcessUb() instead of keeping a dangling
+    // reference after the constructor expression completes.
+    RecurrentGatedDeltaRuleTilingContext ctx_;
 
     bool CheckDimEqual(const gert::Shape a, const int64_t dimA, gert::Shape b, const int64_t dimB,
                        const std::string &nameA, const std::string &nameB, const std::string &dimDesc) const
