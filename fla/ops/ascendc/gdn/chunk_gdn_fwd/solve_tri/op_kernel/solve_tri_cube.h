@@ -83,10 +83,11 @@ class SolveTriCube {
 
  public:
      __aicore__ inline SolveTriCube() {}
+     template <typename TilingData>
      __aicore__ inline void Init(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
                                  GM_ADDR x_out, GM_ADDR workspace,
-                                 const SolveTriTilingData* tilingData);
-     __aicore__ inline void Process();
+                                 const TilingData* tilingData, bool perCoreWorkspace = false);
+     __aicore__ inline void Process(bool synchronize = true);
  
 private:
    __aicore__ inline void ProcessOneTile(int64_t tileIdx);
@@ -175,10 +176,11 @@ private:
  // ============ Implementation ============
  
 template <int MATRIX_SIZE, typename T>
+template <typename TilingData>
 __aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::Init(
      GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
      GM_ADDR x_out, GM_ADDR workspace,
-     const SolveTriTilingData* tilingData)
+     const TilingData* tilingData, bool perCoreWorkspace)
  {
     totalTiles_ = tilingData->totalTiles;
     matrixSize_ = tilingData->matrixSize;
@@ -212,8 +214,11 @@ __aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::Init(
          cuSeqlensGM_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(cu_seqlens));
          chunkIndicesGM_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(chunk_indices));
      }
-     // 每核独立中转区：位于共享矩阵之后，每核两个 TILE_LEN（X 流和 Y 流双缓冲）
-     int64_t scratchOffset = GM_NUM_SHARED_SLOTS * TILE_LEN + aicIdx_ * 2 * TILE_LEN;
+     // Fused callers provide a private constants/scratch region per core group.
+     int64_t scratchOffset = GM_NUM_SHARED_SLOTS * TILE_LEN;
+     if (!perCoreWorkspace) {
+         scratchOffset += aicIdx_ * 2 * TILE_LEN;
+     }
      scratchGM_ = workspaceGM_[scratchOffset];
      scratchGM_Y_ = workspaceGM_[scratchOffset + TILE_LEN];
  
@@ -259,7 +264,7 @@ __aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::Init(
 }
  
 template <int MATRIX_SIZE, typename T>
-__aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::Process()
+__aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::Process(bool synchronize)
  {
      int64_t startTile = aicIdx_ * tilesPerCore_;
      int64_t endTile = startTile + tilesPerCore_;
@@ -269,8 +274,11 @@ __aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::Process()
          return;
      }
  
-     // 等待 AIV 完成辅助矩阵的生成
-     SyncAll<false>();
+     // The standalone operator synchronizes here. A fused caller may place one
+     // shared stage barrier after both KKT and the auxiliary matrices are ready.
+     if (synchronize) {
+         SyncAll<false>();
+     }
      
      PrepareConstants();
  
@@ -346,7 +354,7 @@ __aicore__ inline int64_t SolveTriCube<MATRIX_SIZE, T>::GetTileValidSize(int64_t
         // TND/NTD: 动态计算每个序列的尾块
         int64_t H = numHeads_;
         int64_t BT = matrixSize_;
-        int64_t chunk_global_idx = tileIdx / H;
+         int64_t chunk_global_idx = layoutMode_ == 2 ? tileIdx / H : tileIdx % totalChunks_;
 
         // 从 chunk_indices 读取 (seq_idx, chunk_in_seq)
         int64_t seq_idx = chunkIndicesGM_.GetValue(chunk_global_idx * 2);
@@ -826,13 +834,14 @@ __aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::LoadInputTile(int64_t gmOff
 template <int MATRIX_SIZE, typename T>
 __aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::StoreFinalResult(int64_t gmOffset, int64_t validSize)
 {
-    // L0C -> output GM directly with NZ->ND conversion + FP32->FP16
-    // validSize 控制实际写回的行/列数
+    // Write every column for valid rows. The partial-tile path clears padded
+    // columns before compute, so this also makes downstream full-width reads
+    // deterministic without allocating another output-sized tensor.
     NsSolveTri::L0CToGM(
         outputGM_[gmOffset],  // 目标 GM
         l0c_,                 // 源 L0C
         static_cast<uint32_t>(validSize),   // mTileActual
-        static_cast<uint32_t>(validSize),   // nTileActual
+        MATRIX_SIZE,          // nTileActual
         MATRIX_SIZE,          // srcStride (L0C 中 Z 排布间距)
         static_cast<uint32_t>(rowStride_)   // dstStride (输出行步长)
     );
@@ -1075,4 +1084,3 @@ __aicore__ inline void SolveTriCube<MATRIX_SIZE, T>::ProcessPartialTile(int64_t 
 }  // namespace NsSolveTri
 
 #endif  // SOLVE_TRI_CUBE_H
- 

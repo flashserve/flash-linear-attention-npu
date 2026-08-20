@@ -46,4 +46,35 @@ __aicore__ void inline GetChunkOffset(GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
 
     return;
 }
+template <bool kFlattenHeadTasks, bool kAbcTaskOrder>
+__aicore__ inline void DecodeRecomputeTask(
+    uint32_t loopIdx, GM_ADDR cuSeqlens, uint64_t H, uint64_t T, uint64_t chunkSize,
+    uint64_t chunkNum, uint32_t &chunkIdx, uint32_t &hBegin, uint32_t &hEnd)
+{
+    if constexpr (!kFlattenHeadTasks) {
+        chunkIdx = loopIdx;
+        hBegin = 0;
+        hEnd = static_cast<uint32_t>(H);
+        return;
+    }
+    if constexpr (!kAbcTaskOrder) {
+        chunkIdx = loopIdx / static_cast<uint32_t>(H);
+        hBegin = loopIdx % static_cast<uint32_t>(H);
+        hEnd = hBegin + 1;
+        return;
+    }
+
+    if (cuSeqlens != nullptr) {
+        chunkIdx = loopIdx % static_cast<uint32_t>(chunkNum);
+        hBegin = loopIdx / static_cast<uint32_t>(chunkNum);
+    } else {
+        const uint32_t chunksPerBatch = static_cast<uint32_t>((T + chunkSize - 1) / chunkSize);
+        const uint32_t tasksPerBatch = static_cast<uint32_t>(H) * chunksPerBatch;
+        const uint32_t batchIdx = loopIdx / tasksPerBatch;
+        const uint32_t taskInBatch = loopIdx % tasksPerBatch;
+        hBegin = taskInBatch / chunksPerBatch;
+        chunkIdx = batchIdx * chunksPerBatch + taskInBatch % chunksPerBatch;
+    }
+    hEnd = hBegin + 1;
+}
 #endif // RECOMPUTE_W_U_FWD_COMMON_H

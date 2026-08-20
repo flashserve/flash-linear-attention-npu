@@ -317,9 +317,6 @@ public:
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
             AscendC::DataCopy(vnewdecayOutputThisSubBlock, vNewDecayUbTensor, mActualThisSubBlock * nvActual);
-            if constexpr (!kGated) {
-                Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
-            }
 
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
@@ -330,6 +327,9 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
             AscendC::DataCopy(vnewOutputThisSubBlock, vNewOutputUbTensor, mActualThisSubBlock * nvActual);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
+            if constexpr (!kGated) {
+                Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
+            }
 
             if constexpr (kGated) {
                 AscendC::GlobalTensor<VElementOutput> kInputThisSubBlock = kInput[rowBegin * nkActual];
@@ -413,11 +413,6 @@ public:
 
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
-            if (rowStart + rowsThisTile >= rowEnd) {
-                if constexpr (!kGated) {
-                    Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
-                }
-            }
             AscendC::Cast(vNewOutputUbTensor, wsUbTensor, AscendC::RoundMode::CAST_RINT, rowsThisTile * nvActual);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
@@ -425,6 +420,11 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
             CopyUbToGm(vnewOutputThisTile, vNewOutputUbTensor, rowsThisTile, nvActual, inputStride);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
+            if (rowStart + rowsThisTile >= rowEnd) {
+                if constexpr (!kGated) {
+                    Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
+                }
+            }
             rowStart += rowsThisTile;
         }
 

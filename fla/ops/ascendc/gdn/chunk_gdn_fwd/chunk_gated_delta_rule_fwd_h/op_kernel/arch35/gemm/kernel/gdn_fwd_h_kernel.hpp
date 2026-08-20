@@ -82,7 +82,8 @@ template<
     typename TileShapes = GDNFwdHTileShapes128,
     bool kGated = false,
     bool scalarGated = true,
-    bool useExp2 = false
+    bool useExp2 = false,
+    bool kChunkPipeline = false
 >
 class GDNFwdHKernel {
 public:
@@ -278,11 +279,11 @@ public:
         l1VUpdatePong = resource.l1Buf.template GetBufferByByte<ElementV>(chunkSize * vHeadDim * sizeof(ElementV));
 
         if ASCEND_IS_AIC {
-            cubeBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user);
+            cubeBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user, kChunkPipeline);
         }
 
         if ASCEND_IS_AIV {
-            vecBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user);
+            vecBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user, kChunkPipeline);
         }
     }
 
@@ -342,10 +343,12 @@ public:
         l1VUpdatePong = resource.l1Buf.template GetBufferByByte<ElementV>(chunkSize * vHeadDim * sizeof(ElementV));
 
         if ASCEND_IS_AIC {
-            cubeBlockScheduler.InitFromData(cu_seqlens, chunk_indices, tilingData, user);
+            cubeBlockScheduler.InitFromData(
+                cu_seqlens, chunk_indices, tilingData, user, kChunkPipeline);
         }
         if ASCEND_IS_AIV {
-            vecBlockScheduler.InitFromData(cu_seqlens, chunk_indices, tilingData, user);
+            vecBlockScheduler.InitFromData(
+                cu_seqlens, chunk_indices, tilingData, user, kChunkPipeline);
         }
     }
 
@@ -842,8 +845,12 @@ public:
                 resource.ubBuf.template GetBufferByByte<ElementH>(160 * 1024);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
+            const bool useBalancedWaves = kChunkPipeline && !isVariedLen;
             for (uint32_t slot = 0; slot < tasksPerCore; ++slot) {
-                for (uint32_t taskIdx = coreIdx * tasksPerCore + slot;
+                uint32_t firstTaskIdx = useBalancedWaves
+                                            ? coreIdx + slot * coreNum
+                                            : coreIdx * tasksPerCore + slot;
+                for (uint32_t taskIdx = firstTaskIdx;
                      taskIdx < taskCount; taskIdx += taskStride) {
                     uint32_t batchIdx = taskIdx / vNumHead;
                     uint32_t vHeadIdx = taskIdx % vNumHead;

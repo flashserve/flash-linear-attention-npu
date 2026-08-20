@@ -39,11 +39,11 @@ def gen_compile_options(compile_options_file: str, op_type: str, \
     opc_debug_config = []
     opc_tiling_keys = ""
     for opts in compile_options:
-        if "oom" in opts:
-            if opts == "--oom":
-                opc_debug_config.append("oom")
-            else:
-                raise RuntimeError(f"Unknown oom option format {opts}")
+        # Match the standalone build switch only.  Include paths may contain
+        # the substring "oom" (for example, a workspace directory named
+        # "oomfix") and must remain ordinary compiler options.
+        if opts == "--oom":
+            opc_debug_config.append("oom")
         elif "--save-temp-files" in opts:
             opc_debug_config.append("dump_cce")
         elif opts.startswith("--op_relocatable_kernel_binary"):

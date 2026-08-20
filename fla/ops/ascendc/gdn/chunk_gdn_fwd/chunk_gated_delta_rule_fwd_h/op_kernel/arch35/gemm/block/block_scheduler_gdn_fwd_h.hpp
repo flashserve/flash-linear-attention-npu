@@ -131,7 +131,8 @@ struct BlockSchedulerGdnFwdH {
     BlockSchedulerGdnFwdH() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user, uint32_t coreIdx, uint32_t coreNum) {
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user,
+              uint32_t coreIdx, uint32_t coreNum, bool useWaveTaskMapping = false) {
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
 
         batch = gdnFwdHTilingData->batch;
@@ -149,13 +150,14 @@ struct BlockSchedulerGdnFwdH {
         numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
         numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
 
-        InitRuntime(cu_seqlens, chunk_indices, user, coreIdx, coreNum);
+        InitRuntime(cu_seqlens, chunk_indices, user, coreIdx, coreNum, useWaveTaskMapping);
     }
 
     template <typename TilingData>
     CATLASS_DEVICE
     void InitFromData(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const TilingData& tilingData,
-                      GM_ADDR user, uint32_t coreIdx, uint32_t coreNum) {
+                      GM_ADDR user, uint32_t coreIdx, uint32_t coreNum,
+                      bool useWaveTaskMapping = false) {
         batch = tilingData.batch;
         seqlen = tilingData.seqlen;
         kNumHead = tilingData.kNumHead;
@@ -171,12 +173,12 @@ struct BlockSchedulerGdnFwdH {
         numSeqWorkspaceOffset = tilingData.numSeqWorkspaceOffset;
         numChunksWorkspaceOffset = tilingData.numChunksWorkspaceOffset;
 
-        InitRuntime(cu_seqlens, chunk_indices, user, coreIdx, coreNum);
+        InitRuntime(cu_seqlens, chunk_indices, user, coreIdx, coreNum, useWaveTaskMapping);
     }
 
     CATLASS_DEVICE
     void InitRuntime(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR user,
-                     uint32_t coreIdx, uint32_t coreNum) {
+                     uint32_t coreIdx, uint32_t coreNum, bool useWaveTaskMapping) {
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
         gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
@@ -213,14 +215,22 @@ struct BlockSchedulerGdnFwdH {
         headGroups = vNumHead / kNumHead;
         uint32_t maxTaskCntPerLoop = taskNum > cubeCoreNum ? PING_PONG_STAGES : 1;
         taskStride = cubeCoreNum * maxTaskCntPerLoop;
+        // Fused H/O keeps the two per-core streams but distributes each stream
+        // as a core-wide wave. This preserves ping-pong while avoiding the
+        // 4/2 task imbalance of adjacent task pairs for 64 tasks on 28 cores.
+        const bool useBalancedWaves = useWaveTaskMapping && !isVariedLen;
         for (uint32_t streamId = 0; streamId < PING_PONG_STAGES; ++streamId) {
             auto& stream = runningQ.streams[streamId];
-            stream.nextTaskIdx = (streamId < maxTaskCntPerLoop) ? (cubeCoreIdx * maxTaskCntPerLoop + streamId) : taskNum;
+            stream.nextTaskIdx = (streamId < maxTaskCntPerLoop)
+                                     ? (useBalancedWaves
+                                            ? cubeCoreIdx + streamId * cubeCoreNum
+                                            : cubeCoreIdx * maxTaskCntPerLoop + streamId)
+                                     : taskNum;
             stream.chunkIdx = 0;
             stream.batchChunks = 0;
             stream.active = false;
         }
-        isRunning = cubeCoreIdx * maxTaskCntPerLoop < taskNum;
+        isRunning = (useBalancedWaves ? cubeCoreIdx : cubeCoreIdx * maxTaskCntPerLoop) < taskNum;
 
     }
 
@@ -383,15 +393,20 @@ struct BlockSchedulerGdnFwdHCube : public BlockSchedulerGdnFwdH {
     BlockSchedulerGdnFwdHCube() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user) {
-        BlockSchedulerGdnFwdH::Init(cu_seqlens, chunk_indices, tiling, user, AscendC::GetBlockIdx(), AscendC::GetBlockNum());
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user,
+              bool useWaveTaskMapping = false) {
+        BlockSchedulerGdnFwdH::Init(cu_seqlens, chunk_indices, tiling, user,
+                                    AscendC::GetBlockIdx(), AscendC::GetBlockNum(),
+                                    useWaveTaskMapping);
     }
 
     template <typename TilingData>
     CATLASS_DEVICE
-    void InitFromData(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const TilingData& tilingData, GM_ADDR user) {
+    void InitFromData(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const TilingData& tilingData,
+                      GM_ADDR user, bool useWaveTaskMapping = false) {
         BlockSchedulerGdnFwdH::InitFromData(
-            cu_seqlens, chunk_indices, tilingData, user, AscendC::GetBlockIdx(), AscendC::GetBlockNum());
+            cu_seqlens, chunk_indices, tilingData, user, AscendC::GetBlockIdx(),
+            AscendC::GetBlockNum(), useWaveTaskMapping);
     }
 
 };
@@ -401,20 +416,22 @@ struct BlockSchedulerGdnFwdHVec : public BlockSchedulerGdnFwdH {
     BlockSchedulerGdnFwdHVec() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user) {
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user,
+              bool useWaveTaskMapping = false) {
         BlockSchedulerGdnFwdH::Init(
             cu_seqlens, chunk_indices, tiling, user,
             AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(),
-            AscendC::GetBlockNum());
+            AscendC::GetBlockNum(), useWaveTaskMapping);
     }
 
     template <typename TilingData>
     CATLASS_DEVICE
-    void InitFromData(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const TilingData& tilingData, GM_ADDR user) {
+    void InitFromData(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const TilingData& tilingData,
+                      GM_ADDR user, bool useWaveTaskMapping = false) {
         BlockSchedulerGdnFwdH::InitFromData(
             cu_seqlens, chunk_indices, tilingData, user,
             AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(),
-            AscendC::GetBlockNum());
+            AscendC::GetBlockNum(), useWaveTaskMapping);
     }
 
 };

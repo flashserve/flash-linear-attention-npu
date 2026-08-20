@@ -516,6 +516,8 @@ def run_single_case(seq_lens: list, H: int, chunk_size: int, dtype: torch.dtype 
 
     # Compute metrics
     mask = _valid_tnd_mask(x.shape, cu_seqlens, chunk_size)
+    output_is_finite = bool(torch.isfinite(out_cpu.float()).all())
+    padding_is_zero = bool(torch.count_nonzero(out_cpu[~mask]) == 0)
     verify_err = verify_inverse_tnd(x, out_cpu, cu_seqlens, chunk_size)
 
     mare_npu, mere_npu, rmse_npu, max_abs = _error_metrics(out_cpu, golden_fp32, mask)
@@ -533,15 +535,16 @@ def run_single_case(seq_lens: list, H: int, chunk_size: int, dtype: torch.dtype 
     
     # bf16 only checks ratio, fp16 also checks verify_err
     if dtype == torch.bfloat16:
-        passed = ratio_pass
+        passed = ratio_pass and output_is_finite and padding_is_zero
     else:
         verify_pass = verify_err < verify_threshold
-        passed = ratio_pass and verify_pass
+        passed = ratio_pass and verify_pass and output_is_finite and padding_is_zero
     
     status = "PASS" if passed else "FAIL"
 
     print(f"  verify_err={verify_err:.6g}, MARE={mare_npu:.6g}, MERE={mere_npu:.6g}")
     print(f"  MARE_ratio={mare_ratio:.3g}, MERE_ratio={mere_ratio:.3g}, RMSE_ratio={rmse_ratio:.3g}")
+    print(f"  output_is_finite={output_is_finite}, padding_is_zero={padding_is_zero}")
     print(f"  [{status}] num_seqs={num_seqs}, total_T={total_T}, H={H}, BT={chunk_size}, {dtype_str}")
 
     return passed

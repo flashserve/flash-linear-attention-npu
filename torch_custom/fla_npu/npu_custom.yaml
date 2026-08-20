@@ -41,6 +41,8 @@ custom:
     op_api: all_version
   - func: npu_chunk_scaled_dot_kkt(Tensor k, Tensor g, Tensor beta, *, int[]? cu_seqlens=None, int[]? chunk_indices=None, int chunk_size=64) -> Tensor
     op_api: all_version
+  - func: npu_chunk_cumsum_kkt(Tensor k, Tensor g, Tensor beta, *, int[]? cu_seqlens=None, int[]? chunk_indices=None, int chunk_size=64) -> (Tensor, Tensor)
+    op_api: all_version
   - func: npu_solve_tri(Tensor x, *, int[]? cu_seqlens=None, int[]? chunk_indices=None, str layout="bsnd") -> Tensor
     op_api: all_version
   - func: npu_chunk_kda_fwd(Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta, float scale, int chunk_size, *, str layout="BSND", Tensor? initial_state=None, bool? output_final_state=False, int[]? cu_seqlens=None, int[]? chunk_indices=None, bool? safe_gate=False, float? lower_bound=None, bool? use_gate_in_kernel=False, Tensor? A_log=None, Tensor? dt_bias=None, bool? disable_recompute=False, bool? return_intermediate_states=False, bool? state_v_first=False) -> (Tensor, Tensor?, Tensor?, Tensor, Tensor, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?)

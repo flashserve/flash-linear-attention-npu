@@ -74,6 +74,135 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
         ctypes.POINTER(ctypes.c_void_p),  # executor
     ],
+    "aclnnCausalConv1d": [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_int64,
+        ctypes.c_int64,
+        ctypes.c_int64,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnGdnCoreFwd": [
+        *([ctypes.c_void_p] * 6),
+        ctypes.c_bool,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_double,
+        *([ctypes.c_void_p] * 4),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnGdnCoreFwdPhase1": [
+        *([ctypes.c_void_p] * 6),
+        ctypes.c_bool,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_double,
+        *([ctypes.c_void_p] * 4),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnGdnCoreFwdPhase2": [
+        *([ctypes.c_void_p] * 6),
+        ctypes.c_bool,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_double,
+        *([ctypes.c_void_p] * 4),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnGdnCoreFwdPhase3": [
+        *([ctypes.c_void_p] * 6),
+        ctypes.c_bool,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_double,
+        *([ctypes.c_void_p] * 4),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnGdnCoreFwdPhase4": [
+        *([ctypes.c_void_p] * 6),
+        ctypes.c_bool,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_double,
+        *([ctypes.c_void_p] * 4),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnGdnCoreFwdPhase5": [
+        *([ctypes.c_void_p] * 6),
+        ctypes.c_bool,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_double,
+        *([ctypes.c_void_p] * 4),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnGdnCoreFwdPhase6": [
+        *([ctypes.c_void_p] * 6),
+        ctypes.c_bool,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_double,
+        *([ctypes.c_void_p] * 4),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnChunkLocalCumsum": [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_int64,
+        ctypes.c_bool,
+        ctypes.c_double,
+        ctypes.c_bool,
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnChunkScaledDotKkt": [
+        *([ctypes.c_void_p] * 5),
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnChunkCumsumKkt": [
+        *([ctypes.c_void_p] * 5),
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnChunkKktSolveTri": [
+        *([ctypes.c_void_p] * 5),
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnSolveTri": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -947,6 +1076,8 @@ def npu_causal_conv1d(
             ctx.tensor(weight, "weight"),
             ctx.tensor(bias, "bias"),
             ctx.tensor(conv_states, "conv_states"),
+            # The public aclnn API declares these four optional inputs as aclIntArray,
+            # not aclTensor. A non-null descriptor of the wrong kind corrupts host state.
             ctx.int_array(query_start_loc),
             ctx.int_array(cache_indices),
             ctx.int_array(initial_state_mode),
@@ -956,6 +1087,334 @@ def npu_causal_conv1d(
             ctypes.c_int64(int(run_mode)),
             ctypes.c_int64(int(head_num)),
             ctx.tensor(out, "out"),
+        ],
+        out,
+    )
+
+
+def _npu_gdn_core_fwd(
+    aclnn_name,
+    q,
+    k,
+    v,
+    g,
+    beta,
+    *,
+    initial_state=None,
+    output_final_state=False,
+    chunk_size=64,
+    cu_seqlens=None,
+    chunk_indices=None,
+    scale=None,
+):
+    import torch
+
+    q_shape = _shape(q)
+    k_shape = _shape(k)
+    v_shape = _shape(v)
+    g_shape = _shape(g)
+    beta_shape = _shape(beta)
+    if len(q_shape) != 4 or len(k_shape) != 4 or len(v_shape) != 4:
+        raise RuntimeError("npu_gdn_core_fwd: q, k and v must be rank-4 BNSD tensors.")
+    if q_shape[3] != 128 or k_shape[3] != 128:
+        raise RuntimeError("npu_gdn_core_fwd: the composite implementation requires K=128.")
+    phase6_v256 = aclnn_name == "aclnnGdnCoreFwdPhase6"
+    supported_v_dims = (128, 256) if phase6_v256 else (128,)
+    if v_shape[3] not in supported_v_dims:
+        if phase6_v256:
+            raise RuntimeError("npu_gdn_core_fwd: Phase 6 requires V=128 or V=256.")
+        raise RuntimeError("npu_gdn_core_fwd: this composite checkpoint requires V=128.")
+    if q_shape != k_shape:
+        raise RuntimeError("npu_gdn_core_fwd: q and k must have identical shapes.")
+    batch, k_heads, tokens, k_dim = q_shape
+    _, v_heads, v_tokens, v_dim = v_shape
+    if v_tokens != tokens or v_shape[0] != batch:
+        raise RuntimeError("npu_gdn_core_fwd: v must match q/k in B and T.")
+    if aclnn_name == "aclnnGdnCoreFwdPhase6":
+        if v_heads % k_heads != 0:
+            raise RuntimeError(
+                "npu_gdn_core_fwd: Phase 6 GVA requires value heads divisible by key heads."
+            )
+    elif k_heads != v_heads:
+        raise RuntimeError(
+            "npu_gdn_core_fwd: earlier phase checkpoints expect q/k heads expanded to Hv before entry."
+        )
+    if beta_shape != (batch, tokens, v_heads) or g_shape != beta_shape:
+        raise RuntimeError("npu_gdn_core_fwd: beta and g must have shape [B,T,Hv].")
+    if chunk_size not in (64, 128):
+        raise RuntimeError("npu_gdn_core_fwd: chunk_size must be 64 or 128.")
+    if (cu_seqlens is None) != (chunk_indices is None):
+        raise RuntimeError("npu_gdn_core_fwd: cu_seqlens and chunk_indices must be provided together.")
+    if cu_seqlens is not None:
+        cu_seqlens = tuple(int(value) for value in cu_seqlens)
+        chunk_indices = tuple(int(value) for value in chunk_indices)
+        if batch != 1:
+            raise RuntimeError("npu_gdn_core_fwd: varlen BNSD input requires physical B=1.")
+        if len(cu_seqlens) < 2 or cu_seqlens[0] != 0 or cu_seqlens[-1] != tokens:
+            raise RuntimeError("npu_gdn_core_fwd: cu_seqlens must start at 0 and end at T.")
+        if any(left > right for left, right in zip(cu_seqlens, cu_seqlens[1:])):
+            raise RuntimeError("npu_gdn_core_fwd: cu_seqlens must be nondecreasing.")
+        expected_indices = []
+        for seq, (begin, end) in enumerate(zip(cu_seqlens, cu_seqlens[1:])):
+            for local_chunk in range((end - begin + chunk_size - 1) // chunk_size):
+                expected_indices.extend((seq, local_chunk))
+        if tuple(expected_indices) != chunk_indices:
+            raise RuntimeError("npu_gdn_core_fwd: chunk_indices must use canonical sequence-major order.")
+
+    output_final_state = _optional_bool(output_final_state, False)
+    scale = _optional_float(scale, float(k_dim) ** -0.5)
+    o = _empty_like(v)
+    g_cumsum = _empty((batch, tokens, v_heads), g, dtype=torch.float32)
+    A = _empty((batch, v_heads, tokens, int(chunk_size)), q)
+    final_state = None
+    if output_final_state:
+        seq_num = len(cu_seqlens) - 1 if cu_seqlens is not None else batch
+        if initial_state is None:
+            state_dtype = torch.float32
+        else:
+            state_dtype = initial_state.dtype
+        final_state = _empty((seq_num, v_heads, k_dim, v_dim), q, dtype=state_dtype)
+    outputs = (o, final_state, g_cumsum, A)
+    return _call_aclnn(
+        aclnn_name,
+        lambda ctx: [
+            ctx.tensor(q, "q"),
+            ctx.tensor(k, "k"),
+            ctx.tensor(v, "v"),
+            ctx.tensor(g, "g"),
+            ctx.tensor(beta, "beta"),
+            ctx.tensor(initial_state, "initial_state"),
+            ctypes.c_bool(output_final_state),
+            ctypes.c_int64(int(chunk_size)),
+            ctx.int_array(cu_seqlens),
+            ctx.int_array(chunk_indices),
+            ctypes.c_double(scale),
+            ctx.tensor(o, "o"),
+            ctx.tensor(final_state, "final_state"),
+            ctx.tensor(g_cumsum, "g_cumsum"),
+            ctx.tensor(A, "A"),
+        ],
+        outputs,
+    )
+
+
+def npu_gdn_core_fwd(q, k, v, g, beta, **kwargs):
+    """Call the current default GDN core implementation (currently Phase 2)."""
+    return _npu_gdn_core_fwd("aclnnGdnCoreFwd", q, k, v, g, beta, **kwargs)
+
+
+def npu_gdn_core_fwd_phase1(q, k, v, g, beta, **kwargs):
+    """Call the immutable Phase 1 six-kernel composite checkpoint."""
+    return _npu_gdn_core_fwd("aclnnGdnCoreFwdPhase1", q, k, v, g, beta, **kwargs)
+
+
+def npu_gdn_core_fwd_phase2(q, k, v, g, beta, **kwargs):
+    """Call the immutable Phase 2 fused KKT + solve_tri checkpoint."""
+    return _npu_gdn_core_fwd("aclnnGdnCoreFwdPhase2", q, k, v, g, beta, **kwargs)
+
+
+def npu_gdn_core_fwd_phase3(q, k, v, g, beta, **kwargs):
+    """Call the immutable Phase 3 fused local-cumsum + KKT checkpoint."""
+    return _npu_gdn_core_fwd("aclnnGdnCoreFwdPhase3", q, k, v, g, beta, **kwargs)
+
+
+def npu_gdn_core_fwd_phase4(q, k, v, g, beta, **kwargs):
+    """Call the Phase 4 checkpoint with fused fwd_h + fwd_o."""
+    return _npu_gdn_core_fwd("aclnnGdnCoreFwdPhase4", q, k, v, g, beta, **kwargs)
+
+
+def npu_gdn_core_fwd_phase5(q, k, v, g, beta, **kwargs):
+    """Call the Phase 5 checkpoint with fused recompute_w_u + fwd_h + fwd_o."""
+    return _npu_gdn_core_fwd("aclnnGdnCoreFwdPhase5", q, k, v, g, beta, **kwargs)
+
+
+def npu_gdn_core_fwd_phase6(q, k, v, g, beta, **kwargs):
+    """Call the restricted Phase 6 P0a single-kernel checkpoint."""
+    return _npu_gdn_core_fwd("aclnnGdnCoreFwdPhase6", q, k, v, g, beta, **kwargs)
+
+
+def npu_chunk_local_cumsum(
+    g,
+    chunk_size,
+    *,
+    cu_seqlens=None,
+    chunk_indices_out=None,
+    reverse=False,
+    scale=1.0,
+    head_first=True,
+    output_dtype="float32",
+):
+    import torch
+
+    if not head_first:
+        raise RuntimeError("npu_chunk_local_cumsum: only head_first=True is supported.")
+    if output_dtype != "float32":
+        raise RuntimeError("npu_chunk_local_cumsum: only float32 output is supported.")
+    output_dtype_arg = ctypes.c_char_p(output_dtype.encode("utf-8"))
+    out = _empty_like(g, dtype=torch.float32)
+    return _call_aclnn(
+        "aclnnChunkLocalCumsum",
+        lambda ctx: [
+            ctx.tensor(g, "g"),
+            ctx.tensor(cu_seqlens, "cu_seqlens"),
+            ctx.tensor(chunk_indices_out, "chunk_indices_out"),
+            ctypes.c_int64(int(chunk_size)),
+            ctypes.c_bool(_optional_bool(reverse, False)),
+            ctypes.c_double(_optional_float(scale, 1.0)),
+            ctypes.c_bool(True),
+            output_dtype_arg,
+            ctx.tensor(out, "out"),
+        ],
+        out,
+    )
+
+
+def npu_chunk_scaled_dot_kkt(
+    k,
+    g,
+    beta,
+    *,
+    cu_seqlens=None,
+    chunk_indices=None,
+    chunk_size=64,
+):
+    import torch
+
+    k_shape = _shape(k)
+    g_shape = _shape(g)
+    beta_shape = _shape(beta)
+    if len(k_shape) != 4 or len(g_shape) != 3 or beta_shape != g_shape:
+        raise RuntimeError("npu_chunk_scaled_dot_kkt: expected k=[B,Hk,T,K], g/beta=[B,Hv,T].")
+    if k_shape[0] != g_shape[0] or k_shape[2] != g_shape[2] or g_shape[1] % k_shape[1] != 0:
+        raise RuntimeError("npu_chunk_scaled_dot_kkt: incompatible B/T/head dimensions.")
+    out = _empty((k_shape[0], k_shape[1], k_shape[2], int(chunk_size)), k, dtype=torch.float32)
+    return _call_aclnn(
+        "aclnnChunkScaledDotKkt",
+        lambda ctx: [
+            ctx.tensor(k, "k"),
+            ctx.tensor(g, "g"),
+            ctx.tensor(beta, "beta"),
+            ctx.int_array(cu_seqlens),
+            ctx.int_array(chunk_indices),
+            ctypes.c_int64(int(chunk_size)),
+            ctx.tensor(out, "A"),
+        ],
+        out,
+    )
+
+
+def npu_chunk_cumsum_kkt(
+    k,
+    g,
+    beta,
+    *,
+    cu_seqlens=None,
+    chunk_indices=None,
+    chunk_size=64,
+):
+    import torch
+
+    k_shape = _shape(k)
+    g_shape = _shape(g)
+    beta_shape = _shape(beta)
+    if len(k_shape) != 4 or len(g_shape) != 3 or beta_shape != g_shape:
+        raise RuntimeError("npu_chunk_cumsum_kkt: expected k=[B,H,T,128], g/beta=[B,H,T].")
+    if k_shape[3] != 128 or k_shape[:3] != g_shape:
+        raise RuntimeError("npu_chunk_cumsum_kkt: k, g and beta must use matching physical heads.")
+    if k.dtype not in (torch.float16, torch.bfloat16):
+        raise RuntimeError("npu_chunk_cumsum_kkt: k must be float16 or bfloat16.")
+    if g.dtype != torch.float32 or beta.dtype != torch.float32:
+        raise RuntimeError("npu_chunk_cumsum_kkt: g and beta must be float32.")
+    if chunk_size not in (64, 128):
+        raise RuntimeError("npu_chunk_cumsum_kkt: chunk_size must be 64 or 128.")
+    if (cu_seqlens is None) != (chunk_indices is None):
+        raise RuntimeError("npu_chunk_cumsum_kkt: variable-length metadata must be provided together.")
+    if cu_seqlens is not None:
+        cu_seqlens = tuple(int(value) for value in cu_seqlens)
+        chunk_indices = tuple(int(value) for value in chunk_indices)
+        if k_shape[0] != 1 or len(cu_seqlens) < 2 or cu_seqlens[0] != 0 or cu_seqlens[-1] != k_shape[2]:
+            raise RuntimeError("npu_chunk_cumsum_kkt: invalid cu_seqlens for physical B=1 input.")
+        expected_indices = []
+        for seq, (begin, end) in enumerate(zip(cu_seqlens, cu_seqlens[1:])):
+            if begin > end:
+                raise RuntimeError("npu_chunk_cumsum_kkt: cu_seqlens must be nondecreasing.")
+            for local_chunk in range((end - begin + chunk_size - 1) // chunk_size):
+                expected_indices.extend((seq, local_chunk))
+        if tuple(expected_indices) != chunk_indices:
+            raise RuntimeError("npu_chunk_cumsum_kkt: chunk_indices must use canonical sequence-major order.")
+
+    g_cumsum = _empty(g_shape, g, dtype=torch.float32)
+    A = _empty((k_shape[0], k_shape[1], k_shape[2], int(chunk_size)), k, dtype=torch.float32)
+    outputs = (g_cumsum, A)
+    return _call_aclnn(
+        "aclnnChunkCumsumKkt",
+        lambda ctx: [
+            ctx.tensor(k, "k"),
+            ctx.tensor(g, "g"),
+            ctx.tensor(beta, "beta"),
+            ctx.int_array(cu_seqlens),
+            ctx.int_array(chunk_indices),
+            ctypes.c_int64(int(chunk_size)),
+            ctx.tensor(g_cumsum, "g_cumsum"),
+            ctx.tensor(A, "A"),
+        ],
+        outputs,
+    )
+
+
+def npu_chunk_kkt_solve_tri(
+    k,
+    g,
+    beta,
+    *,
+    cu_seqlens=None,
+    chunk_indices=None,
+    chunk_size=64,
+):
+    import torch
+
+    k_shape = _shape(k)
+    g_shape = _shape(g)
+    beta_shape = _shape(beta)
+    if len(k_shape) != 4 or len(g_shape) != 3 or beta_shape != g_shape:
+        raise RuntimeError("npu_chunk_kkt_solve_tri: expected k=[B,H,T,128], g/beta=[B,H,T].")
+    if k_shape[3] != 128 or k_shape[:3] != g_shape:
+        raise RuntimeError(
+            "npu_chunk_kkt_solve_tri: Phase 2 expects q/k expanded to Hv and matching g/beta heads."
+        )
+    if k.dtype not in (torch.float16, torch.bfloat16):
+        raise RuntimeError("npu_chunk_kkt_solve_tri: k must be float16 or bfloat16.")
+    if g.dtype != torch.float32 or beta.dtype != torch.float32:
+        raise RuntimeError("npu_chunk_kkt_solve_tri: g and beta must be float32.")
+    if chunk_size not in (64, 128):
+        raise RuntimeError("npu_chunk_kkt_solve_tri: chunk_size must be 64 or 128.")
+    if (cu_seqlens is None) != (chunk_indices is None):
+        raise RuntimeError("npu_chunk_kkt_solve_tri: variable-length metadata must be provided together.")
+    if cu_seqlens is not None:
+        cu_seqlens = tuple(int(value) for value in cu_seqlens)
+        chunk_indices = tuple(int(value) for value in chunk_indices)
+        if k_shape[0] != 1 or len(cu_seqlens) < 2 or cu_seqlens[0] != 0 or cu_seqlens[-1] != k_shape[2]:
+            raise RuntimeError("npu_chunk_kkt_solve_tri: invalid cu_seqlens for physical B=1 input.")
+        expected_indices = []
+        for seq, (begin, end) in enumerate(zip(cu_seqlens, cu_seqlens[1:])):
+            if begin > end:
+                raise RuntimeError("npu_chunk_kkt_solve_tri: cu_seqlens must be nondecreasing.")
+            for local_chunk in range((end - begin + chunk_size - 1) // chunk_size):
+                expected_indices.extend((seq, local_chunk))
+        if tuple(expected_indices) != chunk_indices:
+            raise RuntimeError("npu_chunk_kkt_solve_tri: chunk_indices must use canonical sequence-major order.")
+
+    out = _empty((k_shape[0], k_shape[1], k_shape[2], int(chunk_size)), k)
+    return _call_aclnn(
+        "aclnnChunkKktSolveTri",
+        lambda ctx: [
+            ctx.tensor(k, "k"),
+            ctx.tensor(g, "g"),
+            ctx.tensor(beta, "beta"),
+            ctx.int_array(cu_seqlens),
+            ctx.int_array(chunk_indices),
+            ctypes.c_int64(int(chunk_size)),
+            ctx.tensor(out, "A"),
         ],
         out,
     )

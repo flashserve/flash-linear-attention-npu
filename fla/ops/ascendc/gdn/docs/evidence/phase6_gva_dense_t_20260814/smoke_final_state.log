@@ -1,0 +1,2 @@
+[W814 18:04:43.326845900 compiler_depend.ts:52] Warning: Version: 9.1.0.beta1 is invalid. (function operator())
+{"chunk_size": 64, "expanded_shapes": [[1, 8, 130, 128], [1, 8, 128, 128], [1, 130, 8], [1, 8, 130, 64]], "key_heads": 2, "native_finite": {"A": true, "final_state": true, "g_cumsum": true, "output": true}, "native_shapes": [[1, 8, 130, 128], [1, 8, 128, 128], [1, 130, 8], [1, 8, 130, 64]], "native_vs_expanded_bit_exact": {"A": true, "final_state": true, "g_cumsum": true, "output": true}, "tokens": 130, "value_heads": 8}

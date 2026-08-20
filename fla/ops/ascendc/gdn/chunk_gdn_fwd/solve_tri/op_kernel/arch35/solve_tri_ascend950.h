@@ -22,13 +22,13 @@ using namespace AscendC;
 //     提取 drv/oth 对角块到 L1，AIC 做 B/C/E/G 四步矩乘合并，层间结果 Fixpipe 回
 //     ub_Res，末层写 gm_out。
 //
-// 【分核 / 同步】（本版：CrossCoreFlag + round-robin，统一 MCH 与 MBH）
+// 【分核 / 同步】（本版：CrossCoreFlag + 连续 task 分片，统一 MCH 与 MBH）
 //   - 参照仓1（recurrent_gdn/solve_tril）已验证的 MCH 写法：跨核用 CrossCoreSetFlag/
 //     WaitFlag 每 tile / 每 MBH 层握手，AIC 与其配对 AIV 处理同一 tile（cur 一致 -> 层数
 //     一致 -> 握手计数天然对齐，无需全局屏障 / 固定调度，无死锁）。
-//   - 多核 round-robin，以 num_core 为间隔分核：
-//       AIV(sub0): loop_idx = core_idx/2; loop_idx += num_core
-//       AIC     : loop_idx = core_idx;   loop_idx += num_core
+//   - 每个 core group 处理 tiling 给出的连续 tiles_per_core 区间；AIV0 与 AIC
+//     共用 core-group index。该顺序与上游 KKT 及 Phase6 recompute 一致，保留同核
+//     producer/consumer affinity。
 //   - flag：mode 0x4；0x2 = AIV->AIC(数据/提取就绪)，0x0 = AIC->AIV(计算/回写完成)。
 //     两 flag 严格交替复用于 MCH 与每个 MBH 层。
 //   - 注：原 SyncAll 固定调度版已整体替换为 CrossCoreFlag（MBH 一并切换）。
@@ -52,8 +52,9 @@ constexpr AscendC::FixpipeConfig CFG_NZ_UB = {AscendC::CO2Layout::NZ, true};
 template <typename InDtype, typename OutDtype>
 class SolveTri {
 public:
+    template <typename TilingData>
     __aicore__ inline void Init(GM_ADDR aGm, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR outGm,
-                                GM_ADDR workspace, const SolveTriTilingData *tilingData)
+                                GM_ADDR workspace, const TilingData *tilingData)
     {
         // Tiling
         batch_size = tilingData->batchSize;
@@ -98,7 +99,6 @@ public:
         l0c_Y = buf.template GetBuffer<BufferType::ASCEND_L0C, float>(chunk_size * chunk_size * sizeof(float));
 
         // Core
-        num_core = AscendC::GetBlockNum();
         core_idx = AscendC::GetBlockIdx();
         sub_block_idx = AscendC::GetSubBlockIdx();
 
@@ -531,7 +531,10 @@ public:
 
         if ASCEND_IS_AIV {
             if (sub_block_idx == 0) {
-                for (int64_t loop_idx = core_idx / 2; loop_idx < chunk_num_total; loop_idx += num_core) {
+                const int64_t begin = core_idx / 2 * tiles_per_core;
+                int64_t end = begin + tiles_per_core;
+                end = end < chunk_num_total ? end : chunk_num_total;
+                for (int64_t loop_idx = begin; loop_idx < end; ++loop_idx) {
                     int64_t x_gm_offset = 0;
                     int64_t cur = 0;
                     int64_t actual_size = 0;
@@ -555,7 +558,10 @@ public:
         }
 
         if ASCEND_IS_AIC {
-            for (int64_t loop_idx = core_idx; loop_idx < chunk_num_total; loop_idx += num_core) {
+            const int64_t begin = core_idx * tiles_per_core;
+            int64_t end = begin + tiles_per_core;
+            end = end < chunk_num_total ? end : chunk_num_total;
+            for (int64_t loop_idx = begin; loop_idx < end; ++loop_idx) {
                 int64_t x_gm_offset = 0;
                 int64_t cur = 0;
                 int64_t actual_size = 0;
@@ -620,7 +626,6 @@ private:
     int64_t total_tokens;   // NTD: total_T，用于 head 维在外的偏移计算
 
     // Core
-    int64_t num_core;
     int64_t core_idx;
     int64_t sub_block_idx;
 

@@ -32,7 +32,7 @@ class SolveTriVector {
      __aicore__ inline void Init(GM_ADDR workspace,
                                   int64_t totalTiles,
                                   int64_t matrixSize);
-     __aicore__ inline void Process();
+     __aicore__ inline void Process(bool synchronize = true, bool everyCoreGroup = false);
  
  private:
      __aicore__ inline void GenerateAuxMatrices();
@@ -62,19 +62,18 @@ __aicore__ inline void SolveTriVector<MATRIX_SIZE, T>::Init(
 }
  
 template <int MATRIX_SIZE, typename T>
-__aicore__ inline void SolveTriVector<MATRIX_SIZE, T>::Process()
+__aicore__ inline void SolveTriVector<MATRIX_SIZE, T>::Process(bool synchronize, bool everyCoreGroup)
  {
      int32_t subIdx = static_cast<int32_t>(GetSubBlockIdx());
      int32_t blockIdx = static_cast<int32_t>(GetBlockIdx());
-     // 只让核组 0 的 AIV 子核 0 生成辅助矩阵，其他核直接参与全核同步
-     if (subIdx != 0 || blockIdx != 0) {
-         SyncAll<false>();
-         return;
+     // Only AIV 0 of core group 0 generates the shared auxiliary matrices.
+     if (subIdx == 0 && (everyCoreGroup || blockIdx == 0)) {
+         GenerateAuxMatrices();
      }
- 
-     GenerateAuxMatrices();
- 
-     SyncAll<false>();
+
+     if (synchronize) {
+         SyncAll<false>();
+     }
  }
  
 template <int MATRIX_SIZE, typename T>
@@ -133,4 +132,3 @@ __aicore__ inline void SolveTriVector<MATRIX_SIZE, T>::GenerateAuxMatrices()
  }  // namespace NsSolveTri
  
  #endif  // SOLVE_TRI_VECTOR_H
- 
