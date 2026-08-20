@@ -22,6 +22,8 @@ show_usage() {
   ATK_OUTPUT_ROOT                输出根目录，默认 ./atk_output
   ATK_TIMEOUT                    精度阶段超时，默认 14400
   PERFORMANCE_TIMEOUT            性能阶段超时，默认 2000
+  DETERMINISM_TIMEOUT            确定性阶段超时，默认沿用 ATK_TIMEOUT
+  MSS_TIMEOUT                    mssanitizer 阶段超时，默认沿用 ATK_TIMEOUT
   CASE_START/CASE_END            通用 case 顺序范围；不设置时不传 -s/-e，ATK 执行全部用例
   ACCURACY_START/ACCURACY_END    精度与 NaN 检测 case 范围
   PERFORMANCE_START/END          性能 case 范围
@@ -87,6 +89,8 @@ SOC="${SOC:-auto}"
 RUN_SCOPE="${RUN_SCOPE:-all}"
 ATK_TIMEOUT="${ATK_TIMEOUT:-14400}"
 PERFORMANCE_TIMEOUT="${PERFORMANCE_TIMEOUT:-2000}"
+DETERMINISM_TIMEOUT="${DETERMINISM_TIMEOUT:-$ATK_TIMEOUT}"
+MSS_TIMEOUT="${MSS_TIMEOUT:-$ATK_TIMEOUT}"
 CASE_START="${CASE_START:-}"
 CASE_END="${CASE_END:-}"
 MSS_TOOL="${MSS_TOOL:-memcheck}"
@@ -290,7 +294,8 @@ if should_run determinism; then
       -c "atk_${OP}.json" \
       -p "executor_${OP}.py" \
       --task accuracy_dc \
-      "${CASE_RANGE_ARGS[@]}"
+      "${CASE_RANGE_ARGS[@]}" \
+      -to "$DETERMINISM_TIMEOUT"
   log_info "完成确定性测试"
 fi
 
@@ -308,6 +313,7 @@ if should_run mssanitizer; then
       --task run \
       --mssanitizer \
       -msl "$MSS_LOG_PATH" \
+      -to "$MSS_TIMEOUT" \
       "${CASE_RANGE_ARGS[@]}"
   log_info "完成内存检测"
 fi
