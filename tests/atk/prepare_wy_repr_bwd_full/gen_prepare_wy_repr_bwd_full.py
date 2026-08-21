@@ -24,7 +24,7 @@ PROFILES = [
     "B": 1,
     "HK": 1,
     "HV": 1,
-    "T": 64,
+    "T": 128,
     "K": 128,
     "V": 128,
     "chunk_size": 64
@@ -35,7 +35,7 @@ PROFILES = [
     "B": 1,
     "HK": 1,
     "HV": 1,
-    "T": 64,
+    "T": 128,
     "K": 128,
     "V": 128,
     "chunk_size": 64
@@ -51,7 +51,7 @@ def _spec(index):
     return profile
 
 if GENERATOR_REGISTRY is not None:
-    @GENERATOR_REGISTRY.register(f"generator_{OP_NAME}")
+    @GENERATOR_REGISTRY.register("generator_prepare_wy_repr_bwd_full")
     class Generator(CaseGenerator):
         def __init__(self, config):
             super().__init__(config)

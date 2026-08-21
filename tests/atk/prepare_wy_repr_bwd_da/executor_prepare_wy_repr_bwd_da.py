@@ -1,17 +1,17 @@
-"""prepare_wy_repr_bwd_da 的 ATK executor。
+"""ATK executor for prepare_wy_repr_bwd_da.
 
-输入生成、CPU 标杆、run_cpu、run_npu 和 FunctionApi 都放在本算子目录中。
+The CPU golden is embedded from fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd_da/test/test_da.py.
 """
 
 from __future__ import annotations
 
-import math
 import sys
 from pathlib import Path
 from typing import Any
 
 import torch
-import torch.nn.functional as F
+
+from fla_npu.ops import ascendc
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 
@@ -21,85 +21,103 @@ from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 
 from _ascendc_common_executor import (
-    _RCP_LN2,
-    _calc_dtype,
     _case_spec,
     _chunks,
     _finite_tuple,
-    _gate,
-    _int_tensor,
-    _kda_gate,
     _marker_device,
-    _num_chunks,
     _orig_dtype,
     _rand,
-    _randn,
-    _zeros,
 )
 
 
 OP_NAME = "prepare_wy_repr_bwd_da"
 
 
-def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: bool = False) -> dict[str, Any]:
+def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
     dtype_name = str(spec.get("dtype", "bf16")).lower()
-    calc_dtype = _calc_dtype(dtype_name, high_precision)
+    data_dtype = _orig_dtype(dtype_name)
     seed = int(spec.get("seed", 20260817))
     B, HK, HV, T, K, V = (int(spec[x]) for x in ("B", "HK", "HV", "T", "K", "V"))
     chunk_size = int(spec["chunk_size"])
-    inputs = {
-        "k": _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 1),
-        "v": _randn((B, HV, T, V), dtype_name, calc_dtype, device, seed + 2),
-        "beta": _rand((B, HV, T), "fp32", torch.float64 if high_precision else torch.float32, device, seed + 3, 0.1, 0.9),
-        "A": _randn((B, HV, T, chunk_size), dtype_name, calc_dtype, device, seed + 4),
-        "g": _gate((B, HV, T), torch.float64 if high_precision else torch.float32, device, seed + 5),
+    return {
+        "k": _rand((B, HK, T, K), dtype_name, data_dtype, device, seed + 1, 0.0, 1.0),
+        "v": _rand((B, HV, T, V), dtype_name, data_dtype, device, seed + 2, 0.0, 1.0),
+        "beta": _rand((B, HV, T), "fp32", torch.float32, device, seed + 3, 0.0, 1.0),
+        "A": _rand((B, HV, T, chunk_size), dtype_name, data_dtype, device, seed + 4, 0.0, 1.0),
+        "g": -torch.arange(1, B * HV * T + 1, dtype=torch.float32)
+        .reshape(B, HV, T)
+        .to(device),
+        "dw": _rand((B, HV, T, K), dtype_name, data_dtype, device, seed + 6, 0.0, 1.0),
+        "du": _rand((B, HV, T, V), dtype_name, data_dtype, device, seed + 7, 0.0, 1.0),
         "chunk_size": chunk_size,
     }
-    if OP_NAME != "recompute_w_u_fwd":
-        inputs["dw"] = _randn((B, HV, T, K), dtype_name, calc_dtype, device, seed + 6)
-        inputs["du"] = _randn((B, HV, T, V), dtype_name, calc_dtype, device, seed + 7)
-    if OP_NAME == "prepare_wy_repr_bwd_full":
-        inputs["dA"] = _zeros((B, HV, T, chunk_size), dtype_name, calc_dtype, device)
-    return inputs
 
 
-def _prepare_wy_da_ref(inputs):
-    k, v, beta, A, g = inputs["k"], inputs["v"], inputs["beta"], inputs["A"], inputs["g"]
+def _compute_da_golden(inputs: dict[str, Any], high_precision: bool) -> torch.Tensor:
+    """Port of test_da.py::compute_dA_cpu for the dense single-case route."""
+    k, v = inputs["k"], inputs["v"]
+    beta, A, g = inputs["beta"], inputs["A"], inputs["g"]
     dw, du = inputs["dw"], inputs["du"]
     B, HK, T, _ = k.shape
     HV = v.shape[1]
     chunk_size = int(inputs["chunk_size"])
-    calc = torch.float64 if k.dtype == torch.float64 else torch.float32
-    dA = torch.zeros_like(A, dtype=calc)
-    group = max(HV // HK, 1)
+    calc_dtype = torch.float64 if high_precision else torch.float32
+    dA = torch.zeros(A.shape, dtype=calc_dtype, device=A.device)
+    group_size = HV // HK
+
     for b in range(B):
         for hv in range(HV):
-            hk = hv // group
+            hk = hv // group_size
             for start, end in _chunks(T, chunk_size):
                 length = end - start
-                kbg = k[b, hk, start:end].to(calc) * beta[b, hv, start:end].to(calc).unsqueeze(-1) * torch.exp(g[b, hv, start:end].to(calc)).unsqueeze(-1)
-                vb = v[b, hv, start:end].to(calc) * beta[b, hv, start:end].to(calc).unsqueeze(-1)
-                dA[b, hv, start:end, :length] = torch.matmul(dw[b, hv, start:end].to(calc), kbg.t()) + torch.matmul(du[b, hv, start:end].to(calc), vb.t())
-    return dA.to(A.dtype)
+                a_chunk = A[b, hv, start:end, :length].to(calc_dtype)
+                dw_chunk = dw[b, hv, start:end].to(calc_dtype)
+                du_chunk = du[b, hv, start:end].to(calc_dtype)
+                k_chunk = k[b, hk, start:end].to(calc_dtype)
+                v_chunk = v[b, hv, start:end].to(calc_dtype)
+                beta_chunk = beta[b, hv, start:end].to(calc_dtype)
+                g_chunk = g[b, hv, start:end].to(calc_dtype)
+
+                causal = torch.tril(
+                    torch.ones((length, length), dtype=torch.bool, device=A.device),
+                    diagonal=-1,
+                )
+                k_beta_g = k_chunk * (beta_chunk * torch.exp(g_chunk)).unsqueeze(-1)
+                v_beta = v_chunk * beta_chunk.unsqueeze(-1)
+                raw = torch.matmul(dw_chunk, k_beta_g.T) + torch.matmul(du_chunk, v_beta.T)
+                masked = torch.where(causal, raw, torch.zeros_like(raw))
+                transformed = torch.matmul(a_chunk.T, torch.matmul(masked, a_chunk.T))
+                gate_ratio = torch.exp(g_chunk.unsqueeze(1) - g_chunk.unsqueeze(0))
+                result = torch.where(causal, -transformed * gate_ratio, torch.zeros_like(transformed))
+                dA[b, hv, start:end, :length] = result.T
+
+    return dA if high_precision else dA.to(A.dtype)
 
 
 def run_cpu(spec: dict[str, Any], high_precision: bool = False):
-    """运行 CPU 同精度或 fp64 高精度标杆。"""
-    inputs = build_inputs(spec, torch.device("cpu"), high_precision=high_precision)
-    return _prepare_wy_da_ref(inputs)
+    return _compute_da_golden(build_inputs(spec, torch.device("cpu")), high_precision)
 
 
 def run_npu(spec: dict[str, Any], input_data: InputDataset):
-    """运行 NPU DUT。"""
-    inputs = build_inputs(spec, _marker_device(input_data), high_precision=False)
-    from fla_npu.ops import ascendc
+    inputs = build_inputs(spec, _marker_device(input_data))
 
-    return ascendc.prepare_wy_repr_bwd_da(inputs["k"], inputs["v"], inputs["beta"], inputs["A"], inputs["dw"], inputs["du"], inputs["g"], chunk_size=inputs["chunk_size"], cu_seqlens=None, chunk_indices=None)
+    return ascendc.prepare_wy_repr_bwd_da(
+        inputs["k"],
+        inputs["v"],
+        inputs["beta"],
+        inputs["A"],
+        inputs["dw"],
+        inputs["du"],
+        inputs["g"],
+        chunk_size=inputs["chunk_size"],
+        cu_seqlens=None,
+        chunk_indices=None,
+    )
 
 
 @register("executor_prepare_wy_repr_bwd_da")
 class FunctionApi(BaseApi):
-    """ATK 执行入口。"""
+    """ATK execution entry."""
 
     def __init__(self, task_result: TaskResult):
         super(FunctionApi, self).__init__(task_result)
@@ -113,5 +131,5 @@ class FunctionApi(BaseApi):
         elif self.device == "cpu":
             outputs = run_cpu(spec, self.high_precision)
         else:
-            raise RuntimeError(f"{OP_NAME} 仅支持 NPU DUT 与 CPU 标杆节点，当前设备：{self.device!r}")
+            raise RuntimeError(f"{OP_NAME} supports only NPU DUT and CPU benchmark nodes")
         return _finite_tuple(outputs)

@@ -9,7 +9,7 @@ import torch
 import torch_npu
 
 from fla_npu.ops.ascendc import recurrent_kda
-from golden import recurrent_kda_golden
+from recurrent_kda_reference import recurrent_kda_reference as recurrent_kda_golden
 from utils import compare_tensors_by_ratio
 
 
