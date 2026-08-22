@@ -46,7 +46,9 @@ static constexpr size_t RKDA_DIM_3 = 3;
 static constexpr uint32_t RKDA_LAYOUT_BSND = 0;
 static constexpr uint32_t RKDA_LAYOUT_TND = 1;
 static constexpr size_t RKDA_MAX_MTP = 8;
+static constexpr int64_t RKDA_INPUT_BUFFER_NUM = 2;
 static constexpr int64_t RKDA_UB_GUARD_BYTES = 2048;
+static constexpr int64_t RKDA_FUSED_REDUCE_K = 128;
 static constexpr size_t RKDA_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
 
 struct RecurrentKdaTilingContext {
@@ -548,13 +550,25 @@ private:
         return usedUbBytes;
     }
 
+    int64_t CalcComputeUbCoeff(int64_t aDk) const
+    {
+        int64_t coeff = 4 * aDk + 8; // state and row outputs.
+        if (aDk != RKDA_FUSED_REDUCE_K) {
+            coeff += 4 * aDk; // broadTmp for the generic matvec path.
+        }
+        return coeff;
+    }
+
     int64_t CalcVStepCoeff(int64_t aDk, uint32_t stateOutBufferNum, uint32_t attnOutBufferNum) const
     {
         int64_t stateDtypeSize = (ctx_.stateDtype == ge::DT_FLOAT) ? 4 : 2;
-        int64_t coeff = stateDtypeSize * aDk; // state input queue.
+        int64_t coeff = RKDA_INPUT_BUFFER_NUM * stateDtypeSize * aDk; // state input queue.
+        if (ctx_.stateVFirst == 0) {
+            coeff += stateDtypeSize * aDk; // K-first state transpose buffer.
+        }
         coeff += static_cast<int64_t>(stateOutBufferNum) * stateDtypeSize * aDk;
         coeff += static_cast<int64_t>(attnOutBufferNum) * 2;
-        coeff += 8 * aDk + 8;
+        coeff += CalcComputeUbCoeff(aDk);
         return coeff;
     }
 
@@ -562,14 +576,15 @@ private:
                                uint32_t attnOutBufferNum, const RecurrentKdaTilingData &tiling,
                                BufferProfile &profile) const
     {
+        const int64_t vStepAlignment = ctx_.stateVFirst == 0 ? 16 : 8;
         int64_t coeff = CalcVStepCoeff(aDk, stateOutBufferNum, attnOutBufferNum);
-        int64_t vStep = (ubSize - usedUbBytes) / coeff / 8 * 8;
+        int64_t vStep = (ubSize - usedUbBytes) / coeff / vStepAlignment * vStepAlignment;
         if (vStep < static_cast<int64_t>(RKDA_MAX_MTP)) {
             return false;
         }
         int64_t repeatTime = Ops::Base::CeilDiv(tiling.dv, static_cast<uint32_t>(vStep));
         vStep = Ops::Base::CeilAlign(Ops::Base::CeilDiv(tiling.dv, static_cast<uint32_t>(repeatTime)),
-                                     static_cast<uint32_t>(8));
+                                     static_cast<uint32_t>(vStepAlignment));
         if (vStep < static_cast<int64_t>(RKDA_MAX_MTP)) {
             return false;
         }
@@ -625,7 +640,7 @@ private:
         }
 
         int64_t queueCoeff = CalcVStepCoeff(aDk, selected.stateOutBufferNum, selected.attnOutBufferNum) -
-                             (8 * aDk + 8);
+                             CalcComputeUbCoeff(aDk);
         int64_t ubRestBytes = ubSize - ubCalcCtx.fixedUbBytes -
                               queueCoeff * static_cast<int64_t>(selected.vStep);
         if (ubRestBytes < 0) {

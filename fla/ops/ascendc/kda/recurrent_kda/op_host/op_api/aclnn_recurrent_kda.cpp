@@ -47,7 +47,7 @@ struct RecurrentKdaParams {
     const aclTensor *value = nullptr;
     const aclTensor *gate = nullptr;
     const aclTensor *beta = nullptr;
-    const aclTensor *initialStateRef = nullptr;
+    aclTensor *initialStateRef = nullptr;
     const aclTensor *cuSeqlensOptional = nullptr;
     const aclTensor *ssmStateIndicesOptional = nullptr;
     const aclTensor *aLogOptional = nullptr;
@@ -331,17 +331,6 @@ void SetTensorOriginalShape(const aclTensor *tensor)
     }
 }
 
-void SetTensorNdFormat(const aclTensor *tensor)
-{
-    if (tensor == nullptr) {
-        return;
-    }
-    auto *mutableTensor = const_cast<aclTensor *>(tensor);
-    mutableTensor->SetStorageFormat(Format::FORMAT_ND);
-    mutableTensor->SetViewFormat(Format::FORMAT_ND);
-    mutableTensor->SetOriginalFormat(Format::FORMAT_ND);
-}
-
 void SetInputOriginalShape(RecurrentKdaParams &params)
 {
     SetTensorOriginalShape(params.query);
@@ -385,7 +374,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     const aclTensor *value,
     const aclTensor *gate,
     const aclTensor *beta,
-    const aclTensor *initialStateRef,
+    aclTensor *initialStateRef,
     const aclTensor *cuSeqlensOptional,
     const aclTensor *ssmStateIndicesOptional,
     const aclTensor *aLogOptional,
@@ -432,7 +421,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     CHECK_RET(CheckShape(params, parsedLayout), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(PreProcess(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
-    const aclTensor *initialStateForKernel = params.initialStateRef;
+    aclTensor *initialStateForKernel = params.initialStateRef;
     if (!IsContiguous(initialStateForKernel)) {
         initialStateForKernel = executorPtr->CreateView(
             initialStateForKernel,
@@ -453,9 +442,6 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
         CHECK_RET(finalStateForKernel != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
 
-    SetTensorNdFormat(initialStateForKernel);
-    SetTensorNdFormat(finalStateForKernel);
-
     auto result = l0op::RecurrentKda(
         params.query, params.key, params.value, params.gate, params.beta, initialStateForKernel,
         params.cuSeqlensOptional, params.ssmStateIndicesOptional, params.aLogOptional,
@@ -468,7 +454,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
               ACLNN_ERR_INNER_NULLPTR);
     if (params.inplaceFinalState && params.outputFinalState &&
         params.finalState != params.initialStateRef) {
-        CHECK_RET(l0op::ViewCopy(result[1], finalStateForKernel, executorPtr) != nullptr,
+        CHECK_RET(l0op::ViewCopy(result[1], params.finalState, executorPtr) != nullptr,
                   ACLNN_ERR_INNER_NULLPTR);
     }
 

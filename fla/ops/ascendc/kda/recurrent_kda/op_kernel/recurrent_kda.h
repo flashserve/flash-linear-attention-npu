@@ -24,6 +24,7 @@ namespace RecurrentKda {
 using namespace matmul;
 using namespace AscendC;
 constexpr uint64_t BUFFER_NUM = 1;
+constexpr uint64_t INPUT_BUFFER_NUM = 2;
 constexpr uint32_t MAX_OUT_BUFFER_NUM = 2;
 constexpr uint64_t MAX_MTP = 8;
 constexpr uint64_t BF16_NUM_PER_BLOCK = 16;
@@ -32,6 +33,8 @@ constexpr uint32_t REPEAT_LENTH = 64; // 256 bytes for float.
 constexpr uint32_t MAX_REPEAT_TIME = 255;
 constexpr uint32_t ADD_FOLD_REDUCE_MIN_K = 128;
 constexpr uint64_t INVALID_STATE_SLOT = static_cast<uint64_t>(-1);
+constexpr uint32_t STATE_TRANSPOSE_BLOCK = 16;
+constexpr uint32_t DATA_BLOCK_BYTES = 32;
 
 #ifndef RKDA_ENABLE_ADD_FOLD_REDUCE
 #define RKDA_ENABLE_ADD_FOLD_REDUCE  1
@@ -104,6 +107,8 @@ public:
         eventMte2ToVInitialized_ = false;
         eventVToMte2Initialized_ = false;
         eventVToSInitialized_ = false;
+        eventVToMte3Initialized_ = false;
+        eventMte3ToVInitialized_ = false;
     }
 
     __aicore__ inline void Init(const RKDAInitParams &initParams, TPipe *pipe)
@@ -155,8 +160,11 @@ public:
         pipe_->InitBuffer(vInQueue_, BUFFER_NUM, MAX_MTP * alignV_ * sizeof(inType));
         pipe_->InitBuffer(gateInQueue_, BUFFER_NUM, MAX_MTP * alignK_ * sizeof(float));
         pipe_->InitBuffer(betaInQueue_, BUFFER_NUM, betaUbSize);
-        pipe_->InitBuffer(stateInQueue_, BUFFER_NUM, alignK_ * vStep_ * sizeof(stateType));
+        pipe_->InitBuffer(stateInQueue_, INPUT_BUFFER_NUM, alignK_ * vStep_ * sizeof(stateType));
         pipe_->InitBuffer(stateOutQueue_, stateOutBufferNum_, alignK_ * vStep_ * sizeof(stateType));
+        if (!stateVFirst_) {
+            pipe_->InitBuffer(stateTransposeBuf_, alignK_ * vStep_ * sizeof(stateType));
+        }
         pipe_->InitBuffer(attnOutQueue_, attnOutBufferNum_, vStep_ * sizeof(outType));
         pipe_->InitBuffer(tmpBuff, restUbSize_);
         pipe_->InitBuffer(scalarBuf_, 64);
@@ -211,6 +219,26 @@ public:
         WaitFlag<HardEvent::V_S>(eventIdVToS_);
     }
 
+    __aicore__ inline void SyncVToMte3()
+    {
+        if (!eventVToMte3Initialized_) {
+            eventIdVToMte3_ = GetTPipePtr()->FetchEventID(HardEvent::V_MTE3);
+            eventVToMte3Initialized_ = true;
+        }
+        SetFlag<HardEvent::V_MTE3>(eventIdVToMte3_);
+        WaitFlag<HardEvent::V_MTE3>(eventIdVToMte3_);
+    }
+
+    __aicore__ inline void SyncMte3ToV()
+    {
+        if (!eventMte3ToVInitialized_) {
+            eventIdMte3ToV_ = GetTPipePtr()->FetchEventID(HardEvent::MTE3_V);
+            eventMte3ToVInitialized_ = true;
+        }
+        SetFlag<HardEvent::MTE3_V>(eventIdMte3ToV_);
+        WaitFlag<HardEvent::MTE3_V>(eventIdMte3ToV_);
+    }
+
     __aicore__ inline void ReleaseEvents()
     {
         if (eventMte2ToVInitialized_) {
@@ -224,6 +252,14 @@ public:
         if (eventVToSInitialized_) {
             GetTPipePtr()->ReleaseEventID<HardEvent::V_S>(eventIdVToS_);
             eventVToSInitialized_ = false;
+        }
+        if (eventVToMte3Initialized_) {
+            GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE3>(eventIdVToMte3_);
+            eventVToMte3Initialized_ = false;
+        }
+        if (eventMte3ToVInitialized_) {
+            GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_V>(eventIdMte3ToV_);
+            eventMte3ToVInitialized_ = false;
         }
     }
 
@@ -246,22 +282,22 @@ public:
                 return;
             }
 
-            uint32_t copyFlag = 0;
-            uint64_t stateSlot = batch_i;
-            for (uint64_t head_i = 0; head_i < NV_; head_i++) {
-                if (!IsCurrentTask(batch_i, head_i)) {
-                    continue;
-                }
-                copyFlag++;
-                if (copyFlag == 1) {
-                    stateSlot = ResolveInitialStateSlot(batch_i, seq0, seqLen);
-                    if (stateSlot == INVALID_STATE_SLOT) {
-                        ReleaseEvents();
-                        return;
-                    }
-                    CopyInBeta(seq0, seq1);
-                }
-                ProcessHead(batch_i, seq0, seq1, head_i, stateSlot);
+            uint64_t head_i = FindNextTaskHead(batch_i, 0);
+            if (head_i == NV_) {
+                continue;
+            }
+            uint64_t stateSlot = ResolveInitialStateSlot(batch_i, seq0, seqLen);
+            if (stateSlot == INVALID_STATE_SLOT) {
+                ReleaseEvents();
+                return;
+            }
+            CopyInBeta(seq0, seq1);
+            bool statePrefetched = false;
+            while (head_i < NV_) {
+                uint64_t nextHead = FindNextTaskHead(batch_i, head_i + 1);
+                statePrefetched = ProcessHead(batch_i, seq0, seq1, head_i, stateSlot,
+                                              statePrefetched, nextHead < NV_, stateSlot, nextHead);
+                head_i = nextHead;
             }
         }
         ReleaseEvents();
@@ -555,6 +591,62 @@ private:
         vInQueue_.FreeTensor(vLocal);
     }
 
+    template <typename transType>
+    __aicore__ inline void TransposeStateMatrixTyped(const LocalTensor<transType> &dst,
+                                                      const LocalTensor<transType> &src,
+                                                      uint32_t rowCount, uint32_t columnCount,
+                                                      uint32_t srcRowStride, uint32_t dstRowStride)
+    {
+        constexpr uint32_t elementsPerBlock = DATA_BLOCK_BYTES / sizeof(transType);
+        uint64_t dstList[STATE_TRANSPOSE_BLOCK];
+        uint64_t srcList[STATE_TRANSPOSE_BLOCK];
+        uint64_t dstAddr = reinterpret_cast<uint64_t>(dst.GetPhyAddr());
+        uint64_t srcAddr = reinterpret_cast<uint64_t>(src.GetPhyAddr());
+        uint16_t repeatTimes = static_cast<uint16_t>(columnCount / elementsPerBlock);
+        TransDataTo5HDParams transposeParams{
+            false, false, static_cast<uint8_t>(repeatTimes),
+            static_cast<uint16_t>(repeatTimes > 1 ? dstRowStride : 0),
+            static_cast<uint16_t>(repeatTimes > 1 ? 1 : 0)};
+        for (uint32_t rowBlock = 0; rowBlock < rowCount; rowBlock += STATE_TRANSPOSE_BLOCK) {
+            for (uint32_t i = 0; i < STATE_TRANSPOSE_BLOCK; ++i) {
+                srcList[i] = srcAddr + (rowBlock + i) * srcRowStride * sizeof(transType);
+                if constexpr (sizeof(transType) == sizeof(float)) {
+                    dstList[i] = dstAddr +
+                        (rowBlock + (i / 2) * dstRowStride + (i % 2) * elementsPerBlock) * sizeof(transType);
+                } else {
+                    dstList[i] = dstAddr + (rowBlock + i * dstRowStride) * sizeof(transType);
+                }
+            }
+            TransDataTo5HD<transType>(dstList, srcList, transposeParams);
+        }
+    }
+
+    __aicore__ inline void TransposeKFirstToVFirst(const LocalTensor<stateType> &dst,
+                                                   const LocalTensor<stateType> &src,
+                                                   uint32_t curSingleV)
+    {
+        if constexpr (std::is_same<stateType, float32_t>()) {
+            TransposeStateMatrixTyped<float>(dst, src, alignK_, curSingleV, vStep_, alignK_);
+        } else {
+            TransposeStateMatrixTyped<uint16_t>(
+                dst.template ReinterpretCast<uint16_t>(), src.template ReinterpretCast<uint16_t>(),
+                alignK_, curSingleV, vStep_, alignK_);
+        }
+    }
+
+    __aicore__ inline void TransposeVFirstToKFirst(const LocalTensor<stateType> &dst,
+                                                   const LocalTensor<stateType> &src,
+                                                   uint32_t curSingleV)
+    {
+        if constexpr (std::is_same<stateType, float32_t>()) {
+            TransposeStateMatrixTyped<float>(dst, src, curSingleV, alignK_, alignK_, vStep_);
+        } else {
+            TransposeStateMatrixTyped<uint16_t>(
+                dst.template ReinterpretCast<uint16_t>(), src.template ReinterpretCast<uint16_t>(),
+                curSingleV, alignK_, alignK_, vStep_);
+        }
+    }
+
     __aicore__ inline void PrefetchState(uint64_t stateSlot, uint64_t head, uint64_t vOffset,
                                           uint32_t curSingleV)
     {
@@ -567,14 +659,17 @@ private:
             DataCopyPadExtParams<stateType> padParams{true, 0, static_cast<uint8_t>(alignK_ - realK_), 0};
             DataCopyPad(stateLocal, initStateGm_[stateOffset], stateInParams, padParams);
         } else {
-            for (uint32_t v = 0; v < curSingleV; ++v) {
-                for (uint32_t k = 0; k < realK_; ++k) {
-                    uint64_t stateOffset = stateInStride0_ * stateSlot + stateInStride1_ * head +
-                                           stateInStride2_ * k +
-                                           stateInStride3_ * (vOffset + v);
-                    stateLocal.SetValue(v * alignK_ + k, initStateGm_.GetValue(stateOffset));
-                }
-            }
+            uint64_t stateOffset = stateInStride0_ * stateSlot + stateInStride1_ * head +
+                                   stateInStride3_ * vOffset;
+            uint32_t srcStride = static_cast<uint32_t>(
+                (stateInStride2_ - curSingleV) * sizeof(stateType));
+            uint32_t dstStride = static_cast<uint32_t>(
+                (vStep_ - curSingleV) * sizeof(stateType) / DATA_BLOCK_BYTES);
+            DataCopyExtParams stateInParams{static_cast<uint16_t>(realK_),
+                                            static_cast<uint32_t>(curSingleV * sizeof(stateType)),
+                                            srcStride, dstStride, 0};
+            DataCopyPadExtParams<stateType> padParams{false, 0, 0, 0};
+            DataCopyPad(stateLocal, initStateGm_[stateOffset], stateInParams, padParams);
         }
         stateInQueue_.EnQue<stateType>(stateLocal);
     }
@@ -582,13 +677,25 @@ private:
     __aicore__ inline void LoadPrefetchedState(uint32_t curSingleV)
     {
         LocalTensor<stateType> stateLocal = stateInQueue_.DeQue<stateType>();
-        if constexpr (std::is_same<stateType, float32_t>()) {
-            DataCopy(stateInUb, stateLocal, alignK_ * curSingleV);
+        if (stateVFirst_) {
+            if constexpr (std::is_same<stateType, float32_t>()) {
+                DataCopy(stateInUb, stateLocal, alignK_ * curSingleV);
+            } else {
+                Cast(stateInUb, stateLocal, AscendC::RoundMode::CAST_NONE, alignK_ * curSingleV);
+            }
         } else {
-            Cast(stateInUb, stateLocal, AscendC::RoundMode::CAST_NONE, alignK_ * curSingleV);
+            LocalTensor<stateType> stateTransposeLocal = stateTransposeBuf_.Get<stateType>();
+            TransposeKFirstToVFirst(stateTransposeLocal, stateLocal, curSingleV);
+            PipeBarrier<PIPE_V>();
+            if constexpr (std::is_same<stateType, float32_t>()) {
+                Adds(stateInUb, stateTransposeLocal, 0.0f, alignK_ * curSingleV);
+            } else {
+                Cast(stateInUb, stateTransposeLocal, AscendC::RoundMode::CAST_NONE, alignK_ * curSingleV);
+            }
         }
         stateInQueue_.FreeTensor(stateLocal);
     }
+
 
     __aicore__ inline void MatVecMul(const LocalTensor<float> &cubeTensor, const LocalTensor<float> &vecTensor,
                                      LocalTensor<float> &dstTensor, uint32_t cols, bool isAdd)
@@ -735,15 +842,20 @@ private:
                                           static_cast<uint16_t>(realK_ * sizeof(stateType)), 0, 0};
             DataCopyPad(finalStateGm_[stateOffset], stateOutLocal, stateOutParams);
         } else {
-            SyncVToS();
-            for (uint32_t v = 0; v < curSingleV; ++v) {
-                for (uint32_t k = 0; k < realK_; ++k) {
-                    uint64_t stateOffset = stateOutStride0_ * stateSlot + stateOutStride1_ * head +
-                                           stateOutStride2_ * k +
-                                           stateOutStride3_ * (vOffset + v);
-                    finalStateGm_.SetValue(stateOffset, stateOutLocal.GetValue(v * alignK_ + k));
-                }
-            }
+            LocalTensor<stateType> stateTransposeLocal = stateTransposeBuf_.Get<stateType>();
+            TransposeVFirstToKFirst(stateTransposeLocal, stateOutLocal, curSingleV);
+            SyncVToMte3();
+            uint64_t stateOffset = stateOutStride0_ * stateSlot + stateOutStride1_ * head +
+                                   stateOutStride3_ * vOffset;
+            uint32_t srcStride = static_cast<uint32_t>(
+                (vStep_ - curSingleV) * sizeof(stateType) / DATA_BLOCK_BYTES);
+            uint32_t dstStride = static_cast<uint32_t>(
+                (stateOutStride2_ - curSingleV) * sizeof(stateType));
+            DataCopyExtParams stateOutParams{static_cast<uint16_t>(realK_),
+                                             static_cast<uint32_t>(curSingleV * sizeof(stateType)),
+                                             srcStride, dstStride, 0};
+            DataCopyPad(finalStateGm_[stateOffset], stateTransposeLocal, stateOutParams);
+            SyncMte3ToV();
         }
         stateOutQueue_.FreeTensor(stateOutLocal);
     }
@@ -805,26 +917,39 @@ private:
         return beta;
     }
 
-    __aicore__ inline void ProcessHead(uint64_t batchIdx, int64_t seq0, int64_t seq1,
-                                      uint64_t head_i, uint64_t stateSlot)
+    __aicore__ inline bool ProcessHead(uint64_t batchIdx, int64_t seq0, int64_t seq1,
+                                      uint64_t head_i, uint64_t stateSlot, bool statePrefetched,
+                                      bool hasNextHead, uint64_t nextStateSlot, uint64_t nextHead)
     {
         uint64_t vOffset = (static_cast<uint64_t>(seq0) * NV_ + head_i) * realV_;
         uint64_t qkOffset = (static_cast<uint64_t>(seq0) * NK_ + head_i / (NV_ / NK_)) * realK_;
         uint64_t gateOffset = (static_cast<uint64_t>(seq0) * NV_ + head_i) * realK_;
         CopyInQKVGate(vOffset, qkOffset, gateOffset, static_cast<int32_t>(seq1 - seq0), head_i);
         if (realV_ == 0) {
-            return;
+            return false;
         }
-        uint64_t nextVOffset = 0;
-        uint32_t nextSingleV = realV_ > vStep_ ? vStep_ : realV_;
-        PrefetchState(stateSlot, head_i, 0, nextSingleV);
+        uint64_t nextVOffset = statePrefetched ? vStep_ : 0;
+        uint32_t queuedBufferNum = statePrefetched ? 1 : 0;
+        for (uint32_t bufferIdx = queuedBufferNum;
+             bufferIdx < INPUT_BUFFER_NUM && nextVOffset < realV_; ++bufferIdx) {
+            uint32_t nextSingleV =
+                nextVOffset + vStep_ > realV_ ? realV_ - nextVOffset : vStep_;
+            PrefetchState(stateSlot, head_i, nextVOffset, nextSingleV);
+            nextVOffset += vStep_;
+        }
+        bool nextStatePrefetched = false;
         for (uint64_t v_i = 0; v_i < realV_; v_i += vStep_) {
             uint32_t curSingleV = v_i + vStep_ > realV_ ? realV_ - v_i : vStep_;
             LoadPrefetchedState(curSingleV);
-            nextVOffset = v_i + vStep_;
             if (nextVOffset < realV_) {
-                nextSingleV = nextVOffset + vStep_ > realV_ ? realV_ - nextVOffset : vStep_;
+                uint32_t nextSingleV =
+                    nextVOffset + vStep_ > realV_ ? realV_ - nextVOffset : vStep_;
                 PrefetchState(stateSlot, head_i, nextVOffset, nextSingleV);
+                nextVOffset += vStep_;
+            } else if (hasNextHead && !nextStatePrefetched) {
+                uint32_t nextSingleV = realV_ > vStep_ ? vStep_ : realV_;
+                PrefetchState(nextStateSlot, nextHead, 0, nextSingleV);
+                nextStatePrefetched = true;
             }
             uint64_t pendingAttnOffset = 0;
             uint64_t pendingStateSlot = 0;
@@ -867,7 +992,18 @@ private:
                 CopyOutState(pendingStateSlot, head_i, v_i, curSingleV);
             }
         }
+        return nextStatePrefetched;
      }
+
+    __aicore__ inline uint64_t FindNextTaskHead(uint64_t batchIdx, uint64_t startHead) const
+    {
+        for (uint64_t head = startHead; head < NV_; ++head) {
+            if (IsCurrentTask(batchIdx, head)) {
+                return head;
+            }
+        }
+        return NV_;
+    }
 
     __aicore__ inline bool IsCurrentTask(uint64_t batchIdx, uint64_t headIdx) const
     {
@@ -901,10 +1037,11 @@ private:
     TQue<QuePosition::VECIN, 1> vInQueue_;
     TQue<QuePosition::VECIN, 1> gateInQueue_;
     TQue<QuePosition::VECIN, 1> betaInQueue_;
-    TQue<QuePosition::VECIN, 1> stateInQueue_;
+    TQue<QuePosition::VECIN, INPUT_BUFFER_NUM> stateInQueue_;
     TQue<QuePosition::VECOUT, MAX_OUT_BUFFER_NUM> attnOutQueue_;
     TQue<QuePosition::VECOUT, MAX_OUT_BUFFER_NUM> stateOutQueue_;
     TBuf<TPosition::VECCALC> tmpBuff;
+    TBuf<TPosition::VECCALC> stateTransposeBuf_;
     TBuf<TPosition::VECCALC> scalarBuf_;
     LocalTensor<float> qInUb;
     LocalTensor<float> kInUb;
@@ -918,9 +1055,13 @@ private:
     TEventID eventIdMte2ToV_;
     TEventID eventIdVToMte2_;
     TEventID eventIdVToS_;
+    TEventID eventIdVToMte3_;
+    TEventID eventIdMte3ToV_;
     bool eventMte2ToVInitialized_;
     bool eventVToMte2Initialized_;
     bool eventVToSInitialized_;
+    bool eventVToMte3Initialized_;
+    bool eventMte3ToVInitialized_;
     uint32_t B_;
     uint32_t T_;
     uint32_t seqLen_;
