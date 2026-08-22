@@ -352,7 +352,11 @@ private:
         if (rowCount <= 0) {
             return false;
         }
-        colCount = BT_;
+        // Bound the score's N dimension by the number of valid rows: the B-matrix tile is read as K x colCount
+        // from kGm[kOffset], so an unbounded colCount would read [rowStart, rowStart + BT) even for a partial
+        // chunk. When the last chunk of the k tensor is partial (e.g. varlen tail), that read runs past the
+        // tensor end and triggers an MTE DDR out-of-range exception.
+        colCount = MinI64(BT_, meta.valid);
         return colCount > 0;
     }
 
@@ -812,12 +816,15 @@ private:
                                           int64_t rowCount,
                                           int64_t colCount)
     {
+        (void)colCount;
+        // Always copy full BT-wide rows. A partial chunk only fills colCount < BT columns of the score tile;
+        // the extra columns contain stale data but are never read by the epilogue (which stops at the valid
+        // prefix). Keeping blockLen = BT * sizeof(float) preserves the 32B alignment requirement of DataCopyPad.
         DataCopyExtParams scoreParams;
         scoreParams.blockCount = static_cast<uint16_t>(rowCount);
-        scoreParams.blockLen = static_cast<uint32_t>(colCount * static_cast<int64_t>(sizeof(float)));
-        scoreParams.srcStride = static_cast<uint32_t>((BT_ - colCount) * static_cast<int64_t>(sizeof(float)) /
-                                                      UB_ALIGN_BYTES);
-        scoreParams.dstStride = static_cast<uint32_t>((btAlign_ - colCount) * static_cast<int64_t>(sizeof(float)) /
+        scoreParams.blockLen = static_cast<uint32_t>(BT_ * static_cast<int64_t>(sizeof(float)));
+        scoreParams.srcStride = 0;
+        scoreParams.dstStride = static_cast<uint32_t>((btAlign_ - BT_) * static_cast<int64_t>(sizeof(float)) /
                                                       UB_ALIGN_BYTES);
         scoreParams.rsv = 0;
         DataCopyPadExtParams<float> padParams{false, 0, 0, 0.0f};
