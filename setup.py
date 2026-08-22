@@ -7,7 +7,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import re
 import time
 from pathlib import Path
 
@@ -31,6 +30,10 @@ TRITON_CORE_PACKAGE = "fla_npu.ops.triton.triton_core"
 TRITON_CORE_SOURCE = REPO_ROOT / "fla" / "ops" / "triton" / "triton_core"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from fla_npu_build_capabilities import (  # noqa: E402
+    probe_legacy_build_capabilities,
+    torch_npu_gdn_stream_fix_error,
+)
 from fla_npu_artifacts import get_package_version, get_wheel_build_tag  # noqa: E402
 
 
@@ -40,27 +43,6 @@ MIN_PYTHON = (3, 9)
 MIN_TORCH = "2.6.0"
 MIN_TRITON_ASCEND = "3.2.0"
 MIN_TRITON_ASCEND_A5 = "3.2.1"
-TORCH_NPU_GDN_FIX_MINIMUMS = {
-    "2.7.1": "2.7.1.post5",
-    "2.8.0": "2.8.0.post5",
-    "2.9.0": "2.9.0.post3",
-    "2.10.0": "2.10.0.post2",
-    "2.11.0": "2.11.0rc3",
-    "2.12.0": "2.12.0rc1",
-}
-MIN_TORCH_NPU_FUTURE_FIX_FAMILY = "2.13.0"
-TORCH_NPU_GDN_FIX_RELEASE_URL = (
-    "https://gitcode.com/Ascend/pytorch/releases?"
-    "presetConfig={%22tags%22:229,%22release%22:122}"
-)
-
-TORCHNPUGEN_MODULES = (
-    "torchnpugen.gen_op_plugin_functions",
-    "torchnpugen.gen_derivatives",
-    "torchnpugen.gen_op_backend",
-    "torchnpugen.gen_backend_stubs",
-    "torchnpugen.struct.gen_struct_opapi",
-)
 
 
 def _read_requirements():
@@ -131,44 +113,6 @@ def _version_obj(value):
         return Version(value.split("+", 1)[0])
     except InvalidVersion:
         return None
-
-
-def _version_key(value):
-    parts = re.findall(r"\d+", value.split("+", 1)[0])
-    if not parts:
-        return None
-    nums = [int(part) for part in parts[:3]]
-    while len(nums) < 3:
-        nums.append(0)
-    return tuple(nums)
-
-
-def _check_torch_npu_gdn_fix(failures, actual):
-    actual_version = _version_obj(actual)
-    if actual_version is None:
-        failures.append(f"torch_npu has an unsupported version string: {actual}")
-        return
-
-    minimum = TORCH_NPU_GDN_FIX_MINIMUMS.get(actual_version.base_version)
-    if minimum and actual_version >= Version(minimum):
-        return
-
-    if actual_version >= Version(MIN_TORCH_NPU_FUTURE_FIX_FAMILY):
-        return
-
-    if minimum is None:
-        return
-
-    requirements = ", ".join(
-        f"{family}>={minimum}" for family, minimum in TORCH_NPU_GDN_FIX_MINIMUMS.items()
-    )
-    failures.append(
-        "torch_npu must come from an Ascend PyTorch release that contains the "
-        "GDN aclnn_extension stream fix. Packages from releases before "
-        "v26.1.0-beta.1, such as v26.0.0-pytorch2.x, are rejected. "
-        f"Expected one of: {requirements}, or torch_npu>={MIN_TORCH_NPU_FUTURE_FIX_FAMILY} "
-        f"from {TORCH_NPU_GDN_FIX_RELEASE_URL}; got {actual}."
-    )
 
 
 def _check_triton_ascend_a5_compat(failures, actual):
@@ -266,7 +210,15 @@ def _check_build_environment():
         if torch is not None:
             _check_min_version(failures, "torch", getattr(torch, "__version__", ""), MIN_TORCH)
         if torch_npu is not None:
-            _check_torch_npu_gdn_fix(failures, getattr(torch_npu, "__version__", ""))
+            torch_npu_version = getattr(torch_npu, "__version__", "")
+            stream_fix_error = torch_npu_gdn_stream_fix_error(torch_npu_version)
+            if stream_fix_error:
+                failures.append(stream_fix_error)
+            else:
+                print(
+                    "[fla-npu build][OK] torch_npu legacy GDN stream safety: "
+                    f"{torch_npu_version}"
+                )
 
         triton_ascend_version = _distribution_version("triton-ascend")
         try:
@@ -284,17 +236,19 @@ def _check_build_environment():
     else:
         print("[fla-npu build][OK] Skipping torch/torch_npu build-time checks for Python-only wheel")
 
-    if build_legacy_extension and not _env_flag("FLA_NPU_SKIP_TORCH_GEN"):
-        for module in TORCHNPUGEN_MODULES:
-            try:
-                spec = importlib.util.find_spec(module)
-            except Exception as exc:
-                failures.append(f"{module}: {exc}")
-                continue
-            if spec is None:
-                failures.append(f"{module}: not found")
+    if build_legacy_extension:
+        include_torchnpugen = not _env_flag("FLA_NPU_SKIP_TORCH_GEN")
+        if not include_torchnpugen:
+            print("[fla-npu build][WARN] Skipping torchnpugen import checks")
+        for probe in probe_legacy_build_capabilities(
+            include_torchnpugen=include_torchnpugen
+        ):
+            if probe.available:
+                print(
+                    f"[fla-npu build][OK] {probe.requirement}: {probe.detail}"
+                )
             else:
-                print(f"[fla-npu build][OK] {module}: {spec.origin or 'namespace package'}")
+                failures.append(f"{probe.requirement}: {probe.detail}")
 
     print(f"[fla-npu build][OK] FLA_NPU_SOC={os.getenv('FLA_NPU_SOC', DEFAULT_SOC)}")
     print(f"[fla-npu build][OK] FLA NPU vendor={DEFAULT_VENDOR_NAME}")

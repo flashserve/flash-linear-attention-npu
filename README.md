@@ -32,7 +32,7 @@ source $INSTALL_PATH/ascend-toolkit/set_env.sh
 
 #### 方式 A：【推荐】源码一键编译并生成 wheel
 
-在已完成 CANN、PyTorch、torch-npu、torchnpugen、triton-ascend 环境准备后，推荐直接在仓库根目录生成单 wheel。默认目标芯片为 `ascend910b`，A3/A5 机器需要显式指定 `FLA_NPU_SOC`。本仓不会自动安装 `torch`、`torch_npu`、`torchnpugen` 或 `triton-ascend`，因为这些包必须和 CANN、Python、`torch_npu` 可用版本匹配；在新的 conda 环境中请先安装匹配依赖，再执行预检：
+默认 Python-only wheel 构建只要求准备 CANN 和根目录 `requirements.txt` 中的 Python 依赖，不会导入 `torch`、`torch_npu`、`torchnpugen` 或 `torch.utils.cpp_extension`。默认目标芯片为 `ascend910b`，A3/A5 机器需要显式指定 `FLA_NPU_SOC`。在新的 conda 环境中先执行默认构建预检：
 
 ```sh
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
@@ -40,7 +40,13 @@ python -m pip install -r requirements.txt
 python scripts/check_npu_env.py --build-only
 ```
 
-如果依赖缺失，预检和一键编包都会在真正编译前失败，并列出缺失项，例如 `torch`、`torch_npu`、`torchnpugen.*`、`triton` 或 `triton-ascend distribution was not found`。依赖通过后再生成 wheel：
+只有显式构建 legacy PyTorch C++ extension 时，才需要准备相互匹配的 PyTorch、torch-npu、torchnpugen 和 triton-ascend，并执行：
+
+```sh
+python scripts/check_npu_env.py --build-only --legacy-extension
+```
+
+legacy 预检会真实导入构建使用的五个 `torchnpugen` 子模块以及 `BuildExtension`、`CppExtension`，并将代码生成能力与 GDN `aclnn_extension` stream 安全策略分别报告。依赖通过后再生成 wheel：
 
 ```sh
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
