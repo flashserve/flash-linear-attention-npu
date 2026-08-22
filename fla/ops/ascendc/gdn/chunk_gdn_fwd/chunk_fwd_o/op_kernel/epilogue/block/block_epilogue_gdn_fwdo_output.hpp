@@ -292,6 +292,12 @@ public:
         uint32_t blockIdx = AscendC::GetBlockIdx();
         uint32_t mActualPerSubBlock = CeilDiv(mActual, subBlockNum);
         uint32_t mActualThisSubBlock = (subBlockIdx == 0) ? mActualPerSubBlock : (mActual - mActualPerSubBlock);
+        // For a one-token tail, the second AIV sub-block owns no rows.  Do
+        // not form its GM row pointer (one full output row past the tensor)
+        // or issue a zero-length DataCopy from it.
+        if (mActualThisSubBlock == 0) {
+            return;
+        }
         uint32_t mOffset = subBlockIdx * mActualPerSubBlock;
         uint32_t nOffset = 0;
         int64_t offsetA = mOffset * nActual + nOffset;
