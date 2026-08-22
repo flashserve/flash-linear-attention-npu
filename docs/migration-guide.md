@@ -1,0 +1,95 @@
+# 兼容与迁移指南（旧版本 → 最新）
+
+本文档面向从旧版本（v26.6.0 及更早）迁移到最新版本的用户，说明调用方式变化、兼容路径与验证差异。主流程安装 / 使用请见根 [README](../README.md)。
+
+## 背景：调用方式演进
+
+| 版本           | 调用方式                          | 状态                     |
+| -------------- | --------------------------------- | ------------------------ |
+| v26.6.0 及更早 | `torch.ops.npu.*` / `torch_npu.ops.*` | 旧方式，已停止演进       |
+| v26.6.0 之后   | `fla_npu.ops.ascendc` 稳定 Python 入口 | 推荐使用，接口保持稳定   |
+
+**v26.6.0 之后不再维护旧版本兼容接口**。`fla_npu.ops.ascendc` 通过 Python ctypes 直调
+`libcust_opapi.so`，不依赖 PyTorch / torch_npu dispatcher ABI，接口语义稳定、后续版本
+不会变动。`torch.ops.npu.*` / `torch_npu.ops.*` 仅作为迁移期临时兼容能力保留，不推荐
+新增代码使用，也不会默认使能。
+
+## 从旧版本升级步骤
+
+1. **卸载旧包并清理残留**：
+
+   ```sh
+   python -m pip uninstall -y flash-linear-attention-npu
+   ```
+
+   若旧 wheel / legacy extension 在 `site-packages` 遗留了 `custom_aclnn_extension_lib*.so`、`fla_npu/` 或自定义 `libopapi.so`，请手工确认后删除。
+2. **安装新版本 wheel**：见根 [README](../README.md) 的 Step 3 / Step 4。
+3. **迁移代码调用**：将旧入口替换为 `fla_npu.ops.ascendc` 下对应接口，例如：
+
+   | 旧（≤ v26.6.0）                                        | 新                                                                    |
+   | ------------------------------------------------------- | --------------------------------------------------------------------- |
+   | `torch.ops.npu.npu_chunk_fwd_o(...)`                  | `from fla_npu.ops.ascendc import chunk_fwd_o; chunk_fwd_o(...)`     |
+   | `torch_npu.ops.npu_chunk_gated_delta_rule_fwd_h(...)` | `from fla_npu.ops.ascendc import chunk_gated_delta_rule_fwd_h; ...` |
+4. **验证**：
+
+   ```sh
+   python scripts/check_packaged_wheel_api.py
+   cd torch_custom/fla_npu/test && bash test.sh --device 0 --op gdn_fwd_o
+   ```
+
+## 迁移期临时兼容
+
+新接口 `fla_npu.ops.ascendc` 是稳定 Python 入口，语义保持兼容、后续版本不会变动，
+新代码请始终使用它。以下兼容能力仅供存量代码在迁移期临时使用，新代码请勿使用
+legacy 路径。
+
+### 兼容 `torch_npu.ops.*`（推荐优先使用）
+
+将 Python wrapper 挂到 `torch_npu.ops.*`：
+
+```python
+from fla_npu.ops import ascendc
+import torch_npu
+
+ascendc.install_torch_npu_ops_compat()
+torch_npu.ops.npu_xxx(...)
+```
+
+> 注意：`fla_npu` 顶层不自动导入 `ops` 子模块，必须先执行
+> `from fla_npu.ops import ascendc`（或 `import fla_npu.ops.ascendc`），否则直接写
+> `fla_npu.ops.ascendc.install_torch_npu_ops_compat()` 会报 `AttributeError`。
+
+### 兼容更旧的 `torch.ops.npu.*`
+
+需额外构建 legacy extension：
+
+```sh
+bash gen.sh npu_custom.yaml
+FLA_NPU_BUILD_LEGACY_EXTENSION=1 python3 setup.py bdist_wheel
+```
+
+```python
+import fla_npu
+
+fla_npu.load_legacy_torch_ops()
+torch.ops.npu.npu_xxx(...)
+```
+
+legacy extension 会重新绑定 PyTorch、Python、C++ ABI 和 torch_npu dispatcher 行为，
+因此只用于历史接口兼容或专项验证。
+
+## 新旧版本行为差异
+
+- **构建环境变量**：旧版支持 `FLA_NPU_INCREMENTAL_BUILD`（复用 `build/` 的增量构建）、`FLA_NPU_OPS`（只构建指定算子的 wheel）、`FLA_NPU_SKIP_RUN_BUILD` / `FLA_NPU_SKIP_RUN_INSTALL`（跳过 run 包编译或内嵌）；新版保留了 `FLA_NPU_OPS`（`setup.py` 会透传给 `build.sh --ops=<op>`），但移除了 `FLA_NPU_INCREMENTAL_BUILD` / `FLA_NPU_SKIP_RUN_BUILD` / `FLA_NPU_SKIP_RUN_INSTALL`，统一走全量构建（自动清理 `build/`、`build_out/`、`output/` 中间产物）。单算子定位可直接用 `bash build.sh --pkg --soc=<soc> --vendor_name=fla_npu --ops=<op>` 构建 run 包，或在编译 wheel 时设 `FLA_NPU_OPS=<op>`；旧脚本中的 `FLA_NPU_INCREMENTAL_BUILD=1` 需要删除。
+- **安装验证命令**：旧版用 `fla_npu.is_legacy_torch_ops_loaded()` 和 `hasattr(torch_npu.ops, 'chunk_fwd_o')` 验证，新版不再适用（见根 README 的 Step 4 说明）；统一改用 `python -c "import fla_npu; print('ok')"` + `python scripts/check_packaged_wheel_api.py`。
+- **`torch_npu.ops` 挂载行为**：旧版 wheel（2026-07 之前的中间版本）导入 `fla_npu.ops.ascendc` 即自动挂载 `torch_npu.ops.*`；新版 wheel 默认不挂载，迁移期需显式调用 `install_torch_npu_ops_compat()`。
+- **`test.sh` 算子名**：`recompute_wu_fwd` 在新版统一为 `recompute_w_u_fwd`。
+
+## 使用 `hasattr(torch_npu.ops, ...)` 验证时的注意事项
+
+- **新版 wheel**：默认不注册 `torch_npu.ops.*` 兼容入口，`torch_npu.ops` 属性本身不存在，
+  旧版验证命令 `hasattr(torch_npu.ops, 'chunk_fwd_o')` 会抛 `AttributeError` 而非返回
+  `False`——这是预期行为，不要用它来验证新版安装。需要该兼容入口时，先导入子模块再显式
+  调用 `install_torch_npu_ops_compat()`（见上文）。
+- **旧版 wheel**：导入 `fla_npu.ops.ascendc` 时会自动注册 `torch_npu.ops.*`，`hasattr(...)`
+  返回 `True`，属旧版行为，不代表新 wheel 的行为。

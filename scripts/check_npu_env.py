@@ -8,6 +8,7 @@ import importlib.util
 import os
 import re
 import shutil
+import subprocess
 import sys
 from importlib import metadata
 from typing import Optional, Tuple
@@ -19,6 +20,16 @@ MIN_PYTHON = (3, 9)
 MIN_TORCH = "2.6.0"
 MIN_TRITON_ASCEND = "3.2.0"
 MIN_TRITON_ASCEND_A5 = "3.2.1"
+# CANN 9.x (9.0.0+) requires triton-ascend >= 3.2.1: 3.2.0 fails to JIT-compile
+# triton/backends/ascend/npu_utils.cpp on CANN 9.1.0 (RT_LIMIT_TYPE_SIMT_WARP_STACK_SIZE).
+MIN_TRITON_ASCEND_CANN9 = "3.2.1"
+
+# Toolchain and build dependencies checked in addition to the torch-related
+# checks. Values mirror CMakeLists.txt (cmake_minimum_required),
+# install_deps.sh (gcc) and pyproject.toml ([build-system] requires).
+MIN_CMAKE = "3.16"
+MIN_GCC = "7.3"
+MIN_SETUPTOOLS = "70.1"
 TORCH_NPU_GDN_FIX_MINIMUMS = {
     "2.7.1": "2.7.1.post5",
     "2.8.0": "2.8.0.post5",
@@ -156,13 +167,211 @@ def _check_triton_ascend_a5_compat(failures: list[str], actual: str) -> None:
         )
 
 
+def _check_triton_ascend_cann_compat(failures: list[str], actual: str) -> None:
+    """CANN 9.x needs triton-ascend >= 3.2.1.
+
+    3.2.0 is the generic lower bound, but on CANN 9.0.0+ the Ascend Triton
+    backend JIT-compiles npu_utils.cpp against newer rt.h headers and fails
+    (e.g. RT_LIMIT_TYPE_SIMT_WARP_STACK_SIZE), so raise the floor for CANN 9.x.
+    """
+    cann = _detect_cann_version()
+    cann_match = re.search(r"(\d+\.\d+)", cann)
+    if not cann_match:
+        return
+    if int(cann_match.group(1).split(".")[0]) < 9:
+        return
+    actual_version = _version_obj(actual)
+    if actual_version is None or actual_version < Version(MIN_TRITON_ASCEND_CANN9):
+        _fail(
+            failures,
+            f"triton-ascend>={MIN_TRITON_ASCEND_CANN9} is required for CANN {cann_match.group(1)} "
+            f"(detected); got {actual}. triton-ascend 3.2.0 fails to JIT-compile "
+            "npu_utils.cpp on CANN 9.x.",
+        )
+
+
+def _check_cmake_version(failures: list[str]) -> None:
+    """Check the CMake version against the project's minimum requirement.
+
+    The lower bound comes from ``cmake_minimum_required(VERSION 3.16)`` in
+    ``CMakeLists.txt`` (mirrored by ``install_deps.sh``), so any version
+    >= MIN_CMAKE is supported.
+    """
+    cmake = shutil.which("cmake")
+    if cmake is None:
+        _fail(failures, f"cmake not found (cmake>={MIN_CMAKE} is required)")
+        return
+    try:
+        output = subprocess.run(
+            [cmake, "--version"], capture_output=True, text=True, timeout=10
+        ).stdout
+    except OSError as exc:
+        _fail(failures, f"cmake: cannot run {cmake}: {exc}")
+        return
+    match = re.search(r"cmake version ([\d.]+)", output)
+    if not match:
+        _fail(failures, f"cmake: cannot parse version from: {output.strip()!r}")
+        return
+    actual = match.group(1)
+    _ok(f"cmake: {cmake} (version {actual})")
+    _check_min_version(failures, "cmake", actual, MIN_CMAKE)
+
+
+def _check_setuptools_version(failures: list[str]) -> None:
+    """Check the setuptools version against the build-system requirement.
+
+    ``pyproject.toml`` declares ``setuptools>=70.1`` because setuptools only
+    ships ``setuptools.command.bdist_wheel`` (used by setup.py as a fallback)
+    from 70.x onward, so any version >= MIN_SETUPTOOLS is supported.
+    """
+    try:
+        actual = metadata.version("setuptools")
+    except Exception as exc:
+        _fail(failures, f"setuptools: cannot determine version: {exc}")
+        return
+    _ok(f"setuptools version: {actual}")
+    _check_min_version(failures, "setuptools", actual, MIN_SETUPTOOLS)
+
+
+def _check_build_system_deps(failures: list[str]) -> None:
+    """Check the other pyproject build-system dependencies are importable.
+
+    The README build flow runs ``pip wheel --no-build-isolation``, so the
+    build-system packages declared in ``pyproject.toml`` (wheel, packaging,
+    psutil) must already be installed in the current interpreter. setuptools is
+    checked separately with a version bound; the remaining three have no
+    minimum version.
+    """
+    for module_name in ("wheel", "packaging", "psutil"):
+        try:
+            module = importlib.import_module(module_name)
+            _ok(
+                f"{module_name} version: "
+                f"{getattr(module, '__version__', '<unknown>')}"
+            )
+        except Exception as exc:
+            _fail(
+                failures,
+                f"{module_name} not importable (pyproject build-system requires "
+                f"it when using --no-build-isolation): {exc}",
+            )
+
+
+def _check_gcc_version(failures: list[str]) -> None:
+    """Check the host C/C++ compiler version against install_deps.sh.
+
+    ``install_deps.sh`` requires gcc/g++ >= 7.3.0; host-side C++ code in
+    build.sh and the Ascend C host wrapper are compiled with it.
+    """
+    gcc = shutil.which("gcc")
+    if gcc is None:
+        _fail(failures, f"gcc not found (gcc>={MIN_GCC} is required)")
+    else:
+        _ok(f"gcc: {gcc}")
+        actual = _tool_version(gcc, r"(\d+\.\d+\.\d+)")
+        if actual:
+            _check_min_version(failures, "gcc", actual, MIN_GCC)
+        else:
+            _fail(failures, "gcc: cannot parse version")
+
+    gxx = shutil.which("g++")
+    if gxx is None:
+        _fail(failures, f"g++ not found (g++>={MIN_GCC} is required)")
+    else:
+        _ok(f"g++: {gxx}")
+        actual = _tool_version(gxx, r"(\d+\.\d+\.\d+)")
+        if actual:
+            _check_min_version(failures, "g++", actual, MIN_GCC)
+        else:
+            _fail(failures, "g++: cannot parse version")
+
+
+def _check_make_exists(failures: list[str]) -> None:
+    """Check that a CMake build backend is available.
+
+    The build uses CMake's default ``Unix Makefiles`` generator (ninja is an
+    alternative, so either make or ninja is sufficient).
+    """
+    make = shutil.which("make")
+    ninja = shutil.which("ninja")
+    if make:
+        _ok(f"make: {make}")
+    elif ninja:
+        _ok(f"make not found; ninja: {ninja}")
+    else:
+        _fail(failures, "make not found (nor ninja as a CMake build backend)")
+
+
+def _check_patch_exists(failures: list[str]) -> None:
+    """Check that the system ``patch`` command is available.
+
+    The CMake third-party build applies source patches via
+    ``PATCH_COMMAND patch -p1 < ...`` (abseil-cpp and ascend protobuf), so a
+    missing ``patch`` only surfaces halfway through the build. It has no
+    version requirement, so we only check presence.
+    """
+    patch = shutil.which("patch")
+    if patch:
+        _ok(f"patch: {patch}")
+    else:
+        _fail(
+            failures,
+            "patch not found. It is required by the CMake third-party build "
+            "(abseil-cpp / ascend protobuf PATCH_COMMAND); install it with the "
+            "system package manager (e.g. apt-get install -y patch).",
+        )
+
+
+def _check_bisheng_exists(failures: list[str]) -> None:
+    """Check that the Ascend C kernel compiler (bisheng) is available.
+
+    bisheng is shipped with the CANN toolkit and exported to PATH by the CANN
+    ``setenv.bash``; build.sh fails if ``which bisheng`` is empty. Its
+    ``--version`` reports a clang version, not a CANN component version, so we
+    only check presence, not a minimum version.
+    """
+    bisheng = shutil.which("bisheng")
+    if bisheng:
+        _ok(f"bisheng: {bisheng}")
+    else:
+        _fail(
+            failures,
+            "bisheng not found. It is shipped with the CANN toolkit and should be "
+            "on PATH after sourcing the CANN set_env.sh/setenv.bash.",
+        )
+
+
+def _tool_version(tool: str, pattern: str) -> Optional[str]:
+    """Run ``tool --version`` and return the first regex match group, or None."""
+    try:
+        output = subprocess.run(
+            [tool, "--version"], capture_output=True, text=True, timeout=10
+        ).stdout
+    except OSError:
+        return None
+    match = re.search(pattern, output)
+    return match.group(1) if match else None
+
+
 def _detect_cann_version() -> str:
-    candidates = []
-    for env_name in ("ASCEND_HOME_PATH", "ASCEND_OPP_PATH"):
-        value = os.getenv(env_name)
-        if not value:
-            continue
-        path = os.path.abspath(value)
+    # The OPP install dir's version.info is the authoritative CANN version
+    # (e.g. "Version=8.3.0.1.200" or "Version=9.1.0-beta.1"). ASCEND_HOME_PATH
+    # can resolve to driver install files whose version is not the CANN
+    # version (e.g. "version=25.5.1"), so it is only consulted after the OPP
+    # dir, and driver-version-like values are skipped.
+    opp = os.getenv("ASCEND_OPP_PATH")
+    candidates: list[str] = []
+    if opp:
+        path = os.path.abspath(opp)
+        candidates.extend(
+            [
+                os.path.join(path, "version.info"),
+                os.path.join(os.path.dirname(path), "version.info"),
+            ]
+        )
+    home = os.getenv("ASCEND_HOME_PATH")
+    if home:
+        path = os.path.abspath(home)
         candidates.extend(
             [
                 os.path.join(path, "version.info"),
@@ -177,15 +386,21 @@ def _detect_cann_version() -> str:
             continue
         try:
             with open(candidate, "r", encoding="utf-8", errors="ignore") as file:
-                for line in file:
-                    stripped = line.strip()
-                    lower = stripped.lower()
-                    if "version" in lower and "=" in stripped:
-                        return stripped
-                    if lower.startswith("version"):
-                        return stripped
+                lines = [line.strip() for line in file]
         except OSError:
             continue
+        for line in lines:
+            if "driver" in line.lower():
+                continue
+            key, _, value = line.partition("=")
+            if key.strip().lower() == "version" and value.strip():
+                return line
+        for line in lines:
+            if "driver" in line.lower():
+                continue
+            key, _, value = line.partition("=")
+            if key.strip().lower() == "version_dir" and value.strip():
+                return line
     return "<unknown>"
 
 
@@ -233,6 +448,14 @@ def main() -> int:
     else:
         _fail(failures, "ASCEND_HOME_PATH or ASCEND_OPP_PATH must be set")
 
+    _check_cmake_version(failures)
+    _check_gcc_version(failures)
+    _check_make_exists(failures)
+    _check_patch_exists(failures)
+    _check_bisheng_exists(failures)
+    _check_setuptools_version(failures)
+    _check_build_system_deps(failures)
+
     check_runtime = not args.build_only or args.legacy_extension
     if not check_runtime:
         _ok("skipping torch/torch_npu/triton checks for Python-only wheel build")
@@ -278,6 +501,7 @@ def main() -> int:
         if triton_ascend_version:
             _ok(f"triton-ascend version: {triton_ascend_version}")
             _check_min_version(failures, "triton-ascend", triton_ascend_version, MIN_TRITON_ASCEND)
+            _check_triton_ascend_cann_compat(failures, triton_ascend_version)
             _check_triton_ascend_a5_compat(failures, triton_ascend_version)
         elif triton is not None:
             _fail(failures, "triton is importable, but triton-ascend distribution was not found")

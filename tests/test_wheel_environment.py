@@ -137,11 +137,15 @@ class WheelEnvironmentTest(unittest.TestCase):
         build_source = (REPO_ROOT / "build.sh").read_text(encoding="utf-8")
 
         self.assertNotIn("FLA_NPU_INCREMENTAL_BUILD", setup_source)
-        self.assertNotIn("FLA_NPU_OPS", setup_source)
         self.assertNotIn("FLA_NPU_SKIP_RUN_BUILD", setup_source)
         self.assertNotIn("FLA_NPU_SKIP_RUN_INSTALL", setup_source)
         self.assertNotIn("--incremental", build_source)
         self.assertIn("set_env\n\nclean\nclean_build_out", build_source)
+
+    def test_package_build_supports_single_op_filter(self) -> None:
+        setup_source = (REPO_ROOT / "setup.py").read_text(encoding="utf-8")
+        self.assertIn("FLA_NPU_OPS", setup_source)
+        self.assertIn("--ops=", setup_source)
 
     def test_generated_set_env_is_idempotent(self) -> None:
         rewrite_set_env = self.setup_globals["_rewrite_set_env"]

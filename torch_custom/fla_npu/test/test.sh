@@ -18,7 +18,13 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-export PYTHONPATH="$(cd "$SCRIPT_DIR/.." && pwd):${PYTHONPATH:-}"
+# 源码树内建 OPP（libcust_opapi.so）存在时才把源码路径 prepend 到 PYTHONPATH；
+# 否则（例如只安装了 wheel 的用户）直接使用当前环境已安装的 fla_npu，
+# 避免源码树骨架 OPP 遮蔽已安装 wheel 的内嵌 OPP。
+SOURCE_OPP="$SCRIPT_DIR/../fla_npu/opp/vendors/fla_npu_transformer"
+if [ -f "$SOURCE_OPP/op_api/lib/libcust_opapi.so" ]; then
+    export PYTHONPATH="$(cd "$SCRIPT_DIR/.." && pwd):${PYTHONPATH:-}"
+fi
 TEST_DEVICE_ID=""
 SINGLE_OP=""
 DRY_RUN=false
