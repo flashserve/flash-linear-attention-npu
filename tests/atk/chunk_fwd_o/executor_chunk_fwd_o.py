@@ -83,7 +83,7 @@ def _num_states(spec: dict[str, Any]) -> int:
     return sum(_num_chunks(length, int(spec["chunk_size"])) for length in spec["seqlens"])
 
 
-def _build_gate(spec: dict[str, Any], calc_dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+def _build_gate(spec: dict[str, Any], device: torch.device) -> torch.Tensor:
     """Generate stable, chunk-local gates while preserving the declared g dtype."""
     shape = (int(spec["B"]), int(spec["HV"]), int(spec["T"]))
     generator = torch.Generator(device="cpu")
@@ -94,7 +94,7 @@ def _build_gate(spec: dict[str, Any], calc_dtype: torch.dtype, device: torch.dev
             chunk_end = min(chunk_start + int(spec["chunk_size"]), end)
             increments = torch.rand((shape[1], chunk_end - chunk_start), generator=generator) * 0.01 + 0.001
             gate[batch, :, chunk_start:chunk_end] = -torch.cumsum(increments, dim=-1)
-    return gate.to(_orig_dtype(str(spec["g_dtype"]))).to(calc_dtype).to(device)
+    return gate.to(_orig_dtype(str(spec["g_dtype"]))).to(device)
 
 
 def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: bool = False) -> dict[str, Any]:
@@ -107,7 +107,7 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
         "q": _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 1),
         "k": _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 2),
         "v": _randn((B, HV, T, V), dtype_name, calc_dtype, device, seed + 3),
-        "g": _build_gate(spec, calc_dtype, device),
+        "g": _build_gate(spec, device),
         "h": _randn((B, HV, _num_states(spec), K, V), dtype_name, calc_dtype, device, seed + 6),
         "chunk_size": chunk_size,
         "scale": float(spec.get("scale", 1.0 / math.sqrt(K))),
