@@ -53,7 +53,6 @@ def _write_set_env(vendor_dir: Path) -> None:
                 "}",
                 '_fla_npu_prepend_path ASCEND_CUSTOM_OPP_PATH "${_FLA_NPU_VENDOR_DIR}"',
                 '_fla_npu_prepend_path ASCEND_CUSTOM_OPP_PATH "${_FLA_NPU_OPP_ROOT}"',
-                '_fla_npu_prepend_path LD_LIBRARY_PATH "${_FLA_NPU_VENDOR_DIR}/op_api/lib"',
                 'export FLA_NPU_OPP_PATH="${_FLA_NPU_OPP_ROOT}"',
                 'export FLA_NPU_OP_API_LIB="${_FLA_NPU_VENDOR_DIR}/op_api/lib/libcust_opapi.so"',
                 "unset -f _fla_npu_prepend_path",
@@ -88,19 +87,24 @@ def _find_record(package_dir: Path) -> Path:
 def _refresh_record(package_dir: Path) -> Path:
     record = _find_record(package_dir)
     site_root = package_dir.parent.resolve()
-    opp_root = package_dir / "opp"
-    opp_prefix = f"{package_dir.name}/opp/"
+    package_roots = (package_dir / "opp",)
+    package_prefixes = (f"{package_dir.name}/opp/",)
 
     with record.open("r", encoding="utf-8", newline="") as handle:
         rows = list(csv.reader(handle))
 
-    rows = [row for row in rows if row and not row[0].startswith(opp_prefix)]
-    for path in sorted(opp_root.rglob("*")):
-        if not (path.is_file() or path.is_symlink()):
-            continue
-        relative = path.relative_to(site_root).as_posix()
-        digest, size = _record_digest(path)
-        rows.append([relative, digest, size])
+    rows = [
+        row
+        for row in rows
+        if row and not row[0].startswith(package_prefixes)
+    ]
+    for package_root in package_roots:
+        for path in sorted(package_root.rglob("*")):
+            if not (path.is_file() or path.is_symlink()):
+                continue
+            relative = path.relative_to(site_root).as_posix()
+            digest, size = _record_digest(path)
+            rows.append([relative, digest, size])
 
     record_mode = stat.S_IMODE(record.stat().st_mode)
     temp_name = ""
@@ -132,7 +136,7 @@ def finalize_wheel_opp(package_dir: Path, vendor_name: str = DEFAULT_VENDOR_DIR)
     vendor_dir = package_dir / "opp" / "vendors" / vendor_name
     custom_opapi = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
     if not custom_opapi.is_file():
-        raise RuntimeError(f"Wheel OPP is missing custom op_api library: {custom_opapi}")
+        raise RuntimeError(f"Wheel is missing packaged custom op_api: {custom_opapi}")
 
     conflicting_alias = custom_opapi.with_name("libopapi.so")
     if conflicting_alias.exists() or conflicting_alias.is_symlink():

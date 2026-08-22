@@ -340,7 +340,7 @@ class _CallContext:
 
 
 class _AclnnRuntime:
-    """从已打包的 custom op_api 动态库里解析并缓存符号。"""
+    """从 custom、CANN op_api 句柄中按优先级解析并缓存符号。"""
 
     def __init__(self):
         import fla_npu

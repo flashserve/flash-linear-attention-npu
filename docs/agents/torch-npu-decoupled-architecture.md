@@ -108,7 +108,7 @@ legacy `torch.ops.npu.*` 兼容路径仍可通过 `FLA_NPU_BUILD_LEGACY_EXTENSIO
 | CANN 构建 | SoC、kernel 二进制、op_host、tiling、op_api C ABI、host 架构 | 目标环境的 torch、torch_npu、Python minor 和 C++ ABI |
 | wheel 组装 | 包版本、Python wrapper、Triton 源码映射、内嵌 OPP vendor 树 | torch / torch_npu C++ 头文件和 dispatcher 生成代码 |
 | `pip install` | `python_requires`、安装目标 `site-packages`、wheel 内容落盘 | torch 与 torch_npu 是否配套、NPU 是否可执行 |
-| `import fla_npu` | OPP root、`libcust_opapi.so` 路径、必需动态符号 | 具体 tensor、device、stream 和 autograd 行为 |
+| `import fla_npu` | CANN 环境、包内 OPP、CANN/custom opapi 句柄和必需动态符号 | 具体 tensor、device、stream 和 autograd 行为 |
 | 首次 Ascend C 调用 | tensor metadata、目标 device、device guard、current stream、workspace、mutation 清单 | 构建机器上的 torch / torch_npu 版本 |
 | 首次 autograd / 图编译 | forward/backward 语义、版本计数、可选 `torch.library`、FakeTensor 和 compiler 能力 | torch_npu derivatives 生成和 C++ dispatcher ABI |
 | 发布验证 | 声明支持的 Python、torch、torch_npu、host 和 SoC 组合 | 未实际验证的理论兼容组合 |
@@ -117,16 +117,19 @@ legacy `torch.ops.npu.*` 兼容路径仍可通过 `FLA_NPU_BUILD_LEGACY_EXTENSIO
 
 一次 `from fla_npu.ops.ascendc import op` 调用按以下顺序执行：
 
-1. 公共入口选择 raw ctypes wrapper 或高层 autograd wrapper。
-2. wrapper 根据 `aclnn_*.h` 组织参数并分配输出 tensor。
-3. runtime 从输出 tensor 确定目标 NPU device，并检查所有输入输出位于同一 device。
-4. runtime 进入 `torch.npu.device(target_device)` device guard。
-5. runtime 从 tensor 读取 data pointer、shape、stride、dtype、storage offset 和 format，创建 ACL descriptor。
-6. ctypes 调用 `<aclnnOp>GetWorkspaceSize(...)`，取得 workspace 大小和 executor。
-7. runtime 在目标 device 上分配 workspace。
-8. runtime 读取 `torch.npu.current_stream(target_device)` 的底层 stream pointer。
-9. ctypes 调用 `<aclnnOp>(workspace, size, executor, stream)`，将 kernel enqueue 到 current stream。
-10. runtime 销毁 descriptor；workspace 和 helper tensor 在同一 current stream 上交回 PyTorch NPU allocator，并在退出 device guard 时恢复调用方原 device。
+1. root import 验证 CANN 环境，只从当前 Python 包固定路径定位 custom OPP。
+2. runtime 以 `RTLD_LOCAL | RTLD_NOW | RTLD_NODELETE` 先加载 CANN `libopapi.so`，再通过绝对路径加载包内 `libcust_opapi.so`。
+3. runtime 保存 `[custom, CANN]` 两个句柄，后续逐句柄查找符号；同名 `aclnn*` 命中 custom，custom 没有的基础符号回退到 CANN。
+4. 公共入口选择 raw ctypes wrapper 或高层 autograd wrapper。
+5. wrapper 根据 `aclnn_*.h` 组织参数并分配输出 tensor。
+6. runtime 从输出 tensor 确定目标 NPU device，并检查所有输入输出位于同一 device。
+7. runtime 进入 `torch.npu.device(target_device)` device guard。
+8. runtime 从 tensor 读取 data pointer、shape、stride、dtype、storage offset 和 format，创建 ACL descriptor。
+9. ctypes 调用 `<aclnnOp>GetWorkspaceSize(...)`，取得 workspace 大小和 executor。
+10. runtime 在目标 device 上分配 workspace。
+11. runtime 读取 `torch.npu.current_stream(target_device)` 的底层 stream pointer。
+12. ctypes 调用 `<aclnnOp>(workspace, size, executor, stream)`，将 kernel enqueue 到 current stream。
+13. runtime 销毁 descriptor；workspace 和 helper tensor 在同一 current stream 上交回 PyTorch NPU allocator，并在退出 device guard 时恢复调用方原 device。
 
 这条默认链路没有 `torch.ops.load_library()`，不查找 `torch.ops.npu.<op>`，也不加载 `custom_aclnn_extension_lib*.so`。
 
@@ -150,22 +153,44 @@ site-packages/
         fla_npu_transformer/
           bin/set_env.bash
           op_api/lib/libcust_opapi.so
+          op_api/include/...
           op_impl/ai_core/tbe/op_host/...
           op_impl/ai_core/tbe/op_tiling/...
           op_impl/ai_core/tbe/kernel/...
           op_proto/...
 ```
 
-`fla_npu` 按以下顺序选择 OPP：
+`fla_npu` 不在多个 OPP 中做运行时选择。custom OPP 的唯一合法位置是当前导入包的
+`fla_npu/opp/vendors/fla_npu_transformer`，FLA opapi 保持在该 vendor 的标准
+`op_api/lib/libcust_opapi.so` 位置。runtime 从当前导入模块的 `__file__` 推导并校验
+包内绝对路径，再直接加载该文件。`FLA_NPU_OPP_PATH`、
+`ASCEND_CUSTOM_OPP_PATH`、`ASCEND_OPP_PATH` 以及 CANN 的 `vendors` 目录都不能改变
+FLA custom opapi 句柄来源。
 
-1. 用户显式设置的 `FLA_NPU_OPP_PATH`。
-2. wheel 内嵌的 `fla_npu/opp`。
-3. `ASCEND_CUSTOM_OPP_PATH` 或 `ASCEND_OPP_PATH` 中唯一匹配的 vendor。
+root import 只把包内 OPP root/vendor 前置到 `ASCEND_CUSTOM_OPP_PATH`，供 FLA
+host、tiling 和 kernel 发现；不把包内 `op_api/lib` 加入 `LD_LIBRARY_PATH`，也不改写
+调用方已有的 CANN 动态库搜索路径。因此 `torch_npu.ops.*`、
+`cann-ops-transformer.ops.*` 等通用入口继续从调用方 source 的 CANN vendor 环境
+选择自己的库，不会通过通用动态库搜索命中 FLA 包内文件。
+`FLA_NPU_OP_API_LIB` 只记录 FLA 实际加载的包内绝对路径，用于诊断，不参与定位。
 
-选中后，包会把 vendor root 前置到 `ASCEND_CUSTOM_OPP_PATH`，把 `op_api/lib` 前置到 `LD_LIBRARY_PATH`，并用 `FLA_NPU_OP_API_LIB` 记录实际加载的 `libcust_opapi.so`。
-`import fla_npu` 会立即完成上述选择并加载 `libcust_opapi.so`。调用方必须先 source
-CANN `set_env.sh`；CANN 环境、OPP 或动态库不满足要求时，import 直接失败。root
+`import fla_npu` 会先验证调用方已经 source CANN `set_env.sh`，再加载 CANN 和包内
+custom opapi。CANN 环境、包内 OPP 或动态库不满足要求时，import 直接失败。root
 import 不会因此导入 `torch`、`torch_npu` 或注册 legacy dispatcher。
+
+加载顺序与符号优先级是两个独立概念：CANN 句柄先创建，确保基础 runtime 先完成
+初始化；符号解析时却按 custom、CANN 的句柄顺序查找，保证同名 `aclnn*` 使用 custom
+实现。两个库均使用 `RTLD_LOCAL`，不会把内部 C++/STL 符号放进进程全局符号域，
+从而避免另一个 opapi 库错误绑定这些同名实现。
+
+该设计以“同进程内所有 opapi 使用方都遵守 `RTLD_LOCAL`”为前提。如果其他组件
+预先用 `RTLD_GLOBAL` 加载 custom opapi，符号已经进入全局域，局部句柄无法撤销其
+影响；这种非局部加载不在本方案支持范围内。
+
+包内 `libcust_opapi.so` 保留标准文件名，但构建时不写 ELF `DT_SONAME`。这样 FLA
+通过绝对路径加载后，动态链接器不会把它登记成通用的 `libcust_opapi.so`；后续
+`torch_npu` 或 CANN 入口按自己的 vendor 路径加载同名库时，不会复用 FLA 的对象。
+外部程序继续可以用 `-lcust_opapi` 链接，生成的 `DT_NEEDED` 仍是标准文件名。
 自定义 OPP 不得提供 `libopapi.so`，该名字属于 CANN runtime。runtime 会删除旧版本
 安装器遗留且与 `libcust_opapi.so` 相邻的别名；如果目录不可写，则停止加载并提示
 手工清理，避免动态链接器命中错误的自定义库。
@@ -405,20 +430,21 @@ wrapper 的原则是“透传描述，不自行解释私有 layout”。默认�
 
 ### 6.3 run 包覆盖 wheel 内嵌 OPP
 
-run 包 `--install` / `--full` 会把 `packages/vendors/fla_npu_transformer` 合并覆盖到当前环境的 `site-packages/fla_npu/opp/vendors/fla_npu_transformer`。覆盖可能同时替换共享 `libcust_opapi.so`、tiling 和 proto，因此安装前必须列出：
+run 包 `--install` / `--full` 会把 `packages/vendors/fla_npu_transformer` 合并覆盖到当前环境的 `site-packages/fla_npu/opp/vendors/fla_npu_transformer`。生成的 `op_api/lib/libcust_opapi.so` 保持在标准 vendor 位置，不迁移文件，也不创建额外动态库目录。覆盖会同时替换 op_api、tiling 和 proto，因此安装前必须列出：
 
 - run 包包含的算子。
 - 覆盖后仍可使用的算子。
-- 因共享库被替换而不可用的算子。
+- 因 op_api 被替换而不可用的算子。
 - aclnn header 的 added / modified / removed 变化。
 
-覆盖结束后，安装器会删除自定义 `libopapi.so` 别名、重写可重复 source 的
-`set_env.bash`，并用当前 OPP 文件和摘要原子刷新 wheel `RECORD`。同一个 run 包
+覆盖结束后，安装器会删除自定义 `libopapi.so` 别名、保留标准 vendor 目录中的
+`libcust_opapi.so`、重写可重复 source 的 `set_env.bash`，并用当前 OPP 文件摘要
+原子刷新 wheel `RECORD`。同一个 run 包
 重复覆盖后的文件清单必须一致；后续 wheel 强制重装依赖该 `RECORD` 清理 run 包
 增加的文件。每轮 wheel 构建也必须先清理旧 `build_lib/fla_npu`，避免已删除或
 重命名的 Python 适配从上一次构建目录混入新 wheel。
 
-runtime 会缓存 CDLL 和符号，并使用 `RTLD_NODELETE`。覆盖 OPP 后必须重启 Python 进程，不能期待当前进程自动卸载旧 so。
+runtime 会缓存两个局部 CDLL 句柄和已解析符号，并使用 `RTLD_NODELETE`。覆盖 OPP 后必须重启 Python 进程，不能期待当前进程自动卸载旧 so。
 
 ### 6.4 修改红线
 
@@ -586,7 +612,9 @@ fla_npu 默认不会主动 import、链接或注册 torch_npu dispatcher；目�
 | TorchDispatchMode | 临时拦截和改写 PyTorch dispatcher 调用的 Python 机制 | raw ctypes 默认不可见，需要 custom-op 适配 |
 | AOT | Ahead-Of-Time，在实际执行前提前捕获或编译计算图 | `opcheck` 会检查 custom op 的 AOT/functionalization 行为 |
 | fullgraph | 要求 `torch.compile` 把整个函数捕获为一个图、不允许 graph break 的模式 | 未适配 ctypes side effect 的算子不能宣称支持 |
-| CDLL | ctypes 对一个已加载 C 动态库的 Python 对象 | runtime 缓存它以复用 `libcust_opapi.so` 符号 |
+| CDLL | ctypes 对一个已加载 C 动态库的 Python 对象 | runtime 缓存 custom 和 CANN opapi 句柄，并显式控制符号查找顺序 |
+| `RTLD_LOCAL` | 动态库符号只对当前加载组可见，不进入进程全局符号域 | 隔离 custom 与 CANN opapi 的内部同名 C++ 符号 |
+| `DT_SONAME` | ELF 动态库在装载器中的逻辑名字；同名请求可能复用已加载对象 | FLA 包内 opapi 不设置它，避免占用通用 `libcust_opapi.so` 身份 |
 | `RTLD_NOW` | 加载动态库时立即解析依赖符号的模式 | 让缺库或缺符号尽早失败 |
 | `RTLD_NODELETE` | 进程内不真正卸载动态库映射的模式 | run 包覆盖后必须重启 Python 才能可靠使用新 so |
 | helper tensor | wrapper 为传参临时创建、用户通常看不到的 tensor | 异步 launch 时也必须保活 |

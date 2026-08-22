@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -115,33 +116,35 @@ def _require_packaged_triton_sources(fla_npu_module) -> None:
 
 def _require_safe_packaged_opapi(fla_npu_module) -> None:
     package_root = Path(fla_npu_module.__file__).resolve().parent
-    vendor_dirs = list((package_root / "opp" / "vendors").glob("*"))
-    if not vendor_dirs:
-        raise AssertionError("packaged OPP vendor directory is missing")
+    vendor_dir = package_root / "opp" / "vendors" / "fla_npu_transformer"
+    packaged_library = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
+    if not packaged_library.is_file():
+        raise AssertionError(
+            "packaged OPP must preserve libcust_opapi.so in the standard vendor "
+            f"layout: {packaged_library}"
+        )
 
-    custom_libraries = [
-        vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
-        for vendor_dir in vendor_dirs
-    ]
-    if not any(path.is_file() for path in custom_libraries):
-        raise AssertionError("packaged libcust_opapi.so is missing")
-
-    conflicting_libraries = []
-    for vendor_dir in vendor_dirs:
-        candidate = vendor_dir / "op_api" / "lib" / "libopapi.so"
-        if candidate.exists() or candidate.is_symlink():
-            conflicting_libraries.append(candidate)
-    if conflicting_libraries:
+    conflicting_library = packaged_library.with_name("libopapi.so")
+    if conflicting_library.exists() or conflicting_library.is_symlink():
         raise AssertionError(
             "packaged custom OPP must not contain CANN library alias libopapi.so: "
-            + ", ".join(str(path) for path in conflicting_libraries)
+            f"{conflicting_library}"
+        )
+
+    dynamic_section = subprocess.check_output(
+        ["readelf", "-d", str(packaged_library)],
+        encoding="utf-8",
+        errors="replace",
+    )
+    if "(SONAME)" in dynamic_section:
+        raise AssertionError(
+            "packaged libcust_opapi.so must not define a SONAME; otherwise "
+            "later CANN vendor loading can reuse the FLA library by name: "
+            f"{packaged_library}"
         )
 
     configured_library = Path(os.environ.get("FLA_NPU_OP_API_LIB", "")).resolve()
-    packaged_libraries = {
-        path.resolve() for path in custom_libraries if path.is_file()
-    }
-    if configured_library not in packaged_libraries:
+    if configured_library != packaged_library.resolve():
         raise AssertionError(
             "FLA_NPU_OP_API_LIB must point to the packaged libcust_opapi.so"
         )

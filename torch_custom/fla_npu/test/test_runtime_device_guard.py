@@ -88,6 +88,31 @@ def fake_torch(npu: FakeNpu):
 
 
 class RuntimeDeviceGuardTest(unittest.TestCase):
+    def test_symbol_lookup_prefers_custom_library_and_caches_result(self):
+        custom_symbol = object()
+        cann_symbol = object()
+        runtime = object.__new__(RUNTIME._AclnnRuntime)
+        runtime._libraries = [
+            types.SimpleNamespace(aclnnSharedSymbol=custom_symbol),
+            types.SimpleNamespace(aclnnSharedSymbol=cann_symbol),
+        ]
+        runtime._symbols = {}
+
+        self.assertIs(runtime.symbol("aclnnSharedSymbol"), custom_symbol)
+        runtime._libraries.clear()
+        self.assertIs(runtime.symbol("aclnnSharedSymbol"), custom_symbol)
+
+    def test_symbol_lookup_falls_back_to_cann_library(self):
+        cann_symbol = object()
+        runtime = object.__new__(RUNTIME._AclnnRuntime)
+        runtime._libraries = [
+            types.SimpleNamespace(),
+            types.SimpleNamespace(aclnnCannOnlySymbol=cann_symbol),
+        ]
+        runtime._symbols = {}
+
+        self.assertIs(runtime.symbol("aclnnCannOnlySymbol"), cann_symbol)
+
     def test_device_guard_switches_to_target_and_restores_previous_device(self):
         npu = FakeNpu(current_device=0)
         with mock.patch.dict(sys.modules, {"torch": fake_torch(npu)}):

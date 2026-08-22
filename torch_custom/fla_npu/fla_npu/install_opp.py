@@ -75,6 +75,9 @@ def install_opp(install_path: Path, force: bool = False) -> None:
                 raise FileExistsError(f"{vendor_dst} already exists. Use --force to replace it.")
             shutil.rmtree(vendor_dst)
         shutil.copytree(vendor_src, vendor_dst)
+        custom_opapi = vendor_dst / "op_api" / "lib" / "libcust_opapi.so"
+        if not custom_opapi.is_file():
+            raise FileNotFoundError(f"Custom op_api library not found: {custom_opapi}")
         op_api_alias = vendor_dst / "op_api" / "lib" / "libopapi.so"
         if op_api_alias.exists() or op_api_alias.is_symlink():
             op_api_alias.unlink()
@@ -87,7 +90,11 @@ def install_opp(install_path: Path, force: bool = False) -> None:
 
     for vendor_dir in copied:
         print(f"Installed OPP vendor: {vendor_dir}")
-    print(f"To use this external OPP location, set FLA_NPU_OPP_PATH={install_path}")
+    print(
+        "The external OPP is available to CANN/ACLNN after sourcing its "
+        "set_env.bash. The fla_npu Python runtime always loads libcust_opapi.so "
+        "from the vendor tree embedded in its installed package."
+    )
 
 
 def main() -> int:
