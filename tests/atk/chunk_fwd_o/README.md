@@ -23,20 +23,34 @@ CPU 标杆、输入构造、run_cpu、run_npu 和 FunctionApi 均在本目录的
 
 YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合统一脚本的 `-soc=ascend910b|ascend910_93|ascend950` 使用。
 
-## 默认用例
+## 200 条评审用例矩阵
 
-- BF16 用例：`{"dtype": "bf16", "B": 1, "HK": 1, "HV": 1, "T": 16, "K": 128, "V": 128, "chunk_size": 64, "op": "chunk_fwd_o", "case_id": 0, "seed": 20260817, "route": "ascendc", "soc": "ascend910b"}`
-- FP16 用例：`{"dtype": "fp16", "B": 1, "HK": 1, "HV": 1, "T": 16, "K": 128, "V": 128, "chunk_size": 64, "op": "chunk_fwd_o", "case_id": 1, "seed": 20260818, "route": "ascendc", "soc": "ascend910b"}`
+`gen_chunk_fwd_o.py` 是 200 条评审 profile 与 JSON 校验的唯一来源；`atk_chunk_fwd_o.json` 是其物化后纳入版本控制的执行用例。不要用手工缩减的 JSON 替换它。
+
+| 维度 | 覆盖 |
+| --- | --- |
+| 精度 | BF16 100 条，FP16 100 条；`g` 覆盖 FP32 与输入同精度 |
+| 模式 | 定长 100 条；变长 100 条（`B=1`，覆盖单序列、多序列、chunk 边界及尾块） |
+| 形状 | `T=1` 到 `384`；`B=1/2`；MHA 和 GVA (`HK/HV=1/1,1/2,2/2,2/4,4/4`) |
+| 资源分支 | `chunk_size=64/128` 各 100 条；`V=128/256`；标准 scale 与半 scale |
+
+CPU 双标杆会使用同一份量化输入：高精度分支以 FP64 计算真值，同精度分支保留 BF16/FP16 输出量化。标杆实现严格对应算子语义：`((q @ k^T) * exp(g_i-g_j) * tril) @ v + (q * exp(g)) @ h`，随后整体乘 `scale`。每个变长 case 同时生成匹配的 `cu_seqlens` 与扁平化 `[seq_id, chunk_id]`。
+
+修改矩阵后必须重新生成并检查执行 JSON：
+
+```bash
+python3 tests/atk/chunk_fwd_o/gen_chunk_fwd_o.py
+python3 tests/atk/chunk_fwd_o/gen_chunk_fwd_o.py --check
+```
 
 ## 执行方式
 
 ```bash
-bash tests/atk/run_test_cpu.sh -op=chunk_fwd_o -npu_device_id=6
-bash tests/atk/run_test_cpu.sh -op=chunk_fwd_o -npu_device_id=6 -scope=accuracy
-bash tests/atk/run_test_cpu.sh -op=chunk_fwd_o -npu_device_id=6 -scope=performance
-bash tests/atk/run_test_cpu.sh -op=chunk_fwd_o -npu_device_id=6 -scope=determinism
-bash tests/atk/run_test_cpu.sh -op=chunk_fwd_o -npu_device_id=6 -scope=mssanitizer
+bash tests/atk/run_test_cpu.sh -op=chunk_fwd_o -npu_device_id=<device>
+bash tests/atk/run_test_cpu.sh -op=chunk_fwd_o -npu_device_id=<device> -scope=accuracy
+bash tests/atk/run_test_cpu.sh -op=chunk_fwd_o -npu_device_id=<device> -scope=determinism
+bash tests/atk/run_test_cpu.sh -op=chunk_fwd_o -npu_device_id=<device> -scope=mssanitizer
 bash tests/atk/run_test_cpu.sh -op=chunk_fwd_o -scope=gen_cases
 ```
 
-`gen_cases` 默认传入 `-dt 100 -en 0`。所有新增工程的 marker dtype 都保留两路生成入口，生成器会把不支持 FP16 的算子改回合法 BF16 用例。
+默认 `scope=all` 顺序执行 200 条精度/NaN 检测、确定性和内存检测（另含性能阶段）。在目标 SOC 上必须看到三个阶段均为 `success 200, failed 0`；精度阶段还必须为 `acc_pass_result: Pass`，才可将该 SOC 标记为 **OK**。`gen_cases` 默认传入 `-dt 100 -en 0`，会重建相同的 200 条矩阵；提交前仍须用上面的 builder 检查已评审 JSON。

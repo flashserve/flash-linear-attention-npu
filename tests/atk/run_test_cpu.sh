@@ -28,7 +28,7 @@ show_usage() {
   DETERMINISM_START/END          确定性 case 范围
   MSS_START/MSS_END              mssanitizer case 范围
   MSS_TOOL                       mssanitizer 工具，默认 memcheck
-  MSS_LOG_PATH                   ATK -msl 日志路径，默认使用脚本内置绝对路径
+  MSS_LOG_PATH                   ATK -msl 日志路径，默认 <ATK_OUTPUT_ROOT>/mssanitizer_<op>.log
   GEN_CASES_DTYPE_NUMBERS        生成用例时传给 atk case -dt，默认 100；双 dtype 算子生成 200 条
   GEN_CASES_EXTRA_NUMBERS        生成用例时传给 atk case -en，默认 0
   GEN_CASES_SEED                 生成用例随机种子，默认 20260813
@@ -95,7 +95,7 @@ PERFORMANCE_TIMEOUT="${PERFORMANCE_TIMEOUT:-2000}"
 CASE_START="${CASE_START:-}"
 CASE_END="${CASE_END:-}"
 MSS_TOOL="${MSS_TOOL:-memcheck}"
-MSS_LOG_PATH="${MSS_LOG_PATH:-/home/huangjunzhe/gdn/github/alvazu-atk/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/ATK/log.txt}"
+MSS_LOG_PATH="${MSS_LOG_PATH:-}"
 GEN_CASES_DTYPE_NUMBERS="${GEN_CASES_DTYPE_NUMBERS:-100}"
 GEN_CASES_EXTRA_NUMBERS="${GEN_CASES_EXTRA_NUMBERS:-0}"
 GEN_CASES_SEED="${GEN_CASES_SEED:-20260813}"
@@ -228,6 +228,7 @@ MSS_END="${MSS_END:-$CASE_END}"
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
 mkdir -p "${ATK_OUTPUT_ROOT}/cpu_dual_reference" "${ATK_OUTPUT_ROOT}/perf"
+MSS_LOG_PATH="${MSS_LOG_PATH:-${ATK_OUTPUT_ROOT}/mssanitizer_${OP}.log}"
 
 log_info "算子：${OP}"
 log_info "SOC：${SOC}"
@@ -293,12 +294,14 @@ if should_run determinism; then
       -c "atk_${OP}.json" \
       -p "executor_${OP}.py" \
       --task accuracy_dc \
-      "${CASE_RANGE_ARGS[@]}"
+      "${CASE_RANGE_ARGS[@]}" \
+      -sp
   log_info "完成确定性测试"
 fi
 
 if should_run mssanitizer; then
   command -v mssanitizer >/dev/null 2>&1 || die "找不到 mssanitizer，请先加载支持 sanitizer 的 CANN/调试环境"
+  mkdir -p "$(dirname "$MSS_LOG_PATH")"
   log_info "开始内存检测：mssanitizer ${MSS_TOOL}"
   log_info "ATK mssanitizer 日志：${MSS_LOG_PATH}"
   set_case_range_args "内存检测 case 范围" "$MSS_START" "$MSS_END"
@@ -310,7 +313,8 @@ if should_run mssanitizer; then
       --task run \
       --mssanitizer \
       -msl "$MSS_LOG_PATH" \
-      "${CASE_RANGE_ARGS[@]}"
+      "${CASE_RANGE_ARGS[@]}" \
+      -sp
   log_info "完成内存检测"
 fi
 

@@ -9,9 +9,9 @@ extra_numbers: 0
 standard:
   acc:
     cv_fused_double_benchmark:
-      max_re_ratio: 10
-      avg_re_ratio: 3
-      root_mean_squared_ratio: 3
+      max_re_ratio: 5
+      avg_re_ratio: 1.5
+      root_mean_squared_ratio: 1.5
   perf: not_key
 inputs:
   - name: low_precision_marker
@@ -51,7 +51,7 @@ inputs:
       values: [non_param]
     ranges:
       valid:
-        values: ["{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"HK\":1,\"HV\":1,\"T\":16,\"K\":128,\"V\":128,\"chunk_size\":64,\"op\":\"chunk_fwd_o\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
+        values: ["{\"op\":\"chunk_fwd_o\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\",\"dtype\":\"bf16\",\"g_dtype\":\"fp32\",\"mode\":\"fixed\",\"K\":128,\"name\":\"fixed_bf16_000\",\"B\":2,\"HK\":1,\"HV\":1,\"T\":1,\"V\":128,\"chunk_size\":64,\"scale\":0.044194173824159216}"]
       invalid:
         values: []
   - name: dtype
@@ -71,7 +71,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1]
+        values: [2]
       invalid:
         values: []
   - name: HK
@@ -101,7 +101,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [16]
+        values: [1]
       invalid:
         values: []
   - name: K
