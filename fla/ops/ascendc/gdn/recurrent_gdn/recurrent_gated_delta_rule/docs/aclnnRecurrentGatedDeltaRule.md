@@ -430,27 +430,29 @@ int main()
 
     // 自定义输入与属性
     int32_t batchSize = 2;
-    int32_t mtp = 2;
+    int32_t mtp = 1;              // 投机解码个数
+    int32_t seqLength = mtp + 1;  // 每个batch有效序列长度，含1个已确认token与mtp个投机token，本例为2
+    int32_t tokenNum = batchSize * seqLength;
     int32_t headKNum = 4;
     int32_t headVNum = 8;
     int32_t dimV = 32;
     int32_t dimK = 32;
 
 
-    std::vector<int64_t> stateShape = {batchSize * mtp, headVNum, dimV, dimK};
-    std::vector<int64_t> qkShape = {batchSize * mtp, headKNum, dimK};
-    std::vector<int64_t> vShape = {batchSize * mtp, headVNum, dimV};
-    std::vector<int64_t> gamaShape = {batchSize * mtp, headVNum};
+    std::vector<int64_t> stateShape = {tokenNum, headVNum, dimV, dimK};  // BlockNum >= T
+    std::vector<int64_t> qkShape = {tokenNum, headKNum, dimK};
+    std::vector<int64_t> vShape = {tokenNum, headVNum, dimV};
+    std::vector<int64_t> gamaShape = {tokenNum, headVNum};
     std::vector<int64_t> actSeqLenShape = {batchSize};
-    std::vector<int64_t> ssmStaIdShape = {batchSize * mtp};
+    std::vector<int64_t> ssmStaIdShape = {tokenNum};
     std::vector<int16_t> stateRefHostData(GetShapeSize(stateShape));
     std::vector<int16_t> queryHostData(GetShapeSize(qkShape));
     std::vector<int16_t> keyHostData(GetShapeSize(qkShape));
     std::vector<int16_t> valueHostData(GetShapeSize(vShape));
     std::vector<float> gamaHostData(GetShapeSize(gamaShape));
     std::vector<int16_t> betaHostData(GetShapeSize(gamaShape));
-    std::vector<int32_t> actSeqLenHostData(batchSize, mtp);
-    std::vector<int32_t> ssmStaIdHostData(batchSize * mtp);
+    std::vector<int32_t> actSeqLenHostData(batchSize, seqLength);
+    std::vector<int32_t> ssmStaIdHostData(tokenNum);
     std::vector<int32_t> numAccTokHostData(batchSize, 1);
     for (int i = 0; i < stateRefHostData.size(); i++) {
         stateRefHostData[i] = 1;
