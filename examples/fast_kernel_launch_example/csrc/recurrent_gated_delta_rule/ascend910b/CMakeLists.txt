@@ -9,3 +9,7 @@
 # ----------------------------------------------------------------------------
 
 add_sources("--npu-arch=dav-2201")
+
+target_include_directories(recurrent_gated_delta_rule_obj PRIVATE
+    ${ASCEND_DIR}/${SYSTEM_PREFIX}/include/op_common/op_host
+)
