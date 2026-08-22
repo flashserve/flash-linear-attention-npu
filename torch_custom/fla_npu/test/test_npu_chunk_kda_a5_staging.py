@@ -41,7 +41,9 @@ def _is_ascend950() -> bool:
 def _l2norm(x: torch.Tensor) -> torch.Tensor:
     dtype = x.dtype
     x_float = x.float()
-    return (x_float * torch.rsqrt(x_float.square().sum(dim=-1, keepdim=True) + 1e-6)).to(dtype)
+    return (
+        x_float * torch.rsqrt(x_float.square().sum(dim=-1, keepdim=True) + 1e-6)
+    ).to(dtype)
 
 
 def _chunk_indices(cu_seqlens: tuple[int, ...], chunk_size: int) -> tuple[int, ...]:
@@ -63,8 +65,7 @@ def _chunked_reference(
     cu_seqlens: tuple[int, ...],
 ) -> tuple[torch.Tensor, ...]:
     q, k, v, gate, beta, initial_state_vk = (
-        tensor.detach().cpu()
-        for tensor in (q, k, v, gate, beta, initial_state_vk)
+        tensor.detach().cpu() for tensor in (q, k, v, gate, beta, initial_state_vk)
     )
     batch, tokens, heads, head_dim = q.shape
     assert batch == 1
@@ -109,10 +110,14 @@ def _chunked_reference(
             gate_factor = torch.exp2(
                 relative_gate.masked_fill(~causal[None, :, :, None], 0.0)
             )
-            qk = torch.einsum("hik,hjk,hijk->hij", q_block, k_block, gate_factor) * scale
+            qk = (
+                torch.einsum("hik,hjk,hijk->hij", q_block, k_block, gate_factor) * scale
+            )
             kk = torch.einsum("hik,hjk,hijk->hij", k_block, k_block, gate_factor)
             aqk_block = torch.where(causal[None], qk, 0.0)
-            strict_kk = torch.where(strict_causal[None], kk * beta_block[:, :, None], 0.0)
+            strict_kk = torch.where(
+                strict_causal[None], kk * beta_block[:, :, None], 0.0
+            )
             akk_block = torch.linalg.solve_triangular(eye + strict_kk, eye, upper=False)
             w_block = torch.bmm(
                 akk_block,
@@ -133,12 +138,15 @@ def _chunked_reference(
             v_new[0, :, start:end] = v_new_block.to(dtype)
             h[0, global_chunk + chunk_offset] = state_kv.transpose(-1, -2).to(dtype)
             out[0, start:end] = (
-                torch.bmm(qg_block, state_kv) * scale
-                + torch.bmm(aqk_block, v_new_block)
-            ).transpose(0, 1).to(dtype)
-            state_kv = (
-                torch.exp2(gk_block[:, -1])[:, :, None] * state_kv
-                + torch.bmm(kg_block.transpose(1, 2), v_new_block)
+                (
+                    torch.bmm(qg_block, state_kv) * scale
+                    + torch.bmm(aqk_block, v_new_block)
+                )
+                .transpose(0, 1)
+                .to(dtype)
+            )
+            state_kv = torch.exp2(gk_block[:, -1])[:, :, None] * state_kv + torch.bmm(
+                kg_block.transpose(1, 2), v_new_block
             )
             chunk_offset += 1
         final_state_vk[seq_id] = state_kv.transpose(-1, -2)
@@ -167,11 +175,16 @@ def _for_layout(tensor: torch.Tensor, layout: str) -> torch.Tensor:
     return tensor.squeeze(0).contiguous()
 
 
-def _expected_for_layout(outputs: tuple[torch.Tensor, ...], layout: str) -> tuple[torch.Tensor, ...]:
+def _expected_for_layout(
+    outputs: tuple[torch.Tensor, ...], layout: str
+) -> tuple[torch.Tensor, ...]:
     if layout == "BSND":
         return outputs
     rank3_indices = {0, 2, 3, 4, 5, 6, 7, 8, 9, 10}
-    return tuple(output.squeeze(0) if index in rank3_indices else output for index, output in enumerate(outputs))
+    return tuple(
+        output.squeeze(0) if index in rank3_indices else output
+        for index, output in enumerate(outputs)
+    )
 
 
 def _expected_output_shapes(
@@ -183,8 +196,7 @@ def _expected_output_shapes(
 ) -> tuple[tuple[int, ...], ...]:
     seq_num = len(cu_seqlens) - 1
     total_chunks = sum(
-        math.ceil((end - start) / 64)
-        for start, end in zip(cu_seqlens, cu_seqlens[1:])
+        math.ceil((end - start) / 64) for start, end in zip(cu_seqlens, cu_seqlens[1:])
     )
     sequence_shape = (1, tokens, heads, head_dim)
     head_shape = (1, heads, tokens, head_dim)
@@ -229,14 +241,17 @@ def _assert_outputs(actual, expected, retained: set[int]) -> None:
 
 
 @pytest.mark.parametrize(
-    ("layout", "tokens", "heads", "cu_seqlens"),
+    ("layout", "tokens", "heads", "cu_seqlens", "use_metadata"),
     [
-        pytest.param("BSND", 131, 6, (0, 131), id="BSND-T131-H6"),
-        pytest.param("TND", 191, 6, (0, 63, 131, 191), id="TND-varlen"),
+        pytest.param("BSND", 128, 6, (0, 128), False, id="BSND-T128-dense"),
+        pytest.param("BSND", 131, 6, (0, 131), True, id="BSND-T131-H6"),
+        pytest.param("TND", 191, 6, (0, 63, 131, 191), True, id="TND-varlen"),
     ],
 )
 @torch.inference_mode()
-def test_chunk_kda_fwd_a5_multichunk_all_outputs(layout, tokens, heads, cu_seqlens):
+def test_chunk_kda_fwd_a5_multichunk_all_outputs(
+    layout, tokens, heads, cu_seqlens, use_metadata
+):
     if not _is_ascend950():
         pytest.skip("requires an Ascend 950 device")
 
@@ -244,23 +259,31 @@ def test_chunk_kda_fwd_a5_multichunk_all_outputs(layout, tokens, heads, cu_seqle
     device = torch.device("npu:0")
     torch.npu.set_device(0)
     head_dim = 128
-    q_bsnd = _l2norm(torch.randn(1, tokens, heads, head_dim, dtype=torch.bfloat16, device=device))
+    q_bsnd = _l2norm(
+        torch.randn(1, tokens, heads, head_dim, dtype=torch.bfloat16, device=device)
+    )
     k_bsnd = _l2norm(torch.randn_like(q_bsnd))
     v_bsnd = torch.randn_like(q_bsnd) * 0.05
-    raw_gate_bsnd = torch.randn(
-        1, tokens, heads, head_dim, dtype=torch.float32, device=device
-    ) * 0.1
-    beta_bsnd = torch.rand(1, tokens, heads, dtype=torch.float32, device=device).sigmoid()
+    raw_gate_bsnd = (
+        torch.randn(1, tokens, heads, head_dim, dtype=torch.float32, device=device)
+        * 0.1
+    )
+    beta_bsnd = torch.rand(
+        1, tokens, heads, dtype=torch.float32, device=device
+    ).sigmoid()
     a_log = torch.randn(heads, dtype=torch.float32, device=device) * 0.05
     dt_bias = torch.randn(heads * head_dim, dtype=torch.float32, device=device) * 0.05
-    initial_state_vk = torch.randn(
-        len(cu_seqlens) - 1,
-        heads,
-        head_dim,
-        head_dim,
-        dtype=torch.float32,
-        device=device,
-    ) * 0.01
+    initial_state_vk = (
+        torch.randn(
+            len(cu_seqlens) - 1,
+            heads,
+            head_dim,
+            head_dim,
+            dtype=torch.float32,
+            device=device,
+        )
+        * 0.01
+    )
     indices = _chunk_indices(cu_seqlens, 64)
     args = (
         _for_layout(q_bsnd, layout),
@@ -275,8 +298,8 @@ def test_chunk_kda_fwd_a5_multichunk_all_outputs(layout, tokens, heads, cu_seqle
         "layout": layout,
         "initial_state": initial_state_vk,
         "output_final_state": True,
-        "cu_seqlens": cu_seqlens,
-        "chunk_indices": indices,
+        "cu_seqlens": cu_seqlens if use_metadata else None,
+        "chunk_indices": indices if use_metadata else None,
         "safe_gate": True,
         "lower_bound": -5.0,
         "use_gate_in_kernel": True,
@@ -312,7 +335,17 @@ def test_chunk_kda_fwd_a5_multichunk_all_outputs(layout, tokens, heads, cu_seqle
     _assert_outputs(retained_outputs, expected, set(range(len(OUTPUT_NAMES))))
     assert retained_outputs[11] is initial_state_vk
 
-    del retained_outputs, expected
+    model_outputs = chunk_kda_fwd(
+        *args,
+        **kwargs,
+        disable_recompute=False,
+        return_intermediate_states=False,
+    )
+    torch.npu.synchronize()
+    _assert_outputs(model_outputs, expected, {0, 1, 3, 4, 11})
+    assert model_outputs[11] is initial_state_vk
+
+    del retained_outputs, model_outputs, expected
     gc.collect()
     torch.npu.empty_cache()
 
@@ -343,9 +376,7 @@ def test_chunk_kda_fwd_a5_t8191_all_outputs_are_finite(layout, cu_seqlens):
     raw_gate_bsnd = torch.zeros(
         (1, tokens, heads, head_dim), dtype=torch.float32, device=device
     )
-    beta_bsnd = torch.full(
-        (1, tokens, heads), 0.5, dtype=torch.float32, device=device
-    )
+    beta_bsnd = torch.full((1, tokens, heads), 0.5, dtype=torch.float32, device=device)
     initial_state_vk = torch.zeros(
         (len(cu_seqlens) - 1, heads, head_dim, head_dim),
         dtype=torch.float32,

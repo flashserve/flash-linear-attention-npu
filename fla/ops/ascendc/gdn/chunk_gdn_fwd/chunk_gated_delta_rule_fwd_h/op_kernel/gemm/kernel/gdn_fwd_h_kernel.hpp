@@ -278,7 +278,8 @@ public:
         return static_cast<float>(value);
     }
 
-    __aicore__ inline void ComputeTailVWorkspace(const GDNFwdHOffsets& offsets)
+    __aicore__ inline void ComputeTailVWorkspace(
+        const GDNFwdHOffsets& offsets, uint32_t tailEventId)
     {
         uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
@@ -288,6 +289,8 @@ public:
         if (rowBegin >= rowEnd) {
             return;
         }
+        AscendC::ResetMask();
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(tailEventId);
 
         constexpr uint32_t TAIL_INPUT_OFFSET = 166 * 1024;
         constexpr uint32_t TAIL_FLOAT_OFFSET = 167 * 1024;
@@ -298,44 +301,70 @@ public:
             resource.ubBuf.template GetBufferByByte<float>(TAIL_FLOAT_OFFSET);
         AscendC::LocalTensor<float> accumUb =
             resource.ubBuf.template GetBufferByByte<float>(TAIL_ACCUM_OFFSET);
+        AscendC::LocalTensor<ElementW> weightInputUb =
+            resource.ubBuf.template GetBufferByByte<ElementW>(169 * 1024);
+        AscendC::LocalTensor<float> weightFloatUb =
+            resource.ubBuf.template GetBufferByByte<float>(170 * 1024);
 
         for (uint32_t tokenRow = rowBegin; tokenRow < rowEnd; ++tokenRow) {
+            AscendC::DataCopy(
+                weightInputUb,
+                gmW[offsets.wOffset + tokenRow * kHeadDim],
+                kHeadDim);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(tailEventId);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(tailEventId);
+            AscendC::Cast(
+                weightFloatUb, weightInputUb, AscendC::RoundMode::CAST_NONE,
+                kHeadDim);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::SetFlag<AscendC::HardEvent::V_S>(tailEventId);
+            AscendC::WaitFlag<AscendC::HardEvent::V_S>(tailEventId);
+
             AscendC::Duplicate(accumUb, 0.0f, offsets.vBlockDim);
             AscendC::PipeBarrier<PIPE_V>();
             for (uint32_t kIdx = 0; kIdx < kHeadDim; ++kIdx) {
                 AscendC::DataCopy(
                     inputUb, gmH[offsets.hSrcOffset + kIdx * vHeadDim],
                     offsets.vBlockDim);
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID7);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID7);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(tailEventId);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(tailEventId);
                 AscendC::Cast(
                     floatUb, inputUb, AscendC::RoundMode::CAST_NONE,
                     offsets.vBlockDim);
                 AscendC::PipeBarrier<PIPE_V>();
-                float weight = LoadScalarAsFloat(
-                    gmW, offsets.wOffset + tokenRow * kHeadDim + kIdx);
+                float weight = weightFloatUb.GetValue(kIdx);
+                AscendC::SetFlag<AscendC::HardEvent::S_V>(tailEventId);
+                AscendC::WaitFlag<AscendC::HardEvent::S_V>(tailEventId);
                 AscendC::Muls(floatUb, floatUb, weight, offsets.vBlockDim);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Add(accumUb, accumUb, floatUb, offsets.vBlockDim);
                 AscendC::PipeBarrier<PIPE_V>();
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(tailEventId);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(tailEventId);
             }
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID7);
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID7);
+            AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(tailEventId);
+            AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(tailEventId);
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(tailEventId);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(tailEventId);
             AscendC::DataCopy(
                 gmVWorkspace[offsets.vWorkOffset + tokenRow * offsets.vBlockDim],
                 accumUb, offsets.vBlockDim);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID7);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID7);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
         }
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(tailEventId);
     }
 
-    __aicore__ inline void ComputeTailHWorkspace(const GDNFwdHOffsets& offsets)
+    __aicore__ inline void ComputeTailHWorkspace(
+        const GDNFwdHOffsets& offsets, uint32_t tailEventId)
     {
         uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
         uint32_t rowsPerSubBlock = CeilDiv(kHeadDim, subBlockNum);
         uint32_t rowBegin = subBlockIdx * rowsPerSubBlock;
         uint32_t rowEnd = Min(rowBegin + rowsPerSubBlock, kHeadDim);
+        AscendC::ResetMask();
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(tailEventId);
 
         constexpr uint32_t TAIL_INPUT_OFFSET = 166 * 1024;
         constexpr uint32_t TAIL_FLOAT_OFFSET = 167 * 1024;
@@ -346,37 +375,58 @@ public:
             resource.ubBuf.template GetBufferByByte<float>(TAIL_FLOAT_OFFSET);
         AscendC::LocalTensor<float> accumUb =
             resource.ubBuf.template GetBufferByByte<float>(TAIL_ACCUM_OFFSET);
+        AscendC::LocalTensor<ElementK> weightInputUb =
+            resource.ubBuf.template GetBufferByByte<ElementK>(169 * 1024);
+        AscendC::LocalTensor<float> weightFloatUb =
+            resource.ubBuf.template GetBufferByByte<float>(170 * 1024);
 
         for (uint32_t kRow = rowBegin; kRow < rowEnd; ++kRow) {
             AscendC::Duplicate(accumUb, 0.0f, offsets.vBlockDim);
             AscendC::PipeBarrier<PIPE_V>();
             for (uint32_t tokenRow = 0; tokenRow < offsets.blockTokens; ++tokenRow) {
                 AscendC::DataCopy(
+                    weightInputUb,
+                    gmKDecayWorkspace[offsets.kDecayWorkOffset + tokenRow * kHeadDim],
+                    kHeadDim);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(tailEventId);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(tailEventId);
+                AscendC::Cast(
+                    weightFloatUb, weightInputUb, AscendC::RoundMode::CAST_NONE,
+                    kHeadDim);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::SetFlag<AscendC::HardEvent::V_S>(tailEventId);
+                AscendC::WaitFlag<AscendC::HardEvent::V_S>(tailEventId);
+                AscendC::DataCopy(
                     inputUb,
                     gmVUpdateWorkspace[offsets.vWorkOffset + tokenRow * offsets.vBlockDim],
                     offsets.vBlockDim);
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID7);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID7);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(tailEventId);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(tailEventId);
                 AscendC::Cast(
                     floatUb, inputUb, AscendC::RoundMode::CAST_NONE,
                     offsets.vBlockDim);
                 AscendC::PipeBarrier<PIPE_V>();
-                float weight = LoadScalarAsFloat(
-                    gmKDecayWorkspace,
-                    offsets.kDecayWorkOffset + tokenRow * kHeadDim + kRow);
+                float weight = weightFloatUb.GetValue(kRow);
+                AscendC::SetFlag<AscendC::HardEvent::S_V>(tailEventId);
+                AscendC::WaitFlag<AscendC::HardEvent::S_V>(tailEventId);
                 AscendC::Muls(floatUb, floatUb, weight, offsets.vBlockDim);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Add(accumUb, accumUb, floatUb, offsets.vBlockDim);
                 AscendC::PipeBarrier<PIPE_V>();
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(tailEventId);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(tailEventId);
+                AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(tailEventId);
+                AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(tailEventId);
             }
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID7);
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID7);
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(tailEventId);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(tailEventId);
             AscendC::DataCopy(
                 gmHWorkspace[offsets.hWorkOffset + kRow * offsets.vBlockDim],
                 accumUb, offsets.vBlockDim);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID7);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID7);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
         }
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(tailEventId);
     }
 
     __aicore__ inline void PresetVectorPipelineEvents()
@@ -679,8 +729,13 @@ public:
                             continue;
                         }
                         const GDNFwdHOffsets& vec1Offsets = vecBlockScheduler.GetCurTaskOffsets(stream);
-                        if (vec1Offsets.blockTokens < 16) {
-                            ComputeTailVWorkspace(vec1Offsets);
+                        bool tailVectorPath = vec1Offsets.blockTokens < 16;
+                        if (tailVectorPath) {
+                            Arch::CrossCoreWaitFlag(
+                                vecBlockScheduler.cube1Done[streamId]);
+                            ComputeTailVWorkspace(
+                                vec1Offsets,
+                                EVENT_ID3 + (streamId == 0 ? 0 : 4));
                         }
                         bool waitWsFromMte3 = storeFinalState && std::is_same<ElementFinalState, float>::value &&
                                               event0FromMte3[streamId];
@@ -691,7 +746,7 @@ public:
                             vec1Offsets.blockTokens, kHeadDim, vec1Offsets.vBlockDim, vHeadDim,
                             vecBlockScheduler.cube1Done[streamId], vecBlockScheduler.vec1Done[streamId],
                             vec1Offsets.isInitialState, vec1Offsets.isFinalState, storeFinalState,
-                            waitWsFromMte3, (streamId == 0)
+                            waitWsFromMte3, (streamId == 0), tailVectorPath
                         );
                         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
                         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
@@ -713,7 +768,9 @@ public:
                             if (tailVectorPath) {
                                 Arch::CrossCoreWaitFlag(
                                     vecBlockScheduler.cube2Done[streamId]);
-                                ComputeTailHWorkspace(vec2Offsets);
+                                ComputeTailHWorkspace(
+                                    vec2Offsets,
+                                    EVENT_ID3 + (streamId == 0 ? 0 : 4));
                             }
                             if (storeFinalState && std::is_same<ElementFinalState, float>::value) {
                                 event0FromMte3[streamId] = true;
