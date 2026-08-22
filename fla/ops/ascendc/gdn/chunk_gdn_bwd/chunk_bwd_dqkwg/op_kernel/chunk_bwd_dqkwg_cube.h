@@ -28,24 +28,8 @@
  #include "catlass/status.hpp"
  #include "tla/layout.hpp"
  #include "tla/tensor.hpp"
-  using _0 = tla::Int<0>;
-       using _1 = tla::Int<1>;
-       using _2 = tla::Int<2>;
-       using _4 = tla::Int<4>;
-       using _8 = tla::Int<8>;
-       using _16 = tla::Int<16>;
-       using _32 = tla::Int<32>;
-       using _64 = tla::Int<64>;
        using _128 = tla::Int<128>;
        using _256 = tla::Int<256>;
-       using _512 = tla::Int<512>;
-       using _1024 = tla::Int<1024>;
-       using _2048 = tla::Int<2048>;
-       using _4096 = tla::Int<4096>;
-       using _8192 = tla::Int<8192>;
-       using _16384 = tla::Int<16384>;
-       using _32768 = tla::Int<32768>;
-       using _65536 = tla::Int<65536>;
        #else
        #define CATLASS_ARCH 2201
        #include "chunk_bwd_dqkwg_common.h"
@@ -102,7 +86,6 @@ namespace Catlass::Gemm::Kernel {
 
         // Single-stage buffer sizes (no pingpong)
         static constexpr uint32_t L1A_TILE_SIZE = TILE_M * TILE_K * sizeof(ElementA);
-        static constexpr uint32_t L1B_TILE_SIZE = TILE_K * TILE_N * sizeof(ElementB);
 
         // Static L1 layouts for tile-sized buffers
         static constexpr auto L1A_LAYOUT =
@@ -277,7 +260,6 @@ namespace Catlass::Gemm::Kernel {
             GM_ADDR ptrQ;      // [B, HK, T, K]
             GM_ADDR ptrK;      // [B, HK, T, K]
             GM_ADDR ptrV;      // [B, HV, T, V]
-            GM_ADDR ptrG;      // [B, HV, T]
             GM_ADDR ptrH;      // [B, HV, num_chunks, K, V]
             GM_ADDR ptrDo;     // [B, HV, T, V]
             GM_ADDR ptrDh;     // [B, HV, num_chunks, K, V]
@@ -289,8 +271,6 @@ namespace Catlass::Gemm::Kernel {
             // 输出指针
             GM_ADDR ptrDq;     // [B, HK, T, K]
             GM_ADDR ptrDk;     // [B, HK, T, K]
-            GM_ADDR ptrDw;     // [B, HV, T, K]
-            GM_ADDR ptrDg;     // [B, HV, T]
 
             // Workspace 指针
             GM_ADDR ptrWorkspace;
@@ -298,7 +278,6 @@ namespace Catlass::Gemm::Kernel {
             // Workspace 偏移
             uint64_t wsDwOffset;
             uint64_t wsBtxKSyncSlotsPerHead;
-            uint64_t wsDgLastOffset;
             uint64_t wsMm5Offset;
             uint64_t wsDsTempOffset;
             uint64_t wsMm6Offset;
@@ -314,33 +293,24 @@ namespace Catlass::Gemm::Kernel {
             uint64_t BT;// = CONST_BT;
             uint64_t numChunks;// = CONST_NUM_CHUNKS;
             uint64_t n_ratio;      // HV / HK
-            // uint64_t chunkSize = 64;
-            uint64_t isVarLen;
-
-            // 其他参数
-            float scale;
             uint64_t aicCoreNum = 0;  // CV 深融合 blockDim (cube/vector 共用), 由 host tiling 给出
 
             CATLASS_DEVICE
-            Params() {}
-
-            CATLASS_DEVICE
             Params(
-                GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR h,
+                GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h,
                 GM_ADDR do_, GM_ADDR dh, GM_ADDR dv, GM_ADDR cu_seqlen, GM_ADDR chunk_indices,
-                GM_ADDR dq, GM_ADDR dk, GM_ADDR dw, GM_ADDR dg,
+                GM_ADDR dq, GM_ADDR dk,
                 GM_ADDR workspace,
                 uint64_t B, uint64_t HV, uint64_t HK, uint64_t T, uint64_t K, uint64_t V, uint64_t BT, uint64_t numChunks, uint64_t n_ratio,
-                uint64_t wsDw, uint64_t wsBtxKSlots, uint64_t wsDgLast, uint64_t wsMm5, uint64_t wsDsTemp,
-                uint64_t wsMm6, uint64_t wsMm7,
-                float s, uint64_t isVarLen
-            ) : ptrQ(q), ptrK(k), ptrV(v), ptrG(g), ptrH(h),
+                uint64_t wsDw, uint64_t wsBtxKSlots, uint64_t wsMm5, uint64_t wsDsTemp,
+                uint64_t wsMm6, uint64_t wsMm7
+            ) : ptrQ(q), ptrK(k), ptrV(v), ptrH(h),
                 ptrDo(do_), ptrDh(dh), ptrDv(dv), ptrCuSeqLens(cu_seqlen), ptrChunkIndices(chunk_indices),
-                ptrDq(dq), ptrDk(dk), ptrDw(dw), ptrDg(dg),
+                ptrDq(dq), ptrDk(dk),
                 ptrWorkspace(workspace),
-                wsDwOffset(wsDw), wsBtxKSyncSlotsPerHead(wsBtxKSlots), wsDgLastOffset(wsDgLast),
+                wsDwOffset(wsDw), wsBtxKSyncSlotsPerHead(wsBtxKSlots),
                 wsMm5Offset(wsMm5), wsDsTempOffset(wsDsTemp), wsMm6Offset(wsMm6), wsMm7Offset(wsMm7),
-                scale(s), B(B), HV(HV), HK(HK), T(T), K(K), V(V), BT(BT), numChunks(numChunks), n_ratio(n_ratio), isVarLen(isVarLen) {}
+                B(B), HV(HV), HK(HK), T(T), K(K), V(V), BT(BT), numChunks(numChunks), n_ratio(n_ratio) {}
         };
 
         CATLASS_DEVICE
@@ -374,7 +344,6 @@ namespace Catlass::Gemm::Kernel {
             auto layoutVxBT = LayoutColMajor::MakeLayout<ElementA>(params.V, params.BT);
             auto layoutBTxBT = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.BT);
             auto layoutBTxBT_T = LayoutColMajor::MakeLayout<ElementA>(params.BT, params.BT);
-            auto layoutKxV = LayoutRowMajor::MakeLayout<ElementA>(params.K, params.V);
             auto layoutVxK = LayoutColMajor::MakeLayout<ElementA>(params.V, params.K);
 
             uint32_t bos = 0;
@@ -734,13 +703,13 @@ namespace Catlass::Gemm::Kernel {
     class ChunkBwdDqkwgCubeProcess {
     public:
         __aicore__ inline ChunkBwdDqkwgCubeProcess(
-            GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR h,
+            GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h,
             GM_ADDR do_, GM_ADDR dh, GM_ADDR dv, GM_ADDR cu_seqlen, GM_ADDR chunk_indices,
-            GM_ADDR dq, GM_ADDR dk, GM_ADDR dw, GM_ADDR dg,
+            GM_ADDR dq, GM_ADDR dk,
             GM_ADDR workspace
-        ) : ptrQ(q), ptrK(k), ptrV(v), ptrG(g), ptrH(h),
+        ) : ptrQ(q), ptrK(k), ptrV(v), ptrH(h),
             ptrDo(do_), ptrDh(dh), ptrDv(dv), ptrCuSeqLen(cu_seqlen), ptrChunkIndices(chunk_indices),
-            ptrDq(dq), ptrDk(dk), ptrDw(dw), ptrDg(dg),
+            ptrDq(dq), ptrDk(dk),
             ptrWorkspace(workspace) {}
 
         __aicore__ inline void Init(const ChunkBwdDqkwgTilingData &tiling);
@@ -751,7 +720,6 @@ namespace Catlass::Gemm::Kernel {
         GM_ADDR ptrQ;
         GM_ADDR ptrK;
         GM_ADDR ptrV;
-        GM_ADDR ptrG;
         GM_ADDR ptrH;
         GM_ADDR ptrDo;
         GM_ADDR ptrDh;
@@ -760,28 +728,23 @@ namespace Catlass::Gemm::Kernel {
         GM_ADDR ptrChunkIndices;
         GM_ADDR ptrDq;
         GM_ADDR ptrDk;
-        GM_ADDR ptrDw;
-        GM_ADDR ptrDg;
         GM_ADDR ptrWorkspace;
 
         // Tiling 参数
-        uint64_t B = CONST_B;
-        uint64_t HV = CONST_HV;
-        uint64_t HK = CONST_HK;
+        uint64_t B;
+        uint64_t HV;
+        uint64_t HK;
         uint64_t n_ratio = 1;
-        uint64_t T = CONST_T;
-        uint64_t K = CONST_K;
-        uint64_t V = CONST_V;
-        uint64_t BT = CONST_BT;
-        uint64_t numChunks = CONST_NUM_CHUNKS;
-        float scale;
-        uint64_t isVarLen;
+        uint64_t T;
+        uint64_t K;
+        uint64_t V;
+        uint64_t BT;
+        uint64_t numChunks;
         uint64_t aicCoreNum;  // CV 深融合 blockDim (cube/vector 共用)
 
         // Workspace 偏移
         uint64_t wsDwOffset;
         uint64_t wsBtxKSyncSlotsPerHead;
-        uint64_t wsDgLastOffset;
         uint64_t wsMm5Offset;
         uint64_t wsDsTempOffset;
         uint64_t wsMm6Offset;
@@ -790,7 +753,6 @@ namespace Catlass::Gemm::Kernel {
 
     template <typename DataType, typename GType>
     __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Init(const ChunkBwdDqkwgTilingData &tiling) {
-        scale = tiling.scale;
         B = tiling.B;
         HV = tiling.HV;
         HK = tiling.HK;
@@ -803,12 +765,10 @@ namespace Catlass::Gemm::Kernel {
         aicCoreNum = tiling.aicCoreNum;
         wsDwOffset = tiling.wsDwOffset;
         wsBtxKSyncSlotsPerHead = tiling.wsBtxKSyncSlotsPerHead;
-        wsDgLastOffset = tiling.wsDgLastOffset;
         wsMm5Offset = tiling.wsMm5Offset;
         wsDsTempOffset = tiling.wsDsTempOffset;
         wsMm6Offset = tiling.wsMm6Offset;
         wsMm7Offset = tiling.wsMm7Offset;
-        isVarLen = tiling.isVarLen;
     }
 
     template <typename DataType, typename GType>
@@ -889,24 +849,22 @@ namespace Catlass::Gemm::Kernel {
         if (V > 128) {
             MatmulKernelTiled kernel;
             typename MatmulKernelTiled::Params params(
-                ptrQ, ptrK, ptrV, ptrG, ptrH,
+                ptrQ, ptrK, ptrV, ptrH,
                 ptrDo, ptrDh, ptrDv, ptrCuSeqLen, ptrChunkIndices,
-                ptrDq, ptrDk, ptrDw, ptrDg,
+                ptrDq, ptrDk,
                 ptrWorkspace, B, HV, HK, T, K, V, BT, numChunks, n_ratio,
-                wsDwOffset, wsBtxKSyncSlotsPerHead, wsDgLastOffset, wsMm5Offset, wsDsTempOffset, wsMm6Offset, wsMm7Offset,
-                scale, isVarLen
+                wsDwOffset, wsBtxKSyncSlotsPerHead, wsMm5Offset, wsDsTempOffset, wsMm6Offset, wsMm7Offset
             );
             params.aicCoreNum = aicCoreNum;
             kernel(params);
         } else {
             MatmulKernel kernel;
             typename MatmulKernel::Params params(
-                ptrQ, ptrK, ptrV, ptrG, ptrH,
+                ptrQ, ptrK, ptrV, ptrH,
                 ptrDo, ptrDh, ptrDv, ptrCuSeqLen, ptrChunkIndices,
-                ptrDq, ptrDk, ptrDw, ptrDg,
+                ptrDq, ptrDk,
                 ptrWorkspace, B, HV, HK, T, K, V, BT, numChunks, n_ratio,
-                wsDwOffset, wsBtxKSyncSlotsPerHead, wsDgLastOffset, wsMm5Offset, wsDsTempOffset, wsMm6Offset, wsMm7Offset,
-                scale, isVarLen
+                wsDwOffset, wsBtxKSyncSlotsPerHead, wsMm5Offset, wsDsTempOffset, wsMm6Offset, wsMm7Offset
             );
             params.aicCoreNum = aicCoreNum;
             kernel(params);

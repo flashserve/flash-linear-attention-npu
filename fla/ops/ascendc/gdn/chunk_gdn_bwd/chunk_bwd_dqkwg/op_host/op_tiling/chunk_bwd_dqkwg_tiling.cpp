@@ -17,17 +17,10 @@
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include "tiling_base/tiling_type.h"
-#include <cmath>
 #include <algorithm>
 
 namespace optiling {
 
-constexpr int64_t CONST_B = 1;
-constexpr int64_t CONST_HV = 4;
-constexpr int64_t CONST_HK = 4;
-constexpr int64_t CONST_T = 2816;
-constexpr int64_t CONST_K = 128;
-constexpr int64_t CONST_V = 128;
 constexpr int64_t CONST_BT = 64;
 
 // 数据类型大小
@@ -79,8 +72,6 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
         OP_LOGE(context->GetNodeName(), "HV must be a multiple of HK, but HV = %ld, HK = %ld.", HV, HK);
         return ge::GRAPH_FAILED;
     }
-    int64_t n_ratio = HV / HK;
-    (void)n_ratio;
     auto attr = context->GetAttrs();
     const int32_t* chunkSizePtr = attr->GetAttrPointer<int32_t>(ATTR_CHUNK_SIZE_ITEM);
     if (chunkSizePtr != nullptr) {
