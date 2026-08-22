@@ -56,7 +56,7 @@ aclnnStatus aclnnSolveTri(
 | x | 输入 | 公式中的输入矩阵 A，Device 侧的 aclTensor，数据类型支持 FLOAT16、BFLOAT16 |
 | cuSeqlens | 输入 | 变长序列模式下的累积序列长度，可选参数。Device 侧的 aclIntArray，数据类型为 INT64 |
 | chunkIndices | 输入 | 变长序列模式下的 chunk 索引，可选参数。Device 侧的 aclIntArray，数据类型为 INT64 |
-| layout | 输入 | 数据布局模式，支持 "bsnd"、"bnsd"、"tnd"、"ntd"，默认 "bsnd" |
+| layout | 输入 | 数据布局模式，支持 "bsnd"、"tnd"，默认 "bsnd" |
 | xOut | 输出 | 公式中的输出矩阵 Y，Device 侧的 aclTensor，数据类型与 x 一致 |
 | workspaceSize | 输出 | 返回执行该算子所需的 workspace 大小 |
 | executor | 输出 | 返回算子执行器 |
@@ -74,12 +74,14 @@ aclnnStatus aclnnSolveTri(
 
 1. **数据类型**：输入 x 仅支持 FLOAT16 和 BFLOAT16
 2. **chunkSize**：最后一维（矩阵大小）仅支持 64 或 128
+   - 在 Atlas A2（910 机器）上：
+     - `chunkSize=64`：高精度分支，全程使用 FP32 计算
+     - `chunkSize=128`：低精度分支，中间计算会 cast 成 FP16 或 BF16，且需满足 `H * chunkSize * 16 + 16 < 65536`
+   - 在 Ascend 950 系列上：64 和 128 均正常计算
 3. **数据布局**：
-   - `bnsd`: 输入 shape 为 `[B, H, S, chunkSize]`，单 chunk 内数据连续
    - `bsnd`: 输入 shape 为 `[B, S, H, chunkSize]`，单 chunk 内数据不连续
    - `tnd`: 输入 shape 为 `[total_T, H, chunkSize]`，需配合 cu_seqlens 和 chunk_indices 使用，单 chunk 内数据不连续
-   - `ntd`: 输入 shape 为 `[H, total_T, chunkSize]`，需配合 cu_seqlens 和 chunk_indices 使用，单 chunk 内数据连续（TND 的转置）
-4. **变长模式**：当 layout 为 "tnd" 或 "ntd" 时，cu_seqlens 和 chunk_indices 必须提供，数据类型为 INT64
+4. **变长模式**：当 layout 为 "tnd" 时，cu_seqlens 和 chunk_indices 必须提供，数据类型为 INT64
 
 ## 输出说明
 
@@ -109,10 +111,10 @@ torch.ops.npu.npu_solve_tri(
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| x | Tensor | 输入下三角矩阵，shape 为 `[B, H, T, chunkSize]` (bnsd)、`[B, T, H, chunkSize]` (bsnd)、`[total_T, H, chunkSize]` (tnd) 或 `[H, total_T, chunkSize]` (ntd) |
+| x | Tensor | 输入下三角矩阵，shape 为 `[B, T, H, chunkSize]` (bsnd) 或 `[total_T, H, chunkSize]` (tnd) |
 | cu_seqlens | Optional[List[int]] | 变长模式下的累积序列长度，如 `[0, 100, 200]` 表示两个序列长度分别为 100 和 100 |
 | chunk_indices | Optional[List[int]] | 变长模式下的 chunk 索引，格式为 `[seq_id_0, chunk_id_0, seq_id_1, chunk_id_1, ...]` |
-| layout | str | 数据布局，可选 "bsnd"、"bnsd"、"tnd"、"ntd"，默认 "bsnd" |
+| layout | str | 数据布局，可选 "bsnd"、"tnd"，默认 "bsnd" |
 
 ### 返回值
 
@@ -150,21 +152,5 @@ y_tnd = torch.ops.npu.npu_solve_tri(
     cu_seqlens=cu_seqlens,
     chunk_indices=chunk_indices,
     layout="tnd"
-)
-
-
-# BNSD layout (BSND 的转置，单 chunk 内数据连续)
-B, H, T, chunkSize = 2, 4, 128, 64
-x_bnsd = torch.randn(B, H, T, chunkSize, dtype=torch.float16, device="npu")
-y_bnsd = torch.ops.npu.npu_solve_tri(x_bnsd, layout="bnsd")
-
-
-# NTD layout (TND 的转置，单 chunk 内数据连续)
-x_ntd = torch.randn(H, total_T, chunkSize, dtype=torch.float16, device="npu")
-y_ntd = torch.ops.npu.npu_solve_tri(
-    x_ntd,
-    cu_seqlens=cu_seqlens,
-    chunk_indices=chunk_indices,
-    layout="ntd"
 )
 ```

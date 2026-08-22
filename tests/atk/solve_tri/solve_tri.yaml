@@ -51,7 +51,7 @@ inputs:
       values: [non_param]
     ranges:
       valid:
-        values: ["{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":16,\"chunk_size\":64,\"layout\":\"bnsd\",\"op\":\"solve_tri\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
+        values: ["{\"name\":\"bf16_bsnd\",\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":64,\"chunk_size\":64,\"layout\":\"bsnd\",\"op\":\"solve_tri\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
       invalid:
         values: []
   - name: dtype
@@ -71,7 +71,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1]
+        values: [1, 2, 4, 8, 16]
       invalid:
         values: []
   - name: H
@@ -81,7 +81,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1]
+        values: [1, 2, 4, 8, 16, 32]
       invalid:
         values: []
   - name: T
@@ -91,7 +91,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [16]
+        values: [64, 128, 256, 512, 1024, 2048, 4096]
       invalid:
         values: []
   - name: chunk_size
@@ -101,7 +101,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [64]
+        values: [64, 128]
       invalid:
         values: []
   - name: layout
@@ -111,7 +111,17 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: ["bnsd"]
+        values: ["bsnd", "tnd"]
+      invalid:
+        values: []
+  - name: num_seqs
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [1, 2, 4, 8]
       invalid:
         values: []
   - name: case_id
@@ -141,7 +151,7 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: ["ascend910b", "ascend910_93", "ascend950"]
+        values: ["ascend910b"]
       invalid:
         values: []
   - name: route

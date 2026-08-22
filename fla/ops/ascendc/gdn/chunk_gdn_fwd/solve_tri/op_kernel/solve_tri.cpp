@@ -4,11 +4,20 @@
  */
 #include "kernel_operator.h"
 
+#ifndef CATLASS_ARCH
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#define CATLASS_ARCH 3510
+#else
+#define CATLASS_ARCH 2201
+#endif
+#endif
+
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #include "arch35/solve_tri_ascend950.h"
 #else
 #include "lib/matmul_intf.h"
 #include "solve_tri_cube.h"
+#include "solve_tri_fp32.h"
 #include "solve_tri_vector.h"
 #endif
 
@@ -54,7 +63,7 @@ extern "C" __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, G
                     op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                     op.Process();
                 } else if (ms == 64) {
-                    NsSolveTri::SolveTriCube<64, half> op;
+                    NsSolveTri::SolveTriCubeFp32<half> op;
                     op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                     op.Process();
                 } else if (ms == 128) {
@@ -73,7 +82,7 @@ extern "C" __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, G
                     op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                     op.Process();
                 } else if (ms == 64) {
-                    NsSolveTri::SolveTriCube<64, bfloat16_t> op;
+                    NsSolveTri::SolveTriCubeFp32<bfloat16_t> op;
                     op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                     op.Process();
                 } else if (ms == 128) {
@@ -97,8 +106,8 @@ extern "C" __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, G
                     op.Init(workspace, totalTiles, ms);
                     op.Process();
                 } else if (ms == 64) {
-                    NsSolveTri::SolveTriVector<64, half> op;
-                    op.Init(workspace, totalTiles, ms);
+                    NsSolveTri::SolveTriVectorFp32<half> op;
+                    op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                     op.Process();
                 } else if (ms == 128) {
                     NsSolveTri::SolveTriVector<128, half> op;
@@ -116,8 +125,8 @@ extern "C" __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, G
                     op.Init(workspace, totalTiles, ms);
                     op.Process();
                 } else if (ms == 64) {
-                    NsSolveTri::SolveTriVector<64, bfloat16_t> op;
-                    op.Init(workspace, totalTiles, ms);
+                    NsSolveTri::SolveTriVectorFp32<bfloat16_t> op;
+                    op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
                     op.Process();
                 } else if (ms == 128) {
                     NsSolveTri::SolveTriVector<128, bfloat16_t> op;
