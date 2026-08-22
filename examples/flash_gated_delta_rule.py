@@ -1143,15 +1143,18 @@ def flash_gated_delta_rule(
     r"""
     Flash-linear-attention NPU port of xtuner's GDN entry.
 
-    This port keeps the xtuner NPU layout:
-        q, k: [B, H, T, K]
-        v:    [B, H, T, V]
-        g:    [B, T, H]
-        beta: [B, T, H]
+    This port keeps the xtuner NPU layout and supports grouped value attention:
+        q, k: [B, Hk, T, K]
+        v:    [B, Hv, T, V]
+        g:    [B, T, Hv]
+        beta: [B, T, Hv]
+
+    Hv must be an integer multiple of Hk. Value head hv reuses query/key
+    head ``hk = hv // (Hv // Hk)``.
 
     It returns:
-        o: [B, T, H, V]
-        final_state: [N, H, K, V] when output_final_state=True, else None
+        o: [B, T, Hv, V]
+        final_state: [N, Hv, K, V] when output_final_state=True, else None
     """
     if q.dtype != k.dtype or k.dtype != v.dtype:
         raise ValueError(
@@ -1161,22 +1164,29 @@ def flash_gated_delta_rule(
     if q.dtype == torch.float32:
         raise ValueError("ChunkGatedDeltaRuleFunction does not support float32. Please use float16/bfloat16.")
     if beta.ndim != 3 or g.ndim != 3:
-        raise ValueError("g and beta must be rank-3 tensors with shape [B, T, H].")
+        raise ValueError("g and beta must be rank-3 tensors with shape [B, T, Hv].")
     if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
-        raise ValueError("q, k and v must be rank-4 tensors with shape [B, H, T, D].")
-    if q.shape[:3] != k.shape[:3] or q.shape[:3] != v.shape[:3]:
-        raise ValueError(f"q/k/v shape prefixes must match, got {q.shape}, {k.shape}, {v.shape}.")
+        raise ValueError("q/k and v must be rank-4 tensors with shapes [B, Hk, T, K] and [B, Hv, T, V].")
+    if q.shape != k.shape:
+        raise ValueError(f"q and k shapes must match, got q={q.shape}, k={k.shape}.")
+    if q.shape[0] != v.shape[0] or q.shape[2] != v.shape[2]:
+        raise ValueError(f"q/k/v batch and sequence dimensions must match, got q={q.shape}, v={v.shape}.")
+    if v.shape[1] % q.shape[1] != 0:
+        raise ValueError(
+            f"value heads must be a multiple of query heads, got q_heads={q.shape[1]}, v_heads={v.shape[1]}."
+        )
     if g.shape != beta.shape:
         raise ValueError(f"g and beta shapes must match, got {g.shape} and {beta.shape}.")
-    if g.shape[0] != q.shape[0] or g.shape[1] != q.shape[2] or g.shape[2] != q.shape[1]:
+    if g.shape[0] != q.shape[0] or g.shape[1] != q.shape[2] or g.shape[2] != v.shape[1]:
         raise ValueError(
-            "Expected q/k/v in [B, H, T, D] and g/beta in [B, T, H]; "
-            f"got q={tuple(q.shape)}, g={tuple(g.shape)}."
+            "Expected q/k in [B, Hk, T, K], v in [B, Hv, T, V], and g/beta in [B, T, Hv]; "
+            f"got q={tuple(q.shape)}, v={tuple(v.shape)}, g={tuple(g.shape)}."
         )
 
     if head_first:
         warnings.warn(
-            "head_first is kept only for API compatibility. This NPU port always expects q/k/v as [B, H, T, D].",
+            "head_first is kept only for API compatibility. This NPU port expects q/k as [B, Hk, T, K] "
+            "and v as [B, Hv, T, V].",
             stacklevel=2,
         )
     if chunk_size != 2 ** (chunk_size.bit_length() - 1):
@@ -1265,8 +1275,8 @@ class DemoGatedDeltaNet(nn.Module):
         self.num_k_heads = num_key_heads
         if self.num_v_heads % self.num_k_heads != 0:
             raise ValueError(
-                "num_value_heads must be an integer multiple of num_key_heads "
-                f"for the current grouped-value smoke path, got {self.num_v_heads} and {self.num_k_heads}."
+                "DemoGatedDeltaNet requires num_value_heads to be a multiple of num_key_heads; "
+                f"got {self.num_v_heads} and {self.num_k_heads}."
             )
         if key_head_dim != value_head_dim:
             raise ValueError(
@@ -1334,11 +1344,6 @@ class DemoGatedDeltaNet(nn.Module):
 
         beta = b.sigmoid()
         g = -self.A_log.float().exp() * torch.nn.functional.softplus(a.float() + self.dt_bias)
-
-        repeat = self.num_v_heads // self.num_k_heads
-        if repeat > 1:
-            query = query.repeat_interleave(repeat, dim=1)
-            key = key.repeat_interleave(repeat, dim=1)
 
         cu_list = cu_seqlens.detach().tolist() if cu_seqlens is not None else None
         cu_seqlens_list: Optional[list[int]] = cu_list if cu_list is not None else None
@@ -1552,14 +1557,18 @@ def _naive_recurrent_gated_delta_rule_cpu(
     scale: float,
 ) -> torch.Tensor:
     q, k, v, beta, g = [x.transpose(1, 2).contiguous().float() for x in (q, k, v, beta, g)]
-    B, H, T, K = q.shape
+    B, Hk, T, K = q.shape
+    Hv = v.shape[1]
+    if Hv % Hk != 0:
+        raise ValueError(f"value heads must be a multiple of query heads, got Hk={Hk}, Hv={Hv}")
+    head_map = torch.arange(Hv, device=q.device) // (Hv // Hk)
     V = v.shape[-1]
-    state = q.new_zeros(B, H, K, V)
-    o = q.new_empty(B, H, T, V)
+    state = q.new_zeros(B, Hv, K, V)
+    o = q.new_empty(B, Hv, T, V)
     q = q * scale
     for idx in range(T):
-        q_i = q[:, :, idx]
-        k_i = k[:, :, idx]
+        q_i = q[:, head_map, idx]
+        k_i = k[:, head_map, idx]
         v_i = v[:, :, idx]
         beta_i = beta[:, :, idx]
         g_i = g[:, :, idx].exp()
@@ -1574,8 +1583,6 @@ def _naive_recurrent_gated_delta_rule_cpu(
 def _run_cpu_accuracy_reference(
     inputs: dict[str, torch.Tensor],
     *,
-    query_heads: int,
-    value_heads: int,
     scale: float,
     qk_l2norm: bool,
     cu_seqlens: Optional[list[int]],
@@ -1588,14 +1595,9 @@ def _run_cpu_accuracy_reference(
     g = inputs["g"].detach().float().requires_grad_("dg" in tensors)
     do = inputs["do"].detach().float()
 
-    repeat = value_heads // query_heads
-
     def run_slice(start: int, end: int) -> torch.Tensor:
         q_i = q[:, :, start:end, :].transpose(1, 2)
         k_i = k[:, :, start:end, :].transpose(1, 2)
-        if repeat != 1:
-            q_i = q_i.repeat_interleave(repeat, dim=2)
-            k_i = k_i.repeat_interleave(repeat, dim=2)
         if qk_l2norm:
             q_i = F.normalize(q_i, p=2, dim=-1)
             k_i = F.normalize(k_i, p=2, dim=-1)
@@ -1636,8 +1638,6 @@ def _load_or_create_accuracy_golden(
     path: Path,
     config: dict,
     inputs: dict[str, torch.Tensor],
-    query_heads: int,
-    value_heads: int,
     scale: float,
     qk_l2norm: bool,
     cu_seqlens: Optional[list[int]],
@@ -1653,8 +1653,6 @@ def _load_or_create_accuracy_golden(
     path.parent.mkdir(parents=True, exist_ok=True)
     tensors = _run_cpu_accuracy_reference(
         inputs,
-        query_heads=query_heads,
-        value_heads=value_heads,
         scale=scale,
         qk_l2norm=qk_l2norm,
         cu_seqlens=cu_seqlens,
@@ -1669,8 +1667,6 @@ def _run_npu_accuracy_candidate(
     inputs: dict[str, torch.Tensor],
     *,
     device: str,
-    query_heads: int,
-    value_heads: int,
     scale: float,
     qk_l2norm: bool,
     cu_seqlens: Optional[torch.LongTensor],
@@ -1686,11 +1682,6 @@ def _run_npu_accuracy_candidate(
 
     attn_q = q
     attn_k = k
-    if query_heads != value_heads:
-        repeat = value_heads // query_heads
-        attn_q = q.repeat_interleave(repeat, dim=1)
-        attn_k = k.repeat_interleave(repeat, dim=1)
-
     o, _ = flash_gated_delta_rule(
         attn_q,
         attn_k,
@@ -1808,8 +1799,6 @@ def _run_accuracy_check(
         path=golden_path,
         config=config,
         inputs=inputs,
-        query_heads=query_heads,
-        value_heads=value_heads,
         scale=scale,
         qk_l2norm=args.qk_l2norm,
         cu_seqlens=cu_list,
@@ -1818,8 +1807,6 @@ def _run_accuracy_check(
     candidate = _run_npu_accuracy_candidate(
         inputs,
         device=device,
-        query_heads=query_heads,
-        value_heads=value_heads,
         scale=scale,
         qk_l2norm=args.qk_l2norm,
         cu_seqlens=cu_seqlens,
@@ -1931,7 +1918,7 @@ def _main():
         raise ValueError("varlen smoke currently requires batch=1. Use --no-varlen for B > 1 cases.")
     if value_heads % query_heads != 0:
         raise ValueError(
-            "value_heads must be an integer multiple of query_heads for the current grouped-value smoke path, "
+            "value_heads must be a multiple of query_heads for GVA; "
             f"got query_heads={query_heads}, value_heads={value_heads}."
         )
     if args.gate_source != "g":
@@ -2060,11 +2047,9 @@ def _main():
     torch.npu.synchronize()
     attn_q = q
     attn_k = k
-    if query_heads != value_heads:
-        repeat = value_heads // query_heads
-        attn_q = q.repeat_interleave(repeat, dim=1)
-        attn_k = k.repeat_interleave(repeat, dim=1)
-        print("grouped value heads:", f"repeat={repeat}", f"attn_heads={attn_q.shape[1]}")
+    # Keep the original query/key head count. GVA maps each value head to its
+    # corresponding key head in the underlying operators.
+    print("actual operator heads:", f"q={attn_q.shape[1]}", f"k={attn_k.shape[1]}", f"v={v.shape[1]}")
     initial_state = None
     if args.initial_state != "none":
         state_count = len(cu_seqlens) - 1 if cu_seqlens is not None else batch
