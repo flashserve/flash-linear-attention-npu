@@ -419,9 +419,15 @@ private:
                                     const LocalTensor<float> &src1Tensor, uint32_t count)
     {
         BinaryRepeatParams repeatParams{1, 1, 1, FP32_NUM_PER_BLOCK, FP32_NUM_PER_BLOCK, FP32_NUM_PER_BLOCK};
-        for (uint32_t offset = 0; offset < count; offset += V_LENGTH) {
-            uint64_t mask = Std::min(count - offset, static_cast<uint32_t>(V_LENGTH));
-            Sub(dstTensor[offset], src0Tensor[offset], src1Tensor[offset], mask, 1, repeatParams);
+        uint8_t repeatTime = static_cast<uint8_t>(count / V_LENGTH);
+        uint32_t tailCount = count % V_LENGTH;
+        if (repeatTime > 0) {
+            Sub(dstTensor, src0Tensor, src1Tensor, static_cast<uint64_t>(V_LENGTH), repeatTime, repeatParams);
+        }
+        if (tailCount > 0) {
+            uint32_t tailOffset = count - tailCount;
+            Sub(dstTensor[tailOffset], src0Tensor[tailOffset], src1Tensor[tailOffset],
+                static_cast<uint64_t>(tailCount), 1, repeatParams);
         }
     }
 
@@ -429,9 +435,15 @@ private:
                                      float scalar, uint32_t count)
     {
         UnaryRepeatParams repeatParams{1, 1, FP32_NUM_PER_BLOCK, FP32_NUM_PER_BLOCK};
-        for (uint32_t offset = 0; offset < count; offset += V_LENGTH) {
-            uint64_t mask = Std::min(count - offset, static_cast<uint32_t>(V_LENGTH));
-            Muls(dstTensor[offset], srcTensor[offset], scalar, mask, 1, repeatParams);
+        uint8_t repeatTime = static_cast<uint8_t>(count / V_LENGTH);
+        uint32_t tailCount = count % V_LENGTH;
+        if (repeatTime > 0) {
+            Muls(dstTensor, srcTensor, scalar, static_cast<uint64_t>(V_LENGTH), repeatTime, repeatParams);
+        }
+        if (tailCount > 0) {
+            uint32_t tailOffset = count - tailCount;
+            Muls(dstTensor[tailOffset], srcTensor[tailOffset], scalar, static_cast<uint64_t>(tailCount), 1,
+                 repeatParams);
         }
     }
 
@@ -439,9 +451,14 @@ private:
                                     uint32_t count)
     {
         UnaryRepeatParams repeatParams{1, 1, FP32_NUM_PER_BLOCK, FP32_NUM_PER_BLOCK};
-        for (uint32_t offset = 0; offset < count; offset += V_LENGTH) {
-            uint64_t mask = Std::min(count - offset, static_cast<uint32_t>(V_LENGTH));
-            Exp(dstTensor[offset], srcTensor[offset], mask, 1, repeatParams);
+        uint8_t repeatTime = static_cast<uint8_t>(count / V_LENGTH);
+        uint32_t tailCount = count % V_LENGTH;
+        if (repeatTime > 0) {
+            Exp(dstTensor, srcTensor, static_cast<uint64_t>(V_LENGTH), repeatTime, repeatParams);
+        }
+        if (tailCount > 0) {
+            uint32_t tailOffset = count - tailCount;
+            Exp(dstTensor[tailOffset], srcTensor[tailOffset], static_cast<uint64_t>(tailCount), 1, repeatParams);
         }
     }
 

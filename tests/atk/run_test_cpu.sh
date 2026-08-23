@@ -22,6 +22,7 @@ show_usage() {
   ATK_OUTPUT_ROOT                输出根目录，默认 ./atk_output
   ATK_TIMEOUT                    精度阶段超时，默认 14400
   PERFORMANCE_TIMEOUT            性能阶段超时，默认 2000
+  ATK_GM_INIT_MODE               GM 初始化模式，支持 auto/on/off；默认 auto，A5 自动关闭
   ATK_RUN_MODES                  写入 ATK node 配置的 run_modes，默认空列表
   CASE_START/CASE_END            通用 case 顺序范围；不设置时不传 -s/-e，ATK 执行全部用例
   ACCURACY_START/ACCURACY_END    精度与 NaN 检测 case 范围
@@ -97,6 +98,15 @@ run_atk_checked() {
   fi
 }
 
+require_log_result() {
+  local label="$1"
+  local log_path="$2"
+  local result_pattern="$3"
+
+  grep -Eq "$result_pattern" "$log_path" || \
+    die "${label}汇总未通过，请检查 ATK 报告"
+}
+
 write_nodes_config() {
   local config_path="$1"
   local include_cpu="$2"
@@ -166,6 +176,7 @@ SOC="${SOC:-auto}"
 RUN_SCOPE="${RUN_SCOPE:-all}"
 ATK_TIMEOUT="${ATK_TIMEOUT:-14400}"
 PERFORMANCE_TIMEOUT="${PERFORMANCE_TIMEOUT:-2000}"
+ATK_GM_INIT_MODE="${ATK_GM_INIT_MODE:-auto}"
 ATK_RUN_MODES="${ATK_RUN_MODES:-}"
 CASE_START="${CASE_START:-}"
 CASE_END="${CASE_END:-}"
@@ -246,6 +257,11 @@ fi
 case "$RUN_SCOPE" in
   all|accuracy|performance|determinism|mssanitizer|gen_cases) ;;
   *) die "不支持的执行范围：${RUN_SCOPE}" ;;
+esac
+
+case "$ATK_GM_INIT_MODE" in
+  auto|on|off) ;;
+  *) die "不支持的 ATK_GM_INIT_MODE：${ATK_GM_INIT_MODE}，请使用 auto/on/off" ;;
 esac
 
 case "$SOC" in
@@ -339,11 +355,15 @@ fi
 
 if should_run accuracy; then
   GM_INIT_ARGS=()
-  if grep -q -- '--gm_init_flag' <<< "$ATK_TASK_HELP"; then
+  if ! grep -q -- '--gm_init_flag' <<< "$ATK_TASK_HELP"; then
+    log_info "当前 ATK 不支持 --gm_init_flag，继续执行双标杆精度检查"
+  elif [[ "$ATK_GM_INIT_MODE" == "off" ]]; then
+    log_info "ATK_GM_INIT_MODE=off，跳过 GM 初始化检查"
+  elif [[ "$ATK_GM_INIT_MODE" == "auto" && "$SOC" == "ascend950" ]]; then
+    log_info "A5 默认跳过 GM 初始化检查，避免 ATK 按空闲 GM 规模申请内存"
+  else
     GM_INIT_ARGS=(--gm_init_flag)
     log_info "当前 ATK 支持 --gm_init_flag，启用 GM 初始化检查"
-  else
-    log_info "当前 ATK 不支持 --gm_init_flag，继续执行双标杆精度检查"
   fi
   log_info "开始精度检查：accuracy + CPU高精度标杆 + CPU同精度标杆"
   set_case_range_args "精度与 NaN 检测 case 范围" "$ACCURACY_START" "$ACCURACY_END"
@@ -362,6 +382,8 @@ if should_run accuracy; then
       "${ATK_SINGLE_PROCESS_ARGS[@]}" \
       -mt 1 \
       -to "$ATK_TIMEOUT"
+  require_log_result "精度与 NaN 检测" "${ATK_OUTPUT_ROOT}/accuracy.log" \
+    'acc_pass_result:(Pass|Passed)'
   log_info "完成精度检查"
 fi
 
@@ -394,7 +416,10 @@ if should_run determinism; then
       -c "atk_${OP}.json" \
       -p "executor_${OP}.py" \
       --task accuracy_dc \
-      "${CASE_RANGE_ARGS[@]}"
+      "${CASE_RANGE_ARGS[@]}" \
+      "${ATK_SINGLE_PROCESS_ARGS[@]}"
+  require_log_result "确定性测试" "${ATK_OUTPUT_ROOT}/determinism.log" \
+    'is_acc_dc_pass:(Pass|Passed)'
   log_info "完成确定性测试"
 fi
 

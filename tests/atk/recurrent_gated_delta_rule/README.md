@@ -46,6 +46,7 @@ ATK 比较以下两个结果：
 ## 执行方式
 
 执行前先加载 CANN 环境和待测 `fla_npu_transformer` OPP 环境。若使用一体化 wheel，可将 `FLA_NPU_ENV` 指向 wheel 内 `fla_npu/opp/vendors/fla_npu_transformer/bin/set_env.bash`；统一脚本会在启动 ATK 进程前加载它，避免 op_api 与 kernel binary 来自不同安装包。
+ATK 需要同时支持原生 `cv_fused_double_benchmark` 和目标 SOC 的 `performance_device` 后处理；A2 四项调用使用 ATK 26.4.30 验证，A5 使用 ATK 26.7.8 验证。
 
 ```bash
 export FLA_NPU_ENV=<fla_npu_transformer>/bin/set_env.bash
@@ -56,7 +57,7 @@ bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -npu_device_id=0 -
 ```
 
 不传 `-scope` 时默认依次执行上述四项。mssanitizer 必须使用带 sanitizer 信息的 debug OPP 包，并确认日志实际命中目标 kernel。
-精度 scope 会在当前 ATK 支持时自动加入 `--gm_init_flag`；不支持该选项的 ATK 版本仍执行 CPU 高精度与同精度双标杆比较。
+精度 scope 会在当前 ATK 支持时自动加入 `--gm_init_flag`，A5 默认跳过该选项以避免 ATK 按空闲 GM 规模申请内存；不支持该选项的 ATK 版本仍执行 CPU 高精度与同精度双标杆比较。可通过 `ATK_GM_INIT_MODE=on/off` 显式覆盖默认策略。
 内存检查会兼容探测 ATK 的 `--mssanitizer/-msl` 参数；无论 ATK 是否提供内存报告后处理，都由外层 mssanitizer 日志确认目标 kernel 启动、结束且未检测到异常。
 
 用例生成和冻结 JSON 复核命令如下：

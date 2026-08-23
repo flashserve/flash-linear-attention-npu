@@ -70,6 +70,7 @@ npu-smi info
 | `ATK_OUTPUT_ROOT` | ATK 输出根目录，默认是算子目录下的 `./atk_output` |
 | `ATK_TIMEOUT` | 精度阶段超时时间，默认 `14400` |
 | `PERFORMANCE_TIMEOUT` | 性能阶段超时时间，默认 `2000` |
+| `ATK_GM_INIT_MODE` | GM 初始化模式，支持 `auto/on/off`；默认 `auto`，A5 自动关闭 |
 | `MSS_TOOL` | mssanitizer 工具，默认 `memcheck` |
 | `MSS_LOG_PATH` | ATK `-msl` 日志路径；不设置时使用脚本内置路径 |
 
@@ -133,6 +134,9 @@ bash tests/atk/run_test_cpu.sh -op=causal_conv1d -npu_device_id=6
 ```bash
 bash tests/atk/run_test_cpu.sh -op=<op_name> -npu_device_id=<device_id> -scope=accuracy
 ```
+
+精度 scope 在 ATK 支持时默认启用 `--gm_init_flag`；A5 上该选项可能按空闲 GM 规模申请内存，
+`auto` 模式会跳过。需要显式覆盖时设置 `ATK_GM_INIT_MODE=on` 或 `off`。
 
 性能测试使用 ATK `performance_device`：
 
