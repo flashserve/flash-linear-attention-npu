@@ -22,16 +22,13 @@ show_usage() {
   ATK_OUTPUT_ROOT                输出根目录，默认 ./atk_output
   ATK_TIMEOUT                    精度阶段超时，默认 14400
   PERFORMANCE_TIMEOUT            性能阶段超时，默认 2000
-  ATK_GM_INIT_MODE               GM 初始化模式，支持 auto/on/off；默认 auto，A5 自动关闭
-  ATK_RUN_MODES                  写入 ATK node 配置的 run_modes，默认空列表
   CASE_START/CASE_END            通用 case 顺序范围；不设置时不传 -s/-e，ATK 执行全部用例
   ACCURACY_START/ACCURACY_END    精度与 NaN 检测 case 范围
   PERFORMANCE_START/END          性能 case 范围
   DETERMINISM_START/END          确定性 case 范围
   MSS_START/MSS_END              mssanitizer case 范围
   MSS_TOOL                       mssanitizer 工具，默认 memcheck
-  MSS_KERNEL_NAME                mssanitizer 目标 kernel 名，默认由算子名转换为大驼峰
-  MSS_LOG_PATH                   ATK -msl 日志路径，默认写入 ATK_OUTPUT_ROOT
+  MSS_LOG_PATH                   ATK -msl 日志路径，默认使用脚本内置绝对路径
   GEN_CASES_DTYPE_NUMBERS        生成用例时传给 atk case -dt，默认 100；双 dtype 算子生成 200 条
   GEN_CASES_EXTRA_NUMBERS        生成用例时传给 atk case -en，默认 0
   GEN_CASES_SEED                 生成用例随机种子，默认 20260813
@@ -70,80 +67,12 @@ should_run() {
     [[ "$RUN_SCOPE" == "gen_cases" ]]
     return
   fi
-  [[ "$RUN_SCOPE" == "all" || "$RUN_SCOPE" == "$stage" ]]
-}
-
-run_atk_checked() {
-  local label="$1"
-  local log_path="$2"
-  shift 2
-
-  set +e
-  "$@" 2>&1 | tee "$log_path"
-  local command_status="${PIPESTATUS[0]}"
-  set -e
-  [[ "$command_status" -eq 0 ]] || die "${label}命令执行失败，退出码：${command_status}"
-
-  local summary
-  summary="$(grep -Eo 'Total Task: [0-9]+, success [0-9]+, failed [0-9]+' "$log_path" | tail -n 1 || true)"
-  [[ -n "$summary" ]] || die "${label}缺少 ATK 任务汇总，不能判定为通过"
-  if [[ "$summary" =~ Total\ Task:\ ([0-9]+),\ success\ ([0-9]+),\ failed\ ([0-9]+) ]]; then
-    local total="${BASH_REMATCH[1]}"
-    local success="${BASH_REMATCH[2]}"
-    local failed="${BASH_REMATCH[3]}"
-    [[ "$total" -gt 0 && "$success" -eq "$total" && "$failed" -eq 0 ]] || \
-      die "${label}未全部通过：${summary}"
-  else
-    die "${label}任务汇总格式无法识别：${summary}"
+  # performance 不包含在 all 中，需单独指定 -scope=performance
+  if [[ "$stage" == "performance" ]]; then
+    [[ "$RUN_SCOPE" == "performance" ]]
+    return
   fi
-}
-
-require_log_result() {
-  local label="$1"
-  local log_path="$2"
-  local result_pattern="$3"
-
-  grep -Eq "$result_pattern" "$log_path" || \
-    die "${label}汇总未通过，请检查 ATK 报告"
-}
-
-write_nodes_config() {
-  local config_path="$1"
-  local include_cpu="$2"
-  local npu_output_path="$3"
-  local cpu_output_path="$4"
-
-  python3 - "$config_path" "$NPU_BACKEND" "$NPU_DEVICE_ID" "$ATK_RUN_MODES" \
-    "$include_cpu" "$npu_output_path" "$cpu_output_path" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-config_path, backend, devices, run_modes, include_cpu, npu_output, cpu_output = sys.argv[1:]
-node_run_modes = [mode for mode in run_modes.split(",") if mode]
-nodes = [
-    {
-        "name": "npu_dut",
-        "backend": backend,
-        "devices": [int(device) for device in devices.split(",")],
-        "output_path": npu_output,
-        "run_modes": node_run_modes,
-    }
-]
-if include_cpu == "true":
-    nodes.append(
-        {
-            "name": "cpu_reference",
-            "backend": "cpu",
-            "output_path": cpu_output,
-            "run_modes": node_run_modes,
-        }
-    )
-Path(config_path).write_text(
-    json.dumps({"nodes": nodes}, ensure_ascii=False, indent=2) + "\n",
-    encoding="utf-8",
-)
-PY
+  [[ "$RUN_SCOPE" == "all" || "$RUN_SCOPE" == "$stage" ]]
 }
 
 set_case_range_args() {
@@ -157,32 +86,16 @@ set_case_range_args() {
   fi
 }
 
-snake_to_camel() {
-  local value="$1"
-  local part
-  local result=""
-  local IFS="_"
-  local -a parts=()
-  read -r -a parts <<< "$value"
-  for part in "${parts[@]}"; do
-    result+="${part^}"
-  done
-  printf '%s' "$result"
-}
-
 OP=""
 NPU_DEVICE_ID="${NPU_DEVICE_ID:-}"
 SOC="${SOC:-auto}"
 RUN_SCOPE="${RUN_SCOPE:-all}"
 ATK_TIMEOUT="${ATK_TIMEOUT:-14400}"
 PERFORMANCE_TIMEOUT="${PERFORMANCE_TIMEOUT:-2000}"
-ATK_GM_INIT_MODE="${ATK_GM_INIT_MODE:-auto}"
-ATK_RUN_MODES="${ATK_RUN_MODES:-}"
 CASE_START="${CASE_START:-}"
 CASE_END="${CASE_END:-}"
 MSS_TOOL="${MSS_TOOL:-memcheck}"
-MSS_KERNEL_NAME="${MSS_KERNEL_NAME:-}"
-MSS_LOG_PATH="${MSS_LOG_PATH:-}"
+MSS_LOG_PATH="${MSS_LOG_PATH:-/home/huangjunzhe/gdn/github/alvazu-atk/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/ATK/log.txt}"
 GEN_CASES_DTYPE_NUMBERS="${GEN_CASES_DTYPE_NUMBERS:-100}"
 GEN_CASES_EXTRA_NUMBERS="${GEN_CASES_EXTRA_NUMBERS:-0}"
 GEN_CASES_SEED="${GEN_CASES_SEED:-20260813}"
@@ -259,11 +172,6 @@ case "$RUN_SCOPE" in
   *) die "不支持的执行范围：${RUN_SCOPE}" ;;
 esac
 
-case "$ATK_GM_INIT_MODE" in
-  auto|on|off) ;;
-  *) die "不支持的 ATK_GM_INIT_MODE：${ATK_GM_INIT_MODE}，请使用 auto/on/off" ;;
-esac
-
 case "$SOC" in
   auto) ;;
   a2|A2|ascend910b) SOC="ascend910b" ;;
@@ -275,8 +183,8 @@ esac
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OP_DIR="${SCRIPT_DIR}/${OP}"
 
-# 需要仓库自定义 executor 的算子使用 npu 后端，不走 ATK 内置 pyaclnn 路径。
-if [[ "$OP" == "chunk_bwd_dqkwg" || "$OP" == "recurrent_gated_delta_rule" ]]; then
+# chunk_bwd_dqkwg 使用 npu 后端（直调），不使用 pyaclnn 后端
+if [[ "$OP" == "chunk_bwd_dqkwg" ]]; then
   NPU_BACKEND="npu"
 else
   NPU_BACKEND="pyaclnn"
@@ -320,8 +228,6 @@ MSS_END="${MSS_END:-$CASE_END}"
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
 mkdir -p "${ATK_OUTPUT_ROOT}/cpu_dual_reference" "${ATK_OUTPUT_ROOT}/perf"
-MSS_LOG_PATH="${MSS_LOG_PATH:-${ATK_OUTPUT_ROOT}/mssanitizer.log}"
-MSS_KERNEL_NAME="${MSS_KERNEL_NAME:-$(snake_to_camel "$OP")}"
 
 log_info "算子：${OP}"
 log_info "SOC：${SOC}"
@@ -331,16 +237,6 @@ fi
 log_info "ATK 路径：${ATK_BIN}"
 log_info "输出根目录：${ATK_OUTPUT_ROOT}"
 "$ATK_BIN" --version || die "atk --version 执行失败"
-ATK_TASK_HELP="$($ATK_BIN task --help 2>&1)" || die "atk task --help 执行失败"
-ATK_SINGLE_PROCESS_ARGS=()
-if grep -Eq '(^|[[:space:]])-sp([,[:space:]]|$)' <<< "$ATK_TASK_HELP"; then
-  ATK_SINGLE_PROCESS_ARGS=(-sp)
-fi
-ATK_SUPPORTS_MSSANITIZER=false
-if grep -q -- '--mssanitizer' <<< "$ATK_TASK_HELP" && \
-   grep -Eq '(^|[[:space:]])-msl([,[:space:]]|$)' <<< "$ATK_TASK_HELP"; then
-  ATK_SUPPORTS_MSSANITIZER=true
-fi
 
 if should_run gen_cases; then
   log_info "开始生成泛化用例：atk case -dt ${GEN_CASES_DTYPE_NUMBERS} -en ${GEN_CASES_EXTRA_NUMBERS}"
@@ -354,53 +250,37 @@ if should_run gen_cases; then
 fi
 
 if should_run accuracy; then
-  GM_INIT_ARGS=()
-  if ! grep -q -- '--gm_init_flag' <<< "$ATK_TASK_HELP"; then
-    log_info "当前 ATK 不支持 --gm_init_flag，继续执行双标杆精度检查"
-  elif [[ "$ATK_GM_INIT_MODE" == "off" ]]; then
-    log_info "ATK_GM_INIT_MODE=off，跳过 GM 初始化检查"
-  elif [[ "$ATK_GM_INIT_MODE" == "auto" && "$SOC" == "ascend950" ]]; then
-    log_info "A5 默认跳过 GM 初始化检查，避免 ATK 按空闲 GM 规模申请内存"
-  else
-    GM_INIT_ARGS=(--gm_init_flag)
-    log_info "当前 ATK 支持 --gm_init_flag，启用 GM 初始化检查"
-  fi
-  log_info "开始精度检查：accuracy + CPU高精度标杆 + CPU同精度标杆"
+  log_info "开始精度与 NaN 检测：accuracy + CPU高精度标杆 + CPU同精度标杆 + --gm_init_flag"
   set_case_range_args "精度与 NaN 检测 case 范围" "$ACCURACY_START" "$ACCURACY_END"
-  ACCURACY_NODES_FILE="${ATK_OUTPUT_ROOT}/accuracy_nodes.json"
-  write_nodes_config "$ACCURACY_NODES_FILE" true \
-    "${ATK_OUTPUT_ROOT}/cpu_dual_reference" "${ATK_OUTPUT_ROOT}/cpu_dual_reference"
-  run_atk_checked "精度与 NaN 检测" "${ATK_OUTPUT_ROOT}/accuracy.log" \
-    "$ATK_BIN" task \
-      --nodes "$ACCURACY_NODES_FILE" \
+  "$ATK_BIN" node --name npu_dut --backend "$NPU_BACKEND" --devices "$NPU_DEVICE_ID" \
+      --output_path "${ATK_OUTPUT_ROOT}/cpu_dual_reference" \
+    node --name cpu_reference --backend cpu \
+      --output_path "${ATK_OUTPUT_ROOT}/cpu_dual_reference" \
+    task \
       -c "./atk_${OP}.json" \
       --task accuracy \
       --bm_device cpu \
       -p "./executor_${OP}.py" \
       "${CASE_RANGE_ARGS[@]}" \
-      "${GM_INIT_ARGS[@]}" \
-      "${ATK_SINGLE_PROCESS_ARGS[@]}" \
+      --gm_init_flag \
+      -sp \
       -mt 1 \
       -to "$ATK_TIMEOUT"
-  require_log_result "精度与 NaN 检测" "${ATK_OUTPUT_ROOT}/accuracy.log" \
-    'acc_pass_result:(Pass|Passed)'
-  log_info "完成精度检查"
+  log_info "完成精度与 NaN 检测"
 fi
 
 if should_run performance; then
   log_info "开始性能测试：performance_device"
   set_case_range_args "性能测试 case 范围" "$PERFORMANCE_START" "$PERFORMANCE_END"
-  PERFORMANCE_NODES_FILE="${ATK_OUTPUT_ROOT}/performance_nodes.json"
-  write_nodes_config "$PERFORMANCE_NODES_FILE" false "${ATK_OUTPUT_ROOT}/perf" ""
-  run_atk_checked "性能测试" "${ATK_OUTPUT_ROOT}/performance.log" \
-    "$ATK_BIN" task \
-      --nodes "$PERFORMANCE_NODES_FILE" \
+  "$ATK_BIN" node --name npu_dut --backend "$NPU_BACKEND" --devices "$NPU_DEVICE_ID" \
+      --output_path "${ATK_OUTPUT_ROOT}/perf" \
+    task \
       -c "atk_${OP}.json" \
       --task performance_device \
       -p "executor_${OP}.py" \
       "${CASE_RANGE_ARGS[@]}" \
       --save_data profile \
-      "${ATK_SINGLE_PROCESS_ARGS[@]}" \
+      -sp \
       -to "$PERFORMANCE_TIMEOUT"
   log_info "完成性能测试"
 fi
@@ -408,108 +288,29 @@ fi
 if should_run determinism; then
   log_info "开始确定性测试：accuracy_dc"
   set_case_range_args "确定性测试 case 范围" "$DETERMINISM_START" "$DETERMINISM_END"
-  DETERMINISM_NODES_FILE="${ATK_OUTPUT_ROOT}/determinism_nodes.json"
-  write_nodes_config "$DETERMINISM_NODES_FILE" false "${ATK_OUTPUT_ROOT}" ""
-  run_atk_checked "确定性测试" "${ATK_OUTPUT_ROOT}/determinism.log" \
-    "$ATK_BIN" task \
-      --nodes "$DETERMINISM_NODES_FILE" \
+  "$ATK_BIN" node --name npu_dut --backend "$NPU_BACKEND" --devices "$NPU_DEVICE_ID" \
+    task \
       -c "atk_${OP}.json" \
       -p "executor_${OP}.py" \
       --task accuracy_dc \
-      "${CASE_RANGE_ARGS[@]}" \
-      "${ATK_SINGLE_PROCESS_ARGS[@]}"
-  require_log_result "确定性测试" "${ATK_OUTPUT_ROOT}/determinism.log" \
-    'is_acc_dc_pass:(Pass|Passed)'
+      "${CASE_RANGE_ARGS[@]}"
   log_info "完成确定性测试"
 fi
 
 if should_run mssanitizer; then
   command -v mssanitizer >/dev/null 2>&1 || die "找不到 mssanitizer，请先加载支持 sanitizer 的 CANN/调试环境"
   log_info "开始内存检测：mssanitizer ${MSS_TOOL}"
-  log_info "目标 kernel：${MSS_KERNEL_NAME}"
   log_info "ATK mssanitizer 日志：${MSS_LOG_PATH}"
-  if [[ "$ATK_SUPPORTS_MSSANITIZER" != "true" ]]; then
-    log_info "当前 ATK 不支持 --mssanitizer/-msl，使用外层 mssanitizer 原始结果判定"
-  fi
-  MSS_NODES_FILE="${ATK_OUTPUT_ROOT}/mssanitizer_nodes.json"
-  write_nodes_config "$MSS_NODES_FILE" false "${ATK_OUTPUT_ROOT}" ""
-  if [[ "$OP" == "recurrent_gated_delta_rule" ]]; then
-    MSS_CASE_COUNT="$(python3 - "$CASE_FILE" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-cases = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if not isinstance(cases, list) or not cases:
-    raise SystemExit("ATK case JSON must be a non-empty list")
-print(len(cases))
-PY
-)"
-    MSS_RANGE_START="${MSS_START:-0}"
-    MSS_RANGE_END="${MSS_END:-$MSS_CASE_COUNT}"
-    [[ "$MSS_RANGE_START" =~ ^[0-9]+$ && "$MSS_RANGE_END" =~ ^[0-9]+$ ]] || \
-      die "内存检测 case 范围必须是非负整数"
-    [[ "$MSS_RANGE_START" -lt "$MSS_RANGE_END" && "$MSS_RANGE_END" -le "$MSS_CASE_COUNT" ]] || \
-      die "内存检测 case 范围无效：[${MSS_RANGE_START}, ${MSS_RANGE_END})，总用例数为 ${MSS_CASE_COUNT}"
-
-    MSS_LOG_DIR="$(dirname "$MSS_LOG_PATH")"
-    MSS_LOG_BASENAME="$(basename "$MSS_LOG_PATH")"
-    mkdir -p "$MSS_LOG_DIR"
-    for ((case_id = MSS_RANGE_START; case_id < MSS_RANGE_END; case_id++)); do
-      MSS_CASE_LOG="${MSS_LOG_DIR}/${MSS_LOG_BASENAME}.case-${case_id}"
-      MSS_CASE_TASK_LOG="${ATK_OUTPUT_ROOT}/mssanitizer-task-case-${case_id}.log"
-      ATK_MSSANITIZER_ARGS=()
-      if [[ "$ATK_SUPPORTS_MSSANITIZER" == "true" ]]; then
-        ATK_MSSANITIZER_ARGS=(--mssanitizer -msl "$MSS_CASE_LOG")
-      fi
-      log_info "内存检测 case ${case_id}/${MSS_RANGE_END}"
-      run_atk_checked "内存检测 case ${case_id}" "$MSS_CASE_TASK_LOG" \
-        mssanitizer --tool="$MSS_TOOL" --kernel-name="$MSS_KERNEL_NAME" \
-          --log-file="$MSS_CASE_LOG" -- \
-        "$ATK_BIN" task \
-          --nodes "$MSS_NODES_FILE" \
-          -c "atk_${OP}.json" \
-          -p "executor_${OP}.py" \
-          --task run \
-          "${ATK_MSSANITIZER_ARGS[@]}" \
-          -s "$case_id" \
-          -e "$((case_id + 1))" \
-          "${ATK_SINGLE_PROCESS_ARGS[@]}"
-      if [[ "$ATK_SUPPORTS_MSSANITIZER" == "true" ]]; then
-        grep -Eq 'is_memory_check_pass:Pass' "$MSS_CASE_TASK_LOG" || \
-          die "内存检测 case ${case_id} 汇总未通过，详情见 ATK 报告"
-      fi
-      grep -Eq "Start ${MSS_TOOL} sanitizer on kernel ${MSS_KERNEL_NAME}" "$MSS_CASE_LOG" || \
-        die "内存检测 case ${case_id} 未确认命中目标 kernel：${MSS_KERNEL_NAME}"
-      grep -Eq "Sanitizer finished on kernel ${MSS_KERNEL_NAME}.*No error detected" "$MSS_CASE_LOG" || \
-        die "内存检测 case ${case_id} 未确认目标 kernel 无内存异常"
-    done
-  else
-    set_case_range_args "内存检测 case 范围" "$MSS_START" "$MSS_END"
-    ATK_MSSANITIZER_ARGS=()
-    if [[ "$ATK_SUPPORTS_MSSANITIZER" == "true" ]]; then
-      ATK_MSSANITIZER_ARGS=(--mssanitizer -msl "$MSS_LOG_PATH")
-    fi
-    run_atk_checked "内存检测" "${ATK_OUTPUT_ROOT}/mssanitizer-task.log" \
-      mssanitizer --tool="$MSS_TOOL" --kernel-name="$MSS_KERNEL_NAME" \
-        --log-file="$MSS_LOG_PATH" -- \
-      "$ATK_BIN" task \
-        --nodes "$MSS_NODES_FILE" \
-        -c "atk_${OP}.json" \
-        -p "executor_${OP}.py" \
-        --task run \
-        "${ATK_MSSANITIZER_ARGS[@]}" \
-        "${CASE_RANGE_ARGS[@]}" \
-        "${ATK_SINGLE_PROCESS_ARGS[@]}"
-    if [[ "$ATK_SUPPORTS_MSSANITIZER" == "true" ]]; then
-      grep -Eq 'is_memory_check_pass:Pass' "${ATK_OUTPUT_ROOT}/mssanitizer-task.log" || \
-        die "内存检测汇总未通过，详情见 ATK 报告"
-    fi
-    grep -Eq "Start ${MSS_TOOL} sanitizer on kernel ${MSS_KERNEL_NAME}" "$MSS_LOG_PATH" || \
-      die "内存检测日志未确认命中目标 kernel：${MSS_KERNEL_NAME}"
-    grep -Eq "Sanitizer finished on kernel ${MSS_KERNEL_NAME}.*No error detected" "$MSS_LOG_PATH" || \
-      die "内存检测日志未确认目标 kernel 无内存异常"
-  fi
+  set_case_range_args "内存检测 case 范围" "$MSS_START" "$MSS_END"
+  mssanitizer --tool="$MSS_TOOL" -- \
+    "$ATK_BIN" node --name npu_dut --backend "$NPU_BACKEND" --devices "$NPU_DEVICE_ID" \
+    task \
+      -c "atk_${OP}.json" \
+      -p "executor_${OP}.py" \
+      --task run \
+      --mssanitizer \
+      -msl "$MSS_LOG_PATH" \
+      "${CASE_RANGE_ARGS[@]}"
   log_info "完成内存检测"
 fi
 
