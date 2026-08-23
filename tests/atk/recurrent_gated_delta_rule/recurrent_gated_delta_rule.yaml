@@ -2,7 +2,7 @@ api: pytorch
 api_type: executor_recurrent_gated_delta_rule
 version: v2.1
 name: recurrent_gated_delta_rule
-aclnn_name:
+aclnn_name: RecurrentGatedDeltaRule
 generate: generator_recurrent_gated_delta_rule
 dtype_numbers: 1
 extra_numbers: 0
@@ -18,7 +18,7 @@ inputs:
     type: tensor
     required: true
     dtypes:
-      values: [bf16, fp16]
+      values: [bf16]
     ranges:
       valid:
         values: [[0, 0]]
@@ -48,10 +48,10 @@ inputs:
     type: attr
     required: true
     dtypes:
-      values: [non_param]
+      values: [string]
     ranges:
       valid:
-        values: ["{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"T\":2,\"HK\":1,\"HV\":1,\"K\":128,\"V\":128,\"block_num\":1,\"op\":\"recurrent_gated_delta_rule\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
+        values: ["{\"B\":1,\"HK\":1,\"HV\":1,\"K\":64,\"T\":1,\"V\":64,\"block_num\":1,\"case_id\":0,\"dtype\":\"bf16\",\"gate_mode\":\"g\",\"name\":\"minimal_g_bf16_state\",\"op\":\"recurrent_gated_delta_rule\",\"route\":\"ascendc\",\"scale\":0.125,\"seed\":20260823,\"seq_lengths\":[1],\"soc\":\"all\",\"state_dtype\":\"bf16\"}"]
       invalid:
         values: []
   - name: dtype
@@ -64,6 +64,16 @@ inputs:
         values: ["bf16"]
       invalid:
         values: []
+  - name: state_dtype
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["bf16", "fp32"]
+      invalid:
+        values: []
   - name: B
     type: attr
     required: true
@@ -71,7 +81,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1]
+        values: [1, 2, 3]
       invalid:
         values: []
   - name: T
@@ -81,7 +91,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [2]
+        values: [1, 2, 3, 4, 5, 6, 8]
       invalid:
         values: []
   - name: HK
@@ -91,7 +101,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1]
+        values: [1, 2, 4]
       invalid:
         values: []
   - name: HV
@@ -101,7 +111,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1]
+        values: [1, 2, 4, 8]
       invalid:
         values: []
   - name: K
@@ -111,7 +121,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [128]
+        values: [64, 80, 128, 512]
       invalid:
         values: []
   - name: V
@@ -121,7 +131,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [128]
+        values: [64, 80, 96, 128, 256, 512]
       invalid:
         values: []
   - name: block_num
@@ -131,7 +141,37 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1]
+        values: [1, 2, 3, 4, 5, 6, 8]
+      invalid:
+        values: []
+  - name: gate_mode
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["g", "gk", "both"]
+      invalid:
+        values: []
+  - name: use_accepted_tokens
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false, true]
+      invalid:
+        values: []
+  - name: prefix_tokens
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0, 2]
       invalid:
         values: []
   - name: case_id
@@ -141,7 +181,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [0]
+        values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
       invalid:
         values: []
   - name: seed
@@ -151,7 +191,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [20260817]
+        values: [20260823]
       invalid:
         values: []
   - name: soc

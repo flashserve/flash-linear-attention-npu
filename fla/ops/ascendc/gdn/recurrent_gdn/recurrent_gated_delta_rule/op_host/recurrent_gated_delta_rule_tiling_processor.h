@@ -146,7 +146,9 @@ private:
         bool valid = false;
     };
 
-    const RecurrentGatedDeltaRuleTilingContext &ctx_;
+    // BuildProcessorContext() is passed as a temporary by the aclnn tiling path.
+    // Keep a copy so the processor never retains a dangling reference.
+    RecurrentGatedDeltaRuleTilingContext ctx_;
 
     bool CheckDimEqual(const gert::Shape a, const int64_t dimA, gert::Shape b, const int64_t dimB,
                        const std::string &nameA, const std::string &nameB, const std::string &dimDesc) const

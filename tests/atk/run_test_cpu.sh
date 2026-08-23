@@ -22,13 +22,14 @@ show_usage() {
   ATK_OUTPUT_ROOT                输出根目录，默认 ./atk_output
   ATK_TIMEOUT                    精度阶段超时，默认 14400
   PERFORMANCE_TIMEOUT            性能阶段超时，默认 2000
+  ATK_RUN_MODES                  写入 ATK node 配置的 run_modes，默认空列表
   CASE_START/CASE_END            通用 case 顺序范围；不设置时不传 -s/-e，ATK 执行全部用例
   ACCURACY_START/ACCURACY_END    精度与 NaN 检测 case 范围
   PERFORMANCE_START/END          性能 case 范围
   DETERMINISM_START/END          确定性 case 范围
   MSS_START/MSS_END              mssanitizer case 范围
   MSS_TOOL                       mssanitizer 工具，默认 memcheck
-  MSS_LOG_PATH                   ATK -msl 日志路径，默认使用脚本内置绝对路径
+  MSS_LOG_PATH                   ATK -msl 日志路径，默认写入 ATK_OUTPUT_ROOT
   GEN_CASES_DTYPE_NUMBERS        生成用例时传给 atk case -dt，默认 100；双 dtype 算子生成 200 条
   GEN_CASES_EXTRA_NUMBERS        生成用例时传给 atk case -en，默认 0
   GEN_CASES_SEED                 生成用例随机种子，默认 20260813
@@ -75,6 +76,70 @@ should_run() {
   [[ "$RUN_SCOPE" == "all" || "$RUN_SCOPE" == "$stage" ]]
 }
 
+run_atk_checked() {
+  local label="$1"
+  local log_path="$2"
+  shift 2
+
+  set +e
+  "$@" 2>&1 | tee "$log_path"
+  local command_status="${PIPESTATUS[0]}"
+  set -e
+  [[ "$command_status" -eq 0 ]] || die "${label}命令执行失败，退出码：${command_status}"
+
+  local summary
+  summary="$(grep -Eo 'Total Task: [0-9]+, success [0-9]+, failed [0-9]+' "$log_path" | tail -n 1 || true)"
+  [[ -n "$summary" ]] || die "${label}缺少 ATK 任务汇总，不能判定为通过"
+  if [[ "$summary" =~ Total\ Task:\ ([0-9]+),\ success\ ([0-9]+),\ failed\ ([0-9]+) ]]; then
+    local total="${BASH_REMATCH[1]}"
+    local success="${BASH_REMATCH[2]}"
+    local failed="${BASH_REMATCH[3]}"
+    [[ "$total" -gt 0 && "$success" -eq "$total" && "$failed" -eq 0 ]] || \
+      die "${label}未全部通过：${summary}"
+  else
+    die "${label}任务汇总格式无法识别：${summary}"
+  fi
+}
+
+write_nodes_config() {
+  local config_path="$1"
+  local include_cpu="$2"
+  local npu_output_path="$3"
+  local cpu_output_path="$4"
+
+  python3 - "$config_path" "$NPU_BACKEND" "$NPU_DEVICE_ID" "$ATK_RUN_MODES" \
+    "$include_cpu" "$npu_output_path" "$cpu_output_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+config_path, backend, devices, run_modes, include_cpu, npu_output, cpu_output = sys.argv[1:]
+node_run_modes = [mode for mode in run_modes.split(",") if mode]
+nodes = [
+    {
+        "name": "npu_dut",
+        "backend": backend,
+        "devices": [int(device) for device in devices.split(",")],
+        "output_path": npu_output,
+        "run_modes": node_run_modes,
+    }
+]
+if include_cpu == "true":
+    nodes.append(
+        {
+            "name": "cpu_reference",
+            "backend": "cpu",
+            "output_path": cpu_output,
+            "run_modes": node_run_modes,
+        }
+    )
+Path(config_path).write_text(
+    json.dumps({"nodes": nodes}, ensure_ascii=False, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
 set_case_range_args() {
   local label="$1"
   local start="$2"
@@ -92,10 +157,11 @@ SOC="${SOC:-auto}"
 RUN_SCOPE="${RUN_SCOPE:-all}"
 ATK_TIMEOUT="${ATK_TIMEOUT:-14400}"
 PERFORMANCE_TIMEOUT="${PERFORMANCE_TIMEOUT:-2000}"
+ATK_RUN_MODES="${ATK_RUN_MODES:-}"
 CASE_START="${CASE_START:-}"
 CASE_END="${CASE_END:-}"
 MSS_TOOL="${MSS_TOOL:-memcheck}"
-MSS_LOG_PATH="${MSS_LOG_PATH:-/home/huangjunzhe/gdn/github/alvazu-atk/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/ATK/log.txt}"
+MSS_LOG_PATH="${MSS_LOG_PATH:-}"
 GEN_CASES_DTYPE_NUMBERS="${GEN_CASES_DTYPE_NUMBERS:-100}"
 GEN_CASES_EXTRA_NUMBERS="${GEN_CASES_EXTRA_NUMBERS:-0}"
 GEN_CASES_SEED="${GEN_CASES_SEED:-20260813}"
@@ -183,8 +249,8 @@ esac
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OP_DIR="${SCRIPT_DIR}/${OP}"
 
-# chunk_bwd_dqkwg 使用 npu 后端（直调），不使用 pyaclnn 后端
-if [[ "$OP" == "chunk_bwd_dqkwg" ]]; then
+# 需要仓库自定义 executor 的算子使用 npu 后端，不走 ATK 内置 pyaclnn 路径。
+if [[ "$OP" == "chunk_bwd_dqkwg" || "$OP" == "recurrent_gated_delta_rule" ]]; then
   NPU_BACKEND="npu"
 else
   NPU_BACKEND="pyaclnn"
@@ -228,6 +294,7 @@ MSS_END="${MSS_END:-$CASE_END}"
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
 mkdir -p "${ATK_OUTPUT_ROOT}/cpu_dual_reference" "${ATK_OUTPUT_ROOT}/perf"
+MSS_LOG_PATH="${MSS_LOG_PATH:-${ATK_OUTPUT_ROOT}/mssanitizer.log}"
 
 log_info "算子：${OP}"
 log_info "SOC：${SOC}"
@@ -252,11 +319,12 @@ fi
 if should_run accuracy; then
   log_info "开始精度与 NaN 检测：accuracy + CPU高精度标杆 + CPU同精度标杆 + --gm_init_flag"
   set_case_range_args "精度与 NaN 检测 case 范围" "$ACCURACY_START" "$ACCURACY_END"
-  "$ATK_BIN" node --name npu_dut --backend "$NPU_BACKEND" --devices "$NPU_DEVICE_ID" \
-      --output_path "${ATK_OUTPUT_ROOT}/cpu_dual_reference" \
-    node --name cpu_reference --backend cpu \
-      --output_path "${ATK_OUTPUT_ROOT}/cpu_dual_reference" \
-    task \
+  ACCURACY_NODES_FILE="${ATK_OUTPUT_ROOT}/accuracy_nodes.json"
+  write_nodes_config "$ACCURACY_NODES_FILE" true \
+    "${ATK_OUTPUT_ROOT}/cpu_dual_reference" "${ATK_OUTPUT_ROOT}/cpu_dual_reference"
+  run_atk_checked "精度与 NaN 检测" "${ATK_OUTPUT_ROOT}/accuracy.log" \
+    "$ATK_BIN" task \
+      --nodes "$ACCURACY_NODES_FILE" \
       -c "./atk_${OP}.json" \
       --task accuracy \
       --bm_device cpu \
@@ -272,9 +340,11 @@ fi
 if should_run performance; then
   log_info "开始性能测试：performance_device"
   set_case_range_args "性能测试 case 范围" "$PERFORMANCE_START" "$PERFORMANCE_END"
-  "$ATK_BIN" node --name npu_dut --backend "$NPU_BACKEND" --devices "$NPU_DEVICE_ID" \
-      --output_path "${ATK_OUTPUT_ROOT}/perf" \
-    task \
+  PERFORMANCE_NODES_FILE="${ATK_OUTPUT_ROOT}/performance_nodes.json"
+  write_nodes_config "$PERFORMANCE_NODES_FILE" false "${ATK_OUTPUT_ROOT}/perf" ""
+  run_atk_checked "性能测试" "${ATK_OUTPUT_ROOT}/performance.log" \
+    "$ATK_BIN" task \
+      --nodes "$PERFORMANCE_NODES_FILE" \
       -c "atk_${OP}.json" \
       --task performance_device \
       -p "executor_${OP}.py" \
@@ -288,8 +358,11 @@ fi
 if should_run determinism; then
   log_info "开始确定性测试：accuracy_dc"
   set_case_range_args "确定性测试 case 范围" "$DETERMINISM_START" "$DETERMINISM_END"
-  "$ATK_BIN" node --name npu_dut --backend "$NPU_BACKEND" --devices "$NPU_DEVICE_ID" \
-    task \
+  DETERMINISM_NODES_FILE="${ATK_OUTPUT_ROOT}/determinism_nodes.json"
+  write_nodes_config "$DETERMINISM_NODES_FILE" false "${ATK_OUTPUT_ROOT}" ""
+  run_atk_checked "确定性测试" "${ATK_OUTPUT_ROOT}/determinism.log" \
+    "$ATK_BIN" task \
+      --nodes "$DETERMINISM_NODES_FILE" \
       -c "atk_${OP}.json" \
       -p "executor_${OP}.py" \
       --task accuracy_dc \
@@ -302,9 +375,12 @@ if should_run mssanitizer; then
   log_info "开始内存检测：mssanitizer ${MSS_TOOL}"
   log_info "ATK mssanitizer 日志：${MSS_LOG_PATH}"
   set_case_range_args "内存检测 case 范围" "$MSS_START" "$MSS_END"
-  mssanitizer --tool="$MSS_TOOL" -- \
-    "$ATK_BIN" node --name npu_dut --backend "$NPU_BACKEND" --devices "$NPU_DEVICE_ID" \
-    task \
+  MSS_NODES_FILE="${ATK_OUTPUT_ROOT}/mssanitizer_nodes.json"
+  write_nodes_config "$MSS_NODES_FILE" false "${ATK_OUTPUT_ROOT}" ""
+  run_atk_checked "内存检测" "${ATK_OUTPUT_ROOT}/mssanitizer-task.log" \
+    mssanitizer --tool="$MSS_TOOL" -- \
+    "$ATK_BIN" task \
+      --nodes "$MSS_NODES_FILE" \
       -c "atk_${OP}.json" \
       -p "executor_${OP}.py" \
       --task run \

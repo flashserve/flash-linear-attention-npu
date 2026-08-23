@@ -181,6 +181,22 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
+    "aclnnRecurrentGatedDeltaRule": [
+        ctypes.c_void_p,  # query
+        ctypes.c_void_p,  # key
+        ctypes.c_void_p,  # value
+        ctypes.c_void_p,  # beta
+        ctypes.c_void_p,  # stateRef
+        ctypes.c_void_p,  # actualSeqLengths
+        ctypes.c_void_p,  # ssmStateIndices
+        ctypes.c_void_p,  # g
+        ctypes.c_void_p,  # gk
+        ctypes.c_void_p,  # numAcceptedTokens
+        ctypes.c_float,  # scaleValue
+        ctypes.c_void_p,  # out
+        ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
+        ctypes.POINTER(ctypes.c_void_p),  # executor
+    ],
     "aclnnChunkLocalCumsum": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -825,22 +841,33 @@ def npu_recurrent_gated_delta_rule(
     if not math.isfinite(scale):
         raise ValueError(f"{op_name}: scale must be finite, got {scale}.")
 
-    out = _empty_like(value)
+    def nd_tensor(ctx, tensor, name):
+        if tensor is None:
+            return ctx.tensor(tensor, name)
+        storage_shape = _shape(tensor) if tensor.is_contiguous() else None
+        return ctx.tensor(
+            tensor,
+            name,
+            acl_format_override=ACL_FORMAT_ND,
+            storage_shape_override=storage_shape,
+        )
+
+    out = _empty(_shape(value), value)
     return _call_aclnn(
         "aclnnRecurrentGatedDeltaRule",
         lambda ctx: [
-            ctx.tensor(query, "query"),
-            ctx.tensor(key, "key"),
-            ctx.tensor(value, "value"),
-            ctx.tensor(beta, "beta"),
-            ctx.tensor(state, "state"),
-            ctx.tensor(actual_seq_lengths, "actual_seq_lengths"),
-            ctx.tensor(ssm_state_indices, "ssm_state_indices"),
-            ctx.tensor(g, "g"),
-            ctx.tensor(gk, "gk"),
-            ctx.tensor(num_accepted_tokens, "num_accepted_tokens"),
+            nd_tensor(ctx, query, "query"),
+            nd_tensor(ctx, key, "key"),
+            nd_tensor(ctx, value, "value"),
+            nd_tensor(ctx, beta, "beta"),
+            nd_tensor(ctx, state, "state"),
+            nd_tensor(ctx, actual_seq_lengths, "actual_seq_lengths"),
+            nd_tensor(ctx, ssm_state_indices, "ssm_state_indices"),
+            nd_tensor(ctx, g, "g"),
+            nd_tensor(ctx, gk, "gk"),
+            nd_tensor(ctx, num_accepted_tokens, "num_accepted_tokens"),
             ctypes.c_float(scale),
-            ctx.tensor(out, "out"),
+            nd_tensor(ctx, out, "out"),
         ],
         out,
     )
