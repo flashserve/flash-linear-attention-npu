@@ -414,6 +414,8 @@ static __simd_vf__ inline void PrepareKdaGateQwKgRegbase(
             RegTensor<float> directOneReg;
             RegTensor<float> finalNegZeroReg;
             RegTensor<float> finalNegOneReg;
+            RegTensor<float> finalKZeroReg;
+            RegTensor<float> finalKOneReg;
             RegTensor<float> inputZeroReg;
             RegTensor<float> inputOneReg;
             RegTensor<float> outputZeroReg;
@@ -474,6 +476,11 @@ static __simd_vf__ inline void PrepareKdaGateQwKgRegbase(
                 qOut + offset, outputZeroReg, outputOneReg, inputMask, floatMask);
 
             LoadKdaGateRegbasePair<InputT>(inputZeroReg, inputOneReg, k + offset, inputMask);
+            if constexpr (EXPORT_FINAL_KG) {
+                // wOut may alias k, and STORE_DIRECT later reuses inputZeroReg/inputOneReg for V.
+                Adds(finalKZeroReg, inputZeroReg, 0.0f, floatMask);
+                Adds(finalKOneReg, inputOneReg, 0.0f, floatMask);
+            }
             if constexpr (STORE_DIRECT || SCALE_SCORE_W) {
                 LoadAlign<float, LoadDist::DIST_BRC_B32>(betaReg, beta + row);
             }
@@ -532,8 +539,7 @@ static __simd_vf__ inline void PrepareKdaGateQwKgRegbase(
                 Maxs(finalNegOneReg, finalNegOneReg, KDA_EXP_INPUT_MIN, floatMask);
                 ExpFloatTwoReg(finalNegZeroReg, finalNegOneReg,
                                finalNegZeroReg, finalNegOneReg, floatMask);
-                LoadKdaGateRegbasePair<InputT>(inputZeroReg, inputOneReg, k + offset, inputMask);
-                MulFloatTwoReg(outputZeroReg, outputOneReg, inputZeroReg, inputOneReg,
+                MulFloatTwoReg(outputZeroReg, outputOneReg, finalKZeroReg, finalKOneReg,
                                finalNegZeroReg, finalNegOneReg, floatMask);
                 StoreKdaGateRegbasePair<InputT>(
                     finalKgOut + offset, outputZeroReg, outputOneReg, inputMask, floatMask);
@@ -904,6 +910,7 @@ public:
         isVarLen_ = tiling.isVarLen;
         inputSequenceMajor_ = tiling.inputSequenceMajor;
         fusePostWu_ = tiling.fusePostWu;
+        materializeFinalKg_ = tiling.fusePostWu || tiling.fusePostWuIntoFwdH;
         computeGateInPrepare_ = tiling.computeGateInPrepare;
         hasALog_ = tiling.hasALog;
         hasDtBias_ = tiling.hasDtBias;
@@ -1718,7 +1725,7 @@ private:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             bool fuseQwKg = SAFE_GATE && BT_ == 64 && K_ == 128 && V_ == 128 && subBlockNum == 1;
             if (fuseQwKg) {
-                PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true, false, true>(
+                PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true, exportFinalKg, true>(
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
                     (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(qScore.GetPhyAddr()),
@@ -1728,26 +1735,13 @@ private:
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(directW.GetPhyAddr()),
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(vTyped.GetPhyAddr()),
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(directV.GetPhyAddr()),
-                    nullptr,
+                    (__ubuf__ T *)reinterpret_cast<uint64_t>(vTyped.GetPhyAddr()),
                     (__ubuf__ float *)reinterpret_cast<uint64_t>(betaFp32.GetPhyAddr()),
                     (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
                     (__ubuf__ float *)reinterpret_cast<uint64_t>(refFp32.GetPhyAddr()),
-                    nullptr,
+                    (__ubuf__ float *)reinterpret_cast<uint64_t>(finalRefFp32.GetPhyAddr()),
                     static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_),
                     static_cast<uint16_t>(tileRows));
-                if constexpr (exportFinalKg) {
-                    // vTyped remains an input to the fused direct-V write. Produce finalKg only
-                    // after that call completes so its writeback cannot race the first V load.
-                    // The typed helper also keeps BF16 finalKg within the score-safe exp range.
-                    PipeBarrier<PIPE_V>();
-                    PrepareKdaGateKgRegbase<T, T, GK_T, true>(
-                        (__ubuf__ T *)reinterpret_cast<uint64_t>(vTyped.GetPhyAddr()),
-                        (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
-                        (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
-                        (__ubuf__ float *)reinterpret_cast<uint64_t>(finalRefFp32.GetPhyAddr()),
-                        static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_),
-                        static_cast<uint16_t>(tileRows));
-                }
             } else {
                 PrepareKdaGateQwRegbase<T, SCORE_T, GK_T, true>(
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
@@ -1979,6 +1973,10 @@ private:
             LoadGateScoreRef(refFp32, b, hv, refToken);
         }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        LocalTensor<float> finalRefFp32 = exp2Buf_.Get<float>()[K_];
+        if (materializeFinalKg_) {
+            LoadGateScoreRef(finalRefFp32, b, hv, start + curT - 1);
+        }
         const bool fuseScoreWriteback =
             writeScoreScratch && useRef && K_ * 2 <= EXP2_UB_ELEMENTS;
 #endif
@@ -2073,22 +2071,42 @@ private:
             }
             if (writeScoreScratch) {
                 if (fuseScoreWriteback) {
-                    PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true, false, true>(
-                        (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
-                        (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
-                        (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(qScore.GetPhyAddr()),
-                        (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(wScore.GetPhyAddr()),
-                        (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(kgScore.GetPhyAddr()),
-                        (__ubuf__ T *)reinterpret_cast<uint64_t>(directQ.GetPhyAddr()),
-                        (__ubuf__ T *)reinterpret_cast<uint64_t>(directW.GetPhyAddr()),
-                        (__ubuf__ T *)reinterpret_cast<uint64_t>(vTyped.GetPhyAddr()),
-                        (__ubuf__ T *)reinterpret_cast<uint64_t>(directV.GetPhyAddr()),
-                        nullptr,
-                        (__ubuf__ float *)reinterpret_cast<uint64_t>(betaFp32.GetPhyAddr()),
-                        (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
-                        (__ubuf__ float *)reinterpret_cast<uint64_t>(refFp32.GetPhyAddr()),
-                        nullptr,
-                        static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_), validRows);
+                    if (materializeFinalKg_) {
+                        PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true, true, true>(
+                            (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
+                            (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
+                            (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(qScore.GetPhyAddr()),
+                            (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(wScore.GetPhyAddr()),
+                            (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(kgScore.GetPhyAddr()),
+                            (__ubuf__ T *)reinterpret_cast<uint64_t>(directQ.GetPhyAddr()),
+                            (__ubuf__ T *)reinterpret_cast<uint64_t>(directW.GetPhyAddr()),
+                            (__ubuf__ T *)reinterpret_cast<uint64_t>(vTyped.GetPhyAddr()),
+                            (__ubuf__ T *)reinterpret_cast<uint64_t>(directV.GetPhyAddr()),
+                            (__ubuf__ T *)reinterpret_cast<uint64_t>(vTyped.GetPhyAddr()),
+                            (__ubuf__ float *)reinterpret_cast<uint64_t>(betaFp32.GetPhyAddr()),
+                            (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
+                            (__ubuf__ float *)reinterpret_cast<uint64_t>(refFp32.GetPhyAddr()),
+                            (__ubuf__ float *)reinterpret_cast<uint64_t>(finalRefFp32.GetPhyAddr()),
+                            static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_),
+                            validRows);
+                    } else {
+                        PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true, false, true>(
+                            (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
+                            (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
+                            (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(qScore.GetPhyAddr()),
+                            (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(wScore.GetPhyAddr()),
+                            (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(kgScore.GetPhyAddr()),
+                            (__ubuf__ T *)reinterpret_cast<uint64_t>(directQ.GetPhyAddr()),
+                            (__ubuf__ T *)reinterpret_cast<uint64_t>(directW.GetPhyAddr()),
+                            (__ubuf__ T *)reinterpret_cast<uint64_t>(vTyped.GetPhyAddr()),
+                            (__ubuf__ T *)reinterpret_cast<uint64_t>(directV.GetPhyAddr()),
+                            nullptr,
+                            (__ubuf__ float *)reinterpret_cast<uint64_t>(betaFp32.GetPhyAddr()),
+                            (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
+                            (__ubuf__ float *)reinterpret_cast<uint64_t>(refFp32.GetPhyAddr()),
+                            nullptr,
+                            static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_), validRows);
+                    }
                 } else {
                     PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, false, false>(
                         (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
@@ -2227,6 +2245,9 @@ private:
                     StorePreparedQG(b, hv, token, directQ, elems);
                     CopyVectorOut(w_, KVOffset(b, hv, token, 0, K_), directW, elems);
                     CopyVectorOut(vNew_, KVOffset(b, hv, token, 0, V_), directV, tileRows * V_);
+                    if (materializeFinalKg_) {
+                        CopyVectorOut(finalKg_, KVOffset(b, hv, token, 0, K_), vTyped, elems);
+                    }
                 }
 #endif
             } else {
@@ -5066,6 +5087,7 @@ private:
     bool headPairMode_ = false;
     bool inputSequenceMajor_ = false;
     bool fusePostWu_ = false;
+    bool materializeFinalKg_ = false;
     bool computeGateInPrepare_ = false;
     bool hasALog_ = false;
     bool hasDtBias_ = false;
