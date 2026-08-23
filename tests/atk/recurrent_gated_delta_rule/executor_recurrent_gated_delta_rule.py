@@ -37,6 +37,39 @@ def _int_list(spec: dict[str, Any], name: str) -> list[int]:
     return [int(value) for value in values]
 
 
+def _build_state(
+    spec: dict[str, Any],
+    shape: tuple[int, int, int, int],
+    dtype_name: str,
+    dtype: torch.dtype,
+    device: torch.device,
+    seed: int,
+) -> torch.Tensor:
+    dense_state = _randn(
+        shape,
+        dtype_name,
+        dtype,
+        device,
+        seed,
+        scale=0.01,
+    )
+    state_layout = str(spec.get("state_layout", "contiguous"))
+    if state_layout == "contiguous":
+        return dense_state
+    if state_layout != "noncontiguous":
+        raise ValueError(f"{OP_NAME}: unsupported state_layout {state_layout!r}.")
+
+    block_num, value_heads, value_dim, key_dim = shape
+    storage = torch.empty(
+        (value_heads, block_num, value_dim, key_dim),
+        dtype=dense_state.dtype,
+        device=device,
+    )
+    state = storage.permute(1, 0, 2, 3)
+    state.copy_(dense_state)
+    return state
+
+
 def build_inputs(
     spec: dict[str, Any],
     device: torch.device,
@@ -132,13 +165,13 @@ def build_inputs(
             device,
             seed + 3,
         ),
-        "state": _randn(
+        "state": _build_state(
+            spec,
             (block_num, value_heads, value_dim, key_dim),
             state_dtype_name,
             state_calc_dtype,
             device,
             seed + 4,
-            scale=0.01,
         ),
         "beta": _rand(
             (total_tokens, value_heads),
@@ -292,5 +325,6 @@ class FunctionApi(BaseApi):
             "K": int(spec["K"]),
             "V": int(spec["V"]),
             "state_dtype": str(spec["state_dtype"]),
+            "state_layout": str(spec.get("state_layout", "contiguous")),
             "gate_mode": str(spec["gate_mode"]),
         }

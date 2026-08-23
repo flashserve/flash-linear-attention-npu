@@ -29,6 +29,7 @@ show_usage() {
   DETERMINISM_START/END          确定性 case 范围
   MSS_START/MSS_END              mssanitizer case 范围
   MSS_TOOL                       mssanitizer 工具，默认 memcheck
+  MSS_KERNEL_NAME                mssanitizer 目标 kernel 名，默认由算子名转换为大驼峰
   MSS_LOG_PATH                   ATK -msl 日志路径，默认写入 ATK_OUTPUT_ROOT
   GEN_CASES_DTYPE_NUMBERS        生成用例时传给 atk case -dt，默认 100；双 dtype 算子生成 200 条
   GEN_CASES_EXTRA_NUMBERS        生成用例时传给 atk case -en，默认 0
@@ -66,11 +67,6 @@ should_run() {
   local stage="$1"
   if [[ "$stage" == "gen_cases" ]]; then
     [[ "$RUN_SCOPE" == "gen_cases" ]]
-    return
-  fi
-  # performance 不包含在 all 中，需单独指定 -scope=performance
-  if [[ "$stage" == "performance" ]]; then
-    [[ "$RUN_SCOPE" == "performance" ]]
     return
   fi
   [[ "$RUN_SCOPE" == "all" || "$RUN_SCOPE" == "$stage" ]]
@@ -151,6 +147,19 @@ set_case_range_args() {
   fi
 }
 
+snake_to_camel() {
+  local value="$1"
+  local part
+  local result=""
+  local IFS="_"
+  local -a parts=()
+  read -r -a parts <<< "$value"
+  for part in "${parts[@]}"; do
+    result+="${part^}"
+  done
+  printf '%s' "$result"
+}
+
 OP=""
 NPU_DEVICE_ID="${NPU_DEVICE_ID:-}"
 SOC="${SOC:-auto}"
@@ -161,6 +170,7 @@ ATK_RUN_MODES="${ATK_RUN_MODES:-}"
 CASE_START="${CASE_START:-}"
 CASE_END="${CASE_END:-}"
 MSS_TOOL="${MSS_TOOL:-memcheck}"
+MSS_KERNEL_NAME="${MSS_KERNEL_NAME:-}"
 MSS_LOG_PATH="${MSS_LOG_PATH:-}"
 GEN_CASES_DTYPE_NUMBERS="${GEN_CASES_DTYPE_NUMBERS:-100}"
 GEN_CASES_EXTRA_NUMBERS="${GEN_CASES_EXTRA_NUMBERS:-0}"
@@ -295,6 +305,7 @@ cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
 mkdir -p "${ATK_OUTPUT_ROOT}/cpu_dual_reference" "${ATK_OUTPUT_ROOT}/perf"
 MSS_LOG_PATH="${MSS_LOG_PATH:-${ATK_OUTPUT_ROOT}/mssanitizer.log}"
+MSS_KERNEL_NAME="${MSS_KERNEL_NAME:-$(snake_to_camel "$OP")}"
 
 log_info "算子：${OP}"
 log_info "SOC：${SOC}"
@@ -304,6 +315,16 @@ fi
 log_info "ATK 路径：${ATK_BIN}"
 log_info "输出根目录：${ATK_OUTPUT_ROOT}"
 "$ATK_BIN" --version || die "atk --version 执行失败"
+ATK_TASK_HELP="$($ATK_BIN task --help 2>&1)" || die "atk task --help 执行失败"
+ATK_SINGLE_PROCESS_ARGS=()
+if grep -Eq '(^|[[:space:]])-sp([,[:space:]]|$)' <<< "$ATK_TASK_HELP"; then
+  ATK_SINGLE_PROCESS_ARGS=(-sp)
+fi
+ATK_SUPPORTS_MSSANITIZER=false
+if grep -q -- '--mssanitizer' <<< "$ATK_TASK_HELP" && \
+   grep -Eq '(^|[[:space:]])-msl([,[:space:]]|$)' <<< "$ATK_TASK_HELP"; then
+  ATK_SUPPORTS_MSSANITIZER=true
+fi
 
 if should_run gen_cases; then
   log_info "开始生成泛化用例：atk case -dt ${GEN_CASES_DTYPE_NUMBERS} -en ${GEN_CASES_EXTRA_NUMBERS}"
@@ -317,7 +338,14 @@ if should_run gen_cases; then
 fi
 
 if should_run accuracy; then
-  log_info "开始精度与 NaN 检测：accuracy + CPU高精度标杆 + CPU同精度标杆 + --gm_init_flag"
+  GM_INIT_ARGS=()
+  if grep -q -- '--gm_init_flag' <<< "$ATK_TASK_HELP"; then
+    GM_INIT_ARGS=(--gm_init_flag)
+    log_info "当前 ATK 支持 --gm_init_flag，启用 GM 初始化检查"
+  else
+    log_info "当前 ATK 不支持 --gm_init_flag，继续执行双标杆精度检查"
+  fi
+  log_info "开始精度检查：accuracy + CPU高精度标杆 + CPU同精度标杆"
   set_case_range_args "精度与 NaN 检测 case 范围" "$ACCURACY_START" "$ACCURACY_END"
   ACCURACY_NODES_FILE="${ATK_OUTPUT_ROOT}/accuracy_nodes.json"
   write_nodes_config "$ACCURACY_NODES_FILE" true \
@@ -330,11 +358,11 @@ if should_run accuracy; then
       --bm_device cpu \
       -p "./executor_${OP}.py" \
       "${CASE_RANGE_ARGS[@]}" \
-      --gm_init_flag \
-      -sp \
+      "${GM_INIT_ARGS[@]}" \
+      "${ATK_SINGLE_PROCESS_ARGS[@]}" \
       -mt 1 \
       -to "$ATK_TIMEOUT"
-  log_info "完成精度与 NaN 检测"
+  log_info "完成精度检查"
 fi
 
 if should_run performance; then
@@ -350,7 +378,7 @@ if should_run performance; then
       -p "executor_${OP}.py" \
       "${CASE_RANGE_ARGS[@]}" \
       --save_data profile \
-      -sp \
+      "${ATK_SINGLE_PROCESS_ARGS[@]}" \
       -to "$PERFORMANCE_TIMEOUT"
   log_info "完成性能测试"
 fi
@@ -373,20 +401,90 @@ fi
 if should_run mssanitizer; then
   command -v mssanitizer >/dev/null 2>&1 || die "找不到 mssanitizer，请先加载支持 sanitizer 的 CANN/调试环境"
   log_info "开始内存检测：mssanitizer ${MSS_TOOL}"
+  log_info "目标 kernel：${MSS_KERNEL_NAME}"
   log_info "ATK mssanitizer 日志：${MSS_LOG_PATH}"
-  set_case_range_args "内存检测 case 范围" "$MSS_START" "$MSS_END"
+  if [[ "$ATK_SUPPORTS_MSSANITIZER" != "true" ]]; then
+    log_info "当前 ATK 不支持 --mssanitizer/-msl，使用外层 mssanitizer 原始结果判定"
+  fi
   MSS_NODES_FILE="${ATK_OUTPUT_ROOT}/mssanitizer_nodes.json"
   write_nodes_config "$MSS_NODES_FILE" false "${ATK_OUTPUT_ROOT}" ""
-  run_atk_checked "内存检测" "${ATK_OUTPUT_ROOT}/mssanitizer-task.log" \
-    mssanitizer --tool="$MSS_TOOL" -- \
-    "$ATK_BIN" task \
-      --nodes "$MSS_NODES_FILE" \
-      -c "atk_${OP}.json" \
-      -p "executor_${OP}.py" \
-      --task run \
-      --mssanitizer \
-      -msl "$MSS_LOG_PATH" \
-      "${CASE_RANGE_ARGS[@]}"
+  if [[ "$OP" == "recurrent_gated_delta_rule" ]]; then
+    MSS_CASE_COUNT="$(python3 - "$CASE_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+cases = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(cases, list) or not cases:
+    raise SystemExit("ATK case JSON must be a non-empty list")
+print(len(cases))
+PY
+)"
+    MSS_RANGE_START="${MSS_START:-0}"
+    MSS_RANGE_END="${MSS_END:-$MSS_CASE_COUNT}"
+    [[ "$MSS_RANGE_START" =~ ^[0-9]+$ && "$MSS_RANGE_END" =~ ^[0-9]+$ ]] || \
+      die "内存检测 case 范围必须是非负整数"
+    [[ "$MSS_RANGE_START" -lt "$MSS_RANGE_END" && "$MSS_RANGE_END" -le "$MSS_CASE_COUNT" ]] || \
+      die "内存检测 case 范围无效：[${MSS_RANGE_START}, ${MSS_RANGE_END})，总用例数为 ${MSS_CASE_COUNT}"
+
+    MSS_LOG_DIR="$(dirname "$MSS_LOG_PATH")"
+    MSS_LOG_BASENAME="$(basename "$MSS_LOG_PATH")"
+    mkdir -p "$MSS_LOG_DIR"
+    for ((case_id = MSS_RANGE_START; case_id < MSS_RANGE_END; case_id++)); do
+      MSS_CASE_LOG="${MSS_LOG_DIR}/${MSS_LOG_BASENAME}.case-${case_id}"
+      MSS_CASE_TASK_LOG="${ATK_OUTPUT_ROOT}/mssanitizer-task-case-${case_id}.log"
+      ATK_MSSANITIZER_ARGS=()
+      if [[ "$ATK_SUPPORTS_MSSANITIZER" == "true" ]]; then
+        ATK_MSSANITIZER_ARGS=(--mssanitizer -msl "$MSS_CASE_LOG")
+      fi
+      log_info "内存检测 case ${case_id}/${MSS_RANGE_END}"
+      run_atk_checked "内存检测 case ${case_id}" "$MSS_CASE_TASK_LOG" \
+        mssanitizer --tool="$MSS_TOOL" --kernel-name="$MSS_KERNEL_NAME" \
+          --log-file="$MSS_CASE_LOG" -- \
+        "$ATK_BIN" task \
+          --nodes "$MSS_NODES_FILE" \
+          -c "atk_${OP}.json" \
+          -p "executor_${OP}.py" \
+          --task run \
+          "${ATK_MSSANITIZER_ARGS[@]}" \
+          -s "$case_id" \
+          -e "$((case_id + 1))" \
+          "${ATK_SINGLE_PROCESS_ARGS[@]}"
+      if [[ "$ATK_SUPPORTS_MSSANITIZER" == "true" ]]; then
+        grep -Eq 'is_memory_check_pass:Pass' "$MSS_CASE_TASK_LOG" || \
+          die "内存检测 case ${case_id} 汇总未通过，详情见 ATK 报告"
+      fi
+      grep -Eq "Start ${MSS_TOOL} sanitizer on kernel ${MSS_KERNEL_NAME}" "$MSS_CASE_LOG" || \
+        die "内存检测 case ${case_id} 未确认命中目标 kernel：${MSS_KERNEL_NAME}"
+      grep -Eq "Sanitizer finished on kernel ${MSS_KERNEL_NAME}.*No error detected" "$MSS_CASE_LOG" || \
+        die "内存检测 case ${case_id} 未确认目标 kernel 无内存异常"
+    done
+  else
+    set_case_range_args "内存检测 case 范围" "$MSS_START" "$MSS_END"
+    ATK_MSSANITIZER_ARGS=()
+    if [[ "$ATK_SUPPORTS_MSSANITIZER" == "true" ]]; then
+      ATK_MSSANITIZER_ARGS=(--mssanitizer -msl "$MSS_LOG_PATH")
+    fi
+    run_atk_checked "内存检测" "${ATK_OUTPUT_ROOT}/mssanitizer-task.log" \
+      mssanitizer --tool="$MSS_TOOL" --kernel-name="$MSS_KERNEL_NAME" \
+        --log-file="$MSS_LOG_PATH" -- \
+      "$ATK_BIN" task \
+        --nodes "$MSS_NODES_FILE" \
+        -c "atk_${OP}.json" \
+        -p "executor_${OP}.py" \
+        --task run \
+        "${ATK_MSSANITIZER_ARGS[@]}" \
+        "${CASE_RANGE_ARGS[@]}" \
+        "${ATK_SINGLE_PROCESS_ARGS[@]}"
+    if [[ "$ATK_SUPPORTS_MSSANITIZER" == "true" ]]; then
+      grep -Eq 'is_memory_check_pass:Pass' "${ATK_OUTPUT_ROOT}/mssanitizer-task.log" || \
+        die "内存检测汇总未通过，详情见 ATK 报告"
+    fi
+    grep -Eq "Start ${MSS_TOOL} sanitizer on kernel ${MSS_KERNEL_NAME}" "$MSS_LOG_PATH" || \
+      die "内存检测日志未确认命中目标 kernel：${MSS_KERNEL_NAME}"
+    grep -Eq "Sanitizer finished on kernel ${MSS_KERNEL_NAME}.*No error detected" "$MSS_LOG_PATH" || \
+      die "内存检测日志未确认目标 kernel 无内存异常"
+  fi
   log_info "完成内存检测"
 fi
 

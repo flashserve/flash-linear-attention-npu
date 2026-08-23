@@ -129,7 +129,7 @@ PROFILES = [
         "state_dtype": "bf16",
     },
     {
-        "name": "multi_head_gk",
+        "name": "multi_head_gk_noncontiguous_state",
         "seq_lengths": [2, 2],
         "HK": 4,
         "HV": 8,
@@ -137,6 +137,7 @@ PROFILES = [
         "V": 128,
         "gate_mode": "gk",
         "state_dtype": "fp32",
+        "state_layout": "noncontiguous",
     },
     {
         "name": "maximum_key_value_dimensions",
@@ -164,6 +165,7 @@ def _spec(index: int) -> dict:
             "route": "ascendc",
             "soc": "all",
             "dtype": "bf16",
+            "state_layout": str(profile.get("state_layout", "contiguous")),
             "B": len(seq_lengths),
             "T": total_tokens,
             "block_num": int(profile.get("block_num", total_tokens)),
@@ -200,6 +202,7 @@ def _case_payload(case_id: int, spec: dict) -> dict:
         ),
         _input("dtype", "string", spec["dtype"]),
         _input("state_dtype", "string", spec["state_dtype"]),
+        _input("state_layout", "string", spec["state_layout"]),
         _input("B", "int", spec["B"]),
         _input("T", "int", spec["T"]),
         _input("HK", "int", spec["HK"]),
@@ -280,7 +283,7 @@ def main() -> None:
             print(
                 f"case_id={payload['id']} name={spec['name']} "
                 f"shape=T{spec['T']}-HK{spec['HK']}-HV{spec['HV']}-K{spec['K']}-V{spec['V']} "
-                f"state={spec['state_dtype']} gate={spec['gate_mode']}"
+                f"state={spec['state_dtype']}/{spec['state_layout']} gate={spec['gate_mode']}"
             )
 
 

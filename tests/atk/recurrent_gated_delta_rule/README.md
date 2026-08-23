@@ -38,7 +38,7 @@ ATK 比较以下两个结果：
 | 5 | 无效前缀 | 前缀长度 2、变长、`g+gk` |
 | 6 | 最大 MTP | 单序列 8 token、`Dv=256` |
 | 7 | 零长度 batch | 中间 batch 长度为 0 |
-| 8 | 多头 `gk` | `Nk=4`、`Nv=8`、FP32 state |
+| 8 | 非连续多头 `gk` | `Nk=4`、`Nv=8`、FP32 state、transpose 非连续布局 |
 | 9 | 最大状态维度 | `Dk=Dv=512`、`g+gk` |
 
 冻结用例使用 `soc=all`，同一矩阵用于 A2、A3、A5；实际执行平台通过统一脚本的 `-soc` 参数记录。
@@ -49,11 +49,19 @@ ATK 比较以下两个结果：
 
 ```bash
 export FLA_NPU_ENV=<fla_npu_transformer>/bin/set_env.bash
-bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -npu_device_id=0
 bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -npu_device_id=0 -scope=accuracy
 bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -npu_device_id=0 -scope=performance
 bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -npu_device_id=0 -scope=determinism
 bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -npu_device_id=0 -scope=mssanitizer
+```
+
+不传 `-scope` 时默认依次执行上述四项。mssanitizer 必须使用带 sanitizer 信息的 debug OPP 包，并确认日志实际命中目标 kernel。
+精度 scope 会在当前 ATK 支持时自动加入 `--gm_init_flag`；不支持该选项的 ATK 版本仍执行 CPU 高精度与同精度双标杆比较。
+内存检查会兼容探测 ATK 的 `--mssanitizer/-msl` 参数；无论 ATK 是否提供内存报告后处理，都由外层 mssanitizer 日志确认目标 kernel 启动、结束且未检测到异常。
+
+用例生成和冻结 JSON 复核命令如下：
+
+```bash
 bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -scope=gen_cases
 python3 tests/atk/recurrent_gated_delta_rule/gen_recurrent_gated_delta_rule.py --summary
 ```

@@ -141,7 +141,8 @@ MSS_START=0
 MSS_END=1
 PERFORMANCE_TIMEOUT=2000
 MSS_TOOL=memcheck
-MSS_LOG_PATH=/home/huangjunzhe/gdn/github/alvazu-atk/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/ATK/log.txt
+MSS_KERNEL_NAME=<target_kernel_name>
+MSS_LOG_PATH=<mssanitizer_log_path>
 GEN_CASES_DTYPE_NUMBERS=100
 GEN_CASES_EXTRA_NUMBERS=0
 GEN_CASES_SEED=20260813
@@ -155,8 +156,8 @@ ATK 文档 `ATK/docs/ATK使用指南/01 基础操作/任务执行.md` 说明 `--
 表示只执行下标 0 和 1；`ATK/docs/ATK使用指南/02 参考资料/任务执行参数说明.md` 也将
 `-s/--start`、`-e/--end` 定义为执行起始和结束用例下标。因此 case id 混乱时只使用
 `-s 0 -e 1` 这类序号切片表达“第几个 case”，不要用 `-wl` 依赖 JSON 内部 id。
-默认 `CASE_START=0 CASE_END=1`，即每个阶段默认跑第 1 条 case。全量或专项范围由调用者按
-生成后的 JSON 顺序覆盖各阶段 `*_START/*_END`。
+默认不设置 case 范围，每个阶段执行全部用例。需要定位单条或子集时，由调用者按生成后的
+JSON 顺序设置 `CASE_START/CASE_END` 或各阶段的 `*_START/*_END`。
 
 ### 脚本覆盖的 ATK 动作
 
@@ -175,7 +176,8 @@ bash tests/atk/run_test_cpu.sh -op=<op> -scope=gen_cases
 atk case -f ./<op>.yaml -p ./gen_<op>.py -dt 100 -en 0 -s 20260813
 ```
 
-精度与 NaN 检测使用 CPU 高精度真值和 CPU 同精度对照，并开启 `--gm_init_flag`：
+精度检查使用 CPU 高精度真值和 CPU 同精度对照。统一脚本会探测当前 ATK 的
+`task --help`，仅在支持时加入 `--gm_init_flag` 和 `-sp`：
 
 ```bash
 atk node --name npu_dut --backend npu --devices <npu_device_id> \
@@ -183,7 +185,7 @@ atk node --name npu_dut --backend npu --devices <npu_device_id> \
   node --name cpu_reference --backend cpu \
     --output_path ./atk_output/cpu_dual_reference \
   task -c ./atk_<op>.json --task accuracy --bm_device cpu -p ./executor_<op>.py \
-  -s <accuracy_start> -e <accuracy_end> --gm_init_flag -sp -mt 1 -to 14400
+  -s <accuracy_start> -e <accuracy_end> [--gm_init_flag] [-sp] -mt 1 -to 14400
 ```
 
 性能验证只使用 ATK `performance_device` 的 device profiler：
@@ -192,7 +194,7 @@ atk node --name npu_dut --backend npu --devices <npu_device_id> \
 atk node --name npu_dut --backend npu --devices <npu_device_id> \
     --output_path ./atk_output/perf \
   task -c ./atk_<op>.json --task performance_device -p ./executor_<op>.py \
-  -s <performance_start> -e <performance_end> --save_data profile -sp -to 2000
+  -s <performance_start> -e <performance_end> --save_data profile [-sp] -to 2000
 ```
 
 确定性验证使用 ATK `accuracy_dc`：
@@ -203,14 +205,16 @@ atk node --name npu_dut --backend npu --devices <npu_device_id> \
   -s <determinism_start> -e <determinism_end>
 ```
 
-内存检测由 `mssanitizer --tool=memcheck` 包裹 ATK `run` 任务，并在 ATK task 中传入
-`--mssanitizer -msl <log_path>`：
+内存检测由 `mssanitizer --tool=memcheck` 包裹 ATK `run` 任务。统一脚本仅在当前 ATK
+支持时向 task 传入 `--mssanitizer -msl <log_path>`；无论是否支持 ATK 内存报告后处理，
+都必须从外层 mssanitizer 原始日志确认目标 kernel 实际启动、结束且未检测到异常：
 
 ```bash
-mssanitizer --tool=memcheck -- \
+mssanitizer --tool=memcheck --kernel-name=<target_kernel_name> \
+  --log-file=<mssanitizer_log_path> -- \
   atk node --name npu_dut --backend npu --devices <npu_device_id> \
-  task -c ./atk_<op>.json -p ./executor_<op>.py --task run --mssanitizer \
-  -msl /home/huangjunzhe/gdn/github/alvazu-atk/flash-linear-attention-npu/fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/ATK/log.txt \
+  task -c ./atk_<op>.json -p ./executor_<op>.py --task run \
+  [--mssanitizer -msl <mssanitizer_log_path>] \
   -s <mssanitizer_start> -e <mssanitizer_end>
 ```
 
