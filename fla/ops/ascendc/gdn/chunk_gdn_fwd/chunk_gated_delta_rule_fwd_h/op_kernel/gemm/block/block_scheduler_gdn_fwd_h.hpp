@@ -211,27 +211,19 @@ struct BlockSchedulerGdnFwdH {
         vBlockSize = vHeadDim;
         taskNum = batch * vNumHead;
         headGroups = vNumHead / kNumHead;
-        InitTaskWave(0);
-
-    }
-
-    CATLASS_DEVICE
-    void InitTaskWave(uint32_t waveIdx) {
-        uint32_t firstTaskIdx = waveIdx * cubeCoreNum + cubeCoreIdx;
-        taskStride = taskNum;
+        // A short final chunk can retire one AIV subcore before its partner. Keep one task stream
+        // per core until the two-stream protocol has a reverse credit for that asymmetric tail.
+        uint32_t maxTaskCntPerLoop = 1;
+        taskStride = cubeCoreNum * maxTaskCntPerLoop;
         for (uint32_t streamId = 0; streamId < PING_PONG_STAGES; ++streamId) {
             auto& stream = runningQ.streams[streamId];
-            stream.nextTaskIdx = streamId == 0 ? firstTaskIdx : taskNum;
+            stream.nextTaskIdx = (streamId < maxTaskCntPerLoop) ? (cubeCoreIdx * maxTaskCntPerLoop + streamId) : taskNum;
             stream.chunkIdx = 0;
             stream.batchChunks = 0;
             stream.active = false;
         }
-        isRunning = firstTaskIdx < taskNum;
-    }
+        isRunning = cubeCoreIdx * maxTaskCntPerLoop < taskNum;
 
-    CATLASS_DEVICE
-    uint32_t GetTaskWaveCount() const {
-        return CeilDiv(taskNum, cubeCoreNum);
     }
 
     CATLASS_DEVICE
