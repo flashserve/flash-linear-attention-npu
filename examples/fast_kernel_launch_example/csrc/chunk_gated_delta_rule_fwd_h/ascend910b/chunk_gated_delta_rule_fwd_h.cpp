@@ -141,7 +141,9 @@ __global__ __aicore__ void chunk_gated_delta_rule_fwd_h_kernel(
 
     using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<INPUT_TYPE, G_TYPE, STATE_TYPE, float>;
     GDNFwdHKernel gdnFwdH;
-    gdnFwdH.Init(k, w, u, g, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+    gdnFwdH.Init(
+        k, w, u, g, nullptr, inital_state, cu_seqlens, chunk_indices,
+        h, v_new, final_state, tiling, user);
     gdnFwdH.Process();
 }
 
