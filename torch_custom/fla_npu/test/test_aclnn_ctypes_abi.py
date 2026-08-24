@@ -82,6 +82,61 @@ class FakeCallContext:
 
 
 class AclnnCtypesAbiTest(unittest.TestCase):
+    def test_chunk_fwd_h_requires_exactly_one_gate_before_launch(self):
+        invalid_gate_pairs = ((None, None), (object(), object()))
+        for g, gk in invalid_gate_pairs:
+            has_g = g is not None
+            has_gk = gk is not None
+            with self.subTest(has_g=has_g, has_gk=has_gk):
+                with mock.patch.object(ACLNN_CTYPES, "_call_aclnn") as call_aclnn:
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        r"^npu_chunk_gated_delta_rule_fwd_h: exactly one of g and gk must be provided; "
+                        r"g-only selects GDN, while gk-only selects KDA/GDN2; "
+                        rf"has_g={has_g}, has_gk={has_gk}\.$",
+                    ):
+                        ACLNN_CTYPES.npu_chunk_gated_delta_rule_fwd_h(
+                            None,
+                            None,
+                            None,
+                            g,
+                            gk=gk,
+                        )
+                call_aclnn.assert_not_called()
+
+    def test_chunk_fwd_h_use_exp2_is_independent_of_g_only_mode(self):
+        import torch
+
+        captured = {}
+
+        def fake_empty(shape, like, **kwargs):
+            return FakeTensor(shape, kwargs.get("dtype", like.dtype))
+
+        def fake_empty_like(tensor, **kwargs):
+            return FakeTensor(tensor.shape, kwargs.get("dtype", tensor.dtype))
+
+        def fake_call_aclnn(name, build_args, outputs):
+            context = FakeCallContext()
+            captured["name"] = name
+            captured["args"] = build_args(context)
+            return outputs
+
+        data = FakeTensor((1, 1, 64, 128), torch.float16)
+        gate = FakeTensor((1, 1, 64), torch.float32)
+        with mock.patch.object(ACLNN_CTYPES, "_empty", side_effect=fake_empty):
+            with mock.patch.object(ACLNN_CTYPES, "_empty_like", side_effect=fake_empty_like):
+                with mock.patch.object(ACLNN_CTYPES, "_call_aclnn", side_effect=fake_call_aclnn):
+                    ACLNN_CTYPES.npu_chunk_gated_delta_rule_fwd_h(
+                        data,
+                        data,
+                        data,
+                        gate,
+                        use_exp2=True,
+                    )
+
+        self.assertEqual(captured["name"], "aclnnChunkGatedDeltaRuleFwdH")
+        self.assertTrue(captured["args"][11].value)
+
     def test_chunk_gated_delta_rule_bwd_dhu_signature_and_default_use_exp2(self):
         import inspect
 

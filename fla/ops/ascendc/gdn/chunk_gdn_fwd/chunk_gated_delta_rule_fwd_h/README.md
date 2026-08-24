@@ -13,27 +13,41 @@ g:   [B,H_v,T]       optional
 gk:  [B,H_v,T,K]     optional
 ```
 
-`g` 和 `gk` 至少提供一个；两者同时提供时分别作用于 scalar gate 和 key-wise gate。
+`g` 和 `gk` 必须且只能提供一个，是否为空是唯一的模型模式判据：
+
+- GDN v1：传原始 `k` 和 scalar gate `g`，`gk=None`；
+- KDA/GDN2：传 Prepare 生成的 `kg` 作为 `k`，传 key-wise gate `gk`，`g=None`。
+
+两者同时为空或同时非空均返回 `ACLNN_ERR_PARAM_INVALID`。`use_exp2` 和 `state_v_first`
+都不参与模型模式判断。
 
 ## 计算
 
-对每个 chunk：
+对每个 chunk，四个 stage 的公共骨架与模式分支如下：
 
 ```text
-v_new = u - w @ h_prev
+stage0:
+  P = w @ h_prev
 
-scalar_decay = exp(g_last)       if g is provided and use_exp2 is false
-scalar_decay = exp2(g_last)      if g is provided and use_exp2 is true
-key_decay    = exp2(gk_last)     if gk is provided
+stage1:
+  v_new = u - P
+  GDN v1:    v_stage2 = gate(g_last - g) * v_new   # v_new_decay
+  KDA/GDN2:  v_stage2 = v_new                      # 不做额外 decay
 
-h_next = h_prev * scalar_decay * key_decay + k^T @ v_new
+stage2:
+  GDN v1:    delta_h = raw_k^T @ v_new_decay
+  KDA/GDN2:  delta_h = kg^T @ v_new
+
+stage3:
+  GDN v1:    h_next = gate(g_last) * h_prev + delta_h
+  KDA/GDN2:  h_next = diag(exp2(gk_last)) * h_prev + delta_h
 ```
 
-逐 K gate `gk` 固定处于 log2 空间。`use_exp2=true` 表示 `exp2(x)` 语义，false 时逐 K gate 使用
-数学等价的 `exp(x * ln(2))`；当前 NPU 路径允许用后者实现等价 fallback。GDN natural-log scalar gate
-路径固定传 `use_exp2=false`。KDA 路径传 `k=kg`、零值 `g` 和 Prepare 产生的 `gk`，因此 scalar
-gate 的单位不影响结果，并由组合接口显式透传 `use_exp2`。`save_new_value` 是兼容属性，首版仅支持
-`True`。
+GDN v1 的 `gate(x)` 在 `use_exp2=false` 时为 `exp(x)`，在 `use_exp2=true` 时为
+`exp2(x)` 语义。逐 K gate `gk` 固定处于 log2 空间；KDA/GDN2 的 chunk 内相对衰减已经吸收到
+`kg`，Stage1 不得再次对 `v_new` 衰减。NPU 可用 `exp(x * ln(2))` 实现与 `exp2(x)` 等价的
+fallback。`use_exp2` 只控制指数语义/实现，不得替代 `g/gk` 选择模型模式。
+`save_new_value` 是兼容属性，首版仅支持 `True`。
 
 ## Python API
 

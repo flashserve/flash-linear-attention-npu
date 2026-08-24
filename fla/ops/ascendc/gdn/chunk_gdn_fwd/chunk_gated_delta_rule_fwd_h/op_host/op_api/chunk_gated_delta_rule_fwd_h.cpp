@@ -38,6 +38,15 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleFwdH(
     L0_DFX(ChunkGatedDeltaRuleFwdH, k, w, u, gOptional, gkOptional, initialStateOptional, cuSeqlensOptional,
            chunkIndicesOptional, outputFinalState, chunkSize, useExp2, hOut, vNewOut, finalStateOut);
 
+    const bool hasG = gOptional != nullptr;
+    const bool hasGk = gkOptional != nullptr;
+    if (hasG == hasGk) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "Exactly one of g and gk must be provided: g-only selects GDN, while gk-only selects KDA/GDN2; "
+                "has_g=%d, has_gk=%d.", hasG, hasGk);
+        return {nullptr, nullptr, nullptr};
+    }
+
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional) {
         actualCuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);

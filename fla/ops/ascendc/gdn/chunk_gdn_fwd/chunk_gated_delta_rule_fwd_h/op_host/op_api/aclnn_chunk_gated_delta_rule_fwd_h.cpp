@@ -146,10 +146,6 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleFwdHParams params)
     auto gateDtype = params.gOptional != nullptr ? params.gOptional->GetDataType() : params.gkOptional->GetDataType();
     CHECK_COND(gateDtype == DataType::DT_FLOAT || gateDtype == inputDtype,
                ACLNN_ERR_PARAM_INVALID, "g/gk dtype must be float32 or match k dtype.");
-    if (params.gOptional != nullptr && params.gkOptional != nullptr) {
-        CHECK_COND(params.gOptional->GetDataType() == params.gkOptional->GetDataType(),
-                   ACLNN_ERR_PARAM_INVALID, "g and gk must have the same dtype when both are provided.");
-    }
     if (params.initialStateOptional != nullptr) {
         CHECK_COND(params.initialStateOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
                    "initialStateOptional must be float32.");
@@ -190,10 +186,13 @@ static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdHParams &params, a
     return ACLNN_SUCCESS;
 }
 
-static aclnnStatus CheckGateOptionalNonNull(const ChunkGatedDeltaRuleFwdHParams &params)
+static aclnnStatus CheckGateMode(const ChunkGatedDeltaRuleFwdHParams &params)
 {
-    CHECK_COND(params.gOptional != nullptr || params.gkOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
-               "Either g or gk must be provided.");
+    const bool hasG = params.gOptional != nullptr;
+    const bool hasGk = params.gkOptional != nullptr;
+    CHECK_COND(hasG != hasGk, ACLNN_ERR_PARAM_INVALID,
+               "Exactly one of g and gk must be provided: g-only selects GDN, while gk-only selects KDA/GDN2; "
+               "has_g=%d, has_gk=%d.", hasG, hasGk);
     return ACLNN_SUCCESS;
 }
 
@@ -242,8 +241,6 @@ static aclnnStatus CheckOptions(const ChunkGatedDeltaRuleFwdHParams &params)
             }
         }
     }
-    CHECK_COND(!params.useExp2 || params.gkOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
-               "useExp2=true requires gk; the scalar g-only path uses natural-log decay.");
     CHECK_COND(params.saveNewValue, ACLNN_ERR_PARAM_INVALID,
                "saveNewValue is reserved and only true is supported.");
     CHECK_COND(!params.stateVFirst, ACLNN_ERR_PARAM_INVALID,
@@ -265,10 +262,6 @@ static aclnnStatus CheckGkParams(const ChunkGatedDeltaRuleFwdHParams &params)
                    "gk.shape[1] (HV) must match u.shape[1] (HV).");
         CHECK_COND(gkShape.GetDim(0) == params.k->GetViewShape().GetDim(0), ACLNN_ERR_PARAM_INVALID,
                    "gk.shape[0] (B) must match k.shape[0] (B).");
-        if (params.gOptional != nullptr) {
-            CHECK_COND(params.gkOptional->GetDataType() == params.gOptional->GetDataType(), ACLNN_ERR_PARAM_INVALID,
-                       "gk.dtype must match g.dtype when both are provided.");
-        }
     }
     return ACLNN_SUCCESS;
 }
@@ -276,7 +269,7 @@ static aclnnStatus CheckGkParams(const ChunkGatedDeltaRuleFwdHParams &params)
 static aclnnStatus CheckParams(ChunkGatedDeltaRuleFwdHParams params)
 {
     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckGateOptionalNonNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckGateMode(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckOptions(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckGkParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);

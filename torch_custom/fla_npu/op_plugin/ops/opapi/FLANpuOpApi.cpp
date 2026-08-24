@@ -438,9 +438,13 @@ at::Tensor npu_chunk_fwd_o(
     c10::optional<bool> use_exp2,
     c10::optional<bool> state_v_first)
 {
+    const bool has_g = g.has_value() && g->defined();
+    const bool has_gk = gk.has_value() && gk->defined();
     TORCH_CHECK(
-        (g.has_value() && g->defined()) || (gk.has_value() && gk->defined()),
-        "npu_chunk_gated_delta_rule_fwd_h: either g or gk must be defined.");
+        has_g != has_gk,
+        "npu_chunk_gated_delta_rule_fwd_h: exactly one of g and gk must be defined; "
+        "g-only selects GDN, while gk-only selects KDA/GDN2; has_g=", has_g,
+        ", has_gk=", has_gk, ".");
 
     // optional 参数处理
     bool output_final_state_ = output_final_state.value_or(false);
@@ -457,9 +461,6 @@ at::Tensor npu_chunk_fwd_o(
     const at::Tensor &g_ = c10::value_or_else(g, [] { return at::Tensor(); });
     const at::Tensor &gk_ = c10::value_or_else(gk, [] { return at::Tensor(); });
     const at::Tensor &initial_state_ = c10::value_or_else(initial_state, [] { return at::Tensor(); });
-    TORCH_CHECK(!use_exp2_ || gk_.defined(),
-                "npu_chunk_gated_delta_rule_fwd_h: use_exp2=True requires gk.");
-
     bool has_cu_seqlens = cu_seqlens.has_value();
     bool has_chunk_indices = chunk_indices.has_value();
     TORCH_CHECK(has_cu_seqlens == has_chunk_indices,

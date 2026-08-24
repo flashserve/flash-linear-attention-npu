@@ -20,15 +20,15 @@ extern "C" {
  * k : required
  * w : required
  * u : required
- * gOptional : optional, scalar gate tensor; either gOptional or gkOptional must be non-null
- * gkOptional : optional, key-wise gate tensor; either gOptional or gkOptional must be non-null
+ * gOptional : optional, scalar gate tensor; exactly one of gOptional and gkOptional must be non-null
+ * gkOptional : optional, key-wise gate tensor; exactly one of gOptional and gkOptional must be non-null
  * initialStateOptional : optional, float32
  * outputFinalState : required
  * chunkSize : required
  * saveNewValue : reserved, only true is supported
  * cuSeqlensOptional : optional
  * chunkIndicesOptional : optional
- * useExp2 : whether to use the exp2-equivalent gate path; true requires gkOptional
+ * useExp2 : exponent implementation/domain selector, independent of the g/gk gate mode
  * stateVFirst : reserved by the physical aclnn interface, only false is supported
  * hOut : required
  * vNewOut : required

@@ -459,7 +459,10 @@ public:
                     /* C1: v_work = w @ h[i] */
                     ProcessCubeStage0(blockMmadWH, blockMmadWHTail, wLayout, hLayout, vLayout);
                 } else {
-                    /* C2: h[i+1] = k.T @ v_work */
+                    /* Stage2:
+                     * GDN v1:   delta_h = raw_k.T @ v_new_decay
+                     * KDA/GDN2: delta_h = kg.T @ v_new
+                     */
                     for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
                         uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
                         const auto& stream = cubeBlockScheduler.GetStream(i);
@@ -470,7 +473,7 @@ public:
                         Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done[streamId]);
 
                         if (cubeBlockScheduler.NeedProcessStage2(stream)) {
-                            // step 3: h[i+1] = k.T @ v_work
+                            // g/gk presence selects raw-k/v_new_decay or kg/v_new before this MMAD.
                             int64_t cube2OffsetKwork = kGated ? cube2Offsets.kDecayWorkOffset : cube2Offsets.wkOffset;
                             int64_t cube2OffsetVwork = cube2Offsets.vWorkOffset;
                             int64_t cube2OffsetH = cube2Offsets.hWorkOffset;
@@ -623,11 +626,10 @@ public:
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
                 }
                 if (currStage == 0) {
-                    /* V1:
-                     * gmV = gmU - gmVWorkspace
-                     * g_buf = gmG[-1] - gmG
-                     * g_buf = exp(g_buf)
-                     * gmVWorkspace = g_buf * gmV
+                    /* Stage1:
+                     * v_new = u - prediction
+                     * GDN v1:   stage2_v = gate(g_last - g) * v_new
+                     * KDA/GDN2: stage2_v = v_new; stage2_k = input kg
                      */
                     vecBlockScheduler.InitTasks();
                     for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
@@ -662,7 +664,7 @@ public:
                         }
                     }
                 } else {
-                    /* V2: h[i+1] += h_work if i < num_chunks - 1 else None */
+                    /* Stage3: decay h_prev, add delta_h, and publish h_next/final_state. */
                     for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
                         uint32_t streamId = vecBlockScheduler.GetStreamId(i);
                         const auto& stream = vecBlockScheduler.GetStream(i);

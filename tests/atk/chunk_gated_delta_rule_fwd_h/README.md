@@ -5,7 +5,8 @@
 ## 输入约束
 
 - `k` 必须为 `[B,HK,T,K]`；**`w` 与 `u` 都必须为 `[B,HV,T,K]/[B,HV,T,V]`，head 同为 HV**（GVA 语义，对齐 ACLNN `w.H == u.H`）。
-- `g` 与 `gk` 至少提供一个：`g=[B,HV,T]`，`gk=[B,HV,T,K]`。
+- `g` 与 `gk` 必须且只能提供一个：GDN v1 使用 `g=[B,HV,T]`，KDA/GDN2 使用
+  `gk=[B,HV,T,K]`；两者同时为空或同时非空均返回 `ACLNN_ERR_PARAM_INVALID`。
 - `h` 输出为 `[B,HV,Nc,K,V]`，`state_v_first=true` 时末两维为 `[V,K]`；`initial_state/final_state` 同样受 `state_v_first` 解释。
 - `k/w/u` 的 `B`、`T` 必须一致；`u` 的 `HV` 必须大于等于 `HK` 且 `HV % HK == 0`（`w` 亦为 HV，故 GVA 时 `w` 的 head 数与 `u` 相同）。
 - `k/w/u/h/v_new` 支持 `BFLOAT16/FLOAT16`；gate 支持 `FLOAT/FLOAT16/BFLOAT16`，state 支持 `FLOAT/BFLOAT16/FLOAT16`。

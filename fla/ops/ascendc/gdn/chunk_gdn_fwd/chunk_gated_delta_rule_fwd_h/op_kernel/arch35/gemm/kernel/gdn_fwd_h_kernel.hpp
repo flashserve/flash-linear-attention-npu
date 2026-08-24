@@ -764,7 +764,7 @@ public:
                                         cubeBlockScheduler.cube2Done[streamId]);
                                     continue;
                                 }
-                                // step 3: h[i+1] = k.T @ v_work
+                                // Stage2: raw_k.T@v_new_decay for GDN; kg.T@v_new for KDA/GDN2.
                                 int64_t cube2OffsetK = kGated ? cube2Offsets.kDecayWorkOffset : cube2Offsets.wkOffset;
                                 int64_t cube2OffsetVwork = cube2Offsets.vWorkOffset;
                                 auto tensorK = kGated
@@ -926,11 +926,10 @@ public:
                                                       !(storeFinalState && std::is_same<ElementFinalState, float>::value)};
             while (vecBlockScheduler.isRunning) {
                 if (currStage == 0) {
-                    /* V1:
-                     * gmV = gmU - gmVWorkspace
-                     * g_buf = gmG[-1] - gmG
-                     * g_buf = exp(g_buf)
-                     * gmVWorkspace = g_buf * gmV
+                    /* Stage1:
+                     * v_new = u - prediction
+                     * GDN v1:   stage2_v = gate(g_last - g) * v_new
+                     * KDA/GDN2: stage2_v = v_new; stage2_k = input kg
                      */
                     vecBlockScheduler.InitTasks();
                     for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
@@ -967,7 +966,7 @@ public:
                         }
                     }
                 } else {
-                    /* V2: h[i+1] += h_work if i < num_chunks - 1 else None */
+                    /* Stage3: decay h_prev, add delta_h, and publish h_next/final_state. */
                     for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
                         uint32_t streamId = vecBlockScheduler.GetStreamId(i);
                         const auto& stream = vecBlockScheduler.GetStream(i);

@@ -603,8 +603,12 @@ def npu_chunk_gated_delta_rule_fwd_h(
 ):
     import torch
 
-    if g is None and gk is None:
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: either g or gk must be provided.")
+    if (g is None) == (gk is None):
+        raise RuntimeError(
+            "npu_chunk_gated_delta_rule_fwd_h: exactly one of g and gk must be provided; "
+            "g-only selects GDN, while gk-only selects KDA/GDN2; "
+            f"has_g={g is not None}, has_gk={gk is not None}."
+        )
     output_final_state = _optional_bool(output_final_state, False)
     save_new_value = _optional_bool(save_new_value, True)
     use_exp2 = _optional_bool(use_exp2, False)
@@ -635,9 +639,6 @@ def npu_chunk_gated_delta_rule_fwd_h(
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: g must have shape [B, HV, T].")
     if gk is not None and _shape(gk) != (B, HV, T, K):
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: gk must have shape [B, HV, T, K].")
-    if use_exp2 and gk is None:
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: use_exp2=True requires gk.")
-
     cu = _normalize_int_array(cu_seqlens, "cu_seqlens")
     indices = _normalize_int_array(chunk_indices, "chunk_indices", pairs=True)
     if indices is not None and cu is None:

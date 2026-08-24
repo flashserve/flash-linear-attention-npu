@@ -43,17 +43,13 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHLaunchTyped(
     GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
                                                          GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user,
-                                                         bool useGk, bool useG)
+                                                         bool useGk)
 {
     using WorkspaceT = float;
+    // Host and tiling validation guarantee exactly one gate mode.
     if (useGk) {
-        if (useG) {
-            ChunkGatedDeltaRuleFwdHKernelImpl<DataT, GateT, StateT, WorkspaceT, TileShapes, true, true, useExp2>(
-                k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-        } else {
-            ChunkGatedDeltaRuleFwdHKernelImpl<DataT, GateT, StateT, WorkspaceT, TileShapes, true, false, useExp2>(
-                k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-        }
+        ChunkGatedDeltaRuleFwdHKernelImpl<DataT, GateT, StateT, WorkspaceT, TileShapes, true, false, useExp2>(
+            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
     } else {
         ChunkGatedDeltaRuleFwdHKernelImpl<DataT, GateT, StateT, WorkspaceT, TileShapes, false, true, useExp2>(
             k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
@@ -65,22 +61,22 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHDispatchGate(
     GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
     GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user, int64_t gateDataType,
-    bool useGk, bool useG)
+    bool useGk)
 {
     constexpr int64_t DTYPE_BF16 = 1;
     constexpr int64_t DTYPE_FP32 = 2;
     if (gateDataType == DTYPE_FP32) {
         ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, float, StateT, TileShapes, useExp2>(
             k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
-            final_state, tiling, user, useGk, useG);
+            final_state, tiling, user, useGk);
     } else if (gateDataType == DTYPE_BF16) {
         ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, bfloat16_t, StateT, TileShapes, useExp2>(
             k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
-            final_state, tiling, user, useGk, useG);
+            final_state, tiling, user, useGk);
     } else {
         ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, half, StateT, TileShapes, useExp2>(
             k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
-            final_state, tiling, user, useGk, useG);
+            final_state, tiling, user, useGk);
     }
 }
 
@@ -93,16 +89,15 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHDispatchExp(GM_ADDR k, GM_ADDR w, 
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict tilingData =
         reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
     bool useGk = tilingData->useGk;
-    bool useG = tilingData->useG;
     constexpr int64_t DTYPE_FP32 = 2;
     if (tilingData->stateDataType == DTYPE_FP32) {
         ChunkGatedDeltaRuleFwdHDispatchGate<DTYPE_K, float, TileShapes, useExp2>(
             k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
-            final_state, tiling, user, tilingData->gDataType, useGk, useG);
+            final_state, tiling, user, tilingData->gDataType, useGk);
     } else {
         ChunkGatedDeltaRuleFwdHDispatchGate<DTYPE_K, DTYPE_K, TileShapes, useExp2>(
             k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
-            final_state, tiling, user, tilingData->gDataType, useGk, useG);
+            final_state, tiling, user, tilingData->gDataType, useGk);
     }
 }
 

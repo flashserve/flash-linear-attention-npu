@@ -408,7 +408,11 @@ def chunk_fwd_h(
     use_exp2=False,
     state_v_first=False,
 ):
-    """Run the shared GDN/KDA chunk-state recurrence through Ascend C."""
+    """Run the shared chunk-state recurrence with exactly one gate mode.
+
+    ``g`` selects GDN v1 (Stage1 produces ``v_new_decay``); ``gk`` selects
+    KDA/GDN2 (Stage1 forwards ``v_new`` and ``k`` must be the prepared ``kg``).
+    """
 
     return _get_direct_op("npu_chunk_gated_delta_rule_fwd_h")(
         k,

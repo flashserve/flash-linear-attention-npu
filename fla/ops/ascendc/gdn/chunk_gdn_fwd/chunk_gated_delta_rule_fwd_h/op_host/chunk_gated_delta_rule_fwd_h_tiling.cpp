@@ -115,8 +115,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     auto gkTensor = context->GetOptionalInputTensor(INPUT_GK_IDX);
     bool useG = gTensor != nullptr;
     bool useGk = gkTensor != nullptr;
-    OP_CHECK_IF(gTensor == nullptr && gkTensor == nullptr,
-                OP_LOGE(context->GetNodeName(), "Either g or gk must be provided."),
+    OP_CHECK_IF(useG == useGk,
+                OP_LOGE(context->GetNodeName(),
+                        "Exactly one of g and gk must be provided: g-only selects GDN, while gk-only selects "
+                        "KDA/GDN2; has_g=%d, has_gk=%d.", useG, useGk),
                 return ge::GRAPH_FAILED);
     auto gateTensor = useGk ? gkTensor : gTensor;
 
@@ -128,11 +130,6 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(),
                         "chunk_size only supports 64 in the current version, but got %ld.", chunkSize),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(useExp2 && !useGk,
-                OP_LOGE(context->GetNodeName(),
-                        "use_exp2=true requires gk; the scalar g-only path uses natural-log decay."),
-                return ge::GRAPH_FAILED);
-
     int64_t numChunks = (kShape.GetDim(DIM_SEQLEN) + chunkSize - 1) / chunkSize;
     if (chunkIndicesTensor != nullptr) {
         const auto &chunkIndicesShape = chunkIndicesTensor->GetStorageShape();

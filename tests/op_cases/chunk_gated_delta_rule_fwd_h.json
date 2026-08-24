@@ -1,6 +1,37 @@
 {
   "schema_version": 1,
   "operator": "chunk_gated_delta_rule_fwd_h",
+  "interface_contract": {
+    "gate_modes": {
+      "gdn_v1": {
+        "g": "required",
+        "gk": null,
+        "stage1": "v_new_decay = gate(g_last - g) * v_new",
+        "stage2": "delta_h = raw_k^T @ v_new_decay"
+      },
+      "kda_gdn2": {
+        "g": null,
+        "gk": "required",
+        "stage1": "v_new is forwarded without an extra decay",
+        "stage2": "delta_h = kg^T @ v_new"
+      }
+    },
+    "negative_gate_cases": [
+      {
+        "id": "missing_g_and_gk",
+        "has_g": false,
+        "has_gk": false,
+        "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+      },
+      {
+        "id": "both_g_and_gk",
+        "has_g": true,
+        "has_gk": true,
+        "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+      }
+    ],
+    "mode_selector": "presence of g/gk only; use_exp2 and state_v_first are orthogonal"
+  },
   "stage0_debug": {
     "chunk_size": 64,
     "k_dim": 128,
