@@ -59,8 +59,9 @@ __global__ __aicore__ void chunk_gated_delta_rule_fwd_h(
     GM_ADDR user = AscendC::GetUserWorkspace(workspace);
     using TileShapes = typename GDN::FwdHTileSelector<V_TILE>::type;
     using GateT = typename GDN::FwdHGateTypeSelector<GATE_MODE>::type;
+    using WorkspaceT = float;
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
-        DTYPE_K, GateT, DTYPE_FINAL_STATE, float, TileShapes, GATE_MODE, EXP_MODE>;
+        DTYPE_K, GateT, DTYPE_FINAL_STATE, WorkspaceT, TileShapes, GATE_MODE, EXP_MODE>;
     Kernel op;
     op.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices,
             h, v_new, final_state, tiling, user);

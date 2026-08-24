@@ -2,6 +2,8 @@
 
 本目录提供 `chunk_gated_delta_rule_fwd_h` 的 ATK 单算子工程，包含 `executor_chunk_gated_delta_rule_fwd_h.py`、`gen_chunk_gated_delta_rule_fwd_h.py`、`chunk_gated_delta_rule_fwd_h.yaml`、`atk_chunk_gated_delta_rule_fwd_h.json`。
 
+本算子的单算子测试资产统一维护在本目录；算子实现目录下不再设置独立的 `tests/` 或 `test/` 目录。
+
 ## 输入约束
 
 - `k` 必须为 `[B,HK,T,K]`；**`w` 与 `u` 都必须为 `[B,HV,T,K]/[B,HV,T,V]`，head 同为 HV**（GVA 语义，对齐 ACLNN `w.H == u.H`）。
@@ -16,11 +18,11 @@
 
 > **CPU 标杆（`_forward_h_ref`）**使用 `w[b,hv]`（HV head）+ 共享 `k[b,hk]`（`hk = hv // (HV/HK)`），与内核/ACLNN 的 w=HV 语义一致；请不要把 `w` 建成 `[B,HK,…]` 或沿用 HK 索引标杆，那会与 `u` 的 HV 不一致触发 `161002`（历史误判根因）。
 
-## 标杆来源
+## 标杆实现
 
-torch_custom/fla_npu/test/test_fwd_h.py; fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/README.md
-
-CPU 标杆、输入构造、run_cpu、run_npu 和 FunctionApi 均在本目录的 `executor_chunk_gated_delta_rule_fwd_h.py` 中实现；公共文件只提供基础工具函数。
+CPU 标杆、输入构造、`run_cpu`、`run_npu` 和 `FunctionApi` 均在本目录的
+`executor_chunk_gated_delta_rule_fwd_h.py` 中实现；数学语义与算子 README 保持一致，
+不依赖其他测试目录中的实现。
 
 ## SOC 支持
 
