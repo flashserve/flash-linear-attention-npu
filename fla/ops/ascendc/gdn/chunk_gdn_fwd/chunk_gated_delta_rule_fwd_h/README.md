@@ -21,6 +21,15 @@ gk:  [B,H_v,T,K]     optional
 两者同时为空或同时非空均返回 `ACLNN_ERR_PARAM_INVALID`。`use_exp2` 和 `state_v_first`
 都不参与模型模式判断。
 
+Host/tiling 直接选择两套互斥的编译期模板，不在同一个 kernel 实例内运行时判断 gate 模式：
+
+| 模式 | kernel 模板 |
+|---|---|
+| GDN v1 / `g-only` | `GDNFwdHKernel<..., kGated=false, scalarGated=true, useExp2>` |
+| KDA/GDN2 / `gk-only` | `GDNFwdHKernel<..., kGated=true, scalarGated=false, useExp2>` |
+
+公开分派不实例化双空或双 gate 模式；`useExp2` 是两套模板下的正交参数。
+
 ## 计算
 
 对每个 chunk，四个 stage 的公共骨架与模式分支如下：
