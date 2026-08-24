@@ -60,7 +60,6 @@ public:
     BlockEpilogue(Arch::Resource<ArchTag> &resource)
     {
 
-        constexpr uint32_t CALC_BUF_OFFSET = 0;
         constexpr uint32_t PING_BUF_0_OFFSET = 32 * 1024;
         constexpr uint32_t PING_BUF_1_OFFSET = 48 * 1024;
         constexpr uint32_t PING_BUF_2_OFFSET = 64 * 1024;
@@ -78,8 +77,6 @@ public:
         constexpr uint32_t PING_G_INPUT_BUF_OFFSET = 164 * 1024;
         constexpr uint32_t PONG_G_INPUT_BUF_OFFSET = 165 * 1024;
         constexpr uint32_t SHARE_BUF_OFFSET = 166 * 1024;
-
-        calcUbTensor = resource.ubBuf.template GetBufferByByte<float>(CALC_BUF_OFFSET);
 
         uUbTensor_ping = resource.ubBuf.template GetBufferByByte<UElementInput>(PING_BUF_2_OFFSET);
         wsUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(PING_BUF_0_OFFSET);
@@ -208,17 +205,20 @@ public:
     }
 
     CATLASS_DEVICE
-    void ApplyRowScale(
-        AscendC::LocalTensor<float> matrix,
+    void ScaleAndPackVNew(
+        AscendC::LocalTensor<VElementOutput> packedOutput,
+        AscendC::LocalTensor<float> vNew,
         AscendC::LocalTensor<float> rowScale,
         uint32_t rowScaleOffset,
         uint32_t rows,
         uint32_t cols)
     {
-        __ubuf__ float *matrixAddr = reinterpret_cast<__ubuf__ float *>(matrix.GetPhyAddr());
+        __ubuf__ VElementOutput *packedOutputAddr =
+            reinterpret_cast<__ubuf__ VElementOutput *>(packedOutput.GetPhyAddr());
+        __ubuf__ float *vNewAddr = reinterpret_cast<__ubuf__ float *>(vNew.GetPhyAddr());
         __ubuf__ float *rowScaleAddr = reinterpret_cast<__ubuf__ float *>(rowScale.GetPhyAddr());
-        AscendC::VF_CALL<detail::ApplyRowScaleDualIssue>(
-            matrixAddr, rowScaleAddr, rowScaleOffset,
+        AscendC::VF_CALL<detail::ScaleAndPackVNewRegbase<VElementOutput>>(
+            packedOutputAddr, vNewAddr, rowScaleAddr, rowScaleOffset,
             static_cast<uint16_t>(rows), static_cast<uint16_t>(cols));
         AscendC::PipeBarrier<PIPE_V>();
     }
@@ -241,15 +241,10 @@ public:
     void operator()(
         AscendC::GlobalTensor<VElementOutput> vnewOutput,
         AscendC::GlobalTensor<VElementOutput> vnewdecayOutput,
-        AscendC::LocalTensor<VElementUpdate> l1VUpdate,
         AscendC::GlobalTensor<GElementInput> gInput,
         AscendC::GlobalTensor<UElementInput> uInput,
         AscendC::GlobalTensor<float> wsInput,
-        AscendC::GlobalTensor<GElementInput> gkInput,
-        AscendC::GlobalTensor<VElementOutput> kInput,
-        AscendC::GlobalTensor<VElementOutput> kDecayWorkspace,
         uint32_t chunkSize,
-        uint32_t kHeadDim,
         uint32_t vBlockDim,
         uint32_t vHeadDim,
         Arch::CrossCoreFlag cube1Done,
@@ -262,17 +257,21 @@ public:
         bool cube1AlreadyWaited,
         bool useDirectFp32Ub,
         uint64_t directUbFreeFlagBegin,
-        uint64_t directUbReadyFlagBegin
+        uint64_t directUbReadyFlagBegin,
+        bool processWholeHead
     )
     {
         static constexpr uint32_t ROW_TILE = 16;
         uint32_t mActual = chunkSize;
         uint32_t nvActual = vBlockDim;
-        uint32_t nkActual = kHeadDim;
         uint32_t inputStride = vHeadDim;
 
         uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
+        if (processWholeHead) {
+            subBlockIdx = 0;
+            subBlockNum = 1;
+        }
         uint32_t rowsPerSubBlock = CeilDiv(mActual, subBlockNum);
         uint32_t rowBegin = subBlockIdx * rowsPerSubBlock;
         uint32_t rowEnd = rowBegin + rowsPerSubBlock;
@@ -317,7 +316,8 @@ public:
             vNewDecayUbTensor = isPing ? wideIoUbTensor_ping : wideIoUbTensor_pong;
         }
 
-        if (rowBegin < rowEnd && nvActual <= 128 && nvActual == inputStride) {
+        if (!processWholeHead && rowBegin < rowEnd && nvActual <= 128 &&
+            nvActual == inputStride) {
             uint32_t mActualThisSubBlock = rowEnd - rowBegin;
             AscendC::GlobalTensor<VElementOutput> vnewOutputThisSubBlock = vnewOutput[rowBegin * inputStride];
             AscendC::GlobalTensor<UElementInput> uInputThisSubBlock = uInput[rowBegin * inputStride];
@@ -327,11 +327,6 @@ public:
             AscendC::DataCopy(uUbTensor, uInputThisSubBlock, mActualThisSubBlock * nvActual);
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
-            if constexpr (scalarGated) {
-                AscendC::Cast(calcUbTensor, uUbTensor, AscendC::RoundMode::CAST_NONE,
-                              mActualThisSubBlock * nvActual);
-            }
-
             if constexpr (scalarGated) {
                 PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock, mActual, pingpongFlag);
             } else {
@@ -355,23 +350,24 @@ public:
                 AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
             }
 
-            if constexpr (scalarGated) {
-                AscendC::Sub<float>(wsUbTensor, calcUbTensor, wsUbTensor, mActualThisSubBlock * nvActual);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Copy(calcUbTensor, wsUbTensor, mActualThisSubBlock * nvActual);
-                AscendC::PipeBarrier<PIPE_V>();
-                ApplyRowScale(calcUbTensor, gUbTensor, rowBegin, mActualThisSubBlock, nvActual);
-            } else {
-                ComputeVNew(wsUbTensor, uUbTensor, mActualThisSubBlock * nvActual);
-            }
+            ComputeVNew(wsUbTensor, uUbTensor, mActualThisSubBlock * nvActual);
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
 
-            uint32_t nvLoops = nvActual / FLOAT_NUM_PER_REPEAT;
-            for (uint32_t nLoop = 0; nLoop < nvLoops; nLoop++) {
-                uint32_t castSrcOffset = nLoop * FLOAT_NUM_PER_REPEAT;
-                uint32_t castDstOffset = nLoop * mActualThisSubBlock * FLOAT_NUM_PER_REPEAT;
-                AscendC::LocalTensor<float> decayInput = scalarGated ? calcUbTensor : wsUbTensor;
-                AscendC::Cast(vNewDecayUbTensor[castDstOffset], decayInput[castSrcOffset], AscendC::RoundMode::CAST_RINT, FLOAT_NUM_PER_REPEAT, mActualThisSubBlock, {(uint16_t)mActualThisSubBlock, 1, 1, (uint8_t)(nvLoops * 8)});
+            if constexpr (scalarGated) {
+                ScaleAndPackVNew(
+                    vNewDecayUbTensor, wsUbTensor, gUbTensor,
+                    rowBegin, mActualThisSubBlock, nvActual);
+            } else {
+                uint32_t nvLoops = nvActual / FLOAT_NUM_PER_REPEAT;
+                for (uint32_t nLoop = 0; nLoop < nvLoops; nLoop++) {
+                    uint32_t castSrcOffset = nLoop * FLOAT_NUM_PER_REPEAT;
+                    uint32_t castDstOffset = nLoop * mActualThisSubBlock * FLOAT_NUM_PER_REPEAT;
+                    AscendC::Cast(vNewDecayUbTensor[castDstOffset], wsUbTensor[castSrcOffset],
+                                  AscendC::RoundMode::CAST_RINT, FLOAT_NUM_PER_REPEAT,
+                                  mActualThisSubBlock,
+                                  {(uint16_t)mActualThisSubBlock, 1, 1,
+                                   (uint8_t)(nvLoops * 8)});
+                }
             }
 
             AscendC::PipeBarrier<PIPE_V>();
@@ -389,9 +385,7 @@ public:
             AscendC::DataCopy(vnewdecayOutput[l1Addr], vNewDecayUbTensor, intriParams);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
-            if constexpr (!kGated) {
-                Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
-            }
+            Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
 
             AscendC::Cast(vNewOutputUbTensor, wsUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nvActual);
             AscendC::PipeBarrier<PIPE_V>();
@@ -401,21 +395,6 @@ public:
             AscendC::DataCopy(vnewOutputThisSubBlock, vNewOutputUbTensor, mActualThisSubBlock * nvActual);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
 
-            if constexpr (kGated) {
-                AscendC::GlobalTensor<VElementOutput> kInputThisSubBlock = kInput[rowBegin * nkActual];
-                AscendC::GlobalTensor<VElementOutput> kDecayWorkspaceThisSubBlock = kDecayWorkspace[rowBegin * nkActual];
-                // KDA passes kg = k * exp2(g_last - gk). Keep that decay exactly once.
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
-                AscendC::DataCopy(vNewOutputUbTensor, kInputThisSubBlock,
-                                  mActualThisSubBlock * nkActual);
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(EVENT_ID1 + pingpongFlag);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(EVENT_ID1 + pingpongFlag);
-                AscendC::DataCopy(kDecayWorkspaceThisSubBlock, vNewOutputUbTensor,
-                                  mActualThisSubBlock * nkActual);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
-
-                Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
-            }
             if (useDirectFp32Ub) {
                 uint32_t directUbSlot = isPing ? 0 : 1;
                 AscendC::CrossCoreSetFlag<0x4, PIPE_V>(
@@ -447,17 +426,14 @@ public:
             AscendC::GlobalTensor<VElementOutput> vnewOutputThisTile = vnewOutput[rowStart * inputStride];
             AscendC::GlobalTensor<UElementInput> uInputThisTile = uInput[rowStart * inputStride];
             AscendC::GlobalTensor<float> wsInputThisTile = wsInput[rowStart * nvActual];
-            AscendC::LocalTensor<float> wsUbTensorThisTile = wsUbTensor[localRowStart * nvActual];
+            AscendC::LocalTensor<float> wsUbTensorThisTile = processWholeHead
+                ? wsUbTensor
+                : wsUbTensor[localRowStart * nvActual];
 
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
             CopyGmToUb(uUbTensor, uInputThisTile, rowsThisTile, nvActual, inputStride);
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
-            if constexpr (scalarGated) {
-                AscendC::Cast(calcUbTensor, uUbTensor, AscendC::RoundMode::CAST_NONE, rowsThisTile * nvActual);
-                AscendC::PipeBarrier<PIPE_V>();
-            }
-
             if (waitWsThisTileFromMte3) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
                 waitWsThisTileFromMte3 = false;
@@ -467,22 +443,24 @@ public:
             CopyGmToUb(wsUbTensorThisTile, wsInputThisTile, rowsThisTile, nvActual, nvActual);
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
-            if constexpr (scalarGated) {
-                AscendC::Sub<float>(wsUbTensorThisTile, calcUbTensor, wsUbTensorThisTile, rowsThisTile * nvActual);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Copy(calcUbTensor, wsUbTensorThisTile, rowsThisTile * nvActual);
-                AscendC::PipeBarrier<PIPE_V>();
-                ApplyRowScale(calcUbTensor, gUbTensor, rowStart, rowsThisTile, nvActual);
-            } else {
-                ComputeVNew(wsUbTensorThisTile, uUbTensor, rowsThisTile * nvActual);
-            }
+            ComputeVNew(wsUbTensorThisTile, uUbTensor, rowsThisTile * nvActual);
 
-            uint32_t nvLoops = nvActual / FLOAT_NUM_PER_REPEAT;
-            for (uint32_t nLoop = 0; nLoop < nvLoops; nLoop++) {
-                uint32_t castSrcOffset = nLoop * FLOAT_NUM_PER_REPEAT;
-                uint32_t castDstOffset = nLoop * rowsThisTile * FLOAT_NUM_PER_REPEAT;
-                AscendC::LocalTensor<float> decayInput = scalarGated ? calcUbTensor : wsUbTensorThisTile;
-                AscendC::Cast(vNewDecayUbTensor[castDstOffset], decayInput[castSrcOffset], AscendC::RoundMode::CAST_RINT, FLOAT_NUM_PER_REPEAT, rowsThisTile, {(uint16_t)rowsThisTile, 1, 1, (uint8_t)(nvLoops * 8)});
+            if constexpr (scalarGated) {
+                ScaleAndPackVNew(
+                    vNewDecayUbTensor, wsUbTensorThisTile, gUbTensor,
+                    rowStart, rowsThisTile, nvActual);
+            } else {
+                uint32_t nvLoops = nvActual / FLOAT_NUM_PER_REPEAT;
+                for (uint32_t nLoop = 0; nLoop < nvLoops; nLoop++) {
+                    uint32_t castSrcOffset = nLoop * FLOAT_NUM_PER_REPEAT;
+                    uint32_t castDstOffset = nLoop * rowsThisTile * FLOAT_NUM_PER_REPEAT;
+                    AscendC::Cast(vNewDecayUbTensor[castDstOffset],
+                                  wsUbTensorThisTile[castSrcOffset],
+                                  AscendC::RoundMode::CAST_RINT,
+                                  FLOAT_NUM_PER_REPEAT, rowsThisTile,
+                                  {(uint16_t)rowsThisTile, 1, 1,
+                                   (uint8_t)(nvLoops * 8)});
+                }
             }
 
             AscendC::PipeBarrier<PIPE_V>();
@@ -499,10 +477,8 @@ public:
             AscendC::DataCopy(vnewdecayOutput[l1Addr], vNewDecayUbTensor, intriParams);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
-            if constexpr (!kGated) {
-                if (rowStart + rowsThisTile >= rowEnd) {
-                    Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
-                }
+            if (rowStart + rowsThisTile >= rowEnd) {
+                Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
             }
 
             AscendC::Cast(vNewOutputUbTensor, wsUbTensorThisTile, AscendC::RoundMode::CAST_RINT, rowsThisTile * nvActual);
@@ -515,25 +491,6 @@ public:
             rowStart += rowsThisTile;
         }
 
-        if constexpr (kGated) {
-            uint32_t mActualThisSubBlock = rowEnd - rowBegin;
-            for (uint32_t rowOffset = 0; rowOffset < mActualThisSubBlock; rowOffset += ROW_TILE) {
-                uint32_t rowsThisTile = Min(ROW_TILE, mActualThisSubBlock - rowOffset);
-                uint32_t row = rowBegin + rowOffset;
-                AscendC::GlobalTensor<VElementOutput> kInputThisTile = kInput[row * nkActual];
-                AscendC::GlobalTensor<VElementOutput> kDecayWorkspaceThisTile =
-                    kDecayWorkspace[row * nkActual];
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
-                CopyGmToUb(vNewOutputUbTensor, kInputThisTile, rowsThisTile, nkActual, nkActual);
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(EVENT_ID1 + pingpongFlag);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(EVENT_ID1 + pingpongFlag);
-                CopyUbToGm(kDecayWorkspaceThisTile, vNewOutputUbTensor,
-                           rowsThisTile, nkActual, nkActual);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
-            }
-            Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
-        }
-
         if (rowBegin < rowEnd) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
@@ -544,8 +501,6 @@ public:
 
 private:
     uint32_t pongBaseEvent = 4;
-
-    AscendC::LocalTensor<float> calcUbTensor;
 
     AscendC::LocalTensor<UElementInput> uUbTensor_ping;
     AscendC::LocalTensor<float> wsUbTensor_ping;

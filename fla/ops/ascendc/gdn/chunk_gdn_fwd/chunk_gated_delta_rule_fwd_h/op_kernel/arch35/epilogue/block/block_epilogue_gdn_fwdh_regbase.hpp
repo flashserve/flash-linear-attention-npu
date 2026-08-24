@@ -24,6 +24,13 @@ constexpr CastTrait KDA_B16_TO_F32_ZERO = {
     AscendC::RoundMode::UNKNOWN,
 };
 
+constexpr CastTrait KDA_F32_TO_B16_RINT = {
+    RegLayout::ZERO,
+    SatMode::NO_SAT,
+    MaskMergeMode::ZEROING,
+    AscendC::RoundMode::CAST_RINT,
+};
+
 template <typename T>
 __simd_callee__ inline void LoadKdaAsFloat(
     RegTensor<float> &dst, __ubuf__ T *src, MaskReg &mask)
@@ -48,6 +55,22 @@ __simd_callee__ inline void StoreKdaFloat(
     __ubuf__ float *dst, RegTensor<float> &src, MaskReg &mask)
 {
     DataCopy<float, StoreDist::DIST_NORM_B32>(dst, src, mask);
+}
+
+template <typename T>
+__simd_callee__ inline void StoreKdaFromFloat(
+    __ubuf__ T *dst, RegTensor<float> &src, MaskReg &mask)
+{
+    if constexpr (std::is_same<T, float>()) {
+        StoreKdaFloat(dst, src, mask);
+    } else if constexpr (std::is_same<T, half>() || std::is_same<T, bfloat16_t>()) {
+        Cast<T, float, KDA_F32_TO_B16_RINT>(
+            (RegTensor<T> &)src, src, mask);
+        StoreAlign<T, StoreDist::DIST_PACK_B32>(
+            dst, (RegTensor<T> &)src, mask);
+    } else {
+        static_assert(!std::is_same<T, T>::value, "KDA regbase only supports float/half/bfloat16_t");
+    }
 }
 
 template <typename T, bool USE_EXP2>
@@ -109,6 +132,36 @@ static __simd_vf__ inline void ComputeVNewRegbaseDualIssue(
 }
 
 template <typename T>
+static __simd_vf__ inline void ScaleAndPackVNewRegbase(
+    __ubuf__ T *packedOutput, __ubuf__ float *vNew, __ubuf__ float *rowScale,
+    uint32_t rowScaleOffset, uint16_t rows, uint16_t cols)
+{
+    static_assert(std::is_same<T, half>() || std::is_same<T, bfloat16_t>(),
+                  "Stage1 packed output only supports 16-bit data");
+    constexpr uint16_t VALUES_PER_C0 = 16;
+    RegTensor<float> valueReg;
+    RegTensor<float> scaleReg;
+    MaskReg mask;
+
+    for (uint16_t row = 0; row < rows; ++row) {
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(
+            scaleReg, rowScale + rowScaleOffset + row);
+        for (uint16_t col = 0; col < cols; col += VALUES_PER_C0) {
+            uint32_t blockCount = cols - col;
+            if (blockCount > VALUES_PER_C0) {
+                blockCount = VALUES_PER_C0;
+            }
+            mask = UpdateMask<float>(blockCount);
+            LoadKdaFloat(valueReg, vNew + static_cast<uint32_t>(row) * cols + col);
+            Mul(valueReg, valueReg, scaleReg, mask);
+            uint32_t colBlock = col / VALUES_PER_C0;
+            uint32_t outputOffset = (colBlock * rows + row) * VALUES_PER_C0;
+            StoreKdaFromFloat<T>(packedOutput + outputOffset, valueReg, mask);
+        }
+    }
+}
+
+template <typename T>
 static __simd_vf__ inline void ApplyKGateUpdateRegbaseDualIssue(
     __ubuf__ float *update, __ubuf__ T *state, __ubuf__ float *rowScale,
     uint16_t rows, uint16_t cols)
@@ -160,6 +213,45 @@ static __simd_vf__ inline void ApplyKGateUpdateRegbaseDualIssue(
             Add(updateReg0, stateReg0, updateReg0, mask0);
             StoreKdaFloat(update + static_cast<uint32_t>(row) * cols + col, updateReg0, mask0);
         }
+    }
+}
+
+template <typename T>
+static __simd_vf__ inline void ApplyScalarGateUpdateRegbaseDualIssue(
+    __ubuf__ float *update, __ubuf__ T *state, float scale, uint32_t count)
+{
+    constexpr uint32_t FP32_PER_REG = AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    RegTensor<float> stateReg0;
+    RegTensor<float> stateReg1;
+    RegTensor<float> updateReg0;
+    RegTensor<float> updateReg1;
+    MaskReg mask0;
+    MaskReg mask1;
+
+    uint32_t remaining = count;
+    uint32_t offset = 0;
+    while (remaining > FP32_PER_REG) {
+        mask0 = UpdateMask<float>(remaining);
+        mask1 = UpdateMask<float>(remaining);
+        LoadKdaAsFloat<T>(stateReg0, state + offset, mask0);
+        LoadKdaAsFloat<T>(stateReg1, state + offset + FP32_PER_REG, mask1);
+        LoadKdaFloat(updateReg0, update + offset);
+        LoadKdaFloat(updateReg1, update + offset + FP32_PER_REG);
+        Muls(stateReg0, stateReg0, scale, mask0);
+        Muls(stateReg1, stateReg1, scale, mask1);
+        Add(updateReg0, stateReg0, updateReg0, mask0);
+        Add(updateReg1, stateReg1, updateReg1, mask1);
+        StoreKdaFloat(update + offset, updateReg0, mask0);
+        StoreKdaFloat(update + offset + FP32_PER_REG, updateReg1, mask1);
+        offset += 2 * FP32_PER_REG;
+    }
+    if (remaining > 0) {
+        mask0 = UpdateMask<float>(remaining);
+        LoadKdaAsFloat<T>(stateReg0, state + offset, mask0);
+        LoadKdaFloat(updateReg0, update + offset);
+        Muls(stateReg0, stateReg0, scale, mask0);
+        Add(updateReg0, stateReg0, updateReg0, mask0);
+        StoreKdaFloat(update + offset, updateReg0, mask0);
     }
 }
 

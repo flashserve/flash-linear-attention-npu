@@ -139,7 +139,6 @@ static ::ChunkGatedDeltaRuleFwdHTilingData CalcStage0DebugTiling(
     ctx.cuSeqlensDim0 = cuSeqlens.has_value() ? static_cast<int64_t>(cuSeqlens.value().size()) : 0;
     ctx.useInitialState = false;
     // Match the scalar-gated production specialization. Stage0 does not read g.
-    ctx.useGk = false;
     ctx.storeFinalState = false;
     ctx.chunkSize = chunkSize;
 

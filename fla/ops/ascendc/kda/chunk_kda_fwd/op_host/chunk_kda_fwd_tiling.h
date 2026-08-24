@@ -63,7 +63,6 @@ TILING_DATA_FIELD_DEF(int64_t, outputScratchOffset);
 TILING_DATA_FIELD_DEF(int64_t, fwdHWorkspaceBaseOffset);
 TILING_DATA_FIELD_DEF(int64_t, vWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, vUpdateWorkspaceOffset);
-TILING_DATA_FIELD_DEF(int64_t, kDecayWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, hWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, numSeqWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, numChunksWorkspaceOffset);

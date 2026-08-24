@@ -79,7 +79,6 @@ struct FwdHTilingView {
     int64_t tokenBatch;
     int64_t vWorkspaceOffset;
     int64_t vUpdateWorkspaceOffset;
-    int64_t kDecayWorkspaceOffset;
     int64_t hWorkspaceOffset;
     int64_t numSeqWorkspaceOffset;
     int64_t numChunksWorkspaceOffset;
@@ -103,7 +102,6 @@ __aicore__ inline FwdHTilingView MakeFwdHTiling(const TilingData &tiling)
         tiling.isVarLen ? tiling.seqNum : 1,
         tiling.vWorkspaceOffset,
         tiling.vUpdateWorkspaceOffset,
-        tiling.kDecayWorkspaceOffset,
         tiling.hWorkspaceOffset,
         tiling.numSeqWorkspaceOffset,
         tiling.numChunksWorkspaceOffset,

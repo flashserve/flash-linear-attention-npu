@@ -30,7 +30,7 @@ namespace optiling {
 
 static constexpr size_t GDN_FWD_H_WORKSPACE_RSV_BYTE = 16 * 1024 * 1024;
 static constexpr size_t GDN_FWD_H_GM_ALIGN = 512;
-static constexpr int64_t GDN_FWD_H_PING_PONG_STAGES = 2;
+static constexpr int64_t GDN_FWD_H_WORKSPACE_BUFFER_COUNT = 8;
 
 // Plain, framework-agnostic inputs needed to compute the tiling.
 struct ChunkGatedDeltaRuleFwdHTilingContext {
@@ -45,7 +45,6 @@ struct ChunkGatedDeltaRuleFwdHTilingContext {
     bool hasCuSeqlens;
     int64_t cuSeqlensDim0; // length of cu_seqlens (only used when hasCuSeqlens)
     bool useInitialState;
-    bool useGk;
     // attrs
     bool storeFinalState;
     int64_t chunkSize;
@@ -88,18 +87,14 @@ public:
         workspaceOffset += GDN_FWD_H_WORKSPACE_RSV_BYTE;
 
         tiling.vWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * vHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_PING_PONG_STAGES));
+        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * vHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_WORKSPACE_BUFFER_COUNT));
 
         tiling.vUpdateWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * vHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_PING_PONG_STAGES));
+        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * vHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_WORKSPACE_BUFFER_COUNT));
 
-        tiling.kDecayWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        if (ctx_.useGk) {
-            workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * kHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_PING_PONG_STAGES));
-        }
 
         tiling.hWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * kHeadDim * vHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_PING_PONG_STAGES));
+        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * kHeadDim * vHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_WORKSPACE_BUFFER_COUNT));
 
         tiling.numSeqWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
         workspaceOffset += AlignUp(static_cast<size_t>((tokenBatch + 1) * static_cast<int64_t>(sizeof(int64_t))));

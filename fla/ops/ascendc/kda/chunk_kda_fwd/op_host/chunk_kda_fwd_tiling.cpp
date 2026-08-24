@@ -43,7 +43,7 @@ constexpr uint64_t KDA_SOLVE_SCRATCH_SLOTS = 5;
 constexpr uint64_t KDA_SOLVE_PIPELINE_DEPTH = 4;
 constexpr uint64_t KDA_SCORE_QUEUE_SLOTS = 4;
 constexpr uint64_t KDA_SCORE_SCRATCH_PLANES = 3;
-constexpr uint64_t KDA_GDN_PIPELINE_DEPTH = 2;
+constexpr uint64_t KDA_FWD_H_WORKSPACE_BUFFER_COUNT = 8;
 constexpr uint32_t KDA_BATCH_MODE = 1;
 
 uint64_t AlignWorkspace(uint64_t bytes)
@@ -276,16 +276,13 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     uint64_t fwdHCursor = 0;
     const uint64_t vWorkspaceOffset = AllocateWorkspace(
         fwdHCursor, static_cast<uint64_t>(blockDim) * chunkSize * shape.vDim *
-                        sizeof(float) * KDA_GDN_PIPELINE_DEPTH);
+                        sizeof(float) * KDA_FWD_H_WORKSPACE_BUFFER_COUNT);
     const uint64_t vUpdateWorkspaceOffset = AllocateWorkspace(
         fwdHCursor, static_cast<uint64_t>(blockDim) * chunkSize * shape.vDim *
-                        sizeof(float) * KDA_GDN_PIPELINE_DEPTH);
-    const uint64_t kDecayWorkspaceOffset = AllocateWorkspace(
-        fwdHCursor, static_cast<uint64_t>(blockDim) * chunkSize * shape.kDim *
-                        sizeof(float) * KDA_GDN_PIPELINE_DEPTH);
+                        sizeof(float) * KDA_FWD_H_WORKSPACE_BUFFER_COUNT);
     const uint64_t hWorkspaceOffset = AllocateWorkspace(
         fwdHCursor, static_cast<uint64_t>(blockDim) * shape.kDim * shape.vDim *
-                        sizeof(float) * KDA_GDN_PIPELINE_DEPTH);
+                        sizeof(float) * KDA_FWD_H_WORKSPACE_BUFFER_COUNT);
     const uint64_t tokenBatch = isVarLen ? static_cast<uint64_t>(seqNum) : 1;
     const uint64_t numSeqWorkspaceOffset = AllocateWorkspace(
         fwdHCursor, (tokenBatch + 1) * sizeof(int64_t));
@@ -358,7 +355,6 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     tiling.set_fwdHWorkspaceBaseOffset(fwdHWorkspaceBaseOffset);
     tiling.set_vWorkspaceOffset(vWorkspaceOffset);
     tiling.set_vUpdateWorkspaceOffset(vUpdateWorkspaceOffset);
-    tiling.set_kDecayWorkspaceOffset(kDecayWorkspaceOffset);
     tiling.set_hWorkspaceOffset(hWorkspaceOffset);
     tiling.set_numSeqWorkspaceOffset(numSeqWorkspaceOffset);
     tiling.set_numChunksWorkspaceOffset(numChunksWorkspaceOffset);

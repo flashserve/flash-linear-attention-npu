@@ -86,7 +86,6 @@ struct DirectKdaTilingData {
     int64_t fwdHTokenBatch;
     int64_t fwdHVWorkspaceOffset;
     int64_t fwdHVUpdateWorkspaceOffset;
-    int64_t fwdHKDecayWorkspaceOffset;
     int64_t fwdHHWorkspaceOffset;
     int64_t fwdHNumSeqWorkspaceOffset;
     int64_t fwdHNumChunksWorkspaceOffset;
@@ -213,7 +212,6 @@ __aicore__ inline void RunChunkKdaFwdHDirect(
     stateTiling.tokenBatch = tiling.fwdHTokenBatch;
     stateTiling.vWorkspaceOffset = tiling.fwdHVWorkspaceOffset;
     stateTiling.vUpdateWorkspaceOffset = tiling.fwdHVUpdateWorkspaceOffset;
-    stateTiling.kDecayWorkspaceOffset = tiling.fwdHKDecayWorkspaceOffset;
     stateTiling.hWorkspaceOffset = tiling.fwdHHWorkspaceOffset;
     stateTiling.numSeqWorkspaceOffset = tiling.fwdHNumSeqWorkspaceOffset;
     stateTiling.numChunksWorkspaceOffset = tiling.fwdHNumChunksWorkspaceOffset;
@@ -427,7 +425,6 @@ ChunkKdaFwdDirectNpu(
     stateContext.hasCuSeqlens = false;
     stateContext.cuSeqlensDim0 = 0;
     stateContext.useInitialState = initialState.has_value();
-    stateContext.useGk = true;
     stateContext.storeFinalState = outputFinalState;
     stateContext.chunkSize = chunkSize;
     stateContext.aicCoreNum = blockDim;
@@ -490,7 +487,6 @@ ChunkKdaFwdDirectNpu(
     tiling.fwdHTokenBatch = stateTilingHost.tokenBatch;
     tiling.fwdHVWorkspaceOffset = stateTilingHost.vWorkspaceOffset;
     tiling.fwdHVUpdateWorkspaceOffset = stateTilingHost.vUpdateWorkspaceOffset;
-    tiling.fwdHKDecayWorkspaceOffset = stateTilingHost.kDecayWorkspaceOffset;
     tiling.fwdHHWorkspaceOffset = stateTilingHost.hWorkspaceOffset;
     tiling.fwdHNumSeqWorkspaceOffset = stateTilingHost.numSeqWorkspaceOffset;
     tiling.fwdHNumChunksWorkspaceOffset = stateTilingHost.numChunksWorkspaceOffset;

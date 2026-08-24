@@ -182,7 +182,6 @@ static ::ChunkGatedDeltaRuleFwdHTilingData calc_tiling_params(
     ctx.hasCuSeqlens = cu_seqlens.has_value();
     ctx.cuSeqlensDim0 = cu_seqlens.has_value() ? static_cast<int64_t>(cu_seqlens.value().size()) : 0;
     ctx.useInitialState = initial_state.has_value();
-    ctx.useGk = false;
     ctx.storeFinalState = output_final_state;
     ctx.chunkSize = chunk_size;
 

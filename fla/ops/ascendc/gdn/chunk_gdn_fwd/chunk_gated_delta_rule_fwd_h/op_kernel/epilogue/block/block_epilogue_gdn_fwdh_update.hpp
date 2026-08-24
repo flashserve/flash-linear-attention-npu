@@ -160,7 +160,8 @@ public:
         bool isFinalState,
         bool storeFinalState,
         bool useInitialState,
-        bool isPing
+        bool isPing,
+        bool processWholeHead
     )
     {
         static constexpr uint32_t ROW_TILE = 16;
@@ -169,6 +170,10 @@ public:
         uint32_t outputStride = vHeadDim;
         uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
+        if (processWholeHead) {
+            subBlockIdx = 0;
+            subBlockNum = 1;
+        }
         uint32_t rowsPerSubBlock = CeilDiv(mActual, subBlockNum);
         uint32_t rowBegin = subBlockIdx * rowsPerSubBlock;
         uint32_t rowEnd = rowBegin + rowsPerSubBlock;
@@ -228,7 +233,7 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
         }
 
-        if (nActual <= 128 && nActual == outputStride) {
+        if (!processWholeHead && nActual <= 128 && nActual == outputStride) {
             uint32_t mActualThisSubBlock = rowEnd - rowBegin;
             AscendC::GlobalTensor<HElementOutput> hOutputThisSubBlock = hOutput[rowBegin * outputStride];
             AscendC::GlobalTensor<HElementInput> hInputThisSubBlock = hInput[rowBegin * outputStride];
@@ -285,8 +290,10 @@ public:
                     AscendC::Cast(gkLastUbTensor, gkInputUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock);
                 }
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Muls(gkLastUbTensor, gkLastUbTensor, LN2, mActualThisSubBlock);
-                AscendC::PipeBarrier<PIPE_V>();
+                if constexpr (useExp2) {
+                    AscendC::Muls(gkLastUbTensor, gkLastUbTensor, LN2, mActualThisSubBlock);
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
                 AscendC::Exp(gkLastUbTensor, gkLastUbTensor, mActualThisSubBlock);
                 AscendC::PipeBarrier<PIPE_V>();
 
@@ -434,8 +441,10 @@ public:
                     AscendC::Cast(gkLastUbTensor, gkInputUbTensor, AscendC::RoundMode::CAST_NONE, rowsThisTile);
                 }
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Muls(gkLastUbTensor, gkLastUbTensor, LN2, rowsThisTile);
-                AscendC::PipeBarrier<PIPE_V>();
+                if constexpr (useExp2) {
+                    AscendC::Muls(gkLastUbTensor, gkLastUbTensor, LN2, rowsThisTile);
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
                 AscendC::Exp(gkLastUbTensor, gkLastUbTensor, rowsThisTile);
                 AscendC::PipeBarrier<PIPE_V>();
 
