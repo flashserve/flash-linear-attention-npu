@@ -48,7 +48,7 @@ struct ChunkGatedDeltaRuleFwdHParams {
     const aclIntArray *cuSeqlensOptional = nullptr;
     const aclIntArray *chunkIndicesOptional = nullptr;
     bool useExp2 = false;
-    bool transposeStateLayout = false;
+    bool stateVFirst = false;
     const aclTensor *hOut = nullptr;
     const aclTensor *vNewOut = nullptr;
     const aclTensor *finalStateOut = nullptr;
@@ -246,8 +246,8 @@ static aclnnStatus CheckOptions(const ChunkGatedDeltaRuleFwdHParams &params)
                "useExp2=true requires gk; the scalar g-only path uses natural-log decay.");
     CHECK_COND(params.saveNewValue, ACLNN_ERR_PARAM_INVALID,
                "saveNewValue is reserved and only true is supported.");
-    CHECK_COND(!params.transposeStateLayout, ACLNN_ERR_PARAM_INVALID,
-               "transposeStateLayout is reserved and only false is supported.");
+    CHECK_COND(!params.stateVFirst, ACLNN_ERR_PARAM_INVALID,
+               "stateVFirst is reserved and only false is supported by the physical aclnn interface.");
     return ACLNN_SUCCESS;
 }
 
@@ -298,7 +298,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional,
     bool useExp2,
-    bool transposeStateLayout,
+    bool stateVFirst,
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,
@@ -317,7 +317,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
                                          cuSeqlensOptional,
                                          chunkIndicesOptional,
                                          useExp2,
-                                         transposeStateLayout,
+                                         stateVFirst,
                                          hOut,
                                          vNewOut,
                                          finalStateOut};
@@ -325,7 +325,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleFwdH,
                    DFX_IN(k, w, u, gOptional, gkOptional, initialStateOptional, cuSeqlensOptional,
                           chunkIndicesOptional, outputFinalState, chunkSize, saveNewValue, useExp2,
-                          transposeStateLayout),
+                          stateVFirst),
                    DFX_OUT(hOut, vNewOut, finalStateOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);

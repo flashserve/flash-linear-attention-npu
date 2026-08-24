@@ -60,7 +60,7 @@ h, v_new, final_state = chunk_fwd_h(
 
 `state_v_first=True` 只改变公开 h/state 的最后 K/V 两轴。Python adapter 在进入物理 aclnn 前
 把 `initial_state` 规范化为 `[N,H_v,K,V]`，并始终向物理接口传
-`transposeStateLayout=false`；返回时再把 h/final_state 转回 `[V,K]`。
+`stateVFirst=false`；返回时再把 h/final_state 转回 `[V,K]`。
 
 ## 输出
 
@@ -89,7 +89,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional,
     bool useExp2,
-    bool transposeStateLayout,
+    bool stateVFirst,
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,

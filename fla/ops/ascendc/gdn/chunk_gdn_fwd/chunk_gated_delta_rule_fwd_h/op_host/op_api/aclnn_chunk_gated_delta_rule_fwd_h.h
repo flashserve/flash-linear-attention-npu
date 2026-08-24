@@ -29,7 +29,7 @@ extern "C" {
  * cuSeqlensOptional : optional
  * chunkIndicesOptional : optional
  * useExp2 : whether to use the exp2-equivalent gate path; true requires gkOptional
- * transposeStateLayout : reserved, only false is supported
+ * stateVFirst : reserved by the physical aclnn interface, only false is supported
  * hOut : required
  * vNewOut : required
  * finalStateOut : required, float32; use an empty tensor with shape [0] when outputFinalState is false
@@ -50,7 +50,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional,
     bool useExp2,
-    bool transposeStateLayout,
+    bool stateVFirst,
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,

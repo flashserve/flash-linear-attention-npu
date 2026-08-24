@@ -108,7 +108,7 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_void_p,  # cuSeqlensOptional
         ctypes.c_void_p,  # chunkIndicesOptional
         ctypes.c_bool,  # useExp2
-        ctypes.c_bool,  # transposeStateLayout (reserved, always false)
+        ctypes.c_bool,  # stateVFirst (reserved, always false)
         ctypes.c_void_p,  # hOut
         ctypes.c_void_p,  # vNewOut
         ctypes.c_void_p,  # finalStateOut
