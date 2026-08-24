@@ -5,12 +5,15 @@ set(chunk_scaled_dot_kkt_dir "${_chunk_scaled_dot_kkt_op_dir}" CACHE INTERNAL
     "Source directory alias for ChunkScaledDotKkt opFile")
 
 if (BUILD_OPEN_PROJECT)
-    target_sources(op_host_aclnn PRIVATE
+    target_sources(op_host_aclnnExc PRIVATE
         chunk_scaled_dot_kkt_def.cpp
+    )
+    target_compile_definitions(op_host_aclnnExc PRIVATE
+        ASCEND_SOC_VERSION="${ASCEND_COMPUTE_UNIT}"
     )
 endif()
 
-add_modules_sources(OPTYPE chunk_scaled_dot_kkt ACLNNTYPE aclnn)
+add_modules_sources(OPTYPE chunk_scaled_dot_kkt ACLNNTYPE aclnn_exclude)
 
 add_ops_compile_options(
     OP_NAME ChunkScaledDotKkt
