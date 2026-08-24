@@ -545,9 +545,11 @@ at::Tensor npu_chunk_fwd_o(
         h_compute, v_new_out, final_state_compute
     );
     at::Tensor h_out = state_v_first_ ? h_compute.transpose(-2, -1).contiguous() : h_compute;
-    at::Tensor final_state_out = final_state_compute;
-    if (state_v_first_ && output_final_state_) {
-        final_state_out = final_state_compute.transpose(-2, -1).contiguous();
+    at::Tensor final_state_out;
+    if (output_final_state_) {
+        final_state_out = state_v_first_
+                              ? final_state_compute.transpose(-2, -1).contiguous()
+                              : final_state_compute;
     }
     return std::make_tuple(h_out, v_new_out, final_state_out);
 }

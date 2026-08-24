@@ -119,6 +119,7 @@ class AclnnCtypesAbiTest(unittest.TestCase):
             context = FakeCallContext()
             captured["name"] = name
             captured["args"] = build_args(context)
+            captured["descriptors"] = context.descriptor_metadata
             return outputs
 
         data = FakeTensor((1, 1, 64, 128), torch.float16)
@@ -126,7 +127,7 @@ class AclnnCtypesAbiTest(unittest.TestCase):
         with mock.patch.object(ACLNN_CTYPES, "_empty", side_effect=fake_empty):
             with mock.patch.object(ACLNN_CTYPES, "_empty_like", side_effect=fake_empty_like):
                 with mock.patch.object(ACLNN_CTYPES, "_call_aclnn", side_effect=fake_call_aclnn):
-                    ACLNN_CTYPES.npu_chunk_gated_delta_rule_fwd_h(
+                    result = ACLNN_CTYPES.npu_chunk_gated_delta_rule_fwd_h(
                         data,
                         data,
                         data,
@@ -136,6 +137,12 @@ class AclnnCtypesAbiTest(unittest.TestCase):
 
         self.assertEqual(captured["name"], "aclnnChunkGatedDeltaRuleFwdH")
         self.assertTrue(captured["args"][11].value)
+        final_state_descriptor = next(
+            metadata for metadata in captured["descriptors"] if metadata[0] == "final_state"
+        )
+        self.assertEqual(final_state_descriptor[1].shape, (0,))
+        self.assertEqual(final_state_descriptor[1].dtype, torch.float32)
+        self.assertIsNone(result[2])
 
     def test_chunk_gated_delta_rule_bwd_dhu_signature_and_default_use_exp2(self):
         import inspect

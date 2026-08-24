@@ -91,10 +91,11 @@ h, v_new, final_state = chunk_fwd_h(
 | --- | --- | --- |
 | `h` | 必选 | `[B,H_v,N_c,K,V]`，`state_v_first=true` 时末两维为 `[V,K]` |
 | `v_new` | 必选 | `[B,H_v,T,V]` |
-| `final_state` | 必选返回槽 | `[N,H_v,K,V]`，`state_v_first=true` 时末两维为 `[V,K]` |
+| `final_state` | 可选 | `[N,H_v,K,V]`，`state_v_first=true` 时末两维为 `[V,K]` |
 
 `h` 是每个 chunk 的起始状态，反向会继续使用，因此保持 head-major。`final_state` 仅供调用者输出，
-在 `output_final_state=false` 时返回同 device 的 FP32 空 Tensor，shape 为 `[0]`。
+为保持既有 Python 接口兼容，`output_final_state=false` 时三元组第三项返回 `None`。物理 aclnn
+内部使用的 FP32 `[0]` Tensor 只是固定 launch 参数的占位，不作为 Python 输出暴露。
 
 ## aclnn
 

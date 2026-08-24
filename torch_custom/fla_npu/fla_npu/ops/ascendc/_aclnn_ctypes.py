@@ -710,7 +710,7 @@ def npu_chunk_gated_delta_rule_fwd_h(
         if output_final_state:
             final_state_result = final_state_result.transpose(-1, -2).contiguous()
     if not output_final_state:
-        final_state_result = final_state_compute
+        final_state_result = None
     return h_result, v_new_result, final_state_result
 
 
