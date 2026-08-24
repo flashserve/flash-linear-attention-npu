@@ -55,7 +55,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":96,\"HV\":96,\"K\":128,\"T\":2048,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_scale\":0.35,\"case_key\":\"ascend950_h96_t2048_c64_packed_single_recompute\",\"chunk_size\":64,\"cu_seqlens\":\"0,2048\",\"data_profile\":\"model_h96\",\"disable_recompute\":false,\"distribution\":\"single\",\"dt_bias\":true,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":1.25,\"initial_state\":false,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"optional_spec\":\"initial=False,final=False,varlen=True,disable_recompute=False\",\"output_final_state\":false,\"profile\":\"a5_accuracy\",\"q_dtype\":\"bf16\",\"qk_scale\":0.05,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838834764831843,\"seed\":20260820,\"shape_spec\":\"B=1,H=96,HV=96,T=2048,K=128,V=128\",\"soc\":\"ascend950\",\"state_v_first\":true,\"tags\":\"accuracy,model_target,regression,boundary,varlen\",\"use_gate_in_kernel\":true,\"v_scale\":0.05}",
+        "range_values": "{\"B\":1,\"H\":96,\"HV\":96,\"K\":128,\"T\":2048,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_scale\":0.35,\"case_key\":\"ascend950_h96_t2048_c64_dense_bsnd_recompute\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_profile\":\"model_h96\",\"disable_recompute\":false,\"distribution\":\"dense\",\"dt_bias\":true,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":1.25,\"initial_state\":false,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"optional_spec\":\"initial=False,final=False,varlen=False,disable_recompute=False\",\"output_final_state\":false,\"profile\":\"a5_performance\",\"q_dtype\":\"bf16\",\"qk_scale\":0.05,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838834764831843,\"seed\":20260820,\"shape_spec\":\"B=1,H=96,HV=96,T=2048,K=128,V=128\",\"soc\":\"ascend950\",\"state_v_first\":true,\"tags\":\"performance,model_target,regression\",\"use_gate_in_kernel\":true,\"v_scale\":0.05}",
         "backward": false
       },
       {
@@ -199,7 +199,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": true,
+        "range_values": false,
         "backward": false
       },
       {
@@ -324,7 +324,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":96,\"HV\":96,\"K\":128,\"T\":2048,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_scale\":0.35,\"case_key\":\"ascend950_h96_t2048_c64_packed_single_export\",\"chunk_size\":64,\"cu_seqlens\":\"0,2048\",\"data_profile\":\"model_h96\",\"disable_recompute\":true,\"distribution\":\"single\",\"dt_bias\":true,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":1.25,\"initial_state\":false,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"optional_spec\":\"initial=False,final=False,varlen=True,disable_recompute=True\",\"output_final_state\":false,\"profile\":\"a5_accuracy\",\"q_dtype\":\"bf16\",\"qk_scale\":0.05,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838834764831843,\"seed\":20260820,\"shape_spec\":\"B=1,H=96,HV=96,T=2048,K=128,V=128\",\"soc\":\"ascend950\",\"state_v_first\":true,\"tags\":\"accuracy,model_target,regression,boundary,varlen\",\"use_gate_in_kernel\":true,\"v_scale\":0.05}",
+        "range_values": "{\"B\":1,\"H\":96,\"HV\":96,\"K\":128,\"T\":2048,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_scale\":0.35,\"case_key\":\"ascend950_h96_t2048_c64_dense_bsnd_export\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_profile\":\"model_h96\",\"disable_recompute\":true,\"distribution\":\"dense\",\"dt_bias\":true,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":1.25,\"initial_state\":false,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"optional_spec\":\"initial=False,final=False,varlen=False,disable_recompute=True\",\"output_final_state\":false,\"profile\":\"a5_performance\",\"q_dtype\":\"bf16\",\"qk_scale\":0.05,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838834764831843,\"seed\":20260820,\"shape_spec\":\"B=1,H=96,HV=96,T=2048,K=128,V=128\",\"soc\":\"ascend950\",\"state_v_first\":true,\"tags\":\"performance,model_target,regression\",\"use_gate_in_kernel\":true,\"v_scale\":0.05}",
         "backward": false
       },
       {
@@ -468,7 +468,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": true,
+        "range_values": false,
         "backward": false
       },
       {
@@ -593,7 +593,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":96,\"HV\":96,\"K\":128,\"T\":8192,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_scale\":0.35,\"case_key\":\"ascend950_h96_t8192_c64_packed_single_recompute\",\"chunk_size\":64,\"cu_seqlens\":\"0,8192\",\"data_profile\":\"model_h96\",\"disable_recompute\":false,\"distribution\":\"single\",\"dt_bias\":true,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":1.25,\"initial_state\":false,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"optional_spec\":\"initial=False,final=False,varlen=True,disable_recompute=False\",\"output_final_state\":false,\"profile\":\"a5_accuracy\",\"q_dtype\":\"bf16\",\"qk_scale\":0.05,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838834764831843,\"seed\":20260828,\"shape_spec\":\"B=1,H=96,HV=96,T=8192,K=128,V=128\",\"soc\":\"ascend950\",\"state_v_first\":true,\"tags\":\"accuracy,model_target,regression,boundary,varlen\",\"use_gate_in_kernel\":true,\"v_scale\":0.05}",
+        "range_values": "{\"B\":1,\"H\":96,\"HV\":96,\"K\":128,\"T\":8192,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_scale\":0.35,\"case_key\":\"ascend950_h96_t8192_c64_dense_bsnd_recompute\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_profile\":\"model_h96\",\"disable_recompute\":false,\"distribution\":\"dense\",\"dt_bias\":true,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":1.25,\"initial_state\":false,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"optional_spec\":\"initial=False,final=False,varlen=False,disable_recompute=False\",\"output_final_state\":false,\"profile\":\"a5_performance\",\"q_dtype\":\"bf16\",\"qk_scale\":0.05,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838834764831843,\"seed\":20260828,\"shape_spec\":\"B=1,H=96,HV=96,T=8192,K=128,V=128\",\"soc\":\"ascend950\",\"state_v_first\":true,\"tags\":\"performance,model_target,regression\",\"use_gate_in_kernel\":true,\"v_scale\":0.05}",
         "backward": false
       },
       {
@@ -737,7 +737,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": true,
+        "range_values": false,
         "backward": false
       },
       {
@@ -862,7 +862,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":96,\"HV\":96,\"K\":128,\"T\":8192,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_scale\":0.35,\"case_key\":\"ascend950_h96_t8192_c64_packed_single_export\",\"chunk_size\":64,\"cu_seqlens\":\"0,8192\",\"data_profile\":\"model_h96\",\"disable_recompute\":true,\"distribution\":\"single\",\"dt_bias\":true,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":1.25,\"initial_state\":false,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"optional_spec\":\"initial=False,final=False,varlen=True,disable_recompute=True\",\"output_final_state\":false,\"profile\":\"a5_accuracy\",\"q_dtype\":\"bf16\",\"qk_scale\":0.05,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838834764831843,\"seed\":20260828,\"shape_spec\":\"B=1,H=96,HV=96,T=8192,K=128,V=128\",\"soc\":\"ascend950\",\"state_v_first\":true,\"tags\":\"accuracy,model_target,regression,boundary,varlen\",\"use_gate_in_kernel\":true,\"v_scale\":0.05}",
+        "range_values": "{\"B\":1,\"H\":96,\"HV\":96,\"K\":128,\"T\":8192,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_scale\":0.35,\"case_key\":\"ascend950_h96_t8192_c64_dense_bsnd_export\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_profile\":\"model_h96\",\"disable_recompute\":true,\"distribution\":\"dense\",\"dt_bias\":true,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":1.25,\"initial_state\":false,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"optional_spec\":\"initial=False,final=False,varlen=False,disable_recompute=True\",\"output_final_state\":false,\"profile\":\"a5_performance\",\"q_dtype\":\"bf16\",\"qk_scale\":0.05,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838834764831843,\"seed\":20260828,\"shape_spec\":\"B=1,H=96,HV=96,T=8192,K=128,V=128\",\"soc\":\"ascend950\",\"state_v_first\":true,\"tags\":\"performance,model_target,regression\",\"use_gate_in_kernel\":true,\"v_scale\":0.05}",
         "backward": false
       },
       {
@@ -1006,7 +1006,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": true,
+        "range_values": false,
         "backward": false
       },
       {

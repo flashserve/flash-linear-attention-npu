@@ -130,15 +130,18 @@ A2 mixed-tail 1K 用例的保存输出复检稳定复现 NaN/Inf；`ct viz` 显�
 
 ## 2. A5 性能四用例
 
-`atk_chunk_kda_fwd_performance.json` 是从主矩阵固定抽取的 4 条性能用例，避免性能
-scope 误跑精度矩阵或依赖 CPU/GPU 远端节点：
+`atk_chunk_kda_fwd_performance.json` 基于主矩阵的模型输入配置提供 4 条 dense BSND
+性能用例，避免性能 scope 误跑精度矩阵或依赖 CPU/GPU 远端节点：
 
-| 用例 | H/ HV | T | K/V | chunk | `disable_recompute` |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `id=266` | 96/96（无 GVA） | 2048 | 128/128 | 64 | `false` |
-| `id=267` | 96/96（无 GVA） | 2048 | 128/128 | 64 | `true` |
-| `id=282` | 96/96（无 GVA） | 8192 | 128/128 | 64 | `false` |
-| `id=283` | 96/96（无 GVA） | 8192 | 128/128 | 64 | `true` |
+| 用例 | layout | H/HV | T | K/V | chunk | `disable_recompute` |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `id=266` | BSND dense | 96/96（无 GVA） | 2048 | 128/128 | 64 | `false` |
+| `id=267` | BSND dense | 96/96（无 GVA） | 2048 | 128/128 | 64 | `true` |
+| `id=282` | BSND dense | 96/96（无 GVA） | 8192 | 128/128 | 64 | `false` |
+| `id=283` | BSND dense | 96/96（无 GVA） | 8192 | 128/128 | 64 | `true` |
+
+四条用例均不传 `cu_seqlens` 和 `chunk_indices`，A5 BF16、chunk=64、K=V=128
+场景会命中 dense 对齐快路径，一次 API 调用只提交一次物理 `ChunkKdaFwd` 主 kernel。
 
 性能阶段固定使用本地 `npu` backend。ATK 26.7.8 的 `pyaclnn` 性能任务会要求
 remote comparison node；公共 runner 已将性能 backend 与精度双标杆 backend
