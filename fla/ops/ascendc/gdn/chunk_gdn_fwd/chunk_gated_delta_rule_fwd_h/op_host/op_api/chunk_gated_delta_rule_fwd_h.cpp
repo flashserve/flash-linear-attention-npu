@@ -22,20 +22,21 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleFwdH(
     const aclTensor *k,
     const aclTensor *w,
     const aclTensor *u,
-    const aclTensor *g,
+    const aclTensor *gOptional,
     const aclTensor *gkOptional,
     const aclTensor *initialStateOptional,
     const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional,
     bool outputFinalState,
     int64_t chunkSize,
+    bool useExp2,
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,
     aclOpExecutor *executor)
 {
-    L0_DFX(ChunkGatedDeltaRuleFwdH, k, w, u, g, gkOptional, initialStateOptional, cuSeqlensOptional,
-           chunkIndicesOptional, outputFinalState, chunkSize, hOut, vNewOut, finalStateOut);
+    L0_DFX(ChunkGatedDeltaRuleFwdH, k, w, u, gOptional, gkOptional, initialStateOptional, cuSeqlensOptional,
+           chunkIndicesOptional, outputFinalState, chunkSize, useExp2, hOut, vNewOut, finalStateOut);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional) {
@@ -57,19 +58,13 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleFwdH(
         actualChunkIndices = nullptr;
     }
 
-    const auto &kShape = k->GetViewShape();
-    const auto &uShape = u->GetViewShape();
-    const int64_t logicalBatch = kShape.GetDim(0);
-    const int64_t logicalKHeads = kShape.GetDim(1);
-    const int64_t logicalSeqlen = kShape.GetDim(2);
-    const int64_t logicalKDim = kShape.GetDim(3);
-    const int64_t logicalVHeads = uShape.GetDim(1);
-    const int64_t logicalVDim = uShape.GetDim(3);
+    k->SetOriginalShape(k->GetViewShape());
+    u->SetOriginalShape(u->GetViewShape());
+    hOut->SetOriginalShape(hOut->GetViewShape());
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkGatedDeltaRuleFwdH,
-        OP_INPUT(k, w, u, g, gkOptional, initialStateOptional, actualCuSeqlens, actualChunkIndices),
+        OP_INPUT(k, w, u, gOptional, gkOptional, initialStateOptional, actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(hOut, vNewOut, finalStateOut),
-        OP_ATTR(outputFinalState, chunkSize, logicalBatch, logicalSeqlen,
-                logicalKHeads, logicalVHeads, logicalKDim, logicalVDim));
+        OP_ATTR(outputFinalState, chunkSize, useExp2));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr};

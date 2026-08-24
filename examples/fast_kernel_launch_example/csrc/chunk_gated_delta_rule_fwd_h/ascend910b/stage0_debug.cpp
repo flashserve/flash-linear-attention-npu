@@ -155,6 +155,7 @@ static ::ChunkGatedDeltaRuleFwdHTilingData CalcStage0DebugTiling(
     // Match the scalar-gated production specialization. Stage0 does not read g.
     ctx.useG = true;
     ctx.useGk = false;
+    ctx.useExp2 = false;
     ctx.storeFinalState = false;
     ctx.chunkSize = chunkSize;
 

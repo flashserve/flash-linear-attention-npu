@@ -219,6 +219,7 @@ __aicore__ inline void RunChunkKdaFwdHDirect(
     stateTiling.numChunksWorkspaceOffset = tiling.fwdHNumChunksWorkspaceOffset;
     stateTiling.useG = false;
     stateTiling.useGk = true;
+    stateTiling.useExp2 = true;
 
     using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         T, float, float, float, TileShapes, true, false, true>;
@@ -436,6 +437,7 @@ ChunkKdaFwdDirectNpu(
     stateContext.stateDataType = optiling::GDN_FWD_H_DTYPE_FP32;
     stateContext.useG = false;
     stateContext.useGk = true;
+    stateContext.useExp2 = true;
     stateContext.storeFinalState = outputFinalState;
     stateContext.chunkSize = chunkSize;
     stateContext.aicCoreNum = blockDim;

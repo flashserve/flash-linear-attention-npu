@@ -43,6 +43,7 @@ struct ChunkGatedDeltaRuleFwdHTilingData {
     int64_t tokenBatch;
     bool useG;
     bool useGk;
+    bool useExp2;
     int64_t vWorkspaceOffset;
     int64_t vUpdateWorkspaceOffset;
     int64_t kDecayWorkspaceOffset;

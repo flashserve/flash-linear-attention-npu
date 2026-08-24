@@ -38,6 +38,7 @@ TILING_DATA_FIELD_DEF(int64_t, shapeBatch);
 TILING_DATA_FIELD_DEF(int64_t, tokenBatch);
 TILING_DATA_FIELD_DEF(bool, useG);
 TILING_DATA_FIELD_DEF(bool, useGk);
+TILING_DATA_FIELD_DEF(bool, useExp2);
 TILING_DATA_FIELD_DEF(int64_t, vWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, vUpdateWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, kDecayWorkspaceOffset);
