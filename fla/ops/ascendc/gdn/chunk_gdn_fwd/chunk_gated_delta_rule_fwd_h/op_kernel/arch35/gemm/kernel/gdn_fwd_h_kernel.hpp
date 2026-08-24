@@ -28,6 +28,7 @@
 #include "catlass/layout/layout.hpp"
 #include "catlass/gemm_coord.hpp"
 #include "tla/tensor.hpp"
+#include "../../../chunk_gated_delta_rule_fwd_h_policy.h"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 
@@ -67,11 +68,15 @@ struct GDNFwdHTileShapes256 {
     using L0TileShape = tla::Shape<_128, _256, _64>;
 };
 
-template <bool KGated, bool ScalarGated, bool UseExp2>
+template <uint32_t GateMode, uint32_t ExpMode>
 struct GDNFwdHGateTag {
-    static constexpr bool value = KGated;
-    static constexpr bool scalarGated = ScalarGated;
-    static constexpr bool useExp2 = UseExp2;
+    static_assert(GateMode == GDN_FWD_H_GATE_G || GateMode == GDN_FWD_H_GATE_GK,
+                  "unsupported FwdH gate mode");
+    static_assert(ExpMode == GDN_FWD_H_EXP_E || ExpMode == GDN_FWD_H_EXP_2,
+                  "unsupported FwdH exponent mode");
+    static constexpr bool value = GateMode == GDN_FWD_H_GATE_GK;
+    static constexpr bool scalarGated = GateMode == GDN_FWD_H_GATE_G;
+    static constexpr bool useExp2 = ExpMode == GDN_FWD_H_EXP_2;
 };
 
 template<
@@ -79,10 +84,9 @@ template<
     typename G_TYPE,
     typename STATE_TYPE,
     typename WORKSPACE_TYPE,
-    typename TileShapes = GDNFwdHTileShapes128,
-    bool kGated = false,
-    bool scalarGated = true,
-    bool useExp2 = false
+    typename TileShapes,
+    uint32_t gateMode,
+    uint32_t expMode
 >
 class GDNFwdHKernel {
 public:
@@ -134,7 +138,9 @@ public:
 
     // vec 1
     using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnew;
-    using GateTag = GDNFwdHGateTag<kGated, scalarGated, useExp2>;
+    using GateTag = GDNFwdHGateTag<gateMode, expMode>;
+    static constexpr bool kGated = GateTag::value;
+    static constexpr bool scalarGated = GateTag::scalarGated;
     using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, VUpdateType, FinalStateType, GateTag>;
 
     // vec 2

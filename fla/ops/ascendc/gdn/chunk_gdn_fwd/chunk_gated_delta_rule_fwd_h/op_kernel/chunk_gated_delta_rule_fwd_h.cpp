@@ -18,124 +18,51 @@
 #include "gemm/kernel/gdn_fwd_h_kernel.hpp"
 #endif
 
+#include "chunk_gated_delta_rule_fwd_h_tiling_key.h"
 #include "lib/matmul_intf.h"
 
 using namespace Catlass;
 
 namespace GDN {
 
-template <typename InputT, typename GT, typename StateT, typename WorkspaceT, typename TileShapes,
-          bool kGated, bool scalarGated, bool useExp2>
-__aicore__ inline void ChunkGatedDeltaRuleFwdHKernelImpl(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk,
-                                                         GM_ADDR inital_state, GM_ADDR cu_seqlens,
-                                                         GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
-                                                         GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user)
-{
-    using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
-        InputT, GT, StateT, WorkspaceT, TileShapes, kGated, scalarGated, useExp2>;
-    GDNFwdHKernel gdnFwdH;
-    gdnFwdH.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-    gdnFwdH.Process();
-}
+template <uint32_t VTile>
+struct FwdHTileSelector;
 
-template <typename DataT, typename GateT, typename StateT, typename TileShapes, bool useExp2>
-__aicore__ inline void ChunkGatedDeltaRuleFwdHLaunchTyped(
-    GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state,
-    GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
-                                                         GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user,
-                                                         bool useGk)
-{
-    using WorkspaceT = float;
-    // Host and tiling validation guarantee exactly one gate mode.
-    if (useGk) {
-        ChunkGatedDeltaRuleFwdHKernelImpl<DataT, GateT, StateT, WorkspaceT, TileShapes, true, false, useExp2>(
-            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-    } else {
-        ChunkGatedDeltaRuleFwdHKernelImpl<DataT, GateT, StateT, WorkspaceT, TileShapes, false, true, useExp2>(
-            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-    }
-}
+template <>
+struct FwdHTileSelector<GDN_FWD_H_V_TILE_128> {
+    using type = Catlass::Gemm::Kernel::GDNFwdHTileShapes128;
+};
 
-template <typename DataT, typename StateT, typename TileShapes, bool useExp2>
-__aicore__ inline void ChunkGatedDeltaRuleFwdHDispatchGate(
-    GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state,
-    GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
-    GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user, int64_t gateDataType,
-    bool useGk)
-{
-    constexpr int64_t DTYPE_BF16 = 1;
-    constexpr int64_t DTYPE_FP32 = 2;
-    if (gateDataType == DTYPE_FP32) {
-        ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, float, StateT, TileShapes, useExp2>(
-            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
-            final_state, tiling, user, useGk);
-    } else if (gateDataType == DTYPE_BF16) {
-        ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, bfloat16_t, StateT, TileShapes, useExp2>(
-            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
-            final_state, tiling, user, useGk);
-    } else {
-        ChunkGatedDeltaRuleFwdHLaunchTyped<DataT, half, StateT, TileShapes, useExp2>(
-            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
-            final_state, tiling, user, useGk);
-    }
-}
+template <uint32_t GateMode>
+struct FwdHGateTypeSelector;
 
-template <typename TileShapes, bool useExp2>
-__aicore__ inline void ChunkGatedDeltaRuleFwdHDispatchExp(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk,
-                                                          GM_ADDR inital_state, GM_ADDR cu_seqlens,
-                                                          GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
-                                                          GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user)
-{
-    __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict tilingData =
-        reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
-    bool useGk = tilingData->useGk;
-    constexpr int64_t DTYPE_FP32 = 2;
-    if (tilingData->stateDataType == DTYPE_FP32) {
-        ChunkGatedDeltaRuleFwdHDispatchGate<DTYPE_K, float, TileShapes, useExp2>(
-            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
-            final_state, tiling, user, tilingData->gDataType, useGk);
-    } else {
-        ChunkGatedDeltaRuleFwdHDispatchGate<DTYPE_K, DTYPE_K, TileShapes, useExp2>(
-            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
-            final_state, tiling, user, tilingData->gDataType, useGk);
-    }
-}
+template <>
+struct FwdHGateTypeSelector<GDN_FWD_H_GATE_G> {
+    using type = DTYPE_G;
+};
 
-template <typename TileShapes>
-__aicore__ inline void ChunkGatedDeltaRuleFwdHDispatch(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk,
-                                                       GM_ADDR inital_state, GM_ADDR cu_seqlens,
-                                                       GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
-                                                       GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user)
-{
-    __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict tilingData =
-        reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
-    if (tilingData->useExp2) {
-        ChunkGatedDeltaRuleFwdHDispatchExp<TileShapes, true>(
-            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
-            final_state, tiling, user);
-    } else {
-        ChunkGatedDeltaRuleFwdHDispatchExp<TileShapes, false>(
-            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
-            final_state, tiling, user);
-    }
-}
+template <>
+struct FwdHGateTypeSelector<GDN_FWD_H_GATE_GK> {
+    using type = DTYPE_GK;
+};
 
 } // namespace GDN
 
-extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd_h(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g,
-                                                         GM_ADDR gk, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
-                                                         GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state,
-                                                         GM_ADDR workspace, GM_ADDR tiling)
+template <uint32_t V_TILE, uint32_t GATE_MODE, uint32_t EXP_MODE>
+__global__ __aicore__ void chunk_gated_delta_rule_fwd_h(
+    GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk,
+    GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
+    GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state,
+    GM_ADDR workspace, GM_ADDR tiling)
 {
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     GM_ADDR user = AscendC::GetUserWorkspace(workspace);
-
-    if (TILING_KEY_IS(1)) {
-        KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
-        GDN::ChunkGatedDeltaRuleFwdHDispatch<Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
-            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-    } else if (TILING_KEY_IS(2)) {
-        KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
-        GDN::ChunkGatedDeltaRuleFwdHDispatch<Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
-            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
-    }
+    using TileShapes = typename GDN::FwdHTileSelector<V_TILE>::type;
+    using GateT = typename GDN::FwdHGateTypeSelector<GATE_MODE>::type;
+    using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
+        DTYPE_K, GateT, DTYPE_FINAL_STATE, float, TileShapes, GATE_MODE, EXP_MODE>;
+    Kernel op;
+    op.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices,
+            h, v_new, final_state, tiling, user);
+    op.Process();
 }

@@ -95,6 +95,8 @@ static aclnnStatus CheckShape(ChunkGatedDeltaRuleFwdHParams params)
     const int64_t hv = uShape.GetDim(1);
     const int64_t kDim = kShape.GetDim(3);
     const int64_t vDim = uShape.GetDim(3);
+    CHECK_COND(vDim == 128, ACLNN_ERR_PARAM_INVALID,
+               "u V dimension must be 128, but got %ld.", vDim);
     const int64_t seqNum = params.cuSeqlensOptional == nullptr
                                ? batch
                                : static_cast<int64_t>(params.cuSeqlensOptional->Size()) - 1;
@@ -146,12 +148,16 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleFwdHParams params)
     auto gateDtype = params.gOptional != nullptr ? params.gOptional->GetDataType() : params.gkOptional->GetDataType();
     CHECK_COND(gateDtype == DataType::DT_FLOAT || gateDtype == inputDtype,
                ACLNN_ERR_PARAM_INVALID, "g/gk dtype must be float32 or match k dtype.");
+    const auto finalStateDtype = params.finalStateOut->GetDataType();
+    CHECK_COND(finalStateDtype == DataType::DT_FLOAT || finalStateDtype == DataType::DT_BF16,
+               ACLNN_ERR_PARAM_INVALID, "finalStateOut dtype must be float32 or bfloat16.");
     if (params.initialStateOptional != nullptr) {
-        CHECK_COND(params.initialStateOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-                   "initialStateOptional must be float32.");
+        const auto initialStateDtype = params.initialStateOptional->GetDataType();
+        CHECK_COND(initialStateDtype == DataType::DT_FLOAT || initialStateDtype == DataType::DT_BF16,
+                   ACLNN_ERR_PARAM_INVALID, "initialStateOptional dtype must be float32 or bfloat16.");
+        CHECK_COND(initialStateDtype == finalStateDtype, ACLNN_ERR_PARAM_INVALID,
+                   "initialStateOptional and finalStateOut must have the same dtype.");
     }
-    CHECK_COND(params.finalStateOut->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-               "finalStateOut must be float32.");
     return ACLNN_SUCCESS;
 }
 

@@ -22,7 +22,7 @@ extern "C" {
  * u : required
  * gOptional : optional, scalar gate tensor; exactly one of gOptional and gkOptional must be non-null
  * gkOptional : optional, key-wise gate tensor; exactly one of gOptional and gkOptional must be non-null
- * initialStateOptional : optional, float32
+ * initialStateOptional : optional, float32 or bfloat16
  * outputFinalState : required
  * chunkSize : required
  * saveNewValue : reserved, only true is supported
@@ -32,7 +32,8 @@ extern "C" {
  * stateVFirst : reserved by the physical aclnn interface, only false is supported
  * hOut : required
  * vNewOut : required
- * finalStateOut : required, float32; use an empty tensor with shape [0] when outputFinalState is false
+ * finalStateOut : required, float32 or bfloat16 and matching initialStateOptional when present;
+ *                 use an empty tensor with shape [0] when outputFinalState is false
  * workspaceSize : size of workspace(output).
  * executor : executor context(output).
  */

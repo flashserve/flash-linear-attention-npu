@@ -484,6 +484,8 @@ at::Tensor npu_chunk_fwd_o(
                 "npu_chunk_gated_delta_rule_fwd_h: w must have shape [B, HV, T, K].");
     TORCH_CHECK(u_sizes[0] == B && u_sizes[2] == T,
                 "npu_chunk_gated_delta_rule_fwd_h: u must have shape [B, HV, T, V].");
+    TORCH_CHECK(V == 128,
+                "npu_chunk_gated_delta_rule_fwd_h: V must be 128, but got ", V, ".");
     TORCH_CHECK(HV % HK == 0,
                 "npu_chunk_gated_delta_rule_fwd_h: HV must be divisible by HK.");
     if (g_.defined()) {
@@ -511,8 +513,9 @@ at::Tensor npu_chunk_fwd_o(
     int64_t NT = GetKdaTotalChunks(B, T, chunk_size_, cu_seqlens, chunk_indices);
     int64_t N = GetKdaSeqNum(B, cu_seqlens);
     if (initial_state_.defined()) {
-        TORCH_CHECK(initial_state_.scalar_type() == at::kFloat,
-                    "npu_chunk_gated_delta_rule_fwd_h: initial_state must be float32.");
+        TORCH_CHECK(initial_state_.scalar_type() == at::kFloat ||
+                        initial_state_.scalar_type() == at::kBFloat16,
+                    "npu_chunk_gated_delta_rule_fwd_h: initial_state must be float32 or bfloat16.");
         TORCH_CHECK(initial_state_.dim() == 4 && initial_state_.size(0) == N &&
                         initial_state_.size(1) == HV &&
                         initial_state_.size(2) == (state_v_first_ ? V : K) &&
@@ -528,13 +531,13 @@ at::Tensor npu_chunk_fwd_o(
     at::Tensor h_compute = at::empty({B, HV, NT, K, V}, k.options());
     at::Tensor v_new_out = at::empty_like(u);
     at::Tensor final_state_compute;
+    auto state_options = initial_state_compute.defined()
+                             ? initial_state_compute.options()
+                             : k.options().dtype(at::kFloat);
     if (output_final_state_) {
-        auto state_options = initial_state_compute.defined()
-                                 ? initial_state_compute.options()
-                                 : k.options().dtype(at::kFloat);
         final_state_compute = at::empty({N, HV, K, V}, state_options);
     } else {
-        final_state_compute = at::empty({0}, k.options().dtype(at::kFloat));
+        final_state_compute = at::empty({0}, state_options);
     }
 
     EXEC_NPU_CMD_EXT(

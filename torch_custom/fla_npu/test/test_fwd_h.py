@@ -243,7 +243,11 @@ def gen_input_data(h_input, rand_wu = True):
     g = torch.randn([h_input.shape_batch, h_input.v_num_head, h_input.seqlen], dtype=torch.float)
     # g = gen_decay_data(h_input, cu_seqlens, chunk_offsets)
     if h_input.use_initial_state:
-        initial_state = torch.randn([h_input.shape_batch, h_input.v_num_head, h_input.token_batch, h_input.k_head_dim, h_input.v_head_dim], dtype=h_input.dtype)
+        initial_state = torch.randn(
+            [h_input.shape_batch, h_input.v_num_head, h_input.token_batch,
+             h_input.k_head_dim, h_input.v_head_dim],
+            dtype=torch.float32,
+        )
     else:
         initial_state = None
     return GDNFwdHInputTensor(k, w, u, g, cu_seqlens, chunk_offsets, initial_state)

@@ -66,17 +66,6 @@ TORCH_LIBRARY_FRAGMENT(EXTENSION_MODULE_NAME, m)
         "int[]? cu_seqlens=None) -> Tensor");
 }
 
-static int64_t DtypeToEnum(at::ScalarType dtype)
-{
-    if (dtype == at::kBFloat16) {
-        return optiling::GDN_FWD_H_DTYPE_BF16;
-    }
-    if (dtype == at::kHalf) {
-        return optiling::GDN_FWD_H_DTYPE_FP16;
-    }
-    return optiling::GDN_FWD_H_DTYPE_FP32;
-}
-
 static int64_t ValidateChunkLengths(
     int64_t totalTokens, int64_t chunkSize, at::OptionalIntArrayRef cuSeqlens)
 {
@@ -148,14 +137,9 @@ static ::ChunkGatedDeltaRuleFwdHTilingData CalcStage0DebugTiling(
     ctx.shapeBatchDim = w.size(0);
     ctx.hasCuSeqlens = cuSeqlens.has_value();
     ctx.cuSeqlensDim0 = cuSeqlens.has_value() ? static_cast<int64_t>(cuSeqlens.value().size()) : 0;
-    ctx.dataType = DtypeToEnum(w.scalar_type());
-    ctx.gDataType = optiling::GDN_FWD_H_DTYPE_FP32;
     ctx.useInitialState = false;
-    ctx.stateDataType = optiling::GDN_FWD_H_DTYPE_FP32;
     // Match the scalar-gated production specialization. Stage0 does not read g.
-    ctx.useG = true;
     ctx.useGk = false;
-    ctx.useExp2 = false;
     ctx.storeFinalState = false;
     ctx.chunkSize = chunkSize;
 
@@ -181,7 +165,10 @@ __global__ __aicore__ void Stage0DebugKernel(
         return;
     }
 
-    using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<InputT, float, float, float>;
+    using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
+        InputT, float, float, float,
+        Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+        GDN_FWD_H_GATE_G, GDN_FWD_H_EXP_E>;
     Kernel kernel;
     kernel.Init(
         w, w, nullptr, nullptr, nullptr, nullptr, cuSeqlens, nullptr,

@@ -30,7 +30,24 @@
         "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
       }
     ],
-    "mode_selector": "presence of g/gk only; use_exp2 and state_v_first are orthogonal"
+    "mode_selector": "presence of g/gk only; use_exp2 and state_v_first are orthogonal",
+    "state_dtypes": ["float32", "bfloat16"],
+    "default_state_dtype": "float32",
+    "state_dtype_rule": "initial_state and physical final_state must have the same dtype",
+    "supported_v_dims": [128],
+    "supported_chunk_sizes": [64],
+    "negative_shape_cases": [
+      {
+        "id": "unsupported_v_dim_256",
+        "v_dim": 256,
+        "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+      },
+      {
+        "id": "unsupported_chunk_size_128",
+        "chunk_size": 128,
+        "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+      }
+    ]
   },
   "stage0_debug": {
     "chunk_size": 64,

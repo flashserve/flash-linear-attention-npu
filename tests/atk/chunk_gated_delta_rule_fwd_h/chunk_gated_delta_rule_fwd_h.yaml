@@ -123,7 +123,7 @@ inputs:
       valid:
         values: [128]
       invalid:
-        values: []
+        values: [256]
   - name: chunk_size
     type: attr
     required: true
@@ -133,7 +133,7 @@ inputs:
       valid:
         values: [64]
       invalid:
-        values: []
+        values: [128]
   - name: case_id
     type: attr
     required: true

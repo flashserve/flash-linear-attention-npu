@@ -21,14 +21,17 @@ gk:  [B,H_v,T,K]     optional
 两者同时为空或同时非空均返回 `ACLNN_ERR_PARAM_INVALID`。`use_exp2` 和 `state_v_first`
 都不参与模型模式判断。
 
-Host/tiling 直接选择两套互斥的编译期模板，不在同一个 kernel 实例内运行时判断 gate 模式：
+Host 通过 template tiling key 直接选择两套互斥的编译期模式，不在同一个 kernel 实例内运行时判断 gate 模式：
 
 | 模式 | kernel 模板 |
 |---|---|
-| GDN v1 / `g-only` | `GDNFwdHKernel<..., kGated=false, scalarGated=true, useExp2>` |
-| KDA/GDN2 / `gk-only` | `GDNFwdHKernel<..., kGated=true, scalarGated=false, useExp2>` |
+| GDN v1 / `g-only` | `GDNFwdHKernel<..., gateMode=G, expMode>` |
+| KDA/GDN2 / `gk-only` | `GDNFwdHKernel<..., gateMode=GK, expMode>` |
 
-公开分派不实例化双空或双 gate 模式；`useExp2` 是两套模板下的正交参数。
+template tiling key 保留 `V_TILE x GATE_MODE(G/GK) x EXP_MODE(exp/exp2)` 三维；当前只登记
+`V_TILE=128`，因此共 4 个语义组合。input、gate 和 state dtype 不进入 tiling key，分别直接使用算子编译生成的
+`DTYPE_K`、`DTYPE_G/DTYPE_GK` 和 `DTYPE_FINAL_STATE`。公开分派不实例化双空或双 gate 模式；
+`useExp2` 是两套 gate 模式下的正交编译期参数。
 
 ## 计算
 
@@ -95,7 +98,8 @@ h, v_new, final_state = chunk_fwd_h(
 
 `h` 是每个 chunk 的起始状态，反向会继续使用，因此保持 head-major。`final_state` 仅供调用者输出，
 为保持既有 Python 接口兼容，`output_final_state=false` 时三元组第三项返回 `None`。物理 aclnn
-内部使用的 FP32 `[0]` Tensor 只是固定 launch 参数的占位，不作为 Python 输出暴露。
+内部使用的 `[0]` Tensor 只是固定 launch 参数的占位，不作为 Python 输出暴露；其 dtype 在存在
+`initial_state` 时与 initial state 一致，否则默认为 FP32。
 
 ## aclnn
 
@@ -124,8 +128,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
 ## 支持范围
 
 - A2/A3/A5。
-- FP16/BF16 数据路径，gate 支持 FP16/BF16/FP32，初始/最终状态使用 FP32。
-- V=128/256；首版 `chunk_size=64`。
+- FP16/BF16 数据路径；gate 使用 FP32 或与数据路径相同的 dtype；初始/最终状态支持 BF16/FP32，
+  二者必须同 dtype，无 initial state 时默认 FP32。这里的 state dtype 仅定义 initial/final state 的 GM
+  边界存储格式，不表示 chunk 间 rolling state 已按同一 dtype 实现递推。
+- V=128；`chunk_size=64`。
 - dense 时不传 `cu_seqlens/chunk_indices`；varlen 要求 B=1、`cu_seqlens` 从 0 到 T 严格递增，
   `chunk_indices` 使用 `[NT,2]` 的 canonical sequence-major 顺序。
 - `state_v_first` true/false。

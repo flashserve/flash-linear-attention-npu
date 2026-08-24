@@ -217,14 +217,10 @@ __aicore__ inline void RunChunkKdaFwdHDirect(
     stateTiling.hWorkspaceOffset = tiling.fwdHHWorkspaceOffset;
     stateTiling.numSeqWorkspaceOffset = tiling.fwdHNumSeqWorkspaceOffset;
     stateTiling.numChunksWorkspaceOffset = tiling.fwdHNumChunksWorkspaceOffset;
-    stateTiling.useG = false;
-    stateTiling.useGk = true;
-    stateTiling.useExp2 = true;
-
     using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
-        T, float, float, float, TileShapes, true, false, true>;
+        T, float, float, float, TileShapes, GDN_FWD_H_GATE_GK, GDN_FWD_H_EXP_2>;
     FwdHKernel stateOp;
-    stateOp.InitFromData(kg, w, u, gk, gk, initialState, nullptr, nullptr,
+    stateOp.InitFromData(kg, w, u, nullptr, gk, initialState, nullptr, nullptr,
                          h, vNew, finalState, stateTiling,
                          userWorkspace + tiling.fwdHWorkspaceBaseOffset);
     stateOp.Process();
@@ -430,14 +426,8 @@ ChunkKdaFwdDirectNpu(
     stateContext.shapeBatchDim = q.size(0);
     stateContext.hasCuSeqlens = false;
     stateContext.cuSeqlensDim0 = 0;
-    stateContext.dataType = q.scalar_type() == at::kBFloat16 ?
-        optiling::GDN_FWD_H_DTYPE_BF16 : optiling::GDN_FWD_H_DTYPE_FP16;
-    stateContext.gDataType = optiling::GDN_FWD_H_DTYPE_FP32;
     stateContext.useInitialState = initialState.has_value();
-    stateContext.stateDataType = optiling::GDN_FWD_H_DTYPE_FP32;
-    stateContext.useG = false;
     stateContext.useGk = true;
-    stateContext.useExp2 = true;
     stateContext.storeFinalState = outputFinalState;
     stateContext.chunkSize = chunkSize;
     stateContext.aicCoreNum = blockDim;

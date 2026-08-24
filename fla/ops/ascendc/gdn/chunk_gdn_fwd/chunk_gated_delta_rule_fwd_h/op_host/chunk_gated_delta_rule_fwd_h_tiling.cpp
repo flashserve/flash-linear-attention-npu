@@ -17,20 +17,10 @@
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include "chunk_gated_delta_rule_fwd_h_tiling_processor.h"
+#include "../op_kernel/chunk_gated_delta_rule_fwd_h_tiling_key.h"
 
 namespace optiling {
 
-// Maps a ge::DataType to the {fp16:0, bf16:1, fp32:2} convention shared with the kernel.
-static int64_t GdnFwdHDtypeToEnum(ge::DataType dtype)
-{
-    if (dtype == ge::DT_BF16) {
-        return GDN_FWD_H_DTYPE_BF16;
-    }
-    if (dtype == ge::DT_FLOAT16) {
-        return GDN_FWD_H_DTYPE_FP16;
-    }
-    return GDN_FWD_H_DTYPE_FP32;
-}
 static constexpr size_t INPUT_K_IDX = 0;
 static constexpr size_t INPUT_W_IDX = 1;
 static constexpr size_t INPUT_U_IDX = 2;
@@ -50,10 +40,7 @@ static constexpr size_t DIM_HEAD_NUM = 1;
 static constexpr size_t DIM_SEQLEN = 2;
 static constexpr size_t DIM_HEAD_DIM = 3;
 
-static constexpr uint32_t TILING_KEY_V128 = 1;
-static constexpr uint32_t TILING_KEY_V256 = 2;
 static constexpr int64_t V_DIM_128 = 128;
-static constexpr int64_t V_DIM_256 = 256;
 
 static void ChunkGatedDeltaRuleFwdHTilingDataPrint(gert::TilingContext *context, ChunkGatedDeltaRuleFwdHTilingData &tiling)
 {
@@ -68,10 +55,6 @@ static void ChunkGatedDeltaRuleFwdHTilingDataPrint(gert::TilingContext *context,
     OP_LOGD(nodeName, "=== chunkSize: %ld", tiling.get_chunkSize());
     OP_LOGD(nodeName, "=== useInitialState: %ld", tiling.get_useInitialState());
     OP_LOGD(nodeName, "=== storeFinalState: %ld", tiling.get_storeFinalState());
-    OP_LOGD(nodeName, "=== useG: %d", tiling.get_useG());
-    OP_LOGD(nodeName, "=== useGk: %d", tiling.get_useGk());
-    OP_LOGD(nodeName, "=== useExp2: %d", tiling.get_useExp2());
-    OP_LOGD(nodeName, "=== dataType: %ld", tiling.get_dataType());
     OP_LOGD(nodeName, "=== isVariedLen: %ld", tiling.get_isVariedLen());
     OP_LOGD(nodeName, "=== shapeBatch: %ld", tiling.get_shapeBatch());
     OP_LOGD(nodeName, "=== tokenBatch: %f", tiling.get_tokenBatch());
@@ -120,8 +103,6 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
                         "Exactly one of g and gk must be provided: g-only selects GDN, while gk-only selects "
                         "KDA/GDN2; has_g=%d, has_gk=%d.", useG, useGk),
                 return ge::GRAPH_FAILED);
-    auto gateTensor = useGk ? gkTensor : gTensor;
-
     auto attrPtr = context->GetAttrs();
     bool storeFinalState = *(attrPtr->GetAttrPointer<bool>(ATTR_STORE_FINAL_STATE_IDX));
     int64_t chunkSize = *(attrPtr->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_IDX));
@@ -173,16 +154,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     tilingCtx.hasCuSeqlens = cuSeqlensTensor != nullptr;
     tilingCtx.cuSeqlensDim0 =
         cuSeqlensTensor != nullptr ? cuSeqlensTensor->GetStorageShape().GetDim(0) : 0;
-    tilingCtx.dataType = GdnFwdHDtypeToEnum(context->GetInputTensor(0)->GetDataType());
-    tilingCtx.gDataType = GdnFwdHDtypeToEnum(gateTensor->GetDataType());
     tilingCtx.useInitialState = useInitialState;
-    tilingCtx.stateDataType =
-        useInitialState ? GdnFwdHDtypeToEnum(initialStateTensor->GetDataType()) : GDN_FWD_H_DTYPE_FP32;
-    tilingCtx.useG = useG;
     tilingCtx.storeFinalState = storeFinalState;
     tilingCtx.chunkSize = chunkSize;
     tilingCtx.useGk = useGk;
-    tilingCtx.useExp2 = useExp2;
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
@@ -196,9 +171,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
                 tilingCtx.vNumHead, tilingCtx.kNumHead);
         return ge::GRAPH_FAILED;
     }
-    if (tilingCtx.vHeadDim > V_DIM_256) {
-        OP_LOGE(context->GetNodeName(), "Check u shape failed, vHeadDim should be <= %ld, but get %ld.",
-                V_DIM_256, tilingCtx.vHeadDim);
+    if (tilingCtx.vHeadDim != V_DIM_128) {
+        OP_LOGE(context->GetNodeName(), "Check u shape failed, vHeadDim must be %ld, but got %ld.",
+                V_DIM_128, tilingCtx.vHeadDim);
         return ge::GRAPH_FAILED;
     }
 
@@ -208,9 +183,12 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     ChunkGatedDeltaRuleFwdHTilingProcessor processor(tilingCtx);
     processor.Process(plainTiling, blockDim, workspaceSize);
 
-    uint32_t tilingKey = plainTiling.vHeadDim > V_DIM_128 ? TILING_KEY_V256 : TILING_KEY_V128;
+    const uint64_t gateMode = useGk ? GDN_FWD_H_GATE_GK : GDN_FWD_H_GATE_G;
+    const uint64_t expMode = useExp2 ? GDN_FWD_H_EXP_2 : GDN_FWD_H_EXP_E;
+    const uint64_t tilingKey = GET_TPL_TILING_KEY(GDN_FWD_H_V_TILE_128, gateMode, expMode);
     context->SetTilingKey(tilingKey);
-    OP_LOGD(context->GetNodeName(), "tilingKey: %u (vHeadDim=%ld)", tilingKey, plainTiling.vHeadDim);
+    OP_LOGD(context->GetNodeName(),
+            "tilingKey: %lu (gateMode=%lu, expMode=%lu)", tilingKey, gateMode, expMode);
 
     context->SetBlockDim(blockDim);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
@@ -225,15 +203,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     tiling.set_chunkSize(plainTiling.chunkSize);
     tiling.set_useInitialState(plainTiling.useInitialState);
     tiling.set_storeFinalState(plainTiling.storeFinalState);
-    tiling.set_dataType(plainTiling.dataType);
-    tiling.set_stateDataType(plainTiling.stateDataType);
-    tiling.set_gDataType(plainTiling.gDataType);
     tiling.set_isVariedLen(plainTiling.isVariedLen);
     tiling.set_shapeBatch(plainTiling.shapeBatch);
     tiling.set_tokenBatch(plainTiling.tokenBatch);
-    tiling.set_useG(plainTiling.useG);
-    tiling.set_useGk(plainTiling.useGk);
-    tiling.set_useExp2(plainTiling.useExp2);
     tiling.set_vWorkspaceOffset(plainTiling.vWorkspaceOffset);
     tiling.set_vUpdateWorkspaceOffset(plainTiling.vUpdateWorkspaceOffset);
     tiling.set_kDecayWorkspaceOffset(plainTiling.kDecayWorkspaceOffset);

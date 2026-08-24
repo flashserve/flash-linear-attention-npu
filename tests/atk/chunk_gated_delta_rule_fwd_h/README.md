@@ -9,8 +9,9 @@
   `gk=[B,HV,T,K]`；两者同时为空或同时非空均返回 `ACLNN_ERR_PARAM_INVALID`。
 - `h` 输出为 `[B,HV,Nc,K,V]`，`state_v_first=true` 时末两维为 `[V,K]`；`initial_state/final_state` 同样受 `state_v_first` 解释。
 - `k/w/u` 的 `B`、`T` 必须一致；`u` 的 `HV` 必须大于等于 `HK` 且 `HV % HK == 0`（`w` 亦为 HV，故 GVA 时 `w` 的 head 数与 `u` 相同）。
-- `k/w/u/h/v_new` 支持 `BFLOAT16/FLOAT16`；gate 支持 `FLOAT/FLOAT16/BFLOAT16`，state 支持 `FLOAT/BFLOAT16/FLOAT16`。
-- `V` 支持 `128/256`，`chunk_size` 仅支持 `64/128`；变长模式支持 `cu_seqlens/chunk_indices` 成对传入。
+- `k/w/u/h/v_new` 支持 `BFLOAT16/FLOAT16`；gate 使用 `FLOAT` 或与 `k/w/u` 相同的 dtype；
+  state 支持 `FLOAT/BFLOAT16`，initial/final state 必须同 dtype。
+- `V` 固定为 `128`，`chunk_size` 固定为 `64`；变长模式支持 `cu_seqlens/chunk_indices` 成对传入。
 - 当前 ATK 用例遵循上述约束，并通过 `case_spec` 固定具体取值；扩展用例时应继续满足这些限制。
 
 > **CPU 标杆（`_forward_h_ref`）**使用 `w[b,hv]`（HV head）+ 共享 `k[b,hk]`（`hk = hv // (HV/HK)`），与内核/ACLNN 的 w=HV 语义一致；请不要把 `w` 建成 `[B,HK,…]` 或沿用 HK 索引标杆，那会与 `u` 的 HV 不一致触发 `161002`（历史误判根因）。
@@ -27,11 +28,11 @@ YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合�
 
 ## 默认用例
 
-本目录 `atk_chunk_gated_delta_rule_fwd_h.json` 内置 200 条泛化用例（100 个 shape × bf16/fp16），
+本目录 `atk_chunk_gated_delta_rule_fwd_h.json` 只保留满足 `V=128、chunk_size=64` 的泛化用例，
 标准为 `cv_fused_double_benchmark`，SOC 为 `ascend950`。覆盖 noGVA（`HK==HV`）与 GVA（`HV>HK`）。
 
 示例（BF16 首条）：
-`{"dtype": "bf16", "B": 64, "HK": 8, "HV": 8, "T": 1024, "K": 128, "V": 128, "chunk_size": 64, "op": "chunk_gated_delta_rule_fwd_h", "case_id": 0, "seed": 20260817, "route": "ascendc", "soc": "ascend950"}`
+`{"dtype": "bf16", "B": 1, "HK": 4, "HV": 4, "T": 512, "K": 128, "V": 128, "chunk_size": 64, "op": "chunk_gated_delta_rule_fwd_h", "case_id": 0, "seed": 20260817, "route": "ascendc", "soc": "ascend950"}`
 
 ## 执行方式
 
@@ -44,4 +45,6 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_h -npu_device_id=6
 bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_h -scope=gen_cases
 ```
 
-`gen_cases` 默认传入 `-dt 100 -en 0`。所有新增工程的 marker dtype 都保留两路生成入口，生成器会把不支持 FP16 的算子改回合法 BF16 用例。
+本算子重生成 68 条 profile 时使用
+`GEN_CASES_DTYPE_NUMBERS=34 bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_h -scope=gen_cases`。
+全局脚本默认仍传入 `-dt 100 -en 0`；marker dtype 保留 BF16/FP16 两路生成入口。

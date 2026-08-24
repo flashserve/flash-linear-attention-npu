@@ -167,6 +167,9 @@ class GDNFwdHInput:
         torch.npu.set_device(int(sys.argv[15]))
         self.g_dtype = parse_dtype(str(sys.argv[16]))
         self.state_dtype = parse_dtype(str(sys.argv[17]))
+        if self.state_dtype not in (torch.float32, torch.bfloat16):
+            logging("[ERROR] state dtype must be float32 or bfloat16")
+            sys.exit()
 
         if self.is_varied_len:
             self.shape_batch = 1

@@ -1,0 +1,48 @@
+/**
+ * Copyright (c) 2026 Tianjin University, Ltd.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * the BSD 3-Clause License (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ */
+
+#ifndef CHUNK_GATED_DELTA_RULE_FWD_H_TILING_KEY_H
+#define CHUNK_GATED_DELTA_RULE_FWD_H_TILING_KEY_H
+
+#include "chunk_gated_delta_rule_fwd_h_policy.h"
+
+#ifndef TORCH_MODE
+#include "tiling/template_argument.h"
+
+ASCENDC_TPL_ARGS_DECL(ChunkGatedDeltaRuleFwdH,
+    ASCENDC_TPL_UINT_DECL(V_TILE, 1, ASCENDC_TPL_UI_LIST,
+                          GDN_FWD_H_V_TILE_128),
+    ASCENDC_TPL_UINT_DECL(GATE_MODE, 1, ASCENDC_TPL_UI_LIST,
+                          GDN_FWD_H_GATE_G, GDN_FWD_H_GATE_GK),
+    ASCENDC_TPL_UINT_DECL(EXP_MODE, 1, ASCENDC_TPL_UI_LIST,
+                          GDN_FWD_H_EXP_E, GDN_FWD_H_EXP_2)
+);
+
+#define GDN_FWD_H_TPL_SEL_ONE(V_VALUE, GATE_VALUE, EXP_VALUE) \
+    ASCENDC_TPL_ARGS_SEL( \
+        ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_MIX_AIC_1_2), \
+        ASCENDC_TPL_UINT_SEL(V_TILE, ASCENDC_TPL_UI_LIST, V_VALUE), \
+        ASCENDC_TPL_UINT_SEL(GATE_MODE, ASCENDC_TPL_UI_LIST, GATE_VALUE), \
+        ASCENDC_TPL_UINT_SEL(EXP_MODE, ASCENDC_TPL_UI_LIST, EXP_VALUE) \
+    )
+
+#define GDN_FWD_H_TPL_SEL_FOR_GATE(V_VALUE, GATE_VALUE) \
+    GDN_FWD_H_TPL_SEL_ONE(V_VALUE, GATE_VALUE, GDN_FWD_H_EXP_E), \
+    GDN_FWD_H_TPL_SEL_ONE(V_VALUE, GATE_VALUE, GDN_FWD_H_EXP_2)
+
+ASCENDC_TPL_SEL(
+    GDN_FWD_H_TPL_SEL_FOR_GATE(GDN_FWD_H_V_TILE_128, GDN_FWD_H_GATE_G),
+    GDN_FWD_H_TPL_SEL_FOR_GATE(GDN_FWD_H_V_TILE_128, GDN_FWD_H_GATE_GK)
+);
+
+#undef GDN_FWD_H_TPL_SEL_FOR_GATE
+#undef GDN_FWD_H_TPL_SEL_ONE
+#endif
+
+#endif // CHUNK_GATED_DELTA_RULE_FWD_H_TILING_KEY_H

@@ -633,6 +633,10 @@ def npu_chunk_gated_delta_rule_fwd_h(
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: w must have shape [B, HV, T, K].")
     if (u_batch, u_heads, u_tokens) != (B, HV, T):
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: u must have shape [B, HV, T, V].")
+    if V != 128:
+        raise RuntimeError(
+            f"npu_chunk_gated_delta_rule_fwd_h: V must be 128, but got {V}."
+        )
     if HV % HK != 0:
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: HV must be divisible by HK.")
     if g is not None and _shape(g) != (B, HV, T):
@@ -667,21 +671,21 @@ def npu_chunk_gated_delta_rule_fwd_h(
             raise RuntimeError(
                 "npu_chunk_gated_delta_rule_fwd_h: initial_state shape does not match state_v_first."
             )
-        if initial_state.dtype != torch.float32:
-            raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: initial_state must be float32.")
+        if initial_state.dtype not in (torch.float32, torch.bfloat16):
+            raise RuntimeError(
+                "npu_chunk_gated_delta_rule_fwd_h: initial_state must be float32 or bfloat16."
+            )
     initial_state_compute = initial_state
     if state_v_first and initial_state_compute is not None:
         initial_state_compute = initial_state_compute.transpose(-1, -2).contiguous()
 
     h_compute = _empty((B, HV, NT, K, V), k)
     v_new_out = _empty_like(u)
+    state_dtype = initial_state_compute.dtype if initial_state_compute is not None else torch.float32
     if output_final_state:
-        if initial_state_compute is not None:
-            final_state_compute = _empty((N, HV, K, V), initial_state_compute)
-        else:
-            final_state_compute = _empty((N, HV, K, V), k, dtype=torch.float32)
+        final_state_compute = _empty((N, HV, K, V), k, dtype=state_dtype)
     else:
-        final_state_compute = _empty((0,), k, dtype=torch.float32)
+        final_state_compute = _empty((0,), k, dtype=state_dtype)
     compute_outputs = (h_compute, v_new_out, final_state_compute)
     h_result, v_new_result, final_state_result = _call_aclnn(
         "aclnnChunkGatedDeltaRuleFwdH",

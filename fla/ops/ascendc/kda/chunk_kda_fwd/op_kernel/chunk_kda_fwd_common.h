@@ -229,11 +229,11 @@ __aicore__ inline void RunFwdH(
     const TilingData &tiling)
 {
     using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
-        T, float, float, float, TileShapes, true, false, true>;
+        T, float, float, float, TileShapes, GDN_FWD_H_GATE_GK, GDN_FWD_H_EXP_2>;
     const auto fwdHTiling = MakeFwdHTiling(tiling);
     FwdHKernel stateOp;
     stateOp.InitFromData(
-        addresses.kg, addresses.w, addresses.u, addresses.gk, addresses.gk,
+        addresses.kg, addresses.w, addresses.u, nullptr, addresses.gk,
         initialState, cuSeqlens, chunkIndices, addresses.h, addresses.vNew,
         addresses.finalState, fwdHTiling,
         userWorkspace + tiling.fwdHWorkspaceBaseOffset);

@@ -28,11 +28,6 @@
 
 namespace optiling {
 
-// dtype enum convention shared with the kernel: 0 - fp16, 1 - bf16, 2 - fp32
-static constexpr int64_t GDN_FWD_H_DTYPE_FP16 = 0;
-static constexpr int64_t GDN_FWD_H_DTYPE_BF16 = 1;
-static constexpr int64_t GDN_FWD_H_DTYPE_FP32 = 2;
-
 static constexpr size_t GDN_FWD_H_WORKSPACE_RSV_BYTE = 16 * 1024 * 1024;
 static constexpr size_t GDN_FWD_H_GM_ALIGN = 512;
 static constexpr int64_t GDN_FWD_H_PING_PONG_STAGES = 2;
@@ -49,14 +44,8 @@ struct ChunkGatedDeltaRuleFwdHTilingContext {
     // variable length
     bool hasCuSeqlens;
     int64_t cuSeqlensDim0; // length of cu_seqlens (only used when hasCuSeqlens)
-    // dtypes (use GDN_FWD_H_DTYPE_*)
-    int64_t dataType;      // input (k/w/u) dtype: fp16 or bf16
-    int64_t gDataType;     // g dtype
     bool useInitialState;
-    int64_t stateDataType; // initial/final state dtype
-    bool useG;
     bool useGk;
-    bool useExp2;
     // attrs
     bool storeFinalState;
     int64_t chunkSize;
@@ -130,15 +119,9 @@ public:
         tiling.chunkSize = chunkSize;
         tiling.useInitialState = ctx_.useInitialState;
         tiling.storeFinalState = ctx_.storeFinalState;
-        tiling.dataType = ctx_.dataType;
-        tiling.gDataType = ctx_.gDataType;
-        tiling.stateDataType = ctx_.stateDataType;
         tiling.isVariedLen = isVariedLen;
         tiling.shapeBatch = shapeBatch;
         tiling.tokenBatch = tokenBatch;
-        tiling.useG = ctx_.useG;
-        tiling.useGk = ctx_.useGk;
-        tiling.useExp2 = ctx_.useExp2;
     }
 
 private:

@@ -42,15 +42,89 @@ TORCH_LIBRARY_FRAGMENT(EXTENSION_MODULE_NAME, m)
         "-> (Tensor, Tensor, Tensor)");
 }
 
-static int64_t DtypeToEnum(at::ScalarType dtype)
+static void CheckInputs(
+    const at::Tensor &k, const at::Tensor &w, const at::Tensor &u, const at::Tensor &g,
+    const c10::optional<at::Tensor> &initial_state, int64_t chunk_size,
+    at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices)
 {
-    if (dtype == at::kBFloat16) {
-        return optiling::GDN_FWD_H_DTYPE_BF16;
+    TORCH_CHECK(k.dim() == 4 && w.dim() == 4 && u.dim() == 4,
+                "k, w and u must be rank-4 BNSD tensors");
+    TORCH_CHECK(g.dim() == 3, "g must be a rank-3 BNT tensor");
+    TORCH_CHECK(chunk_size == 64, "chunk_size must be 64, but got ", chunk_size);
+
+    const int64_t B = k.size(0);
+    const int64_t HK = k.size(1);
+    const int64_t T = k.size(2);
+    const int64_t K = k.size(3);
+    const int64_t HV = u.size(1);
+    const int64_t V = u.size(3);
+    TORCH_CHECK(B > 0 && HK > 0 && T > 0 && K > 0 && HV > 0 && V > 0,
+                "all logical dimensions must be positive");
+    TORCH_CHECK(HV % HK == 0, "HV must be divisible by HK, but got HV=", HV, " and HK=", HK);
+    TORCH_CHECK(w.size(0) == B && w.size(1) == HV && w.size(2) == T && w.size(3) == K,
+                "w must have shape [B, HV, T, K]");
+    TORCH_CHECK(u.size(0) == B && u.size(2) == T,
+                "u must have shape [B, HV, T, V]");
+    TORCH_CHECK(g.size(0) == B && g.size(1) == HV && g.size(2) == T,
+                "g must have shape [B, HV, T]");
+    TORCH_CHECK(V == 128, "the ascend910b fast-launch wrapper only supports V = 128, but got ", V);
+
+    const auto input_dtype = k.scalar_type();
+    TORCH_CHECK(input_dtype == at::kHalf || input_dtype == at::kBFloat16,
+                "k, w and u must use float16 or bfloat16");
+    TORCH_CHECK(w.scalar_type() == input_dtype && u.scalar_type() == input_dtype,
+                "k, w and u must have the same dtype");
+    TORCH_CHECK(g.scalar_type() == at::kFloat || g.scalar_type() == input_dtype,
+                "g must use float32 or match the input dtype");
+    TORCH_CHECK(w.device() == k.device() && u.device() == k.device() && g.device() == k.device(),
+                "k, w, u and g must be on the same device");
+    TORCH_CHECK(k.is_contiguous() && w.is_contiguous() && u.is_contiguous() && g.is_contiguous(),
+                "k, w, u and g must be contiguous");
+
+    TORCH_CHECK(cu_seqlens.has_value() == chunk_indices.has_value(),
+                "cu_seqlens and chunk_indices must be provided together");
+    int64_t state_batch = B;
+    if (cu_seqlens.has_value()) {
+        const auto cu = cu_seqlens.value();
+        TORCH_CHECK(B == 1, "varlen mode requires B == 1, but got ", B);
+        TORCH_CHECK(cu.size() >= 2 && cu.front() == 0 && cu.back() == T,
+                    "cu_seqlens must start at 0, end at T, and contain at least two elements");
+        for (size_t i = 1; i < cu.size(); ++i) {
+            TORCH_CHECK(cu[i] > cu[i - 1], "cu_seqlens must be strictly increasing");
+        }
+        TORCH_CHECK(chunk_indices.value().size() % 2 == 0,
+                    "chunk_indices must be a flattened [NT, 2] list");
+        int64_t expected_chunks = 0;
+        const auto indices = chunk_indices.value();
+        for (size_t i = 1; i < cu.size(); ++i) {
+            expected_chunks += (cu[i] - cu[i - 1] + chunk_size - 1) / chunk_size;
+        }
+        TORCH_CHECK(static_cast<int64_t>(indices.size()) == expected_chunks * 2,
+                    "chunk_indices must contain one [sequence, local_chunk] pair per chunk");
+        size_t chunk_index_offset = 0;
+        for (size_t i = 1; i < cu.size(); ++i) {
+            const int64_t sequence_chunks =
+                (cu[i] - cu[i - 1] + chunk_size - 1) / chunk_size;
+            for (int64_t local_chunk = 0; local_chunk < sequence_chunks; ++local_chunk) {
+                TORCH_CHECK(indices[chunk_index_offset] == static_cast<int64_t>(i - 1) &&
+                                indices[chunk_index_offset + 1] == local_chunk,
+                            "chunk_indices must use canonical sequence-major [sequence, local_chunk] pairs");
+                chunk_index_offset += 2;
+            }
+        }
+        state_batch = static_cast<int64_t>(cu.size()) - 1;
     }
-    if (dtype == at::kHalf) {
-        return optiling::GDN_FWD_H_DTYPE_FP16;
+
+    if (initial_state.has_value()) {
+        const auto &state = initial_state.value();
+        TORCH_CHECK(state.dim() == 4 && state.size(0) == state_batch && state.size(1) == HV &&
+                        state.size(2) == K && state.size(3) == V,
+                    "initial_state must have shape [N, HV, K, V]");
+        TORCH_CHECK(state.scalar_type() == at::kFloat || state.scalar_type() == at::kBFloat16,
+                    "initial_state must use float32 or bfloat16");
+        TORCH_CHECK(state.device() == k.device(), "initial_state must be on the same device as k");
+        TORCH_CHECK(state.is_contiguous(), "initial_state must be contiguous");
     }
-    return optiling::GDN_FWD_H_DTYPE_FP32;
 }
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_meta(
@@ -58,6 +132,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_meta
     const c10::optional<at::Tensor> &initial_state, bool output_final_state, int64_t chunk_size,
     at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices)
 {
+    CheckInputs(k, w, u, g, initial_state, chunk_size, cu_seqlens, chunk_indices);
     auto k_sizes = k.sizes();
     auto u_sizes = u.sizes();
     int64_t B = k_sizes[0];
@@ -65,7 +140,6 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_meta
     int64_t K = k_sizes[3];
     int64_t HV = u_sizes[1];
     int64_t V = u_sizes[3];
-
     int64_t NT = 0;
     if (chunk_indices.has_value()) {
         NT = static_cast<int64_t>(chunk_indices.value().size()) / 2;
@@ -75,15 +149,15 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_meta
 
     at::Tensor h_out = at::zeros({B, HV, NT, K, V}, k.options());
     at::Tensor v_new_out = at::empty_like(u);
+    auto state_options = initial_state.has_value()
+                             ? initial_state.value().options()
+                             : k.options().dtype(at::kFloat);
     at::Tensor final_state_out;
     if (output_final_state) {
         int64_t N = cu_seqlens.has_value() ? static_cast<int64_t>(cu_seqlens.value().size()) - 1 : B;
-        // The kernel writes the final state in STATE_TYPE: float32 when there is no initial state,
-        // otherwise the initial state's dtype. Allocate accordingly to avoid a dtype/size mismatch.
-        auto state_options = initial_state.has_value() ? initial_state.value().options() : k.options().dtype(at::kFloat);
         final_state_out = at::empty({N, HV, K, V}, state_options);
     } else {
-        final_state_out = at::empty({1}, k.options());
+        final_state_out = at::empty({0}, state_options);
     }
     return std::make_tuple(h_out, v_new_out, final_state_out);
 }
@@ -94,7 +168,7 @@ TORCH_LIBRARY_IMPL(EXTENSION_MODULE_NAME, Meta, m)
 }
 
 static ::ChunkGatedDeltaRuleFwdHTilingData calc_tiling_params(
-    const at::Tensor &k, const at::Tensor &u, const at::Tensor &g,
+    const at::Tensor &k, const at::Tensor &u,
     const c10::optional<at::Tensor> &initial_state, bool output_final_state, int64_t chunk_size,
     at::OptionalIntArrayRef cu_seqlens, uint32_t &blockDim, size_t &workspaceSize)
 {
@@ -107,14 +181,8 @@ static ::ChunkGatedDeltaRuleFwdHTilingData calc_tiling_params(
     ctx.shapeBatchDim = k.size(0);
     ctx.hasCuSeqlens = cu_seqlens.has_value();
     ctx.cuSeqlensDim0 = cu_seqlens.has_value() ? static_cast<int64_t>(cu_seqlens.value().size()) : 0;
-    ctx.dataType = DtypeToEnum(k.scalar_type());
-    ctx.gDataType = DtypeToEnum(g.scalar_type());
     ctx.useInitialState = initial_state.has_value();
-    ctx.stateDataType =
-        initial_state.has_value() ? DtypeToEnum(initial_state.value().scalar_type()) : optiling::GDN_FWD_H_DTYPE_FP32;
-    ctx.useG = true;
     ctx.useGk = false;
-    ctx.useExp2 = false;
     ctx.storeFinalState = output_final_state;
     ctx.chunkSize = chunk_size;
 
@@ -140,7 +208,10 @@ __global__ __aicore__ void chunk_gated_delta_rule_fwd_h_kernel(
         return;
     }
 
-    using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<INPUT_TYPE, G_TYPE, STATE_TYPE, float>;
+    using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
+        INPUT_TYPE, G_TYPE, STATE_TYPE, float,
+        Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+        GDN_FWD_H_GATE_G, GDN_FWD_H_EXP_E>;
     GDNFwdHKernel gdnFwdH;
     gdnFwdH.Init(
         k, w, u, g, nullptr, inital_state, cu_seqlens, chunk_indices,
@@ -166,7 +237,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_npu(
     uint32_t blockDim = 0;
     size_t workspaceSize = 0;
     auto tiling = calc_tiling_params(
-        k, u, g, initial_state, output_final_state, chunk_size, cu_seqlens, blockDim, workspaceSize);
+        k, u, initial_state, output_final_state, chunk_size, cu_seqlens, blockDim, workspaceSize);
 
     auto k_ptr = (GM_ADDR)k.data_ptr();
     auto w_ptr = (GM_ADDR)w.data_ptr();
@@ -242,11 +313,11 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_npu(
                 }
             } else {
                 if (gIsFp32) {
-                    chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, float, INPUT_TYPE><<<blockDim, nullptr, stream>>>(
+                    chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, float, bfloat16_t><<<blockDim, nullptr, stream>>>(
                         k_ptr, w_ptr, u_ptr, g_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
                         h_ptr, v_new_ptr, final_state_ptr, workspace_gm, tiling_gm);
                 } else {
-                    chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, INPUT_TYPE, INPUT_TYPE><<<blockDim, nullptr, stream>>>(
+                    chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, INPUT_TYPE, bfloat16_t><<<blockDim, nullptr, stream>>>(
                         k_ptr, w_ptr, u_ptr, g_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
                         h_ptr, v_new_ptr, final_state_ptr, workspace_gm, tiling_gm);
                 }
@@ -265,11 +336,11 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_npu(
                 }
             } else {
                 if (gIsFp32) {
-                    chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, float, INPUT_TYPE><<<blockDim, nullptr, stream>>>(
+                    chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, float, bfloat16_t><<<blockDim, nullptr, stream>>>(
                         k_ptr, w_ptr, u_ptr, g_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
                         h_ptr, v_new_ptr, final_state_ptr, workspace_gm, tiling_gm);
                 } else {
-                    chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, INPUT_TYPE, INPUT_TYPE><<<blockDim, nullptr, stream>>>(
+                    chunk_gated_delta_rule_fwd_h_kernel<INPUT_TYPE, INPUT_TYPE, bfloat16_t><<<blockDim, nullptr, stream>>>(
                         k_ptr, w_ptr, u_ptr, g_ptr, initial_state_ptr, cu_seqlens_ptr, chunk_indices_ptr,
                         h_ptr, v_new_ptr, final_state_ptr, workspace_gm, tiling_gm);
                 }
