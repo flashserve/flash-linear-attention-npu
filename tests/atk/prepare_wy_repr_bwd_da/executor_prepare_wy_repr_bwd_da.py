@@ -35,18 +35,28 @@ OP_NAME = "prepare_wy_repr_bwd_da"
 
 def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
     dtype_name = str(spec.get("dtype", "bf16")).lower()
+    gtype_name = str(spec.get("gtype", "fp32")).lower()
     data_dtype = _orig_dtype(dtype_name)
+    btype = _orig_dtype(gtype_name)
     seed = int(spec.get("seed", 20260817))
     B, HK, HV, T, K, V = (int(spec[x]) for x in ("B", "HK", "HV", "T", "K", "V"))
     chunk_size = int(spec["chunk_size"])
+    base = _rand(
+        (B, HV, T),
+        "fp32",
+        torch.float32,
+        torch.device("cpu"),
+        seed + 5,
+        0.0,
+        1.0,
+    ) * 0.1 + 0.01
+    g = -torch.cumsum(base, dim=-1).to(btype).to(device)
     return {
         "k": _rand((B, HK, T, K), dtype_name, data_dtype, device, seed + 1, 0.0, 1.0),
         "v": _rand((B, HV, T, V), dtype_name, data_dtype, device, seed + 2, 0.0, 1.0),
         "beta": _rand((B, HV, T), "fp32", torch.float32, device, seed + 3, 0.0, 1.0),
         "A": _rand((B, HV, T, chunk_size), dtype_name, data_dtype, device, seed + 4, 0.0, 1.0),
-        "g": -torch.arange(1, B * HV * T + 1, dtype=torch.float32)
-        .reshape(B, HV, T)
-        .to(device),
+        "g": g,
         "dw": _rand((B, HV, T, K), dtype_name, data_dtype, device, seed + 6, 0.0, 1.0),
         "du": _rand((B, HV, T, V), dtype_name, data_dtype, device, seed + 7, 0.0, 1.0),
         "chunk_size": chunk_size,
