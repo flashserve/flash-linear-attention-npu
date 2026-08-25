@@ -14,5 +14,6 @@ add_modules_sources(OPTYPE chunk_kda_bwd_intra ACLNNTYPE aclnn_exclude)
 add_ops_compile_options(
     OP_NAME ChunkKdaBwdIntra
     OPTIONS --cce-auto-sync=off
-            -Wno-deprecated-declarations
+            -Wno-deprecated-declarations 
+            -DCATLASS_EPILOGUE_BLOCK_EPILOGUE_DEQUANT_HPP
 )

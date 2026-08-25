@@ -19,7 +19,8 @@ if (BUILD_OPEN_PROJECT)
     add_ops_compile_options(
             OP_NAME CausalConv1d
             OPTIONS --cce-auto-sync=off
-                    -Wno-deprecated-declarations
+                    -Wno-deprecated-declarations 
+            -DCATLASS_EPILOGUE_BLOCK_EPILOGUE_DEQUANT_HPP
     )
 endif()
 

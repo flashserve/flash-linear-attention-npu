@@ -15,5 +15,6 @@ add_modules_sources(OPTYPE chunk_scaled_dot_kkt ACLNNTYPE aclnn)
 add_ops_compile_options(
     OP_NAME ChunkScaledDotKkt
     OPTIONS --cce-auto-sync=off
-            -Wno-deprecated-declarations
+            -Wno-deprecated-declarations 
+            -DCATLASS_EPILOGUE_BLOCK_EPILOGUE_DEQUANT_HPP
 )

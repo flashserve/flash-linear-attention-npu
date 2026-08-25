@@ -16,7 +16,7 @@ if(NOT CANN_3RD_LIB_PATH)
 endif()
 
 set(CATLASS_VENDOR_GIT_TAG
-    "41bf90da655bba3c66d0acd7e00abe33960ecfd6"
+    "769cd40a8716b28650b6bebb08db4834eea4462f"
     CACHE STRING "Catlass vendor git tag (fixed revision for reproducible build)")
 
 set(_CATLASS_SOURCE_DIR "${CANN_3RD_LIB_PATH}/catlass")

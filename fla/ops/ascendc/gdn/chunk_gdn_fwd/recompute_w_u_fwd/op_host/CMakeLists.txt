@@ -20,7 +20,8 @@ add_modules_sources(OPTYPE recompute_wu_fwd ACLNNTYPE aclnn_exclude)
 add_ops_compile_options(
     OP_NAME RecomputeWUFwd
     OPTIONS --cce-auto-sync=off
-            -Wno-deprecated-declarations
+            -Wno-deprecated-declarations 
+            -DCATLASS_EPILOGUE_BLOCK_EPILOGUE_DEQUANT_HPP
 )
 if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
     add_ops_compile_options(

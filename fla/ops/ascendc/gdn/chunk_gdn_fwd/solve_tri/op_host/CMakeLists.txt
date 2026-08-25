@@ -13,4 +13,5 @@ add_modules_sources(OPTYPE solve_tri ACLNNTYPE aclnn_exclude)
 
 add_ops_compile_options(OP_NAME SolveTri OPTIONS
     --cce-auto-sync=off
+    -DCATLASS_EPILOGUE_BLOCK_EPILOGUE_DEQUANT_HPP
 )

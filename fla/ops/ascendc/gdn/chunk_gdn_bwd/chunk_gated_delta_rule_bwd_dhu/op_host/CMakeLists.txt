@@ -17,7 +17,8 @@ add_modules_sources(OPTYPE chunk_gated_delta_rule_bwd_dhu ACLNNTYPE aclnn_exclud
 add_ops_compile_options(
     OP_NAME ChunkGatedDeltaRuleBwdDhu
     OPTIONS --cce-auto-sync=off
-            -Wno-deprecated-declarations
+            -Wno-deprecated-declarations 
+            -DCATLASS_EPILOGUE_BLOCK_EPILOGUE_DEQUANT_HPP
 )
 
 if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")

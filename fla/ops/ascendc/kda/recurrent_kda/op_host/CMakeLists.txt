@@ -19,7 +19,8 @@ if (BUILD_OPS_RTY_KERNEL) # 回黄kernel
     add_ops_compile_options(
         OP_NAME RecurrentKda
         OPTIONS --cce-auto-sync=off
-                -Wno-deprecated-declarations
+                -Wno-deprecated-declarations 
+            -DCATLASS_EPILOGUE_BLOCK_EPILOGUE_DEQUANT_HPP
                 -Werror
     )
     if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")

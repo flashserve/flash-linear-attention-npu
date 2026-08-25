@@ -15,5 +15,6 @@ add_modules_sources(OPTYPE kda_gate_cumsum ACLNNTYPE aclnn_exclude)
 add_ops_compile_options(
     OP_NAME KdaGateCumsum
     OPTIONS --cce-auto-sync=off
-            -Wno-deprecated-declarations
+            -Wno-deprecated-declarations 
+            -DCATLASS_EPILOGUE_BLOCK_EPILOGUE_DEQUANT_HPP
 )
