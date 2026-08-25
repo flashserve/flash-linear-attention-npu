@@ -32,6 +32,8 @@ CHUNK_CUMSUM_KKT_HEADER = (
 )
 NPU_CUSTOM_YAML = Path(__file__).resolve().parents[1] / "npu_custom.yaml"
 ASCENDC_INIT = ASCENDC_DIR / "__init__.py"
+BENCHMARK_PATH = Path(__file__).resolve().parent / "benchmark_gdn_core_ablation.py"
+GDN_CORE_TEST_PATH = Path(__file__).resolve().parent / "test_npu_gdn_core_fwd.py"
 
 
 class FakeTensor:
@@ -124,6 +126,26 @@ def make_inputs(batch=1, heads=4, tokens=128, value_dim=128, value_heads=None):
 
 
 class GdnCoreFwdCtypesAbiTest(unittest.TestCase):
+    def test_legacy_pipeline_uses_current_fwd_h_keywords(self):
+        import ast
+
+        for path in (BENCHMARK_PATH, GDN_CORE_TEST_PATH):
+            module = ast.parse(path.read_text(encoding="utf-8"))
+            calls = [
+                node
+                for node in ast.walk(module)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "chunk_gated_delta_rule_fwd_h"
+            ]
+            self.assertEqual(len(calls), 1, path)
+            keywords = {keyword.arg for keyword in calls[0].keywords}
+            self.assertIn("state_v_first", keywords, path)
+            self.assertTrue(
+                {"save_new_value", "use_exp2", "transpose_state_layout"}.isdisjoint(keywords),
+                path,
+            )
+
     def test_example_uses_composite_core_by_default(self):
         source = EXAMPLE_PATH.read_text(encoding="utf-8")
         import ast

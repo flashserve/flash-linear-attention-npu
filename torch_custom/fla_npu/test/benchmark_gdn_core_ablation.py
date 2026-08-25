@@ -161,11 +161,9 @@ def run_pipeline(inputs: dict, *, fused_kkt_solve: bool):
         initial_state=inputs["initial_state"],
         output_final_state=inputs["output_final_state"],
         chunk_size=chunk_size,
-        save_new_value=True,
         cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices,
-        use_exp2=False,
-        transpose_state_layout=False,
+        state_v_first=False,
     )
     output = ascendc.chunk_fwd_o(
         q,

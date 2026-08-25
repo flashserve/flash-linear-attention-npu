@@ -166,11 +166,9 @@ def run_case(case: dict) -> None:
         initial_state=initial_state,
         output_final_state=case["output_final_state"],
         chunk_size=chunk_size,
-        save_new_value=True,
         cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices,
-        use_exp2=False,
-        transpose_state_layout=False,
+        state_v_first=False,
     )
     legacy_o = ascendc.chunk_fwd_o(
         q,
