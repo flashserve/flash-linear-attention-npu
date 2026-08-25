@@ -681,11 +681,17 @@ if __name__ == '__main__':
     args = parse_args(sys.argv)
     if len(args.argv) <= 3:
         raise RuntimeError('arguments must greater than 3')
-    bisheng_flags_option = ['oom', 'dump_cce', 'dump_bin', 'dump_loc', 'ccec_o0', 'ccec_g', 'check_flag_sanitizer']
-    input_bisheng_flags = ""
+    bisheng_flags_option = ['oom', 'dump_cce', 'dump_bin', 'dump_loc', 'ccec_o0', 'ccec_g', 'sanitizer', 'check_flag_sanitizer']
+    matched_flags = []
     for elem in args.argv:
-        if elem in bisheng_flags_option:
-            input_bisheng_flags = elem
+        for sub in elem.split(','):
+            if sub in bisheng_flags_option:
+                matched_flags.append(sub)
+    # check_flag_sanitizer 是更高版本 CANN 的写法；CANN 9.1.0 的 asc_opc
+    # 只接受 sanitizer，因此归一化后再拼入 --op_debug_config。
+    input_bisheng_flags = ",".join(
+        "sanitizer" if f == "check_flag_sanitizer" else f for f in matched_flags
+    )
     gen_bin_param_file(args.argv[1],
                     args.argv[2],
                     args.argv[3],

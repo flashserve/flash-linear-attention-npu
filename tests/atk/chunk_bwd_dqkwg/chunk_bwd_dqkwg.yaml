@@ -1,0 +1,299 @@
+api: pytorch
+api_type: executor_chunk_bwd_dqkwg
+version: v2.1
+name: aclnn.chunk.bwd.dqkwg
+aclnn_name: ChunkBwdDqkwg
+generate: generator_chunk_bwd_dqkwg
+dtype_numbers: 100
+extra_numbers: 0
+standard:
+  acc: cv_fused_double_benchmark
+inputs:
+  # q, k: [B, HK, T, K] —— K 固定 128，HK ∈ [1, 8]
+  - name: q
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        - values: [ [ 1, 5 ] ]      # B
+        - values: [ [ 1, 8 ] ]      # HK
+        - values: [ [ 1, 1024 ] ]   # T
+        - values: [ 128 ]           # K
+  - name: k
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        - values: [ [ 1, 5 ] ]      # B
+        - values: [ [ 1, 8 ] ]      # HK
+        - values: [ [ 1, 1024 ] ]   # T
+        - values: [ 128 ]           # K
+  # v, do, dv: [B, HV, T, V] —— HV = HK * n_ratio ∈ [1, 16]，V ∈ {128, 256}
+  - name: v
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        - values: [ [ 1, 5 ] ]       # B
+        - values: [ [ 1, 16 ] ]      # HV
+        - values: [ [ 1, 1024 ] ]    # T
+        - values: [ [ 128, 256 ] ]   # V
+  # g: [B, HV, T]
+  - name: g
+    type: tensor
+    required: true
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 3 ]
+      dim_values:
+        - values: [ [ 1, 5 ] ]      # B
+        - values: [ [ 1, 16 ] ]    # HV
+        - values: [ [ 1, 1024 ] ]  # T
+  # h, dh: [B, HV, num_chunks, K, V] —— num_chunks = ceil(T / chunk_size) ∈ [1, 16]
+  - name: h
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 5 ]
+      dim_values:
+        - values: [ [ 1, 5 ] ]       # B
+        - values: [ [ 1, 16 ] ]      # HV
+        - values: [ [ 1, 16 ] ]      # num_chunks
+        - values: [ 128 ]            # K
+        - values: [ [ 128, 256 ] ]   # V
+  - name: do
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        - values: [ [ 1, 5 ] ]       # B
+        - values: [ [ 1, 16 ] ]      # HV
+        - values: [ [ 1, 1024 ] ]    # T
+        - values: [ [ 128, 256 ] ]   # V
+  - name: dh
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 5 ]
+      dim_values:
+        - values: [ [ 1, 5 ] ]       # B
+        - values: [ [ 1, 16 ] ]      # HV
+        - values: [ [ 1, 16 ] ]      # num_chunks
+        - values: [ 128 ]            # K
+        - values: [ [ 128, 256 ] ]   # V
+  - name: dv
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        - values: [ [ 1, 5 ] ]       # B
+        - values: [ [ 1, 16 ] ]      # HV
+        - values: [ [ 1, 1024 ] ]    # T
+        - values: [ [ 128, 256 ] ]   # V
+  # cu_seqlens: [N+1]，变长模式累计长度
+  - name: cu_seqlens
+    type: tensor
+    required: true
+    dtypes:
+      values: [int64]
+    ranges:
+      valid:
+        values: [ [ 1, 1024 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 1 ]
+      dim_values:
+        - values: [ [ 2, 6 ] ]       # N+1，N ∈ [1, 5]
+  # chunk_indices: [num_chunks, 2]，实际按一维 [num_chunks*2] 传入
+  - name: chunk_indices
+    type: tensor
+    required: true
+    dtypes:
+      values: [int64]
+    ranges:
+      valid:
+        values: [ [ 0, 15 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 2 ]
+      dim_values:
+        - values: [ [ 1, 16 ] ]      # num_chunks ∈ [1, 16]
+        - values: [ 2 ]             # 固定 2
+  # w: [B, HV, T, K] —— 当前实现要求传空，shape 仅为占位
+  - name: w
+    type: tensor
+    required: false
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        - values: [ [ 1, 5 ] ]      # B
+        - values: [ [ 1, 16 ] ]    # HV
+        - values: [ [ 1, 1024 ] ]  # T
+        - values: [ 128 ]          # K
+  # g_gamma: 当前实现要求传空，shape 仅为占位
+  - name: g_gamma
+    type: tensor
+    required: false
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [ [ -5, 5 ] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 2 ]
+      dim_values:
+        - values: [ [ 1, 16 ] ]   # HV
+        - values: [ 128 ]         # K
+  - name: scale
+    type: attr
+    required: true
+    dtypes:
+      values: [float]
+    ranges:
+      valid:
+        values: [1.0]
+      invalid:
+        values: []
+  - name: chunk_size
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [64, 128]
+      invalid:
+        values: []
+  - name: is_mix
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [true, false]
+      invalid:
+        values: []
+  - name: is_fix
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [true, false]
+      invalid:
+        values: []
+  - name: use_exp2
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false]
+      invalid:
+        values: []
+  - name: transpose_state_layout
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false]
+      invalid:
+        values: []
+  - name: qkv_type
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["bf16", "fp16"]
+      invalid:
+        values: []

@@ -26,6 +26,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     const aclIntArray *chunkIndicesOptional,
     double scale,
     int64_t chunkSize,
+    bool useExp2,
     const aclTensor *dhOut,
     const aclTensor *dh0Out,
     const aclTensor *dv2Out,

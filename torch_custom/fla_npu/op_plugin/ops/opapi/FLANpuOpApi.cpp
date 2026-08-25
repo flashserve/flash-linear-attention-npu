@@ -306,7 +306,7 @@ bool ResolveChunkLocalCumsumOutputDtype(
         q, k, w, d_o, dv,
         g_, gK_, h0_, dht_,
         cu_seqlens, chunk_indices,
-        scale, chunk_size,
+        scale, chunk_size, static_cast<bool>(use_exp2.value_or(gK_.defined())),
         dh, dh0, dv2
     );
     return std::make_tuple(dh, dh0, dv2);

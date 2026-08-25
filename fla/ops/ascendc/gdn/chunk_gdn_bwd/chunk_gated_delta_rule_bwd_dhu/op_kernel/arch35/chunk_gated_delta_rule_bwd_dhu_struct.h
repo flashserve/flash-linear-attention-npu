@@ -78,6 +78,7 @@ struct ChunkGatedDeltaRuleBwdDhuTilingData {
     int64_t totalChunkNum;
     int64_t chunkTaskNum;
     int64_t seqNum;
+    int64_t headsPerTask;
     int64_t headWindowNum;
     int64_t taskNum;
     int64_t isVariable;
@@ -86,6 +87,7 @@ struct ChunkGatedDeltaRuleBwdDhuTilingData {
     int64_t dh0ClearElemsPerCore;
     int64_t dh0ClearTailElems;
     int64_t hasGk;
+    int64_t useExp2;
     int64_t workspaceElemsPerSubBlock;
     int64_t qgWorkspaceOffset;
     int64_t stateWorkspaceOffset;

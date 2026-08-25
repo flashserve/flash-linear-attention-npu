@@ -295,7 +295,7 @@ wrapper 必须明确选择以下一种语义：
 | Compiler-visible mutable | cache/state 更新且需要图编译 | 使用 `torch.library.custom_op` 和准确 `mutates_args`；返回值不隐式 alias 输入；执行 `opcheck` 和 eager/compile 状态对比 |
 | Functional state | 训练或导出需要显式状态流 | 不修改输入 cache，返回 `(y, new_state)`；新旧状态不 alias |
 
-当前 `causal_conv1d` 的 `conv_states` 在 prefill、decode 和 speculative 路径中都可能被修改。公共入口通过 `MUTATED_ARGUMENTS` 声明该参数，拒绝 `conv_states.requires_grad=True`，并在 ctypes launch 成功后调用 `torch.autograd.graph.increment_version()`。这补齐了 eager autograd 的版本检查，但不会让 raw ctypes 自动变成 compiler-visible op。
+当前 `causal_conv1d` 的 `conv_states` 以及 `recurrent_gated_delta_rule` 的 `state` 都会被原地修改。公共入口通过 `MUTATED_ARGUMENTS` 声明这些参数，拒绝状态 tensor 设置 `requires_grad=True`，并在 ctypes launch 成功后调用 `torch.autograd.graph.increment_version()`。这补齐了 eager autograd 的版本检查，但不会让 raw ctypes 自动变成 compiler-visible op。
 
 `ctx.mark_dirty()` 只服务正确实现的 `torch.autograd.Function`，不能替代 mutation schema，也不能让 `torch.compile` 看见任意 ctypes 写入。
 
@@ -355,6 +355,8 @@ runtime 创建 ACL tensor descriptor 时同时传入：
 
 wrapper 的原则是“透传描述，不自行解释私有 layout”。默认不得无理由 `.contiguous()`、转置或转成 ND，否则可能破坏 NZ 等私有格式。宿主进程已经加载 torch_npu 时，runtime 可以复用 `torch_npu.get_npu_format()`；未加载时按 tensor 维度回退到保守 format，这只是能力降级，不应把 torch_npu 变成默认 import 依赖。
 
+如果算子注册契约明确只接受 ND，wrapper 可以显式覆盖 descriptor format，但必须保留逻辑 shape、stride、storage offset 和非连续 storage 范围，并通过 ABI 单测验证每个输入输出 descriptor。`recurrent_gated_delta_rule` 使用这一例外，避免未加载 torch_npu 时按 rank 把三维/四维张量误判成 NCL/NCHW。
+
 ### 5.6 ctypes 与 aclnn C ABI 一致性
 
 每个 `_aclnn_ctypes.py` wrapper 必须逐项对应 `aclnn_*.h`：
@@ -380,7 +382,7 @@ wrapper 的原则是“透传描述，不自行解释私有 layout”。默认�
 - wheel 内嵌 OPP 和 `libcust_opapi.so` 完整性。
 - `RTLD_NOW` 动态加载和必需符号。
 - NPU tensor、同 device、dtype、descriptor、workspace 和 launch 返回值。
-- `causal_conv1d` mutable state 的 grad 限制和 version counter。
+- `causal_conv1d` 和 `recurrent_gated_delta_rule` mutable state 的 grad 限制和 version counter。
 
 当前仍需测试矩阵证明：
 
@@ -552,7 +554,7 @@ fla_npu 默认不会主动 import、链接或注册 torch_npu dispatcher；目�
 | version counter | PyTorch 为 tensor 维护的修改次数，用于 autograd 检查保存值是否被改写 | ctypes 修改后需调用 `increment_version` 补记 |
 | `increment_version()` | 主动推进 tensor version counter 的 Python API | ctypes 成功修改状态 tensor 后调用，让 autograd 看见这次修改 |
 | `ctx.mark_dirty()` | `autograd.Function` 告知 autograd“某个输入会被原地修改”的 API | 只适用于正确实现的 `autograd.Function`，不能替代 dispatcher mutation schema |
-| `MUTATED_ARGUMENTS` | 本仓维护的 raw ctypes mutable 参数清单 | 当前声明 `causal_conv1d.conv_states` |
+| `MUTATED_ARGUMENTS` | 本仓维护的 raw ctypes mutable 参数清单 | 当前包含 `causal_conv1d.conv_states`、`recurrent_gated_delta_rule.state` 等原地更新参数 |
 | functional op / functional state | 不修改输入，而是返回新的输出/状态 | 最容易被 autograd、导出和图编译正确理解 |
 | eager mode | Python 调用到哪里就立即执行到哪里的普通运行模式 | 默认 raw ctypes 路径首先保证 eager 正确性 |
 | graph break | 编译器无法安全捕获某段代码时结束当前图，回到 Python eager 执行 | 未适配的 ctypes side effect 应明确 graph break |

@@ -189,25 +189,62 @@ Python wheel 加单算子 run 包时，将 `--base-mode` 设为 `skeleton`。该
 
 ### 测试单算子
 
+单算子看护统一使用 `tests/atk` 下的 ATK 工程。每个算子目录包含
+`atk_<op>.json`、`<op>.yaml`、`gen_<op>.py`、`executor_<op>.py` 和本算子
+`README.md`。各算子的输入 shape、dtype、可选输入和 tiling 限制以对应算子 README 为准。
+
+运行前先加载 ATK、CANN 和当前安装的 OPP/Python 环境：
+
 ```sh
-# 运行测试
-cd torch_custom/fla_npu/test
-bash test.sh --device 0                      # 全量测试
-bash test.sh --device 0 --op causal_conv1d   # 单个 AscendC 测试任务
+source <cann_install_path>/set_env.sh
+atk --version
+npu-smi info
 ```
 
-`--op` 当前仅覆盖 `test.sh` 已接入的 AscendC 测试任务，可选值：
+一键执行某个算子的完整 ATK 动作：
 
-- `prepare_wy_repr_bwd_full`
-- `chunk_gated_delta_rule_bwd_dhu`
-- `chunk_bwd_dv_local`
+```sh
+bash tests/atk/run_test_cpu.sh -op=causal_conv1d -npu_device_id=0
+```
+
+当前 `-op` 可选值为：
+
 - `causal_conv1d`
-- `prepare_wy_repr_bwd_da`
+- `causal_conv1d_bwd`
 - `chunk_bwd_dqkwg`
-- `gdn_fwd_o`
-- `gdn_fwd_h`
+- `chunk_bwd_dv_local`
+- `chunk_fwd_o`
+- `chunk_gated_delta_rule_bwd_dhu`
+- `chunk_gated_delta_rule_fwd_h`
+- `chunk_kda_fwd`
+- `chunk_local_cumsum`
+- `chunk_scaled_dot_kkt`
+- `prepare_wy_repr_bwd`
+- `prepare_wy_repr_bwd_da`
+- `prepare_wy_repr_bwd_full`
 - `recompute_w_u_fwd`
+- `recurrent_gated_delta_rule`
+- `recurrent_kda`
+- `solve_tri`
 
+`run_test_cpu.sh` 支持以下 scope：
+
+```sh
+bash tests/atk/run_test_cpu.sh -op=causal_conv1d -npu_device_id=0 -scope=accuracy
+bash tests/atk/run_test_cpu.sh -op=causal_conv1d -npu_device_id=0 -scope=performance
+bash tests/atk/run_test_cpu.sh -op=causal_conv1d -npu_device_id=0 -scope=determinism
+bash tests/atk/run_test_cpu.sh -op=causal_conv1d -npu_device_id=0 -scope=mssanitizer
+```
+
+默认 `-scope=all` 会执行 CPU 双标杆精度、性能、确定性和 mssanitizer。未设置 `CASE_START/CASE_END` 时不向 ATK 传入 `-s/-e`，会执行JSON中的全部用例；需要只跑指定顺序范围时使用：
+
+```sh
+CASE_START=0 CASE_END=1 \
+bash tests/atk/run_test_cpu.sh -op=causal_conv1d -npu_device_id=0
+```
+
+ATK 工程结构、支持算子索引、环境变量和新增算子规范见
+[`tests/atk/README.md`](tests/atk/README.md)。
 
 ### 算子调用方式参考
 
@@ -234,6 +271,19 @@ python examples/flash_gated_delta_rule.py
 NPU CI 的 Example/ST 用例由 [`ci/example_st_cases.json`](ci/example_st_cases.json) 管理。当前默认启用 `case1_current_default`，shape 与上面的直接运行默认值一致；后续 GVA、`Vdim=256` 等泛化场景可以在该文件中新增用例，显式填写 `B`、`T`、`chunk_size`、`query_head`、`value_head`、`Kdim`、`Vdim` 等 shape 字段，以及 `gate_source`、`gate_function`、`initial_state`、`output_final_state`、`qk_l2norm` 等行为字段。
 
 当前端到端 Example/ST 已支持 `gate_source=g`；`gk` / `g+gk` 先作为用例 schema 预留，待 NPU fwd_h 路径支持后再启用。
+
+## Memory Checking with msSanitizer
+
+编译时开启 `--sanitizer`（Ascend 910）或运行时注入（Ascend 950）即可使用 msSanitizer 进行算子内存异常检测：
+
+```sh
+# 910（ascend910b/ascend910_93）：编译期静态插桩，产物带 __sanitizer_report_* 符号，直接运行测试
+FLA_NPU_SOC=ascend910b python scripts/build_wheel.py -g --sanitizer
+
+# 950（ascend950）：无 sanitizer stub，编译只需 -g 定位信息，内存检测靠运行时注入
+FLA_NPU_SOC=ascend950 python scripts/build_wheel.py -g
+mssanitizer --tool=memcheck -- python -m pytest -q -s tests/xxx.py
+```
 
 ## 维护文档
 

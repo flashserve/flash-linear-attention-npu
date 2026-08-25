@@ -55,6 +55,11 @@ def gen_compile_options(compile_options_file: str, op_type: str, \
             keys_str = ";".join([key for key in keys])
             opc_tiling_keys = keys_str
         else:
+            # 其余选项（如 -g、-sanitizer）保留为普通编译选项，经
+            # custom_compile_options.ini 传入 bisheng 编译器。kernel
+            # sanitizer（--cce-enable-sanitizer）即依据编译选项中的
+            # "-sanitizer" 触发（见 CANN ascendc_compile_base.py
+            # is_enable_sanitizer）。
             compile_opt.append(opts)
     if len(compile_opt) > 0:
         options_str = ';'.join([opt for opt in compile_opt])

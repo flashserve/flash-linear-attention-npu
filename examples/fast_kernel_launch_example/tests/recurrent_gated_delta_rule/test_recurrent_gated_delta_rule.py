@@ -16,6 +16,7 @@ Accuracy test for npu_recurrent_gated_delta_rule.
 Compares NPU output against CPU golden reference from PTA.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -32,6 +33,11 @@ sys.path.insert(0, str(_PTA_DIR))
 
 from golden import recurrent_gated_delta_rule_golden
 from utils import compare_tensors_by_ratio
+
+
+STATE_HEAD_PREFIX_PADDING = 16
+STATE_LAYOUTS = ("contiguous", "noncontiguous")
+API_MODES = ("functional", "mutable")
 
 
 def make_inputs(
@@ -111,51 +117,92 @@ def run_golden(inp):
     )
 
 
-def run_npu(inp):
-    """Run NPU operator and return CPU tensors."""
-    device = torch.device("npu:7")
-    torch_npu.npu.set_device(device)
-    q_npu = inp["query"].npu()
-    k_npu = inp["key"].npu()
-    v_npu = inp["value"].npu()
-    s_npu = inp["state"].clone().npu()
-    b_npu = inp["beta"].npu()
-    asl_npu = inp["actual_seq_lengths"].npu()
-    ssi_npu = inp["ssm_state_indices"].npu()
+def make_npu_state(cpu_state, device, state_layout):
+    dense_state = cpu_state.to(device)
+    if state_layout == "contiguous":
+        return dense_state, tuple(dense_state.stride())
 
-    g_npu = inp["g"].npu() if inp["g"] is not None else None
-    gk_npu = inp["gk"].npu() if inp["gk"] is not None else None
+    block_num, nv, dv, dk = cpu_state.shape
+    head_stride = dv * dk + STATE_HEAD_PREFIX_PADDING
+    padded_strides = (nv * head_stride, head_stride, dk, 1)
+    storage = torch.empty(
+        (block_num, nv, head_stride), dtype=cpu_state.dtype, device=device
+    )
+    state = storage.as_strided(
+        cpu_state.shape, padded_strides, STATE_HEAD_PREFIX_PADDING
+    )
+    state.copy_(dense_state)
+    return state, padded_strides
+
+
+def run_npu(inp, state_layout, api_mode):
+    """Run NPU operator and return CPU tensors."""
+    device = torch.device(os.getenv("FLA_NPU_TEST_DEVICE", "npu:0"))
+    torch_npu.npu.set_device(device)
+    q_npu = inp["query"].to(device)
+    k_npu = inp["key"].to(device)
+    v_npu = inp["value"].to(device)
+    s_npu, expected_state_strides = make_npu_state(
+        inp["state"], device, state_layout
+    )
+    b_npu = inp["beta"].to(device)
+    asl_npu = inp["actual_seq_lengths"].to(device)
+    ssi_npu = inp["ssm_state_indices"].to(device)
+
+    g_npu = inp["g"].to(device) if inp["g"] is not None else None
+    gk_npu = inp["gk"].to(device) if inp["gk"] is not None else None
     nat_npu = (
-        inp["num_accepted_tokens"].npu()
+        inp["num_accepted_tokens"].to(device)
         if inp["num_accepted_tokens"] is not None
         else None
     )
 
-    result = torch.ops.ascend_ops.recurrent_gated_delta_rule_functional(
-        q_npu,
-        k_npu,
-        v_npu,
-        s_npu,
-        beta=b_npu,
-        scale=inp["scale"],
-        actual_seq_lengths=asl_npu,
-        ssm_state_indices=ssi_npu,
-        num_accepted_tokens=nat_npu,
-        g=g_npu,
-        gk=gk_npu,
-    )
+    assert tuple(s_npu.stride()) == expected_state_strides
+    if state_layout == "noncontiguous":
+        assert not s_npu.is_contiguous()
+        assert s_npu.storage_offset() == STATE_HEAD_PREFIX_PADDING
+
+    # Finish asynchronous H2D/view initialization before isolating the custom
+    # kernel launch in this accuracy test.
     torch_npu.npu.synchronize()
 
-    if isinstance(result, (tuple, list)):
+    kwargs = {
+        "beta": b_npu,
+        "scale": inp["scale"],
+        "actual_seq_lengths": asl_npu,
+        "ssm_state_indices": ssi_npu,
+        "num_accepted_tokens": nat_npu,
+        "g": g_npu,
+        "gk": gk_npu,
+    }
+    if api_mode == "functional":
+        result = torch.ops.ascend_ops.recurrent_gated_delta_rule_functional(
+            q_npu, k_npu, v_npu, s_npu, **kwargs
+        )
+        torch_npu.npu.synchronize()
         attn_out = result[0].cpu()
         final_state = result[1].cpu()
+        output_state_strides = tuple(result[1].stride())
+        input_state_after = s_npu.cpu()
     else:
+        result = torch.ops.ascend_ops.recurrent_gated_delta_rule(
+            q_npu, k_npu, v_npu, s_npu, **kwargs
+        )
+        torch_npu.npu.synchronize()
         attn_out = result.cpu()
         final_state = s_npu.cpu()
+        output_state_strides = tuple(s_npu.stride())
+        input_state_after = None
 
     star_idx = int(inp["actual_seq_lengths"][0].item())
     attn_out[:star_idx] = 0
-    return attn_out, final_state
+    return (
+        attn_out,
+        final_state,
+        output_state_strides,
+        expected_state_strides,
+        input_state_after,
+    )
 
 
 def assert_compare_tensors_by_ratio(golden, actual, name, rtol=0.01, atol=0.004):
@@ -188,11 +235,13 @@ TEST_CONFIGS = [
 
 
 @pytest.mark.skipif(not torch.npu.is_available(), reason="NPU device not found")
+@pytest.mark.parametrize("state_layout", STATE_LAYOUTS)
+@pytest.mark.parametrize("api_mode", API_MODES)
 @pytest.mark.parametrize(
     "bs,mtp,nk,nv,dk,dv,use_g,use_gk,use_accepted_tokens,seed,rtol,atol",
     TEST_CONFIGS,
 )
-def test_recurrent_gated_delta_rule_functional_accuracy(
+def test_recurrent_gated_delta_rule_accuracy(
     bs,
     mtp,
     nk,
@@ -205,6 +254,8 @@ def test_recurrent_gated_delta_rule_functional_accuracy(
     seed,
     rtol,
     atol,
+    state_layout,
+    api_mode,
 ):
     inp = make_inputs(
         bs,
@@ -220,7 +271,12 @@ def test_recurrent_gated_delta_rule_functional_accuracy(
     )
 
     golden_attn, golden_state = run_golden(inp)
-    npu_attn, npu_state = run_npu(inp)
+    npu_attn, npu_state, output_strides, expected_strides, input_state_after = run_npu(
+        inp, state_layout, api_mode
+    )
 
     assert_compare_tensors_by_ratio(golden_attn, npu_attn, "attn_out", rtol=rtol, atol=atol)
     assert_compare_tensors_by_ratio(golden_state, npu_state, "final_state", rtol=rtol, atol=atol)
+    assert output_strides == expected_strides
+    if api_mode == "functional":
+        assert torch.equal(input_state_after, inp["state"])

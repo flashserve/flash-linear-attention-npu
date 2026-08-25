@@ -226,7 +226,7 @@ private:
             DataCopyPad(gamaKLocal, gamaKGm_[vOffset / realV_ * realK_], gkInParams, gkPadParams);
             gamaKInQueue_.EnQue<float>(gamaKLocal);
             gamaKInUb = gamaKInQueue_.DeQue<float>();
-            Exp(gamaKInUb, gamaKInUb, alignK_ * seqLen);
+            ExpMasked(gamaKInUb, gamaKInUb, alignK_ * seqLen);
             AscendC::PipeBarrier<PIPE_V>();
         }
         DataCopyPad(qLocal, queryGm_[qkOffset], qkInParams, qkPadParams);
@@ -322,16 +322,6 @@ private:
     __aicore__ inline void ReduceSumAddFold(LocalTensor<float> &dstTensor, LocalTensor<float> &srcTensor,
                                             uint32_t rows)
     {
-        if (alignK_ < REPEAT_LENTH) {
-            ReduceSumBaseline(dstTensor, srcTensor, rows);
-            return;
-        }
-
-        if ((alignK_ & (alignK_ - 1)) != 0) {
-            ReduceSumBaseline(dstTensor, srcTensor, rows);
-            return;
-        }
-
         if (CanUseK128AddFoldFastPath(rows)) {
             ReduceSumAddFoldK128(dstTensor, srcTensor, rows);
             return;
@@ -347,18 +337,65 @@ private:
                 activeLen = half;
             }
 
-            WholeReduceSum(dstTensor[row], srcTensor[rowOffset], REPEAT_LENTH, 1, 1, 1, FP32_NUM_PER_BLOCK);
+            WholeReduceSum(dstTensor[row], srcTensor[rowOffset], activeLen, 1, 1, 1, FP32_NUM_PER_BLOCK);
         }
     }
 
     __aicore__ inline void ReduceSumDispatch(LocalTensor<float> &dstTensor, LocalTensor<float> &srcTensor,
                                              uint32_t rows)
     {
-        if (useAddFoldReduce_ && alignK_ >= ADD_FOLD_REDUCE_MIN_K) {
+        if (useAddFoldReduce_) {
             ReduceSumAddFold(dstTensor, srcTensor, rows);
             return;
         }
         ReduceSumBaseline(dstTensor, srcTensor, rows);
+    }
+
+    __aicore__ inline void SubMasked(LocalTensor<float> &dstTensor, const LocalTensor<float> &src0Tensor,
+                                    const LocalTensor<float> &src1Tensor, uint32_t count)
+    {
+        BinaryRepeatParams repeatParams{1, 1, 1, FP32_NUM_PER_BLOCK, FP32_NUM_PER_BLOCK, FP32_NUM_PER_BLOCK};
+        uint8_t repeatTime = static_cast<uint8_t>(count / REPEAT_LENTH);
+        uint32_t tailCount = count % REPEAT_LENTH;
+        if (repeatTime > 0) {
+            Sub(dstTensor, src0Tensor, src1Tensor, static_cast<uint64_t>(REPEAT_LENTH), repeatTime, repeatParams);
+        }
+        if (tailCount > 0) {
+            uint32_t tailOffset = count - tailCount;
+            Sub(dstTensor[tailOffset], src0Tensor[tailOffset], src1Tensor[tailOffset],
+                static_cast<uint64_t>(tailCount), 1, repeatParams);
+        }
+    }
+
+    __aicore__ inline void MulsMasked(LocalTensor<float> &dstTensor, const LocalTensor<float> &srcTensor,
+                                     float scalar, uint32_t count)
+    {
+        UnaryRepeatParams repeatParams{1, 1, FP32_NUM_PER_BLOCK, FP32_NUM_PER_BLOCK};
+        uint8_t repeatTime = static_cast<uint8_t>(count / REPEAT_LENTH);
+        uint32_t tailCount = count % REPEAT_LENTH;
+        if (repeatTime > 0) {
+            Muls(dstTensor, srcTensor, scalar, static_cast<uint64_t>(REPEAT_LENTH), repeatTime, repeatParams);
+        }
+        if (tailCount > 0) {
+            uint32_t tailOffset = count - tailCount;
+            Muls(dstTensor[tailOffset], srcTensor[tailOffset], scalar, static_cast<uint64_t>(tailCount), 1,
+                 repeatParams);
+        }
+    }
+
+    __aicore__ inline void ExpMasked(LocalTensor<float> &dstTensor, const LocalTensor<float> &srcTensor,
+                                    uint32_t count)
+    {
+        UnaryRepeatParams repeatParams{1, 1, FP32_NUM_PER_BLOCK, FP32_NUM_PER_BLOCK};
+        uint8_t repeatTime = static_cast<uint8_t>(count / REPEAT_LENTH);
+        uint32_t tailCount = count % REPEAT_LENTH;
+        if (repeatTime > 0) {
+            Exp(dstTensor, srcTensor, static_cast<uint64_t>(REPEAT_LENTH), repeatTime, repeatParams);
+        }
+        if (tailCount > 0) {
+            uint32_t tailOffset = count - tailCount;
+            Exp(dstTensor[tailOffset], srcTensor[tailOffset], static_cast<uint64_t>(tailCount), 1, repeatParams);
+        }
     }
 
     __aicore__ inline void Compute(uint32_t curSingleV, uint64_t curQKOffset, uint64_t curVOffset)
@@ -379,9 +416,9 @@ private:
         AscendC::PipeBarrier<PIPE_V>();
         ReduceSumDispatch(deltaInUb, broadTmpInUb, curSingleV);
         AscendC::PipeBarrier<PIPE_V>();
-        deltaInUb = vInUb[curVOffset] - deltaInUb;
+        SubMasked(attnInUb, vInUb[curVOffset], deltaInUb, curSingleV);
         AscendC::PipeBarrier<PIPE_V>();
-        Muls(deltaInUb, deltaInUb, beta_, curSingleV);
+        MulsMasked(deltaInUb, attnInUb, beta_, curSingleV);
         AscendC::PipeBarrier<PIPE_V>();
         Broadcast<float, 2, 1>(broadTmpInUb, deltaInUb, stateShape, deltaShape); //  2: Dim Number 1: Second Dim
         AscendC::PipeBarrier<PIPE_V>();
@@ -437,7 +474,7 @@ private:
             DataCopyPad(gamaLocal, gamaGm_[seq0 * NV_], gamaInParams, padParams);
             gamaInQueue_.EnQue<float>(gamaLocal);
             gamaInUb = gamaInQueue_.DeQue<float>();
-            Exp(gamaInUb, gamaInUb, seqLen * NV_);
+            ExpMasked(gamaInUb, gamaInUb, seqLen * NV_);
             AscendC::PipeBarrier<PIPE_V>();
         }
     }

@@ -32,6 +32,9 @@ extern "C" {
 namespace {
 constexpr int64_t MAX_KDA_K_DIM = 256;
 constexpr int64_t MAX_KDA_HEAD_NUM = 128;
+constexpr int64_t KDA_STAGE_FULL = -1;
+constexpr int64_t KDA_STAGE_GATE_PREPARE = 0;
+constexpr int64_t KDA_STAGE_COUNT = 4;
 
 constexpr int64_t MAX_KDA_VARLEN_SEQUENCES = 1024;
 
@@ -513,6 +516,12 @@ const aclTensor *AsRank4(const aclTensor *tensor, const op::Shape &shape, aclOpE
 {
     return l0op::Reshape(tensor, shape, executor);
 }
+
+bool IsAscend950()
+{
+    const char *socName = aclrtGetSocName();
+    return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
+}
 } // namespace
 
 aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
@@ -613,13 +622,21 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const op::Shape stateShape4 =
         MakeShape({info.seqNum, info.hvNum, info.kDim, info.vDim});
     const op::Shape placeholderShape = MakeShape({1});
+    const bool useDenseA5FastPath =
+        params.cuSeqlensOptional == nullptr && params.q->GetDataType() == DataType::DT_BF16 &&
+        params.chunkSize == 64 && info.kDim == 128 && info.vDim == 128 &&
+        info.seqlen % params.chunkSize == 0;
+    const bool splitStages =
+        IsAscend950() && info.totalChunks > 1 && !useDenseA5FastPath;
 
     const aclTensor *gkCompute = params.gkOut;
     if (gkCompute != nullptr && info.isRank3) {
         gkCompute = AsRank4(gkCompute, gkShape4, executorPtr);
     }
     if (gkCompute == nullptr) {
-        gkCompute = AllocTensor(executorPtr, placeholderShape, DataType::DT_FLOAT);
+        gkCompute = AllocTensor(
+            executorPtr, splitStages ? gkShape4 : placeholderShape,
+            DataType::DT_FLOAT);
     }
     CHECK_RET(gkCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
@@ -657,22 +674,27 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         akkCompute = AllocTensor(executorPtr, matrixShape4, params.q->GetDataType());
     }
     const aclTensor *wCompute = wExport == nullptr
-        ? AllocTensor(executorPtr, placeholderShape, params.q->GetDataType())
+        ? AllocTensor(executorPtr, splitStages ? kShape4 : placeholderShape,
+                      params.q->GetDataType())
         : wExport;
     const aclTensor *uCompute = uExport == nullptr
-        ? AllocTensor(executorPtr, placeholderShape, params.q->GetDataType())
+        ? AllocTensor(executorPtr, splitStages ? vShape4 : placeholderShape,
+                      params.q->GetDataType())
         : uExport;
     const aclTensor *qgCompute = qgExport == nullptr
-        ? AllocTensor(executorPtr, placeholderShape, params.q->GetDataType())
+        ? AllocTensor(executorPtr, splitStages ? kShape4 : placeholderShape,
+                      params.q->GetDataType())
         : qgExport;
     const aclTensor *kgCompute = kgExport == nullptr
-        ? AllocTensor(executorPtr, placeholderShape, params.q->GetDataType())
+        ? AllocTensor(executorPtr, splitStages ? kShape4 : placeholderShape,
+                      params.q->GetDataType())
         : kgExport;
     const aclTensor *vNewCompute = vNewExport == nullptr
-        ? AllocTensor(executorPtr, placeholderShape, params.q->GetDataType())
+        ? AllocTensor(executorPtr, splitStages ? vShape4 : placeholderShape,
+                      params.q->GetDataType())
         : vNewExport;
     const aclTensor *hCompute = AllocTensor(
-        executorPtr, hExport == nullptr ? placeholderShape : hShape5,
+        executorPtr, hExport == nullptr && !splitStages ? placeholderShape : hShape5,
         params.q->GetDataType());
     CHECK_RET(aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr &&
                   uCompute != nullptr && qgCompute != nullptr && kgCompute != nullptr &&
@@ -686,7 +708,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     }
     const bool outputFinalState = params.finalStateOut != nullptr;
     const aclTensor *finalStateCompute = AllocTensor(
-        executorPtr, outputFinalState ? stateShape4 : placeholderShape,
+        executorPtr, outputFinalState || splitStages ? stateShape4 : placeholderShape,
         DataType::DT_FLOAT);
     CHECK_RET(finalStateCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
@@ -697,16 +719,42 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         CHECK_RET(attnCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
 
-    auto result = l0op::KdaChunkForward(
-        qHead, kHead, vHead, gHead, betaHead, params.aLogOptional,
-        params.dtBiasOptional, initialStateCompute, params.cuSeqlensOptional,
-        params.chunkIndicesOptional, params.scale, params.chunkSize, params.safeGate,
-        parsedLayout == KdaFwdLayout::BSND, params.useGateInKernel,
-        params.lowerBound, attnCompute, finalStateCompute, gkCompute,
-        aqkCompute, akkCompute, wCompute, uCompute, qgCompute,
-        kgCompute, vNewCompute, hCompute, executorPtr);
-    for (const aclTensor *tensor : result) {
-        CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    const aclTensor *qgScaledCompute = AllocTensor(
+        executorPtr, splitStages ? kShape4 : placeholderShape,
+        params.q->GetDataType());
+    const aclTensor *uSeedCompute = AllocTensor(
+        executorPtr, splitStages ? vShape4 : placeholderShape,
+        params.q->GetDataType());
+    CHECK_RET(qgScaledCompute != nullptr && uSeedCompute != nullptr,
+              ACLNN_ERR_INNER_NULLPTR);
+
+    auto launchStage = [&](int64_t stage) {
+        return l0op::KdaChunkForward(
+            qHead, kHead, vHead, gHead, betaHead, params.aLogOptional,
+            params.dtBiasOptional, initialStateCompute, params.cuSeqlensOptional,
+            params.chunkIndicesOptional, params.scale, params.chunkSize,
+            params.safeGate, parsedLayout == KdaFwdLayout::BSND,
+            params.useGateInKernel, params.lowerBound, attnCompute,
+            finalStateCompute, gkCompute, aqkCompute, akkCompute, wCompute,
+            uCompute, qgCompute, kgCompute, vNewCompute, hCompute,
+            qgScaledCompute, uSeedCompute, stage, executorPtr);
+    };
+    l0op::KdaCoreOutputs result{};
+    if (splitStages) {
+        // Physical launch boundaries reset the A5 event state between the
+        // prepare, post-WU, recurrent, and output pipelines.
+        for (int64_t stage = KDA_STAGE_GATE_PREPARE; stage < KDA_STAGE_COUNT;
+             ++stage) {
+            result = launchStage(stage);
+            for (const aclTensor *tensor : result) {
+                CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            }
+        }
+    } else {
+        result = launchStage(KDA_STAGE_FULL);
+        for (const aclTensor *tensor : result) {
+            CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        }
     }
 
     if (outputFinalState) {

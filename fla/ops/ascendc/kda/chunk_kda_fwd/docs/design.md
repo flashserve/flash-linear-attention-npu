@@ -16,9 +16,11 @@ raw g -> ChunkKdaFwd[
 ] -> attn_out
 ```
 
-`aclnnChunkKdaFwd` 做公开 layout 的连续化和必要视图转换，然后只启动一个物理
-`ChunkKdaFwd` L0。Gate、Prepare、Post-WU、FwdH 和 Finalize 均是该 L0 内部阶段，不再注册或
-启动私有阶段 L0。选择所需信息均由既有输入、shape 和属性推导，不增加公开属性或接口字段。
+`aclnnChunkKdaFwd` 做公开 layout 的连续化和必要视图转换。A5 的 BF16、chunk=64、K=V=128
+dense 对齐快路径保持单次物理 `ChunkKdaFwd` L0；A5 其他多 chunk 场景将同一个私有 L0 按
+Gate/Prepare、Post-WU、FwdH、Finalize 四个阶段依次提交，使阶段间通过物理 launch 边界重置事件状态。
+A2/A3 和单 chunk 场景仍使用单次物理 L0。阶段选择仅使用私有 `stage` 属性，不增加公开属性、
+接口字段或独立算子原型。
 
 ## 阶段职责
 
@@ -84,9 +86,10 @@ sequence-major，并按 `state_v_first` 决定末两维顺序。`final_state` �
 ## 重计算策略
 
 L2 不理解 autograd 重计算策略。`final_state/gk/w/u/qg/kg/v_new/h` 是相互独立的
-`OPTIONAL_OUTPUT`；非空指针表示导出，空指针表示不公开该结果。arch35 快路径为隐藏输出传递
-固定 ABI 占位，并由 tiling 在 kernel workspace 中承接实际中间结果；通用路径使用同一规则。
-公开输出存在时直接作为内部目标使用。
+`OPTIONAL_OUTPUT`；非空指针表示导出，空指针表示不公开该结果。单 launch 路径为隐藏输出传递
+固定 ABI 占位，并由 tiling 在 kernel workspace 中承接实际中间结果。A5 四段 launch 路径将
+阶段间依赖的 `gk/w/u/qg/kg/v_new/h/final_state` 和私有 `qg_scaled/u_seed` 物化为 executor 内部张量，
+使后续 launch 不依赖前一 launch 的 kernel workspace。公开输出存在时直接作为内部目标使用。
 
 Python/legacy 包装层对齐 fla-org `chunk_kda_fwd` 提交
 `0f0f0c97af39343855b43bbbaddcedfda5cb9d77`：
@@ -98,27 +101,29 @@ Python/legacy 包装层对齐 fla-org `chunk_kda_fwd` 提交
 - `final_state` 只在 `output_final_state=true` 时创建公开输出。
 
 内部 `hCompute` 与公开 `hOut` 是两个生命周期：`hCompute` 是 FwdH 到 Finalize 的必需
-head-major 阶段结果，`hOut` 为空时由 kernel workspace 承接；`hOut` 非空时，L2 提供 head-major
-临时输出并在导出边界转为 sequence-major。该规则对齐非 CP 的低层 12 返回值接口；
+head-major 阶段结果；`hOut` 为空时，单 launch 路径由 kernel workspace 承接，四段路径由 executor
+内部张量承接。`hOut` 非空时，L2 提供 head-major 临时输出并在导出边界转为 sequence-major。
+该规则对齐非 CP 的低层 12 返回值接口；
 第 12 项 `initial_state` 由 Python 层原对象透传。
 
 ## 模板化方案与 tiling key
 
-物理 `ChunkKdaFwd` 只有一个外层 `op_kernel/chunk_kda_fwd.cpp` 入口。A5 实现位于
+`ChunkKdaFwd` 只有一个外层 `op_kernel/chunk_kda_fwd.cpp` 入口和一个私有 L0 类型。A5 实现位于
 `op_kernel/arch35/*.h`，host 侧 A5 模板选择位于 `op_host/arch35/*.h`。Prepare、Post-WU、
 Finalize 的内部实现头与统一 kernel 入口同属 `chunk_kda_fwd/op_kernel/`，不存在对应的独立 L0
-原型或 `.cpp` 入口。
+原型或 `.cpp` 入口。A5 四段路径只是用不同私有 `stage` 属性连续调用该入口。
 
 - `tiling key=1`：非 chunk=64、K=V=128 场景的通用模板族。
 - `tiling key=2`：chunk=64、K=V=128 模板族，包括 dense、tail 和 varlen。
 
-两个 key 是同一物理 L0 的编译期场景变体，不是平台编号、独立算子或独立接口。A2/A3/A5
+两个 key 是同一 L0 的编译期场景变体，不是平台编号、独立算子或独立接口。A2/A3/A5
 均生成两个 key；同一个 key 内再由编译架构选择根目录通用实现或 `arch35/` 实现。host 的
 `SetTilingKey` 只检查 chunk、K、V，不检查 SoC。
 
-在 arch35 上，key2 的完整 64 行 chunk 使用 Prepare/Post-WU 成批融合流水；tail 使用同一物理
-L0 内的边界实现。dense 对齐场景使用 arch35 FwdH；tail/varlen 内嵌共享 FwdH。其他架构在
-同一 key2 下使用其对应实现。tiling key 不改变算子原型、输出契约或数学定义。
+在 arch35 上，key2 的 dense 对齐场景使用单 launch 融合流水和 arch35 FwdH。A5 多 chunk 的
+tail/varlen 以及 key1 泛化场景使用四段 launch，并在 FwdH 阶段复用共享实现。其他架构在同一
+key2 下使用其对应单 launch 实现。tiling key 和私有 `stage` 均不改变公开算子原型、输出契约
+或数学定义。
 
 ## 性能设计
 

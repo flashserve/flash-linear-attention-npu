@@ -18,6 +18,7 @@
 #include "register/op_def_registry.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include "tiling_base/tiling_util.h"
+#include "platform/soc_spec.h"
 #include "log/log.h"
 #include "util/math_util.h"
 #include "platform/platform_info.h"

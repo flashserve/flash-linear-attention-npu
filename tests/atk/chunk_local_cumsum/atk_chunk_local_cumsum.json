@@ -1,0 +1,322 @@
+[
+  {
+    "id": 0,
+    "default_seed": 20260817,
+    "name": "chunk_local_cumsum",
+    "aclnn_name": "",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_local_cumsum",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 10,
+          "avg_re_ratio": 3,
+          "root_mean_squared_ratio": 3
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":16,\"chunk_size\":8,\"reverse\":false,\"scale\":1.0,\"op\":\"chunk_local_cumsum\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 16,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 8,
+        "backward": false
+      },
+      {
+        "name": "reverse",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 1.0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260817,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910b",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "default_seed": 20260818,
+    "name": "chunk_local_cumsum",
+    "aclnn_name": "",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_local_cumsum",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 10,
+          "avg_re_ratio": 3,
+          "root_mean_squared_ratio": 3
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"name\":\"fp16_small\",\"dtype\":\"fp16\",\"B\":1,\"H\":1,\"T\":16,\"chunk_size\":8,\"reverse\":false,\"scale\":1.0,\"op\":\"chunk_local_cumsum\",\"case_id\":1,\"seed\":20260818,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp16",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 16,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 8,
+        "backward": false
+      },
+      {
+        "name": "reverse",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 1.0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260818,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910b",
+        "backward": false
+      }
+    ]
+  }
+]

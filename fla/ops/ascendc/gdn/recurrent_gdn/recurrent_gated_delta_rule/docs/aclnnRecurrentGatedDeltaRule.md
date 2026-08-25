@@ -136,7 +136,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>输入&输出</td>
       <td>状态矩阵，公式中的S。</td>
       <td><ul><li>不支持空Tensor。cann版本大于等于9.1.0后支持非连续 Tensor，其余版本不支持</li></td>
-      <td>BFLOAT16</td>
+      <td>BFLOAT16、FLOAT32</td>
       <td>ND</td>
       <td>(BlockNum, Nv, Dv, Dk)</td>
       <td>√</td>
@@ -144,11 +144,11 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
     <tr>
       <td>actualSeqLengths</td>
       <td>输入</td>
-      <td>不同batch的有效序列长度。</td>
-      <td><ul><li>不支持空Tensor。</li></td>
+      <td>无效前缀长度及不同 batch 的有效序列长度。</td>
+      <td><ul><li>不支持空Tensor。</li><li>首元素为无效前缀长度，其余 B 个元素为各 batch 的有效序列长度，全部元素之和等于 T。</li></ul></td>
       <td>INT32</td>
       <td>ND</td>
-      <td>(B,)</td>
+      <td>(B+1,)</td>
       <td>√</td>
     </tr>
     <tr>
@@ -224,7 +224,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
   </tbody>
   </table>
   
-  其中 $B$ 表示batch size，令 $L_i$ 表示第i个序列的长度，则 $T=\sum_i^B L_i$ 表示累积序列长度。$N_k$ 表示key的头数，$N_v$ 表示value的头数，$D_k$ 表示key向量的维度，$D_v$ 表示value向量的维度。
+  其中 $B$ 表示 batch size，$L_0$ 表示无效前缀长度，$L_i$（$i \in [1, B]$）表示第 $i$ 个 batch 的有效序列长度，则 $T=L_0+\sum_{i=1}^{B}L_i$ 表示累积 token 数。$N_k$ 表示 key 的头数，$N_v$ 表示 value 的头数，$D_k$ 表示 key 向量的维度，$D_v$ 表示 value 向量的维度。
 
 - 返回值
 
@@ -245,13 +245,11 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
   </thead>
   <tbody>
     <tr>
-      <td>ACLNN_ERR_PARAM_NULLPTR</td>
-      <td>161001</td>
-      <td>query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, numAcceptedTokens, out存在空指针。</td>
+      <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="4">161002</td>
+      <td>query、key、value、beta、stateRef、actualSeqLengths、ssmStateIndices 或 out 存在空指针。</td>
     </tr>
     <tr>
-      <td rowspan="3">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="3">161002</td>
       <td>输入Tensor的数据类型不在支持的范围内。</td>
     </tr>
     <tr>
@@ -310,7 +308,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 ## 约束说明
 - 确定性计算：
   - aclnnRecurrentGatedDeltaRule默认确定性实现。
-- 输入shape大小需满足约束：$L_i \le 8$，$N_k \le 256$，$N_v \le 256$，$D_k \le 256$，$D_v \le 256$。
+- 输入 shape 大小需满足约束： $L_i \le 8$， $N_k \le 256$， $N_v \le 256$， $D_k \le 512$， $D_v \le 512$，且 $N_v$ 是 $N_k$ 的整数倍。
 
 
 ## 调用示例

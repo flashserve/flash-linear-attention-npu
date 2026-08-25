@@ -277,6 +277,14 @@ if __name__ == "__main__":
     test_chunk_bwd_dv_local_varlen()
 ```
 
+### 5.3 GQA Golden 回归覆盖
+
+共享 CPU 双标杆在定长和变长模式下均遍历全部 `H_do`，并按
+`qkHead = doHead // hRatio` 复用对应的 Q/K head。定长回归覆盖
+`H_qk=4`、`H_do=16`、`T=198`、`chunkSize=64` 的 BF16 场景，变长回归覆盖
+`H_qk=4`、`H_do=16` 的 FP16 场景。精度检查使用与算子测试一致的同精度标杆和
+高精度标杆，不通过放宽阈值规避误差。
+
 ---
 
 ## 6. 目录结构

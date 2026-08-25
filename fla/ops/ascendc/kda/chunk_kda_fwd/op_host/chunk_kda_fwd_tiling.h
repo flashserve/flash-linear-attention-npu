@@ -37,6 +37,7 @@ TILING_DATA_FIELD_DEF(bool, storeQG);
 TILING_DATA_FIELD_DEF(bool, storeKg);
 TILING_DATA_FIELD_DEF(bool, storeVNew);
 TILING_DATA_FIELD_DEF(bool, storeH);
+TILING_DATA_FIELD_DEF(int64_t, stage);
 
 TILING_DATA_FIELD_DEF(int64_t, gateDataType);
 TILING_DATA_FIELD_DEF(int64_t, gateUsedCoreNum);

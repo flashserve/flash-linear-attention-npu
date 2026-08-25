@@ -67,8 +67,10 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
     cu_seqlens: Optional[List[int]] = None,
     chunk_indices: Optional[List[int]] = None,
     g: Optional[torch.Tensor] = None,
+    gK: Optional[torch.Tensor] = None,
     scale: Optional[float] = None,
     chunk_size: int = 64,
+    use_exp2: bool = False,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
     """
     PyTorch 标杆：与 flash-linear-attention-npu 中 test_chunk_gated_delta_rule_bwd_dhu.py 保持一致。
@@ -78,6 +80,10 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
     dtype = q.dtype
 
     B, H, T, K = q.shape
+    if (g is None) == (gK is None):
+        raise ValueError("Exactly one of g and gK must be provided.")
+    if gK is not None:
+        use_exp2 = True
     V = do.shape[-1]
     BT = chunk_size
 
@@ -167,8 +173,9 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
                 if g is not None:
                     bg_last = g[b, i_h, global_last_idx]
                     b_g = g[b, i_h, global_start_t:global_end_t]
-                    bg_last_exp = torch.exp(bg_last)
-                    b_g_exp = torch.exp(b_g)
+                    gate_exp = torch.exp2 if use_exp2 else torch.exp
+                    bg_last_exp = gate_exp(bg_last)
+                    b_g_exp = gate_exp(b_g)
 
                 b_do = do[b, i_h, global_start_t:global_end_t, :]
                 b_dv_existing = dv[b, i_h, global_start_t:global_end_t, :]
@@ -178,7 +185,7 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
 
                 if g is not None:
                     m_t = torch.arange(block_size_t, device=device) < block_size_t
-                    gate_factor = torch.exp(bg_last - b_g).unsqueeze(-1)
+                    gate_factor = (torch.exp2 if use_exp2 else torch.exp)(bg_last - b_g).unsqueeze(-1)
                     mask_expanded = m_t.unsqueeze(-1).float()
                     b_dv *= gate_factor * mask_expanded
 
@@ -220,6 +227,8 @@ class FunctionApi(BaseApi):
         d_o = input_data.kwargs["d_o"]
         dv = input_data.kwargs["dv"]
         g = input_data.kwargs["g"]
+        gK = input_data.kwargs.get("gK")
+        use_exp2 = input_data.kwargs.get("use_exp2", gK is not None)
         cu_seqlens = input_data.kwargs["cu_seqlens"]
         chunk_indices = input_data.kwargs["chunk_indices"]
         chunk_size = input_data.kwargs["chunk_size"]
@@ -234,8 +243,10 @@ class FunctionApi(BaseApi):
             cu_seqlens=cu_seqlens,
             chunk_indices=chunk_indices,
             g=g,
+            gK=gK,
             scale=scale,
             chunk_size=chunk_size,
+            use_exp2=use_exp2,
         )
         if self.qkv_type == "bf16":
             dh = dh.to(torch.bfloat16)

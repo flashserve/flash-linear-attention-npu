@@ -16,16 +16,22 @@ def prepare_chunk_indices(
     return torch.stack([indices.eq(0).cumsum(0) - 1, indices], 1).to(cu_seqlens)
 
 def chunk_bwd_dv_local_fix(
-    q: torch.Tensor,  # [B, H, T, K]
-    k: torch.Tensor,  # [B, H, T, K]
-    do: torch.Tensor, # [B, H, T, V]
-    g: torch.Tensor,  # [B, H, T]
+    q: torch.Tensor,  # [B, H_qk, T, K]
+    k: torch.Tensor,  # [B, H_qk, T, K]
+    do: torch.Tensor, # [B, H_do, T, V]
+    g: torch.Tensor,  # [B, H_do, T]
     scale: Optional[float],
     cu_seqlens: torch.LongTensor,  # [batch_size+1]
-    chunk_size: int = 64
+    chunk_size: int = 64,
+    high_precision: bool = False
 ) -> torch.Tensor:
-    B, H, T, K = k.shape
+    B, H_qk, T, K = k.shape
+    H_do = do.shape[1]
+    qkv_type = q.dtype
+    accumulator_type = torch.float64 if high_precision else torch.float32
     V = do.shape[3]
+    assert H_do % H_qk == 0, f"H_do ({H_do}) must be divisible by H_qk ({H_qk})"
+    h_ratio = H_do // H_qk
     if scale is None:
         scale = 1.0 / math.sqrt(K)
     if cu_seqlens is not None:
@@ -33,7 +39,7 @@ def chunk_bwd_dv_local_fix(
     BT = min(chunk_size, max(16, 2 ** math.ceil(math.log2(T)))) # 有风险，T至少要>=64,否则会计算错误
     chunk_per_T = (T + chunk_size -1)// chunk_size
     NT = chunk_per_T * B
-    dv = torch.zeros_like(do).to(torch.float32)
+    dv = torch.zeros_like(do).to(accumulator_type)
     g_t = g
     for chunk_idx in range(NT):
         i_n = chunk_idx // chunk_per_T # 序列编号
@@ -45,21 +51,25 @@ def chunk_bwd_dv_local_fix(
         chunk_len = chunk_end_token - chunk_start_token # 当前chunk的有效token数
         if chunk_len <= 0:
             continue
-        for i_h in range(H):
-            b_A = torch.zeros(BT, BT, device=q.device, dtype=torch.float32)
+        for do_head in range(H_do):
+            qk_head = do_head // h_ratio
+            b_A = torch.zeros(BT, BT, device=q.device, dtype=accumulator_type)
             BK = 128  # 与Triton保持一致
             BK = min(BK, K)  # 确保不超过K
             for i_k in range(0, K, BK):
                 k_end = min(i_k + BK, K)
-                b_k = k[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len, i_k:k_end].to(torch.float32) # [chunk_len, BK]
-                q_normal = q[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len, i_k:k_end].to(torch.float32)  # [chunk_len, BK]
+                b_k = k[batch_idx, qk_head, chunk_start_token:chunk_start_token+chunk_len, i_k:k_end]
+                q_normal = q[batch_idx, qk_head, chunk_start_token:chunk_start_token+chunk_len, i_k:k_end]
+                if high_precision:
+                    b_k = b_k.to(torch.float32)
+                    q_normal = q_normal.to(torch.float32)
                 b_q = q_normal.transpose(0, 1)  # [BK, chunk_len]
                 if chunk_len == 1:
                     matmul_result = torch.sum(b_k * q_normal)
                     b_A[:chunk_len, :chunk_len] += matmul_result
                 else:
                     b_A[:chunk_len, :chunk_len] += torch.matmul(b_k, b_q)# [BT,BT]
-            b_g = g_t[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len] # g_t [B, H, T_max] → b_g [chunk_len]
+            b_g = g_t[batch_idx, do_head, chunk_start_token:chunk_start_token+chunk_len].to(accumulator_type) # g_t [B, H_do, T_max] → b_g [chunk_len]
             o_t = i_t * BT + torch.arange(0, BT) # [BT] chunk内的token序号
             m_t = o_t < T # [BT] bool掩码：是否是有效token
             o_t_col = o_t.unsqueeze(1)  # [BT, 1]
@@ -76,28 +86,36 @@ def chunk_bwd_dv_local_fix(
             b_A_gated[:chunk_len, :chunk_len] = b_A[:chunk_len, :chunk_len] * g_factor # [BT, BT] 门控缩放后的注意力核矩阵
             # 应用掩码
             b_A_masked = torch.where(m_A, b_A_gated, torch.zeros_like(b_A_gated)) # 只保留掩码为 True 的位置的 b_A_gated 值，其余置 0
-            b_A_masked = b_A_masked.to(torch.float32) # [BT, BT]
+            b_A_masked = b_A_masked.to(torch.float32 if high_precision else qkv_type) # [BT, BT]
             BV = 128  # 与Triton保持一致
             BV = min(BV, V)  # 确保不超过V
             for i_v in range(0, V, BV):
                 v_end = min(i_v + BV, V)
                 v_width = v_end - i_v
-                b_do = do[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len, i_v:v_end].to(torch.float32) # do [B, T_max, H, V] → b_do [chunk_len, BV]
+                b_do = do[batch_idx, do_head, chunk_start_token:chunk_start_token+chunk_len, i_v:v_end]
+                if high_precision:
+                    b_do = b_do.to(torch.float32)
                 b_dv = torch.matmul(b_A_masked[:chunk_len, :chunk_len], b_do) # b_A_masked 这个 [BT, BT] 的矩阵，只有左上角 [chunk_len, chunk_len] 区域有非 0 值，其余所有区域全是 0
-                dv[batch_idx, i_h, chunk_start_token:chunk_start_token+chunk_len, i_v:v_end] += b_dv
+                dv[batch_idx, do_head, chunk_start_token:chunk_start_token+chunk_len, i_v:v_end] += b_dv
     return dv
 
 def chunk_bwd_dv_local_variable(
-    q: torch.Tensor,  # [B, H, T_max, K]
-    k: torch.Tensor,  # [B, H, T_max, K]
-    do: torch.Tensor, # [B, H, T_max, V]
-    g: torch.Tensor,  # [B, H, T_max]
+    q: torch.Tensor,  # [B, H_qk, T_max, K]
+    k: torch.Tensor,  # [B, H_qk, T_max, K]
+    do: torch.Tensor, # [B, H_do, T_max, V]
+    g: torch.Tensor,  # [B, H_do, T_max]
     scale: Optional[float],
     cu_seqlens: torch.LongTensor,  # [batch_size+1]
-    chunk_size: int = 64
+    chunk_size: int = 64,
+    high_precision: bool = False
 ) -> torch.Tensor:
-    B, H, T, K = k.shape
+    B, H_qk, T, K = k.shape
+    H_do = do.shape[1]
+    qkv_type = q.dtype
+    accumulator_type = torch.float64 if high_precision else torch.float32
     V = do.shape[3]
+    assert H_do % H_qk == 0, f"H_do ({H_do}) must be divisible by H_qk ({H_qk})"
+    h_ratio = H_do // H_qk
     if scale is None:
         scale = 1.0 / math.sqrt(K)
     if cu_seqlens is not None:
@@ -106,7 +124,7 @@ def chunk_bwd_dv_local_variable(
     chunk_indices = chunk_indices.view(-1)
     BT = min(chunk_size, max(16, 2 ** math.ceil(math.log2(T)))) # 有风险，T至少要>=64,否则会计算错误
     NT = len(chunk_indices) // 2 
-    dv = torch.zeros_like(do).to(torch.float32)
+    dv = torch.zeros_like(do).to(accumulator_type)
     g_t = g
     for chunk_idx in range(NT):
         i_n = chunk_indices[chunk_idx * 2].item() # 序列编号
@@ -120,21 +138,25 @@ def chunk_bwd_dv_local_variable(
         if chunk_len <= 0:
             continue
         global_start = bos + chunk_start_token # 当前chunk在T中开始的位置
-        for i_h in range(H):
-            b_A = torch.zeros(BT, BT, device=q.device, dtype=torch.float32)
+        for do_head in range(H_do):
+            qk_head = do_head // h_ratio
+            b_A = torch.zeros(BT, BT, device=q.device, dtype=accumulator_type)
             BK = 128  # 与Triton保持一致
             BK = min(BK, K)  # 确保不超过K
             for i_k in range(0, K, BK):
                 k_end = min(i_k + BK, K)
-                b_k = k[batch_idx, i_h, global_start:global_start+chunk_len, i_k:k_end].to(torch.float32) # [chunk_len, BK]
-                q_normal = q[batch_idx, i_h, global_start:global_start+chunk_len, i_k:k_end].to(torch.float32)  # [chunk_len, BK]
+                b_k = k[batch_idx, qk_head, global_start:global_start+chunk_len, i_k:k_end]
+                q_normal = q[batch_idx, qk_head, global_start:global_start+chunk_len, i_k:k_end]
+                if high_precision:
+                    b_k = b_k.to(torch.float32)
+                    q_normal = q_normal.to(torch.float32)
                 b_q = q_normal.transpose(0, 1)  # [BK, chunk_len]
                 if chunk_len == 1:
                     matmul_result = torch.sum(b_k * q_normal)
                     b_A[:chunk_len, :chunk_len] += matmul_result
                 else:
                     b_A[:chunk_len, :chunk_len] += torch.matmul(b_k, b_q)# [BT,BT]
-            b_g = g_t[batch_idx, i_h, global_start:global_start+chunk_len] # g_t [B, H, T_max] → b_g [chunk_len]
+            b_g = g_t[batch_idx, do_head, global_start:global_start+chunk_len].to(accumulator_type) # g_t [B, H_do, T_max] → b_g [chunk_len]
             o_t = i_t * BT + torch.arange(0, BT) # [BT] chunk内的token序号
             m_t = o_t < T # [BT] bool掩码：是否是有效token
             o_t_col = o_t.unsqueeze(1)  # [BT, 1]
@@ -160,13 +182,37 @@ def chunk_bwd_dv_local_variable(
             # for i in range(b_A_masked.shape[0]):
             #     row_str = ', '.join([f"{b_A_masked[i, j].item():.6f}" for j in range(b_A_masked.shape[1])])
             #     print(row_str)
-            b_A_masked = b_A_masked.to(torch.float32) # [BT, BT]
+            b_A_masked = b_A_masked.to(torch.float32 if high_precision else qkv_type) # [BT, BT]
             BV = 128  # 与Triton保持一致
             BV = min(BV, V)  # 确保不超过V
             for i_v in range(0, V, BV):
                 v_end = min(i_v + BV, V)
                 v_width = v_end - i_v
-                b_do = do[batch_idx, i_h, global_start:global_start+chunk_len, i_v:v_end].to(torch.float32) # do [B, T_max, H, V] → b_do [chunk_len, BV]
+                b_do = do[batch_idx, do_head, global_start:global_start+chunk_len, i_v:v_end]
+                if high_precision:
+                    b_do = b_do.to(torch.float32)
                 b_dv = torch.matmul(b_A_masked[:chunk_len, :chunk_len], b_do) # b_A_masked 这个 [BT, BT] 的矩阵，只有左上角 [chunk_len, chunk_len] 区域有非 0 值，其余所有区域全是 0
-                dv[batch_idx, i_h, global_start:global_start+chunk_len, i_v:v_end] += b_dv
+                dv[batch_idx, do_head, global_start:global_start+chunk_len, i_v:v_end] += b_dv
     return dv
+
+def chunk_bwd_dv_local_fix_high_precision(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    do: torch.Tensor,
+    g: torch.Tensor,
+    scale: Optional[float],
+    cu_seqlens: torch.LongTensor,
+    chunk_size: int = 64
+) -> torch.Tensor:
+    return chunk_bwd_dv_local_fix(q, k, do, g, scale, cu_seqlens, chunk_size, high_precision=True)
+
+def chunk_bwd_dv_local_variable_high_precision(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    do: torch.Tensor,
+    g: torch.Tensor,
+    scale: Optional[float],
+    cu_seqlens: torch.LongTensor,
+    chunk_size: int = 64
+) -> torch.Tensor:
+    return chunk_bwd_dv_local_variable(q, k, do, g, scale, cu_seqlens, chunk_size, high_precision=True)

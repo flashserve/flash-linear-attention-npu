@@ -120,6 +120,7 @@ public:
 
         this->Attr("scale").AttrType(OPTIONAL).Float(1.0);
         this->Attr("chunk_size").AttrType(OPTIONAL).Int(64);
+        this->Attr("use_exp2").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)

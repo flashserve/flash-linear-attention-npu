@@ -12,8 +12,9 @@
  * \brief Recurrent gated delta rule operator with fast kernel launch (<<<>>>).
  */
 
-#include <vector>
+#include <limits>
 #include <tuple>
+#include <vector>
 #include <ATen/Operators.h>
 #include <torch/all.h>
 #include <torch/library.h>
@@ -90,7 +91,7 @@ std::tuple<at::Tensor, at::Tensor> recurrent_gated_delta_rule_functional_meta(
     TORCH_CHECK(state.dim() == 4, "initial_state dim should be 4");
     c10::SmallVector<int64_t, 3> outShape = {value.size(0), value.size(1), value.size(2)};
     at::Tensor out = at::empty(outShape, value.options().dtype(at::ScalarType::BFloat16));
-    at::Tensor stateOut = at::empty_like(state);
+    at::Tensor stateOut = at::empty_strided(state.sizes(), state.strides(), state.options());
     return std::make_tuple(out, stateOut);
 }
 
@@ -106,6 +107,33 @@ static ge::DataType ToGeStateDtype(at::ScalarType dtype)
         return ge::DT_FLOAT;
     }
     return ge::DT_BF16;
+}
+
+static void FillStateStrides(const at::Tensor &state, RecurrentGatedDeltaRuleTilingData &tiling)
+{
+    TORCH_CHECK(state.dim() == 4, "state dim should be 4");
+    const auto stateStrides = state.strides();
+    const int64_t dk = state.size(3);
+    const int64_t dv = state.size(2);
+    const int64_t nv = state.size(1);
+
+    TORCH_CHECK(stateStrides[3] == 1, "state stride(3) must be 1, but got ", stateStrides[3]);
+    TORCH_CHECK(stateStrides[2] == dk, "state stride(2) must equal Dk (", dk, "), but got ", stateStrides[2]);
+    TORCH_CHECK(stateStrides[1] >= dv * stateStrides[2],
+                "state stride(1) must leave non-overlapping (Dv, Dk) matrices, but got ", stateStrides[1]);
+    TORCH_CHECK(stateStrides[0] >= nv * stateStrides[1],
+                "state stride(0) must leave non-overlapping Nv heads, but got ", stateStrides[0]);
+
+    constexpr int64_t maxTilingStride = static_cast<int64_t>(std::numeric_limits<uint32_t>::max());
+    for (int64_t dim = 0; dim < 3; ++dim) {
+        TORCH_CHECK(stateStrides[dim] >= 0 && stateStrides[dim] <= maxTilingStride,
+                    "state stride(", dim, ") must be in [0, UINT32_MAX], but got ", stateStrides[dim]);
+    }
+
+    // PyTorch strides and the kernel offsets are both measured in elements.
+    tiling.stateStride0 = static_cast<uint32_t>(stateStrides[0]);
+    tiling.stateStride1 = static_cast<uint32_t>(stateStrides[1]);
+    tiling.stateStride2 = static_cast<uint32_t>(stateStrides[2]);
 }
 
 static RecurrentGatedDeltaRuleTilingData CalcTilingParams(const at::Tensor &query, const at::Tensor &key,
@@ -157,6 +185,7 @@ static RecurrentGatedDeltaRuleTilingData CalcTilingParams(const at::Tensor &quer
     optiling::RecurrentGatedDeltaRuleTilingProcessor processor(ctx);
     TORCH_CHECK(processor.Process(tiling, blockDim, workspaceSize) == ge::GRAPH_SUCCESS,
                 "recurrent_gated_delta_rule tiling failed.");
+    FillStateStrides(state, tiling);
     return tiling;
 }
 
@@ -278,6 +307,7 @@ at::Tensor recurrent_gated_delta_rule_npu(const at::Tensor &query, const at::Ten
                                           const c10::optional<at::Tensor> &num_accepted_tokens,
                                           const c10::optional<at::Tensor> &g, const c10::optional<at::Tensor> &gk)
 {
+    const c10::OptionalDeviceGuard guard(query.device());
     TORCH_CHECK(scale.has_value(), "scale cannot be empty");
     auto out = recurrent_gated_delta_rule_meta(query, key, value, state, beta, scale, actual_seq_lengths,
                                                ssm_state_indices, num_accepted_tokens, g, gk);
@@ -293,12 +323,13 @@ std::tuple<at::Tensor, at::Tensor> recurrent_gated_delta_rule_functional_npu(
     const c10::optional<at::Tensor> &num_accepted_tokens, const c10::optional<at::Tensor> &g,
     const c10::optional<at::Tensor> &gk)
 {
+    const c10::OptionalDeviceGuard guard(query.device());
     TORCH_CHECK(scale.has_value(), "scale cannot be empty");
     auto outs = recurrent_gated_delta_rule_functional_meta(query, key, value, state, beta, scale, actual_seq_lengths,
                                                            ssm_state_indices, num_accepted_tokens, g, gk);
     at::Tensor out = std::get<0>(outs);
-    (void)std::get<1>(outs);
-    at::Tensor stateInplace = state.clone();
+    at::Tensor stateInplace = std::get<1>(outs);
+    stateInplace.copy_(state);
     RunRecurrentGatedDeltaRuleKernel(query, key, value, beta, stateInplace, actual_seq_lengths, ssm_state_indices,
                                      num_accepted_tokens, g, gk, static_cast<float>(scale.value()), out, true);
     return std::make_tuple(out, stateInplace);

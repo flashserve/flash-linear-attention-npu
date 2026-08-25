@@ -46,13 +46,17 @@ KdaCoreOutputs KdaChunkForward(
     const aclTensor *kgOut,
     const aclTensor *vNewOut,
     const aclTensor *hOut,
+    const aclTensor *qgScaledOut,
+    const aclTensor *uSeedOut,
+    int64_t stage,
     aclOpExecutor *executor)
 {
     L0_DFX(KdaChunkForward, q, k, v, g, beta, aLogOptional, dtBiasOptional,
            initialStateOptional, cuSeqlensOptional, chunkIndicesOptional,
            scale, chunkSize, safeGate, inputSequenceMajor, useGateInKernel,
            lowerBound, attnOut, finalStateOut, gkOut, aqkOut, akkOut,
-           wOut, uOut, qgOut, kgOut, vNewOut, hOut);
+           wOut, uOut, qgOut, kgOut, vNewOut, hOut, qgScaledOut, uSeedOut,
+           stage);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional != nullptr) {
@@ -79,17 +83,17 @@ KdaCoreOutputs KdaChunkForward(
         OP_INPUT(q, k, v, g, beta, aLogOptional, dtBiasOptional,
                  initialStateOptional, actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut,
-                  qgOut, kgOut, vNewOut, hOut),
+                  qgOut, kgOut, vNewOut, hOut, qgScaledOut, uSeedOut),
         OP_ATTR(inputSequenceMajor ? "BSND" : "BNSD", scale, chunkSize,
                 safeGate, static_cast<float>(lowerBound), useGateInKernel,
-                false));
+                false, stage));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,
                 "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaFwd failed.");
         return {};
     }
     return {attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut,
-            qgOut, kgOut, vNewOut, hOut};
+            qgOut, kgOut, vNewOut, hOut, qgScaledOut, uSeedOut};
 }
 
 } // namespace l0op

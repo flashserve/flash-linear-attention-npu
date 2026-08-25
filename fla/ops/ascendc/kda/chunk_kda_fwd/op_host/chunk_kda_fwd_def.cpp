@@ -67,6 +67,8 @@ public:
         this->Output("kg").ParamType(OPTIONAL).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
         this->Output("v_new").ParamType(OPTIONAL).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
         this->Output("h").ParamType(OPTIONAL).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Output("qg_scaled").ParamType(OPTIONAL).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
+        this->Output("u_seed").ParamType(OPTIONAL).DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
 
         this->Attr("layout").AttrType(OPTIONAL).String("BSND");
         this->Attr("scale").AttrType(REQUIRED).Float(1.0);
@@ -75,6 +77,7 @@ public:
         this->Attr("lower_bound").AttrType(OPTIONAL).Float(-5.0);
         this->Attr("use_gate_in_kernel").AttrType(REQUIRED).Bool(false);
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
+        this->Attr("stage").AttrType(OPTIONAL).Int(-1);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

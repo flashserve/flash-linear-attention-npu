@@ -75,7 +75,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 
 ### 3.1 输入参数（Inputs）
 
-令 $B$ 为 batch size，$T = \sum_i L_i$ 为累积序列长度，$N_k$ 为 key 头数，$N_v$ 为 value 头数，$D_k$ 为 key 维度，$D_v$ 为 value 维度，BlockNum 为状态块总数。
+令 $B$ 为 batch size，$L_0$ 为无效前缀长度，$L_i$（$i \in [1, B]$）为各 batch 的有效序列长度，$T = L_0 + \sum_{i=1}^{B} L_i$ 为累积 token 数，$N_k$ 为 key 头数，$N_v$ 为 value 头数，$D_k$ 为 key 维度，$D_v$ 为 value 维度，BlockNum 为状态块总数。
 
 | 参数名 | 输入/输出 | 必选/可选 | 描述 | 使用说明 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|---|---|
@@ -83,12 +83,12 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 | `key` | 输入 | 必选 | 公式中的 $k$；不支持空 Tensor | - | `BFLOAT16` | `ND` | `(T, Nk, Dk)` | 支持 |
 | `value` | 输入 | 必选 | 公式中的 $v$；不支持空 Tensor | - | `BFLOAT16` | `ND` | `(T, Nv, Dv)` | 支持 |
 | `beta` | 输入 | 必选 | 公式中的 $\beta$；不支持空 Tensor | - | `BFLOAT16` | `ND` | `(T, Nv)` | 支持 |
-| `stateRef` | 输入&输出 | 必选 | 状态矩阵 $S$，算子执行后原地更新；不支持空 Tensor | - | `BFLOAT16` | `ND` | `(BlockNum, Nv, Dv, Dk)` | cann版本大于等于9.1.0后支持，其余版本不支持 |
-| `actualSeqLengths` | 输入 | 必选 | 序列长度；不支持空 Tensor，首元素代表无效序列长度（即不参与计算的序列长度），其余 $B$ 个元素代表各 batch 的有效序列长度 | 第 1 至第 $B$ 个元素之和等于 $T$ | `INT32` | `ND` | `(B+1,)` | 支持 |
+| `stateRef` | 输入&输出 | 必选 | 状态矩阵 $S$，算子执行后原地更新；不支持空 Tensor | - | `BFLOAT16`、`FLOAT32` | `ND` | `(BlockNum, Nv, Dv, Dk)` | CANN 版本大于等于 9.1.0 后支持，其余版本不支持 |
+| `actualSeqLengths` | 输入 | 必选 | 序列长度；不支持空 Tensor，首元素代表无效前缀长度，其余 $B$ 个元素代表各 batch 的有效序列长度 | 全部 $B+1$ 个元素之和等于 $T$ | `INT32` | `ND` | `(B+1,)` | 支持 |
 | `ssmStateIndices` | 输入 | 必选 | 输入序列到状态矩阵的映射索引，`state[ssmStateIndices[i]]` 表示第 $i$ 个 token 对应的状态块；不支持空 Tensor | 取值范围 `[0, BlockNum)` | `INT32` | `ND` | `(T,)` | 支持 |
 | `g` | 输入 | 可选 | 标量衰减系数 $\alpha_t = e^g$ | 传 `nullptr` 时等价于全 0（$\alpha_t = 1$，即无标量衰减） | `FLOAT32` | `ND` | `(T, Nv)` | 支持 |
 | `gk` | 输入 | 可选 | 逐维衰减系数 $\alpha_{kt} = e^{gk}$ | 传 `nullptr` 时等价于全 0（$\alpha_{kt} = \mathbf{1}$，即无逐维衰减） | `FLOAT32` | `ND` | `(T, Nv, Dk)` | 支持 |
-| `numAcceptedTokens` | 输入 | 可选 | 每个序列接受的 token 数量 | 传 `nullptr` 时默认全部接受 | `INT32` | `ND` | `(B,)` | 支持 |
+| `numAcceptedTokens` | 输入 | 可选 | 每个序列接受的 token 数量 | 传 `nullptr` 时每个序列默认取 1 | `INT32` | `ND` | `(B,)` | 支持 |
 
 ### 3.2 属性参数（Attributes）
 
@@ -101,7 +101,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 | 参数名 | 输入/输出 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|
 | `out` | 输出 | 公式中的 $o$，当前时间步注意力输出 | `BFLOAT16` | `ND` | `(T, Nv, Dv)` | 支持 |
-| `stateRef` | 输入&输出 | 更新后的隐藏状态矩阵（原地更新） | `BFLOAT16` | `ND` | `(BlockNum, Nv, Dv, Dk)` | cann版本大于等于9.1.0后支持，其余版本不支持 |
+| `stateRef` | 输入&输出 | 更新后的隐藏状态矩阵（原地更新） | `BFLOAT16`、`FLOAT32` | `ND` | `(BlockNum, Nv, Dv, Dk)` | CANN 版本大于等于 9.1.0 后支持，其余版本不支持 |
 | `workspaceSize` | 输出 | Device 侧所需 workspace 大小 | `uint64_t` | - | 标量 | - |
 | `executor` | 输出 | 算子执行器，封装了计算流程 | `aclOpExecutor*` | - | - | - |
 
@@ -110,17 +110,18 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 - `query`、`key` 的形状为 `(T, Nk, Dk)`。
 - `value` 的形状为 `(T, Nv, Dv)`。
 - `beta` 的形状为 `(T, Nv)`。
-- `stateRef` 的形状为 `(BlockNum, Nv, Dv, Dk)`，cann版本大于等于9.1.0后支持非连续 Tensor，其余版本不支持。
-- `actualSeqLengths` 为长度 $B+1$ 的一维 INT32 张量，首元素代表无效序列长度（不参与计算），第 1 至第 $B$ 个元素代表各 batch 的有效序列长度，其元素之和等于 $T$。
+- `stateRef` 的形状为 `(BlockNum, Nv, Dv, Dk)`，数据类型支持 `BFLOAT16` 和 `FLOAT32`；CANN 版本大于等于 9.1.0 后支持非连续 Tensor，其余版本不支持。
+- `actualSeqLengths` 为长度 $B+1$ 的一维 INT32 张量，首元素代表无效前缀长度（不参与计算），第 1 至第 $B$ 个元素代表各 batch 的有效序列长度，全部元素之和等于 $T$。
 - `ssmStateIndices` 为长度 $T$ 的一维 INT32 张量，取值范围 `[0, BlockNum)`。
-- 当前仅支持 `BFLOAT16` 精度（query/key/value/beta/stateRef/out）。
+- `query/key/value/beta/out` 仅支持 `BFLOAT16`。
+- $N_k$、$N_v$ 不超过 256，$D_k$、$D_v$ 不超过 512，且 $N_v$ 必须是 $N_k$ 的整数倍。
 - 每个序列的有效 token 数 $L_i$（即 `actualSeqLengths[i+1]`，$i \in [0, B)$）须满足 $L_i \le 8$。
 
 ### 3.5 补充说明
 
-- 输入张量 `query/key/value/beta/g` 支持非连续 Tensor 输入。
-- `stateRef` 为原地输入输出，cann版本大于等于9.1.0后支持非连续 Tensor，其余版本不支持。
-- `gk` 当前版本暂不支持，须传 `None`。
+- 输入张量 `query/key/value/beta/g/gk` 支持非连续 Tensor 输入。
+- `stateRef` 为原地输入输出，CANN 版本大于等于 9.1.0 后支持非连续 Tensor，其余版本不支持。
+- `g` 与 `gk` 至少提供一个；传 `None` 表示关闭对应衰减项。
 
 ---
 
@@ -142,7 +143,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 ### 4.2 数值语义
 
 - `g` 传 `None` 时：$\alpha_t = e^0 = 1$，即无标量衰减
-- `gk` 当前版本暂不支持，须传 `None`
+- `gk` 传 `None` 时：$\alpha_{kt} = e^0 = \mathbf{1}$，即无逐维衰减
 - `scaleValue` 推荐设置为：
 
 ```text
@@ -156,9 +157,10 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 ### 5.1 定长场景（每序列处理相同数量 token）
 
 ```python
-import torch
-import torch_npu
 import math
+import torch
+
+from fla_npu.ops.ascendc import recurrent_gated_delta_rule
 
 def test_recurrent_gated_delta_rule_fixed():
     B, mtp = 4, 2           # 4 个 batch，每序列 2 个 token
@@ -180,7 +182,7 @@ def test_recurrent_gated_delta_rule_fixed():
     # ssm_state_indices: 第 i 个 token 使用 state[ssm_state_indices[i]]
     ssm_state_indices  = torch.arange(T, dtype=torch.int32).to(device)
 
-    out = torch_npu.npu_recurrent_gated_delta_rule(
+    out = recurrent_gated_delta_rule(
         query, key, value, state,
         beta=beta,
         scale=scale,
@@ -188,7 +190,7 @@ def test_recurrent_gated_delta_rule_fixed():
         ssm_state_indices=ssm_state_indices,
         num_accepted_tokens=None,   # None = 每序列接受 1 个 token（默认）
         g=g,
-        gk=None                     # 当前版本暂不支持，须传 None
+        gk=None                     # 本示例仅启用标量衰减 g
     )
 
     assert out.shape == (T, Nv, Dv)
@@ -204,9 +206,10 @@ if __name__ == "__main__":
 变长场景下，不同序列接受的 token 数量不同（常见于投机推理中 draft 模型的结果验证）。
 
 ```python
-import torch
-import torch_npu
 import math
+import torch
+
+from fla_npu.ops.ascendc import recurrent_gated_delta_rule
 
 def test_recurrent_gated_delta_rule_varlen():
     B, mtp = 4, 2
@@ -228,10 +231,10 @@ def test_recurrent_gated_delta_rule_varlen():
     ssm_state_indices  = torch.arange(T, dtype=torch.int32).to(device)
 
     # 各序列实际接受的 token 数不同（投机推理验证结果）
-    # 需满足 num_accepted_tokens[i] <= actual_seq_lengths[i] <= 8
+    # 需满足 num_accepted_tokens[i] <= actual_seq_lengths[i + 1] <= 8
     num_accepted_tokens = torch.tensor([2, 1, 2, 1], dtype=torch.int32).to(device)
 
-    out = torch_npu.npu_recurrent_gated_delta_rule(
+    out = recurrent_gated_delta_rule(
         query, key, value, state,
         beta=beta,
         scale=scale,

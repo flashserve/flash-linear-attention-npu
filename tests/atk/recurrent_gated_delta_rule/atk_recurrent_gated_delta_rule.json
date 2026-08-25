@@ -1,0 +1,2152 @@
+[
+  {
+    "id": 0,
+    "default_seed": 20260823,
+    "name": "recurrent_gated_delta_rule",
+    "aclnn_name": "RecurrentGatedDeltaRule",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_recurrent_gated_delta_rule",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 10,
+          "avg_re_ratio": 3,
+          "root_mean_squared_ratio": 3
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":64,\"T\":1,\"V\":64,\"block_num\":1,\"case_id\":0,\"dtype\":\"bf16\",\"gate_mode\":\"g\",\"name\":\"minimal_g_bf16_state\",\"op\":\"recurrent_gated_delta_rule\",\"route\":\"ascendc\",\"scale\":0.125,\"seed\":20260823,\"seq_lengths\":[1],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_layout\":\"contiguous\"}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "contiguous",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "block_num",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "gate_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "g",
+        "backward": false
+      },
+      {
+        "name": "use_accepted_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "prefix_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260823,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "all",
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      }
+    ],
+    "save_name": "recurrent_gated_delta_rule"
+  },
+  {
+    "id": 1,
+    "default_seed": 20260824,
+    "name": "recurrent_gated_delta_rule",
+    "aclnn_name": "RecurrentGatedDeltaRule",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_recurrent_gated_delta_rule",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 10,
+          "avg_re_ratio": 3,
+          "root_mean_squared_ratio": 3
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":2,\"V\":128,\"block_num\":2,\"case_id\":1,\"dtype\":\"bf16\",\"gate_mode\":\"g\",\"name\":\"baseline_g_fp32_state\",\"op\":\"recurrent_gated_delta_rule\",\"route\":\"ascendc\",\"scale\":0.08838834764831843,\"seed\":20260824,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_layout\":\"contiguous\"}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
+        "name": "state_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "contiguous",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "block_num",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "gate_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "g",
+        "backward": false
+      },
+      {
+        "name": "use_accepted_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "prefix_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260824,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "all",
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      }
+    ],
+    "save_name": "recurrent_gated_delta_rule"
+  },
+  {
+    "id": 2,
+    "default_seed": 20260825,
+    "name": "recurrent_gated_delta_rule",
+    "aclnn_name": "RecurrentGatedDeltaRule",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_recurrent_gated_delta_rule",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 10,
+          "avg_re_ratio": 3,
+          "root_mean_squared_ratio": 3
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":80,\"T\":2,\"V\":96,\"block_num\":2,\"case_id\":2,\"dtype\":\"bf16\",\"gate_mode\":\"gk\",\"name\":\"gk_tail_dimensions\",\"op\":\"recurrent_gated_delta_rule\",\"route\":\"ascendc\",\"scale\":0.11180339887498948,\"seed\":20260825,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_layout\":\"contiguous\"}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "contiguous",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 80,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 96,
+        "backward": false
+      },
+      {
+        "name": "block_num",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "gate_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "gk",
+        "backward": false
+      },
+      {
+        "name": "use_accepted_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "prefix_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260825,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "all",
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      }
+    ],
+    "save_name": "recurrent_gated_delta_rule"
+  },
+  {
+    "id": 3,
+    "default_seed": 20260826,
+    "name": "recurrent_gated_delta_rule",
+    "aclnn_name": "RecurrentGatedDeltaRule",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_recurrent_gated_delta_rule",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 10,
+          "avg_re_ratio": 3,
+          "root_mean_squared_ratio": 3
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "{\"B\":2,\"HK\":1,\"HV\":2,\"K\":128,\"T\":3,\"V\":64,\"block_num\":3,\"case_id\":3,\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"name\":\"dual_gate_gqa_varlen\",\"op\":\"recurrent_gated_delta_rule\",\"route\":\"ascendc\",\"scale\":0.08838834764831843,\"seed\":20260826,\"seq_lengths\":[2,1],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_layout\":\"contiguous\"}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "contiguous",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 3,
+        "backward": false
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "block_num",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 3,
+        "backward": false
+      },
+      {
+        "name": "gate_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "both",
+        "backward": false
+      },
+      {
+        "name": "use_accepted_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "prefix_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 3,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260826,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "all",
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      }
+    ],
+    "save_name": "recurrent_gated_delta_rule"
+  },
+  {
+    "id": 4,
+    "default_seed": 20260827,
+    "name": "recurrent_gated_delta_rule",
+    "aclnn_name": "RecurrentGatedDeltaRule",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_recurrent_gated_delta_rule",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 10,
+          "avg_re_ratio": 3,
+          "root_mean_squared_ratio": 3
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "{\"B\":3,\"HK\":2,\"HV\":4,\"K\":128,\"T\":6,\"V\":128,\"accepted_tokens\":[2,1,1],\"block_num\":6,\"case_id\":4,\"dtype\":\"bf16\",\"gate_mode\":\"g\",\"name\":\"accepted_tokens_gqa\",\"op\":\"recurrent_gated_delta_rule\",\"route\":\"ascendc\",\"scale\":0.08838834764831843,\"seed\":20260827,\"seq_lengths\":[3,2,1],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_layout\":\"contiguous\"}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
+        "name": "state_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "contiguous",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 3,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 6,
+        "backward": false
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 4,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "block_num",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 6,
+        "backward": false
+      },
+      {
+        "name": "gate_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "g",
+        "backward": false
+      },
+      {
+        "name": "use_accepted_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "prefix_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 4,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260827,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "all",
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      }
+    ],
+    "save_name": "recurrent_gated_delta_rule"
+  },
+  {
+    "id": 5,
+    "default_seed": 20260828,
+    "name": "recurrent_gated_delta_rule",
+    "aclnn_name": "RecurrentGatedDeltaRule",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_recurrent_gated_delta_rule",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 10,
+          "avg_re_ratio": 3,
+          "root_mean_squared_ratio": 3
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "{\"B\":2,\"HK\":1,\"HV\":2,\"K\":64,\"T\":5,\"V\":80,\"block_num\":5,\"case_id\":5,\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"name\":\"invalid_prefix_and_varlen\",\"op\":\"recurrent_gated_delta_rule\",\"prefix_tokens\":2,\"route\":\"ascendc\",\"scale\":0.125,\"seed\":20260828,\"seq_lengths\":[1,2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_layout\":\"contiguous\"}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
+        "name": "state_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "contiguous",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 5,
+        "backward": false
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 80,
+        "backward": false
+      },
+      {
+        "name": "block_num",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 5,
+        "backward": false
+      },
+      {
+        "name": "gate_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "both",
+        "backward": false
+      },
+      {
+        "name": "use_accepted_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "prefix_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 5,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260828,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "all",
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      }
+    ],
+    "save_name": "recurrent_gated_delta_rule"
+  },
+  {
+    "id": 6,
+    "default_seed": 20260829,
+    "name": "recurrent_gated_delta_rule",
+    "aclnn_name": "RecurrentGatedDeltaRule",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_recurrent_gated_delta_rule",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 10,
+          "avg_re_ratio": 3,
+          "root_mean_squared_ratio": 3
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "{\"B\":1,\"HK\":2,\"HV\":4,\"K\":128,\"T\":8,\"V\":256,\"block_num\":8,\"case_id\":6,\"dtype\":\"bf16\",\"gate_mode\":\"g\",\"name\":\"maximum_mtp_and_v256\",\"op\":\"recurrent_gated_delta_rule\",\"route\":\"ascendc\",\"scale\":0.08838834764831843,\"seed\":20260829,\"seq_lengths\":[8],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_layout\":\"contiguous\"}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "contiguous",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 8,
+        "backward": false
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 4,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 256,
+        "backward": false
+      },
+      {
+        "name": "block_num",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 8,
+        "backward": false
+      },
+      {
+        "name": "gate_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "g",
+        "backward": false
+      },
+      {
+        "name": "use_accepted_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "prefix_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 6,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260829,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "all",
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      }
+    ],
+    "save_name": "recurrent_gated_delta_rule"
+  },
+  {
+    "id": 7,
+    "default_seed": 20260830,
+    "name": "recurrent_gated_delta_rule",
+    "aclnn_name": "RecurrentGatedDeltaRule",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_recurrent_gated_delta_rule",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 10,
+          "avg_re_ratio": 3,
+          "root_mean_squared_ratio": 3
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "{\"B\":3,\"HK\":1,\"HV\":2,\"K\":64,\"T\":3,\"V\":80,\"block_num\":3,\"case_id\":7,\"dtype\":\"bf16\",\"gate_mode\":\"g\",\"name\":\"zero_length_batch\",\"op\":\"recurrent_gated_delta_rule\",\"route\":\"ascendc\",\"scale\":0.125,\"seed\":20260830,\"seq_lengths\":[2,0,1],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_layout\":\"contiguous\"}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "contiguous",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 3,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 3,
+        "backward": false
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 80,
+        "backward": false
+      },
+      {
+        "name": "block_num",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 3,
+        "backward": false
+      },
+      {
+        "name": "gate_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "g",
+        "backward": false
+      },
+      {
+        "name": "use_accepted_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "prefix_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 7,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260830,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "all",
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      }
+    ],
+    "save_name": "recurrent_gated_delta_rule"
+  },
+  {
+    "id": 8,
+    "default_seed": 20260831,
+    "name": "recurrent_gated_delta_rule",
+    "aclnn_name": "RecurrentGatedDeltaRule",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_recurrent_gated_delta_rule",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 10,
+          "avg_re_ratio": 3,
+          "root_mean_squared_ratio": 3
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "{\"B\":2,\"HK\":4,\"HV\":8,\"K\":128,\"T\":4,\"V\":128,\"block_num\":4,\"case_id\":8,\"dtype\":\"bf16\",\"gate_mode\":\"gk\",\"name\":\"multi_head_gk_noncontiguous_state\",\"op\":\"recurrent_gated_delta_rule\",\"route\":\"ascendc\",\"scale\":0.08838834764831843,\"seed\":20260831,\"seq_lengths\":[2,2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_layout\":\"noncontiguous\"}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
+        "name": "state_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "noncontiguous",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 4,
+        "backward": false
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 4,
+        "backward": false
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 8,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "block_num",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 4,
+        "backward": false
+      },
+      {
+        "name": "gate_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "gk",
+        "backward": false
+      },
+      {
+        "name": "use_accepted_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "prefix_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 8,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260831,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "all",
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      }
+    ],
+    "save_name": "recurrent_gated_delta_rule"
+  },
+  {
+    "id": 9,
+    "default_seed": 20260832,
+    "name": "recurrent_gated_delta_rule",
+    "aclnn_name": "RecurrentGatedDeltaRule",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_recurrent_gated_delta_rule",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 10,
+          "avg_re_ratio": 3,
+          "root_mean_squared_ratio": 3
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":512,\"T\":1,\"V\":512,\"block_num\":1,\"case_id\":9,\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"name\":\"maximum_key_value_dimensions\",\"op\":\"recurrent_gated_delta_rule\",\"route\":\"ascendc\",\"scale\":0.044194173824159216,\"seed\":20260832,\"seq_lengths\":[1],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_layout\":\"contiguous\"}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "state_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
+        "name": "state_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "contiguous",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 512,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 512,
+        "backward": false
+      },
+      {
+        "name": "block_num",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "gate_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "both",
+        "backward": false
+      },
+      {
+        "name": "use_accepted_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "prefix_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 9,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260832,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "all",
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      }
+    ],
+    "save_name": "recurrent_gated_delta_rule"
+  }
+]

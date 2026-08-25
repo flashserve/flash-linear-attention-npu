@@ -36,6 +36,7 @@ static constexpr size_t CGDR_BWD_DHU_INPUT_CU_SEQLENS_IDX = 9;
 static constexpr size_t CGDR_BWD_DHU_INPUT_CHUNK_INDICES_IDX = 10;
 static constexpr size_t CGDR_BWD_DHU_ATTR_SCALE_IDX = 0;
 static constexpr size_t CGDR_BWD_DHU_ATTR_CHUNK_SIZE_IDX = 1;
+static constexpr size_t CGDR_BWD_DHU_ATTR_USE_EXP2_IDX = 2;
 
 } // namespace optiling
 

@@ -15,6 +15,7 @@
 #include "prepare_wy_repr_bwd_full_tiling.h"
 #include "arch35/prepare_wy_repr_bwd_full_tiling_a5.h"
 #include <register/op_impl_registry.h>
+#include "platform/soc_spec.h"
 #include "platform/platform_ascendc.h"
 
 namespace optiling {

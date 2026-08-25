@@ -203,6 +203,27 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
+    "aclnnChunkGatedDeltaRuleBwdDhu": [
+        ctypes.c_void_p,  # q
+        ctypes.c_void_p,  # k
+        ctypes.c_void_p,  # w
+        ctypes.c_void_p,  # dO
+        ctypes.c_void_p,  # dv
+        ctypes.c_void_p,  # gOptional
+        ctypes.c_void_p,  # gkOptional
+        ctypes.c_void_p,  # h0Optional
+        ctypes.c_void_p,  # dhtOptional
+        ctypes.c_void_p,  # cuSeqlensOptional
+        ctypes.c_void_p,  # chunkIndicesOptional
+        ctypes.c_double,  # scale
+        ctypes.c_int64,  # chunkSize
+        ctypes.c_bool,  # useExp2
+        ctypes.c_void_p,  # dhOut
+        ctypes.c_void_p,  # dh0Out
+        ctypes.c_void_p,  # dv2Out
+        ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
+        ctypes.POINTER(ctypes.c_void_p),  # executor
+    ],
     "aclnnSolveTri": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -288,6 +309,22 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_void_p,  # finalState
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnRecurrentGatedDeltaRule": [
+        ctypes.c_void_p,  # query
+        ctypes.c_void_p,  # key
+        ctypes.c_void_p,  # value
+        ctypes.c_void_p,  # beta
+        ctypes.c_void_p,  # stateRef
+        ctypes.c_void_p,  # actualSeqLengths
+        ctypes.c_void_p,  # ssmStateIndices
+        ctypes.c_void_p,  # g
+        ctypes.c_void_p,  # gk
+        ctypes.c_void_p,  # numAcceptedTokens
+        ctypes.c_float,  # scaleValue
+        ctypes.c_void_p,  # out
+        ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
+        ctypes.POINTER(ctypes.c_void_p),  # executor
     ],
     "aclnnChunkLocalCumsum": [
         ctypes.c_void_p,
@@ -455,6 +492,8 @@ def npu_chunk_gated_delta_rule_bwd_dhu(
     Hv, V = dv_shape[1], dv_shape[3]
     if (g is None) == (gK is None):
         raise ValueError("Exactly one of g and gK must be provided.")
+    if gK is not None and not _optional_bool(use_exp2, True):
+        raise ValueError("use_exp2 must be true when gK is provided.")
     if any(tensor.dtype != q.dtype for tensor in (k, w, d_o, dv)):
         raise ValueError("q, k, w, d_o and dv must have the same dtype.")
     gate = g if g is not None else gK
@@ -491,6 +530,7 @@ def npu_chunk_gated_delta_rule_bwd_dhu(
             ctx.int_array(chunk_indices),
             ctypes.c_double(float(scale)),
             ctypes.c_int64(int(chunk_size)),
+            ctypes.c_bool(_optional_bool(use_exp2, gK is not None)),
             logical_tensor(ctx, dh, "dh"),
             logical_tensor(ctx, dh0, "dh0"),
             logical_tensor(ctx, dv2, "dv2"),
@@ -930,22 +970,33 @@ def npu_recurrent_gated_delta_rule(
     if not math.isfinite(scale):
         raise ValueError(f"{op_name}: scale must be finite, got {scale}.")
 
-    out = _empty_like(value)
+    def nd_tensor(ctx, tensor, name):
+        if tensor is None:
+            return ctx.tensor(tensor, name)
+        storage_shape = _shape(tensor) if tensor.is_contiguous() else None
+        return ctx.tensor(
+            tensor,
+            name,
+            acl_format_override=ACL_FORMAT_ND,
+            storage_shape_override=storage_shape,
+        )
+
+    out = _empty(_shape(value), value)
     return _call_aclnn(
         "aclnnRecurrentGatedDeltaRule",
         lambda ctx: [
-            ctx.tensor(query, "query"),
-            ctx.tensor(key, "key"),
-            ctx.tensor(value, "value"),
-            ctx.tensor(beta, "beta"),
-            ctx.tensor(state, "state"),
-            ctx.tensor(actual_seq_lengths, "actual_seq_lengths"),
-            ctx.tensor(ssm_state_indices, "ssm_state_indices"),
-            ctx.tensor(g, "g"),
-            ctx.tensor(gk, "gk"),
-            ctx.tensor(num_accepted_tokens, "num_accepted_tokens"),
+            nd_tensor(ctx, query, "query"),
+            nd_tensor(ctx, key, "key"),
+            nd_tensor(ctx, value, "value"),
+            nd_tensor(ctx, beta, "beta"),
+            nd_tensor(ctx, state, "state"),
+            nd_tensor(ctx, actual_seq_lengths, "actual_seq_lengths"),
+            nd_tensor(ctx, ssm_state_indices, "ssm_state_indices"),
+            nd_tensor(ctx, g, "g"),
+            nd_tensor(ctx, gk, "gk"),
+            nd_tensor(ctx, num_accepted_tokens, "num_accepted_tokens"),
             ctypes.c_float(scale),
-            ctx.tensor(out, "out"),
+            nd_tensor(ctx, out, "out"),
         ],
         out,
     )

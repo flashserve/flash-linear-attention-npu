@@ -44,6 +44,7 @@ struct ChunkGatedDeltaRuleBwdDhuParams {
     const aclIntArray *chunkIndicesOptional = nullptr;
     double scale = 1.0;
     int64_t chunkSize = 64;
+    bool useExp2 = false;
     const aclTensor *dhOut = nullptr;
     const aclTensor *dh0Out = nullptr;
     const aclTensor *dv2Out = nullptr;
@@ -58,6 +59,8 @@ static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleBwdDhuParams params)
     CHECK_COND(params.dv != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dv must not be nullptr.");
     CHECK_COND((params.gOptional != nullptr) != (params.gkOptional != nullptr), ACLNN_ERR_PARAM_INVALID,
                "Exactly one of g and gk must be provided.");
+    CHECK_COND(params.gkOptional == nullptr || params.useExp2, ACLNN_ERR_PARAM_INVALID,
+               "use_exp2 must be true when gk is provided.");
     CHECK_COND(params.dhOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dhOut must not be nullptr.");
     CHECK_COND(params.dv2Out != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dv2Out must not be nullptr.");
     return ACLNN_SUCCESS;
@@ -145,6 +148,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     const aclIntArray *chunkIndicesOptional,
     double scale,
     int64_t chunkSize,
+    bool useExp2,
     const aclTensor *dhOut,
     const aclTensor *dh0Out,
     const aclTensor *dv2Out,
@@ -153,10 +157,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
 {
     ChunkGatedDeltaRuleBwdDhuParams params{
         q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional,
-        cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, dhOut, dh0Out, dv2Out};
+        cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, useExp2, dhOut, dh0Out, dv2Out};
     L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleBwdDhu,
                    DFX_IN(q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional,
-                          cuSeqlensOptional, chunkIndicesOptional),
+                          cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, useExp2),
                    DFX_OUT(dhOut, dh0Out, dv2Out));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
@@ -170,7 +174,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     auto result = l0op::ChunkGatedDeltaRuleBwdDhu(
         params.q, params.k, params.w, params.dO, params.dv, params.gOptional, params.gkOptional,
         params.h0Optional, params.dhtOptional, params.cuSeqlensOptional, params.chunkIndicesOptional,
-        params.scale, params.chunkSize, params.dhOut, params.dh0Out, params.dv2Out, executorPtr);
+        params.scale, params.chunkSize, params.useExp2, params.dhOut, params.dh0Out, params.dv2Out, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[2] != nullptr, ACLNN_ERR_PARAM_NULLPTR);

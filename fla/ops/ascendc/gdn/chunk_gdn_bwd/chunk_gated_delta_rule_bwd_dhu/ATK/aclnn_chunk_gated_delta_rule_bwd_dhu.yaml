@@ -181,3 +181,13 @@ inputs:
         values: ["bf16", "fp16"]
       invalid:
         values: []
+  - name: use_exp2
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false]
+      invalid:
+        values: []

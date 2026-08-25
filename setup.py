@@ -3,6 +3,7 @@ import importlib
 from importlib import metadata as importlib_metadata
 import importlib.util
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -353,6 +354,9 @@ def _build_run_package():
         "--pkg",
         f"--vendor_name={DEFAULT_VENDOR_NAME}",
     ]
+    build_args = os.getenv("FLA_NPU_BUILD_ARGS", "").strip()
+    if build_args:
+        cmd.extend(shlex.split(build_args))
     _run(cmd, REPO_ROOT)
 
     return _find_single_run_package()

@@ -241,7 +241,7 @@ int main() {
   aclOpExecutor *executor;
 
   // 调用aclnnChunkGatedDeltaRuleBwdDhu第一段接口
-  ret = aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(q, k, w, d_o, dv, g, nullptr, nullptr, nullptr, cuSeqlens, chunkIndices, scale, chunk_size, dh, dh0, dv2, &workspaceSize, &executor);
+  ret = aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(q, k, w, d_o, dv, g, nullptr, nullptr, nullptr, cuSeqlens, chunkIndices, scale, chunk_size, false, dh, dh0, dv2, &workspaceSize, &executor);
   CHECK_RET(
       ret == ACL_SUCCESS,
       LOG_PRINT("aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize failed. ERROR: %d\n", ret);

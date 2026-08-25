@@ -13,7 +13,7 @@
 #include "opdev/op_executor.h"
 
 namespace l0op {
-using KdaCoreOutputs = std::array<const aclTensor *, 11>;
+using KdaCoreOutputs = std::array<const aclTensor *, 13>;
 
 KdaCoreOutputs KdaChunkForward(
     const aclTensor *q, const aclTensor *k, const aclTensor *v, const aclTensor *g, const aclTensor *beta,
@@ -24,7 +24,9 @@ KdaCoreOutputs KdaChunkForward(
     const aclTensor *attnOut,
     const aclTensor *finalStateOut, const aclTensor *gkOut, const aclTensor *aqkOut,
     const aclTensor *akkOut, const aclTensor *wOut, const aclTensor *uOut, const aclTensor *qgOut,
-    const aclTensor *kgOut, const aclTensor *vNewOut, const aclTensor *hOut, aclOpExecutor *executor);
+    const aclTensor *kgOut, const aclTensor *vNewOut, const aclTensor *hOut,
+    const aclTensor *qgScaledOut, const aclTensor *uSeedOut, int64_t stage,
+    aclOpExecutor *executor);
 } // namespace l0op
 
 #endif

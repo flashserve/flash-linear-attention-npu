@@ -63,13 +63,14 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
     const aclIntArray *chunkIndicesOptional,
     double scale,
     int64_t chunkSize,
+    bool useExp2,
     const aclTensor *dhOut,
     const aclTensor *dh0Out,
     const aclTensor *dv2Out,
     aclOpExecutor *executor)
 {
     L0_DFX(ChunkGatedDeltaRuleBwdDhu, q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional,
-           cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, dhOut, dh0Out, dv2Out);
+           cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, useExp2, dhOut, dh0Out, dv2Out);
 
     const aclTensor *actualCuSeqlens = ConvertIntArrayToTensor(cuSeqlensOptional, executor);
     const aclTensor *actualChunkIndices = ConvertIntArrayToTensor(chunkIndicesOptional, executor);
@@ -93,7 +94,7 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
         OP_INPUT(q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional,
                  actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(dhOut, dh0OutKernel, dv2Out),
-        OP_ATTR(scale, chunkSize));
+        OP_ATTR(scale, chunkSize, useExp2));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr};

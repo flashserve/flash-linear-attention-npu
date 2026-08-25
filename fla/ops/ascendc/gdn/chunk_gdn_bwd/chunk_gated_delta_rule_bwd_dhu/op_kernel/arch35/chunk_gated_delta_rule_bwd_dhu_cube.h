@@ -68,6 +68,7 @@ public:
         chunkSize_ = tiling_->chunkSize;
         vecRow_ = tiling_->vecRow > 0 ? tiling_->vecRow : 8;
         totalChunkNum_ = tiling_->totalChunkNum;
+        headsPerTask_ = tiling_->headsPerTask;
         headWindowNum_ = tiling_->headWindowNum;
         taskNum_ = tiling_->taskNum;
         workspaceElemsPerSubBlock_ = tiling_->workspaceElemsPerSubBlock;
@@ -82,8 +83,6 @@ public:
         cachedKResidentValid_ = false;
         cachedKResidentBase_ = 0;
         cachedKResidentSlot_ = 0;
-        cachedL0KValid_ = false;
-        cachedL0KBase_ = 0;
     }
 
     __aicore__ inline void Process()
@@ -127,8 +126,8 @@ public:
         for (int64_t taskIdx = blockIdx; taskIdx < taskNum_; taskIdx += blockNum) {
             const int64_t seqIdx = taskIdx / headWindowNum_;
             const int64_t headWindowIdx = taskIdx - seqIdx * headWindowNum_;
-            const int64_t hvBase = headWindowIdx * HEADS_PER_TASK;
-            const int64_t headCnt = Min(HEADS_PER_TASK, HV_ - hvBase);
+            const int64_t hvBase = headWindowIdx * headsPerTask_;
+            const int64_t headCnt = Min(headsPerTask_, HV_ - hvBase);
             const int64_t taskRound = (taskIdx - blockIdx) / blockNum;
             const int64_t windowStartSlot = (taskRound & 1) * HEADS_PER_TASK;
             if (headCnt <= 0) {
@@ -150,7 +149,6 @@ public:
 
                 cachedKResidentValid_ = false;
                 nextKResidentSlot_ = 0;
-                cachedL0KValid_ = false;
                 for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
                     const int64_t hv = hvBase + headOffset;
                     const int64_t workspaceSlot = windowStartSlot + headOffset;
@@ -190,17 +188,13 @@ public:
                                             termQWorkspaceOffset_);
 
                     auto tensorK = tla::MakeTensor(gmK, layoutK, Catlass::Arch::PositionGM{});
-                    constexpr bool useL0KResident = std::is_same<DT, bfloat16_t>::value && V_DIM == 128;
-                    const bool needLoadKResident = useL0KResident ?
-                                                       (!cachedL0KValid_ || cachedL0KBase_ != kBase) :
-                                                       (!cachedKResidentValid_ || cachedKResidentBase_ != kBase);
+                    const bool needLoadKResident = !cachedKResidentValid_ || cachedKResidentBase_ != kBase;
                     if (needLoadKResident) {
                         if (cachedKResidentValid_) {
                             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(KResidentEvent(cachedKResidentSlot_));
                             cachedKResidentValid_ = false;
                         }
                         cachedKResidentBase_ = kBase;
-                        cachedL0KBase_ = kBase;
                         cachedKResidentSlot_ = nextKResidentSlot_;
                         cachedKResidentValid_ = true;
                         nextKResidentSlot_ ^= 1U;
@@ -299,20 +293,15 @@ public:
                                     tla::MakeTensor(l0A[l0Slot], layoutL0A, Catlass::Arch::PositionL0A{});
                                 auto tensorTileL1A = tla::GetTile(
                                     tensorL1K, tla::MakeCoord(0, kOffset), tla::MakeShape(mActual, curK));
-                                if (!useL0KResident || needLoadKResident) {
-                                    if (waitKReady) {
-                                        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kResidentEvent);
-                                        waitKReady = false;
-                                    }
-                                    AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
-                                    copyL1ToL0A_DvState(tensorL0A, tensorTileL1A);
-                                    if (lastK && (releaseKAfterUse || useL0KResident)) {
-                                        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kResidentEvent);
-                                        cachedKResidentValid_ = false;
-                                    }
-                                    if (lastK && useL0KResident) {
-                                        cachedL0KValid_ = true;
-                                    }
+                                if (waitKReady) {
+                                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(kResidentEvent);
+                                    waitKReady = false;
+                                }
+                                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
+                                copyL1ToL0A_DvState(tensorL0A, tensorTileL1A);
+                                if (lastK && releaseKAfterUse) {
+                                    AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(kResidentEvent);
+                                    cachedKResidentValid_ = false;
                                 }
 
                                 auto layoutL0B = tla::MakeLayout<DT, LayoutTagL0B_DvState>(
@@ -332,9 +321,7 @@ public:
                                     AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(stateScratchEvent);
                                 }
                                 AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
-                                if (!useL0KResident) {
-                                    curL0_ ^= 1U;
-                                }
+                                curL0_ ^= 1U;
 
                                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
                                 if (firstK) {
@@ -342,12 +329,7 @@ public:
                                 }
                                 const uint8_t unitFlag = lastK ? 0b11 : 0b10;
                                 tileMmadDvState(tensorTileL0C, tensorL0A, tensorL0B, firstK, unitFlag);
-                                if (!useL0KResident || releaseKAfterUse) {
-                                    AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
-                                    if (useL0KResident) {
-                                        cachedL0KValid_ = false;
-                                    }
-                                }
+                                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
                                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
                                 if (lastK) {
                                     AscendC::SetFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
@@ -394,7 +376,7 @@ public:
                             static_cast<uint32_t>(chunkInfo.chunkLen), static_cast<uint32_t>(V_DIM),
                             static_cast<uint32_t>(K_));
                     }
-                    if (releaseKAfterUse && !useL0KResident) {
+                    if (releaseKAfterUse) {
                         cachedKResidentValid_ = false;
                     }
 
@@ -414,9 +396,6 @@ public:
                     }
                     auto tensorL1QGT =
                         tla::MakeTensor(l1AScratch[qgScratchSlot], L1A_LAYOUT_QGT, Catlass::Arch::PositionL1{});
-                    if constexpr (useL0KResident) {
-                        curL0_ = 1;
-                    }
                     RunResidentMmad<LayoutTagL0A_TermQ, LayoutTagL0B_TermQ>(
                         copyL1ToL0A_TermQ, copyL1ToL0B_TermQ, tileMmadTermQ, copyL0CToGm_TermQ,
                         tensorL1QGT, tensorL1DO, blockTermQ, l0A, l0B, l0C,
@@ -949,6 +928,7 @@ private:
     int64_t chunkSize_ = 0;
     int64_t vecRow_ = 8;
     int64_t totalChunkNum_ = 0;
+    int64_t headsPerTask_ = 0;
     int64_t headWindowNum_ = 0;
     int64_t taskNum_ = 0;
     int64_t workspaceElemsPerSubBlock_ = 0;
@@ -962,8 +942,6 @@ private:
     bool cachedKResidentValid_ = false;
     int64_t cachedKResidentBase_ = 0;
     uint32_t cachedKResidentSlot_ = 0;
-    bool cachedL0KValid_ = false;
-    int64_t cachedL0KBase_ = 0;
 };
 
 } // namespace GDN

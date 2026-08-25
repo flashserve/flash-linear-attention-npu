@@ -17,6 +17,7 @@
 #include <cstring>
 #include <cstdint>
 #include "register/op_impl_registry.h"
+#include "platform/soc_spec.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "log/log.h"
 #include "err/ops_err.h"

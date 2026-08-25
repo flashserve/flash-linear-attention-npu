@@ -34,7 +34,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     const aclTensor *gOptional, const aclTensor *gkOptional,
     const aclTensor *h0Optional, const aclTensor *dhtOptional,
     const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional,
-    double scale, int64_t chunkSize,
+    double scale, int64_t chunkSize, bool useExp2,
     const aclTensor *dhOut, const aclTensor *dh0Out, const aclTensor *dv2Out,
     uint64_t *workspaceSize, aclOpExecutor **executor);
 
@@ -73,6 +73,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 |---|---|---|---|---|---|---|
 | `scale` | 输入 | 可选属性，接口侧必传 | 缩放系数 | 推荐设置为 `1 / sqrt(K)` | `double` | 建议按 `1 / sqrt(K)` 设置 |
 | `chunkSize` | 输入 | 可选属性，接口侧必传 | 分块大小 | 默认值为 `64`，仅支持 `64` 或 `128` | `int64_t` | 仅支持 `64` / `128` |
+| `use_exp2` | 输入 | 可选属性，接口侧必传 | 指数门控实现 | `g` 支持 `true`/`false`；`gk` 必须为 `true` | `bool` | `true` / `false` |
 
 ### 3.3 输出参数（Outputs）
 
