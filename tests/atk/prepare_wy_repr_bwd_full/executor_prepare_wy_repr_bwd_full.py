@@ -33,27 +33,87 @@ from _ascendc_common_executor import (
 OP_NAME = "prepare_wy_repr_bwd_full"
 
 
+def _build_varlen_metadata(spec: dict[str, Any]) -> tuple[list[int] | None, list[int] | None]:
+    if not bool(spec.get("varlen", False)):
+        return None, None
+
+    B = int(spec["B"])
+    T = int(spec["T"])
+    chunk_size = int(spec["chunk_size"])
+    mean_len = max(1, min(T, int(spec.get("mean_len", 1))))
+    seed = int(spec.get("seed", 20260817))
+    if B != 1:
+        raise ValueError("variable-length prepare_wy_repr_bwd_full requires B=1")
+
+    lengths = []
+    remaining = T
+    sequence_index = 0
+    while remaining > 0:
+        spread = max(1, mean_len // 2)
+        offset = ((seed + sequence_index * 17) % (2 * spread + 1)) - spread
+        length = max(1, min(remaining, mean_len + offset))
+        lengths.append(length)
+        remaining -= length
+        sequence_index += 1
+
+    cu_seqlens = [0]
+    for length in lengths:
+        cu_seqlens.append(cu_seqlens[-1] + length)
+
+    chunk_indices = []
+    for sequence_index, length in enumerate(lengths):
+        for chunk_index in range((length + chunk_size - 1) // chunk_size):
+            chunk_indices.extend((sequence_index, chunk_index))
+    return cu_seqlens, chunk_indices
+
+
 def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
     dtype_name = str(spec.get("dtype", "bf16")).lower()
+    gtype_name = str(spec.get("gtype", "fp32")).lower()
     data_dtype = _orig_dtype(dtype_name)
+    gate_dtype = _orig_dtype(gtype_name)
     seed = int(spec.get("seed", 20260817))
     B, HK, HV, T, K, V = (int(spec[x]) for x in ("B", "HK", "HV", "T", "K", "V"))
     chunk_size = int(spec["chunk_size"])
+    cu_seqlens, chunk_indices = _build_varlen_metadata(spec)
+    base = _rand(
+        (B, HV, T),
+        "fp32",
+        torch.float32,
+        torch.device("cpu"),
+        seed + 5,
+        0.0,
+        1.0,
+    ) * 0.1 + 0.01
+    g = -torch.cumsum(base, dim=-1).to(gate_dtype).to(device)
     return {
         "k": _rand((B, HK, T, K), dtype_name, data_dtype, device, seed + 1, 0.0, 1.0),
         "v": _rand((B, HV, T, V), dtype_name, data_dtype, device, seed + 2, 0.0, 1.0),
-        "beta": _rand((B, HV, T), "fp32", torch.float32, device, seed + 3, 0.0, 1.0),
+        "beta": _rand((B, HV, T), gtype_name, gate_dtype, device, seed + 3, 0.0, 1.0),
         "A": _rand((B, HV, T, chunk_size), dtype_name, data_dtype, device, seed + 4, 0.0, 1.0),
-        "g": _rand((B, HV, T), "fp32", torch.float32, device, seed + 5, 0.0, 1.0),
+        "g": g,
         "dw": _rand((B, HV, T, K), dtype_name, data_dtype, device, seed + 6, 0.0, 1.0),
         "du": _rand((B, HV, T, V), dtype_name, data_dtype, device, seed + 7, 0.0, 1.0),
         "dA": _rand((B, HV, T, chunk_size), dtype_name, data_dtype, device, seed + 8, 0.0, 1.0),
         "chunk_size": chunk_size,
+        "cu_seqlens": cu_seqlens,
+        "chunk_indices": chunk_indices,
     }
 
 
 def _quantize(value: torch.Tensor, dtype: torch.dtype, calc_dtype: torch.dtype) -> torch.Tensor:
     return value.to(dtype).to(calc_dtype)
+
+
+def _chunk_ranges(inputs: dict[str, Any], T: int, chunk_size: int):
+    cu_seqlens = inputs.get("cu_seqlens")
+    if cu_seqlens is None:
+        yield from _chunks(T, chunk_size)
+        return
+
+    for bos, eos in zip(cu_seqlens[:-1], cu_seqlens[1:]):
+        for local_start, local_end in _chunks(eos - bos, chunk_size):
+            yield bos + local_start, bos + local_end
 
 
 def _compute_full_golden(
@@ -74,11 +134,12 @@ def _compute_full_golden(
     dbeta = torch.zeros((B, HV, T), dtype=calc_dtype, device=beta.device)
     dg = torch.zeros((B, HV, T), dtype=calc_dtype, device=g.device)
     heads_per_kv = HV // HK
+    chunk_ranges = tuple(_chunk_ranges(inputs, T, chunk_size))
 
     for b in range(B):
         for hv in range(HV):
             hk = hv // heads_per_kv
-            for start, end in _chunks(T, chunk_size):
+            for start, end in chunk_ranges:
                 length = end - start
                 a = A[b, hv, start:end, :length].to(calc_dtype)
                 da = dA[b, hv, start:end, :length].to(calc_dtype)
@@ -212,8 +273,8 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
         inputs["du"],
         inputs["g"],
         inputs["chunk_size"],
-        cu_seqlens=None,
-        chunk_indices=None,
+        cu_seqlens=inputs["cu_seqlens"],
+        chunk_indices=inputs["chunk_indices"],
     )
 
 

@@ -4,7 +4,7 @@ version: v2.1
 name: prepare_wy_repr_bwd_full
 aclnn_name:
 generate: generator_prepare_wy_repr_bwd_full
-dtype_numbers: 1
+dtype_numbers: 100
 extra_numbers: 0
 standard:
   acc:
