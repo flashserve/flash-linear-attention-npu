@@ -1,0 +1,274 @@
+{
+  "schema_version": 1,
+  "op": "fused_recurrent_rwkv8",
+  "implementation": "ascendc",
+  "model": "rwkv8",
+  "symbol_table_version": "rwkv8-shape-v1",
+  "upstream_alignment": {
+    "semantics": {
+      "repository": "BlinkDL/RWKV-LM",
+      "commit": "9521024",
+      "source": "RWKV-v8/cuda/wkv7_cuda.cu forward_kernel (lines 10-52)",
+      "note": "z/b 参数化口径：z = -kk, b = kk * a_inctx，decay = exp(-exp(w))"
+    },
+    "precision_peer": {
+      "repository": "fla-org/flash-linear-attention",
+      "commit": "a4a2624b",
+      "source": "fla/ops/generalized_delta_rule/dplr (fused_recurrent 前向)",
+      "note": "fla state 与 RWKV 朝向互为转置；gk = -exp(w)"
+    }
+  },
+  "capability": {
+    "soc": [
+      "ascend910b"
+    ],
+    "dtypes": [
+      "float32"
+    ],
+    "state_dtypes": [
+      "float32"
+    ],
+    "layouts": [
+      "BHTN"
+    ],
+    "features": [
+      "逐 token 递推前向（fused recurrent，推理路径）",
+      "可选初始状态（RWKV 朝向 (B,H,N,N)，fp32）",
+      "scale 作用于 q 读出",
+      "无 T % 16 约束（区别于官方 CUDA kernel）",
+      "chunk_len 属性控制 s 快照间隔（默认 16 对齐官方 backward；非 16 值与官方 backward 不兼容）"
+    ],
+    "routes": [
+      "ascendc",
+      "direct_launch"
+    ]
+  },
+  "data_generation": {
+    "floating_inputs": {
+      "distribution": "normal",
+      "note": "q/k/v ~ randn；w = -rand*2-0.1（log 域衰减参数，保证 decay ∈ (0,1)）"
+    },
+    "structured_inputs": "z = -kk, b = kk * a，kk 为 L2 归一化向量；禁止无约束 randn 造 z/b（delta-rule 状态会指数爆炸）"
+  },
+  "tolerance": {
+    "float32": {
+      "rel_rmse": 0.002
+    },
+    "note": "golden vs 官方 GPU CUDA fixture 用 fla fwd 口径 rel-RMSE <= 0.002（实测 ~1e-7）；kernel vs golden 项目口径 rtol=atol 5e-3，当前实测 ~1e-7"
+  },
+  "coverage_requirements": {
+    "public_modes": [
+      "可选初始状态",
+      "scale = 1.0 / 1/sqrt(N)",
+      "T = 1（decode）与长序列",
+      "T 非 16 倍数"
+    ],
+    "known_limits": [
+      "当前实现 fp32 only，bf16 输入路径待补",
+      "K <= 128（K 维不切分，K×V 的 state 须整体放入单核 UB）",
+      "V <= 128（V 维不切分，K×V state 须整体放入单核 UB）",
+      "仅前向；反向归 chunk 算子另行立项"
+    ]
+  },
+  "cases": [
+    {
+      "id": "fused_recurrent_rwkv8_main_accuracy",
+      "tags": ["accuracy", "example", "route"],
+      "shape": {"B": 2, "T": 64, "H": 4, "N": 64},
+      "dtype": {"q_w_k_v_z_b": "float32", "state": "float32"},
+      "layout": "BHTN",
+      "attrs": {"scale": 1.0},
+      "optional_inputs": {"initial_state": null},
+      "soc": ["ascend910b"],
+      "run_on": ["ascendc", "direct_launch"],
+      "reference": "tests/reference/fused_recurrent_rwkv8_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": ["o"]
+      },
+      "seed": 42
+    },
+    {
+      "id": "fused_recurrent_rwkv8_init_and_scale",
+      "tags": ["accuracy", "generalization"],
+      "shape": {"B": 1, "T": 16, "H": 2, "N": 64},
+      "dtype": {"q_w_k_v_z_b": "float32", "state": "float32"},
+      "layout": "BHTN",
+      "attrs": {"scale": 0.125},
+      "optional_inputs": {"initial_state": "present"},
+      "soc": ["ascend910b"],
+      "run_on": ["ascendc", "direct_launch"],
+      "reference": "tests/reference/fused_recurrent_rwkv8_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": ["o"]
+      },
+      "seed": 43
+    },
+    {
+      "id": "fused_recurrent_rwkv8_t33_tail",
+      "tags": ["accuracy", "boundary", "tail"],
+      "shape": {"B": 2, "T": 33, "H": 4, "N": 64},
+      "dtype": {"q_w_k_v_z_b": "float32", "state": "float32"},
+      "layout": "BHTN",
+      "attrs": {"scale": 1.0},
+      "optional_inputs": {"initial_state": "present"},
+      "soc": ["ascend910b"],
+      "run_on": ["ascendc", "direct_launch"],
+      "reference": "tests/reference/fused_recurrent_rwkv8_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": ["o"]
+      },
+      "seed": 44
+    },
+    {
+      "id": "fused_recurrent_rwkv8_decode_t1",
+      "tags": ["accuracy", "boundary"],
+      "shape": {"B": 1, "T": 1, "H": 1, "N": 64},
+      "dtype": {"q_w_k_v_z_b": "float32", "state": "float32"},
+      "layout": "BHTN",
+      "attrs": {"scale": 1.0},
+      "optional_inputs": {"initial_state": null},
+      "soc": ["ascend910b"],
+      "run_on": ["ascendc", "direct_launch"],
+      "reference": "tests/reference/fused_recurrent_rwkv8_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": ["o"]
+      },
+      "seed": 45
+    },
+    {
+      "id": "fused_recurrent_rwkv8_long_seq_performance",
+      "tags": ["generalization", "performance"],
+      "shape": {"B": 1, "T": 2048, "H": 2, "N": 64},
+      "dtype": {"q_w_k_v_z_b": "float32", "state": "float32"},
+      "layout": "BHTN",
+      "attrs": {"scale": 1.0},
+      "optional_inputs": {"initial_state": null},
+      "soc": ["ascend910b"],
+      "run_on": ["ascendc", "direct_launch"],
+      "reference": "tests/reference/fused_recurrent_rwkv8_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": ["o"]
+      },
+      "seed": 46
+    },
+    {
+      "id": "fused_recurrent_rwkv8_multi_core_parallel",
+      "tags": ["accuracy", "generalization"],
+      "shape": {"B": 4, "T": 128, "H": 8, "N": 64},
+      "dtype": {"q_w_k_v_z_b": "float32", "state": "float32"},
+      "layout": "BHTN",
+      "attrs": {"scale": 1.0},
+      "optional_inputs": {"initial_state": null},
+      "soc": ["ascend910b"],
+      "run_on": ["ascendc", "direct_launch"],
+      "reference": "tests/reference/fused_recurrent_rwkv8_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": ["o"]
+      },
+      "seed": 47
+    },
+    {
+      "id": "fused_recurrent_rwkv8_negative_shape_mismatch",
+      "tags": ["negative"],
+      "shape": {"B": 1, "T": 8, "H": 1, "N": 64},
+      "dtype": {"q_w_k_v_z_b": "float32", "state": "float32"},
+      "layout": "BHTN",
+      "attrs": {"scale": 1.0},
+      "optional_inputs": {"initial_state": null},
+      "soc": ["ascend910b"],
+      "run_on": ["ascendc", "direct_launch"],
+      "reference": "tests/reference/fused_recurrent_rwkv8_reference.py",
+      "expect": {
+        "return_code": "ERROR",
+        "error_match": "shape mismatch"
+      },
+      "seed": 48,
+      "note": "六个输入 shape 不一致时 golden 侧 _check_inputs 应拒绝"
+    },
+    {
+      "id": "fused_recurrent_rwkv8_negative_bad_init_shape",
+      "tags": ["negative"],
+      "shape": {"B": 1, "T": 8, "H": 1, "N": 64},
+      "dtype": {"q_w_k_v_z_b": "float32", "state": "float32"},
+      "layout": "BHTN",
+      "attrs": {"scale": 1.0},
+      "optional_inputs": {"initial_state": "present"},
+      "soc": ["ascend910b"],
+      "run_on": ["ascendc", "direct_launch"],
+      "reference": "tests/reference/fused_recurrent_rwkv8_reference.py",
+      "expect": {
+        "return_code": "ERROR",
+        "error_match": "initial_state"
+      },
+      "seed": 49,
+      "note": "initial_state 非 (B,H,N,N) 时应拒绝"
+    },
+    {
+      "id": "fused_recurrent_rwkv8_chunk_len_8",
+      "tags": ["accuracy", "generalization", "chunk_len"],
+      "shape": {"B": 2, "T": 64, "H": 4, "N": 64},
+      "dtype": {"q_w_k_v_z_b": "float32", "state": "float32"},
+      "layout": "BHTN",
+      "attrs": {"scale": 1.0, "output_chunk_state": true, "output_sa": true, "chunk_len": 8},
+      "optional_inputs": {"initial_state": "present"},
+      "soc": ["ascend910b"],
+      "run_on": ["ascendc", "direct_launch"],
+      "reference": "tests/reference/fused_recurrent_rwkv8_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": ["o", "s", "sa"]
+      },
+      "seed": 51,
+      "note": "非默认 chunk_len=8：s (B,H,T//8,K,V) 共 8 个快照；与官方 backward 不兼容，仅前向语义"
+    },
+    {
+      "id": "fused_recurrent_rwkv8_zero_chunk_state",
+      "tags": ["accuracy", "generalization", "boundary", "chunk_len"],
+      "shape": {"B": 1, "T": 8, "H": 2, "N": 64},
+      "dtype": {"q_w_k_v_z_b": "float32", "state": "float32"},
+      "layout": "BHTN",
+      "attrs": {"scale": 1.0, "output_chunk_state": true, "output_sa": true, "chunk_len": 16},
+      "optional_inputs": {"initial_state": "present"},
+      "soc": ["ascend910b"],
+      "run_on": ["ascendc", "direct_launch"],
+      "reference": "tests/reference/fused_recurrent_rwkv8_reference.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "finite_outputs": true,
+        "compare_outputs": ["o", "s", "sa"]
+      },
+      "seed": 52,
+      "note": "T=8 < chunk_len=16 → NT=0：s 为零尺寸 (B,H,0,K,V)，storage 层 1 行占位，锁定 ctypes 通路的零快照路径"
+    },
+    {
+      "id": "fused_recurrent_rwkv8_negative_chunk_len_zero",
+      "tags": ["negative", "chunk_len"],
+      "shape": {"B": 2, "T": 64, "H": 4, "N": 64},
+      "dtype": {"q_w_k_v_z_b": "float32", "state": "float32"},
+      "layout": "BHTN",
+      "attrs": {"scale": 1.0, "chunk_len": 0},
+      "optional_inputs": {"initial_state": null},
+      "soc": ["ascend910b"],
+      "run_on": ["ascendc"],
+      "expect": {
+        "return_code": "ERROR",
+        "error_match": "chunk"
+      },
+      "seed": 52,
+      "note": "chunk_len < 1 时 aclnn/tiling 应拒绝"
+    }
+  ]
+}
