@@ -75,7 +75,8 @@ aclnnStatus aclnnChunkScaledDotKktGetWorkspaceSize(
 {
     ChunkScaledDotKktParams params{k, g, beta, cuSeqlensOptional, chunkIndicesOptional, chunkSize, out};
 
-    L2_DFX_PHASE_1(aclnnChunkScaledDotKkt, DFX_IN(k, g, beta, cuSeqlensOptional, chunkIndicesOptional),
+    L2_DFX_PHASE_1(aclnnChunkScaledDotKkt,
+                   DFX_IN(k, g, beta, cuSeqlensOptional, chunkIndicesOptional, chunkSize),
                    DFX_OUT(out));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
