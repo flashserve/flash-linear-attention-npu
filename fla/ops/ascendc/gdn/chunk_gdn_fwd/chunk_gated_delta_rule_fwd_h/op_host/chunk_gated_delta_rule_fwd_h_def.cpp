@@ -87,7 +87,7 @@ public:
             .DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
 
         this->Output("final_state")
-            .ParamType(OPTIONAL)
+            .ParamType(REQUIRED)
             .DataType(stateTypes).Format(formats).UnknownShapeFormat(formats);
 
         this->Attr("output_final_state").AttrType(OPTIONAL).Bool(false);

@@ -14,13 +14,11 @@ using namespace Catlass;
 #define CATLASS_GEMM_SCHEDULER_GDN_FWD_H_HPP
 
 constexpr uint32_t LOCAL_PING_PONG_STAGES = 2;
-// The current UB/event protocol supports at most four heads in one stage
-// window. The runtime head count may be smaller (for example, three heads
-// per core when HV=96 and 32 AIC cores are available).
-constexpr uint32_t MAX_HEADS_PER_TASK = 4;
-constexpr uint32_t HEADS_PER_TASK = MAX_HEADS_PER_TASK;
+// One core can own more heads than fit in a stage round. Each round uses at
+// most four heads and the same two-bank, eight-slot ready/free protocol.
+constexpr uint32_t HEADS_PER_ROUND = 4;
 constexpr uint32_t WORKSPACE_WINDOW_COUNT = 2;
-constexpr uint32_t WORKSPACE_BUFFER_COUNT = HEADS_PER_TASK * WORKSPACE_WINDOW_COUNT;
+constexpr uint32_t WORKSPACE_BUFFER_COUNT = HEADS_PER_ROUND * WORKSPACE_WINDOW_COUNT;
 constexpr uint32_t BYTE_SIZE_16_BIT = 2;
 constexpr uint32_t BYTES_PER_C0 = 32;
 constexpr uint32_t BYTE_SIZE_PER_REPEAT = 256;
@@ -90,7 +88,7 @@ struct GDNFwdHHeadTask {
 };
 
 struct GDNFwdHHeadWindow {
-    GDNFwdHHeadTask headTasks[HEADS_PER_TASK];
+    GDNFwdHHeadTask headTasks[HEADS_PER_ROUND];
 };
 
 struct BlockSchedulerGdnFwdH {
@@ -116,7 +114,10 @@ struct BlockSchedulerGdnFwdH {
     uint32_t cubeCoreNum;
     uint32_t taskNum;
     uint32_t headWindowNum;
-    uint32_t headsPerTask;
+    uint32_t coreHeadBase;
+    uint32_t coreHeadCount;
+    uint32_t headRoundNum;
+    uint32_t currentHeadsInRound;
     uint32_t headGroups;
     uint32_t totalChunks;
     uint32_t totalTokens;
@@ -128,7 +129,12 @@ struct BlockSchedulerGdnFwdH {
     uint32_t currentTaskIdx;
     uint32_t currentTaskRound;
     uint32_t currentChunkIdx;
+    uint32_t currentHeadRoundIdx;
     uint32_t currentBatchChunks;
+    uint32_t currentBatchIdx;
+    uint32_t currentChunkOffset;
+    uint32_t currentTokenOffset;
+    uint32_t currentBatchTokens;
     uint32_t nextTaskIdx;
 
     AscendC::GlobalTensor<int64_t> gmSeqlen;
@@ -222,11 +228,16 @@ struct BlockSchedulerGdnFwdH {
         cubeCoreIdx = coreIdx;
         cubeCoreNum = coreNum;
         vBlockSize = vHeadDim;
-        // A task is one compact sequence and one contiguous head range. The
-        // host chooses cubeCoreNum so that this same formula gives the
-        // minimum worst-case head load and the minimum active core count.
-        headsPerTask = (vNumHead + cubeCoreNum - 1) / cubeCoreNum;
-        headWindowNum = (vNumHead + headsPerTask - 1) / headsPerTask;
+        // The host already selected the minimum active core count for the
+        // minimum worst-case load. Split the remainder over the first cores
+        // so every core owns one balanced, contiguous head range.
+        uint32_t baseHeadsPerCore = vNumHead / cubeCoreNum;
+        uint32_t remainderHeads = vNumHead % cubeCoreNum;
+        coreHeadCount = baseHeadsPerCore + (cubeCoreIdx < remainderHeads ? 1 : 0);
+        coreHeadBase = cubeCoreIdx * baseHeadsPerCore + Min(cubeCoreIdx, remainderHeads);
+        headRoundNum = (coreHeadCount + HEADS_PER_ROUND - 1) / HEADS_PER_ROUND;
+        currentHeadsInRound = 0;
+        headWindowNum = cubeCoreNum;
         taskNum = batch * headWindowNum;
         headGroups = vNumHead / kNumHead;
         taskStride = cubeCoreNum;
@@ -234,9 +245,14 @@ struct BlockSchedulerGdnFwdH {
         currentTaskIdx = taskNum;
         currentTaskRound = 0;
         currentChunkIdx = 0;
+        currentHeadRoundIdx = 0;
         currentBatchChunks = 0;
+        currentBatchIdx = 0;
+        currentChunkOffset = 0;
+        currentTokenOffset = 0;
+        currentBatchTokens = 0;
         windowActive = false;
-        for (uint32_t headOffset = 0; headOffset < HEADS_PER_TASK; ++headOffset) {
+        for (uint32_t headOffset = 0; headOffset < HEADS_PER_ROUND; ++headOffset) {
             auto& headTask = headWindow.headTasks[headOffset];
             headTask.chunkIdx = 0;
             headTask.batchChunks = 0;
@@ -282,22 +298,33 @@ struct BlockSchedulerGdnFwdH {
     }
 
     CATLASS_DEVICE
-    void InitNewHeadTask(GDNFwdHHeadTask& newHeadTask, uint32_t batchIdx,
-                       uint32_t vHeadIdx, uint32_t chunkIdx) {
-        newHeadTask.batchIdx = batchIdx;
+    void InitNewHeadTask(GDNFwdHHeadTask& newHeadTask, uint32_t vHeadIdx) {
+        newHeadTask.batchIdx = currentBatchIdx;
         newHeadTask.vHeadIdx = vHeadIdx;
         newHeadTask.kHeadIdx = newHeadTask.vHeadIdx / headGroups;
         newHeadTask.shapeBatchIdx = isVariedLen ? 0 : newHeadTask.batchIdx;
         newHeadTask.tokenBatchIdx = isVariedLen ? newHeadTask.batchIdx : 0;
-        if (isVariedLen) {
-            ResolveVarlenSequence(newHeadTask.tokenBatchIdx, newHeadTask);
-        } else {
-            newHeadTask.chunkOffset = 0;
-            newHeadTask.batchChunks = totalChunks;
-            newHeadTask.tokenOffset = 0;
-            newHeadTask.batchTokens = totalTokens;
+        newHeadTask.chunkOffset = currentChunkOffset;
+        newHeadTask.batchChunks = currentBatchChunks;
+        newHeadTask.tokenOffset = currentTokenOffset;
+        newHeadTask.batchTokens = currentBatchTokens;
+        newHeadTask.chunkIdx = currentChunkIdx;
+    }
+
+    CATLASS_DEVICE
+    void PrepareCurrentHeadRound() {
+        uint32_t roundHeadBase = currentHeadRoundIdx * HEADS_PER_ROUND;
+        currentHeadsInRound = Min(HEADS_PER_ROUND, coreHeadCount - roundHeadBase);
+        for (uint32_t headOffset = 0; headOffset < HEADS_PER_ROUND; ++headOffset) {
+            auto& headTask = headWindow.headTasks[headOffset];
+            headTask.active = headOffset < currentHeadsInRound;
+            if (!headTask.active) {
+                headTask.batchChunks = 0;
+                continue;
+            }
+            InitNewHeadTask(headTask, coreHeadBase + roundHeadBase + headOffset);
+            UpdateTask(headOffset);
         }
-        newHeadTask.chunkIdx = chunkIdx;
     }
 
     CATLASS_DEVICE
@@ -306,32 +333,32 @@ struct BlockSchedulerGdnFwdH {
             currentTaskIdx = nextTaskIdx;
             nextTaskIdx += taskStride;
             currentTaskRound = (currentTaskIdx - cubeCoreIdx) / taskStride;
+            currentBatchIdx = currentTaskIdx / headWindowNum;
             currentChunkIdx = 0;
+            currentHeadRoundIdx = 0;
 
-            uint32_t batchIdx = currentTaskIdx / headWindowNum;
-            uint32_t headWindowIdx = currentTaskIdx % headWindowNum;
-            uint32_t headBase = headWindowIdx * headsPerTask;
-            currentBatchChunks = 0;
-            for (uint32_t headOffset = 0; headOffset < headsPerTask; ++headOffset) {
-                auto& headTask = headWindow.headTasks[headOffset];
-                uint32_t vHeadIdx = headBase + headOffset;
-                headTask.active = vHeadIdx < vNumHead;
-                if (!headTask.active) {
-                    headTask.batchChunks = 0;
-                    continue;
-                }
-                InitNewHeadTask(headTask, batchIdx, vHeadIdx, currentChunkIdx);
-                headTask.active = headTask.batchChunks > 0;
-                currentBatchChunks = headTask.batchChunks;
+            GDNFwdHHeadTask sequenceTask;
+            if (isVariedLen) {
+                ResolveVarlenSequence(currentBatchIdx, sequenceTask);
+                currentChunkOffset = sequenceTask.chunkOffset;
+                currentBatchChunks = sequenceTask.batchChunks;
+                currentTokenOffset = sequenceTask.tokenOffset;
+                currentBatchTokens = sequenceTask.batchTokens;
+            } else {
+                currentChunkOffset = 0;
+                currentBatchChunks = totalChunks;
+                currentTokenOffset = 0;
+                currentBatchTokens = totalTokens;
             }
-            windowActive = currentBatchChunks > 0;
+            windowActive = currentBatchChunks > 0 && coreHeadCount > 0;
             if (windowActive) {
-                UpdateWindow();
+                PrepareCurrentHeadRound();
                 return;
             }
         }
         windowActive = false;
-        for (uint32_t headOffset = 0; headOffset < HEADS_PER_TASK; ++headOffset) {
+        currentHeadsInRound = 0;
+        for (uint32_t headOffset = 0; headOffset < HEADS_PER_ROUND; ++headOffset) {
             headWindow.headTasks[headOffset].active = false;
         }
     }
@@ -357,10 +384,11 @@ struct BlockSchedulerGdnFwdH {
         offset.wOffset = (headTask.shapeBatchIdx * vNumHead * totalTokens + headTask.vHeadIdx * totalTokens + headTask.tokenOffset + headTask.chunkIdx * chunkSize) * kHeadDim;
         offset.gOffset = headTask.shapeBatchIdx * vNumHead * totalTokens + headTask.vHeadIdx * totalTokens + headTask.tokenOffset + headTask.chunkIdx * chunkSize;
         offset.gkOffset = (headTask.shapeBatchIdx * vNumHead * totalTokens + headTask.vHeadIdx * totalTokens + headTask.tokenOffset + headTask.chunkIdx * chunkSize) * kHeadDim;
-        uint32_t windowId = currentTaskRound % WORKSPACE_WINDOW_COUNT;
-        // Keep the two-bank ready/free protocol. A three-head window uses
-        // slots 0..2 and 3..5; a four-head window uses all eight slots.
-        uint32_t workspaceSlot = windowId * headsPerTask + headOffset;
+        // A head round stays on the same bank across chunks, so Stage0 of the
+        // next chunk waits for that round's Stage3 state write to complete.
+        uint32_t windowId =
+            (currentTaskRound + currentHeadRoundIdx) % WORKSPACE_WINDOW_COUNT;
+        uint32_t workspaceSlot = windowId * HEADS_PER_ROUND + headOffset;
         offset.hWorkOffset = (cubeCoreIdx * WORKSPACE_BUFFER_COUNT + workspaceSlot) * kHeadDim * vBlockSize;
         offset.vWorkOffset = (cubeCoreIdx * WORKSPACE_BUFFER_COUNT + workspaceSlot) * chunkSize * vBlockSize;
         offset.vBlockOffset = vBlockOffset;
@@ -375,23 +403,16 @@ struct BlockSchedulerGdnFwdH {
     }
 
     CATLASS_DEVICE
-    void UpdateWindow() {
-        for (uint32_t headOffset = 0; headOffset < headsPerTask; ++headOffset) {
-            auto& headTask = headWindow.headTasks[headOffset];
-            if (headTask.active) {
-                headTask.chunkIdx = currentChunkIdx;
-                UpdateTask(headOffset);
-            }
-        }
-    }
-
-    CATLASS_DEVICE
     void InitTasks() {
         if (!windowActive) {
             AssignNextWindow();
+        } else if (currentHeadRoundIdx + 1 < headRoundNum) {
+            ++currentHeadRoundIdx;
+            PrepareCurrentHeadRound();
         } else if (currentChunkIdx + 1 < currentBatchChunks) {
             ++currentChunkIdx;
-            UpdateWindow();
+            currentHeadRoundIdx = 0;
+            PrepareCurrentHeadRound();
         } else {
             windowActive = false;
             AssignNextWindow();
@@ -405,13 +426,23 @@ struct BlockSchedulerGdnFwdH {
     }
 
     CATLASS_DEVICE
-    uint32_t GetHeadsPerTask() const {
-        return headsPerTask;
+    uint32_t GetHeadsInRound() const {
+        return currentHeadsInRound;
+    }
+
+    CATLASS_DEVICE
+    uint32_t GetHeadsPerCore() const {
+        return coreHeadCount;
+    }
+
+    CATLASS_DEVICE
+    uint32_t GetCoreHeadBase() const {
+        return coreHeadBase;
     }
 
     CATLASS_DEVICE
     uint32_t GetWindowId() const {
-        return currentTaskRound % WORKSPACE_WINDOW_COUNT;
+        return (currentTaskRound + currentHeadRoundIdx) % WORKSPACE_WINDOW_COUNT;
     }
 
     CATLASS_DEVICE

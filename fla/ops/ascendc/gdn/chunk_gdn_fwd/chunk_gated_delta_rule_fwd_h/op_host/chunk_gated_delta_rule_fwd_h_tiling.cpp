@@ -175,19 +175,18 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
                 V_DIM_128, tilingCtx.vHeadDim);
         return ge::GRAPH_FAILED;
     }
-    uint32_t headsPerTask = 0;
+    uint32_t maxHeadsPerCore = 0;
     uint32_t activeCoreNum = 0;
     if (!ResolveFwdHHeadSharding(
-            tilingCtx.vNumHead, tilingCtx.aicCoreNum, headsPerTask, activeCoreNum)) {
+            tilingCtx.vNumHead, tilingCtx.aicCoreNum, maxHeadsPerCore, activeCoreNum)) {
         OP_LOGE(context->GetNodeName(),
-                "Unsupported head sharding: vNumHead=%ld, availableCoreNum=%u; "
-                "the current protocol supports at most %u heads per active core.",
-                tilingCtx.vNumHead, tilingCtx.aicCoreNum, GDN_FWD_H_MAX_HEADS_PER_TASK);
+                "Cannot resolve head sharding: vNumHead=%ld, availableCoreNum=%u.",
+                tilingCtx.vNumHead, tilingCtx.aicCoreNum);
         return ge::GRAPH_FAILED;
     }
     OP_LOGD(context->GetNodeName(),
-            "head sharding: available=%u, active=%u, headsPerCore=%u",
-            tilingCtx.aicCoreNum, activeCoreNum, headsPerTask);
+            "head sharding: available=%u, active=%u, maxHeadsPerCore=%u",
+            tilingCtx.aicCoreNum, activeCoreNum, maxHeadsPerCore);
 
     ::ChunkGatedDeltaRuleFwdHTilingData plainTiling{};
     uint32_t blockDim = 0;

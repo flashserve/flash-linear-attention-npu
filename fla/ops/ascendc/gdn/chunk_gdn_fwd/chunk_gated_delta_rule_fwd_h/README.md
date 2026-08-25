@@ -52,13 +52,14 @@ stage2:
 
 stage3:
   GDN v1:    h_next = gate(g_last) * h_prev + delta_h
-  KDA/GDN2:  h_next = diag(exp2(gk_last)) * h_prev + delta_h
+  KDA/GDN2:  h_next = diag(gate(gk_last)) * h_prev + delta_h
 ```
 
-GDN v1 的 `gate(x)` 在 `use_exp2=false` 时为 `exp(x)`，在 `use_exp2=true` 时为
-`exp2(x)` 语义。逐 K gate `gk` 固定处于 log2 空间；KDA/GDN2 的 chunk 内相对衰减已经吸收到
-`kg`，Stage1 不得再次对 `v_new` 衰减。NPU 可用 `exp(x * ln(2))` 实现与 `exp2(x)` 等价的
-fallback。`use_exp2` 只控制指数语义/实现，不得替代 `g/gk` 选择模型模式。
+两种 gate 模式共用同一指数合同：`gate(x)` 在 `use_exp2=false` 时为 `exp(x)`，在
+`use_exp2=true` 时为 `exp2(x)`。因此独立传入 `gk` 时，其数值域必须与 `use_exp2` 匹配；
+KDA/GDN2 的 Prepare 生成 log2 域 `gk`，调用本算子时固定使用 `use_exp2=true`。KDA/GDN2
+的 chunk 内相对衰减已经吸收到 `kg`，Stage1 不得再次对 `v_new` 衰减。`use_exp2` 只控制
+指数语义，不得替代 `g/gk` 选择模型模式。
 `save_new_value` 是兼容属性，首版仅支持 `True`。
 
 ## Python API
@@ -133,11 +134,12 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
   边界存储格式，不表示 chunk 间 rolling state 已按同一 dtype 实现递推。
 - V=128；`chunk_size=64`。
 - 分核按每个紧凑序列的 value head 数计算：`max_load=ceil(H_v/available_cores)`，启用核数为
-  `ceil(H_v/max_load)`，同一核负责连续的 head 区间。当前 ready/free 协议最多支持每核 4 个 head；例如
-  `H_v=96` 时 32 核为每核 3 个 head 并启用 32 核，28 核为每核 4 个 head 并启用 24 核。
-  每个 chunk 的各 stage 只循环该核实际负责的 head 数，不填充到 4。8 个 workspace slot 沿用 DHU
-  两 bank 的 ready/free 思路，并按实际 head 数紧凑打包：`slot=bank*heads_per_core+head_offset`；
-  3-head 窗口使用 `0..2/3..5`，其余两个 slot 保留。
+  `ceil(H_v/max_load)`，同一核负责负载均衡的连续 head 区间。每核 head 数可以超过 4，但每个
+  chunk 按最多 4 个 head 拆成多轮，完成同一 chunk 的全部 head 轮次后再进入下一 chunk。
+  8 个 workspace slot 沿用 DHU 的两 bank ready/free 协议，固定使用
+  `slot=round_bank*4+round_head_offset`。例如 `H_v=96` 时，32 核为每核 3 个 head；28 个
+  可用核时启用 24 核、每核 4 个 head；A2 的 20 核分为 16 核各 5 个 head 和 4 核各 4 个
+  head，5-head 核按 `4+1` 两轮处理。
 - dense 时不传 `cu_seqlens/chunk_indices`；varlen 要求 B=1、`cu_seqlens` 从 0 到 T 严格递增，
   `chunk_indices` 使用 `[NT,2]` 的 canonical sequence-major 顺序。
 - `state_v_first` true/false。

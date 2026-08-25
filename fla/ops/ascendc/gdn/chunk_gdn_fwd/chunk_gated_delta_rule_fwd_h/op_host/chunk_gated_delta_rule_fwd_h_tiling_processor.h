@@ -31,24 +31,20 @@ namespace optiling {
 static constexpr size_t GDN_FWD_H_WORKSPACE_RSV_BYTE = 16 * 1024 * 1024;
 static constexpr size_t GDN_FWD_H_GM_ALIGN = 512;
 static constexpr int64_t GDN_FWD_H_WORKSPACE_BUFFER_COUNT = 8;
-static constexpr uint32_t GDN_FWD_H_MAX_HEADS_PER_TASK = 4;
 
 inline bool ResolveFwdHHeadSharding(
     int64_t vNumHead, uint32_t availableCoreNum,
-    uint32_t &headsPerTask, uint32_t &activeCoreNum)
+    uint32_t &maxHeadsPerCore, uint32_t &activeCoreNum)
 {
     if (vNumHead <= 0 || availableCoreNum == 0) {
         return false;
     }
-    headsPerTask = static_cast<uint32_t>(
+    maxHeadsPerCore = static_cast<uint32_t>(
         (vNumHead + static_cast<int64_t>(availableCoreNum) - 1) /
         static_cast<int64_t>(availableCoreNum));
-    if (headsPerTask > GDN_FWD_H_MAX_HEADS_PER_TASK) {
-        return false;
-    }
     activeCoreNum = static_cast<uint32_t>(
-        (vNumHead + static_cast<int64_t>(headsPerTask) - 1) /
-        static_cast<int64_t>(headsPerTask));
+        (vNumHead + static_cast<int64_t>(maxHeadsPerCore) - 1) /
+        static_cast<int64_t>(maxHeadsPerCore));
     return activeCoreNum > 0 && activeCoreNum <= availableCoreNum;
 }
 
@@ -97,15 +93,15 @@ public:
             batch = tokenBatch;
         }
 
-        uint32_t headsPerTask = 0;
+        uint32_t maxHeadsPerCore = 0;
         uint32_t activeCoreNum = 0;
         if (!ResolveFwdHHeadSharding(
-                ctx_.vNumHead, ctx_.aicCoreNum, headsPerTask, activeCoreNum)) {
+                ctx_.vNumHead, ctx_.aicCoreNum, maxHeadsPerCore, activeCoreNum)) {
             blockDim = 0;
             workspaceSize = 0;
             return;
         }
-        (void)headsPerTask;
+        (void)maxHeadsPerCore;
         blockDim = activeCoreNum;
         const int64_t aicCoreNum = static_cast<int64_t>(activeCoreNum);
         const int64_t chunkSize = ctx_.chunkSize;

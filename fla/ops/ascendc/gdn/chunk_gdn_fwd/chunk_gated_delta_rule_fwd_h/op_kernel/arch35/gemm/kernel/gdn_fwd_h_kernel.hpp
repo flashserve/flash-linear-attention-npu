@@ -515,7 +515,7 @@ public:
         if (useDirectFp32Ub) {
             BlockMmadWHDirectUb blockMmadWHDirectUb(
                 resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * LOCAL_PING_PONG_STAGES);
-            for (uint32_t i = 0; i < cubeBlockScheduler.GetHeadsPerTask(); ++i) {
+            for (uint32_t i = 0; i < cubeBlockScheduler.GetHeadsInRound(); ++i) {
                 const auto& headTask = cubeBlockScheduler.GetHeadTask(i);
                 if (cubeBlockScheduler.HeadTaskIsDone(headTask)) {
                     continue;
@@ -555,7 +555,7 @@ public:
             } else {
                 blockMmadWH.preSetFlags();
             }
-            for (uint32_t i = 0; i < cubeBlockScheduler.GetHeadsPerTask(); ++i) {
+            for (uint32_t i = 0; i < cubeBlockScheduler.GetHeadsInRound(); ++i) {
                 const auto& headTask = cubeBlockScheduler.GetHeadTask(i);
                 if (cubeBlockScheduler.HeadTaskIsDone(headTask)) {
                     continue;
@@ -586,7 +586,7 @@ public:
             }
         } else {
             blockMmadWH.preSetFlags();
-            for (uint32_t i = 0; i < cubeBlockScheduler.GetHeadsPerTask(); ++i) {
+            for (uint32_t i = 0; i < cubeBlockScheduler.GetHeadsInRound(); ++i) {
                 const auto& headTask = cubeBlockScheduler.GetHeadTask(i);
                 if (cubeBlockScheduler.HeadTaskIsDone(headTask)) {
                     continue;
@@ -649,7 +649,7 @@ public:
                     if (useDirectFp32Ub) {
                         BlockMmadKVDirectUb blockMmadKVDirectUb(
                             resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * LOCAL_PING_PONG_STAGES);
-                        for (uint32_t i = 0; i < cubeBlockScheduler.GetHeadsPerTask(); ++i) {
+                        for (uint32_t i = 0; i < cubeBlockScheduler.GetHeadsInRound(); ++i) {
                             const auto& headTask = cubeBlockScheduler.GetHeadTask(i);
                             if (cubeBlockScheduler.HeadTaskIsDone(headTask)) {
                                 continue;
@@ -703,7 +703,7 @@ public:
                                 blockMmadKV.preSetFlags();
                             }
                         }
-                        for (uint32_t i = 0; i < cubeBlockScheduler.GetHeadsPerTask(); ++i) {
+                        for (uint32_t i = 0; i < cubeBlockScheduler.GetHeadsInRound(); ++i) {
                             const auto& headTask = cubeBlockScheduler.GetHeadTask(i);
                             if (cubeBlockScheduler.HeadTaskIsDone(headTask)) {
                                 continue;
@@ -764,7 +764,7 @@ public:
                         if (runStage2) {
                             blockMmadKV.preSetFlags();
                         }
-                        for (uint32_t i = 0; i < cubeBlockScheduler.GetHeadsPerTask(); ++i) {
+                        for (uint32_t i = 0; i < cubeBlockScheduler.GetHeadsInRound(); ++i) {
                             const auto& headTask = cubeBlockScheduler.GetHeadTask(i);
                             if (cubeBlockScheduler.HeadTaskIsDone(headTask)) {
                                 continue;
@@ -845,15 +845,15 @@ public:
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
             for (uint32_t taskIdx = coreIdx; taskIdx < taskCount; taskIdx += coreNum) {
                 uint32_t batchIdx = taskIdx / headWindowNum;
-                uint32_t headWindowIdx = taskIdx % headWindowNum;
-                uint32_t headBase = headWindowIdx * vecBlockScheduler.GetHeadsPerTask();
+                uint32_t headBase = vecBlockScheduler.GetCoreHeadBase();
                 for (uint32_t headOffset = 0;
-                     headOffset < vecBlockScheduler.GetHeadsPerTask(); ++headOffset) {
+                     headOffset < vecBlockScheduler.GetHeadsPerCore(); ++headOffset) {
                     uint32_t vHeadIdx = headBase + headOffset;
                     if (vHeadIdx >= vNumHead || headOffset % subBlockNum != subBlockIdx) {
                         continue;
                     }
-                    uint32_t pingpongFlag = headOffset < subBlockNum ? 1 : 0;
+                    uint32_t pingpongFlag =
+                        ((headOffset / subBlockNum) & 1U) == 0 ? 1 : 0;
                     uint32_t chunkOffset =
                         isVariedLen ? vecBlockScheduler.GetVarlenChunkOffset(batchIdx) : 0;
                     uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
@@ -953,7 +953,7 @@ public:
                     */
                     vecBlockScheduler.InitTasks();
                     uint32_t windowId = vecBlockScheduler.GetWindowId();
-                    for (uint32_t i = 0; i < vecBlockScheduler.GetHeadsPerTask(); ++i) {
+                    for (uint32_t i = 0; i < vecBlockScheduler.GetHeadsInRound(); ++i) {
                         const auto& headTask = vecBlockScheduler.GetHeadTask(i);
                         if (vecBlockScheduler.HeadTaskIsDone(headTask)) {
                             continue;
@@ -997,7 +997,7 @@ public:
                 } else {
                     /* Stage3: decay h_prev, add delta_h, and publish h_next/final_state. */
                     uint32_t windowId = vecBlockScheduler.GetWindowId();
-                    for (uint32_t i = 0; i < vecBlockScheduler.GetHeadsPerTask(); ++i) {
+                    for (uint32_t i = 0; i < vecBlockScheduler.GetHeadsInRound(); ++i) {
                         const auto& headTask = vecBlockScheduler.GetHeadTask(i);
                         if (vecBlockScheduler.HeadTaskIsDone(headTask)) {
                             continue;
