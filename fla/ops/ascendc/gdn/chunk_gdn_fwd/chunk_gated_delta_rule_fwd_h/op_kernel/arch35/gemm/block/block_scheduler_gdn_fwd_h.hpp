@@ -14,7 +14,11 @@ using namespace Catlass;
 #define CATLASS_GEMM_SCHEDULER_GDN_FWD_H_HPP
 
 constexpr uint32_t LOCAL_PING_PONG_STAGES = 2;
-constexpr uint32_t HEADS_PER_TASK = 4;
+// The current UB/event protocol supports at most four heads in one stage
+// window. The runtime head count may be smaller (for example, three heads
+// per core when HV=96 and 32 AIC cores are available).
+constexpr uint32_t MAX_HEADS_PER_TASK = 4;
+constexpr uint32_t HEADS_PER_TASK = MAX_HEADS_PER_TASK;
 constexpr uint32_t WORKSPACE_WINDOW_COUNT = 2;
 constexpr uint32_t WORKSPACE_BUFFER_COUNT = HEADS_PER_TASK * WORKSPACE_WINDOW_COUNT;
 constexpr uint32_t BYTE_SIZE_16_BIT = 2;
@@ -112,6 +116,7 @@ struct BlockSchedulerGdnFwdH {
     uint32_t cubeCoreNum;
     uint32_t taskNum;
     uint32_t headWindowNum;
+    uint32_t headsPerTask;
     uint32_t headGroups;
     uint32_t totalChunks;
     uint32_t totalTokens;
@@ -217,7 +222,11 @@ struct BlockSchedulerGdnFwdH {
         cubeCoreIdx = coreIdx;
         cubeCoreNum = coreNum;
         vBlockSize = vHeadDim;
-        headWindowNum = (vNumHead + HEADS_PER_TASK - 1) / HEADS_PER_TASK;
+        // A task is one compact sequence and one contiguous head range. The
+        // host chooses cubeCoreNum so that this same formula gives the
+        // minimum worst-case head load and the minimum active core count.
+        headsPerTask = (vNumHead + cubeCoreNum - 1) / cubeCoreNum;
+        headWindowNum = (vNumHead + headsPerTask - 1) / headsPerTask;
         taskNum = batch * headWindowNum;
         headGroups = vNumHead / kNumHead;
         taskStride = cubeCoreNum;
@@ -301,9 +310,9 @@ struct BlockSchedulerGdnFwdH {
 
             uint32_t batchIdx = currentTaskIdx / headWindowNum;
             uint32_t headWindowIdx = currentTaskIdx % headWindowNum;
-            uint32_t headBase = headWindowIdx * HEADS_PER_TASK;
+            uint32_t headBase = headWindowIdx * headsPerTask;
             currentBatchChunks = 0;
-            for (uint32_t headOffset = 0; headOffset < HEADS_PER_TASK; ++headOffset) {
+            for (uint32_t headOffset = 0; headOffset < headsPerTask; ++headOffset) {
                 auto& headTask = headWindow.headTasks[headOffset];
                 uint32_t vHeadIdx = headBase + headOffset;
                 headTask.active = vHeadIdx < vNumHead;
@@ -349,7 +358,9 @@ struct BlockSchedulerGdnFwdH {
         offset.gOffset = headTask.shapeBatchIdx * vNumHead * totalTokens + headTask.vHeadIdx * totalTokens + headTask.tokenOffset + headTask.chunkIdx * chunkSize;
         offset.gkOffset = (headTask.shapeBatchIdx * vNumHead * totalTokens + headTask.vHeadIdx * totalTokens + headTask.tokenOffset + headTask.chunkIdx * chunkSize) * kHeadDim;
         uint32_t windowId = currentTaskRound % WORKSPACE_WINDOW_COUNT;
-        uint32_t workspaceSlot = windowId * HEADS_PER_TASK + headOffset;
+        // Keep the two-bank ready/free protocol. A three-head window uses
+        // slots 0..2 and 3..5; a four-head window uses all eight slots.
+        uint32_t workspaceSlot = windowId * headsPerTask + headOffset;
         offset.hWorkOffset = (cubeCoreIdx * WORKSPACE_BUFFER_COUNT + workspaceSlot) * kHeadDim * vBlockSize;
         offset.vWorkOffset = (cubeCoreIdx * WORKSPACE_BUFFER_COUNT + workspaceSlot) * chunkSize * vBlockSize;
         offset.vBlockOffset = vBlockOffset;
@@ -365,7 +376,7 @@ struct BlockSchedulerGdnFwdH {
 
     CATLASS_DEVICE
     void UpdateWindow() {
-        for (uint32_t headOffset = 0; headOffset < HEADS_PER_TASK; ++headOffset) {
+        for (uint32_t headOffset = 0; headOffset < headsPerTask; ++headOffset) {
             auto& headTask = headWindow.headTasks[headOffset];
             if (headTask.active) {
                 headTask.chunkIdx = currentChunkIdx;
@@ -391,6 +402,11 @@ struct BlockSchedulerGdnFwdH {
     CATLASS_DEVICE
     const GDNFwdHHeadTask& GetHeadTask(uint32_t i) const {
         return headWindow.headTasks[i];
+    }
+
+    CATLASS_DEVICE
+    uint32_t GetHeadsPerTask() const {
+        return headsPerTask;
     }
 
     CATLASS_DEVICE

@@ -193,6 +193,10 @@ static at::Tensor Stage0DebugNpu(
     uint32_t blockDim = 0;
     size_t workspaceSize = 0;
     auto tiling = CalcStage0DebugTiling(w, hEntry, chunkSize, cuSeqlens, blockDim, workspaceSize);
+    TORCH_CHECK(
+        blockDim > 0,
+        "chunk_gated_delta_rule_fwd_h_stage0_debug: unsupported head sharding for v_heads=",
+        w.size(1), ", available core count does not support the four-head window protocol");
 
     std::vector<int64_t> cuSeqlensVector;
     at::Tensor cuSeqlensTensor;

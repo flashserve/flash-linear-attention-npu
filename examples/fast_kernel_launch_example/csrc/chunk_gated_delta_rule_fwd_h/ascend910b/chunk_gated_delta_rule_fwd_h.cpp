@@ -192,6 +192,11 @@ static ::ChunkGatedDeltaRuleFwdHTilingData calc_tiling_params(
     ::ChunkGatedDeltaRuleFwdHTilingData tiling{};
     optiling::ChunkGatedDeltaRuleFwdHTilingProcessor processor(ctx);
     processor.Process(tiling, blockDim, workspaceSize);
+    TORCH_CHECK(
+        blockDim > 0,
+        "chunk_gated_delta_rule_fwd_h: unsupported head sharding for v_heads=",
+        u.size(1), ", available_core_num=", ctx.aicCoreNum,
+        ", max_heads_per_core=", optiling::GDN_FWD_H_MAX_HEADS_PER_TASK);
     return tiling;
 }
 

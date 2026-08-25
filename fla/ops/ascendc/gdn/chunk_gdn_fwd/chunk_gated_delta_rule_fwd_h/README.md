@@ -132,6 +132,12 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
   二者必须同 dtype，无 initial state 时默认 FP32。这里的 state dtype 仅定义 initial/final state 的 GM
   边界存储格式，不表示 chunk 间 rolling state 已按同一 dtype 实现递推。
 - V=128；`chunk_size=64`。
+- 分核按每个紧凑序列的 value head 数计算：`max_load=ceil(H_v/available_cores)`，启用核数为
+  `ceil(H_v/max_load)`，同一核负责连续的 head 区间。当前 ready/free 协议最多支持每核 4 个 head；例如
+  `H_v=96` 时 32 核为每核 3 个 head 并启用 32 核，28 核为每核 4 个 head 并启用 24 核。
+  每个 chunk 的各 stage 只循环该核实际负责的 head 数，不填充到 4。8 个 workspace slot 沿用 DHU
+  两 bank 的 ready/free 思路，并按实际 head 数紧凑打包：`slot=bank*heads_per_core+head_offset`；
+  3-head 窗口使用 `0..2/3..5`，其余两个 slot 保留。
 - dense 时不传 `cu_seqlens/chunk_indices`；varlen 要求 B=1、`cu_seqlens` 从 0 到 T 严格递增，
   `chunk_indices` 使用 `[NT,2]` 的 canonical sequence-major 顺序。
 - `state_v_first` true/false。

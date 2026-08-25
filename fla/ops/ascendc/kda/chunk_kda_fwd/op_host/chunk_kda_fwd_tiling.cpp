@@ -7,6 +7,7 @@
 #include <register/op_impl_registry.h>
 #include "arch35/chunk_kda_fwd_tiling_impl.h"
 #include "tiling/platform/platform_ascendc.h"
+#include "../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling_processor.h"
 
 namespace optiling {
 namespace {
@@ -206,7 +207,20 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     const bool storeH = HasOutput(context, OUTPUT_H_IDX);
 
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
-    const uint32_t blockDim = std::max<uint32_t>(platform.GetCoreNumAic(), 1);
+    const uint32_t availableCoreNum = std::max<uint32_t>(platform.GetCoreNumAic(), 1);
+    uint32_t headsPerTask = 0;
+    uint32_t blockDim = 0;
+    if (!ResolveFwdHHeadSharding(
+            shape.vHeads, availableCoreNum, headsPerTask, blockDim)) {
+        OP_LOGE(context->GetNodeName(),
+                "Unsupported head sharding: vHeads=%ld, availableCoreNum=%u; "
+                "the current FwdH protocol supports at most %u heads per active core.",
+                shape.vHeads, availableCoreNum, GDN_FWD_H_MAX_HEADS_PER_TASK);
+        return ge::GRAPH_FAILED;
+    }
+    OP_LOGD(context->GetNodeName(),
+            "FwdH head sharding: available=%u, active=%u, headsPerCore=%u",
+            availableCoreNum, blockDim, headsPerTask);
     const bool isAscend950 =
         platform.GetCurNpuArch() == NpuArch::DAV_3510;
     const bool useChunk64K128V128Template =

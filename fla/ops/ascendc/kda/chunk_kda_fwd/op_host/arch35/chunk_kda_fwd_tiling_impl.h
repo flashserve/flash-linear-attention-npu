@@ -28,7 +28,10 @@ inline ChunkKdaFwdArch35Options ConfigureChunkKdaFwdArch35(
         qIsBf16 && rawGIsFp32 && hasALog &&
         useGateInKernel && safeGate;
     const bool denseAligned = !isVarLen && seqlen % chunkSize == 0;
-    options.useDenseFwdH = denseAligned && qIsBf16;
+    // The dedicated dense path has a single-head task protocol. For wider
+    // head sets, use the shared FwdH backend so its contiguous head-window,
+    // active-core, and four-head AIV ownership rules remain authoritative.
+    options.useDenseFwdH = denseAligned && qIsBf16 && vHeads <= 4;
     const bool canFusePreparePostWu =
         denseAligned && qIsBf16 && safeGate && vHeads % 2 == 0;
     options.fusePostWuIntoFwdH =
