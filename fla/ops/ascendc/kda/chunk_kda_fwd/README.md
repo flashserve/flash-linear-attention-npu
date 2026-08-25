@@ -103,8 +103,6 @@ Python 返回顺序为：
 - `K/V` 为 `[16,256]` 内 16 的倍数；交付重点覆盖 K=128、V=128/256。
 - `chunk_size` 为 64/128。
 - TND/NTD 均支持多 head。
-- FwdH 阶段按每个紧凑序列的 value head 数进行连续分组：
-  `max_load=ceil(H_v/available_cores)`，启用核数为 `ceil(H_v/max_load)`，当前 ready/free 协议最多支持每核 4 个 head。
 - 变长调用最多 1024 条逻辑序列，rank-4 变长输入要求 B=1。
 
 ## 验证

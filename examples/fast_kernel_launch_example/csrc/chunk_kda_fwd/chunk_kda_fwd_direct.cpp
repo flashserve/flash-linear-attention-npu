@@ -388,16 +388,7 @@ ChunkKdaFwdDirectNpu(
 
     auto platform = platform_ascendc::PlatformAscendCManager::GetInstance();
     TORCH_CHECK(platform != nullptr, "chunk_kda_fwd_direct: PlatformAscendCManager is null");
-    const uint32_t availableCoreNum = static_cast<uint32_t>(platform->GetCoreNumAic());
-    uint32_t headsPerTask = 0;
-    uint32_t blockDim = 0;
-    TORCH_CHECK(
-        optiling::ResolveFwdHHeadSharding(
-            static_cast<int64_t>(v.size(1)), availableCoreNum, headsPerTask, blockDim),
-        "chunk_kda_fwd_direct: unsupported head sharding for v_heads=", v.size(1),
-        ", available_core_num=", availableCoreNum,
-        ", max_heads_per_core=", optiling::GDN_FWD_H_MAX_HEADS_PER_TASK);
-    (void)headsPerTask;
+    uint32_t blockDim = static_cast<uint32_t>(platform->GetCoreNumAic());
     size_t sysWorkspace = static_cast<size_t>(platform->GetLibApiWorkSpaceSize());
     int64_t totalChunks = (q.size(2) + chunkSize - 1) / chunkSize;
     const uint64_t dataBytes = q.element_size();
