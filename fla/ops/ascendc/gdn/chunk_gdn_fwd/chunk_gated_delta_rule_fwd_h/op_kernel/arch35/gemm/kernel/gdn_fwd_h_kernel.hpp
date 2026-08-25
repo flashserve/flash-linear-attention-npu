@@ -541,9 +541,10 @@ public:
                     tensorUbList[ubIdx] = (ubIdx & 1U) ? tensorUbPong : tensorUbPing;
                 }
                 uint32_t rowsPerSubBlock = CeilDiv(shape.m(), DIRECT_VEC_NUM);
+                uint32_t ubListId = i / 2;
                 blockMmadWHDirectUb(
                     blockW, blockH, tensorUbList, shape, rowsPerSubBlock, 0,
-                    DIRECT_UB_FREE_FLAG_BEGIN, DIRECT_UB_READY_FLAG_BEGIN, i / 2,
+                    DIRECT_UB_FREE_FLAG_BEGIN, DIRECT_UB_READY_FLAG_BEGIN, ubListId,
                     DIRECT_VEC_NUM, DIRECT_UB_STAGES);
             }
         } else if (useBoundedMmad) {
