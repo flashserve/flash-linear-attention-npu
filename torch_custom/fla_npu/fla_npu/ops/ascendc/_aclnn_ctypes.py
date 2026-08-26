@@ -40,6 +40,7 @@ from ._runtime import (
 )
 
 RGDR_DIM_ALIGNMENT = 16
+RGDR_MAX_DIM = 128
 
 # Most aclnn functions only receive pointer-sized descriptors and scalar ctypes
 # objects, so ctypes can call them without explicit argtypes.  Functions with C
@@ -1036,9 +1037,9 @@ def npu_recurrent_gated_delta_rule(
                 f"{op_name}: {name} shape must be {expected_shape}, got {shape}."
             )
 
-    if key_heads > 256 or value_heads > 256 or key_dim > 512 or value_dim > 512:
+    if key_heads > 256 or value_heads > 256 or key_dim > RGDR_MAX_DIM or value_dim > RGDR_MAX_DIM:
         raise RuntimeError(
-            f"{op_name}: Nk and Nv must be <= 256 and Dk and Dv must be <= 512, "
+            f"{op_name}: Nk and Nv must be <= 256 and Dk and Dv must be <= {RGDR_MAX_DIM}, "
             f"got Nk={key_heads}, Nv={value_heads}, Dk={key_dim}, Dv={value_dim}."
         )
     if key_dim % RGDR_DIM_ALIGNMENT != 0 or value_dim % RGDR_DIM_ALIGNMENT != 0:

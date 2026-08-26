@@ -256,7 +256,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>输入Tensor的数据格式不在支持范围内。</td>
     </tr>
     <tr>
-      <td>输入Tensor的shape不在支持范围内，或 Dk、Dv 不是 16 的整数倍。</td>
+      <td>输入Tensor的shape不在支持范围内，或 Dk、Dv 不是 16 的整数倍，或超过 128。</td>
     </tr>
   </tbody>
   </table>
@@ -308,7 +308,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 ## 约束说明
 - 确定性计算：
   - aclnnRecurrentGatedDeltaRule默认确定性实现。
-- 输入 shape 大小需满足约束： $L_i \le 8$， $N_k \le 256$， $N_v \le 256$， $D_k \le 512$， $D_v \le 512$，$D_k$ 和 $D_v$ 必须是 16 的整数倍，且 $N_v$ 是 $N_k$ 的整数倍。
+- 输入 shape 大小需满足约束： $L_i \le 8$， $N_k \le 256$， $N_v \le 256$， $D_k \le 128$， $D_v \le 128$，$D_k$ 和 $D_v$ 必须是 16 的整数倍，且 $N_v$ 是 $N_k$ 的整数倍。
 
 
 ## 调用示例

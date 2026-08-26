@@ -100,7 +100,7 @@ public:
         EXPECT_EQ(pass, true);
     }
 
-    void RGDRUnalignedShapeTestCase(uint32_t testDk, uint32_t testDv)
+    void RGDRInvalidDimensionTestCase(uint32_t testDk, uint32_t testDv)
     {
         state = TensorDesc({t, nv, testDv, testDk}, ACL_BF16, ACL_FORMAT_ND).ValueRange(0, 1);
         query = TensorDesc({t, nk, testDk}, ACL_BF16, ACL_FORMAT_ND).ValueRange(0, 1);
@@ -288,10 +288,20 @@ TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_case21)
 
 TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_unaligned_dk)
 {
-    test.RGDRUnalignedShapeTestCase(17, 128);
+    test.RGDRInvalidDimensionTestCase(17, 128);
 }
 
 TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_unaligned_dv)
 {
-    test.RGDRUnalignedShapeTestCase(128, 31);
+    test.RGDRInvalidDimensionTestCase(128, 31);
+}
+
+TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_dk_over_max)
+{
+    test.RGDRInvalidDimensionTestCase(144, 128);
+}
+
+TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_dv_over_max)
+{
+    test.RGDRInvalidDimensionTestCase(128, 144);
 }

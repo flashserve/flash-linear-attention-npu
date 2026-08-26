@@ -4,7 +4,7 @@ version: v2.1
 name: recurrent_gated_delta_rule
 aclnn_name: RecurrentGatedDeltaRule
 generate: generator_recurrent_gated_delta_rule
-dtype_numbers: 146
+dtype_numbers: 140
 extra_numbers: 0
 standard:
   acc: mixed_tolerance_bm
@@ -147,9 +147,9 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 192, 256, 320, 384, 496, 512]
+        values: [16, 32, 48, 64, 80, 96, 112, 128]
       invalid:
-        values: [17, 31, 33, 63, 65, 127, 129, 511]
+        values: [17, 31, 33, 63, 65, 127, 129, 144, 511]
   - name: V
     type: attr
     required: true
@@ -157,9 +157,9 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 192, 256, 320, 384, 496, 512]
+        values: [16, 32, 48, 64, 80, 96, 112, 128]
       invalid:
-        values: [17, 31, 33, 63, 65, 127, 129, 511]
+        values: [17, 31, 33, 63, 65, 127, 129, 144, 511]
   - name: block_num
     type: attr
     required: true

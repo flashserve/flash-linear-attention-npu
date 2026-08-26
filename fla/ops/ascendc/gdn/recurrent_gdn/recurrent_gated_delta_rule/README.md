@@ -114,7 +114,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 - `actualSeqLengths` 为长度 $B+1$ 的一维 INT32 张量，首元素代表无效前缀长度（不参与计算），第 1 至第 $B$ 个元素代表各 batch 的有效序列长度，全部元素之和等于 $T$。
 - `ssmStateIndices` 为长度 $T$ 的一维 INT32 张量，取值范围 `[0, BlockNum)`。
 - `query/key/value/beta/out` 仅支持 `BFLOAT16`。
-- $N_k$、$N_v$ 不超过 256，$D_k$、$D_v$ 不超过 512 且必须是 16 的整数倍，且 $N_v$ 必须是 $N_k$ 的整数倍。
+- $N_k$、$N_v$ 不超过 256，$D_k$、$D_v$ 不超过 128 且必须是 16 的整数倍，且 $N_v$ 必须是 $N_k$ 的整数倍。
 - 每个序列的有效 token 数 $L_i$（即 `actualSeqLengths[i+1]`，$i \in [0, B)$）须满足 $L_i \le 8$。
 
 ### 3.5 补充说明
@@ -137,7 +137,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 - `stateRef`: `(BlockNum, Nv, Dv, Dk)`
 - `actualSeqLengths`: `(B+1,)`，首元素为无效序列长度（不参与计算），其余 `B` 个元素为各 batch 的有效序列长度，其之和等于 `T`
 - `ssmStateIndices`: `(T,)`，取值范围 `[0, BlockNum)`
-- `Dk`、`Dv` 不超过 512 且必须是 16 的整数倍；`Nk`、`Nv` 不超过 256，且 `Nv` 必须是 `Nk` 的整数倍
+- `Dk`、`Dv` 不超过 128 且必须是 16 的整数倍；`Nk`、`Nv` 不超过 256，且 `Nv` 必须是 `Nk` 的整数倍
 
 ---
 
