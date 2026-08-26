@@ -4,7 +4,7 @@ version: v2.1
 name: recurrent_gated_delta_rule
 aclnn_name: RecurrentGatedDeltaRule
 generate: generator_recurrent_gated_delta_rule
-dtype_numbers: 1
+dtype_numbers: 176
 extra_numbers: 0
 standard:
   acc: mixed_tolerance_bm
@@ -47,7 +47,17 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: ["{\"B\":1,\"HK\":1,\"HV\":1,\"K\":64,\"T\":1,\"V\":64,\"block_num\":1,\"case_id\":0,\"dtype\":\"bf16\",\"gate_mode\":\"g\",\"name\":\"minimal_g_bf16_state\",\"op\":\"recurrent_gated_delta_rule\",\"route\":\"ascendc\",\"scale\":0.125,\"seed\":20260823,\"seq_lengths\":[1],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_layout\":\"contiguous\"}"]
+        values: ["{\"B\":1,\"HK\":1,\"HV\":1,\"K\":64,\"T\":1,\"V\":64,\"block_num\":1,\"case_id\":0,\"data_profile\":\"random\",\"design_id\":\"RGDR-P001\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"g\",\"input_layout\":\"contiguous\",\"name\":\"minimal_g_bf16_state\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.125,\"seed\":20260826,\"seq_lengths\":[1],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}"]
+      invalid:
+        values: []
+  - name: design_id
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["RGDR-P001"]
       invalid:
         values: []
   - name: dtype
@@ -77,7 +87,17 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: ["contiguous", "noncontiguous"]
+        values: ["contiguous", "noncontiguous", "head_padded", "block_padded", "head_block_padded"]
+      invalid:
+        values: []
+  - name: input_layout
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["contiguous", "noncontiguous_qkv_beta_g", "noncontiguous_gk_metadata", "noncontiguous_qk", "noncontiguous_v_gates", "noncontiguous_all"]
       invalid:
         values: []
   - name: B
@@ -87,7 +107,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 3]
+        values: [1, 2, 3, 4]
       invalid:
         values: []
   - name: T
@@ -97,7 +117,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 3, 4, 5, 6, 8]
+        values: [1, 2, 3, 4, 5, 6, 7, 8, 16, 17]
       invalid:
         values: []
   - name: HK
@@ -107,7 +127,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 4]
+        values: [1, 2, 3, 4, 6, 8, 16, 24, 32, 48, 64, 256]
       invalid:
         values: []
   - name: HV
@@ -117,7 +137,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 4, 8]
+        values: [1, 2, 3, 4, 6, 8, 16, 64, 96, 128, 256]
       invalid:
         values: []
   - name: K
@@ -127,7 +147,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [64, 80, 128, 512]
+        values: [16, 17, 31, 32, 63, 64, 65, 80, 96, 127, 128, 129, 192, 256, 384, 511, 512]
       invalid:
         values: []
   - name: V
@@ -137,7 +157,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [64, 80, 96, 128, 256, 512]
+        values: [16, 17, 31, 33, 64, 65, 80, 96, 127, 128, 129, 160, 256, 320, 511, 512]
       invalid:
         values: []
   - name: block_num
@@ -147,7 +167,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 3, 4, 5, 6, 8]
+        values: [1, 2, 3, 4, 5, 6, 7, 8, 10, 16, 17]
       invalid:
         values: []
   - name: gate_mode
@@ -177,7 +197,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [0, 2]
+        values: [0, 1, 2, 3, 4]
       invalid:
         values: []
   - name: case_id
@@ -187,7 +207,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        values: [0]
       invalid:
         values: []
   - name: seed
@@ -197,7 +217,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [20260823]
+        values: [20260826]
       invalid:
         values: []
   - name: soc

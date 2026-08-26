@@ -56,18 +56,98 @@ def _build_state(
     state_layout = str(spec.get("state_layout", "contiguous"))
     if state_layout == "contiguous":
         return dense_state
-    if state_layout != "noncontiguous":
+    block_num, value_heads, value_dim, key_dim = shape
+    if state_layout == "noncontiguous":
+        storage = torch.empty(
+            (value_heads, block_num, value_dim, key_dim),
+            dtype=dense_state.dtype,
+            device=device,
+        )
+        state = storage.permute(1, 0, 2, 3)
+        state.copy_(dense_state)
+        return state
+
+    if state_layout not in {
+        "head_padded",
+        "block_padded",
+        "head_block_padded",
+    }:
         raise ValueError(f"{OP_NAME}: unsupported state_layout {state_layout!r}.")
 
-    block_num, value_heads, value_dim, key_dim = shape
-    storage = torch.empty(
-        (value_heads, block_num, value_dim, key_dim),
-        dtype=dense_state.dtype,
-        device=device,
+    head_padding = key_dim if state_layout in {"head_padded", "head_block_padded"} else 0
+    block_padding = (
+        value_dim * key_dim
+        if state_layout in {"block_padded", "head_block_padded"}
+        else 0
     )
-    state = storage.permute(1, 0, 2, 3)
+    head_stride = value_dim * key_dim + head_padding
+    block_stride = value_heads * head_stride + block_padding
+    storage_offset = key_dim + 1 if state_layout == "head_block_padded" else 0
+    storage_size = (
+        storage_offset
+        + (block_num - 1) * block_stride
+        + (value_heads - 1) * head_stride
+        + value_dim * key_dim
+    )
+    storage = torch.empty(storage_size, dtype=dense_state.dtype, device=device)
+    state = torch.as_strided(
+        storage,
+        shape,
+        (block_stride, head_stride, key_dim, 1),
+        storage_offset=storage_offset,
+    )
     state.copy_(dense_state)
     return state
+
+
+def _make_noncontiguous(tensor: torch.Tensor | None) -> torch.Tensor | None:
+    if tensor is None or tensor.ndim == 0:
+        return tensor
+    storage_shape = (*tensor.shape[:-1], tensor.shape[-1] * 2)
+    storage = torch.empty(storage_shape, dtype=tensor.dtype, device=tensor.device)
+    view = storage[..., ::2]
+    view.copy_(tensor)
+    return view
+
+
+def _apply_input_layout(
+    inputs: dict[str, Any], layout: str
+) -> dict[str, Any]:
+    layout_names = {
+        "contiguous": (),
+        "noncontiguous_qkv_beta_g": ("query", "key", "value", "beta", "g"),
+        "noncontiguous_gk_metadata": (
+            "gk",
+            "actual_seq_lengths",
+            "ssm_state_indices",
+            "num_accepted_tokens",
+        ),
+        "noncontiguous_qk": ("query", "key"),
+        "noncontiguous_v_gates": ("value", "beta", "g", "gk"),
+        "noncontiguous_all": (
+            "query",
+            "key",
+            "value",
+            "beta",
+            "g",
+            "gk",
+            "actual_seq_lengths",
+            "ssm_state_indices",
+            "num_accepted_tokens",
+        ),
+    }
+    if layout not in layout_names:
+        raise ValueError(f"{OP_NAME}: unsupported input_layout {layout!r}.")
+    for name in layout_names[layout]:
+        inputs[name] = _make_noncontiguous(inputs[name])
+    return inputs
+
+
+def _add_head_offsets(tensor: torch.Tensor, scale: float) -> None:
+    offsets = torch.arange(
+        tensor.shape[1], device=tensor.device, dtype=torch.float32
+    ).to(tensor.dtype)
+    tensor.add_(offsets.view(1, -1, *([1] * (tensor.ndim - 2))) * scale)
 
 
 def build_inputs(
@@ -110,6 +190,13 @@ def build_inputs(
     if gate_mode not in {"g", "gk", "both"}:
         raise ValueError(f"{OP_NAME}: unsupported gate_mode {gate_mode!r}.")
 
+    gate_profile = str(spec.get("gate_profile", "random"))
+    gate_min, gate_max = 0.001, 0.02
+    if gate_profile == "near_zero":
+        gate_min, gate_max = 0.000001, 0.0001
+    elif gate_profile == "strong_decay":
+        gate_min, gate_max = 0.5, 2.0
+
     g = None
     if gate_mode in {"g", "both"}:
         g = -_rand(
@@ -118,9 +205,18 @@ def build_inputs(
             gate_calc_dtype,
             device,
             seed + 6,
-            0.001,
-            0.02,
+            gate_min,
+            gate_max,
         )
+        if gate_profile == "per_head":
+            values = torch.linspace(
+                -0.001,
+                -0.02,
+                value_heads,
+                dtype=gate_calc_dtype,
+                device=device,
+            )
+            g.copy_(values.view(1, -1).expand_as(g))
 
     gk = None
     if gate_mode in {"gk", "both"}:
@@ -130,9 +226,13 @@ def build_inputs(
             gate_calc_dtype,
             device,
             seed + 7,
-            0.001,
-            0.02,
+            gate_min,
+            gate_max,
         )
+        if gate_profile == "column_pulse":
+            gk.fill_(-0.001)
+            for value_head in range(value_heads):
+                gk[:, value_head, (value_head * 17) % key_dim] = -0.05
 
     accepted_tokens = spec.get("accepted_tokens")
     if accepted_tokens is not None:
@@ -143,7 +243,7 @@ def build_inputs(
                 f"got {len(accepted_tokens)} for B={len(seq_lengths)}."
             )
 
-    return {
+    inputs = {
         "query": _randn(
             (total_tokens, key_heads, key_dim),
             "bf16",
@@ -195,6 +295,36 @@ def build_inputs(
         ),
         "scale": float(spec.get("scale", 1.0 / math.sqrt(key_dim))),
     }
+
+    if str(spec.get("data_profile", "random")) == "traceable_gva":
+        _add_head_offsets(inputs["query"], 0.01)
+        _add_head_offsets(inputs["key"], 0.02)
+        _add_head_offsets(inputs["value"], 0.005)
+
+    if str(spec.get("beta_profile", "random")) == "per_head":
+        values = torch.linspace(
+            0.1,
+            0.9,
+            value_heads,
+            dtype=low_precision_dtype,
+            device=device,
+        )
+        inputs["beta"].copy_(values.view(1, -1).expand_as(inputs["beta"]))
+
+    state_profile = str(spec.get("state_profile", "random"))
+    if state_profile.startswith("pulse_hv"):
+        pulse_head = int(state_profile.removeprefix("pulse_hv"))
+        inputs["state"].zero_()
+        inputs["state"][:, pulse_head, 0, 0] = 0.25
+    elif state_profile == "traceable":
+        offsets = torch.arange(
+            value_heads, device=device, dtype=torch.float32
+        ).to(inputs["state"].dtype)
+        inputs["state"].add_(offsets.view(1, -1, 1, 1) * 0.0001)
+
+    return _apply_input_layout(
+        inputs, str(spec.get("input_layout", "contiguous"))
+    )
 
 
 def recurrent_gated_delta_rule_reference(inputs: dict[str, Any]):
@@ -264,27 +394,44 @@ def recurrent_gated_delta_rule_reference(inputs: dict[str, Any]):
 
 
 def run_cpu(spec: dict[str, Any], high_precision: bool = False):
-    inputs = build_inputs(spec, torch.device("cpu"), high_precision=high_precision)
-    return recurrent_gated_delta_rule_reference(inputs)
+    previous_threads = torch.get_num_threads()
+    try:
+        # ATK runs several CPU workers concurrently. One Torch thread per worker
+        # avoids severe nested-parallelism overhead for the per-head reference.
+        torch.set_num_threads(1)
+        inputs = build_inputs(spec, torch.device("cpu"), high_precision=high_precision)
+        outputs = None
+        for _ in range(int(spec.get("repeat_calls", 1))):
+            outputs = recurrent_gated_delta_rule_reference(inputs)
+            inputs["state"].copy_(outputs[1])
+        if outputs is None:
+            raise RuntimeError(f"{OP_NAME}: repeat_calls must be positive.")
+        return outputs
+    finally:
+        torch.set_num_threads(previous_threads)
 
 
 def run_npu(spec: dict[str, Any], input_data: InputDataset):
     inputs = build_inputs(spec, _marker_device(input_data), high_precision=False)
     from fla_npu.ops import ascendc
 
-    out = ascendc.recurrent_gated_delta_rule(
-        inputs["query"],
-        inputs["key"],
-        inputs["value"],
-        inputs["state"],
-        beta=inputs["beta"],
-        scale=inputs["scale"],
-        actual_seq_lengths=inputs["actual_seq_lengths"],
-        ssm_state_indices=inputs["ssm_state_indices"],
-        num_accepted_tokens=inputs["num_accepted_tokens"],
-        g=inputs["g"],
-        gk=inputs["gk"],
-    )
+    out = None
+    for _ in range(int(spec.get("repeat_calls", 1))):
+        out = ascendc.recurrent_gated_delta_rule(
+            inputs["query"],
+            inputs["key"],
+            inputs["value"],
+            inputs["state"],
+            beta=inputs["beta"],
+            scale=inputs["scale"],
+            actual_seq_lengths=inputs["actual_seq_lengths"],
+            ssm_state_indices=inputs["ssm_state_indices"],
+            num_accepted_tokens=inputs["num_accepted_tokens"],
+            g=inputs["g"],
+            gk=inputs["gk"],
+        )
+    if out is None:
+        raise RuntimeError(f"{OP_NAME}: repeat_calls must be positive.")
     prefix_tokens = int(inputs["actual_seq_lengths"][0].item())
     if prefix_tokens > 0:
         out[:prefix_tokens].zero_()
@@ -316,6 +463,7 @@ class FunctionApi(BaseApi):
     def export_custom_data(self, input_data: InputDataset):
         spec = _case_spec(input_data, OP_NAME)
         return {
+            "design_id": str(spec["design_id"]),
             "case_name": str(spec["name"]),
             "B": int(spec["B"]),
             "T": int(spec["T"]),
@@ -325,5 +473,6 @@ class FunctionApi(BaseApi):
             "V": int(spec["V"]),
             "state_dtype": str(spec["state_dtype"]),
             "state_layout": str(spec.get("state_layout", "contiguous")),
+            "input_layout": str(spec.get("input_layout", "contiguous")),
             "gate_mode": str(spec["gate_mode"]),
         }
