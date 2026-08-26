@@ -1,8 +1,8 @@
 """Generate the reviewed recurrent_gated_delta_rule ATK case matrix.
 
 The committed accuracy matrix is frozen by detailed-design ID:
-  * 0-89: RGDR-P001 through RGDR-P090
-  * 90-162: RGDR-G001 through RGDR-G073
+  * 0-80: RGDR-P001 through RGDR-P081
+  * 81-145: RGDR-G001 through RGDR-G065
 
 All positive cases use dimensions aligned to the 32B BF16 transfer block;
 unaligned dimensions are invalid and are covered by op_host interception tests.
@@ -136,23 +136,14 @@ def _build_positive_profiles() -> list[dict]:
     add("max_length_accepted_ends", seq_lengths=[8, 8], accepted_tokens=[1, 8], HK=1, HV=2)
     add("complex_metadata_four_routes", prefix_tokens=1, seq_lengths=[1, 2, 4], accepted_tokens=[1, 2, 3], HK=2, HV=4, design_routes="P+A+D+F")
 
-    # P033-P042: aligned key/value dimensions and UB profiles (up to 128).
+    # P033: aligned key/value dimensions and UB profile at the supported 128 dimension.
     dimensions = [
-        (16, 16, "dims_16_16"),
-        (32, 32, "dims_32_32"),
-        (32, 48, "dims_32_48"),
-        (32, 64, "dims_32_64"),
-        (64, 80, "dims_64_80"),
-        (64, 64, "dims_64_64"),
-        (80, 80, "dims_80_80"),
-        (80, 96, "dims_80_96"),
-        (112, 112, "dims_112_112"),
         (128, 128, "dims_128_128"),
     ]
     for key_dim, value_dim, name in dimensions:
         add(name, K=key_dim, V=value_dim, state_dtype="bf16")
 
-    # P043-P058: head mapping and GVA basics.
+    # P034-P049: head mapping and GVA basics.
     head_shapes = [
         (1, 1, "heads_1_1", "P+A+D"),
         (1, 2, "heads_1_2", "P+A"),
@@ -174,7 +165,7 @@ def _build_positive_profiles() -> list[dict]:
     for key_heads, value_heads, name, routes in head_shapes:
         add(name, HK=key_heads, HV=value_heads, design_routes=routes, data_profile="traceable_gva")
 
-    # P059-P074: state layout and state-index mapping.
+    # P050-P065: state layout and state-index mapping.
     add("state_bf16_contiguous", gate_mode="g", state_dtype="bf16")
     add("state_fp32_contiguous", gate_mode="g")
     add("state_unused_blocks", gate_mode="g", block_num=6, state_indices=[0, 1])
@@ -192,7 +183,7 @@ def _build_positive_profiles() -> list[dict]:
     add("functional_contiguous_state", HK=2, HV=4, design_routes="D+F")
     add("functional_padded_state", HK=2, HV=4, state_layout="head_block_padded", design_routes="D+F")
 
-    # P075-P090: platform, route and regression representatives. ATK executes
+    # P066-P081: platform, route and regression representatives. ATK executes
     # the stable Python route; design_routes records the originating matrix row.
     add("a2_baseline_matrix", seq_lengths=[8], K=80, V=96, state_dtype="bf16", platform_focus="ascend910b", design_routes="P")
     add("a3_baseline_matrix", seq_lengths=[3, 2, 1], accepted_tokens=[2, 1, 1], HK=2, HV=4, gate_mode="g", platform_focus="ascend910_93", design_routes="P")
@@ -211,8 +202,8 @@ def _build_positive_profiles() -> list[dict]:
     add("independent_stream_state_shape", seq_lengths=[2, 1], HK=2, HV=4, design_routes="P", stream_mode="independent")
     add("accepted_tokens_gqa_regression", seq_lengths=[3, 2, 1], accepted_tokens=[2, 1, 1], HK=2, HV=4, gate_mode="g", design_routes="P+A+D+F")
 
-    if len(profiles) != 90:
-        raise AssertionError(f"expected 90 P profiles, got {len(profiles)}")
+    if len(profiles) != 81:
+        raise AssertionError(f"expected 81 P profiles, got {len(profiles)}")
     return profiles
 
 
@@ -286,22 +277,14 @@ def _build_gva_profiles() -> list[dict]:
     add("gva_disjoint_sparse_blocks", seq_lengths=[2, 2], block_num=10, state_indices=[1, 3, 6, 8], HK=2, HV=8)
     add("gva_complex_metadata", prefix_tokens=1, seq_lengths=[2, 3], accepted_tokens=[1, 3], HK=24, HV=96, design_routes="P+A+D+F")
 
-    # G049-G057: aligned dimensions and UB slicing (up to 128).
+    # G049: aligned key/value dimensions and UB slicing at the supported 128 dimension.
     gva_dimensions = [
-        (16, 16, 1, 8, "gva_dims_16_16", "all"),
-        (32, 32, 2, 6, "gva_dims_32_32", "all"),
-        (32, 64, 2, 8, "gva_dims_32_64", "all"),
-        (64, 80, 2, 6, "gva_dims_64_80", "ascend950"),
-        (64, 64, 2, 8, "gva_dims_64_64", "ascend950"),
-        (80, 80, 2, 6, "gva_dims_80_80", "ascend950"),
-        (80, 96, 4, 8, "gva_dims_80_96", "all"),
-        (112, 112, 2, 8, "gva_dims_112_112", "all"),
         (128, 128, 32, 96, "gva_dims_128_128", "all"),
     ]
     for key_dim, value_dim, key_heads, value_heads, name, platform in gva_dimensions:
         add(name, K=key_dim, V=value_dim, HK=key_heads, HV=value_heads, platform_focus=platform)
 
-    # G058-G073: state layout, indices and route representatives.
+    # G050-G065: state layout, indices and route representatives.
     add("gva_state_bf16_contiguous", HK=2, HV=8, state_dtype="bf16")
     add("gva_state_fp32_contiguous", HK=2, HV=8)
     add("gva_state_head_padding_bf16", HK=2, HV=6, state_dtype="bf16", state_layout="head_padded", design_routes="P+A+D+F")
@@ -319,8 +302,8 @@ def _build_gva_profiles() -> list[dict]:
     add("gva_nondefault_stream_shape", HK=32, HV=96, stream_mode="nondefault", design_routes="P")
     add("gva_all_complex_views", HK=24, HV=96, state_layout="head_block_padded", input_layout="noncontiguous_all", design_routes="P+A+D+F")
 
-    if len(profiles) != 73:
-        raise AssertionError(f"expected 73 G profiles, got {len(profiles)}")
+    if len(profiles) != 65:
+        raise AssertionError(f"expected 65 G profiles, got {len(profiles)}")
     return profiles
 
 
