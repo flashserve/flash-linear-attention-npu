@@ -34,35 +34,86 @@ constexpr CastTrait B16_TO_F32_ZERO = {
     AscendC::RoundMode::UNKNOWN,
 };
 
-constexpr CastTrait F32_TO_B16_RINT = {
-    RegLayout::ZERO,
+constexpr CastTrait B16_TO_F32_ONE = {
+    RegLayout::ONE,
+    SatMode::UNKNOWN,
+    MaskMergeMode::ZEROING,
+    AscendC::RoundMode::UNKNOWN,
+};
+
+constexpr CastTrait F32_TO_B16_ONE_RINT = {
+    RegLayout::ONE,
     SatMode::NO_SAT,
     MaskMergeMode::ZEROING,
     AscendC::RoundMode::CAST_RINT,
 };
 
+constexpr CastTrait F32_TO_B16_ZERO_RINT = {
+    RegLayout::ZERO,
+    SatMode::NO_SAT,
+    MaskMergeMode::MERGING,
+    AscendC::RoundMode::CAST_RINT,
+};
+
 template <typename T>
-__simd_callee__ inline void LoadAsFloat(
-    RegTensor<float> &dst, __ubuf__ T *src, MaskReg &mask)
+__simd_callee__ inline void LoadB16Pair(
+    RegTensor<float> &zero, RegTensor<float> &one, __ubuf__ T *src,
+    MaskReg &b16Mask)
+{
+    RegTensor<T> raw;
+    LoadAlign<T, LoadDist::DIST_NORM>(raw, src);
+    Cast<float, T, B16_TO_F32_ZERO>(zero, raw, b16Mask);
+    Cast<float, T, B16_TO_F32_ONE>(one, raw, b16Mask);
+}
+
+__simd_callee__ inline void LoadFloatPair(
+    RegTensor<float> &zero, RegTensor<float> &one, __ubuf__ float *src,
+    uint32_t b32PerVl)
+{
+    LoadAlign<float, LoadDist::DIST_NORM>(zero, src);
+    LoadAlign<float, LoadDist::DIST_NORM>(one, src + b32PerVl);
+}
+
+__simd_callee__ inline void StoreFloatPair(
+    __ubuf__ float *dst, RegTensor<float> &zero, RegTensor<float> &one,
+    MaskReg &f32Mask, uint32_t b32PerVl)
+{
+    StoreAlign(dst, zero, f32Mask);
+    StoreAlign(dst + b32PerVl, one, f32Mask);
+}
+
+template <typename T>
+__simd_callee__ inline void PackFloatPair(
+    RegTensor<T> &packed, RegTensor<float> &zero, RegTensor<float> &one,
+    MaskReg &f32Mask)
+{
+    Cast<T, float, F32_TO_B16_ONE_RINT>(packed, one, f32Mask);
+    Cast<T, float, F32_TO_B16_ZERO_RINT>(packed, zero, f32Mask);
+}
+
+template <typename T>
+__simd_callee__ inline void StoreB16Pair(
+    __ubuf__ T *dst, RegTensor<float> &zero, RegTensor<float> &one,
+    MaskReg &f32Mask)
+{
+    RegTensor<T> packed;
+    MaskReg b16Mask = CreateMask<T, MaskPattern::ALL>();
+    PackFloatPair(packed, zero, one, f32Mask);
+    StoreAlign(dst, packed, b16Mask);
+}
+
+template <typename T>
+__simd_callee__ inline void LoadBroadcastAsFloat(
+    RegTensor<float> &dst, __ubuf__ T *src)
 {
     if constexpr (std::is_same<T, float>::value) {
-        DataCopy<float, LoadDist::DIST_NORM>(dst, src);
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(dst, src);
     } else {
         RegTensor<T> raw;
-        DataCopy<T, LoadDist::DIST_UNPACK_B16>(raw, src);
-        Cast<float, T, B16_TO_F32_ZERO>(dst, raw, mask);
+        MaskReg b16Mask = CreateMask<T, MaskPattern::ALL>();
+        LoadAlign<T, LoadDist::DIST_BRC_B16>(raw, src);
+        Cast<float, T, B16_TO_F32_ZERO>(dst, raw, b16Mask);
     }
-}
-
-__simd_callee__ inline void LoadFloat(RegTensor<float> &dst, __ubuf__ float *src)
-{
-    DataCopy<float, LoadDist::DIST_NORM>(dst, src);
-}
-
-__simd_callee__ inline void StoreFloat(
-    __ubuf__ float *dst, RegTensor<float> &src, MaskReg &mask)
-{
-    DataCopy<float, StoreDist::DIST_NORM_B32>(dst, src, mask);
 }
 
 struct Stage1WithP {};
@@ -80,354 +131,340 @@ struct B16StateOnlyOutput {};
 struct HOnlyOutput {};
 
 template <typename InputT>
-__simd_callee__ inline void LoadStage1VNew(
-    RegTensor<float> &vNew, RegTensor<float> &uReg,
+__simd_callee__ inline void LoadStage1Pair(
+    RegTensor<float> &vNew0, RegTensor<float> &vNew1,
     __ubuf__ float *workspace, __ubuf__ InputT *uInput,
-    uint32_t offset, MaskReg &mask, Stage1WithP)
+    uint32_t offset, MaskReg &f32Mask, MaskReg &b16Mask,
+    uint32_t b32PerVl, Stage1WithP)
 {
-    LoadAsFloat<InputT>(uReg, uInput + offset, mask);
-    LoadFloat(vNew, workspace + offset);
-    Sub(vNew, uReg, vNew, mask);
+    RegTensor<float> u0, u1, p0, p1;
+    LoadB16Pair(u0, u1, uInput + offset, b16Mask);
+    LoadFloatPair(p0, p1, workspace + offset, b32PerVl);
+    Sub(vNew0, u0, p0, f32Mask);
+    Sub(vNew1, u1, p1, f32Mask);
 }
 
 template <typename InputT>
-__simd_callee__ inline void LoadStage1VNew(
-    RegTensor<float> &vNew, RegTensor<float> &,
+__simd_callee__ inline void LoadStage1Pair(
+    RegTensor<float> &vNew0, RegTensor<float> &vNew1,
     __ubuf__ float *, __ubuf__ InputT *uInput,
-    uint32_t offset, MaskReg &mask, Stage1WithoutP)
+    uint32_t offset, MaskReg &, MaskReg &b16Mask,
+    uint32_t, Stage1WithoutP)
 {
-    LoadAsFloat<InputT>(vNew, uInput + offset, mask);
+    LoadB16Pair(vNew0, vNew1, uInput + offset, b16Mask);
 }
 
 template <typename InputT>
-__simd_callee__ inline void StoreStage1Outputs(
-    __ubuf__ float *workspace, __ubuf__ InputT *packedOutput,
-    __ubuf__ InputT *rowOutput, RegTensor<float> &vNew,
-    RegTensor<float> &vUpdate, uint32_t offset, uint32_t packedOffset,
-    MaskReg &mask)
+__simd_callee__ inline void StoreStage1Pair(
+    __ubuf__ InputT *updateOutput, __ubuf__ InputT *rowOutput,
+    RegTensor<float> &vNew0, RegTensor<float> &vNew1,
+    RegTensor<float> &vUpdate0, RegTensor<float> &vUpdate1,
+    uint32_t offset, MaskReg &f32Mask)
 {
-    RegTensor<InputT> rowOutReg, packedOutReg;
-    Cast<InputT, float, F32_TO_B16_RINT>(rowOutReg, vNew, mask);
-    StoreAlign<InputT, StoreDist::DIST_PACK_B32>(rowOutput + offset, rowOutReg, mask);
-    StoreFloat(workspace + offset, vUpdate, mask);
-    Cast<InputT, float, F32_TO_B16_RINT>(packedOutReg, vUpdate, mask);
-    StoreAlign<InputT, StoreDist::DIST_PACK_B32>(
-        packedOutput + packedOffset, packedOutReg, mask);
+    RegTensor<InputT> vNewPacked, vUpdatePacked;
+    MaskReg b16Mask = CreateMask<InputT, MaskPattern::ALL>();
+    Cast<InputT, float, F32_TO_B16_ONE_RINT>(vNewPacked, vNew1, f32Mask);
+    Cast<InputT, float, F32_TO_B16_ONE_RINT>(vUpdatePacked, vUpdate1, f32Mask);
+    Cast<InputT, float, F32_TO_B16_ZERO_RINT>(vNewPacked, vNew0, f32Mask);
+    Cast<InputT, float, F32_TO_B16_ZERO_RINT>(vUpdatePacked, vUpdate0, f32Mask);
+    StoreAlign(rowOutput + offset, vNewPacked, b16Mask);
+    StoreAlign(updateOutput + offset, vUpdatePacked, b16Mask);
 }
 
 template <typename InputT, typename GateT, typename Stage1Input>
-static __simd_vf__ inline void ComputeStage1GExpTile(
+static __simd_vf__ inline void Stage1GExpRegbaseVf(
     __ubuf__ float *workspace, __ubuf__ InputT *uInput,
-    __ubuf__ InputT *packedOutput, __ubuf__ InputT *rowOutput,
+    __ubuf__ InputT *updateOutput, __ubuf__ InputT *rowOutput,
     __ubuf__ GateT *gateRaw, uint32_t rowOffset, uint16_t totalRows,
     uint16_t rows, uint16_t cols)
 {
-    constexpr uint16_t C0 = 16;
-    RegTensor<float> uReg, vNewReg, vUpdateReg, scaleReg, gateReg, gateLastReg;
-    MaskReg mask, scalarMask = UpdateMask<float>(1);
-    LoadAsFloat<GateT>(gateLastReg, gateRaw + totalRows - 1, scalarMask);
+    constexpr uint32_t B32_PER_VL = AscendC::GetVecLen() / sizeof(float);
+    RegTensor<float> vNew0, vNew1, vUpdate0, vUpdate1;
+    RegTensor<float> gateRow, gateLast, scale;
+    MaskReg f32Mask = CreateMask<float, MaskPattern::ALL>();
+    MaskReg b16Mask = CreateMask<InputT, MaskPattern::ALL>();
+    LoadBroadcastAsFloat(gateLast, gateRaw + totalRows - 1);
     for (uint16_t row = 0; row < rows; ++row) {
-        scalarMask = UpdateMask<float>(1);
-        LoadAsFloat<GateT>(gateReg, gateRaw + rowOffset + row, scalarMask);
-        Sub(gateReg, gateLastReg, gateReg, scalarMask);
-        Exp(gateReg, gateReg, scalarMask);
-        for (uint16_t col = 0; col < cols; col += C0) {
-            uint32_t remaining = cols - col;
-            uint16_t count = remaining > C0 ? C0 : static_cast<uint16_t>(remaining);
-            mask = UpdateMask<float>(count);
-            const uint32_t offset = static_cast<uint32_t>(row) * cols + col;
-            LoadStage1VNew<InputT>(vNewReg, uReg, workspace, uInput, offset, mask,
-                                    Stage1Input{});
-            Duplicate(scaleReg, gateReg, mask);
-            Mul(vUpdateReg, vNewReg, scaleReg, mask);
-            const uint32_t packedOffset = ((col / C0) * rows + row) * C0;
-            StoreStage1Outputs<InputT>(workspace, packedOutput, rowOutput,
-                                       vNewReg, vUpdateReg, offset, packedOffset, mask);
-        }
+        const uint32_t offset = static_cast<uint32_t>(row) * cols;
+        LoadBroadcastAsFloat(gateRow, gateRaw + rowOffset + row);
+        Sub(scale, gateLast, gateRow, f32Mask);
+        Exp(scale, scale, f32Mask);
+        LoadStage1Pair(vNew0, vNew1, workspace, uInput, offset,
+                       f32Mask, b16Mask, B32_PER_VL, Stage1Input{});
+        Mul(vUpdate0, vNew0, scale, f32Mask);
+        Mul(vUpdate1, vNew1, scale, f32Mask);
+        StoreStage1Pair(updateOutput, rowOutput, vNew0, vNew1,
+                        vUpdate0, vUpdate1, offset, f32Mask);
     }
 }
 
 template <typename InputT, typename GateT, typename Stage1Input>
-static __simd_vf__ inline void ComputeStage1GExp2Tile(
+static __simd_vf__ inline void Stage1GExp2RegbaseVf(
     __ubuf__ float *workspace, __ubuf__ InputT *uInput,
-    __ubuf__ InputT *packedOutput, __ubuf__ InputT *rowOutput,
+    __ubuf__ InputT *updateOutput, __ubuf__ InputT *rowOutput,
     __ubuf__ GateT *gateRaw, uint32_t rowOffset, uint16_t totalRows,
     uint16_t rows, uint16_t cols)
 {
-    constexpr uint16_t C0 = 16;
-    RegTensor<float> uReg, vNewReg, vUpdateReg, scaleReg, gateReg, gateLastReg;
-    MaskReg mask, scalarMask = UpdateMask<float>(1);
-    LoadAsFloat<GateT>(gateLastReg, gateRaw + totalRows - 1, scalarMask);
+    constexpr uint32_t B32_PER_VL = AscendC::GetVecLen() / sizeof(float);
+    RegTensor<float> vNew0, vNew1, vUpdate0, vUpdate1;
+    RegTensor<float> gateRow, gateLast, scale;
+    MaskReg f32Mask = CreateMask<float, MaskPattern::ALL>();
+    MaskReg b16Mask = CreateMask<InputT, MaskPattern::ALL>();
+    LoadBroadcastAsFloat(gateLast, gateRaw + totalRows - 1);
     for (uint16_t row = 0; row < rows; ++row) {
-        scalarMask = UpdateMask<float>(1);
-        LoadAsFloat<GateT>(gateReg, gateRaw + rowOffset + row, scalarMask);
-        Sub(gateReg, gateLastReg, gateReg, scalarMask);
-        Muls(gateReg, gateReg, 0.6931471805599453f, scalarMask);
-        Exp(gateReg, gateReg, scalarMask);
-        for (uint16_t col = 0; col < cols; col += C0) {
-            uint32_t remaining = cols - col;
-            uint16_t count = remaining > C0 ? C0 : static_cast<uint16_t>(remaining);
-            mask = UpdateMask<float>(count);
-            const uint32_t offset = static_cast<uint32_t>(row) * cols + col;
-            LoadStage1VNew<InputT>(vNewReg, uReg, workspace, uInput, offset, mask,
-                                    Stage1Input{});
-            Duplicate(scaleReg, gateReg, mask);
-            Mul(vUpdateReg, vNewReg, scaleReg, mask);
-            const uint32_t packedOffset = ((col / C0) * rows + row) * C0;
-            StoreStage1Outputs<InputT>(workspace, packedOutput, rowOutput,
-                                       vNewReg, vUpdateReg, offset, packedOffset, mask);
-        }
+        const uint32_t offset = static_cast<uint32_t>(row) * cols;
+        LoadBroadcastAsFloat(gateRow, gateRaw + rowOffset + row);
+        Sub(scale, gateLast, gateRow, f32Mask);
+        Muls(scale, scale, 0.6931471805599453f, f32Mask);
+        Exp(scale, scale, f32Mask);
+        LoadStage1Pair(vNew0, vNew1, workspace, uInput, offset,
+                       f32Mask, b16Mask, B32_PER_VL, Stage1Input{});
+        Mul(vUpdate0, vNew0, scale, f32Mask);
+        Mul(vUpdate1, vNew1, scale, f32Mask);
+        StoreStage1Pair(updateOutput, rowOutput, vNew0, vNew1,
+                        vUpdate0, vUpdate1, offset, f32Mask);
     }
 }
 
 template <typename InputT, typename GateT, typename Stage1Input>
-static __simd_vf__ inline void ComputeStage1GkTile(
+static __simd_vf__ inline void Stage1GkRegbaseVf(
     __ubuf__ float *workspace, __ubuf__ InputT *uInput,
-    __ubuf__ InputT *packedOutput, __ubuf__ InputT *rowOutput,
+    __ubuf__ InputT *updateOutput, __ubuf__ InputT *rowOutput,
     __ubuf__ GateT *, uint32_t, uint16_t, uint16_t rows, uint16_t cols)
 {
-    constexpr uint16_t C0 = 16;
-    RegTensor<float> uReg, vNewReg;
-    MaskReg mask;
+    constexpr uint32_t B32_PER_VL = AscendC::GetVecLen() / sizeof(float);
+    RegTensor<float> vNew0, vNew1;
+    MaskReg f32Mask = CreateMask<float, MaskPattern::ALL>();
+    MaskReg b16Mask = CreateMask<InputT, MaskPattern::ALL>();
     for (uint16_t row = 0; row < rows; ++row) {
-        for (uint16_t col = 0; col < cols; col += C0) {
-            uint32_t remaining = cols - col;
-            uint16_t count = remaining > C0 ? C0 : static_cast<uint16_t>(remaining);
-            mask = UpdateMask<float>(count);
-            const uint32_t offset = static_cast<uint32_t>(row) * cols + col;
-            LoadStage1VNew<InputT>(vNewReg, uReg, workspace, uInput, offset, mask,
-                                    Stage1Input{});
-            const uint32_t packedOffset = ((col / C0) * rows + row) * C0;
-            StoreStage1Outputs<InputT>(workspace, packedOutput, rowOutput,
-                                       vNewReg, vNewReg, offset, packedOffset, mask);
-        }
+        const uint32_t offset = static_cast<uint32_t>(row) * cols;
+        LoadStage1Pair(vNew0, vNew1, workspace, uInput, offset,
+                       f32Mask, b16Mask, B32_PER_VL, Stage1Input{});
+        StoreStage1Pair(updateOutput, rowOutput, vNew0, vNew1,
+                        vNew0, vNew1, offset, f32Mask);
     }
 }
 
 template <typename InputT, typename StateT>
-__simd_callee__ inline void LoadStage3State(
-    RegTensor<float> &state, __ubuf__ float *stateFloat,
-    __ubuf__ StateT *, __ubuf__ InputT *, uint32_t offset,
-    MaskReg &, FloatStateSource)
+__simd_callee__ inline void LoadStage3StatePair(
+    RegTensor<float> &state0, RegTensor<float> &state1,
+    __ubuf__ float *stateFloat, __ubuf__ StateT *, __ubuf__ InputT *,
+    uint32_t offset, MaskReg &, uint32_t b32PerVl, FloatStateSource)
 {
-    LoadFloat(state, stateFloat + offset);
+    LoadFloatPair(state0, state1, stateFloat + offset, b32PerVl);
 }
 
 template <typename InputT, typename StateT>
-__simd_callee__ inline void LoadStage3State(
-    RegTensor<float> &state, __ubuf__ float *, __ubuf__ StateT *stateNative,
-    __ubuf__ InputT *, uint32_t offset, MaskReg &mask, NativeStateSource)
+__simd_callee__ inline void LoadStage3StatePair(
+    RegTensor<float> &state0, RegTensor<float> &state1,
+    __ubuf__ float *, __ubuf__ StateT *stateNative, __ubuf__ InputT *,
+    uint32_t offset, MaskReg &stateMask, uint32_t, NativeStateSource)
 {
-    LoadAsFloat<StateT>(state, stateNative + offset, mask);
+    LoadB16Pair(state0, state1, stateNative + offset, stateMask);
 }
 
 template <typename InputT, typename StateT>
-__simd_callee__ inline void LoadStage3State(
-    RegTensor<float> &state, __ubuf__ float *, __ubuf__ StateT *,
-    __ubuf__ InputT *stateInput, uint32_t offset, MaskReg &mask,
-    InputStateSource)
+__simd_callee__ inline void LoadStage3StatePair(
+    RegTensor<float> &state0, RegTensor<float> &state1,
+    __ubuf__ float *, __ubuf__ StateT *, __ubuf__ InputT *stateInput,
+    uint32_t offset, MaskReg &stateMask, uint32_t, InputStateSource)
 {
-    LoadAsFloat<InputT>(state, stateInput + offset, mask);
+    LoadB16Pair(state0, state1, stateInput + offset, stateMask);
 }
 
 template <typename InputT, typename StateT>
-__simd_callee__ inline void StoreStage3Outputs(
-    RegTensor<float> &update, __ubuf__ StateT *stateOutput,
-    __ubuf__ InputT *hOutput, uint32_t offset, MaskReg &mask,
+__simd_callee__ inline void StoreStage3Pair(
+    RegTensor<float> &update0, RegTensor<float> &update1,
+    __ubuf__ StateT *stateOutput, __ubuf__ InputT *hOutput,
+    uint32_t offset, MaskReg &f32Mask, uint32_t b32PerVl,
     FloatStateAndHOutput)
 {
-    RegTensor<InputT> hOutReg;
-    StoreFloat(reinterpret_cast<__ubuf__ float *>(stateOutput) + offset, update, mask);
-    Cast<InputT, float, F32_TO_B16_RINT>(hOutReg, update, mask);
-    StoreAlign<InputT, StoreDist::DIST_PACK_B32>(hOutput + offset, hOutReg, mask);
+    StoreFloatPair(reinterpret_cast<__ubuf__ float *>(stateOutput) + offset,
+                   update0, update1, f32Mask, b32PerVl);
+    StoreB16Pair(hOutput + offset, update0, update1, f32Mask);
 }
 
 template <typename InputT, typename StateT>
-__simd_callee__ inline void StoreStage3Outputs(
-    RegTensor<float> &update, __ubuf__ StateT *stateOutput,
-    __ubuf__ InputT *, uint32_t offset, MaskReg &mask, FloatStateOnlyOutput)
+__simd_callee__ inline void StoreStage3Pair(
+    RegTensor<float> &update0, RegTensor<float> &update1,
+    __ubuf__ StateT *stateOutput, __ubuf__ InputT *, uint32_t offset,
+    MaskReg &f32Mask, uint32_t b32PerVl, FloatStateOnlyOutput)
 {
-    StoreFloat(reinterpret_cast<__ubuf__ float *>(stateOutput) + offset, update, mask);
+    StoreFloatPair(reinterpret_cast<__ubuf__ float *>(stateOutput) + offset,
+                   update0, update1, f32Mask, b32PerVl);
 }
 
 template <typename InputT, typename StateT>
-__simd_callee__ inline void StoreStage3Outputs(
-    RegTensor<float> &update, __ubuf__ StateT *stateOutput,
-    __ubuf__ InputT *hOutput, uint32_t offset, MaskReg &mask,
+__simd_callee__ inline void StoreStage3Pair(
+    RegTensor<float> &update0, RegTensor<float> &update1,
+    __ubuf__ StateT *stateOutput, __ubuf__ InputT *hOutput,
+    uint32_t offset, MaskReg &f32Mask, uint32_t,
     SeparateB16StateAndHOutput)
 {
     RegTensor<StateT> stateOutReg;
-    RegTensor<float> quantizedStateReg;
+    RegTensor<float> quantized0, quantized1;
     RegTensor<InputT> hOutReg;
-    Cast<StateT, float, F32_TO_B16_RINT>(stateOutReg, update, mask);
-    StoreAlign<StateT, StoreDist::DIST_PACK_B32>(stateOutput + offset, stateOutReg, mask);
-    Cast<float, StateT, B16_TO_F32_ZERO>(quantizedStateReg, stateOutReg, mask);
-    Cast<InputT, float, F32_TO_B16_RINT>(hOutReg, quantizedStateReg, mask);
-    StoreAlign<InputT, StoreDist::DIST_PACK_B32>(hOutput + offset, hOutReg, mask);
+    MaskReg stateMask = CreateMask<StateT, MaskPattern::ALL>();
+    MaskReg inputMask = CreateMask<InputT, MaskPattern::ALL>();
+    PackFloatPair(stateOutReg, update0, update1, f32Mask);
+    StoreAlign(stateOutput + offset, stateOutReg, stateMask);
+    Cast<float, StateT, B16_TO_F32_ZERO>(quantized0, stateOutReg, stateMask);
+    Cast<float, StateT, B16_TO_F32_ONE>(quantized1, stateOutReg, stateMask);
+    PackFloatPair(hOutReg, quantized0, quantized1, f32Mask);
+    StoreAlign(hOutput + offset, hOutReg, inputMask);
 }
 
 template <typename InputT, typename StateT>
-__simd_callee__ inline void StoreStage3Outputs(
-    RegTensor<float> &update, __ubuf__ StateT *stateOutput,
-    __ubuf__ InputT *hOutput, uint32_t offset, MaskReg &mask,
+__simd_callee__ inline void StoreStage3Pair(
+    RegTensor<float> &update0, RegTensor<float> &update1,
+    __ubuf__ StateT *stateOutput, __ubuf__ InputT *hOutput,
+    uint32_t offset, MaskReg &f32Mask, uint32_t,
     SharedB16StateAndHOutput)
 {
     RegTensor<StateT> stateOutReg;
-    Cast<StateT, float, F32_TO_B16_RINT>(stateOutReg, update, mask);
-    StoreAlign<StateT, StoreDist::DIST_PACK_B32>(stateOutput + offset, stateOutReg, mask);
-    StoreAlign<InputT, StoreDist::DIST_PACK_B32>(hOutput + offset, stateOutReg, mask);
+    MaskReg stateMask = CreateMask<StateT, MaskPattern::ALL>();
+    PackFloatPair(stateOutReg, update0, update1, f32Mask);
+    StoreAlign(stateOutput + offset, stateOutReg, stateMask);
+    StoreAlign(hOutput + offset, stateOutReg, stateMask);
 }
 
 template <typename InputT, typename StateT>
-__simd_callee__ inline void StoreStage3Outputs(
-    RegTensor<float> &update, __ubuf__ StateT *stateOutput,
-    __ubuf__ InputT *, uint32_t offset, MaskReg &mask, B16StateOnlyOutput)
+__simd_callee__ inline void StoreStage3Pair(
+    RegTensor<float> &update0, RegTensor<float> &update1,
+    __ubuf__ StateT *stateOutput, __ubuf__ InputT *, uint32_t offset,
+    MaskReg &f32Mask, uint32_t, B16StateOnlyOutput)
 {
     RegTensor<StateT> stateOutReg;
-    Cast<StateT, float, F32_TO_B16_RINT>(stateOutReg, update, mask);
-    StoreAlign<StateT, StoreDist::DIST_PACK_B32>(stateOutput + offset, stateOutReg, mask);
+    MaskReg stateMask = CreateMask<StateT, MaskPattern::ALL>();
+    PackFloatPair(stateOutReg, update0, update1, f32Mask);
+    StoreAlign(stateOutput + offset, stateOutReg, stateMask);
 }
 
 template <typename InputT, typename StateT>
-__simd_callee__ inline void StoreStage3Outputs(
-    RegTensor<float> &update, __ubuf__ StateT *, __ubuf__ InputT *hOutput,
-    uint32_t offset, MaskReg &mask, HOnlyOutput)
+__simd_callee__ inline void StoreStage3Pair(
+    RegTensor<float> &update0, RegTensor<float> &update1,
+    __ubuf__ StateT *, __ubuf__ InputT *hOutput, uint32_t offset,
+    MaskReg &f32Mask, uint32_t, HOnlyOutput)
 {
-    RegTensor<InputT> hOutReg;
-    Cast<InputT, float, F32_TO_B16_RINT>(hOutReg, update, mask);
-    StoreAlign<InputT, StoreDist::DIST_PACK_B32>(hOutput + offset, hOutReg, mask);
+    StoreB16Pair(hOutput + offset, update0, update1, f32Mask);
 }
 
 template <typename InputT, typename GateT, typename StateT,
           typename StateSource, typename OutputPolicy>
-static __simd_vf__ inline void ComputeStage3GExpTile(
+static __simd_vf__ inline void Stage3GExpRegbaseVf(
     __ubuf__ float *update, __ubuf__ float *stateFloat,
     __ubuf__ StateT *stateNative, __ubuf__ InputT *stateInput,
     __ubuf__ GateT *gateRaw,
     __ubuf__ StateT *stateOutput, __ubuf__ InputT *hOutput,
     uint16_t rows, uint16_t cols)
 {
-    constexpr uint16_t ELEMS = AscendC::VECTOR_REG_WIDTH / sizeof(float);
-    RegTensor<float> updateReg, stateReg, gateReg, gateScalarReg;
-    MaskReg mask, gateScalarMask = UpdateMask<float>(1);
-    MaskReg gateMask = UpdateMask<float>(ELEMS);
-    LoadAsFloat<GateT>(gateScalarReg, gateRaw, gateScalarMask);
-    Exp(gateScalarReg, gateScalarReg, gateScalarMask);
-    Duplicate(gateReg, gateScalarReg, gateMask);
+    constexpr uint32_t B32_PER_VL = AscendC::GetVecLen() / sizeof(float);
+    RegTensor<float> update0, update1, state0, state1, gate;
+    MaskReg f32Mask = CreateMask<float, MaskPattern::ALL>();
+    MaskReg stateMask = CreateMask<InputT, MaskPattern::ALL>();
+    LoadBroadcastAsFloat(gate, gateRaw);
+    Exp(gate, gate, f32Mask);
     for (uint16_t row = 0; row < rows; ++row) {
-        for (uint16_t col = 0; col < cols; col += ELEMS) {
-            uint32_t remaining = cols - col;
-            uint16_t count = remaining > ELEMS ? ELEMS : static_cast<uint16_t>(remaining);
-            mask = UpdateMask<float>(count);
-            const uint32_t offset = static_cast<uint32_t>(row) * cols + col;
-            LoadFloat(updateReg, update + offset);
-            LoadStage3State<InputT, StateT>(stateReg, stateFloat, stateNative,
-                                             stateInput, offset, mask, StateSource{});
-            Mul(stateReg, stateReg, gateReg, mask);
-            Add(updateReg, stateReg, updateReg, mask);
-            StoreStage3Outputs<InputT, StateT>(updateReg, stateOutput, hOutput,
-                                                offset, mask, OutputPolicy{});
-        }
+        const uint32_t offset = static_cast<uint32_t>(row) * cols;
+        LoadFloatPair(update0, update1, update + offset, B32_PER_VL);
+        LoadStage3StatePair<InputT, StateT>(state0, state1, stateFloat,
+            stateNative, stateInput, offset, stateMask, B32_PER_VL,
+            StateSource{});
+        Mul(state0, state0, gate, f32Mask);
+        Mul(state1, state1, gate, f32Mask);
+        Add(update0, state0, update0, f32Mask);
+        Add(update1, state1, update1, f32Mask);
+        StoreStage3Pair<InputT, StateT>(update0, update1, stateOutput,
+            hOutput, offset, f32Mask, B32_PER_VL, OutputPolicy{});
     }
 }
 
 template <typename InputT, typename GateT, typename StateT,
           typename StateSource, typename OutputPolicy>
-static __simd_vf__ inline void ComputeStage3GExp2Tile(
+static __simd_vf__ inline void Stage3GExp2RegbaseVf(
     __ubuf__ float *update, __ubuf__ float *stateFloat,
     __ubuf__ StateT *stateNative, __ubuf__ InputT *stateInput,
     __ubuf__ GateT *gateRaw, __ubuf__ StateT *stateOutput,
     __ubuf__ InputT *hOutput, uint16_t rows, uint16_t cols)
 {
-    constexpr uint16_t ELEMS = AscendC::VECTOR_REG_WIDTH / sizeof(float);
-    RegTensor<float> updateReg, stateReg, gateReg, gateScalarReg;
-    MaskReg mask, gateScalarMask = UpdateMask<float>(1);
-    MaskReg gateMask = UpdateMask<float>(ELEMS);
-    LoadAsFloat<GateT>(gateScalarReg, gateRaw, gateScalarMask);
-    Muls(gateScalarReg, gateScalarReg, 0.6931471805599453f, gateScalarMask);
-    Exp(gateScalarReg, gateScalarReg, gateScalarMask);
-    Duplicate(gateReg, gateScalarReg, gateMask);
+    constexpr uint32_t B32_PER_VL = AscendC::GetVecLen() / sizeof(float);
+    RegTensor<float> update0, update1, state0, state1, gate;
+    MaskReg f32Mask = CreateMask<float, MaskPattern::ALL>();
+    MaskReg stateMask = CreateMask<InputT, MaskPattern::ALL>();
+    LoadBroadcastAsFloat(gate, gateRaw);
+    Muls(gate, gate, 0.6931471805599453f, f32Mask);
+    Exp(gate, gate, f32Mask);
     for (uint16_t row = 0; row < rows; ++row) {
-        for (uint16_t col = 0; col < cols; col += ELEMS) {
-            uint32_t remaining = cols - col;
-            uint16_t count = remaining > ELEMS ? ELEMS : static_cast<uint16_t>(remaining);
-            mask = UpdateMask<float>(count);
-            const uint32_t offset = static_cast<uint32_t>(row) * cols + col;
-            LoadFloat(updateReg, update + offset);
-            LoadStage3State<InputT, StateT>(stateReg, stateFloat, stateNative,
-                                             stateInput, offset, mask, StateSource{});
-            Mul(stateReg, stateReg, gateReg, mask);
-            Add(updateReg, stateReg, updateReg, mask);
-            StoreStage3Outputs<InputT, StateT>(updateReg, stateOutput, hOutput,
-                                                offset, mask, OutputPolicy{});
-        }
+        const uint32_t offset = static_cast<uint32_t>(row) * cols;
+        LoadFloatPair(update0, update1, update + offset, B32_PER_VL);
+        LoadStage3StatePair<InputT, StateT>(state0, state1, stateFloat,
+            stateNative, stateInput, offset, stateMask, B32_PER_VL,
+            StateSource{});
+        Mul(state0, state0, gate, f32Mask);
+        Mul(state1, state1, gate, f32Mask);
+        Add(update0, state0, update0, f32Mask);
+        Add(update1, state1, update1, f32Mask);
+        StoreStage3Pair<InputT, StateT>(update0, update1, stateOutput,
+            hOutput, offset, f32Mask, B32_PER_VL, OutputPolicy{});
     }
 }
 
 template <typename InputT, typename GateT, typename StateT,
           typename StateSource, typename OutputPolicy>
-static __simd_vf__ inline void ComputeStage3GkExpTile(
+static __simd_vf__ inline void Stage3GkExpRegbaseVf(
     __ubuf__ float *update, __ubuf__ float *stateFloat,
     __ubuf__ StateT *stateNative, __ubuf__ InputT *stateInput,
     __ubuf__ GateT *gateRaw, __ubuf__ StateT *stateOutput,
     __ubuf__ InputT *hOutput, uint16_t rows, uint16_t cols)
 {
-    constexpr uint16_t ELEMS = AscendC::VECTOR_REG_WIDTH / sizeof(float);
-    RegTensor<float> updateReg, stateReg, gateReg, gateScalarReg;
-    MaskReg mask, gateScalarMask, gateMask;
+    constexpr uint32_t B32_PER_VL = AscendC::GetVecLen() / sizeof(float);
+    RegTensor<float> update0, update1, state0, state1, gate;
+    MaskReg f32Mask = CreateMask<float, MaskPattern::ALL>();
+    MaskReg stateMask = CreateMask<InputT, MaskPattern::ALL>();
     for (uint16_t row = 0; row < rows; ++row) {
-        gateScalarMask = UpdateMask<float>(1);
-        gateMask = UpdateMask<float>(ELEMS);
-        LoadAsFloat<GateT>(gateScalarReg, gateRaw + row, gateScalarMask);
-        Duplicate(gateReg, gateScalarReg, gateMask);
-        Exp(gateReg, gateReg, gateMask);
-        for (uint16_t col = 0; col < cols; col += ELEMS) {
-            uint32_t remaining = cols - col;
-            uint16_t count = remaining > ELEMS ? ELEMS : static_cast<uint16_t>(remaining);
-            mask = UpdateMask<float>(count);
-            const uint32_t offset = static_cast<uint32_t>(row) * cols + col;
-            LoadFloat(updateReg, update + offset);
-            LoadStage3State<InputT, StateT>(stateReg, stateFloat, stateNative,
-                                             stateInput, offset, mask, StateSource{});
-            Mul(stateReg, stateReg, gateReg, mask);
-            Add(updateReg, stateReg, updateReg, mask);
-            StoreStage3Outputs<InputT, StateT>(updateReg, stateOutput, hOutput,
-                                                offset, mask, OutputPolicy{});
-        }
+        const uint32_t offset = static_cast<uint32_t>(row) * cols;
+        LoadBroadcastAsFloat(gate, gateRaw + row);
+        Exp(gate, gate, f32Mask);
+        LoadFloatPair(update0, update1, update + offset, B32_PER_VL);
+        LoadStage3StatePair<InputT, StateT>(state0, state1, stateFloat,
+            stateNative, stateInput, offset, stateMask, B32_PER_VL,
+            StateSource{});
+        Mul(state0, state0, gate, f32Mask);
+        Mul(state1, state1, gate, f32Mask);
+        Add(update0, state0, update0, f32Mask);
+        Add(update1, state1, update1, f32Mask);
+        StoreStage3Pair<InputT, StateT>(update0, update1, stateOutput,
+            hOutput, offset, f32Mask, B32_PER_VL, OutputPolicy{});
     }
 }
 
 template <typename InputT, typename GateT, typename StateT,
           typename StateSource, typename OutputPolicy>
-static __simd_vf__ inline void ComputeStage3GkExp2Tile(
+static __simd_vf__ inline void Stage3GkExp2RegbaseVf(
     __ubuf__ float *update, __ubuf__ float *stateFloat,
     __ubuf__ StateT *stateNative, __ubuf__ InputT *stateInput,
     __ubuf__ GateT *gateRaw, __ubuf__ StateT *stateOutput,
     __ubuf__ InputT *hOutput, uint16_t rows, uint16_t cols)
 {
-    constexpr uint16_t ELEMS = AscendC::VECTOR_REG_WIDTH / sizeof(float);
-    RegTensor<float> updateReg, stateReg, gateReg, gateScalarReg;
-    MaskReg mask, gateScalarMask, gateMask;
+    constexpr uint32_t B32_PER_VL = AscendC::GetVecLen() / sizeof(float);
+    RegTensor<float> update0, update1, state0, state1, gate;
+    MaskReg f32Mask = CreateMask<float, MaskPattern::ALL>();
+    MaskReg stateMask = CreateMask<InputT, MaskPattern::ALL>();
     for (uint16_t row = 0; row < rows; ++row) {
-        gateScalarMask = UpdateMask<float>(1);
-        gateMask = UpdateMask<float>(ELEMS);
-        LoadAsFloat<GateT>(gateScalarReg, gateRaw + row, gateScalarMask);
-        Duplicate(gateReg, gateScalarReg, gateMask);
-        Muls(gateReg, gateReg, 0.6931471805599453f, gateMask);
-        Exp(gateReg, gateReg, gateMask);
-        for (uint16_t col = 0; col < cols; col += ELEMS) {
-            uint32_t remaining = cols - col;
-            uint16_t count = remaining > ELEMS ? ELEMS : static_cast<uint16_t>(remaining);
-            mask = UpdateMask<float>(count);
-            const uint32_t offset = static_cast<uint32_t>(row) * cols + col;
-            LoadFloat(updateReg, update + offset);
-            LoadStage3State<InputT, StateT>(stateReg, stateFloat, stateNative,
-                                             stateInput, offset, mask, StateSource{});
-            Mul(stateReg, stateReg, gateReg, mask);
-            Add(updateReg, stateReg, updateReg, mask);
-            StoreStage3Outputs<InputT, StateT>(updateReg, stateOutput, hOutput,
-                                                offset, mask, OutputPolicy{});
-        }
+        const uint32_t offset = static_cast<uint32_t>(row) * cols;
+        LoadBroadcastAsFloat(gate, gateRaw + row);
+        Muls(gate, gate, 0.6931471805599453f, f32Mask);
+        Exp(gate, gate, f32Mask);
+        LoadFloatPair(update0, update1, update + offset, B32_PER_VL);
+        LoadStage3StatePair<InputT, StateT>(state0, state1, stateFloat,
+            stateNative, stateInput, offset, stateMask, B32_PER_VL,
+            StateSource{});
+        Mul(state0, state0, gate, f32Mask);
+        Mul(state1, state1, gate, f32Mask);
+        Add(update0, state0, update0, f32Mask);
+        Add(update1, state1, update1, f32Mask);
+        StoreStage3Pair<InputT, StateT>(update0, update1, stateOutput,
+            hOutput, offset, f32Mask, B32_PER_VL, OutputPolicy{});
     }
 }
 
@@ -847,11 +884,17 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
     const uint32_t paddedRows = (offsets.blockTokens + NZ_BLOCK_SIZE - 1) /
         NZ_BLOCK_SIZE * NZ_BLOCK_SIZE;
     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
-    AscendC::DataCopyParams znParams{
-        static_cast<uint16_t>(cols / C0), static_cast<uint16_t>(rows), 0,
-        static_cast<uint16_t>(paddedRows - rows)};
-    AscendC::DataCopy(gmVUpdateWorkspace_[offsets.vWorkOffset + rowStart * C0],
-                      stage1PackedUb_[headSlot], znParams);
+    const int64_t srcStride = static_cast<int64_t>(
+        (cols - C0) * sizeof(InputT) / AscendC::ONE_BLK_SIZE);
+    const AscendC::DataCopyExtParams znParams{
+        static_cast<uint16_t>(rows), C0 * sizeof(InputT), srcStride, 0, 0};
+    for (uint32_t colBlock = 0; colBlock < cols / C0; ++colBlock) {
+        const uint32_t srcOffset = colBlock * C0;
+        const uint32_t dstOffset = colBlock * paddedRows * C0 + rowStart * C0;
+        AscendC::DataCopyPad(
+            gmVUpdateWorkspace_[offsets.vWorkOffset + dstOffset],
+            stage1PackedUb_[headSlot][srcOffset], znParams);
+    }
     CopyUbToGm(gmV_[offsets.uvOffset + rowStart * vHeadDim_], stage1OutputUb_[headSlot],
                rows, cols, vHeadDim_);
     AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
@@ -868,7 +911,7 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
 {
     auto workspace = reinterpret_cast<__ubuf__ float *>(wsUb_[tileSlot].GetPhyAddr());
     auto uInput = reinterpret_cast<__ubuf__ InputT *>(ioUb_[tileSlot].GetPhyAddr());
-    auto packedOutput = reinterpret_cast<__ubuf__ InputT *>(
+    auto updateOutput = reinterpret_cast<__ubuf__ InputT *>(
         stage1PackedUb_[tileSlot].GetPhyAddr());
     auto rowOutput = reinterpret_cast<__ubuf__ InputT *>(
         stage1OutputUb_[tileSlot].GetPhyAddr());
@@ -876,22 +919,22 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
 
     if constexpr (kScalarGate) {
         if constexpr (kUseExp2) {
-            AscendC::VF_CALL<detail::ComputeStage1GExp2Tile<
+            AscendC::VF_CALL<detail::Stage1GExp2RegbaseVf<
                 InputT, GateT, Stage1Input>>(
-                workspace, uInput, packedOutput, rowOutput, gateInput,
+                workspace, uInput, updateOutput, rowOutput, gateInput,
                 rowStart, static_cast<uint16_t>(totalRows),
                 static_cast<uint16_t>(rows), static_cast<uint16_t>(cols));
         } else {
-            AscendC::VF_CALL<detail::ComputeStage1GExpTile<
+            AscendC::VF_CALL<detail::Stage1GExpRegbaseVf<
                 InputT, GateT, Stage1Input>>(
-                workspace, uInput, packedOutput, rowOutput, gateInput,
+                workspace, uInput, updateOutput, rowOutput, gateInput,
                 rowStart, static_cast<uint16_t>(totalRows),
                 static_cast<uint16_t>(rows), static_cast<uint16_t>(cols));
         }
     } else {
-        AscendC::VF_CALL<detail::ComputeStage1GkTile<
+        AscendC::VF_CALL<detail::Stage1GkRegbaseVf<
             InputT, GateT, Stage1Input>>(
-            workspace, uInput, packedOutput, rowOutput, gateInput,
+            workspace, uInput, updateOutput, rowOutput, gateInput,
             rowStart, static_cast<uint16_t>(totalRows),
             static_cast<uint16_t>(rows), static_cast<uint16_t>(cols));
     }
@@ -1094,13 +1137,13 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
         gateInput = reinterpret_cast<__ubuf__ GateT *>(gInputUb_[headSlot].GetPhyAddr()) +
             offsets.blockTokens - 1;
         if constexpr (kUseExp2) {
-            AscendC::VF_CALL<detail::ComputeStage3GExp2Tile<
+            AscendC::VF_CALL<detail::Stage3GExp2RegbaseVf<
                 InputT, GateT, StateT, StateSource, OutputPolicy>>(
                 update, stateFloat, stateNative, stateInput, gateInput,
                 stateOutput, hOutput, static_cast<uint16_t>(rows),
                 static_cast<uint16_t>(cols));
         } else {
-            AscendC::VF_CALL<detail::ComputeStage3GExpTile<
+            AscendC::VF_CALL<detail::Stage3GExpRegbaseVf<
                 InputT, GateT, StateT, StateSource, OutputPolicy>>(
                 update, stateFloat, stateNative, stateInput, gateInput,
                 stateOutput, hOutput, static_cast<uint16_t>(rows),
@@ -1110,13 +1153,13 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
         gateInput = reinterpret_cast<__ubuf__ GateT *>(
             gkInputUb_[tileSlot].GetPhyAddr());
         if constexpr (kUseExp2) {
-            AscendC::VF_CALL<detail::ComputeStage3GkExp2Tile<
+            AscendC::VF_CALL<detail::Stage3GkExp2RegbaseVf<
                 InputT, GateT, StateT, StateSource, OutputPolicy>>(
                 update, stateFloat, stateNative, stateInput, gateInput,
                 stateOutput, hOutput, static_cast<uint16_t>(rows),
                 static_cast<uint16_t>(cols));
         } else {
-            AscendC::VF_CALL<detail::ComputeStage3GkExpTile<
+            AscendC::VF_CALL<detail::Stage3GkExpRegbaseVf<
                 InputT, GateT, StateT, StateSource, OutputPolicy>>(
                 update, stateFloat, stateNative, stateInput, gateInput,
                 stateOutput, hOutput, static_cast<uint16_t>(rows),
