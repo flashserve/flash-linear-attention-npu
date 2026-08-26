@@ -16,8 +16,8 @@
 #include "arch35/chunk_gated_delta_rule_fwd_h_cube.h"
 #include "arch35/chunk_gated_delta_rule_fwd_h_vector.h"
 #else
-#include "chunk_gated_delta_rule_fwd_h_cube.h"
-#include "chunk_gated_delta_rule_fwd_h_vector.h"
+#include "arch22/chunk_gated_delta_rule_fwd_h_cube.h"
+#include "arch22/chunk_gated_delta_rule_fwd_h_vector.h"
 #endif
 
 #include "chunk_gated_delta_rule_fwd_h_tiling_key.h"

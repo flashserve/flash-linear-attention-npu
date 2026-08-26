@@ -65,175 +65,31 @@ __simd_callee__ inline void StoreFloat(
     DataCopy<float, StoreDist::DIST_NORM_B32>(dst, src, mask);
 }
 
-template <typename T>
-__simd_callee__ inline void StoreFromFloat(
-    __ubuf__ T *dst, RegTensor<float> &src, MaskReg &mask)
-{
-    if constexpr (std::is_same<T, float>::value) {
-        StoreFloat(dst, src, mask);
-    } else {
-        Cast<T, float, F32_TO_B16_RINT>((RegTensor<T> &)src, src, mask);
-        StoreAlign<T, StoreDist::DIST_PACK_B32>(dst, (RegTensor<T> &)src, mask);
-    }
-}
-
-template <typename T>
-static __simd_vf__ inline void ComputeVNew(
-    __ubuf__ float *workspace, __ubuf__ T *uInput, uint32_t count)
-{
-    constexpr uint32_t ELEMS = AscendC::VECTOR_REG_WIDTH / sizeof(float);
-    RegTensor<float> u0, u1, ws0, ws1;
-    MaskReg mask0, mask1;
-    uint32_t remaining = count;
-    uint32_t offset = 0;
-    while (remaining > ELEMS) {
-        mask0 = UpdateMask<float>(remaining);
-        mask1 = UpdateMask<float>(remaining);
-        LoadAsFloat<T>(u0, uInput + offset, mask0);
-        LoadAsFloat<T>(u1, uInput + offset + ELEMS, mask1);
-        LoadFloat(ws0, workspace + offset);
-        LoadFloat(ws1, workspace + offset + ELEMS);
-        Sub(ws0, u0, ws0, mask0);
-        Sub(ws1, u1, ws1, mask1);
-        StoreFloat(workspace + offset, ws0, mask0);
-        StoreFloat(workspace + offset + ELEMS, ws1, mask1);
-        offset += 2 * ELEMS;
-        remaining = remaining > 2 * ELEMS ? remaining - 2 * ELEMS : 0;
-    }
-    if (remaining > 0) {
-        mask0 = UpdateMask<float>(remaining);
-        LoadAsFloat<T>(u0, uInput + offset, mask0);
-        LoadFloat(ws0, workspace + offset);
-        Sub(ws0, u0, ws0, mask0);
-        StoreFloat(workspace + offset, ws0, mask0);
-    }
-}
-
-template <typename T>
-static __simd_vf__ inline void ScaleAndPackVNew(
-    __ubuf__ T *output, __ubuf__ float *vNew, __ubuf__ float *rowScale,
-    uint32_t scaleOffset, uint16_t rows, uint16_t cols)
-{
-    constexpr uint16_t C0 = 16;
-    RegTensor<float> value, scale;
-    MaskReg mask;
-    for (uint16_t row = 0; row < rows; ++row) {
-        LoadAlign<float, LoadDist::DIST_BRC_B32>(scale, rowScale + scaleOffset + row);
-        for (uint16_t col = 0; col < cols; col += C0) {
-            uint32_t count = cols - col > C0 ? C0 : cols - col;
-            mask = UpdateMask<float>(count);
-            LoadFloat(value, vNew + static_cast<uint32_t>(row) * cols + col);
-            Mul(value, value, scale, mask);
-            uint32_t outputOffset = ((col / C0) * rows + row) * C0;
-            StoreFromFloat<T>(output + outputOffset, value, mask);
-        }
-    }
-}
-
-template <typename T, bool USE_EXP2>
-static __simd_vf__ inline void PrepareKGate(
-    __ubuf__ float *output, __ubuf__ T *input, uint16_t count)
-{
-    constexpr uint16_t ELEMS = AscendC::VECTOR_REG_WIDTH / sizeof(float);
-    constexpr float LN2 = 0.6931471805599453f;
-    RegTensor<float> gate;
-    MaskReg mask;
-    uint32_t remaining = count;
-    uint32_t offset = 0;
-    while (remaining > 0) {
-        mask = UpdateMask<float>(remaining);
-        LoadAsFloat<T>(gate, input + offset, mask);
-        if constexpr (USE_EXP2) {
-            Muls(gate, gate, LN2, mask);
-        }
-        Exp(gate, gate, mask);
-        StoreFloat(output + offset, gate, mask);
-        offset += ELEMS;
-        remaining = remaining > ELEMS ? remaining - ELEMS : 0;
-    }
-}
-
-template <typename T>
-static __simd_vf__ inline void ApplyScalarGateUpdate(
-    __ubuf__ float *update, __ubuf__ T *state, float scale, uint32_t count)
-{
-    constexpr uint32_t ELEMS = AscendC::VECTOR_REG_WIDTH / sizeof(float);
-    RegTensor<float> stateReg, updateReg;
-    MaskReg mask;
-    uint32_t remaining = count;
-    uint32_t offset = 0;
-    while (remaining > 0) {
-        mask = UpdateMask<float>(remaining);
-        LoadAsFloat<T>(stateReg, state + offset, mask);
-        LoadFloat(updateReg, update + offset);
-        Muls(stateReg, stateReg, scale, mask);
-        Add(updateReg, stateReg, updateReg, mask);
-        StoreFloat(update + offset, updateReg, mask);
-        offset += ELEMS;
-        remaining = remaining > ELEMS ? remaining - ELEMS : 0;
-    }
-}
-
-template <typename T>
-static __simd_vf__ inline void ApplyKGateUpdate(
-    __ubuf__ float *update, __ubuf__ T *state, __ubuf__ float *scales,
-    uint16_t rows, uint16_t cols)
-{
-    constexpr uint16_t ELEMS = AscendC::VECTOR_REG_WIDTH / sizeof(float);
-    RegTensor<float> stateReg, updateReg, scaleReg;
-    MaskReg mask;
-    for (uint16_t row = 0; row < rows; ++row) {
-        LoadAlign<float, LoadDist::DIST_BRC_B32>(scaleReg, scales + row);
-        uint32_t remaining = cols;
-        for (uint16_t col = 0; col < cols; col += ELEMS) {
-            mask = UpdateMask<float>(remaining);
-            uint32_t offset = static_cast<uint32_t>(row) * cols + col;
-            LoadAsFloat<T>(stateReg, state + offset, mask);
-            LoadFloat(updateReg, update + offset);
-            Mul(stateReg, stateReg, scaleReg, mask);
-            Add(updateReg, stateReg, updateReg, mask);
-            StoreFloat(update + offset, updateReg, mask);
-            remaining = remaining > ELEMS ? remaining - ELEMS : 0;
-        }
-    }
-}
-
-static __simd_vf__ inline void ApplyRowScale(
-    __ubuf__ float *matrix, __ubuf__ float *scales,
-    uint16_t rows, uint16_t cols)
-{
-    constexpr uint16_t ELEMS = AscendC::VECTOR_REG_WIDTH / sizeof(float);
-    RegTensor<float> matrixReg, scaleReg;
-    MaskReg mask;
-    for (uint16_t row = 0; row < rows; ++row) {
-        LoadAlign<float, LoadDist::DIST_BRC_B32>(scaleReg, scales + row);
-        uint32_t remaining = cols;
-        for (uint16_t col = 0; col < cols; col += ELEMS) {
-            mask = UpdateMask<float>(remaining);
-            uint32_t offset = static_cast<uint32_t>(row) * cols + col;
-            LoadFloat(matrixReg, matrix + offset);
-            Mul(matrixReg, matrixReg, scaleReg, mask);
-            StoreFloat(matrix + offset, matrixReg, mask);
-            remaining = remaining > ELEMS ? remaining - ELEMS : 0;
-        }
-    }
-}
-
-template <typename InputT, bool SCALAR_GATE>
+template <typename InputT, typename GateT, bool SCALAR_GATE, bool USE_EXP2>
 static __simd_vf__ inline void ComputeStage1Tile(
     __ubuf__ float *workspace, __ubuf__ InputT *uInput,
     __ubuf__ InputT *packedOutput, __ubuf__ InputT *rowOutput,
-    __ubuf__ float *rowScale, uint32_t scaleOffset,
+    __ubuf__ GateT *gateRaw, uint32_t rowOffset, uint16_t totalRows,
     uint16_t rows, uint16_t cols)
 {
     constexpr uint16_t ELEMS = AscendC::VECTOR_REG_WIDTH / sizeof(float);
     constexpr uint16_t C0 = 16;
-    RegTensor<float> uReg, wsReg, scaleReg;
+    RegTensor<float> uReg, wsReg, scaleReg, gateReg, gateLastReg;
     RegTensor<InputT> outReg;
-    MaskReg mask;
+    MaskReg mask, scalarMask;
+    if constexpr (SCALAR_GATE) {
+        scalarMask = UpdateMask<float>(1);
+        LoadAsFloat<GateT>(gateLastReg, gateRaw + totalRows - 1, scalarMask);
+    }
     for (uint16_t row = 0; row < rows; ++row) {
         if constexpr (SCALAR_GATE) {
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(scaleReg, rowScale + scaleOffset + row);
+            scalarMask = UpdateMask<float>(1);
+            LoadAsFloat<GateT>(gateReg, gateRaw + rowOffset + row, scalarMask);
+            Sub(gateReg, gateLastReg, gateReg, scalarMask);
+            if constexpr (USE_EXP2) {
+                Muls(gateReg, gateReg, 0.6931471805599453f, scalarMask);
+            }
+            Exp(gateReg, gateReg, scalarMask);
         }
         for (uint16_t col = 0; col < cols; col += C0) {
             uint32_t remaining = cols - col;
@@ -243,17 +99,24 @@ static __simd_vf__ inline void ComputeStage1Tile(
             LoadAsFloat<InputT>(uReg, uInput + offset, mask);
             LoadFloat(wsReg, workspace + offset);
             Sub(wsReg, uReg, wsReg, mask);
+            if constexpr (std::is_same<InputT, float>::value) {
+                StoreFloat(rowOutput + offset, wsReg, mask);
+            } else {
+                Cast<InputT, float, F32_TO_B16_RINT>(outReg, wsReg, mask);
+                StoreAlign<InputT, StoreDist::DIST_PACK_B32>(rowOutput + offset, outReg, mask);
+            }
             if constexpr (SCALAR_GATE) {
+                Duplicate(scaleReg, gateReg, mask);
                 Mul(wsReg, wsReg, scaleReg, mask);
             }
             StoreFloat(workspace + offset, wsReg, mask);
             if constexpr (std::is_same<InputT, float>::value) {
-                StoreFloat(rowOutput + offset, wsReg, mask);
                 const uint32_t packedOffset = ((col / C0) * rows + row) * C0;
                 StoreFloat(packedOutput + packedOffset, wsReg, mask);
             } else {
-                Cast<InputT, float, F32_TO_B16_RINT>(outReg, wsReg, mask);
-                StoreAlign<InputT, StoreDist::DIST_PACK_B32>(rowOutput + offset, outReg, mask);
+                if constexpr (SCALAR_GATE) {
+                    Cast<InputT, float, F32_TO_B16_RINT>(outReg, wsReg, mask);
+                }
                 const uint32_t packedOffset = ((col / C0) * rows + row) * C0;
                 StoreAlign<InputT, StoreDist::DIST_PACK_B32>(packedOutput + packedOffset, outReg, mask);
             }
@@ -268,13 +131,24 @@ static __simd_vf__ inline void ComputeStage3Tile(
     __ubuf__ StateT *stateNative, __ubuf__ InputT *stateInput,
     __ubuf__ GateT *gateRaw, float scalarGate,
     __ubuf__ StateT *stateOutput, __ubuf__ InputT *hOutput,
-    uint16_t rows, uint16_t cols, bool storeState, bool finalChunk)
+    uint16_t rows, uint16_t cols, bool useRollingState,
+    bool storeState, bool finalChunk)
 {
     constexpr uint16_t ELEMS = AscendC::VECTOR_REG_WIDTH / sizeof(float);
     RegTensor<float> updateReg, stateReg, gateReg, gateScalarReg;
     RegTensor<StateT> stateOutReg;
     RegTensor<InputT> hOutReg;
     MaskReg mask;
+    if constexpr (!K_GATE) {
+        MaskReg gateScalarMask = UpdateMask<float>(1);
+        MaskReg gateMask = UpdateMask<float>(ELEMS);
+        Duplicate(gateScalarReg, scalarGate, gateScalarMask);
+        if constexpr (USE_EXP2) {
+            Muls(gateScalarReg, gateScalarReg, 0.6931471805599453f, gateScalarMask);
+        }
+        Exp(gateScalarReg, gateScalarReg, gateScalarMask);
+        Duplicate(gateReg, gateScalarReg, gateMask);
+    }
     for (uint16_t row = 0; row < rows; ++row) {
         if constexpr (K_GATE) {
             MaskReg gateScalarMask = UpdateMask<float>(1);
@@ -293,17 +167,21 @@ static __simd_vf__ inline void ComputeStage3Tile(
             const uint32_t offset = static_cast<uint32_t>(row) * cols + col;
             LoadFloat(updateReg, update + offset);
             if constexpr (STATE_FLOAT) {
-                LoadFloat(stateReg, stateFloat + offset);
+                if (useRollingState) {
+                    LoadFloat(stateReg, stateFloat + offset);
+                } else {
+                    LoadAsFloat<InputT>(stateReg, stateInput + offset, mask);
+                }
             } else if constexpr (SEPARATE_STATE) {
-                LoadAsFloat<StateT>(stateReg, stateNative + offset, mask);
+                if (useRollingState) {
+                    LoadAsFloat<StateT>(stateReg, stateNative + offset, mask);
+                } else {
+                    LoadAsFloat<InputT>(stateReg, stateInput + offset, mask);
+                }
             } else {
                 LoadAsFloat<InputT>(stateReg, stateInput + offset, mask);
             }
-            if constexpr (K_GATE) {
-                Mul(stateReg, stateReg, gateReg, mask);
-            } else {
-                Muls(stateReg, stateReg, scalarGate, mask);
-            }
+            Mul(stateReg, stateReg, gateReg, mask);
             Add(updateReg, stateReg, updateReg, mask);
             if (storeState) {
                 if constexpr (std::is_same<StateT, float>::value) {
@@ -314,7 +192,24 @@ static __simd_vf__ inline void ComputeStage3Tile(
                 }
             }
             if (!finalChunk || !storeState) {
-                if constexpr (std::is_same<InputT, float>::value) {
+                if constexpr (SEPARATE_STATE) {
+                    if (storeState) {
+                        Cast<float, StateT, B16_TO_F32_ZERO>(stateReg, stateOutReg, mask);
+                        if constexpr (std::is_same<InputT, float>::value) {
+                            StoreFloat(hOutput + offset, stateReg, mask);
+                        } else {
+                            Cast<InputT, float, F32_TO_B16_RINT>(hOutReg, stateReg, mask);
+                            StoreAlign<InputT, StoreDist::DIST_PACK_B32>(
+                                hOutput + offset, hOutReg, mask);
+                        }
+                    } else if constexpr (std::is_same<InputT, float>::value) {
+                        StoreFloat(hOutput + offset, updateReg, mask);
+                    } else {
+                        Cast<InputT, float, F32_TO_B16_RINT>(hOutReg, updateReg, mask);
+                        StoreAlign<InputT, StoreDist::DIST_PACK_B32>(
+                            hOutput + offset, hOutReg, mask);
+                    }
+                } else if constexpr (std::is_same<InputT, float>::value) {
                     StoreFloat(hOutput + offset, updateReg, mask);
                 } else {
                     Cast<InputT, float, F32_TO_B16_RINT>(hOutReg, updateReg, mask);
@@ -341,7 +236,6 @@ public:
     static constexpr bool kSeparateBf16State =
         std::is_same<StateT, bfloat16_t>::value && !std::is_same<StateT, InputT>::value;
     static constexpr uint32_t PONG_EVENT_BASE = 4;
-    static constexpr float LN2 = 0.6931471805599453f;
 
     static_assert(kScalarGate || kKGate, "unsupported FwdH gate mode");
     static_assert(ExpMode == GDN_FWD_H_EXP_E || ExpMode == GDN_FWD_H_EXP_2,
@@ -448,9 +342,7 @@ public:
                     Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube1Done[windowId]);
                     ComputeTailVWorkspace(offsets, EVENT_ID3 + (isPing ? 0 : PONG_EVENT_BASE));
                 }
-                Stage1(offsets, windowId, isPing, tailVectorPath,
-                              event0FromMte3_[localSlot]);
-                event0FromMte3_[localSlot] = false;
+                Stage1(offsets, windowId, isPing, tailVectorPath);
             }
 
             // Stage3: consume the complete Stage2 round and publish the next state.
@@ -472,12 +364,6 @@ public:
                     if (tailVectorPath) {
                         Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube2Done[windowId]);
                         ComputeTailHWorkspace(offsets, EVENT_ID3 + (isPing ? 0 : PONG_EVENT_BASE));
-                    }
-                    if constexpr (std::is_same<StateT, float>::value) {
-                        if (storeFinalState_) {
-                            event0FromMte3_[localSlot] = true;
-                            event2FromMte3_[localSlot] = !offsets.isFinalState;
-                        }
                     }
                     Stage3(offsets, windowId, isPing, tailVectorPath);
                 } else {
@@ -501,15 +387,8 @@ private:
         stage1OutputUb_[1] = resource_.ubBuf.template GetBufferByByte<InputT>(24 * 1024);
         stage1PackedUb_[0] = resource_.ubBuf.template GetBufferByByte<InputT>(40 * 1024);
         stage1PackedUb_[1] = resource_.ubBuf.template GetBufferByByte<InputT>(48 * 1024);
-        gUb_[0] = resource_.ubBuf.template GetBufferByByte<float>(160 * 1024);
-        gUb_[1] = resource_.ubBuf.template GetBufferByByte<float>(161 * 1024);
-        gLastUb_[0] = resource_.ubBuf.template GetBufferByByte<float>(162 * 1024);
-        gLastUb_[1] = resource_.ubBuf.template GetBufferByByte<float>(163 * 1024);
         gInputUb_[0] = resource_.ubBuf.template GetBufferByByte<GateT>(164 * 1024);
         gInputUb_[1] = resource_.ubBuf.template GetBufferByByte<GateT>(165 * 1024);
-
-        calcUb_ = resource_.ubBuf.template GetBufferByByte<float>(0);
-        hUb_ = resource_.ubBuf.template GetBufferByByte<InputT>(160 * 1024);
         // Separate BF16 rolling state is only consumed in Stage3.  Reuse
         // the Stage1 packed banks after Stage2 has consumed them; keeping
         // these banks distinct from ioUb avoids update/state overwrite while
@@ -518,11 +397,8 @@ private:
             kSeparateBf16State ? 40 * 1024 : 160 * 1024);
         stateUb_[1] = resource_.ubBuf.template GetBufferByByte<StateT>(
             kSeparateBf16State ? 48 * 1024 : 160 * 1024);
-        gkLastUb_[0] = resource_.ubBuf.template GetBufferByByte<float>(170 * 1024);
-        gkLastUb_[1] = resource_.ubBuf.template GetBufferByByte<float>(171 * 1024);
         gkInputUb_[0] = resource_.ubBuf.template GetBufferByByte<GateT>(172 * 1024);
         gkInputUb_[1] = resource_.ubBuf.template GetBufferByByte<GateT>(173 * 1024);
-        stage3ScalarUb_ = resource_.ubBuf.template GetBufferByByte<float>(176 * 1024);
     }
 
     template <typename T>
@@ -561,19 +437,22 @@ private:
     __aicore__ inline void DrainEvents();
     __aicore__ inline void Stage1(
         const Offsets &offsets, uint32_t windowId, bool isPing,
-        bool cubeAlreadyWaited, bool waitWsFromMte3);
+        bool cubeAlreadyWaited);
     __aicore__ inline void LoadStage1Tile(
         const Offsets &offsets, uint32_t rowStart, uint32_t rows,
-        uint32_t tileIndex, bool waitWsFromMte3);
+        uint32_t tileIndex);
     __aicore__ inline void StoreStage1Tile(
         const Offsets &offsets, uint32_t rowStart, uint32_t rows,
         uint32_t tileIndex);
     __aicore__ inline void Stage3(
         const Offsets &offsets, uint32_t windowId, bool isPing,
         bool cubeAlreadyWaited);
-    __aicore__ inline void Stage3Legacy(
-        const Offsets &offsets, uint32_t windowId, bool isPing,
-        bool cubeAlreadyWaited);
+    __aicore__ inline void LoadStage3Tile(
+        const Offsets &offsets, uint32_t rowStart, uint32_t rows,
+        uint32_t tileIndex);
+    __aicore__ inline void StoreStage3Tile(
+        const Offsets &offsets, uint32_t rowStart, uint32_t rows,
+        uint32_t tileIndex);
     __aicore__ inline void ComputeTailVWorkspace(const Offsets &offsets, uint32_t eventId);
     __aicore__ inline void ComputeTailHWorkspace(const Offsets &offsets, uint32_t eventId);
 
@@ -594,8 +473,6 @@ private:
     uint64_t numChunksWorkspaceOffset_{0};
     bool useInitialState_{false};
     bool storeFinalState_{false};
-    bool event0FromMte3_[LOCAL_PING_PONG_STAGES] = {false, false};
-    bool event2FromMte3_[LOCAL_PING_PONG_STAGES] = {false, false};
 
     AscendC::GlobalTensor<InputT> gmK_;
     AscendC::GlobalTensor<InputT> gmW_;
@@ -614,15 +491,9 @@ private:
     AscendC::LocalTensor<InputT> ioUb_[LOCAL_PING_PONG_STAGES];
     AscendC::LocalTensor<InputT> stage1OutputUb_[LOCAL_PING_PONG_STAGES];
     AscendC::LocalTensor<InputT> stage1PackedUb_[LOCAL_PING_PONG_STAGES];
-    AscendC::LocalTensor<float> gUb_[LOCAL_PING_PONG_STAGES];
-    AscendC::LocalTensor<float> gLastUb_[LOCAL_PING_PONG_STAGES];
     AscendC::LocalTensor<GateT> gInputUb_[LOCAL_PING_PONG_STAGES];
-    AscendC::LocalTensor<float> calcUb_;
-    AscendC::LocalTensor<InputT> hUb_;
     AscendC::LocalTensor<StateT> stateUb_[LOCAL_PING_PONG_STAGES];
-    AscendC::LocalTensor<float> gkLastUb_[LOCAL_PING_PONG_STAGES];
     AscendC::LocalTensor<GateT> gkInputUb_[LOCAL_PING_PONG_STAGES];
-    AscendC::LocalTensor<float> stage3ScalarUb_;
 
     Scheduler scheduler_;
     Catlass::Arch::Resource<ArchTag> resource_;
@@ -713,38 +584,14 @@ template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
 __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
     InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::PresetEvents()
 {
-    if constexpr (std::is_same<StateT, float>::value) {
-        if (storeFinalState_) {
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + PONG_EVENT_BASE);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + PONG_EVENT_BASE);
-            event2FromMte3_[0] = false;
-            event2FromMte3_[1] = false;
-        } else {
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + PONG_EVENT_BASE);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + PONG_EVENT_BASE);
-            event2FromMte3_[0] = true;
-            event2FromMte3_[1] = true;
-        }
-    } else {
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0);
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + PONG_EVENT_BASE);
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2);
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + PONG_EVENT_BASE);
-        event2FromMte3_[0] = true;
-        event2FromMte3_[1] = true;
+    for (uint32_t slot = 0; slot < LOCAL_PING_PONG_STAGES; ++slot) {
+        const uint32_t base = slot * PONG_EVENT_BASE;
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + base);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + base);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + base);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + base);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + base);
     }
-    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
-    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + PONG_EVENT_BASE);
-    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3);
-    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + PONG_EVENT_BASE);
-    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0);
-    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + PONG_EVENT_BASE);
-    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2);
-    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + PONG_EVENT_BASE);
 }
 
 template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
@@ -754,19 +601,10 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
 {
     for (uint32_t slot = 0; slot < LOCAL_PING_PONG_STAGES; ++slot) {
         const uint32_t base = slot * PONG_EVENT_BASE;
-        if (event0FromMte3_[slot]) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + base);
-        } else {
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + base);
-        }
-        if (event2FromMte3_[slot]) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + base);
-        } else {
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + base);
-        }
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + base);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + base);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + base);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + base);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + base);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + base);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + base);
     }
 }
@@ -776,20 +614,17 @@ template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
 __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
     InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::LoadStage1Tile(
         const Offsets &offsets, uint32_t rowStart, uint32_t rows,
-        uint32_t tileIndex, bool waitWsFromMte3)
+        uint32_t tileIndex)
 {
     const uint32_t headSlot = tileIndex & 1U;
     const uint32_t eventBase = headSlot * PONG_EVENT_BASE;
     const uint32_t cols = offsets.vBlockDim;
     const uint32_t rowOffset = rowStart * vHeadDim_;
-    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + eventBase);
-    CopyGmToUb(ioUb_[headSlot], gmU_[offsets.uvOffset + rowOffset], rows, cols, vHeadDim_);
-    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + eventBase);
-    if (rowStart == 0 && waitWsFromMte3) {
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + eventBase);
-    } else {
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + eventBase);
-    }
+
+    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + eventBase);
+    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
+    CopyGmToUb(ioUb_[headSlot], gmU_[offsets.uvOffset + rowOffset],
+               rows, cols, vHeadDim_);
     CopyGmToUb(wsUb_[headSlot], gmVWorkspace_[offsets.vWorkOffset + rowStart * cols],
                rows, cols, cols);
     AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + eventBase);
@@ -808,22 +643,16 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
     const uint32_t cols = offsets.vBlockDim;
     const uint32_t paddedRows = (offsets.blockTokens + NZ_BLOCK_SIZE - 1) /
         NZ_BLOCK_SIZE * NZ_BLOCK_SIZE;
-    AscendC::PipeBarrier<PIPE_V>();
-    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + eventBase);
-    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + eventBase);
+    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
     AscendC::DataCopyParams znParams{
         static_cast<uint16_t>(cols / C0), static_cast<uint16_t>(rows), 0,
         static_cast<uint16_t>(paddedRows - rows)};
     AscendC::DataCopy(gmVUpdateWorkspace_[offsets.vWorkOffset + rowStart * C0],
                       stage1PackedUb_[headSlot], znParams);
-    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + eventBase);
-    AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + eventBase);
-    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + eventBase);
-    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + eventBase);
     CopyUbToGm(gmV_[offsets.uvOffset + rowStart * vHeadDim_], stage1OutputUb_[headSlot],
                rows, cols, vHeadDim_);
-    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + eventBase);
-    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + eventBase);
+    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
+    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + eventBase);
 }
 
 template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
@@ -831,7 +660,7 @@ template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
 __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
     InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::Stage1(
         const Offsets &offsets, uint32_t windowId, bool isPing,
-        bool cubeAlreadyWaited, bool waitWsFromMte3)
+        bool cubeAlreadyWaited)
 {
     constexpr uint32_t ROW_TILE = 16;
     const uint32_t rows = offsets.blockTokens;
@@ -840,81 +669,156 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
 
     const uint32_t headSlot = isPing ? 0 : 1;
     const uint32_t headEventBase = headSlot * PONG_EVENT_BASE;
-    const uint32_t slot = headSlot;
-    const uint32_t eventBase = headEventBase;
-    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + headEventBase);
     if constexpr (kScalarGate) {
-        if (rows == 1) {
-            AscendC::Duplicate(gUb_[slot], 1.0f, 1);
-            AscendC::PipeBarrier<PIPE_V>();
-        } else {
-            if constexpr (std::is_same<GateT, float>::value) {
-                AscendC::DataCopyParams params{
-                    1, static_cast<uint16_t>(rows * sizeof(GateT)), 0, 0};
-                AscendC::DataCopyPadParams pad{false, 0, 0, 0};
-                AscendC::DataCopyPad(gUb_[slot], gmG_[offsets.gOffset], params, pad);
-            } else {
-                AscendC::DataCopyParams params{
-                    1, static_cast<uint16_t>(rows * sizeof(GateT)), 0, 0};
-                AscendC::DataCopyPadParams pad{false, 0, 0, 0};
-                AscendC::DataCopyPad(gInputUb_[slot], gmG_[offsets.gOffset], params, pad);
-            }
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID3 + eventBase);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID3 + eventBase);
-            if constexpr (!std::is_same<GateT, float>::value) {
-                AscendC::Cast(gUb_[slot], gInputUb_[slot],
-                              AscendC::RoundMode::CAST_NONE, rows);
-                AscendC::PipeBarrier<PIPE_V>();
-            }
-            AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + eventBase);
-            AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + eventBase);
-            const float last = gUb_[slot].GetValue(rows - 1);
-            AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + eventBase);
-            AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + eventBase);
-            AscendC::Duplicate(gLastUb_[slot], last, rows);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Sub(gUb_[slot], gLastUb_[slot], gUb_[slot], rows);
-            AscendC::PipeBarrier<PIPE_V>();
-            if constexpr (kUseExp2) {
-                AscendC::Muls(gUb_[slot], gUb_[slot], LN2, rows);
-                AscendC::PipeBarrier<PIPE_V>();
-            }
-            AscendC::Exp(gUb_[slot], gUb_[slot], rows);
-            AscendC::PipeBarrier<PIPE_V>();
-        }
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + headEventBase);
+        CopyGmToUb(gInputUb_[headSlot], gmG_[offsets.gOffset], rows, 1, 1);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID3 + headEventBase);
     }
 
     if (!cubeAlreadyWaited) {
         Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube1Done[windowId]);
     }
     const uint32_t tileCount = (rows + ROW_TILE - 1) / ROW_TILE;
-    LoadStage1Tile(offsets, 0, Min(ROW_TILE, rows), headSlot, waitWsFromMte3);
+    LoadStage1Tile(offsets, 0, Min(ROW_TILE, rows), headSlot);
+    if constexpr (kScalarGate) {
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID3 + headEventBase);
+    }
     for (uint32_t tile = 0; tile < tileCount; ++tile) {
         const uint32_t rowStart = tile * ROW_TILE;
         const uint32_t rowsThisTile = Min(ROW_TILE, rows - rowStart);
         const uint32_t cur = (headSlot ^ (tile & 1U)) & 1U;
-        // Pipeline order is MTE2(next) -> VF(current) -> MTE3(current).
-        if (tile + 1 < tileCount) {
-            const uint32_t nextRow = (tile + 1) * ROW_TILE;
-            LoadStage1Tile(offsets, nextRow, Min(ROW_TILE, rows - nextRow),
-                            headSlot ^ ((tile + 1) & 1U), false);
-        }
         const uint32_t eventBase = cur * PONG_EVENT_BASE;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + eventBase);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + eventBase);
-        AscendC::VF_CALL<detail::ComputeStage1Tile<InputT, kScalarGate>>(
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + eventBase);
+        AscendC::VF_CALL<detail::ComputeStage1Tile<
+            InputT, GateT, kScalarGate, kUseExp2>>(
             reinterpret_cast<__ubuf__ float *>(wsUb_[cur].GetPhyAddr()),
             reinterpret_cast<__ubuf__ InputT *>(ioUb_[cur].GetPhyAddr()),
             reinterpret_cast<__ubuf__ InputT *>(stage1PackedUb_[cur].GetPhyAddr()),
             reinterpret_cast<__ubuf__ InputT *>(stage1OutputUb_[cur].GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(gUb_[headSlot].GetPhyAddr()),
-            rowStart, static_cast<uint16_t>(rowsThisTile), static_cast<uint16_t>(cols));
+            reinterpret_cast<__ubuf__ GateT *>(gInputUb_[headSlot].GetPhyAddr()),
+            rowStart, static_cast<uint16_t>(rows),
+            static_cast<uint16_t>(rowsThisTile), static_cast<uint16_t>(cols));
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + eventBase);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
+
+        // Enqueue MTE2(next) before MTE3(current).  Both run while the
+        // current VF work drains, and neither helper waits for completion.
+        if (tile + 1 < tileCount) {
+            const uint32_t nextRow = (tile + 1) * ROW_TILE;
+            LoadStage1Tile(offsets, nextRow, Min(ROW_TILE, rows - nextRow),
+                           headSlot ^ ((tile + 1) & 1U));
+        }
         StoreStage1Tile(offsets, rowStart, rowsThisTile, cur);
         if (tile + 1 == tileCount) {
             Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(scheduler_.vec1Done[windowId]);
         }
     }
-    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + headEventBase);
+    if constexpr (kScalarGate) {
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + headEventBase);
+    }
+}
+
+template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
+          uint32_t GateMode, uint32_t ExpMode>
+__aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
+    InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::LoadStage3Tile(
+        const Offsets &offsets, uint32_t rowStart, uint32_t rows,
+        uint32_t tileIndex)
+{
+    const uint32_t slot = tileIndex & 1U;
+    const uint32_t eventBase = slot * PONG_EVENT_BASE;
+    const uint32_t cols = offsets.vBlockDim;
+    const uint32_t stateOffset = rowStart * vHeadDim_;
+
+    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + eventBase);
+    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
+    if constexpr (kKGate) {
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + eventBase);
+    }
+
+    CopyGmToUb(ioUb_[slot].template ReinterpretCast<float>(),
+               gmHWorkspace_[offsets.hWorkOffset + rowStart * cols],
+               rows, cols, cols);
+    const bool useRollingState = !offsets.isInitialState || useInitialState_;
+    if constexpr (std::is_same<StateT, float>::value) {
+        if (useRollingState) {
+            if (offsets.isInitialState) {
+                CopyGmToUb(wsUb_[slot],
+                           gmInitialState_[offsets.initialStateOffset + stateOffset],
+                           rows, cols, vHeadDim_);
+            } else {
+                CopyGmToUb(wsUb_[slot],
+                           gmFinalState_[offsets.finalStateOffset + stateOffset],
+                           rows, cols, vHeadDim_);
+            }
+        } else {
+            CopyGmToUb(stage1PackedUb_[slot],
+                       gmH_[offsets.hSrcOffset + stateOffset],
+                       rows, cols, vHeadDim_);
+        }
+    } else if constexpr (kSeparateBf16State) {
+        if (useRollingState) {
+            if (offsets.isInitialState) {
+                CopyGmToUb(stateUb_[slot],
+                           gmInitialState_[offsets.initialStateOffset + stateOffset],
+                           rows, cols, vHeadDim_);
+            } else {
+                CopyGmToUb(stateUb_[slot],
+                           gmFinalState_[offsets.finalStateOffset + stateOffset],
+                           rows, cols, vHeadDim_);
+            }
+        } else {
+            CopyGmToUb(stage1PackedUb_[slot],
+                       gmH_[offsets.hSrcOffset + stateOffset],
+                       rows, cols, vHeadDim_);
+        }
+    } else {
+        CopyGmToUb(stage1PackedUb_[slot],
+                   gmH_[offsets.hSrcOffset + stateOffset],
+                   rows, cols, vHeadDim_);
+    }
+    if constexpr (kKGate) {
+        CopyGmToUb(gkInputUb_[slot],
+                   gmGk_[offsets.gkOffset +
+                         (offsets.blockTokens - 1) * kHeadDim_ + rowStart],
+                   rows, 1, 1);
+    }
+    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + eventBase);
+}
+
+template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
+          uint32_t GateMode, uint32_t ExpMode>
+__aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
+    InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::StoreStage3Tile(
+        const Offsets &offsets, uint32_t rowStart, uint32_t rows,
+        uint32_t tileIndex)
+{
+    const uint32_t slot = tileIndex & 1U;
+    const uint32_t eventBase = slot * PONG_EVENT_BASE;
+    const uint32_t cols = offsets.vBlockDim;
+    const uint32_t stateOffset = rowStart * vHeadDim_;
+    const bool finalChunk = offsets.isFinalState;
+
+    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
+    if (storeFinalState_) {
+        if constexpr (std::is_same<StateT, float>::value) {
+            CopyUbToGm(gmFinalState_[offsets.finalStateOffset + stateOffset],
+                       wsUb_[slot], rows, cols, vHeadDim_);
+        } else if constexpr (kSeparateBf16State) {
+            CopyUbToGm(gmFinalState_[offsets.finalStateOffset + stateOffset],
+                       stateUb_[slot], rows, cols, vHeadDim_);
+        } else if (finalChunk) {
+            CopyUbToGm(gmFinalState_[offsets.finalStateOffset + stateOffset],
+                       stage1PackedUb_[slot], rows, cols, vHeadDim_);
+        }
+    }
+    if (!finalChunk || !storeFinalState_) {
+        CopyUbToGm(gmH_[offsets.hDstOffset + stateOffset],
+                   stage1OutputUb_[slot], rows, cols, vHeadDim_);
+    }
+    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
+    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + eventBase);
 }
 
 template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
@@ -926,12 +830,9 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
 {
     constexpr uint32_t ROW_TILE = 16;
     const uint32_t headSlot = isPing ? 0 : 1;
-    const uint32_t eventBase = headSlot * PONG_EVENT_BASE;
     const uint32_t rows = kHeadDim_;
     const uint32_t cols = offsets.vBlockDim;
     AscendC::ResetMask();
-    AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + eventBase);
-    AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + eventBase);
     if (!cubeAlreadyWaited) {
         Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube2Done[windowId]);
     }
@@ -946,126 +847,21 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
         } else {
             scalarGate = AscendC::ToFloat(gateValue);
         }
-        stage3ScalarUb_.SetValue(0, scalarGate);
-        AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + eventBase);
-        AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + eventBase);
-        if constexpr (kUseExp2) {
-            AscendC::Muls(stage3ScalarUb_, stage3ScalarUb_, LN2, 1);
-            AscendC::PipeBarrier<PIPE_V>();
-        }
-        AscendC::Exp(stage3ScalarUb_, stage3ScalarUb_, 1);
-        AscendC::PipeBarrier<PIPE_V>();
-        AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + eventBase);
-        AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + eventBase);
-        scalarGate = stage3ScalarUb_.GetValue(0);
     }
 
     const uint32_t tileCount = (rows + ROW_TILE - 1) / ROW_TILE;
-    // Stage1 has just published both update slots with V_MTE2.  State rows
-    // come from InitializeH for the first chunk and from the previous
-    // chunk's final-state stores afterwards.
-    bool slotEvent0FromMte3[LOCAL_PING_PONG_STAGES] = {false, false};
-    bool slotEvent2FromMte3[LOCAL_PING_PONG_STAGES] = {
-        !offsets.isInitialState, !offsets.isInitialState};
-
-    // Prime tile zero before entering the overlapped MTE2/V/MTE3 loop.
-    const uint32_t firstBase = headSlot * PONG_EVENT_BASE;
-    const uint32_t firstRows = Min(ROW_TILE, rows);
-    if (slotEvent0FromMte3[headSlot]) {
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + firstBase);
-    } else {
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + firstBase);
-    }
-    CopyGmToUb(ioUb_[headSlot].template ReinterpretCast<float>(),
-               gmHWorkspace_[offsets.hWorkOffset], firstRows, cols, cols);
-    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + firstBase);
-
-    if (slotEvent2FromMte3[headSlot] && !offsets.isInitialState) {
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + firstBase);
-    } else {
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + firstBase);
-    }
-    if constexpr (std::is_same<StateT, float>::value) {
-        auto stateSource = offsets.isInitialState ?
-            gmInitialState_[offsets.initialStateOffset] :
-            gmFinalState_[offsets.finalStateOffset];
-        CopyGmToUb(wsUb_[headSlot], stateSource, firstRows, cols, vHeadDim_);
-    } else if constexpr (kSeparateBf16State) {
-        auto stateSource = offsets.isInitialState ?
-            gmInitialState_[offsets.initialStateOffset] :
-            gmFinalState_[offsets.finalStateOffset];
-        CopyGmToUb(stateUb_[headSlot], stateSource, firstRows, cols, vHeadDim_);
-    } else {
-        CopyGmToUb(stage1PackedUb_[headSlot], gmH_[offsets.hSrcOffset],
-                   firstRows, cols, vHeadDim_);
-    }
-    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + firstBase);
-    if constexpr (kKGate) {
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + firstBase);
-        CopyGmToUb(gkInputUb_[headSlot],
-                   gmGk_[offsets.gkOffset + (offsets.blockTokens - 1) * kHeadDim_],
-                   firstRows, 1, 1);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + firstBase);
-    }
+    LoadStage3Tile(offsets, 0, Min(ROW_TILE, rows), headSlot);
 
     constexpr bool kStateFloat = std::is_same<StateT, float>::value;
     constexpr bool kSeparateState = kSeparateBf16State;
+    const bool useRollingState = !offsets.isInitialState || useInitialState_;
     for (uint32_t tile = 0; tile < tileCount; ++tile) {
         const uint32_t rowStart = tile * ROW_TILE;
         const uint32_t rowsThisTile = Min(ROW_TILE, rows - rowStart);
         const uint32_t cur = (headSlot ^ (tile & 1U)) & 1U;
-        // Pipeline order is MTE2(next) -> VF(current) -> MTE3(current).
-        if (tile + 1 < tileCount) {
-            const uint32_t nextRow = (tile + 1) * ROW_TILE;
-            const uint32_t next = cur ^ 1U;
-            const uint32_t nextBase = next * PONG_EVENT_BASE;
-            const uint32_t nextRows = Min(ROW_TILE, rows - nextRow);
-            if (slotEvent0FromMte3[next]) {
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + nextBase);
-            } else {
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + nextBase);
-            }
-            CopyGmToUb(ioUb_[next].template ReinterpretCast<float>(),
-                       gmHWorkspace_[offsets.hWorkOffset + nextRow * cols],
-                       nextRows, cols, cols);
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + nextBase);
-            if (slotEvent2FromMte3[next] && !offsets.isInitialState) {
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + nextBase);
-            } else {
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + nextBase);
-            }
-            if constexpr (std::is_same<StateT, float>::value) {
-                auto stateSource = offsets.isInitialState ?
-                    gmInitialState_[offsets.initialStateOffset + nextRow * vHeadDim_] :
-                    gmFinalState_[offsets.finalStateOffset + nextRow * vHeadDim_];
-                CopyGmToUb(wsUb_[next],
-                           stateSource, nextRows, cols, vHeadDim_);
-            } else if constexpr (kSeparateBf16State) {
-                auto stateSource = offsets.isInitialState ?
-                    gmInitialState_[offsets.initialStateOffset + nextRow * vHeadDim_] :
-                    gmFinalState_[offsets.finalStateOffset + nextRow * vHeadDim_];
-                CopyGmToUb(stateUb_[next], stateSource, nextRows, cols, vHeadDim_);
-            } else {
-                CopyGmToUb(stage1PackedUb_[next],
-                           gmH_[offsets.hSrcOffset + nextRow * vHeadDim_],
-                           nextRows, cols, vHeadDim_);
-            }
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + nextBase);
-            if constexpr (kKGate) {
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + nextBase);
-                CopyGmToUb(gkInputUb_[next],
-                           gmGk_[offsets.gkOffset + (offsets.blockTokens - 1) * kHeadDim_ + nextRow],
-                           nextRows, 1, 1);
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + nextBase);
-            }
-        }
-
         const uint32_t curBase = cur * PONG_EVENT_BASE;
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + curBase);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + curBase);
-        if constexpr (kKGate) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + curBase);
-        }
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + curBase);
         const bool storeState = storeFinalState_;
         const bool finalChunk = offsets.isFinalState;
         AscendC::VF_CALL<detail::ComputeStage3Tile<
@@ -1081,337 +877,20 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
                  (kSeparateState ? stateUb_[cur].GetPhyAddr() : stage1PackedUb_[cur].GetPhyAddr()))),
             reinterpret_cast<__ubuf__ InputT *>(stage1OutputUb_[cur].GetPhyAddr()),
             static_cast<uint16_t>(rowsThisTile), static_cast<uint16_t>(cols),
-            storeState, finalChunk);
-        AscendC::PipeBarrier<PIPE_V>();
-        if (storeState) {
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + curBase);
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + curBase);
-            if constexpr (std::is_same<StateT, float>::value) {
-                CopyUbToGm(gmFinalState_[offsets.finalStateOffset + rowStart * vHeadDim_],
-                           wsUb_[cur],
-                           rowsThisTile, cols, vHeadDim_);
-            } else if constexpr (kSeparateBf16State) {
-                CopyUbToGm(gmFinalState_[offsets.finalStateOffset + rowStart * vHeadDim_],
-                           stateUb_[cur], rowsThisTile, cols, vHeadDim_);
-            } else if (finalChunk) {
-                CopyUbToGm(gmFinalState_[offsets.finalStateOffset + rowStart * vHeadDim_],
-                           stage1PackedUb_[cur], rowsThisTile, cols, vHeadDim_);
-            }
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + curBase);
-        } else {
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + curBase);
+            useRollingState, storeState, finalChunk);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + curBase);
+        if constexpr (kKGate) {
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + curBase);
         }
-        if (!finalChunk || !storeState) {
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + curBase);
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + curBase);
-            CopyUbToGm(gmH_[offsets.hDstOffset + rowStart * vHeadDim_],
-                       stage1OutputUb_[cur], rowsThisTile, cols, vHeadDim_);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + curBase);
-        } else {
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + curBase);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + curBase);
+
+        if (tile + 1 < tileCount) {
+            const uint32_t nextRow = (tile + 1) * ROW_TILE;
+            LoadStage3Tile(offsets, nextRow, Min(ROW_TILE, rows - nextRow),
+                           headSlot ^ ((tile + 1) & 1U));
         }
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + curBase);
-        slotEvent0FromMte3[cur] = storeState;
-        slotEvent2FromMte3[cur] = !storeState || !finalChunk;
+        StoreStage3Tile(offsets, rowStart, rowsThisTile, cur);
     }
-    for (uint32_t slot = 0; slot < LOCAL_PING_PONG_STAGES; ++slot) {
-        event0FromMte3_[slot] = slotEvent0FromMte3[slot];
-        event2FromMte3_[slot] = slotEvent2FromMte3[slot];
-    }
-}
-
-template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
-          uint32_t GateMode, uint32_t ExpMode>
-__aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
-    InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::Stage3Legacy(
-        const Offsets &offsets, uint32_t windowId, bool isPing,
-        bool cubeAlreadyWaited)
-{
-    constexpr uint32_t ROW_TILE = 16;
-    const uint32_t slot = isPing ? 0 : 1;
-    const uint32_t eventBase = slot * PONG_EVENT_BASE;
-    const uint32_t rows = kHeadDim_;
-    const uint32_t cols = offsets.vBlockDim;
-    AscendC::ResetMask();
-    AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + eventBase);
-    AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + eventBase);
-
-    const bool useSeparateState = storeFinalState_ && kSeparateBf16State;
-    const bool useFp32State = storeFinalState_ && std::is_same<StateT, float>::value &&
-        (!offsets.isInitialState || useInitialState_);
-    const bool useBf16State = useSeparateState &&
-        (!offsets.isInitialState || useInitialState_);
-    if (useSeparateState) {
-        // BUF2 is shared with Stage1. EVENT1 is the ready/free hand-off.
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + eventBase);
-    }
-
-    float scalarGate = 1.0f;
-    if constexpr (kScalarGate) {
-        const GateT gateValue = gmG_[offsets.gOffset + offsets.blockTokens - 1].GetValue(0);
-        float gateFp32 = 0.0f;
-        if constexpr (std::is_same<GateT, float>::value) {
-            gateFp32 = gateValue;
-        } else if constexpr (std::is_same<GateT, half>::value) {
-            gateFp32 = static_cast<float>(gateValue);
-        } else {
-            gateFp32 = AscendC::ToFloat(gateValue);
-        }
-        stage3ScalarUb_.SetValue(0, gateFp32);
-        AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + eventBase);
-        AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + eventBase);
-        if constexpr (kUseExp2) {
-            AscendC::Muls(stage3ScalarUb_, stage3ScalarUb_, LN2, 1);
-            AscendC::PipeBarrier<PIPE_V>();
-        }
-        AscendC::Exp(stage3ScalarUb_, stage3ScalarUb_, 1);
-        AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + eventBase);
-        AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + eventBase);
-        scalarGate = stage3ScalarUb_.GetValue(0);
-        AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + eventBase);
-        AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + eventBase);
-    } else {
-        AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(EVENT_ID1 + eventBase);
-    }
-
-    if (!cubeAlreadyWaited) {
-        Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube2Done[windowId]);
-    }
-    bool waitHFromV = storeFinalState_ && offsets.isInitialState &&
-        std::is_same<StateT, float>::value;
-    bool waitUpdateFromMte3 = false;
-    const uint32_t updateReadyEvent = EVENT_ID3 + eventBase;
-    for (uint32_t rowStart = 0; rowStart < rows; rowStart += ROW_TILE) {
-        const uint32_t rowsThisTile = Min(ROW_TILE, rows - rowStart);
-        auto hOutput = gmH_[offsets.hDstOffset + rowStart * vHeadDim_];
-        auto hInput = gmH_[offsets.hSrcOffset + rowStart * vHeadDim_];
-        auto hUpdate = gmHWorkspace_[offsets.hWorkOffset + rowStart * cols];
-        auto finalState = gmFinalState_[offsets.finalStateOffset + rowStart * vHeadDim_];
-
-        if (waitHFromV) {
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + eventBase);
-        } else {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
-        }
-        if constexpr (std::is_same<StateT, float>::value) {
-            if (useFp32State) {
-                if (offsets.isInitialState) {
-                    CopyGmToUb(calcUb_, gmInitialState_[offsets.initialStateOffset +
-                                   rowStart * vHeadDim_], rowsThisTile, cols, vHeadDim_);
-                } else {
-                    CopyGmToUb(calcUb_, finalState, rowsThisTile, cols, vHeadDim_);
-                }
-            } else {
-                CopyGmToUb(hUb_, hInput, rowsThisTile, cols, vHeadDim_);
-            }
-        } else {
-            if (useBf16State) {
-                if (offsets.isInitialState) {
-                    CopyGmToUb(stateUb_[slot], gmInitialState_[offsets.initialStateOffset +
-                                   rowStart * vHeadDim_], rowsThisTile, cols, vHeadDim_);
-                } else {
-                    CopyGmToUb(stateUb_[slot], finalState, rowsThisTile, cols, vHeadDim_);
-                }
-            } else {
-                CopyGmToUb(hUb_, hInput, rowsThisTile, cols, vHeadDim_);
-            }
-        }
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + eventBase);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + eventBase);
-
-        if constexpr (kScalarGate) {
-            if (useFp32State) {
-                AscendC::Muls(calcUb_, calcUb_, scalarGate, rowsThisTile * cols);
-                AscendC::PipeBarrier<PIPE_V>();
-            }
-        }
-        if (waitUpdateFromMte3) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(updateReadyEvent);
-        } else {
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + eventBase);
-        }
-        CopyGmToUb(wsUb_[slot], hUpdate, rowsThisTile, cols, cols);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + eventBase);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + eventBase);
-
-        if constexpr (kScalarGate) {
-            if (useFp32State) {
-                AscendC::Add(wsUb_[slot], calcUb_, wsUb_[slot], rowsThisTile * cols);
-                AscendC::PipeBarrier<PIPE_V>();
-            } else if (useBf16State) {
-                AscendC::VF_CALL<detail::ApplyScalarGateUpdate<StateT>>(
-                    reinterpret_cast<__ubuf__ float *>(wsUb_[slot].GetPhyAddr()),
-                    reinterpret_cast<__ubuf__ StateT *>(stateUb_[slot].GetPhyAddr()),
-                    scalarGate, rowsThisTile * cols);
-                AscendC::PipeBarrier<PIPE_V>();
-            } else {
-                AscendC::VF_CALL<detail::ApplyScalarGateUpdate<InputT>>(
-                    reinterpret_cast<__ubuf__ float *>(wsUb_[slot].GetPhyAddr()),
-                    reinterpret_cast<__ubuf__ InputT *>(hUb_.GetPhyAddr()),
-                    scalarGate, rowsThisTile * cols);
-                AscendC::PipeBarrier<PIPE_V>();
-            }
-        } else {
-            auto gateInput = gmGk_[offsets.gkOffset +
-                (offsets.blockTokens - 1) * kHeadDim_ + rowStart];
-            if (rowStart == 0) {
-                AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(EVENT_ID1 + eventBase);
-            } else {
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + eventBase);
-            }
-            if constexpr (std::is_same<GateT, float>::value) {
-                AscendC::DataCopy(gkLastUb_[slot], gateInput, rowsThisTile);
-            } else {
-                AscendC::DataCopy(gkInputUb_[slot], gateInput, rowsThisTile);
-            }
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + eventBase);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + eventBase);
-            if constexpr (std::is_same<GateT, float>::value) {
-                AscendC::VF_CALL<detail::PrepareKGate<GateT, kUseExp2>>(
-                    reinterpret_cast<__ubuf__ float *>(gkLastUb_[slot].GetPhyAddr()),
-                    reinterpret_cast<__ubuf__ GateT *>(gkLastUb_[slot].GetPhyAddr()),
-                    static_cast<uint16_t>(rowsThisTile));
-            } else {
-                AscendC::VF_CALL<detail::PrepareKGate<GateT, kUseExp2>>(
-                    reinterpret_cast<__ubuf__ float *>(gkLastUb_[slot].GetPhyAddr()),
-                    reinterpret_cast<__ubuf__ GateT *>(gkInputUb_[slot].GetPhyAddr()),
-                    static_cast<uint16_t>(rowsThisTile));
-            }
-            AscendC::PipeBarrier<PIPE_V>();
-            if (useFp32State) {
-                AscendC::VF_CALL<detail::ApplyRowScale>(
-                    reinterpret_cast<__ubuf__ float *>(calcUb_.GetPhyAddr()),
-                    reinterpret_cast<__ubuf__ float *>(gkLastUb_[slot].GetPhyAddr()),
-                    static_cast<uint16_t>(rowsThisTile), static_cast<uint16_t>(cols));
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Add(wsUb_[slot], calcUb_, wsUb_[slot], rowsThisTile * cols);
-                AscendC::PipeBarrier<PIPE_V>();
-            } else if (useBf16State) {
-                AscendC::VF_CALL<detail::ApplyKGateUpdate<StateT>>(
-                    reinterpret_cast<__ubuf__ float *>(wsUb_[slot].GetPhyAddr()),
-                    reinterpret_cast<__ubuf__ StateT *>(stateUb_[slot].GetPhyAddr()),
-                    reinterpret_cast<__ubuf__ float *>(gkLastUb_[slot].GetPhyAddr()),
-                    static_cast<uint16_t>(rowsThisTile), static_cast<uint16_t>(cols));
-                AscendC::PipeBarrier<PIPE_V>();
-            } else {
-                AscendC::VF_CALL<detail::ApplyKGateUpdate<InputT>>(
-                    reinterpret_cast<__ubuf__ float *>(wsUb_[slot].GetPhyAddr()),
-                    reinterpret_cast<__ubuf__ InputT *>(hUb_.GetPhyAddr()),
-                    reinterpret_cast<__ubuf__ float *>(gkLastUb_[slot].GetPhyAddr()),
-                    static_cast<uint16_t>(rowsThisTile), static_cast<uint16_t>(cols));
-                AscendC::PipeBarrier<PIPE_V>();
-            }
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + eventBase);
-        }
-
-        if (storeFinalState_ && offsets.isFinalState &&
-            std::is_same<StateT, float>::value) {
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + eventBase);
-            waitHFromV = true;
-        } else {
-            waitHFromV = false;
-        }
-
-        if constexpr (std::is_same<StateT, float>::value) {
-            if (storeFinalState_) {
-                if (!offsets.isFinalState) {
-                    AscendC::Cast(hUb_, wsUb_[slot], AscendC::RoundMode::CAST_RINT,
-                                  rowsThisTile * cols);
-                    AscendC::PipeBarrier<PIPE_V>();
-                }
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + eventBase);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + eventBase);
-                CopyUbToGm(finalState, wsUb_[slot], rowsThisTile, cols, vHeadDim_);
-                AscendC::PipeBarrier<PIPE_ALL>();
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(updateReadyEvent);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(updateReadyEvent);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(updateReadyEvent);
-                waitUpdateFromMte3 = true;
-                if (!offsets.isFinalState) {
-                    CopyUbToGm(hOutput, hUb_, rowsThisTile, cols, vHeadDim_);
-                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(
-                        EVENT_ID2 + eventBase);
-                }
-            } else {
-                AscendC::Cast(hUb_, wsUb_[slot], AscendC::RoundMode::CAST_RINT,
-                              rowsThisTile * cols);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + eventBase);
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
-                CopyUbToGm(hOutput, hUb_, rowsThisTile, cols, vHeadDim_);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
-                waitUpdateFromMte3 = false;
-            }
-        } else if constexpr (kSeparateBf16State) {
-            AscendC::Cast(stateUb_[slot], wsUb_[slot], AscendC::RoundMode::CAST_RINT,
-                          rowsThisTile * cols);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + eventBase);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
-            CopyUbToGm(finalState, stateUb_[slot], rowsThisTile, cols, vHeadDim_);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + eventBase);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + eventBase);
-            if (!offsets.isFinalState) {
-                AscendC::Cast(hUb_, stateUb_[slot], AscendC::RoundMode::CAST_RINT,
-                              rowsThisTile * cols);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
-                CopyUbToGm(hOutput, hUb_, rowsThisTile, cols, vHeadDim_);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + eventBase);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + eventBase);
-            }
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
-            waitUpdateFromMte3 = false;
-        } else {
-            if (storeFinalState_ && offsets.isFinalState) {
-                AscendC::Cast(stateUb_[slot], wsUb_[slot], AscendC::RoundMode::CAST_RINT,
-                              rowsThisTile * cols);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + eventBase);
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
-                CopyUbToGm(finalState, stateUb_[slot], rowsThisTile, cols, vHeadDim_);
-            } else {
-                AscendC::Cast(hUb_, wsUb_[slot], AscendC::RoundMode::CAST_RINT,
-                              rowsThisTile * cols);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + eventBase);
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
-                CopyUbToGm(hOutput, hUb_, rowsThisTile, cols, vHeadDim_);
-            }
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
-            waitUpdateFromMte3 = false;
-        }
-    }
-
-    if constexpr (std::is_same<StateT, float>::value) {
-        if (storeFinalState_) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(updateReadyEvent);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + eventBase);
-            if (!offsets.isFinalState) {
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
-            }
-        } else {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
-        }
-    } else {
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
-    }
-    if (useSeparateState) {
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + eventBase);
-    }
-    if constexpr (kKGate) {
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + eventBase);
-    }
-    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + eventBase);
-    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + eventBase);
 }
 
 template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
