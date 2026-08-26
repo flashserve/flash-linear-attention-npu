@@ -1,2 +1,7 @@
-  --install-path                    Install operator package to specific dir path
+  --install                         Merge this run package into the active Python flash-linear-attention-npu wheel OPP
+  --full                            Same as --install (default behavior)
+                                    Lists package operators, support status, and scoped aclnn ABI changes
+  --cann                            Install into the CANN OPP layout (ASCEND_CUSTOM_OPP_PATH / ASCEND_OPP_PATH)
+  --install-path                    Install operator package to specific dir path (CANN layout)
   --install-for-all                 Allow other users to use the operator package
+  --quiet                           Quiet install mode

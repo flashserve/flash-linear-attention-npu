@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import importlib
 import runpy
 import subprocess
@@ -48,6 +49,19 @@ def _load_setup() -> tuple[dict[str, object], dict[str, object]]:
     with mock.patch.object(setuptools, "setup", side_effect=capture_setup):
         setup_globals = runpy.run_path(str(REPO_ROOT / "setup.py"))
     return setup_globals, setup_kwargs
+
+
+def _load_run_package_finalizer() -> dict[str, object]:
+    return runpy.run_path(
+        str(
+            REPO_ROOT
+            / "scripts"
+            / "package"
+            / "ops_transformer"
+            / "scripts"
+            / "finalize_wheel_opp.py"
+        )
+    )
 
 
 def _create_minimal_vendor(vendor_dir: Path, *, include_alias: bool = False) -> None:
@@ -174,6 +188,83 @@ source {set_env!s}
             self.assertFalse(
                 (installed_vendor / "op_api" / "lib" / "libopapi.so").exists()
             )
+
+    def test_run_package_overlay_finalization_is_idempotent(self) -> None:
+        finalize_wheel_opp = _load_run_package_finalizer()["finalize_wheel_opp"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            site_root = Path(temp_dir) / "site-packages"
+            package_dir = site_root / "fla_npu"
+            vendor_dir = (
+                package_dir / "opp" / "vendors" / "fla_npu_transformer"
+            )
+            _create_minimal_vendor(vendor_dir, include_alias=True)
+            config = package_dir / "opp" / "vendors" / "config.ini"
+            config.write_text("load_priority=fla_npu_transformer\n", encoding="utf-8")
+
+            dist_info = site_root / "flash_linear_attention_npu-1.0.dist-info"
+            dist_info.mkdir(parents=True)
+            record = dist_info / "RECORD"
+            with record.open("w", encoding="utf-8", newline="") as handle:
+                csv.writer(handle, lineterminator="\n").writerows(
+                    [
+                        ["fla_npu/__init__.py", "", ""],
+                        ["fla_npu/opp/stale-from-older-overlay.json", "", ""],
+                        [f"{dist_info.name}/RECORD", "", ""],
+                    ]
+                )
+
+            finalize_wheel_opp(package_dir)
+            first_record = record.read_bytes()
+            first_set_env = (vendor_dir / "bin" / "set_env.bash").read_bytes()
+            finalize_wheel_opp(package_dir)
+
+            self.assertEqual(record.read_bytes(), first_record)
+            self.assertEqual(
+                (vendor_dir / "bin" / "set_env.bash").read_bytes(),
+                first_set_env,
+            )
+            self.assertFalse(
+                (vendor_dir / "op_api" / "lib" / "libopapi.so").exists()
+            )
+
+            with record.open("r", encoding="utf-8", newline="") as handle:
+                recorded_paths = {row[0] for row in csv.reader(handle) if row}
+            current_opp_paths = {
+                path.relative_to(site_root).as_posix()
+                for path in (package_dir / "opp").rglob("*")
+                if path.is_file() or path.is_symlink()
+            }
+            self.assertTrue(current_opp_paths.issubset(recorded_paths))
+            self.assertNotIn(
+                "fla_npu/opp/stale-from-older-overlay.json",
+                recorded_paths,
+            )
+
+    def test_run_package_installers_target_wheel_opp(self) -> None:
+        custom_installer = (
+            REPO_ROOT / "cmake" / "scripts" / "custom" / "install.sh"
+        ).read_text(encoding="utf-8")
+        transformer_installer = (
+            REPO_ROOT
+            / "scripts"
+            / "package"
+            / "ops_transformer"
+            / "scripts"
+            / "install.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('WHEEL_INSTALL="y"', custom_installer)
+        self.assertIn("--cann)", custom_installer)
+        self.assertIn('finalize_wheel_opp "${wheel_opp_root}"', custom_installer)
+        self.assertIn(
+            'finalize_wheel_opp "${wheel_opp_root}"', transformer_installer
+        )
+
+        custom_build = (REPO_ROOT / "cmake" / "custom_build.cmake").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("finalize_wheel_opp.py", custom_build)
 
 if __name__ == "__main__":
     unittest.main()

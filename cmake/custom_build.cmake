@@ -1030,21 +1030,32 @@ if (ENABLE_OPS_KERNEL)
 endif ()
 
 if (NOT ENABLE_BUILT_IN AND BUILD_OPEN_PROJECT)
+    set(FLA_NPU_WHEEL_OPP_FINALIZER
+            ${CMAKE_SOURCE_DIR}/scripts/package/ops_transformer/scripts/finalize_wheel_opp.py)
     add_custom_target(modify_vendor ALL
-            DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/scripts/install.sh ${CMAKE_CURRENT_BINARY_DIR}/scripts/upgrade.sh
+            DEPENDS
+            ${CMAKE_CURRENT_BINARY_DIR}/scripts/install.sh
+            ${CMAKE_CURRENT_BINARY_DIR}/scripts/upgrade.sh
+            ${CMAKE_CURRENT_BINARY_DIR}/scripts/finalize_wheel_opp.py
     )
 
     # modify VENDOR_NAME in install.sh and upgrade.sh
-    if (EXISTS ${ASCEND_PROJECT_DIR}/fwk_modules/scripts)
-        set(ASCEND_PROJECT_DIR_SCRIPTS_PATH ${ASCEND_PROJECT_DIR}/fwk_modules/scripts)
-    else()
-        set(ASCEND_PROJECT_DIR_SCRIPTS_PATH ${CMAKE_SOURCE_DIR}/cmake/scripts/custom)
-    endif()
-    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/scripts/install.sh ${CMAKE_CURRENT_BINARY_DIR}/scripts/upgrade.sh
+    # Use the repository-owned custom package scripts so scoped wheel-OPP
+    # replacement behavior is deterministic across CANN releases.
+    set(ASCEND_PROJECT_DIR_SCRIPTS_PATH ${CMAKE_SOURCE_DIR}/cmake/scripts/custom)
+    add_custom_command(OUTPUT
+            ${CMAKE_CURRENT_BINARY_DIR}/scripts/install.sh
+            ${CMAKE_CURRENT_BINARY_DIR}/scripts/upgrade.sh
+            ${CMAKE_CURRENT_BINARY_DIR}/scripts/finalize_wheel_opp.py
             COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/scripts
             COMMAND cp -r ${ASCEND_PROJECT_DIR_SCRIPTS_PATH}/* ${CMAKE_CURRENT_BINARY_DIR}/scripts/
+            COMMAND cp ${FLA_NPU_WHEEL_OPP_FINALIZER} ${CMAKE_CURRENT_BINARY_DIR}/scripts/
             COMMAND chmod +w ${CMAKE_CURRENT_BINARY_DIR}/scripts/*
             COMMAND sed -i "s/vendor_name=customize/vendor_name=${VENDOR_NAME}_transformer/g" ${CMAKE_CURRENT_BINARY_DIR}/scripts/*
+            DEPENDS
+            ${ASCEND_PROJECT_DIR_SCRIPTS_PATH}/install.sh
+            ${ASCEND_PROJECT_DIR_SCRIPTS_PATH}/upgrade.sh
+            ${FLA_NPU_WHEEL_OPP_FINALIZER}
     )
 
     install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/scripts/

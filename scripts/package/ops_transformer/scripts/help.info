@@ -1,7 +1,7 @@
-  --full                            Install full mode
-    --install-path=<path>           Install product to specific dir path
-    --install-for-all               Install for all user
-    --quiet                         Quiet install mode, skip human-computer interactions
+  --install                         Merge this run package into the active Python flash-linear-attention-npu wheel OPP
+  --full                            Same as --install
+    The installer lists package operators, support status, and scoped aclnn ABI changes
+    --quiet                         Quiet install mode
   --uninstall                       Uninstall product with compatible run package which is installed before
     --install-path=<path>           Uninstall specific ops_transformer dir path
   --upgrade                         Upgrade product immediately

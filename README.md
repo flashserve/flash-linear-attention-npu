@@ -87,6 +87,10 @@ FLA_NPU_SOC=ascend910b FLA_NPU_INCREMENTAL_BUILD=1 python -m pip wheel --no-buil
 
 增量构建仅建议用于本地反复调试。构建完成后，wheel 会输出到 `dist/` 目录，按 Step 3 安装即可。
 
+如果当前 Python 环境已经安装过一次完整 wheel，且后续只修改 Ascend C 算子实现，
+无需再次生成完整 wheel。可以只编译对应算子的 run 包并覆盖 wheel 内嵌 OPP，
+具体命令见 Step 3 的“推荐：首次安装 wheel，后续增量安装 run 包”。
+
 方式 A 编译可用环境变量：
 
 | 环境变量 | 可选范围 | 作用 / 建议 | 默认 |
@@ -141,18 +145,47 @@ python -m pip install --force-reinstall --no-deps dist/flash_linear_attention_np
 wheel 通过绝对路径加载 `libcust_opapi.so`，不会再生成或加载可能覆盖 CANN
 运行库的自定义 `libopapi.so`。
 
-#### 方式 B 产物安装
+#### 推荐：首次安装 wheel，后续增量安装 run 包
 
-先安装 run 包，再安装 torch_custom wheel。运行 Python 前需要 source custom OPP 的 `set_env.bash`，或设置 `FLA_NPU_OPP_PATH` 指向 OPP root / vendor 目录。
+首次使用时，按方式 A 编译并安装一次完整 wheel。后续如果只修改 Ascend C
+算子实现，在同一个 Python/Conda 环境中只编译对应算子的 run 包：
 
 ```sh
-export FLA_NPU_OPP_INSTALL_PATH=/path/to/fla_npu_opp
-./build_out/fla-npu-*.run --quiet --install-path=${FLA_NPU_OPP_INSTALL_PATH}
-source ${FLA_NPU_OPP_INSTALL_PATH}/vendors/fla_npu_transformer/bin/set_env.bash
-python -m pip install --force-reinstall --no-deps torch_custom/fla_npu/dist/fla_npu-*.whl
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+bash build.sh --soc=ascend910b --pkg --vendor_name=fla_npu --ops=<op_name>
+./build_out/fla-npu-fla_npu_linux-*.run --install
 ```
 
-`import fla_npu` 会优先使用 wheel 内嵌 OPP，找不到时会继续从 `FLA_NPU_OPP_PATH`、`ASCEND_CUSTOM_OPP_PATH` 和 `ASCEND_OPP_PATH` 查找已安装 OPP。外部 OPP 的 `op_api/lib` 目录同样不得包含自定义 `libopapi.so`；如果残留该文件并可能遮蔽 CANN 运行库，导入会明确报错并要求清理旧别名。
+`--install` 会把本次 run 包中的 OPP 增量合并到当前 Python 环境已安装 wheel 的
+`fla_npu/opp`，无参数运行或使用 `--full` 与之等价。安装完成后请重新启动 Python
+进程；不需要设置 `FLA_NPU_OPP_PATH` 或 source wheel 内的 `set_env.bash`。进入新 shell
+时仍需 source CANN 的 `set_env.sh`。
+
+按算子构建的 run 包仍会整体替换 `libcust_opapi.so`、tiling so、proto so 等共享产物。
+安装器会列出当前 run 包包含的算子，并用 `WARNING` 标出覆盖后可能不可用的其他算子。
+这条路径适合只调试当前算子的开发环境；需要同时使用完整算子集时，应重新安装完整
+wheel，或构建包含全部所需算子的 run 包。
+
+如果 Python wrapper、公开接口或打包配置也有修改，仍需重新编译并安装完整 wheel，
+不能只安装 run 包。
+
+#### 可选：安装到外部 CANN OPP
+
+只有需要独立调试外部 OPP 时，才使用 `--cann`，或者通过 `--install-path` 指定绝对路径：
+
+```sh
+# 使用 ASCEND_CUSTOM_OPP_PATH / ASCEND_OPP_PATH
+./build_out/fla-npu-fla_npu_linux-*.run --cann
+
+# 或安装到指定目录
+export FLA_NPU_OPP_INSTALL_PATH=/path/to/fla_npu_opp
+./build_out/fla-npu-fla_npu_linux-*.run --install-path=${FLA_NPU_OPP_INSTALL_PATH}
+source ${FLA_NPU_OPP_INSTALL_PATH}/vendors/fla_npu_transformer/bin/set_env.bash
+```
+
+外部 OPP 模式不会更新 wheel 内嵌 OPP。`import fla_npu` 会优先使用 wheel 内嵌 OPP，
+找不到时才继续从 `FLA_NPU_OPP_PATH`、`ASCEND_CUSTOM_OPP_PATH` 和
+`ASCEND_OPP_PATH` 查找外部 OPP。
 
 ### Step 4. 测试安装成功
 
