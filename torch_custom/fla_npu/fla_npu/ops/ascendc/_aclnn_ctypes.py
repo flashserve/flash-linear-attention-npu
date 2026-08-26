@@ -39,6 +39,8 @@ from ._runtime import (
     zeros as _zeros,
 )
 
+RGDR_DIM_ALIGNMENT = 16
+
 # Most aclnn functions only receive pointer-sized descriptors and scalar ctypes
 # objects, so ctypes can call them without explicit argtypes.  Functions with C
 # strings or otherwise ambiguous scalar conversion are listed here to prevent
@@ -1038,6 +1040,11 @@ def npu_recurrent_gated_delta_rule(
         raise RuntimeError(
             f"{op_name}: Nk and Nv must be <= 256 and Dk and Dv must be <= 512, "
             f"got Nk={key_heads}, Nv={value_heads}, Dk={key_dim}, Dv={value_dim}."
+        )
+    if key_dim % RGDR_DIM_ALIGNMENT != 0 or value_dim % RGDR_DIM_ALIGNMENT != 0:
+        raise RuntimeError(
+            f"{op_name}: Dk and Dv must be multiples of {RGDR_DIM_ALIGNMENT} for 32B-aligned BF16 rows, "
+            f"got Dk={key_dim}, Dv={value_dim}."
         )
     if value_heads % key_heads != 0:
         raise RuntimeError(

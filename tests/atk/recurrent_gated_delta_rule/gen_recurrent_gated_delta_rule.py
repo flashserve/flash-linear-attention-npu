@@ -3,6 +3,9 @@
 The committed accuracy matrix is frozen by detailed-design ID:
   * 0-95: RGDR-P001 through RGDR-P096
   * 96-175: RGDR-G001 through RGDR-G080
+
+All positive cases use dimensions aligned to the 32B BF16 transfer block;
+unaligned dimensions are invalid and are covered by op_host interception tests.
 """
 
 from __future__ import annotations
@@ -39,6 +42,7 @@ else:
 
 OP_NAME = "recurrent_gated_delta_rule"
 SEED_BASE = 20260826
+DIM_ALIGNMENT = 16
 STANDARD = {
     "acc": {
         "cv_fused_double_benchmark": {
@@ -132,23 +136,23 @@ def _build_positive_profiles() -> list[dict]:
     add("max_length_accepted_ends", seq_lengths=[8, 8], accepted_tokens=[1, 8], HK=1, HV=2)
     add("complex_metadata_four_routes", prefix_tokens=1, seq_lengths=[1, 2, 4], accepted_tokens=[1, 2, 3], HK=2, HV=4, design_routes="P+A+D+F")
 
-    # P033-P048: key/value dimensions and tails.
+    # P033-P048: aligned key/value dimensions and UB profiles.
     dimensions = [
         (16, 16, "dims_16_16"),
-        (17, 17, "dims_17_17"),
-        (31, 33, "dims_31_33"),
+        (32, 32, "dims_32_32"),
+        (32, 48, "dims_32_48"),
         (32, 64, "dims_32_64"),
-        (63, 65, "dims_63_65"),
+        (64, 80, "dims_64_80"),
         (64, 64, "dims_64_64"),
-        (65, 80, "dims_65_80"),
+        (80, 80, "dims_80_80"),
         (80, 96, "dims_80_96"),
-        (127, 127, "dims_127_127"),
+        (112, 112, "dims_112_112"),
         (128, 128, "dims_128_128"),
-        (129, 129, "dims_129_129"),
+        (144, 144, "dims_144_144"),
         (192, 160, "dims_192_160"),
         (256, 256, "dims_256_256"),
         (384, 320, "dims_384_320"),
-        (511, 511, "dims_511_511"),
+        (496, 496, "dims_496_496"),
         (512, 512, "dims_512_512"),
     ]
     for key_dim, value_dim, name in dimensions:
@@ -288,23 +292,23 @@ def _build_gva_profiles() -> list[dict]:
     add("gva_disjoint_sparse_blocks", seq_lengths=[2, 2], block_num=10, state_indices=[1, 3, 6, 8], HK=2, HV=8)
     add("gva_complex_metadata", prefix_tokens=1, seq_lengths=[2, 3], accepted_tokens=[1, 3], HK=24, HV=96, design_routes="P+A+D+F")
 
-    # G049-G064: dimensions, tails and UB slicing.
+    # G049-G064: aligned dimensions and UB slicing.
     gva_dimensions = [
         (16, 16, 1, 8, "gva_dims_16_16", "all"),
-        (17, 31, 2, 6, "gva_dims_17_31", "all"),
+        (32, 32, 2, 6, "gva_dims_32_32", "all"),
         (32, 64, 2, 8, "gva_dims_32_64", "all"),
-        (63, 65, 2, 6, "gva_dims_63_65", "ascend950"),
+        (64, 80, 2, 6, "gva_dims_64_80", "ascend950"),
         (64, 64, 2, 8, "gva_dims_64_64", "ascend950"),
-        (65, 80, 2, 6, "gva_dims_65_80", "ascend950"),
+        (80, 80, 2, 6, "gva_dims_80_80", "ascend950"),
         (80, 96, 4, 8, "gva_dims_80_96", "all"),
-        (127, 127, 2, 8, "gva_dims_127_127", "all"),
+        (112, 112, 2, 8, "gva_dims_112_112", "all"),
         (128, 128, 32, 96, "gva_dims_128_128", "all"),
-        (129, 129, 2, 6, "gva_dims_129_129", "all"),
+        (144, 144, 2, 6, "gva_dims_144_144", "all"),
         (192, 160, 24, 96, "gva_dims_192_160", "ascend950"),
         (256, 128, 1, 8, "gva_dims_256_128", "all"),
         (128, 256, 4, 8, "gva_dims_128_256", "all"),
         (384, 320, 2, 8, "gva_dims_384_320", "all"),
-        (511, 511, 2, 6, "gva_dims_511_511", "all"),
+        (496, 496, 2, 6, "gva_dims_496_496", "all"),
         (512, 512, 1, 8, "gva_dims_512_512", "all"),
     ]
     for key_dim, value_dim, key_heads, value_heads, name, platform in gva_dimensions:
@@ -384,6 +388,10 @@ def _validate_specs(specs: list[dict]) -> None:
             raise ValueError(f"{spec['design_id']}: HV must be divisible by HK")
         if not (1 <= int(spec["K"]) <= 512 and 1 <= int(spec["V"]) <= 512):
             raise ValueError(f"{spec['design_id']}: invalid K/V range")
+        if int(spec["K"]) % DIM_ALIGNMENT or int(spec["V"]) % DIM_ALIGNMENT:
+            raise ValueError(
+                f"{spec['design_id']}: K/V must be multiples of {DIM_ALIGNMENT}"
+            )
         if spec["gate_mode"] not in {"g", "gk", "both"}:
             raise ValueError(f"{spec['design_id']}: invalid gate_mode")
         if spec["state_dtype"] not in {"bf16", "fp32"}:

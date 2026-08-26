@@ -100,6 +100,27 @@ public:
         EXPECT_EQ(pass, true);
     }
 
+    void RGDRUnalignedShapeTestCase(uint32_t testDk, uint32_t testDv)
+    {
+        state = TensorDesc({t, nv, testDv, testDk}, ACL_BF16, ACL_FORMAT_ND).ValueRange(0, 1);
+        query = TensorDesc({t, nk, testDk}, ACL_BF16, ACL_FORMAT_ND).ValueRange(0, 1);
+        key = TensorDesc({t, nk, testDk}, ACL_BF16, ACL_FORMAT_ND).ValueRange(0, 1);
+        value = TensorDesc({t, nv, testDv}, ACL_BF16, ACL_FORMAT_ND).ValueRange(0, 1);
+        beta = TensorDesc({t, nv}, ACL_BF16, ACL_FORMAT_ND).ValueRange(0, 1);
+        gama = TensorDesc({t, nv}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 1);
+        actSeqLen = TensorDesc({b}, ACL_INT32, ACL_FORMAT_ND).ValueRange(0, 1);
+        ssmStaId = TensorDesc({t}, ACL_INT32, ACL_FORMAT_ND).ValueRange(0, 1);
+        numAccTok = TensorDesc({b}, ACL_INT32, ACL_FORMAT_ND).ValueRange(0, 1);
+        out = TensorDesc({t, nv, testDv}, ACL_BF16, ACL_FORMAT_ND).ValueRange(0, 1);
+
+        auto ut = OP_API_UT(
+            aclnnRecurrentGatedDeltaRule,
+            INPUT(query, key, value, beta, state, actSeqLen, ssmStaId, gama, nullptr, numAccTok, 1.0),
+            OUTPUT(out));
+        uint64_t workspace_size = 0;
+        EXPECT_EQ(ACLNN_ERR_PARAM_INVALID, ut.TestGetWorkspaceSize(&workspace_size));
+    }
+
     aclnnStatus utTest(int nullIdx)
     {
         uint64_t workspace_size = 0;
@@ -263,4 +284,14 @@ TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_case20)
 TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_case21)
 {
     test.RGDRTestCase(0, 11);
+}
+
+TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_unaligned_dk)
+{
+    test.RGDRUnalignedShapeTestCase(17, 128);
+}
+
+TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_unaligned_dv)
+{
+    test.RGDRUnalignedShapeTestCase(128, 31);
 }

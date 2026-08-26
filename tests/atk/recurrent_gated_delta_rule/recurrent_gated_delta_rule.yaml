@@ -147,9 +147,9 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [16, 17, 31, 32, 63, 64, 65, 80, 96, 127, 128, 129, 192, 256, 384, 511, 512]
+        values: [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 192, 256, 320, 384, 496, 512]
       invalid:
-        values: []
+        values: [17, 31, 33, 63, 65, 127, 129, 511]
   - name: V
     type: attr
     required: true
@@ -157,9 +157,9 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [16, 17, 31, 33, 64, 65, 80, 96, 127, 128, 129, 160, 256, 320, 511, 512]
+        values: [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 192, 256, 320, 384, 496, 512]
       invalid:
-        values: []
+        values: [17, 31, 33, 63, 65, 127, 129, 511]
   - name: block_num
     type: attr
     required: true

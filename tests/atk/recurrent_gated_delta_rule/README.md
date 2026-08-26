@@ -11,7 +11,7 @@
 - `ssmStateIndices` 为 `(T,)` 的 INT32 张量，取值范围为 `[0, BlockNum)`。
 - `g` 如提供，shape 为 `(T, Nv)`；`gk` 如提供，shape 为 `(T, Nv, Dk)`。两者均为 FP32，且至少提供一个。
 - `numAcceptedTokens` 如提供，shape 为 `(B,)`，每项取值范围为 `[1, actualSeqLengths[i+1]]`。
-- `Nv` 必须是 `Nk` 的整数倍；`Nk <= 256`、`Nv <= 256`、`Dk <= 512`、`Dv <= 512`，每条有效序列长度不超过 8。
+- `Nv` 必须是 `Nk` 的整数倍；`Nk <= 256`、`Nv <= 256`、`Dk <= 512`、`Dv <= 512`，且 `Dk`、`Dv` 必须是 16 的整数倍；每条有效序列长度不超过 8。
 - 泛化矩阵覆盖连续 state、transpose 非连续 state、head padding、block padding、复合 padding 和 storage offset；同时覆盖 Q/K/V/gate/metadata 的合法非连续视图。
 
 ## 标杆来源
@@ -37,17 +37,19 @@ YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合�
 |---:|---|---:|---|
 | 0-15 | RGDR-P001-P016 | 16 | gate 组合、BF16/FP32 state、A2/A3/A5 归约路径 |
 | 16-31 | RGDR-P017-P032 | 16 | 变长、prefix、零长度逻辑序列、accepted token |
-| 32-47 | RGDR-P033-P048 | 16 | `Dk/Dv=16..512`、非对齐尾维、UB profile |
+| 32-47 | RGDR-P033-P048 | 16 | `Dk/Dv=16..512` 的对齐边界、UB profile |
 | 48-63 | RGDR-P049-P064 | 16 | `Nk/Nv=1..256`、GVA group size |
 | 64-79 | RGDR-P065-P080 | 16 | state stride/layout、稀疏/逆序/重复 index |
 | 80-95 | RGDR-P081-P096 | 16 | 平台、调用通路代表 shape、非连续输入、连续调用与回归 |
 | 96-111 | RGDR-G001-G016 | 16 | GVA head 映射与 group size |
 | 112-127 | RGDR-G017-G032 | 16 | GVA gate、state dtype、可追踪 head 数据 |
 | 128-143 | RGDR-G033-G048 | 16 | GVA varlen、prefix、accepted 与稀疏 block |
-| 144-159 | RGDR-G049-G064 | 16 | GVA 尾维、上界与 UB 分片 |
+| 144-159 | RGDR-G049-G064 | 16 | GVA 对齐维度边界、上界与 UB 分片 |
 | 160-175 | RGDR-G065-G080 | 16 | GVA state layout、index、非连续输入与复杂视图 |
 
 ATK DUT 统一通过 `fla_npu.ops.ascendc.recurrent_gated_delta_rule` 执行。`design_routes` 只保留详细设计中 P/A/D/F 的来源追溯，不表示本 JSON 已执行 aclnn C++ example 或快速拉起通路；这些通路仍由各自专用测试验证。
+
+正向 JSON 只包含 `Dk`、`Dv` 为 16 的整数倍的合法 shape。非 16 倍数的维度属于非法输入，由 `fla_npu` wrapper 和 op_host tiling 共同拦截；对应拦截由 op_host UT 覆盖。
 
 ## 执行方式
 

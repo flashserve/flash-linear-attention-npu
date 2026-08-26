@@ -7744,7 +7744,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":17,\"T\":2,\"V\":17,\"block_num\":2,\"case_id\":33,\"data_profile\":\"random\",\"design_id\":\"RGDR-P034\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_17_17\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.24253562503633297,\"seed\":20260859,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":32,\"T\":2,\"V\":32,\"block_num\":2,\"case_id\":33,\"data_profile\":\"random\",\"design_id\":\"RGDR-P034\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_32_32\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.17677669529663687,\"seed\":20260859,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
         "backward": false
       },
       {
@@ -7834,7 +7834,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 17,
+        "range_values": 32,
         "backward": false
       },
       {
@@ -7843,7 +7843,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 17,
+        "range_values": 32,
         "backward": false
       },
       {
@@ -7977,7 +7977,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":31,\"T\":2,\"V\":33,\"block_num\":2,\"case_id\":34,\"data_profile\":\"random\",\"design_id\":\"RGDR-P035\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_31_33\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.1796053020267749,\"seed\":20260860,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":32,\"T\":2,\"V\":48,\"block_num\":2,\"case_id\":34,\"data_profile\":\"random\",\"design_id\":\"RGDR-P035\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_32_48\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.17677669529663687,\"seed\":20260860,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
         "backward": false
       },
       {
@@ -8067,7 +8067,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 31,
+        "range_values": 32,
         "backward": false
       },
       {
@@ -8076,7 +8076,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 33,
+        "range_values": 48,
         "backward": false
       },
       {
@@ -8443,7 +8443,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":63,\"T\":2,\"V\":65,\"block_num\":2,\"case_id\":36,\"data_profile\":\"random\",\"design_id\":\"RGDR-P037\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_63_65\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.1259881576697424,\"seed\":20260862,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":64,\"T\":2,\"V\":80,\"block_num\":2,\"case_id\":36,\"data_profile\":\"random\",\"design_id\":\"RGDR-P037\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_64_80\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.125,\"seed\":20260862,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
         "backward": false
       },
       {
@@ -8533,7 +8533,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 63,
+        "range_values": 64,
         "backward": false
       },
       {
@@ -8542,7 +8542,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 65,
+        "range_values": 80,
         "backward": false
       },
       {
@@ -8909,7 +8909,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":65,\"T\":2,\"V\":80,\"block_num\":2,\"case_id\":38,\"data_profile\":\"random\",\"design_id\":\"RGDR-P039\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_65_80\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.12403473458920847,\"seed\":20260864,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":80,\"T\":2,\"V\":80,\"block_num\":2,\"case_id\":38,\"data_profile\":\"random\",\"design_id\":\"RGDR-P039\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_80_80\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.11180339887498948,\"seed\":20260864,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
         "backward": false
       },
       {
@@ -8999,7 +8999,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 65,
+        "range_values": 80,
         "backward": false
       },
       {
@@ -9375,7 +9375,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":127,\"T\":2,\"V\":127,\"block_num\":2,\"case_id\":40,\"data_profile\":\"random\",\"design_id\":\"RGDR-P041\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_127_127\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.08873565094161139,\"seed\":20260866,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":112,\"T\":2,\"V\":112,\"block_num\":2,\"case_id\":40,\"data_profile\":\"random\",\"design_id\":\"RGDR-P041\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_112_112\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.0944911182523068,\"seed\":20260866,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
         "backward": false
       },
       {
@@ -9465,7 +9465,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 127,
+        "range_values": 112,
         "backward": false
       },
       {
@@ -9474,7 +9474,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 127,
+        "range_values": 112,
         "backward": false
       },
       {
@@ -9841,7 +9841,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":129,\"T\":2,\"V\":129,\"block_num\":2,\"case_id\":42,\"data_profile\":\"random\",\"design_id\":\"RGDR-P043\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_129_129\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.08804509063256238,\"seed\":20260868,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":144,\"T\":2,\"V\":144,\"block_num\":2,\"case_id\":42,\"data_profile\":\"random\",\"design_id\":\"RGDR-P043\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_144_144\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.08333333333333333,\"seed\":20260868,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
         "backward": false
       },
       {
@@ -9931,7 +9931,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 129,
+        "range_values": 144,
         "backward": false
       },
       {
@@ -9940,7 +9940,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 129,
+        "range_values": 144,
         "backward": false
       },
       {
@@ -10773,7 +10773,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":511,\"T\":2,\"V\":511,\"block_num\":2,\"case_id\":46,\"data_profile\":\"random\",\"design_id\":\"RGDR-P047\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_511_511\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.04423739552038088,\"seed\":20260872,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":496,\"T\":2,\"V\":496,\"block_num\":2,\"case_id\":46,\"data_profile\":\"random\",\"design_id\":\"RGDR-P047\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"dims_496_496\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.04490132550669373,\"seed\":20260872,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}",
         "backward": false
       },
       {
@@ -10863,7 +10863,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 511,
+        "range_values": 496,
         "backward": false
       },
       {
@@ -10872,7 +10872,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 511,
+        "range_values": 496,
         "backward": false
       },
       {
@@ -33840,7 +33840,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":17,\"T\":2,\"V\":31,\"block_num\":2,\"case_id\":145,\"data_profile\":\"traceable_gva\",\"design_id\":\"RGDR-G050\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"gva_dims_17_31\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.24253562503633297,\"seed\":20260971,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,gva,positive\"}",
+        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":32,\"T\":2,\"V\":32,\"block_num\":2,\"case_id\":145,\"data_profile\":\"traceable_gva\",\"design_id\":\"RGDR-G050\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"gva_dims_32_32\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.17677669529663687,\"seed\":20260971,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,gva,positive\"}",
         "backward": false
       },
       {
@@ -33930,7 +33930,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 17,
+        "range_values": 32,
         "backward": false
       },
       {
@@ -33939,7 +33939,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 31,
+        "range_values": 32,
         "backward": false
       },
       {
@@ -34306,7 +34306,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":63,\"T\":2,\"V\":65,\"block_num\":2,\"case_id\":147,\"data_profile\":\"traceable_gva\",\"design_id\":\"RGDR-G052\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"gva_dims_63_65\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"ascend950\",\"route\":\"ascendc\",\"scale\":0.1259881576697424,\"seed\":20260973,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,gva,positive\"}",
+        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":64,\"T\":2,\"V\":80,\"block_num\":2,\"case_id\":147,\"data_profile\":\"traceable_gva\",\"design_id\":\"RGDR-G052\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"gva_dims_64_80\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"ascend950\",\"route\":\"ascendc\",\"scale\":0.125,\"seed\":20260973,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,gva,positive\"}",
         "backward": false
       },
       {
@@ -34396,7 +34396,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 63,
+        "range_values": 64,
         "backward": false
       },
       {
@@ -34405,7 +34405,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 65,
+        "range_values": 80,
         "backward": false
       },
       {
@@ -34772,7 +34772,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":65,\"T\":2,\"V\":80,\"block_num\":2,\"case_id\":149,\"data_profile\":\"traceable_gva\",\"design_id\":\"RGDR-G054\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"gva_dims_65_80\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"ascend950\",\"route\":\"ascendc\",\"scale\":0.12403473458920847,\"seed\":20260975,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,gva,positive\"}",
+        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":80,\"T\":2,\"V\":80,\"block_num\":2,\"case_id\":149,\"data_profile\":\"traceable_gva\",\"design_id\":\"RGDR-G054\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"gva_dims_80_80\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"ascend950\",\"route\":\"ascendc\",\"scale\":0.11180339887498948,\"seed\":20260975,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,gva,positive\"}",
         "backward": false
       },
       {
@@ -34862,7 +34862,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 65,
+        "range_values": 80,
         "backward": false
       },
       {
@@ -35238,7 +35238,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":2,\"HV\":8,\"K\":127,\"T\":2,\"V\":127,\"block_num\":2,\"case_id\":151,\"data_profile\":\"traceable_gva\",\"design_id\":\"RGDR-G056\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"gva_dims_127_127\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.08873565094161139,\"seed\":20260977,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,gva,positive\"}",
+        "range_values": "{\"B\":1,\"HK\":2,\"HV\":8,\"K\":112,\"T\":2,\"V\":112,\"block_num\":2,\"case_id\":151,\"data_profile\":\"traceable_gva\",\"design_id\":\"RGDR-G056\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"gva_dims_112_112\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.0944911182523068,\"seed\":20260977,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,gva,positive\"}",
         "backward": false
       },
       {
@@ -35328,7 +35328,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 127,
+        "range_values": 112,
         "backward": false
       },
       {
@@ -35337,7 +35337,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 127,
+        "range_values": 112,
         "backward": false
       },
       {
@@ -35704,7 +35704,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":129,\"T\":2,\"V\":129,\"block_num\":2,\"case_id\":153,\"data_profile\":\"traceable_gva\",\"design_id\":\"RGDR-G058\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"gva_dims_129_129\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.08804509063256238,\"seed\":20260979,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,gva,positive\"}",
+        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":144,\"T\":2,\"V\":144,\"block_num\":2,\"case_id\":153,\"data_profile\":\"traceable_gva\",\"design_id\":\"RGDR-G058\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"gva_dims_144_144\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.08333333333333333,\"seed\":20260979,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,gva,positive\"}",
         "backward": false
       },
       {
@@ -35794,7 +35794,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 129,
+        "range_values": 144,
         "backward": false
       },
       {
@@ -35803,7 +35803,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 129,
+        "range_values": 144,
         "backward": false
       },
       {
@@ -36869,7 +36869,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":511,\"T\":2,\"V\":511,\"block_num\":2,\"case_id\":158,\"data_profile\":\"traceable_gva\",\"design_id\":\"RGDR-G063\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"gva_dims_511_511\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.04423739552038088,\"seed\":20260984,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,gva,positive\"}",
+        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":496,\"T\":2,\"V\":496,\"block_num\":2,\"case_id\":158,\"data_profile\":\"traceable_gva\",\"design_id\":\"RGDR-G063\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"both\",\"input_layout\":\"contiguous\",\"name\":\"gva_dims_496_496\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.04490132550669373,\"seed\":20260984,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,gva,positive\"}",
         "backward": false
       },
       {
@@ -36959,7 +36959,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 511,
+        "range_values": 496,
         "backward": false
       },
       {
@@ -36968,7 +36968,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 511,
+        "range_values": 496,
         "backward": false
       },
       {

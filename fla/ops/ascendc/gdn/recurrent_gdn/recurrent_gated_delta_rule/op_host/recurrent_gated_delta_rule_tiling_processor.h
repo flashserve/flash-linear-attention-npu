@@ -43,6 +43,7 @@ static constexpr size_t RGDR_DIM_3 = 3;
 
 static constexpr size_t RGDR_MAX_MTP = 8;
 static constexpr size_t RGDR_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
+static constexpr uint32_t RGDR_DIM_ALIGNMENT = 16;
 
 struct RecurrentGatedDeltaRuleTilingContext {
     const char *nodeName = "RecurrentGatedDeltaRule";
@@ -224,6 +225,12 @@ private:
         OP_CHECK_IF(tiling.nv % tiling.nk != 0,
                     OP_LOGE(ctx_.nodeName, "nv should be an integer multiple of nk, but nv is %u, nk is %u", tiling.nv,
                             tiling.nk),
+                    return ge::GRAPH_FAILED);
+
+        OP_CHECK_IF(tiling.dk % RGDR_DIM_ALIGNMENT != 0 || tiling.dv % RGDR_DIM_ALIGNMENT != 0,
+                    OP_LOGE(ctx_.nodeName,
+                            "dk and dv should be multiples of %u for 32B-aligned BF16 rows, but dk is %u, dv is %u",
+                            RGDR_DIM_ALIGNMENT, tiling.dk, tiling.dv),
                     return ge::GRAPH_FAILED);
 
         return ge::GRAPH_SUCCESS;

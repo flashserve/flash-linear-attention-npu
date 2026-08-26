@@ -45,7 +45,7 @@ TEST_F(RecurrentGatedDeltaRuleTilingTest, Test0)
 
     int t = 128;
     int nk = 4;
-    int dk = 8;
+    int dk = 16;
     int nv = 128;
     int dv = 128;
     int sBlockNum = 128;
