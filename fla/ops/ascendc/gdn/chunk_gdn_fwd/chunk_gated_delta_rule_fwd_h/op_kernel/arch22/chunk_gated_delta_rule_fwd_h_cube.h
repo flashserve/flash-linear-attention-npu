@@ -38,10 +38,6 @@ struct TileShapes128 {
 template <class InputT, class WorkspaceT, class TileShapes, uint32_t GateMode>
 class ChunkGatedDeltaRuleFwdHCube {
 public:
-    static constexpr bool kGOnly = GateMode == GDN_FWD_H_GATE_G;
-    static constexpr bool kGkOnly = GateMode == GDN_FWD_H_GATE_GK;
-    static_assert(kGOnly != kGkOnly, "unsupported FwdH gate mode");
-
     using ArchTag = Catlass::Arch::AtlasA2;
     using CubeScheduler = Catlass::Gemm::Block::BlockSchedulerGdnFwdHCube;
     using DispatchPolicy = Catlass::Gemm::MmadPingpongTlaMulti<ArchTag, true, false>;

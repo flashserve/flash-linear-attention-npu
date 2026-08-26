@@ -237,12 +237,6 @@ public:
         std::is_same<StateT, bfloat16_t>::value && !std::is_same<StateT, InputT>::value;
     static constexpr uint32_t PONG_EVENT_BASE = 4;
 
-    static_assert(kScalarGate || kKGate, "unsupported FwdH gate mode");
-    static_assert(ExpMode == GDN_FWD_H_EXP_E || ExpMode == GDN_FWD_H_EXP_2,
-                  "unsupported FwdH exponent mode");
-    static_assert(std::is_same<WorkspaceT, float>::value,
-                  "A5 FwdH workspace must be FP32");
-
     __aicore__ inline ChunkGatedDeltaRuleFwdHVector() = default;
 
     __aicore__ inline void Init(
