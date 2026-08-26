@@ -79,13 +79,11 @@ public:
     {
         auto tilingData = reinterpret_cast<
             __gm__ ChunkGatedDeltaRuleFwdHTilingData*>(tiling);
-        seqlen_ = tilingData->seqlen;
         kNumHead_ = tilingData->kNumHead;
         vNumHead_ = tilingData->vNumHead;
         kHeadDim_ = tilingData->kHeadDim;
         vHeadDim_ = tilingData->vHeadDim;
         chunkSize_ = tilingData->chunkSize;
-        isVariedLen_ = tilingData->isVariedLen;
         shapeBatch_ = tilingData->shapeBatch;
 
         gmK_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT*>(k));
@@ -109,8 +107,6 @@ public:
         BlockMmadWHTail stage0TailMmad(resource_, workspaceBytes);
         BlockMmadKV stage2Mmad(resource_, workspaceBytes);
         BlockMmadKVTail stage2TailMmad(resource_, workspaceBytes);
-        bool useBoundedMmad = isVariedLen_ || (seqlen_ % chunkSize_ != 0);
-
         auto wLayout = tla::MakeLayout<InputT, Catlass::layout::RowMajor>(
             shapeBatch_ * kNumHead_ * scheduler_.totalTokens, kHeadDim_);
         auto hLayout = tla::MakeLayout<InputT, Catlass::layout::RowMajor>(
@@ -130,8 +126,7 @@ public:
             Catlass::Arch::CrossCoreWaitFlag(scheduler_.vec2Done[windowId]);
 
             const auto& firstHead = scheduler_.GetHeadTask(0);
-            bool stage0UsesTail = useBoundedMmad &&
-                firstHead.offset.blockTokens < chunkSize_;
+            bool stage0UsesTail = firstHead.offset.blockTokens < chunkSize_;
             if (stage0UsesTail) {
                 stage0TailMmad.preSetFlags();
             } else {
@@ -142,16 +137,9 @@ public:
                 if (scheduler_.HeadTaskIsDone(headTask)) {
                     continue;
                 }
-                bool cubeProduced = Stage0(
-                    headTask, stage0Mmad, stage0TailMmad,
-                    wLayout, hLayout, useBoundedMmad);
-                if (cubeProduced) {
-                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
-                        scheduler_.cube1Done[windowId]);
-                } else {
-                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(
-                        scheduler_.cube1Done[windowId]);
-                }
+                Stage0(headTask, stage0Mmad, stage0TailMmad, wLayout, hLayout);
+                Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                    scheduler_.cube1Done[windowId]);
             }
             if (stage0UsesTail) {
                 stage0TailMmad.finalWaitFlags();
@@ -161,7 +149,7 @@ public:
 
             bool runStage2 = !scheduler_.HeadTaskIsDone(firstHead) &&
                 scheduler_.NeedProcessStage2(firstHead);
-            bool stage2UsesTail = runStage2 && useBoundedMmad &&
+            bool stage2UsesTail = runStage2 &&
                 firstHead.offset.blockTokens < chunkSize_;
             if (runStage2) {
                 if (stage2UsesTail) {
@@ -176,16 +164,10 @@ public:
                     continue;
                 }
                 Catlass::Arch::CrossCoreWaitFlag(scheduler_.vec1Done[windowId]);
-                bool cubeProduced = Stage2(
-                    headTask, stage2Mmad, stage2TailMmad,
-                    kLayout, hWorkLayout, useBoundedMmad);
-                if (cubeProduced) {
-                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
-                        scheduler_.cube2Done[windowId]);
-                } else {
-                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(
-                        scheduler_.cube2Done[windowId]);
-                }
+                Stage2(headTask, stage2Mmad, stage2TailMmad,
+                       kLayout, hWorkLayout);
+                Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                    scheduler_.cube2Done[windowId]);
             }
             if (runStage2) {
                 if (stage2UsesTail) {
@@ -202,16 +184,12 @@ public:
 
 private:
     template <class HeadTask, class WLayout, class HLayout>
-    __aicore__ inline bool Stage0(
+    __aicore__ inline void Stage0(
         const HeadTask& headTask, BlockMmadWH& mmad,
         BlockMmadWHTail& tailMmad, const WLayout& wLayout,
-        const HLayout& hLayout, bool useBoundedMmad)
+        const HLayout& hLayout)
     {
         const Offsets& offsets = scheduler_.GetCurTaskOffsets(headTask);
-        if (!useBoundedMmad && offsets.blockTokens < 16) {
-            return false;
-        }
-
         auto vLayout = tla::MakeLayout<WorkspaceT, Catlass::layout::RowMajor>(
             offsets.blockTokens, offsets.vBlockDim);
         auto tensorW = tla::MakeTensor(
@@ -229,28 +207,23 @@ private:
             tensorH, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
         auto blockV = tla::GetTile(
             tensorV, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
-        if (useBoundedMmad && offsets.blockTokens < chunkSize_) {
+        if (offsets.blockTokens < chunkSize_) {
             tailMmad(blockW, blockH, blockV, shape, Catlass::EmptyClass{}, true);
         } else {
             mmad(blockW, blockH, blockV, shape);
         }
-        return true;
     }
 
     template <class HeadTask, class KLayout, class HLayout>
-    __aicore__ inline bool Stage2(
+    __aicore__ inline void Stage2(
         const HeadTask& headTask, BlockMmadKV& mmad,
         BlockMmadKVTail& tailMmad, const KLayout& kLayout,
-        const HLayout& hLayout, bool useBoundedMmad)
+        const HLayout& hLayout)
     {
         if (!scheduler_.NeedProcessStage2(headTask)) {
-            return true;
+            return;
         }
         const Offsets& offsets = scheduler_.GetCurTaskOffsets(headTask);
-        if (!useBoundedMmad && offsets.blockTokens < 16) {
-            return false;
-        }
-
         // The formal k input is raw k for GDN v1 and pre-scaled kg for KDA/GDN2.
         auto tensorK = tla::MakeTensor(
             gmK_[offsets.wkOffset], kLayout, Catlass::Arch::PositionGM{});
@@ -270,21 +243,18 @@ private:
             tensorV, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
         auto blockH = tla::GetTile(
             tensorH, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
-        if (useBoundedMmad && offsets.blockTokens < chunkSize_) {
+        if (offsets.blockTokens < chunkSize_) {
             tailMmad(blockK, blockV, blockH, shape, Catlass::EmptyClass{}, true);
         } else {
             mmad(blockK, blockV, blockH, shape);
         }
-        return true;
     }
 
-    uint32_t seqlen_;
     uint32_t kNumHead_;
     uint32_t vNumHead_;
     uint32_t kHeadDim_;
     uint32_t vHeadDim_;
     uint32_t chunkSize_;
-    uint32_t isVariedLen_;
     uint32_t shapeBatch_;
 
     AscendC::GlobalTensor<InputT> gmK_;

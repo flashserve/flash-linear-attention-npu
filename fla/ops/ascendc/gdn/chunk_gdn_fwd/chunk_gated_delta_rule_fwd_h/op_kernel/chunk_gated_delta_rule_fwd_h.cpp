@@ -73,7 +73,7 @@ __global__ __aicore__ void chunk_gated_delta_rule_fwd_h(
         using Vector = GDN::FwdHStandalone::ChunkGatedDeltaRuleFwdHVector<
             DTYPE_K, GateT, DTYPE_FINAL_STATE, WorkspaceT, GATE_MODE, EXP_MODE>;
         Vector vector;
-        vector.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices,
+        vector.Init(u, g, gk, inital_state, cu_seqlens, chunk_indices,
                     h, v_new, final_state, user, tiling);
         vector.Process();
     }

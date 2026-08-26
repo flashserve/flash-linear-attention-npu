@@ -240,7 +240,7 @@ public:
     __aicore__ inline ChunkGatedDeltaRuleFwdHVector() = default;
 
     __aicore__ inline void Init(
-        GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR initialState,
+        GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR initialState,
         GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR h, GM_ADDR vNew,
         GM_ADDR finalState, GM_ADDR user, GM_ADDR tiling)
     {
@@ -276,8 +276,6 @@ public:
             }
         }
 
-        gmK_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(k));
-        gmW_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(w));
         gmU_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(u));
         gmG_.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(g));
         gmGk_.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(gk));
@@ -304,7 +302,6 @@ public:
         Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(scheduler_.vec2Done[1]);
         PresetEvents();
 
-        const bool useBoundedMmad = isVariedLen_ || (seqlen_ % chunkSize_ != 0);
         const uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
         const uint32_t subBlockNum = AscendC::GetSubBlockNum();
         while (scheduler_.isRunning) {
@@ -329,12 +326,7 @@ public:
                     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(scheduler_.vec1Done[windowId]);
                     continue;
                 }
-                const bool tailVectorPath = offsets.blockTokens < 16 && !useBoundedMmad;
-                if (tailVectorPath) {
-                    Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube1Done[windowId]);
-                    ComputeTailVWorkspace(offsets, EVENT_ID3 + (isPing ? 0 : PONG_EVENT_BASE));
-                }
-                Stage1(offsets, windowId, isPing, tailVectorPath);
+                Stage1(offsets, windowId, isPing);
             }
 
             // Stage3: consume the complete Stage2 round and publish the next state.
@@ -352,12 +344,7 @@ public:
                         Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube2Done[windowId]);
                         continue;
                     }
-                    const bool tailVectorPath = offsets.blockTokens < 16 && !useBoundedMmad;
-                    if (tailVectorPath) {
-                        Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube2Done[windowId]);
-                        ComputeTailHWorkspace(offsets, EVENT_ID3 + (isPing ? 0 : PONG_EVENT_BASE));
-                    }
-                    Stage3(offsets, windowId, isPing, tailVectorPath);
+                    Stage3(offsets, windowId, isPing);
                 } else {
                     Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube2Done[windowId]);
                 }
@@ -428,8 +415,7 @@ private:
     __aicore__ inline void PresetEvents();
     __aicore__ inline void DrainEvents();
     __aicore__ inline void Stage1(
-        const Offsets &offsets, uint32_t windowId, bool isPing,
-        bool cubeAlreadyWaited);
+        const Offsets &offsets, uint32_t windowId, bool isPing);
     __aicore__ inline void LoadStage1Tile(
         const Offsets &offsets, uint32_t rowStart, uint32_t rows,
         uint32_t tileIndex);
@@ -437,17 +423,13 @@ private:
         const Offsets &offsets, uint32_t rowStart, uint32_t rows,
         uint32_t tileIndex);
     __aicore__ inline void Stage3(
-        const Offsets &offsets, uint32_t windowId, bool isPing,
-        bool cubeAlreadyWaited);
+        const Offsets &offsets, uint32_t windowId, bool isPing);
     __aicore__ inline void LoadStage3Tile(
         const Offsets &offsets, uint32_t rowStart, uint32_t rows,
         uint32_t tileIndex);
     __aicore__ inline void StoreStage3Tile(
         const Offsets &offsets, uint32_t rowStart, uint32_t rows,
         uint32_t tileIndex);
-    __aicore__ inline void ComputeTailVWorkspace(const Offsets &offsets, uint32_t eventId);
-    __aicore__ inline void ComputeTailHWorkspace(const Offsets &offsets, uint32_t eventId);
-
     uint32_t batch_{0};
     uint32_t seqlen_{0};
     uint32_t kNumHead_{0};
@@ -466,8 +448,6 @@ private:
     bool useInitialState_{false};
     bool storeFinalState_{false};
 
-    AscendC::GlobalTensor<InputT> gmK_;
-    AscendC::GlobalTensor<InputT> gmW_;
     AscendC::GlobalTensor<InputT> gmU_;
     AscendC::GlobalTensor<GateT> gmG_;
     AscendC::GlobalTensor<GateT> gmGk_;
@@ -651,8 +631,7 @@ template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
           uint32_t GateMode, uint32_t ExpMode>
 __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
     InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::Stage1(
-        const Offsets &offsets, uint32_t windowId, bool isPing,
-        bool cubeAlreadyWaited)
+        const Offsets &offsets, uint32_t windowId, bool isPing)
 {
     constexpr uint32_t ROW_TILE = 16;
     const uint32_t rows = offsets.blockTokens;
@@ -667,9 +646,7 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID3 + headEventBase);
     }
 
-    if (!cubeAlreadyWaited) {
-        Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube1Done[windowId]);
-    }
+    Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube1Done[windowId]);
     const uint32_t tileCount = (rows + ROW_TILE - 1) / ROW_TILE;
     LoadStage1Tile(offsets, 0, Min(ROW_TILE, rows), headSlot);
     if constexpr (kScalarGate) {
@@ -817,17 +794,14 @@ template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
           uint32_t GateMode, uint32_t ExpMode>
 __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
     InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::Stage3(
-        const Offsets &offsets, uint32_t windowId, bool isPing,
-        bool cubeAlreadyWaited)
+        const Offsets &offsets, uint32_t windowId, bool isPing)
 {
     constexpr uint32_t ROW_TILE = 16;
     const uint32_t headSlot = isPing ? 0 : 1;
     const uint32_t rows = kHeadDim_;
     const uint32_t cols = offsets.vBlockDim;
     AscendC::ResetMask();
-    if (!cubeAlreadyWaited) {
-        Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube2Done[windowId]);
-    }
+    Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube2Done[windowId]);
 
     float scalarGate = 1.0f;
     if constexpr (kScalarGate) {
@@ -883,112 +857,6 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
         }
         StoreStage3Tile(offsets, rowStart, rowsThisTile, cur);
     }
-}
-
-template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
-          uint32_t GateMode, uint32_t ExpMode>
-__aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
-    InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::ComputeTailVWorkspace(
-        const Offsets &offsets, uint32_t eventId)
-{
-    AscendC::ResetMask();
-    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventId);
-    auto input = resource_.ubBuf.template GetBufferByByte<InputT>(166 * 1024);
-    auto inputFp32 = resource_.ubBuf.template GetBufferByByte<float>(167 * 1024);
-    auto accum = resource_.ubBuf.template GetBufferByByte<float>(168 * 1024);
-    auto weight = resource_.ubBuf.template GetBufferByByte<InputT>(169 * 1024);
-    auto weightFp32 = resource_.ubBuf.template GetBufferByByte<float>(170 * 1024);
-    for (uint32_t token = 0; token < offsets.blockTokens; ++token) {
-        AscendC::DataCopy(weight, gmW_[offsets.wOffset + token * kHeadDim_], kHeadDim_);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventId);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventId);
-        AscendC::Cast(weightFp32, weight, AscendC::RoundMode::CAST_NONE, kHeadDim_);
-        AscendC::PipeBarrier<PIPE_V>();
-        AscendC::SetFlag<AscendC::HardEvent::V_S>(eventId);
-        AscendC::WaitFlag<AscendC::HardEvent::V_S>(eventId);
-        AscendC::Duplicate(accum, 0.0f, offsets.vBlockDim);
-        AscendC::PipeBarrier<PIPE_V>();
-        for (uint32_t k = 0; k < kHeadDim_; ++k) {
-            AscendC::DataCopy(input, gmH_[offsets.hSrcOffset + k * vHeadDim_], offsets.vBlockDim);
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventId);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventId);
-            AscendC::Cast(inputFp32, input, AscendC::RoundMode::CAST_NONE, offsets.vBlockDim);
-            AscendC::PipeBarrier<PIPE_V>();
-            const float factor = weightFp32.GetValue(k);
-            AscendC::SetFlag<AscendC::HardEvent::S_V>(eventId);
-            AscendC::WaitFlag<AscendC::HardEvent::S_V>(eventId);
-            AscendC::Muls(inputFp32, inputFp32, factor, offsets.vBlockDim);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Add(accum, accum, inputFp32, offsets.vBlockDim);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventId);
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventId);
-        }
-        AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(eventId);
-        AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(eventId);
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventId);
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventId);
-        AscendC::DataCopy(gmVWorkspace_[offsets.vWorkOffset + token * offsets.vBlockDim],
-                          accum, offsets.vBlockDim);
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(eventId);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(eventId);
-    }
-    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventId);
-}
-
-template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
-          uint32_t GateMode, uint32_t ExpMode>
-__aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
-    InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::ComputeTailHWorkspace(
-        const Offsets &offsets, uint32_t eventId)
-{
-    AscendC::ResetMask();
-    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventId);
-    auto input = resource_.ubBuf.template GetBufferByByte<InputT>(166 * 1024);
-    auto inputFp32 = resource_.ubBuf.template GetBufferByByte<float>(167 * 1024);
-    auto accum = resource_.ubBuf.template GetBufferByByte<float>(168 * 1024);
-    auto weight = resource_.ubBuf.template GetBufferByByte<InputT>(169 * 1024);
-    auto weightFp32 = resource_.ubBuf.template GetBufferByByte<float>(170 * 1024);
-    for (uint32_t kRow = 0; kRow < kHeadDim_; ++kRow) {
-        AscendC::Duplicate(accum, 0.0f, offsets.vBlockDim);
-        AscendC::PipeBarrier<PIPE_V>();
-        for (uint32_t token = 0; token < offsets.blockTokens; ++token) {
-            AscendC::DataCopy(weight, gmK_[offsets.wkOffset + token * kHeadDim_], kHeadDim_);
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventId);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventId);
-            AscendC::Cast(weightFp32, weight, AscendC::RoundMode::CAST_NONE, kHeadDim_);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::SetFlag<AscendC::HardEvent::V_S>(eventId);
-            AscendC::WaitFlag<AscendC::HardEvent::V_S>(eventId);
-            AscendC::DataCopy(input,
-                              gmVUpdateWorkspace_[offsets.vWorkOffset + token * offsets.vBlockDim],
-                              offsets.vBlockDim);
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventId);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventId);
-            AscendC::Cast(inputFp32, input, AscendC::RoundMode::CAST_NONE, offsets.vBlockDim);
-            AscendC::PipeBarrier<PIPE_V>();
-            const float factor = weightFp32.GetValue(kRow);
-            AscendC::SetFlag<AscendC::HardEvent::S_V>(eventId);
-            AscendC::WaitFlag<AscendC::HardEvent::S_V>(eventId);
-            AscendC::Muls(inputFp32, inputFp32, factor, offsets.vBlockDim);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Add(accum, accum, inputFp32, offsets.vBlockDim);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventId);
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(eventId);
-            AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(eventId);
-            AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(eventId);
-        }
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventId);
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventId);
-        AscendC::DataCopy(gmHWorkspace_[offsets.hWorkOffset + kRow * offsets.vBlockDim],
-                          accum, offsets.vBlockDim);
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
-    }
-    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(eventId);
 }
 
 } // namespace GDN::FwdHStandalone

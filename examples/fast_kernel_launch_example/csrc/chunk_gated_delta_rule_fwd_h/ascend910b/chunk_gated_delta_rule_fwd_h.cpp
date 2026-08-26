@@ -241,7 +241,7 @@ __global__ __aicore__ void chunk_gated_delta_rule_fwd_h_kernel(
             GDN_FWD_H_GATE_G, GDN_FWD_H_EXP_E>;
         Vector vector;
         vector.Init(
-            k, w, u, g, nullptr, inital_state, cu_seqlens, chunk_indices,
+            u, g, nullptr, inital_state, cu_seqlens, chunk_indices,
             h, v_new, final_state, user, tiling);
         vector.Process();
     }

@@ -62,7 +62,7 @@ public:
     __aicore__ inline ChunkGatedDeltaRuleFwdHVector() = default;
 
     __aicore__ inline void Init(
-        GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk,
+        GM_ADDR u, GM_ADDR g, GM_ADDR gk,
         GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
         GM_ADDR h, GM_ADDR vNew, GM_ADDR finalState, GM_ADDR user, GM_ADDR tiling)
     {
@@ -83,8 +83,6 @@ public:
         tokenBatch_ = tilingData->tokenBatch;
         numChunksWorkspaceOffset_ = tilingData->numChunksWorkspaceOffset;
 
-        gmK_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(k));
-        gmW_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(w));
         gmU_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(u));
         gmG_.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(g));
         gmGk_.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(gk));
@@ -143,9 +141,6 @@ public:
                     const Offsets& offsets = scheduler_.GetCurTaskOffsets(headTask);
                     const uint32_t localSlot = i / subBlockNum;
                     const bool isPing = localSlot == 0;
-                    if (offsets.blockTokens < 16) {
-                        Stage0Tail(offsets, isPing);
-                    }
                     Stage1(offsets, isPing);
                 }
                 Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(
@@ -165,9 +160,6 @@ public:
                     const Offsets& offsets = scheduler_.GetCurTaskOffsets(headTask);
                     const uint32_t localSlot = i / subBlockNum;
                     const bool isPing = localSlot == 0;
-                    if (offsets.blockTokens < 16) {
-                        Stage2Tail(offsets, isPing);
-                    }
                     Stage3(offsets, isPing, localSlot);
                 }
             }
@@ -505,133 +497,6 @@ private:
             resource_.pipe.template ReleaseEventID<AscendC::HardEvent::S_MTE2>(
                 scalarToMte2Events_[slot]);
         }
-    }
-
-    __aicore__ inline float LoadScalarAsFloat(
-        AscendC::GlobalTensor<InputT> tensor, uint32_t offset) const
-    {
-        InputT value = tensor.GetValue(offset);
-        if constexpr (std::is_same<InputT, bfloat16_t>::value) {
-            return AscendC::ToFloat(value);
-        }
-        return static_cast<float>(value);
-    }
-
-    __aicore__ inline void Stage0Tail(const Offsets& offsets, bool isPing)
-    {
-        const uint32_t slot = BufferIndex(isPing);
-        const uint32_t eventIdx = EventIndex(GATE_EVENT, slot);
-        AscendC::ResetMask();
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
-            vToMte2Events_[eventIdx]);
-        auto inputUb = resource_.ubBuf.template GetBufferByByte<InputT>(166 * 1024);
-        auto floatUb = resource_.ubBuf.template GetBufferByByte<float>(167 * 1024);
-        auto accumUb = resource_.ubBuf.template GetBufferByByte<float>(168 * 1024);
-        for (uint32_t tokenRow = 0; tokenRow < offsets.blockTokens; ++tokenRow) {
-            AscendC::Duplicate(accumUb, 0.0f, offsets.vBlockDim);
-            AscendC::PipeBarrier<PIPE_V>();
-            for (uint32_t kIdx = 0; kIdx < kHeadDim_; ++kIdx) {
-                AscendC::DataCopy(inputUb,
-                    gmH_[offsets.hSrcOffset + kIdx * vHeadDim_], offsets.vBlockDim);
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
-                    mte2ToVEvents_[eventIdx]);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
-                    mte2ToVEvents_[eventIdx]);
-                AscendC::Cast(floatUb, inputUb, AscendC::RoundMode::CAST_NONE,
-                              offsets.vBlockDim);
-                AscendC::PipeBarrier<PIPE_V>();
-                float weight = LoadScalarAsFloat(
-                    gmW_, offsets.wOffset + tokenRow * kHeadDim_ + kIdx);
-                AscendC::SetFlag<AscendC::HardEvent::S_V>(
-                    scalarToVEvents_[slot]);
-                AscendC::WaitFlag<AscendC::HardEvent::S_V>(
-                    scalarToVEvents_[slot]);
-                AscendC::Muls(floatUb, floatUb, weight, offsets.vBlockDim);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Add(accumUb, accumUb, floatUb, offsets.vBlockDim);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
-                    vToMte2Events_[eventIdx]);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
-                    vToMte2Events_[eventIdx]);
-            }
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(
-                vToMte3Events_[eventIdx]);
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(
-                vToMte3Events_[eventIdx]);
-            AscendC::DataCopy(
-                gmVWorkspace_[offsets.vWorkOffset + tokenRow * offsets.vBlockDim],
-                accumUb, offsets.vBlockDim);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(
-                mte3ToMte2Events_[eventIdx]);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(
-                mte3ToMte2Events_[eventIdx]);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(
-                mte3ToVEvents_[eventIdx]);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
-                mte3ToVEvents_[eventIdx]);
-        }
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
-            vToMte2Events_[eventIdx]);
-    }
-
-    __aicore__ inline void Stage2Tail(const Offsets& offsets, bool isPing)
-    {
-        const uint32_t slot = BufferIndex(isPing);
-        const uint32_t eventIdx = EventIndex(GATE_EVENT, slot);
-        AscendC::ResetMask();
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
-            vToMte2Events_[eventIdx]);
-        auto inputUb = resource_.ubBuf.template GetBufferByByte<InputT>(166 * 1024);
-        auto floatUb = resource_.ubBuf.template GetBufferByByte<float>(167 * 1024);
-        auto accumUb = resource_.ubBuf.template GetBufferByByte<float>(168 * 1024);
-        for (uint32_t kRow = 0; kRow < kHeadDim_; ++kRow) {
-            AscendC::Duplicate(accumUb, 0.0f, offsets.vBlockDim);
-            AscendC::PipeBarrier<PIPE_V>();
-            for (uint32_t tokenRow = 0; tokenRow < offsets.blockTokens; ++tokenRow) {
-                AscendC::DataCopy(inputUb,
-                    gmVUpdateWorkspace_[offsets.vWorkOffset + tokenRow * offsets.vBlockDim],
-                    offsets.vBlockDim);
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(
-                    mte2ToVEvents_[eventIdx]);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
-                    mte2ToVEvents_[eventIdx]);
-                AscendC::Cast(floatUb, inputUb, AscendC::RoundMode::CAST_NONE,
-                              offsets.vBlockDim);
-                AscendC::PipeBarrier<PIPE_V>();
-                float weight = LoadScalarAsFloat(
-                    gmK_, offsets.wkOffset + tokenRow * kHeadDim_ + kRow);
-                AscendC::SetFlag<AscendC::HardEvent::S_V>(
-                    scalarToVEvents_[slot]);
-                AscendC::WaitFlag<AscendC::HardEvent::S_V>(
-                    scalarToVEvents_[slot]);
-                AscendC::Muls(floatUb, floatUb, weight, offsets.vBlockDim);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Add(accumUb, accumUb, floatUb, offsets.vBlockDim);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
-                    vToMte2Events_[eventIdx]);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(
-                    vToMte2Events_[eventIdx]);
-            }
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(
-                vToMte3Events_[eventIdx]);
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(
-                vToMte3Events_[eventIdx]);
-            AscendC::DataCopy(
-                gmHWorkspace_[offsets.hWorkOffset + kRow * offsets.vBlockDim],
-                accumUb, offsets.vBlockDim);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(
-                mte3ToMte2Events_[eventIdx]);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(
-                mte3ToMte2Events_[eventIdx]);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(
-                mte3ToVEvents_[eventIdx]);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(
-                mte3ToVEvents_[eventIdx]);
-        }
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
-            vToMte2Events_[eventIdx]);
     }
 
     __aicore__ inline void PrepareScalarGate(
@@ -1252,8 +1117,6 @@ private:
     uint32_t tokenBatch_ = 0;
     uint64_t numChunksWorkspaceOffset_ = 0;
 
-    AscendC::GlobalTensor<InputT> gmK_;
-    AscendC::GlobalTensor<InputT> gmW_;
     AscendC::GlobalTensor<InputT> gmU_;
     AscendC::GlobalTensor<GateT> gmG_;
     AscendC::GlobalTensor<GateT> gmGk_;

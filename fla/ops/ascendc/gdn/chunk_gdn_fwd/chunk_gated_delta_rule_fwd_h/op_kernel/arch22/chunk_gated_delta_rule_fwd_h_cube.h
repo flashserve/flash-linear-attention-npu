@@ -93,6 +93,7 @@ public:
         BlockMmadWH stage0Mmad(resource_);
         BlockMmadWH stage0TailMmad(resource_);
         BlockMmadKV stage2Mmad(resource_);
+        BlockMmadKV stage2TailMmad(resource_);
 
         auto wLayout = tla::MakeLayout<InputT, Catlass::layout::RowMajor>(
             shapeBatch_ * kNumHead_ * scheduler_.totalTokens, kHeadDim_);
@@ -120,43 +121,39 @@ public:
             Catlass::Arch::CrossCoreWaitFlag(scheduler_.vec2Done[windowId]);
 
             const auto& firstHead = scheduler_.GetHeadTask(0);
-            bool stage0UsesCube = firstHead.offset.blockTokens >= 16;
             bool stage0UsesTail = firstHead.offset.blockTokens < chunkSize_;
-            if (stage0UsesCube) {
-                if (stage0UsesTail) {
-                    stage0TailMmad.preSetFlags();
-                } else {
-                    stage0Mmad.preSetFlags();
-                }
+            if (stage0UsesTail) {
+                stage0TailMmad.preSetFlags();
+            } else {
+                stage0Mmad.preSetFlags();
             }
             for (uint32_t head = 0; head < scheduler_.GetHeadsInRound(); ++head) {
                 const auto& headTask = scheduler_.GetHeadTask(head);
                 if (scheduler_.HeadTaskIsDone(headTask)) {
                     continue;
                 }
-                bool cubeProduced = Stage0(
+                Stage0(
                     headTask, stage0Mmad, stage0TailMmad,
                     wLayout, hLayout, vLayout);
-                if (cubeProduced) {
-                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
-                        scheduler_.cube1Done[windowId]);
-                } else {
-                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(
-                        scheduler_.cube1Done[windowId]);
-                }
+                Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                    scheduler_.cube1Done[windowId]);
             }
-            if (stage0UsesCube) {
-                if (stage0UsesTail) {
-                    stage0TailMmad.finalWaitFlags();
-                } else {
-                    stage0Mmad.finalWaitFlags();
-                }
+            if (stage0UsesTail) {
+                stage0TailMmad.finalWaitFlags();
+            } else {
+                stage0Mmad.finalWaitFlags();
             }
 
             bool runStage2 = !scheduler_.HeadTaskIsDone(firstHead) &&
                 scheduler_.NeedProcessStage2(firstHead);
+            bool stage2UsesTail = runStage2 &&
+                firstHead.offset.blockTokens < chunkSize_;
             if (runStage2) {
-                stage2Mmad.preSetFlags();
+                if (stage2UsesTail) {
+                    stage2TailMmad.preSetFlags();
+                } else {
+                    stage2Mmad.preSetFlags();
+                }
             }
             for (uint32_t head = 0; head < scheduler_.GetHeadsInRound(); ++head) {
                 const auto& headTask = scheduler_.GetHeadTask(head);
@@ -164,12 +161,17 @@ public:
                     continue;
                 }
                 Catlass::Arch::CrossCoreWaitFlag(scheduler_.vec1Done[windowId]);
-                Stage2(headTask, stage2Mmad, kLayout, vUpdateLayout, hWorkLayout);
+                Stage2(headTask, stage2Mmad, stage2TailMmad,
+                    kLayout, vUpdateLayout, hWorkLayout);
                 Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
                     scheduler_.cube2Done[windowId]);
             }
             if (runStage2) {
-                stage2Mmad.finalWaitFlags();
+                if (stage2UsesTail) {
+                    stage2TailMmad.finalWaitFlags();
+                } else {
+                    stage2Mmad.finalWaitFlags();
+                }
             }
         }
 
@@ -179,15 +181,11 @@ public:
 
 private:
     template <class HeadTask, class WLayout, class HLayout, class VLayout>
-    __aicore__ inline bool Stage0(
+    __aicore__ inline void Stage0(
         const HeadTask& headTask, BlockMmadWH& mmad, BlockMmadWH& tailMmad,
         const WLayout& wLayout, const HLayout& hLayout, const VLayout& vLayout)
     {
         const Offsets& offsets = scheduler_.GetCurTaskOffsets(headTask);
-        if (offsets.blockTokens < 16) {
-            return false;
-        }
-
         Catlass::GemmCoord shape{
             offsets.blockTokens, offsets.vBlockDim, kHeadDim_};
         auto tensorW = tla::MakeTensor(
@@ -208,12 +206,12 @@ private:
         } else {
             mmad(blockW, blockH, blockV, shape);
         }
-        return true;
     }
 
     template <class HeadTask, class KLayout, class VLayout, class HLayout>
     __aicore__ inline void Stage2(
         const HeadTask& headTask, BlockMmadKV& mmad,
+        BlockMmadKV& tailMmad,
         const KLayout& kLayout, const VLayout& vLayout,
         const HLayout& hLayout)
     {
@@ -239,7 +237,11 @@ private:
             tensorV, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
         auto blockH = tla::GetTile(
             tensorH, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
-        mmad(blockK, blockV, blockH, shape);
+        if (offsets.blockTokens < chunkSize_) {
+            tailMmad(blockK, blockV, blockH, shape, Catlass::EmptyClass{}, true);
+        } else {
+            mmad(blockK, blockV, blockH, shape);
+        }
     }
 
     uint32_t kNumHead_;
