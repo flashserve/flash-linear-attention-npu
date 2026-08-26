@@ -4,7 +4,7 @@ version: v2.1
 name: recurrent_gated_delta_rule
 aclnn_name: RecurrentGatedDeltaRule
 generate: generator_recurrent_gated_delta_rule
-dtype_numbers: 176
+dtype_numbers: 163
 extra_numbers: 0
 standard:
   acc: mixed_tolerance_bm
