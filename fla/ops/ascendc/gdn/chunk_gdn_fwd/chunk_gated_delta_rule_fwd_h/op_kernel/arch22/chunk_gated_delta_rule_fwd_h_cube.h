@@ -77,7 +77,6 @@ public:
         kHeadDim_ = tilingData->kHeadDim;
         vHeadDim_ = tilingData->vHeadDim;
         chunkSize_ = tilingData->chunkSize;
-        isVariedLen_ = tilingData->isVariedLen;
         shapeBatch_ = tilingData->shapeBatch;
 
         gmK_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT*>(k));
@@ -95,10 +94,6 @@ public:
 
     __aicore__ inline void Process()
     {
-        if (isVariedLen_) {
-            AscendC::SyncAll<false>();
-        }
-
         BlockMmadWH stage0Mmad(resource_);
         BlockMmadWH stage0TailMmad(resource_);
         BlockMmadKV stage2Mmad(resource_);
@@ -257,7 +252,6 @@ private:
     uint32_t kHeadDim_;
     uint32_t vHeadDim_;
     uint32_t chunkSize_;
-    uint32_t isVariedLen_;
     uint32_t shapeBatch_;
 
     AscendC::GlobalTensor<InputT> gmK_;
