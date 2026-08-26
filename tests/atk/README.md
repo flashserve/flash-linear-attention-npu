@@ -83,6 +83,7 @@ npu-smi info
 | `DC_LOOP_NUMS`         | 确定性循环次数，默认`50`                                                             |
 | `DC_TIMEOUT`           | 确定性阶段超时时间，默认`3600`                                                       |
 | `PERFORMANCE_TIMEOUT`  | 性能阶段超时时间，默认`2000`                                                         |
+| `PERFORMANCE_CASE_FILE` | 性能阶段用例 JSON；默认优先使用算子目录下的`atk_<op>_performance.json`             |
 | `MSS_TOOL`             | mssanitizer 工具，默认`memcheck`                                                     |
 | `MSS_LOG_PATH`         | ATK`-msl` 日志路径；默认 `${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log`        |
 
@@ -147,7 +148,8 @@ bash tests/atk/run_test_cpu.sh -op=causal_conv1d
 bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=accuracy
 ```
 
-性能测试使用 ATK `performance_device`：
+性能测试使用 ATK `performance_device`；如果算子目录存在
+`atk_<op_name>_performance.json`，脚本会优先使用该性能子集：
 
 ```bash
 bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=performance

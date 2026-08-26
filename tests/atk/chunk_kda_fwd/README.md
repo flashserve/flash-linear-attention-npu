@@ -128,7 +128,43 @@ A2 mixed-tail 1K 用例的保存输出复检稳定复现 NaN/Inf；`ct viz` 显�
 `attn_out` 存在成片非有限值及数量级异常，而 CPU FP64 golden 和 CPU 同精度对照
 保持有限，属于结构性输出错误，不是小值域相对误差放大。
 
-## 2. GPU 分布式拓扑
+## 2. A5 性能十用例
+
+`atk_chunk_kda_fwd_performance.json` 基于主矩阵的模型输入配置提供 10 条 dense BSND
+性能用例，避免性能 scope 误跑精度矩阵或依赖 CPU/GPU 远端节点：
+
+| 用例 | layout | H/HV | T | K/V | chunk | `disable_recompute` |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `id=266` | BSND dense | 96/96（无 GVA） | 2048 | 128/128 | 64 | `false` |
+| `id=267` | BSND dense | 96/96（无 GVA） | 2048 | 128/128 | 64 | `true` |
+| `id=282` | BSND dense | 96/96（无 GVA） | 8192 | 128/128 | 64 | `false` |
+| `id=283` | BSND dense | 96/96（无 GVA） | 8192 | 128/128 | 64 | `true` |
+| `id=290` | BSND dense | 96/96（无 GVA） | 16384 | 128/128 | 64 | `false` |
+| `id=291` | BSND dense | 96/96（无 GVA） | 16384 | 128/128 | 64 | `true` |
+| `id=298` | BSND dense | 96/96（无 GVA） | 32768 | 128/128 | 64 | `false` |
+| `id=299` | BSND dense | 96/96（无 GVA） | 32768 | 128/128 | 64 | `true` |
+| `id=300` | BSND dense | 96/96（无 GVA） | 65536 | 128/128 | 64 | `false` |
+| `id=301` | BSND dense | 96/96（无 GVA） | 65536 | 128/128 | 64 | `true` |
+
+十条用例均不传 `cu_seqlens` 和 `chunk_indices`，A5 BF16、chunk=64、K=V=128
+场景会命中 dense 对齐快路径，一次 API 调用只提交一次物理 `ChunkKdaFwd` 主 kernel。
+
+性能阶段固定使用本地 `npu` backend。ATK 26.7.8 的 `pyaclnn` 性能任务会要求
+remote comparison node；公共 runner 已将性能 backend 与精度双标杆 backend
+分开，因此不需要启动远端节点。A5 上一键执行：
+
+```bash
+bash tests/atk/run_test_cpu.sh \
+  -op=chunk_kda_fwd \
+  -npu_device_id=<physical_npu_device> \
+  -soc=ascend950 \
+  -scope=performance
+```
+
+默认输出 `atk_output/perf`，性能阶段只运行上表 10 条用例。需要临时替换性能 JSON
+或覆盖 backend 时，可设置 `PERFORMANCE_CASE_FILE`、`PERFORMANCE_BACKEND`。
+
+## 3. GPU 分布式拓扑
 
 ```text
 A5 host
@@ -147,7 +183,7 @@ GPU 宿主机可达地址和宿主机映射端口，不要填写容器内部 IP�
 NPU 运行时和 `fla_npu.ops.ascendc`；GPU 容器只需要 CUDA Torch、Triton 和配置的
 KDA Triton callable，不需要安装 CANN 或 NPU wheel。
 
-## 3. 固定变量
+## 4. 固定变量
 
 后续命令使用以下占位符：
 
@@ -164,7 +200,7 @@ export TRITON_KDA_ROOT=<fla_org_or_compatible_triton_source_root>
 推荐在两边都把仓库放到各自固定路径；路径本身不要求相同。ATK server 与 A5 发起命令
 都从各自仓库的 `test/chunk_kda_fwd` 目录启动，输出路径使用相对路径。
 
-## 4. GPU Docker 准备
+## 5. GPU Docker 准备
 
 优先在 Docker 边界只暴露物理 GPU 6，并将容器 9090 映射到宿主机端口：
 
@@ -190,7 +226,7 @@ docker exec "$GPU_CONTAINER" nvidia-smi -L
 容器只暴露物理 GPU 6 时，它在容器内是逻辑设备 0。若容器仍能看到所有卡，则先设置
 `CUDA_VISIBLE_DEVICES=6`，ATK 中仍使用重新编号后的 `--devices 0`。
 
-## 5. GPU 容器环境与服务
+## 6. GPU 容器环境与服务
 
 进入容器后，激活 ATK 26.7.8 环境并检查 CUDA/Triton：
 
@@ -229,7 +265,7 @@ atk server \
 不要退出这个终端。日志应显示监听 `0.0.0.0:9090`，而不是只监听
 `127.0.0.1:9090`。
 
-## 6. A5 环境
+## 7. A5 环境
 
 在 A5 上加载 ATK、CANN、当前构建的 OPP 和仓内 Python 包。这里只暴露物理 NPU 6，
 所以后续 ATK 使用逻辑设备 0：
@@ -253,7 +289,7 @@ npu-smi info -i 6
 若没有设置 `ASCEND_RT_VISIBLE_DEVICES=6`，则 `node --devices` 必须传物理编号 6；两种
 写法只能选一种，不要设置可见卡后仍传 6。
 
-## 7. 两端一致性与网络预检
+## 8. 两端一致性与网络预检
 
 在 A5 和 GPU 容器内分别执行，结果必须一致：
 
@@ -276,7 +312,7 @@ curl -fsS "http://${GPU_HOST}:${GPU_HOST_PORT}/openapi.json" >/dev/null
 端口不可达时依次检查：容器内 server 是否仍在运行、是否监听 `0.0.0.0:9090`、
 `docker port` 是否存在、宿主机防火墙和 A5 到 GPU 宿主机的路由。
 
-## 8. 单 case 三路烟测
+## 9. 单 case 三路烟测
 
 在 A5 的 `test/chunk_kda_fwd` 目录执行。远端 GPU 不与 A5 共享文件系统，因此
 `--syc_dataset` 必须保留；分布式任务不要使用 `-sp`，使用 `-mt 1` 限制并发和显存：
@@ -323,7 +359,7 @@ GPU control: benchmark=False high_precision=False triton_control=True
 `gpu_benchmark` 目录保存 Torch FP64 真值；普通 `gpu_*` 目录保存同输入 dtype 的 Triton
 对照；`npu_*` 目录保存 A5 DUT 输出。
 
-## 9. 全量和单 case 定位
+## 10. 全量和单 case 定位
 
 A5 正向范围为 `250-449`，ATK 的 `-e` 是开区间：
 
@@ -349,7 +385,7 @@ python ./stress_npu_determinism.py \
   --repeats 100
 ```
 
-## 10. 常见失败
+## 11. 常见失败
 
 | 现象 | 原因与处理 |
 | --- | --- |

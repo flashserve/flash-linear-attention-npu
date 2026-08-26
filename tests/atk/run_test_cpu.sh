@@ -27,6 +27,7 @@ show_usage() {
   DC_LOOP_NUMS                   确定性循环次数，默认 50（与 ATK 一致）
   DC_TIMEOUT                     确定性阶段超时，默认 3600
   PERFORMANCE_TIMEOUT            性能阶段超时，默认 2000
+  PERFORMANCE_CASE_FILE          性能阶段用例 JSON，默认优先使用算子目录下的性能子集
   CASE_START/CASE_END            通用 case 顺序范围；不设置时不传 -s/-e，ATK 执行全部用例
   ACCURACY_START/ACCURACY_END    精度与 NaN 检测 case 范围
   PERFORMANCE_START/END          性能 case 范围
@@ -274,6 +275,7 @@ RESULT_CHECK_PY="${SCRIPT_DIR}/common/check_atk_result.py"
 
 # NPU 后端固定为 npu
 CASE_FILE="${OP_DIR}/atk_${OP}.json"
+PERFORMANCE_CASE_FILE="${PERFORMANCE_CASE_FILE:-${OP_DIR}/atk_${OP}_performance.json}"
 EXECUTOR_FILE="${OP_DIR}/executor_${OP}.py"
 YAML_FILE="${OP_DIR}/${OP}.yaml"
 GEN_FILE="${OP_DIR}/gen_${OP}.py"
@@ -285,6 +287,9 @@ if should_run gen_cases; then
 else
   [[ -f "$CASE_FILE" ]] || die "找不到 ATK 用例文件：${CASE_FILE}"
   [[ -f "$EXECUTOR_FILE" ]] || die "找不到 ATK 执行器：${EXECUTOR_FILE}"
+fi
+if should_run performance && [[ ! -f "$PERFORMANCE_CASE_FILE" ]]; then
+  PERFORMANCE_CASE_FILE="${OP_DIR}/atk_${OP}_perf.json"
 fi
 
 if [[ -n "${ATK_ENV:-}" ]]; then
@@ -369,11 +374,12 @@ fi
 
 if should_run performance; then
   log_info "开始性能测试：performance_device"
+  log_info "性能用例文件：${PERFORMANCE_CASE_FILE}"
   set_case_range_args "性能测试 case 范围" "$PERFORMANCE_START" "$PERFORMANCE_END"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/perf" \
     task \
-      -c "atk_${OP}_perf.json" \
+      -c "$PERFORMANCE_CASE_FILE" \
       --task performance_device \
       -p "executor_${OP}.py" \
       "${CASE_RANGE_ARGS[@]}" \
