@@ -2,9 +2,9 @@ api: pytorch
 api_type: executor_causal_conv1d_bwd
 version: v2.1
 name: causal_conv1d_bwd
-aclnn_name:
+aclnn_name: ""
 generate: generator_causal_conv1d_bwd
-dtype_numbers: 1
+dtype_numbers: 100
 extra_numbers: 0
 standard:
   acc:
@@ -51,7 +51,7 @@ inputs:
       values: [non_param]
     ranges:
       valid:
-        values: ["{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"T\":8,\"D\":16,\"W\":4,\"op\":\"causal_conv1d_bwd\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
+        values: ["{\"name\":\"bf16_bsnd_B1_T16_D16_W4\",\"dtype\":\"bf16\",\"B\":1,\"T\":16,\"D\":16,\"W\":4,\"op\":\"causal_conv1d_bwd\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
       invalid:
         values: []
   - name: dtype
@@ -71,7 +71,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1]
+        values: [1, 2, 4, 8]
       invalid:
         values: []
   - name: T
@@ -81,7 +81,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [8]
+        values: [16, 32, 64, 128, 256]
       invalid:
         values: []
   - name: D
@@ -91,7 +91,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [16]
+        values: [16, 32, 64, 128, 256]
       invalid:
         values: []
   - name: W
@@ -101,7 +101,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [4]
+        values: [2, 3, 4]
       invalid:
         values: []
   - name: case_id
