@@ -1,6 +1,7 @@
 """ATK executor for prepare_wy_repr_bwd.
 
-The CPU golden is embedded from fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd/test/test_final_golden.py.
+The CPU golden chains the prepare_wy_repr_bwd_da and prepare_wy_repr_bwd_full
+reference formulas, matching the fused operator semantics.
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ from _ascendc_common_executor import (
     _case_spec,
     _chunks,
     _finite_tuple,
-    _gate,
     _marker_device,
     _orig_dtype,
     _rand,
@@ -35,26 +35,90 @@ from _ascendc_common_executor import (
 OP_NAME = "prepare_wy_repr_bwd"
 
 
+def _build_varlen_metadata(spec: dict[str, Any]) -> tuple[list[int] | None, list[int] | None]:
+    if not bool(spec.get("varlen", False)):
+        return None, None
+
+    B = int(spec["B"])
+    T = int(spec["T"])
+    chunk_size = int(spec["chunk_size"])
+    mean_len = max(1, min(T, int(spec.get("mean_len", 1))))
+    seed = int(spec.get("seed", 20260817))
+    if B != 1:
+        raise ValueError("variable-length prepare_wy_repr_bwd requires B=1")
+
+    lengths = []
+    remaining = T
+    sequence_index = 0
+    while remaining > 0:
+        spread = max(1, mean_len // 2)
+        offset = ((seed + sequence_index * 17) % (2 * spread + 1)) - spread
+        length = max(1, min(remaining, mean_len + offset))
+        lengths.append(length)
+        remaining -= length
+        sequence_index += 1
+
+    cu_seqlens = [0]
+    for length in lengths:
+        cu_seqlens.append(cu_seqlens[-1] + length)
+
+    chunk_indices = []
+    for sequence_index, length in enumerate(lengths):
+        for chunk_index in range((length + chunk_size - 1) // chunk_size):
+            chunk_indices.extend((sequence_index, chunk_index))
+    return cu_seqlens, chunk_indices
+
+
 def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
     dtype_name = str(spec.get("dtype", "bf16")).lower()
+    gtype_name = str(spec.get("gtype", "fp32")).lower()
     data_dtype = _orig_dtype(dtype_name)
+    gate_dtype = _orig_dtype(gtype_name)
     seed = int(spec.get("seed", 20260817))
     B, HK, HV, T, K, V = (int(spec[x]) for x in ("B", "HK", "HV", "T", "K", "V"))
     chunk_size = int(spec["chunk_size"])
+    cu_seqlens, chunk_indices = _build_varlen_metadata(spec)
+    base = _rand(
+        (B, HV, T),
+        "fp32",
+        torch.float32,
+        torch.device("cpu"),
+        seed + 5,
+        0.0,
+        1.0,
+    ) * 0.1 + 0.01
+    g = -torch.cumsum(base, dim=-1).to(gate_dtype).to(device)
     return {
         "k": _randn((B, HK, T, K), dtype_name, data_dtype, device, seed + 1),
         "v": _randn((B, HV, T, V), dtype_name, data_dtype, device, seed + 2),
-        "beta": _rand((B, HV, T), "fp32", torch.float32, device, seed + 3, 0.1, 0.9),
+        "beta": _rand((B, HV, T), gtype_name, gate_dtype, device, seed + 3, 0.1, 0.9),
         "A": _randn((B, HV, T, chunk_size), dtype_name, data_dtype, device, seed + 4),
-        "g": _gate((B, HV, T), torch.float32, device, seed + 5),
+        "g": g,
         "dw": _randn((B, HV, T, K), dtype_name, data_dtype, device, seed + 6),
         "du": _randn((B, HV, T, V), dtype_name, data_dtype, device, seed + 7),
         "chunk_size": chunk_size,
+        "cu_seqlens": cu_seqlens,
+        "chunk_indices": chunk_indices,
     }
 
 
+def _quantize(value: torch.Tensor, dtype: torch.dtype, calc_dtype: torch.dtype) -> torch.Tensor:
+    return value.to(dtype).to(calc_dtype)
+
+
+def _chunk_ranges(inputs: dict[str, Any], T: int, chunk_size: int):
+    cu_seqlens = inputs.get("cu_seqlens")
+    if cu_seqlens is None:
+        yield from _chunks(T, chunk_size)
+        return
+
+    for bos, eos in zip(cu_seqlens[:-1], cu_seqlens[1:]):
+        for local_start, local_end in _chunks(eos - bos, chunk_size):
+            yield bos + local_start, bos + local_end
+
+
 def _compute_da_golden(inputs: dict[str, Any], high_precision: bool) -> torch.Tensor:
-    """Port of test_da.py::compute_dA_cpu for the dense single-case route."""
+    """Compute the fused operator's internal dA intermediate."""
     k, v = inputs["k"], inputs["v"]
     beta, A, g = inputs["beta"], inputs["A"], inputs["g"]
     dw, du = inputs["dw"], inputs["du"]
@@ -63,39 +127,40 @@ def _compute_da_golden(inputs: dict[str, Any], high_precision: bool) -> torch.Te
     chunk_size = int(inputs["chunk_size"])
     calc_dtype = torch.float64 if high_precision else torch.float32
     dA = torch.zeros(A.shape, dtype=calc_dtype, device=A.device)
-    group_size = HV // HK
+    heads_per_kv = HV // HK
+    chunk_ranges = tuple(_chunk_ranges(inputs, T, chunk_size))
 
     for b in range(B):
         for hv in range(HV):
-            hk = hv // group_size
-            for start, end in _chunks(T, chunk_size):
+            hk = hv // heads_per_kv
+            for start, end in chunk_ranges:
                 length = end - start
-                a_chunk = A[b, hv, start:end, :length].to(calc_dtype)
-                dw_chunk = dw[b, hv, start:end].to(calc_dtype)
-                du_chunk = du[b, hv, start:end].to(calc_dtype)
-                k_chunk = k[b, hk, start:end].to(calc_dtype)
-                v_chunk = v[b, hv, start:end].to(calc_dtype)
-                beta_chunk = beta[b, hv, start:end].to(calc_dtype)
-                g_chunk = g[b, hv, start:end].to(calc_dtype)
+                a = A[b, hv, start:end, :length].to(calc_dtype)
+                dwc = dw[b, hv, start:end].to(calc_dtype)
+                duc = du[b, hv, start:end].to(calc_dtype)
+                kc = k[b, hk, start:end].to(calc_dtype)
+                vc = v[b, hv, start:end].to(calc_dtype)
+                bc = beta[b, hv, start:end].to(calc_dtype)
+                gc = g[b, hv, start:end].to(calc_dtype)
 
                 causal = torch.tril(
                     torch.ones((length, length), dtype=torch.bool, device=A.device),
                     diagonal=-1,
                 )
-                k_beta_g = k_chunk * (beta_chunk * torch.exp(g_chunk)).unsqueeze(-1)
-                v_beta = v_chunk * beta_chunk.unsqueeze(-1)
-                raw = torch.matmul(dw_chunk, k_beta_g.T) + torch.matmul(du_chunk, v_beta.T)
+                k_beta_g = kc * (bc * torch.exp(gc)).unsqueeze(-1)
+                v_beta = vc * bc.unsqueeze(-1)
+                raw = torch.matmul(dwc, k_beta_g.T) + torch.matmul(duc, v_beta.T)
                 masked = torch.where(causal, raw, torch.zeros_like(raw))
-                transformed = torch.matmul(a_chunk.T, torch.matmul(masked, a_chunk.T))
-                gate_ratio = torch.exp(g_chunk.unsqueeze(1) - g_chunk.unsqueeze(0))
-                result = torch.where(causal, -transformed * gate_ratio, torch.zeros_like(transformed))
+                transformed = torch.matmul(a.T, torch.matmul(masked, a.T))
+                gate_ratio = torch.exp(gc.unsqueeze(1) - gc.unsqueeze(0))
+                result = torch.where(
+                    causal,
+                    -transformed * gate_ratio,
+                    torch.zeros_like(transformed),
+                )
                 dA[b, hv, start:end, :length] = result.T
 
     return dA if high_precision else dA.to(A.dtype)
-
-
-def _quantize(value: torch.Tensor, dtype: torch.dtype, calc_dtype: torch.dtype) -> torch.Tensor:
-    return value.to(dtype).to(calc_dtype)
 
 
 def _compute_full_golden(
@@ -116,11 +181,12 @@ def _compute_full_golden(
     dbeta = torch.zeros((B, HV, T), dtype=calc_dtype, device=beta.device)
     dg = torch.zeros((B, HV, T), dtype=calc_dtype, device=g.device)
     heads_per_kv = HV // HK
+    chunk_ranges = tuple(_chunk_ranges(inputs, T, chunk_size))
 
     for b in range(B):
         for hv in range(HV):
             hk = hv // heads_per_kv
-            for start, end in _chunks(T, chunk_size):
+            for start, end in chunk_ranges:
                 length = end - start
                 a = A[b, hv, start:end, :length].to(calc_dtype)
                 da = dA[b, hv, start:end, :length].to(calc_dtype)
@@ -256,8 +322,8 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
         inputs["du"],
         inputs["g"],
         inputs["chunk_size"],
-        cu_seqlens=None,
-        chunk_indices=None,
+        cu_seqlens=inputs["cu_seqlens"],
+        chunk_indices=inputs["chunk_indices"],
     )
 
 

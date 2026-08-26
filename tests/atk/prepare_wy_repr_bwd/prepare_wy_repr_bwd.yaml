@@ -4,7 +4,7 @@ version: v2.1
 name: prepare_wy_repr_bwd
 aclnn_name:
 generate: generator_prepare_wy_repr_bwd
-dtype_numbers: 1
+dtype_numbers: 100
 extra_numbers: 0
 standard:
   acc:
@@ -51,7 +51,7 @@ inputs:
       values: [non_param]
     ranges:
       valid:
-        values: ["{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"HK\":1,\"HV\":1,\"T\":16,\"K\":128,\"V\":128,\"chunk_size\":64,\"op\":\"prepare_wy_repr_bwd\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
+        values: ["{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"gtype\":\"fp32\",\"B\":1,\"HK\":1,\"HV\":1,\"T\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"op\":\"prepare_wy_repr_bwd\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
       invalid:
         values: []
   - name: dtype
@@ -62,6 +62,16 @@ inputs:
     ranges:
       valid:
         values: ["bf16", "fp16"]
+      invalid:
+        values: []
+  - name: gtype
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["bf16", "fp16", "fp32"]
       invalid:
         values: []
   - name: B
@@ -101,7 +111,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [16]
+        values: [64]
       invalid:
         values: []
   - name: K
@@ -132,6 +142,26 @@ inputs:
     ranges:
       valid:
         values: [64]
+      invalid:
+        values: []
+  - name: varlen
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0, 1]
+      invalid:
+        values: []
+  - name: mean_len
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [1]
       invalid:
         values: []
   - name: case_id
