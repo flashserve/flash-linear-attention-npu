@@ -23,7 +23,7 @@
 #include "catlass/layout/layout.hpp"
 #include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
 #include "../chunk_gated_delta_rule_fwd_h_policy.h"
-#include "../gemm/block/block_scheduler_gdn_fwd_h.hpp"
+#include "../chunk_gated_delta_rule_fwd_h_scheduler.h"
 #include "kernel_operator.h"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"

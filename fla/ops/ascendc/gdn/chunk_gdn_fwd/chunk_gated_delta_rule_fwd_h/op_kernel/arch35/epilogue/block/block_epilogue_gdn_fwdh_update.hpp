@@ -170,7 +170,7 @@ public:
             reinterpret_cast<__ubuf__ float *>(gateOutput.GetPhyAddr());
         __ubuf__ GElementInput *gateInputAddr =
             reinterpret_cast<__ubuf__ GElementInput *>(gateInput.GetPhyAddr());
-        AscendC::VF_CALL<detail::PrepareKGateRegbase<GElementInput, useExp2>>(
+        AscendC::VF_CALL<detail::PrepareKGateRegbase<GElementInput, true>>(
             gateOutputAddr, gateInputAddr, static_cast<uint16_t>(count));
         AscendC::PipeBarrier<PIPE_V>();
     }
@@ -191,22 +191,6 @@ public:
         AscendC::VF_CALL<detail::ApplyKGateUpdateRegbaseDualIssue<StateElement>>(
             updateAddr, stateAddr, rowScaleAddr,
             static_cast<uint16_t>(rows), static_cast<uint16_t>(cols));
-        AscendC::PipeBarrier<PIPE_V>();
-    }
-
-    template <typename StateElement>
-    CATLASS_DEVICE
-    void ApplyScalarGateUpdate(
-        AscendC::LocalTensor<float> update,
-        AscendC::LocalTensor<StateElement> state,
-        float scale,
-        uint32_t count)
-    {
-        __ubuf__ float *updateAddr = reinterpret_cast<__ubuf__ float *>(update.GetPhyAddr());
-        __ubuf__ StateElement *stateAddr =
-            reinterpret_cast<__ubuf__ StateElement *>(state.GetPhyAddr());
-        AscendC::VF_CALL<detail::ApplyScalarGateUpdateRegbaseDualIssue<StateElement>>(
-            updateAddr, stateAddr, scale, count);
         AscendC::PipeBarrier<PIPE_V>();
     }
 
@@ -232,8 +216,7 @@ public:
         bool cube2AlreadyWaited,
         bool useDirectFp32Ub,
         uint64_t directUbFreeFlagBegin,
-        uint64_t directUbReadyFlagBegin,
-        bool processWholeHead
+        uint64_t directUbReadyFlagBegin
     )
     {
         static constexpr uint32_t ROW_TILE = 16;
@@ -242,10 +225,6 @@ public:
         uint32_t outputStride = vHeadDim;
         uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
-        if (processWholeHead) {
-            subBlockIdx = 0;
-            subBlockNum = 1;
-        }
         uint32_t rowsPerSubBlock = CeilDiv(mActual, subBlockNum);
         uint32_t rowBegin = subBlockIdx * rowsPerSubBlock;
         uint32_t rowEnd = rowBegin + rowsPerSubBlock;
@@ -358,37 +337,14 @@ public:
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
 
+            if (!useFp32StateUpdate) {
+                AscendC::Cast(calcUbTensor, hUbTensor, AscendC::RoundMode::CAST_NONE,
+                              rowsThisTile * nActual);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
             if constexpr (scalarGated) {
-                if (useFp32StateUpdate) {
-                    AscendC::Muls(calcUbTensor, calcUbTensor, muls,
-                                  rowsThisTile * nActual);
-                    AscendC::PipeBarrier<PIPE_V>();
-                }
-            }
-
-            if (waitUpdateFromMte3) {
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(updateReadyEvent);
-            } else {
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
-            }
-            if (!useDirectFp32Ub) {
-                CopyGmToUb(hUpdateUbTensorThisTile, hUpdateInputThisTile,
-                           rowsThisTile, nActual, nActual);
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
-            }
-
-            if constexpr (scalarGated) {
-                if (useFp32StateUpdate) {
-                    AscendC::Add<float>(
-                        hUpdateUbTensorThisTile, calcUbTensor,
-                        hUpdateUbTensorThisTile, rowsThisTile * nActual);
-                    AscendC::PipeBarrier<PIPE_V>();
-                } else {
-                    ApplyScalarGateUpdate(
-                        hUpdateUbTensorThisTile, hUbTensor, muls,
-                        rowsThisTile * nActual);
-                }
+                AscendC::Muls(calcUbTensor, calcUbTensor, muls, rowsThisTile * nActual);
+                AscendC::PipeBarrier<PIPE_V>();
             }
 
             if constexpr (kGated) {
@@ -415,20 +371,24 @@ public:
                 } else {
                     PrepareKGate(gkLastUbTensor, gkInputUbTensor, rowsThisTile);
                 }
-                if (useFp32StateUpdate) {
-                    ApplyRowScale(calcUbTensor, gkLastUbTensor,
-                                  rowsThisTile, nActual);
-                    AscendC::Add<float>(
-                        hUpdateUbTensorThisTile, calcUbTensor,
-                        hUpdateUbTensorThisTile, rowsThisTile * nActual);
-                    AscendC::PipeBarrier<PIPE_V>();
-                } else {
-                    ApplyKGateUpdate(
-                        hUpdateUbTensorThisTile, hUbTensor, gkLastUbTensor,
-                        rowsThisTile, nActual);
-                }
+                ApplyRowScale(calcUbTensor, gkLastUbTensor, rowsThisTile, nActual);
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
             }
+
+            if (waitUpdateFromMte3) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(updateReadyEvent);
+            } else {
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
+            }
+            if (!useDirectFp32Ub) {
+                CopyGmToUb(hUpdateUbTensorThisTile, hUpdateInputThisTile, rowsThisTile, nActual, nActual);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
+            }
+            AscendC::Add<float>(
+                hUpdateUbTensorThisTile, calcUbTensor, hUpdateUbTensorThisTile,
+                rowsThisTile * nActual);
+            AscendC::PipeBarrier<PIPE_V>();
             if (storeFinalState && isFinalState && std::is_same<FinalStateElement, float>::value) {
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
                 waitHFromV = true;

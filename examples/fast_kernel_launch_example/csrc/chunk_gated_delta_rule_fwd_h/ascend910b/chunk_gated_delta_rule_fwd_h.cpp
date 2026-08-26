@@ -169,7 +169,7 @@ TORCH_LIBRARY_IMPL(EXTENSION_MODULE_NAME, Meta, m)
 }
 
 static ::ChunkGatedDeltaRuleFwdHTilingData calc_tiling_params(
-    const at::Tensor &k, const at::Tensor &u,
+    const at::Tensor &k, const at::Tensor &u, const at::Tensor &g,
     const c10::optional<at::Tensor> &initial_state, bool output_final_state, int64_t chunk_size,
     at::OptionalIntArrayRef cu_seqlens, uint32_t &blockDim, size_t &workspaceSize)
 {
@@ -182,13 +182,22 @@ static ::ChunkGatedDeltaRuleFwdHTilingData calc_tiling_params(
     ctx.shapeBatchDim = k.size(0);
     ctx.hasCuSeqlens = cu_seqlens.has_value();
     ctx.cuSeqlensDim0 = cu_seqlens.has_value() ? static_cast<int64_t>(cu_seqlens.value().size()) : 0;
+    ctx.dataType = k.scalar_type() == at::kBFloat16 ?
+        optiling::GDN_FWD_H_DTYPE_BF16 : optiling::GDN_FWD_H_DTYPE_FP16;
+    ctx.gDataType = g.scalar_type() == at::kFloat ?
+        optiling::GDN_FWD_H_DTYPE_FP32 : ctx.dataType;
     ctx.useInitialState = initial_state.has_value();
     ctx.storeFinalState = output_final_state;
     const auto state_dtype = initial_state.has_value()
                                  ? initial_state.value().scalar_type()
                                  : at::kFloat;
     ctx.stateElementBytes = state_dtype == at::kFloat ? sizeof(float) : sizeof(uint16_t);
+    ctx.stateDataType = state_dtype == at::kFloat ?
+        optiling::GDN_FWD_H_DTYPE_FP32 : optiling::GDN_FWD_H_DTYPE_BF16;
+    ctx.useG = true;
+    ctx.useGk = false;
     ctx.useSeparateRollingState = state_dtype != k.scalar_type();
+    ctx.useStandaloneScheduler = true;
     ctx.chunkSize = chunk_size;
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
@@ -256,7 +265,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_npu(
     uint32_t blockDim = 0;
     size_t workspaceSize = 0;
     auto tiling = calc_tiling_params(
-        k, u, initial_state, output_final_state, chunk_size, cu_seqlens, blockDim, workspaceSize);
+        k, u, g, initial_state, output_final_state, chunk_size, cu_seqlens, blockDim, workspaceSize);
 
     auto k_ptr = (GM_ADDR)k.data_ptr();
     auto w_ptr = (GM_ADDR)w.data_ptr();

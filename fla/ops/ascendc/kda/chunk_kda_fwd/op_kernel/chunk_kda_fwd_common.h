@@ -79,6 +79,7 @@ struct FwdHTilingView {
     int64_t tokenBatch;
     int64_t vWorkspaceOffset;
     int64_t vUpdateWorkspaceOffset;
+    int64_t kDecayWorkspaceOffset;
     int64_t hWorkspaceOffset;
     int64_t numSeqWorkspaceOffset;
     int64_t numChunksWorkspaceOffset;
@@ -102,6 +103,7 @@ __aicore__ inline FwdHTilingView MakeFwdHTiling(const TilingData &tiling)
         tiling.isVarLen ? tiling.seqNum : 1,
         tiling.vWorkspaceOffset,
         tiling.vUpdateWorkspaceOffset,
+        tiling.kDecayWorkspaceOffset,
         tiling.hWorkspaceOffset,
         tiling.numSeqWorkspaceOffset,
         tiling.numChunksWorkspaceOffset,
@@ -227,11 +229,11 @@ __aicore__ inline void RunFwdH(
     const TilingData &tiling)
 {
     using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
-        T, float, float, float, TileShapes, GDN_FWD_H_GATE_GK, GDN_FWD_H_EXP_2>;
+        T, float, float, float, TileShapes, true, false, true>;
     const auto fwdHTiling = MakeFwdHTiling(tiling);
     FwdHKernel stateOp;
     stateOp.InitFromData(
-        addresses.kg, addresses.w, addresses.u, nullptr, addresses.gk,
+        addresses.kg, addresses.w, addresses.u, addresses.gk, addresses.gk,
         initialState, cuSeqlens, chunkIndices, addresses.h, addresses.vNew,
         addresses.finalState, fwdHTiling,
         userWorkspace + tiling.fwdHWorkspaceBaseOffset);

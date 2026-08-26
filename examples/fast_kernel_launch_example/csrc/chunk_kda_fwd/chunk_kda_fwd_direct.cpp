@@ -86,6 +86,7 @@ struct DirectKdaTilingData {
     int64_t fwdHTokenBatch;
     int64_t fwdHVWorkspaceOffset;
     int64_t fwdHVUpdateWorkspaceOffset;
+    int64_t fwdHKDecayWorkspaceOffset;
     int64_t fwdHHWorkspaceOffset;
     int64_t fwdHNumSeqWorkspaceOffset;
     int64_t fwdHNumChunksWorkspaceOffset;
@@ -212,13 +213,17 @@ __aicore__ inline void RunChunkKdaFwdHDirect(
     stateTiling.tokenBatch = tiling.fwdHTokenBatch;
     stateTiling.vWorkspaceOffset = tiling.fwdHVWorkspaceOffset;
     stateTiling.vUpdateWorkspaceOffset = tiling.fwdHVUpdateWorkspaceOffset;
+    stateTiling.kDecayWorkspaceOffset = tiling.fwdHKDecayWorkspaceOffset;
     stateTiling.hWorkspaceOffset = tiling.fwdHHWorkspaceOffset;
     stateTiling.numSeqWorkspaceOffset = tiling.fwdHNumSeqWorkspaceOffset;
     stateTiling.numChunksWorkspaceOffset = tiling.fwdHNumChunksWorkspaceOffset;
+    stateTiling.useG = false;
+    stateTiling.useGk = true;
+
     using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
-        T, float, float, float, TileShapes, GDN_FWD_H_GATE_GK, GDN_FWD_H_EXP_2>;
+        T, float, float, float, TileShapes, true, false, true>;
     FwdHKernel stateOp;
-    stateOp.InitFromData(kg, w, u, nullptr, gk, initialState, nullptr, nullptr,
+    stateOp.InitFromData(kg, w, u, gk, gk, initialState, nullptr, nullptr,
                          h, vNew, finalState, stateTiling,
                          userWorkspace + tiling.fwdHWorkspaceBaseOffset);
     stateOp.Process();
@@ -424,7 +429,13 @@ ChunkKdaFwdDirectNpu(
     stateContext.shapeBatchDim = q.size(0);
     stateContext.hasCuSeqlens = false;
     stateContext.cuSeqlensDim0 = 0;
+    stateContext.dataType = q.scalar_type() == at::kBFloat16 ?
+        optiling::GDN_FWD_H_DTYPE_BF16 : optiling::GDN_FWD_H_DTYPE_FP16;
+    stateContext.gDataType = optiling::GDN_FWD_H_DTYPE_FP32;
     stateContext.useInitialState = initialState.has_value();
+    stateContext.stateDataType = optiling::GDN_FWD_H_DTYPE_FP32;
+    stateContext.useG = false;
+    stateContext.useGk = true;
     stateContext.storeFinalState = outputFinalState;
     stateContext.chunkSize = chunkSize;
     stateContext.aicCoreNum = blockDim;
@@ -487,6 +498,7 @@ ChunkKdaFwdDirectNpu(
     tiling.fwdHTokenBatch = stateTilingHost.tokenBatch;
     tiling.fwdHVWorkspaceOffset = stateTilingHost.vWorkspaceOffset;
     tiling.fwdHVUpdateWorkspaceOffset = stateTilingHost.vUpdateWorkspaceOffset;
+    tiling.fwdHKDecayWorkspaceOffset = stateTilingHost.kDecayWorkspaceOffset;
     tiling.fwdHHWorkspaceOffset = stateTilingHost.hWorkspaceOffset;
     tiling.fwdHNumSeqWorkspaceOffset = stateTilingHost.numSeqWorkspaceOffset;
     tiling.fwdHNumChunksWorkspaceOffset = stateTilingHost.numChunksWorkspaceOffset;

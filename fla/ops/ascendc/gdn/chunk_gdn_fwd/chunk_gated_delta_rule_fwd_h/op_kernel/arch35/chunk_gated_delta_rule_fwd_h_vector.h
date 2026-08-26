@@ -19,7 +19,7 @@
 #include "catlass/arch/cross_core_sync.hpp"
 #include "catlass/arch/resource.hpp"
 #include "../chunk_gated_delta_rule_fwd_h_policy.h"
-#include "gemm/block/block_scheduler_gdn_fwd_h.hpp"
+#include "../chunk_gated_delta_rule_fwd_h_scheduler.h"
 
 namespace GDN::FwdHStandalone {
 

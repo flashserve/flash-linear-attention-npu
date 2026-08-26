@@ -21,6 +21,17 @@
 
 namespace optiling {
 
+static int64_t GdnFwdHDtypeToEnum(ge::DataType dtype)
+{
+    if (dtype == ge::DT_BF16) {
+        return GDN_FWD_H_DTYPE_BF16;
+    }
+    if (dtype == ge::DT_FLOAT16) {
+        return GDN_FWD_H_DTYPE_FP16;
+    }
+    return GDN_FWD_H_DTYPE_FP32;
+}
+
 static constexpr size_t INPUT_K_IDX = 0;
 static constexpr size_t INPUT_W_IDX = 1;
 static constexpr size_t INPUT_U_IDX = 2;
@@ -165,8 +176,14 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     tilingCtx.hasCuSeqlens = cuSeqlensTensor != nullptr;
     tilingCtx.cuSeqlensDim0 =
         cuSeqlensTensor != nullptr ? cuSeqlensTensor->GetStorageShape().GetDim(0) : 0;
+    tilingCtx.dataType = GdnFwdHDtypeToEnum(kDtype);
+    tilingCtx.gDataType = GdnFwdHDtypeToEnum((useGk ? gkTensor : gTensor)->GetDataType());
     tilingCtx.useInitialState = useInitialState;
+    tilingCtx.stateDataType = GdnFwdHDtypeToEnum(stateDtype);
+    tilingCtx.useG = useG;
+    tilingCtx.useGk = useGk;
     tilingCtx.storeFinalState = storeFinalState;
+    tilingCtx.useStandaloneScheduler = true;
     tilingCtx.stateElementBytes = stateDtype == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
     tilingCtx.useSeparateRollingState = stateDtype != kDtype;
     tilingCtx.chunkSize = chunkSize;
@@ -236,11 +253,17 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     tiling.set_chunkSize(plainTiling.chunkSize);
     tiling.set_useInitialState(plainTiling.useInitialState);
     tiling.set_storeFinalState(plainTiling.storeFinalState);
+    tiling.set_dataType(plainTiling.dataType);
+    tiling.set_gDataType(plainTiling.gDataType);
+    tiling.set_stateDataType(plainTiling.stateDataType);
     tiling.set_isVariedLen(plainTiling.isVariedLen);
     tiling.set_shapeBatch(plainTiling.shapeBatch);
     tiling.set_tokenBatch(plainTiling.tokenBatch);
+    tiling.set_useG(plainTiling.useG);
+    tiling.set_useGk(plainTiling.useGk);
     tiling.set_vWorkspaceOffset(plainTiling.vWorkspaceOffset);
     tiling.set_vUpdateWorkspaceOffset(plainTiling.vUpdateWorkspaceOffset);
+    tiling.set_kDecayWorkspaceOffset(plainTiling.kDecayWorkspaceOffset);
     tiling.set_hWorkspaceOffset(plainTiling.hWorkspaceOffset);
     tiling.set_numSeqWorkspaceOffset(plainTiling.numSeqWorkspaceOffset);
     tiling.set_numChunksWorkspaceOffset(plainTiling.numChunksWorkspaceOffset);
