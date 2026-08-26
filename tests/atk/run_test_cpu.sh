@@ -7,15 +7,18 @@ set -euo pipefail
 show_usage() {
   cat <<'EOF'
 用法：
-  bash tests/atk/run_test_cpu.sh -op=<算子名> [-npu_device_id=<NPU卡号>]
+  bash tests/atk/run_test_cpu.sh -op=<算子名> [-npu_device_id=<NPU卡号>] [-gpu_device_id=<GPU卡号>]
 
 常用参数：
   -op=chunk_kda_fwd              ATK 算子目录名
   -npu_device_id=0               传给 ATK node --devices 的 NPU 卡号，默认 0；gen_cases 不需要
+  -gpu_device_id=0               传给 ATK GPU node --devices 的 GPU 卡号，默认 0；accuracy_gpu 使用
+  -gpu_host=<host>              GPU 宿主机地址；accuracy_gpu 必选
+  -gpu_host_port=<port>          GPU server 端口；accuracy_gpu 必选
   -soc=ascend910b                可选：ascend910b/A2、ascend910_93/A3、ascend950/A5；默认 auto 自动探测
-  -scope=all                     可选：all、accuracy、performance、determinism、mssanitizer、gen_cases
-                                 all 包含 accuracy/determinism/mssanitizer；
-                                 performance 需单独指定；gen_cases 不在 all 中
+  -scope=all                     可选：all、accuracy_cpu、accuracy_gpu、performance、determinism、mssanitizer、gen_cases
+                                 all 包含 accuracy_cpu/determinism/mssanitizer；
+                                 accuracy_gpu/performance 需单独指定；gen_cases 不在 all 中
 
 常用环境变量：
   ATK_ENV                        ATK 虚拟环境目录，设置后 source "$ATK_ENV/bin/activate"
@@ -28,7 +31,8 @@ show_usage() {
   DC_TIMEOUT                     确定性阶段超时，默认 3600
   PERFORMANCE_TIMEOUT            性能阶段超时，默认 2000
   CASE_START/CASE_END            通用 case 顺序范围；不设置时不传 -s/-e，ATK 执行全部用例
-  ACCURACY_START/ACCURACY_END    精度与 NaN 检测 case 范围
+  ACCURACY_CPU_START/END         CPU 精度与 NaN 检测 case 范围（兼容旧名 ACCURACY_START/END）
+  ACCURACY_GPU_START/END         GPU 精度与 NaN 检测 case 范围
   PERFORMANCE_START/END          性能 case 范围
   DETERMINISM_START/END          确定性 case 范围
   MSS_START/MSS_END              mssanitizer case 范围
@@ -42,6 +46,8 @@ show_usage() {
   bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd
   bash tests/atk/run_test_cpu.sh -op=chunk_bwd_dqkwg -scope=performance
   bash tests/atk/run_test_cpu.sh -op=chunk_bwd_dqkwg -scope=gen_cases
+  bash tests/atk/run_test_cpu.sh -op=chunk_bwd_dqkwg -scope=accuracy_cpu
+  bash tests/atk/run_test_cpu.sh -op=chunk_bwd_dqkwg -scope=accuracy_gpu -gpu_host=10.10.10.10 -gpu_host_port=9090
   CASE_START=0 CASE_END=1 bash tests/atk/run_test_cpu.sh -op=chunk_bwd_dqkwg
 EOF
 }
@@ -107,11 +113,16 @@ should_run() {
     [[ "$RUN_SCOPE" == "gen_cases" ]]
     return
   fi
-  # performance 不包含在 all 中，需单独指定 -scope=performance
+  # performance 和 accuracy_gpu 不包含在 all 中，需单独指定
   if [[ "$stage" == "performance" ]]; then
     [[ "$RUN_SCOPE" == "performance" ]]
     return
   fi
+  if [[ "$stage" == "accuracy_gpu" ]]; then
+    [[ "$RUN_SCOPE" == "accuracy_gpu" ]]
+    return
+  fi
+  # accuracy_cpu 包含在 all 中，也可单独指定
   [[ "$RUN_SCOPE" == "all" || "$RUN_SCOPE" == "$stage" ]]
 }
 
@@ -175,6 +186,9 @@ resolve_gm_init_args() {
 
 OP=""
 NPU_DEVICE_ID="${NPU_DEVICE_ID:-0}"
+GPU_DEVICE_ID="${GPU_DEVICE_ID:-0}"
+GPU_HOST=""
+GPU_HOST_PORT=""
 SOC="${SOC:-auto}"
 RUN_SCOPE="${RUN_SCOPE:-all}"
 ATK_GM_INIT_MODE="${ATK_GM_INIT_MODE:-on}"
@@ -217,6 +231,42 @@ while [[ $# -gt 0 ]]; do
       [[ $# -gt 0 ]] || die "参数 --npu_device_id 需要取值"
       NPU_DEVICE_ID="$1"
       ;;
+    -gpu_device_id=*) GPU_DEVICE_ID="${1#-gpu_device_id=}" ;;
+    -gpu_device_id)
+      shift
+      [[ $# -gt 0 ]] || die "参数 -gpu_device_id 需要取值"
+      GPU_DEVICE_ID="$1"
+      ;;
+    --gpu_device_id=*) GPU_DEVICE_ID="${1#--gpu_device_id=}" ;;
+    --gpu_device_id)
+      shift
+      [[ $# -gt 0 ]] || die "参数 --gpu_device_id 需要取值"
+      GPU_DEVICE_ID="$1"
+      ;;
+    -gpu_host=*) GPU_HOST="${1#-gpu_host=}" ;;
+    -gpu_host)
+      shift
+      [[ $# -gt 0 ]] || die "参数 -gpu_host 需要取值"
+      GPU_HOST="$1"
+      ;;
+    --gpu_host=*) GPU_HOST="${1#--gpu_host=}" ;;
+    --gpu_host)
+      shift
+      [[ $# -gt 0 ]] || die "参数 --gpu_host 需要取值"
+      GPU_HOST="$1"
+      ;;
+    -gpu_host_port=*) GPU_HOST_PORT="${1#-gpu_host_port=}" ;;
+    -gpu_host_port)
+      shift
+      [[ $# -gt 0 ]] || die "参数 -gpu_host_port 需要取值"
+      GPU_HOST_PORT="$1"
+      ;;
+    --gpu_host_port=*) GPU_HOST_PORT="${1#--gpu_host_port=}" ;;
+    --gpu_host_port)
+      shift
+      [[ $# -gt 0 ]] || die "参数 --gpu_host_port 需要取值"
+      GPU_HOST_PORT="$1"
+      ;;
     -soc=*) SOC="${1#-soc=}" ;;
     -soc)
       shift
@@ -256,7 +306,7 @@ done
 [[ -n "$OP" ]] || die "必须传入 -op=<算子名>"
 
 case "$RUN_SCOPE" in
-  all|accuracy|performance|determinism|mssanitizer|gen_cases) ;;
+  all|accuracy_cpu|accuracy_gpu|performance|determinism|mssanitizer|gen_cases) ;;
   *) die "不支持的执行范围：${RUN_SCOPE}" ;;
 esac
 
@@ -311,8 +361,10 @@ if [[ "$SOC" == "auto" ]]; then
   fi
 fi
 
-ACCURACY_START="${ACCURACY_START:-$CASE_START}"
-ACCURACY_END="${ACCURACY_END:-$CASE_END}"
+ACCURACY_CPU_START="${ACCURACY_CPU_START:-${ACCURACY_START:-$CASE_START}}"
+ACCURACY_CPU_END="${ACCURACY_CPU_END:-${ACCURACY_END:-$CASE_END}}"
+ACCURACY_GPU_START="${ACCURACY_GPU_START:-$CASE_START}"
+ACCURACY_GPU_END="${ACCURACY_GPU_END:-$CASE_END}"
 PERFORMANCE_START="${PERFORMANCE_START:-$CASE_START}"
 PERFORMANCE_END="${PERFORMANCE_END:-$CASE_END}"
 DETERMINISM_START="${DETERMINISM_START:-$CASE_START}"
@@ -320,9 +372,15 @@ DETERMINISM_END="${DETERMINISM_END:-$CASE_END}"
 MSS_START="${MSS_START:-$CASE_START}"
 MSS_END="${MSS_END:-$CASE_END}"
 
+# accuracy_gpu 必须通过 -gpu_host 和 -gpu_host_port 指定远程 GPU server
+if should_run accuracy_gpu; then
+  [[ -n "$GPU_HOST" ]] || die "accuracy_gpu 必须传入 -gpu_host=<GPU宿主机地址>"
+  [[ -n "$GPU_HOST_PORT" ]] || die "accuracy_gpu 必须传入 -gpu_host_port=<GPU server端口>"
+fi
+
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
-mkdir -p "${ATK_OUTPUT_ROOT}/cpu_dual_reference" "${ATK_OUTPUT_ROOT}/perf"
+mkdir -p "${ATK_OUTPUT_ROOT}/cpu_dual_reference" "${ATK_OUTPUT_ROOT}/gpu_dual_reference" "${ATK_OUTPUT_ROOT}/perf"
 # mssanitizer 日志路径：未显式指定时使用 ATK_OUTPUT_ROOT 下的带时间戳绝对路径
 # ATK celery worker 工作目录与脚本不同，必须用绝对路径，否则无法找到日志文件
 MSS_LOG_PATH="${MSS_LOG_PATH:-$(cd "${ATK_OUTPUT_ROOT}" && pwd)/mssanitizer_${OP}_$(date +%Y%m%d_%H%M%S).log}"
@@ -331,6 +389,10 @@ log_info "算子：${OP}"
 log_info "SOC：${SOC}"
 if [[ "$RUN_SCOPE" != "gen_cases" ]]; then
   log_info "NPU 设备号：${NPU_DEVICE_ID}"
+fi
+if should_run accuracy_gpu; then
+  log_info "GPU 设备号：${GPU_DEVICE_ID}"
+  log_info "GPU 远程 server：${GPU_HOST}:${GPU_HOST_PORT}"
 fi
 log_info "ATK 路径：${ATK_BIN}"
 log_info "输出根目录：${ATK_OUTPUT_ROOT}"
@@ -348,9 +410,9 @@ if should_run gen_cases; then
   log_info "完成泛化用例生成：result/${OP}/json/all_${OP}.json"
 fi
 
-if should_run accuracy; then
-  log_info "开始精度与 NaN 检测：accuracy + CPU高精度标杆 + CPU同精度标杆 + GM 初始化"
-  set_case_range_args "精度与 NaN 检测 case 范围" "$ACCURACY_START" "$ACCURACY_END"
+if should_run accuracy_cpu; then
+  log_info "开始 CPU 精度与 NaN 检测：accuracy + CPU高精度标杆 + CPU同精度标杆 + GM 初始化"
+  set_case_range_args "CPU 精度与 NaN 检测 case 范围" "$ACCURACY_CPU_START" "$ACCURACY_CPU_END"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/cpu_dual_reference" \
     node --name cpu_reference --backend cpu \
@@ -363,8 +425,31 @@ if should_run accuracy; then
       "${CASE_RANGE_ARGS[@]}" \
       "${GM_INIT_ARGS[@]}" \
       -to "$ATK_TIMEOUT"
-  log_info "完成精度与 NaN 检测"
-  record_ran_type accuracy
+  log_info "完成 CPU 精度与 NaN 检测"
+  record_ran_type accuracy_cpu
+fi
+
+if should_run accuracy_gpu; then
+  log_info "开始 GPU 精度与 NaN 检测：accuracy + GPU高精度标杆 + GPU同精度标杆 + GM 初始化"
+  set_case_range_args "GPU 精度与 NaN 检测 case 范围" "$ACCURACY_GPU_START" "$ACCURACY_GPU_END"
+  "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+      --output_path "${ATK_OUTPUT_ROOT}/gpu_dual_reference" \
+    node --name gpu_reference --backend gpu \
+      --host "$GPU_HOST" \
+      --port "$GPU_HOST_PORT" \
+      --devices "$GPU_DEVICE_ID" \
+      --is_compare true \
+      --output_path "${ATK_OUTPUT_ROOT}/gpu_dual_reference" \
+    task \
+      -c "./atk_${OP}.json" \
+      --task accuracy \
+      --bm_device gpu \
+      -p "./executor_${OP}.py" \
+      "${CASE_RANGE_ARGS[@]}" \
+      "${GM_INIT_ARGS[@]}" \
+      -to "$ATK_TIMEOUT"
+  log_info "完成 GPU 精度与 NaN 检测"
+  record_ran_type accuracy_gpu
 fi
 
 if should_run performance; then

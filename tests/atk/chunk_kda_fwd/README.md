@@ -77,10 +77,10 @@ atk node --name npu_dut --backend npu --devices 0 \
 使用 CPU 同精度对照、CPU Torch FP64 golden 和 ATK
 `cv_fused_double_benchmark` 原生标准执行 48 条矩阵：
 
-| 产品 | 结果 | 结论 |
-| --- | --- | --- |
-| A5 | 48/48 执行成功，48/48 精度通过 | `acc_pass_result: Pass` |
-| A2 | 48/48 执行成功，37/48 精度通过 | `acc_pass_result: Failed` |
+| 产品 | 结果                           | 结论                        |
+| ---- | ------------------------------ | --------------------------- |
+| A5   | 48/48 执行成功，48/48 精度通过 | `acc_pass_result: Pass`   |
+| A2   | 48/48 执行成功，37/48 精度通过 | `acc_pass_result: Failed` |
 
 A2 的 single、balanced8、short64 共 36 条全部通过。mixed-tail 中，1K、1.5K、
 2K、4K、8K 的两个 `disable_recompute` 分支共 10 条均出现 NPU NaN/Inf；16K
@@ -351,15 +351,15 @@ python ./stress_npu_determinism.py \
 
 ## 10. 常见失败
 
-| 现象 | 原因与处理 |
-| --- | --- |
-| NPU 报 `No module named 'fla_npu'` | A5 的 `PYTHONPATH` 未包含 `torch_custom/fla_npu`，或当前 OPP/Python 包不是同一提交。按第 6 节重新加载。 |
-| GPU 返回 `input.bin is not exists` / HTTP 404 | 远端节点看不到 A5 本地数据。确认任务带 `--syc_dataset`，两端 output path 可写，server 未切换工作目录。 |
-| A5 进程尝试调用 CUDA，报 `_cuda_setDevice` | 分布式任务误加了 `-sp`，GPU node 被当成本地 backend 执行。移除 `-sp`，使用 `-mt 1`。 |
-| ATK 版本相同但 executor 行为不同 | 版本一致不等于测试资产一致。比较第 7 节四个文件的 SHA256。 |
-| GPU FP64 真值 OOM | 物理 GPU 6 未空闲或存在其他容器/进程。先释放资源；H96 长序列保持 `-mt 1`。 |
-| 设备号不可用 | 物理设备经 `ASCEND_RT_VISIBLE_DEVICES`、`CUDA_VISIBLE_DEVICES` 或 Docker 映射后会重新编号；ATK 使用映射后的逻辑编号。 |
-| 能连接端口但任务立即失败 | 检查 GPU server 启动终端中的 Python traceback、CUDA Torch/Triton 导入和 callable 签名；发起端的 404 只是远端失败的包装。 |
+| 现象                                           | 原因与处理                                                                                                               |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| NPU 报`No module named 'fla_npu'`            | A5 的`PYTHONPATH` 未包含 `torch_custom/fla_npu`，或当前 OPP/Python 包不是同一提交。按第 6 节重新加载。               |
+| GPU 返回`input.bin is not exists` / HTTP 404 | 远端节点看不到 A5 本地数据。确认任务带`--syc_dataset`，两端 output path 可写，server 未切换工作目录。                  |
+| A5 进程尝试调用 CUDA，报`_cuda_setDevice`    | 分布式任务误加了`-sp`，GPU node 被当成本地 backend 执行。移除 `-sp`，使用 `-mt 1`。                                |
+| ATK 版本相同但 executor 行为不同               | 版本一致不等于测试资产一致。比较第 7 节四个文件的 SHA256。                                                               |
+| GPU FP64 真值 OOM                              | 物理 GPU 6 未空闲或存在其他容器/进程。先释放资源；H96 长序列保持`-mt 1`。                                              |
+| 设备号不可用                                   | 物理设备经`ASCEND_RT_VISIBLE_DEVICES`、`CUDA_VISIBLE_DEVICES` 或 Docker 映射后会重新编号；ATK 使用映射后的逻辑编号。 |
+| 能连接端口但任务立即失败                       | 检查 GPU server 启动终端中的 Python traceback、CUDA Torch/Triton 导入和 callable 签名；发起端的 404 只是远端失败的包装。 |
 
 结果归档和公开 PR/issue 只记录测试项、case 范围、通过/失败结论和必要的非敏感错误摘要，
 不得记录服务器地址、账号、绝对路径、容器名、token 或内部日志路径。

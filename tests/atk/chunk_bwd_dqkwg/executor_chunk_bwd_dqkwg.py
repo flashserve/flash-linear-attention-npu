@@ -14,6 +14,13 @@ os.environ["PYTORCH_NO_NPU_MEMORY_CACHING"] = "1"
 # sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from scripts.chunk_bwd_dqkwg_cpu import chunk_bwd_dqkwg_cpu
 
+try:
+    from scripts.chunk_bwd_dqkwg_gpu import chunk_bwd_dqkwg_gpu_torch
+    _GPU_BENCHMARK_AVAILABLE = True
+except Exception as _gpu_import_err:
+    _GPU_BENCHMARK_AVAILABLE = False
+    _gpu_import_error_msg = str(_gpu_import_err)
+
 def create_gate_g(B: int, H: int, T: int, gtype):
     lo, hi = -5e-2, -5e-5
     span = hi - lo
@@ -149,6 +156,10 @@ class FunctionApi(BaseApi):
     def __init__(self, task_result: TaskResult):
         super(FunctionApi, self).__init__(task_result)
         self.qkv_type = None
+        # 标杆任务标志：参考 chunk_kda_fwd executor 的 is_benchmark_task 机制
+        # ATK 框架为每个用例分别下发 benchmark 任务和常规任务
+        # benchmark=True 时使用高精度(fp64)参考实现，benchmark=False 时使用同精度参考实现
+        self.is_benchmark_task = bool(getattr(task_result, "is_benchmark_task", False))
 
     def cpu(self, input_data: InputDataset, with_output: bool = False):
         q = input_data.kwargs["q"]
@@ -187,7 +198,10 @@ class FunctionApi(BaseApi):
 
         return dq, dk, dw_out, dg
 
-    def cpu_benchmark(self, input_data: InputDataset, with_output: bool = False):
+
+
+
+    def cpu_fp64(self, input_data: InputDataset, with_output: bool = False):
         q = input_data.kwargs["q"].to(torch.float64)
         k = input_data.kwargs["k"].to(torch.float64)
         v = input_data.kwargs["v"].to(torch.float64)
@@ -208,6 +222,90 @@ class FunctionApi(BaseApi):
             benchmark=True
         )
         # print("[cpu bench output] dq:", dq.shape, dq.dtype, "dk:", dk.shape, dk.dtype, "dw_out:", dw_out.shape, dw_out.dtype, "dg:", dg.shape, dg.dtype)
+
+        return dq, dk, dw_out, dg
+
+    def gpu(self, input_data: InputDataset, with_output: bool = False):
+        """GPU 同精度参考实现（fp64=False，calc_type=fp32，与 CPU 标杆一致）。"""
+        if not _GPU_BENCHMARK_AVAILABLE:
+            raise RuntimeError(
+                f"GPU 标杆模块不可用: {_gpu_import_error_msg}"
+            )
+
+        q = input_data.kwargs["q"]
+        k = input_data.kwargs["k"]
+        v = input_data.kwargs["v"]
+        do = input_data.kwargs["do"]
+        h = input_data.kwargs["h"]
+        dh = input_data.kwargs["dh"]
+        w = input_data.kwargs.get("w", None)
+        g = input_data.kwargs["g"]
+        dv = input_data.kwargs["dv"]
+        cu_seqlens = input_data.kwargs.get("cu_seqlens", None)
+        chunk_size = input_data.kwargs["chunk_size"]
+        scale = input_data.kwargs["scale"]
+
+        dq, dk, dw_out, dg = chunk_bwd_dqkwg_gpu_torch(
+            q, k, v, do, h, dh, w, g, dv, scale, cu_seqlens, chunk_size,
+            fp64=False
+        )
+
+        # 将结果移回 CPU 以便 ATK 框架统一比对
+        dq = dq.cpu()
+        dk = dk.cpu()
+        dw_out = dw_out.cpu() if dw_out is not None else None
+        dg = dg.cpu() if dg is not None else None
+
+        if self.qkv_type == "bf16":
+            dq = dq.to(torch.bfloat16)
+            dk = dk.to(torch.bfloat16)
+            dw_out = dw_out.to(torch.bfloat16) if dw_out is not None else None
+        if self.qkv_type == "fp16":
+            dq = dq.to(torch.float16)
+            dk = dk.to(torch.float16)
+            dw_out = dw_out.to(torch.float16) if dw_out is not None else None
+
+        is_mix = input_data.kwargs.get("is_mix", True)
+        if not is_mix:
+            if self.qkv_type == "bf16":
+                dg = dg.to(torch.bfloat16)
+            if self.qkv_type == "fp16":
+                dg = dg.to(torch.float16)
+
+        return dq, dk, dw_out, dg
+
+    def gpu_fp64(self, input_data: InputDataset, with_output: bool = False):
+        """GPU 高精度参考实现（fp64=True，使用 fp64 精度小算子拼接）。"""
+        if not _GPU_BENCHMARK_AVAILABLE:
+            raise RuntimeError(
+                f"GPU 标杆模块不可用: {_gpu_import_error_msg}"
+            )
+
+        q = input_data.kwargs["q"].to(torch.float64)
+        k = input_data.kwargs["k"].to(torch.float64)
+        v = input_data.kwargs["v"].to(torch.float64)
+        do = input_data.kwargs["do"].to(torch.float64)
+        h = input_data.kwargs["h"].to(torch.float64)
+        dh = input_data.kwargs["dh"].to(torch.float64)
+        w = input_data.kwargs.get("w", None)
+        if w is not None:
+            w = w.to(torch.float64)
+        g = input_data.kwargs["g"].to(torch.float64)
+        dv = input_data.kwargs["dv"].to(torch.float64)
+        cu_seqlens = input_data.kwargs.get("cu_seqlens", None)
+        chunk_size = input_data.kwargs["chunk_size"]
+        scale = input_data.kwargs["scale"]
+
+        dq, dk, dw_out, dg = chunk_bwd_dqkwg_gpu_torch(
+            q, k, v, do, h, dh, w, g, dv, scale, cu_seqlens, chunk_size,
+            fp64=True
+        )
+
+        # 将结果移回 CPU 以便 ATK 框架统一比对
+        dq = dq.cpu()
+        dk = dk.cpu()
+        dw_out = dw_out.cpu() if dw_out is not None else None
+        dg = dg.cpu() if dg is not None else None
 
         return dq, dk, dw_out, dg
 
@@ -237,8 +335,15 @@ class FunctionApi(BaseApi):
         q = input_data.kwargs["q"]
         if self.device == "npu":
             return self.npu_chunk_bwd_dqkwg(input_data, with_output)
-        elif q.dtype == torch.float64:
-            return self.cpu_benchmark(input_data, with_output)
+        elif self.device == "gpu":
+            # GPU 路由：参考 chunk_kda_fwd 的 is_benchmark_task 机制
+            # fp64 任务使用 fp64 高精度参考，常规任务使用同精度参考
+            if self.is_benchmark_task or q.dtype == torch.float64 or q.dtype == torch.float32:
+                return self.gpu_fp64(input_data, with_output)
+            else:
+                return self.gpu(input_data, with_output)
+        elif q.dtype == torch.float64 or q.dtype == torch.float32:
+            return self.cpu_fp64(input_data, with_output)
         else:
             return self.cpu(input_data, with_output)
 

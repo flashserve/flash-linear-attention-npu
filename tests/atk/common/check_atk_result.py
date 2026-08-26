@@ -38,6 +38,11 @@ def _find_accuracy_reports(output_root, op):
     return _find_xlsx_files(output_root, f"cpu_dual_reference/atk_output/atk_{op}_*")
 
 
+def _find_accuracy_gpu_reports(output_root, op):
+    """accuracy_gpu 报告在 gpu_dual_reference/atk_output/atk_<op>_* 下。"""
+    return _find_xlsx_files(output_root, f"gpu_dual_reference/atk_output/atk_{op}_*")
+
+
 def _find_root_reports(output_root, op):
     """determinism 和 mssanitizer 报告共享 atk_<op>_* 目录。"""
     return _find_xlsx_files(output_root, f"atk_{op}_*")
@@ -184,11 +189,27 @@ def _extract_summary_row(header, data_rows):
 # ---------------------------------------------------------------------------
 
 def check_accuracy(output_root, op):
-    """检查 accuracy 报告。"""
+    """检查 accuracy（CPU 标杆）报告。"""
     files = _find_accuracy_reports(output_root, op)
     if not files:
         return {"found": False, "total": 0, "pass": 0, "fail": 0, "all_pass": False,
                 "xlsx": None, "detail": "未找到 accuracy 报告"}
+    xlsx = files[-1]
+    header, data = _parse_summary(xlsx)
+    if header is None:
+        return {"found": True, "total": 0, "pass": 0, "fail": 0, "all_pass": False,
+                "xlsx": xlsx, "detail": "无法解析 summary sheet"}
+    info = _extract_summary_row(header, data)
+    return {"found": True, **info, "xlsx": xlsx,
+            "detail": f"通过率={info['pass_rate']}"}
+
+
+def check_accuracy_gpu(output_root, op):
+    """检查 accuracy_gpu（GPU 标杆）报告。"""
+    files = _find_accuracy_gpu_reports(output_root, op)
+    if not files:
+        return {"found": False, "total": 0, "pass": 0, "fail": 0, "all_pass": False,
+                "xlsx": None, "detail": "未找到 accuracy_gpu 报告"}
     xlsx = files[-1]
     header, data = _parse_summary(xlsx)
     if header is None:
@@ -230,12 +251,16 @@ def check_mssanitizer(output_root, op):
 
 CHECKERS = {
     "accuracy": check_accuracy,
+    "accuracy_cpu": check_accuracy,
+    "accuracy_gpu": check_accuracy_gpu,
     "determinism": check_determinism,
     "mssanitizer": check_mssanitizer,
 }
 
 TYPE_LABELS = {
     "accuracy": "精度",
+    "accuracy_cpu": "CPU精度",
+    "accuracy_gpu": "GPU精度",
     "determinism": "确定性",
     "mssanitizer": "内存检测",
 }

@@ -36,7 +36,8 @@ ATK 运行产生的 `atk_output/`、`result/`、profiling、sanitizer 日志、X
 
 | 文件                                   | 职责                                                                                     |
 | -------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `run_test_cpu.sh`                    | 统一入口，覆盖 CPU 双标杆精度、性能、确定性、mssanitizer 和用例生成                      |
+| `run_test_cpu.sh`                    | 统一入口，覆盖 CPU/GPU 双标杆精度、性能、确定性、mssanitizer 和用例生成                      |
+| `common/gpu_server.sh`             | GPU 端 ATK server 一键启动脚本，在 GPU 宿主机创建/复用 Docker 容器并前台启动 ATK server        |
 | `common/_ascendc_common_executor.py` | executor 共用的基础工具函数，例如 dtype 转换、case_spec 解析、确定性数据生成、有限值检查 |
 | `<op>/executor_<op>.py`              | 本算子的输入构造、CPU 标杆、NPU DUT 调用和 ATK`FunctionApi`                            |
 | `<op>/gen_<op>.py`                   | 本算子的 ATK 泛化用例生成器                                                              |
@@ -100,17 +101,22 @@ bash tests/atk/run_test_cpu.sh -op=<op_name>
 | ----------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `-op=<op_name>`       | `tests/atk` 下的算子目录名                                                                                   |
 | `-npu_device_id=<id>` | 传给`atk node --devices` 的 NPU 设备号，默认`0`；`gen_cases` 不需要                                       |
-| `-scope=<scope>`      | 执行动作，支持`all/accuracy/performance/determinism/mssanitizer/gen_cases`                                   |
+| `-gpu_device_id=<id>` | 传给 ATK GPU node `--devices` 的 GPU 设备号，默认`0`；`accuracy_gpu` 使用                                 |
+| `-gpu_host=<host>`    | GPU 宿主机地址；`accuracy_gpu` 必选                                                                          |
+| `-gpu_host_port=<port>` | GPU server 端口；`accuracy_gpu` 必选                                                                        |
+| `-scope=<scope>`      | 执行动作，支持`all/accuracy_cpu/accuracy_gpu/performance/determinism/mssanitizer/gen_cases`                |
 | `-soc=<soc>`          | SOC 标识，支持`ascend910b/A2`、`ascend910_93/A3`、`ascend950/A5`；默认 `auto`，由 `npu-smi` 自动探测 |
 
-`all` 包含 `accuracy`、`determinism` 和 `mssanitizer`；性能测试需
-显式指定 `-scope=performance`。`gen_cases` 不在 `all` 中，必须显式指定。
+`all` 包含 `accuracy_cpu`、`determinism` 和 `mssanitizer`；性能测试需
+显式指定 `-scope=performance`。`accuracy_gpu` 和 `gen_cases` 不在 `all` 中，
+必须显式指定；`accuracy_gpu` 还必须传入 `-gpu_host` 和 `-gpu_host_port`。
 
 示例：
 
 ```bash
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d
-bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=accuracy
+bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=accuracy_cpu
+bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=accuracy_gpu -gpu_host=10.10.10.10 -gpu_host_port=9090
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=performance
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=determinism
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=mssanitizer
@@ -130,22 +136,75 @@ bash tests/atk/run_test_cpu.sh -op=causal_conv1d
 
 也可以按动作单独设置范围：
 
-| 变量                                  | 作用                 |
-| ------------------------------------- | -------------------- |
-| `ACCURACY_START/ACCURACY_END`       | 精度与 NaN 检测      |
-| `PERFORMANCE_START/PERFORMANCE_END` | 性能测试             |
-| `DETERMINISM_START/DETERMINISM_END` | 确定性验证           |
-| `MSS_START/MSS_END`                 | mssanitizer 内存检测 |
+| 变量                                      | 作用                            |
+| ----------------------------------------- | ------------------------------- |
+| `ACCURACY_CPU_START/ACCURACY_CPU_END`   | CPU 精度与 NaN 检测（兼容旧名 `ACCURACY_START/END`） |
+| `ACCURACY_GPU_START/ACCURACY_GPU_END`   | GPU 精度与 NaN 检测             |
+| `PERFORMANCE_START/PERFORMANCE_END`     | 性能测试                        |
+| `DETERMINISM_START/DETERMINISM_END`     | 确定性验证                      |
+| `MSS_START/MSS_END`                     | mssanitizer 内存检测            |
 
 如果只设置 start 或 end 中的一个，脚本会直接报错，避免范围表达不完整。
 
 ## 测试动作
 
-精度与 NaN 检测使用本机 NPU DUT 和本机 CPU reference 两个 ATK node：
+CPU 精度与 NaN 检测使用本机 NPU DUT 和本机 CPU reference 两个 ATK node，双标杆
+（CPU 高精度 fp64 + CPU 同精度）结果写入 `cpu_dual_reference/`：
 
 ```bash
-bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=accuracy
+bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=accuracy_cpu
 ```
+
+GPU 精度与 NaN 检测使用本机 NPU DUT 和远程 GPU reference 两个 ATK node，双标杆
+（GPU 高精度 fp64 + GPU 同精度）结果写入 `gpu_dual_reference/`：
+`-gpu_host` 和 `-gpu_host_port` 为必选参数，指向已启动的远程 GPU server。
+
+```bash
+bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=accuracy_gpu \
+  -gpu_host=<gpu_host> -gpu_host_port=<port> [-gpu_device_id=0]
+```
+
+远程 GPU server 由 `common/gpu_server.sh` 在 GPU 宿主机上一键启动（见下节）。
+GPU executor 需实现 `gpu`（同精度标杆）和 `gpu_fp64`（高精度标杆）两个方法。
+
+### GPU server 启动（common/gpu_server.sh）
+
+`common/gpu_server.sh` 在 GPU 宿主机执行，负责创建/复用 Docker 容器、激活 ATK 环境、
+校验 CUDA 可见性并前台启动 ATK server 监听 `0.0.0.0:9090`，供 NPU 端远程调用。
+启动后不要退出终端；NPU 端通过 `-gpu_host`/`-gpu_host_port` 连接。
+
+```bash
+# 首次启动：创建容器并前台运行 ATK server
+bash tests/atk/common/gpu_server.sh -op=<op_name> \
+  -gpu_image=<gpu_image> \
+  -gpu_repo_root=<容器内仓库根目录> \
+  [-gpu_device_id=6] [-gpu_host_port=9090] \
+  [-atk_env=<容器内ATK虚拟环境>] [-triton_root=<兼容Triton源码根>]
+
+# 复用已有容器
+bash tests/atk/common/gpu_server.sh -op=<op_name> \
+  -gpu_container=<容器名> -gpu_repo_root=<容器内仓库根目录>
+
+# 停止并删除容器
+bash tests/atk/common/gpu_server.sh -op=<op_name> -action=stop
+```
+
+容器只暴露物理 GPU 6 时，容器内逻辑设备为 0；`-gpu_device_id` 控制物理卡号。
+`-gpu_host_port` 必须与 NPU 端 `run_test_cpu.sh -gpu_host_port` 一致。
+
+### NPU 到 GPU server 连通性自检（action=test_connection_from_npu）
+
+在 NPU 机器上运行 `common/gpu_server.sh -action=test_connection_from_npu`，依次执行
+TCP 端口可达性（`socket.connect` 5s 超时）和 ATK server HTTP 响应（`urllib` 10s 超时）
+两项检查。两者均通过才视为连通；任一失败给出定位提示（容器未启动 / 端口映射 / 防火墙）。
+HTTP 4xx/5xx 也算 server 在响应（如 404），只关心端口是否能握手。
+
+```bash
+bash tests/atk/common/gpu_server.sh -op=<op_name> \
+  -action=test_connection_from_npu -gpu_host=<gpu_host> -gpu_host_port=9090
+```
+
+建议在 `accuracy_gpu` 正式执行前先跑一次自检，避免因网络问题误判为精度异常。
 
 性能测试使用 ATK `performance_device`：
 
@@ -212,7 +271,7 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 4. `executor_<op_name>.py` 中保留本算子的 `build_inputs`、CPU 标杆、`run_cpu`、`run_npu` 和 `FunctionApi`。
 5. 若需要公共基础函数，从 `tests/atk/common/_ascendc_common_executor.py` 引入；不要把算子专属逻辑放入 `common/`。
 6. YAML 与 JSON 中的 shape 必须同时满足源码 README、tiling 检查和 executor 输入构造。
-7. 修改后至少执行 `python` 语法导入检查；具备 NPU 环境时再跑 `accuracy`、`performance`、`determinism` 和 `mssanitizer`。
+7. 修改后至少执行 `python` 语法导入检查；具备 NPU 环境时再跑 `accuracy_cpu`、`accuracy_gpu`、`performance`、`determinism` 和 `mssanitizer`。
 
 executor 使用公共目录的推荐写法：
 
