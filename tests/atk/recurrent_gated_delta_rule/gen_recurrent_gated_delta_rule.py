@@ -1,8 +1,8 @@
 """Generate the reviewed recurrent_gated_delta_rule ATK case matrix.
 
 The committed accuracy matrix is frozen by detailed-design ID:
-  * 0-74: RGDR-P001 through RGDR-P075
-  * 75-139: RGDR-G001 through RGDR-G065
+  * 0-69: RGDR-P001 through RGDR-P070
+  * 70-134: RGDR-G001 through RGDR-G065
 
 All positive cases use dimensions aligned to the 32B BF16 transfer block;
 unaligned dimensions are invalid and are covered by op_host interception tests.
@@ -42,8 +42,7 @@ else:
 
 OP_NAME = "recurrent_gated_delta_rule"
 SEED_BASE = 20260826
-DIM_ALIGNMENT = 16
-DIM_MAX = 128
+DIM_REQUIRED = 128
 STANDARD = {
     "acc": {
         "cv_fused_double_benchmark": {
@@ -101,20 +100,15 @@ def _build_positive_profiles() -> list[dict]:
         profile["tags"] = "accuracy,generalization,positive"
         profiles.append(profile)
 
-    # P001-P011: gate and state dtype.
-    add("minimal_g_bf16_state", seq_lengths=[1], K=64, V=64, gate_mode="g", state_dtype="bf16")
-    add("minimal_g_fp32_state", seq_lengths=[1], K=64, V=64, gate_mode="g", design_routes="P+A+D")
+    # P001-P006: gate and state dtype.
+    add("minimal_g_bf16_state", seq_lengths=[1], gate_mode="g", state_dtype="bf16")
+    add("minimal_g_fp32_state", seq_lengths=[1], gate_mode="g", design_routes="P+A+D")
     add("two_token_g", gate_mode="g", state_dtype="bf16")
     add("two_token_gk", gate_mode="gk", state_dtype="bf16")
     add("two_token_both", state_dtype="bf16", design_routes="P+A+D")
-    add("max_mtp_dv_tail", seq_lengths=[8], K=64, V=80, gate_mode="g", state_dtype="bf16", design_routes="P")
-    add("max_mtp_dk_tail", seq_lengths=[8], K=80, V=64, gate_mode="gk", state_dtype="bf16", design_routes="P")
-    add("max_mtp_dual_tail", seq_lengths=[8], K=96, V=96, state_dtype="bf16", design_routes="P")
-    add("a5_reduce_sum64", seq_lengths=[3], K=64, V=128, gate_mode="g", state_dtype="bf16", platform_focus="ascend950")
-    add("a5_reduce_sum128_tail", seq_lengths=[3], K=80, V=128, gate_mode="gk", state_dtype="bf16", platform_focus="ascend950")
     add("a2_a3_add_fold_k128", seq_lengths=[3], state_dtype="bf16", platform_focus="ascend910b,ascend910_93")
 
-    # P012-P027: sequence metadata, prefix and accepted tokens.
+    # P007-P022: sequence metadata, prefix and accepted tokens.
     add("single_sequence_no_prefix", seq_lengths=[1], gate_mode="g")
     add("single_prefix_token", prefix_tokens=1, seq_lengths=[1], gate_mode="g")
     add("multi_token_prefix", prefix_tokens=3, seq_lengths=[2], gate_mode="g")
@@ -132,14 +126,14 @@ def _build_positive_profiles() -> list[dict]:
     add("max_length_accepted_ends", seq_lengths=[8, 8], accepted_tokens=[1, 8], HK=1, HV=2)
     add("complex_metadata_four_routes", prefix_tokens=1, seq_lengths=[1, 2, 4], accepted_tokens=[1, 2, 3], HK=2, HV=4, design_routes="P+A+D+F")
 
-    # P028: aligned key/value dimensions and UB profile at the supported 128 dimension.
+    # P023: the only supported key/value dimension and UB profile.
     dimensions = [
         (128, 128, "dims_128_128"),
     ]
     for key_dim, value_dim, name in dimensions:
         add(name, K=key_dim, V=value_dim, state_dtype="bf16")
 
-    # P029-P044: head mapping and GVA basics.
+    # P024-P039: head mapping and GVA basics.
     head_shapes = [
         (1, 1, "heads_1_1", "P+A+D"),
         (1, 2, "heads_1_2", "P+A"),
@@ -161,7 +155,7 @@ def _build_positive_profiles() -> list[dict]:
     for key_heads, value_heads, name, routes in head_shapes:
         add(name, HK=key_heads, HV=value_heads, design_routes=routes, data_profile="traceable_gva")
 
-    # P045-P060: state layout and state-index mapping.
+    # P040-P055: state layout and state-index mapping.
     add("state_bf16_contiguous", gate_mode="g", state_dtype="bf16")
     add("state_fp32_contiguous", gate_mode="g")
     add("state_unused_blocks", gate_mode="g", block_num=6, state_indices=[0, 1])
@@ -179,9 +173,9 @@ def _build_positive_profiles() -> list[dict]:
     add("functional_contiguous_state", HK=2, HV=4, design_routes="D+F")
     add("functional_padded_state", HK=2, HV=4, state_layout="head_block_padded", design_routes="D+F")
 
-    # P061-P075: platform, route and regression representatives. ATK executes
+    # P056-P070: platform, route and regression representatives. ATK executes
     # the stable Python route; design_routes records the originating matrix row.
-    add("a2_baseline_matrix", seq_lengths=[8], K=80, V=96, state_dtype="bf16", platform_focus="ascend910b", design_routes="P")
+    add("a2_baseline_matrix", seq_lengths=[8], state_dtype="bf16", platform_focus="ascend910b", design_routes="P")
     add("a3_baseline_matrix", seq_lengths=[3, 2, 1], accepted_tokens=[2, 1, 1], HK=2, HV=4, gate_mode="g", platform_focus="ascend910_93", design_routes="P")
     add("aclnn_example_shape", seq_lengths=[2], HK=2, HV=4, design_routes="A")
     add("fast_mutable_baseline_shape", seq_lengths=[2], HK=2, HV=4, design_routes="D")
@@ -197,8 +191,8 @@ def _build_positive_profiles() -> list[dict]:
     add("independent_stream_state_shape", seq_lengths=[2, 1], HK=2, HV=4, design_routes="P", stream_mode="independent")
     add("accepted_tokens_gqa_regression", seq_lengths=[3, 2, 1], accepted_tokens=[2, 1, 1], HK=2, HV=4, gate_mode="g", design_routes="P+A+D+F")
 
-    if len(profiles) != 75:
-        raise AssertionError(f"expected 75 P profiles, got {len(profiles)}")
+    if len(profiles) != 70:
+        raise AssertionError(f"expected 70 P profiles, got {len(profiles)}")
     return profiles
 
 
@@ -353,12 +347,8 @@ def _validate_specs(specs: list[dict]) -> None:
             raise ValueError(f"{spec['design_id']}: invalid HK/HV range")
         if int(spec["HV"]) % int(spec["HK"]) != 0:
             raise ValueError(f"{spec['design_id']}: HV must be divisible by HK")
-        if not (1 <= int(spec["K"]) <= DIM_MAX and 1 <= int(spec["V"]) <= DIM_MAX):
-            raise ValueError(f"{spec['design_id']}: invalid K/V range")
-        if int(spec["K"]) % DIM_ALIGNMENT or int(spec["V"]) % DIM_ALIGNMENT:
-            raise ValueError(
-                f"{spec['design_id']}: K/V must be multiples of {DIM_ALIGNMENT}"
-            )
+        if int(spec["K"]) != DIM_REQUIRED or int(spec["V"]) != DIM_REQUIRED:
+            raise ValueError(f"{spec['design_id']}: K/V must equal {DIM_REQUIRED}")
         if spec["gate_mode"] not in {"g", "gk", "both"}:
             raise ValueError(f"{spec['design_id']}: invalid gate_mode")
         if spec["state_dtype"] not in {"bf16", "fp32"}:

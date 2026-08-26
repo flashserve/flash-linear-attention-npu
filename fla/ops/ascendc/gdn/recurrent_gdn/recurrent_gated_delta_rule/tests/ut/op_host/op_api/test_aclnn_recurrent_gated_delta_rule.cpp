@@ -296,12 +296,12 @@ TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_unaligned_dv)
     test.RGDRInvalidDimensionTestCase(128, 31);
 }
 
-TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_dk_over_max)
+TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_dk_not_supported)
 {
     test.RGDRInvalidDimensionTestCase(144, 128);
 }
 
-TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_dv_over_max)
+TEST_F(aclnnRecurrentGatedDeltaRule_test, ascend910B2_test_opapi_dv_not_supported)
 {
     test.RGDRInvalidDimensionTestCase(128, 144);
 }
