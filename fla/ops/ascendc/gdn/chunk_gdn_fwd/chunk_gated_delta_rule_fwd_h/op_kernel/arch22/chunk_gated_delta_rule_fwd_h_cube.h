@@ -114,7 +114,6 @@ public:
             AscendC::GetBlockNum() * kHeadDim_ * WORKSPACE_BUFFER_COUNT,
             scheduler_.vBlockSize);
 
-        AscendC::SyncAll<false>();
         while (scheduler_.isRunning) {
             scheduler_.InitTasks();
             if (!scheduler_.isRunning) {

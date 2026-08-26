@@ -124,7 +124,6 @@ public:
     __aicore__ inline void Process()
     {
         InitState();
-        AscendC::SyncAll<false>();
         Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(scheduler_.vec2Done[0]);
         Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(scheduler_.vec2Done[1]);
         InitEvents();

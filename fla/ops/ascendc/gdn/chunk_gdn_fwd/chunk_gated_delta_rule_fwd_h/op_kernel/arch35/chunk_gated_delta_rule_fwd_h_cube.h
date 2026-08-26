@@ -107,8 +107,6 @@ public:
 
     __aicore__ inline void Process()
     {
-        AscendC::SyncAll<false>();
-
         uint32_t workspaceBytes = chunkSize_ * scheduler_.vBlockSize *
             sizeof(InputT) * LOCAL_PING_PONG_STAGES;
         BlockMmadWH stage0Mmad(resource_, workspaceBytes);
@@ -126,7 +124,6 @@ public:
         auto hWorkLayout = tla::MakeLayout<WorkspaceT, Catlass::layout::RowMajor>(
             kHeadDim_, scheduler_.vBlockSize);
 
-        AscendC::SyncAll<false>();
         while (scheduler_.isRunning) {
             scheduler_.InitTasks();
             if (!scheduler_.isRunning) {
