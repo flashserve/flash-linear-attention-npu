@@ -30,6 +30,7 @@ static constexpr size_t INPUT_INITIAL_STATE_IDX = 5;
 static constexpr size_t INPUT_SEQLENS_IDX = 6;
 static constexpr size_t INPUT_CHUNK_INDICES_IDX = 7;
 static constexpr size_t OUTPUT_H_IDX = 0;
+static constexpr size_t OUTPUT_FINAL_STATE_IDX = 2;
 
 static constexpr size_t ATTR_STORE_FINAL_STATE_IDX = 0;
 static constexpr size_t ATTR_CHUNK_SIZE_IDX = 1;
@@ -68,8 +69,12 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
 
     auto kShapePtr = context->GetInputShape(INPUT_K_IDX);
     auto uShapePtr = context->GetInputShape(INPUT_U_IDX);
-    OP_CHECK_IF(kShapePtr == nullptr || uShapePtr == nullptr,
-                OP_LOGE(context->GetNodeName(), "k and u shapes must not be null."),
+    auto kDescPtr = context->GetInputDesc(INPUT_K_IDX);
+    auto finalStateDescPtr = context->GetOutputDesc(OUTPUT_FINAL_STATE_IDX);
+    OP_CHECK_IF(kShapePtr == nullptr || uShapePtr == nullptr || kDescPtr == nullptr ||
+                    finalStateDescPtr == nullptr,
+                OP_LOGE(context->GetNodeName(),
+                        "k/u shapes and k/final_state descriptors must not be null."),
                 return ge::GRAPH_FAILED);
     const gert::Shape &kShape = kShapePtr->GetOriginShape();
     const gert::Shape &uShape = uShapePtr->GetOriginShape();
@@ -107,6 +112,12 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     bool storeFinalState = *(attrPtr->GetAttrPointer<bool>(ATTR_STORE_FINAL_STATE_IDX));
     int64_t chunkSize = *(attrPtr->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_IDX));
     bool useExp2 = *(attrPtr->GetAttrPointer<bool>(ATTR_USE_EXP2_IDX));
+    const ge::DataType kDtype = kDescPtr->GetDataType();
+    const ge::DataType stateDtype = finalStateDescPtr->GetDataType();
+    OP_CHECK_IF(stateDtype != ge::DT_FLOAT && stateDtype != ge::DT_BF16,
+                OP_LOGE(context->GetNodeName(),
+                        "final_state dtype must be float32 or bfloat16."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(chunkSize != 64,
                 OP_LOGE(context->GetNodeName(),
                         "chunk_size only supports 64 in the current version, but got %ld.", chunkSize),
@@ -156,6 +167,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
         cuSeqlensTensor != nullptr ? cuSeqlensTensor->GetStorageShape().GetDim(0) : 0;
     tilingCtx.useInitialState = useInitialState;
     tilingCtx.storeFinalState = storeFinalState;
+    tilingCtx.stateElementBytes = stateDtype == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
+    tilingCtx.useSeparateRollingState = stateDtype != kDtype;
     tilingCtx.chunkSize = chunkSize;
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
@@ -193,6 +206,15 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     size_t workspaceSize = 0;
     ChunkGatedDeltaRuleFwdHTilingProcessor processor(tilingCtx);
     processor.Process(plainTiling, blockDim, workspaceSize);
+    const size_t numChunksBytes = static_cast<size_t>(plainTiling.tokenBatch + 1) * sizeof(int64_t);
+    const size_t alignedNumChunksBytes =
+        (numChunksBytes + GDN_FWD_H_GM_ALIGN) / GDN_FWD_H_GM_ALIGN * GDN_FWD_H_GM_ALIGN;
+    const size_t rollingStateWorkspaceOffset =
+        static_cast<size_t>(plainTiling.numChunksWorkspaceOffset) + alignedNumChunksBytes;
+    OP_LOGD(context->GetNodeName(),
+            "rolling state: stateElementBytes=%zu, useSeparate=%d, storeFinalState=%d, hiddenOffset=%zu",
+            tilingCtx.stateElementBytes, tilingCtx.useSeparateRollingState,
+            tilingCtx.storeFinalState, rollingStateWorkspaceOffset);
 
     const uint64_t gateMode = useGk ? GDN_FWD_H_GATE_GK : GDN_FWD_H_GATE_G;
     const uint64_t expMode = useExp2 ? GDN_FWD_H_EXP_2 : GDN_FWD_H_EXP_E;

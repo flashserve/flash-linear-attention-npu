@@ -43,6 +43,10 @@ ID 74/75 同为 `soc=ascend910b`，使用 BF16 `initial_state`，分别覆盖 BF
 写回。关闭时稳定 Python 入口第三项必须为 `None`；开启时 `final_state` 必须为 BF16
 并参与双标杆比较。
 
+ID 76-83 使用 3 个 chunk 的同 seed 成对用例，验证 rolling state 始终按 state dtype 回写，且
+`output_final_state=false/true` 不改变 `h/v_new`。覆盖 FP16 data + FP32 state、FP16 data +
+BF16 state、BF16 data + BF16 state，以及 gk-only + FP32 state。
+
 示例（BF16 首条）：
 `{"dtype": "bf16", "B": 1, "HK": 4, "HV": 4, "T": 512, "K": 128, "V": 128, "chunk_size": 64, "op": "chunk_gated_delta_rule_fwd_h", "case_id": 0, "seed": 20260817, "route": "ascendc", "soc": "ascend950"}`
 
@@ -57,6 +61,6 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_h -npu_device_id=6
 bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_h -scope=gen_cases
 ```
 
-本算子重生成 76 条 profile 时使用
-`GEN_CASES_DTYPE_NUMBERS=38 bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_h -scope=gen_cases`。
+本算子重生成 84 条 profile 时使用
+`GEN_CASES_DTYPE_NUMBERS=42 bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_h -scope=gen_cases`。
 全局脚本默认仍传入 `-dt 100 -en 0`；marker dtype 保留 BF16/FP16 两路生成入口。

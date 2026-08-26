@@ -25,7 +25,8 @@
 // Plain tiling struct (global ChunkGatedDeltaRuleFwdHTilingData) must be visible before the kernel header.
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling_processor.h"
-#include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
+#include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_cube.h"
+#include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_vector.h"
 
 #include "lib/matmul_intf.h"
 
@@ -183,6 +184,11 @@ static ::ChunkGatedDeltaRuleFwdHTilingData calc_tiling_params(
     ctx.cuSeqlensDim0 = cu_seqlens.has_value() ? static_cast<int64_t>(cu_seqlens.value().size()) : 0;
     ctx.useInitialState = initial_state.has_value();
     ctx.storeFinalState = output_final_state;
+    const auto state_dtype = initial_state.has_value()
+                                 ? initial_state.value().scalar_type()
+                                 : at::kFloat;
+    ctx.stateElementBytes = state_dtype == at::kFloat ? sizeof(float) : sizeof(uint16_t);
+    ctx.useSeparateRollingState = state_dtype != k.scalar_type();
     ctx.chunkSize = chunk_size;
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
@@ -211,15 +217,25 @@ __global__ __aicore__ void chunk_gated_delta_rule_fwd_h_kernel(
         return;
     }
 
-    using GDNFwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
-        INPUT_TYPE, G_TYPE, STATE_TYPE, float,
-        Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
-        GDN_FWD_H_GATE_G, GDN_FWD_H_EXP_E>;
-    GDNFwdHKernel gdnFwdH;
-    gdnFwdH.Init(
-        k, w, u, g, nullptr, inital_state, cu_seqlens, chunk_indices,
-        h, v_new, final_state, tiling, user);
-    gdnFwdH.Process();
+    using WorkspaceT = float;
+    if ASCEND_IS_AIC {
+        using Cube = GDN::FwdHStandalone::ChunkGatedDeltaRuleFwdHCube<
+            INPUT_TYPE, WorkspaceT, GDN::FwdHStandalone::TileShapes128,
+            GDN_FWD_H_GATE_G>;
+        Cube cube;
+        cube.Init(k, w, h, cu_seqlens, chunk_indices, user, tiling);
+        cube.Process();
+    }
+    if ASCEND_IS_AIV {
+        using Vector = GDN::FwdHStandalone::ChunkGatedDeltaRuleFwdHVector<
+            INPUT_TYPE, G_TYPE, STATE_TYPE, WorkspaceT,
+            GDN_FWD_H_GATE_G, GDN_FWD_H_EXP_E>;
+        Vector vector;
+        vector.Init(
+            k, w, u, g, nullptr, inital_state, cu_seqlens, chunk_indices,
+            h, v_new, final_state, user, tiling);
+        vector.Process();
+    }
 }
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_npu(

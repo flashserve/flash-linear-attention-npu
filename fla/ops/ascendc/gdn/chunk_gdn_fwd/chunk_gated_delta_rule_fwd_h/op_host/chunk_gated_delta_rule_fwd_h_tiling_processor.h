@@ -63,6 +63,10 @@ struct ChunkGatedDeltaRuleFwdHTilingContext {
     bool useInitialState;
     // attrs
     bool storeFinalState;
+    // Host-only rolling-state storage contract. These fields are intentionally
+    // not serialized into ChunkGatedDeltaRuleFwdHTilingData.
+    size_t stateElementBytes = 0;
+    bool useSeparateRollingState = false;
     int64_t chunkSize;
     // platform
     uint32_t aicCoreNum;
@@ -126,6 +130,16 @@ public:
 
         tiling.numChunksWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
         workspaceOffset += AlignUp(static_cast<size_t>((tokenBatch + 1) * static_cast<int64_t>(sizeof(int64_t))));
+
+        // The hidden rolling state starts immediately after the aligned
+        // numChunks buffer. The device entry can derive the same address from
+        // numChunksWorkspaceOffset and tokenBatch, so no tiling ABI field is needed.
+        if (ctx_.useSeparateRollingState && !ctx_.storeFinalState) {
+            const size_t rollingStateBytes = static_cast<size_t>(batch) *
+                static_cast<size_t>(ctx_.vNumHead) * static_cast<size_t>(kHeadDim) *
+                static_cast<size_t>(vHeadDim) * ctx_.stateElementBytes;
+            workspaceOffset += AlignUp(rollingStateBytes);
+        }
 
         workspaceOffset += GDN_FWD_H_WORKSPACE_RSV_BYTE;
         workspaceSize = workspaceOffset;

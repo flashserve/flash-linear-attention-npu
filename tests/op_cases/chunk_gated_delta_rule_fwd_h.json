@@ -183,6 +183,83 @@
     "state_dtypes": ["float32", "bfloat16"],
     "default_state_dtype": "float32",
     "state_dtype_rule": "initial_state and physical final_state must have the same dtype",
+    "state_recurrence_contract": {
+      "rolling_state_dtype": "physical final_state dtype (DTYPE_FINAL_STATE)",
+      "h_conversion": "each chunk-start h is converted from rolling_state to the data dtype",
+      "output_final_state": "controls only whether final_state is publicly returned; it must not change h or v_new",
+      "paired_cases": [
+        "fp16_fp32_state_g",
+        "fp16_bf16_state_g",
+        "bf16_bf16_state_g",
+        "fp16_fp32_state_gk"
+      ]
+    },
+    "state_recurrence_cases": [
+      {
+        "id": "fp16_fp32_state_g",
+        "dtype": "float16",
+        "initial_state_dtype": "float32",
+        "gate_mode": "g",
+        "use_exp2": false,
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 192,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "output_final_state_values": [false, true],
+        "same_seed": 20261022
+      },
+      {
+        "id": "fp16_bf16_state_g",
+        "dtype": "float16",
+        "initial_state_dtype": "bfloat16",
+        "gate_mode": "g",
+        "use_exp2": false,
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 192,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "output_final_state_values": [false, true],
+        "same_seed": 20261023
+      },
+      {
+        "id": "bf16_bf16_state_g",
+        "dtype": "bfloat16",
+        "initial_state_dtype": "bfloat16",
+        "gate_mode": "g",
+        "use_exp2": false,
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 192,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "output_final_state_values": [false, true],
+        "same_seed": 20261024
+      },
+      {
+        "id": "fp16_fp32_state_gk",
+        "dtype": "float16",
+        "initial_state_dtype": "float32",
+        "gate_mode": "gk",
+        "use_exp2": true,
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 192,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "output_final_state_values": [false, true],
+        "same_seed": 20261025
+      }
+    ],
     "supported_v_dims": [128],
     "supported_chunk_sizes": [64],
     "negative_shape_cases": [

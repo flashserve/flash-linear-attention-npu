@@ -23,10 +23,15 @@ gk:  [B,H_v,T,K]     optional
 
 Host 通过 template tiling key 直接选择两套互斥的编译期模式，不在同一个 kernel 实例内运行时判断 gate 模式：
 
-| 模式 | kernel 模板 |
-|---|---|
-| GDN v1 / `g-only` | `GDNFwdHKernel<..., gateMode=G, expMode>` |
-| KDA/GDN2 / `gk-only` | `GDNFwdHKernel<..., gateMode=GK, expMode>` |
+| 模式 | Cube 模板 | Vector 模板 |
+|---|---|---|
+| GDN v1 / `g-only` | `ChunkGatedDeltaRuleFwdHCube<..., gateMode=G>` | `ChunkGatedDeltaRuleFwdHVector<..., gateMode=G, expMode>` |
+| KDA/GDN2 / `gk-only` | `ChunkGatedDeltaRuleFwdHCube<..., gateMode=GK>` | `ChunkGatedDeltaRuleFwdHVector<..., gateMode=GK, expMode>` |
+
+正式 kernel 按 AIC/AIV 拆成独立的 `chunk_gated_delta_rule_fwd_h_cube.h` 和
+`chunk_gated_delta_rule_fwd_h_vector.h`。Cube 每轮先遍历连续 head 执行 Stage0 并发布结果，
+再遍历同一批 head 等待 Stage1、执行 Stage2 并发布结果；Vector 对应先完整推进 Stage1，
+再完整推进 Stage3。Vector 直接使用 AscendC/RegBase 接口，不经 epilogue 对象。
 
 template tiling key 保留 `V_TILE x GATE_MODE(G/GK) x EXP_MODE(exp/exp2)` 三维；当前只登记
 `V_TILE=128`，因此共 4 个语义组合。input、gate 和 state dtype 不进入 tiling key，分别直接使用算子编译生成的
@@ -97,7 +102,9 @@ h, v_new, final_state = chunk_fwd_h(
 | `v_new` | 必选 | `[B,H_v,T,V]` |
 | `final_state` | 可选 | `[N,H_v,K,V]`，`state_v_first=true` 时末两维为 `[V,K]` |
 
-`h` 是每个 chunk 的起始状态，反向会继续使用，因此保持 head-major。`final_state` 仅供调用者输出，
+`h` 是每个 chunk 的起始状态，反向会继续使用，因此保持 head-major。chunk 间递推状态按物理
+`final_state` 的 dtype（即 `DTYPE_FINAL_STATE`）回写；`h` 再由该状态转换为数据路径 dtype。
+`final_state` 仅供调用者输出，
 为保持既有 Python 接口兼容，`output_final_state=false` 时三元组第三项返回 `None`。物理 aclnn
 内部使用的 `[0]` Tensor 只是固定 launch 参数的占位，不作为 Python 输出暴露；其 dtype 在存在
 `initial_state` 时与 initial state 一致，否则默认为 FP32。
@@ -130,8 +137,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
 
 - A2/A3/A5。
 - FP16/BF16 数据路径；gate 使用 FP32 或与数据路径相同的 dtype；初始/最终状态支持 BF16/FP32，
-  二者必须同 dtype，无 initial state 时默认 FP32。这里的 state dtype 仅定义 initial/final state 的 GM
-  边界存储格式，不表示 chunk 间 rolling state 已按同一 dtype 实现递推。
+  二者必须同 dtype，无 initial state 时默认 FP32。state dtype 同时决定 chunk 间 rolling state 的
+  回写 dtype；`output_final_state` 只控制公开返回，不改变递推精度。
 - V=128；`chunk_size=64`。
 - 分核按每个紧凑序列的 value head 数计算：`max_load=ceil(H_v/available_cores)`，启用核数为
   `ceil(H_v/max_load)`，同一核负责负载均衡的连续 head 区间。每核 head 数可以超过 4，但每个

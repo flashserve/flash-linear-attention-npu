@@ -1,7 +1,8 @@
 """chunk_gated_delta_rule_fwd_h 的 ATK 泛化用例生成器。
 
 基于 GDN 泛化用例表筛选出 34 个 shape × bf16/fp16 = 68 条，增加 4 条 gk 指数语义用例、
-2 条 A2 多轮分核用例和 2 条 BF16 initial state 用例；仅保留 V=128、chunk_size=64。
+2 条 A2 多轮分核用例、2 条 BF16 initial state 用例和 8 条 state 递推成对用例；仅保留
+V=128、chunk_size=64。
 case 按计算规模从小到大排序，便于从最小 case 开始逐步验证。
 """
 
@@ -99,6 +100,14 @@ PROFILES = [
     {'name': 'BSND_GVA_V128_A2_HV96_multiround', 'dtype': 'fp16', 'B': 1, 'HK': 4, 'HV': 96, 'T': 128, 'K': 128, 'V': 128, 'chunk_size': 64, 'gate_mode': 'g', 'use_exp2': False, 'output_final_state': False, 'op': 'chunk_gated_delta_rule_fwd_h', 'case_id': 73, 'seed': 20261020, 'route': 'ascendc', 'soc': 'ascend910b'},
     {'name': 'BSND_noGVA_V128_bf16_state_no_final', 'dtype': 'bf16', 'B': 1, 'HK': 4, 'HV': 4, 'T': 128, 'K': 128, 'V': 128, 'chunk_size': 64, 'gate_mode': 'g', 'use_exp2': False, 'initial_state_dtype': 'bf16', 'output_final_state': False, 'op': 'chunk_gated_delta_rule_fwd_h', 'case_id': 74, 'seed': 20261021, 'route': 'ascendc', 'soc': 'ascend910b'},
     {'name': 'BSND_noGVA_V128_fp16_bf16_state_with_final', 'dtype': 'fp16', 'B': 1, 'HK': 4, 'HV': 4, 'T': 128, 'K': 128, 'V': 128, 'chunk_size': 64, 'gate_mode': 'g', 'use_exp2': False, 'initial_state_dtype': 'bf16', 'output_final_state': True, 'op': 'chunk_gated_delta_rule_fwd_h', 'case_id': 75, 'seed': 20261021, 'route': 'ascendc', 'soc': 'ascend910b'},
+    {'name': 'BSND_noGVA_V128_fp16_fp32_state_no_final', 'dtype': 'fp16', 'B': 1, 'HK': 4, 'HV': 4, 'T': 192, 'K': 128, 'V': 128, 'chunk_size': 64, 'gate_mode': 'g', 'use_exp2': False, 'initial_state_dtype': 'fp32', 'output_final_state': False, 'op': 'chunk_gated_delta_rule_fwd_h', 'case_id': 76, 'seed': 20261022, 'route': 'ascendc', 'soc': 'ascend950'},
+    {'name': 'BSND_noGVA_V128_fp16_fp32_state_with_final', 'dtype': 'fp16', 'B': 1, 'HK': 4, 'HV': 4, 'T': 192, 'K': 128, 'V': 128, 'chunk_size': 64, 'gate_mode': 'g', 'use_exp2': False, 'initial_state_dtype': 'fp32', 'output_final_state': True, 'op': 'chunk_gated_delta_rule_fwd_h', 'case_id': 77, 'seed': 20261022, 'route': 'ascendc', 'soc': 'ascend950'},
+    {'name': 'BSND_noGVA_V128_fp16_bf16_state_no_final', 'dtype': 'fp16', 'B': 1, 'HK': 4, 'HV': 4, 'T': 192, 'K': 128, 'V': 128, 'chunk_size': 64, 'gate_mode': 'g', 'use_exp2': False, 'initial_state_dtype': 'bf16', 'output_final_state': False, 'op': 'chunk_gated_delta_rule_fwd_h', 'case_id': 78, 'seed': 20261023, 'route': 'ascendc', 'soc': 'ascend950'},
+    {'name': 'BSND_noGVA_V128_fp16_bf16_state_with_final', 'dtype': 'fp16', 'B': 1, 'HK': 4, 'HV': 4, 'T': 192, 'K': 128, 'V': 128, 'chunk_size': 64, 'gate_mode': 'g', 'use_exp2': False, 'initial_state_dtype': 'bf16', 'output_final_state': True, 'op': 'chunk_gated_delta_rule_fwd_h', 'case_id': 79, 'seed': 20261023, 'route': 'ascendc', 'soc': 'ascend950'},
+    {'name': 'BSND_noGVA_V128_bf16_bf16_state_no_final', 'dtype': 'bf16', 'B': 1, 'HK': 4, 'HV': 4, 'T': 192, 'K': 128, 'V': 128, 'chunk_size': 64, 'gate_mode': 'g', 'use_exp2': False, 'initial_state_dtype': 'bf16', 'output_final_state': False, 'op': 'chunk_gated_delta_rule_fwd_h', 'case_id': 80, 'seed': 20261024, 'route': 'ascendc', 'soc': 'ascend950'},
+    {'name': 'BSND_noGVA_V128_bf16_bf16_state_with_final', 'dtype': 'bf16', 'B': 1, 'HK': 4, 'HV': 4, 'T': 192, 'K': 128, 'V': 128, 'chunk_size': 64, 'gate_mode': 'g', 'use_exp2': False, 'initial_state_dtype': 'bf16', 'output_final_state': True, 'op': 'chunk_gated_delta_rule_fwd_h', 'case_id': 81, 'seed': 20261024, 'route': 'ascendc', 'soc': 'ascend950'},
+    {'name': 'BSND_noGVA_V128_fp16_fp32_state_gk_no_final', 'dtype': 'fp16', 'B': 1, 'HK': 4, 'HV': 4, 'T': 192, 'K': 128, 'V': 128, 'chunk_size': 64, 'gate_mode': 'gk', 'use_exp2': True, 'initial_state_dtype': 'fp32', 'output_final_state': False, 'op': 'chunk_gated_delta_rule_fwd_h', 'case_id': 82, 'seed': 20261025, 'route': 'ascendc', 'soc': 'ascend950'},
+    {'name': 'BSND_noGVA_V128_fp16_fp32_state_gk_with_final', 'dtype': 'fp16', 'B': 1, 'HK': 4, 'HV': 4, 'T': 192, 'K': 128, 'V': 128, 'chunk_size': 64, 'gate_mode': 'gk', 'use_exp2': True, 'initial_state_dtype': 'fp32', 'output_final_state': True, 'op': 'chunk_gated_delta_rule_fwd_h', 'case_id': 83, 'seed': 20261025, 'route': 'ascendc', 'soc': 'ascend950'},
 ]
 
 

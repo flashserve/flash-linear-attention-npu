@@ -413,7 +413,10 @@ def chunk_fwd_h(
     ``g`` selects GDN v1 (Stage1 produces ``v_new_decay``); ``gk`` selects
     KDA/GDN2 (Stage1 forwards ``v_new`` and ``k`` must be the prepared ``kg``).
     ``initial_state`` may be float32 or bfloat16; ``final_state`` uses the same
-    dtype, and defaults to float32 when no initial state is supplied.
+    dtype, and defaults to float32 when no initial state is supplied. The
+    chunk-to-chunk recurrence is stored in that state dtype regardless of
+    ``output_final_state``; disabling the output only returns ``None`` as the
+    third result.
     """
 
     return _get_direct_op("npu_chunk_gated_delta_rule_fwd_h")(

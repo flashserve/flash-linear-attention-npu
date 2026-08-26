@@ -109,8 +109,8 @@ def _forward_h_ref(inputs, golden_mode: str = "fp64"):
 
     golden_mode:
       "fp64" - 输入升 fp64、fp64 累加（升精度真值标杆，ATK 自动计算）。
-      "npu"  - k/w/u 保持 bf16/fp16 乘、fp32 累加；仅 FP32 state 且开启最终态输出时
-               保持 FP32 递推，其余场景按 h 的输入 dtype 跨 chunk 回写。
+      "npu"  - k/w/u 保持 bf16/fp16 乘、fp32 累加；rolling state 每个 chunk
+               按 state dtype 回写，h 再由该状态舍入到输入 dtype。
     """
     k, w, u = (inputs[name] for name in ("k", "w", "u"))
     g, gk = inputs["g"], inputs["gk"]
@@ -138,6 +138,7 @@ def _forward_h_ref(inputs, golden_mode: str = "fp64"):
             initial_state = initial_state.float()
         matmul = lambda a, b: _matmul_npu_aligned(a, b, elem_dtype)
         store_input = lambda x: _round_elem(x, elem_dtype)
+        store_state = lambda x: _round_elem(x, state_elem_dtype)
         state_calc_dtype = torch.float32
     else:
         compute = torch.float64
@@ -152,14 +153,11 @@ def _forward_h_ref(inputs, golden_mode: str = "fp64"):
             initial_state = initial_state.to(compute)
         matmul = lambda a, b: a @ b
         store_input = lambda x: x
+        store_state = lambda x: x
         state_elem_dtype = compute
         state_calc_dtype = compute
 
     gate_exp = torch.exp2 if use_exp2 else torch.exp
-    use_fp32_recurrence = (
-        golden_mode != "npu"
-        or (output_final_state and state_elem_dtype == torch.float32)
-    )
 
     h = torch.zeros((B, HV, num_chunks, K, V), dtype=k.dtype, device=k.device)
     v_new = torch.zeros((B, HV, T, V), dtype=u.dtype, device=u.device)
@@ -170,7 +168,7 @@ def _forward_h_ref(inputs, golden_mode: str = "fp64"):
             if initial_state is None:
                 rolling_state = torch.zeros((K, V), dtype=state_calc_dtype, device=k.device)
             else:
-                rolling_state = initial_state[b, hv].to(state_calc_dtype)
+                rolling_state = store_state(initial_state[b, hv].to(state_calc_dtype))
             for chunk_idx, (start, end) in enumerate(_chunks(T, chunk_size)):
                 k_chunk = k[b, hk, start:end]
                 w_chunk = w[b, hv, start:end]
@@ -188,12 +186,11 @@ def _forward_h_ref(inputs, golden_mode: str = "fp64"):
                     gk_chunk = gk[b, hv, start:end]
                     state_scale = gate_exp(gk_chunk[-1]).unsqueeze(-1)
                     update_input = current_v
-                state_base = rolling_state if use_fp32_recurrence else h_state
-                next_state = state_base * state_scale + matmul(
+                next_state = rolling_state * state_scale + matmul(
                     k_chunk.transpose(-1, -2), update_input
                 )
-                rolling_state = next_state if use_fp32_recurrence else store_input(next_state)
-            final_state[b, hv] = next_state
+                rolling_state = store_state(next_state)
+            final_state[b, hv] = rolling_state
     if output_final_state:
         return h, v_new, final_state
     return h, v_new

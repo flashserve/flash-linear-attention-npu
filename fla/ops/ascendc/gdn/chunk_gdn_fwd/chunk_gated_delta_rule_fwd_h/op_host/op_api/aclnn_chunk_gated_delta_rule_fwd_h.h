@@ -33,7 +33,8 @@ extern "C" {
  * hOut : required
  * vNewOut : required
  * finalStateOut : required, float32 or bfloat16 and matching initialStateOptional when present;
- *                 use an empty tensor with shape [0] when outputFinalState is false
+ *                 its dtype controls the chunk-to-chunk rolling state dtype; use an empty tensor
+ *                 with shape [0] when outputFinalState is false
  * workspaceSize : size of workspace(output).
  * executor : executor context(output).
  */

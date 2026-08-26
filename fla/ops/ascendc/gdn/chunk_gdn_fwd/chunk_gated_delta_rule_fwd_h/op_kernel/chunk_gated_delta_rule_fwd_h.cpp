@@ -13,9 +13,11 @@
  */
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-#include "arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
+#include "arch35/chunk_gated_delta_rule_fwd_h_cube.h"
+#include "arch35/chunk_gated_delta_rule_fwd_h_vector.h"
 #else
-#include "gemm/kernel/gdn_fwd_h_kernel.hpp"
+#include "chunk_gated_delta_rule_fwd_h_cube.h"
+#include "chunk_gated_delta_rule_fwd_h_vector.h"
 #endif
 
 #include "chunk_gated_delta_rule_fwd_h_tiling_key.h"
@@ -30,7 +32,7 @@ struct FwdHTileSelector;
 
 template <>
 struct FwdHTileSelector<GDN_FWD_H_V_TILE_128> {
-    using type = Catlass::Gemm::Kernel::GDNFwdHTileShapes128;
+    using type = FwdHStandalone::TileShapes128;
 };
 
 template <uint32_t GateMode>
@@ -60,10 +62,19 @@ __global__ __aicore__ void chunk_gated_delta_rule_fwd_h(
     using TileShapes = typename GDN::FwdHTileSelector<V_TILE>::type;
     using GateT = typename GDN::FwdHGateTypeSelector<GATE_MODE>::type;
     using WorkspaceT = float;
-    using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
-        DTYPE_K, GateT, DTYPE_FINAL_STATE, WorkspaceT, TileShapes, GATE_MODE, EXP_MODE>;
-    Kernel op;
-    op.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices,
-            h, v_new, final_state, tiling, user);
-    op.Process();
+    if ASCEND_IS_AIC {
+        using Cube = GDN::FwdHStandalone::ChunkGatedDeltaRuleFwdHCube<
+            DTYPE_K, WorkspaceT, TileShapes, GATE_MODE>;
+        Cube cube;
+        cube.Init(k, w, h, cu_seqlens, chunk_indices, user, tiling);
+        cube.Process();
+    }
+    if ASCEND_IS_AIV {
+        using Vector = GDN::FwdHStandalone::ChunkGatedDeltaRuleFwdHVector<
+            DTYPE_K, GateT, DTYPE_FINAL_STATE, WorkspaceT, GATE_MODE, EXP_MODE>;
+        Vector vector;
+        vector.Init(k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices,
+                    h, v_new, final_state, user, tiling);
+        vector.Process();
+    }
 }
