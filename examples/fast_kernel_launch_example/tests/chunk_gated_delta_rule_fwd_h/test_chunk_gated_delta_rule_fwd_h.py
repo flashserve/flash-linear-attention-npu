@@ -24,7 +24,7 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
 # --------------------------------------------------------------------------------------
-# helpers (ported from fla/ops/.../chunk_gated_delta_rule_fwd_h/tests/pta/test_fwd_h.py)
+# Helpers for the direct-launch compatibility tests.
 # --------------------------------------------------------------------------------------
 def cdiv(a, b):
     return (a + b - 1) // b

@@ -9,13 +9,11 @@ CPU 标杆逐 value-head 使用各自 `w[b,hv]` 与共享 `k[b, hk]，hk = hv //
 
 from __future__ import annotations
 
-import math
 import sys
 from pathlib import Path
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 
@@ -25,20 +23,15 @@ from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 
 from _ascendc_common_executor import (
-    _RCP_LN2,
     _calc_dtype,
     _case_spec,
     _chunks,
     _finite_tuple,
     _gate,
-    _int_tensor,
     _kda_gate,
     _marker_device,
     _num_chunks,
-    _orig_dtype,
-    _rand,
     _randn,
-    _zeros,
 )
 
 
@@ -48,14 +41,53 @@ OP_NAME = "chunk_gated_delta_rule_fwd_h"
 def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: bool = False) -> dict[str, Any]:
     dtype_name = str(spec.get("dtype", "bf16")).lower()
     calc_dtype = _calc_dtype(dtype_name, high_precision)
+    gate_dtype = torch.float64 if high_precision else torch.float32
     seed = int(spec.get("seed", 20260817))
     B, HK, HV, T, K, V = (int(spec[x]) for x in ("B", "HK", "HV", "T", "K", "V"))
     chunk_size = int(spec["chunk_size"])
+    gate_mode = str(spec.get("gate_mode", "g")).lower()
+    if gate_mode not in {"g", "gk"}:
+        raise ValueError(f"gate_mode 仅支持 'g' 或 'gk'，当前值：{gate_mode!r}")
+
+    g = None
+    gk = None
+    if gate_mode == "g":
+        g = _gate((B, HV, T), gate_dtype, device, seed + 4)
+    else:
+        gk_chunks = [
+            _kda_gate(
+                (B, HV, end - start, K),
+                "fp32",
+                gate_dtype,
+                device,
+                seed + 4 + chunk_idx,
+            )
+            for chunk_idx, (start, end) in enumerate(_chunks(T, chunk_size))
+        ]
+        gk = torch.cat(gk_chunks, dim=2)
+
+    initial_state_dtype = spec.get("initial_state_dtype")
+    initial_state = None
+    if initial_state_dtype is not None:
+        initial_state_dtype = str(initial_state_dtype).lower()
+        initial_state = _randn(
+            (B, HV, K, V),
+            initial_state_dtype,
+            _calc_dtype(initial_state_dtype, high_precision),
+            device,
+            seed + 5,
+        )
+
     return {
         "k": _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 1),
         "w": _randn((B, HV, T, K), dtype_name, calc_dtype, device, seed + 2),
         "u": _randn((B, HV, T, V), dtype_name, calc_dtype, device, seed + 3),
-        "g": _gate((B, HV, T), torch.float64 if high_precision else torch.float32, device, seed + 4),
+        "g": g,
+        "gk": gk,
+        "gate_mode": gate_mode,
+        "use_exp2": bool(spec.get("use_exp2", False)),
+        "output_final_state": bool(spec.get("output_final_state", False)),
+        "initial_state": initial_state,
         "chunk_size": chunk_size,
     }
 
@@ -77,10 +109,15 @@ def _forward_h_ref(inputs, golden_mode: str = "fp64"):
 
     golden_mode:
       "fp64" - 输入升 fp64、fp64 累加（升精度真值标杆，ATK 自动计算）。
-      "npu"  - k/w/u 保持 bf16/fp16 乘、fp32 累加，逐 chunk 状态回写 elem_dtype，
-               与 NPU 单算子同精度标杆一致（双标杆中的同精度参考）。
+      "npu"  - k/w/u 保持 bf16/fp16 乘、fp32 累加；rolling state 每个 chunk
+               按 state dtype 回写，h 再由该状态舍入到输入 dtype。
     """
-    k, w, u, g = (inputs[name] for name in ("k", "w", "u", "g"))
+    k, w, u = (inputs[name] for name in ("k", "w", "u"))
+    g, gk = inputs["g"], inputs["gk"]
+    initial_state = inputs["initial_state"]
+    gate_mode = inputs["gate_mode"]
+    use_exp2 = inputs["use_exp2"]
+    output_final_state = inputs["output_final_state"]
     B, HK, T, K = k.shape
     HV, V = u.shape[1], u.shape[3]
     chunk_size = int(inputs["chunk_size"])
@@ -89,40 +126,73 @@ def _forward_h_ref(inputs, golden_mode: str = "fp64"):
 
     if golden_mode == "npu":
         elem_dtype = k.dtype
+        state_elem_dtype = initial_state.dtype if initial_state is not None else torch.float32
         k = k.to(elem_dtype)
         w = w.to(elem_dtype)
         u = u.to(elem_dtype)
-        g = g.float()
+        if g is not None:
+            g = g.float()
+        if gk is not None:
+            gk = gk.float()
+        if initial_state is not None:
+            initial_state = initial_state.float()
         matmul = lambda a, b: _matmul_npu_aligned(a, b, elem_dtype)
-        store = lambda x: _round_elem(x, elem_dtype)
+        store_input = lambda x: _round_elem(x, elem_dtype)
+        store_state = lambda x: _round_elem(x, state_elem_dtype)
+        state_calc_dtype = torch.float32
     else:
         compute = torch.float64
         k = k.to(compute)
         w = w.to(compute)
         u = u.to(compute)
-        g = g.to(compute)
+        if g is not None:
+            g = g.to(compute)
+        if gk is not None:
+            gk = gk.to(compute)
+        if initial_state is not None:
+            initial_state = initial_state.to(compute)
         matmul = lambda a, b: a @ b
-        store = lambda x: x
+        store_input = lambda x: x
+        store_state = lambda x: x
+        state_elem_dtype = compute
+        state_calc_dtype = compute
+
+    gate_exp = torch.exp2 if use_exp2 else torch.exp
 
     h = torch.zeros((B, HV, num_chunks, K, V), dtype=k.dtype, device=k.device)
     v_new = torch.zeros((B, HV, T, V), dtype=u.dtype, device=u.device)
+    final_state = torch.zeros((B, HV, K, V), dtype=state_elem_dtype, device=k.device)
     for b in range(B):
         for hv in range(HV):
             hk = hv // group
+            if initial_state is None:
+                rolling_state = torch.zeros((K, V), dtype=state_calc_dtype, device=k.device)
+            else:
+                rolling_state = store_state(initial_state[b, hv].to(state_calc_dtype))
             for chunk_idx, (start, end) in enumerate(_chunks(T, chunk_size)):
                 k_chunk = k[b, hk, start:end]
                 w_chunk = w[b, hv, start:end]
                 u_chunk = u[b, hv, start:end]
-                g_chunk = g[b, hv, start:end]
-                state = h[b, hv, chunk_idx]
-                current_v = u_chunk - matmul(w_chunk, state)
+                h_state = store_input(rolling_state)
+                h[b, hv, chunk_idx] = h_state
+                current_v = u_chunk - matmul(w_chunk, h_state)
                 v_new[b, hv, start:end] = current_v.to(u.dtype)
-                if chunk_idx + 1 < num_chunks:
-                    decay = torch.exp(g_chunk[-1] - g_chunk).unsqueeze(-1)
-                    g_last = torch.exp(g_chunk[-1])
-                    s_decayed = store(state) * g_last
-                    s_update = matmul(k_chunk.transpose(-1, -2), current_v * decay)
-                    h[b, hv, chunk_idx + 1] = store(s_decayed + s_update)
+                if gate_mode == "g":
+                    g_chunk = g[b, hv, start:end]
+                    decay = gate_exp(g_chunk[-1] - g_chunk).unsqueeze(-1)
+                    state_scale = gate_exp(g_chunk[-1])
+                    update_input = current_v * decay
+                else:
+                    gk_chunk = gk[b, hv, start:end]
+                    state_scale = gate_exp(gk_chunk[-1]).unsqueeze(-1)
+                    update_input = current_v
+                next_state = rolling_state * state_scale + matmul(
+                    k_chunk.transpose(-1, -2), update_input
+                )
+                rolling_state = store_state(next_state)
+            final_state[b, hv] = rolling_state
+    if output_final_state:
+        return h, v_new, final_state
     return h, v_new
 
 
@@ -137,7 +207,35 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
     inputs = build_inputs(spec, _marker_device(input_data), high_precision=False)
     from fla_npu.ops import ascendc
 
-    return ascendc.chunk_gated_delta_rule_fwd_h(inputs["k"], inputs["w"], inputs["u"], inputs["g"], gk=None, initial_state=None, output_final_state=False, chunk_size=inputs["chunk_size"], cu_seqlens=None, chunk_indices=None, state_v_first=False)
+    outputs = ascendc.chunk_gated_delta_rule_fwd_h(
+        inputs["k"],
+        inputs["w"],
+        inputs["u"],
+        inputs["g"],
+        gk=inputs["gk"],
+        initial_state=inputs["initial_state"],
+        output_final_state=inputs["output_final_state"],
+        chunk_size=inputs["chunk_size"],
+        cu_seqlens=None,
+        chunk_indices=None,
+        use_exp2=inputs["use_exp2"],
+        state_v_first=False,
+    )
+    if inputs["output_final_state"]:
+        if outputs[2] is None:
+            raise AssertionError("output_final_state=true 时 final_state 不得为 None")
+        expected_dtype = (
+            inputs["initial_state"].dtype
+            if inputs["initial_state"] is not None
+            else torch.float32
+        )
+        if outputs[2].dtype != expected_dtype:
+            raise AssertionError(
+                f"final_state dtype 应为 {expected_dtype}，实际为 {outputs[2].dtype}"
+            )
+    elif outputs[2] is not None:
+        raise AssertionError("稳定 Python 入口在 output_final_state=false 时必须返回 None")
+    return outputs
 
 
 @register("executor_chunk_gated_delta_rule_fwd_h")
@@ -157,4 +255,9 @@ class FunctionApi(BaseApi):
             outputs = run_cpu(spec, self.high_precision)
         else:
             raise RuntimeError(f"{OP_NAME} 仅支持 NPU DUT 与 CPU 标杆节点，当前设备：{self.device!r}")
-        return _finite_tuple(outputs)
+        visible_outputs = _finite_tuple(outputs)
+        if not bool(spec.get("output_final_state", False)):
+            # ATK 按首条用例固定输出数量；占位只用于让后续 final_state 进入精度比较。
+            placeholder = torch.zeros((1,), dtype=torch.float32, device=visible_outputs[0].device)
+            return visible_outputs + (placeholder,)
+        return visible_outputs

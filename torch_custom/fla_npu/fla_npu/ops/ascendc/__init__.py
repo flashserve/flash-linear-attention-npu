@@ -392,6 +392,50 @@ def causal_conv1d(
     return Function.apply(x, weight, bias, conv_states)
 
 
+def chunk_fwd_h(
+    k,
+    w,
+    u,
+    g=None,
+    *,
+    gk=None,
+    initial_state=None,
+    output_final_state=False,
+    chunk_size=64,
+    save_new_value=True,
+    cu_seqlens=None,
+    chunk_indices=None,
+    use_exp2=False,
+    state_v_first=False,
+):
+    """Run the shared chunk-state recurrence with exactly one gate mode.
+
+    ``g`` selects GDN v1 (Stage1 produces ``v_new_decay``); ``gk`` selects
+    KDA/GDN2 (Stage1 forwards ``v_new`` and ``k`` must be the prepared ``kg``).
+    ``initial_state`` may be float32 or bfloat16; ``final_state`` uses the same
+    dtype, and defaults to float32 when no initial state is supplied. The
+    chunk-to-chunk recurrence is stored in that state dtype regardless of
+    ``output_final_state``; disabling the output only returns ``None`` as the
+    third result.
+    """
+
+    return _get_direct_op("npu_chunk_gated_delta_rule_fwd_h")(
+        k,
+        w,
+        u,
+        g,
+        gk=gk,
+        initial_state=initial_state,
+        output_final_state=output_final_state,
+        chunk_size=chunk_size,
+        save_new_value=save_new_value,
+        cu_seqlens=cu_seqlens,
+        chunk_indices=chunk_indices,
+        use_exp2=use_exp2,
+        state_v_first=state_v_first,
+    )
+
+
 def install_torch_npu_ops_compat() -> None:
     """Expose wrappers through the legacy ``torch_npu.ops`` namespace."""
 
@@ -408,6 +452,7 @@ def install_torch_npu_ops_compat() -> None:
     for name in _ASCENDC_OPS:
         setattr(ops, name, globals()[name])
         setattr(ops, _strip_npu_prefix(name), globals()[_strip_npu_prefix(name)])
+    setattr(ops, "chunk_fwd_h", chunk_fwd_h)
 
 
 def install_legacy_torch_ops_warning() -> None:
@@ -435,6 +480,7 @@ _prepare_direct_runtime(raise_on_error=False)
 __all__ = [
     "BACKWARD_OPS",
     "MUTATED_ARGUMENTS",
+    "chunk_fwd_h",
     "install_legacy_torch_ops_warning",
     "install_torch_npu_ops_compat",
     *sorted(set(_ASCENDC_OPS)),

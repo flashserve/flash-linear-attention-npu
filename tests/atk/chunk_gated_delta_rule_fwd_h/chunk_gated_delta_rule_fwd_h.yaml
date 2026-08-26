@@ -48,7 +48,7 @@ inputs:
     type: attr
     required: true
     dtypes:
-      values: [non_param]
+      values: [string]
     ranges:
       valid:
         values: ["{\"name\":\"BSND_noGVA_V128_13_T512\",\"dtype\":\"bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":512,\"K\":128,\"V\":128,\"chunk_size\":64,\"op\":\"chunk_gated_delta_rule_fwd_h\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\"}"]
@@ -123,7 +123,7 @@ inputs:
       valid:
         values: [128]
       invalid:
-        values: []
+        values: [256]
   - name: chunk_size
     type: attr
     required: true
@@ -133,7 +133,7 @@ inputs:
       valid:
         values: [64]
       invalid:
-        values: []
+        values: [128]
   - name: case_id
     type: attr
     required: true

@@ -165,6 +165,24 @@ std::vector<int64_t> BuildKdaChunkIndices(at::IntArrayRef cu_seqlens, int64_t ch
     return indices;
 }
 
+void CheckKdaCanonicalChunkIndices(at::IntArrayRef chunk_indices,
+                                   at::IntArrayRef cu_seqlens,
+                                   int64_t chunk_size,
+                                   const char *op_name)
+{
+    auto expected = BuildKdaChunkIndices(cu_seqlens, chunk_size);
+    TORCH_CHECK(chunk_indices.size() == expected.size(),
+                op_name,
+                ": chunk_indices must contain exactly one canonical pair per chunk.");
+    for (size_t i = 0; i < expected.size(); ++i) {
+        TORCH_CHECK(chunk_indices[i] == expected[i],
+                    op_name,
+                    ": chunk_indices must use canonical sequence-major order; mismatch at flat index ",
+                    i,
+                    ".");
+    }
+}
+
 bool ResolveChunkLocalCumsumOutputDtype(
     const std::string &output_dtype_str,
     c10::ScalarType input_dtype,
@@ -414,58 +432,129 @@ at::Tensor npu_chunk_fwd_o(
     const c10::optional<at::Tensor> & initial_state, 
     c10::optional<bool> output_final_state, 
     c10::optional<int64_t> chunk_size,
+    c10::optional<bool> save_new_value,
     at::OptionalIntArrayRef cu_seqlens, 
     at::OptionalIntArrayRef chunk_indices, 
+    c10::optional<bool> use_exp2,
     c10::optional<bool> state_v_first)
 {
+    const bool has_g = g.has_value() && g->defined();
+    const bool has_gk = gk.has_value() && gk->defined();
     TORCH_CHECK(
-        (g.has_value() && g->defined()) || (gk.has_value() && gk->defined()),
-        "npu_chunk_gated_delta_rule_fwd_h: either g or gk must be defined.");
+        has_g != has_gk,
+        "npu_chunk_gated_delta_rule_fwd_h: exactly one of g and gk must be defined; "
+        "g-only selects GDN, while gk-only selects KDA/GDN2; has_g=", has_g,
+        ", has_gk=", has_gk, ".");
 
     // optional 参数处理
     bool output_final_state_ = output_final_state.value_or(false);
     int64_t chunk_size_ = chunk_size.value_or(64);
+    bool save_new_value_ = save_new_value.value_or(true);
+    bool use_exp2_ = use_exp2.value_or(false);
     bool state_v_first_ = state_v_first.value_or(false);
+    TORCH_CHECK(save_new_value_,
+                "npu_chunk_gated_delta_rule_fwd_h: save_new_value=False is not supported.");
+    TORCH_CHECK(chunk_size_ == 64,
+                "npu_chunk_gated_delta_rule_fwd_h: chunk_size must be 64, but got ",
+                chunk_size_,
+                ".");
     const at::Tensor &g_ = c10::value_or_else(g, [] { return at::Tensor(); });
     const at::Tensor &gk_ = c10::value_or_else(gk, [] { return at::Tensor(); });
     const at::Tensor &initial_state_ = c10::value_or_else(initial_state, [] { return at::Tensor(); });
+    bool has_cu_seqlens = cu_seqlens.has_value();
+    bool has_chunk_indices = chunk_indices.has_value();
+    TORCH_CHECK(has_cu_seqlens == has_chunk_indices,
+                "npu_chunk_gated_delta_rule_fwd_h: cu_seqlens and chunk_indices must be provided together.");
 
     // 计算shape
+    TORCH_CHECK(k.dim() == 4 && w.dim() == 4 && u.dim() == 4,
+                "npu_chunk_gated_delta_rule_fwd_h: k, w and u must be rank-4 BNSD tensors.");
     auto k_sizes = k.sizes();
+    auto w_sizes = w.sizes();
     auto u_sizes = u.sizes();
     int64_t B = k_sizes[0];
+    int64_t HK = k_sizes[1];
     int64_t T = k_sizes[2];
     int64_t K = k_sizes[3];
     int64_t V = u_sizes[3];
     int64_t HV = u_sizes[1];
+    TORCH_CHECK(B > 0 && HK > 0 && T > 0 && K > 0 && HV > 0 && V > 0,
+                "npu_chunk_gated_delta_rule_fwd_h: all logical dimensions must be positive.");
+    TORCH_CHECK(w_sizes[0] == B && w_sizes[1] == HV && w_sizes[2] == T && w_sizes[3] == K,
+                "npu_chunk_gated_delta_rule_fwd_h: w must have shape [B, HV, T, K].");
+    TORCH_CHECK(u_sizes[0] == B && u_sizes[2] == T,
+                "npu_chunk_gated_delta_rule_fwd_h: u must have shape [B, HV, T, V].");
+    TORCH_CHECK(V == 128,
+                "npu_chunk_gated_delta_rule_fwd_h: V must be 128, but got ", V, ".");
+    TORCH_CHECK(HV % HK == 0,
+                "npu_chunk_gated_delta_rule_fwd_h: HV must be divisible by HK.");
+    if (g_.defined()) {
+        TORCH_CHECK(g_.dim() == 3 && g_.size(0) == B && g_.size(1) == HV && g_.size(2) == T,
+                    "npu_chunk_gated_delta_rule_fwd_h: g must have shape [B, HV, T].");
+    }
+    if (gk_.defined()) {
+        TORCH_CHECK(gk_.dim() == 4 && gk_.size(0) == B && gk_.size(1) == HV &&
+                        gk_.size(2) == T && gk_.size(3) == K,
+                    "npu_chunk_gated_delta_rule_fwd_h: gk must have shape [B, HV, T, K].");
+    }
+    if (has_cu_seqlens) {
+        TORCH_CHECK(B == 1, "npu_chunk_gated_delta_rule_fwd_h: varlen BNSD input requires B=1.");
+        CheckKdaCuSeqlens(cu_seqlens, T, "npu_chunk_gated_delta_rule_fwd_h");
+        auto cu = cu_seqlens.value();
+        for (size_t i = 0; i + 1 < cu.size(); ++i) {
+            TORCH_CHECK(cu[i] < cu[i + 1],
+                        "npu_chunk_gated_delta_rule_fwd_h: cu_seqlens must be strictly increasing.");
+        }
+        CheckKdaChunkIndices(chunk_indices, cu_seqlens, chunk_size_, "npu_chunk_gated_delta_rule_fwd_h");
+        CheckKdaCanonicalChunkIndices(chunk_indices.value(), cu, chunk_size_,
+                                     "npu_chunk_gated_delta_rule_fwd_h");
+    }
 
     int64_t NT = GetKdaTotalChunks(B, T, chunk_size_, cu_seqlens, chunk_indices);
     int64_t N = GetKdaSeqNum(B, cu_seqlens);
-    std::vector<int64_t> state_tail = state_v_first_
-                                          ? std::vector<int64_t>{V, K}
-                                          : std::vector<int64_t>{K, V};
+    if (initial_state_.defined()) {
+        TORCH_CHECK(initial_state_.scalar_type() == at::kFloat ||
+                        initial_state_.scalar_type() == at::kBFloat16,
+                    "npu_chunk_gated_delta_rule_fwd_h: initial_state must be float32 or bfloat16.");
+        TORCH_CHECK(initial_state_.dim() == 4 && initial_state_.size(0) == N &&
+                        initial_state_.size(1) == HV &&
+                        initial_state_.size(2) == (state_v_first_ ? V : K) &&
+                        initial_state_.size(3) == (state_v_first_ ? K : V),
+                    "npu_chunk_gated_delta_rule_fwd_h: initial_state shape does not match state_v_first.");
+    }
+    at::Tensor initial_state_compute = initial_state_;
+    if (state_v_first_ && initial_state_compute.defined()) {
+        initial_state_compute = initial_state_compute.transpose(-2, -1).contiguous();
+    }
 
     // 创建输出 tensor
-    at::Tensor h_out = at::empty({B, HV, NT, state_tail[0], state_tail[1]}, k.options());
+    at::Tensor h_compute = at::empty({B, HV, NT, K, V}, k.options());
     at::Tensor v_new_out = at::empty_like(u);
-    at::Tensor final_state_out;
+    at::Tensor final_state_compute;
+    auto state_options = initial_state_compute.defined()
+                             ? initial_state_compute.options()
+                             : k.options().dtype(at::kFloat);
     if (output_final_state_) {
-        auto state_options = initial_state.has_value() ? initial_state->options() : k.options().dtype(at::kFloat);
-        final_state_out = at::empty({N, HV, state_tail[0], state_tail[1]}, state_options);
+        final_state_compute = at::empty({N, HV, K, V}, state_options);
+    } else {
+        final_state_compute = at::empty({0}, state_options);
     }
 
     EXEC_NPU_CMD_EXT(
         aclnnChunkGatedDeltaRuleFwdH,
         k, w, u, g_,
-        gk_, initial_state_, output_final_state_, chunk_size_,
-        cu_seqlens, chunk_indices, state_v_first_,
-        h_out, v_new_out, final_state_out
+        gk_, initial_state_compute, output_final_state_, chunk_size_, save_new_value_,
+        cu_seqlens, chunk_indices, use_exp2_, false,
+        h_compute, v_new_out, final_state_compute
     );
+    at::Tensor h_out = state_v_first_ ? h_compute.transpose(-2, -1).contiguous() : h_compute;
+    at::Tensor final_state_out;
     if (output_final_state_) {
-        return std::make_tuple(h_out, v_new_out, final_state_out);
-    } else {
-        return std::make_tuple(h_out, v_new_out, at::Tensor());
+        final_state_out = state_v_first_
+                              ? final_state_compute.transpose(-2, -1).contiguous()
+                              : final_state_compute;
     }
+    return std::make_tuple(h_out, v_new_out, final_state_out);
 }
 
 ::std::tuple<at::Tensor, at::Tensor> npu_recompute_w_u_fwd(

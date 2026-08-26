@@ -95,6 +95,26 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
         ctypes.POINTER(ctypes.c_void_p),  # executor
     ],
+    "aclnnChunkGatedDeltaRuleFwdH": [
+        ctypes.c_void_p,  # k
+        ctypes.c_void_p,  # w
+        ctypes.c_void_p,  # u
+        ctypes.c_void_p,  # gOptional
+        ctypes.c_void_p,  # gkOptional
+        ctypes.c_void_p,  # initialStateOptional
+        ctypes.c_bool,  # outputFinalState
+        ctypes.c_int64,  # chunkSize
+        ctypes.c_bool,  # saveNewValue
+        ctypes.c_void_p,  # cuSeqlensOptional
+        ctypes.c_void_p,  # chunkIndicesOptional
+        ctypes.c_bool,  # useExp2
+        ctypes.c_bool,  # stateVFirst (reserved, always false)
+        ctypes.c_void_p,  # hOut
+        ctypes.c_void_p,  # vNewOut
+        ctypes.c_void_p,  # finalStateOut
+        ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
+        ctypes.POINTER(ctypes.c_void_p),  # executor
+    ],
     "aclnnSolveTri": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -575,41 +595,99 @@ def npu_chunk_gated_delta_rule_fwd_h(
     initial_state=None,
     output_final_state=False,
     chunk_size=None,
+    save_new_value=True,
     cu_seqlens=None,
     chunk_indices=None,
+    use_exp2=False,
     state_v_first=False,
 ):
     import torch
 
-    if g is None and gk is None:
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: either g or gk must be provided.")
+    if (g is None) == (gk is None):
+        raise RuntimeError(
+            "npu_chunk_gated_delta_rule_fwd_h: exactly one of g and gk must be provided; "
+            "g-only selects GDN, while gk-only selects KDA/GDN2; "
+            f"has_g={g is not None}, has_gk={gk is not None}."
+        )
     output_final_state = _optional_bool(output_final_state, False)
+    save_new_value = _optional_bool(save_new_value, True)
+    use_exp2 = _optional_bool(use_exp2, False)
     state_v_first = _optional_bool(state_v_first, False)
+    if not save_new_value:
+        raise RuntimeError(
+            "npu_chunk_gated_delta_rule_fwd_h: save_new_value=False is not supported."
+        )
     chunk_size = _optional_int(chunk_size, 64)
-    B, _, T, K = _shape(k)
-    _, HV, _, V = _shape(u)
-    cu = None if cu_seqlens is None else tuple(int(value) for value in cu_seqlens)
-    indices = None if chunk_indices is None else tuple(int(value) for value in chunk_indices)
-    if indices is None and cu is not None:
-        indices = _kda_build_chunk_indices(cu, chunk_size)
+    if chunk_size != 64:
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: chunk_size must be 64.")
+
+    k_shape, w_shape, u_shape = map(_shape, (k, w, u))
+    if any(len(shape) != 4 for shape in (k_shape, w_shape, u_shape)):
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: k, w and u must be rank-4 BNSD tensors.")
+    B, HK, T, K = k_shape
+    w_batch, HV, w_tokens, w_dim = w_shape
+    u_batch, u_heads, u_tokens, V = u_shape
+    if min(B, HK, T, K, HV, V) <= 0:
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: all logical dimensions must be positive.")
+    if (w_batch, w_tokens, w_dim) != (B, T, K):
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: w must have shape [B, HV, T, K].")
+    if (u_batch, u_heads, u_tokens) != (B, HV, T):
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: u must have shape [B, HV, T, V].")
+    if V != 128:
+        raise RuntimeError(
+            f"npu_chunk_gated_delta_rule_fwd_h: V must be 128, but got {V}."
+        )
+    if HV % HK != 0:
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: HV must be divisible by HK.")
+    if g is not None and _shape(g) != (B, HV, T):
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: g must have shape [B, HV, T].")
+    if gk is not None and _shape(gk) != (B, HV, T, K):
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: gk must have shape [B, HV, T, K].")
+    cu = _normalize_int_array(cu_seqlens, "cu_seqlens")
+    indices = _normalize_int_array(chunk_indices, "chunk_indices", pairs=True)
+    if indices is not None and cu is None:
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: chunk_indices requires cu_seqlens.")
+    if cu is not None:
+        if B != 1:
+            raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: varlen BNSD input requires B=1.")
+        if len(cu) < 2 or cu[0] != 0 or cu[-1] != T:
+            raise RuntimeError(
+                "npu_chunk_gated_delta_rule_fwd_h: cu_seqlens must start at 0 and end at T."
+            )
+        if any(left >= right for left, right in zip(cu, cu[1:])):
+            raise RuntimeError("npu_chunk_gated_delta_rule_fwd_h: cu_seqlens must be strictly increasing.")
+        canonical_indices = _kda_build_chunk_indices(cu, chunk_size)
+        if indices is None:
+            indices = canonical_indices
+        elif indices != canonical_indices:
+            raise RuntimeError(
+                "npu_chunk_gated_delta_rule_fwd_h: chunk_indices must use canonical sequence-major order."
+            )
     NT = _kda_total_chunks(B, T, chunk_size, cu, indices)
     N = len(cu) - 1 if cu is not None else B
     state_tail = (V, K) if state_v_first else (K, V)
-    if initial_state is not None and _shape(initial_state) != (N, HV, *state_tail):
-        raise RuntimeError(
-            "npu_chunk_gated_delta_rule_fwd_h: initial_state shape does not match state_v_first."
-        )
-    h_out = _empty((B, HV, NT, *state_tail), k)
+    if initial_state is not None:
+        if _shape(initial_state) != (N, HV, *state_tail):
+            raise RuntimeError(
+                "npu_chunk_gated_delta_rule_fwd_h: initial_state shape does not match state_v_first."
+            )
+        if initial_state.dtype not in (torch.float32, torch.bfloat16):
+            raise RuntimeError(
+                "npu_chunk_gated_delta_rule_fwd_h: initial_state must be float32 or bfloat16."
+            )
+    initial_state_compute = initial_state
+    if state_v_first and initial_state_compute is not None:
+        initial_state_compute = initial_state_compute.transpose(-1, -2).contiguous()
+
+    h_compute = _empty((B, HV, NT, K, V), k)
     v_new_out = _empty_like(u)
+    state_dtype = initial_state_compute.dtype if initial_state_compute is not None else torch.float32
     if output_final_state:
-        if initial_state is not None:
-            final_state_out = _empty((N, HV, *state_tail), initial_state)
-        else:
-            final_state_out = _empty((N, HV, *state_tail), k, dtype=torch.float32)
+        final_state_compute = _empty((N, HV, K, V), k, dtype=state_dtype)
     else:
-        final_state_out = None
-    outputs = (h_out, v_new_out, final_state_out if output_final_state else None)
-    return _call_aclnn(
+        final_state_compute = _empty((0,), k, dtype=state_dtype)
+    compute_outputs = (h_compute, v_new_out, final_state_compute)
+    h_result, v_new_result, final_state_result = _call_aclnn(
         "aclnnChunkGatedDeltaRuleFwdH",
         lambda ctx: [
             ctx.tensor(k, "k"),
@@ -617,18 +695,27 @@ def npu_chunk_gated_delta_rule_fwd_h(
             ctx.tensor(u, "u"),
             ctx.tensor(g, "g"),
             ctx.tensor(gk, "gk"),
-            ctx.tensor(initial_state, "initial_state"),
+            ctx.tensor(initial_state_compute, "initial_state"),
             ctypes.c_bool(output_final_state),
             ctypes.c_int64(chunk_size),
+            ctypes.c_bool(save_new_value),
             ctx.int_array(cu),
             ctx.int_array(indices),
-            ctypes.c_bool(state_v_first),
-            ctx.tensor(h_out, "h"),
+            ctypes.c_bool(use_exp2),
+            ctypes.c_bool(False),
+            ctx.tensor(h_compute, "h"),
             ctx.tensor(v_new_out, "v_new"),
-            ctx.tensor(final_state_out, "final_state"),
+            ctx.tensor(final_state_compute, "final_state"),
         ],
-        outputs,
+        compute_outputs,
     )
+    if state_v_first:
+        h_result = h_result.transpose(-1, -2).contiguous()
+        if output_final_state:
+            final_state_result = final_state_result.transpose(-1, -2).contiguous()
+    if not output_final_state:
+        final_state_result = None
+    return h_result, v_new_result, final_state_result
 
 
 def npu_recompute_w_u_fwd(
@@ -1066,6 +1153,48 @@ def npu_causal_conv1d_bwd(
 
 def _kda_ceil_div(x: int, y: int) -> int:
     return (int(x) + int(y) - 1) // int(y)
+
+
+def _normalize_int_array(values, name: str, *, pairs: bool = False):
+    if values is None:
+        return None
+
+    import operator
+    import torch
+
+    def checked_index(value):
+        if isinstance(value, bool):
+            raise RuntimeError(f"{name} must contain integers, not bool values.")
+        try:
+            return operator.index(value)
+        except TypeError as exc:
+            raise RuntimeError(f"{name} must contain only integers.") from exc
+
+    if isinstance(values, torch.Tensor):
+        if values.device.type != "cpu" or values.dtype != torch.int64:
+            raise RuntimeError(f"{name} must be a CPU int64 Tensor or a sequence of integers.")
+        if pairs:
+            if values.ndim == 2 and values.shape[1] != 2:
+                raise RuntimeError(f"{name} rank-2 Tensor must have shape [NT, 2].")
+            if values.ndim not in {1, 2}:
+                raise RuntimeError(f"{name} must be rank 1 or rank 2 with shape [NT, 2].")
+        elif values.ndim != 1:
+            raise RuntimeError(f"{name} must be rank 1.")
+        normalized = tuple(int(value) for value in values.reshape(-1).tolist())
+    else:
+        try:
+            sequence = tuple(values)
+        except TypeError as exc:
+            raise RuntimeError(f"{name} must be a sequence of integers.") from exc
+        if pairs and sequence and isinstance(sequence[0], (list, tuple)):
+            if any(not isinstance(pair, (list, tuple)) or len(pair) != 2 for pair in sequence):
+                raise RuntimeError(f"{name} nested sequence must have shape [NT, 2].")
+            normalized = tuple(checked_index(value) for pair in sequence for value in pair)
+        else:
+            normalized = tuple(checked_index(value) for value in sequence)
+    if pairs and len(normalized) % 2:
+        raise RuntimeError(f"{name} must contain (seq_id, local_chunk_id) pairs.")
+    return normalized
 
 
 def _kda_build_chunk_indices(cu_seqlens, chunk_size: int):

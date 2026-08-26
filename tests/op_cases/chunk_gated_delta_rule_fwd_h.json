@@ -1,0 +1,278 @@
+{
+  "schema_version": 1,
+  "operator": "chunk_gated_delta_rule_fwd_h",
+  "interface_contract": {
+    "gate_modes": {
+      "gdn_v1": {
+        "g": "required",
+        "gk": null,
+        "stage1": "v_new_decay = gate(g_last - g) * v_new",
+        "stage2": "delta_h = raw_k^T @ v_new_decay"
+      },
+      "kda_gdn2": {
+        "g": null,
+        "gk": "required",
+        "stage1": "v_new is forwarded without an extra decay",
+        "stage2": "delta_h = kg^T @ v_new"
+      }
+    },
+    "negative_gate_cases": [
+      {
+        "id": "missing_g_and_gk",
+        "has_g": false,
+        "has_gk": false,
+        "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+      },
+      {
+        "id": "both_g_and_gk",
+        "has_g": true,
+        "has_gk": true,
+        "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+      }
+    ],
+    "mode_selector": "presence of g/gk only; use_exp2 and state_v_first are orthogonal",
+    "gate_exp_contract": {
+      "use_exp2_false": {
+        "g": "exp(g)",
+        "gk": "exp(gk)"
+      },
+      "use_exp2_true": {
+        "g": "exp2(g)",
+        "gk": "exp2(gk)"
+      },
+      "kda_gdn2": "Prepare produces log2-domain gk and calls FwdH with use_exp2=true"
+    },
+    "gate_exp_cases": [
+      {
+        "id": "gk_exp_bf16",
+        "gate_mode": "gk",
+        "dtype": "bfloat16",
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "use_exp2": false,
+        "output_final_state": true,
+        "expected_gate": "exp(gk)"
+      },
+      {
+        "id": "gk_exp_fp16",
+        "gate_mode": "gk",
+        "dtype": "float16",
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "use_exp2": false,
+        "output_final_state": true,
+        "expected_gate": "exp(gk)"
+      },
+      {
+        "id": "gk_exp2_bf16",
+        "gate_mode": "gk",
+        "dtype": "bfloat16",
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "use_exp2": true,
+        "output_final_state": true,
+        "expected_gate": "exp2(gk)"
+      },
+      {
+        "id": "gk_exp2_fp16",
+        "gate_mode": "gk",
+        "dtype": "float16",
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "use_exp2": true,
+        "output_final_state": true,
+        "expected_gate": "exp2(gk)"
+      }
+    ],
+    "head_sharding_cases": [
+      {
+        "id": "a2_hv96_multiround_bf16",
+        "soc": "ascend910b",
+        "dtype": "bfloat16",
+        "B": 1,
+        "HK": 4,
+        "HV": 96,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "gate_mode": "g",
+        "use_exp2": false,
+        "output_final_state": false,
+        "aic_count": 20,
+        "heads_per_core": 5,
+        "head_rounds": [4, 1]
+      },
+      {
+        "id": "a2_hv96_multiround_fp16",
+        "soc": "ascend910b",
+        "dtype": "float16",
+        "B": 1,
+        "HK": 4,
+        "HV": 96,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "gate_mode": "g",
+        "use_exp2": false,
+        "output_final_state": false,
+        "aic_count": 20,
+        "heads_per_core": 5,
+        "head_rounds": [4, 1]
+      }
+    ],
+    "bf16_initial_state_cases": [
+      {
+        "id": "bf16_state_no_final",
+        "soc": "ascend910b",
+        "dtype": "bfloat16",
+        "initial_state_dtype": "bfloat16",
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "gate_mode": "g",
+        "use_exp2": false,
+        "output_final_state": false,
+        "expected_python_final_state": null,
+        "expected_h_dtype": "bfloat16"
+      },
+      {
+        "id": "fp16_bf16_state_with_final",
+        "soc": "ascend910b",
+        "dtype": "float16",
+        "initial_state_dtype": "bfloat16",
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 128,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "gate_mode": "g",
+        "use_exp2": false,
+        "output_final_state": true,
+        "expected_final_state_dtype": "bfloat16",
+        "expected_initial_state_cast": "bfloat16 -> float32 -> float16 on A2/A3"
+      }
+    ],
+    "state_dtypes": ["float32", "bfloat16"],
+    "default_state_dtype": "float32",
+    "state_dtype_rule": "initial_state and physical final_state must have the same dtype",
+    "state_recurrence_contract": {
+      "rolling_state_dtype": "physical final_state dtype (DTYPE_FINAL_STATE)",
+      "h_conversion": "each chunk-start h is converted from rolling_state to the data dtype",
+      "output_final_state": "controls only whether final_state is publicly returned; it must not change h or v_new",
+      "paired_cases": [
+        "fp16_fp32_state_g",
+        "fp16_bf16_state_g",
+        "bf16_bf16_state_g",
+        "fp16_fp32_state_gk"
+      ]
+    },
+    "state_recurrence_cases": [
+      {
+        "id": "fp16_fp32_state_g",
+        "dtype": "float16",
+        "initial_state_dtype": "float32",
+        "gate_mode": "g",
+        "use_exp2": false,
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 192,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "output_final_state_values": [false, true],
+        "same_seed": 20261022
+      },
+      {
+        "id": "fp16_bf16_state_g",
+        "dtype": "float16",
+        "initial_state_dtype": "bfloat16",
+        "gate_mode": "g",
+        "use_exp2": false,
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 192,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "output_final_state_values": [false, true],
+        "same_seed": 20261023
+      },
+      {
+        "id": "bf16_bf16_state_g",
+        "dtype": "bfloat16",
+        "initial_state_dtype": "bfloat16",
+        "gate_mode": "g",
+        "use_exp2": false,
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 192,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "output_final_state_values": [false, true],
+        "same_seed": 20261024
+      },
+      {
+        "id": "fp16_fp32_state_gk",
+        "dtype": "float16",
+        "initial_state_dtype": "float32",
+        "gate_mode": "gk",
+        "use_exp2": true,
+        "B": 1,
+        "HK": 4,
+        "HV": 4,
+        "T": 192,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "output_final_state_values": [false, true],
+        "same_seed": 20261025
+      }
+    ],
+    "supported_v_dims": [128],
+    "supported_chunk_sizes": [64],
+    "negative_shape_cases": [
+      {
+        "id": "unsupported_v_dim_256",
+        "v_dim": 256,
+        "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+      },
+      {
+        "id": "unsupported_chunk_size_128",
+        "chunk_size": 128,
+        "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+      }
+    ]
+  }
+}

@@ -28,14 +28,31 @@
 
 namespace optiling {
 
-// dtype enum convention shared with the kernel: 0 - fp16, 1 - bf16, 2 - fp32
+// dtype enum convention retained for legacy KDA fast-launch tiling.
 static constexpr int64_t GDN_FWD_H_DTYPE_FP16 = 0;
 static constexpr int64_t GDN_FWD_H_DTYPE_BF16 = 1;
 static constexpr int64_t GDN_FWD_H_DTYPE_FP32 = 2;
 
 static constexpr size_t GDN_FWD_H_WORKSPACE_RSV_BYTE = 16 * 1024 * 1024;
 static constexpr size_t GDN_FWD_H_GM_ALIGN = 512;
-static constexpr int64_t GDN_FWD_H_PING_PONG_STAGES = 2;
+static constexpr int64_t GDN_FWD_H_WORKSPACE_BUFFER_COUNT = 8;
+static constexpr int64_t GDN_FWD_H_LEGACY_WORKSPACE_BUFFER_COUNT = 2;
+
+inline bool ResolveFwdHHeadSharding(
+    int64_t vNumHead, uint32_t availableCoreNum,
+    uint32_t &maxHeadsPerCore, uint32_t &activeCoreNum)
+{
+    if (vNumHead <= 0 || availableCoreNum == 0) {
+        return false;
+    }
+    maxHeadsPerCore = static_cast<uint32_t>(
+        (vNumHead + static_cast<int64_t>(availableCoreNum) - 1) /
+        static_cast<int64_t>(availableCoreNum));
+    activeCoreNum = static_cast<uint32_t>(
+        (vNumHead + static_cast<int64_t>(maxHeadsPerCore) - 1) /
+        static_cast<int64_t>(maxHeadsPerCore));
+    return activeCoreNum > 0 && activeCoreNum <= availableCoreNum;
+}
 
 // Plain, framework-agnostic inputs needed to compute the tiling.
 struct ChunkGatedDeltaRuleFwdHTilingContext {
@@ -49,15 +66,24 @@ struct ChunkGatedDeltaRuleFwdHTilingContext {
     // variable length
     bool hasCuSeqlens;
     int64_t cuSeqlensDim0; // length of cu_seqlens (only used when hasCuSeqlens)
-    // dtypes (use GDN_FWD_H_DTYPE_*)
-    int64_t dataType;      // input (k/w/u) dtype: fp16 or bf16
-    int64_t gDataType;     // g dtype
+    int64_t dataType;
+    int64_t gDataType;
     bool useInitialState;
-    int64_t stateDataType; // initial/final state dtype
+    int64_t stateDataType;
     bool useG;
     bool useGk;
     // attrs
     bool storeFinalState;
+    // The standalone FwdH uses dynamic contiguous-head sharding and 8 slots.
+    // Legacy KDA callers leave this false and retain the original 2-slot contract.
+    bool useStandaloneScheduler = false;
+    // A5 hands the Stage1 vUpdate operand directly from UB to resident L1.
+    // Other platforms and legacy callers retain the GM workspace contract.
+    bool useL1VUpdate = false;
+    // Host-only rolling-state storage contract. These fields are intentionally
+    // not serialized into ChunkGatedDeltaRuleFwdHTilingData.
+    size_t stateElementBytes = 0;
+    bool useSeparateRollingState = false;
     int64_t chunkSize;
     // platform
     uint32_t aicCoreNum;
@@ -88,34 +114,63 @@ public:
             batch = tokenBatch;
         }
 
-        blockDim = ctx_.aicCoreNum;
-        const int64_t aicCoreNum = static_cast<int64_t>(ctx_.aicCoreNum);
+        uint32_t activeCoreNum = ctx_.aicCoreNum;
+        if (ctx_.useStandaloneScheduler) {
+            uint32_t maxHeadsPerCore = 0;
+            if (!ResolveFwdHHeadSharding(
+                    ctx_.vNumHead, ctx_.aicCoreNum, maxHeadsPerCore, activeCoreNum)) {
+                blockDim = 0;
+                workspaceSize = 0;
+                return;
+            }
+            (void)maxHeadsPerCore;
+        }
+        blockDim = activeCoreNum;
+        const int64_t aicCoreNum = static_cast<int64_t>(activeCoreNum);
         const int64_t chunkSize = ctx_.chunkSize;
         const int64_t kHeadDim = ctx_.kHeadDim;
         const int64_t vHeadDim = ctx_.vHeadDim;
+        const int64_t workspaceBufferCount = ctx_.useStandaloneScheduler ?
+            GDN_FWD_H_WORKSPACE_BUFFER_COUNT : GDN_FWD_H_LEGACY_WORKSPACE_BUFFER_COUNT;
 
         size_t workspaceOffset = ctx_.libApiWorkSpaceSize;
         workspaceOffset += GDN_FWD_H_WORKSPACE_RSV_BYTE;
 
         tiling.vWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * vHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_PING_PONG_STAGES));
+        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * vHeadDim *
+            static_cast<int64_t>(sizeof(float)) * workspaceBufferCount));
 
         tiling.vUpdateWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * vHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_PING_PONG_STAGES));
+        if (!ctx_.useL1VUpdate) {
+            workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * vHeadDim *
+                static_cast<int64_t>(sizeof(float)) * workspaceBufferCount));
+        }
 
         tiling.kDecayWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        if (ctx_.useGk) {
-            workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * kHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_PING_PONG_STAGES));
+        if (!ctx_.useStandaloneScheduler && ctx_.useGk) {
+            workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * kHeadDim *
+                static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_LEGACY_WORKSPACE_BUFFER_COUNT));
         }
 
         tiling.hWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * kHeadDim * vHeadDim * static_cast<int64_t>(sizeof(float)) * GDN_FWD_H_PING_PONG_STAGES));
+        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * kHeadDim * vHeadDim *
+            static_cast<int64_t>(sizeof(float)) * workspaceBufferCount));
 
         tiling.numSeqWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
         workspaceOffset += AlignUp(static_cast<size_t>((tokenBatch + 1) * static_cast<int64_t>(sizeof(int64_t))));
 
         tiling.numChunksWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
         workspaceOffset += AlignUp(static_cast<size_t>((tokenBatch + 1) * static_cast<int64_t>(sizeof(int64_t))));
+
+        // The hidden rolling state starts immediately after the aligned
+        // numChunks buffer. The device entry can derive the same address from
+        // numChunksWorkspaceOffset and tokenBatch, so no tiling ABI field is needed.
+        if (ctx_.useStandaloneScheduler && ctx_.useSeparateRollingState && !ctx_.storeFinalState) {
+            const size_t rollingStateBytes = static_cast<size_t>(batch) *
+                static_cast<size_t>(ctx_.vNumHead) * static_cast<size_t>(kHeadDim) *
+                static_cast<size_t>(vHeadDim) * ctx_.stateElementBytes;
+            workspaceOffset += AlignUp(rollingStateBytes);
+        }
 
         workspaceOffset += GDN_FWD_H_WORKSPACE_RSV_BYTE;
         workspaceSize = workspaceOffset;

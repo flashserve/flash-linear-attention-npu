@@ -21,23 +21,20 @@ public:
     explicit ChunkGatedDeltaRuleFwdH(const char *name) : OpDef(name)
     {
         const std::initializer_list<ge::DataType> dataTypes = {
-            ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16,
-            ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16,
-            ge::DT_FLOAT16, ge::DT_FLOAT16};
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16};
         const std::initializer_list<ge::DataType> gateTypes = {
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16,
-            ge::DT_BF16, ge::DT_BF16};
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_FLOAT16};
         const std::initializer_list<ge::DataType> stateTypes = {
-            ge::DT_BF16, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_FLOAT16, ge::DT_FLOAT};
+            ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16};
         const std::initializer_list<ge::DataType> indexTypes = {
-            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
-            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
+            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
         const std::initializer_list<ge::Format> formats = {
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
 
         this->Input("k")
             .ParamType(REQUIRED)
@@ -90,17 +87,12 @@ public:
             .DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
 
         this->Output("final_state")
-            .ParamType(OPTIONAL)
+            .ParamType(REQUIRED)
             .DataType(stateTypes).Format(formats).UnknownShapeFormat(formats);
 
-        this->Attr("output_final_state").AttrType(REQUIRED).Bool(false);
+        this->Attr("output_final_state").AttrType(OPTIONAL).Bool(false);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
-        this->Attr("logical_batch").AttrType(REQUIRED).Int(1);
-        this->Attr("logical_seqlen").AttrType(REQUIRED).Int(1);
-        this->Attr("logical_k_heads").AttrType(REQUIRED).Int(1);
-        this->Attr("logical_v_heads").AttrType(REQUIRED).Int(1);
-        this->Attr("logical_k_dim").AttrType(REQUIRED).Int(1);
-        this->Attr("logical_v_dim").AttrType(REQUIRED).Int(1);
+        this->Attr("use_exp2").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig aicore_config;
         aicore_config.DynamicCompileStaticFlag(true)

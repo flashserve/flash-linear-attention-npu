@@ -20,17 +20,21 @@ extern "C" {
  * k : required
  * w : required
  * u : required
- * gOptional : optional, scalar gate tensor; either gOptional or gkOptional must be non-null
- * gkOptional : optional, key-wise gate tensor; either gOptional or gkOptional must be non-null
- * initialStateOptional : optional
+ * gOptional : optional, scalar gate tensor; exactly one of gOptional and gkOptional must be non-null
+ * gkOptional : optional, key-wise gate tensor; exactly one of gOptional and gkOptional must be non-null
+ * initialStateOptional : optional, float32 or bfloat16
  * outputFinalState : required
  * chunkSize : required
+ * saveNewValue : reserved, only true is supported
  * cuSeqlensOptional : optional
  * chunkIndicesOptional : optional
- * stateVFirst : whether initial/final state and h use [..., V, K] instead of [..., K, V]
+ * useExp2 : exponent implementation/domain selector, independent of the g/gk gate mode
+ * stateVFirst : reserved by the physical aclnn interface, only false is supported
  * hOut : required
  * vNewOut : required
- * finalStateOut : optional
+ * finalStateOut : required, float32 or bfloat16 and matching initialStateOptional when present;
+ *                 its dtype controls the chunk-to-chunk rolling state dtype; use an empty tensor
+ *                 with shape [0] when outputFinalState is false
  * workspaceSize : size of workspace(output).
  * executor : executor context(output).
  */
@@ -44,8 +48,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     const aclTensor *initialStateOptional,
     bool outputFinalState,
     int64_t chunkSize,
+    bool saveNewValue,
     const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional,
+    bool useExp2,
     bool stateVFirst,
     const aclTensor *hOut,
     const aclTensor *vNewOut,
