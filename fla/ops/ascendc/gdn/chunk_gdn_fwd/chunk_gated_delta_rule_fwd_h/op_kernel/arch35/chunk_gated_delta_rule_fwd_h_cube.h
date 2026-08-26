@@ -27,6 +27,7 @@
 #include "kernel_operator.h"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
+#include "kernel_utils/block/block_mmad_pingpong_tla_preloadA_l1B.hpp"
 
 namespace GDN::FwdHStandalone {
 
@@ -58,18 +59,19 @@ public:
         TailDispatchPolicy, L1TileShape, L0TileShape,
         InputT, InputT, WorkspaceT, void, TileCopyWH>;
 
+    using Stage2DispatchPolicy = Catlass::Gemm::MmadPingpongTlaPreloadAL1B<
+        ArchTag, false>;
     using VUpdateType = Catlass::Gemm::GemmType<InputT, Catlass::layout::zN>;
     using VUpdateLayout = typename VUpdateType::Layout;
     using TileCopyKV = Catlass::Gemm::Tile::PackedTileCopyTla<
         ArchTag, InputT, Catlass::layout::ColumnMajor,
         InputT, Catlass::layout::zN,
         WorkspaceT, Catlass::layout::RowMajor>;
+    using TileMmadKV = Catlass::Gemm::Tile::TileMmadTla<
+        ArchTag, InputT, typename TileCopyKV::LayoutTagL1A>;
     using BlockMmadKV = Catlass::Gemm::Block::BlockMmadTla<
-        DispatchPolicy, L1TileShape, L0TileShape,
-        InputT, InputT, WorkspaceT, void, TileCopyKV>;
-    using BlockMmadKVTail = Catlass::Gemm::Block::BlockMmadTla<
-        TailDispatchPolicy, L1TileShape, L0TileShape,
-        InputT, InputT, WorkspaceT, void, TileCopyKV>;
+        Stage2DispatchPolicy, L1TileShape, L0TileShape,
+        InputT, InputT, WorkspaceT, void, TileCopyKV, TileMmadKV>;
 
     using Offsets = Catlass::Gemm::Block::GDNFwdHOffsets;
 
@@ -91,8 +93,6 @@ public:
         gmH_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT*>(h));
         gmVWorkspace_.SetGlobalBuffer(
             reinterpret_cast<__gm__ WorkspaceT*>(user + tilingData->vWorkspaceOffset));
-        gmVUpdateWorkspace_.SetGlobalBuffer(
-            reinterpret_cast<__gm__ InputT*>(user + tilingData->vUpdateWorkspaceOffset));
         gmHWorkspace_.SetGlobalBuffer(
             reinterpret_cast<__gm__ WorkspaceT*>(user + tilingData->hWorkspaceOffset));
 
@@ -101,12 +101,12 @@ public:
 
     __aicore__ inline void Process()
     {
-        uint32_t workspaceBytes = chunkSize_ * scheduler_.vBlockSize *
-            sizeof(InputT) * LOCAL_PING_PONG_STAGES;
-        BlockMmadWH stage0Mmad(resource_, workspaceBytes);
-        BlockMmadWHTail stage0TailMmad(resource_, workspaceBytes);
-        BlockMmadKV stage2Mmad(resource_, workspaceBytes);
-        BlockMmadKVTail stage2TailMmad(resource_, workspaceBytes);
+        const uint32_t vUpdateSlotBytes =
+            chunkSize_ * scheduler_.vBlockSize * sizeof(InputT);
+        const uint32_t residentBytes = HEADS_PER_ROUND * vUpdateSlotBytes;
+        BlockMmadWH stage0Mmad(resource_, residentBytes);
+        BlockMmadWHTail stage0TailMmad(resource_, residentBytes);
+        BlockMmadKV stage2Mmad(resource_, residentBytes);
         auto wLayout = tla::MakeLayout<InputT, Catlass::layout::RowMajor>(
             shapeBatch_ * kNumHead_ * scheduler_.totalTokens, kHeadDim_);
         auto hLayout = tla::MakeLayout<InputT, Catlass::layout::RowMajor>(
@@ -163,10 +163,9 @@ public:
             bool stage2UsesTail = runStage2 &&
                 firstHead.offset.blockTokens < chunkSize_;
             if (runStage2) {
+                stage2Mmad.preSetFlags();
                 if (stage2UsesTail) {
-                    stage2TailMmad.preSetFlags();
-                } else {
-                    stage2Mmad.preSetFlags();
+                    ClearStage2KPadding(residentBytes);
                 }
             }
             for (uint32_t head = 0; head < scheduler_.GetHeadsInRound(); ++head) {
@@ -175,17 +174,12 @@ public:
                     continue;
                 }
                 Catlass::Arch::CrossCoreWaitFlag(scheduler_.vec1Done[windowId]);
-                Stage2(headTask, stage2Mmad, stage2TailMmad,
-                       kLayout, hWorkLayout);
+                Stage2(headTask, stage2Mmad, kLayout, hWorkLayout);
                 Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
                     scheduler_.cube2Done[windowId]);
             }
             if (runStage2) {
-                if (stage2UsesTail) {
-                    stage2TailMmad.finalWaitFlags();
-                } else {
-                    stage2Mmad.finalWaitFlags();
-                }
+                stage2Mmad.finalWaitFlags();
             }
         }
 
@@ -194,6 +188,23 @@ public:
     }
 
 private:
+    __aicore__ inline void ClearStage2KPadding(uint32_t residentBytes)
+    {
+        constexpr uint32_t L1_BANK_BYTES = 128 * 128 * sizeof(InputT);
+        const AscendC::InitConstValueParams<InputT> clearParams(
+            1, static_cast<uint16_t>(L1_BANK_BYTES / AscendC::ONE_BLK_SIZE),
+            0, static_cast<InputT>(0));
+        for (uint32_t buffer = 0; buffer < LOCAL_PING_PONG_STAGES; ++buffer) {
+            auto l1A = resource_.l1Buf.template GetBufferByByte<InputT>(
+                residentBytes + buffer * L1_BANK_BYTES);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(buffer);
+            AscendC::InitConstValue(l1A, clearParams);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(buffer);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(buffer);
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(buffer);
+        }
+    }
+
     template <class HeadTask, class WLayout, class HLayout>
     __aicore__ inline void Stage0(
         const HeadTask& headTask, BlockMmadWH& mmad,
@@ -228,8 +239,7 @@ private:
     template <class HeadTask, class KLayout, class HLayout>
     __aicore__ inline void Stage2(
         const HeadTask& headTask, BlockMmadKV& mmad,
-        BlockMmadKVTail& tailMmad, const KLayout& kLayout,
-        const HLayout& hLayout)
+        const KLayout& kLayout, const HLayout& hLayout)
     {
         if (!scheduler_.NeedProcessStage2(headTask)) {
             return;
@@ -240,9 +250,11 @@ private:
             gmK_[offsets.wkOffset], kLayout, Catlass::Arch::PositionGM{});
         auto vLayout = tla::MakeLayout<InputT, VUpdateLayout>(
             offsets.blockTokens, offsets.vBlockDim);
+        const uint32_t slotElements = chunkSize_ * vHeadDim_;
+        auto l1VUpdate = resource_.l1Buf.template GetBufferByByte<InputT>(
+            offsets.headOffset * slotElements * sizeof(InputT));
         auto tensorV = tla::MakeTensor(
-            gmVUpdateWorkspace_[offsets.vWorkOffset], vLayout,
-            Catlass::Arch::PositionGM{});
+            l1VUpdate, vLayout, Catlass::Arch::PositionL1{});
         auto tensorH = tla::MakeTensor(
             gmHWorkspace_[offsets.hWorkOffset], hLayout,
             Catlass::Arch::PositionGM{});
@@ -254,11 +266,7 @@ private:
             tensorV, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
         auto blockH = tla::GetTile(
             tensorH, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
-        if (offsets.blockTokens < chunkSize_) {
-            tailMmad(blockK, blockV, blockH, shape, Catlass::EmptyClass{}, true);
-        } else {
-            mmad(blockK, blockV, blockH, shape);
-        }
+        mmad(blockK, blockV, blockH, shape);
     }
 
     uint32_t kNumHead_;
@@ -272,7 +280,6 @@ private:
     AscendC::GlobalTensor<InputT> gmW_;
     AscendC::GlobalTensor<InputT> gmH_;
     AscendC::GlobalTensor<WorkspaceT> gmVWorkspace_;
-    AscendC::GlobalTensor<InputT> gmVUpdateWorkspace_;
     AscendC::GlobalTensor<WorkspaceT> gmHWorkspace_;
 
     CubeScheduler scheduler_;

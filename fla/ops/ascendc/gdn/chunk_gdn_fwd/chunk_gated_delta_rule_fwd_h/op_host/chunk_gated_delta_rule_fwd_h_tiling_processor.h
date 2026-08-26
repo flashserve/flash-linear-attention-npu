@@ -77,6 +77,9 @@ struct ChunkGatedDeltaRuleFwdHTilingContext {
     // The standalone FwdH uses dynamic contiguous-head sharding and 8 slots.
     // Legacy KDA callers leave this false and retain the original 2-slot contract.
     bool useStandaloneScheduler = false;
+    // A5 hands the Stage1 vUpdate operand directly from UB to resident L1.
+    // Other platforms and legacy callers retain the GM workspace contract.
+    bool useL1VUpdate = false;
     // Host-only rolling-state storage contract. These fields are intentionally
     // not serialized into ChunkGatedDeltaRuleFwdHTilingData.
     size_t stateElementBytes = 0;
@@ -138,8 +141,10 @@ public:
             static_cast<int64_t>(sizeof(float)) * workspaceBufferCount));
 
         tiling.vUpdateWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * vHeadDim *
-            static_cast<int64_t>(sizeof(float)) * workspaceBufferCount));
+        if (!ctx_.useL1VUpdate) {
+            workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * chunkSize * vHeadDim *
+                static_cast<int64_t>(sizeof(float)) * workspaceBufferCount));
+        }
 
         tiling.kDecayWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
         if (!ctx_.useStandaloneScheduler && ctx_.useGk) {

@@ -103,6 +103,22 @@ __simd_callee__ inline void StoreB16Pair(
 }
 
 template <typename T>
+static __simd_vf__ inline void FillB16ZeroTile(
+    __ubuf__ T *dst, uint16_t rows, uint16_t cols)
+{
+    RegTensor<float> zero0, zero1;
+    RegTensor<T> packed;
+    MaskReg f32Mask = CreateMask<float, MaskPattern::ALL>();
+    MaskReg b16Mask = CreateMask<T, MaskPattern::ALL>();
+    Duplicate(zero0, 0.0f, f32Mask);
+    Duplicate(zero1, 0.0f, f32Mask);
+    PackFloatPair(packed, zero0, zero1, f32Mask);
+    for (uint16_t row = 0; row < rows; ++row) {
+        StoreAlign(dst + static_cast<uint32_t>(row) * cols, packed, b16Mask);
+    }
+}
+
+template <typename T>
 __simd_callee__ inline void LoadBroadcastAsFloat(
     RegTensor<float> &dst, __ubuf__ T *src)
 {
@@ -506,7 +522,6 @@ public:
         shapeBatch_ = data->shapeBatch;
         tokenBatch_ = data->tokenBatch;
         vWorkspaceOffset_ = data->vWorkspaceOffset;
-        vUpdateWorkspaceOffset_ = data->vUpdateWorkspaceOffset;
         hWorkspaceOffset_ = data->hWorkspaceOffset;
         numSeqWorkspaceOffset_ = data->numSeqWorkspaceOffset;
         numChunksWorkspaceOffset_ = data->numChunksWorkspaceOffset;
@@ -533,8 +548,6 @@ public:
         gmFinalState_.SetGlobalBuffer(reinterpret_cast<__gm__ StateT *>(effectiveFinalState));
         gmVWorkspace_.SetGlobalBuffer(
             reinterpret_cast<__gm__ WorkspaceT *>(user + vWorkspaceOffset_));
-        gmVUpdateWorkspace_.SetGlobalBuffer(
-            reinterpret_cast<__gm__ InputT *>(user + vUpdateWorkspaceOffset_));
         gmHWorkspace_.SetGlobalBuffer(
             reinterpret_cast<__gm__ WorkspaceT *>(user + hWorkspaceOffset_));
 
@@ -545,6 +558,7 @@ public:
     __aicore__ inline void Process()
     {
         InitializeH();
+        InitializeTailPadding();
 
         Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(scheduler_.vec2Done[0]);
         Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(scheduler_.vec2Done[1]);
@@ -630,6 +644,8 @@ private:
             kSeparateBf16State ? 48 * 1024 : 160 * 1024);
         gkInputUb_[0] = resource_.ubBuf.template GetBufferByByte<GateT>(172 * 1024);
         gkInputUb_[1] = resource_.ubBuf.template GetBufferByByte<GateT>(173 * 1024);
+        tailZeroUb_ = resource_.ubBuf.template GetBufferByByte<InputT>(176 * 1024);
+        l1VUpdate_ = resource_.l1Buf.template GetBufferByByte<InputT>(0);
     }
 
     template <typename T>
@@ -664,6 +680,7 @@ private:
     }
 
     __aicore__ inline void InitializeH();
+    __aicore__ inline void InitializeTailPadding();
     __aicore__ inline void PresetEvents();
     __aicore__ inline void DrainEvents();
     __aicore__ inline void Stage1(
@@ -678,7 +695,8 @@ private:
         uint32_t tileIndex, bool hasStage0Output);
     __aicore__ inline void StoreStage1Tile(
         const Offsets &offsets, uint32_t rowStart, uint32_t rows,
-        uint32_t tileIndex);
+        uint32_t tileIndex, uint32_t windowId, bool writeL1,
+        bool publishReady);
     __aicore__ inline void Stage3(
         const Offsets &offsets, uint32_t windowId, bool isPing);
     __aicore__ inline void LoadStage3Tile(
@@ -706,7 +724,6 @@ private:
     uint32_t shapeBatch_{0};
     uint32_t tokenBatch_{0};
     uint32_t vWorkspaceOffset_{0};
-    uint32_t vUpdateWorkspaceOffset_{0};
     uint32_t hWorkspaceOffset_{0};
     uint32_t numSeqWorkspaceOffset_{0};
     uint64_t numChunksWorkspaceOffset_{0};
@@ -721,7 +738,6 @@ private:
     AscendC::GlobalTensor<InputT> gmV_;
     AscendC::GlobalTensor<StateT> gmFinalState_;
     AscendC::GlobalTensor<WorkspaceT> gmVWorkspace_;
-    AscendC::GlobalTensor<InputT> gmVUpdateWorkspace_;
     AscendC::GlobalTensor<WorkspaceT> gmHWorkspace_;
 
     AscendC::LocalTensor<float> wsUb_[LOCAL_PING_PONG_STAGES];
@@ -731,10 +747,23 @@ private:
     AscendC::LocalTensor<GateT> gInputUb_[LOCAL_PING_PONG_STAGES];
     AscendC::LocalTensor<StateT> stateUb_[LOCAL_PING_PONG_STAGES];
     AscendC::LocalTensor<GateT> gkInputUb_[LOCAL_PING_PONG_STAGES];
+    AscendC::LocalTensor<InputT> tailZeroUb_;
+    AscendC::LocalTensor<InputT> l1VUpdate_;
 
     Scheduler scheduler_;
     Catlass::Arch::Resource<ArchTag> resource_;
 };
+
+template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
+          uint32_t GateMode, uint32_t ExpMode>
+__aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
+    InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::InitializeTailPadding()
+{
+    auto zero = reinterpret_cast<__ubuf__ InputT *>(tailZeroUb_.GetPhyAddr());
+    AscendC::VF_CALL<detail::FillB16ZeroTile<InputT>>(
+        zero, static_cast<uint16_t>(NZ_BLOCK_SIZE),
+        static_cast<uint16_t>(vHeadDim_));
+}
 
 template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
           uint32_t GateMode, uint32_t ExpMode>
@@ -875,7 +904,8 @@ template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
 __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
     InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::StoreStage1Tile(
         const Offsets &offsets, uint32_t rowStart, uint32_t rows,
-        uint32_t tileIndex)
+        uint32_t tileIndex, uint32_t windowId, bool writeL1,
+        bool publishReady)
 {
     constexpr uint32_t C0 = 16;
     const uint32_t headSlot = tileIndex & 1U;
@@ -884,16 +914,37 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
     const uint32_t paddedRows = (offsets.blockTokens + NZ_BLOCK_SIZE - 1) /
         NZ_BLOCK_SIZE * NZ_BLOCK_SIZE;
     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
-    const int64_t srcStride = static_cast<int64_t>(
-        (cols - C0) * sizeof(InputT) / AscendC::ONE_BLK_SIZE);
-    const AscendC::DataCopyExtParams znParams{
-        static_cast<uint16_t>(rows), C0 * sizeof(InputT), srcStride, 0, 0};
-    for (uint32_t colBlock = 0; colBlock < cols / C0; ++colBlock) {
-        const uint32_t srcOffset = colBlock * C0;
-        const uint32_t dstOffset = colBlock * paddedRows * C0 + rowStart * C0;
-        AscendC::DataCopyPad(
-            gmVUpdateWorkspace_[offsets.vWorkOffset + dstOffset],
-            stage1PackedUb_[headSlot][srcOffset], znParams);
+    if (writeL1) {
+        const uint32_t slotElements = chunkSize_ * vHeadDim_;
+        auto l1Slot = l1VUpdate_[offsets.headOffset * slotElements];
+        const AscendC::DataCopyParams znParams{
+            static_cast<uint16_t>(rows), 1,
+            static_cast<uint16_t>(cols / C0 - 1), 0};
+        AscendC::DataCopyEnhancedParams enhancedParams;
+        enhancedParams.blockMode = AscendC::BlockMode::BLOCK_MODE_VECTOR;
+        for (uint32_t colBlock = 0; colBlock < cols / C0; ++colBlock) {
+            const uint32_t srcOffset = colBlock * C0;
+            const uint32_t dstOffset = colBlock * paddedRows * C0 + rowStart * C0;
+            AscendC::DataCopy(l1Slot[dstOffset], stage1PackedUb_[headSlot][srcOffset],
+                              znParams, enhancedParams);
+        }
+        if (publishReady && paddedRows > offsets.blockTokens) {
+            const uint32_t paddingRows = paddedRows - offsets.blockTokens;
+            const AscendC::DataCopyParams paddingParams{
+                static_cast<uint16_t>(paddingRows), 1,
+                static_cast<uint16_t>(cols / C0 - 1), 0};
+            for (uint32_t colBlock = 0; colBlock < cols / C0; ++colBlock) {
+                const uint32_t srcOffset = colBlock * C0;
+                const uint32_t dstOffset =
+                    colBlock * paddedRows * C0 + offsets.blockTokens * C0;
+                AscendC::DataCopy(l1Slot[dstOffset], tailZeroUb_[srcOffset],
+                                  paddingParams, enhancedParams);
+            }
+        }
+    }
+    if (publishReady) {
+        Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(
+            scheduler_.vec1Done[windowId]);
     }
     CopyUbToGm(gmV_[offsets.uvOffset + rowStart * vHeadDim_], stage1OutputUb_[headSlot],
                rows, cols, vHeadDim_);
@@ -991,10 +1042,9 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
             LoadStage1Tile(offsets, nextRow, Min(ROW_TILE, rows - nextRow),
                            headSlot ^ ((tile + 1) & 1U), hasStage0Output);
         }
-        StoreStage1Tile(offsets, rowStart, rowsThisTile, cur);
-        if (tile + 1 == tileCount) {
-            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(scheduler_.vec1Done[windowId]);
-        }
+        const bool publishReady = tile + 1 == tileCount;
+        StoreStage1Tile(offsets, rowStart, rowsThisTile, cur,
+                        windowId, processStage3, publishReady);
     }
     if constexpr (kScalarGate) {
         if (!processStage3) {

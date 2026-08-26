@@ -184,6 +184,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     tilingCtx.useGk = useGk;
     tilingCtx.storeFinalState = storeFinalState;
     tilingCtx.useStandaloneScheduler = true;
+    tilingCtx.useL1VUpdate =
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
     tilingCtx.stateElementBytes = stateDtype == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
     tilingCtx.useSeparateRollingState = stateDtype != kDtype;
     tilingCtx.chunkSize = chunkSize;
