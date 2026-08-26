@@ -893,6 +893,7 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
         const uint32_t rowStart = tile * ROW_TILE;
         const uint32_t rowsThisTile = Min(ROW_TILE, rows - rowStart);
         const uint32_t cur = (headSlot ^ (tile & 1U)) & 1U;
+        // Pipeline order is MTE2(next) -> VF(current) -> MTE3(current).
         if (tile + 1 < tileCount) {
             const uint32_t nextRow = (tile + 1) * ROW_TILE;
             LoadStage1Tile(offsets, nextRow, Min(ROW_TILE, rows - nextRow),
@@ -1013,6 +1014,7 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
         const uint32_t rowStart = tile * ROW_TILE;
         const uint32_t rowsThisTile = Min(ROW_TILE, rows - rowStart);
         const uint32_t cur = (headSlot ^ (tile & 1U)) & 1U;
+        // Pipeline order is MTE2(next) -> VF(current) -> MTE3(current).
         if (tile + 1 < tileCount) {
             const uint32_t nextRow = (tile + 1) * ROW_TILE;
             const uint32_t next = cur ^ 1U;
