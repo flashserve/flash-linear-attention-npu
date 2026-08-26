@@ -456,6 +456,11 @@ struct BlockSchedulerGdnFwdH {
     }
 
     CATLASS_DEVICE
+    bool NeedProcessStage0(const GDNFwdHHeadTask& headTask) const {
+        return useInitialState || !headTask.offset.isInitialState;
+    }
+
+    CATLASS_DEVICE
     bool NeedProcessStage2(const GDNFwdHHeadTask& headTask) {
         return storeFinalState || !headTask.offset.isFinalState;
     }

@@ -126,25 +126,36 @@ public:
             Catlass::Arch::CrossCoreWaitFlag(scheduler_.vec2Done[windowId]);
 
             const auto& firstHead = scheduler_.GetHeadTask(0);
-            bool stage0UsesTail = firstHead.offset.blockTokens < chunkSize_;
-            if (stage0UsesTail) {
-                stage0TailMmad.preSetFlags();
-            } else {
-                stage0Mmad.preSetFlags();
+            bool runStage0 = !scheduler_.HeadTaskIsDone(firstHead) &&
+                scheduler_.NeedProcessStage0(firstHead);
+            bool stage0UsesTail = runStage0 &&
+                firstHead.offset.blockTokens < chunkSize_;
+            if (runStage0) {
+                if (stage0UsesTail) {
+                    stage0TailMmad.preSetFlags();
+                } else {
+                    stage0Mmad.preSetFlags();
+                }
             }
             for (uint32_t head = 0; head < scheduler_.GetHeadsInRound(); ++head) {
                 const auto& headTask = scheduler_.GetHeadTask(head);
                 if (scheduler_.HeadTaskIsDone(headTask)) {
                     continue;
                 }
-                Stage0(headTask, stage0Mmad, stage0TailMmad, wLayout, hLayout);
-                Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
-                    scheduler_.cube1Done[windowId]);
+                if (runStage0) {
+                    Stage0(headTask, stage0Mmad, stage0TailMmad, wLayout, hLayout);
+                }
+                if (runStage0) {
+                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                        scheduler_.cube1Done[windowId]);
+                }
             }
-            if (stage0UsesTail) {
-                stage0TailMmad.finalWaitFlags();
-            } else {
-                stage0Mmad.finalWaitFlags();
+            if (runStage0) {
+                if (stage0UsesTail) {
+                    stage0TailMmad.finalWaitFlags();
+                } else {
+                    stage0Mmad.finalWaitFlags();
+                }
             }
 
             bool runStage2 = !scheduler_.HeadTaskIsDone(firstHead) &&

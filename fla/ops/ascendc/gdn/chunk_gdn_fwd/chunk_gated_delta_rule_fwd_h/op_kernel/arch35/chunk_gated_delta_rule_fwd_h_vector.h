@@ -65,7 +65,8 @@ __simd_callee__ inline void StoreFloat(
     DataCopy<float, StoreDist::DIST_NORM_B32>(dst, src, mask);
 }
 
-template <typename InputT, typename GateT, bool SCALAR_GATE, bool USE_EXP2>
+template <typename InputT, typename GateT, bool SCALAR_GATE, bool USE_EXP2,
+          bool HAS_STAGE0_OUTPUT>
 static __simd_vf__ inline void ComputeStage1Tile(
     __ubuf__ float *workspace, __ubuf__ InputT *uInput,
     __ubuf__ InputT *packedOutput, __ubuf__ InputT *rowOutput,
@@ -96,9 +97,13 @@ static __simd_vf__ inline void ComputeStage1Tile(
             uint16_t count = remaining > C0 ? C0 : static_cast<uint16_t>(remaining);
             mask = UpdateMask<float>(count);
             const uint32_t offset = static_cast<uint32_t>(row) * cols + col;
-            LoadAsFloat<InputT>(uReg, uInput + offset, mask);
-            LoadFloat(wsReg, workspace + offset);
-            Sub(wsReg, uReg, wsReg, mask);
+            if constexpr (HAS_STAGE0_OUTPUT) {
+                LoadAsFloat<InputT>(uReg, uInput + offset, mask);
+                LoadFloat(wsReg, workspace + offset);
+                Sub(wsReg, uReg, wsReg, mask);
+            } else {
+                LoadAsFloat<InputT>(wsReg, uInput + offset, mask);
+            }
             if constexpr (std::is_same<InputT, float>::value) {
                 StoreFloat(rowOutput + offset, wsReg, mask);
             } else {
@@ -321,12 +326,15 @@ public:
                 const bool ownsHead = i % subBlockNum == subBlockIdx;
                 const uint32_t localSlot = i / subBlockNum;
                 const bool isPing = localSlot == 0;
+                const bool hasStage0Output = scheduler_.NeedProcessStage0(headTask);
                 if (!ownsHead) {
-                    Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube1Done[windowId]);
+                    if (hasStage0Output) {
+                        Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube1Done[windowId]);
+                    }
                     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(scheduler_.vec1Done[windowId]);
                     continue;
                 }
-                Stage1(offsets, windowId, isPing);
+                Stage1(offsets, windowId, isPing, hasStage0Output);
             }
 
             // Stage3: consume the complete Stage2 round and publish the next state.
@@ -415,10 +423,11 @@ private:
     __aicore__ inline void PresetEvents();
     __aicore__ inline void DrainEvents();
     __aicore__ inline void Stage1(
-        const Offsets &offsets, uint32_t windowId, bool isPing);
+        const Offsets &offsets, uint32_t windowId, bool isPing,
+        bool hasStage0Output);
     __aicore__ inline void LoadStage1Tile(
         const Offsets &offsets, uint32_t rowStart, uint32_t rows,
-        uint32_t tileIndex);
+        uint32_t tileIndex, bool hasStage0Output);
     __aicore__ inline void StoreStage1Tile(
         const Offsets &offsets, uint32_t rowStart, uint32_t rows,
         uint32_t tileIndex);
@@ -586,7 +595,7 @@ template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
 __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
     InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::LoadStage1Tile(
         const Offsets &offsets, uint32_t rowStart, uint32_t rows,
-        uint32_t tileIndex)
+        uint32_t tileIndex, bool hasStage0Output)
 {
     const uint32_t headSlot = tileIndex & 1U;
     const uint32_t eventBase = headSlot * PONG_EVENT_BASE;
@@ -597,8 +606,11 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
     AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + eventBase);
     CopyGmToUb(ioUb_[headSlot], gmU_[offsets.uvOffset + rowOffset],
                rows, cols, vHeadDim_);
-    CopyGmToUb(wsUb_[headSlot], gmVWorkspace_[offsets.vWorkOffset + rowStart * cols],
-               rows, cols, cols);
+    if (hasStage0Output) {
+        CopyGmToUb(wsUb_[headSlot],
+                   gmVWorkspace_[offsets.vWorkOffset + rowStart * cols],
+                   rows, cols, cols);
+    }
     AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + eventBase);
 }
 
@@ -631,7 +643,8 @@ template <typename InputT, typename GateT, typename StateT, typename WorkspaceT,
           uint32_t GateMode, uint32_t ExpMode>
 __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
     InputT, GateT, StateT, WorkspaceT, GateMode, ExpMode>::Stage1(
-        const Offsets &offsets, uint32_t windowId, bool isPing)
+        const Offsets &offsets, uint32_t windowId, bool isPing,
+        bool hasStage0Output)
 {
     constexpr uint32_t ROW_TILE = 16;
     const uint32_t rows = offsets.blockTokens;
@@ -646,9 +659,12 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID3 + headEventBase);
     }
 
-    Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube1Done[windowId]);
+    if (hasStage0Output) {
+        Catlass::Arch::CrossCoreWaitFlag(scheduler_.cube1Done[windowId]);
+    }
     const uint32_t tileCount = (rows + ROW_TILE - 1) / ROW_TILE;
-    LoadStage1Tile(offsets, 0, Min(ROW_TILE, rows), headSlot);
+    LoadStage1Tile(offsets, 0, Min(ROW_TILE, rows), headSlot,
+                   hasStage0Output);
     if constexpr (kScalarGate) {
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID3 + headEventBase);
     }
@@ -659,15 +675,27 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
         const uint32_t eventBase = cur * PONG_EVENT_BASE;
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + eventBase);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + eventBase);
-        AscendC::VF_CALL<detail::ComputeStage1Tile<
-            InputT, GateT, kScalarGate, kUseExp2>>(
-            reinterpret_cast<__ubuf__ float *>(wsUb_[cur].GetPhyAddr()),
-            reinterpret_cast<__ubuf__ InputT *>(ioUb_[cur].GetPhyAddr()),
-            reinterpret_cast<__ubuf__ InputT *>(stage1PackedUb_[cur].GetPhyAddr()),
-            reinterpret_cast<__ubuf__ InputT *>(stage1OutputUb_[cur].GetPhyAddr()),
-            reinterpret_cast<__ubuf__ GateT *>(gInputUb_[headSlot].GetPhyAddr()),
-            rowStart, static_cast<uint16_t>(rows),
-            static_cast<uint16_t>(rowsThisTile), static_cast<uint16_t>(cols));
+        if (hasStage0Output) {
+            AscendC::VF_CALL<detail::ComputeStage1Tile<
+                InputT, GateT, kScalarGate, kUseExp2, true>>(
+                reinterpret_cast<__ubuf__ float *>(wsUb_[cur].GetPhyAddr()),
+                reinterpret_cast<__ubuf__ InputT *>(ioUb_[cur].GetPhyAddr()),
+                reinterpret_cast<__ubuf__ InputT *>(stage1PackedUb_[cur].GetPhyAddr()),
+                reinterpret_cast<__ubuf__ InputT *>(stage1OutputUb_[cur].GetPhyAddr()),
+                reinterpret_cast<__ubuf__ GateT *>(gInputUb_[headSlot].GetPhyAddr()),
+                rowStart, static_cast<uint16_t>(rows),
+                static_cast<uint16_t>(rowsThisTile), static_cast<uint16_t>(cols));
+        } else {
+            AscendC::VF_CALL<detail::ComputeStage1Tile<
+                InputT, GateT, kScalarGate, kUseExp2, false>>(
+                reinterpret_cast<__ubuf__ float *>(wsUb_[cur].GetPhyAddr()),
+                reinterpret_cast<__ubuf__ InputT *>(ioUb_[cur].GetPhyAddr()),
+                reinterpret_cast<__ubuf__ InputT *>(stage1PackedUb_[cur].GetPhyAddr()),
+                reinterpret_cast<__ubuf__ InputT *>(stage1OutputUb_[cur].GetPhyAddr()),
+                reinterpret_cast<__ubuf__ GateT *>(gInputUb_[headSlot].GetPhyAddr()),
+                rowStart, static_cast<uint16_t>(rows),
+                static_cast<uint16_t>(rowsThisTile), static_cast<uint16_t>(cols));
+        }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + eventBase);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + eventBase);
 
@@ -676,7 +704,7 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHVector<
         if (tile + 1 < tileCount) {
             const uint32_t nextRow = (tile + 1) * ROW_TILE;
             LoadStage1Tile(offsets, nextRow, Min(ROW_TILE, rows - nextRow),
-                           headSlot ^ ((tile + 1) & 1U));
+                           headSlot ^ ((tile + 1) & 1U), hasStage0Output);
         }
         StoreStage1Tile(offsets, rowStart, rowsThisTile, cur);
         if (tile + 1 == tileCount) {
