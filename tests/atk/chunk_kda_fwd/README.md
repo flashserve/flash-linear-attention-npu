@@ -128,9 +128,9 @@ A2 mixed-tail 1K 用例的保存输出复检稳定复现 NaN/Inf；`ct viz` 显�
 `attn_out` 存在成片非有限值及数量级异常，而 CPU FP64 golden 和 CPU 同精度对照
 保持有限，属于结构性输出错误，不是小值域相对误差放大。
 
-## 2. A5 性能四用例
+## 2. A5 性能十用例
 
-`atk_chunk_kda_fwd_performance.json` 基于主矩阵的模型输入配置提供 4 条 dense BSND
+`atk_chunk_kda_fwd_performance.json` 基于主矩阵的模型输入配置提供 10 条 dense BSND
 性能用例，避免性能 scope 误跑精度矩阵或依赖 CPU/GPU 远端节点：
 
 | 用例 | layout | H/HV | T | K/V | chunk | `disable_recompute` |
@@ -139,8 +139,14 @@ A2 mixed-tail 1K 用例的保存输出复检稳定复现 NaN/Inf；`ct viz` 显�
 | `id=267` | BSND dense | 96/96（无 GVA） | 2048 | 128/128 | 64 | `true` |
 | `id=282` | BSND dense | 96/96（无 GVA） | 8192 | 128/128 | 64 | `false` |
 | `id=283` | BSND dense | 96/96（无 GVA） | 8192 | 128/128 | 64 | `true` |
+| `id=290` | BSND dense | 96/96（无 GVA） | 16384 | 128/128 | 64 | `false` |
+| `id=291` | BSND dense | 96/96（无 GVA） | 16384 | 128/128 | 64 | `true` |
+| `id=298` | BSND dense | 96/96（无 GVA） | 32768 | 128/128 | 64 | `false` |
+| `id=299` | BSND dense | 96/96（无 GVA） | 32768 | 128/128 | 64 | `true` |
+| `id=300` | BSND dense | 96/96（无 GVA） | 65536 | 128/128 | 64 | `false` |
+| `id=301` | BSND dense | 96/96（无 GVA） | 65536 | 128/128 | 64 | `true` |
 
-四条用例均不传 `cu_seqlens` 和 `chunk_indices`，A5 BF16、chunk=64、K=V=128
+十条用例均不传 `cu_seqlens` 和 `chunk_indices`，A5 BF16、chunk=64、K=V=128
 场景会命中 dense 对齐快路径，一次 API 调用只提交一次物理 `ChunkKdaFwd` 主 kernel。
 
 性能阶段固定使用本地 `npu` backend。ATK 26.7.8 的 `pyaclnn` 性能任务会要求
@@ -155,7 +161,7 @@ bash tests/atk/run_test_cpu.sh \
   -scope=performance
 ```
 
-默认输出 `atk_output/perf`，性能阶段只运行上表 4 条用例。需要临时替换性能 JSON
+默认输出 `atk_output/perf`，性能阶段只运行上表 10 条用例。需要临时替换性能 JSON
 或覆盖 backend 时，可设置 `PERFORMANCE_CASE_FILE`、`PERFORMANCE_BACKEND`。
 
 ## 3. GPU 分布式拓扑
