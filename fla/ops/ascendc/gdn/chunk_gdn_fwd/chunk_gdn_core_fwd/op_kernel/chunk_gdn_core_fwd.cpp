@@ -24,10 +24,11 @@ constexpr uint32_t OWNER_V_TO_MTE3_EVENT = 1;
 constexpr uint32_t OWNER_MTE3_TO_V_EVENT = 2;
 constexpr uint32_t UB_ALIGNMENT = 32;
 constexpr uint32_t PHASE6_TILING_ALIGNMENT = 8;
-// Score completion is the only cross-core dependency before the AIV epilogue.
-// Keep it separate from the later SolveTri hand-off (flag 5).
-constexpr uint64_t PHASE6_SCORE_READY_FLAG = 2;
-constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 5;
+// FwdH and FwdO both own ping-pong flags 0..7. Keep the Phase6 prefix
+// hand-offs outside that range so a completed prefix cannot satisfy a suffix
+// wait with a stale event from the same MIX launch.
+constexpr uint64_t PHASE6_SCORE_READY_FLAG = 8;
+constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 9;
 constexpr int64_t PHASE6_CUMSUM_FAST_BUFFER_LIMIT = 160 * 1024;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 constexpr AscendC::SyncAllConfig PHASE6_HO_SYNC_CONFIG = {PIPE_MTE3, PIPE_MTE2};
@@ -343,16 +344,9 @@ __aicore__ inline void RunPhase6(
                              chunkIndices, h, vNew, finalState, tiling, userWorkspace);
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    if (abc.isVarlen != 0) {
-        // Varlen H and O may assign the same logical tile to different cores.
-        // Drain every pipeline before the global rendezvous so O cannot consume
-        // h/vNew while another core is still publishing it.
-        AscendC::SyncAll<false>();
-    } else {
-        // Fixed-length H/O retain core affinity, so only the producer/consumer
-        // pipelines need to participate in the hand-off.
-        AscendC::SyncAll<false, PHASE6_HO_SYNC_CONFIG>();
-    }
+    // H publishes h/vNew through MTE3 and O first consumes them through MTE2.
+    // Limit the global hand-off to those pipelines instead of draining PIPE_ALL.
+    AscendC::SyncAll<false, PHASE6_HO_SYNC_CONFIG>();
 #else
     // Ascend910B supports only the full-pipeline SyncAll overload.
     AscendC::SyncAll<false>();
