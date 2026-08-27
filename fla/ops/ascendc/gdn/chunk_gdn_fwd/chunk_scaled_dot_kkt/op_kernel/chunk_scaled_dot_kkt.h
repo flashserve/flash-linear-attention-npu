@@ -352,7 +352,7 @@ private:
         if (rowCount <= 0) {
             return false;
         }
-        colCount = BT_;
+        colCount = meta.valid;
         return colCount > 0;
     }
 
@@ -687,7 +687,8 @@ private:
             DuplicateZero(outTileLocal, rowCount * btAlign_);
             PipeBarrier<PIPE_V>();
         }
-        CopyScoreBlock(scoreBaseOffset, scoreTileLocal, rowCount, colCount);
+        const int64_t copyCols = MinI64(btAlign_, (colCount + FP32_BLOCK_ELEMS - 1) / FP32_BLOCK_ELEMS * FP32_BLOCK_ELEMS);
+        CopyScoreBlock(scoreBaseOffset, scoreTileLocal, rowCount, copyCols);
         if (useA5RegBase) {
             ComputeEpilogueScoreBlockRowsA5RegBase(scoreTileLocal, outTileLocal, gLocal, betaLocal, rowBegin, rowCount,
                                                    colCount, outBaseOffset, outRowStride, subBlockIdx, subBlockNum);
