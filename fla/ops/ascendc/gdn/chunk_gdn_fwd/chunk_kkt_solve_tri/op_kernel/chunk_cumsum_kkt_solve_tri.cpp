@@ -22,11 +22,19 @@ __aicore__ inline void RunSolvePhase(GM_ADDR a, GM_ADDR cuSeqlens, GM_ADDR chunk
                                      const TilingData *tilingData)
 {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    if ASCEND_IS_AIC {
-        CrossCoreWaitFlag(KKT_READY_FLAG);
-    }
-    if ASCEND_IS_AIV {
-        CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG);
+    if (tilingData->isVarlen != 0) {
+        // KKT uses head-major contiguous ownership, while varlen SolveTri
+        // decodes the same tile space as chunk-major. A paired AIV->AIC flag
+        // therefore does not identify the actual producer for a solve tile.
+        // Drain every KKT writer before any core enters the remapped solve range.
+        AscendC::SyncAll<false>();
+    } else {
+        if ASCEND_IS_AIC {
+            CrossCoreWaitFlag(KKT_READY_FLAG);
+        }
+        if ASCEND_IS_AIV {
+            CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG);
+        }
     }
     // Phase6 passes a per-core user-workspace slice and its KKT epilogue uses
     // contiguous tile ownership.  Keep those policies explicit instead of
