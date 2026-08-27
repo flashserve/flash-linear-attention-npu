@@ -24,11 +24,10 @@ constexpr uint32_t OWNER_V_TO_MTE3_EVENT = 1;
 constexpr uint32_t OWNER_MTE3_TO_V_EVENT = 2;
 constexpr uint32_t UB_ALIGNMENT = 32;
 constexpr uint32_t PHASE6_TILING_ALIGNMENT = 8;
-// FwdH and FwdO both own ping-pong flags 0..7. Keep the Phase6 prefix
-// hand-offs outside that range so a completed prefix cannot satisfy a suffix
-// wait with a stale event from the same MIX launch.
-constexpr uint64_t PHASE6_SCORE_READY_FLAG = 8;
-constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 9;
+// Score completion is the only cross-core dependency before the AIV epilogue.
+// Keep it separate from the later SolveTri hand-off (flag 5).
+constexpr uint64_t PHASE6_SCORE_READY_FLAG = 2;
+constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 5;
 constexpr int64_t PHASE6_CUMSUM_FAST_BUFFER_LIMIT = 160 * 1024;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 constexpr AscendC::SyncAllConfig PHASE6_HO_SYNC_CONFIG = {PIPE_MTE3, PIPE_MTE2};
@@ -339,7 +338,6 @@ __aicore__ inline void RunPhase6(
             userWorkspace + phase5->recomputeWorkspaceOffset, &recomputeTiling);
     }
 
-    WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, abc);
     DispatchFwdH<TileShapes>(k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
                              chunkIndices, h, vNew, finalState, tiling, userWorkspace);
 
@@ -360,6 +358,10 @@ __aicore__ inline void RunPhase6(
     CopyOTiling(gmOTiling, oTiling);
     DispatchFwdO(q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
                  userWorkspace, &oTiling);
+    // The public BTH cumsum is not consumed by H/O. Publish it after the
+    // dependent suffix so its single-owner AIV work cannot skew the H/O MIX
+    // scheduler inside this fused launch.
+    WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, abc);
 }
 
 } // namespace
