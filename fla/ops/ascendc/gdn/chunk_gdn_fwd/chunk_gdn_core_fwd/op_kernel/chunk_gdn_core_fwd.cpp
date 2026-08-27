@@ -330,11 +330,11 @@ __aicore__ inline void RunPhase6(
     RecomputeWUFwdTilingData recomputeTiling{};
     CopyRecomputeTiling(&phase5->recompute, recomputeTiling);
     if (phase5->recompute.V == 256) {
-        DispatchRecompute<InputT, float, 256, true>(
+        DispatchRecompute<InputT, float, 256>(
             k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u,
             userWorkspace + phase5->recomputeWorkspaceOffset, &recomputeTiling);
     } else {
-        DispatchRecompute<InputT, float, 128, true>(
+        DispatchRecompute<InputT, float, 128>(
             k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u,
             userWorkspace + phase5->recomputeWorkspaceOffset, &recomputeTiling);
     }
