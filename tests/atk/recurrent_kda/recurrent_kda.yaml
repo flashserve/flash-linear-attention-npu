@@ -4,7 +4,7 @@ version: v2.1
 name: recurrent_kda
 aclnn_name:
 generate: generator_recurrent_kda
-dtype_numbers: 1
+dtype_numbers: 100
 extra_numbers: 0
 standard:
   acc:
@@ -18,7 +18,7 @@ inputs:
     type: tensor
     required: true
     dtypes:
-      values: [bf16]
+      values: [bf16, fp16]
     ranges:
       valid:
         values: [[0, 0]]
