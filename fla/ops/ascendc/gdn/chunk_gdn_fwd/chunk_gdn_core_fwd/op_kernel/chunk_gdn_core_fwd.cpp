@@ -24,11 +24,11 @@ constexpr uint32_t OWNER_V_TO_MTE3_EVENT = 1;
 constexpr uint32_t OWNER_MTE3_TO_V_EVENT = 2;
 constexpr uint32_t UB_ALIGNMENT = 32;
 constexpr uint32_t PHASE6_TILING_ALIGNMENT = 8;
-// FwdH and FwdO both own ping-pong flags 0..7. Keep the Phase6 prefix
-// hand-offs outside that range so a completed prefix cannot satisfy a suffix
-// wait with a stale event from the same MIX launch.
-constexpr uint64_t PHASE6_SCORE_READY_FLAG = 8;
-constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 9;
+// Keep the Phase6 prefix hand-offs on the event slots used by the MIX
+// producer/consumer protocol. Varlen SolveTri additionally closes the KKT
+// writer hand-off with a full rendezvous before reading A.
+constexpr uint64_t PHASE6_SCORE_READY_FLAG = 2;
+constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 5;
 constexpr int64_t PHASE6_CUMSUM_FAST_BUFFER_LIMIT = 160 * 1024;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 constexpr AscendC::SyncAllConfig PHASE6_HO_SYNC_CONFIG = {PIPE_MTE3, PIPE_MTE2};
