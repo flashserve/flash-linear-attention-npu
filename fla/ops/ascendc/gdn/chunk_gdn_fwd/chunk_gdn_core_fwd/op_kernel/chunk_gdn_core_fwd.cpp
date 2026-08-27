@@ -343,9 +343,16 @@ __aicore__ inline void RunPhase6(
                              chunkIndices, h, vNew, finalState, tiling, userWorkspace);
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    // H publishes h/vNew through MTE3 and O first consumes them through MTE2.
-    // Limit the global hand-off to those pipelines instead of draining PIPE_ALL.
-    AscendC::SyncAll<false, PHASE6_HO_SYNC_CONFIG>();
+    if (abc.isVarlen != 0) {
+        // Varlen H and O may assign the same logical tile to different cores.
+        // Drain every pipeline before the global rendezvous so O cannot consume
+        // h/vNew while another core is still publishing it.
+        AscendC::SyncAll<false>();
+    } else {
+        // Fixed-length H/O retain core affinity, so only the producer/consumer
+        // pipelines need to participate in the hand-off.
+        AscendC::SyncAll<false, PHASE6_HO_SYNC_CONFIG>();
+    }
 #else
     // Ascend910B supports only the full-pipeline SyncAll overload.
     AscendC::SyncAll<false>();
