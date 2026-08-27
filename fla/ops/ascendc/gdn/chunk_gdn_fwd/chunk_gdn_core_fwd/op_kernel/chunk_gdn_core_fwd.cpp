@@ -287,15 +287,23 @@ __aicore__ inline void RunPhase6(
         RunPhase6Cumsum(rawG, cuSeqlens, chunkIndices, gCumsumBht, abc);
     }
 
-    // Cumsum is already complete on each AIV when it reaches this point. The
-    // epilogue only needs the AIC score completion, so avoid draining all
-    // pipelines with a full SyncAll here.
+    // H/O use every Fwd scheduler flag in the 0..7 range.  The Phase6 varlen
+    // prefix must not leave a producer notification in that range before the
+    // suffix starts, so use SyncAll's dedicated MIX protocol on Ascend950.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    if (abc.isVarlen != 0) {
+        AscendC::SyncAll<false>();
+    } else {
+#endif
     if ASCEND_IS_AIC {
         AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SCORE_READY_FLAG);
     }
     if ASCEND_IS_AIV {
         AscendC::CrossCoreWaitFlag(PHASE6_SCORE_READY_FLAG);
     }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    }
+#endif
 
     if ASCEND_IS_AIV {
         AscendC::TPipe kktPipe;
@@ -315,14 +323,22 @@ __aicore__ inline void RunPhase6(
         RunSolvePhase<InputT, 128>(aWorkspace, cuSeqlens, chunkIndices, A,
                                    solveWorkspace, &abc);
     }
-    // Solve and recompute share a contiguous task range. Publish solved A
-    // before either paired AIV enters its local consumer range.
+    // Keep the varlen phase boundary on the dedicated MIX protocol for the
+    // same reason as the score hand-off above.  Dense keeps its paired event.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    if (abc.isVarlen != 0) {
+        AscendC::SyncAll<false>();
+    } else {
+#endif
     if ASCEND_IS_AIC {
         AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);
     }
     if ASCEND_IS_AIV {
         AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);
     }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    }
+#endif
     GM_ADDR w = userWorkspace + phase5->wIntermediateOffset;
     GM_ADDR u = userWorkspace + phase5->uIntermediateOffset;
     GM_ADDR h = userWorkspace + phase5->hIntermediateOffset;
