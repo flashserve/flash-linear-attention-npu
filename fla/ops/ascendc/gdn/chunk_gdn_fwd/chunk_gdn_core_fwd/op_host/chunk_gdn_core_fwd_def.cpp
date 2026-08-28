@@ -66,6 +66,7 @@ public:
             .ExtendCfgInfo("coreType.value", "AiCore")
             .ExtendCfgInfo("jitCompile.flag", "static_false,dynamic_false");
         this->AICore().AddConfig("ascend910b", config);
+        this->AICore().AddConfig("ascend910_93", config);
         this->AICore().AddConfig("ascend950", config);
     }
 };
