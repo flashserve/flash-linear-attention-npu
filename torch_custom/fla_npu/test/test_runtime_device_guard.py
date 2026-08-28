@@ -297,6 +297,50 @@ class RuntimeDeviceGuardTest(unittest.TestCase):
         self.assertIsNone(output_ref())
         self.assertIsNone(helper_ref())
 
+    def test_repeated_calls_do_not_accumulate_launch_owned_objects(self):
+        npu = FakeNpu(current_device=0)
+        torch_module = fake_torch(npu)
+        output_refs = []
+        helper_refs = []
+        workspace_refs = []
+
+        class FakeDescriptor:
+            def __init__(self, runtime, tensor):
+                self.ptr = 0xD00D
+
+            def destroy(self):
+                self.ptr = None
+
+        class Workspace:
+            pass
+
+        class FakeRuntime:
+            def call(self, name, args, device, *, get_workspace_argtypes=None):
+                workspace = Workspace()
+                workspace_refs.append(weakref.ref(workspace))
+                return workspace
+
+        with mock.patch.dict(sys.modules, {"torch": torch_module}):
+            with mock.patch.object(RUNTIME, "runtime", return_value=FakeRuntime()):
+                with mock.patch.object(RUNTIME, "_AclTensor", FakeDescriptor):
+                    for _ in range(256):
+                        output = FakeTensor(0)
+                        helper = FakeTensor(0)
+                        output_refs.append(weakref.ref(output))
+                        helper_refs.append(weakref.ref(helper))
+
+                        def build_args(ctx, helper_tensor=helper):
+                            ctx.keepalive_tensors.append(helper_tensor)
+                            return [ctx.tensor(output, "output")]
+
+                        result = RUNTIME.call_aclnn("aclnnTest", build_args, output)
+                        del result, output, helper, build_args
+
+        gc.collect()
+        self.assertTrue(all(reference() is None for reference in output_refs))
+        self.assertTrue(all(reference() is None for reference in helper_refs))
+        self.assertTrue(all(reference() is None for reference in workspace_refs))
+
 
 if __name__ == "__main__":
     unittest.main()

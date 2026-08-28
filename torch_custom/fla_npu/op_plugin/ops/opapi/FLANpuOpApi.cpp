@@ -905,6 +905,52 @@ at::Tensor npu_chunk_scaled_dot_kkt(
     return A;
 }
 
+::std::tuple<at::Tensor, at::Tensor> npu_chunk_cumsum_kkt(
+    const at::Tensor &k,
+    const at::Tensor &g,
+    const at::Tensor &beta,
+    at::OptionalIntArrayRef cu_seqlens,
+    at::OptionalIntArrayRef chunk_indices,
+    int64_t chunk_size)
+{
+    TORCH_CHECK(k.dim() == 4 && g.dim() == 3 && beta.dim() == 3,
+        "npu_chunk_cumsum_kkt: expected k=[B,H,T,128], g/beta=[B,H,T].");
+    TORCH_CHECK(
+        k.scalar_type() == c10::ScalarType::Half || k.scalar_type() == c10::ScalarType::BFloat16,
+        "npu_chunk_cumsum_kkt: k dtype must be float16 or bfloat16, got ", k.scalar_type());
+    TORCH_CHECK(g.scalar_type() == c10::ScalarType::Float && beta.scalar_type() == c10::ScalarType::Float,
+        "npu_chunk_cumsum_kkt: g and beta must be float32.");
+    TORCH_CHECK(chunk_size == 64 || chunk_size == 128,
+        "npu_chunk_cumsum_kkt: chunk_size must be 64 or 128, got ", chunk_size);
+    TORCH_CHECK(cu_seqlens.has_value() == chunk_indices.has_value(),
+        "npu_chunk_cumsum_kkt: variable-length metadata must be provided together.");
+
+    const int64_t B = k.size(0);
+    const int64_t H = k.size(1);
+    const int64_t T = k.size(2);
+    TORCH_CHECK(k.size(3) == 128 &&
+                    g.size(0) == B && g.size(1) == H && g.size(2) == T &&
+                    beta.size(0) == B && beta.size(1) == H && beta.size(2) == T,
+        "npu_chunk_cumsum_kkt: k, g and beta must use matching physical heads.");
+    CheckKdaCuSeqlens(cu_seqlens, T, "npu_chunk_cumsum_kkt");
+    CheckKdaChunkIndices(chunk_indices, cu_seqlens, chunk_size, "npu_chunk_cumsum_kkt");
+    if (cu_seqlens.has_value()) {
+        TORCH_CHECK(B == 1, "npu_chunk_cumsum_kkt: varlen mode requires physical B=1.");
+    }
+
+    at::Tensor k_contig = k.contiguous();
+    at::Tensor g_contig = g.contiguous();
+    at::Tensor beta_contig = beta.contiguous();
+    at::Tensor g_cumsum = at::empty_like(g_contig);
+    at::Tensor A = at::empty({B, H, T, chunk_size}, k.options().dtype(c10::ScalarType::Float));
+    EXEC_NPU_CMD_EXT(
+        aclnnChunkCumsumKkt,
+        k_contig, g_contig, beta_contig, cu_seqlens, chunk_indices, chunk_size,
+        g_cumsum, A
+    );
+    return std::make_tuple(g_cumsum, A);
+}
+
 at::Tensor infer_y_tensor(
     const at::Tensor& x,
     int64_t head_num,

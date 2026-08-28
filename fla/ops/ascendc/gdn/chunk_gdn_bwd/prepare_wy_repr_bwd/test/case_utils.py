@@ -1,5 +1,4 @@
 import contextlib
-import importlib
 import io
 import random
 from dataclasses import dataclass
@@ -67,14 +66,6 @@ FULL_GDN_CASES: tuple[GdnCase, ...] = (
     GdnCase("F21", 711, 4, 32, 196, 128, 128, 128, "fp16", "fp32"),
     GdnCase("F22", 176, 2, 64, 24, 128, 256, 64, "bf16", "fp32"),
 )
-
-
-def release_aclnn_keepalive():
-    try:
-        runtime_mod = importlib.import_module("fla_npu.ops.ascendc._runtime")
-        runtime_mod._RECENT_LAUNCH_STORAGE.clear()
-    except Exception:
-        pass
 
 
 def prepare_cu_seqlens(T: int, L: int, seed: int = 42) -> list[int]:

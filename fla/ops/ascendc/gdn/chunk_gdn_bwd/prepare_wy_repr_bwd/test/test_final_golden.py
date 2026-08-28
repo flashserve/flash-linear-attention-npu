@@ -23,7 +23,6 @@ from case_utils import (
     make_inputs,
     prepare_chunk_indices,
     prepare_cu_seqlens,
-    release_aclnn_keepalive,
 )
 
 
@@ -358,7 +357,6 @@ def run_case(case: FinalCase, args) -> list[str]:
             k, v, beta, A, dw, du, g, case.chunk_size, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices
         )
         torch.npu.synchronize()
-        release_aclnn_keepalive()
         kernel_seconds = time.perf_counter() - kernel_start
         print(f"  phase_time kernel_sync={kernel_seconds:.6f}s", flush=True)
         if args.kernel_only:
@@ -410,7 +408,6 @@ def run_case(case: FinalCase, args) -> list[str]:
                 chunk_indices=chunk_indices,
             )
             torch.npu.synchronize()
-            release_aclnn_keepalive()
             golden_seconds = time.perf_counter() - golden_start
             print(f"  phase_time golden_npu={golden_seconds:.6f}s", flush=True)
 

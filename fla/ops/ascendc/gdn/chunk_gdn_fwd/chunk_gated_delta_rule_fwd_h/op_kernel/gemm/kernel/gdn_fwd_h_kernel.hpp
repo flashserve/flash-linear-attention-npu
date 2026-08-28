@@ -62,10 +62,19 @@ template<
     typename TileShapes = GDNFwdHTileShapes128,
     bool kGated = false,
     bool scalarGated = true,
-    bool useExp2 = false
+    bool useExp2 = false,
+    bool kChunkPipeline = false
 >
 class GDNFwdHKernel {
 public:
+
+    static constexpr uint32_t HO_PIPELINE_CHUNK_SIZE = 64;
+    static constexpr uint32_t HO_PIPELINE_VALUE_HEADS = 8;
+    static constexpr uint32_t HO_PIPELINE_VALUE_DIM = 128;
+    static constexpr uint32_t HO_PIPELINE_CUBE_CORES = 24;
+    static constexpr uint32_t HO_PIPELINE_EVENT_COUNT = 2;
+    static constexpr uint32_t HO_PIPELINE_SYNC_UB_OFFSET = 188 * 1024;
+    static constexpr uint64_t HO_PIPELINE_WORKSPACE_ALIGNMENT = 512;
 
     using ArchTag = Arch::AtlasA2;
     using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHCube;
@@ -158,11 +167,68 @@ public:
     AscendC::GlobalTensor<int64_t> gmSeqlen;
     AscendC::GlobalTensor<int64_t> gmNumSeq;
     AscendC::GlobalTensor<int64_t> gmNumChunks;
+    AscendC::GlobalTensor<int32_t> gmPipelineSync;
+
+    bool chunkPipelineEnabled{false};
 
     CubeScheduler cubeBlockScheduler;
     VecScheduler vecBlockScheduler;
 
     Arch::Resource<ArchTag> resource;
+
+
+    __aicore__ inline uint64_t PipelineVNewBytes() const
+    {
+        const uint64_t bytes = static_cast<uint64_t>(batch) * vNumHead * seqlen * vHeadDim * sizeof(ElementV);
+        return (bytes + HO_PIPELINE_WORKSPACE_ALIGNMENT - 1) / HO_PIPELINE_WORKSPACE_ALIGNMENT *
+               HO_PIPELINE_WORKSPACE_ALIGNMENT;
+    }
+
+    __aicore__ inline bool CanRunChunkPipeline() const
+    {
+        if constexpr (!kChunkPipeline) {
+            return false;
+        }
+        return isVariedLen == 0 && batch == 1 && vNumHead == HO_PIPELINE_VALUE_HEADS &&
+               vHeadDim == HO_PIPELINE_VALUE_DIM &&
+               (chunkSize == HO_PIPELINE_CHUNK_SIZE || chunkSize == 2 * HO_PIPELINE_CHUNK_SIZE) &&
+               AscendC::GetBlockNum() == HO_PIPELINE_CUBE_CORES;
+    }
+
+    __aicore__ inline AscendC::LocalTensor<int32_t> GetPipelineSyncLocal()
+    {
+        return resource.ubBuf.template GetBufferByByte<int32_t>(HO_PIPELINE_SYNC_UB_OFFSET);
+    }
+
+    __aicore__ inline uint32_t GetPipelineAivIdx() const
+    {
+        return vecBlockScheduler.cubeCoreIdx * AscendC::GetSubBlockNum() + AscendC::GetSubBlockIdx();
+    }
+
+    __aicore__ inline void InitPipelineSync()
+    {
+        if (!chunkPipelineEnabled) {
+            return;
+        }
+        auto syncLocal = GetPipelineSyncLocal();
+        AscendC::Duplicate(syncLocal, static_cast<int32_t>(0), 8);
+        AscendC::PipeBarrier<PIPE_V>();
+        const uint32_t logicalAivNum = AscendC::GetBlockNum() * AscendC::GetSubBlockNum();
+        const uint32_t logicalAivIdx = GetPipelineAivIdx();
+        for (uint32_t eventId = 0; eventId < HO_PIPELINE_EVENT_COUNT; ++eventId) {
+            const uint32_t offset = logicalAivNum * 8 * eventId + logicalAivIdx * 8;
+            AscendC::DataCopy(gmPipelineSync[offset], syncLocal, 8);
+        }
+    }
+
+    __aicore__ inline void SignalChunkReady(const GDNFwdHOffsets &offsets)
+    {
+        if (!chunkPipelineEnabled) {
+            return;
+        }
+        const uint32_t eventId = offsets.chunkIdx % HO_PIPELINE_EVENT_COUNT;
+        AscendC::IBSet<false>(gmPipelineSync, GetPipelineSyncLocal(), GetPipelineAivIdx(), eventId);
+    }
 
 
     __aicore__ inline GDNFwdHKernel() {}
@@ -208,6 +274,11 @@ public:
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
         gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
         gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
+
+        chunkPipelineEnabled = CanRunChunkPipeline();
+        if (chunkPipelineEnabled) {
+            gmPipelineSync.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(v_new + PipelineVNewBytes()));
+        }
 
         if ASCEND_IS_AIC {
             cubeBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user);
@@ -385,6 +456,7 @@ public:
                 resource.ubBuf.template GetBufferByByte<ElementH>(64 * 1024);
             AscendC::LocalTensor<ElementH> hUbTensorPong =
                 resource.ubBuf.template GetBufferByByte<ElementH>(160 * 1024);
+            InitPipelineSync();
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
             for (uint32_t slot = 0; slot < tasksPerCore; ++slot) {
@@ -509,6 +581,7 @@ public:
                         );
                         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
                         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
+                        SignalChunkReady(vec1Offsets);
                         if (storeFinalState && std::is_same<ElementFinalState, float>::value) {
                             event0FromMte3[streamId] = false;
                         }
@@ -590,6 +663,14 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2); // drain h
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID2 + pongBaseEvent);
 
+        }
+        if constexpr (kChunkPipeline) {
+            // The dense fused path publishes individual chunks through IBSet/IBWait.
+            // Varlen currently uses producer affinity without that handshake, so close
+            // H globally before the following O stage consumes h/vNew.
+            if (isVariedLen) {
+                AscendC::SyncAll<false>();
+            }
         }
     }
 

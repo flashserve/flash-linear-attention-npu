@@ -114,7 +114,34 @@ constexpr uint32_t ATTR_LAYOUT_IDX = 0;
         lastChunkValidSize = (remainder == 0) ? chunkSize : remainder;
     }
 
-    int64_t tilesPerCore = (totalTiles + coreNum - 1) / coreNum;
+    // chunk=16：每个 AIC 一轮处理 8 个 tile（2 Vector × 4 leaves）
+    // chunk=32：每个 AIC 一轮处理 2 个 tile（单 Vector × 4 个 16×16 叶子）
+    constexpr int64_t kTilesPerAicBatch16 = 8;
+    constexpr int64_t kTilesPerAicBatch32 = 2;
+    int64_t tilesPerCore = 0;
+    int64_t usedCoreNum = 0;
+    if (chunkSize == 16 || chunkSize == 32) {
+        int64_t tilesPerBatch = (chunkSize == 16) ? kTilesPerAicBatch16 : kTilesPerAicBatch32;
+        int64_t totalBatches = (totalTiles + tilesPerBatch - 1) / tilesPerBatch;
+        if (totalBatches < 1) {
+            totalBatches = 1;
+        }
+        int64_t batchesPerCore = (totalBatches + coreNum - 1) / coreNum;
+        if (batchesPerCore < 1) {
+            batchesPerCore = 1;
+        }
+        tilesPerCore = batchesPerCore * tilesPerBatch;
+        usedCoreNum = (totalBatches + batchesPerCore - 1) / batchesPerCore;
+    } else {
+        tilesPerCore = (totalTiles + coreNum - 1) / coreNum;
+        usedCoreNum = (totalTiles + tilesPerCore - 1) / tilesPerCore;
+    }
+    if (usedCoreNum > coreNum) {
+        usedCoreNum = coreNum;
+    }
+    if (usedCoreNum < 1) {
+        usedCoreNum = 1;
+    }
 
     // Get input dtype: 0=fp16, 1=bf16
     auto inputDtype = context->GetInputDesc(INPUT_X_IDX)->GetDataType();
@@ -142,20 +169,34 @@ constexpr uint32_t ATTR_LAYOUT_IDX = 0;
     tiling.set_dtypeMode(dtypeMode);
     tiling.set_totalTokens(totalTokens);
  
-     context->SetTilingKey(1);
+    // tilingKey = chunkSize（16/32/64/128）；按 key 分发到固定尺寸 kernel 类。
+    // 不支持的尺寸必须显式拒绝，不能回退到 64 后继续使用错误的矩阵模板。
+    if (!(chunkSize == 16 || chunkSize == 32 || chunkSize == 64 || chunkSize == 128)) {
+        return ge::GRAPH_FAILED;
+    }
+    uint64_t tilingKey = static_cast<uint64_t>(chunkSize);
+    context->SetTilingKey(tilingKey);
      tiling.SaveToBuffer(context->GetRawTilingData()->GetData(),
                          context->GetRawTilingData()->GetCapacity());
      context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
  
-     int64_t usedCoreNum = (totalTiles + tilesPerCore - 1) / tilesPerCore;
-     if (usedCoreNum > coreNum) usedCoreNum = coreNum;
      context->SetBlockDim(usedCoreNum);
  
      // Workspace: ascend950 全程片上缓存，仅预留系统 workspace；910b 需 GM 辅助矩阵中转区
      uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
      size_t* ws = context->GetWorkspaceSizes(1);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-     ws[0] = sysWorkspaceSize;
+    // FP32 MBH：每 AIC 核一块 side×side FP32 NZ 中转（Fixpipe ChannelSplit L0C→GM→L1）
+    // chunk16 纯 Vector，不需要中转；chunk32 把两个 32×32 打进 64×64 工作区
+    size_t mbhSide = static_cast<size_t>(chunkSize);
+    if (chunkSize == 16) {
+        mbhSide = 0;
+    } else if (chunkSize == 32) {
+        mbhSide = 64;
+    }
+    size_t userWorkspaceSize = static_cast<size_t>(usedCoreNum) * mbhSide * mbhSide * sizeof(float);
+    userWorkspaceSize = ((userWorkspaceSize + 511) / 512) * 512;
+    ws[0] = userWorkspaceSize + sysWorkspaceSize;
 #else
      size_t userWorkspaceSize;
      if (chunkSize == 64) {
@@ -186,4 +227,4 @@ constexpr uint32_t ATTR_LAYOUT_IDX = 0;
      .TilingParse<SolveTriCompileInfo>(SolveTriTilingParse);
  
  }  // namespace optiling
- 
+

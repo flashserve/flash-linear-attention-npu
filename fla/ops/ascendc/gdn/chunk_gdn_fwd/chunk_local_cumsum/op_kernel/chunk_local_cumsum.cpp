@@ -791,6 +791,7 @@ private:
 };
 } // namespace
 
+#ifndef GDN_CHUNK_LOCAL_CUMSUM_IMPL_ONLY
 extern "C" __global__ __aicore__ void chunk_local_cumsum(GM_ADDR g, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
                                                           GM_ADDR out, GM_ADDR workspace, GM_ADDR tiling)
 {
@@ -835,3 +836,4 @@ extern "C" __global__ __aicore__ void chunk_local_cumsum(GM_ADDR g, GM_ADDR cuSe
         op.Process();
     }
 }
+#endif

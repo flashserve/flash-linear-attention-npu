@@ -366,6 +366,8 @@ aclnn launch 返回时，kernel 通常只完成 enqueue。runtime 必须保证�
 
 runtime 不使用固定深度的全局保活队列，也不在默认路径做全局 synchronize。固定保留近期 workspace 会使显存随连续 launch 次数线性增长，尤其会放大包含内部中间张量的大融合算子显存占用。
 
+实现上，descriptor/context 必须在目标 device guard 内通过 `try/finally` 销毁；`call_aclnn` 返回后不得由模块级容器继续强引用输出、workspace 或 helper tensor。对应 runtime UT 必须断言这些临时对象在调用返回后可立即释放。
+
 ### 5.5 ACL 私有格式和 NZ 透传
 
 runtime 创建 ACL tensor descriptor 时同时传入：
