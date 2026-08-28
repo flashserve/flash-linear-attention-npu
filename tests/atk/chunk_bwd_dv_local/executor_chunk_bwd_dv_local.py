@@ -267,7 +267,7 @@ class FunctionApi(BaseApi):
             self.init_by_input_data(input_data)
         if self.device == "cpu":
             outputs = run_cpu(self.spec, self.high_precision)
-        elif self.device in {"npu", "pyaclnn"}:
+        elif self.device in {"npu", "pyaclnn", "gpu"}:
             outputs = run_npu(self.spec, input_data)
         else:
             raise RuntimeError(f"{OP_NAME} 仅支持 NPU DUT 与 CPU 标杆节点，当前设备：{self.device!r}")
