@@ -221,6 +221,21 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
+    "aclnnChunkFwdH": [
+        *([ctypes.c_void_p] * 6),
+        ctypes.c_bool,
+        ctypes.c_int64,
+        ctypes.c_bool,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_bool,
+        ctypes.c_bool,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
 }
 
 
@@ -626,6 +641,140 @@ def npu_chunk_gated_delta_rule_fwd_h(
             ctx.tensor(h_out, "h"),
             ctx.tensor(v_new_out, "v_new"),
             ctx.tensor(final_state_out, "final_state"),
+        ],
+        outputs,
+    )
+
+
+def npu_chunk_fwd_h(
+    k,
+    w,
+    u,
+    *,
+    g=None,
+    gk=None,
+    initial_state=None,
+    output_final_state=False,
+    chunk_size=64,
+    save_new_value=True,
+    cu_seqlens=None,
+    chunk_indices=None,
+    use_exp2=False,
+    state_v_first=False,
+):
+    import torch
+
+    op_name = "npu_chunk_fwd_h"
+    if (g is None) == (gk is None):
+        raise RuntimeError(f"{op_name}: exactly one of g and gk must be provided.")
+    output_final_state = _optional_bool(output_final_state, False)
+    save_new_value = _optional_bool(save_new_value, True)
+    use_exp2 = _optional_bool(use_exp2, False)
+    state_v_first = _optional_bool(state_v_first, False)
+    chunk_size = _optional_int(chunk_size, 64)
+    if chunk_size != 64:
+        raise RuntimeError(f"{op_name}: chunk_size must be 64.")
+    if not save_new_value:
+        raise RuntimeError(f"{op_name}: save_new_value must be True.")
+    if len(_shape(k)) != 4 or len(_shape(w)) != 4 or len(_shape(u)) != 4:
+        raise RuntimeError(f"{op_name}: k, w and u must be rank-4 BNSD tensors.")
+
+    batch, k_heads, seqlen, k_dim = _shape(k)
+    _, v_heads, _, v_dim = _shape(u)
+    if batch <= 0 or k_heads <= 0 or v_heads <= 0 or seqlen <= 0:
+        raise RuntimeError(f"{op_name}: B, HK, HV and T must all be positive.")
+    if k.dtype != torch.bfloat16 or w.dtype != k.dtype or u.dtype != k.dtype:
+        raise RuntimeError(f"{op_name}: k, w and u must all use bfloat16.")
+    if k_dim != 128 or v_dim != 128:
+        raise RuntimeError(f"{op_name}: K and V must both be 128.")
+    if _shape(w) != (batch, v_heads, seqlen, k_dim) or _shape(u) != (
+        batch,
+        v_heads,
+        seqlen,
+        v_dim,
+    ):
+        raise RuntimeError(f"{op_name}: w/u must be [B, HV, T, K/V].")
+
+    gate_dtype = g.dtype if g is not None else gk.dtype
+    if gate_dtype not in {torch.bfloat16, torch.float32}:
+        raise RuntimeError(f"{op_name}: g/gk must use bfloat16 or float32.")
+    if g is not None:
+        if v_heads < k_heads or v_heads % k_heads != 0:
+            raise RuntimeError(f"{op_name}: g-only mode requires HV >= HK and HV % HK == 0.")
+        if _shape(g) != (batch, v_heads, seqlen):
+            raise RuntimeError(f"{op_name}: g must be [B, HV, T].")
+    else:
+        if k_heads != v_heads:
+            raise RuntimeError(f"{op_name}: gk-only mode requires prepared kg to have HV heads.")
+        if _shape(gk) != (batch, v_heads, seqlen, k_dim):
+            raise RuntimeError(f"{op_name}: gk must be [B, HV, T, K].")
+
+    cu = None if cu_seqlens is None else tuple(int(value) for value in cu_seqlens)
+    if cu is not None:
+        if batch != 1:
+            raise RuntimeError(f"{op_name}: variable-length BNSD input requires B=1.")
+        if len(cu) < 2 or cu[0] != 0 or cu[-1] != seqlen or any(a >= b for a, b in zip(cu, cu[1:])):
+            raise RuntimeError(
+                f"{op_name}: cu_seqlens must be strictly increasing, start at 0 and end at T."
+            )
+    canonical_indices = _kda_build_chunk_indices(cu, chunk_size)
+    indices = canonical_indices if chunk_indices is None else tuple(int(value) for value in chunk_indices)
+    if indices is not None and indices != canonical_indices:
+        raise RuntimeError(f"{op_name}: chunk_indices must use canonical sequence-major order.")
+
+    total_chunks = _kda_total_chunks(batch, seqlen, chunk_size, cu, indices)
+    sequences = len(cu) - 1 if cu is not None else batch
+    state_tail = (v_dim, k_dim) if state_v_first else (k_dim, v_dim)
+    if initial_state is not None:
+        if _shape(initial_state) != (sequences, v_heads, *state_tail):
+            raise RuntimeError(f"{op_name}: initial_state shape does not match state_v_first.")
+        if initial_state.dtype not in {torch.bfloat16, torch.float32}:
+            raise RuntimeError(f"{op_name}: initial_state must use bfloat16 or float32.")
+
+    h_out = _empty((batch, v_heads, total_chunks, *state_tail), k)
+    v_new_out = _empty_like(u)
+    if output_final_state:
+        state_template = initial_state if initial_state is not None else k
+        state_dtype = initial_state.dtype if initial_state is not None else torch.float32
+        final_state_out = _empty(
+            (sequences, v_heads, *state_tail), state_template, dtype=state_dtype
+        )
+    else:
+        final_state_out = None
+    outputs = (h_out, v_new_out, final_state_out if output_final_state else None)
+
+    # ChunkFwdH 的公开布局契约是 ND。标准连续 rank-4/5 NPU tensor 的物理存储
+    # 仍是行主序，但通用 runtime 会按维数推断 NCHW/NCDHW，因此这里由本算子
+    # 显式覆盖 descriptor 元数据，不触发格式转换或额外数据搬运。
+    def nd_tensor(ctx, tensor, name):
+        if tensor is None:
+            return ctx.tensor(None, name)
+        return ctx.tensor(
+            tensor,
+            name,
+            acl_format_override=ACL_FORMAT_ND,
+            storage_shape_override=_shape(tensor),
+        )
+
+    return _call_aclnn(
+        "aclnnChunkFwdH",
+        lambda ctx: [
+            nd_tensor(ctx, k, "k"),
+            nd_tensor(ctx, w, "w"),
+            nd_tensor(ctx, u, "u"),
+            nd_tensor(ctx, g, "g"),
+            nd_tensor(ctx, gk, "gk"),
+            nd_tensor(ctx, initial_state, "initial_state"),
+            ctypes.c_bool(output_final_state),
+            ctypes.c_int64(chunk_size),
+            ctypes.c_bool(save_new_value),
+            ctx.int_array(cu),
+            ctx.int_array(indices),
+            ctypes.c_bool(use_exp2),
+            ctypes.c_bool(state_v_first),
+            nd_tensor(ctx, h_out, "h"),
+            nd_tensor(ctx, v_new_out, "v_new"),
+            nd_tensor(ctx, final_state_out, "final_state"),
         ],
         outputs,
     )

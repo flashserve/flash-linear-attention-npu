@@ -276,6 +276,7 @@ NPU CI 的 Example/ST 用例由 [`ci/example_st_cases.json`](ci/example_st_cases
 │       │   ├── common                 # 公共模块（GroupedMatMul 等）
 │       │   └── gdn                    # GDN 算子
 │       │       ├── chunk_gdn_fwd      # 前向传播算子
+│       │       │   ├── chunk_fwd_h
 │       │       │   ├── chunk_fwd_o
 │       │       │   ├── chunk_gated_delta_rule_fwd_h
 │       │       │   └── recompute_w_u_fwd

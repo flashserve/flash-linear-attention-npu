@@ -1,0 +1,158 @@
+{
+  "operator": "chunk_fwd_h",
+  "entry": "fla_npu.ops.ascendc.chunk_fwd_h",
+  "cases": [
+    {
+      "id": "g_round_heads_3",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 65,
+      "k_heads": 1,
+      "v_heads": 3,
+      "gate_dtype": "bfloat16",
+      "state_dtype": null,
+      "output_final_state": false,
+      "use_exp2": false,
+      "state_v_first": false,
+      "provide_chunk_indices": false,
+      "seed": 11
+    },
+    {
+      "id": "g_round_heads_4_two_keys",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 128,
+      "k_heads": 2,
+      "v_heads": 4,
+      "gate_dtype": "float32",
+      "state_dtype": "bfloat16",
+      "output_final_state": true,
+      "use_exp2": false,
+      "state_v_first": false,
+      "provide_chunk_indices": false,
+      "seed": 12
+    },
+    {
+      "id": "g_ratio_1_to_3_two_groups",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 65,
+      "k_heads": 2,
+      "v_heads": 6,
+      "gate_dtype": "bfloat16",
+      "state_dtype": null,
+      "output_final_state": false,
+      "use_exp2": false,
+      "state_v_first": false,
+      "provide_chunk_indices": false,
+      "seed": 18
+    },
+    {
+      "id": "g_ratio_1_to_6_cross_round",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 129,
+      "k_heads": 1,
+      "v_heads": 6,
+      "gate_dtype": "float32",
+      "state_dtype": "float32",
+      "output_final_state": true,
+      "use_exp2": true,
+      "state_v_first": true,
+      "provide_chunk_indices": false,
+      "seed": 13
+    },
+    {
+      "id": "g_round_heads_1_terminal_v_new_only",
+      "mode": "g",
+      "batch": 2,
+      "seqlen": 1,
+      "k_heads": 1,
+      "v_heads": 1,
+      "gate_dtype": "bfloat16",
+      "state_dtype": null,
+      "output_final_state": false,
+      "use_exp2": false,
+      "state_v_first": true,
+      "provide_chunk_indices": false,
+      "seed": 14
+    },
+    {
+      "id": "gk_round_heads_2",
+      "mode": "gk",
+      "batch": 1,
+      "seqlen": 65,
+      "k_heads": 2,
+      "v_heads": 2,
+      "gate_dtype": "bfloat16",
+      "state_dtype": null,
+      "output_final_state": true,
+      "use_exp2": false,
+      "state_v_first": false,
+      "provide_chunk_indices": false,
+      "seed": 15
+    },
+    {
+      "id": "gk_round_heads_4_v_first",
+      "mode": "gk",
+      "batch": 1,
+      "seqlen": 128,
+      "k_heads": 4,
+      "v_heads": 4,
+      "gate_dtype": "float32",
+      "state_dtype": "bfloat16",
+      "output_final_state": true,
+      "use_exp2": true,
+      "state_v_first": true,
+      "provide_chunk_indices": false,
+      "seed": 16
+    },
+    {
+      "id": "g_varlen_round_heads_3",
+      "mode": "g",
+      "batch": 1,
+      "seqlens": [1, 64, 65],
+      "k_heads": 1,
+      "v_heads": 3,
+      "gate_dtype": "float32",
+      "state_dtype": "float32",
+      "output_final_state": true,
+      "use_exp2": false,
+      "state_v_first": true,
+      "provide_chunk_indices": true,
+      "seed": 17
+    }
+  ],
+  "negative_cases": [
+    {
+      "id": "both_gate_inputs",
+      "mutation": "both_gate_inputs",
+      "expected_message": "exactly one of g and gk"
+    },
+    {
+      "id": "unsupported_chunk_size",
+      "mutation": "unsupported_chunk_size",
+      "expected_message": "chunk_size must be 64"
+    },
+    {
+      "id": "invalid_g_head_ratio",
+      "mutation": "invalid_g_head_ratio",
+      "expected_message": "HV >= HK and HV % HK == 0"
+    },
+    {
+      "id": "invalid_gk_shape",
+      "mutation": "invalid_gk_shape",
+      "expected_message": "gk must be [B, HV, T, K]"
+    },
+    {
+      "id": "varlen_batch_not_one",
+      "mutation": "varlen_batch_not_one",
+      "expected_message": "variable-length BNSD input requires B=1"
+    },
+    {
+      "id": "invalid_state_v_first_shape",
+      "mutation": "invalid_state_v_first_shape",
+      "expected_message": "initial_state shape does not match state_v_first"
+    }
+  ]
+}
