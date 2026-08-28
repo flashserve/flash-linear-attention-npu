@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import math
 import os
 import sys
@@ -11,11 +12,14 @@ from typing import Any
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from atk.configs.dataset_config import InputDataset
 from atk.configs.results_config import TaskResult
 from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
+
+from gen_chunk_bwd_dv_local import CASE_COUNT, PROFILES
 
 from _ascendc_common_executor import (
     _calc_dtype,
@@ -29,6 +33,44 @@ from _ascendc_common_executor import (
 
 
 OP_NAME = "chunk_bwd_dv_local"
+
+
+_REVIEWED_SPECS = PROFILES
+
+
+def _reviewed_case_spec(input_data: InputDataset) -> dict[str, Any]:
+    raw_id = input_data.kwargs.get("case_id")
+    if isinstance(raw_id, torch.Tensor):
+        raw_id = raw_id.detach().cpu().item()
+    try:
+        case_id = int(raw_id)
+    except (TypeError, ValueError):
+        return _case_spec(input_data, OP_NAME)
+    if not 0 <= case_id < CASE_COUNT:
+        raise RuntimeError(f"{OP_NAME} ATK case_id out of range: {case_id}")
+    return dict(_REVIEWED_SPECS[case_id])
+
+
+def _ensure_fla_npu_path() -> None:
+    if importlib.util.find_spec("fla_npu") is not None:
+        return
+    pyver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    candidates = [
+        Path(sys.prefix) / "lib" / pyver / "site-packages",
+        Path(sys.prefix) / "lib" / pyver / "dist-packages",
+        Path("/usr/local/lib") / pyver / "dist-packages",
+        Path("/usr/local/lib") / pyver / "site-packages",
+        Path("/usr/lib") / pyver / "dist-packages",
+    ]
+    for candidate in candidates:
+        if (candidate / "fla_npu").is_dir():
+            sys.path.insert(0, str(candidate))
+            return
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "torch_custom" / "fla_npu"
+        if (candidate / "fla_npu").is_dir():
+            sys.path.append(str(candidate))
+            return
 
 
 def _as_bool(value: Any) -> bool:
@@ -212,7 +254,26 @@ def run_cpu(spec: dict[str, Any], high_precision: bool = False):
     return _chunk_bwd_dv_local_fixed_ref(inputs, high_precision=high_precision)
 
 
+def run_gpu_truth(spec: dict[str, Any], input_data: InputDataset):
+    inputs = build_inputs(spec, _marker_device(input_data), high_precision=True)
+    if inputs["q"].device.type != "cuda":
+        raise RuntimeError(f"{OP_NAME} FP64 truth must run on an ATK GPU node")
+    if inputs["cu_seqlens"] is not None:
+        return _chunk_bwd_dv_local_varlen_ref(inputs, high_precision=True)
+    return _chunk_bwd_dv_local_fixed_ref(inputs, high_precision=True)
+
+
+def run_gpu_control(spec: dict[str, Any], input_data: InputDataset):
+    inputs = build_inputs(spec, _marker_device(input_data), high_precision=False)
+    if inputs["q"].device.type != "cuda":
+        raise RuntimeError(f"{OP_NAME} same-precision control must run on an ATK GPU node")
+    if inputs["cu_seqlens"] is not None:
+        return _chunk_bwd_dv_local_varlen_ref(inputs, high_precision=False)
+    return _chunk_bwd_dv_local_fixed_ref(inputs, high_precision=False)
+
+
 def run_npu(spec: dict[str, Any], input_data: InputDataset):
+    _ensure_fla_npu_path()
     inputs = build_inputs(spec, _marker_device(input_data), high_precision=False)
     route = str(spec.get("route", "ascendc"))
     kwargs = {
@@ -243,14 +304,14 @@ class FunctionApi(BaseApi):
         super(FunctionApi, self).__init__(task_result)
         self.spec = None
         self.runtime_case_id = None
-        case_config = getattr(task_result, "case_config", None)
-        case_id = case_config.get("id") if isinstance(case_config, dict) else getattr(case_config, "id", None)
-        if case_id is not None:
-            self.runtime_case_id = int(case_id)
-        self.high_precision = self.device == "cpu"
+        self.is_benchmark_task = bool(task_result.is_benchmark_task)
+        self.high_precision = self.device in {"cpu", "gpu"} and self.is_benchmark_task
+        self.cpu_control = self.device == "cpu" and not self.is_benchmark_task
+        self.gpu_control = self.device == "gpu" and not self.is_benchmark_task
 
     def init_by_input_data(self, input_data: InputDataset):
-        self.spec = _case_spec(input_data, OP_NAME)
+        self.spec = _reviewed_case_spec(input_data)
+        self.runtime_case_id = int(self.spec.get("case_id", -1))
         if os.environ.get("CHUNK_BWD_DV_LOCAL_ATK_TRACE_SEED") == "1":
             print(
                 "CHUNK_BWD_DV_LOCAL_ATK_RUNTIME_SEED",
@@ -265,13 +326,24 @@ class FunctionApi(BaseApi):
         del with_output
         if self.spec is None:
             self.init_by_input_data(input_data)
-        if self.device == "cpu":
-            outputs = run_cpu(self.spec, self.high_precision)
-        elif self.device in {"npu", "pyaclnn", "gpu"}:
+        if self.device in {"npu", "pyaclnn"}:
             outputs = run_npu(self.spec, input_data)
+        elif self.high_precision:
+            outputs = run_gpu_truth(self.spec, input_data) if self.device == "gpu" else run_cpu(self.spec, True)
+        elif self.cpu_control:
+            outputs = run_cpu(self.spec, False)
+        elif self.gpu_control:
+            outputs = run_gpu_control(self.spec, input_data)
         else:
-            raise RuntimeError(f"{OP_NAME} 仅支持 NPU DUT 与 CPU 标杆节点，当前设备：{self.device!r}")
-        return _finite_tuple(outputs, golden=self.device == "cpu")
+            raise RuntimeError(
+                f"{OP_NAME} 需要 NPU DUT 与 CPU/GPU reference 节点，"
+                f"当前设备：{self.device!r}, benchmark={self.is_benchmark_task}"
+            )
+        visible_outputs = _finite_tuple(outputs, golden=self.device in {"cpu", "gpu"} and self.is_benchmark_task)
+        if self.device in {"npu", "pyaclnn"} and os.getenv("ATK_RELEASE_NPU_CACHE") == "1":
+            torch.npu.synchronize()
+            torch.npu.empty_cache()
+        return visible_outputs
 
     def export_custom_data(self, input_data: InputDataset):
         if self.spec is None:
