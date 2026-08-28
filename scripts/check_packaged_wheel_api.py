@@ -27,11 +27,15 @@ ASCENDC_NAMES = (
     "chunk_fwd_o",
     "chunk_gated_delta_rule_bwd_dhu",
     "chunk_gated_delta_rule_fwd_h",
+    "chunk_fwd_h",
     "prepare_wy_repr_bwd_da",
     "prepare_wy_repr_bwd_full",
     "recompute_w_u_fwd",
     "recurrent_gated_delta_rule",
     "solve_tri",
+)
+LEGACY_COMPAT_ASCENDC_NAMES = tuple(
+    name for name in ASCENDC_NAMES if name != "chunk_fwd_h"
 )
 
 TRITON_NAMES = (
@@ -192,7 +196,7 @@ def main() -> int:
         import torch_npu
 
         ascendc.install_torch_npu_ops_compat()
-        for name in ASCENDC_NAMES:
+        for name in LEGACY_COMPAT_ASCENDC_NAMES:
             _require_attr(torch_npu.ops, name, "torch_npu.ops")
             _require_attr(torch_npu.ops, f"npu_{name}", "torch_npu.ops")
 
