@@ -480,6 +480,24 @@ private:
         auto layoutA = tla::MakeLayout<KType, LayoutTagA>(BT_, K_);
         auto layoutB = tla::MakeLayout<KType, LayoutTagB>(K_, BT_);
         auto layoutC = tla::MakeLayout<float, LayoutTagC>(BT_, BT_);
+        // Tail chunks: keep the MMAD shape full-width aligned (N = BT_) so the A5
+        // Fixpipe/L0C path never sees non-16-aligned N; bound the B-operand GM read
+        // by declaring the logical valid extent in the layout originShape, and
+        // zero the L1 padding via clearL1Padding so padded columns compute to 0.
+        if (meta.valid < BT_) {
+            auto layoutBBounded = tla::MakeLayout(
+                layoutB.shape(), layoutB.stride(), tla::MakeShape(static_cast<uint32_t>(K_), static_cast<uint32_t>(meta.valid)));
+            auto tensorB = tla::MakeTensor(kGm[kOffset], layoutBBounded, Catlass::Arch::PositionGM{});
+            auto tensorA = tla::MakeTensor(kGm[kOffset], layoutA, Catlass::Arch::PositionGM{});
+            auto tensorC = tla::MakeTensor(scoreGm[scoreOffset], layoutC, Catlass::Arch::PositionGM{});
+            Catlass::GemmCoord shape{static_cast<uint32_t>(rowCount), static_cast<uint32_t>(BT_),
+                                     static_cast<uint32_t>(K_)};
+            auto blockA = GetTile(tensorA, tla::MakeCoord(rowBegin, 0), tla::MakeShape(shape.m(), shape.k()));
+            auto blockB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
+            auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
+            blockMmad(blockA, blockB, blockC, shape, Catlass::EmptyClass{}, true);
+            return;
+        }
         Catlass::GemmCoord shape{static_cast<uint32_t>(rowCount), static_cast<uint32_t>(colCount),
                                  static_cast<uint32_t>(K_)};
 
