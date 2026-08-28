@@ -322,6 +322,7 @@ private:
             ioFreeEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE3_MTE2);
             ioReadyEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE2_V);
             ioDoneEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::V_MTE3);
+            hWriteDoneEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE3_MTE2);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
         }
     }
@@ -339,6 +340,11 @@ private:
     __aicore__ inline AscendC::TEventID IoDoneEvent(uint32_t slot) const
     {
         return ioDoneEvent_[slot];
+    }
+
+    __aicore__ inline AscendC::TEventID HWriteDoneEvent(uint32_t slot) const
+    {
+        return hWriteDoneEvent_[slot];
     }
 
     __aicore__ inline void DrainLocalEvents()
@@ -623,6 +629,8 @@ private:
                     local_[slot].template ReinterpretCast<bfloat16_t>();
                 AscendC::DataCopy(h[HOffset(unit, next, head)], hLocal, FWD_H_K * FWD_H_V);
                 // H 的 MTE3 完成前，D slot 仍是 MTE3 输入，不能交给下一 Stage0/Stage2。
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(HWriteDoneEvent(slot));
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(HWriteDoneEvent(slot));
                 AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
                     FwdHAivLocalFlag(FWD_H_D_FREE_FLAG, slot));
             } else {
@@ -760,6 +768,7 @@ private:
     AscendC::TEventID ioFreeEvent_[FWD_H_AIV_HEAD_SLOTS]{};
     AscendC::TEventID ioReadyEvent_[FWD_H_AIV_HEAD_SLOTS]{};
     AscendC::TEventID ioDoneEvent_[FWD_H_AIV_HEAD_SLOTS]{};
+    AscendC::TEventID hWriteDoneEvent_[FWD_H_AIV_HEAD_SLOTS]{};
     AscendC::TBuf<AscendC::TPosition::VECCALC> ubBuf_{};
     AscendC::LocalTensor<uint8_t> local_[FWD_H_AIV_HEAD_SLOTS]{};
     AscendC::LocalTensor<bfloat16_t> right_[FWD_H_AIV_HEAD_SLOTS]{};
