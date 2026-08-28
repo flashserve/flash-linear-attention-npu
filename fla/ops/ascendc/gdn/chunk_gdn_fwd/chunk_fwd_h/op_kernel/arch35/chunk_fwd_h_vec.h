@@ -579,12 +579,17 @@ private:
         }
     }
 
-    template <bool WRITE_H, bool ZERO_STATE>
+    template <bool WRITE_H, bool WAIT_MTE2>
     __aicore__ inline void ConsumeStage3Head(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
                                              const FwdHHeadBinding &head)
     {
         const uint32_t slot = head.localSlot;
         AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(FwdHAivLocalFlag(FWD_H_D_READY_FLAG, slot));
+        if constexpr (WAIT_MTE2) {
+            // 只有本次 Stage3 确实从 GM 搬入 state/gk 时才等待 MTE2；BF16 g-only
+            // 直接消费 Stage1 已驻留的 stateBf16，不能等待不存在的 event credit。
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+        }
         __ubuf__ float *d = reinterpret_cast<__ubuf__ float *>(local_[slot].GetPhyAddr());
         __ubuf__ bfloat16_t *hNext = nullptr;
         if constexpr (CompilePolicy::STATE_FP32) {
@@ -706,19 +711,36 @@ private:
             const bool zeroState = chunk.first && args_.tiling.useInitialState == 0;
             if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::KEY_GK) {
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
-                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
             } else if constexpr (CompilePolicy::STATE_FP32) {
                 if (!zeroState) {
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
                 }
             }
-            if (writeH) {
-                zeroState ? ConsumeStage3Head<true, true>(unit, chunk, head)
-                          : ConsumeStage3Head<true, false>(unit, chunk, head);
+            if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::KEY_GK) {
+                // gk-only 每个 Stage3 都搬入 gk_last，必须等待该 MTE2。
+                if (writeH) {
+                    ConsumeStage3Head<true, true>(unit, chunk, head);
+                } else {
+                    ConsumeStage3Head<false, true>(unit, chunk, head);
+                }
+            } else if constexpr (CompilePolicy::STATE_FP32) {
+                if (zeroState) {
+                    // 首 chunk 无 initial_state 时 state 为 VF 内构造的零值，没有 MTE2 输入。
+                    if (writeH) {
+                        ConsumeStage3Head<true, false>(unit, chunk, head);
+                    } else {
+                        ConsumeStage3Head<false, false>(unit, chunk, head);
+                    }
+                } else if (writeH) {
+                    ConsumeStage3Head<true, true>(unit, chunk, head);
+                } else {
+                    ConsumeStage3Head<false, true>(unit, chunk, head);
+                }
+            } else if (writeH) {
+                // BF16 g-only 的 stateBf16 由 Stage1 写入并由 right-ready 链路保护。
+                ConsumeStage3Head<true, false>(unit, chunk, head);
             } else {
-                zeroState ? ConsumeStage3Head<false, true>(unit, chunk, head)
-                          : ConsumeStage3Head<false, false>(unit, chunk, head);
+                ConsumeStage3Head<false, false>(unit, chunk, head);
             }
         }
     }
