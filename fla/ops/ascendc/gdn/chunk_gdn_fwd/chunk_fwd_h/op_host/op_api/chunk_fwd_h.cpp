@@ -59,6 +59,10 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional) {
         actualCuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
+        if (actualCuSeqlens == nullptr) {
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert cuSeqlens to tensor failed.");
+            return {nullptr, nullptr, nullptr};
+        }
         const_cast<aclTensor *>(actualCuSeqlens)->SetStorageFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualCuSeqlens)->SetViewFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualCuSeqlens)->SetOriginalFormat(Format::FORMAT_ND);
@@ -69,6 +73,10 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     const aclTensor *actualChunkIndices = nullptr;
     if (chunkIndicesOptional) {
         actualChunkIndices = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
+        if (actualChunkIndices == nullptr) {
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert chunkIndices to tensor failed.");
+            return {nullptr, nullptr, nullptr};
+        }
         const_cast<aclTensor *>(actualChunkIndices)->SetStorageFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualChunkIndices)->SetViewFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualChunkIndices)->SetOriginalFormat(Format::FORMAT_ND);
