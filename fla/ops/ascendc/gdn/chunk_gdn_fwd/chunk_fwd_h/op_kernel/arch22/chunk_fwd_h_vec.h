@@ -630,6 +630,12 @@ private:
             AscendC::Cast(stateBf16_[slot][row * FWD_H_V], calc_[slot],
                           AscendC::RoundMode::CAST_RINT, TILE_ELEMENTS);
             AscendC::PipeBarrier<PIPE_V>();
+            if constexpr (!WRITE_H) {
+                // Terminal BF16 state has no per-tile MTE3 copy. Bridge V to MTE3 before
+                // releasing the slot so the next MTE2 cannot overwrite raw_ early.
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+            }
         }
         if constexpr (WRITE_H) {
             AscendC::Cast(io_[slot], calc_[slot], AscendC::RoundMode::CAST_RINT, TILE_ELEMENTS);
