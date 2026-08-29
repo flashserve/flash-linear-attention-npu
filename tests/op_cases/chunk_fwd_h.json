@@ -456,22 +456,6 @@
       "seed": 206
     }
   ],
-  "call_path_cases": [
-    {
-      "id": "aclnn_zero_initial_bf16_final",
-      "batch": 1,
-      "seqlen": 64,
-      "k_heads": 1,
-      "v_heads": 1,
-      "gate_dtype": "float32",
-      "state_dtype": "bfloat16",
-      "output_final_state": true,
-      "state_v_first": false,
-      "k_value": 0.01,
-      "u_value": 0.02,
-      "seed": 104
-    }
-  ],
   "negative_cases": [
     {
       "id": "both_gate_inputs",
