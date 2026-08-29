@@ -25,13 +25,14 @@ python tests/operators/chunk_fwd_h/accuracy/test_chunk_fwd_h.py
 `state_v_first` 两种布局、`exp/exp2`、dense 多 batch、定长/变长、显式/自动
 chunk indices、尾 chunk 和最终 `v_new-only` 分支。A5 另覆盖 FP32 state 跨 chunk 常驻、
 单 head W/U/K/g 双 bank lookahead，以及 FP32/BF16 gate 的 tail63/tail1 边界。
+组合覆盖矩阵另验证 BF16/FP32 initial state、g/gk 与 exp/exp2 的八种组合。
 反向用例覆盖 gate 二选一、输入/输出 shape 与 dtype、固定 chunk size、g/gk head
 约束、varlen 元数据、canonical chunk indices、state shape/layout、ND/连续输出、可选
 final-state 物理存在性和必选 tensor 空指针，并校验对应 aclnn 返回码。
 
 性能用例同样定义在 `tests/op_cases/chunk_fwd_h.json` 的 `performance_cases`，runner
-只负责 warmup 和重复 launch。性能结论使用 `msprof` 的目标 kernel 记录，不使用 Python
-wall time：
+只负责 warmup 和重复 launch。性能结论使用 `msopprof` 的目标 kernel 记录，统一丢弃
+前 5 次 warmup 并统计随后 50 次 launch，不使用 Python wall time：
 
 ```bash
 python tests/operators/chunk_fwd_h/performance/run_chunk_fwd_h.py \
@@ -47,3 +48,8 @@ python tests/operators/chunk_fwd_h/performance/run_chunk_fwd_h.py \
 `a5_b1_hk16_hv32_t11264_fp32_initial`。变长场景的 65 个 `cu_seqlens` 边界由 seed 202
 随机生成后固化在用例 JSON 中，runner 根据这些边界生成 sequence-major canonical
 `chunk_indices`。
+
+g/gk、exp/exp2 与 BF16/FP32 initial state 的性能矩阵统一使用
+`B=1, HK=HV=32, T=11264`，case id 以 `a5_b1_hk32_hv32_t11264_` 开头。
+g 和 gk 使用同一 shape 和 seed 比较两条代码路径的开销；由于 gate 张量大小不同，
+两种 mode 后续生成的 initial state 不是逐元素相同的配对输入。
