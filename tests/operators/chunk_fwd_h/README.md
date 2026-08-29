@@ -23,7 +23,8 @@ python tests/operators/chunk_fwd_h/accuracy/test_chunk_fwd_h.py
 覆盖范围包括：每轮 1/2/3/4 个 head、`HK:HV=1:2/1:3/1:5/1:6/1:7`、跨 round
 重读 raw K、奇数 tail pair、长序列 credit 复用、g/gk、BF16/FP32 rolling state、
 `state_v_first` 两种布局、`exp/exp2`、dense 多 batch、定长/变长、显式/自动
-chunk indices、尾 chunk 和最终 `v_new-only` 分支。
+chunk indices、尾 chunk 和最终 `v_new-only` 分支。A5 另覆盖 FP32 state 跨 chunk 常驻、
+单 head W/U/K/g 双 bank lookahead，以及 FP32/BF16 gate 的 tail63/tail1 边界。
 反向用例覆盖 gate 二选一、输入/输出 shape 与 dtype、固定 chunk size、g/gk head
 约束、varlen 元数据、canonical chunk indices、state shape/layout、ND/连续输出、可选
 final-state 物理存在性和必选 tensor 空指针，并校验对应 aclnn 返回码。

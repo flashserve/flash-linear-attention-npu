@@ -257,6 +257,36 @@
             "state_v_first": true,
             "provide_chunk_indices": false,
             "seed": 27
+        },
+        {
+            "id": "g_fp32_resident_prefetch_tail63",
+            "mode": "g",
+            "batch": 1,
+            "seqlen": 319,
+            "k_heads": 1,
+            "v_heads": 1,
+            "gate_dtype": "float32",
+            "state_dtype": null,
+            "output_final_state": true,
+            "use_exp2": false,
+            "state_v_first": false,
+            "provide_chunk_indices": false,
+            "seed": 28
+        },
+        {
+            "id": "g_fp32_resident_initial_terminal_tail1",
+            "mode": "g",
+            "batch": 1,
+            "seqlen": 257,
+            "k_heads": 1,
+            "v_heads": 1,
+            "gate_dtype": "bfloat16",
+            "state_dtype": "float32",
+            "output_final_state": false,
+            "use_exp2": true,
+            "state_v_first": true,
+            "provide_chunk_indices": false,
+            "seed": 29
         }
   ],
   "performance_cases": [

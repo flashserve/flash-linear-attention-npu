@@ -73,8 +73,11 @@ AIV 读取 `U` 和 P，计算 `V_new`；g-only 同时生成带相对 gate 的 BF
 直接以 BF16 `V_new` 作为 right。`V_new` 写 GM。right 必须经 MTE3 写 GM workspace，禁止
 UB 直搬 L1。
 
-A5 从 MTE2 后开始的全部向量计算由每个 head 一次 RegBase VF 完成。VF 只使用
-`if constexpr` 模板分支和明确类型的 `for` 循环，并以两组 FP32 寄存器覆盖 128 列。
+A5 从 MTE2 后开始的全部向量计算由 RegBase VF 完成。g-only 的完整 chunk 先将 64 个
+`exp(g_last-g_i)` 一次性向量化写入 gate-scale bank，Stage1 逐行广播该结果，不再重复执行
+64 次向量 Exp；tail chunk 保留标量 gate 读取和单元素写回，避免读取 DataCopyPad 未初始化的
+UB 余量。VF 只使用 `if constexpr` 模板分支和明确类型的 `for` 循环，并以两组 FP32 寄存器
+覆盖 128 列。
 
 ### Stage2：第二次矩阵乘
 
@@ -97,8 +100,12 @@ AIC L1 固定分区：W `[0,64) KiB`，保留空洞 `[64,128) KiB`，H/right `[1
 kg `[256,320) KiB`。kg 区最多四个 16 KiB slot；每个 round 只占用 `requiredKhCount` 个。
 
 A5 每个 AIV 有两个 64 KiB local slot，Stage0 的 P 与 Stage2 的 D 按生命周期复用；BF16
-state、FP32 state、BF16 work 和 gate 区保持固定地址。A2/A3 使用两个 32 KiB tile local slot
-和两个 32 KiB BF16 state slot，P/D 使用每核每 round-head 独立的 GM scratch。
+state、FP32 state、BF16 work 和 gate 区保持固定地址。FP32 work unit 最多包含两个 head 时，
+每个 AIV 最多拥有一个 head，其 64 KiB rolling state 在整个 chunk 循环中常驻 `StateFp32`
+bank；仅首块读取 initial state、末块写 final state，不再逐 chunk 经 GM workspace 回写和恢复。
+work unit 含三个或四个 head 时，同一 AIV 会复用 state bank，继续使用原有 GM workspace
+fallback。A2/A3 使用两个 32 KiB tile local slot 和两个 32 KiB BF16 state slot，P/D 使用每核
+每 round-head 独立的 GM scratch。
 
 ## 6. 同步协议
 
@@ -110,6 +117,13 @@ slot/pair 的事件复用前必须完成上一代 wait。
 
 Stage 内按核内 head id 统一写一套流程，`headId&1` 选择 ping/pong L0 slot。当前 slot 的
 MTE2 完成即可启动该 slot 的 VEC/Cube，不等待另一 slot；Cube->Fixpipe 和 VEC->MTE3 同理。
+
+A5 的 FP32 scalar-g 单 head work unit额外启用跨 chunk lookahead。AIC 将 W 放在 L1 slot
+0/1、K 放在 slot 2/3，按 chunk 奇偶轮转；当前 right 的 GM->L1 已下发后，立即预取下一
+chunk 的 W/K，使下一块 MTE2 与当前 MTE1/MMAD/Fixpipe 重叠。AIV 同样以两个独立 input
+bank 轮转 U/g，在消费当前 bank 前先下发下一 bank；Work bank 由 `MTE3_MTE2` free credit
+保护，gate/alpha bank 由最终 Stage3 V consumer 发布 `V_MTE2` free credit。P/D/right/state
+仍使用原 local slot 和跨核 ready/free 协议，递推 H 仍严格等待上一 chunk 的 `H_READY`。
 
 A2/A3 在无初态、多 chunk 场景为第二个 chunk 的 P scratch 预置一次 free credit，因为首
 chunk 没有 Stage0/P；后续 credit 由前一 chunk Stage1 产生。round 结束时 P 与 D 两条独立
@@ -163,7 +177,7 @@ head round 的展开数组。kernel 在进入 chunk 循环前，按 `kNumHead/vN
 | `stateVFirst` | state 物理布局为 `[V,K]` 还是 `[K,V]` |
 | `vWorkspaceOffset` | A2/A3 P 的 GM scratch，按 FP32 slot stride 预留 `[blockDim,4,64,128]`；实际元素为 PType |
 | `vUpdateWorkspaceOffset` | Stage1 BF16 right 的 GM workspace，形状为 `[blockDim,4,64,128]` |
-| `kDecayWorkspaceOffset` | FP32 rolling state 的 GM workspace，形状为 `[blockDim,4,128,128]` |
+| `kDecayWorkspaceOffset` | FP32 rolling state 的 GM workspace，形状为 `[blockDim,4,128,128]`；A5 每 AIV 单 head 的常驻路径不访问该段，3/4-head fallback 仍使用 |
 | `hWorkspaceOffset` | A2/A3 D 的 FP32 GM scratch，形状为 `[blockDim,4,128,128]` |
 
 workspace 的 core 维使用实际 `blockDim`，各段按 512 Byte 对齐，并在 CANN lib-api workspace

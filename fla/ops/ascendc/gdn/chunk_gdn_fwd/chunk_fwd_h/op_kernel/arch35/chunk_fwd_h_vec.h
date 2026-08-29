@@ -18,6 +18,18 @@ namespace GDN {
 using namespace AscendC::MicroAPI;
 
 constexpr float FWD_H_LN2 = 0.69314718055994530942f;
+constexpr uint32_t FWD_H_ARCH35_GATE_SLOT_BYTES = 512;
+constexpr uint32_t FWD_H_ARCH35_GATE_SCALE_OFFSET = 256;
+static_assert(FWD_H_CHUNK * sizeof(float) <= FWD_H_ARCH35_GATE_SCALE_OFFSET);
+static_assert(FWD_H_ARCH35_GATE_SCALE_OFFSET + FWD_H_CHUNK * sizeof(float) <=
+              FWD_H_ARCH35_GATE_SLOT_BYTES);
+
+constexpr CastTrait FWD_H_B16_TO_F32_ZERO = {
+    RegLayout::ZERO,
+    SatMode::UNKNOWN,
+    MaskMergeMode::ZEROING,
+    AscendC::RoundMode::UNKNOWN,
+};
 
 __simd_callee__ inline void FwdHLoadFloatPair(RegTensor<float> &zero, RegTensor<float> &one,
                                                __ubuf__ float *src)
@@ -56,6 +68,33 @@ __simd_callee__ inline void FwdHLoadScalar(RegTensor<float> &dst, __ubuf__ T *sr
     (void)mask32;
 }
 
+template <typename T>
+__simd_callee__ inline void FwdHLoadGateVector(RegTensor<float> &dst,
+                                                __ubuf__ T *src, MaskReg &mask)
+{
+    if constexpr (std::is_same<T, float>::value) {
+        DataCopy<float, LoadDist::DIST_NORM>(dst, src);
+    } else {
+        static_assert(std::is_same<T, bfloat16_t>::value,
+                      "chunk_fwd_h scalar gate only supports float/bfloat16_t");
+        RegTensor<T> raw;
+        DataCopy<T, LoadDist::DIST_UNPACK_B16>(raw, src);
+        Cast<float, T, FWD_H_B16_TO_F32_ZERO>(dst, raw, mask);
+    }
+}
+
+__simd_callee__ inline void FwdHStoreGateVector(__ubuf__ float *dst,
+                                                 RegTensor<float> &src, MaskReg &mask)
+{
+    DataCopy<float, StoreDist::DIST_NORM_B32>(dst, src, mask);
+}
+
+__simd_callee__ inline void FwdHStoreGateScalar(__ubuf__ float *dst,
+                                                 RegTensor<float> &src, MaskReg &mask)
+{
+    DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dst, src, mask);
+}
+
 __simd_callee__ inline void FwdHStoreBf16(__ubuf__ bfloat16_t *dst,
                                           RegTensor<float> &zero, RegTensor<float> &one,
                                           MaskReg &mask32, MaskReg &mask16)
@@ -65,14 +104,62 @@ __simd_callee__ inline void FwdHStoreBf16(__ubuf__ bfloat16_t *dst,
     StoreAlign(dst, output, mask16);
 }
 
-template <bool HAS_P, bool SCALAR_G, bool WRITE_RIGHT, bool ZERO_STATE, bool USE_EXP2,
-          typename PType, typename GateT>
+template <bool USE_EXP2, typename GateT>
+__simd_vf__ inline void FwdHPrepareScalarGateArch35Vf(__ubuf__ float *gateScale,
+                                                       __ubuf__ GateT *gate,
+                                                       __ubuf__ float *alpha,
+                                                       uint16_t validTokens)
+{
+    MaskReg mask16 = CreateMask<bfloat16_t, MaskPattern::ALL>();
+    MaskReg mask32 = CreateMask<float, MaskPattern::ALL>();
+    RegTensor<float> lastGate;
+    FwdHLoadScalar<GateT>(lastGate, gate + validTokens - 1, mask16, mask32);
+
+    RegTensor<float> alphaReg;
+    Adds(alphaReg, lastGate, 0.0f, mask32);
+    if constexpr (USE_EXP2) {
+        Muls(alphaReg, alphaReg, FWD_H_LN2, mask32);
+    }
+    Exp(alphaReg, alphaReg, mask32);
+    uint32_t scalarCount = 1;
+    MaskReg scalarMask = UpdateMask<float>(scalarCount);
+    FwdHStoreGateVector(alpha, alphaReg, scalarMask);
+
+    RegTensor<float> gateReg;
+    if (validTokens == FWD_H_CHUNK) {
+        uint32_t gateCount = validTokens;
+        MaskReg gateMask = UpdateMask<float>(gateCount);
+        FwdHLoadGateVector<GateT>(gateReg, gate, gateMask);
+        Sub(gateReg, lastGate, gateReg, gateMask);
+        if constexpr (USE_EXP2) {
+            Muls(gateReg, gateReg, FWD_H_LN2, gateMask);
+        }
+        Exp(gateReg, gateReg, gateMask);
+        FwdHStoreGateVector(gateScale, gateReg, gateMask);
+    } else {
+        // DataCopyPad initializes only the valid tail and its final 32-byte block.
+        // Keep tail loads scalar so the VF never reads the uninitialized remainder
+        // of the 256-byte raw-gate bank. Full chunks retain the single vector Exp.
+        for (uint16_t row = 0; row < validTokens; ++row) {
+            FwdHLoadScalar<GateT>(gateReg, gate + row, mask16, mask32);
+            Sub(gateReg, lastGate, gateReg, mask32);
+            if constexpr (USE_EXP2) {
+                Muls(gateReg, gateReg, FWD_H_LN2, mask32);
+            }
+            Exp(gateReg, gateReg, mask32);
+            uint32_t one = 1;
+            MaskReg oneMask = UpdateMask<float>(one);
+            FwdHStoreGateScalar(gateScale + row, gateReg, oneMask);
+        }
+    }
+}
+
+template <bool HAS_P, bool SCALAR_G, bool WRITE_RIGHT, bool ZERO_STATE, typename PType>
 __simd_vf__ inline void FwdHStage1Arch35Vf(__ubuf__ bfloat16_t *uAndVNew,
                                            __ubuf__ PType *p,
-                                           __ubuf__ GateT *gate,
+                                           __ubuf__ float *gateScale,
                                            __ubuf__ bfloat16_t *right,
                                            __ubuf__ bfloat16_t *state,
-                                           __ubuf__ float *alpha,
                                            uint16_t validTokens)
 {
     // Stage1:
@@ -85,20 +172,6 @@ __simd_vf__ inline void FwdHStage1Arch35Vf(__ubuf__ bfloat16_t *uAndVNew,
     constexpr uint16_t STATE_ROWS = FWD_H_STATE_BF16_BYTES / sizeof(bfloat16_t) / BF16_PER_REG;
     MaskReg mask16 = CreateMask<bfloat16_t, MaskPattern::ALL>();
     MaskReg mask32 = CreateMask<float, MaskPattern::ALL>();
-
-    RegTensor<float> lastGate;
-    if constexpr (SCALAR_G && WRITE_RIGHT) {
-        FwdHLoadScalar<GateT>(lastGate, gate + validTokens - 1, mask16, mask32);
-        RegTensor<float> alphaReg;
-        FwdHLoadScalar<GateT>(alphaReg, gate + validTokens - 1, mask16, mask32);
-        if constexpr (USE_EXP2) {
-            Muls(alphaReg, alphaReg, FWD_H_LN2, mask32);
-        }
-        Exp(alphaReg, alphaReg, mask32);
-        uint32_t scalarCount = 1;
-        MaskReg scalarMask = UpdateMask<float>(scalarCount);
-        StoreAlign(alpha, alphaReg, scalarMask);
-    }
 
     if constexpr (ZERO_STATE) {
         RegTensor<bfloat16_t> zeroState;
@@ -113,11 +186,14 @@ __simd_vf__ inline void FwdHStage1Arch35Vf(__ubuf__ bfloat16_t *uAndVNew,
     RegTensor<float> u1;
     RegTensor<float> p0;
     RegTensor<float> p1;
-    RegTensor<float> gateReg;
+    RegTensor<float> scaleReg;
     #pragma unroll 2
     for (uint16_t row = 0; row < validTokens; ++row) {
         const uint32_t rowBf16Offset = static_cast<uint32_t>(row) * FWD_H_V;
         const uint32_t rowFp32Offset = static_cast<uint32_t>(row) * FWD_H_V;
+        if constexpr (SCALAR_G && WRITE_RIGHT) {
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(scaleReg, gateScale + row);
+        }
         for (uint16_t col = 0; col < FWD_H_V; col += BF16_PER_REG) {
             const uint32_t bf16Offset = rowBf16Offset + col;
             const uint32_t fp32Offset = rowFp32Offset + col;
@@ -138,14 +214,8 @@ __simd_vf__ inline void FwdHStage1Arch35Vf(__ubuf__ bfloat16_t *uAndVNew,
 
             if constexpr (WRITE_RIGHT) {
                 if constexpr (SCALAR_G) {
-                    FwdHLoadScalar<GateT>(gateReg, gate + row, mask16, mask32);
-                    Sub(gateReg, lastGate, gateReg, mask32);
-                    if constexpr (USE_EXP2) {
-                        Muls(gateReg, gateReg, FWD_H_LN2, mask32);
-                    }
-                    Exp(gateReg, gateReg, mask32);
-                    Mul(u0, u0, gateReg, mask32);
-                    Mul(u1, u1, gateReg, mask32);
+                    Mul(u0, u0, scaleReg, mask32);
+                    Mul(u1, u1, scaleReg, mask32);
                 }
                 FwdHStoreBf16(right + bf16Offset, u0, u1, mask32, mask16);
             }
@@ -353,7 +423,13 @@ private:
 
     __aicore__ inline AscendC::LocalTensor<GateT> GateSlot(uint32_t slot)
     {
-        return UbAt<GateT>(FWD_H_UB_GATE_BASE + slot * 512);
+        return UbAt<GateT>(FWD_H_UB_GATE_BASE + slot * FWD_H_ARCH35_GATE_SLOT_BYTES);
+    }
+
+    __aicore__ inline AscendC::LocalTensor<float> GateScaleSlot(uint32_t slot)
+    {
+        return UbAt<float>(FWD_H_UB_GATE_BASE + slot * FWD_H_ARCH35_GATE_SLOT_BYTES +
+                           FWD_H_ARCH35_GATE_SCALE_OFFSET);
     }
 
     __aicore__ inline AscendC::LocalTensor<float> AlphaSlot(uint32_t slot)
@@ -365,6 +441,8 @@ private:
     {
         for (uint32_t slot = 0; slot < FWD_H_AIV_HEAD_SLOTS; ++slot) {
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(WorkFreeEvent(slot));
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(GateFreeEvent(slot));
         }
     }
 
@@ -383,12 +461,35 @@ private:
         return static_cast<AscendC::TEventID>(slot);
     }
 
+    __aicore__ inline AscendC::TEventID WorkFreeEvent(uint32_t slot) const
+    {
+        return static_cast<AscendC::TEventID>(FWD_H_AIV_HEAD_SLOTS + slot);
+    }
+
+    __aicore__ inline AscendC::TEventID WorkReadyEvent(uint32_t slot) const
+    {
+        return static_cast<AscendC::TEventID>(FWD_H_AIV_HEAD_SLOTS + slot);
+    }
+
+    __aicore__ inline AscendC::TEventID WorkDoneEvent(uint32_t slot) const
+    {
+        return static_cast<AscendC::TEventID>(FWD_H_AIV_HEAD_SLOTS + slot);
+    }
+
+    __aicore__ inline AscendC::TEventID GateFreeEvent(uint32_t slot) const
+    {
+        return static_cast<AscendC::TEventID>(slot);
+    }
+
     __aicore__ inline void DrainLocalEvents()
     {
         for (uint32_t slot = 0; slot < FWD_H_AIV_HEAD_SLOTS; ++slot) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(WorkFreeEvent(slot));
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(GateFreeEvent(slot));
         }
-        // 三种 HardEvent 分属独立事件空间，均固定使用与 ping/pong 槽一致的 0/1。
+        // Io 使用 0/1；跨 chunk Work 使用 2/3；Gate/alpha 的 V->MTE2 credit
+        // 使用独立 HardEvent 空间的 0/1。所有代际均在退出前回到 free 状态。
     }
 
     __aicore__ inline uint64_t HOffset(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
@@ -413,20 +514,25 @@ private:
     }
 
     __aicore__ inline void CopyGateToUb(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
-                                        const FwdHHeadBinding &head)
+                                        const FwdHHeadBinding &head, uint32_t gateSlot)
     {
         AscendC::GlobalTensor<GateT> gateGm;
         gateGm.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(
             CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G ? args_.g : args_.gk));
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
-            AscendC::DataCopyPadExtParams<GateT> pad{false, 0, 0, 0};
-            const uint32_t gateBytes = static_cast<uint32_t>(chunk.validTokens * sizeof(GateT));
-            AscendC::DataCopyExtParams copy{1, gateBytes, 0, 0, 0};
-            AscendC::DataCopyPad(GateSlot(head.localSlot), gateGm[GateOffset(unit, chunk, head)], copy, pad);
+            const uint64_t gateOffset = GateOffset(unit, chunk, head);
+            if (chunk.validTokens == FWD_H_CHUNK) {
+                AscendC::DataCopy(GateSlot(gateSlot), gateGm[gateOffset], FWD_H_CHUNK);
+            } else {
+                AscendC::DataCopyPadExtParams<GateT> pad{false, 0, 0, 0};
+                const uint32_t gateBytes = static_cast<uint32_t>(chunk.validTokens * sizeof(GateT));
+                AscendC::DataCopyExtParams copy{1, gateBytes, 0, 0, 0};
+                AscendC::DataCopyPad(GateSlot(gateSlot), gateGm[gateOffset], copy, pad);
+            }
         } else {
             const uint64_t lastOffset = GateOffset(unit, chunk, head) +
                                         static_cast<uint64_t>(chunk.validTokens - 1) * FWD_H_K;
-            AscendC::DataCopy(GateSlot(head.localSlot), gateGm[lastOffset], FWD_H_K);
+            AscendC::DataCopy(GateSlot(gateSlot), gateGm[lastOffset], FWD_H_K);
         }
     }
 
@@ -498,32 +604,46 @@ private:
     }
 
     // 保留 leaf stage 调用边界，使各 stage 的临时标量对象复用同一栈区。
-    template <bool HAS_P, bool WRITE_RIGHT, bool ZERO_STATE>
+    template <bool HAS_P, bool WRITE_RIGHT, bool ZERO_STATE, bool SEPARATE_INPUT>
     __aicore__ inline void ConsumeStage1Head(
-        const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHHeadBinding &head)
+        const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHHeadBinding &head,
+        uint32_t inputSlot)
     {
         const uint32_t slot = head.localSlot;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
-        if constexpr (HAS_P) {
-            AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(FwdHAivLocalFlag(FWD_H_P_READY_FLAG, slot));
+        if constexpr (SEPARATE_INPUT) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(WorkReadyEvent(inputSlot));
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+        } else {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
         }
         using PType = std::conditional_t<CompilePolicy::STATE_FP32, float, bfloat16_t>;
         __ubuf__ PType *p = reinterpret_cast<__ubuf__ PType *>(LocalSlot(slot).GetPhyAddr());
         __ubuf__ bfloat16_t *right = reinterpret_cast<__ubuf__ bfloat16_t *>(RightSlot(slot).GetPhyAddr());
         __ubuf__ bfloat16_t *state = reinterpret_cast<__ubuf__ bfloat16_t *>(StateBf16Slot(slot).GetPhyAddr());
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
-            AscendC::VF_CALL<FwdHStage1Arch35Vf<HAS_P, true, WRITE_RIGHT, ZERO_STATE,
-                                                CompilePolicy::USE_EXP2, PType, GateT>>(
-                reinterpret_cast<__ubuf__ bfloat16_t *>(WorkBf16Slot(slot).GetPhyAddr()), p,
-                reinterpret_cast<__ubuf__ GateT *>(GateSlot(slot).GetPhyAddr()), right, state,
-                reinterpret_cast<__ubuf__ float *>(AlphaSlot(slot).GetPhyAddr()),
+            if constexpr (WRITE_RIGHT) {
+                AscendC::VF_CALL<FwdHPrepareScalarGateArch35Vf<CompilePolicy::USE_EXP2, GateT>>(
+                    reinterpret_cast<__ubuf__ float *>(GateScaleSlot(inputSlot).GetPhyAddr()),
+                    reinterpret_cast<__ubuf__ GateT *>(GateSlot(inputSlot).GetPhyAddr()),
+                    reinterpret_cast<__ubuf__ float *>(AlphaSlot(inputSlot).GetPhyAddr()),
+                    static_cast<uint16_t>(chunk.validTokens));
+                AscendC::PipeBarrier<PIPE_V>();
+            }
+        }
+        if constexpr (HAS_P) {
+            // Gate decay is independent of P. Queue it before the cross-core P wait so
+            // scalar Exp can overlap the producer's Stage0 tail.
+            AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(FwdHAivLocalFlag(FWD_H_P_READY_FLAG, slot));
+        }
+        if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
+            AscendC::VF_CALL<FwdHStage1Arch35Vf<HAS_P, true, WRITE_RIGHT, ZERO_STATE, PType>>(
+                reinterpret_cast<__ubuf__ bfloat16_t *>(WorkBf16Slot(inputSlot).GetPhyAddr()), p,
+                reinterpret_cast<__ubuf__ float *>(GateScaleSlot(inputSlot).GetPhyAddr()), right, state,
                 static_cast<uint16_t>(chunk.validTokens));
         } else {
-            AscendC::VF_CALL<FwdHStage1Arch35Vf<HAS_P, false, WRITE_RIGHT, ZERO_STATE,
-                                                CompilePolicy::USE_EXP2, PType, GateT>>(
-                reinterpret_cast<__ubuf__ bfloat16_t *>(WorkBf16Slot(slot).GetPhyAddr()), p,
-                reinterpret_cast<__ubuf__ GateT *>(GateSlot(slot).GetPhyAddr()), right, state,
-                reinterpret_cast<__ubuf__ float *>(AlphaSlot(slot).GetPhyAddr()),
+            AscendC::VF_CALL<FwdHStage1Arch35Vf<HAS_P, false, WRITE_RIGHT, ZERO_STATE, PType>>(
+                reinterpret_cast<__ubuf__ bfloat16_t *>(WorkBf16Slot(inputSlot).GetPhyAddr()), p,
+                reinterpret_cast<__ubuf__ float *>(GateScaleSlot(inputSlot).GetPhyAddr()), right, state,
                 static_cast<uint16_t>(chunk.validTokens));
         }
         if constexpr (HAS_P) {
@@ -537,9 +657,14 @@ private:
         rightGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + args_.tiling.vUpdateWorkspaceOffset));
         h.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h));
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-        AscendC::DataCopy(vNew[UOffset(unit, chunk, head)], WorkBf16Slot(slot),
+        if constexpr (SEPARATE_INPUT) {
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(WorkDoneEvent(inputSlot));
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(WorkDoneEvent(inputSlot));
+        } else {
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+        }
+        AscendC::DataCopy(vNew[UOffset(unit, chunk, head)], WorkBf16Slot(inputSlot),
                           chunk.validTokens * FWD_H_V);
         if constexpr (WRITE_RIGHT) {
             const uint64_t rightOffset = FwdHCoreSlotOffset(coreIdx_, head.roundHead,
@@ -555,7 +680,37 @@ private:
         } else if constexpr (ZERO_STATE) {
             AscendC::DataCopy(h[HOffset(unit, chunk, head)], StateBf16Slot(slot), FWD_H_K * FWD_H_V);
         }
+        if constexpr (SEPARATE_INPUT) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(WorkFreeEvent(inputSlot));
+        }
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+    }
+
+    __aicore__ inline void PrefetchStage1Inputs(
+        const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHHeadBinding &head,
+        uint32_t inputSlot, bool writeRight)
+    {
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(WorkFreeEvent(inputSlot));
+        if (writeRight) {
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(GateFreeEvent(inputSlot));
+        }
+        AscendC::GlobalTensor<bfloat16_t> u;
+        u.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.u));
+        AscendC::DataCopy(WorkBf16Slot(inputSlot), u[UOffset(unit, chunk, head)],
+                          chunk.validTokens * FWD_H_V);
+        if (writeRight) {
+            CopyGateToUb(unit, chunk, head, inputSlot);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(WorkReadyEvent(inputSlot));
+    }
+
+    __aicore__ inline void AcquireStage1LocalSlot(const FwdHHeadBinding &head)
+    {
+        // Publish local-slot ownership to V before queuing next-chunk U/g on MTE2;
+        // otherwise the current Stage1 would sit behind the lookahead transfer.
+        const uint32_t slot = head.localSlot;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
     }
 
     __aicore__ inline void RunStage1(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk)
@@ -575,7 +730,7 @@ private:
             AscendC::DataCopy(WorkBf16Slot(slot), u[UOffset(unit, chunk, head)], chunk.validTokens * FWD_H_V);
             if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
                 if (writeRight) {
-                    CopyGateToUb(unit, chunk, head);
+                    CopyGateToUb(unit, chunk, head, slot);
                 }
             }
             if (!CompilePolicy::STATE_FP32 && chunk.first && args_.tiling.useInitialState != 0) {
@@ -587,40 +742,55 @@ private:
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
             if (coreHeadId > 0) {
                 const FwdHHeadBinding &previous = unit.headRound.heads[aiv_ + 2 * (coreHeadId - 1)];
-                DispatchStage1(unit, chunk, previous, hasP, writeRight, zeroState);
+                DispatchStage1<false>(unit, chunk, previous, previous.localSlot,
+                                      hasP, writeRight, zeroState);
             }
         }
         if (localHeads > 0) {
             const FwdHHeadBinding &last = unit.headRound.heads[aiv_ + 2 * (localHeads - 1)];
-            DispatchStage1(unit, chunk, last, hasP, writeRight, zeroState);
+            DispatchStage1<false>(unit, chunk, last, last.localSlot,
+                                  hasP, writeRight, zeroState);
         }
     }
 
+    template <bool SEPARATE_INPUT>
     __aicore__ inline void DispatchStage1(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
-                                          const FwdHHeadBinding &head, bool hasP,
+                                          const FwdHHeadBinding &head, uint32_t inputSlot, bool hasP,
                                           bool writeRight, bool zeroState)
     {
         if (hasP) {
             if (writeRight) {
-                zeroState ? ConsumeStage1Head<true, true, true>(unit, chunk, head)
-                          : ConsumeStage1Head<true, true, false>(unit, chunk, head);
+                zeroState ? ConsumeStage1Head<true, true, true, SEPARATE_INPUT>(
+                                unit, chunk, head, inputSlot)
+                          : ConsumeStage1Head<true, true, false, SEPARATE_INPUT>(
+                                unit, chunk, head, inputSlot);
             } else {
-                zeroState ? ConsumeStage1Head<true, false, true>(unit, chunk, head)
-                          : ConsumeStage1Head<true, false, false>(unit, chunk, head);
+                zeroState ? ConsumeStage1Head<true, false, true, SEPARATE_INPUT>(
+                                unit, chunk, head, inputSlot)
+                          : ConsumeStage1Head<true, false, false, SEPARATE_INPUT>(
+                                unit, chunk, head, inputSlot);
             }
         } else if (writeRight) {
-            zeroState ? ConsumeStage1Head<false, true, true>(unit, chunk, head)
-                      : ConsumeStage1Head<false, true, false>(unit, chunk, head);
+            zeroState ? ConsumeStage1Head<false, true, true, SEPARATE_INPUT>(
+                            unit, chunk, head, inputSlot)
+                      : ConsumeStage1Head<false, true, false, SEPARATE_INPUT>(
+                            unit, chunk, head, inputSlot);
         } else {
-            zeroState ? ConsumeStage1Head<false, false, true>(unit, chunk, head)
-                      : ConsumeStage1Head<false, false, false>(unit, chunk, head);
+            zeroState ? ConsumeStage1Head<false, false, true, SEPARATE_INPUT>(
+                            unit, chunk, head, inputSlot)
+                      : ConsumeStage1Head<false, false, false, SEPARATE_INPUT>(
+                            unit, chunk, head, inputSlot);
         }
     }
 
-    template <bool WRITE_H, bool WAIT_MTE2, bool ZERO_INIT>
+    template <bool WRITE_H, bool WAIT_MTE2, bool ZERO_INIT, bool RESIDENT_FP32_STATE,
+              bool RELEASE_GATE_BANK>
     __aicore__ inline void ConsumeStage3Head(
-        const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHHeadBinding &head)
+        const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHHeadBinding &head,
+        uint32_t gateSlot)
     {
+        static_assert(!RESIDENT_FP32_STATE || CompilePolicy::STATE_FP32,
+                      "resident state is only valid for FP32 state");
         const uint32_t slot = head.localSlot;
         AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(FwdHAivLocalFlag(FWD_H_D_READY_FLAG, slot));
         if constexpr (WAIT_MTE2) {
@@ -643,15 +813,22 @@ private:
                                                 WRITE_H, ZERO_INIT, CompilePolicy::USE_EXP2, GateT>>(
                 reinterpret_cast<__ubuf__ bfloat16_t *>(StateBf16Slot(slot).GetPhyAddr()),
                 reinterpret_cast<__ubuf__ float *>(StateFp32().GetPhyAddr()), d,
-                reinterpret_cast<__ubuf__ GateT *>(GateSlot(slot).GetPhyAddr()),
-                reinterpret_cast<__ubuf__ float *>(AlphaSlot(slot).GetPhyAddr()), hNext);
+                reinterpret_cast<__ubuf__ GateT *>(GateSlot(gateSlot).GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(AlphaSlot(gateSlot).GetPhyAddr()), hNext);
         } else {
             AscendC::VF_CALL<FwdHStage3Arch35Vf<CompilePolicy::STATE_FP32, false, STATE_V_FIRST,
                                                 WRITE_H, ZERO_INIT, CompilePolicy::USE_EXP2, GateT>>(
                 reinterpret_cast<__ubuf__ bfloat16_t *>(StateBf16Slot(slot).GetPhyAddr()),
                 reinterpret_cast<__ubuf__ float *>(StateFp32().GetPhyAddr()), d,
-                reinterpret_cast<__ubuf__ GateT *>(GateSlot(slot).GetPhyAddr()),
-                reinterpret_cast<__ubuf__ float *>(AlphaSlot(slot).GetPhyAddr()), hNext);
+                reinterpret_cast<__ubuf__ GateT *>(GateSlot(gateSlot).GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(AlphaSlot(gateSlot).GetPhyAddr()), hNext);
+        }
+        if constexpr (RELEASE_GATE_BANK) {
+            static_assert(CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G,
+                          "cross-chunk gate banks are only used by scalar-g");
+            // Stage3 is the final V consumer of alpha/gateScale. Publish this bank to
+            // MTE2 only after its vector reads have completed.
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(GateFreeEvent(gateSlot));
         }
         if constexpr (!WRITE_H || !CompilePolicy::STATE_FP32) {
             AscendC::CrossCoreSetFlag<0x4, PIPE_V>(FwdHAivLocalFlag(FWD_H_D_FREE_FLAG, slot));
@@ -663,11 +840,13 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
         if constexpr (WRITE_H) {
             if constexpr (CompilePolicy::STATE_FP32) {
-                AscendC::GlobalTensor<float> state;
-                state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace));
-                const uint64_t stateOffset = args_.tiling.kDecayWorkspaceOffset / sizeof(float) +
-                    FwdHCoreSlotOffset(coreIdx_, head.roundHead, FWD_H_K * FWD_H_V);
-                AscendC::DataCopy(state[stateOffset], StateFp32(), FWD_H_K * FWD_H_V);
+                if constexpr (!RESIDENT_FP32_STATE) {
+                    AscendC::GlobalTensor<float> state;
+                    state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace));
+                    const uint64_t stateOffset = args_.tiling.kDecayWorkspaceOffset / sizeof(float) +
+                        FwdHCoreSlotOffset(coreIdx_, head.roundHead, FWD_H_K * FWD_H_V);
+                    AscendC::DataCopy(state[stateOffset], StateFp32(), FWD_H_K * FWD_H_V);
+                }
             }
             const FwdHChunkSpan next = FwdHBuildChunk(unit.sequence, chunk.chunk + 1);
             if constexpr (CompilePolicy::STATE_FP32) {
@@ -701,8 +880,15 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
     }
 
-    __aicore__ inline void RunStage3(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk)
+    template <bool RESIDENT_FP32_STATE, bool EXTERNAL_GATE_BANK>
+    __aicore__ inline void RunStage3Impl(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
+                                         uint32_t externalGateSlot)
     {
+        static_assert(!RESIDENT_FP32_STATE || CompilePolicy::STATE_FP32,
+                      "resident state is only valid for FP32 state");
+        static_assert(!EXTERNAL_GATE_BANK ||
+                          CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G,
+                      "external gate banks are only valid for scalar-g");
         // Stage3：g-only 为 R_next=E(g_last)R+D；gk-only 为
         // R_next[k,v]=E(gk_last[k])R[k,v]+D[k,v]，并按需生成下一 H 或 final_state。
         const bool writeH = !chunk.last;
@@ -718,6 +904,7 @@ private:
         for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
             const FwdHHeadBinding &head = unit.headRound.heads[aiv_ + 2 * coreHeadId];
             const uint32_t slot = head.localSlot;
+            const uint32_t gateSlot = EXTERNAL_GATE_BANK ? externalGateSlot : slot;
             if constexpr (CompilePolicy::STATE_FP32) {
                 if (coreHeadId > 0) {
                     const uint32_t previousSlot = unit.headRound.heads[
@@ -728,11 +915,6 @@ private:
             }
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
             if constexpr (CompilePolicy::STATE_FP32) {
-                AscendC::GlobalTensor<float> state;
-                const uint64_t workspaceBase = args_.tiling.kDecayWorkspaceOffset / sizeof(float);
-                state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace));
-                const uint64_t offset = workspaceBase +
-                    FwdHCoreSlotOffset(coreIdx_, head.roundHead, FWD_H_K * FWD_H_V);
                 if (chunk.first) {
                     if (args_.tiling.useInitialState != 0) {
                         AscendC::GlobalTensor<float> initial;
@@ -741,18 +923,24 @@ private:
                                                                       head.hv, 0, 0);
                         AscendC::DataCopy(StateFp32(), initial[initialOffset], FWD_H_K * FWD_H_V);
                     }
-                } else {
+                } else if constexpr (!RESIDENT_FP32_STATE) {
+                    AscendC::GlobalTensor<float> state;
+                    const uint64_t workspaceBase = args_.tiling.kDecayWorkspaceOffset / sizeof(float);
+                    state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace));
+                    const uint64_t offset = workspaceBase +
+                        FwdHCoreSlotOffset(coreIdx_, head.roundHead, FWD_H_K * FWD_H_V);
                     AscendC::DataCopy(StateFp32(), state[offset], FWD_H_K * FWD_H_V);
                 }
             }
             if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::KEY_GK) {
-                CopyGateToUb(unit, chunk, head);
+                CopyGateToUb(unit, chunk, head, slot);
             }
             const bool zeroState = chunk.first && args_.tiling.useInitialState == 0;
             if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::KEY_GK) {
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
             } else if constexpr (CompilePolicy::STATE_FP32) {
-                if (!zeroState) {
+                const bool stateLoaded = !zeroState && (!RESIDENT_FP32_STATE || chunk.first);
+                if (stateLoaded) {
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
                 }
             }
@@ -760,33 +948,108 @@ private:
                 // gk-only 每个 Stage3 都搬入 gk_last，必须等待该 MTE2。
                 if (zeroState) {
                     if (writeH) {
-                        ConsumeStage3Head<true, true, true>(unit, chunk, head);
+                        ConsumeStage3Head<true, true, true, RESIDENT_FP32_STATE,
+                                          EXTERNAL_GATE_BANK>(unit, chunk, head, gateSlot);
                     } else {
-                        ConsumeStage3Head<false, true, true>(unit, chunk, head);
+                        ConsumeStage3Head<false, true, true, RESIDENT_FP32_STATE,
+                                          EXTERNAL_GATE_BANK>(unit, chunk, head, gateSlot);
                     }
                 } else if (writeH) {
-                    ConsumeStage3Head<true, true, false>(unit, chunk, head);
+                    ConsumeStage3Head<true, true, false, RESIDENT_FP32_STATE,
+                                      EXTERNAL_GATE_BANK>(unit, chunk, head, gateSlot);
                 } else {
-                    ConsumeStage3Head<false, true, false>(unit, chunk, head);
+                    ConsumeStage3Head<false, true, false, RESIDENT_FP32_STATE,
+                                      EXTERNAL_GATE_BANK>(unit, chunk, head, gateSlot);
                 }
             } else if constexpr (CompilePolicy::STATE_FP32) {
                 if (zeroState) {
                     // 首 chunk 无 initial_state 时 state 为 VF 内构造的零值，没有 MTE2 输入。
                     if (writeH) {
-                        ConsumeStage3Head<true, false, true>(unit, chunk, head);
+                        ConsumeStage3Head<true, false, true, RESIDENT_FP32_STATE,
+                                          EXTERNAL_GATE_BANK>(unit, chunk, head, gateSlot);
                     } else {
-                        ConsumeStage3Head<false, false, true>(unit, chunk, head);
+                        ConsumeStage3Head<false, false, true, RESIDENT_FP32_STATE,
+                                          EXTERNAL_GATE_BANK>(unit, chunk, head, gateSlot);
                     }
-                } else if (writeH) {
-                    ConsumeStage3Head<true, true, false>(unit, chunk, head);
                 } else {
-                    ConsumeStage3Head<false, true, false>(unit, chunk, head);
+                    const bool waitStateMte2 = !RESIDENT_FP32_STATE || chunk.first;
+                    if (waitStateMte2) {
+                        if (writeH) {
+                            ConsumeStage3Head<true, true, false, RESIDENT_FP32_STATE,
+                                              EXTERNAL_GATE_BANK>(unit, chunk, head, gateSlot);
+                        } else {
+                            ConsumeStage3Head<false, true, false, RESIDENT_FP32_STATE,
+                                              EXTERNAL_GATE_BANK>(unit, chunk, head, gateSlot);
+                        }
+                    } else if (writeH) {
+                        ConsumeStage3Head<true, false, false, RESIDENT_FP32_STATE,
+                                          EXTERNAL_GATE_BANK>(unit, chunk, head, gateSlot);
+                    } else {
+                        ConsumeStage3Head<false, false, false, RESIDENT_FP32_STATE,
+                                          EXTERNAL_GATE_BANK>(unit, chunk, head, gateSlot);
+                    }
                 }
             } else if (writeH) {
                 // BF16 g-only 的 stateBf16 由 Stage1 写入并由 right-ready 链路保护。
-                ConsumeStage3Head<true, false, false>(unit, chunk, head);
+                ConsumeStage3Head<true, false, false, false, false>(unit, chunk, head, gateSlot);
             } else {
-                ConsumeStage3Head<false, false, false>(unit, chunk, head);
+                ConsumeStage3Head<false, false, false, false, false>(unit, chunk, head, gateSlot);
+            }
+        }
+    }
+
+    __aicore__ inline void RunStage3(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk)
+    {
+        if constexpr (CompilePolicy::STATE_FP32) {
+            // StateFp32() 只有一个 64 KiB bank。activeHeadCount<=2 时每个 AIV
+            // 至多处理一个 head，state 可跨 chunk 常驻；3/4 head 继续走 workspace。
+            if (unit.headRound.activeHeadCount <= FWD_H_AIV_COUNT) {
+                RunStage3Impl<true, false>(unit, chunk, 0);
+            } else {
+                RunStage3Impl<false, false>(unit, chunk, 0);
+            }
+        } else {
+            RunStage3Impl<false, false>(unit, chunk, 0);
+        }
+    }
+
+    __aicore__ inline bool NeedsStage3(const FwdHChunkSpan &chunk) const
+    {
+        return args_.tiling.storeFinalState != 0 || !chunk.last;
+    }
+
+    __aicore__ inline void ProcessSingleHeadPipeline(const FwdHWorkUnit &unit)
+    {
+        // activeHeadCount==1 时只有 AIV0 持有 head。U/g 使用 chunk 奇偶 bank，
+        // 下一 chunk 的 MTE2 在当前 Stage1/Stage3 前发射；P/D/right/state 仍使用
+        // 逻辑 localSlot0，并保持原有跨核 ready/free 协议。
+        const uint32_t localHeads = FwdHAivHeadCount(unit.headRound.activeHeadCount, aiv_);
+        if (localHeads == 0) {
+            return;
+        }
+        const FwdHHeadBinding &head = unit.headRound.heads[aiv_];
+        const FwdHChunkSpan first = FwdHBuildChunk(unit.sequence, 0);
+        const bool firstWriteRight = NeedsStage3(first);
+        PrefetchStage1Inputs(unit, first, head, 0, firstWriteRight);
+
+        for (uint32_t chunkId = 0; chunkId < unit.sequence.chunkCount; ++chunkId) {
+            const FwdHChunkSpan chunk = FwdHBuildChunk(unit.sequence, chunkId);
+            const uint32_t inputSlot = chunkId & 1U;
+            const bool writeRight = NeedsStage3(chunk);
+            AcquireStage1LocalSlot(head);
+            if (!chunk.last) {
+                const FwdHChunkSpan next = FwdHBuildChunk(unit.sequence, chunkId + 1);
+                PrefetchStage1Inputs(unit, next, head, inputSlot ^ 1U, NeedsStage3(next));
+            }
+            if (chunkId > 0) {
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
+                    FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, head.localSlot));
+            }
+            const bool hasP = !(chunk.first && args_.tiling.useInitialState == 0);
+            const bool zeroState = chunk.first && args_.tiling.useInitialState == 0;
+            DispatchStage1<true>(unit, chunk, head, inputSlot, hasP, writeRight, zeroState);
+            if (writeRight) {
+                RunStage3Impl<true, true>(unit, chunk, inputSlot);
             }
         }
     }
@@ -797,17 +1060,38 @@ private:
             args_.tiling.seqlen > static_cast<int64_t>(FWD_H_CHUNK);
         const uint32_t localHeads = FwdHAivHeadCount(unit.headRound.activeHeadCount, aiv_);
         RunSMinusOne(unit);
-        for (uint32_t chunkId = 0; chunkId < unit.sequence.chunkCount; ++chunkId) {
-            const FwdHChunkSpan chunk = FwdHBuildChunk(unit.sequence, chunkId);
-            if (chunkId > 0) {
-                for (uint32_t slot = 0; slot < localHeads; ++slot) {
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
-                        FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, slot));
+        if constexpr (CompilePolicy::STATE_FP32 &&
+                      CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
+            if (unit.headRound.activeHeadCount == 1) {
+                ProcessSingleHeadPipeline(unit);
+            } else {
+                for (uint32_t chunkId = 0; chunkId < unit.sequence.chunkCount; ++chunkId) {
+                    const FwdHChunkSpan chunk = FwdHBuildChunk(unit.sequence, chunkId);
+                    if (chunkId > 0) {
+                        for (uint32_t slot = 0; slot < localHeads; ++slot) {
+                            AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
+                                FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, slot));
+                        }
+                    }
+                    RunStage1(unit, chunk);
+                    if (NeedsStage3(chunk)) {
+                        RunStage3(unit, chunk);
+                    }
                 }
             }
-            RunStage1(unit, chunk);
-            if (args_.tiling.storeFinalState != 0 || !chunk.last) {
-                RunStage3(unit, chunk);
+        } else {
+            for (uint32_t chunkId = 0; chunkId < unit.sequence.chunkCount; ++chunkId) {
+                const FwdHChunkSpan chunk = FwdHBuildChunk(unit.sequence, chunkId);
+                if (chunkId > 0) {
+                    for (uint32_t slot = 0; slot < localHeads; ++slot) {
+                        AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
+                            FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, slot));
+                    }
+                }
+                RunStage1(unit, chunk);
+                if (NeedsStage3(chunk)) {
+                    RunStage3(unit, chunk);
+                }
             }
         }
         const bool lastHasStage2 = args_.tiling.storeFinalState != 0;
