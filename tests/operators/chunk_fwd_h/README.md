@@ -13,6 +13,15 @@ python tests/operators/chunk_fwd_h/accuracy/test_chunk_fwd_h.py
 pytest -q tests/operators/chunk_fwd_h/ut/test_chunk_fwd_h_validation.py
 ```
 
+独立 aclnn C ABI 通路校验会直接解析并调用
+`aclnnChunkFwdHGetWorkspaceSize/aclnnChunkFwdH`，不经过公开 Python wrapper。测试包含零输入
+正向 launch、空 `workspaceSize` 的 `ACLNN_ERR_PARAM_NULLPTR` 和私有 format 的
+`ACLNN_ERR_PARAM_INVALID`：
+
+```bash
+pytest -q tests/operators/chunk_fwd_h/call_path/test_chunk_fwd_h_aclnn.py
+```
+
 可通过 `CHUNK_FWD_H_CASE_IDS` 仅运行逗号分隔的指定 case：
 
 ```bash
@@ -20,8 +29,26 @@ CHUNK_FWD_H_CASE_IDS=g_ratio_1_to_6_cross_round \
 python tests/operators/chunk_fwd_h/accuracy/test_chunk_fwd_h.py
 ```
 
-覆盖范围包括：每轮 1/2/3/4 个 head、`HK:HV=1:2/1:3/1:6`、跨 round
-重读 raw K、g/gk、BF16/FP32 rolling state、`state_v_first` 两种布局、
-`exp/exp2`、定长/变长、尾 chunk 和最终 `v_new-only` 分支。
-反向用例覆盖 gate 二选一、固定 chunk size、g/gk head 约束、varlen batch 和
-`state_v_first` 对应的 state shape。
+覆盖范围包括：每轮 1/2/3/4 个 head、`HK:HV=1:2/1:3/1:5/1:6/1:7`、跨 round
+重读 raw K、奇数 tail pair、长序列 credit 复用、g/gk、BF16/FP32 rolling state、
+`state_v_first` 两种布局、`exp/exp2`、dense 多 batch、定长/变长、显式/自动
+chunk indices、尾 chunk 和最终 `v_new-only` 分支。
+反向用例覆盖 gate 二选一、输入/输出 shape 与 dtype、固定 chunk size、g/gk head
+约束、varlen 元数据、canonical chunk indices、state shape/layout、ND/连续输出、可选
+final-state 物理存在性和必选 tensor 空指针，并校验对应 aclnn 返回码。
+
+性能用例同样定义在 `tests/op_cases/chunk_fwd_h.json` 的 `performance_cases`，runner
+只负责 warmup 和重复 launch。性能结论使用 `msprof` 的目标 kernel 记录，不使用 Python
+wall time：
+
+```bash
+python tests/operators/chunk_fwd_h/performance/run_chunk_fwd_h.py \
+  --case-id a5_g_h4_t512 --warmup 5 --iterations 50
+```
+
+六条 A5 性能场景的 case id 为：`a5_b2_hk16_hv32_t11264`、
+`a5_varlen_h32_t65536_s64`、`a5_b4_hk96_hv96_t128`、
+`a5_b1_hk32_hv32_t160`、`a5_b6_hk6_hv6_t1084` 和
+`a5_b1_hk12_hv12_t1084`。变长场景的 65 个 `cu_seqlens` 边界由 seed 202
+随机生成后固化在用例 JSON 中，runner 根据这些边界生成 sequence-major canonical
+`chunk_indices`。

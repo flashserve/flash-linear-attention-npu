@@ -77,10 +77,9 @@ __aicore__ inline uint32_t FwdHHeadRoundsPerSequence(const FwdHRuntimeTiling &ti
 
 template <FwdHGateMode GATE_MODE>
 __aicore__ inline FwdHHeadRoundPlan FwdHBuildHeadRound(const FwdHRuntimeTiling &tiling,
-                                                       uint32_t round)
+    uint32_t round)
 {
     FwdHHeadRoundPlan plan{};
-    plan.round = round;
     const uint32_t hv = static_cast<uint32_t>(tiling.vNumHead);
     const uint32_t hk = static_cast<uint32_t>(tiling.kNumHead);
     const uint32_t groupSize = GATE_MODE == FwdHGateMode::SCALAR_G ? hv / hk : 1;
@@ -118,25 +117,39 @@ __aicore__ inline FwdHHeadRoundPlan FwdHBuildHeadRound(const FwdHRuntimeTiling &
         head.localSlot = roundHead >> 1U;
 
         uint32_t kgSlot = plan.requiredKhCount;
-        for (uint32_t slot = 0; slot < plan.requiredKhCount; ++slot) {
-            if (plan.kg[slot].kh == head.kh) {
-                kgSlot = slot;
+        for (uint32_t consumer = 0; consumer < roundHead; ++consumer) {
+            if (plan.heads[consumer].kh == head.kh) {
+                kgSlot = plan.heads[consumer].kgSlot;
                 break;
             }
         }
         if (kgSlot == plan.requiredKhCount) {
-            FwdHKgBinding &kg = plan.kg[kgSlot];
-            kg.kh = head.kh;
-            kg.slot = kgSlot;
-            kg.firstConsumer = roundHead;
-            kg.lastConsumer = roundHead;
             ++plan.requiredKhCount;
-        } else {
-            plan.kg[kgSlot].lastConsumer = roundHead;
         }
         head.kgSlot = kgSlot;
     }
     return plan;
+}
+
+__aicore__ inline FwdHKgBinding FwdHBuildKgBinding(const FwdHHeadRoundPlan &plan,
+                                                   uint32_t kgSlot)
+{
+    FwdHKgBinding binding{};
+    binding.slot = static_cast<uint8_t>(kgSlot);
+    bool found = false;
+    for (uint32_t consumer = 0; consumer < plan.activeHeadCount; ++consumer) {
+        const FwdHHeadBinding &head = plan.heads[consumer];
+        if (head.kgSlot != kgSlot) {
+            continue;
+        }
+        if (!found) {
+            binding.kh = head.kh;
+            binding.firstConsumer = static_cast<uint8_t>(consumer);
+            found = true;
+        }
+        binding.lastConsumer = static_cast<uint8_t>(consumer);
+    }
+    return binding;
 }
 
 __aicore__ inline FwdHChunkSpan FwdHBuildChunk(const FwdHSequenceSpan &sequence, uint32_t chunk)

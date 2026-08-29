@@ -47,23 +47,23 @@ constexpr uint32_t FWD_H_UB_BF16_WORK_BASE = 192 * 1024;
 constexpr uint32_t FWD_H_UB_GATE_BASE = 224 * 1024;
 constexpr uint32_t FWD_H_UB_SHARE_BASE = 226 * 1024;
 
-// ready/free 始终成对，且同一 ID 在复用前必须已被上一代 wait 消费。
-// A5 的 mode=0x4 是 split AIC/AIV 子块同步，flagId 可通过 16-ID 步长区分两个 AIV。
-// A2/A3 的 mode=0x2 只保留低 4 位 flagId，因此每类信号用 aiv 选择 0/1 两个 ID；
-// localSlot 按各 AIV 固定的 slot 顺序形成计数事件，不能让两个 AIV 共用同一个 ID。
+// ready/free 使用同一 ID 的双向计数器，且复用前必须由上一代 wait 消费。
+// 目标 CANN 9.1 的 A5 mode=0x4 仅支持 AIV 本地 ID 0..10；AIC 侧通过 16-ID
+// 步长选择 AIV0/AIV1。各协议使用互不重叠的本地 ID，最大 ID 为 8。
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 constexpr uint32_t FWD_H_AIV_FLAG_STRIDE = 16;
 #else
 constexpr uint32_t FWD_H_AIV_FLAG_STRIDE = 0;
 #endif
 constexpr uint32_t FWD_H_P_FREE_FLAG = 0;
-constexpr uint32_t FWD_H_P_READY_FLAG = 2;
-constexpr uint32_t FWD_H_D_FREE_FLAG = 4;
-constexpr uint32_t FWD_H_D_READY_FLAG = 6;
-constexpr uint32_t FWD_H_RIGHT_FREE_FLAG = 8;
-constexpr uint32_t FWD_H_RIGHT_READY_FLAG = 10;
-constexpr uint32_t FWD_H_H_READY_FLAG = 12;
-constexpr uint32_t FWD_H_ROUND_DONE_FLAG = 14;
+constexpr uint32_t FWD_H_P_READY_FLAG = 0;
+constexpr uint32_t FWD_H_D_FREE_FLAG = 2;
+constexpr uint32_t FWD_H_D_READY_FLAG = 2;
+constexpr uint32_t FWD_H_RIGHT_FREE_FLAG = 4;
+constexpr uint32_t FWD_H_RIGHT_READY_FLAG = 4;
+constexpr uint32_t FWD_H_H_READY_FLAG = 6;
+constexpr uint32_t FWD_H_ROUND_DONE_FLAG = 8;
+constexpr uint32_t FWD_H_ROUND_ACK_FLAG = 8;
 
 struct FwdHSequenceSpan {
     uint32_t sequence = 0;
@@ -85,27 +85,26 @@ struct FwdHChunkSpan {
 };
 
 struct FwdHHeadBinding {
-    uint32_t roundHead = 0;
     uint32_t hv = 0;
     uint32_t kh = 0;
-    uint32_t kgSlot = 0;
-    uint32_t aiv = 0;
-    uint32_t localSlot = 0;
+    uint8_t roundHead = 0;
+    uint8_t kgSlot = 0;
+    uint8_t aiv = 0;
+    uint8_t localSlot = 0;
 };
 
 struct FwdHKgBinding {
     uint32_t kh = 0;
-    uint32_t slot = 0;
-    uint32_t firstConsumer = 0;
-    uint32_t lastConsumer = 0;
+    uint8_t slot = 0;
+    uint8_t firstConsumer = 0;
+    uint8_t lastConsumer = 0;
+    uint8_t reserved = 0;
 };
 
 struct FwdHHeadRoundPlan {
-    uint32_t round = 0;
-    uint32_t activeHeadCount = 0;
-    uint32_t requiredKhCount = 0;
+    uint8_t activeHeadCount = 0;
+    uint8_t requiredKhCount = 0;
     FwdHHeadBinding heads[FWD_H_AIC_HEAD_SLOTS]{};
-    FwdHKgBinding kg[FWD_H_AIC_HEAD_SLOTS]{};
 };
 
 struct FwdHWorkUnit {
@@ -123,31 +122,29 @@ struct FwdHWorkspace {
 
 // Kernel 入口一次性从 GM tiling 读取这些标量，后续调度和各 stage 只访问寄存器/栈上的副本。
 struct FwdHRuntimeTiling {
-    int64_t batch = 0;
-    int64_t seqlen = 0;
-    int64_t kNumHead = 0;
-    int64_t vNumHead = 0;
-    int64_t kHeadDim = 0;
-    int64_t vHeadDim = 0;
-    int64_t chunkSize = 0;
+    uint32_t batch = 0;
+    uint32_t seqlen = 0;
+    uint32_t kNumHead = 0;
+    uint32_t vNumHead = 0;
+    uint32_t kHeadDim = 0;
+    uint32_t vHeadDim = 0;
+    uint32_t chunkSize = 0;
+    uint32_t shapeBatch = 0;
+    uint32_t tokenBatch = 0;
+    uint64_t vWorkspaceOffset = 0;
+    uint64_t vUpdateWorkspaceOffset = 0;
+    uint64_t kDecayWorkspaceOffset = 0;
+    uint64_t hWorkspaceOffset = 0;
     bool useInitialState = false;
     bool storeFinalState = false;
-    int64_t dataType = 0;
-    int64_t gDataType = 0;
-    int64_t stateDataType = 0;
-    int64_t isVariedLen = 0;
-    int64_t shapeBatch = 0;
-    int64_t tokenBatch = 0;
+    uint8_t dataType = 0;
+    uint8_t gDataType = 0;
+    uint8_t stateDataType = 0;
+    bool isVariedLen = false;
     bool useG = false;
     bool useGk = false;
     bool useExp2 = false;
     bool stateVFirst = false;
-    int64_t vWorkspaceOffset = 0;
-    int64_t vUpdateWorkspaceOffset = 0;
-    int64_t kDecayWorkspaceOffset = 0;
-    int64_t hWorkspaceOffset = 0;
-    int64_t numSeqWorkspaceOffset = 0;
-    int64_t numChunksWorkspaceOffset = 0;
 };
 
 struct FwdHKernelArgs {
@@ -166,28 +163,23 @@ struct FwdHKernelArgs {
     FwdHRuntimeTiling tiling{};
 };
 
-// AIC 侧选择配对 AIV。A2/A3 的低 4 位 flag 按 aiv 区分，A5 的每个 subblock
-// 拥有独立 16-ID 空间，因此再按 subblock stride 区分两个 AIV。
+// A5 mode=0x4 按 subblock stride 选择配对 AIV；A2/A3 mode=0x2 是 AIC:2*AIV
+// 集合同步，同一 localSlot 的两个 AIV 必须使用同一 ID。
 __aicore__ inline uint32_t FwdHAicPeerFlag(uint32_t base, uint32_t localSlot, uint32_t aiv)
 {
-    (void)localSlot;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     return base + localSlot + aiv * FWD_H_AIV_FLAG_STRIDE;
 #else
-    return base + aiv;
+    (void)aiv;
+    return base + localSlot;
 #endif
 }
 
-// AIV 侧已经处于具体 subblock。A2/A3 按 subblock 选择 flag，localSlot
-// 通过同一 ID 的 ready/free 计数顺序复用；A5 在本 subblock 内再按 localSlot 区分。
+// AIV 侧已经处于具体 subblock；两种架构都按 localSlot 选择本地 ID。A2/A3 的
+// 两个 subblock 必须各自执行同一 ID 的 wait/set，缺失 head 的 subblock 也做 dummy 同步。
 __aicore__ inline uint32_t FwdHAivLocalFlag(uint32_t base, uint32_t localSlot)
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     return base + localSlot;
-#else
-    (void)localSlot;
-    return base + AscendC::GetSubBlockIdx();
-#endif
 }
 
 __aicore__ inline uint32_t FwdHLocalSlotBase(uint32_t localSlot)
@@ -198,6 +190,17 @@ __aicore__ inline uint32_t FwdHLocalSlotBase(uint32_t localSlot)
 __aicore__ inline uint32_t FwdHAivHeadCount(uint32_t activeHeadCount, uint32_t aiv)
 {
     return activeHeadCount > aiv ? (activeHeadCount - aiv + 1) / 2 : 0;
+}
+
+__aicore__ inline uint32_t FwdHMode2PairCount(uint32_t activeHeadCount)
+{
+    return (activeHeadCount + 1U) / 2U;
+}
+
+__aicore__ inline bool FwdHMode2PairHasHead(uint32_t activeHeadCount, uint32_t pairSlot,
+                                           uint32_t aiv)
+{
+    return pairSlot * 2U + aiv < activeHeadCount;
 }
 
 } // namespace GDN

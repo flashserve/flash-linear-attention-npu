@@ -202,10 +202,22 @@ def run_case(case: Dict) -> None:
         if seqlens is not None and case["provide_chunk_indices"]
         else None
     )
+    u_npu = inputs["u"].npu()
+    if case.get("non_contiguous_u", False):
+        padded_u = torch.empty(
+            (*u_npu.shape[:-1], u_npu.shape[-1] * 2),
+            dtype=u_npu.dtype,
+            device=u_npu.device,
+        )
+        padded_u[..., ::2].copy_(u_npu)
+        u_npu = padded_u[..., ::2]
+        if u_npu.is_contiguous():
+            raise AssertionError(f"{case['id']}: u must remain a non-contiguous NPU view")
+
     actual = chunk_fwd_h(
         inputs["k"].npu(),
         inputs["w"].npu(),
-        inputs["u"].npu(),
+        u_npu,
         g=inputs["g"].npu() if inputs["g"] is not None else None,
         gk=inputs["gk"].npu() if inputs["gk"] is not None else None,
         initial_state=(

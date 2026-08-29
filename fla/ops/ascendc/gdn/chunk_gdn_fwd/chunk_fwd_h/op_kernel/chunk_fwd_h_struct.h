@@ -44,8 +44,6 @@ struct ChunkFwdHPlainTilingData {
     int64_t vUpdateWorkspaceOffset;
     int64_t kDecayWorkspaceOffset;
     int64_t hWorkspaceOffset;
-    int64_t numSeqWorkspaceOffset;
-    int64_t numChunksWorkspaceOffset;
 };
 
 #endif // CHUNK_FWD_H_STRUCT_H

@@ -121,38 +121,568 @@
       "state_v_first": true,
       "provide_chunk_indices": true,
       "seed": 17
+    },
+    {
+      "id": "g_round_heads_1_bf16_initial",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 65,
+      "k_heads": 1,
+      "v_heads": 1,
+      "gate_dtype": "bfloat16",
+      "state_dtype": "bfloat16",
+      "output_final_state": true,
+      "use_exp2": false,
+      "state_v_first": false,
+      "provide_chunk_indices": false,
+      "seed": 19
+    },
+    {
+      "id": "gk_round_heads_1_fp32_initial_v_first",
+      "mode": "gk",
+      "batch": 1,
+      "seqlen": 65,
+      "k_heads": 1,
+      "v_heads": 1,
+      "gate_dtype": "float32",
+      "state_dtype": "float32",
+      "output_final_state": true,
+      "use_exp2": true,
+      "state_v_first": true,
+      "provide_chunk_indices": false,
+      "seed": 20
+    },
+    {
+      "id": "g_ratio_1_to_5_tail_one",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 65,
+      "k_heads": 1,
+      "v_heads": 5,
+      "gate_dtype": "bfloat16",
+      "state_dtype": null,
+      "output_final_state": false,
+      "use_exp2": false,
+      "state_v_first": false,
+      "provide_chunk_indices": false,
+      "seed": 21
+    },
+    {
+      "id": "g_ratio_1_to_7_tail_three",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 65,
+      "k_heads": 1,
+      "v_heads": 7,
+      "gate_dtype": "float32",
+      "state_dtype": null,
+      "output_final_state": false,
+      "use_exp2": false,
+      "state_v_first": true,
+      "provide_chunk_indices": false,
+      "seed": 22
+    },
+    {
+      "id": "gk_varlen_auto_chunk_indices",
+      "mode": "gk",
+      "batch": 1,
+      "seqlens": [1, 65],
+      "k_heads": 2,
+      "v_heads": 2,
+      "gate_dtype": "bfloat16",
+      "state_dtype": "float32",
+      "output_final_state": true,
+      "use_exp2": false,
+      "state_v_first": false,
+      "provide_chunk_indices": false,
+      "seed": 23
+    },
+    {
+      "id": "g_long_credit_reuse",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 1025,
+      "k_heads": 1,
+      "v_heads": 4,
+      "gate_dtype": "bfloat16",
+      "state_dtype": "bfloat16",
+      "output_final_state": true,
+      "use_exp2": false,
+      "state_v_first": false,
+      "provide_chunk_indices": false,
+      "seed": 24
+    },
+    {
+      "id": "g_dense_batch_reuse",
+      "mode": "g",
+      "batch": 2,
+      "seqlen": 129,
+      "k_heads": 1,
+      "v_heads": 3,
+      "gate_dtype": "float32",
+      "state_dtype": "float32",
+      "output_final_state": true,
+      "use_exp2": true,
+      "state_v_first": true,
+      "provide_chunk_indices": false,
+      "seed": 25
+    },
+    {
+      "id": "g_non_contiguous_u_view",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 65,
+      "k_heads": 1,
+      "v_heads": 1,
+      "gate_dtype": "bfloat16",
+      "state_dtype": null,
+      "output_final_state": true,
+      "use_exp2": false,
+      "state_v_first": false,
+      "provide_chunk_indices": false,
+      "non_contiguous_u": true,
+      "seed": 26
+    }
+  ],
+  "performance_cases": [
+    {
+      "id": "a5_g_h4_t512",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 512,
+      "k_heads": 4,
+      "v_heads": 4,
+      "gate_dtype": "bfloat16",
+      "state_dtype": null,
+      "output_final_state": false,
+      "use_exp2": false,
+      "state_v_first": false,
+      "seed": 101
+    },
+    {
+      "id": "a5_g_gva_1_to_6_t2048",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 2048,
+      "k_heads": 1,
+      "v_heads": 6,
+      "gate_dtype": "bfloat16",
+      "state_dtype": "float32",
+      "output_final_state": true,
+      "use_exp2": false,
+      "state_v_first": false,
+      "seed": 102
+    },
+    {
+      "id": "a5_gk_h4_t2048",
+      "mode": "gk",
+      "batch": 1,
+      "seqlen": 2048,
+      "k_heads": 4,
+      "v_heads": 4,
+      "gate_dtype": "float32",
+      "state_dtype": "bfloat16",
+      "output_final_state": true,
+      "use_exp2": true,
+      "state_v_first": true,
+      "seed": 103
+    },
+    {
+      "id": "a5_b2_hk16_hv32_t11264",
+      "mode": "g",
+      "batch": 2,
+      "seqlen": 11264,
+      "k_heads": 16,
+      "v_heads": 32,
+      "gate_dtype": "float32",
+      "state_dtype": null,
+      "output_final_state": true,
+      "use_exp2": true,
+      "state_v_first": true,
+      "seed": 201
+    },
+    {
+      "id": "a5_varlen_h32_t65536_s64",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 65536,
+      "k_heads": 32,
+      "v_heads": 32,
+      "gate_dtype": "float32",
+      "state_dtype": null,
+      "output_final_state": true,
+      "use_exp2": true,
+      "state_v_first": true,
+      "cu_seqlens_seed": 202,
+      "cu_seqlens": [
+        0,
+        2365,
+        2409,
+        2536,
+        3008,
+        3681,
+        6545,
+        8416,
+        11615,
+        12599,
+        12844,
+        12982,
+        13209,
+        15561,
+        16291,
+        16669,
+        17755,
+        21365,
+        21416,
+        25267,
+        26084,
+        26364,
+        26833,
+        27900,
+        28033,
+        29011,
+        29291,
+        29576,
+        30471,
+        30733,
+        30906,
+        31202,
+        32264,
+        32393,
+        34233,
+        34274,
+        34589,
+        40060,
+        41075,
+        41272,
+        42123,
+        42257,
+        43054,
+        44349,
+        46396,
+        46875,
+        48850,
+        49338,
+        49457,
+        50062,
+        50509,
+        54275,
+        55763,
+        56093,
+        56473,
+        56941,
+        56964,
+        57218,
+        57274,
+        58855,
+        58926,
+        60953,
+        63436,
+        63524,
+        65536
+      ],
+      "provide_chunk_indices": true,
+      "seed": 202
+    },
+    {
+      "id": "a5_b4_hk96_hv96_t128",
+      "mode": "g",
+      "batch": 4,
+      "seqlen": 128,
+      "k_heads": 96,
+      "v_heads": 96,
+      "gate_dtype": "float32",
+      "state_dtype": null,
+      "output_final_state": true,
+      "use_exp2": true,
+      "state_v_first": true,
+      "seed": 203
+    },
+    {
+      "id": "a5_b1_hk32_hv32_t160",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 160,
+      "k_heads": 32,
+      "v_heads": 32,
+      "gate_dtype": "float32",
+      "state_dtype": null,
+      "output_final_state": true,
+      "use_exp2": true,
+      "state_v_first": true,
+      "seed": 204
+    },
+    {
+      "id": "a5_b6_hk6_hv6_t1084",
+      "mode": "g",
+      "batch": 6,
+      "seqlen": 1084,
+      "k_heads": 6,
+      "v_heads": 6,
+      "gate_dtype": "float32",
+      "state_dtype": null,
+      "output_final_state": true,
+      "use_exp2": true,
+      "state_v_first": true,
+      "seed": 205
+    },
+    {
+      "id": "a5_b1_hk12_hv12_t1084",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 1084,
+      "k_heads": 12,
+      "v_heads": 12,
+      "gate_dtype": "float32",
+      "state_dtype": null,
+      "output_final_state": true,
+      "use_exp2": true,
+      "state_v_first": true,
+      "seed": 206
+    }
+  ],
+  "call_path_cases": [
+    {
+      "id": "aclnn_zero_initial_bf16_final",
+      "batch": 1,
+      "seqlen": 64,
+      "k_heads": 1,
+      "v_heads": 1,
+      "gate_dtype": "float32",
+      "state_dtype": "bfloat16",
+      "output_final_state": true,
+      "state_v_first": false,
+      "k_value": 0.01,
+      "u_value": 0.02,
+      "seed": 104
     }
   ],
   "negative_cases": [
     {
       "id": "both_gate_inputs",
       "mutation": "both_gate_inputs",
-      "expected_message": "exactly one of g and gk"
+      "expected_message": "exactly one of g and gk",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
     },
     {
       "id": "unsupported_chunk_size",
       "mutation": "unsupported_chunk_size",
-      "expected_message": "chunk_size must be 64"
+      "expected_message": "chunk_size must be 64",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
     },
     {
       "id": "invalid_g_head_ratio",
       "mutation": "invalid_g_head_ratio",
-      "expected_message": "HV >= HK and HV % HK == 0"
+      "expected_message": "HV >= HK and HV % HK == 0",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
     },
     {
       "id": "invalid_gk_shape",
       "mutation": "invalid_gk_shape",
-      "expected_message": "gk must be [B, HV, T, K]"
+      "expected_message": "gk must be [B, HV, T, K]",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
     },
     {
       "id": "varlen_batch_not_one",
       "mutation": "varlen_batch_not_one",
-      "expected_message": "variable-length BNSD input requires B=1"
+      "expected_message": "variable-length BNSD input requires B=1",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
     },
     {
       "id": "invalid_state_v_first_shape",
       "mutation": "invalid_state_v_first_shape",
-      "expected_message": "initial_state shape does not match state_v_first"
+      "expected_message": "initial_state shape does not match state_v_first",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "missing_gate_inputs",
+      "mutation": "missing_gate_inputs",
+      "expected_message": "exactly one of g and gk",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "unsupported_input_dtype",
+      "mutation": "unsupported_input_dtype",
+      "expected_message": "k, w and u must all use bfloat16",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "save_new_value_false",
+      "mutation": "save_new_value_false",
+      "expected_message": "save_new_value must be True",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "chunk_indices_without_cu",
+      "mutation": "chunk_indices_without_cu",
+      "expected_message": "chunk_indices must use canonical sequence-major order",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "invalid_input_rank",
+      "mutation": "invalid_input_rank",
+      "expected_message": "k, w and u must be rank-4 BNSD tensors",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "non_positive_dimension",
+      "mutation": "non_positive_dimension",
+      "expected_message": "B, HK, HV and T must all be positive",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "mismatched_w_u_shape",
+      "mutation": "mismatched_w_u_shape",
+      "expected_message": "w/u must be [B, HV, T, K/V]",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "unsupported_kv_dimension",
+      "mutation": "unsupported_kv_dimension",
+      "expected_message": "K and V must both be 128",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "invalid_g_shape",
+      "mutation": "invalid_g_shape",
+      "expected_message": "g must be [B, HV, T]",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "unsupported_gate_dtype",
+      "mutation": "unsupported_gate_dtype",
+      "expected_message": "g/gk must use bfloat16 or float32",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "mismatched_input_dtype",
+      "mutation": "mismatched_input_dtype",
+      "expected_message": "k, w and u must all use bfloat16",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "invalid_cu_size",
+      "mutation": "invalid_cu_size",
+      "expected_message": "cu_seqlens must be strictly increasing, start at 0 and end at T",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "invalid_cu_start",
+      "mutation": "invalid_cu_start",
+      "expected_message": "cu_seqlens must be strictly increasing, start at 0 and end at T",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "invalid_cu_end",
+      "mutation": "invalid_cu_end",
+      "expected_message": "cu_seqlens must be strictly increasing, start at 0 and end at T",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "non_increasing_cu",
+      "mutation": "non_increasing_cu",
+      "expected_message": "cu_seqlens must be strictly increasing, start at 0 and end at T",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "invalid_chunk_indices_length",
+      "mutation": "invalid_chunk_indices_length",
+      "expected_message": "chunk_indices must use canonical sequence-major order",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "invalid_chunk_indices_order",
+      "mutation": "invalid_chunk_indices_order",
+      "expected_message": "chunk_indices must use canonical sequence-major order",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "unsupported_state_dtype",
+      "mutation": "unsupported_state_dtype",
+      "expected_message": "initial_state must use bfloat16 or float32",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    }
+  ],
+  "host_negative_cases": [
+    {
+      "id": "null_k",
+      "mutation": "null_k",
+      "expected_return_code": "ACLNN_ERR_PARAM_NULLPTR"
+    },
+    {
+      "id": "null_w",
+      "mutation": "null_w",
+      "expected_return_code": "ACLNN_ERR_PARAM_NULLPTR"
+    },
+    {
+      "id": "null_u",
+      "mutation": "null_u",
+      "expected_return_code": "ACLNN_ERR_PARAM_NULLPTR"
+    },
+    {
+      "id": "null_h",
+      "mutation": "null_h",
+      "expected_return_code": "ACLNN_ERR_PARAM_NULLPTR"
+    },
+    {
+      "id": "null_v_new",
+      "mutation": "null_v_new",
+      "expected_return_code": "ACLNN_ERR_PARAM_NULLPTR"
+    },
+    {
+      "id": "missing_final_output",
+      "mutation": "missing_final_output",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "unexpected_final_output",
+      "mutation": "unexpected_final_output",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "non_contiguous_h",
+      "mutation": "non_contiguous_h",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "non_contiguous_v_new",
+      "mutation": "non_contiguous_v_new",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "non_contiguous_final",
+      "mutation": "non_contiguous_final",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "invalid_h_shape",
+      "mutation": "invalid_h_shape",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "invalid_v_new_shape",
+      "mutation": "invalid_v_new_shape",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "invalid_final_shape",
+      "mutation": "invalid_final_shape",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "invalid_output_dtype",
+      "mutation": "invalid_output_dtype",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "invalid_final_dtype",
+      "mutation": "invalid_final_dtype",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
+    },
+    {
+      "id": "mismatched_final_dtype",
+      "mutation": "mismatched_final_dtype",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID"
     }
   ]
 }

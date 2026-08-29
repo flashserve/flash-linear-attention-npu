@@ -79,6 +79,10 @@ Stage0 和 Stage2 均使用 BF16 矩阵乘输入、FP32 累加。Stage0 在写�
 
 当前仅支持 `K=V=128`、`chunk_size=64`、`save_new_value=true`，支持 A2、A3 和 A5。
 
+所有 aclnn tensor descriptor 必须使用非私有 ND storage/view format；输入可以是 ND view，
+host 会在需要时连续化，`h/v_new/final_state` 输出必须是连续 ND。Python 入口只接受标准物理
+布局并创建连续 ND 输出，不支持将私有 NPU format 伪装成 ND。
+
 ## 变长序列
 
 变长模式使用 BNSD 容器且要求 `B=1`。`cu_seqlens` 必须从 0 开始、以 `T` 结束并严格递增。`chunk_indices` 若提供，必须严格等于由 `cu_seqlens` 和 `chunk_size=64` 推导出的 sequence-major `(seq_id, chunk_id)` 序列。
@@ -90,7 +94,9 @@ Stage0 和 Stage2 均使用 BF16 矩阵乘输入、FP32 累加。Stage0 在写�
 - A2/A3 的 P/D 从 L0C 经 Fixpipe 写 GM scratch，AIV 再从 GM 搬入 UB；A5 的 P/D 从 L0C 直接写配对 AIV UB。
 - Stage1 的 ND 右操作数统一经 UB MTE3 到 GM，再由 AIC MTE2 搬入 L1 NZ，不使用 UB 到 L1 的直搬通路。
 - tail chunk 的 W、kg/k_raw 和 right 在有效 ND 数据覆盖前先由 MTE2 清零对应 L1 NZ 槽，Cube 的 M/K 按 16 对齐，未覆盖位置不会参与有效累加。
-- 每个 ping/pong slot 使用独立 ready/free 事件。某 slot 的 MTE2、Cube/Fixpipe 或 VEC/MTE3 完成后立即发布该 slot，不等待另一个 slot。
+- A5 每个 ping/pong slot 使用独立 ready/free 事件。A2/A3 的 mode2 按一组
+  `AIC + 2*AIV` 做 pair 集合同步，尾 pair 缺少 head 的 AIV 也参与 dummy wait/set。
+  某 slot/pair 的 MTE2、Cube/Fixpipe 或 VEC/MTE3 完成后立即发布，不等待下一组。
 - 下一 head round 的 kg/H/W 预取必须等待上一 round 的 P/D、L1 right 和所有 AIV MTE3 完成。
 
 ## aclnn 接口

@@ -7,7 +7,8 @@
 legacy `torch.ops.npu` 兼容入口。
 
 当前支持 A2、A3、A5，固定 `K=V=128`、`chunk_size=64`，`k/w/u` 为 BF16。gate 和
-state 分别支持 BF16/FP32，`state_v_first=true/false` 均由 kernel 原生处理。
+state 分别支持 BF16/FP32，`state_v_first=true/false` 均由 kernel 原生处理。公开 tensor
+descriptor 使用非私有 ND；输入可由 host 连续化，直接写入的输出必须连续。
 
 ## 2. 计算语义
 
@@ -60,10 +61,11 @@ bank，以“预取当前 head、计算前一 head”的循环实现 ping-pong�
 
 AIC 将当前 `W[M,K]` 与 `H[K,V]` 从 GM 搬到四个 round-head L1 槽，随后执行
 `P=W@H`。Stage0 不读取 kg/k_raw。tail chunk 先用 MTE2 `InitConstValue` 清零当前 W 槽，
-再覆盖有效 ND 行；Cube M 取 `AlignUp(valid_tokens,16)`，最终只写真实 token 行。
+再覆盖有效 ND 行；Cube M 取 `AlignUp(valid_tokens,16)`。
 
-- A2/A3：L0C 经 Fixpipe 写 P GM scratch，AIV 再以 MTE2 读取。
-- A5：L0C 经 Fixpipe 直接写配对 AIV 的 local UB slot。
+- A2/A3：L0C 经 Fixpipe 将对齐后的 M 行写入 P GM scratch，补齐行恒为零；AIV 再以
+  MTE2 只读取 `valid_tokens` 个有效行。
+- A5：L0C 经 Fixpipe 直接将有效行写入配对 AIV 的 local UB slot。
 
 ### Stage1：向量修正
 
@@ -100,9 +102,11 @@ state、FP32 state、BF16 work 和 gate 区保持固定地址。A2/A3 使用两�
 
 ## 6. 同步协议
 
-每个 local slot 分别维护 `P_READY/P_FREE`、`D_READY/D_FREE`、
-`RIGHT_READY/RIGHT_FREE`、`H_READY`。ready 由真实生产 pipe 发布，free 由最后消费者发布；
-同一 slot 的事件复用前必须完成上一代 wait。
+A5 每个 local slot 分别维护 `P_READY/P_FREE`、`D_READY/D_FREE`、
+`RIGHT_READY/RIGHT_FREE`、`H_READY`。A2/A3 mode2 是 `AIC + 2*AIV` 集合同步：每个
+pair 由 AIC set/wait 一次，两个 AIV 对同一 ID 各 wait/set 一次；尾 pair 缺 head 的 AIV
+执行 dummy 同步但不访问数据。ready 由真实生产 pipe 发布，free 由最后消费者发布；同一
+slot/pair 的事件复用前必须完成上一代 wait。
 
 Stage 内按核内 head id 统一写一套流程，`headId&1` 选择 ping/pong L0 slot。当前 slot 的
 MTE2 完成即可启动该 slot 的 VEC/Cube，不等待另一 slot；Cube->Fixpipe 和 VEC->MTE3 同理。
@@ -112,8 +116,9 @@ chunk 没有 Stage0/P；后续 credit 由前一 chunk Stage1 产生。round 结�
 scratch 链分别回收，不能用互斥分支漏掉其中一条。
 
 跨 head round 使用双向收口：两个 AIV 等本轮 MTE3 全部完成后发布 `ROUND_DONE`；AIC 收到
-两份完成信号并回收 P/D/right 后才回 ACK。下一 round 的 kg/H/W MTE2 必须等待 ACK，因而
-不会与上一 round 的未完成写回交叠。
+完成信号并回收 P/D/right 后才回 ACK。A5 的 DONE 由 `PIPE_MTE3` 发布，DONE wait 和 ACK
+使用 `PIPE_S` 作为 scalar/control gate；下一 round 的 kg/H/W MTE2 因而不能越过 ACK，
+不会与上一 round 的未完成写回交叠。A2/A3 用 mode2 collective 完成同等的 pair 收口。
 调度上将同一 sequence 的全部 head-round 绑定到同一核并顺序执行；不同 sequence 才允许在不同核并行，
 因此上述 ACK 是实际的 round 边界，而不是依赖 block 启动顺序推断。
 
@@ -149,12 +154,10 @@ head round 的展开数组。kernel 在进入 chunk 循环前，按 `kNumHead/vN
 | `useG` / `useGk` | gate 模式，二者严格一真一假 |
 | `useExp2` | gate 指数函数是否使用 exp2 |
 | `stateVFirst` | state 物理布局为 `[V,K]` 还是 `[K,V]` |
-| `vWorkspaceOffset` | A2/A3 P 的 FP32 GM scratch，形状为 `[AIC,4,64,128]` |
+| `vWorkspaceOffset` | A2/A3 P 的 GM scratch，按 FP32 slot stride 预留 `[AIC,4,64,128]`；实际元素为 PType |
 | `vUpdateWorkspaceOffset` | Stage1 BF16 right 的 GM workspace，形状为 `[AIC,4,64,128]` |
 | `kDecayWorkspaceOffset` | FP32 rolling state 的 GM workspace，形状为 `[AIC,4,128,128]` |
 | `hWorkspaceOffset` | A2/A3 D 的 FP32 GM scratch，形状为 `[AIC,4,128,128]` |
-| `numSeqWorkspaceOffset` | varlen sequence 前缀辅助区，长度为 `tokenBatch+1` |
-| `numChunksWorkspaceOffset` | varlen chunk 前缀辅助区，长度为 `tokenBatch+1` |
 
 workspace 的各段按 512 Byte 对齐，并在 CANN lib-api workspace 之后额外保留运行时安全区。
 A5 的 P/D 走 L0C->AIV UB，不消费对应的 P/D GM scratch；为保持跨架构统一 tiling，offset

@@ -49,7 +49,7 @@ public:
                                            : static_cast<uint32_t>(args_.tiling.shapeBatch);
         const uint32_t rounds = FwdHHeadRoundsPerSequence<CompilePolicy::GATE_MODE>(args_.tiling);
         // 同一 sequence 的所有 head-round 绑定到同一核，round 内串行收口；
-        // ProcessWorkUnit 返回时已完成本轮 ROUND_DONE/ACK，下一轮才允许预取。
+        // 只有存在下一轮消费者时才等待 ROUND_DONE，保证下一轮预取不越过本轮消费。
         for (uint32_t sequence = coreIdx_; sequence < sequenceCount; sequence += coreNum_) {
             const FwdHSequenceSpan sequenceSpan = FwdHResolveSequence(args_, sequence);
             for (uint32_t round = 0; round < rounds; ++round) {
@@ -57,7 +57,7 @@ public:
                                         FwdHBuildHeadRound<CompilePolicy::GATE_MODE>(args_.tiling,
                                                                                       round)};
                 if (unit.sequence.chunkCount != 0 && unit.headRound.activeHeadCount != 0) {
-                    ProcessWorkUnit(unit);
+                    ProcessWorkUnit(unit, round + 1 < rounds);
                 }
             }
         }
@@ -203,20 +203,20 @@ private:
     __aicore__ inline void InitEvents()
     {
         for (uint32_t slot = 0; slot < FWD_H_AIC_HEAD_SLOTS; ++slot) {
-            wReadyEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE1_MTE2);
-            wDoneEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE2_MTE1);
-            hRightReadyEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE1_MTE2);
-            hRightDoneEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE2_MTE1);
+            wReadyEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE1_MTE2>();
+            wDoneEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE2_MTE1>();
+            hRightReadyEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE1_MTE2>();
+            hRightDoneEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE2_MTE1>();
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(WReadyEvent(slot));
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(HRightReadyEvent(slot));
         }
         for (uint32_t slot = 0; slot < L0_SLOTS; ++slot) {
-            l0AFreeEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::M_MTE1);
-            l0AReadyEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE1_M);
-            l0BFreeEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::M_MTE1);
-            l0BReadyEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE1_M);
-            fixFreeEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::FIX_M);
-            fixDoneEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::M_FIX);
+            l0AFreeEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::M_MTE1>();
+            l0AReadyEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE1_M>();
+            l0BFreeEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::M_MTE1>();
+            l0BReadyEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE1_M>();
+            fixFreeEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::FIX_M>();
+            fixDoneEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::M_FIX>();
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(slot));
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(slot));
             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(slot));
@@ -233,6 +233,20 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(slot));
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(slot));
             AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(slot));
+        }
+        for (uint32_t slot = 0; slot < FWD_H_AIC_HEAD_SLOTS; ++slot) {
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE1_MTE2>(WReadyEvent(slot));
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE2_MTE1>(WDoneEvent(slot));
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE1_MTE2>(HRightReadyEvent(slot));
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE2_MTE1>(HRightDoneEvent(slot));
+        }
+        for (uint32_t slot = 0; slot < L0_SLOTS; ++slot) {
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(slot));
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE1_M>(L0AReadyEvent(slot));
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(slot));
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE1_M>(L0BReadyEvent(slot));
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::FIX_M>(FixFreeEvent(slot));
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::M_FIX>(FixDoneEvent(slot));
         }
     }
 
@@ -275,8 +289,6 @@ private:
                                                          head.hv, 0, 0);
             gmH.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.initialState) + stateOffset);
         } else {
-            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
-                FwdHAicPeerFlag(FWD_H_H_READY_FLAG, head.localSlot, head.aiv));
             gmH.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h) + HOffset(unit, chunk, head));
         }
         auto gmHLayout = tla::MakeLayout<bfloat16_t, LayoutH>(FWD_H_K, FWD_H_V);
@@ -322,14 +334,10 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(L0BReadyEvent(pipelineSlot));
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(pipelineSlot));
         TileMmadS0 mmad;
-        mmad(tensorL0C, tensorL0A, tensorL0B, true, 0b11);
+        mmad(tensorL0C, tensorL0A, tensorL0B, true, 0);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(pipelineSlot));
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(pipelineSlot));
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
-        if (!chunk.first) {
-            AscendC::CrossCoreWaitFlag<0x2, PIPE_FIX>(
-                FwdHAicPeerFlag(FWD_H_P_FREE_FLAG, head.localSlot, head.aiv));
-        }
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
         const uint64_t pByteOffset = ScratchByteOffset(args_.tiling.vWorkspaceOffset,
                                                        head.roundHead,
@@ -338,12 +346,10 @@ private:
         gmP.SetGlobalBuffer(reinterpret_cast<__gm__ PType *>(args_.workspace + pByteOffset));
         auto tensorP = tla::MakeTensor(gmP, tla::MakeLayout<PType, LayoutOutput>(m, FWD_H_V),
                                        Catlass::Arch::PositionGM{});
-        auto blockP = tla::GetTile(tensorP, tla::MakeCoord(0, 0),
-                                   tla::MakeShape(chunk.validTokens, FWD_H_V));
-        CopyL0CToGmS0<decltype(blockP)> copyP;
-        copyP(blockP, tensorL0C, 0b11);
-        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
-            FwdHAicPeerFlag(FWD_H_P_READY_FLAG, head.localSlot, head.aiv));
+        // A2/A3 的 FP32 Fixpipe 按 16 行块写出。尾 chunk 的 W 已在 L1 补零，
+        // 因此写满对齐后的 m 行，并由 AIV 只读取 validTokens 行。
+        CopyL0CToGmS0<decltype(tensorP)> copyP;
+        copyP(tensorP, tensorL0C, 0);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(pipelineSlot));
     }
 
@@ -353,15 +359,33 @@ private:
         if (chunk.first && args_.tiling.useInitialState == 0) {
             return;
         }
-        for (uint32_t headId = 0; headId < unit.headRound.activeHeadCount; ++headId) {
-            LoadStage0Head(unit, chunk, unit.headRound.heads[headId]);
-            if (headId > 0) {
-                ComputeStage0Head(chunk, unit.headRound.heads[headId - 1], (headId - 1) & 1U);
+        const uint32_t pairCount = FwdHMode2PairCount(unit.headRound.activeHeadCount);
+        const bool waitHReady = !(chunk.first && args_.tiling.useInitialState != 0 &&
+                                  !CompilePolicy::STATE_FP32);
+        for (uint32_t pairSlot = 0; pairSlot < pairCount; ++pairSlot) {
+            if (waitHReady) {
+                AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
+                    FwdHAicPeerFlag(FWD_H_H_READY_FLAG, pairSlot, 0));
             }
-        }
-        if (unit.headRound.activeHeadCount > 0) {
-            const uint32_t last = unit.headRound.activeHeadCount - 1;
+            if (!chunk.first) {
+                AscendC::CrossCoreWaitFlag<0x2, PIPE_FIX>(
+                    FwdHAicPeerFlag(FWD_H_P_FREE_FLAG, pairSlot, 0));
+            }
+            const uint32_t firstHead = pairSlot * 2U;
+            const uint32_t pairHeads =
+                unit.headRound.activeHeadCount - firstHead > 1U ? 2U : 1U;
+            for (uint32_t pairHead = 0; pairHead < pairHeads; ++pairHead) {
+                const uint32_t headId = firstHead + pairHead;
+                LoadStage0Head(unit, chunk, unit.headRound.heads[headId]);
+                if (pairHead > 0) {
+                    const uint32_t previous = headId - 1U;
+                    ComputeStage0Head(chunk, unit.headRound.heads[previous], previous & 1U);
+                }
+            }
+            const uint32_t last = firstHead + pairHeads - 1U;
             ComputeStage0Head(chunk, unit.headRound.heads[last], last & 1U);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                FwdHAicPeerFlag(FWD_H_P_READY_FLAG, pairSlot, 0));
         }
     }
 
@@ -404,8 +428,6 @@ private:
     __aicore__ inline void LoadRight(const FwdHChunkSpan &chunk, const FwdHHeadBinding &head)
     {
         const uint32_t slot = head.roundHead;
-        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
-            FwdHAicPeerFlag(FWD_H_RIGHT_READY_FLAG, head.localSlot, head.aiv));
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(HRightReadyEvent(slot));
         if (chunk.validTokens < FWD_H_CHUNK) {
             ClearL1(l1HRight_[slot], FWD_H_L1_KG_SLOT_BYTES);
@@ -446,7 +468,7 @@ private:
         // Stage2 计算：state_v_first=false 时 D=kg^T@right，输出 [K,V]；
         // state_v_first=true 时交换两个输入，计算 right^T@kg，输出物理 [V,K]；
         // A2/A3 的 FP32 D 经 Fixpipe 写 GM scratch。
-        const FwdHKgBinding &binding = unit.headRound.kg[head.kgSlot];
+        const FwdHKgBinding binding = FwdHBuildKgBinding(unit.headRound, head.kgSlot);
         const uint32_t m = FWD_H_K;
         const uint32_t k = FwdHAlignCube(chunk.validTokens);
         auto tensorL0A = tla::MakeTensor(l0A_[pipelineSlot],
@@ -490,22 +512,16 @@ private:
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(WReadyEvent(binding.slot));
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(HRightReadyEvent(head.roundHead));
-        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE1>(
-            FwdHAicPeerFlag(FWD_H_RIGHT_FREE_FLAG, head.localSlot, head.aiv));
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(L0AReadyEvent(pipelineSlot));
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(L0BReadyEvent(pipelineSlot));
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(L0AReadyEvent(pipelineSlot));
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(L0BReadyEvent(pipelineSlot));
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(pipelineSlot));
         TileMmadS2 mmad;
-        mmad(tensorL0C, tensorL0A, tensorL0B, true, 0b11);
+        mmad(tensorL0C, tensorL0A, tensorL0B, true, 0);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(pipelineSlot));
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(pipelineSlot));
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
-        if (!chunk.first) {
-            AscendC::CrossCoreWaitFlag<0x2, PIPE_FIX>(
-                FwdHAicPeerFlag(FWD_H_D_FREE_FLAG, head.localSlot, head.aiv));
-        }
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
         const uint64_t dByteOffset = ScratchByteOffset(args_.tiling.hWorkspaceOffset,
                                                        head.roundHead,
@@ -515,9 +531,7 @@ private:
         auto tensorD = tla::MakeTensor(gmD,
             tla::MakeLayout<float, LayoutOutput>(FWD_H_K, FWD_H_V), Catlass::Arch::PositionGM{});
         CopyL0CToGmS2<decltype(tensorD)> copyD;
-        copyD(tensorD, tensorL0C, 0b11);
-        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
-            FwdHAicPeerFlag(FWD_H_D_READY_FLAG, head.localSlot, head.aiv));
+        copyD(tensorD, tensorL0C, 0);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(pipelineSlot));
     }
 
@@ -525,21 +539,37 @@ private:
     {
         // Stage2：g-only 计算 D_c=k_raw_c^T@V_new_g；gk-only 计算 D_c=kg_c^T@V_new。
         for (uint32_t kgSlot = 0; kgSlot < unit.headRound.requiredKhCount; ++kgSlot) {
-            LoadKg(unit, chunk, unit.headRound.kg[kgSlot]);
+            LoadKg(unit, chunk, FwdHBuildKgBinding(unit.headRound, kgSlot));
         }
-        for (uint32_t headId = 0; headId < unit.headRound.activeHeadCount; ++headId) {
-            LoadRight(chunk, unit.headRound.heads[headId]);
-            if (headId > 0) {
-                ComputeStage2Head(unit, chunk, unit.headRound.heads[headId - 1], (headId - 1) & 1U);
+        const uint32_t pairCount = FwdHMode2PairCount(unit.headRound.activeHeadCount);
+        for (uint32_t pairSlot = 0; pairSlot < pairCount; ++pairSlot) {
+            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
+                FwdHAicPeerFlag(FWD_H_RIGHT_READY_FLAG, pairSlot, 0));
+            if (!chunk.first) {
+                AscendC::CrossCoreWaitFlag<0x2, PIPE_FIX>(
+                    FwdHAicPeerFlag(FWD_H_D_FREE_FLAG, pairSlot, 0));
             }
-        }
-        if (unit.headRound.activeHeadCount > 0) {
-            const uint32_t last = unit.headRound.activeHeadCount - 1;
+            const uint32_t firstHead = pairSlot * 2U;
+            const uint32_t pairHeads =
+                unit.headRound.activeHeadCount - firstHead > 1U ? 2U : 1U;
+            for (uint32_t pairHead = 0; pairHead < pairHeads; ++pairHead) {
+                const uint32_t headId = firstHead + pairHead;
+                LoadRight(chunk, unit.headRound.heads[headId]);
+                if (pairHead > 0) {
+                    const uint32_t previous = headId - 1U;
+                    ComputeStage2Head(unit, chunk, unit.headRound.heads[previous], previous & 1U);
+                }
+            }
+            const uint32_t last = firstHead + pairHeads - 1U;
             ComputeStage2Head(unit, chunk, unit.headRound.heads[last], last & 1U);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE1>(
+                FwdHAicPeerFlag(FWD_H_RIGHT_FREE_FLAG, pairSlot, 0));
+            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                FwdHAicPeerFlag(FWD_H_D_READY_FLAG, pairSlot, 0));
         }
     }
 
-    __aicore__ inline void ProcessWorkUnit(const FwdHWorkUnit &unit)
+    __aicore__ inline void ProcessWorkUnit(const FwdHWorkUnit &unit, bool hasNextRound)
     {
         if (!hasCubeWork_) {
             return;
@@ -551,23 +581,27 @@ private:
                 RunStage2(unit, chunk);
             }
         }
-        const bool terminalStage2 = args_.tiling.storeFinalState != 0;
+        const bool terminalStage2 = args_.tiling.storeFinalState != 0 ||
+            unit.sequence.chunkCount > 1;
         const bool terminalStage0 = args_.tiling.useInitialState != 0 || unit.sequence.chunkCount > 1;
-        for (uint32_t headId = 0; headId < unit.headRound.activeHeadCount; ++headId) {
-            const FwdHHeadBinding &head = unit.headRound.heads[headId];
+        const uint32_t pairCount = FwdHMode2PairCount(unit.headRound.activeHeadCount);
+        for (uint32_t pairSlot = 0; pairSlot < pairCount; ++pairSlot) {
             if (terminalStage2) {
                 AscendC::CrossCoreWaitFlag<0x2, PIPE_FIX>(
-                    FwdHAicPeerFlag(FWD_H_D_FREE_FLAG, head.localSlot, head.aiv));
+                    FwdHAicPeerFlag(FWD_H_D_FREE_FLAG, pairSlot, 0));
             }
             if (terminalStage0) {
                 AscendC::CrossCoreWaitFlag<0x2, PIPE_FIX>(
-                    FwdHAicPeerFlag(FWD_H_P_FREE_FLAG, head.localSlot, head.aiv));
+                    FwdHAicPeerFlag(FWD_H_P_FREE_FLAG, pairSlot, 0));
             }
         }
-        AscendC::CrossCoreWaitFlag<0x2, PIPE_FIX>(FwdHAicPeerFlag(FWD_H_ROUND_DONE_FLAG, 0, 0));
-        AscendC::CrossCoreWaitFlag<0x2, PIPE_FIX>(FwdHAicPeerFlag(FWD_H_ROUND_DONE_FLAG, 0, 1));
-        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(FwdHAicPeerFlag(FWD_H_H_READY_FLAG, 0, 0));
-        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(FwdHAicPeerFlag(FWD_H_H_READY_FLAG, 0, 1));
+        if (hasNextRound) {
+            AscendC::CrossCoreWaitFlag<0x2, PIPE_FIX>(
+                FwdHAicPeerFlag(FWD_H_ROUND_DONE_FLAG, 0, 0));
+            // ACK 表示 AIC 已完成本轮消费；AIV 收到后才可复用下一轮的本地槽。
+            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                FwdHAicPeerFlag(FWD_H_ROUND_ACK_FLAG, 0, 0));
+        }
     }
 
     FwdHKernelArgs args_{};

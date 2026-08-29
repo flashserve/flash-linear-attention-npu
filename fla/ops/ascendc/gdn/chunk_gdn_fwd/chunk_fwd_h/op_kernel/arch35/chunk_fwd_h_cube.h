@@ -39,7 +39,6 @@ public:
         if (!hasCubeWork_) {
             return;
         }
-        InitBuffers();
         InitEvents();
     }
 
@@ -50,7 +49,7 @@ public:
                                            : static_cast<uint32_t>(args_.tiling.shapeBatch);
         const uint32_t rounds = FwdHHeadRoundsPerSequence<CompilePolicy::GATE_MODE>(args_.tiling);
         // 同一 sequence 的所有 head-round 绑定到同一核，round 内串行收口；
-        // ProcessWorkUnit 返回时已完成本轮 ROUND_DONE/ACK，下一轮才允许预取。
+        // 只有存在下一轮消费者时才等待 ROUND_DONE，保证下一轮预取不越过本轮消费。
         for (uint32_t sequence = coreIdx_; sequence < sequenceCount; sequence += coreNum_) {
             const FwdHSequenceSpan sequenceSpan = FwdHResolveSequence(args_, sequence);
             for (uint32_t round = 0; round < rounds; ++round) {
@@ -58,7 +57,7 @@ public:
                                         FwdHBuildHeadRound<CompilePolicy::GATE_MODE>(args_.tiling,
                                                                                       round)};
                 if (unit.sequence.chunkCount != 0 && unit.headRound.activeHeadCount != 0) {
-                    ProcessWorkUnit(unit);
+                    ProcessWorkUnit(unit, round + 1 < rounds);
                 }
             }
         }
@@ -121,93 +120,125 @@ private:
     static constexpr uint32_t L0B_SLOT_BYTES = FWD_H_K * FWD_H_V * sizeof(bfloat16_t);
     static constexpr uint32_t L0C_SLOT_BYTES = FWD_H_K * FWD_H_V * sizeof(ElementAccumulator);
 
+    // 每种 HardEvent 拥有独立的事件空间，因此反向事件可以复用同一数值 ID。
+    // MTE1<->MTE2：W 使用 0..3，H/right 使用 4..7；MTE1<->M：L0A 使用
+    // 0..1、L0B 使用 2..3；M<->FIX：两个流水槽使用 0..1。
     __aicore__ inline AscendC::TEventID WReadyEvent(uint32_t slot) const
     {
-        return wReadyEvent_[slot];
+        return static_cast<AscendC::TEventID>(slot);
     }
 
     __aicore__ inline AscendC::TEventID WDoneEvent(uint32_t slot) const
     {
-        return wDoneEvent_[slot];
+        return static_cast<AscendC::TEventID>(slot);
     }
 
     __aicore__ inline AscendC::TEventID HRightReadyEvent(uint32_t slot) const
     {
-        return hRightReadyEvent_[slot];
+        return static_cast<AscendC::TEventID>(FWD_H_AIC_HEAD_SLOTS + slot);
     }
 
     __aicore__ inline AscendC::TEventID HRightDoneEvent(uint32_t slot) const
     {
-        return hRightDoneEvent_[slot];
+        return static_cast<AscendC::TEventID>(FWD_H_AIC_HEAD_SLOTS + slot);
     }
 
     __aicore__ inline AscendC::TEventID L0AFreeEvent(uint32_t slot) const
     {
-        return l0AFreeEvent_[slot];
+        return static_cast<AscendC::TEventID>(slot);
     }
 
     __aicore__ inline AscendC::TEventID L0AReadyEvent(uint32_t slot) const
     {
-        return l0AReadyEvent_[slot];
+        return static_cast<AscendC::TEventID>(slot);
     }
 
     __aicore__ inline AscendC::TEventID L0BFreeEvent(uint32_t slot) const
     {
-        return l0BFreeEvent_[slot];
+        return static_cast<AscendC::TEventID>(L0_SLOTS + slot);
     }
 
     __aicore__ inline AscendC::TEventID L0BReadyEvent(uint32_t slot) const
     {
-        return l0BReadyEvent_[slot];
+        return static_cast<AscendC::TEventID>(L0_SLOTS + slot);
     }
 
     __aicore__ inline AscendC::TEventID FixFreeEvent(uint32_t slot) const
     {
-        return fixFreeEvent_[slot];
+        return static_cast<AscendC::TEventID>(slot);
     }
 
     __aicore__ inline AscendC::TEventID FixDoneEvent(uint32_t slot) const
     {
-        return fixDoneEvent_[slot];
+        return static_cast<AscendC::TEventID>(slot);
     }
 
-    __aicore__ inline void InitBuffers()
+    __aicore__ inline AscendC::LocalTensor<uint8_t> L1Buffer() const
     {
-        GetTPipePtr()->InitBuffer(l1Buf_, ArchTag::L1_SIZE);
-        GetTPipePtr()->InitBuffer(l0ABuf_, ArchTag::L0A_SIZE);
-        GetTPipePtr()->InitBuffer(l0BBuf_, ArchTag::L0B_SIZE);
-        GetTPipePtr()->InitBuffer(l0CBuf_, ArchTag::L0C_SIZE);
-        GetTPipePtr()->InitBuffer(ubBuf_, ArchTag::UB_SIZE);
-        GetTPipePtr()->InitBuffer(fixBuf_, ArchTag::FIXBUF_SIZE);
-        for (uint32_t slot = 0; slot < FWD_H_AIC_HEAD_SLOTS; ++slot) {
-            l1W_[slot] = l1Buf_.Get<uint8_t>()[FWD_H_L1_W_BASE + slot * FWD_H_L1_W_SLOT_BYTES].template ReinterpretCast<bfloat16_t>();
-            l1HRight_[slot] = l1Buf_.Get<uint8_t>()[FWD_H_L1_H_RIGHT_BASE + slot * FWD_H_L1_H_RIGHT_SLOT_BYTES].template ReinterpretCast<bfloat16_t>();
-            l1Kg_[slot] = l1Buf_.Get<uint8_t>()[FWD_H_L1_KG_BASE + slot * FWD_H_L1_KG_SLOT_BYTES].template ReinterpretCast<bfloat16_t>();
-        }
-        for (uint32_t slot = 0; slot < L0_SLOTS; ++slot) {
-            l0A_[slot] = l0ABuf_.Get<uint8_t>()[slot * L0A_SLOT_BYTES].template ReinterpretCast<bfloat16_t>();
-            l0B_[slot] = l0BBuf_.Get<uint8_t>()[slot * L0B_SLOT_BYTES].template ReinterpretCast<bfloat16_t>();
-            l0C_[slot] = l0CBuf_.Get<uint8_t>()[slot * L0C_SLOT_BYTES].template ReinterpretCast<ElementAccumulator>();
-        }
+        return AscendC::LocalTensor<uint8_t>(AscendC::TPosition::A1, 0, ArchTag::L1_SIZE);
+    }
+
+    __aicore__ inline AscendC::LocalTensor<uint8_t> L0ABuffer() const
+    {
+        return AscendC::LocalTensor<uint8_t>(AscendC::TPosition::A2, 0, ArchTag::L0A_SIZE);
+    }
+
+    __aicore__ inline AscendC::LocalTensor<uint8_t> L0BBuffer() const
+    {
+        return AscendC::LocalTensor<uint8_t>(AscendC::TPosition::B2, 0, ArchTag::L0B_SIZE);
+    }
+
+    __aicore__ inline AscendC::LocalTensor<uint8_t> L0CBuffer() const
+    {
+        return AscendC::LocalTensor<uint8_t>(AscendC::TPosition::CO1, 0, ArchTag::L0C_SIZE);
+    }
+
+    __aicore__ inline AscendC::LocalTensor<uint8_t> UbBuffer() const
+    {
+        return AscendC::LocalTensor<uint8_t>(AscendC::TPosition::VECCALC, 0, ArchTag::UB_SIZE);
+    }
+
+    __aicore__ inline AscendC::LocalTensor<bfloat16_t> L1W(uint32_t slot)
+    {
+        return L1Buffer()[FWD_H_L1_W_BASE + slot * FWD_H_L1_W_SLOT_BYTES]
+            .template ReinterpretCast<bfloat16_t>();
+    }
+
+    __aicore__ inline AscendC::LocalTensor<bfloat16_t> L1HRight(uint32_t slot)
+    {
+        return L1Buffer()[FWD_H_L1_H_RIGHT_BASE + slot * FWD_H_L1_H_RIGHT_SLOT_BYTES]
+            .template ReinterpretCast<bfloat16_t>();
+    }
+
+    __aicore__ inline AscendC::LocalTensor<bfloat16_t> L1Kg(uint32_t slot)
+    {
+        return L1Buffer()[FWD_H_L1_KG_BASE + slot * FWD_H_L1_KG_SLOT_BYTES]
+            .template ReinterpretCast<bfloat16_t>();
+    }
+
+    __aicore__ inline AscendC::LocalTensor<bfloat16_t> L0A(uint32_t slot)
+    {
+        return L0ABuffer()[slot * L0A_SLOT_BYTES].template ReinterpretCast<bfloat16_t>();
+    }
+
+    __aicore__ inline AscendC::LocalTensor<bfloat16_t> L0B(uint32_t slot)
+    {
+        return L0BBuffer()[slot * L0B_SLOT_BYTES].template ReinterpretCast<bfloat16_t>();
+    }
+
+    __aicore__ inline AscendC::LocalTensor<ElementAccumulator> L0C(uint32_t slot)
+    {
+        return L0CBuffer()[slot * L0C_SLOT_BYTES]
+            .template ReinterpretCast<ElementAccumulator>();
     }
 
     __aicore__ inline void InitEvents()
     {
         for (uint32_t slot = 0; slot < FWD_H_AIC_HEAD_SLOTS; ++slot) {
-            wReadyEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE1_MTE2);
-            wDoneEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE2_MTE1);
-            hRightReadyEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE1_MTE2);
-            hRightDoneEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE2_MTE1);
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(WReadyEvent(slot));
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(HRightReadyEvent(slot));
         }
         for (uint32_t slot = 0; slot < L0_SLOTS; ++slot) {
-            l0AFreeEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::M_MTE1);
-            l0AReadyEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE1_M);
-            l0BFreeEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::M_MTE1);
-            l0BReadyEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE1_M);
-            fixFreeEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::FIX_M);
-            fixDoneEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::M_FIX);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(slot));
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(slot));
             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(slot));
@@ -225,6 +256,7 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(slot));
             AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(slot));
         }
+        // 固定 EventID 已全部回收到初始 free 状态，下一次 kernel launch 可重新使用。
     }
 
     __aicore__ inline uint64_t WOffset(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
@@ -248,8 +280,9 @@ private:
         return FwdHHOffset(args_.tiling, unit.sequence, head.hv, chunk.globalChunk);
     }
 
-    __aicore__ inline void LoadStage0Head(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
-                                          const FwdHHeadBinding &head)
+    // 保留 leaf stage 调用边界，使 TLA 临时对象在各 head/stage 之间复用标量栈区。
+    __aicore__ inline void LoadStage0Head(
+        const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHHeadBinding &head)
     {
         // Stage0 搬运：W_c,h[M,K] 和 canonical H_c,h[K,V] 从 GM 异步进入当前 roundHead 的 L1 槽。
         const uint32_t slot = head.roundHead;
@@ -259,13 +292,13 @@ private:
         AscendC::GlobalTensor<bfloat16_t> gmW;
         gmW.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.w) + WOffset(unit, chunk, head));
         if (chunk.validTokens < FWD_H_CHUNK) {
-            ClearL1(l1W_[slot], FWD_H_L1_W_SLOT_BYTES);
+            ClearL1(L1W(slot), FWD_H_L1_W_SLOT_BYTES);
         }
         auto gmWLayout = tla::MakeLayout<bfloat16_t, LayoutW>(chunk.validTokens, FWD_H_K);
         auto tensorW = tla::MakeTensor(gmW, gmWLayout, Catlass::Arch::PositionGM{});
         auto blockW = tla::GetTile(tensorW, tla::MakeCoord(0, 0),
                                    tla::MakeShape(chunk.validTokens, FWD_H_K));
-        auto tensorL1W = tla::MakeTensor(l1W_[slot], L1_W_LAYOUT, Catlass::Arch::PositionL1{});
+        auto tensorL1W = tla::MakeTensor(L1W(slot), L1_W_LAYOUT, Catlass::Arch::PositionL1{});
         CopyGmToL1AS0<decltype(blockW)> copyW;
         copyW(tensorL1W, blockW);
 
@@ -283,7 +316,7 @@ private:
         auto tensorH = tla::MakeTensor(gmH, gmHLayout, Catlass::Arch::PositionGM{});
         auto blockH = tla::GetTile(tensorH, tla::MakeCoord(0, 0),
                                    tla::MakeShape(FWD_H_K, FWD_H_V));
-        auto tensorL1H = tla::MakeTensor(l1HRight_[slot], L1_H_LAYOUT, Catlass::Arch::PositionL1{});
+        auto tensorL1H = tla::MakeTensor(L1HRight(slot), L1_H_LAYOUT, Catlass::Arch::PositionL1{});
         CopyGmToL1BS0<decltype(blockH)> copyH;
         copyH(tensorL1H, blockH);
 
@@ -291,21 +324,21 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(HRightDoneEvent(slot));
     }
 
-    __aicore__ inline void ComputeStage0Head(const FwdHChunkSpan &chunk,
-                                             const FwdHHeadBinding &head, uint32_t pipelineSlot)
+    __aicore__ inline void ComputeStage0Head(
+        const FwdHChunkSpan &chunk, const FwdHHeadBinding &head, uint32_t pipelineSlot)
     {
         // Stage0 计算：Pacc_c,h = W_c,h @ H_c,h，BF16 x BF16 -> FP32；
         // 随后按 StateT 转为 PType，Fixpipe 直接写入该 head 所属 AIV 的 local slot。
         const uint32_t slot = head.roundHead;
         const uint32_t m = FwdHAlignCube(chunk.validTokens);
-        auto tensorL1W = tla::MakeTensor(l1W_[slot], L1_W_LAYOUT, Catlass::Arch::PositionL1{});
-        auto tensorL1H = tla::MakeTensor(l1HRight_[slot], L1_H_LAYOUT, Catlass::Arch::PositionL1{});
+        auto tensorL1W = tla::MakeTensor(L1W(slot), L1_W_LAYOUT, Catlass::Arch::PositionL1{});
+        auto tensorL1H = tla::MakeTensor(L1HRight(slot), L1_H_LAYOUT, Catlass::Arch::PositionL1{});
         auto layoutL0A = tla::MakeLayout<bfloat16_t, typename TileS0::LayoutTagL0A>(m, FWD_H_K);
         auto layoutL0B = tla::MakeLayout<bfloat16_t, typename TileS0::LayoutTagL0B>(FWD_H_K, FWD_H_V);
         auto layoutL0C = tla::MakeLayoutL0C(m, FWD_H_V);
-        auto tensorL0A = tla::MakeTensor(l0A_[pipelineSlot], layoutL0A, Catlass::Arch::PositionL0A{});
-        auto tensorL0B = tla::MakeTensor(l0B_[pipelineSlot], layoutL0B, Catlass::Arch::PositionL0B{});
-        auto tensorL0C = tla::MakeTensor(l0C_[pipelineSlot], layoutL0C, Catlass::Arch::PositionL0C{});
+        auto tensorL0A = tla::MakeTensor(L0A(pipelineSlot), layoutL0A, Catlass::Arch::PositionL0A{});
+        auto tensorL0B = tla::MakeTensor(L0B(pipelineSlot), layoutL0B, Catlass::Arch::PositionL0B{});
+        auto tensorL0C = tla::MakeTensor(L0C(pipelineSlot), layoutL0C, Catlass::Arch::PositionL0C{});
 
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(WDoneEvent(slot));
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(HRightDoneEvent(slot));
@@ -324,7 +357,7 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(L0BReadyEvent(pipelineSlot));
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(pipelineSlot));
         TileMmadS0 mmad;
-        mmad(tensorL0C, tensorL0A, tensorL0B, true, 0b11);
+        mmad(tensorL0C, tensorL0A, tensorL0B, true, 0);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(pipelineSlot));
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(pipelineSlot));
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
@@ -335,14 +368,14 @@ private:
                 FwdHAicPeerFlag(FWD_H_D_FREE_FLAG, head.localSlot, head.aiv));
         }
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
-        AscendC::LocalTensor<PType> pUb = ubBuf_.Get<uint8_t>()[
+        AscendC::LocalTensor<PType> pUb = UbBuffer()[
             FwdHLocalSlotBase(head.localSlot)].template ReinterpretCast<PType>();
         auto ubLayout = tla::MakeLayout<PType, LayoutOutput>(m, FWD_H_V);
         auto tensorUb = tla::MakeTensor(pUb, ubLayout, Catlass::Arch::PositionUB{});
         auto blockUb = tla::GetTile(tensorUb, tla::MakeCoord(0, 0),
                                     tla::MakeShape(chunk.validTokens, FWD_H_V));
         CopyL0CToUbS0<decltype(blockUb)> copyP;
-        copyP(blockUb, tensorL0C, static_cast<uint8_t>(head.aiv), 0b11);
+        copyP(blockUb, tensorL0C, static_cast<uint8_t>(head.aiv), 0);
         AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
             FwdHAicPeerFlag(FWD_H_P_READY_FLAG, head.localSlot, head.aiv));
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(pipelineSlot));
@@ -368,14 +401,14 @@ private:
         }
     }
 
-    __aicore__ inline void LoadKg(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
-                                  const FwdHKgBinding &binding)
+    __aicore__ inline void LoadKg(
+        const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHKgBinding &binding)
     {
         // Stage2 搬运：只加载本轮 requiredKh[] 中实际存在的 k_raw/kg；slot 不跨 round 保留。
         const uint32_t slot = binding.slot;
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(WReadyEvent(slot));
         if (chunk.validTokens < FWD_H_CHUNK) {
-            ClearL1(l1Kg_[slot], FWD_H_L1_KG_SLOT_BYTES);
+            ClearL1(L1Kg(slot), FWD_H_L1_KG_SLOT_BYTES);
         }
         AscendC::GlobalTensor<bfloat16_t> gmKg;
         const uint64_t offset = FwdHKOffset(args_.tiling, unit.sequence.physicalBatch,
@@ -386,7 +419,7 @@ private:
             auto tensorGm = tla::MakeTensor(gmKg, gmLayout, Catlass::Arch::PositionGM{});
             auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
                                         tla::MakeShape(FWD_H_K, chunk.validTokens));
-            auto tensorL1 = tla::MakeTensor(l1Kg_[slot], L1_LEFT_S2_LAYOUT,
+            auto tensorL1 = tla::MakeTensor(L1Kg(slot), L1_LEFT_S2_LAYOUT,
                                             Catlass::Arch::PositionL1{});
             CopyGmToL1AS2<decltype(blockGm)> copy;
             copy(tensorL1, blockGm);
@@ -395,7 +428,7 @@ private:
             auto tensorGm = tla::MakeTensor(gmKg, gmLayout, Catlass::Arch::PositionGM{});
             auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
                                         tla::MakeShape(chunk.validTokens, FWD_H_K));
-            auto tensorL1 = tla::MakeTensor(l1Kg_[slot], L1_RIGHT_S2_LAYOUT,
+            auto tensorL1 = tla::MakeTensor(L1Kg(slot), L1_RIGHT_S2_LAYOUT,
                                             Catlass::Arch::PositionL1{});
             CopyGmToL1BS2<decltype(blockGm)> copy;
             copy(tensorL1, blockGm);
@@ -403,7 +436,8 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(WDoneEvent(slot));
     }
 
-    __aicore__ inline void LoadRight(const FwdHChunkSpan &chunk, const FwdHHeadBinding &head)
+    __aicore__ inline void LoadRight(
+        const FwdHChunkSpan &chunk, const FwdHHeadBinding &head)
     {
         // Stage2 搬运：等待本 head 的 Stage1 MTE3 后，从 GM ND 搬入当前 H/right L1 槽。
         const uint32_t slot = head.roundHead;
@@ -411,7 +445,7 @@ private:
             FwdHAicPeerFlag(FWD_H_RIGHT_READY_FLAG, head.localSlot, head.aiv));
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(HRightReadyEvent(slot));
         if (chunk.validTokens < FWD_H_CHUNK) {
-            ClearL1(l1HRight_[slot], FWD_H_L1_KG_SLOT_BYTES);
+            ClearL1(L1HRight(slot), FWD_H_L1_KG_SLOT_BYTES);
         }
         AscendC::GlobalTensor<bfloat16_t> gmRight;
         const uint64_t offset = args_.tiling.vUpdateWorkspaceOffset / sizeof(bfloat16_t) +
@@ -422,7 +456,7 @@ private:
             auto tensorGm = tla::MakeTensor(gmRight, gmLayout, Catlass::Arch::PositionGM{});
             auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
                                         tla::MakeShape(chunk.validTokens, FWD_H_V));
-            auto tensorL1 = tla::MakeTensor(l1HRight_[slot], L1_RIGHT_S2_LAYOUT,
+            auto tensorL1 = tla::MakeTensor(L1HRight(slot), L1_RIGHT_S2_LAYOUT,
                                             Catlass::Arch::PositionL1{});
             CopyGmToL1BS2<decltype(blockGm)> copy;
             copy(tensorL1, blockGm);
@@ -431,7 +465,7 @@ private:
             auto tensorGm = tla::MakeTensor(gmRight, gmLayout, Catlass::Arch::PositionGM{});
             auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
                                         tla::MakeShape(FWD_H_V, chunk.validTokens));
-            auto tensorL1 = tla::MakeTensor(l1HRight_[slot], L1_LEFT_S2_LAYOUT,
+            auto tensorL1 = tla::MakeTensor(L1HRight(slot), L1_LEFT_S2_LAYOUT,
                                             Catlass::Arch::PositionL1{});
             CopyGmToL1AS2<decltype(blockGm)> copy;
             copy(tensorL1, blockGm);
@@ -439,23 +473,21 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(HRightDoneEvent(slot));
     }
 
-    __aicore__ inline void ComputeStage2Head(const FwdHWorkUnit &unit,
-                                             const FwdHChunkSpan &chunk,
-                                             const FwdHHeadBinding &head,
-                                             uint32_t pipelineSlot,
-                                             bool stage0Ran)
+    __aicore__ inline void ComputeStage2Head(
+        const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHHeadBinding &head,
+        uint32_t pipelineSlot, bool stage0Ran)
     {
         // Stage2 计算：state_v_first=false 时 D=kg^T@right，输出 [K,V]；
         // state_v_first=true 时交换两个输入，计算 right^T@kg，输出物理 [V,K]。
-        const FwdHKgBinding &binding = unit.headRound.kg[head.kgSlot];
+        const FwdHKgBinding binding = FwdHBuildKgBinding(unit.headRound, head.kgSlot);
         const uint32_t m = FWD_H_K;
         const uint32_t k = FwdHAlignCube(chunk.validTokens);
         auto layoutL0A = tla::MakeLayout<bfloat16_t, typename TileS2::LayoutTagL0A>(m, k);
         auto layoutL0B = tla::MakeLayout<bfloat16_t, typename TileS2::LayoutTagL0B>(k, FWD_H_V);
         auto layoutL0C = tla::MakeLayoutL0C(m, FWD_H_V);
-        auto tensorL0A = tla::MakeTensor(l0A_[pipelineSlot], layoutL0A, Catlass::Arch::PositionL0A{});
-        auto tensorL0B = tla::MakeTensor(l0B_[pipelineSlot], layoutL0B, Catlass::Arch::PositionL0B{});
-        auto tensorL0C = tla::MakeTensor(l0C_[pipelineSlot], layoutL0C, Catlass::Arch::PositionL0C{});
+        auto tensorL0A = tla::MakeTensor(L0A(pipelineSlot), layoutL0A, Catlass::Arch::PositionL0A{});
+        auto tensorL0B = tla::MakeTensor(L0B(pipelineSlot), layoutL0B, Catlass::Arch::PositionL0B{});
+        auto tensorL0C = tla::MakeTensor(L0C(pipelineSlot), layoutL0C, Catlass::Arch::PositionL0C{});
 
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(pipelineSlot));
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(pipelineSlot));
@@ -468,18 +500,18 @@ private:
         if constexpr (STATE_V_FIRST) {
             // LoadRight 已将 GM ND right[M,V] 按 ColumnMajor 映射为 L1[V,M]，
             // kg 保持 GM ND[M,K]，Cube 直接执行 [V,M]@[M,K] -> [V,K]。
-            auto tensorRight = tla::MakeTensor(l1HRight_[head.roundHead], L1_LEFT_S2_LAYOUT,
+            auto tensorRight = tla::MakeTensor(L1HRight(head.roundHead), L1_LEFT_S2_LAYOUT,
                                                Catlass::Arch::PositionL1{});
-            auto tensorKg = tla::MakeTensor(l1Kg_[binding.slot], L1_RIGHT_S2_LAYOUT,
+            auto tensorKg = tla::MakeTensor(L1Kg(binding.slot), L1_RIGHT_S2_LAYOUT,
                                             Catlass::Arch::PositionL1{});
             copyA(tensorL0A, tla::GetTile(tensorRight, tla::MakeCoord(0, 0),
                                           tla::MakeShape(m, k)));
             copyB(tensorL0B, tla::GetTile(tensorKg, tla::MakeCoord(0, 0),
                                           tla::MakeShape(k, FWD_H_V)));
         } else {
-            auto tensorKg = tla::MakeTensor(l1Kg_[binding.slot], L1_LEFT_S2_LAYOUT,
+            auto tensorKg = tla::MakeTensor(L1Kg(binding.slot), L1_LEFT_S2_LAYOUT,
                                             Catlass::Arch::PositionL1{});
-            auto tensorRight = tla::MakeTensor(l1HRight_[head.roundHead], L1_RIGHT_S2_LAYOUT,
+            auto tensorRight = tla::MakeTensor(L1HRight(head.roundHead), L1_RIGHT_S2_LAYOUT,
                                                Catlass::Arch::PositionL1{});
             copyA(tensorL0A, tla::GetTile(tensorKg, tla::MakeCoord(0, 0),
                                           tla::MakeShape(m, k)));
@@ -498,7 +530,7 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(L0BReadyEvent(pipelineSlot));
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(pipelineSlot));
         TileMmadS2 mmad;
-        mmad(tensorL0C, tensorL0A, tensorL0B, true, 0b11);
+        mmad(tensorL0C, tensorL0A, tensorL0B, true, 0);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(pipelineSlot));
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(pipelineSlot));
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
@@ -509,11 +541,12 @@ private:
                 FwdHAicPeerFlag(FWD_H_P_FREE_FLAG, head.localSlot, head.aiv));
         }
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
-        AscendC::LocalTensor<float> dUb = ubBuf_.Get<uint8_t>()[FwdHLocalSlotBase(head.localSlot)].template ReinterpretCast<float>();
+        AscendC::LocalTensor<float> dUb =
+            UbBuffer()[FwdHLocalSlotBase(head.localSlot)].template ReinterpretCast<float>();
         auto ubLayout = tla::MakeLayout<float, LayoutOutput>(FWD_H_K, FWD_H_V);
         auto tensorUb = tla::MakeTensor(dUb, ubLayout, Catlass::Arch::PositionUB{});
         CopyL0CToUbS2<decltype(tensorUb)> copyD;
-        copyD(tensorUb, tensorL0C, static_cast<uint8_t>(head.aiv), 0b11);
+        copyD(tensorUb, tensorL0C, static_cast<uint8_t>(head.aiv), 0);
         AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
             FwdHAicPeerFlag(FWD_H_D_READY_FLAG, head.localSlot, head.aiv));
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(pipelineSlot));
@@ -524,7 +557,7 @@ private:
     {
         // Stage2：g-only 计算 D_c=k_raw_c^T@V_new_g；gk-only 计算 D_c=kg_c^T@V_new。
         for (uint32_t kgSlot = 0; kgSlot < unit.headRound.requiredKhCount; ++kgSlot) {
-            LoadKg(unit, chunk, unit.headRound.kg[kgSlot]);
+            LoadKg(unit, chunk, FwdHBuildKgBinding(unit.headRound, kgSlot));
         }
         for (uint32_t roundHead = 0; roundHead < unit.headRound.activeHeadCount; ++roundHead) {
             LoadRight(chunk, unit.headRound.heads[roundHead]);
@@ -539,7 +572,7 @@ private:
         }
     }
 
-    __aicore__ inline void ProcessWorkUnit(const FwdHWorkUnit &unit)
+    __aicore__ inline void ProcessWorkUnit(const FwdHWorkUnit &unit, bool hasNextRound)
     {
         if (!hasCubeWork_) {
             return;
@@ -567,38 +600,24 @@ private:
                     FwdHAicPeerFlag(FWD_H_P_FREE_FLAG, head.localSlot, head.aiv));
             }
         }
-        AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(FwdHAicPeerFlag(FWD_H_ROUND_DONE_FLAG, 0, 0));
-        AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(FwdHAicPeerFlag(FWD_H_ROUND_DONE_FLAG, 0, 1));
-        AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(FwdHAicPeerFlag(FWD_H_H_READY_FLAG, 0, 0));
-        AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(FwdHAicPeerFlag(FWD_H_H_READY_FLAG, 0, 1));
+        if (hasNextRound) {
+            // PIPE_S 将 round 握手放到控制流水，阻止下一轮 MTE2 预取越过 DONE/ACK。
+            AscendC::CrossCoreWaitFlag<0x4, PIPE_S>(
+                FwdHAicPeerFlag(FWD_H_ROUND_DONE_FLAG, 0, 0));
+            AscendC::CrossCoreWaitFlag<0x4, PIPE_S>(
+                FwdHAicPeerFlag(FWD_H_ROUND_DONE_FLAG, 0, 1));
+            // ACK 表示 AIC 已完成本轮消费；AIV 收到后才可复用下一轮的本地槽。
+            AscendC::CrossCoreSetFlag<0x4, PIPE_S>(
+                FwdHAicPeerFlag(FWD_H_ROUND_ACK_FLAG, 0, 0));
+            AscendC::CrossCoreSetFlag<0x4, PIPE_S>(
+                FwdHAicPeerFlag(FWD_H_ROUND_ACK_FLAG, 0, 1));
+        }
     }
 
     FwdHKernelArgs args_{};
     uint32_t coreIdx_ = 0;
     uint32_t coreNum_ = 1;
     bool hasCubeWork_ = false;
-    AscendC::TBuf<AscendC::TPosition::A1> l1Buf_{};
-    AscendC::TBuf<AscendC::TPosition::A2> l0ABuf_{};
-    AscendC::TBuf<AscendC::TPosition::B2> l0BBuf_{};
-    AscendC::TBuf<AscendC::TPosition::CO1> l0CBuf_{};
-    AscendC::TBuf<AscendC::TPosition::VECCALC> ubBuf_{};
-    AscendC::TBuf<AscendC::TPosition::C2PIPE2GM> fixBuf_{};
-    AscendC::TEventID wReadyEvent_[FWD_H_AIC_HEAD_SLOTS]{};
-    AscendC::TEventID wDoneEvent_[FWD_H_AIC_HEAD_SLOTS]{};
-    AscendC::TEventID hRightReadyEvent_[FWD_H_AIC_HEAD_SLOTS]{};
-    AscendC::TEventID hRightDoneEvent_[FWD_H_AIC_HEAD_SLOTS]{};
-    AscendC::TEventID l0AFreeEvent_[L0_SLOTS]{};
-    AscendC::TEventID l0AReadyEvent_[L0_SLOTS]{};
-    AscendC::TEventID l0BFreeEvent_[L0_SLOTS]{};
-    AscendC::TEventID l0BReadyEvent_[L0_SLOTS]{};
-    AscendC::TEventID fixFreeEvent_[L0_SLOTS]{};
-    AscendC::TEventID fixDoneEvent_[L0_SLOTS]{};
-    AscendC::LocalTensor<bfloat16_t> l1W_[FWD_H_AIC_HEAD_SLOTS]{};
-    AscendC::LocalTensor<bfloat16_t> l1HRight_[FWD_H_AIC_HEAD_SLOTS]{};
-    AscendC::LocalTensor<bfloat16_t> l1Kg_[FWD_H_AIC_HEAD_SLOTS]{};
-    AscendC::LocalTensor<bfloat16_t> l0A_[L0_SLOTS]{};
-    AscendC::LocalTensor<bfloat16_t> l0B_[L0_SLOTS]{};
-    AscendC::LocalTensor<ElementAccumulator> l0C_[L0_SLOTS]{};
 };
 
 } // namespace GDN
