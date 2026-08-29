@@ -68,7 +68,51 @@ static aclnnStatus CheckNotNull(ChunkFwdHParams params)
 
 static aclnnStatus CheckFormat(ChunkFwdHParams params)
 {
-    (void)params;
+    const aclTensor *tensors[] = {
+        params.k,
+        params.w,
+        params.u,
+        params.gOptional,
+        params.gkOptional,
+        params.initialStateOptional,
+        params.hOut,
+        params.vNewOut,
+        params.finalStateOut,
+    };
+    const char *tensorNames[] = {
+        "k",
+        "w",
+        "u",
+        "gOptional",
+        "gkOptional",
+        "initialStateOptional",
+        "hOut",
+        "vNewOut",
+        "finalStateOut",
+    };
+    for (size_t idx = 0; idx < sizeof(tensors) / sizeof(tensors[0]); ++idx) {
+        if (tensors[idx] == nullptr) {
+            continue;
+        }
+        const auto storageFormat = tensors[idx]->GetStorageFormat();
+        const auto viewFormat = tensors[idx]->GetViewFormat();
+        CHECK_COND(storageFormat == Format::FORMAT_ND && viewFormat == Format::FORMAT_ND &&
+                       !IsPrivateFormat(storageFormat),
+                   ACLNN_ERR_PARAM_INVALID,
+                   "%s must use non-private ND storage/view format, but got storage=%d and view=%d.",
+                   tensorNames[idx], static_cast<int>(storageFormat),
+                   static_cast<int>(viewFormat));
+    }
+    const aclTensor *outputs[] = {params.hOut, params.vNewOut, params.finalStateOut};
+    const char *outputNames[] = {"hOut", "vNewOut", "finalStateOut"};
+    for (size_t idx = 0; idx < sizeof(outputs) / sizeof(outputs[0]); ++idx) {
+        if (outputs[idx] == nullptr) {
+            continue;
+        }
+        CHECK_COND(IsContiguous(outputs[idx]), ACLNN_ERR_PARAM_INVALID,
+                   "%s must be contiguous because ChunkFwdH writes it directly.",
+                   outputNames[idx]);
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -249,23 +293,35 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkFwdHParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous w failed.");
-    CHECK_COND(DataContiguous(params.u, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous u failed.");
+    auto status = DataContiguous(params.k, executorPtr);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = DataContiguous(params.w, executorPtr);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = DataContiguous(params.u, executorPtr);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
     if (params.gOptional != nullptr) {
-        CHECK_COND(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                   "Contiguous gOptional failed.");
+        status = DataContiguous(params.gOptional, executorPtr);
+        if (status != ACLNN_SUCCESS) {
+            return status;
+        }
     }
     if (params.gkOptional != nullptr) {
-        CHECK_COND(DataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                   "Contiguous gkOptional failed.");
+        status = DataContiguous(params.gkOptional, executorPtr);
+        if (status != ACLNN_SUCCESS) {
+            return status;
+        }
     }
     if (params.initialStateOptional != nullptr) {
-        CHECK_COND(DataContiguous(params.initialStateOptional, executorPtr) == ACLNN_SUCCESS,
-                   ACLNN_ERR_PARAM_INVALID, "Contiguous initialStateOptional failed.");
+        status = DataContiguous(params.initialStateOptional, executorPtr);
+        if (status != ACLNN_SUCCESS) {
+            return status;
+        }
     }
 
     return ACLNN_SUCCESS;
@@ -381,14 +437,18 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     if (ret != ACLNN_SUCCESS) {
         return ret;
     }
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    ret = ParamsDataContiguous(params, executorPtr);
+    if (ret != ACLNN_SUCCESS) {
+        return ret;
+    }
     auto result = l0op::ChunkFwdH(
         params.k, params.w, params.u, params.gOptional, params.gkOptional, params.initialStateOptional,
         params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize,
         params.saveNewValue, params.useExp2, params.stateVFirst,
         params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
-    CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    CHECK_RET(result[0] != nullptr && result[1] != nullptr &&
+                  (!outputFinalState || result[2] != nullptr),
+              ACLNN_ERR_INNER_NULLPTR);
 
     auto viewCopyResult0 = l0op::ViewCopy(result[0], params.hOut, executorPtr);
     CHECK_RET(viewCopyResult0 != nullptr, ACLNN_ERR_INNER_NULLPTR);

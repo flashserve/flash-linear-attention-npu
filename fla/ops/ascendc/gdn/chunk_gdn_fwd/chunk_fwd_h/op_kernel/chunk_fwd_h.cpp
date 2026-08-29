@@ -24,9 +24,15 @@ template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 {
     if ASCEND_IS_AIC {
+        const bool hasCubeWork = args.tiling.useInitialState || args.tiling.storeFinalState ||
+            args.tiling.seqlen > static_cast<uint32_t>(FWD_H_CHUNK);
+        if (!hasCubeWork) {
+            return;
+        }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         ChunkFwdHCubeArch35<CompilePolicy, STATE_V_FIRST> cube;
 #else
+        AscendC::TPipe pipe;
         ChunkFwdHCubeArch22<CompilePolicy, STATE_V_FIRST> cube;
 #endif
         cube.Init(args);
@@ -35,10 +41,12 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
     if ASCEND_IS_AIV {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         ChunkFwdHVecArch35<GateT, CompilePolicy, STATE_V_FIRST> vec;
-#else
-        ChunkFwdHVecArch22<GateT, CompilePolicy, STATE_V_FIRST> vec;
-#endif
         vec.Init(args);
+#else
+        AscendC::TPipe pipe;
+        ChunkFwdHVecArch22<GateT, CompilePolicy, STATE_V_FIRST> vec;
+        vec.Init(args);
+#endif
         vec.Process();
     }
 }
@@ -116,31 +124,29 @@ extern "C" __global__ __aicore__ void chunk_fwd_h(
         args.workspace = AscendC::GetUserWorkspace(workspace);
         __gm__ const ChunkFwdHTilingData *tilingData =
             reinterpret_cast<__gm__ const ChunkFwdHTilingData *>(tiling);
-        args.tiling.batch = tilingData->batch;
-        args.tiling.seqlen = tilingData->seqlen;
-        args.tiling.kNumHead = tilingData->kNumHead;
-        args.tiling.vNumHead = tilingData->vNumHead;
-        args.tiling.kHeadDim = tilingData->kHeadDim;
-        args.tiling.vHeadDim = tilingData->vHeadDim;
-        args.tiling.chunkSize = tilingData->chunkSize;
+        args.tiling.batch = static_cast<uint32_t>(tilingData->batch);
+        args.tiling.seqlen = static_cast<uint32_t>(tilingData->seqlen);
+        args.tiling.kNumHead = static_cast<uint32_t>(tilingData->kNumHead);
+        args.tiling.vNumHead = static_cast<uint32_t>(tilingData->vNumHead);
+        args.tiling.kHeadDim = static_cast<uint32_t>(tilingData->kHeadDim);
+        args.tiling.vHeadDim = static_cast<uint32_t>(tilingData->vHeadDim);
+        args.tiling.chunkSize = static_cast<uint32_t>(tilingData->chunkSize);
         args.tiling.useInitialState = tilingData->useInitialState;
         args.tiling.storeFinalState = tilingData->storeFinalState;
-        args.tiling.dataType = tilingData->dataType;
-        args.tiling.gDataType = tilingData->gDataType;
-        args.tiling.stateDataType = tilingData->stateDataType;
+        args.tiling.dataType = static_cast<uint8_t>(tilingData->dataType);
+        args.tiling.gDataType = static_cast<uint8_t>(tilingData->gDataType);
+        args.tiling.stateDataType = static_cast<uint8_t>(tilingData->stateDataType);
         args.tiling.isVariedLen = tilingData->isVariedLen;
-        args.tiling.shapeBatch = tilingData->shapeBatch;
-        args.tiling.tokenBatch = tilingData->tokenBatch;
+        args.tiling.shapeBatch = static_cast<uint32_t>(tilingData->shapeBatch);
+        args.tiling.tokenBatch = static_cast<uint32_t>(tilingData->tokenBatch);
         args.tiling.useG = tilingData->useG;
         args.tiling.useGk = tilingData->useGk;
         args.tiling.useExp2 = tilingData->useExp2;
         args.tiling.stateVFirst = tilingData->stateVFirst;
-        args.tiling.vWorkspaceOffset = tilingData->vWorkspaceOffset;
-        args.tiling.vUpdateWorkspaceOffset = tilingData->vUpdateWorkspaceOffset;
-        args.tiling.kDecayWorkspaceOffset = tilingData->kDecayWorkspaceOffset;
-        args.tiling.hWorkspaceOffset = tilingData->hWorkspaceOffset;
-        args.tiling.numSeqWorkspaceOffset = tilingData->numSeqWorkspaceOffset;
-        args.tiling.numChunksWorkspaceOffset = tilingData->numChunksWorkspaceOffset;
+        args.tiling.vWorkspaceOffset = static_cast<uint64_t>(tilingData->vWorkspaceOffset);
+        args.tiling.vUpdateWorkspaceOffset = static_cast<uint64_t>(tilingData->vUpdateWorkspaceOffset);
+        args.tiling.kDecayWorkspaceOffset = static_cast<uint64_t>(tilingData->kDecayWorkspaceOffset);
+        args.tiling.hWorkspaceOffset = static_cast<uint64_t>(tilingData->hWorkspaceOffset);
         GDN::DispatchFwdH(args);
     }
 }

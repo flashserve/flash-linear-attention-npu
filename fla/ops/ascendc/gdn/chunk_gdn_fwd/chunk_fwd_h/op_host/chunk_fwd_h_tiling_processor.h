@@ -93,8 +93,15 @@ public:
             batch = tokenBatch;
         }
 
-        blockDim = ctx_.aicCoreNum;
-        const int64_t aicCoreNum = static_cast<int64_t>(ctx_.aicCoreNum);
+        const uint64_t effectiveSequenceCount = static_cast<uint64_t>(batch);
+        const uint64_t totalHeadTasks =
+            effectiveSequenceCount * static_cast<uint64_t>(ctx_.vNumHead);
+        const uint64_t physicalAicCores = static_cast<uint64_t>(ctx_.aicCoreNum);
+        const uint64_t headsPerCore =
+            (totalHeadTasks + physicalAicCores - 1) / physicalAicCores;
+        blockDim = static_cast<uint32_t>(
+            (totalHeadTasks + headsPerCore - 1) / headsPerCore);
+        const int64_t activeAicCoreNum = static_cast<int64_t>(blockDim);
         constexpr int64_t chunkSize = CHUNK_FWD_H_CHUNK_SIZE;
         constexpr int64_t kHeadDim = CHUNK_FWD_H_K_DIM;
         constexpr int64_t vHeadDim = CHUNK_FWD_H_V_DIM;
@@ -103,26 +110,20 @@ public:
         workspaceOffset += CHUNK_FWD_H_WORKSPACE_RSV_BYTE;
 
         tiling.vWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * CHUNK_FWD_H_ROUND_HEAD_SLOTS *
+        workspaceOffset += AlignUp(static_cast<size_t>(activeAicCoreNum * CHUNK_FWD_H_ROUND_HEAD_SLOTS *
                                                         chunkSize * vHeadDim * sizeof(float)));
 
         tiling.vUpdateWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * CHUNK_FWD_H_ROUND_HEAD_SLOTS *
+        workspaceOffset += AlignUp(static_cast<size_t>(activeAicCoreNum * CHUNK_FWD_H_ROUND_HEAD_SLOTS *
                                                         chunkSize * vHeadDim * sizeof(uint16_t)));
 
         tiling.kDecayWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * CHUNK_FWD_H_ROUND_HEAD_SLOTS *
+        workspaceOffset += AlignUp(static_cast<size_t>(activeAicCoreNum * CHUNK_FWD_H_ROUND_HEAD_SLOTS *
                                                         kHeadDim * vHeadDim * sizeof(float)));
 
         tiling.hWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>(aicCoreNum * CHUNK_FWD_H_ROUND_HEAD_SLOTS *
+        workspaceOffset += AlignUp(static_cast<size_t>(activeAicCoreNum * CHUNK_FWD_H_ROUND_HEAD_SLOTS *
                                                         kHeadDim * vHeadDim * sizeof(float)));
-
-        tiling.numSeqWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>((tokenBatch + 1) * static_cast<int64_t>(sizeof(int64_t))));
-
-        tiling.numChunksWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>((tokenBatch + 1) * static_cast<int64_t>(sizeof(int64_t))));
 
         workspaceOffset += CHUNK_FWD_H_WORKSPACE_RSV_BYTE;
         workspaceSize = workspaceOffset;

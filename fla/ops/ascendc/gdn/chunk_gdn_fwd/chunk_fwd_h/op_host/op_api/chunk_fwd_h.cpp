@@ -13,10 +13,25 @@
 #include "opdev/make_op_executor.h"
 #include "chunk_fwd_h.h"
 
+#include <initializer_list>
+
 using namespace op;
 
 namespace l0op {
 OP_TYPE_REGISTER(ChunkFwdH);
+
+namespace {
+
+op::Shape MakeShape(std::initializer_list<int64_t> dims)
+{
+    op::Shape shape;
+    for (int64_t dim : dims) {
+        shape.AppendDim(dim);
+    }
+    return shape;
+}
+
+} // namespace
 
 const std::array<const aclTensor *, 3> ChunkFwdH(
     const aclTensor *k,
@@ -69,9 +84,20 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     const int64_t logicalKDim = kShape.GetDim(3);
     const int64_t logicalVHeads = uShape.GetDim(1);
     const int64_t logicalVDim = uShape.GetDim(3);
+    const aclTensor *finalStateOutKernel = finalStateOut;
+    if (finalStateOutKernel == nullptr) {
+        const DataType stateType = initialStateOptional == nullptr
+                                       ? DataType::DT_FLOAT
+                                       : initialStateOptional->GetDataType();
+        finalStateOutKernel = executor->AllocTensor(MakeShape({0}), stateType, Format::FORMAT_ND);
+        if (finalStateOutKernel == nullptr) {
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Alloc finalStateOut placeholder failed.");
+            return {nullptr, nullptr, nullptr};
+        }
+    }
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkFwdH,
         OP_INPUT(k, w, u, g, gkOptional, initialStateOptional, actualCuSeqlens, actualChunkIndices),
-        OP_OUTPUT(hOut, vNewOut, finalStateOut),
+        OP_OUTPUT(hOut, vNewOut, finalStateOutKernel),
         OP_ATTR(outputFinalState, chunkSize, saveNewValue, useExp2, stateVFirst,
                 logicalBatch, logicalSeqlen,
                 logicalKHeads, logicalVHeads, logicalKDim, logicalVDim));

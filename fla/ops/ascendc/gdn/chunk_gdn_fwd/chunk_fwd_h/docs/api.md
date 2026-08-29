@@ -74,6 +74,10 @@ HV，本算子不会再次把 gk 应用到 prepared kg。
 `B/HK/HV/T` 必须为正；固定 `K=V=128`、`chunk_size=64`、`save_new_value=true`。
 变长模式要求输入容器 `B=1`。
 
+所有 aclnn tensor descriptor 的 storage/view format 必须是非私有 ND。输入 ND view 会由 host
+连续化；三个输出必须是连续 ND，因为 kernel 直接写入输出地址。Python 入口会为输出创建新的
+连续 tensor，并拒绝私有 NPU format。
+
 ## 输出
 
 | 输出 | dtype | Shape |
@@ -86,6 +90,13 @@ HV，本算子不会再次把 gk 应用到 prepared kg。
 存在 initial_state 时 StateT 等于其 dtype；Python 在没有 initial_state 但请求 final_state 时使用
 FP32。aclnn 调用者可通过 final_state 输出 dtype 选择 BF16 或 FP32。
 
-`output_final_state` 必须与 `finalStateOut` 的物理存在性一致。参数空指针返回
-`ACLNN_ERR_PARAM_NULLPTR`；dtype、shape、layout、属性、gate 组合和变长元数据不合法返回
-`ACLNN_ERR_PARAM_INVALID`。
+`output_final_state` 必须与 `finalStateOut` 的物理存在性一致。
+
+| 返回码 | 触发条件 |
+| --- | --- |
+| `ACLNN_SUCCESS` | workspace 查询或执行成功 |
+| `ACLNN_ERR_PARAM_NULLPTR` | 必传输入/输出、`workspaceSize` 或 `executor` 为空 |
+| `ACLNN_ERR_PARAM_INVALID` | dtype、shape、format、连续性、属性、gate 组合或变长元数据不合法 |
+| `ACLNN_ERR_INNER_CREATE_EXECUTOR` | executor 创建失败 |
+| `ACLNN_ERR_INNER_NULLPTR` | Contiguous/ViewCopy 等内部算子未返回有效 tensor |
+| `ACLNN_ERR_INNER` | kernel executor 执行失败 |

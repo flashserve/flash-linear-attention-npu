@@ -142,6 +142,11 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
+    if (tilingCtx.aicCoreNum == 0) {
+        OP_LOGE(context->GetNodeName(), "Platform reports zero AIC cores; cannot build ChunkFwdH tiling.");
+        return ge::GRAPH_FAILED;
+    }
+
     if (logicalBatch <= 0 || logicalSeqlen <= 0 || logicalKHeads <= 0 || logicalVHeads <= 0) {
         OP_LOGE(context->GetNodeName(),
                 "Logical batch, sequence length and head counts must be positive, but got "
@@ -203,9 +208,6 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tiling.set_vUpdateWorkspaceOffset(plainTiling.vUpdateWorkspaceOffset);
     tiling.set_kDecayWorkspaceOffset(plainTiling.kDecayWorkspaceOffset);
     tiling.set_hWorkspaceOffset(plainTiling.hWorkspaceOffset);
-    tiling.set_numSeqWorkspaceOffset(plainTiling.numSeqWorkspaceOffset);
-    tiling.set_numChunksWorkspaceOffset(plainTiling.numChunksWorkspaceOffset);
-
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
 

@@ -32,11 +32,11 @@ public:
     __aicore__ inline void InitEvents()
     {
         for (uint32_t slot = 0; slot < FWD_H_AIV_HEAD_SLOTS; ++slot) {
-            ioFreeEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE3_MTE2);
-            ioReadyEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE2_V);
-            ioDoneEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::V_MTE3);
-            scalarReadEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::V_S);
-            scalarWriteEvent_[slot] = GetTPipePtr()->FetchEventID(AscendC::HardEvent::S_V);
+            ioFreeEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
+            ioReadyEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE2_V>();
+            ioDoneEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::V_MTE3>();
+            scalarReadEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::V_S>();
+            scalarWriteEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::S_V>();
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
         }
     }
@@ -68,25 +68,43 @@ public:
 
     __aicore__ inline void Process()
     {
-        const uint32_t sequenceCount = args_.tiling.isVariedLen != 0
-                                           ? static_cast<uint32_t>(args_.tiling.tokenBatch)
-                                           : static_cast<uint32_t>(args_.tiling.shapeBatch);
-        const uint32_t rounds = FwdHHeadRoundsPerSequence<CompilePolicy::GATE_MODE>(args_.tiling);
-        // 同一 sequence 的所有 head-round 绑定到同一核，round 内串行收口；
-        // ProcessWorkUnit 返回时已完成本轮 ROUND_DONE/ACK，下一轮才允许预取。
-        for (uint32_t sequence = coreIdx_; sequence < sequenceCount; sequence += coreNum_) {
-            const FwdHSequenceSpan sequenceSpan = FwdHResolveSequence(args_, sequence);
-            for (uint32_t round = 0; round < rounds; ++round) {
-                const FwdHWorkUnit unit{sequenceSpan,
-                                        FwdHBuildHeadRound<CompilePolicy::GATE_MODE>(args_.tiling,
-                                                                                      round)};
-                if (unit.sequence.chunkCount != 0 && unit.headRound.activeHeadCount != 0) {
-                    ProcessWorkUnit(unit);
-                }
+        const FwdHCoreHeadRange range =
+            FwdHResolveCoreHeadRange(args_.tiling, coreIdx_, coreNum_);
+        const uint32_t headsPerSequence = static_cast<uint32_t>(args_.tiling.vNumHead);
+        uint32_t cachedSequence = FwdHSequenceCount(args_.tiling);
+        FwdHSequenceSpan sequenceSpan{};
+        for (uint32_t cursor = range.begin; cursor < range.end;) {
+            const uint32_t sequence = cursor / headsPerSequence;
+            const uint32_t hvBegin = cursor - sequence * headsPerSequence;
+            uint32_t unitHeads = range.end - cursor;
+            const uint32_t sequenceRemain = headsPerSequence - hvBegin;
+            if (unitHeads > sequenceRemain) {
+                unitHeads = sequenceRemain;
+            }
+            if (unitHeads > FWD_H_AIC_HEAD_SLOTS) {
+                unitHeads = FWD_H_AIC_HEAD_SLOTS;
+            }
+            if (sequence != cachedSequence) {
+                sequenceSpan = FwdHResolveSequence(args_, sequence);
+                cachedSequence = sequence;
+            }
+            const FwdHWorkUnit unit{
+                sequenceSpan,
+                FwdHBuildHeadRange<CompilePolicy::GATE_MODE>(args_.tiling, hvBegin, unitHeads)};
+            cursor += unitHeads;
+            if (unit.sequence.chunkCount != 0 && unit.headRound.activeHeadCount != 0) {
+                ProcessWorkUnit(unit, cursor < range.end);
             }
         }
         for (uint32_t slot = 0; slot < FWD_H_AIV_HEAD_SLOTS; ++slot) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+        }
+        for (uint32_t slot = 0; slot < FWD_H_AIV_HEAD_SLOTS; ++slot) {
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::V_S>(ScalarReadEvent(slot));
+            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::S_V>(ScalarWriteEvent(slot));
         }
     }
 
@@ -189,9 +207,11 @@ private:
         AscendC::PipeBarrier<PIPE_V>();
         const float last = ReadScalar(gateFp32_[slot], validTokens - 1, slot);
         AscendC::Duplicate(cast_[slot], last, validTokens);
+        AscendC::PipeBarrier<PIPE_V>();
         AscendC::Sub(gateFp32_[slot], cast_[slot], gateFp32_[slot], validTokens);
         AscendC::Duplicate(alpha_[slot], last, 1);
         if constexpr (CompilePolicy::USE_EXP2) {
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Muls(gateFp32_[slot], gateFp32_[slot], FWD_H_ARCH22_LN2, validTokens);
             AscendC::Muls(alpha_[slot], alpha_[slot], FWD_H_ARCH22_LN2, 1);
         }
@@ -232,27 +252,29 @@ private:
         AscendC::GlobalTensor<bfloat16_t> h;
         initial.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.initialState));
         h.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h));
-        const uint32_t localHeads = FwdHAivHeadCount(unit.headRound.activeHeadCount, aiv_);
-        for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
-            const FwdHHeadBinding &head = unit.headRound.heads[aiv_ + 2 * coreHeadId];
-            const uint32_t slot = head.localSlot;
-            const uint64_t stateBase = FwdHStateOffset(args_.tiling, unit.sequence.sequence,
-                                                       head.hv, 0, 0);
-            const FwdHChunkSpan first = FwdHBuildChunk(unit.sequence, 0);
-            for (uint32_t row = 0; row < FWD_H_K; row += TILE_ROWS) {
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
-                AscendC::DataCopy(calc_[slot], initial[stateBase + row * FWD_H_V], TILE_ELEMENTS);
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
-                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
-                AscendC::Cast(io_[slot], calc_[slot], AscendC::RoundMode::CAST_RINT, TILE_ELEMENTS);
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-                AscendC::DataCopy(h[HOffset(unit, first, head) + row * FWD_H_V],
-                                  io_[slot], TILE_ELEMENTS);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+        const uint32_t pairCount = FwdHMode2PairCount(unit.headRound.activeHeadCount);
+        for (uint32_t pairSlot = 0; pairSlot < pairCount; ++pairSlot) {
+            if (FwdHMode2PairHasHead(unit.headRound.activeHeadCount, pairSlot, aiv_)) {
+                const FwdHHeadBinding &head = unit.headRound.heads[pairSlot * 2U + aiv_];
+                const uint32_t slot = head.localSlot;
+                const uint64_t stateBase = FwdHStateOffset(args_.tiling, unit.sequence.sequence,
+                                                           head.hv, 0, 0);
+                const FwdHChunkSpan first = FwdHBuildChunk(unit.sequence, 0);
+                for (uint32_t row = 0; row < FWD_H_K; row += TILE_ROWS) {
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                    AscendC::DataCopy(calc_[slot], initial[stateBase + row * FWD_H_V], TILE_ELEMENTS);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+                    AscendC::Cast(io_[slot], calc_[slot], AscendC::RoundMode::CAST_RINT, TILE_ELEMENTS);
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                    AscendC::DataCopy(h[HOffset(unit, first, head) + row * FWD_H_V],
+                                      io_[slot], TILE_ELEMENTS);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                }
             }
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(
-                FwdHAivLocalFlag(FWD_H_H_READY_FLAG, slot));
+                FwdHAivLocalFlag(FWD_H_H_READY_FLAG, pairSlot));
         }
     }
 
@@ -268,8 +290,6 @@ private:
         const uint32_t firstRows = TileRows(chunk.validTokens);
         AscendC::DataCopy(io_[slot], u[UOffset(unit, chunk, head, 0)], firstRows * FWD_H_V);
         if constexpr (HAS_P) {
-            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
-                FwdHAivLocalFlag(FWD_H_P_READY_FLAG, slot));
             const uint64_t pByteOffset = ScratchByteOffset(args_.tiling.vWorkspaceOffset,
                                                            head.roundHead,
                                                            FWD_H_TOKEN_MATRIX_FP32_BYTES);
@@ -282,7 +302,10 @@ private:
             if (args_.tiling.storeFinalState != 0 || !chunk.last) {
                 AscendC::GlobalTensor<GateT> gate;
                 gate.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(args_.g));
-                AscendC::DataCopy(gateRaw_[slot], gate[GateOffset(unit, chunk, head)], chunk.validTokens);
+                AscendC::DataCopyPadExtParams<GateT> pad{false, 0, 0, 0};
+                const uint32_t gateBytes = static_cast<uint32_t>(chunk.validTokens * sizeof(GateT));
+                AscendC::DataCopyExtParams copy{1, gateBytes, 0, 0, 0};
+                AscendC::DataCopyPad(gateRaw_[slot], gate[GateOffset(unit, chunk, head)], copy, pad);
             }
         }
         if (chunk.first && !CompilePolicy::STATE_FP32 && args_.tiling.useInitialState != 0) {
@@ -319,7 +342,7 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
     }
 
-    template <bool HAS_P, bool WRITE_RIGHT>
+    template <bool HAS_P, bool WRITE_RIGHT, bool WAIT_READY>
     __aicore__ inline void ComputeStage1Tile(const FwdHWorkUnit &unit,
                                              const FwdHChunkSpan &chunk,
                                              const FwdHHeadBinding &head,
@@ -328,8 +351,11 @@ private:
         const uint32_t slot = head.localSlot;
         const uint32_t rows = TileRows(chunk.validTokens - row);
         const uint32_t elements = rows * FWD_H_V;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+        if constexpr (WAIT_READY) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+        }
         AscendC::Cast(calc_[slot], io_[slot], AscendC::RoundMode::CAST_NONE, elements);
+        AscendC::PipeBarrier<PIPE_V>();
         if constexpr (HAS_P) {
             if constexpr (std::is_same<PType, float>::value) {
                 AscendC::Sub(calc_[slot], calc_[slot], raw_[slot].template ReinterpretCast<float>(), elements);
@@ -386,7 +412,6 @@ private:
         // V_new_g=cast_BF16(E(g_last-g_i)*V_new_fp32)，gk-only 的 right 即 V_new。
         const uint32_t slot = head.localSlot;
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
         if constexpr (WRITE_RIGHT && CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
             PrepareScalarGate(slot, chunk.validTokens);
         }
@@ -394,17 +419,10 @@ private:
             AscendC::Duplicate(stateBf16_[slot], static_cast<bfloat16_t>(0), FWD_H_K * FWD_H_V);
             AscendC::PipeBarrier<PIPE_V>();
         }
-        ComputeStage1Tile<HAS_P, WRITE_RIGHT>(unit, chunk, head, 0);
+        ComputeStage1Tile<HAS_P, WRITE_RIGHT, false>(unit, chunk, head, 0);
         for (uint32_t row = TILE_ROWS; row < chunk.validTokens; row += TILE_ROWS) {
             LoadStage1Tile<HAS_P>(unit, chunk, head, row);
-            ComputeStage1Tile<HAS_P, WRITE_RIGHT>(unit, chunk, head, row);
-        }
-        if constexpr (HAS_P) {
-            AscendC::CrossCoreSetFlag<0x2, PIPE_V>(FwdHAivLocalFlag(FWD_H_P_FREE_FLAG, slot));
-        }
-        if constexpr (WRITE_RIGHT) {
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(
-                FwdHAivLocalFlag(FWD_H_RIGHT_READY_FLAG, slot));
+            ComputeStage1Tile<HAS_P, WRITE_RIGHT, true>(unit, chunk, head, row);
         }
         if (chunk.first && (!CompilePolicy::STATE_FP32 || args_.tiling.useInitialState == 0)) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
@@ -423,22 +441,50 @@ private:
         // V_new_g=cast_BF16(E(g_last-g_i)*V_new_fp32)，gk-only 的右矩阵就是 V_new。
         const bool hasP = !(chunk.first && args_.tiling.useInitialState == 0);
         const bool writeRight = args_.tiling.storeFinalState != 0 || !chunk.last;
-        const uint32_t localHeads = FwdHAivHeadCount(unit.headRound.activeHeadCount, aiv_);
-        for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
-            const FwdHHeadBinding &head = unit.headRound.heads[aiv_ + 2 * coreHeadId];
-            if (hasP) {
-                PrefetchStage1Head<true>(unit, chunk, head);
-            } else {
-                PrefetchStage1Head<false>(unit, chunk, head);
+        const uint32_t pairCount = FwdHMode2PairCount(unit.headRound.activeHeadCount);
+        for (uint32_t pairSlot = 0; pairSlot < pairCount; ++pairSlot) {
+            if (hasP && pairSlot > 0) {
+                // A2/A3 的跨核 wait 会阻塞全部流水；先消费已 ready 的 ping，不能让它
+                // 等待下一个 pair 的 P_READY。无 P 时保留 pong MTE2 与 ping VEC 的重叠。
+                CompleteStage1Pair(unit, chunk, pairSlot - 1U, hasP, writeRight);
             }
-            if (coreHeadId > 0) {
-                const FwdHHeadBinding &previous = unit.headRound.heads[aiv_ + 2 * (coreHeadId - 1)];
-                DispatchStage1(unit, chunk, previous, hasP, writeRight);
+            if (hasP) {
+                AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
+                    FwdHAivLocalFlag(FWD_H_P_READY_FLAG, pairSlot));
+            }
+            if (FwdHMode2PairHasHead(unit.headRound.activeHeadCount, pairSlot, aiv_)) {
+                const FwdHHeadBinding &head = unit.headRound.heads[pairSlot * 2U + aiv_];
+                if (hasP) {
+                    PrefetchStage1Head<true>(unit, chunk, head);
+                } else {
+                    PrefetchStage1Head<false>(unit, chunk, head);
+                }
+            }
+            if (!hasP && pairSlot > 0) {
+                CompleteStage1Pair(unit, chunk, pairSlot - 1U, hasP, writeRight);
             }
         }
-        if (localHeads > 0) {
-            DispatchStage1(unit, chunk, unit.headRound.heads[aiv_ + 2 * (localHeads - 1)],
-                           hasP, writeRight);
+        if (pairCount > 0) {
+            CompleteStage1Pair(unit, chunk, pairCount - 1U, hasP, writeRight);
+        }
+    }
+
+    __aicore__ inline void CompleteStage1Pair(const FwdHWorkUnit &unit,
+                                              const FwdHChunkSpan &chunk,
+                                              uint32_t pairSlot, bool hasP,
+                                              bool writeRight)
+    {
+        if (FwdHMode2PairHasHead(unit.headRound.activeHeadCount, pairSlot, aiv_)) {
+            const FwdHHeadBinding &head = unit.headRound.heads[pairSlot * 2U + aiv_];
+            DispatchStage1(unit, chunk, head, hasP, writeRight);
+        }
+        if (hasP) {
+            AscendC::CrossCoreSetFlag<0x2, PIPE_V>(
+                FwdHAivLocalFlag(FWD_H_P_FREE_FLAG, pairSlot));
+        }
+        if (writeRight) {
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(
+                FwdHAivLocalFlag(FWD_H_RIGHT_READY_FLAG, pairSlot));
         }
     }
 
@@ -460,8 +506,6 @@ private:
     {
         const uint32_t slot = head.localSlot;
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
-        AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
-            FwdHAivLocalFlag(FWD_H_D_READY_FLAG, slot));
         const uint64_t dByteOffset = ScratchByteOffset(args_.tiling.hWorkspaceOffset,
                                                        head.roundHead,
                                                        FWD_H_STATE_FP32_BYTES);
@@ -525,14 +569,16 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
     }
 
-    template <bool WRITE_H>
+    template <bool WRITE_H, bool WAIT_READY>
     __aicore__ inline void ComputeStage3Tile(const FwdHWorkUnit &unit,
                                              const FwdHChunkSpan &chunk,
                                              const FwdHHeadBinding &head,
                                              uint32_t row)
     {
         const uint32_t slot = head.localSlot;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+        if constexpr (WAIT_READY) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+        }
         if constexpr (CompilePolicy::STATE_FP32) {
             if (chunk.first && args_.tiling.useInitialState == 0) {
                 AscendC::Duplicate(calc_[slot], 0.0f, TILE_ELEMENTS);
@@ -606,31 +652,45 @@ private:
         // R_next[k,v]=E(gk_last[k])R[k,v]+D[k,v]，所有算术均为 FP32。
         const uint32_t slot = head.localSlot;
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::KEY_GK) {
             PrepareKeyGate(slot);
         }
-        ComputeStage3Tile<WRITE_H>(unit, chunk, head, 0);
+        ComputeStage3Tile<WRITE_H, false>(unit, chunk, head, 0);
         for (uint32_t row = TILE_ROWS; row < FWD_H_K; row += TILE_ROWS) {
             LoadStage3Tile(unit, chunk, head, row);
-            ComputeStage3Tile<WRITE_H>(unit, chunk, head, row);
+            ComputeStage3Tile<WRITE_H, true>(unit, chunk, head, row);
         }
-        AscendC::CrossCoreSetFlag<0x2, PIPE_V>(FwdHAivLocalFlag(FWD_H_D_FREE_FLAG, slot));
-        if constexpr (WRITE_H) {
-            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(
-                FwdHAivLocalFlag(FWD_H_H_READY_FLAG, slot));
-        } else if (args_.tiling.storeFinalState != 0) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
-            const uint64_t finalOffset = FwdHStateOffset(args_.tiling, unit.sequence.sequence,
-                                                         head.hv, 0, 0);
-            if constexpr (!CompilePolicy::STATE_FP32) {
-                AscendC::GlobalTensor<bfloat16_t> finalState;
-                finalState.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.finalState));
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-                AscendC::DataCopy(finalState[finalOffset], stateBf16_[slot], FWD_H_K * FWD_H_V);
+        if constexpr (!WRITE_H) {
+            if (args_.tiling.storeFinalState != 0) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                const uint64_t finalOffset = FwdHStateOffset(args_.tiling, unit.sequence.sequence,
+                                                             head.hv, 0, 0);
+                if constexpr (!CompilePolicy::STATE_FP32) {
+                    AscendC::GlobalTensor<bfloat16_t> finalState;
+                    finalState.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.finalState));
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                    AscendC::DataCopy(finalState[finalOffset], stateBf16_[slot], FWD_H_K * FWD_H_V);
+                }
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+        }
+    }
+
+    __aicore__ inline void CompleteStage3Pair(const FwdHWorkUnit &unit,
+                                              const FwdHChunkSpan &chunk,
+                                              uint32_t pairSlot, bool writeH)
+    {
+        if (FwdHMode2PairHasHead(unit.headRound.activeHeadCount, pairSlot, aiv_)) {
+            const FwdHHeadBinding &head = unit.headRound.heads[pairSlot * 2U + aiv_];
+            writeH ? ConsumeStage3Head<true>(unit, chunk, head)
+                   : ConsumeStage3Head<false>(unit, chunk, head);
+        }
+        AscendC::CrossCoreSetFlag<0x2, PIPE_V>(
+            FwdHAivLocalFlag(FWD_H_D_FREE_FLAG, pairSlot));
+        if (writeH) {
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(
+                FwdHAivLocalFlag(FWD_H_H_READY_FLAG, pairSlot));
         }
     }
 
@@ -639,43 +699,45 @@ private:
         // Stage3：g-only 为 R_next=E(g_last)R+D；gk-only 为
         // R_next[k,v]=E(gk_last[k])R[k,v]+D[k,v]，并按需生成下一 H 或 final_state。
         const bool writeH = !chunk.last;
-        const uint32_t localHeads = FwdHAivHeadCount(unit.headRound.activeHeadCount, aiv_);
-        for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
-            const FwdHHeadBinding &head = unit.headRound.heads[aiv_ + 2 * coreHeadId];
-            PrefetchStage3Head(unit, chunk, head);
-            if (coreHeadId > 0) {
-                const FwdHHeadBinding &previous = unit.headRound.heads[aiv_ + 2 * (coreHeadId - 1)];
-                writeH ? ConsumeStage3Head<true>(unit, chunk, previous)
-                       : ConsumeStage3Head<false>(unit, chunk, previous);
+        const uint32_t pairCount = FwdHMode2PairCount(unit.headRound.activeHeadCount);
+        for (uint32_t pairSlot = 0; pairSlot < pairCount; ++pairSlot) {
+            if (pairSlot > 0) {
+                // 先消费已完成 MTE2 的 ping，再等待下一 pair 的 D_READY。
+                CompleteStage3Pair(unit, chunk, pairSlot - 1U, writeH);
+            }
+            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
+                FwdHAivLocalFlag(FWD_H_D_READY_FLAG, pairSlot));
+            if (FwdHMode2PairHasHead(unit.headRound.activeHeadCount, pairSlot, aiv_)) {
+                const FwdHHeadBinding &head = unit.headRound.heads[pairSlot * 2U + aiv_];
+                PrefetchStage3Head(unit, chunk, head);
             }
         }
-        if (localHeads > 0) {
-            const FwdHHeadBinding &last = unit.headRound.heads[aiv_ + 2 * (localHeads - 1)];
-            writeH ? ConsumeStage3Head<true>(unit, chunk, last)
-                   : ConsumeStage3Head<false>(unit, chunk, last);
+        if (pairCount > 0) {
+            CompleteStage3Pair(unit, chunk, pairCount - 1U, writeH);
         }
     }
 
-    __aicore__ inline void ProcessWorkUnit(const FwdHWorkUnit &unit)
+    __aicore__ inline void ProcessWorkUnit(const FwdHWorkUnit &unit, bool hasNextWorkUnit)
     {
         const bool hasCubeWork = args_.tiling.useInitialState || args_.tiling.storeFinalState ||
             args_.tiling.seqlen > static_cast<int64_t>(FWD_H_CHUNK);
         const uint32_t localHeads = FwdHAivHeadCount(unit.headRound.activeHeadCount, aiv_);
+        const uint32_t pairCount = FwdHMode2PairCount(unit.headRound.activeHeadCount);
         if (args_.tiling.useInitialState == 0 && unit.sequence.chunkCount > 1) {
             // 首 chunk 没有 Stage0/P 消费链。为第二个 chunk 的 Stage0 提供一次 P scratch
             // 初始 free credit；后续 chunk 的 credit 都由前一 chunk 的 Stage1 产生。
-            for (uint32_t slot = 0; slot < localHeads; ++slot) {
+            for (uint32_t pairSlot = 0; pairSlot < pairCount; ++pairSlot) {
                 AscendC::CrossCoreSetFlag<0x2, PIPE_V>(
-                    FwdHAivLocalFlag(FWD_H_P_FREE_FLAG, slot));
+                    FwdHAivLocalFlag(FWD_H_P_FREE_FLAG, pairSlot));
             }
         }
         RunSMinusOne(unit);
         for (uint32_t chunkId = 0; chunkId < unit.sequence.chunkCount; ++chunkId) {
             const FwdHChunkSpan chunk = FwdHBuildChunk(unit.sequence, chunkId);
             if (chunkId > 0) {
-                for (uint32_t slot = 0; slot < localHeads; ++slot) {
+                for (uint32_t pairSlot = 0; pairSlot < pairCount; ++pairSlot) {
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_V>(
-                        FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, slot));
+                        FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, pairSlot));
                 }
             }
             RunStage1(unit, chunk);
@@ -684,9 +746,9 @@ private:
             }
         }
         if (args_.tiling.storeFinalState != 0) {
-            for (uint32_t slot = 0; slot < localHeads; ++slot) {
+            for (uint32_t pairSlot = 0; pairSlot < pairCount; ++pairSlot) {
                 AscendC::CrossCoreWaitFlag<0x2, PIPE_V>(
-                    FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, slot));
+                    FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, pairSlot));
             }
         }
         // 跨 head_round 前必须把本轮所有 VEC->MTE3 写回收口。AIC 收到 ROUND_DONE 后
@@ -695,9 +757,9 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
         }
-        if (hasCubeWork) {
+        if (hasCubeWork && hasNextWorkUnit) {
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(FwdHAivLocalFlag(FWD_H_ROUND_DONE_FLAG, 0));
-            AscendC::CrossCoreWaitFlag<0x2, PIPE_V>(FwdHAivLocalFlag(FWD_H_H_READY_FLAG, 0));
+            AscendC::CrossCoreWaitFlag<0x2, PIPE_V>(FwdHAivLocalFlag(FWD_H_ROUND_ACK_FLAG, 0));
         }
     }
 

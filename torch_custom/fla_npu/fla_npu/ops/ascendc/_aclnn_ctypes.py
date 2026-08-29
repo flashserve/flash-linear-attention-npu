@@ -19,10 +19,15 @@ signature here.
 from __future__ import annotations
 
 import ctypes
+import sys
 
 from ._kda_policy import kda_fwd_optional_output_mask
 from ._runtime import (
+    ACL_FORMAT_NCDHW,
+    ACL_FORMAT_NCHW,
+    ACL_FORMAT_NCL,
     ACL_FORMAT_ND,
+    acl_format as _acl_format,
     call_aclnn as _runtime_call_aclnn,
     chunk_num as _chunk_num,
     empty as _empty,
@@ -646,6 +651,33 @@ def npu_chunk_gated_delta_rule_fwd_h(
     )
 
 
+def _chunk_fwd_h_ceil_div(value: int, divisor: int) -> int:
+    return (int(value) + int(divisor) - 1) // int(divisor)
+
+
+def _chunk_fwd_h_build_chunk_indices(cu_seqlens, chunk_size: int):
+    if cu_seqlens is None:
+        return None
+    cu = tuple(int(value) for value in cu_seqlens)
+    indices = []
+    for sequence, (begin, end) in enumerate(zip(cu, cu[1:])):
+        for chunk in range(_chunk_fwd_h_ceil_div(end - begin, chunk_size)):
+            indices.extend((sequence, chunk))
+    return tuple(indices)
+
+
+def _chunk_fwd_h_total_chunks(seqlen: int, chunk_size: int, cu_seqlens, chunk_indices) -> int:
+    if chunk_indices is not None:
+        return len(tuple(chunk_indices)) // 2
+    if cu_seqlens is None:
+        return _chunk_fwd_h_ceil_div(seqlen, chunk_size)
+    cu = tuple(int(value) for value in cu_seqlens)
+    return sum(
+        _chunk_fwd_h_ceil_div(end - begin, chunk_size)
+        for begin, end in zip(cu, cu[1:])
+    )
+
+
 def npu_chunk_fwd_h(
     k,
     w,
@@ -717,12 +749,12 @@ def npu_chunk_fwd_h(
             raise RuntimeError(
                 f"{op_name}: cu_seqlens must be strictly increasing, start at 0 and end at T."
             )
-    canonical_indices = _kda_build_chunk_indices(cu, chunk_size)
+    canonical_indices = _chunk_fwd_h_build_chunk_indices(cu, chunk_size)
     indices = canonical_indices if chunk_indices is None else tuple(int(value) for value in chunk_indices)
     if indices is not None and indices != canonical_indices:
         raise RuntimeError(f"{op_name}: chunk_indices must use canonical sequence-major order.")
 
-    total_chunks = _kda_total_chunks(batch, seqlen, chunk_size, cu, indices)
+    total_chunks = _chunk_fwd_h_total_chunks(seqlen, chunk_size, cu, indices)
     sequences = len(cu) - 1 if cu is not None else batch
     state_tail = (v_dim, k_dim) if state_v_first else (k_dim, v_dim)
     if initial_state is not None:
@@ -732,7 +764,7 @@ def npu_chunk_fwd_h(
             raise RuntimeError(f"{op_name}: initial_state must use bfloat16 or float32.")
 
     h_out = _empty((batch, v_heads, total_chunks, *state_tail), k)
-    v_new_out = _empty_like(u)
+    v_new_out = _empty(_shape(u), u)
     if output_final_state:
         state_template = initial_state if initial_state is not None else k
         state_dtype = initial_state.dtype if initial_state is not None else torch.float32
@@ -749,11 +781,37 @@ def npu_chunk_fwd_h(
     def nd_tensor(ctx, tensor, name):
         if tensor is None:
             return ctx.tensor(None, name)
+        loaded_torch_npu = sys.modules.get("torch_npu")
+        if loaded_torch_npu is not None:
+            try:
+                actual_format = int(loaded_torch_npu.get_npu_format(tensor))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"{op_name}: cannot determine the real NPU format of {name}."
+                ) from exc
+        else:
+            actual_format = _acl_format(tensor)
+        standard_formats = {
+            ACL_FORMAT_NCHW,
+            ACL_FORMAT_ND,
+            ACL_FORMAT_NCDHW,
+            ACL_FORMAT_NCL,
+        }
+        if actual_format not in standard_formats:
+            raise RuntimeError(
+                f"{op_name}: {name} must use a standard contiguous-compatible layout; "
+                f"private NPU format {actual_format} is not supported."
+            )
+        storage_shape = (
+            _shape(tensor)
+            if tensor.is_contiguous() and int(tensor.storage_offset()) == 0
+            else None
+        )
         return ctx.tensor(
             tensor,
             name,
             acl_format_override=ACL_FORMAT_ND,
-            storage_shape_override=_shape(tensor),
+            storage_shape_override=storage_shape,
         )
 
     return _call_aclnn(
