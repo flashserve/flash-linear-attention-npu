@@ -21,11 +21,18 @@ __aicore__ inline void RunSolvePhase(GM_ADDR a, GM_ADDR cuSeqlens, GM_ADDR chunk
                                      const TilingData *tilingData)
 {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    if ASCEND_IS_AIC {
-        CrossCoreWaitFlag(KKT_READY_FLAG);
-    }
-    if ASCEND_IS_AIV {
-        CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG);
+    if (tilingData->isVarlen != 0) {
+        // KKT uses head-major ownership while varlen SolveTri remaps the same
+        // tiles chunk-major. A paired event can therefore miss a producer on
+        // another core; wait for every KKT writer before SolveTri starts.
+        AscendC::SyncAll<false>();
+    } else {
+        if ASCEND_IS_AIC {
+            CrossCoreWaitFlag(KKT_READY_FLAG);
+        }
+        if ASCEND_IS_AIV {
+            CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG);
+        }
     }
     // Phase6 passes a per-core user-workspace slice and its KKT epilogue uses
     // contiguous tile ownership.  Keep those policies explicit instead of
