@@ -361,6 +361,34 @@
       "seed": 207
     },
     {
+      "id": "a5_b1_hk16_hv32_t11264_bf16_initial",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 11264,
+      "k_heads": 16,
+      "v_heads": 32,
+      "gate_dtype": "float32",
+      "state_dtype": "bfloat16",
+      "output_final_state": true,
+      "use_exp2": true,
+      "state_v_first": true,
+      "seed": 207
+    },
+    {
+      "id": "a5_b1_hk16_hv32_t11264_fp32_initial",
+      "mode": "g",
+      "batch": 1,
+      "seqlen": 11264,
+      "k_heads": 16,
+      "v_heads": 32,
+      "gate_dtype": "float32",
+      "state_dtype": "float32",
+      "output_final_state": true,
+      "use_exp2": true,
+      "state_v_first": true,
+      "seed": 207
+    },
+    {
       "id": "a5_varlen_h32_t65536_s64",
       "mode": "g",
       "batch": 1,
