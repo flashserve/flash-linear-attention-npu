@@ -40,6 +40,7 @@ python tests/operators/chunk_fwd_h/performance/run_chunk_fwd_h.py \
 六条 A5 性能场景的 case id 为：`a5_b2_hk16_hv32_t11264`、
 `a5_varlen_h32_t65536_s64`、`a5_b4_hk96_hv96_t128`、
 `a5_b1_hk32_hv32_t160`、`a5_b6_hk6_hv6_t1084` 和
-`a5_b1_hk12_hv12_t1084`。变长场景的 65 个 `cu_seqlens` 边界由 seed 202
+`a5_b1_hk12_hv12_t1084`。补充的 batch 对照场景为
+`a5_b1_hk16_hv32_t11264`。变长场景的 65 个 `cu_seqlens` 边界由 seed 202
 随机生成后固化在用例 JSON 中，runner 根据这些边界生成 sequence-major canonical
 `chunk_indices`。
