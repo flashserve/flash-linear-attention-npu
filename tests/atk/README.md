@@ -52,6 +52,42 @@ ATK 运行产生的 `atk_output/`、`result/`、profiling、sanitizer 日志、X
 
 ## 运行前准备
 
+### 安装 ATK
+
+ATK 只允许从 [Ascend/ATK 官方开源仓](https://gitcode.com/Ascend/ATK) 构建安装，最低支持版本为
+`26.8.8`。当前验收参考基线为：
+
+- ATK 版本：`26.8.8`
+- 源码 commit：`bac1aa7b77687f4dc9876abb489515f2cbcd9dca`
+
+开发环境可以使用官方 `master` 上更高版本，但每次验收必须记录实际 `atk --version` 和
+`git rev-parse HEAD`。若升级后的版本改变命令、报告或精度语义，应先更新本目录脚本和基线，再用于验收。
+
+按照官方 README 从源码构建 wheel：
+
+```bash
+export ATK_ENV=<atk_venv>
+python3 -m venv "$ATK_ENV"
+source "$ATK_ENV/bin/activate"
+
+git clone --depth 1 https://gitcode.com/Ascend/ATK.git
+cd ATK
+git rev-parse HEAD
+
+python -m pip install --upgrade pip wheel
+python setup.py bdist_wheel
+python -m pip install --force-reinstall dist/*.whl
+
+atk --version
+pip show ATK
+```
+
+ATK 要求 Python 3.8 及以上并依赖已安装的 CANN；测试 PyTorch 算子时，按官方说明使用
+Ascend Extension for PyTorch 2.1 及以上版本。`run_test_cpu.sh` 会在执行 case 前检查 ATK
+版本，低于 `26.8.8` 或无法解析版本时直接失败。
+
+### 加载运行环境
+
 调用脚本前需要在当前 shell 中准备好 ATK、CANN、OPP 和 Python 包路径：
 
 ```bash
@@ -105,6 +141,38 @@ bash tests/atk/run_test_cpu.sh -op=<op_name>
 
 `all` 包含 `accuracy`、`determinism` 和 `mssanitizer`；性能测试需
 显式指定 `-scope=performance`。`gen_cases` 不在 `all` 中，必须显式指定。
+
+## 自动化开发约定
+
+开始开发前，根据目标分支与当前分支的 diff 列出受影响算子。算子私有代码映射到同名
+`tests/atk/<op>`；公共组件、ABI、生成模板或 runtime 改动必须通过引用关系展开到所有受影响
+算子。无法可靠映射时应显式报告，不能静默跳过测试。
+
+开发验证分为快速迭代和轮次验收：
+
+1. 更新 YAML、生成器、executor、已评审 JSON 和覆盖矩阵。
+2. 需要扩展用例时显式运行 `-scope=gen_cases`，评审 `result/` 中的结果后再更新
+   `atk_<op>.json`；`all` 不覆盖受版本控制的用例。
+3. 构建并安装当前代码，再运行 `-scope=accuracy`。
+4. 当前代码和当前用例精度通过后，本次开发迭代才成立；快速开发期间可以直接进入下一次
+   修改，不要求每次都运行其它专项测试。
+5. 准备验收该轮产物时，固定选中的精度通过版本，运行 `all` 完成精度、确定性
+   和 `mssanitizer`，再单独运行 `performance`；此时记录最终 Task Duration、相对基线变化和专项结论。
+
+本目录提供仓内单算子自动化，但 GitHub NPU CI 是独立门禁。除非 workflow 明确调用本脚本，
+否则不得把 CI 通过写成 ATK 已执行，也不得假定 push 会自动运行 ATK。
+
+## TilingKey 覆盖
+
+新增或修改 TilingKey、模板选择条件或 tiling 分支时，在算子 README 中维护以下矩阵：
+
+| TilingKey | 选择条件 | 普通 case | 边界 case | 目标 SOC | 实际命中证据 |
+| --- | --- | --- | --- | --- | --- |
+| `<key>` | dtype、layout、shape、属性和平台条件 | ATK case id | ATK case id | A2/A3/A5 | host tiling UT 或运行时 tiling 记录 |
+
+全部可达 key 都要有普通和边界 case；同一 key 内的运行时分支也要覆盖。输入 shape 只能证明
+预期选择，实际命中必须由 host tiling UT 的 expected key 或真实运行的 tiling dump/日志证明。
+明确不支持的组合应有校验或反向用例。缺少 key、边界 case 或命中证据时，不能把覆盖记为完整。
 
 示例：
 
@@ -203,17 +271,20 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 | `recurrent_kda`                  | `fla_npu.ops.ascendc.recurrent_kda`                  | 见[`recurrent_kda/README.md`](./recurrent_kda/README.md)                                   |
 | `solve_tri`                      | `fla_npu.ops.ascendc.solve_tri`                      | 见[`solve_tri/README.md`](./solve_tri/README.md)                                           |
 
+本索引只列出已经提交完整 ATK 工程的算子；未列出的 Ascend C 算子不能据此记为已覆盖。
+
 ## 新增或维护算子
 
 新增算子工程时按以下顺序处理：
 
 1. 在 `tests/atk/<op_name>/` 下放置 `README.md`、`atk_<op_name>.json`、`<op_name>.yaml`、`gen_<op_name>.py`、`executor_<op_name>.py` 和 `scripts/`。
-2. `atk_<op_name>_perf.json` 和 `atk_<op_name>_mss.json`；`_mss.json` 需根据 tilingKey 和模型 shape 手工补齐。
-3. 在算子 README 中写清输入 shape、dtype、属性、可选输入、变长元数据和 tiling 限制。
+2. 补齐 `atk_<op_name>_perf.json` 和 `atk_<op_name>_mss.json`；`_mss.json` 需根据 TilingKey 和模型 shape 手工补齐。
+3. 在算子 README 中写清源码与公开接口映射、输入 shape、dtype、属性、可选输入、变长元数据、tiling 限制和 TilingKey 覆盖矩阵。
 4. `executor_<op_name>.py` 中保留本算子的 `build_inputs`、CPU 标杆、`run_cpu`、`run_npu` 和 `FunctionApi`。
 5. 若需要公共基础函数，从 `tests/atk/common/_ascendc_common_executor.py` 引入；不要把算子专属逻辑放入 `common/`。
-6. YAML 与 JSON 中的 shape 必须同时满足源码 README、tiling 检查和 executor 输入构造。
-7. 修改后至少执行 `python` 语法导入检查；具备 NPU 环境时再跑 `accuracy`、`performance`、`determinism` 和 `mssanitizer`。
+6. YAML 与 JSON 中的 shape 必须同时满足源码 README、tiling 检查和 executor 输入构造，并能追溯到 TilingKey 矩阵。
+7. 用 host tiling UT 或运行时 tiling 记录确认用例实际命中预期 key；不能只根据输入反推。
+8. 修改后至少执行 Python 语法导入检查；具备 NPU 环境时，快速开发阶段跑 `accuracy`，准备验收精度通过产物时运行 `all` 并单独跑 `performance`。
 
 executor 使用公共目录的推荐写法：
 

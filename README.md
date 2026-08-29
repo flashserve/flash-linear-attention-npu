@@ -168,6 +168,11 @@ python -m pip uninstall -y flash-linear-attention-npu
 `atk_<op>.json`、`<op>.yaml`、`gen_<op>.py`、`executor_<op>.py` 和本算子
 `README.md`。各算子的输入 shape、dtype、可选输入和 tiling 限制以对应算子 README 为准。
 
+ATK 必须从 [Ascend/ATK 官方开源仓](https://gitcode.com/Ascend/ATK) 构建安装，最低支持版本为
+`26.8.8`。当前验收参考基线为版本 `26.8.8`、源码 commit
+`bac1aa7b77687f4dc9876abb489515f2cbcd9dca`；使用官方 `master` 的更新版本时，验收记录中必须
+写明实际版本和 commit。完整安装步骤见 [`tests/atk/README.md`](tests/atk/README.md)。
+
 运行前先加载 ATK、CANN 和当前安装的 OPP/Python 环境：
 
 ```sh

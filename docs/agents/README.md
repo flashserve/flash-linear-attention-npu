@@ -1,17 +1,38 @@
 # AI 开发指南
 
-本目录用于沉淀给 AI coding agent 阅读的开发原理、方法论、验证流程和经验总结。根目录 `AGENTS.md` 保持为短入口；需要深入开发时，再阅读本目录中与任务相关的文档。
+本目录沉淀给 AI coding agent 和开发者使用的基础知识、开发方法、优化方法、验证流程和经验。根目录 `AGENTS.md` 只负责全仓强制规则和任务路由；进入具体任务后，再按本页选择需要阅读的文档。
 
-## 使用方式
+## 目录分层
 
-- 修改算子实现前，先读 [`operator-development.md`](operator-development.md)。
-- 修改 `fla_npu` Python runtime、wheel 打包、OPP 安装、依赖版本门禁、legacy `torch.ops.npu` 兼容路径、多卡 device guard、stream、autograd、alias/mutation 或图编译适配前，先读 [`torch-npu-decoupled-architecture.md`](torch-npu-decoupled-architecture.md)；该文档也包含构建/运行组件关系和基础术语表。
-- 设计验证方案或整理测试结果前，先读 [`validation.md`](validation.md)。
-- 遇到精度、ABI、生成代码、跨 SOC 或提交范围问题时，先读 [`lessons.md`](lessons.md)。
+| 路径 | 内容 | 加载时机 |
+|---|---|---|
+| [`基础知识.md`](基础知识.md) | 项目组件、调用链和基础术语 | 首次进入仓库 |
+| [`development/`](development/) | 算子通用约束、开发方法、编码规范、验证和清单 | 新增、修改、优化或检视算子 |
+| [`optimization/`](optimization/) | 依赖模型、通用优化技术、SOC 约束和性能清单 | 性能设计或优化 |
+| [`architecture/`](architecture/) | 运行时、打包和解耦架构 | 修改对应公共架构 |
+
+根 `AGENTS.md` 和本页只做路由，不复制子文档规则。任务命中哪个领域就读取哪个目录，避免无关内容占用 agent 上下文。
+
+## 首次进入仓库
+
+先读 [`基础知识.md`](基础知识.md)，建立项目组件、调用链、L2/L0、Tiling、workspace、OPP 和 wheel 的共同心智模型。构建、安装和测试命令以根目录 `README.md` 为准。
+
+## 按任务阅读
+
+| 任务 | 必读文档 |
+|---|---|
+| 新增、修改或检视 Ascend C 算子 | [`算子开发通用约束`](development/算子开发通用约束.md) -> [`算子开发设计文档模板`](development/算子开发设计文档模板.md) -> 算子目录 `docs/算子开发设计.md` -> [`算子开发方法论`](development/算子开发方法论.md) -> [`算子编码规范`](development/算子编码规范.md) -> [`算子开发交付清单`](development/算子开发交付清单.md) -> [`验证方法与矩阵`](development/验证方法与矩阵.md) |
+| 算子性能设计或优化 | [`算子开发通用约束`](development/算子开发通用约束.md) -> [`算子编码规范`](development/算子编码规范.md) -> [`optimization/README.md`](optimization/README.md) 按依赖类型和目标 SOC 路由 -> [`验证方法与矩阵`](development/验证方法与矩阵.md) |
+| 修改 Python runtime、wheel、OPP 或兼容路径 | [`算子开发通用约束`](development/算子开发通用约束.md) -> [`PyTorch 与 NPU 解耦架构`](architecture/PyTorch与NPU解耦架构.md) -> [`验证方法与矩阵`](development/验证方法与矩阵.md) |
+| 定位精度、ABI、生成代码或跨 SOC 问题 | [`算子开发通用约束`](development/算子开发通用约束.md) 和对应专项文档 |
+| 整理交付和测试结果 | [`算子开发交付清单`](development/算子开发交付清单.md) -> [`验证方法与矩阵`](development/验证方法与矩阵.md) |
+
+具体算子的 README 和设计文档只说明该算子的接口、语义、实现和验证，不作为其他算子可以直接复制的通用优化规则。设计文档必须归档在对应算子目录下；模板和 GDN 参考设计只规定结构与评审字段，不提供可直接复制的资源数字。
 
 ## 编写原则
 
-- 这里记录可复用的方法论和经验，不记录个人机器、内网路径、临时目录、账号或 token。
-- 新增经验时优先写触发条件、判断方法、推荐处理方式，避免只写口号。
-- 与具体算子强绑定的细节优先放在该算子的 README 或设计文档中，再从这里链接过去。
+- 这里记录可复用的约束和方法论，不记录个人机器、内网路径、临时目录、账号或 token。
+- 新增规则时写清适用范围、必须或禁止行为、判断方法和专项文档入口，避免只写口号。
+- 通用优化方法按依赖模型、技术类别和 SOC 能力归档，不按具体算子组织。
+- 具体算子的变量名、固定窗口数字、代码路径和性能结果不得反向写成全仓通用规则。
 - 与仓库规则、PR 模板、CI 机制有关的事实，以根目录和 `.github/` 下的现有文件为准。

@@ -54,6 +54,10 @@
   - [ ] 文档
 - 输入 / 输出 / shape / dtype / format 支持范围:
 - 明确不包含的范围:
+- 算子开发设计文档:
+  - [ ] 本 PR 涉及算子实现、接口、支持范围、执行图或性能策略，已在对应算子目录归档 `docs/算子开发设计.md`
+  - [ ] 设计文档参考 `docs/agents/development/算子开发设计文档模板.md` 和 GDN backward finalize 设计的章节结构
+  - [ ] 本 PR 仅修改文档、测试或构建配置，设计文档不适用，原因已说明:
 - 是否影响公共模块或其他算子:
   - [ ] 否
   - [ ] 是，请说明影响面、兼容策略和回归范围:
@@ -85,7 +89,6 @@
 在每套 CANN / 产品环境中先确认基础信息。
 
 ```sh
-# 默认 CANN 安装路径；自定义安装路径时替换为实际路径下对应的 set_env.sh
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
 cat /usr/local/Ascend/ascend-toolkit/latest/opp/version.info
 npu-smi info
@@ -241,6 +244,7 @@ python examples/flash_gated_delta_rule.py
 
 - [ ] 已关联 Issue，或说明无需 Issue 的原因
 - [ ] 已明确本 PR 的算子责任范围和不包含范围
+- [ ] 已完成或明确豁免对应算子的开发设计文档门禁，并确认设计文档与实现、接口、测试一致
 - [ ] CANN 8.5 及以上已验证 A2 / A3 可以编译通过
 - [ ] CANN 9.0 及以上已验证 A2 / A3 / A5 可以编译通过
 - [ ] 已验证修改算子的对应 test 在 A2 / A3 / A5 通过
