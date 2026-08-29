@@ -19,8 +19,8 @@ constexpr uint32_t OWNER_V_TO_MTE3_EVENT = 1;
 constexpr uint32_t OWNER_MTE3_TO_V_EVENT = 2;
 constexpr uint32_t UB_ALIGNMENT = 32;
 constexpr uint32_t PHASE6_TILING_ALIGNMENT = 8;
-// Score completion is the only cross-core dependency before the AIV epilogue.
-// Keep it separate from the later SolveTri hand-off (flag 5).
+// Dense keeps the established paired MIX protocol. Varlen retires each prefix
+// stage with SyncAll below before the suffix can reuse these event slots.
 constexpr uint64_t PHASE6_SCORE_READY_FLAG = 2;
 constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 5;
 constexpr int64_t PHASE6_CUMSUM_FAST_BUFFER_LIMIT = 160 * 1024;
@@ -281,15 +281,23 @@ __aicore__ inline void RunPhase6(
         RunPhase6Cumsum(rawG, cuSeqlens, chunkIndices, gCumsumBht, coefficient);
     }
 
-    // Cumsum is already complete on each AIV when it reaches this point. The
-    // epilogue only needs the AIC score completion, so avoid draining all
-    // pipelines with a full SyncAll here.
+    // H/O use every Fwd scheduler flag in the 0..7 range. The Phase6 varlen
+    // prefix must not leave a producer notification in that range before the
+    // suffix starts, so use SyncAll's dedicated MIX protocol on Ascend950.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    if (coefficient.isVarlen != 0) {
+        AscendC::SyncAll<false>();
+    } else {
+#endif
     if ASCEND_IS_AIC {
         AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SCORE_READY_FLAG);
     }
     if ASCEND_IS_AIV {
         AscendC::CrossCoreWaitFlag(PHASE6_SCORE_READY_FLAG);
     }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    }
+#endif
 
     if ASCEND_IS_AIV {
         AscendC::TPipe kktPipe;
@@ -309,14 +317,22 @@ __aicore__ inline void RunPhase6(
         RunSolvePhase<InputT, 128>(aWorkspace, cuSeqlens, chunkIndices, A,
                                    solveWorkspace, &coefficient);
     }
-    // Solve and recompute share a contiguous task range. Publish solved A
-    // before either paired AIV enters its local consumer range.
+    // Keep the varlen phase boundary on the dedicated MIX protocol for the
+    // same reason as the score hand-off above. Dense keeps its paired event.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    if (coefficient.isVarlen != 0) {
+        AscendC::SyncAll<false>();
+    } else {
+#endif
     if ASCEND_IS_AIC {
         AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);
     }
     if ASCEND_IS_AIV {
         AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);
     }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    }
+#endif
     GM_ADDR w = userWorkspace + stateOutputTiling->wIntermediateOffset;
     GM_ADDR u = userWorkspace + stateOutputTiling->uIntermediateOffset;
     GM_ADDR h = userWorkspace + stateOutputTiling->hIntermediateOffset;
@@ -333,14 +349,22 @@ __aicore__ inline void RunPhase6(
             userWorkspace + stateOutputTiling->recomputeWorkspaceOffset, &recomputeTiling);
     }
 
-    WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, coefficient);
+    if (coefficient.isVarlen == 0) {
+        WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, coefficient);
+    }
     DispatchFwdH<TileShapes>(k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
                              chunkIndices, h, vNew, finalState, tiling, userWorkspace);
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    // H publishes h/vNew through MTE3 and O first consumes them through MTE2.
-    // Limit the global hand-off to those pipelines instead of draining PIPE_ALL.
-    AscendC::SyncAll<false, PHASE6_HO_SYNC_CONFIG>();
+    if (coefficient.isVarlen != 0) {
+        // Varlen H/O may assign one logical tile to different cores. Drain all
+        // producer pipelines before O consumes shared h/vNew buffers.
+        AscendC::SyncAll<false>();
+    } else {
+        // Fixed-length H/O retain core affinity; only their hand-off pipelines
+        // need to participate in the rendezvous.
+        AscendC::SyncAll<false, PHASE6_HO_SYNC_CONFIG>();
+    }
 #else
     // Ascend910B supports only the full-pipeline SyncAll overload.
     AscendC::SyncAll<false>();
@@ -354,6 +378,11 @@ __aicore__ inline void RunPhase6(
     CopyOTiling(gmOTiling, oTiling);
     DispatchFwdO(q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
                  userWorkspace, &oTiling);
+    if (coefficient.isVarlen != 0) {
+        // Public BTH cumsum is not consumed by H/O. Publish it after the
+        // dependent suffix so its single-owner write cannot perturb H/O.
+        WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, coefficient);
+    }
 }
 
 } // namespace
