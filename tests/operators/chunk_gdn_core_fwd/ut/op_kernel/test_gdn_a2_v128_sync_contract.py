@@ -52,3 +52,21 @@ def test_fwd_o_joins_aiv_subblocks_before_completion_publication():
     assert vec2_completion in kernel
     assert kernel.count("CrossCoreBarrier<0x1, PIPE_MTE3>();") == 2
     assert obsolete_fence not in kernel
+
+
+def test_fwd_h_tail_c2_retires_mte3_before_reusing_accumulator():
+    kernel = FWD_H_KERNEL.read_text(encoding="utf-8")
+    tail_h = kernel.split("void ComputeTailHWorkspace", maxsplit=1)[1].split(
+        "void PresetVectorPipelineEvents", maxsplit=1
+    )[0]
+
+    ordered_writeback = (
+        "gmHWorkspace[offsets.hWorkOffset + kRow * offsets.vBlockDim],\n"
+        "                accumUb, offsets.vBlockDim);\n"
+        "            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID7);\n"
+        "            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID7);\n"
+        "            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID7);\n"
+        "            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID7);"
+    )
+
+    assert ordered_writeback in tail_h

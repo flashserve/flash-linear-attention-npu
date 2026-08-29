@@ -478,7 +478,9 @@ public:
             AscendC::DataCopy(
                 gmHWorkspace[offsets.hWorkOffset + kRow * offsets.vBlockDim],
                 accumUb, offsets.vBlockDim);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID7);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID7);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID7);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID7);
         }
     }
