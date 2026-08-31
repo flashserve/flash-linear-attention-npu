@@ -70,16 +70,6 @@ def make_inputs(args) -> dict:
             raise ValueError("cu_seqlens must be strictly increasing")
 
     chunk_indices = canonical_chunks(cu_seqlens, args.chunk_size)
-    cu_seqlens_tensor = None
-    chunk_indices_tensor = None
-    if cu_seqlens is not None:
-        cu_seqlens_tensor = torch.tensor(cu_seqlens, device="npu", dtype=torch.int64)
-        chunk_indices_tensor = torch.tensor(
-            chunk_indices,
-            device="npu",
-            dtype=torch.int64,
-        ).view(-1, 2)
-
     initial_state = None
     if args.initial_state:
         sequence_count = args.batch if cu_seqlens is None else len(cu_seqlens) - 1
@@ -101,8 +91,6 @@ def make_inputs(args) -> dict:
         "beta": beta,
         "cu_seqlens": cu_seqlens,
         "chunk_indices": chunk_indices,
-        "cu_seqlens_tensor": cu_seqlens_tensor,
-        "chunk_indices_tensor": chunk_indices_tensor,
         "chunk_size": args.chunk_size,
         "scale": float(args.scale),
         "initial_state": initial_state,
@@ -119,8 +107,8 @@ def run_legacy(inputs: dict):
     g = ascendc.chunk_local_cumsum(
         inputs["g"].transpose(1, 2).contiguous(),
         chunk_size=chunk_size,
-        cu_seqlens=inputs["cu_seqlens_tensor"],
-        chunk_indices_out=inputs["chunk_indices_tensor"],
+        cu_seqlens=cu_seqlens,
+        chunk_indices_out=chunk_indices,
         head_first=True,
     )
     a_raw = ascendc.chunk_scaled_dot_kkt(
