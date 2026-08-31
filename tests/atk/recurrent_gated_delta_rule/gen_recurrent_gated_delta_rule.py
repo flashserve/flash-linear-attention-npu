@@ -1,8 +1,8 @@
 """Generate the reviewed recurrent_gated_delta_rule ATK case matrix.
 
 The committed accuracy matrix is frozen by detailed-design ID:
-  * 0-69: RGDR-P001 through RGDR-P070
-  * 70-134: RGDR-G001 through RGDR-G065
+  * 0-99: RGDR-P001 through RGDR-P100
+  * 100-199: RGDR-G001 through RGDR-G100
 
 All positive cases use dimensions aligned to the 32B BF16 transfer block;
 unaligned dimensions are invalid and are covered by op_host interception tests.
@@ -43,16 +43,7 @@ else:
 OP_NAME = "recurrent_gated_delta_rule"
 SEED_BASE = 20260826
 DIM_REQUIRED = 128
-STANDARD = {
-    "acc": {
-        "cv_fused_double_benchmark": {
-            "max_re_ratio": 10,
-            "avg_re_ratio": 3,
-            "root_mean_squared_ratio": 3,
-        }
-    },
-    "perf": "not_key",
-}
+STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key"}
 
 STATE_LAYOUTS = {
     "contiguous",
@@ -191,8 +182,46 @@ def _build_positive_profiles() -> list[dict]:
     add("independent_stream_state_shape", seq_lengths=[2, 1], HK=2, HV=4, design_routes="P", stream_mode="independent")
     add("accepted_tokens_gqa_regression", seq_lengths=[3, 2, 1], accepted_tokens=[2, 1, 1], HK=2, HV=4, gate_mode="g", design_routes="P+A+D+F")
 
-    if len(profiles) != 70:
-        raise AssertionError(f"expected 70 P profiles, got {len(profiles)}")
+    # P071-P082: gate, state layout and input layout cross coverage.
+    add("bf16_state_head_padding_g", HK=2, HV=4, gate_mode="g", state_dtype="bf16", state_layout="head_padded")
+    add("bf16_state_block_padding_gk", seq_lengths=[2, 1], HK=2, HV=4, gate_mode="gk", state_dtype="bf16", state_layout="block_padded")
+    add("bf16_state_head_block_padding_both", HK=2, HV=6, state_dtype="bf16", state_layout="head_block_padded")
+    add("bf16_state_noncontiguous_both", HK=2, HV=8, state_dtype="bf16", state_layout="noncontiguous")
+    add("fp32_state_head_padding_gk", HK=2, HV=6, gate_mode="gk", state_layout="head_padded")
+    add("fp32_state_block_padding_both", seq_lengths=[2, 1], HK=2, HV=8, state_layout="block_padded")
+    add("fp32_state_noncontiguous_g", HK=4, HV=8, gate_mode="g", state_layout="noncontiguous")
+    add("noncontiguous_qk_g", HK=2, HV=4, gate_mode="g", input_layout="noncontiguous_qk")
+    add("noncontiguous_v_gates_gk", HK=2, HV=6, gate_mode="gk", input_layout="noncontiguous_v_gates")
+    add("noncontiguous_all_both", seq_lengths=[2, 1], HK=2, HV=8, input_layout="noncontiguous_all")
+    add("head_padding_noncontiguous_qkv", HK=2, HV=4, state_layout="head_padded", input_layout="noncontiguous_qkv_beta_g")
+    add("accepted_noncontiguous_gk_metadata", seq_lengths=[3], accepted_tokens=[2], HK=2, HV=6, gate_mode="gk", input_layout="noncontiguous_gk_metadata")
+
+    # P083-P091: longer metadata chains, index reuse and scale values.
+    add("sixteen_single_token_sequences", seq_lengths=[1] * 16, HK=2, HV=4, gate_mode="g")
+    add("alternating_zero_length_sequences", seq_lengths=[1, 0] * 8, HK=2, HV=4, gate_mode="gk")
+    add("long_prefix_max_mtp", prefix_tokens=8, seq_lengths=[8], HK=2, HV=4)
+    add("eight_max_mtp_sequences", seq_lengths=[8] * 8, HK=1, HV=2, state_dtype="bf16")
+    add("increasing_lengths_and_accepted", seq_lengths=list(range(1, 9)), accepted_tokens=list(range(1, 9)), HK=2, HV=4)
+    add("disjoint_state_across_batches", seq_lengths=[1] * 8, block_num=8, state_indices=[7, 0, 6, 1, 5, 2, 4, 3], HK=2, HV=4, gate_mode="g")
+    add("prefix_accepted_sparse_indices", prefix_tokens=4, seq_lengths=[2, 3], accepted_tokens=[1, 3], block_num=10, state_indices=[8, 7, 6, 5, 0, 2, 4, 6, 8], HK=2, HV=4)
+    add("unit_scale", seq_lengths=[4], HK=2, HV=4, scale=1.0, gate_mode="g")
+    add("small_scale", seq_lengths=[4], HK=2, HV=4, scale=0.03125, gate_mode="gk")
+
+    # P092-P096: additional divisible head mappings.
+    add("heads_5_10", HK=5, HV=10, data_profile="traceable_gva")
+    add("heads_7_21", HK=7, HV=21, data_profile="traceable_gva")
+    add("heads_12_48", HK=12, HV=48, data_profile="traceable_gva")
+    add("heads_25_100", HK=25, HV=100, data_profile="traceable_gva")
+    add("heads_128_256", seq_lengths=[1], HK=128, HV=256, state_dtype="bf16", data_profile="traceable_gva")
+
+    # P097-P100: repeated calls and numerical profiles.
+    add("repeat_two_calls_bf16_state", HK=2, HV=4, state_dtype="bf16", repeat_calls=2)
+    add("repeat_three_calls_fp32_state", seq_lengths=[1], HK=2, HV=4, gate_mode="g", repeat_calls=3)
+    add("per_head_gate_and_beta", HK=4, HV=8, gate_mode="g", gate_profile="per_head", beta_profile="per_head")
+    add("strong_decay_accepted_padded_state", seq_lengths=[4, 2], accepted_tokens=[3, 1], HK=2, HV=6, gate_profile="strong_decay", state_layout="head_padded")
+
+    if len(profiles) != 100:
+        raise AssertionError(f"expected 100 P profiles, got {len(profiles)}")
     return profiles
 
 
@@ -291,8 +320,53 @@ def _build_gva_profiles() -> list[dict]:
     add("gva_nondefault_stream_shape", HK=32, HV=96, stream_mode="nondefault", design_routes="P")
     add("gva_all_complex_views", HK=24, HV=96, state_layout="head_block_padded", input_layout="noncontiguous_all", design_routes="P+A+D+F")
 
-    if len(profiles) != 65:
-        raise AssertionError(f"expected 65 G profiles, got {len(profiles)}")
+    # G066-G075: additional GVA ratios and upper head-count boundaries.
+    add("gva_5_10", HK=5, HV=10, gate_mode="g")
+    add("gva_7_14", HK=7, HV=14, gate_mode="gk")
+    add("gva_10_20", HK=10, HV=20)
+    add("gva_12_36", HK=12, HV=36)
+    add("gva_16_48", HK=16, HV=48, gate_mode="g")
+    add("gva_25_100", HK=25, HV=100, gate_mode="gk")
+    add("gva_32_128", HK=32, HV=128)
+    add("gva_64_256", seq_lengths=[1], HK=64, HV=256, state_dtype="bf16")
+    add("gva_128_256", seq_lengths=[1], HK=128, HV=256, gate_mode="g", state_dtype="bf16")
+    add("gva_4_256", seq_lengths=[1], HK=4, HV=256, gate_mode="gk", state_dtype="bf16")
+
+    # G076-G083: gate, state dtype and numerical-profile cross coverage.
+    add("gva_g_bf16_head_padding", HK=4, HV=12, gate_mode="g", state_dtype="bf16", state_layout="head_padded")
+    add("gva_g_fp32_block_padding", seq_lengths=[2, 1], HK=4, HV=12, gate_mode="g", state_layout="block_padded")
+    add("gva_gk_bf16_head_block_padding", HK=6, HV=18, gate_mode="gk", state_dtype="bf16", state_layout="head_block_padded")
+    add("gva_gk_fp32_noncontiguous_state", HK=6, HV=18, gate_mode="gk", state_layout="noncontiguous")
+    add("gva_both_bf16_near_zero", HK=8, HV=24, state_dtype="bf16", gate_profile="near_zero")
+    add("gva_both_fp32_strong_decay", HK=8, HV=24, gate_profile="strong_decay")
+    add("gva_per_head_gate_and_beta", HK=4, HV=12, gate_mode="g", gate_profile="per_head", beta_profile="per_head")
+    add("gva_gk_pulse_traceable_state", HK=6, HV=18, gate_mode="gk", gate_profile="column_pulse", state_profile="traceable")
+
+    # G084-G091: long varlen, accepted-token and state-index chains.
+    add("gva_sixteen_single_token_sequences", seq_lengths=[1] * 16, HK=4, HV=12)
+    add("gva_alternating_zero_length_sequences", seq_lengths=[1, 0] * 8, HK=4, HV=12)
+    add("gva_long_prefix_max_mtp", prefix_tokens=8, seq_lengths=[8], HK=4, HV=12)
+    add("gva_increasing_lengths_accepted", seq_lengths=list(range(1, 9)), accepted_tokens=list(range(1, 9)), HK=4, HV=12)
+    add("gva_eight_max_mtp_accepted", seq_lengths=[8] * 8, accepted_tokens=list(range(1, 9)), HK=2, HV=8, state_dtype="bf16")
+    add("gva_repeated_state_per_batch", seq_lengths=[2] * 4, block_num=4, state_indices=[0, 0, 1, 1, 2, 2, 3, 3], HK=4, HV=12)
+    add("gva_sparse_state_chain", seq_lengths=[4, 3, 2, 1], block_num=12, state_indices=[9, 0, 8, 1, 7, 2, 6, 3, 5, 4], HK=4, HV=12)
+    add("gva_prefix_accepted_complex_chain", prefix_tokens=4, seq_lengths=[4, 3, 2, 1], accepted_tokens=[2, 3, 1, 1], HK=24, HV=96)
+
+    # G092-G099: combined state and input views plus repeat calls.
+    add("gva_bf16_head_padding_noncontiguous_qk", HK=4, HV=12, state_dtype="bf16", state_layout="head_padded", input_layout="noncontiguous_qk")
+    add("gva_fp32_block_padding_noncontiguous_v", HK=4, HV=12, state_layout="block_padded", input_layout="noncontiguous_v_gates")
+    add("gva_bf16_head_block_noncontiguous_all", HK=4, HV=12, state_dtype="bf16", state_layout="head_block_padded", input_layout="noncontiguous_all")
+    add("gva_fp32_noncontiguous_state_and_qkv", HK=4, HV=12, state_layout="noncontiguous", input_layout="noncontiguous_qkv_beta_g")
+    add("gva_accepted_noncontiguous_metadata", seq_lengths=[3], accepted_tokens=[2], HK=4, HV=12, gate_mode="gk", input_layout="noncontiguous_gk_metadata")
+    add("gva_head_padding_repeat_two", HK=4, HV=12, state_layout="head_padded", repeat_calls=2)
+    add("gva_block_padding_repeat_three", seq_lengths=[1], HK=4, HV=12, state_layout="block_padded", repeat_calls=3)
+    add("gva_large_complex_views", HK=16, HV=48, state_layout="head_block_padded", input_layout="noncontiguous_all")
+
+    # G100: combined regression representative.
+    add("gva_full_regression_chain", prefix_tokens=1, seq_lengths=[8, 4, 2, 1], accepted_tokens=[5, 3, 1, 1], HK=8, HV=24, state_dtype="bf16", state_layout="head_block_padded", input_layout="noncontiguous_all", design_routes="P+A+D+F")
+
+    if len(profiles) != 100:
+        raise AssertionError(f"expected 100 G profiles, got {len(profiles)}")
     return profiles
 
 
@@ -332,6 +406,9 @@ def _validate_specs(specs: list[dict]) -> None:
     actual_ids = [str(spec["design_id"]) for spec in specs]
     if actual_ids != expected_ids:
         raise ValueError("detailed-design IDs are missing, duplicated or out of order")
+    names = [str(spec["name"]) for spec in specs]
+    if len(set(names)) != len(names):
+        raise ValueError("case names must be unique")
 
     for case_id, spec in enumerate(specs):
         if int(spec["case_id"]) != case_id:

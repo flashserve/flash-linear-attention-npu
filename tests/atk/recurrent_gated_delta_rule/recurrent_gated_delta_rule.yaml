@@ -4,7 +4,7 @@ version: v2.1
 name: recurrent_gated_delta_rule
 aclnn_name: RecurrentGatedDeltaRule
 generate: generator_recurrent_gated_delta_rule
-dtype_numbers: 135
+dtype_numbers: 200
 extra_numbers: 0
 standard:
   acc: mixed_tolerance_bm
@@ -47,7 +47,7 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: ["{\"B\":1,\"HK\":1,\"HV\":1,\"K\":64,\"T\":1,\"V\":64,\"block_num\":1,\"case_id\":0,\"data_profile\":\"random\",\"design_id\":\"RGDR-P001\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"g\",\"input_layout\":\"contiguous\",\"name\":\"minimal_g_bf16_state\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.125,\"seed\":20260826,\"seq_lengths\":[1],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}"]
+        values: ["{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":1,\"V\":128,\"block_num\":1,\"case_id\":0,\"data_profile\":\"random\",\"design_id\":\"RGDR-P001\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"gate_mode\":\"g\",\"input_layout\":\"contiguous\",\"name\":\"minimal_g_bf16_state\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"all\",\"route\":\"ascendc\",\"scale\":0.08838834764831843,\"seed\":20260826,\"seq_lengths\":[1],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\"}"]
       invalid:
         values: []
   - name: design_id
@@ -107,7 +107,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 3, 4]
+        values: [1, 2, 3, 4, 8, 16]
       invalid:
         values: []
   - name: T
@@ -117,7 +117,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 3, 4, 5, 6, 7, 8, 16, 17]
+        values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 14, 16, 17, 36, 64]
       invalid:
         values: []
   - name: HK
@@ -127,7 +127,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 3, 4, 6, 8, 16, 24, 32, 48, 64, 256]
+        values: [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 24, 25, 32, 48, 64, 128, 256]
       invalid:
         values: []
   - name: HV
@@ -137,7 +137,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 3, 4, 6, 8, 16, 64, 96, 128, 256]
+        values: [1, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 21, 24, 36, 48, 64, 96, 100, 128, 256]
       invalid:
         values: []
   - name: K
@@ -167,7 +167,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 3, 4, 5, 6, 7, 8, 10, 16, 17]
+        values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 17, 36, 64]
       invalid:
         values: []
   - name: gate_mode
@@ -197,7 +197,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [0, 1, 2, 3, 4]
+        values: [0, 1, 2, 3, 4, 8]
       invalid:
         values: []
   - name: case_id
