@@ -24,7 +24,7 @@
 - Alternatives：整目录替换，改动快但无法证明融合语义；机制级移植，成本较高但能维持统一 L0。
 - Choice：只抽取最新 A5 优化机制，保留融合核的任务映射、varlen handoff、chunk pipeline 与架构分支。
 - Validation：独立 WU/O A/B、fixed/varlen/V128/V256 精度、重复执行确定性以及目标模型 profiling。
-- Result：pending
+- Result：WU 机制以 `dbf1c4b2` 集成，并在 `bf499b04` 修复 ring 槽复用 P1 与 A resident 未命中 P2；FwdO 机制以 `11bb0b4b` 集成，并在 `0a1d7ee6` 修复 chunk128 qkmask 下溢越界 P1。两项修复均经独立复核通过（0 critical / 0 warning）。尚未完成 Ascend950 编译和真机验证，不能放行。
 - Invalidation：若参考实现与融合私有副本已证明结构和同步完全等价，可缩小人工适配范围。
 
 ## CD-002：同步由数据版本和物理槽位推导
@@ -36,7 +36,7 @@
 - Alternatives：保留全局屏障；直接复刻参考事件；按版本/槽位重新分配最小事件。
 - Choice：先记录逻辑版本、物理槽、生产者/消费者和 init/drain，再决定事件；不得仅按参考 EventID 文本复制。
 - Validation：静态事件表、目标 CANN 头文件核对、奇偶轮次/尾块/多序列压力重复测试、保守屏障 A/B。
-- Result：pending
+- Result：WU 改为显式 8-slot 状态机：flag3/4 为 AIV→AIC ready，flag5 为 AIC→两个 AIV 的 slot-free；task>=8 覆盖前等待，AIC 通过 `MTE2 -> MTE1 -> PIPE_MTE1 free` 链在最后消费后释放，尾部 drain 清空 credit。FwdO 的 Cube1/2 使用本地事件 0..3，Cube3 使用 4..7 和独立 `[192,384) KiB` L1 区域，scheduler 跨核 0..7 原 init/drain 保留；qkmask 两个 VF 已从 `max(gbrcStart,64)` 开始第二段循环。目标 CANN 实现、重复执行和边界 case 仍待 A5 证据。
 - Invalidation：目标实现或编译产物证明相关访问同步执行或物理地址不重叠。
 
 ## CD-003：平台和 shape 差异留在统一 L0 内部
@@ -48,6 +48,5 @@
 - Alternatives：新建第二套 L0；统一通用 kernel；统一 L0 + 少量 A5 策略特化。
 - Choice：保持同一 L0 与调用路径，仅在现有 tiling/template/arch35 层表达实质差异。
 - Validation：检查 key 域完备互斥；目标模型性能门禁；其他支持 case 功能与精度门禁。
-- Result：pending
+- Result：两项移植都限定在现有融合私有模块及 A5 arch35 分支；A2/非 arch35 路径、统一 L0、V128/V256 tiling key 和现有调用入口保持不变。已通过 12 项本地 ctypes ABI 测试和聚焦 diff 检查；编译/功能/性能待 A5。
 - Invalidation：二进制证明特化不改变生成代码或稳定性能，届时合并模板。
-
