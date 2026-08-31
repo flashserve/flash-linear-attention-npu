@@ -149,13 +149,21 @@ def _apply_input_layout(
 def _add_head_offsets(
     tensor: torch.Tensor, scale: float, dtype_name: str
 ) -> None:
+    """Add zero-centered head offsets with magnitude bounded by scale."""
     storage_dtype = _orig_dtype(dtype_name)
     quantized = tensor.to(storage_dtype)
-    offsets = torch.arange(
-        tensor.shape[1], device=tensor.device, dtype=torch.float32
-    ).to(storage_dtype)
+    head_count = tensor.shape[1]
+    if head_count == 1:
+        offsets = torch.zeros(1, device=tensor.device, dtype=storage_dtype)
+    else:
+        offsets = torch.linspace(
+            -scale,
+            scale,
+            steps=head_count,
+            dtype=torch.float32,
+        ).to(storage_dtype).to(tensor.device)
     quantized.add_(
-        offsets.view(1, -1, *([1] * (tensor.ndim - 2))) * scale
+        offsets.view(1, -1, *([1] * (tensor.ndim - 2)))
     )
     tensor.copy_(quantized.to(tensor.dtype))
 
