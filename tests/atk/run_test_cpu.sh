@@ -36,7 +36,7 @@ show_usage() {
   MSS_LOG_PATH                   ATK -msl 日志路径，默认 ${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log
   GEN_CASES_DTYPE_NUMBERS        生成用例时传给 atk case -dt，默认 100；双 dtype 算子生成 200 条
   GEN_CASES_EXTRA_NUMBERS        生成用例时传给 atk case -en，默认 0
-  GEN_CASES_SEED                 生成用例随机种子，默认 20260831（chunk_kda_fwd canonical seed）
+  GEN_CASES_SEED                 生成用例随机种子，默认 20260813
 
 示例：
   bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd
@@ -76,7 +76,8 @@ print_result_summary() {
   local pass=0
   for t in "${RAN_TYPES[@]}"; do
     if python3 "$RESULT_CHECK_PY" --type "$t" \
-        --output-root "$ATK_OUTPUT_ROOT" --op "$OP"; then
+        --output-root "$ATK_OUTPUT_ROOT" --op "$OP" \
+        --newer-than "$ATK_RUN_STARTED_AT"; then
       pass=$((pass + 1))
     else
       fail=$((fail + 1))
@@ -189,7 +190,7 @@ MSS_TOOL="${MSS_TOOL:-memcheck}"
 MSS_LOG_PATH="${MSS_LOG_PATH:-}"
 GEN_CASES_DTYPE_NUMBERS="${GEN_CASES_DTYPE_NUMBERS:-100}"
 GEN_CASES_EXTRA_NUMBERS="${GEN_CASES_EXTRA_NUMBERS:-0}"
-GEN_CASES_SEED="${GEN_CASES_SEED:-20260831}"
+GEN_CASES_SEED="${GEN_CASES_SEED:-20260813}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -323,6 +324,7 @@ MSS_END="${MSS_END:-$CASE_END}"
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
 mkdir -p "${ATK_OUTPUT_ROOT}/accuracy" "${ATK_OUTPUT_ROOT}/perf"
+ATK_RUN_STARTED_AT="$(date +%s)"
 # mssanitizer 日志路径：未显式指定时使用 ATK_OUTPUT_ROOT 下的带时间戳绝对路径
 # ATK celery worker 工作目录与脚本不同，必须用绝对路径，否则无法找到日志文件
 MSS_LOG_PATH="${MSS_LOG_PATH:-$(cd "${ATK_OUTPUT_ROOT}" && pwd)/mssanitizer_${OP}_$(date +%Y%m%d_%H%M%S).log}"

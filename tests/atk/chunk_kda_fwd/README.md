@@ -62,6 +62,12 @@ bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend950 -scope=mssanitiz
 python3 tests/atk/chunk_kda_fwd/scripts/validate_manifests.py
 ```
 
+卡死判定采用单次 kernel launch 口径：任一 case 的日志进入 `KERNEL_LAUNCH` 后
+60 秒仍未返回，即判定该 case 卡死并记为失败。公共 runner 的 `-to` 约束整个 ATK
+task（还可能包含 CPU golden、多轮确定性或 sanitizer 阶段），不等同于该判据；在接入
+精确的 launch watchdog 前，运行人员必须按日志时间监控并终止卡死 case，不能通过延长
+等待时间把它记录为通过。
+
 确定性阶段使用 ATK `accuracy_dc`，内存阶段使用 mssanitizer 包裹的 ATK `run`；二者
 均消费 `atk_chunk_kda_fwd_mss.json`。独立诊断脚本按清单中的源 ID 工作，默认遍历全部
 4 条 MSS 用例，也可用 `--case-id` 只定位一条：

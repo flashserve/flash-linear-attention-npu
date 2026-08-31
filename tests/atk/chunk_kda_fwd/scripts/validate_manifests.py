@@ -7,6 +7,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import yaml
+
 
 HERE = Path(__file__).resolve()
 OP_DIR = HERE.parents[1]
@@ -114,6 +116,66 @@ def _check_generator(module, manifests: dict[str, list[dict]]) -> None:
             raise ValueError(f"{path.name}: materialized payloads drifted from generator")
 
 
+def _check_yaml_input_contract(manifests: dict[str, list[dict]]) -> None:
+    design = yaml.safe_load((OP_DIR / "chunk_kda_fwd.yaml").read_text(encoding="utf-8"))
+    yaml_inputs = design.get("inputs")
+    if not isinstance(yaml_inputs, list):
+        raise ValueError("chunk_kda_fwd.yaml must declare an inputs list")
+    yaml_contract = []
+    for item in yaml_inputs:
+        if not isinstance(item, dict):
+            raise ValueError("chunk_kda_fwd.yaml inputs must be mappings")
+        dtype_values = item.get("dtypes", {}).get("values", [])
+        if not isinstance(dtype_values, list) or not dtype_values:
+            raise ValueError(f"YAML input {item.get('name')}: dtypes.values must be non-empty")
+        yaml_contract.append(
+            (
+                str(item.get("name")),
+                str(item.get("type")),
+                bool(item.get("required")),
+                {str(dtype) for dtype in dtype_values},
+            )
+        )
+    yaml_names = [item[0] for item in yaml_contract]
+    if len(yaml_names) != len(set(yaml_names)):
+        raise ValueError("chunk_kda_fwd.yaml contains duplicate input names")
+    for manifest_name, cases in manifests.items():
+        for case in cases:
+            actual_inputs = case.get("inputs", [])
+            if not isinstance(actual_inputs, list) or any(
+                not isinstance(item, dict) for item in actual_inputs
+            ):
+                raise ValueError(f"{manifest_name} case {case.get('id')}: invalid inputs list")
+            actual_names = [str(item.get("name")) for item in actual_inputs]
+            if len(actual_names) != len(set(actual_names)):
+                raise ValueError(
+                    f"{manifest_name} case {case.get('id')}: duplicate input names"
+                )
+            if len(actual_inputs) != len(yaml_contract):
+                raise ValueError(
+                    f"{manifest_name} case {case.get('id')}: input count mismatch; "
+                    f"YAML={len(yaml_contract)}, JSON={len(actual_inputs)}"
+                )
+            for index, (actual, expected) in enumerate(zip(actual_inputs, yaml_contract)):
+                expected_name, expected_type, expected_required, allowed_dtypes = expected
+                actual_name = str(actual.get("name"))
+                actual_type = str(actual.get("type"))
+                actual_required = bool(actual.get("required"))
+                actual_dtype = str(actual.get("dtype"))
+                if (
+                    actual_name != expected_name
+                    or actual_type != expected_type
+                    or actual_required != expected_required
+                    or actual_dtype not in allowed_dtypes
+                ):
+                    raise ValueError(
+                        f"{manifest_name} case {case.get('id')} input {index}: "
+                        f"expected name/type/required/dtype={expected_name}/{expected_type}/"
+                        f"{expected_required}/{sorted(allowed_dtypes)}, got "
+                        f"{actual_name}/{actual_type}/{actual_required}/{actual_dtype}"
+                    )
+
+
 def main() -> int:
     _check_source_evidence()
     module = _load_generator()
@@ -126,6 +188,7 @@ def main() -> int:
     mss_specs = _check_manifest(OP_DIR / "atk_chunk_kda_fwd_mss.json", 4, {1, 2})
     perf_specs = _check_manifest(OP_DIR / "atk_chunk_kda_fwd_perf.json", 2, {1, 2})
     _check_generator(module, manifests)
+    _check_yaml_input_contract(manifests)
     if {int(item["tiling_key"]) for item in accuracy_specs} != {1, 2}:
         raise ValueError("accuracy must exercise both tiling keys")
     if {(int(item["tiling_key"]), bool(item["initial_state"])) for item in mss_specs} != {

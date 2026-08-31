@@ -82,6 +82,11 @@ inputs:
     required: true
     dtypes: {values: [string]}
     ranges: {valid: {values: [BSND, BNSD, TND, NTD]}, invalid: {values: [bsnd, INVALID]}}
+  - name: scale
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [0.08838834764831843]}, invalid: {values: []}}
   - name: q_dtype
     type: attr
     required: true
