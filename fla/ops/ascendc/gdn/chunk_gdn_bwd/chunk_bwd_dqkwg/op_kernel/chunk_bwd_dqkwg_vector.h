@@ -32,6 +32,7 @@
 
  #include "chunk_bwd_dqkwg_common.h"
  #include "kernel_operator.h"
+ #include "chunk_bwd_dqkwg_regbase.h"   // A5 (arch35/310) RegBase VF 按元素融合算子 (910B 编译时为空)
 
  using namespace AscendC;
 
@@ -477,8 +478,13 @@
      const uint32_t dwSize = BT * K;
      const uint32_t gSize = BT;
      // 诊断 (同 ProcessBVector): 大 case 缩小 mul1 GM 写, 配合 B 端缩小读, 把 mul1 整个往返流量去掉 (~3.2GB), 看 perf。
+ #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+     // RegBase B 阶段仍从独立环形 workspace 读取 mul1，A5 必须保留 Part2 的计算和写回。
+     const bool largeMemBound_diag = false;
+ #else
      const bool largeMemBound_diag =
          ((uint64_t)B * HV * T * K * 2 + (uint64_t)B * HV * T * BT * 2 + (uint64_t)B * HV * numChunks * 4) > (512ULL * 1024 * 1024);
+ #endif
      const uint32_t maxSize = (2 * hDhSize) > dwSize ? (2 * hDhSize) : dwSize;
 
      // ----- Part1 buffers (h/dh, dw) -----
@@ -616,9 +622,17 @@
                      }
                      Cast(tensorHFp32, tensorDwOut, RoundMode::CAST_NONE, dwSize_sub);
                      PipeBarrier<PIPE_V>();
+ #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                     // RegBase: dw = (DataType)(-dw_fp32), 融合 Muls(-1)+Cast(RINT) 进寄存器 (省 1 次 UB 往返 + 1 个 PIPE_V)
+                     ChunkBwdDqkwgRegBase::NegCastVF<DataType>(
+                         (__ubuf__ DataType*)tensorDwOut.GetPhyAddr(),
+                         (__ubuf__ float*)tensorHFp32.GetPhyAddr(),
+                         dwSize_sub);
+ #else
                      Muls(tensorHFp32, tensorHFp32, -1.0f, dwSize_sub);
                      PipeBarrier<PIPE_V>();
                      Cast(tensorDwOut, tensorHFp32, RoundMode::CAST_RINT, dwSize_sub);
+ #endif
                      PipeBarrier<PIPE_V>();
                      auto tensorRepairWork = calcBuf3.Get<float>();
                      auto tensorRepairScratch = calcBuf2.Get<float>();
@@ -758,11 +772,23 @@
      uint32_t dsSize_full = BT * BT;
      const uint32_t gSize = BT;
 
+ #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+     // RegBase: ds/mul1/mm5 各一独立 fp16 缓冲 (融合 VF 需三者同时在 UB), ds_temp fp16 输出, dg 输出;
+     //          gBuf/dgBuf 复用为 col/dgc scratch (>=2*VL/4 fp32, 列和 INTLV 写满寄存器对)。
+     // 按行循环时每行整寄存器读取 (BT<lanes 时尾行会越读), +512B 余量保证越读仍落在缓冲内 (被掩码丢弃)。
+     constexpr uint32_t kRegbaseRowPad = 512;
+     pipe->InitBuffer(inQue1, BUFFER_NUM, dsSize_full * sizeof(DataType) + kRegbaseRowPad);    // ds (fp16)
+     pipe->InitBuffer(inQue2, BUFFER_NUM, dsSize_full * sizeof(DataType) + kRegbaseRowPad);    // mul1 (fp16)
+     pipe->InitBuffer(inQue3, BUFFER_NUM, dsSize_full * sizeof(DataType) + kRegbaseRowPad);    // mm5 (fp16)
+     pipe->InitBuffer(outQue1, BUFFER_NUM, dsSize_full * sizeof(DataType));   // ds_temp output
+     pipe->InitBuffer(outQue2, BUFFER_NUM, gSize * sizeof(float));            // dg output
+     pipe->InitBuffer(gBuf, 256 * sizeof(float));                            // colScratch
+     pipe->InitBuffer(dgBuf, 256 * sizeof(float));                           // dgcScratch
+ #else
      // 大 memory-bound case: mul1 不走 GM, 改在 vector B 从输入 g 现读现算 (= A Part2 内核 ComputeMul1HalfFp32),
      // 省掉 mul1 的 [BT,BT] GM 往返 (~3.2GB for step2_12)。判据与 host tiling / vector A 同公式; 小 case 仍读 GM。
      const bool largeMemBound_diag =
          ((uint64_t)B * HV * T * K * 2 + (uint64_t)B * HV * T * BT * 2 + (uint64_t)B * HV * numChunks * 4) > (512ULL * 1024 * 1024);
-
      pipe->InitBuffer(inQue1, BUFFER_NUM, dsSize_full * sizeof(float));    // ds from Cube (含 reinterpret)
      pipe->InitBuffer(inQue2, BUFFER_NUM, dsSize_full * sizeof(float));    // mm5/mul1 from workspace (或大 case 内联算 mul1)
      pipe->InitBuffer(outQue1, BUFFER_NUM, dsSize_full * sizeof(DataType));   // ds_temp output
@@ -784,6 +810,7 @@
          }
          PipeBarrier<PIPE_V>();
      }
+ #endif
 
      uint32_t bos = 0;
      uint32_t eos = 0;
@@ -806,6 +833,65 @@
                                                           (uint32_t)wsBtxKSyncSlotsPerHead);
              uint64_t dgOffset = gOffset;
 
+ #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+             // ---- RegBase: ds_temp=ds*mul1, ds2=ds_temp*mm5, dg=rowsum(ds2)-colsum(ds2) ----
+             {  // copy-in: ds / mul1 / mm5 (fp16, 各独立缓冲)
+                 auto tDs = inQue1.AllocTensor<DataType>();
+                 auto tMul1 = inQue2.AllocTensor<DataType>();
+                 auto tMm5 = inQue3.AllocTensor<DataType>();
+                 DataCopy(tDs, gmDsTemp[dsOffset], dsSize_sub);
+                 DataCopy(tMul1, gmMul1[mul1Offset], dsSize_sub);
+                 DataCopy(tMm5, gmMm5[mm5Offset], dsSize_sub);
+                 inQue1.EnQue(tDs);
+                 inQue2.EnQue(tMul1);
+                 inQue3.EnQue(tMm5);
+             }
+             {  // compute: 两段 VF, 中间 PIPE_V 排空 scratch (VF1 store -> VF2 load 同址别名)
+                 auto tDs = inQue1.DeQue<DataType>();
+                 auto tMul1 = inQue2.DeQue<DataType>();
+                 auto tMm5 = inQue3.DeQue<DataType>();
+                 auto tDsTempOut = outQue1.AllocTensor<DataType>();
+                 auto tDgOut = outQue2.AllocTensor<float>();
+                 auto colScratch = gBuf.Get<float>();
+                 auto dgcScratch = dgBuf.Get<float>();
+                 ChunkBwdDqkwgRegBase::BdsTempRowColVF<DataType>(
+                     (__ubuf__ DataType*)tDsTempOut.GetPhyAddr(),
+                     (__ubuf__ float*)dgcScratch.GetPhyAddr(),
+                     (__ubuf__ float*)colScratch.GetPhyAddr(),
+                     (__ubuf__ DataType*)tDs.GetPhyAddr(),
+                     (__ubuf__ DataType*)tMul1.GetPhyAddr(),
+                     (__ubuf__ DataType*)tMm5.GetPhyAddr(),
+                     real_BT, BT);
+                 PipeBarrier<PIPE_V>();
+                 ChunkBwdDqkwgRegBase::BdgFinalizeVF<GType>(
+                     (__ubuf__ GType*)tDgOut.GetPhyAddr(),
+                     (__ubuf__ float*)dgcScratch.GetPhyAddr(),
+                     (__ubuf__ float*)colScratch.GetPhyAddr(),
+                     real_BT);
+                 inQue1.FreeTensor(tDs);
+                 inQue2.FreeTensor(tMul1);
+                 inQue3.FreeTensor(tMm5);
+                 outQue1.EnQue(tDsTempOut);
+                 outQue2.EnQue(tDgOut);
+             }
+             {  // copy-out: ds_temp -> gmDsTemp, dg -> gmDg
+                 auto tDsTempOut = outQue1.DeQue<DataType>();
+                 auto tDgOut = outQue2.DeQue<float>();
+                 DataCopy(gmDsTemp[dsOffset], tDsTempOut, dsSize_sub);
+                 DataCopyParams dataCopyParams;
+                 dataCopyParams.blockCount = 1;
+                 dataCopyParams.blockLen = real_BT * sizeof(GType);
+                 dataCopyParams.srcStride = 0;
+                 dataCopyParams.dstStride = 0;
+                 if constexpr (std::is_same<GType, float>::value) {
+                     DataCopyPad(gmDg[dgOffset], tDgOut, dataCopyParams);
+                 } else {
+                     DataCopyPad(gmDg[dgOffset], tDgOut.template ReinterpretCast<GType>(), dataCopyParams);
+                 }
+                 outQue1.FreeTensor(tDsTempOut);
+                 outQue2.FreeTensor(tDgOut);
+             }
+ #else
              {
                  auto tensorDsIn = inQue1.AllocTensor<DataType>();
                  DataCopy(tensorDsIn[BT * BT], gmDsTemp[dsOffset], dsSize_sub);
@@ -922,6 +1008,7 @@
                  outQue1.FreeTensor(tensorDsTempOut);
                  outQue2.FreeTensor(tensorDgOut);
              }
+ #endif
              PipeBarrier<PIPE_MTE3>();
          }
          PipeBarrier<PIPE_MTE3>();
@@ -1084,6 +1171,20 @@
                  }
                  {
                      auto tensorMm6InFp16 = inQue2.DeQue<DataType>();
+                     auto tensorDqOut = outQue1.AllocTensor<DataType>();
+ #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                     if (!gvaMode || (h % n_ratio == 0)) {
+                         // RegBase: dq = (DataType)(dq_state_fp32 + (float)mm6), 融合 Cast+Add+Cast 进寄存器
+                         // (省 mm6 的 fp32 中转 UB + 2 个 PIPE_V)。三个缓冲互不重叠。
+                         ChunkBwdDqkwgRegBase::AddCastVF<DataType>(
+                             (__ubuf__ DataType*)tensorDqOut.GetPhyAddr(),
+                             (__ubuf__ float*)tensorDqInFp32.GetPhyAddr(),
+                             (__ubuf__ DataType*)tensorMm6InFp16[dqSize_sub].GetPhyAddr(),
+                             dqSize_sub);
+                         inQue2.FreeTensor(tensorMm6InFp16);
+                     } else
+ #endif
+                     {
                      auto tensorMm6Fp32 = tensorMm6InFp16.template ReinterpretCast<float>();
                      Cast(tensorMm6Fp32, tensorMm6InFp16[dqSize_sub], RoundMode::CAST_NONE, dqSize_sub);
                      PipeBarrier<PIPE_V>();
@@ -1103,8 +1204,8 @@
                          PipeBarrier<PIPE_V>();
                          inQue2.FreeTensor(tensorDqAccumInFp16);
                      }
-                     auto tensorDqOut = outQue1.AllocTensor<DataType>();
                      Cast(tensorDqOut, tensorDqInFp32, RoundMode::CAST_RINT, dqSize_sub);
+                     }
                      inQue1.FreeTensor(tensorDqInFp16);
                      outQue1.EnQue(tensorDqOut);
                  }
@@ -1337,6 +1438,19 @@
                  }
                  {
                      auto tensorMm7In = inQue2.DeQue<DataType>();
+                     auto tensorDkOut = outQue1.AllocTensor<DataType>();
+ #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                     if (!gvaMode || (h % n_ratio == 0)) {
+                         // RegBase: dk = (DataType)(dk_state_fp32 + (float)mm7), 融合 Cast+Add+Cast 进寄存器。
+                         ChunkBwdDqkwgRegBase::AddCastVF<DataType>(
+                             (__ubuf__ DataType*)tensorDkOut.GetPhyAddr(),
+                             (__ubuf__ float*)tensorDkFp32.GetPhyAddr(),
+                             (__ubuf__ DataType*)tensorMm7In[dkSize].GetPhyAddr(),
+                             dkSize);
+                         inQue2.FreeTensor(tensorMm7In);
+                     } else
+ #endif
+                     {
                      auto tensorMm7Fp32 = tensorMm7In.template ReinterpretCast<float>();
                      Cast(tensorMm7Fp32, tensorMm7In[dkSize], RoundMode::CAST_NONE, dkSize);
                      PipeBarrier<PIPE_V>();
@@ -1356,8 +1470,8 @@
                          PipeBarrier<PIPE_V>();
                          inQue2.FreeTensor(tensorDkAccumInFp16);
                      }
-                     auto tensorDkOut = outQue1.AllocTensor<DataType>();
                      Cast(tensorDkOut, tensorDkFp32, RoundMode::CAST_RINT, dkSize);
+                     }
                      inQue1.FreeTensor(tensorDkIn);
                      outQue1.EnQue(tensorDkOut);
                  }
