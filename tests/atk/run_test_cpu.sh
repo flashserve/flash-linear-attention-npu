@@ -36,7 +36,7 @@ show_usage() {
   MSS_LOG_PATH                   ATK -msl 日志路径，默认 ${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log
   GEN_CASES_DTYPE_NUMBERS        生成用例时传给 atk case -dt，默认 100；双 dtype 算子生成 200 条
   GEN_CASES_EXTRA_NUMBERS        生成用例时传给 atk case -en，默认 0
-  GEN_CASES_SEED                 生成用例随机种子，默认 20260813
+  GEN_CASES_SEED                 生成用例随机种子，默认 20260831（chunk_kda_fwd canonical seed）
 
 示例：
   bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd
@@ -189,7 +189,7 @@ MSS_TOOL="${MSS_TOOL:-memcheck}"
 MSS_LOG_PATH="${MSS_LOG_PATH:-}"
 GEN_CASES_DTYPE_NUMBERS="${GEN_CASES_DTYPE_NUMBERS:-100}"
 GEN_CASES_EXTRA_NUMBERS="${GEN_CASES_EXTRA_NUMBERS:-0}"
-GEN_CASES_SEED="${GEN_CASES_SEED:-20260813}"
+GEN_CASES_SEED="${GEN_CASES_SEED:-20260831}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -387,6 +387,7 @@ if should_run determinism; then
   log_info "开始确定性测试：accuracy_dc（循环次数=${DC_LOOP_NUMS}，超时=${DC_TIMEOUT}s）"
   set_case_range_args "确定性测试 case 范围" "$DETERMINISM_START" "$DETERMINISM_END"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+    --output_path "${ATK_OUTPUT_ROOT}" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \
@@ -406,6 +407,7 @@ if should_run mssanitizer; then
   touch "$MSS_LOG_PATH"
   mssanitizer --tool="$MSS_TOOL" -- \
     "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+    --output_path "${ATK_OUTPUT_ROOT}" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \

@@ -1,55 +1,91 @@
-# ChunkKdaFwd ATK 工程
+# chunk_kda_fwd ATK 交付件
 
-本目录提供 `chunk_kda_fwd` 的 ATK 单算子工程。通用版本要求、case 范围、测试动作和
-结果检查规则见 [`../README.md`](../README.md)。
+本目录提供当前主线 `chunk_kda_fwd` 的 ATK 精度、确定性和内存测试资产。测试
+executor 使用现代 raw `g`、`A_log`、`dt_bias` 接口，与当前算子实现保持同一 ABI。
 
-## 输入限制
+## 交付清单
 
-- `layout` 支持 `BSND/BNSD/TND/NTD`；`layout` 只描述输入，输出布局由接口固定约定。
-- `BSND` 下 `q/k=[B,T,H_k,K]`，`v=[B,T,H_v,V]`，`g=[B,T,H_v,K]`，`beta=[B,T,H_v]`。
-- `BNSD` 下 `q/k=[B,H_k,T,K]`，`v=[B,H_v,T,V]`，`g=[B,H_v,T,K]`，`beta=[B,H_v,T]`。
-- `TND/NTD` 使用打包 token；`cu_seqlens` 从 `0` 开始、以总 token 数结束且单调不减。
-- head 映射满足 `0 < H_k <= H_v <= 128` 且 `H_v % H_k == 0`。
-- `q/k/v` 支持 `BFLOAT16/FLOAT16`；`g` 支持 `FLOAT/BFLOAT16`；`beta` 支持 `FLOAT/BFLOAT16`。
-- `K/V` 为 `[16,256]` 内 `16` 的倍数，交付矩阵重点覆盖 `K=128`、`V=128/256`。
-- `chunk_size` 支持 `64/128`；rank-4 变长输入要求 `B=1`，逻辑序列数最多 `1024`。
-- `use_gate_in_kernel=true` 时必须提供 `A_log`；`safe_gate=true` 时 `lower_bound` 取 `[-5,0)`。
-- `initial_state` 如提供，末两维由 `state_v_first` 解释为 `[K,V]` 或 `[V,K]`。
+| 文件 | 用途 | 规模 |
+| --- | --- | --- |
+| `atk_chunk_kda_fwd.json` | 精度双标杆 | 200 条正向用例（ID 0--199） |
+| `atk_chunk_kda_fwd_mss.json` | `accuracy_dc` 与 mssanitizer | 4 条：两个 tiling key 各含普通/边界用例 |
+| `atk_chunk_kda_fwd_perf.json` | 性能采样 | 2 条：每个 tiling key 一条 |
+| `gen_chunk_kda_fwd.py` | 生成并校验上述清单 | canonical seed 为 `20260831` |
+| `executor_chunk_kda_fwd.py` | CPU golden 与 NPU DUT | `ascendc` 主通路 |
+| `stress_npu_determinism.py` | 独立逐 bit 确定性诊断 | 默认遍历 MSS 清单 |
+| `scripts/validate_manifests.py` | 无 NPU 静态校验 | 校验源码选择条件与 JSON 漂移 |
 
-## 精度拓扑
+精度清单使用 `soc=all`，同一份 200 条矩阵应分别在 A2（`ascend910b`）、A3
+（`ascend910_93`）和 A5（`ascend950`）设备上执行，不把同一矩阵复制成 600 条。
 
-精度标准统一使用 `mixed_tolerance_bm`。显式 CPU 节点调用 executor 的 FP64 路径生成
-唯一 golden，显式 NPU 节点只运行 DUT。CPU golden 输出转换为 FP32，NPU 输出保持算子
-原始 dtype，由 ATK 按混合容差规则比较。
+## Tiling key 覆盖
 
-```text
-ATK accuracy task
-|-- CPU FP64 golden (output FP32)
-`-- NPU DUT
-```
+主线 host 只根据 `chunk_size/K/V` 选择 key：
+
+| key | 选择条件 | MSS 普通 | MSS 边界 | 性能 |
+| --- | --- | --- | --- | --- |
+| 1 | 除 key2 条件外的合法组合 | ID 0（`V=256`） | ID 1（`chunk=128`） | ID 0 |
+| 2 | `chunk_size=64` 且 `K=128` 且 `V=128` | ID 2 | ID 3（`T=65`） | ID 1 |
+
+精度清单在 100 个 shape profile 上分别使用 BF16/FP16，覆盖四种 layout
+（`BSND/BNSD/TND/NTD`）、dense/varlen、tail、GQA、initial/final state 和重计算
+策略；profile 的 key 由同一 host 条件计算并写入 `case_spec`。`soc=all` 是平台通配
+标记，实际运行时仍需针对每个物理 SoC 单独执行。
+
+## 输入与输出约定
+
+- `q/k/v` 使用相同的 BF16 或 FP16；`g` 使用 FP32；`beta` 使用 FP32 或 BF16。
+- `K`、`V` 为 16 的倍数，范围为 16--256；本交付矩阵重点覆盖 `K=128`、`V=128/256`。
+- `layout` 支持 `BSND`、`BNSD`、`TND`、`NTD`。变长输入的 `cu_seqlens` 从 0 开始并以
+  `T` 结束，`chunk_indices` 使用 sequence-major canonical 顺序。
+- `use_gate_in_kernel=true` 时提供 FP32 `A_log`；若提供 `dt_bias`，其形状为 `[HV*K]`。
+- CPU 节点以 FP64 计算 golden，executor 只在 golden 输出边界转为 FP32；NPU 节点保留
+  算子原始输出 dtype，由 `mixed_tolerance_bm` 统一比较。
 
 ## 运行
 
-在仓库根目录准备好 ATK、CANN、OPP 和 Python 包环境后执行：
+先加载 CANN、算子 OPP、Python 包和 ATK 26.8.8 或更高版本，再从仓库根目录运行：
 
 ```bash
-bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -npu_device_id=0 -scope=accuracy
+# 精度：每个物理 SoC 都执行完整 200 条
+bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend910b -scope=accuracy
+bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend910_93 -scope=accuracy
+bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend950 -scope=accuracy
+
+# 确定性：复用 4 条 MSS 清单，覆盖 key1/key2 的普通与边界
+bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend950 -scope=determinism
+
+# 内存：需要 sanitizer/debug 算子包；默认使用 memcheck
+bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend950 -scope=mssanitizer
+
+# 无 NPU 的清单与源码选择条件检查
+python3 tests/atk/chunk_kda_fwd/scripts/validate_manifests.py
 ```
 
-只验证前 5 个 case：
+确定性阶段使用 ATK `accuracy_dc`，内存阶段使用 mssanitizer 包裹的 ATK `run`；二者
+均消费 `atk_chunk_kda_fwd_mss.json`。独立诊断脚本按清单中的源 ID 工作，默认遍历全部
+4 条 MSS 用例，也可用 `--case-id` 只定位一条：
 
 ```bash
-CASE_START=0 CASE_END=5 \
-bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -npu_device_id=0 -scope=accuracy
+python3 tests/atk/chunk_kda_fwd/stress_npu_determinism.py \
+  --device 0 --soc ascend950 --repeats 100
+python3 tests/atk/chunk_kda_fwd/stress_npu_determinism.py \
+  --device 0 --soc ascend950 --case-id 3 --repeats 100
 ```
 
-确定性回归会重复运行 MSS 用例并逐位比较全部可见输出。MSS 包含 #440 的 63-token 单序列
-尾块场景，通过 96 个 value heads 放大并行调度覆盖，同时启用 `disable_recompute=true`、最终状态
-和全部中间量：
+脚本每轮从固定输入的 clone 发起调用，检查所有非空输出的 shape、dtype 和 bitwise
+一致性；任一用例异常或不一致都会以非零状态退出。mssanitizer 只有在确认 debug
+对象实际命中 sanitizer 版本并看到对应工具启动信息后，才能作为内存结论。
+
+## 重新物化
+
+canonical 清单由生成器冻结为 200 条精度、4 条 MSS、2 条性能用例。重新生成并校验：
 
 ```bash
-DC_LOOP_NUMS=100 \
-bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -npu_device_id=0 -scope=determinism
+python3 tests/atk/chunk_kda_fwd/gen_chunk_kda_fwd.py \
+  --out-dir tests/atk/chunk_kda_fwd --positive 200 --negative 0 \
+  --seed 20260831 --print-summary
+python3 tests/atk/chunk_kda_fwd/scripts/validate_manifests.py
 ```
 
-性能、确定性、mssanitizer 和用例生成均通过统一脚本的对应 `-scope` 执行。
+不要提交 ATK 运行产生的 `atk_output`、报告、日志、profiling 数据或 Python 缓存。
