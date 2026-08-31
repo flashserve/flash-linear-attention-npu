@@ -44,7 +44,7 @@ def make_inputs(args) -> dict:
     q = (torch.randn(args.batch, args.key_heads, args.tokens, 128, dtype=dtype) * 0.05).npu()
     k = (torch.randn(args.batch, args.key_heads, args.tokens, 128, dtype=dtype) * 0.05).npu()
     repeat = args.value_heads // args.key_heads
-    if repeat > 1:
+    if repeat > 1 and not args.keep_grouped_qk:
         q = q.repeat_interleave(repeat, dim=1).contiguous()
         k = k.repeat_interleave(repeat, dim=1).contiguous()
     v = (
@@ -527,7 +527,7 @@ def contract_report(args, inputs: dict) -> dict:
         "batch": args.batch,
         "logical_key_heads": args.key_heads,
         "value_heads": args.value_heads,
-        "physical_qk_heads": args.value_heads,
+        "physical_qk_heads": int(inputs["q"].shape[1]),
         "tokens": args.tokens,
         "k_dim": 128,
         "v_dim": args.value_dim,
@@ -547,6 +547,14 @@ def parse_args():
     parser.add_argument("--batch", type=int, default=1)
     parser.add_argument("--key-heads", type=int, default=4)
     parser.add_argument("--value-heads", type=int, default=8)
+    parser.add_argument(
+        "--keep-grouped-qk",
+        action="store_true",
+        help=(
+            "Keep Q/K at --key-heads instead of expanding them to --value-heads. "
+            "Use this for grouped-value model shapes."
+        ),
+    )
     parser.add_argument("--value-dim", type=int, choices=(128, 256), default=128)
     parser.add_argument("--tokens", type=int, default=1024)
     parser.add_argument("--chunk-size", type=int, choices=(64, 128), default=64)
