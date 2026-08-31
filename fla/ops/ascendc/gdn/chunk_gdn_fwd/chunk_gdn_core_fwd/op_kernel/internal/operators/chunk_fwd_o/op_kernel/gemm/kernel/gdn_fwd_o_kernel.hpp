@@ -16,10 +16,11 @@
 #include "catlass/catlass.hpp"
 #include "catlass/debug.hpp"
 #include "catlass/epilogue/block/block_epilogue.hpp"
-#include "../../epilogue/block/block_epilogue_gdn_fwdo_qkmask.hpp"
-#include "../../epilogue/block/block_epilogue_gdn_fwdo_output.hpp"
+#include "../../arch35/epilogue/block/block_epilogue_gdn_fwdo_qkmask.hpp"
+#include "../../arch35/epilogue/block/block_epilogue_gdn_fwdo_output.hpp"
 #include "catlass/gemm/block/block_mmad.hpp"
-#include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
+#include "../../arch35/gemm/block/block_mmad_pingpong_tla_gdn_fwd_o.hpp"
+#include "../../arch35/gemm/block/block_mmad_pingpong_tla_pipelined.hpp"
 #include "catlass/gemm/block/block_swizzle.hpp"
 #include "../block/block_scheduler_gdn_fwd_o.hpp"
 #include "catlass/gemm/dispatch_policy.hpp"
@@ -108,7 +109,11 @@ public:
     using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdOCube;
     using VecScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdOVec;
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using DispatchPolicyTla = Gemm::MmadPingpongTlaGdnFwdO<ArchTag, true, false>;
+#else
     using DispatchPolicyTla = Gemm::MmadPingpongTlaMulti<ArchTag, true, false>;
+#endif
     using L1TileShapeQKTla = Shape<_128, _128, _128>;
     using L0TileShapeQKTla = L1TileShapeQKTla;
     using L1TileShapeV128Tla = Shape<_128, _128, _128>;
@@ -129,17 +134,32 @@ public:
 
     // cube 1
     using TileCopyQK = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::ColumnMajor, WORKSPACE_TYPE, layout::RowMajor>;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using BlockMmadQK = Gemm::Block::BlockMmadTlaPipelined<DispatchPolicyTla, L1TileShapeQKTla, L0TileShapeQKTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyQK>;
+#else
     using BlockMmadQK = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeQKTla, L0TileShapeQKTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyQK>;
+#endif
 
     // cube 2
     using TileCopyQH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using DispatchPolicyTlaShareL1A = Gemm::MmadPingpongTlaGdnFwdO<ArchTag, true, false, 1, false, true>;
+    using BlockMmadQH128 = Gemm::Block::BlockMmadTlaPipelined<DispatchPolicyTlaShareL1A, L1TileShapeV128Tla, L0TileShapeV128Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyQH>;
+    using BlockMmadQH256 = Gemm::Block::BlockMmadTlaPipelined<DispatchPolicyTlaShareL1A, L1TileShapeV256Tla, L0TileShapeV256Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyQH>;
+#else
     using BlockMmadQH128 = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeV128Tla, L0TileShapeV128Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyQH>;
     using BlockMmadQH256 = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeV256Tla, L0TileShapeV256Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyQH>;
+#endif
 
     // cube 3
     using TileCopyAttenVNEW = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using BlockMmadAttenVNEW128 = Gemm::Block::BlockMmadTlaPipelined<DispatchPolicyTla, L1TileShapeV128Tla, L0TileShapeV128Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyAttenVNEW>;
+    using BlockMmadAttenVNEW256 = Gemm::Block::BlockMmadTlaPipelined<DispatchPolicyTla, L1TileShapeV256Tla, L0TileShapeV256Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyAttenVNEW>;
+#else
     using BlockMmadAttenVNEW128 = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeV128Tla, L0TileShapeV128Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyAttenVNEW>;
     using BlockMmadAttenVNEW256 = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeV256Tla, L0TileShapeV256Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyAttenVNEW>;
+#endif
 
     // vec 1
     using DispatchPolicyGDNFwdOQkmask = Epilogue::EpilogueAtlasGDNFwdOQkmask;
@@ -308,8 +328,27 @@ public:
             BlockMmadQK blockMmadQK(resource);
             BlockMmadQH128 blockMmadQH128(resource);
             BlockMmadQH256 blockMmadQH256(resource);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            // A5 local-resource lifetime:
+            //   Cube1 L1A/Q [0,64K), L1B/K [64K,128K), events A=0/1 B=2/3.
+            //   Cube2 shares L1A/Q and reuses B [64K,128K|192K), events 0..3.
+            //   Cube3 owns A [192K,256K), B [256K,320K|384K), events 4..7.
+            // Shared Q/K-H slots use the event pair for producer/consumer
+            // RAW+WAR ordering; Cube3 has no physical/event WAW alias. L0A/B/C
+            // stay shared and each compute window is drained before the next.
+            // Cross-core flags remain scheduler-owned (cube1/vec1/cube3/vec2 =
+            // 0..7); their ping-pong init and final vec2 drain are unchanged.
+            constexpr uint32_t cube3L1Offset = 192 * 1024;
+            constexpr uint32_t cube3L1AEventId = 4;
+            constexpr uint32_t cube3L1BEventId = 6;
+            BlockMmadAttenVNEW128 blockMmadAttenVNEW128(
+                resource, cube3L1Offset, cube3L1AEventId, cube3L1BEventId);
+            BlockMmadAttenVNEW256 blockMmadAttenVNEW256(
+                resource, cube3L1Offset, cube3L1AEventId, cube3L1BEventId);
+#else
             BlockMmadAttenVNEW128 blockMmadAttenVNEW128(resource);
             BlockMmadAttenVNEW256 blockMmadAttenVNEW256(resource);
+#endif
 
             auto qLayout = tla::MakeLayout<ElementQ, LayoutQ>(shapeBatch * kNumHead * seqlen, kHeadDim);
             auto kLayout = tla::MakeLayout<ElementK, LayoutK>(kHeadDim, shapeBatch * kNumHead * seqlen);
@@ -320,6 +359,182 @@ public:
 
             bool needRun = false;
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            while (cubeBlockScheduler.isRunning) {
+                cubeBlockScheduler.InitTask();
+
+                // Phase 1a: launch Cube1, then release only the L1 producer
+                // events. Its MMAD/FIX pipeline remains in flight.
+                if (cubeBlockScheduler.isRunning && coreIdx < coreNum) {
+                    uint32_t streamId = cubeBlockScheduler.GetCurStageId();
+                    GDNFwdOOffsets &cube1Offsets = cubeBlockScheduler.GetCube1Offsets();
+                    auto attenLayout = tla::MakeLayout<ElementAtten, LayoutAtten>(
+                        coreNum * chunkSize * GDN_FWD_O_PING_PONG_STAGES,
+                        cube1Offsets.blockTokens);
+                    auto tensorQ = tla::MakeTensor(
+                        gmQ[cube1Offsets.qkOffset], qLayout, Catlass::Arch::PositionGM{});
+                    auto tensorK = tla::MakeTensor(
+                        gmK[cube1Offsets.qkOffset], kLayout, Catlass::Arch::PositionGM{});
+                    auto tensorAttn = tla::MakeTensor(
+                        gmAttnWorkspace[cube1Offsets.attnWorkOffset], attenLayout,
+                        Catlass::Arch::PositionGM{});
+                    GemmCoord cube1Shape{
+                        cube1Offsets.blockTokens, cube1Offsets.blockTokens, kHeadDim};
+                    auto tensorBlockQ = GetTile(
+                        tensorQ, tla::MakeCoord(0, 0),
+                        tla::MakeShape(cube1Shape.m(), cube1Shape.k()));
+                    auto tensorBlockK = GetTile(
+                        tensorK, tla::MakeCoord(0, 0),
+                        tla::MakeShape(cube1Shape.k(), cube1Shape.n()));
+                    auto tensorBlockAttn = GetTile(
+                        tensorAttn, tla::MakeCoord(0, 0),
+                        tla::MakeShape(cube1Shape.m(), cube1Shape.n()));
+                    blockMmadQK.preSetFlags();
+                    blockMmadQK(tensorBlockQ, tensorBlockK, tensorBlockAttn, cube1Shape);
+                    blockMmadQK.waitL1Drained();
+                    (void)streamId;
+                }
+
+                // Phase 1b: Cube2 reuses Cube1's Q in L1 and preloads H while
+                // Cube1 drains its MMAD pipeline. Shared L1 events enforce the
+                // RAW/WAR ordering for the overlapping physical buffers.
+                if (needRun && coreIdx < coreNum) {
+                    GDNFwdOOffsets &cube2Offsets = cubeBlockScheduler.GetCube23Offsets();
+                    auto tensorQ = tla::MakeTensor(
+                        gmQ[cube2Offsets.qkOffset], qLayout, Catlass::Arch::PositionGM{});
+                    auto tensorH = tla::MakeTensor(
+                        gmH[cube2Offsets.hOffset], hLayout, Catlass::Arch::PositionGM{});
+                    GemmCoord cube2Shape{
+                        cube2Offsets.blockTokens, cube2Offsets.vBlockDim, kHeadDim};
+                    auto tensorBlockQ = GetTile(
+                        tensorQ, tla::MakeCoord(0, 0),
+                        tla::MakeShape(cube2Shape.m(), cube2Shape.k()));
+                    auto tensorBlockH = GetTile(
+                        tensorH, tla::MakeCoord(0, 0),
+                        tla::MakeShape(cube2Shape.k(), cube2Shape.n()));
+                    if (cube2Offsets.vBlockDim <= 128) {
+                        blockMmadQH128.preSetL1Flags();
+                        blockMmadQH128.copyGmToL1(
+                            tensorBlockQ, tensorBlockH, cube2Shape);
+                    } else {
+                        blockMmadQH256.preSetL1Flags();
+                        blockMmadQH256.copyGmToL1(
+                            tensorBlockQ, tensorBlockH, cube2Shape);
+                    }
+                }
+
+                // Phase 1c: Cube1 no longer owns L0A/L0B. PIPE_FIX ordering
+                // makes the workspace visible before Vec1 consumes it.
+                if (cubeBlockScheduler.isRunning && coreIdx < coreNum) {
+                    uint32_t streamId = cubeBlockScheduler.GetCurStageId();
+                    blockMmadQK.waitL0Drained();
+                    Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                        cubeBlockScheduler.cube1Done[streamId]);
+                }
+
+                if (needRun && coreIdx < coreNum) {
+                    uint32_t streamId = cubeBlockScheduler.GetPrevStageId();
+                    GDNFwdOOffsets &cube2Offsets = cubeBlockScheduler.GetCube23Offsets();
+                    GDNFwdOOffsets &cube3Offsets = cubeBlockScheduler.GetCube23Offsets();
+
+                    // H/V workspaces are ping-pong slots. Delay this wait until
+                    // the first operation that can overwrite the previous slot.
+                    Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[streamId]);
+
+                    auto tensorHWork = tla::MakeTensor(
+                        gmHWorkspace[cube2Offsets.hvWorkOffset], ointerLayout,
+                        Catlass::Arch::PositionGM{});
+                    GemmCoord cube2Shape{
+                        cube2Offsets.blockTokens, cube2Offsets.vBlockDim, kHeadDim};
+                    auto tensorBlockHWork = GetTile(
+                        tensorHWork, tla::MakeCoord(0, 0),
+                        tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
+
+                    auto attenLayout = tla::MakeLayout<ElementAtten, LayoutAtten>(
+                        coreNum * chunkSize * GDN_FWD_O_PING_PONG_STAGES,
+                        cube3Offsets.blockTokens);
+                    auto tensorAttnMask = tla::MakeTensor(
+                        gmAftermaskWorkspace[cube3Offsets.attnWorkOffset], attenLayout,
+                        Catlass::Arch::PositionGM{});
+                    auto tensorV = tla::MakeTensor(
+                        gmV[cube3Offsets.ovOffset], vnewLayout,
+                        Catlass::Arch::PositionGM{});
+                    GemmCoord cube3Shape{
+                        cube3Offsets.blockTokens, cube3Offsets.vBlockDim,
+                        cube3Offsets.blockTokens};
+                    auto tensorBlockAttnMask = GetTile(
+                        tensorAttnMask, tla::MakeCoord(0, 0),
+                        tla::MakeShape(cube3Shape.m(), cube3Shape.k()));
+                    auto tensorBlockV = GetTile(
+                        tensorV, tla::MakeCoord(0, 0),
+                        tla::MakeShape(cube3Shape.k(), cube3Shape.n()));
+
+                    // V has no dependency on Vec1, so preload Cube3 L1B before
+                    // Cube2's compute. Cube3 owns L1 events 6/7.
+                    if (cube3Offsets.vBlockDim <= 128) {
+                        blockMmadAttenVNEW128.preSetL1Flags();
+                        blockMmadAttenVNEW128.copyGmToL1BOnly(
+                            tensorBlockV, cube3Shape);
+                    } else {
+                        blockMmadAttenVNEW256.preSetL1Flags();
+                        blockMmadAttenVNEW256.copyGmToL1BOnly(
+                            tensorBlockV, cube3Shape);
+                    }
+
+                    // Cube2 compute overlaps Cube3's MTE2 preload. L0 resources
+                    // remain serialized and are drained before Cube3 starts.
+                    if (cube2Offsets.vBlockDim <= 128) {
+                        blockMmadQH128.preSetL0Flags();
+                        blockMmadQH128.executeCompute(
+                            tensorBlockHWork, cube2Shape);
+                    } else {
+                        blockMmadQH256.preSetL0Flags();
+                        blockMmadQH256.executeCompute(
+                            tensorBlockHWork, cube2Shape);
+                    }
+
+                    // AttnMask is a Vec1 product; load it only after Vec1's
+                    // MTE3 release. Cube3 L1A owns events 4/5.
+                    Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done[streamId]);
+                    if (cube3Offsets.vBlockDim <= 128) {
+                        blockMmadAttenVNEW128.copyGmToL1AOnly(
+                            tensorBlockAttnMask, cube3Shape);
+                    } else {
+                        blockMmadAttenVNEW256.copyGmToL1AOnly(
+                            tensorBlockAttnMask, cube3Shape);
+                    }
+
+                    if (cube2Offsets.vBlockDim <= 128) {
+                        blockMmadQH128.finalWaitFlags();
+                    } else {
+                        blockMmadQH256.finalWaitFlags();
+                    }
+
+                    auto tensorVWork = tla::MakeTensor(
+                        gmVWorkspace[cube3Offsets.hvWorkOffset], ointerLayout,
+                        Catlass::Arch::PositionGM{});
+                    auto tensorBlockVWork = GetTile(
+                        tensorVWork, tla::MakeCoord(0, 0),
+                        tla::MakeShape(cube3Shape.m(), cube3Shape.n()));
+                    if (cube3Offsets.vBlockDim <= 128) {
+                        blockMmadAttenVNEW128.preSetL0Flags();
+                        blockMmadAttenVNEW128.executeCompute(
+                            tensorBlockVWork, cube3Shape);
+                        blockMmadAttenVNEW128.finalWaitFlags();
+                    } else {
+                        blockMmadAttenVNEW256.preSetL0Flags();
+                        blockMmadAttenVNEW256.executeCompute(
+                            tensorBlockVWork, cube3Shape);
+                        blockMmadAttenVNEW256.finalWaitFlags();
+                    }
+                    Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                        cubeBlockScheduler.cube3Done[streamId]);
+                }
+                needRun = true;
+            }
+            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[0]);
+            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[1]);
+#else
             while (cubeBlockScheduler.isRunning) {
                 cubeBlockScheduler.InitTask();
 
@@ -408,6 +623,7 @@ public:
             }
             Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[0]);
             Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[1]);
+#endif
         }
 
         if ASCEND_IS_AIV {
@@ -434,7 +650,9 @@ public:
 
                 if (vecBlockScheduler.isRunning && coreIdx < coreNum * subBlockNum) {
                     uint32_t streamId = vecBlockScheduler.GetCurStageId();
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
                     Arch::CrossCoreWaitFlag(vecBlockScheduler.cube1Done[streamId]);
+#endif
                     GDNFwdOOffsets& vec1Offsets = vecBlockScheduler.GetVec1Offsets();
                     WaitChunkReady(vec1Offsets);
                     int64_t vec1OffsetAttnMask = vec1Offsets.attnWorkOffset;
@@ -444,7 +662,11 @@ public:
                     epilogueGDNFwdOQkmask(
                         gmAftermaskWorkspace[vec1OffsetAttnMask],
                         gmG[vec1OffsetG], gmAttnWorkspace[vec1OffsetAttn], gmMask,
-                        chunkSize, vec1Offsets.blockTokens, kHeadDim, vHeadDim, pingpongFlag, vec1Offsets.batchIdx, vec1Offsets.headIdx, vec1Offsets.chunkIdx
+                        chunkSize, vec1Offsets.blockTokens, kHeadDim, vHeadDim, pingpongFlag,
+                        vec1Offsets.batchIdx, vec1Offsets.headIdx, vec1Offsets.chunkIdx
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                        , &vecBlockScheduler.cube1Done[streamId]
+#endif
                     );
                     if (isVariedLen != 0) {
                         Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
@@ -456,7 +678,9 @@ public:
 
                 if (needRun && coreIdx < coreNum * subBlockNum) {
                     uint32_t streamId = vecBlockScheduler.GetPrevStageId();
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
                     Arch::CrossCoreWaitFlag(vecBlockScheduler.cube3Done[streamId]);
+#endif
                     GDNFwdOOffsets& vec2Offsets = vecBlockScheduler.GetVec2Offsets();
                     int64_t vec2OffsetO = vec2Offsets.ovOffset;
                     int64_t vec2OffsetG = vec2Offsets.gOffset;
@@ -466,12 +690,28 @@ public:
                     epilogueGDNFwdOOutput(
                         gmO[vec2OffsetO],
                         gmG[vec2OffsetG], gmVWorkspace[vec2OffsetVWork], gmHWorkspace[vec2OffsetHWork],
-                        scale, vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, vHeadDim, pingpongFlag, vec2Offsets.batchIdx, vec2Offsets.headIdx, vec2Offsets.chunkIdx
+                        scale, vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim,
+                        vHeadDim, pingpongFlag, vec2Offsets.batchIdx, vec2Offsets.headIdx,
+                        vec2Offsets.chunkIdx
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                        , &vecBlockScheduler.cube3Done[streamId]
+                        , isVariedLen == 0 ? &vecBlockScheduler.vec2Done[streamId] : nullptr
+#endif
                     );
                     if (isVariedLen != 0) {
                         Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
                     }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                    // Varlen must join both AIV generations before publishing
+                    // the reusable workspace slot. Fixed-length paths publish
+                    // from the epilogue immediately after the final MTE2 read.
+                    if (isVariedLen != 0) {
+                        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(
+                            vecBlockScheduler.vec2Done[streamId]);
+                    }
+#else
                     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);
+#endif
                 }
                 needRun = true;
             }
