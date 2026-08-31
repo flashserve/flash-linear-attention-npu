@@ -42,6 +42,28 @@ _T_VALUES = (64, 65, 96, 127, 128, 129, 192, 256, 512, 1024)
 _DATA_SCALES = (0.03, 0.08, 0.2, 0.5)
 _GATE_SCALES = (0.01, 0.02, 0.04, 0.08)
 _BETA_RANGES = ((0.1, 0.9), (0.05, 0.95), (0.2, 0.8), (0.01, 0.99))
+_SHAPE_VARIANTS = (
+    (64, 128, 128),
+    (128, 128, 128),
+    (64, 128, 256),
+    (64, 16, 128),
+    (64, 256, 128),
+)
+_GATE_VARIANTS = (
+    (False, False, False, "activated"),
+    (True, False, False, "raw_unsafe_no_bias"),
+    (True, False, True, "raw_unsafe_bias"),
+    (True, True, False, "raw_safe_no_bias"),
+    (True, True, True, "raw_safe_bias"),
+)
+_OUTPUT_POLICIES = (
+    (False, False),
+    (False, True),
+    (True, False),
+    (True, True),
+)
+_A5_FUSION_PROFILE_ID = 28
+_HANG_REGRESSION_PROFILE_ID = 5
 
 
 def _tiling_key(chunk_size: int, key_dim: int, value_dim: int) -> int:
@@ -71,26 +93,31 @@ def _accuracy_spec(profile_id: int, q_dtype: str, case_id: int) -> dict[str, Any
     if varlen:
         batch = 1
 
-    # Rotate the template key with two representative key-1 combinations.
-    shape_variant = profile_id % 3
-    if shape_variant == 0:
-        chunk_size, key_dim, value_dim = 64, 128, 128
-    elif shape_variant == 1:
-        chunk_size, key_dim, value_dim = 128, 128, 128
-    else:
-        chunk_size, key_dim, value_dim = 64, 128, 256
+    # The 100 structural profiles cover the five shape and gate variants
+    # without increasing the fixed 100 x 2 dtype-pair manifest size.
+    chunk_size, key_dim, value_dim = _SHAPE_VARIANTS[profile_id % len(_SHAPE_VARIANTS)]
+    gate_block = profile_id // len(_SHAPE_VARIANTS)
+    use_gate_in_kernel, safe_gate, dt_bias, gate_variant = _GATE_VARIANTS[
+        gate_block % len(_GATE_VARIANTS)
+    ]
+    disable_recompute, return_intermediate_states = _OUTPUT_POLICIES[
+        gate_block % len(_OUTPUT_POLICIES)
+    ]
+    g_dtype = "fp32" if (profile_id // 25) % 2 == 0 else "bf16"
+    state_v_first = bool(gate_block % 2)
     cu = _cu_seqlens(total_tokens, profile_id) if varlen else ""
     initial_state = profile_id % 7 in {0, 3}
     output_final_state = profile_id % 3 != 1
-    disable_recompute = profile_id % 2 == 1
     beta_low, beta_high = _BETA_RANGES[profile_id % len(_BETA_RANGES)]
-    key = _tiling_key(chunk_size, key_dim, value_dim)
-    return {
+    spec = {
         "case_id": case_id,
         "case_key": f"accuracy_{profile_id:03d}_{layout}_t{total_tokens}_{q_dtype}",
         "design_id": f"KDA-FWD-A{profile_id:03d}-{q_dtype}",
         "profile": "accuracy_100x2",
-        "tags": "accuracy,regression" + (",varlen" if varlen else ",dense"),
+        "tags": (
+            f"accuracy,regression,gate_{gate_variant}"
+            + (",varlen" if varlen else ",dense")
+        ),
         "soc": "all",
         "target_platforms": list(SOCS),
         "target_routes": ["ascendc"],
@@ -107,20 +134,19 @@ def _accuracy_spec(profile_id: int, q_dtype: str, case_id: int) -> dict[str, Any
         "chunk_size": chunk_size,
         "layout": layout,
         "q_dtype": q_dtype,
-        "g_dtype": "fp32",
+        "g_dtype": g_dtype,
         "beta_dtype": "bf16" if profile_id % 2 == 0 else "fp32",
-        "scale": 1.0 / math.sqrt(key_dim),
         "initial_state": initial_state,
         "output_final_state": output_final_state,
         "cu_seqlens": cu,
         "explicit_chunk_indices": bool(varlen and profile_id % 2 == 0),
-        "safe_gate": True,
+        "safe_gate": safe_gate,
         "lower_bound": -5.0,
-        "use_gate_in_kernel": True,
-        "dt_bias": True,
+        "use_gate_in_kernel": use_gate_in_kernel,
+        "dt_bias": dt_bias,
         "disable_recompute": disable_recompute,
-        "return_intermediate_states": True,
-        "state_v_first": False,
+        "return_intermediate_states": return_intermediate_states,
+        "state_v_first": state_v_first,
         "negative_case": False,
         "data_profile": "uniform",
         "data_scale": _DATA_SCALES[profile_id % len(_DATA_SCALES)],
@@ -135,15 +161,72 @@ def _accuracy_spec(profile_id: int, q_dtype: str, case_id: int) -> dict[str, Any
         "beta_low": beta_low,
         "beta_high": beta_high,
         "state_scale": 0.02,
+        "tiling_selection_evidence": "chunk_kda_fwd_tiling.cpp:SetTilingKey",
+        "seed": SEED_BASE + case_id,
+    }
+
+    if profile_id == _A5_FUSION_PROFILE_ID:
+        # Dense/aligned BF16-q + FP32-g key2 case with no stored QG/VNew/H.
+        # This is the exact public-output policy required by the A5 fused path.
+        spec.update({
+            "B": 1,
+            "H": 1,
+            "HV": 2,
+            "T": 256,
+            "K": 128,
+            "V": 128,
+            "chunk_size": 64,
+            "layout": "BSND",
+            "g_dtype": "fp32",
+            "initial_state": False,
+            "output_final_state": False,
+            "cu_seqlens": "",
+            "explicit_chunk_indices": False,
+            "safe_gate": True,
+            "use_gate_in_kernel": True,
+            "dt_bias": True,
+            "disable_recompute": False,
+            "return_intermediate_states": False,
+            "state_v_first": False,
+            "tags": "accuracy,regression,dense,a5_key2_fusion_candidate",
+        })
+    elif profile_id == _HANG_REGRESSION_PROFILE_ID:
+        # Preserve the exact structure that reproduced the key1 T=65 hang.
+        spec.update({
+            "B": 1,
+            "H": 2,
+            "HV": 2,
+            "T": 65,
+            "K": 128,
+            "V": 256,
+            "chunk_size": 64,
+            "layout": "BNSD",
+            "g_dtype": "fp32",
+            "beta_dtype": "fp32",
+            "initial_state": False,
+            "output_final_state": True,
+            "cu_seqlens": "",
+            "explicit_chunk_indices": False,
+            "safe_gate": True,
+            "use_gate_in_kernel": True,
+            "dt_bias": True,
+            "disable_recompute": True,
+            "return_intermediate_states": True,
+            "state_v_first": False,
+            "tags": "accuracy,regression,dense,key1_hang_regression",
+        })
+
+    key = _tiling_key(spec["chunk_size"], spec["K"], spec["V"])
+    spec.update({
+        "scale": 1.0 / math.sqrt(int(spec["K"])),
         "tiling_key": key,
         "expected_tiling_key": key,
         "tiling_key_condition": (
             "chunk_size=64 and K=128 and V=128" if key == 2
             else "otherwise (valid chunk/K/V combination)"
         ),
-        "tiling_selection_evidence": "chunk_kda_fwd_tiling.cpp:SetTilingKey",
-        "seed": SEED_BASE + case_id,
-    }
+    })
+    return spec
 
 
 def build_accuracy_specs(*, seed_base: int = SEED_BASE) -> list[dict[str, Any]]:
@@ -338,6 +421,10 @@ def _case_payload(spec: dict[str, Any], *, manifest: str) -> dict[str, Any]:
     }
 
 
+def _contains_exact(specs: list[dict[str, Any]], expected: dict[str, Any]) -> bool:
+    return any(all(spec.get(name) == value for name, value in expected.items()) for spec in specs)
+
+
 def _validate_specs(specs: list[dict[str, Any]], manifest: str) -> None:
     if [int(item["case_id"]) for item in specs] != list(range(len(specs))):
         raise ValueError(f"{manifest} IDs must be contiguous from zero")
@@ -345,8 +432,65 @@ def _validate_specs(specs: list[dict[str, Any]], manifest: str) -> None:
         expected = _tiling_key(spec["chunk_size"], spec["K"], spec["V"])
         if int(spec["tiling_key"]) != expected or int(spec["expected_tiling_key"]) != expected:
             raise ValueError(f"{spec['case_key']} has a stale tiling key")
-    if manifest == "accuracy" and (len(specs) != ACCURACY_COUNT or {str(s["soc"]) for s in specs} != {"all"}):
-        raise ValueError("accuracy must contain exactly 200 cross-SoC cases")
+    if manifest == "accuracy":
+        if len(specs) != ACCURACY_COUNT or {str(s["soc"]) for s in specs} != {"all"}:
+            raise ValueError("accuracy must contain exactly 200 cross-SoC cases")
+        gate_variants = {
+            (bool(s["use_gate_in_kernel"]), bool(s["safe_gate"]), bool(s["dt_bias"]))
+            for s in specs
+        }
+        if gate_variants != {variant[:3] for variant in _GATE_VARIANTS}:
+            raise ValueError("accuracy must cover all five gate variants")
+        if {str(s["g_dtype"]) for s in specs} != {"fp32", "bf16"}:
+            raise ValueError("accuracy must cover FP32 and BF16 gate tensors")
+        gate_dtype_variants = {
+            (
+                bool(s["use_gate_in_kernel"]), bool(s["safe_gate"]), bool(s["dt_bias"]),
+                str(s["g_dtype"]),
+            )
+            for s in specs
+        }
+        expected_gate_dtype_variants = {
+            variant[:3] + (g_dtype,)
+            for variant in _GATE_VARIANTS
+            for g_dtype in ("fp32", "bf16")
+        }
+        if gate_dtype_variants != expected_gate_dtype_variants:
+            raise ValueError("each gate variant must cover FP32 and BF16 gate tensors")
+        output_policies = {
+            (bool(s["disable_recompute"]), bool(s["return_intermediate_states"]))
+            for s in specs
+        }
+        if output_policies != set(_OUTPUT_POLICIES):
+            raise ValueError("accuracy must cover all recompute/intermediate output policies")
+        if {bool(s["state_v_first"]) for s in specs} != {False, True}:
+            raise ValueError("accuracy must cover both state layouts")
+        if {int(s["K"]) for s in specs} != {16, 128, 256}:
+            raise ValueError("accuracy must cover K=16/128/256")
+        if not set(_SHAPE_VARIANTS).issubset({
+            (int(s["chunk_size"]), int(s["K"]), int(s["V"])) for s in specs
+        }):
+            raise ValueError("accuracy must preserve all five shape variants")
+        if {int(s["tiling_key"]) for s in specs} != set(TILING_KEYS):
+            raise ValueError("accuracy must cover both tiling keys")
+        if not _contains_exact(specs, {
+            "q_dtype": "bf16", "g_dtype": "fp32", "B": 1, "H": 1, "HV": 2,
+            "T": 256, "K": 128, "V": 128, "chunk_size": 64, "layout": "BSND",
+            "cu_seqlens": "", "safe_gate": True, "use_gate_in_kernel": True,
+            "disable_recompute": False, "return_intermediate_states": False,
+            "tiling_key": 2,
+        }):
+            raise ValueError("accuracy is missing the A5 key2 fusion candidate")
+        if not _contains_exact(specs, {
+            "q_dtype": "bf16", "g_dtype": "fp32", "beta_dtype": "fp32",
+            "B": 1, "H": 2, "HV": 2, "T": 65, "K": 128, "V": 256,
+            "chunk_size": 64, "layout": "BNSD", "initial_state": False,
+            "output_final_state": True, "cu_seqlens": "", "safe_gate": True,
+            "use_gate_in_kernel": True, "dt_bias": True, "disable_recompute": True,
+            "return_intermediate_states": True, "state_v_first": False,
+            "tiling_key": 1,
+        }):
+            raise ValueError("accuracy is missing the fixed key1 hang regression")
     if manifest == "mss" and {(int(s["tiling_key"]), bool(s["initial_state"])) for s in specs} != {
         (key, boundary) for key in TILING_KEYS for boundary in (False, True)
     }:

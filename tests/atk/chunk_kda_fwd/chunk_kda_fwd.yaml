@@ -61,12 +61,12 @@ inputs:
     type: attr
     required: true
     dtypes: {values: [int]}
-    ranges: {valid: {values: [64, 128, 256, 512, 1024]}, invalid: {values: []}}
+    ranges: {valid: {values: [64, 65, 96, 127, 128, 129, 192, 256, 512, 1024]}, invalid: {values: []}}
   - name: key_dim
     type: attr
     required: true
     dtypes: {values: [int]}
-    ranges: {valid: {values: [128]}, invalid: {values: [8, 24, 272]}}
+    ranges: {valid: {values: [16, 128, 256]}, invalid: {values: [8, 24, 272]}}
   - name: value_dim
     type: attr
     required: true
@@ -86,7 +86,7 @@ inputs:
     type: attr
     required: true
     dtypes: {values: [float]}
-    ranges: {valid: {values: [0.08838834764831843]}, invalid: {values: []}}
+    ranges: {valid: {values: [0.25, 0.08838834764831843, 0.0625]}, invalid: {values: []}}
   - name: q_dtype
     type: attr
     required: true
@@ -131,7 +131,7 @@ inputs:
     type: attr
     required: true
     dtypes: {values: [bool]}
-    ranges: {valid: {values: [true]}, invalid: {values: []}}
+    ranges: {valid: {values: [false, true]}, invalid: {values: []}}
   - name: lower_bound
     type: attr
     required: true
@@ -141,7 +141,7 @@ inputs:
     type: attr
     required: true
     dtypes: {values: [bool]}
-    ranges: {valid: {values: [true]}, invalid: {values: []}}
+    ranges: {valid: {values: [false, true]}, invalid: {values: []}}
   - name: dt_bias
     type: attr
     required: true
@@ -211,12 +211,12 @@ inputs:
     type: attr
     required: true
     dtypes: {values: [float]}
-    ranges: {valid: {values: [0.03, 0.5]}, invalid: {values: []}}
+    ranges: {valid: {values: [0.03, 0.08, 0.2, 0.5]}, invalid: {values: []}}
   - name: gate_scale
     type: attr
     required: true
     dtypes: {values: [float]}
-    ranges: {valid: {values: [0.01, 0.08]}, invalid: {values: []}}
+    ranges: {valid: {values: [0.01, 0.02, 0.04, 0.08]}, invalid: {values: []}}
   - name: qk_scale
     type: attr
     required: true
@@ -256,12 +256,12 @@ inputs:
     type: attr
     required: true
     dtypes: {values: [float]}
-    ranges: {valid: {values: [0.01, 0.2]}, invalid: {values: []}}
+    ranges: {valid: {values: [0.01, 0.05, 0.1, 0.2]}, invalid: {values: []}}
   - name: beta_high
     type: attr
     required: true
     dtypes: {values: [float]}
-    ranges: {valid: {values: [0.8, 0.99]}, invalid: {values: []}}
+    ranges: {valid: {values: [0.8, 0.9, 0.95, 0.99]}, invalid: {values: []}}
   - name: state_scale
     type: attr
     required: true

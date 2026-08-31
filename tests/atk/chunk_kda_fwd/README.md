@@ -27,15 +27,27 @@ executor 使用现代 raw `g`、`A_log`、`dt_bias` 接口，与当前算子实�
 | 1 | 除 key2 条件外的合法组合 | ID 0（`V=256`） | ID 1（`chunk=128`） | ID 0 |
 | 2 | `chunk_size=64` 且 `K=128` 且 `V=128` | ID 2 | ID 3（`T=65`） | ID 1 |
 
-精度清单在 100 个 shape profile 上分别使用 BF16/FP16，覆盖四种 layout
-（`BSND/BNSD/TND/NTD`）、dense/varlen、tail、GQA、initial/final state 和重计算
-策略；profile 的 key 由同一 host 条件计算并写入 `case_spec`。`soc=all` 是平台通配
-标记，实际运行时仍需针对每个物理 SoC 单独执行。
+精度清单在 100 个结构 profile 上分别使用 BF16/FP16，固定为 200 条。结构矩阵覆盖四种
+layout（`BSND/BNSD/TND/NTD`）、dense/varlen、tail、GQA、initial/final state，以及：
+
+- 五种 gate 组合：已激活 gate、raw unsafe gate 有/无 `dt_bias`、raw safe gate 有/无
+  `dt_bias`；raw `g` 同时覆盖 FP32/BF16。
+- `disable_recompute` 与 `return_intermediate_states` 的四种组合，以及
+  `state_v_first=false/true`。
+- `K=16/128/256`、`V=128/256`、`chunk_size=64/128` 和 key1/key2。
+
+profile 28 的 BF16 用例（ID 56）固定为 A5 key2 融合候选：dense/aligned、FP32 raw gate、
+safe gate、偶数 `HV`，且不导出 QG/VNew/H。profile 5 的 BF16 用例（ID 10）固定保留已复现
+卡死结构：`B=1,H=2,HV=2,T=65,K=128,V=256,chunk=64,BNSD`，dense、无 initial state、
+返回 final state，并开启 safe/raw gate、`dt_bias`、`disable_recompute` 和 intermediate state。
+validator 对两个固定点执行精确存在性检查。profile 的 key 由同一 host 条件计算并写入
+`case_spec`。`soc=all` 是平台通配标记，实际运行时仍需针对每个物理 SoC 单独执行。
 
 ## 输入与输出约定
 
-- `q/k/v` 使用相同的 BF16 或 FP16；`g` 使用 FP32；`beta` 使用 FP32 或 BF16。
-- `K`、`V` 为 16 的倍数，范围为 16--256；本交付矩阵重点覆盖 `K=128`、`V=128/256`。
+- `q/k/v` 使用相同的 BF16 或 FP16；`g` 使用 FP32 或 BF16；`beta` 使用 FP32 或 BF16。
+- `K`、`V` 为 16 的倍数，范围为 16--256；精度矩阵覆盖 `K=16/128/256`、
+  `V=128/256`。
 - `layout` 支持 `BSND`、`BNSD`、`TND`、`NTD`。变长输入的 `cu_seqlens` 从 0 开始并以
   `T` 结束，`chunk_indices` 使用 sequence-major canonical 顺序。
 - `use_gate_in_kernel=true` 时提供 FP32 `A_log`；若提供 `dt_bias`，其形状为 `[HV*K]`。
