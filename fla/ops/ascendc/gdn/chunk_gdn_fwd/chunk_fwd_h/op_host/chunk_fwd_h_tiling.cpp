@@ -16,6 +16,7 @@
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
+#include "../op_kernel/chunk_fwd_h_tiling_key.h"
 #include "chunk_fwd_h_tiling_processor.h"
 
 namespace optiling {
@@ -53,7 +54,6 @@ static constexpr size_t ATTR_LOGICAL_V_HEADS_IDX = 8;
 static constexpr size_t ATTR_LOGICAL_K_DIM_IDX = 9;
 static constexpr size_t ATTR_LOGICAL_V_DIM_IDX = 10;
 
-static constexpr uint32_t TILING_KEY_V128 = 1;
 static constexpr int64_t V_DIM_128 = 128;
 static constexpr int64_t K_DIM_128 = 128;
 static constexpr int64_t CHUNK_SIZE_64 = 64;
@@ -178,8 +178,10 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     ChunkFwdHTilingProcessor processor(tilingCtx);
     processor.Process(plainTiling, blockDim, workspaceSize);
 
-    context->SetTilingKey(TILING_KEY_V128);
-    OP_LOGD(context->GetNodeName(), "tilingKey: %u", TILING_KEY_V128);
+    using namespace GDN;
+    const uint64_t tilingKey = GET_TPL_TILING_KEY(static_cast<uint64_t>(logicalVDim));
+    context->SetTilingKey(tilingKey);
+    OP_LOGD(context->GetNodeName(), "tilingKey: %lu", static_cast<unsigned long>(tilingKey));
 
     context->SetBlockDim(blockDim);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);

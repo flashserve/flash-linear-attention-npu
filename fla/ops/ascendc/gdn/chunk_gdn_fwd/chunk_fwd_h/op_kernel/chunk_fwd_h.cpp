@@ -91,8 +91,10 @@ __aicore__ inline void DispatchGateMode(const FwdHKernelArgs &args)
     }
 }
 
+template <int V_DIM>
 __aicore__ inline void DispatchFwdH(const FwdHKernelArgs &args)
 {
+    static_assert(V_DIM == static_cast<int>(FWD_H_V), "ChunkFwdH only supports V=128.");
     if (args.tiling.gDataType == FWD_H_DTYPE_FP32) {
         DispatchGateMode<float>(args);
     } else {
@@ -102,51 +104,52 @@ __aicore__ inline void DispatchFwdH(const FwdHKernelArgs &args)
 
 } // namespace GDN
 
-extern "C" __global__ __aicore__ void chunk_fwd_h(
+#ifndef TORCH_MODE
+template <int V_DIM>
+__global__ __aicore__ void chunk_fwd_h(
     GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR initial_state,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
     GM_ADDR final_state, GM_ADDR workspace, GM_ADDR tiling)
 {
-    if (TILING_KEY_IS(1)) {
-        KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
-        GDN::FwdHKernelArgs args{};
-        args.k = k;
-        args.w = w;
-        args.u = u;
-        args.g = g;
-        args.gk = gk;
-        args.initialState = initial_state;
-        args.cuSeqlens = cu_seqlens;
-        args.chunkIndices = chunk_indices;
-        args.h = h;
-        args.vNew = v_new;
-        args.finalState = final_state;
-        args.workspace = AscendC::GetUserWorkspace(workspace);
-        __gm__ const ChunkFwdHTilingData *tilingData =
-            reinterpret_cast<__gm__ const ChunkFwdHTilingData *>(tiling);
-        args.tiling.batch = static_cast<uint32_t>(tilingData->batch);
-        args.tiling.seqlen = static_cast<uint32_t>(tilingData->seqlen);
-        args.tiling.kNumHead = static_cast<uint32_t>(tilingData->kNumHead);
-        args.tiling.vNumHead = static_cast<uint32_t>(tilingData->vNumHead);
-        args.tiling.kHeadDim = static_cast<uint32_t>(tilingData->kHeadDim);
-        args.tiling.vHeadDim = static_cast<uint32_t>(tilingData->vHeadDim);
-        args.tiling.chunkSize = static_cast<uint32_t>(tilingData->chunkSize);
-        args.tiling.useInitialState = tilingData->useInitialState;
-        args.tiling.storeFinalState = tilingData->storeFinalState;
-        args.tiling.dataType = static_cast<uint8_t>(tilingData->dataType);
-        args.tiling.gDataType = static_cast<uint8_t>(tilingData->gDataType);
-        args.tiling.stateDataType = static_cast<uint8_t>(tilingData->stateDataType);
-        args.tiling.isVariedLen = tilingData->isVariedLen;
-        args.tiling.shapeBatch = static_cast<uint32_t>(tilingData->shapeBatch);
-        args.tiling.tokenBatch = static_cast<uint32_t>(tilingData->tokenBatch);
-        args.tiling.useG = tilingData->useG;
-        args.tiling.useGk = tilingData->useGk;
-        args.tiling.useExp2 = tilingData->useExp2;
-        args.tiling.stateVFirst = tilingData->stateVFirst;
-        args.tiling.vWorkspaceOffset = static_cast<uint64_t>(tilingData->vWorkspaceOffset);
-        args.tiling.vUpdateWorkspaceOffset = static_cast<uint64_t>(tilingData->vUpdateWorkspaceOffset);
-        args.tiling.kDecayWorkspaceOffset = static_cast<uint64_t>(tilingData->kDecayWorkspaceOffset);
-        args.tiling.hWorkspaceOffset = static_cast<uint64_t>(tilingData->hWorkspaceOffset);
-        GDN::DispatchFwdH(args);
-    }
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+    GDN::FwdHKernelArgs args{};
+    args.k = k;
+    args.w = w;
+    args.u = u;
+    args.g = g;
+    args.gk = gk;
+    args.initialState = initial_state;
+    args.cuSeqlens = cu_seqlens;
+    args.chunkIndices = chunk_indices;
+    args.h = h;
+    args.vNew = v_new;
+    args.finalState = final_state;
+    args.workspace = AscendC::GetUserWorkspace(workspace);
+    __gm__ const ChunkFwdHTilingData *tilingData =
+        reinterpret_cast<__gm__ const ChunkFwdHTilingData *>(tiling);
+    args.tiling.batch = static_cast<uint32_t>(tilingData->batch);
+    args.tiling.seqlen = static_cast<uint32_t>(tilingData->seqlen);
+    args.tiling.kNumHead = static_cast<uint32_t>(tilingData->kNumHead);
+    args.tiling.vNumHead = static_cast<uint32_t>(tilingData->vNumHead);
+    args.tiling.kHeadDim = static_cast<uint32_t>(tilingData->kHeadDim);
+    args.tiling.vHeadDim = static_cast<uint32_t>(tilingData->vHeadDim);
+    args.tiling.chunkSize = static_cast<uint32_t>(tilingData->chunkSize);
+    args.tiling.useInitialState = tilingData->useInitialState;
+    args.tiling.storeFinalState = tilingData->storeFinalState;
+    args.tiling.dataType = static_cast<uint8_t>(tilingData->dataType);
+    args.tiling.gDataType = static_cast<uint8_t>(tilingData->gDataType);
+    args.tiling.stateDataType = static_cast<uint8_t>(tilingData->stateDataType);
+    args.tiling.isVariedLen = tilingData->isVariedLen;
+    args.tiling.shapeBatch = static_cast<uint32_t>(tilingData->shapeBatch);
+    args.tiling.tokenBatch = static_cast<uint32_t>(tilingData->tokenBatch);
+    args.tiling.useG = tilingData->useG;
+    args.tiling.useGk = tilingData->useGk;
+    args.tiling.useExp2 = tilingData->useExp2;
+    args.tiling.stateVFirst = tilingData->stateVFirst;
+    args.tiling.vWorkspaceOffset = static_cast<uint64_t>(tilingData->vWorkspaceOffset);
+    args.tiling.vUpdateWorkspaceOffset = static_cast<uint64_t>(tilingData->vUpdateWorkspaceOffset);
+    args.tiling.kDecayWorkspaceOffset = static_cast<uint64_t>(tilingData->kDecayWorkspaceOffset);
+    args.tiling.hWorkspaceOffset = static_cast<uint64_t>(tilingData->hWorkspaceOffset);
+    GDN::DispatchFwdH<V_DIM>(args);
 }
+#endif

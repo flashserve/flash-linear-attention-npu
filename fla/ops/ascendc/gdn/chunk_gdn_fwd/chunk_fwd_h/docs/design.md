@@ -184,3 +184,15 @@ workspace 的 core 维使用实际 `blockDim`，各段按 512 Byte 对齐，并�
 之后额外保留运行时安全区。
 A5 的 P/D 走 L0C->AIV UB，不消费对应的 P/D GM scratch；为保持跨架构统一 tiling，offset
 仍由 host 生成，但 A5 kernel 不访问这些地址。
+
+## 9. 模板参数与 TilingKey
+
+`ChunkFwdH` 的 kernel 全局入口以 `V_DIM` 作为编译期模板参数。当前唯一注册的模板实例为
+`V_DIM=128`；host 在完成 `V=128` 参数校验后，通过与 kernel 共用的
+`ASCENDC_TPL_ARGS_DECL/ASCENDC_TPL_SEL` 声明调用 `GET_TPL_TILING_KEY(128)`，再将生成的 key
+交给运行时选择 `chunk_fwd_h<128>`。代码不维护手写数值 key，也不在 kernel 内使用
+`TILING_KEY_IS` 做二次运行时分派。
+
+gate dtype、g/gk、exp/exp2、state dtype 和 state layout 仍在同一个 `V_DIM=128` binary 内按
+运行时 tiling 数据进入现有的编译期策略分支；它们不是独立 TilingKey 维度。TilingKey 的数值是
+模板声明的编码结果，不作为公开接口或跨版本稳定语义。
