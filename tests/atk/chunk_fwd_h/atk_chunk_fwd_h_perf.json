@@ -243,15 +243,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -508,15 +499,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -789,15 +771,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -1054,15 +1027,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -1335,15 +1299,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -1600,15 +1555,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -1881,15 +1827,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -2146,15 +2083,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -2427,15 +2355,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -2692,15 +2611,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -2973,15 +2883,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -3238,15 +3139,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -3519,15 +3411,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -3784,15 +3667,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -4065,15 +3939,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -4330,15 +4195,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -4611,15 +4467,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -4876,15 +4723,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -5157,15 +4995,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -5422,15 +5251,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -5703,15 +5523,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -5968,15 +5779,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -6249,15 +6051,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -6514,15 +6307,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -6795,15 +6579,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -7060,15 +6835,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -7341,15 +7107,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -7606,15 +7363,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -7887,15 +7635,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -8152,15 +7891,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -8433,15 +8163,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -8698,15 +8419,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -8979,15 +8691,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -9244,15 +8947,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -9525,15 +9219,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -9790,15 +9475,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -10071,15 +9747,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -10336,15 +10003,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -10617,15 +10275,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -10882,15 +10531,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -11163,15 +10803,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -11428,15 +11059,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -11709,15 +11331,6 @@
         "backward": false
       },
       {
-        "name": "negative_case",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
         "name": "tags",
         "type": "attr",
         "required": true,
@@ -11974,15 +11587,6 @@
       },
       {
         "name": "non_contiguous_u",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "negative_case",
         "type": "attr",
         "required": true,
         "dtype": "bool",

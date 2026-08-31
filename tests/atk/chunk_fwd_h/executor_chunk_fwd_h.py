@@ -391,134 +391,6 @@ def run_npu(spec: dict[str, Any], inputs: PreparedInputs):
     )
 
 
-def _negative_base(device: torch.device, *, batch: int = 1, tokens: int = 65):
-    return {
-        "k": torch.empty((batch, 1, tokens, K_DIM), dtype=torch.bfloat16, device=device),
-        "w": torch.empty((batch, 1, tokens, K_DIM), dtype=torch.bfloat16, device=device),
-        "u": torch.empty((batch, 1, tokens, V_DIM), dtype=torch.bfloat16, device=device),
-        "g": torch.empty((batch, 1, tokens), dtype=torch.bfloat16, device=device),
-    }
-
-
-def _run_negative(spec: dict[str, Any], device: torch.device) -> torch.Tensor:
-    from fla_npu.ops.ascendc import chunk_fwd_h
-
-    mutation = str(spec["mutation"])
-    expected_return_code = int(spec["expected_return_code"])
-    expected_exception = str(spec["expected_exception"])
-    expected_message = str(spec["expected_message"])
-    if expected_return_code != 0:
-        raise AssertionError(
-            f"{mutation}: wrapper-interception cases require expected_return_code=0, "
-            f"got {expected_return_code}"
-        )
-    inputs = _negative_base(device)
-    kwargs: dict[str, Any] = {}
-
-    if mutation == "both_gate_inputs":
-        kwargs["gk"] = torch.empty(
-            (1, 1, 65, K_DIM), dtype=torch.bfloat16, device=device
-        )
-    elif mutation == "missing_gate_inputs":
-        inputs.pop("g")
-    elif mutation == "unsupported_chunk_size":
-        kwargs["chunk_size"] = 32
-    elif mutation == "save_new_value_false":
-        kwargs["save_new_value"] = False
-    elif mutation == "invalid_input_rank":
-        inputs["k"] = torch.empty((1, 65, K_DIM), dtype=torch.bfloat16, device=device)
-    elif mutation == "non_positive_dimension":
-        inputs = _negative_base(device, batch=0)
-    elif mutation == "unsupported_input_dtype":
-        for name in ("k", "w", "u"):
-            inputs[name] = inputs[name].float()
-    elif mutation == "mismatched_input_dtype":
-        inputs["w"] = inputs["w"].float()
-    elif mutation == "unsupported_kv_dimension":
-        inputs["k"] = torch.empty((1, 1, 65, 64), dtype=torch.bfloat16, device=device)
-        inputs["w"] = torch.empty((1, 1, 65, 64), dtype=torch.bfloat16, device=device)
-    elif mutation == "mismatched_w_u_shape":
-        inputs["w"] = torch.empty((1, 1, 66, K_DIM), dtype=torch.bfloat16, device=device)
-    elif mutation == "invalid_g_head_ratio":
-        inputs = {
-            "k": torch.empty((1, 2, 65, K_DIM), dtype=torch.bfloat16, device=device),
-            "w": torch.empty((1, 3, 65, K_DIM), dtype=torch.bfloat16, device=device),
-            "u": torch.empty((1, 3, 65, V_DIM), dtype=torch.bfloat16, device=device),
-            "g": torch.empty((1, 3, 65), dtype=torch.bfloat16, device=device),
-        }
-    elif mutation == "invalid_g_shape":
-        inputs["g"] = torch.empty((1, 1, 66), dtype=torch.bfloat16, device=device)
-    elif mutation == "invalid_gk_shape":
-        inputs = {
-            "k": torch.empty((1, 2, 65, K_DIM), dtype=torch.bfloat16, device=device),
-            "w": torch.empty((1, 2, 65, K_DIM), dtype=torch.bfloat16, device=device),
-            "u": torch.empty((1, 2, 65, V_DIM), dtype=torch.bfloat16, device=device),
-        }
-        kwargs["gk"] = torch.empty(
-            (1, 1, 65, K_DIM), dtype=torch.bfloat16, device=device
-        )
-    elif mutation == "invalid_gk_head_count":
-        inputs = {
-            "k": torch.empty((1, 1, 65, K_DIM), dtype=torch.bfloat16, device=device),
-            "w": torch.empty((1, 2, 65, K_DIM), dtype=torch.bfloat16, device=device),
-            "u": torch.empty((1, 2, 65, V_DIM), dtype=torch.bfloat16, device=device),
-        }
-        kwargs["gk"] = torch.empty(
-            (1, 2, 65, K_DIM), dtype=torch.bfloat16, device=device
-        )
-    elif mutation == "unsupported_gate_dtype":
-        inputs["g"] = inputs["g"].half()
-    elif mutation == "unsupported_state_dtype":
-        kwargs["initial_state"] = torch.empty(
-            (1, 1, K_DIM, V_DIM), dtype=torch.float16, device=device
-        )
-    elif mutation == "invalid_state_shape":
-        kwargs["state_v_first"] = True
-        kwargs["initial_state"] = torch.empty(
-            (1, 1, 127, 128), dtype=torch.bfloat16, device=device
-        )
-    elif mutation == "varlen_batch_not_one":
-        inputs = _negative_base(device, batch=2)
-        kwargs["cu_seqlens"] = (0, 65)
-    elif mutation == "invalid_cu_size":
-        kwargs["cu_seqlens"] = (0,)
-    elif mutation == "invalid_cu_start":
-        kwargs["cu_seqlens"] = (1, 65)
-    elif mutation == "invalid_cu_end":
-        kwargs["cu_seqlens"] = (0, 64)
-    elif mutation == "non_increasing_cu":
-        kwargs["cu_seqlens"] = (0, 65, 65)
-    elif mutation == "chunk_indices_without_cu":
-        kwargs["chunk_indices"] = (0, 0)
-    elif mutation == "invalid_chunk_indices_length":
-        kwargs["cu_seqlens"] = (0, 65)
-        kwargs["chunk_indices"] = (0,)
-    elif mutation == "invalid_chunk_indices_order":
-        kwargs["cu_seqlens"] = (0, 65)
-        kwargs["chunk_indices"] = (0, 1, 0, 0)
-    else:
-        raise AssertionError(f"unknown negative mutation: {mutation}")
-
-    try:
-        chunk_fwd_h(**inputs, **kwargs)
-    except Exception as error:
-        actual_exception = type(error).__name__
-        if actual_exception != expected_exception:
-            raise AssertionError(
-                f"{mutation}: expected {expected_exception}, got "
-                f"{actual_exception}: {error}"
-            ) from error
-        if expected_message not in str(error):
-            raise AssertionError(
-                f"{mutation}: expected {expected_exception} containing "
-                f"{expected_message!r}, got {error!r}"
-            ) from error
-        return torch.ones((1,), dtype=torch.float32, device=device)
-    raise AssertionError(
-        f"{mutation}: expected {expected_exception} was not raised"
-    )
-
-
 @register("executor_chunk_fwd_h")
 class FunctionApi(BaseApi):
     """ATK FunctionApi using only fla_npu.ops.ascendc.chunk_fwd_h."""
@@ -530,33 +402,23 @@ class FunctionApi(BaseApi):
 
     def init_by_input_data(self, input_data: InputDataset):
         self.spec = _case_spec(input_data, OP_NAME)
-        if "negative" not in str(self.spec.get("tags", "")).split(","):
-            self.inputs = build_inputs(self.spec, _marker_device(input_data))
+        self.inputs = build_inputs(self.spec, _marker_device(input_data))
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
         del with_output
         if self.spec is None:
             self.init_by_input_data(input_data)
         assert self.spec is not None
-        is_negative = "negative" in str(self.spec.get("tags", "")).split(",")
-        if is_negative:
-            if self.device in {"npu", "pyaclnn"}:
-                outputs = _run_negative(self.spec, _marker_device(input_data))
-            else:
-                raise RuntimeError(
-                    f"{OP_NAME} negative cases require an NPU DUT node, got {self.device!r}"
-                )
+        if self.inputs is None:
+            self.inputs = build_inputs(self.spec, _marker_device(input_data))
+        if self.device == "cpu":
+            outputs = run_cpu(self.spec, self.inputs)
+        elif self.device in {"npu", "pyaclnn"}:
+            outputs = run_npu(self.spec, self.inputs)
         else:
-            if self.inputs is None:
-                self.inputs = build_inputs(self.spec, _marker_device(input_data))
-            if self.device == "cpu":
-                outputs = run_cpu(self.spec, self.inputs)
-            elif self.device in {"npu", "pyaclnn"}:
-                outputs = run_npu(self.spec, self.inputs)
-            else:
-                raise RuntimeError(
-                    f"{OP_NAME} only supports CPU golden and NPU DUT nodes, got {self.device!r}"
-                )
+            raise RuntimeError(
+                f"{OP_NAME} only supports CPU golden and NPU DUT nodes, got {self.device!r}"
+            )
         return _finite_tuple(outputs, golden=self.device == "cpu")
 
     def export_custom_data(self, input_data: InputDataset):

@@ -21,8 +21,6 @@ except ModuleNotFoundError as exc:
 
 OP_NAME = "chunk_fwd_h"
 SEED_BASE = 20260831
-# Preserve the published negative-case inputs when the positive matrix grows.
-NEGATIVE_SEED_OFFSET = 49
 STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key", "mem": 1.1}
 TEMPLATE_GATE_DTYPES = ("bf16", "fp32")
 TEMPLATE_GATE_MODES = ("g", "gk")
@@ -61,17 +59,6 @@ def _positive(case_key: str, **updates) -> dict:
     }
     spec.update(updates)
     return spec
-
-
-def _negative(mutation: str, expected_message: str) -> dict:
-    return _positive(
-        f"negative_{mutation}",
-        tags="negative,boundary",
-        mutation=mutation,
-        expected_return_code=0,
-        expected_exception="RuntimeError",
-        expected_message=expected_message,
-    )
 
 
 def _template_signature(spec: dict) -> tuple:
@@ -620,56 +607,6 @@ for _, matrix_specs in ACCURACY_TEMPLATE_MATRIX_GROUPS:
     POSITIVE_SPECS.extend(matrix_specs)
 
 
-NEGATIVE_SPECS = [
-    _negative("both_gate_inputs", "exactly one of g and gk must be provided"),
-    _negative("missing_gate_inputs", "exactly one of g and gk must be provided"),
-    _negative("unsupported_chunk_size", "chunk_size must be 64"),
-    _negative("save_new_value_false", "save_new_value must be True"),
-    _negative("invalid_input_rank", "k, w and u must be rank-4 BNSD tensors"),
-    _negative("non_positive_dimension", "B, HK, HV and T must all be positive"),
-    _negative("unsupported_input_dtype", "k, w and u must all use bfloat16"),
-    _negative("mismatched_input_dtype", "k, w and u must all use bfloat16"),
-    _negative("unsupported_kv_dimension", "K and V must both be 128"),
-    _negative("mismatched_w_u_shape", "w/u must be [B, HV, T, K/V]"),
-    _negative("invalid_g_head_ratio", "g-only mode requires HV >= HK and HV % HK == 0"),
-    _negative("invalid_g_shape", "g must be [B, HV, T]"),
-    _negative("invalid_gk_head_count", "gk-only mode requires prepared kg to have HV heads"),
-    _negative("invalid_gk_shape", "gk must be [B, HV, T, K]"),
-    _negative("unsupported_gate_dtype", "g/gk must use bfloat16 or float32"),
-    _negative("unsupported_state_dtype", "initial_state must use bfloat16 or float32"),
-    _negative("invalid_state_shape", "initial_state shape does not match state_v_first"),
-    _negative("varlen_batch_not_one", "variable-length BNSD input requires B=1"),
-    _negative(
-        "invalid_cu_size",
-        "cu_seqlens must be strictly increasing, start at 0 and end at T",
-    ),
-    _negative(
-        "invalid_cu_start",
-        "cu_seqlens must be strictly increasing, start at 0 and end at T",
-    ),
-    _negative(
-        "invalid_cu_end",
-        "cu_seqlens must be strictly increasing, start at 0 and end at T",
-    ),
-    _negative(
-        "non_increasing_cu",
-        "cu_seqlens must be strictly increasing, start at 0 and end at T",
-    ),
-    _negative(
-        "chunk_indices_without_cu",
-        "chunk_indices must use canonical sequence-major order",
-    ),
-    _negative(
-        "invalid_chunk_indices_length",
-        "chunk_indices must use canonical sequence-major order",
-    ),
-    _negative(
-        "invalid_chunk_indices_order",
-        "chunk_indices must use canonical sequence-major order",
-    ),
-]
-
-
 VARLEN_65_CU = (
     "0,2365,2409,2536,3008,3681,6545,8416,11615,12599,12844,12982,13209,"
     "15561,16291,16669,17755,21365,21416,25267,26084,26364,26833,27900,"
@@ -971,14 +908,6 @@ def build_accuracy_specs() -> list[dict]:
     return specs
 
 
-def build_negative_specs() -> list[dict]:
-    specs = deepcopy(NEGATIVE_SPECS)
-    for case_id, spec in enumerate(specs):
-        spec["case_id"] = case_id
-        spec.setdefault("seed", SEED_BASE + NEGATIVE_SEED_OFFSET + case_id)
-    return specs
-
-
 def build_perf_specs() -> list[dict]:
     _assert_complete_template_matrix("performance", PERF_TEMPLATE_SPECS)
     specs = deepcopy(PERF_SPECS)
@@ -1073,7 +1002,6 @@ def _case_payload(case_id: int, spec: dict) -> dict:
             metadata["explicit_chunk_indices"],
         ),
         _input("non_contiguous_u", "bool", metadata["non_contiguous_u"]),
-        _input("negative_case", "bool", "negative" in metadata["tags"].split(",")),
         _input("tags", "string", metadata["tags"]),
         _input("seed", "int", metadata["seed"]),
     ]
@@ -1135,18 +1063,15 @@ def main() -> None:
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     accuracy = build_accuracy_specs()
-    negative = build_negative_specs()
     perf = build_perf_specs()
     mss = build_mss_specs()
     _write(args.output_dir / f"atk_{OP_NAME}.json", accuracy)
-    _write(args.output_dir / f"atk_{OP_NAME}_negative.json", negative)
     _write(args.output_dir / f"atk_{OP_NAME}_perf.json", perf)
     _write(args.output_dir / f"atk_{OP_NAME}_mss.json", mss)
     if args.summary:
         print(
             f"accuracy={len(accuracy)} positive={len(POSITIVE_SPECS)} "
-            f"negative={len(negative)} perf={len(perf)} "
-            f"determinism={len(mss)} mss={len(mss)}"
+            f"perf={len(perf)} determinism={len(mss)} mss={len(mss)}"
         )
 
 

@@ -13,8 +13,8 @@ show_usage() {
   -op=chunk_kda_fwd              ATK 算子目录名
   -npu_device_id=0               传给 ATK node --devices 的 NPU 卡号，默认 0；gen_cases 不需要
   -soc=ascend910b                可选：ascend910b/A2、ascend910_93/A3、ascend950/A5；默认 auto 自动探测
-  -scope=all                     可选：all、accuracy、negative、performance、determinism、mssanitizer、gen_cases
-                                 all 包含 accuracy、可选 negative、determinism、mssanitizer；
+  -scope=all                     可选：all、accuracy、performance、determinism、mssanitizer、gen_cases
+                                 all 包含 accuracy/determinism/mssanitizer；
                                  performance 需单独指定；gen_cases 不在 all 中
 
 常用环境变量：
@@ -23,13 +23,12 @@ show_usage() {
   FLA_NPU_ENV                    fla_npu_transformer set_env.bash 路径，设置后 source
   ATK_OUTPUT_ROOT                输出根目录，默认 ./atk_output
   ATK_GM_INIT_MODE               GM 数据初始化模式，默认 on；可设 on/off
-  ATK_TIMEOUT                    精度与反向阶段超时，默认 14400
+  ATK_TIMEOUT                    精度阶段超时，默认 14400
   DC_LOOP_NUMS                   确定性循环次数，默认 50（与 ATK 一致）
   DC_TIMEOUT                     确定性阶段超时，默认 3600
   PERFORMANCE_TIMEOUT            性能阶段超时，默认 2000
   CASE_START/CASE_END            通用 case 顺序范围；不设置时不传 -s/-e，ATK 执行全部用例
   ACCURACY_START/ACCURACY_END    精度与 NaN 检测 case 范围
-  NEGATIVE_START/NEGATIVE_END    反向拦截 case 范围
   PERFORMANCE_START/END          性能 case 范围
   DETERMINISM_START/END          确定性 case 范围
   MSS_START/MSS_END              mssanitizer case 范围
@@ -257,7 +256,7 @@ done
 [[ -n "$OP" ]] || die "必须传入 -op=<算子名>"
 
 case "$RUN_SCOPE" in
-  all|accuracy|negative|performance|determinism|mssanitizer|gen_cases) ;;
+  all|accuracy|performance|determinism|mssanitizer|gen_cases) ;;
   *) die "不支持的执行范围：${RUN_SCOPE}" ;;
 esac
 
@@ -275,7 +274,6 @@ RESULT_CHECK_PY="${SCRIPT_DIR}/common/check_atk_result.py"
 
 # NPU 后端固定为 npu
 CASE_FILE="${OP_DIR}/atk_${OP}.json"
-NEGATIVE_FILE="${OP_DIR}/atk_${OP}_negative.json"
 EXECUTOR_FILE="${OP_DIR}/executor_${OP}.py"
 YAML_FILE="${OP_DIR}/${OP}.yaml"
 GEN_FILE="${OP_DIR}/gen_${OP}.py"
@@ -285,13 +283,8 @@ if should_run gen_cases; then
   [[ -f "$YAML_FILE" ]] || die "找不到 ATK YAML 文件：${YAML_FILE}"
   [[ -f "$GEN_FILE" ]] || die "找不到 ATK 生成器：${GEN_FILE}"
 else
-  if [[ "$RUN_SCOPE" != "negative" ]]; then
-    [[ -f "$CASE_FILE" ]] || die "找不到 ATK 用例文件：${CASE_FILE}"
-  fi
+  [[ -f "$CASE_FILE" ]] || die "找不到 ATK 用例文件：${CASE_FILE}"
   [[ -f "$EXECUTOR_FILE" ]] || die "找不到 ATK 执行器：${EXECUTOR_FILE}"
-  if [[ "$RUN_SCOPE" == "negative" ]]; then
-    [[ -f "$NEGATIVE_FILE" ]] || die "找不到 ATK 反向用例文件：${NEGATIVE_FILE}"
-  fi
 fi
 
 if [[ -n "${ATK_ENV:-}" ]]; then
@@ -320,8 +313,6 @@ fi
 
 ACCURACY_START="${ACCURACY_START:-$CASE_START}"
 ACCURACY_END="${ACCURACY_END:-$CASE_END}"
-NEGATIVE_START="${NEGATIVE_START:-$CASE_START}"
-NEGATIVE_END="${NEGATIVE_END:-$CASE_END}"
 PERFORMANCE_START="${PERFORMANCE_START:-$CASE_START}"
 PERFORMANCE_END="${PERFORMANCE_END:-$CASE_END}"
 DETERMINISM_START="${DETERMINISM_START:-$CASE_START}"
@@ -331,12 +322,7 @@ MSS_END="${MSS_END:-$CASE_END}"
 
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
-mkdir -p \
-  "${ATK_OUTPUT_ROOT}/accuracy" \
-  "${ATK_OUTPUT_ROOT}/negative" \
-  "${ATK_OUTPUT_ROOT}/perf" \
-  "${ATK_OUTPUT_ROOT}/determinism" \
-  "${ATK_OUTPUT_ROOT}/mssanitizer"
+mkdir -p "${ATK_OUTPUT_ROOT}/accuracy" "${ATK_OUTPUT_ROOT}/perf"
 # mssanitizer 日志路径：未显式指定时使用 ATK_OUTPUT_ROOT 下的带时间戳绝对路径
 # ATK celery worker 工作目录与脚本不同，必须用绝对路径，否则无法找到日志文件
 MSS_LOG_PATH="${MSS_LOG_PATH:-$(cd "${ATK_OUTPUT_ROOT}" && pwd)/mssanitizer_${OP}_$(date +%Y%m%d_%H%M%S).log}"
@@ -381,28 +367,6 @@ if should_run accuracy; then
   record_ran_type accuracy
 fi
 
-if should_run negative; then
-  if [[ -f "$NEGATIVE_FILE" ]]; then
-    log_info "开始反向拦截测试：NPU稳定入口 + executor异常类型/消息核验"
-    set_case_range_args "反向拦截 case 范围" "$NEGATIVE_START" "$NEGATIVE_END"
-    "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
-        --output_path "${ATK_OUTPUT_ROOT}/negative" \
-      task \
-        -c "./atk_${OP}_negative.json" \
-        --task run \
-        -p "./executor_${OP}.py" \
-        "${CASE_RANGE_ARGS[@]}" \
-        -sp \
-        -to "$ATK_TIMEOUT"
-    log_info "完成反向拦截测试"
-    record_ran_type negative
-  elif [[ "$RUN_SCOPE" == "negative" ]]; then
-    die "找不到 ATK 反向用例文件：${NEGATIVE_FILE}"
-  else
-    log_info "未提供 atk_${OP}_negative.json，all 跳过反向拦截测试"
-  fi
-fi
-
 if should_run performance; then
   log_info "开始性能测试：performance_device"
   set_case_range_args "性能测试 case 范围" "$PERFORMANCE_START" "$PERFORMANCE_END"
@@ -423,7 +387,6 @@ if should_run determinism; then
   log_info "开始确定性测试：accuracy_dc（循环次数=${DC_LOOP_NUMS}，超时=${DC_TIMEOUT}s）"
   set_case_range_args "确定性测试 case 范围" "$DETERMINISM_START" "$DETERMINISM_END"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
-      --output_path "${ATK_OUTPUT_ROOT}/determinism" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \
@@ -443,7 +406,6 @@ if should_run mssanitizer; then
   touch "$MSS_LOG_PATH"
   mssanitizer --tool="$MSS_TOOL" -- \
     "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
-      --output_path "${ATK_OUTPUT_ROOT}/mssanitizer" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \

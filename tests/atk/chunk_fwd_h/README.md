@@ -43,7 +43,7 @@ from fla_npu.ops.ascendc import chunk_fwd_h
 因此该标杆不是把整个递推直接提升到 FP64，而是复现公开计算语义中的 cast 点。CPU 与 NPU
 节点使用相同 seed 和量化后的输入，ATK 统一使用 `mixed_tolerance_bm` 比较所有可见输出。
 
-## 精度与反向矩阵
+## 精度矩阵
 
 `atk_chunk_fwd_h.json` 共 200 条，只包含正向精度用例。其中 0-39 是功能、边界、
 分核和变长专项场景，40-199 是五组完整的 32 项顶层模板矩阵。
@@ -86,17 +86,6 @@ from fla_npu.ops.ascendc import chunk_fwd_h
 
 上表依据 `headsPerCore=ceil(totalHeadTasks/C)` 和每 work unit 最多四个 head 推导，属于预期
 映射；实际 `blockDim` 和 active head 记录仍需在对应 SoC 运行后回填。
-
-`atk_chunk_fwd_h_negative.json` 共 25 条，case 0-24 逐项覆盖稳定入口公开拦截，包括 gate 二选一、固定属性、rank/dtype/shape、
-K/V、g-only head 比例、gk-only prepared kg head 数、gate/state dtype、state layout、变长
-batch 与 `cu_seqlens/chunk_indices` 规范序列。
-
-反向 case 使用 NPU-only `run`，不进入精度比较。每条 case_spec 都显式配置
-`expected_return_code=0`、`expected_exception=RuntimeError` 和 `expected_message`。这些公开参数
-校验发生在稳定 wrapper 调用 aclnn 之前，因此返回码 0 表示 executor 严格核验异常后正常结束，
-不是 aclnn 返回码。executor 同时核验异常的精确类型和消息子串，其他异常或意外成功都会使
-该 case 执行失败；共享结果检查器还会核对 ATK 报告中 `total>0`、`exec_pass=total` 且
-`exec_fail=0`。
 
 ## 模板实例与 TilingKey 覆盖
 
@@ -197,7 +186,6 @@ SoC 运行后回填。显式设置 `DETERMINISM_START/END` 或 `MSS_START/END` �
 
 ```bash
 bash tests/atk/run_test_cpu.sh -op=chunk_fwd_h -scope=accuracy
-bash tests/atk/run_test_cpu.sh -op=chunk_fwd_h -scope=negative
 bash tests/atk/run_test_cpu.sh -op=chunk_fwd_h -scope=performance
 bash tests/atk/run_test_cpu.sh -op=chunk_fwd_h -scope=determinism
 bash tests/atk/run_test_cpu.sh -op=chunk_fwd_h -scope=mssanitizer
@@ -217,5 +205,5 @@ python3 tests/atk/chunk_fwd_h/gen_chunk_fwd_h.py \
   --summary
 ```
 
-生成后的 case id、`case_key` 和 seed 是确定的；修改矩阵后应重建四份 JSON 并做 JSON、YAML
+生成后的 case id、`case_key` 和 seed 是确定的；修改矩阵后应重建三份 JSON 并做 JSON、YAML
 和 Python 静态校验。ATK 输出目录、profile、XLSX、sanitizer 日志和 Python 缓存不得提交。

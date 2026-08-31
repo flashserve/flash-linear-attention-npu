@@ -1,7 +1,7 @@
 # ATK 单算子验证工程
 
 本目录保存 `flash-linear-attention-npu` 仓内 Ascend C 算子的 ATK 单算子验证工程。
-所有精度、反向、性能、确定性、内存检测和用例生成动作都通过 ATK 发起；公共脚本只负责拼装
+所有精度、性能、确定性、内存检测和用例生成动作都通过 ATK 发起；公共脚本只负责拼装
 ATK 命令，不在脚本内导出 `PYTHONPATH`。
 
 ## 目录结构
@@ -17,7 +17,6 @@ tests/atk/
 |-- <op_name>/
 |   |-- README.md
 |   |-- atk_<op_name>.json          # 逻辑分支覆盖用例（精度检测使用）
-|   |-- atk_<op_name>_negative.json # 可选反向拦截用例（NPU run 使用）
 |   |-- atk_<op_name>_perf.json     # 性能精简用例（模型 case）
 |   |-- atk_<op_name>_mss.json      # 内存检测精简用例（需覆盖所有 tilingKey）
 |   |-- <op_name>.yaml
@@ -37,14 +36,13 @@ ATK 运行产生的 `atk_output/`、`result/`、profiling、sanitizer 日志、X
 
 | 文件                                   | 职责                                                                                     |
 | -------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `run_test_cpu.sh`                    | 统一入口，覆盖混合容差精度、反向、性能、确定性、mssanitizer 和用例生成                   |
+| `run_test_cpu.sh`                    | 统一入口，覆盖混合容差精度、性能、确定性、mssanitizer 和用例生成                         |
 | `common/_ascendc_common_executor.py` | executor 共用的基础工具函数，例如 dtype 转换、case_spec 解析、确定性数据生成、有限值检查 |
 | `<op>/executor_<op>.py`              | 本算子的输入构造、CPU 标杆、NPU DUT 调用和 ATK`FunctionApi`                            |
 | `<op>/gen_<op>.py`                   | 本算子的 ATK 泛化用例生成器                                                              |
 | `<op>/scripts/`                      | 本算子专用的杂项脚本、分析脚本或辅助标杆，不放跨算子公共逻辑                             |
 | `<op>/<op>.yaml`                     | ATK case 生成配置，shape 与 dtype 必须符合算子 README 和 tiling 限制                     |
 | `<op>/atk_<op>.json`                 | 逻辑分支覆盖用例，精度检测使用                                                          |
-| `<op>/atk_<op>_negative.json`        | 可选反向拦截用例，使用 NPU-only `run`，不进入精度比较                                  |
 | `<op>/atk_<op>_perf.json`            | 性能精简用例（模型 case）                                                                |
 | `<op>/atk_<op>_mss.json`             | 内存检测与确定性精简用例（需覆盖所有 tilingKey）                                         |
 | `<op>/README.md`                     | 本算子的输入限制、标杆来源、SoC 支持、TilingKey 清单、用例映射、实际选择记录和执行示例     |
@@ -112,19 +110,17 @@ bash tests/atk/run_test_cpu.sh -op=<op_name>
 | ----------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `-op=<op_name>`       | `tests/atk` 下的算子目录名                                                                                   |
 | `-npu_device_id=<id>` | 传给`atk node --devices` 的 NPU 设备号，默认`0`；`gen_cases` 不需要                                       |
-| `-scope=<scope>`      | 执行动作，支持`all/accuracy/negative/performance/determinism/mssanitizer/gen_cases`                          |
+| `-scope=<scope>`      | 执行动作，支持`all/accuracy/performance/determinism/mssanitizer/gen_cases`                                   |
 | `-soc=<soc>`          | SOC 标识，支持`ascend910b/A2`、`ascend910_93/A3`、`ascend950/A5`；默认 `auto`，由 `npu-smi` 自动探测 |
 
-`all` 包含 `accuracy`、`determinism` 和 `mssanitizer`；若算子目录存在
-`atk_<op_name>_negative.json`，还会自动执行 `negative`。性能测试需显式指定
-`-scope=performance`，`gen_cases` 不在 `all` 中。显式指定 `negative` 但文件不存在时会报错。
+`all` 包含 `accuracy`、`determinism` 和 `mssanitizer`；性能测试需
+显式指定 `-scope=performance`。`gen_cases` 不在 `all` 中，必须显式指定。
 
 示例：
 
 ```bash
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=accuracy
-bash tests/atk/run_test_cpu.sh -op=chunk_fwd_h -scope=negative
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=performance
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=determinism
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=mssanitizer
@@ -147,7 +143,6 @@ bash tests/atk/run_test_cpu.sh -op=causal_conv1d
 | 变量                                  | 作用                 |
 | ------------------------------------- | -------------------- |
 | `ACCURACY_START/ACCURACY_END`       | 精度与 NaN 检测      |
-| `NEGATIVE_START/NEGATIVE_END`       | 反向拦截测试         |
 | `PERFORMANCE_START/PERFORMANCE_END` | 性能测试             |
 | `DETERMINISM_START/DETERMINISM_END` | 确定性验证           |
 | `MSS_START/MSS_END`                 | mssanitizer 内存检测 |
@@ -161,15 +156,6 @@ bash tests/atk/run_test_cpu.sh -op=causal_conv1d
 
 ```bash
 bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=accuracy
-```
-
-反向拦截使用 NPU-only `run`。若公开入口在 aclnn 调用前完成参数校验，case_spec 中应配置
-`expected_return_code=0`、`expected_exception` 和 `expected_message`；executor 必须严格核验
-异常类型及消息且将意外成功判为失败。这里的返回码 0 表示 executor 完成核验后正常结束，不是
-被测 aclnn 接口的返回码。结果检查器还会从 ATK 报告中核对总用例数、执行成功数和执行失败数：
-
-```bash
-bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=negative
 ```
 
 性能测试使用 ATK `performance_device`：
@@ -212,7 +198,6 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 | `causal_conv1d_bwd`              | `fla_npu.ops.ascendc.causal_conv1d_bwd`              | 见[`causal_conv1d_bwd/README.md`](./causal_conv1d_bwd/README.md)                           |
 | `chunk_bwd_dqkwg`                | `fla_npu.ops.ascendc.chunk_bwd_dqkwg`                | 见[`chunk_bwd_dqkwg/README.md`](./chunk_bwd_dqkwg/README.md)                               |
 | `chunk_bwd_dv_local`             | `fla_npu.ops.ascendc.chunk_bwd_dv_local`             | 见[`chunk_bwd_dv_local/README.md`](./chunk_bwd_dv_local/README.md)                         |
-| `chunk_fwd_h`                    | `fla_npu.ops.ascendc.chunk_fwd_h`                    | 见[`chunk_fwd_h/README.md`](./chunk_fwd_h/README.md)                                       |
 | `chunk_fwd_o`                    | `fla_npu.ops.ascendc.chunk_fwd_o`                    | 见[`chunk_fwd_o/README.md`](./chunk_fwd_o/README.md)                                       |
 | `chunk_gated_delta_rule_bwd_dhu` | `fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_dhu` | 见[`chunk_gated_delta_rule_bwd_dhu/README.md`](./chunk_gated_delta_rule_bwd_dhu/README.md) |
 | `chunk_gated_delta_rule_fwd_h`   | `fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd_h`   | 见[`chunk_gated_delta_rule_fwd_h/README.md`](./chunk_gated_delta_rule_fwd_h/README.md)     |
@@ -233,12 +218,12 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 新增算子工程时按以下顺序处理：
 
 1. 在 `tests/atk/<op_name>/` 下放置 `README.md`、`atk_<op_name>.json`、`<op_name>.yaml`、`gen_<op_name>.py`、`executor_<op_name>.py` 和 `scripts/`。
-2. 按需补充 `atk_<op_name>_negative.json`，并提供 `atk_<op_name>_perf.json` 和 `atk_<op_name>_mss.json`；`_mss.json` 需根据 tilingKey 和模型 shape 手工补齐。
+2. `atk_<op_name>_perf.json` 和 `atk_<op_name>_mss.json`；`_mss.json` 需根据 tilingKey 和模型 shape 手工补齐。
 3. 在算子 README 中写清输入 shape、dtype、属性、可选输入、变长元数据和 tiling 限制。
 4. `executor_<op_name>.py` 中保留本算子的 `build_inputs`、CPU 标杆、`run_cpu`、`run_npu` 和 `FunctionApi`。
 5. 若需要公共基础函数，从 `tests/atk/common/_ascendc_common_executor.py` 引入；不要把算子专属逻辑放入 `common/`。
 6. YAML 与 JSON 中的 shape 必须同时满足源码 README、tiling 检查和 executor 输入构造。
-7. 修改后至少执行 `python` 语法导入检查；具备 NPU 环境时再跑适用的 `accuracy`、`negative`、`performance`、`determinism` 和 `mssanitizer`。
+7. 修改后至少执行 `python` 语法导入检查；具备 NPU 环境时再跑 `accuracy`、`performance`、`determinism` 和 `mssanitizer`。
 
 ### TilingKey 覆盖交付
 

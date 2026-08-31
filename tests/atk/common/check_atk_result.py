@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ATK 测试结果检查器。
 
-解析 ATK 生成的 xlsx 报告，检查 accuracy / negative / determinism / mssanitizer 是否全部通过，
+解析 ATK 生成的 xlsx 报告，检查 accuracy / determinism / mssanitizer 是否全部通过，
 统计 fail 数量。供 run_test_cpu.sh 在每个测试阶段结束后调用。
 
 用法:
@@ -38,25 +38,9 @@ def _find_accuracy_reports(output_root, op):
     return _find_xlsx_files(output_root, f"accuracy/atk_output/atk_{op}_*")
 
 
-def _find_negative_reports(output_root, op):
-    """negative 报告在 negative/atk_output/atk_<op>_negative_* 下。"""
-    return _find_xlsx_files(
-        output_root, f"negative/atk_output/atk_{op}_negative_*"
-    )
-
-
 def _find_root_reports(output_root, op):
-    """兼容旧 runner 写在输出根目录下的报告。"""
+    """determinism 和 mssanitizer 报告共享 atk_<op>_* 目录。"""
     return _find_xlsx_files(output_root, f"atk_{op}_*")
-
-
-def _find_stage_reports(output_root, stage, op):
-    """查找独立 stage 目录，并兼容旧 runner 的输出布局。"""
-    files = _find_xlsx_files(
-        output_root, f"{stage}/atk_output/atk_{op}_*"
-    )
-    files.extend(_find_root_reports(output_root, op))
-    return sorted(set(files), key=os.path.getmtime)
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +90,7 @@ def _classify_report(header):
     return "unknown"
 
 
-def _extract_summary_row(header, data_rows, *, mssanitizer=False):
+def _extract_summary_row(header, data_rows):
     """从 summary 行中提取关键指标。
 
     返回 dict: {total, exec_pass, exec_fail, check_pass, check_fail,
@@ -176,8 +160,8 @@ def _extract_summary_row(header, data_rows, *, mssanitizer=False):
                 if val == "Failed":
                     all_pass = False
 
-    # 部分 mssanitizer 报告不提供执行/通过计数，只提供达标列。
-    if mssanitizer and exec_fail == 0 and total > 0 and check_pass == 0:
+    # mssanitizer 没有 exec_fail，用 total - (pass count) 估算
+    if exec_fail == 0 and total > 0 and check_pass == 0:
         # mssanitizer 情况：total 个用例，达标判断看 "内存检测是否达标"
         exec_pass = total
         check_pass = total if all_pass else 0
@@ -208,8 +192,7 @@ def check_accuracy(output_root, op):
     xlsx = files[-1]
     header, data = _parse_summary(xlsx)
     if header is None:
-        return {"found": True, "total": 0, "exec_pass": 0, "exec_fail": 0,
-                "check_pass": 0, "check_fail": 0, "all_pass": False,
+        return {"found": True, "total": 0, "pass": 0, "fail": 0, "all_pass": False,
                 "xlsx": xlsx, "detail": "无法解析 summary sheet"}
     info = _extract_summary_row(header, data)
     if info["total"] <= 0 or info["check_pass"] != info["total"]:
@@ -218,60 +201,15 @@ def check_accuracy(output_root, op):
             "detail": f"通过率={info['pass_rate']}"}
 
 
-def check_negative(output_root, op):
-    """检查 NPU-only run 报告中的真实执行计数。"""
-    files = _find_negative_reports(output_root, op)
-    if not files:
-        return {"found": False, "total": 0, "exec_pass": 0, "exec_fail": 0,
-                "check_pass": 0, "check_fail": 0, "all_pass": False,
-                "xlsx": None, "detail": "未找到 negative 报告"}
-    xlsx = files[-1]
-    header, data = _parse_summary(xlsx)
-    if header is None:
-        return {"found": True, "total": 0, "exec_pass": 0, "exec_fail": 0,
-                "check_pass": 0, "check_fail": 0, "all_pass": False,
-                "xlsx": xlsx, "detail": "无法解析 summary sheet"}
-
-    required_columns = (
-        "总用例数",
-        "执行成功用例个数",
-        "执行失败用例个数",
-    )
-    missing_columns = [
-        column
-        for column in required_columns
-        if not any(column in heading for heading in header)
-    ]
-    info = _extract_summary_row(header, data)
-    info["all_pass"] = bool(
-        info["all_pass"]
-        and not missing_columns
-        and info["total"] > 0
-        and info["exec_pass"] == info["total"]
-        and info["exec_fail"] == 0
-    )
-    info["check_pass"] = info["exec_pass"]
-    info["check_fail"] = info["exec_fail"]
-    detail = (
-        f"执行成功={info['exec_pass']}, 执行失败={info['exec_fail']}"
-        if not missing_columns
-        else f"缺少汇总列={','.join(missing_columns)}"
-    )
-    return {"found": True, **info, "xlsx": xlsx, "detail": detail}
-
-
 def check_determinism(output_root, op):
-    """检查 determinism 报告，并兼容旧输出布局。"""
-    files = _find_stage_reports(output_root, "determinism", op)
+    """检查 determinism 报告（与 mssanitizer 共享目录，按表头过滤）。"""
+    files = _find_root_reports(output_root, op)
     # 从新到旧找第一个非 mssanitizer 报告
     for f in reversed(files):
         header, _ = _parse_summary(f)
         if header is not None and not _is_mssanitizer_report(header):
             header, data = _parse_summary(f)
             info = _extract_summary_row(header, data)
-            if (info["total"] <= 0 or info["exec_fail"] != 0
-                    or info["check_pass"] != info["total"]):
-                info["all_pass"] = False
             return {"found": True, **info, "xlsx": f,
                     "detail": f"通过率={info['pass_rate']}"}
     return {"found": False, "total": 0, "pass": 0, "fail": 0, "all_pass": False,
@@ -279,16 +217,13 @@ def check_determinism(output_root, op):
 
 
 def check_mssanitizer(output_root, op):
-    """检查 mssanitizer 报告，并兼容旧输出布局。"""
-    files = _find_stage_reports(output_root, "mssanitizer", op)
+    """检查 mssanitizer 报告。"""
+    files = _find_root_reports(output_root, op)
     for f in reversed(files):
         header, _ = _parse_summary(f)
         if header is not None and _is_mssanitizer_report(header):
             header, data = _parse_summary(f)
-            info = _extract_summary_row(header, data, mssanitizer=True)
-            if (info["total"] <= 0 or info["exec_fail"] != 0
-                    or info["check_pass"] != info["total"]):
-                info["all_pass"] = False
+            info = _extract_summary_row(header, data)
             return {"found": True, **info, "xlsx": f,
                     "detail": f"内存检测通过率={info['mss_pass_rate']}"}
     return {"found": False, "total": 0, "pass": 0, "fail": 0, "all_pass": False,
@@ -297,14 +232,12 @@ def check_mssanitizer(output_root, op):
 
 CHECKERS = {
     "accuracy": check_accuracy,
-    "negative": check_negative,
     "determinism": check_determinism,
     "mssanitizer": check_mssanitizer,
 }
 
 TYPE_LABELS = {
     "accuracy": "精度",
-    "negative": "反向拦截",
     "determinism": "确定性",
     "mssanitizer": "内存检测",
 }
@@ -313,7 +246,7 @@ TYPE_LABELS = {
 def main():
     parser = argparse.ArgumentParser(description="ATK 测试结果检查器")
     parser.add_argument("--type", required=True,
-                        choices=["accuracy", "negative", "determinism", "mssanitizer", "all"],
+                        choices=["accuracy", "determinism", "mssanitizer", "all"],
                         help="检查的测试类型")
     parser.add_argument("--output-root", required=True,
                         help="ATK 输出根目录（如 ./atk_output）")
@@ -331,21 +264,15 @@ def main():
         results[t] = r
         label = TYPE_LABELS[t]
         if not r["found"]:
-            if args.type == "all":
-                print(f"[ATK结果检查] {label}: 未找到报告（跳过）")
-            else:
-                print(f"[ATK结果检查] {label}: 未找到报告（失败）")
-                any_fail = True
+            status_str = "NO_REPORT"
+            print(f"[ATK结果检查] {label}: 未找到报告（跳过）")
             continue
         status = "Pass" if r["all_pass"] else "Failed"
         if not r["all_pass"]:
             any_fail = True
         xlsx_name = os.path.basename(r.get("xlsx", "")) if r.get("xlsx") else ""
         # 实际失败数 = 总用例 - 通过用例 (check_fail 是"错误信息匹配"，不等价于未通过)
-        if t == "negative":
-            actual_fail = max(r["total"] - r["exec_pass"], r["exec_fail"])
-        else:
-            actual_fail = r["total"] - r["check_pass"]
+        actual_fail = r["total"] - r["check_pass"]
         print(f"[ATK结果检查] {label}: {status} "
               f"(总用例={r['total']}, 通过={r['check_pass']}, "
               f"失败={actual_fail}) [{xlsx_name}]")

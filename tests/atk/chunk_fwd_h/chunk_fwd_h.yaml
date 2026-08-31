@@ -260,16 +260,6 @@ inputs:
         values: [false, true]
       invalid:
         values: []
-  - name: negative_case
-    type: attr
-    required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
   - name: tags
     type: attr
     required: true
