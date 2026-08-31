@@ -39,8 +39,16 @@ def _find_accuracy_reports(output_root, op):
 
 
 def _find_root_reports(output_root, op):
-    """determinism 和 mssanitizer 报告共享 atk_<op>_* 目录。"""
-    return _find_xlsx_files(output_root, f"atk_{op}_*")
+    """determinism 和 mssanitizer 报告共享 atk_<op>_* 目录。
+
+    ATK creates an ``atk_output`` child below the node output path.  Keep
+    accepting a root that already points at that directory so callers can use
+    either the script's output root or an ATK-native output path.
+    """
+    files = []
+    for pattern in (f"atk_{op}_*", f"atk_output/atk_{op}_*"):
+        files.extend(_find_xlsx_files(output_root, pattern))
+    return sorted(set(files), key=os.path.getmtime)
 
 
 # ---------------------------------------------------------------------------
