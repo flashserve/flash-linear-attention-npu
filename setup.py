@@ -2,6 +2,7 @@ import glob
 import importlib
 from importlib import metadata as importlib_metadata
 import importlib.util
+import json
 import os
 import shutil
 import stat
@@ -98,6 +99,44 @@ def _package_dir():
 
 def _env_flag(name):
     return os.getenv(name, "FALSE").upper() in {"1", "TRUE", "YES", "ON"}
+
+
+def _external_build_ops():
+    raw_ops = os.getenv("FLA_NPU_OPS", "").strip()
+    if not raw_ops:
+        return []
+
+    ops = []
+    seen = set()
+    for raw_op in raw_ops.split(","):
+        op = raw_op.strip()
+        if not op or not re.fullmatch(r"[a-z0-9_]+", op):
+            raise RuntimeError(
+                "FLA_NPU_OPS must be a comma-separated list of lowercase snake_case operator names"
+            )
+        if op not in seen:
+            seen.add(op)
+            ops.append(op)
+    return ops
+
+
+def _external_build_args():
+    raw_args = os.getenv("FLA_NPU_BUILD_ARGS_JSON", "").strip()
+    if not raw_args:
+        return []
+    try:
+        args = json.loads(raw_args)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("FLA_NPU_BUILD_ARGS_JSON must contain a JSON string array") from exc
+    if not isinstance(args, list) or not all(isinstance(arg, str) and arg for arg in args):
+        raise RuntimeError("FLA_NPU_BUILD_ARGS_JSON must contain a JSON string array")
+
+    reserved = ("--ops", "--soc", "--vendor_name", "--pkg")
+    if any(arg.startswith(reserved) for arg in args):
+        raise RuntimeError(
+            "FLA_NPU_BUILD_ARGS_JSON cannot override --ops, --soc, --vendor_name, or --pkg"
+        )
+    return args
 
 
 def _run(cmd, cwd, env=None):
@@ -353,6 +392,10 @@ def _build_run_package():
         "--pkg",
         f"--vendor_name={DEFAULT_VENDOR_NAME}",
     ]
+    ops = _external_build_ops()
+    if ops:
+        cmd.append(f"--ops={','.join(ops)}")
+    cmd.extend(_external_build_args())
     _run(cmd, REPO_ROOT)
 
     return _find_single_run_package()
