@@ -69,10 +69,11 @@ public:
     static constexpr bool kCoefficientGenerationTaskOrder = kCoefficientGenerationTaskOrder_;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     static constexpr uint32_t GM_RING_DEPTH = 8;
-    Arch::CrossCoreFlagWithReverse<GM_RING_DEPTH> flagAivVbReady{
-        SYNC_AIC_AIV_FLAG_5, SYNC_AIV_AIC_FLAG_3};
-    Arch::CrossCoreFlagWithReverse<GM_RING_DEPTH> flagAivKbgExpReady{
-        SYNC_AIC_AIV_FLAG_6, SYNC_AIV_AIC_FLAG_4};
+    static_assert(GM_RING_DEPTH <= Arch::MAX_REVERSE_DEPTH,
+                  "Ring window must keep every cross-core flag below the hardware credit limit.");
+    Arch::CrossCoreFlag flagAivVbReady{SYNC_AIV_AIC_FLAG_3};
+    Arch::CrossCoreFlag flagAivKbgExpReady{SYNC_AIV_AIC_FLAG_4};
+    Arch::CrossCoreFlag flagAicSlotFree{SYNC_AIC_AIV_FLAG_5};
 #else
     Arch::CrossCoreFlagWithReverse<> flagAivFinishStore{SYNC_AIC_AIV_FLAG_5, SYNC_AIV_AIC_FLAG_3};
 #endif
@@ -181,7 +182,7 @@ public:
                                     (h * params.T + bos) * params.chunkSize);
                 auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
 
-                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivVbReady);
+                Arch::CrossCoreWaitFlag(flagAivVbReady);
                 const uint32_t tileN = tla::get<1>(BdkL1TileShape{});
                 for (uint32_t nOffset = 0; nOffset < params.V; nOffset += tileN) {
                     const uint32_t curN =
@@ -205,7 +206,7 @@ public:
                     blockMmad(tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
                 }
 
-                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivKbgExpReady);
+                Arch::CrossCoreWaitFlag(flagAivKbgExpReady);
                 GemmCoord actualBlockShape{
                     curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
                 gmKbgExp.SetGlobalBuffer((__gm__ ElementKbgExp *)params.ptrKbgExp +
@@ -225,6 +226,12 @@ public:
                     tensorW, tla::MakeCoord(0, 0),
                     tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                 blockMmad(tensorBlockA, tensorBlockKbgExp, tensorBlockW, actualBlockShape);
+                // Dependency chain inside BlockMmad is GM->L1 (MTE2), MTE2_MTE1 wait,
+                // then L1->L0 (MTE1). Issuing the free notification on PIPE_MTE1 here
+                // orders it after that final L1 read, which transitively proves the GM
+                // source is no longer in use. Mode 0x2 broadcasts one credit to each
+                // paired AIV subcore, matching their independent FIFO waits.
+                Arch::CrossCoreSetFlag<0x2, PIPE_MTE1>(flagAicSlotFree);
             }
         }
         blockMmad.finalWaitFlags();
@@ -441,7 +448,8 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
     using ArchTag = Arch::Ascend950;
     // UnitFlag keeps L0C single-buffered; L1-resident mode lets the back-to-back
     // U/W calls reuse A while retaining the multi-stage A5 load/compute pipeline.
-    using DispatchPolicy = Gemm::MmadPingpongTlaMulti<ArchTag, true, false, 1, true>;
+    using DispatchPolicy = Gemm::MmadPingpongTlaMulti<
+        ArchTag, true, false, 1, true, 1, 2, 2, 2>;
 #else
     using ArchTag = Arch::AtlasA2;
     using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;
@@ -457,6 +465,14 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
         Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagA, kType, LayoutTagKbgExp, kType, LayoutTagW>;
     using BlockMmadW =
         Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyW>;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    static_assert(BlockMmadU::ENABLE_L1_RESIDENT, "A5 recompute requires L1-resident A.");
+    static_assert(BlockMmadU::L1A_STAGES == 1,
+                  "A5 recompute requires one L1A stage so U and W hit the same resident slot.");
+    static_assert(BlockMmadU::L1B_STAGES == 2 && BlockMmadU::L0A_STAGES == 2 &&
+                      BlockMmadU::L0B_STAGES == 2,
+                  "A5 recompute pipeline stage counts must remain explicit and audited.");
+#endif
 
     auto layoutA = MakeLayoutFromTag(tagA);
     auto layoutVb = MakeLayoutFromTag(tagVb);

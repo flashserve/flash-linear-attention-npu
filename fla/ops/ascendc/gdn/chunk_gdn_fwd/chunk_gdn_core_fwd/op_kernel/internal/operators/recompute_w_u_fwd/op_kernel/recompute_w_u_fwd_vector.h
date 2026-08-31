@@ -38,10 +38,11 @@ public:
                                                         GM_ADDR workspace_);
 
     __aicore__ inline void Process();
-    __aicore__ inline void ProcessVb();
-    __aicore__ inline void ProcessKbgExp();
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     __aicore__ inline void ProcessVbAndKbgExpInterleaved();
+#else
+    __aicore__ inline void ProcessVb();
+    __aicore__ inline void ProcessKbgExp();
 #endif
     __aicore__ inline void Init(const RecomputeWUFwdTilingData &tiling, AscendC::TPipe *pipe_);
 
@@ -73,12 +74,14 @@ private:
 private:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     static constexpr uint32_t GM_RING_DEPTH = 8;
-    Arch::CrossCoreFlagWithReverse<GM_RING_DEPTH> flagAivVbReady{
-        SYNC_AIC_AIV_FLAG_5, SYNC_AIV_AIC_FLAG_3};
-    Arch::CrossCoreFlagWithReverse<GM_RING_DEPTH> flagAivKbgExpReady{
-        SYNC_AIC_AIV_FLAG_6, SYNC_AIV_AIC_FLAG_4};
-#endif
+    static_assert(GM_RING_DEPTH <= Arch::MAX_REVERSE_DEPTH,
+                  "Ring window must keep every cross-core flag below the hardware credit limit.");
+    Arch::CrossCoreFlag flagAivVbReady{SYNC_AIV_AIC_FLAG_3};
+    Arch::CrossCoreFlag flagAivKbgExpReady{SYNC_AIV_AIC_FLAG_4};
+    Arch::CrossCoreFlag flagAicSlotFree{SYNC_AIC_AIV_FLAG_5};
+#else
     Arch::CrossCoreFlagWithReverse<> flagAivFinishStore{SYNC_AIC_AIV_FLAG_5, SYNC_AIV_AIC_FLAG_3};
+#endif
     GlobalTensor<kType> kTensor;
     GlobalTensor<kType> vTensor;
     GlobalTensor<betaType> betaTensor;
@@ -107,6 +110,7 @@ private:
 
     __aicore__ inline void NotifyVbReady();
     __aicore__ inline void NotifyKbgExpReady();
+    __aicore__ inline void WaitSlotFree();
     __simd_callee__ inline void CastFloat2KTypeRint(
         RegTensor<kType> &dstReg, RegTensor<float> &srcZeroReg,
         RegTensor<float> &srcOneReg, MaskReg &mask);
@@ -176,14 +180,23 @@ template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kCoeff
 __aicore__ inline void RecomputeWUFwdVectorProcess<
     kType, betaType, kFlattenHeadTasks, kCoefficientGenerationTaskOrder>::NotifyVbReady()
 {
-    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivVbReady);
+    Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(flagAivVbReady);
 }
 
 template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kCoefficientGenerationTaskOrder>
 __aicore__ inline void RecomputeWUFwdVectorProcess<
     kType, betaType, kFlattenHeadTasks, kCoefficientGenerationTaskOrder>::NotifyKbgExpReady()
 {
-    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivKbgExpReady);
+    Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(flagAivKbgExpReady);
+}
+
+template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kCoefficientGenerationTaskOrder>
+__aicore__ inline void RecomputeWUFwdVectorProcess<
+    kType, betaType, kFlattenHeadTasks, kCoefficientGenerationTaskOrder>::WaitSlotFree()
+{
+    // This is a scalar wait, not a pipelined credit checkpoint: the producer
+    // must not enqueue the next MTE3 write until AIC has consumed this slot.
+    Arch::CrossCoreWaitFlag(flagAicSlotFree);
 }
 
 template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kCoefficientGenerationTaskOrder>
@@ -308,6 +321,11 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<
     kType, betaType, kFlattenHeadTasks,
     kCoefficientGenerationTaskOrder>::ProcessVbAndKbgExpInterleaved()
 {
+    // Per-slot lifecycle (FIFO on each AIC/AIV pair):
+    // FREE -> WRITING -> READY -> READING -> FREE.
+    // The first GM_RING_DEPTH tasks consume the implicit initial FREE state.
+    // Every later task waits for one explicit free credit before WRITING, and
+    // the trailing drain consumes the final window of credits at phase exit.
     const uint32_t coreLoops = kFlattenHeadTasks ? chunkNum * Hv : chunkNum;
     const uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
     const uint32_t coreNumAic = GetBlockNum();
@@ -344,6 +362,14 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<
         const uint32_t curChunkSize = eos - bos;
 
         for (uint32_t h = hBegin; h < hEnd; ++h) {
+            if (vecTaskIdx >= GM_RING_DEPTH) {
+                // Free credits are produced by AIC in the same FIFO task order.
+                // Consuming one before task t reclaims exactly slot t % depth,
+                // whose preceding owner was task t - depth. The mode-0x2 release
+                // broadcasts to both AIV subcores, so both intentionally wait before
+                // the owner test and keep identical per-task credit histories.
+                WaitSlotFree();
+            }
             const uint32_t slotId = vecTaskIdx % GM_RING_DEPTH;
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
@@ -439,10 +465,19 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<
             NotifyKbgExpReady();
         }
     }
+
+    // AIC releases every task, whereas reuse consumes only taskCount-depth
+    // credits. Drain the final live window so flag 5 is empty before H/O reuse
+    // the 0..7 event namespace and so both AIV subcores observe full completion.
+    const uint32_t trailingCredits =
+        vecTaskIdx < GM_RING_DEPTH ? vecTaskIdx : GM_RING_DEPTH;
+    for (uint32_t i = 0; i < trailingCredits; ++i) {
+        WaitSlotFree();
+    }
 }
 #endif
 
-
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
 template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kCoefficientGenerationTaskOrder>
 __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType,
                                                     kFlattenHeadTasks, kCoefficientGenerationTaskOrder>::ProcessVb()
@@ -686,6 +721,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType,
     }
     return;
 }
+#endif
 
 
 #endif // RECOMPUTE_W_U_FWD_VECTOR_H
