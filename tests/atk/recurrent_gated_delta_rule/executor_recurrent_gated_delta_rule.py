@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 
 from atk.configs.dataset_config import InputDataset
@@ -23,6 +24,9 @@ from _ascendc_common_executor import (
     _orig_dtype,
     _rand,
     _randn,
+)
+from reference_recurrent_gated_delta_rule import (
+    recurrent_gated_delta_rule_reference,
 )
 
 
@@ -338,72 +342,6 @@ def build_inputs(
     )
 
 
-def recurrent_gated_delta_rule_reference(inputs: dict[str, Any]):
-    query = inputs["query"]
-    key = inputs["key"]
-    value = inputs["value"]
-    beta = inputs["beta"]
-    g = inputs["g"]
-    gk = inputs["gk"]
-    actual_seq_lengths = inputs["actual_seq_lengths"].detach().cpu().tolist()
-    state_indices = inputs["ssm_state_indices"].detach().cpu().tolist()
-    accepted_tokens = inputs["num_accepted_tokens"]
-    if accepted_tokens is not None:
-        accepted_tokens = accepted_tokens.detach().cpu().tolist()
-
-    calc_dtype = torch.float64 if query.dtype == torch.float64 else torch.float32
-    final_state = inputs["state"].to(calc_dtype).clone()
-    total_tokens, key_heads, _ = query.shape
-    value_heads, value_dim = value.shape[1:]
-    head_group = value_heads // key_heads
-    out = torch.zeros(
-        (total_tokens, value_heads, value_dim),
-        dtype=calc_dtype,
-        device=query.device,
-    )
-
-    seq_start = int(actual_seq_lengths[0])
-    for batch_index, seq_len_value in enumerate(actual_seq_lengths[1:]):
-        seq_len = int(seq_len_value)
-        if seq_len <= 0:
-            continue
-        seq_end = seq_start + seq_len
-        state_token_index = seq_start
-        if accepted_tokens is not None:
-            state_token_index += int(accepted_tokens[batch_index]) - 1
-        initial_state_slot = int(state_indices[state_token_index])
-
-        for value_head in range(value_heads):
-            key_head = value_head // head_group
-            recurrent_state = final_state[initial_state_slot, value_head].clone()
-            for token_index in range(seq_start, seq_end):
-                if g is not None:
-                    recurrent_state *= torch.exp(g[token_index, value_head].to(calc_dtype))
-                if gk is not None:
-                    recurrent_state *= torch.exp(
-                        gk[token_index, value_head].to(calc_dtype)
-                    ).unsqueeze(0)
-
-                key_vector = key[token_index, key_head].to(calc_dtype)
-                delta = value[token_index, value_head].to(calc_dtype)
-                delta -= torch.matmul(recurrent_state, key_vector)
-                delta *= beta[token_index, value_head].to(calc_dtype)
-                recurrent_state += torch.outer(delta, key_vector)
-                scaled_query = (
-                    query[token_index, key_head].to(calc_dtype)
-                    * float(inputs["scale"])
-                )
-                out[token_index, value_head] = torch.matmul(
-                    recurrent_state, scaled_query
-                )
-                state_slot = int(state_indices[token_index])
-                final_state[state_slot, value_head] = recurrent_state
-
-        seq_start = seq_end
-
-    return out.to(value.dtype), final_state.to(inputs["state"].dtype)
-
-
 def run_cpu(spec: dict[str, Any]):
     previous_threads = torch.get_num_threads()
     try:
@@ -414,7 +352,19 @@ def run_cpu(spec: dict[str, Any]):
         outputs = None
         repeat_calls = int(spec.get("repeat_calls", 1))
         for call_index in range(repeat_calls):
-            outputs = recurrent_gated_delta_rule_reference(inputs)
+            outputs = recurrent_gated_delta_rule_reference(
+                query=inputs["query"],
+                key=inputs["key"],
+                value=inputs["value"],
+                state=inputs["state"],
+                beta=inputs["beta"],
+                scale=inputs["scale"],
+                actual_seq_lengths=inputs["actual_seq_lengths"],
+                ssm_state_indices=inputs["ssm_state_indices"],
+                num_accepted_tokens=inputs["num_accepted_tokens"],
+                g=inputs["g"],
+                gk=inputs["gk"],
+            )
             if call_index + 1 < repeat_calls:
                 inputs["state"].copy_(outputs[1])
         if outputs is None:
