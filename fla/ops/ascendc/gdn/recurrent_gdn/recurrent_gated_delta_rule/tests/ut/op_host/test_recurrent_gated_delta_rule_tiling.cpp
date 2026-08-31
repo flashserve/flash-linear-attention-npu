@@ -39,13 +39,13 @@ protected:
     }
 };
 
-TEST_F(RecurrentGatedDeltaRuleTilingTest, Test0)
+TEST_F(RecurrentGatedDeltaRuleTilingTest, SelectsStateDtypeTemplate)
 {
     optiling::RecurrentGatedDeltaRuleCompileInfo compileinfo = {48, 196608}; // aivNum銆乽bSize
 
     int t = 128;
     int nk = 4;
-    int dk = 16;
+    int dk = 128;
     int nv = 128;
     int dv = 128;
     int sBlockNum = 128;
@@ -62,33 +62,37 @@ TEST_F(RecurrentGatedDeltaRuleTilingTest, Test0)
     gert::StorageShape gkShape = {{}, {}};
     gert::StorageShape accTokensShape = {{b}, {b}};
 
-    gert::TilingContextPara tilingContextPara("RecurrentGatedDeltaRule",
-        {
-            {queryShape, ge::DT_BF16, ge::FORMAT_ND},
-            {keyShape, ge::DT_BF16, ge::FORMAT_ND},
-            {valueShape, ge::DT_BF16, ge::FORMAT_ND},
-            {betaShape, ge::DT_BF16, ge::FORMAT_ND},
-            {stateShape, ge::DT_BF16, ge::FORMAT_ND},
-            {seqLengthsShape, ge::DT_INT32, ge::FORMAT_ND},
-            {ssmStateIndicesShape, ge::DT_INT32, ge::FORMAT_ND},
-            {gShape, ge::DT_FLOAT, ge::FORMAT_ND},
-        },
-        {
-            {{{}, {}}, ge::DT_BF16, ge::FORMAT_ND},
-            {{{}, {}}, ge::DT_BF16, ge::FORMAT_ND},
-        },
-        {
-            {"scale_value", Ops::Transformer::AnyValue::CreateFrom<float>(1.0)},
+    const std::vector<std::pair<ge::DataType, uint64_t>> testCases = {
+        {ge::DT_BF16, GET_TPL_TILING_KEY(RGDR_TPL_BF16)},
+        {ge::DT_FLOAT, GET_TPL_TILING_KEY(RGDR_TPL_FP32)},
+    };
+    for (const auto &testCase : testCases) {
+        const auto stateDtype = testCase.first;
+        gert::TilingContextPara tilingContextPara("RecurrentGatedDeltaRule",
+            {
+                {queryShape, ge::DT_BF16, ge::FORMAT_ND},
+                {keyShape, ge::DT_BF16, ge::FORMAT_ND},
+                {valueShape, ge::DT_BF16, ge::FORMAT_ND},
+                {betaShape, ge::DT_BF16, ge::FORMAT_ND},
+                {stateShape, stateDtype, ge::FORMAT_ND},
+                {seqLengthsShape, ge::DT_INT32, ge::FORMAT_ND},
+                {ssmStateIndicesShape, ge::DT_INT32, ge::FORMAT_ND},
+                {gShape, ge::DT_FLOAT, ge::FORMAT_ND},
+            },
+            {
+                {{{}, {}}, ge::DT_BF16, ge::FORMAT_ND},
+                {{{}, {}}, stateDtype, ge::FORMAT_ND},
+            },
+            {
+                {"scale_value", Ops::Transformer::AnyValue::CreateFrom<float>(1.0)},
+            },
+            &compileinfo
+        );
 
-        },
-        &compileinfo
-    );
-
-    int64_t expectTilingKey = 0UL;
-
-    TilingInfo tilingInfo;
-    ExecuteTiling(tilingContextPara, tilingInfo);
-    EXPECT_EQ(tilingInfo.tilingKey, expectTilingKey);
+        TilingInfo tilingInfo;
+        ASSERT_TRUE(ExecuteTiling(tilingContextPara, tilingInfo));
+        EXPECT_EQ(tilingInfo.tilingKey, testCase.second);
+    }
 }
 
 TEST_F(RecurrentGatedDeltaRuleTilingTest, SelectsDoubleOutputBufferProfile)

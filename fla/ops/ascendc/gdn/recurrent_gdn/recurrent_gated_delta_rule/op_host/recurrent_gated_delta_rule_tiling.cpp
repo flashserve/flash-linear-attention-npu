@@ -116,7 +116,9 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::DoOpTiling()
 
 ge::graphStatus RecurrentGatedDeltaRuleTiling::DoLibApiTiling()
 {
-    tilingKey_ = 0;
+    const auto stateDtype = context_->GetInputDesc(STATE_INDEX)->GetDataType();
+    const uint64_t stateDtypeKey = stateDtype == ge::DT_FLOAT ? RGDR_TPL_FP32 : RGDR_TPL_BF16;
+    tilingKey_ = GET_TPL_TILING_KEY(stateDtypeKey);
     return ge::GRAPH_SUCCESS;
 };
 
