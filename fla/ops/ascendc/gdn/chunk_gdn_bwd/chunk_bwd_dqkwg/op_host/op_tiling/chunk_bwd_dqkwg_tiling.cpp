@@ -253,6 +253,17 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     size_t wsDgLastOffset = offset;
     offset += dgLastSize;
 
+    // torch materializes each value-head contribution in DataType, then reduces
+    // the GVA group in FP32 before one final cast.  Keep a full FP32 accumulator
+    // only for GVA shapes; ordinary HV == HK cases retain the original workspace.
+    const size_t gvaAccumSize = (HV != HK)
+        ? align32(static_cast<size_t>(B) * HK * T * K * FP32_SIZE)
+        : 0;
+    size_t wsDqAccumOffset = offset;
+    offset += gvaAccumSize;
+    size_t wsDkAccumOffset = offset;
+    offset += gvaAccumSize;
+
     size_t wsMm6Offset = wsDwOffset;
     size_t wsMm7Offset = wsMm5Offset;
     size_t totalUserWorkspace = offset;
@@ -289,6 +300,8 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     tilingData.set_wsMm6Offset(wsMm6Offset);
     tilingData.set_wsMm7Offset(wsMm7Offset);
     tilingData.set_wsMul1Offset(wsMul1Offset);
+    tilingData.set_wsDqAccumOffset(wsDqAccumOffset);
+    tilingData.set_wsDkAccumOffset(wsDkAccumOffset);
 
     // 检查是否有 cu_seqlens 输入来判断 IS_VARLEN
     tilingData.set_isVarLen(isVarLen);

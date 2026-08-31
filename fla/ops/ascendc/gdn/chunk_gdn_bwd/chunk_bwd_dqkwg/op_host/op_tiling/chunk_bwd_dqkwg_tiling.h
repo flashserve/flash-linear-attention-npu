@@ -49,6 +49,8 @@ BEGIN_TILING_DATA_DEF(ChunkBwdDqkwgTilingData)
     TILING_DATA_FIELD_DEF(uint64_t, wsMm6Offset);        // PartC: mm6 / GVA D: dk_inner
     TILING_DATA_FIELD_DEF(uint64_t, wsMm7Offset);        // PartD: mm7 复用已释放的 wsMm5
     TILING_DATA_FIELD_DEF(uint64_t, wsMul1Offset);       // independent short BT x BT ring for mul1
+    TILING_DATA_FIELD_DEF(uint64_t, wsDqAccumOffset);    // A5 GVA: FP32 dq reduction across value heads
+    TILING_DATA_FIELD_DEF(uint64_t, wsDkAccumOffset);    // A5 GVA: FP32 dk reduction across value heads
 
     // 其他偏移
     TILING_DATA_FIELD_DEF(uint64_t, totalWorkspaceSize); // 总 workspace 大小
