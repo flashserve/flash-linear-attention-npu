@@ -131,10 +131,21 @@ def _external_build_args():
     if not isinstance(args, list) or not all(isinstance(arg, str) and arg for arg in args):
         raise RuntimeError("FLA_NPU_BUILD_ARGS_JSON must contain a JSON string array")
 
-    reserved = ("--ops", "--soc", "--vendor_name", "--pkg")
-    if any(arg.startswith(reserved) for arg in args):
+    safe_patterns = (
+        r"-j[1-9][0-9]*",
+        r"-O[0-3]",
+        r"--build-type=(?:Release|Debug|RelWithDebInfo|MinSizeRel)",
+        r"--bisheng_flags=[A-Za-z0-9_.,=:+/-]+",
+        r"--oom",
+    )
+    unsafe = [
+        arg for arg in args if not any(re.fullmatch(pattern, arg) for pattern in safe_patterns)
+    ]
+    if unsafe:
         raise RuntimeError(
-            "FLA_NPU_BUILD_ARGS_JSON cannot override --ops, --soc, --vendor_name, or --pkg"
+            "FLA_NPU_BUILD_ARGS_JSON only accepts non-scope build flags: "
+            "-jN, -O0..3, --build-type=Release|Debug|RelWithDebInfo|MinSizeRel, "
+            "--bisheng_flags=<value>, and --oom; rejected: " + repr(unsafe)
         )
     return args
 
