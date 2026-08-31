@@ -543,8 +543,8 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
         AscendC::GlobalTensor<float> initial;
         initial.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.initialState));
-        const uint64_t stateBase = FwdHStateOffset(args_.tiling, unit.sequence.sequence,
-                                                   head.hv, 0, 0);
+        const uint64_t stateBase = FwdHStateOffset<STATE_V_FIRST>(
+            args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
         AscendC::DataCopy(SminusStateSlot(slot), initial[stateBase], FWD_H_K * FWD_H_V);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
     }
@@ -736,7 +736,8 @@ private:
             if (!CompilePolicy::STATE_FP32 && chunk.first && args_.tiling.useInitialState != 0) {
                 AscendC::GlobalTensor<bfloat16_t> initial;
                 initial.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.initialState));
-                const uint64_t stateOffset = FwdHStateOffset(args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
+                const uint64_t stateOffset = FwdHStateOffset<STATE_V_FIRST>(
+                    args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
                 AscendC::DataCopy(StateBf16Slot(slot), initial[stateOffset], FWD_H_K * FWD_H_V);
             }
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
@@ -867,12 +868,14 @@ private:
                 if constexpr (CompilePolicy::STATE_FP32) {
                     AscendC::GlobalTensor<float> finalState;
                     finalState.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.finalState));
-                    const uint64_t offset = FwdHStateOffset(args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
+                    const uint64_t offset = FwdHStateOffset<STATE_V_FIRST>(
+                        args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
                     AscendC::DataCopy(finalState[offset], StateFp32(), FWD_H_K * FWD_H_V);
                 } else {
                     AscendC::GlobalTensor<bfloat16_t> finalState;
                     finalState.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.finalState));
-                    const uint64_t offset = FwdHStateOffset(args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
+                    const uint64_t offset = FwdHStateOffset<STATE_V_FIRST>(
+                        args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
                     AscendC::DataCopy(finalState[offset], StateBf16Slot(slot), FWD_H_K * FWD_H_V);
                 }
             }
@@ -919,8 +922,8 @@ private:
                     if (args_.tiling.useInitialState != 0) {
                         AscendC::GlobalTensor<float> initial;
                         initial.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.initialState));
-                        const uint64_t initialOffset = FwdHStateOffset(args_.tiling, unit.sequence.sequence,
-                                                                      head.hv, 0, 0);
+                        const uint64_t initialOffset = FwdHStateOffset<STATE_V_FIRST>(
+                            args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
                         AscendC::DataCopy(StateFp32(), initial[initialOffset], FWD_H_K * FWD_H_V);
                     }
                 } else if constexpr (!RESIDENT_FP32_STATE) {

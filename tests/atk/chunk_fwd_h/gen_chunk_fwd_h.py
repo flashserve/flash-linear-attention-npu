@@ -22,6 +22,11 @@ except ModuleNotFoundError as exc:
 OP_NAME = "chunk_fwd_h"
 SEED_BASE = 20260831
 STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key", "mem": 1.1}
+TEMPLATE_GATE_DTYPES = ("bf16", "fp32")
+TEMPLATE_GATE_MODES = ("g", "gk")
+TEMPLATE_EXP2_VALUES = (False, True)
+TEMPLATE_STATE_DTYPES = ("bf16", "fp32")
+TEMPLATE_STATE_LAYOUTS = (False, True)
 
 
 def _positive(case_key: str, **updates) -> dict:
@@ -65,6 +70,83 @@ def _negative(mutation: str, expected_message: str) -> dict:
         expected_exception="RuntimeError",
         expected_message=expected_message,
     )
+
+
+def _template_signature(spec: dict) -> tuple:
+    """Return the symbolic top-level kernel template arguments for a case."""
+    state_dtype = str(spec.get("state_dtype", "none"))
+    return (
+        str(spec["gate_dtype"]),
+        int(spec["V"]),
+        str(spec["mode"]) == "gk",
+        bool(spec["use_exp2"]),
+        state_dtype != "bf16",
+        bool(spec["state_v_first"]),
+    )
+
+
+EXPECTED_TEMPLATE_SIGNATURES = frozenset(
+    (
+        gate_dtype,
+        128,
+        mode == "gk",
+        use_exp2,
+        state_dtype == "fp32",
+        state_v_first,
+    )
+    for gate_dtype in TEMPLATE_GATE_DTYPES
+    for mode in TEMPLATE_GATE_MODES
+    for use_exp2 in TEMPLATE_EXP2_VALUES
+    for state_dtype in TEMPLATE_STATE_DTYPES
+    for state_v_first in TEMPLATE_STATE_LAYOUTS
+)
+
+
+def _template_matrix_specs(prefix: str, tags: str, **updates) -> list[dict]:
+    specs = []
+    for gate_dtype in TEMPLATE_GATE_DTYPES:
+        for mode in TEMPLATE_GATE_MODES:
+            for use_exp2 in TEMPLATE_EXP2_VALUES:
+                for state_dtype in TEMPLATE_STATE_DTYPES:
+                    for state_v_first in TEMPLATE_STATE_LAYOUTS:
+                        values = dict(updates)
+                        values.update(
+                            mode=mode,
+                            gate_dtype=gate_dtype,
+                            state_dtype=state_dtype,
+                            output_final_state=True,
+                            use_exp2=use_exp2,
+                            state_v_first=state_v_first,
+                        )
+                        specs.append(
+                            _positive(
+                                (
+                                    f"{prefix}_{gate_dtype}_{mode}_"
+                                    f"{'exp2' if use_exp2 else 'exp'}_{state_dtype}_"
+                                    f"{'vk' if state_v_first else 'kv'}"
+                                ),
+                                tags=tags,
+                                **values,
+                            )
+                        )
+    return specs
+
+
+def _assert_complete_template_matrix(name: str, specs: list[dict]) -> None:
+    signatures = [_template_signature(spec) for spec in specs]
+    actual = frozenset(signatures)
+    if len(specs) != len(EXPECTED_TEMPLATE_SIGNATURES):
+        raise AssertionError(
+            f"{name}: expected {len(EXPECTED_TEMPLATE_SIGNATURES)} cases, got {len(specs)}"
+        )
+    if len(actual) != len(signatures):
+        raise AssertionError(f"{name}: duplicate top-level template signatures")
+    if actual != EXPECTED_TEMPLATE_SIGNATURES:
+        missing = sorted(EXPECTED_TEMPLATE_SIGNATURES - actual)
+        unexpected = sorted(actual - EXPECTED_TEMPLATE_SIGNATURES)
+        raise AssertionError(
+            f"{name}: template signature mismatch; missing={missing}, unexpected={unexpected}"
+        )
 
 
 POSITIVE_SPECS = [
@@ -239,22 +321,12 @@ POSITIVE_SPECS = [
 ]
 
 
-for mode in ("g", "gk"):
-    for state_dtype in ("bf16", "fp32"):
-        for use_exp2 in (False, True):
-            POSITIVE_SPECS.append(
-                _positive(
-                    f"matrix_{mode}_{state_dtype}_{'exp2' if use_exp2 else 'exp'}",
-                    tags="accuracy,gate_state_exponent_matrix",
-                    mode=mode,
-                    T=129,
-                    gate_dtype="fp32",
-                    state_dtype=state_dtype,
-                    output_final_state=True,
-                    use_exp2=use_exp2,
-                    state_v_first=True,
-                )
-            )
+ACCURACY_TEMPLATE_SPECS = _template_matrix_specs(
+    "matrix",
+    "accuracy,template_key_matrix,boundary,tail1",
+    T=129,
+)
+POSITIVE_SPECS.extend(ACCURACY_TEMPLATE_SPECS)
 
 
 NEGATIVE_SPECS = [
@@ -397,25 +469,15 @@ PERF_SPECS = [
 ]
 
 
-for state_dtype in ("bf16", "fp32"):
-    for mode in ("g", "gk"):
-        for use_exp2 in (False, True):
-            PERF_SPECS.append(
-                _positive(
-                    f"a5_b1_hk32_hv32_t11264_{mode}_{'exp2' if use_exp2 else 'exp'}_{state_dtype}_initial",
-                    tags="performance,model_target,gate_state_exponent_matrix",
-                    mode=mode,
-                    HK=32,
-                    HV=32,
-                    T=11264,
-                    gate_dtype="fp32",
-                    state_dtype=state_dtype,
-                    output_final_state=True,
-                    use_exp2=use_exp2,
-                    state_v_first=True,
-                    seed=208,
-                )
-            )
+PERF_TEMPLATE_SPECS = _template_matrix_specs(
+    "a5_b1_hk32_hv32_t11264",
+    "performance,model_target,template_key_matrix",
+    HK=32,
+    HV=32,
+    T=11264,
+    seed=208,
+)
+PERF_SPECS.extend(PERF_TEMPLATE_SPECS)
 
 
 PERF_SPECS.extend(
@@ -494,24 +556,117 @@ PERF_SPECS.extend(
 )
 
 
-MSS_CASE_KEYS = (
-    "dense_active1_terminal_vnew_only",
-    "dense_active2_g_ratio3_final",
-    "dense_g_ratio7_final",
-    "dense_active3_cross_sequence",
-    "dense_active4_g_cross_round_key_reuse",
-    "dense_active4_gk_distinct_keys",
-    "g_fp32_resident_lookahead_tail63",
-    "g_fp32_initial_terminal_tail1_no_final",
-    "gk_tail1_fp32_state",
-    "g_varlen_explicit_indices",
-    "g_dense_total64_head_partition_cross_sequence",
-    "g_varlen_total64_head_partition_cross_sequence",
+MSS_TEMPLATE_SPECS = _template_matrix_specs(
+    "mss_matrix",
+    "determinism,sanitizer,template_key_matrix,boundary,tail1",
+    T=129,
 )
+
+# Keep one case per template signature while distributing the synchronization,
+# partitioning and boundary shapes that are most useful to sanitizer runs.
+MSS_TEMPLATE_OVERRIDES = {
+    ("bf16", 128, False, False, False, False): {
+        "case_key": "mss_dense_total64_cross_sequence",
+        "B": 2,
+        "HK": 16,
+        "HV": 32,
+        "T": 1,
+        "extra_tags": "dense,cross_sequence,head_partition",
+    },
+    ("bf16", 128, False, False, False, True): {
+        "case_key": "mss_varlen_total64_cross_sequence",
+        "HK": 16,
+        "HV": 32,
+        "T": 2,
+        "seqlens": "1,1",
+        "explicit_chunk_indices": True,
+        "extra_tags": "varlen,cross_sequence,head_partition,explicit_indices",
+    },
+    ("bf16", 128, False, False, True, True): {
+        "case_key": "mss_terminal_vnew_only_no_cube",
+        "T": 1,
+        "state_dtype": "none",
+        "output_final_state": False,
+        "extra_tags": "no_cube",
+    },
+    ("bf16", 128, False, True, False, False): {
+        "case_key": "mss_long_credit_reuse",
+        "T": 1025,
+        "extra_tags": "long_credit_reuse",
+    },
+    ("bf16", 128, False, True, True, True): {
+        "case_key": "mss_fp32_initial_terminal_no_final",
+        "T": 257,
+        "output_final_state": False,
+        "extra_tags": "a5_resident,a5_lookahead,tail1",
+    },
+    ("fp32", 128, False, False, False, False): {
+        "case_key": "mss_active2_g_ratio3",
+        "HK": 11,
+        "HV": 33,
+        "T": 1,
+        "extra_tags": "head_partition",
+    },
+    ("fp32", 128, False, False, False, True): {
+        "case_key": "mss_active3_cross_sequence",
+        "B": 5,
+        "HK": 1,
+        "HV": 13,
+        "T": 1,
+        "extra_tags": "head_partition,cross_sequence",
+    },
+    ("fp32", 128, False, False, True, False): {
+        "case_key": "mss_fp32_resident_lookahead_tail63",
+        "T": 319,
+        "remove_tags": "tail1",
+        "extra_tags": "a5_resident,a5_lookahead,tail63",
+    },
+    ("fp32", 128, False, False, True, True): {
+        "case_key": "mss_varlen_explicit_indices",
+        "HK": 1,
+        "HV": 3,
+        "T": 259,
+        "seqlens": "1,64,65,129",
+        "explicit_chunk_indices": True,
+        "extra_tags": "varlen,explicit_indices",
+    },
+    ("fp32", 128, False, True, True, True): {
+        "case_key": "mss_active4_g_cross_round_key_reuse",
+        "HK": 16,
+        "HV": 160,
+        "T": 1,
+        "extra_tags": "head_partition,key_reuse",
+    },
+    ("fp32", 128, True, False, False, False): {
+        "case_key": "mss_active4_gk_distinct_keys",
+        "HK": 160,
+        "HV": 160,
+        "T": 1,
+        "extra_tags": "head_partition,gk",
+    },
+    ("fp32", 128, True, True, True, True): {
+        "case_key": "mss_gk_tail1_fp32_state",
+        "extra_tags": "gk,tail1",
+    },
+}
+
+for spec in MSS_TEMPLATE_SPECS:
+    override = MSS_TEMPLATE_OVERRIDES.get(_template_signature(spec))
+    if override is None:
+        continue
+    metadata_keys = {"extra_tags", "remove_tags"}
+    spec.update({key: value for key, value in override.items() if key not in metadata_keys})
+    removed_tags = set(override.get("remove_tags", "").split(",")) - {""}
+    base_tags = [tag for tag in spec["tags"].split(",") if tag not in removed_tags]
+    extra_tags = [tag for tag in override.get("extra_tags", "").split(",") if tag]
+    spec["tags"] = ",".join(base_tags + extra_tags)
 
 
 def build_accuracy_specs() -> list[dict]:
+    _assert_complete_template_matrix("accuracy", ACCURACY_TEMPLATE_SPECS)
     specs = deepcopy(POSITIVE_SPECS)
+    if len(specs) != 49:
+        raise AssertionError(f"accuracy: expected 49 cases, got {len(specs)}")
     for case_id, spec in enumerate(specs):
         spec["case_id"] = case_id
         spec.setdefault("seed", SEED_BASE + case_id)
@@ -527,7 +682,10 @@ def build_negative_specs() -> list[dict]:
 
 
 def build_perf_specs() -> list[dict]:
+    _assert_complete_template_matrix("performance", PERF_TEMPLATE_SPECS)
     specs = deepcopy(PERF_SPECS)
+    if len(specs) != 44:
+        raise AssertionError(f"performance: expected 44 cases, got {len(specs)}")
     for case_id, spec in enumerate(specs):
         spec["case_id"] = case_id
         spec.setdefault("seed", SEED_BASE + 1000 + case_id)
@@ -535,11 +693,10 @@ def build_perf_specs() -> list[dict]:
 
 
 def build_mss_specs() -> list[dict]:
-    by_key = {spec["case_key"]: spec for spec in POSITIVE_SPECS}
-    specs = [deepcopy(by_key[key]) for key in MSS_CASE_KEYS]
+    _assert_complete_template_matrix("mss", MSS_TEMPLATE_SPECS)
+    specs = deepcopy(MSS_TEMPLATE_SPECS)
     for case_id, spec in enumerate(specs):
         spec["case_id"] = case_id
-        spec["tags"] = f"{spec['tags']},determinism,sanitizer"
         spec.setdefault("seed", SEED_BASE + 2000 + case_id)
     return specs
 

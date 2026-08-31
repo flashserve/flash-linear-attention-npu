@@ -13,9 +13,6 @@
 
 namespace GDN {
 
-constexpr int64_t FWD_H_DTYPE_BF16 = 1;
-constexpr int64_t FWD_H_DTYPE_FP32 = 2;
-
 enum class FwdHGateMode : uint8_t {
     SCALAR_G = 0,
     KEY_GK = 1,
@@ -156,14 +153,7 @@ struct FwdHRuntimeTiling {
     uint64_t hWorkspaceOffset = 0;
     bool useInitialState = false;
     bool storeFinalState = false;
-    uint8_t dataType = 0;
-    uint8_t gDataType = 0;
-    uint8_t stateDataType = 0;
     bool isVariedLen = false;
-    bool useG = false;
-    bool useGk = false;
-    bool useExp2 = false;
-    bool stateVFirst = false;
 };
 
 struct FwdHKernelArgs {

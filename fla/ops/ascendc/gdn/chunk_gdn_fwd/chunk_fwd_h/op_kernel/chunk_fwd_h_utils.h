@@ -255,12 +255,15 @@ __aicore__ inline uint64_t FwdHHOffset(const FwdHRuntimeTiling &tiling,
                 chunksPerSequence + globalChunk - sequence.chunkPrefix) * FWD_H_K * FWD_H_V;
 }
 
+template <bool STATE_V_FIRST>
 __aicore__ inline uint64_t FwdHStateOffset(const FwdHRuntimeTiling &tiling,
                                            uint32_t sequence, uint32_t hv, uint32_t k, uint32_t v)
 {
     const uint64_t base = (static_cast<uint64_t>(sequence) * tiling.vNumHead + hv) * FWD_H_K * FWD_H_V;
-    return base + (tiling.stateVFirst ? static_cast<uint64_t>(v) * FWD_H_K + k
-                                      : static_cast<uint64_t>(k) * FWD_H_V + v);
+    if constexpr (STATE_V_FIRST) {
+        return base + static_cast<uint64_t>(v) * FWD_H_K + k;
+    }
+    return base + static_cast<uint64_t>(k) * FWD_H_V + v;
 }
 
 __aicore__ inline uint64_t FwdHCoreSlotOffset(uint32_t core, uint32_t slot, uint32_t slotElements)

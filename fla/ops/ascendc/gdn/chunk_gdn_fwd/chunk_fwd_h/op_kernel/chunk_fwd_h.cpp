@@ -20,6 +20,29 @@
 
 namespace GDN {
 
+template <int D_T_G>
+struct FwdHGateDTypeTraits;
+
+template <>
+struct FwdHGateDTypeTraits<CHUNK_FWD_H_TPL_BF16> {
+    using type = bfloat16_t;
+};
+
+template <>
+struct FwdHGateDTypeTraits<CHUNK_FWD_H_TPL_FP32> {
+    using type = float;
+};
+
+template <int D_T_G, int V_DIM, bool USE_GK, bool USE_EXP2, bool STATE_FP32,
+          bool STATE_V_FIRST>
+struct FwdHKernelTraits {
+    static_assert(V_DIM == static_cast<int>(FWD_H_V), "ChunkFwdH only supports V=128.");
+    using GateT = typename FwdHGateDTypeTraits<D_T_G>::type;
+    using CompilePolicy = FwdHCompilePolicy<
+        USE_GK ? FwdHGateMode::KEY_GK : FwdHGateMode::SCALAR_G, USE_EXP2, STATE_FP32>;
+    static constexpr bool STATE_V_FIRST_VALUE = STATE_V_FIRST;
+};
+
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 {
@@ -51,61 +74,11 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
     }
 }
 
-template <typename GateT, FwdHGateMode GATE_MODE, bool STATE_FP32>
-__aicore__ inline void DispatchExpAndLayout(const FwdHKernelArgs &args)
-{
-    if (args.tiling.useExp2) {
-        using Policy = FwdHCompilePolicy<GATE_MODE, true, STATE_FP32>;
-        if (args.tiling.stateVFirst) {
-            RunFwdHTyped<GateT, Policy, true>(args);
-        } else {
-            RunFwdHTyped<GateT, Policy, false>(args);
-        }
-    } else {
-        using Policy = FwdHCompilePolicy<GATE_MODE, false, STATE_FP32>;
-        if (args.tiling.stateVFirst) {
-            RunFwdHTyped<GateT, Policy, true>(args);
-        } else {
-            RunFwdHTyped<GateT, Policy, false>(args);
-        }
-    }
-}
-
-template <typename GateT, FwdHGateMode GATE_MODE>
-__aicore__ inline void DispatchState(const FwdHKernelArgs &args)
-{
-    if (args.tiling.stateDataType == FWD_H_DTYPE_FP32) {
-        DispatchExpAndLayout<GateT, GATE_MODE, true>(args);
-    } else {
-        DispatchExpAndLayout<GateT, GATE_MODE, false>(args);
-    }
-}
-
-template <typename GateT>
-__aicore__ inline void DispatchGateMode(const FwdHKernelArgs &args)
-{
-    if (args.tiling.useGk) {
-        DispatchState<GateT, FwdHGateMode::KEY_GK>(args);
-    } else {
-        DispatchState<GateT, FwdHGateMode::SCALAR_G>(args);
-    }
-}
-
-template <int V_DIM>
-__aicore__ inline void DispatchFwdH(const FwdHKernelArgs &args)
-{
-    static_assert(V_DIM == static_cast<int>(FWD_H_V), "ChunkFwdH only supports V=128.");
-    if (args.tiling.gDataType == FWD_H_DTYPE_FP32) {
-        DispatchGateMode<float>(args);
-    } else {
-        DispatchGateMode<bfloat16_t>(args);
-    }
-}
-
 } // namespace GDN
 
 #ifndef TORCH_MODE
-template <int V_DIM>
+template <int D_T_G, int V_DIM, bool USE_GK, bool USE_EXP2, bool STATE_FP32,
+          bool STATE_V_FIRST>
 __global__ __aicore__ void chunk_fwd_h(
     GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR initial_state,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
@@ -136,20 +109,16 @@ __global__ __aicore__ void chunk_fwd_h(
     args.tiling.chunkSize = static_cast<uint32_t>(tilingData->chunkSize);
     args.tiling.useInitialState = tilingData->useInitialState;
     args.tiling.storeFinalState = tilingData->storeFinalState;
-    args.tiling.dataType = static_cast<uint8_t>(tilingData->dataType);
-    args.tiling.gDataType = static_cast<uint8_t>(tilingData->gDataType);
-    args.tiling.stateDataType = static_cast<uint8_t>(tilingData->stateDataType);
     args.tiling.isVariedLen = tilingData->isVariedLen;
     args.tiling.shapeBatch = static_cast<uint32_t>(tilingData->shapeBatch);
     args.tiling.tokenBatch = static_cast<uint32_t>(tilingData->tokenBatch);
-    args.tiling.useG = tilingData->useG;
-    args.tiling.useGk = tilingData->useGk;
-    args.tiling.useExp2 = tilingData->useExp2;
-    args.tiling.stateVFirst = tilingData->stateVFirst;
     args.tiling.vWorkspaceOffset = static_cast<uint64_t>(tilingData->vWorkspaceOffset);
     args.tiling.vUpdateWorkspaceOffset = static_cast<uint64_t>(tilingData->vUpdateWorkspaceOffset);
     args.tiling.kDecayWorkspaceOffset = static_cast<uint64_t>(tilingData->kDecayWorkspaceOffset);
     args.tiling.hWorkspaceOffset = static_cast<uint64_t>(tilingData->hWorkspaceOffset);
-    GDN::DispatchFwdH<V_DIM>(args);
+    using Traits = GDN::FwdHKernelTraits<
+        D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST>;
+    GDN::RunFwdHTyped<typename Traits::GateT, typename Traits::CompilePolicy,
+                      Traits::STATE_V_FIRST_VALUE>(args);
 }
 #endif

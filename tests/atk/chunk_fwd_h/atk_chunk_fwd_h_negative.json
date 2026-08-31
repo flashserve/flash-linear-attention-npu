@@ -1,7 +1,7 @@
 [
   {
     "id": 0,
-    "default_seed": 20260856,
+    "default_seed": 20260880,
     "name": "chunk_fwd_h_0000_negative_both_gate_inputs",
     "aclnn_name": null,
     "version": "v2.1",
@@ -50,7 +50,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":0,\"case_key\":\"negative_both_gate_inputs\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"exactly one of g and gk must be provided\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"both_gate_inputs\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260856,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":0,\"case_key\":\"negative_both_gate_inputs\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"exactly one of g and gk must be provided\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"both_gate_inputs\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260880,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -266,7 +266,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260856,
+        "range_values": 20260880,
         "backward": false
       }
     ],
@@ -274,7 +274,7 @@
   },
   {
     "id": 1,
-    "default_seed": 20260857,
+    "default_seed": 20260881,
     "name": "chunk_fwd_h_0001_negative_missing_gate_inputs",
     "aclnn_name": null,
     "version": "v2.1",
@@ -323,7 +323,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":1,\"case_key\":\"negative_missing_gate_inputs\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"exactly one of g and gk must be provided\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"missing_gate_inputs\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260857,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":1,\"case_key\":\"negative_missing_gate_inputs\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"exactly one of g and gk must be provided\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"missing_gate_inputs\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260881,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -539,7 +539,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260857,
+        "range_values": 20260881,
         "backward": false
       }
     ],
@@ -547,7 +547,7 @@
   },
   {
     "id": 2,
-    "default_seed": 20260858,
+    "default_seed": 20260882,
     "name": "chunk_fwd_h_0002_negative_unsupported_chunk_size",
     "aclnn_name": null,
     "version": "v2.1",
@@ -596,7 +596,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":2,\"case_key\":\"negative_unsupported_chunk_size\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"chunk_size must be 64\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"unsupported_chunk_size\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260858,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":2,\"case_key\":\"negative_unsupported_chunk_size\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"chunk_size must be 64\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"unsupported_chunk_size\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260882,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -812,7 +812,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260858,
+        "range_values": 20260882,
         "backward": false
       }
     ],
@@ -820,7 +820,7 @@
   },
   {
     "id": 3,
-    "default_seed": 20260859,
+    "default_seed": 20260883,
     "name": "chunk_fwd_h_0003_negative_save_new_value_false",
     "aclnn_name": null,
     "version": "v2.1",
@@ -869,7 +869,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":3,\"case_key\":\"negative_save_new_value_false\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"save_new_value must be True\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"save_new_value_false\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260859,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":3,\"case_key\":\"negative_save_new_value_false\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"save_new_value must be True\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"save_new_value_false\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260883,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -1085,7 +1085,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260859,
+        "range_values": 20260883,
         "backward": false
       }
     ],
@@ -1093,7 +1093,7 @@
   },
   {
     "id": 4,
-    "default_seed": 20260860,
+    "default_seed": 20260884,
     "name": "chunk_fwd_h_0004_negative_invalid_input_rank",
     "aclnn_name": null,
     "version": "v2.1",
@@ -1142,7 +1142,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":4,\"case_key\":\"negative_invalid_input_rank\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"k, w and u must be rank-4 BNSD tensors\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_input_rank\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260860,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":4,\"case_key\":\"negative_invalid_input_rank\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"k, w and u must be rank-4 BNSD tensors\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_input_rank\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260884,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -1358,7 +1358,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260860,
+        "range_values": 20260884,
         "backward": false
       }
     ],
@@ -1366,7 +1366,7 @@
   },
   {
     "id": 5,
-    "default_seed": 20260861,
+    "default_seed": 20260885,
     "name": "chunk_fwd_h_0005_negative_non_positive_dimension",
     "aclnn_name": null,
     "version": "v2.1",
@@ -1415,7 +1415,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":5,\"case_key\":\"negative_non_positive_dimension\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"B, HK, HV and T must all be positive\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"non_positive_dimension\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260861,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":5,\"case_key\":\"negative_non_positive_dimension\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"B, HK, HV and T must all be positive\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"non_positive_dimension\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260885,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -1631,7 +1631,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260861,
+        "range_values": 20260885,
         "backward": false
       }
     ],
@@ -1639,7 +1639,7 @@
   },
   {
     "id": 6,
-    "default_seed": 20260862,
+    "default_seed": 20260886,
     "name": "chunk_fwd_h_0006_negative_unsupported_input_dtype",
     "aclnn_name": null,
     "version": "v2.1",
@@ -1688,7 +1688,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":6,\"case_key\":\"negative_unsupported_input_dtype\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"k, w and u must all use bfloat16\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"unsupported_input_dtype\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260862,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":6,\"case_key\":\"negative_unsupported_input_dtype\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"k, w and u must all use bfloat16\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"unsupported_input_dtype\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260886,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -1904,7 +1904,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260862,
+        "range_values": 20260886,
         "backward": false
       }
     ],
@@ -1912,7 +1912,7 @@
   },
   {
     "id": 7,
-    "default_seed": 20260863,
+    "default_seed": 20260887,
     "name": "chunk_fwd_h_0007_negative_mismatched_input_dtype",
     "aclnn_name": null,
     "version": "v2.1",
@@ -1961,7 +1961,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":7,\"case_key\":\"negative_mismatched_input_dtype\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"k, w and u must all use bfloat16\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"mismatched_input_dtype\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260863,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":7,\"case_key\":\"negative_mismatched_input_dtype\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"k, w and u must all use bfloat16\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"mismatched_input_dtype\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260887,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -2177,7 +2177,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260863,
+        "range_values": 20260887,
         "backward": false
       }
     ],
@@ -2185,7 +2185,7 @@
   },
   {
     "id": 8,
-    "default_seed": 20260864,
+    "default_seed": 20260888,
     "name": "chunk_fwd_h_0008_negative_unsupported_kv_dimension",
     "aclnn_name": null,
     "version": "v2.1",
@@ -2234,7 +2234,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":8,\"case_key\":\"negative_unsupported_kv_dimension\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"K and V must both be 128\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"unsupported_kv_dimension\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260864,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":8,\"case_key\":\"negative_unsupported_kv_dimension\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"K and V must both be 128\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"unsupported_kv_dimension\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260888,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -2450,7 +2450,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260864,
+        "range_values": 20260888,
         "backward": false
       }
     ],
@@ -2458,7 +2458,7 @@
   },
   {
     "id": 9,
-    "default_seed": 20260865,
+    "default_seed": 20260889,
     "name": "chunk_fwd_h_0009_negative_mismatched_w_u_shape",
     "aclnn_name": null,
     "version": "v2.1",
@@ -2507,7 +2507,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":9,\"case_key\":\"negative_mismatched_w_u_shape\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"w/u must be [B, HV, T, K/V]\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"mismatched_w_u_shape\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260865,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":9,\"case_key\":\"negative_mismatched_w_u_shape\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"w/u must be [B, HV, T, K/V]\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"mismatched_w_u_shape\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260889,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -2723,7 +2723,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260865,
+        "range_values": 20260889,
         "backward": false
       }
     ],
@@ -2731,7 +2731,7 @@
   },
   {
     "id": 10,
-    "default_seed": 20260866,
+    "default_seed": 20260890,
     "name": "chunk_fwd_h_0010_negative_invalid_g_head_ratio",
     "aclnn_name": null,
     "version": "v2.1",
@@ -2780,7 +2780,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":10,\"case_key\":\"negative_invalid_g_head_ratio\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"g-only mode requires HV >= HK and HV % HK == 0\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_g_head_ratio\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260866,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":10,\"case_key\":\"negative_invalid_g_head_ratio\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"g-only mode requires HV >= HK and HV % HK == 0\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_g_head_ratio\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260890,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -2996,7 +2996,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260866,
+        "range_values": 20260890,
         "backward": false
       }
     ],
@@ -3004,7 +3004,7 @@
   },
   {
     "id": 11,
-    "default_seed": 20260867,
+    "default_seed": 20260891,
     "name": "chunk_fwd_h_0011_negative_invalid_g_shape",
     "aclnn_name": null,
     "version": "v2.1",
@@ -3053,7 +3053,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":11,\"case_key\":\"negative_invalid_g_shape\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"g must be [B, HV, T]\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_g_shape\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260867,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":11,\"case_key\":\"negative_invalid_g_shape\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"g must be [B, HV, T]\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_g_shape\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260891,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -3269,7 +3269,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260867,
+        "range_values": 20260891,
         "backward": false
       }
     ],
@@ -3277,7 +3277,7 @@
   },
   {
     "id": 12,
-    "default_seed": 20260868,
+    "default_seed": 20260892,
     "name": "chunk_fwd_h_0012_negative_invalid_gk_head_count",
     "aclnn_name": null,
     "version": "v2.1",
@@ -3326,7 +3326,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":12,\"case_key\":\"negative_invalid_gk_head_count\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"gk-only mode requires prepared kg to have HV heads\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_gk_head_count\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260868,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":12,\"case_key\":\"negative_invalid_gk_head_count\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"gk-only mode requires prepared kg to have HV heads\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_gk_head_count\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260892,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -3542,7 +3542,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260868,
+        "range_values": 20260892,
         "backward": false
       }
     ],
@@ -3550,7 +3550,7 @@
   },
   {
     "id": 13,
-    "default_seed": 20260869,
+    "default_seed": 20260893,
     "name": "chunk_fwd_h_0013_negative_invalid_gk_shape",
     "aclnn_name": null,
     "version": "v2.1",
@@ -3599,7 +3599,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":13,\"case_key\":\"negative_invalid_gk_shape\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"gk must be [B, HV, T, K]\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_gk_shape\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260869,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":13,\"case_key\":\"negative_invalid_gk_shape\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"gk must be [B, HV, T, K]\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_gk_shape\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260893,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -3815,7 +3815,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260869,
+        "range_values": 20260893,
         "backward": false
       }
     ],
@@ -3823,7 +3823,7 @@
   },
   {
     "id": 14,
-    "default_seed": 20260870,
+    "default_seed": 20260894,
     "name": "chunk_fwd_h_0014_negative_unsupported_gate_dtype",
     "aclnn_name": null,
     "version": "v2.1",
@@ -3872,7 +3872,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":14,\"case_key\":\"negative_unsupported_gate_dtype\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"g/gk must use bfloat16 or float32\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"unsupported_gate_dtype\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260870,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":14,\"case_key\":\"negative_unsupported_gate_dtype\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"g/gk must use bfloat16 or float32\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"unsupported_gate_dtype\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260894,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -4088,7 +4088,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260870,
+        "range_values": 20260894,
         "backward": false
       }
     ],
@@ -4096,7 +4096,7 @@
   },
   {
     "id": 15,
-    "default_seed": 20260871,
+    "default_seed": 20260895,
     "name": "chunk_fwd_h_0015_negative_unsupported_state_dtype",
     "aclnn_name": null,
     "version": "v2.1",
@@ -4145,7 +4145,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":15,\"case_key\":\"negative_unsupported_state_dtype\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"initial_state must use bfloat16 or float32\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"unsupported_state_dtype\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260871,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":15,\"case_key\":\"negative_unsupported_state_dtype\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"initial_state must use bfloat16 or float32\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"unsupported_state_dtype\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260895,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -4361,7 +4361,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260871,
+        "range_values": 20260895,
         "backward": false
       }
     ],
@@ -4369,7 +4369,7 @@
   },
   {
     "id": 16,
-    "default_seed": 20260872,
+    "default_seed": 20260896,
     "name": "chunk_fwd_h_0016_negative_invalid_state_shape",
     "aclnn_name": null,
     "version": "v2.1",
@@ -4418,7 +4418,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":16,\"case_key\":\"negative_invalid_state_shape\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"initial_state shape does not match state_v_first\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_state_shape\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260872,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":16,\"case_key\":\"negative_invalid_state_shape\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"initial_state shape does not match state_v_first\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_state_shape\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260896,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -4634,7 +4634,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260872,
+        "range_values": 20260896,
         "backward": false
       }
     ],
@@ -4642,7 +4642,7 @@
   },
   {
     "id": 17,
-    "default_seed": 20260873,
+    "default_seed": 20260897,
     "name": "chunk_fwd_h_0017_negative_varlen_batch_not_one",
     "aclnn_name": null,
     "version": "v2.1",
@@ -4691,7 +4691,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":17,\"case_key\":\"negative_varlen_batch_not_one\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"variable-length BNSD input requires B=1\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"varlen_batch_not_one\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260873,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":17,\"case_key\":\"negative_varlen_batch_not_one\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"variable-length BNSD input requires B=1\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"varlen_batch_not_one\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260897,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -4907,7 +4907,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260873,
+        "range_values": 20260897,
         "backward": false
       }
     ],
@@ -4915,7 +4915,7 @@
   },
   {
     "id": 18,
-    "default_seed": 20260874,
+    "default_seed": 20260898,
     "name": "chunk_fwd_h_0018_negative_invalid_cu_size",
     "aclnn_name": null,
     "version": "v2.1",
@@ -4964,7 +4964,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":18,\"case_key\":\"negative_invalid_cu_size\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"cu_seqlens must be strictly increasing, start at 0 and end at T\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_cu_size\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260874,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":18,\"case_key\":\"negative_invalid_cu_size\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"cu_seqlens must be strictly increasing, start at 0 and end at T\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_cu_size\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260898,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -5180,7 +5180,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260874,
+        "range_values": 20260898,
         "backward": false
       }
     ],
@@ -5188,7 +5188,7 @@
   },
   {
     "id": 19,
-    "default_seed": 20260875,
+    "default_seed": 20260899,
     "name": "chunk_fwd_h_0019_negative_invalid_cu_start",
     "aclnn_name": null,
     "version": "v2.1",
@@ -5237,7 +5237,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":19,\"case_key\":\"negative_invalid_cu_start\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"cu_seqlens must be strictly increasing, start at 0 and end at T\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_cu_start\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260875,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":19,\"case_key\":\"negative_invalid_cu_start\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"cu_seqlens must be strictly increasing, start at 0 and end at T\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_cu_start\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260899,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -5453,7 +5453,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260875,
+        "range_values": 20260899,
         "backward": false
       }
     ],
@@ -5461,7 +5461,7 @@
   },
   {
     "id": 20,
-    "default_seed": 20260876,
+    "default_seed": 20260900,
     "name": "chunk_fwd_h_0020_negative_invalid_cu_end",
     "aclnn_name": null,
     "version": "v2.1",
@@ -5510,7 +5510,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":20,\"case_key\":\"negative_invalid_cu_end\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"cu_seqlens must be strictly increasing, start at 0 and end at T\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_cu_end\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260876,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":20,\"case_key\":\"negative_invalid_cu_end\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"cu_seqlens must be strictly increasing, start at 0 and end at T\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_cu_end\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260900,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -5726,7 +5726,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260876,
+        "range_values": 20260900,
         "backward": false
       }
     ],
@@ -5734,7 +5734,7 @@
   },
   {
     "id": 21,
-    "default_seed": 20260877,
+    "default_seed": 20260901,
     "name": "chunk_fwd_h_0021_negative_non_increasing_cu",
     "aclnn_name": null,
     "version": "v2.1",
@@ -5783,7 +5783,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":21,\"case_key\":\"negative_non_increasing_cu\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"cu_seqlens must be strictly increasing, start at 0 and end at T\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"non_increasing_cu\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260877,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":21,\"case_key\":\"negative_non_increasing_cu\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"cu_seqlens must be strictly increasing, start at 0 and end at T\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"non_increasing_cu\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260901,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -5999,7 +5999,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260877,
+        "range_values": 20260901,
         "backward": false
       }
     ],
@@ -6007,7 +6007,7 @@
   },
   {
     "id": 22,
-    "default_seed": 20260878,
+    "default_seed": 20260902,
     "name": "chunk_fwd_h_0022_negative_chunk_indices_without_cu",
     "aclnn_name": null,
     "version": "v2.1",
@@ -6056,7 +6056,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":22,\"case_key\":\"negative_chunk_indices_without_cu\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"chunk_indices must use canonical sequence-major order\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"chunk_indices_without_cu\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260878,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":22,\"case_key\":\"negative_chunk_indices_without_cu\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"chunk_indices must use canonical sequence-major order\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"chunk_indices_without_cu\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260902,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -6272,7 +6272,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260878,
+        "range_values": 20260902,
         "backward": false
       }
     ],
@@ -6280,7 +6280,7 @@
   },
   {
     "id": 23,
-    "default_seed": 20260879,
+    "default_seed": 20260903,
     "name": "chunk_fwd_h_0023_negative_invalid_chunk_indices_length",
     "aclnn_name": null,
     "version": "v2.1",
@@ -6329,7 +6329,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":23,\"case_key\":\"negative_invalid_chunk_indices_length\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"chunk_indices must use canonical sequence-major order\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_chunk_indices_length\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260879,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":23,\"case_key\":\"negative_invalid_chunk_indices_length\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"chunk_indices must use canonical sequence-major order\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_chunk_indices_length\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260903,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -6545,7 +6545,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260879,
+        "range_values": 20260903,
         "backward": false
       }
     ],
@@ -6553,7 +6553,7 @@
   },
   {
     "id": 24,
-    "default_seed": 20260880,
+    "default_seed": 20260904,
     "name": "chunk_fwd_h_0024_negative_invalid_chunk_indices_order",
     "aclnn_name": null,
     "version": "v2.1",
@@ -6602,7 +6602,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":24,\"case_key\":\"negative_invalid_chunk_indices_order\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"chunk_indices must use canonical sequence-major order\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_chunk_indices_order\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260880,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":65,\"V\":128,\"case_id\":24,\"case_key\":\"negative_invalid_chunk_indices_order\",\"chunk_size\":64,\"dtype\":\"bf16\",\"expected_exception\":\"RuntimeError\",\"expected_message\":\"chunk_indices must use canonical sequence-major order\",\"expected_return_code\":0,\"explicit_chunk_indices\":false,\"gate_dtype\":\"bf16\",\"gate_step_scale\":0.02,\"input_scale\":0.05,\"mode\":\"g\",\"mutation\":\"invalid_chunk_indices_order\",\"non_contiguous_u\":false,\"output_final_state\":false,\"route\":\"ascendc\",\"save_new_value\":true,\"seed\":20260904,\"seqlens\":\"\",\"soc\":\"all\",\"state_dtype\":\"none\",\"state_scale\":0.05,\"state_v_first\":false,\"tags\":\"negative,boundary\",\"use_exp2\":false}",
         "backward": false
       },
       {
@@ -6818,7 +6818,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260880,
+        "range_values": 20260904,
         "backward": false
       }
     ],

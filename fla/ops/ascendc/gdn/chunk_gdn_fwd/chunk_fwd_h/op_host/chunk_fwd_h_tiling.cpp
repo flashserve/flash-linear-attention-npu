@@ -21,17 +21,20 @@
 
 namespace optiling {
 
-// Maps a ge::DataType to the {fp16:0, bf16:1, fp32:2} convention shared with the kernel.
-static int64_t ChunkFwdHDtypeToEnum(ge::DataType dtype)
+static bool ChunkFwdHDtypeToTemplateToken(ge::DataType dtype, uint64_t &token)
 {
+    using namespace GDN;
     if (dtype == ge::DT_BF16) {
-        return CHUNK_FWD_H_DTYPE_BF16;
+        token = CHUNK_FWD_H_TPL_BF16;
+        return true;
     }
-    if (dtype == ge::DT_FLOAT16) {
-        return CHUNK_FWD_H_DTYPE_FP16;
+    if (dtype == ge::DT_FLOAT) {
+        token = CHUNK_FWD_H_TPL_FP32;
+        return true;
     }
-    return CHUNK_FWD_H_DTYPE_FP32;
+    return false;
 }
+
 static constexpr size_t INPUT_K_IDX = 0;
 static constexpr size_t INPUT_W_IDX = 1;
 static constexpr size_t INPUT_U_IDX = 2;
@@ -71,11 +74,6 @@ static void ChunkFwdHTilingDataPrint(gert::TilingContext *context, ChunkFwdHTili
     OP_LOGD(nodeName, "=== chunkSize: %ld", tiling.get_chunkSize());
     OP_LOGD(nodeName, "=== useInitialState: %ld", tiling.get_useInitialState());
     OP_LOGD(nodeName, "=== storeFinalState: %ld", tiling.get_storeFinalState());
-    OP_LOGD(nodeName, "=== useG: %d", tiling.get_useG());
-    OP_LOGD(nodeName, "=== useGk: %d", tiling.get_useGk());
-    OP_LOGD(nodeName, "=== useExp2: %d", tiling.get_useExp2());
-    OP_LOGD(nodeName, "=== stateVFirst: %d", tiling.get_stateVFirst());
-    OP_LOGD(nodeName, "=== dataType: %ld", tiling.get_dataType());
     OP_LOGD(nodeName, "=== isVariedLen: %ld", tiling.get_isVariedLen());
     OP_LOGD(nodeName, "=== shapeBatch: %ld", tiling.get_shapeBatch());
     OP_LOGD(nodeName, "=== tokenBatch: %ld", tiling.get_tokenBatch());
@@ -99,6 +97,13 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
                 return ge::GRAPH_FAILED);
     auto gateTensor = useGk ? gkTensor : gTensor;
 
+    uint64_t gateDtypeToken = 0;
+    OP_CHECK_IF(!ChunkFwdHDtypeToTemplateToken(gateTensor->GetDataType(), gateDtypeToken),
+                OP_LOGE(context->GetNodeName(),
+                        "g/gk dtype must be BF16 or FP32, but got dtype=%d.",
+                        static_cast<int>(gateTensor->GetDataType())),
+                return ge::GRAPH_FAILED);
+
     auto attrPtr = context->GetAttrs();
     bool storeFinalState = *(attrPtr->GetAttrPointer<bool>(ATTR_STORE_FINAL_STATE_IDX));
     int64_t chunkSize = *(attrPtr->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_IDX));
@@ -112,6 +117,24 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     int64_t logicalKDim = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_K_DIM_IDX));
     int64_t logicalVDim = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_V_DIM_IDX));
 
+    ge::DataType resolvedStateDataType = ge::DT_FLOAT;
+    if (useInitialState) {
+        resolvedStateDataType = initialStateTensor->GetDataType();
+    } else if (storeFinalState) {
+        auto finalStateDesc = context->GetOutputDesc(OUTPUT_FINAL_STATE_IDX);
+        OP_CHECK_IF(finalStateDesc == nullptr,
+                    OP_LOGE(context->GetNodeName(),
+                            "final_state output descriptor must exist when storeFinalState is true."),
+                    return ge::GRAPH_FAILED);
+        resolvedStateDataType = finalStateDesc->GetDataType();
+    }
+    uint64_t stateDtypeToken = 0;
+    OP_CHECK_IF(!ChunkFwdHDtypeToTemplateToken(resolvedStateDataType, stateDtypeToken),
+                OP_LOGE(context->GetNodeName(),
+                        "Resolved state dtype must be BF16 or FP32, but got dtype=%d.",
+                        static_cast<int>(resolvedStateDataType)),
+                return ge::GRAPH_FAILED);
+
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
 
     ChunkFwdHTilingContext tilingCtx{};
@@ -124,19 +147,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.hasCuSeqlens = cuSeqlensTensor != nullptr;
     tilingCtx.cuSeqlensDim0 =
         cuSeqlensTensor != nullptr ? cuSeqlensTensor->GetStorageShape().GetDim(0) : 0;
-    tilingCtx.dataType = ChunkFwdHDtypeToEnum(context->GetInputTensor(0)->GetDataType());
-    tilingCtx.gDataType = ChunkFwdHDtypeToEnum(gateTensor->GetDataType());
     tilingCtx.useInitialState = useInitialState;
-    tilingCtx.stateDataType = useInitialState
-                                  ? ChunkFwdHDtypeToEnum(initialStateTensor->GetDataType())
-                                  : (storeFinalState
-                                         ? ChunkFwdHDtypeToEnum(
-                                               context->GetOutputDesc(OUTPUT_FINAL_STATE_IDX)->GetDataType())
-                                         : CHUNK_FWD_H_DTYPE_FP32);
-    tilingCtx.useG = useG;
-    tilingCtx.useGk = useGk;
-    tilingCtx.useExp2 = useExp2;
-    tilingCtx.stateVFirst = stateVFirst;
     tilingCtx.storeFinalState = storeFinalState;
     tilingCtx.chunkSize = chunkSize;
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
@@ -179,7 +190,13 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     processor.Process(plainTiling, blockDim, workspaceSize);
 
     using namespace GDN;
-    const uint64_t tilingKey = GET_TPL_TILING_KEY(static_cast<uint64_t>(logicalVDim));
+    const uint64_t tilingKey = GET_TPL_TILING_KEY(
+        gateDtypeToken,
+        static_cast<uint64_t>(logicalVDim),
+        static_cast<uint64_t>(useGk ? 1 : 0),
+        static_cast<uint64_t>(useExp2 ? 1 : 0),
+        static_cast<uint64_t>(stateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 1 : 0),
+        static_cast<uint64_t>(stateVFirst ? 1 : 0));
     context->SetTilingKey(tilingKey);
     OP_LOGD(context->GetNodeName(), "tilingKey: %lu", static_cast<unsigned long>(tilingKey));
 
@@ -196,16 +213,9 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tiling.set_chunkSize(plainTiling.chunkSize);
     tiling.set_useInitialState(plainTiling.useInitialState);
     tiling.set_storeFinalState(plainTiling.storeFinalState);
-    tiling.set_dataType(plainTiling.dataType);
-    tiling.set_stateDataType(plainTiling.stateDataType);
-    tiling.set_gDataType(plainTiling.gDataType);
     tiling.set_isVariedLen(plainTiling.isVariedLen);
     tiling.set_shapeBatch(plainTiling.shapeBatch);
     tiling.set_tokenBatch(plainTiling.tokenBatch);
-    tiling.set_useG(plainTiling.useG);
-    tiling.set_useGk(plainTiling.useGk);
-    tiling.set_useExp2(plainTiling.useExp2);
-    tiling.set_stateVFirst(plainTiling.stateVFirst);
     tiling.set_vWorkspaceOffset(plainTiling.vWorkspaceOffset);
     tiling.set_vUpdateWorkspaceOffset(plainTiling.vUpdateWorkspaceOffset);
     tiling.set_kDecayWorkspaceOffset(plainTiling.kDecayWorkspaceOffset);

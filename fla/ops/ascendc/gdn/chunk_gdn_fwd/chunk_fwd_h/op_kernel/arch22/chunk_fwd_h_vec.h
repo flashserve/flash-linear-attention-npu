@@ -257,8 +257,8 @@ private:
             if (FwdHMode2PairHasHead(unit.headRound.activeHeadCount, pairSlot, aiv_)) {
                 const FwdHHeadBinding &head = unit.headRound.heads[pairSlot * 2U + aiv_];
                 const uint32_t slot = head.localSlot;
-                const uint64_t stateBase = FwdHStateOffset(args_.tiling, unit.sequence.sequence,
-                                                           head.hv, 0, 0);
+                const uint64_t stateBase = FwdHStateOffset<STATE_V_FIRST>(
+                    args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
                 const FwdHChunkSpan first = FwdHBuildChunk(unit.sequence, 0);
                 for (uint32_t row = 0; row < FWD_H_K; row += TILE_ROWS) {
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
@@ -311,8 +311,8 @@ private:
         if (chunk.first && !CompilePolicy::STATE_FP32 && args_.tiling.useInitialState != 0) {
             AscendC::GlobalTensor<bfloat16_t> initial;
             initial.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.initialState));
-            const uint64_t offset = FwdHStateOffset(args_.tiling, unit.sequence.sequence,
-                                                    head.hv, 0, 0);
+            const uint64_t offset = FwdHStateOffset<STATE_V_FIRST>(
+                args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
             AscendC::DataCopy(stateBf16_[slot], initial[offset], FWD_H_K * FWD_H_V);
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
@@ -517,7 +517,8 @@ private:
             uint64_t offset = 0;
             if (chunk.first && args_.tiling.useInitialState != 0) {
                 state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.initialState));
-                offset = FwdHStateOffset(args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
+                offset = FwdHStateOffset<STATE_V_FIRST>(
+                    args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
             } else {
                 state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace));
                 offset = args_.tiling.kDecayWorkspaceOffset / sizeof(float) +
@@ -560,7 +561,8 @@ private:
             }
             if (!(chunk.first && args_.tiling.useInitialState == 0)) {
                 const uint64_t base = chunk.first
-                    ? FwdHStateOffset(args_.tiling, unit.sequence.sequence, head.hv, 0, 0)
+                    ? FwdHStateOffset<STATE_V_FIRST>(
+                          args_.tiling, unit.sequence.sequence, head.hv, 0, 0)
                     : args_.tiling.kDecayWorkspaceOffset / sizeof(float) +
                         FwdHCoreSlotOffset(coreIdx_, head.roundHead, FWD_H_K * FWD_H_V);
                 AscendC::DataCopy(calc_[slot], state[base + row * FWD_H_V], TILE_ELEMENTS);
@@ -621,7 +623,7 @@ private:
                 if (args_.tiling.storeFinalState != 0) {
                     AscendC::GlobalTensor<float> finalState;
                     finalState.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.finalState));
-                    const uint64_t finalOffset = FwdHStateOffset(
+                    const uint64_t finalOffset = FwdHStateOffset<STATE_V_FIRST>(
                         args_.tiling, unit.sequence.sequence, head.hv, 0, 0) + row * FWD_H_V;
                     AscendC::DataCopy(finalState[finalOffset], calc_[slot], TILE_ELEMENTS);
                 }
@@ -669,8 +671,8 @@ private:
         if constexpr (!WRITE_H) {
             if (args_.tiling.storeFinalState != 0) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
-                const uint64_t finalOffset = FwdHStateOffset(args_.tiling, unit.sequence.sequence,
-                                                             head.hv, 0, 0);
+                const uint64_t finalOffset = FwdHStateOffset<STATE_V_FIRST>(
+                    args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
                 if constexpr (!CompilePolicy::STATE_FP32) {
                     AscendC::GlobalTensor<bfloat16_t> finalState;
                     finalState.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.finalState));

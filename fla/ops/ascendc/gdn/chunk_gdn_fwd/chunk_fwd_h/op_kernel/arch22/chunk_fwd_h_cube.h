@@ -296,8 +296,8 @@ private:
 
         AscendC::GlobalTensor<bfloat16_t> gmH;
         if (chunk.first && args_.tiling.useInitialState != 0 && !CompilePolicy::STATE_FP32) {
-            const uint64_t stateOffset = FwdHStateOffset(args_.tiling, unit.sequence.sequence,
-                                                         head.hv, 0, 0);
+            const uint64_t stateOffset = FwdHStateOffset<STATE_V_FIRST>(
+                args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
             gmH.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.initialState) + stateOffset);
         } else {
             gmH.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h) + HOffset(unit, chunk, head));
