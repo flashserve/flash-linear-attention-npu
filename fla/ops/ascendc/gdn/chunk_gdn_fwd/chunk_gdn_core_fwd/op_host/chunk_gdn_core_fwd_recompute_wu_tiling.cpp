@@ -261,6 +261,8 @@ ge::graphStatus Tiling4ChunkGdnCoreStateOutput(gert::TilingContext *context)
         betaDesc->GetDataType(),
         0,
         sysWorkspaceSize,
+        static_cast<uint64_t>(aicCoreNum),
+        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950,
     };
     platform_ascendc::PlatformAscendC ascendcPlatform(context->GetPlatformInfo());
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, recomputeContext.ubSize);
