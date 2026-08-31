@@ -127,12 +127,15 @@ private:
             tla::Int<FWD_H_CHUNK>{}, tla::Int<FWD_H_V>{});
 
     static constexpr uint32_t L0_SLOTS = 2;
+    static constexpr uint32_t H_RIGHT_EVENT_SLOTS = 2;
+    static_assert(FWD_H_AIC_HEAD_SLOTS + H_RIGHT_EVENT_SLOTS <= 6,
+                  "static-tensor EventID 6/7 are reserved");
     static constexpr uint32_t L0A_SLOT_BYTES = FWD_H_CHUNK * FWD_H_K * sizeof(bfloat16_t);
     static constexpr uint32_t L0B_SLOT_BYTES = FWD_H_K * FWD_H_V * sizeof(bfloat16_t);
     static constexpr uint32_t L0C_SLOT_BYTES = FWD_H_K * FWD_H_V * sizeof(ElementAccumulator);
 
     // 每种 HardEvent 拥有独立的事件空间，因此反向事件可以复用同一数值 ID。
-    // MTE1<->MTE2：W 使用 0..3，H/right 使用 4..7；MTE1<->M：L0A 使用
+    // MTE1<->MTE2：W 使用 0..3，H/right 使用 4..5；MTE1<->M：L0A 使用
     // 0..1、L0B 使用 2..3；M<->FIX：两个流水槽使用 0..1。
     __aicore__ inline AscendC::TEventID WReadyEvent(uint32_t slot) const
     {
@@ -146,12 +149,14 @@ private:
 
     __aicore__ inline AscendC::TEventID HRightReadyEvent(uint32_t slot) const
     {
-        return static_cast<AscendC::TEventID>(FWD_H_AIC_HEAD_SLOTS + slot);
+        return static_cast<AscendC::TEventID>(
+            FWD_H_AIC_HEAD_SLOTS + slot % H_RIGHT_EVENT_SLOTS);
     }
 
     __aicore__ inline AscendC::TEventID HRightDoneEvent(uint32_t slot) const
     {
-        return static_cast<AscendC::TEventID>(FWD_H_AIC_HEAD_SLOTS + slot);
+        return static_cast<AscendC::TEventID>(
+            FWD_H_AIC_HEAD_SLOTS + slot % H_RIGHT_EVENT_SLOTS);
     }
 
     __aicore__ inline AscendC::TEventID L0AFreeEvent(uint32_t slot) const
@@ -247,6 +252,11 @@ private:
     {
         for (uint32_t slot = 0; slot < FWD_H_AIC_HEAD_SLOTS; ++slot) {
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(WReadyEvent(slot));
+        }
+        // Static-tensor code must not use reserved EventID 6/7. The stage loop
+        // consumes head N before loading head N+2, so two credits safely serve
+        // the four physical H/right L1 slots.
+        for (uint32_t slot = 0; slot < H_RIGHT_EVENT_SLOTS; ++slot) {
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(HRightReadyEvent(slot));
         }
         for (uint32_t slot = 0; slot < L0_SLOTS; ++slot) {
@@ -260,6 +270,8 @@ private:
     {
         for (uint32_t slot = 0; slot < FWD_H_AIC_HEAD_SLOTS; ++slot) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(WReadyEvent(slot));
+        }
+        for (uint32_t slot = 0; slot < H_RIGHT_EVENT_SLOTS; ++slot) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(HRightReadyEvent(slot));
         }
         for (uint32_t slot = 0; slot < L0_SLOTS; ++slot) {
@@ -283,6 +295,7 @@ private:
         AscendC::InitConstValueParams<bfloat16_t> params(
             1, static_cast<uint16_t>(bytes / 32U), 0, static_cast<bfloat16_t>(0));
         AscendC::InitConstValue(tensor, params);
+        AscendC::PipeBarrier<PIPE_MTE2>();
     }
 
     __aicore__ inline uint64_t HOffset(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,

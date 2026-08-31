@@ -190,6 +190,7 @@ private:
         AscendC::InitConstValueParams<bfloat16_t> params(
             1, static_cast<uint16_t>(bytes / 32U), 0, static_cast<bfloat16_t>(0));
         AscendC::InitConstValue(tensor, params);
+        AscendC::PipeBarrier<PIPE_MTE2>();
     }
 
     __aicore__ inline void InitBuffers()

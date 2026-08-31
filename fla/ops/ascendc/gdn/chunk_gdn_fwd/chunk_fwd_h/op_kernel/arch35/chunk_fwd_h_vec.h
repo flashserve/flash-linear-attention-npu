@@ -481,6 +481,17 @@ private:
         return static_cast<AscendC::TEventID>(slot);
     }
 
+    __aicore__ inline AscendC::TEventID StateMte3ToVEvent(uint32_t slot) const
+    {
+        return static_cast<AscendC::TEventID>(slot);
+    }
+
+    __aicore__ inline void WaitStateWritebackBeforeVectorReuse(uint32_t slot)
+    {
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(StateMte3ToVEvent(slot));
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(StateMte3ToVEvent(slot));
+    }
+
     __aicore__ inline void DrainLocalEvents()
     {
         for (uint32_t slot = 0; slot < FWD_H_AIV_HEAD_SLOTS; ++slot) {
@@ -676,9 +687,13 @@ private:
         if constexpr (!CompilePolicy::STATE_FP32) {
             if (chunk.first) {
                 AscendC::DataCopy(h[HOffset(unit, chunk, head)], StateBf16Slot(slot), FWD_H_K * FWD_H_V);
+                // Stage3 reads and updates the same BF16 state bank on PIPE_V.
+                WaitStateWritebackBeforeVectorReuse(slot);
             }
         } else if constexpr (ZERO_STATE) {
             AscendC::DataCopy(h[HOffset(unit, chunk, head)], StateBf16Slot(slot), FWD_H_K * FWD_H_V);
+            // The two BF16 H0 slots alias the single 64 KiB FP32 state bank.
+            WaitStateWritebackBeforeVectorReuse(slot);
         }
         if constexpr (SEPARATE_INPUT) {
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(WorkFreeEvent(inputSlot));
@@ -847,6 +862,11 @@ private:
                     const uint64_t stateOffset = args_.tiling.kDecayWorkspaceOffset / sizeof(float) +
                         FwdHCoreSlotOffset(coreIdx_, head.roundHead, FWD_H_K * FWD_H_V);
                     AscendC::DataCopy(state[stateOffset], StateFp32(), FWD_H_K * FWD_H_V);
+                    if constexpr (ZERO_INIT) {
+                        // Zero-init skips the next head's MTE2 state load, so it needs a
+                        // direct MTE3->V fence before reusing the shared FP32 bank.
+                        WaitStateWritebackBeforeVectorReuse(slot);
+                    }
                 }
             }
             const FwdHChunkSpan next = FwdHBuildChunk(unit.sequence, chunk.chunk + 1);
@@ -871,6 +891,9 @@ private:
                     const uint64_t offset = FwdHStateOffset<STATE_V_FIRST>(
                         args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
                     AscendC::DataCopy(finalState[offset], StateFp32(), FWD_H_K * FWD_H_V);
+                    if constexpr (ZERO_INIT && !RESIDENT_FP32_STATE) {
+                        WaitStateWritebackBeforeVectorReuse(slot);
+                    }
                 } else {
                     AscendC::GlobalTensor<bfloat16_t> finalState;
                     finalState.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.finalState));
