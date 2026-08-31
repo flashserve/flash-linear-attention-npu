@@ -238,6 +238,7 @@ namespace Catlass::Gemm::Kernel {
      * - BlockMmadPart5_: v @ dh -> dk
      * - BlockMmadPart6_: ds @ k -> dq+=
      * - BlockMmadPart7_: ds^T @ q -> dk+=
+     * - BlockMmadPart4/5/6/7Gva_: same C/D outputs, but fp32 C workspace for GVA aggregation
      */
     template <
         class BlockMmadPart1_,  // dv @ h^T -> dw
@@ -246,7 +247,11 @@ namespace Catlass::Gemm::Kernel {
         class BlockMmadPart4_,  // do @ h^T -> dq
         class BlockMmadPart5_,  // v @ dh -> dk
         class BlockMmadPart6_,  // ds @ k -> dq
-        class BlockMmadPart7_   // ds^T @ q -> dk
+        class BlockMmadPart7_,  // ds^T @ q -> dk
+        class BlockMmadPart4Gva_,  // do @ h^T -> dq fp32 workspace
+        class BlockMmadPart5Gva_,  // v @ dh -> dk fp32 workspace
+        class BlockMmadPart6Gva_,  // ds @ k -> dq+= fp32 workspace
+        class BlockMmadPart7Gva_   // ds^T @ q -> dk+= fp32 workspace
     >
     class ChunkBwdDqkwgTla {
     public:
@@ -257,6 +262,10 @@ namespace Catlass::Gemm::Kernel {
         using BlockMmadPart5 = BlockMmadPart5_;
         using BlockMmadPart6 = BlockMmadPart6_;
         using BlockMmadPart7 = BlockMmadPart7_;
+        using BlockMmadPart4Gva = BlockMmadPart4Gva_;
+        using BlockMmadPart5Gva = BlockMmadPart5Gva_;
+        using BlockMmadPart6Gva = BlockMmadPart6Gva_;
+        using BlockMmadPart7Gva = BlockMmadPart7Gva_;
 
         using ArchTag = typename BlockMmadPart1::ArchTag;
 
@@ -303,6 +312,8 @@ namespace Catlass::Gemm::Kernel {
             uint64_t wsDsTempOffset;
             uint64_t wsMm6Offset;
             uint64_t wsMm7Offset;
+            uint64_t wsGvaBtxKOffset;
+            uint64_t wsGvaShortBtxKOffset;
 
             // 形状参数 (GVA: H 拆为 HV/HK, HV = n_ratio * HK)
             uint64_t B;// = CONST_B;
@@ -332,7 +343,7 @@ namespace Catlass::Gemm::Kernel {
                 GM_ADDR workspace,
                 uint64_t B, uint64_t HV, uint64_t HK, uint64_t T, uint64_t K, uint64_t V, uint64_t BT, uint64_t numChunks, uint64_t n_ratio,
                 uint64_t wsDw, uint64_t wsBtxKSlots, uint64_t wsDgLast, uint64_t wsMm5, uint64_t wsDsTemp,
-                uint64_t wsMm6, uint64_t wsMm7,
+                uint64_t wsMm6, uint64_t wsMm7, uint64_t wsGvaBtxK, uint64_t wsGvaShortBtxK,
                 float s, uint64_t isVarLen
             ) : ptrQ(q), ptrK(k), ptrV(v), ptrG(g), ptrH(h),
                 ptrDo(do_), ptrDh(dh), ptrDv(dv), ptrCuSeqLens(cu_seqlen), ptrChunkIndices(chunk_indices),
@@ -340,6 +351,7 @@ namespace Catlass::Gemm::Kernel {
                 ptrWorkspace(workspace),
                 wsDwOffset(wsDw), wsBtxKSyncSlotsPerHead(wsBtxKSlots), wsDgLastOffset(wsDgLast),
                 wsMm5Offset(wsMm5), wsDsTempOffset(wsDsTemp), wsMm6Offset(wsMm6), wsMm7Offset(wsMm7),
+                wsGvaBtxKOffset(wsGvaBtxK), wsGvaShortBtxKOffset(wsGvaShortBtxK),
                 scale(s), B(B), HV(HV), HK(HK), T(T), K(K), V(V), BT(BT), numChunks(numChunks), n_ratio(n_ratio), isVarLen(isVarLen) {}
         };
 
@@ -369,6 +381,7 @@ namespace Catlass::Gemm::Kernel {
 
             // Layout 创建
             auto layoutBTxK = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.K);
+            auto layoutBTxKFp32 = LayoutRowMajor::MakeLayout<float>(params.BT, params.K);
             auto layoutKxBT = LayoutColMajor::MakeLayout<ElementA>(params.K, params.BT);
             auto layoutBTxV = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.V);
             auto layoutVxBT = LayoutColMajor::MakeLayout<ElementA>(params.V, params.BT);
@@ -558,26 +571,41 @@ namespace Catlass::Gemm::Kernel {
                         gmDo.SetGlobalBuffer((__gm__ ElementA *)params.ptrDo + doOffset);
                         GlobalTensor<ElementA> gmH;
                         gmH.SetGlobalBuffer((__gm__ ElementA *)params.ptrH + hOffset);
-                        GlobalTensor<ElementC> gmDq;
                         if (gvaMode) {
-                            gmDq.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsMm5Offset) + dqTempOffset);
+                            GlobalTensor<float> gmDq;
+                            gmDq.SetGlobalBuffer((__gm__ float *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsGvaBtxKOffset) + dqTempOffset);
+
+                            auto tensorDo = tla::MakeTensor(gmDo, MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
+                            auto tensorH = tla::MakeTensor(gmH, MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});
+                            auto tensorDq = tla::MakeTensor(gmDq, MakeLayoutFromTag(layoutBTxKFp32), Arch::PositionGM{});
+
+                            auto tensorBlockDo = GetTile(tensorDo, tla::MakeCoord(0, 0),
+                                                          tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                            auto tensorBlockH = GetTile(tensorH, tla::MakeCoord(0, 0),
+                                                         tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                            auto tensorBlockDq = GetTile(tensorDq, tla::MakeCoord(0, 0),
+                                                          tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+
+                            BlockMmadPart4Gva blockMmadPart4(resource);
+                            blockMmadPart4(tensorBlockDo, tensorBlockH, tensorBlockDq, actualBlockShape);
                         } else {
+                            GlobalTensor<ElementC> gmDq;
                             gmDq.SetGlobalBuffer((__gm__ ElementC *)params.ptrDq + dqOffset);
+
+                            auto tensorDo = tla::MakeTensor(gmDo, MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
+                            auto tensorH = tla::MakeTensor(gmH, MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});
+                            auto tensorDq = tla::MakeTensor(gmDq, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+
+                            auto tensorBlockDo = GetTile(tensorDo, tla::MakeCoord(0, 0),
+                                                          tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                            auto tensorBlockH = GetTile(tensorH, tla::MakeCoord(0, 0),
+                                                         tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                            auto tensorBlockDq = GetTile(tensorDq, tla::MakeCoord(0, 0),
+                                                          tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+
+                            BlockMmadPart4 blockMmadPart4(resource);
+                            blockMmadPart4(tensorBlockDo, tensorBlockH, tensorBlockDq, actualBlockShape);
                         }
-
-                        auto tensorDo = tla::MakeTensor(gmDo, MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
-                        auto tensorH = tla::MakeTensor(gmH, MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});
-                        auto tensorDq = tla::MakeTensor(gmDq, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
-
-                        auto tensorBlockDo = GetTile(tensorDo, tla::MakeCoord(0, 0),
-                                                      tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                        auto tensorBlockH = GetTile(tensorH, tla::MakeCoord(0, 0),
-                                                     tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                        auto tensorBlockDq = GetTile(tensorDq, tla::MakeCoord(0, 0),
-                                                      tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-
-                        BlockMmadPart4 blockMmadPart4(resource);
-                        blockMmadPart4(tensorBlockDo, tensorBlockH, tensorBlockDq, actualBlockShape);
                     }
                     // --- Part6: mm6 = ds_temp @ k -> wsMm6 (复用 wsDw) ---
                     {
@@ -598,25 +626,44 @@ namespace Catlass::Gemm::Kernel {
                         gmDsTemp.SetGlobalBuffer((__gm__ ElementA *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsDsTempOffset) + dsOffset);
                         GlobalTensor<ElementA> gmK;
                         gmK.SetGlobalBuffer((__gm__ ElementA *)params.ptrK + kOffset);
-                        GlobalTensor<ElementC> gmMm6;  // mm6 复用 dw short 环区 (stage C 内消费, 与 dw 同槽)
                         uint64_t mm6RingOffset = DqkwgShortBtxKRingElemOffset(coreIdx, loopIdx, coreNum, h,
                                                                               params.HV, params.BT, params.K,
                                                                               DqkwgShortRingDepthFromGroup((uint32_t)params.wsBtxKSyncSlotsPerHead));
-                        gmMm6.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsMm6Offset) + mm6RingOffset);
+                        if (gvaMode) {
+                            GlobalTensor<float> gmMm6;
+                            gmMm6.SetGlobalBuffer((__gm__ float *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsGvaShortBtxKOffset) + mm6RingOffset);
 
-                        auto tensorDsTemp = tla::MakeTensor(gmDsTemp, MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
-                        auto tensorK = tla::MakeTensor(gmK, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
-                        auto tensorMm6 = tla::MakeTensor(gmMm6, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+                            auto tensorDsTemp = tla::MakeTensor(gmDsTemp, MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
+                            auto tensorK = tla::MakeTensor(gmK, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+                            auto tensorMm6 = tla::MakeTensor(gmMm6, MakeLayoutFromTag(layoutBTxKFp32), Arch::PositionGM{});
 
-                        auto tensorBlockDsTemp = GetTile(tensorDsTemp, tla::MakeCoord(0, 0),
-                                                          tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                        auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0),
-                                                     tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                        auto tensorBlockMm6 = GetTile(tensorMm6, tla::MakeCoord(0, 0),
-                                                       tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                            auto tensorBlockDsTemp = GetTile(tensorDsTemp, tla::MakeCoord(0, 0),
+                                                              tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                            auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0),
+                                                         tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                            auto tensorBlockMm6 = GetTile(tensorMm6, tla::MakeCoord(0, 0),
+                                                           tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
 
-                        BlockMmadPart6 blockMmadPart6(resource);
-                        blockMmadPart6(tensorBlockDsTemp, tensorBlockK, tensorBlockMm6, actualBlockShape);
+                            BlockMmadPart6Gva blockMmadPart6(resource);
+                            blockMmadPart6(tensorBlockDsTemp, tensorBlockK, tensorBlockMm6, actualBlockShape);
+                        } else {
+                            GlobalTensor<ElementC> gmMm6;  // mm6 复用 dw short 环区 (stage C 内消费, 与 dw 同槽)
+                            gmMm6.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsMm6Offset) + mm6RingOffset);
+
+                            auto tensorDsTemp = tla::MakeTensor(gmDsTemp, MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
+                            auto tensorK = tla::MakeTensor(gmK, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+                            auto tensorMm6 = tla::MakeTensor(gmMm6, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+
+                            auto tensorBlockDsTemp = GetTile(tensorDsTemp, tla::MakeCoord(0, 0),
+                                                              tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                            auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0),
+                                                         tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                            auto tensorBlockMm6 = GetTile(tensorMm6, tla::MakeCoord(0, 0),
+                                                           tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+
+                            BlockMmadPart6 blockMmadPart6(resource);
+                            blockMmadPart6(tensorBlockDsTemp, tensorBlockK, tensorBlockMm6, actualBlockShape);
+                        }
                         AscendC::PipeBarrier<PIPE_FIX>();
                     }
                 }
@@ -653,26 +700,41 @@ namespace Catlass::Gemm::Kernel {
                         gmV.SetGlobalBuffer((__gm__ ElementA *)params.ptrV + vOffset);
                         GlobalTensor<ElementA> gmDh;
                         gmDh.SetGlobalBuffer((__gm__ ElementA *)params.ptrDh + dhOffset);
-                        GlobalTensor<ElementC> gmDk;
                         if (gvaMode) {
-                            gmDk.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsMm6Offset) + dkTempOffset);
+                            GlobalTensor<float> gmDk;
+                            gmDk.SetGlobalBuffer((__gm__ float *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsGvaShortBtxKOffset) + dkTempOffset);
+
+                            auto tensorV = tla::MakeTensor(gmV, MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
+                            auto tensorDh = tla::MakeTensor(gmDh, MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});
+                            auto tensorDk = tla::MakeTensor(gmDk, MakeLayoutFromTag(layoutBTxKFp32), Arch::PositionGM{});
+
+                            auto tensorBlockV = GetTile(tensorV, tla::MakeCoord(0, 0),
+                                                         tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                            auto tensorBlockDh = GetTile(tensorDh, tla::MakeCoord(0, 0),
+                                                          tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                            auto tensorBlockDk = GetTile(tensorDk, tla::MakeCoord(0, 0),
+                                                          tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+
+                            BlockMmadPart5Gva blockMmadPart5(resource);
+                            blockMmadPart5(tensorBlockV, tensorBlockDh, tensorBlockDk, actualBlockShape);
                         } else {
+                            GlobalTensor<ElementC> gmDk;
                             gmDk.SetGlobalBuffer((__gm__ ElementC *)params.ptrDk + dkOffset);
+
+                            auto tensorV = tla::MakeTensor(gmV, MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
+                            auto tensorDh = tla::MakeTensor(gmDh, MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});
+                            auto tensorDk = tla::MakeTensor(gmDk, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+
+                            auto tensorBlockV = GetTile(tensorV, tla::MakeCoord(0, 0),
+                                                         tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                            auto tensorBlockDh = GetTile(tensorDh, tla::MakeCoord(0, 0),
+                                                          tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                            auto tensorBlockDk = GetTile(tensorDk, tla::MakeCoord(0, 0),
+                                                          tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+
+                            BlockMmadPart5 blockMmadPart5(resource);
+                            blockMmadPart5(tensorBlockV, tensorBlockDh, tensorBlockDk, actualBlockShape);
                         }
-
-                        auto tensorV = tla::MakeTensor(gmV, MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
-                        auto tensorDh = tla::MakeTensor(gmDh, MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});
-                        auto tensorDk = tla::MakeTensor(gmDk, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
-
-                        auto tensorBlockV = GetTile(tensorV, tla::MakeCoord(0, 0),
-                                                     tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                        auto tensorBlockDh = GetTile(tensorDh, tla::MakeCoord(0, 0),
-                                                      tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                        auto tensorBlockDk = GetTile(tensorDk, tla::MakeCoord(0, 0),
-                                                      tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-
-                        BlockMmadPart5 blockMmadPart5(resource);
-                        blockMmadPart5(tensorBlockV, tensorBlockDh, tensorBlockDk, actualBlockShape);
                     }
                     // --- Part7: mm7 = ds_temp^T @ q -> wsMm7 (复用 wsMm5) ---
                     {
@@ -693,25 +755,44 @@ namespace Catlass::Gemm::Kernel {
                         gmDsTemp.SetGlobalBuffer((__gm__ ElementA *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsDsTempOffset) + dsOffset);
                         GlobalTensor<ElementA> gmQ;
                         gmQ.SetGlobalBuffer((__gm__ ElementA *)params.ptrQ + qOffset);
-                        GlobalTensor<ElementC> gmMm7;  // mm7 复用 mm5 的 group 环槽 (stage D 写, mm5 已在 stage B 消费完; 单写, 同 stride 无跨核冲突)
                         uint64_t mm7RingOffset = DqkwgBtxKRingElemOffset(coreIdx, loopBase, loopIdx, coreNum, h,
                                                                          params.HV, params.BT, params.K,
                                                                          (uint32_t)params.wsBtxKSyncSlotsPerHead);
-                        gmMm7.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsMm7Offset) + mm7RingOffset);
+                        if (gvaMode) {
+                            GlobalTensor<float> gmMm7;
+                            gmMm7.SetGlobalBuffer((__gm__ float *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsGvaBtxKOffset) + mm7RingOffset);
 
-                        auto tensorDsTemp = tla::MakeTensor(gmDsTemp, MakeLayoutFromTag(layoutBTxBT_T), Arch::PositionGM{});
-                        auto tensorQ = tla::MakeTensor(gmQ, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
-                        auto tensorMm7 = tla::MakeTensor(gmMm7, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+                            auto tensorDsTemp = tla::MakeTensor(gmDsTemp, MakeLayoutFromTag(layoutBTxBT_T), Arch::PositionGM{});
+                            auto tensorQ = tla::MakeTensor(gmQ, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+                            auto tensorMm7 = tla::MakeTensor(gmMm7, MakeLayoutFromTag(layoutBTxKFp32), Arch::PositionGM{});
 
-                        auto tensorBlockDsTemp = GetTile(tensorDsTemp, tla::MakeCoord(0, 0),
-                                                          tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                        auto tensorBlockQ = GetTile(tensorQ, tla::MakeCoord(0, 0),
-                                                     tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                        auto tensorBlockMm7 = GetTile(tensorMm7, tla::MakeCoord(0, 0),
-                                                       tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                            auto tensorBlockDsTemp = GetTile(tensorDsTemp, tla::MakeCoord(0, 0),
+                                                              tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                            auto tensorBlockQ = GetTile(tensorQ, tla::MakeCoord(0, 0),
+                                                         tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                            auto tensorBlockMm7 = GetTile(tensorMm7, tla::MakeCoord(0, 0),
+                                                           tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
 
-                        BlockMmadPart7 blockMmadPart7(resource);
-                        blockMmadPart7(tensorBlockDsTemp, tensorBlockQ, tensorBlockMm7, actualBlockShape);
+                            BlockMmadPart7Gva blockMmadPart7(resource);
+                            blockMmadPart7(tensorBlockDsTemp, tensorBlockQ, tensorBlockMm7, actualBlockShape);
+                        } else {
+                            GlobalTensor<ElementC> gmMm7;  // mm7 复用 mm5 的 group 环槽 (stage D 写, mm5 已在 stage B 消费完; 单写, 同 stride 无跨核冲突)
+                            gmMm7.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t*)params.ptrWorkspace + params.wsMm7Offset) + mm7RingOffset);
+
+                            auto tensorDsTemp = tla::MakeTensor(gmDsTemp, MakeLayoutFromTag(layoutBTxBT_T), Arch::PositionGM{});
+                            auto tensorQ = tla::MakeTensor(gmQ, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+                            auto tensorMm7 = tla::MakeTensor(gmMm7, MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+
+                            auto tensorBlockDsTemp = GetTile(tensorDsTemp, tla::MakeCoord(0, 0),
+                                                              tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                            auto tensorBlockQ = GetTile(tensorQ, tla::MakeCoord(0, 0),
+                                                         tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                            auto tensorBlockMm7 = GetTile(tensorMm7, tla::MakeCoord(0, 0),
+                                                           tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+
+                            BlockMmadPart7 blockMmadPart7(resource);
+                            blockMmadPart7(tensorBlockDsTemp, tensorBlockQ, tensorBlockMm7, actualBlockShape);
+                        }
                         AscendC::PipeBarrier<PIPE_FIX>();
                     }
                 }
@@ -786,6 +867,8 @@ namespace Catlass::Gemm::Kernel {
         uint64_t wsDsTempOffset;
         uint64_t wsMm6Offset;
         uint64_t wsMm7Offset;
+        uint64_t wsGvaBtxKOffset;
+        uint64_t wsGvaShortBtxKOffset;
     };
 
     template <typename DataType, typename GType>
@@ -808,6 +891,8 @@ namespace Catlass::Gemm::Kernel {
         wsDsTempOffset = tiling.wsDsTempOffset;
         wsMm6Offset = tiling.wsMm6Offset;
         wsMm7Offset = tiling.wsMm7Offset;
+        wsGvaBtxKOffset = tiling.wsGvaBtxKOffset;
+        wsGvaShortBtxKOffset = tiling.wsGvaShortBtxKOffset;
         isVarLen = tiling.isVarLen;
     }
 
@@ -845,23 +930,32 @@ namespace Catlass::Gemm::Kernel {
         // Part 4: do @ h^T -> dq  [BT, V] @ [V, K] -> [BT, K]
         using TileCopyPart4 = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType, LayoutColMajor, DataType, LayoutRowMajor>;
         using BlockMmadPart4 = Kernel::TileGemmDirect<ArchTag, DataType, TileCopyPart4>;
+        using TileCopyPart4Gva = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType, LayoutColMajor, float, LayoutRowMajor>;
+        using BlockMmadPart4Gva = Kernel::TileGemmDirect<ArchTag, float, TileCopyPart4Gva>;
 
         // Part 5: v @ dh -> dk  [BT, V] @ [V, K] -> [BT, K]
         using TileCopyPart5 = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType, LayoutColMajor, DataType, LayoutRowMajor>;
         using BlockMmadPart5 = Kernel::TileGemmDirect<ArchTag, DataType, TileCopyPart5>;
+        using TileCopyPart5Gva = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType, LayoutColMajor, float, LayoutRowMajor>;
+        using BlockMmadPart5Gva = Kernel::TileGemmDirect<ArchTag, float, TileCopyPart5Gva>;
 
         // Part 6: ds @ k -> dq+=  [BT, BT] @ [BT, K] -> [BT, K]
         using TileCopyPart6 = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType, LayoutRowMajor, DataType, LayoutRowMajor>;
         using BlockMmadPart6 = Kernel::TileGemmDirect<ArchTag, DataType, TileCopyPart6>;
+        using TileCopyPart6Gva = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType, LayoutRowMajor, float, LayoutRowMajor>;
+        using BlockMmadPart6Gva = Kernel::TileGemmDirect<ArchTag, float, TileCopyPart6Gva>;
 
         // Part 7: ds^T @ q -> dk+=  [BT, BT] @ [BT, K] -> [BT, K]
         using TileCopyPart7 = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutColMajor, DataType, LayoutRowMajor, DataType, LayoutRowMajor>;
         using BlockMmadPart7 = Kernel::TileGemmDirect<ArchTag, DataType, TileCopyPart7>;
+        using TileCopyPart7Gva = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutColMajor, DataType, LayoutRowMajor, float, LayoutRowMajor>;
+        using BlockMmadPart7Gva = Kernel::TileGemmDirect<ArchTag, float, TileCopyPart7Gva>;
 
         // Kernel 实例
         using MatmulKernel = Kernel::ChunkBwdDqkwgTla<
             BlockMmadPart1, BlockMmadPart2, BlockMmadPart3, BlockMmadPart4,
-            BlockMmadPart5, BlockMmadPart6, BlockMmadPart7
+            BlockMmadPart5, BlockMmadPart6, BlockMmadPart7,
+            BlockMmadPart4Gva, BlockMmadPart5Gva, BlockMmadPart6Gva, BlockMmadPart7Gva
         >;
 
         // V=256 makes Part1/3/4/5 use a 256-wide reduction dimension. TileGemmDirect is a single
@@ -875,15 +969,24 @@ namespace Catlass::Gemm::Kernel {
         using BlockMmadPart3Tiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType, DataType, void, TileCopyPart3Tiled>;
         using TileCopyPart4Tiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType, LayoutColMajor, DataType, LayoutRowMajor>;
         using BlockMmadPart4Tiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType, DataType, void, TileCopyPart4Tiled>;
+        using TileCopyPart4GvaTiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType, LayoutColMajor, float, LayoutRowMajor>;
+        using BlockMmadPart4GvaTiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType, float, void, TileCopyPart4GvaTiled>;
         using TileCopyPart5Tiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType, LayoutColMajor, DataType, LayoutRowMajor>;
         using BlockMmadPart5Tiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType, DataType, void, TileCopyPart5Tiled>;
+        using TileCopyPart5GvaTiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType, LayoutColMajor, float, LayoutRowMajor>;
+        using BlockMmadPart5GvaTiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType, float, void, TileCopyPart5GvaTiled>;
         using TileCopyPart6Tiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType, LayoutRowMajor, DataType, LayoutRowMajor>;
         using BlockMmadPart6Tiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType, DataType, void, TileCopyPart6Tiled>;
+        using TileCopyPart6GvaTiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType, LayoutRowMajor, float, LayoutRowMajor>;
+        using BlockMmadPart6GvaTiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType, float, void, TileCopyPart6GvaTiled>;
         using TileCopyPart7Tiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutColMajor, DataType, LayoutRowMajor, DataType, LayoutRowMajor>;
         using BlockMmadPart7Tiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType, DataType, void, TileCopyPart7Tiled>;
+        using TileCopyPart7GvaTiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutColMajor, DataType, LayoutRowMajor, float, LayoutRowMajor>;
+        using BlockMmadPart7GvaTiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType, float, void, TileCopyPart7GvaTiled>;
         using MatmulKernelTiled = Kernel::ChunkBwdDqkwgTla<
             BlockMmadPart1Tiled, BlockMmadPart2Tiled, BlockMmadPart3Tiled, BlockMmadPart4Tiled,
-            BlockMmadPart5Tiled, BlockMmadPart6Tiled, BlockMmadPart7Tiled
+            BlockMmadPart5Tiled, BlockMmadPart6Tiled, BlockMmadPart7Tiled,
+            BlockMmadPart4GvaTiled, BlockMmadPart5GvaTiled, BlockMmadPart6GvaTiled, BlockMmadPart7GvaTiled
         >;
 
         if (V > 128) {
@@ -894,6 +997,7 @@ namespace Catlass::Gemm::Kernel {
                 ptrDq, ptrDk, ptrDw, ptrDg,
                 ptrWorkspace, B, HV, HK, T, K, V, BT, numChunks, n_ratio,
                 wsDwOffset, wsBtxKSyncSlotsPerHead, wsDgLastOffset, wsMm5Offset, wsDsTempOffset, wsMm6Offset, wsMm7Offset,
+                wsGvaBtxKOffset, wsGvaShortBtxKOffset,
                 scale, isVarLen
             );
             params.aicCoreNum = aicCoreNum;
@@ -906,6 +1010,7 @@ namespace Catlass::Gemm::Kernel {
                 ptrDq, ptrDk, ptrDw, ptrDg,
                 ptrWorkspace, B, HV, HK, T, K, V, BT, numChunks, n_ratio,
                 wsDwOffset, wsBtxKSyncSlotsPerHead, wsDgLastOffset, wsMm5Offset, wsDsTempOffset, wsMm6Offset, wsMm7Offset,
+                wsGvaBtxKOffset, wsGvaShortBtxKOffset,
                 scale, isVarLen
             );
             params.aicCoreNum = aicCoreNum;
