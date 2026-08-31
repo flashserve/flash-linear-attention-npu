@@ -49,7 +49,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":64,\"T\":1,\"V\":64,\"block_num\":1,\"case_id\":0,\"dtype\":\"bf16\",\"gate_mode\":\"g\",\"name\":\"minimal_g_bf16_state\",\"op\":\"recurrent_gated_delta_rule\",\"route\":\"ascendc\",\"scale\":0.125,\"seed\":20260823,\"seq_lengths\":[1],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_layout\":\"contiguous\"}",
+        "range_values": "{\"B\":1,\"HK\":1,\"HV\":1,\"K\":128,\"T\":1,\"V\":128,\"block_num\":1,\"case_id\":0,\"dtype\":\"bf16\",\"gate_mode\":\"g\",\"name\":\"minimal_g_bf16_state\",\"op\":\"recurrent_gated_delta_rule\",\"route\":\"ascendc\",\"scale\":0.125,\"seed\":20260823,\"seq_lengths\":[1],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_layout\":\"contiguous\"}",
         "backward": false
       },
       {
@@ -121,7 +121,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 64,
+        "range_values": 128,
         "backward": false
       },
       {
@@ -130,7 +130,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 64,
+        "range_values": 128,
         "backward": false
       },
       {

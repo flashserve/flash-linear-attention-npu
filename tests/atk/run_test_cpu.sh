@@ -33,7 +33,7 @@ show_usage() {
   DETERMINISM_START/END          确定性 case 范围
   MSS_START/MSS_END              mssanitizer case 范围
   MSS_TOOL                       mssanitizer 工具，默认 memcheck
-  MSS_LOG_PATH                   ATK -msl 日志路径，默认 ${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log
+  MSS_LOG_PATH                   mssanitizer 原始日志及 ATK -msl 路径，默认 ${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log
   GEN_CASES_DTYPE_NUMBERS        生成用例时传给 atk case -dt，默认 100；双 dtype 算子生成 200 条
   GEN_CASES_EXTRA_NUMBERS        生成用例时传给 atk case -en，默认 0
   GEN_CASES_SEED                 生成用例随机种子，默认 20260813
@@ -323,8 +323,8 @@ MSS_END="${MSS_END:-$CASE_END}"
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
 mkdir -p "${ATK_OUTPUT_ROOT}/accuracy" "${ATK_OUTPUT_ROOT}/perf"
-# mssanitizer 日志路径：未显式指定时使用 ATK_OUTPUT_ROOT 下的带时间戳绝对路径
-# ATK celery worker 工作目录与脚本不同，必须用绝对路径，否则无法找到日志文件
+# mssanitizer 日志路径：未显式指定时使用 ATK_OUTPUT_ROOT 下的带时间戳绝对路径。
+# 同一路径传给 mssanitizer 和 ATK；celery worker 工作目录不同，必须使用绝对路径。
 MSS_LOG_PATH="${MSS_LOG_PATH:-$(cd "${ATK_OUTPUT_ROOT}" && pwd)/mssanitizer_${OP}_$(date +%Y%m%d_%H%M%S).log}"
 
 log_info "算子：${OP}"
@@ -404,7 +404,7 @@ if should_run mssanitizer; then
   log_info "ATK mssanitizer 日志：${MSS_LOG_PATH}"
   set_case_range_args "内存检测 case 范围" "$MSS_START" "$MSS_END"
   touch "$MSS_LOG_PATH"
-  mssanitizer --tool="$MSS_TOOL" -- \
+  mssanitizer --tool="$MSS_TOOL" --log-file="$MSS_LOG_PATH" -- \
     "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
     task \
       -c "atk_${OP}_mss.json" \
