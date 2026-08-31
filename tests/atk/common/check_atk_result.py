@@ -284,8 +284,7 @@ def main():
         results[t] = r
         label = TYPE_LABELS[t]
         if not r["found"]:
-            status_str = "NO_REPORT"
-            print(f"[ATK结果检查] {label}: 未找到报告（跳过）")
+            print(f"[ATK结果检查] {label}: 未找到报告（失败）")
             any_fail = True
             continue
         status = "Pass" if r["all_pass"] else "Failed"
