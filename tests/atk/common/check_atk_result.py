@@ -218,6 +218,12 @@ def check_determinism(output_root, op):
         if header is not None and not _is_mssanitizer_report(header):
             header, data = _parse_summary(f)
             info = _extract_summary_row(header, data)
+            info["all_pass"] = (
+                info["total"] > 0
+                and info["exec_fail"] == 0
+                and info["check_pass"] == info["total"]
+                and info["all_pass"]
+            )
             return {"found": True, **info, "xlsx": f,
                     "detail": f"通过率={info['pass_rate']}"}
     return {"found": False, "total": 0, "pass": 0, "fail": 0, "all_pass": False,
@@ -232,6 +238,12 @@ def check_mssanitizer(output_root, op):
         if header is not None and _is_mssanitizer_report(header):
             header, data = _parse_summary(f)
             info = _extract_summary_row(header, data)
+            info["all_pass"] = (
+                info["total"] > 0
+                and info["exec_fail"] == 0
+                and info["check_pass"] == info["total"]
+                and info["all_pass"]
+            )
             return {"found": True, **info, "xlsx": f,
                     "detail": f"内存检测通过率={info['mss_pass_rate']}"}
     return {"found": False, "total": 0, "pass": 0, "fail": 0, "all_pass": False,
@@ -274,6 +286,7 @@ def main():
         if not r["found"]:
             status_str = "NO_REPORT"
             print(f"[ATK结果检查] {label}: 未找到报告（跳过）")
+            any_fail = True
             continue
         status = "Pass" if r["all_pass"] else "Failed"
         if not r["all_pass"]:
