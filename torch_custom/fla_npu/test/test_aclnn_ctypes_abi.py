@@ -180,9 +180,9 @@ class AclnnCtypesAbiTest(unittest.TestCase):
         inputs = {
             "query": FakeTensor((5, 4, 128), fake_torch.bfloat16),
             "key": FakeTensor((5, 4, 128), fake_torch.bfloat16),
-            "value": FakeTensor((5, 8, 128), fake_torch.bfloat16),
+            "value": FakeTensor((5, 8, 96), fake_torch.bfloat16),
             "state": FakeTensor(
-                (5, 8, 128, 128),
+                (5, 8, 96, 128),
                 fake_torch.float32,
                 contiguous=False,
             ),
