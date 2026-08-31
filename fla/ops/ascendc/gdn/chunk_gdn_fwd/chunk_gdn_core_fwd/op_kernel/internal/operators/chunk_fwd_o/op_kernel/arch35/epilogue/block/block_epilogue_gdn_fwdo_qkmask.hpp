@@ -73,7 +73,8 @@ __simd_vf__ inline void QkmaskCausalMaskVf(
     // 第二个循环：absRow >= 64，对角线在第二个 64 列 tile 内
     //   列 [0, 64):   Mins(0)→Exp 保留（全部 j < 64 <= absRow，无需 mask）
     //   列 [64, 128): Mins(0)→Exp→Mul(maskUbTensor[absRow-64]) 因果掩码
-    for (uint32_t absRow = 64; absRow < gbrcEnd; ++absRow) {
+    const uint32_t secondLoopBegin = gbrcStart > VL ? gbrcStart : VL;
+    for (uint32_t absRow = secondLoopBegin; absRow < gbrcEnd; ++absRow) {
         uint32_t row = absRow - gbrcStart;
         __ubuf__ float* rowAddr = upAddr + row * alignedNActual;
         __ubuf__ float* maskRowAddr = maskBase + (absRow - 64) * VL;
@@ -146,7 +147,8 @@ __simd_vf__ inline void QkmaskCausalMaskVfTail(
     // 第二个循环：absRow >= 64，对角线在第二个 64 列 tile 内
     //   列 [0, 64):      Mins(0)→Exp 保留
     //   列 [64, N):       Mins(0)→Exp→Mul(mask[absRow-64])（tailWidth 个）
-    for (uint32_t absRow = 64; absRow < gbrcEnd; ++absRow) {
+    const uint32_t secondLoopBegin = gbrcStart > VL ? gbrcStart : VL;
+    for (uint32_t absRow = secondLoopBegin; absRow < gbrcEnd; ++absRow) {
         uint32_t row = absRow - gbrcStart;
         __ubuf__ float* rowAddr = upAddr + row * alignedNActual;
         __ubuf__ float* maskRowAddr = maskBase + (absRow - 64) * VL;
