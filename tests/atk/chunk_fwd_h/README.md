@@ -45,8 +45,8 @@ from fla_npu.ops.ascendc import chunk_fwd_h
 
 ## 精度与反向矩阵
 
-`atk_chunk_fwd_h.json` 共 49 条，只包含正向精度用例。其中 0-16 保留功能、边界、
-分核和变长专项场景，17-48 是完整的 32 项顶层模板矩阵。
+`atk_chunk_fwd_h.json` 共 200 条，只包含正向精度用例。其中 0-39 是功能、边界、
+分核和变长专项场景，40-199 是五组完整的 32 项顶层模板矩阵。
 
 正向 case id 按以下分组：
 
@@ -59,12 +59,21 @@ from fla_npu.ops.ascendc import chunk_fwd_h
 | 4 | 总任务数 160，覆盖 4-head work unit、跨 round 和 raw K 复用 |
 | 5 | gk-only 总任务数 160，覆盖每个 head 独立 prepared kg |
 | 6、9 | g/gk、整 chunk、BF16 initial state、final state |
-| 7、8、10 | tail=63/tail=1、FP32 常驻 state、lookahead、末 chunk 分支 |
+| 7、8、10 | tail=63/tail=2、FP32 常驻 state、lookahead、末 chunk 分支 |
 | 11 | 非连续 `u` ND view |
 | 12 | 17 个 chunk，覆盖流水 credit 复用 |
 | 13、14 | 变长显式/自动 `chunk_indices`，覆盖 g/gk 与跨 sequence chunk |
 | 15、16 | dense/varlen 总任务数 64；28 核预期为 22 block，即 `21x3 + 1x1` |
-| 17-48 | BF16/FP32 gate x g/gk x exp/exp2 x BF16/FP32 initial state x `[K,V]/[V,K]` 完整 32 组合；每条 `T=129`，同时覆盖 full chunk 与 tail=1 |
+| 17-21 | initial/final state 生命周期：无 initial、无 final、BF16/FP32 initial 及 g/gk |
+| 22-26 | tail=2/32/63、整 chunk 与 33-chunk credit 复用 |
+| 27-30 | g-only `HK:HV=1:2/1:3/1:4/1:8` |
+| 31-36 | 总任务数 20/24/28/32/48/96，覆盖不同核数下的分核与跨 sequence |
+| 37-39 | 变长混合边界、32 个单 token sequence、gk 非连续 `u` view |
+| 40-71 | dense `T=129`，完整 32 组合，覆盖 full chunk 与 tail=1 |
+| 72-103 | dense `T=128`，完整 32 组合，覆盖 exact full chunks |
+| 104-135 | dense `T=127`，完整 32 组合，覆盖 full chunk 与 tail=63 |
+| 136-167 | dense `T=257` 且不输出 final state，完整 32 组合，覆盖 terminal 分支 |
+| 168-199 | varlen `seqlens=[1,64,65,129]` 与显式 canonical indices，完整 32 组合 |
 
 分核覆盖由整个矩阵共同完成，不假设同一 case 在所有 SoC 上有相同的 `activeHeadCount`：
 
@@ -95,48 +104,51 @@ Kernel 顶层入口模板参数依次为 gate dtype、`V_DIM`、g/gk、exp/exp2�
 layout。`V_DIM` 当前固定为 128，其余五项各有两个取值，因此注册
 `2 x 1 x 2 x 2 x 2 x 2 = 32` 个可达实例。canonical matrix 均显式传入 BF16 或 FP32
 `initial_state`，避免把 `initial_state=None` 的 FP32 默认规则与 state dtype 模板覆盖混在一起；
-专项 case 仍覆盖无 initial state 路径。
+专项 case 仍覆盖无 initial state 路径。五组矩阵分别交叉覆盖 dense tail=1、dense full
+chunk、dense tail=63、terminal no-final 和 varlen explicit-index 路径。
 
 下表的 `K00`-`K31` 是 ATK 交付件中的符号编号，不是 CANN 生成的数值 TilingKey。数值 key
-由目标 CANN 版本编码，不能写入用例或作为跨版本稳定语义。每条 accuracy matrix case 的
-`T=129` 同时包含两个 full chunk 和一个 tail=1，因此普通与边界栏使用同一个 case id。
+由目标 CANN 版本编码，不能写入用例或作为跨版本稳定语义。下表列出第一组 accuracy
+canonical matrix 的 case id；其余四组相同模板实例的 case id 分别在此基础上加
+32、64、96 和 128。
 
-| 符号实例 | gate dtype | gate | 指数 | state dtype | state layout | accuracy 普通/边界 | performance | mss |
+| 符号实例 | gate dtype | gate | 指数 | state dtype | state layout | accuracy canonical | performance | determinism / mss |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| K00 | BF16 | g | exp | BF16 | `[K,V]` | 17 | 7 | 0 |
-| K01 | BF16 | g | exp | BF16 | `[V,K]` | 18 | 8 | 1 |
-| K02 | BF16 | g | exp | FP32 | `[K,V]` | 19 | 9 | 2 |
-| K03 | BF16 | g | exp | FP32 | `[V,K]` | 20 | 10 | 3 |
-| K04 | BF16 | g | exp2 | BF16 | `[K,V]` | 21 | 11 | 4 |
-| K05 | BF16 | g | exp2 | BF16 | `[V,K]` | 22 | 12 | 5 |
-| K06 | BF16 | g | exp2 | FP32 | `[K,V]` | 23 | 13 | 6 |
-| K07 | BF16 | g | exp2 | FP32 | `[V,K]` | 24 | 14 | 7 |
-| K08 | BF16 | gk | exp | BF16 | `[K,V]` | 25 | 15 | 8 |
-| K09 | BF16 | gk | exp | BF16 | `[V,K]` | 26 | 16 | 9 |
-| K10 | BF16 | gk | exp | FP32 | `[K,V]` | 27 | 17 | 10 |
-| K11 | BF16 | gk | exp | FP32 | `[V,K]` | 28 | 18 | 11 |
-| K12 | BF16 | gk | exp2 | BF16 | `[K,V]` | 29 | 19 | 12 |
-| K13 | BF16 | gk | exp2 | BF16 | `[V,K]` | 30 | 20 | 13 |
-| K14 | BF16 | gk | exp2 | FP32 | `[K,V]` | 31 | 21 | 14 |
-| K15 | BF16 | gk | exp2 | FP32 | `[V,K]` | 32 | 22 | 15 |
-| K16 | FP32 | g | exp | BF16 | `[K,V]` | 33 | 23 | 16 |
-| K17 | FP32 | g | exp | BF16 | `[V,K]` | 34 | 24 | 17 |
-| K18 | FP32 | g | exp | FP32 | `[K,V]` | 35 | 25 | 18 |
-| K19 | FP32 | g | exp | FP32 | `[V,K]` | 36 | 26 | 19 |
-| K20 | FP32 | g | exp2 | BF16 | `[K,V]` | 37 | 27 | 20 |
-| K21 | FP32 | g | exp2 | BF16 | `[V,K]` | 38 | 28 | 21 |
-| K22 | FP32 | g | exp2 | FP32 | `[K,V]` | 39 | 29 | 22 |
-| K23 | FP32 | g | exp2 | FP32 | `[V,K]` | 40 | 30 | 23 |
-| K24 | FP32 | gk | exp | BF16 | `[K,V]` | 41 | 31 | 24 |
-| K25 | FP32 | gk | exp | BF16 | `[V,K]` | 42 | 32 | 25 |
-| K26 | FP32 | gk | exp | FP32 | `[K,V]` | 43 | 33 | 26 |
-| K27 | FP32 | gk | exp | FP32 | `[V,K]` | 44 | 34 | 27 |
-| K28 | FP32 | gk | exp2 | BF16 | `[K,V]` | 45 | 35 | 28 |
-| K29 | FP32 | gk | exp2 | BF16 | `[V,K]` | 46 | 36 | 29 |
-| K30 | FP32 | gk | exp2 | FP32 | `[K,V]` | 47 | 37 | 30 |
-| K31 | FP32 | gk | exp2 | FP32 | `[V,K]` | 48 | 38 | 31 |
+| K00 | BF16 | g | exp | BF16 | `[K,V]` | 40 | 7 | 0 |
+| K01 | BF16 | g | exp | BF16 | `[V,K]` | 41 | 8 | 1 |
+| K02 | BF16 | g | exp | FP32 | `[K,V]` | 42 | 9 | 2 |
+| K03 | BF16 | g | exp | FP32 | `[V,K]` | 43 | 10 | 3 |
+| K04 | BF16 | g | exp2 | BF16 | `[K,V]` | 44 | 11 | 4 |
+| K05 | BF16 | g | exp2 | BF16 | `[V,K]` | 45 | 12 | 5 |
+| K06 | BF16 | g | exp2 | FP32 | `[K,V]` | 46 | 13 | 6 |
+| K07 | BF16 | g | exp2 | FP32 | `[V,K]` | 47 | 14 | 7 |
+| K08 | BF16 | gk | exp | BF16 | `[K,V]` | 48 | 15 | 8 |
+| K09 | BF16 | gk | exp | BF16 | `[V,K]` | 49 | 16 | 9 |
+| K10 | BF16 | gk | exp | FP32 | `[K,V]` | 50 | 17 | 10 |
+| K11 | BF16 | gk | exp | FP32 | `[V,K]` | 51 | 18 | 11 |
+| K12 | BF16 | gk | exp2 | BF16 | `[K,V]` | 52 | 19 | 12 |
+| K13 | BF16 | gk | exp2 | BF16 | `[V,K]` | 53 | 20 | 13 |
+| K14 | BF16 | gk | exp2 | FP32 | `[K,V]` | 54 | 21 | 14 |
+| K15 | BF16 | gk | exp2 | FP32 | `[V,K]` | 55 | 22 | 15 |
+| K16 | FP32 | g | exp | BF16 | `[K,V]` | 56 | 23 | 16 |
+| K17 | FP32 | g | exp | BF16 | `[V,K]` | 57 | 24 | 17 |
+| K18 | FP32 | g | exp | FP32 | `[K,V]` | 58 | 25 | 18 |
+| K19 | FP32 | g | exp | FP32 | `[V,K]` | 59 | 26 | 19 |
+| K20 | FP32 | g | exp2 | BF16 | `[K,V]` | 60 | 27 | 20 |
+| K21 | FP32 | g | exp2 | BF16 | `[V,K]` | 61 | 28 | 21 |
+| K22 | FP32 | g | exp2 | FP32 | `[K,V]` | 62 | 29 | 22 |
+| K23 | FP32 | g | exp2 | FP32 | `[V,K]` | 63 | 30 | 23 |
+| K24 | FP32 | gk | exp | BF16 | `[K,V]` | 64 | 31 | 24 |
+| K25 | FP32 | gk | exp | BF16 | `[V,K]` | 65 | 32 | 25 |
+| K26 | FP32 | gk | exp | FP32 | `[K,V]` | 66 | 33 | 26 |
+| K27 | FP32 | gk | exp | FP32 | `[V,K]` | 67 | 34 | 27 |
+| K28 | FP32 | gk | exp2 | BF16 | `[K,V]` | 68 | 35 | 28 |
+| K29 | FP32 | gk | exp2 | BF16 | `[V,K]` | 69 | 36 | 29 |
+| K30 | FP32 | gk | exp2 | FP32 | `[K,V]` | 70 | 37 | 30 |
+| K31 | FP32 | gk | exp2 | FP32 | `[V,K]` | 71 | 38 | 31 |
 
-生成器会对 accuracy、performance 和 mss 的 canonical matrix 做集合相等与去重断言。实际 key
+生成器会对五组 accuracy、performance 以及 determinism/mss 的 canonical matrix 分别做
+集合相等与去重断言，并额外拒绝 accuracy 的重复 case key 与结构重复。实际 key
 证据必须在 A2、A3、A5 clean build 后从 `binary_info_config.json` 确认 32 个唯一 key，并从
 编译 wrapper/dump 建立“数值 key 到六个模板参数”的一一映射；运行时再将每条 ATK case 的
 host tiling 记录与该映射核对。未取得对应 SoC 的 build/runtime 记录前，不将输入条件推断写成
@@ -159,20 +171,22 @@ host tiling 记录与该映射核对。未取得对应 SoC 的 build/runtime 记
 
 ## 确定性与内存检测
 
-`atk_chunk_fwd_h_mss.json` 共 32 条，每个顶层模板签名恰好一条。同一文件供 `accuracy_dc`
-与 mssanitizer 使用。默认 shape 为 `B=HK=HV=1,T=129`；为兼顾同步和分核路径，以下签名在
+`atk_chunk_fwd_h_mss.json` 共 32 条，每个顶层模板签名恰好一条。按仓库统一约定，同一文件
+分别供 determinism scope 的 `accuracy_dc` 和 mssanitizer scope 使用，因此两个测试动作默认
+都会执行完整的 32 项模板矩阵。默认 shape 为 `B=HK=HV=1,T=129`；为兼顾同步和分核路径，以下签名在
 不改变模板参数的前提下使用专项 shape：
 
-- mss 0/1：dense/varlen 总任务数 64，覆盖跨 sequence 和不同核数下的分核映射；
-- mss 3：无 initial/final state 的单 token VEC-only 路径；
-- mss 4：`T=1025` 的流水 credit 复用；
-- mss 7/18：FP32 state 常驻、lookahead、tail=1/tail=63；
-- mss 16/17/23/24：2/3/4-head、跨 round、raw K 复用和 gk 独立 key；
-- mss 19：变长显式 `chunk_indices` 和跨 sequence chunk；
-- mss 31：gk、FP32 state、exp2、`[V,K]` 的 tail=1 路径。
+- case 0/1：dense/varlen 总任务数 64，覆盖跨 sequence 和不同核数下的分核映射；
+- case 3：无 initial/final state 的单 token VEC-only 路径；
+- case 4：`T=1025` 的流水 credit 复用；
+- case 7/18：FP32 state 常驻、lookahead、tail=1/tail=63；
+- case 16/17/23/24：2/3/4-head、跨 round、raw K 复用和 gk 独立 key；
+- case 19：变长显式 `chunk_indices` 和跨 sequence chunk；
+- case 31：gk、FP32 state、exp2、`[V,K]` 的 tail=1 路径。
 
 单条 case 的 active head 数会随物理核数变化；实际 `blockDim` 和 active head 记录仍需在对应
-SoC 运行后回填。
+SoC 运行后回填。显式设置 `DETERMINISM_START/END` 或 `MSS_START/END` 时只属于局部定位，
+不能作为 32 个模板实例已完整覆盖的结论。
 
 使用 sanitizer 前必须确认当前 OPP 为 sanitizer 编译版本，且运行日志明确显示目标 kernel
 已启用对应工具；仅看到未激活提示不能作为内存无异常结论。

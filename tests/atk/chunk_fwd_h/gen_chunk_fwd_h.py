@@ -21,6 +21,8 @@ except ModuleNotFoundError as exc:
 
 OP_NAME = "chunk_fwd_h"
 SEED_BASE = 20260831
+# Preserve the published negative-case inputs when the positive matrix grows.
+NEGATIVE_SEED_OFFSET = 49
 STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key", "mem": 1.1}
 TEMPLATE_GATE_DTYPES = ("bf16", "fp32")
 TEMPLATE_GATE_MODES = ("g", "gk")
@@ -74,11 +76,19 @@ def _negative(mutation: str, expected_message: str) -> dict:
 
 def _template_signature(spec: dict) -> tuple:
     """Return the symbolic top-level kernel template arguments for a case."""
+    gate_dtype = str(spec["gate_dtype"])
+    mode = str(spec["mode"])
     state_dtype = str(spec.get("state_dtype", "none"))
+    if gate_dtype not in TEMPLATE_GATE_DTYPES:
+        raise ValueError(f"unsupported template gate dtype: {gate_dtype}")
+    if mode not in TEMPLATE_GATE_MODES:
+        raise ValueError(f"unsupported template gate mode: {mode}")
+    if state_dtype not in {"none", *TEMPLATE_STATE_DTYPES}:
+        raise ValueError(f"unsupported template state dtype: {state_dtype}")
     return (
-        str(spec["gate_dtype"]),
+        gate_dtype,
         int(spec["V"]),
-        str(spec["mode"]) == "gk",
+        mode == "gk",
         bool(spec["use_exp2"]),
         state_dtype != "bf16",
         bool(spec["state_v_first"]),
@@ -109,12 +119,11 @@ def _template_matrix_specs(prefix: str, tags: str, **updates) -> list[dict]:
             for use_exp2 in TEMPLATE_EXP2_VALUES:
                 for state_dtype in TEMPLATE_STATE_DTYPES:
                     for state_v_first in TEMPLATE_STATE_LAYOUTS:
-                        values = dict(updates)
+                        values = {"output_final_state": True, **updates}
                         values.update(
                             mode=mode,
                             gate_dtype=gate_dtype,
                             state_dtype=state_dtype,
-                            output_final_state=True,
                             use_exp2=use_exp2,
                             state_v_first=state_v_first,
                         )
@@ -147,6 +156,25 @@ def _assert_complete_template_matrix(name: str, specs: list[dict]) -> None:
         raise AssertionError(
             f"{name}: template signature mismatch; missing={missing}, unexpected={unexpected}"
         )
+
+
+def _assert_unique_specs(name: str, specs: list[dict]) -> None:
+    case_keys = [str(spec["case_key"]) for spec in specs]
+    if len(case_keys) != len(set(case_keys)):
+        raise AssertionError(f"{name}: duplicate case_key")
+
+    ignored = {"case_id", "case_key", "seed", "tags"}
+    fingerprints = [
+        json.dumps(
+            {key: value for key, value in spec.items() if key not in ignored},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        for spec in specs
+    ]
+    if len(fingerprints) != len(set(fingerprints)):
+        raise AssertionError(f"{name}: structurally duplicate cases")
 
 
 POSITIVE_SPECS = [
@@ -229,9 +257,9 @@ POSITIVE_SPECS = [
         output_final_state=True,
     ),
     _positive(
-        "g_fp32_initial_terminal_tail1_no_final",
-        tags="accuracy,boundary,a5_resident,a5_lookahead,tail1",
-        T=257,
+        "g_fp32_initial_terminal_tail2_no_final",
+        tags="accuracy,boundary,a5_resident,a5_lookahead,tail2",
+        T=258,
         state_dtype="fp32",
         use_exp2=True,
         state_v_first=True,
@@ -246,10 +274,10 @@ POSITIVE_SPECS = [
         output_final_state=True,
     ),
     _positive(
-        "gk_tail1_fp32_state",
-        tags="accuracy,boundary,gk,tail1",
+        "gk_tail2_fp32_state",
+        tags="accuracy,boundary,gk,tail2",
         mode="gk",
-        T=129,
+        T=130,
         gate_dtype="fp32",
         state_dtype="fp32",
         output_final_state=True,
@@ -321,12 +349,275 @@ POSITIVE_SPECS = [
 ]
 
 
-ACCURACY_TEMPLATE_SPECS = _template_matrix_specs(
-    "matrix",
-    "accuracy,template_key_matrix,boundary,tail1",
-    T=129,
-)
-POSITIVE_SPECS.extend(ACCURACY_TEMPLATE_SPECS)
+ACCURACY_GENERALIZATION_SPECS = [
+    _positive(
+        "dense_no_initial_final_fp32_g",
+        tags="accuracy,generalization,no_initial",
+        T=65,
+        output_final_state=True,
+    ),
+    _positive(
+        "dense_no_initial_final_fp32_gk_vk",
+        tags="accuracy,generalization,no_initial,gk,tail1",
+        mode="gk",
+        T=129,
+        gate_dtype="fp32",
+        output_final_state=True,
+        use_exp2=True,
+        state_v_first=True,
+    ),
+    _positive(
+        "dense_no_initial_no_final_full_chunk",
+        tags="accuracy,generalization,no_initial,no_final,full_chunk",
+        T=64,
+    ),
+    _positive(
+        "dense_bf16_initial_no_final_tail1",
+        tags="accuracy,generalization,no_final,tail1",
+        T=65,
+        state_dtype="bf16",
+    ),
+    _positive(
+        "dense_fp32_initial_no_final_gk_full_chunks",
+        tags="accuracy,generalization,no_final,gk,full_chunk",
+        mode="gk",
+        T=128,
+        gate_dtype="fp32",
+        state_dtype="fp32",
+        use_exp2=True,
+        state_v_first=True,
+    ),
+    _positive(
+        "dense_tail2_fp32_state",
+        tags="accuracy,generalization,tail2",
+        T=130,
+        gate_dtype="fp32",
+        state_dtype="fp32",
+        output_final_state=True,
+    ),
+    _positive(
+        "dense_tail32_gk_bf16_state",
+        tags="accuracy,generalization,gk,tail32",
+        mode="gk",
+        T=160,
+        state_dtype="bf16",
+        output_final_state=True,
+        state_v_first=True,
+    ),
+    _positive(
+        "dense_tail63_gk_fp32_state",
+        tags="accuracy,generalization,gk,tail63",
+        mode="gk",
+        T=191,
+        gate_dtype="fp32",
+        state_dtype="fp32",
+        output_final_state=True,
+        use_exp2=True,
+    ),
+    _positive(
+        "dense_four_full_chunks",
+        tags="accuracy,generalization,full_chunk",
+        T=256,
+        gate_dtype="fp32",
+        state_dtype="bf16",
+        output_final_state=True,
+    ),
+    _positive(
+        "dense_credit_reuse_33_chunks_gk",
+        tags="accuracy,generalization,gk,long_credit_reuse,tail1",
+        mode="gk",
+        T=2113,
+        gate_dtype="fp32",
+        state_dtype="bf16",
+        output_final_state=True,
+        use_exp2=True,
+    ),
+    _positive(
+        "dense_gva_ratio2",
+        tags="accuracy,generalization,head_partition,gva",
+        HK=2,
+        HV=4,
+        T=65,
+        state_dtype="bf16",
+        output_final_state=True,
+    ),
+    _positive(
+        "dense_gva_ratio3",
+        tags="accuracy,generalization,head_partition,gva",
+        HK=3,
+        HV=9,
+        T=65,
+        gate_dtype="fp32",
+        state_dtype="fp32",
+        output_final_state=True,
+    ),
+    _positive(
+        "dense_gva_ratio4",
+        tags="accuracy,generalization,head_partition,gva",
+        HK=4,
+        HV=16,
+        T=65,
+        state_dtype="bf16",
+        output_final_state=True,
+        use_exp2=True,
+    ),
+    _positive(
+        "dense_gva_ratio8",
+        tags="accuracy,generalization,head_partition,gva",
+        HK=2,
+        HV=16,
+        T=65,
+        gate_dtype="fp32",
+        state_dtype="fp32",
+        output_final_state=True,
+        state_v_first=True,
+    ),
+    _positive(
+        "dense_total20_heads",
+        tags="accuracy,generalization,head_partition",
+        HK=5,
+        HV=20,
+        T=1,
+        output_final_state=True,
+    ),
+    _positive(
+        "dense_total24_heads",
+        tags="accuracy,generalization,head_partition",
+        HK=6,
+        HV=24,
+        T=1,
+        gate_dtype="fp32",
+        state_dtype="bf16",
+        output_final_state=True,
+    ),
+    _positive(
+        "dense_total28_heads",
+        tags="accuracy,generalization,head_partition",
+        HK=7,
+        HV=28,
+        T=1,
+        state_dtype="fp32",
+        output_final_state=True,
+        use_exp2=True,
+    ),
+    _positive(
+        "dense_total32_heads",
+        tags="accuracy,generalization,head_partition",
+        HK=8,
+        HV=32,
+        T=1,
+        gate_dtype="fp32",
+        state_dtype="fp32",
+        output_final_state=True,
+        state_v_first=True,
+    ),
+    _positive(
+        "dense_total48_heads_cross_sequence",
+        tags="accuracy,generalization,head_partition,cross_sequence",
+        B=2,
+        HK=6,
+        HV=24,
+        T=1,
+        state_dtype="bf16",
+        output_final_state=True,
+    ),
+    _positive(
+        "dense_total96_heads_cross_sequence",
+        tags="accuracy,generalization,head_partition,cross_sequence",
+        B=3,
+        HK=8,
+        HV=32,
+        T=1,
+        gate_dtype="fp32",
+        state_dtype="fp32",
+        output_final_state=True,
+        use_exp2=True,
+    ),
+    _positive(
+        "varlen_mixed_boundaries_explicit_indices",
+        tags="accuracy,generalization,varlen,explicit_indices",
+        HK=2,
+        HV=4,
+        T=454,
+        gate_dtype="fp32",
+        state_dtype="fp32",
+        output_final_state=True,
+        state_v_first=True,
+        seqlens="1,2,3,63,64,65,127,129",
+        explicit_chunk_indices=True,
+    ),
+    _positive(
+        "varlen_32_single_token_sequences",
+        tags="accuracy,generalization,varlen,cross_sequence,auto_indices",
+        HK=1,
+        HV=2,
+        T=32,
+        state_dtype="bf16",
+        output_final_state=True,
+        seqlens=",".join(["1"] * 32),
+    ),
+    _positive(
+        "gk_non_contiguous_u_view",
+        tags="accuracy,generalization,gk,non_contiguous_input",
+        mode="gk",
+        T=65,
+        gate_dtype="fp32",
+        state_dtype="bf16",
+        output_final_state=True,
+        non_contiguous_u=True,
+    ),
+]
+POSITIVE_SPECS.extend(ACCURACY_GENERALIZATION_SPECS)
+
+
+ACCURACY_TEMPLATE_MATRIX_GROUPS = [
+    (
+        "dense_tail1",
+        _template_matrix_specs(
+            "matrix_dense_tail1",
+            "accuracy,template_key_matrix,dense,boundary,tail1",
+            T=129,
+        ),
+    ),
+    (
+        "dense_full_chunks",
+        _template_matrix_specs(
+            "matrix_dense_full_chunks",
+            "accuracy,template_key_matrix,dense,full_chunk",
+            T=128,
+        ),
+    ),
+    (
+        "dense_tail63",
+        _template_matrix_specs(
+            "matrix_dense_tail63",
+            "accuracy,template_key_matrix,dense,boundary,tail63",
+            T=127,
+        ),
+    ),
+    (
+        "dense_terminal_no_final",
+        _template_matrix_specs(
+            "matrix_dense_terminal_no_final",
+            "accuracy,template_key_matrix,dense,boundary,no_final,tail1",
+            T=257,
+            output_final_state=False,
+        ),
+    ),
+    (
+        "varlen_mixed_boundaries",
+        _template_matrix_specs(
+            "matrix_varlen_mixed_boundaries",
+            "accuracy,template_key_matrix,varlen,boundary,explicit_indices",
+            T=259,
+            seqlens="1,64,65,129",
+            explicit_chunk_indices=True,
+        ),
+    ),
+]
+
+for _, matrix_specs in ACCURACY_TEMPLATE_MATRIX_GROUPS:
+    POSITIVE_SPECS.extend(matrix_specs)
 
 
 NEGATIVE_SPECS = [
@@ -651,7 +942,8 @@ MSS_TEMPLATE_OVERRIDES = {
 }
 
 for spec in MSS_TEMPLATE_SPECS:
-    override = MSS_TEMPLATE_OVERRIDES.get(_template_signature(spec))
+    expected_signature = _template_signature(spec)
+    override = MSS_TEMPLATE_OVERRIDES.get(expected_signature)
     if override is None:
         continue
     metadata_keys = {"extra_tags", "remove_tags"}
@@ -660,13 +952,19 @@ for spec in MSS_TEMPLATE_SPECS:
     base_tags = [tag for tag in spec["tags"].split(",") if tag not in removed_tags]
     extra_tags = [tag for tag in override.get("extra_tags", "").split(",") if tag]
     spec["tags"] = ",".join(base_tags + extra_tags)
+    if _template_signature(spec) != expected_signature:
+        raise AssertionError(
+            f"mss override changed template signature for {spec['case_key']}"
+        )
 
 
 def build_accuracy_specs() -> list[dict]:
-    _assert_complete_template_matrix("accuracy", ACCURACY_TEMPLATE_SPECS)
+    for matrix_name, matrix_specs in ACCURACY_TEMPLATE_MATRIX_GROUPS:
+        _assert_complete_template_matrix(f"accuracy/{matrix_name}", matrix_specs)
     specs = deepcopy(POSITIVE_SPECS)
-    if len(specs) != 49:
-        raise AssertionError(f"accuracy: expected 49 cases, got {len(specs)}")
+    if len(specs) != 200:
+        raise AssertionError(f"accuracy: expected 200 cases, got {len(specs)}")
+    _assert_unique_specs("accuracy", specs)
     for case_id, spec in enumerate(specs):
         spec["case_id"] = case_id
         spec.setdefault("seed", SEED_BASE + case_id)
@@ -677,7 +975,7 @@ def build_negative_specs() -> list[dict]:
     specs = deepcopy(NEGATIVE_SPECS)
     for case_id, spec in enumerate(specs):
         spec["case_id"] = case_id
-        spec.setdefault("seed", SEED_BASE + len(POSITIVE_SPECS) + case_id)
+        spec.setdefault("seed", SEED_BASE + NEGATIVE_SEED_OFFSET + case_id)
     return specs
 
 
@@ -693,8 +991,10 @@ def build_perf_specs() -> list[dict]:
 
 
 def build_mss_specs() -> list[dict]:
+    _assert_complete_template_matrix("determinism", MSS_TEMPLATE_SPECS)
     _assert_complete_template_matrix("mss", MSS_TEMPLATE_SPECS)
     specs = deepcopy(MSS_TEMPLATE_SPECS)
+    _assert_unique_specs("determinism/mss", specs)
     for case_id, spec in enumerate(specs):
         spec["case_id"] = case_id
         spec.setdefault("seed", SEED_BASE + 2000 + case_id)
@@ -845,7 +1145,8 @@ def main() -> None:
     if args.summary:
         print(
             f"accuracy={len(accuracy)} positive={len(POSITIVE_SPECS)} "
-            f"negative={len(negative)} perf={len(perf)} mss={len(mss)}"
+            f"negative={len(negative)} perf={len(perf)} "
+            f"determinism={len(mss)} mss={len(mss)}"
         )
 
 
