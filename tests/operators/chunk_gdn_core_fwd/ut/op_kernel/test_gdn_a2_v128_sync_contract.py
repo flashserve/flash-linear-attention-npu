@@ -12,6 +12,10 @@ FWD_H_KERNEL = ROOT / (
     "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/"
     "op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
 )
+FWD_H_VNEW_EPILOGUE = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/"
+    "op_kernel/epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
+)
 FWD_O_KERNEL = ROOT / (
     "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/"
     "op_kernel/gemm/kernel/gdn_fwd_o_kernel.hpp"
@@ -52,6 +56,36 @@ def test_fwd_o_joins_aiv_subblocks_before_completion_publication():
     assert vec2_completion in kernel
     assert kernel.count("CrossCoreBarrier<0x1, PIPE_MTE3>();") == 2
     assert obsolete_fence not in kernel
+
+
+def test_fwd_h_v1_joins_aiv_subblocks_before_c2_consumes_workspace():
+    epilogue = FWD_H_VNEW_EPILOGUE.read_text(encoding="utf-8")
+
+    publish_helper = (
+        "void PublishVec1Done(Arch::CrossCoreFlag &vec1Done)\n"
+        "    {\n"
+        "        // V1 partitions the token rows across the two AIV subblocks while C2\n"
+        "        // consumes the complete workspace tile. Publish only after both MTE3\n"
+        "        // producers have closed the same workspace generation.\n"
+        "        Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();\n"
+        "        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);"
+    )
+
+    assert publish_helper in epilogue
+    assert epilogue.count("PublishVec1Done(vec1Done);") == 5
+    assert epilogue.count("CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);") == 1
+
+
+def test_fwd_h_v2_joins_aiv_subblocks_before_releasing_workspace():
+    kernel = FWD_H_KERNEL.read_text(encoding="utf-8")
+
+    v2_completion = (
+        "Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();\n"
+        "                        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>("
+        "vecBlockScheduler.vec2Done[streamId]);"
+    )
+
+    assert v2_completion in kernel
 
 
 def test_fwd_h_tail_c2_retires_mte3_before_reusing_accumulator():
