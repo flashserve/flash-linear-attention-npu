@@ -39,8 +39,6 @@ from ._runtime import (
     zeros as _zeros,
 )
 
-RGDR_REQUIRED_DIM = 128
-
 # Most aclnn functions only receive pointer-sized descriptors and scalar ctypes
 # objects, so ctypes can call them without explicit argtypes.  Functions with C
 # strings or otherwise ambiguous scalar conversion are listed here to prevent
@@ -899,6 +897,7 @@ def npu_recurrent_gated_delta_rule(
     """
 
     op_name = "npu_recurrent_gated_delta_rule"
+    required_dim = 128
     if g is None and gk is None:
         raise RuntimeError(f"{op_name}: either g or gk must be provided.")
 
@@ -1036,9 +1035,14 @@ def npu_recurrent_gated_delta_rule(
                 f"{op_name}: {name} shape must be {expected_shape}, got {shape}."
             )
 
-    if key_heads > 256 or value_heads > 256 or key_dim != RGDR_REQUIRED_DIM or value_dim != RGDR_REQUIRED_DIM:
+    if (
+        key_heads > 256
+        or value_heads > 256
+        or key_dim != required_dim
+        or value_dim != required_dim
+    ):
         raise RuntimeError(
-            f"{op_name}: Nk and Nv must be <= 256 and Dk and Dv must be exactly {RGDR_REQUIRED_DIM}, "
+            f"{op_name}: Nk and Nv must be <= 256 and Dk and Dv must be exactly {required_dim}, "
             f"got Nk={key_heads}, Nv={value_heads}, Dk={key_dim}, Dv={value_dim}."
         )
     if value_heads % key_heads != 0:
