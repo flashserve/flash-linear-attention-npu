@@ -33,6 +33,10 @@ GDN_CORE_TILING = GDN_CORE_ROOT / "chunk_gdn_core_fwd_tiling.cpp"
 GDN_CORE_KERNEL = GDN_CORE_ROOT.parent / "op_kernel/chunk_gdn_core_fwd.cpp"
 GDN_CORE_STRUCT = GDN_CORE_ROOT.parent / "op_kernel/chunk_gdn_core_fwd_struct.h"
 GDN_CORE_MASK_HEADER = GDN_CORE_ROOT.parent / "op_kernel/chunk_gdn_core_output_mask.h"
+GDN_CORE_COEFFICIENT = (
+    GDN_CORE_ROOT.parent
+    / "op_kernel/internal/coefficient_generation/chunk_gdn_core_coefficient_generation.cpp"
+)
 
 
 class FakeTensor:
@@ -346,6 +350,22 @@ class GdnCoreFwdCtypesAbiTest(unittest.TestCase):
         self.assertIn("constexpr uint64_t GDN_CORE_OUTPUT_G_CUMSUM = 1ULL << 0", mask_header)
         self.assertIn("constexpr uint64_t GDN_CORE_OUTPUT_A = 1ULL << 1", mask_header)
         self.assertIn("uint64_t outputMask", struct)
+
+    def test_fixed_kkt_waits_for_both_aiv_writers_before_solve(self):
+        coefficient = GDN_CORE_COEFFICIENT.read_text(encoding="utf-8")
+        run_solve = coefficient.index("__aicore__ inline void RunSolvePhase")
+        arch_guard = coefficient.index(
+            "#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310", run_solve
+        )
+        fallback = coefficient.index("#else", arch_guard)
+        arch310 = coefficient[arch_guard:fallback]
+
+        self.assertLess(
+            arch310.index("AscendC::SyncAll<false>();"),
+            arch310.index("if constexpr (MATRIX_SIZE == 64)"),
+        )
+        self.assertNotIn("CrossCoreWaitFlag(KKT_READY_FLAG)", arch310)
+        self.assertNotIn("CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG)", arch310)
 
     def test_kernel_mask_retains_internal_a_and_cumsum_dependencies(self):
         kernel = GDN_CORE_KERNEL.read_text(encoding="utf-8")
