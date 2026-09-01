@@ -283,21 +283,18 @@ __aicore__ inline void RunPhase6(
         RunPhase6Cumsum(rawG, cuSeqlens, chunkIndices, gCumsumBht, coefficient);
     }
 
-    // H/O use every Fwd scheduler flag in the 0..7 range. The Phase6 varlen
-    // prefix must not leave a producer notification in that range before the
-    // suffix starts, so use SyncAll's dedicated MIX protocol on Ascend950.
+    // Join the AIC score producer and both AIV cumsum producers before either
+    // AIV subblock consumes score/cumsum tiles. The fixed-length paired ID2
+    // handoff can observe stale scheduler credit on the first fused launch;
+    // use the dedicated MIX barrier for both fixed and varlen on Ascend950.
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    if (coefficient.isVarlen != 0) {
-        AscendC::SyncAll<false>();
-    } else {
-#endif
+    AscendC::SyncAll<false>();
+#else
     if ASCEND_IS_AIC {
         AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SCORE_READY_FLAG);
     }
     if ASCEND_IS_AIV {
         AscendC::CrossCoreWaitFlag(PHASE6_SCORE_READY_FLAG);
-    }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     }
 #endif
 

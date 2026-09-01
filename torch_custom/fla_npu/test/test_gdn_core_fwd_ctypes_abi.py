@@ -351,7 +351,29 @@ class GdnCoreFwdCtypesAbiTest(unittest.TestCase):
         self.assertIn("constexpr uint64_t GDN_CORE_OUTPUT_A = 1ULL << 1", mask_header)
         self.assertIn("uint64_t outputMask", struct)
 
-    def test_fixed_kkt_waits_for_both_aiv_writers_before_solve(self):
+    def test_arch310_joins_score_and_cumsum_before_kkt_epilogue(self):
+        kernel = GDN_CORE_KERNEL.read_text(encoding="utf-8")
+        run_phase6 = kernel.index("__aicore__ inline void RunPhase6(")
+        score_producer = kernel.index("kktCube.Process", run_phase6)
+        cumsum_producer = kernel.index("RunPhase6Cumsum", score_producer)
+        score_join = kernel.index(
+            "#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310", run_phase6
+        )
+        kkt_epilogue = kernel.index("kkt.ProcessEpilogueForSolve", score_join)
+        fallback = kernel.index("#else", score_join)
+        fallback_end = kernel.index("#endif", fallback)
+        arch310 = kernel[score_join:fallback]
+        fallback_path = kernel[fallback:fallback_end]
+
+        self.assertIn("AscendC::SyncAll<false>();", arch310)
+        self.assertNotIn("coefficient.isVarlen", arch310)
+        self.assertNotIn("PHASE6_SCORE_READY_FLAG", arch310)
+        self.assertIn("PHASE6_SCORE_READY_FLAG", fallback_path)
+        self.assertLess(score_producer, score_join)
+        self.assertLess(cumsum_producer, score_join)
+        self.assertLess(score_join, kkt_epilogue)
+
+    def test_arch310_varlen_keeps_global_kkt_to_solve_join(self):
         coefficient = GDN_CORE_COEFFICIENT.read_text(encoding="utf-8")
         run_solve = coefficient.index("__aicore__ inline void RunSolvePhase")
         arch_guard = coefficient.index(
@@ -360,12 +382,10 @@ class GdnCoreFwdCtypesAbiTest(unittest.TestCase):
         fallback = coefficient.index("#else", arch_guard)
         arch310 = coefficient[arch_guard:fallback]
 
-        self.assertLess(
-            arch310.index("AscendC::SyncAll<false>();"),
-            arch310.index("if constexpr (MATRIX_SIZE == 64)"),
-        )
-        self.assertNotIn("CrossCoreWaitFlag(KKT_READY_FLAG)", arch310)
-        self.assertNotIn("CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG)", arch310)
+        self.assertIn("if (tilingData->isVarlen != 0)", arch310)
+        self.assertIn("AscendC::SyncAll<false>();", arch310)
+        self.assertIn("CrossCoreWaitFlag(KKT_READY_FLAG)", arch310)
+        self.assertIn("CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG)", arch310)
 
     def test_kernel_mask_retains_internal_a_and_cumsum_dependencies(self):
         kernel = GDN_CORE_KERNEL.read_text(encoding="utf-8")
