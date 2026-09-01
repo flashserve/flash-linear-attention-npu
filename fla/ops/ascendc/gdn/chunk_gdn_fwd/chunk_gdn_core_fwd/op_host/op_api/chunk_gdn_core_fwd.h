@@ -15,7 +15,6 @@ const std::array<const aclTensor *, 4> ChunkGdnCoreFwd(
     const aclTensor *k,
     const aclTensor *v,
     const aclTensor *beta,
-    const aclTensor *aStorage,
     const aclTensor *rawG,
     const aclTensor *gkOptional,
     const aclTensor *initialStateOptional,

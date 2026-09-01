@@ -21,6 +21,7 @@ from unittest import mock
 
 ASCENDC_DIR = Path(__file__).resolve().parents[1] / "fla_npu" / "ops" / "ascendc"
 CTYPES_PATH = ASCENDC_DIR / "_aclnn_ctypes.py"
+RUNTIME_PATH = ASCENDC_DIR / "_runtime.py"
 EXAMPLE_PATH = Path(__file__).resolve().parents[3] / "examples" / "flash_gated_delta_rule.py"
 GDN_CORE_CPP = (
     Path(__file__).resolve().parents[3]
@@ -30,12 +31,21 @@ GDN_CORE_HEADER = GDN_CORE_CPP.with_suffix(".h")
 GDN_CORE_ROOT = GDN_CORE_CPP.parents[1]
 GDN_CORE_DEF = GDN_CORE_ROOT / "chunk_gdn_core_fwd_def.cpp"
 GDN_CORE_TILING = GDN_CORE_ROOT / "chunk_gdn_core_fwd_tiling.cpp"
+GDN_CORE_STATE_TILING = GDN_CORE_ROOT / "chunk_gdn_core_fwd_recompute_wu_tiling.cpp"
 GDN_CORE_KERNEL = GDN_CORE_ROOT.parent / "op_kernel/chunk_gdn_core_fwd.cpp"
 GDN_CORE_STRUCT = GDN_CORE_ROOT.parent / "op_kernel/chunk_gdn_core_fwd_struct.h"
 GDN_CORE_MASK_HEADER = GDN_CORE_ROOT.parent / "op_kernel/chunk_gdn_core_output_mask.h"
 GDN_CORE_COEFFICIENT = (
     GDN_CORE_ROOT.parent
     / "op_kernel/internal/coefficient_generation/chunk_gdn_core_coefficient_generation.cpp"
+)
+GDN_CORE_RECOMPUTE_PROCESSOR = (
+    GDN_CORE_ROOT.parent
+    / "op_kernel/internal/operators/recompute_w_u_fwd/op_host/op_tiling/recompute_w_u_fwd_tiling_processor.h"
+)
+STANDALONE_RECOMPUTE_PROCESSOR = (
+    Path(__file__).resolve().parents[3]
+    / "fla/ops/ascendc/gdn/chunk_gdn_fwd/recompute_w_u_fwd/op_host/op_tiling/recompute_w_u_fwd_tiling_processor.h"
 )
 
 
@@ -305,7 +315,7 @@ class GdnCoreFwdCtypesAbiTest(unittest.TestCase):
         ]
         self.assertEqual(module._GET_WORKSPACE_ARGTYPES["aclnnGdnCoreFwdPhase6"], expected)
 
-    def test_cpp_null_aux_contract_keeps_required_l0_placeholders(self):
+    def test_cpp_null_aux_contract_keeps_private_internal_a_output(self):
         source = GDN_CORE_CPP.read_text(encoding="utf-8")
         op_def = GDN_CORE_DEF.read_text(encoding="utf-8")
 
@@ -318,14 +328,21 @@ class GdnCoreFwdCtypesAbiTest(unittest.TestCase):
         )
         self.assertRegex(
             source,
-            r"aOutput\s*=\s*executorPtr->AllocTensor\(MakeShape\(\{1\}\),\s*"
+            r"aOutput\s*=\s*executorPtr->AllocTensor\(\s*"
+            r"MakeShape\(\{batch, hv, seqlen, params\.chunkSize\}\),\s*"
             r"params\.k->GetDataType\(\)",
         )
+        self.assertNotRegex(
+            source,
+            r"aOutput\s*=\s*executorPtr->AllocTensor\(MakeShape\(\{1\}\)",
+        )
+        self.assertNotIn('Input("a_storage")', op_def)
         self.assertIn('Output("g_cumsum_bth").ParamType(REQUIRED)', op_def)
         self.assertIn('Output("A").ParamType(REQUIRED)', op_def)
 
     def test_tiling_output_mask_uses_explicit_private_l0_attr(self):
         tiling = GDN_CORE_TILING.read_text(encoding="utf-8")
+        state_tiling = GDN_CORE_STATE_TILING.read_text(encoding="utf-8")
         struct = GDN_CORE_STRUCT.read_text(encoding="utf-8")
         mask_header = GDN_CORE_MASK_HEADER.read_text(encoding="utf-8")
         source = GDN_CORE_CPP.read_text(encoding="utf-8")
@@ -334,7 +351,14 @@ class GdnCoreFwdCtypesAbiTest(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertNotIn("GetOutputShape", tiling)
+        self.assertIn("OUTPUT_A = 3", tiling)
+        self.assertIn("constexpr size_t INPUT_RAW_G = 4;", tiling)
+        self.assertIn("constexpr size_t INPUT_G = 4;", state_tiling)
+        for tiling_source in (tiling, state_tiling):
+            self.assertIn("OUTPUT_A = 3", tiling_source)
+            self.assertIn("GetOutputDesc(OUTPUT_A)", tiling_source)
+            self.assertNotIn("GetOutputShape(OUTPUT_A)", tiling_source)
+            self.assertNotIn("INPUT_A_STORAGE", tiling_source)
         self.assertIn("ATTR_OUTPUT_MASK = 3", tiling)
         self.assertIn("GetAttrPointer<int64_t>(ATTR_OUTPUT_MASK)", tiling)
         self.assertIn("trailer.outputMask = static_cast<uint64_t>(*outputMask)", tiling)
@@ -350,6 +374,30 @@ class GdnCoreFwdCtypesAbiTest(unittest.TestCase):
         self.assertIn("constexpr uint64_t GDN_CORE_OUTPUT_G_CUMSUM = 1ULL << 0", mask_header)
         self.assertIn("constexpr uint64_t GDN_CORE_OUTPUT_A = 1ULL << 1", mask_header)
         self.assertIn("uint64_t outputMask", struct)
+
+    def test_tiling_ignores_flattened_public_a_storage_shape(self):
+        runtime = RUNTIME_PATH.read_text(encoding="utf-8")
+        tiling = GDN_CORE_TILING.read_text(encoding="utf-8")
+        state_tiling = GDN_CORE_STATE_TILING.read_text(encoding="utf-8")
+
+        self.assertIn("(storage_numel(tensor),)", runtime)
+        for tiling_source in (tiling, state_tiling):
+            self.assertIn("GetOutputDesc(OUTPUT_A)", tiling_source)
+            self.assertNotIn("GetOutputShape(OUTPUT_A)", tiling_source)
+
+    def test_fused_recompute_tiling_types_are_odr_isolated(self):
+        fused = GDN_CORE_RECOMPUTE_PROCESSOR.read_text(encoding="utf-8")
+        standalone = STANDALONE_RECOMPUTE_PROCESSOR.read_text(encoding="utf-8")
+        state_tiling = GDN_CORE_STATE_TILING.read_text(encoding="utf-8")
+
+        self.assertIn("struct GdnCoreRecomputeWUFwdTilingContext", fused)
+        self.assertIn("class GdnCoreRecomputeWUFwdTilingProcessor", fused)
+        self.assertNotIn("struct RecomputeWUFwdTilingContext", fused)
+        self.assertNotIn("class RecomputeWUFwdTilingProcessor", fused)
+        self.assertIn("struct RecomputeWUFwdTilingContext", standalone)
+        self.assertIn("class RecomputeWUFwdTilingProcessor", standalone)
+        self.assertIn("GdnCoreRecomputeWUFwdTilingContext recomputeContext", state_tiling)
+        self.assertIn("GdnCoreRecomputeWUFwdTilingProcessor recomputeProcessor", state_tiling)
 
     def test_arch310_joins_score_and_cumsum_before_kkt_epilogue(self):
         kernel = GDN_CORE_KERNEL.read_text(encoding="utf-8")
@@ -387,10 +435,12 @@ class GdnCoreFwdCtypesAbiTest(unittest.TestCase):
         self.assertIn("CrossCoreWaitFlag(KKT_READY_FLAG)", arch310)
         self.assertIn("CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG)", arch310)
 
-    def test_kernel_mask_retains_internal_a_and_cumsum_dependencies(self):
+    def test_kernel_retains_private_a_output_and_cumsum_dependencies(self):
         kernel = GDN_CORE_KERNEL.read_text(encoding="utf-8")
 
-        self.assertIn("? A : aStorage", kernel)
+        self.assertIn("GM_ADDR solveA = A", kernel)
+        self.assertNotIn("? A : aStorage", kernel)
+        self.assertNotIn("a_storage", kernel)
         self.assertGreaterEqual(kernel.count("solveA"), 5)
         self.assertIn("RunPhase6Cumsum(rawG", kernel)
         self.assertIn("gCumsumBht", kernel)
@@ -412,6 +462,7 @@ class GdnCoreFwdCtypesAbiTest(unittest.TestCase):
             "return {oOut, finalStateOut, gCumsumBthOut, aOut};",
             l0_source,
         )
+        self.assertNotIn("aStorage", l0_source)
 
     def test_phase6_wrapper_uses_fixed_aclnn_symbol(self):
         captured = {}

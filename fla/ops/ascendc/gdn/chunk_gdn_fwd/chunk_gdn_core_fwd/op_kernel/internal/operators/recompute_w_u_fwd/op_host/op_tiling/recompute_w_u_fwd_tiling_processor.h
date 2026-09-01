@@ -34,7 +34,6 @@ static constexpr int64_t RECOMPUTE_W_U_FWD_V_DIM_256 = 256;
 static constexpr size_t RECOMPUTE_W_U_FWD_INPUT_K_IDX = 0;
 static constexpr size_t RECOMPUTE_W_U_FWD_INPUT_V_IDX = 1;
 static constexpr size_t RECOMPUTE_W_U_FWD_INPUT_BETA_IDX = 2;
-static constexpr size_t RECOMPUTE_W_U_FWD_INPUT_A_IDX = 3;
 static constexpr size_t RECOMPUTE_W_U_FWD_INPUT_G_IDX = 4;
 static constexpr size_t RECOMPUTE_W_U_FWD_INPUT_SEQLENS_IDX = 6;
 static constexpr size_t RECOMPUTE_W_U_FWD_INPUT_CHUNK_INDICES_IDX = 7;
@@ -54,7 +53,6 @@ static constexpr int64_t RECOMPUTE_W_U_FWD_VAR_LEN_B_DIM_1 = 1;
 static constexpr const char *const RECOMPUTE_W_U_FWD_INPUT_K_NAME = "k";
 static constexpr const char *const RECOMPUTE_W_U_FWD_INPUT_V_NAME = "v";
 static constexpr const char *const RECOMPUTE_W_U_FWD_INPUT_BETA_NAME = "beta";
-static constexpr const char *const RECOMPUTE_W_U_FWD_INPUT_A_NAME = "A";
 static constexpr const char *const RECOMPUTE_W_U_FWD_INPUT_G_NAME = "g";
 static constexpr const char *const RECOMPUTE_W_U_FWD_INPUT_CHUNK_INDICES_NAME = "chunk_indices";
 static constexpr const char *const RECOMPUTE_W_U_FWD_INPUT_SEQLENS_NAME = "cu_seqlens";
@@ -66,12 +64,11 @@ static constexpr uint64_t RECOMPUTE_W_U_FWD_INTERLEAVED_UB_RESERVED_BYTES = 16 *
 static constexpr uint64_t RECOMPUTE_W_U_FWD_INTERLEAVED_MIN_VEC_ROW = 8;
 static constexpr uint32_t RECOMPUTE_W_U_FWD_A5_GM_RING_DEPTH = 8;
 
-struct RecomputeWUFwdTilingContext {
+struct GdnCoreRecomputeWUFwdTilingContext {
     const char *nodeName;
     const gert::StorageShape *kShape;
     const gert::StorageShape *vShape;
     const gert::StorageShape *betaShape;
-    const gert::StorageShape *aShape;
     const gert::StorageShape *gShape;
     const gert::StorageShape *cuSeqlensShape;
     const gert::StorageShape *chunkIndicesShape;
@@ -86,8 +83,8 @@ struct RecomputeWUFwdTilingContext {
     bool enableA5CompactWorkspace;
 };
 
-class RecomputeWUFwdTilingProcessor {
-    RecomputeWUFwdTilingContext &ctx_;
+class GdnCoreRecomputeWUFwdTilingProcessor {
+    GdnCoreRecomputeWUFwdTilingContext &ctx_;
     RecomputeWUFwdTilingData &tiling_;
     size_t workspaceSize_ = 0;
     int64_t B = 0;
@@ -100,7 +97,8 @@ class RecomputeWUFwdTilingProcessor {
     int64_t chunkSize = 0;
 
 public:
-    explicit RecomputeWUFwdTilingProcessor(RecomputeWUFwdTilingContext &ctx, RecomputeWUFwdTilingData &tiling)
+    explicit GdnCoreRecomputeWUFwdTilingProcessor(
+        GdnCoreRecomputeWUFwdTilingContext &ctx, RecomputeWUFwdTilingData &tiling)
         : ctx_(ctx), tiling_(tiling)
     {
     }
@@ -141,9 +139,6 @@ public:
                     , return ge::GRAPH_FAILED);
         OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.betaShape, RECOMPUTE_W_U_FWD_DIM_NUM_3,
                                              RECOMPUTE_W_U_FWD_INPUT_BETA_NAME) != ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.aShape, RECOMPUTE_W_U_FWD_DIM_NUM_4, RECOMPUTE_W_U_FWD_INPUT_A_NAME) !=
-                        ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
         OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.gShape, RECOMPUTE_W_U_FWD_DIM_NUM_3, RECOMPUTE_W_U_FWD_INPUT_G_NAME) !=
                         ge::GRAPH_SUCCESS,
@@ -267,7 +262,6 @@ public:
         const gert::Shape kStorageShape = ctx_.kShape->GetStorageShape();
         const gert::Shape vStorageShape = ctx_.vShape->GetStorageShape();
         const gert::Shape betaStorageShape = ctx_.betaShape->GetStorageShape();
-        const gert::Shape AStorageShape = ctx_.aShape->GetStorageShape();
         const gert::Shape gStorageShape = ctx_.gShape->GetStorageShape();
         B = static_cast<int64_t>(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0));
         Hk = static_cast<int64_t>(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1));
@@ -299,17 +293,6 @@ public:
         OP_CHECK_IF(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2) != gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
                     OP_LOGE(ctx_.nodeName, "Compare T: k T=%ld vs g T=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
                             gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0) != AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0),
-                    OP_LOGE(ctx_.nodeName, "Compare B: k B=%ld vs A B=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0),
-                            AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0)),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2) != AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
-                    OP_LOGE(ctx_.nodeName, "Compare T: k T=%ld vs A T=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
-                            AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1) != Hv,
-                    OP_LOGE(ctx_.nodeName, "Compare head: A H=%ld must equal Hv=%ld.", AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1), Hv),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(betaStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1) != Hv,
                     OP_LOGE(ctx_.nodeName, "Compare head: beta H=%ld must equal Hv=%ld.",

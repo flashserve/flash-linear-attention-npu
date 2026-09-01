@@ -20,12 +20,12 @@ constexpr size_t INPUT_Q = 0;
 constexpr size_t INPUT_K = 1;
 constexpr size_t INPUT_V = 2;
 constexpr size_t INPUT_BETA = 3;
-constexpr size_t INPUT_A = 4;
-constexpr size_t INPUT_G = 5;
-constexpr size_t INPUT_GK = 6;
-constexpr size_t INPUT_INITIAL_STATE = 7;
-constexpr size_t INPUT_CU_SEQLENS = 8;
-constexpr size_t INPUT_CHUNK_INDICES = 9;
+constexpr size_t INPUT_G = 4;
+constexpr size_t INPUT_GK = 5;
+constexpr size_t INPUT_INITIAL_STATE = 6;
+constexpr size_t INPUT_CU_SEQLENS = 7;
+constexpr size_t INPUT_CHUNK_INDICES = 8;
+constexpr size_t OUTPUT_A = 3;
 
 constexpr size_t ATTR_OUTPUT_FINAL_STATE = 0;
 constexpr size_t ATTR_CHUNK_SIZE = 1;
@@ -129,13 +129,12 @@ ge::graphStatus Tiling4ChunkGdnCoreStateOutput(gert::TilingContext *context)
     const auto *kShapePtr = context->GetOptionalInputShape(INPUT_K);
     const auto *vShapePtr = context->GetOptionalInputShape(INPUT_V);
     const auto *betaShapePtr = context->GetOptionalInputShape(INPUT_BETA);
-    const auto *aShapePtr = context->GetOptionalInputShape(INPUT_A);
     const auto *gShapePtr = context->GetOptionalInputShape(INPUT_G);
     const auto *cuShapePtr = context->GetOptionalInputShape(INPUT_CU_SEQLENS);
     const auto *chunkShapePtr = context->GetOptionalInputShape(INPUT_CHUNK_INDICES);
     OP_CHECK_IF(!IsRank(qShapePtr, 4) || !IsRank(kShapePtr, 4) || !IsRank(vShapePtr, 4) ||
-                    !IsRank(betaShapePtr, 3) || !IsRank(aShapePtr, 4) || !IsRank(gShapePtr, 3),
-                OP_LOGE(context->GetNodeName(), "q/k/v/A must be rank 4 and beta/g rank 3."),
+                    !IsRank(betaShapePtr, 3) || !IsRank(gShapePtr, 3),
+                OP_LOGE(context->GetNodeName(), "q/k/v must be rank 4 and beta/g rank 3."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF((cuShapePtr == nullptr) != (chunkShapePtr == nullptr),
                 OP_LOGE(context->GetNodeName(),
@@ -149,7 +148,6 @@ ge::graphStatus Tiling4ChunkGdnCoreStateOutput(gert::TilingContext *context)
     const gert::Shape kShape = kShapePtr->GetStorageShape();
     const gert::Shape vShape = vShapePtr->GetStorageShape();
     const gert::Shape betaShape = betaShapePtr->GetStorageShape();
-    const gert::Shape aShape = aShapePtr->GetStorageShape();
     const gert::Shape gShape = gShapePtr->GetStorageShape();
     const int64_t batch = qShape.GetDim(DIM_BATCH);
     const int64_t kNumHead = qShape.GetDim(DIM_HEAD);
@@ -167,10 +165,8 @@ ge::graphStatus Tiling4ChunkGdnCoreStateOutput(gert::TilingContext *context)
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(vShape.GetDim(DIM_BATCH) != batch || vShape.GetDim(DIM_TOKEN) != seqlen ||
                     betaShape.GetDim(0) != batch || betaShape.GetDim(1) != vNumHead ||
-                    betaShape.GetDim(2) != seqlen || aShape.GetDim(DIM_BATCH) != batch ||
-                    aShape.GetDim(DIM_HEAD) != vNumHead || aShape.GetDim(DIM_TOKEN) != seqlen ||
-                    aShape.GetDim(DIM_CHANNEL) <= 0,
-                OP_LOGE(context->GetNodeName(), "v/beta/A must match q/k in B/T and value heads."),
+                    betaShape.GetDim(2) != seqlen,
+                OP_LOGE(context->GetNodeName(), "v/beta must match q/k in B/T and value heads."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(gShape.GetDim(0) != batch || gShape.GetDim(1) != vNumHead ||
                     gShape.GetDim(2) != seqlen,
@@ -192,10 +188,6 @@ ge::graphStatus Tiling4ChunkGdnCoreStateOutput(gert::TilingContext *context)
     OP_CHECK_IF(chunkSize != CHUNK_64 && chunkSize != CHUNK_128,
                 OP_LOGE(context->GetNodeName(), "chunk_size must be 64 or 128."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(aShape.GetDim(DIM_CHANNEL) != chunkSize,
-                OP_LOGE(context->GetNodeName(), "A last dimension must equal chunk_size."),
-                return ge::GRAPH_FAILED);
-
     const bool isVarlen = cuShapePtr != nullptr;
     const int64_t tokenBatch = isVarlen ? cuShapePtr->GetStorageShape().GetDim(0) - 1 : 1;
     OP_CHECK_IF(tokenBatch <= 0 || (isVarlen && batch != 1),
@@ -216,7 +208,9 @@ ge::graphStatus Tiling4ChunkGdnCoreStateOutput(gert::TilingContext *context)
     const auto *kDesc = context->GetInputDesc(INPUT_K);
     const auto *vDesc = context->GetInputDesc(INPUT_V);
     const auto *betaDesc = context->GetInputDesc(INPUT_BETA);
-    const auto *aDesc = context->GetInputDesc(INPUT_A);
+    // A's physical storage descriptor can be flattened by public runtimes.
+    // Recompute dimensions come from k/v/g and chunk_size; only dtype is read.
+    const auto *aDesc = context->GetOutputDesc(OUTPUT_A);
     const auto *gDesc = context->GetInputDesc(INPUT_G);
     OP_CHECK_NULL_WITH_CONTEXT(context, qDesc);
     OP_CHECK_NULL_WITH_CONTEXT(context, kDesc);
@@ -245,12 +239,11 @@ ge::graphStatus Tiling4ChunkGdnCoreStateOutput(gert::TilingContext *context)
     const int64_t *chunkIndicesData =
         chunkIndicesTensor == nullptr ? nullptr : chunkIndicesTensor->GetData<int64_t>();
     GDN::RecomputeWUFwdTilingData recomputeTiling{};
-    RecomputeWUFwdTilingContext recomputeContext{
+    GdnCoreRecomputeWUFwdTilingContext recomputeContext{
         context->GetNodeName(),
         context->GetRequiredInputShape(INPUT_K),
         context->GetRequiredInputShape(INPUT_V),
         context->GetRequiredInputShape(INPUT_BETA),
-        context->GetRequiredInputShape(INPUT_A),
         context->GetRequiredInputShape(INPUT_G),
         context->GetOptionalInputShape(INPUT_CU_SEQLENS),
         context->GetOptionalInputShape(INPUT_CHUNK_INDICES),
@@ -266,7 +259,7 @@ ge::graphStatus Tiling4ChunkGdnCoreStateOutput(gert::TilingContext *context)
     };
     platform_ascendc::PlatformAscendC ascendcPlatform(context->GetPlatformInfo());
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, recomputeContext.ubSize);
-    RecomputeWUFwdTilingProcessor recomputeProcessor(recomputeContext, recomputeTiling);
+    GdnCoreRecomputeWUFwdTilingProcessor recomputeProcessor(recomputeContext, recomputeTiling);
     OP_CHECK_IF(recomputeProcessor.Process() != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "RecomputeWUFwd tiling failed."),
                 return ge::GRAPH_FAILED);

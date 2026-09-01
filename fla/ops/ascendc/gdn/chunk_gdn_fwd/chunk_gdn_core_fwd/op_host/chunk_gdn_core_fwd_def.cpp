@@ -29,8 +29,6 @@ public:
             .UnknownShapeFormat(formats).AutoContiguous();
         this->Input("beta").ParamType(REQUIRED).DataType(gateTypes).Format(formats)
             .UnknownShapeFormat(formats).AutoContiguous();
-        this->Input("a_storage").ParamType(REQUIRED).DataType(inputTypes).Format(formats)
-            .UnknownShapeFormat(formats).AutoContiguous();
         this->Input("raw_g").ParamType(REQUIRED).DataType(gateTypes).Format(formats)
             .UnknownShapeFormat(formats).AutoContiguous();
         this->Input("gk").ParamType(OPTIONAL).DataType(gateTypes).Format(formats)

@@ -9,16 +9,18 @@
 - `oOut` 始终必选。
 - `finalStateOutOptional` 在 `outputFinalState=true` 时必选，否则可以为 null。
 - `gCumsumOut` 和 `aOut` 可以分别为 null。
-- null 不会改变底层输出数量、顺序或公开 C ABI。L2 使用 rank-1 `[1]`
-  placeholder 保持 REQUIRED L0 固定槽，并从公开 null 指针显式生成私有
-  `output_mask` attr；tiling 不从输出 storage shape 反推 mask。
+- null 不会改变底层输出数量、顺序或公开 C ABI。L2 从公开 null 指针显式生成
+  私有 `output_mask` attr；`gCumsumOut=null` 时使用 rank-1 `[1]` placeholder，
+  `aOut=null` 时使用完整形状的私有 L0 输出保存内部 A。tiling 不从输出 storage
+  shape 反推 mask。
 - `gCumsumOut=null` 时，kernel 仍生成 H/O 所需的内部 BHT cumsum，只跳过公开
   BTH 搬出。
-- `aOut=null` 时，kernel 仍生成 Solve/Recompute 所需的 A，并将其保存在内部
-  `a_storage`，不写公开 A 输出。
+- `aOut=null` 时，kernel 仍生成 Solve/Recompute 所需的 A；该 tensor 登记为真实
+  L0 输出以保证执行器在整个 kernel 生命周期内保留其存储，但不会返回给公共调用方。
 
-两个辅助输出可以独立省略。`output_mask` 的 bit 0 表示写出
-`gCumsumOut`，bit 1 表示写出 `aOut`；其他 bit 无效。
+两个辅助输出可以独立省略。`output_mask` 的 bit 0 控制公开
+`gCumsumOut` 搬出；bit 1 记录 L2 第 4 槽使用公共 A 还是私有 A。kernel 为后续
+Recompute 始终写第 4 槽，私有 A 只是不返回给调用方；其他 bit 无效。
 
 ## Python 调用
 
@@ -46,7 +48,7 @@ assert g_cumsum is None and A is None
 ## 兼容性
 
 - `aclnnGdnCoreFwdPhase6GetWorkspaceSize` 的参数数量、顺序和 C 类型不变。
-- `ChunkGdnCoreFwd` 的 L0 输入和四个 REQUIRED 输出不变；私有 L0 新增
-  `output_mask` attr，不暴露给公开 ACLNN C ABI。
+- `ChunkGdnCoreFwd` 保持四个 REQUIRED 输出；内部 A 直接使用第 4 个输出槽，不再
+  伪装成可写 input scratch。私有 `output_mask` attr 不暴露给公开 ACLNN C ABI。
 - 旧调用方继续提供 `gCumsumOut/aOut` 时，shape、dtype 和数值语义不变。
 - Python 返回值始终是四元组；关闭辅助输出时对应位置为 `None`。

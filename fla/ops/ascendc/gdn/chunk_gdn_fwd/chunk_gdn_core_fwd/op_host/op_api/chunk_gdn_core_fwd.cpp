@@ -38,7 +38,6 @@ const std::array<const aclTensor *, 4> ChunkGdnCoreFwd(
     const aclTensor *k,
     const aclTensor *v,
     const aclTensor *beta,
-    const aclTensor *aStorage,
     const aclTensor *rawG,
     const aclTensor *gkOptional,
     const aclTensor *initialStateOptional,
@@ -54,7 +53,7 @@ const std::array<const aclTensor *, 4> ChunkGdnCoreFwd(
     const aclTensor *aOut,
     aclOpExecutor *executor)
 {
-    L0_DFX(ChunkGdnCoreFwd, q, k, v, beta, aStorage, rawG, gkOptional, initialStateOptional,
+    L0_DFX(ChunkGdnCoreFwd, q, k, v, beta, rawG, gkOptional, initialStateOptional,
            cuSeqlensOptional, chunkIndicesOptional, outputFinalState, chunkSize, scale,
            outputMask, oOut, finalStateOut, gCumsumBthOut, aOut);
     const aclTensor *cuSeqlens = ConvertMetadata(cuSeqlensOptional, executor);
@@ -67,7 +66,7 @@ const std::array<const aclTensor *, 4> ChunkGdnCoreFwd(
 
     const aclError ret = ADD_TO_LAUNCHER_LIST_AICORE(
         ChunkGdnCoreFwd,
-        OP_INPUT(q, k, v, beta, aStorage, rawG, gkOptional, initialStateOptional,
+        OP_INPUT(q, k, v, beta, rawG, gkOptional, initialStateOptional,
                  cuSeqlens, chunkIndices),
         OP_OUTPUT(oOut, finalStateOut, gCumsumBthOut, aOut),
         OP_ATTR(outputFinalState, chunkSize, scale, outputMask));

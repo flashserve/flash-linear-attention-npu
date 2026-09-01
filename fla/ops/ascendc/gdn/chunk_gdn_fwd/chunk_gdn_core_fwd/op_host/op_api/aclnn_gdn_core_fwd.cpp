@@ -337,8 +337,6 @@ static aclnnStatus GdnCoreFwdGetWorkspaceSizeImpl(
     const int64_t batch = Dim(params.q, 0);
     const int64_t hv = Dim(params.v, 1);
     const int64_t seqlen = Dim(params.v, 2);
-    auto aStorageBhtc = executorPtr->AllocTensor(MakeShape({batch, hv, seqlen, params.chunkSize}),
-                                                  params.k->GetDataType(), Format::FORMAT_ND);
     auto finalState = params.finalStateOutOptional;
     if (!params.outputFinalState) {
         finalState = executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
@@ -350,11 +348,15 @@ static aclnnStatus GdnCoreFwdGetWorkspaceSizeImpl(
     }
     auto aOutput = params.aOut;
     if (aOutput == nullptr) {
-        aOutput = executorPtr->AllocTensor(MakeShape({1}), params.k->GetDataType(),
-                                           Format::FORMAT_ND);
+        // A is an internal dependency of Solve -> RecomputeWU even when the
+        // public ACLNN output is null. Keep it as a real L0 output so the
+        // executor cannot recycle its storage as read-only input workspace.
+        aOutput = executorPtr->AllocTensor(
+            MakeShape({batch, hv, seqlen, params.chunkSize}),
+            params.k->GetDataType(), Format::FORMAT_ND);
     }
-    GDN_STAGE_CHECK(aStorageBhtc != nullptr && finalState != nullptr &&
-                        gCumsumOutput != nullptr && aOutput != nullptr,
+    GDN_STAGE_CHECK(finalState != nullptr && gCumsumOutput != nullptr &&
+                        aOutput != nullptr,
                     169101);
 
     const aclTensor *gBht = TransposeContiguous(params.g, {0, 2, 1}, executorPtr);
@@ -372,7 +374,7 @@ static aclnnStatus GdnCoreFwdGetWorkspaceSizeImpl(
         (params.aOut != nullptr ? static_cast<int64_t>(GDN::GDN_CORE_OUTPUT_A) : 0);
 
     auto phase6Result = l0op::ChunkGdnCoreFwd(
-        params.q, params.k, params.v, betaBht, aStorageBhtc, gBht, nullptr,
+        params.q, params.k, params.v, betaBht, gBht, nullptr,
         params.initialStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional,
         params.outputFinalState, params.chunkSize, params.scale, outputMask, params.oOut, finalState,
         gCumsumOutput, aOutput, executorPtr);

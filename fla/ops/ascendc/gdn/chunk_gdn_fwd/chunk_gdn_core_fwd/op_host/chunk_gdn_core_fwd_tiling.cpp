@@ -27,12 +27,12 @@ constexpr size_t INPUT_Q = 0;
 constexpr size_t INPUT_K = 1;
 constexpr size_t INPUT_V = 2;
 constexpr size_t INPUT_BETA = 3;
-constexpr size_t INPUT_A_STORAGE = 4;
-constexpr size_t INPUT_RAW_G = 5;
-constexpr size_t INPUT_GK = 6;
-constexpr size_t INPUT_INITIAL_STATE = 7;
-constexpr size_t INPUT_CU_SEQLENS = 8;
-constexpr size_t INPUT_CHUNK_INDICES = 9;
+constexpr size_t INPUT_RAW_G = 4;
+constexpr size_t INPUT_GK = 5;
+constexpr size_t INPUT_INITIAL_STATE = 6;
+constexpr size_t INPUT_CU_SEQLENS = 7;
+constexpr size_t INPUT_CHUNK_INDICES = 8;
+constexpr size_t OUTPUT_A = 3;
 
 constexpr size_t ATTR_OUTPUT_FINAL_STATE = 0;
 constexpr size_t ATTR_CHUNK_SIZE = 1;
@@ -130,23 +130,24 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     const auto *kShape = context->GetOptionalInputShape(INPUT_K);
     const auto *vShape = context->GetOptionalInputShape(INPUT_V);
     const auto *betaShape = context->GetOptionalInputShape(INPUT_BETA);
-    const auto *aShape = context->GetOptionalInputShape(INPUT_A_STORAGE);
     const auto *gShape = context->GetOptionalInputShape(INPUT_RAW_G);
     OP_CHECK_IF(qShape == nullptr || kShape == nullptr || vShape == nullptr || betaShape == nullptr ||
-                    aShape == nullptr || gShape == nullptr ||
+                    gShape == nullptr ||
                     qShape->GetStorageShape().GetDimNum() != 4 ||
                     kShape->GetStorageShape().GetDimNum() != 4 ||
                     vShape->GetStorageShape().GetDimNum() != 4 ||
                     betaShape->GetStorageShape().GetDimNum() != 3 ||
-                    aShape->GetStorageShape().GetDimNum() != 4 ||
                     gShape->GetStorageShape().GetDimNum() != 3,
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires rank-4 q/k/v/A and rank-3 beta/raw_g."),
+                OP_LOGE(context->GetNodeName(), "Phase 6 requires rank-4 q/k/v and rank-3 beta/raw_g."),
                 return ge::GRAPH_FAILED);
     const auto *qDesc = context->GetInputDesc(INPUT_Q);
     const auto *kDesc = context->GetInputDesc(INPUT_K);
     const auto *vDesc = context->GetInputDesc(INPUT_V);
     const auto *betaDesc = context->GetInputDesc(INPUT_BETA);
-    const auto *aDesc = context->GetInputDesc(INPUT_A_STORAGE);
+    // The public ACL tensor may expose rank-1 physical storage even though its
+    // view is [B,Hv,T,C]. L2 validates/allocates A; tiling derives its logical
+    // dimensions from v and chunk_size and only needs the output dtype here.
+    const auto *aDesc = context->GetOutputDesc(OUTPUT_A);
     const auto *gDesc = context->GetInputDesc(INPUT_RAW_G);
     OP_CHECK_IF(qDesc == nullptr || kDesc == nullptr || vDesc == nullptr || betaDesc == nullptr ||
                     aDesc == nullptr || gDesc == nullptr,
@@ -214,9 +215,6 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
                                   !GetChunkCount(chunkShape, &varlenChunks))),
                 OP_LOGE(context->GetNodeName(),
                         "Phase 6 requires output_mask in [0,3], chunk_size=64/128, and paired valid varlen metadata."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!IsShape(aShape, {batch, valueHeads, tokens, *chunkSize}),
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires a_storage=[B,Hv,T,chunk_size]."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(Tiling4ChunkGdnCoreStateOutput(context) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "Reuse of the accepted Phase 5 suffix tiling failed."),
