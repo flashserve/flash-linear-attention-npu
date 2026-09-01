@@ -1749,6 +1749,14 @@ private:
         if (curT == 0 || !UsePostWuCube(curT)) {
             return;
         }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // AIV owns partial chunks: its vector path materializes W/U and the
+        // final K gate.  Letting AIC run the cube path as well races on the
+        // same GM tiles and can deadlock the A5 tail pipeline.
+        if (curT < BT_) {
+            return;
+        }
+#endif
         ComputePostWuCube(b, hv, chunkIdx, start, curT);
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
         Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(syncDoneFlag_);
