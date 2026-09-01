@@ -10,6 +10,9 @@
 
 namespace GDN {
 
+constexpr uint64_t GDN_CORE_OUTPUT_G_CUMSUM = 1ULL << 0;
+constexpr uint64_t GDN_CORE_OUTPUT_A = 1ULL << 1;
+
 struct ChunkGdnCoreCoefficientTiling {
     uint64_t B;
     uint64_t Hk;
@@ -51,6 +54,7 @@ struct ChunkGdnCoreFwdTrailer {
     uint64_t aWorkspaceOffset;
     uint64_t solveWorkspaceOffset;
     uint64_t gCumsumBhtOffset;
+    uint64_t outputMask;
 };
 
 } // namespace GDN

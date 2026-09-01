@@ -201,8 +201,14 @@ static aclnnStatus CheckParams(const GdnCoreFwdParams &params)
     CHECK_RET(CheckRank(params.g, 3, "g") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckRank(params.beta, 3, "beta") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckRank(params.oOut, 4, "oOut") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckRank(params.gCumsumOut, 3, "gCumsumOut") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckRank(params.aOut, 4, "aOut") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (params.gCumsumOut != nullptr) {
+        CHECK_RET(CheckRank(params.gCumsumOut, 3, "gCumsumOut") == ACLNN_SUCCESS,
+                  ACLNN_ERR_PARAM_INVALID);
+    }
+    if (params.aOut != nullptr) {
+        CHECK_RET(CheckRank(params.aOut, 4, "aOut") == ACLNN_SUCCESS,
+                  ACLNN_ERR_PARAM_INVALID);
+    }
 
     const int64_t batch = Dim(params.q, 0);
     const int64_t hq = Dim(params.q, 1);
@@ -230,12 +236,16 @@ static aclnnStatus CheckParams(const GdnCoreFwdParams &params)
     CHECK_COND(Dim(params.oOut, 0) == batch && Dim(params.oOut, 1) == hv &&
                    Dim(params.oOut, 2) == seqlen && Dim(params.oOut, 3) == vDim,
                ACLNN_ERR_PARAM_INVALID, "oOut must have shape [B,Hv,T,V].");
-    CHECK_COND(Dim(params.gCumsumOut, 0) == batch && Dim(params.gCumsumOut, 1) == seqlen &&
-                   Dim(params.gCumsumOut, 2) == hv,
-               ACLNN_ERR_PARAM_INVALID, "gCumsumOut must have shape [B,T,Hv].");
-    CHECK_COND(Dim(params.aOut, 0) == batch && Dim(params.aOut, 1) == hv &&
-                   Dim(params.aOut, 2) == seqlen && Dim(params.aOut, 3) == params.chunkSize,
-               ACLNN_ERR_PARAM_INVALID, "aOut must have shape [B,Hv,T,chunkSize].");
+    if (params.gCumsumOut != nullptr) {
+        CHECK_COND(Dim(params.gCumsumOut, 0) == batch && Dim(params.gCumsumOut, 1) == seqlen &&
+                       Dim(params.gCumsumOut, 2) == hv,
+                   ACLNN_ERR_PARAM_INVALID, "gCumsumOut must have shape [B,T,Hv].");
+    }
+    if (params.aOut != nullptr) {
+        CHECK_COND(Dim(params.aOut, 0) == batch && Dim(params.aOut, 1) == hv &&
+                       Dim(params.aOut, 2) == seqlen && Dim(params.aOut, 3) == params.chunkSize,
+                   ACLNN_ERR_PARAM_INVALID, "aOut must have shape [B,Hv,T,chunkSize].");
+    }
     CHECK_COND(params.chunkSize == GDN_CORE_CHUNK_64 || params.chunkSize == GDN_CORE_CHUNK_128,
                ACLNN_ERR_PARAM_INVALID, "chunkSize must be 64 or 128.");
     CHECK_COND((params.cuSeqlensOptional == nullptr) == (params.chunkIndicesOptional == nullptr),
@@ -258,13 +268,15 @@ static aclnnStatus CheckParams(const GdnCoreFwdParams &params)
     CHECK_COND(dtype == DataType::DT_FLOAT16 || dtype == DataType::DT_BF16,
                ACLNN_ERR_PARAM_INVALID, "q/k/v must be float16 or bfloat16.");
     CHECK_COND(params.k->GetDataType() == dtype && params.v->GetDataType() == dtype &&
-                   params.oOut->GetDataType() == dtype && params.aOut->GetDataType() == dtype,
-               ACLNN_ERR_PARAM_INVALID, "q/k/v/oOut/aOut must have the same dtype.");
+                   params.oOut->GetDataType() == dtype &&
+                   (params.aOut == nullptr || params.aOut->GetDataType() == dtype),
+               ACLNN_ERR_PARAM_INVALID, "q/k/v/oOut and aOut, when present, must have the same dtype.");
     CHECK_COND((params.beta->GetDataType() == DataType::DT_FLOAT || params.beta->GetDataType() == dtype) &&
                    params.g->GetDataType() == DataType::DT_FLOAT,
                ACLNN_ERR_PARAM_INVALID, "beta must be float32 or match q/k/v, and g must be float32.");
-    CHECK_COND(params.gCumsumOut->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-               "gCumsumOut must be float32.");
+    CHECK_COND(params.gCumsumOut == nullptr ||
+                   params.gCumsumOut->GetDataType() == DataType::DT_FLOAT,
+               ACLNN_ERR_PARAM_INVALID, "gCumsumOut must be float32 when present.");
     CHECK_COND(!params.outputFinalState || params.finalStateOutOptional != nullptr,
                ACLNN_ERR_PARAM_NULLPTR, "finalStateOut is required when outputFinalState is true.");
     if (params.initialStateOptional != nullptr) {
@@ -330,7 +342,19 @@ static aclnnStatus GdnCoreFwdGetWorkspaceSizeImpl(
     if (!params.outputFinalState) {
         finalState = executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
     }
-    GDN_STAGE_CHECK(aStorageBhtc != nullptr && finalState != nullptr, 169101);
+    auto gCumsumOutput = params.gCumsumOut;
+    if (gCumsumOutput == nullptr) {
+        gCumsumOutput = executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT,
+                                                 Format::FORMAT_ND);
+    }
+    auto aOutput = params.aOut;
+    if (aOutput == nullptr) {
+        aOutput = executorPtr->AllocTensor(MakeShape({1}), params.k->GetDataType(),
+                                           Format::FORMAT_ND);
+    }
+    GDN_STAGE_CHECK(aStorageBhtc != nullptr && finalState != nullptr &&
+                        gCumsumOutput != nullptr && aOutput != nullptr,
+                    169101);
 
     const aclTensor *gBht = TransposeContiguous(params.g, {0, 2, 1}, executorPtr);
     const aclTensor *betaFloat = params.beta->GetDataType() == DataType::DT_FLOAT
@@ -345,7 +369,7 @@ static aclnnStatus GdnCoreFwdGetWorkspaceSizeImpl(
         params.q, params.k, params.v, betaBht, aStorageBhtc, gBht, nullptr,
         params.initialStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional,
         params.outputFinalState, params.chunkSize, params.scale, params.oOut, finalState,
-        params.gCumsumOut, params.aOut, executorPtr);
+        gCumsumOutput, aOutput, executorPtr);
     GDN_STAGE_CHECK(phase6Result[0] != nullptr && phase6Result[2] != nullptr &&
                         phase6Result[3] != nullptr,
                     169112);

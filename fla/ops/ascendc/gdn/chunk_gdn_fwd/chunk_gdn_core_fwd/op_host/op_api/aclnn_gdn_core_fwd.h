@@ -11,7 +11,10 @@
 extern "C" {
 #endif
 
-/** Final Phase 6 composite: coefficient generation plus state/output update in one kernel. */
+/**
+ * Final Phase 6 composite: coefficient generation plus state/output update in one kernel.
+ * gCumsumOut and aOut may independently be nullptr; the remaining argument order is fixed.
+ */
 __attribute__((visibility("default")))
 aclnnStatus aclnnGdnCoreFwdPhase6GetWorkspaceSize(
     const aclTensor *q,

@@ -34,6 +34,9 @@ constexpr size_t INPUT_INITIAL_STATE = 7;
 constexpr size_t INPUT_CU_SEQLENS = 8;
 constexpr size_t INPUT_CHUNK_INDICES = 9;
 
+constexpr size_t OUTPUT_G_CUMSUM_BTH = 2;
+constexpr size_t OUTPUT_A = 3;
+
 constexpr size_t ATTR_OUTPUT_FINAL_STATE = 0;
 constexpr size_t ATTR_CHUNK_SIZE = 1;
 
@@ -129,8 +132,11 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     const auto *betaShape = context->GetOptionalInputShape(INPUT_BETA);
     const auto *aShape = context->GetOptionalInputShape(INPUT_A_STORAGE);
     const auto *gShape = context->GetOptionalInputShape(INPUT_RAW_G);
+    const auto *gCumsumOutputShape = context->GetOutputShape(OUTPUT_G_CUMSUM_BTH);
+    const auto *aOutputShape = context->GetOutputShape(OUTPUT_A);
     OP_CHECK_IF(qShape == nullptr || kShape == nullptr || vShape == nullptr || betaShape == nullptr ||
-                    aShape == nullptr || gShape == nullptr ||
+                    aShape == nullptr || gShape == nullptr || gCumsumOutputShape == nullptr ||
+                    aOutputShape == nullptr ||
                     qShape->GetStorageShape().GetDimNum() != 4 ||
                     kShape->GetStorageShape().GetDimNum() != 4 ||
                     vShape->GetStorageShape().GetDimNum() != 4 ||
@@ -138,6 +144,19 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
                     aShape->GetStorageShape().GetDimNum() != 4 ||
                     gShape->GetStorageShape().GetDimNum() != 3,
                 OP_LOGE(context->GetNodeName(), "Phase 6 requires rank-4 q/k/v/A and rank-3 beta/raw_g."),
+                return ge::GRAPH_FAILED);
+    const auto &gCumsumOutputStorage = gCumsumOutputShape->GetStorageShape();
+    const auto &aOutputStorage = aOutputShape->GetStorageShape();
+    const bool writePublicCumsum = gCumsumOutputStorage.GetDimNum() == 3;
+    const bool cumsumPlaceholder = gCumsumOutputStorage.GetDimNum() == 1 &&
+                                   gCumsumOutputStorage.GetDim(0) == 1;
+    const bool writePublicA = aOutputStorage.GetDimNum() == 4;
+    const bool aPlaceholder = aOutputStorage.GetDimNum() == 1 &&
+                              aOutputStorage.GetDim(0) == 1;
+    OP_CHECK_IF((!writePublicCumsum && !cumsumPlaceholder) ||
+                    (!writePublicA && !aPlaceholder),
+                OP_LOGE(context->GetNodeName(),
+                        "Phase 6 auxiliary outputs must use their public rank or the exact [1] placeholder."),
                 return ge::GRAPH_FAILED);
     const auto *qDesc = context->GetInputDesc(INPUT_Q);
     const auto *kDesc = context->GetInputDesc(INPUT_K);
@@ -228,6 +247,9 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
                 return ge::GRAPH_FAILED);
 
     GDN::ChunkGdnCoreFwdTrailer trailer{};
+    trailer.outputMask =
+        (writePublicCumsum ? GDN::GDN_CORE_OUTPUT_G_CUMSUM : 0) |
+        (writePublicA ? GDN::GDN_CORE_OUTPUT_A : 0);
     auto &coefficient = trailer.coefficient;
     coefficient.B = static_cast<uint64_t>(batch);
     coefficient.Hk = static_cast<uint64_t>(heads);

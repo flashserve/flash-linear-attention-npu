@@ -252,7 +252,7 @@ __aicore__ inline void RunPhase6Cumsum(
 
 template <typename InputT, typename TileShapes>
 __aicore__ inline void RunPhase6(
-    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR rawG, GM_ADDR gk,
+    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR aStorage, GM_ADDR rawG, GM_ADDR gk,
     GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
     GM_ADDR finalState, GM_ADDR gCumsumBth, GM_ADDR A, GM_ADDR workspace, GM_ADDR tiling)
 {
@@ -261,6 +261,8 @@ __aicore__ inline void RunPhase6(
     const __gm__ ChunkGdnCoreFwdTrailer *phase6 = GetPhase6Trailer(tiling);
     ChunkGdnCoreCoefficientTiling coefficient{};
     CopyCoefficientTiling(&phase6->coefficient, coefficient);
+    const uint64_t outputMask = phase6->outputMask;
+    GM_ADDR solveA = (outputMask & GDN_CORE_OUTPUT_A) != 0 ? A : aStorage;
 
     GM_ADDR scoreWorkspace = userWorkspace + phase6->scoreWorkspaceOffset;
     GM_ADDR aWorkspace = userWorkspace + phase6->aWorkspaceOffset;
@@ -311,10 +313,10 @@ __aicore__ inline void RunPhase6(
     }
 
     if (coefficient.BT == 64) {
-        RunSolvePhase<InputT, 64>(aWorkspace, cuSeqlens, chunkIndices, A,
+        RunSolvePhase<InputT, 64>(aWorkspace, cuSeqlens, chunkIndices, solveA,
                                   solveWorkspace, &coefficient);
     } else {
-        RunSolvePhase<InputT, 128>(aWorkspace, cuSeqlens, chunkIndices, A,
+        RunSolvePhase<InputT, 128>(aWorkspace, cuSeqlens, chunkIndices, solveA,
                                    solveWorkspace, &coefficient);
     }
     // Keep the varlen phase boundary on the dedicated MIX protocol for the
@@ -341,15 +343,15 @@ __aicore__ inline void RunPhase6(
     CopyRecomputeTiling(&stateOutputTiling->recompute, recomputeTiling);
     if (stateOutputTiling->recompute.V == 256) {
         DispatchRecompute<InputT, float, 256, true>(
-            k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u,
+            k, v, beta, solveA, gCumsumBht, cuSeqlens, chunkIndices, w, u,
             userWorkspace + stateOutputTiling->recomputeWorkspaceOffset, &recomputeTiling);
     } else {
         DispatchRecompute<InputT, float, 128, true>(
-            k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u,
+            k, v, beta, solveA, gCumsumBht, cuSeqlens, chunkIndices, w, u,
             userWorkspace + stateOutputTiling->recomputeWorkspaceOffset, &recomputeTiling);
     }
 
-    if (coefficient.isVarlen == 0) {
+    if ((outputMask & GDN_CORE_OUTPUT_G_CUMSUM) != 0 && coefficient.isVarlen == 0) {
         WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, coefficient);
     }
     DispatchFwdH<TileShapes>(k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
@@ -378,7 +380,7 @@ __aicore__ inline void RunPhase6(
     CopyOTiling(gmOTiling, oTiling);
     DispatchFwdO(q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
                  userWorkspace, &oTiling);
-    if (coefficient.isVarlen != 0) {
+    if ((outputMask & GDN_CORE_OUTPUT_G_CUMSUM) != 0 && coefficient.isVarlen != 0) {
         // Public BTH cumsum is not consumed by H/O. Publish it after the
         // dependent suffix so its single-owner write cannot perturb H/O.
         WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, coefficient);
@@ -394,18 +396,17 @@ extern "C" __global__ __aicore__ void chunk_gdn_core_fwd(
     GM_ADDR o, GM_ADDR final_state, GM_ADDR g_cumsum_bth, GM_ADDR A,
     GM_ADDR workspace, GM_ADDR tiling)
 {
-    (void)a_storage;
     REGISTER_TILING_DEFAULT(GDN::ChunkGdnCoreFwdTrailer);
     if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
         const __gm__ GDN::ChunkGdnCoreFwdTrailer *phase6 = GDN::GetPhase6Trailer(tiling);
         if (phase6->coefficient.dtypeMode == 1) {
             GDN::RunPhase6<bfloat16_t, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+                q, k, v, beta, a_storage, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
                 o, final_state, g_cumsum_bth, A, workspace, tiling);
         } else {
             GDN::RunPhase6<half, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+                q, k, v, beta, a_storage, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
                 o, final_state, g_cumsum_bth, A, workspace, tiling);
         }
     } else if (TILING_KEY_IS(2)) {
@@ -413,11 +414,11 @@ extern "C" __global__ __aicore__ void chunk_gdn_core_fwd(
         const __gm__ GDN::ChunkGdnCoreFwdTrailer *phase6 = GDN::GetPhase6Trailer(tiling);
         if (phase6->coefficient.dtypeMode == 1) {
             GDN::RunPhase6<bfloat16_t, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+                q, k, v, beta, a_storage, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
                 o, final_state, g_cumsum_bth, A, workspace, tiling);
         } else {
             GDN::RunPhase6<half, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+                q, k, v, beta, a_storage, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
                 o, final_state, g_cumsum_bth, A, workspace, tiling);
         }
     }

@@ -27,6 +27,13 @@ GDN_CORE_CPP = (
     / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gdn_core_fwd/op_host/op_api/aclnn_gdn_core_fwd.cpp"
 )
 GDN_CORE_HEADER = GDN_CORE_CPP.with_suffix(".h")
+GDN_CORE_ROOT = GDN_CORE_CPP.parents[1]
+GDN_CORE_DEF = GDN_CORE_ROOT / "chunk_gdn_core_fwd_def.cpp"
+GDN_CORE_TILING = GDN_CORE_ROOT / "chunk_gdn_core_fwd_tiling.cpp"
+GDN_CORE_KERNEL = GDN_CORE_ROOT.parent / "op_kernel/chunk_gdn_core_fwd.cpp"
+GDN_CORE_STRUCT = GDN_CORE_ROOT.parent / "op_kernel/chunk_gdn_core_fwd_struct.h"
+
+
 class FakeTensor:
     def __init__(self, shape, dtype="bf16"):
         self.shape = tuple(shape)
@@ -44,6 +51,8 @@ class FakeCallContext:
 
     def tensor(self, tensor, name):
         self.tensor_calls.append((name, tensor))
+        if tensor is None:
+            return ctypes.c_void_p()
         return ("tensor", name)
 
     def int_array(self, values):
@@ -160,6 +169,49 @@ class GdnCoreFwdCtypesAbiTest(unittest.TestCase):
         self.assertEqual(outputs[2].shape, (1, 128, 4))
         self.assertEqual(outputs[3].shape, (1, 4, 128, 64))
 
+    def test_final_state_and_aux_output_matrix_keeps_fixed_slots(self):
+        for output_final_state in (False, True):
+            for return_aux in (False, True):
+                with self.subTest(
+                    output_final_state=output_final_state,
+                    return_aux=return_aux,
+                ):
+                    captured = {}
+                    module = load_ctypes_module(captured)
+
+                    output, final_state, g_cumsum, A = module.npu_gdn_core_fwd_phase6(
+                        **make_inputs(),
+                        output_final_state=output_final_state,
+                        return_aux=return_aux,
+                    )
+
+                    self.assertEqual(output.shape, (1, 4, 128, 128))
+                    self.assertEqual(final_state is not None, output_final_state)
+                    self.assertEqual(g_cumsum is not None, return_aux)
+                    self.assertEqual(A is not None, return_aux)
+                    self.assertEqual(len(captured["args"]), 15)
+                    self.assertEqual(bool(captured["args"][12]), output_final_state)
+                    self.assertEqual(bool(captured["args"][13]), return_aux)
+                    self.assertEqual(bool(captured["args"][14]), return_aux)
+                    self.assertEqual(
+                        captured["outputs"],
+                        (output, final_state, g_cumsum, A),
+                    )
+
+    def test_return_aux_none_preserves_legacy_default(self):
+        captured = {}
+        module = load_ctypes_module(captured)
+
+        outputs = module.npu_gdn_core_fwd_phase6(
+            **make_inputs(batch=1, heads=1, tokens=1),
+            return_aux=None,
+        )
+
+        self.assertEqual(outputs[2].shape, (1, 1, 1))
+        self.assertEqual(outputs[3].shape, (1, 1, 1, 64))
+        self.assertIsNotNone(captured["ctx"].tensor_calls[-2][1])
+        self.assertIsNotNone(captured["ctx"].tensor_calls[-1][1])
+
     def test_varlen_final_state_uses_initial_state_dtype(self):
         captured = {}
         module = load_ctypes_module(captured)
@@ -247,6 +299,65 @@ class GdnCoreFwdCtypesAbiTest(unittest.TestCase):
             ctypes.POINTER(ctypes.c_void_p),
         ]
         self.assertEqual(module._GET_WORKSPACE_ARGTYPES["aclnnGdnCoreFwdPhase6"], expected)
+
+    def test_cpp_null_aux_contract_keeps_required_l0_placeholders(self):
+        source = GDN_CORE_CPP.read_text(encoding="utf-8")
+        op_def = GDN_CORE_DEF.read_text(encoding="utf-8")
+
+        self.assertIn("if (params.gCumsumOut != nullptr)", source)
+        self.assertIn("if (params.aOut != nullptr)", source)
+        self.assertRegex(
+            source,
+            r"gCumsumOutput\s*=\s*executorPtr->AllocTensor\(MakeShape\(\{1\}\),\s*"
+            r"DataType::DT_FLOAT",
+        )
+        self.assertRegex(
+            source,
+            r"aOutput\s*=\s*executorPtr->AllocTensor\(MakeShape\(\{1\}\),\s*"
+            r"params\.k->GetDataType\(\)",
+        )
+        self.assertIn('Output("g_cumsum_bth").ParamType(REQUIRED)', op_def)
+        self.assertIn('Output("A").ParamType(REQUIRED)', op_def)
+
+    def test_tiling_output_mask_is_rank_based_and_singleton_safe(self):
+        tiling = GDN_CORE_TILING.read_text(encoding="utf-8")
+        struct = GDN_CORE_STRUCT.read_text(encoding="utf-8")
+
+        self.assertIn("gCumsumOutputStorage.GetDimNum() == 3", tiling)
+        self.assertIn("aOutputStorage.GetDimNum() == 4", tiling)
+        self.assertIn("gCumsumOutputStorage.GetDimNum() == 1", tiling)
+        self.assertIn("aOutputStorage.GetDimNum() == 1", tiling)
+        self.assertNotIn("GetShapeSize()", tiling)
+        self.assertIn("constexpr uint64_t GDN_CORE_OUTPUT_G_CUMSUM = 1ULL << 0", struct)
+        self.assertIn("constexpr uint64_t GDN_CORE_OUTPUT_A = 1ULL << 1", struct)
+        self.assertIn("uint64_t outputMask", struct)
+        self.assertIn("trailer.outputMask", tiling)
+
+    def test_kernel_mask_retains_internal_a_and_cumsum_dependencies(self):
+        kernel = GDN_CORE_KERNEL.read_text(encoding="utf-8")
+
+        self.assertIn("? A : aStorage", kernel)
+        self.assertGreaterEqual(kernel.count("solveA"), 5)
+        self.assertIn("RunPhase6Cumsum(rawG", kernel)
+        self.assertIn("gCumsumBht", kernel)
+        self.assertEqual(
+            kernel.count("(outputMask & GDN_CORE_OUTPUT_G_CUMSUM) != 0"),
+            2,
+        )
+
+    def test_l0_output_slots_remain_fixed_and_ordered(self):
+        l0_source = (GDN_CORE_ROOT / "op_api/chunk_gdn_core_fwd.cpp").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "OP_OUTPUT(oOut, finalStateOut, gCumsumBthOut, aOut)",
+            l0_source,
+        )
+        self.assertIn(
+            "return {oOut, finalStateOut, gCumsumBthOut, aOut};",
+            l0_source,
+        )
 
     def test_phase6_wrapper_uses_fixed_aclnn_symbol(self):
         captured = {}

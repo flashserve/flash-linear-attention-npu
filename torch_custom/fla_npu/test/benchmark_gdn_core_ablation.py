@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import inspect
 import json
 import math
 import os
@@ -95,6 +96,7 @@ def make_inputs(args) -> dict:
         "scale": float(args.scale),
         "initial_state": initial_state,
         "output_final_state": args.output_final_state,
+        "return_aux": getattr(args, "return_aux", True),
     }
 
 
@@ -176,20 +178,27 @@ def ascendc_gdn_function(name: str):
     raise AttributeError(f"module 'fla_npu.ops.ascendc' has no {name!r} or {prefixed_name!r}")
 
 
+def phase6_supports_return_aux() -> bool:
+    direct_ops = getattr(ascendc, "ASCENDC_CTYPES_OPS", {})
+    raw_function = direct_ops.get("npu_gdn_core_fwd_phase6")
+    return raw_function is not None and "return_aux" in inspect.signature(raw_function).parameters
+
+
 def run_phase6(inputs: dict):
     function = ascendc_gdn_function("gdn_core_fwd_phase6")
+    kwargs = {
+        "initial_state": inputs["initial_state"],
+        "output_final_state": inputs["output_final_state"],
+        "chunk_size": inputs["chunk_size"],
+        "cu_seqlens": inputs["cu_seqlens"],
+        "chunk_indices": inputs["chunk_indices"],
+        "scale": inputs["scale"],
+    }
+    if phase6_supports_return_aux():
+        kwargs["return_aux"] = inputs.get("return_aux", True)
     output, final_state, g_cumsum, a = function(
-        inputs["q"],
-        inputs["k"],
-        inputs["v"],
-        inputs["g"],
-        inputs["beta"],
-        initial_state=inputs["initial_state"],
-        output_final_state=inputs["output_final_state"],
-        chunk_size=inputs["chunk_size"],
-        cu_seqlens=inputs["cu_seqlens"],
-        chunk_indices=inputs["chunk_indices"],
-        scale=inputs["scale"],
+        inputs["q"], inputs["k"], inputs["v"], inputs["g"], inputs["beta"],
+        **kwargs,
     )
     return output, g_cumsum, a, final_state
 
@@ -226,14 +235,15 @@ def valid_a_chunks(tensor: torch.Tensor, inputs: dict):
 def result_finiteness(outputs, inputs: dict) -> dict:
     valid_a_element_count = 0
     valid_a_non_finite_count = 0
-    for chunk in valid_a_chunks(outputs[2], inputs):
-        valid_a_element_count += chunk.numel()
-        valid_a_non_finite_count += int((~torch.isfinite(chunk.float())).sum().cpu())
+    if outputs[2] is not None:
+        for chunk in valid_a_chunks(outputs[2], inputs):
+            valid_a_element_count += chunk.numel()
+            valid_a_non_finite_count += int((~torch.isfinite(chunk.float())).sum().cpu())
     components = {
         "output": tensor_finiteness(outputs[0]),
         "g_cumsum": tensor_finiteness(outputs[1]),
         "valid_a": {
-            "present": True,
+            "present": outputs[2] is not None,
             "element_count": valid_a_element_count,
             "non_finite_count": valid_a_non_finite_count,
             "all_finite": valid_a_non_finite_count == 0,
@@ -307,10 +317,14 @@ def compare_valid_a(expected: torch.Tensor, actual: torch.Tensor, inputs: dict) 
 def compare_results(expected, actual, inputs: dict) -> dict:
     components = {
         "output": compare_tensor(expected[0], actual[0]),
-        "g_cumsum": compare_tensor(expected[1], actual[1]),
-        "valid_a": compare_valid_a(expected[2], actual[2], inputs),
         "final_state": compare_tensor(expected[3], actual[3]),
     }
+    if inputs.get("return_aux", True):
+        components["g_cumsum"] = compare_tensor(expected[1], actual[1])
+        components["valid_a"] = compare_valid_a(expected[2], actual[2], inputs)
+    else:
+        components["g_cumsum"] = compare_tensor(None, actual[1])
+        components["valid_a"] = compare_tensor(None, actual[2])
     return {
         "bit_exact": all(component["bit_exact"] for component in components.values()),
         "components": components,
@@ -356,6 +370,12 @@ def measure_once(function, inputs: dict) -> dict:
         "workspaces": workspaces,
         "workspace_max_bytes": max((item["bytes"] for item in workspaces), default=0),
         "workspace_sum_bytes": sum(item["bytes"] for item in workspaces),
+        "output_presence": {
+            "output": outputs[0] is not None,
+            "g_cumsum": outputs[1] is not None,
+            "a": outputs[2] is not None,
+            "final_state": outputs[3] is not None,
+        },
     }
     del outputs
     clear_allocator_state()
@@ -525,6 +545,7 @@ def contract_report(args, inputs: dict) -> dict:
         "cu_seqlens": inputs["cu_seqlens"],
         "initial_state": args.initial_state,
         "output_final_state": args.output_final_state,
+        "return_aux": inputs.get("return_aux", True),
         "seed": args.seed,
     }
 
@@ -559,6 +580,13 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=20260724)
     parser.add_argument("--initial-state", action="store_true")
     parser.add_argument("--output-final-state", action="store_true")
+    parser.add_argument(
+        "--no-return-aux",
+        dest="return_aux",
+        action="store_false",
+        default=True,
+        help="Pass null gCumsum/A public output slots to the Phase6 ACLNN wrapper.",
+    )
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--case-id", default="")
     parser.add_argument("--output", type=Path, default=Path("gdn_core_phase6_benchmark.json"))

@@ -364,6 +364,11 @@ wrapper 的原则是“透传描述，不自行解释私有 layout”。默认�
 - `<aclnnOp>GetWorkspaceSize` 返回 executor 的生命周期。
 - `<aclnnOp>(workspace, size, executor, stream)` 的发射签名。
 
+公开可选输出仍应保留稳定的返回槽位。Python wrapper 对未请求的输出返回 `None`，
+并向对应 aclnn 输出参数传 null descriptor；若底层 REQUIRED L0 需要固定输出数量，
+L2 可以分配仅用于表达“未公开”的 placeholder，并由 tiling/kernel mask 跳过实际
+公共写出。placeholder 不得泄漏为 Python tensor，也不得改变既有 aclnn 参数顺序。
+
 动态符号能加载不代表参数 ABI 一定正确。同名 aclnn 符号发生不兼容变化时，必须发布新符号或版本化接口；不能修改旧签名后继续宣称旧 wheel 兼容。
 
 ## 6. 如何验证、发布和维护
