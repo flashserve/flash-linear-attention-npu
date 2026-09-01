@@ -48,11 +48,11 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
                                GM_ADDR h, GM_ADDR vNew, GM_ADDR finalState, GM_ADDR tiling,
                                GM_ADDR userWorkspace)
 {
-    // Keep the same H implementation mode as the established FwdHO kernel.
-    // The final boolean enables the H/O fused scheduling path; using the
-    // standalone-H mode here changes synchronization and precision behavior.
+    // Match the standalone FwdH compile-time mode. On A2, retaining the unused
+    // chunk-pipeline specialization in embedded H makes final-state writes
+    // nondeterministic under concurrent execution even when its runtime guard is false.
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
-        InputT, GT, StateT, float, TileShapes, kGated, true, false, true>;
+        InputT, GT, StateT, float, TileShapes, kGated, true, false, false>;
     Kernel kernel;
     kernel.Init(k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                 tiling, userWorkspace);

@@ -20,6 +20,10 @@ FWD_O_KERNEL = ROOT / (
     "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/"
     "op_kernel/gemm/kernel/gdn_fwd_o_kernel.hpp"
 )
+FUSED_HO_KERNEL = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_recompute_wu_fwd_ho/"
+    "op_kernel/chunk_recompute_wu_fwd_ho.cpp"
+)
 
 
 def test_fwd_h_splits_v256_into_v128_logical_tasks():
@@ -104,3 +108,13 @@ def test_fwd_h_tail_c2_retires_mte3_before_reusing_accumulator():
     )
 
     assert ordered_writeback in tail_h
+
+
+def test_embedded_fwd_h_uses_standalone_compile_mode():
+    fused = FUSED_HO_KERNEL.read_text(encoding="utf-8")
+
+    assert (
+        "InputT, GT, StateT, float, TileShapes, kGated, true, false, false>"
+        in fused
+    )
+    assert "GDNFwdOKernel<InputT, GT, float, true>" in fused
