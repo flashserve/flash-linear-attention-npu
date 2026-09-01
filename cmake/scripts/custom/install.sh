@@ -308,6 +308,10 @@ if [ -n "${INSTALL_PATH}" ] && [ -d ${INSTALL_PATH} ]; then
     else
         log "[INFO] using requirements: when custom module install finished or before you run the custom module, \
         execute the command [ source ${bin_path}/set_env.bash ] to set the environment path"
+        log "[INFO] fla_npu custom OPP installed to: ${_ASCEND_CUSTOM_OPP_PATH}"
+        log "[INFO] If the process initializes CANN before importing fla_npu, set before starting the process:"
+        log "[INFO]   export ASCEND_CUSTOM_OPP_PATH=${_ASCEND_CUSTOM_OPP_PATH}:${_ASCEND_CUSTOM_OPP_PATH}/op_api/lib:\${ASCEND_CUSTOM_OPP_PATH:-}"
+        log "[WARNING] --install-path=${INSTALL_PATH} was specified; CANN will not auto-discover this custom OPP, please export ASCEND_CUSTOM_OPP_PATH as above and restart the process."
     fi
 else
     _ASCEND_CUSTOM_OPP_PATH=${targetdir}/${vendordir}
@@ -333,6 +337,9 @@ else
     fi
     log "[INFO] using requirements: when custom module install finished or before you run the custom module, \
         execute the command [ export LD_LIBRARY_PATH=${_ASCEND_CUSTOM_OPP_PATH}/op_api/lib/:\${LD_LIBRARY_PATH} ] to set the environment path"
+    log "[INFO] fla_npu custom OPP installed to: ${_ASCEND_CUSTOM_OPP_PATH}"
+    log "[INFO] If the process initializes CANN before importing fla_npu, set before starting the process:"
+    log "[INFO]   export ASCEND_CUSTOM_OPP_PATH=${_ASCEND_CUSTOM_OPP_PATH}:${_ASCEND_CUSTOM_OPP_PATH}/op_api/lib:\${ASCEND_CUSTOM_OPP_PATH:-}"
 fi
 
 if [ -d ${targetdir}/$vendordir/op_impl/cpu/aicpu_kernel/impl/ ]; then

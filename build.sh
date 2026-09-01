@@ -29,6 +29,11 @@ COV="false"
 CLANG="false"
 VERBOSE="false"
 OOM="false"
+# 构建过程禁用已安装 fla_npu wheel 的 .pth 自动 export（FLA_NPU_DISABLE_PTH）：
+# 当前 python 环境若装有其他版本 fla_npu wheel，其 .pth 会在每个 python3 子进程
+# （cmake、asc_opc 等）启动时把该 wheel 的 OPP prepend 进 ASCEND_CUSTOM_OPP_PATH，
+# 造成 op store 与本次源码输入数不一致（如 ChunkGatedDeltaRuleFwdH 7 vs 8）。
+export FLA_NPU_DISABLE_PTH=1
 THREAD_NUM=$(grep -c ^processor /proc/cpuinfo)
 ENABLE_VALGRIND=FALSE
 ENABLE_CREATE_LIB=FALSE
@@ -560,7 +565,7 @@ function build_example()
                     -o test_aclnn_${EXAMPLE_NAME}
             elif [[ "${PKG_MODE}" == "cust" ]]; then
                 if [[ "${vendor_name}" == "" ]]; then
-                    vendor_name="custom"
+                    vendor_name="fla_npu"
                 fi
                 echo "pkg_mode:${PKG_MODE} vendor_name:${vendor_name}"
                 export CUST_LIBRARY_PATH="${ASCEND_OPP_PATH}/vendors/${vendor_name}_transformer/op_api/lib"     # 仅自定义算子需要
@@ -1137,7 +1142,7 @@ while [[ $# -gt 0 ]]; do
         PR_CHANGED_FILES="$2"
         ENABLE_SMOKE=TRUE
         PKG_MODE="cust"
-        vendor_name="custom"
+        vendor_name="fla_npu"
         CI_MODE=TRUE
         shift 2
         ;;

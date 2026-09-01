@@ -8,6 +8,11 @@ CDIR="$(cd "$(dirname "$0")" ; pwd -P)"
 
 cd $CDIR
 
+# Use the interpreter passed by the caller (build.sh sets FLA_NPU_PYTHON to its
+# resolved interpreter; root setup.py, where present, sets PYTHON=sys.executable)
+# so we don't depend on whatever 'python3' resolves to via PATH.
+PY="${FLA_NPU_PYTHON:-${PYTHON:-python3}}"
+
 # check if the file exists
 if [ ! -f "$YAML_FILE" ]; then
     echo "Error: yaml file $YAML_FILE does not exit"
@@ -15,7 +20,7 @@ if [ ! -f "$YAML_FILE" ]; then
 fi
 
 # get the torch version
-PYTORCH_VERSION=$(python3 -c "import torch; print(torch.__version__.split('+')[0])")
+PYTORCH_VERSION=$("$PY" -c "import torch; print(torch.__version__.split('+')[0])")
 
 IFS='.' read -ra version_parts <<< "$PYTORCH_VERSION"
 PYTORCH_VERSION_DIR="v${version_parts[0]}r${version_parts[1]}"
@@ -45,27 +50,30 @@ OPAPI_OUTPUT_DIR="$CDIR/op_plugin/ops/opapi"
 if [ ! -d "$OPAPI_OUTPUT_DIR" ]; then
     mkdir -p "$OPAPI_OUTPUT_DIR"
 fi
+# --- clear stale generated aggregate/chunk files to avoid multiple definition ---
+rm -f "$OPAPI_OUTPUT_DIR"/StructKernelNpuOpApi*.cpp
+rm -f "$CDIR"/op_plugin/OpInterface*.cpp "$CDIR"/op_plugin/DvmOpsInterface.h
 
-python3 -m torchnpugen.gen_op_plugin_functions \
+"$PY" -m torchnpugen.gen_op_plugin_functions \
   --version="$PYTORCH_VERSION" \
   --output_dir="$OUTPUT_DIR/" \
   --source_yaml="$CDIR/$YAML_FILE"
 
 # check if the second parameter is passed
 if [ -n "$DERIVATIVES_YAML_FILE" ]; then
-    python3 -m torchnpugen.gen_derivatives \
+    "$PY" -m torchnpugen.gen_derivatives \
       --version="$PYTORCH_VERSION" \
       --output_dir="$OUTPUT_DIR/" \
       --source_yaml="$CDIR/$DERIVATIVES_YAML_FILE"
 fi
 
-python3 -m torchnpugen.gen_op_backend  \
+"$PY" -m torchnpugen.gen_op_backend  \
   --version="$PYTORCH_VERSION" \
   --output_dir="$CDIR/op_plugin/" \
   --source_yaml="$OUTPUT_DIR/op_plugin_functions.yaml" \
   --deprecate_yaml="$CDIR/deprecated.yaml"
 
-python3 -m torchnpugen.struct.gen_struct_opapi \
+"$PY" -m torchnpugen.struct.gen_struct_opapi \
   --output_dir="$OPAPI_OUTPUT_DIR/" \
   --native_yaml="$OUTPUT_DIR/op_plugin_functions.yaml" \
   --struct_yaml="$CDIR/$YAML_FILE"
@@ -73,7 +81,7 @@ python3 -m torchnpugen.struct.gen_struct_opapi \
 
 #################### torch_npu torchnpugen ####################
 
-python3 -m torchnpugen.gen_backend_stubs  \
+"$PY" -m torchnpugen.gen_backend_stubs  \
   --output_dir="$CDIR/torch_npu/csrc/aten" \
   --source_yaml="./test_native_functions.yaml" \
   --impl_path="$CDIR/torch_npu/csrc/aten" \
