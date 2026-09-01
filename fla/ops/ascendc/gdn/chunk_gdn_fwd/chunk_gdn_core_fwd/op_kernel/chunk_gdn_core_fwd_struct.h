@@ -6,12 +6,10 @@
 #define CHUNK_GDN_CORE_FWD_STRUCT_H
 
 #include <cstdint>
+#include "chunk_gdn_core_output_mask.h"
 #include "kernel_tiling/kernel_tiling.h"
 
 namespace GDN {
-
-constexpr uint64_t GDN_CORE_OUTPUT_G_CUMSUM = 1ULL << 0;
-constexpr uint64_t GDN_CORE_OUTPUT_A = 1ULL << 1;
 
 struct ChunkGdnCoreCoefficientTiling {
     uint64_t B;

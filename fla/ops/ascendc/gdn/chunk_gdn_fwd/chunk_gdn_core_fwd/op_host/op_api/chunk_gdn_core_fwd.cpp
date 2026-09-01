@@ -47,6 +47,7 @@ const std::array<const aclTensor *, 4> ChunkGdnCoreFwd(
     bool outputFinalState,
     int64_t chunkSize,
     double scale,
+    int64_t outputMask,
     const aclTensor *oOut,
     const aclTensor *finalStateOut,
     const aclTensor *gCumsumBthOut,
@@ -55,7 +56,7 @@ const std::array<const aclTensor *, 4> ChunkGdnCoreFwd(
 {
     L0_DFX(ChunkGdnCoreFwd, q, k, v, beta, aStorage, rawG, gkOptional, initialStateOptional,
            cuSeqlensOptional, chunkIndicesOptional, outputFinalState, chunkSize, scale,
-           oOut, finalStateOut, gCumsumBthOut, aOut);
+           outputMask, oOut, finalStateOut, gCumsumBthOut, aOut);
     const aclTensor *cuSeqlens = ConvertMetadata(cuSeqlensOptional, executor);
     const aclTensor *chunkIndices = ConvertMetadata(chunkIndicesOptional, executor);
     if ((cuSeqlensOptional != nullptr && cuSeqlens == nullptr) ||
@@ -69,7 +70,7 @@ const std::array<const aclTensor *, 4> ChunkGdnCoreFwd(
         OP_INPUT(q, k, v, beta, aStorage, rawG, gkOptional, initialStateOptional,
                  cuSeqlens, chunkIndices),
         OP_OUTPUT(oOut, finalStateOut, gCumsumBthOut, aOut),
-        OP_ATTR(outputFinalState, chunkSize, scale));
+        OP_ATTR(outputFinalState, chunkSize, scale, outputMask));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkGdnCoreFwd failed.");
         return {nullptr, nullptr, nullptr, nullptr};

@@ -54,6 +54,7 @@ public:
         this->Attr("output_final_state").AttrType(REQUIRED).Bool(false);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
         this->Attr("scale").AttrType(REQUIRED).Float(1.0);
+        this->Attr("output_mask").AttrType(REQUIRED).Int(3);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

@@ -24,6 +24,7 @@ const std::array<const aclTensor *, 4> ChunkGdnCoreFwd(
     bool outputFinalState,
     int64_t chunkSize,
     double scale,
+    int64_t outputMask,
     const aclTensor *oOut,
     const aclTensor *finalStateOut,
     const aclTensor *gCumsumBthOut,

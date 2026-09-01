@@ -34,11 +34,11 @@ constexpr size_t INPUT_INITIAL_STATE = 7;
 constexpr size_t INPUT_CU_SEQLENS = 8;
 constexpr size_t INPUT_CHUNK_INDICES = 9;
 
-constexpr size_t OUTPUT_G_CUMSUM_BTH = 2;
-constexpr size_t OUTPUT_A = 3;
-
 constexpr size_t ATTR_OUTPUT_FINAL_STATE = 0;
 constexpr size_t ATTR_CHUNK_SIZE = 1;
+constexpr size_t ATTR_OUTPUT_MASK = 3;
+constexpr int64_t GDN_CORE_OUTPUT_MASK_ALL = static_cast<int64_t>(
+    GDN::GDN_CORE_OUTPUT_G_CUMSUM | GDN::GDN_CORE_OUTPUT_A);
 
 constexpr int64_t SUPPORTED_K_DIM = 128;
 constexpr int64_t SUPPORTED_V_DIM_128 = 128;
@@ -132,11 +132,8 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     const auto *betaShape = context->GetOptionalInputShape(INPUT_BETA);
     const auto *aShape = context->GetOptionalInputShape(INPUT_A_STORAGE);
     const auto *gShape = context->GetOptionalInputShape(INPUT_RAW_G);
-    const auto *gCumsumOutputShape = context->GetOutputShape(OUTPUT_G_CUMSUM_BTH);
-    const auto *aOutputShape = context->GetOutputShape(OUTPUT_A);
     OP_CHECK_IF(qShape == nullptr || kShape == nullptr || vShape == nullptr || betaShape == nullptr ||
-                    aShape == nullptr || gShape == nullptr || gCumsumOutputShape == nullptr ||
-                    aOutputShape == nullptr ||
+                    aShape == nullptr || gShape == nullptr ||
                     qShape->GetStorageShape().GetDimNum() != 4 ||
                     kShape->GetStorageShape().GetDimNum() != 4 ||
                     vShape->GetStorageShape().GetDimNum() != 4 ||
@@ -144,19 +141,6 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
                     aShape->GetStorageShape().GetDimNum() != 4 ||
                     gShape->GetStorageShape().GetDimNum() != 3,
                 OP_LOGE(context->GetNodeName(), "Phase 6 requires rank-4 q/k/v/A and rank-3 beta/raw_g."),
-                return ge::GRAPH_FAILED);
-    const auto &gCumsumOutputStorage = gCumsumOutputShape->GetStorageShape();
-    const auto &aOutputStorage = aOutputShape->GetStorageShape();
-    const bool writePublicCumsum = gCumsumOutputStorage.GetDimNum() == 3;
-    const bool cumsumPlaceholder = gCumsumOutputStorage.GetDimNum() == 1 &&
-                                   gCumsumOutputStorage.GetDim(0) == 1;
-    const bool writePublicA = aOutputStorage.GetDimNum() == 4;
-    const bool aPlaceholder = aOutputStorage.GetDimNum() == 1 &&
-                              aOutputStorage.GetDim(0) == 1;
-    OP_CHECK_IF((!writePublicCumsum && !cumsumPlaceholder) ||
-                    (!writePublicA && !aPlaceholder),
-                OP_LOGE(context->GetNodeName(),
-                        "Phase 6 auxiliary outputs must use their public rank or the exact [1] placeholder."),
                 return ge::GRAPH_FAILED);
     const auto *qDesc = context->GetInputDesc(INPUT_Q);
     const auto *kDesc = context->GetInputDesc(INPUT_K);
@@ -217,8 +201,10 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     const bool *outputFinalState =
         context->GetAttrs()->GetAttrPointer<bool>(ATTR_OUTPUT_FINAL_STATE);
     const int64_t *chunkSize = context->GetAttrs()->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE);
+    const int64_t *outputMask = context->GetAttrs()->GetAttrPointer<int64_t>(ATTR_OUTPUT_MASK);
     uint64_t varlenChunks = 0;
-    OP_CHECK_IF(outputFinalState == nullptr || chunkSize == nullptr ||
+    OP_CHECK_IF(outputFinalState == nullptr || chunkSize == nullptr || outputMask == nullptr ||
+                    *outputMask < 0 || *outputMask > GDN_CORE_OUTPUT_MASK_ALL ||
                     (*chunkSize != CHUNK_64 && *chunkSize != CHUNK_128) ||
                     context->GetOptionalInputDesc(INPUT_GK) != nullptr || hasCu != hasChunks ||
                     (isVarlen && (cuDesc->GetDataType() != ge::DT_INT64 ||
@@ -227,7 +213,7 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
                                   cuShape->GetStorageShape().GetDim(0) < 2 ||
                                   !GetChunkCount(chunkShape, &varlenChunks))),
                 OP_LOGE(context->GetNodeName(),
-                        "Phase 6 requires chunk_size=64/128 and paired valid varlen metadata."),
+                        "Phase 6 requires output_mask in [0,3], chunk_size=64/128, and paired valid varlen metadata."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!IsShape(aShape, {batch, valueHeads, tokens, *chunkSize}),
                 OP_LOGE(context->GetNodeName(), "Phase 6 requires a_storage=[B,Hv,T,chunk_size]."),
@@ -247,9 +233,7 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
                 return ge::GRAPH_FAILED);
 
     GDN::ChunkGdnCoreFwdTrailer trailer{};
-    trailer.outputMask =
-        (writePublicCumsum ? GDN::GDN_CORE_OUTPUT_G_CUMSUM : 0) |
-        (writePublicA ? GDN::GDN_CORE_OUTPUT_A : 0);
+    trailer.outputMask = static_cast<uint64_t>(*outputMask);
     auto &coefficient = trailer.coefficient;
     coefficient.B = static_cast<uint64_t>(batch);
     coefficient.Hk = static_cast<uint64_t>(heads);

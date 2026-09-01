@@ -9,16 +9,16 @@
 - `oOut` 始终必选。
 - `finalStateOutOptional` 在 `outputFinalState=true` 时必选，否则可以为 null。
 - `gCumsumOut` 和 `aOut` 可以分别为 null。
-- null 不会改变底层输出数量、顺序或 C ABI。L2 使用 rank-1 `[1]` placeholder
-  保持 REQUIRED L0 固定槽，tiling 再生成内部 output mask。
+- null 不会改变底层输出数量、顺序或公开 C ABI。L2 使用 rank-1 `[1]`
+  placeholder 保持 REQUIRED L0 固定槽，并从公开 null 指针显式生成私有
+  `output_mask` attr；tiling 不从输出 storage shape 反推 mask。
 - `gCumsumOut=null` 时，kernel 仍生成 H/O 所需的内部 BHT cumsum，只跳过公开
   BTH 搬出。
 - `aOut=null` 时，kernel 仍生成 Solve/Recompute 所需的 A，并将其保存在内部
   `a_storage`，不写公开 A 输出。
 
-两个辅助输出可以独立省略。公开输出是否存在按 rank 判断：正常 cumsum 为 rank 3、
-正常 A 为 rank 4、placeholder 为精确的 rank-1 `[1]`；不得使用元素数量判断，以免
-把合法的 `[1,1,1]` 或 `[1,1,1,1]` 输出误认为 placeholder。
+两个辅助输出可以独立省略。`output_mask` 的 bit 0 表示写出
+`gCumsumOut`，bit 1 表示写出 `aOut`；其他 bit 无效。
 
 ## Python 调用
 
@@ -46,6 +46,7 @@ assert g_cumsum is None and A is None
 ## 兼容性
 
 - `aclnnGdnCoreFwdPhase6GetWorkspaceSize` 的参数数量、顺序和 C 类型不变。
-- `ChunkGdnCoreFwd` 的 L0 输入、输出和属性数量不变。
+- `ChunkGdnCoreFwd` 的 L0 输入和四个 REQUIRED 输出不变；私有 L0 新增
+  `output_mask` attr，不暴露给公开 ACLNN C ABI。
 - 旧调用方继续提供 `gCumsumOut/aOut` 时，shape、dtype 和数值语义不变。
 - Python 返回值始终是四元组；关闭辅助输出时对应位置为 `None`。

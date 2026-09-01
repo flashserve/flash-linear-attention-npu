@@ -5,6 +5,7 @@
 #include "aclnn_gdn_core_fwd.h"
 
 #include "chunk_gdn_core_fwd.h"
+#include "../../op_kernel/chunk_gdn_core_output_mask.h"
 
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
@@ -364,11 +365,16 @@ static aclnnStatus GdnCoreFwdGetWorkspaceSizeImpl(
                                    ? nullptr
                                    : TransposeContiguous(betaFloat, {0, 2, 1}, executorPtr);
     GDN_STAGE_CHECK(gBht != nullptr && betaBht != nullptr, 169102);
+    const int64_t outputMask =
+        (params.gCumsumOut != nullptr
+             ? static_cast<int64_t>(GDN::GDN_CORE_OUTPUT_G_CUMSUM)
+             : 0) |
+        (params.aOut != nullptr ? static_cast<int64_t>(GDN::GDN_CORE_OUTPUT_A) : 0);
 
     auto phase6Result = l0op::ChunkGdnCoreFwd(
         params.q, params.k, params.v, betaBht, aStorageBhtc, gBht, nullptr,
         params.initialStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional,
-        params.outputFinalState, params.chunkSize, params.scale, params.oOut, finalState,
+        params.outputFinalState, params.chunkSize, params.scale, outputMask, params.oOut, finalState,
         gCumsumOutput, aOutput, executorPtr);
     GDN_STAGE_CHECK(phase6Result[0] != nullptr && phase6Result[2] != nullptr &&
                         phase6Result[3] != nullptr,

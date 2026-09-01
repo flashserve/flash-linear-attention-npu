@@ -32,6 +32,7 @@ GDN_CORE_DEF = GDN_CORE_ROOT / "chunk_gdn_core_fwd_def.cpp"
 GDN_CORE_TILING = GDN_CORE_ROOT / "chunk_gdn_core_fwd_tiling.cpp"
 GDN_CORE_KERNEL = GDN_CORE_ROOT.parent / "op_kernel/chunk_gdn_core_fwd.cpp"
 GDN_CORE_STRUCT = GDN_CORE_ROOT.parent / "op_kernel/chunk_gdn_core_fwd_struct.h"
+GDN_CORE_MASK_HEADER = GDN_CORE_ROOT.parent / "op_kernel/chunk_gdn_core_output_mask.h"
 
 
 class FakeTensor:
@@ -319,19 +320,32 @@ class GdnCoreFwdCtypesAbiTest(unittest.TestCase):
         self.assertIn('Output("g_cumsum_bth").ParamType(REQUIRED)', op_def)
         self.assertIn('Output("A").ParamType(REQUIRED)', op_def)
 
-    def test_tiling_output_mask_is_rank_based_and_singleton_safe(self):
+    def test_tiling_output_mask_uses_explicit_private_l0_attr(self):
         tiling = GDN_CORE_TILING.read_text(encoding="utf-8")
         struct = GDN_CORE_STRUCT.read_text(encoding="utf-8")
+        mask_header = GDN_CORE_MASK_HEADER.read_text(encoding="utf-8")
+        source = GDN_CORE_CPP.read_text(encoding="utf-8")
+        op_def = GDN_CORE_DEF.read_text(encoding="utf-8")
+        l0_source = (GDN_CORE_ROOT / "op_api/chunk_gdn_core_fwd.cpp").read_text(
+            encoding="utf-8"
+        )
 
-        self.assertIn("gCumsumOutputStorage.GetDimNum() == 3", tiling)
-        self.assertIn("aOutputStorage.GetDimNum() == 4", tiling)
-        self.assertIn("gCumsumOutputStorage.GetDimNum() == 1", tiling)
-        self.assertIn("aOutputStorage.GetDimNum() == 1", tiling)
-        self.assertNotIn("GetShapeSize()", tiling)
-        self.assertIn("constexpr uint64_t GDN_CORE_OUTPUT_G_CUMSUM = 1ULL << 0", struct)
-        self.assertIn("constexpr uint64_t GDN_CORE_OUTPUT_A = 1ULL << 1", struct)
+        self.assertNotIn("GetOutputShape", tiling)
+        self.assertIn("ATTR_OUTPUT_MASK = 3", tiling)
+        self.assertIn("GetAttrPointer<int64_t>(ATTR_OUTPUT_MASK)", tiling)
+        self.assertIn("trailer.outputMask = static_cast<uint64_t>(*outputMask)", tiling)
+        self.assertIn('Attr("output_mask").AttrType(REQUIRED).Int(3)', op_def)
+        self.assertIn("const int64_t outputMask =", source)
+        self.assertIn("GDN::GDN_CORE_OUTPUT_G_CUMSUM", source)
+        self.assertIn("GDN::GDN_CORE_OUTPUT_A", source)
+        self.assertIn(
+            "OP_ATTR(outputFinalState, chunkSize, scale, outputMask)",
+            l0_source,
+        )
+        self.assertIn("chunk_gdn_core_output_mask.h", struct)
+        self.assertIn("constexpr uint64_t GDN_CORE_OUTPUT_G_CUMSUM = 1ULL << 0", mask_header)
+        self.assertIn("constexpr uint64_t GDN_CORE_OUTPUT_A = 1ULL << 1", mask_header)
         self.assertIn("uint64_t outputMask", struct)
-        self.assertIn("trailer.outputMask", tiling)
 
     def test_kernel_mask_retains_internal_a_and_cumsum_dependencies(self):
         kernel = GDN_CORE_KERNEL.read_text(encoding="utf-8")
