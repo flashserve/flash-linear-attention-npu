@@ -23,7 +23,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch_npu
 
-from fla_npu.ops import ascendc as ascendc_ops
 from fla_npu.ops.ascendc import (
     causal_conv1d as ascendc_causal_conv1d,
     causal_conv1d_bwd as ascendc_causal_conv1d_bwd,
@@ -32,6 +31,8 @@ from fla_npu.ops.ascendc import (
     chunk_fwd_o as ascendc_chunk_fwd_o,
     chunk_gated_delta_rule_bwd_dhu as ascendc_chunk_gated_delta_rule_bwd_dhu,
     chunk_gated_delta_rule_fwd_h as ascendc_chunk_gated_delta_rule_fwd_h,
+    chunk_local_cumsum as ascendc_chunk_local_cumsum,
+    chunk_scaled_dot_kkt as ascendc_chunk_scaled_dot_kkt,
     prepare_wy_repr_bwd_da as ascendc_prepare_wy_repr_bwd_da,
     prepare_wy_repr_bwd_full as ascendc_prepare_wy_repr_bwd_full,
     recompute_w_u_fwd as ascendc_recompute_w_u_fwd,
@@ -40,7 +41,6 @@ from fla_npu.ops.ascendc import (
 from fla_npu.ops.triton import (
     autocast_custom_bwd,
     autocast_custom_fwd,
-    chunk_local_cumsum as triton_chunk_local_cumsum,
     chunk_scaled_dot_kkt_fwd as triton_chunk_scaled_dot_kkt_fwd,
     input_guard,
     l2norm_bwd,
@@ -106,10 +106,6 @@ def _as_int_list(value: Optional[list[int] | torch.Tensor]) -> Optional[list[int
     if isinstance(value, torch.Tensor):
         return [int(x) for x in value.detach().cpu().flatten().tolist()]
     return [int(x) for x in value]
-
-
-def _is_power_of_two(value: int) -> bool:
-    return value > 0 and (value & (value - 1)) == 0
 
 
 def _activation_mode(activation: Optional[str]) -> int:
@@ -606,7 +602,7 @@ def chunk_local_cumsum_ascendc(
     if cu_list is not None or chunk_list is not None:
         op_kwargs["cu_seqlens"] = cu_list
         op_kwargs["chunk_indices_out"] = chunk_list
-    out = ascendc_ops.chunk_local_cumsum(g.contiguous().float(), chunk_size, **op_kwargs)
+    out = ascendc_chunk_local_cumsum(g.contiguous().float(), chunk_size, **op_kwargs)
     return out
 
 
@@ -638,28 +634,13 @@ def chunk_scaled_dot_kkt_fwd_ascendc(
     if cu_list is not None or chunk_list is not None:
         op_kwargs["cu_seqlens"] = cu_list
         op_kwargs["chunk_indices"] = chunk_list
-    A = ascendc_ops.chunk_scaled_dot_kkt(
+    A = ascendc_chunk_scaled_dot_kkt(
         k,
         g.contiguous().float(),
         beta.contiguous().float(),
         **op_kwargs,
     )
     return A
-
-
-def _should_use_ascendc_cumsum(
-    g: torch.Tensor,
-    *,
-    chunk_size: int,
-    output_dtype: torch.dtype,
-) -> bool:
-    if not _is_power_of_two(int(chunk_size)):
-        return False
-    if g.dim() != 3:
-        return False
-    if output_dtype not in (torch.float, torch.float32):
-        return False
-    return True
 
 
 def _should_use_ascendc_kkt(
@@ -695,28 +676,15 @@ def chunk_local_cumsum_auto(
     chunk_size: int,
     output_dtype: torch.dtype,
 ) -> torch.Tensor:
-    if _should_use_ascendc_cumsum(
-        g,
-        chunk_size=chunk_size,
-        output_dtype=output_dtype,
-    ):
-        g_ascendc = g.transpose(1, 2).contiguous()
-        return chunk_local_cumsum_ascendc(
-            g_ascendc,
-            chunk_size=chunk_size,
-            cu_seqlens=cu_seqlens,
-            chunk_indices_out=chunk_indices,
-            head_first=True,
-            output_dtype=output_dtype,
-        )
-
-    return triton_chunk_local_cumsum(
-        g,
+    g_ascendc = g.transpose(1, 2).contiguous()
+    return chunk_local_cumsum_ascendc(
+        g_ascendc,
         chunk_size=chunk_size,
         cu_seqlens=cu_seqlens,
         chunk_indices_out=chunk_indices,
-        head_first=False,
-    ).transpose(1, 2).contiguous()
+        head_first=True,
+        output_dtype=output_dtype,
+    )
 
 
 def chunk_scaled_dot_kkt_fwd_auto(
@@ -766,31 +734,17 @@ def chunk_local_cumsum_bwd_auto(
     chunk_indices: Optional[Dict[str, Optional[torch.LongTensor]]],
     chunk_size: int,
 ) -> torch.Tensor:
-    if (
-        dg.dim() == 3
-        and dg.dtype == torch.float32
-        and _is_power_of_two(int(chunk_size))
-    ):
-        dg_ascendc = dg.transpose(1, 2).contiguous()
-        dg_ascendc = chunk_local_cumsum_ascendc(
-            dg_ascendc,
-            chunk_size=chunk_size,
-            reverse=True,
-            cu_seqlens=cu_seqlens,
-            chunk_indices_out=chunk_indices,
-            head_first=True,
-            output_dtype=torch.float32,
-        )
-        return dg_ascendc.transpose(1, 2).contiguous()
-
-    return triton_chunk_local_cumsum(
-        dg,
+    dg_ascendc = dg.transpose(1, 2).contiguous()
+    dg_ascendc = chunk_local_cumsum_ascendc(
+        dg_ascendc,
         chunk_size=chunk_size,
         reverse=True,
         cu_seqlens=cu_seqlens,
         chunk_indices_out=chunk_indices,
-        head_first=False,
+        head_first=True,
+        output_dtype=torch.float32,
     )
+    return dg_ascendc.transpose(1, 2).contiguous()
 
 
 def flash_chunk_gated_delta_rule_fwd(
