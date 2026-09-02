@@ -2,8 +2,8 @@ add_op_to_compiled_list()
 
 set(chunk_kda_bwd_depends
     "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu"
-    "fla/ops/ascendc/kda/chunk_kda_bwd/internal_ops/kda_gate_bwd_post"
-    "fla/ops/ascendc/kda/chunk_kda_bwd/internal_ops/kda_gate_bwd_post_varlen"
+    "fla/ops/ascendc/kda/kda_gate_bwd_post"
+    "fla/ops/ascendc/kda/kda_gate_bwd_post_varlen"
     CACHE STRING "Kernel source dependencies for chunk_kda_bwd" FORCE)
 
 if(BUILD_OPEN_PROJECT)
