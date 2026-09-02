@@ -18,7 +18,6 @@ torch tensor 转成 aclnn descriptor，并持有一次 launch 期间需要保活
 from __future__ import annotations
 
 import ctypes
-import os
 import sys
 from contextlib import contextmanager
 from typing import Iterable, Optional, Sequence
@@ -341,7 +340,7 @@ class _CallContext:
 
 
 class _AclnnRuntime:
-    """从已打包的 custom op_api 动态库里解析并缓存符号。"""
+    """从 custom、CANN op_api 句柄中按优先级解析并缓存符号。"""
 
     def __init__(self):
         import fla_npu
@@ -418,12 +417,6 @@ class _AclnnRuntime:
 
             workspace = torch.empty((int(workspace_size.value),), dtype=torch.uint8, device=device)
             workspace_ptr = ctypes.c_void_p(int(workspace.data_ptr()))
-            if os.environ.get("FLA_NPU_DEBUG_WORKSPACE") == "1":
-                print(
-                    f"FLA_NPU_WORKSPACE name={name} ptr=0x{int(workspace.data_ptr()):x} "
-                    f"bytes={int(workspace_size.value)}",
-                    flush=True,
-                )
 
         ret = launch(
             workspace_ptr,
