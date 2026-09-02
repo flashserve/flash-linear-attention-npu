@@ -62,6 +62,10 @@ static constexpr const char *const RECOMPUTE_W_U_FWD_INPUT_SEQLENS_NAME = "cu_se
 static constexpr uint64_t RECOMPUTE_W_U_FWD_SIZE_HALF = 2;
 static constexpr uint64_t RECOMPUTE_W_U_FWD_SIZE_FP32 = 4;
 static constexpr uint64_t RECOMPUTE_W_U_FWD_ONE_BLOCK_32 = 32;
+static constexpr uint64_t RECOMPUTE_W_U_FWD_INTERLEAVED_UB_RESERVED_BYTES = 16 * 1024;
+static constexpr uint64_t RECOMPUTE_W_U_FWD_INTERLEAVED_MIN_VEC_ROW = 8;
+static constexpr uint32_t RECOMPUTE_W_U_FWD_A5_GM_RING_DEPTH =
+    GDN::RECOMPUTE_W_U_FWD_GM_RING_DEPTH;
 
 struct RecomputeWUFwdTilingContext {
     const char *nodeName;
@@ -79,6 +83,8 @@ struct RecomputeWUFwdTilingContext {
     ge::DataType betaDtype;
     uint64_t ubSize;
     size_t sysWorkspaceSize;
+    uint64_t aicCoreNum;
+    bool enableA5CompactWorkspace;
 };
 
 class RecomputeWUFwdTilingProcessor {
@@ -224,6 +230,33 @@ public:
         return ge::GRAPH_SUCCESS;
     }
 
+    ge::graphStatus SetInterleavedVecRow(uint64_t ubSize, ge::DataType kType, ge::DataType betaType)
+    {
+        uint64_t sizeofKType = kType == ge::DataType::DT_FLOAT ? RECOMPUTE_W_U_FWD_SIZE_FP32 :
+                                                                 RECOMPUTE_W_U_FWD_SIZE_HALF;
+        uint64_t sizeofBetaType = betaType == ge::DataType::DT_FLOAT ? RECOMPUTE_W_U_FWD_SIZE_FP32 :
+                                                                       RECOMPUTE_W_U_FWD_SIZE_HALF;
+        OP_CHECK_IF(ubSize <= RECOMPUTE_W_U_FWD_INTERLEAVED_UB_RESERVED_BYTES,
+                    OP_LOGE(ctx_.nodeName, "UB size is too small for the interleaved vector path."),
+                    return ge::GRAPH_FAILED);
+
+        const uint64_t usableUbSize = ubSize - RECOMPUTE_W_U_FWD_INTERLEAVED_UB_RESERVED_BYTES;
+        const uint64_t dataDim = static_cast<uint64_t>(K > V ? K : V);
+        // dataIn/dataOut/beta/g are all double-buffered in the A5 interleaved vector path.
+        const uint64_t bytesPerRow = 4 * (dataDim * sizeofKType + sizeofBetaType);
+        uint64_t rowNum = static_cast<uint64_t>(chunkSize);
+        uint64_t useUbSize = rowNum * bytesPerRow;
+        while (rowNum > RECOMPUTE_W_U_FWD_INTERLEAVED_MIN_VEC_ROW && useUbSize > usableUbSize) {
+            rowNum = rowNum / 2;
+            useUbSize = rowNum * bytesPerRow;
+        }
+        OP_CHECK_IF(rowNum < RECOMPUTE_W_U_FWD_INTERLEAVED_MIN_VEC_ROW || useUbSize > usableUbSize,
+                    OP_LOGE(ctx_.nodeName, "UB size is insufficient for the interleaved vector path."),
+                    return ge::GRAPH_FAILED);
+        tiling_.interleavedVecRow = static_cast<int64_t>(rowNum);
+        return ge::GRAPH_SUCCESS;
+    }
+
     ge::graphStatus CommonTiling()
     {
         const gert::Shape kStorageShape = ctx_.kShape->GetStorageShape();
@@ -306,6 +339,8 @@ public:
                     OP_LOGE(ctx_.nodeName, "SetVbVecRow Failed."), return ge::GRAPH_FAILED);
         OP_CHECK_IF(SetKbgExpVecRow(ctx_.ubSize, ctx_.kDtype, ctx_.betaDtype) != ge::GRAPH_SUCCESS,
                     OP_LOGE(ctx_.nodeName, "SetKbgExpVecRow Failed."), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(SetInterleavedVecRow(ctx_.ubSize, ctx_.kDtype, ctx_.betaDtype) != ge::GRAPH_SUCCESS,
+                    OP_LOGE(ctx_.nodeName, "SetInterleavedVecRow Failed."), return ge::GRAPH_FAILED);
         return ge::GRAPH_SUCCESS;
     }
 
@@ -393,9 +428,17 @@ public:
 
     ge::graphStatus WorkspaceTiling()
     {
-        uint64_t userWorkspaceSize =
-            static_cast<uint64_t>(2) * static_cast<uint64_t>(tiling_.B) * static_cast<uint64_t>(tiling_.Hv) *
-            static_cast<uint64_t>(tiling_.T) * static_cast<uint64_t>(tiling_.V);
+        uint64_t elementSize = ctx_.kDtype == ge::DataType::DT_FLOAT ? RECOMPUTE_W_U_FWD_SIZE_FP32 :
+                                                                       RECOMPUTE_W_U_FWD_SIZE_HALF;
+        uint64_t userWorkspaceSize = elementSize * static_cast<uint64_t>(tiling_.B) *
+            static_cast<uint64_t>(tiling_.Hv) * static_cast<uint64_t>(tiling_.T) *
+            static_cast<uint64_t>(tiling_.V + tiling_.K);
+        if (ctx_.enableA5CompactWorkspace) {
+            userWorkspaceSize = elementSize * static_cast<uint64_t>(ctx_.aicCoreNum) *
+                static_cast<uint64_t>(RECOMPUTE_W_U_FWD_A5_GM_RING_DEPTH) *
+                static_cast<uint64_t>(tiling_.chunkSize) *
+                static_cast<uint64_t>(tiling_.V + tiling_.K);
+        }
         workspaceSize_ = ctx_.sysWorkspaceSize + static_cast<size_t>(userWorkspaceSize);
         return ge::GRAPH_SUCCESS;
     }

@@ -19,6 +19,14 @@
 
 namespace GDN {
 
+// The compact Ascend 950 path uses this depth for both workspace slots and
+// the reverse-credit cadence of its cross-core synchronization channels.
+// Keep the value in the shared tiling header so host sizing and kernel
+// addressing cannot silently diverge.
+constexpr uint32_t RECOMPUTE_W_U_FWD_GM_RING_DEPTH = 8;
+static_assert(RECOMPUTE_W_U_FWD_GM_RING_DEPTH > 0 && RECOMPUTE_W_U_FWD_GM_RING_DEPTH <= 15,
+              "GM ring depth must fit the cross-core flag counter limit.");
+
 struct RecomputeWUFwdTilingData {
     int64_t B;
     int64_t Hk;
@@ -31,6 +39,7 @@ struct RecomputeWUFwdTilingData {
     int64_t chunkSize;
     int64_t vbVecRow;
     int64_t kbgExpVecRow;
+    int64_t interleavedVecRow;
     int64_t isVariable;
 };
 
