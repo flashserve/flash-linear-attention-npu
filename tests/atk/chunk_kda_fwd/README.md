@@ -13,7 +13,7 @@ executor 使用现代 raw `g`、`A_log`、`dt_bias` 接口，与当前算子实�
 | `gen_chunk_kda_fwd.py` | 生成并校验上述清单 | canonical seed 为 `20260831` |
 | `executor_chunk_kda_fwd.py` | CPU golden 与 NPU DUT | `ascendc` 主通路 |
 | `stress_npu_determinism.py` | 独立逐 bit 确定性诊断 | 默认遍历 MSS 清单 |
-| `scripts/validate_manifests.py` | 无 NPU 静态校验 | 校验源码选择条件与 JSON 漂移 |
+| `scripts/validate_manifests.py` | 无 NPU 静态校验 | 校验源码选择、私有依赖边界与 JSON 漂移 |
 
 精度清单使用 `soc=all`，同一份 200 条矩阵应分别在 A2（`ascend910b`）、A3
 （`ascend910_93`）和 A5（`ascend950`）设备上执行，不把同一矩阵复制成 600 条。

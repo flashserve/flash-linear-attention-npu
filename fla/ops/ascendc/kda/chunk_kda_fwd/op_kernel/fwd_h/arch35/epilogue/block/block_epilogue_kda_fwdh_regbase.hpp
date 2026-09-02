@@ -4,14 +4,11 @@
  * the BSD 3-Clause License (the "License").
  */
 
-#ifndef BLOCK_EPILOGUE_GDN_FWDH_REGBASE_HPP
-#define BLOCK_EPILOGUE_GDN_FWDH_REGBASE_HPP
+#ifndef BLOCK_EPILOGUE_KDA_FWDH_REGBASE_HPP
+#define BLOCK_EPILOGUE_KDA_FWDH_REGBASE_HPP
 
 #include "kernel_operator.h"
-#ifndef FLA_NPU_REGBASE_HPP_INCLUDED
-#define FLA_NPU_REGBASE_HPP_INCLUDED
-#include "kernel_utils/vector/regbase.hpp"
-#endif
+#include "../../../../kernel_utils/vector/regbase.hpp"
 
 namespace Catlass::Epilogue::Block::detail {
 

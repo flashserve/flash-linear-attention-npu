@@ -18,7 +18,7 @@ case_timeout="900"
 profile_launch_count="20"
 profile_warm_up="5"
 clone_retries="3"
-ops="chunk_kda_fwd,kda_gate_cumsum,chunk_gated_delta_rule_fwd_h"
+ops="chunk_kda_fwd,kda_gate_cumsum"
 
 usage() {
     cat <<'EOF'

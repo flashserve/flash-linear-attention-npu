@@ -33,17 +33,14 @@ KDA_TILING_PATH = (
     REPO_ROOT
     / "fla/ops/ascendc/kda/chunk_kda_fwd/op_host/chunk_kda_fwd_tiling.cpp"
 )
-FWD_H_ROOT = (
-    REPO_ROOT
-    / "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel"
-)
+FWD_H_ROOT = KDA_KERNEL_ROOT / "fwd_h"
 FWD_H_SCHEDULER_PATHS = (
-    FWD_H_ROOT / "gemm/block/block_scheduler_gdn_fwd_h.hpp",
-    FWD_H_ROOT / "arch35/gemm/block/block_scheduler_gdn_fwd_h.hpp",
+    FWD_H_ROOT / "gemm/block/block_scheduler_kda_fwd_h.hpp",
+    FWD_H_ROOT / "arch35/gemm/block/block_scheduler_kda_fwd_h.hpp",
 )
 FWD_H_KERNEL_PATHS = (
-    FWD_H_ROOT / "gemm/kernel/gdn_fwd_h_kernel.hpp",
-    FWD_H_ROOT / "arch35/gemm/kernel/gdn_fwd_h_kernel.hpp",
+    FWD_H_ROOT / "gemm/kernel/kda_fwd_h_kernel.hpp",
+    FWD_H_ROOT / "arch35/gemm/kernel/kda_fwd_h_kernel.hpp",
 )
 KDA_KERNEL_UTILS_ROOT = (
     REPO_ROOT / "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/kernel_utils"
@@ -66,12 +63,26 @@ KDA_PRIVATE_UTILITY_PATHS = (
     KDA_KERNEL_UTILS_ROOT / "vector/regbase.hpp",
     KDA_BWD_INTRA_REGBASE_PATH,
 )
+KDA_PRIVATE_FWD_H_PATHS = (
+    FWD_H_ROOT / "chunk_kda_fwd_h_struct.h",
+    FWD_H_ROOT / "epilogue/kda_fwd_h_epilogue_policies.hpp",
+    FWD_H_ROOT / "epilogue/block/block_epilogue_kda_fwdh_update.hpp",
+    FWD_H_ROOT / "epilogue/block/block_epilogue_kda_fwdh_vnew.hpp",
+    FWD_H_ROOT / "gemm/block/block_scheduler_kda_fwd_h.hpp",
+    FWD_H_ROOT / "gemm/kernel/kda_fwd_h_kernel.hpp",
+    FWD_H_ROOT / "arch35/epilogue/kda_fwd_h_epilogue_policies.hpp",
+    FWD_H_ROOT / "arch35/epilogue/block/block_epilogue_kda_fwdh_regbase.hpp",
+    FWD_H_ROOT / "arch35/epilogue/block/block_epilogue_kda_fwdh_update.hpp",
+    FWD_H_ROOT / "arch35/epilogue/block/block_epilogue_kda_fwdh_vnew.hpp",
+    FWD_H_ROOT / "arch35/gemm/block/block_scheduler_kda_fwd_h.hpp",
+    FWD_H_ROOT / "arch35/gemm/kernel/kda_fwd_h_kernel.hpp",
+)
 POST_WU_PATH = (
     REPO_ROOT
     / "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/arch35/chunk_kda_fwd_post_wu.h"
 )
 VNEW_EPILOGUE_PATH = (
-    FWD_H_ROOT / "arch35/epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
+    FWD_H_ROOT / "arch35/epilogue/block/block_epilogue_kda_fwdh_vnew.hpp"
 )
 SOCS = {"ascend910b", "ascend910_93", "ascend950"}
 ACCURACY_STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key"}
@@ -246,12 +257,18 @@ def _check_l1_clear_barriers() -> None:
 
 
 def _check_kernel_utils_ownership() -> None:
-    for path in KDA_PRIVATE_UTILITY_PATHS:
+    for path in (*KDA_PRIVATE_UTILITY_PATHS, *KDA_PRIVATE_FWD_H_PATHS):
         if not path.is_file():
-            raise ValueError(f"missing KDA-private kernel utility: {path}")
+            raise ValueError(f"missing KDA-private kernel source: {path}")
         source = path.read_text(encoding="utf-8")
         if "fla/ops/ascendc/common/kernel_utils" in source:
-            raise ValueError(f"KDA utility must not reference common/kernel_utils: {path}")
+            raise ValueError(f"KDA source must not reference common/kernel_utils: {path}")
+        if "chunk_gated_delta_rule_fwd_h" in source:
+            raise ValueError(f"KDA source must not reference the independent GDN FwdH: {path}")
+        if path in KDA_PRIVATE_FWD_H_PATHS and re.search(
+            r"\b(?:GDN|Gdn|gdn)FwdH", source
+        ):
+            raise ValueError(f"KDA-private FwdH must use KDA-owned type names: {path}")
 
     provider_markers = {
         KDA_MMAD_PATHS[0]: "FLA_NPU_KERNEL_UTIL_MMAD_TLA_PROVIDED",
@@ -278,9 +295,14 @@ def _check_kernel_utils_ownership() -> None:
             continue
         source = path.read_text(encoding="utf-8")
         for include_target in include_re.findall(source):
-            if include_target.startswith("kernel_utils/") or "common/kernel_utils/" in include_target:
+            if (
+                include_target.startswith("kernel_utils/")
+                or "common/kernel_utils/" in include_target
+                or "chunk_gdn_fwd/" in include_target
+                or "chunk_gated_delta_rule_fwd_h/" in include_target
+            ):
                 raise ValueError(
-                    f"{path}: KDA source must not include public kernel utility {include_target}"
+                    f"{path}: KDA source must not include public GDN/utility source {include_target}"
                 )
 
     expected_private_includes = {
@@ -312,6 +334,20 @@ def _check_kernel_utils_ownership() -> None:
         KDA_COMMON_PATH: (
             '#include "./kernel_utils/vector/regbase.hpp"',
             '#include "./kernel_utils/block/block_mmad_pingpong_tla_preloadA_l1B.hpp"',
+            '#include "fwd_h/chunk_kda_fwd_h_struct.h"',
+            '#include "fwd_h/arch35/gemm/kernel/kda_fwd_h_kernel.hpp"',
+            '#include "fwd_h/gemm/kernel/kda_fwd_h_kernel.hpp"',
+        ),
+        FWD_H_KERNEL_PATHS[0]: (
+            '#include "../../../kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"',
+        ),
+        FWD_H_KERNEL_PATHS[1]: (
+            '#include "../../../../kernel_utils/block/block_mmad_pingpong_tla.hpp"',
+            '#include "../../../../kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"',
+            '#include "../../../../kernel_utils/block/block_mmad_pingpong_tla_preloadA_l1B.hpp"',
+        ),
+        FWD_H_ROOT / "arch35/epilogue/block/block_epilogue_kda_fwdh_regbase.hpp": (
+            '#include "../../../../kernel_utils/vector/regbase.hpp"',
         ),
         REPO_ROOT / "fla/ops/ascendc/kda/chunk_kda_bwd_intra/op_kernel/arch35/chunk_kda_bwd_intra_regbase.h": (
             '#include "./kernel_utils/vector/regbase.hpp"',
@@ -328,47 +364,55 @@ def _check_kernel_utils_ownership() -> None:
         raise ValueError("kda_gate_cumsum must not retain the unused regbase dependency")
 
     common_source = KDA_COMMON_PATH.read_text(encoding="utf-8")
-    gdn_include = common_source.index("gdn_fwd_h_kernel.hpp")
-    for private_include in (
-        '#include "./kernel_utils/vector/regbase.hpp"',
-        '#include "./kernel_utils/block/block_mmad_pingpong_tla_preloadA_l1B.hpp"',
-        '#include "arch35/chunk_kda_fwd_prepare.h"',
-        '#include "arch35/chunk_kda_fwd_post_wu.h"',
-        '#include "chunk_kda_fwd_prepare.h"',
-    ):
-        if common_source.index(private_include) > gdn_include:
-            raise ValueError(
-                f"chunk_kda_fwd_common.h: {private_include} must precede the transitive GDN include"
-            )
+    if "chunk_gated_delta_rule_fwd_h" in common_source:
+        raise ValueError("chunk_kda_fwd_common.h must use only the KDA-private FwdH")
 
-    expected_gdn_markers = {
-        FWD_H_ROOT / "gemm/kernel/gdn_fwd_h_kernel.hpp": (
-            "FLA_NPU_KERNEL_UTIL_MMAD_MULTI_PROVIDED",
-        ),
-        FWD_H_ROOT / "arch35/gemm/kernel/gdn_fwd_h_kernel.hpp": (
-            "FLA_NPU_KERNEL_UTIL_MMAD_TLA_PROVIDED",
-            "FLA_NPU_KERNEL_UTIL_MMAD_MULTI_PROVIDED",
-            "FLA_NPU_KERNEL_UTIL_MMAD_PRELOAD_PROVIDED",
-        ),
-        FWD_H_ROOT / "arch35/epilogue/block/block_epilogue_gdn_fwdh_regbase.hpp": (
-            "FLA_NPU_KERNEL_UTIL_REGBASE_PROVIDED",
-        ),
-    }
-    for path, markers in expected_gdn_markers.items():
-        source = path.read_text(encoding="utf-8")
-        for marker in markers:
-            if f"#ifndef {marker}" not in source:
-                raise ValueError(f"{path.name}: missing local utility handoff guard {marker}")
+    op_cmake = (
+        KDA_KERNEL_ROOT.parent / "op_host/CMakeLists.txt"
+    ).read_text(encoding="utf-8")
+    if "chunk_gated_delta_rule_fwd_h" in op_cmake:
+        raise ValueError("chunk_kda_fwd must not retain a build dependency on GDN FwdH")
+    if "fla/ops/ascendc/kda/kda_gate_cumsum" not in op_cmake:
+        raise ValueError("chunk_kda_fwd must retain its kda_gate_cumsum dependency")
 
     cmake_source = (REPO_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    if "${_kernel_source_dir}" in cmake_source:
+        raise ValueError("RTY private-source install must not change every operator")
+    kda_install = _source_section(
+        cmake_source,
+        'if (_op_name STREQUAL "chunk_kda_fwd" OR',
+        "endif ()",
+    )
+    if '_op_name STREQUAL "chunk_kda_bwd_intra"' not in kda_install:
+        raise ValueError("RTY private-source install must remain scoped to KDA operators")
     for install_source in (
-        "${_kernel_source_dir}/kernel_utils",
-        "${_kernel_source_dir}/arch32",
-        "${_kernel_source_dir}/arch35",
-        "${_kernel_source_dir}/arch38",
+        "${_kda_kernel_source_dir}/kernel_utils",
+        "${_kda_kernel_source_dir}/fwd_h",
+        "${_kda_kernel_source_dir}/${_arch_dir}",
     ):
-        if f"install(DIRECTORY {install_source}" not in cmake_source:
-            raise ValueError(f"RTY package must install private utility path {install_source}")
+        if f"install(DIRECTORY {install_source}" not in kda_install:
+            raise ValueError(f"RTY package must install KDA-private path {install_source}")
+    for public_install_source in (
+        "${op_dir}/arch32",
+        "${op_dir}/arch35",
+        "${op_dir}/arch38",
+    ):
+        if f"install(DIRECTORY {public_install_source}" not in cmake_source:
+            raise ValueError(
+                f"non-KDA RTY install behavior must retain {public_install_source}"
+            )
+
+    validation_script = (
+        REPO_ROOT / "scripts/validate_kda_a5.sh"
+    ).read_text(encoding="utf-8")
+    default_ops = re.search(r'^ops="([^"]+)"$', validation_script, re.MULTILINE)
+    if default_ops is None:
+        raise ValueError("A5 validation script must define its default KDA operator set")
+    default_op_names = set(default_ops.group(1).split(","))
+    if "chunk_gated_delta_rule_fwd_h" in default_op_names:
+        raise ValueError("A5 KDA validation must not build the independent GDN FwdH")
+    if not {"chunk_kda_fwd", "kda_gate_cumsum"}.issubset(default_op_names):
+        raise ValueError("A5 KDA validation must build ChunkKdaFwd and KdaGateCumsum")
 
 
 def _check_kernel_sync_contract() -> None:

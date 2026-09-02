@@ -16,20 +16,11 @@
 #include "chunk_kda_fwd_finalize.h"
 #endif
 
-#if __has_include("../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h")
-#include "../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
+#include "fwd_h/chunk_kda_fwd_h_struct.h"
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-#include "../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
+#include "fwd_h/arch35/gemm/kernel/kda_fwd_h_kernel.hpp"
 #else
-#include "../../../gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
-#endif
-#else
-#include "../../chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-#include "../../chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
-#else
-#include "../../chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
-#endif
+#include "fwd_h/gemm/kernel/kda_fwd_h_kernel.hpp"
 #endif
 
 namespace KdaForward {
@@ -290,11 +281,11 @@ __aicore__ inline void RunFwdHImpl(
     const TilingData &tiling)
 {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
+    using FwdHKernel = Catlass::Gemm::Kernel::KDAFwdHKernel<
         T, float, float, float, TileShapes, true, false, true, HI_LO_C2>;
 #else
     static_assert(!HI_LO_C2, "HI_LO_C2 is only supported on Ascend950");
-    using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
+    using FwdHKernel = Catlass::Gemm::Kernel::KDAFwdHKernel<
         T, float, float, float, TileShapes, true, false, true>;
 #endif
     const auto fwdHTiling = MakeFwdHTiling(tiling);
@@ -348,13 +339,13 @@ __aicore__ inline void RunGenericBackEnd(
 {
     if (tiling.vHeadDim > 128) {
         RunFwdH<SAFE_GATE, T,
-                Catlass::Gemm::Kernel::GDNFwdHTileShapes256, TilingData,
+                Catlass::Gemm::Kernel::KDAFwdHTileShapes256, TilingData,
                 COMPILE_BT, COMPILE_K, COMPILE_V>(
             initialState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, tiling);
     } else {
         RunFwdH<SAFE_GATE, T,
-                Catlass::Gemm::Kernel::GDNFwdHTileShapes128, TilingData,
+                Catlass::Gemm::Kernel::KDAFwdHTileShapes128, TilingData,
                 COMPILE_BT, COMPILE_K, COMPILE_V>(
             initialState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, tiling);
@@ -377,13 +368,13 @@ __aicore__ inline void RunGenericBackEnd(
 {
     if (tiling.vHeadDim > 128) {
         RunFwdH<SAFE_GATE, T,
-                Catlass::Gemm::Kernel::GDNFwdHTileShapes256, TilingData,
+                Catlass::Gemm::Kernel::KDAFwdHTileShapes256, TilingData,
                 COMPILE_BT, COMPILE_K, COMPILE_V>(
             initialState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, tiling);
     } else {
         RunFwdH<SAFE_GATE, T,
-                Catlass::Gemm::Kernel::GDNFwdHTileShapes128, TilingData,
+                Catlass::Gemm::Kernel::KDAFwdHTileShapes128, TilingData,
                 COMPILE_BT, COMPILE_K, COMPILE_V>(
             initialState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, tiling);

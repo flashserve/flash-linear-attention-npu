@@ -57,13 +57,13 @@ __aicore__ inline void DispatchStage(
     } else if (tiling.stage == KDA_STAGE_FWD_H) {
         if (tiling.vHeadDim > 128) {
             RunFwdH<SAFE_GATE, T,
-                    Catlass::Gemm::Kernel::GDNFwdHTileShapes256, TilingData,
+                    Catlass::Gemm::Kernel::KDAFwdHTileShapes256, TilingData,
                     COMPILE_BT, COMPILE_K, COMPILE_V>(
                 initialState, cuSeqlens, chunkIndices, addresses,
                 userWorkspace, tiling);
         } else {
             RunFwdH<SAFE_GATE, T,
-                    Catlass::Gemm::Kernel::GDNFwdHTileShapes128, TilingData,
+                    Catlass::Gemm::Kernel::KDAFwdHTileShapes128, TilingData,
                     COMPILE_BT, COMPILE_K, COMPILE_V>(
                 initialState, cuSeqlens, chunkIndices, addresses,
                 userWorkspace, tiling);

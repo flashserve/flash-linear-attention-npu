@@ -6,11 +6,12 @@
 2. 不新增公开算子原型；A5 快路径复用既有 `ChunkKdaFwd` 原型和外层 kernel 入口。
 3. A2/A3/A5 使用同一数学定义；A5 保留 regbase 双发射特化。
 4. 输入 layout 与输出 layout 解耦。
-5. FwdH 同时服务 KDA 与 GDN，并支持可选 scalar gate、key-wise gate 和 `state_v_first`。
+5. KDA 私有 FwdH 支持可选 scalar gate、key-wise gate 和 `state_v_first`。
 
-KDA 使用的 Catlass 流水和 regbase 辅助头位于本算子的 `op_kernel/kernel_utils/` 私有目录；
+KDA 使用的 FwdH 实现位于本算子的 `op_kernel/fwd_h/` 私有目录，Catlass 流水和 regbase
+辅助头位于 `op_kernel/kernel_utils/` 私有目录；
 bwd-intra 等 KDA 子算子也在各自的 `op_kernel/kernel_utils/` 中携带所需的 regbase 副本；
-`ascendc/common/kernel_utils` 仅保留给 GDN 等既有消费者，KDA 不依赖该公共副本。
+`ascendc/common/kernel_utils` 和独立 GDN FwdH 实现仅保留给既有消费者，KDA 不依赖这些公共副本。
 
 ## L2 调度
 
@@ -77,8 +78,8 @@ v_new = u - w @ h_prev
 h_next = exp2(gk_last) * h_prev + kg^T @ v_new
 ```
 
-arch35 路径复用与 `ChunkGatedDeltaRuleFwdH` 相同的数学实现；其他场景在 `ChunkKdaFwd` 内嵌
-共享 FwdH 实现。独立 GDN L0 原型继续保留给其他调用方，key-wise `gk` 固定使用 `exp2`。
+各平台均使用 `ChunkKdaFwd` 内部的私有 FwdH 实现。该实现与 GDN FwdH 保持相同的基础递推
+数学定义，但不包含或依赖独立 GDN 算子的源码；key-wise `gk` 固定使用 `exp2`。
 
 上述 A5 残差策略启用时，FwdH 将 BF16 `kg`（导出时为公开输出，否则为私有 workspace）
 作为高位平面，将 `u_seed` 前 `K` 列作为低位平面，并对同一 `v_new` 执行两平面归约，
@@ -143,7 +144,7 @@ Finalize 的内部实现头与统一 kernel 入口同属 `chunk_kda_fwd/op_kerne
 `SetTilingKey` 只检查 chunk、K、V，不检查 SoC。
 
 在 arch35 上，key2 的 dense 对齐场景使用单 launch 融合流水和 arch35 FwdH。A5 多 chunk 的
-tail/varlen 以及 key1 泛化场景使用四段 launch，并在 FwdH 阶段复用共享实现。其他架构在同一
+tail/varlen 以及 key1 泛化场景使用四段 launch，并在 FwdH 阶段复用 KDA 私有实现。其他架构在同一
 key2 下使用其对应单 launch 实现。tiling key 和私有 `stage` 均不改变公开算子原型、输出契约
 或数学定义。
 

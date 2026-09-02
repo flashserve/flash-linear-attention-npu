@@ -5,7 +5,8 @@
 `ChunkKdaFwd` 对齐不涉及 CP 切分的 FLA `chunk_kda_fwd` 顶层语义。公共接口接收 raw gate 或已激活的
 自然对数 gate。Gate、Prepare、PostWu、FwdH 和 Finalize 复用同一个私有 L0；A5 的非对齐多 chunk
 场景按四个阶段依次提交，其他场景保持单次提交。该内部调度不改变 ACLNN 或 Python 公共接口。
-算子使用自身 `op_kernel/kernel_utils` 中的流水辅助头，避免依赖面向其他算子的公共 utility 副本。
+算子使用自身 `op_kernel/fwd_h` 中的状态递推实现和 `op_kernel/kernel_utils` 中的流水辅助头，
+不依赖独立 GDN FwdH 或面向其他算子的公共 utility 副本。
 
 Shape 符号与布局约定见 [KDA 模型符号表](../README.md#model-shape-symbols)。
 
