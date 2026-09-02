@@ -601,7 +601,7 @@ public:
                             blockMmadWHTail.preSetFlags();
                             blockMmadWHTail(
                                 tensorBlockW, tensorBlockH, tensorBlockV,
-                                cube1Shape, EmptyClass{}, true);
+                                cube1Shape);
                             blockMmadWHTail.finalWaitFlags();
                         } else {
                             blockMmadWH.preSetFlags();
@@ -646,7 +646,7 @@ public:
                                 blockMmadKVTail.preSetFlags();
                                 blockMmadKVTail(
                                     tensorBlockK, tensorBlockVwork, tensorBlockHwork,
-                                    cube2Shape, EmptyClass{}, true);
+                                    cube2Shape);
                                 blockMmadKVTail.finalWaitFlags();
                             } else {
                                 blockMmadKV.preSetFlags();
