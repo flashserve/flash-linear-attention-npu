@@ -107,7 +107,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [128, 8192, 16384]
+        values: [63, 128, 8192, 16384]
       invalid:
         values: []
   - name: key_dim

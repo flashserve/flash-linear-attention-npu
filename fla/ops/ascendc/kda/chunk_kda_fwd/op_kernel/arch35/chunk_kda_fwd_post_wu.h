@@ -1491,7 +1491,7 @@ private:
     template <typename SrcTensor, typename DstTensor>
     __aicore__ inline void ComputeTailWuRow(GlobalTensor<SrcTensor> &src, GlobalTensor<DstTensor> &dst,
                                             uint64_t akkBase, uint64_t srcBase, uint64_t dstBase, uint64_t curT,
-                                            uint64_t dim)
+                                            uint64_t dim, uint64_t rowStride)
     {
         LocalTensor<float> acc = vecBuf_.Get<float>();
         LocalTensor<float> value = vecBuf_.Get<float>()[512];
@@ -1506,7 +1506,7 @@ private:
         SetFlag<HardEvent::V_S>(EXP2_EVENT_ID);
         WaitFlag<HardEvent::V_S>(EXP2_EVENT_ID);
         for (uint64_t j = 0; j < curT; ++j) {
-            LoadAsFloatVector(src, srcBase + j * dim, value, typed, dim);
+            LoadAsFloatVector(src, srcBase + j * rowStride, value, typed, dim);
             float coefficient = coefficients.GetValue(j);
             SetFlag<HardEvent::S_V>(EXP2_EVENT_ID);
             WaitFlag<HardEvent::S_V>(EXP2_EVENT_ID);
@@ -1530,15 +1530,24 @@ private:
     __aicore__ inline void ComputeTailWuVector(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
                                                uint64_t curT, uint64_t subBlockIdx, uint64_t subBlockNum)
     {
+        // preparedQG_ and w_ alias. Each subblock owns disjoint columns and
+        // writes rows from last to first, so every lower-triangular source row
+        // remains live through its final use without desynchronizing the AIVs.
+        uint64_t colBegin = (K_ * subBlockIdx) / subBlockNum;
+        uint64_t colEnd = (K_ * (subBlockIdx + 1)) / subBlockNum;
+        for (uint64_t row = curT; row > 0; --row) {
+            uint64_t rowIdx = row - 1;
+            ComputeTailWuRow(
+                preparedQG_, w_, AOffset(b, hv, start + rowIdx, 0), KVOffset(b, hv, start, colBegin, K_),
+                KVOffset(b, hv, start + rowIdx, colBegin, K_), curT, colEnd - colBegin, K_);
+        }
+
         uint64_t rowBegin = (curT * subBlockIdx) / subBlockNum;
         uint64_t rowEnd = (curT * (subBlockIdx + 1)) / subBlockNum;
         for (uint64_t row = rowBegin; row < rowEnd; ++row) {
             ComputeTailWuRow(
-                preparedQG_, w_, AOffset(b, hv, start + row, 0), KVOffset(b, hv, start, 0, K_),
-                KVOffset(b, hv, start + row, 0, K_), curT, K_);
-            ComputeTailWuRow(
                 propagatedVNew_, u_, AOffset(b, hv, start + row, 0), KVOffset(b, hv, start, 0, V_),
-                KVOffset(b, hv, start + row, 0, V_), curT, V_);
+                KVOffset(b, hv, start + row, 0, V_), curT, V_, V_);
         }
     }
 #endif

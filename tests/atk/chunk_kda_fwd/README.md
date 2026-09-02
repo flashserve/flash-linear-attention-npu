@@ -43,4 +43,13 @@ CASE_START=0 CASE_END=5 \
 bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -npu_device_id=0 -scope=accuracy
 ```
 
+确定性回归会重复运行 MSS 用例并逐位比较全部可见输出。MSS 包含 #440 的 63-token 单序列
+尾块场景，通过 96 个 value heads 放大并行调度覆盖，同时启用 `disable_recompute=true`、最终状态
+和全部中间量：
+
+```bash
+DC_LOOP_NUMS=100 \
+bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -npu_device_id=0 -scope=determinism
+```
+
 性能、确定性、mssanitizer 和用例生成均通过统一脚本的对应 `-scope` 执行。
