@@ -13,7 +13,7 @@ OP_TYPE_REGISTER(ChunkKdaBwd);
 OP_TYPE_REGISTER(KdaGateBwdPost);
 OP_TYPE_REGISTER(KdaGateBwdPostVarlen);
 
-ChunkKdaBwdOutputs KdaChunkBackward(
+ChunkKdaBwdOutputs ChunkKdaBwd(
     const aclTensor *q, const aclTensor *k, const aclTensor *v,
     const aclTensor *beta, const aclTensor *gk,
     const aclTensor *aqk, const aclTensor *akk,
@@ -32,7 +32,7 @@ ChunkKdaBwdOutputs KdaChunkBackward(
     const aclTensor *dAOptional,
     const aclTensor *dBiasOptional, aclOpExecutor *executor)
 {
-    L0_DFX(KdaChunkBackward, q, k, v, beta, gk, aqk, akk, wOptional,
+    L0_DFX(ChunkKdaBwd, q, k, v, beta, gk, aqk, akk, wOptional,
            qgOptional, kgOptional, vNewOptional, hOptional, dO,
            rawGOptional, aLogOptional, dtBiasOptional,
            cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize,

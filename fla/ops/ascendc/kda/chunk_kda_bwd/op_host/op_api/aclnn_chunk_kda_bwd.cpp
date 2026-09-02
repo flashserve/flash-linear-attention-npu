@@ -148,7 +148,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         dAOutOptional != nullptr ? dAOutOptional : dgOut;
     const aclTensor *dBiasForKernel =
         dBiasOutOptional != nullptr ? dBiasOutOptional : dgOut;
-    const auto result = l0op::KdaChunkBackward(
+    const auto result = l0op::ChunkKdaBwd(
         q, k, v, beta, gk, aqk, akk, wOptional, qgOptional, kgOptional,
         vNewOptional, hOptional, dO,
         rawGOptional, aLogOptional, dtBiasOptional, cuTensor, chunkTensor,

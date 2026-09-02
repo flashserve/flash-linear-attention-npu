@@ -9,7 +9,7 @@ namespace l0op {
 
 using ChunkKdaBwdOutputs = std::array<const aclTensor *, 7>;
 
-ChunkKdaBwdOutputs KdaChunkBackward(
+ChunkKdaBwdOutputs ChunkKdaBwd(
     const aclTensor *q, const aclTensor *k, const aclTensor *v,
     const aclTensor *beta, const aclTensor *gk,
     const aclTensor *aqk, const aclTensor *akk,
