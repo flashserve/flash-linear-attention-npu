@@ -6,6 +6,18 @@ from setuptools import setup, Extension, find_packages
 import torch
 import torch_npu
 from torch.utils.cpp_extension import BuildExtension, CppExtension
+from pathlib import Path
+from setuptools.command.build_py import build_py as _build_py
+
+
+class FlaNpuBuildPy(_build_py):
+    def run(self):
+        super().run()
+        src_dir = Path(__file__).resolve().parent
+        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth"):
+            src = src_dir / name
+            if src.exists():
+                self.copy_file(str(src), str(Path(self.build_lib) / name))
 
 # Get PyTorch version
 PYTORCH_VERSION = subprocess.check_output([sys.executable, '-c', 'import torch; print(torch.__version__.split("+")[0])']).decode('utf-8').strip()
@@ -46,7 +58,33 @@ def get_sources():
         os.path.join(ops_dir, "ops", "opapi", "StructKernelNpuOpApiEverything.cpp"),
     ]
 
-    sources_new = [cur_file for cur_file in sources if cur_file not in BUILD_EXCLUDE_LIST]
+    # Newer torchnpugen emits an aggregate monolith (StructKernelNpuOpApi.cpp /
+    # OpInterface.cpp) *together with* per-op split files (StructKernelNpuOpApi_0.cpp,
+    # OpInterface_0.cpp, ...). Compiling both causes multiple-definition at link time.
+    # Only drop the aggregate when its split replacement is actually present, so older
+    # single-file torchnpugen output still builds.
+    for aggregate in (
+        os.path.join(ops_dir, "OpInterface.cpp"),
+        os.path.join(ops_dir, "ops", "opapi", "StructKernelNpuOpApi.cpp"),
+    ):
+        aggregate_dir = os.path.dirname(aggregate)
+        prefix = os.path.splitext(os.path.basename(aggregate))[0] + "_"
+        if any(
+            f.startswith(prefix) and f.endswith(".cpp")
+            for f in os.listdir(aggregate_dir)
+        ):
+            BUILD_EXCLUDE_LIST.append(aggregate)
+
+    sources_new = []
+    seen = set()
+    for cur_file in sources:
+        if cur_file in BUILD_EXCLUDE_LIST:
+            continue
+        rp = os.path.realpath(cur_file)
+        if rp in seen:
+            continue
+        seen.add(rp)
+        sources_new.append(cur_file)
     print("====sources_new:", sources_new)
 
     return sources_new
@@ -148,6 +186,7 @@ setup(
     ext_modules=extensions,
     cmdclass={
         'build_ext': BuildExtension,
+        'build_py': FlaNpuBuildPy,
     },
     zip_safe=False,
     install_requires=[

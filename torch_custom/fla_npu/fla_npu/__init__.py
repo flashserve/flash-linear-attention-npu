@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import os
 import pathlib
+import warnings
 from typing import Optional
 
 
@@ -17,6 +18,29 @@ def _prepend_env_path(name: str, value: pathlib.Path) -> None:
     if value_str not in parts:
         os.environ[name] = os.pathsep.join([value_str, *parts])
 
+
+def _warn_if_embedded_opp_not_preconfigured() -> None:
+    """Warn when the wheel-embedded custom OPP was not pre-configured.
+
+    CANN discovers custom operator host/tiling/kernel binaries when the runtime
+    is initialized (e.g. at ``import torch_npu``). If CANN initializes before
+    ``import fla_npu``, setting ``ASCEND_CUSTOM_OPP_PATH`` in this process may be
+    too late for the already-initialized kernel registry (issue #429).
+    """
+    try:
+        vendor_dir = _resolve_vendor_dir()
+    except Exception:
+        return
+    parts = [part for part in os.environ.get("ASCEND_CUSTOM_OPP_PATH", "").split(os.pathsep) if part]
+    if str(vendor_dir) in parts:
+        return
+    warnings.warn(
+        "[fla-npu] ASCEND_CUSTOM_OPP_PATH does not contain the custom OPP implements "
+        "before import fla_npu, If you need to use fla_npu operators,  run:\n\n"
+        f"  export ASCEND_CUSTOM_OPP_PATH=\"{vendor_dir}:{vendor_dir / 'op_api' / 'lib'}:${{ASCEND_CUSTOM_OPP_PATH:-}}\"",
+        RuntimeWarning,
+        stacklevel=2,
+    )
 
 def _resolve_vendor_dir() -> pathlib.Path:
     package_dir = _PACKAGE_DIR.resolve()
@@ -144,6 +168,7 @@ def _preload_torch_npu_dependencies(torch_module, torch_npu_module) -> None:
 
 # Load the custom operator library
 def _load_opextension_so():
+    _warn_if_embedded_opp_not_preconfigured()
     load_ascendc_opapi_libraries()
 
     import torch

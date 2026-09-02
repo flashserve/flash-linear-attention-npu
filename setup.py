@@ -562,7 +562,8 @@ def _stage_run_package(run_file, opp_root):
 
 def _build_torch_extension_inplace():
     if not _env_flag("FLA_NPU_SKIP_TORCH_GEN"):
-        _run(["bash", "gen.sh", "npu_custom.yaml"], TORCH_EXTENSION_DIR)
+        _run(["bash", "gen.sh", "npu_custom.yaml"], TORCH_EXTENSION_DIR,
+             env={**os.environ, "PYTHON": sys.executable})
 
     build_dir = TORCH_EXTENSION_DIR / "build"
     if build_dir.exists():
@@ -596,6 +597,11 @@ class FlaNpuBuildPy(_build_py):
         super().run()
         run_package = _RUN_PACKAGE or _find_single_run_package()
         _stage_run_package(run_package, Path(self.build_lib) / "fla_npu" / "opp")
+        opp_env_src = REPO_ROOT / "torch_custom" / "fla_npu"
+        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth"):
+            src = opp_env_src / name
+            if src.exists():
+                shutil.copyfile(str(src), str(Path(self.build_lib) / name))
 
 
 class BinaryDistribution(Distribution):
