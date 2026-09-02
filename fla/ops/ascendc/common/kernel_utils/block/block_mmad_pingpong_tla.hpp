@@ -277,6 +277,7 @@ public:
                 }
             } else {
                 l0CTensorList[0] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
+                l0CEventList[0] = 0;
             }
             if constexpr (HAS_BIAS) {
                 uint32_t l1BiasOffset = l1BOffset + L1B_TILE_SIZE * L1B_STAGES;

@@ -29,6 +29,7 @@ _SOC_ALIASES = {
 }
 _VALID_ROUTES = {"ascendc", "aclnn", "direct_launch"}
 _TILING_KEYS = {1, 2}
+_REQUIRED_UNSAFE_CASES = {4: (4, "full"), 5: (24, "staged")}
 
 
 def _parse_args() -> argparse.Namespace:
@@ -48,7 +49,7 @@ def _parse_args() -> argparse.Namespace:
         "--case-id",
         type=int,
         default=None,
-        help="run one source manifest case instead of the complete MSS selection",
+        help="run one MSS manifest case instead of the complete selection",
     )
     parser.add_argument("--repeats", type=int, default=100)
     parser.add_argument(
@@ -122,6 +123,33 @@ def _host_tiling_key(spec: dict[str, Any]) -> int:
     return 2 if (chunk_size, key_dim, value_dim) == (64, 128, 128) else 1
 
 
+def _a5_launch_mode(spec: dict[str, Any]) -> str:
+    chunk_size = int(spec["chunk_size"])
+    raw_cu = str(spec.get("cu_seqlens", "")).strip()
+    if raw_cu:
+        cu = [int(value) for value in raw_cu.split(",")]
+        if len(cu) < 2 or cu[0] != 0 or cu[-1] != int(spec["T"]):
+            raise ValueError(f"case {spec['case_id']} has invalid cu_seqlens")
+        if any(end < begin for begin, end in zip(cu, cu[1:])):
+            raise ValueError(f"case {spec['case_id']} has decreasing cu_seqlens")
+        total_chunks = sum(
+            (end - begin + chunk_size - 1) // chunk_size
+            for begin, end in zip(cu, cu[1:])
+        )
+    else:
+        total_chunks = (int(spec["T"]) + chunk_size - 1) // chunk_size
+
+    use_dense_a5_fast_path = (
+        not raw_cu
+        and spec["q_dtype"] == "bf16"
+        and chunk_size == 64
+        and int(spec["K"]) == 128
+        and int(spec["V"]) == 128
+        and int(spec["T"]) % chunk_size == 0
+    )
+    return "staged" if total_chunks > 1 and not use_dense_a5_fast_path else "full"
+
+
 def _matches_soc(spec: dict[str, Any], requested: str) -> bool:
     if requested == "all":
         return True
@@ -173,6 +201,33 @@ def _load_specs(
                 f"case {current_id} has inconsistent tiling key: "
                 f"manifest={key}, expected={expected_key}, host={actual_key}"
             )
+        if "source_accuracy_case_id" in spec:
+            expected_source = _REQUIRED_UNSAFE_CASES.get(current_id)
+            actual_source = (
+                int(spec["source_accuracy_case_id"]),
+                str(spec.get("a5_launch_mode", "")),
+            )
+            derived_mode = _a5_launch_mode(spec)
+            if expected_source is None or actual_source != expected_source:
+                raise ValueError(
+                    f"case {current_id} has invalid unsafe source identity {actual_source}"
+                )
+            if derived_mode != actual_source[1]:
+                raise ValueError(
+                    f"case {current_id} launch mode drifted: "
+                    f"declared={actual_source[1]}, derived={derived_mode}"
+                )
+            if not (
+                spec["q_dtype"] == "bf16"
+                and spec["g_dtype"] == "fp32"
+                and not spec["safe_gate"]
+                and key == 1
+                and int(spec["K"]) == 128
+                and int(spec["V"]) >= int(spec["K"])
+            ):
+                raise ValueError(f"case {current_id} misses the A5 precision selector")
+        elif current_id in _REQUIRED_UNSAFE_CASES:
+            raise ValueError(f"case {current_id} is missing unsafe source metadata")
         route = str(spec.get("route", ""))
         if route not in _VALID_ROUTES:
             raise ValueError(f"case {current_id} has unsupported route {route!r}")
@@ -189,17 +244,41 @@ def _load_specs(
         selector = f"case_id={case_id}" if case_id is not None else "the requested SoC"
         raise ValueError(f"no MSS cases selected for {selector}")
     selected.sort(key=lambda item: (int(item["case_id"]), int(item["tiling_key"])))
-    if case_id is None and {int(item["tiling_key"]) for item in selected} != _TILING_KEYS:
-        raise ValueError(
-            "complete MSS selection must cover tiling keys {1, 2}; "
-            f"selected {sorted({int(item['tiling_key']) for item in selected})}"
-        )
+    if case_id is None:
+        selected_ids = [int(item["case_id"]) for item in selected]
+        if selected_ids != list(range(6)):
+            raise ValueError(
+                f"complete MSS selection must contain IDs 0--5; selected {selected_ids}"
+            )
+        base_coverage = {
+            (int(item["tiling_key"]), bool(item["initial_state"]))
+            for item in selected[:4]
+        }
+        expected_base_coverage = {
+            (key, boundary) for key in _TILING_KEYS for boundary in (False, True)
+        }
+        if base_coverage != expected_base_coverage:
+            raise ValueError(
+                "MSS IDs 0--3 must cover ordinary/boundary rows for both tiling keys"
+            )
+        unsafe_launches = {
+            (int(item["source_accuracy_case_id"]), str(item.get("a5_launch_mode", "")))
+            for item in selected
+            if "source_accuracy_case_id" in item
+        }
+        if unsafe_launches != set(_REQUIRED_UNSAFE_CASES.values()):
+            raise ValueError(
+                "complete MSS selection must cover the canonical unsafe full/staged "
+                f"cases; selected {sorted(unsafe_launches)}"
+            )
     return selected
 
 
 def _override_tokens(spec: dict[str, Any], tokens: Optional[int]) -> dict[str, Any]:
     if tokens is None:
         return dict(spec)
+    if "source_accuracy_case_id" in spec:
+        raise ValueError("--tokens cannot override a canonical accuracy regression clone")
     value = int(tokens)
     chunk_size = int(spec["chunk_size"])
     if value <= 0 or value % chunk_size != 0:
@@ -365,6 +444,8 @@ def _run_case(
                 "device": str(device),
                 "repeats": repeats,
                 "seed": int(spec["seed"]),
+                "source_accuracy_case_id": spec.get("source_accuracy_case_id"),
+                "a5_launch_mode": spec.get("a5_launch_mode"),
                 "shape": {
                     name: int(spec[name])
                     for name in ("B", "H", "HV", "T", "K", "V", "chunk_size")
@@ -419,6 +500,8 @@ def _run_case(
                 "case_id": case_id,
                 "case_key": case_key,
                 "tiling_key": int(spec["tiling_key"]),
+                "source_accuracy_case_id": spec.get("source_accuracy_case_id"),
+                "a5_launch_mode": spec.get("a5_launch_mode"),
                 "repeats": repeats,
                 "equal_to_run_0": repeats - len(mismatch_runs),
                 "different_from_run_0": len(mismatch_runs),

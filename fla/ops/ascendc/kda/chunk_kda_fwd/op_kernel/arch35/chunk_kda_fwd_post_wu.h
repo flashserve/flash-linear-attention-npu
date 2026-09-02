@@ -26,6 +26,7 @@
 #include "catlass/gemm/tile/tile_copy.hpp"
 #include "catlass/gemm/tile/tile_mmad.hpp"
 #include "catlass/gemm_coord.hpp"
+#include "kernel_utils/block/block_mmad_pingpong_tla.hpp"
 #include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
 #include "catlass/layout/layout.hpp"
 #include "kernel_operator.h"
@@ -49,6 +50,10 @@ constexpr float LN2 = 0.69314718055994530942f;
 constexpr float KDA_EXP2_CLAMP = 80.0f;
 constexpr float KDA_EXP_INPUT_MAX = KDA_EXP2_CLAMP * LN2;
 constexpr float KDA_EXP_INPUT_MIN = -KDA_EXP2_CLAMP * LN2;
+constexpr float KDA_SCORE_EXP2_CLAMP = 120.0f;
+constexpr float KDA_SCORE_EXP2_MIN_CLAMP = 126.0f;
+constexpr float KDA_SCORE_EXP_INPUT_MAX = KDA_SCORE_EXP2_CLAMP * LN2;
+constexpr float KDA_SCORE_EXP_INPUT_MIN = -KDA_SCORE_EXP2_MIN_CLAMP * LN2;
 constexpr float KDA_FP16_MAX = 65504.0f;
 constexpr uint32_t EXP2_UB_ELEMENTS = 256;
 constexpr uint32_t EXP2_UB_BYTES = EXP2_UB_ELEMENTS * (sizeof(float) + sizeof(uint16_t));
@@ -199,7 +204,11 @@ using KdaArchTag = Catlass::Arch::Ascend950;
 #else
 using KdaArchTag = Catlass::Arch::AtlasA2;
 #endif
-using KdaDispatchPolicy = Catlass::Gemm::MmadPingpong<KdaArchTag, true, false>;
+// Post-WU uses the common block wrapper so its L0C credit lifecycle is drained
+// when each W/U block goes out of scope.  A 256-column output needs a single
+// wide L0C slot; the narrow path keeps two slots for overlap.
+using KdaDispatchPolicy = Common::MmadPingpong<KdaArchTag, false, false, 2>;
+using KdaWideDispatchPolicy = Common::MmadPingpong<KdaArchTag, false, false, 1>;
 using KdaScoreDispatchPolicy =
     Catlass::Gemm::MmadPingpongTlaMulti<KdaArchTag, true, false, 1, true, 2, 1, 2, 2>;
 static_assert(KdaScoreDispatchPolicy::ENABLE_L1_RESIDENT,
@@ -268,7 +277,8 @@ __aicore__ inline T FloatToType(float value)
     return static_cast<T>(value);
 }
 
-template <typename T, typename GK_T = float, typename BETA_T = float>
+template <bool PRESERVE_KG_RESIDUAL, typename T, typename GK_T = float,
+          typename BETA_T = float>
 class ChunkKdaFwdPostWuKernel {
 public:
     using OUT_T = T;
@@ -592,6 +602,14 @@ private:
         PipeBarrier<PIPE_V>();
     }
 
+    __aicore__ inline void ClampScoreExpInput(LocalTensor<float> &tensor, uint32_t count)
+    {
+        Mins(tensor, tensor, KDA_SCORE_EXP_INPUT_MAX, count);
+        PipeBarrier<PIPE_V>();
+        Maxs(tensor, tensor, KDA_SCORE_EXP_INPUT_MIN, count);
+        PipeBarrier<PIPE_V>();
+    }
+
     __aicore__ inline void ClampFp32ToOutputType(LocalTensor<float> &tensor, uint32_t count)
     {
         if constexpr (IsSameType<T, half>::value) {
@@ -649,6 +667,34 @@ private:
         }
         DataCopyParams params{1, static_cast<uint16_t>(rowBytes), 0, 0};
         DataCopyPad(dst[offset], src, params);
+    }
+
+    template <typename CopyT>
+    __aicore__ inline void CopyRowsOut(
+        GlobalTensor<CopyT> &dst, uint64_t offset, LocalTensor<CopyT> &src,
+        uint64_t rows, uint64_t cols, uint64_t dstStride)
+    {
+        if (rows == 0 || cols == 0) {
+            return;
+        }
+        if (dstStride == cols) {
+            CopyVectorOut(dst, offset, src, rows * cols);
+            return;
+        }
+        constexpr uint64_t blockBytes = 32;
+        const uint64_t rowBytes = cols * sizeof(CopyT);
+        DataCopyParams params{
+            1,
+            static_cast<uint16_t>(rowBytes / blockBytes),
+            0,
+            0};
+        const uint64_t dstRowBytes = dstStride * sizeof(CopyT);
+        LoopModeParams loopParams{
+            static_cast<uint32_t>(rows), 1, rowBytes, dstRowBytes, 0, 0};
+        ResetLoopModePara(DataCopyMVType::UB_TO_OUT);
+        SetLoopModePara(loopParams, DataCopyMVType::UB_TO_OUT);
+        DataCopy(dst[offset], src, params);
+        ResetLoopModePara(DataCopyMVType::UB_TO_OUT);
     }
 
     template <typename CopyT>
@@ -1123,20 +1169,26 @@ private:
         using PostL1TileShape256 = tla::Shape<KdaInt128, tla::_256, tla::_256>;
         using PostL0TileShape256 = tla::Shape<KdaInt128, tla::_256, KdaInt64>;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        using WBlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape128,
-                                                               PostL0TileShape128,
-                                                               ElementA, ElementB, T, void, WTileCopy>;
+        using WBlockMmad128 = Common::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape128,
+                                                   PostL0TileShape128,
+                                                   ElementA, ElementB, T, void, WTileCopy>;
+        using WBlockMmad256 = Common::BlockMmadTla<KdaWideDispatchPolicy, PostL1TileShape256,
+                                                   PostL0TileShape256,
+                                                   ElementA, ElementB, T, void, WTileCopy>;
 #else
-        using WBlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape128,
-                                                               PostL0TileShape128,
-                                                               ElementA, ElementB, float, void, WTileCopy>;
+        using WBlockMmad128 = Common::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape128,
+                                                   PostL0TileShape128,
+                                                   ElementA, ElementB, float, void, WTileCopy>;
+        using WBlockMmad256 = Common::BlockMmadTla<KdaWideDispatchPolicy, PostL1TileShape256,
+                                                   PostL0TileShape256,
+                                                   ElementA, ElementB, float, void, WTileCopy>;
 #endif
-        using UBlockMmad128 = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape128,
-                                                                  PostL0TileShape128,
-                                                                  ElementA, ElementB, OUT_T, void, UTileCopy>;
-        using UBlockMmad256 = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape256,
-                                                                  PostL0TileShape256,
-                                                                  ElementA, ElementB, OUT_T, void, UTileCopy>;
+        using UBlockMmad128 = Common::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape128,
+                                                   PostL0TileShape128,
+                                                   ElementA, ElementB, OUT_T, void, UTileCopy>;
+        using UBlockMmad256 = Common::BlockMmadTla<KdaWideDispatchPolicy, PostL1TileShape256,
+                                                   PostL0TileShape256,
+                                                   ElementA, ElementB, OUT_T, void, UTileCopy>;
         LayoutTagA tagA = LayoutTagA::template MakeLayout<ElementA>(BT_, BT_);
         auto layoutA = tla::MakeLayoutFromTag(tagA);
         auto tensorA = tla::MakeTensor(preparedAqk_[AOffset(b, hv, start, 0)], layoutA,
@@ -1166,8 +1218,13 @@ private:
             auto blockB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
             auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
             Catlass::Arch::Resource<KdaArchTag> wResource;
-            WBlockMmad wBlockMmad(wResource);
-            wBlockMmad(blockA, blockB, blockC, shape);
+            if (K_ <= 128) {
+                WBlockMmad128 wBlockMmad(wResource);
+                wBlockMmad(blockA, blockB, blockC, shape);
+            } else {
+                WBlockMmad256 wBlockMmad(wResource);
+                wBlockMmad(blockA, blockB, blockC, shape);
+            }
             PipeBarrier<PIPE_ALL>();
         }
 
@@ -1461,7 +1518,11 @@ private:
             PipeBarrier<PIPE_V>();
             Muls(expLocal, expLocal, LN2, static_cast<uint32_t>(elemCount));
             PipeBarrier<PIPE_V>();
-            ClampExpInput(expLocal, static_cast<uint32_t>(elemCount));
+            if constexpr (PRESERVE_KG_RESIDUAL) {
+                ClampScoreExpInput(expLocal, static_cast<uint32_t>(elemCount));
+            } else {
+                ClampExpInput(expLocal, static_cast<uint32_t>(elemCount));
+            }
             Exp(expLocal, expLocal, static_cast<uint32_t>(elemCount));
             PipeBarrier<PIPE_V>();
             Mul(outLocal, kLocal, expLocal, static_cast<uint32_t>(elemCount));
@@ -1469,9 +1530,28 @@ private:
             ClampFp32ToOutputType(outLocal, static_cast<uint32_t>(elemCount));
             Cast(typedLocal, outLocal, RoundMode::CAST_RINT, static_cast<uint32_t>(elemCount));
             PipeBarrier<PIPE_V>();
+            if constexpr (PRESERVE_KG_RESIDUAL) {
+                Cast(kLocal, typedLocal, RoundMode::CAST_NONE,
+                     static_cast<uint32_t>(elemCount));
+                PipeBarrier<PIPE_V>();
+                Sub(expLocal, outLocal, kLocal, static_cast<uint32_t>(elemCount));
+                PipeBarrier<PIPE_V>();
+            }
             SetFlag<HardEvent::V_MTE3>(vToMte3Event_);
             WaitFlag<HardEvent::V_MTE3>(vToMte3Event_);
             CopyVectorOut(kg_, KVOffset(b, hv, token, 0, K_), typedLocal, elemCount);
+            if constexpr (PRESERVE_KG_RESIDUAL) {
+                SetFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
+                WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
+                Cast(typedLocal, expLocal, RoundMode::CAST_RINT,
+                     static_cast<uint32_t>(elemCount));
+                PipeBarrier<PIPE_V>();
+                SetFlag<HardEvent::V_MTE3>(vToMte3Event_);
+                WaitFlag<HardEvent::V_MTE3>(vToMte3Event_);
+                CopyRowsOut(
+                    propagatedVNew_, KVOffset(b, hv, token, 0, V_), typedLocal,
+                    tileRows, K_, V_);
+            }
             SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
             WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
         }
@@ -1480,6 +1560,16 @@ private:
             SetFlag<HardEvent::MTE2_MTE3>(mte2ToMte3Event_);
             WaitFlag<HardEvent::MTE2_MTE3>(mte2ToMte3Event_);
             CopyVectorOut(kg_, KVOffset(b, hv, last, 0, K_), typedLocal, K_);
+            if constexpr (PRESERVE_KG_RESIDUAL) {
+                SetFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
+                WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
+                Duplicate(typedLocal, static_cast<T>(0), static_cast<uint32_t>(K_));
+                SetFlag<HardEvent::V_MTE3>(vToMte3Event_);
+                WaitFlag<HardEvent::V_MTE3>(vToMte3Event_);
+                CopyVectorOut(
+                    propagatedVNew_, KVOffset(b, hv, last, 0, V_), typedLocal,
+                    K_);
+            }
             SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
             WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Event_);
         }
@@ -1718,6 +1808,12 @@ private:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         if (curT < BT_) {
             ComputeTailWuVector(b, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum);
+            if constexpr (PRESERVE_KG_RESIDUAL) {
+                // Both AIV lanes read every U-seed row while forming the
+                // triangular update.  Do not reuse those rows for the K-gate
+                // residual until both lanes have completed their MTE3 work.
+                Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+            }
             CopyScratchWAndFinalizeKg(
                 b, h, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum);
             return;
@@ -1726,6 +1822,10 @@ private:
             ComputeTypicalKg(b, h, hv, start, curT, subBlockIdx, subBlockNum);
             return;
         } else {
+            if constexpr (PRESERVE_KG_RESIDUAL) {
+                Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(
+                    syncDoneFlag_);
+            }
             CopyScratchWAndFinalizeKg(b, h, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum);
         }
 #else
@@ -1749,15 +1849,20 @@ private:
         if (curT == 0 || !UsePostWuCube(curT)) {
             return;
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         // AIV owns partial chunks: its vector path materializes W/U and the
         // final K gate.  Letting AIC run the cube path as well races on the
-        // same GM tiles and can deadlock the A5 tail pipeline.
+        // same GM tiles and can deadlock the tail pipeline.  Keep this guard
+        // unconditional because this header is also instantiated by the
+        // generic KDA dispatch on A5; hiding it behind the architecture macro
+        // lets a key-specific compile reintroduce the partial Cube path.
         if (curT < BT_) {
             return;
         }
-#endif
         ComputePostWuCube(b, hv, chunkIdx, start, curT);
+        if constexpr (PRESERVE_KG_RESIDUAL) {
+            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(
+                syncDoneFlag_);
+        }
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
         Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(syncDoneFlag_);
 #endif
@@ -2005,7 +2110,8 @@ private:
 };
 } // namespace
 
-template <typename T, typename GK_T, typename BETA_T, typename TilingData>
+template <bool PRESERVE_KG_RESIDUAL, typename T, typename GK_T, typename BETA_T,
+          typename TilingData>
 __aicore__ inline void RunChunkKdaPostWu(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR initialState,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR wSeed, GM_ADDR akk, GM_ADDR uSeed,
@@ -2014,14 +2120,14 @@ __aicore__ inline void RunChunkKdaPostWu(
 {
     GM_ADDR postScratch = userWorkspace + tiling.postWuScratchOffset;
     if ASCEND_IS_AIC {
-        ChunkKdaFwdPostWuKernel<T, GK_T, BETA_T> op;
+        ChunkKdaFwdPostWuKernel<PRESERVE_KG_RESIDUAL, T, GK_T, BETA_T> op;
         op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
                 wSeed, akk, uSeed, nullptr, userWorkspace, userWorkspace, userWorkspace, akk, w, u,
                 userWorkspace, kg, vNew, postScratch, postScratch, tiling, &pipe, false);
         op.ProcessAic();
     }
     if ASCEND_IS_AIV {
-        ChunkKdaFwdPostWuKernel<T, GK_T, BETA_T> op;
+        ChunkKdaFwdPostWuKernel<PRESERVE_KG_RESIDUAL, T, GK_T, BETA_T> op;
         op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
                 wSeed, akk, uSeed, nullptr, userWorkspace, userWorkspace, userWorkspace, akk, w, u,
                 userWorkspace, kg, vNew, postScratch, postScratch, tiling, &pipe);

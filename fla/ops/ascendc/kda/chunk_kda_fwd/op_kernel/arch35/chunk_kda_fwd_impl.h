@@ -38,11 +38,13 @@ __aicore__ inline void Run(
         fwdHTaskCount > tiling.prepareUsedCoreNum;
     if (isolateGenericBackEnd) {
         pipe.Destroy();
-        RunGenericBackEnd<T, BETA_T, TilingData>(
+        RunGenericBackEnd<SAFE_GATE, T, BETA_T, TilingData,
+                          COMPILE_BT, COMPILE_K, COMPILE_V>(
             q, k, v, beta, initialState, cuSeqlens, chunkIndices, aqk,
             attnOut, addresses, userWorkspace, tiling);
     } else {
-        RunGenericBackEnd<T, BETA_T, TilingData>(
+        RunGenericBackEnd<SAFE_GATE, T, BETA_T, TilingData,
+                          COMPILE_BT, COMPILE_K, COMPILE_V>(
             q, k, v, beta, initialState, cuSeqlens, chunkIndices, aqk,
             attnOut, addresses, userWorkspace, tiling, pipe);
     }

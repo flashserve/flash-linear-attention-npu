@@ -40,20 +40,20 @@ CATLASS_DEVICE T Max(T a, T b) {
 namespace Catlass::Gemm::Block {
 
 struct GDNFwdHOffsets {
-    uint32_t hSrcOffset;
-    uint32_t hDstOffset;
-    uint32_t uvOffset;
-    uint32_t wkOffset;
-    uint32_t wOffset;
-    uint32_t gOffset;
-    uint32_t gkOffset;
+    uint64_t hSrcOffset;
+    uint64_t hDstOffset;
+    uint64_t uvOffset;
+    uint64_t wkOffset;
+    uint64_t wOffset;
+    uint64_t gOffset;
+    uint64_t gkOffset;
     uint32_t hWorkOffset;
     uint32_t vWorkOffset;
     uint32_t kDecayWorkOffset;
     uint32_t vBlockOffset;
     uint32_t vBlockDim;
-    uint32_t initialStateOffset;
-    uint32_t finalStateOffset;
+    uint64_t initialStateOffset;
+    uint64_t finalStateOffset;
     bool isInitialState;
     bool isFinalState;
     uint32_t blockTokens;
@@ -236,6 +236,7 @@ struct BlockSchedulerGdnFwdH {
             if (batchTokens > 0) {
                 int64_t batchChunks = (batchTokens + chunkSize - 1) / chunkSize;
                 if (actualBatch == compactBatchIdx) {
+                    stream.batchIdx = b - 1;
                     stream.chunkOffset = static_cast<uint32_t>(chunkPrefix);
                     stream.batchChunks = static_cast<uint32_t>(batchChunks);
                     stream.tokenOffset = static_cast<uint32_t>(prevSeq);
@@ -247,17 +248,11 @@ struct BlockSchedulerGdnFwdH {
             }
             prevSeq = currSeq;
         }
+        stream.batchIdx = 0;
         stream.chunkOffset = 0;
         stream.batchChunks = 0;
         stream.tokenOffset = 0;
         stream.batchTokens = 0;
-    }
-
-    CATLASS_DEVICE
-    uint32_t GetVarlenChunkOffset(uint32_t compactBatchIdx) {
-        GDNFwdHStream stream;
-        ResolveVarlenSequence(compactBatchIdx, stream);
-        return stream.chunkOffset;
     }
 
     CATLASS_DEVICE
@@ -305,18 +300,33 @@ struct BlockSchedulerGdnFwdH {
         offset.isFinalState = stream.chunkIdx == (stream.batchChunks - 1);
         uint32_t vBlockOffset = 0;
         uint32_t vBlockDim = vBlockSize;
-        offset.initialStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim + vBlockOffset;
-        offset.finalStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim + vBlockOffset;
-        offset.hSrcOffset = (stream.shapeBatchIdx * vNumHead * totalChunks + stream.vHeadIdx * totalChunks + stream.chunkOffset + stream.chunkIdx) * kHeadDim * vHeadDim + vBlockOffset;
-        offset.hDstOffset = offset.hSrcOffset + kHeadDim * vHeadDim;
+        uint64_t stateHeadIdx =
+            static_cast<uint64_t>(stream.batchIdx) * vNumHead + stream.vHeadIdx;
+        uint64_t chunkLinearIdx =
+            (static_cast<uint64_t>(stream.shapeBatchIdx) * vNumHead + stream.vHeadIdx) *
+                totalChunks +
+            stream.chunkOffset + stream.chunkIdx;
+        uint64_t tokenLinearV =
+            (static_cast<uint64_t>(stream.shapeBatchIdx) * vNumHead + stream.vHeadIdx) *
+                totalTokens +
+            stream.tokenOffset + static_cast<uint64_t>(stream.chunkIdx) * chunkSize;
+        uint64_t tokenLinearK =
+            (static_cast<uint64_t>(stream.shapeBatchIdx) * kNumHead + stream.kHeadIdx) *
+                totalTokens +
+            stream.tokenOffset + static_cast<uint64_t>(stream.chunkIdx) * chunkSize;
+        uint64_t stateBlockSize = static_cast<uint64_t>(kHeadDim) * vHeadDim;
+        offset.initialStateOffset = stateHeadIdx * stateBlockSize + vBlockOffset;
+        offset.finalStateOffset = stateHeadIdx * stateBlockSize + vBlockOffset;
+        offset.hSrcOffset = chunkLinearIdx * stateBlockSize + vBlockOffset;
+        offset.hDstOffset = offset.hSrcOffset + stateBlockSize;
         if (storeFinalState && offset.isFinalState) {
             offset.hDstOffset = offset.hSrcOffset;
         }
-        offset.uvOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * vHeadDim + vBlockOffset;
-        offset.wkOffset = (stream.shapeBatchIdx * kNumHead * totalTokens + stream.kHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
-        offset.wOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
-        offset.gOffset = stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize;
-        offset.gkOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
+        offset.uvOffset = tokenLinearV * vHeadDim + vBlockOffset;
+        offset.wkOffset = tokenLinearK * kHeadDim;
+        offset.wOffset = tokenLinearV * kHeadDim;
+        offset.gOffset = tokenLinearV;
+        offset.gkOffset = tokenLinearV * kHeadDim;
         offset.hWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * kHeadDim * vBlockSize;
         offset.vWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * chunkSize * vBlockSize;
         offset.kDecayWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * chunkSize * kHeadDim;

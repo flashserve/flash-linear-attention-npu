@@ -7,8 +7,8 @@ executor 使用现代 raw `g`、`A_log`、`dt_bias` 接口，与当前算子实�
 
 | 文件 | 用途 | 规模 |
 | --- | --- | --- |
-| `atk_chunk_kda_fwd.json` | 精度双标杆 | 200 条正向用例（ID 0--199） |
-| `atk_chunk_kda_fwd_mss.json` | `accuracy_dc` 与 mssanitizer | 4 条：两个 tiling key 各含普通/边界用例 |
+| `atk_chunk_kda_fwd.json` | 混合容差精度 | 200 条正向用例（ID 0--199） |
+| `atk_chunk_kda_fwd_mss.json` | `accuracy_dc` 与 mssanitizer | 6 条：4 条 key 覆盖与 2 条 A5 同步回归 |
 | `atk_chunk_kda_fwd_perf.json` | 性能采样 | 2 条：每个 tiling key 一条 |
 | `gen_chunk_kda_fwd.py` | 生成并校验上述清单 | canonical seed 为 `20260831` |
 | `executor_chunk_kda_fwd.py` | CPU golden 与 NPU DUT | `ascendc` 主通路 |
@@ -27,6 +27,12 @@ executor 使用现代 raw `g`、`A_log`、`dt_bias` 接口，与当前算子实�
 | 1 | 除 key2 条件外的合法组合 | ID 0（`V=256`） | ID 1（`chunk=128`） | ID 0 |
 | 2 | `chunk_size=64` 且 `K=128` 且 `V=128` | ID 2 | ID 3（`T=65`） | ID 1 |
 
+MSS ID 0--3 保持原有两个 key 的普通/边界矩阵。ID 4 原样克隆 accuracy case 4，
+覆盖 A5 unsafe BF16 key1 的单次 full launch；ID 5 原样克隆 accuracy case 24，覆盖同一路径
+的四阶段 staged launch 和 63-token tail。两条克隆保留源用例的 seed、shape、layout、dtype、
+输入 range 与输出策略，只增加来源和 launch-mode 元数据；validator 会逐字段核对并从 host
+分阶段条件重新推导 launch mode。
+
 精度清单在 100 个结构 profile 上分别使用 BF16/FP16，固定为 200 条。结构矩阵覆盖四种
 layout（`BSND/BNSD/TND/NTD`）、dense/varlen、tail、GQA、initial/final state，以及：
 
@@ -35,6 +41,8 @@ layout（`BSND/BNSD/TND/NTD`）、dense/varlen、tail、GQA、initial/final stat
 - `disable_recompute` 与 `return_intermediate_states` 的四种组合，以及
   `state_v_first=false/true`。
 - `K=16/128/256`、`V=128/256`、`chunk_size=64/128` 和 key1/key2。
+- 重复 `cu_seqlens` 形成的空序列：无 initial state 时空 final-state 槽清零；有 initial
+  state 时空槽原样透传，并验证非空序列使用原始 batch state 而非压缩后的索引。
 
 profile 28 的 BF16 用例（ID 56）固定为 A5 key2 融合候选：dense/aligned、FP32 raw gate、
 safe gate、偶数 `HV`，且不导出 QG/VNew/H。profile 5 的 BF16 用例（ID 10）固定保留已复现
@@ -42,6 +50,27 @@ safe gate、偶数 `HV`，且不导出 QG/VNew/H。profile 5 的 BF16 用例（I
 返回 final state，并开启 safe/raw gate、`dt_bias`、`disable_recompute` 和 intermediate state。
 validator 对两个固定点执行精确存在性检查。profile 的 key 由同一 host 条件计算并写入
 `case_spec`。`soc=all` 是平台通配标记，实际运行时仍需针对每个物理 SoC 单独执行。
+
+profile 41（ID 82/83）固定覆盖无 initial state 的交错空序列，profile 56（ID 112/113）
+固定覆盖有 initial state、显式 `chunk_indices` 与 `state_v_first=true` 的交错空序列。
+validator 对两组 BF16/FP16 成对结构和 kernel 的 compact-to-original state 映射执行检查。
+
+## 精度复检
+
+case ID `4`、`12`、`14`、`52`、`54` 的单轮 `mixed_tolerance_bm` 结果需要复检。生成器在这些
+用例的 `tags` 中写入 `needs_accuracy_lt_recheck`，validator 会精确校验该 ID 集合。
+
+主清单和当前 executor 使用 ATK 26.8 `mixed_tolerance_bm` 单标杆：executor 固定读取
+`case_spec.seed`，且没有同精度 CPU control。因此不能直接对这组资产执行 50 轮后将结果
+作为 CT 双标杆结论。复检必须使用兼容的独立双标杆 fixture，并同时满足：
+
+- 与主清单的 shape、layout、dtype、range 和其他结构参数逐字段一致；
+- `accuracy_lt` 每轮按 runtime case ID 派生新 seed，同一轮三路输入保持一致；
+- 明确区分 NPU DUT、同精度 CPU control 和 FP64 CPU benchmark；
+- 执行 50 轮且不使用 `-sp`，最终使用 CT L2 聚合，同时保留单轮输出定位结构性错误。
+
+复检不能替代执行错误、非有限值或 sanitizer 问题的修复，也不能把当前单标杆报告解释为
+双标杆报告。
 
 ## 输入与输出约定
 
@@ -52,7 +81,7 @@ validator 对两个固定点执行精确存在性检查。profile 的 key 由同
   `T` 结束，`chunk_indices` 使用 sequence-major canonical 顺序。
 - `use_gate_in_kernel=true` 时提供 FP32 `A_log`；若提供 `dt_bias`，其形状为 `[HV*K]`。
 - CPU 节点以 FP64 计算 golden，executor 只在 golden 输出边界转为 FP32；NPU 节点保留
-  算子原始输出 dtype，由 `mixed_tolerance_bm` 统一比较。
+  算子原始输出 dtype，由 `mixed_tolerance_bm` 单标杆统一比较。
 
 ## 运行
 
@@ -64,7 +93,7 @@ bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend910b -scope=accuracy
 bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend910_93 -scope=accuracy
 bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend950 -scope=accuracy
 
-# 确定性：复用 4 条 MSS 清单，覆盖 key1/key2 的普通与边界
+# 确定性：复用 6 条 MSS 清单，覆盖 key1/key2 与 unsafe full/staged 同步回归
 bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend950 -scope=determinism
 
 # 内存：需要 sanitizer/debug 算子包；默认使用 memcheck
@@ -81,23 +110,28 @@ python3 tests/atk/chunk_kda_fwd/scripts/validate_manifests.py
 延长等待时间把它记录为通过。
 
 确定性阶段使用 ATK `accuracy_dc`，内存阶段使用 mssanitizer 包裹的 ATK `run`；二者
-均消费 `atk_chunk_kda_fwd_mss.json`。独立诊断脚本按清单中的源 ID 工作，默认遍历全部
-4 条 MSS 用例，也可用 `--case-id` 只定位一条：
+均消费 `atk_chunk_kda_fwd_mss.json`。独立诊断脚本按 MSS 本地 ID 工作，默认遍历全部
+6 条用例，也可用 `--case-id` 只定位一条；本次 staged tail 同步回归使用 MSS ID 5：
 
 ```bash
 python3 tests/atk/chunk_kda_fwd/stress_npu_determinism.py \
   --device 0 --soc ascend950 --repeats 100
 python3 tests/atk/chunk_kda_fwd/stress_npu_determinism.py \
-  --device 0 --soc ascend950 --case-id 3 --repeats 100
+  --device 0 --soc ascend950 --case-id 5 --repeats 100
 ```
 
 脚本每轮从固定输入的 clone 发起调用，检查所有非空输出的 shape、dtype 和 bitwise
 一致性；任一用例异常或不一致都会以非零状态退出。mssanitizer 只有在确认 debug
 对象实际命中 sanitizer 版本并看到对应工具启动信息后，才能作为内存结论。
 
+内存回归至少对 ID 0--5 全部执行 `memcheck`；A5 上再对 ID 4/5 分别执行
+`racecheck`、`synccheck` 和 `initcheck`。可通过 `MSS_START=4 MSS_END=6 MSS_TOOL=<tool>`
+限制到两条 unsafe 同步回归。staged ID 5 的四个物理 launch 都必须出现对应 sanitizer
+启动标记；出现 inactive 提示时不能形成“未发现问题”的结论。
+
 ## 重新物化
 
-canonical 清单由生成器冻结为 200 条精度、4 条 MSS、2 条性能用例。重新生成并校验：
+canonical 清单由生成器冻结为 200 条精度、6 条 MSS、2 条性能用例。重新生成并校验：
 
 ```bash
 python3 tests/atk/chunk_kda_fwd/gen_chunk_kda_fwd.py \

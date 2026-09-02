@@ -219,6 +219,12 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
 
     const uint64_t dataBytes =
         qDesc->GetDataType() == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
+    const bool useFp32Score =
+        isAscend950 && !useChunk64K128V128Template && !safeGate &&
+        qDesc->GetDataType() == ge::DT_BF16 && shape.kDim == 128 &&
+        shape.vDim >= shape.kDim;
+    const uint64_t scoreDataBytes =
+        useFp32Score ? sizeof(float) : dataBytes;
     const uint64_t tokenHeads = static_cast<uint64_t>(shape.batch) *
         shape.vHeads * shape.seqlen;
     const uint64_t kTensorBytes = tokenHeads * shape.kDim * dataBytes;
@@ -264,7 +270,7 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
         KDA_SOLVE_SCRATCH_SLOTS * chunkSize * chunkSize * sizeof(float);
     const uint64_t scoreBytes = static_cast<uint64_t>(blockDim) *
         KDA_SCORE_QUEUE_SLOTS * KDA_SCORE_SCRATCH_PLANES * chunkSize *
-        shape.kDim * dataBytes;
+        shape.kDim * scoreDataBytes;
     cursor = prepareScratchOffset + AlignWorkspace(solveBytes) + scoreBytes;
 
     const uint64_t postWuScratchOffset = AlignWorkspace(cursor);

@@ -13,6 +13,7 @@ have ordinary and boundary coverage.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 from pathlib import Path
@@ -38,6 +39,8 @@ TILING_KEYS = (1, 2)
 SOCS = ("ascend910b", "ascend910_93", "ascend950")
 STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key"}
 MSS_STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key", "mem": 1.1}
+MSS_UNSAFE_SOURCE_CASES = ((4, "full"), (24, "staged"))
+MSS_COUNT = 4 + len(MSS_UNSAFE_SOURCE_CASES)
 _T_VALUES = (64, 65, 96, 127, 128, 129, 192, 256, 512, 1024)
 _DATA_SCALES = (0.03, 0.08, 0.2, 0.5)
 _GATE_SCALES = (0.01, 0.02, 0.04, 0.08)
@@ -64,6 +67,12 @@ _OUTPUT_POLICIES = (
 )
 _A5_FUSION_PROFILE_ID = 28
 _HANG_REGRESSION_PROFILE_ID = 5
+_EMPTY_STATE_NO_INITIAL_PROFILE_ID = 41
+_EMPTY_STATE_WITH_INITIAL_PROFILE_ID = 56
+# These cases require accuracy_lt recheck before a single-run precision
+# failure is treated as a kernel regression.
+ACCURACY_LT_RECHECK_CASE_IDS = frozenset({4, 12, 14, 52, 54})
+ACCURACY_LT_RECHECK_TAG = "needs_accuracy_lt_recheck"
 
 
 def _tiling_key(chunk_size: int, key_dim: int, value_dim: int) -> int:
@@ -215,6 +224,55 @@ def _accuracy_spec(profile_id: int, q_dtype: str, case_id: int) -> dict[str, Any
             "state_v_first": False,
             "tags": "accuracy,regression,dense,key1_hang_regression",
         })
+    elif profile_id == _EMPTY_STATE_NO_INITIAL_PROFILE_ID:
+        # Empty original sequences must retain zero final-state slots while
+        # active sequences keep their original (not compacted) batch index.
+        spec.update({
+            "B": 1,
+            "H": 2,
+            "HV": 2,
+            "T": 64,
+            "K": 128,
+            "V": 128,
+            "chunk_size": 128,
+            "layout": "BNSD",
+            "initial_state": False,
+            "output_final_state": True,
+            "cu_seqlens": "0,0,0,16,16,64,64",
+            "explicit_chunk_indices": False,
+            "state_v_first": False,
+            "tags": (
+                "accuracy,regression,gate_raw_safe_no_bias,varlen,"
+                "empty_sequence_zero_state"
+            ),
+        })
+    elif profile_id == _EMPTY_STATE_WITH_INITIAL_PROFILE_ID:
+        # Interleave empty and active sequences so compact-to-original state
+        # mapping and initial-state passthrough are both observable.
+        spec.update({
+            "B": 1,
+            "H": 1,
+            "HV": 4,
+            "T": 128,
+            "K": 128,
+            "V": 128,
+            "chunk_size": 64,
+            "layout": "BSND",
+            "initial_state": True,
+            "output_final_state": True,
+            "cu_seqlens": "0,0,0,32,32,128,128",
+            "explicit_chunk_indices": True,
+            "disable_recompute": True,
+            "return_intermediate_states": True,
+            "state_v_first": True,
+            "tags": (
+                "accuracy,regression,gate_raw_unsafe_no_bias,varlen,"
+                "empty_sequence_initial_state"
+            ),
+        })
+
+    if case_id in ACCURACY_LT_RECHECK_CASE_IDS:
+        spec["tags"] = f"{spec['tags']},{ACCURACY_LT_RECHECK_TAG}"
 
     key = _tiling_key(spec["chunk_size"], spec["K"], spec["V"])
     spec.update({
@@ -317,8 +375,31 @@ def _coverage_spec(key: int, boundary: bool, case_id: int, *, seed_base: int) ->
 
 def build_mss_specs(*, seed_base: int = SEED_BASE) -> list[dict[str, Any]]:
     entries = ((key, boundary) for key in TILING_KEYS for boundary in (False, True))
-    return [_coverage_spec(key, boundary, case_id, seed_base=seed_base)
-            for case_id, (key, boundary) in enumerate(entries)]
+    specs = [_coverage_spec(key, boundary, case_id, seed_base=seed_base)
+             for case_id, (key, boundary) in enumerate(entries)]
+    accuracy_by_id = {
+        int(spec["case_id"]): spec for spec in build_accuracy_specs(seed_base=seed_base)
+    }
+    for source_case_id, launch_mode in MSS_UNSAFE_SOURCE_CASES:
+        source = accuracy_by_id[source_case_id]
+        spec = copy.deepcopy(source)
+        local_case_id = len(specs)
+        source_case_key = str(source["case_key"])
+        spec.update({
+            "case_id": local_case_id,
+            "case_key": f"mss_unsafe_{launch_mode}_from_accuracy_{source_case_id}",
+            "design_id": f"KDA-FWD-MSS-UNSAFE-{launch_mode.upper()}",
+            "profile": "mss_unsafe_regression",
+            "tags": (
+                f"mss,unsafe,tiling_key_{source['tiling_key']},{launch_mode},"
+                f"source_accuracy_case_{source_case_id}"
+            ),
+            "source_accuracy_case_id": source_case_id,
+            "source_accuracy_case_key": source_case_key,
+            "a5_launch_mode": launch_mode,
+        })
+        specs.append(spec)
+    return specs
 
 
 def build_perf_specs(*, seed_base: int = SEED_BASE) -> list[dict[str, Any]]:
@@ -425,7 +506,9 @@ def _contains_exact(specs: list[dict[str, Any]], expected: dict[str, Any]) -> bo
     return any(all(spec.get(name) == value for name, value in expected.items()) for spec in specs)
 
 
-def _validate_specs(specs: list[dict[str, Any]], manifest: str) -> None:
+def _validate_specs(
+    specs: list[dict[str, Any]], manifest: str, *, seed_base: int = SEED_BASE
+) -> None:
     if [int(item["case_id"]) for item in specs] != list(range(len(specs))):
         raise ValueError(f"{manifest} IDs must be contiguous from zero")
     for spec in specs:
@@ -435,6 +518,17 @@ def _validate_specs(specs: list[dict[str, Any]], manifest: str) -> None:
     if manifest == "accuracy":
         if len(specs) != ACCURACY_COUNT or {str(s["soc"]) for s in specs} != {"all"}:
             raise ValueError("accuracy must contain exactly 200 cross-SoC cases")
+        actual_recheck_ids = {
+            int(spec["case_id"])
+            for spec in specs
+            if ACCURACY_LT_RECHECK_TAG in str(spec.get("tags", "")).split(",")
+        }
+        if actual_recheck_ids != set(ACCURACY_LT_RECHECK_CASE_IDS):
+            raise ValueError(
+                "accuracy_lt recheck IDs drifted: "
+                f"expected {sorted(ACCURACY_LT_RECHECK_CASE_IDS)}, "
+                f"got {sorted(actual_recheck_ids)}"
+            )
         gate_variants = {
             (bool(s["use_gate_in_kernel"]), bool(s["safe_gate"]), bool(s["dt_bias"]))
             for s in specs
@@ -491,10 +585,74 @@ def _validate_specs(specs: list[dict[str, Any]], manifest: str) -> None:
             "tiling_key": 1,
         }):
             raise ValueError("accuracy is missing the fixed key1 hang regression")
-    if manifest == "mss" and {(int(s["tiling_key"]), bool(s["initial_state"])) for s in specs} != {
-        (key, boundary) for key in TILING_KEYS for boundary in (False, True)
-    }:
-        raise ValueError("MSS must contain ordinary and boundary records for both keys")
+        if not _contains_exact(specs, {
+            "q_dtype": "bf16", "B": 1, "H": 2, "HV": 2,
+            "T": 64, "K": 128, "V": 128, "chunk_size": 128,
+            "layout": "BNSD", "initial_state": False,
+            "output_final_state": True, "cu_seqlens": "0,0,0,16,16,64,64",
+            "explicit_chunk_indices": False, "state_v_first": False,
+            "tiling_key": 1,
+        }):
+            raise ValueError("accuracy is missing the empty-sequence zero-state regression")
+        if not _contains_exact(specs, {
+            "q_dtype": "bf16", "B": 1, "H": 1, "HV": 4,
+            "T": 128, "K": 128, "V": 128, "chunk_size": 64,
+            "layout": "BSND", "initial_state": True,
+            "output_final_state": True, "cu_seqlens": "0,0,0,32,32,128,128",
+            "explicit_chunk_indices": True, "disable_recompute": True,
+            "return_intermediate_states": True, "state_v_first": True,
+            "tiling_key": 2,
+        }):
+            raise ValueError("accuracy is missing the empty-sequence initial-state regression")
+    if manifest == "mss":
+        if len(specs) != MSS_COUNT:
+            raise ValueError(f"MSS must contain exactly {MSS_COUNT} records")
+        base_specs = [
+            spec for spec in specs if "source_accuracy_case_id" not in spec
+        ]
+        if len(base_specs) != 4 or {
+            (int(s["tiling_key"]), bool(s["initial_state"])) for s in base_specs
+        } != {
+            (key, boundary) for key in TILING_KEYS for boundary in (False, True)
+        }:
+            raise ValueError("MSS must contain ordinary and boundary records for both keys")
+        accuracy_by_id = {
+            int(spec["case_id"]): spec
+            for spec in build_accuracy_specs(seed_base=seed_base)
+        }
+        identity_fields = {
+            "case_id", "case_key", "design_id", "profile", "tags",
+            "source_accuracy_case_id", "source_accuracy_case_key", "a5_launch_mode",
+        }
+        for local_case_id, (source_case_id, launch_mode) in enumerate(
+            MSS_UNSAFE_SOURCE_CASES, start=4
+        ):
+            spec = specs[local_case_id]
+            source = accuracy_by_id[source_case_id]
+            if (
+                int(spec.get("source_accuracy_case_id", -1)) != source_case_id
+                or spec.get("source_accuracy_case_key") != source["case_key"]
+                or spec.get("a5_launch_mode") != launch_mode
+            ):
+                raise ValueError(f"MSS unsafe case {local_case_id} provenance drifted")
+            if set(spec) != set(source) | {
+                "source_accuracy_case_id", "source_accuracy_case_key", "a5_launch_mode",
+            }:
+                raise ValueError(f"MSS unsafe case {local_case_id} field set drifted")
+            for name, value in source.items():
+                if name not in identity_fields and spec.get(name) != value:
+                    raise ValueError(
+                        f"MSS unsafe case {local_case_id} changed source field {name}"
+                    )
+            if not (
+                spec["q_dtype"] == "bf16"
+                and spec["g_dtype"] == "fp32"
+                and not spec["safe_gate"]
+                and int(spec["tiling_key"]) == 1
+                and int(spec["K"]) == 128
+                and int(spec["V"]) >= int(spec["K"])
+            ):
+                raise ValueError(f"MSS unsafe case {local_case_id} misses the A5 selector")
     if manifest == "perf" and {int(s["tiling_key"]) for s in specs} != set(TILING_KEYS):
         raise ValueError("performance must contain both tiling keys")
 
@@ -550,7 +708,7 @@ def main() -> None:
         (build_perf_specs(seed_base=args.seed), "perf"),
     )
     for specs, manifest in specs_by_manifest:
-        _validate_specs(specs, manifest)
+        _validate_specs(specs, manifest, seed_base=args.seed)
     for path, (specs, manifest) in zip(paths, specs_by_manifest):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps([_case_payload(s, manifest=manifest) for s in specs], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

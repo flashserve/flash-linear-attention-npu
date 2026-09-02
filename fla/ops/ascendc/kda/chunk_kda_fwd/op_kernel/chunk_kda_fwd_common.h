@@ -85,6 +85,29 @@ struct FwdHTilingView {
     int64_t numChunksWorkspaceOffset;
 };
 
+template <bool SAFE_GATE, typename T, uint32_t COMPILE_BT,
+          uint32_t COMPILE_K, uint32_t COMPILE_V>
+struct KgResidualPolicy {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    static constexpr bool compileEnabled =
+        !SAFE_GATE && IsSameType<T, bfloat16_t>::value &&
+        COMPILE_BT == 0 && COMPILE_K == 0 && COMPILE_V == 0;
+#else
+    static constexpr bool compileEnabled = false;
+#endif
+
+    template <typename TilingData>
+    __aicore__ static inline bool IsEnabled(const TilingData &tiling)
+    {
+        if constexpr (!compileEnabled) {
+            return false;
+        }
+        return tiling.kHeadDim == 128 &&
+               tiling.vHeadDim >= tiling.kHeadDim &&
+               !tiling.fusePostWu && !tiling.fusePostWuIntoFwdH;
+    }
+};
+
 template <typename TilingData>
 __aicore__ inline FwdHTilingView MakeFwdHTiling(const TilingData &tiling)
 {
@@ -187,6 +210,38 @@ __aicore__ inline void RunGateCumsum(
 template <bool SAFE_GATE, typename T, typename GK_T, typename BETA_T,
           typename TilingData, uint32_t COMPILE_BT, uint32_t COMPILE_K,
           uint32_t COMPILE_V>
+__aicore__ inline void RunPostWu(
+    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta,
+    GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
+    GM_ADDR wSeed, GM_ADDR akk, GM_ADDR uSeed, GM_ADDR w, GM_ADDR u,
+    GM_ADDR kg, GM_ADDR vNew, GM_ADDR userWorkspace,
+    const TilingData &tiling, TPipe &pipe)
+{
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using ResidualPolicy = KgResidualPolicy<
+        SAFE_GATE, T, COMPILE_BT, COMPILE_K, COMPILE_V>;
+    if constexpr (ResidualPolicy::compileEnabled) {
+        if (ResidualPolicy::IsEnabled(tiling)) {
+            KdaPostWu::RunChunkKdaPostWu<true, T, GK_T, BETA_T>(
+                q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
+                wSeed, akk, uSeed, w, u, kg, vNew, userWorkspace, tiling,
+                pipe);
+            return;
+        }
+    }
+    KdaPostWu::RunChunkKdaPostWu<false, T, GK_T, BETA_T>(
+        q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices, wSeed,
+        akk, uSeed, w, u, kg, vNew, userWorkspace, tiling, pipe);
+#else
+    KdaPostWu::RunChunkKdaPostWu<T, GK_T, BETA_T>(
+        q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices, wSeed,
+        akk, uSeed, w, u, kg, vNew, userWorkspace, tiling, pipe);
+#endif
+}
+
+template <bool SAFE_GATE, typename T, typename GK_T, typename BETA_T,
+          typename TilingData, uint32_t COMPILE_BT, uint32_t COMPILE_K,
+          uint32_t COMPILE_V>
 __aicore__ inline void RunFrontEnd(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta,
     GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR initialState,
@@ -212,7 +267,8 @@ __aicore__ inline void RunFrontEnd(
     pipe.Reset();
 
     if (!tiling.fusePostWu && !tiling.fusePostWuIntoFwdH) {
-        KdaPostWu::RunChunkKdaPostWu<T, GK_T, BETA_T>(
+        RunPostWu<SAFE_GATE, T, GK_T, BETA_T, TilingData, COMPILE_BT,
+                  COMPILE_K, COMPILE_V>(
             q, k, v, addresses.gk, beta, initialState, cuSeqlens,
             chunkIndices, addresses.w, akk, uSeed,
             addresses.w, addresses.u, addresses.kg, addresses.vNew,
@@ -222,25 +278,64 @@ __aicore__ inline void RunFrontEnd(
     }
 }
 
-template <typename T, typename TileShapes, typename TilingData>
-__aicore__ inline void RunFwdH(
+template <bool HI_LO_C2, typename T, typename TileShapes,
+          typename TilingData>
+__aicore__ inline void RunFwdHImpl(
     GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
     const ChunkKdaFwdAddresses &addresses, GM_ADDR userWorkspace,
     const TilingData &tiling)
 {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
+        T, float, float, float, TileShapes, true, false, true, HI_LO_C2>;
+#else
+    static_assert(!HI_LO_C2, "HI_LO_C2 is only supported on Ascend950");
     using FwdHKernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         T, float, float, float, TileShapes, true, false, true>;
+#endif
     const auto fwdHTiling = MakeFwdHTiling(tiling);
     FwdHKernel stateOp;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    stateOp.InitFromData(
+        addresses.kg, addresses.w, addresses.u, addresses.gk, addresses.gk,
+        initialState, cuSeqlens, chunkIndices, addresses.h, addresses.vNew,
+        addresses.finalState, fwdHTiling,
+        userWorkspace + tiling.fwdHWorkspaceBaseOffset, addresses.uSeed);
+#else
     stateOp.InitFromData(
         addresses.kg, addresses.w, addresses.u, addresses.gk, addresses.gk,
         initialState, cuSeqlens, chunkIndices, addresses.h, addresses.vNew,
         addresses.finalState, fwdHTiling,
         userWorkspace + tiling.fwdHWorkspaceBaseOffset);
+#endif
     stateOp.Process();
 }
 
-template <typename T, typename BETA_T, typename TilingData>
+template <bool SAFE_GATE, typename T, typename TileShapes,
+          typename TilingData, uint32_t COMPILE_BT, uint32_t COMPILE_K,
+          uint32_t COMPILE_V>
+__aicore__ inline void RunFwdH(
+    GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
+    const ChunkKdaFwdAddresses &addresses, GM_ADDR userWorkspace,
+    const TilingData &tiling)
+{
+    using ResidualPolicy = KgResidualPolicy<
+        SAFE_GATE, T, COMPILE_BT, COMPILE_K, COMPILE_V>;
+    if constexpr (ResidualPolicy::compileEnabled) {
+        if (ResidualPolicy::IsEnabled(tiling)) {
+            RunFwdHImpl<true, T, TileShapes>(
+                initialState, cuSeqlens, chunkIndices, addresses,
+                userWorkspace, tiling);
+            return;
+        }
+    }
+    RunFwdHImpl<false, T, TileShapes>(
+        initialState, cuSeqlens, chunkIndices, addresses, userWorkspace,
+        tiling);
+}
+
+template <bool SAFE_GATE, typename T, typename BETA_T, typename TilingData,
+          uint32_t COMPILE_BT, uint32_t COMPILE_K, uint32_t COMPILE_V>
 __aicore__ inline void RunGenericBackEnd(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR initialState,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR aqk, GM_ADDR attnOut,
@@ -248,11 +343,15 @@ __aicore__ inline void RunGenericBackEnd(
     const TilingData &tiling)
 {
     if (tiling.vHeadDim > 128) {
-        RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
+        RunFwdH<SAFE_GATE, T,
+                Catlass::Gemm::Kernel::GDNFwdHTileShapes256, TilingData,
+                COMPILE_BT, COMPILE_K, COMPILE_V>(
             initialState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, tiling);
     } else {
-        RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
+        RunFwdH<SAFE_GATE, T,
+                Catlass::Gemm::Kernel::GDNFwdHTileShapes128, TilingData,
+                COMPILE_BT, COMPILE_K, COMPILE_V>(
             initialState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, tiling);
     }
@@ -264,7 +363,8 @@ __aicore__ inline void RunGenericBackEnd(
         addresses.vNew, addresses.h, attnOut, userWorkspace, tiling, pipe);
 }
 
-template <typename T, typename BETA_T, typename TilingData>
+template <bool SAFE_GATE, typename T, typename BETA_T, typename TilingData,
+          uint32_t COMPILE_BT, uint32_t COMPILE_K, uint32_t COMPILE_V>
 __aicore__ inline void RunGenericBackEnd(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR initialState,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR aqk, GM_ADDR attnOut,
@@ -272,11 +372,15 @@ __aicore__ inline void RunGenericBackEnd(
     const TilingData &tiling, TPipe &pipe)
 {
     if (tiling.vHeadDim > 128) {
-        RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
+        RunFwdH<SAFE_GATE, T,
+                Catlass::Gemm::Kernel::GDNFwdHTileShapes256, TilingData,
+                COMPILE_BT, COMPILE_K, COMPILE_V>(
             initialState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, tiling);
     } else {
-        RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
+        RunFwdH<SAFE_GATE, T,
+                Catlass::Gemm::Kernel::GDNFwdHTileShapes128, TilingData,
+                COMPILE_BT, COMPILE_K, COMPILE_V>(
             initialState, cuSeqlens, chunkIndices, addresses,
             userWorkspace, tiling);
     }
@@ -307,11 +411,13 @@ __aicore__ inline void RunGeneric(
         chunkIndices, aqk, akk, addresses, userWorkspace, tiling, pipe);
     if (!tiling.isVarLen && tiling.seqlen % tiling.chunkSize == 0) {
         pipe.Destroy();
-        RunGenericBackEnd<T, BETA_T, TilingData>(
+        RunGenericBackEnd<SAFE_GATE, T, BETA_T, TilingData,
+                          COMPILE_BT, COMPILE_K, COMPILE_V>(
             q, k, v, beta, initialState, cuSeqlens, chunkIndices, aqk,
             attnOut, addresses, userWorkspace, tiling);
     } else {
-        RunGenericBackEnd<T, BETA_T, TilingData>(
+        RunGenericBackEnd<SAFE_GATE, T, BETA_T, TilingData,
+                          COMPILE_BT, COMPILE_K, COMPILE_V>(
             q, k, v, beta, initialState, cuSeqlens, chunkIndices, aqk,
             attnOut, addresses, userWorkspace, tiling, pipe);
     }
@@ -323,7 +429,8 @@ __aicore__ inline void RunGeneric(
             q, k, v, g, beta, aLog, dtBias, initialState, cuSeqlens,
             chunkIndices, aqk, akk, addresses, userWorkspace, tiling, pipe);
     }
-    RunGenericBackEnd<T, BETA_T, TilingData>(
+    RunGenericBackEnd<SAFE_GATE, T, BETA_T, TilingData,
+                      COMPILE_BT, COMPILE_K, COMPILE_V>(
         q, k, v, beta, initialState, cuSeqlens, chunkIndices, aqk,
         attnOut, addresses, userWorkspace, tiling);
 #endif

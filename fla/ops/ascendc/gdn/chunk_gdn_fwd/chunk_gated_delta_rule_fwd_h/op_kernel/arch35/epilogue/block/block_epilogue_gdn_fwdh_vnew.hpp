@@ -43,6 +43,7 @@ class BlockEpilogue <
     static constexpr bool kGated = KGatedTag::value;
     static constexpr bool scalarGated = KGatedTag::scalarGated;
     static constexpr bool useExp2 = KGatedTag::useExp2;
+    static constexpr bool hiLoC2 = KGatedTag::hiLoC2;
     static constexpr float LN2 = 0.6931471805599453f;
 public:
     using DispatchPolicy = EpilogueAtlasGDNFwdHVnew;
@@ -247,6 +248,7 @@ public:
         AscendC::GlobalTensor<float> wsInput,
         AscendC::GlobalTensor<GElementInput> gkInput,
         AscendC::GlobalTensor<VElementOutput> kInput,
+        AscendC::GlobalTensor<VElementOutput> kResidualInput,
         AscendC::GlobalTensor<VElementOutput> kDecayWorkspace,
         uint32_t chunkSize,
         uint32_t kHeadDim,
@@ -379,7 +381,9 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
 
             uint32_t ubToL1Loops = nvActual / SIZE_16_NUM_PER_C0;
-            uint32_t mActualPadded = (mActual + NZ_BLOCK_SIZE - 1) / NZ_BLOCK_SIZE * NZ_BLOCK_SIZE;
+            uint32_t reductionRows = hiLoC2 ? 2 * mActual : mActual;
+            uint32_t mActualPadded =
+                (reductionRows + NZ_BLOCK_SIZE - 1) / NZ_BLOCK_SIZE * NZ_BLOCK_SIZE;
             AscendC::DataCopyParams intriParams;
             intriParams.blockCount = ubToL1Loops;
             intriParams.blockLen = mActualThisSubBlock;
@@ -387,6 +391,13 @@ public:
             intriParams.dstGap = mActualPadded - mActualThisSubBlock;
             uint32_t l1Addr = rowBegin * SIZE_16_NUM_PER_C0;
             AscendC::DataCopy(vnewdecayOutput[l1Addr], vNewDecayUbTensor, intriParams);
+            if constexpr (hiLoC2) {
+                uint32_t residualL1Addr =
+                    (mActual + rowBegin) * SIZE_16_NUM_PER_C0;
+                AscendC::DataCopy(
+                    vnewdecayOutput[residualL1Addr], vNewDecayUbTensor,
+                    intriParams);
+            }
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
             if constexpr (!kGated) {
@@ -414,6 +425,27 @@ public:
                                   mActualThisSubBlock * nkActual);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
 
+                if constexpr (hiLoC2) {
+                    AscendC::GlobalTensor<VElementOutput> kResidualThisSubBlock =
+                        kResidualInput[rowBegin * vHeadDim];
+                    AscendC::GlobalTensor<VElementOutput> kResidualWorkspaceThisSubBlock =
+                        kDecayWorkspace[(mActual + rowBegin) * nkActual];
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(
+                        EVENT_ID1 + pingpongFlag);
+                    CopyGmToUb(
+                        vNewOutputUbTensor, kResidualThisSubBlock,
+                        mActualThisSubBlock, nkActual, vHeadDim);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(
+                        EVENT_ID1 + pingpongFlag);
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(
+                        EVENT_ID1 + pingpongFlag);
+                    CopyUbToGm(
+                        kResidualWorkspaceThisSubBlock, vNewOutputUbTensor,
+                        mActualThisSubBlock, nkActual, nkActual);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(
+                        EVENT_ID1 + pingpongFlag);
+                }
+
                 Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
             }
             if (useDirectFp32Ub) {
@@ -433,7 +465,9 @@ public:
             Arch::CrossCoreWaitFlag(cube1Done);
         }
 
-        uint32_t mActualPadded = (mActual + NZ_BLOCK_SIZE - 1) / NZ_BLOCK_SIZE * NZ_BLOCK_SIZE;
+        uint32_t reductionRows = hiLoC2 ? 2 * mActual : mActual;
+        uint32_t mActualPadded =
+            (reductionRows + NZ_BLOCK_SIZE - 1) / NZ_BLOCK_SIZE * NZ_BLOCK_SIZE;
         bool waitWsThisTileFromMte3 = waitWsFromMte3;
         for (uint32_t rowStart = rowBegin; rowStart < rowEnd;) {
             uint32_t alignExtra = rowStart & 7;
@@ -497,6 +531,13 @@ public:
             intriParams.dstGap = mActualPadded - rowsThisTile;
             uint32_t l1Addr = rowStart * SIZE_16_NUM_PER_C0;
             AscendC::DataCopy(vnewdecayOutput[l1Addr], vNewDecayUbTensor, intriParams);
+            if constexpr (hiLoC2) {
+                uint32_t residualL1Addr =
+                    (mActual + rowStart) * SIZE_16_NUM_PER_C0;
+                AscendC::DataCopy(
+                    vnewdecayOutput[residualL1Addr], vNewDecayUbTensor,
+                    intriParams);
+            }
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
             if constexpr (!kGated) {
@@ -530,6 +571,26 @@ public:
                 CopyUbToGm(kDecayWorkspaceThisTile, vNewOutputUbTensor,
                            rowsThisTile, nkActual, nkActual);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
+                if constexpr (hiLoC2) {
+                    AscendC::GlobalTensor<VElementOutput> kResidualInputThisTile =
+                        kResidualInput[row * vHeadDim];
+                    AscendC::GlobalTensor<VElementOutput> kResidualWorkspaceThisTile =
+                        kDecayWorkspace[(mActual + row) * nkActual];
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(
+                        EVENT_ID1 + pingpongFlag);
+                    CopyGmToUb(
+                        vNewOutputUbTensor, kResidualInputThisTile,
+                        rowsThisTile, nkActual, vHeadDim);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(
+                        EVENT_ID1 + pingpongFlag);
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(
+                        EVENT_ID1 + pingpongFlag);
+                    CopyUbToGm(
+                        kResidualWorkspaceThisTile, vNewOutputUbTensor,
+                        rowsThisTile, nkActual, nkActual);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(
+                        EVENT_ID1 + pingpongFlag);
+                }
             }
             Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
         }

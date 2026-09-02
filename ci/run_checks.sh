@@ -497,6 +497,9 @@ echo "[CI] mode=$ci_mode soc=$ci_soc ops=${ci_ops:-<all>} jobs=$ci_jobs cpack_jo
 python3 torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py
 python3 torch_custom/fla_npu/test/test_runtime_device_guard.py
 python3 torch_custom/fla_npu/test/test_ascendc_mutation_contract.py
+if [[ -z "$ci_ops" || ",$ci_ops," == *",chunk_kda_fwd,"* ]]; then
+    python3 tests/atk/chunk_kda_fwd/scripts/validate_manifests.py
+fi
 
 case "$ci_mode" in
     quick)

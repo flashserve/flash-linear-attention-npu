@@ -2109,7 +2109,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":1,\"HV\":1,\"K\":128,\"T\":64,\"V\":256,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_high\":0.8,\"beta_low\":0.2,\"beta_scale\":0.35,\"case_id\":4,\"case_key\":\"accuracy_002_TND_t64_bf16\",\"chunk_size\":64,\"coverage_only\":false,\"cu_seqlens\":\"\",\"data_profile\":\"uniform\",\"data_scale\":0.2,\"design_id\":\"KDA-FWD-A002-bf16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":0.04,\"initial_state\":false,\"layout\":\"TND\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=False,indices=False\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260835,\"shape_spec\":\"B=1,H=1,HV=1,T=64,K=128,V=256,chunk=64\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":false,\"tags\":\"accuracy,regression,gate_activated,dense\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":false,\"v_scale\":0.25}",
+        "range_values": "{\"B\":1,\"H\":1,\"HV\":1,\"K\":128,\"T\":64,\"V\":256,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_high\":0.8,\"beta_low\":0.2,\"beta_scale\":0.35,\"case_id\":4,\"case_key\":\"accuracy_002_TND_t64_bf16\",\"chunk_size\":64,\"coverage_only\":false,\"cu_seqlens\":\"\",\"data_profile\":\"uniform\",\"data_scale\":0.2,\"design_id\":\"KDA-FWD-A002-bf16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":0.04,\"initial_state\":false,\"layout\":\"TND\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=False,indices=False\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260835,\"shape_spec\":\"B=1,H=1,HV=1,T=64,K=128,V=256,chunk=64\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":false,\"tags\":\"accuracy,regression,gate_activated,dense,needs_accuracy_lt_recheck\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":false,\"v_scale\":0.25}",
         "backward": false
       },
       {
@@ -2568,7 +2568,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "accuracy,regression,gate_activated,dense",
+        "range_values": "accuracy,regression,gate_activated,dense,needs_accuracy_lt_recheck",
         "backward": false
       }
     ],
@@ -6229,7 +6229,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":1,\"HV\":2,\"K\":128,\"T\":65,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_high\":0.8,\"beta_low\":0.2,\"beta_scale\":0.35,\"case_id\":12,\"case_key\":\"accuracy_006_TND_t65_bf16\",\"chunk_size\":128,\"coverage_only\":false,\"cu_seqlens\":\"0,21,43,65\",\"data_profile\":\"uniform\",\"data_scale\":0.2,\"design_id\":\"KDA-FWD-A006-bf16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":true,\"g_dtype\":\"fp32\",\"gate_scale\":0.04,\"initial_state\":false,\"layout\":\"TND\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=True,indices=True\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":true,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260843,\"shape_spec\":\"B=1,H=1,HV=2,T=65,K=128,V=128,chunk=128\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":true,\"tags\":\"accuracy,regression,gate_raw_unsafe_no_bias,varlen\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":true,\"v_scale\":0.25}",
+        "range_values": "{\"B\":1,\"H\":1,\"HV\":2,\"K\":128,\"T\":65,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_high\":0.8,\"beta_low\":0.2,\"beta_scale\":0.35,\"case_id\":12,\"case_key\":\"accuracy_006_TND_t65_bf16\",\"chunk_size\":128,\"coverage_only\":false,\"cu_seqlens\":\"0,21,43,65\",\"data_profile\":\"uniform\",\"data_scale\":0.2,\"design_id\":\"KDA-FWD-A006-bf16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":true,\"g_dtype\":\"fp32\",\"gate_scale\":0.04,\"initial_state\":false,\"layout\":\"TND\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=True,indices=True\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":true,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260843,\"shape_spec\":\"B=1,H=1,HV=2,T=65,K=128,V=128,chunk=128\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":true,\"tags\":\"accuracy,regression,gate_raw_unsafe_no_bias,varlen,needs_accuracy_lt_recheck\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":true,\"v_scale\":0.25}",
         "backward": false
       },
       {
@@ -6688,7 +6688,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "accuracy,regression,gate_raw_unsafe_no_bias,varlen",
+        "range_values": "accuracy,regression,gate_raw_unsafe_no_bias,varlen,needs_accuracy_lt_recheck",
         "backward": false
       }
     ],
@@ -7259,7 +7259,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":8,\"HV\":8,\"K\":128,\"T\":65,\"V\":256,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"fp32\",\"beta_high\":0.99,\"beta_low\":0.01,\"beta_scale\":0.35,\"case_id\":14,\"case_key\":\"accuracy_007_NTD_t65_bf16\",\"chunk_size\":64,\"coverage_only\":false,\"cu_seqlens\":\"\",\"data_profile\":\"uniform\",\"data_scale\":0.5,\"design_id\":\"KDA-FWD-A007-bf16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":0.08,\"initial_state\":true,\"layout\":\"NTD\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=True,final=False,varlen=False,indices=False\",\"output_final_state\":false,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":true,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260845,\"shape_spec\":\"B=1,H=8,HV=8,T=65,K=128,V=256,chunk=64\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":true,\"tags\":\"accuracy,regression,gate_raw_unsafe_no_bias,dense\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":true,\"v_scale\":0.25}",
+        "range_values": "{\"B\":1,\"H\":8,\"HV\":8,\"K\":128,\"T\":65,\"V\":256,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"fp32\",\"beta_high\":0.99,\"beta_low\":0.01,\"beta_scale\":0.35,\"case_id\":14,\"case_key\":\"accuracy_007_NTD_t65_bf16\",\"chunk_size\":64,\"coverage_only\":false,\"cu_seqlens\":\"\",\"data_profile\":\"uniform\",\"data_scale\":0.5,\"design_id\":\"KDA-FWD-A007-bf16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":0.08,\"initial_state\":true,\"layout\":\"NTD\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=True,final=False,varlen=False,indices=False\",\"output_final_state\":false,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":true,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260845,\"shape_spec\":\"B=1,H=8,HV=8,T=65,K=128,V=256,chunk=64\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":true,\"tags\":\"accuracy,regression,gate_raw_unsafe_no_bias,dense,needs_accuracy_lt_recheck\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":true,\"v_scale\":0.25}",
         "backward": false
       },
       {
@@ -7718,7 +7718,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "accuracy,regression,gate_raw_unsafe_no_bias,dense",
+        "range_values": "accuracy,regression,gate_raw_unsafe_no_bias,dense,needs_accuracy_lt_recheck",
         "backward": false
       }
     ],
@@ -26829,7 +26829,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":1,\"HV\":4,\"K\":128,\"T\":192,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_high\":0.8,\"beta_low\":0.2,\"beta_scale\":0.35,\"case_id\":52,\"case_key\":\"accuracy_026_TND_t192_bf16\",\"chunk_size\":128,\"coverage_only\":false,\"cu_seqlens\":\"0,38,128,192\",\"data_profile\":\"uniform\",\"data_scale\":0.2,\"design_id\":\"KDA-FWD-A026-bf16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":true,\"g_dtype\":\"bf16\",\"gate_scale\":0.04,\"initial_state\":false,\"layout\":\"TND\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=True,indices=True\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":true,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260883,\"shape_spec\":\"B=1,H=1,HV=4,T=192,K=128,V=128,chunk=128\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":true,\"tags\":\"accuracy,regression,gate_activated,varlen\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":false,\"v_scale\":0.25}",
+        "range_values": "{\"B\":1,\"H\":1,\"HV\":4,\"K\":128,\"T\":192,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_high\":0.8,\"beta_low\":0.2,\"beta_scale\":0.35,\"case_id\":52,\"case_key\":\"accuracy_026_TND_t192_bf16\",\"chunk_size\":128,\"coverage_only\":false,\"cu_seqlens\":\"0,38,128,192\",\"data_profile\":\"uniform\",\"data_scale\":0.2,\"design_id\":\"KDA-FWD-A026-bf16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":true,\"g_dtype\":\"bf16\",\"gate_scale\":0.04,\"initial_state\":false,\"layout\":\"TND\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=True,indices=True\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":true,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260883,\"shape_spec\":\"B=1,H=1,HV=4,T=192,K=128,V=128,chunk=128\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":true,\"tags\":\"accuracy,regression,gate_activated,varlen,needs_accuracy_lt_recheck\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":false,\"v_scale\":0.25}",
         "backward": false
       },
       {
@@ -27288,7 +27288,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "accuracy,regression,gate_activated,varlen",
+        "range_values": "accuracy,regression,gate_activated,varlen,needs_accuracy_lt_recheck",
         "backward": false
       }
     ],
@@ -27859,7 +27859,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":8,\"HV\":8,\"K\":128,\"T\":192,\"V\":256,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"fp32\",\"beta_high\":0.99,\"beta_low\":0.01,\"beta_scale\":0.35,\"case_id\":54,\"case_key\":\"accuracy_027_NTD_t192_bf16\",\"chunk_size\":64,\"coverage_only\":false,\"cu_seqlens\":\"\",\"data_profile\":\"uniform\",\"data_scale\":0.5,\"design_id\":\"KDA-FWD-A027-bf16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":false,\"g_dtype\":\"bf16\",\"gate_scale\":0.08,\"initial_state\":false,\"layout\":\"NTD\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=False,indices=False\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":true,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260885,\"shape_spec\":\"B=1,H=8,HV=8,T=192,K=128,V=256,chunk=64\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":true,\"tags\":\"accuracy,regression,gate_activated,dense\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":false,\"v_scale\":0.25}",
+        "range_values": "{\"B\":1,\"H\":8,\"HV\":8,\"K\":128,\"T\":192,\"V\":256,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"fp32\",\"beta_high\":0.99,\"beta_low\":0.01,\"beta_scale\":0.35,\"case_id\":54,\"case_key\":\"accuracy_027_NTD_t192_bf16\",\"chunk_size\":64,\"coverage_only\":false,\"cu_seqlens\":\"\",\"data_profile\":\"uniform\",\"data_scale\":0.5,\"design_id\":\"KDA-FWD-A027-bf16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":false,\"g_dtype\":\"bf16\",\"gate_scale\":0.08,\"initial_state\":false,\"layout\":\"NTD\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=False,indices=False\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":true,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260885,\"shape_spec\":\"B=1,H=8,HV=8,T=192,K=128,V=256,chunk=64\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":true,\"tags\":\"accuracy,regression,gate_activated,dense,needs_accuracy_lt_recheck\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":false,\"v_scale\":0.25}",
         "backward": false
       },
       {
@@ -28318,7 +28318,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "accuracy,regression,gate_activated,dense",
+        "range_values": "accuracy,regression,gate_activated,dense,needs_accuracy_lt_recheck",
         "backward": false
       }
     ],
@@ -42279,7 +42279,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":2,\"HV\":2,\"K\":128,\"T\":64,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"fp32\",\"beta_high\":0.95,\"beta_low\":0.05,\"beta_scale\":0.35,\"case_id\":82,\"case_key\":\"accuracy_041_BNSD_t64_bf16\",\"chunk_size\":128,\"coverage_only\":false,\"cu_seqlens\":\"0,12,42,64\",\"data_profile\":\"uniform\",\"data_scale\":0.08,\"design_id\":\"KDA-FWD-A041-bf16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":false,\"g_dtype\":\"bf16\",\"gate_scale\":0.02,\"initial_state\":false,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=True,indices=False\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":true,\"scale\":0.08838834764831843,\"seed\":20260913,\"shape_spec\":\"B=1,H=2,HV=2,T=64,K=128,V=128,chunk=128\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":false,\"tags\":\"accuracy,regression,gate_raw_safe_no_bias,varlen\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":true,\"v_scale\":0.25}",
+        "range_values": "{\"B\":1,\"H\":2,\"HV\":2,\"K\":128,\"T\":64,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"fp32\",\"beta_high\":0.95,\"beta_low\":0.05,\"beta_scale\":0.35,\"case_id\":82,\"case_key\":\"accuracy_041_BNSD_t64_bf16\",\"chunk_size\":128,\"coverage_only\":false,\"cu_seqlens\":\"0,0,0,16,16,64,64\",\"data_profile\":\"uniform\",\"data_scale\":0.08,\"design_id\":\"KDA-FWD-A041-bf16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":false,\"g_dtype\":\"bf16\",\"gate_scale\":0.02,\"initial_state\":false,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=True,indices=False\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":true,\"scale\":0.08838834764831843,\"seed\":20260913,\"shape_spec\":\"B=1,H=2,HV=2,T=64,K=128,V=128,chunk=128\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":false,\"tags\":\"accuracy,regression,gate_raw_safe_no_bias,varlen,empty_sequence_zero_state\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":true,\"v_scale\":0.25}",
         "backward": false
       },
       {
@@ -42450,7 +42450,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "0,12,42,64",
+        "range_values": "0,0,0,16,16,64,64",
         "backward": false
       },
       {
@@ -42738,7 +42738,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "accuracy,regression,gate_raw_safe_no_bias,varlen",
+        "range_values": "accuracy,regression,gate_raw_safe_no_bias,varlen,empty_sequence_zero_state",
         "backward": false
       }
     ],
@@ -42794,7 +42794,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":2,\"HV\":2,\"K\":128,\"T\":64,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"fp32\",\"beta_high\":0.95,\"beta_low\":0.05,\"beta_scale\":0.35,\"case_id\":83,\"case_key\":\"accuracy_041_BNSD_t64_fp16\",\"chunk_size\":128,\"coverage_only\":false,\"cu_seqlens\":\"0,12,42,64\",\"data_profile\":\"uniform\",\"data_scale\":0.08,\"design_id\":\"KDA-FWD-A041-fp16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":false,\"g_dtype\":\"bf16\",\"gate_scale\":0.02,\"initial_state\":false,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=True,indices=False\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"fp16\",\"qk_scale\":0.25,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":true,\"scale\":0.08838834764831843,\"seed\":20260914,\"shape_spec\":\"B=1,H=2,HV=2,T=64,K=128,V=128,chunk=128\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":false,\"tags\":\"accuracy,regression,gate_raw_safe_no_bias,varlen\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":true,\"v_scale\":0.25}",
+        "range_values": "{\"B\":1,\"H\":2,\"HV\":2,\"K\":128,\"T\":64,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"fp32\",\"beta_high\":0.95,\"beta_low\":0.05,\"beta_scale\":0.35,\"case_id\":83,\"case_key\":\"accuracy_041_BNSD_t64_fp16\",\"chunk_size\":128,\"coverage_only\":false,\"cu_seqlens\":\"0,0,0,16,16,64,64\",\"data_profile\":\"uniform\",\"data_scale\":0.08,\"design_id\":\"KDA-FWD-A041-fp16\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":false,\"g_dtype\":\"bf16\",\"gate_scale\":0.02,\"initial_state\":false,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=True,indices=False\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"fp16\",\"qk_scale\":0.25,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":true,\"scale\":0.08838834764831843,\"seed\":20260914,\"shape_spec\":\"B=1,H=2,HV=2,T=64,K=128,V=128,chunk=128\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":false,\"tags\":\"accuracy,regression,gate_raw_safe_no_bias,varlen,empty_sequence_zero_state\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":true,\"v_scale\":0.25}",
         "backward": false
       },
       {
@@ -42965,7 +42965,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "0,12,42,64",
+        "range_values": "0,0,0,16,16,64,64",
         "backward": false
       },
       {
@@ -43253,7 +43253,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "accuracy,regression,gate_raw_safe_no_bias,varlen",
+        "range_values": "accuracy,regression,gate_raw_safe_no_bias,varlen,empty_sequence_zero_state",
         "backward": false
       }
     ],
@@ -57729,7 +57729,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":1,\"HV\":4,\"K\":128,\"T\":128,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_high\":0.9,\"beta_low\":0.1,\"beta_scale\":0.35,\"case_id\":112,\"case_key\":\"accuracy_056_BSND_t128_bf16\",\"chunk_size\":128,\"coverage_only\":false,\"cu_seqlens\":\"0,25,85,128\",\"data_profile\":\"uniform\",\"data_scale\":0.03,\"design_id\":\"KDA-FWD-A056-bf16\",\"disable_recompute\":true,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":true,\"g_dtype\":\"fp32\",\"gate_scale\":0.01,\"initial_state\":true,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=True,final=True,varlen=True,indices=True\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":true,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260943,\"shape_spec\":\"B=1,H=1,HV=4,T=128,K=128,V=128,chunk=128\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":true,\"tags\":\"accuracy,regression,gate_raw_unsafe_no_bias,varlen\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":true,\"v_scale\":0.25}",
+        "range_values": "{\"B\":1,\"H\":1,\"HV\":4,\"K\":128,\"T\":128,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_high\":0.9,\"beta_low\":0.1,\"beta_scale\":0.35,\"case_id\":112,\"case_key\":\"accuracy_056_BSND_t128_bf16\",\"chunk_size\":64,\"coverage_only\":false,\"cu_seqlens\":\"0,0,0,32,32,128,128\",\"data_profile\":\"uniform\",\"data_scale\":0.03,\"design_id\":\"KDA-FWD-A056-bf16\",\"disable_recompute\":true,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":2,\"explicit_chunk_indices\":true,\"g_dtype\":\"fp32\",\"gate_scale\":0.01,\"initial_state\":true,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=True,final=True,varlen=True,indices=True\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":true,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260943,\"shape_spec\":\"B=1,H=1,HV=4,T=128,K=128,V=128,chunk=64\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":true,\"tags\":\"accuracy,regression,gate_raw_unsafe_no_bias,varlen,empty_sequence_initial_state\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":2,\"tiling_key_condition\":\"chunk_size=64 and K=128 and V=128\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":true,\"v_scale\":0.25}",
         "backward": false
       },
       {
@@ -57819,7 +57819,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 128,
+        "range_values": 64,
         "backward": false
       },
       {
@@ -57900,7 +57900,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "0,25,85,128",
+        "range_values": "0,0,0,32,32,128,128",
         "backward": false
       },
       {
@@ -57990,7 +57990,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 1,
+        "range_values": 2,
         "backward": false
       },
       {
@@ -57999,7 +57999,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 1,
+        "range_values": 2,
         "backward": false
       },
       {
@@ -58008,7 +58008,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "otherwise (valid chunk/K/V combination)",
+        "range_values": "chunk_size=64 and K=128 and V=128",
         "backward": false
       },
       {
@@ -58188,7 +58188,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "accuracy,regression,gate_raw_unsafe_no_bias,varlen",
+        "range_values": "accuracy,regression,gate_raw_unsafe_no_bias,varlen,empty_sequence_initial_state",
         "backward": false
       }
     ],
@@ -58244,7 +58244,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":1,\"HV\":4,\"K\":128,\"T\":128,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_high\":0.9,\"beta_low\":0.1,\"beta_scale\":0.35,\"case_id\":113,\"case_key\":\"accuracy_056_BSND_t128_fp16\",\"chunk_size\":128,\"coverage_only\":false,\"cu_seqlens\":\"0,25,85,128\",\"data_profile\":\"uniform\",\"data_scale\":0.03,\"design_id\":\"KDA-FWD-A056-fp16\",\"disable_recompute\":true,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":true,\"g_dtype\":\"fp32\",\"gate_scale\":0.01,\"initial_state\":true,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=True,final=True,varlen=True,indices=True\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"fp16\",\"qk_scale\":0.25,\"return_intermediate_states\":true,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260944,\"shape_spec\":\"B=1,H=1,HV=4,T=128,K=128,V=128,chunk=128\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":true,\"tags\":\"accuracy,regression,gate_raw_unsafe_no_bias,varlen\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":true,\"v_scale\":0.25}",
+        "range_values": "{\"B\":1,\"H\":1,\"HV\":4,\"K\":128,\"T\":128,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_high\":0.9,\"beta_low\":0.1,\"beta_scale\":0.35,\"case_id\":113,\"case_key\":\"accuracy_056_BSND_t128_fp16\",\"chunk_size\":64,\"coverage_only\":false,\"cu_seqlens\":\"0,0,0,32,32,128,128\",\"data_profile\":\"uniform\",\"data_scale\":0.03,\"design_id\":\"KDA-FWD-A056-fp16\",\"disable_recompute\":true,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":2,\"explicit_chunk_indices\":true,\"g_dtype\":\"fp32\",\"gate_scale\":0.01,\"initial_state\":true,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"manifest\":\"accuracy\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=True,final=True,varlen=True,indices=True\",\"output_final_state\":true,\"profile\":\"accuracy_100x2\",\"q_dtype\":\"fp16\",\"qk_scale\":0.25,\"return_intermediate_states\":true,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260944,\"shape_spec\":\"B=1,H=1,HV=4,T=128,K=128,V=128,chunk=64\",\"soc\":\"all\",\"state_scale\":0.02,\"state_v_first\":true,\"tags\":\"accuracy,regression,gate_raw_unsafe_no_bias,varlen,empty_sequence_initial_state\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":2,\"tiling_key_condition\":\"chunk_size=64 and K=128 and V=128\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":true,\"v_scale\":0.25}",
         "backward": false
       },
       {
@@ -58334,7 +58334,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 128,
+        "range_values": 64,
         "backward": false
       },
       {
@@ -58415,7 +58415,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "0,25,85,128",
+        "range_values": "0,0,0,32,32,128,128",
         "backward": false
       },
       {
@@ -58505,7 +58505,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 1,
+        "range_values": 2,
         "backward": false
       },
       {
@@ -58514,7 +58514,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 1,
+        "range_values": 2,
         "backward": false
       },
       {
@@ -58523,7 +58523,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "otherwise (valid chunk/K/V combination)",
+        "range_values": "chunk_size=64 and K=128 and V=128",
         "backward": false
       },
       {
@@ -58703,7 +58703,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "accuracy,regression,gate_raw_unsafe_no_bias,varlen",
+        "range_values": "accuracy,regression,gate_raw_unsafe_no_bias,varlen,empty_sequence_initial_state",
         "backward": false
       }
     ],

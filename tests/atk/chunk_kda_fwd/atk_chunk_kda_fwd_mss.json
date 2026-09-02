@@ -2064,9 +2064,9 @@
     "save_name": "chunk_kda_fwd"
   },
   {
-    "id": 298,
-    "default_seed": 4,
-    "name": "chunk_kda_fwd",
+    "id": 4,
+    "default_seed": 20260835,
+    "name": "chunk_kda_fwd_mss_0004",
     "aclnn_name": "ChunkKdaFwd",
     "version": "v2.1",
     "api": "pytorch",
@@ -2075,7 +2075,8 @@
     "backward": false,
     "standard": {
       "acc": "mixed_tolerance_bm",
-      "perf": "not_key"
+      "perf": "not_key",
+      "mem": 1.1
     },
     "outputs": null,
     "inputs": [
@@ -2113,7 +2114,16 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"H\":2,\"HV\":96,\"K\":128,\"T\":63,\"V\":128,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"fp32\",\"beta_scale\":0.35,\"case_key\":\"ascend910b_issue440_h2_hv96_t63_c64_single_tail_export\",\"chunk_size\":64,\"cu_seqlens\":\"0,63\",\"data_profile\":\"model_h96\",\"disable_recompute\":true,\"distribution\":\"single_tail\",\"dt_bias\":true,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":1.25,\"initial_state\":false,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"optional_spec\":\"initial=False,final=True,varlen=True,disable_recompute=True\",\"output_final_state\":true,\"profile\":\"determinism_regression\",\"q_dtype\":\"bf16\",\"qk_scale\":0.05,\"return_intermediate_states\":true,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838834764831843,\"seed\":4,\"shape_spec\":\"B=1,H=2,HV=96,T=63,K=128,V=128\",\"soc\":\"ascend910b\",\"state_v_first\":false,\"tags\":\"accuracy,determinism,mssanitizer,regression,boundary,varlen,issue440\",\"use_gate_in_kernel\":true,\"v_scale\":0.05}",
+        "range_values": "{\"B\":1,\"H\":1,\"HV\":1,\"K\":128,\"T\":64,\"V\":256,\"a5_launch_mode\":\"full\",\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_high\":0.8,\"beta_low\":0.2,\"beta_scale\":0.35,\"case_id\":4,\"case_key\":\"mss_unsafe_full_from_accuracy_4\",\"chunk_size\":64,\"coverage_only\":false,\"cu_seqlens\":\"\",\"data_profile\":\"uniform\",\"data_scale\":0.2,\"design_id\":\"KDA-FWD-MSS-UNSAFE-FULL\",\"disable_recompute\":false,\"dt_bias\":false,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":0.04,\"initial_state\":false,\"layout\":\"TND\",\"lower_bound\":-5.0,\"manifest\":\"mss\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=False,indices=False\",\"output_final_state\":true,\"profile\":\"mss_unsafe_regression\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260835,\"shape_spec\":\"B=1,H=1,HV=1,T=64,K=128,V=256,chunk=64\",\"soc\":\"all\",\"source_accuracy_case_id\":4,\"source_accuracy_case_key\":\"accuracy_002_TND_t64_bf16\",\"state_scale\":0.02,\"state_v_first\":false,\"tags\":\"mss,unsafe,tiling_key_1,full,source_accuracy_case_4\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":false,\"v_scale\":0.25}",
+        "backward": false
+      },
+      {
+        "name": "design_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "KDA-FWD-MSS-UNSAFE-FULL",
         "backward": false
       },
       {
@@ -2122,7 +2132,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "ascend910b",
+        "range_values": "all",
         "backward": false
       },
       {
@@ -2149,7 +2159,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 2,
+        "range_values": 1,
         "backward": false
       },
       {
@@ -2158,7 +2168,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 96,
+        "range_values": 1,
         "backward": false
       },
       {
@@ -2167,7 +2177,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 63,
+        "range_values": 64,
         "backward": false
       },
       {
@@ -2185,7 +2195,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 128,
+        "range_values": 256,
         "backward": false
       },
       {
@@ -2203,7 +2213,16 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "BSND",
+        "range_values": "TND",
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.08838834764831843,
         "backward": false
       },
       {
@@ -2230,7 +2249,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "fp32",
+        "range_values": "bf16",
         "backward": false
       },
       {
@@ -2257,7 +2276,25 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": true,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "explicit_chunk_indices",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
         "backward": false
       },
       {
@@ -2266,7 +2303,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": true,
+        "range_values": false,
         "backward": false
       },
       {
@@ -2280,6 +2317,531 @@
       },
       {
         "name": "use_gate_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "dt_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "return_intermediate_states",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "negative_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "tiling_key",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "expected_tiling_key",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "tiling_key_condition",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "otherwise (valid chunk/K/V combination)",
+        "backward": false
+      },
+      {
+        "name": "execution_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "public_api",
+        "backward": false
+      },
+      {
+        "name": "coverage_only",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "runtime_status",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "public_api_reachable",
+        "backward": false
+      },
+      {
+        "name": "tiling_selection_evidence",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "chunk_kda_fwd_tiling.cpp:SetTilingKey",
+        "backward": false
+      },
+      {
+        "name": "data_profile",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "uniform",
+        "backward": false
+      },
+      {
+        "name": "data_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.2,
+        "backward": false
+      },
+      {
+        "name": "gate_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.04,
+        "backward": false
+      },
+      {
+        "name": "qk_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.25,
+        "backward": false
+      },
+      {
+        "name": "v_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.25,
+        "backward": false
+      },
+      {
+        "name": "beta_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.35,
+        "backward": false
+      },
+      {
+        "name": "beta_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 1.5,
+        "backward": false
+      },
+      {
+        "name": "a_log_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.12,
+        "backward": false
+      },
+      {
+        "name": "dt_bias_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.5,
+        "backward": false
+      },
+      {
+        "name": "dt_bias_mean",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -3.0,
+        "backward": false
+      },
+      {
+        "name": "beta_low",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.2,
+        "backward": false
+      },
+      {
+        "name": "beta_high",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.8,
+        "backward": false
+      },
+      {
+        "name": "state_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.02,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 4,
+        "backward": false
+      },
+      {
+        "name": "profile",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "mss_unsafe_regression",
+        "backward": false
+      },
+      {
+        "name": "tags",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "mss,unsafe,tiling_key_1,full,source_accuracy_case_4",
+        "backward": false
+      }
+    ],
+    "save_name": "chunk_kda_fwd"
+  },
+  {
+    "id": 5,
+    "default_seed": 20260855,
+    "name": "chunk_kda_fwd_mss_0005",
+    "aclnn_name": "ChunkKdaFwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "mixed_tolerance_bm",
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"B\":1,\"H\":1,\"HV\":2,\"K\":128,\"T\":127,\"V\":256,\"a5_launch_mode\":\"staged\",\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_dtype\":\"bf16\",\"beta_high\":0.9,\"beta_low\":0.1,\"beta_scale\":0.35,\"case_id\":5,\"case_key\":\"mss_unsafe_staged_from_accuracy_24\",\"chunk_size\":64,\"coverage_only\":false,\"cu_seqlens\":\"\",\"data_profile\":\"uniform\",\"data_scale\":0.03,\"design_id\":\"KDA-FWD-MSS-UNSAFE-STAGED\",\"disable_recompute\":true,\"dt_bias\":true,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":0.5,\"execution_mode\":\"public_api\",\"expected_tiling_key\":1,\"explicit_chunk_indices\":false,\"g_dtype\":\"fp32\",\"gate_scale\":0.01,\"initial_state\":false,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"manifest\":\"mss\",\"negative_case\":false,\"op\":\"chunk_kda_fwd\",\"optional_spec\":\"initial=False,final=True,varlen=False,indices=False\",\"output_final_state\":true,\"profile\":\"mss_unsafe_regression\",\"q_dtype\":\"bf16\",\"qk_scale\":0.25,\"return_intermediate_states\":false,\"route\":\"ascendc\",\"runtime_status\":\"public_api_reachable\",\"safe_gate\":false,\"scale\":0.08838834764831843,\"seed\":20260855,\"shape_spec\":\"B=1,H=1,HV=2,T=127,K=128,V=256,chunk=64\",\"soc\":\"all\",\"source_accuracy_case_id\":24,\"source_accuracy_case_key\":\"accuracy_012_BSND_t127_bf16\",\"state_scale\":0.02,\"state_v_first\":false,\"tags\":\"mss,unsafe,tiling_key_1,staged,source_accuracy_case_24\",\"target_platforms\":[\"ascend910b\",\"ascend910_93\",\"ascend950\"],\"target_routes\":[\"ascendc\"],\"tiling_key\":1,\"tiling_key_condition\":\"otherwise (valid chunk/K/V combination)\",\"tiling_selection_evidence\":\"chunk_kda_fwd_tiling.cpp:SetTilingKey\",\"use_gate_in_kernel\":true,\"v_scale\":0.25}",
+        "backward": false
+      },
+      {
+        "name": "design_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "KDA-FWD-MSS-UNSAFE-STAGED",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "all",
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      },
+      {
+        "name": "batch",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "head",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "value_head",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "total_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 127,
+        "backward": false
+      },
+      {
+        "name": "key_dim",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "value_dim",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 256,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BSND",
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.08838834764831843,
+        "backward": false
+      },
+      {
+        "name": "q_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "initial_state",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "output_final_state",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "varlen",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "explicit_chunk_indices",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -5.0,
+        "backward": false
+      },
+      {
+        "name": "use_gate_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "dt_bias",
         "type": "attr",
         "required": true,
         "dtype": "bool",
@@ -2302,7 +2864,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": true,
+        "range_values": false,
         "backward": false
       },
       {
@@ -2321,6 +2883,213 @@
         "dtype": "bool",
         "shape": null,
         "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "tiling_key",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "expected_tiling_key",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "tiling_key_condition",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "otherwise (valid chunk/K/V combination)",
+        "backward": false
+      },
+      {
+        "name": "execution_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "public_api",
+        "backward": false
+      },
+      {
+        "name": "coverage_only",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "runtime_status",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "public_api_reachable",
+        "backward": false
+      },
+      {
+        "name": "tiling_selection_evidence",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "chunk_kda_fwd_tiling.cpp:SetTilingKey",
+        "backward": false
+      },
+      {
+        "name": "data_profile",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "uniform",
+        "backward": false
+      },
+      {
+        "name": "data_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.03,
+        "backward": false
+      },
+      {
+        "name": "gate_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.01,
+        "backward": false
+      },
+      {
+        "name": "qk_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.25,
+        "backward": false
+      },
+      {
+        "name": "v_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.25,
+        "backward": false
+      },
+      {
+        "name": "beta_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.35,
+        "backward": false
+      },
+      {
+        "name": "beta_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 1.5,
+        "backward": false
+      },
+      {
+        "name": "a_log_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.12,
+        "backward": false
+      },
+      {
+        "name": "dt_bias_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.5,
+        "backward": false
+      },
+      {
+        "name": "dt_bias_mean",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -3.0,
+        "backward": false
+      },
+      {
+        "name": "beta_low",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.1,
+        "backward": false
+      },
+      {
+        "name": "beta_high",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.9,
+        "backward": false
+      },
+      {
+        "name": "state_scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.02,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 5,
+        "backward": false
+      },
+      {
+        "name": "profile",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "mss_unsafe_regression",
+        "backward": false
+      },
+      {
+        "name": "tags",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "mss,unsafe,tiling_key_1,staged,source_accuracy_case_24",
         "backward": false
       }
     ],

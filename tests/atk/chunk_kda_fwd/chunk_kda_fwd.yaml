@@ -276,7 +276,7 @@ inputs:
     type: attr
     required: true
     dtypes: {values: [string]}
-    ranges: {valid: {values: [accuracy_100x2, mss_tiling_key_coverage, perf_tiling_key_coverage]}, invalid: {values: []}}
+    ranges: {valid: {values: [accuracy_100x2, mss_tiling_key_coverage, mss_unsafe_regression, perf_tiling_key_coverage]}, invalid: {values: []}}
   - name: tags
     type: attr
     required: true

@@ -238,6 +238,7 @@ public:
                 }
             } else {
                 l0CTensorList[0] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
+                l0CEventList[0] = 0;
             }
             if constexpr (HAS_BIAS) {
                 uint32_t l1BiasOffset = l1BOffset + L1B_TILE_SIZE * L1B_STAGES;
@@ -378,6 +379,7 @@ public:
                 1, static_cast<uint16_t>(L1A_TILE_SIZE / 32), 0,
                 static_cast<ElementA>(0));
             AscendC::InitConstValue(l1ATensorList[l1AListId], clearParams);
+            AscendC::PipeBarrier<PIPE_MTE2>();
         }
         auto tensorL1A = tla::MakeTensor(l1ATensorList[l1AListId], L1A_LAYOUT, Arch::PositionL1{});
         auto tensorTileA = GetTileA(tensorA, 0, 0, mBlockActual, kL1Actual);
@@ -407,6 +409,7 @@ public:
                 1, static_cast<uint16_t>(L1B_TILE_SIZE / 32), 0,
                 static_cast<ElementB>(0));
             AscendC::InitConstValue(l1BTensorList[l1BListId], clearParams);
+            AscendC::PipeBarrier<PIPE_MTE2>();
         }
         auto tensorL1B = tla::MakeTensor(l1BTensorList[l1BListId], L1B_LAYOUT, Arch::PositionL1{});
         auto tensorTileB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(kL1Actual, nBlockActual));
@@ -472,6 +475,7 @@ public:
                         1, static_cast<uint16_t>(L1A_TILE_SIZE / 32), 0,
                         static_cast<ElementA>(0));
                     AscendC::InitConstValue(l1ATensorList[l1AListIdNext], clearParams);
+                    AscendC::PipeBarrier<PIPE_MTE2>();
                 }
                 if constexpr (ENABLE_L1_RESIDENT) {
                     if (lastAddrA[l1AListIdNext] != tensorTileA.data().GetPhyAddr()
@@ -498,6 +502,7 @@ public:
                         1, static_cast<uint16_t>(L1B_TILE_SIZE / 32), 0,
                         static_cast<ElementB>(0));
                     AscendC::InitConstValue(l1BTensorList[l1BListIdNext], clearParams);
+                    AscendC::PipeBarrier<PIPE_MTE2>();
                 }
                 if constexpr (ENABLE_L1_RESIDENT) {
                     if (lastAddrB[l1BListIdNext] != tensorTileB.data().GetPhyAddr()

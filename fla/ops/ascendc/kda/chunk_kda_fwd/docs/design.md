@@ -46,7 +46,7 @@ Aqk, Akk, qg, qg_scaled, w_seed, u_seed
 
 ### Post-WU
 
-只读取 `k/gk/w_seed/Akk/u_seed`，产生：
+读取 `k/gk/w_seed/Akk/u_seed`，产生：
 
 ```text
 w, u, kg, v_new_seed
@@ -57,6 +57,12 @@ w, u, kg, v_new_seed
 变长尾块中 `w_seed` 与 `w` 可复用同一段 GM。两个 AIV 按 K 维列区间独占写回，并从高行向低行
 处理，保证下三角计算依赖的源行在最后一次读取前不会被原位覆盖。`u_seed` 与 `u` 使用独立存储，
 仍按行区间并行。
+
+A5 unsafe BF16 key1 在 `K=128`、`V>=K` 且未启用 Post-WU 融合时，会额外保留
+`kg` 的量化残差。Post-WU 先消费 Prepare 产生的 `u_seed` 并完成 `u`，再将私有
+`u_seed` 的每个 token 行按原 `V` stride 复用：前 `K` 列写入
+`kg_fp32 - float(kg_bf16)` 的 BF16 残差；每个 chunk 最后一行写零，与该行公开
+`kg` 直接使用原始 `k` 的语义一致。该复用只发生在私有阶段载体上，不改变公开输出或 ABI。
 
 ### FwdH state propagation
 
@@ -69,6 +75,14 @@ h_next = exp2(gk_last) * h_prev + kg^T @ v_new
 
 arch35 路径复用与 `ChunkGatedDeltaRuleFwdH` 相同的数学实现；其他场景在 `ChunkKdaFwd` 内嵌
 共享 FwdH 实现。独立 GDN L0 原型继续保留给其他调用方，key-wise `gk` 固定使用 `exp2`。
+
+上述 A5 残差策略启用时，FwdH 将 BF16 `kg`（导出时为公开输出，否则为私有 workspace）
+作为高位平面，将 `u_seed` 前 `K` 列作为低位平面，并对同一 `v_new` 执行两平面归约，
+从而计算
+`(kg_high + kg_low)^T @ v_new`。单 launch 路径由 Post-WU 后的 `SyncAll` 保证写入完成后再读；
+四段路径由同一 stream 上顺序提交的独立 Post-WU/FwdH launch 边界保证可见性，executor 内部
+`u_seed` 张量仅负责跨阶段承载残差。其他平台、
+dtype、safe gate、key2、K/V 组合和融合路径均不覆写或消费该残差布局。
 
 ### Finalize
 
