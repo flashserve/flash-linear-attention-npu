@@ -79,27 +79,6 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
         ctypes.POINTER(ctypes.c_void_p),  # executor
     ],
-    "aclnnChunkGatedDeltaRuleBwdDhu": [
-        ctypes.c_void_p,  # q
-        ctypes.c_void_p,  # k
-        ctypes.c_void_p,  # w
-        ctypes.c_void_p,  # dO
-        ctypes.c_void_p,  # dv
-        ctypes.c_void_p,  # gOptional
-        ctypes.c_void_p,  # gkOptional
-        ctypes.c_void_p,  # h0Optional
-        ctypes.c_void_p,  # dhtOptional
-        ctypes.c_void_p,  # cuSeqlensOptional
-        ctypes.c_void_p,  # chunkIndicesOptional
-        ctypes.c_double,  # scale
-        ctypes.c_int64,  # chunkSize
-        ctypes.c_bool,  # useExp2
-        ctypes.c_void_p,  # dhOut
-        ctypes.c_void_p,  # dh0Out
-        ctypes.c_void_p,  # dv2Out
-        ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
-        ctypes.POINTER(ctypes.c_void_p),  # executor
-    ],
     "aclnnSolveTri": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -145,6 +124,49 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
+    "aclnnChunkKdaBwd": [
+        *([ctypes.c_void_p] * 20),
+        ctypes.c_double,
+        ctypes.c_int64,
+        ctypes.c_bool,
+        ctypes.c_bool,
+        ctypes.c_double,
+        ctypes.c_bool,
+        ctypes.c_bool,
+        ctypes.c_bool,
+        *([ctypes.c_void_p] * 8),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnChunkGatedDeltaRuleBwdDhu": [
+        *([ctypes.c_void_p] * 11),
+        ctypes.c_double,
+        ctypes.c_int64,
+        ctypes.c_bool,
+        *([ctypes.c_void_p] * 3),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnRecurrentGatedDeltaRule": [
+        *([ctypes.c_void_p] * 10),
+        ctypes.c_float,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
+    "aclnnChunkFwdH": [
+        *([ctypes.c_void_p] * 6),
+        ctypes.c_bool,
+        ctypes.c_int64,
+        ctypes.c_bool,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_bool,
+        ctypes.c_bool,
+        *([ctypes.c_void_p] * 3),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnKdaGateCumsum": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -186,22 +208,6 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
-    "aclnnRecurrentGatedDeltaRule": [
-        ctypes.c_void_p,  # query
-        ctypes.c_void_p,  # key
-        ctypes.c_void_p,  # value
-        ctypes.c_void_p,  # beta
-        ctypes.c_void_p,  # stateRef
-        ctypes.c_void_p,  # actualSeqLengths
-        ctypes.c_void_p,  # ssmStateIndices
-        ctypes.c_void_p,  # g
-        ctypes.c_void_p,  # gk
-        ctypes.c_void_p,  # numAcceptedTokens
-        ctypes.c_float,  # scaleValue
-        ctypes.c_void_p,  # out
-        ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
-        ctypes.POINTER(ctypes.c_void_p),  # executor
-    ],
     "aclnnChunkLocalCumsum": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -222,21 +228,6 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_int64,
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_uint64),
-        ctypes.POINTER(ctypes.c_void_p),
-    ],
-    "aclnnChunkFwdH": [
-        *([ctypes.c_void_p] * 6),
-        ctypes.c_bool,
-        ctypes.c_int64,
-        ctypes.c_bool,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_bool,
-        ctypes.c_bool,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
@@ -1301,6 +1292,361 @@ def _kda_total_chunks(batch: int, seqlen: int, chunk_size: int, cu_seqlens, chun
         return _kda_ceil_div(seqlen, chunk_size)
     cu = tuple(int(value) for value in cu_seqlens)
     return sum(_kda_ceil_div(cu[i + 1] - cu[i], chunk_size) for i in range(len(cu) - 1))
+
+
+def npu_chunk_kda_bwd(
+    q,
+    k,
+    v,
+    beta,
+    gk,
+    Aqk,
+    Akk,
+    w,
+    qg,
+    kg,
+    v_new,
+    h,
+    d_o,
+    scale,
+    *,
+    raw_g=None,
+    A_log=None,
+    dt_bias=None,
+    initial_state=None,
+    dht=None,
+    cu_seqlens=None,
+    chunk_indices=None,
+    chunk_size=64,
+    safe_gate=True,
+    lower_bound=-5.0,
+    use_gate_in_kernel=False,
+    disable_recompute=True,
+    use_exp2=True,
+    state_v_first=False,
+):
+    """Run the canonical head-major fused KDA backward ACLNN operator.
+
+    Dense tensors use ``[B, H, T, D]`` and packed tensors use ``[H, T, D]``.
+    ``Aqk/Akk/w/qg/kg/v_new/h/gk`` are the saved intermediates returned by
+    ``npu_chunk_kda_fwd(..., disable_recompute=True)`` after canonicalization.
+    The return value is always ``(dq, dk, dv, db, dg, dh0, dA, dbias)`` to
+    match the upstream GPU interface. ``dh0`` is ``None`` because the current
+    fused path does not support ``initial_state``; ``dA`` and ``dbias`` are
+    ``None`` unless raw-gate backward is enabled.
+    """
+    import torch
+
+    chunk_size = int(chunk_size)
+    if chunk_size != 64:
+        raise RuntimeError("npu_chunk_kda_bwd: chunk_size must be 64.")
+    if not _optional_bool(disable_recompute, True):
+        raise RuntimeError(
+            "npu_chunk_kda_bwd: disable_recompute=false is reserved but not supported."
+        )
+    if not _optional_bool(use_exp2, True):
+        raise RuntimeError(
+            "npu_chunk_kda_bwd: use_exp2=false is reserved but not supported."
+        )
+    if _optional_bool(state_v_first, False):
+        raise RuntimeError(
+            "npu_chunk_kda_bwd: state_v_first=true is reserved but not supported."
+        )
+    if initial_state is not None or dht is not None:
+        raise RuntimeError(
+            "npu_chunk_kda_bwd: initial_state and dht are not supported by the current fused backward."
+        )
+
+    use_gate_in_kernel = _optional_bool(use_gate_in_kernel, False)
+    safe_gate = _optional_bool(safe_gate, True)
+    if not safe_gate:
+        raise RuntimeError(
+            "npu_chunk_kda_bwd: safe_gate=False is reserved but not supported."
+        )
+    lower_bound = _optional_float(lower_bound, -5.0)
+    q_shape, k_shape, v_shape = map(_shape, (q, k, v))
+    is_varlen = cu_seqlens is not None
+    expected_rank = 3 if is_varlen else 4
+    if any(len(shape) != expected_rank for shape in (q_shape, k_shape, v_shape)):
+        raise RuntimeError(
+            "npu_chunk_kda_bwd: dense inputs use [B,H,T,D]; varlen inputs use [H,T,D]."
+        )
+    if q_shape != k_shape:
+        raise RuntimeError("npu_chunk_kda_bwd: q and k must have identical shape.")
+    if is_varlen:
+        batch, heads, seqlen, key_dim = 1, q_shape[0], q_shape[1], q_shape[2]
+        value_dim = v_shape[2]
+        token_prefix = (heads, seqlen)
+    else:
+        batch, heads, seqlen, key_dim = q_shape
+        value_dim = v_shape[3]
+        token_prefix = (batch, heads, seqlen)
+    if v_shape[:-1] != token_prefix:
+        raise RuntimeError("npu_chunk_kda_bwd: v must share q's [B,H,T] or [H,T] prefix.")
+    if key_dim != 128 or value_dim != 128:
+        raise RuntimeError("npu_chunk_kda_bwd: current fused path requires K=128 and V=128.")
+    if q.dtype not in {torch.float16, torch.bfloat16} or k.dtype != q.dtype or v.dtype != q.dtype:
+        raise RuntimeError("npu_chunk_kda_bwd: q/k/v must use the same float16 or bfloat16 dtype.")
+
+    key_shape = (*token_prefix, key_dim)
+    value_shape = (*token_prefix, value_dim)
+    matrix_shape = (*token_prefix, chunk_size)
+    scalar_shape = token_prefix
+    required_key_tensors = {"gk": gk, "w": w, "qg": qg, "kg": kg}
+    for name, tensor in required_key_tensors.items():
+        if _shape(tensor) != key_shape:
+            raise RuntimeError(f"npu_chunk_kda_bwd: {name} must have shape {key_shape}.")
+    for name, tensor in {"v_new": v_new, "d_o": d_o}.items():
+        if _shape(tensor) != value_shape:
+            raise RuntimeError(f"npu_chunk_kda_bwd: {name} must have shape {value_shape}.")
+    for name, tensor in {"Aqk": Aqk, "Akk": Akk}.items():
+        if _shape(tensor) != matrix_shape:
+            raise RuntimeError(f"npu_chunk_kda_bwd: {name} must have shape {matrix_shape}.")
+    if _shape(beta) != scalar_shape:
+        raise RuntimeError(f"npu_chunk_kda_bwd: beta must have shape {scalar_shape}.")
+    if gk.dtype != torch.float32:
+        raise RuntimeError("npu_chunk_kda_bwd: gk must be float32.")
+    if beta.dtype not in {torch.float32, torch.bfloat16}:
+        raise RuntimeError("npu_chunk_kda_bwd: beta must be float32 or bfloat16.")
+
+    cu = None if cu_seqlens is None else tuple(int(value) for value in cu_seqlens)
+    if cu is not None:
+        if len(cu) < 2 or cu[0] != 0 or cu[-1] != seqlen or any(a > b for a, b in zip(cu, cu[1:])):
+            raise RuntimeError(
+                "npu_chunk_kda_bwd: cu_seqlens must be nondecreasing, start at 0 and end at T."
+            )
+        if len(cu) - 1 > 1024:
+            raise RuntimeError("npu_chunk_kda_bwd: varlen supports at most 1024 sequences.")
+    canonical_indices = _kda_build_chunk_indices(cu, chunk_size)
+    indices = canonical_indices if chunk_indices is None else tuple(int(value) for value in chunk_indices)
+    if indices is not None and indices != canonical_indices:
+        raise RuntimeError("npu_chunk_kda_bwd: chunk_indices must use canonical sequence-major order.")
+    total_chunks = _kda_total_chunks(batch, seqlen, chunk_size, cu, indices)
+    h_shape = ((total_chunks, heads, key_dim, value_dim) if is_varlen
+               else (batch, total_chunks, heads, key_dim, value_dim))
+    if _shape(h) != h_shape:
+        raise RuntimeError(f"npu_chunk_kda_bwd: h must have shape {h_shape}.")
+
+    d_a = None
+    d_bias = None
+    if use_gate_in_kernel:
+        if raw_g is None or A_log is None:
+            raise RuntimeError("npu_chunk_kda_bwd: raw_g and A_log are required when use_gate_in_kernel=True.")
+        if _shape(raw_g) != key_shape or raw_g.dtype not in {torch.float32, torch.bfloat16}:
+            raise RuntimeError("npu_chunk_kda_bwd: raw_g must be BF16/FP32 with the same shape as gk.")
+        if _shape(A_log) != (heads,) or A_log.dtype != torch.float32:
+            raise RuntimeError("npu_chunk_kda_bwd: A_log must be float32 [H].")
+        if safe_gate and not (-5.0 <= lower_bound < 0.0):
+            raise RuntimeError("npu_chunk_kda_bwd: lower_bound must be in [-5,0) for safe_gate.")
+        d_a = _empty((heads,), q, dtype=torch.float32)
+        if dt_bias is not None:
+            if _shape(dt_bias) != (heads, key_dim) or dt_bias.dtype != torch.float32:
+                raise RuntimeError("npu_chunk_kda_bwd: dt_bias must be float32 [H,K].")
+            d_bias = _empty((heads, key_dim), q, dtype=torch.float32)
+    elif any(value is not None for value in (raw_g, A_log, dt_bias)):
+        raise RuntimeError("npu_chunk_kda_bwd: raw_g/A_log/dt_bias require use_gate_in_kernel=True.")
+
+    # Atlas A2's packed V=256 state-scan path can leave non-finite dh-derived
+    # gradients.  Reuse the proven dense kernel for each independent packed
+    # sequence.  This keeps the public packed layout and reduction semantics,
+    # while model/even-head V=128 calls remain on the original single launch.
+    use_dense_varlen_fallback = is_varlen and value_dim == 256
+    has_varlen_tail = is_varlen and any(
+        (token_end - token_begin) % chunk_size != 0
+        for token_begin, token_end in zip(cu, cu[1:])
+    )
+    needs_device_check = (
+        use_dense_varlen_fallback or heads % 2 != 0 or has_varlen_tail
+    )
+    is_a2_device = False
+    is_a5_device = False
+    if needs_device_check:
+        device_index = q.device.index
+        if device_index is None:
+            device_index = torch.npu.current_device()
+        device_name = str(torch.npu.get_device_name(device_index))
+        is_a2_device = device_name.startswith("Ascend910B")
+        is_a5_device = "950" in device_name
+    # A5's native packed tail can expose a short C-Intra AIC/AIV race.  Split
+    # only packed sequences that contain tails into independent dense calls;
+    # each call reuses the proven single-sequence padding path below.  Full
+    # chunks and the long dense model path remain one fused launch.
+    use_a5_varlen_tail_fallback = is_a5_device and has_varlen_tail
+    if ((is_a2_device and use_dense_varlen_fallback) or
+            use_a5_varlen_tail_fallback):
+        sequence_results = []
+        chunk_begin = 0
+        for token_begin, token_end in zip(cu, cu[1:]):
+            sequence_length = token_end - token_begin
+            if sequence_length == 0:
+                continue
+            sequence_chunks = _kda_ceil_div(sequence_length, chunk_size)
+
+            def dense_token_slice(tensor):
+                if tensor is None:
+                    return None
+                return tensor.narrow(1, token_begin, sequence_length).unsqueeze(0).contiguous()
+
+            sequence_results.append(npu_chunk_kda_bwd(
+                dense_token_slice(q), dense_token_slice(k), dense_token_slice(v),
+                dense_token_slice(beta), dense_token_slice(gk),
+                dense_token_slice(Aqk), dense_token_slice(Akk),
+                dense_token_slice(w), dense_token_slice(qg), dense_token_slice(kg),
+                dense_token_slice(v_new),
+                h.narrow(0, chunk_begin, sequence_chunks).unsqueeze(0).contiguous(),
+                dense_token_slice(d_o), scale,
+                raw_g=dense_token_slice(raw_g), A_log=A_log, dt_bias=dt_bias,
+                initial_state=None, dht=None, cu_seqlens=None, chunk_indices=None,
+                chunk_size=chunk_size, safe_gate=safe_gate,
+                lower_bound=lower_bound, use_gate_in_kernel=use_gate_in_kernel,
+                disable_recompute=True, use_exp2=True, state_v_first=False,
+            ))
+            chunk_begin += sequence_chunks
+
+        restored = []
+        for output_index in range(8):
+            values = [result[output_index] for result in sequence_results]
+            if values[0] is None:
+                restored.append(None)
+            elif output_index < 5:
+                restored.append(torch.cat(
+                    [value.squeeze(0) for value in values], dim=1
+                ).contiguous())
+            else:
+                total = values[0]
+                for value in values[1:]:
+                    total = total + value
+                restored.append(total)
+        return tuple(restored)
+
+    # A5's fused C-Intra short-tail path is not numerically stable yet.  A
+    # single packed sequence can use the proven full-chunk path without
+    # changing the math: append zero-gradient rows inside the already existing
+    # final chunk, then slice token gradients back to the public shape.  The
+    # number and layout of saved chunk states do not change.
+    original_seqlen = seqlen
+    original_heads = heads
+    padded_tail = seqlen % chunk_size != 0 and (cu is None or len(cu) == 2)
+    if padded_tail:
+        padded_seqlen = _kda_ceil_div(seqlen, chunk_size) * chunk_size
+        pad_rows = padded_seqlen - seqlen
+        token_dim = 1 if is_varlen else 2
+
+        def pad_token_rows(tensor, *, repeat_last=False):
+            if tensor is None:
+                return None
+            pad_shape = list(_shape(tensor))
+            pad_shape[token_dim] = pad_rows
+            if repeat_last:
+                tail = tensor.narrow(token_dim, seqlen - 1, 1).expand(*pad_shape).clone()
+            else:
+                tail = tensor.new_zeros(pad_shape)
+            return torch.cat((tensor, tail), dim=token_dim).contiguous()
+
+        q, k, v = (pad_token_rows(tensor) for tensor in (q, k, v))
+        beta = pad_token_rows(beta)
+        # gk is cumulative.  Holding its final real value constant keeps every
+        # zero-padded contraction finite while contributing zero gradient.
+        gk = pad_token_rows(gk, repeat_last=True)
+        Aqk, Akk = (pad_token_rows(tensor) for tensor in (Aqk, Akk))
+        w, qg, kg, v_new, d_o = (
+            pad_token_rows(tensor) for tensor in (w, qg, kg, v_new, d_o)
+        )
+        raw_g = pad_token_rows(raw_g)
+        seqlen = padded_seqlen
+        cu = None if cu is None else (0, padded_seqlen)
+        indices = _kda_build_chunk_indices(cu, chunk_size)
+
+    # Atlas A2's fused Intra pipeline processes heads in pairs.  A one-head
+    # final window can retain a stale final-head correction across launches.
+    # Materialize a valid independent partner head on 910B only, then slice
+    # every public gradient back to the original shape.  Ascend950/A5 and all
+    # even-head model cases keep the original zero-copy path.
+    padded_head = False
+    if heads % 2 != 0:
+        padded_head = is_a2_device
+    if padded_head:
+        head_dim = 0 if is_varlen else 1
+
+        def duplicate_last_head(tensor, dim):
+            if tensor is None:
+                return None
+            return torch.cat(
+                (tensor, tensor.narrow(dim, heads - 1, 1).clone()), dim=dim
+            ).contiguous()
+
+        q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, d_o, raw_g = (
+            duplicate_last_head(tensor, head_dim)
+            for tensor in (
+                q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, d_o, raw_g
+            )
+        )
+        h = duplicate_last_head(h, 1 if is_varlen else 2)
+        A_log = duplicate_last_head(A_log, 0)
+        dt_bias = duplicate_last_head(dt_bias, 0)
+        heads += 1
+        d_a = _empty((heads,), q, dtype=torch.float32) if d_a is not None else None
+        d_bias = (
+            _empty((heads, key_dim), q, dtype=torch.float32)
+            if d_bias is not None else None
+        )
+
+    dq = _empty_like(q, dtype=torch.float32)
+    dk = _empty_like(k, dtype=torch.float32)
+    dv = _empty_like(v)
+    db = _empty_like(beta, dtype=torch.float32)
+    dg = _empty_like(gk)
+    # Keep the public result contract aligned with the upstream GPU operator.
+    # The device ABI still has seven materialized outputs: initial_state/dh0 is
+    # reserved but unsupported, so its public slot is an explicit None.
+    dh0 = None
+    outputs = (dq, dk, dv, db, dg, dh0, d_a, d_bias)
+
+    # ChunkKdaBwd consumes the canonical dense BNSD/varlen NTD tensors as ND.
+    # A contiguous rank-4/5 NPU tensor can otherwise carry an NCHW/NCDHW tag;
+    # preserve its row-major storage and override descriptor metadata only.
+    def nd_tensor(ctx, tensor, name):
+        return ctx.tensor(
+            tensor,
+            name,
+            acl_format_override=ACL_FORMAT_ND,
+            storage_shape_override=_shape(tensor) if tensor is not None else None,
+        )
+
+    result = _call_aclnn(
+        "aclnnChunkKdaBwd",
+        lambda ctx: [
+            nd_tensor(ctx, q, "q"), nd_tensor(ctx, k, "k"), nd_tensor(ctx, v, "v"),
+            nd_tensor(ctx, beta, "beta"), nd_tensor(ctx, gk, "gk"),
+            nd_tensor(ctx, Aqk, "Aqk"), nd_tensor(ctx, Akk, "Akk"),
+            nd_tensor(ctx, w, "w"), nd_tensor(ctx, qg, "qg"), nd_tensor(ctx, kg, "kg"),
+            nd_tensor(ctx, v_new, "v_new"), nd_tensor(ctx, h, "h"), nd_tensor(ctx, d_o, "d_o"),
+            nd_tensor(ctx, raw_g, "raw_g"), nd_tensor(ctx, A_log, "A_log"),
+            nd_tensor(ctx, dt_bias, "dt_bias"), nd_tensor(ctx, None, "initial_state"),
+            nd_tensor(ctx, None, "dht"), ctx.int_array(cu), ctx.int_array(indices),
+            ctypes.c_double(float(scale)), ctypes.c_int64(chunk_size),
+            ctypes.c_bool(safe_gate), ctypes.c_bool(use_gate_in_kernel),
+            ctypes.c_double(lower_bound), ctypes.c_bool(True), ctypes.c_bool(True),
+            ctypes.c_bool(False), nd_tensor(ctx, dq, "dq"), nd_tensor(ctx, dk, "dk"),
+            nd_tensor(ctx, dv, "dv"), nd_tensor(ctx, db, "db"), nd_tensor(ctx, dg, "dg"),
+            nd_tensor(ctx, None, "dh0"), nd_tensor(ctx, d_a, "dA"), nd_tensor(ctx, d_bias, "dbias"),
+        ],
+        outputs,
+    )
+    restored = []
+    for index, value in enumerate(result):
+        if value is None:
+            restored.append(None)
+            continue
+        if padded_tail and index < 5:
+            value = value.narrow(token_dim, 0, original_seqlen)
+        if padded_head:
+            if index < 5:
+                value = value.narrow(0 if is_varlen else 1, 0, original_heads)
+            elif index in (6, 7):
+                value = value.narrow(0, 0, original_heads)
+        restored.append(value.contiguous() if padded_tail or padded_head else value)
+    return tuple(restored)
 
 
 def npu_chunk_kda_fwd(

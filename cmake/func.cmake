@@ -665,6 +665,22 @@ function(add_bin_compile_target)
                 DEPENDS ${_BUILD_FLAG}
             )
 
+            # A dependency kernel may include implementation headers from the
+            # selecting operator.  Make every binary configuration wait until
+            # that operator's source tree has been copied.
+            foreach(_source_op_info ${BINARY_OP_INFO})
+                get_filename_component(_source_op_name "${_source_op_info}" NAME)
+                if (DEFINED ${_source_op_name}_depends)
+                    foreach(_depend_info ${${_source_op_name}_depends})
+                        get_filename_component(_depend_op_name "${_depend_info}" NAME)
+                        set(_source_copy_target ${_source_op_name}_${BINARY_COMPUTE_UNIT}_src_copy)
+                        if ("${_depend_op_name}" STREQUAL "${op_file}" AND TARGET ${_source_copy_target})
+                            add_dependencies(${OP_TARGET_NAME}_${op_index} ${_source_copy_target})
+                        endif()
+                    endforeach()
+                endif()
+            endforeach()
+
             if (ENABLE_OPS_HOST OR ENABLE_HOST_TILING)
                 add_dependencies(${OP_TARGET_NAME}_${op_index} optiling_compat generate_ops_info)
             endif ()
