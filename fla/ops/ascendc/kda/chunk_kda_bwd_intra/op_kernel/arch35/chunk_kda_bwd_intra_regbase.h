@@ -6,7 +6,7 @@
 #define CHUNK_KDA_BWD_INTRA_ARCH35_REGBASE_H
 
 #include "../chunk_kda_bwd_intra_common.h"
-#include "kernel_utils/vector/regbase.hpp"
+#include "./kernel_utils/vector/regbase.hpp"
 
 namespace KDA {
 

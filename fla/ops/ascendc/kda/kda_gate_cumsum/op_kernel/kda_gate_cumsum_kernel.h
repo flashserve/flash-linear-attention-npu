@@ -8,12 +8,6 @@
 #pragma once
 
 #include "kernel_operator.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-#ifndef FLA_NPU_REGBASE_HPP_INCLUDED
-#define FLA_NPU_REGBASE_HPP_INCLUDED
-#include "kernel_utils/vector/regbase.hpp"
-#endif
-#endif
 
 namespace KdaGateCumsum {
 

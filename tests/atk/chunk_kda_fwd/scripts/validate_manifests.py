@@ -22,6 +22,7 @@ PREPARE_PATH = (
 KDA_KERNEL_ROOT = (
     REPO_ROOT / "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel"
 )
+KDA_ROOT = REPO_ROOT / "fla/ops/ascendc/kda"
 KDA_COMMON_PATH = KDA_KERNEL_ROOT / "chunk_kda_fwd_common.h"
 KDA_ENTRY_PATH = KDA_KERNEL_ROOT / "chunk_kda_fwd.cpp"
 KDA_OP_API_PATH = (
@@ -44,12 +45,26 @@ FWD_H_KERNEL_PATHS = (
     FWD_H_ROOT / "gemm/kernel/gdn_fwd_h_kernel.hpp",
     FWD_H_ROOT / "arch35/gemm/kernel/gdn_fwd_h_kernel.hpp",
 )
-COMMON_MMAD_ROOT = REPO_ROOT / "fla/ops/ascendc/common/kernel_utils/block"
-COMMON_MMAD_MULTI_PATH = COMMON_MMAD_ROOT / "block_mmad_pingpong_tla_multi.hpp"
-COMMON_MMAD_PATHS = (
-    COMMON_MMAD_ROOT / "block_mmad_pingpong_tla.hpp",
-    COMMON_MMAD_MULTI_PATH,
-    COMMON_MMAD_ROOT / "block_mmad_pingpong_tla_preloadA_l1B.hpp",
+KDA_KERNEL_UTILS_ROOT = (
+    REPO_ROOT / "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/kernel_utils"
+)
+KDA_BWD_INTRA_REGBASE_PATH = (
+    REPO_ROOT
+    / "fla/ops/ascendc/kda/chunk_kda_bwd_intra/op_kernel/arch35/kernel_utils/vector/regbase.hpp"
+)
+KDA_MMAD_MULTI_PATH = (
+    KDA_KERNEL_UTILS_ROOT / "block/block_mmad_pingpong_tla_multi.hpp"
+)
+KDA_MMAD_PATHS = (
+    KDA_KERNEL_UTILS_ROOT / "block/block_mmad_pingpong_tla.hpp",
+    KDA_MMAD_MULTI_PATH,
+    KDA_KERNEL_UTILS_ROOT / "block/block_mmad_pingpong_tla_preloadA_l1B.hpp",
+)
+KDA_PRIVATE_UTILITY_PATHS = (
+    *KDA_MMAD_PATHS,
+    KDA_KERNEL_UTILS_ROOT / "tile/copy_l0c_to_ub.hpp",
+    KDA_KERNEL_UTILS_ROOT / "vector/regbase.hpp",
+    KDA_BWD_INTRA_REGBASE_PATH,
 )
 POST_WU_PATH = (
     REPO_ROOT
@@ -191,7 +206,7 @@ def _source_section(source: str, start_marker: str, end_marker: str) -> str:
 
 
 def _check_l1_clear_barriers() -> None:
-    source = COMMON_MMAD_MULTI_PATH.read_text(encoding="utf-8")
+    source = KDA_MMAD_MULTI_PATH.read_text(encoding="utf-8")
     source = re.sub(r"/\*.*?\*/|//[^\r\n]*", "", source, flags=re.DOTALL)
     start_marker = "CATLASS_DEVICE void operator()("
     start = source.index(start_marker)
@@ -228,6 +243,132 @@ def _check_l1_clear_barriers() -> None:
             raise ValueError(
                 f"{target} clear must be immediately followed by a PIPE_MTE2 barrier"
             )
+
+
+def _check_kernel_utils_ownership() -> None:
+    for path in KDA_PRIVATE_UTILITY_PATHS:
+        if not path.is_file():
+            raise ValueError(f"missing KDA-private kernel utility: {path}")
+        source = path.read_text(encoding="utf-8")
+        if "fla/ops/ascendc/common/kernel_utils" in source:
+            raise ValueError(f"KDA utility must not reference common/kernel_utils: {path}")
+
+    provider_markers = {
+        KDA_MMAD_PATHS[0]: "FLA_NPU_KERNEL_UTIL_MMAD_TLA_PROVIDED",
+        KDA_MMAD_PATHS[1]: "FLA_NPU_KERNEL_UTIL_MMAD_MULTI_PROVIDED",
+        KDA_MMAD_PATHS[2]: "FLA_NPU_KERNEL_UTIL_MMAD_PRELOAD_PROVIDED",
+        KDA_KERNEL_UTILS_ROOT / "tile/copy_l0c_to_ub.hpp": (
+            "FLA_NPU_KERNEL_UTIL_COPY_L0C_PROVIDED"
+        ),
+        KDA_KERNEL_UTILS_ROOT / "vector/regbase.hpp": (
+            "FLA_NPU_KERNEL_UTIL_REGBASE_PROVIDED"
+        ),
+        KDA_BWD_INTRA_REGBASE_PATH: "FLA_NPU_KERNEL_UTIL_REGBASE_PROVIDED",
+    }
+    for path, marker in provider_markers.items():
+        source = path.read_text(encoding="utf-8")
+        if f"#define {marker} 1" not in source:
+            raise ValueError(f"{path.name}: missing private utility provider marker {marker}")
+
+    include_re = re.compile(
+        r'^\s*#\s*include\s*[<"]([^">]+)[">]', flags=re.MULTILINE
+    )
+    for path in KDA_ROOT.rglob("*"):
+        if path.suffix not in {".h", ".hpp", ".cpp"}:
+            continue
+        source = path.read_text(encoding="utf-8")
+        for include_target in include_re.findall(source):
+            if include_target.startswith("kernel_utils/") or "common/kernel_utils/" in include_target:
+                raise ValueError(
+                    f"{path}: KDA source must not include public kernel utility {include_target}"
+                )
+
+    expected_private_includes = {
+        KDA_KERNEL_ROOT / "chunk_kda_fwd_prepare.h": (
+            '#include "./kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"',
+        ),
+        KDA_KERNEL_ROOT / "chunk_kda_fwd_post_wu.h": (
+            '#include "./kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"',
+        ),
+        KDA_KERNEL_ROOT / "chunk_kda_fwd_finalize.h": (
+            '#include "./kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"',
+        ),
+        KDA_KERNEL_ROOT / "arch35/chunk_kda_fwd_prepare.h": (
+            '#include "../kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"',
+            '#include "../kernel_utils/tile/copy_l0c_to_ub.hpp"',
+            '#include "../kernel_utils/vector/regbase.hpp"',
+        ),
+        KDA_KERNEL_ROOT / "arch35/chunk_kda_fwd_post_wu.h": (
+            '#include "../kernel_utils/block/block_mmad_pingpong_tla.hpp"',
+            '#include "../kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"',
+            '#include "../kernel_utils/vector/regbase.hpp"',
+        ),
+        KDA_KERNEL_ROOT / "arch35/chunk_kda_fwd_finalize.h": (
+            '#include "../kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"',
+        ),
+        KDA_KERNEL_ROOT / "arch35/chunk_kda_fwd_fwd_h.h": (
+            '#include "../kernel_utils/tile/copy_l0c_to_ub.hpp"',
+        ),
+        KDA_COMMON_PATH: (
+            '#include "./kernel_utils/vector/regbase.hpp"',
+            '#include "./kernel_utils/block/block_mmad_pingpong_tla_preloadA_l1B.hpp"',
+        ),
+        REPO_ROOT / "fla/ops/ascendc/kda/chunk_kda_bwd_intra/op_kernel/arch35/chunk_kda_bwd_intra_regbase.h": (
+            '#include "./kernel_utils/vector/regbase.hpp"',
+        ),
+    }
+    for path, expected_includes in expected_private_includes.items():
+        source = path.read_text(encoding="utf-8")
+        for expected_include in expected_includes:
+            if expected_include not in source:
+                raise ValueError(f"{path.name}: missing private utility include {expected_include}")
+
+    gate_path = KDA_ROOT / "kda_gate_cumsum/op_kernel/kda_gate_cumsum_kernel.h"
+    if "kernel_utils/" in gate_path.read_text(encoding="utf-8"):
+        raise ValueError("kda_gate_cumsum must not retain the unused regbase dependency")
+
+    common_source = KDA_COMMON_PATH.read_text(encoding="utf-8")
+    gdn_include = common_source.index("gdn_fwd_h_kernel.hpp")
+    for private_include in (
+        '#include "./kernel_utils/vector/regbase.hpp"',
+        '#include "./kernel_utils/block/block_mmad_pingpong_tla_preloadA_l1B.hpp"',
+        '#include "arch35/chunk_kda_fwd_prepare.h"',
+        '#include "arch35/chunk_kda_fwd_post_wu.h"',
+        '#include "chunk_kda_fwd_prepare.h"',
+    ):
+        if common_source.index(private_include) > gdn_include:
+            raise ValueError(
+                f"chunk_kda_fwd_common.h: {private_include} must precede the transitive GDN include"
+            )
+
+    expected_gdn_markers = {
+        FWD_H_ROOT / "gemm/kernel/gdn_fwd_h_kernel.hpp": (
+            "FLA_NPU_KERNEL_UTIL_MMAD_MULTI_PROVIDED",
+        ),
+        FWD_H_ROOT / "arch35/gemm/kernel/gdn_fwd_h_kernel.hpp": (
+            "FLA_NPU_KERNEL_UTIL_MMAD_TLA_PROVIDED",
+            "FLA_NPU_KERNEL_UTIL_MMAD_MULTI_PROVIDED",
+            "FLA_NPU_KERNEL_UTIL_MMAD_PRELOAD_PROVIDED",
+        ),
+        FWD_H_ROOT / "arch35/epilogue/block/block_epilogue_gdn_fwdh_regbase.hpp": (
+            "FLA_NPU_KERNEL_UTIL_REGBASE_PROVIDED",
+        ),
+    }
+    for path, markers in expected_gdn_markers.items():
+        source = path.read_text(encoding="utf-8")
+        for marker in markers:
+            if f"#ifndef {marker}" not in source:
+                raise ValueError(f"{path.name}: missing local utility handoff guard {marker}")
+
+    cmake_source = (REPO_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    for install_source in (
+        "${_kernel_source_dir}/kernel_utils",
+        "${_kernel_source_dir}/arch32",
+        "${_kernel_source_dir}/arch35",
+        "${_kernel_source_dir}/arch38",
+    ):
+        if f"install(DIRECTORY {install_source}" not in cmake_source:
+            raise ValueError(f"RTY package must install private utility path {install_source}")
 
 
 def _check_kernel_sync_contract() -> None:
@@ -400,7 +541,7 @@ def _check_empty_varlen_state_contract() -> None:
 
 
 def _check_post_wu_and_fwd_h_contract() -> None:
-    for path in COMMON_MMAD_PATHS:
+    for path in KDA_MMAD_PATHS:
         source = path.read_text(encoding="utf-8")
         if "l0CEventList[0] = 0;" not in source:
             raise ValueError(f"{path.name}: unit-flag L0C event is uninitialized")
@@ -829,6 +970,7 @@ def _check_yaml_input_contract(manifests: dict[str, list[dict]]) -> None:
 
 def main() -> int:
     _check_source_evidence()
+    _check_kernel_utils_ownership()
     _check_l1_clear_barriers()
     _check_kernel_sync_contract()
     _check_empty_varlen_state_contract()

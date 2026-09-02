@@ -555,11 +555,13 @@ if (BUILD_OPS_RTY_KERNEL)
         get_filename_component(_op_name "${op_dir}" NAME)
 
         if (EXISTS "${op_dir}/op_kernel")
+            set(_kernel_source_dir "${op_dir}/op_kernel")
             file(GLOB KERNEL_FILES
                 ${op_dir}/op_kernel/*.cpp
                 ${op_dir}/op_kernel/*.h
-        )
+            )
         else()
+            set(_kernel_source_dir "${op_dir}")
             file(GLOB KERNEL_FILES
                 ${op_dir}/*.cpp
                 ${op_dir}/*.h
@@ -571,17 +573,22 @@ if (BUILD_OPS_RTY_KERNEL)
                 OPTIONAL
         )
 
-        install(DIRECTORY ${op_dir}/arch32
-            DESTINATION ${IMPL_INSTALL_DIR}/ascendc/${_op_name}
-            OPTIONAL
-        )
-
-        install(DIRECTORY ${op_dir}/arch35
+        install(DIRECTORY ${_kernel_source_dir}/kernel_utils
                 DESTINATION ${IMPL_INSTALL_DIR}/ascendc/${_op_name}
                 OPTIONAL
         )
 
-        install(DIRECTORY ${op_dir}/arch38
+        install(DIRECTORY ${_kernel_source_dir}/arch32
+            DESTINATION ${IMPL_INSTALL_DIR}/ascendc/${_op_name}
+            OPTIONAL
+        )
+
+        install(DIRECTORY ${_kernel_source_dir}/arch35
+                DESTINATION ${IMPL_INSTALL_DIR}/ascendc/${_op_name}
+                OPTIONAL
+        )
+
+        install(DIRECTORY ${_kernel_source_dir}/arch38
                 DESTINATION ${IMPL_INSTALL_DIR}/ascendc/${_op_name}
                 OPTIONAL
         )

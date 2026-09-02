@@ -8,8 +8,9 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef COMMON_BLOCK_MMAD_PINGPONG_TLA_HPP
-#define COMMON_BLOCK_MMAD_PINGPONG_TLA_HPP
+#ifndef FLA_NPU_KDA_BLOCK_MMAD_PINGPONG_TLA_HPP
+#define FLA_NPU_KDA_BLOCK_MMAD_PINGPONG_TLA_HPP
+#define FLA_NPU_KERNEL_UTIL_MMAD_TLA_PROVIDED 1
 
 #include "catlass/catlass.hpp"
 #include "catlass/arch/resource.hpp"
@@ -19,7 +20,7 @@
 #include "catlass/gemm/helper.hpp"
 #include "catlass/gemm/tile/tile_copy.hpp"
 #include "catlass/gemm/tile/tile_mmad.hpp"
-#include "kernel_utils/tile/copy_l0c_to_ub.hpp"
+#include "../tile/copy_l0c_to_ub.hpp"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 
@@ -43,8 +44,8 @@ struct BlockMmadTla {
 };
 
 // Now ENABLE_UNIT_FLAG_ must be false when intput element is int8
-template <class ArchTag_, bool ENABLE_UNIT_FLAG_ = false, bool USE_HF32_MODE_ = false, uint32_t L0C_STAGES_ = 1, 
-    bool ENABLE_L1_RESIDENT_ = false, uint32_t L1A_STAGES_ = 2, uint32_t L1B_STAGES_ = 2, uint32_t L0A_STAGES_ = 2, 
+template <class ArchTag_, bool ENABLE_UNIT_FLAG_ = false, bool USE_HF32_MODE_ = false, uint32_t L0C_STAGES_ = 1,
+    bool ENABLE_L1_RESIDENT_ = false, uint32_t L1A_STAGES_ = 2, uint32_t L1B_STAGES_ = 2, uint32_t L0A_STAGES_ = 2,
     uint32_t L0B_STAGES_ = 2, uint32_t UB_STAGES_ = 2>
 struct MmadPingpong : public Catlass::Gemm::MmadBase<ArchTag_, false> {
     static constexpr uint32_t L1A_STAGES = L1A_STAGES_;
@@ -79,7 +80,7 @@ template <
     class TileMmad_
 >
 struct BlockMmadTla <
-    MmadPingpong<ArchTag_, ENABLE_UNIT_FLAG_, USE_HF32_MODE_, L0C_STAGES_, ENABLE_L1_RESIDENT_, L1A_STAGES_, 
+    MmadPingpong<ArchTag_, ENABLE_UNIT_FLAG_, USE_HF32_MODE_, L0C_STAGES_, ENABLE_L1_RESIDENT_, L1A_STAGES_,
         L1B_STAGES_, L0A_STAGES_, L0B_STAGES_, UB_STAGES_>,
     L1TileShape_,
     L0TileShape_,
@@ -92,7 +93,7 @@ struct BlockMmadTla <
 > {
 public:
     // Type Aliases
-    using DispatchPolicy = MmadPingpong<ArchTag_, ENABLE_UNIT_FLAG_, USE_HF32_MODE_, L0C_STAGES_, ENABLE_L1_RESIDENT_, 
+    using DispatchPolicy = MmadPingpong<ArchTag_, ENABLE_UNIT_FLAG_, USE_HF32_MODE_, L0C_STAGES_, ENABLE_L1_RESIDENT_,
         L1A_STAGES_, L1B_STAGES_, L0A_STAGES_, L0B_STAGES_, UB_STAGES_>;
     using ArchTag = typename DispatchPolicy::ArchTag;
     using TileCopy = TileCopy_;
@@ -191,10 +192,10 @@ public:
     static_assert(L0_TILE_K * SizeOfBits<ElementB>::value % _32B == 0, "L0TileShape::K must be 32B aligned.");
 #endif
 
-    static_assert((!HAS_BIAS && (L1A_STAGES + L1B_STAGES) <= 8) || (HAS_BIAS && (L1A_STAGES + L1B_STAGES) <= 7), 
+    static_assert((!HAS_BIAS && (L1A_STAGES + L1B_STAGES) <= 8) || (HAS_BIAS && (L1A_STAGES + L1B_STAGES) <= 7),
         "L1 Buffer overflow: Exceeds the supported range of EVENT(0~7)");
 
-    static_assert((!HAS_BIAS && (L0A_STAGES + L0B_STAGES) <= 8) || (HAS_BIAS && (L0A_STAGES + L0B_STAGES) <= 7), 
+    static_assert((!HAS_BIAS && (L0A_STAGES + L0B_STAGES) <= 8) || (HAS_BIAS && (L0A_STAGES + L0B_STAGES) <= 7),
         "L0 Buffer overflow: Exceeds the supported range of EVENT_ID(0~7)");
 
     static constexpr auto L1A_LAYOUT =
@@ -277,6 +278,7 @@ public:
                 }
             } else {
                 l0CTensorList[0] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
+                l0CEventList[0] = 0;
             }
             if constexpr (HAS_BIAS) {
                 uint32_t l1BiasOffset = l1BOffset + L1B_TILE_SIZE * L1B_STAGES;
@@ -349,11 +351,11 @@ public:
 #if (defined (CATLASS_ARCH) && CATLASS_ARCH == 2201)
         using CopyL0CToGm = typename TileCopy_::template CopyL0CToGm<TensorC>;
         CopyL0CToGm copyL0CToDst;
-#endif        
+#endif
 #if (defined (CATLASS_ARCH) && CATLASS_ARCH == 3510)
         using CopyL0CToDst = typename TileCopy_::template CopyL0CToDst<TensorC>;
         CopyL0CToDst copyL0CToDst;
-#endif        
+#endif
 
         uint32_t mBlockActual = actualShape.m();
         uint32_t kBlockActual = actualShape.k();
@@ -1035,7 +1037,7 @@ protected:
     __gm__ typename AscendC::GlobalTensor<ElementB>::PrimType* lastAddrB[L1B_STAGES];
     Catlass::MatrixCoord lastCoordA[L1A_STAGES];
     Catlass::MatrixCoord lastCoordB[L1B_STAGES];
-    
+
     // The id of current stage
     uint32_t l1AListId{0};
     uint32_t l1BListId{0};
@@ -1051,4 +1053,4 @@ protected:
 
 } // namespace Common
 
-#endif // CATLASS_GEMM_BLOCK_BLOCK_MMAD_PINGPONG_TLA_HPP
+#endif // FLA_NPU_KDA_BLOCK_MMAD_PINGPONG_TLA_HPP

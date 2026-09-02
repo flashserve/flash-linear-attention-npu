@@ -218,7 +218,6 @@ public:
                 }
             } else {
                 l0CTensorList[0] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
-                l0CEventList[0] = 0;
             }
         }
     }

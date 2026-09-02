@@ -18,7 +18,10 @@
 #include "../../epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
 #include "../../epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
 #include "catlass/gemm/block/block_mmad.hpp"
+// A parent operator may provide an equivalent local utility before this header.
+#ifndef FLA_NPU_KERNEL_UTIL_MMAD_MULTI_PROVIDED
 #include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
+#endif
 #include "catlass/gemm/block/block_swizzle.hpp"
 #include "../block/block_scheduler_gdn_fwd_h.hpp"
 #include "catlass/gemm/dispatch_policy.hpp"

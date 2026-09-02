@@ -1,11 +1,15 @@
 #pragma once
 
 #include "kernel_operator.h"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "./kernel_utils/vector/regbase.hpp"
+#endif
 #include "../../kda_gate_cumsum/op_kernel/kda_gate_cumsum_kernel.h"
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #include "arch35/chunk_kda_fwd_prepare.h"
 #include "arch35/chunk_kda_fwd_post_wu.h"
 #include "arch35/chunk_kda_fwd_finalize.h"
+#include "./kernel_utils/block/block_mmad_pingpong_tla_preloadA_l1B.hpp"
 #else
 #include "chunk_kda_fwd_prepare.h"
 #include "chunk_kda_fwd_post_wu.h"

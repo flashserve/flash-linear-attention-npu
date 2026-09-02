@@ -8,9 +8,12 @@
 #define BLOCK_EPILOGUE_GDN_FWDH_REGBASE_HPP
 
 #include "kernel_operator.h"
+// A parent operator may provide an equivalent local utility before this header.
+#ifndef FLA_NPU_KERNEL_UTIL_REGBASE_PROVIDED
 #ifndef FLA_NPU_REGBASE_HPP_INCLUDED
 #define FLA_NPU_REGBASE_HPP_INCLUDED
 #include "kernel_utils/vector/regbase.hpp"
+#endif
 #endif
 
 namespace Catlass::Epilogue::Block::detail {

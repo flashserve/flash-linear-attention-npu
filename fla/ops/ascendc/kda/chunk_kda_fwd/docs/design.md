@@ -8,6 +8,10 @@
 4. 输入 layout 与输出 layout 解耦。
 5. FwdH 同时服务 KDA 与 GDN，并支持可选 scalar gate、key-wise gate 和 `state_v_first`。
 
+KDA 使用的 Catlass 流水和 regbase 辅助头位于本算子的 `op_kernel/kernel_utils/` 私有目录；
+bwd-intra 等 KDA 子算子也在各自的 `op_kernel/kernel_utils/` 中携带所需的 regbase 副本；
+`ascendc/common/kernel_utils` 仅保留给 GDN 等既有消费者，KDA 不依赖该公共副本。
+
 ## L2 调度
 
 ```text
