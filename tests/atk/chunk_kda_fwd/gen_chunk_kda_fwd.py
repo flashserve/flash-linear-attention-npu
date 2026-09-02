@@ -40,7 +40,9 @@ SOCS = ("ascend910b", "ascend910_93", "ascend950")
 STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key"}
 MSS_STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key", "mem": 1.1}
 MSS_UNSAFE_SOURCE_CASES = ((4, "full"), (24, "staged"))
-MSS_COUNT = 4 + len(MSS_UNSAFE_SOURCE_CASES)
+MSS_VARLEN_TAIL_CASE_ID = 6
+MSS_VARLEN_TAIL_SEED = 4
+MSS_COUNT = MSS_VARLEN_TAIL_CASE_ID + 1
 _T_VALUES = (64, 65, 96, 127, 128, 129, 192, 256, 512, 1024)
 _DATA_SCALES = (0.03, 0.08, 0.2, 0.5)
 _GATE_SCALES = (0.01, 0.02, 0.04, 0.08)
@@ -373,6 +375,51 @@ def _coverage_spec(key: int, boundary: bool, case_id: int, *, seed_base: int) ->
     }
 
 
+def _varlen_tail_regression_spec(*, seed_base: int) -> dict[str, Any]:
+    spec = _coverage_spec(
+        2, False, MSS_VARLEN_TAIL_CASE_ID, seed_base=seed_base
+    )
+    spec.update({
+        "case_key": "mss_varlen_tail_h2_hv96_t63_key2",
+        "design_id": "KDA-FWD-MSS-VARLEN-TAIL-H96",
+        "profile": "determinism_regression",
+        "tags": (
+            "mss,determinism,mssanitizer,regression,boundary,varlen,"
+            "tiling_key_2,issue440"
+        ),
+        "B": 1,
+        "H": 2,
+        "HV": 96,
+        "T": 63,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "layout": "BSND",
+        "q_dtype": "bf16",
+        "g_dtype": "fp32",
+        "beta_dtype": "fp32",
+        "scale": 0.08838834764831843,
+        "initial_state": False,
+        "output_final_state": True,
+        "cu_seqlens": "0,63",
+        "explicit_chunk_indices": False,
+        "safe_gate": True,
+        "lower_bound": -5.0,
+        "use_gate_in_kernel": True,
+        "dt_bias": True,
+        "disable_recompute": True,
+        "return_intermediate_states": True,
+        "state_v_first": False,
+        "data_profile": "model_h96",
+        "gate_scale": 1.25,
+        "qk_scale": 0.05,
+        "v_scale": 0.05,
+        "dt_bias_scale": 1.65,
+        "seed": MSS_VARLEN_TAIL_SEED,
+    })
+    return spec
+
+
 def build_mss_specs(*, seed_base: int = SEED_BASE) -> list[dict[str, Any]]:
     entries = ((key, boundary) for key in TILING_KEYS for boundary in (False, True))
     specs = [_coverage_spec(key, boundary, case_id, seed_base=seed_base)
@@ -399,6 +446,7 @@ def build_mss_specs(*, seed_base: int = SEED_BASE) -> list[dict[str, Any]]:
             "a5_launch_mode": launch_mode,
         })
         specs.append(spec)
+    specs.append(_varlen_tail_regression_spec(seed_base=seed_base))
     return specs
 
 
@@ -607,9 +655,7 @@ def _validate_specs(
     if manifest == "mss":
         if len(specs) != MSS_COUNT:
             raise ValueError(f"MSS must contain exactly {MSS_COUNT} records")
-        base_specs = [
-            spec for spec in specs if "source_accuracy_case_id" not in spec
-        ]
+        base_specs = specs[:4]
         if len(base_specs) != 4 or {
             (int(s["tiling_key"]), bool(s["initial_state"])) for s in base_specs
         } != {
@@ -653,6 +699,11 @@ def _validate_specs(
                 and int(spec["V"]) >= int(spec["K"])
             ):
                 raise ValueError(f"MSS unsafe case {local_case_id} misses the A5 selector")
+        expected_tail = _varlen_tail_regression_spec(seed_base=seed_base)
+        if specs[MSS_VARLEN_TAIL_CASE_ID] != expected_tail:
+            raise ValueError(
+                f"MSS case {MSS_VARLEN_TAIL_CASE_ID} varlen tail regression drifted"
+            )
     if manifest == "perf" and {int(s["tiling_key"]) for s in specs} != set(TILING_KEYS):
         raise ValueError("performance must contain both tiling keys")
 

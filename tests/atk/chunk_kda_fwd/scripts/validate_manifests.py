@@ -878,7 +878,7 @@ def _a5_launch_mode(spec: dict) -> str:
 def _check_mss_coverage(
     specs: list[dict], accuracy_specs: list[dict], module
 ) -> None:
-    base_specs = [spec for spec in specs if "source_accuracy_case_id" not in spec]
+    base_specs = specs[:4]
     if [int(spec["case_id"]) for spec in base_specs] != list(range(4)):
         raise ValueError("the four original MSS rows must retain IDs 0--3")
     if {
@@ -939,6 +939,68 @@ def _check_mss_coverage(
             and int(spec["V"]) >= int(spec["K"])
         ):
             raise ValueError(f"MSS case {local_case_id} misses the A5 precision selector")
+
+    tail_case_id = int(module.MSS_VARLEN_TAIL_CASE_ID)
+    tail = specs[tail_case_id]
+    expected_tail = {
+        "case_id": 6,
+        "case_key": "mss_varlen_tail_h2_hv96_t63_key2",
+        "design_id": "KDA-FWD-MSS-VARLEN-TAIL-H96",
+        "profile": "determinism_regression",
+        "soc": "all",
+        "B": 1,
+        "H": 2,
+        "HV": 96,
+        "T": 63,
+        "K": 128,
+        "V": 128,
+        "chunk_size": 64,
+        "layout": "BSND",
+        "q_dtype": "bf16",
+        "g_dtype": "fp32",
+        "beta_dtype": "fp32",
+        "scale": 0.08838834764831843,
+        "initial_state": False,
+        "output_final_state": True,
+        "cu_seqlens": "0,63",
+        "explicit_chunk_indices": False,
+        "safe_gate": True,
+        "lower_bound": -5.0,
+        "use_gate_in_kernel": True,
+        "dt_bias": True,
+        "disable_recompute": True,
+        "return_intermediate_states": True,
+        "state_v_first": False,
+        "negative_case": False,
+        "data_profile": "model_h96",
+        "data_scale": 0.08,
+        "gate_scale": 1.25,
+        "qk_scale": 0.05,
+        "v_scale": 0.05,
+        "beta_scale": 0.35,
+        "beta_bias": 1.5,
+        "a_log_scale": 0.12,
+        "dt_bias_scale": 1.65,
+        "dt_bias_mean": -3.0,
+        "beta_low": 0.1,
+        "beta_high": 0.9,
+        "state_scale": 0.02,
+        "tiling_key": 2,
+        "expected_tiling_key": 2,
+        "seed": 4,
+    }
+    if tail_case_id != 6 or any(
+        tail.get(name) != value for name, value in expected_tail.items()
+    ):
+        raise ValueError("MSS case 6 varlen tail regression drifted")
+    if set(tail.get("target_platforms", ())) != SOCS:
+        raise ValueError("MSS case 6 must retain cross-SoC coverage")
+    required_tags = {
+        "mss", "determinism", "mssanitizer", "regression", "boundary",
+        "varlen", "tiling_key_2", "issue440",
+    }
+    if set(str(tail.get("tags", "")).split(",")) != required_tags:
+        raise ValueError("MSS case 6 regression tags drifted")
 
 
 def _check_yaml_input_contract(manifests: dict[str, list[dict]]) -> None:

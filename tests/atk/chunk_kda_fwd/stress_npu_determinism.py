@@ -30,6 +30,7 @@ _SOC_ALIASES = {
 _VALID_ROUTES = {"ascendc", "aclnn", "direct_launch"}
 _TILING_KEYS = {1, 2}
 _REQUIRED_UNSAFE_CASES = {4: (4, "full"), 5: (24, "staged")}
+_VARLEN_TAIL_CASE_ID = 6
 
 
 def _parse_args() -> argparse.Namespace:
@@ -228,6 +229,34 @@ def _load_specs(
                 raise ValueError(f"case {current_id} misses the A5 precision selector")
         elif current_id in _REQUIRED_UNSAFE_CASES:
             raise ValueError(f"case {current_id} is missing unsafe source metadata")
+        if current_id == _VARLEN_TAIL_CASE_ID:
+            expected_tail = {
+                "profile": "determinism_regression",
+                "B": 1, "H": 2, "HV": 96, "T": 63, "K": 128, "V": 128,
+                "chunk_size": 64, "layout": "BSND", "q_dtype": "bf16",
+                "g_dtype": "fp32", "beta_dtype": "fp32",
+                "scale": 0.08838834764831843,
+                "initial_state": False, "output_final_state": True,
+                "cu_seqlens": "0,63", "explicit_chunk_indices": False,
+                "safe_gate": True, "lower_bound": -5.0,
+                "use_gate_in_kernel": True, "dt_bias": True,
+                "disable_recompute": True, "return_intermediate_states": True,
+                "state_v_first": False, "negative_case": False,
+                "data_profile": "model_h96", "data_scale": 0.08,
+                "gate_scale": 1.25, "qk_scale": 0.05, "v_scale": 0.05,
+                "beta_scale": 0.35, "beta_bias": 1.5, "a_log_scale": 0.12,
+                "dt_bias_scale": 1.65, "dt_bias_mean": -3.0,
+                "beta_low": 0.1, "beta_high": 0.9, "state_scale": 0.02,
+                "tiling_key": 2, "expected_tiling_key": 2, "seed": 4,
+            }
+            if any(spec.get(name) != value for name, value in expected_tail.items()):
+                raise ValueError("case 6 varlen tail regression drifted")
+            required_tags = {
+                "mss", "determinism", "mssanitizer", "regression", "boundary",
+                "varlen", "tiling_key_2", "issue440",
+            }
+            if tags != required_tags:
+                raise ValueError("case 6 regression tags drifted")
         route = str(spec.get("route", ""))
         if route not in _VALID_ROUTES:
             raise ValueError(f"case {current_id} has unsupported route {route!r}")
@@ -246,9 +275,9 @@ def _load_specs(
     selected.sort(key=lambda item: (int(item["case_id"]), int(item["tiling_key"])))
     if case_id is None:
         selected_ids = [int(item["case_id"]) for item in selected]
-        if selected_ids != list(range(6)):
+        if selected_ids != list(range(7)):
             raise ValueError(
-                f"complete MSS selection must contain IDs 0--5; selected {selected_ids}"
+                f"complete MSS selection must contain IDs 0--6; selected {selected_ids}"
             )
         base_coverage = {
             (int(item["tiling_key"]), bool(item["initial_state"]))
@@ -319,6 +348,43 @@ def _ensure_finite(torch, tensor, label: str) -> None:
         return
     if not bool(torch.isfinite(tensor).all().item()):
         raise RuntimeError(f"{label} contains NaN or Inf")
+
+
+def _expected_output_presence(spec: dict[str, Any]) -> dict[str, bool]:
+    export_full = bool(spec["disable_recompute"])
+    return {
+        "attn_out": True,
+        "final_state": bool(spec["output_final_state"]),
+        "gk": not bool(spec["use_gate_in_kernel"]) or export_full,
+        "Aqk": True,
+        "Akk": True,
+        "w": export_full,
+        "u": export_full,
+        "qg": export_full,
+        "kg": export_full,
+        "v_new": export_full,
+        "h": export_full or bool(spec["return_intermediate_states"]),
+        "initial_state_out": bool(spec["initial_state"]),
+    }
+
+
+def _validate_output_presence(torch, outputs, names: Iterable[str], spec: dict[str, Any]) -> None:
+    names = tuple(names)
+    expected = _expected_output_presence(spec)
+    if set(names) != set(expected) or len(names) != len(expected):
+        raise RuntimeError("executor output names disagree with the output-policy contract")
+    if not isinstance(outputs, (tuple, list)) or len(outputs) != len(names):
+        actual = len(outputs) if isinstance(outputs, (tuple, list)) else type(outputs).__name__
+        raise RuntimeError(f"executor returned {actual} outputs, expected {len(names)}")
+    for name, output in zip(names, outputs):
+        should_exist = expected[name]
+        is_tensor = isinstance(output, torch.Tensor)
+        if should_exist != is_tensor:
+            expected_type = "Tensor" if should_exist else "None"
+            raise RuntimeError(
+                f"{name} violates the output policy: expected {expected_type}, "
+                f"got {type(output).__name__}"
+            )
 
 
 def _snapshot_outputs(torch, outputs, names: Iterable[str]):
@@ -467,6 +533,7 @@ def _run_case(
             outputs = run_positive_npu(run_inputs, spec)
             torch.npu.synchronize()
             elapsed = time.perf_counter() - launch_started
+            _validate_output_presence(torch, outputs, output_names, spec)
             if baseline is None:
                 baseline = _snapshot_outputs(torch, outputs, output_names)
                 record: dict[str, Any] = {

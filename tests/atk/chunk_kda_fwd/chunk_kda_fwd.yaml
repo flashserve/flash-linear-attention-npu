@@ -56,12 +56,12 @@ inputs:
     type: attr
     required: true
     dtypes: {values: [int]}
-    ranges: {valid: {values: [1, 2, 4, 8, 16, 32]}, invalid: {values: [0, 129]}}
+    ranges: {valid: {values: [1, 2, 4, 8, 16, 32, 96]}, invalid: {values: [0, 129]}}
   - name: total_tokens
     type: attr
     required: true
     dtypes: {values: [int]}
-    ranges: {valid: {values: [64, 65, 96, 127, 128, 129, 192, 256, 512, 1024]}, invalid: {values: []}}
+    ranges: {valid: {values: [63, 64, 65, 96, 127, 128, 129, 192, 256, 512, 1024]}, invalid: {values: []}}
   - name: key_dim
     type: attr
     required: true
@@ -206,7 +206,7 @@ inputs:
     type: attr
     required: true
     dtypes: {values: [string]}
-    ranges: {valid: {values: [uniform]}, invalid: {values: []}}
+    ranges: {valid: {values: [uniform, model_h96]}, invalid: {values: []}}
   - name: data_scale
     type: attr
     required: true
@@ -216,17 +216,17 @@ inputs:
     type: attr
     required: true
     dtypes: {values: [float]}
-    ranges: {valid: {values: [0.01, 0.02, 0.04, 0.08]}, invalid: {values: []}}
+    ranges: {valid: {values: [0.01, 0.02, 0.04, 0.08, 1.25]}, invalid: {values: []}}
   - name: qk_scale
     type: attr
     required: true
     dtypes: {values: [float]}
-    ranges: {valid: {values: [0.25]}, invalid: {values: []}}
+    ranges: {valid: {values: [0.05, 0.25]}, invalid: {values: []}}
   - name: v_scale
     type: attr
     required: true
     dtypes: {values: [float]}
-    ranges: {valid: {values: [0.25]}, invalid: {values: []}}
+    ranges: {valid: {values: [0.05, 0.25]}, invalid: {values: []}}
   - name: beta_scale
     type: attr
     required: true
@@ -246,7 +246,7 @@ inputs:
     type: attr
     required: true
     dtypes: {values: [float]}
-    ranges: {valid: {values: [0.5]}, invalid: {values: []}}
+    ranges: {valid: {values: [0.5, 1.65]}, invalid: {values: []}}
   - name: dt_bias_mean
     type: attr
     required: true
@@ -276,7 +276,7 @@ inputs:
     type: attr
     required: true
     dtypes: {values: [string]}
-    ranges: {valid: {values: [accuracy_100x2, mss_tiling_key_coverage, mss_unsafe_regression, perf_tiling_key_coverage]}, invalid: {values: []}}
+    ranges: {valid: {values: [accuracy_100x2, determinism_regression, mss_tiling_key_coverage, mss_unsafe_regression, perf_tiling_key_coverage]}, invalid: {values: []}}
   - name: tags
     type: attr
     required: true
