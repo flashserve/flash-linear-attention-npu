@@ -437,10 +437,16 @@ private:
                 {false, 0, 0, 0});
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             KdaBwdCCastBf16ToFp32A5(
                 (__ubuf__ float *)x.GetPhyAddr(),
                 (__ubuf__ bfloat16_t *)rawStage.GetPhyAddr(),
                 static_cast<uint16_t>(count));
+#else
+            AscendC::Cast(
+                x, rawStage, AscendC::RoundMode::CAST_NONE, count);
+            AscendC::PipeBarrier<PIPE_V>();
+#endif
         }
         if (tiling_.hasDtBias != 0) {
             auto bias = reduce_.Get<float>()[144];
