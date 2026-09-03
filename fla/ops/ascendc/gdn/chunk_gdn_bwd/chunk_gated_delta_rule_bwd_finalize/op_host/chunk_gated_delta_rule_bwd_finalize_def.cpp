@@ -91,6 +91,7 @@ public:
         this->Attr("chunk_size").AttrType(OPTIONAL).Int(64);
         this->Attr("use_qk_l2norm_in_kernel").AttrType(OPTIONAL).Bool(false);
         this->Attr("use_beta_sigmoid_in_kernel").AttrType(OPTIONAL).Bool(false);
+        this->Attr("allow_neg_eigval").AttrType(OPTIONAL).Bool(false);
         this->Attr("use_gate_in_kernel").AttrType(OPTIONAL).Bool(false);
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
         this->Attr("use_exp2").AttrType(OPTIONAL).Bool(true);

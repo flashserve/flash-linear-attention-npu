@@ -150,6 +150,7 @@ Python：           fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_finalize
 | `chunk_size` | int64 | 64 |
 | `use_qk_l2norm_in_kernel` | bool | false |
 | `use_beta_sigmoid_in_kernel` | bool | false |
+| `allow_neg_eigval` | bool | false |
 | `use_gate_in_kernel` | bool | false |
 | `state_v_first` | bool | false |
 | `use_exp2` | bool | true |
@@ -163,6 +164,8 @@ Python：           fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_finalize
 - `chunk_size` 为兼容上层调用保留，但只接受 `64`；
 - `use_qk_l2norm_in_kernel=True` 时 `q_rstd/k_rstd` 必须非空；
 - `use_beta_sigmoid_in_kernel=True` 时 `beta_raw` 必须非空；
+- `allow_neg_eigval=True` 要求 `use_beta_sigmoid_in_kernel=True`，并将
+  beta sigmoid backward 系数乘 2；
 - 对应开关为 `False` 时，可选输入允许为空且 kernel 不绑定、不搬运该 GM 地址；
 - `use_gate_in_kernel` 当前只接受 `False`，输入 `g` 必须是核外已经准备好的 chunk gate；
 - `use_exp2` 当前只接受 `True`，所有 gate 指数项均按 `exp2` 计算；
@@ -173,18 +176,19 @@ Python：           fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_finalize
 ### 3.2 TilingKey 模板
 
 `D_T_Q` 固定为 BF16，`D_T_G` 同时表示 `g/beta` 的共同 BF16 或 FP32 dtype；
-`USE_QK_L2NORM` 和 `USE_BETA_SIGMOID` 是两个独立 bool 模板参数：
+`USE_QK_L2NORM`、`USE_BETA_SIGMOID` 和 `ALLOW_NEG_EIGVAL` 是 bool 模板参数：
 
-| `D_T_G` | `USE_QK_L2NORM` | `USE_BETA_SIGMOID` | kernel 行为 |
-|---|---:|---:|---|
-| BF16 或 FP32 | 0 | 0 | 直接输出聚合后的 `dq/dk` 与 `db_prepare` |
-| BF16 或 FP32 | 0 | 1 | 只融合 beta sigmoid backward |
-| BF16 或 FP32 | 1 | 0 | 只融合 Q/K L2Norm backward |
-| BF16 或 FP32 | 1 | 1 | 同时融合两条 backward |
+| `D_T_G` | `USE_QK_L2NORM` | `USE_BETA_SIGMOID` | `ALLOW_NEG_EIGVAL` | kernel 行为 |
+|---|---:|---:|---:|---|
+| BF16 或 FP32 | 0/1 | 0 | 0 | `dbeta=db_prepare`；按模板决定是否融合 Q/K L2Norm backward |
+| BF16 或 FP32 | 0/1 | 1 | 0 | 融合 beta sigmoid backward |
+| BF16 或 FP32 | 0/1 | 1 | 1 | 融合 beta sigmoid backward，导数系数乘 2 |
 
-因此总计生成 `2 * 2 * 2 = 8` 个模板实例。Host 使用属性值调用
+每个 dtype 和 Q/K L2Norm 组合有 3 个可达 beta 分支，总计生成
+`2 * 2 * 3 = 12` 个模板实例。`USE_BETA_SIGMOID=0, ALLOW_NEG_EIGVAL=1`
+为非法组合，ACLNN 和 Tiling 两层拦截。Host 使用属性值调用
 `GET_TPL_TILING_KEY`，kernel 通过 `if constexpr` 裁掉关闭路径的输入搬运和 VF
-公式；这两个开关不再存入 `ChunkGatedDeltaRuleBwdFinalizeTilingData`。定长/变长、shape、
+公式；这三个开关不再存入 `ChunkGatedDeltaRuleBwdFinalizeTilingData`。定长/变长、shape、
 任务组、workspace 调度和 `state_v_first` 仍是运行时 tiling 数据。
 
 `use_gate_in_kernel` 和 `use_exp2` 是兼容上层调用的固定属性，不扩展 TilingKey：
@@ -842,7 +846,8 @@ UB[247.5,248)  bg[2]；FP32；S12 消费后释放
    VF 前到齐。
 2. 一次 VF 完成上述公式；`dk_prepare` 原位覆盖 `dkbg0`，`do_g` 原位覆盖
    `do`，`v_decay` 原位覆盖 `v_new`。`USE_BETA_SIGMOID=1` 时执行 sigmoid
-   backward；否则 `dbeta=db_prepare`。`dbeta` 始终以 FP32 驻留；FP32 ABI 直接
+   backward；`ALLOW_NEG_EIGVAL=1` 时再乘 2；否则 `dbeta=db_prepare`。
+   `dbeta` 始终以 FP32 驻留；FP32 ABI 直接
    写回，BF16 ABI 仅在 MTE3 前生成临时打包结果。
 3. `ds[2]` 原位覆盖 `ds0[2]`。`ds/do_g/v_decay` 分别写入
    `dsWorkspace/kbgDoGWorkspace/dk0Workspace`，供 S13 搬入 L1。Stage 12 是
@@ -990,7 +995,8 @@ beta sigmoid backward：
 
 ```text
 s     = sigmoid(beta_raw)                     # s: [BT]
-dbeta = db_prepare * s * (1-s)                # dbeta: [BT]
+coef  = 2 if allow_neg_eigval else 1
+dbeta = db_prepare * s * (1-s) * coef         # dbeta: [BT]
 ```
 
 关闭 `use_beta_sigmoid_in_kernel` 时：
