@@ -2,9 +2,12 @@
 
 ## 知识来源
 
-- 来源：`D:/workspace/部门AI全流程专项/.codex/knowledge/causal-decisions/`
+- 来源：本地固定的 AscendC 因果决策卡快照。
 - 索引 SHA256：`8A39C978073539C5648B2CCDAC1131F82871AC567081EBA445CE91C3BC0DC426`
-- 目标范围：A5 / dav-3510 / Ascend950；精确 CANN 版本待真机登记。
+- 目标范围：A5 / dav-3510 / Ascend950 / CANN 9.1。
+- 目标 CANN：由执行旁车固定的 CANN 9.1 安装；`kernel_event.h`
+  SHA256 为
+  `3b2fc26123e9fcaa011f77f1db67f2fef16909c6051f7930093845111d81aa52`。
 
 ## 检索账本
 
@@ -50,3 +53,36 @@
 - Validation：检查 key 域完备互斥；目标模型性能门禁；其他支持 case 功能与精度门禁。
 - Result：两项移植都限定在现有融合私有模块及 A5 arch35 分支；A2/非 arch35 路径、统一 L0、V128/V256 tiling key 和现有调用入口保持不变。已通过 12 项本地 ctypes ABI 测试和聚焦 diff 检查；编译/功能/性能待 A5。
 - Invalidation：二进制证明特化不改变生成代码或稳定性能，届时合并模板。
+
+## CD-004：用单一产物的编译期变体定位过宽同步
+
+- Phase/status：实验 / in progress
+- Affected files：Phase 6 host tiling、顶层 kernel、FwdH arch35 kernel 与 SolveTri64。
+- Signal/question：FwdH 两处 bounded-MMAD 结束后和 SolveTri64 的
+  `FixpipeL0cToL1` 之后使用 `PIPE_ALL`，需判断它们是否为当前 A5
+  模型 shape 的可见性能瓶颈，以及是否能收窄而不破坏正确性。
+- Mechanism：
+  - FwdH 候选假设：`finalWaitFlags()` 已闭合当前 bounded MMAD
+    生命周期，后续 `CrossCoreSetFlag<0x2, PIPE_FIX>` 承担向 AIV 发布结果的
+    跨核边，因此两处 `PIPE_ALL` 可能是重复全流水排空。
+  - SolveTri64 已确认的实际链路为
+    `FIX -> GM workspace -> MTE2 -> l1_Y -> MTE1`。helper 内部的
+    `FIX_MTE2` 不能替代 helper 返回后的 `MTE2_MTE1`；第一次 MMAD
+    读 `l1_I/l1_X` 与 `l1_Y` 无关，第二次 MMAD 才首次读 `l1_Y`。
+- Alternatives：直接删除所有 `PIPE_ALL`；每个方案单独编译；一次编译
+  B0–B3 后通过 tiling key 选择。
+- Choice：采用一次编译、四个编译期变体：B0 保留原同步；B1 仅跳过
+  FwdH 两处目标 `PIPE_ALL`；B2 在 B1 上将 SolveTri64 的 `PIPE_ALL`
+  收窄为立即 `MTE2_MTE1`；B3 在 B2 上将 wait 延后到第二次、
+  即首次读 `l1_Y` 的 MMAD 前。B1–B3 仅在 `__CCE_AICORE__ == 310`
+  中编译，host 在非 Ascend950 上 fail-closed；不扩展公共 ABI/trailer。
+- Validation：先冻结两轮 inference/full 均成功的 stable200；然后在同一
+  CANN 9.1 产物中检查 key 集、实际路由、首次/重复精度与确定性；
+  最后用独占空闲卡做 B0↔B1、B1↔B2、B2↔B3 和 B0↔winner ABBA，
+  报告 median、p95 和峰值显存。
+- Falsifiers：任一变体编译失败、路由不符、超时/hang、重复运行不确定、
+  stable200 精度劣化，或独占卡 ABBA 无稳定收益，均否定对应候选机制。
+- Result：已完成本地静态路由、ABI 中性、同步顺序和非 A5 编译隔离检查；
+  尚未编译、部署或得出硬件结论。
+- Invalidation：若目标 CANN 头文件、生成代码或 profiling 证明上述生产者/消费者
+  链路不成立，需回到 B0 并重建依赖图，不继续放宽同步。

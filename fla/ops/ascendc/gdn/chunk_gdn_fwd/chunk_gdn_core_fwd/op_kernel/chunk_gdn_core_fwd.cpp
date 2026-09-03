@@ -250,7 +250,7 @@ __aicore__ inline void RunPhase6Cumsum(
     cumsum.Process();
 }
 
-template <typename InputT, typename TileShapes>
+template <typename InputT, typename TileShapes, GdnCoreSyncVariant kSyncVariant>
 __aicore__ inline void RunPhase6(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR rawG, GM_ADDR gk,
     GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
@@ -312,11 +312,11 @@ __aicore__ inline void RunPhase6(
     }
 
     if (coefficient.BT == 64) {
-        RunSolvePhase<InputT, 64>(aWorkspace, cuSeqlens, chunkIndices, solveA,
-                                  solveWorkspace, &coefficient);
+        RunSolvePhase<InputT, 64, kSyncVariant>(aWorkspace, cuSeqlens, chunkIndices, solveA,
+                                                solveWorkspace, &coefficient);
     } else {
-        RunSolvePhase<InputT, 128>(aWorkspace, cuSeqlens, chunkIndices, solveA,
-                                   solveWorkspace, &coefficient);
+        RunSolvePhase<InputT, 128, kSyncVariant>(aWorkspace, cuSeqlens, chunkIndices, solveA,
+                                                 solveWorkspace, &coefficient);
     }
     // Keep the varlen phase boundary on the dedicated MIX protocol for the
     // same reason as the score hand-off above. Dense keeps its paired event.
@@ -353,8 +353,9 @@ __aicore__ inline void RunPhase6(
     if ((outputMask & GDN_CORE_OUTPUT_G_CUMSUM) != 0 && coefficient.isVarlen == 0) {
         WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, coefficient);
     }
-    DispatchFwdH<TileShapes>(k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
-                             chunkIndices, h, vNew, finalState, tiling, userWorkspace);
+    DispatchFwdH<TileShapes, kSyncVariant>(k, w, u, gCumsumBht, gk, initialState,
+                                          cuSeqlens, chunkIndices, h, vNew, finalState,
+                                          tiling, userWorkspace);
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     if (coefficient.isVarlen != 0) {
@@ -386,6 +387,24 @@ __aicore__ inline void RunPhase6(
     }
 }
 
+template <typename TileShapes, GdnCoreSyncVariant kSyncVariant>
+__aicore__ inline void DispatchPhase6ByDtype(
+    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR rawG, GM_ADDR gk,
+    GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
+    GM_ADDR finalState, GM_ADDR gCumsumBth, GM_ADDR A, GM_ADDR workspace, GM_ADDR tiling)
+{
+    const __gm__ ChunkGdnCoreFwdTrailer *phase6 = GetPhase6Trailer(tiling);
+    if (phase6->coefficient.dtypeMode == 1) {
+        RunPhase6<bfloat16_t, TileShapes, kSyncVariant>(
+            q, k, v, beta, rawG, gk, initialState, cuSeqlens, chunkIndices,
+            o, finalState, gCumsumBth, A, workspace, tiling);
+    } else {
+        RunPhase6<half, TileShapes, kSyncVariant>(
+            q, k, v, beta, rawG, gk, initialState, cuSeqlens, chunkIndices,
+            o, finalState, gCumsumBth, A, workspace, tiling);
+    }
+}
+
 } // namespace
 } // namespace GDN
 
@@ -398,27 +417,53 @@ extern "C" __global__ __aicore__ void chunk_gdn_core_fwd(
     REGISTER_TILING_DEFAULT(GDN::ChunkGdnCoreFwdTrailer);
     if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
-        const __gm__ GDN::ChunkGdnCoreFwdTrailer *phase6 = GDN::GetPhase6Trailer(tiling);
-        if (phase6->coefficient.dtypeMode == 1) {
-            GDN::RunPhase6<bfloat16_t, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-                o, final_state, g_cumsum_bth, A, workspace, tiling);
-        } else {
-            GDN::RunPhase6<half, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-                o, final_state, g_cumsum_bth, A, workspace, tiling);
-        }
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B0>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
     } else if (TILING_KEY_IS(2)) {
         KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
-        const __gm__ GDN::ChunkGdnCoreFwdTrailer *phase6 = GDN::GetPhase6Trailer(tiling);
-        if (phase6->coefficient.dtypeMode == 1) {
-            GDN::RunPhase6<bfloat16_t, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-                o, final_state, g_cumsum_bth, A, workspace, tiling);
-        } else {
-            GDN::RunPhase6<half, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-                o, final_state, g_cumsum_bth, A, workspace, tiling);
-        }
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes256,
+                                   GDN::GdnCoreSyncVariant::B0>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    } else if (TILING_KEY_IS(11)) {
+        KERNEL_TASK_TYPE(11, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B1>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(12)) {
+        KERNEL_TASK_TYPE(12, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes256,
+                                   GDN::GdnCoreSyncVariant::B1>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(21)) {
+        KERNEL_TASK_TYPE(21, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B2>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(22)) {
+        KERNEL_TASK_TYPE(22, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes256,
+                                   GDN::GdnCoreSyncVariant::B2>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(31)) {
+        KERNEL_TASK_TYPE(31, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B3>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(32)) {
+        KERNEL_TASK_TYPE(32, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes256,
+                                   GDN::GdnCoreSyncVariant::B3>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+#endif
     }
 }

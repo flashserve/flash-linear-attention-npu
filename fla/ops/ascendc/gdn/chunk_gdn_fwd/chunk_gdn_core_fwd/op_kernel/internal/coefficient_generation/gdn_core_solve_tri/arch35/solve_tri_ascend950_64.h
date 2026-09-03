@@ -38,9 +38,13 @@ constexpr uint32_t kWsElems64 = kChunk64 * kChunk64;
 constexpr uint32_t kSlotFp16_64 = kChunk64 * kChunk64 * static_cast<uint32_t>(sizeof(half)); // 8KB
 constexpr uint32_t kSlotFp32_64 = kWsElems64 * static_cast<uint32_t>(sizeof(float));          // 16KB
 
-template <typename InDtype, typename OutDtype>
+template <typename InDtype, typename OutDtype, bool kUseMte2Mte1Event = false,
+          bool kDeferMte2Mte1Wait = false>
 class SolveTri64 {
 public:
+    static_assert(!kDeferMte2Mte1Wait || kUseMte2Mte1Event,
+                  "A deferred MTE2_MTE1 wait requires the matching event.");
+
     template <typename TilingData>
     __aicore__ inline void Init(GM_ADDR aGm, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR outGm,
                                 GM_ADDR workspace, const TilingData *tilingData,
@@ -506,9 +510,21 @@ public:
         WaitFlag<AscendC::HardEvent::M_FIX>(0);
         FixpipeL0cToL1(l1_Y, l0c_X, static_cast<uint32_t>(cur));
 
-        AscendC::PipeBarrier<PIPE_ALL>();
+        // FixpipeL0cToL1 already closes FIX -> MTE2 inside the helper. The
+        // narrowed variants model only the remaining MTE2 -> MTE1 RAW edge.
+        if constexpr (kUseMte2Mte1Event) {
+            SetFlag<AscendC::HardEvent::MTE2_MTE1>(0);
+            if constexpr (!kDeferMte2Mte1Wait) {
+                WaitFlag<AscendC::HardEvent::MTE2_MTE1>(0);
+            }
+        } else {
+            AscendC::PipeBarrier<PIPE_ALL>();
+        }
 
         MbhMatmulToL0C(l1_I, l1_X, l0a_X, l0b_X, l0c_Y, cur, true);
+        if constexpr (kUseMte2Mte1Event && kDeferMte2Mte1Wait) {
+            WaitFlag<AscendC::HardEvent::MTE2_MTE1>(0);
+        }
         MbhMatmulToL0C(l1_Y, l1_INPUT, l0a_Y, l0b_Y, l0c_Y, cur, false);
 
         SetFlag<AscendC::HardEvent::M_FIX>(1);

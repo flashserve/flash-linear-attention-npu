@@ -11,6 +11,15 @@
 
 namespace GDN {
 
+// Internal compile-time experiment selector. The host encodes this selector in
+// the tiling key; it must not be serialized into the public tiling ABI.
+enum class GdnCoreSyncVariant : uint32_t {
+    B0 = 0,
+    B1 = 1,
+    B2 = 2,
+    B3 = 3,
+};
+
 struct ChunkGdnCoreCoefficientTiling {
     uint64_t B;
     uint64_t Hk;

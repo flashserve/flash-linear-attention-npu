@@ -83,7 +83,8 @@ template<
     bool kGated = false,
     bool scalarGated = true,
     bool useExp2 = false,
-    bool kChunkPipeline = false
+    bool kChunkPipeline = false,
+    bool kSkipBoundedMmadPipeAll = false
 >
 class GDNFwdHKernel {
 public:
@@ -618,7 +619,11 @@ public:
                                     tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape);
                                 blockMmadWH.finalWaitFlags();
                             }
-                            AscendC::PipeBarrier<PIPE_ALL>();
+                            // finalWaitFlags closes the bounded MMAD lifecycle; keep B0's
+                            // conservative all-pipe drain as a compile-time A/B control.
+                            if constexpr (!kSkipBoundedMmadPipeAll) {
+                                AscendC::PipeBarrier<PIPE_ALL>();
+                            }
                             Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
                                 cubeBlockScheduler.cube1Done[streamId]);
                         }
@@ -757,7 +762,11 @@ public:
                                         cube2Shape);
                                     blockMmadKV.finalWaitFlags();
                                 }
-                                AscendC::PipeBarrier<PIPE_ALL>();
+                                // Match cube1: only the diagnostic variants omit this
+                                // bounded-MMAD drain before publishing PIPE_FIX completion.
+                                if constexpr (!kSkipBoundedMmadPipeAll) {
+                                    AscendC::PipeBarrier<PIPE_ALL>();
+                                }
                             }
                             Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
                                 cubeBlockScheduler.cube2Done[streamId]);

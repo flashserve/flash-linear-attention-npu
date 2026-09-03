@@ -36,7 +36,8 @@ struct RecomputeWUFwdTileShapes256 {
     using L0TileShape = GemmCubeTileShape<_128, _256, _64>;
 };
 
-template <typename InputT, typename GT, typename StateT, typename TileShapes, bool kGated>
+template <typename InputT, typename GT, typename StateT, typename TileShapes, bool kGated,
+          GdnCoreSyncVariant kSyncVariant = GdnCoreSyncVariant::B0>
 __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk,
                                GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
                                GM_ADDR h, GM_ADDR vNew, GM_ADDR finalState, GM_ADDR tiling,
@@ -45,15 +46,21 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
     // Keep the same H implementation mode as the established FwdHO kernel.
     // The final boolean enables the H/O fused scheduling path; using the
     // standalone-H mode here changes synchronization and precision behavior.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
+        InputT, GT, StateT, float, TileShapes, kGated, true, false, true,
+        kSyncVariant != GdnCoreSyncVariant::B0>;
+#else
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true>;
+#endif
     Kernel kernel;
     kernel.Init(k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                 tiling, userWorkspace);
     kernel.Process();
 }
 
-template <typename TileShapes>
+template <typename TileShapes, GdnCoreSyncVariant kSyncVariant = GdnCoreSyncVariant::B0>
 __aicore__ inline void DispatchFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk,
                                     GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
                                     GM_ADDR h, GM_ADDR vNew, GM_ADDR finalState, GM_ADDR tiling,
@@ -66,78 +73,78 @@ __aicore__ inline void DispatchFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, 
         if (hTiling->stateDataType == 2) {
             if (hTiling->gDataType == 2) {
                 if (useGk) {
-                    RunFwdH<bfloat16_t, float, float, TileShapes, true>(
+                    RunFwdH<bfloat16_t, float, float, TileShapes, true, kSyncVariant>(
                         k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                         tiling, userWorkspace);
                 } else {
-                    RunFwdH<bfloat16_t, float, float, TileShapes, false>(
+                    RunFwdH<bfloat16_t, float, float, TileShapes, false, kSyncVariant>(
                         k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                         tiling, userWorkspace);
                 }
             } else if (useGk) {
-                RunFwdH<bfloat16_t, bfloat16_t, float, TileShapes, true>(
+                RunFwdH<bfloat16_t, bfloat16_t, float, TileShapes, true, kSyncVariant>(
                     k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                     tiling, userWorkspace);
             } else {
-                RunFwdH<bfloat16_t, bfloat16_t, float, TileShapes, false>(
+                RunFwdH<bfloat16_t, bfloat16_t, float, TileShapes, false, kSyncVariant>(
                     k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                     tiling, userWorkspace);
             }
         } else if (hTiling->gDataType == 2) {
             if (useGk) {
-                RunFwdH<bfloat16_t, float, bfloat16_t, TileShapes, true>(
+                RunFwdH<bfloat16_t, float, bfloat16_t, TileShapes, true, kSyncVariant>(
                     k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                     tiling, userWorkspace);
             } else {
-                RunFwdH<bfloat16_t, float, bfloat16_t, TileShapes, false>(
+                RunFwdH<bfloat16_t, float, bfloat16_t, TileShapes, false, kSyncVariant>(
                     k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                     tiling, userWorkspace);
             }
         } else if (useGk) {
-            RunFwdH<bfloat16_t, bfloat16_t, bfloat16_t, TileShapes, true>(
+            RunFwdH<bfloat16_t, bfloat16_t, bfloat16_t, TileShapes, true, kSyncVariant>(
                 k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                 tiling, userWorkspace);
         } else {
-            RunFwdH<bfloat16_t, bfloat16_t, bfloat16_t, TileShapes, false>(
+            RunFwdH<bfloat16_t, bfloat16_t, bfloat16_t, TileShapes, false, kSyncVariant>(
                 k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                 tiling, userWorkspace);
         }
     } else if (hTiling->stateDataType == 2) {
         if (hTiling->gDataType == 2) {
             if (useGk) {
-                RunFwdH<half, float, float, TileShapes, true>(
+                RunFwdH<half, float, float, TileShapes, true, kSyncVariant>(
                     k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                     tiling, userWorkspace);
             } else {
-                RunFwdH<half, float, float, TileShapes, false>(
+                RunFwdH<half, float, float, TileShapes, false, kSyncVariant>(
                     k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                     tiling, userWorkspace);
             }
         } else if (useGk) {
-            RunFwdH<half, half, float, TileShapes, true>(
+            RunFwdH<half, half, float, TileShapes, true, kSyncVariant>(
                 k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                 tiling, userWorkspace);
         } else {
-            RunFwdH<half, half, float, TileShapes, false>(
+            RunFwdH<half, half, float, TileShapes, false, kSyncVariant>(
                 k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                 tiling, userWorkspace);
         }
     } else if (hTiling->gDataType == 2) {
         if (useGk) {
-            RunFwdH<half, float, half, TileShapes, true>(
+            RunFwdH<half, float, half, TileShapes, true, kSyncVariant>(
                 k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                 tiling, userWorkspace);
         } else {
-            RunFwdH<half, float, half, TileShapes, false>(
+            RunFwdH<half, float, half, TileShapes, false, kSyncVariant>(
                 k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                 tiling, userWorkspace);
         }
     } else if (useGk) {
-        RunFwdH<half, half, half, TileShapes, true>(
+        RunFwdH<half, half, half, TileShapes, true, kSyncVariant>(
             k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
             tiling, userWorkspace);
     } else {
-        RunFwdH<half, half, half, TileShapes, false>(
+        RunFwdH<half, half, half, TileShapes, false, kSyncVariant>(
             k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
             tiling, userWorkspace);
     }

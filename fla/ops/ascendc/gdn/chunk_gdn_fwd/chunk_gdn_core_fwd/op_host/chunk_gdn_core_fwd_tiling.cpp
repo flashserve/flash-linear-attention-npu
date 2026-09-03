@@ -15,6 +15,8 @@
 #include "tiling/platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <register/op_impl_registry.h>
 
 namespace optiling {
@@ -45,11 +47,55 @@ constexpr int64_t SUPPORTED_V_DIM_128 = 128;
 constexpr int64_t SUPPORTED_V_DIM_256 = 256;
 constexpr int64_t CHUNK_64 = 64;
 constexpr int64_t CHUNK_128 = 128;
-constexpr uint32_t TILING_KEY_V128 = 1;
-constexpr uint32_t TILING_KEY_V256 = 2;
+constexpr uint32_t TILING_KEY_B0_V128 = 1;
+constexpr uint32_t TILING_KEY_B0_V256 = 2;
+constexpr uint32_t TILING_KEY_B1_V128 = 11;
+constexpr uint32_t TILING_KEY_B1_V256 = 12;
+constexpr uint32_t TILING_KEY_B2_V128 = 21;
+constexpr uint32_t TILING_KEY_B2_V256 = 22;
+constexpr uint32_t TILING_KEY_B3_V128 = 31;
+constexpr uint32_t TILING_KEY_B3_V256 = 32;
 constexpr uint64_t WORKSPACE_ALIGNMENT = 512;
 constexpr uint64_t TILING_ALIGNMENT = 8;
 constexpr uint64_t FP32_BLOCK_ELEMS = 8;
+
+bool ResolveSyncVariant(GDN::GdnCoreSyncVariant &variant)
+{
+    const char *value = std::getenv("FLA_NPU_GDN_SYNC_VARIANT");
+    if (value == nullptr || std::strcmp(value, "B0") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B0;
+        return true;
+    }
+    if (std::strcmp(value, "B1") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B1;
+        return true;
+    }
+    if (std::strcmp(value, "B2") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B2;
+        return true;
+    }
+    if (std::strcmp(value, "B3") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B3;
+        return true;
+    }
+    return false;
+}
+
+uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
+{
+    const bool isV256 = vDim == SUPPORTED_V_DIM_256;
+    switch (variant) {
+        case GDN::GdnCoreSyncVariant::B0:
+            return isV256 ? TILING_KEY_B0_V256 : TILING_KEY_B0_V128;
+        case GDN::GdnCoreSyncVariant::B1:
+            return isV256 ? TILING_KEY_B1_V256 : TILING_KEY_B1_V128;
+        case GDN::GdnCoreSyncVariant::B2:
+            return isV256 ? TILING_KEY_B2_V256 : TILING_KEY_B2_V128;
+        case GDN::GdnCoreSyncVariant::B3:
+            return isV256 ? TILING_KEY_B3_V256 : TILING_KEY_B3_V128;
+    }
+    return 0;
+}
 
 uint64_t CeilDiv(uint64_t value, uint64_t divisor)
 {
@@ -216,11 +262,22 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(),
                         "Phase 6 requires output_mask in [0,3], chunk_size=64/128, and paired valid varlen metadata."),
                 return ge::GRAPH_FAILED);
+    GDN::GdnCoreSyncVariant syncVariant = GDN::GdnCoreSyncVariant::B0;
+    OP_CHECK_IF(!ResolveSyncVariant(syncVariant),
+                OP_LOGE(context->GetNodeName(),
+                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3."),
+                return ge::GRAPH_FAILED);
+    const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
+    const bool isAscend950 =
+        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+    OP_CHECK_IF(syncVariant != GDN::GdnCoreSyncVariant::B0 && !isAscend950,
+                OP_LOGE(context->GetNodeName(),
+                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3 is supported only on Ascend950."),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(Tiling4ChunkGdnCoreStateOutput(context) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "Reuse of the accepted Phase 5 suffix tiling failed."),
                 return ge::GRAPH_FAILED);
 
-    const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     const uint64_t aicCoreNum = std::max<uint64_t>(1, platform.GetCoreNumAic());
     const uint64_t aivCoreNum = std::max<uint64_t>(1, platform.GetCoreNumAiv());
     const uint64_t systemWorkspace = platform.GetLibApiWorkSpaceSize();
@@ -309,7 +366,7 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(), "Serialize Phase 6 coefficient trailer failed."),
                 return ge::GRAPH_FAILED);
     rawTiling->SetDataSize(rawTilingSize);
-    context->SetTilingKey(vDim == SUPPORTED_V_DIM_256 ? TILING_KEY_V256 : TILING_KEY_V128);
+    context->SetTilingKey(ResolveTilingKey(vDim, syncVariant));
     context->SetScheduleMode(1);
     OP_LOGD(context->GetNodeName(),
             "Phase 6 tiling: B=%ld, Hk=%ld, Hv=%ld, T=%ld, K=%ld, V=%ld, blocks=%lu, tasks=%lu, suffix=%zu, total=%zu.",

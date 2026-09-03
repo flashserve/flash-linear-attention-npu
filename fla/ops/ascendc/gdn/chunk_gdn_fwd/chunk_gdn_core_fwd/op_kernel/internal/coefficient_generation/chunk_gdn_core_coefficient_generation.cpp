@@ -15,7 +15,8 @@ using namespace AscendC;
 namespace {
 constexpr uint64_t KKT_READY_FLAG = 3;
 
-template <typename T, int MATRIX_SIZE, typename TilingData>
+template <typename T, int MATRIX_SIZE, GDN::GdnCoreSyncVariant kSyncVariant,
+          typename TilingData>
 __aicore__ inline void RunSolvePhase(GM_ADDR a, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
                                      GM_ADDR out, GM_ADDR workspace,
                                      const TilingData *tilingData)
@@ -38,7 +39,12 @@ __aicore__ inline void RunSolvePhase(GM_ADDR a, GM_ADDR cuSeqlens, GM_ADDR chunk
     // contiguous tile ownership.  Keep those policies explicit instead of
     // silently inheriting the standalone round-robin/default-workspace path.
     if constexpr (MATRIX_SIZE == 64) {
-        SolveTri64<T, T> solve;
+        constexpr bool kUseMte2Mte1Event =
+            kSyncVariant == GDN::GdnCoreSyncVariant::B2 ||
+            kSyncVariant == GDN::GdnCoreSyncVariant::B3;
+        constexpr bool kDeferMte2Mte1Wait =
+            kSyncVariant == GDN::GdnCoreSyncVariant::B3;
+        SolveTri64<T, T, kUseMte2Mte1Event, kDeferMte2Mte1Wait> solve;
         solve.Init(a, cuSeqlens, chunkIndices, out, workspace, tilingData, true, true);
         solve.Process();
     } else {
