@@ -69,10 +69,12 @@ o_t   = state @ (q_t * scale)                # 读出（scale 作用在 q 上）
 
 ## 验证
 
-用例规格是 `tests/op_cases/fused_recurrent_rwkv8.json`；CPU golden 为
-`tests/reference/fused_recurrent_rwkv8_reference.py`（纯 PyTorch，不依赖 torch_npu/Triton，
+用例规格是 `tests/cases.py`（正例 8 条 + 负例 3 条，由旧中央 manifest 迁移而来）；
+CPU golden 为 `tests/pta/golden.py`（纯 PyTorch，不依赖 torch_npu/Triton，
 golden 已与官方 GPU CUDA fixture 同机对拍：o/state rel-RMSE ~1e-7）。
-manifest 结构测试位于 `tests/operators/fused_recurrent_rwkv8/accuracy/`。
+PTA 精度脚本为 `tests/pta/test_accuracy.py`（NPU 对拍 CPU golden，11/11 PASS）；
+ATK 单算子工程位于仓根 `tests/atk/fused_recurrent_rwkv8/`（accuracy/performance/
+determinism/mssanitizer/gen_cases 全动作走 `tests/atk/run_test_cpu.sh`）。
 
 交付形态为 OPP（aclnn）算子。e2e 验证见 `examples/test_aclnn_fused_recurrent_rwkv8.cpp`
 （自包含：内置输入 + C++ CPU golden + rel-RMSE ≤ 0.002 对拍，4 组 case）：
@@ -81,12 +83,6 @@ manifest 结构测试位于 `tests/operators/fused_recurrent_rwkv8/accuracy/`。
 bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu --ops=fused_recurrent_rwkv8 -j8
 ./build_out/fla-npu-*.run --install
 bash build.sh --run_example fused_recurrent_rwkv8 eager cust --vendor_name=fla_npu --soc=ascend910b
-```
-
-gtest UT（infershape / tiling / op_api）位于 `tests/ut/`：
-
-```bash
-bash build.sh --ophost_test --opapi_test --soc=ascend910b --vendor_name=fla_npu --ops=fused_recurrent_rwkv8
 ```
 
 aclnn 接口文档见 `docs/aclnnFusedRecurrentRwkv8.md`。
