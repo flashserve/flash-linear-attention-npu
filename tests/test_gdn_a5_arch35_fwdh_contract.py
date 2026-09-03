@@ -7,6 +7,14 @@ FWD_H = ROOT / (
     "op_kernel/internal/operators/chunk_gated_delta_rule_fwd_h/op_kernel/"
     "arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
 )
+STANDALONE_FWD_H = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/"
+    "op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
+)
+STANDALONE_FWD_O = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/op_kernel/gemm/kernel/"
+    "gdn_fwd_o_kernel.hpp"
+)
 FUSED_STATE_OUTPUT = ROOT / (
     "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd/"
     "op_kernel/internal/gated_delta_rule_state_update_output/"
@@ -65,3 +73,25 @@ def test_embedded_fwdh_matches_standalone_compile_time_mode():
         "InputT, GT, StateT, float, TileShapes, kGated, true, false, true>"
         not in source
     )
+
+
+def test_a5_fwdh_v2_joins_both_aiv_subblocks_before_cube_reuse():
+    join = "Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();"
+    publish = "Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);"
+
+    for path in (FWD_H, STANDALONE_FWD_H):
+        source = path.read_text(encoding="utf-8")
+        handoff = source[: source.index(publish)]
+        assert handoff.rfind(join) > handoff.rfind("cube2Done[streamId]")
+
+
+def test_standalone_fwdo_joins_aiv_subblocks_before_shared_publications():
+    source = STANDALONE_FWD_O.read_text(encoding="utf-8")
+    join = "Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();"
+
+    for publish in (
+        "Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec1Done[streamId]);",
+        "Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);",
+    ):
+        before = source[: source.index(publish)]
+        assert before.rfind(join) > before.rfind("epilogueGDNFwdO")
