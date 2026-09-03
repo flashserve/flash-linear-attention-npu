@@ -89,7 +89,14 @@ __aicore__ inline void RunChunkKdaBwdC(
     // either AIV sub-block still has a queued dg/dA/dbias store: a following
     // invocation can reuse the same output allocation and observe that late
     // write as a stale cross-shape generation.
-    if (tiling->seqlen < static_cast<int32_t>(kA5SharedGateMinSeqlen)) {
+    bool needsFinalSync =
+        tiling->seqlen < static_cast<int32_t>(kA5SharedGateMinSeqlen);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    needsFinalSync = needsFinalSync ||
+        (tiling->useGateInKernel != 0 &&
+         !CanUseA5SharedGateAnchor(*tiling));
+#endif
+    if (needsFinalSync) {
         AscendC::SyncAll<false>();
     }
 }

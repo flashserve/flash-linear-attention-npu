@@ -25,10 +25,27 @@ constexpr uint32_t kWorkspaceSlots = kCIntraWorkspaceSlots;
 constexpr uint32_t kVecToCubeReadyFlag = kCIntraVecReadyFlag;
 constexpr uint32_t kCubeToVecReadyFlag = kCIntraCubeReadyFlag;
 constexpr float kLn2 = 0.69314718055994530942f;
-// Use the chunk-wide shared-anchor encoding only where its packing savings
-// matter. Short validation tensors stay on the numerically robust local
-// anchor path; long dense model sequences retain the A5 fast path.
+// The backward inputs include gk saved by the matching Safe Gate forward, so
+// every log2-domain step is bounded by lowerBound / ln(2). A chunk-wide anchor
+// can still make one split exp2 factor overflow while its reciprocal factor
+// underflows, producing 0 * Inf instead of the finite unsplit scale. Reserve
+// margin from FP32's +/-127 exponent boundary and use row-local anchors when
+// the configured bound cannot guarantee that margin for a full chunk.
 constexpr uint32_t kA5SharedGateMinSeqlen = 1024;
+constexpr float kA5SharedGateMaxLog2Magnitude = 120.0f;
+constexpr float kA5SharedGateMinLowerBound =
+    -kA5SharedGateMaxLog2Magnitude * kLn2 / kChunkSize;
+
+__aicore__ inline bool CanUseA5SharedGateAnchor(
+    const ChunkKdaBwdCTilingData &tiling)
+{
+    return tiling.useGateInKernel != 0 && tiling.isVarLen == 0 &&
+           tiling.keyDim == 128 && tiling.chunkSize == kChunkSize &&
+           tiling.seqlen % kChunkSize == 0 &&
+           tiling.seqlen >= static_cast<int32_t>(kA5SharedGateMinSeqlen) &&
+           tiling.lowerBound >= kA5SharedGateMinLowerBound &&
+           tiling.lowerBound <= 0.0f;
+}
 
 template <uint32_t K_DIM, bool VARLEN_TND>
 struct ProcessRowBlock {
@@ -369,10 +386,7 @@ public:
                     uint64_t bSlotBase = slotBase;
                     bool useSharedB = false;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                    useSharedB = tiling_.seqlen >= kA5SharedGateMinSeqlen &&
-                                 tiling_.isVarLen == 0 &&
-                                 tiling_.keyDim == 128 &&
-                                 tiling_.useGateInKernel != 0 &&
+                    useSharedB = CanUseA5SharedGateAnchor(tiling_) &&
                                  validC == kChunkSize &&
                                  processRowBlock == kRowBlock;
                     if (useSharedB) {
@@ -740,7 +754,7 @@ public:
                     taskGroupCount);
                 // Drain the final Cube-ready wait and all dependent output
                 // stores before this fast path returns into phase SyncAll.
-                if (tiling_.seqlen < kA5SharedGateMinSeqlen) {
+                if (!CanUseA5SharedGateAnchor(tiling_)) {
                     AscendC::PipeBarrier<PIPE_ALL>();
                 }
                 ReleaseMatrixInputEvents();
@@ -891,7 +905,7 @@ private:
         for (uint32_t headInWindow = 0;
              headInWindow < headCount; ++headInWindow) {
             Catlass::Arch::CrossCoreWaitFlag(denseCubeToVecReadyFlag_);
-            if (tiling_.seqlen < kA5SharedGateMinSeqlen) {
+            if (!CanUseA5SharedGateAnchor(tiling_)) {
                 AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(0);
                 AscendC::WaitFlag<AscendC::HardEvent::S_MTE2>(0);
             }
@@ -1680,8 +1694,7 @@ private:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
                       kProcessRowBlock == kRowBlock) {
-            if (tiling_.seqlen >= kA5SharedGateMinSeqlen &&
-                tiling_.useGateInKernel != 0 &&
+            if (CanUseA5SharedGateAnchor(tiling_) &&
                 validRows == kProcessRowBlock &&
                 task.end - task.begin == CHUNK_SIZE) {
                 PackUpperA5Shared(
@@ -2743,9 +2756,7 @@ private:
         KdaRegbaseFill(
             (__ubuf__ float *)dbAcc.GetPhyAddr(), 0.0f, ownedRows);
 
-        const bool useSharedB =
-            tiling_.seqlen >= kA5SharedGateMinSeqlen &&
-            tiling_.useGateInKernel != 0;
+        const bool useSharedB = CanUseA5SharedGateAnchor(tiling_);
         const uint32_t localAnchor =
             rowStart + 8 < task.end - task.begin ?
                 rowStart + 8 : task.end - task.begin - 1;
@@ -2817,9 +2828,15 @@ private:
         ConsumeMatrixRows(k, MatrixInput<DataT>(kSlot), kSlot, count);
         AscendC::PipeBarrier<PIPE_V>();
 
-        KdaRegbaseExp2(
-            (__ubuf__ float *)anchorExp.GetPhyAddr(),
-            (__ubuf__ float *)lowerAnchor.GetPhyAddr(), cols);
+        if (useSharedB) {
+            KdaRegbaseExp2<true>(
+                (__ubuf__ float *)anchorExp.GetPhyAddr(),
+                (__ubuf__ float *)lowerAnchor.GetPhyAddr(), cols);
+        } else {
+            KdaRegbaseExp2(
+                (__ubuf__ float *)anchorExp.GetPhyAddr(),
+                (__ubuf__ float *)lowerAnchor.GetPhyAddr(), cols);
+        }
         if (useSharedB) {
             KdaRegbaseFinishScale<true, true>(
                 (__ubuf__ float *)rawDq.GetPhyAddr(),

@@ -59,6 +59,7 @@ static __simd_vf__ inline void KdaRegbaseCastBf16ToFp32(
     }
 }
 
+template <bool CLAMP_INPUT = false>
 static __simd_vf__ inline void KdaRegbaseExp2(
     __ubuf__ float *dst, __ubuf__ float *src, uint16_t count)
 {
@@ -67,6 +68,10 @@ static __simd_vf__ inline void KdaRegbaseExp2(
     for (uint32_t offset = 0; offset < count; offset += kKdaRegbaseFp32Elements) {
         MaskReg mask = UpdateMask<float>(remaining);
         DataCopy(value, src + offset);
+        if constexpr (CLAMP_INPUT) {
+            Mins(value, value, kA5SharedGateMaxLog2Magnitude, mask);
+            Maxs(value, value, -kA5SharedGateMaxLog2Magnitude, mask);
+        }
         Muls(value, value, kLn2, mask);
         Exp(value, value, mask);
         DataCopy(dst + offset, value, mask);
@@ -257,6 +262,12 @@ static __simd_vf__ inline void KdaRegbaseGateScaleLowerPair(
             }
 
             Sub(lowerScaleReg, lowerAnchorReg, gateReg, mask);
+            if constexpr (DUAL_ANCHOR) {
+                Mins(lowerScaleReg, lowerScaleReg,
+                     kA5SharedGateMaxLog2Magnitude, mask);
+                Maxs(lowerScaleReg, lowerScaleReg,
+                     -kA5SharedGateMaxLog2Magnitude, mask);
+            }
             Muls(lowerScaleReg, lowerScaleReg, kLn2, mask);
             Exp(lowerScaleReg, lowerScaleReg, mask);
             Mul(lowerReg, kReg, lowerScaleReg, mask);
@@ -265,6 +276,12 @@ static __simd_vf__ inline void KdaRegbaseGateScaleLowerPair(
                 Sub(upperScaleReg, gateReg, upperAnchorReg, mask);
             } else {
                 Sub(upperScaleReg, gateReg, lowerAnchorReg, mask);
+            }
+            if constexpr (DUAL_ANCHOR) {
+                Mins(upperScaleReg, upperScaleReg,
+                     kA5SharedGateMaxLog2Magnitude, mask);
+                Maxs(upperScaleReg, upperScaleReg,
+                     -kA5SharedGateMaxLog2Magnitude, mask);
             }
             Muls(upperScaleReg, upperScaleReg, kLn2, mask);
             Exp(upperScaleReg, upperScaleReg, mask);
@@ -329,6 +346,12 @@ static __simd_vf__ inline void KdaRegbaseFinishScale(
                 Sub(negReg, upperAnchorReg, gateReg, mask);
             } else {
                 Sub(negReg, lowerAnchorReg, gateReg, mask);
+            }
+            if constexpr (DUAL_ANCHOR) {
+                Mins(posReg, posReg, kA5SharedGateMaxLog2Magnitude, mask);
+                Maxs(posReg, posReg, -kA5SharedGateMaxLog2Magnitude, mask);
+                Mins(negReg, negReg, kA5SharedGateMaxLog2Magnitude, mask);
+                Maxs(negReg, negReg, -kA5SharedGateMaxLog2Magnitude, mask);
             }
             Muls(posReg, posReg, kLn2, mask);
             Muls(negReg, negReg, kLn2, mask);
