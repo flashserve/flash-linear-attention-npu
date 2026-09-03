@@ -84,7 +84,8 @@ template<
     bool scalarGated = true,
     bool useExp2 = false,
     bool kChunkPipeline = false,
-    bool kSkipBoundedMmadPipeAll = false
+    bool kNarrowCube1ToPipeFix = false,
+    bool kNarrowCube2ToPipeFix = false
 >
 class GDNFwdHKernel {
 public:
@@ -619,9 +620,11 @@ public:
                                     tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape);
                                 blockMmadWH.finalWaitFlags();
                             }
-                            // finalWaitFlags closes the bounded MMAD lifecycle; keep B0's
-                            // conservative all-pipe drain as a compile-time A/B control.
-                            if constexpr (!kSkipBoundedMmadPipeAll) {
+                            // Publish only after the bounded MMAD FIX path is visible.
+                            // B0 retains the conservative all-pipe drain as the control.
+                            if constexpr (kNarrowCube1ToPipeFix) {
+                                AscendC::PipeBarrier<PIPE_FIX>();
+                            } else {
                                 AscendC::PipeBarrier<PIPE_ALL>();
                             }
                             Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
@@ -762,9 +765,10 @@ public:
                                         cube2Shape);
                                     blockMmadKV.finalWaitFlags();
                                 }
-                                // Match cube1: only the diagnostic variants omit this
-                                // bounded-MMAD drain before publishing PIPE_FIX completion.
-                                if constexpr (!kSkipBoundedMmadPipeAll) {
+                                // Keep the second producer edge independently selectable.
+                                if constexpr (kNarrowCube2ToPipeFix) {
+                                    AscendC::PipeBarrier<PIPE_FIX>();
+                                } else {
                                     AscendC::PipeBarrier<PIPE_ALL>();
                                 }
                             }

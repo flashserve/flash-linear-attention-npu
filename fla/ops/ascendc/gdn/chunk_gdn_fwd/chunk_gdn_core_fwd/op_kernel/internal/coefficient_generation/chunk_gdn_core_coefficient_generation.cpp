@@ -40,11 +40,9 @@ __aicore__ inline void RunSolvePhase(GM_ADDR a, GM_ADDR cuSeqlens, GM_ADDR chunk
     // silently inheriting the standalone round-robin/default-workspace path.
     if constexpr (MATRIX_SIZE == 64) {
         constexpr bool kUseMte2Mte1Event =
-            kSyncVariant == GDN::GdnCoreSyncVariant::B2 ||
-            kSyncVariant == GDN::GdnCoreSyncVariant::B3;
-        constexpr bool kDeferMte2Mte1Wait =
-            kSyncVariant == GDN::GdnCoreSyncVariant::B3;
-        SolveTri64<T, T, kUseMte2Mte1Event, kDeferMte2Mte1Wait> solve;
+            kSyncVariant == GDN::GdnCoreSyncVariant::B3 ||
+            kSyncVariant == GDN::GdnCoreSyncVariant::B5;
+        SolveTri64<T, T, kUseMte2Mte1Event, false> solve;
         solve.Init(a, cuSeqlens, chunkIndices, out, workspace, tilingData, true, true);
         solve.Process();
     } else {

@@ -69,26 +69,38 @@
     `FIX -> GM workspace -> MTE2 -> l1_Y -> MTE1`。helper 内部的
     `FIX_MTE2` 不能替代 helper 返回后的 `MTE2_MTE1`；第一次 MMAD
     读 `l1_I/l1_X` 与 `l1_Y` 无关，第二次 MMAD 才首次读 `l1_Y`。
-- Alternatives：直接删除所有 `PIPE_ALL`；每个方案单独编译；一次构建
-  B0–B3 后通过 tiling key 选择。
-- Choice：采用一次构建、四个编译期变体：B0 保留原同步；B1 仅跳过
-  FwdH 两处目标 `PIPE_ALL`；B2 在 B1 上将 SolveTri64 的 `PIPE_ALL`
-  收窄为立即 `MTE2_MTE1`；B3 在 B2 上将 wait 延后到第二次、
-  即首次读 `l1_Y` 的 MMAD 前。B1–B3 的额外 key 仅在 A5、BF16 输入、
-  FP32 initial_state 的编译配置中生成，并仅为 V128 模型主路径选择；
+- Alternatives：直接删除所有 `PIPE_ALL`；用 `PIPE_FIX` 保留生产者发布语义；
+  每个方案单独编译；一次构建多个 tiling key 变体。
+- Choice：首轮 B0–B3 实验后收窄为一次构建、六个编译期变体：
+  B0 保留两处 FwdH `PIPE_ALL` 和 SolveTri64 `PIPE_ALL`；B1 仅将 FwdH C1
+  收窄为 `PIPE_FIX`；B2 仅将 FwdH C2 收窄为 `PIPE_FIX`；B3 仅将
+  SolveTri64 收窄为立即 `MTE2_MTE1`；B4 组合 C1/C2 `PIPE_FIX`、Solve
+  保持 `PIPE_ALL`；B5 在 B4 上再将 SolveTri64 收窄为立即
+  `MTE2_MTE1`。因此 B4→B5 可直接归因最终 FwdH 配置下的 Solve 增量。
+  不再编译裸删 barrier 或延后 wait。B1–B5 的额外 key 仅在 A5、BF16 输入、
+  FP32 initial_state 的编译配置中生成，并仅为 V128、chunk64
+  模型主路径选择；
   其他合法 dtype/state/V256 形态回退 B0。host 在非 Ascend950 上
   fail-closed；不扩展公共 ABI/trailer。
 - Validation：先冻结两轮 inference/full 均成功的 stable200；然后在同一
-  CANN 9.1 产物中检查 key 集、实际路由、首次/重复精度与确定性；
-  最后用独占空闲卡做 B0↔B1、B1↔B2、B2↔B3 和 B0↔winner ABBA，
+  CANN 9.1 产物中检查 key 集、实际路由、多设备首次/重复精度与确定性；
+  只对通过的单项变体和 B4/B5 运行 stable200，最后用独占空闲卡做
+  单项变体与 B0、B4→B5、winner 与交付基线的对称 ABBA，
   报告 median、p95 和峰值显存。
 - Falsifiers：任一变体编译失败、路由不符、超时/hang、重复运行不确定、
   stable200 精度劣化，或独占卡 ABBA 无稳定收益，均否定对应候选机制。
-- Result：已完成本地静态路由、ABI 中性、同步顺序和非 A5 编译隔离检查。
-  首次将 8 个 key 放入所有 dtype 配置后，CCE 仍逐配置、逐 key 生成；
-  构建约 27 分钟时只从 B0 key 1 推进到 key 2，因此精确终止该隔离
-  构建，并将实验矩阵收敛为主模型配置的 3 个额外 V128 key。这否定了
-  “8 key 全配置一次构建成本可接受”的实验打包假设，不是否定 B1–B3
-  机制。收敛后的 CANN 9.1 编译、部署和硬件结论仍待完成。
+- Result：旧 B0–B3 代码已以收敛配置完成 CANN 9.1 构建、部署和 key
+  矩阵验收。B3 延后 wait 在 3/3 首调中造成大面积 O/final_state 错误，
+  已否定。对模型推理 shape 的精确首调诊断显示：差异总是 final_state
+  最后一个 value head 的 `[K=0:128,V=112:128]`，即 2048 个元素。
+  device 6 上 B0 Phase6 5/5 产生差异、B1 Phase6 5/5 参考一致；
+  device 5 上 B0/B1 Phase6 各 5/5 参考一致，但 legacy 路径 10 次中
+  3 次产生同一差异。哨兵实验证明该分块被写覆盖，排除公共输出漏写。
+  这些证据否定“比较失败可直接归因于当前 selector”；B3 延后 wait
+  已被硬件结果否定。旧 B1 的两处裸删 Phase6 在两卡精确诊断中均得到
+  同一参考一致哈希，因此保留为性能上界/正向观察；但由于它同时改变两条边且
+  未保留 FIX 发布语义，未经进一步因果证明不作为交付候选。当前已切换到
+  上述可独立归因的 B0–B5 矩阵，
+  完成本地静态检查后待一次新构建验证。
 - Invalidation：若目标 CANN 头文件、生成代码或 profiling 证明上述生产者/消费者
   链路不成立，需回到 B0 并重建依赖图，不继续放宽同步。

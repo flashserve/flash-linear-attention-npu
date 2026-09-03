@@ -18,6 +18,8 @@ enum class GdnCoreSyncVariant : uint32_t {
     B1 = 1,
     B2 = 2,
     B3 = 3,
+    B4 = 4,
+    B5 = 5,
 };
 
 struct ChunkGdnCoreCoefficientTiling {

@@ -47,9 +47,17 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
     // The final boolean enables the H/O fused scheduling path; using the
     // standalone-H mode here changes synchronization and precision behavior.
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    constexpr bool kNarrowCube1ToPipeFix =
+        kSyncVariant == GdnCoreSyncVariant::B1 ||
+        kSyncVariant == GdnCoreSyncVariant::B4 ||
+        kSyncVariant == GdnCoreSyncVariant::B5;
+    constexpr bool kNarrowCube2ToPipeFix =
+        kSyncVariant == GdnCoreSyncVariant::B2 ||
+        kSyncVariant == GdnCoreSyncVariant::B4 ||
+        kSyncVariant == GdnCoreSyncVariant::B5;
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true,
-        kSyncVariant != GdnCoreSyncVariant::B0>;
+        kNarrowCube1ToPipeFix, kNarrowCube2ToPipeFix>;
 #else
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true>;

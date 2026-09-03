@@ -52,6 +52,8 @@ constexpr uint32_t TILING_KEY_B0_V256 = 2;
 constexpr uint32_t TILING_KEY_B1_V128 = 11;
 constexpr uint32_t TILING_KEY_B2_V128 = 21;
 constexpr uint32_t TILING_KEY_B3_V128 = 31;
+constexpr uint32_t TILING_KEY_B4_V128 = 41;
+constexpr uint32_t TILING_KEY_B5_V128 = 51;
 constexpr uint64_t WORKSPACE_ALIGNMENT = 512;
 constexpr uint64_t TILING_ALIGNMENT = 8;
 constexpr uint64_t FP32_BLOCK_ELEMS = 8;
@@ -75,6 +77,14 @@ bool ResolveSyncVariant(GDN::GdnCoreSyncVariant &variant)
         variant = GDN::GdnCoreSyncVariant::B3;
         return true;
     }
+    if (std::strcmp(value, "B4") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B4;
+        return true;
+    }
+    if (std::strcmp(value, "B5") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B5;
+        return true;
+    }
     return false;
 }
 
@@ -94,6 +104,10 @@ uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
             return TILING_KEY_B2_V128;
         case GDN::GdnCoreSyncVariant::B3:
             return TILING_KEY_B3_V128;
+        case GDN::GdnCoreSyncVariant::B4:
+            return TILING_KEY_B4_V128;
+        case GDN::GdnCoreSyncVariant::B5:
+            return TILING_KEY_B5_V128;
     }
     return 0;
 }
@@ -267,14 +281,14 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     GDN::GdnCoreSyncVariant syncVariant = GDN::GdnCoreSyncVariant::B0;
     OP_CHECK_IF(!ResolveSyncVariant(syncVariant),
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3."),
+                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3/B4/B5."),
                 return ge::GRAPH_FAILED);
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     const bool isAscend950 =
         platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     OP_CHECK_IF(syncVariant != GDN::GdnCoreSyncVariant::B0 && !isAscend950,
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3 is supported only on Ascend950."),
+                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5 is supported only on Ascend950."),
                 return ge::GRAPH_FAILED);
     // Extra experiment kernels are intentionally limited to the dominant model
     // domain. Other supported shapes retain full functionality through B0 and
@@ -282,7 +296,7 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     const bool isExperimentalShape =
         isBf16 && initialStateDesc != nullptr &&
         initialStateDesc->GetDataType() == ge::DT_FLOAT &&
-        vDim == SUPPORTED_V_DIM_128;
+        vDim == SUPPORTED_V_DIM_128 && *chunkSize == CHUNK_64;
     const GDN::GdnCoreSyncVariant effectiveSyncVariant =
         isExperimentalShape ? syncVariant : GDN::GdnCoreSyncVariant::B0;
     OP_CHECK_IF(Tiling4ChunkGdnCoreStateOutput(context) != ge::GRAPH_SUCCESS,
