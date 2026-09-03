@@ -1268,6 +1268,7 @@ def npu_chunk_gated_delta_rule_fwd(
     cu_seqlens=None,
     chunk_indices=None,
     scale=None,
+    return_aux=True,
 ):
     """Call the final Phase 6 single-kernel GDN core."""
     import torch
@@ -1316,10 +1317,14 @@ def npu_chunk_gated_delta_rule_fwd(
             raise RuntimeError("npu_chunk_gated_delta_rule_fwd: chunk_indices must use canonical sequence-major order.")
 
     output_final_state = _optional_bool(output_final_state, False)
+    return_aux = _optional_bool(return_aux, True)
     scale = _optional_float(scale, float(k_dim) ** -0.5)
     o = _empty_like(v)
-    g_cumsum = _empty((batch, tokens, v_heads), g, dtype=torch.float32)
-    A = _empty((batch, v_heads, tokens, int(chunk_size)), q)
+    g_cumsum = None
+    A = None
+    if return_aux:
+        g_cumsum = _empty((batch, tokens, v_heads), g, dtype=torch.float32)
+        A = _empty((batch, v_heads, tokens, int(chunk_size)), q)
     final_state = None
     if output_final_state:
         seq_num = len(cu_seqlens) - 1 if cu_seqlens is not None else batch
