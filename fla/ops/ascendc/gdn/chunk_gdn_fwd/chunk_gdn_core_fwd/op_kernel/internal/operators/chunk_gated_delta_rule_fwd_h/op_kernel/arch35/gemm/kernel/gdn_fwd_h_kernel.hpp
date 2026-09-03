@@ -67,11 +67,15 @@ struct GDNFwdHTileShapes256 {
     using L0TileShape = tla::Shape<_128, _256, _64>;
 };
 
-template <bool KGated, bool ScalarGated, bool UseExp2>
+template <bool KGated, bool ScalarGated, bool UseExp2,
+          bool KUpdateBarrierToPipeMte3 = false,
+          bool KUpdateBarrierEventOnly = false>
 struct GDNFwdHGateTag {
     static constexpr bool value = KGated;
     static constexpr bool scalarGated = ScalarGated;
     static constexpr bool useExp2 = UseExp2;
+    static constexpr bool updateBarrierToPipeMte3 = KUpdateBarrierToPipeMte3;
+    static constexpr bool updateBarrierEventOnly = KUpdateBarrierEventOnly;
 };
 
 template<
@@ -85,10 +89,18 @@ template<
     bool useExp2 = false,
     bool kChunkPipeline = false,
     bool kNarrowCube1ToPipeFix = false,
-    bool kNarrowCube2ToPipeFix = false
+    bool kNarrowCube2ToPipeFix = false,
+    bool kCube1EventOnly = false,
+    bool kUpdateBarrierToPipeMte3 = false,
+    bool kUpdateBarrierEventOnly = false
 >
 class GDNFwdHKernel {
 public:
+
+    static_assert(!(kNarrowCube1ToPipeFix && kCube1EventOnly),
+                  "C1 publish barrier cannot be both PIPE_FIX and event-only.");
+    static_assert(!(kUpdateBarrierToPipeMte3 && kUpdateBarrierEventOnly),
+                  "Update barrier cannot be both PIPE_MTE3 and event-only.");
 
     using ArchTag = Arch::Ascend950;
     using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHCube;
@@ -137,7 +149,9 @@ public:
 
     // vec 1
     using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnew;
-    using GateTag = GDNFwdHGateTag<kGated, scalarGated, useExp2>;
+    using GateTag = GDNFwdHGateTag<
+        kGated, scalarGated, useExp2,
+        kUpdateBarrierToPipeMte3, kUpdateBarrierEventOnly>;
     using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, VUpdateType, FinalStateType, GateTag>;
 
     // vec 2
@@ -622,10 +636,12 @@ public:
                             }
                             // Publish only after the bounded MMAD FIX path is visible.
                             // B0 retains the conservative all-pipe drain as the control.
-                            if constexpr (kNarrowCube1ToPipeFix) {
-                                AscendC::PipeBarrier<PIPE_FIX>();
-                            } else {
-                                AscendC::PipeBarrier<PIPE_ALL>();
+                            if constexpr (!kCube1EventOnly) {
+                                if constexpr (kNarrowCube1ToPipeFix) {
+                                    AscendC::PipeBarrier<PIPE_FIX>();
+                                } else {
+                                    AscendC::PipeBarrier<PIPE_ALL>();
+                                }
                             }
                             Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
                                 cubeBlockScheduler.cube1Done[streamId]);

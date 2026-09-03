@@ -71,13 +71,35 @@
     读 `l1_I/l1_X` 与 `l1_Y` 无关，第二次 MMAD 才首次读 `l1_Y`。
 - Alternatives：直接删除所有 `PIPE_ALL`；用 `PIPE_FIX` 保留生产者发布语义；
   每个方案单独编译；一次构建多个 tiling key 变体。
-- Choice：首轮 B0–B3 实验后收窄为一次构建、六个编译期变体：
+- Choice：首轮 B0–B3 实验后先收窄为一次构建、六个编译期变体：
   B0 保留两处 FwdH `PIPE_ALL` 和 SolveTri64 `PIPE_ALL`；B1 仅将 FwdH C1
   收窄为 `PIPE_FIX`；B2 仅将 FwdH C2 收窄为 `PIPE_FIX`；B3 仅将
   SolveTri64 收窄为立即 `MTE2_MTE1`；B4 组合 C1/C2 `PIPE_FIX`、Solve
   保持 `PIPE_ALL`；B5 在 B4 上再将 SolveTri64 收窄为立即
   `MTE2_MTE1`。因此 B4→B5 可直接归因最终 FwdH 配置下的 Solve 增量。
-  不再编译裸删 barrier 或延后 wait。B1–B5 的额外 key 仅在 A5、BF16 输入、
+  第二轮只扩展尚未隔离的 C1 发布与 Update 写回边，B6–B11 真值表如下；
+  其中“event-only”只移除显式 `PipeBarrier`，保留紧随其后的定向事件或
+  `CrossCoreSetFlag`，不是删除依赖协议。C2 和 Solve 在新增变体中均保持 B0，
+  已有 B0–B5 语义不变。
+
+  | 变体/key | C1 发布 | C2 发布 | SolveTri64 | Update FP32 final-state 写回 |
+  |---|---|---|---|---|
+  | B0/1 | `PIPE_ALL` | `PIPE_ALL` | `PIPE_ALL` | `PIPE_ALL` |
+  | B1/11 | `PIPE_FIX` | `PIPE_ALL` | `PIPE_ALL` | `PIPE_ALL` |
+  | B2/21 | `PIPE_ALL` | `PIPE_FIX` | `PIPE_ALL` | `PIPE_ALL` |
+  | B3/31 | `PIPE_ALL` | `PIPE_ALL` | 立即 `MTE2_MTE1` | `PIPE_ALL` |
+  | B4/41 | `PIPE_FIX` | `PIPE_FIX` | `PIPE_ALL` | `PIPE_ALL` |
+  | B5/51 | `PIPE_FIX` | `PIPE_FIX` | 立即 `MTE2_MTE1` | `PIPE_ALL` |
+  | B6/61 | `PIPE_ALL` | `PIPE_ALL` | `PIPE_ALL` | `PIPE_MTE3` |
+  | B7/71 | `PIPE_ALL` | `PIPE_ALL` | `PIPE_ALL` | event-only，保留 `MTE3_MTE2`/`MTE3_V` |
+  | B8/81 | event-only，保留 `CrossCoreSetFlag<0x2, PIPE_FIX>` | `PIPE_ALL` | `PIPE_ALL` | `PIPE_ALL` |
+  | B9/91 | `PIPE_FIX` | `PIPE_ALL` | `PIPE_ALL` | `PIPE_MTE3` |
+  | B10/101 | event-only，保留 `CrossCoreSetFlag<0x2, PIPE_FIX>` | `PIPE_ALL` | `PIPE_ALL` | `PIPE_MTE3` |
+  | B11/111 | event-only，保留 `CrossCoreSetFlag<0x2, PIPE_FIX>` | `PIPE_ALL` | `PIPE_ALL` | event-only，保留 `MTE3_MTE2`/`MTE3_V` |
+
+  已被 A5 硬件精度结果否定的 Solve deferred-wait 不重试；MIX kernel 的
+  `SyncAll` 保护跨阶段 GM/workspace 可见性与参与者会合，不属于本轮局部
+  barrier 假设，全部保留。也不编译丢弃配套事件的裸删方案。B1–B11 的额外 key 仅在 A5、BF16 输入、
   FP32 initial_state 的编译配置中生成，并仅为 V128、chunk64
   模型主路径选择；
   其他合法 dtype/state/V256 形态回退 B0。host 在非 Ascend950 上
@@ -100,7 +122,8 @@
   已被硬件结果否定。旧 B1 的两处裸删 Phase6 在两卡精确诊断中均得到
   同一参考一致哈希，因此保留为性能上界/正向观察；但由于它同时改变两条边且
   未保留 FIX 发布语义，未经进一步因果证明不作为交付候选。当前已切换到
-  上述可独立归因的 B0–B5 矩阵，
-  完成本地静态检查后待一次新构建验证。
+  上述可独立归因的 B0–B11 矩阵。B6–B11 已通过源码真值表、selector、
+  key 路由、实验域 fallback、非 A5 fail-closed 和 ABI-neutral 静态测试；
+  尚待同一产物构建及 A5 路由、精度、确定性和性能验证。
 - Invalidation：若目标 CANN 头文件、生成代码或 profiling 证明上述生产者/消费者
   链路不成立，需回到 B0 并重建依赖图，不继续放宽同步。

@@ -50,14 +50,27 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
     constexpr bool kNarrowCube1ToPipeFix =
         kSyncVariant == GdnCoreSyncVariant::B1 ||
         kSyncVariant == GdnCoreSyncVariant::B4 ||
-        kSyncVariant == GdnCoreSyncVariant::B5;
+        kSyncVariant == GdnCoreSyncVariant::B5 ||
+        kSyncVariant == GdnCoreSyncVariant::B9;
     constexpr bool kNarrowCube2ToPipeFix =
         kSyncVariant == GdnCoreSyncVariant::B2 ||
         kSyncVariant == GdnCoreSyncVariant::B4 ||
         kSyncVariant == GdnCoreSyncVariant::B5;
+    constexpr bool kCube1EventOnly =
+        kSyncVariant == GdnCoreSyncVariant::B8 ||
+        kSyncVariant == GdnCoreSyncVariant::B10 ||
+        kSyncVariant == GdnCoreSyncVariant::B11;
+    constexpr bool kUpdateBarrierToPipeMte3 =
+        kSyncVariant == GdnCoreSyncVariant::B6 ||
+        kSyncVariant == GdnCoreSyncVariant::B9 ||
+        kSyncVariant == GdnCoreSyncVariant::B10;
+    constexpr bool kUpdateBarrierEventOnly =
+        kSyncVariant == GdnCoreSyncVariant::B7 ||
+        kSyncVariant == GdnCoreSyncVariant::B11;
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true,
-        kNarrowCube1ToPipeFix, kNarrowCube2ToPipeFix>;
+        kNarrowCube1ToPipeFix, kNarrowCube2ToPipeFix, kCube1EventOnly,
+        kUpdateBarrierToPipeMte3, kUpdateBarrierEventOnly>;
 #else
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true>;

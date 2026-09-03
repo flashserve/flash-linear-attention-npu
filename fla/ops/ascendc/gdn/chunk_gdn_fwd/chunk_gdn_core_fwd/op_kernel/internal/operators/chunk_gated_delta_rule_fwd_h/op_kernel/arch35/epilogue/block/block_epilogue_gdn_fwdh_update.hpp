@@ -39,6 +39,10 @@ class BlockEpilogue <
     static constexpr bool kGated = KGatedTag::value;
     static constexpr bool scalarGated = KGatedTag::scalarGated;
     static constexpr bool useExp2 = KGatedTag::useExp2;
+    static constexpr bool kUpdateBarrierToPipeMte3 =
+        KGatedTag::updateBarrierToPipeMte3;
+    static constexpr bool kUpdateBarrierEventOnly =
+        KGatedTag::updateBarrierEventOnly;
     static constexpr float LN2 = 0.6931471805599453f;
 public:
     // Type aliases
@@ -408,7 +412,13 @@ public:
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                     CopyUbToGm(finalStateThisTile, hUpdateUbTensorThisTile,
                                rowsThisTile, nActual, outputStride);
-                    AscendC::PipeBarrier<PIPE_ALL>();
+                    if constexpr (!kUpdateBarrierEventOnly) {
+                        if constexpr (kUpdateBarrierToPipeMte3) {
+                            AscendC::PipeBarrier<PIPE_MTE3>();
+                        } else {
+                            AscendC::PipeBarrier<PIPE_ALL>();
+                        }
+                    }
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(updateReadyEvent);
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(updateReadyEvent);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(updateReadyEvent);

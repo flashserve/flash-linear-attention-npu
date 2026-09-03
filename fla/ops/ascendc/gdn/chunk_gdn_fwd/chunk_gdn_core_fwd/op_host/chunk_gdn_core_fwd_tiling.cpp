@@ -54,6 +54,12 @@ constexpr uint32_t TILING_KEY_B2_V128 = 21;
 constexpr uint32_t TILING_KEY_B3_V128 = 31;
 constexpr uint32_t TILING_KEY_B4_V128 = 41;
 constexpr uint32_t TILING_KEY_B5_V128 = 51;
+constexpr uint32_t TILING_KEY_B6_V128 = 61;
+constexpr uint32_t TILING_KEY_B7_V128 = 71;
+constexpr uint32_t TILING_KEY_B8_V128 = 81;
+constexpr uint32_t TILING_KEY_B9_V128 = 91;
+constexpr uint32_t TILING_KEY_B10_V128 = 101;
+constexpr uint32_t TILING_KEY_B11_V128 = 111;
 constexpr uint64_t WORKSPACE_ALIGNMENT = 512;
 constexpr uint64_t TILING_ALIGNMENT = 8;
 constexpr uint64_t FP32_BLOCK_ELEMS = 8;
@@ -85,6 +91,30 @@ bool ResolveSyncVariant(GDN::GdnCoreSyncVariant &variant)
         variant = GDN::GdnCoreSyncVariant::B5;
         return true;
     }
+    if (std::strcmp(value, "B6") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B6;
+        return true;
+    }
+    if (std::strcmp(value, "B7") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B7;
+        return true;
+    }
+    if (std::strcmp(value, "B8") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B8;
+        return true;
+    }
+    if (std::strcmp(value, "B9") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B9;
+        return true;
+    }
+    if (std::strcmp(value, "B10") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B10;
+        return true;
+    }
+    if (std::strcmp(value, "B11") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B11;
+        return true;
+    }
     return false;
 }
 
@@ -108,6 +138,18 @@ uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
             return TILING_KEY_B4_V128;
         case GDN::GdnCoreSyncVariant::B5:
             return TILING_KEY_B5_V128;
+        case GDN::GdnCoreSyncVariant::B6:
+            return TILING_KEY_B6_V128;
+        case GDN::GdnCoreSyncVariant::B7:
+            return TILING_KEY_B7_V128;
+        case GDN::GdnCoreSyncVariant::B8:
+            return TILING_KEY_B8_V128;
+        case GDN::GdnCoreSyncVariant::B9:
+            return TILING_KEY_B9_V128;
+        case GDN::GdnCoreSyncVariant::B10:
+            return TILING_KEY_B10_V128;
+        case GDN::GdnCoreSyncVariant::B11:
+            return TILING_KEY_B11_V128;
     }
     return 0;
 }
@@ -281,14 +323,14 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     GDN::GdnCoreSyncVariant syncVariant = GDN::GdnCoreSyncVariant::B0;
     OP_CHECK_IF(!ResolveSyncVariant(syncVariant),
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3/B4/B5."),
+                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11."),
                 return ge::GRAPH_FAILED);
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     const bool isAscend950 =
         platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     OP_CHECK_IF(syncVariant != GDN::GdnCoreSyncVariant::B0 && !isAscend950,
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5 is supported only on Ascend950."),
+                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11 is supported only on Ascend950."),
                 return ge::GRAPH_FAILED);
     // Extra experiment kernels are intentionally limited to the dominant model
     // domain. Other supported shapes retain full functionality through B0 and
