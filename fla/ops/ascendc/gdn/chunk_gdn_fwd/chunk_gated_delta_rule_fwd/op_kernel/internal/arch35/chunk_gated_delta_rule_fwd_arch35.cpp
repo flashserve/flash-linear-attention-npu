@@ -21,9 +21,6 @@ constexpr uint32_t UB_ALIGNMENT = 32;
 constexpr uint32_t PHASE6_TILING_ALIGNMENT = 8;
 constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 5;
 constexpr int64_t PHASE6_CUMSUM_FAST_BUFFER_LIMIT = 160 * 1024;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-constexpr AscendC::SyncAllConfig PHASE6_HO_SYNC_CONFIG = {PIPE_MTE3, PIPE_MTE2};
-#endif
 
 __aicore__ inline uint64_t AlignPhase6(uint64_t value, uint64_t alignment)
 {
@@ -330,14 +327,10 @@ __aicore__ inline void RunPhase6(
     DispatchFwdH<TileShapes>(k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
                              chunkIndices, h, vNew, finalState, tiling, userWorkspace);
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    // H publishes h/vNew through MTE3 and O first consumes them through MTE2.
-    // Limit the global hand-off to those pipelines instead of draining PIPE_ALL.
-    AscendC::SyncAll<false, PHASE6_HO_SYNC_CONFIG>();
-#else
-    // Ascend910B supports only the full-pipeline SyncAll overload.
+    // FwdH leaves local vector/FIX generations as well as MTE3 writes behind.
+    // FwdO reuses the same cross-core flag namespace, so close every pipeline
+    // generation before its schedulers are initialized.
     AscendC::SyncAll<false>();
-#endif
 
     const uint64_t oTilingOffset =
         AlignPhase6(sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
