@@ -50,11 +50,8 @@ constexpr int64_t CHUNK_128 = 128;
 constexpr uint32_t TILING_KEY_B0_V128 = 1;
 constexpr uint32_t TILING_KEY_B0_V256 = 2;
 constexpr uint32_t TILING_KEY_B1_V128 = 11;
-constexpr uint32_t TILING_KEY_B1_V256 = 12;
 constexpr uint32_t TILING_KEY_B2_V128 = 21;
-constexpr uint32_t TILING_KEY_B2_V256 = 22;
 constexpr uint32_t TILING_KEY_B3_V128 = 31;
-constexpr uint32_t TILING_KEY_B3_V256 = 32;
 constexpr uint64_t WORKSPACE_ALIGNMENT = 512;
 constexpr uint64_t TILING_ALIGNMENT = 8;
 constexpr uint64_t FP32_BLOCK_ELEMS = 8;
@@ -83,16 +80,20 @@ bool ResolveSyncVariant(GDN::GdnCoreSyncVariant &variant)
 
 uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
 {
-    const bool isV256 = vDim == SUPPORTED_V_DIM_256;
+    const uint32_t b0Key =
+        vDim == SUPPORTED_V_DIM_256 ? TILING_KEY_B0_V256 : TILING_KEY_B0_V128;
+    if (vDim != SUPPORTED_V_DIM_128) {
+        return b0Key;
+    }
     switch (variant) {
         case GDN::GdnCoreSyncVariant::B0:
-            return isV256 ? TILING_KEY_B0_V256 : TILING_KEY_B0_V128;
+            return b0Key;
         case GDN::GdnCoreSyncVariant::B1:
-            return isV256 ? TILING_KEY_B1_V256 : TILING_KEY_B1_V128;
+            return TILING_KEY_B1_V128;
         case GDN::GdnCoreSyncVariant::B2:
-            return isV256 ? TILING_KEY_B2_V256 : TILING_KEY_B2_V128;
+            return TILING_KEY_B2_V128;
         case GDN::GdnCoreSyncVariant::B3:
-            return isV256 ? TILING_KEY_B3_V256 : TILING_KEY_B3_V128;
+            return TILING_KEY_B3_V128;
     }
     return 0;
 }
@@ -195,6 +196,7 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     // dimensions from v and chunk_size and only needs the output dtype here.
     const auto *aDesc = context->GetOutputDesc(OUTPUT_A);
     const auto *gDesc = context->GetInputDesc(INPUT_RAW_G);
+    const auto *initialStateDesc = context->GetOptionalInputDesc(INPUT_INITIAL_STATE);
     OP_CHECK_IF(qDesc == nullptr || kDesc == nullptr || vDesc == nullptr || betaDesc == nullptr ||
                     aDesc == nullptr || gDesc == nullptr,
                 OP_LOGE(context->GetNodeName(), "Phase 6 requires valid input descriptors."),
@@ -274,6 +276,15 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(),
                         "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3 is supported only on Ascend950."),
                 return ge::GRAPH_FAILED);
+    // Extra experiment kernels are intentionally limited to the dominant model
+    // domain. Other supported shapes retain full functionality through B0 and
+    // do not multiply the CCE compile matrix.
+    const bool isExperimentalShape =
+        isBf16 && initialStateDesc != nullptr &&
+        initialStateDesc->GetDataType() == ge::DT_FLOAT &&
+        vDim == SUPPORTED_V_DIM_128;
+    const GDN::GdnCoreSyncVariant effectiveSyncVariant =
+        isExperimentalShape ? syncVariant : GDN::GdnCoreSyncVariant::B0;
     OP_CHECK_IF(Tiling4ChunkGdnCoreStateOutput(context) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "Reuse of the accepted Phase 5 suffix tiling failed."),
                 return ge::GRAPH_FAILED);
@@ -366,7 +377,7 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(), "Serialize Phase 6 coefficient trailer failed."),
                 return ge::GRAPH_FAILED);
     rawTiling->SetDataSize(rawTilingSize);
-    context->SetTilingKey(ResolveTilingKey(vDim, syncVariant));
+    context->SetTilingKey(ResolveTilingKey(vDim, effectiveSyncVariant));
     context->SetScheduleMode(1);
     OP_LOGD(context->GetNodeName(),
             "Phase 6 tiling: B=%ld, Hk=%ld, Hv=%ld, T=%ld, K=%ld, V=%ld, blocks=%lu, tasks=%lu, suffix=%zu, total=%zu.",

@@ -157,10 +157,9 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
     def test_top_level_dispatches_all_variants_at_compile_time(self):
         text = source(CORE_KERNEL)
 
-        for variant in ("B0", "B1", "B2", "B3"):
-            self.assertEqual(
-                text.count(f"GDN::GdnCoreSyncVariant::{variant}>"), 2
-            )
+        self.assertEqual(text.count("GDN::GdnCoreSyncVariant::B0>"), 2)
+        for variant in ("B1", "B2", "B3"):
+            self.assertEqual(text.count(f"GDN::GdnCoreSyncVariant::{variant}>"), 1)
         self.assertIn(
             "RunSolvePhase<InputT, 64, kSyncVariant>", text
         )
@@ -196,28 +195,50 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
             "TILING_KEY_B0_V128": "1",
             "TILING_KEY_B0_V256": "2",
             "TILING_KEY_B1_V128": "11",
-            "TILING_KEY_B1_V256": "12",
             "TILING_KEY_B2_V128": "21",
-            "TILING_KEY_B2_V256": "22",
             "TILING_KEY_B3_V128": "31",
-            "TILING_KEY_B3_V256": "32",
         }
         for name, value in expected_keys.items():
             self.assertIn(f"constexpr uint32_t {name} = {value};", host)
-        expected_host_routes = {
-            "B0": ("TILING_KEY_B0_V128", "TILING_KEY_B0_V256"),
-            "B1": ("TILING_KEY_B1_V128", "TILING_KEY_B1_V256"),
-            "B2": ("TILING_KEY_B2_V128", "TILING_KEY_B2_V256"),
-            "B3": ("TILING_KEY_B3_V128", "TILING_KEY_B3_V256"),
-        }
-        for variant, (v128_key, v256_key) in expected_host_routes.items():
+        self.assertRegex(
+            host,
+            r"const uint32_t b0Key\s*=\s*vDim == SUPPORTED_V_DIM_256 \? "
+            r"TILING_KEY_B0_V256 : TILING_KEY_B0_V128;",
+        )
+        self.assertRegex(
+            host,
+            r"if \(vDim != SUPPORTED_V_DIM_128\) \{\s*return b0Key;\s*\}",
+        )
+        for variant, key in {
+            "B0": "b0Key",
+            "B1": "TILING_KEY_B1_V128",
+            "B2": "TILING_KEY_B2_V128",
+            "B3": "TILING_KEY_B3_V128",
+        }.items():
             self.assertRegex(
                 host,
                 rf"case GDN::GdnCoreSyncVariant::{variant}:\s*"
-                rf"return isV256 \? {v256_key} : {v128_key};",
+                rf"return {key};",
             )
         self.assertIn(
-            "context->SetTilingKey(ResolveTilingKey(vDim, syncVariant));", host
+            "context->SetTilingKey(ResolveTilingKey(vDim, effectiveSyncVariant));",
+            host,
+        )
+        self.assertRegex(
+            host,
+            r"const bool isExperimentalShape\s*=\s*isBf16 && "
+            r"initialStateDesc != nullptr &&\s*"
+            r"initialStateDesc->GetDataType\(\) == ge::DT_FLOAT &&\s*"
+            r"vDim == SUPPORTED_V_DIM_128;",
+        )
+        self.assertIn(
+            "context->GetOptionalInputDesc(INPUT_INITIAL_STATE)", host
+        )
+        self.assertRegex(
+            host,
+            r"const GDN::GdnCoreSyncVariant effectiveSyncVariant\s*=\s*"
+            r"isExperimentalShape \? syncVariant : "
+            r"GDN::GdnCoreSyncVariant::B0;",
         )
 
         routed = {
@@ -237,21 +258,22 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
                 1: ("GDNFwdHTileShapes128", "B0"),
                 2: ("GDNFwdHTileShapes256", "B0"),
                 11: ("GDNFwdHTileShapes128", "B1"),
-                12: ("GDNFwdHTileShapes256", "B1"),
                 21: ("GDNFwdHTileShapes128", "B2"),
-                22: ("GDNFwdHTileShapes256", "B2"),
                 31: ("GDNFwdHTileShapes128", "B3"),
-                32: ("GDNFwdHTileShapes256", "B3"),
             },
         )
         a5_dispatch_start = kernel.index(
-            "#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310",
+            "#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310 &&",
             kernel.index("TILING_KEY_IS(2)"),
         )
         a5_dispatch_end = kernel.index("#endif", a5_dispatch_start)
         a5_dispatch = kernel[a5_dispatch_start:a5_dispatch_end]
-        for key in (11, 12, 21, 22, 31, 32):
+        self.assertIn("ORIG_DTYPE_Q == DT_BF16", a5_dispatch)
+        self.assertIn("ORIG_DTYPE_INITIAL_STATE == DT_FLOAT", a5_dispatch)
+        for key in (11, 21, 31):
             self.assertIn(f"TILING_KEY_IS({key})", a5_dispatch)
+        for key in (12, 22, 32):
+            self.assertNotIn(f"TILING_KEY_IS({key})", kernel)
 
         self.assertIn(
             "platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950",

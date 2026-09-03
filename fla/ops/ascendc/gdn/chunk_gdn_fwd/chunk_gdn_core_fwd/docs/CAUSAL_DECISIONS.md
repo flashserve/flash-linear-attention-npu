@@ -69,20 +69,26 @@
     `FIX -> GM workspace -> MTE2 -> l1_Y -> MTE1`。helper 内部的
     `FIX_MTE2` 不能替代 helper 返回后的 `MTE2_MTE1`；第一次 MMAD
     读 `l1_I/l1_X` 与 `l1_Y` 无关，第二次 MMAD 才首次读 `l1_Y`。
-- Alternatives：直接删除所有 `PIPE_ALL`；每个方案单独编译；一次编译
+- Alternatives：直接删除所有 `PIPE_ALL`；每个方案单独编译；一次构建
   B0–B3 后通过 tiling key 选择。
-- Choice：采用一次编译、四个编译期变体：B0 保留原同步；B1 仅跳过
+- Choice：采用一次构建、四个编译期变体：B0 保留原同步；B1 仅跳过
   FwdH 两处目标 `PIPE_ALL`；B2 在 B1 上将 SolveTri64 的 `PIPE_ALL`
   收窄为立即 `MTE2_MTE1`；B3 在 B2 上将 wait 延后到第二次、
-  即首次读 `l1_Y` 的 MMAD 前。B1–B3 仅在 `__CCE_AICORE__ == 310`
-  中编译，host 在非 Ascend950 上 fail-closed；不扩展公共 ABI/trailer。
+  即首次读 `l1_Y` 的 MMAD 前。B1–B3 的额外 key 仅在 A5、BF16 输入、
+  FP32 initial_state 的编译配置中生成，并仅为 V128 模型主路径选择；
+  其他合法 dtype/state/V256 形态回退 B0。host 在非 Ascend950 上
+  fail-closed；不扩展公共 ABI/trailer。
 - Validation：先冻结两轮 inference/full 均成功的 stable200；然后在同一
   CANN 9.1 产物中检查 key 集、实际路由、首次/重复精度与确定性；
   最后用独占空闲卡做 B0↔B1、B1↔B2、B2↔B3 和 B0↔winner ABBA，
   报告 median、p95 和峰值显存。
 - Falsifiers：任一变体编译失败、路由不符、超时/hang、重复运行不确定、
   stable200 精度劣化，或独占卡 ABBA 无稳定收益，均否定对应候选机制。
-- Result：已完成本地静态路由、ABI 中性、同步顺序和非 A5 编译隔离检查；
-  尚未编译、部署或得出硬件结论。
+- Result：已完成本地静态路由、ABI 中性、同步顺序和非 A5 编译隔离检查。
+  首次将 8 个 key 放入所有 dtype 配置后，CCE 仍逐配置、逐 key 生成；
+  构建约 27 分钟时只从 B0 key 1 推进到 key 2，因此精确终止该隔离
+  构建，并将实验矩阵收敛为主模型配置的 3 个额外 V128 key。这否定了
+  “8 key 全配置一次构建成本可接受”的实验打包假设，不是否定 B1–B3
+  机制。收敛后的 CANN 9.1 编译、部署和硬件结论仍待完成。
 - Invalidation：若目标 CANN 头文件、生成代码或 profiling 证明上述生产者/消费者
   链路不成立，需回到 B0 并重建依赖图，不继续放宽同步。
