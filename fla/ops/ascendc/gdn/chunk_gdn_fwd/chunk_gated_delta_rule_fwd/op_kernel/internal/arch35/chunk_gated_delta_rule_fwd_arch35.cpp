@@ -311,13 +311,11 @@ __aicore__ inline void RunPhase6(
         AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);
     }
     GM_ADDR w = userWorkspace + stateOutputTiling->wIntermediateOffset;
-    GM_ADDR u = userWorkspace + stateOutputTiling->uIntermediateOffset;
+    // Diagnostic build: expose recompute U through the public O buffer.  The
+    // target case has the same [B, Hv, T, V] physical layout for both tensors.
+    GM_ADDR u = o;
     GM_ADDR h = userWorkspace + stateOutputTiling->hIntermediateOffset;
-    // Diagnostic build: expose the fused FwdH vNew through the public O buffer
-    // so case-level evidence can determine whether the first mismatch precedes
-    // FwdO.  This alias is valid for the target case because O and vNew share
-    // the same [B, Hv, T, V] physical layout.
-    GM_ADDR vNew = o;
+    GM_ADDR vNew = userWorkspace + stateOutputTiling->vNewIntermediateOffset;
     RecomputeWUFwdTilingData recomputeTiling{};
     CopyRecomputeTiling(&stateOutputTiling->recompute, recomputeTiling);
     if (stateOutputTiling->recompute.V == 256) {
@@ -331,6 +329,12 @@ __aicore__ inline void RunPhase6(
     }
 
     WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, coefficient);
+
+    // Diagnostic build: close the same all-core boundary that normally starts
+    // FwdH, then stop before FwdH can consume the captured U tensor.
+    AscendC::SyncAll<false>();
+    return;
+
     DispatchFwdH<TileShapes>(k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
                              chunkIndices, h, vNew, finalState, tiling, userWorkspace);
 
@@ -342,10 +346,6 @@ __aicore__ inline void RunPhase6(
     // Ascend910B supports only the full-pipeline SyncAll overload.
     AscendC::SyncAll<false>();
 #endif
-
-    // Diagnostic build: vNew is already stored in O.  Stop before FwdO can
-    // overwrite the captured intermediate.
-    return;
 
     const uint64_t oTilingOffset =
         AlignPhase6(sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
