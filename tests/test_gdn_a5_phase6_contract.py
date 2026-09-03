@@ -20,6 +20,11 @@ EMBEDDED_FWD_O = ROOT / (
     "op_kernel/internal/operators/chunk_fwd_o/op_kernel/gemm/kernel/"
     "gdn_fwd_o_kernel.hpp"
 )
+RECOMPUTE_VECTOR = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd/"
+    "op_kernel/internal/operators/recompute_w_u_fwd/op_kernel/"
+    "recompute_w_u_fwd_vector.h"
+)
 
 
 def test_cumsum_is_published_globally_before_coefficient_epilogue():
@@ -72,3 +77,19 @@ def test_embedded_fwdo_joins_aiv_subblocks_before_shared_publications():
     ):
         before = source[: source.index(publish)]
         assert before.rfind(join) > before.rfind("epilogueGDNFwdO")
+
+
+def test_recompute_vbeta_joins_both_aiv_subblocks_before_cube_consumes_workspace():
+    source = RECOMPUTE_VECTOR.read_text(encoding="utf-8")
+    process_vb = source.split("::ProcessVb()", maxsplit=1)[1].split(
+        "::ProcessKbgExp()", maxsplit=1
+    )[0]
+    join = "Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();"
+    publish = (
+        "Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>"
+        "(flagAivFinishStore);"
+    )
+
+    assert process_vb.count(publish) == 2
+    for before_publish in process_vb.split(publish)[:-1]:
+        assert before_publish.rstrip().endswith(join)
