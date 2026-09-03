@@ -25,6 +25,11 @@ __aicore__ inline void RunSolvePhase(GM_ADDR a, GM_ADDR cuSeqlens, GM_ADDR chunk
         CrossCoreWaitFlag(KKT_READY_FLAG);
     }
     if ASCEND_IS_AIV {
+        // Each AIC owns the two contiguous coefficient tasks produced by its
+        // paired AIV subblocks.  Close the AIV generation before publishing
+        // KKT_READY, otherwise SolveTri can consume the second task while its
+        // MTE3 writeback is still in flight.
+        Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
         CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG);
     }
     // Phase6 passes a per-core user-workspace slice and its KKT epilogue uses
