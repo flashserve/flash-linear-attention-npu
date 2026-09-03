@@ -44,6 +44,21 @@ from ._runtime import (
 # strings or otherwise ambiguous scalar conversion are listed here to prevent
 # ctypes from narrowing or mis-converting arguments.
 _GET_WORKSPACE_ARGTYPES = {
+    "aclnnChunkGatedDeltaRuleBwdFinalize": [
+        *([ctypes.c_void_p] * 14),  # required and optional tensor descriptors
+        ctypes.c_void_p,  # cu_seqlens optional
+        ctypes.c_void_p,  # chunk_indices optional
+        ctypes.c_double,
+        ctypes.c_int64,
+        ctypes.c_bool,
+        ctypes.c_bool,
+        ctypes.c_bool,
+        ctypes.c_bool,
+        ctypes.c_bool,
+        *([ctypes.c_void_p] * 5),  # dq, dk, dv, dbeta, dg
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnPrepareWyReprBwd": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -458,6 +473,112 @@ def npu_chunk_gated_delta_rule_bwd_dhu(
         ],
         outputs,
     )
+
+
+def npu_chunk_gated_delta_rule_bwd_finalize(
+    q,
+    k,
+    v,
+    v_new,
+    do,
+    du,
+    g,
+    beta,
+    h,
+    dh,
+    a,
+    *,
+    q_rstd=None,
+    k_rstd=None,
+    beta_raw=None,
+    cu_seqlens=None,
+    chunk_indices=None,
+    scale=None,
+    chunk_size=64,
+    use_qk_l2_norm_in_kernel=False,
+    use_beta_sigmoid_in_kernel=False,
+    use_gate_in_kernel=False,
+    state_v_first=False,
+    use_exp2=True,
+):
+    """Run the complete GDN backward finalize kernel.
+
+    Returns ``dq, dk, dv, dbeta, dg``.
+    """
+
+    import torch
+
+    npu = getattr(torch, "npu", None)
+    if npu is None or not hasattr(npu, "get_device_name"):
+        raise RuntimeError(
+            "npu_chunk_gated_delta_rule_bwd_finalize requires an Ascend 950 NPU."
+        )
+    device_index = q.device.index
+    if device_index is None:
+        device_index = npu.current_device()
+    device_name = npu.get_device_name(device_index)
+    if not device_name.startswith("Ascend950"):
+        raise RuntimeError(
+            "npu_chunk_gated_delta_rule_bwd_finalize only supports Ascend 950, "
+            f"got {device_name}."
+        )
+
+    if int(chunk_size) != 64:
+        raise ValueError("chunk_size must be 64.")
+    if scale is None:
+        scale = 1.0 / (128.0 ** 0.5)
+    if (cu_seqlens is None) != (chunk_indices is None):
+        raise ValueError("cu_seqlens and chunk_indices must be both None or both provided.")
+    if use_qk_l2_norm_in_kernel and (q_rstd is None or k_rstd is None):
+        raise ValueError("q_rstd and k_rstd are required when Q/K L2Norm backward is enabled.")
+    if use_beta_sigmoid_in_kernel and beta_raw is None:
+        raise ValueError("beta_raw is required when beta sigmoid backward is enabled.")
+    if bool(use_gate_in_kernel):
+        raise ValueError("use_gate_in_kernel only supports False.")
+    if not bool(use_exp2):
+        raise ValueError("use_exp2 only supports True.")
+    if g.dtype != beta.dtype:
+        raise ValueError("g and beta must use the same dtype.")
+
+    batch, _, total_tokens, key_dim = q.shape
+    value_heads = v.shape[1]
+    outputs = (
+        _empty_like(q),
+        _empty_like(k),
+        _empty_like(v),
+        _empty_like(beta),
+        _empty_like(g),
+    )
+    def logical_tensor(ctx, tensor, name):
+        # Ascend C tiling按逻辑 shape 校验输入；显式覆盖 storage shape，避免
+        # NPU allocator 的物理 stride/padding 被误当成算子输入 shape。
+        return ctx.tensor(tensor, name, storage_shape_override=tuple(tensor.shape)
+                          if tensor is not None else None)
+
+    result = _call_aclnn(
+        "aclnnChunkGatedDeltaRuleBwdFinalize",
+        lambda ctx: [
+            logical_tensor(ctx, q, "q"), logical_tensor(ctx, k, "k"), logical_tensor(ctx, v, "v"),
+            logical_tensor(ctx, v_new, "v_new"), logical_tensor(ctx, do, "do"), logical_tensor(ctx, du, "du"),
+            logical_tensor(ctx, g, "g"), logical_tensor(ctx, beta, "beta"), logical_tensor(ctx, h, "h"),
+            logical_tensor(ctx, dh, "dh"), logical_tensor(ctx, a, "a"),
+            logical_tensor(ctx, q_rstd, "q_rstd"), logical_tensor(ctx, k_rstd, "k_rstd"),
+            logical_tensor(ctx, beta_raw, "beta_raw"),
+                ctx.int_array(cu_seqlens), ctx.int_array(chunk_indices),
+            ctypes.c_double(float(scale)), ctypes.c_int64(int(chunk_size)),
+            ctypes.c_bool(bool(use_qk_l2_norm_in_kernel)),
+            ctypes.c_bool(bool(use_beta_sigmoid_in_kernel)),
+            ctypes.c_bool(bool(use_gate_in_kernel)),
+            ctypes.c_bool(bool(state_v_first)),
+            ctypes.c_bool(bool(use_exp2)),
+            *[logical_tensor(ctx, output, name) for output, name in zip(
+                outputs,
+                ("dq_out", "dk_out", "dv_out", "dbeta_out", "dg_out")
+            )],
+        ],
+        outputs,
+    )
+    return tuple(result)
 
 
 def npu_chunk_bwd_dv_local(

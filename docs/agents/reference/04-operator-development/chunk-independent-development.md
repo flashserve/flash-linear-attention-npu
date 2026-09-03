@@ -6,9 +6,9 @@
 >
 > 当前来源：[PR #404](https://github.com/flashserve/flash-linear-attention-npu/pull/404)
 >
-> 当前参考算子：`ChunkGdnBwdFinalize`
+> 当前参考算子：`ChunkGatedDeltaRuleBwdFinalize`
 >
-> 当前参考目录：`fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gdn_bwd_finalize/`
+> 当前参考目录：`fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_finalize/`
 >
 > 提炼来源 commit：`a78efa9512dfa64c20b2a58a75e84e88a054d694`
 
@@ -125,12 +125,12 @@ fixed/varlen 和 tail chunk 通过统一的 `ChunkInfo` 进入 kernel；无效 t
 
 | 需要确认的内容 | 文件 |
 | --- | --- |
-| task、fixed/varlen、blockDim、workspace 和 TilingKey | `op_host/op_tiling/chunk_gdn_bwd_finalize_tiling.cpp` |
-| tiling data 和常量 | `op_kernel/arch35/chunk_gdn_bwd_finalize_struct.h` |
-| task 到 chunk/token/state 的映射 | `op_kernel/arch35/chunk_gdn_bwd_finalize_common.h` |
-| AIC Stage、L1/L0 流水、Fixpipe 和跨核握手 | `op_kernel/arch35/chunk_gdn_bwd_finalize_cube.h` |
-| AIV Stage、UB 布局、owner 规则和本地 event | `op_kernel/arch35/chunk_gdn_bwd_finalize_vector.h` |
-| kernel 模板分发 | `op_kernel/chunk_gdn_bwd_finalize.cpp` |
+| task、fixed/varlen、blockDim、workspace 和 TilingKey | `op_host/op_tiling/chunk_gated_delta_rule_bwd_finalize_tiling.cpp` |
+| tiling data 和常量 | `op_kernel/arch35/chunk_gated_delta_rule_bwd_finalize_struct.h` |
+| task 到 chunk/token/state 的映射 | `op_kernel/arch35/chunk_gated_delta_rule_bwd_finalize_common.h` |
+| AIC Stage、L1/L0 流水、Fixpipe 和跨核握手 | `op_kernel/arch35/chunk_gated_delta_rule_bwd_finalize_cube.h` |
+| AIV Stage、UB 布局、owner 规则和本地 event | `op_kernel/arch35/chunk_gated_delta_rule_bwd_finalize_vector.h` |
+| kernel 模板分发 | `op_kernel/chunk_gated_delta_rule_bwd_finalize.cpp` |
 
 ## 10. 版本维护
 

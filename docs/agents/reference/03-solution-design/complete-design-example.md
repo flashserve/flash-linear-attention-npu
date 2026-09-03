@@ -113,10 +113,10 @@ golden 单 chunk 中将 `h/dh` 读取为逻辑 `[V,K]`，将 `A` 读取为逻辑
 接口名称固定为：
 
 ```text
-GE/Ascend C 算子名：ChunkGdnBwdFinalize
-ACLNN workspace：  aclnnChunkGdnBwdFinalizeGetWorkspaceSize
-ACLNN execute：    aclnnChunkGdnBwdFinalize
-Python：           fla_npu.ops.ascendc.chunk_gdn_bwd_finalize
+GE/Ascend C 算子名：ChunkGatedDeltaRuleBwdFinalize
+ACLNN workspace：  aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize
+ACLNN execute：    aclnnChunkGatedDeltaRuleBwdFinalize
+Python：           fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_finalize
 ```
 
 ### 3.1 输入
@@ -127,7 +127,7 @@ Python：           fla_npu.ops.ascendc.chunk_gdn_bwd_finalize
 | `k` | `[B,HK,T,K]` | bf16 | 归一化 K |
 | `v` | `[B,HV,T,V]` | 同 `q` | prepare backward |
 | `v_new` | `[B,HV,T,V]` | 同 `q` | dqkwg value 输入 |
-| `dox` | `[B,HV,T,V]` | 同 `q` | 上游输出梯度 |
+| `do` | `[B,HV,T,V]` | 同 `q` | 上游输出梯度 |
 | `du` | `[B,HV,T,V]` | 同 `q` | 原始 value 梯度 |
 | `g` | `[B,HV,T]` | bf16/fp32 | 变换后的 chunk gate |
 | `beta` | `[B,HV,T]` | 同 `g` | sigmoid 后 beta |
