@@ -11,6 +11,11 @@ from fla.ops.triton.triton_core.cumsum import (
     chunk_local_cumsum,
     chunk_local_cumsum_scalar,
 )
+from fla.ops.triton.triton_core.gated_delta_rule import (
+    RCP_LN2,
+    chunk_gated_delta_rule_fwd_intra_triton_ascend,
+    recompute_w_u_fwd_triton_ascend,
+)
 from fla.ops.triton.triton_core.l2norm import L2Norm, l2norm, l2norm_bwd, l2norm_fwd
 from fla.ops.triton.triton_core.solve_tril_fast import solve_tril_npu
 from fla.ops.triton.triton_core.utils import (
@@ -31,10 +36,13 @@ __all__ = [
     "chunk_local_cumsum",
     "chunk_local_cumsum_scalar",
     "chunk_scaled_dot_kkt_fwd",
+    "chunk_gated_delta_rule_fwd_intra_triton_ascend",
     "input_guard",
     "l2norm",
     "l2norm_bwd",
     "l2norm_fwd",
+    "RCP_LN2",
+    "recompute_w_u_fwd_triton_ascend",
     "solve_tril",
     "solve_tril_npu",
 ]

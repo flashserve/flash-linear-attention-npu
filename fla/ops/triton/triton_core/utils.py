@@ -212,7 +212,7 @@ def input_guard(
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        contiguous_args = (i if not isinstance(i, torch.Tensor) else i.contiguous() for i in args)
+        contiguous_args = tuple(i if not isinstance(i, torch.Tensor) else i.contiguous() for i in args)
         contiguous_kwargs = {k: (v if not isinstance(v, torch.Tensor) else v.contiguous()) for k, v in kwargs.items()}
 
         tensor = None
@@ -232,7 +232,10 @@ def input_guard(
             ctx = contextlib.nullcontext()
 
         with ctx:
-            return fn(*contiguous_args, **contiguous_kwargs)
+            result = fn(*contiguous_args, **contiguous_kwargs)
+            if tensor is not None and tensor.device.type == "npu":
+                torch.npu.synchronize()
+            return result
 
     return wrapper
 
