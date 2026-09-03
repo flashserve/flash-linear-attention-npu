@@ -15,6 +15,15 @@ STANDALONE_FWD_O = ROOT / (
     "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/op_kernel/gemm/kernel/"
     "gdn_fwd_o_kernel.hpp"
 )
+FWD_H_VNEW = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd/"
+    "op_kernel/internal/operators/chunk_gated_delta_rule_fwd_h/op_kernel/"
+    "arch35/epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
+)
+STANDALONE_FWD_H_VNEW = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/"
+    "op_kernel/arch35/epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
+)
 FUSED_STATE_OUTPUT = ROOT / (
     "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd/"
     "op_kernel/internal/gated_delta_rule_state_update_output/"
@@ -95,3 +104,21 @@ def test_standalone_fwdo_joins_aiv_subblocks_before_shared_publications():
     ):
         before = source[: source.index(publish)]
         assert before.rfind(join) > before.rfind("epilogueGDNFwdO")
+
+
+def test_a5_vnew_publication_drains_gm_write_and_joins_aiv_subblocks():
+    direct_publish = "Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);"
+    output_write = "CopyUbToGm(vnewOutputThisTile, vNewOutputUbTensor"
+    wait_write = "AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>"
+
+    for path in (FWD_H_VNEW, STANDALONE_FWD_H_VNEW):
+        source = path.read_text(encoding="utf-8")
+        helper = _between(source, "void PublishVec1Done", "private:")
+        tiled = _between(source, "for (uint32_t rowStart = rowBegin", "if constexpr (kGated)")
+
+        assert source.count(direct_publish) == 1
+        assert "Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();" in helper
+        assert direct_publish in helper
+        assert output_write in tiled
+        assert wait_write in tiled[tiled.index(output_write) :]
+        assert "PublishVec1Done(vec1Done);" in tiled[tiled.index(output_write) :]
