@@ -107,6 +107,36 @@ def get_wheel_platform_tag() -> str:
     return f"manylinux_2_28_{get_arch()}"
 
 
+def get_tier(soc: str | None = None) -> str:
+    """Map FLA_NPU_SOC to the public product tier (a2/a3/a5)."""
+    soc_tag = _compact_tag(soc or get_soc())
+    if soc_tag in {"910b", "ascend910b"}:
+        return "a2"
+    if soc_tag in {"a3", "91093", "ascend91093"}:
+        return "a3"
+    if soc_tag in {"950", "ascend950"}:
+        return "a5"
+    raise ValueError(
+        f"FLA_NPU_SOC={soc or get_soc()!r} has no public product tier; "
+        "expected ascend910b / ascend910_93 / ascend950"
+    )
+
+
+def get_distribution_name() -> str:
+    """PyPI project name for the current build.
+
+    Tiered PyPI wheels use flash-linear-attention-npu-a2/a3/a5 (derived from
+    FLA_NPU_SOC); non-PyPI builds keep the base name for local/dev artifacts.
+    """
+    if env_flag("FLA_NPU_PYPI"):
+        return f"{PACKAGE_NAME}-{get_tier()}"
+    return PACKAGE_NAME
+
+
+def get_wheel_dist_name() -> str:
+    return get_distribution_name().replace("-", "_")
+
+
 def get_vendor_name() -> str:
     return DEFAULT_VENDOR_NAME
 
@@ -154,14 +184,9 @@ def get_wheel_build_tag(repo_root: Path, public_version: str | None = None) -> s
             return f"1{build_tag}"
         return build_tag
     if env_flag("FLA_NPU_PYPI"):
-        product_tag = get_product_tag()
-        arch_tag = get_arch()
-        if not product_tag or not arch_tag:
-            return ""
-        build_tag = ".".join([product_tag, arch_tag])
-        if build_tag and not build_tag[0].isdigit():
-            build_tag = f"1{build_tag}"
-        return build_tag
+        # Tier is encoded in the distribution name (a2/a3/a5); arch is encoded
+        # in the platform tag, so PyPI wheels need no soc build tag.
+        return ""
     if env_flag("FLA_NPU_DISABLE_LOCAL_VERSION"):
         return ""
 
@@ -204,9 +229,10 @@ def get_wheel_filename(repo_root: Path) -> str:
     package_version = get_package_version(repo_root)
     build_tag = get_wheel_build_tag(repo_root, public_version)
     platform_tag = get_wheel_platform_tag() if env_flag("FLA_NPU_PYPI") else "any"
+    dist_name = get_wheel_dist_name()
     if build_tag:
-        return f"{WHEEL_DIST_NAME}-{package_version}-{build_tag}-py3-none-{platform_tag}.whl"
-    return f"{WHEEL_DIST_NAME}-{package_version}-py3-none-{platform_tag}.whl"
+        return f"{dist_name}-{package_version}-{build_tag}-py3-none-{platform_tag}.whl"
+    return f"{dist_name}-{package_version}-py3-none-{platform_tag}.whl"
 
 
 def get_platform_name() -> str:
@@ -236,6 +262,9 @@ def main() -> int:
             "package-version",
             "commit-id",
             "wheel-build-tag",
+            "tier",
+            "distribution-name",
+            "wheel-dist-name",
             "wheel-filename",
             "run-filename",
         ],
@@ -254,6 +283,12 @@ def main() -> int:
         value = get_commit_id(repo_root)
     elif args.field == "wheel-build-tag":
         value = get_wheel_build_tag(repo_root)
+    elif args.field == "tier":
+        value = get_tier()
+    elif args.field == "distribution-name":
+        value = get_distribution_name()
+    elif args.field == "wheel-dist-name":
+        value = get_wheel_dist_name()
     elif args.field == "wheel-filename":
         value = get_wheel_filename(repo_root)
     else:

@@ -1,4 +1,4 @@
-name: Publish to PyPI
+name: Publish to PyPI (per-tier a2/a3/a5)
 
 on:
   workflow_dispatch:
@@ -31,11 +31,12 @@ jobs:
       matrix:
         soc: [ascend910b, ascend910_93, ascend950]
         arch: [aarch64, x86_64]
-    # NOTE: matrix.arch must match the runner's real CPU arch (wheel embeds arch-specific OPP binaries);
-    # FLA_NPU_ARCH only labels the wheel, it cannot cross-compile binaries.
+    # NOTE: matrix.arch must match the runner's real CPU arch (the wheel embeds
+    # arch-specific OPP host libraries); FLA_NPU_ARCH only labels the wheel.
     env:
       FLA_NPU_PYPI: "TRUE"
       FLA_NPU_DISABLE_LOCAL_VERSION: "TRUE"
+      FLA_NPU_BUILD_OFFLINE_BUNDLE: "TRUE"
       FLA_NPU_SOC: ${{ matrix.soc }}
       FLA_NPU_ARCH: ${{ matrix.arch }}
     steps:
@@ -62,9 +63,11 @@ jobs:
     needs: build
     if: ${{ github.event_name == 'push' || !inputs.dry_run }}
     runs-on: ubuntu-latest
-    # Configure matching PyPI trusted publishers (OIDC) for this workflow:
-    #   - environment "pypi"    -> pypi.org/project/flash-linear-attention-npu/
-    #   - environment "testpypi" -> test.pypi.org/project/flash-linear-attention-npu/
+    # Configure PyPI trusted publishers (OIDC) for each project with this
+    # workflow + environment:
+    #   - flash-linear-attention-npu-a2 (environment "pypi"/"testpypi")
+    #   - flash-linear-attention-npu-a3
+    #   - flash-linear-attention-npu-a5
     environment: ${{ github.event_name == 'push' && 'pypi' || 'testpypi' }}
     steps:
       - name: Download wheels
@@ -72,12 +75,31 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: twine check
+      - name: Split wheels by tier and twine check
         run: |
           python -m pip install -q twine
-          python -m twine check dist/*.whl
-      - name: Publish
+          mkdir -p dist-a2 dist-a3 dist-a5
+          for f in dist/*.whl; do
+            case "$f" in
+              *_a2-*) mv "$f" dist-a2/ ;;
+              *_a3-*) mv "$f" dist-a3/ ;;
+              *_a5-*) mv "$f" dist-a5/ ;;
+              *) echo "unexpected wheel: $f"; exit 1 ;;
+            esac
+          done
+          python -m twine check dist-a2/*.whl dist-a3/*.whl dist-a5/*.whl
+      - name: Publish a2
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist
+          packages-dir: dist-a2
+          repository-url: ${{ github.event_name == 'push' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
+      - name: Publish a3
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-a3
+          repository-url: ${{ github.event_name == 'push' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
+      - name: Publish a5
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-a5
           repository-url: ${{ github.event_name == 'push' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}

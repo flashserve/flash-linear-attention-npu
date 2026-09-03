@@ -17,12 +17,18 @@ from packaging.version import InvalidVersion, Version
 
 
 MIN_PYTHON = (3, 9)
-MIN_TORCH = "2.6.0"
-MIN_TRITON_ASCEND = "3.2.0"
-MIN_TRITON_ASCEND_A5 = "3.2.1"
-# CANN 9.x (9.0.0+) requires triton-ascend >= 3.2.1: 3.2.0 fails to JIT-compile
-# triton/backends/ascend/npu_utils.cpp on CANN 9.1.0 (RT_LIMIT_TYPE_SIMT_WARP_STACK_SIZE).
-MIN_TRITON_ASCEND_CANN9 = "3.2.1"
+# Runtime/version tables are shared with the PyPI import guard via
+# scripts/npu_compat.py (single source of truth).
+from npu_compat import (  # noqa: E402
+    MIN_CANN,
+    MIN_TORCH,
+    MIN_TRITON_ASCEND,
+    MIN_TRITON_ASCEND_A5,
+    MIN_TRITON_ASCEND_CANN9,
+    MIN_TORCH_NPU_FUTURE_FIX_FAMILY,
+    TORCH_NPU_GDN_FIX_MINIMUMS,
+    VALIDATED_COMBOS,
+)
 
 # Toolchain and build dependencies checked in addition to the torch-related
 # checks. Values mirror CMakeLists.txt (cmake_minimum_required),
@@ -30,15 +36,6 @@ MIN_TRITON_ASCEND_CANN9 = "3.2.1"
 MIN_CMAKE = "3.16"
 MIN_GCC = "7.3"
 MIN_SETUPTOOLS = "70.1"
-TORCH_NPU_GDN_FIX_MINIMUMS = {
-    "2.7.1": "2.7.1.post5",
-    "2.8.0": "2.8.0.post5",
-    "2.9.0": "2.9.0.post3",
-    "2.10.0": "2.10.0.post2",
-    "2.11.0": "2.11.0rc3",
-    "2.12.0": "2.12.0rc1",
-}
-MIN_TORCH_NPU_FUTURE_FIX_FAMILY = "2.13.0"
 TORCH_NPU_GDN_FIX_RELEASE_URL = (
     "https://gitcode.com/Ascend/pytorch/releases?"
     "presetConfig={%22tags%22:229,%22release%22:122}"
