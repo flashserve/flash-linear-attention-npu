@@ -1,8 +1,7 @@
-# Pure PyTorch reference for fused_recurrent_rwkv8 forward (WKV7, z/b
-# parametrization). This file is intentionally independent from torch_npu
-# and Triton so ATK CPU golden code can reuse it.
+# fused_recurrent_rwkv8 (WKV7) 前向的纯 PyTorch 金标（z/b 参数化口径）。
+# 本文件不依赖 torch_npu / Triton，可直接在 CPU 上跑。
 #
-# upstream_alignment 双锚点：
+# 上游语义锚点：
 #   semantics:      BlinkDL/RWKV-LM @ 9521024
 #                   RWKV-v8/cuda/wkv7_cuda.cu forward_kernel (lines 10-52)
 #                   - line 21:      decay = __expf(-__expf(w))（w 为 log 域参数）
@@ -22,15 +21,16 @@
 # K（q/w/k/z/b 侧）与 V（v/o/sa 侧）是两个独立维度（io 布局 BHTC：k (B,H,T,K)、
 # v (B,H,T,V)，H 在 T 前使每核 (b,h) 数据段连续）；K=V=N 是其特例。
 #
-# 精度真值锚点：真实 GPU fixture 对拍（dump/check_cuda_fixture.py，同机执行），
-# 9 case × 3 输出（o/s/sa）实测 rel-RMSE ≤ 5.5e-7，全 PASS（2026-08-07）。
+# ⚠️ 本文件与 tests/atk/fused_recurrent_rwkv8/executor_fused_recurrent_rwkv8.py
+# 中内嵌的 CPU 标杆是同一份逻辑的两份拷贝（executor 按 ATK 规范必须自包含）。
+# 修改金标算法时两处必须同步。
 from __future__ import annotations
 
 from typing import NamedTuple, Optional
 
 import torch
 
-__all__ = ["FusedRecurrentRwkv8Result", "fused_recurrent_rwkv8_reference", "wkv7_decay"]
+__all__ = ["FusedRecurrentRwkv8Result", "fused_recurrent_rwkv8_golden", "wkv7_decay"]
 
 
 class FusedRecurrentRwkv8Result(NamedTuple):
@@ -58,7 +58,7 @@ def _check_inputs(q, w, k, v, z, b):
         f'expect v (B, H, T, V) with same B/H/T as q, got {v.shape} vs {q.shape}'
 
 
-def fused_recurrent_rwkv8_reference(
+def fused_recurrent_rwkv8_golden(
     q: torch.Tensor,
     w: torch.Tensor,
     k: torch.Tensor,

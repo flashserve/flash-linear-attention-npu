@@ -209,6 +209,7 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 | `chunk_kda_fwd`                  | `fla_npu.ops.ascendc.chunk_kda_fwd`                  | 见[`chunk_kda_fwd/README.md`](./chunk_kda_fwd/README.md)                                   |
 | `chunk_local_cumsum`             | `fla_npu.ops.ascendc.chunk_local_cumsum`             | 见[`chunk_local_cumsum/README.md`](./chunk_local_cumsum/README.md)                         |
 | `chunk_scaled_dot_kkt`           | `fla_npu.ops.ascendc.chunk_scaled_dot_kkt`           | 见[`chunk_scaled_dot_kkt/README.md`](./chunk_scaled_dot_kkt/README.md)                     |
+| `fused_recurrent_rwkv8`          | `fla_npu.ops.ascendc.fused_recurrent_rwkv8`          | 见[`fused_recurrent_rwkv8/README.md`](./fused_recurrent_rwkv8/README.md)                   |
 | `kda_gate_cumsum`                | `fla_npu.ops.ascendc.kda_gate_cumsum`                | 见[`kda_gate_cumsum/README.md`](./kda_gate_cumsum/README.md)                               |
 | `prepare_wy_repr_bwd`            | `fla_npu.ops.ascendc.prepare_wy_repr_bwd`            | 见[`prepare_wy_repr_bwd/README.md`](./prepare_wy_repr_bwd/README.md)                       |
 | `prepare_wy_repr_bwd_da`         | `fla_npu.ops.ascendc.prepare_wy_repr_bwd_da`         | 见[`prepare_wy_repr_bwd_da/README.md`](./prepare_wy_repr_bwd_da/README.md)                 |
