@@ -26,3 +26,24 @@ def test_short_tail_h_retires_mte3_before_reusing_accumulator():
     )
 
     assert ordered_writeback in tail_h
+
+
+def test_partial_tiles_rely_on_actual_shape_without_full_l1_clear():
+    source = FWD_H.read_text(encoding="utf-8")
+    c1 = _between(
+        source,
+        "if (cube1Offsets.blockTokens < chunkSize)",
+        "} else {",
+    )
+    c2 = _between(
+        source,
+        "if (cube2Offsets.blockTokens < chunkSize)",
+        "} else {",
+    )
+
+    assert "blockMmadWHTail(" in c1
+    assert "cube1Shape);" in c1
+    assert "EmptyClass{}, true" not in c1
+    assert "blockMmadKVTail(" in c2
+    assert "cube2Shape);" in c2
+    assert "EmptyClass{}, true" not in c2
