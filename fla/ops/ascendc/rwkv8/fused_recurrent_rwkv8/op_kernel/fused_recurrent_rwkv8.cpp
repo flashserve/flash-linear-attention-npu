@@ -78,6 +78,16 @@ public:
         outSa_ = tiling->outputSa;
         chunkLen_ = tiling->chunkLen;   // s 快照间隔（host attr 下发，kernel 不存常量）
 
+        // 防御：tiling 字段合理性校验。tiling 的 GM 读若被扰动（脏数据/竞争），
+        // 异常字段会把循环边界/地址计算带飞——此时本核静默退出，宁可不写也不越界
+        sane_ = (T_ > 0 && T_ <= (1u << 20) && K_ > 0 && K_ <= 256 && V_ > 0 && V_ <= 256 &&
+                 (uint64_t)K_ * V_ <= 16384) ? 1 : 0;
+        if (!sane_) {
+            return;
+        }
+        // 本核 s 快照槽位数（chunkLen_ == 0 时归 0，顺带免除 Process 里的除零风险）
+        sSlots_ = (chunkLen_ > 0) ? (T_ / chunkLen_) : 0;
+
         uint32_t bh = GetBlockIdx();           // 一个核负责一个 (b, h)，扁平下标 = b*H + h
 
         // (B,H,T,K)/(B,H,T,V) 连续布局（BHTC）：每核 (b,h) 段连续，token t 步长 = dim
@@ -134,6 +144,9 @@ public:
 
     __aicore__ inline void Process()
     {
+        if (!sane_) {
+            return;   // tiling 异常：本核零读写（UB/GM 均未触碰）
+        }
         LocalTensor<float> state = stateBuf_.Get<float>();   // S^T (K,V)
 
         // 初始状态：GM (K,V) 布局，逐行读入（行距 V；逐行而非整块是为避开
@@ -229,12 +242,19 @@ public:
             if (outSa_) {
                 DataCopyPad(saGm_[offV], saL, {1, static_cast<uint16_t>(V_ * sizeof(float)), 0, 0});
             }
-            if (outS_ && (t + 1) % chunkLen_ == 0) {
+            if (outS_ && sSlots_ > 0 && (t + 1) % chunkLen_ == 0) {
                 // s 槽位内 GM 是 (K,V) 布局，逐行写出（行距 V，同 init 读的 uint16 考虑）
+                // 防御：逐行核对本核 s 区段边界（sExtent = sSlots_·K·V），rowOff 单调
+                // 递增，越段即 break——slotBase 被异常数据带飞时也不会扫写出 s 区段
+                const uint64_t sExtent = (uint64_t)sSlots_ * K_ * V_;
                 uint64_t slotBase = (uint64_t)(t / chunkLen_) * K_ * V_;
                 for (uint32_t j = 0; j < K_; j++) {
-                    DataCopyPad(sGm_[slotBase + (uint64_t)j * V_], state[j * V_],
-                        {1, static_cast<uint16_t>(V_ * sizeof(float)), 0, 0});
+                    uint64_t rowOff = slotBase + (uint64_t)j * V_;
+                    if (rowOff + V_ > sExtent) {
+                        break;
+                    }
+                    DataCopyPad(sGm_[rowOff], state[j * V_],
+                            {1, static_cast<uint16_t>(V_ * sizeof(float)), 0, 0});
                 }
             }
 
@@ -257,6 +277,8 @@ private:
     uint32_t hasInit_;
     uint32_t reverse_, outS_, outSa_;
     uint32_t chunkLen_;          // s 快照间隔（tiling 下发；默认 16 = 官方 backward 重建粒度）
+    uint32_t sSlots_;            // 本核 s 快照槽位数（chunkLen_==0 时归 0，免除零）
+    uint32_t sane_;              // tiling 字段合理性校验结果（0 = 本核静默退出）
     uint64_t seqLenK_, seqLenV_;
 
     GlobalTensor<T> qGm_, wGm_, kGm_, vGm_, zGm_, bGm_, oGm_;
