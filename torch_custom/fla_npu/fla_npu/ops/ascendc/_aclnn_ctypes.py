@@ -145,6 +145,15 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
+    "aclnnChunkKdaBwdRecompute": [
+        *([ctypes.c_void_p] * 10),
+        ctypes.c_int64,
+        ctypes.c_bool,
+        ctypes.c_double,
+        *([ctypes.c_void_p] * 5),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnKdaGateCumsum": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -2021,6 +2030,75 @@ def npu_chunk_kda_bwd_intra(
             return outputs
 
     return launch(input_tensors, outputs)
+
+
+def npu_chunk_kda_bwd_recompute(
+    q,
+    k,
+    v,
+    g,
+    beta,
+    a,
+    chunk_size,
+    *,
+    A_log=None,
+    dt_bias=None,
+    cu_seqlens=None,
+    chunk_indices=None,
+    use_gate_in_kernel=True,
+    use_exp2=True,
+    lower_bound=-5.0,
+):
+    import torch
+
+    if chunk_size != 64:
+        raise RuntimeError("npu_chunk_kda_bwd_recompute: chunk_size must be 64.")
+    if q.dtype != torch.bfloat16 or k.dtype != torch.bfloat16 or v.dtype != torch.bfloat16:
+        raise RuntimeError("npu_chunk_kda_bwd_recompute: q/k/v must be bfloat16.")
+    if a.dtype != torch.bfloat16:
+        raise RuntimeError("npu_chunk_kda_bwd_recompute: A must be bfloat16.")
+    if g.dtype not in (torch.bfloat16, torch.float32):
+        raise RuntimeError("npu_chunk_kda_bwd_recompute: g must be bfloat16 or float32.")
+    if beta.dtype not in (torch.bfloat16, torch.float32):
+        raise RuntimeError("npu_chunk_kda_bwd_recompute: beta must be bfloat16 or float32.")
+    if len(q.shape) != 4 or len(k.shape) != 4 or len(v.shape) != 4 or len(g.shape) != 4:
+        raise RuntimeError("npu_chunk_kda_bwd_recompute: expects dense BNSD rank-4 tensors.")
+    if q.shape[-1] != 128 or k.shape[-1] != 128 or v.shape[-1] != 128 or g.shape[-1] != 128:
+        raise RuntimeError("npu_chunk_kda_bwd_recompute: K/V must be 128.")
+    if use_gate_in_kernel and A_log is None:
+        raise RuntimeError("npu_chunk_kda_bwd_recompute: A_log is required when use_gate_in_kernel=True.")
+
+    hv = g.shape[1]
+    gk = _empty((g.shape[0], hv, g.shape[2], 128), g, dtype=torch.float32) if use_gate_in_kernel else None
+    w = _empty((v.shape[0], hv, v.shape[2], 128), v, dtype=torch.bfloat16)
+    u = _empty((v.shape[0], hv, v.shape[2], 128), v, dtype=torch.bfloat16)
+    qg = _empty((g.shape[0], hv, g.shape[2], 128), g, dtype=torch.bfloat16)
+    kg = _empty((g.shape[0], hv, g.shape[2], 128), g, dtype=torch.bfloat16)
+
+    def build_args(ctx):
+        return [
+            ctx.tensor(q, "q"),
+            ctx.tensor(k, "k"),
+            ctx.tensor(v, "v"),
+            ctx.tensor(g, "g"),
+            ctx.tensor(beta, "beta"),
+            ctx.tensor(a, "a"),
+            ctx.tensor(A_log, "A_log"),
+            ctx.tensor(dt_bias, "dt_bias"),
+            ctx.int_array(None if cu_seqlens is None else tuple(int(x) for x in cu_seqlens)),
+            ctx.int_array(None if chunk_indices is None else tuple(int(x) for x in chunk_indices)),
+            ctypes.c_int64(int(chunk_size)),
+            ctypes.c_bool(bool(use_exp2)),
+            ctypes.c_double(float(lower_bound)),
+            ctx.tensor(w, "w"),
+            ctx.tensor(u, "u"),
+            ctx.tensor(qg, "qg"),
+            ctx.tensor(kg, "kg"),
+            ctx.tensor(gk, "gk") if gk is not None else ctypes.c_void_p(0),
+        ]
+
+    _call_aclnn("aclnnChunkKdaBwdRecompute", build_args, (w, u, qg, kg, gk))
+    return gk, w, u, qg, kg
 
 
 def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
