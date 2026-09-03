@@ -303,31 +303,38 @@ public:
             uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
             uint32_t subBlockNum = AscendC::GetSubBlockNum();
 
+
+            AscendC::LocalTensor<ElementInitialState> stateUbTensorPing = resource.ubBuf.template GetBufferByByte<ElementInitialState>(0);
+            AscendC::LocalTensor<ElementInitialState> stateUbTensorPong = resource.ubBuf.template GetBufferByByte<ElementInitialState>(96 * 1024);
+            AscendC::LocalTensor<ElementH> hUbTensorPing = resource.ubBuf.template GetBufferByByte<ElementH>(64 * 1024);
+            AscendC::LocalTensor<ElementH> hUbTensorPong = resource.ubBuf.template GetBufferByByte<ElementH>(160 * 1024);
+            uint32_t totalChunks = isVariedLen ? vecBlockScheduler.totalChunks : ((seqlen + chunkSize - 1) / chunkSize);
+            uint32_t transferCount = isVariedLen ? (vecBlockScheduler.tokenBatch * vNumHead / coreNum) : (shapeBatch * vNumHead / coreNum);
+            uint32_t remainderFlag = isVariedLen ? (((vecBlockScheduler.tokenBatch * vNumHead) % coreNum) != 0): (((shapeBatch * vNumHead) % coreNum) != 0);
+            uint32_t step = transferCount + remainderFlag;
+            uint32_t stateBlockSize = kHeadDim * vHeadDim;
+            uint32_t pingpongFlag = 1;
+            uint32_t start = coreIdx * step;
+            uint32_t end = start + step;
+            uint32_t maxLimit = isVariedLen ? vecBlockScheduler.tokenBatch * vNumHead : shapeBatch * vNumHead;
+            uint32_t realEnd = min(end, maxLimit);
             if (useInitialState) {
-                AscendC::LocalTensor<ElementInitialState> stateUbTensorPing = resource.ubBuf.template GetBufferByByte<ElementInitialState>(0);
-                AscendC::LocalTensor<ElementInitialState> stateUbTensorPong = resource.ubBuf.template GetBufferByByte<ElementInitialState>(96 * 1024);
-                AscendC::LocalTensor<ElementH> hUbTensorPing = resource.ubBuf.template GetBufferByByte<ElementH>(64 * 1024);
-                AscendC::LocalTensor<ElementH> hUbTensorPong = resource.ubBuf.template GetBufferByByte<ElementH>(160 * 1024);
-                uint32_t totalChunks = isVariedLen ? vecBlockScheduler.totalChunks : ((seqlen + chunkSize - 1) / chunkSize);
-                uint32_t transferCount = isVariedLen ? (vecBlockScheduler.tokenBatch * vNumHead / coreNum) : (shapeBatch * vNumHead / coreNum);
-                uint32_t remainderFlag = isVariedLen ? (((vecBlockScheduler.tokenBatch * vNumHead) % coreNum) != 0): (((shapeBatch * vNumHead) % coreNum) != 0);
-                uint32_t step = transferCount + remainderFlag;
-                uint32_t stateBlockSize = kHeadDim * vHeadDim;
-                uint32_t pingpongFlag = 1;
-                uint32_t start = coreIdx * step;
-                uint32_t end = start + step;
-                uint32_t maxLimit = isVariedLen ? vecBlockScheduler.tokenBatch * vNumHead : shapeBatch * vNumHead;
-                uint32_t realEnd = min(end, maxLimit);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
-                for(uint32_t initialStateBlockOffset = start ;initialStateBlockOffset >= start && initialStateBlockOffset < realEnd;initialStateBlockOffset++)
-                {
-                    uint32_t batchIdx = initialStateBlockOffset / vNumHead;
-                    uint32_t vHeadIdx = initialStateBlockOffset % vNumHead;
-                    uint32_t chunkOffset = isVariedLen ? gmNumChunks.GetValue(batchIdx) : 0;
-                    uint32_t initialStateOffset = initialStateBlockOffset * stateBlockSize;
-                    uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
-                    uint32_t hOffset = (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset) * stateBlockSize;
+            } else {
+                AscendC::Duplicate(hUbTensorPing, static_cast<ElementH>(0), stateBlockSize);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
+            }
+            for(uint32_t initialStateBlockOffset = start ;initialStateBlockOffset >= start && initialStateBlockOffset < realEnd;initialStateBlockOffset++)
+            {   
+                uint32_t batchIdx = initialStateBlockOffset / vNumHead;
+                uint32_t vHeadIdx = initialStateBlockOffset % vNumHead;
+                uint32_t chunkOffset = isVariedLen ? gmNumChunks.GetValue(batchIdx) : 0; 
+                uint32_t initialStateOffset = initialStateBlockOffset * stateBlockSize;
+                uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
+                uint32_t hOffset = (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset) * stateBlockSize;
+                if (useInitialState) {
                     AscendC::LocalTensor<ElementInitialState> stateUbTensor = pingpongFlag ? stateUbTensorPing : stateUbTensorPong;
                     AscendC::LocalTensor<ElementH> hUbTensor = pingpongFlag ? hUbTensorPing : hUbTensorPong;
                     auto event_id = pingpongFlag ? EVENT_ID1 : EVENT_ID0;
@@ -348,13 +355,21 @@ public:
                     }
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(event_id);
                     pingpongFlag = 1 - pingpongFlag;
-
+                } else {
+                    AscendC::DataCopy(gmH[hOffset], hUbTensorPing, stateBlockSize);
                 }
 
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
 
             }
+                
+            if (useInitialState) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
+            } else {
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+            }
+            
 
             AscendC::SyncAll<false>();
 
