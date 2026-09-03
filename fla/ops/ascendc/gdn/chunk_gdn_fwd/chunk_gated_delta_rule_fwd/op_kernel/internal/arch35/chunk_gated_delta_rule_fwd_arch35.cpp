@@ -313,7 +313,11 @@ __aicore__ inline void RunPhase6(
     GM_ADDR w = userWorkspace + stateOutputTiling->wIntermediateOffset;
     GM_ADDR u = userWorkspace + stateOutputTiling->uIntermediateOffset;
     GM_ADDR h = userWorkspace + stateOutputTiling->hIntermediateOffset;
-    GM_ADDR vNew = userWorkspace + stateOutputTiling->vNewIntermediateOffset;
+    // Diagnostic build: expose the fused FwdH vNew through the public O buffer
+    // so case-level evidence can determine whether the first mismatch precedes
+    // FwdO.  This alias is valid for the target case because O and vNew share
+    // the same [B, Hv, T, V] physical layout.
+    GM_ADDR vNew = o;
     RecomputeWUFwdTilingData recomputeTiling{};
     CopyRecomputeTiling(&stateOutputTiling->recompute, recomputeTiling);
     if (stateOutputTiling->recompute.V == 256) {
@@ -338,6 +342,10 @@ __aicore__ inline void RunPhase6(
     // Ascend910B supports only the full-pipeline SyncAll overload.
     AscendC::SyncAll<false>();
 #endif
+
+    // Diagnostic build: vNew is already stored in O.  Stop before FwdO can
+    // overwrite the captured intermediate.
+    return;
 
     const uint64_t oTilingOffset =
         AlignPhase6(sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
