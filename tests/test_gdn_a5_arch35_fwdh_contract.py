@@ -7,6 +7,11 @@ FWD_H = ROOT / (
     "op_kernel/internal/operators/chunk_gated_delta_rule_fwd_h/op_kernel/"
     "arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
 )
+FUSED_STATE_OUTPUT = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd/"
+    "op_kernel/internal/gated_delta_rule_state_update_output/"
+    "chunk_gated_delta_rule_state_update_output.cpp"
+)
 
 
 def _between(source: str, start: str, end: str) -> str:
@@ -47,3 +52,16 @@ def test_partial_tiles_rely_on_actual_shape_without_full_l1_clear():
     assert "blockMmadKVTail(" in c2
     assert "cube2Shape);" in c2
     assert "EmptyClass{}, true" not in c2
+
+
+def test_embedded_fwdh_matches_standalone_compile_time_mode():
+    source = FUSED_STATE_OUTPUT.read_text(encoding="utf-8")
+
+    assert (
+        "InputT, GT, StateT, float, TileShapes, kGated, true, false, false>"
+        in source
+    )
+    assert (
+        "InputT, GT, StateT, float, TileShapes, kGated, true, false, true>"
+        not in source
+    )
