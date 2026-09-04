@@ -53,11 +53,16 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
         kSyncVariant == GdnCoreSyncVariant::B5 ||
         kSyncVariant == GdnCoreSyncVariant::B9 ||
         kSyncVariant == GdnCoreSyncVariant::B13 ||
-        kSyncVariant == GdnCoreSyncVariant::B15;
+        kSyncVariant == GdnCoreSyncVariant::B15 ||
+        kSyncVariant == GdnCoreSyncVariant::B16 ||
+        kSyncVariant == GdnCoreSyncVariant::B17 ||
+        kSyncVariant == GdnCoreSyncVariant::B18;
     constexpr bool kNarrowCube2ToPipeFix =
         kSyncVariant == GdnCoreSyncVariant::B2 ||
         kSyncVariant == GdnCoreSyncVariant::B4 ||
-        kSyncVariant == GdnCoreSyncVariant::B5;
+        kSyncVariant == GdnCoreSyncVariant::B5 ||
+        kSyncVariant == GdnCoreSyncVariant::B17 ||
+        kSyncVariant == GdnCoreSyncVariant::B18;
     constexpr bool kCube1EventOnly =
         kSyncVariant == GdnCoreSyncVariant::B8 ||
         kSyncVariant == GdnCoreSyncVariant::B10 ||
@@ -72,20 +77,30 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
         kSyncVariant == GdnCoreSyncVariant::B12 ||
         kSyncVariant == GdnCoreSyncVariant::B13 ||
         kSyncVariant == GdnCoreSyncVariant::B14 ||
-        kSyncVariant == GdnCoreSyncVariant::B15;
+        kSyncVariant == GdnCoreSyncVariant::B15 ||
+        kSyncVariant == GdnCoreSyncVariant::B16 ||
+        kSyncVariant == GdnCoreSyncVariant::B17 ||
+        kSyncVariant == GdnCoreSyncVariant::B18;
     constexpr bool kBypassHInitCollective =
         kSyncVariant == GdnCoreSyncVariant::B12 ||
         kSyncVariant == GdnCoreSyncVariant::B13;
     constexpr bool kEntryLocalPipeDrain =
         kSyncVariant == GdnCoreSyncVariant::B14 ||
-        kSyncVariant == GdnCoreSyncVariant::B15;
-    static_assert(!(kBypassHInitCollective && kEntryLocalPipeDrain),
-                  "WU-to-H local drain and H-init collective bypass cannot be combined.");
+        kSyncVariant == GdnCoreSyncVariant::B15 ||
+        kSyncVariant == GdnCoreSyncVariant::B17;
+    constexpr bool kEntryRolePipeDrain =
+        kSyncVariant == GdnCoreSyncVariant::B16 ||
+        kSyncVariant == GdnCoreSyncVariant::B18;
+    static_assert(!(kBypassHInitCollective &&
+                    (kEntryLocalPipeDrain || kEntryRolePipeDrain)),
+                   "WU-to-H local drain and H-init collective bypass cannot be combined.");
+    static_assert(!(kEntryLocalPipeDrain && kEntryRolePipeDrain),
+                  "WU-to-H entry cannot select two local drain policies.");
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true,
         kNarrowCube1ToPipeFix, kNarrowCube2ToPipeFix, kCube1EventOnly,
         kUpdateBarrierToPipeMte3, kUpdateBarrierEventOnly,
-        kBypassHInitCollective, kEntryLocalPipeDrain>;
+        kBypassHInitCollective, kEntryLocalPipeDrain, kEntryRolePipeDrain>;
 #else
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true>;

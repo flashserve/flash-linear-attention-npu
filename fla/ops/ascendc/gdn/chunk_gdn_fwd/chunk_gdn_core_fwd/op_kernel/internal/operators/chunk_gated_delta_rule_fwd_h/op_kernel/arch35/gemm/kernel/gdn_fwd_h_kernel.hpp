@@ -94,7 +94,8 @@ template<
     bool kUpdateBarrierToPipeMte3 = false,
     bool kUpdateBarrierEventOnly = false,
     bool kBypassHInitCollective = false,
-    bool kEntryLocalPipeDrain = false
+    bool kEntryLocalPipeDrain = false,
+    bool kEntryRolePipeDrain = false
 >
 class GDNFwdHKernel {
 public:
@@ -103,8 +104,11 @@ public:
                   "C1 publish barrier cannot be both PIPE_FIX and event-only.");
     static_assert(!(kUpdateBarrierToPipeMte3 && kUpdateBarrierEventOnly),
                   "Update barrier cannot be both PIPE_MTE3 and event-only.");
-    static_assert(!(kBypassHInitCollective && kEntryLocalPipeDrain),
+    static_assert(!(kBypassHInitCollective &&
+                    (kEntryLocalPipeDrain || kEntryRolePipeDrain)),
                   "WU-to-H local drain and H-init collective bypass cannot be combined.");
+    static_assert(!(kEntryLocalPipeDrain && kEntryRolePipeDrain),
+                  "WU-to-H entry cannot select two local drain policies.");
 
     using ArchTag = Arch::Ascend950;
     using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHCube;
@@ -529,10 +533,21 @@ public:
     }
 
     __aicore__ inline void Process() {
-        // FwdH can run after another stage in a megakernel. Start its AIC/AIV
-        // handshake only after every core has retired the preceding stage.
-        if constexpr (kEntryLocalPipeDrain) {
-            // B14/B15 test whether retiring every local pipeline is sufficient
+        // FwdH follows WU in the megakernel. Retire the preceding local
+        // producers with the selected protocol before reusing H's event state;
+        // variants without an entry collective retain the H-init collective.
+        if constexpr (kEntryRolePipeDrain) {
+            // B16/B18 keep the dependency closure of B15 while draining only
+            // the pipelines that publish the preceding WU stage: AIC writes
+            // U/W through FIX and AIV publishes its GM ring through MTE3.
+            if ASCEND_IS_AIC {
+                AscendC::PipeBarrier<PIPE_FIX>();
+            }
+            if ASCEND_IS_AIV {
+                AscendC::PipeBarrier<PIPE_MTE3>();
+            }
+        } else if constexpr (kEntryLocalPipeDrain) {
+            // B14/B15/B17 test whether retiring every local pipeline is sufficient
             // at the WU-to-H boundary.  This is deliberately not combined with
             // the independent H-initialization collective experiment.
             AscendC::PipeBarrier<PIPE_ALL>();

@@ -114,10 +114,34 @@
   `output_final_state=true`。output mask 不参与选择；同一请求在既有实验域的其他
   shape 回退 B7，实验域外回退 B0。
 
+  第四轮继续以 B15 为共同基线，把入口本核全流水 drain 与高频 C2 发布边拆成
+  两个原子变量，并增加一个组合变体验证可加性：
+
+  | 变体/key | C1 发布 | C2 发布 | WU→H 入口 | H initial_state 发布→C1 |
+  |---|---|---|---|---|
+  | B16/161 | `PIPE_FIX` | `PIPE_ALL` | AIC `PIPE_FIX`、AIV `PIPE_MTE3` | 保留双侧 `SyncAll<false>()` |
+  | B17/171 | `PIPE_FIX` | `PIPE_FIX` | 所有参与者本核 `PIPE_ALL` | 保留双侧 `SyncAll<false>()` |
+  | B18/181 | `PIPE_FIX` | `PIPE_FIX` | AIC `PIPE_FIX`、AIV `PIPE_MTE3` | 保留双侧 `SyncAll<false>()` |
+
+  B16/B18 的依赖闭环为：WU 的 AIC 最终 U/W 由 FIX 写 GM，AIV 的 ring
+  workspace 由 MTE3 写并以同一 pipe 发布 ready；WU 尾部已经消费全部
+  slot-free credit，随后保留的 H-init collective 继续负责参与者会合。因此只缩小
+  本核 drain，不删除跨角色同步。`static_assert` 同时禁止 role-specific drain 与
+  H-init bypass、以及两种入口 drain 策略并存。B17 只收窄 C2 的 FIX producer
+  发布边，B18 用于检查两项变化是否可加。
+
+  B16–B18 的生产 selector 仍只允许上述精确主 varlen shape。为让最短真实调用
+  覆盖新 key，内部环境开关 `FLA_NPU_GDN_SYNC_T1_DIAGNOSTIC=1` 仅对 B16–B18
+  放行严格诊断 shape：Ascend950、BF16、FP32 initial_state、
+  B1/Hk16/Hv32/T1/K128/V128/C64、`cu_seqlens` 长度 2、1 个 chunk、
+  `output_final_state=true`；output mask 仍不参与选择。未设置开关或任一 shape
+  条件不符时不拓宽 key 域：未设置/设为 0 或 shape 不符时，既有实验域
+  回退 B7、实验域外回退 B0；开关值非法则直接 fail-closed。
+
   已被 A5 硬件精度结果否定的 Solve deferred-wait 不重试；MIX kernel 的
   `SyncAll` 保护跨阶段 GM/workspace 可见性与参与者会合；B0–B11 全部保留，
   B12–B15 每次只隔离上表中的一条边。也不编译丢弃配套事件的裸删方案。
-  B1–B11 的额外 key 仅在 A5、BF16 输入、
+  B1–B18 的额外 key 仅在 A5、BF16 输入、
   FP32 initial_state 的编译配置中生成，并仅为 V128、chunk64
   模型主路径选择；
   其他合法 dtype/state/V256 形态回退 B0。host 在非 Ascend950 上
@@ -144,6 +168,8 @@
   key 路由、实验域 fallback、非 A5 fail-closed 和 ABI-neutral 静态测试；
   B12–B15 已完成本地源码真值表、精确 selector、key 路由、分层 fallback、
   非 A5 fail-closed 和 ABI-neutral 静态门禁；均尚待同一产物构建及 A5 路由、
-  精度、确定性和性能验证。
+  精度、确定性和性能验证。B16–B18 已完成本地实现与静态门禁设计，新增 key
+  仅在 A5/BF16/FP32 initial_state 编译域内出现；编译、T1 真命中、主 shape
+  精度、确定性和性能仍待同一 A5 产物验证。
 - Invalidation：若目标 CANN 头文件、生成代码或 profiling 证明上述生产者/消费者
   链路不成立，需回到 B0 并重建依赖图，不继续放宽同步。

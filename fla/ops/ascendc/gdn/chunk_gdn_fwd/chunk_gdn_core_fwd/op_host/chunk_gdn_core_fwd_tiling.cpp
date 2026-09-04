@@ -64,11 +64,16 @@ constexpr uint32_t TILING_KEY_B12_V128 = 121;
 constexpr uint32_t TILING_KEY_B13_V128 = 131;
 constexpr uint32_t TILING_KEY_B14_V128 = 141;
 constexpr uint32_t TILING_KEY_B15_V128 = 151;
+constexpr uint32_t TILING_KEY_B16_V128 = 161;
+constexpr uint32_t TILING_KEY_B17_V128 = 171;
+constexpr uint32_t TILING_KEY_B18_V128 = 181;
 constexpr int64_t MAIN_MODEL_BATCH = 1;
 constexpr int64_t MAIN_MODEL_K_HEADS = 16;
 constexpr int64_t MAIN_MODEL_V_HEADS = 32;
 constexpr int64_t MAIN_MODEL_TOKENS = 11274;
 constexpr uint64_t MAIN_MODEL_CHUNKS = 177;
+constexpr int64_t T1_DIAGNOSTIC_TOKENS = 1;
+constexpr uint64_t T1_DIAGNOSTIC_CHUNKS = 1;
 constexpr uint64_t WORKSPACE_ALIGNMENT = 512;
 constexpr uint64_t TILING_ALIGNMENT = 8;
 constexpr uint64_t FP32_BLOCK_ELEMS = 8;
@@ -140,6 +145,32 @@ bool ResolveSyncVariant(GDN::GdnCoreSyncVariant &variant)
         variant = GDN::GdnCoreSyncVariant::B15;
         return true;
     }
+    if (std::strcmp(value, "B16") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B16;
+        return true;
+    }
+    if (std::strcmp(value, "B17") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B17;
+        return true;
+    }
+    if (std::strcmp(value, "B18") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B18;
+        return true;
+    }
+    return false;
+}
+
+bool ResolveT1Diagnostic(bool &enabled)
+{
+    const char *value = std::getenv("FLA_NPU_GDN_SYNC_T1_DIAGNOSTIC");
+    if (value == nullptr || std::strcmp(value, "0") == 0) {
+        enabled = false;
+        return true;
+    }
+    if (std::strcmp(value, "1") == 0) {
+        enabled = true;
+        return true;
+    }
     return false;
 }
 
@@ -148,7 +179,17 @@ bool IsMainShapeOnlySyncVariant(GDN::GdnCoreSyncVariant variant)
     return variant == GDN::GdnCoreSyncVariant::B12 ||
            variant == GDN::GdnCoreSyncVariant::B13 ||
            variant == GDN::GdnCoreSyncVariant::B14 ||
-           variant == GDN::GdnCoreSyncVariant::B15;
+           variant == GDN::GdnCoreSyncVariant::B15 ||
+           variant == GDN::GdnCoreSyncVariant::B16 ||
+           variant == GDN::GdnCoreSyncVariant::B17 ||
+           variant == GDN::GdnCoreSyncVariant::B18;
+}
+
+bool IsT1DiagnosticSyncVariant(GDN::GdnCoreSyncVariant variant)
+{
+    return variant == GDN::GdnCoreSyncVariant::B16 ||
+           variant == GDN::GdnCoreSyncVariant::B17 ||
+           variant == GDN::GdnCoreSyncVariant::B18;
 }
 
 uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
@@ -191,6 +232,12 @@ uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
             return TILING_KEY_B14_V128;
         case GDN::GdnCoreSyncVariant::B15:
             return TILING_KEY_B15_V128;
+        case GDN::GdnCoreSyncVariant::B16:
+            return TILING_KEY_B16_V128;
+        case GDN::GdnCoreSyncVariant::B17:
+            return TILING_KEY_B17_V128;
+        case GDN::GdnCoreSyncVariant::B18:
+            return TILING_KEY_B18_V128;
     }
     return 0;
 }
@@ -364,14 +411,19 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     GDN::GdnCoreSyncVariant syncVariant = GDN::GdnCoreSyncVariant::B0;
     OP_CHECK_IF(!ResolveSyncVariant(syncVariant),
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15."),
+                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18."),
+                return ge::GRAPH_FAILED);
+    bool t1Diagnostic = false;
+    OP_CHECK_IF(!ResolveT1Diagnostic(t1Diagnostic),
+                OP_LOGE(context->GetNodeName(),
+                        "FLA_NPU_GDN_SYNC_T1_DIAGNOSTIC must be unset, 0, or 1."),
                 return ge::GRAPH_FAILED);
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     const bool isAscend950 =
         platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     OP_CHECK_IF(syncVariant != GDN::GdnCoreSyncVariant::B0 && !isAscend950,
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15 is supported only on Ascend950."),
+                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18 is supported only on Ascend950."),
                 return ge::GRAPH_FAILED);
     // Extra experiment kernels are intentionally limited to the dominant model
     // domain. Other supported shapes retain full functionality through B0 and
@@ -386,10 +438,23 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
         valueHeads == MAIN_MODEL_V_HEADS && tokens == MAIN_MODEL_TOKENS &&
         kDim == SUPPORTED_K_DIM && IsShape(cuShape, {2}) &&
         varlenChunks == MAIN_MODEL_CHUNKS && *outputFinalState;
+    // This opt-in route exists only to make the synchronization hypotheses
+    // observable on the smallest real varlen call. It does not widen their
+    // production selector, and it deliberately ignores the public output mask.
+    const bool isExactT1DiagnosticVarlenShape =
+        isAscend950 && isExperimentalShape && isVarlen &&
+        batch == MAIN_MODEL_BATCH && heads == MAIN_MODEL_K_HEADS &&
+        valueHeads == MAIN_MODEL_V_HEADS && tokens == T1_DIAGNOSTIC_TOKENS &&
+        kDim == SUPPORTED_K_DIM && IsShape(cuShape, {2}) &&
+        varlenChunks == T1_DIAGNOSTIC_CHUNKS && *outputFinalState;
+    const bool selectT1DiagnosticVariant =
+        t1Diagnostic && IsT1DiagnosticSyncVariant(syncVariant) &&
+        isExactT1DiagnosticVarlenShape;
     GDN::GdnCoreSyncVariant effectiveSyncVariant = GDN::GdnCoreSyncVariant::B0;
     if (isExperimentalShape) {
         effectiveSyncVariant =
-            IsMainShapeOnlySyncVariant(syncVariant) && !isExactMainVarlenShape
+            IsMainShapeOnlySyncVariant(syncVariant) &&
+                    !isExactMainVarlenShape && !selectT1DiagnosticVariant
                 ? GDN::GdnCoreSyncVariant::B7
                 : syncVariant;
     }
