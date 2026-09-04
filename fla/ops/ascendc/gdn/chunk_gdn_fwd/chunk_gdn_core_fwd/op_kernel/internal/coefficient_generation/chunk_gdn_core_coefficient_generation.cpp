@@ -14,6 +14,14 @@ using namespace AscendC;
 
 namespace {
 constexpr uint64_t KKT_READY_FLAG = 3;
+constexpr uint64_t KKT_SOLVE_RELEASE_FLAG = 0;
+
+// Event generations in the fused suffix are deliberately disjoint in time:
+// P uses AIV->AIC flag3 and AIC->both-AIV flag0, Solve uses flags1/2/3,
+// Q uses flag5, WU drains flags3/4/5, and only then may H reuse flags0..7.
+// Target CANN reserves flags6/7, so coefficient generation must not use them.
+// For mode2, the two AIV notifications are aggregated by FFTS and the paired
+// AIC performs one wait, matching the official cross-core set/wait example.
 
 template <typename T, int MATRIX_SIZE, GDN::GdnCoreSyncVariant kSyncVariant,
           typename TilingData>
@@ -22,11 +30,30 @@ __aicore__ inline void RunSolvePhase(GM_ADDR a, GM_ADDR cuSeqlens, GM_ADDR chunk
                                      const TilingData *tilingData)
 {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using SyncTraits = GDN::GdnCoreSyncVariantTraits<kSyncVariant>;
+    constexpr bool kUseKktToSolveGroupHandoff =
+        MATRIX_SIZE == 64 && SyncTraits::kKktToSolveGroupHandoff;
     if (tilingData->isVarlen != 0) {
-        // KKT uses head-major ownership while varlen SolveTri remaps the same
-        // tiles chunk-major. A paired event can therefore miss a producer on
-        // another core; wait for every KKT writer before SolveTri starts.
-        AscendC::SyncAll<false>();
+        if constexpr (kUseKktToSolveGroupHandoff) {
+            // Both AIV subblocks publish their MTE3 completion. Mode2 folds
+            // those two notifications into one AIC wait; a second wait would
+            // consume a nonexistent generation and can deadlock.
+            if ASCEND_IS_AIC {
+                CrossCoreWaitFlag(KKT_READY_FLAG);
+                CrossCoreSetFlag<0x2, PIPE_FIX>(KKT_SOLVE_RELEASE_FLAG);
+            }
+            // Every AIV, including an idle subblock, participates so flag0 is
+            // fully consumed before Solve starts and can later be reused by H.
+            if ASCEND_IS_AIV {
+                CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG);
+                CrossCoreWaitFlag(KKT_SOLVE_RELEASE_FLAG);
+            }
+        } else {
+            // KKT uses head-major ownership while legacy varlen SolveTri
+            // remaps the same tiles chunk-major. Wait for every writer unless
+            // the head-major paired protocol is selected explicitly.
+            AscendC::SyncAll<false>();
+        }
     } else {
         if ASCEND_IS_AIC {
             CrossCoreWaitFlag(KKT_READY_FLAG);
@@ -39,11 +66,9 @@ __aicore__ inline void RunSolvePhase(GM_ADDR a, GM_ADDR cuSeqlens, GM_ADDR chunk
     // contiguous tile ownership.  Keep those policies explicit instead of
     // silently inheriting the standalone round-robin/default-workspace path.
     if constexpr (MATRIX_SIZE == 64) {
-        constexpr bool kUseMte2Mte1Event =
-            kSyncVariant == GDN::GdnCoreSyncVariant::B3 ||
-            kSyncVariant == GDN::GdnCoreSyncVariant::B5 ||
-            kSyncVariant == GDN::GdnCoreSyncVariant::B19;
-        SolveTri64<T, T, kUseMte2Mte1Event, false> solve;
+        SolveTri64<T, T, SyncTraits::kUseImmediateMte2Mte1,
+                   SyncTraits::kDeferMte2Mte1Wait,
+                   SyncTraits::kHeadMajorSolve64Ownership> solve;
         solve.Init(a, cuSeqlens, chunkIndices, out, workspace, tilingData, true, true);
         solve.Process();
     } else {

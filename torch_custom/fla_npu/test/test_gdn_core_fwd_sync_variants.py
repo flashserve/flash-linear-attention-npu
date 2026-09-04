@@ -23,6 +23,10 @@ COEFFICIENT = (
     KERNEL_ROOT
     / "internal/coefficient_generation/chunk_gdn_core_coefficient_generation.cpp"
 )
+KKT_EPILOGUE = (
+    KERNEL_ROOT
+    / "internal/coefficient_generation/chunk_gdn_core_cumsum_kkt.h"
+)
 FWD_H_ARCH35 = (
     KERNEL_ROOT
     / "internal/operators/chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
@@ -35,6 +39,12 @@ SOLVE_TRI_64 = (
     KERNEL_ROOT
     / "internal/coefficient_generation/gdn_core_solve_tri/arch35/solve_tri_ascend950_64.h"
 )
+RECOMPUTE_W_U_KERNEL = (
+    KERNEL_ROOT / "internal/operators/recompute_w_u_fwd/op_kernel"
+)
+RECOMPUTE_W_U_COMMON = RECOMPUTE_W_U_KERNEL / "recompute_w_u_fwd_common.h"
+RECOMPUTE_W_U_CUBE = RECOMPUTE_W_U_KERNEL / "recompute_w_u_fwd_cube.h"
+RECOMPUTE_W_U_VECTOR = RECOMPUTE_W_U_KERNEL / "recompute_w_u_fwd_vector.h"
 
 
 def source(path: Path) -> str:
@@ -165,18 +175,22 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         expected_true_sets = {
             "kNarrowCube1ToPipeFix": {
                 "B1", "B4", "B5", "B9", "B13", "B15",
-                "B16", "B17", "B18", "B19"
+                "B16", "B17", "B18", "B19", "B20", "B21", "B22",
+                "B23", "B24"
             },
             "kNarrowCube2ToPipeFix": {"B2", "B4", "B5", "B17", "B18"},
             "kCube1EventOnly": {"B8", "B10", "B11"},
             "kUpdateBarrierToPipeMte3": {"B6", "B9", "B10"},
             "kUpdateBarrierEventOnly": {
                 "B7", "B11", "B12", "B13", "B14", "B15",
-                "B16", "B17", "B18", "B19"
+                "B16", "B17", "B18", "B19", "B20", "B21", "B22",
+                "B23", "B24"
             },
             "kBypassHInitCollective": {"B12", "B13"},
             "kEntryLocalPipeDrain": {"B14", "B15", "B17"},
-            "kEntryRolePipeDrain": {"B16", "B18", "B19"},
+            "kEntryRolePipeDrain": {
+                "B16", "B18", "B19", "B20", "B21", "B22", "B23", "B24"
+            },
         }
         observed_true_sets = {}
         for flag in expected_true_sets:
@@ -210,6 +224,11 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
             "B17": (True, True, False, False, True, False, True, False),
             "B18": (True, True, False, False, True, False, False, True),
             "B19": (True, False, False, False, True, False, False, True),
+            "B20": (True, False, False, False, True, False, False, True),
+            "B21": (True, False, False, False, True, False, False, True),
+            "B22": (True, False, False, False, True, False, False, True),
+            "B23": (True, False, False, False, True, False, False, True),
+            "B24": (True, False, False, False, True, False, False, True),
         }
         observed_matrix = {
             variant: tuple(variant in observed_true_sets[flag]
@@ -218,6 +237,8 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         }
         self.assertEqual(observed_matrix, expected_matrix)
         self.assertEqual(observed_matrix["B19"], observed_matrix["B16"])
+        for variant in ("B20", "B21", "B22", "B23", "B24"):
+            self.assertEqual(observed_matrix[variant], observed_matrix["B16"])
         self.assertIn(
             "kNarrowCube1ToPipeFix, kNarrowCube2ToPipeFix, kCube1EventOnly,\n"
             "        kUpdateBarrierToPipeMte3, kUpdateBarrierEventOnly,\n"
@@ -238,25 +259,23 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         self.assertNotIn("kEntryLocalPipeDrain", non_a5_alias)
         self.assertNotIn("kEntryRolePipeDrain", non_a5_alias)
 
-    def test_solve_wrapper_limits_immediate_event_to_a5_bt64_b3_b5_b19(self):
+    def test_solve_wrapper_maps_b20_b24_traits_only_to_a5_bt64(self):
         text = source(COEFFICIENT)
 
         self.assertIn(
             "GDN::GdnCoreSyncVariant kSyncVariant,",
             text,
         )
-        self.assertRegex(
+        self.assertIn(
+            "using SyncTraits = GDN::GdnCoreSyncVariantTraits<kSyncVariant>;",
             text,
-            r"kUseMte2Mte1Event\s*=\s*"
-            r"kSyncVariant == GDN::GdnCoreSyncVariant::B3 \|\|\s*"
-            r"kSyncVariant == GDN::GdnCoreSyncVariant::B5 \|\|\s*"
-            r"kSyncVariant == GDN::GdnCoreSyncVariant::B19;",
         )
         self.assertIn(
-            "SolveTri64<T, T, kUseMte2Mte1Event, false> solve;",
+            "SolveTri64<T, T, SyncTraits::kUseImmediateMte2Mte1,\n"
+            "                   SyncTraits::kDeferMte2Mte1Wait,\n"
+            "                   SyncTraits::kHeadMajorSolve64Ownership> solve;",
             text,
         )
-        self.assertNotIn("kDeferMte2Mte1Wait =", text)
         self.assertIn("SolveTri128<T, T> solve;", text)
 
         a5_start = text.index("#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310")
@@ -264,12 +283,332 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         non_a5_end = text.index("#endif", non_a5_start)
         self.assertNotIn("kSyncVariant", text[non_a5_start:non_a5_end])
 
+    def test_b20_b24_coefficient_trait_truth_table_is_orthogonal(self):
+        text = source(CORE_STRUCT)
+        trait_start = text.index("struct GdnCoreSyncVariantTraits")
+        trait_end = text.index("struct ChunkGdnCoreCoefficientTiling", trait_start)
+        traits = text[trait_start:trait_end]
+        expected_true_sets = {
+            "kHeadMajorSolve64Ownership": {
+                "B20", "B21", "B22", "B23", "B24"
+            },
+            "kKktToSolveGroupHandoff": {"B22", "B23", "B24"},
+            "kSolveToWuGroupHandoff": {"B21", "B23", "B24"},
+            "kUseImmediateMte2Mte1": {"B3", "B5", "B19", "B24"},
+        }
+        observed_true_sets = {}
+        for flag in expected_true_sets:
+            assignment = re.search(
+                rf"static constexpr bool {flag}\s*=\s*(.*?);",
+                traits,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(assignment, flag)
+            observed_true_sets[flag] = set(
+                re.findall(r"GdnCoreSyncVariant::(B\d+)", assignment.group(1))
+            )
+        self.assertEqual(observed_true_sets, expected_true_sets)
+        self.assertIn("kDeferMte2Mte1Wait = false;", traits)
+        self.assertIn(
+            "!(kKktToSolveGroupHandoff || kSolveToWuGroupHandoff) ||\n"
+            "                      kHeadMajorSolve64Ownership",
+            traits,
+        )
+        self.assertIn(
+            '"The hardware-rejected deferred Solve64 wait must remain disabled."',
+            traits,
+        )
+        for variant in ("B21", "B22", "B23", "B24"):
+            self.assertIn(variant, observed_true_sets["kHeadMajorSolve64Ownership"])
+        self.assertIn("B24", observed_true_sets["kUseImmediateMte2Mte1"])
+
+    def test_head_major_varlen_solve_uses_total_chunks_not_total_tiles(self):
+        text = source(SOLVE_TRI_64)
+
+        self.assertIn("total_chunks = tilingData->totalChunks;", text)
+        self.assertIn("chunk_num_total = tilingData->totalTiles;", text)
+        self.assertRegex(
+            text,
+            r"if constexpr \(kHeadMajorVarlenOwnership\) \{\s*"
+            r"(?://[^\n]*\n\s*)*"
+            r"chunk_idx = loop_idx % total_chunks;\s*"
+            r"head_idx = loop_idx / total_chunks;\s*"
+            r"\} else \{\s*"
+            r"chunk_idx = loop_idx / num_head;\s*"
+            r"head_idx = loop_idx % num_head;",
+        )
+        ownership_start = text.index(
+            "if constexpr (kHeadMajorVarlenOwnership)"
+        )
+        ownership_end = text.index("seq_idx = gm_chunk_indices", ownership_start)
+        ownership = text[ownership_start:ownership_end]
+        self.assertNotIn("totalTiles", ownership)
+        self.assertNotIn("chunk_num_total", ownership)
+
+    def test_kkt_to_solve_p_is_mode2_fanin_then_flag0_release(self):
+        text = source(COEFFICIENT)
+
+        self.assertIn("constexpr uint64_t KKT_READY_FLAG = 3;", text)
+        self.assertIn("constexpr uint64_t KKT_SOLVE_RELEASE_FLAG = 0;", text)
+        self.assertIn(
+            "MATRIX_SIZE == 64 && SyncTraits::kKktToSolveGroupHandoff", text
+        )
+        p_start = text.index("if constexpr (kUseKktToSolveGroupHandoff)")
+        p_end = text.index(
+            "// KKT uses head-major ownership while legacy varlen SolveTri",
+            p_start,
+        )
+        protocol = text[p_start:p_end]
+        self.assertEqual(protocol.count("CrossCoreWaitFlag(KKT_READY_FLAG)"), 1)
+        self.assertEqual(
+            protocol.count(
+                "CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG)"
+            ),
+            1,
+        )
+        self.assertEqual(
+            protocol.count(
+                "CrossCoreSetFlag<0x2, PIPE_FIX>(KKT_SOLVE_RELEASE_FLAG)"
+            ),
+            1,
+        )
+        self.assertEqual(
+            protocol.count("CrossCoreWaitFlag(KKT_SOLVE_RELEASE_FLAG)"), 1
+        )
+        aic_start = protocol.index("if ASCEND_IS_AIC")
+        aiv_start = protocol.index("if ASCEND_IS_AIV")
+        self.assertLess(
+            protocol.index("CrossCoreWaitFlag(KKT_READY_FLAG)", aic_start),
+            protocol.index(
+                "CrossCoreSetFlag<0x2, PIPE_FIX>(KKT_SOLVE_RELEASE_FLAG)",
+                aic_start,
+            ),
+        )
+        self.assertLess(
+            protocol.index(
+                "CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG)", aiv_start
+            ),
+            protocol.index("CrossCoreWaitFlag(KKT_SOLVE_RELEASE_FLAG)", aiv_start),
+        )
+        self.assertIn("two AIV notifications are aggregated by FFTS", text)
+        self.assertIn("Target CANN reserves flags6/7", text)
+        self.assertNotIn("GetSubBlockIdx", protocol)
+        self.assertNotIn("PHASE6_SOLVE_DONE_FLAG", protocol)
+        self.assertNotRegex(protocol, r"(?:FLAG|Flag)\s*\(?[67]\)?")
+
+    def test_solve_to_wu_q_drains_aic_then_balances_flag5(self):
+        text = source(CORE_KERNEL)
+
+        q_start = text.index("if constexpr (SyncTraits::kSolveToWuGroupHandoff)")
+        q_end = text.index("} else {\n            AscendC::SyncAll<false>();", q_start)
+        protocol = text[q_start:q_end]
+        self.assertIn("if (coefficient.BT == 64)", protocol)
+        self.assertRegex(
+            protocol,
+            r"if ASCEND_IS_AIC \{\s*"
+            r"AscendC::PipeBarrier<PIPE_ALL>\(\);\s*"
+            r"AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>"
+            r"\(PHASE6_SOLVE_DONE_FLAG\);\s*\}",
+        )
+        self.assertRegex(
+            protocol,
+            r"if ASCEND_IS_AIV \{\s*"
+            r"AscendC::CrossCoreWaitFlag\(PHASE6_SOLVE_DONE_FLAG\);\s*\}",
+        )
+        self.assertEqual(protocol.count("PHASE6_SOLVE_DONE_FLAG"), 2)
+        self.assertIn("both paired AIVs consume that generation", text)
+
+    def test_group_geometry_covers_t1_t65_main_and_idle_participants(self):
+        core_groups = 28
+        heads = 32
+        aiv_subblocks = 2
+        coefficient = source(COEFFICIENT)
+        core = source(CORE_KERNEL)
+        kkt = source(KKT_EPILOGUE)
+        solve = source(SOLVE_TRI_64)
+        wu_common = source(RECOMPUTE_W_U_COMMON)
+        wu_cube = source(RECOMPUTE_W_U_CUBE)
+        wu_vector = source(RECOMPUTE_W_U_VECTOR)
+        p_start = coefficient.index(
+            "if constexpr (kUseKktToSolveGroupHandoff)"
+        )
+        p_end = coefficient.index(
+            "// KKT uses head-major ownership while legacy varlen SolveTri",
+            p_start,
+        )
+        p_protocol = coefficient[p_start:p_end]
+        q_start = core.index(
+            "if constexpr (SyncTraits::kSolveToWuGroupHandoff)"
+        )
+        q_end = core.index(
+            "} else {\n            AscendC::SyncAll<false>();", q_start
+        )
+        q_protocol = core[q_start:q_end]
+        p_counts = (
+            aiv_subblocks * p_protocol.count(
+                "CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG)"
+            ),
+            p_protocol.count("CrossCoreWaitFlag(KKT_READY_FLAG)"),
+            p_protocol.count(
+                "CrossCoreSetFlag<0x2, PIPE_FIX>(KKT_SOLVE_RELEASE_FLAG)"
+            ),
+            aiv_subblocks * p_protocol.count(
+                "CrossCoreWaitFlag(KKT_SOLVE_RELEASE_FLAG)"
+            ),
+        )
+        q_counts = (
+            q_protocol.count(
+                "CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG)"
+            ),
+            aiv_subblocks * q_protocol.count(
+                "CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG)"
+            ),
+        )
+        self.assertEqual(p_counts, (2, 1, 1, 2))
+        self.assertEqual(q_counts, (1, 2))
+        self.assertNotIn("GetSubBlockIdx", p_protocol)
+        self.assertNotIn("GetSubBlockIdx", q_protocol)
+        self.assertRegex(
+            kkt,
+            r"const int64_t begin = aicIdx \* tilesPerAic;\s*"
+            r"const int64_t end = MinI64\(begin \+ tilesPerAic, taskNum_\);\s*"
+            r"for \(int64_t task = begin \+ subBlockIdx; task < end; "
+            r"task \+= subBlockNum\)",
+        )
+        # Bind the geometry model below to both production schedulers, not just
+        # to two equivalent Python ranges.  Solve's AIV0 and AIC sides must use
+        # the same logical-core contiguous interval, and WU's cube/vector sides
+        # must reproduce that interval before decoding the head-major task.
+        self.assertIn(
+            "const int64_t begin = contiguous_schedule ? (core_idx / 2) * "
+            "tiles_per_core : core_idx / 2;",
+            solve,
+        )
+        self.assertIn(
+            "const int64_t begin = contiguous_schedule ? core_idx * "
+            "tiles_per_core : core_idx;",
+            solve,
+        )
+        self.assertEqual(
+            solve.count(
+                "? (begin + tiles_per_core < chunk_num_total ? begin + "
+                "tiles_per_core : chunk_num_total)"
+            ),
+            2,
+        )
+        self.assertEqual(
+            solve.count("const int64_t step = contiguous_schedule ? 1 : num_core;"),
+            2,
+        )
+        self.assertRegex(
+            solve,
+            r"x_gm_offset = head_idx \* total_tokens \* chunk_size \+\s*"
+            r"\(bos \+ chunk_in_seq_idx \* chunk_size\) \* chunk_size;",
+        )
+        self.assertRegex(
+            wu_common,
+            r"if \(cuSeqlens != nullptr\) \{\s*"
+            r"chunkIdx = loopIdx % static_cast<uint32_t>\(chunkNum\);\s*"
+            r"hBegin = loopIdx / static_cast<uint32_t>\(chunkNum\);",
+        )
+        self.assertRegex(
+            wu_cube,
+            r"const uint32_t coreLoops = kFlattenHeadTasks \? "
+            r"params\.chunkNum \* params\.Hv : params\.chunkNum;\s*"
+            r"uint32_t loopBegin = coreIdx;\s*"
+            r"uint32_t loopEnd = coreLoops;\s*"
+            r"uint32_t loopStep = coreNum;\s*"
+            r"if constexpr \(kCoefficientGenerationTaskOrder\) \{\s*"
+            r"const uint32_t tasksPerCore = "
+            r"\(coreLoops \+ coreNum - 1\) / coreNum;\s*"
+            r"loopBegin = coreIdx \* tasksPerCore;\s*"
+            r"loopEnd = \(loopBegin \+ tasksPerCore\) < coreLoops \? "
+            r"loopBegin \+ tasksPerCore : coreLoops;\s*"
+            r"loopStep = 1;",
+        )
+        self.assertRegex(
+            wu_vector,
+            r"const uint32_t coreLoops = kFlattenHeadTasks \? "
+            r"chunkNum \* Hv : chunkNum;\s*"
+            r"const uint32_t coreIdx = GetBlockIdx\(\) / GetSubBlockNum\(\);\s*"
+            r"const uint32_t coreNumAic = GetBlockNum\(\);[\s\S]*?"
+            r"uint32_t loopBegin = coreIdx;\s*"
+            r"uint32_t loopEnd = coreLoops;\s*"
+            r"uint32_t loopStep = coreNumAic;\s*"
+            r"if constexpr \(kCoefficientGenerationTaskOrder\) \{\s*"
+            r"const uint32_t tasksPerCore = "
+            r"\(coreLoops \+ coreNumAic - 1\) / coreNumAic;\s*"
+            r"loopBegin = coreIdx \* tasksPerCore;\s*"
+            r"loopEnd = \(loopBegin \+ tasksPerCore\) < coreLoops \? "
+            r"loopBegin \+ tasksPerCore : coreLoops;\s*"
+            r"loopStep = 1;",
+        )
+        for scheduler in (wu_cube, wu_vector):
+            self.assertRegex(
+                scheduler,
+                r"for \(uint32_t loopIdx = loopBegin; loopIdx < loopEnd; "
+                r"loopIdx \+= loopStep\) \{[\s\S]*?"
+                r"DecodeRecomputeTask<kFlattenHeadTasks, "
+                r"kCoefficientGenerationTaskOrder>\(",
+            )
+        cases = {
+            "t1": (1, 16, 12),
+            "t65": (2, 22, 6),
+            "main": (177, 28, 0),
+        }
+        for name, (total_chunks, active_expected, idle_expected) in cases.items():
+            task_count = heads * total_chunks
+            tasks_per_core = (task_count + core_groups - 1) // core_groups
+            all_pairs = {
+                (head, chunk)
+                for head in range(heads)
+                for chunk in range(total_chunks)
+            }
+            decoded_pairs = {
+                (task // total_chunks, task % total_chunks)
+                for task in range(task_count)
+            }
+            self.assertEqual(decoded_pairs, all_pairs, name)
+
+            active = 0
+            idle = 0
+            for core in range(core_groups):
+                begin = core * tasks_per_core
+                end = min(begin + tasks_per_core, task_count)
+                solve_tasks = list(range(begin, end))
+                aiv0_tasks = list(range(begin, end, 2))
+                aiv1_tasks = list(range(begin + 1, end, 2))
+                self.assertEqual(
+                    sorted(aiv0_tasks + aiv1_tasks), solve_tasks, (name, core)
+                )
+                # S gives Solve and WU the same contiguous task interval.
+                wu_tasks = list(range(begin, end))
+                self.assertEqual(solve_tasks, wu_tasks, (name, core))
+                if solve_tasks:
+                    active += 1
+                else:
+                    idle += 1
+
+            self.assertEqual((active, idle), (active_expected, idle_expected), name)
+
+        # T65's last active range contains only one task: AIV0 produces it and
+        # AIV1 is empty but must still publish/wait at both P protocol edges.
+        task_count = heads * 2
+        tasks_per_core = (task_count + core_groups - 1) // core_groups
+        last_active_core = (task_count - 1) // tasks_per_core
+        begin = last_active_core * tasks_per_core
+        end = min(begin + tasks_per_core, task_count)
+        self.assertEqual(list(range(begin, end)), [63])
+        self.assertEqual(list(range(begin, end, 2)), [63])
+        self.assertEqual(list(range(begin + 1, end, 2)), [])
+
     def test_solve_tri64_immediate_event_order_preserves_helper_edge(self):
         text = source(SOLVE_TRI_64)
 
         self.assertIn(
             "bool kUseMte2Mte1Event = false,\n"
-            "          bool kDeferMte2Mte1Wait = false",
+            "          bool kDeferMte2Mte1Wait = false,\n"
+            "          bool kHeadMajorVarlenOwnership = false",
             text,
         )
         self.assertIn(
@@ -314,7 +653,7 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         text = source(CORE_KERNEL)
 
         self.assertEqual(text.count("GDN::GdnCoreSyncVariant::B0>"), 2)
-        for variant in tuple(f"B{index}" for index in range(1, 20)):
+        for variant in tuple(f"B{index}" for index in range(1, 25)):
             self.assertEqual(text.count(f"GDN::GdnCoreSyncVariant::{variant}>"), 1)
         self.assertIn(
             "RunSolvePhase<InputT, 64, kSyncVariant>", text
@@ -336,12 +675,12 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
             re.findall(r'std::strcmp\(value, "([^"]+)"\)', resolver)
         )
         self.assertEqual(
-            accepted_values, {f"B{index}" for index in range(20)}
+            accepted_values, {f"B{index}" for index in range(25)}
         )
         self.assertIn("value == nullptr", resolver)
-        self.assertEqual(resolver.count("return true;"), 20)
+        self.assertEqual(resolver.count("return true;"), 25)
         self.assertEqual(resolver.count("return false;"), 1)
-        for selector in tuple(f"B{index}" for index in range(20)):
+        for selector in tuple(f"B{index}" for index in range(25)):
             prefix = r"value == nullptr \|\| " if selector == "B0" else ""
             self.assertRegex(
                 resolver,
@@ -403,6 +742,11 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
             "TILING_KEY_B17_V128": "171",
             "TILING_KEY_B18_V128": "181",
             "TILING_KEY_B19_V128": "191",
+            "TILING_KEY_B20_V128": "201",
+            "TILING_KEY_B21_V128": "211",
+            "TILING_KEY_B22_V128": "221",
+            "TILING_KEY_B23_V128": "231",
+            "TILING_KEY_B24_V128": "241",
         }
         for name, value in expected_keys.items():
             self.assertIn(f"constexpr uint32_t {name} = {value};", host)
@@ -436,6 +780,11 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
             "B17": "TILING_KEY_B17_V128",
             "B18": "TILING_KEY_B18_V128",
             "B19": "TILING_KEY_B19_V128",
+            "B20": "TILING_KEY_B20_V128",
+            "B21": "TILING_KEY_B21_V128",
+            "B22": "TILING_KEY_B22_V128",
+            "B23": "TILING_KEY_B23_V128",
+            "B24": "TILING_KEY_B24_V128",
         }.items():
             self.assertRegex(
                 host,
@@ -463,7 +812,8 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
             set(re.findall(r"GdnCoreSyncVariant::(B\d+)", main_only)),
             {
                 "B12", "B13", "B14", "B15", "B16",
-                "B17", "B18", "B19",
+                "B17", "B18", "B19", "B20", "B21", "B22", "B23",
+                "B24",
             },
         )
         t1_variant_start = main_only_end
@@ -473,7 +823,7 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         t1_variants = host[t1_variant_start:t1_variant_end]
         self.assertEqual(
             set(re.findall(r"GdnCoreSyncVariant::(B\d+)", t1_variants)),
-            {"B16", "B17", "B18"},
+            {"B16", "B17", "B18", "B20", "B21", "B22", "B23", "B24"},
         )
         t65_variant_start = t1_variant_end
         t65_variant_end = host.index(
@@ -482,7 +832,7 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         t65_variants = host[t65_variant_start:t65_variant_end]
         self.assertEqual(
             set(re.findall(r"GdnCoreSyncVariant::(B\d+)", t65_variants)),
-            {"B19"},
+            {"B19", "B20", "B21", "B22", "B23", "B24"},
         )
         exact_start = host.index("const bool isExactMainVarlenShape")
         exact_end = host.index(
@@ -580,9 +930,9 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         )
 
         # Selector truth table: legacy variants retain their established
-        # experimental domain; B12-B19 narrow to the exact main varlen shape.
-        # B16-B18 retain the exact-T=1 diagnostic exception, while B19 has an
-        # independent exact-T=65/two-chunk route that executes SolveTri64.
+        # experimental domain; B12-B24 narrow to the exact main varlen shape.
+        # B16-B18 and B20-B24 retain the exact-T=1 diagnostic exception;
+        # B19-B24 have an exact-T=65/two-chunk route that executes full+tail.
         def selected(
             requested: str,
             experimental: bool,
@@ -595,19 +945,22 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
             if not experimental:
                 return "B0"
             select_t1 = (
-                requested in {"B16", "B17", "B18"}
+                requested in {
+                    "B16", "B17", "B18", "B20", "B21", "B22", "B23", "B24"
+                }
                 and t1_diagnostic_enabled
                 and exact_t1
             )
             select_t65 = (
-                requested == "B19"
+                requested in {"B19", "B20", "B21", "B22", "B23", "B24"}
                 and t65_diagnostic_enabled
                 and exact_t65
             )
             if (
                 requested in {
                     "B12", "B13", "B14", "B15", "B16",
-                    "B17", "B18", "B19",
+                    "B17", "B18", "B19", "B20", "B21", "B22", "B23",
+                    "B24",
                 }
                 and not exact_main
                 and not select_t1
@@ -655,6 +1008,29 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         self.assertEqual(
             selected("B19", False, False, False, False, True, True), "B0"
         )
+        for requested in ("B20", "B21", "B22", "B23", "B24"):
+            self.assertEqual(selected(requested, True, True), requested)
+            self.assertEqual(selected(requested, True, False), "B7")
+            self.assertEqual(
+                selected(requested, True, False, True, True), requested
+            )
+            self.assertEqual(
+                selected(requested, True, False, False, False, True, True),
+                requested,
+            )
+            self.assertEqual(
+                selected(requested, True, False, False, True), "B7"
+            )
+            self.assertEqual(
+                selected(requested, True, False, True, False), "B7"
+            )
+            self.assertEqual(
+                selected(requested, True, False, False, False, False, True),
+                "B7",
+            )
+            self.assertEqual(
+                selected(requested, False, False, True, True), "B0"
+            )
 
         routed = {
             int(key): (shape, variant)
@@ -691,6 +1067,11 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
                 171: ("GDNFwdHTileShapes128", "B17"),
                 181: ("GDNFwdHTileShapes128", "B18"),
                 191: ("GDNFwdHTileShapes128", "B19"),
+                201: ("GDNFwdHTileShapes128", "B20"),
+                211: ("GDNFwdHTileShapes128", "B21"),
+                221: ("GDNFwdHTileShapes128", "B22"),
+                231: ("GDNFwdHTileShapes128", "B23"),
+                241: ("GDNFwdHTileShapes128", "B24"),
             },
         )
         a5_dispatch_start = kernel.index(
@@ -704,19 +1085,15 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         for key in (
             11, 21, 31, 41, 51, 61, 71, 81,
             91, 101, 111, 121, 131, 141, 151, 161, 171, 181,
-            191,
+            191, 201, 211, 221, 231, 241,
         ):
             self.assertIn(f"TILING_KEY_IS({key})", a5_dispatch)
         for key in (
             12, 22, 32, 42, 52, 62, 72, 82,
             92, 102, 112, 122, 132, 142, 152, 162, 172, 182,
-            192, 202, 212,
+            192, 202, 212, 222, 232, 242,
         ):
             self.assertNotIn(f"TILING_KEY_IS({key})", kernel)
-        self.assertNotIn("TILING_KEY_IS(201)", kernel)
-        self.assertNotIn("TILING_KEY_IS(211)", kernel)
-        self.assertNotIn("TILING_KEY_B20_V128", host)
-        self.assertNotIn("TILING_KEY_B21_V128", host)
 
         self.assertIn(
             "platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950",
@@ -730,7 +1107,7 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
             host,
             r"OP_CHECK_IF\(syncVariant != GDN::GdnCoreSyncVariant::B0 && "
             r"!isAscend950,\s*OP_LOGE\(context->GetNodeName\(\),\s*"
-            r'"FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18/B19 is supported only on Ascend950\."\),\s*'
+            r'"FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18/B19/B20/B21/B22/B23/B24 is supported only on Ascend950\."\),\s*'
             r"return ge::GRAPH_FAILED\);",
         )
 
@@ -743,7 +1120,7 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
             )
         }
         self.assertEqual(
-            enum_values, {f"B{index}": index for index in range(20)}
+            enum_values, {f"B{index}": index for index in range(25)}
         )
 
         trailer_start = struct.index("struct ChunkGdnCoreFwdTrailer {")

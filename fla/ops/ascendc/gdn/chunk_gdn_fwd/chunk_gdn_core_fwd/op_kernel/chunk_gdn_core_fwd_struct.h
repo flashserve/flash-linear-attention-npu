@@ -34,6 +34,44 @@ enum class GdnCoreSyncVariant : uint32_t {
     B17 = 17,
     B18 = 18,
     B19 = 19,
+    B20 = 20,
+    B21 = 21,
+    B22 = 22,
+    B23 = 23,
+    B24 = 24,
+};
+
+// Compile-time experiment axes for the coefficient-generation suffix.  Keep
+// them centralized so a key cannot silently select a hand-off without the
+// ownership policy that makes the paired producer/consumer ranges identical.
+template <GdnCoreSyncVariant kVariant>
+struct GdnCoreSyncVariantTraits {
+    static constexpr bool kHeadMajorSolve64Ownership =
+        kVariant == GdnCoreSyncVariant::B20 ||
+        kVariant == GdnCoreSyncVariant::B21 ||
+        kVariant == GdnCoreSyncVariant::B22 ||
+        kVariant == GdnCoreSyncVariant::B23 ||
+        kVariant == GdnCoreSyncVariant::B24;
+    static constexpr bool kKktToSolveGroupHandoff =
+        kVariant == GdnCoreSyncVariant::B22 ||
+        kVariant == GdnCoreSyncVariant::B23 ||
+        kVariant == GdnCoreSyncVariant::B24;
+    static constexpr bool kSolveToWuGroupHandoff =
+        kVariant == GdnCoreSyncVariant::B21 ||
+        kVariant == GdnCoreSyncVariant::B23 ||
+        kVariant == GdnCoreSyncVariant::B24;
+    static constexpr bool kUseImmediateMte2Mte1 =
+        kVariant == GdnCoreSyncVariant::B3 ||
+        kVariant == GdnCoreSyncVariant::B5 ||
+        kVariant == GdnCoreSyncVariant::B19 ||
+        kVariant == GdnCoreSyncVariant::B24;
+    static constexpr bool kDeferMte2Mte1Wait = false;
+
+    static_assert(!(kKktToSolveGroupHandoff || kSolveToWuGroupHandoff) ||
+                      kHeadMajorSolve64Ownership,
+                  "A group-local coefficient hand-off requires head-major Solve64 ownership.");
+    static_assert(!kDeferMte2Mte1Wait,
+                  "The hardware-rejected deferred Solve64 wait must remain disabled.");
 };
 
 struct ChunkGdnCoreCoefficientTiling {

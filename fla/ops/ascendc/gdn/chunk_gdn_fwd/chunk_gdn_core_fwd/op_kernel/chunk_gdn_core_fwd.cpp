@@ -256,6 +256,7 @@ __aicore__ inline void RunPhase6(
     GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
     GM_ADDR finalState, GM_ADDR gCumsumBth, GM_ADDR A, GM_ADDR workspace, GM_ADDR tiling)
 {
+    using SyncTraits = GdnCoreSyncVariantTraits<kSyncVariant>;
     GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
     const __gm__ ChunkGdnCoreStateOutputTrailer *stateOutputTiling = GetStateOutputTrailer(tiling);
     const __gm__ ChunkGdnCoreFwdTrailer *phase6 = GetPhase6Trailer(tiling);
@@ -318,11 +319,27 @@ __aicore__ inline void RunPhase6(
         RunSolvePhase<InputT, 128, kSyncVariant>(aWorkspace, cuSeqlens, chunkIndices, solveA,
                                                  solveWorkspace, &coefficient);
     }
-    // Keep the varlen phase boundary on the dedicated MIX protocol for the
-    // same reason as the score hand-off above. Dense keeps its paired event.
+    // Legacy varlen keeps the global MIX boundary. Q variants are safe only
+    // after S aligns Solve/WU group ownership: every AIC drains both the full
+    // FIX writer and the tail's pending PIPE_MTE1 dependency, publishes flag5,
+    // and both paired AIVs consume that generation before WU reuses flag5.
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     if (coefficient.isVarlen != 0) {
-        AscendC::SyncAll<false>();
+        if constexpr (SyncTraits::kSolveToWuGroupHandoff) {
+            if (coefficient.BT == 64) {
+                if ASCEND_IS_AIC {
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);
+                }
+                if ASCEND_IS_AIV {
+                    AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);
+                }
+            } else {
+                AscendC::SyncAll<false>();
+            }
+        } else {
+            AscendC::SyncAll<false>();
+        }
     } else {
 #endif
     if ASCEND_IS_AIC {
@@ -542,6 +559,36 @@ extern "C" __global__ __aicore__ void chunk_gdn_core_fwd(
         KERNEL_TASK_TYPE(191, KERNEL_TYPE_MIX_AIC_1_2);
         GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
                                    GDN::GdnCoreSyncVariant::B19>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(201)) {
+        KERNEL_TASK_TYPE(201, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B20>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(211)) {
+        KERNEL_TASK_TYPE(211, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B21>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(221)) {
+        KERNEL_TASK_TYPE(221, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B22>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(231)) {
+        KERNEL_TASK_TYPE(231, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B23>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(241)) {
+        KERNEL_TASK_TYPE(241, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B24>(
             q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
             o, final_state, g_cumsum_bth, A, workspace, tiling);
 #endif

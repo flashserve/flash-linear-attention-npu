@@ -8,6 +8,12 @@
 - 目标 CANN：由执行旁车固定的 CANN 9.1 安装；`kernel_event.h`
   SHA256 为
   `3b2fc26123e9fcaa011f77f1db67f2fef16909c6051f7930093845111d81aa52`。
+- CANN 9.1 官方 `cross_core_set_wait_flag.h` 样例 SHA256 为
+  `02c710c9f0495b07d74e1b10aa100621017e9f9a4dd8022970e6ca74bb3b58eb`；
+  其 mode2 示例是两个 AIV 各 set、配对 AIC 单次 wait。目标 dav3510
+  `kernel_operator_sync_impl.h` SHA256 为
+  `2aa4b98f300b13f3c6632ace06406a2fa8cb776e2171595a51f0095997407752`；
+  mode2 notify 由 FFTS 聚合，wait 落到 `wait_flag_dev`。
 
 ## 检索账本
 
@@ -151,16 +157,48 @@
   | B19/191 | `PIPE_FIX` | `PIPE_ALL` | immediate `MTE2_MTE1` set/wait，绝不启用 deferred wait | AIC `PIPE_FIX`、AIV `PIPE_MTE3` |
 
   SolveTri64 变化需要至少一个完整 64-token tile，因此 B19 不由 T1 诊断放行；
-  内部开关 `FLA_NPU_GDN_SYNC_T65_DIAGNOSTIC=1` 仅对 B19 放行相同 heads/dims、
+  第五轮当时的内部开关 `FLA_NPU_GDN_SYNC_T65_DIAGNOSTIC=1` 仅对 B19
+  放行相同 heads/dims、
   T65、`cu_seqlens` 长度 2、2 chunks、存在 FP32 initial_state 且
   `output_final_state=true` 的 A5 BF16 varlen 调用。两个诊断开关都只接受未设置、
   `0` 或 `1`，非法值直接 fail-closed；output mask 不参与路由。未命中严格诊断
   shape 时，生产主 shape 之外仍按既有规则回退 B7/B0，不改变默认生产路由。
 
+  第六轮以 B16 为已知安全基线，把 Solve64 调度 S、KKT→Solve 组内
+  协议 P、Solve→WU 组内协议 Q 和已有 immediate 事件 R 拆成可归因矩阵：
+
+  | 变体/key | Solve64 ownership S | KKT→Solve P | Solve→WU Q | Solve64 R |
+  |---|---|---|---|---|
+  | B20/201 | head-major | 保留 `SyncAll<false>()` | 保留 `SyncAll<false>()` | `PIPE_ALL` |
+  | B21/211 | head-major | 保留 `SyncAll<false>()` | AIC 本核 `PIPE_ALL` 后 flag5 广播，两 AIV 各单次 wait | `PIPE_ALL` |
+  | B22/221 | head-major | 两 AIV 各以 `PIPE_MTE3` 发布 flag3，AIC 单次 wait 聚合，再以 flag0 反向释放两 AIV | 保留 `SyncAll<false>()` | `PIPE_ALL` |
+  | B23/231 | head-major | 同 B22 | 同 B21 | `PIPE_ALL` |
+  | B24/241 | head-major | 同 B22 | 同 B21 | immediate `MTE2_MTE1` |
+
+  S 只改任务 ownership，不改物理输出布局；varlen 的 `(head, chunk)`
+  解码必须使用 `tilingData->totalChunks`，`totalTiles` 仍只用于总任务边界。
+  P 只在 S 使 KKT/Solve 组内连续 range 一致后可用。mode2 已由 FFTS 聚合
+  两个 AIV writer，因此 AIC 对 flag3 只能 wait 一次；两次 wait 会消费不存在的
+  generation，有死锁风险。AIC 单 wait 后以独立 flag0 反向广播，两个 AIV
+  无论 active/idle 都必须各 wait 一次，之后只有 AIV0 进入 Solve。
+  Q 同样依赖 S：AIC 的本核 `PIPE_ALL` 同时退休 full tile 的 FIX 写和 tail
+  tile 由 flag2 导入的 `PIPE_MTE1` 依赖，然后以 flag5 释放两个 AIV。
+
+  同一 fused launch 内的 flag 分代为：P 先用 flag3/0 并在 Solve 前完全消费；
+  Solve 再用 flag1/2/3；Q 使用 flag5 并在 WU 前完全消费；WU 使用并尾部
+  drain flag3/4/5；保留的 H-init collective 之后 H 才复用 flag0..7。目标 CANN
+  保留 flag6/7，P/Q 不得使用。编译期以 `(P || Q) => S` 和 deferred=false
+  的 `static_assert` 锁定。
+
+  B20–B24 生产路由仅放行与 B16 相同的 exact-main shape。T1 诊断放行
+  B20–B24，B19 仍回退 B7；T65/2 chunks 诊断放行 B19–B24，用于同时覆盖
+  full/tail 和不对称 subblock 分工。output mask 不参与路由；其他域、非 A5
+  与非法环境开关继续 fail-closed 或按既有层级回退。
+
   已被 A5 硬件精度结果否定的 Solve deferred-wait 不重试；MIX kernel 的
   `SyncAll` 保护跨阶段 GM/workspace 可见性与参与者会合；B0–B11 全部保留，
   B12–B15 每次只隔离上表中的一条边。也不编译丢弃配套事件的裸删方案。
-  B1–B19 的额外 key 仅在 A5、BF16 输入、
+  B1–B24 的额外 key 仅在 A5、BF16 输入、
   FP32 initial_state 的编译配置中生成，并仅为 V128、chunk64
   模型主路径选择；
   其他合法 dtype/state/V256 形态回退 B0。host 在非 Ascend950 上
@@ -190,8 +228,10 @@
   精度、确定性和性能验证。B16–B18 已完成本地实现与静态门禁设计，新增 key
   仅在 A5/BF16/FP32 initial_state 编译域内出现；后续 T1 重复验证已否定 B17
   的 C2 收窄，B18 因继承同一机制不再作为下一轮基线；既有 B8 证据同时排除
-  C1 event-only 后代。收敛后的唯一 B19 已完成本地实现与静态门禁，使用严格
+  C1 event-only 后代。第五轮收敛后的唯一 B19 已完成本地实现与静态门禁，使用严格
   T65/2 chunks 诊断，仍待同一 A5 产物完成编译、真实 key、精度、确定性和
-  性能验证。
+  性能验证。B20–B24 已按上述 S/P/Q/R 矩阵提供本地源码与静态门禁，
+  它们仍是 `formal_identity=false` 的诊断候选，尚未获得 A5 编译、路由、
+  多进程精度或性能证据。
 - Invalidation：若目标 CANN 头文件、生成代码或 profiling 证明上述生产者/消费者
   链路不成立，需回到 B0 并重建依赖图，不继续放宽同步。
