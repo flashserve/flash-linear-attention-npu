@@ -184,7 +184,9 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType,
             ++vecTaskIdx;
             if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
                 Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
-                Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
+                if (GetSubBlockIdx() == 0) {
+                    Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
+                }
                 continue;
             }
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
@@ -244,7 +246,9 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType,
             }
 
             Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
-            Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
+            if (GetSubBlockIdx() == 0) {
+                Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore);
+            }
         }
     }
     return;

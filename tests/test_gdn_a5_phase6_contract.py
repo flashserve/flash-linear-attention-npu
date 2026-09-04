@@ -79,7 +79,7 @@ def test_embedded_fwdo_joins_aiv_subblocks_before_shared_publications():
         assert before.rfind(join) > before.rfind("epilogueGDNFwdO")
 
 
-def test_recompute_vbeta_joins_both_aiv_subblocks_before_cube_consumes_workspace():
+def test_recompute_vbeta_has_one_publish_after_both_aiv_subblocks_join():
     source = RECOMPUTE_VECTOR.read_text(encoding="utf-8")
     process_vb = source.split("::ProcessVb()", maxsplit=1)[1].split(
         "::ProcessKbgExp()", maxsplit=1
@@ -89,7 +89,10 @@ def test_recompute_vbeta_joins_both_aiv_subblocks_before_cube_consumes_workspace
         "Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>"
         "(flagAivFinishStore);"
     )
+    single_publisher = "if (GetSubBlockIdx() == 0) {"
 
     assert process_vb.count(publish) == 2
+    assert process_vb.count(single_publisher) == 2
     for before_publish in process_vb.split(publish)[:-1]:
-        assert before_publish.rstrip().endswith(join)
+        publisher_block = before_publish.rsplit(join, maxsplit=1)[1]
+        assert publisher_block.count(single_publisher) == 1
