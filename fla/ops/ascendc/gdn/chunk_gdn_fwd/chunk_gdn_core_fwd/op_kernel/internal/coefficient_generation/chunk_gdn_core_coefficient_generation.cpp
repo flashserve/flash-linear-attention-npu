@@ -41,7 +41,9 @@ __aicore__ inline void RunSolvePhase(GM_ADDR a, GM_ADDR cuSeqlens, GM_ADDR chunk
     if constexpr (MATRIX_SIZE == 64) {
         constexpr bool kUseMte2Mte1Event =
             kSyncVariant == GDN::GdnCoreSyncVariant::B3 ||
-            kSyncVariant == GDN::GdnCoreSyncVariant::B5;
+            kSyncVariant == GDN::GdnCoreSyncVariant::B5 ||
+            kSyncVariant == GDN::GdnCoreSyncVariant::B20 ||
+            kSyncVariant == GDN::GdnCoreSyncVariant::B21;
         SolveTri64<T, T, kUseMte2Mte1Event, false> solve;
         solve.Init(a, cuSeqlens, chunkIndices, out, workspace, tilingData, true, true);
         solve.Process();

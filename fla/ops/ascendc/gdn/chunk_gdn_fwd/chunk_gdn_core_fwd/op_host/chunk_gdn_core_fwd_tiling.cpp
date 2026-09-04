@@ -67,6 +67,9 @@ constexpr uint32_t TILING_KEY_B15_V128 = 151;
 constexpr uint32_t TILING_KEY_B16_V128 = 161;
 constexpr uint32_t TILING_KEY_B17_V128 = 171;
 constexpr uint32_t TILING_KEY_B18_V128 = 181;
+constexpr uint32_t TILING_KEY_B19_V128 = 191;
+constexpr uint32_t TILING_KEY_B20_V128 = 201;
+constexpr uint32_t TILING_KEY_B21_V128 = 211;
 constexpr int64_t MAIN_MODEL_BATCH = 1;
 constexpr int64_t MAIN_MODEL_K_HEADS = 16;
 constexpr int64_t MAIN_MODEL_V_HEADS = 32;
@@ -74,6 +77,8 @@ constexpr int64_t MAIN_MODEL_TOKENS = 11274;
 constexpr uint64_t MAIN_MODEL_CHUNKS = 177;
 constexpr int64_t T1_DIAGNOSTIC_TOKENS = 1;
 constexpr uint64_t T1_DIAGNOSTIC_CHUNKS = 1;
+constexpr int64_t T65_DIAGNOSTIC_TOKENS = 65;
+constexpr uint64_t T65_DIAGNOSTIC_CHUNKS = 2;
 constexpr uint64_t WORKSPACE_ALIGNMENT = 512;
 constexpr uint64_t TILING_ALIGNMENT = 8;
 constexpr uint64_t FP32_BLOCK_ELEMS = 8;
@@ -157,12 +162,38 @@ bool ResolveSyncVariant(GDN::GdnCoreSyncVariant &variant)
         variant = GDN::GdnCoreSyncVariant::B18;
         return true;
     }
+    if (std::strcmp(value, "B19") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B19;
+        return true;
+    }
+    if (std::strcmp(value, "B20") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B20;
+        return true;
+    }
+    if (std::strcmp(value, "B21") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B21;
+        return true;
+    }
     return false;
 }
 
 bool ResolveT1Diagnostic(bool &enabled)
 {
     const char *value = std::getenv("FLA_NPU_GDN_SYNC_T1_DIAGNOSTIC");
+    if (value == nullptr || std::strcmp(value, "0") == 0) {
+        enabled = false;
+        return true;
+    }
+    if (std::strcmp(value, "1") == 0) {
+        enabled = true;
+        return true;
+    }
+    return false;
+}
+
+bool ResolveT65Diagnostic(bool &enabled)
+{
+    const char *value = std::getenv("FLA_NPU_GDN_SYNC_T65_DIAGNOSTIC");
     if (value == nullptr || std::strcmp(value, "0") == 0) {
         enabled = false;
         return true;
@@ -182,14 +213,24 @@ bool IsMainShapeOnlySyncVariant(GDN::GdnCoreSyncVariant variant)
            variant == GDN::GdnCoreSyncVariant::B15 ||
            variant == GDN::GdnCoreSyncVariant::B16 ||
            variant == GDN::GdnCoreSyncVariant::B17 ||
-           variant == GDN::GdnCoreSyncVariant::B18;
+           variant == GDN::GdnCoreSyncVariant::B18 ||
+           variant == GDN::GdnCoreSyncVariant::B19 ||
+           variant == GDN::GdnCoreSyncVariant::B20 ||
+           variant == GDN::GdnCoreSyncVariant::B21;
 }
 
 bool IsT1DiagnosticSyncVariant(GDN::GdnCoreSyncVariant variant)
 {
     return variant == GDN::GdnCoreSyncVariant::B16 ||
            variant == GDN::GdnCoreSyncVariant::B17 ||
-           variant == GDN::GdnCoreSyncVariant::B18;
+           variant == GDN::GdnCoreSyncVariant::B18 ||
+           variant == GDN::GdnCoreSyncVariant::B19;
+}
+
+bool IsT65DiagnosticSyncVariant(GDN::GdnCoreSyncVariant variant)
+{
+    return variant == GDN::GdnCoreSyncVariant::B20 ||
+           variant == GDN::GdnCoreSyncVariant::B21;
 }
 
 uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
@@ -238,6 +279,12 @@ uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
             return TILING_KEY_B17_V128;
         case GDN::GdnCoreSyncVariant::B18:
             return TILING_KEY_B18_V128;
+        case GDN::GdnCoreSyncVariant::B19:
+            return TILING_KEY_B19_V128;
+        case GDN::GdnCoreSyncVariant::B20:
+            return TILING_KEY_B20_V128;
+        case GDN::GdnCoreSyncVariant::B21:
+            return TILING_KEY_B21_V128;
     }
     return 0;
 }
@@ -411,19 +458,24 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     GDN::GdnCoreSyncVariant syncVariant = GDN::GdnCoreSyncVariant::B0;
     OP_CHECK_IF(!ResolveSyncVariant(syncVariant),
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18."),
+                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18/B19/B20/B21."),
                 return ge::GRAPH_FAILED);
     bool t1Diagnostic = false;
     OP_CHECK_IF(!ResolveT1Diagnostic(t1Diagnostic),
                 OP_LOGE(context->GetNodeName(),
                         "FLA_NPU_GDN_SYNC_T1_DIAGNOSTIC must be unset, 0, or 1."),
                 return ge::GRAPH_FAILED);
+    bool t65Diagnostic = false;
+    OP_CHECK_IF(!ResolveT65Diagnostic(t65Diagnostic),
+                OP_LOGE(context->GetNodeName(),
+                        "FLA_NPU_GDN_SYNC_T65_DIAGNOSTIC must be unset, 0, or 1."),
+                return ge::GRAPH_FAILED);
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     const bool isAscend950 =
         platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     OP_CHECK_IF(syncVariant != GDN::GdnCoreSyncVariant::B0 && !isAscend950,
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18 is supported only on Ascend950."),
+                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18/B19/B20/B21 is supported only on Ascend950."),
                 return ge::GRAPH_FAILED);
     // Extra experiment kernels are intentionally limited to the dominant model
     // domain. Other supported shapes retain full functionality through B0 and
@@ -450,11 +502,24 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     const bool selectT1DiagnosticVariant =
         t1Diagnostic && IsT1DiagnosticSyncVariant(syncVariant) &&
         isExactT1DiagnosticVarlenShape;
+    // SolveTri64's immediate MTE2_MTE1 edge is only executed by a full
+    // 64-token tile. T=65 is the smallest varlen call that covers one such
+    // tile plus the short-tail scheduler path without widening production.
+    const bool isExactT65DiagnosticVarlenShape =
+        isAscend950 && isExperimentalShape && isVarlen &&
+        batch == MAIN_MODEL_BATCH && heads == MAIN_MODEL_K_HEADS &&
+        valueHeads == MAIN_MODEL_V_HEADS && tokens == T65_DIAGNOSTIC_TOKENS &&
+        kDim == SUPPORTED_K_DIM && IsShape(cuShape, {2}) &&
+        varlenChunks == T65_DIAGNOSTIC_CHUNKS && *outputFinalState;
+    const bool selectT65DiagnosticVariant =
+        t65Diagnostic && IsT65DiagnosticSyncVariant(syncVariant) &&
+        isExactT65DiagnosticVarlenShape;
     GDN::GdnCoreSyncVariant effectiveSyncVariant = GDN::GdnCoreSyncVariant::B0;
     if (isExperimentalShape) {
         effectiveSyncVariant =
             IsMainShapeOnlySyncVariant(syncVariant) &&
-                    !isExactMainVarlenShape && !selectT1DiagnosticVariant
+                    !isExactMainVarlenShape && !selectT1DiagnosticVariant &&
+                    !selectT65DiagnosticVariant
                 ? GDN::GdnCoreSyncVariant::B7
                 : syncVariant;
     }
