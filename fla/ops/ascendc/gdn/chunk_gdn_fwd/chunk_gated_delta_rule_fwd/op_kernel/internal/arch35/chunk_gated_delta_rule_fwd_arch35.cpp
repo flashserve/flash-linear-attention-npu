@@ -20,6 +20,7 @@ constexpr uint32_t OWNER_MTE3_TO_V_EVENT = 2;
 constexpr uint32_t PHASE6_SOLVE_FIX_TO_MTE2_EVENT = 0;
 constexpr uint32_t UB_ALIGNMENT = 32;
 constexpr uint32_t PHASE6_TILING_ALIGNMENT = 8;
+constexpr uint64_t PHASE6_SOLVE_AIV_DONE_FLAG = 4;
 constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 5;
 constexpr int64_t PHASE6_CUMSUM_FAST_BUFFER_LIMIT = 160 * 1024;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -303,14 +304,17 @@ __aicore__ inline void RunPhase6(
         RunSolvePhase<InputT, 128>(aWorkspace, cuSeqlens, chunkIndices, A,
                                    solveWorkspace, &coefficient);
     }
-    // Solve and recompute share a contiguous task range. Publish solved A
-    // before either paired AIV enters its local consumer range.
+    // SolveTri may publish A through AIC FIX or AIV MTE3.  Join both AIV
+    // subblocks and send their completed MTE3 generation back to the paired
+    // AIC before any member of the group enters recompute.
+    if ASCEND_IS_AIV {
+        Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(PHASE6_SOLVE_AIV_DONE_FLAG);
+    }
     if ASCEND_IS_AIC {
-        // SolveTri's final A tile is written through FIX.  The same AIC then
-        // reloads A through MTE2 in recompute, so close that local pipeline
-        // dependency before publishing completion to the paired AIVs.
         AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(PHASE6_SOLVE_FIX_TO_MTE2_EVENT);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(PHASE6_SOLVE_FIX_TO_MTE2_EVENT);
+        AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_AIV_DONE_FLAG);
         AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);
     }
     if ASCEND_IS_AIV {

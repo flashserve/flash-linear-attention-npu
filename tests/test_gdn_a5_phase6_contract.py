@@ -62,10 +62,10 @@ def test_a5_kkt_epilogue_joins_both_aiv_subblocks_before_solve():
     assert handoff.index(join) < handoff.index(publish)
 
 
-def test_solved_a_closes_local_fix_to_mte2_before_recompute_reads_it():
+def test_solved_a_joins_fix_and_both_aiv_mte3_writes_before_recompute():
     source = PHASE6.read_text(encoding="utf-8")
     handoff = source.split(
-        "// Solve and recompute share a contiguous task range.", maxsplit=1
+        "// SolveTri may publish A through AIC FIX or AIV MTE3.", maxsplit=1
     )[1].split("GM_ADDR w", maxsplit=1)[0]
 
     set_fix_mte2 = (
@@ -76,11 +76,26 @@ def test_solved_a_closes_local_fix_to_mte2_before_recompute_reads_it():
         "AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>"
         "(PHASE6_SOLVE_FIX_TO_MTE2_EVENT);"
     )
+    join_aivs = "Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();"
+    publish_aivs = (
+        "AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>"
+        "(PHASE6_SOLVE_AIV_DONE_FLAG);"
+    )
+    wait_aivs = "AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_AIV_DONE_FLAG);"
     publish = "AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);"
+    assert join_aivs in handoff
+    assert publish_aivs in handoff
     assert set_fix_mte2 in handoff
     assert wait_fix_mte2 in handoff
+    assert wait_aivs in handoff
     assert publish in handoff
-    assert handoff.index(set_fix_mte2) < handoff.index(wait_fix_mte2) < handoff.index(publish)
+    assert handoff.index(join_aivs) < handoff.index(publish_aivs)
+    assert (
+        handoff.index(set_fix_mte2)
+        < handoff.index(wait_fix_mte2)
+        < handoff.index(wait_aivs)
+        < handoff.index(publish)
+    )
     assert "AscendC::SyncAll<false>();" not in handoff
 
 
