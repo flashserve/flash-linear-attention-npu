@@ -2,6 +2,7 @@
 #define SOLVE_TRI_ASCEND950_128_H
 
 #include "kernel_operator.h"
+#include "catlass/arch/cross_core_sync.hpp"
 #include "solve_tri_ascend950_common.h"
 #include "mem.h"
 
@@ -649,6 +650,10 @@ public:
                 }
                 SetFlag<AscendC::HardEvent::MTE3_V>(0);
                 WaitFlag<AscendC::HardEvent::MTE3_V>(0);
+                // Both Vector subblocks scatter different diagonal leaves into
+                // the same L1 tile.  Do not let the first finisher release the
+                // Cube before the other subblock's MTE3 writes are complete.
+                Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
                 AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(0x2);
             }
         }

@@ -20,6 +20,15 @@ EMBEDDED_FWD_O = ROOT / (
     "op_kernel/internal/operators/chunk_fwd_o/op_kernel/gemm/kernel/"
     "gdn_fwd_o_kernel.hpp"
 )
+FUSED_SOLVE_TRI_128 = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd/"
+    "op_kernel/internal/coefficient_generation/gated_delta_rule_solve_tri/"
+    "arch35/solve_tri_ascend950_128.h"
+)
+STANDALONE_SOLVE_TRI_128 = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/solve_tri/op_kernel/arch35/"
+    "solve_tri_ascend950_128.h"
+)
 
 
 def test_cumsum_is_published_globally_before_coefficient_epilogue():
@@ -55,11 +64,23 @@ def test_a5_kkt_epilogue_joins_both_aiv_subblocks_before_solve():
     a5_path = source.split("#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310", maxsplit=1)[1]
     handoff = a5_path.split("if ASCEND_IS_AIV", maxsplit=1)[1].split("// Phase6 passes", maxsplit=1)[0]
 
-    join = "Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();"
+    join = "Catlass::Arch::CrossCoreBarrier<0x0, PIPE_MTE3>();"
     publish = "CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG);"
     assert join in handoff
     assert publish in handoff
     assert handoff.index(join) < handoff.index(publish)
+
+
+def test_a5_solve_tri_128_joins_both_aiv_l1_writers_before_cube():
+    join = "Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();"
+    publish = "AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(0x2);"
+
+    for path in (FUSED_SOLVE_TRI_128, STANDALONE_SOLVE_TRI_128):
+        source = path.read_text(encoding="utf-8")
+        before_publish = source[: source.index(publish)]
+        assert before_publish.rfind(join) > before_publish.rfind(
+            "WaitFlag<AscendC::HardEvent::MTE3_V>(0);"
+        )
 
 
 def test_solved_a_joins_fix_and_both_aiv_mte3_writes_before_recompute():
