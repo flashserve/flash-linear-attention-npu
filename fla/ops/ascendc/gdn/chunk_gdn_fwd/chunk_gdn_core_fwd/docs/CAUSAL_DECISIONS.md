@@ -97,9 +97,27 @@
   | B10/101 | event-only，保留 `CrossCoreSetFlag<0x2, PIPE_FIX>` | `PIPE_ALL` | `PIPE_ALL` | `PIPE_MTE3` |
   | B11/111 | event-only，保留 `CrossCoreSetFlag<0x2, PIPE_FIX>` | `PIPE_ALL` | `PIPE_ALL` | event-only，保留 `MTE3_MTE2`/`MTE3_V` |
 
+  第三轮以 B7 的 Update event-only 为共同基线，只隔离 H 的两条同步假设：
+
+  | 变体/key | C1 发布 | WU→H 入口 | H initial_state 发布→C1 |
+  |---|---|---|---|
+  | B12/121 | `PIPE_ALL` | `SyncAll<false>()` | 跳过双侧 collective；保留每核 MTE3 drain、`vec2Done[0/1]` seed 与全部 C1 wait |
+  | B13/131 | `PIPE_FIX` | `SyncAll<false>()` | 同 B12 |
+  | B14/141 | `PIPE_ALL` | 所有参与者无条件本核 `PIPE_ALL` drain | 保留双侧 `SyncAll<false>()` |
+  | B15/151 | `PIPE_FIX` | 同 B14 | 保留双侧 `SyncAll<false>()` |
+
+  H-init bypass 依赖 AIC 与两个 AIV subblock 的物理 core/stream ownership
+  一致；入口 local drain 则独立检验 WU→H 是否只需本核流水退休。两者不得组合，
+  kernel 以 `static_assert` 固化该限制。B12–B15 只允许精确主 varlen shape：
+  Ascend950、BF16、FP32 initial_state、B1/Hk16/Hv32/T11274/K128/V128/C64、
+  `cu_seqlens` 长度 2、177 chunks、存在 initial_state 且
+  `output_final_state=true`。output mask 不参与选择；同一请求在既有实验域的其他
+  shape 回退 B7，实验域外回退 B0。
+
   已被 A5 硬件精度结果否定的 Solve deferred-wait 不重试；MIX kernel 的
-  `SyncAll` 保护跨阶段 GM/workspace 可见性与参与者会合，不属于本轮局部
-  barrier 假设，全部保留。也不编译丢弃配套事件的裸删方案。B1–B11 的额外 key 仅在 A5、BF16 输入、
+  `SyncAll` 保护跨阶段 GM/workspace 可见性与参与者会合；B0–B11 全部保留，
+  B12–B15 每次只隔离上表中的一条边。也不编译丢弃配套事件的裸删方案。
+  B1–B11 的额外 key 仅在 A5、BF16 输入、
   FP32 initial_state 的编译配置中生成，并仅为 V128、chunk64
   模型主路径选择；
   其他合法 dtype/state/V256 形态回退 B0。host 在非 Ascend950 上
@@ -124,6 +142,8 @@
   未保留 FIX 发布语义，未经进一步因果证明不作为交付候选。当前已切换到
   上述可独立归因的 B0–B11 矩阵。B6–B11 已通过源码真值表、selector、
   key 路由、实验域 fallback、非 A5 fail-closed 和 ABI-neutral 静态测试；
-  尚待同一产物构建及 A5 路由、精度、确定性和性能验证。
+  B12–B15 已完成本地源码真值表、精确 selector、key 路由、分层 fallback、
+  非 A5 fail-closed 和 ABI-neutral 静态门禁；均尚待同一产物构建及 A5 路由、
+  精度、确定性和性能验证。
 - Invalidation：若目标 CANN 头文件、生成代码或 profiling 证明上述生产者/消费者
   链路不成立，需回到 B0 并重建依赖图，不继续放宽同步。

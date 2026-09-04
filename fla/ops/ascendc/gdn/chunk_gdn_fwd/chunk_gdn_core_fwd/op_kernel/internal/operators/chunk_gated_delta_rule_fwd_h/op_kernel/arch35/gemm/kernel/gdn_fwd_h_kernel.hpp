@@ -92,7 +92,9 @@ template<
     bool kNarrowCube2ToPipeFix = false,
     bool kCube1EventOnly = false,
     bool kUpdateBarrierToPipeMte3 = false,
-    bool kUpdateBarrierEventOnly = false
+    bool kUpdateBarrierEventOnly = false,
+    bool kBypassHInitCollective = false,
+    bool kEntryLocalPipeDrain = false
 >
 class GDNFwdHKernel {
 public:
@@ -101,6 +103,8 @@ public:
                   "C1 publish barrier cannot be both PIPE_FIX and event-only.");
     static_assert(!(kUpdateBarrierToPipeMte3 && kUpdateBarrierEventOnly),
                   "Update barrier cannot be both PIPE_MTE3 and event-only.");
+    static_assert(!(kBypassHInitCollective && kEntryLocalPipeDrain),
+                  "WU-to-H local drain and H-init collective bypass cannot be combined.");
 
     using ArchTag = Arch::Ascend950;
     using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHCube;
@@ -527,7 +531,14 @@ public:
     __aicore__ inline void Process() {
         // FwdH can run after another stage in a megakernel. Start its AIC/AIV
         // handshake only after every core has retired the preceding stage.
-        AscendC::SyncAll<false>();
+        if constexpr (kEntryLocalPipeDrain) {
+            // B14/B15 test whether retiring every local pipeline is sufficient
+            // at the WU-to-H boundary.  This is deliberately not combined with
+            // the independent H-initialization collective experiment.
+            AscendC::PipeBarrier<PIPE_ALL>();
+        } else {
+            AscendC::SyncAll<false>();
+        }
 
         if ASCEND_IS_AIC {
             uint32_t coreIdx = AscendC::GetBlockIdx();
@@ -545,7 +556,9 @@ public:
             auto kLayout = tla::MakeLayout<ElementK, LayoutK>(kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens);
             auto hworkLayout = tla::MakeLayout<ElementHWork, LayoutH>(kHeadDim, cubeBlockScheduler.vBlockSize);
 
-            AscendC::SyncAll<false>();
+            if constexpr (!kBypassHInitCollective) {
+                AscendC::SyncAll<false>();
+            }
             uint32_t currStage = 0; // 0: C1, 1: C2
             while (cubeBlockScheduler.isRunning) {
                 if (currStage == 0) {
@@ -935,7 +948,9 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
 
-            AscendC::SyncAll<false>();
+            if constexpr (!kBypassHInitCollective) {
+                AscendC::SyncAll<false>();
+            }
 
             if (useDirectFp32Ub) {
                 for (uint32_t slot = 0; slot < DIRECT_UB_STAGES; ++slot) {

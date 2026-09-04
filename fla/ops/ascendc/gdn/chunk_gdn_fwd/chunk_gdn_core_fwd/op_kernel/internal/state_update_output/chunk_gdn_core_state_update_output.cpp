@@ -51,7 +51,9 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
         kSyncVariant == GdnCoreSyncVariant::B1 ||
         kSyncVariant == GdnCoreSyncVariant::B4 ||
         kSyncVariant == GdnCoreSyncVariant::B5 ||
-        kSyncVariant == GdnCoreSyncVariant::B9;
+        kSyncVariant == GdnCoreSyncVariant::B9 ||
+        kSyncVariant == GdnCoreSyncVariant::B13 ||
+        kSyncVariant == GdnCoreSyncVariant::B15;
     constexpr bool kNarrowCube2ToPipeFix =
         kSyncVariant == GdnCoreSyncVariant::B2 ||
         kSyncVariant == GdnCoreSyncVariant::B4 ||
@@ -66,11 +68,24 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
         kSyncVariant == GdnCoreSyncVariant::B10;
     constexpr bool kUpdateBarrierEventOnly =
         kSyncVariant == GdnCoreSyncVariant::B7 ||
-        kSyncVariant == GdnCoreSyncVariant::B11;
+        kSyncVariant == GdnCoreSyncVariant::B11 ||
+        kSyncVariant == GdnCoreSyncVariant::B12 ||
+        kSyncVariant == GdnCoreSyncVariant::B13 ||
+        kSyncVariant == GdnCoreSyncVariant::B14 ||
+        kSyncVariant == GdnCoreSyncVariant::B15;
+    constexpr bool kBypassHInitCollective =
+        kSyncVariant == GdnCoreSyncVariant::B12 ||
+        kSyncVariant == GdnCoreSyncVariant::B13;
+    constexpr bool kEntryLocalPipeDrain =
+        kSyncVariant == GdnCoreSyncVariant::B14 ||
+        kSyncVariant == GdnCoreSyncVariant::B15;
+    static_assert(!(kBypassHInitCollective && kEntryLocalPipeDrain),
+                  "WU-to-H local drain and H-init collective bypass cannot be combined.");
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true,
         kNarrowCube1ToPipeFix, kNarrowCube2ToPipeFix, kCube1EventOnly,
-        kUpdateBarrierToPipeMte3, kUpdateBarrierEventOnly>;
+        kUpdateBarrierToPipeMte3, kUpdateBarrierEventOnly,
+        kBypassHInitCollective, kEntryLocalPipeDrain>;
 #else
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true>;

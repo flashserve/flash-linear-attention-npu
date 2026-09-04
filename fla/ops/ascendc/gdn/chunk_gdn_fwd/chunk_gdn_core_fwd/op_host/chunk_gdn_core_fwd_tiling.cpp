@@ -60,6 +60,15 @@ constexpr uint32_t TILING_KEY_B8_V128 = 81;
 constexpr uint32_t TILING_KEY_B9_V128 = 91;
 constexpr uint32_t TILING_KEY_B10_V128 = 101;
 constexpr uint32_t TILING_KEY_B11_V128 = 111;
+constexpr uint32_t TILING_KEY_B12_V128 = 121;
+constexpr uint32_t TILING_KEY_B13_V128 = 131;
+constexpr uint32_t TILING_KEY_B14_V128 = 141;
+constexpr uint32_t TILING_KEY_B15_V128 = 151;
+constexpr int64_t MAIN_MODEL_BATCH = 1;
+constexpr int64_t MAIN_MODEL_K_HEADS = 16;
+constexpr int64_t MAIN_MODEL_V_HEADS = 32;
+constexpr int64_t MAIN_MODEL_TOKENS = 11274;
+constexpr uint64_t MAIN_MODEL_CHUNKS = 177;
 constexpr uint64_t WORKSPACE_ALIGNMENT = 512;
 constexpr uint64_t TILING_ALIGNMENT = 8;
 constexpr uint64_t FP32_BLOCK_ELEMS = 8;
@@ -115,7 +124,31 @@ bool ResolveSyncVariant(GDN::GdnCoreSyncVariant &variant)
         variant = GDN::GdnCoreSyncVariant::B11;
         return true;
     }
+    if (std::strcmp(value, "B12") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B12;
+        return true;
+    }
+    if (std::strcmp(value, "B13") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B13;
+        return true;
+    }
+    if (std::strcmp(value, "B14") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B14;
+        return true;
+    }
+    if (std::strcmp(value, "B15") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B15;
+        return true;
+    }
     return false;
+}
+
+bool IsMainShapeOnlySyncVariant(GDN::GdnCoreSyncVariant variant)
+{
+    return variant == GDN::GdnCoreSyncVariant::B12 ||
+           variant == GDN::GdnCoreSyncVariant::B13 ||
+           variant == GDN::GdnCoreSyncVariant::B14 ||
+           variant == GDN::GdnCoreSyncVariant::B15;
 }
 
 uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
@@ -150,6 +183,14 @@ uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
             return TILING_KEY_B10_V128;
         case GDN::GdnCoreSyncVariant::B11:
             return TILING_KEY_B11_V128;
+        case GDN::GdnCoreSyncVariant::B12:
+            return TILING_KEY_B12_V128;
+        case GDN::GdnCoreSyncVariant::B13:
+            return TILING_KEY_B13_V128;
+        case GDN::GdnCoreSyncVariant::B14:
+            return TILING_KEY_B14_V128;
+        case GDN::GdnCoreSyncVariant::B15:
+            return TILING_KEY_B15_V128;
     }
     return 0;
 }
@@ -323,14 +364,14 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     GDN::GdnCoreSyncVariant syncVariant = GDN::GdnCoreSyncVariant::B0;
     OP_CHECK_IF(!ResolveSyncVariant(syncVariant),
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11."),
+                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15."),
                 return ge::GRAPH_FAILED);
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     const bool isAscend950 =
         platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     OP_CHECK_IF(syncVariant != GDN::GdnCoreSyncVariant::B0 && !isAscend950,
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11 is supported only on Ascend950."),
+                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15 is supported only on Ascend950."),
                 return ge::GRAPH_FAILED);
     // Extra experiment kernels are intentionally limited to the dominant model
     // domain. Other supported shapes retain full functionality through B0 and
@@ -339,8 +380,19 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
         isBf16 && initialStateDesc != nullptr &&
         initialStateDesc->GetDataType() == ge::DT_FLOAT &&
         vDim == SUPPORTED_V_DIM_128 && *chunkSize == CHUNK_64;
-    const GDN::GdnCoreSyncVariant effectiveSyncVariant =
-        isExperimentalShape ? syncVariant : GDN::GdnCoreSyncVariant::B0;
+    const bool isExactMainVarlenShape =
+        isAscend950 && isExperimentalShape && isVarlen &&
+        batch == MAIN_MODEL_BATCH && heads == MAIN_MODEL_K_HEADS &&
+        valueHeads == MAIN_MODEL_V_HEADS && tokens == MAIN_MODEL_TOKENS &&
+        kDim == SUPPORTED_K_DIM && IsShape(cuShape, {2}) &&
+        varlenChunks == MAIN_MODEL_CHUNKS && *outputFinalState;
+    GDN::GdnCoreSyncVariant effectiveSyncVariant = GDN::GdnCoreSyncVariant::B0;
+    if (isExperimentalShape) {
+        effectiveSyncVariant =
+            IsMainShapeOnlySyncVariant(syncVariant) && !isExactMainVarlenShape
+                ? GDN::GdnCoreSyncVariant::B7
+                : syncVariant;
+    }
     OP_CHECK_IF(Tiling4ChunkGdnCoreStateOutput(context) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "Reuse of the accepted Phase 5 suffix tiling failed."),
                 return ge::GRAPH_FAILED);
