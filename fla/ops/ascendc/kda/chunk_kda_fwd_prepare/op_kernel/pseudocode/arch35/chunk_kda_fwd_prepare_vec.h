@@ -23,8 +23,15 @@ namespace detail {
 inline BufferSpan Subspan(const BufferSpan &parent, const char *name,
                           Offset relativeOffset, Offset bytes)
 {
-    return {name, parent.space, parent.byteOffset + relativeOffset, bytes,
-            parent.slot, parent.generation, parent.ownerRole, parent.ownerId};
+    BufferSpan span = parent;
+    span.name = name;
+    span.byteOffset += relativeOffset;
+    span.byteSize = bytes;
+    span.rows = 0U;
+    span.columns = 0U;
+    span.leadingDimension = 0U;
+    span.elementBytes = 0U;
+    return span;
 }
 
 inline BufferSpan UbMainSpan(const HeadTask &head, const char *name,
@@ -48,12 +55,18 @@ inline BufferSpan UbAuxSpan(const HeadTask &head, const char *name,
 }
 
 inline BufferSpan SymbolicGmSpan(const HeadTask &head, const char *name,
-                                 Offset bytes, std::uint64_t generation)
+                                 Offset bytes, std::uint64_t generation,
+                                 std::uint32_t logicalHeadId =
+                                     kAllGroupLocalHeads)
 {
     // Public strides and canonical GM offsets are an ABI/tiling gate. Zero is
     // deliberately symbolic and must not be copied into the real kernel.
-    return {name, MemorySpace::Gm, 0U, bytes, head.workspaceSlot, generation,
-            CoreRole::Shared, 0U};
+    BufferSpan span{name, MemorySpace::Gm, 0U, bytes, head.workspaceSlot,
+                    generation, CoreRole::Shared, 0U};
+    span.logicalHeadId = logicalHeadId == kAllGroupLocalHeads
+                             ? head.headId
+                             : logicalHeadId;
+    return span;
 }
 
 constexpr Offset MatrixFootprintBytes(Offset rows, Offset columns,
@@ -72,11 +85,16 @@ inline BufferSpan UbMainMatrixSpan(
 {
     const Offset relativeOffset =
         base + (row * leadingDimension + column) * elementBytes;
-    return UbMainSpan(
+    BufferSpan span = UbMainSpan(
         head, name,
         {relativeOffset, MatrixFootprintBytes(
                              rows, columns, leadingDimension, elementBytes)},
         generation);
+    span.rows = rows;
+    span.columns = columns;
+    span.leadingDimension = leadingDimension;
+    span.elementBytes = elementBytes;
+    return span;
 }
 
 inline BufferSpan SymbolicGmMatrixSpan(
@@ -91,8 +109,20 @@ inline BufferSpan SymbolicGmMatrixSpan(
         (row * leadingDimension + column) * elementBytes;
     const Offset footprint = MatrixFootprintBytes(
         rows, columns, leadingDimension, elementBytes);
-    return {name, MemorySpace::Gm, relativeOffset, footprint,
-            head.workspaceSlot, generation, CoreRole::Shared, 0U};
+    BufferSpan span{name,
+                    MemorySpace::Gm,
+                    relativeOffset,
+                    footprint,
+                    head.workspaceSlot,
+                    generation,
+                    CoreRole::Shared,
+                    0U,
+                    rows,
+                    columns,
+                    leadingDimension,
+                    elementBytes};
+    span.logicalHeadId = head.headId;
+    return span;
 }
 
 inline bool IsOwnedActiveHead(const HeadTask &head,
@@ -112,8 +142,25 @@ inline bool IsSupportedKey(const ProposedTilingKey &key)
 {
     // FP32Internal remains a capacity-proven layout candidate, but the target
     // mixed FP32-Akk / 2-byte-RHS Cube operand contract is not yet proven.
-    return key.akkStorage == AkkStorage::TwoByteAbi &&
-           IsSupportedStorageMapping(key);
+    return IsSupportedTilingKey(key);
+}
+
+inline void RequireMte2ToVectorInputs(const SyncLedger &sync,
+                                      Stage stage) noexcept
+{
+    // PROPOSED local input-ready edge. Every GM/workspace -> UB MTE2 load in
+    // this stage must complete before Vector reads its destination. The exact
+    // A5/CANN HardEvent remains a target-version compile gate.
+    sync.Local(LocalDependency::Mte2ToVectorInputs, stage);
+}
+
+inline void RequireVectorToMte3Outputs(const SyncLedger &sync,
+                                       Stage stage) noexcept
+{
+    // PROPOSED local output-ready edge. Vector must finish writing all named
+    // UB sources before their GM/workspace MTE3 drains start. A cross-core
+    // ready token does not replace this same-core dependency.
+    sync.Local(LocalDependency::VectorToMte3Outputs, stage);
 }
 
 // These dependent pseudo-interfaces are never instantiated by the host-only
@@ -123,7 +170,7 @@ inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
                     const ProposedTilingKey &key, float epsilon,
                     float lowerBound)
 {
-    const Offset gOffset = key.gateStorage == GateStorage::TwoByte
+    const Offset gOffset = IsTwoByteGateStorage(key.gateStorage)
                                ? V0Gate2BLayout::kG.offset
                                : V0GateFp32Layout::kG.offset;
     const bool usesSelectiveGate =
@@ -152,8 +199,6 @@ inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
             vf.StoreBetaEffScalar(row, 0.0F);
             continue;
         }
-        auto q = vf.ToFp32(vf.LoadQStorageRow(row, key.inputStorage));
-        auto k = vf.ToFp32(vf.LoadKStorageRow(row, key.inputStorage));
         auto gateRaw = vf.LoadGateRow(row, key.gateStorage);
         auto betaRaw = vf.LoadBetaFp32Scalar(
             UbPolicy::kAuxBase[head.aivLocalSlot] +
@@ -166,11 +211,29 @@ inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
             betaEff = vf.Mul(2.0F, vf.Sigmoid(betaRaw));
         }
 
-        auto qHat = q;
-        auto kHat = k;
-        if (key.qkNormMode == QkNormMode::L2) {
-            qHat = vf.L2Normalize(q, epsilon);
-            kHat = vf.L2Normalize(k, epsilon);
+        if (head.qkOwner && key.qkNormMode == QkNormMode::L2) {
+            // Match the repository FLA L2 kernel and precision reference:
+            // x_hat = x * rsqrt(sum_d(x_d^2) + epsilon).
+            const auto q =
+                vf.ToFp32(vf.LoadQStorageRow(row, key.inputStorage));
+            const auto k =
+                vf.ToFp32(vf.LoadKStorageRow(row, key.inputStorage));
+            const auto qHat =
+                vf.L2NormalizeRsqrtSumPlusEpsilon(q, epsilon);
+            const auto kHat =
+                vf.L2NormalizeRsqrtSumPlusEpsilon(k, epsilon);
+            vf.StoreStorageRow(
+                V0Gate2BLayout::kQHat.offset, row,
+                vf.RoundToInputStorage(
+                    vf.ClampForInputStorage(qHat, key.inputStorage),
+                    key.inputStorage),
+                key.inputStorage);
+            vf.StoreStorageRow(
+                V0Gate2BLayout::kKHat.offset, row,
+                vf.RoundToInputStorage(
+                    vf.ClampForInputStorage(kHat, key.inputStorage),
+                    key.inputStorage),
+                key.inputStorage);
         }
 
         auto gateStep = gateRaw;
@@ -193,16 +256,9 @@ inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
             }
         }
         carry = vf.Add(carry, gateStep); // Token order is a true scan dependency.
-        auto qHatStorage = vf.RoundToInputStorage(
-            vf.ClampForInputStorage(qHat, key.inputStorage),
-            key.inputStorage);
-        auto kHatStorage = vf.RoundToInputStorage(
-            vf.ClampForInputStorage(kHat, key.inputStorage),
-            key.inputStorage);
-        vf.StoreStorageRow(V0Gate2BLayout::kQHat.offset, row, qHatStorage,
-                           key.inputStorage);
-        vf.StoreStorageRow(V0Gate2BLayout::kKHat.offset, row, kHatStorage,
-                           key.inputStorage);
+        // Identity owners and mapped non-owners retain the 2-byte MTE2 result
+        // already resident at Qhat/Khat. Re-converting and re-rounding it would
+        // be duplicate Vector work and could not improve precision.
         vf.StoreFp32Row(gOffset, row, carry);
         vf.StoreBetaEffScalar(row, betaEff);
     }
@@ -225,15 +281,15 @@ inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
     vf.StoreGLast(carry);
 }
 
-template <typename Vf>
+template <bool UseExp2, typename Vf>
 inline void V1OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
                     GateStorage gateStorage, InputStorage inputStorage,
                     ScoreStorage scoreStorage)
 {
-    const Offset gOffset = gateStorage == GateStorage::TwoByte
+    const Offset gOffset = IsTwoByteGateStorage(gateStorage)
                                ? V1Gate2BLayout::kLiveG.offset
                                : V1GateFp32Layout::kLiveG.offset;
-    const auto &kMinus = gateStorage == GateStorage::TwoByte
+    const auto &kMinus = IsTwoByteGateStorage(gateStorage)
                              ? V1Gate2BLayout::kKMinus
                              : V1GateFp32Layout::kKMinus;
     const std::uint32_t activeBlocks = ActiveScoreBlocks(validRows);
@@ -254,8 +310,8 @@ inline void V1OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
             auto ownerRef = vf.LoadFp32Row(
                 UbPolicy::kAuxBase[head.aivLocalSlot] +
                 AuxLayout::kGRef[owner].offset);
-            auto plusFactor = vf.Exp2Clamped(
-                vf.Sub(g, ownerRef), exp2InputMin, exp2InputMax);
+            auto plusFactor = EvaluatePow2<UseExp2>(
+                vf, vf.Sub(g, ownerRef), exp2InputMin, exp2InputMax);
             auto qPlus = vf.Mul(qHat, plusFactor);
             auto kPlus = vf.Mul(kHat, plusFactor);
 
@@ -273,8 +329,9 @@ inline void V1OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
                     auto reference = vf.LoadFp32Row(
                         UbPolicy::kAuxBase[head.aivLocalSlot] +
                         AuxLayout::kGRef[s].offset);
-                    auto minusFactor = vf.Exp2Clamped(
-                        vf.Sub(reference, g), exp2InputMin, exp2InputMax);
+                    auto minusFactor = EvaluatePow2<UseExp2>(
+                        vf, vf.Sub(reference, g), exp2InputMin,
+                        exp2InputMax);
                     auto kMinusStorage = vf.RoundToScoreStorage(
                         vf.ClampForScoreStorage(
                             vf.Mul(kHat, minusFactor), scoreStorage),
@@ -312,33 +369,19 @@ inline void V1OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
 }
 
 template <typename Vf>
-inline void V3OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
-                    AkkStorage akkStorage, InputStorage inputStorage)
+inline void V3ReadAndTransformRaw(Vf &vf, std::uint32_t validRows,
+                                  float scale)
 {
-    (void)head;
-    for (std::uint32_t row = 0; row < ShapePolicy::kBt; ++row) {
-        const std::uint32_t block = row / ShapePolicy::kScoreBlockRows;
-        for (std::uint32_t col = 0; col < ShapePolicy::kBt; ++col) {
-            const bool c2Wrote = row < validRows &&
-                                 col < ShapePolicy::kPrefixRows[block];
-            if (!c2Wrote) {
-                // Source-free zero: never read a stale raw-score generation.
-                vf.StoreRawAqk(row, col, 0.0F);
-                vf.StoreRawAkk(row, col, 0.0F);
-            }
-        }
-    }
-
-    // This ordering is one VF: source-free initialization precedes every raw
-    // reader; a real same-V dependency may use PIPE_V only after target-CANN
-    // verification. All-pipe barriers are forbidden; MTE/Fixpipe need events.
     for (std::uint32_t row = 0; row < ShapePolicy::kBt; ++row) {
         for (std::uint32_t col = 0; col < ShapePolicy::kBt; ++col) {
-            const bool valid = row < validRows && col < validRows;
-            auto aqk = valid && col <= row
-                           ? vf.Mul(vf.Scale(), vf.LoadRawAqk(row, col))
+            const bool readAqk =
+                V3AqkRawReadRequired(validRows, row, col);
+            const bool readAkk =
+                V3AkkRawReadRequired(validRows, row, col);
+            auto aqk = readAqk
+                           ? vf.Mul(scale, vf.LoadRawAqk(row, col))
                            : vf.ZeroFp32();
-            auto lkk = valid && col < row
+            auto lkk = readAkk
                            ? vf.Mul(vf.LoadBetaEff(row),
                                     vf.LoadRawAkk(row, col))
                            : vf.ZeroFp32();
@@ -346,6 +389,18 @@ inline void V3OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
             vf.StoreLkkOrIdentityPadding(row, col, lkk, validRows);
         }
     }
+}
+
+template <typename Vf>
+inline void V3OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
+                    PrepareAbi abi, AkkStorage akkStorage,
+                    InputStorage inputStorage, float scale)
+{
+    (void)head;
+    // This remains one VF invocation. Each raw load is predicated by the
+    // shared physical-write and valid-causal domains; invalid outputs are
+    // generated directly and never read stale raw storage.
+    V3ReadAndTransformRaw(vf, validRows, scale);
     vf.InvertTwo32By32LeavesWithFixedColumnScan();
     vf.MaterializeX0X1AndBAtFinalOffsets();
     if (akkStorage == AkkStorage::TwoByteAbi) {
@@ -359,28 +414,38 @@ inline void V3OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
              row < Akk2BPackPolicy::kQuadrantRows; ++row) {
             for (std::uint32_t col = 0U;
                  col < Akk2BPackPolicy::kQuadrantColumns; ++col) {
-                auto q00 = vf.LoadStableAkkQ00OrZeroColumnPadding(
-                    row, col, validRows);
-                auto q11 = vf.LoadStableAkkQ11OrZeroColumnPadding(
-                    row, col, validRows);
-                auto q00Storage = vf.RoundToInputStorage(
-                    vf.ClampForInputStorage(q00, inputStorage),
-                    inputStorage);
-                auto q11Storage = vf.RoundToInputStorage(
-                    vf.ClampForInputStorage(q11, inputStorage),
-                    inputStorage);
-                // V3 stages q00/q11/q01 in three final UB regions. C4 later
-                // loads them directly into the q00/q11/q01 positions of the
-                // L1 quadrant-major resident; no UB or L1 relocation occurs.
-                vf.StoreInputStorageMatrix(
-                    V3Layout::kX0Tau.offset, row, col, q00Storage,
-                    inputStorage);
-                vf.StoreInputStorageMatrix(
-                    V3Layout::kQ01Zero.offset, row, col, zeroStorage,
-                    inputStorage);
-                vf.StoreInputStorageMatrix(
-                    V3Layout::kX1Tau.offset, row, col, q11Storage,
-                    inputStorage);
+                // q00/q11 are staged at their final UB offsets. Current also
+                // needs q01 for the public Akk output; Fused leaves the known
+                // zero implicit and C4 fills q01 at its final L1 address.
+                if (V3StableAkkWriteRequired(
+                        Architecture::Arch35, abi, validRows, row, col)) {
+                    auto q00 = vf.LoadStableAkkQ00OrZeroColumnPadding(
+                        row, col, validRows);
+                    auto q00Storage = vf.RoundToInputStorage(
+                        vf.ClampForInputStorage(q00, inputStorage),
+                        inputStorage);
+                    vf.StoreInputStorageMatrix(
+                        V3Layout::kX0Tau.offset, row, col, q00Storage,
+                        inputStorage);
+                }
+                if (V3StableAkkWriteRequired(Architecture::Arch35, abi,
+                                             validRows, row, col + 32U)) {
+                    vf.StoreInputStorageMatrix(
+                        V3Layout::kQ01Zero.offset, row, col, zeroStorage,
+                        inputStorage);
+                }
+                if (V3StableAkkWriteRequired(Architecture::Arch35, abi,
+                                             validRows, row + 32U,
+                                             col + 32U)) {
+                    auto q11 = vf.LoadStableAkkQ11OrZeroColumnPadding(
+                        row, col, validRows);
+                    auto q11Storage = vf.RoundToInputStorage(
+                        vf.ClampForInputStorage(q11, inputStorage),
+                        inputStorage);
+                    vf.StoreInputStorageMatrix(
+                        V3Layout::kX1Tau.offset, row, col, q11Storage,
+                        inputStorage);
+                }
             }
         }
     }
@@ -397,25 +462,34 @@ inline void V3OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
     }
 }
 
-template <typename Vf>
+template <bool UseExp2, typename Vf>
 inline void V6OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
-                    PrepareAbi abi, InputStorage inputStorage)
+                    PrepareAbi abi, InputStorage inputStorage,
+                    InputStorage valueStorage, float scale)
 {
     (void)head;
-    auto zeroInputStorage = vf.RoundToInputStorage(
+    auto zeroQkStorage = vf.RoundToInputStorage(
         vf.ClampForInputStorage(vf.ZeroFp32(), inputStorage), inputStorage);
+    auto zeroValueStorage = vf.RoundToInputStorage(
+        vf.ClampForInputStorage(vf.ZeroFp32(), valueStorage), valueStorage);
+    const std::uint32_t rhsRows =
+        validRows > Akk2BPackPolicy::kQuadrantRows
+            ? ShapePolicy::kBt
+            : Akk2BPackPolicy::kQuadrantRows;
     if (validRows == 0U) {
-        for (std::uint32_t row = 0; row < ShapePolicy::kBt; ++row) {
-            vf.StoreZeroV6OutputRows(row, abi, zeroInputStorage,
-                                     inputStorage);
+        for (std::uint32_t row = 0; row < rhsRows; ++row) {
+            vf.StoreZeroV6OutputRows(row, abi, zeroQkStorage,
+                                     zeroValueStorage, inputStorage,
+                                     valueStorage);
         }
         return;
     }
     auto gLast = vf.LoadFp32Row(V6Layout::kGInput.offset, validRows - 1U);
-    for (std::uint32_t row = 0; row < ShapePolicy::kBt; ++row) {
+    for (std::uint32_t row = 0; row < rhsRows; ++row) {
         if (row >= validRows) {
-            vf.StoreZeroV6OutputRows(row, abi, zeroInputStorage,
-                                     inputStorage);
+            vf.StoreZeroV6OutputRows(row, abi, zeroQkStorage,
+                                     zeroValueStorage, inputStorage,
+                                     valueStorage);
             continue;
         }
         // Capture every reader before Q/K/V in-place stores or the optional
@@ -425,16 +499,17 @@ inline void V6OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
         auto kHat = vf.ToFp32(vf.LoadStorageRow(
             V6Layout::kKHatToKg.offset, row, inputStorage));
         auto v = vf.ToFp32(vf.LoadStorageRow(
-            V6Layout::kVToVBeta.offset, row, inputStorage));
+            V6Layout::kVToVBeta.offset, row, valueStorage));
         auto g = vf.LoadFp32Row(V6Layout::kGInput.offset, row);
         auto beta = vf.LoadBetaEff(row);
-        auto expG = vf.Exp2Clamped(
-            g, kDirectExp2InputMin, kDirectExp2InputMax);
+        auto expG = EvaluatePow2<UseExp2>(
+            vf, g, kDirectExp2InputMin, kDirectExp2InputMax);
         auto qgFp32 = vf.Mul(qHat, expG);
         auto kgFp32 = vf.Mul(
             kHat,
-            vf.Exp2Clamped(vf.Sub(gLast, g), kDirectExp2InputMin,
-                           kDirectExp2InputMax));
+            EvaluatePow2<UseExp2>(vf, vf.Sub(gLast, g),
+                                  kDirectExp2InputMin,
+                                  kDirectExp2InputMax));
         auto qgStorage = vf.RoundToInputStorage(
             vf.ClampForInputStorage(qgFp32, inputStorage), inputStorage);
         auto kgStorage = vf.RoundToInputStorage(
@@ -450,8 +525,8 @@ inline void V6OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
         auto kBetaGStorage = vf.RoundToInputStorage(
             vf.ClampForInputStorage(kBetaGFp32, inputStorage), inputStorage);
         auto vBetaStorage = vf.RoundToInputStorage(
-            vf.ClampForInputStorage(vf.Mul(beta, v), inputStorage),
-            inputStorage);
+            vf.ClampForInputStorage(vf.Mul(beta, v), valueStorage),
+            valueStorage);
 
         vf.StoreStorageRow(V6Layout::kQHatToQg.offset, row, qgStorage,
                            inputStorage);
@@ -460,7 +535,7 @@ inline void V6OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
         vf.StoreStorageRow(V6Layout::kKBetaG.offset, row, kBetaGStorage,
                            inputStorage);
         vf.StoreStorageRow(V6Layout::kVToVBeta.offset, row, vBetaStorage,
-                           inputStorage);
+                           valueStorage);
         if (abi == PrepareAbi::Fused) {
             // The 2-byte destination overlaps FP32 G row floor(row/2), which
             // is no later than row. The current G row was fully captured above.
@@ -468,7 +543,7 @@ inline void V6OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
             // second InputStorage saturation/rounding required by FUSED ABI.
             auto qgScaledStorage = vf.RoundToInputStorage(
                 vf.ClampForInputStorage(
-                    vf.Mul(vf.Scale(), vf.ToFp32(qgStorage)), inputStorage),
+                    vf.Mul(scale, vf.ToFp32(qgStorage)), inputStorage),
                 inputStorage);
             vf.StoreStorageRow(V6Layout::kQgScaled.offset, row,
                                qgScaledStorage, inputStorage);
@@ -501,8 +576,20 @@ inline void RunV0(const VectorStageArgs &args)
                         Stage::V0, Pipe::Control);
         args.sync->Wait(SyncPoint::LocalBankFree, head.localBankId,
                         localGeneration, Stage::V0, Pipe::Mte2);
+        if (head.qkOwner) {
+            args.sync->Wait(SyncPoint::QkCacheFree, head.qkCacheSlot,
+                            head.qkCacheGeneration, Stage::V0,
+                            Pipe::Mte2);
+        } else {
+            // QkCacheReady is a level-triggered generation state in the
+            // workspace control page. Multiple mapped HV heads acquire the
+            // same publication without consuming it.
+            args.sync->Wait(SyncPoint::QkCacheReady, head.qkCacheSlot,
+                            head.qkCacheGeneration, Stage::V0,
+                            Pipe::Mte2);
+        }
 
-        const bool gate2B = args.key.gateStorage == GateStorage::TwoByte;
+        const bool gate2B = IsTwoByteGateStorage(args.key.gateStorage);
         const Offset validRows = args.work->group.chunk.validRows;
         const Offset qkInputBytes =
             validRows * ShapePolicy::kK * ShapePolicy::kStorageBytes;
@@ -516,15 +603,30 @@ inline void RunV0(const VectorStageArgs &args)
         const Region q = gate2B ? V0Gate2BLayout::kQHat : V0GateFp32Layout::kQHat;
         const Region k = gate2B ? V0Gate2BLayout::kKHat : V0GateFp32Layout::kKHat;
         const Region g = gate2B ? V0Gate2BLayout::kGateRaw : V0GateFp32Layout::kG;
+        const BufferSpan qkCache = args.workspace->Span(
+            WorkspaceRegion::Context, head.qkCacheSlot,
+            head.qkCacheGeneration);
+        const BufferSpan qSource =
+            head.qkOwner
+                ? detail::SymbolicGmSpan(
+                      head, "q", qkInputBytes, workspaceGeneration,
+                      head.qkHeadId)
+                : detail::Subspan(qkCache, "qhat-HK-cache", 0x0000U,
+                                  qkInputBytes);
+        const BufferSpan kSource =
+            head.qkOwner
+                ? detail::SymbolicGmSpan(
+                      head, "k", qkInputBytes, workspaceGeneration,
+                      head.qkHeadId)
+                : detail::Subspan(qkCache, "khat-HK-cache", 0x4000U,
+                                  qkInputBytes);
         args.ops->Load(Stage::V0,
-                       detail::SymbolicGmSpan(head, "q", qkInputBytes,
-                                              workspaceGeneration),
+                       qSource,
                        detail::UbMainSpan(
                            head, "q-to-qhat", {q.offset, qkInputBytes},
                            localGeneration));
         args.ops->Load(Stage::V0,
-                       detail::SymbolicGmSpan(head, "k", qkInputBytes,
-                                              workspaceGeneration),
+                       kSource,
                        detail::UbMainSpan(
                            head, "k-to-khat", {k.offset, qkInputBytes},
                            localGeneration));
@@ -571,6 +673,7 @@ inline void RunV0(const VectorStageArgs &args)
                     localGeneration));
         }
 
+        detail::RequireMte2ToVectorInputs(*args.sync, Stage::V0);
         // Exactly one invocation; its required body is detail::V0OneVf with
         // args.key and the frozen epsilon/lowerBound scalar attributes.
         args.ops->RunVf(Stage::V0, head);
@@ -581,19 +684,25 @@ inline void RunV0(const VectorStageArgs &args)
         const BufferSpan context = args.workspace->Span(
             WorkspaceRegion::Context, head.workspaceSlot,
             workspaceGeneration);
+        detail::RequireVectorToMte3Outputs(*args.sync, Stage::V0);
         const Region gResult = gate2B ? V0Gate2BLayout::kG : V0GateFp32Layout::kG;
-        args.ops->Store(Stage::V0,
-                        detail::UbMainSpan(head, "qhat", q, localGeneration),
-                        detail::Subspan(context, "qhat-context", 0x0000U, 0x4000U));
-        args.ops->Store(Stage::V0,
-                        detail::UbMainSpan(head, "khat", k, localGeneration),
-                        detail::Subspan(context, "khat-context", 0x4000U, 0x4000U));
-        args.ops->Store(Stage::V0,
-                        detail::UbMainSpan(head, "G", gResult,
-                                           localGeneration),
-                        detail::Subspan(context, "G-context", 0x8200U, 0x8000U));
-
+        if (head.qkOwner) {
+            args.ops->Store(
+                Stage::V0,
+                detail::UbMainSpan(head, "qhat", {q.offset, qkInputBytes},
+                                   localGeneration),
+                detail::Subspan(
+                    qkCache, "qhat-HK-cache", 0x0000U, qkInputBytes));
+            args.ops->Store(
+                Stage::V0,
+                detail::UbMainSpan(head, "khat", {k.offset, qkInputBytes},
+                                   localGeneration),
+                detail::Subspan(
+                    qkCache, "khat-HK-cache", 0x4000U, qkInputBytes));
+        }
         if (args.key.abi == PrepareAbi::Current) {
+            // Current already exposes G as gk. V6 reuses that one GM copy
+            // instead of materializing identical Vector data in context.
             args.ops->Store(
                 Stage::V0,
                 detail::UbMainSpan(
@@ -604,14 +713,19 @@ inline void RunV0(const VectorStageArgs &args)
         } else {
             args.ops->Store(
                 Stage::V0,
-                detail::UbAuxSpan(head, "G-last", AuxLayout::kGLast,
-                                  localGeneration),
-                detail::SymbolicGmSpan(head, "G-last-output", 0x0200U,
-                                       workspaceGeneration));
+                detail::UbMainSpan(head, "G-context-source",
+                                   {gResult.offset, gOutputBytes},
+                                   localGeneration),
+                detail::Subspan(context, "G-context", 0x8200U,
+                                gOutputBytes));
         }
 
         // Both points become visible only after the last enabled MTE3/output
         // drain. Concrete HardEvent and CrossCore IDs remain an API gate.
+        if (head.qkOwner) {
+            args.sync->Set(SyncPoint::QkCacheReady, head.qkCacheSlot,
+                           head.qkCacheGeneration, Stage::V0, Pipe::Mte3);
+        }
         args.sync->Set(SyncPoint::V0ContextReady, head.workspaceSlot,
                        workspaceGeneration, Stage::V0, Pipe::Mte3);
         args.sync->Set(SyncPoint::V0ExportDone, head.localBankId,
@@ -633,15 +747,18 @@ inline void RunV1(const VectorStageArgs &args)
         args.sync->Wait(SyncPoint::V0ExportDone, head.localBankId,
                         localGeneration,
                         Stage::V1, Pipe::Vector);
-        // Exactly one invocation. Its required body is detail::V1OneVf with
-        // input/gate/score storage from args.key; both Exp2 sites and every
-        // score saturation/rounding point remain inside this same VF.
-        args.ops->RunVf(Stage::V1, head);
+        // Exactly one invocation. Host dispatch specializes
+        // detail::V1OneVf<useExp2> with input/gate/score storage from
+        // args.key; both 2^x sites and every saturation/rounding point remain
+        // inside this same VF.
+        args.ops->RunVf(Stage::V1, head,
+                        ResolvePow2Primitive(args.key.useExp2));
+        detail::RequireVectorToMte3Outputs(*args.sync, Stage::V1);
 
         const BufferSpan payload = args.workspace->Span(
             WorkspaceRegion::SharedPayload, head.workspaceSlot,
             workspaceGeneration);
-        if (args.key.gateStorage == GateStorage::TwoByte) {
+        if (IsTwoByteGateStorage(args.key.gateStorage)) {
             for (const CopyRegion &copy : V1Gate2BLayout::kScoreWriteback) {
                 const Region source{copy.source, copy.size};
                 args.ops->Store(
@@ -694,41 +811,57 @@ inline void RunV3(const VectorStageArgs &args)
         args.sync->Wait(SyncPoint::C2RawReady, head.localBankId,
                         localGeneration,
                         Stage::V3, Pipe::Vector);
-        // Exactly one invocation; detail::V3OneVf also receives inputStorage.
-        // Its first operations source-free-zero every C2-unwritten raw cell
-        // before any raw-score reader, then round every 2-byte V3 destination.
-        args.ops->RunVf(Stage::V3, head);
+        // Exactly one invocation; detail::V3OneVf also receives ABI,
+        // AkkStorage, InputStorage, and the explicit runtime scale. The scale
+        // is applied once to Aqk.
+        // Raw readers are restricted to the C2-defined valid-causal domain;
+        // every other output lane is generated without a raw UB read.
+        args.ops->RunVf(Stage::V3, head, args.scale, RuntimeScaleUse::Aqk,
+                        1U);
+        detail::RequireVectorToMte3Outputs(*args.sync, Stage::V3);
         const BufferSpan payload = args.workspace->Span(
             WorkspaceRegion::SharedPayload, head.workspaceSlot,
             workspaceGeneration);
-        args.ops->Store(Stage::V3,
-                        detail::UbMainSpan(head, "X0", V3Layout::kX0,
-                                           localGeneration),
-                        detail::Subspan(payload, "X0-fp32", 0x0000U, 0x1000U));
-        args.ops->Store(Stage::V3,
-                        detail::UbMainSpan(head, "X1", V3Layout::kX1,
-                                           localGeneration),
-                        detail::Subspan(payload, "X1-fp32", 0x1000U, 0x1000U));
-        args.ops->Store(Stage::V3,
-                        detail::UbMainSpan(head, "B", V3Layout::kB,
-                                           localGeneration),
-                        detail::Subspan(payload, "B-fp32", 0x2000U, 0x1000U));
-        if (args.key.akkStorage == AkkStorage::TwoByteAbi) {
+        const bool hasQ10 = validRows > Akk2BPackPolicy::kQuadrantRows;
+        if (hasQ10) {
+            args.ops->Store(
+                Stage::V3,
+                detail::UbMainSpan(head, "X0", V3Layout::kX0,
+                                   localGeneration),
+                detail::Subspan(payload, "X0-fp32", 0x0000U, 0x1000U));
+            args.ops->Store(
+                Stage::V3,
+                detail::UbMainSpan(head, "X1", V3Layout::kX1,
+                                   localGeneration),
+                detail::Subspan(payload, "X1-fp32", 0x1000U, 0x1000U));
+            args.ops->Store(
+                Stage::V3,
+                detail::UbMainSpan(head, "B", V3Layout::kB,
+                                   localGeneration),
+                detail::Subspan(payload, "B-fp32", 0x2000U, 0x1000U));
+        }
+        if (args.key.abi == PrepareAbi::Fused &&
+            args.key.akkStorage == AkkStorage::TwoByteAbi) {
             args.ops->Store(Stage::V3,
                             detail::UbMainSpan(head, "X0-tau", V3Layout::kX0Tau,
                                                localGeneration),
                             detail::Subspan(payload, "X0-tau", 0x3000U, 0x0800U));
-            args.ops->Store(Stage::V3,
-                            detail::UbMainSpan(head, "X1-tau", V3Layout::kX1Tau,
-                                               localGeneration),
-                            detail::Subspan(payload, "X1-tau", 0x3800U, 0x0800U));
-            args.ops->Store(Stage::V3,
-                            detail::UbMainSpan(head, "q01-zero", V3Layout::kQ01Zero,
-                                               localGeneration),
-                            detail::Subspan(payload, "q01-zero", 0x4000U, 0x0800U));
+            if (hasQ10) {
+                args.ops->Store(
+                    Stage::V3,
+                    detail::UbMainSpan(head, "X1-tau", V3Layout::kX1Tau,
+                                       localGeneration),
+                    detail::Subspan(payload, "X1-tau", 0x3800U, 0x0800U));
+            }
         }
-        args.sync->Set(SyncPoint::V3VcsReady, head.workspaceSlot,
-                       workspaceGeneration, Stage::V3, Pipe::Mte3);
+        // Fused has no public AkkOut relay, so its stable quadrants become
+        // visible through the tight workspace payload. Current publishes only
+        // after the single public AkkOut drain below; it must not duplicate
+        // those quadrants into this payload.
+        if (args.key.abi == PrepareAbi::Fused) {
+            args.sync->Set(SyncPoint::V3VcsReady, head.workspaceSlot,
+                           workspaceGeneration, Stage::V3, Pipe::Mte3);
+        }
 
         // Aqk and optional AkkOut use independent public GM addresses. Their
         // ABI offsets/casts are intentionally symbolic, but their MTE3 drains
@@ -789,6 +922,10 @@ inline void RunV3(const VectorStageArgs &args)
                         kQuadrant, bottom, kQuadrant, ShapePolicy::kBt,
                         ShapePolicy::kStorageBytes, workspaceGeneration));
             }
+            // C4 uses this same public AkkOut generation as the Current ABI
+            // relay. Publish only after q00/q01/q11 MTE3 drains are visible.
+            args.sync->Set(SyncPoint::V3VcsReady, head.workspaceSlot,
+                           workspaceGeneration, Stage::V3, Pipe::Mte3);
         }
         args.sync->Set(SyncPoint::V3LocalSourceFree, head.localBankId,
                        localGeneration, Stage::V3, Pipe::Mte3);
@@ -809,6 +946,8 @@ inline void RunV6(const VectorStageArgs &args)
         const Offset validRows = args.work->group.chunk.validRows;
         const Offset tokenStorageBytes =
             validRows * ShapePolicy::kV * ShapePolicy::kStorageBytes;
+        const Offset gBytes =
+            validRows * ShapePolicy::kK * ShapePolicy::kFp32Bytes;
         // This is a symbolic three-input join, not a claim that target CANN
         // provides one instruction with these semantics.
         args.sync->Wait(SyncPoint::V0ContextReady, head.workspaceSlot,
@@ -821,18 +960,40 @@ inline void RunV6(const VectorStageArgs &args)
         const BufferSpan context = args.workspace->Span(
             WorkspaceRegion::Context, head.workspaceSlot,
             workspaceGeneration);
-        args.ops->Load(Stage::V6,
-                       detail::Subspan(context, "qhat-context", 0x0000U, 0x4000U),
-                       detail::UbMainSpan(head, "qhat-to-qg", V6Layout::kQHatToQg,
-                                              localGeneration));
-        args.ops->Load(Stage::V6,
-                       detail::Subspan(context, "khat-context", 0x4000U, 0x4000U),
-                       detail::UbMainSpan(head, "khat-to-kg", V6Layout::kKHatToKg,
-                                              localGeneration));
-        args.ops->Load(Stage::V6,
-                       detail::Subspan(context, "G-context", 0x8200U, 0x8000U),
-                       detail::UbMainSpan(head, "G", V6Layout::kGInput,
-                                              localGeneration));
+        // Every mapped HV reloads Qhat/Khat directly from the owner copy.
+        // C7 coordinates all mapped heads' V6RhsReady publications before it
+        // releases the cache; non-owner context Q/K ranges are never
+        // materialized.
+        const BufferSpan qkContext = args.workspace->Span(
+            WorkspaceRegion::Context, head.qkCacheSlot,
+            head.qkCacheGeneration);
+        args.ops->Load(
+            Stage::V6,
+            detail::Subspan(qkContext, "qhat-HK-cache", 0x0000U,
+                            tokenStorageBytes),
+            detail::UbMainSpan(
+                head, "qhat-to-qg",
+                {V6Layout::kQHatToQg.offset, tokenStorageBytes},
+                localGeneration));
+        args.ops->Load(
+            Stage::V6,
+            detail::Subspan(qkContext, "khat-HK-cache", 0x4000U,
+                            tokenStorageBytes),
+            detail::UbMainSpan(
+                head, "khat-to-kg",
+                {V6Layout::kKHatToKg.offset, tokenStorageBytes},
+                localGeneration));
+        const BufferSpan gSource =
+            args.key.abi == PrepareAbi::Current
+                ? detail::SymbolicGmSpan(
+                      head, "gk-output-reuse", gBytes,
+                      workspaceGeneration)
+                : detail::Subspan(context, "G-context", 0x8200U, gBytes);
+        args.ops->Load(Stage::V6, gSource,
+                       detail::UbMainSpan(
+                           head, "G",
+                           {V6Layout::kGInput.offset, gBytes},
+                           localGeneration));
         args.ops->Load(Stage::V6,
                        detail::SymbolicGmSpan(head, "V", tokenStorageBytes,
                                               workspaceGeneration),
@@ -840,22 +1001,45 @@ inline void RunV6(const VectorStageArgs &args)
                            head, "V-to-Vbeta",
                            {V6Layout::kVToVBeta.offset, tokenStorageBytes},
                            localGeneration));
-        // Exactly one invocation; detail::V6OneVf receives inputStorage. Both
-        // direct Exp2 sites and all first/second storage round points execute
-        // inside this same VF.
-        args.ops->RunVf(Stage::V6, head);
+        detail::RequireMte2ToVectorInputs(*args.sync, Stage::V6);
+        // Exactly one invocation; host dispatch specializes
+        // detail::V6OneVf<useExp2> and passes independent q/k and value
+        // storage plus runtime scale. Current performs no V6 scale multiply;
+        // Fused applies it exactly once after the first qg round. Both direct
+        // 2^x sites and all storage round points execute here.
+        args.ops->RunVf(Stage::V6, head,
+                        ResolvePow2Primitive(args.key.useExp2), args.scale,
+                        args.key.abi == PrepareAbi::Fused
+                            ? RuntimeScaleUse::FusedQg
+                            : RuntimeScaleUse::None,
+                        args.key.abi == PrepareAbi::Fused ? 1U : 0U);
+        detail::RequireVectorToMte3Outputs(*args.sync, Stage::V6);
 
         const BufferSpan payload = args.workspace->Span(
             WorkspaceRegion::SharedPayload, head.workspaceSlot,
             workspaceGeneration);
-        args.ops->Store(Stage::V6,
-                        detail::UbMainSpan(head, "K-beta-g", V6Layout::kKBetaG,
-                                               localGeneration),
-                        detail::Subspan(payload, "K-beta-g", 0x0000U, 0x4000U));
-        args.ops->Store(Stage::V6,
-                        detail::UbMainSpan(head, "V-beta", V6Layout::kVToVBeta,
-                                               localGeneration),
-                        detail::Subspan(payload, "V-beta", 0x4000U, 0x4000U));
+        const Offset rhsRows =
+            validRows > Akk2BPackPolicy::kQuadrantRows
+                ? ShapePolicy::kBt
+                : Akk2BPackPolicy::kQuadrantRows;
+        const Offset rhsPlaneBytes =
+            rhsRows * ShapePolicy::kK * ShapePolicy::kStorageBytes;
+        // Plane bases remain fixed. Top-only tails drain only 32 physical
+        // rows per plane; full tails drain all 64 rows.
+        args.ops->Store(
+            Stage::V6,
+            detail::UbMainSpan(
+                head, "K-beta-g",
+                {V6Layout::kKBetaG.offset, rhsPlaneBytes}, localGeneration),
+            detail::Subspan(payload, "K-beta-g", 0x0000U,
+                            rhsPlaneBytes));
+        args.ops->Store(
+            Stage::V6,
+            detail::UbMainSpan(
+                head, "V-beta",
+                {V6Layout::kVToVBeta.offset, rhsPlaneBytes},
+                localGeneration),
+            detail::Subspan(payload, "V-beta", 0x4000U, rhsPlaneBytes));
 
         if (args.key.abi == PrepareAbi::Current) {
             args.ops->Store(

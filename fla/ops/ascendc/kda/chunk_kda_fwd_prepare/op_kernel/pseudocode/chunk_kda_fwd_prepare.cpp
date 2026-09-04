@@ -8,6 +8,8 @@
 #include "chunk_kda_fwd_prepare_struct.h"
 #include "chunk_kda_fwd_prepare_utils.h"
 
+#include "arch22/chunk_kda_fwd_prepare_cube.h"
+#include "arch22/chunk_kda_fwd_prepare_vec.h"
 #include "arch35/chunk_kda_fwd_prepare_cube.h"
 #include "arch35/chunk_kda_fwd_prepare_vec.h"
 
@@ -17,27 +19,69 @@ using ResolveChunk = ChunkTask (*)(std::uint32_t chunkOrdinal);
 
 namespace {
 
+bool BindWorkspaceView(Architecture architecture,
+                       const WorkspaceSizing &sizing,
+                       WorkspaceView &workspace) noexcept
+{
+    if (!sizing.valid || workspace.backingBytes < sizing.totalBytes) {
+        return false;
+    }
+    workspace.workgroupBase = sizing.workgroupBase;
+    workspace.contextOffsetBytes = 0U;
+    if (architecture == Architecture::Arch22) {
+        workspace.slotStrideBytes =
+            arch22_policy::WorkspacePolicy::kSlotStride;
+        workspace.contextBytes =
+            arch22_policy::WorkspacePolicy::kStagePayload.offset;
+        workspace.payloadOffsetBytes =
+            arch22_policy::WorkspacePolicy::kStagePayload.offset;
+        workspace.payloadBytes =
+            arch22_policy::WorkspacePolicy::kStagePayload.size;
+        return true;
+    }
+    workspace.slotStrideBytes = WorkspacePolicy::kSlotStride;
+    workspace.contextBytes = WorkspacePolicy::kStagePayload.offset;
+    workspace.payloadOffsetBytes = WorkspacePolicy::kStagePayload.offset;
+    workspace.payloadBytes = WorkspacePolicy::kStagePayload.size;
+    return true;
+}
+
 ChunkTask ResolveDenseChunk(std::uint32_t chunkOrdinal) noexcept
 {
     return {0, chunkOrdinal, chunkOrdinal, kChunkRows};
 }
 
-void RunAivBranch(const WorkItem &item, std::uint32_t workgroupId,
-                  std::uint32_t aivId, WorkspaceView &workspace,
-                  SyncLedger &sync, VectorOps &ops,
-                  const RuntimeTiling &tiling) noexcept
+VectorStageArgs MakeVectorArgs(const WorkItem &item,
+                               Architecture architecture,
+                               std::uint32_t workgroupId,
+                               std::uint32_t aivId,
+                               WorkspaceView &workspace, SyncLedger &sync,
+                               VectorOps &ops,
+                               const RuntimeTiling &tiling) noexcept
 {
-    VectorStageArgs args{&item,
-                         &workspace,
-                         &sync,
-                         &ops,
-                         tiling.key,
-                         tiling.epsilon,
-                         tiling.lowerBound,
-                         tiling.scale,
-                         tiling.hasDtBias,
-                         workgroupId,
-                         aivId};
+    return {&item,
+            &workspace,
+            &sync,
+            &ops,
+            architecture,
+            tiling.key,
+            tiling.epsilon,
+            tiling.lowerBound,
+            tiling.scale,
+            tiling.hasDtBias,
+            workgroupId,
+            aivId,
+            kAllGroupLocalHeads};
+}
+
+void RunArch35AivBranch(const WorkItem &item, std::uint32_t workgroupId,
+                        std::uint32_t aivId, WorkspaceView &workspace,
+                        SyncLedger &sync, VectorOps &ops,
+                        const RuntimeTiling &tiling) noexcept
+{
+    VectorStageArgs args = MakeVectorArgs(
+        item, Architecture::Arch35, workgroupId, aivId, workspace, sync, ops,
+        tiling);
 
     // Each function is one physical Vector stage and one symbolic VF call.
     // V3 and V6 own their waits, so this source order is not an assertion that
@@ -48,19 +92,61 @@ void RunAivBranch(const WorkItem &item, std::uint32_t workgroupId,
     arch35::RunV6(args);
 }
 
-void RunAicBranch(const WorkItem &item, std::uint32_t workgroupId,
-                  WorkspaceView &workspace, SyncLedger &sync,
-                  CubeOps &ops, const RuntimeTiling &tiling) noexcept
+void RunArch22AivBranch(const WorkItem &item, std::uint32_t workgroupId,
+                        std::uint32_t aivId, WorkspaceView &workspace,
+                        SyncLedger &sync, VectorOps &ops,
+                        const RuntimeTiling &tiling) noexcept
 {
-    CubeStageArgs args{&item,
-                       &workspace,
-                       &sync,
-                       &ops,
-                       tiling.key,
-                       tiling.epsilon,
-                       tiling.lowerBound,
-                       tiling.scale,
-                       workgroupId};
+    VectorStageArgs args = MakeVectorArgs(
+        item, Architecture::Arch22, workgroupId, aivId, workspace, sync, ops,
+        tiling);
+    const std::uint32_t pairWaves = static_cast<std::uint32_t>(
+        CeilDiv(item.group.activeHeads, kAivPerWorkgroup));
+
+    // Arch22 has one 40 KiB shared arena per AIV. Preserve G in that arena by
+    // completing V0 -> V1 for one pair-wave head before selecting the next
+    // private 72 KiB bank. An inactive partner still enters the arch22 helper
+    // so a mode-0x2 collective can emit its required dummy token.
+    for (std::uint32_t pair = 0; pair < pairWaves; ++pair) {
+        args.selectedGroupLocalHead = pair * kAivPerWorkgroup + aivId;
+        arch22::RunV0(args);
+        arch22::RunV1(args);
+    }
+    for (std::uint32_t pair = 0; pair < pairWaves; ++pair) {
+        args.selectedGroupLocalHead = pair * kAivPerWorkgroup + aivId;
+        arch22::RunV3(args);
+    }
+    for (std::uint32_t pair = 0; pair < pairWaves; ++pair) {
+        args.selectedGroupLocalHead = pair * kAivPerWorkgroup + aivId;
+        arch22::RunV6(args);
+    }
+}
+
+CubeStageArgs MakeCubeArgs(const WorkItem &item,
+                           Architecture architecture,
+                           std::uint32_t workgroupId,
+                           WorkspaceView &workspace, SyncLedger &sync,
+                           CubeOps &ops,
+                           const RuntimeTiling &tiling) noexcept
+{
+    return {&item,
+            &workspace,
+            &sync,
+            &ops,
+            architecture,
+            tiling.key,
+            tiling.epsilon,
+            tiling.lowerBound,
+            tiling.scale,
+            workgroupId};
+}
+
+void RunArch35AicBranch(const WorkItem &item, std::uint32_t workgroupId,
+                        WorkspaceView &workspace, SyncLedger &sync,
+                        CubeOps &ops, const RuntimeTiling &tiling) noexcept
+{
+    CubeStageArgs args = MakeCubeArgs(item, Architecture::Arch35, workgroupId,
+                                      workspace, sync, ops, tiling);
 
     // C2 contains the eight independent score MMADs. C4, C5, and C7 are
     // separate physical stages because each consumes a prior-stage result.
@@ -68,6 +154,18 @@ void RunAicBranch(const WorkItem &item, std::uint32_t workgroupId,
     arch35::RunC4(args);
     arch35::RunC5(args);
     arch35::RunC7(args);
+}
+
+void RunArch22AicBranch(const WorkItem &item, std::uint32_t workgroupId,
+                        WorkspaceView &workspace, SyncLedger &sync,
+                        CubeOps &ops, const RuntimeTiling &tiling) noexcept
+{
+    CubeStageArgs args = MakeCubeArgs(item, Architecture::Arch22, workgroupId,
+                                      workspace, sync, ops, tiling);
+    arch22::RunC2(args);
+    arch22::RunC4(args);
+    arch22::RunC5(args);
+    arch22::RunC7(args);
 }
 
 void Dispatch(const WorkItem &item, CoreRole role, std::uint32_t workgroupId,
@@ -80,13 +178,48 @@ void Dispatch(const WorkItem &item, CoreRole role, std::uint32_t workgroupId,
     }
     if (role == CoreRole::Aiv) {
         if (aivId < kAivPerWorkgroup) {
-            RunAivBranch(item, workgroupId, aivId, workspace, sync, vectorOps,
-                         tiling);
+            if (tiling.architecture == Architecture::Arch22) {
+                RunArch22AivBranch(item, workgroupId, aivId, workspace, sync,
+                                   vectorOps, tiling);
+            } else {
+                RunArch35AivBranch(item, workgroupId, aivId, workspace, sync,
+                                   vectorOps, tiling);
+            }
         }
         return;
     }
     if (role == CoreRole::Aic) {
-        RunAicBranch(item, workgroupId, workspace, sync, cubeOps, tiling);
+        if (tiling.architecture == Architecture::Arch22) {
+            RunArch22AicBranch(item, workgroupId, workspace, sync, cubeOps,
+                               tiling);
+        } else {
+            RunArch35AicBranch(item, workgroupId, workspace, sync, cubeOps,
+                               tiling);
+        }
+    }
+}
+
+void DispatchHeadPartition(
+    const CorePlan &plan, std::uint64_t ordinal, const ChunkTask &chunk,
+    std::uint32_t partitionOrdinal, const RuntimeTiling &tiling,
+    CoreRole role, std::uint32_t workgroupId, std::uint32_t aivId,
+    WorkspaceView &workspace, SyncLedger &sync, VectorOps &vectorOps,
+    CubeOps &cubeOps, OwnerTicketState &ownerTickets) noexcept
+{
+    const std::uint32_t headBegin = PartitionValueHeadBegin(
+        partitionOrdinal, tiling.headCount, tiling.qkHeadCount);
+    const std::uint32_t headEnd = PartitionValueHeadEnd(
+        partitionOrdinal, tiling.headCount, tiling.qkHeadCount);
+    std::uint32_t groupOrdinal =
+        partitionOrdinal * HeadGroupsPerPartition(
+                               tiling.headCount, tiling.qkHeadCount);
+    for (std::uint32_t groupBegin = headBegin; groupBegin < headEnd;
+         groupBegin += kHeadsPerGroup, ++groupOrdinal) {
+        const WorkItem item = BuildWorkItemRange(
+            plan, ordinal, chunk, groupOrdinal, groupBegin, headEnd,
+            tiling.headCount, ownerTickets, tiling.qkHeadCount);
+        Dispatch(item, role, workgroupId, aivId, workspace, sync, vectorOps,
+                 cubeOps, tiling);
     }
 }
 
@@ -102,8 +235,15 @@ void RunChunkKdaFwdPreparePseudocode(
     VectorOps &vectorOps, CubeOps &cubeOps,
     ResolveChunk resolveChunk) noexcept
 {
-    if (tiling.aicWorkgroupCount == 0 || tiling.totalChunks == 0 ||
-        tiling.headCount == 0 || workgroupId >= tiling.aicWorkgroupCount) {
+    if (!IsKnownArchitecture(tiling.architecture) ||
+        tiling.aicWorkgroupCount == 0 || tiling.totalChunks == 0 ||
+        !IsValidHeadMapping(tiling.headCount, tiling.qkHeadCount) ||
+        workgroupId >= tiling.aicWorkgroupCount) {
+        return;
+    }
+    const WorkspaceSizing sizing = CheckedWorkspaceSizing(
+        tiling.architecture, tiling.aicWorkgroupCount, workgroupId);
+    if (!BindWorkspaceView(tiling.architecture, sizing, workspace)) {
         return;
     }
     if (resolveChunk == nullptr) {
@@ -114,8 +254,9 @@ void RunChunkKdaFwdPreparePseudocode(
     OwnerTicketState ownerTickets{};
     for (std::uint64_t ordinal = plan.begin; ordinal < plan.end; ++ordinal) {
         std::uint32_t chunkOrdinal = 0;
-        std::uint32_t groupOrdinal = 0;
-        DecodeChunkHeadGroupOrdinal(plan, ordinal, chunkOrdinal, groupOrdinal);
+        std::uint32_t partitionOrdinal = 0;
+        DecodeChunkHeadPartitionOrdinal(plan, ordinal, chunkOrdinal,
+                                        partitionOrdinal);
         const ChunkTask chunk = resolveChunk(chunkOrdinal);
         // Host tiling must omit empty sequences and reject any descriptor
         // outside [1,64]. The symbolic kernel also refuses to enter a stage,
@@ -125,26 +266,26 @@ void RunChunkKdaFwdPreparePseudocode(
         }
 
         if (plan.mode == PartitionMode::ChunkOnly) {
-            // Chunk-first: a workgroup owns the complete chunk, then advances
-            // all head groups. Adjacent group pairs form one eight-slot wave.
-            for (groupOrdinal = 0; groupOrdinal < plan.headGroupCount;
-                 ++groupOrdinal) {
-                const WorkItem item = BuildWorkItem(
-                    plan, ordinal, chunk, groupOrdinal, tiling.headCount,
+            // Chunk-first: one workgroup owns the complete chunk. Its inner
+            // order follows complete HK cohorts so the once-per-HK Q/K cache
+            // remains live across every mapped HV consumer.
+            for (partitionOrdinal = 0U;
+                 partitionOrdinal < plan.headPartitionCount;
+                 ++partitionOrdinal) {
+                DispatchHeadPartition(
+                    plan, ordinal, chunk, partitionOrdinal, tiling, role,
+                    workgroupId, aivId, workspace, sync, vectorOps, cubeOps,
                     ownerTickets);
-                Dispatch(item, role, workgroupId, aivId, workspace, sync,
-                         vectorOps, cubeOps, tiling);
             }
             continue;
         }
 
-        // Head grouping is only the fallback when chunks alone cannot fill the
-        // AIC workgroups. The flattened ordinal never changes head ownership.
-        const WorkItem item = BuildWorkItem(
-            plan, ordinal, chunk, groupOrdinal, tiling.headCount,
-            ownerTickets);
-        Dispatch(item, role, workgroupId, aivId, workspace, sync, vectorOps,
-                 cubeOps, tiling);
+        // Head splitting is only the fallback when chunks cannot fill AIC
+        // workgroups. A flattened unit is an indivisible HK cohort pack, not
+        // an arbitrary four-HV group, so no HK normalization is duplicated.
+        DispatchHeadPartition(plan, ordinal, chunk, partitionOrdinal, tiling,
+                              role, workgroupId, aivId, workspace, sync,
+                              vectorOps, cubeOps, ownerTickets);
     }
 }
 
