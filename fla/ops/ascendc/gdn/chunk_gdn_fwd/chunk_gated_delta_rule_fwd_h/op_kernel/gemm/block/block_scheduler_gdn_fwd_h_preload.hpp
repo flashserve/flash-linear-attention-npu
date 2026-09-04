@@ -16,39 +16,39 @@ using namespace Catlass;
 namespace Catlass::Gemm::Block {
 
 struct GDNFwdHOffsetsPreload {
-    uint32_t hSrcOffset;
-    uint32_t hDstOffset;
-    uint32_t uvOffset;
-    uint32_t wkOffset;
-    uint32_t wOffset;
-    uint32_t gOffset;
-    uint32_t hWorkOffset;
-    uint32_t vWorkOffset;
-    uint32_t initialStateOffset;
-    uint32_t finalStateOffset;
-    bool isInitialState;
-    bool isFinalState;
-    uint32_t blockTokens;
+    uint64_t hSrcOffset{0};
+    uint64_t hDstOffset{0};
+    uint64_t uvOffset{0};
+    uint64_t wkOffset{0};
+    uint64_t wOffset{0};
+    uint64_t gOffset{0};
+    uint64_t hWorkOffset{0};
+    uint64_t vWorkOffset{0};
+    uint64_t initialStateOffset{0};
+    uint64_t finalStateOffset{0};
+    bool isInitialState{false};
+    bool isFinalState{false};
+    uint32_t blockTokens{0};
     // for debug
-    uint32_t batchIdx;
-    uint32_t headIdx;
-    uint32_t chunkIdx;
+    uint32_t batchIdx{0};
+    uint32_t headIdx{0};
+    uint32_t chunkIdx{0};
 
 };
 
 struct GDNFwdHStreamPreload {
-    uint32_t vIdx;
-    uint32_t batchIdx;
+    uint32_t vIdx{0};
+    uint32_t batchIdx{0};
     uint32_t chunkIdx{0};
-    uint32_t vHeadIdx;
-    uint32_t kHeadIdx;
-    uint32_t shapeBatchIdx;
-    uint32_t tokenBatchIdx;
+    uint32_t vHeadIdx{0};
+    uint32_t kHeadIdx{0};
+    uint32_t shapeBatchIdx{0};
+    uint32_t tokenBatchIdx{0};
      
-    uint32_t chunkOffset;
-    uint32_t tokenOffset;
+    uint32_t chunkOffset{0};
+    uint32_t tokenOffset{0};
     uint32_t batchChunks{0};
-    uint32_t batchTokens;
+    uint32_t batchTokens{0};
      
     GDNFwdHOffsetsPreload offset;
 };
@@ -59,40 +59,40 @@ struct GDNFwdHRunningQPreload {
 };
 
 struct BlockSchedulerGdnFwdHPreload {
-    uint32_t batch;
-    uint32_t seqlen;
-    uint32_t kNumHead;
-    uint32_t vNumHead;
-    uint32_t kHeadDim;
-    uint32_t vHeadDim;
-    uint32_t chunkSize;
+    uint32_t batch{0};
+    uint32_t seqlen{0};
+    uint32_t kNumHead{0};
+    uint32_t vNumHead{0};
+    uint32_t kHeadDim{0};
+    uint32_t vHeadDim{0};
+    uint32_t chunkSize{0};
     uint32_t vBlockSize{128};
-    uint32_t isVariedLen;
-    uint32_t shapeBatch;
-    uint32_t tokenBatch;
-    bool useInitialState;
-    bool storeFinalState;
-    uint32_t numSeqWorkspaceOffset;
-    uint32_t numChunksWorkspaceOffset;
+    uint32_t isVariedLen{0};
+    uint32_t shapeBatch{0};
+    uint32_t tokenBatch{0};
+    bool useInitialState{false};
+    bool storeFinalState{false};
+    uint64_t numSeqWorkspaceOffset{0};
+    uint64_t numChunksWorkspaceOffset{0};
 
-    uint32_t taskIdx;
-    uint32_t taskLoops;
-    uint32_t cubeCoreIdx;
-    uint32_t cubeCoreNum;
-    uint32_t vLoops;
-    uint32_t taskNum;
-    uint32_t headGroups;
-    uint32_t totalChunks;
-    uint32_t totalTokens;
-    bool hasDummyHead;
+    uint32_t taskIdx{0};
+    uint32_t taskLoops{0};
+    uint32_t cubeCoreIdx{0};
+    uint32_t cubeCoreNum{0};
+    uint32_t vLoops{0};
+    uint32_t taskNum{0};
+    uint32_t headGroups{0};
+    uint32_t totalChunks{0};
+    uint32_t totalTokens{0};
+    bool hasDummyHead{false};
 
     GDNFwdHRunningQPreload runningQ;
-    uint32_t curLoopIdx;
-    uint32_t curLoopTaskBegin;
-    uint32_t curLoopTaskCnt;
-    uint32_t lastLoopTaskCnt;
+    int64_t curLoopIdx{-1};
+    uint32_t curLoopTaskBegin{0};
+    uint32_t curLoopTaskCnt{0};
+    uint32_t lastLoopTaskCnt{0};
 
-    bool isRunning;
+    bool isRunning{false};
 
     AscendC::GlobalTensor<int64_t> gmSeqlen;
     AscendC::GlobalTensor<int64_t> gmNumSeq;

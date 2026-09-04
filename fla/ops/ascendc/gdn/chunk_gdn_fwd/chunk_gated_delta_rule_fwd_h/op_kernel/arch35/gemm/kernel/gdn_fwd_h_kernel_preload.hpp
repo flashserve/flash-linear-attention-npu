@@ -117,23 +117,23 @@ public:
     using LayoutK = Catlass::layout::ColumnMajor;
 
 
-    uint32_t batch;
-    uint32_t seqlen;
-    uint32_t kNumHead;
-    uint32_t vNumHead;
-    uint32_t kHeadDim;
-    uint32_t vHeadDim;
-    uint32_t chunkSize;
-    bool useInitialState;
-    bool storeFinalState;
-    uint32_t isVariedLen;
-    uint32_t shapeBatch;
-    uint32_t tokenBatch;
-    uint32_t vWorkspaceOffset;
-    uint32_t vUpdateWorkspaceOffset;
-    uint32_t hWorkspaceOffset;
-    uint32_t numSeqWorkspaceOffset;
-    uint32_t numChunksWorkspaceOffset;
+    uint32_t batch{0};
+    uint32_t seqlen{0};
+    uint32_t kNumHead{0};
+    uint32_t vNumHead{0};
+    uint32_t kHeadDim{0};
+    uint32_t vHeadDim{0};
+    uint32_t chunkSize{0};
+    bool useInitialState{false};
+    bool storeFinalState{false};
+    uint32_t isVariedLen{0};
+    uint32_t shapeBatch{0};
+    uint32_t tokenBatch{0};
+    uint64_t vWorkspaceOffset{0};
+    uint64_t vUpdateWorkspaceOffset{0};
+    uint64_t hWorkspaceOffset{0};
+    uint64_t numSeqWorkspaceOffset{0};
+    uint64_t numChunksWorkspaceOffset{0};
 
     AscendC::GlobalTensor<ElementK> gmK;
     AscendC::GlobalTensor<ElementW> gmW;
@@ -331,9 +331,9 @@ public:
                 uint32_t batchIdx = initialStateBlockOffset / vNumHead;
                 uint32_t vHeadIdx = initialStateBlockOffset % vNumHead;
                 uint32_t chunkOffset = isVariedLen ? gmNumChunks.GetValue(batchIdx) : 0; 
-                uint32_t initialStateOffset = initialStateBlockOffset * stateBlockSize;
+                uint64_t initialStateOffset = initialStateBlockOffset * stateBlockSize;
                 uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
-                uint32_t hOffset = (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset) * stateBlockSize;
+                uint64_t hOffset = (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset) * stateBlockSize;
                 if (useInitialState) {
                     AscendC::LocalTensor<ElementInitialState> stateUbTensor = pingpongFlag ? stateUbTensorPing : stateUbTensorPong;
                     AscendC::LocalTensor<ElementH> hUbTensor = pingpongFlag ? hUbTensorPing : hUbTensorPong;
