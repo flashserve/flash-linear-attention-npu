@@ -188,8 +188,10 @@ public:
         buffOffset += kSize;
         stateInUb = tmpBuff.GetWithOffset<float>(static_cast<uint32_t>(alignK_ * vStep_), buffOffset);
         buffOffset += cubeSize;
-        broadTmpInUb = tmpBuff.GetWithOffset<float>(static_cast<uint32_t>(alignK_ * vStep_), buffOffset);
-        buffOffset += cubeSize;
+        if (alignK_ != ADD_FOLD_REDUCE_MIN_K) {
+            broadTmpInUb = tmpBuff.GetWithOffset<float>(static_cast<uint32_t>(alignK_ * vStep_), buffOffset);
+            buffOffset += cubeSize;
+        }
         betaInUb = tmpBuff.GetWithOffset<float>(static_cast<uint32_t>(betaUbSize / sizeof(float)), buffOffset);
         buffOffset += betaUbSize;
         gateInUb = tmpBuff.GetWithOffset<float>(static_cast<uint32_t>(MAX_MTP * alignK_), buffOffset);
@@ -489,20 +491,28 @@ private:
         }
 
         if (safeGate_) {
-            Muls(gateInUb, gateInUb, expA, total);
-            PipeBarrier<PIPE_V>();
-            Muls(broadTmpInUb, gateInUb, -1.0f, total);
-            PipeBarrier<PIPE_V>();
-            Exp(broadTmpInUb, broadTmpInUb, total);
-            PipeBarrier<PIPE_V>();
-            Adds(broadTmpInUb, broadTmpInUb, 1.0f, total);
-            PipeBarrier<PIPE_V>();
-            Duplicate(gateInUb, 1.0f, total);
-            PipeBarrier<PIPE_V>();
-            Div(gateInUb, gateInUb, broadTmpInUb, total);
-            PipeBarrier<PIPE_V>();
-            Muls(gateInUb, gateInUb, lowerBound_, total);
-            PipeBarrier<PIPE_V>();
+            uint32_t scratchRows = alignK_ == ADD_FOLD_REDUCE_MIN_K
+                                       ? vStep_ * sizeof(stateType) / sizeof(float)
+                                       : vStep_;
+            for (uint32_t row = 0; row < static_cast<uint32_t>(seqLen); row += scratchRows) {
+                uint32_t rows = Std::min(scratchRows, static_cast<uint32_t>(seqLen) - row);
+                uint32_t offset = row * alignK_;
+                uint32_t chunkTotal = rows * alignK_;
+                Muls(gateInUb[offset], gateInUb[offset], expA, chunkTotal);
+                PipeBarrier<PIPE_V>();
+                Muls(broadTmpInUb, gateInUb[offset], -1.0f, chunkTotal);
+                PipeBarrier<PIPE_V>();
+                Exp(broadTmpInUb, broadTmpInUb, chunkTotal);
+                PipeBarrier<PIPE_V>();
+                Adds(broadTmpInUb, broadTmpInUb, 1.0f, chunkTotal);
+                PipeBarrier<PIPE_V>();
+                Duplicate(gateInUb[offset], 1.0f, chunkTotal);
+                PipeBarrier<PIPE_V>();
+                Div(gateInUb[offset], gateInUb[offset], broadTmpInUb, chunkTotal);
+                PipeBarrier<PIPE_V>();
+                Muls(gateInUb[offset], gateInUb[offset], lowerBound_, chunkTotal);
+                PipeBarrier<PIPE_V>();
+            }
         } else {
             Exp(gateInUb, gateInUb, total);
             PipeBarrier<PIPE_V>();
@@ -551,6 +561,13 @@ private:
         LocalTensor<inType> qLocal = qInQueue_.AllocTensor<inType>();
         LocalTensor<inType> kLocal = kInQueue_.AllocTensor<inType>();
         LocalTensor<inType> vLocal = vInQueue_.AllocTensor<inType>();
+        LocalTensor<stateType> preprocessScratchLocal;
+        bool needPreprocessScratch = useQkL2norm_ ||
+                                     (useGateInKernel_ && (hasDtBias_ || safeGate_));
+        if (alignK_ == ADD_FOLD_REDUCE_MIN_K && needPreprocessScratch) {
+            preprocessScratchLocal = stateOutQueue_.AllocTensor<stateType>();
+            broadTmpInUb = preprocessScratchLocal.template ReinterpretCast<float>();
+        }
 
         DataCopyExtParams qInParams{static_cast<uint16_t>(seqLen), static_cast<uint32_t>(realK_ * sizeof(inType)),
                                     static_cast<uint32_t>((queryTokenStride_ - realK_) * sizeof(inType)), 0, 0};
@@ -593,6 +610,9 @@ private:
         }
         Exp(gateInUb, gateInUb, alignK_ * seqLen);
         AscendC::PipeBarrier<PIPE_V>();
+        if (alignK_ == ADD_FOLD_REDUCE_MIN_K && needPreprocessScratch) {
+            stateOutQueue_.FreeTensor(preprocessScratchLocal);
+        }
 
         qInQueue_.FreeTensor(qLocal);
         kInQueue_.FreeTensor(kLocal);
@@ -798,34 +818,59 @@ private:
 
     __aicore__ inline void Compute(uint32_t curSingleV, uint64_t curQKOffset, uint64_t curVOffset)
     {
-        uint32_t stateShape[2] = {curSingleV, alignK_};
-        uint32_t deltaShape[2] = {curSingleV, 1};
+        LocalTensor<stateType> stateOutLocal;
+        bool reuseStateOut = alignK_ == ADD_FOLD_REDUCE_MIN_K;
+        if (reuseStateOut) {
+            stateOutLocal = stateOutQueue_.AllocTensor<stateType>();
+            broadTmpInUb = stateOutLocal.template ReinterpretCast<float>();
+        }
+        uint32_t scratchRows = reuseStateOut ? vStep_ * sizeof(stateType) / sizeof(float) : vStep_;
+
         MatVecMul(stateInUb, gateInUb[curQKOffset], stateInUb, curSingleV, false);
         AscendC::PipeBarrier<PIPE_V>();
-        MatVecMul(stateInUb, kInUb[curQKOffset], broadTmpInUb, curSingleV, false);
-        AscendC::PipeBarrier<PIPE_V>();
-        ReduceSumDispatch(deltaInUb, broadTmpInUb, curSingleV);
-        AscendC::PipeBarrier<PIPE_V>();
+        for (uint32_t row = 0; row < curSingleV; row += scratchRows) {
+            uint32_t rows = Std::min(scratchRows, curSingleV - row);
+            uint32_t stateOffset = row * alignK_;
+            MatVecMul(stateInUb[stateOffset], kInUb[curQKOffset], broadTmpInUb, rows, false);
+            AscendC::PipeBarrier<PIPE_V>();
+            ReduceSumDispatch(deltaInUb[row], broadTmpInUb, rows);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
         deltaInUb = vInUb[curVOffset] - deltaInUb;
         AscendC::PipeBarrier<PIPE_V>();
         Muls(deltaInUb, deltaInUb, beta_, curSingleV);
         AscendC::PipeBarrier<PIPE_V>();
-        Broadcast<float, 2, 1>(broadTmpInUb, deltaInUb, stateShape, deltaShape);
-        AscendC::PipeBarrier<PIPE_V>();
-        MatVecMul(broadTmpInUb, kInUb[curQKOffset], stateInUb, curSingleV, true);
-        AscendC::PipeBarrier<PIPE_V>();
-        MatVecMul(stateInUb, qInUb[curQKOffset], broadTmpInUb, curSingleV, false);
-        AscendC::PipeBarrier<PIPE_V>();
-        ReduceSumDispatch(attnInUb, broadTmpInUb, curSingleV);
+        for (uint32_t row = 0; row < curSingleV; row += scratchRows) {
+            uint32_t rows = Std::min(scratchRows, curSingleV - row);
+            uint32_t stateOffset = row * alignK_;
+            uint32_t stateShape[2] = {rows, alignK_};
+            uint32_t deltaShape[2] = {rows, 1};
+            Broadcast<float, 2, 1>(broadTmpInUb, deltaInUb[row], stateShape, deltaShape);
+            AscendC::PipeBarrier<PIPE_V>();
+            MatVecMul(broadTmpInUb, kInUb[curQKOffset], stateInUb[stateOffset], rows, true);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        for (uint32_t row = 0; row < curSingleV; row += scratchRows) {
+            uint32_t rows = Std::min(scratchRows, curSingleV - row);
+            uint32_t stateOffset = row * alignK_;
+            MatVecMul(stateInUb[stateOffset], qInUb[curQKOffset], broadTmpInUb, rows, false);
+            AscendC::PipeBarrier<PIPE_V>();
+            ReduceSumDispatch(attnInUb[row], broadTmpInUb, rows);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
         LocalTensor<outType> attnOutLocal = attnOutQueue_.AllocTensor<outType>();
         if (shouldStoreState_) {
-            LocalTensor<stateType> stateOutLocal = stateOutQueue_.AllocTensor<stateType>();
+            if (!reuseStateOut) {
+                stateOutLocal = stateOutQueue_.AllocTensor<stateType>();
+            }
             if constexpr (std::is_same<stateType, float32_t>()) {
                 DataCopy(stateOutLocal, stateInUb, alignK_ * curSingleV);
             } else {
                 Cast(stateOutLocal, stateInUb, AscendC::RoundMode::CAST_RINT, alignK_ * curSingleV);
             }
             stateOutQueue_.EnQue<stateType>(stateOutLocal);
+        } else if (reuseStateOut) {
+            stateOutQueue_.FreeTensor(stateOutLocal);
         }
         Cast(attnOutLocal, attnInUb, AscendC::RoundMode::CAST_RINT, curSingleV);
         attnOutQueue_.EnQue<outType>(attnOutLocal);
