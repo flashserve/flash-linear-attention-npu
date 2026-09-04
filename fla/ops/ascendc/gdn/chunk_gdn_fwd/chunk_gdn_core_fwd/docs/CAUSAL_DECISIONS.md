@@ -140,18 +140,18 @@
 
   后续累计 T1 硬件观测中，B17 的 C2 `PIPE_ALL`→`PIPE_FIX` 在第 10 次出现
   final_state 间歇失配；因此 B17 的 C2 收窄被否定，继承该机制的 B18 不能
-  作为下一轮基线。第五轮改以未包含 C2 收窄的 B16 为共同候选基线，只拆分
-  C1 event-only 与已存在、未被硬件否定的 SolveTri64 immediate event：
+  作为下一轮基线。既有 B8 的 C1 event-only 也已在 A5 T1 精度门禁失败；
+  B16 的 WU→H role drain 与 Solve immediate 都不补足 C1 producer→consumer
+  happens-before，因此不再组合或重试 C1 event-only。第五轮改以未包含上述
+  两项失败机制的 B16 为基线，只验证已存在、未被硬件否定的 SolveTri64
+  immediate event：
 
   | 变体/key | C1 发布 | C2 发布 | SolveTri64 FIX→后续 MTE1 | WU→H 入口 |
   |---|---|---|---|---|
-  | B19/191 | event-only，保留 `CrossCoreSetFlag<0x2, PIPE_FIX>` | `PIPE_ALL` | B16 原路径 | AIC `PIPE_FIX`、AIV `PIPE_MTE3` |
-  | B20/201 | `PIPE_FIX` | `PIPE_ALL` | immediate `MTE2_MTE1` set/wait，绝不启用 deferred wait | 同 B19 |
-  | B21/211 | event-only，同 B19 | `PIPE_ALL` | immediate，同 B20 且绝不启用 deferred wait | 同 B19 |
+  | B19/191 | `PIPE_FIX` | `PIPE_ALL` | immediate `MTE2_MTE1` set/wait，绝不启用 deferred wait | AIC `PIPE_FIX`、AIV `PIPE_MTE3` |
 
-  B19 可由既有 `FLA_NPU_GDN_SYNC_T1_DIAGNOSTIC=1` 在严格 T1 shape
-  验证新 key；B20/B21 的 SolveTri64 变化需要至少一个完整 64-token tile，因此新增
-  内部开关 `FLA_NPU_GDN_SYNC_T65_DIAGNOSTIC=1`，仅放行相同 heads/dims、
+  SolveTri64 变化需要至少一个完整 64-token tile，因此 B19 不由 T1 诊断放行；
+  内部开关 `FLA_NPU_GDN_SYNC_T65_DIAGNOSTIC=1` 仅对 B19 放行相同 heads/dims、
   T65、`cu_seqlens` 长度 2、2 chunks、存在 FP32 initial_state 且
   `output_final_state=true` 的 A5 BF16 varlen 调用。两个诊断开关都只接受未设置、
   `0` 或 `1`，非法值直接 fail-closed；output mask 不参与路由。未命中严格诊断
@@ -160,7 +160,7 @@
   已被 A5 硬件精度结果否定的 Solve deferred-wait 不重试；MIX kernel 的
   `SyncAll` 保护跨阶段 GM/workspace 可见性与参与者会合；B0–B11 全部保留，
   B12–B15 每次只隔离上表中的一条边。也不编译丢弃配套事件的裸删方案。
-  B1–B21 的额外 key 仅在 A5、BF16 输入、
+  B1–B19 的额外 key 仅在 A5、BF16 输入、
   FP32 initial_state 的编译配置中生成，并仅为 V128、chunk64
   模型主路径选择；
   其他合法 dtype/state/V256 形态回退 B0。host 在非 Ascend950 上
@@ -189,8 +189,9 @@
   非 A5 fail-closed 和 ABI-neutral 静态门禁；均尚待同一产物构建及 A5 路由、
   精度、确定性和性能验证。B16–B18 已完成本地实现与静态门禁设计，新增 key
   仅在 A5/BF16/FP32 initial_state 编译域内出现；后续 T1 重复验证已否定 B17
-  的 C2 收窄，B18 因继承同一机制不再作为下一轮基线。B19–B21 已完成下一轮本地实现；
-  B19 复用 T1 诊断，B20/B21 使用严格 T65/2 chunks 诊断，均仍待同一 A5
-  产物完成编译、真实 key、精度、确定性和性能验证。
+  的 C2 收窄，B18 因继承同一机制不再作为下一轮基线；既有 B8 证据同时排除
+  C1 event-only 后代。收敛后的唯一 B19 已完成本地实现与静态门禁，使用严格
+  T65/2 chunks 诊断，仍待同一 A5 产物完成编译、真实 key、精度、确定性和
+  性能验证。
 - Invalidation：若目标 CANN 头文件、生成代码或 profiling 证明上述生产者/消费者
   链路不成立，需回到 B0 并重建依赖图，不继续放宽同步。
