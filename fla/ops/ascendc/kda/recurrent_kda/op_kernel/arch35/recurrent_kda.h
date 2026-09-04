@@ -1087,20 +1087,15 @@ private:
                                           static_cast<uint16_t>(realK_ * sizeof(stateType)), 0, 0};
             DataCopyPad(finalStateGm_[stateOffset], stateOutLocal, stateOutParams);
         } else {
-            LocalTensor<stateType> stateTransposeLocal = stateTransposeBuf_.Get<stateType>();
-            TransposeVFirstToKFirst(stateTransposeLocal, stateOutLocal, curSingleV);
-            SyncVToMte3();
-            uint64_t stateOffset = stateOutStride0_ * stateSlot + stateOutStride1_ * head +
-                                   stateOutStride3_ * vOffset;
-            int64_t srcStride = static_cast<int64_t>(
-                (vStep_ - curSingleV) * sizeof(stateType) / DATA_BLOCK_BYTES);
-            int64_t dstStride = static_cast<int64_t>(
-                (stateOutStride2_ - curSingleV) * sizeof(stateType));
-            DataCopyExtParams stateOutParams{static_cast<uint16_t>(realK_),
-                                             static_cast<uint32_t>(curSingleV * sizeof(stateType)),
-                                             srcStride, dstStride, 0};
-            DataCopyPad(finalStateGm_[stateOffset], stateTransposeLocal, stateOutParams);
-            SyncMte3ToV();
+            SyncVToS();
+            for (uint32_t v = 0; v < curSingleV; ++v) {
+                for (uint32_t k = 0; k < realK_; ++k) {
+                    uint64_t stateOffset = stateOutStride0_ * stateSlot + stateOutStride1_ * head +
+                                           stateOutStride2_ * k +
+                                           stateOutStride3_ * (vOffset + v);
+                    finalStateGm_.SetValue(stateOffset, stateOutLocal.GetValue(v * alignK_ + k));
+                }
+            }
         }
         stateOutQueue_.FreeTensor(stateOutLocal);
     }
