@@ -62,13 +62,26 @@ def test_a5_kkt_epilogue_joins_both_aiv_subblocks_before_solve():
     assert handoff.index(join) < handoff.index(publish)
 
 
-def test_solved_a_is_published_globally_before_recompute_reads_it():
+def test_solved_a_closes_local_fix_to_mte2_before_recompute_reads_it():
     source = PHASE6.read_text(encoding="utf-8")
     handoff = source.split(
-        "AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);", maxsplit=1
-    )[1].split("DispatchRecompute", maxsplit=1)[0]
+        "// Solve and recompute share a contiguous task range.", maxsplit=1
+    )[1].split("GM_ADDR w", maxsplit=1)[0]
 
-    assert "AscendC::SyncAll<false>();" in handoff
+    set_fix_mte2 = (
+        "AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>"
+        "(PHASE6_SOLVE_FIX_TO_MTE2_EVENT);"
+    )
+    wait_fix_mte2 = (
+        "AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>"
+        "(PHASE6_SOLVE_FIX_TO_MTE2_EVENT);"
+    )
+    publish = "AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);"
+    assert set_fix_mte2 in handoff
+    assert wait_fix_mte2 in handoff
+    assert publish in handoff
+    assert handoff.index(set_fix_mte2) < handoff.index(wait_fix_mte2) < handoff.index(publish)
+    assert "AscendC::SyncAll<false>();" not in handoff
 
 
 def test_embedded_fwdo_joins_aiv_subblocks_before_shared_publications():

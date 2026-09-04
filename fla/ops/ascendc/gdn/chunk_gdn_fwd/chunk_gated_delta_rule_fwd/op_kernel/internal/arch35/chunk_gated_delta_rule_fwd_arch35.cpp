@@ -17,6 +17,7 @@ namespace {
 constexpr uint32_t OWNER_MTE2_TO_V_EVENT = 0;
 constexpr uint32_t OWNER_V_TO_MTE3_EVENT = 1;
 constexpr uint32_t OWNER_MTE3_TO_V_EVENT = 2;
+constexpr uint32_t PHASE6_SOLVE_FIX_TO_MTE2_EVENT = 0;
 constexpr uint32_t UB_ALIGNMENT = 32;
 constexpr uint32_t PHASE6_TILING_ALIGNMENT = 8;
 constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 5;
@@ -305,15 +306,16 @@ __aicore__ inline void RunPhase6(
     // Solve and recompute share a contiguous task range. Publish solved A
     // before either paired AIV enters its local consumer range.
     if ASCEND_IS_AIC {
+        // SolveTri's final A tile is written through FIX.  The same AIC then
+        // reloads A through MTE2 in recompute, so close that local pipeline
+        // dependency before publishing completion to the paired AIVs.
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(PHASE6_SOLVE_FIX_TO_MTE2_EVENT);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(PHASE6_SOLVE_FIX_TO_MTE2_EVENT);
         AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);
     }
     if ASCEND_IS_AIV {
         AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);
     }
-    // SolveTri writes A through FIX, while recompute immediately reloads A
-    // through MTE2 on the same AIC.  Close the phase globally so the solved A
-    // is visible before either recompute operand starts its next pipeline.
-    AscendC::SyncAll<false>();
     GM_ADDR w = userWorkspace + stateOutputTiling->wIntermediateOffset;
     GM_ADDR u = userWorkspace + stateOutputTiling->uIntermediateOffset;
     GM_ADDR h = userWorkspace + stateOutputTiling->hIntermediateOffset;
