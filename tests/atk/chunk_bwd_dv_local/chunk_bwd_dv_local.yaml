@@ -60,6 +60,36 @@ inputs:
         values: ["bf16", "fp16"]
       invalid:
         values: []
+  - name: g_dtype
+    type: attr
+    required: false
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["bf16", "fp16", "fp32"]
+      invalid:
+        values: []
+  - name: var_len
+    type: attr
+    required: false
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false, true]
+      invalid:
+        values: []
+  - name: cu_seqlens_len
+    type: attr
+    required: false
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [1, 2, 3]
+      invalid:
+        values: []
   - name: B
     type: attr
     required: true
