@@ -73,6 +73,13 @@ constexpr uint32_t TILING_KEY_B21_V128 = 211;
 constexpr uint32_t TILING_KEY_B22_V128 = 221;
 constexpr uint32_t TILING_KEY_B23_V128 = 231;
 constexpr uint32_t TILING_KEY_B24_V128 = 241;
+constexpr uint32_t TILING_KEY_B25_V128 = 251;
+constexpr uint32_t TILING_KEY_B26_V128 = 261;
+constexpr uint32_t TILING_KEY_B27_V128 = 271;
+constexpr uint32_t TILING_KEY_B28_V128 = 281;
+constexpr uint32_t TILING_KEY_B29_V128 = 291;
+constexpr uint32_t TILING_KEY_B30_V128 = 301;
+constexpr uint32_t TILING_KEY_B31_V128 = 311;
 constexpr int64_t MAIN_MODEL_BATCH = 1;
 constexpr int64_t MAIN_MODEL_K_HEADS = 16;
 constexpr int64_t MAIN_MODEL_V_HEADS = 32;
@@ -189,6 +196,34 @@ bool ResolveSyncVariant(GDN::GdnCoreSyncVariant &variant)
         variant = GDN::GdnCoreSyncVariant::B24;
         return true;
     }
+    if (std::strcmp(value, "B25") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B25;
+        return true;
+    }
+    if (std::strcmp(value, "B26") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B26;
+        return true;
+    }
+    if (std::strcmp(value, "B27") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B27;
+        return true;
+    }
+    if (std::strcmp(value, "B28") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B28;
+        return true;
+    }
+    if (std::strcmp(value, "B29") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B29;
+        return true;
+    }
+    if (std::strcmp(value, "B30") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B30;
+        return true;
+    }
+    if (std::strcmp(value, "B31") == 0) {
+        variant = GDN::GdnCoreSyncVariant::B31;
+        return true;
+    }
     return false;
 }
 
@@ -234,7 +269,14 @@ bool IsMainShapeOnlySyncVariant(GDN::GdnCoreSyncVariant variant)
            variant == GDN::GdnCoreSyncVariant::B21 ||
            variant == GDN::GdnCoreSyncVariant::B22 ||
            variant == GDN::GdnCoreSyncVariant::B23 ||
-           variant == GDN::GdnCoreSyncVariant::B24;
+           variant == GDN::GdnCoreSyncVariant::B24 ||
+           variant == GDN::GdnCoreSyncVariant::B25 ||
+           variant == GDN::GdnCoreSyncVariant::B26 ||
+           variant == GDN::GdnCoreSyncVariant::B27 ||
+           variant == GDN::GdnCoreSyncVariant::B28 ||
+           variant == GDN::GdnCoreSyncVariant::B29 ||
+           variant == GDN::GdnCoreSyncVariant::B30 ||
+           variant == GDN::GdnCoreSyncVariant::B31;
 }
 
 bool IsT1DiagnosticSyncVariant(GDN::GdnCoreSyncVariant variant)
@@ -246,7 +288,14 @@ bool IsT1DiagnosticSyncVariant(GDN::GdnCoreSyncVariant variant)
            variant == GDN::GdnCoreSyncVariant::B21 ||
            variant == GDN::GdnCoreSyncVariant::B22 ||
            variant == GDN::GdnCoreSyncVariant::B23 ||
-           variant == GDN::GdnCoreSyncVariant::B24;
+           variant == GDN::GdnCoreSyncVariant::B24 ||
+           variant == GDN::GdnCoreSyncVariant::B25 ||
+           variant == GDN::GdnCoreSyncVariant::B26 ||
+           variant == GDN::GdnCoreSyncVariant::B27 ||
+           variant == GDN::GdnCoreSyncVariant::B28 ||
+           variant == GDN::GdnCoreSyncVariant::B29 ||
+           variant == GDN::GdnCoreSyncVariant::B30 ||
+           variant == GDN::GdnCoreSyncVariant::B31;
 }
 
 bool IsT65DiagnosticSyncVariant(GDN::GdnCoreSyncVariant variant)
@@ -256,7 +305,14 @@ bool IsT65DiagnosticSyncVariant(GDN::GdnCoreSyncVariant variant)
            variant == GDN::GdnCoreSyncVariant::B21 ||
            variant == GDN::GdnCoreSyncVariant::B22 ||
            variant == GDN::GdnCoreSyncVariant::B23 ||
-           variant == GDN::GdnCoreSyncVariant::B24;
+           variant == GDN::GdnCoreSyncVariant::B24 ||
+           variant == GDN::GdnCoreSyncVariant::B25 ||
+           variant == GDN::GdnCoreSyncVariant::B26 ||
+           variant == GDN::GdnCoreSyncVariant::B27 ||
+           variant == GDN::GdnCoreSyncVariant::B28 ||
+           variant == GDN::GdnCoreSyncVariant::B29 ||
+           variant == GDN::GdnCoreSyncVariant::B30 ||
+           variant == GDN::GdnCoreSyncVariant::B31;
 }
 
 uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
@@ -317,6 +373,20 @@ uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
             return TILING_KEY_B23_V128;
         case GDN::GdnCoreSyncVariant::B24:
             return TILING_KEY_B24_V128;
+        case GDN::GdnCoreSyncVariant::B25:
+            return TILING_KEY_B25_V128;
+        case GDN::GdnCoreSyncVariant::B26:
+            return TILING_KEY_B26_V128;
+        case GDN::GdnCoreSyncVariant::B27:
+            return TILING_KEY_B27_V128;
+        case GDN::GdnCoreSyncVariant::B28:
+            return TILING_KEY_B28_V128;
+        case GDN::GdnCoreSyncVariant::B29:
+            return TILING_KEY_B29_V128;
+        case GDN::GdnCoreSyncVariant::B30:
+            return TILING_KEY_B30_V128;
+        case GDN::GdnCoreSyncVariant::B31:
+            return TILING_KEY_B31_V128;
     }
     return 0;
 }
@@ -490,7 +560,7 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     GDN::GdnCoreSyncVariant syncVariant = GDN::GdnCoreSyncVariant::B0;
     OP_CHECK_IF(!ResolveSyncVariant(syncVariant),
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18/B19/B20/B21/B22/B23/B24."),
+                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18/B19/B20/B21/B22/B23/B24/B25/B26/B27/B28/B29/B30/B31."),
                 return ge::GRAPH_FAILED);
     bool t1Diagnostic = false;
     OP_CHECK_IF(!ResolveT1Diagnostic(t1Diagnostic),
@@ -507,7 +577,7 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
         platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     OP_CHECK_IF(syncVariant != GDN::GdnCoreSyncVariant::B0 && !isAscend950,
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18/B19/B20/B21/B22/B23/B24 is supported only on Ascend950."),
+                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18/B19/B20/B21/B22/B23/B24/B25/B26/B27/B28/B29/B30/B31 is supported only on Ascend950."),
                 return ge::GRAPH_FAILED);
     // Extra experiment kernels are intentionally limited to the dominant model
     // domain. Other supported shapes retain full functionality through B0 and

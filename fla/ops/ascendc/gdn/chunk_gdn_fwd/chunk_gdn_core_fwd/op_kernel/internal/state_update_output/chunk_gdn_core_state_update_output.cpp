@@ -47,6 +47,7 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
     // The final boolean enables the H/O fused scheduling path; using the
     // standalone-H mode here changes synchronization and precision behavior.
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using SyncTraits = GdnCoreSyncVariantTraits<kSyncVariant>;
     constexpr bool kNarrowCube1ToPipeFix =
         kSyncVariant == GdnCoreSyncVariant::B1 ||
         kSyncVariant == GdnCoreSyncVariant::B4 ||
@@ -62,7 +63,14 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
         kSyncVariant == GdnCoreSyncVariant::B21 ||
         kSyncVariant == GdnCoreSyncVariant::B22 ||
         kSyncVariant == GdnCoreSyncVariant::B23 ||
-        kSyncVariant == GdnCoreSyncVariant::B24;
+        kSyncVariant == GdnCoreSyncVariant::B24 ||
+        kSyncVariant == GdnCoreSyncVariant::B25 ||
+        kSyncVariant == GdnCoreSyncVariant::B26 ||
+        kSyncVariant == GdnCoreSyncVariant::B27 ||
+        kSyncVariant == GdnCoreSyncVariant::B28 ||
+        kSyncVariant == GdnCoreSyncVariant::B29 ||
+        kSyncVariant == GdnCoreSyncVariant::B30 ||
+        kSyncVariant == GdnCoreSyncVariant::B31;
     constexpr bool kNarrowCube2ToPipeFix =
         kSyncVariant == GdnCoreSyncVariant::B2 ||
         kSyncVariant == GdnCoreSyncVariant::B4 ||
@@ -92,7 +100,14 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
         kSyncVariant == GdnCoreSyncVariant::B21 ||
         kSyncVariant == GdnCoreSyncVariant::B22 ||
         kSyncVariant == GdnCoreSyncVariant::B23 ||
-        kSyncVariant == GdnCoreSyncVariant::B24;
+        kSyncVariant == GdnCoreSyncVariant::B24 ||
+        kSyncVariant == GdnCoreSyncVariant::B25 ||
+        kSyncVariant == GdnCoreSyncVariant::B26 ||
+        kSyncVariant == GdnCoreSyncVariant::B27 ||
+        kSyncVariant == GdnCoreSyncVariant::B28 ||
+        kSyncVariant == GdnCoreSyncVariant::B29 ||
+        kSyncVariant == GdnCoreSyncVariant::B30 ||
+        kSyncVariant == GdnCoreSyncVariant::B31;
     constexpr bool kBypassHInitCollective =
         kSyncVariant == GdnCoreSyncVariant::B12 ||
         kSyncVariant == GdnCoreSyncVariant::B13;
@@ -108,7 +123,14 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
         kSyncVariant == GdnCoreSyncVariant::B21 ||
         kSyncVariant == GdnCoreSyncVariant::B22 ||
         kSyncVariant == GdnCoreSyncVariant::B23 ||
-        kSyncVariant == GdnCoreSyncVariant::B24;
+        kSyncVariant == GdnCoreSyncVariant::B24 ||
+        kSyncVariant == GdnCoreSyncVariant::B25 ||
+        kSyncVariant == GdnCoreSyncVariant::B26 ||
+        kSyncVariant == GdnCoreSyncVariant::B27 ||
+        kSyncVariant == GdnCoreSyncVariant::B28 ||
+        kSyncVariant == GdnCoreSyncVariant::B29 ||
+        kSyncVariant == GdnCoreSyncVariant::B30 ||
+        kSyncVariant == GdnCoreSyncVariant::B31;
     static_assert(!(kNarrowCube1ToPipeFix && kCube1EventOnly),
                   "C1 publish barrier cannot be both PIPE_FIX and event-only.");
     static_assert(!(kBypassHInitCollective &&
@@ -120,7 +142,9 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true,
         kNarrowCube1ToPipeFix, kNarrowCube2ToPipeFix, kCube1EventOnly,
         kUpdateBarrierToPipeMte3, kUpdateBarrierEventOnly,
-        kBypassHInitCollective, kEntryLocalPipeDrain, kEntryRolePipeDrain>;
+        kBypassHInitCollective, kEntryLocalPipeDrain, kEntryRolePipeDrain,
+        SyncTraits::kFwdHVarlenDenseC1FullTiles,
+        SyncTraits::kFwdHVarlenDenseC2FullTiles>;
 #else
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true>;
@@ -260,12 +284,21 @@ __aicore__ inline void CopyRecomputeTiling(const __gm__ RecomputeWUFwdTilingData
     dst.isVariable = src->isVariable;
 }
 
-template <typename InputT, typename GT>
+template <typename InputT, typename GT,
+          GdnCoreSyncVariant kSyncVariant = GdnCoreSyncVariant::B0>
 __aicore__ inline void RunFwdO(GM_ADDR q, GM_ADDR k, GM_ADDR vNew, GM_ADDR h, GM_ADDR g,
                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
                                GM_ADDR userWorkspace, const ChunkFwdOTilingData *tiling)
 {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using SyncTraits = GdnCoreSyncVariantTraits<kSyncVariant>;
+    using Kernel = Catlass::Gemm::Kernel::GDNFwdOKernel<
+        InputT, GT, float, true,
+        SyncTraits::kFwdOAggregateQkMaskBarrier,
+        SyncTraits::kFwdOAggregateOutputBarrier>;
+#else
     using Kernel = Catlass::Gemm::Kernel::GDNFwdOKernel<InputT, GT, float, true>;
+#endif
     Kernel kernel;
     kernel.Init(q, k, vNew, h, g, cuSeqlens, chunkIndices, o, tiling, userWorkspace);
     kernel.Process();
@@ -311,22 +344,25 @@ __aicore__ inline void DispatchRecompute(
     }
 }
 
+template <GdnCoreSyncVariant kSyncVariant = GdnCoreSyncVariant::B0>
 __aicore__ inline void DispatchFwdO(GM_ADDR q, GM_ADDR k, GM_ADDR vNew, GM_ADDR h, GM_ADDR g,
                                     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
                                     GM_ADDR userWorkspace, const ChunkFwdOTilingData *tiling)
 {
     if (tiling->dataType == 1) {
         if (tiling->gDataType == 2) {
-            RunFwdO<bfloat16_t, float>(q, k, vNew, h, g, cuSeqlens, chunkIndices, o,
-                                       userWorkspace, tiling);
+            RunFwdO<bfloat16_t, float, kSyncVariant>(
+                q, k, vNew, h, g, cuSeqlens, chunkIndices, o, userWorkspace, tiling);
         } else {
-            RunFwdO<bfloat16_t, bfloat16_t>(q, k, vNew, h, g, cuSeqlens, chunkIndices, o,
-                                            userWorkspace, tiling);
+            RunFwdO<bfloat16_t, bfloat16_t, kSyncVariant>(
+                q, k, vNew, h, g, cuSeqlens, chunkIndices, o, userWorkspace, tiling);
         }
     } else if (tiling->gDataType == 2) {
-        RunFwdO<half, float>(q, k, vNew, h, g, cuSeqlens, chunkIndices, o, userWorkspace, tiling);
+        RunFwdO<half, float, kSyncVariant>(
+            q, k, vNew, h, g, cuSeqlens, chunkIndices, o, userWorkspace, tiling);
     } else {
-        RunFwdO<half, half>(q, k, vNew, h, g, cuSeqlens, chunkIndices, o, userWorkspace, tiling);
+        RunFwdO<half, half, kSyncVariant>(
+            q, k, vNew, h, g, cuSeqlens, chunkIndices, o, userWorkspace, tiling);
     }
 }
 

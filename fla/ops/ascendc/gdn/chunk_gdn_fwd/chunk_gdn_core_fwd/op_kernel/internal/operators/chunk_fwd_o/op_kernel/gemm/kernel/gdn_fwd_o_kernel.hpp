@@ -86,7 +86,9 @@ template<
     typename INPUT_TYPE,
     typename G_TYPE,
     typename WORKSPACE_TYPE,
-    bool kChunkPipeline = false
+    bool kChunkPipeline = false,
+    bool kFwdOAggregateQkMaskBarrier = false,
+    bool kFwdOAggregateOutputBarrier = false
 >
 class GDNFwdOKernel {
 public:
@@ -668,9 +670,20 @@ public:
                         , &vecBlockScheduler.cube1Done[streamId]
 #endif
                     );
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                    if constexpr (!kFwdOAggregateQkMaskBarrier) {
+                        if (isVariedLen != 0) {
+                            Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+                        }
+                    }
+#else
                     if (isVariedLen != 0) {
                         Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
                     }
+#endif
+                    // In mode2 both AIV subblocks must publish, including a
+                    // zero-row tail subblock. FFTS aggregates the pair for the
+                    // AIC's single wait when the A5 experiment is enabled.
                     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec1Done[streamId]);
                 }
 
@@ -695,21 +708,27 @@ public:
                         vec2Offsets.chunkIdx
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                         , &vecBlockScheduler.cube3Done[streamId]
-                        , isVariedLen == 0 ? &vecBlockScheduler.vec2Done[streamId] : nullptr
+                        , (isVariedLen == 0 || kFwdOAggregateOutputBarrier)
+                              ? &vecBlockScheduler.vec2Done[streamId]
+                              : nullptr
 #endif
                     );
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                    if constexpr (!kFwdOAggregateOutputBarrier) {
+                        // Conservative varlen path: join the two AIV
+                        // generations, then publish after both MTE3 pipelines
+                        // are drained. Fixed-length paths already publish from
+                        // the epilogue after the final MTE2 read.
+                        if (isVariedLen != 0) {
+                            Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+                            Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(
+                                vecBlockScheduler.vec2Done[streamId]);
+                        }
+                    }
+#else
                     if (isVariedLen != 0) {
                         Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
                     }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                    // Varlen must join both AIV generations before publishing
-                    // the reusable workspace slot. Fixed-length paths publish
-                    // from the epilogue immediately after the final MTE2 read.
-                    if (isVariedLen != 0) {
-                        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(
-                            vecBlockScheduler.vec2Done[streamId]);
-                    }
-#else
                     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);
 #endif
                 }

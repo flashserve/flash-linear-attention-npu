@@ -195,19 +195,50 @@
   full/tail 和不对称 subblock 分工。output mask 不参与路由；其他域、非 A5
   与非法环境开关继续 fail-closed 或按既有层级回退。
 
+  第七轮以精度通过且性能最快的无 R 变体 B23 为共同基线，仅在
+  A5 单序列 varlen 主模型路径上拆分 FwdH 完整 tile 与 FwdO mode2
+  聚合机制：
+
+  | 变体/key | FwdH C1 full tile | FwdH C2 full tile | FwdO qkmask 发布 | FwdO output 发布 |
+  |---|---|---|---|---|
+  | B25/251 | dense generation | bounded | 保留 AIV barrier | 保留 AIV barrier |
+  | B26/261 | bounded | dense generation | 保留 AIV barrier | 保留 AIV barrier |
+  | B27/271 | dense generation | dense generation | 保留 AIV barrier | 保留 AIV barrier |
+  | B28/281 | bounded | bounded | 两 AIV 各以 `PIPE_MTE3` mode2 发布 | 保留 AIV barrier |
+  | B29/291 | bounded | bounded | 保留 AIV barrier | 两 AIV 在最后 MTE2 消费后 mode2 发布 |
+  | B30/301 | bounded | bounded | 同 B28 | 同 B29 |
+  | B31/311 | dense generation | dense generation | 同 B28 | 同 B29 |
+
+  FwdH dense 路径的优势域严格限于 `isVariedLen && tokenBatch==1 &&
+  chunkSize==64 && blockTokens==64`；C2 还要求当前任务真正执行 stage2。每个
+  full/full generation 共享一次 `preSetFlags/finalWaitFlags`；full→tail/no-op 先
+  drain 已打开的 generation，tail→full 则在 tail 保守回收后新建 generation。
+  T1、多序列 varlen、fixed、chunk!=64 和尾 tile 均保留旧路径。
+
+  FwdO 两个机制依赖 A5 mode2 对两个 AIV subblock 的 generation 聚合。
+  qkmask 路径的两个 AIV 不论是否分到有效行都必须发布；output 路径必须
+  在最后一次 GM→UB MTE2 读取发出后发布，零行 subblock 也必须 wait
+  producer 并发布。非 A5 与 trait=false 实例编译为原协议。编译期断言锁定
+  B25–B31 必须继承 B23 的 S+P+Q，且不得继承有精度风险的 R。
+
+  证伪门禁为：T65 真机覆盖 full↔tail/no-op 切换；T1/T65/main 覆盖
+  fresh process、full/masked、B16/B23 交替和严格 key 路由；任一 hang、
+  bit mismatch、generation 串线或路由不符均立即否定对应机制。B31 只在其
+  H/O 单项或局部组合均幸存时进入性能门禁。
+
   已被 A5 硬件精度结果否定的 Solve deferred-wait 不重试；MIX kernel 的
   `SyncAll` 保护跨阶段 GM/workspace 可见性与参与者会合；B0–B11 全部保留，
   B12–B15 每次只隔离上表中的一条边。也不编译丢弃配套事件的裸删方案。
-  B1–B24 的额外 key 仅在 A5、BF16 输入、
+  B1–B31 的额外 key 仅在 A5、BF16 输入、
   FP32 initial_state 的编译配置中生成，并仅为 V128、chunk64
   模型主路径选择；
   其他合法 dtype/state/V256 形态回退 B0。host 在非 Ascend950 上
   fail-closed；不扩展公共 ABI/trailer。
-- Validation：先冻结两轮 inference/full 均成功的 stable200；然后在同一
-  CANN 9.1 产物中检查 key 集、实际路由、多设备首次/重复精度与确定性；
-  只对通过的单项变体和 B4/B5 运行 stable200，最后用独占空闲卡做
-  单项变体与 B0、B4→B5、winner 与交付基线的对称 ABBA，
-  报告 median、p95 和峰值显存。
+- Validation：stable200 v9 已冻结；每轮变体只构建一个 combined wheel。
+  先在同一 CANN 9.1 产物中检查 key 集、实际路由、首次/重复精度、
+  mask 和确定性；只对正确性幸存者使用独占空闲卡做 B23/B16 屏测。
+  最终 winner 再对 B0 做 50 样本正式推理+训练 ABBA，报告 median、p95
+  和峰值显存，并回归 stable200 及模型 case。
 - Falsifiers：任一变体编译失败、路由不符、超时/hang、重复运行不确定、
   stable200 精度劣化，或独占卡 ABBA 无稳定收益，均否定对应候选机制。
 - Result：旧 B0–B3 代码已以收敛配置完成 CANN 9.1 构建、部署和 key
@@ -228,10 +259,12 @@
   精度、确定性和性能验证。B16–B18 已完成本地实现与静态门禁设计，新增 key
   仅在 A5/BF16/FP32 initial_state 编译域内出现；后续 T1 重复验证已否定 B17
   的 C2 收窄，B18 因继承同一机制不再作为下一轮基线；既有 B8 证据同时排除
-  C1 event-only 后代。第五轮收敛后的唯一 B19 已完成本地实现与静态门禁，使用严格
-  T65/2 chunks 诊断，仍待同一 A5 产物完成编译、真实 key、精度、确定性和
-  性能验证。B20–B24 已按上述 S/P/Q/R 矩阵提供本地源码与静态门禁，
-  它们仍是 `formal_identity=false` 的诊断候选，尚未获得 A5 编译、路由、
-  多进程精度或性能证据。
+  C1 event-only 后代。B19 因 2048 点间歇 final_state 差异否定。
+  B20–B23 已完成 A5 combined build、fresh20、mask、交替、严格路由和
+  独占 20 样本屏测；B23 相对 B16 median 改善 `0.351%`，作为新的
+  无 R 安全实验基线。B24 虽有约 `1.079%` 屏测改善，但继承 R 风险且
+  折算相对 B0 仍未达 `8%`，不进入产品。B25–B31 已通过本地真值表、
+  selector、key、非 A5 回退、FwdO 聚合和 qkmask 边界静态门禁，并通过
+  独立同步审查；尚待 Ascend950 combined build 与上述真机证伪门禁。
 - Invalidation：若目标 CANN 头文件、生成代码或 profiling 证明上述生产者/消费者
   链路不成立，需回到 B0 并重建依赖图，不继续放宽同步。

@@ -39,6 +39,13 @@ enum class GdnCoreSyncVariant : uint32_t {
     B22 = 22,
     B23 = 23,
     B24 = 24,
+    B25 = 25,
+    B26 = 26,
+    B27 = 27,
+    B28 = 28,
+    B29 = 29,
+    B30 = 30,
+    B31 = 31,
 };
 
 // Compile-time experiment axes for the coefficient-generation suffix.  Keep
@@ -51,27 +58,73 @@ struct GdnCoreSyncVariantTraits {
         kVariant == GdnCoreSyncVariant::B21 ||
         kVariant == GdnCoreSyncVariant::B22 ||
         kVariant == GdnCoreSyncVariant::B23 ||
-        kVariant == GdnCoreSyncVariant::B24;
+        kVariant == GdnCoreSyncVariant::B24 ||
+        kVariant == GdnCoreSyncVariant::B25 ||
+        kVariant == GdnCoreSyncVariant::B26 ||
+        kVariant == GdnCoreSyncVariant::B27 ||
+        kVariant == GdnCoreSyncVariant::B28 ||
+        kVariant == GdnCoreSyncVariant::B29 ||
+        kVariant == GdnCoreSyncVariant::B30 ||
+        kVariant == GdnCoreSyncVariant::B31;
     static constexpr bool kKktToSolveGroupHandoff =
         kVariant == GdnCoreSyncVariant::B22 ||
         kVariant == GdnCoreSyncVariant::B23 ||
-        kVariant == GdnCoreSyncVariant::B24;
+        kVariant == GdnCoreSyncVariant::B24 ||
+        kVariant == GdnCoreSyncVariant::B25 ||
+        kVariant == GdnCoreSyncVariant::B26 ||
+        kVariant == GdnCoreSyncVariant::B27 ||
+        kVariant == GdnCoreSyncVariant::B28 ||
+        kVariant == GdnCoreSyncVariant::B29 ||
+        kVariant == GdnCoreSyncVariant::B30 ||
+        kVariant == GdnCoreSyncVariant::B31;
     static constexpr bool kSolveToWuGroupHandoff =
         kVariant == GdnCoreSyncVariant::B21 ||
         kVariant == GdnCoreSyncVariant::B23 ||
-        kVariant == GdnCoreSyncVariant::B24;
+        kVariant == GdnCoreSyncVariant::B24 ||
+        kVariant == GdnCoreSyncVariant::B25 ||
+        kVariant == GdnCoreSyncVariant::B26 ||
+        kVariant == GdnCoreSyncVariant::B27 ||
+        kVariant == GdnCoreSyncVariant::B28 ||
+        kVariant == GdnCoreSyncVariant::B29 ||
+        kVariant == GdnCoreSyncVariant::B30 ||
+        kVariant == GdnCoreSyncVariant::B31;
     static constexpr bool kUseImmediateMte2Mte1 =
         kVariant == GdnCoreSyncVariant::B3 ||
         kVariant == GdnCoreSyncVariant::B5 ||
         kVariant == GdnCoreSyncVariant::B19 ||
         kVariant == GdnCoreSyncVariant::B24;
     static constexpr bool kDeferMte2Mte1Wait = false;
+    static constexpr bool kFwdHVarlenDenseC1FullTiles =
+        kVariant == GdnCoreSyncVariant::B25 ||
+        kVariant == GdnCoreSyncVariant::B27 ||
+        kVariant == GdnCoreSyncVariant::B31;
+    static constexpr bool kFwdHVarlenDenseC2FullTiles =
+        kVariant == GdnCoreSyncVariant::B26 ||
+        kVariant == GdnCoreSyncVariant::B27 ||
+        kVariant == GdnCoreSyncVariant::B31;
+    static constexpr bool kFwdOAggregateQkMaskBarrier =
+        kVariant == GdnCoreSyncVariant::B28 ||
+        kVariant == GdnCoreSyncVariant::B30 ||
+        kVariant == GdnCoreSyncVariant::B31;
+    static constexpr bool kFwdOAggregateOutputBarrier =
+        kVariant == GdnCoreSyncVariant::B29 ||
+        kVariant == GdnCoreSyncVariant::B30 ||
+        kVariant == GdnCoreSyncVariant::B31;
+    static constexpr bool kHasStateUpdateOutputExperiment =
+        kFwdHVarlenDenseC1FullTiles || kFwdHVarlenDenseC2FullTiles ||
+        kFwdOAggregateQkMaskBarrier || kFwdOAggregateOutputBarrier;
 
     static_assert(!(kKktToSolveGroupHandoff || kSolveToWuGroupHandoff) ||
                       kHeadMajorSolve64Ownership,
                   "A group-local coefficient hand-off requires head-major Solve64 ownership.");
     static_assert(!kDeferMte2Mte1Wait,
                   "The hardware-rejected deferred Solve64 wait must remain disabled.");
+    static_assert(!kHasStateUpdateOutputExperiment ||
+                      (kHeadMajorSolve64Ownership && kKktToSolveGroupHandoff &&
+                       kSolveToWuGroupHandoff),
+                  "H/O experiments must inherit the fully paired B23 coefficient protocol.");
+    static_assert(!kHasStateUpdateOutputExperiment || !kUseImmediateMte2Mte1,
+                  "H/O experiments must not inherit the precision-risky Solve64 R path.");
 };
 
 struct ChunkGdnCoreCoefficientTiling {

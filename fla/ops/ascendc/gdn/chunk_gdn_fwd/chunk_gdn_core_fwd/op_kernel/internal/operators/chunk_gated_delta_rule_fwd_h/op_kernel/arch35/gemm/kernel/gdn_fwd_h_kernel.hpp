@@ -95,7 +95,9 @@ template<
     bool kUpdateBarrierEventOnly = false,
     bool kBypassHInitCollective = false,
     bool kEntryLocalPipeDrain = false,
-    bool kEntryRolePipeDrain = false
+    bool kEntryRolePipeDrain = false,
+    bool kFwdHVarlenDenseC1FullTiles = false,
+    bool kFwdHVarlenDenseC2FullTiles = false
 >
 class GDNFwdHKernel {
 public:
@@ -564,6 +566,10 @@ public:
             BlockMmadWHTail blockMmadWHTail(resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
             BlockMmadKVTail blockMmadKVTail(resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
             bool useBoundedMmad = isVariedLen || (seqlen % chunkSize != 0);
+            const bool useSingleSeqVarlenDenseC1FullTiles =
+                kFwdHVarlenDenseC1FullTiles && isVariedLen && tokenBatch == 1 && chunkSize == 64;
+            const bool useSingleSeqVarlenDenseC2FullTiles =
+                kFwdHVarlenDenseC2FullTiles && isVariedLen && tokenBatch == 1 && chunkSize == 64;
 
             auto wLayout = tla::MakeLayout<ElementW, LayoutW>(shapeBatch * kNumHead * cubeBlockScheduler.totalTokens, kHeadDim);
             auto hLayout = tla::MakeLayout<ElementH, LayoutH>(shapeBatch * vNumHead * cubeBlockScheduler.totalChunks * kHeadDim, vHeadDim);
@@ -620,6 +626,7 @@ public:
                                 DIRECT_VEC_NUM, DIRECT_UB_STAGES);
                         }
                     } else if (useBoundedMmad) {
+                        bool denseFullGenerationOpen = false;
                         for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
                             uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
                             const auto& stream = cubeBlockScheduler.GetStream(i);
@@ -628,6 +635,15 @@ public:
                             }
 
                             const GDNFwdHOffsets& cube1Offsets = cubeBlockScheduler.GetCurTaskOffsets(stream);
+                            const bool useDenseFullTile =
+                                useSingleSeqVarlenDenseC1FullTiles &&
+                                cube1Offsets.blockTokens == chunkSize;
+                            if (denseFullGenerationOpen && !useDenseFullTile) {
+                                // Consume every event from the shared dense generation before
+                                // the bounded tail re-seeds the same physical event IDs.
+                                blockMmadWH.finalWaitFlags();
+                                denseFullGenerationOpen = false;
+                            }
                             Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[streamId]);
                             auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(
                                 cube1Offsets.blockTokens, cube1Offsets.vBlockDim);
@@ -650,7 +666,14 @@ public:
                                 tensorV, tla::MakeCoord(0, 0),
                                 tla::MakeShape(cube1Shape.m(), cube1Shape.n()));
 
-                            if (cube1Offsets.blockTokens < chunkSize) {
+                            if (useDenseFullTile) {
+                                if (!denseFullGenerationOpen) {
+                                    blockMmadWH.preSetFlags();
+                                    denseFullGenerationOpen = true;
+                                }
+                                blockMmadWH(
+                                    tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape);
+                            } else if (cube1Offsets.blockTokens < chunkSize) {
                                 blockMmadWHTail.preSetFlags();
                                 blockMmadWHTail(
                                     tensorBlockW, tensorBlockH, tensorBlockV,
@@ -662,17 +685,24 @@ public:
                                     tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape);
                                 blockMmadWH.finalWaitFlags();
                             }
-                            // Publish only after the bounded MMAD FIX path is visible.
-                            // B0 retains the conservative all-pipe drain as the control.
-                            if constexpr (!kCube1EventOnly) {
-                                if constexpr (kNarrowCube1ToPipeFix) {
-                                    AscendC::PipeBarrier<PIPE_FIX>();
-                                } else {
-                                    AscendC::PipeBarrier<PIPE_ALL>();
+
+                            if (!useDenseFullTile) {
+                                // Publish only after the bounded MMAD FIX path is visible.
+                                // Full 64-row varlen tiles deliberately reuse the proven
+                                // non-bounded PIPE_FIX publication protocol instead.
+                                if constexpr (!kCube1EventOnly) {
+                                    if constexpr (kNarrowCube1ToPipeFix) {
+                                        AscendC::PipeBarrier<PIPE_FIX>();
+                                    } else {
+                                        AscendC::PipeBarrier<PIPE_ALL>();
+                                    }
                                 }
                             }
                             Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
                                 cubeBlockScheduler.cube1Done[streamId]);
+                        }
+                        if (denseFullGenerationOpen) {
+                            blockMmadWH.finalWaitFlags();
                         }
                     } else {
                         blockMmadWH.preSetFlags();
@@ -755,6 +785,7 @@ public:
                             }
                         }
                     } else if (useBoundedMmad) {
+                        bool denseFullGenerationOpen = false;
                         for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
                             uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
                             const auto& stream = cubeBlockScheduler.GetStream(i);
@@ -763,9 +794,20 @@ public:
                             }
                             const GDNFwdHOffsets& cube2Offsets =
                                 cubeBlockScheduler.GetCurTaskOffsets(stream);
+                            const bool needProcessStage2 =
+                                cubeBlockScheduler.NeedProcessStage2(stream);
+                            const bool useDenseFullTile =
+                                useSingleSeqVarlenDenseC2FullTiles && needProcessStage2 &&
+                                cube2Offsets.blockTokens == chunkSize;
+                            if (denseFullGenerationOpen && !useDenseFullTile) {
+                                // A tail/no-op slot must not inherit outstanding events from
+                                // the preceding full-tile generation.
+                                blockMmadKV.finalWaitFlags();
+                                denseFullGenerationOpen = false;
+                            }
                             Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done[streamId]);
 
-                            if (cubeBlockScheduler.NeedProcessStage2(stream)) {
+                            if (needProcessStage2) {
                                 int64_t cube2OffsetK = kGated
                                     ? cube2Offsets.kDecayWorkOffset
                                     : cube2Offsets.wkOffset;
@@ -796,7 +838,15 @@ public:
                                     tensorHwork, tla::MakeCoord(0, 0),
                                     tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
 
-                                if (cube2Offsets.blockTokens < chunkSize) {
+                                if (useDenseFullTile) {
+                                    if (!denseFullGenerationOpen) {
+                                        blockMmadKV.preSetFlags();
+                                        denseFullGenerationOpen = true;
+                                    }
+                                    blockMmadKV(
+                                        tensorBlockK, tensorBlockVwork, tensorBlockHwork,
+                                        cube2Shape);
+                                } else if (cube2Offsets.blockTokens < chunkSize) {
                                     blockMmadKVTail.preSetFlags();
                                     blockMmadKVTail(
                                         tensorBlockK, tensorBlockVwork, tensorBlockHwork,
@@ -809,15 +859,22 @@ public:
                                         cube2Shape);
                                     blockMmadKV.finalWaitFlags();
                                 }
-                                // Keep the second producer edge independently selectable.
-                                if constexpr (kNarrowCube2ToPipeFix) {
-                                    AscendC::PipeBarrier<PIPE_FIX>();
-                                } else {
-                                    AscendC::PipeBarrier<PIPE_ALL>();
+
+                                if (!useDenseFullTile) {
+                                    // Keep the conservative bounded publication independently
+                                    // selectable; dense full tiles use the existing PIPE_FIX edge.
+                                    if constexpr (kNarrowCube2ToPipeFix) {
+                                        AscendC::PipeBarrier<PIPE_FIX>();
+                                    } else {
+                                        AscendC::PipeBarrier<PIPE_ALL>();
+                                    }
                                 }
                             }
                             Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
                                 cubeBlockScheduler.cube2Done[streamId]);
+                        }
+                        if (denseFullGenerationOpen) {
+                            blockMmadKV.finalWaitFlags();
                         }
                     } else {
                         blockMmadKV.preSetFlags();

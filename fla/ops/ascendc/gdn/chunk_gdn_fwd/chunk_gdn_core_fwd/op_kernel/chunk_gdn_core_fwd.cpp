@@ -395,8 +395,8 @@ __aicore__ inline void RunPhase6(
         reinterpret_cast<const __gm__ ChunkFwdOTilingData *>(tiling + oTilingOffset);
     ChunkFwdOTilingData oTiling{};
     CopyOTiling(gmOTiling, oTiling);
-    DispatchFwdO(q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
-                 userWorkspace, &oTiling);
+    DispatchFwdO<kSyncVariant>(q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
+                               userWorkspace, &oTiling);
     if ((outputMask & GDN_CORE_OUTPUT_G_CUMSUM) != 0 && coefficient.isVarlen != 0) {
         // Public BTH cumsum is not consumed by H/O. Publish it after the
         // dependent suffix so its single-owner write cannot perturb H/O.
@@ -589,6 +589,48 @@ extern "C" __global__ __aicore__ void chunk_gdn_core_fwd(
         KERNEL_TASK_TYPE(241, KERNEL_TYPE_MIX_AIC_1_2);
         GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
                                    GDN::GdnCoreSyncVariant::B24>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(251)) {
+        KERNEL_TASK_TYPE(251, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B25>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(261)) {
+        KERNEL_TASK_TYPE(261, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B26>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(271)) {
+        KERNEL_TASK_TYPE(271, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B27>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(281)) {
+        KERNEL_TASK_TYPE(281, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B28>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(291)) {
+        KERNEL_TASK_TYPE(291, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B29>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(301)) {
+        KERNEL_TASK_TYPE(301, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B30>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(311)) {
+        KERNEL_TASK_TYPE(311, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                                   GDN::GdnCoreSyncVariant::B31>(
             q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
             o, final_state, g_cumsum_bth, A, workspace, tiling);
 #endif
