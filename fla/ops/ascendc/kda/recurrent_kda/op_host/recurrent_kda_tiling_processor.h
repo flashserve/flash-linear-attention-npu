@@ -49,7 +49,6 @@ static constexpr uint32_t RKDA_LAYOUT_TND = 1;
 static constexpr size_t RKDA_MAX_MTP = 8;
 static constexpr int64_t RKDA_INPUT_BUFFER_NUM = 2;
 static constexpr int64_t RKDA_UB_GUARD_BYTES = 2048;
-static constexpr int64_t RKDA_FUSED_REDUCE_K = 128;
 static constexpr size_t RKDA_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
 
 struct RecurrentKdaTilingContext {
@@ -669,11 +668,7 @@ private:
 
     int64_t CalcComputeUbCoeff(int64_t aDk) const
     {
-        int64_t coeff = 4 * aDk + 8; // state and row outputs.
-        if (aDk != RKDA_FUSED_REDUCE_K) {
-            coeff += 4 * aDk; // broadTmp for the generic matvec path.
-        }
-        return coeff;
+        return 8 * aDk + 8; // state, independent broadTmp, and row outputs.
     }
 
     int64_t CalcVStepCoeff(int64_t aDk, uint32_t stateOutBufferNum, uint32_t attnOutBufferNum) const
