@@ -19,6 +19,7 @@ add_ops_compile_options(
             -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/internal/arch22/operators/chunk_kkt_solve_tri/op_kernel
             -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/internal/arch22/operators/chunk_scaled_dot_kkt/op_kernel
             -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/internal/arch22/operators/solve_tri/op_kernel
+            -I${CMAKE_CURRENT_SOURCE_DIR}/../../solve_tri/op_kernel
             -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/internal/arch22/operators/chunk_gated_delta_rule_fwd_h/op_kernel
             -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/internal/arch22/operators/chunk_fwd_o/op_kernel
             -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/internal/arch22/operators/recompute_w_u_fwd/op_kernel

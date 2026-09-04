@@ -478,7 +478,9 @@ public:
             AscendC::DataCopy(
                 gmHWorkspace[offsets.hWorkOffset + kRow * offsets.vBlockDim],
                 accumUb, offsets.vBlockDim);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID7);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID7);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID7);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID7);
         }
     }
@@ -599,7 +601,7 @@ public:
                             blockMmadWHTail.preSetFlags();
                             blockMmadWHTail(
                                 tensorBlockW, tensorBlockH, tensorBlockV,
-                                cube1Shape, EmptyClass{}, true);
+                                cube1Shape);
                             blockMmadWHTail.finalWaitFlags();
                         } else {
                             blockMmadWH.preSetFlags();
@@ -644,7 +646,7 @@ public:
                                 blockMmadKVTail.preSetFlags();
                                 blockMmadKVTail(
                                     tensorBlockK, tensorBlockVwork, tensorBlockHwork,
-                                    cube2Shape, EmptyClass{}, true);
+                                    cube2Shape);
                                 blockMmadKVTail.finalWaitFlags();
                             } else {
                                 blockMmadKV.preSetFlags();

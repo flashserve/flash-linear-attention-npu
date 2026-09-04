@@ -10,6 +10,7 @@
 
 #define GDN_CHUNK_CUMSUM_KKT_SOLVE_IMPL_ONLY
 #include "operators/chunk_kkt_solve_tri/op_kernel/chunk_cumsum_kkt_solve_tri.cpp"
+#include "operators/chunk_kkt_solve_tri/op_kernel/solve_layout_staging.h"
 #undef GDN_CHUNK_CUMSUM_KKT_SOLVE_IMPL_ONLY
 
 namespace GDN {
@@ -226,6 +227,8 @@ __aicore__ inline void RunPhase6(
     GM_ADDR scoreWorkspace = userWorkspace + phase6->scoreWorkspaceOffset;
     GM_ADDR aWorkspace = userWorkspace + phase6->aWorkspaceOffset;
     GM_ADDR solveWorkspaceBase = userWorkspace + phase6->solveWorkspaceOffset;
+    GM_ADDR tndInput = scoreWorkspace;
+    GM_ADDR tndOutput = scoreWorkspace + abc.aWorkspaceBytes;
     GM_ADDR gCumsumBht = userWorkspace + phase6->gCumsumBhtOffset;
     uint64_t coreGroup = static_cast<uint64_t>(AscendC::GetBlockIdx());
     if ASCEND_IS_AIV {
@@ -252,9 +255,30 @@ __aicore__ inline void RunPhase6(
         kktPipe.Reset();
     }
 
-    if (abc.BT == 64) {
+    if (abc.BT == 64 && abc.isVarlen != 0) {
+        // Match the public BT64 SolveTri path exactly: physical TND layout,
+        // chunk-to-head task order, and the native FP32 implementation.
+        AscendC::SyncAll<false>();
+        NsPhase6SolveLayoutStaging::TransposeBhtTnd<InputT>(
+            aWorkspace, tndInput, &abc, true);
+        AscendC::SyncAll<false>();
+
+        Arch22ChunkGatedDeltaRuleFwdAbcTiling solveTiling = abc;
+        solveTiling.layoutMode = 2;
+        RunSolvePhase<InputT, 64>(tndInput, cuSeqlens, chunkIndices,
+                                  tndOutput, solveWorkspaceBase, &solveTiling);
+
+        AscendC::SyncAll<false>();
+        NsPhase6SolveLayoutStaging::TransposeBhtTnd<InputT>(
+            tndOutput, A, &abc, false);
+        AscendC::SyncAll<false>();
+    } else if (abc.BT == 64) {
+        // The public SolveTri runs after a kernel boundary.  Recreate that
+        // visibility point before its FP32 AIC/AIV protocol consumes the
+        // fused KKT epilogue written by all participating vector cores.
+        AscendC::SyncAll<false>();
         RunSolvePhase<InputT, 64>(aWorkspace, cuSeqlens, chunkIndices, A,
-                                  solveWorkspace, &abc);
+                                  solveWorkspaceBase, &abc);
     } else {
         RunSolvePhase<InputT, 128>(aWorkspace, cuSeqlens, chunkIndices, A,
                                    solveWorkspace, &abc);
