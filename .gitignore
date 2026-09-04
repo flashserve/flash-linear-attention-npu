@@ -62,6 +62,7 @@ fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/OPPROF_*
 fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/extra-info
 PROF_*
 OPPROF_*
+msprof_*/
 extra-info
 
 # test artifacts

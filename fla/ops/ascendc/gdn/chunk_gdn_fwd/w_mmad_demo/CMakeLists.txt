@@ -1,0 +1,9 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# -----------------------------------------------------------------------------------------------------------
+file(GLOB SUB_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/*)
+foreach(SUB_DIR ${SUB_DIRS})
+    if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/${SUB_DIR} AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${SUB_DIR}/CMakeLists.txt)
+        add_subdirectory(${SUB_DIR})
+    endif()
+endforeach()

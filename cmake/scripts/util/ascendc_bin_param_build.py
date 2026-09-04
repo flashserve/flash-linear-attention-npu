@@ -264,7 +264,10 @@ class BinParamBuilder(opdesc_parser.OpDesc):
                 para['shape'] = [-2]
                 para['format_match_mode'] = 'FormatAgnostic'
 
-                input_parameter_key = (idtypes[i], ifmts[i])
+                # Include optional inputs in the uniqueness key. opc -DDTYPE_* macros
+                # come from every input (e.g. DTYPE_A_LOG), so optional dtype variants
+                # must compile to separate binaries.
+                input_parameter_key = (idx, itype, idtypes[i], ifmts[i])
                 if itype == 'dynamic':
                     inputs.append([para])
                     required_parameter.append(input_parameter_key)
@@ -273,6 +276,7 @@ class BinParamBuilder(opdesc_parser.OpDesc):
                     required_parameter.append(input_parameter_key)
                 else:
                     inputs.append(para)
+                    required_parameter.append(input_parameter_key)
 
             for idx in range(0, len(self.output_name)):
                 odtypes = self.output_dtype[idx].split(',')

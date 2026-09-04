@@ -1,0 +1,1214 @@
+[
+ {
+  "id": 0,
+  "default_seed": 20260817,
+  "name": "chunk_gdn_fwd_prepare_0000_gva_B2_T256_bf16",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gdn_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"gva_B2_T256_bf16\",\"B\":2,\"HK\":16,\"HV\":32,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gdn_fwd_prepare\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 2,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 16,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 32,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 0,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260817,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 1,
+  "default_seed": 20260818,
+  "name": "chunk_gdn_fwd_prepare_0001_gva_B2_T256_fp16",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gdn_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"gva_B2_T256_fp16\",\"B\":2,\"HK\":16,\"HV\":32,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gdn_fwd_prepare\",\"case_id\":1,\"seed\":20260818,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 2,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 16,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 32,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260818,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 18,
+  "default_seed": 20260835,
+  "name": "chunk_gdn_fwd_prepare_0018_r1_T256_V128_bf16",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gdn_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"r1_T256_V128_bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gdn_fwd_prepare\",\"case_id\":18,\"seed\":20260835,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 18,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260835,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 19,
+  "default_seed": 20260836,
+  "name": "chunk_gdn_fwd_prepare_0019_r1_T256_V128_fp16",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gdn_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"r1_T256_V128_fp16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gdn_fwd_prepare\",\"case_id\":19,\"seed\":20260836,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 19,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260836,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 26,
+  "default_seed": 20260843,
+  "name": "chunk_gdn_fwd_prepare_0026_r2_T256_V128_bf16",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gdn_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"r2_T256_V128_bf16\",\"B\":1,\"HK\":4,\"HV\":8,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gdn_fwd_prepare\",\"case_id\":26,\"seed\":20260843,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 8,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 26,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260843,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 27,
+  "default_seed": 20260844,
+  "name": "chunk_gdn_fwd_prepare_0027_r2_T256_V128_fp16",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gdn_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"r2_T256_V128_fp16\",\"B\":1,\"HK\":4,\"HV\":8,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gdn_fwd_prepare\",\"case_id\":27,\"seed\":20260844,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 8,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 27,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260844,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ }
+]
