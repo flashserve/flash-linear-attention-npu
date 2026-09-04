@@ -170,6 +170,7 @@ public:
         pipe_->InitBuffer(stateOutQueue_, stateOutBufferNum_, alignK_ * vStep_ * sizeof(stateType));
         if (!stateVFirst_) {
             pipe_->InitBuffer(stateTransposeBuf_, alignK_ * vStep_ * sizeof(stateType));
+            pipe_->InitBuffer(stateOutTransposeQueue_, BUFFER_NUM, alignK_ * vStep_ * sizeof(stateType));
         }
         pipe_->InitBuffer(attnOutQueue_, attnOutBufferNum_, vStep_ * sizeof(outType));
         pipe_->InitBuffer(tmpBuff, restUbSize_);
@@ -833,7 +834,8 @@ private:
             uint32_t stateOffset = row * alignK_;
             MatVecMul(stateInUb[stateOffset], kInUb[curQKOffset], broadTmpInUb, rows, false);
             AscendC::PipeBarrier<PIPE_V>();
-            ReduceSumDispatch(deltaInUb[row], broadTmpInUb, rows);
+            LocalTensor<float> deltaRow = deltaInUb[row];
+            ReduceSumDispatch(deltaRow, broadTmpInUb, rows);
             AscendC::PipeBarrier<PIPE_V>();
         }
         deltaInUb = vInUb[curVOffset] - deltaInUb;
@@ -847,7 +849,8 @@ private:
             uint32_t deltaShape[2] = {rows, 1};
             Broadcast<float, 2, 1>(broadTmpInUb, deltaInUb[row], stateShape, deltaShape);
             AscendC::PipeBarrier<PIPE_V>();
-            MatVecMul(broadTmpInUb, kInUb[curQKOffset], stateInUb[stateOffset], rows, true);
+            LocalTensor<float> stateRow = stateInUb[stateOffset];
+            MatVecMul(broadTmpInUb, kInUb[curQKOffset], stateRow, rows, true);
             AscendC::PipeBarrier<PIPE_V>();
         }
         for (uint32_t row = 0; row < curSingleV; row += scratchRows) {
@@ -855,7 +858,8 @@ private:
             uint32_t stateOffset = row * alignK_;
             MatVecMul(stateInUb[stateOffset], qInUb[curQKOffset], broadTmpInUb, rows, false);
             AscendC::PipeBarrier<PIPE_V>();
-            ReduceSumDispatch(attnInUb[row], broadTmpInUb, rows);
+            LocalTensor<float> attnRow = attnInUb[row];
+            ReduceSumDispatch(attnRow, broadTmpInUb, rows);
             AscendC::PipeBarrier<PIPE_V>();
         }
         LocalTensor<outType> attnOutLocal = attnOutQueue_.AllocTensor<outType>();
@@ -895,9 +899,10 @@ private:
                                           static_cast<uint16_t>(realK_ * sizeof(stateType)), 0, 0};
             DataCopyPad(finalStateGm_[stateOffset], stateOutLocal, stateOutParams);
         } else {
-            LocalTensor<stateType> stateTransposeLocal = stateTransposeBuf_.Get<stateType>();
+            LocalTensor<stateType> stateTransposeLocal = stateOutTransposeQueue_.AllocTensor<stateType>();
             TransposeVFirstToKFirst(stateTransposeLocal, stateOutLocal, curSingleV);
-            SyncVToMte3();
+            stateOutTransposeQueue_.EnQue<stateType>(stateTransposeLocal);
+            LocalTensor<stateType> stateCopyLocal = stateOutTransposeQueue_.DeQue<stateType>();
             uint64_t stateOffset = stateOutStride0_ * stateSlot + stateOutStride1_ * head +
                                    stateOutStride3_ * vOffset;
             uint32_t srcStride = static_cast<uint32_t>(
@@ -907,8 +912,8 @@ private:
             DataCopyExtParams stateOutParams{static_cast<uint16_t>(realK_),
                                              static_cast<uint32_t>(curSingleV * sizeof(stateType)),
                                              srcStride, dstStride, 0};
-            DataCopyPad(finalStateGm_[stateOffset], stateTransposeLocal, stateOutParams);
-            SyncMte3ToV();
+            DataCopyPad(finalStateGm_[stateOffset], stateCopyLocal, stateOutParams);
+            stateOutTransposeQueue_.FreeTensor(stateCopyLocal);
         }
         stateOutQueue_.FreeTensor(stateOutLocal);
     }
@@ -1096,6 +1101,7 @@ private:
     TQue<QuePosition::VECIN, INPUT_BUFFER_NUM> stateInQueue_;
     TQue<QuePosition::VECOUT, MAX_OUT_BUFFER_NUM> attnOutQueue_;
     TQue<QuePosition::VECOUT, MAX_OUT_BUFFER_NUM> stateOutQueue_;
+    TQue<QuePosition::VECOUT, 1> stateOutTransposeQueue_;
     TBuf<TPosition::VECCALC> tmpBuff;
     TBuf<TPosition::VECCALC> stateTransposeBuf_;
     TBuf<TPosition::VECCALC> scalarBuf_;
