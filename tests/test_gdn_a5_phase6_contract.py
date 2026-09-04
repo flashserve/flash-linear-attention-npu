@@ -82,18 +82,27 @@ def test_solved_a_joins_fix_and_both_aiv_mte3_writes_before_recompute():
         "(PHASE6_SOLVE_AIV_DONE_FLAG);"
     )
     wait_aivs = "AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_AIV_DONE_FLAG);"
+    publish_all_aics = (
+        "AscendC::CrossCoreSetFlag<0x0, PIPE_FIX>"
+        "(PHASE6_SOLVE_AIC_ALL_DONE_FLAG);"
+    )
+    wait_all_aics = "AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_AIC_ALL_DONE_FLAG);"
     publish = "AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);"
     assert join_aivs in handoff
     assert publish_aivs in handoff
     assert set_fix_mte2 in handoff
     assert wait_fix_mte2 in handoff
     assert wait_aivs in handoff
+    assert publish_all_aics in handoff
+    assert wait_all_aics in handoff
     assert publish in handoff
     assert handoff.index(join_aivs) < handoff.index(publish_aivs)
     assert (
         handoff.index(set_fix_mte2)
         < handoff.index(wait_fix_mte2)
         < handoff.index(wait_aivs)
+        < handoff.index(publish_all_aics)
+        < handoff.index(wait_all_aics)
         < handoff.index(publish)
     )
     assert "AscendC::SyncAll<false>();" not in handoff

@@ -22,6 +22,7 @@ constexpr uint32_t UB_ALIGNMENT = 32;
 constexpr uint32_t PHASE6_TILING_ALIGNMENT = 8;
 constexpr uint64_t PHASE6_SOLVE_AIV_DONE_FLAG = 4;
 constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 5;
+constexpr uint64_t PHASE6_SOLVE_AIC_ALL_DONE_FLAG = 6;
 constexpr int64_t PHASE6_CUMSUM_FAST_BUFFER_LIMIT = 160 * 1024;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 constexpr AscendC::SyncAllConfig PHASE6_HO_SYNC_CONFIG = {PIPE_MTE3, PIPE_MTE2};
@@ -315,6 +316,12 @@ __aicore__ inline void RunPhase6(
         AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(PHASE6_SOLVE_FIX_TO_MTE2_EVENT);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(PHASE6_SOLVE_FIX_TO_MTE2_EVENT);
         AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_AIV_DONE_FLAG);
+        // Recompute preserves contiguous producer ownership, but FIX writes
+        // still require the all-AIC completion/visibility step performed by
+        // SyncAll.  Use a phase-private generation so it cannot overlap the
+        // earlier SyncAll that publishes cumsum and score workspaces.
+        AscendC::CrossCoreSetFlag<0x0, PIPE_FIX>(PHASE6_SOLVE_AIC_ALL_DONE_FLAG);
+        AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_AIC_ALL_DONE_FLAG);
         AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);
     }
     if ASCEND_IS_AIV {
