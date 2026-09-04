@@ -62,6 +62,15 @@ def test_a5_kkt_epilogue_joins_both_aiv_subblocks_before_solve():
     assert handoff.index(join) < handoff.index(publish)
 
 
+def test_solved_a_is_published_globally_before_recompute_reads_it():
+    source = PHASE6.read_text(encoding="utf-8")
+    handoff = source.split(
+        "AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);", maxsplit=1
+    )[1].split("DispatchRecompute", maxsplit=1)[0]
+
+    assert "AscendC::SyncAll<false>();" in handoff
+
+
 def test_embedded_fwdo_joins_aiv_subblocks_before_shared_publications():
     source = EMBEDDED_FWD_O.read_text(encoding="utf-8")
     join = "Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();"

@@ -310,10 +310,12 @@ __aicore__ inline void RunPhase6(
     if ASCEND_IS_AIV {
         AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);
     }
+    // SolveTri writes A through FIX, while recompute immediately reloads A
+    // through MTE2 on the same AIC.  Close the phase globally so the solved A
+    // is visible before either recompute operand starts its next pipeline.
+    AscendC::SyncAll<false>();
     GM_ADDR w = userWorkspace + stateOutputTiling->wIntermediateOffset;
-    // Diagnostic build: expose recompute U through the public O buffer.  The
-    // target case has the same [B, Hv, T, V] physical layout for both tensors.
-    GM_ADDR u = o;
+    GM_ADDR u = userWorkspace + stateOutputTiling->uIntermediateOffset;
     GM_ADDR h = userWorkspace + stateOutputTiling->hIntermediateOffset;
     GM_ADDR vNew = userWorkspace + stateOutputTiling->vNewIntermediateOffset;
     RecomputeWUFwdTilingData recomputeTiling{};
@@ -329,12 +331,6 @@ __aicore__ inline void RunPhase6(
     }
 
     WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, coefficient);
-
-    // Diagnostic build: close the same all-core boundary that normally starts
-    // FwdH, then stop before FwdH can consume the captured U tensor.
-    AscendC::SyncAll<false>();
-    return;
-
     DispatchFwdH<TileShapes>(k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
                              chunkIndices, h, vNew, finalState, tiling, userWorkspace);
 
