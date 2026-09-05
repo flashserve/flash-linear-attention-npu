@@ -254,7 +254,7 @@ public:
                           head_idx * chunk_size;
         } else {
             if constexpr (kHeadMajorVarlenOwnership) {
-                // B20-B31 are host-gated to B=1.  Reorder ownership only;
+                // The promoted B30 path is host-gated to B=1. Reorder ownership only;
                 // ComputeTile still derives the same physical BHT offsets.
                 chunk_idx = loop_idx % total_chunks;
                 head_idx = loop_idx / total_chunks;

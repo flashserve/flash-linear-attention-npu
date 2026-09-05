@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import unittest
 from pathlib import Path
@@ -56,9 +57,17 @@ def source(path: Path) -> str:
 
 
 class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
-    def test_fwd_h_variants_narrow_two_bounded_mmad_barriers_independently(self):
+    def test_fwd_h_keeps_the_frozen_pre_b25_kernel_body(self):
         text = source(FWD_H_ARCH35)
 
+        # B25-B31 originally changed the bounded-mmad loop body even when the
+        # new traits were false.  That perturbed the B0/V256 code generation
+        # and caused a reproducible final-state regression.  Freeze the known
+        # good pre-B25 body while keeping the earlier synchronization axes.
+        self.assertEqual(
+            hashlib.sha256(text.encode()).hexdigest(),
+            "b6492c6e6bdff463dfe926628308f130cbc56bc55b15ae026ff4d0128fcc59e7",
+        )
         self.assertIn("bool kNarrowCube1ToPipeFix = false", text)
         self.assertIn("bool kNarrowCube2ToPipeFix = false", text)
         self.assertIn("bool kCube1EventOnly = false", text)
@@ -68,8 +77,9 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         self.assertIn("bool kBypassHInitCollective = false", text)
         self.assertIn("bool kEntryLocalPipeDrain = false", text)
         self.assertIn("bool kEntryRolePipeDrain = false", text)
-        self.assertIn("bool kFwdHVarlenDenseC1FullTiles = false", text)
-        self.assertIn("bool kFwdHVarlenDenseC2FullTiles = false", text)
+        self.assertNotIn("kFwdHVarlenDense", text)
+        self.assertNotIn("useDenseFullTile", text)
+        self.assertNotIn("denseFullGenerationOpen", text)
         self.assertEqual(text.count("if constexpr (kNarrowCube1ToPipeFix)"), 1)
         self.assertEqual(text.count("if constexpr (kNarrowCube2ToPipeFix)"), 1)
         self.assertEqual(text.count("if constexpr (!kCube1EventOnly)"), 1)
@@ -78,64 +88,6 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         self.assertEqual(text.count("AscendC::PipeBarrier<PIPE_MTE3>();"), 1)
         self.assertEqual(text.count("AscendC::SyncAll<false>();"), 3)
         self.assertEqual(text.count("AscendC::PipeBarrier<PIPE_V>();"), 10)
-
-        bounded_protocols = (
-            (
-                "blockMmadWH.finalWaitFlags();",
-                "blockMmadWHTail.finalWaitFlags();",
-                "if constexpr (!kCube1EventOnly)",
-                "if constexpr (kNarrowCube1ToPipeFix)",
-                "cubeBlockScheduler.cube1Done[streamId]",
-            ),
-            (
-                "blockMmadKV.finalWaitFlags();",
-                "blockMmadKVTail.finalWaitFlags();",
-                None,
-                "if constexpr (kNarrowCube2ToPipeFix)",
-                "cubeBlockScheduler.cube2Done[streamId]",
-            ),
-        )
-        search_pos = 0
-        for final_wait, tail_wait, event_guard, barrier_guard, done_flag in bounded_protocols:
-            dense_branch_pos = text.index("if (useDenseFullTile)", search_pos)
-            dense_guard_pos = text.index("if (!useDenseFullTile)", dense_branch_pos)
-            publish_pos = text.index(done_flag, dense_guard_pos)
-            protocol = text[dense_branch_pos:publish_pos]
-            self.assertIn(final_wait, protocol)
-            self.assertIn(tail_wait, protocol)
-            if event_guard is not None:
-                self.assertIn(event_guard, protocol)
-            self.assertIn(barrier_guard, protocol)
-            self.assertIn("AscendC::PipeBarrier<PIPE_FIX>();", protocol)
-            self.assertIn("AscendC::PipeBarrier<PIPE_ALL>();", protocol)
-            search_pos = publish_pos
-
-        self.assertIn(
-            "kFwdHVarlenDenseC1FullTiles && isVariedLen && "
-            "tokenBatch == 1 && chunkSize == 64",
-            text,
-        )
-        self.assertIn(
-            "kFwdHVarlenDenseC2FullTiles && isVariedLen && "
-            "tokenBatch == 1 && chunkSize == 64",
-            text,
-        )
-        self.assertEqual(text.count("bool denseFullGenerationOpen = false;"), 2)
-        self.assertEqual(
-            text.count("if (denseFullGenerationOpen && !useDenseFullTile)"), 2
-        )
-        self.assertEqual(text.count("if (!denseFullGenerationOpen)"), 2)
-        self.assertEqual(text.count("if (denseFullGenerationOpen)"), 2)
-        self.assertIn(
-            "useSingleSeqVarlenDenseC1FullTiles &&\n"
-            "                                cube1Offsets.blockTokens == chunkSize",
-            text,
-        )
-        self.assertIn(
-            "useSingleSeqVarlenDenseC2FullTiles && needProcessStage2 &&\n"
-            "                                cube2Offsets.blockTokens == chunkSize",
-            text,
-        )
 
     def test_fwd_h_entry_drain_and_init_bypass_are_mutually_exclusive(self):
         text = source(FWD_H_ARCH35)
@@ -243,104 +195,43 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         non_a5_alias = wrapper[non_a5_start:non_a5_end]
         self.assertNotIn("kFwdOAggregate", non_a5_alias)
 
-    def test_fwd_h_wrapper_maps_c1_c2_and_combined_variants_only_on_a5(self):
+    def test_release_wrapper_maps_only_b30_h_o_traits_on_a5(self):
         text = source(STATE_UPDATE)
 
-        self.assertNotIn("kCube2EventOnly", text)
-        self.assertIn(
-            "GdnCoreSyncVariant kSyncVariant = GdnCoreSyncVariant::B0", text
-        )
         self.assertEqual(text.count("RunFwdH<"), 16)
         self.assertEqual(text.count("RunFwdO<"), 4)
         self.assertEqual(text.count(", kSyncVariant>("), 20)
-        expected_true_sets = {
-            "kNarrowCube1ToPipeFix": {
-                "B1", "B4", "B5", "B9", "B13", "B15",
-                "B16", "B17", "B18", "B19", "B20", "B21", "B22",
-                "B23", "B24", "B25", "B26", "B27", "B28", "B29",
-                "B30", "B31"
-            },
-            "kNarrowCube2ToPipeFix": {"B2", "B4", "B5", "B17", "B18"},
-            "kCube1EventOnly": {"B8", "B10", "B11"},
-            "kUpdateBarrierToPipeMte3": {"B6", "B9", "B10"},
-            "kUpdateBarrierEventOnly": {
-                "B7", "B11", "B12", "B13", "B14", "B15",
-                "B16", "B17", "B18", "B19", "B20", "B21", "B22",
-                "B23", "B24", "B25", "B26", "B27", "B28", "B29",
-                "B30", "B31"
-            },
-            "kBypassHInitCollective": {"B12", "B13"},
-            "kEntryLocalPipeDrain": {"B14", "B15", "B17"},
-            "kEntryRolePipeDrain": {
-                "B16", "B18", "B19", "B20", "B21", "B22", "B23", "B24",
-                "B25", "B26", "B27", "B28", "B29", "B30", "B31"
-            },
-        }
-        observed_true_sets = {}
-        for flag in expected_true_sets:
-            assignment = re.search(
-                rf"constexpr bool {flag}\s*=\s*(.*?);", text, re.DOTALL
-            )
-            self.assertIsNotNone(assignment, flag)
-            observed_true_sets[flag] = set(
-                re.findall(r"GdnCoreSyncVariant::(B\d+)", assignment.group(1))
-            )
-        self.assertEqual(observed_true_sets, expected_true_sets)
-
-        expected_matrix = {
-            "B0": (False, False, False, False, False, False, False, False),
-            "B1": (True, False, False, False, False, False, False, False),
-            "B2": (False, True, False, False, False, False, False, False),
-            "B3": (False, False, False, False, False, False, False, False),
-            "B4": (True, True, False, False, False, False, False, False),
-            "B5": (True, True, False, False, False, False, False, False),
-            "B6": (False, False, False, True, False, False, False, False),
-            "B7": (False, False, False, False, True, False, False, False),
-            "B8": (False, False, True, False, False, False, False, False),
-            "B9": (True, False, False, True, False, False, False, False),
-            "B10": (False, False, True, True, False, False, False, False),
-            "B11": (False, False, True, False, True, False, False, False),
-            "B12": (False, False, False, False, True, True, False, False),
-            "B13": (True, False, False, False, True, True, False, False),
-            "B14": (False, False, False, False, True, False, True, False),
-            "B15": (True, False, False, False, True, False, True, False),
-            "B16": (True, False, False, False, True, False, False, True),
-            "B17": (True, True, False, False, True, False, True, False),
-            "B18": (True, True, False, False, True, False, False, True),
-            "B19": (True, False, False, False, True, False, False, True),
-            "B20": (True, False, False, False, True, False, False, True),
-            "B21": (True, False, False, False, True, False, False, True),
-            "B22": (True, False, False, False, True, False, False, True),
-            "B23": (True, False, False, False, True, False, False, True),
-            "B24": (True, False, False, False, True, False, False, True),
-            "B25": (True, False, False, False, True, False, False, True),
-            "B26": (True, False, False, False, True, False, False, True),
-            "B27": (True, False, False, False, True, False, False, True),
-            "B28": (True, False, False, False, True, False, False, True),
-            "B29": (True, False, False, False, True, False, False, True),
-            "B30": (True, False, False, False, True, False, False, True),
-            "B31": (True, False, False, False, True, False, False, True),
-        }
-        observed_matrix = {
-            variant: tuple(variant in observed_true_sets[flag]
-                           for flag in expected_true_sets)
-            for variant in expected_matrix
-        }
-        self.assertEqual(observed_matrix, expected_matrix)
-        self.assertEqual(observed_matrix["B19"], observed_matrix["B16"])
-        for variant in (
-            "B20", "B21", "B22", "B23", "B24", "B25", "B26", "B27",
-            "B28", "B29", "B30", "B31",
-        ):
-            self.assertEqual(observed_matrix[variant], observed_matrix["B16"])
         self.assertIn(
-            "kNarrowCube1ToPipeFix, kNarrowCube2ToPipeFix, kCube1EventOnly,\n"
-            "        kUpdateBarrierToPipeMte3, kUpdateBarrierEventOnly,\n"
-            "        kBypassHInitCollective, kEntryLocalPipeDrain, "
-            "kEntryRolePipeDrain,\n"
-            "        SyncTraits::kFwdHVarlenDenseC1FullTiles,\n"
-            "        SyncTraits::kFwdHVarlenDenseC2FullTiles>;", text
+            "constexpr bool kNarrowCube1ToPipeFix =\n"
+            "        kSyncVariant == GdnCoreSyncVariant::B30;",
+            text,
         )
+        self.assertIn("constexpr bool kNarrowCube2ToPipeFix = false;", text)
+        self.assertIn("constexpr bool kCube1EventOnly = false;", text)
+        self.assertIn("constexpr bool kUpdateBarrierToPipeMte3 = false;", text)
+        self.assertIn(
+            "constexpr bool kUpdateBarrierEventOnly =\n"
+            "        kSyncVariant == GdnCoreSyncVariant::B30;",
+            text,
+        )
+        self.assertIn("constexpr bool kBypassHInitCollective = false;", text)
+        self.assertIn("constexpr bool kEntryLocalPipeDrain = false;", text)
+        self.assertIn(
+            "constexpr bool kEntryRolePipeDrain =\n"
+            "        kSyncVariant == GdnCoreSyncVariant::B30;",
+            text,
+        )
+        self.assertIn(
+            "kBypassHInitCollective, kEntryLocalPipeDrain, kEntryRolePipeDrain>;",
+            text,
+        )
+        self.assertNotIn("kFwdHVarlenDense", text)
+        self.assertIn(
+            "SyncTraits::kFwdOAggregateQkMaskBarrier,\n"
+            "        SyncTraits::kFwdOAggregateOutputBarrier>;",
+            text,
+        )
+
         wrapper_start = text.index("__aicore__ inline void RunFwdH(")
         a5_start = text.index(
             "#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310", wrapper_start
@@ -348,21 +239,20 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         non_a5_start = text.index("#else", a5_start)
         alias_end = text.index("#endif", non_a5_start)
         non_a5_alias = text[non_a5_start:alias_end]
-        self.assertNotIn("kNarrowCube", non_a5_alias)
-        self.assertNotIn("kCube1EventOnly", non_a5_alias)
-        self.assertNotIn("kUpdateBarrier", non_a5_alias)
-        self.assertNotIn("kBypassHInitCollective", non_a5_alias)
-        self.assertNotIn("kEntryLocalPipeDrain", non_a5_alias)
-        self.assertNotIn("kEntryRolePipeDrain", non_a5_alias)
-        self.assertNotIn("kFwdHVarlenDense", non_a5_alias)
+        for flag in (
+            "kNarrowCube",
+            "kCube1EventOnly",
+            "kUpdateBarrier",
+            "kBypassHInitCollective",
+            "kEntryLocalPipeDrain",
+            "kEntryRolePipeDrain",
+        ):
+            self.assertNotIn(flag, non_a5_alias)
 
-    def test_solve_wrapper_maps_b20_b31_traits_only_to_a5_bt64(self):
+    def test_solve_wrapper_maps_b30_traits_only_to_a5_bt64(self):
         text = source(COEFFICIENT)
 
-        self.assertIn(
-            "GDN::GdnCoreSyncVariant kSyncVariant,",
-            text,
-        )
+        self.assertIn("GDN::GdnCoreSyncVariant kSyncVariant,", text)
         self.assertIn(
             "using SyncTraits = GDN::GdnCoreSyncVariantTraits<kSyncVariant>;",
             text,
@@ -374,76 +264,58 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
             text,
         )
         self.assertIn("SolveTri128<T, T> solve;", text)
-
         a5_start = text.index("#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310")
         non_a5_start = text.index("#else", a5_start)
         non_a5_end = text.index("#endif", non_a5_start)
         self.assertNotIn("kSyncVariant", text[non_a5_start:non_a5_end])
 
-    def test_b20_b31_sync_trait_truth_table_is_orthogonal(self):
+    def test_release_sync_trait_truth_table_contains_only_b0_b30(self):
         text = source(CORE_STRUCT)
+        enum_start = text.index("enum class GdnCoreSyncVariant")
+        enum_end = text.index("};", enum_start)
+        enum_values = {
+            name: int(value)
+            for name, value in re.findall(
+                r"\b(B\d+)\s*=\s*(\d+)", text[enum_start:enum_end]
+            )
+        }
+        self.assertEqual(enum_values, {"B0": 0, "B30": 30})
+
         trait_start = text.index("struct GdnCoreSyncVariantTraits")
         trait_end = text.index("struct ChunkGdnCoreCoefficientTiling", trait_start)
         traits = text[trait_start:trait_end]
-        expected_true_sets = {
-            "kHeadMajorSolve64Ownership": {
-                "B20", "B21", "B22", "B23", "B24", "B25", "B26", "B27",
-                "B28", "B29", "B30", "B31",
-            },
-            "kKktToSolveGroupHandoff": {
-                "B22", "B23", "B24", "B25", "B26", "B27", "B28", "B29",
-                "B30", "B31",
-            },
-            "kSolveToWuGroupHandoff": {
-                "B21", "B23", "B24", "B25", "B26", "B27", "B28", "B29",
-                "B30", "B31",
-            },
-            "kUseImmediateMte2Mte1": {"B3", "B5", "B19", "B24"},
-            "kFwdHVarlenDenseC1FullTiles": {"B25", "B27", "B31"},
-            "kFwdHVarlenDenseC2FullTiles": {"B26", "B27", "B31"},
-            "kFwdOAggregateQkMaskBarrier": {"B28", "B30", "B31"},
-            "kFwdOAggregateOutputBarrier": {"B29", "B30", "B31"},
-        }
-        observed_true_sets = {}
-        for flag in expected_true_sets:
+        for flag in (
+            "kHeadMajorSolve64Ownership",
+            "kKktToSolveGroupHandoff",
+            "kSolveToWuGroupHandoff",
+            "kFwdOAggregateQkMaskBarrier",
+            "kFwdOAggregateOutputBarrier",
+        ):
             assignment = re.search(
                 rf"static constexpr bool {flag}\s*=\s*(.*?);",
                 traits,
                 re.DOTALL,
             )
             self.assertIsNotNone(assignment, flag)
-            observed_true_sets[flag] = set(
-                re.findall(r"GdnCoreSyncVariant::(B\d+)", assignment.group(1))
+            self.assertEqual(
+                set(re.findall(r"GdnCoreSyncVariant::(B\d+)", assignment.group(1))),
+                {"B30"},
+                flag,
             )
-        self.assertEqual(observed_true_sets, expected_true_sets)
+        self.assertIn("kUseImmediateMte2Mte1 = false;", traits)
         self.assertIn("kDeferMte2Mte1Wait = false;", traits)
+        self.assertNotIn("kFwdHVarlenDense", traits)
         self.assertIn(
-            "!(kKktToSolveGroupHandoff || kSolveToWuGroupHandoff) ||\n"
-            "                      kHeadMajorSolve64Ownership",
+            "kFwdOAggregateQkMaskBarrier || kFwdOAggregateOutputBarrier",
             traits,
         )
         self.assertIn(
-            '"The hardware-rejected deferred Solve64 wait must remain disabled."',
+            '"B30 FwdO aggregation requires the fully paired coefficient protocol."',
             traits,
         )
         self.assertIn(
-            '"H/O experiments must inherit the fully paired B23 coefficient protocol."',
+            '"B30 FwdO aggregation must not inherit the precision-risky Solve64 R path."',
             traits,
-        )
-        self.assertIn(
-            '"H/O experiments must not inherit the precision-risky Solve64 R path."',
-            traits,
-        )
-        for variant in (
-            "B21", "B22", "B23", "B24", "B25", "B26", "B27", "B28",
-            "B29", "B30", "B31",
-        ):
-            self.assertIn(variant, observed_true_sets["kHeadMajorSolve64Ownership"])
-        self.assertIn("B24", observed_true_sets["kUseImmediateMte2Mte1"])
-        self.assertTrue(
-            observed_true_sets["kFwdHVarlenDenseC1FullTiles"].isdisjoint(
-                observed_true_sets["kFwdOAggregateOutputBarrier"] - {"B31"}
-            )
         )
 
     def test_head_major_varlen_solve_uses_total_chunks_not_total_tiles(self):
@@ -773,217 +645,111 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         self.assertIn("AscendC::PipeBarrier<PIPE_ALL>();", level)
         self.assertNotIn("HardEvent::FIX_MTE1", level)
 
-    def test_top_level_dispatches_all_variants_at_compile_time(self):
+    def test_top_level_dispatches_only_b0_and_promoted_b30(self):
         text = source(CORE_KERNEL)
 
-        self.assertEqual(text.count("GDN::GdnCoreSyncVariant::B0>"), 2)
-        for variant in tuple(f"B{index}" for index in range(1, 32)):
-            self.assertEqual(text.count(f"GDN::GdnCoreSyncVariant::{variant}>"), 1)
-        self.assertIn(
-            "RunSolvePhase<InputT, 64, kSyncVariant>", text
+        routed = {
+            int(key): (shape, variant)
+            for key, shape, variant in re.findall(
+                r"(?:if|else if) \(TILING_KEY_IS\((\d+)\)\) \{\s*"
+                r"KERNEL_TASK_TYPE\(\1, KERNEL_TYPE_MIX_AIC_1_2\);\s*"
+                r"GDN::DispatchPhase6ByDtype<"
+                r"Catlass::Gemm::Kernel::(GDNFwdHTileShapes(?:128|256)),\s*"
+                r"GDN::GdnCoreSyncVariant::(B\d+)>",
+                text,
+            )
+        }
+        self.assertEqual(
+            routed,
+            {
+                1: ("GDNFwdHTileShapes128", "B0"),
+                2: ("GDNFwdHTileShapes256", "B0"),
+                301: ("GDNFwdHTileShapes128", "B30"),
+            },
         )
-        self.assertIn(
-            "RunSolvePhase<InputT, 128, kSyncVariant>", text
+        self.assertEqual(
+            set(map(int, re.findall(r"TILING_KEY_IS\((\d+)\)", text))),
+            {1, 2, 301},
         )
+        self.assertIn("RunSolvePhase<InputT, 64, kSyncVariant>", text)
+        self.assertIn("RunSolvePhase<InputT, 128, kSyncVariant>", text)
         self.assertIn("DispatchFwdH<TileShapes, kSyncVariant>", text)
+        self.assertIn("DispatchFwdO<kSyncVariant>", text)
 
-    def test_host_variant_router_is_strict_fail_closed_and_abi_neutral(self):
+    def test_host_release_router_is_strict_fail_closed_and_abi_neutral(self):
         host = source(HOST_TILING)
-        kernel = source(CORE_KERNEL)
         struct = source(CORE_STRUCT)
 
         resolver_start = host.index("bool ResolveSyncVariant(")
-        resolver_end = host.index("bool ResolveT1Diagnostic(", resolver_start)
+        resolver_end = host.index("uint32_t ResolveTilingKey(", resolver_start)
         resolver = host[resolver_start:resolver_end]
-        accepted_values = set(
-            re.findall(r'std::strcmp\(value, "([^"]+)"\)', resolver)
-        )
+        self.assertIn("explicitSelection = value != nullptr;", resolver)
         self.assertEqual(
-            accepted_values, {f"B{index}" for index in range(32)}
+            set(re.findall(r'std::strcmp\(value, "([^"]+)"\)', resolver)),
+            {"B0", "B30"},
         )
-        self.assertIn("value == nullptr", resolver)
-        self.assertEqual(resolver.count("return true;"), 32)
+        self.assertEqual(resolver.count("return true;"), 2)
         self.assertEqual(resolver.count("return false;"), 1)
-        for selector in tuple(f"B{index}" for index in range(32)):
-            prefix = r"value == nullptr \|\| " if selector == "B0" else ""
-            self.assertRegex(
-                resolver,
-                rf"if \({prefix}std::strcmp\(value, \"{selector}\"\) == 0\) \{{\s*"
-                rf"variant = GDN::GdnCoreSyncVariant::{selector};\s*return true;",
+        self.assertRegex(
+            resolver,
+            r'if \(value == nullptr \|\| std::strcmp\(value, "B0"\) == 0\) '
+            r"\{\s*variant = GDN::GdnCoreSyncVariant::B0;\s*return true;",
+        )
+        self.assertRegex(
+            resolver,
+            r'if \(std::strcmp\(value, "B30"\) == 0\) '
+            r"\{\s*variant = GDN::GdnCoreSyncVariant::B30;\s*return true;",
+        )
+        self.assertNotIn("FLA_NPU_GDN_SYNC_T1_DIAGNOSTIC", host)
+        self.assertNotIn("FLA_NPU_GDN_SYNC_T65_DIAGNOSTIC", host)
+        self.assertIn(
+            "FLA_NPU_GDN_SYNC_VARIANT must be unset, B0, or B30.", host
+        )
+        self.assertIn(
+            "FLA_NPU_GDN_SYNC_VARIANT B30 is supported only on Ascend950.", host
+        )
+
+        constants = {
+            name: int(value)
+            for name, value in re.findall(
+                r"constexpr uint32_t (TILING_KEY_B\w+?) = (\d+);", host
             )
-
-        diagnostic_start = resolver_end
-        diagnostic_end = host.index("bool ResolveT65Diagnostic(", diagnostic_start)
-        diagnostic = host[diagnostic_start:diagnostic_end]
-        self.assertIn('std::getenv("FLA_NPU_GDN_SYNC_T1_DIAGNOSTIC")', diagnostic)
-        self.assertEqual(
-            set(re.findall(r'std::strcmp\(value, "([^"]+)"\)', diagnostic)),
-            {"0", "1"},
-        )
-        self.assertEqual(diagnostic.count("return true;"), 2)
-        self.assertEqual(diagnostic.count("return false;"), 1)
-        self.assertIn(
-            "FLA_NPU_GDN_SYNC_T1_DIAGNOSTIC must be unset, 0, or 1.", host
-        )
-
-        t65_diagnostic_start = diagnostic_end
-        t65_diagnostic_end = host.index(
-            "bool IsMainShapeOnlySyncVariant(", t65_diagnostic_start
-        )
-        t65_diagnostic = host[t65_diagnostic_start:t65_diagnostic_end]
-        self.assertIn(
-            'std::getenv("FLA_NPU_GDN_SYNC_T65_DIAGNOSTIC")', t65_diagnostic
-        )
-        self.assertEqual(
-            set(re.findall(r'std::strcmp\(value, "([^"]+)"\)', t65_diagnostic)),
-            {"0", "1"},
-        )
-        self.assertEqual(t65_diagnostic.count("return true;"), 2)
-        self.assertEqual(t65_diagnostic.count("return false;"), 1)
-        self.assertIn(
-            "FLA_NPU_GDN_SYNC_T65_DIAGNOSTIC must be unset, 0, or 1.", host
-        )
-
-        expected_keys = {
-            "TILING_KEY_B0_V128": "1",
-            "TILING_KEY_B0_V256": "2",
-            "TILING_KEY_B1_V128": "11",
-            "TILING_KEY_B2_V128": "21",
-            "TILING_KEY_B3_V128": "31",
-            "TILING_KEY_B4_V128": "41",
-            "TILING_KEY_B5_V128": "51",
-            "TILING_KEY_B6_V128": "61",
-            "TILING_KEY_B7_V128": "71",
-            "TILING_KEY_B8_V128": "81",
-            "TILING_KEY_B9_V128": "91",
-            "TILING_KEY_B10_V128": "101",
-            "TILING_KEY_B11_V128": "111",
-            "TILING_KEY_B12_V128": "121",
-            "TILING_KEY_B13_V128": "131",
-            "TILING_KEY_B14_V128": "141",
-            "TILING_KEY_B15_V128": "151",
-            "TILING_KEY_B16_V128": "161",
-            "TILING_KEY_B17_V128": "171",
-            "TILING_KEY_B18_V128": "181",
-            "TILING_KEY_B19_V128": "191",
-            "TILING_KEY_B20_V128": "201",
-            "TILING_KEY_B21_V128": "211",
-            "TILING_KEY_B22_V128": "221",
-            "TILING_KEY_B23_V128": "231",
-            "TILING_KEY_B24_V128": "241",
-            "TILING_KEY_B25_V128": "251",
-            "TILING_KEY_B26_V128": "261",
-            "TILING_KEY_B27_V128": "271",
-            "TILING_KEY_B28_V128": "281",
-            "TILING_KEY_B29_V128": "291",
-            "TILING_KEY_B30_V128": "301",
-            "TILING_KEY_B31_V128": "311",
         }
-        for name, value in expected_keys.items():
-            self.assertIn(f"constexpr uint32_t {name} = {value};", host)
-        self.assertRegex(
-            host,
-            r"const uint32_t b0Key\s*=\s*vDim == SUPPORTED_V_DIM_256 \? "
-            r"TILING_KEY_B0_V256 : TILING_KEY_B0_V128;",
+        self.assertEqual(
+            constants,
+            {
+                "TILING_KEY_B0_V128": 1,
+                "TILING_KEY_B0_V256": 2,
+                "TILING_KEY_B30_V128": 301,
+            },
+        )
+        resolve_start = host.index("uint32_t ResolveTilingKey(")
+        resolve_end = host.index("uint64_t CeilDiv(", resolve_start)
+        resolve = host[resolve_start:resolve_end]
+        self.assertIn(
+            "vDim == SUPPORTED_V_DIM_256 ? TILING_KEY_B0_V256 : "
+            "TILING_KEY_B0_V128",
+            resolve,
         )
         self.assertRegex(
-            host,
+            resolve,
             r"if \(vDim != SUPPORTED_V_DIM_128\) \{\s*return b0Key;\s*\}",
         )
-        for variant, key in {
-            "B0": "b0Key",
-            "B1": "TILING_KEY_B1_V128",
-            "B2": "TILING_KEY_B2_V128",
-            "B3": "TILING_KEY_B3_V128",
-            "B4": "TILING_KEY_B4_V128",
-            "B5": "TILING_KEY_B5_V128",
-            "B6": "TILING_KEY_B6_V128",
-            "B7": "TILING_KEY_B7_V128",
-            "B8": "TILING_KEY_B8_V128",
-            "B9": "TILING_KEY_B9_V128",
-            "B10": "TILING_KEY_B10_V128",
-            "B11": "TILING_KEY_B11_V128",
-            "B12": "TILING_KEY_B12_V128",
-            "B13": "TILING_KEY_B13_V128",
-            "B14": "TILING_KEY_B14_V128",
-            "B15": "TILING_KEY_B15_V128",
-            "B16": "TILING_KEY_B16_V128",
-            "B17": "TILING_KEY_B17_V128",
-            "B18": "TILING_KEY_B18_V128",
-            "B19": "TILING_KEY_B19_V128",
-            "B20": "TILING_KEY_B20_V128",
-            "B21": "TILING_KEY_B21_V128",
-            "B22": "TILING_KEY_B22_V128",
-            "B23": "TILING_KEY_B23_V128",
-            "B24": "TILING_KEY_B24_V128",
-            "B25": "TILING_KEY_B25_V128",
-            "B26": "TILING_KEY_B26_V128",
-            "B27": "TILING_KEY_B27_V128",
-            "B28": "TILING_KEY_B28_V128",
-            "B29": "TILING_KEY_B29_V128",
-            "B30": "TILING_KEY_B30_V128",
-            "B31": "TILING_KEY_B31_V128",
-        }.items():
-            self.assertRegex(
-                host,
-                rf"case GDN::GdnCoreSyncVariant::{variant}:\s*"
-                rf"return {key};",
-            )
-        self.assertIn(
-            "context->SetTilingKey(ResolveTilingKey(vDim, effectiveSyncVariant));",
-            host,
+        self.assertRegex(
+            resolve,
+            r"case GDN::GdnCoreSyncVariant::B0:\s*return b0Key;",
         )
         self.assertRegex(
-            host,
-            r"const bool isExperimentalShape\s*=\s*isBf16 && "
-            r"initialStateDesc != nullptr &&\s*"
-            r"initialStateDesc->GetDataType\(\) == ge::DT_FLOAT &&\s*"
-            r"vDim == SUPPORTED_V_DIM_128 && \*chunkSize == CHUNK_64;",
+            resolve,
+            r"case GDN::GdnCoreSyncVariant::B30:\s*"
+            r"return TILING_KEY_B30_V128;",
         )
-        self.assertIn(
-            "context->GetOptionalInputDesc(INPUT_INITIAL_STATE)", host
-        )
-        main_only_start = host.index("bool IsMainShapeOnlySyncVariant(")
-        main_only_end = host.index("bool IsT1DiagnosticSyncVariant(", main_only_start)
-        main_only = host[main_only_start:main_only_end]
-        self.assertEqual(
-            set(re.findall(r"GdnCoreSyncVariant::(B\d+)", main_only)),
-            {
-                "B12", "B13", "B14", "B15", "B16",
-                "B17", "B18", "B19", "B20", "B21", "B22", "B23",
-                "B24", "B25", "B26", "B27", "B28", "B29", "B30",
-                "B31",
-            },
-        )
-        t1_variant_start = main_only_end
-        t1_variant_end = host.index(
-            "bool IsT65DiagnosticSyncVariant(", t1_variant_start
-        )
-        t1_variants = host[t1_variant_start:t1_variant_end]
-        self.assertEqual(
-            set(re.findall(r"GdnCoreSyncVariant::(B\d+)", t1_variants)),
-            {
-                "B16", "B17", "B18", "B20", "B21", "B22", "B23", "B24",
-                "B25", "B26", "B27", "B28", "B29", "B30", "B31",
-            },
-        )
-        t65_variant_start = t1_variant_end
-        t65_variant_end = host.index(
-            "uint32_t ResolveTilingKey(", t65_variant_start
-        )
-        t65_variants = host[t65_variant_start:t65_variant_end]
-        self.assertEqual(
-            set(re.findall(r"GdnCoreSyncVariant::(B\d+)", t65_variants)),
-            {
-                "B19", "B20", "B21", "B22", "B23", "B24", "B25", "B26",
-                "B27", "B28", "B29", "B30", "B31",
-            },
-        )
+
         exact_start = host.index("const bool isExactMainVarlenShape")
-        exact_end = host.index(
-            "GDN::GdnCoreSyncVariant effectiveSyncVariant", exact_start
+        effective_end = host.index(
+            "OP_CHECK_IF(Tiling4ChunkGdnCoreStateOutput", exact_start
         )
-        exact_selector = host[exact_start:exact_end]
+        selector = host[exact_start:effective_end]
         for required in (
             "isAscend950",
             "isExperimentalShape",
@@ -997,279 +763,41 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
             "varlenChunks == MAIN_MODEL_CHUNKS",
             "*outputFinalState",
         ):
-            self.assertIn(required, exact_selector)
-        self.assertNotIn("outputMask", exact_selector)
-        t1_selector_start = host.index("const bool isExactT1DiagnosticVarlenShape")
-        t1_selector_end = host.index(
-            "const bool selectT1DiagnosticVariant", t1_selector_start
-        )
-        t1_selector = host[t1_selector_start:t1_selector_end]
-        for required in (
-            "isAscend950",
-            "isExperimentalShape",
-            "isVarlen",
-            "batch == MAIN_MODEL_BATCH",
-            "heads == MAIN_MODEL_K_HEADS",
-            "valueHeads == MAIN_MODEL_V_HEADS",
-            "tokens == T1_DIAGNOSTIC_TOKENS",
-            "kDim == SUPPORTED_K_DIM",
-            "IsShape(cuShape, {2})",
-            "varlenChunks == T1_DIAGNOSTIC_CHUNKS",
-            "*outputFinalState",
-        ):
-            self.assertIn(required, t1_selector)
-        self.assertNotIn("outputMask", t1_selector)
-        t65_selector_start = host.index("const bool isExactT65DiagnosticVarlenShape")
-        t65_selector_end = host.index(
-            "const bool selectT65DiagnosticVariant", t65_selector_start
-        )
-        t65_selector = host[t65_selector_start:t65_selector_end]
-        for required in (
-            "isAscend950",
-            "isExperimentalShape",
-            "isVarlen",
-            "batch == MAIN_MODEL_BATCH",
-            "heads == MAIN_MODEL_K_HEADS",
-            "valueHeads == MAIN_MODEL_V_HEADS",
-            "tokens == T65_DIAGNOSTIC_TOKENS",
-            "kDim == SUPPORTED_K_DIM",
-            "IsShape(cuShape, {2})",
-            "varlenChunks == T65_DIAGNOSTIC_CHUNKS",
-            "*outputFinalState",
-        ):
-            self.assertIn(required, t65_selector)
-        self.assertNotIn("outputMask", t65_selector)
-        for required in (
-            "t1Diagnostic",
-            "IsT1DiagnosticSyncVariant(syncVariant)",
-            "isExactT1DiagnosticVarlenShape",
-            "tokens == T1_DIAGNOSTIC_TOKENS",
-            "varlenChunks == T1_DIAGNOSTIC_CHUNKS",
-            "t65Diagnostic",
-            "IsT65DiagnosticSyncVariant(syncVariant)",
-            "isExactT65DiagnosticVarlenShape",
-            "tokens == T65_DIAGNOSTIC_TOKENS",
-            "varlenChunks == T65_DIAGNOSTIC_CHUNKS",
-        ):
-            self.assertIn(required, exact_selector)
-        self.assertIn("constexpr int64_t T1_DIAGNOSTIC_TOKENS = 1;", host)
-        self.assertIn("constexpr uint64_t T1_DIAGNOSTIC_CHUNKS = 1;", host)
-        self.assertIn("constexpr int64_t T65_DIAGNOSTIC_TOKENS = 65;", host)
-        self.assertIn("constexpr uint64_t T65_DIAGNOSTIC_CHUNKS = 2;", host)
-        effective_start = exact_end
-        effective_end = host.index(
-            "OP_CHECK_IF(Tiling4ChunkGdnCoreStateOutput", effective_start
-        )
-        effective_selector = host[effective_start:effective_end]
-        self.assertIn(
-            "effectiveSyncVariant = GDN::GdnCoreSyncVariant::B0",
-            effective_selector,
-        )
-        self.assertIn("if (isExperimentalShape)", effective_selector)
+            self.assertIn(required, selector)
+        self.assertNotIn("outputMask", selector)
         self.assertRegex(
-            effective_selector,
-            r"IsMainShapeOnlySyncVariant\(syncVariant\) &&\s*"
-            r"!isExactMainVarlenShape && !selectT1DiagnosticVariant &&\s*"
-            r"!selectT65DiagnosticVariant\s*\? "
-            r"GDN::GdnCoreSyncVariant::B7\s*:\s*syncVariant;",
+            selector,
+            r"const GDN::GdnCoreSyncVariant effectiveSyncVariant =\s*"
+            r"requestedSyncVariant == GDN::GdnCoreSyncVariant::B30 &&\s*"
+            r"isExactMainVarlenShape\s*\? GDN::GdnCoreSyncVariant::B30\s*"
+            r": GDN::GdnCoreSyncVariant::B0;",
+        )
+        self.assertIn(
+            "!syncVariantExplicit && isAscend950\n"
+            "            ? GDN::GdnCoreSyncVariant::B30\n"
+            "            : syncVariant;",
+            host,
+        )
+        self.assertIn(
+            "context->SetTilingKey(ResolveTilingKey(vDim, effectiveSyncVariant));",
+            host,
         )
 
-        # Selector truth table: legacy variants retain their established
-        # experimental domain; B12-B31 narrow to the exact main varlen shape.
-        # B16-B18 and B20-B31 retain the exact-T=1 diagnostic exception;
-        # B19-B31 have an exact-T=65/two-chunk route that executes full+tail.
         def selected(
+            explicit: bool,
             requested: str,
-            experimental: bool,
+            is_a5: bool,
             exact_main: bool,
-            t1_diagnostic_enabled: bool = False,
-            exact_t1: bool = False,
-            t65_diagnostic_enabled: bool = False,
-            exact_t65: bool = False,
         ) -> str:
-            if not experimental:
-                return "B0"
-            select_t1 = (
-                requested in {
-                    "B16", "B17", "B18", "B20", "B21", "B22", "B23", "B24",
-                    "B25", "B26", "B27", "B28", "B29", "B30", "B31",
-                }
-                and t1_diagnostic_enabled
-                and exact_t1
-            )
-            select_t65 = (
-                requested in {
-                    "B19", "B20", "B21", "B22", "B23", "B24", "B25", "B26",
-                    "B27", "B28", "B29", "B30", "B31",
-                }
-                and t65_diagnostic_enabled
-                and exact_t65
-            )
-            if (
-                requested in {
-                    "B12", "B13", "B14", "B15", "B16",
-                    "B17", "B18", "B19", "B20", "B21", "B22", "B23",
-                    "B24", "B25", "B26", "B27", "B28", "B29", "B30",
-                    "B31",
-                }
-                and not exact_main
-                and not select_t1
-                and not select_t65
-            ):
-                return "B7"
-            return requested
+            requested_variant = "B30" if not explicit and is_a5 else requested
+            return "B30" if requested_variant == "B30" and exact_main else "B0"
 
-        for requested in (f"B{index}" for index in range(12)):
-            self.assertEqual(selected(requested, True, False), requested)
-            self.assertEqual(selected(requested, True, True), requested)
-            self.assertEqual(selected(requested, False, False), "B0")
-        for requested in ("B12", "B13", "B14", "B15"):
-            self.assertEqual(selected(requested, True, True), requested)
-            self.assertEqual(selected(requested, True, False), "B7")
-            self.assertEqual(
-                selected(requested, True, False, True, True), "B7"
-            )
-            self.assertEqual(selected(requested, False, False), "B0")
-        for requested in ("B16", "B17", "B18"):
-            self.assertEqual(selected(requested, True, True), requested)
-            self.assertEqual(selected(requested, True, False), "B7")
-            self.assertEqual(
-                selected(requested, True, False, True, True), requested
-            )
-            self.assertEqual(
-                selected(requested, True, False, False, True), "B7"
-            )
-            self.assertEqual(
-                selected(requested, True, False, True, False), "B7"
-            )
-            self.assertEqual(selected(requested, False, False, True, True), "B0")
-        self.assertEqual(selected("B19", True, True), "B19")
-        self.assertEqual(selected("B19", True, False), "B7")
-        self.assertEqual(
-            selected("B19", True, False, False, False, True, True), "B19"
-        )
-        self.assertEqual(
-            selected("B19", True, False, False, False, False, True), "B7"
-        )
-        self.assertEqual(
-            selected("B19", True, False, False, False, True, False), "B7"
-        )
-        self.assertEqual(selected("B19", True, False, True, True), "B7")
-        self.assertEqual(
-            selected("B19", False, False, False, False, True, True), "B0"
-        )
-        for requested in (
-            "B20", "B21", "B22", "B23", "B24", "B25", "B26", "B27",
-            "B28", "B29", "B30", "B31",
-        ):
-            self.assertEqual(selected(requested, True, True), requested)
-            self.assertEqual(selected(requested, True, False), "B7")
-            self.assertEqual(
-                selected(requested, True, False, True, True), requested
-            )
-            self.assertEqual(
-                selected(requested, True, False, False, False, True, True),
-                requested,
-            )
-            self.assertEqual(
-                selected(requested, True, False, False, True), "B7"
-            )
-            self.assertEqual(
-                selected(requested, True, False, True, False), "B7"
-            )
-            self.assertEqual(
-                selected(requested, True, False, False, False, False, True),
-                "B7",
-            )
-            self.assertEqual(
-                selected(requested, False, False, True, True), "B0"
-            )
-
-        routed = {
-            int(key): (shape, variant)
-            for key, shape, variant in re.findall(
-                r"(?:if|else if) \(TILING_KEY_IS\((\d+)\)\) \{\s*"
-                r"KERNEL_TASK_TYPE\(\1, KERNEL_TYPE_MIX_AIC_1_2\);\s*"
-                r"GDN::DispatchPhase6ByDtype<"
-                r"Catlass::Gemm::Kernel::(GDNFwdHTileShapes(?:128|256)),\s*"
-                r"GDN::GdnCoreSyncVariant::(B\d+)>",
-                kernel,
-            )
-        }
-        self.assertEqual(
-            routed,
-            {
-                1: ("GDNFwdHTileShapes128", "B0"),
-                2: ("GDNFwdHTileShapes256", "B0"),
-                11: ("GDNFwdHTileShapes128", "B1"),
-                21: ("GDNFwdHTileShapes128", "B2"),
-                31: ("GDNFwdHTileShapes128", "B3"),
-                41: ("GDNFwdHTileShapes128", "B4"),
-                51: ("GDNFwdHTileShapes128", "B5"),
-                61: ("GDNFwdHTileShapes128", "B6"),
-                71: ("GDNFwdHTileShapes128", "B7"),
-                81: ("GDNFwdHTileShapes128", "B8"),
-                91: ("GDNFwdHTileShapes128", "B9"),
-                101: ("GDNFwdHTileShapes128", "B10"),
-                111: ("GDNFwdHTileShapes128", "B11"),
-                121: ("GDNFwdHTileShapes128", "B12"),
-                131: ("GDNFwdHTileShapes128", "B13"),
-                141: ("GDNFwdHTileShapes128", "B14"),
-                151: ("GDNFwdHTileShapes128", "B15"),
-                161: ("GDNFwdHTileShapes128", "B16"),
-                171: ("GDNFwdHTileShapes128", "B17"),
-                181: ("GDNFwdHTileShapes128", "B18"),
-                191: ("GDNFwdHTileShapes128", "B19"),
-                201: ("GDNFwdHTileShapes128", "B20"),
-                211: ("GDNFwdHTileShapes128", "B21"),
-                221: ("GDNFwdHTileShapes128", "B22"),
-                231: ("GDNFwdHTileShapes128", "B23"),
-                241: ("GDNFwdHTileShapes128", "B24"),
-                251: ("GDNFwdHTileShapes128", "B25"),
-                261: ("GDNFwdHTileShapes128", "B26"),
-                271: ("GDNFwdHTileShapes128", "B27"),
-                281: ("GDNFwdHTileShapes128", "B28"),
-                291: ("GDNFwdHTileShapes128", "B29"),
-                301: ("GDNFwdHTileShapes128", "B30"),
-                311: ("GDNFwdHTileShapes128", "B31"),
-            },
-        )
-        a5_dispatch_start = kernel.index(
-            "#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310 &&",
-            kernel.index("TILING_KEY_IS(2)"),
-        )
-        a5_dispatch_end = kernel.index("#endif", a5_dispatch_start)
-        a5_dispatch = kernel[a5_dispatch_start:a5_dispatch_end]
-        self.assertIn("ORIG_DTYPE_Q == DT_BF16", a5_dispatch)
-        self.assertIn("ORIG_DTYPE_INITIAL_STATE == DT_FLOAT", a5_dispatch)
-        for key in (
-            11, 21, 31, 41, 51, 61, 71, 81,
-            91, 101, 111, 121, 131, 141, 151, 161, 171, 181,
-            191, 201, 211, 221, 231, 241, 251, 261, 271, 281, 291, 301, 311,
-        ):
-            self.assertIn(f"TILING_KEY_IS({key})", a5_dispatch)
-        for key in (
-            12, 22, 32, 42, 52, 62, 72, 82,
-            92, 102, 112, 122, 132, 142, 152, 162, 172, 182,
-            192, 202, 212, 222, 232, 242, 252, 262, 272, 282, 292, 302, 312,
-        ):
-            self.assertNotIn(f"TILING_KEY_IS({key})", kernel)
-
-        self.assertIn(
-            "platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950",
-            host,
-        )
-        self.assertIn(
-            "syncVariant != GDN::GdnCoreSyncVariant::B0 && !isAscend950",
-            host,
-        )
-        self.assertRegex(
-            host,
-            r"OP_CHECK_IF\(syncVariant != GDN::GdnCoreSyncVariant::B0 && "
-            r"!isAscend950,\s*OP_LOGE\(context->GetNodeName\(\),\s*"
-            r'"FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18/B19/B20/B21/B22/B23/B24/B25/B26/B27/B28/B29/B30/B31 is supported only on Ascend950\."\),\s*'
-            r"return ge::GRAPH_FAILED\);",
-        )
+        self.assertEqual(selected(False, "B0", True, True), "B30")
+        self.assertEqual(selected(False, "B0", True, False), "B0")
+        self.assertEqual(selected(False, "B0", False, True), "B0")
+        self.assertEqual(selected(True, "B0", True, True), "B0")
+        self.assertEqual(selected(True, "B30", True, True), "B30")
+        self.assertEqual(selected(True, "B30", True, False), "B0")
 
         enum_start = struct.index("enum class GdnCoreSyncVariant")
         enum_end = struct.index("};", enum_start)
@@ -1279,9 +807,7 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
                 r"\b(B\d+)\s*=\s*(\d+)", struct[enum_start:enum_end]
             )
         }
-        self.assertEqual(
-            enum_values, {f"B{index}": index for index in range(32)}
-        )
+        self.assertEqual(enum_values, {"B0": 0, "B30": 30})
 
         trailer_start = struct.index("struct ChunkGdnCoreFwdTrailer {")
         trailer_end = struct.index("};", trailer_start)

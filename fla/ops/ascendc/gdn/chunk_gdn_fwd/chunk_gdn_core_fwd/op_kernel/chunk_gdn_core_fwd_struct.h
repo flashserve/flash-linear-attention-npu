@@ -11,107 +11,31 @@
 
 namespace GDN {
 
-// Internal compile-time experiment selector. The host encodes this selector in
+// Internal compile-time implementation selector. The host encodes it in
 // the tiling key; it must not be serialized into the public tiling ABI.
 enum class GdnCoreSyncVariant : uint32_t {
     B0 = 0,
-    B1 = 1,
-    B2 = 2,
-    B3 = 3,
-    B4 = 4,
-    B5 = 5,
-    B6 = 6,
-    B7 = 7,
-    B8 = 8,
-    B9 = 9,
-    B10 = 10,
-    B11 = 11,
-    B12 = 12,
-    B13 = 13,
-    B14 = 14,
-    B15 = 15,
-    B16 = 16,
-    B17 = 17,
-    B18 = 18,
-    B19 = 19,
-    B20 = 20,
-    B21 = 21,
-    B22 = 22,
-    B23 = 23,
-    B24 = 24,
-    B25 = 25,
-    B26 = 26,
-    B27 = 27,
-    B28 = 28,
-    B29 = 29,
     B30 = 30,
-    B31 = 31,
 };
 
-// Compile-time experiment axes for the coefficient-generation suffix.  Keep
-// them centralized so a key cannot silently select a hand-off without the
-// ownership policy that makes the paired producer/consumer ranges identical.
+// B30 carries the validated coefficient hand-offs and FwdO aggregation as one
+// indivisible release specialization. Keep the traits centralized so a key
+// cannot select a hand-off without the matching ownership policy.
 template <GdnCoreSyncVariant kVariant>
 struct GdnCoreSyncVariantTraits {
     static constexpr bool kHeadMajorSolve64Ownership =
-        kVariant == GdnCoreSyncVariant::B20 ||
-        kVariant == GdnCoreSyncVariant::B21 ||
-        kVariant == GdnCoreSyncVariant::B22 ||
-        kVariant == GdnCoreSyncVariant::B23 ||
-        kVariant == GdnCoreSyncVariant::B24 ||
-        kVariant == GdnCoreSyncVariant::B25 ||
-        kVariant == GdnCoreSyncVariant::B26 ||
-        kVariant == GdnCoreSyncVariant::B27 ||
-        kVariant == GdnCoreSyncVariant::B28 ||
-        kVariant == GdnCoreSyncVariant::B29 ||
-        kVariant == GdnCoreSyncVariant::B30 ||
-        kVariant == GdnCoreSyncVariant::B31;
+        kVariant == GdnCoreSyncVariant::B30;
     static constexpr bool kKktToSolveGroupHandoff =
-        kVariant == GdnCoreSyncVariant::B22 ||
-        kVariant == GdnCoreSyncVariant::B23 ||
-        kVariant == GdnCoreSyncVariant::B24 ||
-        kVariant == GdnCoreSyncVariant::B25 ||
-        kVariant == GdnCoreSyncVariant::B26 ||
-        kVariant == GdnCoreSyncVariant::B27 ||
-        kVariant == GdnCoreSyncVariant::B28 ||
-        kVariant == GdnCoreSyncVariant::B29 ||
-        kVariant == GdnCoreSyncVariant::B30 ||
-        kVariant == GdnCoreSyncVariant::B31;
+        kVariant == GdnCoreSyncVariant::B30;
     static constexpr bool kSolveToWuGroupHandoff =
-        kVariant == GdnCoreSyncVariant::B21 ||
-        kVariant == GdnCoreSyncVariant::B23 ||
-        kVariant == GdnCoreSyncVariant::B24 ||
-        kVariant == GdnCoreSyncVariant::B25 ||
-        kVariant == GdnCoreSyncVariant::B26 ||
-        kVariant == GdnCoreSyncVariant::B27 ||
-        kVariant == GdnCoreSyncVariant::B28 ||
-        kVariant == GdnCoreSyncVariant::B29 ||
-        kVariant == GdnCoreSyncVariant::B30 ||
-        kVariant == GdnCoreSyncVariant::B31;
-    static constexpr bool kUseImmediateMte2Mte1 =
-        kVariant == GdnCoreSyncVariant::B3 ||
-        kVariant == GdnCoreSyncVariant::B5 ||
-        kVariant == GdnCoreSyncVariant::B19 ||
-        kVariant == GdnCoreSyncVariant::B24;
+        kVariant == GdnCoreSyncVariant::B30;
+    static constexpr bool kUseImmediateMte2Mte1 = false;
     static constexpr bool kDeferMte2Mte1Wait = false;
-    static constexpr bool kFwdHVarlenDenseC1FullTiles =
-        kVariant == GdnCoreSyncVariant::B25 ||
-        kVariant == GdnCoreSyncVariant::B27 ||
-        kVariant == GdnCoreSyncVariant::B31;
-    static constexpr bool kFwdHVarlenDenseC2FullTiles =
-        kVariant == GdnCoreSyncVariant::B26 ||
-        kVariant == GdnCoreSyncVariant::B27 ||
-        kVariant == GdnCoreSyncVariant::B31;
     static constexpr bool kFwdOAggregateQkMaskBarrier =
-        kVariant == GdnCoreSyncVariant::B28 ||
-        kVariant == GdnCoreSyncVariant::B30 ||
-        kVariant == GdnCoreSyncVariant::B31;
+        kVariant == GdnCoreSyncVariant::B30;
     static constexpr bool kFwdOAggregateOutputBarrier =
-        kVariant == GdnCoreSyncVariant::B29 ||
-        kVariant == GdnCoreSyncVariant::B30 ||
-        kVariant == GdnCoreSyncVariant::B31;
-    static constexpr bool kHasStateUpdateOutputExperiment =
-        kFwdHVarlenDenseC1FullTiles || kFwdHVarlenDenseC2FullTiles ||
+        kVariant == GdnCoreSyncVariant::B30;
+    static constexpr bool kHasFwdOAggregation =
         kFwdOAggregateQkMaskBarrier || kFwdOAggregateOutputBarrier;
 
     static_assert(!(kKktToSolveGroupHandoff || kSolveToWuGroupHandoff) ||
@@ -119,12 +43,12 @@ struct GdnCoreSyncVariantTraits {
                   "A group-local coefficient hand-off requires head-major Solve64 ownership.");
     static_assert(!kDeferMte2Mte1Wait,
                   "The hardware-rejected deferred Solve64 wait must remain disabled.");
-    static_assert(!kHasStateUpdateOutputExperiment ||
+    static_assert(!kHasFwdOAggregation ||
                       (kHeadMajorSolve64Ownership && kKktToSolveGroupHandoff &&
                        kSolveToWuGroupHandoff),
-                  "H/O experiments must inherit the fully paired B23 coefficient protocol.");
-    static_assert(!kHasStateUpdateOutputExperiment || !kUseImmediateMte2Mte1,
-                  "H/O experiments must not inherit the precision-risky Solve64 R path.");
+                  "B30 FwdO aggregation requires the fully paired coefficient protocol.");
+    static_assert(!kHasFwdOAggregation || !kUseImmediateMte2Mte1,
+                  "B30 FwdO aggregation must not inherit the precision-risky Solve64 R path.");
 };
 
 struct ChunkGdnCoreCoefficientTiling {

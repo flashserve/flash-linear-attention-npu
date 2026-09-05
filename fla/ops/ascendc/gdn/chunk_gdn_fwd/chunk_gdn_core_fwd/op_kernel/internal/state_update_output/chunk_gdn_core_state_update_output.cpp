@@ -47,90 +47,17 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
     // The final boolean enables the H/O fused scheduling path; using the
     // standalone-H mode here changes synchronization and precision behavior.
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    using SyncTraits = GdnCoreSyncVariantTraits<kSyncVariant>;
     constexpr bool kNarrowCube1ToPipeFix =
-        kSyncVariant == GdnCoreSyncVariant::B1 ||
-        kSyncVariant == GdnCoreSyncVariant::B4 ||
-        kSyncVariant == GdnCoreSyncVariant::B5 ||
-        kSyncVariant == GdnCoreSyncVariant::B9 ||
-        kSyncVariant == GdnCoreSyncVariant::B13 ||
-        kSyncVariant == GdnCoreSyncVariant::B15 ||
-        kSyncVariant == GdnCoreSyncVariant::B16 ||
-        kSyncVariant == GdnCoreSyncVariant::B17 ||
-        kSyncVariant == GdnCoreSyncVariant::B18 ||
-        kSyncVariant == GdnCoreSyncVariant::B19 ||
-        kSyncVariant == GdnCoreSyncVariant::B20 ||
-        kSyncVariant == GdnCoreSyncVariant::B21 ||
-        kSyncVariant == GdnCoreSyncVariant::B22 ||
-        kSyncVariant == GdnCoreSyncVariant::B23 ||
-        kSyncVariant == GdnCoreSyncVariant::B24 ||
-        kSyncVariant == GdnCoreSyncVariant::B25 ||
-        kSyncVariant == GdnCoreSyncVariant::B26 ||
-        kSyncVariant == GdnCoreSyncVariant::B27 ||
-        kSyncVariant == GdnCoreSyncVariant::B28 ||
-        kSyncVariant == GdnCoreSyncVariant::B29 ||
-        kSyncVariant == GdnCoreSyncVariant::B30 ||
-        kSyncVariant == GdnCoreSyncVariant::B31;
-    constexpr bool kNarrowCube2ToPipeFix =
-        kSyncVariant == GdnCoreSyncVariant::B2 ||
-        kSyncVariant == GdnCoreSyncVariant::B4 ||
-        kSyncVariant == GdnCoreSyncVariant::B5 ||
-        kSyncVariant == GdnCoreSyncVariant::B17 ||
-        kSyncVariant == GdnCoreSyncVariant::B18;
-    constexpr bool kCube1EventOnly =
-        kSyncVariant == GdnCoreSyncVariant::B8 ||
-        kSyncVariant == GdnCoreSyncVariant::B10 ||
-        kSyncVariant == GdnCoreSyncVariant::B11;
-    constexpr bool kUpdateBarrierToPipeMte3 =
-        kSyncVariant == GdnCoreSyncVariant::B6 ||
-        kSyncVariant == GdnCoreSyncVariant::B9 ||
-        kSyncVariant == GdnCoreSyncVariant::B10;
+        kSyncVariant == GdnCoreSyncVariant::B30;
+    constexpr bool kNarrowCube2ToPipeFix = false;
+    constexpr bool kCube1EventOnly = false;
+    constexpr bool kUpdateBarrierToPipeMte3 = false;
     constexpr bool kUpdateBarrierEventOnly =
-        kSyncVariant == GdnCoreSyncVariant::B7 ||
-        kSyncVariant == GdnCoreSyncVariant::B11 ||
-        kSyncVariant == GdnCoreSyncVariant::B12 ||
-        kSyncVariant == GdnCoreSyncVariant::B13 ||
-        kSyncVariant == GdnCoreSyncVariant::B14 ||
-        kSyncVariant == GdnCoreSyncVariant::B15 ||
-        kSyncVariant == GdnCoreSyncVariant::B16 ||
-        kSyncVariant == GdnCoreSyncVariant::B17 ||
-        kSyncVariant == GdnCoreSyncVariant::B18 ||
-        kSyncVariant == GdnCoreSyncVariant::B19 ||
-        kSyncVariant == GdnCoreSyncVariant::B20 ||
-        kSyncVariant == GdnCoreSyncVariant::B21 ||
-        kSyncVariant == GdnCoreSyncVariant::B22 ||
-        kSyncVariant == GdnCoreSyncVariant::B23 ||
-        kSyncVariant == GdnCoreSyncVariant::B24 ||
-        kSyncVariant == GdnCoreSyncVariant::B25 ||
-        kSyncVariant == GdnCoreSyncVariant::B26 ||
-        kSyncVariant == GdnCoreSyncVariant::B27 ||
-        kSyncVariant == GdnCoreSyncVariant::B28 ||
-        kSyncVariant == GdnCoreSyncVariant::B29 ||
-        kSyncVariant == GdnCoreSyncVariant::B30 ||
-        kSyncVariant == GdnCoreSyncVariant::B31;
-    constexpr bool kBypassHInitCollective =
-        kSyncVariant == GdnCoreSyncVariant::B12 ||
-        kSyncVariant == GdnCoreSyncVariant::B13;
-    constexpr bool kEntryLocalPipeDrain =
-        kSyncVariant == GdnCoreSyncVariant::B14 ||
-        kSyncVariant == GdnCoreSyncVariant::B15 ||
-        kSyncVariant == GdnCoreSyncVariant::B17;
+        kSyncVariant == GdnCoreSyncVariant::B30;
+    constexpr bool kBypassHInitCollective = false;
+    constexpr bool kEntryLocalPipeDrain = false;
     constexpr bool kEntryRolePipeDrain =
-        kSyncVariant == GdnCoreSyncVariant::B16 ||
-        kSyncVariant == GdnCoreSyncVariant::B18 ||
-        kSyncVariant == GdnCoreSyncVariant::B19 ||
-        kSyncVariant == GdnCoreSyncVariant::B20 ||
-        kSyncVariant == GdnCoreSyncVariant::B21 ||
-        kSyncVariant == GdnCoreSyncVariant::B22 ||
-        kSyncVariant == GdnCoreSyncVariant::B23 ||
-        kSyncVariant == GdnCoreSyncVariant::B24 ||
-        kSyncVariant == GdnCoreSyncVariant::B25 ||
-        kSyncVariant == GdnCoreSyncVariant::B26 ||
-        kSyncVariant == GdnCoreSyncVariant::B27 ||
-        kSyncVariant == GdnCoreSyncVariant::B28 ||
-        kSyncVariant == GdnCoreSyncVariant::B29 ||
-        kSyncVariant == GdnCoreSyncVariant::B30 ||
-        kSyncVariant == GdnCoreSyncVariant::B31;
+        kSyncVariant == GdnCoreSyncVariant::B30;
     static_assert(!(kNarrowCube1ToPipeFix && kCube1EventOnly),
                   "C1 publish barrier cannot be both PIPE_FIX and event-only.");
     static_assert(!(kBypassHInitCollective &&
@@ -142,9 +69,7 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true,
         kNarrowCube1ToPipeFix, kNarrowCube2ToPipeFix, kCube1EventOnly,
         kUpdateBarrierToPipeMte3, kUpdateBarrierEventOnly,
-        kBypassHInitCollective, kEntryLocalPipeDrain, kEntryRolePipeDrain,
-        SyncTraits::kFwdHVarlenDenseC1FullTiles,
-        SyncTraits::kFwdHVarlenDenseC2FullTiles>;
+        kBypassHInitCollective, kEntryLocalPipeDrain, kEntryRolePipeDrain>;
 #else
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true>;

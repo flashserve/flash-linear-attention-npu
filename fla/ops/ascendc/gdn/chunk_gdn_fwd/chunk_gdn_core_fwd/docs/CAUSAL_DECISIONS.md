@@ -264,7 +264,26 @@
   独占 20 样本屏测；B23 相对 B16 median 改善 `0.351%`，作为新的
   无 R 安全实验基线。B24 虽有约 `1.079%` 屏测改善，但继承 R 风险且
   折算相对 B0 仍未达 `8%`，不进入产品。B25–B31 已通过本地真值表、
-  selector、key、非 A5 回退、FwdO 聚合和 qkmask 边界静态门禁，并通过
-  独立同步审查；尚待 Ascend950 combined build 与上述真机证伪门禁。
+  selector、key、非 A5 回退、FwdO 聚合和 qkmask 边界静态门禁，并完成
+  Ascend950 combined build。fresh20、mask、交替和严格路由均通过；独占
+  20 样本筛选中 B30 相对 B23 的 median 改善 `2.628%`，为本轮胜者。
+  B30 对 B0 的 50 样本正式 ABBA 中，推理 median/p95 分别改善
+  `9.116%`/`8.976%`，训练 median 改善 `4.576%`，两条路径峰值显存不变。
+
+  随后的 stable200 泛化门禁在 41ad combined wheel 上发现 V256、多序列
+  varlen case342/344 的 key2/B0 `final_state` 稳定回归；相同 saved input 在
+  92f wheel 通过，且差异发生在 FwdH 产出的完整 V tile。源码复核确认
+  B25–B31 虽未被 key2 选择，其新增的 FwdH bounded-loop 模板骨架仍改变了
+  同一翻译单元内 B0 的编译实体。因而发布收敛执行以下规则：
+
+  - FwdH kernel 恢复并以 SHA256 固化为 92f 的已知稳定实现；不接入被否定的
+    dense-generation C1/C2 机制。
+  - 仅保留 B0/key1,key2 与胜出的 B30/key301 为可路由、可编译实例；删除
+    B1–B29/B31 的 host 解析、诊断 selector 和 device dispatch。
+  - A5 未设置环境变量时，只有精确主模型 shape 进入 B30；显式 B0 始终
+    保持 B0。V256、fixed、多序列 varlen 及其他任意非主模型 shape 全部回 B0。
+  - B30 只保留已验证的 S+P+Q、H 同步配置以及 FwdO 两处 mode2 聚合，不启用
+    有精度风险的 R。最终收敛 wheel 必须重新完成 key2 回归、stable200 和
+    B30 对 B0 的正式性能门禁后才可发布。
 - Invalidation：若目标 CANN 头文件、生成代码或 profiling 证明上述生产者/消费者
   链路不成立，需回到 B0 并重建依赖图，不继续放宽同步。

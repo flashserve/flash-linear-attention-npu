@@ -49,270 +49,29 @@ constexpr int64_t CHUNK_64 = 64;
 constexpr int64_t CHUNK_128 = 128;
 constexpr uint32_t TILING_KEY_B0_V128 = 1;
 constexpr uint32_t TILING_KEY_B0_V256 = 2;
-constexpr uint32_t TILING_KEY_B1_V128 = 11;
-constexpr uint32_t TILING_KEY_B2_V128 = 21;
-constexpr uint32_t TILING_KEY_B3_V128 = 31;
-constexpr uint32_t TILING_KEY_B4_V128 = 41;
-constexpr uint32_t TILING_KEY_B5_V128 = 51;
-constexpr uint32_t TILING_KEY_B6_V128 = 61;
-constexpr uint32_t TILING_KEY_B7_V128 = 71;
-constexpr uint32_t TILING_KEY_B8_V128 = 81;
-constexpr uint32_t TILING_KEY_B9_V128 = 91;
-constexpr uint32_t TILING_KEY_B10_V128 = 101;
-constexpr uint32_t TILING_KEY_B11_V128 = 111;
-constexpr uint32_t TILING_KEY_B12_V128 = 121;
-constexpr uint32_t TILING_KEY_B13_V128 = 131;
-constexpr uint32_t TILING_KEY_B14_V128 = 141;
-constexpr uint32_t TILING_KEY_B15_V128 = 151;
-constexpr uint32_t TILING_KEY_B16_V128 = 161;
-constexpr uint32_t TILING_KEY_B17_V128 = 171;
-constexpr uint32_t TILING_KEY_B18_V128 = 181;
-constexpr uint32_t TILING_KEY_B19_V128 = 191;
-constexpr uint32_t TILING_KEY_B20_V128 = 201;
-constexpr uint32_t TILING_KEY_B21_V128 = 211;
-constexpr uint32_t TILING_KEY_B22_V128 = 221;
-constexpr uint32_t TILING_KEY_B23_V128 = 231;
-constexpr uint32_t TILING_KEY_B24_V128 = 241;
-constexpr uint32_t TILING_KEY_B25_V128 = 251;
-constexpr uint32_t TILING_KEY_B26_V128 = 261;
-constexpr uint32_t TILING_KEY_B27_V128 = 271;
-constexpr uint32_t TILING_KEY_B28_V128 = 281;
-constexpr uint32_t TILING_KEY_B29_V128 = 291;
 constexpr uint32_t TILING_KEY_B30_V128 = 301;
-constexpr uint32_t TILING_KEY_B31_V128 = 311;
 constexpr int64_t MAIN_MODEL_BATCH = 1;
 constexpr int64_t MAIN_MODEL_K_HEADS = 16;
 constexpr int64_t MAIN_MODEL_V_HEADS = 32;
 constexpr int64_t MAIN_MODEL_TOKENS = 11274;
 constexpr uint64_t MAIN_MODEL_CHUNKS = 177;
-constexpr int64_t T1_DIAGNOSTIC_TOKENS = 1;
-constexpr uint64_t T1_DIAGNOSTIC_CHUNKS = 1;
-constexpr int64_t T65_DIAGNOSTIC_TOKENS = 65;
-constexpr uint64_t T65_DIAGNOSTIC_CHUNKS = 2;
 constexpr uint64_t WORKSPACE_ALIGNMENT = 512;
 constexpr uint64_t TILING_ALIGNMENT = 8;
 constexpr uint64_t FP32_BLOCK_ELEMS = 8;
 
-bool ResolveSyncVariant(GDN::GdnCoreSyncVariant &variant)
+bool ResolveSyncVariant(GDN::GdnCoreSyncVariant &variant, bool &explicitSelection)
 {
     const char *value = std::getenv("FLA_NPU_GDN_SYNC_VARIANT");
+    explicitSelection = value != nullptr;
     if (value == nullptr || std::strcmp(value, "B0") == 0) {
         variant = GDN::GdnCoreSyncVariant::B0;
-        return true;
-    }
-    if (std::strcmp(value, "B1") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B1;
-        return true;
-    }
-    if (std::strcmp(value, "B2") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B2;
-        return true;
-    }
-    if (std::strcmp(value, "B3") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B3;
-        return true;
-    }
-    if (std::strcmp(value, "B4") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B4;
-        return true;
-    }
-    if (std::strcmp(value, "B5") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B5;
-        return true;
-    }
-    if (std::strcmp(value, "B6") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B6;
-        return true;
-    }
-    if (std::strcmp(value, "B7") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B7;
-        return true;
-    }
-    if (std::strcmp(value, "B8") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B8;
-        return true;
-    }
-    if (std::strcmp(value, "B9") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B9;
-        return true;
-    }
-    if (std::strcmp(value, "B10") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B10;
-        return true;
-    }
-    if (std::strcmp(value, "B11") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B11;
-        return true;
-    }
-    if (std::strcmp(value, "B12") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B12;
-        return true;
-    }
-    if (std::strcmp(value, "B13") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B13;
-        return true;
-    }
-    if (std::strcmp(value, "B14") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B14;
-        return true;
-    }
-    if (std::strcmp(value, "B15") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B15;
-        return true;
-    }
-    if (std::strcmp(value, "B16") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B16;
-        return true;
-    }
-    if (std::strcmp(value, "B17") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B17;
-        return true;
-    }
-    if (std::strcmp(value, "B18") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B18;
-        return true;
-    }
-    if (std::strcmp(value, "B19") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B19;
-        return true;
-    }
-    if (std::strcmp(value, "B20") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B20;
-        return true;
-    }
-    if (std::strcmp(value, "B21") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B21;
-        return true;
-    }
-    if (std::strcmp(value, "B22") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B22;
-        return true;
-    }
-    if (std::strcmp(value, "B23") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B23;
-        return true;
-    }
-    if (std::strcmp(value, "B24") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B24;
-        return true;
-    }
-    if (std::strcmp(value, "B25") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B25;
-        return true;
-    }
-    if (std::strcmp(value, "B26") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B26;
-        return true;
-    }
-    if (std::strcmp(value, "B27") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B27;
-        return true;
-    }
-    if (std::strcmp(value, "B28") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B28;
-        return true;
-    }
-    if (std::strcmp(value, "B29") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B29;
         return true;
     }
     if (std::strcmp(value, "B30") == 0) {
         variant = GDN::GdnCoreSyncVariant::B30;
         return true;
     }
-    if (std::strcmp(value, "B31") == 0) {
-        variant = GDN::GdnCoreSyncVariant::B31;
-        return true;
-    }
     return false;
-}
-
-bool ResolveT1Diagnostic(bool &enabled)
-{
-    const char *value = std::getenv("FLA_NPU_GDN_SYNC_T1_DIAGNOSTIC");
-    if (value == nullptr || std::strcmp(value, "0") == 0) {
-        enabled = false;
-        return true;
-    }
-    if (std::strcmp(value, "1") == 0) {
-        enabled = true;
-        return true;
-    }
-    return false;
-}
-
-bool ResolveT65Diagnostic(bool &enabled)
-{
-    const char *value = std::getenv("FLA_NPU_GDN_SYNC_T65_DIAGNOSTIC");
-    if (value == nullptr || std::strcmp(value, "0") == 0) {
-        enabled = false;
-        return true;
-    }
-    if (std::strcmp(value, "1") == 0) {
-        enabled = true;
-        return true;
-    }
-    return false;
-}
-
-bool IsMainShapeOnlySyncVariant(GDN::GdnCoreSyncVariant variant)
-{
-    return variant == GDN::GdnCoreSyncVariant::B12 ||
-           variant == GDN::GdnCoreSyncVariant::B13 ||
-           variant == GDN::GdnCoreSyncVariant::B14 ||
-           variant == GDN::GdnCoreSyncVariant::B15 ||
-           variant == GDN::GdnCoreSyncVariant::B16 ||
-           variant == GDN::GdnCoreSyncVariant::B17 ||
-           variant == GDN::GdnCoreSyncVariant::B18 ||
-           variant == GDN::GdnCoreSyncVariant::B19 ||
-           variant == GDN::GdnCoreSyncVariant::B20 ||
-           variant == GDN::GdnCoreSyncVariant::B21 ||
-           variant == GDN::GdnCoreSyncVariant::B22 ||
-           variant == GDN::GdnCoreSyncVariant::B23 ||
-           variant == GDN::GdnCoreSyncVariant::B24 ||
-           variant == GDN::GdnCoreSyncVariant::B25 ||
-           variant == GDN::GdnCoreSyncVariant::B26 ||
-           variant == GDN::GdnCoreSyncVariant::B27 ||
-           variant == GDN::GdnCoreSyncVariant::B28 ||
-           variant == GDN::GdnCoreSyncVariant::B29 ||
-           variant == GDN::GdnCoreSyncVariant::B30 ||
-           variant == GDN::GdnCoreSyncVariant::B31;
-}
-
-bool IsT1DiagnosticSyncVariant(GDN::GdnCoreSyncVariant variant)
-{
-    return variant == GDN::GdnCoreSyncVariant::B16 ||
-           variant == GDN::GdnCoreSyncVariant::B17 ||
-           variant == GDN::GdnCoreSyncVariant::B18 ||
-           variant == GDN::GdnCoreSyncVariant::B20 ||
-           variant == GDN::GdnCoreSyncVariant::B21 ||
-           variant == GDN::GdnCoreSyncVariant::B22 ||
-           variant == GDN::GdnCoreSyncVariant::B23 ||
-           variant == GDN::GdnCoreSyncVariant::B24 ||
-           variant == GDN::GdnCoreSyncVariant::B25 ||
-           variant == GDN::GdnCoreSyncVariant::B26 ||
-           variant == GDN::GdnCoreSyncVariant::B27 ||
-           variant == GDN::GdnCoreSyncVariant::B28 ||
-           variant == GDN::GdnCoreSyncVariant::B29 ||
-           variant == GDN::GdnCoreSyncVariant::B30 ||
-           variant == GDN::GdnCoreSyncVariant::B31;
-}
-
-bool IsT65DiagnosticSyncVariant(GDN::GdnCoreSyncVariant variant)
-{
-    return variant == GDN::GdnCoreSyncVariant::B19 ||
-           variant == GDN::GdnCoreSyncVariant::B20 ||
-           variant == GDN::GdnCoreSyncVariant::B21 ||
-           variant == GDN::GdnCoreSyncVariant::B22 ||
-           variant == GDN::GdnCoreSyncVariant::B23 ||
-           variant == GDN::GdnCoreSyncVariant::B24 ||
-           variant == GDN::GdnCoreSyncVariant::B25 ||
-           variant == GDN::GdnCoreSyncVariant::B26 ||
-           variant == GDN::GdnCoreSyncVariant::B27 ||
-           variant == GDN::GdnCoreSyncVariant::B28 ||
-           variant == GDN::GdnCoreSyncVariant::B29 ||
-           variant == GDN::GdnCoreSyncVariant::B30 ||
-           variant == GDN::GdnCoreSyncVariant::B31;
 }
 
 uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
@@ -325,68 +84,8 @@ uint32_t ResolveTilingKey(int64_t vDim, GDN::GdnCoreSyncVariant variant)
     switch (variant) {
         case GDN::GdnCoreSyncVariant::B0:
             return b0Key;
-        case GDN::GdnCoreSyncVariant::B1:
-            return TILING_KEY_B1_V128;
-        case GDN::GdnCoreSyncVariant::B2:
-            return TILING_KEY_B2_V128;
-        case GDN::GdnCoreSyncVariant::B3:
-            return TILING_KEY_B3_V128;
-        case GDN::GdnCoreSyncVariant::B4:
-            return TILING_KEY_B4_V128;
-        case GDN::GdnCoreSyncVariant::B5:
-            return TILING_KEY_B5_V128;
-        case GDN::GdnCoreSyncVariant::B6:
-            return TILING_KEY_B6_V128;
-        case GDN::GdnCoreSyncVariant::B7:
-            return TILING_KEY_B7_V128;
-        case GDN::GdnCoreSyncVariant::B8:
-            return TILING_KEY_B8_V128;
-        case GDN::GdnCoreSyncVariant::B9:
-            return TILING_KEY_B9_V128;
-        case GDN::GdnCoreSyncVariant::B10:
-            return TILING_KEY_B10_V128;
-        case GDN::GdnCoreSyncVariant::B11:
-            return TILING_KEY_B11_V128;
-        case GDN::GdnCoreSyncVariant::B12:
-            return TILING_KEY_B12_V128;
-        case GDN::GdnCoreSyncVariant::B13:
-            return TILING_KEY_B13_V128;
-        case GDN::GdnCoreSyncVariant::B14:
-            return TILING_KEY_B14_V128;
-        case GDN::GdnCoreSyncVariant::B15:
-            return TILING_KEY_B15_V128;
-        case GDN::GdnCoreSyncVariant::B16:
-            return TILING_KEY_B16_V128;
-        case GDN::GdnCoreSyncVariant::B17:
-            return TILING_KEY_B17_V128;
-        case GDN::GdnCoreSyncVariant::B18:
-            return TILING_KEY_B18_V128;
-        case GDN::GdnCoreSyncVariant::B19:
-            return TILING_KEY_B19_V128;
-        case GDN::GdnCoreSyncVariant::B20:
-            return TILING_KEY_B20_V128;
-        case GDN::GdnCoreSyncVariant::B21:
-            return TILING_KEY_B21_V128;
-        case GDN::GdnCoreSyncVariant::B22:
-            return TILING_KEY_B22_V128;
-        case GDN::GdnCoreSyncVariant::B23:
-            return TILING_KEY_B23_V128;
-        case GDN::GdnCoreSyncVariant::B24:
-            return TILING_KEY_B24_V128;
-        case GDN::GdnCoreSyncVariant::B25:
-            return TILING_KEY_B25_V128;
-        case GDN::GdnCoreSyncVariant::B26:
-            return TILING_KEY_B26_V128;
-        case GDN::GdnCoreSyncVariant::B27:
-            return TILING_KEY_B27_V128;
-        case GDN::GdnCoreSyncVariant::B28:
-            return TILING_KEY_B28_V128;
-        case GDN::GdnCoreSyncVariant::B29:
-            return TILING_KEY_B29_V128;
         case GDN::GdnCoreSyncVariant::B30:
             return TILING_KEY_B30_V128;
-        case GDN::GdnCoreSyncVariant::B31:
-            return TILING_KEY_B31_V128;
     }
     return 0;
 }
@@ -558,72 +257,42 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
                         "Phase 6 requires output_mask in [0,3], chunk_size=64/128, and paired valid varlen metadata."),
                 return ge::GRAPH_FAILED);
     GDN::GdnCoreSyncVariant syncVariant = GDN::GdnCoreSyncVariant::B0;
-    OP_CHECK_IF(!ResolveSyncVariant(syncVariant),
+    bool syncVariantExplicit = false;
+    OP_CHECK_IF(!ResolveSyncVariant(syncVariant, syncVariantExplicit),
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT must be unset or one of B0/B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18/B19/B20/B21/B22/B23/B24/B25/B26/B27/B28/B29/B30/B31."),
-                return ge::GRAPH_FAILED);
-    bool t1Diagnostic = false;
-    OP_CHECK_IF(!ResolveT1Diagnostic(t1Diagnostic),
-                OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_T1_DIAGNOSTIC must be unset, 0, or 1."),
-                return ge::GRAPH_FAILED);
-    bool t65Diagnostic = false;
-    OP_CHECK_IF(!ResolveT65Diagnostic(t65Diagnostic),
-                OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_T65_DIAGNOSTIC must be unset, 0, or 1."),
+                        "FLA_NPU_GDN_SYNC_VARIANT must be unset, B0, or B30."),
                 return ge::GRAPH_FAILED);
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     const bool isAscend950 =
         platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
-    OP_CHECK_IF(syncVariant != GDN::GdnCoreSyncVariant::B0 && !isAscend950,
+    OP_CHECK_IF(syncVariantExplicit &&
+                    syncVariant != GDN::GdnCoreSyncVariant::B0 && !isAscend950,
                 OP_LOGE(context->GetNodeName(),
-                        "FLA_NPU_GDN_SYNC_VARIANT B1/B2/B3/B4/B5/B6/B7/B8/B9/B10/B11/B12/B13/B14/B15/B16/B17/B18/B19/B20/B21/B22/B23/B24/B25/B26/B27/B28/B29/B30/B31 is supported only on Ascend950."),
+                        "FLA_NPU_GDN_SYNC_VARIANT B30 is supported only on Ascend950."),
                 return ge::GRAPH_FAILED);
-    // Extra experiment kernels are intentionally limited to the dominant model
-    // domain. Other supported shapes retain full functionality through B0 and
-    // do not multiply the CCE compile matrix.
+    // B30 is the sole promoted A5 specialization. All other supported shapes
+    // retain the frozen B0 implementation and its key1/key2 code generation.
     const bool isExperimentalShape =
         isBf16 && initialStateDesc != nullptr &&
         initialStateDesc->GetDataType() == ge::DT_FLOAT &&
         vDim == SUPPORTED_V_DIM_128 && *chunkSize == CHUNK_64;
+    // Unset selects the validated production policy on A5. Explicit B0 keeps
+    // a stable A/B baseline; explicit B30 remains shape-gated below.
+    const GDN::GdnCoreSyncVariant requestedSyncVariant =
+        !syncVariantExplicit && isAscend950
+            ? GDN::GdnCoreSyncVariant::B30
+            : syncVariant;
     const bool isExactMainVarlenShape =
         isAscend950 && isExperimentalShape && isVarlen &&
         batch == MAIN_MODEL_BATCH && heads == MAIN_MODEL_K_HEADS &&
         valueHeads == MAIN_MODEL_V_HEADS && tokens == MAIN_MODEL_TOKENS &&
         kDim == SUPPORTED_K_DIM && IsShape(cuShape, {2}) &&
         varlenChunks == MAIN_MODEL_CHUNKS && *outputFinalState;
-    // This opt-in route exists only to make the synchronization hypotheses
-    // observable on the smallest real varlen call. It does not widen their
-    // production selector, and it deliberately ignores the public output mask.
-    const bool isExactT1DiagnosticVarlenShape =
-        isAscend950 && isExperimentalShape && isVarlen &&
-        batch == MAIN_MODEL_BATCH && heads == MAIN_MODEL_K_HEADS &&
-        valueHeads == MAIN_MODEL_V_HEADS && tokens == T1_DIAGNOSTIC_TOKENS &&
-        kDim == SUPPORTED_K_DIM && IsShape(cuShape, {2}) &&
-        varlenChunks == T1_DIAGNOSTIC_CHUNKS && *outputFinalState;
-    const bool selectT1DiagnosticVariant =
-        t1Diagnostic && IsT1DiagnosticSyncVariant(syncVariant) &&
-        isExactT1DiagnosticVarlenShape;
-    // T=65 is the smallest varlen call that covers both a full SolveTri64 tile
-    // (including R) and the short-tail ownership/handoff paths for S/P/Q.
-    const bool isExactT65DiagnosticVarlenShape =
-        isAscend950 && isExperimentalShape && isVarlen &&
-        batch == MAIN_MODEL_BATCH && heads == MAIN_MODEL_K_HEADS &&
-        valueHeads == MAIN_MODEL_V_HEADS && tokens == T65_DIAGNOSTIC_TOKENS &&
-        kDim == SUPPORTED_K_DIM && IsShape(cuShape, {2}) &&
-        varlenChunks == T65_DIAGNOSTIC_CHUNKS && *outputFinalState;
-    const bool selectT65DiagnosticVariant =
-        t65Diagnostic && IsT65DiagnosticSyncVariant(syncVariant) &&
-        isExactT65DiagnosticVarlenShape;
-    GDN::GdnCoreSyncVariant effectiveSyncVariant = GDN::GdnCoreSyncVariant::B0;
-    if (isExperimentalShape) {
-        effectiveSyncVariant =
-            IsMainShapeOnlySyncVariant(syncVariant) &&
-                    !isExactMainVarlenShape && !selectT1DiagnosticVariant &&
-                    !selectT65DiagnosticVariant
-                ? GDN::GdnCoreSyncVariant::B7
-                : syncVariant;
-    }
+    const GDN::GdnCoreSyncVariant effectiveSyncVariant =
+        requestedSyncVariant == GDN::GdnCoreSyncVariant::B30 &&
+                isExactMainVarlenShape
+            ? GDN::GdnCoreSyncVariant::B30
+            : GDN::GdnCoreSyncVariant::B0;
     OP_CHECK_IF(Tiling4ChunkGdnCoreStateOutput(context) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "Reuse of the accepted Phase 5 suffix tiling failed."),
                 return ge::GRAPH_FAILED);
