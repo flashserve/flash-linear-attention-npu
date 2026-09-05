@@ -13,270 +13,272 @@ inputs:
   - name: low_precision_marker
     type: tensor
     required: true
-    dtypes:
-      values: [bf16]
-    ranges:
-      valid:
-        values: [[0, 0]]
-      invalid:
-        values: []
-    shapes:
-      dim_numbers:
-        values: [1]
-      dim_values:
-        values: [1]
+    dtypes: {values: [bf16, fp16]}
+    ranges: {valid: {values: [[0, 0]]}, invalid: {values: []}}
+    shapes: {dim_numbers: {values: [1]}, dim_values: {values: [1]}}
   - name: fp32_marker
     type: tensor
     required: true
-    dtypes:
-      values: [fp32]
-    ranges:
-      valid:
-        values: [[0, 0]]
-      invalid:
-        values: []
-    shapes:
-      dim_numbers:
-        values: [1]
-      dim_values:
-        values: [1]
+    dtypes: {values: [fp32]}
+    ranges: {valid: {values: [[0, 0]]}, invalid: {values: []}}
+    shapes: {dim_numbers: {values: [1]}, dim_values: {values: [1]}}
   - name: case_spec
     type: attr
     required: true
-    dtypes:
-      values: [non_param]
-    ranges:
-      valid:
-        values: ['{"profile":"frozen_by_gen"}']
-      invalid:
-        values: []
+    dtypes: {values: [non_param]}
+    ranges: {valid: {values: ['{"profile":"generated"}']}, invalid: {values: []}}
+  - name: design_id
+    type: attr
+    required: true
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [KDA-FWD-A000]}, invalid: {values: []}}
   - name: soc
     type: attr
     required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [ascend910b, ascend950]
-      invalid:
-        values: []
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [all, ascend910b, ascend910_93, ascend950]}, invalid: {values: []}}
   - name: route
     type: attr
     required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [ascendc, aclnn, direct_launch]
-      invalid:
-        values: []
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [ascendc, aclnn, direct_launch]}, invalid: {values: []}}
   - name: batch
     type: attr
     required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [1]
-      invalid:
-        values: []
+    dtypes: {values: [int]}
+    ranges: {valid: {values: [1, 2, 3]}, invalid: {values: []}}
   - name: head
     type: attr
     required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [2, 96]
-      invalid:
-        values: [0, 129]
+    dtypes: {values: [int]}
+    ranges: {valid: {values: [1, 2, 4, 8]}, invalid: {values: [0, 129]}}
   - name: value_head
     type: attr
     required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [4, 96]
-      invalid:
-        values: [0, 2, 129]
+    dtypes: {values: [int]}
+    ranges: {valid: {values: [1, 2, 4, 8, 16, 32, 96]}, invalid: {values: [0, 129]}}
   - name: total_tokens
     type: attr
     required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [63, 128, 8192, 16384]
-      invalid:
-        values: []
+    dtypes: {values: [int]}
+    ranges: {valid: {values: [63, 64, 65, 96, 127, 128, 129, 192, 256, 512, 1024]}, invalid: {values: []}}
   - name: key_dim
     type: attr
     required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [128]
-      invalid:
-        values: [8, 24, 272]
+    dtypes: {values: [int]}
+    ranges: {valid: {values: [16, 128, 256]}, invalid: {values: [8, 24, 272]}}
   - name: value_dim
     type: attr
     required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [128]
-      invalid:
-        values: [8, 24, 272]
+    dtypes: {values: [int]}
+    ranges: {valid: {values: [128, 256]}, invalid: {values: [8, 24, 272]}}
   - name: chunk_size
     type: attr
     required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [64]
-      invalid:
-        values: [32]
+    dtypes: {values: [int]}
+    ranges: {valid: {values: [64, 128]}, invalid: {values: [32]}}
   - name: layout
     type: attr
     required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [BSND, BNSD, TND, NTD]
-      invalid:
-        values: [bsnd, INVALID]
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [BSND, BNSD, TND, NTD]}, invalid: {values: [bsnd, INVALID]}}
+  - name: scale
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [0.25, 0.08838834764831843, 0.0625]}, invalid: {values: []}}
   - name: q_dtype
     type: attr
     required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [bf16, fp16]
-      invalid:
-        values: [fp32]
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [bf16, fp16]}, invalid: {values: [fp32]}}
   - name: g_dtype
     type: attr
     required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [fp32]
-      invalid:
-        values: [fp16]
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [fp32, bf16]}, invalid: {values: [fp16]}}
   - name: beta_dtype
     type: attr
     required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [bf16, fp32]
-      invalid:
-        values: [fp16]
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [bf16, fp32]}, invalid: {values: [fp16]}}
   - name: initial_state
     type: attr
     required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
+    dtypes: {values: [bool]}
+    ranges: {valid: {values: [false, true]}, invalid: {values: []}}
   - name: output_final_state
     type: attr
     required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
+    dtypes: {values: [bool]}
+    ranges: {valid: {values: [false, true]}, invalid: {values: []}}
   - name: varlen
     type: attr
     required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
+    dtypes: {values: [bool]}
+    ranges: {valid: {values: [false, true]}, invalid: {values: []}}
+  - name: cu_seqlens
+    type: attr
+    required: true
+    dtypes: {values: [string]}
+    ranges: {valid: {values: ['']}, invalid: {values: []}}
+  - name: explicit_chunk_indices
+    type: attr
+    required: true
+    dtypes: {values: [bool]}
+    ranges: {valid: {values: [false, true]}, invalid: {values: []}}
   - name: safe_gate
     type: attr
     required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [true]
-      invalid:
-        values: []
+    dtypes: {values: [bool]}
+    ranges: {valid: {values: [false, true]}, invalid: {values: []}}
   - name: lower_bound
     type: attr
     required: true
-    dtypes:
-      values: [float]
-    ranges:
-      valid:
-        values: [-5.0]
-      invalid:
-        values: [-5.1, 0.0]
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [-5.0]}, invalid: {values: [-5.1, 0.0]}}
   - name: use_gate_in_kernel
     type: attr
     required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [true]
-      invalid:
-        values: []
+    dtypes: {values: [bool]}
+    ranges: {valid: {values: [false, true]}, invalid: {values: []}}
+  - name: dt_bias
+    type: attr
+    required: true
+    dtypes: {values: [bool]}
+    ranges: {valid: {values: [true, false]}, invalid: {values: []}}
   - name: disable_recompute
     type: attr
     required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
+    dtypes: {values: [bool]}
+    ranges: {valid: {values: [false, true]}, invalid: {values: []}}
   - name: return_intermediate_states
     type: attr
     required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
+    dtypes: {values: [bool]}
+    ranges: {valid: {values: [false, true]}, invalid: {values: []}}
   - name: state_v_first
     type: attr
     required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
+    dtypes: {values: [bool]}
+    ranges: {valid: {values: [false, true]}, invalid: {values: []}}
   - name: negative_case
     type: attr
     required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
+    dtypes: {values: [bool]}
+    ranges: {valid: {values: [false]}, invalid: {values: []}}
+  - name: tiling_key
+    type: attr
+    required: true
+    dtypes: {values: [int]}
+    ranges: {valid: {values: [1, 2]}, invalid: {values: [0, 3]}}
+  - name: expected_tiling_key
+    type: attr
+    required: true
+    dtypes: {values: [int]}
+    ranges: {valid: {values: [1, 2]}, invalid: {values: [0, 3]}}
+  - name: tiling_key_condition
+    type: attr
+    required: true
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [generated]}, invalid: {values: []}}
+  - name: execution_mode
+    type: attr
+    required: true
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [public_api]}, invalid: {values: []}}
+  - name: coverage_only
+    type: attr
+    required: true
+    dtypes: {values: [bool]}
+    ranges: {valid: {values: [false]}, invalid: {values: []}}
+  - name: runtime_status
+    type: attr
+    required: true
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [public_api_reachable]}, invalid: {values: []}}
+  - name: tiling_selection_evidence
+    type: attr
+    required: true
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [chunk_kda_fwd_tiling]}, invalid: {values: []}}
+  - name: data_profile
+    type: attr
+    required: true
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [uniform, model_h96]}, invalid: {values: []}}
+  - name: data_scale
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [0.03, 0.08, 0.2, 0.5]}, invalid: {values: []}}
+  - name: gate_scale
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [0.01, 0.02, 0.04, 0.08, 1.25]}, invalid: {values: []}}
+  - name: qk_scale
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [0.05, 0.25]}, invalid: {values: []}}
+  - name: v_scale
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [0.05, 0.25]}, invalid: {values: []}}
+  - name: beta_scale
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [0.35]}, invalid: {values: []}}
+  - name: beta_bias
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [1.5]}, invalid: {values: []}}
+  - name: a_log_scale
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [0.12]}, invalid: {values: []}}
+  - name: dt_bias_scale
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [0.5, 1.65]}, invalid: {values: []}}
+  - name: dt_bias_mean
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [-3.0]}, invalid: {values: []}}
+  - name: beta_low
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [0.01, 0.05, 0.1, 0.2]}, invalid: {values: []}}
+  - name: beta_high
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [0.8, 0.9, 0.95, 0.99]}, invalid: {values: []}}
+  - name: state_scale
+    type: attr
+    required: true
+    dtypes: {values: [float]}
+    ranges: {valid: {values: [0.02]}, invalid: {values: []}}
+  - name: case_id
+    type: attr
+    required: true
+    dtypes: {values: [int]}
+    ranges: {valid: {values: [0, 199]}, invalid: {values: []}}
+  - name: profile
+    type: attr
+    required: true
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [accuracy_100x2, determinism_regression, mss_tiling_key_coverage, mss_unsafe_regression, perf_tiling_key_coverage]}, invalid: {values: []}}
+  - name: tags
+    type: attr
+    required: true
+    dtypes: {values: [string]}
+    ranges: {valid: {values: [accuracy, mss, performance]}, invalid: {values: []}}

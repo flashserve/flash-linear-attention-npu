@@ -6,7 +6,12 @@
 2. 不新增公开算子原型；A5 快路径复用既有 `ChunkKdaFwd` 原型和外层 kernel 入口。
 3. A2/A3/A5 使用同一数学定义；A5 保留 regbase 双发射特化。
 4. 输入 layout 与输出 layout 解耦。
-5. FwdH 同时服务 KDA 与 GDN，并支持可选 scalar gate、key-wise gate 和 `state_v_first`。
+5. KDA 私有 FwdH 支持可选 scalar gate、key-wise gate 和 `state_v_first`。
+
+KDA 使用的 FwdH 实现位于本算子的 `op_kernel/fwd_h/` 私有目录，Catlass 流水和 regbase
+辅助头位于 `op_kernel/kernel_utils/` 私有目录；
+bwd-intra 等 KDA 子算子也在各自的 `op_kernel/kernel_utils/` 中携带所需的 regbase 副本；
+`ascendc/common/kernel_utils` 和独立 GDN FwdH 实现仅保留给既有消费者，KDA 不依赖这些公共副本。
 
 ## L2 调度
 
@@ -46,7 +51,7 @@ Aqk, Akk, qg, qg_scaled, w_seed, u_seed
 
 ### Post-WU
 
-只读取 `k/gk/w_seed/Akk/u_seed`，产生：
+读取 `k/gk/w_seed/Akk/u_seed`，产生：
 
 ```text
 w, u, kg, v_new_seed
@@ -58,6 +63,12 @@ w, u, kg, v_new_seed
 处理，保证下三角计算依赖的源行在最后一次读取前不会被原位覆盖。`u_seed` 与 `u` 使用独立存储，
 仍按行区间并行。
 
+A5 unsafe BF16 key1 在 `K=128`、`V>=K` 且未启用 Post-WU 融合时，会额外保留
+`kg` 的量化残差。Post-WU 先消费 Prepare 产生的 `u_seed` 并完成 `u`，再将私有
+`u_seed` 的每个 token 行按原 `V` stride 复用：前 `K` 列写入
+`kg_fp32 - float(kg_bf16)` 的 BF16 残差；每个 chunk 最后一行写零，与该行公开
+`kg` 直接使用原始 `k` 的语义一致。该复用只发生在私有阶段载体上，不改变公开输出或 ABI。
+
 ### FwdH state propagation
 
 读取 `kg/w/u/gk` 和可选 `initial_state`，计算 chunk 间递推：
@@ -67,8 +78,16 @@ v_new = u - w @ h_prev
 h_next = exp2(gk_last) * h_prev + kg^T @ v_new
 ```
 
-arch35 路径复用与 `ChunkGatedDeltaRuleFwdH` 相同的数学实现；其他场景在 `ChunkKdaFwd` 内嵌
-共享 FwdH 实现。独立 GDN L0 原型继续保留给其他调用方，key-wise `gk` 固定使用 `exp2`。
+各平台均使用 `ChunkKdaFwd` 内部的私有 FwdH 实现。该实现与 GDN FwdH 保持相同的基础递推
+数学定义，但不包含或依赖独立 GDN 算子的源码；key-wise `gk` 固定使用 `exp2`。
+
+上述 A5 残差策略启用时，FwdH 将 BF16 `kg`（导出时为公开输出，否则为私有 workspace）
+作为高位平面，将 `u_seed` 前 `K` 列作为低位平面，并对同一 `v_new` 执行两平面归约，
+从而计算
+`(kg_high + kg_low)^T @ v_new`。单 launch 路径由 Post-WU 后的 `SyncAll` 保证写入完成后再读；
+四段路径由同一 stream 上顺序提交的独立 Post-WU/FwdH launch 边界保证可见性，executor 内部
+`u_seed` 张量仅负责跨阶段承载残差。其他平台、
+dtype、safe gate、key2、K/V 组合和融合路径均不覆写或消费该残差布局。
 
 ### Finalize
 
@@ -125,7 +144,7 @@ Finalize 的内部实现头与统一 kernel 入口同属 `chunk_kda_fwd/op_kerne
 `SetTilingKey` 只检查 chunk、K、V，不检查 SoC。
 
 在 arch35 上，key2 的 dense 对齐场景使用单 launch 融合流水和 arch35 FwdH。A5 多 chunk 的
-tail/varlen 以及 key1 泛化场景使用四段 launch，并在 FwdH 阶段复用共享实现。其他架构在同一
+tail/varlen 以及 key1 泛化场景使用四段 launch，并在 FwdH 阶段复用 KDA 私有实现。其他架构在同一
 key2 下使用其对应单 launch 实现。tiling key 和私有 `stage` 均不改变公开算子原型、输出契约
 或数学定义。
 

@@ -1,156 +1,522 @@
 #!/usr/bin/env python3
-"""Run fixed-input NPU-only binary determinism stress for chunk_kda_fwd."""
+"""Run fixed-input NPU determinism stress for modern ``chunk_kda_fwd``.
+
+The mss manifest is the source of truth for this diagnostic.  By default all
+records are executed, and the manifest must contain both host tiling keys.
+The diagnostic intentionally does not run a CPU reference: every output from
+every repeat is compared byte-for-byte with the first repeat.
+"""
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import gc
 import json
 import time
 from pathlib import Path
+from typing import Any, Iterable, Optional
+
+
+_SOC_ALIASES = {
+    "all": "all",
+    "a2": "ascend910b",
+    "a3": "ascend910_93",
+    "a5": "ascend950",
+    "ascend910b": "ascend910b",
+    "ascend910_93": "ascend910_93",
+    "ascend950": "ascend950",
+}
+_VALID_ROUTES = {"ascendc", "aclnn", "direct_launch"}
+_TILING_KEYS = {1, 2}
+_REQUIRED_UNSAFE_CASES = {4: (4, "full"), 5: (24, "staged")}
+_VARLEN_TAIL_CASE_ID = 6
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run chunk_kda_fwd repeatedly on one NPU and compare every attn_out "
-            "bit against run 0. No CPU or GPU reference is executed."
+            "Run chunk_kda_fwd repeatedly for every selected MSS case and "
+            "compare every output bit against run 0."
         )
     )
     parser.add_argument("--device", type=int, default=0)
-    parser.add_argument("--case-id", type=int, default=250)
+    parser.add_argument(
+        "--soc",
+        default="all",
+        help="restrict records to one SoC (ascend910b, ascend910_93, ascend950, or all)",
+    )
+    parser.add_argument(
+        "--case-id",
+        type=int,
+        default=None,
+        help="run one MSS manifest case instead of the complete selection",
+    )
     parser.add_argument("--repeats", type=int, default=100)
     parser.add_argument(
         "--tokens",
         type=int,
-        help="override T for a shorter boundary stress, for example 128",
+        help="override T for a dense boundary stress; varlen records are rejected",
     )
     parser.add_argument(
         "--case-json",
         type=Path,
-        default=Path(__file__).with_name("atk_chunk_kda_fwd.json"),
+        default=Path(__file__).with_name("atk_chunk_kda_fwd_mss.json"),
     )
     return parser.parse_args()
 
 
-def _load_spec(path: Path, case_id: int) -> dict:
-    cases = json.loads(path.read_text(encoding="utf-8"))
-    for case in cases:
-        if int(case["id"]) != case_id:
+def _normalise_soc(value: str) -> str:
+    key = str(value).strip().lower()
+    try:
+        return _SOC_ALIASES[key]
+    except KeyError as exc:
+        choices = ", ".join(sorted(_SOC_ALIASES))
+        raise ValueError(f"unsupported --soc {value!r}; expected one of {choices}") from exc
+
+
+def _case_spec(case: dict[str, Any], path: Path) -> dict[str, Any]:
+    if not isinstance(case, dict):
+        raise ValueError(f"manifest entry in {path} is not an object")
+    if "id" not in case:
+        raise ValueError(f"manifest entry in {path} has no id")
+    try:
+        case_id = int(case["id"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"manifest entry has a non-integer id: {case.get('id')!r}") from exc
+    inputs = case.get("inputs")
+    if not isinstance(inputs, list):
+        raise ValueError(f"case {case_id} in {path} has no inputs list")
+    candidates = [
+        item for item in inputs
+        if isinstance(item, dict) and item.get("name") == "case_spec"
+    ]
+    if len(candidates) != 1:
+        raise ValueError(f"case {case_id} in {path} must contain exactly one case_spec input")
+    raw = candidates[0].get("range_values")
+    if isinstance(raw, str):
+        try:
+            spec = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"case {case_id} in {path} has invalid case_spec JSON") from exc
+    elif isinstance(raw, dict):
+        spec = raw
+    else:
+        raise ValueError(f"case {case_id} in {path} has an invalid case_spec value")
+    if not isinstance(spec, dict):
+        raise ValueError(f"case {case_id} in {path} case_spec is not an object")
+    spec = dict(spec)
+    if int(spec.get("case_id", case_id)) != case_id:
+        raise ValueError(
+            f"case {case_id} in {path} disagrees with case_spec.case_id={spec.get('case_id')!r}"
+        )
+    spec["case_id"] = case_id
+    return spec
+
+
+def _host_tiling_key(spec: dict[str, Any]) -> int:
+    try:
+        chunk_size = int(spec["chunk_size"])
+        key_dim = int(spec["K"])
+        value_dim = int(spec["V"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"case {spec.get('case_id')} lacks numeric chunk/K/V fields") from exc
+    return 2 if (chunk_size, key_dim, value_dim) == (64, 128, 128) else 1
+
+
+def _a5_launch_mode(spec: dict[str, Any]) -> str:
+    chunk_size = int(spec["chunk_size"])
+    raw_cu = str(spec.get("cu_seqlens", "")).strip()
+    if raw_cu:
+        cu = [int(value) for value in raw_cu.split(",")]
+        if len(cu) < 2 or cu[0] != 0 or cu[-1] != int(spec["T"]):
+            raise ValueError(f"case {spec['case_id']} has invalid cu_seqlens")
+        if any(end < begin for begin, end in zip(cu, cu[1:])):
+            raise ValueError(f"case {spec['case_id']} has decreasing cu_seqlens")
+        total_chunks = sum(
+            (end - begin + chunk_size - 1) // chunk_size
+            for begin, end in zip(cu, cu[1:])
+        )
+    else:
+        total_chunks = (int(spec["T"]) + chunk_size - 1) // chunk_size
+
+    use_dense_a5_fast_path = (
+        not raw_cu
+        and spec["q_dtype"] == "bf16"
+        and chunk_size == 64
+        and int(spec["K"]) == 128
+        and int(spec["V"]) == 128
+        and int(spec["T"]) % chunk_size == 0
+    )
+    return "staged" if total_chunks > 1 and not use_dense_a5_fast_path else "full"
+
+
+def _matches_soc(spec: dict[str, Any], requested: str) -> bool:
+    if requested == "all":
+        return True
+    declared = str(spec.get("soc", "all")).strip().lower()
+    if declared in {"all", requested.lower()}:
+        return True
+    platforms = spec.get("target_platforms", ())
+    return isinstance(platforms, (list, tuple, set)) and requested in {
+        str(item).strip().lower() for item in platforms
+    }
+
+
+def _load_specs(
+    path: Path,
+    *,
+    soc: str = "all",
+    case_id: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    path = path.expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"MSS manifest does not exist: {path}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"MSS manifest is not valid JSON: {path}") from exc
+    if not isinstance(payload, list) or not payload:
+        raise ValueError(f"MSS manifest must be a non-empty JSON list: {path}")
+
+    requested = _normalise_soc(soc)
+    selected: list[dict[str, Any]] = []
+    seen: set[tuple[int, str, int]] = set()
+    for case in payload:
+        spec = _case_spec(case, path)
+        current_id = int(spec["case_id"])
+        if case_id is not None and current_id != int(case_id):
             continue
-        for item in case.get("inputs", []):
-            if item.get("name") == "case_spec":
-                return json.loads(item["range_values"])
-        raise RuntimeError(f"case {case_id} has no case_spec in {path}")
-    raise RuntimeError(f"case {case_id} not found in {path}")
+        tags = {
+            tag.strip() for tag in str(spec.get("tags", "")).split(",") if tag.strip()
+        }
+        if "negative" in tags or bool(spec.get("negative_case", False)):
+            raise ValueError(f"MSS manifest contains a negative case {current_id}")
+        if "mss" not in tags and str(spec.get("manifest", "mss")) != "mss":
+            raise ValueError(f"case {current_id} is not marked as an MSS case")
+        key = int(spec.get("tiling_key", -1))
+        expected_key = int(spec.get("expected_tiling_key", -1))
+        actual_key = _host_tiling_key(spec)
+        if key not in _TILING_KEYS or expected_key != key or actual_key != key:
+            raise ValueError(
+                f"case {current_id} has inconsistent tiling key: "
+                f"manifest={key}, expected={expected_key}, host={actual_key}"
+            )
+        if "source_accuracy_case_id" in spec:
+            expected_source = _REQUIRED_UNSAFE_CASES.get(current_id)
+            actual_source = (
+                int(spec["source_accuracy_case_id"]),
+                str(spec.get("a5_launch_mode", "")),
+            )
+            derived_mode = _a5_launch_mode(spec)
+            if expected_source is None or actual_source != expected_source:
+                raise ValueError(
+                    f"case {current_id} has invalid unsafe source identity {actual_source}"
+                )
+            if derived_mode != actual_source[1]:
+                raise ValueError(
+                    f"case {current_id} launch mode drifted: "
+                    f"declared={actual_source[1]}, derived={derived_mode}"
+                )
+            if not (
+                spec["q_dtype"] == "bf16"
+                and spec["g_dtype"] == "fp32"
+                and not spec["safe_gate"]
+                and key == 1
+                and int(spec["K"]) == 128
+                and int(spec["V"]) >= int(spec["K"])
+            ):
+                raise ValueError(f"case {current_id} misses the A5 precision selector")
+        elif current_id in _REQUIRED_UNSAFE_CASES:
+            raise ValueError(f"case {current_id} is missing unsafe source metadata")
+        if current_id == _VARLEN_TAIL_CASE_ID:
+            expected_tail = {
+                "profile": "determinism_regression",
+                "B": 1, "H": 2, "HV": 96, "T": 63, "K": 128, "V": 128,
+                "chunk_size": 64, "layout": "BSND", "q_dtype": "bf16",
+                "g_dtype": "fp32", "beta_dtype": "fp32",
+                "scale": 0.08838834764831843,
+                "initial_state": False, "output_final_state": True,
+                "cu_seqlens": "0,63", "explicit_chunk_indices": False,
+                "safe_gate": True, "lower_bound": -5.0,
+                "use_gate_in_kernel": True, "dt_bias": True,
+                "disable_recompute": True, "return_intermediate_states": True,
+                "state_v_first": False, "negative_case": False,
+                "data_profile": "model_h96", "data_scale": 0.08,
+                "gate_scale": 1.25, "qk_scale": 0.05, "v_scale": 0.05,
+                "beta_scale": 0.35, "beta_bias": 1.5, "a_log_scale": 0.12,
+                "dt_bias_scale": 1.65, "dt_bias_mean": -3.0,
+                "beta_low": 0.1, "beta_high": 0.9, "state_scale": 0.02,
+                "tiling_key": 2, "expected_tiling_key": 2, "seed": 4,
+            }
+            if any(spec.get(name) != value for name, value in expected_tail.items()):
+                raise ValueError("case 6 varlen tail regression drifted")
+            required_tags = {
+                "mss", "determinism", "mssanitizer", "regression", "boundary",
+                "varlen", "tiling_key_2", "issue440",
+            }
+            if tags != required_tags:
+                raise ValueError("case 6 regression tags drifted")
+        route = str(spec.get("route", ""))
+        if route not in _VALID_ROUTES:
+            raise ValueError(f"case {current_id} has unsupported route {route!r}")
+        if not _matches_soc(spec, requested):
+            continue
+        declared_soc = str(spec.get("soc", "all"))
+        identity = (current_id, declared_soc, key)
+        if identity in seen:
+            raise ValueError(f"duplicate MSS case identity {identity}")
+        seen.add(identity)
+        selected.append(spec)
+
+    if not selected:
+        selector = f"case_id={case_id}" if case_id is not None else "the requested SoC"
+        raise ValueError(f"no MSS cases selected for {selector}")
+    selected.sort(key=lambda item: (int(item["case_id"]), int(item["tiling_key"])))
+    if case_id is None:
+        selected_ids = [int(item["case_id"]) for item in selected]
+        if selected_ids != list(range(7)):
+            raise ValueError(
+                f"complete MSS selection must contain IDs 0--6; selected {selected_ids}"
+            )
+        base_coverage = {
+            (int(item["tiling_key"]), bool(item["initial_state"]))
+            for item in selected[:4]
+        }
+        expected_base_coverage = {
+            (key, boundary) for key in _TILING_KEYS for boundary in (False, True)
+        }
+        if base_coverage != expected_base_coverage:
+            raise ValueError(
+                "MSS IDs 0--3 must cover ordinary/boundary rows for both tiling keys"
+            )
+        unsafe_launches = {
+            (int(item["source_accuracy_case_id"]), str(item.get("a5_launch_mode", "")))
+            for item in selected
+            if "source_accuracy_case_id" in item
+        }
+        if unsafe_launches != set(_REQUIRED_UNSAFE_CASES.values()):
+            raise ValueError(
+                "complete MSS selection must cover the canonical unsafe full/staged "
+                f"cases; selected {sorted(unsafe_launches)}"
+            )
+    return selected
 
 
-def _integer_dtype(torch, tensor):
+def _override_tokens(spec: dict[str, Any], tokens: Optional[int]) -> dict[str, Any]:
+    if tokens is None:
+        return dict(spec)
+    if "source_accuracy_case_id" in spec:
+        raise ValueError("--tokens cannot override a canonical accuracy regression clone")
+    value = int(tokens)
+    chunk_size = int(spec["chunk_size"])
+    if value <= 0 or value % chunk_size != 0:
+        raise ValueError("--tokens must be a positive multiple of chunk_size")
+    if str(spec.get("cu_seqlens", "")).strip():
+        raise ValueError("--tokens cannot override a varlen MSS case")
+    updated = dict(spec)
+    updated["T"] = value
+    updated["case_key"] = f"{updated.get('case_key', updated['case_id'])}_t{value}_stress"
+    return updated
+
+
+def _clone_prepared_inputs(torch, inputs):
+    """Clone every tensor in the executor dataclass before each launch."""
+    if not dataclasses.is_dataclass(inputs):
+        raise TypeError("chunk_kda_fwd executor inputs are not a dataclass")
+    values = {}
+    for field in dataclasses.fields(inputs):
+        value = getattr(inputs, field.name)
+        if isinstance(value, torch.Tensor):
+            values[field.name] = value.clone()
+        elif isinstance(value, list):
+            values[field.name] = list(value)
+        elif isinstance(value, tuple):
+            values[field.name] = tuple(value)
+        else:
+            values[field.name] = value
+    return dataclasses.replace(inputs, **values)
+
+
+def _output_name(index: int, names: Iterable[str]) -> str:
+    names = tuple(names)
+    return names[index] if index < len(names) else f"output_{index}"
+
+
+def _ensure_finite(torch, tensor, label: str) -> None:
+    if not (tensor.is_floating_point() or tensor.is_complex()):
+        return
+    if not bool(torch.isfinite(tensor).all().item()):
+        raise RuntimeError(f"{label} contains NaN or Inf")
+
+
+def _expected_output_presence(spec: dict[str, Any]) -> dict[str, bool]:
+    export_full = bool(spec["disable_recompute"])
     return {
-        1: torch.int8,
-        2: torch.int16,
-        4: torch.int32,
-        8: torch.int64,
-    }[tensor.element_size()]
-
-
-def _scalar_record(torch, tensor, index: tuple[int, ...]) -> dict:
-    scalar = tensor[index].detach().cpu().contiguous().reshape(1)
-    raw = int(scalar.view(_integer_dtype(torch, scalar)).item())
-    raw &= (1 << (scalar.element_size() * 8)) - 1
-    return {
-        "index": list(index),
-        "value": float(scalar.float().item()),
-        "bits": f"0x{raw:0{scalar.element_size() * 2}x}",
+        "attn_out": True,
+        "final_state": bool(spec["output_final_state"]),
+        "gk": not bool(spec["use_gate_in_kernel"]) or export_full,
+        "Aqk": True,
+        "Akk": True,
+        "w": export_full,
+        "u": export_full,
+        "qg": export_full,
+        "kg": export_full,
+        "v_new": export_full,
+        "h": export_full or bool(spec["return_intermediate_states"]),
+        "initial_state_out": bool(spec["initial_state"]),
     }
 
 
-def _flat_to_index(flat_index: int, shape: tuple[int, ...]) -> tuple[int, ...]:
-    result = []
-    for size in reversed(shape):
-        result.append(flat_index % size)
-        flat_index //= size
-    return tuple(reversed(result))
+def _validate_output_presence(torch, outputs, names: Iterable[str], spec: dict[str, Any]) -> None:
+    names = tuple(names)
+    expected = _expected_output_presence(spec)
+    if set(names) != set(expected) or len(names) != len(expected):
+        raise RuntimeError("executor output names disagree with the output-policy contract")
+    if not isinstance(outputs, (tuple, list)) or len(outputs) != len(names):
+        actual = len(outputs) if isinstance(outputs, (tuple, list)) else type(outputs).__name__
+        raise RuntimeError(f"executor returned {actual} outputs, expected {len(names)}")
+    for name, output in zip(names, outputs):
+        should_exist = expected[name]
+        is_tensor = isinstance(output, torch.Tensor)
+        if should_exist != is_tensor:
+            expected_type = "Tensor" if should_exist else "None"
+            raise RuntimeError(
+                f"{name} violates the output policy: expected {expected_type}, "
+                f"got {type(output).__name__}"
+            )
 
 
-def _max_abs_record(torch, tensor) -> dict:
-    absolute = tensor.detach().abs()
-    flat_index = int(absolute.reshape(-1).argmax().item())
-    index = _flat_to_index(flat_index, tuple(tensor.shape))
-    result = _scalar_record(torch, tensor, index)
-    result["max_abs"] = float(absolute[index].float().item())
-    del absolute
-    return result
+def _snapshot_outputs(torch, outputs, names: Iterable[str]):
+    names = tuple(names)
+    if not isinstance(outputs, (tuple, list)):
+        raise RuntimeError(f"executor returned {type(outputs).__name__}, expected a tuple/list")
+    if len(outputs) != len(names):
+        raise RuntimeError(
+            f"executor returned {len(outputs)} outputs, expected {len(names)}"
+        )
+    snapshot = []
+    for index, output in enumerate(outputs):
+        name = _output_name(index, names)
+        if output is None:
+            snapshot.append(None)
+            continue
+        if not isinstance(output, torch.Tensor):
+            raise RuntimeError(f"{name} has unsupported output type {type(output).__name__}")
+        _ensure_finite(torch, output, name)
+        snapshot.append(output.detach().clone())
+    return tuple(snapshot)
 
 
-def _binary_difference(torch, current, baseline, baseline_bits) -> dict:
-    current_bits = current.contiguous().view(_integer_dtype(torch, current))
-    unequal = current_bits != baseline_bits
-    head_counts = unequal.to(torch.float32).sum(dim=(0, 1, 3))
-    mismatch_count = int(head_counts.sum().item())
-    if mismatch_count == 0:
-        return {"binary_equal": True, "mismatched_elements": 0}
-
-    top_head = int(head_counts.argmax().item())
-    top_head_count = int(head_counts[top_head].item())
-    head_unequal = unequal[:, :, top_head, :]
-    local_flat = int(head_unequal.to(torch.int8).reshape(-1).argmax().item())
-    batch, token, channel = _flat_to_index(local_flat, tuple(head_unequal.shape))
-    index = (batch, token, top_head, channel)
-    max_abs_difference = float((current - baseline).abs().max().float().item())
-    result = {
-        "binary_equal": False,
-        "mismatched_elements": mismatch_count,
-        "top_head": top_head,
-        "top_head_mismatched_elements": top_head_count,
-        "first_mismatch_in_top_head": list(index),
-        "current": _scalar_record(torch, current, index),
-        "baseline": _scalar_record(torch, baseline, index),
-        "max_abs_difference": max_abs_difference,
-    }
-    del current_bits, unequal, head_counts, head_unequal
-    return result
+def _max_abs_delta(torch, current, baseline) -> Optional[float]:
+    if not (current.is_floating_point() or current.is_complex()):
+        return None
+    if current.numel() == 0:
+        return 0.0
+    delta = (current.to(torch.float32) - baseline.to(torch.float32)).abs()
+    value = float(delta.max().item())
+    del delta
+    return value
 
 
-def main() -> int:
-    args = _parse_args()
-    if args.repeats < 2:
-        raise ValueError("--repeats must be at least 2")
+def _compare_outputs(torch, current, baseline, names: Iterable[str]) -> list[dict[str, Any]]:
+    names = tuple(names)
+    if not isinstance(current, (tuple, list)):
+        raise RuntimeError(f"executor returned {type(current).__name__}, expected a tuple/list")
+    if len(current) != len(names):
+        raise RuntimeError(
+            f"executor returned {len(current)} outputs, expected {len(names)}"
+        )
+    if len(current) != len(baseline):
+        raise RuntimeError(
+            f"output count changed between repeats: {len(current)} != {len(baseline)}"
+        )
+    differences: list[dict[str, Any]] = []
+    for index, (value, reference) in enumerate(zip(current, baseline)):
+        name = _output_name(index, names)
+        if value is None or reference is None:
+            if value is not None or reference is not None:
+                differences.append(
+                    {"name": name, "reason": "optional_output_presence_changed"}
+                )
+            continue
+        if not isinstance(value, torch.Tensor) or not isinstance(reference, torch.Tensor):
+            differences.append({"name": name, "reason": "output_type_changed"})
+            continue
+        _ensure_finite(torch, value, name)
+        if value.dtype != reference.dtype or tuple(value.shape) != tuple(reference.shape):
+            differences.append(
+                {
+                    "name": name,
+                    "reason": "dtype_or_shape_changed",
+                    "current_dtype": str(value.dtype),
+                    "baseline_dtype": str(reference.dtype),
+                    "current_shape": list(value.shape),
+                    "baseline_shape": list(reference.shape),
+                }
+            )
+            continue
+        if value.device != reference.device:
+            differences.append(
+                {
+                    "name": name,
+                    "reason": "device_changed",
+                    "current_device": str(value.device),
+                    "baseline_device": str(reference.device),
+                }
+            )
+            continue
+        current_bytes = value.detach().contiguous().view(torch.uint8)
+        baseline_bytes = reference.detach().contiguous().view(torch.uint8)
+        if not bool(torch.equal(current_bytes, baseline_bytes)):
+            mismatch_bytes = int(torch.count_nonzero(current_bytes != baseline_bytes).item())
+            differences.append(
+                {
+                    "name": name,
+                    "reason": "bitwise_mismatch",
+                    "mismatched_bytes": mismatch_bytes,
+                    "max_abs_delta": _max_abs_delta(torch, value, reference),
+                }
+            )
+        del current_bytes, baseline_bytes
+    return differences
 
-    import torch
-    import torch_npu  # noqa: F401
 
-    from executor_chunk_kda_fwd import _prepare_inputs, _run_positive_npu
-
-    spec = _load_spec(args.case_json.expanduser().resolve(), args.case_id)
-    if args.tokens is not None:
-        if args.tokens <= 0 or args.tokens % int(spec["chunk_size"]) != 0:
-            raise ValueError("--tokens must be a positive multiple of chunk_size")
-        spec["T"] = args.tokens
-        spec["case_key"] = f"{spec['case_key']}_t{args.tokens}_stress"
-    if str(spec["layout"]) != "BSND":
-        raise ValueError("this stress diagnostic expects BSND attn_out")
-
-    device = torch.device(f"npu:{args.device}")
-    torch.npu.set_device(device)
+def _run_case(
+    torch,
+    spec: dict[str, Any],
+    *,
+    device,
+    repeats: int,
+    prepare_inputs,
+    run_positive_npu,
+    output_names: Iterable[str],
+) -> bool:
     low_marker = torch.zeros(1, dtype=torch.bfloat16, device=device)
     fp32_marker = torch.zeros(1, dtype=torch.float32, device=device)
-    inputs = _prepare_inputs(spec, low_marker, fp32_marker, high_precision=False)
+    template_inputs = prepare_inputs(spec, low_marker, fp32_marker, high_precision=False)
+    torch.npu.synchronize()
 
-    print("KDA_NPU_BINARY_STRESS_BEGIN", flush=True)
+    case_id = int(spec["case_id"])
+    case_key = str(spec.get("case_key", case_id))
     print(
-        json.dumps(
+        "CASE_BEGIN "
+        + json.dumps(
             {
-                "case_id": args.case_id,
-                "case_key": spec["case_key"],
-                "device": args.device,
-                "repeats": args.repeats,
+                "case_id": case_id,
+                "case_key": case_key,
+                "tiling_key": int(spec["tiling_key"]),
+                "soc": str(spec.get("soc", "all")),
+                "device": str(device),
+                "repeats": repeats,
                 "seed": int(spec["seed"]),
+                "source_accuracy_case_id": spec.get("source_accuracy_case_id"),
+                "a5_launch_mode": spec.get("a5_launch_mode"),
                 "shape": {
                     name: int(spec[name])
                     for name in ("B", "H", "HV", "T", "K", "V", "chunk_size")
                 },
-                "comparison": "full_attn_out_bitwise_against_run_0",
+                "comparison": "all_outputs_bitwise_against_run_0",
             },
             sort_keys=True,
         ),
@@ -158,56 +524,132 @@ def main() -> int:
     )
 
     baseline = None
-    baseline_bits = None
-    mismatch_runs = []
+    mismatch_runs: list[int] = []
     started = time.perf_counter()
     with torch.no_grad():
-        for repeat in range(args.repeats):
+        for repeat in range(repeats):
+            run_inputs = _clone_prepared_inputs(torch, template_inputs)
             launch_started = time.perf_counter()
-            outputs = _run_positive_npu(inputs, spec)
-            attn_out = outputs[0]
+            outputs = run_positive_npu(run_inputs, spec)
             torch.npu.synchronize()
-            if not torch.isfinite(attn_out).all().item():
-                raise RuntimeError(f"run {repeat} attn_out contains NaN or Inf")
-
-            record = {
-                "run": repeat,
-                "elapsed_seconds": time.perf_counter() - launch_started,
-                "max_abs": _max_abs_record(torch, attn_out),
-            }
+            elapsed = time.perf_counter() - launch_started
+            _validate_output_presence(torch, outputs, output_names, spec)
             if baseline is None:
-                baseline = attn_out.detach().clone()
-                baseline_bits = baseline.contiguous().view(
-                    _integer_dtype(torch, baseline)
-                )
-                record.update({"binary_equal": True, "baseline": True})
+                baseline = _snapshot_outputs(torch, outputs, output_names)
+                record: dict[str, Any] = {
+                    "run": repeat,
+                    "elapsed_seconds": elapsed,
+                    "binary_equal": True,
+                    "baseline": True,
+                    "outputs_compared": len(baseline),
+                }
             else:
-                difference = _binary_difference(
-                    torch, attn_out, baseline, baseline_bits
-                )
-                record.update(difference)
-                if not difference["binary_equal"]:
+                differences = _compare_outputs(torch, outputs, baseline, output_names)
+                equal = not differences
+                if not equal:
                     mismatch_runs.append(repeat)
+                record = {
+                    "run": repeat,
+                    "elapsed_seconds": elapsed,
+                    "binary_equal": equal,
+                    "differences": differences,
+                    "outputs_compared": len(baseline),
+                }
             print("RUN " + json.dumps(record, sort_keys=True), flush=True)
-            del outputs, attn_out
+            del outputs, run_inputs
             gc.collect()
 
+    passed = not mismatch_runs
     print(
-        "SUMMARY "
+        "CASE_SUMMARY "
         + json.dumps(
             {
-                "repeats": args.repeats,
-                "equal_to_run_0": args.repeats - len(mismatch_runs),
+                "case_id": case_id,
+                "case_key": case_key,
+                "tiling_key": int(spec["tiling_key"]),
+                "source_accuracy_case_id": spec.get("source_accuracy_case_id"),
+                "a5_launch_mode": spec.get("a5_launch_mode"),
+                "repeats": repeats,
+                "equal_to_run_0": repeats - len(mismatch_runs),
                 "different_from_run_0": len(mismatch_runs),
                 "mismatch_runs": mismatch_runs,
                 "elapsed_seconds": time.perf_counter() - started,
+                "passed": passed,
             },
             sort_keys=True,
         ),
         flush=True,
     )
+    del baseline, template_inputs, low_marker, fp32_marker
+    gc.collect()
+    return passed
+
+
+def main() -> int:
+    args = _parse_args()
+    if args.device < 0:
+        raise ValueError("--device must be non-negative")
+    if args.repeats < 2:
+        raise ValueError("--repeats must be at least 2")
+    requested_soc = _normalise_soc(args.soc)
+    manifest = args.case_json.expanduser().resolve()
+    specs = _load_specs(manifest, soc=requested_soc, case_id=args.case_id)
+    specs = [_override_tokens(spec, args.tokens) for spec in specs]
+
+    import torch
+    import torch_npu  # noqa: F401
+
+    from executor_chunk_kda_fwd import (
+        _OUTPUT_NAMES,
+        _prepare_inputs,
+        _run_positive_npu,
+    )
+
+    device = torch.device(f"npu:{args.device}")
+    torch.npu.set_device(device)
+    print("KDA_NPU_BINARY_STRESS_BEGIN", flush=True)
+    failures: list[dict[str, Any]] = []
+    started = time.perf_counter()
+    for spec in specs:
+        try:
+            passed = _run_case(
+                torch,
+                spec,
+                device=device,
+                repeats=args.repeats,
+                prepare_inputs=_prepare_inputs,
+                run_positive_npu=_run_positive_npu,
+                output_names=_OUTPUT_NAMES,
+            )
+            if not passed:
+                failures.append(
+                    {
+                        "case_id": int(spec["case_id"]),
+                        "tiling_key": int(spec["tiling_key"]),
+                        "reason": "bitwise_mismatch",
+                    }
+                )
+        except Exception as exc:  # Fail closed, but continue to report other selected cases.
+            failure = {
+                "case_id": int(spec.get("case_id", -1)),
+                "tiling_key": int(spec.get("tiling_key", -1)),
+                "reason": f"{type(exc).__name__}: {exc}",
+            }
+            failures.append(failure)
+            print("CASE_ERROR " + json.dumps(failure, sort_keys=True), flush=True)
+    summary = {
+        "manifest": manifest.name,
+        "soc": requested_soc,
+        "case_count": len(specs),
+        "tiling_keys": sorted({int(spec["tiling_key"]) for spec in specs}),
+        "passed_cases": len(specs) - len(failures),
+        "failed_cases": len(failures),
+        "failures": failures,
+        "elapsed_seconds": time.perf_counter() - started,
+    }
+    print("SUMMARY " + json.dumps(summary, sort_keys=True), flush=True)
     print("KDA_NPU_BINARY_STRESS_END", flush=True)
-    return 1 if mismatch_runs else 0
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

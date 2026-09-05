@@ -32,6 +32,7 @@ __aicore__ inline void DispatchStage(
     auto addresses = ResolveAddresses(
         finalState, gk, w, u, qg, kg, vNew, h, userWorkspace, tiling);
     addresses.qgScaled = qgScaled;
+    addresses.uSeed = uSeed;
     if (tiling.stage == KDA_STAGE_GATE_PREPARE) {
         RunGateCumsum(g, aLog, dtBias, cuSeqlens, addresses.gk, tiling);
         if (!tiling.computeGateInPrepare) {
@@ -47,18 +48,23 @@ __aicore__ inline void DispatchStage(
             userWorkspace, tiling, pipe, tiling.storeQG);
     } else if (tiling.stage == KDA_STAGE_POST_WU) {
         TPipe pipe;
-        KdaPostWu::RunChunkKdaPostWu<T, float, BETA_T>(
+        RunPostWu<SAFE_GATE, T, float, BETA_T, TilingData, COMPILE_BT,
+                  COMPILE_K, COMPILE_V>(
             q, k, v, addresses.gk, beta, initialState, cuSeqlens,
             chunkIndices, addresses.w, akk, uSeed, addresses.w,
             addresses.u, addresses.kg, addresses.vNew, userWorkspace,
             tiling, pipe);
     } else if (tiling.stage == KDA_STAGE_FWD_H) {
         if (tiling.vHeadDim > 128) {
-            RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
+            RunFwdH<SAFE_GATE, T,
+                    Catlass::Gemm::Kernel::KDAFwdHTileShapes256, TilingData,
+                    COMPILE_BT, COMPILE_K, COMPILE_V>(
                 initialState, cuSeqlens, chunkIndices, addresses,
                 userWorkspace, tiling);
         } else {
-            RunFwdH<T, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
+            RunFwdH<SAFE_GATE, T,
+                    Catlass::Gemm::Kernel::KDAFwdHTileShapes128, TilingData,
+                    COMPILE_BT, COMPILE_K, COMPILE_V>(
                 initialState, cuSeqlens, chunkIndices, addresses,
                 userWorkspace, tiling);
         }

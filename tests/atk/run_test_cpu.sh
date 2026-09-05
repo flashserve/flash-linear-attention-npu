@@ -76,7 +76,8 @@ print_result_summary() {
   local pass=0
   for t in "${RAN_TYPES[@]}"; do
     if python3 "$RESULT_CHECK_PY" --type "$t" \
-        --output-root "$ATK_OUTPUT_ROOT" --op "$OP"; then
+        --output-root "$ATK_OUTPUT_ROOT" --op "$OP" \
+        --newer-than "$ATK_RUN_STARTED_AT"; then
       pass=$((pass + 1))
     else
       fail=$((fail + 1))
@@ -323,6 +324,7 @@ MSS_END="${MSS_END:-$CASE_END}"
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
 mkdir -p "${ATK_OUTPUT_ROOT}/accuracy" "${ATK_OUTPUT_ROOT}/perf"
+ATK_RUN_STARTED_AT="$(date +%s)"
 # mssanitizer 日志路径：未显式指定时使用 ATK_OUTPUT_ROOT 下的带时间戳绝对路径
 # ATK celery worker 工作目录与脚本不同，必须用绝对路径，否则无法找到日志文件
 MSS_LOG_PATH="${MSS_LOG_PATH:-$(cd "${ATK_OUTPUT_ROOT}" && pwd)/mssanitizer_${OP}_$(date +%Y%m%d_%H%M%S).log}"
@@ -387,6 +389,7 @@ if should_run determinism; then
   log_info "开始确定性测试：accuracy_dc（循环次数=${DC_LOOP_NUMS}，超时=${DC_TIMEOUT}s）"
   set_case_range_args "确定性测试 case 范围" "$DETERMINISM_START" "$DETERMINISM_END"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+    --output_path "${ATK_OUTPUT_ROOT}" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \
@@ -406,6 +409,7 @@ if should_run mssanitizer; then
   touch "$MSS_LOG_PATH"
   mssanitizer --tool="$MSS_TOOL" -- \
     "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+    --output_path "${ATK_OUTPUT_ROOT}" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \

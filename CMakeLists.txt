@@ -586,6 +586,25 @@ if (BUILD_OPS_RTY_KERNEL)
                 OPTIONAL
         )
 
+        if (_op_name STREQUAL "chunk_kda_fwd" OR
+            _op_name STREQUAL "chunk_kda_bwd_intra")
+            set(_kda_kernel_source_dir "${op_dir}/op_kernel")
+            install(DIRECTORY ${_kda_kernel_source_dir}/kernel_utils
+                    DESTINATION ${IMPL_INSTALL_DIR}/ascendc/${_op_name}
+                    OPTIONAL
+            )
+            install(DIRECTORY ${_kda_kernel_source_dir}/fwd_h
+                    DESTINATION ${IMPL_INSTALL_DIR}/ascendc/${_op_name}
+                    OPTIONAL
+            )
+            foreach (_arch_dir arch32 arch35 arch38)
+                install(DIRECTORY ${_kda_kernel_source_dir}/${_arch_dir}
+                        DESTINATION ${IMPL_INSTALL_DIR}/ascendc/${_op_name}
+                        OPTIONAL
+                )
+            endforeach ()
+        endif ()
+
         install(DIRECTORY ${op_dir}/regbase/opkernel
                 DESTINATION ${IMPL_INSTALL_DIR}/ascendc/${_op_name}/regbase
                 OPTIONAL
