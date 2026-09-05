@@ -282,10 +282,142 @@ def compute_dA_cpu(
     return dA
 
 
+def compute_dA_cpu_high_precision(
+    A: torch.Tensor,      # [B, HV, T, BT] - 每个chunk的A值
+    dw: torch.Tensor,     # [B, HV, T, K]
+    g: torch.Tensor,      # [B, HV, T]
+    beta: torch.Tensor,   # [B, HV, T] - beta参数
+    k: torch.Tensor,      # [B, HK, T, K]
+    v: torch.Tensor,      # [B, HV, T, V]
+    du: torch.Tensor,     # [B, HV, T, V]
+    chunk_indices: list[int],  # 扁平化的chunk索引 [seq_idx0, chunk_idx0, seq_idx1, chunk_idx1, ...]
+    cu_seqlens: list[int],  # 累积序列长度
+    B: int,
+    HK: int,
+    HV: int,
+    T: int,
+    D: int,
+    BT: int,  # BT
+    NT: int,  # T / BT
+) -> torch.Tensor:
+    """
+    CPU golden implementation (fp64) for dA computation (支持GVA: HV >= HK)
+    A的形状为 [B, HV, T, BT]
+    group_size = HV // HK, h_k = h_v // group_size
+    """
+    group_size = HV // HK
+    dA = torch.zeros_like(A).to(torch.float64)
+    IS_VARLEN = cu_seqlens is not None
+    for idx in range(NT):
+        bos, eos = get_bos_eos(idx, T, BT, cu_seqlens, chunk_indices)
+        chunk_len = eos - bos
+        if IS_VARLEN:
+            # 从chunk_indices获取batch索引和chunk索引
+            # chunk_indices为扁平化列表: [seq_idx0, chunk_idx0, seq_idx1, chunk_idx1, ...]
+            seq_idx = chunk_indices[idx * 2]   # 等价于序列号i_n = tl.load(chunk_indices + idx * 2).to(tl.int32)
+            chunk_idx = chunk_indices[idx * 2 + 1]
+            i_t = chunk_idx
+            T = cu_seqlens[seq_idx + 1] - cu_seqlens[seq_idx]
+        else:
+            i_t = idx
+
+        # 并行步骤1~3：m_A
+        # 创建因果掩码
+        # i_t = tl.load(chunk_indices + idx * 2 + 1).to(tl.int32)
+        # o_t = i_t * BT + tl.arange(0, BT)
+        # m_t = o_t < T
+        # m_A = (o_t[:, None] > o_t[None, :]) & (m_t[:, None] & m_t)
+
+        o_t = i_t * BT + torch.arange(0, BT, dtype=torch.int32)
+        m_t = o_t < T
+        m_A = (o_t[:, None] > o_t[None, :]) & (m_t[:, None] & m_t)
+        # print("==== m_A.shape = ", m_A.shape)
+        # print("==== m_A ====")
+        # print(m_A)
+
+        for i_b in range(B):
+        # 遍历所有batch
+            for i_h in range(HV):
+            # 遍历所有head
+                i_k = i_h // group_size
+
+                # 获取当前chunk的dw, k, beta, g
+                dw_chunk = dw[i_b, i_h, bos : eos, :]  # [BT, K]
+                k_chunk = k[i_b, i_k, bos : eos, :]  # [BT, K]
+                # beta形状: [B, HV, T]
+                beta_chunk = beta[i_b, i_h, bos : eos]  # [BT]
+                # g形状: [B, HV, T]
+                g_chunk = g[i_b, i_h, bos : eos]  # [BT]
+
+                # 获取当前chunk的du, v
+                du_chunk = du[i_b, i_h, bos : eos, :]  # [BT, V]
+                v_chunk = v[i_b, i_h, bos : eos, :]  # [BT, V]
+
+                # 获取当前chunk的A向量
+                # A形状: [B, HV, T, BT]
+                # 我们需要获取这个chunk对应的A向量
+                # 注意: A的每个位置存储的是该chunk对应的A向量
+                A_chunk = A[i_b, i_h, bos : eos, : chunk_len]  # [BT, BT]
+
+                g_exp_chunk = torch.exp(g_chunk.to(torch.float64))
+
+                # 步骤1: b_dA_1
+                # b_dA_1 = dw_chunk @ b_k_beta_g.T
+                b_k_beta_g = k_chunk.to(torch.float64) * (beta_chunk.to(torch.float64) * g_exp_chunk.to(torch.float64))[:, None]
+                if chunk_len == 1:
+                    b_dA_1 = torch.sum(dw_chunk.to(torch.float64) * b_k_beta_g.to(torch.float64)).reshape(chunk_len, chunk_len)
+                else:
+                    b_dA_1 = torch.matmul(dw_chunk.to(torch.float64), b_k_beta_g.T.to(torch.float64))
+
+                # 步骤2: b_dA_2
+                # b_dA_2 = du_chunk @ b_v_beta.T
+                b_v_beta = v_chunk.to(torch.float64) * beta_chunk.to(torch.float64)[:, None]
+                if chunk_len == 1:
+                    b_dA_2 = torch.sum(du_chunk.to(torch.float64) * b_v_beta.to(torch.float64)).reshape(chunk_len, chunk_len)
+                else:
+                    b_dA_2 = torch.matmul(du_chunk.to(torch.float64), b_v_beta.T.to(torch.float64))
+
+                # # 步骤3：b_dA_3
+                b_dA_3 = b_dA_1 + b_dA_2
+
+                # 步骤4：b_dA_4
+                # b_dA_4 = tl.where(m_A, b_dA_3, 0)
+                b_dA_4 = torch.where(m_A[:chunk_len, :chunk_len], b_dA_3.to(torch.float64), 0.0)
+
+                # 步骤5：b_dA_5
+                # b_dA_5 = b_dA_4 @ A_chunk.T
+                if chunk_len == 1:
+                    b_dA_5 = torch.sum(b_dA_4.to(torch.float64) * A_chunk.T.to(torch.float64)).reshape(chunk_len, chunk_len)
+                else:
+                    b_dA_5 = torch.matmul(b_dA_4.to(torch.float64), A_chunk.T.to(torch.float64))
+
+                # 步骤6：b_dA_6
+                # b_dA_6 = A_chunk.T @ b_dA_5
+                if chunk_len == 1:
+                    b_dA_6 = torch.sum(A_chunk.T.to(torch.float64) * b_dA_5.to(torch.float64)).reshape(chunk_len, chunk_len)
+                else:
+                    b_dA_6 = torch.matmul(A_chunk.T.to(torch.float64), b_dA_5.to(torch.float64))
+
+                # 并行步骤1~6：b_g_sub_exp
+                b_g_sub_exp = torch.exp(g_chunk.to(torch.float64)[:, None] - g_chunk.to(torch.float64)[None, :])
+
+                # 步骤7：b_dA_7
+                b_dA_7 = -b_dA_6.to(torch.float64) * b_g_sub_exp.to(torch.float64)
+
+                # 步骤8：b_dA
+                # b_dA = tl.where(m_A, b_dA_7, 0)
+                b_dA = torch.where(m_A[:chunk_len, :chunk_len], b_dA_7.to(torch.float64), 0.0)
+
+                # 存储结果
+                dA[i_b, i_h, bos : eos, : chunk_len] = b_dA.T
+
+    return dA
+
+
 def create_tensor(shape, dtype=torch.float16):
     # return create_incremental_tensor(shape,dtype)
     # return torch.ones(shape, dtype=dtype)
-    return torch.rand(shape, dtype=dtype)
+    return torch.rand(shape, dtype=dtype) * 2 - 1
 
 
 def test_prepare_wy_repr_bwd_da_variable(
@@ -358,8 +490,9 @@ def test_prepare_wy_repr_bwd_da_variable(
     # torch.save(dA_cpu, save_path2)
     # 测试dA_cpu里是否包含nan值
     print(f"==== dA_cpu has NaN: {torch.isnan(dA_cpu).any().item()}")
+    dA_cpu_high_precision = compute_dA_cpu_high_precision(A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, HK, HV, T, K, BT, NT)
 
-    ct.isclose(dA_npu.cpu(), dA_cpu, diff_thd=0.1)
+    ct.dual(dA_npu.cpu(), dA_cpu_high_precision, dA_cpu)
     print(f"test_prepare_wy_repr_bwd_da_variable 被调用了第 {test_prepare_wy_repr_bwd_da_variable.call_count} 次")
 
 
@@ -430,8 +563,9 @@ def test_prepare_wy_repr_bwd_da_fix(
     # torch.save(dA_cpu, save_path4)
     # 测试dA_cpu里是否包含nan值
     print(f"==== dA_cpu has NaN: {torch.isnan(dA_cpu).any().item()}")
+    dA_cpu_high_precision = compute_dA_cpu_high_precision(A, dw, g, beta, k, v, du, chunk_indices, cu_seqlens, B, HK, HV, T, K, BT, NT)
 
-    ct.isclose(dA_npu.cpu(), dA_cpu, diff_thd=0.1)
+    ct.dual(dA_npu.cpu(), dA_cpu_high_precision, dA_cpu)
     print(f"test_prepare_wy_repr_bwd_da_fix 被调用了第 {test_prepare_wy_repr_bwd_da_fix.call_count} 次")
 
 
