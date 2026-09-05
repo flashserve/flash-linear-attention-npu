@@ -34,6 +34,7 @@ constexpr uint32_t CHUNK_FWD_O_UB_APRIME_FP32_BYTES = 16U * 1024U;
 constexpr uint32_t CHUNK_FWD_O_UB_APRIME_BF16_OFFSET =
     CHUNK_FWD_O_UB_APRIME_FP32_OFFSET + CHUNK_FWD_O_UB_APRIME_FP32_BYTES;
 constexpr uint32_t CHUNK_FWD_O_STREAM_BANK_COUNT = 2U;
+constexpr uint32_t CHUNK_FWD_O_L1_RESIDENT_HEAD_COUNT = 4U;
 constexpr uint32_t CHUNK_FWD_O_UB_APRIME_BF16_SLOT_BYTES = CHUNK_FWD_O_APRIME_SLOT_BYTES;
 constexpr uint32_t CHUNK_FWD_O_UB_APRIME_BF16_SLOT_COUNT = CHUNK_FWD_O_STREAM_BANK_COUNT;
 constexpr uint32_t CHUNK_FWD_O_UB_TOTAL_BYTES = 248U * 1024U;
@@ -85,15 +86,15 @@ __aicore__ inline uint32_t ChunkFwdOOlOffset(uint32_t slot)
     return CHUNK_FWD_O_UB_LAYOUT_OL_BASE + slot * CHUNK_FWD_O_UB_LAYOUT_OL_SLOT_BYTES;
 }
 
-__aicore__ inline int64_t ChunkFwdOGroupRound(const ChunkFwdOTilingData &tiling, uint32_t loopIdx,
-                                              uint32_t coreIdx, uint32_t coreNum, int64_t hvBase)
+__aicore__ inline uint32_t ChunkFwdOHeadGroupNum(const ChunkFwdOTilingData &tiling)
 {
-    const int64_t headGroupNum =
-        (tiling.vNumHead + tiling.taskGroupSize - 1) / tiling.taskGroupSize;
-    const int64_t taskRound =
-        (static_cast<int64_t>(loopIdx) - static_cast<int64_t>(coreIdx)) /
-        static_cast<int64_t>(coreNum);
-    return taskRound * headGroupNum + hvBase / tiling.taskGroupSize;
+    return static_cast<uint32_t>(
+        (tiling.vNumHead + tiling.taskGroupSize - 1) / tiling.taskGroupSize);
+}
+
+__aicore__ inline int64_t ChunkFwdOGroupRound(uint32_t groupTaskIdx, uint32_t coreNum)
+{
+    return static_cast<int64_t>(groupTaskIdx / coreNum);
 }
 
 __aicore__ inline GM_ADDR ChunkFwdOAPrimeGmOffset(GM_ADDR workspace, const ChunkFwdOTilingData &tiling,
@@ -114,7 +115,7 @@ constexpr uint32_t CHUNK_FWD_O_L1_Q_SLOT_BYTES = 16U * 1024U;
 constexpr uint32_t CHUNK_FWD_O_L1_K_SLOT_BYTES = 16U * 1024U;
 constexpr uint32_t CHUNK_FWD_O_L1_H_SLOT_BYTES = 32U * 1024U;
 constexpr uint32_t CHUNK_FWD_O_L1_STAGE2_END =
-    CHUNK_FWD_O_L1_H_BASE + CHUNK_FWD_O_STREAM_BANK_COUNT * CHUNK_FWD_O_L1_H_SLOT_BYTES;
+    CHUNK_FWD_O_L1_H_BASE + CHUNK_FWD_O_L1_RESIDENT_HEAD_COUNT * CHUNK_FWD_O_L1_H_SLOT_BYTES;
 constexpr uint32_t CHUNK_FWD_O_L1_APRIME_BASE = 256U * 1024U;
 constexpr uint32_t CHUNK_FWD_O_L1_APRIME_SLOT_BYTES = CHUNK_FWD_O_APRIME_SLOT_BYTES;
 constexpr uint32_t CHUNK_FWD_O_L1_V_BASE = 288U * 1024U;
