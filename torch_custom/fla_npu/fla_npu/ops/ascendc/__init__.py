@@ -50,6 +50,7 @@ _ASCENDC_OPS = (
     "npu_chunk_kda_bwd_intra",
     "npu_kda_gate_cumsum",
     "npu_recurrent_kda",
+    "npu_fused_recurrent_rwkv8",
 )
 
 # ChunkFwdH 仅提供解耦 ctypes 稳定入口，不注册 torch.ops.npu，也不挂到
