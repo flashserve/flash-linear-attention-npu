@@ -173,6 +173,7 @@ public:
         pipe_->InitBuffer(stateOutQueue_, stateOutBufferNum_, alignK_ * vStep_ * sizeof(stateType));
         if (!stateVFirst_) {
             pipe_->InitBuffer(stateTransposeBuf_, alignK_ * vStep_ * sizeof(stateType));
+            pipe_->InitBuffer(stateOutTransposeQueue_, BUFFER_NUM, alignK_ * vStep_ * sizeof(stateType));
         }
         pipe_->InitBuffer(attnOutQueue_, attnOutBufferNum_, vStep_ * sizeof(outType));
         pipe_->InitBuffer(tmpBuff, restUbSize_);
@@ -1091,9 +1092,10 @@ private:
                                           static_cast<uint16_t>(realK_ * sizeof(stateType)), 0, 0};
             DataCopyPad(finalStateGm_[stateOffset], stateOutLocal, stateOutParams);
         } else {
-            LocalTensor<stateType> stateTransposeLocal = stateTransposeBuf_.Get<stateType>();
+            LocalTensor<stateType> stateTransposeLocal = stateOutTransposeQueue_.AllocTensor<stateType>();
             TransposeVFirstToKFirst(stateTransposeLocal, stateOutLocal, curSingleV);
-            SyncVToMte3();
+            stateOutTransposeQueue_.EnQue<stateType>(stateTransposeLocal);
+            LocalTensor<stateType> stateCopyLocal = stateOutTransposeQueue_.DeQue<stateType>();
             uint64_t stateOffset = stateOutStride0_ * stateSlot + stateOutStride1_ * head +
                                    stateOutStride3_ * vOffset;
             int64_t srcStride = static_cast<int64_t>(
@@ -1103,8 +1105,8 @@ private:
             DataCopyExtParams stateOutParams{static_cast<uint16_t>(realK_),
                                              static_cast<uint32_t>(curSingleV * sizeof(stateType)),
                                              srcStride, dstStride, 0};
-            DataCopyPad(finalStateGm_[stateOffset], stateTransposeLocal, stateOutParams);
-            SyncMte3ToV();
+            DataCopyPad(finalStateGm_[stateOffset], stateCopyLocal, stateOutParams);
+            stateOutTransposeQueue_.FreeTensor(stateCopyLocal);
         }
         stateOutQueue_.FreeTensor(stateOutLocal);
     }
@@ -1289,6 +1291,7 @@ private:
     TQue<QuePosition::VECIN, INPUT_BUFFER_NUM> stateInQueue_;
     TQue<QuePosition::VECOUT, MAX_OUT_BUFFER_NUM> attnOutQueue_;
     TQue<QuePosition::VECOUT, MAX_OUT_BUFFER_NUM> stateOutQueue_;
+    TQue<QuePosition::VECOUT, 1> stateOutTransposeQueue_;
     TBuf<TPosition::VECCALC> tmpBuff;
     TBuf<TPosition::VECCALC> stateTransposeBuf_;
     TBuf<TPosition::VECCALC> scalarBuf_;

@@ -681,7 +681,7 @@ private:
         int64_t stateDtypeSize = (ctx_.stateDtype == ge::DT_FLOAT) ? 4 : 2;
         int64_t coeff = RKDA_INPUT_BUFFER_NUM * stateDtypeSize * aDk; // state input queue.
         if (ctx_.stateVFirst == 0) {
-            coeff += stateDtypeSize * aDk; // K-first state transpose buffer.
+            coeff += 2 * stateDtypeSize * aDk; // K-first input/output transpose buffers.
         }
         coeff += static_cast<int64_t>(stateOutBufferNum) * stateDtypeSize * aDk;
         coeff += static_cast<int64_t>(attnOutBufferNum) * 2;
