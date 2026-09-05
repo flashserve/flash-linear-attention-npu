@@ -379,6 +379,8 @@ foreach (OP_DEPEND_DIR ${OP_DEPEND_DIR_LIST})
        list(APPEND OP_DIR_LIST ${OPS_TRANSFORMER_DIR}/moe/3rd/moe_masked_scatter)
     endif()
 endforeach ()
+list(APPEND OP_DIR_LIST ${OP_DEPEND_DIR_LIST})
+list(REMOVE_DUPLICATES OP_DIR_LIST)
 
 # ------------------------------------------------ aclnn ------------------------------------------------
 get_target_property(base_aclnn_srcs op_host_aclnn SOURCES)

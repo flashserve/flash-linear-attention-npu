@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "op": "chunk_kda_bwd",
+  "implementation": "ascendc",
+  "capability": {
+    "run_on": ["ascendc"],
+    "soc": ["ascend950"],
+    "layout": ["BNSD"]
+  },
+  "cases": [
+    {
+      "id": "a5_shared_anchor_safe",
+      "tags": ["accuracy", "regression", "a5", "dense", "safe_gate"],
+      "coverage": ["shared_anchor", "weak_gate"],
+      "run_on": ["ascendc"],
+      "soc": ["ascend950"],
+      "shape": {
+        "batch": 1,
+        "heads": 2,
+        "seqlen": 1024,
+        "key_dim": 128,
+        "value_dim": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "input": "bfloat16",
+        "gate": "float32"
+      },
+      "attrs": {
+        "layout": "BNSD",
+        "safe_gate": true,
+        "lower_bound": -1.0,
+        "use_gate_in_kernel": true,
+        "use_exp2": true
+      },
+      "inputs": {
+        "raw_gate": 2.0
+      },
+      "generator": "zero_forward_consistent_safe_gate",
+      "expect": {
+        "anchor": "shared",
+        "gk_min_lt": -80.0,
+        "outputs": "finite_exact_zero"
+      }
+    },
+    {
+      "id": "a5_local_anchor_strong",
+      "tags": ["accuracy", "regression", "a5", "dense", "safe_gate"],
+      "coverage": ["local_anchor", "strong_gate"],
+      "run_on": ["ascendc"],
+      "soc": ["ascend950"],
+      "shape": {
+        "batch": 1,
+        "heads": 2,
+        "seqlen": 1024,
+        "key_dim": 128,
+        "value_dim": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "input": "bfloat16",
+        "gate": "float32"
+      },
+      "attrs": {
+        "layout": "BNSD",
+        "safe_gate": true,
+        "lower_bound": -5.0,
+        "use_gate_in_kernel": true,
+        "use_exp2": true
+      },
+      "inputs": {
+        "raw_gate": 2.0
+      },
+      "generator": "zero_forward_consistent_safe_gate",
+      "expect": {
+        "anchor": "local",
+        "gk_min_lt": -400.0,
+        "outputs": "finite_exact_zero"
+      }
+    },
+    {
+      "id": "a5_local_anchor_strong_model_shape",
+      "tags": [
+        "accuracy",
+        "regression",
+        "a5",
+        "dense",
+        "safe_gate",
+        "model_shape"
+      ],
+      "coverage": ["local_anchor", "strong_gate", "model_shape"],
+      "run_on": ["ascendc"],
+      "soc": ["ascend950"],
+      "shape": {
+        "batch": 1,
+        "heads": 96,
+        "seqlen": 4096,
+        "key_dim": 128,
+        "value_dim": 128,
+        "chunk_size": 64
+      },
+      "dtype": {
+        "input": "bfloat16",
+        "gate": "float32"
+      },
+      "attrs": {
+        "layout": "BNSD",
+        "safe_gate": true,
+        "lower_bound": -5.0,
+        "use_gate_in_kernel": true,
+        "use_exp2": true
+      },
+      "inputs": {
+        "raw_gate": 2.0
+      },
+      "generator": "zero_forward_consistent_safe_gate",
+      "expect": {
+        "anchor": "local",
+        "gk_min_lt": -400.0,
+        "outputs": "finite_exact_zero"
+      }
+    }
+  ]
+}
