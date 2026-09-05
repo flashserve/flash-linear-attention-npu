@@ -41,7 +41,7 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
     const aclTensor *betaRawOptional,
     const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional,
     double scale, int64_t chunkSize, bool useQkL2NormInKernel,
-    bool useBetaSigmoidInKernel, bool useGateInKernel, bool stateVFirst,
+    bool useBetaSigmoidInKernel, bool allowNegEigval, bool useGateInKernel, bool stateVFirst,
     bool useExp2,
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dbetaOut, const aclTensor *dgOut,
@@ -51,7 +51,7 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
            qRstdOptional, kRstdOptional, betaRawOptional,
            cuSeqlensOptional, chunkIndicesOptional,
            scale, chunkSize, useQkL2NormInKernel,
-           useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
+           useBetaSigmoidInKernel, allowNegEigval, useGateInKernel, stateVFirst, useExp2,
            dqOut, dkOut, dvOut, dbetaOut, dgOut);
 
     const aclTensor *cuSeqlens = ConvertIntArray(cuSeqlensOptional, executor);
@@ -69,7 +69,7 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
                  cuSeqlens, chunkIndices),
         OP_OUTPUT(dqOut, dkOut, dvOut, dbetaOut, dgOut),
         OP_ATTR(scale, chunkSize, useQkL2NormInKernel,
-                useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2));
+                useBetaSigmoidInKernel, allowNegEigval, useGateInKernel, stateVFirst, useExp2));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr};

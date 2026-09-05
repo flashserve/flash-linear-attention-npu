@@ -71,6 +71,7 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_bool,
         ctypes.c_bool,
         ctypes.c_bool,
+        ctypes.c_bool,
         *([ctypes.c_void_p] * 5),  # dq, dk, dv, dbeta, dg
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
@@ -513,6 +514,7 @@ def npu_chunk_gated_delta_rule_bwd_finalize(
     chunk_size=64,
     use_qk_l2_norm_in_kernel=False,
     use_beta_sigmoid_in_kernel=False,
+    allow_neg_eigval=False,
     use_gate_in_kernel=False,
     state_v_first=False,
     use_exp2=True,
@@ -549,6 +551,10 @@ def npu_chunk_gated_delta_rule_bwd_finalize(
         raise ValueError("q_rstd and k_rstd are required when Q/K L2Norm backward is enabled.")
     if use_beta_sigmoid_in_kernel and beta_raw is None:
         raise ValueError("beta_raw is required when beta sigmoid backward is enabled.")
+    if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
+        raise ValueError(
+            "allow_neg_eigval=True requires use_beta_sigmoid_in_kernel=True."
+        )
     if bool(use_gate_in_kernel):
         raise ValueError("use_gate_in_kernel only supports False.")
     if not bool(use_exp2):
@@ -584,6 +590,7 @@ def npu_chunk_gated_delta_rule_bwd_finalize(
             ctypes.c_double(float(scale)), ctypes.c_int64(int(chunk_size)),
             ctypes.c_bool(bool(use_qk_l2_norm_in_kernel)),
             ctypes.c_bool(bool(use_beta_sigmoid_in_kernel)),
+            ctypes.c_bool(bool(allow_neg_eigval)),
             ctypes.c_bool(bool(use_gate_in_kernel)),
             ctypes.c_bool(bool(state_v_first)),
             ctypes.c_bool(bool(use_exp2)),

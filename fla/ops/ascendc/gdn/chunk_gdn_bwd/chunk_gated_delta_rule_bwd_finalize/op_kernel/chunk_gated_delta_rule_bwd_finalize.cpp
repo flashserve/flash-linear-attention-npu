@@ -16,7 +16,7 @@ struct DTypeTraits<TPL_FP32> { using type = float; };
 } // namespace GDN
 
 #ifndef TORCH_MODE
-template <int D_T_Q, int D_T_G, bool USE_QK_L2NORM, bool USE_BETA_SIGMOID>
+template <int D_T_Q, int D_T_G, bool USE_QK_L2NORM, bool USE_BETA_SIGMOID, bool ALLOW_NEG_EIGVAL>
 __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR v_new, GM_ADDR dO, GM_ADDR du,
     GM_ADDR g, GM_ADDR beta, GM_ADDR h, GM_ADDR dh, GM_ADDR A,
@@ -61,7 +61,7 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
         using BetaType = GType;
         AscendC::TPipe pipe;
         GDN::ChunkGatedDeltaRuleBwdFinalizeVector<
-            QType, GType, BetaType, USE_QK_L2NORM, USE_BETA_SIGMOID> vec;
+            QType, GType, BetaType, USE_QK_L2NORM, USE_BETA_SIGMOID, ALLOW_NEG_EIGVAL> vec;
         // 跨 stage 的矩阵/向量中间量使用独立 workspace 区域。
         vec.Init(q, k, v, v_new, dO, g, beta, h, dh,
                  q_rstd, k_rstd, dq, dk, dg, cu_seqlens, chunk_indices,

@@ -24,6 +24,7 @@ dq, dk, dv, dbeta, dg = chunk_gated_delta_rule_bwd_finalize_golden(
     chunk_size=64,
     use_qk_l2_norm_in_kernel=use_qk_l2_norm_in_kernel,
     use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
+    allow_neg_eigval=allow_neg_eigval,
     use_gate_in_kernel=False,
     state_v_first=state_v_first,
     use_exp2=True,
@@ -42,6 +43,8 @@ tensor 必须位于 CPU。
 - `K=V=128`，`chunk_size=64`，支持定长和变长序列。
 - `use_qk_l2_norm_in_kernel` 和 `use_beta_sigmoid_in_kernel` 为两个独立
   TilingKey 模板参数，默认值均为 `false`，支持 `false/true`。
+- `allow_neg_eigval` 默认为 `false`；仅开启 beta sigmoid 时支持 `true`，
+  并将 beta sigmoid backward 的系数乘 2。该开关纳入 TilingKey。
 - `use_gate_in_kernel` 只支持 `false`，`use_exp2` 只支持 `true`；ATK executor
   显式传入这两个固定属性。
 - `q/k` 由 ATK 生成，数据范围为 `[-0.2, 0.2]`，`v` 数据范围为
@@ -57,9 +60,9 @@ tensor 必须位于 CPU。
 
 | 文件 | 用例数 | 覆盖 |
 |---|---:|---|
-| `atk_chunk_gated_delta_rule_bwd_finalize.json` | 200 | 4 类边界 shape + 8 个模型派生 shape + 13 个泛化 shape x 8 个模板 key |
-| `atk_chunk_gated_delta_rule_bwd_finalize_perf.json` | 64 | 8 个模型派生 case x 8 个模板 key |
-| `atk_chunk_gated_delta_rule_bwd_finalize_mss.json` | 8 | 每个模板 key 一条尾块 GVA 用例 |
+| `atk_chunk_gated_delta_rule_bwd_finalize.json` | 300 | 4 类边界 shape + 8 个模型派生 shape + 13 个泛化 shape x 12 个模板 key |
+| `atk_chunk_gated_delta_rule_bwd_finalize_perf.json` | 96 | 8 个模型派生 case x 12 个模板 key |
+| `atk_chunk_gated_delta_rule_bwd_finalize_mss.json` | 12 | 每个模板 key 一条尾块 GVA 用例 |
 
 精度矩阵覆盖完整 chunk、尾 chunk、多 chunk、GVA、varlen、泛化 shape
 和全部 8 个模型派生 shape。为控制 ATK CPU 标杆耗时，各派生 shape 的 `T`
