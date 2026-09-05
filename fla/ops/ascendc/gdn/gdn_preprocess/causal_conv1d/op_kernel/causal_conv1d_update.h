@@ -7,6 +7,11 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+/*!
+ * \file causal_conv1d_update.h
+ * \brief CausalConv1d UPDATE (decode) kernel.
+ */
+
 #ifndef CAUSAL_CONV1D_UPDATE_H
 #define CAUSAL_CONV1D_UPDATE_H
 
@@ -20,8 +25,8 @@ class CausalConv1dUpdate
                           CAUSAL_CONV1D_TPL_FN_PLAN_INVALID> {
 public:
     __aicore__ inline void Init(GM_ADDR x, GM_ADDR weight, GM_ADDR bias, GM_ADDR convStates, GM_ADDR queryStartLoc,
-                                GM_ADDR cacheIndices, GM_ADDR, GM_ADDR numAcceptedTokens, GM_ADDR y, GM_ADDR workspace,
-                                const CausalConv1dTilingData *tilingData)
+                                GM_ADDR convStateIndices, GM_ADDR, GM_ADDR numAcceptedTokens, GM_ADDR y,
+                                GM_ADDR workspace, const CausalConv1dTilingData *tilingData)
     {
         (void)workspace;
         this->ResetRuntimeState(tilingData);
@@ -30,8 +35,11 @@ public:
         this->biasGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(bias));
         this->convStatesGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(convStates));
         this->queryStartLocGm.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(queryStartLoc));
-        this->cacheIndicesGm.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cacheIndices));
+        this->queryStartLocI32Gm.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(queryStartLoc));
+        this->cacheIndicesGm.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(convStateIndices));
+        this->cacheIndicesI32Gm.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(convStateIndices));
         this->numAcceptedTokensGm.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(numAcceptedTokens));
+        this->numAcceptedTokensI32Gm.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(numAcceptedTokens));
         this->yGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(y));
         this->InitSharedBuffersAndEvents();
     }
@@ -56,16 +64,17 @@ public:
 
 template <typename T>
 __aicore__ inline void RunCausalConv1dUpdate(GM_ADDR x, GM_ADDR weight, GM_ADDR bias, GM_ADDR convStates,
-                                             GM_ADDR queryStartLoc, GM_ADDR cacheIndices, GM_ADDR initialStateMode,
-                                             GM_ADDR numAcceptedTokens, GM_ADDR y, GM_ADDR workspace,
+                                             GM_ADDR queryStartLoc, GM_ADDR convStateIndices,
+                                             GM_ADDR hasInitialState, GM_ADDR numAcceptedTokens, GM_ADDR y,
+                                             GM_ADDR workspace,
                                              const CausalConv1dTilingData *tilingData)
 {
     CausalConv1dUpdate<T> op;
-    op.Init(x, weight, bias, convStates, queryStartLoc, cacheIndices, initialStateMode, numAcceptedTokens, y, workspace,
-            tilingData);
+    op.Init(x, weight, bias, convStates, queryStartLoc, convStateIndices, hasInitialState, numAcceptedTokens, y,
+            workspace, tilingData);
     op.Process();
 }
 
-} // namespace NsCausalConv1d
+}
 
-#endif // CAUSAL_CONV1D_UPDATE_H
+#endif

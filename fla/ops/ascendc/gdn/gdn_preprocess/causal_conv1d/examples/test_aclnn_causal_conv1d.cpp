@@ -9,7 +9,7 @@
 
 /*!
  * \file test_aclnn_causal_conv1d.cpp
- * \brief
+ * \brief Example of invoking the aclnnCausalConv1d operator.
  */
 
 #include <iostream>
@@ -121,7 +121,7 @@ int main()
     std::vector<int16_t> weightHostData(GetShapeSize(weightShape), 1);
     std::vector<int16_t> biasHostData(GetShapeSize(biasShape), 0);
     std::vector<int16_t> convStatesHostData(GetShapeSize(convStatesShape), 0);
-    std::vector<int64_t> queryStartLocHostData = {0, seqLen, batchSize * seqLen};
+    std::vector<int32_t> queryStartLocHostData = {0, seqLen, batchSize * seqLen};
     std::vector<int16_t> yHostData(GetShapeSize(yShape), 0);
 
     ret = CreateAclTensor(xHostData, xShape, &xDeviceAddr, aclDataType::ACL_BF16, &x);
@@ -132,20 +132,24 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(convStatesHostData, convStatesShape, &convStatesDeviceAddr, aclDataType::ACL_BF16, &convStates);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(queryStartLocHostData, queryStartLocShape, &queryStartLocDeviceAddr, aclDataType::ACL_INT64, &queryStartLoc);
+    ret = CreateAclTensor(queryStartLocHostData, queryStartLocShape, &queryStartLocDeviceAddr,
+                          aclDataType::ACL_INT32, &queryStartLoc);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(yHostData, yShape, &yDeviceAddr, aclDataType::ACL_BF16, &y);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
     uint64_t workspaceSize = 0;
     aclOpExecutor *executor;
-    int64_t activationMode = 0;
+    char activation[] = "none";
     int64_t padSlotId = -1;
+    int64_t nullBlockId = -1;
     int64_t runMode = 0;
     int64_t headNum = 0;
+    int64_t maxQueryLen = -1;
 
     ret = aclnnCausalConv1dGetWorkspaceSize(x, weight, bias, convStates, queryStartLoc, nullptr, nullptr, nullptr,
-                                            activationMode, padSlotId, runMode, headNum, y, &workspaceSize, &executor);
+                                            nullptr, nullptr, nullptr, nullptr, activation, padSlotId, nullBlockId,
+                                            runMode, headNum, maxQueryLen, y, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnCausalConv1dGetWorkspaceSize failed. ERROR: %d\n", ret);
               return ret);
 

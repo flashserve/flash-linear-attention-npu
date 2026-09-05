@@ -4,12 +4,12 @@
 
 ## 输入约束
 
-- `x` 支持 `[B,T,D]` 或 `[totalTokens,D]`；本工程用例使用 `[B,T,D]`。
+- `x` 使用 dim-last `[totalTokens,D]`，`queryStartLoc` 划分 batch。
 - `weight` 必须为 `[W,D]`，`W` 支持 `2/3/4`，`D` 需要是 `16` 的倍数。
-- `bias` 为可选 `[D]`；`convStates` 为必需输入，形状为 `[state_rows,state_len,D]`，`state_len >= W - 1`。
-- 未传 `cacheIndices` 时，`convStates.shape[0]` 需要覆盖 batch 数；`queryStartLoc`、`cacheIndices`、`initialStateMode`、`numAcceptedTokens` 均为 `INT64` 可选输入。
+- `bias` 为可选 `[D]`；`convStates` 为 `[state_rows,state_len,D]`，`state_len >= W - 1`。
+- `queryStartLoc`、`cacheIndices`、`numAcceptedTokens` 使用 INT32 device Tensor，`hasInitialState` 使用 BOOL/INT32 device Tensor。
 - `x/weight/bias/convStates/y` 数据类型支持 `BFLOAT16/FLOAT16`，且输入数据类型需要保持一致。
-- `activationMode` 支持 `0/1`，`runMode` 支持 `0/1`；`headNum` 仅在前向模式中用于输出格式转换。
+- 本工程通过 `causal_conv1d_fn` 调用 FN，数据保持 dim-last，不做布局转换。
 - 当前 ATK 用例遵循上述约束，并通过 `case_spec` 固定具体取值；扩展用例时应继续满足这些限制。
 
 ## 标杆来源

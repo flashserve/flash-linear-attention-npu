@@ -1,246 +1,70 @@
 # aclnnCausalConv1d
 
-## 产品支持情况
-
-| 产品                                           | 是否支持 |
-| :------------------------------------------- | :--: |
-| <term>Ascend 950PR/Ascend 950DT</term>       |   √  |
-| <term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term> |   √  |
-| <term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term> |   √  |
-| <term>Atlas 200I/500 A2 推理产品</term>          |   ×  |
-| <term>Atlas 推理系列产品</term>                    |   ×  |
-| <term>Atlas 训练系列产品</term>                    |   ×  |
-
-## 功能说明
-
-- 接口功能：完成因果一维卷积（Causal Conv1d）计算，支持前向计算（runMode=0）和状态更新（runMode=1）两种运行模式。
-- 计算公式：
-
-  Causal Conv1d 是一种因果一维卷积算子，常用于序列建模中。在每个时间步 $t$，根据当前输入 $x\_t$、卷积权重 $w$ 和历史状态，计算卷积输出 $y\_t$。
-
-  $$
-  y\_t = \text{Activation}\left(\sum\_{j=0}^{W-1} w\_j \cdot x\_{t-j} + b\right)
-  $$
-
-  其中，$W$ 为卷积核宽度（支持2、3、4），$w\_j$ 为卷积权重，$b$ 为偏置（可选），$\text{Activation}$ 为激活函数（可选，SiLU）。当 `activationMode=0` 时不使用激活函数，`activationMode=1` 时使用 SiLU 激活函数。
-
 ## 函数原型
-
-每个算子分为[两段式接口](../../../docs/zh/context/两段式接口.md)，必须先调用"aclnnCausalConv1dGetWorkspaceSize"接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用"aclnnCausalConv1d"接口执行计算。
 
 ```cpp
 aclnnStatus aclnnCausalConv1dGetWorkspaceSize(
-    const aclTensor   *x,
-    const aclTensor   *weight,
-    const aclTensor   *biasOptional,
-    const aclTensor   *convStates,
-    const aclIntArray *queryStartLocOptional,
-    const aclIntArray *cacheIndicesOptional,
-    const aclIntArray *initialStateModeOptional,
-    const aclIntArray *numAcceptedTokensOptional,
-    int64_t           activationMode,
-    int64_t           padSlotId,
-    int64_t           runMode,
-    int64_t           headNum,
-    const aclTensor   *out,
-    uint64_t          *workspaceSize,
-    aclOpExecutor     **executor)
+    const aclTensor *x,
+    const aclTensor *weight,
+    const aclTensor *biasOptional,
+    const aclTensor *convStatesOptional,
+    const aclTensor *queryStartLocOptional,
+    const aclTensor *cacheIndicesOptional,
+    const aclTensor *hasInitialStateOptional,
+    const aclTensor *numAcceptedTokensOptional,
+    const aclIntArray *queryStartLocCpuOptional,
+    const aclIntArray *cacheIndicesCpuOptional,
+    const aclIntArray *hasInitialStateCpuOptional,
+    const aclIntArray *numAcceptedTokensCpuOptional,
+    char *activationOptional,
+    int64_t padSlotId,
+    int64_t nullBlockId,
+    int64_t runMode,
+    int64_t headNum,
+    int64_t maxQueryLen,
+    const aclTensor *out,
+    uint64_t *workspaceSize,
+    aclOpExecutor **executor);
+
+aclnnStatus aclnnCausalConv1d(
+    void *workspace,
+    uint64_t workspaceSize,
+    aclOpExecutor *executor,
+    aclrtStream stream);
 ```
 
-其中 `queryStartLocOptional`、`cacheIndicesOptional`、`initialStateModeOptional`、`numAcceptedTokensOptional` 在头文件中均为 `const aclIntArray *` 类型。C/C++ 开发者可通过 `aclCreateIntArray` 创建，也可在不使用对应可选输入时传入空指针。
+## 参数
 
-## aclnnCausalConv1d
+| 参数 | 约束 |
+| --- | --- |
+| `x` | FP16/BF16，dim-last。FN 支持 `(T,D)`、`(B,S,D)`；UPDATE 支持 `(B,D)`、`(B,S,D)` 及带 `queryStartLoc` 的 `(T,D)`。 |
+| `weight` | `(W,D)`，`W` 为 2、3、4，`D % 16 == 0`。 |
+| `biasOptional` | 可选 `(D,)`，dtype/device 与 `x` 一致。 |
+| `convStatesOptional` | `(N,L,D)`，`L >= W-1`。FN 可为空，UPDATE 必须为非空；执行时可能原地更新。 |
+| `queryStartLocOptional` | 可选 INT32 device Tensor，长度为 `batch+1`。 |
+| `cacheIndicesOptional` | 可选 INT32 device Tensor，长度为 `batch`。 |
+| `hasInitialStateOptional` | 可选 BOOL/INT32 device Tensor，仅 FN 使用。 |
+| `numAcceptedTokensOptional` | 可选 INT32 device Tensor，UPDATE speculative 路径使用。 |
+| 四个 `*CpuOptional` | 对应 metadata 的 INT64 `aclIntArray` 兼容输入，与 device Tensor 输入互斥。 |
+| `activationOptional` | `"none"`、`"silu"` 或 `"swish"`。 |
+| `padSlotId` | 跳过 FN padding 索引。 |
+| `nullBlockId` | 非负时跳过保留 null 状态块，负值禁用。 |
+| `runMode` | `0` 为 FN，`1` 为 UPDATE。 |
+| `headNum` | `0` 返回与 `x` 相同 shape；正值仅用于 FN，要求整除 `D` 且 head dim 为 16 的倍数。 |
+| `maxQueryLen` | UPDATE 变长模式下各分段长度的上界，取值 `>= 0`；其他模式传 `-1`。该属性追加在 `headNum` 之后。 |
+| `out` | 调用方分配。flat 输出与 `x` 同 shape；分头输出为 `(N,T,D/N)` 或 `(B,N,S,D/N)`。 |
 
-- 返回值
-  aclnnStatus： 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn返回码.md)。
+## 行为
 
-## 约束说明
+- FN 的 `cacheIndices` 同时受 `padSlotId` 和启用的 `nullBlockId` 过滤。
+- Python 高层 FN 的 3D `(B,S,D)` 输入不接受 `query_start_loc`；序列边界由固定的 `B`、`S` 确定。
+- UPDATE 通过 `cacheIndices` 选择状态行；Python 高层接口对外命名为 `conv_state_indices`。
+- UPDATE 传入 `queryStartLoc` 时，`maxQueryLen` 对齐 vLLM 的 `max_query_len`，用于声明最大分段长度，并为 speculative 状态容量校验提供上界；实际分段窗口仍由 `queryStartLoc` 决定。
+- 未提供 `hasInitialState` 时，FN 使用零历史并按有效 cache index 写回最终状态。
+- device metadata 必须使用与数据 Tensor 相同的设备。
+- Host-array 输入仅用于兼容，计划在 2026 年 12 月后删除。
+- 算子默认使用确定性实现。
 
-- 确定性计算：
-  - aclnnCausalConv1d默认确定性实现。
-- 卷积核宽度 $W$ 仅支持2、3、4。
-- 特征维度 $D$ 需为16的倍数。
-- runMode=0（前向计算模式）时，卷积核宽度为编译时已知常量，支持FnRolling快速路径优化。
-- runMode=1（状态更新模式）时，卷积核宽度为运行时参数。
-- `initialStateMode` 为可选输入，仅在 runMode=0（前向计算模式）下支持。未传入或传入空指针时，所有序列均按无初始状态处理。
-- 当存在 `initialStateMode` 输入时，其长度必须等于 batch，元素取值范围为0或1：0表示对应序列不使用 `convStates` 中的初始状态；1表示对应序列使用 `cacheIndices`（未传入时按序列号映射）指向的 `convStates` 缓存行作为初始状态参与计算。
-- 当存在 `initialStateMode` 输入时，算子需要额外的 workspace 用于初始状态同步。
-- cann版本大于等于9.1.0后convStates支持非连续 Tensor，其余版本不支持
+## 调用
 
-## 调用示例
-
-示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/编译与运行样例.md)。
-
-```cpp
-#include <iostream>
-#include <vector>
-#include "acl/acl.h"
-#include "aclnnop/aclnn_causal_conv1d.h"
-
-#define CHECK_RET(cond, return_expr)                                                                                   \
-    do {                                                                                                               \
-        if (!(cond)) {                                                                                                 \
-            return_expr;                                                                                               \
-        }                                                                                                              \
-    } while (0)
-
-#define LOG_PRINT(message, ...)                                                                                        \
-    do {                                                                                                               \
-        printf(message, ##__VA_ARGS__);                                                                                \
-    } while (0)
-
-int64_t GetShapeSize(const std::vector<int64_t> &shape)
-{
-    int64_t shapeSize = 1;
-    for (auto i : shape) {
-        shapeSize *= i;
-    }
-    return shapeSize;
-}
-
-void PrintOutResult(std::vector<int64_t> &shape, void **deviceAddr)
-{
-    auto size = GetShapeSize(shape);
-    std::vector<aclFloat16> resultData(size, 0);
-    auto ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), *deviceAddr,
-                           size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return);
-    for (int64_t i = 0; i < size; i++) {
-        if (i >= 5) {
-            break;
-        }
-        LOG_PRINT("result[%ld] is: %f\n", i, aclFloat16ToFloat(resultData[i]));
-    }
-}
-
-int Init(int32_t deviceId, aclrtContext *context, aclrtStream *stream)
-{
-    auto ret = aclInit(nullptr);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclInit failed. ERROR: %d\n", ret); return ret);
-    ret = aclrtSetDevice(deviceId);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSetDevice failed. ERROR: %d\n", ret); return ret);
-    ret = aclrtCreateContext(context, deviceId);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtCreateContext failed. ERROR: %d\n", ret); return ret);
-    ret = aclrtSetCurrentContext(*context);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSetCurrentContext failed. ERROR: %d\n", ret); return ret);
-    ret = aclrtCreateStream(stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtCreateStream failed. ERROR: %d\n", ret); return ret);
-    return 0;
-}
-
-template <typename T>
-int CreateAclTensor(const std::vector<T> &hostData, const std::vector<int64_t> &shape, void **deviceAddr,
-                    aclDataType dataType, aclTensor **tensor)
-{
-    auto size = GetShapeSize(shape) * sizeof(T);
-    auto ret = aclrtMalloc(deviceAddr, size, ACL_MEM_MALLOC_HUGE_FIRST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMalloc failed. ERROR: %d\n", ret); return ret);
-    ret = aclrtMemcpy(*deviceAddr, size, hostData.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); return ret);
-    *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, nullptr, 0, aclFormat::ACL_FORMAT_ND, shape.data(),
-                              shape.size(), *deviceAddr);
-    return ACL_SUCCESS;
-}
-
-int main()
-{
-    int32_t deviceId = 0;
-    aclrtContext context;
-    aclrtStream stream;
-    auto ret = Init(deviceId, &context, &stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
-
-    void *xDeviceAddr = nullptr;
-    void *weightDeviceAddr = nullptr;
-    void *biasDeviceAddr = nullptr;
-    void *convStatesDeviceAddr = nullptr;
-    void *yDeviceAddr = nullptr;
-
-    aclTensor *x = nullptr;
-    aclTensor *weight = nullptr;
-    aclTensor *bias = nullptr;
-    aclTensor *convStates = nullptr;
-    aclTensor *y = nullptr;
-    aclIntArray *queryStartLoc = nullptr;
-
-    int32_t batchSize = 2;
-    int32_t seqLen = 4;
-    int32_t dim = 64;
-    int32_t width = 3;
-    int32_t stateLen = width;
-
-    std::vector<int64_t> xShape = {batchSize * seqLen, dim};
-    std::vector<int64_t> weightShape = {width, dim};
-    std::vector<int64_t> biasShape = {dim};
-    std::vector<int64_t> convStatesShape = {batchSize, stateLen, dim};
-    std::vector<int64_t> yShape = {batchSize * seqLen, dim};
-
-    std::vector<int16_t> xHostData(GetShapeSize(xShape), 1);
-    std::vector<int16_t> weightHostData(GetShapeSize(weightShape), 1);
-    std::vector<int16_t> biasHostData(GetShapeSize(biasShape), 0);
-    std::vector<int16_t> convStatesHostData(GetShapeSize(convStatesShape), 0);
-    std::vector<int64_t> queryStartLocHostData = {0, seqLen, batchSize * seqLen};
-    std::vector<int16_t> yHostData(GetShapeSize(yShape), 0);
-
-    ret = CreateAclTensor(xHostData, xShape, &xDeviceAddr, aclDataType::ACL_BF16, &x);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(weightHostData, weightShape, &weightDeviceAddr, aclDataType::ACL_BF16, &weight);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(biasHostData, biasShape, &biasDeviceAddr, aclDataType::ACL_BF16, &bias);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(convStatesHostData, convStatesShape, &convStatesDeviceAddr, aclDataType::ACL_BF16, &convStates);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
-    queryStartLoc = aclCreateIntArray(queryStartLocHostData.data(), queryStartLocHostData.size());
-    CHECK_RET(queryStartLoc != nullptr, LOG_PRINT("aclCreateIntArray failed.\n"); return -1);
-    ret = CreateAclTensor(yHostData, yShape, &yDeviceAddr, aclDataType::ACL_BF16, &y);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
-
-    uint64_t workspaceSize = 0;
-    aclOpExecutor *executor;
-    int64_t activationMode = 0;
-    int64_t padSlotId = -1;
-    int64_t runMode = 0;
-    int64_t headNum = 0;
-
-    ret = aclnnCausalConv1dGetWorkspaceSize(x, weight, bias, convStates, queryStartLoc, nullptr, nullptr, nullptr,
-                                            activationMode, padSlotId, runMode, headNum, y, &workspaceSize, &executor);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnCausalConv1dGetWorkspaceSize failed. ERROR: %d\n", ret);
-              return ret);
-
-    void *workspaceAddr = nullptr;
-    if (workspaceSize > 0) {
-        ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
-    }
-
-    ret = aclnnCausalConv1d(workspaceAddr, workspaceSize, executor, stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnCausalConv1d failed. ERROR: %d\n", ret); return ret);
-
-    ret = aclrtSynchronizeStream(stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
-
-    PrintOutResult(yShape, &yDeviceAddr);
-
-    aclDestroyTensor(x);
-    aclDestroyTensor(weight);
-    aclDestroyTensor(bias);
-    aclDestroyTensor(convStates);
-    aclDestroyTensor(y);
-    aclDestroyIntArray(queryStartLoc);
-
-    aclrtFree(xDeviceAddr);
-    aclrtFree(weightDeviceAddr);
-    aclrtFree(biasDeviceAddr);
-    aclrtFree(convStatesDeviceAddr);
-    aclrtFree(yDeviceAddr);
-    if (workspaceSize > 0) {
-        aclrtFree(workspaceAddr);
-    }
-    aclrtDestroyStream(stream);
-    aclrtDestroyContext(context);
-    aclrtResetDevice(deviceId);
-    aclFinalize();
-
-    return 0;
-}
-```
+先调用 `aclnnCausalConv1dGetWorkspaceSize`，按返回大小分配 workspace，再在同一 stream 上调用 `aclnnCausalConv1d`。完整最小示例见 [test_aclnn_causal_conv1d.cpp](../examples/test_aclnn_causal_conv1d.cpp)。

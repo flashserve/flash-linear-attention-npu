@@ -9,6 +9,7 @@
 
 /*!
  * \file causal_conv1d_common.h
+ * \brief CausalConv1d shared constants, ring-buffer helpers and buffer layouts.
  */
 
 #ifndef CAUSAL_CONV1D_COMMON_H
@@ -60,6 +61,6 @@ struct CalcBufLayout {
     }
 };
 
-} // namespace NsCausalConv1dCommon
+}
 
-#endif // CAUSAL_CONV1D_COMMON_H
+#endif

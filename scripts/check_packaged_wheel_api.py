@@ -22,6 +22,8 @@ from pathlib import Path
 ASCENDC_NAMES = (
     "causal_conv1d",
     "causal_conv1d_bwd",
+    "causal_conv1d_fn",
+    "causal_conv1d_update",
     "chunk_bwd_dqkwg",
     "chunk_bwd_dv_local",
     "chunk_fwd_o",
@@ -182,6 +184,9 @@ def main() -> int:
         _require_attr(ascendc, name, "fla_npu.ops.ascendc")
         _require_attr(ascendc, f"npu_{name}", "fla_npu.ops.ascendc")
 
+    _require_attr(ascendc, "causal_conv1d_fn", "fla_npu.ops.ascendc")
+    _require_attr(ascendc, "causal_conv1d_update", "fla_npu.ops.ascendc")
+
     for name in FORBIDDEN_ASCENDC_NAMES:
         if hasattr(ascendc, name):
             raise AssertionError(
@@ -200,8 +205,14 @@ def main() -> int:
     _require_safe_packaged_opapi(fla_npu)
     _require_packaged_triton_sources(fla_npu)
 
+    if ascendc.BACKWARD_OPS.get("npu_causal_conv1d") != "npu_causal_conv1d_bwd":
+        raise AssertionError("npu_causal_conv1d backward binding metadata is missing")
     if ascendc.BACKWARD_OPS.get("causal_conv1d") != "causal_conv1d_bwd":
         raise AssertionError("causal_conv1d backward binding metadata is missing")
+    if ascendc.BACKWARD_OPS.get("npu_causal_conv1d_fn") != "npu_causal_conv1d_bwd":
+        raise AssertionError("npu_causal_conv1d_fn backward binding metadata is missing")
+    if ascendc.BACKWARD_OPS.get("causal_conv1d_fn") != "causal_conv1d_bwd":
+        raise AssertionError("causal_conv1d_fn backward binding metadata is missing")
 
     if args.check_triton and not args.skip_triton:
         from fla_npu.ops import triton

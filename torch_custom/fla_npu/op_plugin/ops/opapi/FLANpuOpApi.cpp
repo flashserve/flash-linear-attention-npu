@@ -910,29 +910,21 @@ at::Tensor infer_y_tensor(
     int64_t head_num,
     int64_t run_mode)
 {
-    at::Tensor y;
-    int64_t x_dim = x.dim();
-
-    if (run_mode == 0 && head_num > 0) {
-        if (x_dim == 3) {
-            auto sizes = x.sizes();
-            int64_t b = sizes[0];
-            int64_t s = sizes[1];
-            int64_t d = sizes[2] / head_num;
-            y = at::empty({b, head_num, s, d}, x.options());
-        } else if (x_dim == 2) {
-            auto sizes = x.sizes();
-            int64_t s = sizes[0];
-            int64_t d = sizes[1] / head_num;
-            y = at::empty({head_num, s, d}, x.options());
-        } else {
-            y = at::empty_like(x);
-        }
-    } else {
-        y = at::empty_like(x);
+    TORCH_CHECK(head_num >= 0, "head_num must be non-negative, got ", head_num);
+    if (head_num == 0) {
+        return at::empty_like(x);
     }
 
-    return y;
+    TORCH_CHECK(run_mode == 0, "head_num > 0 is only supported when run_mode=0, got run_mode=", run_mode);
+    TORCH_CHECK(x.dim() == 2 || x.dim() == 3, "head_num > 0 requires rank-2 or rank-3 x, got rank ", x.dim());
+    const int64_t dim = x.size(-1);
+    TORCH_CHECK(dim % head_num == 0, "head_num must divide the last dimension exactly, got head_num=", head_num,
+                ", dim=", dim);
+    const int64_t head_dim = dim / head_num;
+    if (x.dim() == 2) {
+        return at::empty({head_num, x.size(0), head_dim}, x.options());
+    }
+    return at::empty({x.size(0), head_num, x.size(1), head_dim}, x.options());
 }
 
 at::Tensor npu_causal_conv1d(
@@ -950,23 +942,26 @@ at::Tensor npu_causal_conv1d(
     int64_t head_num = 0)
 {
     at::Tensor y = infer_y_tensor(x, head_num, run_mode);
-
-    const at::Tensor &bias_ = c10::value_or_else(bias, [] { return at::Tensor(); });
-
-    c10::optional<at::IntArrayRef> query_start_loc_ = query_start_loc.has_value()
+    const at::Tensor &bias_tensor = c10::value_or_else(bias, [] { return at::Tensor(); });
+    const c10::optional<at::Tensor> device_metadata = c10::nullopt;
+    c10::optional<at::IntArrayRef> query_start_loc_host = query_start_loc.has_value()
         ? c10::optional<at::IntArrayRef>(query_start_loc.value()) : c10::nullopt;
-    c10::optional<at::IntArrayRef> cache_indices_ = cache_indices.has_value()
+    c10::optional<at::IntArrayRef> cache_indices_host = cache_indices.has_value()
         ? c10::optional<at::IntArrayRef>(cache_indices.value()) : c10::nullopt;
-    c10::optional<at::IntArrayRef> initial_state_mode_ = initial_state_mode.has_value()
+    c10::optional<at::IntArrayRef> has_initial_state_host = initial_state_mode.has_value()
         ? c10::optional<at::IntArrayRef>(initial_state_mode.value()) : c10::nullopt;
-    c10::optional<at::IntArrayRef> num_accepted_tokens_ = num_accepted_tokens.has_value()
+    c10::optional<at::IntArrayRef> num_accepted_tokens_host = num_accepted_tokens.has_value()
         ? c10::optional<at::IntArrayRef>(num_accepted_tokens.value()) : c10::nullopt;
+    TORCH_CHECK(activation_mode == 0 || activation_mode == 1,
+                "activation_mode only supports 0/1, got ", activation_mode);
+    const std::string activation = activation_mode == 0 ? "none" : "silu";
 
     EXEC_NPU_CMD_EXT(
         aclnnCausalConv1d,
-        x, weight, bias_, conv_states,
-        query_start_loc_, cache_indices_, initial_state_mode_, num_accepted_tokens_,
-        activation_mode, pad_slot_id, run_mode, head_num,
+        x, weight, bias_tensor, conv_states,
+        device_metadata, device_metadata, device_metadata, device_metadata,
+        query_start_loc_host, cache_indices_host, has_initial_state_host, num_accepted_tokens_host,
+        activation, pad_slot_id, -1, run_mode, head_num, -1,
         y
     );
     return y;

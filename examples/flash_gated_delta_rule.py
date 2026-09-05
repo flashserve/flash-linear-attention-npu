@@ -25,8 +25,8 @@ import torch_npu
 
 from fla_npu.ops import ascendc as ascendc_ops
 from fla_npu.ops.ascendc import (
-    causal_conv1d as ascendc_causal_conv1d,
     causal_conv1d_bwd as ascendc_causal_conv1d_bwd,
+    causal_conv1d_fn as ascendc_causal_conv1d_fn,
     chunk_bwd_dqkwg as ascendc_chunk_bwd_dqkwg,
     chunk_bwd_dv_local as ascendc_chunk_bwd_dv_local,
     chunk_fwd_o as ascendc_chunk_fwd_o,
@@ -338,7 +338,22 @@ class AscendCCausalConv1dFunction(torch.autograd.Function):
         op_weight = weight.transpose(-1, -2).contiguous()
         width, dim = op_weight.shape
         op_x, query_start_loc, is_varlen = _flatten_varlen_x(x, cu_seqlens)
-        num_sequences = len(query_start_loc) - 1 if query_start_loc is not None else int(x.shape[0])
+        if query_start_loc is None:
+            if op_x.ndim == 3:
+                num_sequences, seq_len = int(op_x.shape[0]), int(op_x.shape[1])
+                forward_query_start_loc = [i * seq_len for i in range(num_sequences + 1)]
+                op_x = op_x.reshape(-1, dim)
+            else:
+                num_sequences = 1
+                forward_query_start_loc = [0, int(op_x.shape[0])]
+        else:
+            num_sequences = len(query_start_loc) - 1
+            forward_query_start_loc = query_start_loc
+        query_start_loc_device = torch.tensor(
+            forward_query_start_loc,
+            dtype=torch.int32,
+            device=op_x.device,
+        )
         conv_states, initial_state_bwd = _prepare_conv_states(
             x,
             initial_state,
@@ -346,22 +361,27 @@ class AscendCCausalConv1dFunction(torch.autograd.Function):
             width=width,
             dim=dim,
         )
-        initial_state_mode = [1] * num_sequences if initial_state is not None else None
+        has_initial_state = None
+        if initial_state is not None:
+            has_initial_state = torch.ones(num_sequences, dtype=torch.bool, device=op_x.device)
 
-        preactivation = ascendc_causal_conv1d(
+        preactivation = ascendc_causal_conv1d_fn(
             op_x,
             op_weight,
             bias,
             conv_states,
-            query_start_loc=query_start_loc,
-            initial_state_mode=initial_state_mode,
-            activation_mode=0,
-            pad_slot_id=-1,
-            run_mode=0,
-            head_num=H,
+            query_start_loc_device,
+            has_initial_state=has_initial_state,
+            activation=None,
+            null_block_id=None,
         )
         if is_varlen:
+            preactivation = _flat_to_head_layout(preactivation, H, is_varlen=True)
             preactivation = preactivation.unsqueeze(0)
+        elif x.ndim == 2:
+            preactivation = _flat_to_head_layout(preactivation, H, is_varlen=True)
+        else:
+            preactivation = _flat_to_head_layout(preactivation.reshape_as(x), H, is_varlen=False)
         if residual is not None:
             preactivation = preactivation + _flat_to_head_layout(residual, H, is_varlen=is_varlen)
 
@@ -378,7 +398,7 @@ class AscendCCausalConv1dFunction(torch.autograd.Function):
         ctx.save_for_backward(x, op_weight, bias, residual, initial_state_bwd, preactivation)
         ctx.activation_mode = activation_mode
         ctx.query_start_loc = query_start_loc
-        ctx.is_varlen = is_varlen
+        ctx.is_varlen = is_varlen or x.ndim == 2
         ctx.head_num = H
         ctx.batch_size = x.shape[0] if x.ndim == 3 else 1
         ctx.had_bias = bias is not None
