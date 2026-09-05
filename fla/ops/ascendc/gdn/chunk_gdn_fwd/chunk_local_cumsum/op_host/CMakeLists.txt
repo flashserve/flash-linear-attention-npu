@@ -13,6 +13,9 @@ if (BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnnExc PRIVATE
         chunk_local_cumsum_def.cpp
     )
+    target_compile_definitions(op_host_aclnnExc PRIVATE
+        ASCEND_SOC_VERSION="${ASCEND_COMPUTE_UNIT}"
+    )
 endif()
 
 add_modules_sources(OPTYPE chunk_local_cumsum ACLNNTYPE aclnn_exclude)
