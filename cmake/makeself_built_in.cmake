@@ -142,7 +142,7 @@ endif()
 # makeself打包
 file(STRINGS ${CPACK_CMAKE_BINARY_DIR}/makeself.txt script_output)
 string(REPLACE " " ";" makeself_param_string "${script_output}")
-string(REGEX MATCH "(cann|fla-npu).*\\.run" package_name "${makeself_param_string}")
+string(REGEX MATCH "(cann|fla[-_]npu).*\\.run" package_name "${makeself_param_string}")
 
 list(LENGTH makeself_param_string LIST_LENGTH)
 math(EXPR INSERT_INDEX "${LIST_LENGTH} - 2")
@@ -180,7 +180,7 @@ endif()
 
 if(CPACK_BUILD_MODE STREQUAL "RUN_COPY")
     execute_process(
-        COMMAND find "${STAGING_DIR}" "(" "-name" "cann-*.run" "-o" "-name" "fla-npu-*.run" ")"
+        COMMAND find "${STAGING_DIR}" "(" "-name" "cann-*.run" "-o" "-name" "fla_npu_linux-*.run" ")"
         COMMAND xargs cp --target-directory=${CPACK_CMAKE_INSTALL_PREFIX}
         WORKING_DIRECTORY ${STAGING_DIR}
         RESULT_VARIABLE EXEC_RESULT

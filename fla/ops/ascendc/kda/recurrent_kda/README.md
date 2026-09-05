@@ -3,7 +3,8 @@
 `RecurrentKda` 是 KDA 的 fused recurrent 前向算子。算子在一个 AICore kernel 内完成 recurrent state decay、delta 更新和输出计算；`raw gate -> log gate` 和 `beta sigmoid` 可以在 kernel 内完成，不依赖 `KdaGateCumsum` 或 GDN recurrent 的接口。
 
 完整接口和调用示例见 [API 文档](docs/api.md)，实现方案见 [设计文档](docs/design.md)，非连续 state
-的 stride 约束与数据流见 [专项设计](docs/non_contiguous_state_design.md)。Shape 符号统一引用
+的 stride 约束与数据流见 [专项设计](docs/non_contiguous_state_design.md)，非连续 Q/K/V 的支持边界、
+回退策略与实测结果见 [QKV 专项设计](docs/non_contiguous_qkv_design.md)。Shape 符号统一引用
 [KDA 模型符号表](../README.md#model-shape-symbols)。
 
 ## Python 接口
@@ -45,6 +46,8 @@ out, final_state = recurrent_kda(
   `state_v_first=True` 对应 `[state_capacity,HV,V,K]`，`state_v_first=False` 对应
   `[state_capacity,HV,K,V]`。支持 slot/head 维带间隔的非连续 view，但内部二维 state
   矩阵必须稠密。
+- Q/K/V 支持融合 storage 切片形成的规则非连续 view；算子保留各自 storage offset，并按 token/head
+  stride 直接读取。不满足直接访问约束的 view 在 ACLNN 侧自动回退连续化。
 - `scale=None` 时，Python wrapper 使用 `K ** -0.5`。
 - `use_qk_l2norm_in_kernel=True` 时，kernel 内对每个 token 的 `q/k` 做 L2 normalize，然后对 `q` 乘 `scale`。
 - `use_gate_in_kernel=False` 时，`g` 被视为已经预计算好的 step log gate，kernel 使用 `exp(g)` 做 state decay。
@@ -72,10 +75,14 @@ o_t = S @ (q_t * scale)
 ## 当前限制
 
 - `q/k/v/out` 仅支持 `BF16`。
+- Q/K/V 直接非连续访问要求 feature stride 为 1、head 间不重叠、token 间不重叠且 stride 为正；
+  BSND 在 `B>1` 时还要求 `batchStride == T * tokenStride`。已验证的 feature-gap、zero-stride
+  与 batch-gap view 自动回退连续化；token/head 置换或正 stride 重叠 descriptor 明确拒绝。
 - `g/beta` Python 入口支持 `FP32/BF16/FP16`，aclnn 预处理后以 `FP32` 输入 kernel。
 - `A_log/dt_bias` 支持 `FP32`。
 - `cu_seqlens` 为必传、与 q 同设备的 INT32/INT64 Tensor；offset 必须单调不减，末项不得超过输入
-  token capacity，各相邻差值必须不超过 8。末项小于 capacity 时，仅有效 token 对应的输出和 state
+  token capacity，各相邻差值必须不超过 8。接口面向 decode / MTP 短序列，dense 单序列与 varlen
+  每段序列长度均必须小于等于 8。末项小于 capacity 时，仅有效 token 对应的输出和 state
   更新有定义，padding tail 输出不作保证。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`。
 - 支持 V-first `[state_capacity,HV,V,K]` 和 K-first `[state_capacity,HV,K,V]`，state dtype 为

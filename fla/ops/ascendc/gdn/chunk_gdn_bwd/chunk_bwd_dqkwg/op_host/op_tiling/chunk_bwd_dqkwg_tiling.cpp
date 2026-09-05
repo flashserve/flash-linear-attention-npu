@@ -17,17 +17,10 @@
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include "tiling_base/tiling_type.h"
-#include <cmath>
 #include <algorithm>
 
 namespace optiling {
 
-constexpr int64_t CONST_B = 1;
-constexpr int64_t CONST_HV = 4;
-constexpr int64_t CONST_HK = 4;
-constexpr int64_t CONST_T = 2816;
-constexpr int64_t CONST_K = 128;
-constexpr int64_t CONST_V = 128;
 constexpr int64_t CONST_BT = 64;
 
 // 数据类型大小
@@ -79,8 +72,6 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
         OP_LOGE(context->GetNodeName(), "HV must be a multiple of HK, but HV = %ld, HK = %ld.", HV, HK);
         return ge::GRAPH_FAILED;
     }
-    int64_t n_ratio = HV / HK;
-    (void)n_ratio;
     auto attr = context->GetAttrs();
     const int32_t* chunkSizePtr = attr->GetAttrPointer<int32_t>(ATTR_CHUNK_SIZE_ITEM);
     if (chunkSizePtr != nullptr) {
@@ -180,81 +171,25 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
         ringCoreSlots = 1;
     }
 
-    const size_t mainDgLastSize = align32(static_cast<size_t>(B) * HV *numChunks * FP32_SIZE);
-    const size_t mainMm5Size = static_cast<size_t>(B) * HV *T * K * FP16_SIZE;
-    const size_t mainDsTempSize = static_cast<size_t>(B) * HV *T * BT * FP16_SIZE;
-    const size_t mainWorkspaceSize = mainDgLastSize + mainMm5Size + mainDsTempSize;
-
-    // actualWorkspaceForDepth: 与下面真实分配完全一致 (short 环深自适应 = 2G, mm7 寄生 mm5 group 区, 不再 max)。
-    auto actualWorkspaceForDepth = [&](int64_t g) -> size_t {
-        int64_t shortD = (g / 2 >= 2) ? (g / 2) : 2;                 // 自适应 short = 2G, 地板 2
-        size_t shortBtxK = align32(static_cast<size_t>(ringCoreSlots) * shortD * HV *BT * K * FP16_SIZE);
-        size_t sharedBtxK = align32(static_cast<size_t>(ringCoreSlots) * g * HV *BT * K * FP16_SIZE);  // mm5+mm7 group
-        size_t groupBtb = align32(static_cast<size_t>(ringCoreSlots) * g * HV *BT * BT * FP16_SIZE);
-        size_t shortBtb = align32(static_cast<size_t>(ringCoreSlots) * shortD * HV *BT * BT * FP16_SIZE);
-        size_t dgLast = align32(static_cast<size_t>(ringCoreSlots) * g * HV *FP32_SIZE);
-        return shortBtxK + sharedBtxK + groupBtb + shortBtb + dgLast;
-    };
-
-    // 选 G: 取 <= min(main, L2 驻留预算) 的最大 G。**memory-bound 关键 (msprof 实锤)**: 大 H/大 BT 的 case
-    // 是 L2 受限 (cube FixPipe 0.997 / MTE2 0.869 被 L2 miss 打满, L2 hit 仅 0.13), group 环 (mm5/ds_temp,
-    // 深度 4G) 装不进 L2 -> 环越大越慢。用 L2 预算把它们压到小 G (group 环减半、贴 L2); 小 case 环本来就小,
-    // 仍能拿到 G=4。L2_RING_BUDGET 按 910B 实测取 (case_03 432MB 不劣 / case_11 604MB 劣之间), 跨设备可调。
-    const size_t L2_RING_BUDGET = static_cast<size_t>(512) * 1024 * 1024;
-    const size_t ringBudget = std::min(mainWorkspaceSize, L2_RING_BUDGET);
-    int64_t groupRingDepth = 4;
-    for (int64_t candidate : {16, 8, 4}) {
-        if (actualWorkspaceForDepth(candidate) <= ringBudget) {
-            groupRingDepth = candidate;
-            break;
-        }
-    }
-
-    // ---- 仅针对劣化形状的 overlap 深度修复 (2026-06-28) ----
-    // 判别证据: case_10 (H=16/BT=128, G=2, ring~288MB) 不劣化; case_11/12 (H=32/BT=128) 被 512MB 预算压到
-    // G=1 (ring 也~288MB) 却 +6% 劣化。两者 ring 大小几乎相同 => 差异不在 ring 体积, 而在 overlap 深度:
-    // G=1 => 信用窗口 N=min(G,M)=1 => cube 只能领先 vector 1 个 task (近 lockstep); G=2 => N=2 真正重叠。
-    // (旁证: 历史实测 G=2 = +4.92% < 当前 G=1 = +6.29%。) 故把被压到 depth<8 的形状抬到 depth=8 (G=2), 对齐 case_10。
-    //
-    // **只改坏形状, 好 case 字节不变**: 此 if 仅命中"当前 groupRingDepth<8 且 main 容得下 depth=8"的形状 =>
-    //   - case_10 已是 depth=8 (8<8 false) -> 不变;
-    //   - case_01/03 等在 G=4=depth16 (16<8 false) -> 不变;
-    //   - tiny case footprint(8)>main -> 守卫挡掉 -> 不变;
-    //   - 唯独 case_11/12/24 (H=32/BT=128, 被预算压到 depth=4) 抬到 8。
-    const int64_t MIN_DEPTH_FOR_OVERLAP = 8;  // G=2 => N>=2, 对齐不劣化的 case_10
-    if (groupRingDepth < MIN_DEPTH_FOR_OVERLAP &&
-        actualWorkspaceForDepth(MIN_DEPTH_FOR_OVERLAP) <= mainWorkspaceSize) {
-        groupRingDepth = MIN_DEPTH_FOR_OVERLAP;
-    }
-
-    // short 环深自适应 (= 内核 DqkwgShortRingDepthFromGroup 同公式): dw/mm6/mul1 只需 2G-1 个 slot, 固定 8 严重过配。
-    // 大 H/大 BT 的 memory-bound case (G=1~2) 把 short 环砍掉一大半 -> 环贴近 L2 -> 缓解 FixPipe/MTE2 的 L2 miss。
-    const int64_t adaptiveShortDepth = (groupRingDepth / 2 >= 2) ? (groupRingDepth / 2) : 2;  // 2G (G=4→8 复现原值; G<4 收缩), 地板 2
-    const size_t shortBtxKSize = align32(static_cast<size_t>(ringCoreSlots) * adaptiveShortDepth * HV *BT * K * FP16_SIZE);
-    // mm7 改用 group 环 (与 mm5 同槽, 单写, stage B/D 时序错开), 故 mm5/mm7 共享区 = group 深度 (不再 max(group,short))。
-    const size_t sharedBtxKSize = align32(static_cast<size_t>(ringCoreSlots) * groupRingDepth * HV *BT * K * FP16_SIZE);
-    const size_t groupBtbSize = align32(static_cast<size_t>(ringCoreSlots) * groupRingDepth * HV *BT * BT * FP16_SIZE);
-    const size_t shortBtbSize = align32(static_cast<size_t>(ringCoreSlots) * adaptiveShortDepth * HV *BT * BT * FP16_SIZE);
-    size_t dgLastSize = align32(static_cast<size_t>(ringCoreSlots) * groupRingDepth * HV *FP32_SIZE);
+    const size_t sharedBtxKSize = align32(static_cast<size_t>(ringCoreSlots) * HV * BT * K * FP16_SIZE);
+    const size_t sharedBtbSize = align32(static_cast<size_t>(ringCoreSlots) * HV * BT * BT * FP16_SIZE);
+    size_t dgLastSize = align32(static_cast<size_t>(ringCoreSlots) * HV * FP32_SIZE);
 
     size_t offset = 0;
-    size_t wsDwOffset = offset;
-    offset += shortBtxKSize;
-
+    size_t wsMm3Offset = offset;
+    offset += sharedBtbSize;
+    size_t wsMm4Offset = offset;
+    offset += sharedBtxKSize;
+    size_t wsMm6Offset = offset;
+    offset += sharedBtxKSize;
     size_t wsMm5Offset = offset;
     offset += sharedBtxKSize;
-
+    size_t wsMm7Offset = offset;
+    offset += sharedBtxKSize;
     size_t wsDsTempOffset = offset;
-    offset += groupBtbSize;
-
-    size_t wsMul1Offset = offset;
-    offset += shortBtbSize;
-
+    offset += sharedBtbSize;
     size_t wsDgLastOffset = offset;
     offset += dgLastSize;
-
-    size_t wsMm6Offset = wsDwOffset;
-    size_t wsMm7Offset = wsMm5Offset;
     size_t totalUserWorkspace = offset;
 
     // 设置 workspace 大小
@@ -262,7 +197,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     workspaces[0] = static_cast<size_t>(sysWorkspaceSize + totalUserWorkspace);
 
     // 设置 block 数量
-    context->SetBlockDim(aicNum);
+    context->SetBlockDim(ringCoreSlots);
     context->SetScheduleMode(1); // mixed AIC/AIV schedule
 
     // 填充 TilingData
@@ -279,16 +214,13 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     tilingData.set_mul0RowNum(V == 256 ? 16 : 32);
     tilingData.set_aicCoreNum(static_cast<uint32_t>(aicNum));
 
-    tilingData.set_wsDwOffset(wsDwOffset);
-    tilingData.set_wsBtxKSyncSlotsPerHead(static_cast<uint64_t>(groupRingDepth));
-    tilingData.set_wsDgLastOffset(wsDgLastOffset);
-    tilingData.set_dgLastSize(dgLastSize);
-    tilingData.set_wsMm5Offset(wsMm5Offset);
-    tilingData.set_wsDsTempOffset(wsDsTempOffset);
-    tilingData.set_totalWorkspaceSize(totalUserWorkspace);
+    tilingData.set_wsMm3Offset(wsMm3Offset);
+    tilingData.set_wsMm4Offset(wsMm4Offset);
     tilingData.set_wsMm6Offset(wsMm6Offset);
+    tilingData.set_wsMm5Offset(wsMm5Offset);
     tilingData.set_wsMm7Offset(wsMm7Offset);
-    tilingData.set_wsMul1Offset(wsMul1Offset);
+    tilingData.set_wsDsTempOffset(wsDsTempOffset);
+    tilingData.set_wsDgLastOffset(wsDgLastOffset);
 
     // 检查是否有 cu_seqlens 输入来判断 IS_VARLEN
     tilingData.set_isVarLen(isVarLen);

@@ -1,9 +1,8 @@
-"""ATK executor, dual references, and route adapters for chunk_kda_fwd."""
+"""ATK executor, CPU golden, and route adapters for chunk_kda_fwd."""
 
 from __future__ import annotations
 
 import ctypes
-import importlib
 import json
 import math
 import os
@@ -59,7 +58,6 @@ _OUTPUT_NAMES = (
 _REFERENCE_WORKERS = int(os.environ.get("KDA_ATK_REFERENCE_WORKERS", "48"))
 _REFERENCE_CACHE: OrderedDict[str, tuple] = OrderedDict()
 _REFERENCE_CACHE_ENTRIES = int(os.environ.get("KDA_ATK_REFERENCE_CACHE_ENTRIES", "1"))
-_DEFAULT_TRITON_CALLABLE = "fla.ops.kda.chunk_fwd:chunk_kda_fwd"
 
 
 def _selected_output_names() -> Optional[set[str]]:
@@ -799,176 +797,6 @@ def _torch_fp64_golden(inputs: _PreparedInputs, spec: dict):
     )
 
 
-def _torch_same_precision(inputs: _PreparedInputs, spec: dict):
-    if inputs.q.device.type != "cpu":
-        raise RuntimeError("Torch same-precision control must run on an ATK CPU node")
-    if inputs.q.dtype != _DTYPES[str(spec["q_dtype"])]:
-        raise RuntimeError(
-            "Torch same-precision control received an unexpected q dtype: "
-            f"expected={_DTYPES[str(spec['q_dtype'])]}, actual={inputs.q.dtype}"
-        )
-    previous_threads = torch.get_num_threads()
-    try:
-        torch.set_num_threads(1)
-        return _cached_full_reference(
-            inputs,
-            spec,
-            "torch_cpu_same_precision",
-            _reference_model_parallel,
-        )
-    finally:
-        torch.set_num_threads(previous_threads)
-
-
-def _load_triton_callable():
-    target = os.environ.get("KDA_ATK_TRITON_CALLABLE", _DEFAULT_TRITON_CALLABLE).strip()
-    module_name, separator, attribute = target.partition(":")
-    if not separator or not module_name or not attribute:
-        raise RuntimeError(
-            "KDA_ATK_TRITON_CALLABLE must use '<python_module>:<callable>' syntax"
-        )
-    module = importlib.import_module(module_name)
-    callable_obj = getattr(module, attribute, None)
-    if not callable(callable_obj):
-        raise RuntimeError(f"configured Triton target is not callable: {target}")
-    return target, callable_obj
-
-
-def _cuda_long(values: Optional[list[int]], device, *, pairs: bool = False):
-    if values is None:
-        return None
-    tensor = torch.tensor(values, dtype=torch.int64, device=device)
-    return tensor.reshape(-1, 2) if pairs else tensor
-
-
-def _triton_gate_cumsum(
-    inputs: _PreparedInputs,
-    spec: dict,
-    g: torch.Tensor,
-    cu_seqlens: Optional[torch.Tensor],
-    chunk_indices: Optional[torch.Tensor],
-) -> torch.Tensor:
-    if _as_bool(spec["use_gate_in_kernel"]):
-        from fla.ops.kda.gate import kda_gate_chunk_cumsum
-
-        return kda_gate_chunk_cumsum(
-            g=g,
-            A_log=inputs.A_log,
-            dt_bias=inputs.dt_bias,
-            scale=1.0 / math.log(2.0),
-            chunk_size=int(spec["chunk_size"]),
-            cu_seqlens=cu_seqlens,
-            chunk_indices=chunk_indices,
-            lower_bound=(
-                float(spec["lower_bound"]) if _as_bool(spec["safe_gate"]) else None
-            ),
-        )
-
-    from fla.ops.utils import chunk_local_cumsum
-
-    return chunk_local_cumsum(
-        g,
-        scale=1.0 / math.log(2.0),
-        chunk_size=int(spec["chunk_size"]),
-        cu_seqlens=cu_seqlens,
-        chunk_indices=chunk_indices,
-    )
-
-
-def _sequence_major_to_head_major(tensor: Optional[torch.Tensor], spec: dict):
-    if tensor is None or tensor.dim() != 4:
-        return tensor
-    total_t, hv_num = int(spec["T"]), int(spec["HV"])
-    if tensor.shape[1] == total_t and tensor.shape[2] == hv_num:
-        return tensor.permute(0, 2, 1, 3).contiguous()
-    if tensor.shape[1] == hv_num and tensor.shape[2] == total_t:
-        return tensor
-    raise RuntimeError(
-        "Triton intermediate has an unsupported layout: "
-        f"shape={tuple(tensor.shape)}, expected BT(HV)D or B(HV)TD"
-    )
-
-
-def _normalize_triton_outputs(outputs: tuple, inputs: _PreparedInputs, spec: dict) -> tuple:
-    if not isinstance(outputs, (tuple, list)) or len(outputs) != len(_OUTPUT_NAMES):
-        raise RuntimeError(
-            f"Triton callable must return {len(_OUTPUT_NAMES)} values in chunk_kda_fwd order"
-        )
-    normalized = list(outputs)
-    for index in range(2, 10):
-        normalized[index] = _sequence_major_to_head_major(normalized[index], spec)
-    normalized[11] = inputs.initial_state
-    if str(spec["layout"]) in {"TND", "NTD"}:
-        for index in (0, 2, 3, 4, 5, 6, 7, 8, 9, 10):
-            tensor = normalized[index]
-            if isinstance(tensor, torch.Tensor) and tensor.dim() >= 1 and tensor.shape[0] == 1:
-                normalized[index] = tensor.squeeze(0)
-    return tuple(normalized)
-
-
-def _triton_same_precision_impl(inputs: _PreparedInputs, spec: dict):
-    if inputs.q.device.type != "cuda":
-        raise RuntimeError("Triton same-precision control must run on an ATK GPU node")
-    target, triton_callable = _load_triton_callable()
-    chunk_size = int(spec["chunk_size"])
-    if chunk_size != 64:
-        raise RuntimeError(
-            "the GPU dual-benchmark matrix is scoped to chunk_size=64; "
-            f"got chunk_size={chunk_size} from {target}"
-        )
-
-    layout = str(spec["layout"])
-    q = _layout_to_bsnd(inputs.q, layout).contiguous()
-    k = _layout_to_bsnd(inputs.k, layout).contiguous()
-    v = _layout_to_bsnd(inputs.v, layout).contiguous()
-    g = _layout_to_bsnd(inputs.g, layout).contiguous()
-    beta = _layout_to_bsnd(inputs.beta, layout, beta=True).contiguous()
-    cu_seqlens = _cuda_long(inputs.cu_seqlens, q.device)
-    cu_seqlens_cpu = (
-        None if inputs.cu_seqlens is None
-        else torch.tensor(inputs.cu_seqlens, dtype=torch.int64, device="cpu")
-    )
-    chunk_indices = _cuda_long(inputs.chunk_indices, q.device, pairs=True)
-
-    outputs = list(
-        triton_callable(
-            q=q,
-            k=k,
-            v=v,
-            g=g,
-            beta=beta,
-            scale=float(spec["scale"]),
-            initial_state=inputs.initial_state,
-            output_final_state=True,
-            state_v_first=_as_bool(spec["state_v_first"]),
-            cu_seqlens=cu_seqlens,
-            cu_seqlens_cpu=cu_seqlens_cpu,
-            chunk_indices=chunk_indices,
-            chunk_size=chunk_size,
-            safe_gate=_as_bool(spec["safe_gate"]),
-            lower_bound=(
-                float(spec["lower_bound"]) if _as_bool(spec["safe_gate"]) else None
-            ),
-            use_gate_in_kernel=_as_bool(spec["use_gate_in_kernel"]),
-            A_log=inputs.A_log,
-            dt_bias=inputs.dt_bias,
-            disable_recompute=True,
-            return_intermediate_states=True,
-        )
-    )
-    if len(outputs) == len(_OUTPUT_NAMES) and outputs[2] is None:
-        outputs[2] = _triton_gate_cumsum(
-            inputs, spec, g, cu_seqlens, chunk_indices
-        )
-    return _normalize_triton_outputs(tuple(outputs), inputs, spec)
-
-
-def _triton_same_precision(inputs: _PreparedInputs, spec: dict):
-    return _cached_full_reference(
-        inputs, spec, "cuda_triton_same_precision", _triton_same_precision_impl
-    )
-
-
 def _public_kwargs(inputs: _PreparedInputs, spec: dict) -> dict:
     return {
         "layout": str(spec["layout"]),
@@ -1266,30 +1094,11 @@ class ChunkKdaFwdApi(BaseApi):
         case_config = getattr(task_result, "case_config", None)
         case_id = case_config.get("id") if isinstance(case_config, dict) else getattr(case_config, "id", None)
         self.runtime_case_id = None if case_id is None else int(case_id)
-        task_names = {
-            str(getattr(task_type, "value", task_type))
-            for task_type in (task_result.task_type or [])
-        }
-        self.randomize_values = bool(
-            getattr(task_result, "disable_id_seed", False)
-            and "accuracy_lt" in task_names
-        )
-        self.is_benchmark_task = bool(task_result.is_benchmark_task)
-        # The benchmark task is the FP64 truth. A regular CPU task is the
-        # quantized Torch control; a regular GPU task remains the Triton control.
-        self.high_precision = self.device in {"cpu", "gpu"} and self.is_benchmark_task
-        self.cpu_control = self.device == "cpu" and not self.is_benchmark_task
-        self.triton_control = self.device == "gpu" and not self.is_benchmark_task
+        self.high_precision = self.device == "cpu"
 
     def init_by_input_data(self, input_data: InputDataset):
         self.spec = json.loads(str(input_data.kwargs["case_spec"]))
         runtime_seed = int(self.spec["seed"])
-        if self.randomize_values:
-            if self.runtime_case_id is None:
-                raise RuntimeError("accuracy_lt with --disable_id_seed requires an ATK runtime case id")
-            runtime_seed = (
-                runtime_seed * 0x9E3779B185EBCA87 + self.runtime_case_id
-            ) % (2**63 - 1)
         self.inputs = _prepare_inputs(
             self.spec,
             input_data.kwargs["low_precision_marker"],
@@ -1301,10 +1110,7 @@ class ChunkKdaFwdApi(BaseApi):
             print(
                 "KDA_ATK_RUNTIME_SEED",
                 self.device,
-                "benchmark=" + str(self.is_benchmark_task),
-                "high_precision=" + str(self.high_precision),
-                "cpu_control=" + str(self.cpu_control),
-                "triton_control=" + str(self.triton_control),
+                "cpu_golden=" + str(self.high_precision),
                 "case_id=" + str(self.runtime_case_id),
                 "seed=" + str(runtime_seed),
                 flush=True,
@@ -1316,22 +1122,18 @@ class ChunkKdaFwdApi(BaseApi):
             if self.device != "npu":
                 raise RuntimeError("negative cases must run on the NPU aclnn route")
             return _run_negative_aclnn(self.inputs, self.spec)
-        if self.high_precision:
+        if self.device == "cpu":
             outputs = _torch_fp64_golden(self.inputs, self.spec)
-        elif self.cpu_control:
-            outputs = _torch_same_precision(self.inputs, self.spec)
-        elif self.triton_control:
-            outputs = _triton_same_precision(self.inputs, self.spec)
         elif self.device == "npu":
             outputs = _run_positive_npu(self.inputs, self.spec)
         else:
             raise RuntimeError(
-                "positive chunk_kda_fwd cases require one NPU node and one CPU or GPU reference node; "
-                f"got device={self.device!r}, benchmark={self.is_benchmark_task}"
+                "positive chunk_kda_fwd cases require an NPU DUT or CPU golden node; "
+                f"got device={self.device!r}"
             )
         selected_names = _selected_output_names()
         named_visible = tuple(
-            (name, output.to(torch.float32) if output.is_floating_point() else output)
+            (name, output.to(torch.float32) if self.high_precision and output.is_floating_point() else output)
             for name, output in zip(_OUTPUT_NAMES, outputs)
             if isinstance(output, torch.Tensor)
             and (selected_names is None or name in selected_names)

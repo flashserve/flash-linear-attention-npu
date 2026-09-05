@@ -9,6 +9,7 @@
 - `q/k` 与 `dO/g/out` 的 `B`、`T` 必须一致；`H_do` 必须能被 `H_qk` 整除。
 - `K` 固定为 `128`，`V` 支持 `128/256`，`chunk_size` 仅支持 `64/128`。
 - `q/k/dO/out` 支持 `BFLOAT16/FLOAT16`；`g` 支持 `FLOAT/FLOAT16/BFLOAT16`。
+- `g` 为 chunk 内累计 log-decay，每个序列的每个有效 chunk 内沿 T 维单调不增；非单调 `g` 不在支持范围内。
 - `gGammaOptional` 和 `aOptional` 当前未启用，必须传 `None`；变长模式下 `cu_seqlens` 与 `chunk_indices` 必须同时提供且 `B=1`。
 - 当前 ATK 用例遵循上述约束，并通过 `case_spec` 固定具体取值；扩展用例时应继续满足这些限制。
 

@@ -148,12 +148,22 @@ def _assert_record_covers_opp(package_dir: Path) -> None:
 
 def _assert_opp_layout(package_dir: Path, *, require_runtime: bool) -> None:
     vendor_dir = package_dir / "opp" / "vendors" / VENDOR_DIR
-    custom_opapi = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
-    conflicting_alias = custom_opapi.with_name("libopapi.so")
+    packaged_opapi = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
+    conflicting_alias = packaged_opapi.with_name("libopapi.so")
     if conflicting_alias.exists() or conflicting_alias.is_symlink():
         raise AssertionError(f"Installed wheel contains conflicting alias: {conflicting_alias}")
-    if require_runtime and not custom_opapi.is_file():
-        raise AssertionError(f"Installed wheel is missing custom op_api: {custom_opapi}")
+    if require_runtime and not packaged_opapi.is_file():
+        raise AssertionError(f"Installed wheel is missing packaged op_api: {packaged_opapi}")
+    if require_runtime:
+        dynamic = subprocess.check_output(
+            ["readelf", "-d", str(packaged_opapi)],
+            encoding="utf-8",
+            errors="replace",
+        )
+        if "(SONAME)" in dynamic:
+            raise AssertionError(
+                "Packaged FLA op_api must not claim the generic libcust_opapi.so SONAME"
+            )
 
 
 def _assert_set_env_idempotent(package_dir: Path, env: dict[str, str], cwd: Path) -> None:
@@ -167,7 +177,7 @@ set -euo pipefail
 unset ASCEND_CUSTOM_OPP_PATH LD_LIBRARY_PATH FLA_NPU_OPP_PATH FLA_NPU_OP_API_LIB
 source "$1"
 source "$1"
-printf '%s\n' "$ASCEND_CUSTOM_OPP_PATH" "$LD_LIBRARY_PATH" "$FLA_NPU_OPP_PATH" "$FLA_NPU_OP_API_LIB"
+printf '%s\n' "$ASCEND_CUSTOM_OPP_PATH" "${LD_LIBRARY_PATH-}" "$FLA_NPU_OPP_PATH" "$FLA_NPU_OP_API_LIB"
 '''
     output = subprocess.check_output(
         ["bash", "-c", check, "check-set-env", str(set_env)],
@@ -177,7 +187,7 @@ printf '%s\n' "$ASCEND_CUSTOM_OPP_PATH" "$LD_LIBRARY_PATH" "$FLA_NPU_OPP_PATH" "
     ).splitlines()
     expected = [
         f"{vendor_dir.parent.parent}:{vendor_dir}",
-        str(vendor_dir / "op_api" / "lib"),
+        "",
         str(vendor_dir.parent.parent),
         str(vendor_dir / "op_api" / "lib" / "libcust_opapi.so"),
     ]
@@ -194,6 +204,7 @@ def _assert_runtime(
     child_env = env.copy()
     child_env["FLA_NPU_EXPECT_OPS"] = ",".join(expected_ops)
     code = r'''
+import ctypes
 import os
 from pathlib import Path
 
@@ -208,6 +219,8 @@ first = fla_npu.load_ascendc_opapi_libraries()
 second = fla_npu.load_ascendc_opapi_libraries()
 if first is not second or not first:
     raise AssertionError("Ascend C op_api loading is not idempotent")
+if len(first) != 2:
+    raise AssertionError(f"expected custom and CANN op_api handles, got {len(first)}")
 
 package_dir = Path(fla_npu.__file__).resolve().parent
 expected = (
@@ -226,6 +239,14 @@ if configured != expected:
 maps = Path("/proc/self/maps").read_text(encoding="utf-8", errors="replace")
 if str(expected) not in maps:
     raise AssertionError("packaged libcust_opapi.so is not mapped into the process")
+if "/libopapi.so" not in maps:
+    raise AssertionError("CANN libopapi.so is not mapped into the process")
+if "custom_aclnn_extension_lib" in maps:
+    raise AssertionError("default import unexpectedly loaded the legacy C++ extension")
+
+# Regression for issue #310: importing fla_npu and then opening CANN opapi must
+# leave the subprocess able to finish normal interpreter teardown.
+ctypes.CDLL("libopapi.so")
 '''
     _run([str(python), "-c", code], env=child_env, cwd=cwd)
 
@@ -239,7 +260,7 @@ def _check_stale_alias_recovery(
     expected_ops: Iterable[str],
 ) -> None:
     package_dir = _find_package_dir(python, env, cwd)
-    custom_opapi = (
+    packaged_opapi = (
         package_dir
         / "opp"
         / "vendors"
@@ -248,8 +269,17 @@ def _check_stale_alias_recovery(
         / "lib"
         / "libcust_opapi.so"
     )
-    stale_alias = custom_opapi.with_name("libopapi.so")
-    shutil.copy2(custom_opapi, stale_alias)
+    stale_alias = (
+        package_dir
+        / "opp"
+        / "vendors"
+        / VENDOR_DIR
+        / "op_api"
+        / "lib"
+        / "libopapi.so"
+    )
+    stale_alias.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(packaged_opapi, stale_alias)
 
     _assert_runtime(
         python,

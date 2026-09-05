@@ -111,7 +111,9 @@ at::Tensor npu_chunk_fwd_o(
     at::OptionalIntArrayRef cu_seqlens,
     at::OptionalIntArrayRef chunk_indices,
     c10::optional<int64_t> chunk_size,
-    c10::optional<bool> transpose_state_layout);
+    c10::optional<bool> transpose_state_layout,
+    c10::optional<bool> use_exp2,
+    c10::string_view output_layout);
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> npu_chunk_gated_delta_rule_fwd_h(
     const at::Tensor &k,
@@ -351,7 +353,9 @@ at::Tensor py_npu_chunk_fwd_o(
     const py::object &cu_seqlens,
     const py::object &chunk_indices,
     const py::object &chunk_size,
-    const py::object &transpose_state_layout)
+    const py::object &transpose_state_layout,
+    const py::object &use_exp2,
+    const std::string &output_layout)
 {
     const auto cu_seqlens_vec = optional_int_array(cu_seqlens);
     const auto chunk_indices_vec = optional_int_array(chunk_indices);
@@ -362,7 +366,9 @@ at::Tensor py_npu_chunk_fwd_o(
         optional_int_array_ref(cu_seqlens_vec),
         optional_int_array_ref(chunk_indices_vec),
         optional_value<int64_t>(chunk_size),
-        optional_value<bool>(transpose_state_layout));
+        optional_value<bool>(transpose_state_layout),
+        optional_value<bool>(use_exp2),
+        c10::string_view(output_layout.data(), output_layout.size()));
 }
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> py_npu_chunk_gated_delta_rule_fwd_h(
@@ -614,7 +620,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
         py::arg("cu_seqlens") = py::none(),
         py::arg("chunk_indices") = py::none(),
         py::arg("chunk_size") = py::none(),
-        py::arg("transpose_state_layout") = false);
+        py::arg("transpose_state_layout") = false,
+        py::arg("use_exp2") = false,
+        py::arg("output_layout") = "BNSD");
     m.def(
         "npu_chunk_gated_delta_rule_fwd_h",
         &py_npu_chunk_gated_delta_rule_fwd_h,

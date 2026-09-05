@@ -15,13 +15,54 @@
 #ifndef CHUNK_BWD_DQKWG_TILING_PROCESSOR_H
 #define CHUNK_BWD_DQKWG_TILING_PROCESSOR_H
 
-#include "../../op_kernel/chunk_bwd_dqkwg_struct.h"
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+
 #include "exe_graph/runtime/storage_shape.h"
+
+#ifndef TORCH_MODE
+// aclnn build: use the CANN tiling framework + BEGIN_TILING_DATA_DEF from tiling.h.
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
+#include "chunk_bwd_dqkwg_tiling.h"  // BEGIN_TILING_DATA_DEF + REGISTER_TILING_DATA_CLASS
+#else
+// TORCH_MODE (fast kernel launch example): the CANN tiling framework headers
+// (op_impl_registry.h, tiling_templates_registry.h, tiling.h) transitively include
+// graph/error_codes.h which clashes with torch_npu's ge_error_codes.h. Skip them
+// and provide lightweight shims for the CANN-only macros (OP_LOGE, OP_CHECK_IF)
+// that are NOT already provided by torch_npu. Note: ge::graphStatus,
+// ge::GRAPH_SUCCESS, ge::GRAPH_FAILED come from torch_npu's ge_error_codes.h
+// (included transitively via <torch/all.h>), so we must NOT redefine them.
+#define OP_LOGE(...) do {} while(0)
+#define OP_CHECK_IF(cond, log_action, return_action) do { if (cond) { log_action; return_action; } } while(0)
 
-using GDN::ChunkBwdDqkwgTilingData;
+// Plain struct mirror of optiling::ChunkBwdDqkwgTilingData (from tiling.h
+// BEGIN_TILING_DATA_DEF). Field order/types MUST match tiling.h so the binary
+// layout is identical between aclnn and kernel-launch builds.
+struct ChunkBwdDqkwgTilingData {
+    uint64_t B;
+    uint64_t HV;
+    uint64_t HK;
+    uint64_t T;
+    uint64_t K;
+    uint64_t V;
+    uint64_t BT;
+    uint64_t numChunks;
+    float scale;
+    uint32_t mul0RowNum;
+    uint32_t aicCoreNum;
+    uint64_t wsMm3Offset;
+    uint64_t wsMm4Offset;
+    uint64_t wsMm6Offset;
+    uint64_t wsMm5Offset;
+    uint64_t wsMm7Offset;
+    uint64_t wsDsTempOffset;
+    uint64_t wsDgLastOffset;
+    uint64_t isVarLen;
+};
+#endif
 
 namespace optiling {
 
@@ -87,17 +128,24 @@ struct ChunkBwdDqkwgTilingContext {
     const gert::StorageShape *chunkIndicesShape;
     float scale;
     int32_t chunkSize;
+    uint32_t aicCoreNum;       // available AIC cores from platform
+    size_t sysWorkspaceSize;   // system workspace size from platform
 };
 
 class ChunkBwdDqkwgTilingProcessor {
     ChunkBwdDqkwgTilingContext &ctx_;
     ChunkBwdDqkwgTilingData &tiling_;
+    uint32_t blockDim_ = 1;
+    size_t workspaceSize_ = 0;
 
 public:
     explicit ChunkBwdDqkwgTilingProcessor(ChunkBwdDqkwgTilingContext &ctx, ChunkBwdDqkwgTilingData &tiling)
         : ctx_(ctx), tiling_(tiling)
     {
     }
+
+    uint32_t GetBlockDim() const { return blockDim_; }
+    size_t GetWorkspaceSize() const { return workspaceSize_; }
 
     ge::graphStatus RequiredInputDimNumCheck(const gert::StorageShape *curShape, size_t validDimNum,
                                              const char *inputName)
@@ -197,28 +245,51 @@ public:
         tiling_.numChunks = numChunks;
         tiling_.scale = ctx_.scale;
         tiling_.mul0RowNum = (V == V_SIZE_256) ? 16 : 32;
+        return ge::GRAPH_SUCCESS;
+    }
 
-        size_t dgLastSize = B * HV * numChunks * 1 * FP32_SIZE;
-        dgLastSize = ((dgLastSize + 31) / 32) * 32;
+    // Compute the ring-buffer workspace layout. Must match TilingChunkBwdDqkwg in
+    // op_host/op_tiling/chunk_bwd_dqkwg_tiling.cpp exactly: workspace slots are sized
+    // by min(aicNum, B*numChunks) (the actual blockDim), not by full B*HV*T. The
+    // CV-deep-fusion Cube/Vector Process classes index into this layout by coreIdx.
+    ge::graphStatus ComputeWorkspaceLayout()
+    {
+        int64_t aicNum = static_cast<int64_t>(ctx_.aicCoreNum);
+        if (aicNum < 1) {
+            aicNum = 1;
+        }
+        int64_t coreLoops = static_cast<int64_t>(tiling_.B) * static_cast<int64_t>(tiling_.numChunks);
+        int64_t ringCoreSlots = std::min(aicNum, coreLoops);
+        if (ringCoreSlots < 1) {
+            ringCoreSlots = 1;
+        }
 
-        size_t mm5Size = B * HV * T * K * FP16_SIZE;
-        size_t dsTempSize = B * HV * T * BT * FP16_SIZE;
+        auto align32 = [](size_t v) -> size_t { return ((v + 31) / 32) * 32; };
+        size_t sharedBtxKSize = align32(static_cast<size_t>(ringCoreSlots) * static_cast<size_t>(tiling_.HV) *
+                                        static_cast<size_t>(tiling_.BT) * static_cast<size_t>(tiling_.K) * FP16_SIZE);
+        size_t sharedBtbSize = align32(static_cast<size_t>(ringCoreSlots) * static_cast<size_t>(tiling_.HV) *
+                                        static_cast<size_t>(tiling_.BT) * static_cast<size_t>(tiling_.BT) * FP16_SIZE);
+        size_t dgLastSize = align32(static_cast<size_t>(ringCoreSlots) * static_cast<size_t>(tiling_.HV) * FP32_SIZE);
 
         size_t offset = 0;
-
-        tiling_.wsDwOffset = 0;
-        tiling_.wsDgLastOffset = static_cast<int64_t>(offset);
+        tiling_.wsMm3Offset = offset;
+        offset += sharedBtbSize;
+        tiling_.wsMm4Offset = offset;
+        offset += sharedBtxKSize;
+        tiling_.wsMm6Offset = offset;
+        offset += sharedBtxKSize;
+        tiling_.wsMm5Offset = offset;
+        offset += sharedBtxKSize;
+        tiling_.wsMm7Offset = offset;
+        offset += sharedBtxKSize;
+        tiling_.wsDsTempOffset = offset;
+        offset += sharedBtbSize;
+        tiling_.wsDgLastOffset = offset;
         offset += dgLastSize;
 
-        tiling_.wsMm5Offset = static_cast<int64_t>(offset);
-        offset += mm5Size;
-
-        tiling_.wsDsTempOffset = static_cast<int64_t>(offset);
-        offset += dsTempSize;
-
-        tiling_.dgLastSize = static_cast<int64_t>(dgLastSize);
-        tiling_.totalWorkspaceSize = static_cast<int64_t>(offset);
-
+        tiling_.aicCoreNum = static_cast<uint32_t>(aicNum);
+        blockDim_ = static_cast<uint32_t>(ringCoreSlots);
+        workspaceSize_ = ctx_.sysWorkspaceSize + offset;
         return ge::GRAPH_SUCCESS;
     }
 
@@ -247,28 +318,6 @@ public:
                     return ge::GRAPH_FAILED);
 
         tiling_.numChunks = chunkIndicesDim0 / CHUNK_INDICES_DIM_1_SIZE;
-
-        size_t dgLastSize = tiling_.B * tiling_.HV * tiling_.numChunks * 1 * FP32_SIZE;
-        dgLastSize = ((dgLastSize + 31) / 32) * 32;
-
-        size_t mm5Size = tiling_.B * tiling_.HV * tiling_.T * tiling_.K * FP16_SIZE;
-        size_t dsTempSize = tiling_.B * tiling_.HV * tiling_.T * tiling_.BT * FP16_SIZE;
-
-        size_t offset = 0;
-
-        tiling_.wsDwOffset = 0;
-        tiling_.wsDgLastOffset = static_cast<int64_t>(offset);
-        offset += dgLastSize;
-
-        tiling_.wsMm5Offset = static_cast<int64_t>(offset);
-        offset += mm5Size;
-
-        tiling_.wsDsTempOffset = static_cast<int64_t>(offset);
-        offset += dsTempSize;
-
-        tiling_.dgLastSize = static_cast<int64_t>(dgLastSize);
-        tiling_.totalWorkspaceSize = static_cast<int64_t>(offset);
-
         return ge::GRAPH_SUCCESS;
     }
 
@@ -291,6 +340,8 @@ public:
             OP_CHECK_IF(FixLenTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
             tiling_.isVarLen = 0;
         }
+        // Compute workspace layout AFTER numChunks is finalized (varlen may recompute it).
+        OP_CHECK_IF(ComputeWorkspaceLayout() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
         return ge::GRAPH_SUCCESS;
     }
 };

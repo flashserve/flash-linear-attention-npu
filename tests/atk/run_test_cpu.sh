@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 单算子 ATK CPU 标杆一键验证脚本。
+# 单算子 ATK 混合容差单标杆一键验证脚本。
 # 所有测试动作均由 ATK 发起；内存检测由 mssanitizer 包裹 ATK run 任务。
 
 show_usage() {
@@ -178,7 +178,7 @@ NPU_DEVICE_ID="${NPU_DEVICE_ID:-0}"
 SOC="${SOC:-auto}"
 RUN_SCOPE="${RUN_SCOPE:-all}"
 ATK_GM_INIT_MODE="${ATK_GM_INIT_MODE:-on}"
-REQUIRED_ATK_VERSION="${REQUIRED_ATK_VERSION:-26.7.8}"
+REQUIRED_ATK_VERSION="${REQUIRED_ATK_VERSION:-26.8.8}"
 ATK_TIMEOUT="${ATK_TIMEOUT:-14400}"
 DC_LOOP_NUMS="${DC_LOOP_NUMS:-50}"
 DC_TIMEOUT="${DC_TIMEOUT:-3600}"
@@ -322,7 +322,7 @@ MSS_END="${MSS_END:-$CASE_END}"
 
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
-mkdir -p "${ATK_OUTPUT_ROOT}/cpu_dual_reference" "${ATK_OUTPUT_ROOT}/perf"
+mkdir -p "${ATK_OUTPUT_ROOT}/accuracy" "${ATK_OUTPUT_ROOT}/perf"
 # mssanitizer 日志路径：未显式指定时使用 ATK_OUTPUT_ROOT 下的带时间戳绝对路径
 # ATK celery worker 工作目录与脚本不同，必须用绝对路径，否则无法找到日志文件
 MSS_LOG_PATH="${MSS_LOG_PATH:-$(cd "${ATK_OUTPUT_ROOT}" && pwd)/mssanitizer_${OP}_$(date +%Y%m%d_%H%M%S).log}"
@@ -349,12 +349,12 @@ if should_run gen_cases; then
 fi
 
 if should_run accuracy; then
-  log_info "开始精度与 NaN 检测：accuracy + CPU高精度标杆 + CPU同精度标杆 + GM 初始化"
+  log_info "开始精度与 NaN 检测：mixed_tolerance_bm + CPU单标杆 + GM 初始化"
   set_case_range_args "精度与 NaN 检测 case 范围" "$ACCURACY_START" "$ACCURACY_END"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
-      --output_path "${ATK_OUTPUT_ROOT}/cpu_dual_reference" \
-    node --name cpu_reference --backend cpu \
-      --output_path "${ATK_OUTPUT_ROOT}/cpu_dual_reference" \
+      --output_path "${ATK_OUTPUT_ROOT}/accuracy" \
+    node --name cpu_golden --backend cpu \
+      --output_path "${ATK_OUTPUT_ROOT}/accuracy" \
     task \
       -c "./atk_${OP}.json" \
       --task accuracy \

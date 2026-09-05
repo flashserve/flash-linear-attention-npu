@@ -23,8 +23,26 @@ using namespace AscendC;
 using namespace matmul;
 using namespace RecurrentGatedDeltaRule;
 
+namespace RecurrentGatedDeltaRule {
 
-extern "C" __global__ __aicore__ void
+template <int D_T>
+struct RGDRDTypeTraits;
+
+template <>
+struct RGDRDTypeTraits<RGDR_TPL_BF16> {
+    using type = bfloat16_t;
+};
+
+template <>
+struct RGDRDTypeTraits<RGDR_TPL_FP32> {
+    using type = float;
+};
+
+} // namespace RecurrentGatedDeltaRule
+
+#ifndef TORCH_MODE
+template <int D_T_STATE>
+__global__ __aicore__ void
 recurrent_gated_delta_rule(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR beta, GM_ADDR state, GM_ADDR cuSeqlens,
                            GM_ADDR ssmStateIndices, GM_ADDR g, GM_ADDR gk, GM_ADDR numAcceptedTokens, GM_ADDR out,
                            GM_ADDR stateOut, GM_ADDR workspaceGM, GM_ADDR tilingGM)
@@ -33,9 +51,11 @@ recurrent_gated_delta_rule(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR be
     GET_TILING_DATA(tilingData, tilingGM);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     TPipe pipe;
-    RGDR<bfloat16_t, bfloat16_t, DTYPE_STATE> op(&tilingData);
+    using StateType = typename RGDRDTypeTraits<D_T_STATE>::type;
+    RGDR<bfloat16_t, bfloat16_t, StateType> op(&tilingData);
     RGDRInitParams initParams{query, key, value, g, gk, beta, state, cuSeqlens,
                               ssmStateIndices, numAcceptedTokens, out, stateOut};
     op.Init(initParams, &pipe);
     op.Process();
 }
+#endif

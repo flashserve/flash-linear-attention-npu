@@ -26,7 +26,7 @@ YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合�
 ## 默认用例
 
 本目录 `atk_recompute_w_u_fwd.json` 内置 200 条泛化用例（100 个 shape × bf16/fp16），
-标准为 `cv_fused_double_benchmark`，SOC 为 `ascend950`。覆盖 noGVA（`HK==HV`）与 GVA（`HV>HK`），
+标准为 `mixed_tolerance_bm`，SOC 为 `ascend950`。覆盖 noGVA（`HK==HV`）与 GVA（`HV>HK`），
 `T` 均为完整 chunk（`T >= chunk_size`，不再用小于单个 chunk 的小 `T`）。
 
 示例（BF16 首条）：

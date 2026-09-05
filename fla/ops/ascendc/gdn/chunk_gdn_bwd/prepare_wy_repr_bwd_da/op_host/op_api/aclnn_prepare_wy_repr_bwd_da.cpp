@@ -129,7 +129,8 @@ aclnnStatus aclnnPrepareWyReprBwdDaGetWorkspaceSize(
     aclOpExecutor **executor)
 {
     PrepareWyReprBwdDaParams params{k, v, beta, a, dw, du, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize, dAOut};
-    L2_DFX_PHASE_1(aclnnPrepareWyReprBwdDa, DFX_IN(k, v, beta, a, dw, du, g, cuSeqlensOptional, chunkIndicesOptional),
+    L2_DFX_PHASE_1(aclnnPrepareWyReprBwdDa,
+                   DFX_IN(k, v, beta, a, dw, du, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize),
                    DFX_OUT(dAOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);

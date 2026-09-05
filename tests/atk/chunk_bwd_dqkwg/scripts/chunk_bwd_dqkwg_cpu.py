@@ -76,21 +76,14 @@ def chunk_bwd_dqkwg_cpu(
     scale: float,
     cu_seqlens: torch.LongTensor,
     chunk_size: int = 64,
-    benchmark = False
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     CPU Equivalent of chunk_bwd_kernel_dqkwg.
     """
-    if benchmark:
-        calc_type = torch.float64
-        datatype = torch.float64
-        gtype = torch.float64
-        mmtype = torch.float64
-    else:
-        calc_type = torch.float32
-        datatype = q.dtype
-        gtype = g.dtype
-        mmtype = datatype
+    calc_type = torch.float64
+    datatype = torch.float64
+    gtype = torch.float64
+    mmtype = torch.float64
     q.to(calc_type)
     k.to(calc_type)
     v.to(calc_type)

@@ -199,6 +199,20 @@ public:
         }
     }
 
+    CATLASS_DEVICE
+    void SkipNextADataCopy()
+    {
+        skipNextADataCopy = true;
+    }
+
+    CATLASS_DEVICE
+    void UseExternalL1ATensor(AscendC::LocalTensor<ElementA> l1ATensor)
+    {
+        externalL1ATensor = l1ATensor;
+        useExternalL1ATensor = true;
+        skipNextADataCopy = true;
+    }
+
     /// Construct
     CATLASS_DEVICE
     BlockMmadTla(Arch::Resource<ArchTag> &resource, uint32_t l1BufAddrStart = 0)
@@ -356,6 +370,11 @@ public:
         uint32_t mBlockActual = actualShape.m();
         uint32_t kBlockActual = actualShape.k();
         uint32_t nBlockActual = actualShape.n();
+        bool useExternalL1AThisCall = useExternalL1ATensor && kBlockActual <= L1_TILE_K;
+        if (useExternalL1ATensor && !useExternalL1AThisCall) {
+            useExternalL1ATensor = false;
+            skipNextADataCopy = false;
+        }
 
         uint32_t mL1Actual = mBlockActual;
         if constexpr (std::is_same_v<ArchTag, Arch::AtlasA2>) {
@@ -373,15 +392,19 @@ public:
         uint32_t kL1Actual = min(kBlockActual, L1_TILE_K);
         // load first matrix A tile from GM to L1
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[l1AListId]);
-        if (clearL1Padding) {
+        if (clearL1Padding && !useExternalL1AThisCall) {
             AscendC::InitConstValueParams<ElementA> clearParams(
                 1, static_cast<uint16_t>(L1A_TILE_SIZE / 32), 0,
                 static_cast<ElementA>(0));
             AscendC::InitConstValue(l1ATensorList[l1AListId], clearParams);
         }
-        auto tensorL1A = tla::MakeTensor(l1ATensorList[l1AListId], L1A_LAYOUT, Arch::PositionL1{});
+        auto tensorL1A = tla::MakeTensor(
+            useExternalL1AThisCall ? externalL1ATensor : l1ATensorList[l1AListId],
+            L1A_LAYOUT, Arch::PositionL1{});
         auto tensorTileA = GetTileA(tensorA, 0, 0, mBlockActual, kL1Actual);
-        if constexpr (ENABLE_L1_RESIDENT) {
+        if (skipNextADataCopy) {
+            skipNextADataCopy = false;
+        } else if constexpr (ENABLE_L1_RESIDENT) {
             // If the currently loaded GM pointer and block coordinates are the same as the last loaded ones,
             // skip this loading.
             if (lastAddrA[l1AListId] != tensorTileA.data().GetPhyAddr()
@@ -447,7 +470,8 @@ public:
         // main loop
         uint32_t kL1Loop = CeilDiv<L1_TILE_K>(kBlockActual);
         for (uint32_t kL1Idx = 0; kL1Idx < kL1Loop; kL1Idx++) {
-            uint32_t l1AListIdNext = (l1AListId + 1 < L1A_STAGES) ? (l1AListId + 1) : 0;
+            uint32_t l1AListIdNext = useExternalL1AThisCall ? l1AListId :
+                ((l1AListId + 1 < L1A_STAGES) ? (l1AListId + 1) : 0);
             uint32_t l1BListIdNext = (l1BListId + 1 < L1B_STAGES) ? (l1BListId + 1) : 0;
             uint32_t kL1ActualNext{0};
             // preload next tile from GM to L1
@@ -519,7 +543,7 @@ public:
             }
 
             // Get L1 tensor for current stage
-            auto l1ATensor = l1ATensorList[l1AListId];
+            auto l1ATensor = useExternalL1AThisCall ? externalL1ATensor : l1ATensorList[l1AListId];
             auto l1BTensor = l1BTensorList[l1BListId];
             tensorL1A = tla::MakeTensor(l1ATensor, L1A_LAYOUT, Arch::PositionL1{});
             tensorL1B = tla::MakeTensor(l1BTensor, L1B_LAYOUT, Arch::PositionL1{});
@@ -643,10 +667,13 @@ public:
                     l0AListId = (l0AListId + 1 < L0A_STAGES) ? (l0AListId + 1) : 0;
                 }
             }
-            l1AListId = l1AListIdNext;
+            if (!useExternalL1AThisCall) {
+                l1AListId = l1AListIdNext;
+            }
             l1BListId = l1BListIdNext;
             kL1Actual = kL1ActualNext;
         }
+        useExternalL1ATensor = false;
 
         // copy block out
         if constexpr (!ENABLE_UNIT_FLAG) {
@@ -698,6 +725,9 @@ protected:
     uint32_t l0AListId{0};
     uint32_t l0BListId{0};
     uint32_t l0CListId{0};
+    bool skipNextADataCopy{false};
+    bool useExternalL1ATensor{false};
+    AscendC::LocalTensor<ElementA> externalL1ATensor;
 
     TileMmad tileMmad;
     CopyL1ToL0A copyL1ToL0A;

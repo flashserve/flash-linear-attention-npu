@@ -12,7 +12,7 @@
 #include "opdev/op_executor.h"
 
 namespace l0op {
-const std::array<const aclTensor *, 4> ChunkBwdDqkwg(
+const std::array<aclTensor *, 4> ChunkBwdDqkwg(
     const aclTensor *q,
     const aclTensor *k,
     const aclTensor *v,
@@ -27,10 +27,6 @@ const std::array<const aclTensor *, 4> ChunkBwdDqkwg(
     const aclTensor *gGamma,
     float scale,
     int64_t chunkSize,
-    const aclTensor *dqOut,
-    const aclTensor *dkOut,
-    const aclTensor *dwOut,
-    const aclTensor *dgOut,
     aclOpExecutor *executor);
 }
 

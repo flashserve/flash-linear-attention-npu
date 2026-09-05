@@ -91,8 +91,9 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
 aclnnStatus aclnnRecurrentKda(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream);
 ```
 
-`GetWorkspaceSize` 完成参数校验、非 state tensor 连续化预处理和 executor 创建；第二段在传入
-stream 上异步执行。非连续 state 通过 `CreateView` 保留 shape、storage、stride 和 offset，kernel 按 tiling
+`GetWorkspaceSize` 完成参数校验、Q/K/V stride 判定、其余非 state tensor 连续化预处理和 executor
+创建；第二段在传入 stream 上异步执行。满足约束的非连续 Q/K/V 与 state 均通过 `CreateView` 保留
+shape、storage、stride 和 offset，kernel 按 tiling
 中的真实 stride 直接访问。原位模式直接写回输入 view；非原位模式直接写入 `finalState` view。原位模式若调用者
 另外传入独立的 `finalState` 输出，仅为该输出保留一次必要的 `ViewCopy`。`cuSeqlensOptional` 为空时，BSND
 按 batch 行划分序列，TND 视为一条序列；提供时仅在 host 检查 rank/dtype，具体 offset 值由 device kernel 读取，
@@ -136,8 +137,9 @@ recurrent_kda(q, k, v, g, beta, initial_state=None, *,
 
 稳定入口通过 ctypes 直调 aclnn，不依赖 `torch.ops.npu` 注册。`initial_state=None` 仅在
 `inplace_final_state=False` 时有效，此时 wrapper 创建与 `state_v_first` 对应布局的全零 FP32 状态；原位模式必须
-显式传入 state。显式传入的非连续 state view 由 kernel 按真实 stride 直接
-访问；原位模式返回与输入相同 storage/stride 的 state，非原位模式保持输入不变并返回独立 state。
+显式传入 state。显式传入的非连续 state view 由 kernel 按真实 stride 直接访问；满足第 7 节约束的 Q/K/V view
+同样保留 storage offset 并直接读取，不满足时自动连续化。原位模式返回与输入相同 storage/stride
+的 state，非原位模式保持输入不变并返回独立 state。
 
 ### 4.2 调用示例
 
@@ -173,8 +175,8 @@ recurrent_kda<<<blockDim, nullptr, stream>>>(
     aLog, dtBias, numAcceptedTokens, out, initialStateOut, finalState, workspace, tiling);
 ```
 
-直调通路只作为 route/诊断入口；公开 Python 和 aclnn API 负责完整参数校验。直调通路按连续物理
-或 tiling data 中的 state stride 解释 GM 地址；非连续直调必须使用与实际 view 匹配的 host tiling 结果。
+直调通路只作为 route/诊断入口；公开 Python 和 aclnn API 负责完整参数校验。直调通路按连续物理地址或 tiling data 中的 Q/K/V/state stride 解释 GM 地址；非连续直调必须使用
+与实际 view shape、stride 和首地址匹配的 host tiling 结果。
 
 ## 6. legacy `torch.ops.npu` 通路
 
@@ -185,7 +187,10 @@ recurrent_kda<<<blockDim, nullptr, stream>>>(
 
 - `q/k/v/out` 当前仅支持 BF16。
 - `K/V` 当前仅支持 `K=128,V=128` 或 `K=128,V=256` 两档枚举。
-- Python/aclnn 入口支持符合 stride 约束的非连续 `initial_state`。
+- Python/aclnn 入口支持符合 stride 约束的非连续 Q/K/V 与 `initial_state`。
+- Q/K/V 直接访问要求 feature stride=1、head/token 区间不重叠、stride 为正；BSND `B>1` 时
+  `batchStride == T * tokenStride`。已验证的 feature-gap、zero-stride、batch-gap view 由 ACLNN
+  回退连续化；token/head 置换或正 stride 重叠 descriptor 返回参数错误。
 - 未传 `ssm_state_indices` 时 `state_capacity=seq_num`；传入后容量可大于序列数，所有有效 slot 必须位于 `[0,state_capacity)`。
 - `ssm_state_indices` 支持 packed `[T]` 和 speculative `[seq_num,max_step]`；活跃序列不得共享正在写入的 state slot。
 - 空序列不读取 `ssm_state_indices/num_accepted_tokens`，也不读写 state pool。
@@ -195,7 +200,7 @@ recurrent_kda<<<blockDim, nullptr, stream>>>(
 - 末项小于 capacity 时，kernel 仅处理有效前缀并逐行跳过零长度序列；padding tail 输出不作保证。
 - state 支持 V-first 与 K-first，支持 FP32/BF16，以及原位/非原位 final state。
 - 非连续 state 仅允许 slot/head 外层维存在间隔，最后两维必须为行主序稠密矩阵，且外层地址区间不得重叠。
-- 每条 recurrent 有效序列长度必须 `<=8`。
+- 接口面向 decode / MTP 短序列；dense 单序列长度与 varlen 每段有效序列长度均必须 `<=8`。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`。
 - `use_gate_in_kernel=false` 时 `A_log/dt_bias/safe_gate` 必须为空或 false。
 

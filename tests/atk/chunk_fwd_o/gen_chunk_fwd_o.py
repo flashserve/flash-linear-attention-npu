@@ -47,11 +47,19 @@ def _dtype(dtype):
 
 def _spec(index):
     profile = deepcopy(PROFILES[index % len(PROFILES)])
-    profile.update({"op": OP_NAME, "case_id": index, "seed": 20260817 + index, "route": "ascendc", "soc": "ascend910b"})
+    profile.update({
+        "use_exp2": True,
+        "output_layout": "BSND",
+        "op": OP_NAME,
+        "case_id": index,
+        "seed": 20260817 + index,
+        "route": "ascendc",
+        "soc": "ascend910b",
+    })
     return profile
 
 if GENERATOR_REGISTRY is not None:
-    @GENERATOR_REGISTRY.register(f"generator_{OP_NAME}")
+    @GENERATOR_REGISTRY.register("generator_chunk_fwd_o")
     class Generator(CaseGenerator):
         def __init__(self, config):
             super().__init__(config)

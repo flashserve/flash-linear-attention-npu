@@ -47,8 +47,7 @@ YAML 已按算子限制收敛：
 `executor_chunk_bwd_dqkwg.py` 注册 `executor_chunk_bwd_dqkwg`：
 - NPU 路径调用 `fla_npu.ops.ascendc.npu_chunk_bwd_dqkwg`，若该路径不可用则回退到
   `torch.ops.npu.npu_chunk_bwd_dqkwg`。
-- CPU 同精度路径调用 `scripts/chunk_bwd_dqkwg_cpu.py`，输出保持同精度 dtype。
-- CPU 高精度路径在 ATK benchmark task 中使用 `float64` 标杆，输出保持 `float64`。
+- CPU golden 在 ATK benchmark task 中使用 `float64` 完成高精度计算，并转换为 ATK 混合容差比较支持的输出 dtype。
 
 ## 一键执行
 
@@ -68,7 +67,8 @@ CASE_START=0 CASE_END=1 bash tests/atk/run_test_cpu.sh \
   -npu_device_id=<physical_npu_device>
 ```
 
-脚本会通过 ATK 覆盖 CPU 双标杆精度、性能、确定性和 mssanitizer；所有范围均使用
+脚本会通过 ATK 覆盖混合容差精度、性能、确定性和 mssanitizer；精度检查以 CPU 高精度
+结果作为唯一 golden、以 NPU 输出作为 DUT。所有范围均使用
 `-s <start> -e <end>` 表示 JSON 顺序中的第几个 case。脚本不会导出 `PYTHONPATH`，需要在调用前准备好 ATK、CANN、OPP 和 Python 包路径。
 
 ## 重新生成

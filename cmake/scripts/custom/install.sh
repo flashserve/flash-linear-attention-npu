@@ -17,7 +17,7 @@ target_custom=0
 sourcedir=$PWD/packages
 vendordir=vendors/$vendor_name
 
-QUIET="n"
+QUIET="y"
 INSTALL_FOR_ALL="n"
 WHEEL_INSTALL="y"
 MODE_SET="n"
@@ -440,6 +440,8 @@ install_wheel_opp_package() {
     update_wheel_vendors_config "${wheel_opp_root}/vendors"
     finalize_wheel_opp "${wheel_opp_root}"
 
+    log "[INFO] fla_npu custom OPP installed to: ${dst_vendor}"
+    log "[INFO] using requirements: when custom module install finished or before you run the custom module, execute the command [ export ASCEND_CUSTOM_OPP_PATH=${dst_vendor}:${dst_vendor}/op_api/lib:\${ASCEND_CUSTOM_OPP_PATH:-} ] to set the environment path"
     log "[INFO] FLA NPU wheel OPP update completed. Restart Python processes to load the new libcust_opapi.so and kernels."
     echo "SUCCESS"
     exit 0
@@ -519,17 +521,14 @@ upgrade()
 	          fi
             grep -q $file_b <<<`ls ${targetdir}/$vendordir/$1`;
             if [[ $? -eq 0 ]]; then
-                echo -n "${file_b} "
+                echo "  - ${file_b}"
                 has_same_file=0
             fi
         done
         if [ 0 -eq $has_same_file ]; then
             echo
             if test $QUIET = "n"; then
-                echo "[INFO]: has old version in ${targetdir}/$vendordir/$1, \
-                you want to Overlay Installation , please enter:[o]; \
-                or replace directory installation , please enter: [r]; \
-                or not install , please enter:[n]."
+                echo "[INFO]: has old version in ${targetdir}/$vendordir/$1, you want to Overlay Installation, please enter:[o]; or replace directory installation, please enter:[r]; or not install, please enter:[n]."
 
                 while true
                 do
@@ -692,7 +691,7 @@ fi
 if [ -n "${INSTALL_PATH}" ] && [ -d ${INSTALL_PATH} ]; then
     _ASCEND_CUSTOM_OPP_PATH=${targetdir}/${vendordir}
     bin_path="${_ASCEND_CUSTOM_OPP_PATH}/bin"
-    set_env_variable="#!/bin/bash\nexport ASCEND_CUSTOM_OPP_PATH=${_ASCEND_CUSTOM_OPP_PATH}:\${ASCEND_CUSTOM_OPP_PATH}\nexport LD_LIBRARY_PATH=${_ASCEND_CUSTOM_OPP_PATH}/op_api/lib/:\${LD_LIBRARY_PATH}"
+    set_env_variable="#!/bin/bash\nexport ASCEND_CUSTOM_OPP_PATH=${_ASCEND_CUSTOM_OPP_PATH}:${_ASCEND_CUSTOM_OPP_PATH}/op_api/lib:\${ASCEND_CUSTOM_OPP_PATH}"
     if [ ! -d ${bin_path} ]; then
         mkdir -p ${bin_path} >> /dev/null 2>&1
         if [ $? -ne 0 ]; then
@@ -705,8 +704,9 @@ if [ -n "${INSTALL_PATH}" ] && [ -d ${INSTALL_PATH} ]; then
         log "[ERROR] write ASCEND_CUSTOM_OPP_PATH to set_env.bash failed"
         exit 1
     else
-        log "[INFO] using requirements: when custom module install finished or before you run the custom module, \
-        execute the command [ source ${bin_path}/set_env.bash ] to set the environment path"
+        log "[INFO] fla_npu custom OPP installed to: ${_ASCEND_CUSTOM_OPP_PATH}"
+        log "[INFO] using requirements: when custom module install finished or before you run the custom module, execute the command [ export ASCEND_CUSTOM_OPP_PATH=${_ASCEND_CUSTOM_OPP_PATH}:${_ASCEND_CUSTOM_OPP_PATH}/op_api/lib:\${ASCEND_CUSTOM_OPP_PATH:-} ] to set the environment path"
+        log "[WARNING] --install-path=${INSTALL_PATH} was specified; CANN will not auto-discover this custom OPP, please export ASCEND_CUSTOM_OPP_PATH as above and restart the process."
     fi
 else
     _ASCEND_CUSTOM_OPP_PATH=${targetdir}/${vendordir}
@@ -730,8 +730,8 @@ else
     if test $INSTALL_FOR_ALL = "y"; then
         chmod 755 ${config_file}
     fi
-    log "[INFO] using requirements: when custom module install finished or before you run the custom module, \
-        execute the command [ export LD_LIBRARY_PATH=${_ASCEND_CUSTOM_OPP_PATH}/op_api/lib/:\${LD_LIBRARY_PATH} ] to set the environment path"
+    log "[INFO] fla_npu custom OPP installed to: ${_ASCEND_CUSTOM_OPP_PATH}"
+    log "[INFO] using requirements: when custom module install finished or before you run the custom module, execute the command [ export ASCEND_CUSTOM_OPP_PATH=${_ASCEND_CUSTOM_OPP_PATH}:${_ASCEND_CUSTOM_OPP_PATH}/op_api/lib:\${ASCEND_CUSTOM_OPP_PATH:-} ] to set the environment path"
 fi
 
 if [ -d ${targetdir}/$vendordir/op_impl/cpu/aicpu_kernel/impl/ ]; then

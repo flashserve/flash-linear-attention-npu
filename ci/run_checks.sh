@@ -343,11 +343,11 @@ PY
 
 find_single_run_package() {
     shopt -s nullglob
-    local run_files=(build_out/fla-npu-*.run build/fla-npu-*.run)
+    local run_files=(build_out/fla_npu_linux-*.run build/fla_npu_linux-*.run)
     shopt -u nullglob
 
     if (( ${#run_files[@]} == 0 )); then
-        echo "[CI][ERROR] No fla-npu .run package found in build_out/ or build/." >&2
+        echo "[CI][ERROR] No fla_npu_linux-*.run package found in build_out/ or build/." >&2
         exit 1
     fi
     if (( ${#run_files[@]} > 1 )); then

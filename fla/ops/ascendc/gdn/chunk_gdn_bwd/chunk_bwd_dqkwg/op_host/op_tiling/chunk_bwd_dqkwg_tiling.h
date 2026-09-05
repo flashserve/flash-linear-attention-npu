@@ -40,18 +40,13 @@ BEGIN_TILING_DATA_DEF(ChunkBwdDqkwgTilingData)
     TILING_DATA_FIELD_DEF(uint32_t, aicCoreNum);     // CV 深融合使用的 AIC blockDim (cube/vector 共用)
 
     // Workspace 偏移量 (按字节)
-    TILING_DATA_FIELD_DEF(uint64_t, wsDwOffset);         // PartA: b_dw / 之后 PartC mm6 复用
-    TILING_DATA_FIELD_DEF(uint64_t, wsBtxKSyncSlotsPerHead); // cross-stage group ring depth per core
-    TILING_DATA_FIELD_DEF(uint64_t, wsDgLastOffset);     // PartA: b_dg_last 偏移
-    TILING_DATA_FIELD_DEF(uint64_t, dgLastSize);         // PartA: b_dg_last 大小, 32B 对齐
-    TILING_DATA_FIELD_DEF(uint64_t, wsMm5Offset);        // PartA: mm5 / GVA C: dq_inner / PartD: mm7
+    TILING_DATA_FIELD_DEF(uint64_t, wsMm3Offset);        // PartB: mm3
+    TILING_DATA_FIELD_DEF(uint64_t, wsMm4Offset);        // PartC: mm4
+    TILING_DATA_FIELD_DEF(uint64_t, wsMm6Offset);        // PartC: mm6
+    TILING_DATA_FIELD_DEF(uint64_t, wsMm5Offset);        // PartC: mm5
+    TILING_DATA_FIELD_DEF(uint64_t, wsMm7Offset);        // PartD: mm7
     TILING_DATA_FIELD_DEF(uint64_t, wsDsTempOffset);     // PartB: b_ds_temp 偏移
-    TILING_DATA_FIELD_DEF(uint64_t, wsMm6Offset);        // PartC: mm6 / GVA D: dk_inner
-    TILING_DATA_FIELD_DEF(uint64_t, wsMm7Offset);        // PartD: mm7 复用已释放的 wsMm5
-    TILING_DATA_FIELD_DEF(uint64_t, wsMul1Offset);       // independent short BT x BT ring for mul1
-
-    // 其他偏移
-    TILING_DATA_FIELD_DEF(uint64_t, totalWorkspaceSize); // 总 workspace 大小
+    TILING_DATA_FIELD_DEF(uint64_t, wsDgLastOffset);     // PartA: b_dg_last 偏移
 
     // IS_VARLEN 相关
     TILING_DATA_FIELD_DEF(uint64_t, isVarLen);           // 是否变长序列

@@ -180,7 +180,10 @@ endfunction()
 
 function(gen_cust_opapi_symbol)
   #op_api
-  set_target_properties(${OPAPI_NAME} PROPERTIES OUTPUT_NAME "cust_opapi")
+  set_target_properties(${OPAPI_NAME} PROPERTIES
+    OUTPUT_NAME "cust_opapi"
+    NO_SONAME ON
+  )
 
   install(TARGETS ${OPAPI_NAME}
     LIBRARY DESTINATION ${ACLNN_LIB_INSTALL_DIR}

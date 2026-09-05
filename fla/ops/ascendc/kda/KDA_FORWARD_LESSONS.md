@@ -63,7 +63,7 @@
 - 数据搬运用 `DataCopy/DataCopyPad`，尽量成行成块搬运。
 - 有数据依赖的计算尽量驻留 UB，减少 GM 往返。
 - cube 核和 vector 核要尽量并行，不能人为串行化。
-- 精度问题要用 CT dual/CT viz 或逐阶段输出定位，不能只看最终 pass/fail。
+- 精度问题要用 CT single/CT viz 或逐阶段输出定位，不能只看最终 pass/fail。
 - 性能结论以 `msopprof` 为准，Python wall time 只能作为粗略体感。
 
 ## 3. 融合算子设计哲学
@@ -711,10 +711,10 @@ KDA 的逐阶段定位顺序：
 数值误差特征：
 
 - 误差随机分散。
-- CT dual 显示 test 和 benchmark 在同一数量级。
+- NPU DUT 与 CPU 高精度 golden 的误差随机分散且处于可接受范围。
 - 没有固定 layout/offset 模式。
 
-结构性错误必须修 kernel。数值误差可用 dual benchmark、MCH/MXR 迭代次数、fp32 workspace 等方式评估取舍。
+结构性错误必须修 kernel。数值误差可结合混合容差结果、MCH/MXR 迭代次数、fp32 workspace 等方式评估取舍。
 
 ### 10.3 CT 工具使用
 
@@ -731,15 +731,14 @@ ct viz ... --sc 4096
 - cross-core flag 死等。
 - 内存越界或同步缺失。
 
-双标杆用来判断相对 NPU 是否劣于可接受 benchmark：
+混合容差精度检查使用单一 CPU 高精度 golden：
 
 ```text
-golden:    CPU/Triton 高精度参考
-benchmark: CPU/Triton fp32 中间计算并 cast 到目标 dtype
-test:      NPU 输出
+golden: CPU 高精度参考
+DUT:    NPU 输出
 ```
 
-不要把 `diff_thd` 调大来制造通过。阈值和双标杆语义必须和用例规格一致。
+不要把阈值调大来制造通过。混合容差标准和用例规格必须保持一致。
 
 ### 10.4 固定输入多跑
 
@@ -971,7 +970,7 @@ gate:
 
 - 先 gate-only、stage-only，再 full KDA。
 - 先小 shape，再目标 shape。
-- 精度失败必须看 CT dual/CT viz 或逐阶段 diff。
+- 精度失败必须看 CT single/CT viz 或逐阶段 diff。
 - NaN/Inf 必须追第一处非有限或第一处极大值。
 - 固定输入多跑验证同步类问题。
 - 性能用 msopprof 看 bound。

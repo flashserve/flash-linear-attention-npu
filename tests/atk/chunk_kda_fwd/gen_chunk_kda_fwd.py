@@ -27,16 +27,7 @@ except ModuleNotFoundError as exc:
 
 
 SEED_BASE = 20260810
-L1_STANDARD = {
-    "acc": {
-        "cv_fused_double_benchmark": {
-            "max_re_ratio": 5,
-            "avg_re_ratio": 1.5,
-            "root_mean_squared_ratio": 1.5,
-        }
-    },
-    "perf": "not_key",
-}
+L1_STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key"}
 
 
 def _balanced(total: int, count: int) -> list[int]:

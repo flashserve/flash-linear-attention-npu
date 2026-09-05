@@ -7,11 +7,7 @@ generate: generator_chunk_local_cumsum
 dtype_numbers: 1
 extra_numbers: 0
 standard:
-  acc:
-    cv_fused_double_benchmark:
-      max_re_ratio: 10
-      avg_re_ratio: 3
-      root_mean_squared_ratio: 3
+  acc: mixed_tolerance_bm
   perf: not_key
 inputs:
   - name: low_precision_marker

@@ -132,6 +132,8 @@ ChunkFwdOTilingResult CalcTilingParams(const at::Tensor &q, const at::Tensor &k,
         chunk_size,
         ToChunkFwdODtype(q.scalar_type()),
         ToChunkFwdODtype(g.scalar_type()),
+        false,
+        "BNSD",
         coreNum,
         sysWorkspaceSize,
     };

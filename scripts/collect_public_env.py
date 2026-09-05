@@ -296,6 +296,10 @@ def _has_opp(root: Path) -> bool:
 
 
 def _has_op_api(root: Path) -> bool:
+    configured_op_api = os.environ.get("FLA_NPU_OP_API_LIB", "").strip()
+    if configured_op_api and Path(configured_op_api).is_file():
+        return True
+
     candidates = [
         root / "op_api" / "lib" / "libcust_opapi.so",
         root / "op_api" / "lib" / "libopapi.so",

@@ -9,41 +9,73 @@
 
 flash-linear-attention-npu 算子库由天津大学主导开发，是一个面向昇腾架构的高性能线性注意力算子库，对标 Flash-Linear-Attention 项目，旨在为昇腾平台提供高效的线性注意力计算实现。
 
+本仓不自动安装 `torch`、`torch_npu`、`torchnpugen`、`triton-ascend`，这些包必须与 CANN 与 Python 版本匹配，需要使用者按环境自行安装；版本不匹配时，构建或运行会报错。依赖匹配关系与检查方式见下文 Step 1 / Step 2。
+
 ## ⚡️快速上手
+
+### Step 0. 确认硬件与目标芯片
+
+在开始前，先确认机器上可用的 NPU 类型：
+
+```sh
+npu-smi info
+```
+
+确认机器类型后，按目标芯片选择后续构建参数（`--soc` / `FLA_NPU_SOC`）：
+
+| 产品 | `--soc` / `FLA_NPU_SOC` |
+| ---- | --------------------------- |
+| A2   | `ascend910b`              |
+| A3   | `ascend910_93`            |
+| A5   | `ascend950`               |
 
 ### Step 1. 部署 CANN 开发环境
 
 首先需安装 CANN 开发包，提供 NPU 算子运行所需的底层驱动与工具链。
-推荐使用是社区版8.5.2，总共要下2个run包，这里以A3机器为例（即需要下载A3-ops、toolkit）
-下载地址为
-[https://www.hiascend.com/developer/download/community/result?module=cann&amp;cann=8.5.2](https://www.hiascend.com/developer/download/community/result?module=cann&cann=8.5.2)
-需要找到与你当前机器对应的包
+推荐使用最新的社区稳定版本（不低于 8.5.2，如需使用更新版本请参考 `check_npu_env.py` 支持的 CANN / torch_npu 版本组合），总共需要下载 2 个 run 包。
+下载地址为社区 CANN 下载页（最新稳定版）
+[https://www.hiascend.com/zh/cann/download?versionId=752&ids=d803%2Ch0501%2Ch0601%2Ch0703](https://www.hiascend.com/zh/cann/download?versionId=752&ids=d803%2Ch0501%2Ch0601%2Ch0703)
+在其中找到与你当前机器对应的包
 
 ```
-#设置需要安装的路径
+# 设置需要安装的路径（请替换为实际安装路径）
 export INSTALL_PATH=/usr/local/Ascend
 
+# toolkit 与机型对应的 ops 包都必须安装；ops 包命名格式为
+# Ascend-cann-<chip_type>-ops_<version>_linux-<arch>.run，
+# 例如 A3 机器对应 Ascend-cann-A3-ops*.run，A2 机器对应 Ascend-cann-910b-ops*.run，A5 机器对应 Ascend-cann-950-ops*.run
 ./Ascend-cann-toolkit*run --install-path=$INSTALL_PATH --full  --quiet
-./Ascend-cann-A3*run --install-path=$INSTALL_PATH --install --quiet
+./Ascend-cann-*-ops*.run --install-path=$INSTALL_PATH --install --quiet
 source $INSTALL_PATH/ascend-toolkit/set_env.sh
 ```
 
+> 若 CANN 安装在自定义路径，请将 `INSTALL_PATH` 设置为实际安装路径，并 source 实际路径下对应的 `set_env.sh`（上述 `/usr/local/Ascend` 仅为默认安装路径）。每次进入新的 shell（含 Docker / Conda / venv）后，都需要重新 source `set_env.sh` 才能正常编译与运行。
+
 ### Step 2. 编译
 
-#### 方式 A：【推荐】源码一键编译并生成 wheel
+#### 【推荐】源码一键编译并生成 wheel
 
 在已完成 CANN、PyTorch、torch-npu、torchnpugen、triton-ascend 环境准备后，推荐直接在仓库根目录生成单 wheel。默认目标芯片为 `ascend910b`，A3/A5 机器需要显式指定 `FLA_NPU_SOC`。本仓不会自动安装 `torch`、`torch_npu`、`torchnpugen` 或 `triton-ascend`，因为这些包必须和 CANN、Python、`torch_npu` 可用版本匹配；在新的 conda 环境中请先安装匹配依赖，再执行预检：
 
 ```sh
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
 python -m pip install -r requirements.txt
+python scripts/check_npu_env.py
+```
+
+完整预检会同时检测运行与编译环境，检查 `torch` / `torch_npu` / `triton-ascend` 是否可导入、版本下限与 NPU 可用性（`torch.npu.is_available()`）；torch 系依赖缺失或版本不匹配时，`pip wheel` 会在构建或打包阶段报错，请按 CANN 与 Python 版本匹配的列表先行安装。在无 NPU 卡的纯构建环境里，`is_available()` 为 `False` 且该检查会报 `FAIL`，属预期现象——此时若只需产出 wheel 构建，可用 `--build-only` 跳过 torch 系检查：
+
+```sh
 python scripts/check_npu_env.py --build-only
 ```
 
-如果依赖缺失，预检和一键编包都会在真正编译前失败，并列出缺失项，例如 `torch`、`torch_npu`、`torchnpugen.*`、`triton` 或 `triton-ascend distribution was not found`。依赖通过后再生成 wheel：
+预检覆盖编译链上的 `cmake`、`gcc`/`g++`、`setuptools` 版本要求，`make` / `patch` / `bisheng` 存在性检查，以及 `wheel` / `packaging` / `psutil`（`--no-build-isolation` 构建时需本机已装）的导入检查。其余组件未纳入预检，缺失时会在 `pip wheel` 阶段才报错。各组件的最低版本要求与详细说明见[开发者指南](docs/开发者指南.md) 场景 2 的工具链依赖表。
+
+> `triton-ascend` 与 CANN 版本需要匹配：CANN 8.x 使用 `>=3.2.0` 即可；CANN 9.x（9.0.0+）因 Ascend Triton 后端 JIT 编译 `npu_utils.cpp` 依赖更新的 `rt.h` 头文件，需要 **`>=3.2.1`**（3.2.0 在 CANN 9.1.0 上会编译失败）。预检会按检测到的 CANN 版本自动校验 `triton-ascend` 是否满足对应下限。
+
+预检通过后再生成 wheel：
 
 ```sh
-source /usr/local/Ascend/ascend-toolkit/set_env.sh
 FLA_NPU_SOC=ascend910b python scripts/build_wheel.py
 ```
 
@@ -63,76 +95,40 @@ FLA_NPU_SOC=ascend910b python scripts/build_wheel.py
 的 wheel，因此安装时必须传入本轮构建生成的准确文件名，并使用 Step 3 的强制覆盖
 命令，避免通配符选中旧产物。
 
-方式 A 编译可用环境变量：
+编译可用环境变量：
 
 | 环境变量                          | 可选范围                                          | 作用 / 建议                                                                                                                        | 默认           |
 | --------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------- |
 | `FLA_NPU_SOC`                   | `ascend910b` / `ascend910_93` / `ascend950` | 目标芯片；按实际运行机器选择                                                                                                       | `ascend910b` |
+| `FLA_NPU_OPS`                   | 算子名，逗号分隔（如 `chunk_fwd_o,chunk_bwd_dv_local`） | 只构建指定算子的 wheel；适合已安装完整 wheel 后快速替换少量算子的 Ascend C 产物，未设置则全量构建 | 空（全量） |
+| `FLA_NPU_BUILD_OFFLINE_BUNDLE` | `TRUE` / `FALSE` | 是否在 wheel 内嵌离线 third-party bundle 供离线二次编译；需 `third_party/` 缓存完整，否则打包阶段报错 | `FALSE` |
 | `FLA_NPU_DISABLE_LOCAL_VERSION` | `TRUE` / `FALSE`                              | wheel 版本号不追加 SOC/torch/ABI 本地版本；内部统一发版需要固定版本号时可设`TRUE`，日常构建建议保持 `FALSE` 以区分产物兼容范围 | `FALSE`      |
 
 布尔变量设为 `TRUE` 时也接受 `1`、`YES`、`ON`；未设置或其他值按 `FALSE` 处理。
 
-#### 方式 B：【备选】单独编译算子 run 包和 Python wheel
-
-只有在已经安装方式 A 的完整 wheel、但需要快速替换少量算子的 Ascend C 产物时，才建议使用该方式。`--ops=op1,op2,...` 只会生成指定算子的 run 包；run 包安装时会把当前 run 包里的 `packages/vendors/fla_npu_transformer` 合并覆盖到当前 Python 环境已安装的 `site-packages/fla_npu/opp/vendors/fla_npu_transformer`，从而更新 `aclnn`、tiling、kernel 和相关配置。
-
-```sh
-# 编译一个或多个算子 run 包，--soc 需指定为当前机器芯片类型 {ascend910b/ascend910_93/ascend950}
-bash build.sh --soc=ascend910b --pkg --vendor_name=fla_npu --ops=chunk_fwd_o
-
-# 如果 Python wrapper 也有修改，再单独编译 Python runtime wheel
-cd torch_custom/fla_npu
-python3 setup.py bdist_wheel
-
-# 如需继续验证旧 torch.ops.npu 路径，可显式编译 legacy PyTorch C++ extension
-FLA_NPU_BUILD_LEGACY_EXTENSION=1 bash gen.sh npu_custom.yaml
-FLA_NPU_BUILD_LEGACY_EXTENSION=1 python3 setup.py bdist_wheel
-```
+> 需要单独编译一个或多个算子 run 包的开发者场景（如已安装完整 wheel 后快速替换少量算子的
+> Ascend C 产物），见[开发者指南](docs/开发者指南.md) 场景 1。
 
 ### Step 3. 安装
 
-#### 方式 A 产物安装
-
-方式 A 产物可以来自本地源码一键编译，也可以直接使用 [Release v26.6.0](https://github.com/flashserve/flash-linear-attention-npu/releases/tag/v26.6.0) 提供的官方验证 wheel。下载或构建完成后执行：
+产物可以来自本地源码一键编译，也可以直接使用 [Release v26.6.0](https://github.com/flashserve/flash-linear-attention-npu/releases/tag/v26.6.0) 提供的官方验证 wheel。下载或构建完成后执行：
 
 ```sh
-WHEEL_PATH="dist/本轮构建生成的-wheel-文件名.whl"
+# 将 WHEEL_PATH 设置为实际 wheel 文件路径：
+# 本地构建产物位于 dist/ 目录，请使用构建日志输出的准确文件名（勿用通配符，避免匹配多个产物）；
+# Release 下载的 wheel 则填实际下载路径。
+WHEEL_PATH="dist/<准确wheel文件名>.whl"
 python -m pip install --force-reinstall --no-cache-dir --no-deps "$WHEEL_PATH"
 ```
 
-将 `WHEEL_PATH` 设置为本轮构建日志中输出的准确 wheel 文件；如果使用 Release
-下载的 wheel，则设置为实际下载路径。
+> 重新构建的 wheel 版本号与已安装的旧 wheel 可能相同。版本号相同时，不带 `--force-reinstall` 的 `pip install` 会认为"已是最新版本"而跳过，导致实际仍是旧代码。上面的命令已带 `--force-reinstall` 强制覆盖；若想先清理再装，可先执行 `python -m pip uninstall -y flash-linear-attention-npu`。
 
-方式 A wheel 不安装或执行 shell 环境钩子。无论使用系统 Python、Conda、venv
+wheel 不安装或执行 shell 环境钩子。无论使用系统 Python、Conda、venv
 还是 Docker，每次进入新的 shell 后都需要先按 Step 1 手工 source CANN 的
 `set_env.sh`。调用 `fla_npu.ops.ascendc` 算子时会在当前 Python 进程内定位并加载
 wheel 内嵌 OPP；wheel 通过绝对路径加载 `libcust_opapi.so`，不会再生成或加载
 可能覆盖 CANN 运行库的自定义 `libopapi.so`。如果旧版 run 包曾在 wheel 中遗留该别名，
 新 runtime 会在首次加载 OPP 时删除它；目录不可写时会给出明确的手工清理提示。
-
-#### 方式 B 产物安装
-
-先确认方式 A 的完整 wheel 已经安装到当前 Python 环境，然后安装 run 包。安装器会在覆盖前列出当前 run 包携带的算子，并标出安装后的算子状态：`WARNING` 表示安装后不可用，包括不在当前 run 包范围内但会受局部 `libcust_opapi.so`、tiling so、proto so 整体替换影响的算子，以及当前 run 包内但 aclnn ABI 修改或删除的算子；`NOTICE` 表示新增或无法完整确认的 ABI，需要确认当前 Python wheel 是否已有对应 wrapper；`OK` 表示当前 run 包内且 aclnn ABI 一致的算子。`op_api/include/aclnnop` 中新增、删除、修改的 aclnn ABI 头文件会合并显示到对应算子的状态原因里；删除只按当前 run 包携带的算子范围判断，非 `--quiet` 模式只在状态表后确认一次。
-
-```sh
-# 覆盖当前 Python 环境中 flash-linear-attention-npu wheel 内嵌的 OPP
-# （无参数直接运行 .run 也是同样的行为，等价于 --install / --full）
-./build_out/fla-npu-*.run --install
-# 或等价写法
-./build_out/fla-npu-*.run --full
-
-# 如需装到 CANN OPP 目录（ASCEND_CUSTOM_OPP_PATH / ASCEND_OPP_PATH），
-# 使用 --cann 或 --install-path=<绝对路径>
-# ./build_out/fla-npu-*.run --cann
-
-# 如果 Python wrapper 也有修改，再安装单独编译出的 wheel
-WHEEL_PATH="dist/本轮构建生成的-wheel-文件名.whl"
-python -m pip install --force-reinstall --no-cache-dir --no-deps "$WHEEL_PATH"
-```
-
-run 包覆盖完成后会重写幂等的 `set_env.bash`，并把实际 OPP 文件清单刷新到 wheel
-的 `RECORD`。因此重复覆盖同一个 run 包不会累积环境变量或文件记录，后续
-`pip --force-reinstall` 也能先清理 run 包增加的文件，再安装新 wheel。
 
 `import fla_npu` 会定位 OPP 并加载 `libcust_opapi.so`。执行前必须先 source CANN
 的 `set_env.sh`；CANN 环境未初始化、OPP 不完整或动态库加载失败时，import 会直接
@@ -141,51 +137,30 @@ run 包覆盖完成后会重写幂等的 `set_env.bash`，并把实际 OPP 文�
 只有用 `FLA_NPU_BUILD_LEGACY_EXTENSION=1` 额外编出 legacy 扩展时，才可显式调用
 `fla_npu.load_legacy_torch_ops()` 兼容旧 `torch.ops.npu.*`。
 
-`fla_npu.ops.ascendc` 调用会优先使用 wheel 内嵌 OPP，找不到时会继续从 `FLA_NPU_OPP_PATH`、`ASCEND_CUSTOM_OPP_PATH` 和 `ASCEND_OPP_PATH` 查找已安装 OPP。外部 OPP 的 `op_api/lib` 目录同样不得包含自定义 `libopapi.so`；runtime 会先尝试删除旧版本遗留的别名，目录不可写时再明确报错并要求手工清理。
+`fla_npu.ops.ascendc` 只使用当前 wheel 内嵌的 custom OPP，不从 `FLA_NPU_OPP_PATH`、`ASCEND_CUSTOM_OPP_PATH`、`ASCEND_OPP_PATH` 或 CANN 的 `vendors` 目录回退查找其他 `libcust_opapi.so`。外部 OPP 仅用于 CANN 侧的 host、tiling 与 kernel 发现，不再作为 Python runtime 加载 `libcust_opapi.so` 的来源。单独构建的 run 包应使用默认 `--install` / `--full` 流程覆盖当前 wheel 内的 OPP（见[开发者指南](docs/开发者指南.md) 场景 1）。
+
+> 已安装完整 wheel 后，如需用单算子 run 包快速替换部分算子的 Ascend C 产物（含安装器
+> 的算子状态说明），见[开发者指南](docs/开发者指南.md) 场景 1。
 
 ### Step 4. 测试安装成功
 
-安装后两种方式均可用以下命令验证：
+安装后可用以下命令验证：
 
 ```sh
-python -c "import fla_npu; print('fla_npu runtime loaded')"
+python -c "import fla_npu; print('ok')"
 python -c "from fla_npu.ops import ascendc; print(hasattr(ascendc, 'chunk_fwd_o'))"
 python scripts/check_packaged_wheel_api.py
 ```
+
+`import fla_npu` 成功即表示 wheel 与内嵌 OPP 加载正常。推荐使用 `fla_npu.ops.ascendc` 稳定 Python 入口调用算子。
+
+`torch.ops.npu.*` / `torch_npu.ops.*` 是旧版本（v26.6.0 及更早）的调用方式，**v26.6.0 之后不再维护旧版本兼容接口**，新代码请使用 `fla_npu.ops.ascendc` 下的稳定 Python 入口。迁移期如需临时兼容（`install_torch_npu_ops_compat()` / `load_legacy_torch_ops()`）及其注意事项（如 `hasattr(torch_npu.ops, ...)` 的版本差异），见[兼容与迁移指南](docs/兼容与迁移指南.md)。
 
 不再使用时，按 distribution 名卸载：
 
 ```sh
 python -m pip uninstall -y flash-linear-attention-npu
 ```
-
-wheel 原始文件、pip 安装期生成的 `__pycache__`、单算子 run 包覆盖写入的 OPP 文件
-及对应 metadata 都由安装后的 `RECORD` 管理；卸载后不应残留 `fla_npu/` 或
-`flash_linear_attention_npu-*.dist-info/`。
-
-修改源码、Python 适配或单算子 run 包后，可以用安装流程看护脚本在隔离 venv 中
-检查重复安装、卸载和主要调用通路。参数必须指向确定的单个产物；下面的 base wheel、
-run 包和 updated wheel 会分别安装两次，每次都在新 Python 进程中检查 OPP 布局、
-`RECORD`、环境变量、公开 API 和 `libcust_opapi.so` 动态库映射。run 包覆盖后及最终
-整包验证后还会执行 `pip uninstall`，确认包目录、distribution metadata 和
-`RECORD` 登记文件均无残留：
-
-```sh
-python scripts/check_install_workflows.py \
-  --wheel dist/<exact-base-wheel>.whl \
-  --run-package build_out/<exact-scoped-run-package>.run \
-  --updated-wheel dist/<exact-updated-wheel>.whl \
-  --wheel-op chunk_gated_delta_rule_fwd_h \
-  --run-op chunk_gated_delta_rule_fwd_h \
-  --updated-wheel-op chunk_gated_delta_rule_fwd_h \
-  --work-cwd .
-```
-
-新增适配时，用 `--updated-wheel-op` 声明新增的公开 API。只验证 standalone
-Python wheel 加单算子 run 包时，将 `--base-mode` 设为 `skeleton`。该脚本看护
-打包安装和主要加载通路，不替代算子自身的精度、泛化或性能测试。
-
-`torch.ops.npu.*` 是 legacy extension 的过渡用法，后续版本不再支持。新代码优先使用 `fla_npu.ops.ascendc` 下的稳定 Python 入口。
 
 ### 测试单算子
 
@@ -236,7 +211,10 @@ bash tests/atk/run_test_cpu.sh -op=causal_conv1d -npu_device_id=0 -scope=determi
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d -npu_device_id=0 -scope=mssanitizer
 ```
 
-默认 `-scope=all` 会执行 CPU 双标杆精度、性能、确定性和 mssanitizer。未设置 `CASE_START/CASE_END` 时不向 ATK 传入 `-s/-e`，会执行JSON中的全部用例；需要只跑指定顺序范围时使用：
+默认 `-scope=all` 会执行混合容差精度、确定性和 mssanitizer；性能测试需显式指定
+`-scope=performance`。精度任务以 CPU 高精度结果作为唯一 golden，以 NPU 输出作为 DUT。
+未设置 `CASE_START/CASE_END` 时不向 ATK 传入 `-s/-e`，会执行 JSON 中的全部用例；
+需要只跑指定顺序范围时使用：
 
 ```sh
 CASE_START=0 CASE_END=1 \
@@ -272,22 +250,20 @@ NPU CI 的 Example/ST 用例由 [`ci/example_st_cases.json`](ci/example_st_cases
 
 当前端到端 Example/ST 已支持 `gate_source=g`；`gk` / `g+gk` 先作为用例 schema 预留，待 NPU fwd_h 路径支持后再启用。
 
-## Memory Checking with msSanitizer
+## 开发者指引
 
-编译时开启 `--sanitizer`（Ascend 910）或运行时注入（Ascend 950）即可使用 msSanitizer 进行算子内存异常检测：
+开发者相关操作（单独编译单算子、一键编包、增加新算子、确认 wheel 来自最新源码）按场景拆分为独立文档；测试单算子和端到端验证见上文 Step 4：
 
-```sh
-# 910（ascend910b/ascend910_93）：编译期静态插桩，产物带 __sanitizer_report_* 符号，直接运行测试
-FLA_NPU_SOC=ascend910b python scripts/build_wheel.py -g --sanitizer
+- [开发者指南](docs/开发者指南.md)
+- [在线 / 离线使用与编译指南](docs/离线编译与使用指南.md)（直接使用 wheel、在线编译后离线二次编译、全离线编译）
 
-# 950（ascend950）：无 sanitizer stub，编译只需 -g 定位信息，内存检测靠运行时注入
-FLA_NPU_SOC=ascend950 python scripts/build_wheel.py -g
-mssanitizer --tool=memcheck -- python -m pytest -q -s tests/xxx.py
-```
+旧版本（v26.6.0 及更早）用户升级与兼容迁移见[兼容与迁移指南](docs/兼容与迁移指南.md)。
 
 ## 维护文档
 
-NPU CI 维护说明见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部署教程.md)。
+- NPU CI 维护说明见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部署教程.md)。
+- 旧版本用户升级与兼容迁移见 [`docs/兼容与迁移指南.md`](docs/兼容与迁移指南.md)。
+- 开发者分场景指南见 [`docs/开发者指南.md`](docs/开发者指南.md)。
 
 ## 🔍目录结构
 
@@ -302,6 +278,7 @@ NPU CI 维护说明见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部
 │       │   ├── common                 # 公共模块（GroupedMatMul 等）
 │       │   └── gdn                    # GDN 算子
 │       │       ├── chunk_gdn_fwd      # 前向传播算子
+│       │       │   ├── chunk_fwd_h
 │       │       │   ├── chunk_fwd_o
 │       │       │   ├── chunk_gated_delta_rule_fwd_h
 │       │       │   └── recompute_w_u_fwd
@@ -320,6 +297,7 @@ NPU CI 维护说明见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部
 ├── examples                           # 端到端算子开发和调用示例
 │   └── flash_gated_delta_rule.py      # 完整GDN接入调用示例
 ├── scripts                            # 脚本目录，包含算子构建相关配置文件
+├── docs                               # 文档目录（兼容迁移指南、开发者指南等）
 ├── tests                              # 测试工程目录
 ├── gdn-verify.sh                      # GDN 一键验证脚本
 ├── CMakeLists.txt

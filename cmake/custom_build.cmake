@@ -98,6 +98,7 @@ if (BUILD_OPEN_PROJECT)
     )
     set_target_properties(cust_opapi PROPERTIES OUTPUT_NAME
             cust_opapi
+            NO_SONAME ON
     )
     if (NOT ENABLE_BUILT_IN)
         install(TARGETS cust_opapi
@@ -1096,7 +1097,7 @@ if (NOT ENABLE_BUILT_IN AND BUILD_OPEN_PROJECT)
     set(CPACK_PACKAGE_DESCRIPTION "CPack ops project")
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "CPack ops project")
     set(CPACK_PACKAGE_DIRECTORY ${CMAKE_BINARY_DIR})
-    set(CPACK_PACKAGE_FILE_NAME "fla-npu-${VENDOR_NAME}_linux-${ARCH}.run")
+    set(CPACK_PACKAGE_FILE_NAME "fla_npu_linux-${ARCH}.run")
     set(CPACK_GENERATOR External)
     set(CPACK_CMAKE_GENERATOR "Unix Makefiles")
     set(CPACK_EXTERNAL_ENABLE_STAGING TRUE)

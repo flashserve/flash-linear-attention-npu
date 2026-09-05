@@ -34,10 +34,17 @@ elseif(EXISTS "${CANN_3RD_LIB_PATH}/opbase")
   get_filename_component(OPBASE_SOURCE_PATH
                          ${CANN_3RD_LIB_PATH}/opbase REALPATH)
   message(STATUS "Find opbase source dir: ${OPBASE_SOURCE_PATH}")
-  execute_process(
-    COMMAND git checkout ${OPBASE_TAG_ID}
-    WORKING_DIRECTORY ${OPBASE_SOURCE_PATH}
-  )
+  # 优先使用 git 检出目录并切到目标 tag（在线/预置 git 检出场景）。
+  # 离线 bundle 提供的是不带 .git 的解压源码目录，此时不执行 git checkout，
+  # 直接使用 bundle 制作时已固化的源码。
+  if(EXISTS "${OPBASE_SOURCE_PATH}/.git")
+    execute_process(
+      COMMAND git checkout ${OPBASE_TAG_ID}
+      WORKING_DIRECTORY ${OPBASE_SOURCE_PATH}
+    )
+  else()
+    message(STATUS "opbase source dir has no .git; using bundled tarball sources as-is")
+  endif()
 else()
   if(EXISTS "${PROJECT_SOURCE_DIR}/build/_deps/opbase-subbuild")
     file(REMOVE_RECURSE ${PROJECT_SOURCE_DIR}/build/_deps/opbase-subbuild)

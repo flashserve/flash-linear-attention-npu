@@ -60,26 +60,8 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
     }
 
 
-def _round_elem(x: torch.Tensor, elem_dtype: torch.dtype) -> torch.Tensor:
-    """舍入到 elem_dtype（bf16/fp16）精度，仍留在 fp32 容器计算（对齐 Cube MMAD）。"""
-    if elem_dtype == torch.float32:
-        return x.to(torch.float32)
-    return x.to(elem_dtype).to(torch.float32)
-
-
-def _matmul_npu_aligned(a: torch.Tensor, b: torch.Tensor, elem_dtype: torch.dtype) -> torch.Tensor:
-    """bf16/fp16 乘 + fp32 累加，与 NPU Cube MMAD 语义一致（同精度标杆关键）。"""
-    return _round_elem(a, elem_dtype) @ _round_elem(b, elem_dtype)
-
-
-def _forward_h_ref(inputs, golden_mode: str = "fp64"):
-    """定长 CPU 标杆（w=HV, GVA 对齐 ACLNN / 内核）。
-
-    golden_mode:
-      "fp64" - 输入升 fp64、fp64 累加（升精度真值标杆，ATK 自动计算）。
-      "npu"  - k/w/u 保持 bf16/fp16 乘、fp32 累加，逐 chunk 状态回写 elem_dtype，
-               与 NPU 单算子同精度标杆一致（双标杆中的同精度参考）。
-    """
+def _forward_h_ref(inputs):
+    """使用 FP64 输入和累加计算定长 CPU golden。"""
     k, w, u, g = (inputs[name] for name in ("k", "w", "u", "g"))
     B, HK, T, K = k.shape
     HV, V = u.shape[1], u.shape[3]
@@ -87,22 +69,11 @@ def _forward_h_ref(inputs, golden_mode: str = "fp64"):
     num_chunks = _num_chunks(T, chunk_size)
     group = HV // HK
 
-    if golden_mode == "npu":
-        elem_dtype = k.dtype
-        k = k.to(elem_dtype)
-        w = w.to(elem_dtype)
-        u = u.to(elem_dtype)
-        g = g.float()
-        matmul = lambda a, b: _matmul_npu_aligned(a, b, elem_dtype)
-        store = lambda x: _round_elem(x, elem_dtype)
-    else:
-        compute = torch.float64
-        k = k.to(compute)
-        w = w.to(compute)
-        u = u.to(compute)
-        g = g.to(compute)
-        matmul = lambda a, b: a @ b
-        store = lambda x: x
+    compute = torch.float64
+    k = k.to(compute)
+    w = w.to(compute)
+    u = u.to(compute)
+    g = g.to(compute)
 
     h = torch.zeros((B, HV, num_chunks, K, V), dtype=k.dtype, device=k.device)
     v_new = torch.zeros((B, HV, T, V), dtype=u.dtype, device=u.device)
@@ -115,21 +86,21 @@ def _forward_h_ref(inputs, golden_mode: str = "fp64"):
                 u_chunk = u[b, hv, start:end]
                 g_chunk = g[b, hv, start:end]
                 state = h[b, hv, chunk_idx]
-                current_v = u_chunk - matmul(w_chunk, state)
+                current_v = u_chunk - w_chunk @ state
                 v_new[b, hv, start:end] = current_v.to(u.dtype)
                 if chunk_idx + 1 < num_chunks:
                     decay = torch.exp(g_chunk[-1] - g_chunk).unsqueeze(-1)
                     g_last = torch.exp(g_chunk[-1])
-                    s_decayed = store(state) * g_last
-                    s_update = matmul(k_chunk.transpose(-1, -2), current_v * decay)
-                    h[b, hv, chunk_idx + 1] = store(s_decayed + s_update)
+                    s_decayed = state * g_last
+                    s_update = k_chunk.transpose(-1, -2) @ (current_v * decay)
+                    h[b, hv, chunk_idx + 1] = s_decayed + s_update
     return h, v_new
 
 
-def run_cpu(spec: dict[str, Any], high_precision: bool = False):
-    """运行 CPU 标杆：高精度用 fp64，其余用 npu 对齐（bf16/fp16 乘 + fp32 累加）。"""
-    inputs = build_inputs(spec, torch.device("cpu"), high_precision=high_precision)
-    return _forward_h_ref(inputs, golden_mode="fp64" if high_precision else "npu")
+def run_cpu(spec: dict[str, Any]):
+    """运行 FP64 CPU golden。"""
+    inputs = build_inputs(spec, torch.device("cpu"), high_precision=True)
+    return _forward_h_ref(inputs)
 
 
 def run_npu(spec: dict[str, Any], input_data: InputDataset):
@@ -146,15 +117,13 @@ class FunctionApi(BaseApi):
 
     def __init__(self, task_result: TaskResult):
         super(FunctionApi, self).__init__(task_result)
-        self.is_benchmark_task = bool(task_result.is_benchmark_task)
-        self.high_precision = self.device == "cpu" and self.is_benchmark_task
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
         spec = _case_spec(input_data, OP_NAME)
         if self.device in {"npu", "pyaclnn"}:
             outputs = run_npu(spec, input_data)
         elif self.device == "cpu":
-            outputs = run_cpu(spec, self.high_precision)
+            outputs = run_cpu(spec)
         else:
             raise RuntimeError(f"{OP_NAME} 仅支持 NPU DUT 与 CPU 标杆节点，当前设备：{self.device!r}")
-        return _finite_tuple(outputs)
+        return _finite_tuple(outputs, golden=self.device == "cpu")

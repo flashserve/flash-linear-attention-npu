@@ -85,6 +85,7 @@
 在每套 CANN / 产品环境中先确认基础信息。
 
 ```sh
+# 默认 CANN 安装路径；自定义安装路径时替换为实际路径下对应的 set_env.sh
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
 cat /usr/local/Ascend/ascend-toolkit/latest/opp/version.info
 npu-smi info

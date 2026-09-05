@@ -384,13 +384,28 @@ at::Tensor npu_chunk_fwd_o(
     at::OptionalIntArrayRef cu_seqlens, 
     at::OptionalIntArrayRef chunk_indices, 
     c10::optional<int64_t> chunk_size,
-    c10::optional<bool> transpose_state_layout)
+    c10::optional<bool> transpose_state_layout,
+    c10::optional<bool> use_exp2,
+    c10::string_view output_layout)
 {
-    // 创建输出tensor
-    at::Tensor o = at::empty_like(v);
+    const std::string output_layout_(output_layout.data(), output_layout.size());
+    at::Tensor o;
+    if (output_layout_ == "BNSD") {
+        o = at::empty_like(v);
+    } else if (output_layout_ == "BSND") {
+        o = at::empty({v.size(0), v.size(2), v.size(1), v.size(3)}, v.options());
+    } else {
+        if (output_layout_ == "TND") {
+            o = at::empty({v.size(2), v.size(1), v.size(3)}, v.options());
+        } else {
+            o = at::empty({v.size(1), v.size(2), v.size(3)}, v.options());
+        }
+    }
 
     // chunk_size默认值
     int64_t chunk_size_ = chunk_size.value_or(64);
+    bool use_exp2_ = use_exp2.value_or(false);
+    const char *output_layout_cstr = output_layout_.c_str();
     const at::Tensor &g_ = c10::value_or_else(g, [] { return at::Tensor(); });
     (void)g_gamma;
     (void)transpose_state_layout;
@@ -400,6 +415,7 @@ at::Tensor npu_chunk_fwd_o(
         aclnnChunkFwdO,
         q, k, v, h, g_,
         cu_seqlens, chunk_indices, scale, chunk_size_,
+        use_exp2_, output_layout_cstr,
         o
     );
     return o;
