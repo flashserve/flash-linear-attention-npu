@@ -54,16 +54,20 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_me
     int64_t K = q.size(3);
     int64_t Hv = dv.size(1);
     int64_t V = dv.size(3);
+    int64_t sequenceNum = B;
     int64_t chunkNum = (T + chunk_size - 1) / chunk_size;
     if (chunk_indices.has_value()) {
         chunkNum = static_cast<int64_t>(chunk_indices.value().size()) / 2;
+    }
+    if (cu_seqlens.has_value()) {
+        sequenceNum = static_cast<int64_t>(cu_seqlens.value().size()) - 1;
     }
 
     at::Tensor dh = at::empty({B, Hv, chunkNum, K, V}, q.options());
     at::Tensor dv2 = at::empty_like(dv);
     at::Tensor dh0;
     if (h0.has_value()) {
-        dh0 = at::empty({B, Hv, chunkNum, K, V}, q.options());
+        dh0 = at::empty({sequenceNum, Hv, K, V}, q.options());
     } else {
         dh0 = at::empty({0}, q.options());
     }
@@ -251,7 +255,7 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu_kernel(
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
     }
     GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<DT, GT>(
-        q, k, w, d_o, dv, g, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
+        q, k, w, d_o, dv, g, nullptr, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
 }
 
 template <typename DT, typename GT>

@@ -138,6 +138,78 @@ class AclnnCtypesAbiTest(unittest.TestCase):
         self.assertEqual([type(arg) for arg in captured["args"]], operator_argtypes)
         self.assertFalse(captured["args"][13].value)
 
+    def test_chunk_gated_delta_rule_bwd_dhu_uses_sequence_state_shape(self):
+        import torch
+
+        captured = {}
+
+        def fake_empty(shape, like, **kwargs):
+            return FakeTensor(shape, kwargs.get("dtype", like.dtype))
+
+        def fake_empty_like(tensor, **kwargs):
+            return FakeTensor(tensor.shape, kwargs.get("dtype", tensor.dtype))
+
+        def fake_call_aclnn(name, build_args, outputs):
+            context = FakeCallContext()
+            build_args(context)
+            captured["name"] = name
+            return outputs
+
+        dtype = torch.float16
+        q = FakeTensor((1, 2, 128, 128), dtype)
+        value = FakeTensor((1, 4, 128, 128), dtype)
+        gate = FakeTensor((1, 4, 128), torch.float32)
+        h0 = FakeTensor((2, 4, 128, 128), dtype)
+        dht = FakeTensor((2, 4, 128, 128), dtype)
+
+        with mock.patch.object(ACLNN_CTYPES, "_empty", side_effect=fake_empty):
+            with mock.patch.object(ACLNN_CTYPES, "_empty_like", side_effect=fake_empty_like):
+                with mock.patch.object(ACLNN_CTYPES, "_call_aclnn", side_effect=fake_call_aclnn):
+                    dh, dh0, dv2 = ACLNN_CTYPES.npu_chunk_gated_delta_rule_bwd_dhu(
+                        q,
+                        q,
+                        FakeTensor((1, 4, 128, 128), dtype),
+                        value,
+                        value,
+                        scale=0.125,
+                        chunk_size=64,
+                        g=gate,
+                        h0=h0,
+                        dht=dht,
+                        cu_seqlens=[0, 64, 128],
+                        chunk_indices=[0, 0, 1, 0],
+                    )
+
+        self.assertEqual(captured["name"], "aclnnChunkGatedDeltaRuleBwdDhu")
+        self.assertEqual(dh.shape, (1, 4, 2, 128, 128))
+        self.assertEqual(dh0.shape, (2, 4, 128, 128))
+        self.assertEqual(dv2.shape, value.shape)
+
+    def test_chunk_gated_delta_rule_bwd_dhu_rejects_chunk_expanded_state(self):
+        import torch
+
+        dtype = torch.float16
+        q = FakeTensor((1, 2, 128, 128), dtype)
+        value = FakeTensor((1, 4, 128, 128), dtype)
+        gate = FakeTensor((1, 4, 128), torch.float32)
+        chunk_expanded_h0 = FakeTensor((1, 4, 2, 128, 128), dtype)
+
+        with mock.patch.object(ACLNN_CTYPES, "_call_aclnn") as call_aclnn:
+            with self.assertRaisesRegex(ValueError, r"h0 must have shape \(1, 4, 128, 128\)"):
+                ACLNN_CTYPES.npu_chunk_gated_delta_rule_bwd_dhu(
+                    q,
+                    q,
+                    FakeTensor((1, 4, 128, 128), dtype),
+                    value,
+                    value,
+                    scale=0.125,
+                    chunk_size=64,
+                    g=gate,
+                    h0=chunk_expanded_h0,
+                )
+
+        call_aclnn.assert_not_called()
+
     def test_recurrent_gated_delta_rule_requires_at_least_one_gate_before_launch(self):
         with mock.patch.object(ACLNN_CTYPES, "_call_aclnn") as call_aclnn:
             with self.assertRaisesRegex(

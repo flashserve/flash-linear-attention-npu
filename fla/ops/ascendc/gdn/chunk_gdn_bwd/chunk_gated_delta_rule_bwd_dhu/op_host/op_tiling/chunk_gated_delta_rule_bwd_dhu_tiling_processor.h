@@ -462,8 +462,8 @@ private:
         tiling_.dh0ClearTailElems = 0;
         if (ctx_.hasDh0) {
             const uint64_t dh0Elems =
-                static_cast<uint64_t>(tiling_.B) * static_cast<uint64_t>(tiling_.HV) *
-                static_cast<uint64_t>(tiling_.totalChunkNum) * static_cast<uint64_t>(tiling_.K) *
+                static_cast<uint64_t>(tiling_.seqNum) * static_cast<uint64_t>(tiling_.HV) *
+                static_cast<uint64_t>(tiling_.K) *
                 static_cast<uint64_t>(tiling_.V);
             const uint64_t dh0Bytes = dh0Elems * qSize;
             if (dh0Bytes > 0) {

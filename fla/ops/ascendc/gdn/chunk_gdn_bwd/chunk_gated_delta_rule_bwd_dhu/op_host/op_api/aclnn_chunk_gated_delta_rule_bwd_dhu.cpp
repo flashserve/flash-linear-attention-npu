@@ -62,6 +62,8 @@ static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleBwdDhuParams params)
     CHECK_COND(params.gkOptional == nullptr || params.useExp2, ACLNN_ERR_PARAM_INVALID,
                "use_exp2 must be true when gk is provided.");
     CHECK_COND(params.dhOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dhOut must not be nullptr.");
+    CHECK_COND(params.h0Optional == nullptr || params.dh0Out != nullptr, ACLNN_ERR_PARAM_NULLPTR,
+               "dh0Out must not be nullptr when h0 is provided.");
     CHECK_COND(params.dv2Out != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dv2Out must not be nullptr.");
     return ACLNN_SUCCESS;
 }
@@ -74,13 +76,50 @@ static aclnnStatus CheckFormat(ChunkGatedDeltaRuleBwdDhuParams params)
 
 static aclnnStatus CheckShape(ChunkGatedDeltaRuleBwdDhuParams params)
 {
-    (void)params;
+    const auto qShape = params.q->GetViewShape();
+    const auto dvShape = params.dv->GetViewShape();
+    CHECK_COND(qShape.GetDimNum() == 4 && dvShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID,
+               "q and dv must be rank-4 tensors.");
+    if (params.cuSeqlensOptional != nullptr) {
+        CHECK_COND(params.cuSeqlensOptional->Size() >= 2, ACLNN_ERR_PARAM_INVALID,
+                   "cuSeqlensOptional must contain at least two offsets.");
+    }
+
+    const int64_t sequenceNum = params.cuSeqlensOptional == nullptr
+                                    ? qShape.GetDim(0)
+                                    : static_cast<int64_t>(params.cuSeqlensOptional->Size()) - 1;
+    const int64_t hv = dvShape.GetDim(1);
+    const int64_t kDim = qShape.GetDim(3);
+    const int64_t vDim = dvShape.GetDim(3);
+    const aclTensor *states[] = {
+        params.h0Optional, params.dhtOptional, params.h0Optional == nullptr ? nullptr : params.dh0Out};
+    const char *stateNames[] = {"h0Optional", "dhtOptional", "dh0Out"};
+    for (size_t idx = 0; idx < 3; ++idx) {
+        if (states[idx] == nullptr) {
+            continue;
+        }
+        const auto stateShape = states[idx]->GetViewShape();
+        CHECK_COND(stateShape.GetDimNum() == 4 && stateShape.GetDim(0) == sequenceNum &&
+                       stateShape.GetDim(1) == hv && stateShape.GetDim(2) == kDim &&
+                       stateShape.GetDim(3) == vDim,
+                   ACLNN_ERR_PARAM_INVALID, "%s must have shape [N, HV, K, V].", stateNames[idx]);
+    }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus CheckDtype(ChunkGatedDeltaRuleBwdDhuParams params)
 {
-    (void)params;
+    const auto qDtype = params.q->GetDataType();
+    const aclTensor *states[] = {
+        params.h0Optional, params.dhtOptional, params.h0Optional == nullptr ? nullptr : params.dh0Out};
+    const char *stateNames[] = {"h0Optional", "dhtOptional", "dh0Out"};
+    for (size_t idx = 0; idx < 3; ++idx) {
+        if (states[idx] == nullptr) {
+            continue;
+        }
+        CHECK_COND(states[idx]->GetDataType() == qDtype, ACLNN_ERR_PARAM_INVALID,
+                   "%s dtype must match q.", stateNames[idx]);
+    }
     return ACLNN_SUCCESS;
 }
 

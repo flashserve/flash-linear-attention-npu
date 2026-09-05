@@ -455,9 +455,20 @@ def npu_chunk_gated_delta_rule_bwd_dhu(
         raise ValueError(f"g must have shape {(B, Hv, T)}, got {_shape(g)}.")
     if gK is not None and _shape(gK) != (B, Hv, T, K):
         raise ValueError(f"gK must have shape {(B, Hv, T, K)}, got {_shape(gK)}.")
+    if cu_seqlens is not None and len(cu_seqlens) < 2:
+        raise ValueError("cu_seqlens must contain at least the start and end offsets.")
+    N = B if cu_seqlens is None else len(cu_seqlens) - 1
+    state_shape = (N, Hv, K, V)
+    for name, state in (("h0", h0), ("dht", dht)):
+        if state is None:
+            continue
+        if _shape(state) != state_shape:
+            raise ValueError(f"{name} must have shape {state_shape}, got {_shape(state)}.")
+        if state.dtype != q.dtype:
+            raise ValueError(f"{name} must have the same dtype as q.")
     NT = _chunk_num(T, int(chunk_size), chunk_indices)
     dh = _empty((B, Hv, NT, K, V), q)
-    dh0 = _empty((B, Hv, NT, K, V), q) if h0 is not None else None
+    dh0 = _empty(state_shape, q) if h0 is not None else None
     dv2 = _empty_like(dv)
     outputs = (dh, dh0, dv2)
 

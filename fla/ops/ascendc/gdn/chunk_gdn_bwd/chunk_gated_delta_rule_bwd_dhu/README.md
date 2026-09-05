@@ -62,8 +62,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 | `dv` | 输入 | 必选 | Value 的上游梯度张量 | 将与来自 `dh` 的贡献叠加后输出为 `dv2` | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `gOptional` | 输入 | 可选 | Gate 张量 | 对隐藏状态递推施加指数门控 `exp(g)` | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
 | `gkOptional` | 输入 | 可选 | Key-wise Gate 张量 | 对每个 Key 维度施加额外门控 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, K]` | 支持 |
-| `h0Optional` | 输入 | 可选 | 初始隐藏状态张量 | 提供时参与递推初始化 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
-| `dhtOptional` | 输入 | 可选 | 末尾隐藏状态的梯度张量 | 反向递推的起始梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
+| `h0Optional` | 输入 | 可选 | 初始隐藏状态张量 | 用于标识是否需要输出 `dh0Out`，数值不参与本算子计算 | `FLOAT16`、`BFLOAT16` | `ND` | `[N, HV, K, V]` | 支持 |
+| `dhtOptional` | 输入 | 可选 | 末尾隐藏状态的梯度张量 | 作为每条序列反向递推的起始梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[N, HV, K, V]` | 支持 |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | 变长模式输入，形状为 `[N+1]` | `INT64` | `ND` | 1 维 | - |
 | `chunkIndicesOptional` | 输入 | 可选 | 分块索引信息 | 变长模式输入，扁平化存储 `[seqIdx0, chunkIdx0, ...]`，长度为 `2 * numChunks` | `INT64` | `ND` | 1 维 | - |
 
@@ -80,12 +80,12 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 | 参数名 | 输入/输出 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|
 | `dhOut` | 输出 | 各 chunk 起始时刻的隐藏状态梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, NT, K, V]` | 支持 |
-| `dh0Out` | 输出 | 初始隐藏状态 `h0` 的梯度（仅当 `h0Optional` 非空时有意义）| `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
+| `dh0Out` | 输出 | 初始隐藏状态 `h0` 的梯度（仅当 `h0Optional` 非空时有意义）| `FLOAT16`、`BFLOAT16` | `ND` | `[N, HV, K, V]` | 支持 |
 | `dv2Out` | 输出 | 融合了隐藏状态贡献后的 Value 梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `workspaceSize` | 输出 | Device 侧所需 workspace 大小 | `uint64_t` | - | 标量 | - |
 | `executor` | 输出 | 算子执行器，封装了计算流程 | `aclOpExecutor*` | - | - | - |
 
-> **注**：`NT` 为 chunk 总数，定长模式下 `NT = ceil(T / chunkSize)`；变长模式下 `NT` 由 `chunkIndices` 推导。
+> **注**：`NT` 为 chunk 总数，定长模式下 `NT = ceil(T / chunkSize)`；变长模式下 `NT` 由 `chunkIndices` 推导。`N` 为实际序列数，定长模式下 `N = B`，变长模式下 `N = len(cuSeqlensOptional) - 1`。
 
 ### 3.4 形状与约束
 
@@ -95,7 +95,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 - `q` 与 `dO`/`dv` 的 `B`、`T` 必须一致，head 数允许不同（GVA）。
 - `gOptional` 的形状必须为 `[B, HV, T]`（若提供）。
 - `gkOptional` 的形状必须为 `[B, HV, T, K]`（若提供）。
-- `h0Optional`、`dhtOptional` 的形状必须为 `[B, HV, K, V]`（若提供）。
+- `h0Optional`、`dhtOptional` 的形状必须为 `[N, HV, K, V]`（若提供）；定长模式下 `N = B`，变长模式下 `N = len(cuSeqlensOptional) - 1`。
 - `dhOut` 的形状必须为 `[B, HV, NT, K, V]`。
 - **GVA 约束**：`HV % HK == 0`；读 `q`/`k` 时使用 `hq = hv / (HV / HK)`，读/写 `w`/`dO`/`dv`/`g`/`dh`/`dv2` 使用 value head 索引 `hv`。
 - 当前实现仅支持 `K = 128`；其他 `K` 尺寸会在 tiling 阶段被拒绝。
