@@ -25,6 +25,12 @@ __aicore__ inline void RunSolvePhase(GM_ADDR a, GM_ADDR cuSeqlens, GM_ADDR chunk
         CrossCoreWaitFlag(KKT_READY_FLAG);
     }
     if ASCEND_IS_AIV {
+        // A short task range can leave an entire coefficient tile on an AIV
+        // group whose writeback finishes after an unrelated group has already
+        // released its AIC.  Publish the complete AIV generation before any
+        // AIC enters SolveTri; a paired-subblock barrier is not sufficient for
+        // this cross-group dependency.
+        Catlass::Arch::CrossCoreBarrier<0x0, PIPE_MTE3>();
         CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG);
     }
     // Phase6 passes a per-core user-workspace slice and its KKT epilogue uses

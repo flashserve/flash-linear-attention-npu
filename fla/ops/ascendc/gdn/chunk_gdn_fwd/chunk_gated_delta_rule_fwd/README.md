@@ -52,6 +52,9 @@
 | `betaEffOutOptional` | 当前未支持 | - | beta sigmoid 扩展输出预留，必须为空 |
 | `hOutOptional` | 当前未支持 | - | 中间状态扩展输出预留，必须为空 |
 
+Python ctypes 入口通过关键字参数 `return_aux` 控制两个辅助输出：默认值 `True` 返回
+`gCumsum` 和 `A`；设为 `False` 时仍返回四元组，但后两项为 `None`，底层公共输出指针也为空。
+
 ## 属性
 
 | 名称 | 当前支持范围 | 说明 |

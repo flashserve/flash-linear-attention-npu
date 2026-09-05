@@ -297,7 +297,7 @@ public:
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(
                     EVENT_ID0 + pingpongFlag);
             }
-            Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
+            PublishVec1Done(vec1Done);
             return;
         }
         AscendC::ResetMask();
@@ -389,10 +389,6 @@ public:
             AscendC::DataCopy(vnewdecayOutput[l1Addr], vNewDecayUbTensor, intriParams);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
-            if constexpr (!kGated) {
-                Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
-            }
-
             AscendC::Cast(vNewOutputUbTensor, wsUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nvActual);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
@@ -400,6 +396,14 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
             AscendC::DataCopy(vnewOutputThisSubBlock, vNewOutputUbTensor, mActualThisSubBlock * nvActual);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
+            if constexpr (!kGated) {
+                // vec1Done releases the downstream consumer. Drain the
+                // asynchronous GM write before publishing that token, then
+                // re-arm the ping-pong token for the next invocation.
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
+                PublishVec1Done(vec1Done);
+            }
 
             if constexpr (kGated) {
                 AscendC::GlobalTensor<VElementOutput> kInputThisSubBlock = kInput[rowBegin * nkActual];
@@ -414,7 +418,7 @@ public:
                                   mActualThisSubBlock * nkActual);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
 
-                Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
+                PublishVec1Done(vec1Done);
             }
             if (useDirectFp32Ub) {
                 uint32_t directUbSlot = isPing ? 0 : 1;
@@ -499,12 +503,6 @@ public:
             AscendC::DataCopy(vnewdecayOutput[l1Addr], vNewDecayUbTensor, intriParams);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
-            if constexpr (!kGated) {
-                if (rowStart + rowsThisTile >= rowEnd) {
-                    Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
-                }
-            }
-
             AscendC::Cast(vNewOutputUbTensor, wsUbTensorThisTile, AscendC::RoundMode::CAST_RINT, rowsThisTile * nvActual);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
@@ -512,6 +510,14 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
             CopyUbToGm(vnewOutputThisTile, vNewOutputUbTensor, rowsThisTile, nvActual, inputStride);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
+            if (rowStart + rowsThisTile >= rowEnd) {
+                if constexpr (!kGated) {
+                    // Same producer/consumer handoff for the tiled path.
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
+                    PublishVec1Done(vec1Done);
+                }
+            }
             rowStart += rowsThisTile;
         }
 
@@ -531,7 +537,7 @@ public:
                            rowsThisTile, nkActual, nkActual);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
             }
-            Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
+            PublishVec1Done(vec1Done);
         }
 
         if (rowBegin < rowEnd) {
@@ -540,6 +546,16 @@ public:
         }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
 
+    }
+
+    CATLASS_DEVICE
+    void PublishVec1Done(Arch::CrossCoreFlag &vec1Done)
+    {
+        // V1 partitions the token rows across the two AIV subblocks while C2
+        // consumes the complete workspace tile. Publish only after both MTE3
+        // producers have closed the same workspace generation.
+        Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
     }
 
 private:

@@ -47,6 +47,8 @@ constexpr uint32_t TILING_KEY_V256 = 2;
 constexpr uint64_t WORKSPACE_ALIGNMENT = 512;
 constexpr uint64_t TILING_ALIGNMENT = 8;
 constexpr uint64_t FP32_BLOCK_ELEMS = 8;
+constexpr uint64_t LOW_PRECISION_SOLVE_WORKSPACE_SLOTS = 5;
+constexpr uint64_t FP32_SOLVE_WORKSPACE_SLOTS = 4;
 
 uint64_t CeilDiv(uint64_t value, uint64_t divisor)
 {
@@ -248,8 +250,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
         AlignUp(abc.taskNum * abc.BT * abc.BT * sizeof(float), WORKSPACE_ALIGNMENT);
     abc.aWorkspaceBytes = AlignUp(
         abc.B * abc.Hv * abc.T * abc.BT * sizeof(uint16_t), WORKSPACE_ALIGNMENT);
-    abc.solveWorkspacePerCoreBytes = AlignUp(
-        5 * abc.BT * abc.BT * sizeof(uint16_t), WORKSPACE_ALIGNMENT);
+    const uint64_t solveWorkspaceBytes = abc.BT == CHUNK_64
+        ? FP32_SOLVE_WORKSPACE_SLOTS * abc.BT * abc.BT * sizeof(float)
+        : LOW_PRECISION_SOLVE_WORKSPACE_SLOTS * abc.BT * abc.BT * sizeof(uint16_t);
+    abc.solveWorkspacePerCoreBytes = AlignUp(solveWorkspaceBytes, WORKSPACE_ALIGNMENT);
     abc.totalTiles = static_cast<int64_t>(abc.taskNum);
     abc.matrixSize = *chunkSize;
     abc.numHeads = valueHeads;

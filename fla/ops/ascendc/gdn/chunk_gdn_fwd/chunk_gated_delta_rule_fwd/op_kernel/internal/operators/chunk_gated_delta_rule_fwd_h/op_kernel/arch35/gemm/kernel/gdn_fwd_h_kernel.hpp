@@ -502,7 +502,9 @@ public:
             AscendC::DataCopy(
                 gmHWorkspace[offsets.hWorkOffset + kRow * offsets.vBlockDim],
                 accumUb, offsets.vBlockDim);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(tailEventId);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(tailEventId);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(tailEventId);
         }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(tailEventId);
@@ -610,7 +612,7 @@ public:
                                 blockMmadWHTail.preSetFlags();
                                 blockMmadWHTail(
                                     tensorBlockW, tensorBlockH, tensorBlockV,
-                                    cube1Shape, EmptyClass{}, true);
+                                    cube1Shape);
                                 blockMmadWHTail.finalWaitFlags();
                             } else {
                                 blockMmadWH.preSetFlags();
@@ -748,7 +750,7 @@ public:
                                     blockMmadKVTail.preSetFlags();
                                     blockMmadKVTail(
                                         tensorBlockK, tensorBlockVwork, tensorBlockHwork,
-                                        cube2Shape, EmptyClass{}, true);
+                                        cube2Shape);
                                     blockMmadKVTail.finalWaitFlags();
                                 } else {
                                     blockMmadKV.preSetFlags();
@@ -1028,6 +1030,9 @@ public:
                                 Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done[streamId]);
                             }
                         }
+                        // V2 partitions H-workspace rows across both AIV
+                        // subblocks. Close the generation before AIC reuses it.
+                        Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
                         Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);
                     }
                 }
