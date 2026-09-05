@@ -238,6 +238,7 @@ FIX_TEST_CONFIGS = [
     (2, 2, 65, 128, 128, 64, 0.0625, torch.float16, torch.float32, 1),
     (2, 2, 65, 128, 128, 64, 0.0625, torch.bfloat16, torch.bfloat16, 2),
     (2, 2, 65, 128, 128, 64, 0.0625, torch.bfloat16, torch.bfloat16, 4),
+    (1, 15, 1, 128, 128, 64, 1.0 / math.sqrt(128), torch.float16, torch.float32, 8),
 ]
 
 VARIABLE_TEST_CONFIGS = [

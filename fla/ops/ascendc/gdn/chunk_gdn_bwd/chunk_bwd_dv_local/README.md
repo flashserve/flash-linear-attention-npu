@@ -184,6 +184,15 @@ B = 1
 
 ---
 
+### 4.5 核间同步与 QK 流水
+
+- Cube 通过 3 个 GM ring slot 预填 QK，并为每个 QK head 向两个 Vector 子核发送一次 ready。
+- 两个 Vector 子核消费 ready 后立即共同返回一个 QK free credit；Cube 在淘汰对应的旧 head 时消费该 credit。因此未消费的 QK ready 最多为 3 个，不会触及硬件 flag 计数上限。
+- QK free credit 只负责限制 ready 的在途数量；gated-ready 握手仍保证所有 `hRatio` 个 gated workspace 写回完成后，Cube 才复用对应的 QK slot。
+- QK 与 gated-ready 不使用相同的批量反向确认节奏，避免高 `hRatio` 下两条同步链在计数边界相互等待。
+
+---
+
 ## 5. Torch 测试调用示例
 
 ### 5.1 定长场景（Padding-mode）
@@ -286,7 +295,8 @@ if __name__ == "__main__":
 `qkHead = doHead // hRatio` 复用对应的 Q/K head。定长回归覆盖
 `H_qk=4`、`H_do=16`、`T=198`、`chunkSize=64` 的 BF16 场景，变长回归覆盖
 `H_qk=4`、`H_do=16` 的 FP16 场景。精度检查使用与算子测试一致的同精度标杆和
-高精度标杆，不通过放宽阈值规避误差。
+高精度标杆，不通过放宽阈值规避误差。Fast-Kernel-Launch 还覆盖
+`B=1`、`H_qk=15`、`H_do=120`、`T=1`、`hRatio=8` 的同步边界，验证执行完成并通过 golden 精度对比。
 
 ---
 
