@@ -206,6 +206,22 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
+    "aclnnChunkKdaBwdPrepare": [
+        ctypes.c_void_p,  # aqk
+        ctypes.c_void_p,  # vNew
+        ctypes.c_void_p,  # dO
+        ctypes.c_void_p,  # h
+        ctypes.c_void_p,  # cuSeqlensOptional
+        ctypes.c_void_p,  # chunkIndicesOptional
+        ctypes.c_double,
+        ctypes.c_int64,
+        ctypes.c_bool,
+        ctypes.c_void_p,  # dAqkOut
+        ctypes.c_void_p,  # dvOut
+        ctypes.c_void_p,  # dqRawOut
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnKdaGateCumsum": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -2039,6 +2055,123 @@ def npu_recurrent_kda(
 # outputs alias the transposed gradient inputs, so bounding this input footprint
 # bounds the dominant per-call workspace without changing kernel/tiling.
 _KDA_BSND_TRANSPOSE_WORKSPACE_BUDGET_BYTES = 960 * 1024 * 1024
+
+
+def npu_chunk_kda_bwd_prepare(
+    aqk,
+    v_new,
+    d_o,
+    h,
+    *,
+    scale,
+    chunk_size=64,
+    state_v_first=False,
+    cu_seqlens=None,
+    chunk_indices=None,
+):
+    """Prepare ``dAqk``, ``dv`` and ``dq_raw`` with the A5 KernelA path.
+
+    Dense tensors use native BNSD storage. Varlen tensors use ``[N,T,D]`` and
+    require canonical host integer metadata. This path is intentionally strict:
+    BF16, C=64, K=V=128 and equal query/value head counts only.
+    """
+    import math
+    import torch
+
+    tensors = {"aqk": aqk, "v_new": v_new, "d_o": d_o, "h": h}
+    for name, tensor in tensors.items():
+        if tensor.dtype != torch.bfloat16:
+            raise RuntimeError(f"npu_chunk_kda_bwd_prepare: {name} must be torch.bfloat16.")
+        if tensor.device != aqk.device:
+            raise RuntimeError(f"npu_chunk_kda_bwd_prepare: {name} must be on aqk.device.")
+        if not tensor.is_contiguous():
+            raise RuntimeError(f"npu_chunk_kda_bwd_prepare: {name} must be contiguous.")
+    chunk_size = int(chunk_size)
+    if chunk_size != 64:
+        raise RuntimeError("npu_chunk_kda_bwd_prepare: chunk_size must be 64.")
+    scale = float(scale)
+    if not math.isfinite(scale):
+        raise RuntimeError("npu_chunk_kda_bwd_prepare: scale must be finite.")
+    if (cu_seqlens is None) != (chunk_indices is None):
+        raise RuntimeError(
+            "npu_chunk_kda_bwd_prepare: cu_seqlens and chunk_indices must be provided together."
+        )
+
+    variable = cu_seqlens is not None
+    a_shape = _shape(aqk)
+    v_shape = _shape(v_new)
+    o_shape = _shape(d_o)
+    h_shape = _shape(h)
+    expected_rank = 3 if variable else 4
+    if len(a_shape) != expected_rank or len(v_shape) != expected_rank or len(o_shape) != expected_rank:
+        raise RuntimeError("npu_chunk_kda_bwd_prepare: token tensor rank is invalid.")
+    if len(h_shape) != expected_rank + 1:
+        raise RuntimeError("npu_chunk_kda_bwd_prepare: h rank is invalid.")
+    if variable:
+        heads, tokens, chunk_width = a_shape
+        if v_shape != (heads, tokens, 128) or o_shape != (heads, tokens, 128):
+            raise RuntimeError("npu_chunk_kda_bwd_prepare: varlen aqk/v_new/d_o shapes mismatch.")
+        total_chunks = h_shape[1]
+        if h_shape != (heads, total_chunks, 128, 128):
+            raise RuntimeError("npu_chunk_kda_bwd_prepare: varlen h shape is invalid.")
+        cu = tuple(int(value) for value in cu_seqlens)
+        indices = tuple(int(value) for value in chunk_indices)
+        if not 2 <= len(cu) <= 1025 or cu[0] != 0 or cu[-1] != tokens:
+            raise RuntimeError("npu_chunk_kda_bwd_prepare: invalid cu_seqlens boundary.")
+        canonical = []
+        for seq, (begin, end) in enumerate(zip(cu[:-1], cu[1:])):
+            if begin < 0 or end < begin:
+                raise RuntimeError("npu_chunk_kda_bwd_prepare: cu_seqlens must be nondecreasing.")
+            for local in range((end - begin + chunk_size - 1) // chunk_size):
+                canonical.extend((seq, local))
+        if tuple(canonical) != indices or len(canonical) != 2 * total_chunks:
+            raise RuntimeError(
+                "npu_chunk_kda_bwd_prepare: chunk_indices must be complete canonical sequence-major metadata."
+            )
+        cu_arg = cu
+        indices_arg = indices
+    else:
+        batch, heads, tokens, chunk_width = a_shape
+        if v_shape != (batch, heads, tokens, 128) or o_shape != (batch, heads, tokens, 128):
+            raise RuntimeError("npu_chunk_kda_bwd_prepare: dense aqk/v_new/d_o shapes mismatch.")
+        chunks = (tokens + chunk_size - 1) // chunk_size
+        if h_shape != (batch, heads, chunks, 128, 128):
+            raise RuntimeError("npu_chunk_kda_bwd_prepare: dense h shape is invalid.")
+        cu_arg = None
+        indices_arg = None
+    if chunk_width != chunk_size or heads <= 0 or tokens <= 0:
+        raise RuntimeError("npu_chunk_kda_bwd_prepare: requires C=64 and positive N/T.")
+
+    d_aqk = _empty(a_shape, aqk, dtype=torch.float32)
+    dv = _empty(v_shape, v_new)
+    dq_raw = _empty(o_shape, d_o, dtype=torch.float32)
+    outputs = (d_aqk, dv, dq_raw)
+
+    def nd_tensor(ctx, tensor, name):
+        return ctx.tensor(
+            tensor,
+            name,
+            acl_format_override=ACL_FORMAT_ND,
+            storage_shape_override=_shape(tensor),
+        )
+
+    def build_args(ctx):
+        return [
+            nd_tensor(ctx, aqk, "aqk"),
+            nd_tensor(ctx, v_new, "v_new"),
+            nd_tensor(ctx, d_o, "d_o"),
+            nd_tensor(ctx, h, "h"),
+            ctx.int_array(cu_arg),
+            ctx.int_array(indices_arg),
+            ctypes.c_double(scale),
+            ctypes.c_int64(chunk_size),
+            ctypes.c_bool(bool(state_v_first)),
+            nd_tensor(ctx, d_aqk, "d_aqk"),
+            nd_tensor(ctx, dv, "dv"),
+            nd_tensor(ctx, dq_raw, "dq_raw"),
+        ]
+
+    return _call_aclnn("aclnnChunkKdaBwdPrepare", build_args, outputs)
 
 
 def _chunk_kda_bwd_intra_bsnd_segment_tokens(
