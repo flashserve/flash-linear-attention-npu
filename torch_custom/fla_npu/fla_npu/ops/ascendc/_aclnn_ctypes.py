@@ -95,43 +95,7 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
         ctypes.POINTER(ctypes.c_void_p),  # executor
     ],
-    "aclnnChunkGdnFwdS1": [
-        *([ctypes.c_void_p] * 8),
-        ctypes.c_int64,
-        ctypes.c_bool,
-        ctypes.c_bool,
-        ctypes.c_bool,
-        ctypes.c_bool,
-        ctypes.c_bool,
-        *([ctypes.c_void_p] * 6),
-        ctypes.POINTER(ctypes.c_uint64),
-        ctypes.POINTER(ctypes.c_void_p),
-    ],
-    "aclnnChunkGdnFwdS2": [
-        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int64, ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p),
-    ],
-    "aclnnChunkGdnFwdS3": [
-        *([ctypes.c_void_p] * 5), ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p),
-    ],
-    "aclnnChunkGdnFwdS4": [
-        *([ctypes.c_void_p] * 4), ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p),
-    ],
-    "aclnnChunkGdnFwdS5": [
-        *([ctypes.c_void_p] * 6), ctypes.c_int64, ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p),
-    ],
-    "aclnnChunkGdnFwdS6": [
-        *([ctypes.c_void_p] * 6), ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p),
-    ],
-    "aclnnChunkGdnFwdS7": [
-        *([ctypes.c_void_p] * 5), ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p),
-    ],
-    "aclnnChunkGdnFwdPrepare": [
+    "aclnnChunkGatedDeltaRuleFwdPrepare": [
         ctypes.c_void_p,  # q
         ctypes.c_void_p,  # k
         ctypes.c_void_p,  # v
@@ -490,7 +454,7 @@ def _chunk_indices_from_cu_seqlens(cu_seqlens, chunk_size):
     return indices
 
 
-def npu_chunk_gdn_fwd_prepare(
+def npu_chunk_gated_delta_rule_fwd_prepare(
     q,
     k,
     v,
@@ -586,7 +550,7 @@ def npu_chunk_gdn_fwd_prepare(
         )
 
     _call_aclnn(
-        "aclnnChunkGdnFwdPrepare",
+        "aclnnChunkGatedDeltaRuleFwdPrepare",
         lambda ctx: [
             logical_tensor(ctx, q, "q"),
             logical_tensor(ctx, k, "k"),
@@ -615,17 +579,6 @@ def npu_chunk_gdn_fwd_prepare(
     if beta_out is None:
         beta_out = beta.to(dtype=torch.float32)
     return q_hat, k_hat, q_rstd, k_rstd, beta_out, g_cumsum, w, u, A
-
-
-def _lt(ctx, tensor, name):
-    if tensor is None:
-        return ctx.tensor(tensor, name)
-    return ctx.tensor(
-        tensor,
-        name,
-        acl_format_override=ACL_FORMAT_ND,
-        storage_shape_override=_shape(tensor),
-    )
 
 
 def npu_chunk_bwd_dv_local(

@@ -25,7 +25,7 @@ ASCENDC_NAMES = (
     "chunk_bwd_dv_local",
     "chunk_fwd_o",
     "chunk_gated_delta_rule_bwd_dhu",
-    "chunk_gdn_fwd_prepare",
+    "chunk_gated_delta_rule_fwd_prepare",
     "chunk_gated_delta_rule_fwd_h",
     "prepare_wy_repr_bwd_da",
     "prepare_wy_repr_bwd_full",
