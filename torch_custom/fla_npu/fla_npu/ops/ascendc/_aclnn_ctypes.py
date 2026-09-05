@@ -161,6 +161,16 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
         ctypes.POINTER(ctypes.c_void_p),  # executor
     ],
+    "aclnnChunkGdnBwdIntra": [
+        *([ctypes.c_void_p] * 9),
+        ctypes.c_double,
+        ctypes.c_int64,
+        ctypes.c_bool,
+        ctypes.c_int64,
+        *([ctypes.c_void_p] * 3),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnSolveTri": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -627,6 +637,97 @@ def npu_chunk_bwd_dv_local(
             ctx.tensor(out, "out"),
         ],
         out,
+    )
+
+
+def npu_chunk_gdn_bwd_intra(
+    q,
+    k,
+    v,
+    g,
+    beta,
+    A,
+    d_o,
+    scale,
+    chunk_size,
+    *,
+    cu_seqlens=None,
+    chunk_indices=None,
+    use_exp2=True,
+    stage=2,
+):
+    """Run fused GDN recompute-w/u and intra-chunk dv in native BNSD."""
+
+    import torch
+
+    op_name = "npu_chunk_gdn_bwd_intra"
+    tensors = {"q": q, "k": k, "v": v, "g": g, "beta": beta,
+               "A": A, "d_o": d_o}
+    for name, tensor in tensors.items():
+        if not isinstance(tensor, torch.Tensor):
+            raise TypeError(f"{op_name}: {name} must be a torch.Tensor.")
+        if tensor.device != q.device:
+            raise RuntimeError(f"{op_name}: {name} must be on the same device as q.")
+        if not tensor.is_contiguous():
+            raise RuntimeError(f"{op_name}: {name} must be contiguous BNSD.")
+    if q.ndim != 4 or k.shape != q.shape or v.ndim != 4 or d_o.shape != v.shape:
+        raise RuntimeError(f"{op_name}: q/k and v/d_o must be matching rank-4 BNSD tensors.")
+    if g.ndim != 3 or beta.shape != g.shape or A.ndim != 4:
+        raise RuntimeError(f"{op_name}: g/beta must be rank 3 and A rank 4.")
+    if q.dtype not in {torch.float16, torch.bfloat16}:
+        raise RuntimeError(f"{op_name}: q must be FP16 or BF16.")
+    if any(tensor.dtype != q.dtype for tensor in (k, v, A, d_o)):
+        raise RuntimeError(f"{op_name}: k/v/A/d_o must use q.dtype.")
+    if g.dtype not in {torch.bfloat16, torch.float32} or beta.dtype not in {torch.bfloat16, torch.float32}:
+        raise RuntimeError(f"{op_name}: g and beta must each use BF16 or FP32.")
+    batch, qk_heads, seqlen, key_dim = map(int, q.shape)
+    value_heads = int(v.shape[1])
+    chunk_size = int(chunk_size)
+    if chunk_size != 64 or key_dim != 128 or int(v.shape[3]) != 128:
+        raise RuntimeError(f"{op_name}: v1 requires chunk_size=64 and K=V=128.")
+    if value_heads % qk_heads != 0 or value_heads // qk_heads not in {1, 2, 3, 4}:
+        raise RuntimeError(f"{op_name}: HV/HK must be an integer in [1, 4].")
+    if tuple(v.shape[:1] + v.shape[2:3]) != (batch, seqlen):
+        raise RuntimeError(f"{op_name}: q/k and value tensors must share B and T.")
+    if tuple(g.shape) != (batch, value_heads, seqlen):
+        raise RuntimeError(f"{op_name}: g/beta shape must be [B, HV, T].")
+    if tuple(A.shape) != (batch, value_heads, seqlen, chunk_size):
+        raise RuntimeError(f"{op_name}: A shape must be [B, HV, T, chunk_size].")
+    if (cu_seqlens is None) != (chunk_indices is None):
+        raise RuntimeError(f"{op_name}: cu_seqlens and chunk_indices must be provided together.")
+    stage = int(stage)
+    if stage not in {0, 1, 2}:
+        raise RuntimeError(f"{op_name}: stage must be 0, 1, or 2.")
+
+    w_shape = [batch, value_heads, seqlen, key_dim]
+    w_out = _empty(w_shape, q, dtype=q.dtype)
+    u_out = _empty_like(v)
+    dv_local_out = _empty_like(v)
+    outputs = (w_out, u_out, dv_local_out)
+
+    # BNSD tensors are already contiguous; expose that physical shape to tiling.
+    def nd_tensor(ctx, tensor, name):
+        return ctx.tensor(
+            tensor,
+            name,
+            acl_format_override=ACL_FORMAT_ND,
+            storage_shape_override=_shape(tensor),
+        )
+
+    return _call_aclnn(
+        "aclnnChunkGdnBwdIntra",
+        lambda ctx: [
+            nd_tensor(ctx, q, "q"), nd_tensor(ctx, k, "k"),
+            nd_tensor(ctx, v, "v"), nd_tensor(ctx, g, "g"),
+            nd_tensor(ctx, beta, "beta"), nd_tensor(ctx, A, "A"),
+            nd_tensor(ctx, d_o, "d_o"), ctx.int_array(cu_seqlens),
+            ctx.int_array(chunk_indices), ctypes.c_double(float(scale)),
+            ctypes.c_int64(chunk_size), ctypes.c_bool(bool(use_exp2)),
+            ctypes.c_int64(stage),
+            nd_tensor(ctx, w_out, "w"), nd_tensor(ctx, u_out, "u"),
+            nd_tensor(ctx, dv_local_out, "dv_local"),
+        ],
+        outputs,
     )
 
 
