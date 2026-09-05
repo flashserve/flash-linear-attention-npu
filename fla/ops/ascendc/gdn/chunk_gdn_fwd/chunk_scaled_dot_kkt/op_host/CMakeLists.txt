@@ -8,6 +8,9 @@ if (BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnn PRIVATE
         chunk_scaled_dot_kkt_def.cpp
     )
+    target_compile_definitions(op_host_aclnn PRIVATE
+        ASCEND_SOC_VERSION="${ASCEND_COMPUTE_UNIT}"
+    )
 endif()
 
 add_modules_sources(OPTYPE chunk_scaled_dot_kkt ACLNNTYPE aclnn)
