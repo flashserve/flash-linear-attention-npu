@@ -82,7 +82,7 @@ Stage 方案和测试标准沿用前面阶段的结论。
 
 1. 明确本轮目标和受影响的接口、Stage、数据、地址、资源与同步设计。
 2. 只修改本轮目标所需的代码。
-3. 按目标 SoC 构建并安装当前代码，确认运行时加载的是本轮构建结果。
+3. 按目标 SoC 和下述开发期构建方式构建并安装当前代码，确认运行时加载的是本轮构建结果。
 4. 对照 `docs/api.md` 和 `docs/design.md` 检查本轮实现；需要改变前置结论时，返回对应阶段更新并
    重新评审。
 5. 运行本轮对应的精度或接入检查，并回归已经通过但受本轮修改影响的目标。
@@ -91,6 +91,49 @@ Stage 方案和测试标准沿用前面阶段的结论。
 
 开发目标依次为 Stage 0 到最后一个 Stage、调用层与平台适配、整算子，以及每轮性能优化改动。
 前一个目标未完成闭环时，不得开始后一个目标。
+
+#### 开发期构建与运行控制
+
+首次建立开发环境时，在独立的 conda 环境中编译并安装一次完整 wheel，并确认当前 `python` 和
+`pip` 来自该环境。多人共用同一套 CANN 时，每个开发者使用各自的 conda 环境。每轮开发按
+改动范围选择构建方式：
+
+1. 只修改现有接口下的 host、tiling、kernel 或算子配置时，构建并安装单算子 run 包：
+
+   ```sh
+   bash build.sh \
+     --soc=<soc> \
+     --pkg \
+     --vendor_name=fla_npu \
+     --ops=<算子名>
+
+   ./build_out/fla_npu_linux-*.run --install
+   ```
+
+   多个算子使用逗号分隔：`--ops=<算子1>,<算子2>`。
+
+2. 修改算子参数、aclnn/schema 接口、Python wrapper 或公开导出时，重新构建并安装完整 wheel：
+
+   ```sh
+   FLA_NPU_SOC=<soc> \
+     python -m pip wheel --no-build-isolation --no-deps . -w dist
+
+   WHEEL_PATH=$(ls -t dist/flash_linear_attention_npu-*.whl | head -n 1)
+   python -m pip install \
+     --force-reinstall \
+     --no-cache-dir \
+     --no-deps \
+     "$WHEEL_PATH"
+   ```
+
+构建产物安装完成后，重启测试 Python 进程，并确认运行时加载的是本轮构建产物。构建和安装的
+详细说明见 [`开发者指南`](../开发者指南.md)。
+
+开发期执行单个用例时，确认已经进入 NPU kernel 后开始计时，连续执行 60 秒仍未返回即判定为
+kernel 超时。此时终止对应测试进程；普通终止无法退出时强制结束，并确认残留进程已经清理、
+设备资源已经释放。将超时用例、当前 Stage、TilingKey、`blockDim` 和超时现象记录到
+`docs/validation.md`，排查循环退出条件、任务分发和同步逻辑。修复并重新验证通过后再进入
+下一 Stage。编译、CPU 标杆计算和 ATK 正式验收分别使用各自的耗时与超时配置。
 
 ### 4.2 逐 Stage 实现 kernel
 
