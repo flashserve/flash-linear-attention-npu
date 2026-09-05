@@ -161,6 +161,31 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
         ctypes.POINTER(ctypes.c_void_p),  # executor
     ],
+    "aclnnChunkGatedDeltaRuleFwdPrepare": [
+        ctypes.c_void_p,  # q
+        ctypes.c_void_p,  # k
+        ctypes.c_void_p,  # v
+        ctypes.c_void_p,  # g
+        ctypes.c_void_p,  # beta
+        ctypes.c_void_p,  # aLogOptional
+        ctypes.c_void_p,  # dtBiasOptional
+        ctypes.c_void_p,  # cuSeqlensOptional
+        ctypes.c_void_p,  # chunkIndicesOptional
+        ctypes.c_int64,  # chunkSize
+        ctypes.c_bool,  # allowNegEigval
+        ctypes.c_bool,  # useExp2
+        ctypes.c_void_p,  # gOut
+        ctypes.c_void_p,  # wOut
+        ctypes.c_void_p,  # uOut
+        ctypes.c_void_p,  # aOut
+        ctypes.c_void_p,  # qHatOptional
+        ctypes.c_void_p,  # kHatOptional
+        ctypes.c_void_p,  # qRstdOptional
+        ctypes.c_void_p,  # kRstdOptional
+        ctypes.c_void_p,  # betaEffOptional
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnSolveTri": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -489,6 +514,152 @@ def npu_chunk_gated_delta_rule_bwd_dhu(
         ],
         outputs,
     )
+
+
+def _as_int_list(values):
+    if values is None:
+        return None
+    if hasattr(values, "detach"):
+        return [int(x) for x in values.detach().cpu().flatten().tolist()]
+    return [int(x) for x in values]
+
+
+def _chunk_indices_from_cu_seqlens(cu_seqlens, chunk_size):
+    indices = []
+    for seq_idx in range(len(cu_seqlens) - 1):
+        seq_len = int(cu_seqlens[seq_idx + 1]) - int(cu_seqlens[seq_idx])
+        chunk_num = (seq_len + chunk_size - 1) // chunk_size
+        for chunk_idx in range(chunk_num):
+            indices.append(seq_idx)
+            indices.append(chunk_idx)
+    return indices
+
+
+def npu_chunk_gated_delta_rule_fwd_prepare(
+    q,
+    k,
+    v,
+    g,
+    beta,
+    chunk_size=64,
+    *,
+    use_qk_l2norm_in_kernel=False,
+    use_gate_in_kernel=False,
+    use_beta_sigmoid_in_kernel=False,
+    allow_neg_eigval=False,
+    use_exp2=False,
+    a_log=None,
+    dt_bias=None,
+    cu_seqlens=None,
+    chunk_indices=None,
+):
+    import torch
+
+    if int(chunk_size) != 64:
+        raise ValueError("chunk_size currently only supports 64.")
+    q_shape = _shape(q)
+    k_shape = _shape(k)
+    v_shape = _shape(v)
+    if q_shape != k_shape:
+        raise ValueError(f"k shape must match q {q_shape}, got {k_shape}.")
+    if len(q_shape) != 4 or len(v_shape) != 4:
+        raise ValueError("q/k/v must be BNSD 4D tensors.")
+    B, HK, T, K = q_shape
+    HV, V = v_shape[1], v_shape[3]
+    if v_shape[0] != B or v_shape[2] != T:
+        raise ValueError("v batch/seq must match q.")
+    if K != 128:
+        raise ValueError("K currently only supports 128.")
+    if V not in (128, 256):
+        raise ValueError("V must be 128 or 256.")
+    if HK <= 0 or HV % HK != 0 or HV // HK not in (1, 2, 3, 4):
+        raise ValueError("Hv must be divisible by Hk and Hv/Hk must be in {1,2,3,4}.")
+    if any(tensor.dtype != q.dtype for tensor in (k, v)):
+        raise ValueError("q, k and v must have the same dtype.")
+    if q.dtype not in (torch.bfloat16,):
+        raise ValueError("q/k/v currently only support bfloat16.")
+    if _shape(g) != (B, HV, T) or _shape(beta) != (B, HV, T):
+        raise ValueError(f"g and beta must have shape {(B, HV, T)}.")
+
+    use_qk_l2norm_in_kernel = _optional_bool(use_qk_l2norm_in_kernel, False)
+    use_gate_in_kernel = _optional_bool(use_gate_in_kernel, False)
+    use_beta_sigmoid_in_kernel = _optional_bool(use_beta_sigmoid_in_kernel, False)
+    allow_neg_eigval = _optional_bool(allow_neg_eigval, False)
+    use_exp2 = _optional_bool(use_exp2, False)
+
+    if not use_qk_l2norm_in_kernel:
+        raise ValueError("use_qk_l2norm_in_kernel currently only supports True.")
+    if use_gate_in_kernel:
+        raise ValueError("use_gate_in_kernel currently only supports False.")
+    if not use_exp2:
+        raise ValueError("use_exp2 currently only supports True.")
+    if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
+        raise ValueError("allow_neg_eigval=True requires use_beta_sigmoid_in_kernel=True.")
+    if a_log is not None and _shape(a_log) != (HV,):
+        raise ValueError(f"a_log must have shape {(HV,)}, got {_shape(a_log)}.")
+    if dt_bias is not None and _shape(dt_bias) != (HV,):
+        raise ValueError(f"dt_bias must have shape {(HV,)}, got {_shape(dt_bias)}.")
+
+    cu_seqlens_list = _as_int_list(cu_seqlens)
+    chunk_indices_list = _as_int_list(chunk_indices)
+    if cu_seqlens_list is not None:
+        if B != 1:
+            raise ValueError("varlen requires B=1.")
+        if chunk_indices_list is None:
+            chunk_indices_list = _chunk_indices_from_cu_seqlens(cu_seqlens_list, int(chunk_size))
+
+    g_cumsum = _empty((B, HV, T), q, dtype=torch.float32)
+    w = _empty((B, HV, T, K), k)
+    u = _empty_like(v)
+    A = _empty((B, HV, T, int(chunk_size)), k)
+    q_hat = _empty_like(q) if use_qk_l2norm_in_kernel else q
+    k_hat = _empty_like(k) if use_qk_l2norm_in_kernel else k
+    q_rstd = _empty((B, HK, T), q, dtype=torch.float32) if use_qk_l2norm_in_kernel else None
+    k_rstd = _empty((B, HK, T), k, dtype=torch.float32) if use_qk_l2norm_in_kernel else None
+    beta_out = _empty((B, HV, T), beta, dtype=torch.float32) if use_beta_sigmoid_in_kernel else None
+
+    outputs = (q_hat, k_hat, q_rstd, k_rstd, beta_out, g_cumsum, w, u, A)
+
+    def logical_tensor(ctx, tensor, name):
+        if tensor is None:
+            return ctx.tensor(tensor, name)
+        return ctx.tensor(
+            tensor,
+            name,
+            acl_format_override=ACL_FORMAT_ND,
+            storage_shape_override=_shape(tensor),
+        )
+
+    _call_aclnn(
+        "aclnnChunkGatedDeltaRuleFwdPrepare",
+        lambda ctx: [
+            logical_tensor(ctx, q, "q"),
+            logical_tensor(ctx, k, "k"),
+            logical_tensor(ctx, v, "v"),
+            logical_tensor(ctx, g, "g"),
+            logical_tensor(ctx, beta, "beta"),
+            logical_tensor(ctx, a_log if use_gate_in_kernel else None, "a_log"),
+            logical_tensor(ctx, dt_bias if use_gate_in_kernel else None, "dt_bias"),
+            ctx.int_array(cu_seqlens_list),
+            ctx.int_array(chunk_indices_list),
+            ctypes.c_int64(int(chunk_size)),
+            ctypes.c_bool(allow_neg_eigval),
+            ctypes.c_bool(use_exp2),
+            logical_tensor(ctx, g_cumsum, "g_cumsum"),
+            logical_tensor(ctx, w, "w"),
+            logical_tensor(ctx, u, "u"),
+            logical_tensor(ctx, A, "A"),
+            logical_tensor(ctx, q_hat if use_qk_l2norm_in_kernel else None, "q_hat"),
+            logical_tensor(ctx, k_hat if use_qk_l2norm_in_kernel else None, "k_hat"),
+            logical_tensor(ctx, q_rstd, "q_rstd"),
+            logical_tensor(ctx, k_rstd, "k_rstd"),
+            logical_tensor(ctx, beta_out, "beta_out"),
+        ],
+        outputs,
+    )
+    if beta_out is None:
+        beta_out = beta.to(dtype=torch.float32)
+    return q_hat, k_hat, q_rstd, k_rstd, beta_out, g_cumsum, w, u, A
 
 
 def npu_chunk_gated_delta_rule_bwd_finalize(

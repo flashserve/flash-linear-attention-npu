@@ -25,6 +25,8 @@ custom:
     op_api: all_version
   - func: npu_chunk_gated_delta_rule_bwd_dhu(Tensor q, Tensor k, Tensor w, Tensor d_o, Tensor dv, float scale, int chunk_size, *, Tensor? g=None, Tensor? gK=None, Tensor? h0=None, Tensor? dht=None, int[]? cu_seqlens=None, int[]? chunk_indices=None, bool? use_exp2=False, bool? transpose_state_layout=False) -> (Tensor, Tensor, Tensor)
     op_api: all_version
+  - func: npu_chunk_gated_delta_rule_fwd_prepare(Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta, int chunk_size=64, *, bool use_qk_l2norm_in_kernel=False, bool use_gate_in_kernel=False, bool use_beta_sigmoid_in_kernel=False, bool allow_neg_eigval=False, bool use_exp2=False, Tensor? a_log=None, Tensor? dt_bias=None, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> (Tensor, Tensor, Tensor?, Tensor?, Tensor?, Tensor, Tensor, Tensor, Tensor)
+    op_api: all_version
   - func: npu_chunk_bwd_dv_local(Tensor q, Tensor k, Tensor d_o, Tensor g, float scale, int chunk_size, *, Tensor? g_gamma=None, Tensor? A=None, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> Tensor
     op_api: all_version
   - func: npu_prepare_wy_repr_bwd_da(Tensor k, Tensor v, Tensor beta, Tensor A, Tensor dw, Tensor du, Tensor g, *, int chunk_size, int[]? cu_seqlens=None, int[]? chunk_indices=None) -> Tensor
