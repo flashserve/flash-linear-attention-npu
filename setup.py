@@ -37,7 +37,13 @@ TRITON_CORE_PACKAGE = "fla_npu.ops.triton.triton_core"
 TRITON_CORE_SOURCE = REPO_ROOT / "fla" / "ops" / "triton" / "triton_core"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from fla_npu_artifacts import get_package_version, get_wheel_build_tag  # noqa: E402
+from fla_npu_artifacts import (  # noqa: E402
+    get_distribution_name,
+    get_package_version,
+    get_tier,
+    get_wheel_build_tag,
+    get_wheel_platform_tag,
+)
 
 
 DEFAULT_SOC = "ascend910b"
@@ -509,6 +515,45 @@ def _stage_run_package(run_file, opp_root):
     print(f"[fla-npu build] Embedded OPP staged at {vendor_dir}")
 
 
+def _write_runtime_meta() -> None:
+    """Embed wheel-tier and version-table metadata for the import-time guard.
+
+    Only tiered PyPI wheels carry _build_meta.py (tier a2/a3/a5) and
+    _compat.py (version tables mirrored from scripts/npu_compat.py). Legacy and
+    local-dev builds keep the guard inert by leaving both files absent.
+    """
+    build_meta = FLA_NPU_PACKAGE_DIR / "_build_meta.py"
+    compat_py = FLA_NPU_PACKAGE_DIR / "_compat.py"
+    if not _env_flag("FLA_NPU_PYPI"):
+        for stale in (build_meta, compat_py):
+            stale.unlink(missing_ok=True)
+        return
+
+    try:
+        import npu_compat
+    except Exception as exc:  # pragma: no cover - scripts dir is on sys.path
+        raise RuntimeError(f"unable to import npu_compat for wheel metadata: {exc}") from exc
+
+    tier = get_tier()
+    build_meta.write_text(
+        f'"""Generated at wheel build time. Do not edit."""\nTIER = {tier!r}\n',
+        encoding="utf-8",
+    )
+    compat_py.write_text(
+        "".join(
+            [
+                '"""Generated at wheel build time from scripts/npu_compat.py."""\n',
+                f"MIN_CANN = {npu_compat.MIN_CANN_BY_TIER[tier]!r}\n",
+                f"MIN_TORCH = {npu_compat.MIN_TORCH!r}\n",
+                f"TORCH_NPU_GDN_FIX_MINIMUMS = {npu_compat.TORCH_NPU_GDN_FIX_MINIMUMS!r}\n",
+                f"VALIDATED_COMBOS = {npu_compat.VALIDATED_COMBOS!r}\n",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    print(f"[fla-npu build] runtime meta written: tier={tier}, {compat_py.name}")
+
+
 def _cleanup_build_residuals():
     """Remove setuptools egg-info artifacts from the repo root.
 
@@ -521,6 +566,11 @@ def _cleanup_build_residuals():
     """
     for egg_info in glob.glob(str(REPO_ROOT / "*.egg-info")):
         shutil.rmtree(egg_info, ignore_errors=True)
+    for generated in (
+        FLA_NPU_PACKAGE_DIR / "_build_meta.py",
+        FLA_NPU_PACKAGE_DIR / "_compat.py",
+    ):
+        generated.unlink(missing_ok=True)
 
 
 def _build_torch_extension_inplace():
@@ -646,7 +696,14 @@ if _bdist_wheel is not None:
             if build_tag:
                 self.build_number = build_tag
 
+        def get_tag(self):
+            python_tag, abi_tag, plat_tag = super().get_tag()
+            if _env_flag("FLA_NPU_PYPI"):
+                return (python_tag, "none", get_wheel_platform_tag())
+            return (python_tag, abi_tag, plat_tag)
+
         def run(self):
+            _write_runtime_meta()
             super().run()
             _cleanup_build_residuals()
 
@@ -654,11 +711,24 @@ if _bdist_wheel is not None:
 
 
 setup(
-    name="flash-linear-attention-npu",
+    name=get_distribution_name(),
     version=get_package_version(REPO_ROOT),
     description="High-performance linear attention operators for Ascend NPU",
     long_description=(REPO_ROOT / "README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Developers",
+        "Operating System :: POSIX :: Linux",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    ],
+    project_urls={
+        "Homepage": "https://github.com/flashserve/flash-linear-attention-npu",
+        "Source Code": "https://github.com/flashserve/flash-linear-attention-npu",
+        "Bug Tracker": "https://github.com/flashserve/flash-linear-attention-npu/issues",
+    },
     packages=_packages(),
     package_dir=_package_dir(),
     package_data={"fla_npu": ["opp/**/*", "offline/third_party/**/*"]},

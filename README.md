@@ -121,6 +121,22 @@ WHEEL_PATH="dist/<准确wheel文件名>.whl"
 python -m pip install --force-reinstall --no-cache-dir --no-deps "$WHEEL_PATH"
 ```
 
+发布到 PyPI 后，按机器芯片选择对应包名直接安装（仍需先按 Step 1/Step 2 准备 CANN 与
+`torch` / `torch_npu` / `triton-ascend` 环境；wheel 内嵌预编译 OPP 与离线编译 bundle，
+但**不打包**这些运行时依赖）：
+
+| 芯片 | 产品档位 | PyPI 包名 |
+| --- | --- | --- |
+| 910B（A2，ascend910b） | a2 | `python -m pip install flash-linear-attention-npu-a2` |
+| A3（ascend910_93） | a3 | `python -m pip install flash-linear-attention-npu-a3` |
+| 950（A5，ascend950） | a5 | `python -m pip install flash-linear-attention-npu-a5` |
+
+pip 会按机器架构自动选择 `manylinux_2_28_aarch64` / `manylinux_2_28_x86_64` wheel。
+请按机器芯片选择上表对应包名（当前不包含芯片自动识别）。`import fla_npu` 会校验
+CANN/torch/torch_npu 版本：不满足支持要求时直接报错并提示版本组合。wheel 内嵌离线编译
+bundle，需要从源码（重）编译的场景可参考
+[离线编译与使用指南](docs/离线编译与使用指南.md)从已安装包还原。
+
 > 重新构建的 wheel 版本号与已安装的旧 wheel 可能相同。版本号相同时，不带 `--force-reinstall` 的 `pip install` 会认为"已是最新版本"而跳过，导致实际仍是旧代码。上面的命令已带 `--force-reinstall` 强制覆盖；若想先清理再装，可先执行 `python -m pip uninstall -y flash-linear-attention-npu`。
 
 wheel 不安装或执行 shell 环境钩子。无论使用系统 Python、Conda、venv
