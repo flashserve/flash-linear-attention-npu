@@ -44,6 +44,29 @@ from ._runtime import (
 # strings or otherwise ambiguous scalar conversion are listed here to prevent
 # ctypes from narrowing or mis-converting arguments.
 _GET_WORKSPACE_ARGTYPES = {
+    "aclnnCausalConv1d": [
+        ctypes.c_void_p,  # x
+        ctypes.c_void_p,  # weight
+        ctypes.c_void_p,  # biasOptional
+        ctypes.c_void_p,  # convStatesOptional
+        ctypes.c_void_p,  # queryStartLocOptional
+        ctypes.c_void_p,  # cacheIndicesOptional
+        ctypes.c_void_p,  # hasInitialStateOptional
+        ctypes.c_void_p,  # numAcceptedTokensOptional
+        ctypes.c_void_p,  # queryStartLocCpuOptional
+        ctypes.c_void_p,  # cacheIndicesCpuOptional
+        ctypes.c_void_p,  # hasInitialStateCpuOptional
+        ctypes.c_void_p,  # numAcceptedTokensCpuOptional
+        ctypes.c_char_p,  # activation
+        ctypes.c_int64,  # padSlotId
+        ctypes.c_int64,  # nullBlockId
+        ctypes.c_int64,  # runMode
+        ctypes.c_int64,  # headNum
+        ctypes.c_int64,  # maxQueryLen
+        ctypes.c_void_p,  # y
+        ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
+        ctypes.POINTER(ctypes.c_void_p),  # executor
+    ],
     "aclnnChunkFwdO": [
         ctypes.c_void_p,  # q
         ctypes.c_void_p,  # k
@@ -1360,8 +1383,17 @@ def npu_chunk_scaled_dot_kkt(
     )
 
 
+# Typing dependencies scoped to the causal_conv1d wrappers below: annotations
+# stay lazy, and Sequence is also used at runtime by the metadata helpers.
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import torch
+
+
 def _infer_causal_conv1d_y(x, head_num: int, run_mode: int):
-    x_dim = x.dim()
+    x_dim = len(x.shape)
     if run_mode == 0 and head_num > 0:
         if x_dim == 3:
             b, s, d_model = _shape(x)
@@ -1370,6 +1402,572 @@ def _infer_causal_conv1d_y(x, head_num: int, run_mode: int):
             s, d_model = _shape(x)
             return _empty((head_num, s, d_model // head_num), x)
     return _empty_like(x)
+
+
+def _normalize_causal_conv1d_activation(activation: str | None) -> str:
+    if activation not in {None, "silu", "swish"}:
+        raise ValueError(
+            "activation must be None, 'silu', or 'swish', "
+            f"got {activation!r}"
+        )
+    return "none" if activation is None else activation
+
+
+def _validate_causal_conv1d_slot_id(
+    value: int | None,
+    *,
+    name: str,
+    allow_none: bool,
+) -> int:
+    if value is None:
+        if allow_none:
+            return -1  # sentinel disabling the null-block slot
+        raise TypeError(f"{name} must be an int")
+    if isinstance(value, bool) or not isinstance(value, int):
+        expected = "an int or None" if allow_none else "an int"
+        raise TypeError(f"{name} must be {expected}, got {type(value).__name__}")
+    if allow_none and value < 0:
+        raise ValueError(f"{name} must be non-negative or None, got {value}")
+    return value
+
+
+def _reject_unsupported_causal_conv1d_scheduling(**values: object) -> None:
+    enabled = [name for name, value in values.items() if value is not None]
+    if enabled:
+        raise NotImplementedError(
+            "CausalConv1d APC/block-cache scheduling is not supported by the "
+            f"Ascend operator: {', '.join(enabled)}"
+        )
+
+
+def _causal_conv1d_cpu_metadata_values(
+    value: torch.Tensor | Sequence[int] | None,
+    *,
+    name: str,
+) -> list[int] | None:
+    import torch
+
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        if value.device.type != "cpu":
+            raise ValueError(f"{name} must be a CPU Tensor, got {value.device}")
+        if value.dim() != 1:
+            raise ValueError(f"{name} must be rank 1, got shape {tuple(value.shape)}")
+        if value.dtype not in {torch.bool, torch.int32, torch.int64}:
+            raise TypeError(f"{name} must use bool, int32, or int64, got {value.dtype}")
+        return [int(item) for item in value.tolist()]
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return [int(item) for item in value]
+    raise TypeError(f"{name} must be a CPU Tensor, an integer sequence, or None")
+
+
+def _validate_causal_conv1d_device_metadata(
+    value: torch.Tensor | None,
+    *,
+    name: str,
+    data_device: torch.device,
+    allow_bool: bool = False,
+) -> None:
+    import torch
+
+    if value is None:
+        return
+    if not isinstance(value, torch.Tensor):
+        raise TypeError(f"{name} must be a device Tensor or None")
+    if value.dim() != 1:
+        raise ValueError(f"{name} must be rank 1, got shape {tuple(value.shape)}")
+    allowed_dtypes = {torch.int32} | ({torch.bool} if allow_bool else set())
+    if value.dtype not in allowed_dtypes:
+        allowed = "bool or int32" if allow_bool else "int32"
+        raise TypeError(f"{name} must use {allowed}, got {value.dtype}")
+    if value.device != data_device:
+        raise ValueError(f"{name} must be on {data_device}, got {value.device}")
+
+
+def _check_causal_conv1d_metadata_pair(
+    device_value: torch.Tensor | None,
+    cpu_value: list[int] | None,
+    *,
+    name: str,
+) -> None:
+    if device_value is not None and cpu_value is not None:
+        raise ValueError(f"{name} and {name}_cpu are mutually exclusive")
+
+
+def _causal_conv1d_metadata_length(
+    device_value: torch.Tensor | None,
+    cpu_value: list[int] | None,
+) -> int | None:
+    if device_value is not None:
+        return device_value.numel()
+    if cpu_value is not None:
+        return len(cpu_value)
+    return None
+
+
+def _causal_conv1d_metadata_values_for_validation(
+    device_value: torch.Tensor | None,
+    cpu_value: list[int] | None,
+) -> list[int] | None:
+    if cpu_value is not None:
+        return cpu_value
+    if device_value is None:
+        return None
+    return [int(item) for item in device_value.detach().cpu().tolist()]
+
+
+def _validate_causal_conv1d_query_start_loc(
+    values: list[int],
+    *,
+    total_tokens: int,
+) -> None:
+    if len(values) < 2:
+        raise ValueError("query_start_loc must contain at least [0, total_tokens]")
+    if values[0] != 0 or values[-1] != total_tokens:
+        raise ValueError(
+            "query_start_loc must start at 0 and end at "
+            f"{total_tokens}, got ({values[0]}, {values[-1]})"
+        )
+    if any(left > right for left, right in zip(values, values[1:])):
+        raise ValueError(f"query_start_loc must be non-decreasing, got {values}")
+
+
+def _validate_causal_conv1d_weight_and_state(
+    weight: torch.Tensor,
+    conv_state: torch.Tensor | None,
+    *,
+    allow_missing_state: bool = False,
+) -> tuple[int, int]:
+    if weight.dim() != 2:
+        raise ValueError(f"weight must have shape (width, dim), got {tuple(weight.shape)}")
+    width, dim = weight.shape
+    supported_widths = {2, 3, 4}
+    if width not in supported_widths:
+        raise ValueError(
+            "weight width must be one of "
+            f"{sorted(supported_widths)}, got {width}"
+        )
+    if dim % 16 != 0:
+        raise ValueError(f"weight dim must be divisible by 16, got {dim}")
+    if conv_state is None:
+        if allow_missing_state:
+            return dim, width
+        raise ValueError("conv_state is required by causal_conv1d_update")
+    if conv_state.numel() == 0:
+        if allow_missing_state:
+            return dim, width
+        raise ValueError("empty conv_state is only supported by causal_conv1d_fn")
+    if conv_state.dim() != 3:
+        raise ValueError(
+            "conv_state(s) must have shape (num_cache_lines, state_len, dim), "
+            f"got {tuple(conv_state.shape)}"
+        )
+    if conv_state.shape[2] != dim:
+        raise ValueError(
+            f"conv_state(s) dim {conv_state.shape[2]} must match weight dim {dim}"
+        )
+    if conv_state.shape[1] < width - 1:
+        raise ValueError(
+            f"conv_state(s) state_len must be at least width - 1 ({width - 1}), "
+            f"got {conv_state.shape[1]}"
+        )
+    return dim, width
+
+
+def _validate_causal_conv1d_data_tensors(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None,
+    conv_state: torch.Tensor | None,
+) -> None:
+    data_tensors = [("weight", weight)]
+    if conv_state is not None:
+        data_tensors.append(("conv_state(s)", conv_state))
+    for name, tensor in data_tensors:
+        if tensor.dtype != x.dtype:
+            raise TypeError(f"{name} dtype {tensor.dtype} must match x dtype {x.dtype}")
+        if tensor.device != x.device:
+            raise ValueError(f"{name} device {tensor.device} must match x device {x.device}")
+    if bias is not None:
+        if bias.dtype != x.dtype:
+            raise TypeError(f"bias dtype {bias.dtype} must match x dtype {x.dtype}")
+        if bias.device != x.device:
+            raise ValueError(f"bias device {bias.device} must match x device {x.device}")
+
+
+# Public signature defaults re-exported by fla_npu.ops.ascendc.
+PAD_SLOT_ID = -1
+NULL_BLOCK_ID = 0
+
+
+def _launch_causal_conv1d(
+    x,
+    weight,
+    bias=None,
+    conv_states=None,
+    *,
+    query_start_loc=None,
+    cache_indices=None,
+    has_initial_state=None,
+    num_accepted_tokens=None,
+    query_start_loc_cpu=None,
+    cache_indices_cpu=None,
+    has_initial_state_cpu=None,
+    num_accepted_tokens_cpu=None,
+    activation="none",
+    pad_slot_id=-1,
+    null_block_id=-1,
+    run_mode=0,
+    head_num=0,
+    max_query_len=-1,
+):
+    """Build the single aclnnCausalConv1d ABI shared by all Python APIs."""
+
+    out = _infer_causal_conv1d_y(x, int(head_num), int(run_mode))
+    activation_buffer = ctypes.create_string_buffer(str(activation).encode("utf-8"))
+    return _call_aclnn(
+        "aclnnCausalConv1d",
+        lambda ctx: [
+            ctx.tensor(x, "x"),
+            ctx.tensor(weight, "weight"),
+            ctx.tensor(bias, "bias"),
+            ctx.tensor(conv_states, "conv_states"),
+            ctx.tensor(query_start_loc, "query_start_loc"),
+            ctx.tensor(cache_indices, "cache_indices"),
+            ctx.tensor(has_initial_state, "has_initial_state"),
+            ctx.tensor(num_accepted_tokens, "num_accepted_tokens"),
+            ctx.int_array(query_start_loc_cpu),
+            ctx.int_array(cache_indices_cpu),
+            ctx.int_array(has_initial_state_cpu),
+            ctx.int_array(num_accepted_tokens_cpu),
+            ctypes.cast(activation_buffer, ctypes.c_char_p),
+            ctypes.c_int64(int(pad_slot_id)),
+            ctypes.c_int64(int(null_block_id)),
+            ctypes.c_int64(int(run_mode)),
+            ctypes.c_int64(int(head_num)),
+            ctypes.c_int64(int(max_query_len)),
+            ctx.tensor(out, "out"),
+        ],
+        out,
+    )
+
+
+def npu_causal_conv1d_fn(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None,
+    conv_states: torch.Tensor | None = None,
+    query_start_loc: torch.Tensor | None = None,
+    cache_indices: torch.Tensor | None = None,
+    has_initial_state: torch.Tensor | None = None,
+    activation: str | None = "silu",
+    pad_slot_id: int = PAD_SLOT_ID,
+    null_block_id: int | None = NULL_BLOCK_ID,
+    block_idx_first_scheduled_token: torch.Tensor | None = None,
+    block_idx_last_scheduled_token: torch.Tensor | None = None,
+    initial_state_idx: torch.Tensor | None = None,
+    num_computed_tokens: torch.Tensor | None = None,
+    block_size_to_align: int = 0,
+    metadata: object | None = None,
+    validate_data: bool = False,
+    *,
+    query_start_loc_cpu: torch.Tensor | Sequence[int] | None = None,
+    cache_indices_cpu: torch.Tensor | Sequence[int] | None = None,
+    has_initial_state_cpu: torch.Tensor | Sequence[int] | None = None,
+    head_num: int = 0,
+) -> torch.Tensor:
+    """Run FN with dim-last ``x=(T,D)`` or ``x=(B,S,D)``."""
+    _reject_unsupported_causal_conv1d_scheduling(
+        block_idx_first_scheduled_token=block_idx_first_scheduled_token,
+        block_idx_last_scheduled_token=block_idx_last_scheduled_token,
+        initial_state_idx=initial_state_idx,
+        num_computed_tokens=num_computed_tokens,
+        metadata=metadata,
+    )
+    if block_size_to_align not in (0, None):
+        raise NotImplementedError(
+            "CausalConv1d block_size_to_align is not supported by the Ascend operator"
+        )
+    raw_pad_slot_id = _validate_causal_conv1d_slot_id(
+        pad_slot_id,
+        name="pad_slot_id",
+        allow_none=False,
+    )
+    raw_null_block_id = _validate_causal_conv1d_slot_id(
+        null_block_id,
+        name="null_block_id",
+        allow_none=True,
+    )
+
+    dim, _ = _validate_causal_conv1d_weight_and_state(
+        weight,
+        conv_states,
+        allow_missing_state=True,
+    )
+    if x.dim() not in (2, 3) or x.shape[-1] != dim:
+        raise ValueError(
+            "x must have shape (total_tokens, dim) or (batch, seqlen, dim) "
+            f"with dim={dim}, got {tuple(x.shape)}"
+        )
+    _validate_causal_conv1d_data_tensors(x, weight, bias, conv_states)
+    if x.dim() == 3 and (query_start_loc is not None or query_start_loc_cpu is not None):
+        raise ValueError("query_start_loc is not supported for 3D x")
+    if head_num < 0 or (
+        head_num > 0
+        and (dim % head_num != 0 or (dim // head_num) % 16 != 0)
+    ):
+        raise ValueError("head_num must be 0 or divide dim with a head_dim divisible by 16")
+
+    qsl_cpu = _causal_conv1d_cpu_metadata_values(
+        query_start_loc_cpu,
+        name="query_start_loc_cpu",
+    )
+    cache_cpu = _causal_conv1d_cpu_metadata_values(
+        cache_indices_cpu,
+        name="cache_indices_cpu",
+    )
+    initial_cpu = _causal_conv1d_cpu_metadata_values(
+        has_initial_state_cpu,
+        name="has_initial_state_cpu",
+    )
+
+    _validate_causal_conv1d_device_metadata(
+        query_start_loc,
+        name="query_start_loc",
+        data_device=x.device,
+    )
+    _validate_causal_conv1d_device_metadata(
+        cache_indices,
+        name="cache_indices",
+        data_device=x.device,
+    )
+    _validate_causal_conv1d_device_metadata(
+        has_initial_state,
+        name="has_initial_state",
+        data_device=x.device,
+        allow_bool=True,
+    )
+    _check_causal_conv1d_metadata_pair(query_start_loc, qsl_cpu, name="query_start_loc")
+    _check_causal_conv1d_metadata_pair(cache_indices, cache_cpu, name="cache_indices")
+    _check_causal_conv1d_metadata_pair(
+        has_initial_state,
+        initial_cpu,
+        name="has_initial_state",
+    )
+
+    qsl_len = _causal_conv1d_metadata_length(query_start_loc, qsl_cpu)
+    if qsl_len is None:
+        if x.dim() == 2:
+            raise ValueError("query_start_loc or query_start_loc_cpu is required for 2D x")
+        batch = x.shape[0]
+    else:
+        batch = qsl_len - 1
+        if batch < 0:
+            raise ValueError("query_start_loc must contain at least one element")
+    for name, device_value, cpu_value in (
+        ("cache_indices", cache_indices, cache_cpu),
+        ("has_initial_state", has_initial_state, initial_cpu),
+    ):
+        length = _causal_conv1d_metadata_length(device_value, cpu_value)
+        if length is not None and length != batch:
+            raise ValueError(f"{name} must contain {batch} entries")
+    if validate_data and qsl_len is not None:
+        values = _causal_conv1d_metadata_values_for_validation(query_start_loc, qsl_cpu)
+        assert values is not None
+        _validate_causal_conv1d_query_start_loc(values, total_tokens=x.shape[0])
+
+    return _launch_causal_conv1d(
+        x=x,
+        weight=weight,
+        bias=bias,
+        conv_states=conv_states,
+        query_start_loc=query_start_loc,
+        cache_indices=cache_indices,
+        has_initial_state=has_initial_state,
+        query_start_loc_cpu=qsl_cpu,
+        cache_indices_cpu=cache_cpu,
+        has_initial_state_cpu=initial_cpu,
+        activation=_normalize_causal_conv1d_activation(activation),
+        pad_slot_id=raw_pad_slot_id,
+        null_block_id=raw_null_block_id,
+        run_mode=0,
+        head_num=head_num,
+    )
+
+
+def npu_causal_conv1d_update(
+    x: torch.Tensor,
+    conv_state: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None = None,
+    activation: str | None = None,
+    conv_state_indices: torch.Tensor | None = None,
+    num_accepted_tokens: torch.Tensor | None = None,
+    query_start_loc: torch.Tensor | None = None,
+    max_query_len: int = -1,
+    null_block_id: int | None = NULL_BLOCK_ID,
+    block_idx_last_scheduled_token: torch.Tensor | None = None,
+    initial_state_idx: torch.Tensor | None = None,
+    validate_data: bool = False,
+    out: torch.Tensor | None = None,
+    *,
+    conv_state_indices_cpu: torch.Tensor | Sequence[int] | None = None,
+    num_accepted_tokens_cpu: torch.Tensor | Sequence[int] | None = None,
+    query_start_loc_cpu: torch.Tensor | Sequence[int] | None = None,
+) -> torch.Tensor:
+    """Run UPDATE with dim-last data and mutate ``conv_state`` in place."""
+    _reject_unsupported_causal_conv1d_scheduling(
+        block_idx_last_scheduled_token=block_idx_last_scheduled_token,
+        initial_state_idx=initial_state_idx,
+    )
+    raw_null_block_id = _validate_causal_conv1d_slot_id(
+        null_block_id,
+        name="null_block_id",
+        allow_none=True,
+    )
+
+    dim, width = _validate_causal_conv1d_weight_and_state(weight, conv_state)
+    qsl_cpu = _causal_conv1d_cpu_metadata_values(
+        query_start_loc_cpu,
+        name="query_start_loc_cpu",
+    )
+    state_indices_cpu = _causal_conv1d_cpu_metadata_values(
+        conv_state_indices_cpu,
+        name="conv_state_indices_cpu",
+    )
+    accepted_cpu = _causal_conv1d_cpu_metadata_values(
+        num_accepted_tokens_cpu,
+        name="num_accepted_tokens_cpu",
+    )
+
+    _validate_causal_conv1d_device_metadata(
+        query_start_loc,
+        name="query_start_loc",
+        data_device=x.device,
+    )
+    _validate_causal_conv1d_device_metadata(
+        conv_state_indices,
+        name="conv_state_indices",
+        data_device=x.device,
+    )
+    _validate_causal_conv1d_device_metadata(
+        num_accepted_tokens,
+        name="num_accepted_tokens",
+        data_device=x.device,
+    )
+    _check_causal_conv1d_metadata_pair(query_start_loc, qsl_cpu, name="query_start_loc")
+    _check_causal_conv1d_metadata_pair(
+        conv_state_indices,
+        state_indices_cpu,
+        name="conv_state_indices",
+    )
+    _check_causal_conv1d_metadata_pair(
+        num_accepted_tokens,
+        accepted_cpu,
+        name="num_accepted_tokens",
+    )
+
+    is_varlen = query_start_loc is not None or qsl_cpu is not None
+    if isinstance(max_query_len, bool) or not isinstance(max_query_len, int):
+        raise TypeError(
+            f"max_query_len must be an int, got {type(max_query_len).__name__}"
+        )
+    if max_query_len < -1:
+        raise ValueError(f"max_query_len must be >= -1, got {max_query_len}")
+    if is_varlen and max_query_len < 0:
+        raise ValueError(
+            "max_query_len must be provided and non-negative for varlen update"
+        )
+    if x.dim() == 2:
+        if x.shape[1] != dim:
+            raise ValueError(f"x.shape[1] must equal dim={dim}, got {tuple(x.shape)}")
+    elif x.dim() == 3 and not is_varlen:
+        if x.shape[2] != dim:
+            raise ValueError(f"x.shape[2] must equal dim={dim}, got {tuple(x.shape)}")
+    else:
+        expected = (
+            "(total_tokens, dim)"
+            if is_varlen
+            else "(batch, dim) or (batch, seqlen, dim)"
+        )
+        raise ValueError(f"x must have shape {expected}, got {tuple(x.shape)}")
+    _validate_causal_conv1d_data_tensors(x, weight, bias, conv_state)
+
+    if out is not None:
+        if out.shape != x.shape:
+            raise ValueError(f"out shape {tuple(out.shape)} must match x shape {tuple(x.shape)}")
+        if out.dtype != x.dtype or out.device != x.device:
+            raise ValueError("out must have the same dtype and device as x")
+    if (
+        _causal_conv1d_metadata_length(num_accepted_tokens, accepted_cpu) is not None
+        and width != 4
+    ):
+        raise ValueError(
+            "num_accepted_tokens is currently supported only when weight width is 4"
+        )
+    if (
+        is_varlen
+        and _causal_conv1d_metadata_length(conv_state_indices, state_indices_cpu) is None
+    ):
+        raise ValueError(
+            "conv_state_indices or conv_state_indices_cpu is required for varlen update"
+        )
+
+    qsl_len = _causal_conv1d_metadata_length(query_start_loc, qsl_cpu)
+    if qsl_len is not None:
+        batch = qsl_len - 1
+        state_indices_len = _causal_conv1d_metadata_length(
+            conv_state_indices,
+            state_indices_cpu,
+        )
+        accepted_len = _causal_conv1d_metadata_length(
+            num_accepted_tokens,
+            accepted_cpu,
+        )
+        if state_indices_len is not None and state_indices_len != batch:
+            raise ValueError(f"conv_state_indices must contain {batch} entries")
+        if accepted_len is not None and accepted_len != batch:
+            raise ValueError(f"num_accepted_tokens must contain {batch} entries")
+        if validate_data:
+            values = _causal_conv1d_metadata_values_for_validation(
+                query_start_loc,
+                qsl_cpu,
+            )
+            assert values is not None
+            _validate_causal_conv1d_query_start_loc(values, total_tokens=x.shape[0])
+            observed_max = max(
+                (right - left for left, right in zip(values, values[1:])),
+                default=0,
+            )
+            if max_query_len >= 0 and max_query_len < observed_max:
+                raise ValueError(
+                    f"max_query_len={max_query_len} is smaller than the observed "
+                    f"segment length {observed_max}"
+                )
+
+    result = _launch_causal_conv1d(
+        x=x,
+        weight=weight,
+        bias=bias,
+        conv_states=conv_state,
+        query_start_loc=query_start_loc,
+        cache_indices=conv_state_indices,
+        num_accepted_tokens=num_accepted_tokens,
+        query_start_loc_cpu=qsl_cpu,
+        cache_indices_cpu=state_indices_cpu,
+        num_accepted_tokens_cpu=accepted_cpu,
+        activation=_normalize_causal_conv1d_activation(activation),
+        pad_slot_id=-(1 << 63),
+        null_block_id=raw_null_block_id,
+        run_mode=1,
+        max_query_len=max_query_len,
+    )
+    if out is not None:
+        out.copy_(result)
+        return out
+    x.copy_(result)
+    return x
 
 
 def npu_causal_conv1d(
@@ -1387,25 +1985,34 @@ def npu_causal_conv1d(
     run_mode=0,
     head_num=0,
 ):
-    out = _infer_causal_conv1d_y(x, int(head_num), int(run_mode))
-    return _call_aclnn(
-        "aclnnCausalConv1d",
-        lambda ctx: [
-            ctx.tensor(x, "x"),
-            ctx.tensor(weight, "weight"),
-            ctx.tensor(bias, "bias"),
-            ctx.tensor(conv_states, "conv_states"),
-            ctx.int_array(query_start_loc),
-            ctx.int_array(cache_indices),
-            ctx.int_array(initial_state_mode),
-            ctx.int_array(num_accepted_tokens),
-            ctypes.c_int64(int(activation_mode)),
-            ctypes.c_int64(int(pad_slot_id)),
-            ctypes.c_int64(int(run_mode)),
-            ctypes.c_int64(int(head_num)),
-            ctx.tensor(out, "out"),
-        ],
-        out,
+    """Run the deprecated Host-metadata compatibility interface."""
+    import warnings
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_causal_conv1d is a deprecated compatibility "
+        "API and will be removed in 2027/02. Use causal_conv1d_fn or "
+        "causal_conv1d_update instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+    activation_mode = int(activation_mode)
+    if activation_mode not in (0, 1):
+        raise ValueError(f"activation_mode only supports 0/1, got {activation_mode}")
+    activation = "silu" if activation_mode == 1 else "none"
+    return _launch_causal_conv1d(
+        x=x,
+        weight=weight,
+        bias=bias,
+        conv_states=conv_states,
+        query_start_loc_cpu=query_start_loc,
+        cache_indices_cpu=cache_indices,
+        has_initial_state_cpu=initial_state_mode,
+        num_accepted_tokens_cpu=num_accepted_tokens,
+        activation=activation,
+        pad_slot_id=pad_slot_id,
+        null_block_id=-1,
+        run_mode=run_mode,
+        head_num=head_num,
     )
 
 

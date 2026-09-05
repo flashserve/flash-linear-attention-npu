@@ -9,7 +9,7 @@
 
 /*!
  * \file causal_conv1d_tiling.cpp
- * \brief
+ * \brief CausalConv1d tiling entry and template registration.
  */
 
 #include "tiling_base/tiling_templates_registry.h"
@@ -53,8 +53,9 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
     FnExecutionPlan fnExecutionPlan = FN_EXECUTION_PLAN_INVALID;
     FnHostPlan fnHostPlan;
     const int64_t *qslData = nullptr;
-    if (isFn && tiling->inputMode == 0) {
-        const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INDEX);
+    if (isFn && tiling->inputMode == 0 && tiling->queryStartLocUseCpu != 0 &&
+        tiling->queryStartLocDtype == METADATA_DTYPE_INT64) {
+        const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_CPU_INDEX);
         qslData = (qslTensor != nullptr) ? qslTensor->GetData<int64_t>() : nullptr;
     }
 
@@ -114,7 +115,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
     uint32_t blockDim =
         (effectiveGridSize < static_cast<int64_t>(coreNum)) ? static_cast<uint32_t>(effectiveGridSize) : coreNum;
     if (isFn) {
-        const int64_t mappedBlockDim = std::min<int64_t>(effectiveGridSize, fnHostPlan.tokenCoreMapping.blockDim);
+        const int64_t mappedBlockDim = (effectiveGridSize < fnHostPlan.tokenCoreMapping.blockDim) ? effectiveGridSize : fnHostPlan.tokenCoreMapping.blockDim;
         OP_CHECK_IF(mappedBlockDim <= 0, OP_LOGE(context, "invalid mapped blockDim for runMode=0"),
                     return ge::GRAPH_FAILED);
         blockDim = static_cast<uint32_t>(mappedBlockDim);
@@ -123,22 +124,25 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
     OP_LOGD(context,
             "Tiling result: mode[%s], batch[%ld], dim[%ld], baseDim[%ld], baseDimCnt[%ld], gridSize[%ld], "
             "effectiveGrid[%ld], blockDim[%u], coreNum[%u], tokenTiling[%ld,%ld], hasActivation[%d], hasBias[%d], "
-            "fnPlan[%ld].",
+            "fnPlan[%ld], maxQueryLen[%ld].",
             plannerModeTag, batch, dim, baseDimChoice.baseDim, baseDimChoice.baseDimCnt, baseDimChoice.gridSize,
             effectiveGridSize, blockDim, coreNum, tiling->tokenBlockSize, tiling->tokenBlockCnt,
-            static_cast<int32_t>(hasActivation), static_cast<int32_t>(hasBias), static_cast<int64_t>(fnExecutionPlan));
+            static_cast<int32_t>(hasActivation), static_cast<int32_t>(hasBias), static_cast<int64_t>(fnExecutionPlan),
+            tiling->maxQueryLen);
 
     context->SetBlockDim(blockDim);
     tiling->baseDim = baseDimChoice.baseDim;
     tiling->baseDimCnt = baseDimChoice.baseDimCnt;
     const uint32_t fnPlanKey = NormalizeFnPlanTilingKey(runModeKey, fnExecutionPlan);
     const uint32_t widthKey = NormalizeWidthTilingKey(runModeKey, static_cast<int32_t>(tiling->width));
-    if (isFn && tiling->hasInitialStateMode != 0) {
+    if (isFn && tiling->numCacheLines > 0 && tiling->hasInitialState != 0) {
         constexpr int64_t kDtypeSize = 2;
         constexpr int64_t kSyncBytesPerBlock = 32;
-        const int64_t snapshotWorkspaceSize = tiling->numCacheLines * tiling->stateLen * tiling->dim * kDtypeSize;
+        const int64_t historyCount = (tiling->width - 1 > 0) ? tiling->width - 1 : 0;
+        const int64_t syncWorkspaceSize = static_cast<int64_t>(blockDim) * kSyncBytesPerBlock;
+        const int64_t snapshotWorkspaceSize = tiling->batch * historyCount * tiling->dim * kDtypeSize;
         const int64_t workspaceSize =
-            ASCENDC_RESERVED_WORKSPACE_SIZE + snapshotWorkspaceSize;
+            ASCENDC_RESERVED_WORKSPACE_SIZE + syncWorkspaceSize + snapshotWorkspaceSize;
         OP_CHECK_IF(SetWorkspaceSize(context, static_cast<size_t>(workspaceSize)) != ge::GRAPH_SUCCESS,
                     OP_LOGE(context, "SetWorkspaceSize error"), return ge::GRAPH_FAILED);
         OP_CHECK_IF(context->SetScheduleMode(1) != ge::GRAPH_SUCCESS,
@@ -165,4 +169,4 @@ IMPL_OP_OPTILING(CausalConv1d)
     .Tiling(CausalConv1dTilingFunc)
     .TilingParse<CausalConv1dCompileInfo>(TilingParseForCausalConv1d);
 
-} // namespace optiling
+}

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ctypes
 import importlib.util
+import inspect
 import sys
 import types
 import unittest
@@ -46,20 +47,45 @@ ACLNN_CTYPES = load_aclnn_ctypes_module()
 
 
 class FakeTensor:
-    def __init__(self, shape, dtype=None, *, device_type="npu", contiguous=True):
+    def __init__(
+        self,
+        shape,
+        dtype=None,
+        *,
+        device_type="npu",
+        device=None,
+        contiguous=True,
+    ):
         self.shape = tuple(shape)
         self.dtype = dtype
-        self.device = types.SimpleNamespace(type=device_type)
+        self.device = device or types.SimpleNamespace(type=device_type)
         self._contiguous = contiguous
+
+    def dim(self):
+        return len(self.shape)
+
+    def numel(self):
+        result = 1
+        for value in self.shape:
+            result *= value
+        return result
+
+    def copy_(self, other):
+        del other
+        return self
 
     def is_contiguous(self):
         return self._contiguous
+
+    def data_ptr(self):
+        return 0x3000
 
 
 class FakeCallContext:
     def __init__(self):
         self.descriptor_names = []
         self.descriptor_metadata = []
+        self.int_array_values = []
 
     def tensor(
         self,
@@ -76,12 +102,242 @@ class FakeCallContext:
         return ctypes.c_void_p(0x1000 + len(self.descriptor_names))
 
     def int_array(self, values):
-        del values
+        self.int_array_values.append(values)
         self.descriptor_names.append("query_start_loc")
         return ctypes.c_void_p(0x2000)
 
 
 class AclnnCtypesAbiTest(unittest.TestCase):
+    def test_causal_conv1d_signature_matches_aclnn_prototype(self):
+        expected_argtypes = [
+            *([ctypes.c_void_p] * 12),
+            ctypes.c_char_p,
+            *([ctypes.c_int64] * 5),
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_uint64),
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        self.assertEqual(
+            ACLNN_CTYPES._GET_WORKSPACE_ARGTYPES["aclnnCausalConv1d"],
+            expected_argtypes,
+        )
+
+    def test_causal_conv1d_wrapper_matches_complete_argument_order(self):
+        captured = {}
+
+        def fake_empty_like(tensor, **kwargs):
+            return FakeTensor(tensor.shape, kwargs.get("dtype", tensor.dtype))
+
+        def fake_call_aclnn(name, build_args, outputs):
+            context = FakeCallContext()
+            captured["name"] = name
+            captured["args"] = build_args(context)
+            captured["context"] = context
+            return outputs
+
+        x = FakeTensor((5, 16))
+        weight = FakeTensor((4, 16))
+        with mock.patch.object(ACLNN_CTYPES, "_empty_like", side_effect=fake_empty_like):
+            with mock.patch.object(ACLNN_CTYPES, "_call_aclnn", side_effect=fake_call_aclnn):
+                with self.assertWarnsRegex(FutureWarning, "2027/02"):
+                    ACLNN_CTYPES.npu_causal_conv1d(
+                        x,
+                        weight,
+                        conv_states=FakeTensor((2, 3, 16)),
+                        query_start_loc=[0, 2, 5],
+                        cache_indices=[0, 1],
+                        initial_state_mode=[0, 1],
+                        num_accepted_tokens=[1, 1],
+                        activation_mode=1,
+                        pad_slot_id=-7,
+                        run_mode=0,
+                        head_num=0,
+                    )
+
+        operator_argtypes = ACLNN_CTYPES._GET_WORKSPACE_ARGTYPES["aclnnCausalConv1d"][:-2]
+        self.assertEqual(captured["name"], "aclnnCausalConv1d")
+        self.assertEqual(len(captured["args"]), len(operator_argtypes))
+        self.assertEqual([type(arg) for arg in captured["args"]], operator_argtypes)
+        self.assertEqual(captured["args"][12].value, b"silu")
+        self.assertEqual([arg.value for arg in captured["args"][13:18]], [-7, -1, 0, 0, -1])
+        self.assertEqual(
+            [item[1] for item in captured["context"].descriptor_metadata[4:8]],
+            [None, None, None, None],
+        )
+        self.assertEqual(
+            captured["context"].int_array_values,
+            [[0, 2, 5], [0, 1], [0, 1], [1, 1]],
+        )
+
+    def test_causal_conv1d_legacy_wrapper_keeps_host_metadata_signature(self):
+        self.assertEqual(
+            list(inspect.signature(ACLNN_CTYPES.npu_causal_conv1d).parameters),
+            [
+                "x",
+                "weight",
+                "bias",
+                "conv_states",
+                "query_start_loc",
+                "cache_indices",
+                "initial_state_mode",
+                "num_accepted_tokens",
+                "activation_mode",
+                "pad_slot_id",
+                "run_mode",
+                "head_num",
+            ],
+        )
+
+    def test_causal_conv1d_fn_and_update_each_build_complete_aclnn_arguments(self):
+        captured = []
+
+        def fake_empty_like(tensor, **kwargs):
+            return FakeTensor(
+                tensor.shape,
+                kwargs.get("dtype", tensor.dtype),
+                device=tensor.device,
+            )
+
+        def fake_call_aclnn(name, build_args, outputs):
+            context = FakeCallContext()
+            args = build_args(context)
+            captured.append((name, args, context))
+            return outputs
+
+        dtype = object()
+        device = types.SimpleNamespace(type="npu")
+        x = FakeTensor((5, 16), dtype, device=device)
+        weight = FakeTensor((4, 16), dtype, device=device)
+        fn_state = FakeTensor((2, 3, 16), dtype, device=device)
+        update_state = FakeTensor((2, 3, 16), dtype, device=device)
+        query_start_loc = FakeTensor((3,), dtype, device=device)
+        cache_indices = FakeTensor((2,), dtype, device=device)
+        has_initial_state = FakeTensor((2,), dtype, device=device)
+        num_accepted_tokens = FakeTensor((2,), dtype, device=device)
+
+        with mock.patch.object(ACLNN_CTYPES, "_empty_like", side_effect=fake_empty_like):
+            with mock.patch.object(
+                ACLNN_CTYPES,
+                "_call_aclnn",
+                side_effect=fake_call_aclnn,
+            ):
+                with mock.patch.object(
+                    ACLNN_CTYPES,
+                    "_validate_causal_conv1d_device_metadata",
+                ):
+                    ACLNN_CTYPES.npu_causal_conv1d_fn(
+                        x,
+                        weight,
+                        None,
+                        fn_state,
+                        query_start_loc=query_start_loc,
+                        cache_indices=cache_indices,
+                        has_initial_state=has_initial_state,
+                    )
+                    returned = ACLNN_CTYPES.npu_causal_conv1d_update(
+                        x,
+                        update_state,
+                        weight,
+                        conv_state_indices=cache_indices,
+                        num_accepted_tokens=num_accepted_tokens,
+                        query_start_loc=query_start_loc,
+                        max_query_len=3,
+                    )
+
+        operator_argtypes = ACLNN_CTYPES._GET_WORKSPACE_ARGTYPES["aclnnCausalConv1d"][:-2]
+        self.assertIs(returned, x)
+        self.assertEqual([item[0] for item in captured], ["aclnnCausalConv1d"] * 2)
+        for _, args, _ in captured:
+            self.assertEqual(len(args), len(operator_argtypes))
+            self.assertEqual([type(arg) for arg in args], operator_argtypes)
+
+        fn_args, update_args = captured[0][1], captured[1][1]
+        self.assertEqual(fn_args[12].value, b"silu")
+        self.assertEqual([arg.value for arg in fn_args[13:18]], [-1, 0, 0, 0, -1])
+        self.assertEqual(update_args[12].value, b"none")
+        self.assertEqual(
+            [arg.value for arg in update_args[13:18]],
+            [-(1 << 63), 0, 1, 0, 3],
+        )
+        self.assertEqual(captured[0][2].int_array_values, [None, None, None, None])
+        self.assertEqual(captured[1][2].int_array_values, [None, None, None, None])
+        self.assertEqual(
+            [item[1] for item in captured[0][2].descriptor_metadata[4:8]],
+            [query_start_loc, cache_indices, has_initial_state, None],
+        )
+        self.assertEqual(
+            [item[1] for item in captured[1][2].descriptor_metadata[4:8]],
+            [query_start_loc, cache_indices, None, num_accepted_tokens],
+        )
+
+    def test_causal_conv1d_fn_and_update_forward_host_metadata_slots(self):
+        captured = []
+
+        def fake_empty_like(tensor, **kwargs):
+            return FakeTensor(
+                tensor.shape,
+                kwargs.get("dtype", tensor.dtype),
+                device=tensor.device,
+            )
+
+        def fake_call_aclnn(name, build_args, outputs):
+            context = FakeCallContext()
+            args = build_args(context)
+            captured.append((name, args, context))
+            return outputs
+
+        dtype = object()
+        device = types.SimpleNamespace(type="npu")
+        x = FakeTensor((5, 16), dtype, device=device)
+        weight = FakeTensor((4, 16), dtype, device=device)
+        fn_state = FakeTensor((3, 3, 16), dtype, device=device)
+        update_state = FakeTensor((3, 3, 16), dtype, device=device)
+
+        with mock.patch.object(ACLNN_CTYPES, "_empty_like", side_effect=fake_empty_like):
+            with mock.patch.object(
+                ACLNN_CTYPES,
+                "_call_aclnn",
+                side_effect=fake_call_aclnn,
+            ):
+                ACLNN_CTYPES.npu_causal_conv1d_fn(
+                    x,
+                    weight,
+                    None,
+                    fn_state,
+                    query_start_loc_cpu=[0, 2, 5],
+                    cache_indices_cpu=[1, 2],
+                    has_initial_state_cpu=[0, 1],
+                )
+                returned = ACLNN_CTYPES.npu_causal_conv1d_update(
+                    x,
+                    update_state,
+                    weight,
+                    conv_state_indices_cpu=[1, 2],
+                    num_accepted_tokens_cpu=[1, 1],
+                    query_start_loc_cpu=[0, 2, 5],
+                    max_query_len=3,
+                )
+
+        operator_argtypes = ACLNN_CTYPES._GET_WORKSPACE_ARGTYPES["aclnnCausalConv1d"][:-2]
+        self.assertIs(returned, x)
+        self.assertEqual([item[0] for item in captured], ["aclnnCausalConv1d"] * 2)
+        for _, args, _ in captured:
+            self.assertEqual(len(args), len(operator_argtypes))
+            self.assertEqual([type(arg) for arg in args], operator_argtypes)
+        self.assertEqual(
+            captured[0][2].int_array_values,
+            [[0, 2, 5], [1, 2], [0, 1], None],
+        )
+        self.assertEqual(
+            captured[1][2].int_array_values,
+            [[0, 2, 5], [1, 2], None, [1, 1]],
+        )
+        for _, _, context in captured:
+            self.assertEqual(
+                [item[1] for item in context.descriptor_metadata[4:8]],
+                [None, None, None, None],
+            )
+
     def test_chunk_gated_delta_rule_bwd_dhu_signature_and_default_use_exp2(self):
         import inspect
 

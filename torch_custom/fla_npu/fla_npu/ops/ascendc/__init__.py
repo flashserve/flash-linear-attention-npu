@@ -29,6 +29,8 @@ _ASCENDC_OPS = (
     "npu_fast_gelu_custom",
     "npu_fast_gelu_custom_backward",
     "npu_causal_conv1d",
+    "npu_causal_conv1d_fn",
+    "npu_causal_conv1d_update",
     "npu_causal_conv1d_bwd",
     "npu_prepare_wy_repr_bwd_full",
     "npu_prepare_wy_repr_bwd",
@@ -62,14 +64,20 @@ BACKWARD_OPS = {
     "fast_gelu_custom": "fast_gelu_custom_backward",
     "npu_fast_gelu_custom": "npu_fast_gelu_custom_backward",
     "causal_conv1d": "causal_conv1d_bwd",
+    "causal_conv1d_fn": "causal_conv1d_bwd",
     "npu_causal_conv1d": "npu_causal_conv1d_bwd",
+    "npu_causal_conv1d_fn": "npu_causal_conv1d_bwd",
 }
 
 # ctypes 直接写 tensor storage 时，PyTorch 无法从 Python 调用自动发现副作用。
 # 这里集中声明被修改的参数，由 direct-op wrapper 负责 grad 限制和版本计数。
 MUTATED_ARGUMENTS = {
     "causal_conv1d": ("conv_states",),
+    "causal_conv1d_fn": ("conv_states",),
+    "causal_conv1d_update": ("conv_state",),
     "npu_causal_conv1d": ("conv_states",),
+    "npu_causal_conv1d_fn": ("conv_states",),
+    "npu_causal_conv1d_update": ("conv_state",),
     "npu_recurrent_kda": ("initial_state",),
     "recurrent_gated_delta_rule": ("state",),
     "npu_recurrent_gated_delta_rule": ("state",),
@@ -259,6 +267,9 @@ def _make_raw_wrapper(name: str) -> Callable:
     wrapper.__name__ = name
     wrapper.__qualname__ = name
     wrapper.__doc__ = f"Call the direct Ascend C binding for {name}."
+    op = ASCENDC_CTYPES_OPS.get(name)
+    if op is not None:
+        wrapper.__signature__ = inspect.signature(op)
     return wrapper
 
 
@@ -320,13 +331,20 @@ def causal_conv1d(
     run_mode=0,
     head_num=0,
 ):
-    """Causal conv1d with automatic backward binding for prefill mode.
+    """Deprecated causal conv1d API kept for source compatibility.
 
-    ``conv_states`` is mutable state in every mode and must not require gradients.
-    Decode/speculative modes are left on the raw op path; prefill only binds
-    gradients for ``x``, ``weight`` and ``bias``.
+    This preserves the pre-``bd55f7c`` signature and automatic backward binding
+    for the supported prefill path. ``conv_states`` is mutable state in every
+    mode and must not require gradients.
     """
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.causal_conv1d is a deprecated compatibility API "
+        "and will be removed in 2027/02. Use causal_conv1d_fn or "
+        "causal_conv1d_update instead.",
+        FutureWarning,
+        stacklevel=2,
+    )
     can_bind_backward = (
         run_mode == 0
         and activation_mode == 0
@@ -434,10 +452,7 @@ def install_legacy_torch_ops_warning() -> None:
 
 for _name in _ASCENDC_OPS:
     globals()[_name] = _make_raw_wrapper(_name)
-    globals()[_strip_npu_prefix(_name)] = globals()[_name]
-
-globals()["fast_gelu_custom"] = fast_gelu_custom
-globals()["causal_conv1d"] = causal_conv1d
+    globals().setdefault(_strip_npu_prefix(_name), globals()[_name])
 
 _prepare_direct_runtime(raise_on_error=False)
 

@@ -1,138 +1,101 @@
 # CausalConv1d
 
-## 产品支持情况
+## 支持范围
 
-|产品      | 是否支持 |
-|:----------------------------|:-----------:|
-|<term>Ascend 950PR/Ascend 950DT</term>|      √     |
-|<term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>|      √     |
-|<term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>|      √     |
-|<term>Atlas 200I/500 A2 推理产品</term>|      ×     |
-|<term>Atlas 推理系列产品</term>|      ×     |
-|<term>Atlas 训练系列产品</term>|      ×     |
+| 产品 | 支持 |
+| --- | :---: |
+| Ascend 950PR/Ascend 950DT | √ |
+| Atlas A3 训练/推理系列 | √ |
+| Atlas A2 训练/推理系列 | √ |
+| Atlas 200I/500 A2、Atlas 推理/训练系列 | × |
 
+## 功能
 
-## 功能说明
+算子使用同一个 `CausalConv1d` L0 路径完成两种模式：
 
-- 算子功能：完成因果一维卷积（Causal Conv1d）计算，支持前向计算（runMode=0）和状态更新（runMode=1）两种运行模式。
+- `runMode=0`：FN/prefill，输入为 dim-last `(T,D)` 或 `(B,S,D)`。
+- `runMode=1`：UPDATE/decode，更新 `convStates` 并输出当前 token 的卷积结果。
 
-- 计算公式：
+计算为：
 
-  Causal Conv1d 是一种因果一维卷积算子，常用于序列建模中。在每个时间步 $t$，根据当前输入 $x_t$、卷积权重 $w$ 和历史状态，计算卷积输出 $y_t$。
+```text
+y[t] = activation(sum(weight[j] * x[t-j]) + bias)
+```
 
-  $$
-  y_t = \text{Activation}\left(\sum_{j=0}^{W-1} w_j \cdot x_{t-j} + b\right)
-  $$
+卷积宽度支持 2、3、4，`D` 必须是 16 的倍数，数据 dtype 支持 FP16 和 BF16。
 
-  其中，$W$ 为卷积核宽度（支持2、3、4），$w_j$ 为卷积权重，$b$ 为偏置（可选），$\text{Activation}$ 为激活函数（可选，SiLU）。当 `activationMode=0` 时不使用激活函数，`activationMode=1` 时使用 SiLU 激活函数。
+## 输入与属性
 
-  算子同时维护卷积状态 `convStates`，用于在增量推理（runMode=1）时缓存历史输入，实现高效的状态更新。
+| 名称 | 类型 | 说明 |
+| --- | --- | --- |
+| `x` | Tensor | dim-last 数据。 |
+| `weight` | Tensor | `(W,D)`。 |
+| `bias` | Optional Tensor | `(D,)`。 |
+| `convStates` | Optional mutable Tensor | `(N,L,D)`；FN 可省略或传空 Tensor，UPDATE 必须提供。 |
+| `queryStartLoc` | Optional INT32 Tensor | 变长序列边界。 |
+| `cacheIndices` | Optional INT32 Tensor | 序列到状态行的映射。 |
+| `hasInitialState` | Optional BOOL/INT32 Tensor | FN 是否读取已有状态。 |
+| `numAcceptedTokens` | Optional INT32 Tensor | speculative UPDATE 的接受 token 数。 |
+| `*Cpu` | Optional INT64 aclIntArray | Host-array metadata 输入；FN/UPDATE 保留该形式且不产生 warning。 |
+| `activation` | string | `"none"`、`"silu"` 或 `"swish"`。 |
+| `padSlotId` | int64 | FN padding 索引；raw 默认 `-1`。 |
+| `nullBlockId` | int64 | 保留空状态块；负值禁用。 |
+| `runMode` | int64 | `0` 为 FN，`1` 为 UPDATE。 |
+| `headNum` | int64 | FN 输出分头；`0` 保持扁平输出。 |
+| `maxQueryLen` | int64 | UPDATE 变长模式的最大分段长度上界；其他模式为 `-1`。 |
 
+device Tensor metadata 与对应 `*Cpu` 输入互斥。device metadata 必须与数据 Tensor 位于同一设备；`queryStartLoc/cacheIndices/numAcceptedTokens` 仅支持 INT32，`hasInitialState` 支持 BOOL 或 INT32。
 
-## 参数说明
+## Python API
 
-<table style="undefined;table-layout: fixed; width: 900px"><colgroup>
-<col style="width: 180px">
-<col style="width: 120px">
-<col style="width: 200px">
-<col style="width: 300px">
-<col style="width: 100px">
-</colgroup>
-<thead>
-  <tr>
-    <th>参数名</th>
-    <th>输入/输出</th>
-    <th>描述</th>
-    <th>数据类型</th>
-    <th>数据格式</th>
-  </tr></thead>
-<tbody>
-  <tr>
-    <td>x</td>
-    <td>输入</td>
-    <td>输入序列，公式中的x。</td>
-    <td>FLOAT16、BFLOAT16</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>weight</td>
-    <td>输入</td>
-    <td>卷积权重，公式中的w。</td>
-    <td>FLOAT16、BFLOAT16</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>bias</td>
-    <td>输入</td>
-    <td>偏置，公式中的b。可选输入，若不提供则默认为0。</td>
-    <td>FLOAT16、BFLOAT16</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>convStates</td>
-    <td>输入&输出</td>
-    <td>卷积状态，缓存历史输入用于因果卷积计算。</td>
-    <td>FLOAT16、BFLOAT16</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>queryStartLoc</td>
-    <td>输入</td>
-    <td>变长序列的起始位置索引，用于变长输入模式。可选输入。</td>
-    <td>INT64</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>cacheIndices</td>
-    <td>输入</td>
-    <td>序列到状态缓存的映射索引。可选输入。</td>
-    <td>INT64</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>initialStateMode</td>
-    <td>输入</td>
-    <td>标记各序列是否使用初始状态。可选输入，仅在runMode=0（前向计算模式）下支持；长度需等于batch。元素取值范围为0或1：
-      <ul>
-        <li>0：表示对应序列不使用convStates中的初始状态。</li>
-        <li>1：表示对应序列使用cacheIndices（未传入时按序列号映射）指向的convStates缓存行作为初始状态参与计算。</li>
-      </ul>
-    </td>
-    <td>INT64</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>numAcceptedTokens</td>
-    <td>输入</td>
-    <td>每个序列接受的token数量，用于投机解码。可选输入。</td>
-    <td>INT64</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>y</td>
-    <td>输出</td>
-    <td>卷积输出，公式中的y。</td>
-    <td>FLOAT16、BFLOAT16</td>
-    <td>ND</td>
-  </tr>
-</tbody>
-</table>
+推荐使用解耦的 ctypes 入口：
 
-### 属性说明
+```python
+from fla_npu.ops.ascendc import causal_conv1d_fn, causal_conv1d_update
 
-| 属性名 | 描述 | 数据类型 | 默认值 |
-|:---:|:---:|:---:|:---:|
-| activationMode | 激活函数模式。0：不使用激活函数，1：使用SiLU激活函数。 | INT64 | 0 |
-| padSlotId | 无效缓存槽位的标记ID，用于跳过不需要计算的序列。 | INT64 | -1 |
-| runMode | 运行模式。0：前向计算模式（fn），1：状态更新模式（update）。 | INT64 | 0 |
-| headNum | 头数。仅支持在前向计算模式中传入大于0的数值，指示输出格式转换成BNSD或NTD。 | INT64 | 0 |
+y = causal_conv1d_fn(
+    x,
+    weight,
+    bias,
+    conv_states,
+    query_start_loc,
+    cache_indices=cache_indices,
+    has_initial_state=has_initial_state,
+    head_num=0,
+)
 
-## 约束说明
-- 输入tensor的shape大小需满足一定约束，具体见[aclnnCausalConv1d](./docs/aclnnCausalConv1d.md)。
-- cann版本大于等于9.1.0后convStates支持非连续 Tensor，其余版本不支持
+causal_conv1d_update(
+    x,
+    conv_states,
+    weight,
+    bias,
+    conv_state_indices=conv_state_indices,
+)
 
-## 调用说明
+# 变长 UPDATE：max_query_len 必须为非负值，且不小于最长分段。
+causal_conv1d_update(
+    x_varlen,
+    conv_states,
+    weight,
+    bias,
+    conv_state_indices=conv_state_indices,
+    query_start_loc=query_start_loc,
+    max_query_len=3,
+)
+```
 
-| 调用方式  | 样例代码                                                     | 说明                                                         |
-| --------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| aclnn接口 | [test_aclnn_causal_conv1d.cpp](./examples/test_aclnn_causal_conv1d.cpp) | 通过[aclnnCausalConv1d](./docs/aclnnCausalConv1d.md)调用aclnnCausalConv1d算子 |
+FN 使用 `cache_indices`；UPDATE 使用 `conv_state_indices`。两个高层接口既接受与数据位于同一设备的 Tensor metadata，也保留对应的 `*_cpu` Host metadata 输入；同一 metadata 的 device 与 Host 形式互斥。使用 `*_cpu` Host 输入不会产生 warning。高层接口的 `activation` 接受 `None`、`"silu"` 或 `"swish"`，其中 `None` 表示不启用激活。两个接口均保持 dim-last，不执行 transpose、permute 或隐式 dtype 转换。UPDATE 默认原地写回 `x`；传入 `out` 时写入 `out`，并始终原地更新 `conv_states`。
+
+FN 的 `head_num` 默认为 `0`，表示输出保持 flat dim-last；正值要求整除 `D` 且 head dim 为 16 的倍数。FN 的 3D `(B,S,D)` 输入不接受 `query_start_loc` 或 `query_start_loc_cpu`；序列边界由 `B`、`S` 直接确定。
+
+UPDATE 传入 `query_start_loc` 或 `query_start_loc_cpu` 时，必须同时提供非负的 `max_query_len`。它只声明最大分段长度上界；每个序列的实际范围仍由所传序列边界 metadata 决定。`validate_data=True` 时会拒绝小于实际最长分段的值。
+
+高层 FN 默认 `pad_slot_id=-1`、`null_block_id=0`；高层 UPDATE 不公开 pad sentinel，默认 `null_block_id=0`。`null_block_id=None` 可禁用 null block 过滤。保留在签名中的 APC/block scheduling 参数当前不支持，传入非默认值会抛出 `NotImplementedError`。
+
+`causal_conv1d` Python 接口作为废弃兼容入口保留，调用时会发出 `FutureWarning`，并将在 2027 年 2 月移除；新代码应使用 FN/UPDATE 接口。该入口保持原有签名以及 prefill 场景的 autograd 绑定行为。
+
+ `npu_causal_conv1d` Python 接口仅为兼容保留，调用时会发出 `FutureWarning`，并将在 2026 年 12 月废弃；新代码应使用 FN/UPDATE 接口。该接口保持原有参数不变，`query_start_loc`、`cache_indices`、`initial_state_mode` 和 `num_accepted_tokens` 仍按 Host int-array metadata 传递，不接受接口使用的 device metadata 参数。该入口继续发出既有的 `FutureWarning`。
+
+## ACLNN
+
+C 接口原型见 [aclnnCausalConv1d](./docs/aclnnCausalConv1d.md)，最小 C++ 调用见 [test_aclnn_causal_conv1d.cpp](./examples/test_aclnn_causal_conv1d.cpp)。
