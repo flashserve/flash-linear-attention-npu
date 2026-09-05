@@ -45,6 +45,7 @@ void RecurrentGatedDeltaRuleTiling::InitCompileInfo()
     const auto &ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfo_.ubSize);
     compileInfo_.aivNum = ascendcPlatform.GetCoreNumAiv();
+    compileInfo_.isRegBase = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510);
 
     if (compileInfo_.aivNum <= 0) {
         OP_LOGE(context_->GetNodeName(), "aivNum <= 0");
@@ -66,6 +67,7 @@ RecurrentGatedDeltaRuleTilingContext RecurrentGatedDeltaRuleTiling::BuildProcess
     ctx.ssmStateShape = &context_->GetInputShape(SSM_STATE_INDICES_INDEX)->GetOriginShape();
     ctx.aivNum = compileInfo_.aivNum;
     ctx.ubSize = compileInfo_.ubSize;
+    ctx.isRegBase = compileInfo_.isRegBase;
     ctx.stateDtype = context_->GetInputDesc(STATE_INDEX)->GetDataType();
     ctx.scale = tilingData_.scale;
     ctx.hasGama = tilingData_.hasGama;

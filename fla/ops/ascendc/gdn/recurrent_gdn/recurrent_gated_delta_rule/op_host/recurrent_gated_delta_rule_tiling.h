@@ -26,6 +26,7 @@ using namespace RecurrentGatedDeltaRule;
 struct RecurrentGatedDeltaRuleCompileInfo {
     uint64_t aivNum{0UL};
     uint64_t ubSize{0UL};
+    bool isRegBase{false};
 };
 
 struct RecurrentGatedDeltaRuleInfo {

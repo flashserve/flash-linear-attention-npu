@@ -44,6 +44,8 @@ static constexpr size_t RGDR_DIM_3 = 3;
 static constexpr size_t RGDR_MAX_MTP = 8;
 static constexpr size_t RGDR_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
 static constexpr uint32_t RGDR_REQUIRED_DIM = 128;
+static constexpr int64_t RGDR_UB_BLOCK_BYTES = 32;
+static constexpr int64_t RGDR_UB_SAFETY_BYTES = 128;
 
 struct RecurrentGatedDeltaRuleTilingContext {
     const char *nodeName = "RecurrentGatedDeltaRule";
@@ -61,6 +63,7 @@ struct RecurrentGatedDeltaRuleTilingContext {
     ge::DataType stateDtype = ge::DT_BF16;
     uint64_t aivNum = 0;
     uint64_t ubSize = 0;
+    bool isRegBase = false;
 };
 
 class RecurrentGatedDeltaRuleTilingProcessor {
@@ -274,32 +277,57 @@ private:
 
     int64_t CalcFixedUbBytes(int64_t aNv, int64_t aDv, int64_t aDk, const RecurrentGatedDeltaRuleTilingData &tiling) const
     {
+        (void)aNv;
+        // Persistent MTE2 banks: BF16 Q/K/V and beta, plus the enabled FP32 gate banks.
         int64_t usedUbBytes = RGDR_MAX_MTP * (4 * aDk + 2 * aDv);
-        usedUbBytes += 128;
+        usedUbBytes += RGDR_UB_SAFETY_BYTES;
         if (tiling.hasGamaK) {
             usedUbBytes += RGDR_MAX_MTP * 4 * aDk;
         }
         if (tiling.hasGama) {
-            usedUbBytes += RGDR_MAX_MTP * 4 * aNv;
+            usedUbBytes += RGDR_MAX_MTP * 4 * static_cast<int64_t>(tiling.nv);
         }
-        usedUbBytes += RGDR_MAX_MTP * 2 * aNv;
+        const int64_t betaBytes = RGDR_MAX_MTP * 2 * static_cast<int64_t>(tiling.nv);
+        usedUbBytes += Ops::Base::CeilAlign(betaBytes, RGDR_UB_BLOCK_BYTES);
         return usedUbBytes;
+    }
+
+    int64_t CalcLegacyTmpFixedBytes(int64_t aDv, int64_t aDk,
+                                    const RecurrentGatedDeltaRuleTilingData &tiling) const
+    {
+        const int64_t scalarMirrorElements =
+            Ops::Base::CeilAlign(static_cast<int64_t>(RGDR_MAX_MTP) * static_cast<int64_t>(tiling.nv),
+                                 static_cast<int64_t>(16));
+        // FP32 Q/K/V mirrors plus the beta scalar mirror used by the A2/A3 kernel. The former arch35
+        // implementation also created a gamma mirror, but DAV_3510 now takes the RegBase branch above.
+        return RGDR_MAX_MTP * (8 * aDk + 4 * aDv) + 4 * scalarMirrorElements;
     }
 
     int64_t CalcWorkingUbBytes(int64_t aNv, int64_t aDv, int64_t aDk,
                                const RecurrentGatedDeltaRuleTilingData &tiling) const
     {
         int64_t usedUbBytes = CalcFixedUbBytes(aNv, aDv, aDk, tiling);
-        usedUbBytes += RGDR_MAX_MTP * (8 * aDk + 4 * aDv + 4 * aNv);
+        if (!ctx_.isRegBase) {
+            usedUbBytes += CalcLegacyTmpFixedBytes(aDv, aDk, tiling);
+        }
+        // RegBase consumes raw inputs directly, so it has no fixed FP32 mirrors in tmpBuffer.
         return usedUbBytes;
+    }
+
+    int64_t CalcTmpVStepCoeff(int64_t aDk) const
+    {
+        if (ctx_.isRegBase) {
+            return 4 * aDk; // FP32 recurrence bank only.
+        }
+        return 8 * aDk + 8; // FP32 state, K-wide product scratch, delta and attention vectors.
     }
 
     int64_t CalcVStepCoeff(int64_t aDk, uint32_t stateOutBufferNum, uint32_t attnOutBufferNum) const
     {
         int64_t stateDtypeSize = (ctx_.stateDtype == ge::DT_FLOAT) ? 4 : 2;
         int64_t coeff = (stateDtypeSize + static_cast<int64_t>(stateDtypeSize * stateOutBufferNum)) * aDk +
-                        static_cast<int64_t>(4 * attnOutBufferNum);
-        coeff += (4 + 4) * aDk + 4 + 4;
+                        static_cast<int64_t>(2 * attnOutBufferNum);
+        coeff += CalcTmpVStepCoeff(aDk);
         return coeff;
     }
 
@@ -377,10 +405,19 @@ private:
 
         int64_t stateDtypeSize = (ctx_.stateDtype == ge::DT_FLOAT) ? 4 : 2;
         int64_t queueCoeff = (stateDtypeSize + static_cast<int64_t>(stateDtypeSize * selected.stateOutBufferNum)) * aDk +
-                             static_cast<int64_t>(4 * selected.attnOutBufferNum);
+                             static_cast<int64_t>(2 * selected.attnOutBufferNum);
         int64_t ubRestBytes = ubSize - ubCalcCtx.fixedUbBytes - queueCoeff * static_cast<int64_t>(selected.vStep);
         if (ubRestBytes < 0) {
             OP_LOGE(ctx_.nodeName, "ubRestBytes should be non-negative, but got %ld", ubRestBytes);
+            return ge::GRAPH_FAILED;
+        }
+        const int64_t tmpFixedBytes = ubCalcCtx.workingUbBytes - ubCalcCtx.fixedUbBytes;
+        const int64_t requiredTmpBytes =
+            tmpFixedBytes + CalcTmpVStepCoeff(aDk) * static_cast<int64_t>(selected.vStep);
+        if (ubRestBytes < requiredTmpBytes) {
+            OP_LOGE(ctx_.nodeName,
+                    "ubRestBytes [%ld] is smaller than required tmpBuffer [%ld] for vStep [%u], regbase [%d]",
+                    ubRestBytes, requiredTmpBytes, selected.vStep, ctx_.isRegBase);
             return ge::GRAPH_FAILED;
         }
         tiling.ubCalSize = static_cast<uint32_t>(ctx_.ubSize);
