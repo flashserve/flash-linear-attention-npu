@@ -30,9 +30,11 @@
  * kills the overlap and regresses G=1 wall time.
  *
  * Scheduling: total work = Ceil(T/BT)*B*Hv. Pack size TG = 3 if G=3 else 4
- * (last pack may be shorter). AIV0: task 0,2; AIV1: task 1,3. L2Norm(q/k)
- * and Cube kkt run once per HK (OwnsHk: hv % G == 0). Sibling HV reuse
- * that kkt via Fixpipe to both AIVs when G>1. Per pack each AIV finishes
+ * (last pack may be shorter). AIV0: task 0,2; AIV1: task 1,3. A full
+ * G=2 pack is reordered as [owner0, owner1, sibling0, sibling1], putting
+ * one complete HK group on each AIV. L2Norm(q/k) and Cube kkt run once
+ * per HK (OwnsHk: hv % G == 0). G=2 keeps each kkt on its owning AIV;
+ * G=3/4 sibling HV reuse kkt through Fixpipe to both AIVs. Each AIV finishes
  * Stage1 ping then pong (Set taskIdx after k' L1, owners only). AIC Wait
  * that flag, kkt, then Set every sibling id (PIPE_FIX) so Stage3 can run.
  * After Stage3 L1 writes, AIV Set taskIdx+4; AIC Wait that (4, 21, 6, 23)
@@ -473,13 +475,13 @@ public:
     // (chunk, hk). G=1 notifies only the owner.
     __aicore__ inline void NotifyKktSiblings(int64_t base, int64_t nThis, int64_t ownerTask)
     {
-        const int64_t ownerWork = base + ownerTask;
+        const int64_t ownerWork = PackWorkId(base, nThis, ownerTask);
         const int64_t ownerChunk = ownerWork / HV;
         const int64_t ownerHv = ownerWork % HV;
         const int64_t hvLo = ownerHv - ((HRatio <= 1) ? 0 : (ownerHv % HRatio));
         const int64_t hvHi = hvLo + ((HRatio <= 1) ? 1 : HRatio);
         for (int64_t t2 = 0; t2 < nThis; ++t2) {
-            const int64_t work2 = base + t2;
+            const int64_t work2 = PackWorkId(base, nThis, t2);
             if ((work2 / HV) != ownerChunk) {
                 continue;
             }
@@ -494,16 +496,17 @@ public:
     // ========================= Stage 2 =========================
     // Cube kkt = k' @ k'^T, once per HK after WaitAivStage1Done. Even tasks
     // use L0[0,16)/L0C[0,64); odd use L0[16,32)/L0C[64,128). Wait M_MTE1
-    // (primed in ProcessAic). Inner Matmul Wait FIX_M matches V3. G>1 dumps
-    // the full 64x64 to both AIVs. G=1 NotifyAivKktDone here; G>1 siblings
-    // from ProcessAic.
-    __aicore__ inline void Stage2_AicOne(int64_t taskIdx)
+    // (primed in ProcessAic). Inner Matmul Wait FIX_M matches V3. A full
+    // G=2 pack keeps each KKT on its owning AIV; G=3/4 and a partial G=2
+    // pack dump it to both AIVs. G=1 notifies here; G>1 siblings are
+    // notified from ProcessAic.
+    __aicore__ inline void Stage2_AicOne(int64_t taskIdx, int64_t nThis)
     {
         const int32_t bt = static_cast<int32_t>(chunkSize);
         const int32_t kk = static_cast<int32_t>(K);
         const uint8_t subBlk = static_cast<uint8_t>(taskIdx & 1);
         const int32_t db = PingPongSlot(taskIdx);
-        const bool shareBothAiv = (HRatio > 1);
+        const bool shareBothAiv = (HRatio > 2) || (HRatio == 2 && nThis < kTasksPerRound);
         if ((taskIdx & 1) == 0) {
             WaitFlag<HardEvent::M_MTE1>(0);
             MatmulToL0C<InDtype>(l1KHat[taskIdx], l1KHat[taskIdx], l0A, l0B, l0C, bt, bt, kk, true, false, false, 0);
@@ -754,7 +757,7 @@ public:
     __aicore__ inline bool PackHasTail(int64_t base, int64_t nThis)
     {
         for (int64_t t = 0; t < nThis; ++t) {
-            if (GetChunkRange(*this, gmCu, gmIdx, (base + t) / HV).M < chunkSize) {
+            if (GetChunkRange(*this, gmCu, gmIdx, PackWorkId(base, nThis, t) / HV).M < chunkSize) {
                 return true;
             }
         }
@@ -779,18 +782,18 @@ public:
                 }
             }
             for (int64_t t = subBlock; t < nThis; t += 2) {
-                const int64_t workId = base + t;
+                const int64_t workId = PackWorkId(base, nThis, t);
                 Stage1_OneTask(GetChunkRange(*this, gmCu, gmIdx, workId / HV), workId % HV, t);
             }
             SetFlag<HardEvent::MTE3_V>(0);
             WaitFlag<HardEvent::MTE3_V>(0);
             for (int64_t t = subBlock; t < nThis; t += 2) {
-                const int64_t workId = base + t;
+                const int64_t workId = PackWorkId(base, nThis, t);
                 Stage3_AivOne(workId % HV, t);
             }
             if (pack != coreIdx) {
                 for (int64_t t = subBlock; t < prevN; t += 2) {
-                    const int64_t workId = prevBase + t;
+                    const int64_t workId = PackWorkId(prevBase, prevN, t);
                     const ChunkRange chunk = GetChunkRange(*this, gmCu, gmIdx, workId / HV);
                     CopyUbToGmElems(gmW[OffsetBHTD(chunk.batch, workId % HV, chunk.tokenStart, HV, T, K)],
                                     ubS7W[PingPongSlot(t)], static_cast<uint32_t>(chunk.M * K));
@@ -802,7 +805,7 @@ public:
             WaitFlag<HardEvent::MTE3_MTE2>(0);
 
             for (int64_t t = subBlock; t < nThis; t += 2) {
-                const int64_t workId = base + t;
+                const int64_t workId = PackWorkId(base, nThis, t);
                 Stage6_AivOne(GetChunkRange(*this, gmCu, gmIdx, workId / HV), workId % HV, t);
                 NotifyAicStage6Done(t);
             }
@@ -813,7 +816,7 @@ public:
             const int64_t nThis = (totalChunks - base) < packSize ? (totalChunks - base) : packSize;
             WaitAicStage7Done();
             for (int64_t t = subBlock; t < nThis; t += 2) {
-                const int64_t workId = base + t;
+                const int64_t workId = PackWorkId(base, nThis, t);
                 const ChunkRange chunk = GetChunkRange(*this, gmCu, gmIdx, workId / HV);
                 CopyUbToGmElems(gmW[OffsetBHTD(chunk.batch, workId % HV, chunk.tokenStart, HV, T, K)],
                                 ubS7W[PingPongSlot(t)], static_cast<uint32_t>(chunk.M * K));
@@ -840,24 +843,24 @@ public:
             const int64_t nThis = (totalChunks - base) < packSize ? (totalChunks - base) : packSize;
             WaitFlag<HardEvent::FIX_MTE1>(0);
             for (int64_t t = 0; t < nThis; ++t) {
-                const int64_t workId = base + t;
+                const int64_t workId = PackWorkId(base, nThis, t);
                 if (!OwnsHk(workId % HV)) {
                     continue;
                 }
                 WaitAivStage1Done(t);
-                Stage2_AicOne(t);
+                Stage2_AicOne(t, nThis);
                 if (HRatio > 1) {
                     NotifyKktSiblings(base, nThis, t);
                 }
             }
             for (int64_t t = 0; t < nThis; ++t) {
                 WaitAivStage3Done(t);
-                const int64_t workId = base + t;
+                const int64_t workId = PackWorkId(base, nThis, t);
                 Stage4_AicOne(GetChunkRange(*this, gmCu, gmIdx, workId / HV), workId % HV, t);
                 SetFlag<HardEvent::MTE2_MTE1>(t);
             }
             for (int64_t t = 0; t < nThis; ++t) {
-                const int64_t workId = base + t;
+                const int64_t workId = PackWorkId(base, nThis, t);
                 WaitFlag<HardEvent::MTE2_MTE1>(t);
                 Stage5_AicOne(GetChunkRange(*this, gmCu, gmIdx, workId / HV), workId % HV, t);
                 if (outputA != 0) {
@@ -867,7 +870,7 @@ public:
                 }
             }
             for (int64_t t = 0; t < nThis; ++t) {
-                const int64_t workId = base + t;
+                const int64_t workId = PackWorkId(base, nThis, t);
                 WaitAivStage6Done(t);
                 if (outputA != 0) {
                     WaitFlag<HardEvent::MTE2_MTE1>(t);

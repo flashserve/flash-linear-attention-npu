@@ -314,18 +314,33 @@ struct PrepareState {
         return (HRatio == 3) ? 3 : kTasksPerRound;
     }
 
+    // G=2 full pack: place both HK owners first so AIV0/AIV1 each own one
+    // complete HK group: [owner0, owner1, sibling0, sibling1].
+    __aicore__ inline int64_t PackWorkId(int64_t base, int64_t nThis, int64_t taskIdx) const
+    {
+        if (HRatio == 2 && nThis == kTasksPerRound && taskIdx > 0 && taskIdx < 3) {
+            return base + 3 - taskIdx;
+        }
+        return base + taskIdx;
+    }
+
     // First HV of an HK group owns L2Norm(q/k) and Cube kkt.
     __aicore__ inline bool OwnsHk(int64_t hv) const
     {
         return (HRatio <= 1) || ((hv % HRatio) == 0);
     }
 
-    // Pack-local task that produced kkt for this hv. Packing keeps the owner
-    // at taskIdx - (hv % G); never negative when TasksPerPack() is used.
+    // Pack-local task that produced kkt for this hv.
     __aicore__ inline int64_t OwnerTaskIdx(int64_t hv, int64_t taskIdx) const
     {
         if (HRatio <= 1) {
             return taskIdx;
+        }
+        if (HRatio == 2) {
+            if ((hv & 1) == 0) {
+                return taskIdx;
+            }
+            return taskIdx - ((taskIdx >= 2) ? 2 : 1);
         }
         const int64_t owner = taskIdx - (hv % HRatio);
         return (owner < 0) ? taskIdx : owner;
