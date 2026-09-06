@@ -28,6 +28,7 @@ const std::array<const aclTensor *, 9> ChunkGatedDeltaRuleFwdPrepare(
     bool useQkL2norm,
     bool useGateInKernel,
     bool useBetaSigmoid,
+    bool outputA,
     const aclTensor *gOut,
     const aclTensor *wOut,
     const aclTensor *uOut,

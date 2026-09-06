@@ -143,8 +143,8 @@ struct ChunkGatedDeltaRuleFwdStageTilingData {
     // Fixed-length: Ceil(T / BT) * B * Hv. Varlen: (chunk_indices.numel()/2) * Hv.
     int64_t totalChunkTileCount;
 
-    // Host GetDataSize+8 pad. Layout must match ChunkGatedDeltaRuleFwdPrepareTilingData.
-    int64_t reservedEightByteAlignPad;
+    // 1: A is written to GM. 0: A remains resident in L1 only.
+    int64_t hasAOutput;
 };
 
 
@@ -166,9 +166,9 @@ constexpr uint16_t kFlagS4DumpBase = 8;
 // notify on PIPE_FIX; a PIPE_MTE1 Wait(0) can steal that leftover and
 // Stage7 runs before L1 vb/kbg exist. Ids 12..15 are ignored by intra-block.
 constexpr uint16_t kFlagS6DoneBase = 4;
-// Pack N Stage7 finished with L1 kbg/vb. Pack N+1 Stage6 may then overwrite
-// those slots. Mode 2 id 0xF. Stage1 still uses the Stage4 pack gate so it
-// can overlap pack N Stage5/7.
+// Pack N Stage7 finished. The existing tail gate protects L1 slot reuse;
+// the final pack also uses this flag to let AIV flush the last W/U UB slots.
+// Mode 2 id 0xF.
 constexpr uint16_t kFlagS7Done = 0xF;
 
 constexpr uint32_t kChunk64 = 64;
@@ -295,6 +295,7 @@ struct PrepareState {
         allowNegEigval = td.scaleBetaByTwoWhenNegEigval;
         useExp2 = td.useExp2ForGateCumsum;
         totalChunks = td.totalChunkTileCount;
+        outputA = td.hasAOutput;
         if (chunkSize <= 0) {
             chunkSize = kGdnChunkSize;
         }
@@ -336,7 +337,7 @@ struct PrepareState {
     int64_t B, HK, HV, T, K, V, HRatio, chunkSize;
     int64_t isVariable, hasChunkIndices;
     int64_t useQkL2norm, useGateInKernel, useBetaSigmoid, hasDtBias, allowNegEigval, useExp2;
-    int64_t totalChunks;
+    int64_t totalChunks, outputA;
     int64_t coreIdx, numCore, subBlock, auxReady;
 };
 
@@ -389,7 +390,10 @@ constexpr uint32_t kUbS2Kkt[2] = {kUbS2KktPing, kUbS2KktPong};
 constexpr uint32_t kUbS3LPacked[2] = {10 * kPrepareKb, 50 * kPrepareKb};
 constexpr uint32_t kUbS3ResVcs[2] = {18 * kPrepareKb, 58 * kPrepareKb};
 constexpr uint32_t kUbS3LFull[2] = {34 * kPrepareKb, 74 * kPrepareKb};
-constexpr uint32_t kUbMaskFp32 = 172 * kPrepareKb;
+
+// UB S7 Fixpipe destinations. One AIV owns two tasks in a pack.
+constexpr uint32_t kUbS7W[2] = {172 * kPrepareKb, 188 * kPrepareKb};
+constexpr uint32_t kUbS7U[2] = {204 * kPrepareKb, 220 * kPrepareKb};
 
 // UB S6 (after S3; overlaps S1/S3). K' 16 KiB. V=128 tile is 16 KiB,
 // V=256 tile is 32 KiB. After Stage3, rstd/hat at [107,140) are free.

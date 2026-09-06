@@ -107,6 +107,7 @@ def run_npu_prepare(q, k, v, g, beta, *, flags, cu_seqlens=None):
         use_beta_sigmoid_in_kernel=flags["use_beta_sigmoid_in_kernel"],
         allow_neg_eigval=flags["allow_neg_eigval"],
         use_exp2=True,
+        output_a=flags.get("output_a", True),
     )
     if cu_seqlens is not None:
         kw["cu_seqlens"] = cu_seqlens.contiguous().npu()
@@ -142,7 +143,8 @@ def check_against_ref(q, k, v, g, beta, outs, flags, cu_seqlens=None):
     assert_close("k_rstd", k_rstd, ref.k_rstd, 5e-3, 5e-3)
     assert_close("beta_out", beta_out, ref.beta, 5e-3, 5e-3)
     assert_close("g_cumsum", g_cumsum, ref.g, 5e-3, 5e-3)
-    assert_close("A", A, ref.a, 8e-2, 8e-2)
+    if flags.get("output_a", True):
+        assert_close("A", A, ref.a, 8e-2, 8e-2)
     assert_tile_rel("w", w, ref.w, B, HV, T, K, BT, cu_seqlens=cu_seqlens)
     assert_tile_rel("u", u, ref.u, B, HV, T, V, BT, cu_seqlens=cu_seqlens)
 

@@ -26,6 +26,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     int64_t chunkSize,
     bool allowNegEigval,
     bool useExp2,
+    bool outputA,
     aclTensor *gOut,
     aclTensor *wOut,
     aclTensor *uOut,

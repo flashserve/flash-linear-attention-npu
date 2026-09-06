@@ -335,38 +335,42 @@ __aicore__ inline void BetaSigmoidVF(LocalTensor<T> &betaIn, LocalTensor<float> 
 
 /**
  * function: 构造 MBH 用的 -L。整块写 64x64。
- *           -L[i,j] = -mask[i,j] * beta[i] * kkt[i,j] * exp2(clip(g[i]-g[j], -50, 50))。
- *           mask 是严格下三角（i>j 为 1）。
- * input:  kkt [64,64] fp32, g [64] fp32, beta [64] fp32, mask [64,64] fp32
+ *           -L[i,j] = -beta[i] * kkt[i,j] * exp2(clip(g[i]-g[j], -50, 50)), i>j；其余为 0。
+ * input:  kkt [64,64] fp32, g [64] fp32, beta [64] fp32
  * output: L [64,64] fp32（即 -L）
  */
 __aicore__ inline void NegLowerLVF(LocalTensor<float> &kkt, LocalTensor<float> &g, LocalTensor<float> &beta,
-                                   LocalTensor<float> &mask, LocalTensor<float> &L)
+                                   LocalTensor<float> &L)
 {
     constexpr float kLn2 = 0.6931471825f;
     __ubuf__ float *kktAddr = (__ubuf__ float *)kkt.GetPhyAddr();
     __ubuf__ float *gAddr = (__ubuf__ float *)g.GetPhyAddr();
     __ubuf__ float *betaAddr = (__ubuf__ float *)beta.GetPhyAddr();
-    __ubuf__ float *maskAddr = (__ubuf__ float *)mask.GetPhyAddr();
     __ubuf__ float *lAddr = (__ubuf__ float *)L.GetPhyAddr();
     __VEC_SCOPE__
     {
         MaskReg pregAll = CreateMask<float, MaskPattern::ALL>();
+        MaskReg lowerMask0, lowerMask1;
         RegTensor<float> gJ, gI0, gI1, kkt0, kkt1, d0, d1, gate0, gate1;
-        RegTensor<float> b0, b1, out0, out1, m0, m1, lo, hi;
+        RegTensor<float> b0, b1, out0, out1, lo, hi, zero;
+        uint32_t lowerCount0 = 0;
+        uint32_t lowerCount1 = 0;
         Duplicate(lo, -kGdnGateClip, pregAll);
         Duplicate(hi, kGdnGateClip, pregAll);
+        Duplicate(zero, 0.0f, pregAll);
         LoadAlign(gJ, gAddr);
         for (uint16_t i = 0; i < 32; i++) {
             const uint32_t r0 = static_cast<uint32_t>(i) * 128;
+            lowerCount0 = static_cast<uint32_t>(i) * 2;
+            lowerCount1 = lowerCount0 + 1;
+            lowerMask0 = UpdateMask<float>(lowerCount0);
+            lowerMask1 = UpdateMask<float>(lowerCount1);
             LoadAlign<float, LoadDist::DIST_BRC_B32>(gI0, gAddr + static_cast<uint32_t>(i) * 2);
             LoadAlign<float, LoadDist::DIST_BRC_B32>(gI1, gAddr + static_cast<uint32_t>(i) * 2 + 1);
             LoadAlign<float, LoadDist::DIST_BRC_B32>(b0, betaAddr + static_cast<uint32_t>(i) * 2);
             LoadAlign<float, LoadDist::DIST_BRC_B32>(b1, betaAddr + static_cast<uint32_t>(i) * 2 + 1);
             LoadAlign(kkt0, kktAddr + r0);
             LoadAlign(kkt1, kktAddr + r0 + 64);
-            LoadAlign(m0, maskAddr + r0);
-            LoadAlign(m1, maskAddr + r0 + 64);
             Sub(d0, gI0, gJ, pregAll);
             Sub(d1, gI1, gJ, pregAll);
             Max(d0, d0, lo, pregAll);
@@ -381,10 +385,10 @@ __aicore__ inline void NegLowerLVF(LocalTensor<float> &kkt, LocalTensor<float> &
             Mul(out1, kkt1, gate1, pregAll);
             Mul(out0, out0, b0, pregAll);
             Mul(out1, out1, b1, pregAll);
-            Mul(out0, out0, m0, pregAll);
-            Mul(out1, out1, m1, pregAll);
             Muls(out0, out0, -1.0f, pregAll);
             Muls(out1, out1, -1.0f, pregAll);
+            Select(out0, out0, zero, lowerMask0);
+            Select(out1, out1, zero, lowerMask1);
             StoreAlign(lAddr + r0, out0, pregAll);
             StoreAlign(lAddr + r0 + 64, out1, pregAll);
         }
@@ -566,37 +570,6 @@ __aicore__ inline void ScaleRowsVF(LocalTensor<T> &x, LocalTensor<T> &y, LocalTe
         return;
     }
     ScaleRowsK128VF<T>(x, y, scale, rows);
-}
-
-/**
- * function: 画 64x64 严格下三角 mask：col < row 为 1，否则 0。
- * input:  无
- * output: ubMask [64,64] fp32
- */
-__aicore__ inline void LowerTriMaskVF(AscendC::LocalTensor<float> ubMaskFp32)
-{
-    __ubuf__ float *dst = (__ubuf__ float *)ubMaskFp32.GetPhyAddr();
-    __VEC_SCOPE__
-    {
-        MaskReg pregAll = CreateMask<float, MaskPattern::ALL>();
-        RegTensor<float> col, ones, zeros, row0, row1, idx0, idx1;
-        Arange(col, 0.0f);
-        Duplicate(ones, 1.0f, pregAll);
-        Duplicate(zeros, 0.0f, pregAll);
-        Duplicate(idx0, 0.0f, pregAll);
-        Duplicate(idx1, 1.0f, pregAll);
-        for (uint16_t i = 0; i < 32; ++i) {
-            MaskReg m0, m1;
-            Compare<float, AscendC::CMPMODE::LT>(m0, col, idx0, pregAll);
-            Compare<float, AscendC::CMPMODE::LT>(m1, col, idx1, pregAll);
-            Select(row0, ones, zeros, m0);
-            Select(row1, ones, zeros, m1);
-            StoreAlign(dst + static_cast<uint32_t>(i) * 128, row0, pregAll);
-            StoreAlign(dst + static_cast<uint32_t>(i) * 128 + 64, row1, pregAll);
-            Adds(idx0, idx0, 2.0f, pregAll);
-            Adds(idx1, idx1, 2.0f, pregAll);
-        }
-    }
 }
 
 /**

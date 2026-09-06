@@ -107,6 +107,7 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     bool useQkL2normAttr = false;
     bool useGateAttr = false;
     bool useBetaAttr = false;
+    bool outputAAttr = true;
     if (attrPtr != nullptr) {
         const int64_t *chunkSizePtr = attrPtr->GetAttrPointer<int64_t>(PREPARE_ATTR_CHUNK_SIZE);
         const bool *allowNegPtr = attrPtr->GetAttrPointer<bool>(PREPARE_ATTR_ALLOW_NEG_EIGVAL);
@@ -114,6 +115,7 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
         const bool *useQkPtr = attrPtr->GetAttrPointer<bool>(PREPARE_ATTR_USE_QK_L2NORM);
         const bool *useGatePtr = attrPtr->GetAttrPointer<bool>(PREPARE_ATTR_USE_GATE);
         const bool *useBetaPtr = attrPtr->GetAttrPointer<bool>(PREPARE_ATTR_USE_BETA_SIGMOID);
+        const bool *outputAPtr = attrPtr->GetAttrPointer<bool>(PREPARE_ATTR_OUTPUT_A);
         if (chunkSizePtr != nullptr) {
             chunkSize = *chunkSizePtr;
         }
@@ -131,6 +133,9 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
         }
         if (useBetaPtr != nullptr) {
             useBetaAttr = *useBetaPtr;
+        }
+        if (outputAPtr != nullptr) {
+            outputAAttr = *outputAPtr;
         }
     }
 
@@ -281,7 +286,7 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     tiling.set_gateStorageDtype(static_cast<int64_t>(gDtype));
     tiling.set_betaStorageDtype(static_cast<int64_t>(betaDtype));
     tiling.set_totalChunkTileCount(totalChunks);
-    tiling.set_reservedEightByteAlignPad(0);
+    tiling.set_hasAOutput(outputAAttr ? 1 : 0);
 
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     // Kernel GET_TILING_DATA opParaSize is GetDataSize()+8 on this CANN; mismatch

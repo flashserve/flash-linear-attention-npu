@@ -60,8 +60,8 @@ BEGIN_TILING_DATA_DEF(ChunkGatedDeltaRuleFwdPrepareTilingData)
     TILING_DATA_FIELD_DEF(int64_t, betaStorageDtype);
     // Tile count this kernel walks: Ceil(T/BT)*B, or NT if varlen indices.
     TILING_DATA_FIELD_DEF(int64_t, totalChunkTileCount);
-    // Prepare-only. Unused pad so host GetDataSize matches device opParaSize+8.
-    TILING_DATA_FIELD_DEF(int64_t, reservedEightByteAlignPad);
+    // Prepare-only. 1: A is written to GM. 0: A remains resident in L1 only.
+    TILING_DATA_FIELD_DEF(int64_t, hasAOutput);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkGatedDeltaRuleFwdPrepare, ChunkGatedDeltaRuleFwdPrepareTilingData)
@@ -92,6 +92,7 @@ constexpr size_t PREPARE_ATTR_USE_EXP2 = 2;
 constexpr size_t PREPARE_ATTR_USE_QK_L2NORM = 3;
 constexpr size_t PREPARE_ATTR_USE_GATE = 4;
 constexpr size_t PREPARE_ATTR_USE_BETA_SIGMOID = 5;
+constexpr size_t PREPARE_ATTR_OUTPUT_A = 6;
 
 } // namespace optiling
 

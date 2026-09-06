@@ -229,11 +229,10 @@ __aicore__ inline void UploadDiagLeavesAndFullAToL1(LocalTensor<float> l1LeafRig
 
 // -L from kkt/g/β, pack diag leaves, VCS (I+Lii)^{-1} into ubResVcs.
 __aicore__ inline void Stage3_ConstructLAndVcs(LocalTensor<float> kkt, LocalTensor<float> g, LocalTensor<float> beta,
-                                               LocalTensor<float> mask, LocalTensor<float> ubL,
-                                               LocalTensor<float> packed, LocalTensor<float> ubIVcs,
+                                               LocalTensor<float> ubL, LocalTensor<float> packed, LocalTensor<float> ubIVcs,
                                                LocalTensor<float> ubResVcs, LocalTensor<uint32_t> ubVcsIdx)
 {
-    NegLowerLVF(kkt, g, beta, mask, ubL);
+    NegLowerLVF(kkt, g, beta, ubL);
     PackDiagLeavesFromUb(packed, ubL);
     DataCopy(ubResVcs, ubIVcs, static_cast<int32_t>(kVcsPackedElems32));
     MulReduceScatterVF32(ubResVcs, packed, ubResVcs, ubVcsIdx);

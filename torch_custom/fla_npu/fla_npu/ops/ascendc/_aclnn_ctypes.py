@@ -174,6 +174,7 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_int64,  # chunkSize
         ctypes.c_bool,  # allowNegEigval
         ctypes.c_bool,  # useExp2
+        ctypes.c_bool,  # outputA
         ctypes.c_void_p,  # gOut
         ctypes.c_void_p,  # wOut
         ctypes.c_void_p,  # uOut
@@ -552,6 +553,7 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
     dt_bias=None,
     cu_seqlens=None,
     chunk_indices=None,
+    output_a=True,
 ):
     import torch
 
@@ -586,6 +588,7 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
     use_beta_sigmoid_in_kernel = _optional_bool(use_beta_sigmoid_in_kernel, False)
     allow_neg_eigval = _optional_bool(allow_neg_eigval, False)
     use_exp2 = _optional_bool(use_exp2, False)
+    output_a = _optional_bool(output_a, True)
 
     if not use_qk_l2norm_in_kernel:
         raise ValueError("use_qk_l2norm_in_kernel currently only supports True.")
@@ -645,6 +648,7 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
             ctypes.c_int64(int(chunk_size)),
             ctypes.c_bool(allow_neg_eigval),
             ctypes.c_bool(use_exp2),
+            ctypes.c_bool(output_a),
             logical_tensor(ctx, g_cumsum, "g_cumsum"),
             logical_tensor(ctx, w, "w"),
             logical_tensor(ctx, u, "u"),

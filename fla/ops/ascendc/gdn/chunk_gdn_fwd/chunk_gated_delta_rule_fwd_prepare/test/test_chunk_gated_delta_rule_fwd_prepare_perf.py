@@ -36,24 +36,22 @@ def setup_npu():
     torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
 
 
-def run_one(case: dict):
+def run_one(case: dict, output_a: bool):
     torch.manual_seed(0)
-    torch.npu.manual_seed_all(0)
-    device = torch.device("npu")
     dtype = torch.bfloat16
     b, hk, hv, t, k, v = (
         case["batch"], case["hk"], case["hv"],
         case["seq_len"], case["head_k"], case["head_v"],
     )
-    q = torch.randn(b, hk, t, k, dtype=dtype, device=device)
-    k_t = torch.randn(b, hk, t, k, dtype=dtype, device=device)
-    v_t = torch.randn(b, hv, t, v, dtype=dtype, device=device)
-    g = torch.randn(b, hv, t, dtype=torch.float32, device=device)
-    beta = torch.randn(b, hv, t, dtype=torch.float32, device=device)
+    q = torch.randn(b, hk, t, k, dtype=dtype).npu()
+    k_t = torch.randn(b, hk, t, k, dtype=dtype).npu()
+    v_t = torch.randn(b, hv, t, v, dtype=dtype).npu()
+    g = torch.randn(b, hv, t, dtype=torch.float32).npu()
+    beta = torch.randn(b, hv, t, dtype=torch.float32).npu()
     torch.npu.synchronize()
     print(
         f"PERF case{case['case_id']}: B={b} HK={hk} HV={hv} T={t} K={k} V={v} "
-        f"chunk=64 l2norm=True gate=False beta_sigmoid=True neg=True exp2=True",
+        f"chunk=64 l2norm=True gate=False beta_sigmoid=True neg=True exp2=True output_a={output_a}",
         flush=True,
     )
     outs = ascendc_ops.chunk_gated_delta_rule_fwd_prepare(
@@ -64,6 +62,7 @@ def run_one(case: dict):
         use_beta_sigmoid_in_kernel=True,
         allow_neg_eigval=True,
         use_exp2=True,
+        output_a=output_a,
     )
     torch.npu.synchronize()
     n_out = sum(1 for x in outs if x is not None)
@@ -76,10 +75,11 @@ def main():
     parser.add_argument(
         "--case-id", type=int, required=True, choices=(0, 1, 2),
         help="0: T=8192 G=1; 1: T=16384 G=1; 2: HK=16 HV=32 T=11264 G=2.")
+    parser.add_argument("--no-output-a", action="store_true", help="Keep A in L1 without writing it to GM.")
     args = parser.parse_args()
     setup_npu()
     with torch.no_grad():
-        run_one(CASES[args.case_id])
+        run_one(CASES[args.case_id], not args.no_output_a)
 
 
 if __name__ == "__main__":

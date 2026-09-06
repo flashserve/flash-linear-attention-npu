@@ -71,6 +71,7 @@ public:
         this->Attr("use_qk_l2norm").AttrType(OPTIONAL).Bool(false);
         this->Attr("use_gate_in_kernel").AttrType(OPTIONAL).Bool(false);
         this->Attr("use_beta_sigmoid").AttrType(OPTIONAL).Bool(false);
+        this->Attr("output_a").AttrType(OPTIONAL).Bool(true);
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)

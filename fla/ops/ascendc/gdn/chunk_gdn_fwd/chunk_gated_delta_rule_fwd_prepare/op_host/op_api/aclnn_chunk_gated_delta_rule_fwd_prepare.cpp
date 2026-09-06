@@ -47,6 +47,7 @@ struct ChunkGatedDeltaRuleFwdPrepareParams {
     int64_t chunkSize = 64;
     bool allowNegEigval = false;
     bool useExp2 = false;
+    bool outputA = true;
     const aclTensor *gOut = nullptr;
     const aclTensor *wOut = nullptr;
     const aclTensor *uOut = nullptr;
@@ -296,6 +297,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     int64_t chunkSize,
     bool allowNegEigval,
     bool useExp2,
+    bool outputA,
     aclTensor *gOut,
     aclTensor *wOut,
     aclTensor *uOut,
@@ -310,12 +312,12 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
 {
     ChunkGatedDeltaRuleFwdPrepareParams params{
         q, k, v, g, beta, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkIndicesOptional,
-        chunkSize, allowNegEigval, useExp2, gOut, wOut, uOut, aOut,
+        chunkSize, allowNegEigval, useExp2, outputA, gOut, wOut, uOut, aOut,
         qHatOptional, kHatOptional, qRstdOptional, kRstdOptional, betaEffOptional};
 
     L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleFwdPrepare,
                    DFX_IN(q, k, v, g, beta, aLogOptional, dtBiasOptional, cuSeqlensOptional,
-                          chunkIndicesOptional, chunkSize, allowNegEigval, useExp2),
+                          chunkIndicesOptional, chunkSize, allowNegEigval, useExp2, outputA),
                    DFX_OUT(gOut, wOut, uOut, aOut, qHatOptional, kHatOptional, qRstdOptional,
                            kRstdOptional, betaEffOptional));
 
@@ -331,8 +333,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
         params.q, params.k, params.v, params.g, params.beta, params.aLogOptional, params.dtBiasOptional,
         params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize, params.allowNegEigval,
         params.useExp2, true,
-        params.aLogOptional != nullptr, params.betaEffOptional != nullptr, params.gOut, params.wOut,
-        params.uOut, params.aOut, params.qHatOptional, params.kHatOptional, params.qRstdOptional,
+        params.aLogOptional != nullptr, params.betaEffOptional != nullptr, params.outputA,
+        params.gOut, params.wOut, params.uOut, params.aOut, params.qHatOptional, params.kHatOptional, params.qRstdOptional,
         params.kRstdOptional, params.betaEffOptional, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
