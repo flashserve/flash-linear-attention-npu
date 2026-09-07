@@ -24,7 +24,6 @@ pseudocode/
 |   |-- chunk_kda_fwd_prepare_vec.h     # V0/V1/V3/V6
 |   `-- chunk_kda_fwd_prepare_cube.h    # C2/C4/C5/C7
 `-- arch22/
-    |-- README.md
     |-- chunk_kda_fwd_prepare_vec.h     # A2/A3 V0/V1/V3/V6 候选
     `-- chunk_kda_fwd_prepare_cube.h    # A2/A3 C2/C4/C5/C7 候选
 ```
