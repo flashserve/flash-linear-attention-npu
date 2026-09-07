@@ -82,6 +82,7 @@ public:
         this->Attr("scale").AttrType(REQUIRED).Float(1.0);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
         this->Attr("use_exp2").AttrType(OPTIONAL).Bool(false);
+        this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
         this->Attr("output_layout").AttrType(OPTIONAL).String("BNSD");
 
         OpAICoreConfig aicore_config;

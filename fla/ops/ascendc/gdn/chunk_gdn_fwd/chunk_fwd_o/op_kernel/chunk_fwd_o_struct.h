@@ -19,9 +19,6 @@
 
 namespace GDN {
 
-static constexpr uint64_t CHUNK_FWD_O_TILING_KEY_LEGACY = 1;
-static constexpr uint64_t CHUNK_FWD_O_TILING_KEY_A5 = 2;
-
 enum ChunkFwdOOutputLayout : int64_t {
     CHUNK_FWD_O_LAYOUT_BNSD = 0,
     CHUNK_FWD_O_LAYOUT_BSND = 1,
@@ -47,6 +44,7 @@ struct ChunkFwdOTilingData {
     int64_t aftermaskWorkspaceOffset;
     int64_t maskWorkspaceOffset;
     int64_t useExp2;
+    int64_t stateVFirst;
     int64_t outputLayout;
     float scale;
     int64_t chunkNum;

@@ -14,6 +14,7 @@
 
 #include "chunk_fwd_o_tiling.h"
 #include "chunk_fwd_o_tiling_processor.h"
+#include "../op_kernel/chunk_fwd_o_tiling_key.h"
 #include <cstring>
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
@@ -75,6 +76,8 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     size_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     const bool *useExp2Ptr = attrPtr->GetAttrPointer<bool>(CHUNK_FWD_O_ATTR_USE_EXP2_IDX);
     const bool useExp2 = useExp2Ptr != nullptr ? *useExp2Ptr : false;
+    const bool *stateVFirstPtr = attrPtr->GetAttrPointer<bool>(CHUNK_FWD_O_ATTR_STATE_V_FIRST_IDX);
+    const bool stateVFirst = stateVFirstPtr != nullptr ? *stateVFirstPtr : false;
     const char *outputLayout = attrPtr->GetStr(CHUNK_FWD_O_ATTR_OUTPUT_LAYOUT_IDX);
     const bool useA5Path =
         useExp2 && outputLayout != nullptr &&
@@ -98,6 +101,7 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
         dataType,
         gDataType,
         useExp2,
+        stateVFirst,
         outputLayout,
         aicCoreNum,
         sysWorkspaceSize,
@@ -105,7 +109,11 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
 
     ChunkFwdOTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-    context->SetTilingKey(processor.GetTilingKey());
+    using namespace GDN;
+    const uint64_t tilingKey = GET_TPL_TILING_KEY(
+        static_cast<uint64_t>(processor.UseA5Path() ? CHUNK_FWD_O_PATH_A5 : CHUNK_FWD_O_PATH_LEGACY),
+        static_cast<uint64_t>(stateVFirst ? 1 : 0));
+    context->SetTilingKey(tilingKey);
 
     context->SetBlockDim(aicCoreNum);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);

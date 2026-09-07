@@ -30,11 +30,12 @@ const std::array<const aclTensor *, 1> ChunkFwdO(
     double scale,
     int64_t chunkSize,
     bool useExp2,
+    bool stateVFirst,
     const char *outputLayout,
     const aclTensor *oOut,
     aclOpExecutor *executor)
 {
-    L0_DFX(ChunkFwdO, q, k, v, h, g, cuSeqlensOptional, chunkOffsetsOptional, scale, chunkSize, useExp2,
+    L0_DFX(ChunkFwdO, q, k, v, h, g, cuSeqlensOptional, chunkOffsetsOptional, scale, chunkSize, useExp2, stateVFirst,
            outputLayout, oOut);
 
     const aclTensor *actualCuSeqlens = nullptr;
@@ -61,7 +62,7 @@ const std::array<const aclTensor *, 1> ChunkFwdO(
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkFwdO,
         OP_INPUT(q, k, v, h, g, actualCuSeqlens, actualChunkOffsets),
         OP_OUTPUT(oOut),
-        OP_ATTR(scale, chunkSize, useExp2, outputLayoutStr));
+        OP_ATTR(scale, chunkSize, useExp2, stateVFirst, outputLayoutStr));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr};

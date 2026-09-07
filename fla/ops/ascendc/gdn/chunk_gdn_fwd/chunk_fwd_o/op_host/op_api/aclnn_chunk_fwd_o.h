@@ -27,6 +27,7 @@ extern "C" {
  * scale : required
  * chunkSize : required
  * useExp2 : optional
+ * stateVFirst : whether h uses [..., V, K] instead of [..., K, V]
  * outputLayout : optional
  * oOut : required
  * workspaceSize : size of workspace(output).
@@ -44,6 +45,7 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
     double scale,
     int64_t chunkSize,
     bool useExp2,
+    bool stateVFirst,
     const char *outputLayout,
     const aclTensor *oOut,
     uint64_t *workspaceSize,

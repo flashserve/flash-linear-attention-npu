@@ -43,6 +43,7 @@
  * scale : required
  * chunkSize : required
  * useExp2 : optional
+ * stateVFirst : optional
  * outputLayout : optional
  * oOut : required
  * workspaceSize : size of workspace(output).
@@ -60,6 +61,7 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
     double scale,
     int64_t chunkSize,
     bool useExp2,
+    bool stateVFirst,
     const char *outputLayout,
     const aclTensor *oOut,
     uint64_t *workspaceSize,
@@ -103,6 +105,7 @@ aclnnStatus aclnnChunkFwdO(
 | `scale` | 输入 | 必选 | 缩放系数 | `double` | 建议按 `1 / sqrt(K)` 设置 |
 | `chunkSize` | 输入 | 必选 | 分块大小 | `int64_t` | 仅支持 `64` / `128` |
 | `useExp2` | 输入 | 必选 | Gate 指数是否使用以 2 为底的语义 | `bool` | `true` 仅支持 A5 的 `BSND` / `TND` 新路径；`false` 走兼容旧路径 |
+| `stateVFirst` | 输入 | 可选 | `h` 的末两维是否为 `[V,K]` | `bool` | 默认 `false`，A5 新路径支持 true/false |
 | `outputLayout` | 输入 | 必选 | 输出布局，大小写敏感 | `const char *` | `BNSD` / `BSND` / `TND` / `NTD`，具体组合见下表 |
 
 ### 3.3 输出参数（Outputs）

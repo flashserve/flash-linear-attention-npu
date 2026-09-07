@@ -77,22 +77,26 @@ const std::array<const aclTensor *, 9> ChunkGatedDeltaRuleFwdPrepare(
 
     const aclTensor *actualCuSeqlens = ConvertIntArrayToTensor(cuSeqlensOptional, executor);
     const aclTensor *actualChunkIndices = ConvertIntArrayToTensor(chunkIndicesOptional, executor);
+    const aclTensor *actualBetaEff = betaEffOptional;
+    if (actualBetaEff == nullptr) {
+        actualBetaEff = executor->AllocTensor(g->GetViewShape(), DataType::DT_FLOAT, Format::FORMAT_ND);
+    }
     if ((cuSeqlensOptional != nullptr && actualCuSeqlens == nullptr) ||
-        (chunkIndicesOptional != nullptr && actualChunkIndices == nullptr)) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert optional int array to tensor failed.");
+        (chunkIndicesOptional != nullptr && actualChunkIndices == nullptr) || actualBetaEff == nullptr) {
+        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Create internal tensor failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         ChunkGatedDeltaRuleFwdPrepare,
         OP_INPUT(q, k, v, g, beta, aLogOptional, dtBiasOptional, actualCuSeqlens, actualChunkIndices),
-        OP_OUTPUT(gOut, wOut, uOut, aOut, qHatOptional, kHatOptional, qRstdOptional, kRstdOptional, betaEffOptional),
+        OP_OUTPUT(gOut, wOut, uOut, aOut, qHatOptional, kHatOptional, qRstdOptional, kRstdOptional, actualBetaEff),
         OP_ATTR(chunkSize, allowNegEigval, useExp2, useQkL2norm, useGateInKernel, useBetaSigmoid, outputA));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkGatedDeltaRuleFwdPrepare failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
-    return {gOut, wOut, uOut, aOut, qHatOptional, kHatOptional, qRstdOptional, kRstdOptional, betaEffOptional};
+    return {gOut, wOut, uOut, aOut, qHatOptional, kHatOptional, qRstdOptional, kRstdOptional, actualBetaEff};
 }
 
 } // namespace l0op

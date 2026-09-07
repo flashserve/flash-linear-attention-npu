@@ -24,6 +24,7 @@ const std::array<const aclTensor *, 1> ChunkFwdO(
     double scale,
     int64_t chunkSize,
     bool useExp2,
+    bool stateVFirst,
     const char *outputLayout,
     const aclTensor *oOut,
     aclOpExecutor *executor);

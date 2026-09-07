@@ -50,6 +50,7 @@ struct ChunkFwdOParams {
     double scale = 1.0;
     int64_t chunkSize = 64;
     bool useExp2 = false;
+    bool stateVFirst = false;
     const char *outputLayout = nullptr;
     const aclTensor *oOut = nullptr;
 };
@@ -129,16 +130,18 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
     double scale,
     int64_t chunkSize,
     bool useExp2,
+    bool stateVFirst,
     const char *outputLayout,
     const aclTensor *oOut,
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
     ChunkFwdOParams params{q, k, v, h, g, cuSeqlensOptional, chunkOffsetsOptional, scale, chunkSize,
-                           useExp2, outputLayout, oOut};
+                           useExp2, stateVFirst, outputLayout, oOut};
     // Standard syntax, Check parameters.
     L2_DFX_PHASE_1(aclnnChunkFwdO,
-                   DFX_IN(q, k, v, h, g, cuSeqlensOptional, chunkOffsetsOptional, scale, chunkSize),
+                   DFX_IN(q, k, v, h, g, cuSeqlensOptional, chunkOffsetsOptional, scale, chunkSize,
+                          useExp2, stateVFirst, outputLayout),
                    DFX_OUT(oOut));
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
@@ -151,7 +154,7 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
                "ParamsDataContiguous failed.");
     auto result = l0op::ChunkFwdO(params.q, params.k, params.v, params.h, params.g, params.cuSeqlensOptional,
                                  params.chunkOffsetsOptional, params.scale, params.chunkSize, params.useExp2,
-                                 params.outputLayout, params.oOut, executorPtr);
+                                 params.stateVFirst, params.outputLayout, params.oOut, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.

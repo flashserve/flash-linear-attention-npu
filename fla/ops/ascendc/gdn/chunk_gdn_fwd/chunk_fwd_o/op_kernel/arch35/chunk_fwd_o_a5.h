@@ -24,7 +24,7 @@
 
 namespace GDN {
 
-template <typename GT, bool UseExp2>
+template <typename GT, bool UseExp2, bool StateVFirst>
 class ChunkFwdOA5 {
 public:
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g, GM_ADDR cuSeqlens,
@@ -60,7 +60,7 @@ public:
         }
 
         if ASCEND_IS_AIC {
-            ChunkFwdOA5CubeProcess cube(q_, k_, v_, h_, g_, cuSeqlens_, chunkOffsets_, o_, workspace_);
+            ChunkFwdOA5CubeProcess<StateVFirst> cube(q_, k_, v_, h_, g_, cuSeqlens_, chunkOffsets_, o_, workspace_);
             cube.Init(tiling_);
             cube.Process(aicCoreIdx, aicCoreNum);
         }
@@ -79,12 +79,12 @@ private:
     ChunkFwdOTilingData tiling_{};
 };
 
-template <typename GT, bool UseExp2>
+template <typename GT, bool UseExp2, bool StateVFirst>
 __aicore__ inline void ChunkFwdOA5Dispatch(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g,
                                            GM_ADDR cuSeqlens, GM_ADDR chunkOffsets, GM_ADDR o, GM_ADDR workspace,
                                            const ChunkFwdOTilingData *tilingData)
 {
-    ChunkFwdOA5<GT, UseExp2> op;
+    ChunkFwdOA5<GT, UseExp2, StateVFirst> op;
     op.Init(q, k, v, h, g, cuSeqlens, chunkOffsets, o, workspace, tilingData);
     op.Process();
 }

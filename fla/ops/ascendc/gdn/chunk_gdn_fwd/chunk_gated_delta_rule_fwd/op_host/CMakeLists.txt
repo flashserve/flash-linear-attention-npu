@@ -1,4 +1,7 @@
 add_op_to_compiled_list()
+set(chunk_gated_delta_rule_fwd_depends
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_prepare;fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h;fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o"
+    CACHE STRING "Kernel source dependencies for chunk_gated_delta_rule_fwd" FORCE)
 
 if (BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnnExc PRIVATE

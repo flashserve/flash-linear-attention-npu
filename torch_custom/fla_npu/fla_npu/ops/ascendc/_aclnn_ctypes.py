@@ -55,6 +55,7 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_double,  # scale
         ctypes.c_int64,  # chunkSize
         ctypes.c_bool,  # useExp2
+        ctypes.c_bool,  # stateVFirst
         ctypes.c_char_p,  # outputLayout
         ctypes.c_void_p,  # oOut
         ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
@@ -125,6 +126,7 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_double,  # scale
         ctypes.c_int64,  # chunkSize
         ctypes.c_bool,  # useExp2
+        ctypes.c_bool,  # useQkL2norm
         ctypes.c_bool,  # allowNegEigval
         ctypes.c_bool,  # stateVFirst
         ctypes.c_void_p,  # oOut
@@ -908,7 +910,7 @@ def npu_chunk_fwd_o(
     use_exp2=False,
     output_layout="BNSD",
 ):
-    del g_gamma, transpose_state_layout
+    del g_gamma
     chunk_size = _optional_int(chunk_size, 64)
     use_exp2 = _optional_bool(use_exp2, False)
     output_layout = str(output_layout)
@@ -937,6 +939,7 @@ def npu_chunk_fwd_o(
             ctypes.c_double(float(scale)),
             ctypes.c_int64(chunk_size),
             ctypes.c_bool(use_exp2),
+            ctypes.c_bool(bool(transpose_state_layout)),
             ctypes.cast(layout_buffer, ctypes.c_char_p),
             ctx.tensor(out, "out"),
         ],
@@ -1597,6 +1600,9 @@ def npu_chunk_gated_delta_rule_fwd(
     cu_seqlens=None,
     chunk_indices=None,
     scale=None,
+    use_exp2=False,
+    use_qk_l2norm_in_kernel=False,
+    state_v_first=False,
 ):
     """Call the final Phase 6 single-kernel GDN core."""
     import torch
@@ -1645,8 +1651,9 @@ def npu_chunk_gated_delta_rule_fwd(
             raise RuntimeError("npu_chunk_gated_delta_rule_fwd: chunk_indices must use canonical sequence-major order.")
 
     output_final_state = _optional_bool(output_final_state, False)
+    state_v_first = _optional_bool(state_v_first, False)
     scale = _optional_float(scale, float(k_dim) ** -0.5)
-    o = _empty_like(v)
+    o = _empty((batch, tokens, v_heads, v_dim), v)
     g_cumsum = _empty((batch, tokens, v_heads), g, dtype=torch.float32)
     A = _empty((batch, v_heads, tokens, int(chunk_size)), q)
     final_state = None
@@ -1656,7 +1663,8 @@ def npu_chunk_gated_delta_rule_fwd(
             state_dtype = torch.float32
         else:
             state_dtype = initial_state.dtype
-        final_state = _empty((seq_num, v_heads, k_dim, v_dim), q, dtype=state_dtype)
+        state_tail = (v_dim, k_dim) if state_v_first else (k_dim, v_dim)
+        final_state = _empty((seq_num, v_heads, *state_tail), q, dtype=state_dtype)
     layout_buffer = ctypes.create_string_buffer(b"BNSD")
     outputs = (o, final_state, g_cumsum, A)
     return _call_aclnn(
@@ -1675,9 +1683,10 @@ def npu_chunk_gated_delta_rule_fwd(
             ctypes.cast(layout_buffer, ctypes.c_char_p),
             ctypes.c_double(scale),
             ctypes.c_int64(int(chunk_size)),
+            ctypes.c_bool(_optional_bool(use_exp2, False)),
+            ctypes.c_bool(_optional_bool(use_qk_l2norm_in_kernel, False)),
             ctypes.c_bool(False),
-            ctypes.c_bool(False),
-            ctypes.c_bool(False),
+            ctypes.c_bool(state_v_first),
             ctx.tensor(o, "o"),
             ctx.tensor(final_state, "final_state"),
             ctx.tensor(None, "q_hat"),

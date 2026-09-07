@@ -23,11 +23,13 @@
 #include "chunk_fwd_o_common.h"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
+#include <type_traits>
 
 namespace GDN {
 
 using namespace AscendC;
 
+template <bool StateVFirst>
 class ChunkFwdOA5CubeProcess {
 public:
     using ArchTag = Catlass::Arch::Ascend950;
@@ -37,7 +39,8 @@ public:
 
     using TileCopyQK = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, Element, LayoutRM, Element, LayoutCM, Element,
                                                               LayoutRM>;
-    using TileCopyQH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, Element, LayoutRM, Element, LayoutCM, Element,
+    using HLayout = std::conditional_t<StateVFirst, LayoutCM, LayoutRM>;
+    using TileCopyQH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, Element, LayoutRM, Element, HLayout, Element,
                                                               LayoutRM>;
     using TileCopyAV = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, Element, LayoutRM, Element, LayoutRM, Element,
                                                               LayoutRM>;
@@ -378,7 +381,7 @@ private:
         // Load H to L1 while Q @ K^T runs on M/FIX.
         const int64_t hOffset = ChunkFwdOHOffset(tiling_, loc, hv);
         using LayoutTagL1H = typename TileCopyQH::LayoutTagL1B;
-        auto layoutHGm = tla::MakeLayout<Element, LayoutCM>(kK, kV);
+        auto layoutHGm = tla::MakeLayout<Element, HLayout>(kK, kV);
         auto tensorHGm = tla::MakeTensor(hGm_[hOffset], layoutHGm, Catlass::Arch::PositionGM{});
         auto blockH = GetTile(tensorHGm, tla::MakeCoord(0, 0), tla::MakeShape(kK, kV));
         using CopyGmToL1H = typename TileCopyQH::template CopyGmToL1B<decltype(blockH)>;
