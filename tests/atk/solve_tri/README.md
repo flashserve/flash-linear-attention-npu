@@ -1,13 +1,11 @@
-# SolveTri 本机混合容差 ATK 工程
+# SolveTri ATK 工程
 
-本目录验证公开接口 `fla_npu.ops.ascendc.solve_tri`，**只在本机跑**，不连远程 GPU。
+本目录验证公开接口 `fla_npu.ops.ascendc.solve_tri`。
 
-精度标准为 `mixed_tolerance_bm`（参考 `chunk_gated_delta_rule_fwd_prepare`）：
+精度标准为 `mixed_tolerance_bm`：
 
 - **dut** = 本机 NPU `solve_tri`
 - **golden** = 本机 CPU FP64 `linalg.inv`（`--bm_device cpu`）
-
-`run_test_cpu.sh` 默认要求 ATK ≥ 26.8.8（该版本原生提供 `mixed_tolerance_bm`）。本机若仍是 26.7.8，可设 `REQUIRED_ATK_VERSION=26.7.8`；executor 会把缺失的 `mixed_tolerance_bm` 别名到同角色的 `single_bm`，不必改 JSON。全量 200 条建议加 `--single_process`，避免 Celery 对比卡住。
 
 ## 输入约束
 
