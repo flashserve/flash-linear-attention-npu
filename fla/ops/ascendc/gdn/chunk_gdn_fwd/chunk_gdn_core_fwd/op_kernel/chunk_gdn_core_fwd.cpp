@@ -446,7 +446,8 @@ extern "C" __global__ __aicore__ void chunk_gdn_core_fwd(
             o, final_state, g_cumsum_bth, A, workspace, tiling);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310 && \
     defined(ORIG_DTYPE_Q) && (ORIG_DTYPE_Q == DT_BF16) && \
-    defined(ORIG_DTYPE_INITIAL_STATE) && (ORIG_DTYPE_INITIAL_STATE == DT_FLOAT)
+    defined(ORIG_DTYPE_INITIAL_STATE) && \
+    ((ORIG_DTYPE_INITIAL_STATE == DT_FLOAT) || (ORIG_DTYPE_INITIAL_STATE == DT_BF16))
     } else if (TILING_KEY_IS(301)) {
         KERNEL_TASK_TYPE(301, KERNEL_TYPE_MIX_AIC_1_2);
         GDN::DispatchPhase6ByDtype<Catlass::Gemm::Kernel::GDNFwdHTileShapes128,

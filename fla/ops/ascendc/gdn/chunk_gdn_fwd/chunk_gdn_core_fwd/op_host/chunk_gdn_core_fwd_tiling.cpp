@@ -274,7 +274,8 @@ ge::graphStatus Tiling4ChunkGdnCoreFwd(gert::TilingContext *context)
     // retain the frozen B0 implementation and its key1/key2 code generation.
     const bool isExperimentalShape =
         isBf16 && initialStateDesc != nullptr &&
-        initialStateDesc->GetDataType() == ge::DT_FLOAT &&
+        (initialStateDesc->GetDataType() == ge::DT_FLOAT ||
+         initialStateDesc->GetDataType() == ge::DT_BF16) &&
         vDim == SUPPORTED_V_DIM_128 && *chunkSize == CHUNK_64;
     // Unset selects the validated production policy on A5. Explicit B0 keeps
     // a stable A/B baseline; explicit B30 remains shape-gated below.

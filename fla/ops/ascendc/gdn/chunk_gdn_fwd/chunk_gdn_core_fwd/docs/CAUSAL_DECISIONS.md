@@ -287,3 +287,15 @@
     B30 对 B0 的正式性能门禁后才可发布。
 - Invalidation：若目标 CANN 头文件、生成代码或 profiling 证明上述生产者/消费者
   链路不成立，需回到 B0 并重建依赖图，不继续放宽同步。
+
+
+## CD-B30-BF16-STATE：扩展精确模型的 BF16 state 候选编译域
+
+- 阶段/状态：候选实现 / 待 A5 精度与性能验证；源码基线 `9250fa8b`。此前 B30 的 FP32 state 实测结论保持原范围，本节不将其扩称为 BF16 state 已通过。
+- 决策：仅将 host 的 state dtype 判断与 key301 的 `ORIG_DTYPE_INITIAL_STATE` 编译门禁同时扩展为 FP32 或 BF16。BF16 q/k/v、V128、chunk64、既有 exact-main varlen shape、initial state 存在及 final state 输出条件全部保留；显式 B0 仍回退基线。公开 ABI、kernel 数值计算和同步代码不变。
+- 必要性：只修改 host 会把 BF16 state 路由到未编译的 key301。现有 `DispatchFwdH` 已覆盖 BF16 state 并传递 B30 模板参数，因此无需新增接口、key 或 dtype 转换。
+- 数值边界：FP32 state 路径保留 FP32 状态递推，另生成 BF16 H 供 C1；BF16 state 路径从 BF16 H 转 FP32 计算并逐 chunk 舍入。比较应在同一 BF16 state 输入上进行 B30/B0 A/B，不能要求其与 FP32 state 路径逐 bit 相同。
+- 同步边界：coefficient group handoff 不消费 state，C1 与 FwdO 的输入输出 dtype 不变，可作为复用机制依据；H 初始化直接复制与 cast 的事件链不同，BF16 update 的预置/归还事件也不同，仍需新编译实例的目标证据。`kUpdateBarrierEventOnly` 的节省位于 FP32 finalState 分支，BF16 不执行，性能不能套用 FP32 收益。
+- 知识卡：沿用本文检索账本。`compile-time-template-specialization.md` 要求 host/device 选择域一致；`synchronization-from-data-dependencies.md` 要求按 BF16 实际事件生命周期复核；`cann-version-architecture-evidence.md` 要求 A5 固定 CANN 的新 binary 与真机验收。知识来源和固定摘要保持本文原记录。
+- 验证：CPU 检查 host/编译 dtype 集合一致、已有 BF16 dispatch、exact-main 筛选、B0 override 和既有同步不变量；随后完整 combined wheel 构建并核实实际 key301。目标板检查 BF16 state 的冷启动、重复运行、F/N、O/finalState 精度与设备时延，并回归 FP32 原模型及域外 B0。
+- 可证伪条件：缺失 BF16 key301 binary、事件失配、精度回退或无稳定性能收益时不扩大默认发布范围；先保留候选证据并退回 B0，不能放宽阈值或以 FP32 验证代替 BF16。

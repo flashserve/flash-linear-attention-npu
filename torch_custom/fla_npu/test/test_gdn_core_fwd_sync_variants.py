@@ -645,6 +645,42 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         self.assertIn("AscendC::PipeBarrier<PIPE_ALL>();", level)
         self.assertNotIn("HardEvent::FIX_MTE1", level)
 
+    def test_b30_host_and_compiled_state_domains_match(self):
+        host = source(HOST_TILING)
+        start = host.index("const bool isExperimentalShape =")
+        shape_gate = host[start:host.index(";", start)]
+        self.assertIn("isBf16 && initialStateDesc != nullptr", shape_gate)
+        self.assertEqual(
+            set(re.findall(r"initialStateDesc->GetDataType\(\) == ge::(DT_\w+)", shape_gate)),
+            {"DT_FLOAT", "DT_BF16"},
+        )
+        self.assertRegex(
+            shape_gate,
+            r"\(initialStateDesc->GetDataType\(\) == ge::DT_FLOAT \|\|\s*"
+            r"initialStateDesc->GetDataType\(\) == ge::DT_BF16\) &&",
+        )
+        self.assertIn("vDim == SUPPORTED_V_DIM_128 && *chunkSize == CHUNK_64", shape_gate)
+        core = source(CORE_KERNEL)
+        key = core.index("} else if (TILING_KEY_IS(301))")
+        compile_gate = core[core.rindex("#if", 0, key):key]
+        self.assertIn("__CCE_AICORE__ == 310", compile_gate)
+        self.assertIn("ORIG_DTYPE_Q == DT_BF16", compile_gate)
+        self.assertIn("defined(ORIG_DTYPE_INITIAL_STATE)", compile_gate)
+        self.assertEqual(
+            set(re.findall(r"ORIG_DTYPE_INITIAL_STATE == (DT_\w+)", compile_gate)),
+            {"DT_FLOAT", "DT_BF16"},
+        )
+        self.assertIn(
+            "((ORIG_DTYPE_INITIAL_STATE == DT_FLOAT) || (ORIG_DTYPE_INITIAL_STATE == DT_BF16))",
+            compile_gate,
+        )
+        # BF16 state uses the existing dispatch; no state conversion or separate
+        # public entry point is introduced by the broader key compilation domain.
+        self.assertIn(
+            "RunFwdH<bfloat16_t, float, bfloat16_t, TileShapes, false, kSyncVariant>",
+            source(STATE_UPDATE),
+        )
+
     def test_top_level_dispatches_only_b0_and_promoted_b30(self):
         text = source(CORE_KERNEL)
 
