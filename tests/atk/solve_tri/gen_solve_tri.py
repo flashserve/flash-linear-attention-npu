@@ -1,13 +1,16 @@
-"""solve_tri 本机混合容差用例生成器。
+"""solve_tri 混合容差用例生成器。
 
-精度集与 GPU 双标杆套同一套 200 条中小 shape（``generate_solve_tri_case.iter_profiles``），
-标准改为 ``mixed_tolerance_bm``。同时写出 perf / mss 精简集。
+生成 200 条中小 shape 双标杆精度用例（与 GPU 双标杆套同一套 profile），标准为
+``mixed_tolerance_bm``。同时写出 perf / mss 精简集。
+
+覆盖维度：
+  chunk 16/32/64/128、fp16/bf16、bsnd/bnsd/tnd/ntd、
+  定长/变长、对齐/非对齐。
 """
 
 from __future__ import annotations
 
 import json
-import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -16,8 +19,223 @@ OP_NAME = "solve_tri"
 KERNEL_OP = "solve_tri"
 MIXED_STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key", "mem": 1.1}
 
-sys.path.insert(0, str(OP_DIR / "scripts"))
-from generate_solve_tri_case import _name, _nbytes, iter_profiles  # noqa: E402
+# ===========================================================================
+# 用例 profile 定义（原 scripts/generate_solve_tri_case.py 的数据源部分）
+# ===========================================================================
+
+CHUNK_SIZES = (16, 32, 64, 128)
+DTYPES = ("bf16", "fp16")
+DENSE_LAYOUTS = ("bsnd", "bnsd")
+PACKED_LAYOUTS = ("tnd", "ntd")
+LAYOUTS = DENSE_LAYOUTS + PACKED_LAYOUTS
+
+
+def _tail(chunk: int, kind: str) -> int:
+    if kind == "half":
+        return max(1, chunk // 2)
+    if kind == "quarter":
+        return max(1, chunk // 4)
+    if kind == "almost":
+        return max(1, chunk - 1)
+    return 1
+
+
+def _dense(chunk: int, dtype: str, layout: str, aligned: bool, size_id: int) -> dict:
+    heads = 1 if size_id == 0 else 4
+    batch = 1 if size_id == 0 else 2
+    if aligned:
+        tokens = 2 * chunk
+    else:
+        tokens = 2 * chunk + _tail(chunk, "half" if size_id == 0 else "quarter")
+    return {
+        "dtype": dtype,
+        "B": batch,
+        "H": heads,
+        "T": tokens,
+        "chunk_size": chunk,
+        "layout": layout,
+        "num_seqs": 1,
+        "aligned": aligned,
+        "varlen": False,
+    }
+
+
+def _packed(
+    chunk: int,
+    dtype: str,
+    layout: str,
+    aligned: bool,
+    varlen: bool,
+    size_id: int,
+) -> dict:
+    heads = 1 if size_id == 0 else 4
+    if not varlen:
+        seqlens = [2 * chunk] if aligned else [2 * chunk + _tail(chunk, "half" if size_id == 0 else "quarter")]
+    elif aligned:
+        seqlens = [chunk, chunk] if size_id == 0 else [2 * chunk, chunk]
+    else:
+        seqlens = (
+            [chunk, chunk + _tail(chunk, "half")]
+            if size_id == 0
+            else [chunk + 1, 2 * chunk]
+        )
+    return {
+        "dtype": dtype,
+        "B": 1,
+        "H": heads,
+        "T": sum(seqlens),
+        "chunk_size": chunk,
+        "layout": layout,
+        "num_seqs": len(seqlens),
+        "aligned": aligned,
+        "varlen": varlen,
+        "seqlens": seqlens,
+    }
+
+
+def _specials() -> list[dict]:
+    return [
+        {
+            "dtype": "fp16",
+            "B": 1,
+            "H": 2,
+            "T": 17,
+            "chunk_size": 16,
+            "layout": "bsnd",
+            "num_seqs": 1,
+            "aligned": False,
+            "varlen": False,
+        },
+        {
+            "dtype": "bf16",
+            "B": 1,
+            "H": 2,
+            "T": 33,
+            "chunk_size": 32,
+            "layout": "bnsd",
+            "num_seqs": 1,
+            "aligned": False,
+            "varlen": False,
+        },
+        {
+            "dtype": "fp16",
+            "B": 1,
+            "H": 2,
+            "T": 65,
+            "chunk_size": 32,
+            "layout": "tnd",
+            "num_seqs": 2,
+            "aligned": False,
+            "varlen": True,
+            "seqlens": [32, 33],
+        },
+        {
+            "dtype": "bf16",
+            "B": 1,
+            "H": 2,
+            "T": 160,
+            "chunk_size": 64,
+            "layout": "ntd",
+            "num_seqs": 2,
+            "aligned": False,
+            "varlen": True,
+            "seqlens": [64, 96],
+        },
+        {
+            "dtype": "fp16",
+            "B": 4,
+            "H": 4,
+            "T": 128,
+            "chunk_size": 64,
+            "layout": "bsnd",
+            "num_seqs": 1,
+            "aligned": True,
+            "varlen": False,
+        },
+        {
+            "dtype": "bf16",
+            "B": 2,
+            "H": 4,
+            "T": 256,
+            "chunk_size": 128,
+            "layout": "bnsd",
+            "num_seqs": 1,
+            "aligned": True,
+            "varlen": False,
+        },
+        {
+            "dtype": "fp16",
+            "B": 1,
+            "H": 2,
+            "T": 65,
+            "chunk_size": 16,
+            "layout": "tnd",
+            "num_seqs": 3,
+            "aligned": False,
+            "varlen": True,
+            "seqlens": [16, 32, 17],
+        },
+        {
+            "dtype": "bf16",
+            "B": 1,
+            "H": 1,
+            "T": 321,
+            "chunk_size": 128,
+            "layout": "ntd",
+            "num_seqs": 3,
+            "aligned": False,
+            "varlen": True,
+            "seqlens": [128, 64, 129],
+        },
+    ]
+
+
+def iter_profiles() -> list[dict]:
+    profiles = []
+    for size_id in (0, 1):
+        for chunk in CHUNK_SIZES:
+            for dtype in DTYPES:
+                for layout in DENSE_LAYOUTS:
+                    for aligned in (True, False):
+                        profiles.append(_dense(chunk, dtype, layout, aligned, size_id))
+    for size_id in (0, 1):
+        for chunk in CHUNK_SIZES:
+            for dtype in DTYPES:
+                for layout in PACKED_LAYOUTS:
+                    for aligned in (True, False):
+                        for varlen in (False, True):
+                            profiles.append(
+                                _packed(chunk, dtype, layout, aligned, varlen, size_id)
+                            )
+    profiles.extend(_specials())
+    if len(profiles) != 200:
+        raise RuntimeError(f"期望 200 条，实际 {len(profiles)}")
+    return profiles
+
+
+def _name(spec: dict) -> str:
+    align = "align" if spec["aligned"] else "unalign"
+    length = "varlen" if spec.get("varlen") else "fixed"
+    if spec["layout"] in PACKED_LAYOUTS:
+        return (
+            f"{spec['dtype']}_{spec['layout']}_{length}_{align}"
+            f"_NS{spec['num_seqs']}_H{spec['H']}_T{spec['T']}_C{spec['chunk_size']}"
+        )
+    return (
+        f"{spec['dtype']}_{spec['layout']}_{length}_{align}"
+        f"_B{spec['B']}_H{spec['H']}_T{spec['T']}_C{spec['chunk_size']}"
+    )
+
+
+def _nbytes(spec: dict) -> int:
+    if spec["layout"] in PACKED_LAYOUTS:
+        return spec["T"] * spec["H"] * spec["chunk_size"] * 2
+    return spec["B"] * spec["T"] * spec["H"] * spec["chunk_size"] * 2
+
+
+# ===========================================================================
+# ATK 用例生成（mixed_tolerance_bm 标准）
+# ===========================================================================
 
 try:
     from atk.case_generator.generator.base_generator import CaseGenerator

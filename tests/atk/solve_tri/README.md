@@ -4,8 +4,8 @@
 
 精度标准为 `mixed_tolerance_bm`：
 
-- **dut** = 本机 NPU `solve_tri`
-- **golden** = 本机 CPU FP64 `linalg.inv`（`--bm_device cpu`）
+- **dut** = NPU `solve_tri`
+- **golden** = CPU FP64 `linalg.inv`（`--bm_device cpu`）
 
 ## 输入约束
 
@@ -17,7 +17,7 @@
 
 ## 默认用例
 
-`atk_solve_tri.json` 为 **200** 条中小 shape（`scripts/generate_solve_tri_case.py` 的 `iter_profiles`），标准为 `mixed_tolerance_bm`。
+`atk_solve_tri.json` 为 **200** 条中小 shape（`gen_solve_tri.py` 的 `iter_profiles`），标准为 `mixed_tolerance_bm`。
 
 | 维度 | 条数 |
 |---|---|
