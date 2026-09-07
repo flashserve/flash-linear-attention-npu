@@ -82,7 +82,7 @@ def make_inputs(args) -> dict:
                 args.value_dim,
                 dtype=torch.float32,
             ) * 0.01
-        ).npu()
+        ).to(torch.bfloat16 if getattr(args, "state_dtype", "fp32") == "bf16" else torch.float32).npu()
 
     return {
         "q": q,
@@ -544,6 +544,8 @@ def contract_report(args, inputs: dict) -> dict:
         "scale": inputs["scale"],
         "cu_seqlens": inputs["cu_seqlens"],
         "initial_state": args.initial_state,
+        "state_dtype": ("bf16" if inputs["initial_state"] is not None and
+                        inputs["initial_state"].dtype == torch.bfloat16 else "fp32"),
         "output_final_state": args.output_final_state,
         "return_aux": inputs.get("return_aux", True),
         "seed": args.seed,
@@ -579,6 +581,7 @@ def parse_args():
     parser.add_argument("--iterations", type=int, default=10)
     parser.add_argument("--seed", type=int, default=20260724)
     parser.add_argument("--initial-state", action="store_true")
+    parser.add_argument("--state-dtype", choices=("fp32", "bf16"), default="fp32")
     parser.add_argument("--output-final-state", action="store_true")
     parser.add_argument(
         "--no-return-aux",
