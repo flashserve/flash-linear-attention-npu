@@ -41,7 +41,7 @@ pseudocode/
 | `C4` | Cube | 所需 GM/workspace source 已 ready；`M>32` 装入 `B/X0/X1`，Arch35 另把 stable Akk 装入最终 L1 resident | `M>32` 用一个 MMAD 计算 `T = B @ X0`；Arch35 在最终 L1 地址直接清零 q01，Arch22 把 FP32 `T` 写 GM relay；`M<=32` 时 Arch35 只装 q00、Arch22 走 control，两者都不启动 MMAD |
 | `C5` | Cube | `M>32` 时前一 Stage 的 `T`、`X1`、Akk prepack 均 ready | `M>32` 用一个 MMAD 计算 `Y = -X1 @ T`；Arch35 提交 resident quadrant，Arch22 把 2-byte `q10` 写入 row-major Akk GM relay；`M<=32` 只做 control pass-through |
 | `V6` | Vector | `Qhat/Khat` context、Fused 的 G context 或 Current 的公开 `gk`、`V` 以及三条 data-ready 边；Arch35 从 AUX 取常驻 `betaEff`，Arch22 从 workspace 重载 | 一次 VF 以 `[-80,80]` 截断 direct base-2 指数，按同一 `useExp2` 轴求 `2^x`，并生成 `Qg/qg`、`kg`、`K_beta_g`、`V_beta`；两个 RHS plane 固定 base，`M<=32` 各 drain 32 行，`M>32` 各 drain 64 行 |
-| `C7` | Cube | 有效 Akk 与对应 32/64 行 RHS | 一个逻辑 MMAD 计算 `Akk @ [K_beta_g | V_beta]`，提交 `[W | U]`；两架构的 top-only tail 都把有效 q00 直接装成 tight 32x32 Cube operand 并做 `K=32`，Arch22 full 才从 GM relay 做完整 ND 到 Cube-ready 转换 |
+| `C7` | Cube | 有效 Akk 与对应 32/64 行 RHS | 一个逻辑 MMAD 计算 `Akk @ [K_beta_g \| V_beta]`，提交 `[W \| U]`；两架构的 top-only tail 都把有效 q00 直接装成 tight 32x32 Cube operand 并做 `K=32`，Arch22 full 才从 GM relay 做完整 ND 到 Cube-ready 转换 |
 
 每个 Stage 只包含 Cube 或 Vector 之一。`V0/V1/V3/V6` 各只允许一次 VF，不按 token、
 score block 或硬件 tile 分 pass。Cube 的独立逻辑 MMAD 可在编译期展开为硬件 tile，但本 Stage
