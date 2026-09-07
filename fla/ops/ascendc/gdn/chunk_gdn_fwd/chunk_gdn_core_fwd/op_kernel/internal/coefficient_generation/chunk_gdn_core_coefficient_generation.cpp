@@ -4,6 +4,7 @@
 // solve_tri operator remains independently registered and keeps the same
 // high-precision implementation.
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "catlass/arch/cross_core_sync.hpp"
 #include "gdn_core_solve_tri/arch35/solve_tri_ascend950.h"
 #else
 #include "gdn_core_solve_tri/solve_tri_cube.h"
@@ -59,6 +60,11 @@ __aicore__ inline void RunSolvePhase(GM_ADDR a, GM_ADDR cuSeqlens, GM_ADDR chunk
             CrossCoreWaitFlag(KKT_READY_FLAG);
         }
         if ASCEND_IS_AIV {
+            if constexpr (MATRIX_SIZE == 128) {
+                // Publish all coefficient stores before releasing Solve128.
+                // Idle AIVs must participate in the same barrier generation.
+                Catlass::Arch::CrossCoreBarrier<0x0, PIPE_MTE3>();
+            }
             CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG);
         }
     }
