@@ -18,8 +18,13 @@
 #endif
 #include "recompute_w_u_fwd_struct.h"
 #include "recompute_w_u_fwd_common.h"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "arch35/recompute_w_u_fwd_cube_l1resident.h"
+#include "arch35/recompute_w_u_fwd_vector_regbase.h"
+#else
 #include "recompute_w_u_fwd_cube.h"
 #include "recompute_w_u_fwd_vector.h"
+#endif
 
 template <class... Dims>
 using GemmCubeTileShape = tla::Shape<Dims...>;
@@ -45,14 +50,22 @@ __aicore__ inline void RecomputeWUFwdKernelImplTyped(
     GM_ADDR w, GM_ADDR u, GM_ADDR workspace, const RecomputeWUFwdTilingData *tilingData)
 {
     if ASCEND_IS_AIC {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        RecomputeWUFwdProcessL1Resident<kType, betaType, typename TileShapes::L1TileShape, typename TileShapes::L0TileShape>
+#else
         RecomputeWUFwdProcess<kType, betaType, typename TileShapes::L1TileShape, typename TileShapes::L0TileShape>
+#endif
             recomputeWUFwdProcess(k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, workspace);
         recomputeWUFwdProcess.Init(*tilingData);
         recomputeWUFwdProcess.Process();
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe tPipe;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        RecomputeWUFwdVectorProcessRegbase<kType, betaType, VDim> recomputeWUFwdVectorProcess(
+#else
         RecomputeWUFwdVectorProcess<kType, betaType> recomputeWUFwdVectorProcess(
+#endif
             k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, workspace);
         recomputeWUFwdVectorProcess.Init(*tilingData, &tPipe);
         recomputeWUFwdVectorProcess.Process();
