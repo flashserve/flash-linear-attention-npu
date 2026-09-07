@@ -37,8 +37,7 @@ enum class Pipe : std::uint8_t {
     Mte3,
 };
 
-// Named same-core dependencies. They are observable design obligations, not
-// claims about a concrete HardEvent spelling in any CANN release.
+// 具名的同核依赖。这些是可观测的设计约束，不表示任何 CANN 版本中的具体 HardEvent 写法。
 enum class LocalDependency : std::uint8_t {
     Mte2ToVectorInputs,
     VectorToMte3Outputs,
@@ -62,7 +61,7 @@ enum class MemorySpace : std::uint8_t {
     Workspace,
     Ub,
     L1,
-    L0, // Symbolic L0C result storage retained for existing trace consumers.
+    L0, // 为现有轨迹消费者保留的符号化 L0C 结果存储。
     L0A,
     L0B,
 };
@@ -92,9 +91,8 @@ enum class L0OperandUse : std::uint8_t {
     Count,
 };
 
-// PROPOSED Arch22 adapter channels. Logical SyncPoint values remain distinct;
-// an implementation may serialize compatible phases over these bounded
-// reverse-aware channels instead of assigning one physical flag per enum.
+// 待实现的 Arch22 适配器通道。逻辑 SyncPoint 值保持互异；实现可以在这些有界、
+// 支持反向确认的通道上串行化兼容阶段，而不必为每个枚举值分配一个物理标志。
 enum class Arch22ReverseChannel : std::uint8_t {
     AivToAicPhase,
     AicToAivPhase,
@@ -119,10 +117,9 @@ enum class WorkspaceRegion : std::uint8_t {
 };
 
 enum class SyncPoint : std::uint8_t {
-    // SlotFree owns the per-HV G/beta/payload parts of a workspace slot. A live
-    // owner-slot Qhat/Khat cache is a disjoint subresource governed only by
-    // QkCacheFree/Ready. It remains live until C7 has observed V6RhsReady from
-    // every mapped HV cache reader and publishes the next free generation.
+    // SlotFree 管理工作区槽中每个 HV 的 G/beta/载荷区域。存活的所有者槽
+    // Qhat/Khat 缓存是独立子资源，仅由 QkCacheFree/QkCacheReady 管理。它持续存活，直到 C7
+    // 观察到每个映射 HV 缓存读取者的 V6RhsReady，并发布下一空闲代际。
     SlotFree,
     QkCacheFree,
     LocalBankFree,
@@ -156,8 +153,8 @@ struct ChunkTask {
 };
 
 struct HeadTask {
-    // headId is the value/gate head (HV). qkHeadId is its grouped Q/K source
-    // head (HK), derived from the public HV/HK ratio.
+    // headId 表示值/门控头（HV）。qkHeadId 表示根据公开 HV/HK 比例推导出的
+    // 分组 Q/K 来源头（HK）。
     std::uint32_t headId = 0;
     std::uint32_t qkHeadId = 0;
     std::uint32_t qkCacheSlot = 0;
@@ -274,29 +271,27 @@ struct BufferSpan {
     const char *name = nullptr;
     MemorySpace space = MemorySpace::Workspace;
     std::uint64_t byteOffset = 0;
-    // Contiguous enclosing byte range. For a strided matrix this is
-    // ((rows - 1) * leadingDimension + columns) * elementBytes, not merely
-    // rows * columns * elementBytes.
+    // 连续包络字节范围。对于跨步矩阵，该值为
+    // ((rows - 1) * leadingDimension + columns) * elementBytes，
+    // 而不只是 rows * columns * elementBytes。
     std::size_t byteSize = 0;
     std::uint32_t slot = 0;
     std::uint64_t generation = 0;
     CoreRole ownerRole = CoreRole::Shared;
     std::uint32_t ownerId = 0;
-    // Optional logical matrix view. Zero values mean that the span is a
-    // byte-range only. Strided transfers must populate all four fields so row
-    // stride and the logical rectangle are not lost.
+    // 可选的逻辑矩阵视图。值为零表示该范围只描述字节区间。
+    // 跨步搬运必须填写全部四个字段，避免丢失行步长和逻辑矩形信息。
     std::uint32_t rows = 0;
     std::uint32_t columns = 0;
     std::uint32_t leadingDimension = 0;
     std::uint32_t elementBytes = 0;
-    // Logical tensor head used by the symbolic GM descriptor. It is separate
-    // from memory ownership: raw q/k use HK, while gate/value/outputs use HV.
+    // 符号化 GM 描述符使用的逻辑张量头。它与内存所有权相互独立：
+    // 原始 q/k 使用 HK，门控/值/输出使用 HV。
     std::uint32_t logicalHeadId = kAllGroupLocalHeads;
 };
 
-// A shared host-only clock makes operation and synchronization records
-// comparable without introducing allocation or runtime behavior in the
-// default (untraced) pseudocode path.
+// 共享的仅主机时钟使操作记录与同步记录可比较，
+// 同时不在默认的无轨迹伪代码路径中引入内存分配或运行时行为。
 struct TraceClock {
     std::uint64_t next = 1U;
 
@@ -307,8 +302,8 @@ struct TraceClock {
 };
 
 struct WorkspaceView {
-    // Total bytes owned by the launch. The symbolic entry rejects an
-    // undersized backing allocation before deriving any per-workgroup span.
+    // 本次启动拥有的总字节数。符号化入口在推导任何每个工作组的内存范围前，
+    // 会拒绝容量不足的后备分配空间。
     std::uint64_t backingBytes = 0;
     std::uint64_t workgroupBase = 0;
     std::size_t slotStrideBytes = 0;
@@ -349,7 +344,7 @@ enum class SyncAction : std::uint8_t {
 struct SyncRecord {
     SyncAction action = SyncAction::Wait;
     SyncPoint point = SyncPoint::SlotFree;
-    // A regular event records its owner slot; a pair event records pairWave.
+    // 普通事件记录其所有者槽；配对事件记录 pairWave。
     std::uint32_t ownerId = 0;
     std::uint64_t generation = 0;
     std::uint32_t aivId = std::numeric_limits<std::uint32_t>::max();
@@ -467,14 +462,12 @@ struct OperationTrace {
     }
 };
 
-// PROPOSED: these methods describe ready/free ownership only. They do not map
-// to a chosen CrossCore flag API, flag ID, counter depth, or HardEvent. The
-// optional trace exists only for the host contract test. It records both
-// ordinary owner tickets and pair collectives so the test can prove ordering,
-// dummy participation, generations, and ready/free closure. QkCacheReady is
-// the sole level-triggered exception: one owner publishes a generation into
-// the workspace control page and every mapped HV may acquire it without
-// consuming the state. QkCacheFree remains a single next-generation credit.
+// 待实现：这些方法只描述就绪/空闲所有权，不映射到选定的跨核标志 API、
+// 标志 ID、计数器深度或 HardEvent。可选轨迹仅供主机合同测试使用，同时记录
+// 普通所有者票据和配对集合操作，使测试可以证明执行顺序、空参与者、代际以及
+// 就绪/空闲闭环。QkCacheReady 是唯一的电平式例外：一个所有者将代际发布到
+// 工作区控制页，每个映射的 HV 都可以获取该状态而不消费它。
+// QkCacheFree 仍只保留一个下一代许可。
 struct SyncLedger {
     SyncTrace *trace = nullptr;
     LocalSyncTrace *localTrace = nullptr;
@@ -531,9 +524,9 @@ struct SyncLedger {
         Set(output, slot, generation, consumer, consumerPipe);
     }
 
-    // PROPOSED Arch22 mode-0x2 adapter. Each AIV arrives exactly once per
-    // active pair; hasActiveHead=false is the mandatory dummy participant.
-    // The AIC waits/publishes once per pair, and both AIVs consume a publish.
+    // 待实现的 Arch22 0x2 模式适配器。每个 AIV 对每个有效配对恰好到达一次；
+    // hasActiveHead=false 表示必须参加的空参与者。AIC 对每个配对执行一次等待和发布，
+    // 两个 AIV 都消费同一次发布。
     void AivArrivePair(SyncPoint point, std::uint32_t pairWave,
                        std::uint64_t generation, std::uint32_t aivId,
                        bool hasActiveHead, Stage producer,
@@ -581,8 +574,8 @@ struct SyncLedger {
     }
 };
 
-// Symbolic no-ops. Their names state dataflow intent and are not claims about
-// an Ascend C API declaration, overload, memory position, or synchronization.
+// 符号化空操作。其名称只表达数据流意图，不表示 Ascend C API 的声明、重载、
+// 内存位置或同步语义。
 struct VectorOps {
     OperationTrace *trace = nullptr;
     TraceClock *clock = nullptr;
@@ -720,8 +713,8 @@ struct CubeOps {
         return clock == nullptr ? 0U : clock->Tick();
     }
 
-    // PROPOSED symbolic mode boundary. Arch22 C4/C5 must explicitly disable
-    // HF32 before their FP32 MMADs; this is not a frozen Ascend C API call.
+    // 待实现的符号化模式边界。Arch22 C4/C5 必须在 FP32 MMAD 前显式关闭 HF32；
+    // 这不是已冻结的 Ascend C API 调用。
     void SetHf32Mode(Stage stage, bool enabled) const noexcept
     {
         if (trace != nullptr) {
@@ -748,10 +741,9 @@ struct CubeOps {
         }
     }
 
-    // The L1 source descriptors and their concrete L0A/L0B operand spans are
-    // both explicit. This makes shared-vs-disjoint operand residency and the
-    // subsequent release edge auditable without claiming a concrete MTE1 API.
-    // The symbolic MMAD accumulator and its L0C output are always FP32.
+    // L1 源描述符及其具体 L0A/L0B 操作数范围都显式记录。这样无需声明具体
+    // MTE1 API，也能审计操作数驻留区是共享还是独立，以及后续释放依赖边。
+    // 符号化 MMAD 累加器及其 L0C 输出始终为 FP32。
     void Mmad(Stage stage, const BufferSpan &lhs, const BufferSpan &rhs,
               const BufferSpan &output, const BufferSpan &l0aOperand,
               const BufferSpan &l0bOperand, MatrixStorage lhsStorage,
@@ -838,8 +830,8 @@ struct CubeOps {
         }
     }
 
-    // PROPOSED Fixpipe conversion: FP16 means saturate to +/-65504 then RINT;
-    // BF16 means RINT without a finite-magnitude saturation.
+    // 待实现的 Fixpipe 转换：FP16 先饱和到 +/-65504，再执行 RINT；
+    // BF16 执行 RINT，但不做有限幅值饱和。
     void StoreRounded(Stage stage, const BufferSpan &source,
                       const BufferSpan &destination,
                       InputStorage storage) const noexcept

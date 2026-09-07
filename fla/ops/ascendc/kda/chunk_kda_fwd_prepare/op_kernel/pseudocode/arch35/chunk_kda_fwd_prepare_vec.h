@@ -59,8 +59,8 @@ inline BufferSpan SymbolicGmSpan(const HeadTask &head, const char *name,
                                  std::uint32_t logicalHeadId =
                                      kAllGroupLocalHeads)
 {
-    // Public strides and canonical GM offsets are an ABI/tiling gate. Zero is
-    // deliberately symbolic and must not be copied into the real kernel.
+    // 公开跨步和规范 GM 偏移仍需由 ABI/切分参数确认。这里的零值是刻意
+    // 保留的符号占位，不能照搬到真实核函数中。
     BufferSpan span{name, MemorySpace::Gm, 0U, bytes, head.workspaceSlot,
                     generation, CoreRole::Shared, 0U};
     span.logicalHeadId = logicalHeadId == kAllGroupLocalHeads
@@ -102,9 +102,9 @@ inline BufferSpan SymbolicGmMatrixSpan(
     Offset rows, Offset columns, Offset leadingDimension,
     Offset elementBytes, std::uint64_t generation)
 {
-    // row/column/rows/columns/leadingDimension are deliberately present in
-    // this pseudo-interface. BufferSpan retains the exact strided footprint;
-    // the real ABI must freeze and encode the corresponding 2-D DataCopy.
+    // 该伪接口刻意保留 row/column/rows/columns/leadingDimension。
+    // BufferSpan 保存跨步视图精确的物理覆盖范围；真实 ABI 必须冻结并编码对应的
+    // 二维 DataCopy。
     const Offset relativeOffset =
         (row * leadingDimension + column) * elementBytes;
     const Offset footprint = MatrixFootprintBytes(
@@ -140,31 +140,31 @@ inline std::uint32_t ActiveScoreBlocks(std::uint32_t validRows)
 
 inline bool IsSupportedKey(const ProposedTilingKey &key)
 {
-    // FP32Internal remains a capacity-proven layout candidate, but the target
-    // mixed FP32-Akk / 2-byte-RHS Cube operand contract is not yet proven.
+    // FP32Internal 仍是容量已证明可行的布局候选，但目标平台混合使用
+    // FP32 Akk 与双字节右操作数的 Cube 操作数合同尚未验证。
     return IsSupportedTilingKey(key);
 }
 
 inline void RequireMte2ToVectorInputs(const SyncLedger &sync,
                                       Stage stage) noexcept
 {
-    // PROPOSED local input-ready edge. Every GM/workspace -> UB MTE2 load in
-    // this stage must complete before Vector reads its destination. The exact
-    // A5/CANN HardEvent remains a target-version compile gate.
+    // 待实现的本核输入就绪依赖。该阶段内所有 GM/工作区 -> UB MTE2 搬运
+    // 必须先完成，Vector 才能读取目标。具体 A5/CANN HardEvent 仍需以目标
+    // 版本编译验证为准。
     sync.Local(LocalDependency::Mte2ToVectorInputs, stage);
 }
 
 inline void RequireVectorToMte3Outputs(const SyncLedger &sync,
                                        Stage stage) noexcept
 {
-    // PROPOSED local output-ready edge. Vector must finish writing all named
-    // UB sources before their GM/workspace MTE3 drains start. A cross-core
-    // ready token does not replace this same-core dependency.
+    // 待实现的本核输出就绪依赖。Vector 必须先写完所有指定的 UB 源，随后才能
+    // 启动对应的 GM/工作区 MTE3 搬运。跨核就绪令牌不能替代这一本核
+    // 依赖。
     sync.Local(LocalDependency::VectorToMte3Outputs, stage);
 }
 
-// These dependent pseudo-interfaces are never instantiated by the host-only
-// design build. They freeze operation order without claiming an Ascend C API.
+// 这些依赖伪接口不会在仅主机的设计构建中实例化；它们只冻结操作顺序，
+// 不代表任何具体 Ascend C API。
 template <typename Vf>
 inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
                     const ProposedTilingKey &key, float epsilon,
@@ -178,9 +178,9 @@ inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
     auto gateCoefficient = vf.OneFp32();
     auto dtBias = vf.ZeroFp32Row(ShapePolicy::kK);
     if (usesSelectiveGate) {
-        // The per-head coefficient and K-vector bias are loaded/computed once,
-        // outside the token scan. Their AUX addresses overlay GRef[0:2], which
-        // is materialized only after this loop has consumed both values.
+        // 每个头的系数和 K 向量偏置只在词元扫描外搬运或
+        // 计算一次。它们的 AUX 地址与 GRef[0:2] 复用；本循环消费完两个值后，
+        // 才物化 GRef[0:2]。
         gateCoefficient = vf.Exp(vf.LoadALogScalarOnce(
             UbPolicy::kAuxBase[head.aivLocalSlot] +
             AuxLayout::kALogOrGateAttrs.offset));
@@ -212,8 +212,8 @@ inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
         }
 
         if (head.qkOwner && key.qkNormMode == QkNormMode::L2) {
-            // Match the repository FLA L2 kernel and precision reference:
-            // x_hat = x * rsqrt(sum_d(x_d^2) + epsilon).
+            // 与仓库内 FLA L2 核函数及精度标杆保持一致，归一化公式为：
+            // x_hat = x * rsqrt(sum_d(x_d^2) + epsilon)。
             const auto q =
                 vf.ToFp32(vf.LoadQStorageRow(row, key.inputStorage));
             const auto k =
@@ -255,10 +255,9 @@ inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
                     vf.Ln2());
             }
         }
-        carry = vf.Add(carry, gateStep); // Token order is a true scan dependency.
-        // Identity owners and mapped non-owners retain the 2-byte MTE2 result
-        // already resident at Qhat/Khat. Re-converting and re-rounding it would
-        // be duplicate Vector work and could not improve precision.
+        carry = vf.Add(carry, gateStep); // 词元顺序构成真实的扫描依赖。
+        // 恒等路径所有者和映射到它的非所有者保留已常驻 Qhat/Khat 的 2 字节
+        // MTE2 结果。再次转换和舍入只会造成重复向量计算，无法提高精度。
         vf.StoreFp32Row(gOffset, row, carry);
         vf.StoreBetaEffScalar(row, betaEff);
     }
@@ -300,7 +299,7 @@ inline void V1OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
 
     for (std::uint32_t row = 0; row < ShapePolicy::kBt; ++row) {
         if (row < validRows) {
-            // All three source rows are captured before any aliased Q/K store.
+            // 在任何存在别名的 Q/K 写入前，先将三个源行读入临时寄存器。
             auto qHat = vf.ToFp32(vf.LoadStorageRow(
                 V1Gate2BLayout::kQPlus.offset, row, inputStorage));
             auto kHat = vf.ToFp32(vf.LoadStorageRow(
@@ -315,8 +314,8 @@ inline void V1OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
             auto qPlus = vf.Mul(qHat, plusFactor);
             auto kPlus = vf.Mul(kHat, plusFactor);
 
-            // Khat remains in a register until every required prefix has been
-            // produced. No Kminus destination overlaps the still-live G.
+            // 在所有所需前缀生成完成前，Khat 一直保留在寄存器中；所有
+            // Kminus 目标均不与仍在生命周期内的 G 重叠。
             for (std::uint32_t s = 0; s < ShapePolicy::kScoreBlockCount; ++s) {
                 const std::uint32_t physicalEnd =
                     ShapePolicy::kPrefixRows[s];
@@ -357,8 +356,8 @@ inline void V1OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
             vf.StoreStorageRow(V1Gate2BLayout::kKPlus.offset, row,
                                zeroScoreStorage, scoreStorage);
             for (std::uint32_t s = 0; s < ShapePolicy::kScoreBlockCount; ++s) {
-                // Tail keeps the fixed B_s-byte segment and explicitly zeros
-                // [b_s=min(B_s,M), B_s); it never shrinks the physical slot.
+                // 尾块保留固定的 B_s 字节区段，并显式清零
+                // [b_s=min(B_s,M), B_s)；不会缩小物理槽位。
                 if (row < ShapePolicy::kPrefixRows[s]) {
                     vf.StoreStorageRow(kMinus[s].offset, row,
                                        zeroScoreStorage, scoreStorage);
@@ -397,16 +396,15 @@ inline void V3OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
                     InputStorage inputStorage, float scale)
 {
     (void)head;
-    // This remains one VF invocation. Each raw load is predicated by the
-    // shared physical-write and valid-causal domains; invalid outputs are
-    // generated directly and never read stale raw storage.
+    // 此处仍只调用一次 VF。每次原始数据搬运都由谓词限定在共享物理写入域和
+    // 有效因果域内；无效输出直接生成，不读取残留的原始数据存储。
     V3ReadAndTransformRaw(vf, validRows, scale);
     vf.InvertTwo32By32LeavesWithFixedColumnScan();
     vf.MaterializeX0X1AndBAtFinalOffsets();
     if (akkStorage == AkkStorage::TwoByteAbi) {
-        // q00/q01/q11 are stored at their final tight quadrant-major
-        // addresses. ClampForInputStorage applies finite +/-65504 saturation
-        // only for FP16; both FP16 and BF16 then use their own rounding.
+        // q00/q01/q11 直接写入各自最终的紧凑象限优先布局地址。
+        // ClampForInputStorage 只对 FP16 执行有限值 +/-65504 饱和；随后 FP16
+        // 和 BF16 分别使用各自的舍入方式。
         auto zeroStorage = vf.RoundToInputStorage(
             vf.ClampForInputStorage(vf.ZeroFp32(), inputStorage),
             inputStorage);
@@ -414,9 +412,9 @@ inline void V3OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
              row < Akk2BPackPolicy::kQuadrantRows; ++row) {
             for (std::uint32_t col = 0U;
                  col < Akk2BPackPolicy::kQuadrantColumns; ++col) {
-                // q00/q11 are staged at their final UB offsets. Current also
-                // needs q01 for the public Akk output; Fused leaves the known
-                // zero implicit and C4 fills q01 at its final L1 address.
+                // q00/q11 暂存在其最终 UB 偏移。Current 还需要 q01 作为公开
+                // Akk 输出；Fused 不物化这个已知零值，由 C4 在最终 L1 地址
+                // 填充 q01。
                 if (V3StableAkkWriteRequired(
                         Architecture::Arch35, abi, validRows, row, col)) {
                     auto q00 = vf.LoadStableAkkQ00OrZeroColumnPadding(
@@ -449,9 +447,9 @@ inline void V3OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
             }
         }
     }
-    // Aqk has no later FP32 reader. Cast it in place toward lower addresses at
-    // the same base; forward row/column order overwrites only values already
-    // read. This is not a UB relocation or a second VF invocation.
+    // Aqk 此后不再有 FP32 读取方。以相同基址在原地向低地址执行类型转换；
+    // 按行、列正序处理时只会覆盖已经读取的值。这不属于 UB 数据移动，
+    // 也不是第二次 VF 调用。
     for (std::uint32_t row = 0U; row < ShapePolicy::kBt; ++row) {
         for (std::uint32_t col = 0U; col < ShapePolicy::kBt; ++col) {
             auto aqkStorage = vf.RoundToInputStorage(
@@ -492,8 +490,8 @@ inline void V6OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
                                      valueStorage);
             continue;
         }
-        // Capture every reader before Q/K/V in-place stores or the optional
-        // 2-byte QgScaled compression into the low half of FP32 G.
+        // 在 Q/K/V 原地写入以及可选的 2 字节 QgScaled 压缩到 FP32 G 低半区前，
+        // 先将本行所有源操作数读入寄存器。
         auto qHat = vf.ToFp32(vf.LoadStorageRow(
             V6Layout::kQHatToQg.offset, row, inputStorage));
         auto kHat = vf.ToFp32(vf.LoadStorageRow(
@@ -515,9 +513,8 @@ inline void V6OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
         auto kgStorage = vf.RoundToInputStorage(
             vf.ClampForInputStorage(kgFp32, inputStorage), inputStorage);
 
-        // Preserve the split Prepare double-rounding point. kHat*exp2(G) is
-        // first materialized in InputStorage, promoted back to FP32 for beta,
-        // then saturated/rounded again for K_beta_g.
+        // 保持拆分 Prepare 的双重舍入点。kHat*exp2(G) 先物化到 InputStorage，
+        // 再提升回 FP32 参与 beta 计算，最后为 K_beta_g 再次执行饱和与舍入。
         auto kGateStorage = vf.RoundToInputStorage(
             vf.ClampForInputStorage(vf.Mul(kHat, expG), inputStorage),
             inputStorage);
@@ -537,10 +534,9 @@ inline void V6OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
         vf.StoreStorageRow(V6Layout::kVToVBeta.offset, row, vBetaStorage,
                            valueStorage);
         if (abi == PrepareAbi::Fused) {
-            // The 2-byte destination overlaps FP32 G row floor(row/2), which
-            // is no later than row. The current G row was fully captured above.
-            // Scaling consumes the first rounded qg value, then applies the
-            // second InputStorage saturation/rounding required by FUSED ABI.
+            // 2 字节目标与 FP32 G 的 floor(row/2) 行复用，该行不会晚于当前 row。
+            // 当前 G 行已在上方完整读取。缩放先消费第一次舍入后的 qg，再执行
+            // FUSED ABI 要求的第二次 InputStorage 饱和与舍入。
             auto qgScaledStorage = vf.RoundToInputStorage(
                 vf.ClampForInputStorage(
                     vf.Mul(scale, vf.ToFp32(qgStorage)), inputStorage),
@@ -581,9 +577,8 @@ inline void RunV0(const VectorStageArgs &args)
                             head.qkCacheGeneration, Stage::V0,
                             Pipe::Mte2);
         } else {
-            // QkCacheReady is a level-triggered generation state in the
-            // workspace control page. Multiple mapped HV heads acquire the
-            // same publication without consuming it.
+            // QkCacheReady 是工作区控制页中的电平式（非消费式）代际状态。
+            // 多个映射到该缓存的 HV 头获取同一次发布，但不会消费它。
             args.sync->Wait(SyncPoint::QkCacheReady, head.qkCacheSlot,
                             head.qkCacheGeneration, Stage::V0,
                             Pipe::Mte2);
@@ -636,8 +631,8 @@ inline void RunV0(const VectorStageArgs &args)
                        detail::UbMainSpan(
                            head, "gate-to-G", {g.offset, gateInputBytes},
                            localGeneration));
-        // The split-forward kernel boundary is FP32 beta. Public 2-byte beta
-        // is cast by op_api/L2 before this load, so V0 reads exactly M scalars.
+        // 拆分前向核函数边界上的 beta 为 FP32。公开的 2 字节 beta 在本次
+        // 搬运前由 op_api/L2 完成类型转换，因此 V0 恰好读取 M 个标量。
         args.ops->Load(Stage::V0,
                        detail::SymbolicGmSpan(head, "beta", betaInputBytes,
                                               workspaceGeneration),
@@ -646,9 +641,8 @@ inline void RunV0(const VectorStageArgs &args)
                            {AuxLayout::kBetaRaw.offset, betaInputBytes},
                            localGeneration));
         if (args.key.gateMode != GateMode::PrecomputedStep) {
-            // Each selective-gate input is loaded once. An absent optional
-            // dt_bias must be zero-filled at this final AUX address, not read
-            // past a null/short GM tensor.
+            // 每个选择性门控输入只搬运一次。可选 dt_bias 缺失时，必须在
+            // 该最终 AUX 地址清零，不能越过空指针或过短的 GM 张量读取。
             const BufferSpan dtBias = detail::UbAuxSpan(
                 head, "dt-bias", AuxLayout::kDtBias, localGeneration);
             if (args.hasDtBias) {
@@ -674,8 +668,8 @@ inline void RunV0(const VectorStageArgs &args)
         }
 
         detail::RequireMte2ToVectorInputs(*args.sync, Stage::V0);
-        // Exactly one invocation; its required body is detail::V0OneVf with
-        // args.key and the frozen epsilon/lowerBound scalar attributes.
+        // 仅调用一次；所需函数体为 detail::V0OneVf，并传入 args.key 以及已冻结
+        // 的 epsilon/lowerBound 标量属性。
         args.ops->RunVf(Stage::V0, head);
         args.sync->Set(SyncPoint::V0BetaReady, head.localBankId,
                        localGeneration,
@@ -701,8 +695,8 @@ inline void RunV0(const VectorStageArgs &args)
                     qkCache, "khat-HK-cache", 0x4000U, qkInputBytes));
         }
         if (args.key.abi == PrepareAbi::Current) {
-            // Current already exposes G as gk. V6 reuses that one GM copy
-            // instead of materializing identical Vector data in context.
+            // Current 已将 G 作为 gk 公开。V6 复用这一份 GM 数据，不再在
+            // 上下文中物化相同的 Vector 数据。
             args.ops->Store(
                 Stage::V0,
                 detail::UbMainSpan(
@@ -720,8 +714,8 @@ inline void RunV0(const VectorStageArgs &args)
                                 gOutputBytes));
         }
 
-        // Both points become visible only after the last enabled MTE3/output
-        // drain. Concrete HardEvent and CrossCore IDs remain an API gate.
+        // 仅在最后一个已启用的 MTE3/输出搬运完成后，两个同步点才可见。具体
+        // HardEvent 和 CrossCore ID 仍需通过 API 验证。
         if (head.qkOwner) {
             args.sync->Set(SyncPoint::QkCacheReady, head.qkCacheSlot,
                            head.qkCacheGeneration, Stage::V0, Pipe::Mte3);
@@ -747,10 +741,9 @@ inline void RunV1(const VectorStageArgs &args)
         args.sync->Wait(SyncPoint::V0ExportDone, head.localBankId,
                         localGeneration,
                         Stage::V1, Pipe::Vector);
-        // Exactly one invocation. Host dispatch specializes
-        // detail::V1OneVf<useExp2> with input/gate/score storage from
-        // args.key; both 2^x sites and every saturation/rounding point remain
-        // inside this same VF.
+        // 仅调用一次。主机分发根据 args.key 中的输入/门控/分数存储类型
+        // 特化 detail::V1OneVf<useExp2>；两个 2^x 计算点以及所有饱和与舍入点
+        // 都保留在同一次 VF 中。
         args.ops->RunVf(Stage::V1, head,
                         ResolvePow2Primitive(args.key.useExp2));
         detail::RequireVectorToMte3Outputs(*args.sync, Stage::V1);
@@ -779,9 +772,8 @@ inline void RunV1(const VectorStageArgs &args)
                                     copy.size));
             }
         }
-        // One writeback phase contains exactly two fixed MTE3 regions. It is
-        // not one contiguous DataCopy. These three states all follow the last
-        // source reader; each is consumed once by its named owner.
+        // 一个回写阶段恰好包含两个固定的 MTE3 区域，并非一次连续 DataCopy。
+        // 随后发布的三个同步状态均位于最后一个源读取方之后，且各自由指定所有者消费一次。
         args.sync->Set(SyncPoint::V1MainSourceFree, head.localBankId,
                        localGeneration, Stage::V1, Pipe::Mte3);
         args.sync->Set(SyncPoint::C2RawDstFree, head.localBankId,
@@ -811,11 +803,10 @@ inline void RunV3(const VectorStageArgs &args)
         args.sync->Wait(SyncPoint::C2RawReady, head.localBankId,
                         localGeneration,
                         Stage::V3, Pipe::Vector);
-        // Exactly one invocation; detail::V3OneVf also receives ABI,
-        // AkkStorage, InputStorage, and the explicit runtime scale. The scale
-        // is applied once to Aqk.
-        // Raw readers are restricted to the C2-defined valid-causal domain;
-        // every other output lane is generated without a raw UB read.
+        // 仅调用一次；detail::V3OneVf 还接收 ABI、AkkStorage、InputStorage 和
+        // 显式运行时缩放。缩放仅对 Aqk 应用一次。
+        // 原始数据读取方仅访问 C2 定义的有效因果域；其余输出通道均不读取
+        // 原始 UB，直接生成结果。
         args.ops->RunVf(Stage::V3, head, args.scale, RuntimeScaleUse::Aqk,
                         1U);
         detail::RequireVectorToMte3Outputs(*args.sync, Stage::V3);
@@ -854,18 +845,17 @@ inline void RunV3(const VectorStageArgs &args)
                     detail::Subspan(payload, "X1-tau", 0x3800U, 0x0800U));
             }
         }
-        // Fused has no public AkkOut relay, so its stable quadrants become
-        // visible through the tight workspace payload. Current publishes only
-        // after the single public AkkOut drain below; it must not duplicate
-        // those quadrants into this payload.
+        // Fused 没有公开 AkkOut 中转数据，因此其稳定象限通过紧凑的工作区载荷
+        // 变为可见。Current 仅在下方唯一一次公开 AkkOut 搬运完成后发布；
+        // 禁止将这些象限重复写入该载荷。
         if (args.key.abi == PrepareAbi::Fused) {
             args.sync->Set(SyncPoint::V3VcsReady, head.workspaceSlot,
                            workspaceGeneration, Stage::V3, Pipe::Mte3);
         }
 
-        // Aqk and optional AkkOut use independent public GM addresses. Their
-        // ABI offsets/casts are intentionally symbolic, but their MTE3 drains
-        // are included before local MAIN/AUX ownership is returned.
+        // Aqk 与可选 AkkOut 使用相互独立的公开 GM 地址。其 ABI 偏移和类型转换
+        // 刻意保持符号化，但归还本地 MAIN/AUX 所有权前必须包含对应的 MTE3
+        // 搬运。
         if (validRows != 0U) {
             args.ops->Store(
                 Stage::V3,
@@ -922,8 +912,8 @@ inline void RunV3(const VectorStageArgs &args)
                         kQuadrant, bottom, kQuadrant, ShapePolicy::kBt,
                         ShapePolicy::kStorageBytes, workspaceGeneration));
             }
-            // C4 uses this same public AkkOut generation as the Current ABI
-            // relay. Publish only after q00/q01/q11 MTE3 drains are visible.
+            // C4 使用同一代公开 AkkOut 作为 Current ABI 的中转数据。仅在
+            // q00/q01/q11 的 MTE3 搬运可见后发布。
             args.sync->Set(SyncPoint::V3VcsReady, head.workspaceSlot,
                            workspaceGeneration, Stage::V3, Pipe::Mte3);
         }
@@ -948,8 +938,7 @@ inline void RunV6(const VectorStageArgs &args)
             validRows * ShapePolicy::kV * ShapePolicy::kStorageBytes;
         const Offset gBytes =
             validRows * ShapePolicy::kK * ShapePolicy::kFp32Bytes;
-        // This is a symbolic three-input join, not a claim that target CANN
-        // provides one instruction with these semantics.
+        // 这是符号化的三输入汇合点，不表示目标 CANN 提供具有该语义的单条指令。
         args.sync->Wait(SyncPoint::V0ContextReady, head.workspaceSlot,
                         workspaceGeneration, Stage::V6, Pipe::Mte2);
         args.sync->Wait(SyncPoint::V3LocalSourceFree, head.localBankId,
@@ -960,10 +949,9 @@ inline void RunV6(const VectorStageArgs &args)
         const BufferSpan context = args.workspace->Span(
             WorkspaceRegion::Context, head.workspaceSlot,
             workspaceGeneration);
-        // Every mapped HV reloads Qhat/Khat directly from the owner copy.
-        // C7 coordinates all mapped heads' V6RhsReady publications before it
-        // releases the cache; non-owner context Q/K ranges are never
-        // materialized.
+        // 每个映射到该缓存的 HV 都直接从所有者副本重新装载 Qhat/Khat。C7 在
+        // 释放缓存前汇聚所有映射头发布的 V6RhsReady；非所有者上下文
+        // 的 Q/K 区间从不物化。
         const BufferSpan qkContext = args.workspace->Span(
             WorkspaceRegion::Context, head.qkCacheSlot,
             head.qkCacheGeneration);
@@ -1002,11 +990,10 @@ inline void RunV6(const VectorStageArgs &args)
                            {V6Layout::kVToVBeta.offset, tokenStorageBytes},
                            localGeneration));
         detail::RequireMte2ToVectorInputs(*args.sync, Stage::V6);
-        // Exactly one invocation; host dispatch specializes
-        // detail::V6OneVf<useExp2> and passes independent q/k and value
-        // storage plus runtime scale. Current performs no V6 scale multiply;
-        // Fused applies it exactly once after the first qg round. Both direct
-        // 2^x sites and all storage round points execute here.
+        // 仅调用一次；主机分发特化 detail::V6OneVf<useExp2>，并传入相互
+        // 独立的 Q/K 存储类型、V 存储类型及运行时缩放。Current 在 V6
+        // 不执行缩放乘法；Fused 在 qg 第一次舍入后恰好应用一次。两个直接
+        // 2^x 计算点和所有存储舍入点都在此执行。
         args.ops->RunVf(Stage::V6, head,
                         ResolvePow2Primitive(args.key.useExp2), args.scale,
                         args.key.abi == PrepareAbi::Fused
@@ -1024,8 +1011,8 @@ inline void RunV6(const VectorStageArgs &args)
                 : Akk2BPackPolicy::kQuadrantRows;
         const Offset rhsPlaneBytes =
             rhsRows * ShapePolicy::kK * ShapePolicy::kStorageBytes;
-        // Plane bases remain fixed. Top-only tails drain only 32 physical
-        // rows per plane; full tails drain all 64 rows.
+        // 各平面基址保持固定。仅上半区有效的尾块在每个平面只搬运 32 个
+        // 物理行；完整尾块搬运全部 64 行。
         args.ops->Store(
             Stage::V6,
             detail::UbMainSpan(

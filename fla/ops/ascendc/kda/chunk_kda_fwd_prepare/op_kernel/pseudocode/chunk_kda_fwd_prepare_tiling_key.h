@@ -14,8 +14,7 @@
 
 namespace kda_prepare_pseudocode {
 
-// This directory is non-building design pseudocode. The actual Ascend C tiling
-// key declaration and encoding remain PROPOSED until the ABI is frozen.
+// 本目录包含不参与构建的设计伪代码。在 ABI 冻结前，实际 Ascend C TilingKey 的声明和编码仍是待确认设计。
 enum class Architecture : std::uint8_t {
     Arch22,
     Arch35,
@@ -91,9 +90,8 @@ constexpr std::uint64_t WorkspaceWorkgroupStrideFor(
                : kArch35WorkspaceWorkgroupStrideBytes;
 }
 
-// Base-2 exponent bounds copied from the existing split Prepare semantics.
-// SCORE_T controls the score path; direct gate-derived values retain the
-// narrower range even when the score payload is BF16.
+// 从现有拆分 Prepare 语义沿用的以 2 为底指数边界。SCORE_T 控制分数路径；
+// 即使分数数据为 BF16，直接由门控派生的值仍使用较窄范围。
 constexpr float kFp16ScoreExp2InputMin = -80.0F;
 constexpr float kFp16ScoreExp2InputMax = 80.0F;
 constexpr float kBf16ScoreExp2InputMin = -126.0F;
@@ -194,9 +192,8 @@ enum class PrepareAbi : std::uint8_t {
     Fused,
 };
 
-// V3's coordinate-level ownership contract is shared by both VF pseudocode
-// paths and the host contract test. Physical C2 writes include 16-row tail
-// padding, while the two raw readers are predicated to valid causal elements.
+// V3 的坐标级所有权合同由两条 VF 伪代码路径和主机合同测试共享。
+// C2 的物理写入包含 16 行尾部填充，而两个原始数据读取端均通过谓词限定为有效的因果元素。
 constexpr bool V3C2RawDefined(std::uint32_t validRows, std::uint32_t row,
                               std::uint32_t column) noexcept
 {
@@ -233,8 +230,8 @@ constexpr bool V3C5Q10WriteRequired(Architecture architecture,
         row >= kChunkRows || column >= 32U) {
         return false;
     }
-    // Arch35's final L1 operand is a fixed quadrant; Arch22 writes only the
-    // valid bottom rows to its row-major relay and lets C7 fill the tail.
+    // Arch35 的最终 L1 操作数是固定象限；Arch22 只把有效底部行写入
+    // 行主序中继区，并由 C7 填充尾部。
     return architecture == Architecture::Arch35 || row < validRows;
 }
 
@@ -261,11 +258,10 @@ constexpr bool V3StableAkkWriteRequired(Architecture architecture,
     const bool q01 = row < 32U && column >= 32U;
     const bool q11 = row >= 32U && column >= 32U;
     if (abi == PrepareAbi::Current) {
-        // Current drains only valid public Akk rows; C4 fills tail rows before
-        // its strided-to-tight reload.
+        // Current 仅写出有效的公开 Akk 行；C4 在将跨步布局重新装载为紧凑布局前填充尾部行。
         return row < validRows && (q00 || q01 || q11);
     }
-    // Fused feeds fixed tight Cube operands directly, including tail padding.
+    // Fused 直接提供包含尾部填充的固定紧凑 Cube 操作数。
     return q00 || (validRows > 32U && q11);
 }
 
@@ -297,9 +293,9 @@ constexpr Pow2Primitive ResolvePow2Primitive(bool useExp2) noexcept
 }
 
 struct ProposedTilingKey {
-    // q/k and q/k-derived public outputs.
+    // q/k 以及由 q/k 派生的公开输出。
     InputStorage inputStorage = InputStorage::Bf16;
-    // v/u are an independent public dtype axis with the same 2-byte width.
+    // v/u 是独立的公开数据类型轴，宽度同为 2 字节。
     InputStorage valueStorage = InputStorage::Bf16;
     GateStorage gateStorage = GateStorage::Bf16;
     ScoreStorage scoreStorage = ScoreStorage::Bf16;
@@ -308,8 +304,8 @@ struct ProposedTilingKey {
     QkNormMode qkNormMode = QkNormMode::Identity;
     BetaMode betaMode = BetaMode::Raw;
     GateMode gateMode = GateMode::PrecomputedStep;
-    // Public gk remains log2-valued in both specializations. This axis only
-    // selects exp2(x) versus exp(x * ln(2)) when materializing 2^x.
+    // 两种特化中公开 gk 都保持 log2 数值。该轴仅在物化 2^x 时选择
+    // exp2(x) 或 exp(x * ln(2))。
     bool useExp2 = true;
     bool safeGate = false;
 };
@@ -467,8 +463,8 @@ static_assert(kFp16FiniteMin == -kFp16FiniteMax,
 struct RuntimeTiling {
     std::uint32_t sequenceCount = 0;
     std::uint32_t totalChunks = 0;
-    // headCount is HV. qkHeadCount is HK; zero is a host-test shorthand for
-    // HK=HV, while production Host tiling must write the shape-derived HK.
+    // headCount 表示 HV，qkHeadCount 表示 HK；在主机测试中，零是 HK=HV 的简写，
+    // 生产环境的主机分块配置必须写入从形状推导出的 HK。
     std::uint32_t headCount = 0;
     std::uint32_t qkHeadCount = 0;
     std::uint32_t aicWorkgroupCount = 0;
@@ -548,20 +544,16 @@ static_assert(
          .valid,
     "Arch22 checked sizing must reject u64 multiplication overflow");
 
-// PROPOSED Host contract: beta is one FP32 scalar per token at this split-kernel
-// boundary. L2 may accept BF16/FP32 publicly but must cast to FP32 before launch;
-// beta storage is therefore not a kernel template axis. Reject non-finite
-// scalars before launch; L2 norm requires a positive epsilon. Selective gate
-// modes require A_log and use dt_bias only when hasDtBias is true; false means
-// exact zero and no GM read. InputStorage selects q/k and their derived
-// outputs; valueStorage independently selects v/u. ScoreStorage is a distinct
-// compile-time semantic because a generic two-byte label cannot choose the
-// FP16/BF16 Exp2 clamp. Host must reject unimplemented input/score and
-// gate/safeGate mappings. epsilon/lowerBound/scale/hasDtBias remain runtime data;
-// the enum axes are compile-time semantics whose numeric key encoding is not
-// frozen by this pseudocode. Every FP16 write first saturates to
-// [kFp16FiniteMin,kFp16FiniteMax] and then uses RINT; BF16 writes use RINT
-// without that finite-magnitude saturation.
+// 待确认的主机合同：在该拆分核函数边界，每个词元对应一个 FP32 beta 标量。
+// L2 公开接口可以接受 BF16/FP32，但启动前必须转换为 FP32；因此 beta 存储类型不是
+// 核函数模板轴。启动前拒绝非有限标量；L2 归一化要求 epsilon 为正数。
+// 选择性门控模式要求提供 A_log，并且仅在 hasDtBias 为 true 时使用 dt_bias；false
+// 表示精确的零且不读取 GM。InputStorage 选择 q/k 及其派生输出；valueStorage 独立选择
+// v/u。ScoreStorage 是独立的编译期语义，因为通用的 2 字节标记无法选择 FP16/BF16
+// Exp2 限幅。主机必须拒绝未实现的输入/分数和门控/safeGate 映射。
+// epsilon/lowerBound/scale/hasDtBias 保持为运行时数据；枚举轴是编译期语义，
+// 本伪代码不冻结其数值键编码。每次写 FP16 前先饱和到
+// [kFp16FiniteMin,kFp16FiniteMax]，再执行 RINT；BF16 写入执行 RINT，但不做有限幅值饱和。
 
 } // namespace kda_prepare_pseudocode
 

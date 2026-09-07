@@ -61,7 +61,7 @@ struct Pow2Probe {
 
     float Ln2() const noexcept
     {
-        // A sentinel makes the multiply observable without relying on libm.
+        // 使用哨兵值使乘法路径可观测，而不依赖 libm。
         return 0.5F;
     }
 

@@ -49,8 +49,8 @@ inline BufferSpan MatrixRect(const BufferSpan &parent, const char *name,
                              Offset columns, Offset leadingDimension,
                              Offset elementBytes)
 {
-    // PROPOSED 2-D descriptor. byteSize encloses the complete strided view;
-    // rows/columns retain its logical payload.
+    // 待实现的二维描述符：byteSize 覆盖完整的跨步视图，rows/columns
+    // 保留其逻辑载荷尺寸。
     BufferSpan span = parent;
     span.name = name;
     span.byteOffset +=
@@ -216,53 +216,52 @@ constexpr std::uint32_t ActiveScoreBlocks(std::uint32_t validRows) noexcept
 inline void RequireMte2ToFixpipePayloadReuse(const SyncLedger &sync,
                                              Stage stage) noexcept
 {
-    // PROPOSED: score MTE2 must finish before compact Fixpipe writers reuse
-    // the same GM payload. A cross-core ready token is not this local event.
+    // 待实现：分数数据的 MTE2 搬运必须先完成，紧凑数据的 Fixpipe 写入方
+    // 才能复用同一段 GM 载荷区；跨核就绪令牌不能替代这个核内事件。
     sync.Local(LocalDependency::Mte2ToFixpipePayloadReuse, stage);
 }
 
 inline void RequireFixpipeToMte2Relay(const SyncLedger &sync,
                                       Stage stage) noexcept
 {
-    // PROPOSED c220 FIX->MTE2 event and ND2NZ transfer. Exact API/format are
-    // compile gates; PIPE_ALL and a made-up PipeBarrier are forbidden.
+    // 待实现 c220 的 FIX->MTE2 事件与 ND2NZ 搬运。具体 API/格式是编译
+    // 门禁；禁止使用 PIPE_ALL 或臆造的 PipeBarrier。
     sync.Local(LocalDependency::FixpipeToMte2Relay, stage);
 }
 
 inline void RequireMte2FillToLoadWaw(const SyncLedger &sync,
                                      Stage stage) noexcept
 {
-    // PROPOSED c220 MTE2 WAW edge. The asynchronous full-L1 zero fill must
-    // complete before GM->L1 writes valid Akk rows at the same addresses.
-    // Source order is insufficient; the concrete implementation must use the
-    // target-version MTE2 barrier/event proven by a minimal compile.
+    // 待实现 c220 的 MTE2 WAW 依赖。异步全 L1 清零必须先完成，随后 GM->L1
+    // 才能向相同地址写入有效 Akk 行。仅靠源码顺序不够；具体实现必须使用
+    // 经最小编译验证的目标版本 MTE2 屏障/事件。
     sync.Local(LocalDependency::Mte2FillToLoadWaw, stage);
 }
 
 inline void RequireMte2ToMte1Inputs(const SyncLedger &sync,
                                     Stage stage) noexcept
 {
-    // PROPOSED local input-ready edge. Every GM/workspace -> L1 MTE2 load for
-    // this stage must complete before MTE1 transfers its MMAD operands. The
-    // exact c220 HardEvent remains a target-version compile gate.
+    // 待实现的本核输入就绪依赖。本阶段的所有 GM/工作空间 -> L1 MTE2
+    // 搬入必须先完成，MTE1 随后才能搬运 MMAD 操作数。具体 c220 HardEvent
+    // 仍是目标版本的编译门禁。
     sync.Local(LocalDependency::Mte2ToMte1Inputs, stage);
 }
 
 inline void RequireCubeToMte1OperandReuse(const SyncLedger &sync,
                                           Stage stage) noexcept
 {
-    // PROPOSED local operand-release edge. Call only after every independent
-    // MMAD reader for the current C2 band or Cube stage has consumed its
-    // L0A/L0B lane; a later MTE1 transfer may then overwrite that lane.
+    // 待实现的本核操作数释放依赖。仅当当前 C2 分带或 Cube 阶段的所有
+    // 独立 MMAD 读取方均已消费各自 L0A/L0B 通道后，后续 MTE1 搬运
+    // 才可覆盖该通道。
     sync.Local(LocalDependency::CubeToMte1OperandReuse, stage);
 }
 
 inline void RequireCubeToFixpipeOutput(const SyncLedger &sync,
                                        Stage stage) noexcept
 {
-    // PROPOSED local result-ready edge. Cube must finish producing the named
-    // L0C region before Fixpipe reads it. A later Fixpipe-tagged ready/free
-    // token cannot make the preceding Store itself safe.
+    // 待实现的本核结果就绪依赖。Cube 必须先完成指定 L0C 区域的生成，
+    // Fixpipe 随后才能读取。后续带 Fixpipe 标签的就绪/释放令牌不能
+    // 反向保证前序 Store 本身安全。
     sync.Local(LocalDependency::CubeToFixpipeOutput, stage);
 }
 
@@ -425,8 +424,8 @@ inline void RunC4(const CubeStageArgs &args)
                             hasQ10 ? Pipe::Cube : Pipe::Control);
 
             if (!hasQ10) {
-                // V3 already completed the only live Akk quadrants. Preserve
-                // the L1/L0C ticket chain without loading VCS or producing T.
+                // V3 已经完成所有仍有效的 Akk 象限；不加载 VCS、也不生成 T，
+                // 仅维持 L1/L0C 代际许可链。
                 args.sync->Set(SyncPoint::C4AkkPrepReady, head.l1BankId,
                                head.l1Generation, Stage::C4, Pipe::Control);
                 args.sync->Set(SyncPoint::L0cBankFree, head.l0cBankId,
@@ -507,9 +506,9 @@ inline void RunC4(const CubeStageArgs &args)
             args.sync->Set(SyncPoint::L0cBankFree, head.l0cBankId,
                            l0cGeneration + 1U, Stage::C4, Pipe::Fixpipe);
         }
-        // T/Akk remain live in disjoint payload suffixes. For a real q10 the
-        // pair publish follows both MTE2 readers; a top-only tail has no VCS
-        // reader and transfers the phase through Control.
+        // T/Akk 驻留在载荷区中互不重叠的后缀。确实存在 q10 时，配对发布
+        // 位于两个 MTE2 读取方之后；仅含上半部分的尾块没有 VCS 读取方，
+        // 通过 Control 传递阶段状态。
         args.sync->AicPublishPair(
             SyncPoint::C4PayloadFree, pair, collectiveGeneration, Stage::C4,
             hasQ10 ? Pipe::Mte2 : Pipe::Control);
@@ -627,10 +626,9 @@ inline void RunC7(const CubeStageArgs &args)
             PairCollectiveGenerationFor(args.work->group, pair);
         args.sync->AicWaitPair(SyncPoint::V6RhsReady, pair,
                                collectiveGeneration, Stage::C7, Pipe::Mte2);
-        // The pair wait aggregates both AIVs. Because C7 visits pair waves and
-        // earlier local groups in order, a cohort-last head in this pair means
-        // every mapped HV has published V6RhsReady; only the AIC coordinator
-        // may then release the shared Q/K cache generation.
+        // 配对等待汇聚两个 AIV。C7 按配对波次顺序遍历，并已处理所有更早的
+        // 本地分组；若当前配对包含协作组的最后一个头，则所有映射的 HV 均已
+        // 发布 V6RhsReady；此后只能由 AIC 协调者释放共享 Q/K 缓存代际。
         for (const HeadTask &head : args.work->group.heads) {
             if (head.active && head.qkLastConsumer &&
                 arch22_policy::PairWave(head.groupLocalHead) == pair) {
@@ -658,23 +656,21 @@ inline void RunC7(const CubeStageArgs &args)
                 cube_detail::AkkRelay(args, head, validRows);
             BufferSpan akkMmad = akkL1;
             if (hasQ10) {
-                // PROPOSED one-shot row-major GM -> full Cube-ready transfer.
-                // Fill supplies bottom tail rows; the complete row transfer
-                // intentionally includes q01 because an Arch22 final-address
-                // NZ submatrix fill has not yet passed the compile gate.
+                // 待实现一次性行主序 GM -> 完整 Cube 就绪搬运。Fill 补齐
+                // 底部尾行；完整行搬运特意包含 q01，因为 Arch22 在最终地址
+                // 执行 NZ 子矩阵填充的方案尚未通过编译门禁。
                 args.ops->Fill(Stage::C7, akkL1, 0U);
                 cube_detail::RequireMte2FillToLoadWaw(*args.sync,
                                                       Stage::C7);
-                // Only the bottom-left q10 has a C5 Fixpipe producer. For a
-                // top-only tail, C5 is a Control pass-through and waiting on
-                // a nonexistent Fixpipe event would deadlock.
+                // 只有左下角 q10 存在 C5 Fixpipe 生产者。对于仅含顶部的尾块，
+                // C5 只经 Control 透传；等待不存在的 Fixpipe 事件会导致死锁。
                 cube_detail::RequireFixpipeToMte2Relay(*args.sync,
                                                        Stage::C7);
                 args.ops->Load(Stage::C7, akkRelay, akkL1);
             } else {
-                // Do not derive q00 from a partially populated 64x64 NZ view.
-                // This is a direct valid-row/ld64 GM -> tight 32x32
-                // Cube-ready transfer into the final L1 operand address.
+                // 不要从未完整填充的 64x64 NZ 视图派生 q00。这里直接执行
+                // 按有效行数、主维度 64 从 GM -> 紧凑 32x32 Cube 就绪搬运，
+                // 并写入最终 L1 操作数地址。
                 constexpr Offset kQuadrant = 32U;
                 const BufferSpan q00Tight = cube_detail::MatrixRect(
                     akkL1, "Akk-q00-tight-cube-ready", 0U, 0U,
@@ -811,8 +807,8 @@ inline void RunC7(const CubeStageArgs &args)
             args.sync->Set(SyncPoint::L0cBankFree, head.l0cBankId,
                            l0cGeneration + 1U, Stage::C7, Pipe::Fixpipe);
         }
-        // Both physical lanes have completed their U Fixpipe store before the
-        // pair credit is broadcast to both AIVs for the next transaction.
+        // 两条物理通道均完成 U 的 Fixpipe 写回后，才把配对许可广播给
+        // 两个 AIV，供下一笔事务使用。
         args.sync->AicPublishPair(SyncPoint::SlotFree, pair,
                                   collectiveGeneration + 1U, Stage::C7,
                                   Pipe::Fixpipe);

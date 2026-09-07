@@ -30,8 +30,8 @@ inline auto EvaluatePow2(Vf &vf, const Value &base2Exponent,
     if constexpr (UseExp2) {
         return vf.Exp2Clamped(base2Exponent, base2Minimum, base2Maximum);
     }
-    // gk and every relative gate remain in log2 units. The alternate public
-    // mode clamps that same x first, then evaluates exp(x * ln(2)) in FP32.
+    // gk 和所有相对门控均保持 log2 单位。另一种公开模式先将同一个 x 限幅到指定范围，
+    // 再用 FP32 计算 exp(x * ln(2))。
     const auto clamped =
         vf.Clamp(base2Exponent, base2Minimum, base2Maximum);
     return vf.Exp(vf.Mul(clamped, vf.Ln2()));
@@ -151,10 +151,9 @@ constexpr void BindQkCacheTask(HeadTask &task, const ChunkTask &chunk,
     task.qkCacheGeneration = std::numeric_limits<std::uint64_t>::max();
 }
 
-// Head fallback partitions only at complete HK cohorts. When one cohort fits
-// in four lanes, pack as many complete cohorts as possible; a larger cohort
-// stays on one workgroup and is emitted as several consecutive four-head
-// groups. Thus no second workgroup can repeat the same HK normalization.
+// 头分核回退只按完整的 HK 同源头组分区。当一个同源头组能装入四条通道时，尽可能打包
+// 更多完整同源头组；较大的同源头组保留在一个工作组中，并拆成若干连续的四头
+// 分组发出。因此不会有第二个工作组重复执行同一 HK 归一化。
 constexpr std::uint32_t QkHeadsPerPartition(
     std::uint32_t valueHeadCount, std::uint32_t qkHeadCount) noexcept
 {
@@ -329,9 +328,9 @@ constexpr void BindL0OperandGenerations(
     HeadGroup &group, Architecture architecture,
     OwnerTicketState &tickets) noexcept
 {
-    // Allocation order exactly follows the AIC source order: all active C2
-    // bands by head, then C4, C5, and C7 by head. Arch35 has one shared
-    // operand bank; Arch22 has two independently reusable physical lanes.
+    // 分配顺序严格遵循 AIC 源码顺序：先按头分配所有有效的 C2 分带，再按头
+    // 分配 C4、C5 和 C7。Arch35 只有一个共享操作数缓冲区；Arch22 有两条可独立复用的
+    // 物理通道。
     for (HeadTask &head : group.heads) {
         if (!head.active) {
             continue;
@@ -445,9 +444,8 @@ constexpr HeadGroup BuildHeadGroup(const ChunkTask &chunk,
     BindL0OperandGenerations(group, architecture, tickets);
 
     if (architecture == Architecture::Arch22) {
-        // Arch22 owns one shared 40 KiB arena per AIV. V0 and V1 retain one
-        // ticket across their same-head sequence; V3 stays entirely private,
-        // and V6 acquires the only later shared ticket.
+        // Arch22 的每个 AIV 拥有一块 40 KiB 共享区。V0 和 V1 在同一个头的序列中持续
+        // 持有同一票据；V3 完全使用私有区，只有 V6 随后再获取一次共享区票据。
         for (std::size_t use = 0; use < kSharedArenaUseCount; ++use) {
             for (std::uint32_t localSlot = 0; localSlot < kHeadsPerAiv;
                  ++localSlot) {
@@ -463,9 +461,8 @@ constexpr HeadGroup BuildHeadGroup(const ChunkTask &chunk,
             }
         }
 
-        // Arch22 has two physical 64 KiB L0C lanes. Every Cube stage releases
-        // its lane before the next pair/stage reuses it, so generations are
-        // stage-use tickets rather than an A5 transaction-long ticket.
+        // Arch22 有两条物理 64 KiB L0C 通道。每个 Cube 阶段都在下一配对或阶段复用前
+        // 释放自己的通道，因此代际是阶段使用票据，而不是覆盖 A5 整个事务生命周期的票据。
         for (std::size_t use = 0; use < kL0cStageUseCount; ++use) {
             for (std::uint32_t pair = 0; pair < kArch22PairCount; ++pair) {
                 for (std::uint32_t lane = 0; lane < kAivPerWorkgroup; ++lane) {
@@ -499,9 +496,8 @@ constexpr HeadGroup BuildHeadGroupRange(
             ? std::min(kHeadsPerGroup, headEnd - headBegin)
             : 0U;
 
-    // The zero-head helper above allocates no owner tickets. Populate the
-    // explicit range using the same ownership rules as BuildHeadGroup while
-    // allowing cohort boundaries that are not multiples of four.
+    // 上面的零头辅助函数不分配所有者票据。此处使用与 BuildHeadGroup 相同的
+    // 所有权规则填充显式范围，同时允许同源头组边界不是四的倍数。
     if (architecture == Architecture::Arch22) {
         for (std::uint32_t pair = 0U; pair < kArch22PairCount; ++pair) {
             if (PairHasActiveHead(group, pair)) {
@@ -813,8 +809,8 @@ constexpr bool CheckArch22PairTicketShapeForHeads(
     std::array<std::uint64_t, kArch22PairCount> expectedCurrent{};
     const std::uint32_t groups = static_cast<std::uint32_t>(
         CeilDiv(heads, kHeadsPerGroup));
-    // Three consecutive chunk transactions exercise current/next SlotFree
-    // generations instead of checking only the initially seeded credit.
+    // 使用三个连续分块事务覆盖当前/下一 SlotFree 代际，
+    // 而不只是检查初始化时预置的许可。
     for (std::uint32_t chunkId = 0; chunkId < 3U; ++chunkId) {
         const ChunkTask chunk{0, chunkId, chunkId, kChunkRows};
         for (std::uint32_t groupId = 0; groupId < groups; ++groupId) {
@@ -836,16 +832,14 @@ constexpr bool CheckArch22PairTicketShapeForHeads(
                                             group.activeHeads - pairBegin);
                 const std::uint32_t dummyAivCount =
                     kAivPerWorkgroup - activeInPair;
-                // The runtime trace test verifies actual stage helper calls.
-                // This constexpr layer only proves the partial-pair shape and
-                // its owner-ticket progression for every supported head tail.
+                // 运行时轨迹测试验证实际阶段辅助函数调用。该 constexpr 层只证明
+                // 每种受支持的尾部头数组合及其部分配对形态和所有者票据推进关系。
                 if (activeInPair + dummyAivCount != kAivPerWorkgroup ||
                     (dummyAivCount != 0U && dummyAivCount != 1U)) {
                     return false;
                 }
 
-                // C7 publishes SlotFree(generation+1); the next V0 pair
-                // invocation must wait exactly that ticket.
+                // C7 发布 SlotFree(generation+1)；下一次 V0 配对调用必须准确等待该票据。
                 expectedCurrent[pair] = generation + 1U;
             }
         }

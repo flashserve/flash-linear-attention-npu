@@ -83,9 +83,8 @@ void RunArch35AivBranch(const WorkItem &item, std::uint32_t workgroupId,
         item, Architecture::Arch35, workgroupId, aivId, workspace, sync, ops,
         tiling);
 
-    // Each function is one physical Vector stage and one symbolic VF call.
-    // V3 and V6 own their waits, so this source order is not an assertion that
-    // AIV runs ahead of the corresponding AIC branch.
+    // 每个函数对应一个物理 Vector 阶段和一次符号化 VF 调用。
+    // V3 和 V6 自行执行等待，因此此处源码顺序不表示 AIV 一定先于对应的 AIC 分支执行。
     arch35::RunV0(args);
     arch35::RunV1(args);
     arch35::RunV3(args);
@@ -103,10 +102,9 @@ void RunArch22AivBranch(const WorkItem &item, std::uint32_t workgroupId,
     const std::uint32_t pairWaves = static_cast<std::uint32_t>(
         CeilDiv(item.group.activeHeads, kAivPerWorkgroup));
 
-    // Arch22 has one 40 KiB shared arena per AIV. Preserve G in that arena by
-    // completing V0 -> V1 for one pair-wave head before selecting the next
-    // private 72 KiB bank. An inactive partner still enters the arch22 helper
-    // so a mode-0x2 collective can emit its required dummy token.
+    // Arch22 的每个 AIV 只有一块 40 KiB 共享区。先针对配对波次中的一个头完成
+    // V0 -> V1，再选择下一块 72 KiB 私有缓冲区，从而保留共享区中的 G。
+    // 非活动伙伴仍需进入 Arch22 辅助函数，使 0x2 模式集合操作能发出必需的空令牌。
     for (std::uint32_t pair = 0; pair < pairWaves; ++pair) {
         args.selectedGroupLocalHead = pair * kAivPerWorkgroup + aivId;
         arch22::RunV0(args);
@@ -148,8 +146,8 @@ void RunArch35AicBranch(const WorkItem &item, std::uint32_t workgroupId,
     CubeStageArgs args = MakeCubeArgs(item, Architecture::Arch35, workgroupId,
                                       workspace, sync, ops, tiling);
 
-    // C2 contains the eight independent score MMADs. C4, C5, and C7 are
-    // separate physical stages because each consumes a prior-stage result.
+    // C2 包含八个相互独立的分数 MMAD。C4、C5 和 C7 各自消费前序阶段的结果，
+    // 因此必须是独立的物理阶段。
     arch35::RunC2(args);
     arch35::RunC4(args);
     arch35::RunC5(args);
@@ -225,10 +223,9 @@ void DispatchHeadPartition(
 
 } // namespace
 
-// PROPOSED control entry only. It deliberately is not a __global__ kernel and
-// declares no GM ABI, tiling-key registration, task-mix macro, or device API.
-// The AIC and both AIV roles conceptually execute this same schedule with the
-// same CorePlan and communicate only through the named ready/free ledger.
+// 仅为待实现的控制入口。此处刻意不实现为 __global__ 核函数，也不声明 GM ABI、
+// TilingKey 注册、任务混合宏或设备 API。AIC 与两个 AIV 角色在概念上使用同一个
+// CorePlan 执行相同调度，并且只通过具名的就绪/空闲账本通信。
 void RunChunkKdaFwdPreparePseudocode(
     const RuntimeTiling &tiling, std::uint32_t workgroupId, CoreRole role,
     std::uint32_t aivId, WorkspaceView &workspace, SyncLedger &sync,
@@ -258,17 +255,15 @@ void RunChunkKdaFwdPreparePseudocode(
         DecodeChunkHeadPartitionOrdinal(plan, ordinal, chunkOrdinal,
                                         partitionOrdinal);
         const ChunkTask chunk = resolveChunk(chunkOrdinal);
-        // Host tiling must omit empty sequences and reject any descriptor
-        // outside [1,64]. The symbolic kernel also refuses to enter a stage,
-        // preventing V6 from evaluating validRows - 1 for an empty chunk.
+        // 主机分块配置必须忽略空序列，并拒绝不在 [1,64] 范围内的描述符。
+        // 符号化核函数同样拒绝进入阶段，避免 V6 对空分块计算 validRows - 1。
         if (chunk.validRows == 0 || chunk.validRows > kChunkRows) {
             continue;
         }
 
         if (plan.mode == PartitionMode::ChunkOnly) {
-            // Chunk-first: one workgroup owns the complete chunk. Its inner
-            // order follows complete HK cohorts so the once-per-HK Q/K cache
-            // remains live across every mapped HV consumer.
+            // 分块优先：一个工作组拥有完整分块。内部顺序遵循完整的 HK 同源头组，
+            // 使每个 HK 仅生成一次的 Q/K 缓存在所有映射的 HV 消费者间保持存活。
             for (partitionOrdinal = 0U;
                  partitionOrdinal < plan.headPartitionCount;
                  ++partitionOrdinal) {
@@ -280,9 +275,8 @@ void RunChunkKdaFwdPreparePseudocode(
             continue;
         }
 
-        // Head splitting is only the fallback when chunks cannot fill AIC
-        // workgroups. A flattened unit is an indivisible HK cohort pack, not
-        // an arbitrary four-HV group, so no HK normalization is duplicated.
+        // 只有分块无法填满 AIC 工作组时才回退到头分核。展平单元是由完整 HK 同源头组
+        // 组成的不可拆分任务包，而不是任意四个 HV 组成的分组，因此不会重复执行 HK 归一化。
         DispatchHeadPartition(plan, ordinal, chunk, partitionOrdinal, tiling,
                               role, workgroupId, aivId, workspace, sync,
                               vectorOps, cubeOps, ownerTickets);

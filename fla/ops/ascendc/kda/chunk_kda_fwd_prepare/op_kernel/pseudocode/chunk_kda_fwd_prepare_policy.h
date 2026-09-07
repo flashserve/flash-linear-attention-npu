@@ -159,9 +159,9 @@ struct ShapePolicy {
 };
 
 struct UbPolicy {
-    static constexpr Offset kCapacity = 0x3E000U;  // 248 KiB per AIV.
-    static constexpr Offset kMainBytes = 0x1C000U; // 112 KiB per local head.
-    static constexpr Offset kAuxBytes = 0x03000U;  // 12 KiB per local head.
+    static constexpr Offset kCapacity = 0x3E000U;  // 每个 AIV 248 KiB。
+    static constexpr Offset kMainBytes = 0x1C000U; // 每个本地头 112 KiB。
+    static constexpr Offset kAuxBytes = 0x03000U;  // 每个本地头 12 KiB。
     static constexpr std::array<Offset, 2> kMainBase = {0x00000U, 0x1C000U};
     static constexpr std::array<Offset, 2> kAuxBase = {0x38000U, 0x3B000U};
 };
@@ -176,9 +176,8 @@ struct AuxLayout {
     static constexpr Region kScanCarry{0x0C00U, 0x0200U};
     static constexpr Region kGLast{0x0E00U, 0x0200U};
 
-    // V0 consumes the selective-gate inputs during the token scan, before it
-    // materializes GRef[0:2]. This exact-address overlay preserves the full
-    // 8 KiB VF scratch without any UB movement.
+    // V0 在词元扫描期间、物化 GRef[0:2] 之前消费选择性门控输入。
+    // 该同地址复用无需在 UB 内搬移数据，并保留完整的 8 KiB VF 临时区。
     static constexpr Region kDtBias{0x0400U, 0x0200U};
     static constexpr Region kALogOrGateAttrs{0x0600U, 0x0200U};
     static constexpr Region kVfScratch{0x1000U, 0x2000U};
@@ -259,13 +258,13 @@ struct ScorePayloadLayout {
 };
 
 struct L1Policy {
-    static constexpr Offset kCapacity = 0x80000U;   // 512 KiB.
-    static constexpr Offset kLaneBytes = 0x12000U;  // 72 KiB.
+    static constexpr Offset kCapacity = 0x80000U;   // 512 KiB。
+    static constexpr Offset kLaneBytes = 0x12000U;  // 72 KiB。
     static constexpr std::array<Offset, 4> kLaneBase = {0x00000U, 0x12000U, 0x24000U, 0x36000U};
     static constexpr Offset kCurrentEnd = 0x48000U;
     static constexpr Offset kResidentBase = 0x48000U;
     static constexpr Offset kResidentBytes = 0x14000U;
-    static constexpr Offset kPeakEnd = 0x5C000U;    // 368 KiB.
+    static constexpr Offset kPeakEnd = 0x5C000U;    // 368 KiB。
     static constexpr Region kHardReserve{0x5C000U, 0x24000U};
 
     struct AkkFp32Resident {
@@ -293,16 +292,15 @@ struct WorkspacePolicy {
     static constexpr Region kAlignmentPad{0x10200U, 0x00200U};
     static constexpr Region kStagePayload{0x10400U, 0x12000U};
 
-    static constexpr Offset kSlotStride = 0x22400U;       // 137 KiB.
+    static constexpr Offset kSlotStride = 0x22400U;       // 137 KiB。
     static constexpr Offset kSlotCount = 8U;
-    static constexpr Offset kSlotsEnd = 0x112000U;        // 1096 KiB.
+    static constexpr Offset kSlotsEnd = 0x112000U;        // 1096 KiB。
     static constexpr Region kControl{0x112000U, 0x01000U};
-    // One 32-byte record per physical Q/K cache slot. Host initialization sets
-    // freeGeneration=0 and validState=0. The owner invalidates the record after
-    // acquiring freeGeneration, then publishes logicalKey/readyGeneration and
-    // validState with release ordering after the Qhat/Khat MTE3 drain. Readers
-    // acquire validState before comparing the other words. The concrete atomic
-    // API remains a target-CANN gate.
+    // 每个物理 Q/K 缓存槽使用一条 32 字节记录。主机初始化时设置
+    // freeGeneration=0 和 validState=0。所有者获取 freeGeneration 后先使记录失效；
+    // Qhat/Khat 的 MTE3 写出排空后，再按释放内存序发布 logicalKey/readyGeneration 和
+    // validState。读取者先按获取内存序读取 validState，再比较其他字段。
+    // 具体原子 API 仍需通过目标 CANN 验证。
     static constexpr Offset kQkCacheRecordBytes = 0x00020U;
     static constexpr Offset kQkCacheFreeGenerationOffset = 0x00000U;
     static constexpr Offset kQkCacheReadyGenerationOffset = 0x00008U;
@@ -311,7 +309,7 @@ struct WorkspacePolicy {
     static constexpr Offset kQkCacheRecordCount = kSlotCount;
     static constexpr Region kQkCacheControl{0x112000U, 0x00100U};
     static constexpr Region kControlReserve{0x112100U, 0x00F00U};
-    static constexpr Offset kWorkgroupStride = 0x113000U;  // 1100 KiB.
+    static constexpr Offset kWorkgroupStride = 0x113000U;  // 1100 KiB。
 
     static constexpr Region kVcsX0{0x0000U, 0x1000U};
     static constexpr Region kVcsX1{0x1000U, 0x1000U};
@@ -340,9 +338,8 @@ struct C2Policy {
 };
 
 struct Akk2BPackPolicy {
-    // One logical [64,64] matrix is packed as four tight [32,32]
-    // quadrants. C7 must use the dedicated quadrant-packed MTE1/MMAD path;
-    // treating this 8 KiB payload as a row-major matrix is invalid.
+    // 一个逻辑 [64,64] 矩阵紧凑打包为四个 [32,32] 象限。C7 必须使用专用的
+    // 象限紧凑打包的 MTE1/MMAD 路径；不得把该 8 KiB 数据当作行主序矩阵。
     static constexpr Offset kQuadrantRows = 32U;
     static constexpr Offset kQuadrantColumns = 32U;
     static constexpr Offset kQuadrantBytes = 0x0800U;
@@ -354,10 +351,9 @@ struct Akk2BPackPolicy {
 };
 
 struct L0aPolicy {
-    // One Arch35 AIC processes one head at a time. Within that head, C2 keeps
-    // Q/K in disjoint L0A regions so the second MTE1 transfer cannot overwrite
-    // the first MMAD reader. C7 loads Akk once and shares it read-only between
-    // the W/U products.
+    // 一个 Arch35 AIC 每次处理一个头。在该头内，C2 将 Q/K 放在互不重叠的
+    // L0A 区域，防止第二次 MTE1 搬运覆盖第一次 MMAD 仍在读取的数据。C7 只装入一次
+    // Akk，并在 W/U 两个乘积之间只读共享。
     static constexpr Offset kCapacity = 0x10000U;
     static constexpr Region kC2Q{0x0000U, 0x1000U};
     static constexpr Region kC2K{0x1000U, 0x1000U};
@@ -365,8 +361,8 @@ struct L0aPolicy {
 };
 
 struct L0bPolicy {
-    // C2 loads one Kminus prefix and both MMADs share it read-only. C7 keeps
-    // Kbeta/Vbeta disjoint, permitting one operand-release after both MMADs.
+    // C2 装入一份 Kminus 前缀，由两次 MMAD 只读共享。C7 将 Kbeta/Vbeta 分开放置，
+    // 从而在两次 MMAD 都完成后只需发布一次操作数释放信号。
     static constexpr Offset kCapacity = 0x10000U;
     static constexpr Region kC2KMinus{0x0000U, 0x4000U};
     static constexpr Region kC7KBeta{0x0000U, 0x4000U};
@@ -374,11 +370,10 @@ struct L0bPolicy {
 };
 
 struct L0cPolicy {
-    // PROPOSED API gate: four Cube-pipelined heads require four disjoint 64
-    // KiB L0C lanes. Target A5/CANN must confirm the 256 KiB physical budget
-    // and exact MMAD/Fixpipe forms; host syntax checks cannot prove either.
-    // C2/C4/C5/C7 overlay only within one head lane across completed stages;
-    // an independent L0cBankFree ticket protects cross-group lane reuse.
+    // 待验证的 API 项：四个采用 Cube 流水处理的头需要四条互不重叠的 64 KiB L0C 通道。
+    // 目标 A5/CANN 必须确认 256 KiB 物理容量及准确的 MMAD/Fixpipe 形式；主机语法检查
+    // 无法证明这两点。C2/C4/C5/C7 仅在同一头通道内跨已完成阶段复用空间；
+    // 独立的 L0cBankFree 票据保护跨分组的通道复用。
     static constexpr Offset kHeadCount = 4U;
     static constexpr Offset kHeadLaneBytes = 0x10000U;
     static constexpr Offset kRequiredBytes = kHeadCount * kHeadLaneBytes;
@@ -629,14 +624,13 @@ static_assert(L0cPolicy::kC2AqkOffset[0] == 0U &&
                       L0cPolicy::kRequiredBytes,
               "each head must own one disjoint 64 KiB L0C lane within the 256 KiB proposal");
 
-// Arch22 (A2/A3) has a different physical memory and scheduling contract from
-// Arch35. Keep it in a separate namespace so no Arch35 address can be selected
-// accidentally by an architecture-generic caller.
+// Arch22（A2/A3）的物理内存和调度合同与 Arch35 不同。将其保留在独立命名空间中，
+// 避免架构通用调用者意外选择 Arch35 地址。
 namespace arch22_policy {
 
 struct UbPolicy {
-    // c220 exposes 192 KiB total UB, but the Basic API reserves the final
-    // 8 KiB. Only [0, 0x2E000) is available to ordinary LocalTensor storage.
+    // c220 提供 192 KiB 总 UB，但基础 API 保留最后 8 KiB。
+    // 普通 LocalTensor 只能使用 [0, 0x2E000) 区间。
     static constexpr Offset kHardwareBytes = 0x30000U;
     static constexpr Offset kUsableBytes = 0x2E000U;
     static constexpr Region kPrivate0{0x00000U, 0x12000U};
@@ -656,9 +650,9 @@ struct V01PrivateLayout {
     static constexpr Region kQToQPlus{0x0000U, 0x4000U};
     static constexpr Region kKToKPlus{0x4000U, 0x4000U};
 
-    // Gate2B occupies the low half of the V0 work region. After its last
-    // reader, the same 32 KiB becomes norm work. V1 later changes the whole
-    // 40 KiB tail directly to packed Kminus; no UB copy is inserted.
+    // Gate2B 占用 V0 工作区的低半部分。最后一个读取者完成后，同一块 32 KiB
+    // 区域改作归一化工作区。V1 随后将完整的 40 KiB 尾部区域直接改作紧凑打包的 Kminus，
+    // 不插入 UB 复制。
     static constexpr Region kGateRaw2B{0x8000U, 0x4000U};
     static constexpr Region kV0NormWork{0x8000U, 0x8000U};
     static constexpr Region kV0Small{0x10000U, 0x2000U};
@@ -683,8 +677,9 @@ struct V01SharedLayout {
 };
 
 struct V3PrivateLayout {
-    // C2 compact raw is read from the high 20 KiB and transformed directly
-    // into final causal outputs below 0xD000. No full raw 64x64 pair exists.
+    // C2 的紧凑原始数据从高地址侧的 20 KiB 区域读取，并直接转换后写入
+    // 地址偏移 0xD000 以下的最终因果输出。
+    // 整个过程中不存在完整的 64x64 原始矩阵对。
     static constexpr Region kAqkStorage{0x0000U, 0x2000U};
     static constexpr Region kLkk{0x2000U, 0x4000U};
     static constexpr Region kLeaf0{0x6000U, 0x1000U};
@@ -717,13 +712,13 @@ struct V6PrivateLayout {
 
 struct V6SharedLayout {
     static constexpr Region kG{0x0000U, 0x8000U};
-    // Arch22 is supportable only if the compiled V6 VF requires no more than
-    // this contiguous 8 KiB. The resource report is a mandatory compile gate.
+    // 仅当编译后的 V6 VF 所需空间不超过这块连续 8 KiB 区域时，Arch22 才可支持。
+    // 资源报告是强制编译准入项。
     static constexpr Region kVfScratch{0x8000U, 0x2000U};
 };
 
 struct L1Policy {
-    // Use the stricter c220 Basic API limit (512 KiB - 256 B).
+    // 使用更严格的 c220 基础 API 上限（512 KiB - 256 B）。
     static constexpr Offset kCapacity = 0x7FF00U;
     static constexpr Offset kLaneBytes = 0x12000U;
     static constexpr std::array<Offset, 4> kLaneBase = {
@@ -754,8 +749,7 @@ struct L1Policy {
 struct WorkspacePolicy {
     static constexpr Region kQHatContext{0x00000U, 0x04000U};
     static constexpr Region kKHatContext{0x04000U, 0x04000U};
-    // Arch22 uses the former hard pad to relay betaEff. Only the first 256 B
-    // are logical data; the rest remains alignment padding.
+    // Arch22 使用原硬预留区中转 betaEff。只有前 256 B 是逻辑数据，其余部分仍为对齐填充。
     static constexpr Region kBetaEffContext{0x08000U, 0x00200U};
     static constexpr Region kGContext{0x08200U, 0x08000U};
     static constexpr Region kAlignmentPad{0x10200U, 0x00200U};
@@ -764,8 +758,8 @@ struct WorkspacePolicy {
     static constexpr Offset kSlotCount = 4U;
     static constexpr Offset kSlotsEnd = 0x89000U;
     static constexpr Region kControl{0x89000U, 0x01000U};
-    // Four physical cache slots use the first half of the common 256-byte
-    // state table. Record fields and publication ordering match Arch35.
+    // 四个物理缓存槽使用公共 256 字节状态表的前半部分。
+    // 记录字段和发布顺序与 Arch35 一致。
     static constexpr Offset kQkCacheRecordBytes = 0x00020U;
     static constexpr Offset kQkCacheFreeGenerationOffset = 0x00000U;
     static constexpr Offset kQkCacheReadyGenerationOffset = 0x00008U;
@@ -786,9 +780,9 @@ struct WorkspacePolicy {
     static constexpr Region kVcsX0{0x0000U, 0x1000U};
     static constexpr Region kVcsX1{0x1000U, 0x1000U};
     static constexpr Region kVcsB{0x2000U, 0x1000U};
-    // Arch22 C7 full paths reload the complete row-major Akk relay; top-only
-    // paths load only q00 directly into a tight Cube-ready operand. Unlike
-    // Arch35, Arch22 does not stage extra tight quadrants for C4.
+    // Arch22 C7 完整路径重新装载整份行主序 Akk 中继数据；仅上半路径只把 q00
+    // 直接装入可供 Cube 使用的紧凑操作数。与 Arch35 不同，Arch22 不为 C4 暂存额外的
+    // 紧凑象限。
     static constexpr Region kVcsHardUnused{0x3000U, 0x1800U};
     static constexpr Region kRelayT{0x4800U, 0x1000U};
     static constexpr Region kAkkRowMajor{0x5800U, 0x2000U};
