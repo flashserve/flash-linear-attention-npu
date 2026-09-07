@@ -29,7 +29,6 @@ namespace GDN {
 
 using namespace AscendC;
 
-template <bool StateVFirst>
 class ChunkFwdOA5CubeProcess {
 public:
     using ArchTag = Catlass::Arch::Ascend950;
@@ -38,9 +37,6 @@ public:
     using LayoutCM = Catlass::layout::ColumnMajor;
 
     using TileCopyQK = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, Element, LayoutRM, Element, LayoutCM, Element,
-                                                              LayoutRM>;
-    using HLayout = std::conditional_t<StateVFirst, LayoutCM, LayoutRM>;
-    using TileCopyQH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, Element, LayoutRM, Element, HLayout, Element,
                                                               LayoutRM>;
     using TileCopyAV = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, Element, LayoutRM, Element, LayoutRM, Element,
                                                               LayoutRM>;
@@ -132,7 +128,11 @@ public:
                         const uint32_t localSlot = static_cast<uint32_t>(headOffset / 2);
                         const bool loadQK = cachedLoopIdx_[l1StreamSlot_] != loopIdx ||
                                             cachedHk_[l1StreamSlot_] != hk;
-                        ProcessStage2Head(loc, hk, hv, ownerSubBlock, localSlot, l1StreamSlot_, loadQK);
+                        if (tiling_.stateVFirst != 0) {
+                            ProcessStage2Head<true>(loc, hk, hv, ownerSubBlock, localSlot, l1StreamSlot_, loadQK);
+                        } else {
+                            ProcessStage2Head<false>(loc, hk, hv, ownerSubBlock, localSlot, l1StreamSlot_, loadQK);
+                        }
                         cachedLoopIdx_[l1StreamSlot_] = loopIdx;
                         cachedHk_[l1StreamSlot_] = hk;
                         l1StreamSlot_ ^= 1U;
@@ -292,10 +292,14 @@ private:
         Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
     }
 
+    template <bool StateVFirst>
     __aicore__ inline void ProcessStage2Head(const ChunkFwdOChunkLoc &loc, int64_t hk, int64_t hv,
                                              uint32_t ownerSubBlock, uint32_t localSlot,
                                              uint32_t l1StreamSlot, bool loadQK)
     {
+        using HLayout = std::conditional_t<StateVFirst, LayoutCM, LayoutRM>;
+        using TileCopyQH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, Element, LayoutRM, Element, HLayout,
+                                                                  Element, LayoutRM>;
         const uint32_t m = kBt;
         const uint32_t mActual = static_cast<uint32_t>(loc.chunkLen);
 

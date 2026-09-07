@@ -104,9 +104,7 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     ChunkFwdOTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
     using namespace GDN;
-    const uint64_t tilingKey = GET_TPL_TILING_KEY(
-        static_cast<uint64_t>(useExp2 ? 1 : 0),
-        static_cast<uint64_t>(stateVFirst ? 1 : 0));
+    const uint64_t tilingKey = GET_TPL_TILING_KEY(static_cast<uint64_t>(useExp2 ? 1 : 0));
     context->SetTilingKey(tilingKey);
 
     context->SetBlockDim(aicCoreNum);
