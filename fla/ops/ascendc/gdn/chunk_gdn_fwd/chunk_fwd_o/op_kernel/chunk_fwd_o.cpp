@@ -61,19 +61,19 @@ __aicore__ inline void ChunkFwdOKernelImpl(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_A
     gdnFwdO.Process();
 }
 
-template <int Path, bool StateVFirst>
+template <bool UseExp2, bool StateVFirst>
 __aicore__ inline void ChunkFwdODispatch(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g,
                                          GM_ADDR cuSeqlens, GM_ADDR chunkOffsets, GM_ADDR o,
                                          GM_ADDR userWorkspace, const ChunkFwdOTilingData *tilingData)
 {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    if constexpr (Path == CHUNK_FWD_O_PATH_A5) {
-        ChunkFwdOA5DispatchByGateType<true, StateVFirst>(q, k, v, h, g, cuSeqlens, chunkOffsets, o,
-                                                        userWorkspace, tilingData);
+    if constexpr (UseExp2) {
+        ChunkFwdOA5DispatchByGateType<UseExp2, StateVFirst>(q, k, v, h, g, cuSeqlens, chunkOffsets, o,
+                                                           userWorkspace, tilingData);
         return;
     }
 #endif
-    if constexpr (Path == CHUNK_FWD_O_PATH_LEGACY) {
+    if constexpr (!UseExp2) {
         using WorkspaceT = float;
         if (tilingData->dataType == CHUNK_FWD_O_DTYPE_BF16) {
             if (tilingData->gDataType == CHUNK_FWD_O_DTYPE_FP32) {
@@ -98,7 +98,7 @@ __aicore__ inline void ChunkFwdODispatch(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADD
 } // namespace GDN
 
 #ifndef TORCH_MODE
-template <int PATH, bool STATE_V_FIRST>
+template <bool USE_EXP2, bool STATE_V_FIRST>
 __global__ __aicore__ void chunk_fwd_o(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h,
                                                    GM_ADDR g, GM_ADDR cu_seqlens, GM_ADDR chunk_offsets,
                                                    GM_ADDR o, GM_ADDR workspace, GM_ADDR tiling)
@@ -109,6 +109,6 @@ __global__ __aicore__ void chunk_fwd_o(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR 
     REGISTER_TILING_DEFAULT(GDN::ChunkFwdOTilingData);
     GET_TILING_DATA_WITH_STRUCT(GDN::ChunkFwdOTilingData, tilingData, tiling);
 
-    GDN::ChunkFwdODispatch<PATH, STATE_V_FIRST>(q, k, v, h, g, cu_seqlens, chunk_offsets, o, user, &tilingData);
+    GDN::ChunkFwdODispatch<USE_EXP2, STATE_V_FIRST>(q, k, v, h, g, cu_seqlens, chunk_offsets, o, user, &tilingData);
 }
 #endif

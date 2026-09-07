@@ -116,13 +116,6 @@ public:
         return workspaceSize_;
     }
 
-    bool UseA5Path() const
-    {
-        return ctx_.useExp2 &&
-               (tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BSND ||
-                tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_TND);
-    }
-
     bool IsVariableLength() const
     {
         return ctx_.cuSeqlensShape != nullptr || ctx_.chunkOffsetsShape != nullptr;
@@ -312,20 +305,18 @@ public:
             return ge::GRAPH_FAILED;
         }
 
-        const bool useA5Path =
-            ctx_.useExp2 &&
-            (tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BSND ||
-             tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_TND);
-        const bool useLegacyPath =
-            !ctx_.useExp2 &&
-            (tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BNSD ||
-             tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_NTD);
-        OP_CHECK_IF(!useA5Path && !useLegacyPath,
+        const bool outputLayoutSupported =
+            ctx_.useExp2 ?
+                (tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BSND ||
+                 tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_TND) :
+                (tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BNSD ||
+                 tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_NTD);
+        OP_CHECK_IF(!outputLayoutSupported,
                     OP_LOGE(ctx_.nodeName,
                             "use_exp2=true supports BSND/TND, while use_exp2=false supports BNSD/NTD."),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.stateVFirst && useLegacyPath,
-                    OP_LOGE(ctx_.nodeName, "state_v_first=true is supported by the A5 path only."),
+        OP_CHECK_IF(ctx_.stateVFirst && !ctx_.useExp2,
+                    OP_LOGE(ctx_.nodeName, "state_v_first=true requires use_exp2=true."),
                     return ge::GRAPH_FAILED);
         return ge::GRAPH_SUCCESS;
     }
@@ -411,10 +402,9 @@ public:
         OP_CHECK_IF(PreCheck() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
         OP_CHECK_IF(ShapeCheck() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
         OP_CHECK_IF(CommonTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        tiling_.useExp2 = ctx_.useExp2 ? 1 : 0;
         tiling_.stateVFirst = ctx_.stateVFirst ? 1 : 0;
         OP_CHECK_IF(LayoutCheck() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        if (UseA5Path()) {
+        if (ctx_.useExp2) {
             OP_CHECK_IF(A5ShapeCheck() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
             OP_CHECK_IF(A5ChunkTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
             OP_CHECK_IF(WorkspaceTilingA5() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);

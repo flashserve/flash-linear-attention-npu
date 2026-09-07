@@ -15,7 +15,6 @@
 #include "chunk_fwd_o_tiling.h"
 #include "chunk_fwd_o_tiling_processor.h"
 #include "../op_kernel/chunk_fwd_o_tiling_key.h"
-#include <cstring>
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
@@ -37,7 +36,6 @@ static void ChunkFwdOTilingDataPrint(gert::TilingContext *context, const ChunkFw
     OP_LOGD(nodeName, "=== gDataType: %ld", tiling.gDataType);
     OP_LOGD(nodeName, "=== isVariedLen: %ld", tiling.isVariedLen);
     OP_LOGD(nodeName, "=== tokenBatch: %ld", tiling.tokenBatch);
-    OP_LOGD(nodeName, "=== useExp2: %ld", tiling.useExp2);
     OP_LOGD(nodeName, "=== outputLayout: %ld", tiling.outputLayout);
     OP_LOGD(nodeName, "=== chunkNum: %ld", tiling.chunkNum);
     OP_LOGD(nodeName, "=== hvPerHk: %ld", tiling.hvPerHk);
@@ -79,12 +77,8 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     const bool *stateVFirstPtr = attrPtr->GetAttrPointer<bool>(CHUNK_FWD_O_ATTR_STATE_V_FIRST_IDX);
     const bool stateVFirst = stateVFirstPtr != nullptr ? *stateVFirstPtr : false;
     const char *outputLayout = attrPtr->GetStr(CHUNK_FWD_O_ATTR_OUTPUT_LAYOUT_IDX);
-    const bool useA5Path =
-        useExp2 && outputLayout != nullptr &&
-        (std::strcmp(outputLayout, "BSND") == 0 || std::strcmp(outputLayout, "TND") == 0);
-    OP_CHECK_IF(useA5Path && ascendcPlatform.GetCurNpuArch() != NpuArch::DAV_3510,
-                OP_LOGE(context->GetNodeName(),
-                        "use_exp2=true with output_layout=BSND/TND is supported only on A5."),
+    OP_CHECK_IF(useExp2 && ascendcPlatform.GetCurNpuArch() != NpuArch::DAV_3510,
+                OP_LOGE(context->GetNodeName(), "use_exp2=true is supported only on A5."),
                 return ge::GRAPH_FAILED);
 
     ChunkFwdOTilingContext ctx{
@@ -111,7 +105,7 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
     using namespace GDN;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
-        static_cast<uint64_t>(processor.UseA5Path() ? CHUNK_FWD_O_PATH_A5 : CHUNK_FWD_O_PATH_LEGACY),
+        static_cast<uint64_t>(useExp2 ? 1 : 0),
         static_cast<uint64_t>(stateVFirst ? 1 : 0));
     context->SetTilingKey(tilingKey);
 

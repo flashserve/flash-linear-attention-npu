@@ -43,7 +43,6 @@ struct ChunkFwdOTilingData {
     int64_t attnWorkspaceOffset;
     int64_t aftermaskWorkspaceOffset;
     int64_t maskWorkspaceOffset;
-    int64_t useExp2;
     int64_t stateVFirst;
     int64_t outputLayout;
     float scale;
