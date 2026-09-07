@@ -47,6 +47,13 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
     // The final boolean enables the H/O fused scheduling path; using the
     // standalone-H mode here changes synchronization and precision behavior.
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    // Independent row policy: this caller fixes scalarGated=true. The larger
+    // row tile is restricted to the B30 model's BF16/V128 candidate path.
+    constexpr uint32_t kUpdateRowTile =
+        kSyncVariant == GdnCoreSyncVariant::B30 && !kGated &&
+        std::is_same_v<InputT, bfloat16_t> && std::is_same_v<StateT, bfloat16_t> &&
+        std::is_same_v<TileShapes, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>
+            ? 64 : 16;
     constexpr bool kNarrowCube1ToPipeFix =
         kSyncVariant == GdnCoreSyncVariant::B30;
     constexpr bool kNarrowCube2ToPipeFix = false;
@@ -69,7 +76,7 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true,
         kNarrowCube1ToPipeFix, kNarrowCube2ToPipeFix, kCube1EventOnly,
         kUpdateBarrierToPipeMte3, kUpdateBarrierEventOnly,
-        kBypassHInitCollective, kEntryLocalPipeDrain, kEntryRolePipeDrain>;
+        kBypassHInitCollective, kEntryLocalPipeDrain, kEntryRolePipeDrain, kUpdateRowTile>;
 #else
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true>;

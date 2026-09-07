@@ -69,13 +69,14 @@ struct GDNFwdHTileShapes256 {
 
 template <bool KGated, bool ScalarGated, bool UseExp2,
           bool KUpdateBarrierToPipeMte3 = false,
-          bool KUpdateBarrierEventOnly = false>
+          bool KUpdateBarrierEventOnly = false, uint32_t KUpdateRowTile = 16>
 struct GDNFwdHGateTag {
     static constexpr bool value = KGated;
     static constexpr bool scalarGated = ScalarGated;
     static constexpr bool useExp2 = UseExp2;
     static constexpr bool updateBarrierToPipeMte3 = KUpdateBarrierToPipeMte3;
     static constexpr bool updateBarrierEventOnly = KUpdateBarrierEventOnly;
+    static constexpr uint32_t updateRowTile = KUpdateRowTile;
 };
 
 template<
@@ -95,11 +96,19 @@ template<
     bool kUpdateBarrierEventOnly = false,
     bool kBypassHInitCollective = false,
     bool kEntryLocalPipeDrain = false,
-    bool kEntryRolePipeDrain = false
+    bool kEntryRolePipeDrain = false,
+    uint32_t kUpdateRowTile = 16
 >
 class GDNFwdHKernel {
 public:
 
+    static_assert(kUpdateRowTile == 16 || kUpdateRowTile == 64,
+                  "H update supports only the baseline or BF16 wide row tile.");
+    static_assert(kUpdateRowTile == 16 ||
+                      (std::is_same_v<INPUT_TYPE, bfloat16_t> &&
+                       std::is_same_v<STATE_TYPE, bfloat16_t> && scalarGated && !kGated &&
+                       std::is_same_v<TileShapes, GDNFwdHTileShapes128>),
+                  "Wide H update requires scalar-only BF16 input/state and V128 tiles.");
     static_assert(!(kNarrowCube1ToPipeFix && kCube1EventOnly),
                   "C1 publish barrier cannot be both PIPE_FIX and event-only.");
     static_assert(!(kUpdateBarrierToPipeMte3 && kUpdateBarrierEventOnly),
@@ -159,7 +168,7 @@ public:
     using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnew;
     using GateTag = GDNFwdHGateTag<
         kGated, scalarGated, useExp2,
-        kUpdateBarrierToPipeMte3, kUpdateBarrierEventOnly>;
+        kUpdateBarrierToPipeMte3, kUpdateBarrierEventOnly, kUpdateRowTile>;
     using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, VUpdateType, FinalStateType, GateTag>;
 
     // vec 2

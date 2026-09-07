@@ -103,6 +103,41 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
                     text, r"GemmCoord cube2Shape\s*\{\s*"
                     r"kHeadDim, cube2Offsets.vBlockDim, cube2Offsets.blockTokens\s*\}")
 
+    def test_wide_update_row_policy_is_independent_and_narrowly_scoped(self):
+        state = source(STATE_UPDATE)
+        start = state.index("constexpr uint32_t kUpdateRowTile =")
+        policy = state[start:state.index(";", start)]
+        for required in (
+            "kSyncVariant == GdnCoreSyncVariant::B30 && !kGated",
+            "std::is_same_v<InputT, bfloat16_t>",
+            "std::is_same_v<StateT, bfloat16_t>",
+            "std::is_same_v<TileShapes, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>",
+            "? 64 : 16",
+        ):
+            self.assertIn(required, policy)
+        self.assertNotIn("kUpdateBarrierEventOnly", policy)
+        h = source(FWD_H_ARCH35)
+        self.assertIn("uint32_t kUpdateRowTile = 16", h)
+        self.assertIn("scalarGated && !kGated", h)
+        self.assertIn("std::is_same_v<STATE_TYPE, bfloat16_t>", h)
+        self.assertIn("static constexpr uint32_t updateRowTile = KUpdateRowTile;", h)
+        update = source(FWD_H_UPDATE_ARCH35)
+        self.assertIn("nActual == 128 ? KGatedTag::updateRowTile : 16", update)
+        self.assertIn("rowStart += rowTile", update)
+        self.assertIn("rowsThisTile = rowTile;", update)
+        for required in (
+            "CALC_BUF_OFFSET = 0", "PING_BUF_0_OFFSET = 32 * 1024",
+            "PONG_BUF_0_OFFSET = 96 * 1024", "UPDATE_SCRATCH_BUF_OFFSET = 160 * 1024",
+            "UPDATE_G_BUF_OFFSET = 176 * 1024",
+        ):
+            self.assertIn(required, update)
+        # Shared scratch release must remain before returning to another stream.
+        self.assertIn(
+            "AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);\n"
+            "            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);",
+            update,
+        )
+
     def test_fwd_h_entry_drain_and_init_bypass_are_mutually_exclusive(self):
         text = source(FWD_H_ARCH35)
 
@@ -236,7 +271,7 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
             text,
         )
         self.assertIn(
-            "kBypassHInitCollective, kEntryLocalPipeDrain, kEntryRolePipeDrain>;",
+            "kBypassHInitCollective, kEntryLocalPipeDrain, kEntryRolePipeDrain, kUpdateRowTile>;",
             text,
         )
         self.assertNotIn("kFwdHVarlenDense", text)

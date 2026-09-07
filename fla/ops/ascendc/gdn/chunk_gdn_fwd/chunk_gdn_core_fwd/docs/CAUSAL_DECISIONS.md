@@ -312,3 +312,25 @@
 - 验证要求：完整 combined wheel、实际 key 与 binary 身份、同 seed/顺序的多个 fresh 进程、F/N、跨设备复现条件与 BF16/FP32 原域回归；C2 K10 非对齐仍需要边界覆盖，不能由主模型通过直接放行全域。
 - 知识卡：沿用本文检索账本的模板特化、数据依赖同步、架构/CANN 证据卡。删除数据初始化不等于删同步；保留槽位 RAW/WAR 事件，目标 A5 实测才决定放行。
 - CPU 检查：保留 BF16 host/编译门禁一致性检查，使用 tail 实际形状和事件生命周期断言替代旧整文件 SHA 冻结断言；源码检查不替代真机精度证据。
+
+
+## CD-BF16-ROW64：仅扩大 B30 scalar-only BF16/V128 的 H update 行 tile
+
+- 阶段/状态：性能候选 / 待目标 A5 编译、精度与性能验证；基线 `1dea3ac1`。原源码 ROW_TILE=16，本候选目标为64；模型每 AIV 处理64行，因此每 chunk 的行循环由4轮变为1轮。此前 BF16 推理 B30 相对 B0 的50样本改善约3.8936%，尚未达到8%目标；本节不预报新候选收益。
+- 独立策略：私有 `RunFwdH` 只对 B30、BF16 InputT/StateT、`!kGated`、V128 TileShapes 选择 `kUpdateRowTile=64`，该调用固定 scalarGated=true；其他选择16。H Kernel 加编译期条件约束，GateTag 通过独立 `updateRowTile` 成员传至 Update，不复用 event-only 标志语义。Update 还要求实际 nActual==128，其他宽度保持16。
+- 范围：不改 host 门禁、key、公开 ABI、standalone H、B0/FP32/kGated 数值策略或其他阶段；保留全部 PIPE_V、Set/Wait、CrossCore 及原 UB 地址。本候选不叠加 Cast 后 PIPE_V 删除。
+
+| Update 物理区间（左闭右开） | 64行×128列的最大占用 | 当前目标的生命周期依据 |
+|---|---:|---|
+| calc `[0,32KB)` | FP32 32KB | Vnew 相关 V 读取已完成；V128不使用16/24KB wide-I/O临时源 |
+| hUpdate ping `[32,64KB)` | FP32 32KB | Vnew 晚发 MTE3 的源在64KB处，边界不重叠 |
+| hUpdate pong `[96,128KB)` | FP32 32KB | Vnew 晚发 MTE3 的源在128KB处，边界不重叠 |
+| H/final scratch `[160,176KB)` | BF16 16KB | Vnew g160..166KB在末次V_MTE3 set/wait前已消费；Update kGate170..174KB分支禁用 |
+| Update glast `176KB` | FP32 4字节 | scalar gate在行循环前计算，不与输出scratch重叠 |
+
+- 容量证据：目标 CATLASS `Arch::Ascend950::UB_SIZE=248*1024`，VECCALC resource按该大小初始化；本候选保持最高既有使用位置，无需新增 UB/L1。H 初始化所用同地址缓冲在已有初始化 collective 后结束生命周期；当前 varlen 路径不执行 direct-UB 或短尾Vector helper。
+- 数据依赖：MTE2加载 H/C2结果后由 MTE2_V 发布（RAW）；V读完 hUpdate 后由 V_MTE2 释放（WAR）；Cast结果由 V_MTE3 交给输出搬运（RAW）；BF16分支末尾 MTE3_MTE2(EVENT2) wait/set 排空共享scratch，保护另一stream/下一Vnew覆写（WAR）。这些语句顺序全部保持。Vnew 的晚发 GM store源分别为64KB/128KB的至多8KB区间，与扩大后的 Update 区间不重叠。
+- 数值预测：每元素仍依次 BF16→FP32、Muls、Add、CAST_RINT，没有归约或新增中间舍入；只改变批量元素数。需要实测逐 bit 比较确认编译调度没有改变结果。
+- CPU 验证：源检查覆盖独立策略限定、实际宽度回退、UB地址与共享scratch末尾drain；与基线比较 Update 全部同步语句有序序列和buffer绑定完全相同。尚未执行目标编译/NPU。
+- 目标门禁：先同输入B30/候选逐 bit稳定性、F/N及最终state，再做与原B0的独立进程ABBA性能；回归B0/FP32与域外分支。若精度或事件闭合失败，否定候选；若无稳定收益则不推广，不因目标8%放宽阈值。
+- 因果卡：沿用本文知识源和固定摘要。模板卡约束选择域与组合规模；数据依赖卡要求按物理区间核查RAW/WAR；架构/CANN卡要求目标产物与真机放行，不用CPU源码检查替代。

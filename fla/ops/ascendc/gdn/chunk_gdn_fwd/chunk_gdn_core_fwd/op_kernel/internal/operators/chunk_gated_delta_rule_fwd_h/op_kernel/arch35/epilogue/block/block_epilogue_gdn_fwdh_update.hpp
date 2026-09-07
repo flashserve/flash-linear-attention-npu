@@ -223,9 +223,11 @@ public:
         uint64_t directUbReadyFlagBegin
     )
     {
-        static constexpr uint32_t ROW_TILE = 16;
         uint32_t mActual = kHeadDim;
         uint32_t nActual = vBlockDim;
+        // V128 uses at most 32KB FP32 calc/update and 16KB BF16 scratch.
+        // Keep the baseline row policy for every other runtime width.
+        const uint32_t rowTile = nActual == 128 ? KGatedTag::updateRowTile : 16;
         uint32_t outputStride = vHeadDim;
         uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
@@ -304,10 +306,10 @@ public:
         bool waitHFromV = storeFinalState && isInitialState && std::is_same<FinalStateElement, float>::value;
         bool waitUpdateFromMte3 = false;
         uint32_t updateReadyEvent = EVENT_ID3 + pingpongFlag;
-        for (uint32_t rowStart = rowBegin; rowStart < rowEnd; rowStart += ROW_TILE) {
+        for (uint32_t rowStart = rowBegin; rowStart < rowEnd; rowStart += rowTile) {
             uint32_t rowsThisTile = rowEnd - rowStart;
-            if (rowsThisTile > ROW_TILE) {
-                rowsThisTile = ROW_TILE;
+            if (rowsThisTile > rowTile) {
+                rowsThisTile = rowTile;
             }
 
             AscendC::GlobalTensor<HElementOutput> hOutputThisTile = hOutput[rowStart * outputStride];
