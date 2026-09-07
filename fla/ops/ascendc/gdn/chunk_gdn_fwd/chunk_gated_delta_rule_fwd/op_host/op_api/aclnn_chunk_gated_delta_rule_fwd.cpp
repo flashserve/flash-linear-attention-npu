@@ -71,7 +71,6 @@ enum class GdnLayout { BNSD, BSND, NTD, TND };
 
 struct GdnShapeInfo {
     GdnLayout layout = GdnLayout::BNSD;
-    bool isRank3 = false;
     bool isSequenceMajor = false;
     int64_t batch = 0;
     int64_t hq = 0;
@@ -187,17 +186,6 @@ static int64_t ExpectedChunks(const ChunkGatedDeltaRuleFwdParams &params, int64_
     return total;
 }
 
-static const aclTensor *ReshapeDense(const aclTensor *tensor, const op::Shape &shape, aclOpExecutor *executor)
-{
-    const aclTensor *reshaped = l0op::Reshape(tensor, shape, executor);
-    if (reshaped == nullptr) {
-        return nullptr;
-    }
-    reshaped->SetStorageShape(shape);
-    reshaped->SetOriginalShape(shape);
-    return reshaped;
-}
-
 static aclnnStatus CheckStateShape(const aclTensor *state, const char *name, int64_t seqNum, int64_t hv,
                                    int64_t kDim, int64_t vDim)
 {
@@ -304,18 +292,15 @@ static aclnnStatus ResolveShapeInfo(const ChunkGatedDeltaRuleFwdParams &params, 
         CHECK_COND(false, ACLNN_ERR_PARAM_INVALID,
                    "layout must be uppercase and one of BNSD, BSND, NTD or TND.");
     }
-    info.isRank3 = info.layout == GdnLayout::NTD || info.layout == GdnLayout::TND;
     info.isSequenceMajor = info.layout == GdnLayout::BSND || info.layout == GdnLayout::TND;
-    const size_t qkvRank = info.isRank3 ? 3 : 4;
-    const size_t scalarRank = info.isRank3 ? 2 : 3;
-    CHECK_COND(Rank(params.q) == qkvRank && Rank(params.k) == qkvRank && Rank(params.v) == qkvRank &&
-                   Rank(params.oOut) == qkvRank && Rank(params.g) == scalarRank && Rank(params.beta) == scalarRank,
+    CHECK_COND(Rank(params.q) == 4 && Rank(params.k) == 4 && Rank(params.v) == 4 &&
+                   Rank(params.oOut) == 4 && Rank(params.g) == 3 && Rank(params.beta) == 3,
                ACLNN_ERR_PARAM_INVALID,
-               "q/k/v/o and g/beta ranks must match layout.");
+               "q/k/v/o must be rank 4 and g/beta must be rank 3.");
     CHECK_COND(ShapeEqual(params.q->GetViewShape(), params.k->GetViewShape()),
                ACLNN_ERR_PARAM_INVALID, "q and k must have identical shapes.");
 
-    if (info.layout == GdnLayout::BNSD) {
+    if (!info.isSequenceMajor) {
         info.batch = Dim(params.q, 0);
         info.hq = Dim(params.q, 1);
         info.seqlen = Dim(params.q, 2);
@@ -323,8 +308,8 @@ static aclnnStatus ResolveShapeInfo(const ChunkGatedDeltaRuleFwdParams &params, 
         info.hv = Dim(params.v, 1);
         info.vDim = Dim(params.v, 3);
         CHECK_COND(HasShape(params.v, {info.batch, info.hv, info.seqlen, info.vDim}),
-                   ACLNN_ERR_PARAM_INVALID, "BNSD expects v as [B,Hv,T,V].");
-    } else if (info.layout == GdnLayout::BSND) {
+                   ACLNN_ERR_PARAM_INVALID, "BNSD/NTD expects v as [B,Hv,T,V].");
+    } else {
         info.batch = Dim(params.q, 0);
         info.seqlen = Dim(params.q, 1);
         info.hq = Dim(params.q, 2);
@@ -332,38 +317,13 @@ static aclnnStatus ResolveShapeInfo(const ChunkGatedDeltaRuleFwdParams &params, 
         info.hv = Dim(params.v, 2);
         info.vDim = Dim(params.v, 3);
         CHECK_COND(HasShape(params.v, {info.batch, info.seqlen, info.hv, info.vDim}),
-                   ACLNN_ERR_PARAM_INVALID, "BSND expects v as [B,T,Hv,V].");
-    } else if (info.layout == GdnLayout::NTD) {
-        info.batch = 1;
-        info.hq = Dim(params.q, 0);
-        info.seqlen = Dim(params.q, 1);
-        info.kDim = Dim(params.q, 2);
-        info.hv = Dim(params.v, 0);
-        info.vDim = Dim(params.v, 2);
-        CHECK_COND(HasShape(params.v, {info.hv, info.seqlen, info.vDim}),
-                   ACLNN_ERR_PARAM_INVALID, "NTD expects v as [Hv,T,V].");
-    } else {
-        info.batch = 1;
-        info.seqlen = Dim(params.q, 0);
-        info.hq = Dim(params.q, 1);
-        info.kDim = Dim(params.q, 2);
-        info.hv = Dim(params.v, 1);
-        info.vDim = Dim(params.v, 2);
-        CHECK_COND(HasShape(params.v, {info.seqlen, info.hv, info.vDim}),
-                   ACLNN_ERR_PARAM_INVALID, "TND expects v as [T,Hv,V].");
+                   ACLNN_ERR_PARAM_INVALID, "BSND/TND expects v as [B,T,Hv,V].");
     }
-    const bool outputShapeValid = info.isRank3
-                                      ? HasShape(params.oOut, {info.seqlen, info.hv, info.vDim})
-                                      : HasShape(params.oOut, {info.batch, info.seqlen, info.hv, info.vDim});
-    CHECK_COND(outputShapeValid, ACLNN_ERR_PARAM_INVALID,
-               "oOut must use sequence-major BSND/TND layout.");
-    const bool scalarShapeValid = info.isRank3
-                                      ? HasShape(params.g, {info.seqlen, info.hv}) &&
-                                            HasShape(params.beta, {info.seqlen, info.hv})
-                                      : HasShape(params.g, {info.batch, info.seqlen, info.hv}) &&
-                                            HasShape(params.beta, {info.batch, info.seqlen, info.hv});
-    CHECK_COND(scalarShapeValid, ACLNN_ERR_PARAM_INVALID,
-               "g and beta must use sequence-major [B,T,Hv] or [T,Hv] shape.");
+    CHECK_COND(HasShape(params.oOut, {info.batch, info.seqlen, info.hv, info.vDim}),
+               ACLNN_ERR_PARAM_INVALID, "oOut must use BSND shape [B,T,Hv,V].");
+    CHECK_COND(HasShape(params.g, {info.batch, info.seqlen, info.hv}) &&
+                   HasShape(params.beta, {info.batch, info.seqlen, info.hv}),
+               ACLNN_ERR_PARAM_INVALID, "g and beta must have shape [B,T,Hv].");
     return ACLNN_SUCCESS;
 }
 
@@ -412,8 +372,8 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
                ACLNN_ERR_PARAM_NULLPTR, "q/k/v/g/beta/oOut must not be nullptr.");
     GdnShapeInfo info;
     CHECK_RET(ResolveShapeInfo(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    const size_t qkvRank = info.isRank3 ? 3 : 4;
-    const size_t scalarRank = info.isRank3 ? 2 : 3;
+    const size_t qkvRank = 4;
+    const size_t scalarRank = 3;
     CHECK_RET(CheckOptionalRank(params.gCumsumOutOptional, scalarRank, "gCumsumOutOptional") == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckOptionalRank(params.aOutOptional, qkvRank, "aOutOptional") == ACLNN_SUCCESS,
@@ -428,7 +388,7 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
               ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckOptionalRank(params.betaEffOutOptional, scalarRank, "betaEffOutOptional") == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.hOutOptional, info.isRank3 ? 4 : 5, "hOutOptional") == ACLNN_SUCCESS,
+    CHECK_RET(CheckOptionalRank(params.hOutOptional, 5, "hOutOptional") == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
 
     const int64_t chunks = ExpectedChunks(params, info.seqlen);
@@ -446,12 +406,10 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
                    ACLNN_ERR_PARAM_INVALID, "gCumsumOutOptional shape must match g.");
     }
     if (params.aOutOptional != nullptr) {
-        const bool valid = info.isRank3
-                               ? HasShape(params.aOutOptional, {info.hv, info.seqlen, params.chunkSize})
-                               : HasShape(params.aOutOptional,
-                                          {info.batch, info.hv, info.seqlen, params.chunkSize});
+        const bool valid = HasShape(params.aOutOptional,
+                                    {info.batch, info.hv, info.seqlen, params.chunkSize});
         CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID,
-                   "aOutOptional must use head-major [B,Hv,T,chunkSize] or [Hv,T,chunkSize].");
+                   "aOutOptional must use head-major [B,Hv,T,chunkSize].");
     }
     if (params.qHatOutOptional != nullptr) {
         CHECK_COND(ShapeEqual(params.qHatOutOptional->GetViewShape(), params.q->GetViewShape()),
@@ -465,22 +423,14 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
     }
     if (params.qRstdOutOptional != nullptr) {
         const bool valid = info.isSequenceMajor
-                               ? (info.isRank3
-                                      ? HasShape(params.qRstdOutOptional, {info.seqlen, info.hq})
-                                      : HasShape(params.qRstdOutOptional, {info.batch, info.seqlen, info.hq}))
-                               : (info.isRank3
-                                      ? HasShape(params.qRstdOutOptional, {info.hq, info.seqlen})
-                                      : HasShape(params.qRstdOutOptional, {info.batch, info.hq, info.seqlen}));
+                               ? HasShape(params.qRstdOutOptional, {info.batch, info.seqlen, info.hq})
+                               : HasShape(params.qRstdOutOptional, {info.batch, info.hq, info.seqlen});
         CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID, "qRstdOutOptional shape must follow q layout.");
     }
     if (params.kRstdOutOptional != nullptr) {
         const bool valid = info.isSequenceMajor
-                               ? (info.isRank3
-                                      ? HasShape(params.kRstdOutOptional, {info.seqlen, info.hq})
-                                      : HasShape(params.kRstdOutOptional, {info.batch, info.seqlen, info.hq}))
-                               : (info.isRank3
-                                      ? HasShape(params.kRstdOutOptional, {info.hq, info.seqlen})
-                                      : HasShape(params.kRstdOutOptional, {info.batch, info.hq, info.seqlen}));
+                               ? HasShape(params.kRstdOutOptional, {info.batch, info.seqlen, info.hq})
+                               : HasShape(params.kRstdOutOptional, {info.batch, info.hq, info.seqlen});
         CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID, "kRstdOutOptional shape must follow k layout.");
     }
     if (params.betaEffOutOptional != nullptr) {
@@ -490,10 +440,8 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
     if (params.hOutOptional != nullptr) {
         const int64_t stateDim0 = params.stateVFirst ? info.vDim : info.kDim;
         const int64_t stateDim1 = params.stateVFirst ? info.kDim : info.vDim;
-        const bool valid = info.isRank3
-                               ? HasShape(params.hOutOptional, {info.hv, chunks, stateDim0, stateDim1})
-                               : HasShape(params.hOutOptional,
-                                          {info.batch, info.hv, chunks, stateDim0, stateDim1});
+        const bool valid = HasShape(params.hOutOptional,
+                                    {info.batch, info.hv, chunks, stateDim0, stateDim1});
         CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID,
                    "hOutOptional shape must match stateVFirst.");
     }
@@ -627,18 +575,14 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
     const int64_t vDim = info.vDim;
     const int64_t seqNum = SeqNum(params, batch);
     const bool outputFinalState = params.finalStateOutOptional != nullptr;
-    const aclTensor *gSequence = info.isRank3
-                                     ? ReshapeDense(params.g, MakeShape({1, seqlen, hv}), executorPtr)
-                                     : params.g;
+    const aclTensor *gSequence = params.g;
     const aclTensor *gBht = gSequence == nullptr
                                 ? nullptr
                                 : TransposeContiguous(gSequence, {0, 2, 1}, executorPtr);
     const aclTensor *betaFloat = params.beta->GetDataType() == DataType::DT_FLOAT
                                      ? params.beta
                                      : l0op::Cast(params.beta, DataType::DT_FLOAT, executorPtr);
-    const aclTensor *betaSequence = betaFloat == nullptr || !info.isRank3
-                                        ? betaFloat
-                                        : ReshapeDense(betaFloat, MakeShape({1, seqlen, hv}), executorPtr);
+    const aclTensor *betaSequence = betaFloat;
     const aclTensor *betaBht = betaSequence == nullptr
                                    ? nullptr
                                    : TransposeContiguous(betaSequence, {0, 2, 1}, executorPtr);
@@ -687,20 +631,9 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         const aclTensor *kHead = params.k;
         const aclTensor *vHead = params.v;
         if (info.isSequenceMajor) {
-            qHead = info.isRank3
-                        ? TransposeContiguous(params.q, {1, 0, 2}, executorPtr)
-                        : TransposeContiguous(params.q, {0, 2, 1, 3}, executorPtr);
-            kHead = info.isRank3
-                        ? TransposeContiguous(params.k, {1, 0, 2}, executorPtr)
-                        : TransposeContiguous(params.k, {0, 2, 1, 3}, executorPtr);
-            vHead = info.isRank3
-                        ? TransposeContiguous(params.v, {1, 0, 2}, executorPtr)
-                        : TransposeContiguous(params.v, {0, 2, 1, 3}, executorPtr);
-        }
-        if (info.isRank3) {
-            qHead = qHead == nullptr ? nullptr : ReshapeDense(qHead, qkShape, executorPtr);
-            kHead = kHead == nullptr ? nullptr : ReshapeDense(kHead, qkShape, executorPtr);
-            vHead = vHead == nullptr ? nullptr : ReshapeDense(vHead, vShape, executorPtr);
+            qHead = TransposeContiguous(params.q, {0, 2, 1, 3}, executorPtr);
+            kHead = TransposeContiguous(params.k, {0, 2, 1, 3}, executorPtr);
+            vHead = TransposeContiguous(params.v, {0, 2, 1, 3}, executorPtr);
         }
         GDN_STAGE_CHECK(qHead != nullptr && kHead != nullptr && vHead != nullptr, 169108);
 
@@ -724,82 +657,56 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         auto oResult = l0op::ChunkFwdO(
             qHat, kHat, vNew, h, gCumsumBht, params.cuSeqlensOptional,
             params.chunkIndicesOptional, params.scale, params.chunkSize, true, params.stateVFirst,
-            info.isRank3 ? "TND" : "BSND", params.oOut, executorPtr);
+            "BSND", params.oOut, executorPtr);
         GDN_STAGE_CHECK(oResult[0] != nullptr, 169106);
 
         if (params.qHatOutOptional != nullptr) {
-            const aclTensor *qHatExport = info.isRank3
-                                              ? ReshapeDense(qHat, MakeShape({hq, seqlen, kDim}), executorPtr)
-                                              : qHat;
+            const aclTensor *qHatExport = qHat;
             if (info.isSequenceMajor) {
-                qHatExport = info.isRank3
-                                 ? TransposeContiguous(qHatExport, {1, 0, 2}, executorPtr)
-                                 : TransposeContiguous(qHatExport, {0, 2, 1, 3}, executorPtr);
+                qHatExport = TransposeContiguous(qHatExport, {0, 2, 1, 3}, executorPtr);
             }
             CHECK_RET(ViewCopyIfPresent(qHatExport, params.qHatOutOptional, executorPtr) == ACLNN_SUCCESS,
                       ACLNN_ERR_INNER_NULLPTR);
         }
         if (params.kHatOutOptional != nullptr) {
-            const aclTensor *kHatExport = info.isRank3
-                                              ? ReshapeDense(kHat, MakeShape({hq, seqlen, kDim}), executorPtr)
-                                              : kHat;
+            const aclTensor *kHatExport = kHat;
             if (info.isSequenceMajor) {
-                kHatExport = info.isRank3
-                                 ? TransposeContiguous(kHatExport, {1, 0, 2}, executorPtr)
-                                 : TransposeContiguous(kHatExport, {0, 2, 1, 3}, executorPtr);
+                kHatExport = TransposeContiguous(kHatExport, {0, 2, 1, 3}, executorPtr);
             }
             CHECK_RET(ViewCopyIfPresent(kHatExport, params.kHatOutOptional, executorPtr) == ACLNN_SUCCESS,
                       ACLNN_ERR_INNER_NULLPTR);
         }
         if (params.qRstdOutOptional != nullptr) {
-            const aclTensor *qRstdExport = info.isRank3
-                                               ? ReshapeDense(qRstd, MakeShape({hq, seqlen}), executorPtr)
-                                               : qRstd;
+            const aclTensor *qRstdExport = qRstd;
             if (info.isSequenceMajor) {
-                qRstdExport = info.isRank3
-                                  ? TransposeContiguous(qRstdExport, {1, 0}, executorPtr)
-                                  : TransposeContiguous(qRstdExport, {0, 2, 1}, executorPtr);
+                qRstdExport = TransposeContiguous(qRstdExport, {0, 2, 1}, executorPtr);
             }
             CHECK_RET(ViewCopyIfPresent(qRstdExport, params.qRstdOutOptional, executorPtr) == ACLNN_SUCCESS,
                       ACLNN_ERR_INNER_NULLPTR);
         }
         if (params.kRstdOutOptional != nullptr) {
-            const aclTensor *kRstdExport = info.isRank3
-                                               ? ReshapeDense(kRstd, MakeShape({hq, seqlen}), executorPtr)
-                                               : kRstd;
+            const aclTensor *kRstdExport = kRstd;
             if (info.isSequenceMajor) {
-                kRstdExport = info.isRank3
-                                  ? TransposeContiguous(kRstdExport, {1, 0}, executorPtr)
-                                  : TransposeContiguous(kRstdExport, {0, 2, 1}, executorPtr);
+                kRstdExport = TransposeContiguous(kRstdExport, {0, 2, 1}, executorPtr);
             }
             CHECK_RET(ViewCopyIfPresent(kRstdExport, params.kRstdOutOptional, executorPtr) == ACLNN_SUCCESS,
                       ACLNN_ERR_INNER_NULLPTR);
         }
-        const aclTensor *aExport = info.isRank3
-                                       ? ReshapeDense(a, MakeShape({hv, seqlen, params.chunkSize}), executorPtr)
-                                       : a;
-        const aclTensor *hExport = info.isRank3
-                                       ? ReshapeDense(h, MakeShape({hv, ExpectedChunks(params, seqlen),
-                                                                   stateDim0, stateDim1}),
-                                                      executorPtr)
-                                       : h;
+        const aclTensor *aExport = a;
+        const aclTensor *hExport = h;
         CHECK_RET(ViewCopyIfPresent(aExport, params.aOutOptional, executorPtr) == ACLNN_SUCCESS,
                   ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(ViewCopyIfPresent(hExport, params.hOutOptional, executorPtr) == ACLNN_SUCCESS,
                   ACLNN_ERR_INNER_NULLPTR);
         if (params.gCumsumOutOptional != nullptr) {
             const aclTensor *gCumsumBth = TransposeContiguous(gCumsumBht, {0, 2, 1}, executorPtr);
-            const aclTensor *gCumsumExport = info.isRank3
-                                                 ? ReshapeDense(gCumsumBth, MakeShape({seqlen, hv}), executorPtr)
-                                                 : gCumsumBth;
+            const aclTensor *gCumsumExport = gCumsumBth;
             CHECK_RET(ViewCopyIfPresent(gCumsumExport, params.gCumsumOutOptional, executorPtr) == ACLNN_SUCCESS,
                       ACLNN_ERR_INNER_NULLPTR);
         }
         if (params.betaEffOutOptional != nullptr) {
             const aclTensor *betaEffBth = TransposeContiguous(betaEffBht, {0, 2, 1}, executorPtr);
-            const aclTensor *betaEffExport = info.isRank3
-                                                 ? ReshapeDense(betaEffBth, MakeShape({seqlen, hv}), executorPtr)
-                                                 : betaEffBth;
+            const aclTensor *betaEffExport = betaEffBth;
             CHECK_RET(ViewCopyIfPresent(betaEffExport, params.betaEffOutOptional, executorPtr) == ACLNN_SUCCESS,
                       ACLNN_ERR_INNER_NULLPTR);
         }

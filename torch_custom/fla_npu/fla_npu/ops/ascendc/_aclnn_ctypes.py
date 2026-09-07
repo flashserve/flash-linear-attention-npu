@@ -1603,6 +1603,7 @@ def npu_chunk_gated_delta_rule_fwd(
     use_exp2=False,
     use_qk_l2norm_in_kernel=False,
     state_v_first=False,
+    layout="BNSD",
 ):
     """Call the final Phase 6 single-kernel GDN core."""
     import torch
@@ -1612,16 +1613,25 @@ def npu_chunk_gated_delta_rule_fwd(
     v_shape = _shape(v)
     g_shape = _shape(g)
     beta_shape = _shape(beta)
+    layout = str(layout)
+    if layout not in ("BNSD", "BSND", "NTD", "TND"):
+        raise RuntimeError(
+            "npu_chunk_gated_delta_rule_fwd: layout must be one of BNSD, BSND, NTD or TND."
+        )
     if len(q_shape) != 4 or len(k_shape) != 4 or len(v_shape) != 4:
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: q, k and v must be rank-4 BNSD tensors.")
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: q, k and v must be rank-4 tensors.")
     if q_shape[3] != 128 or k_shape[3] != 128:
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd: the composite implementation requires K=128.")
     if v_shape[3] not in (128, 256):
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd: Phase 6 requires V=128 or V=256.")
     if q_shape != k_shape:
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd: q and k must have identical shapes.")
-    batch, k_heads, tokens, k_dim = q_shape
-    _, v_heads, v_tokens, v_dim = v_shape
+    if layout in ("BSND", "TND"):
+        batch, tokens, k_heads, k_dim = q_shape
+        _, v_tokens, v_heads, v_dim = v_shape
+    else:
+        batch, k_heads, tokens, k_dim = q_shape
+        _, v_heads, v_tokens, v_dim = v_shape
     if v_tokens != tokens or v_shape[0] != batch:
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd: v must match q/k in B and T.")
     if v_heads % k_heads != 0:
@@ -1665,7 +1675,7 @@ def npu_chunk_gated_delta_rule_fwd(
             state_dtype = initial_state.dtype
         state_tail = (v_dim, k_dim) if state_v_first else (k_dim, v_dim)
         final_state = _empty((seq_num, v_heads, *state_tail), q, dtype=state_dtype)
-    layout_buffer = ctypes.create_string_buffer(b"BNSD")
+    layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
     outputs = (o, final_state, g_cumsum, A)
     return _call_aclnn(
         "aclnnChunkGatedDeltaRuleFwd",
