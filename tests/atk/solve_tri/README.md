@@ -1,41 +1,59 @@
-# SolveTri ATK 工程
+# SolveTri 本机混合容差 ATK 工程
 
-本目录提供 `solve_tri` 的 ATK 单算子工程，包含 `executor_solve_tri.py`、`gen_solve_tri.py`、`solve_tri.yaml`、`atk_solve_tri.json`。
+本目录验证公开接口 `fla_npu.ops.ascendc.solve_tri`，**只在本机跑**，不连远程 GPU。
+
+精度标准为 `mixed_tolerance_bm`（参考 `chunk_gated_delta_rule_fwd_prepare`）：
+
+- **dut** = 本机 NPU `solve_tri`
+- **golden** = 本机 CPU FP64 `linalg.inv`（`--bm_device cpu`）
+
+`run_test_cpu.sh` 默认要求 ATK ≥ 26.8.8（该版本原生提供 `mixed_tolerance_bm`）。本机若仍是 26.7.8，可设 `REQUIRED_ATK_VERSION=26.7.8`；executor 会把缺失的 `mixed_tolerance_bm` 别名到同角色的 `single_bm`，不必改 JSON。全量 200 条建议加 `--single_process`，避免 Celery 对比卡住。
 
 ## 输入约束
 
 - `layout` 支持 `bsnd/bnsd/tnd/ntd`。
-- `BSND/BNSD` 输入必须为 4D；`TND/NTD` 输入必须为 3D。
-- `BSND` 逻辑为 `[B,T,H,chunk_size]`，`BNSD` 逻辑为 `[B,H,T,chunk_size]`；`TND/NTD` 使用打包 token 维。
-- `x/out` 仅支持 `FLOAT16/BFLOAT16`，输出 shape 与输入一致。
-- 最后一维 `chunk_size` 仅支持 `64/128`。
-- `TND/NTD` 变长模式必须同时提供 `cu_seqlens` 和 `chunk_indices`；`chunk_indices` 描述每个 chunk 的序列与局部 chunk 序号。
-- 当前 ATK 用例遵循上述约束，并通过 `case_spec` 固定具体取值；扩展用例时应继续满足这些限制。
-
-## 标杆来源
-
-torch_custom/fla_npu/test/test_npu_solve_tri_ascend910b.py; fla/ops/ascendc/gdn/chunk_gdn_fwd/solve_tri/README.md
-
-CPU 标杆、输入构造、run_cpu、run_npu 和 FunctionApi 均在本目录的 `executor_solve_tri.py` 中实现；公共文件只提供基础工具函数。
-
-## SOC 支持
-
-YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合统一脚本的 `-soc=ascend910b|ascend910_93|ascend950` 使用。
+- `x/out` 仅 `FLOAT16/BFLOAT16`；`chunk_size` 支持 `16/32/64/128`。
+- `bsnd` / `bnsd` 一定长；`tnd` / `ntd` 含 1-seq 定长和 2+ seq 变长。
+- 变长用 `seqlens` 固定，executor 转成 `cu_seqlens` / `chunk_indices`。
+- CPU golden 与 `fwd_prepare` 里 solve-tri 一段相同：块内 `(I + L)^{-1}`，尾块 padding 列清零。
 
 ## 默认用例
 
-- BF16 用例：`{"dtype": "bf16", "B": 1, "H": 1, "T": 16, "chunk_size": 64, "layout": "bnsd", "op": "solve_tri", "case_id": 0, "seed": 20260817, "route": "ascendc", "soc": "ascend910b"}`
-- FP16 用例：`{"dtype": "fp16", "B": 1, "H": 1, "T": 16, "chunk_size": 64, "layout": "bnsd", "op": "solve_tri", "case_id": 1, "seed": 20260818, "route": "ascendc", "soc": "ascend910b"}`
+`atk_solve_tri.json` 为 **200** 条中小 shape（`scripts/generate_solve_tri_case.py` 的 `iter_profiles`），标准为 `mixed_tolerance_bm`。
 
-## 执行方式
+| 维度 | 条数 |
+|---|---|
+| chunk 16 / 32 / 64 / 128 | 各 50 |
+| bf16 / fp16 | 各 100 |
+| bsnd / bnsd | 各 34 |
+| tnd / ntd | 各 66 |
+| align / unalign | 98 / 102 |
+| fixed / varlen | 132 / 68 |
+
+`atk_solve_tri_perf.json`：6 条对齐定长、chunk 64/128。  
+`atk_solve_tri_mss.json`：6 条，覆盖 4 种 chunk、密/打包、尾块和 3-seq packed。
+
+重生成：
 
 ```bash
-bash tests/atk/run_test_cpu.sh -op=solve_tri -npu_device_id=6
-bash tests/atk/run_test_cpu.sh -op=solve_tri -npu_device_id=6 -scope=accuracy
-bash tests/atk/run_test_cpu.sh -op=solve_tri -npu_device_id=6 -scope=performance
-bash tests/atk/run_test_cpu.sh -op=solve_tri -npu_device_id=6 -scope=determinism
-bash tests/atk/run_test_cpu.sh -op=solve_tri -npu_device_id=6 -scope=mssanitizer
-bash tests/atk/run_test_cpu.sh -op=solve_tri -scope=gen_cases
+python3 tests/atk/solve_tri/gen_solve_tri.py
 ```
 
-`gen_cases` 默认传入 `-dt 100 -en 0`。所有新增工程的 marker dtype 都保留两路生成入口，生成器会把不支持 FP16 的算子改回合法 BF16 用例。
+## 执行
+
+走统一入口，**不要**改 `run_test_cpu.sh`。精度建议关 GM init。
+
+```bash
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+
+ATK_GM_INIT_MODE=off \
+bash tests/atk/run_test_cpu.sh -op=solve_tri -npu_device_id=6 -soc=ascend950 -scope=accuracy
+
+ATK_GM_INIT_MODE=off ACCURACY_START=0 ACCURACY_END=1 REQUIRED_ATK_VERSION=26.7.8 \
+bash tests/atk/run_test_cpu.sh -op=solve_tri -npu_device_id=6 -soc=ascend950 -scope=accuracy
+
+bash tests/atk/run_test_cpu.sh -op=solve_tri -npu_device_id=6 -soc=ascend950 -scope=performance
+bash tests/atk/run_test_cpu.sh -op=solve_tri -npu_device_id=6 -soc=ascend950 -scope=determinism
+bash tests/atk/run_test_cpu.sh -op=solve_tri -npu_device_id=6 -soc=ascend950 -scope=mssanitizer
+bash tests/atk/run_test_cpu.sh -op=solve_tri -scope=gen_cases
+```

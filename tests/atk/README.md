@@ -193,7 +193,8 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=accuracy
 
 `chunk_gated_delta_rule_fwd` 使用 NPU DUT、六 ACLNN NPU benchmark 和 CPU FP64 golden
 三路双标杆，精度入口为该算子 `README.md` 中的 `scripts/run_matrix.sh`；统一脚本仍用于其
-性能、确定性和 mssanitizer。
+性能、确定性和 mssanitizer。`solve_tri` 本机混合容差走
+`-op=solve_tri`，精度标准为 `mixed_tolerance_bm`。
 
 ### 性能执行
 
@@ -275,7 +276,7 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 | `recompute_w_u_fwd`              | `fla_npu.ops.ascendc.recompute_w_u_fwd`              | 见[`recompute_w_u_fwd/README.md`](./recompute_w_u_fwd/README.md)                           |
 | `recurrent_gated_delta_rule`     | `fla_npu.ops.ascendc.recurrent_gated_delta_rule`     | 见[`recurrent_gated_delta_rule/README.md`](./recurrent_gated_delta_rule/README.md)         |
 | `recurrent_kda`                  | `fla_npu.ops.ascendc.recurrent_kda`                  | 见[`recurrent_kda/README.md`](./recurrent_kda/README.md)                                   |
-| `solve_tri`                      | `fla_npu.ops.ascendc.solve_tri`                      | 见[`solve_tri/README.md`](./solve_tri/README.md)                                           |
+| `solve_tri`                      | `fla_npu.ops.ascendc.solve_tri`                      | 本机 `mixed_tolerance_bm`，走 `run_test_cpu.sh`；见[`solve_tri/README.md`](./solve_tri/README.md) |
 
 ## 新增或维护算子
 
