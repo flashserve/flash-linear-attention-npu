@@ -1,10 +1,15 @@
-add_op_to_compiled_list()
+if("chunk_kda_bwd" IN_LIST OP_LIST)
+    foreach(INTERNAL_OP kda_gate_bwd_post kda_gate_bwd_post_varlen)
+        if(NOT "${INTERNAL_OP}" IN_LIST OP_LIST)
+            add_subdirectory(
+                "${CMAKE_CURRENT_LIST_DIR}/../internal_ops/${INTERNAL_OP}/op_host"
+                "${CMAKE_CURRENT_BINARY_DIR}/internal_ops/${INTERNAL_OP}"
+            )
+        endif()
+    endforeach()
+endif()
 
-set(chunk_kda_bwd_depends
-    "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu"
-    "fla/ops/ascendc/kda/chunk_kda_bwd/internal_ops/kda_gate_bwd_post"
-    "fla/ops/ascendc/kda/chunk_kda_bwd/internal_ops/kda_gate_bwd_post_varlen"
-    CACHE STRING "Kernel source dependencies for chunk_kda_bwd" FORCE)
+add_op_to_compiled_list()
 
 if(BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnnExc PRIVATE

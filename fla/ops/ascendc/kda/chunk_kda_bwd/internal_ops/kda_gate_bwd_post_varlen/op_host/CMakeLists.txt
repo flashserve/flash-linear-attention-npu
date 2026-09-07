@@ -1,5 +1,9 @@
 add_op_to_compiled_list()
 
+set(kda_gate_bwd_post_varlen_depends
+    "fla/ops/ascendc/kda/chunk_kda_bwd"
+    CACHE STRING "Kernel source dependencies for kda_gate_bwd_post_varlen" FORCE)
+
 if(BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnnExc PRIVATE
         kda_gate_bwd_post_varlen_def.cpp
