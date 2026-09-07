@@ -37,12 +37,42 @@ def get_sources():
                 if file.endswith(".cpp") or file.endswith(".cc"):
                     sources.append(os.path.join(root, file))
 
-    BUILD_EXCLUDE_LIST = [f"{aten_dir}/VariableTypeEverything.cpp",
-        f"{aten_dir}/ADInplaceOrViewTypeEverything.cpp",
-        f"{aten_dir}/python_functionsEverything.cpp",
-        f"{aten_dir}/RegisterFunctionalizationEverything.cpp"]
+    BUILD_EXCLUDE_LIST = [
+        os.path.join(aten_dir, "VariableTypeEverything.cpp"),
+        os.path.join(aten_dir, "ADInplaceOrViewTypeEverything.cpp"),
+        os.path.join(aten_dir, "python_functionsEverything.cpp"),
+        os.path.join(aten_dir, "RegisterFunctionalizationEverything.cpp"),
+        os.path.join(ops_dir, "OpInterfaceEverything.cpp"),
+        os.path.join(ops_dir, "ops", "opapi", "StructKernelNpuOpApiEverything.cpp"),
+    ]
 
-    sources_new = [cur_file for cur_file in sources if cur_file not in BUILD_EXCLUDE_LIST]
+    # Newer torchnpugen emits an aggregate monolith (StructKernelNpuOpApi.cpp /
+    # OpInterface.cpp) *together with* per-op split files (StructKernelNpuOpApi_0.cpp,
+    # OpInterface_0.cpp, ...). Compiling both causes multiple-definition at link time.
+    # Only drop the aggregate when its split replacement is actually present, so older
+    # single-file torchnpugen output still builds.
+    for aggregate in (
+        os.path.join(ops_dir, "OpInterface.cpp"),
+        os.path.join(ops_dir, "ops", "opapi", "StructKernelNpuOpApi.cpp"),
+    ):
+        aggregate_dir = os.path.dirname(aggregate)
+        prefix = os.path.splitext(os.path.basename(aggregate))[0] + "_"
+        if any(
+            f.startswith(prefix) and f.endswith(".cpp")
+            for f in os.listdir(aggregate_dir)
+        ):
+            BUILD_EXCLUDE_LIST.append(aggregate)
+
+    sources_new = []
+    seen = set()
+    for cur_file in sources:
+        if cur_file in BUILD_EXCLUDE_LIST:
+            continue
+        rp = os.path.realpath(cur_file)
+        if rp in seen:
+            continue
+        seen.add(rp)
+        sources_new.append(cur_file)
     print("====sources_new:", sources_new)
 
     return sources_new
@@ -138,5 +168,8 @@ setup(
     install_requires=[
         f"torch=={PYTORCH_VERSION}"
     ],
-    packages=find_packages()
+    # 显式列出包，避免 find_packages() 把构建目录里残留的杂包（如从 main 工作区混入的
+    # fla/）一并打进 wheel：那会让卸载删除 site-packages/fla/__init__.py，而干净重建后
+    # 重装无法还原，导致运行时提示缺少 __version__。
+    packages=["fla_npu"],
 )

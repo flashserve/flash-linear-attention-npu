@@ -155,6 +155,8 @@ else()
 endif()
 
 set(OP_TILING_INCLUDE
+  ${OPBASE_SOURCE_PATH}/pkg_inc
+  ${OPBASE_SOURCE_PATH}/include
   ${C_SEC_INCLUDE}
   ${PLATFORM_INC_DIRS}
   ${METADEF_INCLUDE_DIRS}
