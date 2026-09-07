@@ -302,32 +302,53 @@ inline void RunC2(const CubeStageArgs &args)
                 lane + C2Policy::kKMinusOffset[s],
                 ShapePolicy::kKMinusBytes[s], l1Generation);
             const Offset rawRow = s * C2Policy::kM;
-            const Offset resultBytes =
-                L0cPolicy::kC2PerHeadResultBytes[s];
+            const Offset packedResultBytes =
+                L0cPolicy::kC2PackedResultBytes[s];
             const std::uint64_t operandGeneration =
                 L0OperandGenerationFor(head, C2L0OperandUse(s));
-            const BufferSpan rawAqkL0c = cube_detail::SymbolicL0cSpan(
-                head, "raw-Aqk-L0C", args.workgroupId, resultBytes,
-                l0cLane + L0cPolicy::kC2AqkOffset[s]);
-            const BufferSpan qL0a = cube_detail::L0OperandSpan(
-                head, "C2-Q-L0A", MemorySpace::L0A, args.workgroupId,
-                L0aPolicy::kC2Q.offset, L0aPolicy::kC2Q.size,
-                operandGeneration);
-            const BufferSpan kL0a = cube_detail::L0OperandSpan(
-                head, "C2-K-L0A", MemorySpace::L0A, args.workgroupId,
-                L0aPolicy::kC2K.offset, L0aPolicy::kC2K.size,
-                operandGeneration);
+            const BufferSpan packedL0c = NativeMatrixOwner(
+                cube_detail::SymbolicL0cSpan(
+                    head, "raw-Aqk-Akk-packed-L0C", args.workgroupId,
+                    packedResultBytes,
+                    l0cLane + L0cPolicy::kC2PackedOffset[s]),
+                "raw-Aqk-Akk-packed-L0C",
+                NativeMatrixLayout::L0cFractal, C2Policy::kPackedM,
+                physicalN, ShapePolicy::kFp32Bytes);
+            const BufferSpan rawAqkL0c = NativeMatrixTile(
+                packedL0c, "raw-Aqk-L0C", 0U, 0U, C2Policy::kM,
+                physicalN);
+            const BufferSpan rawAkkL0c = NativeMatrixTile(
+                packedL0c, "raw-Akk-L0C", C2Policy::kM, 0U,
+                C2Policy::kM, physicalN);
+            const BufferSpan stackedL0a = NativeMatrixOwner(
+                cube_detail::L0OperandSpan(
+                    head, "C2-QK-stacked-L0A", MemorySpace::L0A,
+                    args.workgroupId, L0aPolicy::kC2StackedQK.offset,
+                    L0aPolicy::kC2StackedQK.size, operandGeneration),
+                "C2-QK-stacked-L0A", NativeMatrixLayout::L0aZN,
+                C2Policy::kPackedM, C2Policy::kK,
+                ShapePolicy::kStorageBytes);
+            const BufferSpan qL0aTile = NativeMatrixTile(
+                stackedL0a, "C2-Qplus-L0A-tile", 0U, 0U,
+                C2Policy::kM, C2Policy::kK);
+            const BufferSpan kL0aTile = NativeMatrixTile(
+                stackedL0a, "C2-Kplus-L0A-tile", C2Policy::kM, 0U,
+                C2Policy::kM, C2Policy::kK);
             const BufferSpan kMinusL0b = cube_detail::L0OperandSpan(
                 head, "C2-Kminus-L0B", MemorySpace::L0B,
                 args.workgroupId, L0bPolicy::kC2KMinus.offset,
                 ShapePolicy::kKMinusBytes[s], operandGeneration);
-            // 两个独立乘积使用互不重叠的 Q/K L0A 区间，并共享只读的 Kminus
-            // L0B 前缀。两个 MMAD 均完成后再统一释放。
-            args.ops->Mmad(Stage::C2, qBand, kMinus, rawAqkL0c, qL0a,
-                           kMinusL0b,
-                           FromScoreStorage(args.key.scoreStorage),
-                           FromScoreStorage(args.key.scoreStorage),
-                           C2Policy::kM, physicalN, C2Policy::kK, true);
+            // MTE1 将 Qplus/Kplus 两个 16 行 L1 源分别装入 zN L0A 的逻辑
+            // rows[0,16)/rows[16,32) tile，然后一次 32x128 @ 128xN MMAD
+            // 同时生成 Aqk/Akk。两个 tile 不是连续物理半区，也不需要在 L1 搬位。
+            args.ops->MmadRowStackedLhs(
+                Stage::C2, qBand, kBand, kMinus, packedL0c, stackedL0a,
+                qL0aTile, kL0aTile, kMinusL0b,
+                FromScoreStorage(args.key.scoreStorage),
+                FromScoreStorage(args.key.scoreStorage), C2Policy::kM,
+                C2Policy::kM, physicalN, C2Policy::kK, true);
+            cube_detail::RequireCubeToMte1OperandReuse(*args.sync,
+                                                       Stage::C2);
             cube_detail::RequireCubeToFixpipeOutput(*args.sync, Stage::C2);
             args.ops->Store(
                 Stage::C2, rawAqkL0c,
@@ -336,18 +357,6 @@ inline void RunC2(const CubeStageArgs &args)
                     C2Policy::kM, physicalN,
                     C2Policy::kRawLeadingDimension,
                     ShapePolicy::kFp32Bytes));
-
-            const BufferSpan rawAkkL0c = cube_detail::SymbolicL0cSpan(
-                head, "raw-Akk-L0C", args.workgroupId, resultBytes,
-                l0cLane + L0cPolicy::kC2AkkOffset[s]);
-            args.ops->Mmad(Stage::C2, kBand, kMinus, rawAkkL0c, kL0a,
-                           kMinusL0b,
-                           FromScoreStorage(args.key.scoreStorage),
-                           FromScoreStorage(args.key.scoreStorage),
-                           C2Policy::kM, physicalN, C2Policy::kK, true);
-            cube_detail::RequireCubeToMte1OperandReuse(*args.sync,
-                                                       Stage::C2);
-            cube_detail::RequireCubeToFixpipeOutput(*args.sync, Stage::C2);
             args.ops->Store(
                 Stage::C2, rawAkkL0c,
                 cube_detail::CubeMatrixSubspan(
@@ -356,10 +365,11 @@ inline void RunC2(const CubeStageArgs &args)
                     C2Policy::kRawLeadingDimension,
                     ShapePolicy::kFp32Bytes));
 
-            // 待确认的 API 约束：上述逻辑元素 (r,c) 必须写入
+            // 待确认的 API 约束：必须通过 MakeLayoutL0C(32,N) 的逻辑 tile
+            // 选择 packed L0C 的上、下 16 行，再分别写入
             // UBM + rawBase + (16*s+r)*0x100 + c*4，且 c<physicalN。
-            // 紧凑的 16xN Fixpipe 写入并不正确；目标 CANN 必须验证可直接写入
-            // 配对 AIV 的 UB，且目标行跨度为 64。
+            // 禁止按 row-major 字节偏移切 L0C；目标 CANN 必须验证可直接写入配对
+            // AIV 的 UB，且目标行跨度为 64。
         }
         args.sync->Set(SyncPoint::C2ScoreL1Free, head.l1BankId, l1Generation,
                        Stage::C2, Pipe::Mte1);
@@ -563,11 +573,11 @@ inline void RunC4(const CubeStageArgs &args)
             L0OperandGenerationFor(head, L0OperandUse::C4);
         const BufferSpan bL0a = cube_detail::L0OperandSpan(
             head, "C4-B-L0A", MemorySpace::L0A, args.workgroupId,
-            L0aPolicy::kC2Q.offset, L0aPolicy::kC2Q.size,
+            L0aPolicy::kC45Operand.offset, L0aPolicy::kC45Operand.size,
             operandGeneration);
         const BufferSpan x0L0b = cube_detail::L0OperandSpan(
             head, "C4-X0-L0B", MemorySpace::L0B, args.workgroupId,
-            L0bPolicy::kC2KMinus.offset, L0aPolicy::kC2Q.size,
+            L0bPolicy::kC45Operand.offset, L0bPolicy::kC45Operand.size,
             operandGeneration);
         cube_detail::RequireMte2ToMte1Inputs(*args.sync, Stage::C4);
         args.ops->Mmad(Stage::C4, bCurrent, x0Resident, tL0c, bL0a, x0L0b,
@@ -629,11 +639,11 @@ inline void RunC5(const CubeStageArgs &args)
             L0OperandGenerationFor(head, L0OperandUse::C5);
         const BufferSpan x1L0a = cube_detail::L0OperandSpan(
             head, "C5-X1-L0A", MemorySpace::L0A, args.workgroupId,
-            L0aPolicy::kC2Q.offset, L0aPolicy::kC2Q.size,
+            L0aPolicy::kC45Operand.offset, L0aPolicy::kC45Operand.size,
             operandGeneration);
         const BufferSpan tL0b = cube_detail::L0OperandSpan(
             head, "C5-T-L0B", MemorySpace::L0B, args.workgroupId,
-            L0bPolicy::kC2KMinus.offset, L0aPolicy::kC2Q.size,
+            L0bPolicy::kC45Operand.offset, L0bPolicy::kC45Operand.size,
             operandGeneration);
         args.ops->Mmad(Stage::C5, x1, t, y, x1L0a, tL0b,
                        MatrixStorage::Fp32,

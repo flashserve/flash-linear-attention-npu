@@ -912,6 +912,24 @@ bool CheckMatrixSpan(const BufferSpan &span, std::uint32_t rows,
     return span.byteSize == expectedBytes;
 }
 
+bool CheckNativeMatrixView(const BufferSpan &span,
+                           NativeMatrixLayout layout,
+                           std::uint32_t parentRows,
+                           std::uint32_t parentColumns,
+                           std::uint32_t rowOffset,
+                           std::uint32_t columnOffset,
+                           std::uint32_t rows,
+                           std::uint32_t columns,
+                           std::uint32_t elementBytes) noexcept
+{
+    return span.nativeLayout == layout && span.parentRows == parentRows &&
+           span.parentColumns == parentColumns &&
+           span.logicalRowOffset == rowOffset &&
+           span.logicalColumnOffset == columnOffset && span.rows == rows &&
+           span.columns == columns && span.leadingDimension == 0U &&
+           span.elementBytes == elementBytes;
+}
+
 bool FindUniqueSyncOrder(const SyncTrace &trace, SyncAction action,
                          SyncPoint point, std::uint32_t ownerId,
                          std::uint64_t generation, Stage stage, Pipe pipe,
@@ -1008,6 +1026,24 @@ bool FindNthOperationOrder(const OperationTrace &trace,
     return false;
 }
 
+const OperationRecord *FindNthOperation(const OperationTrace &trace,
+                                        OperationKind kind, Stage stage,
+                                        std::size_t ordinal) noexcept
+{
+    std::size_t match = 0U;
+    for (std::size_t index = 0U; index < trace.size; ++index) {
+        const OperationRecord &record = trace.records[index];
+        if (record.kind != kind || record.stage != stage) {
+            continue;
+        }
+        if (match == ordinal) {
+            return &record;
+        }
+        ++match;
+    }
+    return nullptr;
+}
+
 bool FindNthMmadOrder(const OperationTrace &trace, Stage stage,
                       std::size_t ordinal,
                       std::uint64_t &order) noexcept
@@ -1016,8 +1052,10 @@ bool FindNthMmadOrder(const OperationTrace &trace, Stage stage,
     for (std::size_t index = 0U; index < trace.size; ++index) {
         const OperationRecord &record = trace.records[index];
         const bool mmad = record.kind == OperationKind::Mmad ||
-                          record.kind ==
-                              OperationKind::MmadQuadrantPackedLhs;
+                           record.kind ==
+                               OperationKind::MmadRowStackedLhs ||
+                           record.kind ==
+                               OperationKind::MmadQuadrantPackedLhs;
         if (!mmad || record.stage != stage) {
             continue;
         }
@@ -2158,16 +2196,17 @@ bool CheckOperandReleaseOrder(
              operationIndex < operations.size; ++operationIndex) {
             const OperationRecord &operation =
                 operations.records[operationIndex];
-            const bool isMmad = operation.kind == OperationKind::Mmad ||
-                                operation.kind ==
-                                    OperationKind::MmadQuadrantPackedLhs;
+            const bool isMmad =
+                operation.kind == OperationKind::Mmad ||
+                operation.kind == OperationKind::MmadRowStackedLhs ||
+                operation.kind == OperationKind::MmadQuadrantPackedLhs;
             if (isMmad && operation.stage == stage &&
                 operation.order < release.order) {
                 ++precedingMmad;
             }
         }
         const std::size_t expectedPreceding =
-            stage == Stage::C2 ? 2U * releaseIndex
+            stage == Stage::C2 ? releaseIndex
                                : (stage == Stage::C7 ? 2U : 1U);
         if (precedingMmad != expectedPreceding) {
             return false;
@@ -2182,9 +2221,10 @@ std::size_t CountStageMmad(const OperationTrace &operations,
     std::size_t count = 0U;
     for (std::size_t index = 0U; index < operations.size; ++index) {
         const OperationRecord &record = operations.records[index];
-        const bool isMmad = record.kind == OperationKind::Mmad ||
-                            record.kind ==
-                                OperationKind::MmadQuadrantPackedLhs;
+        const bool isMmad =
+            record.kind == OperationKind::Mmad ||
+            record.kind == OperationKind::MmadRowStackedLhs ||
+            record.kind == OperationKind::MmadQuadrantPackedLhs;
         if (record.stage == stage && isMmad) {
             ++count;
         }
@@ -2298,26 +2338,25 @@ bool CheckSingleMmadPhase(const OperationTrace &operations,
 bool CheckC2BandPipeline(const OperationTrace &operations,
                          const LocalSyncTrace &localDependencies,
                          std::size_t activeBlocks,
-                         bool splitFixpipeEdges) noexcept
+                         bool directAivUbOutput) noexcept
 {
-    const std::size_t expectedMmad = 2U * activeBlocks;
-    const std::size_t expectedFixpipe =
-        splitFixpipeEdges ? expectedMmad : activeBlocks;
+    const std::size_t expectedStores = 2U * activeBlocks;
     if (CountOperations(operations, OperationKind::Load, Stage::C2) != 1U ||
-        CountOperations(operations, OperationKind::Mmad, Stage::C2) !=
-            expectedMmad ||
+        CountOperations(operations, OperationKind::Mmad, Stage::C2) != 0U ||
+        CountOperations(operations, OperationKind::MmadRowStackedLhs,
+                        Stage::C2) != activeBlocks ||
         CountOperations(operations, OperationKind::Store, Stage::C2) !=
-            expectedMmad ||
+            expectedStores ||
         CountLocalDependencies(
             localDependencies, LocalDependency::Mte2ToMte1Inputs,
             Stage::C2) != 1U ||
         CountLocalDependencies(
             localDependencies,
             LocalDependency::Mte2ToFixpipePayloadReuse,
-            Stage::C2) != (splitFixpipeEdges ? 0U : 1U) ||
+            Stage::C2) != (directAivUbOutput ? 0U : 1U) ||
         CountLocalDependencies(
             localDependencies, LocalDependency::CubeToFixpipeOutput,
-            Stage::C2) != expectedFixpipe) {
+            Stage::C2) != activeBlocks) {
         return false;
     }
 
@@ -2330,13 +2369,14 @@ bool CheckC2BandPipeline(const OperationTrace &operations,
         !FindUniqueLocalOrder(localDependencies,
                               LocalDependency::Mte2ToMte1Inputs,
                               Stage::C2, inputReady) ||
-        !FindNthOperationOrder(operations, OperationKind::Mmad, Stage::C2,
-                               0U, firstMmad) ||
+        !FindNthOperationOrder(operations,
+                               OperationKind::MmadRowStackedLhs,
+                               Stage::C2, 0U, firstMmad) ||
         firstLoad > lastLoad || lastLoad >= inputReady ||
         inputReady >= firstMmad) {
         return false;
     }
-    if (!splitFixpipeEdges) {
+    if (!directAivUbOutput) {
         std::uint64_t payloadReuse = 0U;
         if (!FindUniqueLocalOrder(
                 localDependencies,
@@ -2348,21 +2388,21 @@ bool CheckC2BandPipeline(const OperationTrace &operations,
     }
 
     for (std::size_t block = 0U; block < activeBlocks; ++block) {
-        std::uint64_t firstBandMmad = 0U;
-        std::uint64_t secondBandMmad = 0U;
+        std::uint64_t bandMmad = 0U;
         std::uint64_t release = 0U;
+        std::uint64_t fixpipe = 0U;
         std::uint64_t firstStore = 0U;
         std::uint64_t secondStore = 0U;
-        if (!FindNthOperationOrder(operations, OperationKind::Mmad,
-                                   Stage::C2, 2U * block,
-                                   firstBandMmad) ||
-            !FindNthOperationOrder(operations, OperationKind::Mmad,
-                                   Stage::C2, 2U * block + 1U,
-                                   secondBandMmad) ||
+        if (!FindNthOperationOrder(
+                operations, OperationKind::MmadRowStackedLhs,
+                Stage::C2, block, bandMmad) ||
             !FindNthLocalOrder(
                 localDependencies,
                 LocalDependency::CubeToMte1OperandReuse, Stage::C2,
                 block, release) ||
+            !FindNthLocalOrder(
+                localDependencies, LocalDependency::CubeToFixpipeOutput,
+                Stage::C2, block, fixpipe) ||
             !FindNthOperationOrder(operations, OperationKind::Store,
                                    Stage::C2, 2U * block, firstStore) ||
             !FindNthOperationOrder(operations, OperationKind::Store,
@@ -2370,43 +2410,16 @@ bool CheckC2BandPipeline(const OperationTrace &operations,
                                    secondStore)) {
             return false;
         }
-
-        if (splitFixpipeEdges) {
-            std::uint64_t firstFixpipe = 0U;
-            std::uint64_t secondFixpipe = 0U;
-            if (!FindNthLocalOrder(
-                    localDependencies,
-                    LocalDependency::CubeToFixpipeOutput, Stage::C2,
-                    2U * block, firstFixpipe) ||
-                !FindNthLocalOrder(
-                    localDependencies,
-                    LocalDependency::CubeToFixpipeOutput, Stage::C2,
-                    2U * block + 1U, secondFixpipe) ||
-                firstBandMmad >= firstFixpipe ||
-                firstFixpipe >= firstStore ||
-                firstStore >= secondBandMmad ||
-                secondBandMmad >= release || release >= secondFixpipe ||
-                secondFixpipe >= secondStore) {
-                return false;
-            }
-        } else {
-            std::uint64_t fixpipe = 0U;
-            if (!FindNthLocalOrder(
-                    localDependencies,
-                    LocalDependency::CubeToFixpipeOutput, Stage::C2,
-                    block, fixpipe) ||
-                firstBandMmad >= secondBandMmad ||
-                secondBandMmad >= release || release >= fixpipe ||
-                fixpipe >= firstStore || firstStore >= secondStore) {
-                return false;
-            }
+        if (bandMmad >= release || release >= fixpipe ||
+            fixpipe >= firstStore || firstStore >= secondStore) {
+            return false;
         }
 
         if (block + 1U < activeBlocks) {
             std::uint64_t nextBandMmad = 0U;
-            if (!FindNthOperationOrder(operations, OperationKind::Mmad,
-                                       Stage::C2, 2U * (block + 1U),
-                                       nextBandMmad) ||
+            if (!FindNthOperationOrder(
+                    operations, OperationKind::MmadRowStackedLhs,
+                    Stage::C2, block + 1U, nextBandMmad) ||
                 secondStore >= nextBandMmad) {
                 return false;
             }
@@ -2578,47 +2591,236 @@ bool CheckStandardMmad(const OperationRecord &record, Stage stage,
            record.transposeRhs == transposeRhs && record.negate == negate;
 }
 
-bool CheckQuadrantMmad(const OperationRecord &record, const char *rhs,
-                       const char *destination) noexcept
+bool CheckRowStackedMmad(const OperationRecord &record,
+                         const char *destination,
+                         std::uint32_t n,
+                         NativeMatrixLayout l0aLayout,
+                         MatrixStorage expectedStorage) noexcept
 {
-    return record.kind == OperationKind::MmadQuadrantPackedLhs &&
-           record.stage == Stage::C7 &&
-           SameName(record.source.name, "Akk-resident") &&
-           SameName(record.auxiliary.name, rhs) &&
+    constexpr std::uint32_t kBandRows = 16U;
+    constexpr std::uint32_t kInner = 128U;
+    constexpr std::size_t kBandBytes = 0x1000U;
+    constexpr std::size_t kStackedL0aBytes = 0x2000U;
+    return record.kind == OperationKind::MmadRowStackedLhs &&
+           record.stage == Stage::C2 &&
+           SameName(record.source.name, "Qplus-band") &&
+           SameName(record.secondarySource.name, "Kplus-band") &&
+           SameName(record.auxiliary.name, "Kminus-prefix") &&
            SameName(record.destination.name, destination) &&
-           record.lhsStorage == MatrixStorage::Bf16 &&
-           record.rhsStorage == MatrixStorage::Bf16 &&
-           record.quadrantRows == 32U && record.quadrantColumns == 32U &&
-           record.n == 128U && record.k == 64U;
+           SameName(record.l0aOperand.name, "C2-QK-stacked-L0A") &&
+           SameName(record.l0bOperand.name, "C2-Kminus-L0B") &&
+           record.lhsStorage == expectedStorage &&
+           record.rhsStorage == expectedStorage &&
+           record.m == 2U * kBandRows && record.n == n &&
+           record.k == kInner && record.lhsTopRows == kBandRows &&
+           record.lhsBottomRows == kBandRows && record.transposeRhs &&
+           !record.negate && record.source.byteSize == kBandBytes &&
+           record.secondarySource.byteSize == kBandBytes &&
+           record.auxiliary.byteSize ==
+               static_cast<std::size_t>(n) * kInner * 2U &&
+           record.destination.byteSize ==
+               static_cast<std::size_t>(2U * kBandRows) * n * 4U &&
+           record.l0aOperand.byteSize == kStackedL0aBytes &&
+           record.l0bOperand.byteSize ==
+               static_cast<std::size_t>(n) * kInner * 2U &&
+           record.l0aOperand.space == MemorySpace::L0A &&
+           record.lhsTopL0aTile.space == MemorySpace::L0A &&
+           record.lhsBottomL0aTile.space == MemorySpace::L0A &&
+           record.destination.space == MemorySpace::L0 &&
+           CheckNativeMatrixView(record.l0aOperand, l0aLayout,
+                                 2U * kBandRows, kInner, 0U, 0U,
+                                 2U * kBandRows, kInner, 2U) &&
+           CheckNativeMatrixView(record.lhsTopL0aTile, l0aLayout,
+                                 2U * kBandRows, kInner, 0U, 0U,
+                                 kBandRows, kInner, 2U) &&
+           CheckNativeMatrixView(record.lhsBottomL0aTile, l0aLayout,
+                                 2U * kBandRows, kInner, kBandRows, 0U,
+                                 kBandRows, kInner, 2U) &&
+           SamePhysicalSpan(record.l0aOperand,
+                            record.lhsTopL0aTile) &&
+           SamePhysicalSpan(record.l0aOperand,
+                            record.lhsBottomL0aTile) &&
+           CheckNativeMatrixView(record.destination,
+                                 NativeMatrixLayout::L0cFractal,
+                                 2U * kBandRows, n, 0U, 0U,
+                                 2U * kBandRows, n, 4U);
 }
 
-bool CheckArch35MmadDescriptors(const OperationTrace &operations,
-                                std::uint32_t validRows) noexcept
+bool CheckC2StoreDescriptors(const OperationTrace &operations,
+                             std::size_t activeBlocks,
+                             Architecture architecture) noexcept
+{
+    constexpr std::uint32_t kBandRows = 16U;
+    constexpr std::uint32_t kRawLeadingDimension = 64U;
+    constexpr std::uint32_t kFp32Bytes = 4U;
+    const bool arch22 = architecture == Architecture::Arch22;
+    const OperationRecord *payloadLoad =
+        arch22 ? FindUniqueOperation(
+                     operations, OperationKind::Load, Stage::C2,
+                     "shared-payload", "packed-score-L1")
+               : nullptr;
+    const OperationRecord *firstAqk = FindNthOperation(
+        operations, OperationKind::Store, Stage::C2, 0U);
+    const OperationRecord *firstAkk = FindNthOperation(
+        operations, OperationKind::Store, Stage::C2, 1U);
+    if (firstAqk == nullptr || firstAkk == nullptr ||
+        (arch22 && payloadLoad == nullptr)) {
+        return false;
+    }
+
+    for (std::size_t block = 0U; block < activeBlocks; ++block) {
+        const OperationRecord *mmad = FindNthOperation(
+            operations, OperationKind::MmadRowStackedLhs,
+            Stage::C2, block);
+        const OperationRecord *aqk = FindNthOperation(
+            operations, OperationKind::Store, Stage::C2, 2U * block);
+        const OperationRecord *akk = FindNthOperation(
+            operations, OperationKind::Store, Stage::C2,
+            2U * block + 1U);
+        if (mmad == nullptr || aqk == nullptr || akk == nullptr) {
+            return false;
+        }
+        const std::uint32_t n = kPrefixRows[block];
+        const char *aqkSource =
+            arch22 ? "Aqk-compact-L0C" : "raw-Aqk-L0C";
+        const char *akkSource =
+            arch22 ? "Akk-compact-L0C" : "raw-Akk-L0C";
+        if (!SameName(aqk->source.name, aqkSource) ||
+            !SameName(akk->source.name, akkSource) ||
+            !CheckNativeMatrixView(
+                aqk->source, NativeMatrixLayout::L0cFractal,
+                2U * kBandRows, n, 0U, 0U, kBandRows, n,
+                kFp32Bytes) ||
+            !CheckNativeMatrixView(
+                akk->source, NativeMatrixLayout::L0cFractal,
+                2U * kBandRows, n, kBandRows, 0U, kBandRows, n,
+                kFp32Bytes) ||
+            !SamePhysicalSpan(aqk->source, akk->source) ||
+            !SamePhysicalSpan(aqk->source, mmad->destination)) {
+            return false;
+        }
+
+        if (!arch22) {
+            const std::uint64_t rowOffset =
+                block * kBandRows * kRawLeadingDimension * kFp32Bytes;
+            const std::uint64_t rawPlaneDistance =
+                V3Layout::kRawAkk.offset - V3Layout::kRawAqk.offset;
+            if (!SameName(aqk->destination.name,
+                          "raw-Aqk-band-ld64") ||
+                !SameName(akk->destination.name,
+                          "raw-Akk-band-ld64") ||
+                aqk->destination.space != MemorySpace::Ub ||
+                akk->destination.space != MemorySpace::Ub ||
+                !CheckMatrixSpan(aqk->destination, kBandRows, n,
+                                 kRawLeadingDimension, kFp32Bytes) ||
+                !CheckMatrixSpan(akk->destination, kBandRows, n,
+                                 kRawLeadingDimension, kFp32Bytes) ||
+                aqk->destination.byteOffset !=
+                    firstAqk->destination.byteOffset + rowOffset ||
+                akk->destination.byteOffset !=
+                    firstAkk->destination.byteOffset + rowOffset ||
+                firstAkk->destination.byteOffset !=
+                    firstAqk->destination.byteOffset + rawPlaneDistance) {
+                return false;
+            }
+            continue;
+        }
+
+        const Region &aqkRegion =
+            arch22_policy::WorkspacePolicy::kRelayRawAqk[block];
+        const Region &akkRegion =
+            arch22_policy::WorkspacePolicy::kRelayRawAkk[block];
+        if (!SameName(aqk->destination.name, "Aqk-compact-relay") ||
+            !SameName(akk->destination.name, "Akk-compact-relay") ||
+            aqk->destination.space != MemorySpace::Workspace ||
+            akk->destination.space != MemorySpace::Workspace ||
+            !CheckMatrixSpan(aqk->destination, kBandRows, n, n,
+                             kFp32Bytes) ||
+            !CheckMatrixSpan(akk->destination, kBandRows, n, n,
+                             kFp32Bytes) ||
+            aqk->destination.byteOffset !=
+                payloadLoad->source.byteOffset + aqkRegion.offset ||
+            akk->destination.byteOffset !=
+                payloadLoad->source.byteOffset + akkRegion.offset ||
+            aqk->destination.byteSize != aqkRegion.size ||
+            akk->destination.byteSize != akkRegion.size ||
+            aqk->destination.slot != payloadLoad->source.slot ||
+            akk->destination.slot != payloadLoad->source.slot ||
+            aqk->destination.generation !=
+                payloadLoad->source.generation ||
+            akk->destination.generation !=
+                payloadLoad->source.generation ||
+            aqk->destination.ownerRole !=
+                payloadLoad->source.ownerRole ||
+            akk->destination.ownerRole !=
+                payloadLoad->source.ownerRole ||
+            aqk->destination.ownerId != payloadLoad->source.ownerId ||
+            akk->destination.ownerId != payloadLoad->source.ownerId) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool CheckC2RowStackedMmadDescriptors(
+    const OperationTrace &operations, std::uint32_t validRows,
+    const char *destination, NativeMatrixLayout l0aLayout,
+    Architecture architecture, MatrixStorage expectedStorage) noexcept
 {
     const std::size_t activeBlocks =
         (static_cast<std::size_t>(validRows) + 15U) / 16U;
     std::size_t c2Index = 0U;
     for (std::size_t index = 0U; index < operations.size; ++index) {
         const OperationRecord &record = operations.records[index];
-        if (record.kind != OperationKind::Mmad ||
+        if (record.kind != OperationKind::MmadRowStackedLhs ||
             record.stage != Stage::C2) {
             continue;
         }
-        const std::size_t block = c2Index / 2U;
-        if (block >= activeBlocks) {
-            return false;
-        }
-        const bool aqk = c2Index % 2U == 0U;
-        if (!CheckStandardMmad(
-                record, Stage::C2, aqk ? "Qplus-band" : "Kplus-band",
-                "Kminus-prefix", aqk ? "raw-Aqk-L0C" : "raw-Akk-L0C",
-                MatrixStorage::Bf16, MatrixStorage::Bf16, 16U,
-                kPrefixRows[block], 128U, true, false)) {
+        if (c2Index >= activeBlocks ||
+            !CheckRowStackedMmad(record, destination,
+                                 kPrefixRows[c2Index], l0aLayout,
+                                 expectedStorage)) {
             return false;
         }
         ++c2Index;
     }
-    if (c2Index != 2U * activeBlocks) {
+    return c2Index == activeBlocks &&
+           CountOperations(operations, OperationKind::Mmad,
+                           Stage::C2) == 0U &&
+           CheckC2StoreDescriptors(operations, activeBlocks,
+                                   architecture);
+}
+
+bool CheckQuadrantMmad(const OperationRecord &record, const char *rhs,
+                       const char *destination,
+                       MatrixStorage lhsStorage,
+                       MatrixStorage rhsStorage) noexcept
+{
+    return record.kind == OperationKind::MmadQuadrantPackedLhs &&
+           record.stage == Stage::C7 &&
+           SameName(record.source.name, "Akk-resident") &&
+           SameName(record.auxiliary.name, rhs) &&
+           SameName(record.destination.name, destination) &&
+           record.lhsStorage == lhsStorage &&
+           record.rhsStorage == rhsStorage &&
+           record.quadrantRows == 32U && record.quadrantColumns == 32U &&
+           record.n == 128U && record.k == 64U;
+}
+
+bool CheckArch35MmadDescriptors(const OperationTrace &operations,
+                                std::uint32_t validRows,
+                                const ProposedTilingKey &key) noexcept
+{
+    const MatrixStorage inputStorage =
+        FromInputStorage(key.inputStorage);
+    const MatrixStorage valueStorage =
+        FromInputStorage(key.valueStorage);
+    const MatrixStorage scoreStorage =
+        FromScoreStorage(key.scoreStorage);
+    if (!CheckC2RowStackedMmadDescriptors(
+            operations, validRows, "raw-Aqk-Akk-packed-L0C",
+            NativeMatrixLayout::L0aZN, Architecture::Arch35,
+            scoreStorage)) {
         return false;
     }
 
@@ -2648,8 +2850,10 @@ bool CheckArch35MmadDescriptors(const OperationTrace &operations,
             operations, OperationKind::MmadQuadrantPackedLhs, Stage::C7,
             "Akk-resident", "U-fp32-L0C");
         return w != nullptr && u != nullptr &&
-               CheckQuadrantMmad(*w, "K-beta-g-RHS", "W-fp32-L0C") &&
-               CheckQuadrantMmad(*u, "V-beta-RHS", "U-fp32-L0C");
+               CheckQuadrantMmad(*w, "K-beta-g-RHS", "W-fp32-L0C",
+                                 inputStorage, inputStorage) &&
+               CheckQuadrantMmad(*u, "V-beta-RHS", "U-fp32-L0C",
+                                 inputStorage, valueStorage);
     }
 
     const OperationRecord *w = FindUniqueOperation(
@@ -2661,11 +2865,11 @@ bool CheckArch35MmadDescriptors(const OperationTrace &operations,
     return w != nullptr && u != nullptr &&
            CheckStandardMmad(*w, Stage::C7, "Akk-q00",
                               "K-beta-g-top32", "W-fp32-L0C",
-                              MatrixStorage::Bf16, MatrixStorage::Bf16,
+                              inputStorage, inputStorage,
                               32U, 128U, 32U, false, false) &&
            CheckStandardMmad(*u, Stage::C7, "Akk-q00", "V-beta-top32",
-                              "U-fp32-L0C", MatrixStorage::Bf16,
-                              MatrixStorage::Bf16, 32U, 128U, 32U, false,
+                              "U-fp32-L0C", inputStorage,
+                              valueStorage, 32U, 128U, 32U, false,
                               false);
 }
 
@@ -2673,13 +2877,14 @@ bool CheckArch35CubeOperations(const OperationTrace &operations,
                                const SyncTrace &synchronization,
                                const LocalSyncTrace &localDependencies,
                                std::uint32_t validRows,
-                               PrepareAbi abi) noexcept
+                               const ProposedTilingKey &key) noexcept
 {
+    const PrepareAbi abi = key.abi;
     if (operations.overflow || synchronization.overflow ||
         localDependencies.overflow ||
         !CheckArch35C4Transfers(operations, localDependencies, validRows,
                                 abi) ||
-        !CheckArch35MmadDescriptors(operations, validRows)) {
+        !CheckArch35MmadDescriptors(operations, validRows, key)) {
         return false;
     }
     const bool hasQ10 = validRows > 32U;
@@ -2703,8 +2908,9 @@ bool CheckArch35CubeOperations(const OperationTrace &operations,
             expectedDependentMmad) ||
         !CheckOperandReleaseOrder(operations, localDependencies, Stage::C7,
                                   1U) ||
-        CountOperations(operations, OperationKind::Mmad, Stage::C2) !=
-            2U * activeBlocks ||
+        CountOperations(operations, OperationKind::Mmad, Stage::C2) != 0U ||
+        CountOperations(operations, OperationKind::MmadRowStackedLhs,
+                        Stage::C2) != activeBlocks ||
         CountOperations(operations, OperationKind::Mmad, Stage::C4) !=
             expectedDependentMmad ||
         CountOperations(operations, OperationKind::Mmad, Stage::C5) !=
@@ -3055,8 +3261,13 @@ bool CheckArch22C5Contract(const OperationTrace &operations,
 bool CheckArch22C7Contract(const OperationTrace &operations,
                            const LocalSyncTrace &localDependencies,
                            std::uint32_t validRows,
-                           PrepareAbi abi) noexcept
+                           const ProposedTilingKey &key) noexcept
 {
+    const PrepareAbi abi = key.abi;
+    const MatrixStorage inputStorage =
+        FromInputStorage(key.inputStorage);
+    const MatrixStorage valueStorage =
+        FromInputStorage(key.valueStorage);
     const bool hasQ10 = validRows > 32U;
     const std::size_t rhsPlaneBytes =
         static_cast<std::size_t>(hasQ10 ? 64U : 32U) *
@@ -3174,10 +3385,10 @@ bool CheckArch22C7Contract(const OperationTrace &operations,
     const std::uint32_t k = hasQ10 ? 64U : 32U;
     return w != nullptr && u != nullptr &&
            CheckStandardMmad(*w, Stage::C7, lhsName, kRhsName, "W-L0C",
-                             MatrixStorage::Bf16, MatrixStorage::Bf16, m,
+                             inputStorage, inputStorage, m,
                              128U, k, false, false) &&
            CheckStandardMmad(*u, Stage::C7, lhsName, vRhsName, "U-L0C",
-                             MatrixStorage::Bf16, MatrixStorage::Bf16, m,
+                             inputStorage, valueStorage, m,
                              128U, k, false, false) &&
            akkLoad->order < w->order && akkLoad->order < u->order &&
            kBetaLoad->order < w->order && vBetaLoad->order < u->order;
@@ -3187,10 +3398,15 @@ bool CheckArch22CubeOperations(const OperationTrace &operations,
                                const SyncTrace &synchronization,
                                const LocalSyncTrace &localDependencies,
                                std::uint32_t validRows,
-                               PrepareAbi abi) noexcept
+                               const ProposedTilingKey &key) noexcept
 {
+    const PrepareAbi abi = key.abi;
     if (operations.overflow || synchronization.overflow ||
-        localDependencies.overflow) {
+        localDependencies.overflow ||
+        !CheckC2RowStackedMmadDescriptors(
+            operations, validRows, "Aqk-Akk-stacked-L0C",
+            NativeMatrixLayout::L0aZZ, Architecture::Arch22,
+            FromScoreStorage(key.scoreStorage))) {
         return false;
     }
     const bool hasQ10 = validRows > 32U;
@@ -3204,8 +3420,9 @@ bool CheckArch22CubeOperations(const OperationTrace &operations,
         !CheckSingleMmadPhase(operations, synchronization,
                               localDependencies, Stage::C5, hasQ10, true) ||
         !CheckC7ComputePipeline(operations, localDependencies, false) ||
-        CountOperations(operations, OperationKind::Mmad, Stage::C2) !=
-            2U * activeBlocks ||
+        CountOperations(operations, OperationKind::Mmad, Stage::C2) != 0U ||
+        CountOperations(operations, OperationKind::MmadRowStackedLhs,
+                        Stage::C2) != activeBlocks ||
         CountOperations(operations, OperationKind::Mmad, Stage::C4) !=
             dependentMmad ||
         CountOperations(operations, OperationKind::Mmad, Stage::C5) !=
@@ -3225,7 +3442,7 @@ bool CheckArch22CubeOperations(const OperationTrace &operations,
         !CheckArch22C5Contract(operations, synchronization,
                                localDependencies, validRows, abi) ||
         !CheckArch22C7Contract(operations, localDependencies, validRows,
-                               abi)) {
+                               key)) {
         return false;
     }
     return true;
@@ -3455,6 +3672,7 @@ bool CaptureMultiHeadAddressTrace(Architecture architecture,
 bool IsMmadOperation(const OperationRecord &record) noexcept
 {
     return record.kind == OperationKind::Mmad ||
+           record.kind == OperationKind::MmadRowStackedLhs ||
            record.kind == OperationKind::MmadQuadrantPackedLhs;
 }
 
@@ -3517,26 +3735,17 @@ bool CheckL0OperandUseConsumers(const OperationTrace &operations,
         consumers[consumerCount++] = &record;
     }
 
-    const bool twoConsumers = stage == Stage::C2 || stage == Stage::C7;
+    const bool twoConsumers = stage == Stage::C7;
     if (consumerCount != (twoConsumers ? 2U : 1U)) {
         return false;
     }
     if (stage == Stage::C2) {
-        const OperationRecord *q = nullptr;
-        const OperationRecord *k = nullptr;
-        for (std::size_t index = 0U; index < consumerCount; ++index) {
-            if (SameName(consumers[index]->l0aOperand.name, "C2-Q-L0A")) {
-                q = consumers[index];
-            } else if (SameName(consumers[index]->l0aOperand.name,
-                                "C2-K-L0A")) {
-                k = consumers[index];
-            }
-        }
-        return q != nullptr && k != nullptr &&
-               SameName(q->l0bOperand.name, "C2-Kminus-L0B") &&
-               SameName(k->l0bOperand.name, "C2-Kminus-L0B") &&
-               SamePhysicalSpan(q->l0bOperand, k->l0bOperand) &&
-               AreDisjointPhysicalSpans(q->l0aOperand, k->l0aOperand);
+        const OperationRecord &packed = *consumers[0];
+        return packed.kind == OperationKind::MmadRowStackedLhs &&
+               SameName(packed.l0aOperand.name,
+                        "C2-QK-stacked-L0A") &&
+               packed.l0aOperand.byteSize == 0x2000U &&
+               SameName(packed.l0bOperand.name, "C2-Kminus-L0B");
     }
     if (stage == Stage::C4) {
         return SameName(consumers[0]->l0aOperand.name, "C4-B-L0A") &&
@@ -3684,10 +3893,7 @@ bool CheckL0OperandEpochContract(Architecture architecture) noexcept
     }
     for (std::size_t index = 0U; index < epochCount; ++index) {
         const std::size_t expectedConsumers =
-            epochs[index].stage == Stage::C2 ||
-                    epochs[index].stage == Stage::C7
-                ? 2U
-                : 1U;
+            epochs[index].stage == Stage::C7 ? 2U : 1U;
         if (epochs[index].consumerCount != expectedConsumers ||
             releases[index]->stage != epochs[index].stage ||
             releases[index]->order <= epochs[index].lastConsumerOrder ||
@@ -4854,7 +5060,10 @@ bool RunMultiHeadAddressContracts() noexcept
 bool RunArch22OperationCase(ResolveChunk resolveChunk,
                             std::uint32_t validRows,
                             PrepareAbi abi, bool useExp2,
-                            GateStorage gateStorage) noexcept
+                            GateStorage gateStorage,
+                            InputStorage inputStorage = InputStorage::Bf16,
+                            ScoreStorage scoreStorage = ScoreStorage::Bf16,
+                            bool safeGate = false) noexcept
 {
     RuntimeTiling tiling{};
     tiling.totalChunks = 1U;
@@ -4866,6 +5075,9 @@ bool RunArch22OperationCase(ResolveChunk resolveChunk,
     tiling.key.abi = abi;
     tiling.key.useExp2 = useExp2;
     tiling.key.gateStorage = gateStorage;
+    tiling.key.inputStorage = inputStorage;
+    tiling.key.scoreStorage = scoreStorage;
+    tiling.key.safeGate = safeGate;
     const WorkspaceSizing sizing = CheckedWorkspaceSizing(
         Architecture::Arch22, tiling.aicWorkgroupCount, 0U);
     if (!sizing.valid) {
@@ -4911,7 +5123,8 @@ bool RunArch22OperationCase(ResolveChunk resolveChunk,
                vectorLocalDependencies, validRows, abi, useExp2,
                gateStorage, tiling.scale) &&
            CheckArch22CubeOperations(cubeOperations, cubeSynchronization,
-                                     cubeLocalDependencies, validRows, abi);
+                                     cubeLocalDependencies, validRows,
+                                     tiling.key);
 }
 
 bool RunArch22OperationCasesForBothAbis(ResolveChunk resolveChunk,
@@ -4941,7 +5154,10 @@ bool RunArch22OperationCasesForBothAbis(ResolveChunk resolveChunk,
 bool RunArch35OperationCase(ResolveChunk resolveChunk,
                             std::uint32_t validRows,
                             PrepareAbi abi, bool useExp2,
-                            GateStorage gateStorage) noexcept
+                            GateStorage gateStorage,
+                            InputStorage inputStorage = InputStorage::Bf16,
+                            ScoreStorage scoreStorage = ScoreStorage::Bf16,
+                            bool safeGate = false) noexcept
 {
     RuntimeTiling tiling{};
     tiling.totalChunks = 1U;
@@ -4953,6 +5169,9 @@ bool RunArch35OperationCase(ResolveChunk resolveChunk,
     tiling.key.abi = abi;
     tiling.key.useExp2 = useExp2;
     tiling.key.gateStorage = gateStorage;
+    tiling.key.inputStorage = inputStorage;
+    tiling.key.scoreStorage = scoreStorage;
+    tiling.key.safeGate = safeGate;
     const WorkspaceSizing sizing = CheckedWorkspaceSizing(
         Architecture::Arch35, tiling.aicWorkgroupCount, 0U);
     if (!sizing.valid) {
@@ -4996,7 +5215,8 @@ bool RunArch35OperationCase(ResolveChunk resolveChunk,
                vectorLocalDependencies, validRows, abi, useExp2,
                gateStorage, tiling.scale) &&
            CheckArch35CubeOperations(cubeOperations, cubeSynchronization,
-                                     cubeLocalDependencies, validRows, abi);
+                                     cubeLocalDependencies, validRows,
+                                     tiling.key);
 }
 
 bool RunArch35OperationCasesForBothAbis(ResolveChunk resolveChunk,
@@ -5021,6 +5241,29 @@ bool RunArch35OperationCasesForBothAbis(ResolveChunk resolveChunk,
         }
     }
     return true;
+}
+
+bool RunScoreStorageDtypeCases() noexcept
+{
+    constexpr PrepareAbi kAbi = PrepareAbi::Current;
+    constexpr bool kUseExp2 = true;
+    constexpr GateStorage kGateStorage = GateStorage::Bf16;
+    return IsSupportedStorageMapping(InputStorage::Fp16,
+                                     ScoreStorage::Fp16, false) &&
+           IsSupportedStorageMapping(InputStorage::Fp16,
+                                     ScoreStorage::Bf16, true) &&
+           RunArch22OperationCase(
+               ResolveDense, 64U, kAbi, kUseExp2, kGateStorage,
+               InputStorage::Fp16, ScoreStorage::Fp16, false) &&
+           RunArch22OperationCase(
+               ResolveDense, 64U, kAbi, kUseExp2, kGateStorage,
+               InputStorage::Fp16, ScoreStorage::Bf16, true) &&
+           RunArch35OperationCase(
+               ResolveDense, 64U, kAbi, kUseExp2, kGateStorage,
+               InputStorage::Fp16, ScoreStorage::Fp16, false) &&
+           RunArch35OperationCase(
+               ResolveDense, 64U, kAbi, kUseExp2, kGateStorage,
+               InputStorage::Fp16, ScoreStorage::Bf16, true);
 }
 
 } // namespace
@@ -5077,6 +5320,9 @@ int main()
         !RunArch35OperationCasesForBothAbis(ResolveTail63, 63U) ||
         !RunArch35OperationCasesForBothAbis(ResolveDense, 64U)) {
         return 3;
+    }
+    if (!RunScoreStorageDtypeCases()) {
+        return 8;
     }
     return 0;
 }

@@ -36,7 +36,7 @@ pseudocode/
 | --- | --- | --- | --- |
 | `V0` | Vector | HK cohort owner 从公开 GM 一次装入 raw `q/k`；其余 HV head 从 owner 的只读 Q/K cache 装入已归一化值；每个 HV 另完整装入 `beta` 及所选 gate 输入 | 每个 HV 仍只有一次 VF：仅 `owner+L2` 对该 HK 做唯一一次 Q/K norm，Identity owner 和其余 head 直接保留已在最终 UB 地址的 2-byte MTE2 结果，不做重复 convert/round；同一次 VF 完成本 HV 的 beta、gate/cumsum。只有 owner 写一份 `Qhat/Khat` cache，非 owner 不复制到各自 context；Fused ABI 另存每 HV 的 G context，Current ABI 只写一次公开 `gk` 并由 V6 复用；Arch35 另物化 `G_ref[4]`，Arch22 不物化 |
 | `V1` | Vector | 同一 head 仍驻留在 UB 的 V0 local source | 一次 VF 先按 `ScoreStorage` 截断 base-2 指数，再按 `useExp2` 选择 `exp2(x)` 或 `exp(x*ln2)`，物化全部 `S=4` 的 `Qplus/Kplus/Kminus`；Arch22 必须 `V0(head)->V1(head)` 后才能复用 shared arena，score drain 只读取该 head 的 private bank |
-| `C2` | Cube | 一次把完整 72 KiB score 搬入 L1 | 四个 row band，每个 band 两个互不依赖 MMAD；Arch35 直达配对 AIV UB，Arch22 先写 compact raw GM relay |
+| `C2` | Cube | 一次把完整 72 KiB score 搬入 L1 | 四个 row band；每个 band 将 `Qplus/Kplus` 沿行堆叠为 `[32,128]`，通过一次 `MmadRowStackedLhs`（packed TileMmad）同时生成 `rawAqk/rawAkk`；Arch35 直达配对 AIV UB，Arch22 先写 compact raw GM relay |
 | `V3` | Vector | UB 中完整 raw score；Arch35 从 AUX 取保留的 `betaEff`，Arch22 从 workspace 重载 | 一次 VF 完成无效区清零、causal mask、`Aqk/Lkk` 和 VCS 两个叶子 `B/X0/X1`；已知为零的 q01 只在 Current ABI 作为公开 Akk 输出写回，Arch22 Fused full 因完整 ND 转换限制保留一次 relay，Fused top 不物化 |
 | `C4` | Cube | 所需 GM/workspace source 已 ready；`M>32` 装入 `B/X0/X1`，Arch35 另把 stable Akk 装入最终 L1 resident | `M>32` 用一个 MMAD 计算 `T = B @ X0`；Arch35 在最终 L1 地址直接清零 q01，Arch22 把 FP32 `T` 写 GM relay；`M<=32` 时 Arch35 只装 q00、Arch22 走 control，两者都不启动 MMAD |
 | `C5` | Cube | `M>32` 时前一 Stage 的 `T`、`X1`、Akk prepack 均 ready | `M>32` 用一个 MMAD 计算 `Y = -X1 @ T`；Arch35 提交 resident quadrant，Arch22 把 2-byte `q10` 写入 row-major Akk GM relay；`M<=32` 只做 control pass-through |
@@ -128,14 +128,29 @@ Kminus_3[64,128]               16 KiB
 total                           72 KiB
 ```
 
-`C2` 对每个 active band `s` 执行两次互不依赖的
-`[16,128] x [128,b_s]` MMAD，分别生成对应行的 `rawAqk` 和 `rawAkk`。
+`C2` 对每个 active band `s` 将两个互不依赖的左操作数沿行堆叠：
+
+```text
+stack(Qplus_s, Kplus_s) [32,128] x Kminus_s^T [128,b_s]
+    -> stack(rawAqk_s, rawAkk_s) [32,b_s]
+```
+
+并通过一次 `MmadRowStackedLhs`（设备侧映射为一次 packed TileMmad API 提交）完成。
+结果的逻辑上 16 行是 `rawAqk_s`，逻辑下 16 行是 `rawAkk_s`；两部分必须通过原生
+L0C layout-aware tile 分别写入原有 raw destination，不能换算成 row-major 连续字节半区。
+每个 head 的 full chunk 共提交四次 packed TileMmad API，但数学上仍是
+四个 `Qplus_s @ Kminus_s^T` 和四个 `Kplus_s @ Kminus_s^T`，即八个独立乘积；按
+`16 x 16` 输出 tile 展开仍为 `2 x (1 + 2 + 3 + 4) = 20` 个 tile，不能把四次 API
+提交误写成四条硬件 MMAD 指令。
+这一 lowering 与仓内 A5 `ComputeRawAqkAkkCubeStableBlockDirectUbArch35` 已采用的
+`packedRows + L0C top/bottom tile` 模式一致；该路径使用 32 行 score block，而本设计仍按
+`S=4` 固定 16 行 band，只复用行堆叠方法，不改变分块语义。
 每份 prefix 恰好包含 full `Kminus[64,128]` 公式在有效列读取的 key，因此有效 raw 结果完全一致。
 `[b_s,64)` 没有存储，也不是隐式零；`V3` 必须在任何 mask/VCS reader 之前直接清零这些区域，
 再处理当前 16-row block 内的 `j > i` causal mask。
 
 `C2` 在 Stage 入口只搬一次完整 72 KiB。遍历四个编译期 band 只是同一 Cube Stage 内的独立
-MMAD 宏格，不构成 GM 重读或语义 pass。
+packed TileMmad 宏格，不构成 GM 重读或语义 pass。
 
 ## 固定物理布局
 
@@ -250,15 +265,19 @@ C7 的 `MmadQuadrantPackedLhs` 只符号化以下合同：MTE1 从四个最终 L
 L0A 四象限后参与 MMAD，不先在 L1 拼成 row-major，也不做任何 L1 位置移动。目标 A5 是否支持
 该装载/计算形式及其精确 API、事件和 tile 描述仍是 **PROPOSED** 硬门禁。
 
-Arch35 还冻结 64 KiB L0A/L0B 的 stage overlay。C2 将 `Qplus/Kplus` 分别放在 L0A
-`[0,0x1000)`/`[0x1000,0x2000)`，两次 MMAD 只读同一份 L0B `Kminus[0,0x4000)`；C7 只读一份
+Arch35 还冻结 64 KiB L0A/L0B 的 stage overlay。C2 的 `[32,128]` 左操作数拥有完整
+L0A owner `[0,0x2000)`；`Qplus/Kplus` 分别写入 zN 布局的逻辑 `rows[0,16)` 和
+`rows[16,32)` tile，物理上会按分形块交织，不能解释成两个连续 4 KiB 半区。
+一次 `MmadRowStackedLhs` 只读同一份 L0B `Kminus[0,0x4000)`。C7 只读一份
 L0A `Akk[0,0x2000)`，并把 `Kbeta/Vbeta` 分别放在 L0B `[0,0x4000)`/`[0x4000,0x8000)`。
-这些不重叠区间是每组两次 MMAD 后只发布一次 `CubeToMte1OperandReuse` 的前提；若正式 API 不能
-维持该映射，必须改成每次 MMAD 后释放并重新装载，不能沿用一次 release。
+完整 C2 owner 与 C7 的两个不重叠 RHS 区间，是 C2 单次 packed TileMmad、以及 C7
+两次 MMAD 完成后分别只发布一次
+`CubeToMte1OperandReuse` 的前提；若正式 API 不能维持该映射，必须按实际最后 reader
+重新设计释放和装载，不能沿用一次 release。
 
 L0A/L0B operand 另有独立于 L1 resident 和 L0C result 的 owner epoch。Arch35 的所有 head
 共享一个物理 operand bank；每个 active C2 band、C4、C5、C7 各取得一个严格递增的
-`l0OperandGeneration`。同一 C2 band 的 Q-L0A、K-L0A、Kminus-L0B 以及两次独立 MMAD 共用
+`l0OperandGeneration`。同一 C2 band 的 stacked-QK-L0A、Kminus-L0B 与单次 packed TileMmad 共用
 同一个 epoch，C7 的 Akk-L0A、Kbeta-L0B、Vbeta-L0B 与 W/U 两次 MMAD同理。只有该 epoch
 最后一次 Cube reader 完成后，`CubeToMte1OperandReuse` 才释放地址供下一 epoch 的 MTE1 覆盖。
 这个同 AIC 核内 release 不能由 L1 generation、L0C generation 或跨核 ready/free 代替。
@@ -274,21 +293,23 @@ headLaneBytes   = 0x10000       # 64 KiB
 requiredBytes   = 4 * 0x10000   # 256 KiB
 ```
 
-C2 在每条 lane 内使用紧凑 `16 x N` FP32 结果；`N={16,32,48,64}` 时每个结果真实为
-1/2/3/4 KiB。下面都是相对 `headLaneBase(h)` 的 half-open range：
+C2 在每条 lane 内按 band 保存紧凑 `32 x N` FP32 stacked 结果；上 16 行为 `rawAqk`，
+下 16 行为 `rawAkk`。`N={16,32,48,64}` 时每个 stacked 结果真实为 2/4/6/8 KiB。
+下面都是相对 `headLaneBase(h)` 的 half-open range：
 
 | C2 lane-relative range | 大小 | owner |
 | --- | ---: | --- |
-| `[0x0000,0x0400)` | 1 KiB | rawAqk，prefix 16 |
-| `[0x0400,0x0C00)` | 2 KiB | rawAqk，prefix 32 |
-| `[0x0C00,0x1800)` | 3 KiB | rawAqk，prefix 48 |
-| `[0x1800,0x2800)` | 4 KiB | rawAqk，prefix 64 |
-| `[0x2800,0x2C00)` | 1 KiB | rawAkk，prefix 16 |
-| `[0x2C00,0x3400)` | 2 KiB | rawAkk，prefix 32 |
-| `[0x3400,0x4000)` | 3 KiB | rawAkk，prefix 48 |
-| `[0x4000,0x5000)` | 4 KiB | rawAkk，prefix 64 |
+| `[0x0000,0x0800)` | 2 KiB | band 0 的完整 `[32,16]` L0C owner |
+| `[0x0800,0x1800)` | 4 KiB | band 1 的完整 `[32,32]` L0C owner |
+| `[0x1800,0x3000)` | 6 KiB | band 2 的完整 `[32,48]` L0C owner |
+| `[0x3000,0x5000)` | 8 KiB | band 3 的完整 `[32,64]` L0C owner |
 
-C2 每 head 同时存活 20 KiB，四 head 合计 80 KiB；但不能把它们密排成单个 80 KiB owner，
+C2 每 head 同时存活 20 KiB，四 head 合计 80 KiB。表中的 byte range 只描述完整物理
+owner；其中 `rawAqk/rawAkk` 分别是 `MakeLayoutL0C(32,N)` 上的逻辑
+`rows[0,16)`/`rows[16,32)` tile。除 `N=16` 的特例外，两者按 L0C 分形布局交织，
+不得为它们声明连续 byte subspan。每个 band 的单次 packed TileMmad 完成后，Fixpipe 通过
+layout-aware tile view 分别写入原有目标；在两个 reader 都完成前不得覆盖该 owner。
+四个 head 仍不能密排成单个 80 KiB owner，
 因为同一条物理 lane 还要服务后续 C7。C4 把本 head lane 的 `[0x0000,0x1000)` 用作 `T`，
 C5 保留该输入并把 `[0x1000,0x2000)` 用作 `Y`；只有前一 Stage 的最后 Fixpipe reader 完成后，
 后续 Stage 才能 overlay C2 的旧语义。
@@ -308,11 +329,17 @@ C7；C2/C4/C5/C7 每个 Stage 都取得独立 `l0cStageGenerations[stage]`，本
 reader 发布 next-ticket 后，下一 pair 或下一 Stage 才能复用同一 lane。每 Stage 的具体 L0C
 offset 可 overlay，但不得在 reader 完成前重叠。普通 A2/A3 MMAD、Fixpipe 到 GM、GM ND->L1 NZ
 及其 HardEvent 组合仍为 **PROPOSED**，正式代码必须按 CANN 9.1 头文件做最小编译确认。
+其中 C2 从同一个 `MakeLayoutL0C(32,N)` owner 选择上下两个逻辑 row tile 并分别
+Fixpipe 到 GM 的精确 API、source layout、stride 和 mode 也都是 **PROPOSED**；必须在
+CANN 9.1/Arch2201 上完成最小编译与设备验证后才能落地，不能用 row-major 字节切半替代。
 
 Arch22 的 L0A/L0B 同样按两条 physical lane 建立独立 operand epoch，
 `l0OperandBankId=groupLocalHead%2`。每条 lane 分别按实际 AIC 发射顺序递增，不能因为 head0/head2
-或 head1/head3 使用相同 offset 就共享同一代。每个 C2 band、C4、C5、C7 的复用边界与 Arch35
-相同；差别只是两个 bank 各自从 ticket0 连续推进，不需要跨两条 lane 做同步。
+或 head1/head3 使用相同 offset 就共享同一代。C2 在每条 lane 内同样使用 zZ 布局的
+stacked-QK L0A owner `[0,0x2000)`，Qplus/Kplus 仍由上下逻辑 row tile 区分，而不是连续
+byte 半区；Kminus L0B 使用 `[0,0x4000)`，packed L0C 使用上表的 `[0,0x5000)`；每个 C2 band、
+C4、C5、C7 的复用边界与 Arch35 相同。差别只是两个 bank 各自从 ticket0 连续推进，
+不需要跨两条 lane 做同步。
 
 ### Arch35 Workspace：每个 workgroup 8 slot
 
@@ -640,7 +667,7 @@ V-pipe RAW/WAR/WAW 时才能考虑 `PipeBarrier<PIPE_V>()`；它不能替代 MTE
 output-ready 边；每个有数据搬运的 Cube Stage 保留 `MTE2 -> MTE1` operand-ready、
 `Cube/M -> MTE1` L0A/L0B operand-release 和 `Cube/M -> Fixpipe` result-ready 边。每条 operand
 release 必须晚于当前 `(l0OperandBankId,l0OperandGeneration)` 的最后 MMAD reader。C2 每个 band
-的两次独立 MMAD 完成后发布一次 operand-release，C4/C5 各一次，C7 的两个 RHS product 都完成
+的单次 `MmadRowStackedLhs` 完成后发布一次 operand-release，C4/C5 各一次，C7 的两个 RHS product 都完成
 后发布一次，才能让下一 band/head/stage 的 MTE1 覆盖同一 lane。Arch22 另有 payload overlay 的
 MTE2/Fixpipe 反向保护、条件化 Fixpipe->MTE2 relay 和 C7 fill/load WAW。它们目前都是
 **PROPOSED** helper，正式编码时必须用目标 CANN 版本支持的成对 HardEvent 落地，不能因源码
@@ -675,7 +702,8 @@ MTE2/Fixpipe 反向保护、条件化 Fixpipe->MTE2 relay 和 C7 fill/load WAW�
 - `useExp2` 必须随公开 Prepare 参数进入 Host dispatch，并分别实例化两架构 V1/V6 的
   `EvaluatePow2<true/false>`；不得只在接口或 TilingKey 留一个未被 kernel 消费的字段。
 - workspace 精确 offset、公开输出集合、Akk cast 边界、Arch35 Fixpipe 直写配对 AIV UB、Arch22
-  mode-0x2 collective/GM relay/ND2NZ、flag/event 分配、Matmul/VF API、TilingKey 编码和 launch ABI
+  mode-0x2 collective/GM relay/ND2NZ、split L0C tile Fixpipe、flag/event 分配、Matmul/VF API、
+  TilingKey 编码和 launch ABI
   均为 **PROPOSED**，必须结合目标 CANN 官方文档、
   随包头文件和实现源码确认后才能编码。
 

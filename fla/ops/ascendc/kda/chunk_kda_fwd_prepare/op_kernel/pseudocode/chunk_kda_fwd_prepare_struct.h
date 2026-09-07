@@ -66,6 +66,13 @@ enum class MemorySpace : std::uint8_t {
     L0B,
 };
 
+enum class NativeMatrixLayout : std::uint8_t {
+    Unspecified,
+    L0aZN,
+    L0aZZ,
+    L0cFractal,
+};
+
 enum class SharedArenaUse : std::uint8_t {
     V01,
     V6,
@@ -288,7 +295,48 @@ struct BufferSpan {
     // 符号化 GM 描述符使用的逻辑张量头。它与内存所有权相互独立：
     // 原始 q/k 使用 HK，门控/值/输出使用 HV。
     std::uint32_t logicalHeadId = kAllGroupLocalHeads;
+    // 原生 L0 分形布局的逻辑视图。byteOffset/byteSize 始终保留完整、连续的
+    // owner 分配区；逻辑 tile 通过父矩阵 shape、起点和 rows/columns 描述，
+    // 不能按 row-major 公式把 tile 起点换算成字节偏移。
+    NativeMatrixLayout nativeLayout = NativeMatrixLayout::Unspecified;
+    std::uint32_t parentRows = 0U;
+    std::uint32_t parentColumns = 0U;
+    std::uint32_t logicalRowOffset = 0U;
+    std::uint32_t logicalColumnOffset = 0U;
 };
+
+inline BufferSpan NativeMatrixOwner(
+    const BufferSpan &storage, const char *name, NativeMatrixLayout layout,
+    std::uint32_t rows, std::uint32_t columns,
+    std::uint32_t elementBytes) noexcept
+{
+    BufferSpan owner = storage;
+    owner.name = name;
+    owner.rows = rows;
+    owner.columns = columns;
+    owner.leadingDimension = 0U;
+    owner.elementBytes = elementBytes;
+    owner.nativeLayout = layout;
+    owner.parentRows = rows;
+    owner.parentColumns = columns;
+    owner.logicalRowOffset = 0U;
+    owner.logicalColumnOffset = 0U;
+    return owner;
+}
+
+inline BufferSpan NativeMatrixTile(
+    const BufferSpan &owner, const char *name, std::uint32_t row,
+    std::uint32_t column, std::uint32_t rows,
+    std::uint32_t columns) noexcept
+{
+    BufferSpan tile = owner;
+    tile.name = name;
+    tile.rows = rows;
+    tile.columns = columns;
+    tile.logicalRowOffset = row;
+    tile.logicalColumnOffset = column;
+    return tile;
+}
 
 // 共享的仅主机时钟使操作记录与同步记录可比较，
 // 同时不在默认的无轨迹伪代码路径中引入内存分配或运行时行为。
@@ -405,6 +453,7 @@ enum class OperationKind : std::uint8_t {
     ZeroUndefined,
     SetHf32Mode,
     Mmad,
+    MmadRowStackedLhs,
     MmadQuadrantPackedLhs,
     Fill,
     StoreRounded,
@@ -420,9 +469,12 @@ struct OperationRecord {
     OperationKind kind = OperationKind::Load;
     Stage stage = Stage::V0;
     BufferSpan source{};
+    BufferSpan secondarySource{};
     BufferSpan auxiliary{};
     BufferSpan destination{};
     BufferSpan l0aOperand{};
+    BufferSpan lhsTopL0aTile{};
+    BufferSpan lhsBottomL0aTile{};
     BufferSpan l0bOperand{};
     MatrixStorage lhsStorage = MatrixStorage::Fp32;
     MatrixStorage rhsStorage = MatrixStorage::Fp32;
@@ -431,6 +483,8 @@ struct OperationRecord {
     std::uint32_t m = 0U;
     std::uint32_t n = 0U;
     std::uint32_t k = 0U;
+    std::uint32_t lhsTopRows = 0U;
+    std::uint32_t lhsBottomRows = 0U;
     std::uint32_t quadrantRows = 0U;
     std::uint32_t quadrantColumns = 0U;
     std::uint32_t value = 0U;
@@ -768,6 +822,44 @@ struct CubeOps {
             record.k = k;
             record.transposeRhs = transposeRhs;
             record.negate = negate;
+            record.order = NextOrder();
+            trace->Push(record);
+        }
+    }
+
+    // 将两个独立的 L1 行平面分别装入同一 L0A owner 的上下逻辑 row tile，
+    // 再用一次 MMAD 共享同一份 L0B。该记录显式保留两个 L1 源及两个原生
+    // L0A tile，避免把分形地址伪装成连续半区；packed L0C 输出仍为 FP32。
+    void MmadRowStackedLhs(
+        Stage stage, const BufferSpan &lhsTop, const BufferSpan &lhsBottom,
+        const BufferSpan &rhs, const BufferSpan &output,
+        const BufferSpan &l0aOperand, const BufferSpan &lhsTopL0aTile,
+        const BufferSpan &lhsBottomL0aTile, const BufferSpan &l0bOperand,
+        MatrixStorage lhsStorage, MatrixStorage rhsStorage,
+        std::uint32_t lhsTopRows, std::uint32_t lhsBottomRows,
+        std::uint32_t n, std::uint32_t k, bool transposeRhs = false) const noexcept
+    {
+        if (trace != nullptr) {
+            OperationRecord record{};
+            record.kind = OperationKind::MmadRowStackedLhs;
+            record.stage = stage;
+            record.source = lhsTop;
+            record.secondarySource = lhsBottom;
+            record.auxiliary = rhs;
+            record.destination = output;
+            record.l0aOperand = l0aOperand;
+            record.lhsTopL0aTile = lhsTopL0aTile;
+            record.lhsBottomL0aTile = lhsBottomL0aTile;
+            record.l0bOperand = l0bOperand;
+            record.headId = l0aOperand.logicalHeadId;
+            record.lhsStorage = lhsStorage;
+            record.rhsStorage = rhsStorage;
+            record.m = lhsTopRows + lhsBottomRows;
+            record.n = n;
+            record.k = k;
+            record.lhsTopRows = lhsTopRows;
+            record.lhsBottomRows = lhsBottomRows;
+            record.transposeRhs = transposeRhs;
             record.order = NextOrder();
             trace->Push(record);
         }

@@ -146,8 +146,8 @@ void RunArch35AicBranch(const WorkItem &item, std::uint32_t workgroupId,
     CubeStageArgs args = MakeCubeArgs(item, Architecture::Arch35, workgroupId,
                                       workspace, sync, ops, tiling);
 
-    // C2 包含八个相互独立的分数 MMAD。C4、C5 和 C7 各自消费前序阶段的结果，
-    // 因此必须是独立的物理阶段。
+    // 对每个 head，C2 将八个数学分数乘积按 Qplus/Kplus 行堆叠为四次 MMAD
+    // 提交。C4、C5 和 C7 各自消费前序阶段的结果，因此必须是独立的物理阶段。
     arch35::RunC2(args);
     arch35::RunC4(args);
     arch35::RunC5(args);

@@ -311,6 +311,8 @@ inline void RunC2(const CubeStageArgs &args)
                 arch22_policy::L0bPolicy::C2LaneBase(physicalLane);
             for (Offset s = 0U; s < activeBlocks; ++s) {
                 const Offset n = arch22_policy::C2Policy::kN[s];
+                const Offset packedResultBytes =
+                    arch22_policy::L0cPolicy::kC2PackedResultBytes[s];
                 const Offset resultBytes =
                     arch22_policy::L0cPolicy::kC2ResultBytes[s];
                 const BufferSpan qBand = cube_detail::Subspan(
@@ -323,37 +325,49 @@ inline void RunC2(const CubeStageArgs &args)
                     scoreL1, "Kminus-prefix",
                     arch22_policy::C2Policy::kKMinusOffset[s],
                     ShapePolicy::kKMinusBytes[s]);
-                const BufferSpan aqkL0c = cube_detail::L0cSpan(
-                    args, head, L0cStageUse::C2, "Aqk-compact-L0C",
-                    {arch22_policy::L0cPolicy::kC2AqkOffset[s], resultBytes});
-                const BufferSpan akkL0c = cube_detail::L0cSpan(
-                    args, head, L0cStageUse::C2, "Akk-compact-L0C",
-                    {arch22_policy::L0cPolicy::kC2AkkOffset[s], resultBytes});
+                const BufferSpan packedL0c = NativeMatrixOwner(
+                    cube_detail::L0cSpan(
+                        args, head, L0cStageUse::C2,
+                        "Aqk-Akk-stacked-L0C",
+                        {arch22_policy::L0cPolicy::kC2PackedOffset[s],
+                         packedResultBytes}),
+                    "Aqk-Akk-stacked-L0C",
+                    NativeMatrixLayout::L0cFractal,
+                    arch22_policy::C2Policy::kPackedM, n,
+                    ShapePolicy::kFp32Bytes);
                 const std::uint64_t operandGeneration =
                     L0OperandGenerationFor(head, C2L0OperandUse(s));
-                const BufferSpan qL0a = cube_detail::L0OperandSpan(
-                    args, head, "C2-Q-L0A", MemorySpace::L0A,
-                    c2L0aBase + arch22_policy::L0aPolicy::kC2QOffset,
-                    0x1000U, operandGeneration);
-                const BufferSpan kL0a = cube_detail::L0OperandSpan(
-                    args, head, "C2-K-L0A", MemorySpace::L0A,
-                    c2L0aBase + arch22_policy::L0aPolicy::kC2KOffset,
-                    0x1000U, operandGeneration);
+                // Qplus/Kplus 分别装入 zZ L0A 的逻辑 rows[0,16) 和
+                // rows[16,32) tile；二者不按 row-major 连续半区寻址。
+                const BufferSpan qkL0a = NativeMatrixOwner(
+                    cube_detail::L0OperandSpan(
+                        args, head, "C2-QK-stacked-L0A", MemorySpace::L0A,
+                        c2L0aBase, arch22_policy::L0aPolicy::kC2LaneBytes,
+                        operandGeneration),
+                    "C2-QK-stacked-L0A", NativeMatrixLayout::L0aZZ,
+                    arch22_policy::C2Policy::kPackedM,
+                    arch22_policy::C2Policy::kK,
+                    ShapePolicy::kStorageBytes);
+                const BufferSpan qL0aTile = NativeMatrixTile(
+                    qkL0a, "C2-Qplus-L0A-tile", 0U, 0U,
+                    arch22_policy::C2Policy::kM,
+                    arch22_policy::C2Policy::kK);
+                const BufferSpan kL0aTile = NativeMatrixTile(
+                    qkL0a, "C2-Kplus-L0A-tile",
+                    arch22_policy::C2Policy::kM, 0U,
+                    arch22_policy::C2Policy::kM,
+                    arch22_policy::C2Policy::kK);
                 const BufferSpan kMinusL0b = cube_detail::L0OperandSpan(
                     args, head, "C2-Kminus-L0B", MemorySpace::L0B,
                     c2L0bBase, ShapePolicy::kKMinusBytes[s],
                     operandGeneration);
 
-                args.ops->Mmad(Stage::C2, qBand, kMinus, aqkL0c, qL0a,
-                               kMinusL0b,
-                               FromScoreStorage(args.key.scoreStorage),
-                               FromScoreStorage(args.key.scoreStorage), 16U,
-                               n, ShapePolicy::kK, true);
-                args.ops->Mmad(Stage::C2, kBand, kMinus, akkL0c, kL0a,
-                               kMinusL0b,
-                               FromScoreStorage(args.key.scoreStorage),
-                               FromScoreStorage(args.key.scoreStorage), 16U,
-                               n, ShapePolicy::kK, true);
+                args.ops->MmadRowStackedLhs(
+                    Stage::C2, qBand, kBand, kMinus, packedL0c, qkL0a,
+                    qL0aTile, kL0aTile, kMinusL0b,
+                    FromScoreStorage(args.key.scoreStorage),
+                    FromScoreStorage(args.key.scoreStorage), 16U, 16U, n,
+                    ShapePolicy::kK, true);
                 cube_detail::RequireCubeToMte1OperandReuse(*args.sync,
                                                            Stage::C2);
                 cube_detail::RequireCubeToFixpipeOutput(*args.sync,
@@ -366,19 +380,22 @@ inline void RunC2(const CubeStageArgs &args)
                     payload, "Akk-compact-relay",
                     arch22_policy::WorkspacePolicy::kRelayRawAkk[s].offset,
                     resultBytes);
+                // 待确认的 Arch22 API 约束：必须从同一个
+                // MakeLayoutL0C(32,N) owner 选择上下两个逻辑 row tile，
+                // 再分别由 Fixpipe 写入紧凑 GM relay。精确的源布局、步长、
+                // 模式和 API 均为 PROPOSED，必须在 CANN 9.1/Arch2201
+                // 上完成最小编译与设备验证；禁止按 row-major 字节切半。
                 args.ops->Store(
                     Stage::C2,
-                    cube_detail::MatrixRect(aqkL0c, "Aqk-compact-L0C", 0U,
-                                            0U, 16U, n, n,
-                                            ShapePolicy::kFp32Bytes),
+                    NativeMatrixTile(packedL0c, "Aqk-compact-L0C", 0U,
+                                     0U, 16U, n),
                     cube_detail::MatrixRect(aqkRelay, "Aqk-compact-relay",
                                             0U, 0U, 16U, n, n,
                                             ShapePolicy::kFp32Bytes));
                 args.ops->Store(
                     Stage::C2,
-                    cube_detail::MatrixRect(akkL0c, "Akk-compact-L0C", 0U,
-                                            0U, 16U, n, n,
-                                            ShapePolicy::kFp32Bytes),
+                    NativeMatrixTile(packedL0c, "Akk-compact-L0C", 16U,
+                                     0U, 16U, n),
                     cube_detail::MatrixRect(akkRelay, "Akk-compact-relay",
                                             0U, 0U, 16U, n, n,
                                             ShapePolicy::kFp32Bytes));

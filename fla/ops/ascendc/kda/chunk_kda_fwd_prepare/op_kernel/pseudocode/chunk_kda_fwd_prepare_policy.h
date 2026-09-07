@@ -328,6 +328,7 @@ struct WorkspacePolicy {
 
 struct C2Policy {
     static constexpr Offset kM = 16U;
+    static constexpr Offset kPackedM = 2U * kM;
     static constexpr Offset kK = 128U;
     static constexpr std::array<Offset, 4> kN = ShapePolicy::kPrefixRows;
     static constexpr Offset kRawLeadingDimension = 64U;
@@ -351,20 +352,21 @@ struct Akk2BPackPolicy {
 };
 
 struct L0aPolicy {
-    // 一个 Arch35 AIC 每次处理一个头。在该头内，C2 将 Q/K 放在互不重叠的
-    // L0A 区域，防止第二次 MTE1 搬运覆盖第一次 MMAD 仍在读取的数据。C7 只装入一次
-    // Akk，并在 W/U 两个乘积之间只读共享。
+    // 一个 Arch35 AIC 每次处理一个头。C2 的 8 KiB owner 按 zN 布局保存
+    // [32,128] 左操作数，Qplus/Kplus 由逻辑 tile 区分，不是两个连续 4 KiB 半区。
+    // C7 只装入一次 Akk，并在 W/U 两个乘积之间只读共享。
     static constexpr Offset kCapacity = 0x10000U;
-    static constexpr Region kC2Q{0x0000U, 0x1000U};
-    static constexpr Region kC2K{0x1000U, 0x1000U};
+    static constexpr Region kC2StackedQK{0x0000U, 0x2000U};
+    static constexpr Region kC45Operand{0x0000U, 0x1000U};
     static constexpr Region kC7Akk{0x0000U, 0x2000U};
 };
 
 struct L0bPolicy {
-    // C2 装入一份 Kminus 前缀，由两次 MMAD 只读共享。C7 将 Kbeta/Vbeta 分开放置，
-    // 从而在两次 MMAD 都完成后只需发布一次操作数释放信号。
+    // C2 装入一份 Kminus 前缀，由一次 32 行 MMAD 读取。C7 将 Kbeta/Vbeta
+    // 分开放置，从而在两次 MMAD 都完成后只需发布一次操作数释放信号。
     static constexpr Offset kCapacity = 0x10000U;
     static constexpr Region kC2KMinus{0x0000U, 0x4000U};
+    static constexpr Region kC45Operand{0x0000U, 0x1000U};
     static constexpr Region kC7KBeta{0x0000U, 0x4000U};
     static constexpr Region kC7VBeta{0x4000U, 0x4000U};
 };
@@ -379,10 +381,10 @@ struct L0cPolicy {
     static constexpr Offset kRequiredBytes = kHeadCount * kHeadLaneBytes;
     static constexpr std::array<Offset, 4> kC2PerHeadResultBytes = {
         0x0400U, 0x0800U, 0x0C00U, 0x1000U};
-    static constexpr std::array<Offset, 4> kC2AqkOffset = {
-        0x0000U, 0x0400U, 0x0C00U, 0x1800U};
-    static constexpr std::array<Offset, 4> kC2AkkOffset = {
-        0x2800U, 0x2C00U, 0x3400U, 0x4000U};
+    static constexpr std::array<Offset, 4> kC2PackedResultBytes = {
+        0x0800U, 0x1000U, 0x1800U, 0x2000U};
+    static constexpr std::array<Offset, 4> kC2PackedOffset = {
+        0x0000U, 0x0800U, 0x1800U, 0x3000U};
     static constexpr Offset kC2PerHeadEnd = 0x5000U;
     static constexpr Region kC4T{0x0000U, 0x1000U};
     static constexpr Region kC5Y{0x1000U, 0x1000U};
@@ -563,11 +565,18 @@ static_assert(C2Policy::kN[0] == 16U && C2Policy::kN[1] == 32U &&
               "C2 N must match the four causal prefixes");
 static_assert(C2Policy::kRawRowBytes == 0x100U,
               "C2 Fixpipe destinations must retain a raw-score leading dimension of 64 FP32 elements");
-static_assert(Disjoint(L0aPolicy::kC2Q, L0aPolicy::kC2K) &&
-                  L0aPolicy::kC2K.End() <= L0aPolicy::kCapacity &&
+static_assert(L0aPolicy::kC2StackedQK.size ==
+                      C2Policy::kPackedM * C2Policy::kK *
+                          ShapePolicy::kStorageBytes &&
+                  L0aPolicy::kC2StackedQK.End() <=
+                      L0aPolicy::kCapacity &&
+                  L0aPolicy::kC45Operand.End() <=
+                      L0aPolicy::kCapacity &&
                   L0aPolicy::kC7Akk.End() <= L0aPolicy::kCapacity,
-              "Arch35 C2 Q/K must use disjoint L0A regions and C7 Akk must fit L0A");
+              "Arch35 stacked C2 Q/K and C7 Akk must fit L0A");
 static_assert(L0bPolicy::kC2KMinus.End() <= L0bPolicy::kCapacity &&
+                  L0bPolicy::kC45Operand.End() <=
+                      L0bPolicy::kCapacity &&
                   Disjoint(L0bPolicy::kC7KBeta,
                            L0bPolicy::kC7VBeta) &&
                   L0bPolicy::kC7VBeta.End() <= L0bPolicy::kCapacity,
@@ -585,30 +594,30 @@ static_assert(L0cPolicy::kC2PerHeadResultBytes[0] ==
                       C2Policy::kM * C2Policy::kN[3] *
                           ShapePolicy::kFp32Bytes,
               "C2 per-head L0C bytes must match tight 16xN FP32 results");
-static_assert(L0cPolicy::kC2AqkOffset[0] == 0U &&
-                  L0cPolicy::kC2AqkOffset[1] ==
-                      L0cPolicy::kC2AqkOffset[0] +
-                          L0cPolicy::kC2PerHeadResultBytes[0] &&
-                  L0cPolicy::kC2AqkOffset[2] ==
-                      L0cPolicy::kC2AqkOffset[1] +
-                          L0cPolicy::kC2PerHeadResultBytes[1] &&
-                  L0cPolicy::kC2AqkOffset[3] ==
-                      L0cPolicy::kC2AqkOffset[2] +
-                          L0cPolicy::kC2PerHeadResultBytes[2] &&
-                  L0cPolicy::kC2AkkOffset[0] ==
-                      L0cPolicy::kC2AqkOffset[3] +
-                          L0cPolicy::kC2PerHeadResultBytes[3] &&
-                  L0cPolicy::kC2AkkOffset[1] ==
-                      L0cPolicy::kC2AkkOffset[0] +
-                          L0cPolicy::kC2PerHeadResultBytes[0] &&
-                  L0cPolicy::kC2AkkOffset[2] ==
-                      L0cPolicy::kC2AkkOffset[1] +
-                          L0cPolicy::kC2PerHeadResultBytes[1] &&
-                  L0cPolicy::kC2AkkOffset[3] ==
-                      L0cPolicy::kC2AkkOffset[2] +
-                          L0cPolicy::kC2PerHeadResultBytes[2] &&
-                  L0cPolicy::kC2AkkOffset[3] +
-                          L0cPolicy::kC2PerHeadResultBytes[3] ==
+static_assert(L0cPolicy::kC2PackedResultBytes[0] ==
+                      C2Policy::kPackedM * C2Policy::kN[0] *
+                          ShapePolicy::kFp32Bytes &&
+                  L0cPolicy::kC2PackedResultBytes[1] ==
+                      C2Policy::kPackedM * C2Policy::kN[1] *
+                          ShapePolicy::kFp32Bytes &&
+                  L0cPolicy::kC2PackedResultBytes[2] ==
+                      C2Policy::kPackedM * C2Policy::kN[2] *
+                          ShapePolicy::kFp32Bytes &&
+                  L0cPolicy::kC2PackedResultBytes[3] ==
+                      C2Policy::kPackedM * C2Policy::kN[3] *
+                          ShapePolicy::kFp32Bytes &&
+                  L0cPolicy::kC2PackedOffset[0] == 0U &&
+                  L0cPolicy::kC2PackedOffset[1] ==
+                      L0cPolicy::kC2PackedOffset[0] +
+                          L0cPolicy::kC2PackedResultBytes[0] &&
+                  L0cPolicy::kC2PackedOffset[2] ==
+                      L0cPolicy::kC2PackedOffset[1] +
+                          L0cPolicy::kC2PackedResultBytes[1] &&
+                  L0cPolicy::kC2PackedOffset[3] ==
+                      L0cPolicy::kC2PackedOffset[2] +
+                          L0cPolicy::kC2PackedResultBytes[2] &&
+                  L0cPolicy::kC2PackedOffset[3] +
+                          L0cPolicy::kC2PackedResultBytes[3] ==
                       L0cPolicy::kC2PerHeadEnd &&
                   L0cPolicy::kC2PerHeadEnd <=
                       L0cPolicy::kHeadLaneBytes &&
@@ -793,6 +802,7 @@ struct WorkspacePolicy {
 
 struct C2Policy {
     static constexpr Offset kM = 16U;
+    static constexpr Offset kPackedM = 2U * kM;
     static constexpr Offset kK = 128U;
     static constexpr std::array<Offset, 4> kN = ShapePolicy::kPrefixRows;
     static constexpr Offset kRawLeadingDimension = 64U;
@@ -820,8 +830,6 @@ struct Akk2BPackPolicy {
 struct L0aPolicy {
     static constexpr Offset kCapacity = 0x10000U;
     static constexpr Offset kC2LaneBytes = 0x2000U;
-    static constexpr Offset kC2QOffset = 0x0000U;
-    static constexpr Offset kC2KOffset = 0x1000U;
     static constexpr Offset kC7AkkLaneBytes = 0x2000U;
 
     static constexpr Offset C2LaneBase(Offset physicalLane)
@@ -859,10 +867,10 @@ struct L0cPolicy {
     static constexpr Offset kHeadLaneBytes = 0x10000U;
     static constexpr std::array<Offset, 4> kC2ResultBytes = {
         0x0400U, 0x0800U, 0x0C00U, 0x1000U};
-    static constexpr std::array<Offset, 4> kC2AqkOffset = {
-        0x0000U, 0x0400U, 0x0C00U, 0x1800U};
-    static constexpr std::array<Offset, 4> kC2AkkOffset = {
-        0x2800U, 0x2C00U, 0x3400U, 0x4000U};
+    static constexpr std::array<Offset, 4> kC2PackedResultBytes = {
+        0x0800U, 0x1000U, 0x1800U, 0x2000U};
+    static constexpr std::array<Offset, 4> kC2PackedOffset = {
+        0x0000U, 0x0800U, 0x1800U, 0x3000U};
     static constexpr Offset kC2End = 0x5000U;
     static constexpr Region kC4T{0x0000U, 0x1000U};
     static constexpr Region kC5Y{0x1000U, 0x1000U};
@@ -992,6 +1000,9 @@ static_assert(WorkspacePolicy::kRelayCompactRaw.End() == 0x5000U &&
 static_assert(L0aPolicy::C2LaneBase(1U) +
                           L0aPolicy::kC2LaneBytes <=
                       L0aPolicy::kCapacity &&
+                  L0aPolicy::kC2LaneBytes ==
+                      C2Policy::kPackedM * C2Policy::kK *
+                          ShapePolicy::kStorageBytes &&
                   L0aPolicy::C7LaneBase(1U) +
                           L0aPolicy::kC7AkkLaneBytes <=
                       L0aPolicy::kCapacity,
@@ -1006,8 +1017,42 @@ static_assert(L0bPolicy::C2LaneBase(1U) +
 static_assert(L0cPolicy::HeadLaneBase(1U) +
                           L0cPolicy::kHeadLaneBytes ==
                       L0cPolicy::kCapacity &&
-                  L0cPolicy::kC2AkkOffset[3] +
-                          L0cPolicy::kC2ResultBytes[3] ==
+                  L0cPolicy::kC2ResultBytes[0] ==
+                      C2Policy::kM * C2Policy::kN[0] *
+                          ShapePolicy::kFp32Bytes &&
+                  L0cPolicy::kC2ResultBytes[1] ==
+                      C2Policy::kM * C2Policy::kN[1] *
+                          ShapePolicy::kFp32Bytes &&
+                  L0cPolicy::kC2ResultBytes[2] ==
+                      C2Policy::kM * C2Policy::kN[2] *
+                          ShapePolicy::kFp32Bytes &&
+                  L0cPolicy::kC2ResultBytes[3] ==
+                      C2Policy::kM * C2Policy::kN[3] *
+                          ShapePolicy::kFp32Bytes &&
+                  L0cPolicy::kC2PackedResultBytes[0] ==
+                      C2Policy::kPackedM * C2Policy::kN[0] *
+                          ShapePolicy::kFp32Bytes &&
+                  L0cPolicy::kC2PackedResultBytes[1] ==
+                      C2Policy::kPackedM * C2Policy::kN[1] *
+                          ShapePolicy::kFp32Bytes &&
+                  L0cPolicy::kC2PackedResultBytes[2] ==
+                      C2Policy::kPackedM * C2Policy::kN[2] *
+                          ShapePolicy::kFp32Bytes &&
+                  L0cPolicy::kC2PackedResultBytes[3] ==
+                      C2Policy::kPackedM * C2Policy::kN[3] *
+                          ShapePolicy::kFp32Bytes &&
+                  L0cPolicy::kC2PackedOffset[0] == 0U &&
+                  L0cPolicy::kC2PackedOffset[1] ==
+                      L0cPolicy::kC2PackedOffset[0] +
+                          L0cPolicy::kC2PackedResultBytes[0] &&
+                  L0cPolicy::kC2PackedOffset[2] ==
+                      L0cPolicy::kC2PackedOffset[1] +
+                          L0cPolicy::kC2PackedResultBytes[1] &&
+                  L0cPolicy::kC2PackedOffset[3] ==
+                      L0cPolicy::kC2PackedOffset[2] +
+                          L0cPolicy::kC2PackedResultBytes[2] &&
+                  L0cPolicy::kC2PackedOffset[3] +
+                          L0cPolicy::kC2PackedResultBytes[3] ==
                       L0cPolicy::kC2End &&
                   L0cPolicy::kC2End <= L0cPolicy::kHeadLaneBytes &&
                   L0cPolicy::kC7W.End() == L0cPolicy::kC7U.offset &&
