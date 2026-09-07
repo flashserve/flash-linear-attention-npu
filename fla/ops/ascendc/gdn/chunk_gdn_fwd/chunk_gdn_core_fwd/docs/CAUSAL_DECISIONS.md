@@ -299,3 +299,16 @@
 - 知识卡：沿用本文检索账本。`compile-time-template-specialization.md` 要求 host/device 选择域一致；`synchronization-from-data-dependencies.md` 要求按 BF16 实际事件生命周期复核；`cann-version-architecture-evidence.md` 要求 A5 固定 CANN 的新 binary 与真机验收。知识来源和固定摘要保持本文原记录。
 - 验证：CPU 检查 host/编译 dtype 集合一致、已有 BF16 dispatch、exact-main 筛选、B0 override 和既有同步不变量；随后完整 combined wheel 构建并核实实际 key301。目标板检查 BF16 state 的冷启动、重复运行、F/N、O/finalState 精度与设备时延，并回归 FP32 原模型及域外 B0。
 - 可证伪条件：缺失 BF16 key301 binary、事件失配、精度回退或无稳定性能收益时不扩大默认发布范围；先保留候选证据并退回 B0，不能放宽阈值或以 FP32 验证代替 BF16。
+
+
+## CD-BF16-TAIL-CLEAR：验证两处 H 尾块初始化是否足以修复 BF16 B30 终态漂移
+
+- 阶段/状态：正确性候选 / 待目标 A5 完整构建与验证；基线 `d42f4827`。BF16 state B30 的 host/编译门禁及原 B30 同步配置保持不变。
+- 触发证据：BF16 B0 的 10 个 fresh 进程、合计 60 次调用通过；B30 在两个设备复现有限的 finalState 差异，O/A/g 保持逐 bit 一致，输入未变。一轮 F2/N3 为 2043/524288 点差异、最大绝对误差 0.0118103；另一设备首个差异坐标为 `[0,23,0,112]`。这是 BF16 B30 未通过门禁的证据，不是 root cause 结论。
+- 唯一源机制变化：移植 `0115f973` 的 H 修复，独立与融合 A5 H 各取消 C1/C2 tail 调用显式 `EmptyClass{}, true`。保留实际 shape、tail 类型、preSetFlags/finalWaitFlags、B30 全部同步和公开 ABI；不带入 WU 任务末 RestoreStatus，也不引入运行时诊断 mask。
+- 选择依据：旧 V256 同 binary 四组合中，两处都不清时状态 40/40 与保存历史参考逐 bit 相同，而两处都清时 0/40。当前主模型尾长为 10，varlen bounded 路径的 C1 M10/K128 与 C2 M128/K10 确实经过这两处初始化；state dtype 不改变 Cube copy/clear 模板。该机制已有独立对照，比无边界恢复同步更适合下一次最小实验，但 V128 的资源几何不同，不能声称已经证明同一 WAW 根因。
+- 预测：同一已保存 BF16 输入在候选 B30 下终态恢复稳定，原 O/A/g 不变，同时候选 B0 无回退；若仍复现相同终态模式，则否定这两处 clear 足以修复当前问题。
+- 参照约束：本提交同时修改 standalone H，必须保留旧 `9250fa8b`/`d42f4827` B0 的保存输出及高精检查；不能只用更新后的 legacy 比较，避免 DUT 与参考同时改变导致假通过。
+- 验证要求：完整 combined wheel、实际 key 与 binary 身份、同 seed/顺序的多个 fresh 进程、F/N、跨设备复现条件与 BF16/FP32 原域回归；C2 K10 非对齐仍需要边界覆盖，不能由主模型通过直接放行全域。
+- 知识卡：沿用本文检索账本的模板特化、数据依赖同步、架构/CANN 证据卡。删除数据初始化不等于删同步；保留槽位 RAW/WAR 事件，目标 A5 实测才决定放行。
+- CPU 检查：保留 BF16 host/编译门禁一致性检查，使用 tail 实际形状和事件生命周期断言替代旧整文件 SHA 冻结断言；源码检查不替代真机精度证据。

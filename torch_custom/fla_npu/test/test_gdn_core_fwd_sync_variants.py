@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import re
 import unittest
 from pathlib import Path
@@ -57,17 +56,9 @@ def source(path: Path) -> str:
 
 
 class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
-    def test_fwd_h_keeps_the_frozen_pre_b25_kernel_body(self):
+    def test_fwd_h_retains_the_accepted_sync_axes(self):
         text = source(FWD_H_ARCH35)
 
-        # B25-B31 originally changed the bounded-mmad loop body even when the
-        # new traits were false.  That perturbed the B0/V256 code generation
-        # and caused a reproducible final-state regression.  Freeze the known
-        # good pre-B25 body while keeping the earlier synchronization axes.
-        self.assertEqual(
-            hashlib.sha256(text.encode()).hexdigest(),
-            "b6492c6e6bdff463dfe926628308f130cbc56bc55b15ae026ff4d0128fcc59e7",
-        )
         self.assertIn("bool kNarrowCube1ToPipeFix = false", text)
         self.assertIn("bool kNarrowCube2ToPipeFix = false", text)
         self.assertIn("bool kCube1EventOnly = false", text)
@@ -88,6 +79,29 @@ class GdnCoreFwdSyncVariantSourceTests(unittest.TestCase):
         self.assertEqual(text.count("AscendC::PipeBarrier<PIPE_MTE3>();"), 1)
         self.assertEqual(text.count("AscendC::SyncAll<false>();"), 3)
         self.assertEqual(text.count("AscendC::PipeBarrier<PIPE_V>();"), 10)
+
+    def test_fwd_h_tail_calls_keep_actual_shapes_and_event_lifetime(self):
+        standalone = (REPO_ROOT / "fla/ops/ascendc/gdn/chunk_gdn_fwd"
+                      / "chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp")
+        for path in (FWD_H_ARCH35, standalone):
+            with self.subTest(path=path):
+                text = source(path)
+                for stage, operand in ((1, "WH"), (2, "KV")):
+                    # Tail calls retain the bounded implementation and drain;
+                    # neither caller forces whole-L1 initialization anymore.
+                    self.assertRegex(
+                        text,
+                        rf"blockMmad{operand}Tail.preSetFlags\(\);\s*"
+                        rf"blockMmad{operand}Tail\([^;]*cube{stage}Shape\);\s*"
+                        rf"blockMmad{operand}Tail.finalWaitFlags\(\);",
+                    )
+                    self.assertNotIn(f"cube{stage}Shape, EmptyClass{{}}, true", text)
+                self.assertRegex(
+                    text, r"GemmCoord cube1Shape\s*\{\s*"
+                    r"cube1Offsets.blockTokens, cube1Offsets.vBlockDim, kHeadDim\s*\}")
+                self.assertRegex(
+                    text, r"GemmCoord cube2Shape\s*\{\s*"
+                    r"kHeadDim, cube2Offsets.vBlockDim, cube2Offsets.blockTokens\s*\}")
 
     def test_fwd_h_entry_drain_and_init_bypass_are_mutually_exclusive(self):
         text = source(FWD_H_ARCH35)
