@@ -208,21 +208,13 @@ int main()
         return 7;
     }
 
-    if (Arch35Mutex::kAivUb[1] >= 28 ||
-        Arch35Mutex::kAicL1[3] >= 28 ||
-        Arch35Mutex::kAicL0Operand >= 28 ||
-        Arch35Mutex::kAicL0cLower[3] >= 28 ||
-        Arch35Mutex::kAicL0cUpper[3] >= 28) {
-        return 8;
-    }
-
     constexpr float kEpsilon = 1.0e-6F;
     constexpr float kZero[] = {0.0F, 0.0F, 0.0F, 0.0F};
     const float zeroScale = L2NormalizationScale(
         kZero, sizeof(kZero) / sizeof(kZero[0]), kEpsilon);
     if (!std::isfinite(zeroScale) || !NearlyEqual(zeroScale, 1000.0F) ||
         !NearlyEqual(kZero[0] * zeroScale, 0.0F)) {
-        return 9;
+        return 8;
     }
 
     // 小范数必须在平方和上加 epsilon，不能退化为 max(norm, epsilon)。
@@ -235,7 +227,7 @@ int main()
     const float legacySmall = kSmallNorm[0] / kEpsilon;
     if (!NearlyEqual(smallNormalized, expectedSmall) ||
         NearlyEqual(smallNormalized, legacySmall)) {
-        return 10;
+        return 9;
     }
     return 0;
 }

@@ -296,15 +296,18 @@ workspace relay。Current ABI 的公开 `Akk` 只写 `validRows` 行，不能把
 
 ### Arch35
 
-核内使用 `AscendC::Mutex`，ID 静态分配：
+Arch35 核内没有 HardEvent EventID，ping-pong 使用 `AscendC::Mutex`。ID 在各
+Stage 的 `Lock/Unlock` 前直接计算，不再通过公共 helper 隐藏：
+接口约束见 Ascend C
+[`Mutex`](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/API/ascendcopapi/docs/zh/api/SIMD-API/basic_api/sync_control/intra_core_sync/Mutex_ISASI.md)。
 
 | Core | Mutex ID | 资源 |
 | --- | --- | --- |
-| AIV | `0,1` | 两个 UB local slot |
-| AIC | `0..3` | 四个 L1 head lane |
+| AIV | `localSlot=0/1` | 两个 UB local slot，即 `0/1` |
+| AIC | `localHead=0..3` | 四个 L1 head lane，即 `0/1/2/3` |
 | AIC | `4` | 共享 L0A/L0B operand |
-| AIC | `5..8` | 四个 lower L0C lane |
-| AIC | `9..12` | 四个 upper L0C lane |
+| AIC | `5+localHead` | 四个 lower L0C lane，即 `5/6/7/8` |
+| AIC | `9+localHead` | 四个 upper L0C lane，即 `9/10/11/12` |
 
 `13..27` 不用，`28..31` 为系统保留。相同物理区跨 pipe 使用同一 ID：
 
@@ -319,18 +322,81 @@ AscendC::Mutex::Unlock<PIPE_V>(id);
 ```
 
 Mutex 只处理同核 pipe 交接，不是核间同步。AIC/AIV 仍用 mode `0x4` 的
-`CrossCoreSetFlag/CrossCoreWaitFlag` 建立 ready/free 双向协议。
+`CrossCoreSetFlag/CrossCoreWaitFlag` 建立 ready/free 双向协议。下表是调用现场
+直接写出的固定 ID；AIV1 的 `+16` 只出现在 AIC 视角，AIV1 本身仍使用本地
+`0/1/4/5`：
+
+| local head | AIV / local slot | AIV ready / free | AIC ready / free |
+| ---: | --- | --- | --- |
+| 0 | AIV0 / 0 | `0 / 4` | `0 / 4` |
+| 1 | AIV0 / 1 | `1 / 5` | `1 / 5` |
+| 2 | AIV1 / 0 | `0 / 4` | `16 / 20` |
+| 3 | AIV1 / 1 | `1 / 5` | `17 / 21` |
+
+同一个 slot 的 ready/free 按以下顺序复用，任何一次 set 都有唯一的后续 wait：
+
+| 轮次 | AIV | AIC |
+| --- | --- | --- |
+| 初始化 | 等待 free `4/5` | 发布 free `4/5/20/21` |
+| V0+V1 -> C2 | 发布 ready `0/1` | 等待 ready `0/1/16/17`，C2 后发布 free `4/5/20/21` |
+| V3 -> C4/C5 | 等待 free `4/5`，发布 ready `0/1` | 等待 ready `0/1/16/17`，C4 搬完后发布 free `4/5/20/21` |
+| V6 -> C7 | 等待 free `4/5`，发布 ready `0/1` | 等待 ready `0/1/16/17`，C7 搬完 RHS 后发布 free `4/5/20/21` |
+| 收尾 | 等待最后一次 free `4/5` | 无额外 set |
 
 ### Arch22
 
-核内使用通过 `TPipe::AllocEventID` 获取的成对 `SetFlag/WaitFlag`，
-核间使用 mode `0x2`。两个 pair 复用共享 G/scratch 时单独使用一个
-`V_MTE2` shared-free 事件：V0/V3/V6 的 MTE2 写前 wait，V1/V3/V6 最后一次
-V 读后 set。每个 pair 的 inactive AIV 只参与 collective，不计算地址、不搬 GM。
-生产者覆盖 slot 前必须收到反向 free，禁止连续无消费地 set 同一 flag。
-C7 先把同一 pair 两个有效 head 的 `K_beta_g/V_beta` 全部搬到各自 L1 lane，
-统一完成 MTE2 wait 后立即发布一次 pair free；后续 W/U 的 MMAD 与 Fixpipe 不再读取
-workspace，可以和 AIV 对下一组 slot 的生产重叠。
+核内仍通过 `TPipe::AllocEventID` 申请，不能改成不登记占用的裸数字。下表的
+“预期 ID”是当前 CANN 9.1 分配器按本文件申请顺序返回的值，实际调用始终使用
+`AllocEventID` 的返回值，并在结束时用同一值 `ReleaseEventID`；设备 kernel 不用断言
+校验它。不同 HardEvent 是独立事件池，因此多个池都出现 ID 0 不冲突。
+申请/释放规则见 Ascend C 的
+[`AllocEventID`](https://www.hiascend.com/document/detail/en/canncommercial/850/API/ascendcopapi/atlasascendc_api_07_0114.html)
+和
+[`ReleaseEventID`](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/800alpha003/apiref/ascendcopapi/atlasascendc_api_07_0115.html)；
+`M_MTE1` 的预占值依据 CANN 9.1.0
+[`TPipe::Init`](https://gitcode.com/cann/asc-devkit/blob/v9.1.0/impl/basic_api/kernel_tpipe_impl.h)。
+
+| 核 | HardEvent | 变量 | 预期 ID |
+| --- | --- | --- | --- |
+| AIV | `V_S` | `scalarRead_` | `0` |
+| AIV | `S_V` | `scalarWrite_` | `0` |
+| AIV | `V_MTE2` | `sharedFree_` | `0` |
+| AIV | `MTE3_MTE2` | `ioFree_[0/1]` | `0/1` |
+| AIV | `MTE2_V` | `inputReady_[0/1]` | `0/1` |
+| AIV | `V_MTE3` | `outputReady_[0/1]` | `0/1` |
+| AIV | `MTE3_V` | `v0StoreDone_[0/1]` | `0/1` |
+| AIC | `MTE2_MTE1` | `mte2ToMte1_` | `0` |
+| AIC | `MTE2_MTE1` | `tReady_[0..3]` | `1/2/3/4` |
+| AIC | `MTE1_M` | `mte1ToM_` | `0` |
+| AIC | `M_MTE1` | `mToMte1_` | `3`，`0/1/2` 由 AIC `TPipe::Init` 预占 |
+| AIC | `M_FIX` | `mToFix_` | `0` |
+| AIC | `FIX_M` | `fixToM_` | `0` |
+| AIC | `MTE2_FIX` | `mte2ToFix_` | `0` |
+| AIC | `FIX_MTE2` | `fixToMte2_[0..3]` | `0/1/2/3` |
+| AIC | `FIX_MTE1` | `fixToMte1_[0..3]` | `0/1/2/3` |
+
+两个 pair 复用共享 G/scratch 时，`V_MTE2` ID 0 是 shared-free：V0/V3/V6 的
+MTE2 写前 wait，V1/V3/V6 最后一次 V 读后 set。两个私有 UB slot 的内部
+ping-pong 则分别使用各 HardEvent 池的 ID 0/1。
+
+核间使用 mode `0x2`，固定 ID 已在 AIV/AIC 两侧主循环直接列成数组：
+
+| pair | 覆盖的 local head | ready ID | free ID |
+| ---: | --- | ---: | ---: |
+| 0 | 0/1 | `0` | `2` |
+| 1 | 2/3 | `1` | `3` |
+
+| 轮次 | AIV | AIC |
+| --- | --- | --- |
+| 初始化 | 等待 free `2/3` | 发布 free `2/3` |
+| V0+V1 -> C2 | 发布 ready `0/1` | 等待 ready `0/1`，C2 后发布 free `2/3` |
+| V3 -> C4/C5 | 等待 free `2/3`，发布 ready `0/1` | 等待 ready `0/1`，C4 搬完后发布 free `2/3` |
+| V6 -> C7 | 等待 free `2/3`，发布 ready `0/1` | 等待 ready `0/1`，C7 搬完 RHS 后发布 free `2/3` |
+| 收尾 | 等待最后一次 free `2/3` | 无额外 set |
+
+每个 pair 的 inactive AIV 只参与 collective，不计算地址、不搬 GM。生产者覆盖 slot
+前必须收到反向 free，禁止连续无消费地 set 同一 flag。C7 归还 slot 后，W/U 的
+MMAD 与 Fixpipe 不再读取 workspace，可以和 AIV 对下一组 slot 的生产重叠。
 
 ## 精度顺序
 
@@ -367,7 +433,8 @@ workspace，可以和 AIV 对下一组 slot 的生产重叠。
    可用的 MTE2/FIX 事件组合。
 5. C7 的四象限 Akk pack 到 L0A 的真实 NZ 排列。
 6. 四个单次 VF 的寄存器、mask、repeat/stride 和自然底 `Exp` 参数。
-7. CrossCore flag 的物理 ID、计数深度以及与 Catlass/Matmul 内部占用的冲突。
+7. 已冻结的 CrossCore flag ID 在目标版本上的 mode 映射、计数深度，以及与
+   Catlass/Matmul 内部占用是否冲突。
 8. A2、A3、A5 的目标编译、精度、性能和 sanitizer 验证。
 
 设备 kernel 内不使用断言。容量和静态 offset 由 host 小测试、编译资源报告和

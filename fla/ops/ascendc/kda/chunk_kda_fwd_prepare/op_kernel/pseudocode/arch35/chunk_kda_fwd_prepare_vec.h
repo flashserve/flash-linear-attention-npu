@@ -717,6 +717,10 @@ public:
             workgroup_ >= args_.tiling.usedCoreNum) {
             return;
         }
+        // 每个 AIV 都在自己的本地 flag 空间使用同一组固定编号：
+        // localSlot0/1 的 ready=0/1，free=4/5。AIV1 不能写 16/17/20/21。
+        constexpr uint16_t kReadyFlagId[2] = {0, 1};
+        constexpr uint16_t kFreeFlagId[2] = {4, 5};
         bool usedLocalSlot[2] = {false, false};
         const uint32_t total = TotalWorkItems(args_.tiling);
         const uint32_t workBegin = WorkBegin(
@@ -745,14 +749,12 @@ public:
                     usedLocalSlot[localSlot] = true;
                     // 初始 free 或上一组 C7 free；V0 首个消费者是 MTE2。
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        Arch35AivFlagId(Arch35CrossCore::kFreeBase,
-                                        localSlot));
+                        kFreeFlagId[localSlot]);
                     StageV0(chunk, valueHead, localHead, localSlot);
                     StageV1(chunk, localHead, localSlot);
                     // V1 的 72 KiB score payload 已经写入 workspace。
                     AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
-                        Arch35AivFlagId(Arch35CrossCore::kReadyBase,
-                                        localSlot));
+                        kReadyFlagId[localSlot]);
                 }
                 for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
                     const uint32_t localHead = aiv_ * 2 + localSlot;
@@ -762,12 +764,10 @@ public:
                     }
                     // C2 已写回 raw Aqk/Akk，且不再读取 V1 payload。
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
-                        Arch35AivFlagId(Arch35CrossCore::kFreeBase,
-                                        localSlot));
+                        kFreeFlagId[localSlot]);
                     StageV3(chunk, valueHead, localHead, localSlot);
                     AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
-                        Arch35AivFlagId(Arch35CrossCore::kReadyBase,
-                                        localSlot));
+                        kReadyFlagId[localSlot]);
                 }
                 for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
                     const uint32_t localHead = aiv_ * 2 + localSlot;
@@ -777,12 +777,10 @@ public:
                     }
                     // C4 已一次性读完 B/X0/negX1/Akk，V6 可以原址换义。
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        Arch35AivFlagId(Arch35CrossCore::kFreeBase,
-                                        localSlot));
+                        kFreeFlagId[localSlot]);
                     StageV6(chunk, valueHead, localHead, localSlot);
                     AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
-                        Arch35AivFlagId(Arch35CrossCore::kReadyBase,
-                                        localSlot));
+                        kReadyFlagId[localSlot]);
                 }
             }
         }
@@ -790,8 +788,7 @@ public:
         for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
             if (usedLocalSlot[localSlot]) {
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                    Arch35AivFlagId(Arch35CrossCore::kFreeBase,
-                                    localSlot));
+                    kFreeFlagId[localSlot]);
             }
         }
     }
@@ -802,7 +799,7 @@ private:
                                     uint32_t localHead,
                                     uint32_t localSlot)
     {
-        const uint8_t mutex = Arch35Mutex::kAivUb[localSlot];
+        const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1
         const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
         const uint32_t state = Arch35Ub::kStateBase[localSlot];
         auto q = resource_.ubBuf.template GetBufferByByte<InputT>(
@@ -922,7 +919,7 @@ private:
                                     uint32_t localHead,
                                     uint32_t localSlot)
     {
-        const uint8_t mutex = Arch35Mutex::kAivUb[localSlot];
+        const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1
         const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
         const uint32_t state = Arch35Ub::kStateBase[localSlot];
         auto qPlus = resource_.ubBuf.template GetBufferByByte<ScoreT>(
@@ -966,7 +963,7 @@ private:
                                     uint32_t localHead,
                                     uint32_t localSlot)
     {
-        const uint8_t mutex = Arch35Mutex::kAivUb[localSlot];
+        const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1
         const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
         const uint32_t state = Arch35Ub::kStateBase[localSlot];
         auto rawScore = resource_.ubBuf.template GetBufferByByte<float>(
@@ -1037,7 +1034,7 @@ private:
                                     uint32_t localHead,
                                     uint32_t localSlot)
     {
-        const uint8_t mutex = Arch35Mutex::kAivUb[localSlot];
+        const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1
         const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
         const uint32_t state = Arch35Ub::kStateBase[localSlot];
         auto qg = resource_.ubBuf.template GetBufferByByte<InputT>(

@@ -275,26 +275,6 @@ __aicore__ inline uint64_t AOutputOffset(
            Shape::kChunkRows;
 }
 
-__aicore__ inline uint16_t Arch22FlagId(uint16_t base, uint32_t pair)
-{
-    return static_cast<uint16_t>(base + pair);
-}
-
-__aicore__ inline uint16_t Arch35AivFlagId(uint16_t base,
-                                           uint32_t localSlot)
-{
-    return static_cast<uint16_t>(base + localSlot);
-}
-
-__aicore__ inline uint16_t Arch35AicFlagId(uint16_t base,
-                                           uint32_t groupLocalHead)
-{
-    const uint32_t aiv = groupLocalHead / 2;
-    const uint32_t localSlot = groupLocalHead % 2;
-    return static_cast<uint16_t>(base + localSlot +
-        aiv * Arch35CrossCore::kSecondAivOnAic);
-}
-
 __aicore__ inline uint64_t WorkspaceSlotBase(
     uint32_t workgroup, uint32_t slot, uint32_t workgroupStride)
 {

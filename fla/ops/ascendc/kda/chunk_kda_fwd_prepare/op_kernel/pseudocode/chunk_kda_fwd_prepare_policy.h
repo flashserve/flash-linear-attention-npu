@@ -164,29 +164,6 @@ constexpr uint32_t kV6VBeta = 0x8000;
 constexpr uint32_t kV6KBetaG = 0xC000;
 } // namespace Arch22Ub
 
-namespace Arch35Mutex {
-constexpr uint8_t kAivUb[2] = {0, 1};
-constexpr uint8_t kAicL1[4] = {0, 1, 2, 3};
-constexpr uint8_t kAicL0Operand = 4;
-constexpr uint8_t kAicL0cLower[4] = {5, 6, 7, 8};
-constexpr uint8_t kAicL0cUpper[4] = {9, 10, 11, 12};
-} // namespace Arch35Mutex
-
-namespace Arch22CrossCore {
-// mode 0x2 把两个 AIV 聚合成一个 pair：两边对同一 ID 各 set 一次，
-// AIC 的一次 wait 才完成。ready/free 在三轮握手中严格顺序复用。
-constexpr uint16_t kReadyBase = 0;
-constexpr uint16_t kFreeBase = 2;
-} // namespace Arch22CrossCore
-
-namespace Arch35CrossCore {
-// AIV0/AIV1 都只使用本地 0..15；AIC 访问 AIV1 时按硬件映射加 16。
-// 同一 slot 的 ready/free 在三轮握手中严格顺序复用。
-constexpr uint16_t kReadyBase = 0;
-constexpr uint16_t kFreeBase = 4;
-constexpr uint16_t kSecondAivOnAic = 16;
-} // namespace Arch35CrossCore
-
 } // namespace KdaPrepare
 
 #endif // PSEUDOCODE_CHUNK_KDA_FWD_PREPARE_POLICY_H

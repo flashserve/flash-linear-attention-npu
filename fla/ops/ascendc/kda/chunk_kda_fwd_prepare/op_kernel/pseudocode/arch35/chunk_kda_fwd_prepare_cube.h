@@ -45,6 +45,10 @@ public:
             return;
         }
 
+        // AIC 视角下四个 local head 的固定核间编号。AIV1 的两个本地
+        // ready 0/1、free 4/5 在 AIC 侧映射为 16/17、20/21。
+        constexpr uint16_t kReadyFlagId[4] = {0, 1, 16, 17};
+        constexpr uint16_t kFreeFlagId[4] = {4, 5, 20, 21};
         // free[localHead] 初始只发布一次。以后每一组的 V0 会消费上一组
         // C7 发布的 free，不能在组首重复 set 同一个计数器。
         bool freeInitialized[Shape::kHeadsPerGroup] = {false, false, false, false};
@@ -77,8 +81,7 @@ public:
                         continue;
                     }
                     AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
-                        Arch35AicFlagId(Arch35CrossCore::kFreeBase,
-                                       localHead));
+                        kFreeFlagId[localHead]);
                     freeInitialized[localHead] = true;
                 }
 
@@ -90,12 +93,10 @@ public:
                         continue;
                     }
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        Arch35AicFlagId(Arch35CrossCore::kReadyBase,
-                                       localHead));
+                        kReadyFlagId[localHead]);
                     StageC2(chunk, localHead);
                     AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
-                        Arch35AicFlagId(Arch35CrossCore::kFreeBase,
-                                       localHead));
+                        kFreeFlagId[localHead]);
                 }
 
                 // C4 在一次性读完 B/X0/negX1/Akk 后立即归还 workspace
@@ -108,9 +109,8 @@ public:
                         continue;
                     }
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        Arch35AicFlagId(Arch35CrossCore::kReadyBase,
-                                       localHead));
-                    StageC4(chunk, localHead);
+                        kReadyFlagId[localHead]);
+                    StageC4(chunk, localHead, kFreeFlagId[localHead]);
                     StageC5(chunk, valueHead, localHead);
                 }
 
@@ -123,9 +123,9 @@ public:
                         continue;
                     }
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        Arch35AicFlagId(Arch35CrossCore::kReadyBase,
-                                       localHead));
-                    StageC7(chunk, valueHead, localHead);
+                        kReadyFlagId[localHead]);
+                    StageC7(chunk, valueHead, localHead,
+                            kFreeFlagId[localHead]);
                 }
             }
         }
@@ -138,9 +138,9 @@ private:
         const uint64_t slot = WorkspaceSlotBase(
             workgroup_, localHead, Workspace::kArch35WorkgroupStride);
         const uint32_t lane = L1::kHeadLane[localHead];
-        const uint8_t l1Mutex = Arch35Mutex::kAicL1[localHead];
-        const uint8_t operandMutex = Arch35Mutex::kAicL0Operand;
-        const uint8_t l0cMutex = Arch35Mutex::kAicL0cLower[localHead];
+        const uint8_t l1Mutex = static_cast<uint8_t>(localHead); // 0..3
+        const uint8_t operandMutex = 4;
+        const uint8_t l0cMutex = static_cast<uint8_t>(5 + localHead); // 5..8
         const uint8_t ownerAiv = static_cast<uint8_t>(localHead / 2);
         const uint32_t localSlot = localHead % 2;
         const uint32_t l0cLane = localHead * 64 * 1024;
@@ -273,14 +273,15 @@ private:
     }
 
     __aicore__ inline void StageC4(const ChunkRange &chunk,
-                                   uint32_t localHead)
+                                   uint32_t localHead,
+                                   uint16_t freeFlagId)
     {
         const uint64_t slot = WorkspaceSlotBase(
             workgroup_, localHead, Workspace::kArch35WorkgroupStride);
         const uint32_t lane = L1::kHeadLane[localHead];
-        const uint8_t l1Mutex = Arch35Mutex::kAicL1[localHead];
-        const uint8_t operandMutex = Arch35Mutex::kAicL0Operand;
-        const uint8_t l0cMutex = Arch35Mutex::kAicL0cLower[localHead];
+        const uint8_t l1Mutex = static_cast<uint8_t>(localHead); // 0..3
+        const uint8_t operandMutex = 4;
+        const uint8_t l0cMutex = static_cast<uint8_t>(5 + localHead); // 5..8
         const uint32_t l0cLane = localHead * 64 * 1024;
 
         AscendC::GlobalTensor<float> payload;
@@ -338,7 +339,7 @@ private:
 
         // 载荷已完全离开 workspace，立即允许 AIV 在同一地址生成 V6 RHS。
         AscendC::CrossCoreSetFlag<0x4, PIPE_MTE2>(
-            Arch35AicFlagId(Arch35CrossCore::kFreeBase, localHead));
+            freeFlagId);
         if (chunk.validRows <= 32) {
             return;
         }
@@ -403,9 +404,9 @@ private:
             return;
         }
 
-        const uint8_t l1Mutex = Arch35Mutex::kAicL1[localHead];
-        const uint8_t operandMutex = Arch35Mutex::kAicL0Operand;
-        const uint8_t l0cMutex = Arch35Mutex::kAicL0cLower[localHead];
+        const uint8_t l1Mutex = static_cast<uint8_t>(localHead); // 0..3
+        const uint8_t operandMutex = 4;
+        const uint8_t l0cMutex = static_cast<uint8_t>(5 + localHead); // 5..8
         const uint32_t l0cLane = localHead * 64 * 1024;
         auto negX1L1 = resource_.l1Buf.template GetBufferByByte<float>(
             L1::kNegX1 + localHead * L1::kQuadrantStride);
@@ -491,16 +492,19 @@ private:
 
     __aicore__ inline void StageC7(const ChunkRange &chunk,
                                     uint32_t valueHead,
-                                    uint32_t localHead)
+                                    uint32_t localHead,
+                                    uint16_t freeFlagId)
     {
         const uint32_t m = chunk.validRows > 32 ? 64 : 32;
         const uint64_t slot = WorkspaceSlotBase(
             workgroup_, localHead, Workspace::kArch35WorkgroupStride);
         const uint32_t lane = L1::kHeadLane[localHead];
-        const uint8_t l1Mutex = Arch35Mutex::kAicL1[localHead];
-        const uint8_t operandMutex = Arch35Mutex::kAicL0Operand;
-        const uint8_t lowerL0cMutex = Arch35Mutex::kAicL0cLower[localHead];
-        const uint8_t upperL0cMutex = Arch35Mutex::kAicL0cUpper[localHead];
+        const uint8_t l1Mutex = static_cast<uint8_t>(localHead); // 0..3
+        const uint8_t operandMutex = 4;
+        const uint8_t lowerL0cMutex =
+            static_cast<uint8_t>(5 + localHead); // 5..8
+        const uint8_t upperL0cMutex =
+            static_cast<uint8_t>(9 + localHead); // 9..12
         const uint32_t l0cLane = localHead * 64 * 1024;
 
         AscendC::GlobalTensor<InputT> kBetaRelay;
@@ -539,7 +543,7 @@ private:
         // 两个 RHS 已完整进入 L1，后续 Cube 不再读取 workspace；立即归还
         // 当前 slot，使下一组 V0/V1 与本组 C7 的 MMAD/Fixpipe 重叠。
         AscendC::CrossCoreSetFlag<0x4, PIPE_MTE2>(
-            Arch35AicFlagId(Arch35CrossCore::kFreeBase, localHead));
+            freeFlagId);
 
         auto akkL0 = resource_.l0ABuf.template GetBufferByByte<InputT>(0);
         auto kBetaL0 =

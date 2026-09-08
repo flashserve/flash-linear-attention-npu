@@ -39,20 +39,27 @@ public:
         pipe_->InitBuffer(l0BBuf_, 0x10000);
         pipe_->InitBuffer(l0CBuf_, 0x10000);
 
-        mte2ToMte1_ = pipe_->AllocEventID<AscendC::HardEvent::MTE2_MTE1>();
-        mte1ToM_ = pipe_->AllocEventID<AscendC::HardEvent::MTE1_M>();
-        mToMte1_ = pipe_->AllocEventID<AscendC::HardEvent::M_MTE1>();
-        mToFix_ = pipe_->AllocEventID<AscendC::HardEvent::M_FIX>();
-        fixToM_ = pipe_->AllocEventID<AscendC::HardEvent::FIX_M>();
-        mte2ToFix_ = pipe_->AllocEventID<AscendC::HardEvent::MTE2_FIX>();
-        for (uint32_t head = 0; head < Shape::kHeadsPerGroup; ++head) {
-            fixToMte2_[head] =
-                pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE2>();
-            tReady_[head] =
-                pipe_->AllocEventID<AscendC::HardEvent::MTE2_MTE1>();
-            fixToMte1_[head] =
-                pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE1>();
-        }
+        // 每种 HardEvent 有独立 ID 池。保留 Alloc/Release，并把 CANN 9.1
+        // 分配器的预期返回值直接列在申请现场，便于逐项核对。
+        mte2ToMte1_ = pipe_->AllocEventID<AscendC::HardEvent::MTE2_MTE1>(); // ID 0
+        mte1ToM_ = pipe_->AllocEventID<AscendC::HardEvent::MTE1_M>(); // ID 0
+        // AIC 的 TPipe::Init 已在 M_MTE1 池占用 0、1、2。
+        mToMte1_ = pipe_->AllocEventID<AscendC::HardEvent::M_MTE1>(); // ID 3
+        mToFix_ = pipe_->AllocEventID<AscendC::HardEvent::M_FIX>(); // ID 0
+        fixToM_ = pipe_->AllocEventID<AscendC::HardEvent::FIX_M>(); // ID 0
+        mte2ToFix_ = pipe_->AllocEventID<AscendC::HardEvent::MTE2_FIX>(); // ID 0
+        fixToMte2_[0] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE2>(); // ID 0
+        fixToMte2_[1] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE2>(); // ID 1
+        fixToMte2_[2] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE2>(); // ID 2
+        fixToMte2_[3] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE2>(); // ID 3
+        tReady_[0] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_MTE1>(); // ID 1
+        tReady_[1] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_MTE1>(); // ID 2
+        tReady_[2] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_MTE1>(); // ID 3
+        tReady_[3] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_MTE1>(); // ID 4
+        fixToMte1_[0] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE1>(); // ID 0
+        fixToMte1_[1] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE1>(); // ID 1
+        fixToMte1_[2] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE1>(); // ID 2
+        fixToMte1_[3] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE1>(); // ID 3
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
     }
@@ -62,6 +69,10 @@ public:
         if (coreCount_ == 0) {
             return;
         }
+        // mode 0x2 的核间 flag 是固定物理编号，不经过 EventID 分配器。
+        // pair0/pair1: ready=0/1，free=2/3。
+        constexpr uint16_t kReadyFlagId[2] = {0, 1};
+        constexpr uint16_t kFreeFlagId[2] = {2, 3};
         const uint32_t total = TotalWorkItems(args_.tiling);
         const uint32_t workBegin = WorkBegin(total, workgroup_, coreCount_);
         const uint32_t workEnd = WorkEnd(total, workgroup_, coreCount_);
@@ -75,7 +86,7 @@ public:
         // 两个 pair 的初始许可由 AIC 发布；后续许可由 C7 写回完成后发布。
         for (uint32_t pair = 0; pair < 2; ++pair) {
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
-                Arch22FlagId(Arch22CrossCore::kFreeBase, pair));
+                kFreeFlagId[pair]);
         }
 
         for (uint32_t work = workBegin; work < workEnd; ++work) {
@@ -94,7 +105,7 @@ public:
                 // C2：一次 pair wait 汇聚两个 AIV，再消费该 pair 的两个 local head。
                 for (uint32_t pair = 0; pair < 2; ++pair) {
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
-                        Arch22FlagId(Arch22CrossCore::kReadyBase, pair));
+                        kReadyFlagId[pair]);
                     for (uint32_t peer = 0; peer < 2; ++peer) {
                         const uint32_t localHead = pair * 2 + peer;
                         const uint32_t valueHead = groupBegin + localHead;
@@ -103,13 +114,13 @@ public:
                         }
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
-                        Arch22FlagId(Arch22CrossCore::kFreeBase, pair));
+                        kFreeFlagId[pair]);
                 }
 
                 // C4：读取 V3 的 B/X0/negX1，计算 T=B@X0 并常驻 L1。
                 for (uint32_t pair = 0; pair < 2; ++pair) {
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
-                        Arch22FlagId(Arch22CrossCore::kReadyBase, pair));
+                        kReadyFlagId[pair]);
                     for (uint32_t peer = 0; peer < 2; ++peer) {
                         const uint32_t localHead = pair * 2 + peer;
                         const uint32_t valueHead = groupBegin + localHead;
@@ -118,7 +129,7 @@ public:
                         }
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(
-                        Arch22FlagId(Arch22CrossCore::kFreeBase, pair));
+                        kFreeFlagId[pair]);
                 }
 
                 // C5：只在下半块存在时计算 Akk[32:M,0:32]=negX1@T。
@@ -134,8 +145,9 @@ public:
                 // workspace，再分别计算 W 与 U。
                 for (uint32_t pair = 0; pair < 2; ++pair) {
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
-                        Arch22FlagId(Arch22CrossCore::kReadyBase, pair));
-                    StageC7(chunk, groupBegin, headEnd, pair);
+                        kReadyFlagId[pair]);
+                    StageC7(chunk, groupBegin, headEnd, pair,
+                            kFreeFlagId[pair]);
                 }
             }
         }
@@ -452,7 +464,8 @@ private:
     __aicore__ inline void StageC7(const ChunkRange &chunk,
                                    uint32_t groupBegin,
                                    uint32_t headEnd,
-                                   uint32_t pair)
+                                   uint32_t pair,
+                                   uint16_t freeFlagId)
     {
         const bool hasBottom = chunk.validRows > 32;
         const uint32_t m = hasBottom ? 64 : 32;
@@ -497,7 +510,7 @@ private:
 
         // RHS 已全部离开 workspace；一次 collective free 同时归还 pair 的两个 slot。
         AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(
-            Arch22FlagId(Arch22CrossCore::kFreeBase, pair));
+            freeFlagId);
 
         // 再逐 head 消费 L1 常驻的 Akk 与两个 RHS，分别计算 W、U。
         for (uint32_t peer = 0; peer < 2; ++peer) {

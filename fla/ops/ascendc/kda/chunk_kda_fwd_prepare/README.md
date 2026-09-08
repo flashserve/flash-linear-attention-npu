@@ -10,12 +10,14 @@
 `HK` Q/K head 到 `HV` value/gate head 的 cohort 映射、静态 UB/L1/workspace 生命周期和
 ready/free 合同。代码直接采用 `GlobalTensor/LocalTensor`、`DataCopy`、`LoadData`、
 `Mmad`、`Fixpipe`、HardEvent 和 Arch35 Mutex 的真实 API 形态，各 Stage 的搬运、
-计算与同步都在对应函数内直接展开。
+计算与同步都在对应函数内直接展开；核内 EventID/Mutex ID 和核间 ready/free flag ID
+也在申请或主循环现场逐项列出。
 `USE_EXP2=false` 与 `USE_EXP2=true` 都是必须保留的编译期路径，分别在自然对数域和
 log2 域完成同一组门控计算。
 尚未由目标 CANN 头文件确认的布局和参数在调用现场标为 **TODO**；因此不能据此声称 A2/A3/A5
 已经具备可构建、可调用的生产支持。详细说明见
 [`op_kernel/pseudocode/README.md`](op_kernel/pseudocode/README.md)。
 
-所有标为 **TODO** 的设备 API 参数、同步 ID、内存布局、TilingKey 与 ABI 必须在正式实现前
-依据目标 CANN 版本重新确认；资源账本 host 测试不等价于 NPU 编译或测试。
+所有标为 **TODO** 的设备 API 参数、同步 mode 映射与计数深度、内存布局、TilingKey
+与 ABI 必须在正式实现前依据目标 CANN 版本重新确认；资源账本 host 测试不等价于
+NPU 编译或测试。

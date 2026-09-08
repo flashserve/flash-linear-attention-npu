@@ -51,18 +51,23 @@ public:
             return;
         }
         pipe_->InitBuffer(ubBuf_, Arch22Ub::kUsableBytes);
-        scalarRead_ = pipe_->AllocEventID<AscendC::HardEvent::V_S>();
-        scalarWrite_ = pipe_->AllocEventID<AscendC::HardEvent::S_V>();
-        sharedFree_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
+        // 每种 HardEvent 有独立 ID 池。这里保留 Alloc/Release，让后续
+        // 基础 API 能看到占用状态；注释给出 CANN 9.1 分配器的预期返回值。
+        scalarRead_ = pipe_->AllocEventID<AscendC::HardEvent::V_S>(); // ID 0
+        scalarWrite_ = pipe_->AllocEventID<AscendC::HardEvent::S_V>(); // ID 0
+        sharedFree_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>(); // ID 0
         // 两个 pair 分时复用共享 G/scratch；初始许可只发布一次。
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(sharedFree_);
-        for (uint32_t pair = 0; pair < 2; ++pair) {
-            ioFree_[pair] = pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
-            inputReady_[pair] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>();
-            outputReady_[pair] = pipe_->AllocEventID<AscendC::HardEvent::V_MTE3>();
-            v0StoreDone_[pair] = pipe_->AllocEventID<AscendC::HardEvent::MTE3_V>();
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(ioFree_[pair]);
-        }
+        ioFree_[0] = pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>(); // ID 0
+        ioFree_[1] = pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>(); // ID 1
+        inputReady_[0] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>(); // ID 0
+        inputReady_[1] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>(); // ID 1
+        outputReady_[0] = pipe_->AllocEventID<AscendC::HardEvent::V_MTE3>(); // ID 0
+        outputReady_[1] = pipe_->AllocEventID<AscendC::HardEvent::V_MTE3>(); // ID 1
+        v0StoreDone_[0] = pipe_->AllocEventID<AscendC::HardEvent::MTE3_V>(); // ID 0
+        v0StoreDone_[1] = pipe_->AllocEventID<AscendC::HardEvent::MTE3_V>(); // ID 1
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(ioFree_[0]);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(ioFree_[1]);
     }
 
     __aicore__ inline void Process()
@@ -70,6 +75,10 @@ public:
         if (coreCount_ == 0) {
             return;
         }
+        // mode 0x2 的核间 flag 是固定物理编号，不经过 EventID 分配器。
+        // pair0/pair1: ready=0/1，free=2/3。
+        constexpr uint16_t kReadyFlagId[2] = {0, 1};
+        constexpr uint16_t kFreeFlagId[2] = {2, 3};
         const uint32_t total = TotalWorkItems(args_.tiling);
         const uint32_t workBegin = WorkBegin(total, workgroup_, coreCount_);
         const uint32_t workEnd = WorkEnd(total, workgroup_, coreCount_);
@@ -101,7 +110,7 @@ public:
                 for (uint32_t pair = 0; pair < 2; ++pair) {
                     const uint32_t localHead = pair * 2 + aiv_;
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
-                        Arch22FlagId(Arch22CrossCore::kFreeBase, pair));
+                        kFreeFlagId[pair]);
                     const uint32_t valueHead = groupBegin + localHead;
                     if (valueHead < headEnd) {
                         StageV0(chunk, valueHead, localHead, pair);
@@ -109,36 +118,36 @@ public:
                     }
                     // 尾部无任务的 AIV 仍参加集合，但不计算地址或访问 GM。
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(
-                        Arch22FlagId(Arch22CrossCore::kReadyBase, pair));
+                        kReadyFlagId[pair]);
                 }
                 for (uint32_t pair = 0; pair < 2; ++pair) {
                     const uint32_t localHead = pair * 2 + aiv_;
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
-                        Arch22FlagId(Arch22CrossCore::kFreeBase, pair));
+                        kFreeFlagId[pair]);
                     const uint32_t valueHead = groupBegin + localHead;
                     if (valueHead < headEnd) {
                         StageV3(chunk, valueHead, localHead, pair);
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(
-                        Arch22FlagId(Arch22CrossCore::kReadyBase, pair));
+                        kReadyFlagId[pair]);
                 }
                 for (uint32_t pair = 0; pair < 2; ++pair) {
                     const uint32_t localHead = pair * 2 + aiv_;
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
-                        Arch22FlagId(Arch22CrossCore::kFreeBase, pair));
+                        kFreeFlagId[pair]);
                     const uint32_t valueHead = groupBegin + localHead;
                     if (valueHead < headEnd) {
                         StageV6(chunk, valueHead, localHead, pair);
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(
-                        Arch22FlagId(Arch22CrossCore::kReadyBase, pair));
+                        kReadyFlagId[pair]);
                 }
             }
         }
         // 消费最后一次 C7 发布，保证每次 set 都有对应 wait。
         for (uint32_t pair = 0; pair < 2; ++pair) {
             AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
-                Arch22FlagId(Arch22CrossCore::kFreeBase, pair));
+                kFreeFlagId[pair]);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(ioFree_[pair]);
             ReleasePairEvents(pair);
         }
