@@ -15,11 +15,11 @@
 namespace Catlass::Epilogue {
 
 struct EpilogueAtlasGDNFwdOQkmask {
-    using ArchTag = Arch::AtlasA2;
+    using ArchTag = Arch::Ascend950;
 };
 
 struct EpilogueAtlasGDNFwdOOutput {
-    using ArchTag = Arch::AtlasA2;
+    using ArchTag = Arch::Ascend950;
 };
 
 }  // namespace Catlass::Epilogue
