@@ -42,7 +42,11 @@ MSS_STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key", "mem": 1.1}
 MSS_UNSAFE_SOURCE_CASES = ((4, "full"), (24, "staged"))
 MSS_VARLEN_TAIL_CASE_ID = 6
 MSS_VARLEN_TAIL_SEED = 4
-MSS_COUNT = MSS_VARLEN_TAIL_CASE_ID + 1
+MSS_FP16_K256_SOURCE_CASE = (69, "staged")
+MSS_FP16_K256_CASE_ID = 7
+MSS_DIRECT_C2_SOURCE_CASE = 150
+MSS_DIRECT_C2_CASE_IDS = (8, 9)
+MSS_COUNT = MSS_DIRECT_C2_CASE_IDS[-1] + 1
 _T_VALUES = (64, 65, 96, 127, 128, 129, 192, 256, 512, 1024)
 _DATA_SCALES = (0.03, 0.08, 0.2, 0.5)
 _GATE_SCALES = (0.01, 0.02, 0.04, 0.08)
@@ -71,10 +75,6 @@ _A5_FUSION_PROFILE_ID = 28
 _HANG_REGRESSION_PROFILE_ID = 5
 _EMPTY_STATE_NO_INITIAL_PROFILE_ID = 41
 _EMPTY_STATE_WITH_INITIAL_PROFILE_ID = 56
-# These cases require accuracy_lt recheck before a single-run precision
-# failure is treated as a kernel regression.
-ACCURACY_LT_RECHECK_CASE_IDS = frozenset({4, 12, 14, 52, 54})
-ACCURACY_LT_RECHECK_TAG = "needs_accuracy_lt_recheck"
 
 
 def _tiling_key(chunk_size: int, key_dim: int, value_dim: int) -> int:
@@ -273,9 +273,6 @@ def _accuracy_spec(profile_id: int, q_dtype: str, case_id: int) -> dict[str, Any
             ),
         })
 
-    if case_id in ACCURACY_LT_RECHECK_CASE_IDS:
-        spec["tags"] = f"{spec['tags']},{ACCURACY_LT_RECHECK_TAG}"
-
     key = _tiling_key(spec["chunk_size"], spec["K"], spec["V"])
     spec.update({
         "scale": 1.0 / math.sqrt(int(spec["K"])),
@@ -447,6 +444,52 @@ def build_mss_specs(*, seed_base: int = SEED_BASE) -> list[dict[str, Any]]:
         })
         specs.append(spec)
     specs.append(_varlen_tail_regression_spec(seed_base=seed_base))
+    source_case_id, launch_mode = MSS_FP16_K256_SOURCE_CASE
+    source = accuracy_by_id[source_case_id]
+    spec = copy.deepcopy(source)
+    spec.update({
+        "case_id": MSS_FP16_K256_CASE_ID,
+        "case_key": f"mss_fp16_k256_from_accuracy_{source_case_id}",
+        "design_id": "KDA-FWD-MSS-FP16-K256",
+        "profile": "mss_fp16_k256_regression",
+        "tags": (
+            f"mss,mssanitizer,fp16,k256,fp32_state,tiling_key_1,{launch_mode},"
+            f"source_accuracy_case_{source_case_id}"
+        ),
+        "source_accuracy_case_id": source_case_id,
+        "source_accuracy_case_key": str(source["case_key"]),
+        "a5_launch_mode": launch_mode,
+    })
+    specs.append(spec)
+    source = accuracy_by_id[MSS_DIRECT_C2_SOURCE_CASE]
+    for local_case_id, output_final_state in zip(
+        MSS_DIRECT_C2_CASE_IDS, (True, False)
+    ):
+        spec = copy.deepcopy(source)
+        spec.update({
+            "case_id": local_case_id,
+            "case_key": (
+                f"mss_direct_c2_from_accuracy_{MSS_DIRECT_C2_SOURCE_CASE}_"
+                f"final_{str(output_final_state).lower()}"
+            ),
+            "design_id": (
+                "KDA-FWD-MSS-DIRECT-C2-FINAL"
+                if output_final_state
+                else "KDA-FWD-MSS-DIRECT-C2-NO-FINAL"
+            ),
+            "profile": "mss_direct_c2_regression",
+            "tags": (
+                "mss,mssanitizer,bf16,direct_c2_ub,tiling_key_2,dense,"
+                f"final_{str(output_final_state).lower()},"
+                f"source_accuracy_case_{MSS_DIRECT_C2_SOURCE_CASE}"
+            ),
+            "source_accuracy_case_id": MSS_DIRECT_C2_SOURCE_CASE,
+            "source_accuracy_case_key": str(source["case_key"]),
+            "a5_launch_mode": "full",
+            "a5_fwd_h_path": "direct_c2_ub",
+            "output_final_state": output_final_state,
+        })
+        specs.append(spec)
     return specs
 
 
@@ -566,17 +609,6 @@ def _validate_specs(
     if manifest == "accuracy":
         if len(specs) != ACCURACY_COUNT or {str(s["soc"]) for s in specs} != {"all"}:
             raise ValueError("accuracy must contain exactly 200 cross-SoC cases")
-        actual_recheck_ids = {
-            int(spec["case_id"])
-            for spec in specs
-            if ACCURACY_LT_RECHECK_TAG in str(spec.get("tags", "")).split(",")
-        }
-        if actual_recheck_ids != set(ACCURACY_LT_RECHECK_CASE_IDS):
-            raise ValueError(
-                "accuracy_lt recheck IDs drifted: "
-                f"expected {sorted(ACCURACY_LT_RECHECK_CASE_IDS)}, "
-                f"got {sorted(actual_recheck_ids)}"
-            )
         gate_variants = {
             (bool(s["use_gate_in_kernel"]), bool(s["safe_gate"]), bool(s["dt_bias"]))
             for s in specs
@@ -669,6 +701,7 @@ def _validate_specs(
         identity_fields = {
             "case_id", "case_key", "design_id", "profile", "tags",
             "source_accuracy_case_id", "source_accuracy_case_key", "a5_launch_mode",
+            "a5_fwd_h_path",
         }
         for local_case_id, (source_case_id, launch_mode) in enumerate(
             MSS_UNSAFE_SOURCE_CASES, start=4
@@ -704,6 +737,70 @@ def _validate_specs(
             raise ValueError(
                 f"MSS case {MSS_VARLEN_TAIL_CASE_ID} varlen tail regression drifted"
             )
+        source_case_id, launch_mode = MSS_FP16_K256_SOURCE_CASE
+        fp16_k256 = specs[MSS_FP16_K256_CASE_ID]
+        source = accuracy_by_id[source_case_id]
+        if (
+            int(fp16_k256.get("source_accuracy_case_id", -1)) != source_case_id
+            or fp16_k256.get("source_accuracy_case_key") != source["case_key"]
+            or fp16_k256.get("a5_launch_mode") != launch_mode
+        ):
+            raise ValueError("MSS FP16 K=256 case provenance drifted")
+        if set(fp16_k256) != set(source) | {
+            "source_accuracy_case_id", "source_accuracy_case_key", "a5_launch_mode",
+        }:
+            raise ValueError("MSS FP16 K=256 case field set drifted")
+        for name, value in source.items():
+            if name not in identity_fields and fp16_k256.get(name) != value:
+                raise ValueError(
+                    f"MSS FP16 K=256 case changed source field {name}"
+                )
+        if not (
+            fp16_k256["q_dtype"] == "fp16"
+            and int(fp16_k256["tiling_key"]) == 1
+            and int(fp16_k256["K"]) == 256
+            and int(fp16_k256["V"]) == 128
+            and fp16_k256["a5_launch_mode"] == "staged"
+        ):
+            raise ValueError("MSS FP16 K=256 case misses the A5 FP32-state path")
+        direct_source = accuracy_by_id[MSS_DIRECT_C2_SOURCE_CASE]
+        for local_case_id, output_final_state in zip(
+            MSS_DIRECT_C2_CASE_IDS, (True, False)
+        ):
+            direct_case = specs[local_case_id]
+            if (
+                int(direct_case.get("source_accuracy_case_id", -1))
+                != MSS_DIRECT_C2_SOURCE_CASE
+                or direct_case.get("source_accuracy_case_key")
+                != direct_source["case_key"]
+                or direct_case.get("a5_launch_mode") != "full"
+                or direct_case.get("a5_fwd_h_path") != "direct_c2_ub"
+            ):
+                raise ValueError(f"MSS direct-C2 case {local_case_id} provenance drifted")
+            if set(direct_case) != set(direct_source) | {
+                "source_accuracy_case_id", "source_accuracy_case_key", "a5_launch_mode",
+                "a5_fwd_h_path",
+            }:
+                raise ValueError(f"MSS direct-C2 case {local_case_id} field set drifted")
+            variant_fields = identity_fields | {"output_final_state"}
+            for name, value in direct_source.items():
+                if name not in variant_fields and direct_case.get(name) != value:
+                    raise ValueError(
+                        f"MSS direct-C2 case {local_case_id} changed source field {name}"
+                    )
+            if not (
+                direct_case["q_dtype"] == "bf16"
+                and not direct_case["cu_seqlens"]
+                and int(direct_case["chunk_size"]) == 64
+                and int(direct_case["K"]) == 128
+                and int(direct_case["V"]) == 128
+                and int(direct_case["T"]) % int(direct_case["chunk_size"]) == 0
+                and int(direct_case["B"]) * int(direct_case["HV"]) >= 16
+                and bool(direct_case["output_final_state"]) is output_final_state
+            ):
+                raise ValueError(
+                    f"MSS direct-C2 case {local_case_id} misses the A5 selector"
+                )
     if manifest == "perf" and {int(s["tiling_key"]) for s in specs} != set(TILING_KEYS):
         raise ValueError("performance must contain both tiling keys")
 
@@ -762,7 +859,16 @@ def main() -> None:
         _validate_specs(specs, manifest, seed_base=args.seed)
     for path, (specs, manifest) in zip(paths, specs_by_manifest):
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps([_case_payload(s, manifest=manifest) for s in specs], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        path.write_text(
+            json.dumps(
+                [_case_payload(s, manifest=manifest) for s in specs],
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
     if args.print_summary:
         print(
             f"seed={args.seed} accuracy={len(specs_by_manifest[0][0])} "

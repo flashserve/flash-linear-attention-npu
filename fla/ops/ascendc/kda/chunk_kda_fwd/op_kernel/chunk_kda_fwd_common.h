@@ -54,7 +54,11 @@ struct ChunkKdaFwdAddresses {
     GM_ADDR qg;
     GM_ADDR kg;
     GM_ADDR vNew;
+    GM_ADDR vNewFp32;
     GM_ADDR h;
+    GM_ADDR hFp32;
+    GM_ADDR akkFp32;
+    GM_ADDR wFp32;
     GM_ADDR qgScaled;
     GM_ADDR uSeed;
 };
@@ -78,6 +82,8 @@ struct FwdHTilingView {
     int64_t hWorkspaceOffset;
     int64_t numSeqWorkspaceOffset;
     int64_t numChunksWorkspaceOffset;
+    int64_t stateOperandFp32Offset;
+    bool storeH;
 };
 
 template <bool SAFE_GATE, typename T, uint32_t COMPILE_BT,
@@ -125,6 +131,9 @@ __aicore__ inline FwdHTilingView MakeFwdHTiling(const TilingData &tiling)
         tiling.hWorkspaceOffset,
         tiling.numSeqWorkspaceOffset,
         tiling.numChunksWorkspaceOffset,
+        static_cast<int64_t>(tiling.stateOperandFp32Offset) -
+            static_cast<int64_t>(tiling.fwdHWorkspaceBaseOffset),
+        tiling.storeH,
     };
 }
 
@@ -137,7 +146,9 @@ __aicore__ inline GM_ADDR ResolveStorage(
 template <typename TilingData>
 __aicore__ inline ChunkKdaFwdAddresses ResolveAddresses(
     GM_ADDR finalState, GM_ADDR gk, GM_ADDR w, GM_ADDR u, GM_ADDR qg,
-    GM_ADDR kg, GM_ADDR vNew, GM_ADDR h, GM_ADDR userWorkspace,
+    GM_ADDR kg, GM_ADDR vNew, GM_ADDR vNewFp32, GM_ADDR h,
+    GM_ADDR hFp32, GM_ADDR akkFp32, GM_ADDR wFp32,
+    GM_ADDR userWorkspace,
     const TilingData &tiling)
 {
     return {
@@ -149,7 +160,19 @@ __aicore__ inline ChunkKdaFwdAddresses ResolveAddresses(
         ResolveStorage(qg, userWorkspace, tiling.qgStorageOffset, tiling.storeQG),
         ResolveStorage(kg, userWorkspace, tiling.kgStorageOffset, tiling.storeKg),
         ResolveStorage(vNew, userWorkspace, tiling.vNewStorageOffset, tiling.storeVNew),
+        ResolveStorage(vNewFp32, userWorkspace,
+                       tiling.vNewFp32StorageOffset,
+                       tiling.storeVNewFp32),
         ResolveStorage(h, userWorkspace, tiling.hStorageOffset, tiling.storeH),
+        ResolveStorage(hFp32, userWorkspace,
+                       tiling.hFp32StorageOffset,
+                       tiling.storeHFp32),
+        ResolveStorage(akkFp32, userWorkspace,
+                       tiling.prepareAkkFp32Offset,
+                       tiling.storeAkkFp32),
+        ResolveStorage(wFp32, userWorkspace,
+                       tiling.stateOperandFp32Offset,
+                       tiling.storeWFp32),
         userWorkspace + tiling.qgScaledOffset,
         userWorkspace + tiling.outputScratchOffset,
     };
@@ -209,7 +232,8 @@ __aicore__ inline void RunPostWu(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta,
     GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
     GM_ADDR wSeed, GM_ADDR akk, GM_ADDR uSeed, GM_ADDR w, GM_ADDR u,
-    GM_ADDR kg, GM_ADDR vNew, GM_ADDR userWorkspace,
+    GM_ADDR kg, GM_ADDR vNew, GM_ADDR akkFp32, GM_ADDR wFp32,
+    GM_ADDR uFp32, GM_ADDR userWorkspace,
     const TilingData &tiling, TPipe &pipe)
 {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -219,15 +243,23 @@ __aicore__ inline void RunPostWu(
         if (ResidualPolicy::IsEnabled(tiling)) {
             KdaPostWu::RunChunkKdaPostWu<true, T, GK_T, BETA_T>(
                 q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
-                wSeed, akk, uSeed, w, u, kg, vNew, userWorkspace, tiling,
-                pipe);
+                wSeed, IsSameType<T, half>::value ? akkFp32 : akk, uSeed,
+                w, u, IsSameType<T, half>::value ? wFp32 : w,
+                IsSameType<T, half>::value ? uFp32 : u, kg, vNew,
+                userWorkspace, tiling, pipe);
             return;
         }
     }
     KdaPostWu::RunChunkKdaPostWu<false, T, GK_T, BETA_T>(
         q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices, wSeed,
-        akk, uSeed, w, u, kg, vNew, userWorkspace, tiling, pipe);
+        IsSameType<T, half>::value ? akkFp32 : akk, uSeed, w, u,
+        IsSameType<T, half>::value ? wFp32 : w,
+        IsSameType<T, half>::value ? uFp32 : u, kg, vNew, userWorkspace,
+        tiling, pipe);
 #else
+    (void)akkFp32;
+    (void)wFp32;
+    (void)uFp32;
     KdaPostWu::RunChunkKdaPostWu<T, GK_T, BETA_T>(
         q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices, wSeed,
         akk, uSeed, w, u, kg, vNew, userWorkspace, tiling, pipe);
@@ -257,7 +289,7 @@ __aicore__ inline void RunFrontEnd(
         q, k, v, addresses.gk, g, aLog, dtBias, beta, initialState,
         cuSeqlens, chunkIndices, aqk, akk, addresses.qg,
         addresses.qgScaled, addresses.w, uSeed, addresses.kg,
-        userWorkspace, tiling, pipe, tiling.storeQG);
+        addresses.akkFp32, userWorkspace, tiling, pipe, tiling.storeQG);
     SyncAll<false>();
     pipe.Reset();
 
@@ -267,6 +299,7 @@ __aicore__ inline void RunFrontEnd(
             q, k, v, addresses.gk, beta, initialState, cuSeqlens,
             chunkIndices, addresses.w, akk, uSeed,
             addresses.w, addresses.u, addresses.kg, addresses.vNew,
+            addresses.akkFp32, addresses.wFp32, addresses.vNewFp32,
             userWorkspace, tiling, pipe);
         SyncAll<false>();
         pipe.Reset();
@@ -292,9 +325,10 @@ __aicore__ inline void RunFwdHImpl(
     FwdHKernel stateOp;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     stateOp.InitFromData(
-        addresses.kg, addresses.w, addresses.u, addresses.gk, addresses.gk,
+        addresses.kg, addresses.w, addresses.u, addresses.wFp32,
+        addresses.vNewFp32, addresses.gk, addresses.gk,
         initialState, cuSeqlens, chunkIndices, addresses.h, addresses.vNew,
-        addresses.finalState, fwdHTiling,
+        addresses.vNewFp32, addresses.hFp32, addresses.finalState, fwdHTiling,
         userWorkspace + tiling.fwdHWorkspaceBaseOffset, addresses.uSeed);
 #else
     stateOp.InitFromData(
@@ -352,10 +386,27 @@ __aicore__ inline void RunGenericBackEnd(
     }
     SyncAll<false>();
     TPipe pipe;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using PropagatedVType =
+        std::conditional_t<IsSameType<T, half>::value, float, T>;
+    using PropagatedHType =
+        std::conditional_t<IsSameType<T, half>::value, float, T>;
+    GM_ADDR propagatedVNew = IsSameType<T, half>::value
+        ? addresses.vNewFp32
+        : addresses.vNew;
+    GM_ADDR propagatedH = IsSameType<T, half>::value
+        ? addresses.hFp32
+        : addresses.h;
+    KdaFinalize::RunChunkKdaOutput<
+        T, float, BETA_T, PropagatedVType, PropagatedHType>(
+#else
+    GM_ADDR propagatedVNew = addresses.vNew;
+    GM_ADDR propagatedH = addresses.h;
     KdaFinalize::RunChunkKdaOutput<T, float, BETA_T>(
+#endif
         q, k, v, addresses.gk, beta, initialState, cuSeqlens,
         chunkIndices, addresses.qgScaled, aqk,
-        addresses.vNew, addresses.h, attnOut, userWorkspace, tiling, pipe);
+        propagatedVNew, propagatedH, attnOut, userWorkspace, tiling, pipe);
 }
 
 template <bool SAFE_GATE, typename T, typename BETA_T, typename TilingData,
@@ -380,10 +431,27 @@ __aicore__ inline void RunGenericBackEnd(
             userWorkspace, tiling);
     }
     SyncAll<false>();
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    using PropagatedVType =
+        std::conditional_t<IsSameType<T, half>::value, float, T>;
+    using PropagatedHType =
+        std::conditional_t<IsSameType<T, half>::value, float, T>;
+    GM_ADDR propagatedVNew = IsSameType<T, half>::value
+        ? addresses.vNewFp32
+        : addresses.vNew;
+    GM_ADDR propagatedH = IsSameType<T, half>::value
+        ? addresses.hFp32
+        : addresses.h;
+    KdaFinalize::RunChunkKdaOutput<
+        T, float, BETA_T, PropagatedVType, PropagatedHType>(
+#else
+    GM_ADDR propagatedVNew = addresses.vNew;
+    GM_ADDR propagatedH = addresses.h;
     KdaFinalize::RunChunkKdaOutput<T, float, BETA_T>(
+#endif
         q, k, v, addresses.gk, beta, initialState, cuSeqlens,
         chunkIndices, addresses.qgScaled, aqk,
-        addresses.vNew, addresses.h, attnOut, userWorkspace, tiling, pipe);
+        propagatedVNew, propagatedH, attnOut, userWorkspace, tiling, pipe);
 }
 
 template <bool SAFE_GATE, typename T, typename BETA_T, typename TilingData,
@@ -393,11 +461,14 @@ __aicore__ inline void RunGeneric(
     GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR initialState,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR attnOut,
     GM_ADDR finalState, GM_ADDR gk, GM_ADDR aqk, GM_ADDR akk,
-    GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR vNew, GM_ADDR h,
-    GM_ADDR userWorkspace, const TilingData &tiling)
+    GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR vNew,
+    GM_ADDR vNewFp32, GM_ADDR h, GM_ADDR hFp32, GM_ADDR akkFp32,
+    GM_ADDR wFp32, GM_ADDR userWorkspace,
+    const TilingData &tiling)
 {
     const auto addresses = ResolveAddresses(
-        finalState, gk, w, u, qg, kg, vNew, h, userWorkspace, tiling);
+        finalState, gk, w, u, qg, kg, vNew, vNewFp32, h, hFp32,
+        akkFp32, wFp32, userWorkspace, tiling);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     TPipe pipe;
     RunFrontEnd<SAFE_GATE, T, float, BETA_T, TilingData,

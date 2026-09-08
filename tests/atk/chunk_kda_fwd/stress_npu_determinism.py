@@ -31,6 +31,13 @@ _VALID_ROUTES = {"ascendc", "aclnn", "direct_launch"}
 _TILING_KEYS = {1, 2}
 _REQUIRED_UNSAFE_CASES = {4: (4, "full"), 5: (24, "staged")}
 _VARLEN_TAIL_CASE_ID = 6
+_FP16_K256_CASE_ID = 7
+_FP16_K256_SOURCE = (69, "accuracy_034_TND_t512_fp16", "staged")
+_DIRECT_C2_CASES = {
+    8: (150, "accuracy_075_NTD_t512_bf16", True),
+    9: (150, "accuracy_075_NTD_t512_bf16", False),
+}
+_COMPLETE_MSS_CASE_IDS = tuple(range(max(_DIRECT_C2_CASES) + 1))
 
 
 def _parse_args() -> argparse.Namespace:
@@ -202,7 +209,10 @@ def _load_specs(
                 f"case {current_id} has inconsistent tiling key: "
                 f"manifest={key}, expected={expected_key}, host={actual_key}"
             )
-        if "source_accuracy_case_id" in spec:
+        has_source = "source_accuracy_case_id" in spec
+        if current_id in _REQUIRED_UNSAFE_CASES:
+            if not has_source:
+                raise ValueError(f"case {current_id} is missing unsafe source metadata")
             expected_source = _REQUIRED_UNSAFE_CASES.get(current_id)
             actual_source = (
                 int(spec["source_accuracy_case_id"]),
@@ -227,8 +237,63 @@ def _load_specs(
                 and int(spec["V"]) >= int(spec["K"])
             ):
                 raise ValueError(f"case {current_id} misses the A5 precision selector")
-        elif current_id in _REQUIRED_UNSAFE_CASES:
-            raise ValueError(f"case {current_id} is missing unsafe source metadata")
+        elif current_id == _FP16_K256_CASE_ID:
+            if not has_source:
+                raise ValueError("case 7 is missing FP16 K=256 source metadata")
+            source_id, source_key, expected_mode = _FP16_K256_SOURCE
+            actual_source = (
+                int(spec["source_accuracy_case_id"]),
+                str(spec.get("source_accuracy_case_key", "")),
+                str(spec.get("a5_launch_mode", "")),
+            )
+            if actual_source != _FP16_K256_SOURCE:
+                raise ValueError(f"case 7 has invalid FP16 K=256 provenance {actual_source}")
+            if _a5_launch_mode(spec) != expected_mode:
+                raise ValueError("case 7 FP16 K=256 launch mode drifted")
+            if not (
+                source_id == 69
+                and source_key == "accuracy_034_TND_t512_fp16"
+                and spec["q_dtype"] == "fp16"
+                and int(spec["K"]) == 256
+                and int(spec["V"]) == 128
+                and key == 1
+            ):
+                raise ValueError("case 7 misses the A5 FP32-state selector")
+        elif current_id in _DIRECT_C2_CASES:
+            if not has_source:
+                raise ValueError(f"case {current_id} is missing direct-C2 source metadata")
+            source_id, source_key, output_final_state = _DIRECT_C2_CASES[current_id]
+            actual_source = (
+                int(spec["source_accuracy_case_id"]),
+                str(spec.get("source_accuracy_case_key", "")),
+            )
+            if actual_source != (source_id, source_key):
+                raise ValueError(
+                    f"case {current_id} has invalid direct-C2 provenance {actual_source}"
+                )
+            expected_optional = (
+                "initial=False,final=True,varlen=False,indices=False"
+                if output_final_state
+                else "initial=False,final=False,varlen=False,indices=False"
+            )
+            if not (
+                str(spec.get("a5_launch_mode", "")) == "full"
+                and _a5_launch_mode(spec) == "full"
+                and spec.get("a5_fwd_h_path") == "direct_c2_ub"
+                and spec["q_dtype"] == "bf16"
+                and not str(spec.get("cu_seqlens", "")).strip()
+                and int(spec["chunk_size"]) == 64
+                and int(spec["K"]) == 128
+                and int(spec["V"]) == 128
+                and int(spec["T"]) % int(spec["chunk_size"]) == 0
+                and int(spec["B"]) * int(spec["HV"]) >= 16
+                and bool(spec["output_final_state"]) is output_final_state
+                and spec.get("optional_spec") == expected_optional
+                and key == 2
+            ):
+                raise ValueError(f"case {current_id} misses the A5 direct-C2 selector")
+        elif has_source:
+            raise ValueError(f"case {current_id} has unexpected source metadata")
         if current_id == _VARLEN_TAIL_CASE_ID:
             expected_tail = {
                 "profile": "determinism_regression",
@@ -275,9 +340,10 @@ def _load_specs(
     selected.sort(key=lambda item: (int(item["case_id"]), int(item["tiling_key"])))
     if case_id is None:
         selected_ids = [int(item["case_id"]) for item in selected]
-        if selected_ids != list(range(7)):
+        if selected_ids != list(_COMPLETE_MSS_CASE_IDS):
             raise ValueError(
-                f"complete MSS selection must contain IDs 0--6; selected {selected_ids}"
+                "complete MSS selection must contain IDs "
+                f"0--{_COMPLETE_MSS_CASE_IDS[-1]}; selected {selected_ids}"
             )
         base_coverage = {
             (int(item["tiling_key"]), bool(item["initial_state"]))
@@ -290,15 +356,19 @@ def _load_specs(
             raise ValueError(
                 "MSS IDs 0--3 must cover ordinary/boundary rows for both tiling keys"
             )
-        unsafe_launches = {
+        cloned_launches = {
             (int(item["source_accuracy_case_id"]), str(item.get("a5_launch_mode", "")))
             for item in selected
             if "source_accuracy_case_id" in item
         }
-        if unsafe_launches != set(_REQUIRED_UNSAFE_CASES.values()):
+        expected_cloned_launches = set(_REQUIRED_UNSAFE_CASES.values()) | {
+            (_FP16_K256_SOURCE[0], _FP16_K256_SOURCE[2]),
+            (_DIRECT_C2_CASES[8][0], "full"),
+        }
+        if cloned_launches != expected_cloned_launches:
             raise ValueError(
-                "complete MSS selection must cover the canonical unsafe full/staged "
-                f"cases; selected {sorted(unsafe_launches)}"
+                "complete MSS selection must cover the canonical cloned launch modes; "
+                f"selected {sorted(cloned_launches)}"
             )
     return selected
 

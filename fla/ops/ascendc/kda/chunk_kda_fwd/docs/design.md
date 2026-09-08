@@ -99,6 +99,15 @@ attn_out = qg_scaled @ h + Aqk @ v_new
 
 kernel 内直接按 BSND/TND 写出 `attn_out`。供反向使用的中间量保持 BNSD/NTD。
 
+A5 FP16 使用 FP32 内部 `hCompute` 且 `K>128` 时，Finalize 将 `qg_scaled @ h` 沿 K 维拆为
+`[0,128)` 和 `[128,K)` 两个独立 MMAD。每个 MMAD 只产生一个完整的 L0C 结果，分别写入
+`state0/state1` FP32 workspace 平面；`Aqk @ v_new` 写入第三个 `local` 平面。AIV 等待三路
+Fixpipe 写回后，以 FP32 计算 `(state0 + state1) + local`，再做范围保护和输出类型转换。
+两段 state MMAD 均在复用 L1/L0 与事件资源前先完成 `finalWaitFlags`，随后执行 `PIPE_ALL`
+排空 Fixpipe，避免下一段重置固定 EventID 时仍有上一段事务在途。
+该拆分避免依赖目标 CANN 版本未覆盖的 L0C 跨 K 轮 UnitFlag 累加语义。`K<=128` 保持单次
+state MMAD；不足 16 个 token 的尾块继续使用既有 VEC 路径。
+
 ## 状态布局
 
 内部递推统一使用 `[...,K,V]`。`state_v_first=true` 时，L2 在进入 FwdH 前转置 initial state。
@@ -113,6 +122,10 @@ L2 不理解 autograd 重计算策略。`final_state/gk/w/u/qg/kg/v_new/h` 是�
 固定 ABI 占位，并由 tiling 在 kernel workspace 中承接实际中间结果。A5 四段 launch 路径将
 阶段间依赖的 `gk/w/u/qg/kg/v_new/h/final_state` 和私有 `qg_scaled/u_seed` 物化为 executor 内部张量，
 使后续 launch 不依赖前一 launch 的 kernel workspace。公开输出存在时直接作为内部目标使用。
+
+Finalize 的输出 scratch 通常包含 `state/local` 两个 FP32 平面；A5 FP16、FP32 内部状态、
+`K>128` 的 Full/Finalize 阶段改为 `state0/state1/local` 三个平面。该空间完全属于私有 kernel
+workspace，由 tiling 按实际 shape 计算，不新增公开输入、输出或 ABI 字段。
 
 Python/legacy 包装层对齐 fla-org `chunk_kda_fwd` 提交
 `0f0f0c97af39343855b43bbbaddcedfda5cb9d77`：

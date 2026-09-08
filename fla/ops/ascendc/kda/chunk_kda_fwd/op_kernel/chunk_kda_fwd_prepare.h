@@ -2602,7 +2602,7 @@ __aicore__ inline void RunChunkKdaPrepare(
     GM_ADDR, GM_ADDR beta, GM_ADDR initialState, GM_ADDR cuSeqlens,
     GM_ADDR chunkIndices, GM_ADDR aqk, GM_ADDR akk, GM_ADDR qg,
     GM_ADDR qgScaled, GM_ADDR wSeed, GM_ADDR uSeed, GM_ADDR,
-    GM_ADDR userWorkspace, const TilingData &tiling, TPipe &pipe,
+    GM_ADDR, GM_ADDR userWorkspace, const TilingData &tiling, TPipe &pipe,
     bool = true)
 {
     RunChunkKdaPrepare<SAFE_GATE, T, GK_T, BETA_T>(

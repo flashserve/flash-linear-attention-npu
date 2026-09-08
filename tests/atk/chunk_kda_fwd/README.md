@@ -8,7 +8,7 @@ executor 使用现代 raw `g`、`A_log`、`dt_bias` 接口，与当前算子实�
 | 文件 | 用途 | 规模 |
 | --- | --- | --- |
 | `atk_chunk_kda_fwd.json` | 混合容差精度 | 200 条正向用例（ID 0--199） |
-| `atk_chunk_kda_fwd_mss.json` | `accuracy_dc` 与 mssanitizer | 7 条：4 条 key 覆盖、2 条 A5 同步回归与 1 条变长 tail 回归 |
+| `atk_chunk_kda_fwd_mss.json` | `accuracy_dc` 与 mssanitizer | 10 条：4 条 key 覆盖、2 条 A5 同步回归、1 条变长 tail、1 条 FP16 K=256 与 2 条 direct-C2 回归 |
 | `atk_chunk_kda_fwd_perf.json` | 性能采样 | 2 条：每个 tiling key 一条 |
 | `gen_chunk_kda_fwd.py` | 生成并校验上述清单 | canonical seed 为 `20260831` |
 | `executor_chunk_kda_fwd.py` | CPU golden 与 NPU DUT | `ascendc` 主通路 |
@@ -34,6 +34,11 @@ MSS ID 0--3 保持原有两个 key 的普通/边界矩阵。ID 4 原样克隆 ac
 分阶段条件重新推导 launch mode。
 ID 6 保留 `T=63/HV=96/K=V=128` 的 key2 变长 tail 回归，使用固定 seed 4 和
 `model_h96` 输入分布，覆盖双 AIV 对原位 `W` 的 K 列分片与从高行到低行写回。
+ID 7 原样克隆 accuracy case 69，覆盖 A5 FP16、`K=256/V=128` 的 staged 路径及其
+FP32 state 中间存储；同样保留源用例的 seed、shape、layout、dtype、输入 range 和输出策略。
+ID 8 原样克隆 accuracy case 150，覆盖 A5 BF16、dense、`K=V=128` 的 direct-C2 UB
+路径；ID 9 保持同一源用例的 seed、shape、layout、dtype 和输入 range，只关闭 final state
+输出，以覆盖该路径不保存 final state 的分支。
 
 精度清单在 100 个结构 profile 上分别使用 BF16/FP16，固定为 200 条。结构矩阵覆盖四种
 layout（`BSND/BNSD/TND/NTD`）、dense/varlen、tail、GQA、initial/final state，以及：
@@ -59,9 +64,6 @@ validator 对两组 BF16/FP16 成对结构和 kernel 的 compact-to-original sta
 
 ## 精度复检
 
-case ID `4`、`12`、`14`、`52`、`54` 的单轮 `mixed_tolerance_bm` 结果需要复检。生成器在这些
-用例的 `tags` 中写入 `needs_accuracy_lt_recheck`，validator 会精确校验该 ID 集合。
-
 主清单和当前 executor 使用 ATK 26.8 `mixed_tolerance_bm` 单标杆：executor 固定读取
 `case_spec.seed`，且没有同精度 CPU control。因此不能直接对这组资产执行 50 轮后将结果
 作为 CT 双标杆结论。复检必须使用兼容的独立双标杆 fixture，并同时满足：
@@ -72,7 +74,8 @@ case ID `4`、`12`、`14`、`52`、`54` 的单轮 `mixed_tolerance_bm` 结果需
 - 执行 50 轮且不使用 `-sp`，最终使用 CT L2 聚合，同时保留单轮输出定位结构性错误。
 
 复检不能替代执行错误、非有限值或 sanitizer 问题的修复，也不能把当前单标杆报告解释为
-双标杆报告。
+双标杆报告。需要复检的 case 属于具体 SoC、候选版本和测试报告的运行结果，不写入跨平台
+canonical manifest 的 `tags`。
 
 ## 输入与输出约定
 
@@ -82,8 +85,11 @@ case ID `4`、`12`、`14`、`52`、`54` 的单轮 `mixed_tolerance_bm` 结果需
 - `layout` 支持 `BSND`、`BNSD`、`TND`、`NTD`。变长输入的 `cu_seqlens` 从 0 开始并以
   `T` 结束，`chunk_indices` 使用 sequence-major canonical 顺序。
 - `use_gate_in_kernel=true` 时提供 FP32 `A_log`；若提供 `dt_bias`，其形状为 `[HV*K]`。
-- CPU 节点以 FP64 计算 golden，executor 只在 golden 输出边界转为 FP32；NPU 节点保留
-  算子原始输出 dtype，由 `mixed_tolerance_bm` 单标杆统一比较。
+- CPU 节点以 FP64 计算 golden。对于 FP16，`attn_out`、`Aqk`、`Akk`、`w`、`u`、
+  `qg`、`kg`、`v_new` 和 `h` 会先确认原始计算结果均为有限值，再投影到 FP16 可表示
+  范围。executor 最后在
+  golden 输出边界转为 FP32；NPU 节点保留算子原始输出 dtype，由
+  `mixed_tolerance_bm` 单标杆统一比较。
 
 ## 运行
 
@@ -95,7 +101,7 @@ bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend910b -scope=accuracy
 bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend910_93 -scope=accuracy
 bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend950 -scope=accuracy
 
-# 确定性：复用 7 条 MSS 清单，覆盖 key1/key2、unsafe full/staged 与变长 tail 回归
+# 确定性：复用 10 条 MSS 清单，增加 A5 BF16 direct-C2 的 final/no-final 分支
 bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -soc=ascend950 -scope=determinism
 
 # 内存：需要 sanitizer/debug 算子包；默认使用 memcheck
@@ -113,8 +119,9 @@ python3 tests/atk/chunk_kda_fwd/scripts/validate_manifests.py
 
 确定性阶段使用 ATK `accuracy_dc`，内存阶段使用 mssanitizer 包裹的 ATK `run`；二者
 均消费 `atk_chunk_kda_fwd_mss.json`。独立诊断脚本按 MSS 本地 ID 工作，默认遍历全部
-7 条用例，也可用 `--case-id` 只定位一条；staged tail 同步回归使用 MSS ID 5，
-`T=63/HV=96` 的 key2 变长 tail 回归使用 MSS ID 6：
+10 条用例，也可用 `--case-id` 只定位一条；staged tail 同步回归使用 MSS ID 5，
+`T=63/HV=96` 的 key2 变长 tail 回归使用 MSS ID 6，FP16 K=256 回归使用 MSS ID 7，
+BF16 direct-C2 final/no-final 回归使用 MSS ID 8/9：
 
 ```bash
 python3 tests/atk/chunk_kda_fwd/stress_npu_determinism.py \
@@ -123,22 +130,28 @@ python3 tests/atk/chunk_kda_fwd/stress_npu_determinism.py \
   --device 0 --soc ascend950 --case-id 5 --repeats 100
 python3 tests/atk/chunk_kda_fwd/stress_npu_determinism.py \
   --device 0 --soc ascend950 --case-id 6 --repeats 100
+python3 tests/atk/chunk_kda_fwd/stress_npu_determinism.py \
+  --device 0 --soc ascend950 --case-id 7 --repeats 100
+python3 tests/atk/chunk_kda_fwd/stress_npu_determinism.py \
+  --device 0 --soc ascend950 --case-id 8 --repeats 100
+python3 tests/atk/chunk_kda_fwd/stress_npu_determinism.py \
+  --device 0 --soc ascend950 --case-id 9 --repeats 100
 ```
 
 脚本每轮从固定输入的 clone 发起调用，检查所有非空输出的 shape、dtype 和 bitwise
 一致性；任一用例异常或不一致都会以非零状态退出。mssanitizer 只有在确认 debug
 对象实际命中 sanitizer 版本并看到对应工具启动信息后，才能作为内存结论。
 
-内存回归至少对 ID 0--6 全部执行 `memcheck`；A5 上再对 ID 4/5 分别执行
-`racecheck`、`synccheck` 和 `initcheck`，可通过
-`MSS_START=4 MSS_END=6 MSS_TOOL=<tool>` 限制到两条 unsafe 同步回归。ID 6 是双 AIV
+内存回归至少对 ID 0--9 全部执行 `memcheck`；A5 上再对 ID 4/5/7/8/9 执行
+`racecheck`、`synccheck` 或 `initcheck`，可通过
+单条 `MSS_START=<id> MSS_END=<id+1> MSS_TOOL=<tool>` 限制到目标回归。ID 6 是双 AIV
 原位写回竞争回归，需在 A2、A3、A5 分别执行 `racecheck`，范围为
 `MSS_START=6 MSS_END=7 MSS_TOOL=racecheck`。staged ID 5 的四个物理 launch 和 ID 6
 都必须出现对应 sanitizer 启动标记；出现 inactive 提示时不能形成“未发现问题”的结论。
 
 ## 重新物化
 
-canonical 清单由生成器冻结为 200 条精度、7 条 MSS、2 条性能用例。重新生成并校验：
+canonical 清单由生成器冻结为 200 条精度、10 条 MSS 和 2 条性能用例。重新生成并校验：
 
 ```bash
 python3 tests/atk/chunk_kda_fwd/gen_chunk_kda_fwd.py \

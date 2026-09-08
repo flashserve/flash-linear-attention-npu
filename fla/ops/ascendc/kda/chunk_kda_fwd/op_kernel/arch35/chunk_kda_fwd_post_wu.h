@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include <type_traits>
+
 #ifndef CATLASS_ARCH
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #define CATLASS_ARCH 3510
@@ -281,12 +283,14 @@ template <bool PRESERVE_KG_RESIDUAL, typename T, typename GK_T = float,
 class ChunkKdaFwdPostWuKernel {
 public:
     using OUT_T = T;
-    using AKK_T = T;
+    using AKK_T = std::conditional_t<IsSameType<T, half>::value, float, T>;
+    using INTERNAL_T = std::conditional_t<IsSameType<T, half>::value, float, T>;
     template <typename TilingData>
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR initialState,
                                 GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR preparedQG, GM_ADDR preparedAqk,
                                 GM_ADDR propagatedVNew, GM_ADDR propagatedH, GM_ADDR o, GM_ADDR finalState, GM_ADDR aqk,
-                                GM_ADDR akk, GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR vNew, GM_ADDR h,
+                                GM_ADDR akk, GM_ADDR w, GM_ADDR u, GM_ADDR wInternal, GM_ADDR uInternal,
+                                GM_ADDR qg, GM_ADDR kg, GM_ADDR vNew, GM_ADDR h,
                                 GM_ADDR workspace, const TilingData &tiling, TPipe *pipe,
                                 bool initVecBuffers = true)
     {
@@ -304,7 +308,7 @@ public:
             preparedQG_.SetGlobalBuffer((__gm__ T *)preparedQG);
         }
         if (preparedAqk != nullptr) {
-            preparedAqk_.SetGlobalBuffer((__gm__ T *)preparedAqk);
+            preparedAqk_.SetGlobalBuffer((__gm__ AKK_T *)preparedAqk);
         }
         if (propagatedVNew != nullptr) {
             propagatedVNew_.SetGlobalBuffer((__gm__ T *)propagatedVNew);
@@ -319,6 +323,8 @@ public:
         akk_.SetGlobalBuffer((__gm__ AKK_T *)akk);
         w_.SetGlobalBuffer((__gm__ T *)w);
         u_.SetGlobalBuffer((__gm__ OUT_T *)u);
+        wInternal_.SetGlobalBuffer((__gm__ INTERNAL_T *)wInternal);
+        uInternal_.SetGlobalBuffer((__gm__ INTERNAL_T *)uInternal);
         qg_.SetGlobalBuffer((__gm__ T *)qg);
         kg_.SetGlobalBuffer((__gm__ T *)kg);
         vNew_.SetGlobalBuffer((__gm__ T *)vNew);
@@ -1578,19 +1584,27 @@ private:
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     template <typename SrcTensor, typename DstTensor>
-    __aicore__ inline void ComputeTailWuRow(GlobalTensor<SrcTensor> &src, GlobalTensor<DstTensor> &dst,
-                                            uint64_t akkBase, uint64_t srcBase, uint64_t dstBase, uint64_t curT,
-                                            uint64_t dim, uint64_t rowStride)
+    __aicore__ inline void ComputeTailWuRow(
+        GlobalTensor<SrcTensor> &src, GlobalTensor<INTERNAL_T> &internalDst,
+        GlobalTensor<DstTensor> &dst, uint64_t akkBase, uint64_t srcBase,
+        uint64_t dstBase, uint64_t curT, uint64_t dim,
+        uint64_t rowStride)
     {
         LocalTensor<float> acc = vecBuf_.Get<float>();
         LocalTensor<float> value = vecBuf_.Get<float>()[512];
         LocalTensor<SrcTensor> typed = vecBuf_.Get<SrcTensor>()[4096];
-        LocalTensor<T> coefficientTyped = exp2Buf_.Get<T>();
+        LocalTensor<AKK_T> coefficientTyped = exp2Buf_.Get<AKK_T>();
         LocalTensor<float> coefficients = exp2Buf_.Get<float>()[128];
         CopyVectorIn(coefficientTyped, preparedAqk_, akkBase, curT);
         SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
         WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
-        Cast(coefficients, coefficientTyped, RoundMode::CAST_NONE, static_cast<uint32_t>(curT));
+        if constexpr (IsSameType<AKK_T, float>::value) {
+            Adds(coefficients, coefficientTyped, 0.0f,
+                 static_cast<uint32_t>(curT));
+        } else {
+            Cast(coefficients, coefficientTyped, RoundMode::CAST_NONE,
+                 static_cast<uint32_t>(curT));
+        }
         PipeBarrier<PIPE_V>();
         SetFlag<HardEvent::V_S>(EXP2_EVENT_ID);
         WaitFlag<HardEvent::V_S>(EXP2_EVENT_ID);
@@ -1612,6 +1626,9 @@ private:
         }
         SetFlag<HardEvent::S_MTE2>(EXP2_EVENT_ID);
         WaitFlag<HardEvent::S_MTE2>(EXP2_EVENT_ID);
+        if constexpr (IsSameType<T, half>::value) {
+            StoreFloatRow(internalDst, dstBase, acc, dim);
+        }
         ClampFp32ToOutputType(acc, static_cast<uint32_t>(dim));
         StoreFloatRow(dst, dstBase, acc, dim);
     }
@@ -1627,7 +1644,8 @@ private:
         for (uint64_t row = curT; row > 0; --row) {
             uint64_t rowIdx = row - 1;
             ComputeTailWuRow(
-                preparedQG_, w_, AOffset(b, hv, start + rowIdx, 0), KVOffset(b, hv, start, colBegin, K_),
+                preparedQG_, wInternal_, w_,
+                AOffset(b, hv, start + rowIdx, 0), KVOffset(b, hv, start, colBegin, K_),
                 KVOffset(b, hv, start + rowIdx, colBegin, K_), curT, colEnd - colBegin, K_);
         }
 
@@ -1635,7 +1653,8 @@ private:
         uint64_t rowEnd = (curT * (subBlockIdx + 1)) / subBlockNum;
         for (uint64_t row = rowBegin; row < rowEnd; ++row) {
             ComputeTailWuRow(
-                propagatedVNew_, u_, AOffset(b, hv, start + row, 0), KVOffset(b, hv, start, 0, V_),
+                propagatedVNew_, uInternal_, u_,
+                AOffset(b, hv, start + row, 0), KVOffset(b, hv, start, 0, V_),
                 KVOffset(b, hv, start + row, 0, V_), curT, V_, V_);
         }
     }
@@ -1805,6 +1824,19 @@ private:
             return;
         }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if constexpr (IsSameType<T, half>::value) {
+            ComputeTailWuVector(
+                b, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum);
+            if (UseTypicalPostWuGate(curT)) {
+                ComputeTypicalKg(
+                    b, h, hv, start, curT, subBlockIdx, subBlockNum);
+            } else {
+                CopyScratchWAndFinalizeKg(
+                    b, h, hv, chunkIdx, start, curT, subBlockIdx,
+                    subBlockNum);
+            }
+            return;
+        }
         if (curT < BT_) {
             ComputeTailWuVector(b, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum);
             if constexpr (PRESERVE_KG_RESIDUAL) {
@@ -1881,12 +1913,16 @@ private:
         uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
         uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if (BT_ == 64 && K_ == 128 && V_ == 128) {
-            uint64_t taskBegin = 0;
-            uint64_t taskEnd = 0;
-            GetHeadMajorTaskRange(coreIdx, coreNum, taskNum, taskBegin, taskEnd);
-            ProcessPostAivPipelineArch35(taskBegin, taskEnd, subBlockIdx, subBlockNum);
-            return;
+        if constexpr (!IsSameType<T, half>::value) {
+            if (BT_ == 64 && K_ == 128 && V_ == 128) {
+                uint64_t taskBegin = 0;
+                uint64_t taskEnd = 0;
+                GetHeadMajorTaskRange(
+                    coreIdx, coreNum, taskNum, taskBegin, taskEnd);
+                ProcessPostAivPipelineArch35(
+                    taskBegin, taskEnd, subBlockIdx, subBlockNum);
+                return;
+            }
         }
 #endif
         for (uint64_t task = coreIdx; task < taskNum; task += coreNum) {
@@ -1906,29 +1942,33 @@ private:
 
     __aicore__ inline void ProcessPostAic()
     {
-        if constexpr (IsSameType<T, float>::value) {
-            return;
-        }
+        if constexpr (!IsSameType<T, float>::value &&
+                      !IsSameType<T, half>::value) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if (KDA_ENABLE_POST_AIC_PIPELINE && BT_ == 64 && K_ == 128 && V_ == 128) {
-            ProcessPostAicPipelineArch35();
-            return;
-        }
+            if (KDA_ENABLE_POST_AIC_PIPELINE && BT_ == 64 && K_ == 128 &&
+                V_ == 128) {
+                ProcessPostAicPipelineArch35();
+                return;
+            }
 #endif
-        uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
-        uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
-        for (uint64_t task = GetBlockIdx(); task < taskNum; task += coreNum) {
-            uint64_t seq = 0;
-            uint64_t b = 0;
-            uint64_t h = 0;
-            uint64_t hv = 0;
-            uint64_t chunkIdx = 0;
-            uint64_t start = 0;
-            uint64_t end = 0;
-            if (ResolveFlatChunk(task, seq, b, h, hv, chunkIdx, start, end)) {
-                (void)seq;
-                (void)h;
-                ProcessChunkPostAic(b, hv, chunkIdx, start, end);
+            uint64_t taskNum = static_cast<uint64_t>(
+                (isVarLen_ ? NT_ : B_ * NT_) * HV_);
+            uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
+            for (uint64_t task = GetBlockIdx(); task < taskNum;
+                 task += coreNum) {
+                uint64_t seq = 0;
+                uint64_t b = 0;
+                uint64_t h = 0;
+                uint64_t hv = 0;
+                uint64_t chunkIdx = 0;
+                uint64_t start = 0;
+                uint64_t end = 0;
+                if (ResolveFlatChunk(
+                        task, seq, b, h, hv, chunkIdx, start, end)) {
+                    (void)seq;
+                    (void)h;
+                    ProcessChunkPostAic(b, hv, chunkIdx, start, end);
+                }
             }
         }
     }
@@ -2057,12 +2097,14 @@ private:
     GlobalTensor<AKK_T> akk_;
     GlobalTensor<T> w_;
     GlobalTensor<OUT_T> u_;
+    GlobalTensor<INTERNAL_T> wInternal_;
+    GlobalTensor<INTERNAL_T> uInternal_;
     GlobalTensor<T> qg_;
     GlobalTensor<T> kg_;
     GlobalTensor<T> vNew_;
     GlobalTensor<float> h_;
     GlobalTensor<T> preparedQG_;
-    GlobalTensor<T> preparedAqk_;
+    GlobalTensor<AKK_T> preparedAqk_;
     GlobalTensor<T> propagatedVNew_;
     GlobalTensor<T> propagatedH_;
     GlobalTensor<float> solveWorkspace_;
@@ -2114,7 +2156,8 @@ template <bool PRESERVE_KG_RESIDUAL, typename T, typename GK_T, typename BETA_T,
 __aicore__ inline void RunChunkKdaPostWu(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR initialState,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR wSeed, GM_ADDR akk, GM_ADDR uSeed,
-    GM_ADDR w, GM_ADDR u, GM_ADDR kg, GM_ADDR vNew, GM_ADDR userWorkspace,
+    GM_ADDR w, GM_ADDR u, GM_ADDR wInternal, GM_ADDR uInternal,
+    GM_ADDR kg, GM_ADDR vNew, GM_ADDR userWorkspace,
     const TilingData &tiling, TPipe &pipe)
 {
     GM_ADDR postScratch = userWorkspace + tiling.postWuScratchOffset;
@@ -2122,14 +2165,16 @@ __aicore__ inline void RunChunkKdaPostWu(
         ChunkKdaFwdPostWuKernel<PRESERVE_KG_RESIDUAL, T, GK_T, BETA_T> op;
         op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
                 wSeed, akk, uSeed, nullptr, userWorkspace, userWorkspace, userWorkspace, akk, w, u,
-                userWorkspace, kg, vNew, postScratch, postScratch, tiling, &pipe, false);
+                wInternal, uInternal, userWorkspace, kg, vNew, postScratch,
+                postScratch, tiling, &pipe, false);
         op.ProcessAic();
     }
     if ASCEND_IS_AIV {
         ChunkKdaFwdPostWuKernel<PRESERVE_KG_RESIDUAL, T, GK_T, BETA_T> op;
         op.Init(q, k, v, gk, beta, initialState, cuSeqlens, chunkIndices,
                 wSeed, akk, uSeed, nullptr, userWorkspace, userWorkspace, userWorkspace, akk, w, u,
-                userWorkspace, kg, vNew, postScratch, postScratch, tiling, &pipe);
+                wInternal, uInternal, userWorkspace, kg, vNew, postScratch,
+                postScratch, tiling, &pipe);
         op.ProcessAiv();
     }
 }

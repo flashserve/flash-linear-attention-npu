@@ -18,6 +18,10 @@ constexpr size_t INPUT_DT_BIAS_IDX = 6;
 constexpr size_t INPUT_INITIAL_STATE_IDX = 7;
 constexpr size_t INPUT_CU_SEQLENS_IDX = 8;
 constexpr size_t INPUT_CHUNK_INDICES_IDX = 9;
+constexpr size_t INPUT_STAGE_V_NEW_FP32_IDX = 20;
+constexpr size_t INPUT_STAGE_H_FP32_IDX = 21;
+constexpr size_t INPUT_STAGE_AKK_FP32_IDX = 22;
+constexpr size_t INPUT_STAGE_W_FP32_IDX = 23;
 
 constexpr size_t OUTPUT_FINAL_STATE_IDX = 1;
 constexpr size_t OUTPUT_GK_IDX = 2;
@@ -27,6 +31,10 @@ constexpr size_t OUTPUT_QG_IDX = 7;
 constexpr size_t OUTPUT_KG_IDX = 8;
 constexpr size_t OUTPUT_V_NEW_IDX = 9;
 constexpr size_t OUTPUT_H_IDX = 10;
+constexpr size_t OUTPUT_V_NEW_FP32_IDX = 13;
+constexpr size_t OUTPUT_H_FP32_IDX = 14;
+constexpr size_t OUTPUT_AKK_FP32_IDX = 15;
+constexpr size_t OUTPUT_W_FP32_IDX = 16;
 
 constexpr size_t ATTR_LAYOUT_IDX = 0;
 constexpr size_t ATTR_SCALE_IDX = 1;
@@ -36,6 +44,8 @@ constexpr size_t ATTR_LOWER_BOUND_IDX = 4;
 constexpr size_t ATTR_USE_GATE_IDX = 5;
 constexpr size_t ATTR_STAGE_IDX = 7;
 constexpr int64_t KDA_STAGE_FULL = -1;
+constexpr int64_t KDA_STAGE_POST_WU = 1;
+constexpr int64_t KDA_STAGE_FWD_H = 2;
 constexpr int64_t KDA_STAGE_FINALIZE = 3;
 
 constexpr uint64_t KDA_ALIGN = 512;
@@ -44,6 +54,7 @@ constexpr uint64_t KDA_SOLVE_PIPELINE_DEPTH = 4;
 constexpr uint64_t KDA_SCORE_QUEUE_SLOTS = 4;
 constexpr uint64_t KDA_SCORE_SCRATCH_PLANES = 3;
 constexpr uint64_t KDA_GDN_PIPELINE_DEPTH = 2;
+constexpr int64_t KDA_FP32_STATE_K_TILE = 128;
 constexpr uint32_t KDA_BATCH_MODE = 1;
 
 uint64_t AlignWorkspace(uint64_t bytes)
@@ -79,6 +90,72 @@ struct ShapeInfo {
     int64_t vDim = 0;
     bool sequenceMajor = false;
 };
+
+template <typename StorageShape>
+bool MatchesVNewFp32Shape(const StorageShape &storageShape,
+                          const ShapeInfo &info)
+{
+    if (storageShape.GetDimNum() == 4) {
+        return storageShape.GetDim(0) == info.batch &&
+            storageShape.GetDim(1) == info.vHeads &&
+            storageShape.GetDim(2) == info.seqlen &&
+            storageShape.GetDim(3) == info.vDim;
+    }
+    return info.rank == 3 && storageShape.GetDimNum() == 3 &&
+        storageShape.GetDim(0) == info.vHeads &&
+        storageShape.GetDim(1) == info.seqlen &&
+        storageShape.GetDim(2) == info.vDim;
+}
+
+template <typename StorageShape>
+bool MatchesWFp32Shape(const StorageShape &storageShape,
+                       const ShapeInfo &info)
+{
+    if (storageShape.GetDimNum() == 4) {
+        return storageShape.GetDim(0) == info.batch &&
+            storageShape.GetDim(1) == info.vHeads &&
+            storageShape.GetDim(2) == info.seqlen &&
+            storageShape.GetDim(3) == info.kDim;
+    }
+    return info.rank == 3 && storageShape.GetDimNum() == 3 &&
+        storageShape.GetDim(0) == info.vHeads &&
+        storageShape.GetDim(1) == info.seqlen &&
+        storageShape.GetDim(2) == info.kDim;
+}
+
+template <typename StorageShape>
+bool MatchesAkkFp32Shape(const StorageShape &storageShape,
+                         const ShapeInfo &info, int64_t chunkSize)
+{
+    if (storageShape.GetDimNum() == 4) {
+        return storageShape.GetDim(0) == info.batch &&
+            storageShape.GetDim(1) == info.vHeads &&
+            storageShape.GetDim(2) == info.seqlen &&
+            storageShape.GetDim(3) == chunkSize;
+    }
+    return info.rank == 3 && storageShape.GetDimNum() == 3 &&
+        storageShape.GetDim(0) == info.vHeads &&
+        storageShape.GetDim(1) == info.seqlen &&
+        storageShape.GetDim(2) == chunkSize;
+}
+
+template <typename StorageShape>
+bool MatchesHFp32Shape(const StorageShape &storageShape,
+                       const ShapeInfo &info, int64_t totalChunks)
+{
+    if (storageShape.GetDimNum() == 5) {
+        return storageShape.GetDim(0) == info.batch &&
+            storageShape.GetDim(1) == info.vHeads &&
+            storageShape.GetDim(2) == totalChunks &&
+            storageShape.GetDim(3) == info.kDim &&
+            storageShape.GetDim(4) == info.vDim;
+    }
+    return info.rank == 3 && storageShape.GetDimNum() == 4 &&
+        storageShape.GetDim(0) == info.vHeads &&
+        storageShape.GetDim(1) == totalChunks &&
+        storageShape.GetDim(2) == info.kDim &&
+        storageShape.GetDim(3) == info.vDim;
+}
 
 bool ResolveShape(gert::TilingContext *context, const char *layout, ShapeInfo &info)
 {
@@ -204,11 +281,132 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     const bool storeKg = HasOutput(context, OUTPUT_KG_IDX);
     const bool storeVNew = HasOutput(context, OUTPUT_V_NEW_IDX);
     const bool storeH = HasOutput(context, OUTPUT_H_IDX);
+    const bool storeVNewFp32 = HasOutput(context, OUTPUT_V_NEW_FP32_IDX);
+    const bool storeHFp32 = HasOutput(context, OUTPUT_H_FP32_IDX);
+    const bool storeAkkFp32 = HasOutput(context, OUTPUT_AKK_FP32_IDX);
+    const bool storeWFp32 = HasOutput(context, OUTPUT_W_FP32_IDX);
 
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint32_t blockDim = std::max<uint32_t>(platform.GetCoreNumAic(), 1);
     const bool isAscend950 =
         platform.GetCurNpuArch() == NpuArch::DAV_3510;
+    const bool useFp32Wu =
+        isAscend950 && qDesc->GetDataType() == ge::DT_FLOAT16;
+    if (useFp32Wu && stage == KDA_STAGE_POST_WU) {
+        const auto desc = context->GetOptionalInputDesc(INPUT_STAGE_AKK_FP32_IDX);
+        const auto inputShape = context->GetOptionalInputShape(INPUT_STAGE_AKK_FP32_IDX);
+        if (desc == nullptr || inputShape == nullptr ||
+            desc->GetDataType() != ge::DT_FLOAT ||
+            !MatchesAkkFp32Shape(inputShape->GetStorageShape(), shape,
+                                 chunkSize)) {
+            return ge::GRAPH_FAILED;
+        }
+    }
+    if (useFp32Wu && stage == KDA_STAGE_FWD_H) {
+        const auto wDesc = context->GetOptionalInputDesc(INPUT_STAGE_W_FP32_IDX);
+        const auto wShape = context->GetOptionalInputShape(INPUT_STAGE_W_FP32_IDX);
+        const auto uDesc =
+            context->GetOptionalInputDesc(INPUT_STAGE_V_NEW_FP32_IDX);
+        const auto uShape =
+            context->GetOptionalInputShape(INPUT_STAGE_V_NEW_FP32_IDX);
+        if (wDesc == nullptr || wShape == nullptr ||
+            wDesc->GetDataType() != ge::DT_FLOAT ||
+            !MatchesWFp32Shape(wShape->GetStorageShape(), shape) ||
+            uDesc == nullptr || uShape == nullptr ||
+            uDesc->GetDataType() != ge::DT_FLOAT ||
+            !MatchesVNewFp32Shape(uShape->GetStorageShape(), shape)) {
+            return ge::GRAPH_FAILED;
+        }
+    }
+    if (isAscend950 && qDesc->GetDataType() == ge::DT_FLOAT16 &&
+        stage == KDA_STAGE_FINALIZE) {
+        const auto stageVNewFp32Desc =
+            context->GetOptionalInputDesc(INPUT_STAGE_V_NEW_FP32_IDX);
+        const auto stageVNewFp32Shape =
+            context->GetOptionalInputShape(INPUT_STAGE_V_NEW_FP32_IDX);
+        if (stageVNewFp32Desc == nullptr || stageVNewFp32Shape == nullptr ||
+            stageVNewFp32Desc->GetDataType() != ge::DT_FLOAT) {
+            return ge::GRAPH_FAILED;
+        }
+        const auto &storageShape = stageVNewFp32Shape->GetStorageShape();
+        if (!MatchesVNewFp32Shape(storageShape, shape)) {
+            return ge::GRAPH_FAILED;
+        }
+        const auto stageHFp32Desc =
+            context->GetOptionalInputDesc(INPUT_STAGE_H_FP32_IDX);
+        const auto stageHFp32Shape =
+            context->GetOptionalInputShape(INPUT_STAGE_H_FP32_IDX);
+        if (stageHFp32Desc == nullptr || stageHFp32Shape == nullptr ||
+            stageHFp32Desc->GetDataType() != ge::DT_FLOAT ||
+            !MatchesHFp32Shape(stageHFp32Shape->GetStorageShape(), shape,
+                               totalChunks)) {
+            return ge::GRAPH_FAILED;
+        }
+    }
+    if (isAscend950 && qDesc->GetDataType() == ge::DT_FLOAT16 &&
+        storeVNewFp32) {
+        const auto instanceInfo =
+            context->GetIrOutputInstanceInfo(OUTPUT_V_NEW_FP32_IDX);
+        if (instanceInfo == nullptr || instanceInfo->GetInstanceNum() == 0) {
+            return ge::GRAPH_FAILED;
+        }
+        const size_t outputIndex = instanceInfo->GetInstanceStart();
+        const auto outputDesc = context->GetOutputDesc(outputIndex);
+        const auto outputShape = context->GetOutputShape(outputIndex);
+        if (outputDesc == nullptr || outputShape == nullptr ||
+            outputDesc->GetDataType() != ge::DT_FLOAT ||
+            !MatchesVNewFp32Shape(outputShape->GetStorageShape(), shape)) {
+            return ge::GRAPH_FAILED;
+        }
+    }
+    if (isAscend950 && qDesc->GetDataType() == ge::DT_FLOAT16 &&
+        storeHFp32) {
+        const auto instanceInfo =
+            context->GetIrOutputInstanceInfo(OUTPUT_H_FP32_IDX);
+        if (instanceInfo == nullptr || instanceInfo->GetInstanceNum() == 0) {
+            return ge::GRAPH_FAILED;
+        }
+        const size_t outputIndex = instanceInfo->GetInstanceStart();
+        const auto outputDesc = context->GetOutputDesc(outputIndex);
+        const auto outputShape = context->GetOutputShape(outputIndex);
+        if (outputDesc == nullptr || outputShape == nullptr ||
+            outputDesc->GetDataType() != ge::DT_FLOAT ||
+            !MatchesHFp32Shape(outputShape->GetStorageShape(), shape,
+                               totalChunks)) {
+            return ge::GRAPH_FAILED;
+        }
+    }
+    if (useFp32Wu && storeAkkFp32) {
+        const auto instanceInfo =
+            context->GetIrOutputInstanceInfo(OUTPUT_AKK_FP32_IDX);
+        if (instanceInfo == nullptr || instanceInfo->GetInstanceNum() == 0) {
+            return ge::GRAPH_FAILED;
+        }
+        const size_t outputIndex = instanceInfo->GetInstanceStart();
+        const auto outputDesc = context->GetOutputDesc(outputIndex);
+        const auto outputShape = context->GetOutputShape(outputIndex);
+        if (outputDesc == nullptr || outputShape == nullptr ||
+            outputDesc->GetDataType() != ge::DT_FLOAT ||
+            !MatchesAkkFp32Shape(outputShape->GetStorageShape(), shape,
+                                 chunkSize)) {
+            return ge::GRAPH_FAILED;
+        }
+    }
+    if (useFp32Wu && storeWFp32) {
+        const auto instanceInfo =
+            context->GetIrOutputInstanceInfo(OUTPUT_W_FP32_IDX);
+        if (instanceInfo == nullptr || instanceInfo->GetInstanceNum() == 0) {
+            return ge::GRAPH_FAILED;
+        }
+        const size_t outputIndex = instanceInfo->GetInstanceStart();
+        const auto outputDesc = context->GetOutputDesc(outputIndex);
+        const auto outputShape = context->GetOutputShape(outputIndex);
+        if (outputDesc == nullptr || outputShape == nullptr ||
+            outputDesc->GetDataType() != ge::DT_FLOAT ||
+            !MatchesWFp32Shape(outputShape->GetStorageShape(), shape)) {
+            return ge::GRAPH_FAILED;
+        }
+    }
     const bool useChunk64K128V128Template =
         chunkSize == 64 && shape.kDim == 128 && shape.vDim == 128;
     const auto arch35Options = arch35::ConfigureChunkKdaFwdArch35(
@@ -253,12 +451,28 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
             : vTensorBytes;
     const uint64_t vNewStorageOffset = storeVNew ? 0 :
         AllocateWorkspace(cursor, vNewStorageBytes);
+    const bool useFp32InternalVNew =
+        isAscend950 && qDesc->GetDataType() == ge::DT_FLOAT16;
+    const uint64_t vNewFp32StorageOffset =
+        storeVNewFp32 || !useFp32InternalVNew || stage == KDA_STAGE_FINALIZE
+            ? 0
+            : AllocateWorkspace(cursor, tokenHeads * shape.vDim * sizeof(float));
     const uint64_t hStorageBytes =
         arch35Options.useDenseFwdH && !storeH
             ? static_cast<uint64_t>(shape.batch) * shape.vHeads * shape.kDim *
                   shape.vDim * dataBytes
             : hBytes;
     const uint64_t hStorageOffset = storeH ? 0 : AllocateWorkspace(cursor, hStorageBytes);
+    const bool useFp32InternalH =
+        isAscend950 && qDesc->GetDataType() == ge::DT_FLOAT16;
+    const uint64_t hFp32StorageOffset =
+        storeHFp32 || !useFp32InternalH || stage == KDA_STAGE_FINALIZE
+            ? 0
+            : AllocateWorkspace(cursor, hChunkCount * shape.vHeads *
+                shape.kDim * shape.vDim * sizeof(float));
+    const uint64_t stateOperandFp32Offset = useFp32InternalH
+        ? AllocateWorkspace(cursor, tokenHeads * shape.kDim * sizeof(float))
+        : 0;
     const uint64_t qgScaledOffset = AllocateWorkspace(cursor, kTensorBytes);
 
     const uint64_t matrixBytes = tokenHeads * chunkSize * sizeof(float);
@@ -299,8 +513,12 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
         fwdHCursor, (tokenBatch + 1) * sizeof(int64_t));
     cursor = fwdHWorkspaceBaseOffset + AlignWorkspace(fwdHCursor);
 
+    const bool splitFp32OutputState =
+        useFp32InternalH && shape.kDim > KDA_FP32_STATE_K_TILE &&
+        (stage == KDA_STAGE_FULL || stage == KDA_STAGE_FINALIZE);
+    const uint64_t outputScratchPlanes = splitFp32OutputState ? 3 : 2;
     const uint64_t outputScratchOffset = AllocateWorkspace(
-        cursor, 2 * tokenHeads * shape.vDim * sizeof(float));
+        cursor, outputScratchPlanes * tokenHeads * shape.vDim * sizeof(float));
     const uint64_t totalWorkspace = AlignWorkspace(cursor);
 
     context->SetBlockDim(blockDim);
@@ -339,7 +557,11 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     tiling.set_storeQG(storeQG);
     tiling.set_storeKg(storeKg);
     tiling.set_storeVNew(storeVNew);
+    tiling.set_storeVNewFp32(storeVNewFp32);
     tiling.set_storeH(storeH);
+    tiling.set_storeHFp32(storeHFp32);
+    tiling.set_storeAkkFp32(storeAkkFp32);
+    tiling.set_storeWFp32(storeWFp32);
     tiling.set_stage(stage);
     tiling.set_gateDataType(gDesc->GetDataType() == ge::DT_FLOAT ? 2 :
         (gDesc->GetDataType() == ge::DT_BF16 ? 1 : 0));
@@ -354,7 +576,10 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     tiling.set_qgStorageOffset(qgStorageOffset);
     tiling.set_kgStorageOffset(kgStorageOffset);
     tiling.set_vNewStorageOffset(vNewStorageOffset);
+    tiling.set_vNewFp32StorageOffset(vNewFp32StorageOffset);
     tiling.set_hStorageOffset(hStorageOffset);
+    tiling.set_hFp32StorageOffset(hFp32StorageOffset);
+    tiling.set_stateOperandFp32Offset(stateOperandFp32Offset);
     tiling.set_qgScaledOffset(qgScaledOffset);
     tiling.set_prepareAqkFp32Offset(prepareAqkFp32Offset);
     tiling.set_prepareAkkFp32Offset(prepareAkkFp32Offset);

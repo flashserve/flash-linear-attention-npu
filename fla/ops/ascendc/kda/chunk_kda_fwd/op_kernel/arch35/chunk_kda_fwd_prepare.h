@@ -1817,7 +1817,14 @@ private:
                 WaitGateOutputForMte2();
             }
             uint64_t nextTileRow = tileRow + qwMaxRows;
-            if (nextTileRow < qwEnd) {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            const bool fuseQwKg =
+                SAFE_GATE && BT_ == 64 && K_ == 128 && V_ == 128 && subBlockNum == 1;
+            const bool deferNextPrefetch = fuseQwKg && exportFinalKg;
+#else
+            const bool deferNextPrefetch = false;
+#endif
+            if (!deferNextPrefetch && nextTileRow < qwEnd) {
                 uint64_t nextRows = qwEnd - nextTileRow;
                 if (nextRows > qwMaxRows) {
                     nextRows = qwMaxRows;
@@ -1825,7 +1832,6 @@ private:
                 PrefetchQKGate(qwSlot ^ 1, b, h, hv, start + nextTileRow, nextRows * K_);
             }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            bool fuseQwKg = SAFE_GATE && BT_ == 64 && K_ == 128 && V_ == 128 && subBlockNum == 1;
             if (fuseQwKg) {
                 PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true, false, true>(
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
@@ -1845,13 +1851,18 @@ private:
                     static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_),
                     static_cast<uint16_t>(tileRows));
                 if constexpr (exportFinalKg) {
-                    // vTyped remains an input to the fused direct-V write. Produce finalKg only
-                    // after that call completes so its writeback cannot race the first V load.
-                    // The typed helper also keeps BF16 finalKg within the score-safe exp range.
+                    // kScore aliases kTyped for safe low-precision scores and overwrites raw K.
+                    // Once direct-V has consumed vTyped, reuse it for a synchronized raw-K reload.
                     PipeBarrier<PIPE_V>();
+                    SetFlag<HardEvent::V_MTE2>(vToMte2Event_);
+                    WaitFlag<HardEvent::V_MTE2>(vToMte2Event_);
+                    CopyRowsIn(vTyped, k_, QOffset(b, h, start + tileRow, 0), tileRows, K_,
+                               inputSequenceMajor_ ? H_ * K_ : K_);
+                    SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+                    WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
                     PrepareKdaGateKgRegbase<T, T, GK_T, true>(
                         (__ubuf__ T *)reinterpret_cast<uint64_t>(vTyped.GetPhyAddr()),
-                        (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
+                        (__ubuf__ T *)reinterpret_cast<uint64_t>(vTyped.GetPhyAddr()),
                         (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
                         (__ubuf__ float *)reinterpret_cast<uint64_t>(finalRefFp32.GetPhyAddr()),
                         static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_),
@@ -1892,6 +1903,14 @@ private:
             Cast(kScore, outFp32, RoundMode::CAST_RINT, static_cast<uint32_t>(elems));
             PipeBarrier<PIPE_V>();
 #endif
+
+            if (deferNextPrefetch && nextTileRow < qwEnd) {
+                uint64_t nextRows = qwEnd - nextTileRow;
+                if (nextRows > qwMaxRows) {
+                    nextRows = qwMaxRows;
+                }
+                PrefetchQKGate(qwSlot ^ 1, b, h, hv, start + nextTileRow, nextRows * K_);
+            }
 
             if (qwOutputPending) {
                 WaitGateOutputForVector();
@@ -4630,7 +4649,8 @@ private:
                 }
                 RunAicAfterBothAivReady(subBlockIdx, subBlockNum);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                if constexpr (!(SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 && COMPILE_V == 128)) {
+                if constexpr (!(SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 && COMPILE_V == 128) ||
+                              IsSameType<T, half>::value) {
                     StoreSolveXRowsToAkk(b, hv, chunkIdx, start, curT, solveRowBegin, solveRowEnd);
                 }
 #else
@@ -4677,7 +4697,8 @@ private:
         uint64_t solveRowEnd = 0;
         GetSolveRowRange(BT_, subBlockIdx, subBlockNum, solveRowBegin, solveRowEnd);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if constexpr (!(SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 && COMPILE_V == 128)) {
+        if constexpr (!(SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 && COMPILE_V == 128) ||
+                      IsSameType<T, half>::value) {
             StoreSolveXRowsToAkk(b, hv, chunkIdx, start, curT, solveRowBegin, solveRowEnd);
         }
 #else
@@ -5232,11 +5253,12 @@ __aicore__ inline void RunChunkKdaPrepareImpl(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR rawG, GM_ADDR aLog,
     GM_ADDR dtBias, GM_ADDR beta, GM_ADDR initialState,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR aqk, GM_ADDR akk, GM_ADDR qg,
-    GM_ADDR qgScaled, GM_ADDR wSeed, GM_ADDR uSeed, GM_ADDR finalKg, GM_ADDR userWorkspace,
+    GM_ADDR qgScaled, GM_ADDR wSeed, GM_ADDR uSeed, GM_ADDR finalKg,
+    GM_ADDR akkFp32Storage, GM_ADDR userWorkspace,
     const TilingData &tiling, TPipe &pipe, bool storeQG = true)
 {
     GM_ADDR aqkFp32 = userWorkspace + tiling.prepareAqkFp32Offset;
-    GM_ADDR akkFp32 = userWorkspace + tiling.prepareAkkFp32Offset;
+    GM_ADDR akkFp32 = akkFp32Storage;
     GM_ADDR prepareScratch = userWorkspace + tiling.prepareScratchOffset;
 
     if ASCEND_IS_AIC {
@@ -5246,20 +5268,25 @@ __aicore__ inline void RunChunkKdaPrepareImpl(
                 nullptr, nullptr, nullptr, nullptr, aqk, userWorkspace, aqkFp32, akkFp32,
                 wSeed, akk, qg, qgScaled, uSeed, userWorkspace, finalKg,
                 prepareScratch, tiling, &pipe, false, storeQG);
-        if (tiling.fusePostWu) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            KdaPostWu::ChunkKdaFwdPostWuKernel<false, T, GK_T, BETA_T> postWu;
-            postWu.Init(nullptr, k, nullptr, gk, beta, initialState, cuSeqlens, chunkIndices,
-                        wSeed, akk, uSeed, nullptr, userWorkspace, userWorkspace, userWorkspace,
-                        akk, wSeed, uSeed, userWorkspace, finalKg, userWorkspace,
-                        prepareScratch, prepareScratch, tiling, &pipe, false);
-            op.ProcessAicFused(postWu);
-#else
-            op.ProcessAic();
-#endif
+        if constexpr (!IsSameType<T, half>::value) {
+            if (tiling.fusePostWu) {
+                KdaPostWu::ChunkKdaFwdPostWuKernel<false, T, GK_T, BETA_T> postWu;
+                postWu.Init(nullptr, k, nullptr, gk, beta, initialState, cuSeqlens, chunkIndices,
+                            wSeed, akk, uSeed, nullptr, userWorkspace, userWorkspace, userWorkspace,
+                            akk, wSeed, uSeed, wSeed, uSeed, userWorkspace,
+                            finalKg, userWorkspace, prepareScratch, prepareScratch,
+                            tiling, &pipe, false);
+                op.ProcessAicFused(postWu);
+            } else {
+                op.ProcessAic();
+            }
         } else {
             op.ProcessAic();
         }
+#else
+        op.ProcessAic();
+#endif
     }
     if ASCEND_IS_AIV {
         ChunkKdaFwdPrepareKernel<FP32_SCORE, SAFE_GATE, T, GK_T, BETA_T,
@@ -5278,7 +5305,8 @@ __aicore__ inline void RunChunkKdaPrepare(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR rawG, GM_ADDR aLog,
     GM_ADDR dtBias, GM_ADDR beta, GM_ADDR initialState,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR aqk, GM_ADDR akk, GM_ADDR qg,
-    GM_ADDR qgScaled, GM_ADDR wSeed, GM_ADDR uSeed, GM_ADDR finalKg, GM_ADDR userWorkspace,
+    GM_ADDR qgScaled, GM_ADDR wSeed, GM_ADDR uSeed, GM_ADDR finalKg,
+    GM_ADDR akkFp32Storage, GM_ADDR userWorkspace,
     const TilingData &tiling, TPipe &pipe, bool storeQG = true)
 {
     if constexpr (COMPILE_BT == 0 && COMPILE_K == 0 && COMPILE_V == 0 &&
@@ -5288,7 +5316,7 @@ __aicore__ inline void RunChunkKdaPrepare(
                                    COMPILE_BT, COMPILE_K, COMPILE_V>(
                 q, k, v, gk, rawG, aLog, dtBias, beta, initialState, cuSeqlens,
                 chunkIndices, aqk, akk, qg, qgScaled, wSeed, uSeed, finalKg,
-                userWorkspace, tiling, pipe, storeQG);
+                akkFp32Storage, userWorkspace, tiling, pipe, storeQG);
             return;
         }
     }
@@ -5296,7 +5324,7 @@ __aicore__ inline void RunChunkKdaPrepare(
                            COMPILE_BT, COMPILE_K, COMPILE_V>(
         q, k, v, gk, rawG, aLog, dtBias, beta, initialState, cuSeqlens,
         chunkIndices, aqk, akk, qg, qgScaled, wSeed, uSeed, finalKg,
-        userWorkspace, tiling, pipe, storeQG);
+        akkFp32Storage, userWorkspace, tiling, pipe, storeQG);
 }
 
 } // namespace KdaPrepare
