@@ -22,6 +22,6 @@ struct EpilogueAtlasGDNFwdOOutput {
     using ArchTag = Arch::Ascend950;
 };
 
-} // namespace Catlass::Epilogue
+}  // namespace Catlass::Epilogue
 
-#endif // CATLASS_EPILOGUE_GDN_FWD_O_EPILOGUE_POLICIES_HPP
+#endif  // CATLASS_EPILOGUE_GDN_FWD_O_EPILOGUE_POLICIES_HPP
