@@ -2,7 +2,8 @@
 
 本目录是 A2/A3 Arch22 与 A5 Arch35 `chunk_kda_fwd_prepare` 的可检视、可用 host C++17
 做语法检查的设计伪代码。
-文件命名和 kernel 侧分层参考 `chunk_fwd_h`，但本目录**不参与构建**，不会创建算子定义、
+文件命名和分架构目录沿用 `chunk_fwd_h`；薄入口、`Kernel::Init/Process` 与具名 Stage 的
+封装风格参考 `chunk_gated_delta_rule_fwd_prepare`。本目录**不参与构建**，不会创建算子定义、
 Host Tiling、CMake target、aclnn/Python API 或设备 kernel ABI。
 
 架构路径与仓内其他 Ascend C 算子保持一致，由编译器宏静态选择：
@@ -21,9 +22,9 @@ pseudocode/
 |-- README.md
 |-- chunk_kda_fwd_prepare_tiling_key.h  # 固定维度与候选模板轴
 |-- chunk_kda_fwd_prepare_policy.h      # 分架构 UB/L1/workspace 资源账本
-|-- chunk_kda_fwd_prepare_struct.h      # task、buffer、同步公共类型
+|-- chunk_kda_fwd_prepare_struct.h      # task、buffer、同步和具名计算合同
 |-- chunk_kda_fwd_prepare_utils.h       # 分核、head owner、代际映射
-|-- chunk_kda_fwd_prepare.cpp           # MIX AIC/AIV 符号入口与调度
+|-- chunk_kda_fwd_prepare.cpp           # 薄入口、Kernel::Init/Process 与主循环
 |-- chunk_kda_fwd_prepare_contract_test.cpp # 跨架构同步与操作轨迹 host 合同测试
 |-- arch35/
 |   |-- chunk_kda_fwd_prepare_vec.h     # V0/V1/V3/V6
@@ -42,11 +43,11 @@ pseudocode/
 | `V0` | Vector | HK cohort owner 从公开 GM 一次装入 raw `q/k`；其余 HV head 从 owner 的只读 Q/K cache 装入已归一化值；每个 HV 另完整装入 `beta` 及所选 gate 输入 | 每个 HV 仍只有一次 VF：仅 `owner+L2` 对该 HK 做唯一一次 Q/K norm，Identity owner 和其余 head 直接保留已在最终 UB 地址的 2-byte MTE2 结果，不做重复 convert/round；同一次 VF 完成本 HV 的 beta、gate/cumsum。只有 owner 写一份 `Qhat/Khat` cache，非 owner 不复制到各自 context；Fused ABI 另存每 HV 的 G context，Current ABI 只写一次公开 `gk` 并由 V6 复用；Arch35 另物化 `G_ref[4]`，Arch22 不物化 |
 | `V1` | Vector | 同一 head 仍驻留在 UB 的 V0 local source | 一次 VF 先按 `ScoreStorage` 截断 base-2 指数，再按 `useExp2` 选择 `exp2(x)` 或 `exp(x*ln2)`，物化全部 `S=4` 的 `Qplus/Kplus/Kminus`；Arch22 必须 `V0(head)->V1(head)` 后才能复用 shared arena，score drain 只读取该 head 的 private bank |
 | `C2` | Cube | 一次把完整 72 KiB score 搬入 L1 | 四个 row band；每个 band 将 `Qplus/Kplus` 沿行堆叠为 `[32,128]`，通过一次 `MmadRowStackedLhs`（packed TileMmad）同时生成 `rawAqk/rawAkk`；Arch35 直达配对 AIV UB，Arch22 先写 compact raw GM relay |
-| `V3` | Vector | UB 中完整 raw score；Arch35 从每头 UB 向量状态区读取常驻 `betaEff`，Arch22 从 workspace 重载 | 一次 VF 完成无效区清零、causal mask、`Aqk/Lkk` 和 VCS 两个叶子 `B/X0/X1`；已知为零的 q01 只在 Current ABI 作为公开 Akk 输出写回，Arch22 Fused full 因完整 ND 转换限制保留一次 relay，Fused top 不物化 |
+| `V3` | Vector | UB 中完整的紧凑 `rawAqk/rawAkk`；Arch35 从每头 UB 向量状态区读取常驻 `betaEff`，Arch22 从 workspace 重载 | 一次 VF 计算 `Aqk_ij=scale*rawAqk_ij*1[j<=i]` 和严格下三角 `Lkk_ij=beta_i*rawAkk_ij*1[j<i]`，再用 VCS（Vectorized Column-Sweep，向量化列扫描）求两个叶子逆并生成 `B/X0/X1`；已知为零的 q01 只在 Current ABI 作为公开 Akk 输出写回，Arch22 Fused 完整块因完整 ND 转换限制保留一次中转，仅上半区有效块不物化 |
 | `C4` | Cube | 所需 GM/workspace source 已 ready；`M>32` 装入 `B/X0/X1`，Arch35 另把 stable Akk 装入最终 L1 resident | `M>32` 用一个 MMAD 计算 `T = B @ X0`；Arch35 在最终 L1 地址直接清零 q01，Arch22 把 FP32 `T` 写 GM relay；`M<=32` 时 Arch35 只装 q00、Arch22 走 control，两者都不启动 MMAD |
-| `C5` | Cube | `M>32` 时前一 Stage 的 `T`、`X1`、Akk prepack 均 ready | `M>32` 用一个 MMAD 计算 `Y = -X1 @ T`；Arch35 提交 resident quadrant，Arch22 把 2-byte `q10` 写入 row-major Akk GM relay；`M<=32` 只做 control pass-through |
-| `V6` | Vector | `Qhat/Khat` context、Fused 的 G context 或 Current 的公开 `gk`、`V` 以及三条 data-ready 边；Arch35 从每头 UB 向量状态区读取常驻 `betaEff`，Arch22 从 workspace 重载 | 一次 VF 以 `[-80,80]` 截断 direct base-2 指数，按同一 `useExp2` 轴求 `2^x`，并生成 `Qg/qg`、`kg`、`K_beta_g`、`V_beta`；两个 RHS plane 固定 base，`M<=32` 各 drain 32 行，`M>32` 各 drain 64 行 |
-| `C7` | Cube | 有效 Akk 与对应 32/64 行 RHS | 一个逻辑 MMAD 计算 `Akk @ [K_beta_g \| V_beta]`，提交 `[W \| U]`；两架构的 top-only tail 都把有效 q00 直接装成 tight 32x32 Cube operand 并做 `K=32`，Arch22 full 才从 GM relay 做完整 ND 到 Cube-ready 转换 |
+| `C5` | Cube | `M>32` 时前一 Stage 的 `T`、`X1`、Akk 预排布数据均就绪 | `M>32` 用一个 MMAD 计算 `Akk_q10 = -X1 @ T`；Arch35 提交常驻象限，Arch22 把 2-byte `q10` 写入按行排布的 Akk GM 中转区；`M<=32` 只传递控制状态 |
+| `V6` | Vector | `Qhat/Khat` context、Fused 的 G context 或 Current 的公开 `gk`、`V` 以及三条 data-ready 边；Arch35 从每头 UB 向量状态区读取常驻 `betaEff`，Arch22 从 workspace 重载 | 一次 VF 以 `[-80,80]` 截断 direct base-2 指数，按同一 `useExp2` 轴求 `2^x`，并生成 `Qg/qg`、`kg`、`K_beta_g`、`V_beta`；两个矩阵乘右操作数平面使用固定基址，`M<=32` 各搬出 32 行，`M>32` 各搬出 64 行 |
+| `C7` | Cube | 有效 Akk 与对应 32/64 行矩阵乘右操作数 | 一个逻辑 MMAD 计算 `Akk @ [K_beta_g \| V_beta]`，提交 `[W \| U]`；两架构中仅上半区有效的尾块都把有效 q00 直接装成紧凑 32x32 Cube 操作数并使用 `K=32`，Arch22 完整块才从 GM 中转区完成 ND 到 Cube 操作数的转换 |
 
 每个 Stage 只包含 Cube 或 Vector 之一。`V0/V1/V3/V6` 各只允许一次 VF，不按 token、
 score block 或硬件 tile 分 pass。Cube 的独立逻辑 MMAD 可在编译期展开为硬件 tile，但本 Stage
@@ -57,7 +58,7 @@ score block 或硬件 tile 分 pass。Cube 的独立逻辑 MMAD 可在编译期�
 - `V0+V1` 必须同时保留 context 和 72 KiB score，而单 local head 只有固定
   112 KiB 主计算区和 12 KiB 向量状态与临时区，容量不成立。
 - `C4` 产生 `T`，`C5` 才能消费；二者不能合并。
-- `C7` 既依赖 C5 新完成的 Akk，又要汇聚独立的 V6 RHS；`C5/C7` 不能合并。
+- `C7` 既依赖 C5 新完成的 Akk，又要汇聚独立的 V6 矩阵乘右操作数；`C5/C7` 不能合并。
 - `V6` 必须等 V3 归还 local bank 且 C4 归还 payload owner，不能提前覆盖任一存活区。
 - Arch22 的 V0/V1 虽按同一 head 相邻调度，但仍是两次独立 VF；本伪代码没有证明把两者折成一次
   VF 的 CANN 接口、寄存器压力或数值顺序，因此不能据此把八 Stage 降为七 Stage。
@@ -66,9 +67,10 @@ score block 或硬件 tile 分 pass。Cube 的独立逻辑 MMAD 可在编译期�
 
 ## 主循环展开
 
-`RunChunkKdaFwdPreparePseudocode` 已去掉
-`DispatchHeadPartition -> Dispatch -> RunArch*Branch -> Make*Args` 四层调度包装。主循环现在直接展示
-`chunk -> head partition -> head group -> AIV/AIC` 的控制结构，并在角色分支中按物理顺序发射：
+`RunChunkKdaFwdPreparePseudocode` 只构造 `ChunkKdaFwdPrepareKernel`，随后调用 `Init/Process`。
+`Kernel::Process` 只判断一次当前物理核是 AIV 还是 AIC；角色判断不进入任务循环。
+`ProcessAiv/ProcessAic` 分别直接展示 `chunk -> head partition -> head group` 主循环，把同一角色的
+四个 Stage 放在一起并按物理顺序发射，不再经过多层 dispatch 或参数转发函数：
 
 ```text
 Arch35 AIV: V0 -> V1 -> V3 -> V6
@@ -80,8 +82,24 @@ Arch22 AIC: C2 -> C4 -> C5 -> C7
 同一个设备目标只包含上述一种架构的头文件和 Stage 调用。workspace 策略、CorePlan 构造和
 Stage 实现均使用同一编译期架构常量，不能通过 tiling 改写。
 
-保留 `RunV*`/`RunC*` 是为了表达不可合并的物理 Stage，而不是继续隐藏调度。各 Stage 内部仍自行
-等待跨核 ready/free，因此上面的源码顺序不表示 AIV 与 AIC 之间存在隐式先后关系。
+八个 Stage 使用“Stage + 角色 + 结果”的名字，例如
+`StageV1_AivBuildS4ScoreOperands` 和 `StageC7_AicComputeWAndU`。各 Stage 内部仍自行等待跨核
+ready/free，因此上面的源码顺序不表示 AIV 与 AIC 之间存在隐式先后关系。
+
+Vector 计算也不再由 `RunVf(Stage, ...)` 猜测。每个 Stage 只能调用下面一个具名的一次 VF 合同类型。
+同一类型的 `Evaluate` 保存唯一数学体，`Record` 绑定固定的 Stage 与 `VectorFormula`；Stage 调用点与
+语义测试都通过该类型访问公式，不能各自维护一套映射：
+
+| Stage | 一次 VF 调用 | 明确计算 |
+| --- | --- | --- |
+| `V0` | `QkNormGateCumsumBetaVf` | Q/K norm、beta 变换、gate 步长、cumsum、`G_last`；Arch35 另物化 `G_ref[4]`，Arch22 的 V1 直接读取 G 行视图 |
+| `V1` | `S4ScoreOperandsVf` | S=4 `Qplus/Kplus/Kminus` |
+| `V3` | `AqkAndAkkFactorsVf` | `tril(rawAqk,0)`、`tril(rawAkk,-1)`、两个 32x32 叶子求逆、`X0/X1/B` 和稳定 Akk |
+| `V6` | `PostWuOperandsVf` | `Qg/kg/K_beta_g/V_beta` |
+
+Cube 仍在 Stage 现场给出操作数、M/N/K、转置和负号，不把维度藏进公式包装；每条
+`Mmad*` 额外携带 `MatrixFormula`，明确区分 raw Aqk/Akk、`T=B@X0`、
+`Akk_q10=-X1@T`、`W=Akk@K_beta_g` 和 `U=Akk@V_beta`。
 
 V0 的核心数学不能被一个含糊的 `ApplyFrozen*` 隐藏。候选 TilingKey 必须显式携带以下
 **PROPOSED** 语义轴，但当前伪代码不冻结它们的数值编码：
@@ -752,8 +770,8 @@ HardEvent 落地，不能因源码调用顺序或跨核 ticket 已存在而省�
   `[0x8000,0x8200)` 全为 hard pad，`betaEff` 在每头 UB 向量状态区常驻到 V6；Arch22 用
   `[0x8000,0x8100)` 保存有效 FP32 betaEff，剩余 `[0x8100,0x8200)` 仍为 hard pad。
 - `AkkStorage::Fp32Internal` 为 **BLOCKED**，目前只是通过容量推导的 L1 布局候选；FP32 Akk 与 2-byte RHS 的
-  C7 Cube operand 组合及对应目标 CANN API 尚未证明。当前 `RunV0/V1/V3/V6` 与
-  `RunC2/C4/C5/C7` 伪 dispatch 全部只接受 `AkkStorage::TwoByteAbi`，不能把 FP32 candidate
+  C7 Cube operand 组合及对应目标 CANN API 尚未证明。当前八个具名 `StageV*/StageC*`
+  入口全部只接受 `AkkStorage::TwoByteAbi`，不能把 FP32 candidate
   当作已支持模板。
 - `InputStorage`、`valueStorage` 与 `ScoreStorage` 是三个独立的必要语义轴，都不是已冻结的
   数值 key。前两者分别选择 q/k 与 v/u 的 FP16/BF16 dtype，后者选择 score dtype；Host 必须
@@ -792,8 +810,11 @@ lower/upper 生命周期，以及仅在 C4 MTE2 `Fill -> Load` 位置出现的 b
 Arch22/Arch35 都记录 Current/Fused 在 `M=16/32/33/64` 下的 Vector/Cube 外部操作轨迹，检查 G source、
 Qhat/Khat 有效行搬运、Akk quadrant writer、q01 fill/relay 分支、`ld64 -> tight`、partial fill、
 top-only RHS 收缩、MMAD 操作数/模式，以及 ready 晚于对应最后写入。VF 内部逐元素循环仍由
-共享的语义伪代码描述；合同另用可执行 probe 验证 `useExp2=true` 只走截断 Exp2、false 只走
-截断后 FP32 `x*ln2` 再 Exp。外部 OperationTrace 不把一次 VF 展开成第二条执行流：
+共享的语义伪代码描述；V1 可执行探针覆盖 `M=1/16/17/32/33/49/63/64`，逐行检查
+Q/K/G/G_ref 来源、两架构 V0 的累加 G 物化、Arch35 的参考行物化、四段 Kminus 物理前缀、
+尾部补零以及 Qplus/Kplus/Kminus 的写入地址与数值。
+合同同时验证 `useExp2=true` 只走截断 Exp2，false 只走截断后 FP32 `x*ln2` 再 Exp。
+外部 OperationTrace 不把一次 VF 展开成第二条执行流：
 
 ```bash
 set -euo pipefail

@@ -297,8 +297,8 @@ struct BufferSpan {
     // 原始 q/k 使用 HK，门控/值/输出使用 HV。
     std::uint32_t logicalHeadId = kAllGroupLocalHeads;
     // 原生 L0 分形布局的逻辑视图。byteOffset/byteSize 始终保留完整、连续的
-    // owner 分配区；逻辑 tile 通过父矩阵 shape、起点和 rows/columns 描述，
-    // 不能按 row-major 公式把 tile 起点换算成字节偏移。
+    // 所属分配区；逻辑子块通过父矩阵形状、起点和 rows/columns 描述，
+    // 不能按行主序公式把子块起点换算成字节偏移。
     NativeMatrixLayout nativeLayout = NativeMatrixLayout::Unspecified;
     std::uint32_t parentRows = 0U;
     std::uint32_t parentColumns = 0U;
@@ -447,7 +447,7 @@ struct LocalSyncTrace {
 };
 
 // Mutex 只管理 Arch35 同一个 AI Core 内的异步流水，不能替代 AIC/AIV 之间的
-// ready/free 票据。本方案采用静态 Tensor/静态 UB-L1 地址范式，因此 MutexID
+// 就绪/空闲票据。本方案采用静态 Tensor/静态 UB-L1 地址范式，因此 MutexID
 // 由编译期表管理；按官方约束只使用建议的 0..27，不占用系统预留的 28..31。
 using SymbolicMutexId = std::uint8_t;
 constexpr SymbolicMutexId kInvalidMutexId =
@@ -555,6 +555,27 @@ enum class RuntimeScaleUse : std::uint8_t {
     FusedQg,
 };
 
+// 一次 VF 调用与其数学体的静态绑定。Stage 代码必须选择其中一个具名公式，
+// 不能再用只有 Stage 编号的通用 RunVf 代替实际计算。
+enum class VectorFormula : std::uint8_t {
+    None,
+    QkNormGateCumsumBeta,
+    S4ScoreOperands,
+    AqkAndAkkFactors,
+    PostWuOperands,
+};
+
+// 每次逻辑 MMAD 对应的矩阵公式。布局、M/N/K 和物理打包方式仍由同一条
+// OperationRecord 记录，公式名只用于消除通用 Mmad 调用的语义歧义。
+enum class MatrixFormula : std::uint8_t {
+    None,
+    RawAqkAndAkk,
+    TEqualsBMatmulX0,
+    AkkLowerLeftEqualsNegX1MatmulT,
+    WEqualsAkkMatmulKBetaG,
+    UEqualsAkkMatmulVBeta,
+};
+
 struct OperationRecord {
     OperationKind kind = OperationKind::Load;
     Stage stage = Stage::V0;
@@ -570,6 +591,8 @@ struct OperationRecord {
     MatrixStorage rhsStorage = MatrixStorage::Fp32;
     InputStorage inputStorage = InputStorage::Bf16;
     Pow2Primitive pow2Primitive = Pow2Primitive::ExpLn2;
+    VectorFormula vectorFormula = VectorFormula::None;
+    MatrixFormula matrixFormula = MatrixFormula::None;
     std::uint32_t m = 0U;
     std::uint32_t n = 0U;
     std::uint32_t k = 0U;
@@ -604,6 +627,19 @@ struct OperationTrace {
         }
         records[size++] = record;
     }
+};
+
+// 公式合同向底层轨迹接口提交的元数据。数学体、Stage 和公式枚举由架构内
+// 同一个合同类型绑定；VectorOps 只负责记录，不伪装成公式执行入口。
+struct VectorVfTraceMetadata {
+    Stage stage = Stage::V0;
+    VectorFormula formula = VectorFormula::None;
+    Pow2Primitive pow2Primitive = Pow2Primitive::ExpLn2;
+    RuntimeScaleUse runtimeScaleUse = RuntimeScaleUse::None;
+    std::uint32_t runtimeScaleMultiplyCount = 0U;
+    float runtimeScale = 1.0F;
+    bool hasPow2Primitive = false;
+    bool hasRuntimeScale = false;
 };
 
 // 待实现：这些方法只描述就绪/空闲所有权，不映射到选定的跨核标志 API、
@@ -773,67 +809,22 @@ struct VectorOps {
         }
     }
 
-    void RunVf(Stage stage, const HeadTask &task) const noexcept
+    void RecordOneVf(const HeadTask &task,
+                     const VectorVfTraceMetadata &metadata) const noexcept
     {
         if (trace != nullptr) {
             OperationRecord record{};
             record.kind = OperationKind::RunVf;
-            record.stage = stage;
+            record.stage = metadata.stage;
             record.headId = task.headId;
-            record.order = NextOrder();
-            trace->Push(record);
-        }
-    }
-
-    void RunVf(Stage stage, const HeadTask &task,
-               Pow2Primitive pow2Primitive) const noexcept
-    {
-        if (trace != nullptr) {
-            OperationRecord record{};
-            record.kind = OperationKind::RunVf;
-            record.stage = stage;
-            record.headId = task.headId;
-            record.pow2Primitive = pow2Primitive;
-            record.hasPow2Primitive = true;
-            record.order = NextOrder();
-            trace->Push(record);
-        }
-    }
-
-    void RunVf(Stage stage, const HeadTask &task, float runtimeScale,
-               RuntimeScaleUse runtimeScaleUse,
-               std::uint32_t runtimeScaleMultiplyCount) const noexcept
-    {
-        if (trace != nullptr) {
-            OperationRecord record{};
-            record.kind = OperationKind::RunVf;
-            record.stage = stage;
-            record.headId = task.headId;
-            record.runtimeScale = runtimeScale;
-            record.runtimeScaleUse = runtimeScaleUse;
-            record.runtimeScaleMultiplyCount = runtimeScaleMultiplyCount;
-            record.hasRuntimeScale = true;
-            record.order = NextOrder();
-            trace->Push(record);
-        }
-    }
-
-    void RunVf(Stage stage, const HeadTask &task,
-               Pow2Primitive pow2Primitive, float runtimeScale,
-               RuntimeScaleUse runtimeScaleUse,
-               std::uint32_t runtimeScaleMultiplyCount) const noexcept
-    {
-        if (trace != nullptr) {
-            OperationRecord record{};
-            record.kind = OperationKind::RunVf;
-            record.stage = stage;
-            record.headId = task.headId;
-            record.pow2Primitive = pow2Primitive;
-            record.hasPow2Primitive = true;
-            record.runtimeScale = runtimeScale;
-            record.runtimeScaleUse = runtimeScaleUse;
-            record.runtimeScaleMultiplyCount = runtimeScaleMultiplyCount;
-            record.hasRuntimeScale = true;
+            record.vectorFormula = metadata.formula;
+            record.pow2Primitive = metadata.pow2Primitive;
+            record.hasPow2Primitive = metadata.hasPow2Primitive;
+            record.runtimeScale = metadata.runtimeScale;
+            record.runtimeScaleUse = metadata.runtimeScaleUse;
+            record.runtimeScaleMultiplyCount =
+                metadata.runtimeScaleMultiplyCount;
+            record.hasRuntimeScale = metadata.hasRuntimeScale;
             record.order = NextOrder();
             trace->Push(record);
         }
@@ -918,7 +909,8 @@ struct CubeOps {
     // L1 源描述符及其具体 L0A/L0B 操作数范围都显式记录。这样无需声明具体
     // MTE1 API，也能审计操作数驻留区是共享还是独立，以及后续释放依赖边。
     // 符号化 MMAD 累加器及其 L0C 输出始终为 FP32。
-    void Mmad(Stage stage, const BufferSpan &lhs, const BufferSpan &rhs,
+    void Mmad(Stage stage, MatrixFormula formula, const BufferSpan &lhs,
+              const BufferSpan &rhs,
               const BufferSpan &output, const BufferSpan &l0aOperand,
               const BufferSpan &l0bOperand, MatrixStorage lhsStorage,
               MatrixStorage rhsStorage, std::uint32_t m,
@@ -929,6 +921,7 @@ struct CubeOps {
             OperationRecord record{};
             record.kind = OperationKind::Mmad;
             record.stage = stage;
+            record.matrixFormula = formula;
             record.source = lhs;
             record.rhsOperand = rhs;
             record.destination = output;
@@ -947,11 +940,12 @@ struct CubeOps {
         }
     }
 
-    // 将两个独立的 L1 行平面分别装入同一 L0A owner 的上下逻辑 row tile，
+    // 将两个独立的 L1 行平面分别装入同一 L0A 所属存储的上下逻辑行子块，
     // 再用一次 MMAD 共享同一份 L0B。该记录显式保留两个 L1 源及两个原生
-    // L0A tile，避免把分形地址伪装成连续半区；packed L0C 输出仍为 FP32。
+    // L0A 子块，避免把分形地址伪装成连续半区；紧凑拼装的 L0C 输出仍为 FP32。
     void MmadRowStackedLhs(
-        Stage stage, const BufferSpan &lhsTop, const BufferSpan &lhsBottom,
+        Stage stage, MatrixFormula formula, const BufferSpan &lhsTop,
+        const BufferSpan &lhsBottom,
         const BufferSpan &rhs, const BufferSpan &output,
         const BufferSpan &l0aOperand, const BufferSpan &lhsTopL0aTile,
         const BufferSpan &lhsBottomL0aTile, const BufferSpan &l0bOperand,
@@ -963,6 +957,7 @@ struct CubeOps {
             OperationRecord record{};
             record.kind = OperationKind::MmadRowStackedLhs;
             record.stage = stage;
+            record.matrixFormula = formula;
             record.source = lhsTop;
             record.secondarySource = lhsBottom;
             record.rhsOperand = rhs;
@@ -986,7 +981,8 @@ struct CubeOps {
     }
 
     void MmadQuadrantPackedLhs(
-        Stage stage, const BufferSpan &lhs, const BufferSpan &rhs,
+        Stage stage, MatrixFormula formula, const BufferSpan &lhs,
+        const BufferSpan &rhs,
         const BufferSpan &output, const BufferSpan &l0aOperand,
         const BufferSpan &l0bOperand, MatrixStorage lhsStorage,
         MatrixStorage rhsStorage, std::uint32_t quadrantRows,
@@ -997,6 +993,7 @@ struct CubeOps {
             OperationRecord record{};
             record.kind = OperationKind::MmadQuadrantPackedLhs;
             record.stage = stage;
+            record.matrixFormula = formula;
             record.source = lhs;
             record.rhsOperand = rhs;
             record.destination = output;

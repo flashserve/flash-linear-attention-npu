@@ -201,8 +201,13 @@ inline Offset AkkFp32Resident(const HeadTask &head)
 
 } // namespace cube_detail
 
-inline void RunC2(const CubeStageArgs &args)
+inline void StageC2_AicComputeRawAqkAkk(const CubeStageArgs &args)
 {
+    // 输入：S=4 的 Qplus、Kplus、Kminus[s] 紧凑分数操作数。
+    // 计算：每个有效分带用一次行堆叠 MMAD 同时得到
+    //       rawAqk_s=Qplus_s@Kminus[s]^T 和
+    //       rawAkk_s=Kplus_s@Kminus[s]^T。
+    // 输出：按有效因果域紧凑保存的 rawAqk/rawAkk，供配对 AIV 的 V3 消费。
     if (!cube_detail::ValidArgs(args)) {
         return;
     }
@@ -248,7 +253,7 @@ inline void RunC2(const CubeStageArgs &args)
         args.sync->Set(SyncPoint::C2ScorePayloadFree, head.workspaceSlot,
                        workspaceGeneration, Stage::C2, Pipe::Mte2);
 
-        // 一次持有本 head 的 L1 消费锁，覆盖四个有效分带的全部 MTE1 读取；
+        // 一次持有本头的 L1 消费锁，覆盖四个有效分带的全部 MTE1 读取；
         // C4 的下一次 MTE2 复用必须等待这里的 Unlock<PIPE_MTE1>。
         args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
                              head.l1BankId, Stage::C2, Pipe::Mte1);
@@ -314,9 +319,9 @@ inline void RunC2(const CubeStageArgs &args)
                 head, "C2-Kminus-L0B", MemorySpace::L0B,
                 args.workgroupId, L0bPolicy::kC2KMinus.offset,
                 ShapePolicy::kKMinusBytes[s], operandGeneration);
-            // MTE1 将 Qplus/Kplus 两个 16 行 L1 源分别装入 zN L0A 的逻辑
-            // rows[0,16)/rows[16,32) tile，然后一次 32x128 @ 128xN MMAD
-            // 同时生成 Aqk/Akk。两个 tile 不是连续物理半区，也不需要在 L1 搬位。
+            // MTE1 将 Qplus/Kplus 两个 16 行 L1 源分别装入 zN L0A 的逻辑行
+            // [0,16)/[16,32) 子块，然后一次 32x128 @ 128xN MMAD
+            // 同时生成 Aqk/Akk。两个子块不是连续物理半区，也不需要在 L1 搬位。
             args.sync->MutexLock(MutexResource::AicL0OperandBank,
                                  l0OperandMutex, head.l0OperandBankId,
                                  Stage::C2, Pipe::Mte1);
@@ -332,8 +337,9 @@ inline void RunC2(const CubeStageArgs &args)
                                  l0OperandMutex, head.l0OperandBankId,
                                  Stage::C2, Pipe::Cube);
             args.ops->MmadRowStackedLhs(
-                Stage::C2, qBand, kBand, kMinus, packedL0c, stackedL0a,
-                qL0aTile, kL0aTile, kMinusL0b,
+                Stage::C2, MatrixFormula::RawAqkAndAkk, qBand, kBand,
+                kMinus, packedL0c, stackedL0a, qL0aTile, kL0aTile,
+                kMinusL0b,
                 FromScoreStorage(args.key.scoreStorage),
                 FromScoreStorage(args.key.scoreStorage), C2Policy::kM,
                 C2Policy::kM, physicalN, C2Policy::kK, true);
@@ -368,10 +374,10 @@ inline void RunC2(const CubeStageArgs &args)
                                    l0cLowerMutex, head.l0cBankId, Stage::C2,
                                    Pipe::Fixpipe);
 
-            // 待确认的 API 约束：必须通过 MakeLayoutL0C(32,N) 的逻辑 tile
-            // 选择 packed L0C 的上、下 16 行，再分别写入
+            // 待确认的 API 约束：必须通过 MakeLayoutL0C(32,N) 的逻辑子块
+            // 选择紧凑拼装的 L0C 上、下 16 行，再分别写入
             // UBM + rawBase + (16*s+r)*0x100 + c*4，且 c<physicalN。
-            // 禁止按 row-major 字节偏移切 L0C；目标 CANN 必须验证可直接写入配对
+            // 禁止按行主序字节偏移切 L0C；目标 CANN 必须验证可直接写入配对
             // AIV 的 UB，且目标行跨度为 64。
         }
         args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
@@ -383,8 +389,11 @@ inline void RunC2(const CubeStageArgs &args)
     }
 }
 
-inline void RunC4(const CubeStageArgs &args)
+inline void StageC4_AicComputeTEqualsBMatmulX0(const CubeStageArgs &args)
 {
+    // M>32：装入 B/X0/X1 和稳定 Akk 象限，计算 T=B@X0，再把
+    //       T 与 C7 所需 Akk 象限写入最终 L1 常驻地址。
+    // M<=32：只把 q00 放入最终 L1，不读取 B/X1，不生成 T。
     if (!cube_detail::ValidArgs(args)) {
         return;
     }
@@ -613,7 +622,8 @@ inline void RunC4(const CubeStageArgs &args)
         args.sync->MutexLock(MutexResource::AicL0OperandBank,
                              l0OperandMutex, head.l0OperandBankId,
                              Stage::C4, Pipe::Cube);
-        args.ops->Mmad(Stage::C4, bCurrent, x0Resident, tL0c, bL0a, x0L0b,
+        args.ops->Mmad(Stage::C4, MatrixFormula::TEqualsBMatmulX0,
+                       bCurrent, x0Resident, tL0c, bL0a, x0L0b,
                        MatrixStorage::Fp32, MatrixStorage::Fp32, 32U, 32U,
                        32U);
         args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
@@ -642,8 +652,12 @@ inline void RunC4(const CubeStageArgs &args)
     }
 }
 
-inline void RunC5(const CubeStageArgs &args)
+inline void StageC5_AicComputeAkkQ10EqualsNegX1MatmulT(
+    const CubeStageArgs &args)
 {
+    // M>32：读取 C4 常驻的 X1/T，计算 Akk_q10=-X1@T，再把 q10
+    //       写入最终 Akk 常驻区。
+    // M<=32：q00 已由 C4 常驻，本 Stage 不读取 X1/T，也不提交 MMAD。
     if (!cube_detail::ValidArgs(args)) {
         return;
     }
@@ -663,7 +677,7 @@ inline void RunC5(const CubeStageArgs &args)
         const Offset l0cLane =
             L0cPolicy::HeadLaneBase(head.groupLocalHead);
         // 同一 L1 MutexID 汇合 C4 的 MTE2 与 Fixpipe 两个生产者，C5 的
-        // MTE1 无需再消费两个独立的同核 flag。
+        // MTE1 无需再消费两个独立的同核标志。
         const SymbolicMutexId l1Mutex =
             Arch35CubeMutexIds::L1Bank(head.l1BankId);
         const SymbolicMutexId l0OperandMutex =
@@ -708,9 +722,10 @@ inline void RunC5(const CubeStageArgs &args)
         args.sync->MutexLock(MutexResource::AicL0OperandBank,
                              l0OperandMutex, head.l0OperandBankId,
                              Stage::C5, Pipe::Cube);
-        args.ops->Mmad(Stage::C5, x1, t, y, x1L0a, tL0b,
-                       MatrixStorage::Fp32,
-                       MatrixStorage::Fp32, 32U, 32U, 32U, false, true);
+        args.ops->Mmad(
+            Stage::C5, MatrixFormula::AkkLowerLeftEqualsNegX1MatmulT,
+            x1, t, y, x1L0a, tL0b, MatrixStorage::Fp32,
+            MatrixStorage::Fp32, 32U, 32U, 32U, false, true);
         args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
                                l0OperandMutex, head.l0OperandBankId,
                                Stage::C5, Pipe::Cube);
@@ -771,8 +786,11 @@ inline void RunC5(const CubeStageArgs &args)
     }
 }
 
-inline void RunC7(const CubeStageArgs &args)
+inline void StageC7_AicComputeWAndU(const CubeStageArgs &args)
 {
+    // 输入：C5 完成的 Akk，以及 V6 生成的 K_beta_g、V_beta 两个矩阵乘右操作数平面。
+    // 计算：W=Akk@K_beta_g，U=Akk@V_beta；仅上半区有效的尾块只消费 q00。
+    // 输出：将有效行 W、U 分别舍入并写回公开 GM 输出。
     if (!cube_detail::ValidArgs(args)) {
         return;
     }
@@ -901,7 +919,8 @@ inline void RunC7(const CubeStageArgs &args)
             // 待确认的 API 约束：MTE1 必须将四个紧凑的 q00/q01/q10/q11
             // 象限直接拼装到 L0A；不允许在 L1 内移动数据。
             args.ops->MmadQuadrantPackedLhs(
-                Stage::C7, akk, kBetaG, wL0c, akkL0a, kBetaL0b,
+                Stage::C7, MatrixFormula::WEqualsAkkMatmulKBetaG, akk,
+                kBetaG, wL0c, akkL0a, kBetaL0b,
                 FromInputStorage(args.key.inputStorage),
                 FromInputStorage(args.key.inputStorage),
                 Akk2BPackPolicy::kQuadrantRows,
@@ -920,7 +939,8 @@ inline void RunC7(const CubeStageArgs &args)
                 Akk2BPackPolicy::kQuadrantRows, ShapePolicy::kK,
                 ShapePolicy::kK, ShapePolicy::kStorageBytes);
             args.ops->Mmad(
-                Stage::C7, q00, kBetaGTop, wL0c, akkL0a, kBetaL0b,
+                Stage::C7, MatrixFormula::WEqualsAkkMatmulKBetaG, q00,
+                kBetaGTop, wL0c, akkL0a, kBetaL0b,
                 FromInputStorage(args.key.inputStorage),
                 FromInputStorage(args.key.inputStorage),
                 Akk2BPackPolicy::kQuadrantRows, ShapePolicy::kK,
@@ -957,7 +977,8 @@ inline void RunC7(const CubeStageArgs &args)
                              Pipe::Cube);
         if (hasQ10) {
             args.ops->MmadQuadrantPackedLhs(
-                Stage::C7, akk, vBeta, uL0c, akkL0a, vBetaL0b,
+                Stage::C7, MatrixFormula::UEqualsAkkMatmulVBeta, akk,
+                vBeta, uL0c, akkL0a, vBetaL0b,
                 FromInputStorage(args.key.inputStorage),
                 FromInputStorage(args.key.valueStorage),
                 Akk2BPackPolicy::kQuadrantRows,
@@ -974,7 +995,8 @@ inline void RunC7(const CubeStageArgs &args)
                 Akk2BPackPolicy::kQuadrantRows, ShapePolicy::kV,
                 ShapePolicy::kV, ShapePolicy::kStorageBytes);
             args.ops->Mmad(
-                Stage::C7, q00, vBetaTop, uL0c, akkL0a, vBetaL0b,
+                Stage::C7, MatrixFormula::UEqualsAkkMatmulVBeta, q00,
+                vBetaTop, uL0c, akkL0a, vBetaL0b,
                 FromInputStorage(args.key.inputStorage),
                 FromInputStorage(args.key.valueStorage),
                 Akk2BPackPolicy::kQuadrantRows, ShapePolicy::kV,

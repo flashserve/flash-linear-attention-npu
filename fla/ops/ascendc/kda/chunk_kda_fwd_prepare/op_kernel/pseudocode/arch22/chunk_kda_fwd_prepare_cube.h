@@ -266,8 +266,13 @@ inline void RequireCubeToFixpipeOutput(const SyncLedger &sync,
 
 } // namespace cube_detail
 
-inline void RunC2(const CubeStageArgs &args)
+inline void StageC2_AicComputeRawAqkAkk(const CubeStageArgs &args)
 {
+    // 输入：S=4 的 Qplus、Kplus、Kminus[s] 紧凑分数操作数。
+    // 计算：每个有效分带将 Qplus/Kplus 按行堆叠，一次 MMAD 同时得到
+    //       rawAqk_s=Qplus_s@Kminus[s]^T 和
+    //       rawAkk_s=Kplus_s@Kminus[s]^T。
+    // 输出：紧凑 rawAqk/rawAkk GM 中转数据，供配对 AIV 的 V3 消费。
     if (!cube_detail::ValidArgs(args)) {
         return;
     }
@@ -336,8 +341,8 @@ inline void RunC2(const CubeStageArgs &args)
                     ShapePolicy::kFp32Bytes);
                 const std::uint64_t operandGeneration =
                     L0OperandGenerationFor(head, C2L0OperandUse(s));
-                // Qplus/Kplus 分别装入 zZ L0A 的逻辑 rows[0,16) 和
-                // rows[16,32) tile；二者不按 row-major 连续半区寻址。
+                // Qplus/Kplus 分别装入 zZ L0A 的逻辑行 [0,16) 和
+                // [16,32) 子块；二者不按行主序连续半区寻址。
                 const BufferSpan qkL0a = NativeMatrixOwner(
                     cube_detail::L0OperandSpan(
                         args, head, "C2-QK-stacked-L0A", MemorySpace::L0A,
@@ -362,7 +367,8 @@ inline void RunC2(const CubeStageArgs &args)
                     operandGeneration);
 
                 args.ops->MmadRowStackedLhs(
-                    Stage::C2, qBand, kBand, kMinus, packedL0c, qkL0a,
+                    Stage::C2, MatrixFormula::RawAqkAndAkk, qBand, kBand,
+                    kMinus, packedL0c, qkL0a,
                     qL0aTile, kL0aTile, kMinusL0b,
                     FromScoreStorage(args.key.scoreStorage),
                     FromScoreStorage(args.key.scoreStorage), 16U, 16U, n,
@@ -380,10 +386,10 @@ inline void RunC2(const CubeStageArgs &args)
                     arch22_policy::WorkspacePolicy::kRelayRawAkk[s].offset,
                     resultBytes);
                 // 待确认的 Arch22 API 约束：必须从同一个
-                // MakeLayoutL0C(32,N) owner 选择上下两个逻辑 row tile，
-                // 再分别由 Fixpipe 写入紧凑 GM relay。精确的源布局、步长、
-                // 模式和 API 均为 PROPOSED，必须在 CANN 9.1/Arch2201
-                // 上完成最小编译与设备验证；禁止按 row-major 字节切半。
+                // MakeLayoutL0C(32,N) 所属存储中选择上下两个逻辑行子块，
+                // 再分别由 Fixpipe 写入紧凑 GM 中转区。精确的源布局、步长、
+                // 模式和 API 均为待验证设计，必须在 CANN 9.1/Arch2201
+                // 上完成最小编译与设备验证；禁止按行主序字节切半。
                 args.ops->Store(
                     Stage::C2,
                     NativeMatrixTile(packedL0c, "Aqk-compact-L0C", 0U,
@@ -410,8 +416,11 @@ inline void RunC2(const CubeStageArgs &args)
     }
 }
 
-inline void RunC4(const CubeStageArgs &args)
+inline void StageC4_AicComputeTEqualsBMatmulX0(const CubeStageArgs &args)
 {
+    // M>32：从工作区装入 B/X0/X1，将 X0/X1 放入 L1，计算 T=B@X0，
+    //       再把 T 写入 GM 中转区供 C5 使用。
+    // M<=32：不读取 B/X0/X1，不写 L1 或 T，只传递同步状态。
     if (!cube_detail::ValidArgs(args)) {
         return;
     }
@@ -499,9 +508,10 @@ inline void RunC4(const CubeStageArgs &args)
                 arch22_policy::L0bPolicy::C2LaneBase(physicalLane),
                 0x1000U, operandGeneration);
             args.ops->SetHf32Mode(Stage::C4, false);
-            args.ops->Mmad(Stage::C4, bL1, x0L1, tL0c, bL0a, x0L0b,
-                           MatrixStorage::Fp32, MatrixStorage::Fp32, 32U, 32U,
-                           32U);
+            args.ops->Mmad(
+                Stage::C4, MatrixFormula::TEqualsBMatmulX0, bL1, x0L1,
+                tL0c, bL0a, x0L0b, MatrixStorage::Fp32,
+                MatrixStorage::Fp32, 32U, 32U, 32U);
             cube_detail::RequireCubeToMte1OperandReuse(*args.sync,
                                                        Stage::C4);
             cube_detail::RequireCubeToFixpipeOutput(*args.sync, Stage::C4);
@@ -531,8 +541,12 @@ inline void RunC4(const CubeStageArgs &args)
     }
 }
 
-inline void RunC5(const CubeStageArgs &args)
+inline void StageC5_AicComputeAkkQ10EqualsNegX1MatmulT(
+    const CubeStageArgs &args)
 {
+    // M>32：读取 C4 常驻的 X1 和 T 中转数据，计算
+    //       Akk_q10=-X1@T，再把 q10 写入 Akk GM 中转区。
+    // M<=32：不读取 X1/T，不提交 MMAD，只传递同步状态。
     if (!cube_detail::ValidArgs(args)) {
         return;
     }
@@ -601,11 +615,13 @@ inline void RunC5(const CubeStageArgs &args)
                 arch22_policy::L0bPolicy::C2LaneBase(physicalLane),
                 0x1000U, operandGeneration);
             args.ops->SetHf32Mode(Stage::C5, false);
-            args.ops->Mmad(Stage::C5, cube_detail::X1Resident(args, head),
-                           cube_detail::TResident(args, head), yL0c, x1L0a,
-                           tL0b,
-                           MatrixStorage::Fp32, MatrixStorage::Fp32, 32U, 32U,
-                           32U, false, true);
+            args.ops->Mmad(
+                Stage::C5,
+                MatrixFormula::AkkLowerLeftEqualsNegX1MatmulT,
+                cube_detail::X1Resident(args, head),
+                cube_detail::TResident(args, head), yL0c, x1L0a, tL0b,
+                MatrixStorage::Fp32, MatrixStorage::Fp32, 32U, 32U, 32U,
+                false, true);
             cube_detail::RequireCubeToMte1OperandReuse(*args.sync,
                                                        Stage::C5);
             cube_detail::RequireCubeToFixpipeOutput(*args.sync, Stage::C5);
@@ -629,8 +645,11 @@ inline void RunC5(const CubeStageArgs &args)
     }
 }
 
-inline void RunC7(const CubeStageArgs &args)
+inline void StageC7_AicComputeWAndU(const CubeStageArgs &args)
 {
+    // 输入：C5 完成的 Akk 中转数据，以及 V6 生成的 K_beta_g、V_beta。
+    // 计算：W=Akk@K_beta_g，U=Akk@V_beta；仅上半区有效的尾块只消费 q00。
+    // 输出：将有效行 W、U 分别舍入并写回公开 GM 输出。
     if (!cube_detail::ValidArgs(args)) {
         return;
     }
@@ -763,14 +782,16 @@ inline void RunC7(const CubeStageArgs &args)
                 c7L0bBase + arch22_policy::L0bPolicy::kC7VbetaOffset,
                 rhsPlaneBytes, operandGeneration);
             if (hasQ10) {
-                args.ops->Mmad(Stage::C7, akkMmad, kBetaL1, wL0c, akkL0a,
-                               kBetaL0b,
+                args.ops->Mmad(Stage::C7,
+                               MatrixFormula::WEqualsAkkMatmulKBetaG,
+                               akkMmad, kBetaL1, wL0c, akkL0a, kBetaL0b,
                                FromInputStorage(args.key.inputStorage),
                                FromInputStorage(args.key.inputStorage),
                                ShapePolicy::kBt, ShapePolicy::kK,
                                ShapePolicy::kBt);
-                args.ops->Mmad(Stage::C7, akkMmad, vBetaL1, uL0c, akkL0a,
-                               vBetaL0b,
+                args.ops->Mmad(Stage::C7,
+                               MatrixFormula::UEqualsAkkMatmulVBeta,
+                               akkMmad, vBetaL1, uL0c, akkL0a, vBetaL0b,
                                FromInputStorage(args.key.inputStorage),
                                FromInputStorage(args.key.valueStorage),
                                ShapePolicy::kBt, ShapePolicy::kV,
@@ -784,13 +805,15 @@ inline void RunC7(const CubeStageArgs &args)
                     vBetaL1, "V-beta-top32", 0U, 0U, 32U,
                     ShapePolicy::kV, ShapePolicy::kV,
                     ShapePolicy::kStorageBytes);
-                args.ops->Mmad(Stage::C7, akkMmad, kBetaTop, wL0c, akkL0a,
-                               kBetaL0b,
+                args.ops->Mmad(Stage::C7,
+                               MatrixFormula::WEqualsAkkMatmulKBetaG,
+                               akkMmad, kBetaTop, wL0c, akkL0a, kBetaL0b,
                                FromInputStorage(args.key.inputStorage),
                                FromInputStorage(args.key.inputStorage), 32U,
                                ShapePolicy::kK, 32U);
-                args.ops->Mmad(Stage::C7, akkMmad, vBetaTop, uL0c, akkL0a,
-                               vBetaL0b,
+                args.ops->Mmad(Stage::C7,
+                               MatrixFormula::UEqualsAkkMatmulVBeta,
+                               akkMmad, vBetaTop, uL0c, akkL0a, vBetaL0b,
                                FromInputStorage(args.key.inputStorage),
                                FromInputStorage(args.key.valueStorage), 32U,
                                ShapePolicy::kV, 32U);

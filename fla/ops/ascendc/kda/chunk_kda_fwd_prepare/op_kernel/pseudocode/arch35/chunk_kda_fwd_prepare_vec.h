@@ -147,400 +147,443 @@ inline bool IsSupportedKey(const ProposedTilingKey &key)
     return IsSupportedTilingKey(key);
 }
 
-// VF 伪接口不会在仅主机的设计构建中实例化；它只冻结一次 VF 内的数学顺序。
-template <typename Vf>
-inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
-                    const ProposedTilingKey &key, float epsilon,
-                    float lowerBound)
-{
-    const Offset gOffset = IsTwoByteGateStorage(key.gateStorage)
-                               ? V0Gate2BLayout::kG.offset
-                               : V0GateFp32Layout::kG.offset;
-    const bool usesSelectiveGate =
-        key.gateMode != GateMode::PrecomputedStep;
-    auto gateCoefficient = vf.OneFp32();
-    auto dtBias = vf.ZeroFp32Row(ShapePolicy::kK);
-    if (usesSelectiveGate) {
-        // 每个头的系数和 K 向量偏置只在词元扫描外搬运或
-        // 计算一次。它们在每头 UB 向量状态区中的地址与 GRef[0:2] 复用；
-        // 本循环消费完两个值后，才物化 GRef[0:2]。
-        gateCoefficient = vf.Exp(vf.LoadALogScalarOnce(
-            UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-            VectorStateLayout::kALogOrGateAttrs.offset));
-        dtBias = vf.LoadDtBiasRow(
-            UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-            VectorStateLayout::kDtBias.offset);
-    }
-    auto carry = vf.ZeroFp32Row(ShapePolicy::kK);
-    auto zeroInputStorage = vf.RoundToInputStorage(
-        vf.ClampForInputStorage(vf.ZeroFp32(), key.inputStorage),
-        key.inputStorage);
-    for (std::uint32_t row = 0; row < ShapePolicy::kBt; ++row) {
-        if (row >= validRows) {
-            vf.StoreZeroQHatKHatAndGPadding(
-                row, zeroInputStorage, key.inputStorage);
-            vf.StoreBetaEffScalar(row, 0.0F);
-            continue;
-        }
-        auto gateRaw = vf.LoadGateRow(row, key.gateStorage);
-        auto betaRaw = vf.LoadBetaFp32Scalar(
-            UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-                VectorStateLayout::kBetaRaw.offset,
-            row);
-        auto betaEff = betaRaw;
-        if (key.betaMode == BetaMode::Sigmoid) {
-            betaEff = vf.Sigmoid(betaRaw);
-        } else if (key.betaMode == BetaMode::TwoSigmoid) {
-            betaEff = vf.Mul(2.0F, vf.Sigmoid(betaRaw));
-        }
+// 每个合同类型同时绑定数学体、Stage 和轨迹公式，Stage 与语义测试不能绕过它。
+struct QkNormGateCumsumBetaVf {
+    static constexpr Stage kStage = Stage::V0;
+    static constexpr VectorFormula kFormula = VectorFormula::QkNormGateCumsumBeta;
 
-        if (head.qkOwner && key.qkNormMode == QkNormMode::L2) {
-            // 与仓库内 FLA L2 核函数及精度标杆保持一致，归一化公式为：
-            // x_hat = x * rsqrt(sum_d(x_d^2) + epsilon)。
-            const auto q =
-                vf.ToFp32(vf.LoadQStorageRow(row, key.inputStorage));
-            const auto k =
-                vf.ToFp32(vf.LoadKStorageRow(row, key.inputStorage));
-            const auto qHat =
-                vf.L2NormalizeRsqrtSumPlusEpsilon(q, epsilon);
-            const auto kHat =
-                vf.L2NormalizeRsqrtSumPlusEpsilon(k, epsilon);
-            vf.StoreStorageRow(
-                V0Gate2BLayout::kQHat.offset, row,
-                vf.RoundToInputStorage(
-                    vf.ClampForInputStorage(qHat, key.inputStorage),
-                    key.inputStorage),
-                key.inputStorage);
-            vf.StoreStorageRow(
-                V0Gate2BLayout::kKHat.offset, row,
-                vf.RoundToInputStorage(
-                    vf.ClampForInputStorage(kHat, key.inputStorage),
-                    key.inputStorage),
-                key.inputStorage);
+    template <typename Vf>
+    static inline void Evaluate(Vf &vf, const HeadTask &head, std::uint32_t validRows,
+                                const ProposedTilingKey &key, float epsilon,
+                                float lowerBound)
+    {
+        const Offset gOffset = IsTwoByteGateStorage(key.gateStorage)
+                                   ? V0Gate2BLayout::kG.offset
+                                   : V0GateFp32Layout::kG.offset;
+        const bool usesSelectiveGate = key.gateMode != GateMode::PrecomputedStep;
+        auto gateCoefficient = vf.OneFp32();
+        auto dtBias = vf.ZeroFp32Row(ShapePolicy::kK);
+        if (usesSelectiveGate) {
+            // 每个头的系数和 K 向量偏置只在词元扫描外搬运或
+            // 计算一次。它们在每头 UB 向量状态区中的地址与 GRef[0:2] 复用；
+            // 本循环消费完两个值后，才物化 GRef[0:2]。
+            gateCoefficient = vf.Exp(
+                vf.LoadALogScalarOnce(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+                                      VectorStateLayout::kALogOrGateAttrs.offset));
+            dtBias = vf.LoadDtBiasRow(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+                                      VectorStateLayout::kDtBias.offset);
         }
+        auto carry = vf.ZeroFp32Row(ShapePolicy::kK);
+        auto zeroInputStorage = vf.RoundToInputStorage(
+            vf.ClampForInputStorage(vf.ZeroFp32(), key.inputStorage), key.inputStorage);
+        for (std::uint32_t row = 0; row < ShapePolicy::kBt; ++row) {
+            if (row >= validRows) {
+                vf.StoreZeroQHatKHatAndGPadding(row, zeroInputStorage,
+                                                key.inputStorage);
+                vf.StoreBetaEffScalar(row, 0.0F);
+                continue;
+            }
+            auto gateRaw = vf.LoadGateRow(row, key.gateStorage);
+            auto betaRaw =
+                vf.LoadBetaFp32Scalar(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+                                          VectorStateLayout::kBetaRaw.offset,
+                                      row);
+            auto betaEff = betaRaw;
+            if (key.betaMode == BetaMode::Sigmoid) {
+                betaEff = vf.Sigmoid(betaRaw);
+            } else if (key.betaMode == BetaMode::TwoSigmoid) {
+                betaEff = vf.Mul(2.0F, vf.Sigmoid(betaRaw));
+            }
 
-        auto gateStep = gateRaw;
-        if (key.gateMode == GateMode::PrecomputedStep) {
-            gateStep = vf.Div(gateRaw, vf.Ln2());
-        } else {
-            auto x = vf.Add(gateRaw, dtBias);
-            if (key.gateMode == GateMode::Softplus) {
-                auto stableSoftplus = vf.Add(
-                    vf.Max(x, vf.ZeroFp32()),
-                    vf.Log1p(vf.Exp(vf.Neg(vf.Abs(x)))));
-                gateStep = vf.Div(
-                    vf.Neg(vf.Mul(gateCoefficient, stableSoftplus)),
-                    vf.Ln2());
+            if (head.qkOwner && key.qkNormMode == QkNormMode::L2) {
+                // 与仓库内 FLA L2 核函数及精度标杆保持一致，归一化公式为：
+                // x_hat = x * rsqrt(sum_d(x_d^2) + epsilon)。
+                const auto q = vf.ToFp32(vf.LoadQStorageRow(row, key.inputStorage));
+                const auto k = vf.ToFp32(vf.LoadKStorageRow(row, key.inputStorage));
+                const auto qHat = vf.L2NormalizeRsqrtSumPlusEpsilon(q, epsilon);
+                const auto kHat = vf.L2NormalizeRsqrtSumPlusEpsilon(k, epsilon);
+                vf.StoreStorageRow(V0Gate2BLayout::kQHat.offset, row,
+                                   vf.RoundToInputStorage(
+                                       vf.ClampForInputStorage(qHat, key.inputStorage),
+                                       key.inputStorage),
+                                   key.inputStorage);
+                vf.StoreStorageRow(V0Gate2BLayout::kKHat.offset, row,
+                                   vf.RoundToInputStorage(
+                                       vf.ClampForInputStorage(kHat, key.inputStorage),
+                                       key.inputStorage),
+                                   key.inputStorage);
+            }
+
+            auto gateStep = gateRaw;
+            if (key.gateMode == GateMode::PrecomputedStep) {
+                gateStep = vf.Div(gateRaw, vf.Ln2());
             } else {
-                gateStep = vf.Div(
-                    vf.Mul(lowerBound,
-                           vf.Sigmoid(vf.Mul(gateCoefficient, x))),
-                    vf.Ln2());
-            }
-        }
-        carry = vf.Add(carry, gateStep); // 词元顺序构成真实的扫描依赖。
-        // 恒等路径所有者和映射到它的非所有者保留已常驻 Qhat/Khat 的 2 字节
-        // MTE2 结果。再次转换和舍入只会造成重复向量计算，无法提高精度。
-        vf.StoreFp32Row(gOffset, row, carry);
-        vf.StoreBetaEffScalar(row, betaEff);
-    }
-
-    for (std::uint32_t s = 0; s < ShapePolicy::kScoreBlockCount; ++s) {
-        const std::uint32_t begin = s * ShapePolicy::kScoreBlockRows;
-        const std::uint32_t end = std::min(begin + ShapePolicy::kScoreBlockRows,
-                                           validRows);
-        if (begin >= end) {
-            vf.ZeroFp32Row(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-                           VectorStateLayout::kGRef[s].offset);
-            continue;
-        }
-        const std::uint32_t referenceRow = begin + (end - begin) / 2U;
-        auto reference = vf.LoadFp32Row(gOffset, referenceRow);
-        vf.StoreFp32Row(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-                            VectorStateLayout::kGRef[s].offset,
-                        reference);
-    }
-    vf.StoreGLast(carry);
-}
-
-template <bool UseExp2, typename Vf>
-inline void V1OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
-                    GateStorage gateStorage, InputStorage inputStorage,
-                    ScoreStorage scoreStorage)
-{
-    const Offset gOffset = IsTwoByteGateStorage(gateStorage)
-                               ? V1Gate2BLayout::kLiveG.offset
-                               : V1GateFp32Layout::kLiveG.offset;
-    const auto &kMinus = IsTwoByteGateStorage(gateStorage)
-                             ? V1Gate2BLayout::kKMinus
-                             : V1GateFp32Layout::kKMinus;
-    const std::uint32_t activeBlocks = ActiveScoreBlocks(validRows);
-    const float exp2InputMin = ScoreExp2InputMin(scoreStorage);
-    const float exp2InputMax = ScoreExp2InputMax(scoreStorage);
-    auto zeroScoreStorage = vf.RoundToScoreStorage(
-        vf.ClampForScoreStorage(vf.ZeroFp32(), scoreStorage), scoreStorage);
-
-    for (std::uint32_t row = 0; row < ShapePolicy::kBt; ++row) {
-        if (row < validRows) {
-            // 在任何存在别名的 Q/K 写入前，先将三个源行读入临时寄存器。
-            auto qHat = vf.ToFp32(vf.LoadStorageRow(
-                V1Gate2BLayout::kQPlus.offset, row, inputStorage));
-            auto kHat = vf.ToFp32(vf.LoadStorageRow(
-                V1Gate2BLayout::kKPlus.offset, row, inputStorage));
-            auto g = vf.LoadFp32Row(gOffset, row);
-            const std::uint32_t owner = row / ShapePolicy::kScoreBlockRows;
-            auto ownerRef = vf.LoadFp32Row(
-                UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-                VectorStateLayout::kGRef[owner].offset);
-            auto plusFactor = EvaluatePow2<UseExp2>(
-                vf, vf.Sub(g, ownerRef), exp2InputMin, exp2InputMax);
-            auto qPlus = vf.Mul(qHat, plusFactor);
-            auto kPlus = vf.Mul(kHat, plusFactor);
-
-            // 在所有所需前缀生成完成前，Khat 一直保留在寄存器中；所有
-            // Kminus 目标均不与仍在生命周期内的 G 重叠。
-            for (std::uint32_t s = 0; s < ShapePolicy::kScoreBlockCount; ++s) {
-                const std::uint32_t physicalEnd =
-                    ShapePolicy::kPrefixRows[s];
-                const std::uint32_t logicalEnd =
-                    ShapePolicy::LogicalPrefixRows(s, validRows);
-                if (row >= physicalEnd) {
-                    continue;
-                }
-                if (s < activeBlocks && row < logicalEnd) {
-                    auto reference = vf.LoadFp32Row(
-                        UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-                        VectorStateLayout::kGRef[s].offset);
-                    auto minusFactor = EvaluatePow2<UseExp2>(
-                        vf, vf.Sub(reference, g), exp2InputMin,
-                        exp2InputMax);
-                    auto kMinusStorage = vf.RoundToScoreStorage(
-                        vf.ClampForScoreStorage(
-                            vf.Mul(kHat, minusFactor), scoreStorage),
-                        scoreStorage);
-                    vf.StoreStorageRow(kMinus[s].offset, row, kMinusStorage,
-                                       scoreStorage);
+                auto x = vf.Add(gateRaw, dtBias);
+                if (key.gateMode == GateMode::Softplus) {
+                    auto stableSoftplus = vf.Add(vf.Max(x, vf.ZeroFp32()),
+                                                 vf.Log1p(vf.Exp(vf.Neg(vf.Abs(x)))));
+                    gateStep = vf.Div(vf.Neg(vf.Mul(gateCoefficient, stableSoftplus)),
+                                      vf.Ln2());
                 } else {
-                    vf.StoreStorageRow(kMinus[s].offset, row,
-                                       zeroScoreStorage, scoreStorage);
+                    gateStep = vf.Div(
+                        vf.Mul(lowerBound, vf.Sigmoid(vf.Mul(gateCoefficient, x))),
+                        vf.Ln2());
                 }
             }
-            auto qPlusStorage = vf.RoundToScoreStorage(
-                vf.ClampForScoreStorage(qPlus, scoreStorage), scoreStorage);
-            auto kPlusStorage = vf.RoundToScoreStorage(
-                vf.ClampForScoreStorage(kPlus, scoreStorage), scoreStorage);
-            vf.StoreStorageRow(V1Gate2BLayout::kQPlus.offset, row,
-                               qPlusStorage, scoreStorage);
-            vf.StoreStorageRow(V1Gate2BLayout::kKPlus.offset, row,
-                               kPlusStorage, scoreStorage);
-        } else {
-            vf.StoreStorageRow(V1Gate2BLayout::kQPlus.offset, row,
-                               zeroScoreStorage, scoreStorage);
-            vf.StoreStorageRow(V1Gate2BLayout::kKPlus.offset, row,
-                               zeroScoreStorage, scoreStorage);
-            for (std::uint32_t s = 0; s < ShapePolicy::kScoreBlockCount; ++s) {
-                // 尾块保留固定的 B_s 字节区段，并显式清零
-                // [b_s=min(B_s,M), B_s)；不会缩小物理槽位。
-                if (row < ShapePolicy::kPrefixRows[s]) {
-                    vf.StoreStorageRow(kMinus[s].offset, row,
-                                       zeroScoreStorage, scoreStorage);
+            carry = vf.Add(carry, gateStep); // 词元顺序构成真实的扫描依赖。
+            // 恒等路径所有者和映射到它的非所有者保留已常驻 Qhat/Khat 的 2 字节
+            // MTE2 结果。再次转换和舍入只会造成重复向量计算，无法提高精度。
+            vf.StoreFp32Row(gOffset, row, carry);
+            vf.StoreBetaEffScalar(row, betaEff);
+        }
+
+        for (std::uint32_t s = 0; s < ShapePolicy::kScoreBlockCount; ++s) {
+            const std::uint32_t begin = s * ShapePolicy::kScoreBlockRows;
+            const std::uint32_t end =
+                std::min(begin + ShapePolicy::kScoreBlockRows, validRows);
+            if (begin >= end) {
+                vf.ZeroFp32Row(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+                               VectorStateLayout::kGRef[s].offset);
+                continue;
+            }
+            const std::uint32_t referenceRow = begin + (end - begin) / 2U;
+            auto reference = vf.LoadFp32Row(gOffset, referenceRow);
+            vf.StoreFp32Row(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+                                VectorStateLayout::kGRef[s].offset,
+                            reference);
+        }
+        vf.StoreGLast(carry);
+    }
+
+    static inline void Record(const VectorOps &ops, const HeadTask &head) noexcept
+    {
+        VectorVfTraceMetadata metadata{};
+        metadata.stage = kStage;
+        metadata.formula = kFormula;
+        ops.RecordOneVf(head, metadata);
+    }
+};
+
+struct S4ScoreOperandsVf {
+    static constexpr Stage kStage = Stage::V1;
+    static constexpr VectorFormula kFormula = VectorFormula::S4ScoreOperands;
+
+    template <bool UseExp2, typename Vf>
+    static inline void Evaluate(Vf &vf, const HeadTask &head, std::uint32_t validRows,
+                                GateStorage gateStorage, InputStorage inputStorage,
+                                ScoreStorage scoreStorage)
+    {
+        const Offset gOffset = IsTwoByteGateStorage(gateStorage)
+                                   ? V1Gate2BLayout::kLiveG.offset
+                                   : V1GateFp32Layout::kLiveG.offset;
+        const auto &kMinus = IsTwoByteGateStorage(gateStorage)
+                                 ? V1Gate2BLayout::kKMinus
+                                 : V1GateFp32Layout::kKMinus;
+        const std::uint32_t activeBlocks = ActiveScoreBlocks(validRows);
+        const float exp2InputMin = ScoreExp2InputMin(scoreStorage);
+        const float exp2InputMax = ScoreExp2InputMax(scoreStorage);
+        auto zeroScoreStorage = vf.RoundToScoreStorage(
+            vf.ClampForScoreStorage(vf.ZeroFp32(), scoreStorage), scoreStorage);
+
+        for (std::uint32_t row = 0; row < ShapePolicy::kBt; ++row) {
+            if (row < validRows) {
+                // 在任何存在别名的 Q/K 写入前，先将三个源行读入临时寄存器。
+                auto qHat = vf.ToFp32(vf.LoadStorageRow(V1Gate2BLayout::kQPlus.offset,
+                                                        row, inputStorage));
+                auto kHat = vf.ToFp32(vf.LoadStorageRow(V1Gate2BLayout::kKPlus.offset,
+                                                        row, inputStorage));
+                auto g = vf.LoadFp32Row(gOffset, row);
+                const std::uint32_t owner = row / ShapePolicy::kScoreBlockRows;
+                auto ownerRef =
+                    vf.LoadFp32Row(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+                                   VectorStateLayout::kGRef[owner].offset);
+                auto plusFactor = EvaluatePow2<UseExp2>(vf, vf.Sub(g, ownerRef),
+                                                        exp2InputMin, exp2InputMax);
+                auto qPlus = vf.Mul(qHat, plusFactor);
+                auto kPlus = vf.Mul(kHat, plusFactor);
+
+                // 在所有所需前缀生成完成前，Khat 一直保留在寄存器中；所有
+                // Kminus 目标均不与仍在生命周期内的 G 重叠。
+                for (std::uint32_t s = 0; s < ShapePolicy::kScoreBlockCount; ++s) {
+                    const std::uint32_t physicalEnd = ShapePolicy::kPrefixRows[s];
+                    const std::uint32_t logicalEnd =
+                        ShapePolicy::LogicalPrefixRows(s, validRows);
+                    if (row >= physicalEnd) {
+                        continue;
+                    }
+                    if (s < activeBlocks && row < logicalEnd) {
+                        auto reference = vf.LoadFp32Row(
+                            UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+                            VectorStateLayout::kGRef[s].offset);
+                        auto minusFactor = EvaluatePow2<UseExp2>(
+                            vf, vf.Sub(reference, g), exp2InputMin, exp2InputMax);
+                        auto kMinusStorage = vf.RoundToScoreStorage(
+                            vf.ClampForScoreStorage(vf.Mul(kHat, minusFactor),
+                                                    scoreStorage),
+                            scoreStorage);
+                        vf.StoreStorageRow(kMinus[s].offset, row, kMinusStorage,
+                                           scoreStorage);
+                    } else {
+                        vf.StoreStorageRow(kMinus[s].offset, row, zeroScoreStorage,
+                                           scoreStorage);
+                    }
+                }
+                auto qPlusStorage = vf.RoundToScoreStorage(
+                    vf.ClampForScoreStorage(qPlus, scoreStorage), scoreStorage);
+                auto kPlusStorage = vf.RoundToScoreStorage(
+                    vf.ClampForScoreStorage(kPlus, scoreStorage), scoreStorage);
+                vf.StoreStorageRow(V1Gate2BLayout::kQPlus.offset, row, qPlusStorage,
+                                   scoreStorage);
+                vf.StoreStorageRow(V1Gate2BLayout::kKPlus.offset, row, kPlusStorage,
+                                   scoreStorage);
+            } else {
+                vf.StoreStorageRow(V1Gate2BLayout::kQPlus.offset, row, zeroScoreStorage,
+                                   scoreStorage);
+                vf.StoreStorageRow(V1Gate2BLayout::kKPlus.offset, row, zeroScoreStorage,
+                                   scoreStorage);
+                for (std::uint32_t s = 0; s < ShapePolicy::kScoreBlockCount; ++s) {
+                    // 尾块保留固定的 B_s 字节区段，并显式清零
+                    // [b_s=min(B_s,M), B_s)；不会缩小物理槽位。
+                    if (row < ShapePolicy::kPrefixRows[s]) {
+                        vf.StoreStorageRow(kMinus[s].offset, row, zeroScoreStorage,
+                                           scoreStorage);
+                    }
                 }
             }
         }
     }
-}
+
+    static inline void Record(const VectorOps &ops, const HeadTask &head,
+                              Pow2Primitive pow2Primitive) noexcept
+    {
+        VectorVfTraceMetadata metadata{};
+        metadata.stage = kStage;
+        metadata.formula = kFormula;
+        metadata.pow2Primitive = pow2Primitive;
+        metadata.hasPow2Primitive = true;
+        ops.RecordOneVf(head, metadata);
+    }
+};
 
 template <typename Vf>
-inline void V3ReadAndTransformRaw(Vf &vf, std::uint32_t validRows,
-                                  float scale)
+inline void BuildAqkAndLkkFromRaw(Vf &vf, std::uint32_t validRows, float scale)
 {
     for (std::uint32_t row = 0; row < ShapePolicy::kBt; ++row) {
         for (std::uint32_t col = 0; col < ShapePolicy::kBt; ++col) {
-            const bool readAqk =
-                V3AqkRawReadRequired(validRows, row, col);
-            const bool readAkk =
-                V3AkkRawReadRequired(validRows, row, col);
-            auto aqk = readAqk
-                           ? vf.Mul(scale, vf.LoadRawAqk(row, col))
-                           : vf.ZeroFp32();
-            auto lkk = readAkk
-                           ? vf.Mul(vf.LoadBetaEff(row),
-                                    vf.LoadRawAkk(row, col))
-                           : vf.ZeroFp32();
+            const bool readAqk = V3AqkRawReadRequired(validRows, row, col);
+            const bool readAkk = V3AkkRawReadRequired(validRows, row, col);
+            auto aqk = readAqk ? vf.Mul(scale, vf.LoadRawAqk(row, col)) : vf.ZeroFp32();
+            auto lkk = readAkk ? vf.Mul(vf.LoadBetaEff(row), vf.LoadRawAkk(row, col))
+                               : vf.ZeroFp32();
             vf.StoreAqk(row, col, aqk);
             vf.StoreLkkOrIdentityPadding(row, col, lkk, validRows);
         }
     }
 }
 
-template <typename Vf>
-inline void V3OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
-                    PrepareAbi abi, AkkStorage akkStorage,
-                    InputStorage inputStorage, float scale)
-{
-    (void)head;
-    // 此处仍只调用一次 VF。每次原始数据搬运都由谓词限定在共享物理写入域和
-    // 有效因果域内；无效输出直接生成，不读取残留的原始数据存储。
-    V3ReadAndTransformRaw(vf, validRows, scale);
-    vf.InvertTwo32By32LeavesWithFixedColumnScan();
-    vf.MaterializeX0X1AndBAtFinalOffsets();
-    if (akkStorage == AkkStorage::TwoByteAbi) {
-        // q00/q01/q11 直接写入各自最终的紧凑象限优先布局地址。
-        // ClampForInputStorage 只对 FP16 执行有限值 +/-65504 饱和；随后 FP16
-        // 和 BF16 分别使用各自的舍入方式。
-        auto zeroStorage = vf.RoundToInputStorage(
-            vf.ClampForInputStorage(vf.ZeroFp32(), inputStorage),
-            inputStorage);
-        for (std::uint32_t row = 0U;
-             row < Akk2BPackPolicy::kQuadrantRows; ++row) {
-            for (std::uint32_t col = 0U;
-                 col < Akk2BPackPolicy::kQuadrantColumns; ++col) {
-                // q00/q11 暂存在其最终 UB 偏移。Current 还需要 q01 作为公开
-                // Akk 输出；Fused 不物化这个已知零值，由 C4 在最终 L1 地址
-                // 填充 q01。
-                if (V3StableAkkWriteRequired(
-                        Architecture::Arch35, abi, validRows, row, col)) {
-                    auto q00 = vf.LoadStableAkkQ00OrZeroColumnPadding(
-                        row, col, validRows);
-                    auto q00Storage = vf.RoundToInputStorage(
-                        vf.ClampForInputStorage(q00, inputStorage),
-                        inputStorage);
-                    vf.StoreInputStorageMatrix(
-                        V3Layout::kX0Tau.offset, row, col, q00Storage,
-                        inputStorage);
-                }
-                if (V3StableAkkWriteRequired(Architecture::Arch35, abi,
-                                             validRows, row, col + 32U)) {
-                    vf.StoreInputStorageMatrix(
-                        V3Layout::kQ01Zero.offset, row, col, zeroStorage,
-                        inputStorage);
-                }
-                if (V3StableAkkWriteRequired(Architecture::Arch35, abi,
-                                             validRows, row + 32U,
-                                             col + 32U)) {
-                    auto q11 = vf.LoadStableAkkQ11OrZeroColumnPadding(
-                        row, col, validRows);
-                    auto q11Storage = vf.RoundToInputStorage(
-                        vf.ClampForInputStorage(q11, inputStorage),
-                        inputStorage);
-                    vf.StoreInputStorageMatrix(
-                        V3Layout::kX1Tau.offset, row, col, q11Storage,
-                        inputStorage);
+struct AqkAndAkkFactorsVf {
+    static constexpr Stage kStage = Stage::V3;
+    static constexpr VectorFormula kFormula = VectorFormula::AqkAndAkkFactors;
+
+    template <typename Vf>
+    static inline void Evaluate(Vf &vf, const HeadTask &head, std::uint32_t validRows,
+                                PrepareAbi abi, AkkStorage akkStorage,
+                                InputStorage inputStorage, float scale)
+    {
+        (void)head;
+        // 此处仍只调用一次 VF。每次原始数据搬运都由谓词限定在共享物理写入域和
+        // 有效因果域内；无效输出直接生成，不读取残留的原始数据存储。
+        BuildAqkAndLkkFromRaw(vf, validRows, scale);
+        // 将单位下三角矩阵 I+Lkk 分块为 [[A00,0],[B,A11]]：
+        // X0=A00^-1，X1=A11^-1，最终
+        // Akk=[[X0,0],[-X1@B@X0,X1]]。本 Stage 生成 X0/X1/B，
+        // C4/C5 再依次计算 T=B@X0 和左下象限 -X1@T。
+        vf.InvertUnitLowerTriangularLeaves32();
+        vf.MaterializeAkkFactorsX0X1AndBAtFinalOffsets();
+        if (akkStorage == AkkStorage::TwoByteAbi) {
+            // q00/q01/q11 直接写入各自最终的紧凑象限优先布局地址。
+            // ClampForInputStorage 只对 FP16 执行有限值 +/-65504 饱和；随后
+            // FP16 和 BF16 分别使用各自的舍入方式。
+            auto zeroStorage = vf.RoundToInputStorage(
+                vf.ClampForInputStorage(vf.ZeroFp32(), inputStorage), inputStorage);
+            for (std::uint32_t row = 0U; row < Akk2BPackPolicy::kQuadrantRows; ++row) {
+                for (std::uint32_t col = 0U; col < Akk2BPackPolicy::kQuadrantColumns;
+                     ++col) {
+                    // q00/q11 暂存在其最终 UB 偏移。Current 还需要 q01 作为公开
+                    // Akk 输出；Fused 不物化这个已知零值，由 C4 在最终 L1 地址
+                    // 填充 q01。
+                    if (V3StableAkkWriteRequired(Architecture::Arch35, abi, validRows,
+                                                 row, col)) {
+                        auto q00 =
+                            vf.LoadStableAkkQ00OrZeroColumnPadding(row, col, validRows);
+                        auto q00Storage = vf.RoundToInputStorage(
+                            vf.ClampForInputStorage(q00, inputStorage), inputStorage);
+                        vf.StoreInputStorageMatrix(V3Layout::kX0Tau.offset, row, col,
+                                                   q00Storage, inputStorage);
+                    }
+                    if (V3StableAkkWriteRequired(Architecture::Arch35, abi, validRows,
+                                                 row, col + 32U)) {
+                        vf.StoreInputStorageMatrix(V3Layout::kQ01Zero.offset, row, col,
+                                                   zeroStorage, inputStorage);
+                    }
+                    if (V3StableAkkWriteRequired(Architecture::Arch35, abi, validRows,
+                                                 row + 32U, col + 32U)) {
+                        auto q11 =
+                            vf.LoadStableAkkQ11OrZeroColumnPadding(row, col, validRows);
+                        auto q11Storage = vf.RoundToInputStorage(
+                            vf.ClampForInputStorage(q11, inputStorage), inputStorage);
+                        vf.StoreInputStorageMatrix(V3Layout::kX1Tau.offset, row, col,
+                                                   q11Storage, inputStorage);
+                    }
                 }
             }
         }
-    }
-    // Aqk 此后不再有 FP32 读取方。以相同基址在原地向低地址执行类型转换；
-    // 按行、列正序处理时只会覆盖已经读取的值。这不属于 UB 数据移动，
-    // 也不是第二次 VF 调用。
-    for (std::uint32_t row = 0U; row < ShapePolicy::kBt; ++row) {
-        for (std::uint32_t col = 0U; col < ShapePolicy::kBt; ++col) {
-            auto aqkStorage = vf.RoundToInputStorage(
-                vf.ClampForInputStorage(vf.LoadAqk(row, col), inputStorage),
-                inputStorage);
-            vf.StoreAqkStorageInPlace(row, col, aqkStorage, inputStorage);
+        // Aqk 此后不再有 FP32 读取方。以相同基址在原地向低地址执行类型转换；
+        // 按行、列正序处理时只会覆盖已经读取的值。这不属于 UB 数据移动，
+        // 也不是第二次 VF 调用。
+        for (std::uint32_t row = 0U; row < ShapePolicy::kBt; ++row) {
+            for (std::uint32_t col = 0U; col < ShapePolicy::kBt; ++col) {
+                auto aqkStorage = vf.RoundToInputStorage(
+                    vf.ClampForInputStorage(vf.LoadAqk(row, col), inputStorage),
+                    inputStorage);
+                vf.StoreAqkStorageInPlace(row, col, aqkStorage, inputStorage);
+            }
         }
     }
-}
 
-template <bool UseExp2, typename Vf>
-inline void V6OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
-                    PrepareAbi abi, InputStorage inputStorage,
-                    InputStorage valueStorage, float scale)
-{
-    (void)head;
-    auto zeroQkStorage = vf.RoundToInputStorage(
-        vf.ClampForInputStorage(vf.ZeroFp32(), inputStorage), inputStorage);
-    auto zeroValueStorage = vf.RoundToInputStorage(
-        vf.ClampForInputStorage(vf.ZeroFp32(), valueStorage), valueStorage);
-    const std::uint32_t rhsRows =
-        validRows > Akk2BPackPolicy::kQuadrantRows
-            ? ShapePolicy::kBt
-            : Akk2BPackPolicy::kQuadrantRows;
-    if (validRows == 0U) {
+    static inline void Record(const VectorOps &ops, const HeadTask &head,
+                              float runtimeScale, RuntimeScaleUse runtimeScaleUse,
+                              std::uint32_t runtimeScaleMultiplyCount) noexcept
+    {
+        VectorVfTraceMetadata metadata{};
+        metadata.stage = kStage;
+        metadata.formula = kFormula;
+        metadata.runtimeScale = runtimeScale;
+        metadata.runtimeScaleUse = runtimeScaleUse;
+        metadata.runtimeScaleMultiplyCount = runtimeScaleMultiplyCount;
+        metadata.hasRuntimeScale = true;
+        ops.RecordOneVf(head, metadata);
+    }
+};
+
+struct PostWuOperandsVf {
+    static constexpr Stage kStage = Stage::V6;
+    static constexpr VectorFormula kFormula = VectorFormula::PostWuOperands;
+
+    template <bool UseExp2, typename Vf>
+    static inline void Evaluate(Vf &vf, const HeadTask &head, std::uint32_t validRows,
+                                PrepareAbi abi, InputStorage inputStorage,
+                                InputStorage valueStorage, float scale)
+    {
+        (void)head;
+        auto zeroQkStorage = vf.RoundToInputStorage(
+            vf.ClampForInputStorage(vf.ZeroFp32(), inputStorage), inputStorage);
+        auto zeroValueStorage = vf.RoundToInputStorage(
+            vf.ClampForInputStorage(vf.ZeroFp32(), valueStorage), valueStorage);
+        const std::uint32_t rhsRows = validRows > Akk2BPackPolicy::kQuadrantRows
+                                          ? ShapePolicy::kBt
+                                          : Akk2BPackPolicy::kQuadrantRows;
+        if (validRows == 0U) {
+            for (std::uint32_t row = 0; row < rhsRows; ++row) {
+                vf.StoreZeroV6OutputRows(row, abi, zeroQkStorage, zeroValueStorage,
+                                         inputStorage, valueStorage);
+            }
+            return;
+        }
+        auto gLast = vf.LoadFp32Row(V6Layout::kGInput.offset, validRows - 1U);
         for (std::uint32_t row = 0; row < rhsRows; ++row) {
-            vf.StoreZeroV6OutputRows(row, abi, zeroQkStorage,
-                                     zeroValueStorage, inputStorage,
-                                     valueStorage);
-        }
-        return;
-    }
-    auto gLast = vf.LoadFp32Row(V6Layout::kGInput.offset, validRows - 1U);
-    for (std::uint32_t row = 0; row < rhsRows; ++row) {
-        if (row >= validRows) {
-            vf.StoreZeroV6OutputRows(row, abi, zeroQkStorage,
-                                     zeroValueStorage, inputStorage,
-                                     valueStorage);
-            continue;
-        }
-        // 在 Q/K/V 原地写入以及可选的 2 字节 QgScaled 压缩到 FP32 G 低半区前，
-        // 先将本行所有源操作数读入寄存器。
-        auto qHat = vf.ToFp32(vf.LoadStorageRow(
-            V6Layout::kQHatToQg.offset, row, inputStorage));
-        auto kHat = vf.ToFp32(vf.LoadStorageRow(
-            V6Layout::kKHatToKg.offset, row, inputStorage));
-        auto v = vf.ToFp32(vf.LoadStorageRow(
-            V6Layout::kVToVBeta.offset, row, valueStorage));
-        auto g = vf.LoadFp32Row(V6Layout::kGInput.offset, row);
-        auto beta = vf.LoadBetaEff(row);
-        auto expG = EvaluatePow2<UseExp2>(
-            vf, g, kDirectExp2InputMin, kDirectExp2InputMax);
-        auto qgFp32 = vf.Mul(qHat, expG);
-        auto kgFp32 = vf.Mul(
-            kHat,
-            EvaluatePow2<UseExp2>(vf, vf.Sub(gLast, g),
-                                  kDirectExp2InputMin,
-                                  kDirectExp2InputMax));
-        auto qgStorage = vf.RoundToInputStorage(
-            vf.ClampForInputStorage(qgFp32, inputStorage), inputStorage);
-        auto kgStorage = vf.RoundToInputStorage(
-            vf.ClampForInputStorage(kgFp32, inputStorage), inputStorage);
+            if (row >= validRows) {
+                vf.StoreZeroV6OutputRows(row, abi, zeroQkStorage, zeroValueStorage,
+                                         inputStorage, valueStorage);
+                continue;
+            }
+            // 在 Q/K/V 原地写入以及可选的 2 字节 QgScaled 压缩到 FP32 G
+            // 低半区前，先将本行所有源操作数读入寄存器。
+            auto qHat = vf.ToFp32(
+                vf.LoadStorageRow(V6Layout::kQHatToQg.offset, row, inputStorage));
+            auto kHat = vf.ToFp32(
+                vf.LoadStorageRow(V6Layout::kKHatToKg.offset, row, inputStorage));
+            auto v = vf.ToFp32(
+                vf.LoadStorageRow(V6Layout::kVToVBeta.offset, row, valueStorage));
+            auto g = vf.LoadFp32Row(V6Layout::kGInput.offset, row);
+            auto beta = vf.LoadBetaEff(row);
+            auto expG =
+                EvaluatePow2<UseExp2>(vf, g, kDirectExp2InputMin, kDirectExp2InputMax);
+            auto qgFp32 = vf.Mul(qHat, expG);
+            auto kgFp32 = vf.Mul(kHat, EvaluatePow2<UseExp2>(vf, vf.Sub(gLast, g),
+                                                             kDirectExp2InputMin,
+                                                             kDirectExp2InputMax));
+            auto qgStorage = vf.RoundToInputStorage(
+                vf.ClampForInputStorage(qgFp32, inputStorage), inputStorage);
+            auto kgStorage = vf.RoundToInputStorage(
+                vf.ClampForInputStorage(kgFp32, inputStorage), inputStorage);
 
-        // 保持拆分 Prepare 的双重舍入点。kHat*exp2(G) 先物化到 InputStorage，
-        // 再提升回 FP32 参与 beta 计算，最后为 K_beta_g 再次执行饱和与舍入。
-        auto kGateStorage = vf.RoundToInputStorage(
-            vf.ClampForInputStorage(vf.Mul(kHat, expG), inputStorage),
-            inputStorage);
-        auto kBetaGFp32 = vf.Mul(beta, vf.ToFp32(kGateStorage));
-        auto kBetaGStorage = vf.RoundToInputStorage(
-            vf.ClampForInputStorage(kBetaGFp32, inputStorage), inputStorage);
-        auto vBetaStorage = vf.RoundToInputStorage(
-            vf.ClampForInputStorage(vf.Mul(beta, v), valueStorage),
-            valueStorage);
-
-        vf.StoreStorageRow(V6Layout::kQHatToQg.offset, row, qgStorage,
-                           inputStorage);
-        vf.StoreStorageRow(V6Layout::kKHatToKg.offset, row, kgStorage,
-                           inputStorage);
-        vf.StoreStorageRow(V6Layout::kKBetaG.offset, row, kBetaGStorage,
-                           inputStorage);
-        vf.StoreStorageRow(V6Layout::kVToVBeta.offset, row, vBetaStorage,
-                           valueStorage);
-        if (abi == PrepareAbi::Fused) {
-            // 2 字节目标与 FP32 G 的 floor(row/2) 行复用，该行不会晚于当前 row。
-            // 当前 G 行已在上方完整读取。缩放先消费第一次舍入后的 qg，再执行
-            // FUSED ABI 要求的第二次 InputStorage 饱和与舍入。
-            auto qgScaledStorage = vf.RoundToInputStorage(
-                vf.ClampForInputStorage(
-                    vf.Mul(scale, vf.ToFp32(qgStorage)), inputStorage),
+            // 保持拆分 Prepare 的双重舍入点。kHat*exp2(G) 先物化到
+            // InputStorage，再提升回 FP32 参与 beta 计算，最后为 K_beta_g
+            // 再次执行饱和与舍入。
+            auto kGateStorage = vf.RoundToInputStorage(
+                vf.ClampForInputStorage(vf.Mul(kHat, expG), inputStorage),
                 inputStorage);
-            vf.StoreStorageRow(V6Layout::kQgScaled.offset, row,
-                               qgScaledStorage, inputStorage);
+            auto kBetaGFp32 = vf.Mul(beta, vf.ToFp32(kGateStorage));
+            auto kBetaGStorage = vf.RoundToInputStorage(
+                vf.ClampForInputStorage(kBetaGFp32, inputStorage), inputStorage);
+            auto vBetaStorage = vf.RoundToInputStorage(
+                vf.ClampForInputStorage(vf.Mul(beta, v), valueStorage), valueStorage);
+
+            vf.StoreStorageRow(V6Layout::kQHatToQg.offset, row, qgStorage,
+                               inputStorage);
+            vf.StoreStorageRow(V6Layout::kKHatToKg.offset, row, kgStorage,
+                               inputStorage);
+            vf.StoreStorageRow(V6Layout::kKBetaG.offset, row, kBetaGStorage,
+                               inputStorage);
+            vf.StoreStorageRow(V6Layout::kVToVBeta.offset, row, vBetaStorage,
+                               valueStorage);
+            if (abi == PrepareAbi::Fused) {
+                // 2 字节目标与 FP32 G 的 floor(row/2) 行复用，该行不会晚于当前
+                // row。当前 G 行已在上方完整读取。缩放先消费第一次舍入后的
+                // qg，再执行 FUSED ABI 要求的第二次 InputStorage 饱和与舍入。
+                auto qgScaledStorage = vf.RoundToInputStorage(
+                    vf.ClampForInputStorage(vf.Mul(scale, vf.ToFp32(qgStorage)),
+                                            inputStorage),
+                    inputStorage);
+                vf.StoreStorageRow(V6Layout::kQgScaled.offset, row, qgScaledStorage,
+                                   inputStorage);
+            }
         }
     }
-}
+
+    static inline void Record(const VectorOps &ops, const HeadTask &head,
+                              Pow2Primitive pow2Primitive, float runtimeScale,
+                              RuntimeScaleUse runtimeScaleUse,
+                              std::uint32_t runtimeScaleMultiplyCount) noexcept
+    {
+        VectorVfTraceMetadata metadata{};
+        metadata.stage = kStage;
+        metadata.formula = kFormula;
+        metadata.pow2Primitive = pow2Primitive;
+        metadata.hasPow2Primitive = true;
+        metadata.runtimeScale = runtimeScale;
+        metadata.runtimeScaleUse = runtimeScaleUse;
+        metadata.runtimeScaleMultiplyCount = runtimeScaleMultiplyCount;
+        metadata.hasRuntimeScale = true;
+        ops.RecordOneVf(head, metadata);
+    }
+};
 
 inline bool ValidArgs(const VectorStageArgs &args)
 {
-    return args.work != nullptr && args.workspace != nullptr &&
-           args.sync != nullptr && args.ops != nullptr &&
-           IsSupportedKey(args.key);
+    return args.work != nullptr && args.workspace != nullptr && args.sync != nullptr &&
+           args.ops != nullptr && IsSupportedKey(args.key);
 }
 
 } // namespace detail
 
-inline void RunV0(const VectorStageArgs &args)
+inline void StageV0_AivNormalizeQkGateCumsumBeta(const VectorStageArgs &args)
 {
+    // 输入：Q、K、原始 gate、beta，以及选择性 gate 所需的 A_log/dt_bias。
+    // 计算：按 key 完成 Q/K 归一化、beta 变换、gate 步长和
+    //       G_i = G_{i-1} + deltaG_i，并从四个 16 行分块提取 G_ref。
+    // 输出：Qhat/Khat 共享缓存、G（或公开 gk）、常驻 betaEff 和 G_ref。
     if (!detail::ValidArgs(args)) {
         return;
     }
@@ -660,9 +703,9 @@ inline void RunV0(const VectorStageArgs &args)
         args.sync->Local(LocalDependency::Mte2ToVectorInputs, Stage::V0);
         args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
                              head.localBankId, Stage::V0, Pipe::Vector);
-        // 仅调用一次；所需函数体为 detail::V0OneVf，并传入 args.key 以及已冻结
-        // 的 epsilon/lowerBound 标量属性。
-        args.ops->RunVf(Stage::V0, head);
+        // 仅调用一次；QkNormGateCumsumBetaVf::Evaluate 冻结具体数学顺序，
+        // 并接收 args.key 以及 epsilon/lowerBound 标量属性。
+        detail::QkNormGateCumsumBetaVf::Record(*args.ops, head);
         args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
                                head.localBankId, Stage::V0, Pipe::Vector);
 
@@ -717,8 +760,13 @@ inline void RunV0(const VectorStageArgs &args)
     }
 }
 
-inline void RunV1(const VectorStageArgs &args)
+inline void StageV1_AivBuildS4ScoreOperands(const VectorStageArgs &args)
 {
+    // 输入：Qhat、Khat、完整 G，以及四个 16 行分块的 G_ref[s]。
+    // 计算：令 s(i)=floor(i/16)，Qplus_i/Kplus_i =
+    //       Qhat_i/Khat_i * 2^(G_i-G_ref_s(i))；并为每个 s 计算
+    //       Kminus_s,j = Khat_j * 2^(G_ref_s-G_j)，全程只调用一次 VF。
+    // 输出：S=4 的 Qplus、Kplus、Kminus 紧凑分数操作数。
     if (!detail::ValidArgs(args)) {
         return;
     }
@@ -733,10 +781,10 @@ inline void RunV1(const VectorStageArgs &args)
         args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
                              head.localBankId, Stage::V1, Pipe::Vector);
         // 仅调用一次。主机分发根据 args.key 中的输入/门控/分数存储类型
-        // 特化 detail::V1OneVf<useExp2>；两个 2^x 计算点以及所有饱和与舍入点
-        // 都保留在同一次 VF 中。
-        args.ops->RunVf(Stage::V1, head,
-                        ResolvePow2Primitive(args.key.useExp2));
+        // 特化 S4ScoreOperandsVf::Evaluate<useExp2>；两个 2^x 计算点以及
+        // 所有饱和与舍入点都保留在同一次 VF 中。
+        detail::S4ScoreOperandsVf::Record(
+            *args.ops, head, ResolvePow2Primitive(args.key.useExp2));
         args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
                                head.localBankId, Stage::V1, Pipe::Vector);
         args.sync->Local(LocalDependency::VectorToMte3Outputs, Stage::V1);
@@ -780,8 +828,13 @@ inline void RunV1(const VectorStageArgs &args)
     }
 }
 
-inline void RunV3(const VectorStageArgs &args)
+inline void StageV3_AivBuildAqkAndAkkFactors(const VectorStageArgs &args)
 {
+    // 输入：C2 生成的 rawAqk/rawAkk、betaEff 和运行时 scale。
+    // 计算：Aqk_ij=scale*rawAqk_ij*1[j<=i]，
+    //       Lkk_ij=beta_i*rawAkk_ij*1[j<i]，
+    //       再完成两个 32x32 叶子求逆并构造稳定 Akk 象限。
+    // 输出：公开 Aqk、供 C4/C5 消费的 X0/X1/B，以及稳定 Akk 数据。
     if (!detail::ValidArgs(args)) {
         return;
     }
@@ -801,12 +854,12 @@ inline void RunV3(const VectorStageArgs &args)
             Arch35VectorMutexIds::UbBank(head.aivLocalSlot);
         args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
                              head.localBankId, Stage::V3, Pipe::Vector);
-        // 仅调用一次；detail::V3OneVf 还接收 ABI、AkkStorage、InputStorage 和
-        // 显式运行时缩放。缩放仅对 Aqk 应用一次。
+        // 仅调用一次；AqkAndAkkFactorsVf::Evaluate 还接收 ABI、
+        // AkkStorage、InputStorage 和显式运行时缩放，缩放仅对 Aqk 应用一次。
         // 原始数据读取方仅访问 C2 定义的有效因果域；其余输出通道均不读取
         // 原始 UB，直接生成结果。
-        args.ops->RunVf(Stage::V3, head, args.scale, RuntimeScaleUse::Aqk,
-                        1U);
+        detail::AqkAndAkkFactorsVf::Record(
+            *args.ops, head, args.scale, RuntimeScaleUse::Aqk, 1U);
         args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
                                head.localBankId, Stage::V3, Pipe::Vector);
         args.sync->Local(LocalDependency::VectorToMte3Outputs, Stage::V3);
@@ -919,8 +972,13 @@ inline void RunV3(const VectorStageArgs &args)
     }
 }
 
-inline void RunV6(const VectorStageArgs &args)
+inline void StageV6_AivBuildPostWuOperands(const VectorStageArgs &args)
 {
+    // 输入：Qhat、Khat、V、G、G_last 和 betaEff。
+    // 计算：Qg=Qhat*2^G，kg=Khat*2^(G_last-G)，
+    //       K_beta_g=betaEff*(Khat*2^G)，V_beta=betaEff*V；Fused ABI
+    //       另在 Qg 首次舍入后恰好乘一次运行时 scale。
+    // 输出：Qg/qg、kg，以及 C7 使用的 K_beta_g、V_beta 两个矩阵乘右操作数平面。
     if (!detail::ValidArgs(args)) {
         return;
     }
@@ -936,7 +994,7 @@ inline void RunV6(const VectorStageArgs &args)
         const Offset gBytes =
             validRows * ShapePolicy::kK * ShapePolicy::kFp32Bytes;
         // C4PayloadFree 是跨核前置；V0/V3 对同一 UB 槽的本核释放由 ubMutex
-        // 在 MTE3 -> MTE2 之间直接串接，不再占用额外 flag。
+        // 在 MTE3 -> MTE2 之间直接串接，不再占用额外标志。
         args.sync->Wait(SyncPoint::C4PayloadFree, head.workspaceSlot,
                         workspaceGeneration, Stage::V6, Pipe::Mte2);
         const SymbolicMutexId ubMutex =
@@ -992,16 +1050,17 @@ inline void RunV6(const VectorStageArgs &args)
         args.sync->Local(LocalDependency::Mte2ToVectorInputs, Stage::V6);
         args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
                              head.localBankId, Stage::V6, Pipe::Vector);
-        // 仅调用一次；主机分发特化 detail::V6OneVf<useExp2>，并传入相互
-        // 独立的 Q/K 存储类型、V 存储类型及运行时缩放。Current 在 V6
+        // 仅调用一次；主机分发特化 PostWuOperandsVf::Evaluate<useExp2>，
+        // 并传入相互独立的 Q/K 存储类型、V 存储类型及运行时缩放。Current 在 V6
         // 不执行缩放乘法；Fused 在 qg 第一次舍入后恰好应用一次。两个直接
         // 2^x 计算点和所有存储舍入点都在此执行。
-        args.ops->RunVf(Stage::V6, head,
-                        ResolvePow2Primitive(args.key.useExp2), args.scale,
-                        args.key.abi == PrepareAbi::Fused
-                            ? RuntimeScaleUse::FusedQg
-                            : RuntimeScaleUse::None,
-                        args.key.abi == PrepareAbi::Fused ? 1U : 0U);
+        detail::PostWuOperandsVf::Record(
+            *args.ops, head, ResolvePow2Primitive(args.key.useExp2),
+            args.scale,
+            args.key.abi == PrepareAbi::Fused
+                ? RuntimeScaleUse::FusedQg
+                : RuntimeScaleUse::None,
+            args.key.abi == PrepareAbi::Fused ? 1U : 0U);
         args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
                                head.localBankId, Stage::V6, Pipe::Vector);
         args.sync->Local(LocalDependency::VectorToMte3Outputs, Stage::V6);

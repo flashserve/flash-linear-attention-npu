@@ -352,8 +352,8 @@ struct Akk2BPackPolicy {
 };
 
 struct L0aPolicy {
-    // 一个 Arch35 AIC 每次处理一个头。C2 的 8 KiB owner 按 zN 布局保存
-    // [32,128] 左操作数，Qplus/Kplus 由逻辑 tile 区分，不是两个连续 4 KiB 半区。
+    // 一个 Arch35 AIC 每次处理一个头。C2 的 8 KiB 所属存储按 zN 布局保存
+    // [32,128] 左操作数，Qplus/Kplus 由逻辑子块区分，不是两个连续 4 KiB 半区。
     // C7 只装入一次 Akk，并在 W/U 两个乘积之间只读共享。
     static constexpr Offset kCapacity = 0x10000U;
     static constexpr Region kC2StackedQK{0x0000U, 0x2000U};

@@ -118,6 +118,10 @@ struct VfSemanticProbe {
     std::uint32_t normSourceLoadCount = 0U;
     std::uint32_t normDestinationStoreCount = 0U;
     std::uint32_t normWorkDependencyCount = 0U;
+    std::uint32_t leafInverseCount = 0U;
+    std::uint32_t akkFactorMaterializeCount = 0U;
+    std::uint32_t scoreClampCount = 0U;
+    std::uint32_t scoreRoundCount = 0U;
 
     float Exp2Clamped(float, float, float) noexcept
     {
@@ -279,6 +283,18 @@ struct VfSemanticProbe {
         return value;
     }
 
+    float ClampForScoreStorage(float value, ScoreStorage) noexcept
+    {
+        ++scoreClampCount;
+        return value;
+    }
+
+    float RoundToScoreStorage(float value, ScoreStorage) noexcept
+    {
+        ++scoreRoundCount;
+        return value;
+    }
+
     template <typename... Args>
     float L2NormalizeRsqrtSumPlusEpsilon(Args...) noexcept
     {
@@ -404,12 +420,17 @@ struct VfSemanticProbe {
     {}
 
     template <typename... Args>
-    void InvertTwo32By32LeavesWithFixedColumnScan(Args...) const noexcept
-    {}
+    void InvertUnitLowerTriangularLeaves32(Args...) noexcept
+    {
+        ++leafInverseCount;
+    }
 
     template <typename... Args>
-    void MaterializeX0X1AndBAtFinalOffsets(Args...) const noexcept
-    {}
+    void MaterializeAkkFactorsX0X1AndBAtFinalOffsets(
+        Args...) noexcept
+    {
+        ++akkFactorMaterializeCount;
+    }
 };
 
 bool CheckPow2EvaluationContract() noexcept
@@ -441,19 +462,19 @@ bool CheckV6RuntimeScaleSemanticContract() noexcept
     head.qkOwner = true;
 
     VfSemanticProbe arch22Current{kRuntimeScaleProbeValue};
-    arch22::detail::V6OneVf<UseExp2>(
+    arch22::detail::PostWuOperandsVf::Evaluate<UseExp2>(
         arch22Current, head, 1U, PrepareAbi::Current, InputStorage::Bf16,
         InputStorage::Fp16, kRuntimeScaleProbeValue);
     VfSemanticProbe arch22Fused{kRuntimeScaleProbeValue};
-    arch22::detail::V6OneVf<UseExp2>(
+    arch22::detail::PostWuOperandsVf::Evaluate<UseExp2>(
         arch22Fused, head, 1U, PrepareAbi::Fused, InputStorage::Bf16,
         InputStorage::Fp16, kRuntimeScaleProbeValue);
     VfSemanticProbe arch35Current{kRuntimeScaleProbeValue};
-    arch35::detail::V6OneVf<UseExp2>(
+    arch35::detail::PostWuOperandsVf::Evaluate<UseExp2>(
         arch35Current, head, 1U, PrepareAbi::Current, InputStorage::Bf16,
         InputStorage::Fp16, kRuntimeScaleProbeValue);
     VfSemanticProbe arch35Fused{kRuntimeScaleProbeValue};
-    arch35::detail::V6OneVf<UseExp2>(
+    arch35::detail::PostWuOperandsVf::Evaluate<UseExp2>(
         arch35Fused, head, 1U, PrepareAbi::Fused, InputStorage::Bf16,
         InputStorage::Fp16, kRuntimeScaleProbeValue);
 
@@ -485,15 +506,19 @@ bool CheckRuntimeScaleSemanticContract() noexcept
     head.qkOwner = true;
 
     VfSemanticProbe arch22V3{kRuntimeScaleProbeValue};
-    arch22::detail::V3OneVf(
+    arch22::detail::AqkAndAkkFactorsVf::Evaluate(
         arch22V3, head, 1U, PrepareAbi::Current, InputStorage::Bf16,
         kRuntimeScaleProbeValue);
     VfSemanticProbe arch35V3{kRuntimeScaleProbeValue};
-    arch35::detail::V3OneVf(
+    arch35::detail::AqkAndAkkFactorsVf::Evaluate(
         arch35V3, head, 1U, PrepareAbi::Current, AkkStorage::TwoByteAbi,
         InputStorage::Bf16, kRuntimeScaleProbeValue);
     return arch22V3.runtimeScaleMultiplyCount == 1U &&
            arch35V3.runtimeScaleMultiplyCount == 1U &&
+           arch22V3.leafInverseCount == 1U &&
+           arch35V3.leafInverseCount == 1U &&
+           arch22V3.akkFactorMaterializeCount == 1U &&
+           arch35V3.akkFactorMaterializeCount == 1U &&
            arch22V3.lastRuntimeScaleProduct ==
                kRuntimeScaleProbeValue * 11.0F &&
            arch35V3.lastRuntimeScaleProduct ==
@@ -519,23 +544,29 @@ bool CheckV0QkNormalizeSemanticContract() noexcept
     nonOwner.qkOwner = false;
 
     VfSemanticProbe arch22L2Owner{kRuntimeScaleProbeValue};
-    arch22::detail::V0OneVf(arch22L2Owner, owner, kValidRows, l2Key,
-                            1.0e-6F, -5.0F);
+    arch22::detail::QkNormGateCumsumBetaVf::Evaluate(
+        arch22L2Owner, owner, kValidRows, l2Key,
+        1.0e-6F, -5.0F);
     VfSemanticProbe arch22IdentityOwner{kRuntimeScaleProbeValue};
-    arch22::detail::V0OneVf(arch22IdentityOwner, owner, kValidRows,
-                            identityKey, 1.0e-6F, -5.0F);
+    arch22::detail::QkNormGateCumsumBetaVf::Evaluate(
+        arch22IdentityOwner, owner, kValidRows,
+        identityKey, 1.0e-6F, -5.0F);
     VfSemanticProbe arch22L2NonOwner{kRuntimeScaleProbeValue};
-    arch22::detail::V0OneVf(arch22L2NonOwner, nonOwner, kValidRows, l2Key,
-                            1.0e-6F, -5.0F);
+    arch22::detail::QkNormGateCumsumBetaVf::Evaluate(
+        arch22L2NonOwner, nonOwner, kValidRows, l2Key,
+        1.0e-6F, -5.0F);
     VfSemanticProbe arch35L2Owner{kRuntimeScaleProbeValue};
-    arch35::detail::V0OneVf(arch35L2Owner, owner, kValidRows, l2Key,
-                            1.0e-6F, -5.0F);
+    arch35::detail::QkNormGateCumsumBetaVf::Evaluate(
+        arch35L2Owner, owner, kValidRows, l2Key,
+        1.0e-6F, -5.0F);
     VfSemanticProbe arch35IdentityOwner{kRuntimeScaleProbeValue};
-    arch35::detail::V0OneVf(arch35IdentityOwner, owner, kValidRows,
-                            identityKey, 1.0e-6F, -5.0F);
+    arch35::detail::QkNormGateCumsumBetaVf::Evaluate(
+        arch35IdentityOwner, owner, kValidRows,
+        identityKey, 1.0e-6F, -5.0F);
     VfSemanticProbe arch35L2NonOwner{kRuntimeScaleProbeValue};
-    arch35::detail::V0OneVf(arch35L2NonOwner, nonOwner, kValidRows, l2Key,
-                            1.0e-6F, -5.0F);
+    arch35::detail::QkNormGateCumsumBetaVf::Evaluate(
+        arch35L2NonOwner, nonOwner, kValidRows, l2Key,
+        1.0e-6F, -5.0F);
 
     constexpr std::uint32_t kExpectedQkRows = 2U * kValidRows;
     return arch22L2Owner.l2NormalizeCount == kExpectedQkRows &&
@@ -560,6 +591,847 @@ bool CheckV0QkNormalizeSemanticContract() noexcept
            arch35L2NonOwner.l2NormalizeCount == 0U &&
            arch35L2NonOwner.normSourceLoadCount == 0U &&
            arch35L2NonOwner.normDestinationStoreCount == 0U;
+}
+
+bool CheckVfContractMetadata() noexcept
+{
+    return arch22::detail::QkNormGateCumsumBetaVf::kStage == Stage::V0 &&
+           arch22::detail::QkNormGateCumsumBetaVf::kFormula ==
+               VectorFormula::QkNormGateCumsumBeta &&
+           arch22::detail::S4ScoreOperandsVf::kStage == Stage::V1 &&
+           arch22::detail::S4ScoreOperandsVf::kFormula ==
+               VectorFormula::S4ScoreOperands &&
+           arch22::detail::AqkAndAkkFactorsVf::kStage == Stage::V3 &&
+           arch22::detail::AqkAndAkkFactorsVf::kFormula ==
+               VectorFormula::AqkAndAkkFactors &&
+           arch22::detail::PostWuOperandsVf::kStage == Stage::V6 &&
+           arch22::detail::PostWuOperandsVf::kFormula ==
+               VectorFormula::PostWuOperands &&
+           arch35::detail::QkNormGateCumsumBetaVf::kStage == Stage::V0 &&
+           arch35::detail::QkNormGateCumsumBetaVf::kFormula ==
+               VectorFormula::QkNormGateCumsumBeta &&
+           arch35::detail::S4ScoreOperandsVf::kStage == Stage::V1 &&
+           arch35::detail::S4ScoreOperandsVf::kFormula ==
+               VectorFormula::S4ScoreOperands &&
+           arch35::detail::AqkAndAkkFactorsVf::kStage == Stage::V3 &&
+           arch35::detail::AqkAndAkkFactorsVf::kFormula ==
+               VectorFormula::AqkAndAkkFactors &&
+           arch35::detail::PostWuOperandsVf::kStage == Stage::V6 &&
+           arch35::detail::PostWuOperandsVf::kFormula ==
+               VectorFormula::PostWuOperands;
+}
+
+struct V1S4StoreRecord {
+    Offset offset = 0U;
+    std::uint32_t row = 0U;
+    float value = 0.0F;
+    ScoreStorage storage = ScoreStorage::Bf16;
+};
+
+struct V1S4Case {
+    std::uint32_t validRows = 0U;
+    std::uint32_t activeBlocks = 0U;
+    std::array<std::uint32_t, ShapePolicy::kScoreBlockCount> referenceRows{};
+};
+
+// 中点按 begin + floor((end - begin) / 2) 冻结为独立期望，避免测试与
+// 被测实现复用同一套推导逻辑而掩盖尾块参考行错误。
+constexpr std::array<V1S4Case, 8U> kV1S4Cases = {{
+    {1U, 1U, {0U, 0U, 0U, 0U}},
+    {16U, 1U, {8U, 0U, 0U, 0U}},
+    {17U, 2U, {8U, 16U, 0U, 0U}},
+    {32U, 2U, {8U, 24U, 0U, 0U}},
+    {33U, 3U, {8U, 24U, 32U, 0U}},
+    {49U, 4U, {8U, 24U, 40U, 48U}},
+    {63U, 4U, {8U, 24U, 40U, 55U}},
+    {64U, 4U, {8U, 24U, 40U, 56U}},
+}};
+
+struct V1S4SemanticProbe {
+    static constexpr std::size_t kStoreCapacity = 320U;
+    static constexpr float kExp2FactorBase = 256.0F;
+    static constexpr float kExpLn2FactorBase = 512.0F;
+
+    V1S4SemanticProbe(Architecture architectureValue,
+                      const V1S4Case &testCaseValue,
+                      GateStorage gateStorageValue) noexcept
+        : architecture(architectureValue), testCase(testCaseValue),
+          validRows(testCase.validRows),
+          gateStorage(gateStorageValue)
+    {
+        if (architecture == Architecture::Arch22) {
+            const Offset privateBase =
+                arch22_policy::UbPolicy::PrivateBase(1U);
+            const Offset sharedBase = arch22_policy::UbPolicy::kShared.offset;
+            qOffset = privateBase +
+                      arch22_policy::V01PrivateLayout::kQToQPlus.offset;
+            kOffset = privateBase +
+                      arch22_policy::V01PrivateLayout::kKToKPlus.offset;
+            gOffset = sharedBase + arch22_policy::V01SharedLayout::kG.offset;
+            gateRawOffset = IsTwoByteGateStorage(gateStorage)
+                                ? privateBase +
+                                      arch22_policy::V01PrivateLayout::kGateRaw2B.offset
+                                : sharedBase +
+                                      arch22_policy::V01SharedLayout::kGateRawFp32.offset;
+            betaRawOffset =
+                privateBase + arch22_policy::V01PrivateLayout::kBetaRaw.offset;
+            betaEffOffset =
+                privateBase + arch22_policy::V01PrivateLayout::kBetaEff.offset;
+            gLastOffset =
+                privateBase + arch22_policy::V01PrivateLayout::kGLast.offset;
+            for (std::uint32_t s = 0U;
+                 s < ShapePolicy::kScoreBlockCount; ++s) {
+                kMinusOffsets[s] =
+                    privateBase +
+                    arch22_policy::V01PrivateLayout::kKMinus[s].offset;
+            }
+            return;
+        }
+
+        qOffset = V1Gate2BLayout::kQPlus.offset;
+        kOffset = V1Gate2BLayout::kKPlus.offset;
+        gOffset = IsTwoByteGateStorage(gateStorage)
+                      ? V1Gate2BLayout::kLiveG.offset
+                      : V1GateFp32Layout::kLiveG.offset;
+        betaRawOffset = UbPolicy::kVectorStateBase[1U] +
+                        VectorStateLayout::kBetaRaw.offset;
+        const auto &kMinus = IsTwoByteGateStorage(gateStorage)
+                                 ? V1Gate2BLayout::kKMinus
+                                 : V1GateFp32Layout::kKMinus;
+        for (std::uint32_t s = 0U;
+             s < ShapePolicy::kScoreBlockCount; ++s) {
+            kMinusOffsets[s] = kMinus[s].offset;
+            gRefOffsets[s] = UbPolicy::kVectorStateBase[1U] +
+                             VectorStateLayout::kGRef[s].offset;
+        }
+    }
+
+    Architecture architecture = Architecture::Arch22;
+    V1S4Case testCase{};
+    std::uint32_t validRows = 0U;
+    GateStorage gateStorage = GateStorage::Bf16;
+    Offset qOffset = 0U;
+    Offset kOffset = 0U;
+    Offset gOffset = 0U;
+    Offset gateRawOffset = 0U;
+    Offset betaRawOffset = 0U;
+    Offset betaEffOffset = 0U;
+    Offset gLastOffset = 0U;
+    std::array<Offset, ShapePolicy::kScoreBlockCount> kMinusOffsets{};
+    std::array<Offset, ShapePolicy::kScoreBlockCount> gRefOffsets{};
+    std::array<std::uint16_t, ShapePolicy::kBt> qLoads{};
+    std::array<std::uint16_t, ShapePolicy::kBt> kLoads{};
+    std::array<std::uint16_t, ShapePolicy::kBt> gRowLoads{};
+    std::array<std::uint16_t, ShapePolicy::kScoreBlockCount> gRefLoads{};
+    std::array<float, ShapePolicy::kBt> materializedG{};
+    std::array<bool, ShapePolicy::kBt> gInitialized{};
+    std::array<std::uint16_t, ShapePolicy::kBt> gStoreCount{};
+    std::array<std::uint16_t, ShapePolicy::kBt> betaEffStoreCount{};
+    std::array<std::uint16_t, ShapePolicy::kBt> qPaddingStoreCount{};
+    std::array<std::uint16_t, ShapePolicy::kBt> kPaddingStoreCount{};
+    std::array<std::uint16_t, ShapePolicy::kBt> combinedPaddingStoreCount{};
+    std::array<float, ShapePolicy::kScoreBlockCount> materializedGRef{};
+    std::array<std::uint16_t, ShapePolicy::kScoreBlockCount> gRefStoreCount{};
+    float materializedGLast = 0.0F;
+    std::uint16_t gLastStoreCount = 0U;
+    std::array<V1S4StoreRecord, kStoreCapacity> stores{};
+    std::size_t storeCount = 0U;
+    std::uint32_t exp2CallCount = 0U;
+    std::uint32_t expCallCount = 0U;
+    std::uint32_t scoreClampCount = 0U;
+    std::uint32_t scoreRoundCount = 0U;
+    bool sourceValid = true;
+    bool boundsValid = true;
+    bool storeOverflow = false;
+
+    static float QHatValue(std::uint32_t row) noexcept
+    {
+        return 10.0F + static_cast<float>(row);
+    }
+
+    static float KHatValue(std::uint32_t row) noexcept
+    {
+        return 100.0F + static_cast<float>(row);
+    }
+
+    static float GValue(std::uint32_t row) noexcept
+    {
+        return 2.0F * static_cast<float>(row) + 1.0F;
+    }
+
+    std::uint32_t ReferenceRow(std::uint32_t block) const noexcept
+    {
+        return block < ShapePolicy::kScoreBlockCount
+                   ? testCase.referenceRows[block]
+                   : 0U;
+    }
+
+    float ZeroFp32() const noexcept
+    {
+        return 0.0F;
+    }
+
+    float ZeroFp32Row(std::uint32_t value) noexcept
+    {
+        if (architecture == Architecture::Arch35) {
+            for (std::uint32_t s = 0U;
+                 s < ShapePolicy::kScoreBlockCount; ++s) {
+                if (value == gRefOffsets[s]) {
+                    materializedGRef[s] = 0.0F;
+                    ++gRefStoreCount[s];
+                    break;
+                }
+            }
+        }
+        return 0.0F;
+    }
+
+    float OneFp32() const noexcept
+    {
+        return 1.0F;
+    }
+
+    float ToFp32(float value) const noexcept
+    {
+        return value;
+    }
+
+    float LoadGateRow(std::uint32_t row, GateStorage storage) noexcept
+    {
+        sourceValid = sourceValid && architecture == Architecture::Arch35 &&
+                      row < validRows &&
+                      storage == gateStorage;
+        return row == 0U ? 1.0F : 2.0F;
+    }
+
+    float LoadGateRow(Offset offset, std::uint32_t row,
+                      GateStorage storage) noexcept
+    {
+        sourceValid = sourceValid && architecture == Architecture::Arch22 &&
+                      offset == gateRawOffset && row < validRows &&
+                      storage == gateStorage;
+        return row == 0U ? 1.0F : 2.0F;
+    }
+
+    float LoadBetaFp32Scalar(Offset offset, std::uint32_t row) noexcept
+    {
+        sourceValid = sourceValid && offset == betaRawOffset &&
+                      row < validRows;
+        return 1.0F;
+    }
+
+    float LoadALogScalarOnce(Offset) const noexcept
+    {
+        return 1.0F;
+    }
+
+    float LoadDtBiasRow(Offset) const noexcept
+    {
+        return 0.0F;
+    }
+
+    float LoadQStorageRow(std::uint32_t row, InputStorage storage) noexcept
+    {
+        sourceValid = false;
+        return storage == InputStorage::Bf16 ? QHatValue(row) : -6.0F;
+    }
+
+    float LoadKStorageRow(std::uint32_t row, InputStorage storage) noexcept
+    {
+        sourceValid = false;
+        return storage == InputStorage::Bf16 ? KHatValue(row) : -7.0F;
+    }
+
+    float L2NormalizeRsqrtSumPlusEpsilon(float value, float) const noexcept
+    {
+        return value;
+    }
+
+    void DependNormWorkOnGateLastReader() noexcept
+    {
+        sourceValid = false;
+    }
+
+    float L2NormalizeRsqrtSumPlusEpsilonWithWork(float value, float,
+                                                 Offset) noexcept
+    {
+        sourceValid = false;
+        return value;
+    }
+
+    float ClampForInputStorage(float value, InputStorage) const noexcept
+    {
+        return value;
+    }
+
+    float RoundToInputStorage(float value, InputStorage) const noexcept
+    {
+        return value;
+    }
+
+    float Add(float lhs, float rhs) const noexcept
+    {
+        return lhs + rhs;
+    }
+
+    float Div(float lhs, float rhs) const noexcept
+    {
+        return lhs / rhs;
+    }
+
+    float Neg(float value) const noexcept
+    {
+        return -value;
+    }
+
+    float Abs(float value) const noexcept
+    {
+        return value < 0.0F ? -value : value;
+    }
+
+    float Max(float lhs, float rhs) const noexcept
+    {
+        return lhs > rhs ? lhs : rhs;
+    }
+
+    float Log1p(float value) const noexcept
+    {
+        return value;
+    }
+
+    float Sigmoid(float) const noexcept
+    {
+        return 0.5F;
+    }
+
+    float LoadStorageRow(Offset offset, std::uint32_t row,
+                         InputStorage storage) noexcept
+    {
+        if (row >= ShapePolicy::kBt || storage != InputStorage::Bf16) {
+            sourceValid = false;
+            return -1.0F;
+        }
+        if (offset == qOffset) {
+            ++qLoads[row];
+            return QHatValue(row);
+        }
+        if (offset == kOffset) {
+            ++kLoads[row];
+            return KHatValue(row);
+        }
+        sourceValid = false;
+        return -2.0F;
+    }
+
+    float LoadFp32Row(Offset offset, std::uint32_t row) noexcept
+    {
+        if (offset != gOffset || row >= ShapePolicy::kBt) {
+            sourceValid = false;
+            return -3.0F;
+        }
+        ++gRowLoads[row];
+        if (!gInitialized[row]) {
+            sourceValid = false;
+            return -4.0F;
+        }
+        return materializedG[row];
+    }
+
+    float LoadFp32Row(Offset offset) noexcept
+    {
+        if (architecture != Architecture::Arch35) {
+            sourceValid = false;
+            return -5.0F;
+        }
+        for (std::uint32_t s = 0U;
+             s < ShapePolicy::kScoreBlockCount; ++s) {
+            if (offset == gRefOffsets[s]) {
+                ++gRefLoads[s];
+                if (gRefStoreCount[s] != 1U) {
+                    sourceValid = false;
+                    return -6.0F;
+                }
+                return materializedGRef[s];
+            }
+        }
+        sourceValid = false;
+        return -7.0F;
+    }
+
+    float Sub(float lhs, float rhs) const noexcept
+    {
+        return lhs - rhs;
+    }
+
+    float Mul(float lhs, float rhs) const noexcept
+    {
+        return lhs * rhs;
+    }
+
+    float Exp2Clamped(float value, float minimum, float maximum) noexcept
+    {
+        ++exp2CallCount;
+        boundsValid = boundsValid &&
+                      minimum == ScoreExp2InputMin(ScoreStorage::Bf16) &&
+                      maximum == ScoreExp2InputMax(ScoreStorage::Bf16) &&
+                      value >= minimum && value <= maximum;
+        return kExp2FactorBase + value;
+    }
+
+    float Clamp(float value, float minimum, float maximum) noexcept
+    {
+        boundsValid = boundsValid &&
+                      minimum == ScoreExp2InputMin(ScoreStorage::Bf16) &&
+                      maximum == ScoreExp2InputMax(ScoreStorage::Bf16) &&
+                      value >= minimum && value <= maximum;
+        return value < minimum ? minimum :
+               (value > maximum ? maximum : value);
+    }
+
+    float Ln2() const noexcept
+    {
+        // 令自然指数分支保留原指数，便于精确检查引用行和正负号。
+        return 1.0F;
+    }
+
+    float Exp(float value) noexcept
+    {
+        ++expCallCount;
+        return kExpLn2FactorBase + value;
+    }
+
+    float ClampForScoreStorage(float value, ScoreStorage storage) noexcept
+    {
+        ++scoreClampCount;
+        sourceValid = sourceValid && storage == ScoreStorage::Bf16;
+        return value;
+    }
+
+    float RoundToScoreStorage(float value, ScoreStorage storage) noexcept
+    {
+        ++scoreRoundCount;
+        sourceValid = sourceValid && storage == ScoreStorage::Bf16;
+        return value;
+    }
+
+    void StoreFp32Row(Offset offset, std::uint32_t row, float value) noexcept
+    {
+        const float expected = row < validRows ? GValue(row) : 0.0F;
+        if (offset != gOffset || row >= ShapePolicy::kBt ||
+            value != expected) {
+            sourceValid = false;
+            return;
+        }
+        materializedG[row] = value;
+        gInitialized[row] = true;
+        ++gStoreCount[row];
+    }
+
+    void StoreFp32Row(Offset offset, float value) noexcept
+    {
+        if (architecture != Architecture::Arch35) {
+            sourceValid = false;
+            return;
+        }
+        for (std::uint32_t s = 0U;
+             s < ShapePolicy::kScoreBlockCount; ++s) {
+            if (offset == gRefOffsets[s]) {
+                materializedGRef[s] = value;
+                ++gRefStoreCount[s];
+                return;
+            }
+        }
+        sourceValid = false;
+    }
+
+    void StoreStorageRow(Offset offset, std::uint32_t row, float value,
+                         InputStorage storage) noexcept
+    {
+        if (architecture != Architecture::Arch22 || row < validRows ||
+            row >= ShapePolicy::kBt || value != 0.0F ||
+            storage != InputStorage::Bf16) {
+            sourceValid = false;
+            return;
+        }
+        if (offset == qOffset) {
+            ++qPaddingStoreCount[row];
+        } else if (offset == kOffset) {
+            ++kPaddingStoreCount[row];
+        } else {
+            sourceValid = false;
+        }
+    }
+
+    void StoreBetaEffScalar(std::uint32_t row, float value) noexcept
+    {
+        const float expected = row < validRows ? 1.0F : 0.0F;
+        if (architecture != Architecture::Arch35 ||
+            row >= ShapePolicy::kBt || value != expected) {
+            sourceValid = false;
+            return;
+        }
+        ++betaEffStoreCount[row];
+    }
+
+    void StoreBetaEffScalar(Offset offset, std::uint32_t row,
+                            float value) noexcept
+    {
+        const float expected = row < validRows ? 1.0F : 0.0F;
+        if (architecture != Architecture::Arch22 || offset != betaEffOffset ||
+            row >= ShapePolicy::kBt || value != expected) {
+            sourceValid = false;
+            return;
+        }
+        ++betaEffStoreCount[row];
+    }
+
+    void StoreZeroQHatKHatAndGPadding(std::uint32_t row, float value,
+                                     InputStorage storage) noexcept
+    {
+        if (architecture != Architecture::Arch35 || row < validRows ||
+            row >= ShapePolicy::kBt || value != 0.0F ||
+            storage != InputStorage::Bf16) {
+            sourceValid = false;
+            return;
+        }
+        ++combinedPaddingStoreCount[row];
+    }
+
+    void StoreGLast(float value) noexcept
+    {
+        const float expected = GValue(validRows - 1U);
+        if (architecture != Architecture::Arch35 || value != expected) {
+            sourceValid = false;
+            return;
+        }
+        materializedGLast = value;
+        ++gLastStoreCount;
+    }
+
+    void StoreGLast(Offset offset, float value) noexcept
+    {
+        const float expected = GValue(validRows - 1U);
+        if (architecture != Architecture::Arch22 || offset != gLastOffset ||
+            value != expected) {
+            sourceValid = false;
+            return;
+        }
+        materializedGLast = value;
+        ++gLastStoreCount;
+    }
+
+    void StoreStorageRow(Offset offset, std::uint32_t row, float value,
+                         ScoreStorage storage) noexcept
+    {
+        if (storeCount == stores.size()) {
+            storeOverflow = true;
+            return;
+        }
+        stores[storeCount++] = {offset, row, value, storage};
+    }
+
+    void BeginV1Trace() noexcept
+    {
+        qLoads.fill(0U);
+        kLoads.fill(0U);
+        gRowLoads.fill(0U);
+        gRefLoads.fill(0U);
+        storeCount = 0U;
+        exp2CallCount = 0U;
+        expCallCount = 0U;
+        scoreClampCount = 0U;
+        scoreRoundCount = 0U;
+        boundsValid = true;
+        storeOverflow = false;
+    }
+};
+
+bool CheckV0GateMaterialization(const V1S4SemanticProbe &probe) noexcept
+{
+    if (!probe.sourceValid || probe.gLastStoreCount != 1U ||
+        probe.materializedGLast !=
+            V1S4SemanticProbe::GValue(probe.validRows - 1U)) {
+        return false;
+    }
+    for (std::uint32_t row = 0U; row < ShapePolicy::kBt; ++row) {
+        const bool valid = row < probe.validRows;
+        const bool expectedInitialized =
+            probe.architecture == Architecture::Arch22 || valid;
+        const std::uint16_t expectedGStores = expectedInitialized ? 1U : 0U;
+        const std::uint16_t expectedSeparatePadding =
+            probe.architecture == Architecture::Arch22 && !valid ? 1U : 0U;
+        const std::uint16_t expectedCombinedPadding =
+            probe.architecture == Architecture::Arch35 && !valid ? 1U : 0U;
+        if (probe.gInitialized[row] != expectedInitialized ||
+            probe.gStoreCount[row] != expectedGStores ||
+            probe.betaEffStoreCount[row] != 1U ||
+            probe.qPaddingStoreCount[row] != expectedSeparatePadding ||
+            probe.kPaddingStoreCount[row] != expectedSeparatePadding ||
+            probe.combinedPaddingStoreCount[row] != expectedCombinedPadding ||
+            (expectedInitialized &&
+             probe.materializedG[row] !=
+                 (valid ? V1S4SemanticProbe::GValue(row) : 0.0F))) {
+            return false;
+        }
+    }
+    std::array<std::uint16_t, ShapePolicy::kBt>
+        expectedReferenceLoads{};
+    for (std::uint32_t s = 0U;
+         s < ShapePolicy::kScoreBlockCount; ++s) {
+        if (probe.architecture == Architecture::Arch22) {
+            if (probe.gRefStoreCount[s] != 0U ||
+                probe.gRefLoads[s] != 0U) {
+                return false;
+            }
+            continue;
+        }
+        const bool active = s < probe.testCase.activeBlocks;
+        const std::uint32_t referenceRow = probe.ReferenceRow(s);
+        if (active) {
+            ++expectedReferenceLoads[referenceRow];
+        }
+        if (probe.gRefStoreCount[s] != 1U ||
+            probe.materializedGRef[s] !=
+                (active ? V1S4SemanticProbe::GValue(referenceRow) : 0.0F)) {
+            return false;
+        }
+    }
+    for (std::uint32_t row = 0U; row < ShapePolicy::kBt; ++row) {
+        const std::uint16_t expectedLoads =
+            probe.architecture == Architecture::Arch35
+                ? expectedReferenceLoads[row]
+                : 0U;
+        if (probe.gRowLoads[row] != expectedLoads) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::uint32_t LogicalV1PrefixRows(std::uint32_t block,
+                                  std::uint32_t validRows) noexcept
+{
+    const std::uint32_t physicalRows = ShapePolicy::kPrefixRows[block];
+    return physicalRows < validRows ? physicalRows : validRows;
+}
+
+const V1S4StoreRecord *FindUniqueV1Store(
+    const V1S4SemanticProbe &probe, Offset offset,
+    std::uint32_t row) noexcept
+{
+    const V1S4StoreRecord *result = nullptr;
+    for (std::size_t index = 0U; index < probe.storeCount; ++index) {
+        const V1S4StoreRecord &record = probe.stores[index];
+        if (record.offset != offset || record.row != row) {
+            continue;
+        }
+        if (result != nullptr) {
+            return nullptr;
+        }
+        result = &record;
+    }
+    return result;
+}
+
+bool CheckV1S4Sources(const V1S4SemanticProbe &probe) noexcept
+{
+    if (!probe.sourceValid || !probe.boundsValid || probe.storeOverflow) {
+        return false;
+    }
+
+    std::array<std::uint16_t, ShapePolicy::kBt> expectedGRowLoads{};
+    std::array<std::uint16_t, ShapePolicy::kScoreBlockCount>
+        expectedGRefLoads{};
+    const std::uint32_t activeBlocks = probe.testCase.activeBlocks;
+    for (std::uint32_t row = 0U; row < ShapePolicy::kBt; ++row) {
+        const std::uint16_t expectedStorageLoads =
+            row < probe.validRows ? 1U : 0U;
+        if (probe.qLoads[row] != expectedStorageLoads ||
+            probe.kLoads[row] != expectedStorageLoads) {
+            return false;
+        }
+        if (row >= probe.validRows) {
+            continue;
+        }
+
+        if (probe.architecture == Architecture::Arch22) {
+            ++expectedGRowLoads[row];
+            const std::uint32_t owner =
+                row / ShapePolicy::kScoreBlockRows;
+            ++expectedGRowLoads[probe.ReferenceRow(owner)];
+            for (std::uint32_t s = 0U; s < activeBlocks; ++s) {
+                if (row < LogicalV1PrefixRows(s, probe.validRows)) {
+                    ++expectedGRowLoads[probe.ReferenceRow(s)];
+                }
+            }
+        } else {
+            ++expectedGRowLoads[row];
+            const std::uint32_t owner =
+                row / ShapePolicy::kScoreBlockRows;
+            ++expectedGRefLoads[owner];
+            for (std::uint32_t s = 0U; s < activeBlocks; ++s) {
+                if (row < LogicalV1PrefixRows(s, probe.validRows)) {
+                    ++expectedGRefLoads[s];
+                }
+            }
+        }
+    }
+
+    for (std::uint32_t row = 0U; row < ShapePolicy::kBt; ++row) {
+        if (probe.gRowLoads[row] != expectedGRowLoads[row]) {
+            return false;
+        }
+    }
+    for (std::uint32_t s = 0U;
+         s < ShapePolicy::kScoreBlockCount; ++s) {
+        if (probe.gRefLoads[s] != expectedGRefLoads[s]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+template <bool UseExp2>
+bool CheckV1S4Writes(const V1S4SemanticProbe &probe) noexcept
+{
+    constexpr std::size_t kExpectedStoreCount =
+        2U * ShapePolicy::kBt + 16U + 32U + 48U + 64U;
+    if (probe.storeCount != kExpectedStoreCount) {
+        return false;
+    }
+    const float factorBase = UseExp2
+                                 ? V1S4SemanticProbe::kExp2FactorBase
+                                 : V1S4SemanticProbe::kExpLn2FactorBase;
+    const std::uint32_t activeBlocks = probe.testCase.activeBlocks;
+
+    for (std::uint32_t row = 0U; row < ShapePolicy::kBt; ++row) {
+        float expectedQPlus = 0.0F;
+        float expectedKPlus = 0.0F;
+        if (row < probe.validRows) {
+            const std::uint32_t owner =
+                row / ShapePolicy::kScoreBlockRows;
+            const float exponent =
+                V1S4SemanticProbe::GValue(row) -
+                V1S4SemanticProbe::GValue(probe.ReferenceRow(owner));
+            expectedQPlus = V1S4SemanticProbe::QHatValue(row) *
+                            (factorBase + exponent);
+            expectedKPlus = V1S4SemanticProbe::KHatValue(row) *
+                            (factorBase + exponent);
+        }
+        const V1S4StoreRecord *qPlus =
+            FindUniqueV1Store(probe, probe.qOffset, row);
+        const V1S4StoreRecord *kPlus =
+            FindUniqueV1Store(probe, probe.kOffset, row);
+        if (qPlus == nullptr || kPlus == nullptr ||
+            qPlus->storage != ScoreStorage::Bf16 ||
+            kPlus->storage != ScoreStorage::Bf16 ||
+            qPlus->value != expectedQPlus ||
+            kPlus->value != expectedKPlus) {
+            return false;
+        }
+    }
+
+    for (std::uint32_t s = 0U;
+         s < ShapePolicy::kScoreBlockCount; ++s) {
+        const std::uint32_t logicalEnd =
+            LogicalV1PrefixRows(s, probe.validRows);
+        for (std::uint32_t row = 0U;
+             row < ShapePolicy::kPrefixRows[s]; ++row) {
+            float expectedKMinus = 0.0F;
+            if (s < activeBlocks && row < logicalEnd) {
+                const float exponent =
+                    V1S4SemanticProbe::GValue(probe.ReferenceRow(s)) -
+                    V1S4SemanticProbe::GValue(row);
+                expectedKMinus = V1S4SemanticProbe::KHatValue(row) *
+                                 (factorBase + exponent);
+            }
+            const V1S4StoreRecord *kMinus =
+                FindUniqueV1Store(probe, probe.kMinusOffsets[s], row);
+            if (kMinus == nullptr ||
+                kMinus->storage != ScoreStorage::Bf16 ||
+                kMinus->value != expectedKMinus) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+template <bool UseExp2>
+bool CheckV1S4ScoreOperandsCase(Architecture architecture,
+                                const V1S4Case &testCase,
+                                GateStorage gateStorage) noexcept
+{
+    HeadTask head{};
+    head.active = true;
+    head.qkOwner = true;
+    head.groupLocalHead = architecture == Architecture::Arch22 ? 2U : 1U;
+    head.aivLocalSlot = 1U;
+
+    const std::uint32_t validRows = testCase.validRows;
+    V1S4SemanticProbe probe{architecture, testCase, gateStorage};
+    ProposedTilingKey key{};
+    key.gateStorage = gateStorage;
+    key.inputStorage = InputStorage::Bf16;
+    key.qkNormMode = QkNormMode::Identity;
+    key.gateMode = GateMode::PrecomputedStep;
+    key.betaMode = BetaMode::Raw;
+    if (architecture == Architecture::Arch22) {
+        arch22::detail::QkNormGateCumsumBetaVf::Evaluate(
+            probe, head, validRows, key, 1.0e-6F, -5.0F);
+    } else {
+        arch35::detail::QkNormGateCumsumBetaVf::Evaluate(
+            probe, head, validRows, key, 1.0e-6F, -5.0F);
+    }
+    if (!CheckV0GateMaterialization(probe)) {
+        return false;
+    }
+    probe.BeginV1Trace();
+
+    if (architecture == Architecture::Arch22) {
+        arch22::detail::S4ScoreOperandsVf::Evaluate<UseExp2>(
+            probe, head, validRows, InputStorage::Bf16,
+            ScoreStorage::Bf16);
+    } else {
+        arch35::detail::S4ScoreOperandsVf::Evaluate<UseExp2>(
+            probe, head, validRows, gateStorage, InputStorage::Bf16,
+            ScoreStorage::Bf16);
+    }
+
+    std::uint32_t expectedPrefixEvaluations = 0U;
+    const std::uint32_t activeBlocks = testCase.activeBlocks;
+    for (std::uint32_t s = 0U; s < activeBlocks; ++s) {
+        expectedPrefixEvaluations += LogicalV1PrefixRows(s, validRows);
+    }
+    const std::uint32_t expectedPow2Calls =
+        validRows + expectedPrefixEvaluations;
+    const std::uint32_t expectedScoreConversions =
+        1U + 2U * validRows + expectedPrefixEvaluations;
+    return CheckV1S4Sources(probe) &&
+           CheckV1S4Writes<UseExp2>(probe) &&
+           probe.scoreClampCount == expectedScoreConversions &&
+           probe.scoreRoundCount == expectedScoreConversions &&
+           (UseExp2
+                ? probe.exp2CallCount == expectedPow2Calls &&
+                      probe.expCallCount == 0U
+                : probe.expCallCount == expectedPow2Calls &&
+                      probe.exp2CallCount == 0U);
+}
+
+template <bool UseExp2>
+bool CheckV1S4ScoreOperandsSemanticContract() noexcept
+{
+    for (const V1S4Case &testCase : kV1S4Cases) {
+        if (!CheckV1S4ScoreOperandsCase<UseExp2>(
+                Architecture::Arch22, testCase, GateStorage::Bf16) ||
+            !CheckV1S4ScoreOperandsCase<UseExp2>(
+                Architecture::Arch35, testCase, GateStorage::Bf16) ||
+            !CheckV1S4ScoreOperandsCase<UseExp2>(
+                Architecture::Arch35, testCase, GateStorage::Fp32)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 ChunkTask ResolveTail16(std::uint32_t chunkOrdinal) noexcept
@@ -1632,7 +2504,7 @@ bool CheckArch35VectorStageMutex(
         return false;
     }
 
-    // 同阶段的跨核发布都必须晚于该 head 的最后一次 MTE3 Unlock。
+    // 同阶段的跨核发布都必须晚于该头的最后一次 MTE3 Unlock。
     for (std::size_t index = 0U; index < synchronization.size; ++index) {
         const SyncRecord &record = synchronization.records[index];
         if (record.action == SyncAction::Set && record.stage == stage &&
@@ -2458,6 +3330,40 @@ bool CheckRuntimeScaleVfDispatch(const OperationTrace &operations,
     return scaledStages == 2U;
 }
 
+VectorFormula ExpectedVectorFormula(Stage stage) noexcept
+{
+    switch (stage) {
+        case Stage::V0:
+            return VectorFormula::QkNormGateCumsumBeta;
+        case Stage::V1:
+            return VectorFormula::S4ScoreOperands;
+        case Stage::V3:
+            return VectorFormula::AqkAndAkkFactors;
+        case Stage::V6:
+            return VectorFormula::PostWuOperands;
+        default:
+            return VectorFormula::None;
+    }
+}
+
+bool CheckVectorFormulaBindings(const OperationTrace &operations) noexcept
+{
+    std::size_t vfCalls = 0U;
+    for (std::size_t index = 0U; index < operations.size; ++index) {
+        const OperationRecord &record = operations.records[index];
+        if (record.kind != OperationKind::RunVf) {
+            continue;
+        }
+        const VectorFormula expected = ExpectedVectorFormula(record.stage);
+        if (expected == VectorFormula::None ||
+            record.vectorFormula != expected) {
+            return false;
+        }
+        ++vfCalls;
+    }
+    return vfCalls == 4U;
+}
+
 bool CheckArch35VectorOperations(const OperationTrace &operations,
                                  const SyncTrace &synchronization,
                                  const LocalSyncTrace &localDependencies,
@@ -2471,6 +3377,7 @@ bool CheckArch35VectorOperations(const OperationTrace &operations,
         localDependencies.overflow ||
         !CheckPow2VfDispatch(operations, useExp2) ||
         !CheckRuntimeScaleVfDispatch(operations, abi, runtimeScale) ||
+        !CheckVectorFormulaBindings(operations) ||
         !CheckArch35VectorMutexPipelines(
             operations, synchronization, localDependencies, mutexes)) {
         return false;
@@ -4032,6 +4939,44 @@ bool CheckArch35CubeMutexPipelines(
                operations, synchronization, localDependencies, mutexes);
 }
 
+bool CheckMatrixFormulaBindings(const OperationTrace &operations) noexcept
+{
+    for (std::size_t index = 0U; index < operations.size; ++index) {
+        const OperationRecord &record = operations.records[index];
+        const bool isMmad = record.kind == OperationKind::Mmad ||
+                            record.kind == OperationKind::MmadRowStackedLhs ||
+                            record.kind == OperationKind::MmadQuadrantPackedLhs;
+        if (!isMmad) {
+            continue;
+        }
+
+        MatrixFormula expected = MatrixFormula::None;
+        switch (record.stage) {
+            case Stage::C2:
+                expected = MatrixFormula::RawAqkAndAkk;
+                break;
+            case Stage::C4:
+                expected = MatrixFormula::TEqualsBMatmulX0;
+                break;
+            case Stage::C5:
+                expected =
+                    MatrixFormula::AkkLowerLeftEqualsNegX1MatmulT;
+                break;
+            case Stage::C7:
+                expected = ContainsName(record.destination.name, "W-")
+                               ? MatrixFormula::WEqualsAkkMatmulKBetaG
+                               : MatrixFormula::UEqualsAkkMatmulVBeta;
+                break;
+            default:
+                return false;
+        }
+        if (record.matrixFormula != expected) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool CheckArch35CubeOperations(const OperationTrace &operations,
                                const SyncTrace &synchronization,
                                const LocalSyncTrace &localDependencies,
@@ -4042,6 +4987,7 @@ bool CheckArch35CubeOperations(const OperationTrace &operations,
     const PrepareAbi abi = key.abi;
     if (operations.overflow || synchronization.overflow ||
         localDependencies.overflow ||
+        !CheckMatrixFormulaBindings(operations) ||
         !CheckArch35C4Transfers(operations, localDependencies, mutexes,
                                 validRows, abi) ||
         !CheckArch35CubeMutexPipelines(
@@ -4183,6 +5129,7 @@ bool CheckArch22VectorOperations(const OperationTrace &operations,
         localDependencies.overflow ||
         !CheckPow2VfDispatch(operations, useExp2) ||
         !CheckRuntimeScaleVfDispatch(operations, abi, runtimeScale) ||
+        !CheckVectorFormulaBindings(operations) ||
         !CheckVectorStagePipeline(
             operations, synchronization, localDependencies, Stage::V0,
             true, SyncPoint::V0ContextReady, false) ||
@@ -4544,6 +5491,7 @@ bool CheckArch22CubeOperations(const OperationTrace &operations,
     const PrepareAbi abi = key.abi;
     if (operations.overflow || synchronization.overflow ||
         localDependencies.overflow ||
+        !CheckMatrixFormulaBindings(operations) ||
         !CheckC2RowStackedMmadDescriptors(
             operations, validRows, "Aqk-Akk-stacked-L0C",
             NativeMatrixLayout::L0aZZ, Architecture::Arch22,
@@ -6818,6 +7766,11 @@ int main()
     if (!CheckRuntimeScaleSemanticContract() ||
         !CheckV0QkNormalizeSemanticContract()) {
         return 7;
+    }
+    if (!CheckVfContractMetadata() ||
+        !CheckV1S4ScoreOperandsSemanticContract<true>() ||
+        !CheckV1S4ScoreOperandsSemanticContract<false>()) {
+        return 9;
     }
     if (!CheckV3SemanticContracts()) {
         return 4;
