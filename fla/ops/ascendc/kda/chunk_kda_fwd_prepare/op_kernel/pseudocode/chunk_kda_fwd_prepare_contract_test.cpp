@@ -19,7 +19,13 @@
 
 namespace kda_prepare_pseudocode {
 
-void RunChunkKdaFwdPreparePseudocode(
+void RunChunkKdaFwdPrepareArch22Contract(
+    const RuntimeTiling &tiling, std::uint32_t workgroupId, CoreRole role,
+    std::uint32_t aivId, WorkspaceView &workspace, SyncLedger &sync,
+    VectorOps &vectorOps, CubeOps &cubeOps,
+    ChunkTask (*resolveChunk)(std::uint32_t)) noexcept;
+
+void RunChunkKdaFwdPrepareArch35Contract(
     const RuntimeTiling &tiling, std::uint32_t workgroupId, CoreRole role,
     std::uint32_t aivId, WorkspaceView &workspace, SyncLedger &sync,
     VectorOps &vectorOps, CubeOps &cubeOps,
@@ -28,6 +34,23 @@ void RunChunkKdaFwdPreparePseudocode(
 namespace {
 
 using ResolveChunk = ChunkTask (*)(std::uint32_t);
+
+void RunArchitectureContract(
+    Architecture architecture, const RuntimeTiling &tiling,
+    std::uint32_t workgroupId, CoreRole role, std::uint32_t aivId,
+    WorkspaceView &workspace, SyncLedger &sync, VectorOps &vectorOps,
+    CubeOps &cubeOps, ResolveChunk resolveChunk) noexcept
+{
+    if (architecture == Architecture::Arch22) {
+        RunChunkKdaFwdPrepareArch22Contract(
+            tiling, workgroupId, role, aivId, workspace, sync, vectorOps,
+            cubeOps, resolveChunk);
+        return;
+    }
+    RunChunkKdaFwdPrepareArch35Contract(
+        tiling, workgroupId, role, aivId, workspace, sync, vectorOps,
+        cubeOps, resolveChunk);
+}
 
 constexpr std::uint32_t kNoAivId =
     std::numeric_limits<std::uint32_t>::max();
@@ -2188,10 +2211,11 @@ bool CheckAicLocalItem(LocalTraceCursor &cursor,
 }
 
 template <typename CheckItem>
-bool ReplayItems(const RuntimeTiling &tiling, std::uint32_t workgroupId,
-                 ResolveChunk resolveChunk, CheckItem checkItem) noexcept
+bool ReplayItems(Architecture architecture, const RuntimeTiling &tiling,
+                 std::uint32_t workgroupId, ResolveChunk resolveChunk,
+                 CheckItem checkItem) noexcept
 {
-    const CorePlan plan = BuildCorePlan(tiling, workgroupId);
+    const CorePlan plan = BuildCorePlan(tiling, workgroupId, architecture);
     OwnerTicketState tickets{};
     const auto replayPartition =
         [&plan, &tiling, &tickets, &checkItem](
@@ -2240,54 +2264,56 @@ bool ReplayItems(const RuntimeTiling &tiling, std::uint32_t workgroupId,
     return true;
 }
 
-bool CheckAivTrace(const SyncTrace &trace, const RuntimeTiling &tiling,
-                   std::uint32_t workgroupId, std::uint32_t aivId,
-                   ResolveChunk resolveChunk) noexcept
+bool CheckAivTrace(Architecture architecture, const SyncTrace &trace,
+                   const RuntimeTiling &tiling, std::uint32_t workgroupId,
+                   std::uint32_t aivId, ResolveChunk resolveChunk) noexcept
 {
     TraceCursor cursor{trace};
     const bool valid = ReplayItems(
-        tiling, workgroupId, resolveChunk,
+        architecture, tiling, workgroupId, resolveChunk,
         [&cursor, aivId](const WorkItem &item) noexcept {
             return CheckAivItem(cursor, item, aivId);
         });
     return valid && cursor.Complete();
 }
 
-bool CheckAicTrace(const SyncTrace &trace, const RuntimeTiling &tiling,
-                   std::uint32_t workgroupId,
+bool CheckAicTrace(Architecture architecture, const SyncTrace &trace,
+                   const RuntimeTiling &tiling, std::uint32_t workgroupId,
                    ResolveChunk resolveChunk) noexcept
 {
     TraceCursor cursor{trace};
     const bool valid = ReplayItems(
-        tiling, workgroupId, resolveChunk,
+        architecture, tiling, workgroupId, resolveChunk,
         [&cursor](const WorkItem &item) noexcept {
             return CheckAicItem(cursor, item);
         });
     return valid && cursor.Complete();
 }
 
-bool CheckAivLocalTrace(const LocalSyncTrace &trace,
+bool CheckAivLocalTrace(Architecture architecture,
+                        const LocalSyncTrace &trace,
                         const RuntimeTiling &tiling,
                         std::uint32_t workgroupId, std::uint32_t aivId,
                         ResolveChunk resolveChunk) noexcept
 {
     LocalTraceCursor cursor{trace};
     const bool valid = ReplayItems(
-        tiling, workgroupId, resolveChunk,
+        architecture, tiling, workgroupId, resolveChunk,
         [&cursor, aivId](const WorkItem &item) noexcept {
             return CheckAivLocalItem(cursor, item, aivId);
         });
     return valid && cursor.Complete();
 }
 
-bool CheckAicLocalTrace(const LocalSyncTrace &trace,
+bool CheckAicLocalTrace(Architecture architecture,
+                        const LocalSyncTrace &trace,
                         const RuntimeTiling &tiling,
                         std::uint32_t workgroupId,
                         ResolveChunk resolveChunk) noexcept
 {
     LocalTraceCursor cursor{trace};
     const bool valid = ReplayItems(
-        tiling, workgroupId, resolveChunk,
+        architecture, tiling, workgroupId, resolveChunk,
         [&cursor](const WorkItem &item) noexcept {
             return CheckAicLocalItem(cursor, item);
         });
@@ -2305,7 +2331,6 @@ bool RunTraceCase(std::uint32_t heads, std::uint32_t totalChunks,
     tiling.headCount = heads;
     tiling.qkHeadCount = qkHeads;
     tiling.aicWorkgroupCount = workgroupCount;
-    tiling.architecture = Architecture::Arch22;
     tiling.epsilon = 1.0e-6F;
     tiling.key.abi = abi;
 
@@ -2331,29 +2356,31 @@ bool RunTraceCase(std::uint32_t heads, std::uint32_t totalChunks,
         workspace.backingBytes = sizing.totalBytes;
         SyncLedger sync{&aivTraces[aiv], &aivLocalTraces[aiv], nullptr,
                         &aivMutexTraces[aiv]};
-        RunChunkKdaFwdPreparePseudocode(
-            tiling, workgroupId, CoreRole::Aiv, aiv, workspace, sync,
-            vectorOps, cubeOps, resolveChunk);
+        RunArchitectureContract(
+            Architecture::Arch22, tiling, workgroupId, CoreRole::Aiv, aiv,
+            workspace, sync, vectorOps, cubeOps, resolveChunk);
     }
     WorkspaceView workspace{};
     workspace.backingBytes = sizing.totalBytes;
     SyncLedger sync{&aicTrace, &aicLocalTrace, nullptr, &aicMutexTrace};
-    RunChunkKdaFwdPreparePseudocode(
-        tiling, workgroupId, CoreRole::Aic, 0U, workspace, sync, vectorOps,
-        cubeOps, resolveChunk);
+    RunArchitectureContract(
+        Architecture::Arch22, tiling, workgroupId, CoreRole::Aic, 0U,
+        workspace, sync, vectorOps, cubeOps, resolveChunk);
 
     for (std::uint32_t aiv = 0U; aiv < kAivPerWorkgroup; ++aiv) {
-        if (!CheckAivTrace(aivTraces[aiv], tiling, workgroupId, aiv,
-                           resolveChunk) ||
-            !CheckAivLocalTrace(aivLocalTraces[aiv], tiling, workgroupId,
+        if (!CheckAivTrace(Architecture::Arch22, aivTraces[aiv], tiling,
+                           workgroupId, aiv, resolveChunk) ||
+            !CheckAivLocalTrace(Architecture::Arch22,
+                                aivLocalTraces[aiv], tiling, workgroupId,
                                 aiv, resolveChunk) ||
             !EmptyMutexTrace(aivMutexTraces[aiv])) {
             return false;
         }
     }
-    return CheckAicTrace(aicTrace, tiling, workgroupId, resolveChunk) &&
-           CheckAicLocalTrace(aicLocalTrace, tiling, workgroupId,
-                              resolveChunk) &&
+    return CheckAicTrace(Architecture::Arch22, aicTrace, tiling,
+                         workgroupId, resolveChunk) &&
+           CheckAicLocalTrace(Architecture::Arch22, aicLocalTrace, tiling,
+                              workgroupId, resolveChunk) &&
            EmptyMutexTrace(aicMutexTrace);
 }
 
@@ -4704,12 +4731,13 @@ bool CheckC7ReadyWaitSources(const MultiHeadAddressTrace &trace,
 }
 
 template <std::size_t N>
-bool CollectExpectedHeads(const RuntimeTiling &tiling,
+bool CollectExpectedHeads(Architecture architecture,
+                          const RuntimeTiling &tiling,
                           std::array<HeadTask, N> &heads,
                           std::array<bool, N> &seen) noexcept
 {
     return ReplayItems(
-        tiling, 0U, ResolveDense,
+        architecture, tiling, 0U, ResolveDense,
         [&heads, &seen](const WorkItem &item) noexcept {
             for (const HeadTask &head : item.group.heads) {
                 if (!head.active) {
@@ -4736,7 +4764,6 @@ bool CaptureMultiHeadAddressTrace(Architecture architecture,
     tiling.headCount = heads;
     tiling.qkHeadCount = qkHeads;
     tiling.aicWorkgroupCount = 1U;
-    tiling.architecture = architecture;
     tiling.epsilon = 1.0e-6F;
     tiling.key = key;
     const WorkspaceSizing sizing =
@@ -4755,9 +4782,9 @@ bool CaptureMultiHeadAddressTrace(Architecture architecture,
                         &trace.aivMutexes[aiv]};
         WorkspaceView workspace{};
         workspace.backingBytes = sizing.totalBytes;
-        RunChunkKdaFwdPreparePseudocode(
-            tiling, 0U, CoreRole::Aiv, aiv, workspace, sync, vectorOps,
-            unusedCubeOps, ResolveDense);
+        RunArchitectureContract(
+            architecture, tiling, 0U, CoreRole::Aiv, aiv, workspace, sync,
+            vectorOps, unusedCubeOps, ResolveDense);
     }
 
     TraceClock clock{};
@@ -4770,9 +4797,9 @@ bool CaptureMultiHeadAddressTrace(Architecture architecture,
                     &trace.aicMutexes};
     WorkspaceView workspace{};
     workspace.backingBytes = sizing.totalBytes;
-    RunChunkKdaFwdPreparePseudocode(
-        tiling, 0U, CoreRole::Aic, 0U, workspace, sync, unusedVectorOps,
-        cubeOps, ResolveDense);
+    RunArchitectureContract(
+        architecture, tiling, 0U, CoreRole::Aic, 0U, workspace, sync,
+        unusedVectorOps, cubeOps, ResolveDense);
 
     if (trace.aicOperations.overflow || trace.aicSynchronization.overflow ||
         trace.aicLocalDependencies.overflow || trace.aicMutexes.overflow) {
@@ -4946,11 +4973,10 @@ bool CheckL0OperandEpochContract(Architecture architecture) noexcept
     tiling.totalChunks = 1U;
     tiling.headCount = kValueHeads;
     tiling.aicWorkgroupCount = 1U;
-    tiling.architecture = architecture;
     tiling.epsilon = 1.0e-6F;
     std::array<HeadTask, kValueHeads> heads{};
     std::array<bool, kValueHeads> seen{};
-    if (!CollectExpectedHeads(tiling, heads, seen)) {
+    if (!CollectExpectedHeads(architecture, tiling, heads, seen)) {
         return false;
     }
     for (std::uint32_t headId = 0U; headId < kValueHeads; ++headId) {
@@ -5096,7 +5122,6 @@ bool CheckCompleteQkCohortPartition(Architecture architecture,
     tiling.headCount = valueHeads;
     tiling.qkHeadCount = qkHeads;
     tiling.aicWorkgroupCount = kWorkgroups;
-    tiling.architecture = architecture;
     tiling.epsilon = 1.0e-6F;
     const std::uint32_t expectedPartitions =
         HeadPartitionCount(valueHeads, qkHeads);
@@ -5117,7 +5142,8 @@ bool CheckCompleteQkCohortPartition(Architecture architecture,
 
     for (std::uint32_t workgroup = 0U; workgroup < kWorkgroups;
          ++workgroup) {
-        const CorePlan plan = BuildCorePlan(tiling, workgroup);
+        const CorePlan plan =
+            BuildCorePlan(tiling, workgroup, architecture);
         if (plan.mode != PartitionMode::ChunkHeadGroup ||
             plan.headPartitionCount != expectedPartitions ||
             plan.headGroupCount != expectedGroups ||
@@ -5157,7 +5183,7 @@ bool CheckCompleteQkCohortPartition(Architecture architecture,
         }
 
         if (!ReplayItems(
-                tiling, workgroup, ResolveDense,
+                architecture, tiling, workgroup, ResolveDense,
                 [ratio, expectedGroups, &qkWorkgroup, &groupVisits,
                  workgroup](const WorkItem &item) noexcept {
                     if (item.group.headGroupId >= expectedGroups ||
@@ -5201,9 +5227,9 @@ bool CheckCompleteQkCohortPartition(Architecture architecture,
             SyncLedger sync{nullptr, nullptr, &clock, &mutexes};
             WorkspaceView workspace{};
             workspace.backingBytes = sizing.totalBytes;
-            RunChunkKdaFwdPreparePseudocode(
-                tiling, workgroup, CoreRole::Aiv, aiv, workspace, sync,
-                vectorOps, unusedCubeOps, ResolveDense);
+            RunArchitectureContract(
+                architecture, tiling, workgroup, CoreRole::Aiv, aiv,
+                workspace, sync, vectorOps, unusedCubeOps, ResolveDense);
             if (operations.overflow || mutexes.overflow ||
                 (architecture == Architecture::Arch22
                      ? !EmptyMutexTrace(mutexes)
@@ -5427,11 +5453,11 @@ bool CheckArch22MultiHeadAddresses(std::uint32_t heads) noexcept
         tiling.totalChunks = 1U;
         tiling.headCount = heads;
         tiling.aicWorkgroupCount = 1U;
-        tiling.architecture = Architecture::Arch22;
         tiling.epsilon = 1.0e-6F;
         tiling.key.abi = PrepareAbi::Current;
         for (std::uint32_t aiv = 0U; aiv < kAivPerWorkgroup; ++aiv) {
-            if (!CheckAivTrace(trace.aivSynchronization[aiv], tiling, 0U,
+            if (!CheckAivTrace(Architecture::Arch22,
+                               trace.aivSynchronization[aiv], tiling, 0U,
                                aiv, ResolveDense)) {
                 return false;
             }
@@ -6117,11 +6143,10 @@ bool CheckQkContextAddressCase(Architecture architecture,
     tiling.headCount = valueHeads;
     tiling.qkHeadCount = qkHeads;
     tiling.aicWorkgroupCount = 1U;
-    tiling.architecture = architecture;
     tiling.epsilon = 1.0e-6F;
     std::array<HeadTask, kMaxHeads> heads{};
     std::array<bool, kMaxHeads> seen{};
-    if (!CollectExpectedHeads(tiling, heads, seen)) {
+    if (!CollectExpectedHeads(architecture, tiling, heads, seen)) {
         return false;
     }
     for (std::uint32_t current = 0U; current < valueHeads; ++current) {
@@ -6234,11 +6259,10 @@ bool CheckQkCacheProtocolCase(Architecture architecture,
     tiling.headCount = valueHeads;
     tiling.qkHeadCount = qkHeads;
     tiling.aicWorkgroupCount = 1U;
-    tiling.architecture = architecture;
     tiling.epsilon = 1.0e-6F;
     std::array<HeadTask, kMaxValueHeads> heads{};
     std::array<bool, kMaxValueHeads> seen{};
-    if (!CollectExpectedHeads(tiling, heads, seen)) {
+    if (!CollectExpectedHeads(architecture, tiling, heads, seen)) {
         return false;
     }
     std::array<std::size_t, kMaxValueHeads>
@@ -6246,7 +6270,7 @@ bool CheckQkCacheProtocolCase(Architecture architecture,
     std::array<bool, kMaxValueHeads> expectedFreeSeen{};
     std::size_t emittedReadyWaits = 0U;
     if (!ReplayItems(
-            tiling, 0U, ResolveDense,
+            architecture, tiling, 0U, ResolveDense,
             [architecture, qkHeads, &expectedReadyWaitsBeforeFree,
              &expectedFreeSeen,
              &emittedReadyWaits](const WorkItem &item) noexcept {
@@ -6579,7 +6603,6 @@ bool RunArch22OperationCase(ResolveChunk resolveChunk,
     tiling.totalChunks = 1U;
     tiling.headCount = 1U;
     tiling.aicWorkgroupCount = 1U;
-    tiling.architecture = Architecture::Arch22;
     tiling.epsilon = 1.0e-6F;
     tiling.scale = kRuntimeScaleProbeValue;
     tiling.key.abi = abi;
@@ -6608,9 +6631,10 @@ bool RunArch22OperationCase(ResolveChunk resolveChunk,
     WorkspaceView vectorWorkspace{};
     vectorWorkspace.backingBytes = sizing.totalBytes;
     for (std::uint32_t aiv = 0U; aiv < kAivPerWorkgroup; ++aiv) {
-        RunChunkKdaFwdPreparePseudocode(
-            tiling, 0U, CoreRole::Aiv, aiv, vectorWorkspace, vectorSync,
-            vectorOps, unusedCubeOps, resolveChunk);
+        RunArchitectureContract(
+            Architecture::Arch22, tiling, 0U, CoreRole::Aiv, aiv,
+            vectorWorkspace, vectorSync, vectorOps, unusedCubeOps,
+            resolveChunk);
     }
 
     OperationTrace cubeOperations{};
@@ -6626,9 +6650,9 @@ bool RunArch22OperationCase(ResolveChunk resolveChunk,
                         &cubeClock, &cubeMutexes};
     WorkspaceView cubeWorkspace{};
     cubeWorkspace.backingBytes = sizing.totalBytes;
-    RunChunkKdaFwdPreparePseudocode(
-        tiling, 0U, CoreRole::Aic, 0U, cubeWorkspace, cubeSync,
-        unusedVectorOps, cubeOps, resolveChunk);
+    RunArchitectureContract(
+        Architecture::Arch22, tiling, 0U, CoreRole::Aic, 0U,
+        cubeWorkspace, cubeSync, unusedVectorOps, cubeOps, resolveChunk);
 
     return EmptyMutexTrace(vectorMutexes) && EmptyMutexTrace(cubeMutexes) &&
            CheckArch22VectorOperations(
@@ -6676,7 +6700,6 @@ bool RunArch35OperationCase(ResolveChunk resolveChunk,
     tiling.totalChunks = 1U;
     tiling.headCount = 1U;
     tiling.aicWorkgroupCount = 1U;
-    tiling.architecture = Architecture::Arch35;
     tiling.epsilon = 1.0e-6F;
     tiling.scale = kRuntimeScaleProbeValue;
     tiling.key.abi = abi;
@@ -6704,9 +6727,10 @@ bool RunArch35OperationCase(ResolveChunk resolveChunk,
                           &vectorClock, &vectorMutexes};
     WorkspaceView vectorWorkspace{};
     vectorWorkspace.backingBytes = sizing.totalBytes;
-    RunChunkKdaFwdPreparePseudocode(
-        tiling, 0U, CoreRole::Aiv, 0U, vectorWorkspace, vectorSync,
-        vectorOps, unusedCubeOps, resolveChunk);
+    RunArchitectureContract(
+        Architecture::Arch35, tiling, 0U, CoreRole::Aiv, 0U,
+        vectorWorkspace, vectorSync, vectorOps, unusedCubeOps,
+        resolveChunk);
 
     OperationTrace cubeOperations{};
     SyncTrace cubeSynchronization{};
@@ -6721,9 +6745,9 @@ bool RunArch35OperationCase(ResolveChunk resolveChunk,
                         &cubeClock, &cubeMutexes};
     WorkspaceView cubeWorkspace{};
     cubeWorkspace.backingBytes = sizing.totalBytes;
-    RunChunkKdaFwdPreparePseudocode(
-        tiling, 0U, CoreRole::Aic, 0U, cubeWorkspace, cubeSync,
-        unusedVectorOps, cubeOps, resolveChunk);
+    RunArchitectureContract(
+        Architecture::Arch35, tiling, 0U, CoreRole::Aic, 0U,
+        cubeWorkspace, cubeSync, unusedVectorOps, cubeOps, resolveChunk);
 
     return CheckArch35VectorOperations(
                vectorOperations, vectorSynchronization,

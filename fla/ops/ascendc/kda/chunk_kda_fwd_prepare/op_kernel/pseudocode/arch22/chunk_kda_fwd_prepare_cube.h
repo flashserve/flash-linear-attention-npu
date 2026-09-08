@@ -162,7 +162,7 @@ inline BufferSpan L0cSpan(const CubeStageArgs &args, const HeadTask &head,
             static_cast<std::uint64_t>(base) + withinLane.offset,
             withinLane.size,
             head.l0cBankId,
-            L0cGenerationFor(head, use, args.architecture),
+            L0cGenerationFor(head, use, Architecture::Arch22),
             CoreRole::Aic,
             args.workgroupId};
 }
@@ -201,7 +201,6 @@ inline bool ValidArgs(const CubeStageArgs &args)
 {
     return args.work != nullptr && args.workspace != nullptr &&
            args.sync != nullptr && args.ops != nullptr &&
-           args.architecture == Architecture::Arch22 &&
            IsSupportedTilingKey(args.key);
 }
 
@@ -286,7 +285,7 @@ inline void RunC2(const CubeStageArgs &args)
                 continue;
             }
             const std::uint64_t l0cGeneration = L0cGenerationFor(
-                head, L0cStageUse::C2, args.architecture);
+                head, L0cStageUse::C2, Architecture::Arch22);
             args.sync->Wait(SyncPoint::L1BankFree, head.l1BankId,
                             head.l1Generation, Stage::C2, Pipe::Mte2);
             args.sync->Wait(SyncPoint::L0cBankFree, head.l0cBankId,
@@ -432,7 +431,7 @@ inline void RunC4(const CubeStageArgs &args)
                 continue;
             }
             const std::uint64_t l0cGeneration = L0cGenerationFor(
-                head, L0cStageUse::C4, args.architecture);
+                head, L0cStageUse::C4, Architecture::Arch22);
             args.sync->Wait(SyncPoint::C2ScoreL1Free, head.l1BankId,
                             head.l1Generation, Stage::C4,
                             hasQ10 ? Pipe::Mte2 : Pipe::Control);
@@ -547,7 +546,7 @@ inline void RunC5(const CubeStageArgs &args)
                 continue;
             }
             const std::uint64_t l0cGeneration = L0cGenerationFor(
-                head, L0cStageUse::C5, args.architecture);
+                head, L0cStageUse::C5, Architecture::Arch22);
             const Offset validRows = args.work->group.chunk.validRows;
             const Offset bottomRows =
                 validRows > 32U ? validRows - 32U : 0U;
@@ -660,7 +659,7 @@ inline void RunC7(const CubeStageArgs &args)
                 continue;
             }
             const std::uint64_t l0cGeneration = L0cGenerationFor(
-                head, L0cStageUse::C7, args.architecture);
+                head, L0cStageUse::C7, Architecture::Arch22);
             args.sync->Wait(SyncPoint::C5AkkReady, head.workspaceSlot,
                             head.workspaceGeneration, Stage::C7, Pipe::Mte2);
             args.sync->Wait(SyncPoint::L0cBankFree, head.l0cBankId,

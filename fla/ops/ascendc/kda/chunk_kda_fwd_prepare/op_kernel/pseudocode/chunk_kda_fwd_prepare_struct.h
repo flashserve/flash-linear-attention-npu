@@ -1066,7 +1066,6 @@ struct VectorStageArgs {
     WorkspaceView *workspace = nullptr;
     SyncLedger *sync = nullptr;
     VectorOps *ops = nullptr;
-    Architecture architecture = Architecture::Arch35;
     ProposedTilingKey key{};
     float epsilon = 0.0F;
     float lowerBound = 0.0F;
@@ -1082,7 +1081,6 @@ struct CubeStageArgs {
     WorkspaceView *workspace = nullptr;
     SyncLedger *sync = nullptr;
     CubeOps *ops = nullptr;
-    Architecture architecture = Architecture::Arch35;
     ProposedTilingKey key{};
     float epsilon = 0.0F;
     float lowerBound = 0.0F;

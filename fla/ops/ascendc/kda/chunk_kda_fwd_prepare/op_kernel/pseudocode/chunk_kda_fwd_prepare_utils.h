@@ -239,13 +239,14 @@ static_assert(ValueHeadsPerQkHead(16U, 2U) == 8U &&
               "R>4 must expand one cohort into consecutive local groups");
 
 constexpr CorePlan BuildCorePlan(const RuntimeTiling &tiling,
-                                 std::uint32_t workgroupId) noexcept
+                                 std::uint32_t workgroupId,
+                                 Architecture architecture) noexcept
 {
     CorePlan plan{};
     plan.workgroupId = workgroupId;
     plan.workgroupCount = tiling.aicWorkgroupCount;
     plan.totalChunks = tiling.totalChunks;
-    plan.architecture = tiling.architecture;
+    plan.architecture = architecture;
     plan.headPartitionCount =
         HeadPartitionCount(tiling.headCount, tiling.qkHeadCount);
     plan.headGroupCount =
@@ -658,11 +659,12 @@ constexpr bool CheckPartitionModeBoundary() noexcept
     tiling.headCount = 5U;
     tiling.aicWorkgroupCount = 3U;
     tiling.totalChunks = 3U;
-    if (BuildCorePlan(tiling, 0U).mode != PartitionMode::ChunkOnly) {
+    if (BuildCorePlan(tiling, 0U, Architecture::Arch35).mode !=
+        PartitionMode::ChunkOnly) {
         return false;
     }
     tiling.totalChunks = 2U;
-    return BuildCorePlan(tiling, 0U).mode ==
+    return BuildCorePlan(tiling, 0U, Architecture::Arch35).mode ==
            PartitionMode::ChunkHeadGroup;
 }
 
@@ -748,8 +750,7 @@ constexpr bool CheckOwnerTicketsForPlan(std::uint32_t totalChunks,
     tiling.totalChunks = totalChunks;
     tiling.headCount = headCount;
     tiling.aicWorkgroupCount = workgroupCount;
-    tiling.architecture = architecture;
-    const CorePlan plan = BuildCorePlan(tiling, workgroupId);
+    const CorePlan plan = BuildCorePlan(tiling, workgroupId, architecture);
     OwnerTicketState actual{};
     OwnerTicketState expected{};
     for (std::uint64_t ordinal = plan.begin; ordinal < plan.end; ++ordinal) {

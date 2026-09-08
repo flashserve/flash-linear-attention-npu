@@ -164,7 +164,6 @@ inline bool ValidArgs(const VectorStageArgs &args)
 {
     return args.work != nullptr && args.workspace != nullptr &&
            args.sync != nullptr && args.ops != nullptr &&
-           args.architecture == Architecture::Arch22 &&
            IsSupportedKey(args.key);
 }
 

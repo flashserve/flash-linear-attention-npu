@@ -5,6 +5,10 @@
 文件命名和 kernel 侧分层参考 `chunk_fwd_h`，但本目录**不参与构建**，不会创建算子定义、
 Host Tiling、CMake target、aclnn/Python API 或设备 kernel ABI。
 
+架构路径与仓内其他 Ascend C 算子保持一致，由编译器宏静态选择：
+`__CCE_AICORE__ == 310` 编译 Arch35，其余目标编译 Arch22。设备侧 `RuntimeTiling` 不携带
+架构字段，也不存在按 runtime tiling 在两个架构实现之间分支的路径。
+
 `VectorOps`、`CubeOps` 中类似 Ascend C API 的名字仍只是符号化数据流标记。Arch35
 `SyncLedger::MutexLock/MutexUnlock` 则明确映射为官方
 `Mutex::Lock<pipe>(id)/Mutex::Unlock<pipe>(id)` 的核内流水合同，但当前文件记录的是可执行 host
@@ -72,6 +76,9 @@ Arch35 AIC: C2 -> C4 -> C5 -> C7
 Arch22 AIV: pair-wise (V0 -> V1) -> pair-wise V3 -> pair-wise V6
 Arch22 AIC: C2 -> C4 -> C5 -> C7
 ```
+
+同一个设备目标只包含上述一种架构的头文件和 Stage 调用。workspace 策略、CorePlan 构造和
+Stage 实现均使用同一编译期架构常量，不能通过 tiling 改写。
 
 保留 `RunV*`/`RunC*` 是为了表达不可合并的物理 Stage，而不是继续隐藏调度。各 Stage 内部仍自行
 等待跨核 ready/free，因此上面的源码顺序不表示 AIV 与 AIC 之间存在隐式先后关系。
@@ -460,7 +467,8 @@ Current ABI 的 G 与 Akk 不另建内部副本，分别复用公开 `gk` 与 Ak
 才能让 MTE3 覆写同一 payload 低地址为 VCS；跨核 `C2RawReady` 只表示 producer 已写好 raw，不能
 替代这条反向 source-free 保护。
 
-Host 必须调用等价于 `CheckedWorkspaceSizing(architecture,N,workgroupId)` 的 checked-u64 计算，
+Host 必须根据目标 SoC 确定架构，并调用等价于
+`CheckedWorkspaceSizing(architecture,N,workgroupId)` 的 checked-u64 计算，
 先验证 `N > 0`、`workgroupId < N` 和
 `N <= UINT64_MAX / WorkspaceWorkgroupStrideFor(architecture)`，再得到：
 
@@ -766,7 +774,9 @@ HardEvent 落地，不能因源码调用顺序或跨核 ticket 已存在而省�
 本目录可作为普通 C++17 做静态语法检查，不需要 CANN：
 
 ```sh
-g++ -std=c++17 -Wall -Wextra -Werror -fsyntax-only \
+g++ -std=c++17 -Wall -Wextra -Werror -D__CCE_AICORE__=220 -fsyntax-only \
+  fla/ops/ascendc/kda/chunk_kda_fwd_prepare/op_kernel/pseudocode/chunk_kda_fwd_prepare.cpp
+g++ -std=c++17 -Wall -Wextra -Werror -D__CCE_AICORE__=310 -fsyntax-only \
   fla/ops/ascendc/kda/chunk_kda_fwd_prepare/op_kernel/pseudocode/chunk_kda_fwd_prepare.cpp
 ```
 
@@ -784,13 +794,26 @@ top-only RHS 收缩、MMAD 操作数/模式，以及 ready 晚于对应最后写
 共享的语义伪代码描述；合同另用可执行 probe 验证 `useExp2=true` 只走截断 Exp2、false 只走
 截断后 FP32 `x*ln2` 再 Exp。外部 OperationTrace 不把一次 VF 展开成第二条执行流：
 
-```sh
-g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
-  fla/ops/ascendc/kda/chunk_kda_fwd_prepare/op_kernel/pseudocode/chunk_kda_fwd_prepare.cpp \
-  fla/ops/ascendc/kda/chunk_kda_fwd_prepare/op_kernel/pseudocode/chunk_kda_fwd_prepare_contract_test.cpp \
-  -o chunk_kda_fwd_prepare_contract_test
-./chunk_kda_fwd_prepare_contract_test
+```bash
+set -euo pipefail
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf -- "$tmp_dir"' EXIT
+src=fla/ops/ascendc/kda/chunk_kda_fwd_prepare/op_kernel/pseudocode/chunk_kda_fwd_prepare.cpp
+test_src=fla/ops/ascendc/kda/chunk_kda_fwd_prepare/op_kernel/pseudocode/chunk_kda_fwd_prepare_contract_test.cpp
+flags=(-std=c++17 -Wall -Wextra -Werror -pedantic)
+
+g++ "${flags[@]}" -D__CCE_AICORE__=220 \
+  -DKDA_PREPARE_PSEUDOCODE_ENTRY_NAME=RunChunkKdaFwdPrepareArch22Contract \
+  -c "$src" -o "$tmp_dir/arch22.o"
+g++ "${flags[@]}" -D__CCE_AICORE__=310 \
+  -DKDA_PREPARE_PSEUDOCODE_ENTRY_NAME=RunChunkKdaFwdPrepareArch35Contract \
+  -c "$src" -o "$tmp_dir/arch35.o"
+g++ "${flags[@]}" -c "$test_src" -o "$tmp_dir/contract_test.o"
+g++ "$tmp_dir/arch22.o" "$tmp_dir/arch35.o" "$tmp_dir/contract_test.o" \
+  -o "$tmp_dir/chunk_kda_fwd_prepare_contract_test"
+"$tmp_dir/chunk_kda_fwd_prepare_contract_test"
 ```
 
-该命令通过只说明设计伪代码内部是合法 C++17；不代表 A2/A3/A5 编译、device link、功能、精度、
+上述测试将同一入口源文件分别按 Arch22 和 Arch35 编译，再链接进同一个合同测试；通过只说明两条
+预处理路径的设计伪代码均为合法 C++17 且 host 合同成立，不代表 A2/A3/A5 编译、device link、功能、精度、
 sanitizer 或性能验证通过。

@@ -468,7 +468,6 @@ struct RuntimeTiling {
     std::uint32_t headCount = 0;
     std::uint32_t qkHeadCount = 0;
     std::uint32_t aicWorkgroupCount = 0;
-    Architecture architecture = Architecture::Arch35;
     ProposedTilingKey key{};
     float epsilon = 1.0e-6F;
     float lowerBound = -5.0F;
