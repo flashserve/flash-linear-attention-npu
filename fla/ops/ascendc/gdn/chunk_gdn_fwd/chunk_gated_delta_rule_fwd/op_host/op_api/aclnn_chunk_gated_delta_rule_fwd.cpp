@@ -82,7 +82,12 @@ struct GdnShapeInfo {
 
 static bool UsePreparePath(const ChunkGatedDeltaRuleFwdParams &params)
 {
-    return params.useExp2 && params.useQkL2norm;
+    const bool legacyLayout = std::strcmp(params.layout, "BNSD") == 0 ||
+                              std::strcmp(params.layout, "NTD") == 0;
+    return params.useExp2 || params.useQkL2norm ||
+           params.aLogOptional != nullptr || params.dtBiasOptional != nullptr ||
+           params.betaEffOutOptional != nullptr || params.allowNegEigval ||
+           params.aOutOptional == nullptr || params.stateVFirst || !legacyLayout;
 }
 
 static op::Shape MakeShape(std::initializer_list<int64_t> dims)
@@ -330,26 +335,17 @@ static aclnnStatus ResolveShapeInfo(const ChunkGatedDeltaRuleFwdParams &params, 
 static aclnnStatus CheckSupportedL2Contract(const ChunkGatedDeltaRuleFwdParams &params)
 {
     CHECK_COND(params.layout != nullptr, ACLNN_ERR_PARAM_NULLPTR, "layout must not be nullptr.");
-    CHECK_COND(params.aLogOptional == nullptr && params.dtBiasOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
-               "aLogOptional and dtBiasOptional are reserved by the stable ABI but are not supported yet.");
     if (UsePreparePath(params)) {
         CHECK_COND(IsAscend950(), ACLNN_ERR_PARAM_INVALID,
-                   "useExp2=true is supported on Ascend950 only.");
+                   "The prepare path is supported on Ascend950 only.");
         CHECK_COND(std::strcmp(params.layout, "BNSD") == 0 || std::strcmp(params.layout, "BSND") == 0 ||
                        std::strcmp(params.layout, "NTD") == 0 || std::strcmp(params.layout, "TND") == 0,
                    ACLNN_ERR_PARAM_INVALID,
-                   "Ascend950 useExp2 path supports BNSD, BSND, NTD and TND.");
-        CHECK_COND(!params.allowNegEigval || params.betaEffOutOptional != nullptr,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "allowNegEigval=true requires betaEffOutOptional to enable beta sigmoid.");
+                   "The Ascend950 prepare path supports BNSD, BSND, NTD and TND.");
         return ACLNN_SUCCESS;
     }
-    CHECK_COND(std::strcmp(params.layout, "BNSD") == 0, ACLNN_ERR_PARAM_INVALID,
-               "The current Phase 6 implementation supports layout=BNSD only.");
-    CHECK_COND(!params.stateVFirst, ACLNN_ERR_PARAM_INVALID,
-               "stateVFirst=true is supported by the Ascend950 useExp2 path only.");
-    CHECK_COND(!params.allowNegEigval, ACLNN_ERR_PARAM_INVALID,
-               "allowNegEigval=true is supported by the Ascend950 useExp2 path only.");
+    CHECK_COND(std::strcmp(params.layout, "BNSD") == 0 || std::strcmp(params.layout, "NTD") == 0,
+               ACLNN_ERR_PARAM_INVALID, "The Phase 6 implementation supports BNSD and NTD only.");
     CHECK_COND(params.qHatOutOptional == nullptr && params.kHatOutOptional == nullptr &&
                    params.qRstdOutOptional == nullptr && params.kRstdOutOptional == nullptr,
                ACLNN_ERR_PARAM_INVALID,
@@ -638,9 +634,10 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         GDN_STAGE_CHECK(qHead != nullptr && kHead != nullptr && vHead != nullptr, 169108);
 
         auto prepareResult = l0op::ChunkGatedDeltaRuleFwdPrepare(
-            qHead, kHead, vHead, gBht, betaBht, nullptr, nullptr,
+            qHead, kHead, vHead, gBht, betaBht, params.aLogOptional, params.dtBiasOptional,
             params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize,
-            params.allowNegEigval, true, true, false, betaEffBht != nullptr,
+            params.allowNegEigval, params.useExp2, params.useQkL2norm,
+            params.aLogOptional != nullptr || params.dtBiasOptional != nullptr, betaEffBht != nullptr,
             params.aOutOptional != nullptr, gCumsumBht, w, u, a, qHat, kHat, qRstd,
             kRstd, betaEffBht, executorPtr);
         GDN_STAGE_CHECK(prepareResult[0] != nullptr && prepareResult[1] != nullptr &&
@@ -651,12 +648,12 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         auto hResult = l0op::ChunkFwdH(
             kHat, w, u, gCumsumBht, nullptr, params.initialStateOptional,
             params.cuSeqlensOptional, params.chunkIndicesOptional, outputFinalState,
-            params.chunkSize, true, true, params.stateVFirst, h, vNew, finalState, executorPtr);
+            params.chunkSize, true, params.useExp2, params.stateVFirst, h, vNew, finalState, executorPtr);
         GDN_STAGE_CHECK(hResult[0] != nullptr && hResult[1] != nullptr, 169105);
 
         auto oResult = l0op::ChunkFwdO(
             qHat, kHat, vNew, h, gCumsumBht, params.cuSeqlensOptional,
-            params.chunkIndicesOptional, params.scale, params.chunkSize, true, params.stateVFirst,
+            params.chunkIndicesOptional, params.scale, params.chunkSize, params.useExp2, params.stateVFirst,
             "BSND", params.oOut, executorPtr);
         GDN_STAGE_CHECK(oResult[0] != nullptr, 169106);
 

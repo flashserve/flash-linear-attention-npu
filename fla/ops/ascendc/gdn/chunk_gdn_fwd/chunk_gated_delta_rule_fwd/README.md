@@ -2,10 +2,11 @@
 
 ## 功能
 
-`ChunkGatedDeltaRuleFwd` 实现 Gated Delta Rule 的分块前向计算。A5 上 `useExp2=true`
-且 `useQkL2norm=true`
-时依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkGatedDeltaRuleFwdH` 和 `ChunkFwdO`；
-其他组合继续使用原 Phase6 kernel。当前实现支持定长和变长序列、GVA、可选初始状态
+`ChunkGatedDeltaRuleFwd` 实现 Gated Delta Rule 的分块前向计算。仅当 `useExp2=false`、
+`useQkL2norm=false`、`useGateInKernel=false`、不启用 beta sigmoid、`allowNegEigval=false`、输出 A、
+`stateVFirst=false` 且 layout 为 `BNSD/NTD` 时使用原 Phase6 kernel；任意条件不满足时，
+A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`。
+新路径不支持的参数组合由 `ChunkGatedDeltaRuleFwdPrepare` 报错。当前实现支持定长和变长序列、GVA、可选初始状态
 以及可选最终状态输出。
 
 用于精度对比的公开算子链依次由以下算子组成：
@@ -62,11 +63,11 @@ Python ctypes 入口通过 `disable_recompute=False` 选择训练输出，返回
 
 | 名称 | 当前支持范围 | 说明 |
 | --- | --- | --- |
-| `layout` | A5 `useExp2=true` 支持 `BNSD/BSND/NTD/TND`；其他路径保持原有支持范围 | q/k/v 的输入布局；BSND/TND 输入在拼接路径内转为 head-first，o 固定输出 BSND |
+| `layout` | 原 Phase6 路径支持 `BNSD/NTD`；A5 新路径支持 `BNSD/BSND/NTD/TND` | q/k/v 的输入布局；BSND/TND 输入在拼接路径内转为 head-first，o 固定输出 BSND |
 | `scale` | 通常为 `K**-0.5` | Query 缩放因子 |
 | `chunkSize` | `64`、`128` | 分块大小 |
-| `useExp2` | A5 支持 `true`；其他路径为 `false` | A5 true 时走三小算子拼接路径 |
-| `useQkL2norm` | `true/false` | 仅与 `useExp2=true` 同时成立时走三小算子拼接路径；false 时走原 Phase6 kernel |
+| `useExp2` | A5 新路径支持 `true` | true 时走三小算子拼接路径；新路径收到 false 时由 prepare 校验 |
+| `useQkL2norm` | A5 新路径支持 `true` | true 时走三小算子拼接路径；新路径收到 false 时由 prepare 校验 |
 | `allowNegEigval` | A5 `useExp2=true` 支持 | 为 true 时必须提供 `betaEffOutOptional` |
 | `stateVFirst` | A5 三小算子拼接路径支持 `true/false` | 控制初始状态、分块状态和最终状态的末两维采用 `[V,K]` 或 `[K,V]` |
 

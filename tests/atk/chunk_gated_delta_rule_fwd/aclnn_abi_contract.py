@@ -131,7 +131,14 @@ def main() -> None:
     required_patterns = {
         "final-state selector": r"const\s+bool\s+outputFinalState\s*=\s*"
         r"params\.finalStateOutOptional\s*!=\s*nullptr\s*;",
-        "BNSD default path": r'std::strcmp\(params\.layout,\s*"BNSD"\)\s*==\s*0',
+        "BNSD legacy layout": r'std::strcmp\(params\.layout,\s*"BNSD"\)\s*==\s*0',
+        "NTD legacy layout": r'std::strcmp\(params\.layout,\s*"NTD"\)\s*==\s*0',
+        "prepare path selector": r"return\s+params\.useExp2\s*\|\|\s*params\.useQkL2norm\s*\|\|.*"
+        r"params\.aLogOptional\s*!=\s*nullptr\s*\|\|\s*params\.dtBiasOptional\s*!=\s*nullptr\s*\|\|.*"
+        r"params\.betaEffOutOptional\s*!=\s*nullptr\s*\|\|\s*params\.allowNegEigval\s*\|\|.*"
+        r"params\.aOutOptional\s*==\s*nullptr\s*\|\|\s*params\.stateVFirst\s*\|\|\s*!legacyLayout",
+        "prepare path A5 guard": r"if\s*\(UsePreparePath\(params\)\)\s*\{\s*"
+        r"CHECK_COND\(IsAscend950\(\),\s*ACLNN_ERR_PARAM_INVALID",
         "gCumsum scratch": r"gCumsumCompute\s*=\s*executorPtr->AllocTensor",
         "A scratch": r"aCompute\s*=\s*executorPtr->AllocTensor",
     }
@@ -151,7 +158,7 @@ def main() -> None:
                 "symbol": SYMBOL,
                 "parameter_count": len(parameters),
                 "final_state_selector": "finalStateOutOptional != nullptr",
-                "supported_layout": "BNSD",
+                "legacy_layouts": ["BNSD", "NTD"],
             },
             ensure_ascii=False,
             indent=2,

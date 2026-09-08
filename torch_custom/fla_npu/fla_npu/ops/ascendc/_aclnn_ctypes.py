@@ -1686,15 +1686,6 @@ def npu_chunk_gated_delta_rule_fwd(
     allow_neg_eigval = _optional_bool(allow_neg_eigval, False)
     disable_recompute = _optional_bool(disable_recompute, False)
     state_v_first = _optional_bool(state_v_first, False)
-    if use_gate_in_kernel:
-        raise ValueError("use_gate_in_kernel currently only supports False.")
-    if use_beta_sigmoid_in_kernel and not (use_exp2 and use_qk_l2norm_in_kernel):
-        raise ValueError(
-            "use_beta_sigmoid_in_kernel=True requires use_exp2=True and "
-            "use_qk_l2norm_in_kernel=True."
-        )
-    if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
-        raise ValueError("allow_neg_eigval=True requires use_beta_sigmoid_in_kernel=True.")
     scale = _optional_float(scale, float(k_dim) ** -0.5)
     o = _empty((batch, tokens, v_heads, v_dim), v)
     g_cumsum = (
@@ -1707,6 +1698,7 @@ def npu_chunk_gated_delta_rule_fwd(
         if not disable_recompute
         else None
     )
+    a_log = _empty((v_heads,), g, dtype=torch.float32) if use_gate_in_kernel else None
     beta_eff = (
         _empty((batch, tokens, v_heads), beta, dtype=torch.float32)
         if use_beta_sigmoid_in_kernel
@@ -1731,7 +1723,7 @@ def npu_chunk_gated_delta_rule_fwd(
             ctx.tensor(v, "v"),
             ctx.tensor(g, "g"),
             ctx.tensor(beta, "beta"),
-            ctx.tensor(None, "a_log"),
+            ctx.tensor(a_log, "a_log"),
             ctx.tensor(None, "dt_bias"),
             ctx.tensor(initial_state, "initial_state"),
             ctx.int_array(cu_seqlens),
